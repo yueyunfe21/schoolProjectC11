@@ -1,0 +1,16 @@
+bot:
+  dhxy:
+    # --- 游戏客户端配置 ---
+    window-keyword: 大话西游2经典版
+
+    # --- 百度云 OCR 视觉配置 ---
+    ocr:
+      app-id: 7663260
+      api-key: sPCs5AFdc13mfgtqHnovGP5b
+      secret-key: yoDcd7FEqh4fkC5qLaE3igfQ0wEbPudx
+
+    anchor_windowTo_map_scroll_X: 560
+    anchor_windowTo_map_scroll_Y: 370
+
+    anchor_windowTo_map_search_X: 320
+    anchor_windowTo_map_search_Y: 293

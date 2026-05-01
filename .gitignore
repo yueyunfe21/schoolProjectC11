@@ -1,0 +1,17 @@
+# 编译后的文件
+target/
+*.class
+
+# IDEA 配置文件
+.idea/
+*.iml
+
+# 🌟 游戏截图产生的临时文件（只封杀 temp 这一个文件夹，里面不管什么格式全不要）
+images/temp/
+
+# 如果你根目录下有日志，可以忽略日志
+*.log
+
+# 操作系统临时文件
+.DS_Store
+Thumbs.db
