@@ -2,13 +2,12 @@ package com.bot.dhxy.tools;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
+import com.bot.dhxy.config.InputProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.awt.*;
-import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
 import java.util.List;
 
 /**
@@ -24,6 +23,8 @@ public class NpcInteractHelper {
     private GameClientTracker tracker;
     @Autowired
     private TextRecognizer ocr;
+    @Autowired
+    private InputProvider inputProvider;
 
     /**
      * 智能交互逻辑：先普攻，被挡住了再放 Ctrl 大招
@@ -44,18 +45,11 @@ public class NpcInteractHelper {
             }
 
             log.info("📍 锁定 NPC [{}], 坐标: {},{}", npcName, targetPoint.x, targetPoint.y);
-            Robot robot = new Robot();
-
             // ==========================================
             // 第一阶段：尝试普通点击
             // ==========================================
-            robot.mouseMove(targetPoint.x, targetPoint.y);
-            Thread.sleep(150);
-
             log.info("🖱️ 尝试普通左键点击...");
-            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-            Thread.sleep(50);
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            inputProvider.clickLeft(targetPoint.x, targetPoint.y, 80);
 
             // 给游戏 0.8 秒的时间弹出对话框并渲染文字
             Thread.sleep(800);
@@ -73,36 +67,56 @@ public class NpcInteractHelper {
             // ==========================================
             log.warn("⚠️ 未检测到对话框，可能被玩家遮挡。启动 Ctrl 防遮挡协议！");
 
-            // 重新把鼠标移回去（防止手抖碰到了）
-            robot.mouseMove(targetPoint.x, targetPoint.y);
-            Thread.sleep(100);
-
-            // 唤出重叠列表
-            robot.keyPress(KeyEvent.VK_CONTROL);
-            Thread.sleep(50);
-            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-            Thread.sleep(50);
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-            Thread.sleep(50);
-            robot.keyRelease(KeyEvent.VK_CONTROL);
+            // Ctrl+左键唤出重叠列表
+            controlClick(targetPoint.x, targetPoint.y);
 
             Thread.sleep(300); // 等待列表出现
 
-            // 偏移点击黄字 NPC
-            int OFFSET_X = 40;
-            int OFFSET_Y = 20;
-            robot.mouseMove(targetPoint.x + OFFSET_X, targetPoint.y + OFFSET_Y);
-            Thread.sleep(100);
-
-            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-            Thread.sleep(50);
-            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            // 优先 OCR 定位重叠列表中的 NPC 黄字，找不到再使用偏移兜底
+            if (!clickNpcInOverlayList(targetPoint, npcName)) {
+                int offsetX = 40;
+                int offsetY = 20;
+                log.warn("⚠️ 未识别出重叠列表中的 NPC 文本，使用偏移兜底点击: {},{}", targetPoint.x + offsetX, targetPoint.y + offsetY);
+                inputProvider.clickLeft(targetPoint.x + offsetX, targetPoint.y + offsetY, 80);
+            }
 
             log.info("✅ Ctrl 防遮挡连招执行完毕！");
 
         } catch (Exception e) {
             log.error("❌ 交互异常", e);
         }
+    }
+
+    private void controlClick(int x, int y) throws Exception {
+        Robot robot = new Robot();
+        robot.mouseMove(x, y);
+        Thread.sleep(80);
+        robot.keyPress(java.awt.event.KeyEvent.VK_CONTROL);
+        Thread.sleep(40);
+        inputProvider.clickLeft(x, y, 60);
+        Thread.sleep(40);
+        robot.keyRelease(java.awt.event.KeyEvent.VK_CONTROL);
+    }
+
+    private boolean clickNpcInOverlayList(Point anchor, String npcName) {
+        int x1 = Math.max(tracker.getWindowBaseX(), anchor.x - 20);
+        int y1 = Math.max(tracker.getWindowBaseY(), anchor.y - 10);
+        int x2 = x1 + 280;
+        int y2 = y1 + 180;
+        String path = "images/temp/npc_overlay_check.png";
+
+        tracker.captureToFile("NPC重叠列表检测", path, x1, y1, x2, y2);
+        List<TextRecognizer.OcrWordResult> words = ocr.getAllTextResults(path);
+        for (TextRecognizer.OcrWordResult word : words) {
+            if (word.getText() != null && word.getText().contains(npcName)) {
+                int clickX = x1 + word.getX();
+                int clickY = y1 + word.getY();
+                log.info("🎯 命中重叠列表 NPC [{}]，点击坐标: {},{}", npcName, clickX, clickY);
+                inputProvider.clickLeft(clickX, clickY, 80);
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
