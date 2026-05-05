@@ -12,7 +12,7 @@ import java.awt.image.DataBufferByte;
 public class ImageFinder {
 
     static {
-        nu.pattern.OpenCV.loadLocally();
+        OpenCvNativeLoader.ensureLoaded();
     }
 
     /**

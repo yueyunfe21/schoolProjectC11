@@ -32,35 +32,25 @@ public class WinApiMouseController implements InputProvider {
     private static final int VK_CONTROL = 0x11;
     private static final int VK_V = 0x56;
 
-    // 🌟 纯正的硬件扫描码 (DirectInput 唯一认这个)
     private static final int SCAN_LALT = 0x38;
-    private static final int SCAN_2 = 0x03; // 主键盘数字 2 的硬件码
-
-    private static final int SCAN_ENTER = 0x1C; // 🌟 新增：主键盘的 Enter 键物理扫描码
+    private static final int SCAN_2 = 0x03;
+    private static final int SCAN_4 = 0x05; // 🌟 新增：数字键 4 的硬件扫描码
+    private static final int SCAN_ENTER = 0x1C;
 
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
 
-
-
     private static final DWORD INPUT_ARRAY_SIZE_ONE = new DWORD(1);
-    private final GameClientTracker tracker;
-    private final CoordinateHelper coordinateHelper; // 🌟 注入
 
-    private static final int FLAG_KEY_UNICODE = 0x0004; // 🌟 告诉系统：我发的是 Unicode 字符，不是键盘按键！
+    private final GameClientTracker tracker;
+    private final CoordinateHelper coordinateHelper;
+
+    private static final int FLAG_KEY_UNICODE = 0x0004;
 
     @Override
     public void clickLeft(int x, int y, int delayMs) {
         try {
-            // ==========================================
-            // 🌟 核心换算：Java 给的是逻辑坐标，Windows 底层要的是物理坐标，必须乘回去！
-            // ==========================================
-            double scale = coordinateHelper.getScaleRatio();
-            int physicalX = (int) Math.round(x * scale);
-            int physicalY = (int) Math.round(y * scale);
-
-            // 告诉 Windows，去点真实的物理屏幕像素！
-            User32.INSTANCE.SetCursorPos(physicalX, physicalY);
+            moveCursorToLogicalPoint(x, y);
 
             INPUT inputDown = buildMouseInput(FLAG_MOUSE_LEFT_DOWN);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputDown}, inputDown.size());
@@ -78,11 +68,7 @@ public class WinApiMouseController implements InputProvider {
     @Override
     public void clickRight(int x, int y, int delayMs) {
         try {
-            double scale = coordinateHelper.getScaleRatio();
-            int physicalX = (int) Math.round(x * scale);
-            int physicalY = (int) Math.round(y * scale);
-
-            User32.INSTANCE.SetCursorPos(physicalX, physicalY);
+            moveCursorToLogicalPoint(x, y);
 
             INPUT inputDown = buildMouseInput(FLAG_MOUSE_RIGHT_DOWN);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputDown}, inputDown.size());
@@ -109,56 +95,89 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
+    public void ctrlClickNpcTarget(int npcX, int npcY, int yellowNpcX, int yellowNpcY, int delayMs) {
+        // 废弃不用
+    }
+
+    // ==========================================
+    // 🌟 底层开关能力实现
+    // ==========================================
+
+    @Override
+    public void moveMouse(int x, int y) {
+        moveCursorToLogicalPoint(x, y);
+    }
+
+    @Override
+    public void holdCtrl() {
+        try {
+            if (!tracker.bringWindowToFront()) return;
+            // 发送按下信号
+            sendInput(buildKeyboardInput(VK_CONTROL, false));
+        } catch (Exception e) {
+            System.err.println("❌ [Input] 按住 Ctrl 失败: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void releaseCtrl() {
+        try {
+            // 发送弹起信号
+            sendInput(buildKeyboardInput(VK_CONTROL, true));
+        } catch (Exception e) {
+            System.err.println("❌ [Input] 释放 Ctrl 失败: " + e.getMessage());
+        }
+    }
+
+    // ==========================================
+
+    @Override
     public void pressAlt2() {
         try {
-            System.out.println("⌨️ [Input] 开始发送底层组合键 Alt+2...");
-
-            // 1. 确保游戏在最前面，但【坚决不点击屏幕中心】以免角色乱跑
-            if (!tracker.bringWindowToFront()) {
-                System.out.println("❌ [Input] 游戏未置顶，放弃按键");
-                return;
-            }
-
-            // 稍作停顿，等窗口彻底切过来
+            if (!tracker.bringWindowToFront()) return;
             Thread.sleep(200);
-
-            // 2. 🌟 唯一指定通道：硬件扫描码 (模拟真实物理键盘)
-            // 按下 左Alt
             sendInput(buildKeyboardScanInput(SCAN_LALT, false));
-            Thread.sleep(60); // 必须停顿！给游戏引擎反应时间
-
-            // 按下 2
+            Thread.sleep(60);
             sendInput(buildKeyboardScanInput(SCAN_2, false));
-            Thread.sleep(80); // 键盘按到底的物理停顿
-
-            // 松开 2
+            Thread.sleep(80);
             sendInput(buildKeyboardScanInput(SCAN_2, true));
             Thread.sleep(60);
-
-            // 松开 左Alt
             sendInput(buildKeyboardScanInput(SCAN_LALT, true));
-
-            System.out.println("✅ [Input] Alt+2 发送完毕");
-
         } catch (Exception e) {
             System.err.println("❌ [Input] 按键发送失败: " + e.getMessage());
+        }
+    }
+
+    // 🌟 新增：完美复刻原有的组合键逻辑，实现 ALT + 4
+    @Override
+    public void pressAlt4() {
+        try {
+            if (!tracker.bringWindowToFront()) return;
+            Thread.sleep(200); // 前置停顿，等待游戏响应
+            sendInput(buildKeyboardScanInput(SCAN_LALT, false)); // 按下 ALT
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_4, false));    // 按下 4
+            Thread.sleep(80);
+            sendInput(buildKeyboardScanInput(SCAN_4, true));     // 松开 4
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_LALT, true));  // 松开 ALT
+        } catch (Exception e) {
+            System.err.println("❌ [Input] ALT+4 按键发送失败: " + e.getMessage());
+        } finally {
+            // 🛡️ 兜底保命：防止报错导致 ALT 被锁死
+            try {
+                sendInput(buildKeyboardScanInput(SCAN_LALT, true));
+            } catch (Exception ignored) {}
         }
     }
 
     @Override
     public void pressEnter() {
         try {
-
-            System.out.println("⌨️ [Input] 准备敲击回车键...");
-
-            // 🌟 依然使用最底层的硬件扫描码通道
-            sendInput(buildKeyboardScanInput(SCAN_ENTER, false)); // 按下回车
-            Thread.sleep(60); // 必须停顿，模拟真实人类按压键盘的时间
-
-            sendInput(buildKeyboardScanInput(SCAN_ENTER, true));  // 松开回车
-            Thread.sleep(60); // 敲击完成后的余留时间
-
-            System.out.println("✅ [Input] 回车键发送完毕");
+            sendInput(buildKeyboardScanInput(SCAN_ENTER, false));
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_ENTER, true));
+            Thread.sleep(60);
         } catch (Exception e) {
             System.err.println("❌ [Input] 回车键发送失败: " + e.getMessage());
         }
@@ -169,8 +188,6 @@ public class WinApiMouseController implements InputProvider {
         if (text == null) return;
         try {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
-
-            // 粘贴直接用虚拟键即可，因为这通常是给操作系统的输入框发信号
             sendInput(buildKeyboardInput(VK_CONTROL, false));
             Thread.sleep(50);
             sendInput(buildKeyboardInput(VK_V, false));
@@ -180,12 +197,59 @@ public class WinApiMouseController implements InputProvider {
             sendInput(buildKeyboardInput(VK_CONTROL, true));
             log.info("粘贴文本**{}**成功", text);
         } catch (Exception e) {
-            System.err.println("❌ [Input] 粘贴文本失败: " + e.getMessage());
+            releaseCtrl();
         }
+    }
+
+    @Override
+    public void typeTextUnicode(String text) {
+        if (text == null || text.isEmpty()) return;
+        try {
+            for (char c : text.toCharArray()) {
+                sendInput(buildUnicodeInput(c, false));
+                sendInput(buildUnicodeInput(c, true));
+                Thread.sleep(20);
+            }
+        } catch (Exception e) {
+            System.err.println("❌ [Input] Unicode 打字失败: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void scrollDown(int clicks) {
+        try {
+            INPUT input = new INPUT();
+            input.type = new DWORD(WinUser.INPUT.INPUT_MOUSE);
+            input.input.setType(UNION_FIELD_MOUSE);
+            input.input.mi.dwFlags = new DWORD(FLAG_MOUSE_WHEEL);
+            input.input.mi.mouseData = new DWORD(-120 * clicks);
+            sendInput(input);
+            Thread.sleep(50);
+        } catch (Exception e) {}
+    }
+
+    @Override
+    public void scrollUp(int clicks) {
+        try {
+            INPUT input = new INPUT();
+            input.type = new DWORD(WinUser.INPUT.INPUT_MOUSE);
+            input.input.setType(UNION_FIELD_MOUSE);
+            input.input.mi.dwFlags = new DWORD(FLAG_MOUSE_WHEEL);
+            input.input.mi.mouseData = new DWORD(120 * clicks);
+            sendInput(input);
+            Thread.sleep(50);
+        } catch (Exception e) {}
     }
 
     private static void sendInput(INPUT input) {
         User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{input}, input.size());
+    }
+
+    private void moveCursorToLogicalPoint(int x, int y) {
+        double scale = coordinateHelper.getScaleRatio();
+        int physicalX = (int) Math.round(x * scale);
+        int physicalY = (int) Math.round(y * scale);
+        User32.INSTANCE.SetCursorPos(physicalX, physicalY);
     }
 
     private static INPUT buildMouseInput(int mouseEventFlag) {
@@ -209,7 +273,7 @@ public class WinApiMouseController implements InputProvider {
         INPUT input = new INPUT();
         input.type = new DWORD(WinUser.INPUT.INPUT_KEYBOARD);
         input.input.setType(UNION_FIELD_KEYBOARD);
-        input.input.ki.wVk = new WORD(0); // 🌟 用扫描码时，虚拟键必须设为0
+        input.input.ki.wVk = new WORD(0);
         input.input.ki.wScan = new WORD(scanCode);
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_SCANCODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
@@ -219,76 +283,9 @@ public class WinApiMouseController implements InputProvider {
         INPUT input = new INPUT();
         input.type = new DWORD(WinUser.INPUT.INPUT_KEYBOARD);
         input.input.setType(UNION_FIELD_KEYBOARD);
-        input.input.ki.wVk = new WORD(0); // 必须为0
-        input.input.ki.wScan = new WORD(c); // 直接塞入汉字的 Unicode 码
+        input.input.ki.wVk = new WORD(0);
+        input.input.ki.wScan = new WORD(c);
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_UNICODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
     }
-
-    /**
-     * 🌟 终极输入法：绕过剪贴板，直接将文字“打”进游戏
-     */
-    public void typeTextUnicode(String text) {
-        if (text == null || text.isEmpty()) return;
-        try {
-            System.out.println("⌨️ [Input] 开始 Unicode 强制打字: " + text);
-            for (char c : text.toCharArray()) {
-                // 按下这个字
-                sendInput(buildUnicodeInput(c, false));
-                // 松开这个字
-                sendInput(buildUnicodeInput(c, true));
-                // 模拟人类打字间隔
-                Thread.sleep(20);
-            }
-        } catch (Exception e) {
-            System.err.println("❌ [Input] Unicode 打字失败: " + e.getMessage());
-        }
-    }
-
-    @Override
-    public void scrollDown(int clicks) {
-        try {
-            // Windows 底层规定：向下滚动是负数，一格是 120 (WHEEL_DELTA)
-            int wheelMovement = -120 * clicks;
-
-            INPUT input = new INPUT();
-            input.type = new DWORD(WinUser.INPUT.INPUT_MOUSE);
-            input.input.setType(UNION_FIELD_MOUSE);
-            // 告诉 Windows 这是一次滚轮操作
-            input.input.mi.dwFlags = new DWORD(FLAG_MOUSE_WHEEL);
-            // 塞入滚动的数值 (-120, -240 等)
-            input.input.mi.mouseData = new DWORD(wheelMovement);
-
-            sendInput(input);
-            System.out.println("🖱️ [Input] 鼠标向下滚动了 " + clicks + " 格");
-
-            // 模拟人类滚动后的短暂停顿
-            Thread.sleep(50);
-        } catch (Exception e) {
-            System.err.println("❌ [Input] 鼠标向下滚动失败: " + e.getMessage());
-        }
-    }
-
-    @Override
-    public void scrollUp(int clicks) {
-        try {
-            // 向上滚动是正数
-            int wheelMovement = 120 * clicks;
-
-            INPUT input = new INPUT();
-            input.type = new DWORD(WinUser.INPUT.INPUT_MOUSE);
-            input.input.setType(UNION_FIELD_MOUSE);
-            input.input.mi.dwFlags = new DWORD(FLAG_MOUSE_WHEEL);
-            input.input.mi.mouseData = new DWORD(wheelMovement);
-
-            sendInput(input);
-            System.out.println("🖱️ [Input] 鼠标向上滚动了 " + clicks + " 格");
-
-            Thread.sleep(50);
-        } catch (Exception e) {
-            System.err.println("❌ [Input] 鼠标向上滚动失败: " + e.getMessage());
-        }
-    }
-
-
 }

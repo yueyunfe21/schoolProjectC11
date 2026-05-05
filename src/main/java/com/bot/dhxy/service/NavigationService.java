@@ -39,6 +39,7 @@ public class NavigationService {
     private final GameStateUtil gameStateUtil;
     private final CoordinateHelper coordinateHelper;
     private final UICleanerService uiCleanerService;
+    private final DialogService dialogService;
     private final Random random = new Random();
 
     private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
@@ -67,7 +68,7 @@ public class NavigationService {
         int stuckCount = 0;
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (gameStateUtil.isDialogOpened()) {
+            if (dialogService.isDialogOpened()) {
                 log.info("[导航] 发现传送对话框，极速处理");
                 if (processDialog(targetMapName)) {
                     stuckCount = 0;

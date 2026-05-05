@@ -24,49 +24,6 @@ public class GameStateUtil {
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
 
-    private BufferedImage dialogTemplate;
-
-    @PostConstruct
-    public void initTemplates() {
-        try {
-            File file = new File("images/template/dialog.png");
-            if (file.exists()) {
-                dialogTemplate = ImageIO.read(file);
-                log.info("Loaded dialog template: {}", file.getAbsolutePath());
-            } else {
-                log.error("Dialog template not found: {}", file.getAbsolutePath());
-            }
-        } catch (Exception e) {
-            log.error("Failed to load dialog template", e);
-        }
-    }
-
-    public boolean isDialogOpened() {
-        if (dialogTemplate == null) {
-            return false;
-        }
-
-        int[] searchArea = coordinateHelper.getScaledRect(635, 312, 150, 200);
-        BufferedImage largeFrame = tracker.captureToMemory(
-                "dialog-scan-area",
-                searchArea[0],
-                searchArea[1],
-                searchArea[2],
-                searchArea[3]
-        );
-        if (largeFrame == null) {
-            return false;
-        }
-
-        boolean opened = ImageFinder.findTemplateInImage(largeFrame, dialogTemplate, 0.05);
-        largeFrame.flush();
-
-        if (opened) {
-            log.info("NPC dialog detected");
-        }
-        return opened;
-    }
-
     /**
      * 判断是否在移动（通过边缘像素差异防抖识别）
      */

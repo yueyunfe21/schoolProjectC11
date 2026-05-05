@@ -28,6 +28,7 @@ public class UICleanerService {
     private final TextRecognizer ocr;
     private final GameStateUtil gameStateUtil;
     private final BotProperties config;
+    private final DialogService dialogService;
 
     private final Random random = new Random();
 
@@ -47,7 +48,7 @@ public class UICleanerService {
         }
 
         // 2. 查对话框
-        if (gameStateUtil.isDialogOpened()) {
+        if (dialogService.isDialogOpened()) {
             log.info("🧹 [UI清理] 发现残留【NPC对话框】，执行强制关闭...");
             forceCloseDialog();
             needWait = true;
