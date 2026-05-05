@@ -18,4 +18,6 @@ public interface InputProvider {
     void typeTextUnicode(String text);
     void scrollDown(int clicks);
     void scrollUp(int clicks);
+
+    void pressAlt1(); // 🌟 新增：打开/关闭小地图
 }

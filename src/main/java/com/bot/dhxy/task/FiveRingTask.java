@@ -68,7 +68,7 @@ public class FiveRingTask {
 
         // 🌟 3. 把跑地图的脏活累活全丢给导航系统！
         // 主控逻辑瞬间变得极其干净漂亮
-        boolean arrived = navigationService.navigateToMap(targetMapName);
+        boolean arrived = navigationService.navigateToNPC(targetMapName, npc_coor_x, npc_coor_y);
 //
         if (!arrived) {
             System.out.println("❌ 任务中止：无法到达任务起始点！");

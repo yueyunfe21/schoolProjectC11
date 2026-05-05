@@ -33,6 +33,7 @@ public class WinApiMouseController implements InputProvider {
     private static final int VK_V = 0x56;
 
     private static final int SCAN_LALT = 0x38;
+    private static final int SCAN_1 = 0x02;
     private static final int SCAN_2 = 0x03;
     private static final int SCAN_4 = 0x05; // 🌟 新增：数字键 4 的硬件扫描码
     private static final int SCAN_ENTER = 0x1C;
@@ -287,5 +288,28 @@ public class WinApiMouseController implements InputProvider {
         input.input.ki.wScan = new WORD(c);
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_UNICODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
+    }
+
+    @Override
+    public void pressAlt1() {
+        try {
+            if (!tracker.bringWindowToFront()) return;
+            Thread.sleep(200); // 前置停顿，等待游戏响应
+            sendInput(buildKeyboardScanInput(SCAN_LALT, false)); // 按下 ALT
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_1, false));    // 按下 1
+            Thread.sleep(80);
+            sendInput(buildKeyboardScanInput(SCAN_1, true));     // 松开 1
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_LALT, true));  // 松开 ALT
+            log.debug("⌨️ [物理驱动] 执行 Alt+1 呼叫小地图");
+        } catch (Exception e) {
+            System.err.println("❌ [Input] ALT+1 按键发送失败: " + e.getMessage());
+        } finally {
+            // 🛡️ 兜底保命：防止报错导致 ALT 被锁死
+            try {
+                sendInput(buildKeyboardScanInput(SCAN_LALT, true));
+            } catch (Exception ignored) {}
+        }
     }
 }

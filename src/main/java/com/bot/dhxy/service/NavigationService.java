@@ -50,7 +50,50 @@ public class NavigationService {
         MAP_ALIASES.put("长安", java.util.Arrays.asList("长安", "长安城", "皇宫门口", "化生寺", "去长安", "回长安"));
     }
 
-    public boolean navigateToMap(String targetMapName) {
+    public boolean navigateToNPC(String targetMapName, int targetX, int targetY){
+        if (!navigateToMap(targetMapName)) {
+            return false;
+        }
+        return navigateInCurrentMap(targetX, targetY);
+    }
+
+    /**
+     * 📍 本地小地图精准制导
+     * 场景：已经通过大地图到达目标地图，现在需要去往该地图内的特定 (x, y)
+     */
+    private boolean navigateInCurrentMap(int targetX, int targetY) {
+        // 1. 获取当前地图名（从内存中白嫖）
+        // 🌟 修正：您代码里的变量名是 context，不是 gameContext
+        String mapName = context.getMe().getCurrentMapName();
+        log.info("🚀 [战术制导] 目标地图: {}, 目标坐标: ({}, {})", mapName, targetX, targetY);
+
+        // 2. 呼叫小地图
+        inputProvider.pressAlt1();
+        // 🌟 修正：直接调用本类自带的 sleepInterruptible 方法
+        sleepInterruptible(800);
+
+        // 3. 调用您早已写好的底层转换引擎
+        java.awt.Point pixelPoint = coordinateHelper.getPhysicalMapPoint(mapName, targetX, targetY);
+
+        if (pixelPoint == null) {
+            log.error("❌ [战术制导] 转换失败！请检查 config/maps.json 中是否有 [{}] 的测绘数据", mapName);
+            inputProvider.pressAlt1(); // 无论成败，把地图关了
+            return false;
+        }
+
+        // 4. 执行物理打击
+        log.info("🎯 [战术制导] 锁定物理像素点: {}, {}", pixelPoint.x, pixelPoint.y);
+        inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
+
+        // 5. 任务完成，收回小地图
+        sleepInterruptible(500); // 🌟 修正：直接调用
+        inputProvider.pressAlt1();
+
+        log.info("✅ [战术制导] 坐标指令已下达，角色开始奔赴目标。");
+        return true;
+    }
+
+    private boolean navigateToMap(String targetMapName) {
         PlayerCharacter me = context.getMe();
         log.info("[导航] 请求前往地图: [{}], 当前位置: [{}]", targetMapName, me.getCurrentMapName());
 
