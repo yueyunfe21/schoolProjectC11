@@ -22,6 +22,8 @@ public class FiveRingTask {
     private final AutoGridCalibrator autoGridCalibrator;
     private final DialogService dialogService;
 
+    private final PlayerStateService playerStateService;
+
     private static final int DIALOG_RECT_OFFSET_X = 250;
     private static final int DIALOG_RECT_OFFSET_Y = 285;
     private static final int DIALOG_RECT_WIDTH = 532;
@@ -39,31 +41,11 @@ public class FiveRingTask {
     private static final int TUNE_X = -10; // 👈 既然你发现第一炮靠右，这里填负数，强行把准星往左拉15像素！(数值可自己微调)
     private static final int TUNE_Y = 0;
 
-    public void syncMyIdentity() {
-        System.out.println("🤖 [任务大脑] 请求读取角色档案...");
-        PlayerCharacter me = context.getMe();
-        identityService.scanAndSyncIdentity(me);
-        System.out.println("📋 当前上线角色: " + me.toString());
-    }
-
-    public void syncMyPosition() {
-        System.out.println("🤖 [任务大脑] 请求雷达扫描当前位置...");
-        TextRecognizer.LocationInfo info = locationRadar.scanCurrentLocation();
-        if (info != null) {
-            PlayerCharacter me = context.getMe();
-            me.setCurrentMapName(info.mapName);
-            me.setX(info.x);
-            me.setY(info.y);
-            System.out.println("🔄 全局记忆已更新: " + me.toString());
-        }
-    }
 
     public void execute() {
-        // 1. 上线先对身份对账
-        syncMyIdentity();
-        // 2. 看一眼自己在哪
-        syncMyPosition();
 
+
+        playerStateService.syncAll();
         //autoGridCalibrator.startAutoCalibration(context.getMe());
 
         // 🌟 3. 把跑地图的脏活累活全丢给导航系统！
@@ -76,8 +58,8 @@ public class FiveRingTask {
         }
         System.out.println("⚔️ 到达指定地点，开始执行五环具体任务逻辑...");
 
-        //npcClickService.clickNpcSmart(context.getMe(), targetMapName, npc_coor_x, npc_coor_y,targetNPCName,
-                //TUNE_X, TUNE_Y);
+        npcClickService.clickNpcSmart(context.getMe(), targetMapName, npc_coor_x, npc_coor_y,targetNPCName,
+                TUNE_X, TUNE_Y);
 
         //dialogService.acceptTaskByFixedCoordinates(DIALOG_OFFSET_X, DIALOG__OFFSET_Y);
 

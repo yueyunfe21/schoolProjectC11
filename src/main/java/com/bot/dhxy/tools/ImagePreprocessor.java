@@ -18,6 +18,12 @@ import java.awt.image.DataBufferByte;
 
 @Slf4j
 public class ImagePreprocessor {
+    // ==========================================
+    // 📸 Debug 探头总控开关
+    // ==========================================
+    // 设为 true 时，各种过程图才会存到硬盘；发布生产环境时改为 false，极大地节省 CPU 和硬盘 I/O！
+    public static boolean ENABLE_DEBUG_SAVE = true;
+    private static final String DEBUG_DIR = "images/temp/";
 
     static {
         OpenCvNativeLoader.ensureLoaded();
@@ -137,13 +143,13 @@ public class ImagePreprocessor {
         // 🚨 探头 2：把洗出来的黑白遮罩图存下来！
         // 纯白的就是它认定的绿字，纯黑的就是被干掉的背景。
         // ==========================================
-        try {
-            java.io.File debugDir = new java.io.File("images/temp");
-            if (!debugDir.exists()) debugDir.mkdirs();
-            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_hsv_mask_green.png", mask);
-        } catch (Exception e) {
-            log.error("❌ 保存HSV遮罩图失败", e);
-        }
+//        try {
+//            java.io.File debugDir = new java.io.File("images/temp");
+//            if (!debugDir.exists()) debugDir.mkdirs();
+//            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_hsv_mask_green.png", mask);
+//        } catch (Exception e) {
+//            log.error("❌ 保存HSV遮罩图失败", e);
+//        }
 
         int count = Core.countNonZero(mask);
 
@@ -214,13 +220,13 @@ public class ImagePreprocessor {
         // 没开框时：这里面应该有各种深浅不一的花纹。
         // 开框时：这里面应该是一片均匀的灰色。
         // ==========================================
-        try {
-            java.io.File debugDir = new java.io.File("images/temp");
-            if (!debugDir.exists()) debugDir.mkdirs();
-            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_smoothness_gray.png", gray);
-        } catch (Exception e) {
-            log.error("保存灰度图失败", e);
-        }
+//        try {
+//            java.io.File debugDir = new java.io.File("images/temp");
+//            if (!debugDir.exists()) debugDir.mkdirs();
+//            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_smoothness_gray.png", gray);
+//        } catch (Exception e) {
+//            log.error("保存灰度图失败", e);
+//        }
 
         // 2. 算标准差
         org.opencv.core.MatOfDouble mean = new org.opencv.core.MatOfDouble();
@@ -235,5 +241,77 @@ public class ImagePreprocessor {
         stddev.release();
 
         return dev;
+    }
+
+    // =========================================================
+    // 🛠️ 通用 Debug 存图工具库
+    // =========================================================
+
+    /**
+     * 保存 OpenCV 的 Mat 图像 (自动创建目录并加上 try-catch)
+     * @param mat OpenCV图像对象
+     * @param fileName 文件名，例如 "debug_hsv_mask.png"
+     */
+    public static void saveDebugImage(Mat mat, String fileName) {
+        if (!ENABLE_DEBUG_SAVE || mat == null || mat.empty()) return;
+
+        try {
+            File dir = new File(DEBUG_DIR);
+            if (!dir.exists()) dir.mkdirs();
+
+            String fullPath = DEBUG_DIR + fileName;
+            Imgcodecs.imwrite(fullPath, mat);
+            // log.debug("📸 [Debug探头] 已保存: {}", fullPath); // 嫌吵可以注释掉
+        } catch (Exception e) {
+            log.error("❌ 保存 Debug 图片 (Mat) 失败: {}", fileName, e);
+        }
+    }
+
+    /**
+     * 保存 Java 原生的 BufferedImage
+     * @param img Java 图像对象
+     * @param fileName 文件名，例如 "debug_raw_crop.png"
+     */
+    public static void saveDebugImage(BufferedImage img, String fileName) {
+        if (!ENABLE_DEBUG_SAVE || img == null) return;
+
+        try {
+            File dir = new File(DEBUG_DIR);
+            if (!dir.exists()) dir.mkdirs();
+
+            String fullPath = DEBUG_DIR + fileName;
+            ImageIO.write(img, "png", new File(fullPath));
+            // log.debug("📸 [Debug探头] 已保存: {}", fullPath); // 嫌吵可以注释掉
+        } catch (Exception e) {
+            log.error("❌ 保存 Debug 图片 (BufferedImage) 失败: {}", fileName, e);
+        }
+    }
+
+    public static void washYellowText(String inputPath, String outputPath) {
+        try {
+            Mat src = Imgcodecs.imread(inputPath);
+            if (src.empty()) return;
+
+            Mat hsv = new Mat();
+            Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
+
+            // 1. 🌟 只抓核心黄色，不要试图去抓边缘虚化的部分
+            Scalar lowerYellow = new Scalar(20, 100, 100);
+            Scalar upperYellow = new Scalar(35, 255, 255);
+
+            Mat mask = new Mat();
+            Core.inRange(hsv, lowerYellow, upperYellow, mask);
+
+            // 🌟 核心：不要 dilate，不要 erode！它们会破坏字体结构。
+            // 直接转成白底黑字。
+            Mat result = new Mat();
+            Core.bitwise_not(mask, result);
+
+            Imgcodecs.imwrite(outputPath, result);
+
+            src.release(); hsv.release(); mask.release(); result.release();
+        } catch (Exception e) {
+            log.error("❌ 极简洗字失败", e);
+        }
     }
 }

@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+
 import java.awt.Point;
 import java.util.Random;
 
@@ -41,6 +42,7 @@ public class NavigationService {
     private final UICleanerService uiCleanerService;
     private final DialogService dialogService;
     private final Random random = new Random();
+    private final PlayerStateService playerStateService;
 
     private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
     private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
@@ -58,39 +60,66 @@ public class NavigationService {
     }
 
     /**
-     * 📍 本地小地图精准制导
-     * 场景：已经通过大地图到达目标地图，现在需要去往该地图内的特定 (x, y)
+     * 📍 本地小地图精准制导 (首领架构版：单循环极简流)
      */
-    private boolean navigateInCurrentMap(int targetX, int targetY) {
-        // 1. 获取当前地图名（从内存中白嫖）
-        // 🌟 修正：您代码里的变量名是 context，不是 gameContext
+    public boolean navigateInCurrentMap(int targetX, int targetY) {
         String mapName = context.getMe().getCurrentMapName();
         log.info("🚀 [战术制导] 目标地图: {}, 目标坐标: ({}, {})", mapName, targetX, targetY);
 
-        // 2. 呼叫小地图
-        inputProvider.pressAlt1();
-        // 🌟 修正：直接调用本类自带的 sleepInterruptible 方法
-        sleepInterruptible(800);
-
-        // 3. 调用您早已写好的底层转换引擎
         java.awt.Point pixelPoint = coordinateHelper.getPhysicalMapPoint(mapName, targetX, targetY);
-
         if (pixelPoint == null) {
-            log.error("❌ [战术制导] 转换失败！请检查 config/maps.json 中是否有 [{}] 的测绘数据", mapName);
-            inputProvider.pressAlt1(); // 无论成败，把地图关了
+            log.error("❌ [战术制导] 转换失败！缺少 [{}] 的测绘数据", mapName);
             return false;
         }
 
-        // 4. 执行物理打击
-        log.info("🎯 [战术制导] 锁定物理像素点: {}, {}", pixelPoint.x, pixelPoint.y);
-        inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
+        long startTime = System.currentTimeMillis();
+        long timeoutMs = 60000; // 最多寻路 60 秒
 
-        // 5. 任务完成，收回小地图
-        sleepInterruptible(500); // 🌟 修正：直接调用
+        // 🌟 首次发射：打开地图点一下
+        log.info("🎯 [战术制导] 发起首次寻路点击...");
         inputProvider.pressAlt1();
+        sleepInterruptible(800);
+        inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
+        sleepInterruptible(500);
+        inputProvider.pressAlt1();
+        sleepInterruptible(1500); // 等待角色转身起步
 
-        log.info("✅ [战术制导] 坐标指令已下达，角色开始奔赴目标。");
-        return true;
+        // ==========================================
+        // 🔄 唯一的监控循环 (外偶)
+        // ==========================================
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+
+            // 🌟 就是这个 IF (衣服)！直接在循环里处理停下的逻辑！
+            if (!gameStateUtil.isMovingByPixelDiff()) {
+
+                // 1. 停下了，立刻查坐标
+                log.info("🛑 [战术制导] 侦测到停步，呼叫状态中枢核对...");
+                playerStateService.syncMyPosition();
+                PlayerCharacter me = context.getMe();
+
+                // 2. 到了吗？
+                if (Math.abs(me.getX() - targetX) <= 2 && Math.abs(me.getY() - targetY) <= 2) {
+                    log.info("✅ [战术制导] 精确命中目标！当前坐标: ({}, {})", me.getX(), me.getY());
+                    return true;
+                }
+
+                // 3. 没到？直接在这里补点！点完循环会自动继续监控！
+                log.warn("⚠️ [战术制导] 中途卡住，未达目标！重新打开小地图补点...");
+                inputProvider.pressAlt1();
+                sleepInterruptible(800);
+                inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
+                sleepInterruptible(500);
+                inputProvider.pressAlt1();
+
+                sleepInterruptible(1500); // 补点后同样等起步
+            }
+
+            // 如果还在跑，稍作歇息，继续下一次 while 循环监控
+            sleepInterruptible(500);
+        }
+
+        log.error("⏳ [战术制导] 寻路总时间超时 (60秒)！放弃任务。");
+        return false;
     }
 
     private boolean navigateToMap(String targetMapName) {

@@ -62,7 +62,9 @@ public class NpcClickService {
             {20, 20},
     };
 
-    private static final String NPC_regex = ".*\\(NPC\\).*";
+    // 🌟 终极容错正则：连续匹配 NPC, IPC, PC 或 NP，无视大小写
+    // (?i) 忽略大小写；(NPC|IPC|PC|NP) 只要这四个连续组合出现任何一个就中！
+    private static final String NPC_TAG_REGEX = "(?i).*(NPC|IPC|PC|NP).*";
 
     private boolean executeClickAndVerify(int x, int y, long firstWaitMs, int maxRetries) {
         inputProvider.clickLeft(x, y, 100);
@@ -79,22 +81,38 @@ public class NpcClickService {
         return false;
     }
 
-    private boolean scanMenuAndVerify(int testX, int testY) {
+    // 🌟 增加 targetName 参数，把 NPC 的名字（如"墨意"）传进来
+    private boolean scanMenuAndVerify(int testX, int testY, String targetName) {
         int scanW = 150;
         int scanH = 120;
         int scanX = testX;
         int scanY = testY - scanH;
         String menuScanPath = "images/temp/npc_menu_scan.png";
+        String cleanPath = "images/temp/npc_menu_clean.png";
 
-        // 🌟 1. 改用装甲截图，防止菜单被别人名字干扰
+        // 1. 物理截图
         tracker.captureToFileWithShield("菜单侦查", menuScanPath, scanX, scanY, scanX + scanW, testY);
-        List<TextRecognizer.OcrWordResult> menuWords = ocr.getAllTextResults(menuScanPath);
+
+        // 2. 🌟 核心步骤：调用洗图滤镜，把黄字抠出来
+        ImagePreprocessor.washYellowText(menuScanPath, cleanPath);
+
+        // 3. 🌟 使用清洗后的图片进行 OCR
+        List<TextRecognizer.OcrWordResult> menuWords = ocr.getAllTextResults(cleanPath);
 
         if (menuWords != null) {
             for (TextRecognizer.OcrWordResult w : menuWords) {
                 String text = w.getText();
-                if (text != null && text.matches(NPC_regex)) {
-                    log.info("🎯 锁定(NPC)下拉菜单: {}", text);
+                if (text == null) continue;
+
+                log.info("🔍 [洗图雷达] 发现文字: [{}]", text); // 加上探头，看洗完后的效果
+
+                // 🌟 核心改动：连续匹配逻辑
+                // 只要连续包含名字 (如"墨意") 或者 连续符合 NPC 变体标签 (如"PC")
+                boolean isNameMatch = text.contains(targetName);
+                boolean isTagMatch = text.matches(NPC_TAG_REGEX);
+
+                if (isNameMatch || isTagMatch) {
+                    log.info("🎯 [命中] 锁定目标! 匹配名: {} | 匹配标签: {} | 原始文本: {}", isNameMatch, isTagMatch, text);
                     int clickX = scanX + w.getX();
                     int clickY = scanY + w.getY();
                     inputProvider.moveMouse(clickX, clickY);
@@ -170,6 +188,10 @@ public class NpcClickService {
             // 如果失败，大概率人物自动寻路跑过去了，等 1.5 秒让他站稳
             log.warn("⚠️ 轨道炮未能拉出菜单，人物可能发生跑动，等待贴脸...");
             sleep(1500);
+        } else if (locInfo != null) {
+            log.info("playerAnchor is null, give up the 1st shot");
+        } else if (playerAnchor == null) {
+            log.info("locInfo is null, give up the 1st shot");
         }
 
         // ==========================================
@@ -193,13 +215,14 @@ public class NpcClickService {
 
             // 🌟 散弹枪盲截，保留原有裸奔状态，绝不加盾卡顿！
             BufferedImage frameBefore = tracker.captureToMemory("menu_before", scanX, scanY, scanX + scanW, testY);
+            ImagePreprocessor.saveDebugImage(frameBefore, "menu_before.png");
             inputProvider.moveMouse(testX, testY);
             inputProvider.holdCtrl();
             try {
                 sleep(200);
 
                 BufferedImage frameAfter = tracker.captureToMemory("menu_after", scanX, scanY, scanX + scanW, testY);
-
+                ImagePreprocessor.saveDebugImage(frameAfter, "menu_after.png");
                 if (frameBefore != null && frameAfter != null) {
                     boolean changed = !ImageFinder.isMatch(frameBefore, frameAfter, 0.05);
                     frameBefore.flush();
@@ -214,7 +237,7 @@ public class NpcClickService {
                 }
 
                 // 进里面会调用一次套盾的 scanMenuAndVerify
-                if (scanMenuAndVerify(testX, testY)) {
+                if (scanMenuAndVerify(testX, testY, npcName)) {
                     log.info("✅ [盲狙层] 物理微调兜底成功！死角破除！");
                     return true;
                 }
