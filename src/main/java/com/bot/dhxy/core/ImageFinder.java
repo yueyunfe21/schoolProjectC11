@@ -1,5 +1,6 @@
 package com.bot.dhxy.core;
 
+import com.bot.dhxy.tools.ImagePreprocessor;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -26,9 +27,9 @@ public class ImageFinder {
         }
 
         Mat result = new Mat();
+
         Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
         Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
-
         double[] coordsAndSim = null;
         if (mmr.maxVal >= threshold) {
             double centerX = mmr.maxLoc.x + target.cols() / 2.0;

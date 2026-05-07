@@ -48,7 +48,7 @@ public class UICleanerService {
         }
 
         // 2. 查对话框
-        if (dialogService.isDialogOpened()) {
+        if (dialogService.detectDialogType() != DialogService.DialogType.NONE) {
             log.info("🧹 [UI清理] 发现残留【NPC对话框】，执行强制关闭...");
             forceCloseDialog();
             needWait = true;

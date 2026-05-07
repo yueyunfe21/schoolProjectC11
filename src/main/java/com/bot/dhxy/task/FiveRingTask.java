@@ -29,8 +29,8 @@ public class FiveRingTask {
     private static final int DIALOG_RECT_WIDTH = 532;
     private static final int DIALOG_RECT_HEIGHT = 144;
 
-    private static final int DIALOG_OFFSET_X = 450;
-    private static final int DIALOG__OFFSET_Y = 360;
+    private static final int DIALOG_START_OFFSET_X = 427;
+    private static final int DIALOG_START_OFFSET_Y = 420;
 
 
     private final String targetMapName = "长安";
@@ -40,6 +40,7 @@ public class FiveRingTask {
 
     private static final int TUNE_X = -10; // 👈 既然你发现第一炮靠右，这里填负数，强行把准星往左拉15像素！(数值可自己微调)
     private static final int TUNE_Y = 0;
+    private static final String KEY_ITEM_NAME= "shoe.png";
 
 
     public void execute() {
@@ -61,7 +62,7 @@ public class FiveRingTask {
         npcClickService.clickNpcSmart(context.getMe(), targetMapName, npc_coor_x, npc_coor_y,targetNPCName,
                 TUNE_X, TUNE_Y);
 
-        //dialogService.acceptTaskByFixedCoordinates(DIALOG_OFFSET_X, DIALOG__OFFSET_Y);
+        dialogService.acceptTask(DIALOG_START_OFFSET_X, DIALOG_START_OFFSET_Y);
 
         // TODO: 接任务、找NPC、打怪等具体业务逻辑...
     }

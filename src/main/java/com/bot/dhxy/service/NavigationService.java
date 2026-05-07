@@ -23,10 +23,6 @@ public class NavigationService {
 
     private static final String XUNLU_TEMPLATE_PATH = "images/template/xunlu.png";
     private static final int DEFAULT_LOGICAL_COORDINATE = Integer.MIN_VALUE;
-    private static final int DIALOG_RECT_OFFSET_X = 250;
-    private static final int DIALOG_RECT_OFFSET_Y = 312;
-    private static final int DIALOG_RECT_WIDTH = 529;
-    private static final int DIALOG_RECT_HEIGHT = 208;
     private static final int MAP_SEARCH_RECT_WIDTH = 392;
     private static final int MAP_SEARCH_RECT_HEIGHT = 242;
 
@@ -46,11 +42,6 @@ public class NavigationService {
 
     private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
     private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
-
-    private static final java.util.Map<String, java.util.List<String>> MAP_ALIASES = new java.util.HashMap<>();
-    static {
-        MAP_ALIASES.put("长安", java.util.Arrays.asList("长安", "长安城", "皇宫门口", "化生寺", "去长安", "回长安"));
-    }
 
     public boolean navigateToNPC(String targetMapName, int targetX, int targetY){
         if (!navigateToMap(targetMapName)) {
@@ -140,15 +131,12 @@ public class NavigationService {
         int stuckCount = 0;
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (dialogService.isDialogOpened()) {
-                log.info("[导航] 发现传送对话框，极速处理");
-                if (processDialog(targetMapName)) {
-                    stuckCount = 0;
-                    if (!sleepInterruptible(1500)) {
-                        return false;
-                    }
-                    continue;
+            if (dialogService.processDialog(targetMapName)) {
+                stuckCount = 0;
+                if (!sleepInterruptible(1500)) {
+                    return false;
                 }
+                continue;
             }
 
             boolean moving = gameStateUtil.isMovingByPixelDiff();
@@ -299,95 +287,6 @@ public class NavigationService {
                 return;
             }
         }
-    }
-
-    /**
-     * 🧠 极速版智能对话框处理器
-     */
-    private boolean processDialog(String targetMapName) {
-        int[] dialogRect = getDialogRect();
-        String dialogImagePath = "images/temp/dialog_active_scan.png";
-
-        if (!captureDialogImage("对话框综合扫描", dialogImagePath, dialogRect)) {
-            return false;
-        }
-
-        java.util.List<TextRecognizer.OcrWordResult> allWords = ocr.getAllTextResults(dialogImagePath);
-
-        // 🚨 触发点 A：把原因传进去
-        if (allWords == null || allWords.isEmpty()) {
-            return doFallbackClick(dialogRect, "OCR 未识别到任何文字 (可能是残影或误判)");
-        }
-
-        java.util.List<String> targetKeywords = MAP_ALIASES.getOrDefault(targetMapName, java.util.Collections.singletonList(targetMapName));
-        for (String keyword : targetKeywords) {
-            for (TextRecognizer.OcrWordResult word : allWords) {
-                if (word.getText().contains(keyword)) {
-                    log.info("[导航] 发现目标传送选项 [{}] (触发别名匹配: {})", targetMapName, keyword);
-                    clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY());
-                    sleepInterruptible(1500);
-                    return true;
-                }
-            }
-        }
-
-        java.util.List<String> closeKeywords = java.util.Arrays.asList(
-                "取消", "离开", "看一看", "哪儿也", "以后再说", "需要再找", "原来你",
-                "我更喜欢", "看看", "我还有事", "人家还没", "不", "没什么", "算了",
-                "暂时", "路过", "再会", "没好感", "我还是", "收起来"
-        );
-        for (String keyword : closeKeywords) {
-            for (TextRecognizer.OcrWordResult word : allWords) {
-                if (word.getText().contains(keyword)) {
-                    log.info("[导航] 非目标 NPC，匹配到关闭词 [{}]，执行关闭", keyword);
-                    clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY());
-                    return true;
-                }
-            }
-        }
-
-        // 🚨 触发点 B：把原因传进去
-        return doFallbackClick(dialogRect, "有文字，但未匹配到目标地名或关闭词");
-    }
-
-    /**
-     * 🛡️ 独立的物理兜底方法 (带原因溯源)
-     */
-    private boolean doFallbackClick(int[] dialogRect, String reason) {
-        // 🌟 日志里直接打印出具体的触发原因！
-        log.warn("🛡️ [导航兜底] 触发原因: [{}] -> 执行物理中心点击！", reason);
-
-        int centerX = dialogRect[0] + ((dialogRect[2] - dialogRect[0]) / 2);
-        int centerY = dialogRect[1] + ((dialogRect[3] - dialogRect[1]) / 2);
-        clickAbsolutePoint(centerX, centerY);
-        return true;
-    }
-
-    private void clickAbsolutePoint(int x, int y) {
-        int randomX = x + (random.nextInt(5) - 2);
-        int randomY = y + (random.nextInt(5) - 2);
-        log.info("[点击追踪] 来源: clickAbsolutePoint(处理对话框) -> 原始:{},{} | 随机后:{},{}", x, y, randomX, randomY);
-        inputProvider.clickLeft(randomX, randomY, 150);
-    }
-
-    private int[] getDialogRect() {
-        return coordinateHelper.getScaledRect(
-                DIALOG_RECT_OFFSET_X,
-                DIALOG_RECT_OFFSET_Y,
-                DIALOG_RECT_WIDTH,
-                DIALOG_RECT_HEIGHT
-        );
-    }
-
-    private boolean captureDialogImage(String sceneName, String imagePath, int[] dialogRect) {
-        return tracker.captureToFile(
-                sceneName,
-                imagePath,
-                dialogRect[0],
-                dialogRect[1],
-                dialogRect[2],
-                dialogRect[3]
-        );
     }
 
     private void closeMapByDoubleRightClick() {

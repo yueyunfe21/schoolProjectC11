@@ -70,13 +70,13 @@ public class NpcClickService {
         inputProvider.clickLeft(x, y, 100);
         sleep(firstWaitMs);
 
-        if (dialogService.hasOptionDialog()) return true;
+        if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
 
         for (int i = 1; i <= maxRetries; i++) {
             log.warn("⚠️ 首发未触发对话，进行第 {} 次火力覆盖...", i);
             inputProvider.clickLeft(x, y, 100);
             sleep(1000);
-            if (dialogService.hasOptionDialog()) return true;
+            if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
         }
         return false;
     }

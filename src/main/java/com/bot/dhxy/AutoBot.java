@@ -4,6 +4,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.service.AutoGridCalibrator;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.NavigationService;
+import com.bot.dhxy.tools.BagService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.task.FiveRingTask;
@@ -24,6 +25,7 @@ public class AutoBot implements CommandLineRunner {
     private final CoordinateHelper coordinateHelper;
     private final NavigationService navigationService;
     private final DialogService dialogService;
+    private final BagService bagService;
 
 
 
@@ -52,10 +54,10 @@ public class AutoBot implements CommandLineRunner {
             // 🎯 雷达测绘专场：暂时屏蔽业务逻辑
             // ==========================================
 
-
+            //bagService.searchItemInAllBags("shoe.png");
 
             // 🌟 4. 把做任务的代码注释掉，专心跑测绘
-            fiveRingTask.execute();
+           fiveRingTask.execute();
 
         } else {
             System.err.println("❌ 定位失败，请确认你的大话西游没被最小化，且 GAME_WINDOW_KEYWORD 填对了！");
