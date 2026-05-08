@@ -14,6 +14,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
+import com.bot.dhxy.core.ImageFinder;
 
 /**
  * 坐标与矩阵计算核心大脑
@@ -25,6 +27,9 @@ public class CoordinateHelper {
 
     // 🌟 核心防爆指南：这里必须加 @Lazy！
     private final GameClientTracker tracker;
+
+    // 🌟 注入全局统一的随机数发生器 (拟人化防封核心)
+    private final Random random = new Random();
 
     // ==========================================
     // 🗺️ 地图测绘持久化相关组件
@@ -57,19 +62,16 @@ public class CoordinateHelper {
     }
 
     // ==========================================
-    // 🗺️ 地图参数加载与保存逻辑 (新加入)
+    // 🗺️ 地图参数加载与保存逻辑
     // ==========================================
 
-    /**
-     * 地图矩阵基因数据模型
-     */
     public static class MapTransform {
-        public int zeroOffsetX; // (0,0)点相对于游戏窗口左上角的物理X偏移
-        public int zeroOffsetY; // (0,0)点相对于游戏窗口左上角的物理Y偏移
-        public double scaleX;   // X轴缩放比
-        public double scaleY;   // Y轴缩放比
+        public int zeroOffsetX;
+        public int zeroOffsetY;
+        public double scaleX;
+        public double scaleY;
 
-        public MapTransform() {} // 供 Jackson 反序列化使用
+        public MapTransform() {}
 
         public MapTransform(int zeroOffsetX, int zeroOffsetY, double scaleX, double scaleY) {
             this.zeroOffsetX = zeroOffsetX;
@@ -95,9 +97,6 @@ public class CoordinateHelper {
         }
     }
 
-    /**
-     * 供【全自动悬停测绘雷达】调用，将新测出的地图数据保存到 JSON 硬盘中
-     */
     public void saveNewMapConfig(String mapName, MapTransform transform) {
         mapTransforms.put(mapName, transform);
         try {
@@ -108,16 +107,12 @@ public class CoordinateHelper {
         }
     }
 
-    /**
-     * 供【寻路引擎】调用：传入地图名和游戏逻辑坐标，直接返回要点击的屏幕物理点
-     */
     public Point getPhysicalMapPoint(String mapName, int logicalX, int logicalY) {
         MapTransform transform = mapTransforms.get(mapName);
         if (transform == null) {
             log.error("❌ 字典中未配置地图 [{}] 的数据，请先运行测绘雷达！", mapName);
             return null;
         }
-        // 基于当前游戏窗口的 BaseX/BaseY 加上偏移量，再应用比例。抗窗口拖拽！
         int absoluteX = (int) Math.round(tracker.getWindowBaseX() + transform.zeroOffsetX + logicalX * transform.scaleX);
         int absoluteY = (int) Math.round(tracker.getWindowBaseY() + transform.zeroOffsetY + logicalY * transform.scaleY);
 
@@ -125,7 +120,33 @@ public class CoordinateHelper {
     }
 
     // ==========================================
-    // 🧱 以下为你原有的像素比例换算逻辑，完全保留
+    // 🎭 拟人化引擎：坐标防封抖动发生器
+    // ==========================================
+
+    /**
+     * 为绝对坐标注入灵魂（随机抖动），模拟人类点击的误差
+     * @param baseX 原始绝对 X 坐标
+     * @param baseY 原始绝对 Y 坐标
+     * @param maxRadiusX X 轴最大允许的左右偏移量 (像素)
+     * @param maxRadiusY Y 轴最大允许的上下偏移量 (像素)
+     * @return 抖动后的安全物理坐标
+     */
+    public Point getRandomizedPoint(int baseX, int baseY, int maxRadiusX, int maxRadiusY) {
+        int offsetX = maxRadiusX <= 0 ? 0 : random.nextInt(maxRadiusX * 2 + 1) - maxRadiusX;
+        int offsetY = maxRadiusY <= 0 ? 0 : random.nextInt(maxRadiusY * 2 + 1) - maxRadiusY;
+        return new Point(baseX + offsetX, baseY + offsetY);
+    }
+
+    /**
+     * 重载版本：直接传入 Point 对象
+     */
+    public Point getRandomizedPoint(Point base, int maxRadiusX, int maxRadiusY) {
+        if (base == null) return null;
+        return getRandomizedPoint(base.x, base.y, maxRadiusX, maxRadiusY);
+    }
+
+    // ==========================================
+    // 🧱 像素比例换算逻辑
     // ==========================================
 
     public double getScaleRatio() {
@@ -145,5 +166,42 @@ public class CoordinateHelper {
         int logicalY = (int) Math.round(physicalY / systemScaleRatio) - tracker.getWindowBaseY();
         log.info("📍 反算相对偏移 -> X:{}, Y:{}", logicalX, logicalY);
         return new int[]{logicalX, logicalY};
+    }
+
+    // ==========================================
+    // 👁️ 万能寻图雷达 (视觉定位转换)
+    // ==========================================
+
+    public Point findImageAbsoluteCoordinate(String templatePath, double matchRate) {
+        if (!tracker.bringWindowToFront()) {
+            log.warn("❌ [坐标计算] 游戏窗口无法置顶！");
+            return null;
+        }
+
+        tracker.updateGlobalVision();
+        String screenPath = GameClientTracker.LATEST_VISION_PATH;
+
+        double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
+
+        if (result != null && result.length >= 2) {
+            int absoluteX = (int) Math.round(result[0] / systemScaleRatio) + tracker.getWindowBaseX();
+            int absoluteY = (int) Math.round(result[1] / systemScaleRatio) + tracker.getWindowBaseY();
+
+            log.info("✅ [坐标雷达] 锁定目标 [{}] 中心点，屏幕绝对坐标:({},{})", templatePath, absoluteX, absoluteY);
+            return new Point(absoluteX, absoluteY);
+        }
+
+        return null;
+    }
+
+    public int[] getAbsoluteRectByAnchor(Point anchor, int offsetX, int offsetY, int width, int height) {
+        if (anchor == null) return null;
+
+        int startX = anchor.x + offsetX;
+        int startY = anchor.y + offsetY;
+        int endX = startX + width;
+        int endY = startY + height;
+
+        return new int[]{startX, startY, endX, endY};
     }
 }

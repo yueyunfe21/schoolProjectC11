@@ -4,7 +4,8 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.service.AutoGridCalibrator;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.NavigationService;
-import com.bot.dhxy.tools.BagService;
+import com.bot.dhxy.service.QuestManagerService;
+import com.bot.dhxy.service.BagService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.task.FiveRingTask;
@@ -26,9 +27,9 @@ public class AutoBot implements CommandLineRunner {
     private final NavigationService navigationService;
     private final DialogService dialogService;
     private final BagService bagService;
+    private final QuestManagerService questManagerService;
 
-
-
+    private static final String KEY_ITEM_NAME = "/wuhuan/shoe.png";
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -57,7 +58,9 @@ public class AutoBot implements CommandLineRunner {
             //bagService.searchItemInAllBags("shoe.png");
 
             // 🌟 4. 把做任务的代码注释掉，专心跑测绘
-           fiveRingTask.execute();
+            log.info(String.valueOf(bagService.findAndSelectItem(BagService.MAIN_BAG, KEY_ITEM_NAME,null)));
+           //fiveRingTask.execute();
+            //questManagerService.fetchCurrentQuestInfo();
 
         } else {
             System.err.println("❌ 定位失败，请确认你的大话西游没被最小化，且 GAME_WINDOW_KEYWORD 填对了！");

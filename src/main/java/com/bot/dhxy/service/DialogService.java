@@ -13,6 +13,8 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.Random;
 
+import static com.bot.dhxy.config.TeleportConfig.MAP_ALIASES;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -22,6 +24,8 @@ public class DialogService {
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
+    private final GiveItemService giveItemService; // 🌟 注入您的全新大将！
+
     private final Random random = new Random();
 
     // 测绘数据
@@ -29,12 +33,11 @@ public class DialogService {
     private static final int DIALOG_Y = 312;
     private static final int DIALOG_W = 529;
     private static final int DIALOG_H = 208;
-    private static final int CROP_TOP_Y = 85; // 屏蔽上半部剧情绿字的偏移量
+    private static final int CROP_TOP_Y = 85;
 
-    private static final java.util.Map<String, java.util.List<String>> MAP_ALIASES = new java.util.HashMap<>();
-    static {
-        MAP_ALIASES.put("长安", java.util.Arrays.asList("长安", "长安城", "皇宫门口", "化生寺", "去长安", "回长安"));
-    }
+    // 🌟 特殊选项的绿色特征文字
+    private static final String OPTION_GIVE_TEXT = "images/template/dialog/dialog_opt_give.png";
+
 
     public enum DialogType { NONE, OPTION, STORY }
 
@@ -44,22 +47,21 @@ public class DialogService {
 
     /**
      * 🧠 智能对话框总线
-     * @param targetKeyword 如果不为空，则在选项中寻找并匹配文字。如果为空，则默认盲选第一个选项。
-     * @param initialClick 如果不为空，则在启动处理流程前，先点击该绝对坐标（用于接任务的第一下）。
+     * @param targetKeyword 如果不为空，则在选项中寻找并匹配文字。
+     * @param initialClick 如果不为空，则在启动处理流程前，先点击该绝对坐标。
+     * @param itemToGive 🌟 新增参数：如果当前任务包含给东西，传入物品的图片名称（如 shoe.png）
      */
-    public boolean handleDialog(String targetKeyword, Point initialClick) {
-        // 1. 如果有初始点击任务（接任务），先开火
+    public boolean handleDialog(String targetKeyword, Point initialClick, String itemToGive, Integer knownBagIndex) {
         if (initialClick != null) {
             log.info("🎯 [对话框总线] 执行初始点击（盲狙接任务）: ({},{})", initialClick.x, initialClick.y);
             clickAbsolutePoint(initialClick.x, initialClick.y);
-            sleep(600 + random.nextInt(200)); // 等待下一页弹出来
+            sleep(600 + random.nextInt(200));
         }
 
         boolean hasHandled = false;
         int maxSafetyPages = 20;
         int currentPage = 0;
 
-        // 🌟 2. 进入状态自旋锁：只要对话框还在，我就不走！
         while (currentPage < maxSafetyPages) {
             DialogType type = detectDialogType();
 
@@ -75,15 +77,30 @@ public class DialogService {
             }
             else if (type == DialogType.OPTION) {
                 log.info("🎯 [对话框总线] 第{}页：发现选项，执行策略决策...", currentPage + 1);
+
+// 🌟 寻物给予侦测：把页码情报透传下去！
+                if (itemToGive != null) {
+                    Point giveTextPt = coordinateHelper.findImageAbsoluteCoordinate(OPTION_GIVE_TEXT, 0.85);
+                    if (giveTextPt != null) {
+                        log.info("🎯 [对话框总线] 发现【送你啦】特殊选项！携带包裹情报[{}]呼叫给予引擎...", knownBagIndex);
+
+                        Point safeClick = coordinateHelper.getRandomizedPoint(giveTextPt, 20, 5);
+                        clickAbsolutePoint(safeClick.x, safeClick.y);
+                        sleep(800);
+
+                        // 🌟 把 knownBagIndex 传给 GiveItemService
+                        if (giveItemService.executeGive(itemToGive, knownBagIndex)) {
+                            break;
+                        }
+                    }
+                }
+
+                // 常规选项侦测
                 if (targetKeyword != null) {
-                    // 策略A：精准 OCR 狙击
                     processOptionsWithOCR(targetKeyword);
                 } else {
-                    // 策略B：硬核通关，盲选第一个
                     doFallbackClick(getDialogRect(), "无关键字需求，默认选第一个");
                 }
-                // 通常选项点完，这个任务流就结束了，根据大话逻辑可以考虑直接 break
-                // 但为了防止点完选项还有剧情，我们不 break，继续循环
             }
             currentPage++;
         }
@@ -92,34 +109,23 @@ public class DialogService {
     }
 
     // ==========================================
-    // 🛠️ 为了方便调用，我们保留两个极简的“快捷方式”
+    // 🛠️ 快捷方式重载 (为了兼容其他老代码)
     // ==========================================
-
-    /**
-     * 快捷方式 1：寻路/找 NPC 时使用（匹配地名）
-     */
     public boolean processDialog(String targetMapName) {
-        return handleDialog(targetMapName, null);
+        return handleDialog(targetMapName, null, null, null);
     }
 
-    /**
-     * 快捷方式 2：接固定坐标任务（点击指定位置 + 自动清理后续剧情）
-     */
     public void acceptTask(int offsetX, int offsetY) {
         double scale = coordinateHelper.getScaleRatio();
         int targetX = tracker.getWindowBaseX() + (int)Math.round(offsetX / scale);
         int targetY = tracker.getWindowBaseY() + (int)Math.round(offsetY / scale);
-
-        // 加上随机偏移
         int finalX = targetX + randomOffset((int)(15/scale));
         int finalY = targetY + randomOffset((int)(3/scale));
 
-        handleDialog(null, new Point(finalX, finalY));
+        handleDialog(null, new Point(finalX, finalY), null, null);
     }
 
-    // ==========================================
-    // 📡 侦测与底层逻辑 (保持之前的优化版本)
-    // ==========================================
+    // ... 下方的 detectDialogType, hasOptionDialog, hasStoryDialog 等底层方法保持您原有代码完全不变 ...
 
     public DialogType detectDialogType() {
         if (hasOptionDialog()) return DialogType.OPTION;
@@ -174,6 +180,7 @@ public class DialogService {
         return doFallbackClick(rect, "OCR未匹配到目标地名");
     }
 
+    //reminder for needing refactoy
     private boolean doFallbackClick(int[] rect, String reason) {
         log.warn("🛡️ [兜底] {} -> 盲选第一个选项", reason);
         double scale = coordinateHelper.getScaleRatio();
@@ -192,5 +199,6 @@ public class DialogService {
     }
 
     private int randomOffset(int r) { return r <= 0 ? 0 : random.nextInt(r * 2 + 1) - r; }
+
     private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
 }

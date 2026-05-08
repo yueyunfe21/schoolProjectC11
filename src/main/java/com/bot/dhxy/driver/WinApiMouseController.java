@@ -28,6 +28,7 @@ public class WinApiMouseController implements InputProvider {
 
     private static final int FLAG_KEY_UP = 0x0002;
     private static final int FLAG_KEY_SCANCODE = 0x0008;
+    private static final int FLAG_KEY_UNICODE = 0x0004;
 
     private static final int VK_CONTROL = 0x11;
     private static final int VK_V = 0x56;
@@ -35,32 +36,27 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_LALT = 0x38;
     private static final int SCAN_1 = 0x02;
     private static final int SCAN_2 = 0x03;
-    private static final int SCAN_4 = 0x05; // 🌟 新增：数字键 4 的硬件扫描码
+    private static final int SCAN_4 = 0x05;
+    private static final int SCAN_E = 0x12;
+    private static final int SCAN_Q = 0x10;
     private static final int SCAN_ENTER = 0x1C;
 
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
-
     private static final DWORD INPUT_ARRAY_SIZE_ONE = new DWORD(1);
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
 
-    private static final int FLAG_KEY_UNICODE = 0x0004;
-
     @Override
     public void clickLeft(int x, int y, int delayMs) {
         try {
             moveCursorToLogicalPoint(x, y);
-
             INPUT inputDown = buildMouseInput(FLAG_MOUSE_LEFT_DOWN);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputDown}, inputDown.size());
-
             Thread.sleep(delayMs);
-
             INPUT inputUp = buildMouseInput(FLAG_MOUSE_LEFT_UP);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputUp}, inputUp.size());
-
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -70,12 +66,9 @@ public class WinApiMouseController implements InputProvider {
     public void clickRight(int x, int y, int delayMs) {
         try {
             moveCursorToLogicalPoint(x, y);
-
             INPUT inputDown = buildMouseInput(FLAG_MOUSE_RIGHT_DOWN);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputDown}, inputDown.size());
-
             Thread.sleep(delayMs);
-
             INPUT inputUp = buildMouseInput(FLAG_MOUSE_RIGHT_UP);
             User32.INSTANCE.SendInput(INPUT_ARRAY_SIZE_ONE, new INPUT[]{inputUp}, inputUp.size());
         } catch (InterruptedException e) {
@@ -97,12 +90,7 @@ public class WinApiMouseController implements InputProvider {
 
     @Override
     public void ctrlClickNpcTarget(int npcX, int npcY, int yellowNpcX, int yellowNpcY, int delayMs) {
-        // 废弃不用
     }
-
-    // ==========================================
-    // 🌟 底层开关能力实现
-    // ==========================================
 
     @Override
     public void moveMouse(int x, int y) {
@@ -113,63 +101,44 @@ public class WinApiMouseController implements InputProvider {
     public void holdCtrl() {
         try {
             if (!tracker.bringWindowToFront()) return;
-            // 发送按下信号
             sendInput(buildKeyboardInput(VK_CONTROL, false));
         } catch (Exception e) {
-            System.err.println("❌ [Input] 按住 Ctrl 失败: " + e.getMessage());
+            System.err.println("[Input] hold Ctrl failed: " + e.getMessage());
         }
     }
 
     @Override
     public void releaseCtrl() {
         try {
-            // 发送弹起信号
             sendInput(buildKeyboardInput(VK_CONTROL, true));
         } catch (Exception e) {
-            System.err.println("❌ [Input] 释放 Ctrl 失败: " + e.getMessage());
+            System.err.println("[Input] release Ctrl failed: " + e.getMessage());
         }
     }
 
-    // ==========================================
+    @Override
+    public void pressAlt1() {
+        pressAltScan(SCAN_1, "ALT+1");
+    }
 
     @Override
     public void pressAlt2() {
-        try {
-            if (!tracker.bringWindowToFront()) return;
-            Thread.sleep(200);
-            sendInput(buildKeyboardScanInput(SCAN_LALT, false));
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_2, false));
-            Thread.sleep(80);
-            sendInput(buildKeyboardScanInput(SCAN_2, true));
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_LALT, true));
-        } catch (Exception e) {
-            System.err.println("❌ [Input] 按键发送失败: " + e.getMessage());
-        }
+        pressAltScan(SCAN_2, "ALT+2");
     }
 
-    // 🌟 新增：完美复刻原有的组合键逻辑，实现 ALT + 4
     @Override
     public void pressAlt4() {
-        try {
-            if (!tracker.bringWindowToFront()) return;
-            Thread.sleep(200); // 前置停顿，等待游戏响应
-            sendInput(buildKeyboardScanInput(SCAN_LALT, false)); // 按下 ALT
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_4, false));    // 按下 4
-            Thread.sleep(80);
-            sendInput(buildKeyboardScanInput(SCAN_4, true));     // 松开 4
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_LALT, true));  // 松开 ALT
-        } catch (Exception e) {
-            System.err.println("❌ [Input] ALT+4 按键发送失败: " + e.getMessage());
-        } finally {
-            // 🛡️ 兜底保命：防止报错导致 ALT 被锁死
-            try {
-                sendInput(buildKeyboardScanInput(SCAN_LALT, true));
-            } catch (Exception ignored) {}
-        }
+        pressAltScan(SCAN_4, "ALT+4");
+    }
+
+    @Override
+    public void pressAltE() {
+        pressAltScan(SCAN_E, "ALT+E");
+    }
+
+    @Override
+    public void pressAltQ() {
+        pressAltScan(SCAN_Q, "ALT+Q");
     }
 
     @Override
@@ -180,7 +149,7 @@ public class WinApiMouseController implements InputProvider {
             sendInput(buildKeyboardScanInput(SCAN_ENTER, true));
             Thread.sleep(60);
         } catch (Exception e) {
-            System.err.println("❌ [Input] 回车键发送失败: " + e.getMessage());
+            System.err.println("[Input] Enter send failed: " + e.getMessage());
         }
     }
 
@@ -196,7 +165,7 @@ public class WinApiMouseController implements InputProvider {
             sendInput(buildKeyboardInput(VK_V, true));
             Thread.sleep(50);
             sendInput(buildKeyboardInput(VK_CONTROL, true));
-            log.info("粘贴文本**{}**成功", text);
+            log.info("Pasted text: {}", text);
         } catch (Exception e) {
             releaseCtrl();
         }
@@ -212,7 +181,7 @@ public class WinApiMouseController implements InputProvider {
                 Thread.sleep(20);
             }
         } catch (Exception e) {
-            System.err.println("❌ [Input] Unicode 打字失败: " + e.getMessage());
+            System.err.println("[Input] Unicode typing failed: " + e.getMessage());
         }
     }
 
@@ -226,7 +195,8 @@ public class WinApiMouseController implements InputProvider {
             input.input.mi.mouseData = new DWORD(-120 * clicks);
             sendInput(input);
             Thread.sleep(50);
-        } catch (Exception e) {}
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -239,7 +209,29 @@ public class WinApiMouseController implements InputProvider {
             input.input.mi.mouseData = new DWORD(120 * clicks);
             sendInput(input);
             Thread.sleep(50);
-        } catch (Exception e) {}
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void pressAltScan(int scanCode, String label) {
+        try {
+            if (!tracker.bringWindowToFront()) return;
+            Thread.sleep(200);
+            sendInput(buildKeyboardScanInput(SCAN_LALT, false));
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(scanCode, false));
+            Thread.sleep(80);
+            sendInput(buildKeyboardScanInput(scanCode, true));
+            Thread.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_LALT, true));
+        } catch (Exception e) {
+            System.err.println("[Input] " + label + " send failed: " + e.getMessage());
+        } finally {
+            try {
+                sendInput(buildKeyboardScanInput(SCAN_LALT, true));
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     private static void sendInput(INPUT input) {
@@ -288,28 +280,5 @@ public class WinApiMouseController implements InputProvider {
         input.input.ki.wScan = new WORD(c);
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_UNICODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
-    }
-
-    @Override
-    public void pressAlt1() {
-        try {
-            if (!tracker.bringWindowToFront()) return;
-            Thread.sleep(200); // 前置停顿，等待游戏响应
-            sendInput(buildKeyboardScanInput(SCAN_LALT, false)); // 按下 ALT
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_1, false));    // 按下 1
-            Thread.sleep(80);
-            sendInput(buildKeyboardScanInput(SCAN_1, true));     // 松开 1
-            Thread.sleep(60);
-            sendInput(buildKeyboardScanInput(SCAN_LALT, true));  // 松开 ALT
-            log.debug("⌨️ [物理驱动] 执行 Alt+1 呼叫小地图");
-        } catch (Exception e) {
-            System.err.println("❌ [Input] ALT+1 按键发送失败: " + e.getMessage());
-        } finally {
-            // 🛡️ 兜底保命：防止报错导致 ALT 被锁死
-            try {
-                sendInput(buildKeyboardScanInput(SCAN_LALT, true));
-            } catch (Exception ignored) {}
-        }
     }
 }

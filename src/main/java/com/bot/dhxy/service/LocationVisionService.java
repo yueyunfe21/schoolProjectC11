@@ -37,7 +37,7 @@ public class LocationVisionService {
             System.out.println("❌ 无法唤醒游戏，停止任务。");
             return null;
         }
-        String path = "images/tmp_pos.png";
+        String path = "images/temp/tmp_pos.png";
 
         // 1. 算好的绝对坐标数组
         int[] pics = coordinateHelper.getScaledRect(ANCHOR_DIFF_X, ANCHOR_DIFF_Y, width, height);

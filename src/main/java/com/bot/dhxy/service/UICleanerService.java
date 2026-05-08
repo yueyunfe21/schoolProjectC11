@@ -20,9 +20,7 @@ import java.util.Random;
 @RequiredArgsConstructor
 public class UICleanerService {
 
-    // 🌟 把所有需要用到的工具全注入进来
     private final InputProvider inputProvider;
-    private final UITemplateLocatorService uiTemplateLocator;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
@@ -75,7 +73,8 @@ public class UICleanerService {
      * 🗺️ 检查并关闭世界地图
      */
     private boolean isWorldMapOpened() {
-        return uiTemplateLocator.findTemplateCenter("images/template/world_map_title.png") != null;
+        // 🌟 直接调用万能雷达，它返回的就是中心点，用来做判定足够了
+        return coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8) != null;
     }
 
     private void closeMapByDoubleRightClick() {
@@ -100,10 +99,11 @@ public class UICleanerService {
             boolean foundInThisPass = false;
 
             for (String templatePath : closeButtonTemplates) {
-                Point closeBtnPoint = uiTemplateLocator.findTemplateCenter(templatePath);
+                // 🌟 直接调用万能雷达，拿到的刚好是 'X' 按钮的正中心，直接可以开火！
+                Point closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinate(templatePath, 0.8);
 
                 if (closeBtnPoint != null) {
-                    log.info("🧹 [UI清理] 发现关闭按钮 [{}], 坐标: {}, 执行点击",
+                    log.info("🧹 [UI清理] 发现关闭按钮 [{}], 中心点坐标: {}, 执行点击",
                             templatePath, closeBtnPoint.x, closeBtnPoint.y);
 
                     int clickX = closeBtnPoint.x + (random.nextInt(5) - 2);

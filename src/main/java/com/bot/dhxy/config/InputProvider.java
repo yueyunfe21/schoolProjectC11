@@ -10,14 +10,15 @@ public interface InputProvider {
     void holdCtrl();
     void releaseCtrl();
 
+    void pressAlt1();
     void pressAlt2();
-    void pressAlt4(); // 🌟 新增：屏蔽玩家的组合神技
+    void pressAlt4();
+    void pressAltE();
+    void pressAltQ();
 
     void pressEnter();
     void pasteText(String text);
     void typeTextUnicode(String text);
     void scrollDown(int clicks);
     void scrollUp(int clicks);
-
-    void pressAlt1(); // 🌟 新增：打开/关闭小地图
 }

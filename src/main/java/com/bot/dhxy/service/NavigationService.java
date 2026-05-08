@@ -31,7 +31,6 @@ public class NavigationService {
     private final LocationVisionService locationRadar;
     private final GameClientTracker tracker;
     private final InputProvider inputProvider;
-    private final UITemplateLocatorService UITemplateLocatorService;
     private final TextRecognizer ocr;
     private final GameStateUtil gameStateUtil;
     private final CoordinateHelper coordinateHelper;
@@ -39,6 +38,7 @@ public class NavigationService {
     private final DialogService dialogService;
     private final Random random = new Random();
     private final PlayerStateService playerStateService;
+    private final BattleRadarService battleRadarService;
 
     private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
     private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
@@ -79,6 +79,20 @@ public class NavigationService {
         // 🔄 唯一的监控循环 (外偶)
         // ==========================================
         while (System.currentTimeMillis() - startTime < timeoutMs) {
+
+            // 🌟 1. 神经反射：看一眼有没有遇暗雷打起来？
+            if (battleRadarService.checkAndSyncCombatState()) {
+                log.warn("⚔️ [战术制导] 突遇暗雷！全员挂起，等待战斗结束...");
+                sleepInterruptible(battleRadarService.getDynamicPollingIntervalMs());
+                // 战斗中强制重置超时时间，防止战斗太久导致寻路超时失败
+                startTime = System.currentTimeMillis();
+                continue;
+            }
+
+            // 🌟 2. 状态同步：告诉大脑我现在在赶路
+            context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
+
+            // ... (下面保留您原有的 if (!gameStateUtil.isMovingByPixelDiff()) 等逻辑)
 
             // 🌟 就是这个 IF (衣服)！直接在循环里处理停下的逻辑！
             if (!gameStateUtil.isMovingByPixelDiff()) {
@@ -247,7 +261,7 @@ public class NavigationService {
             }
         }
 
-        Point xunluPoint = UITemplateLocatorService.findTemplateCenter(XUNLU_TEMPLATE_PATH);
+        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, 0.8);
         if (xunluPoint == null) {
             log.warn("[导航] 未找到寻路按钮模板 xunlu.png");
             return false;
@@ -273,7 +287,7 @@ public class NavigationService {
     }
 
     private boolean isWorldMapOpened() {
-        Point titlePoint = UITemplateLocatorService.findTemplateCenter("images/template/world_map_title.png");
+        Point titlePoint = coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8);
         return titlePoint != null;
     }
 
