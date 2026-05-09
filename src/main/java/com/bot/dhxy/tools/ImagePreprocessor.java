@@ -143,13 +143,13 @@ public class ImagePreprocessor {
         // 🚨 探头 2：把洗出来的黑白遮罩图存下来！
         // 纯白的就是它认定的绿字，纯黑的就是被干掉的背景。
         // ==========================================
-//        try {
-//            java.io.File debugDir = new java.io.File("images/temp");
-//            if (!debugDir.exists()) debugDir.mkdirs();
-//            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_hsv_mask_green.png", mask);
-//        } catch (Exception e) {
-//            log.error("❌ 保存HSV遮罩图失败", e);
-//        }
+        try {
+            java.io.File debugDir = new java.io.File("images/temp");
+            if (!debugDir.exists()) debugDir.mkdirs();
+            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_hsv_mask_green.png", mask);
+        } catch (Exception e) {
+            log.error("❌ 保存HSV遮罩图失败", e);
+        }
 
         int count = Core.countNonZero(mask);
 
@@ -199,6 +199,53 @@ public class ImagePreprocessor {
     }
 
     /**
+     * ⚔️ 终极白字洗布机 (带粗细过滤)
+     * 利用 OpenCV 形态学腐蚀，完美剥离游戏里的白衣服、雪地，只保留纤细的纯白文字！
+     */
+    public static int countThinWhitePixelsHSV(BufferedImage img) {
+        if (img == null) return 0;
+
+        // 1. 转为 OpenCV Mat
+        BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
+        convertedImg.getGraphics().drawImage(img, 0, 0, null);
+        byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
+        Mat src = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC3);
+        src.put(0, 0, data);
+
+        Mat hsv = new Mat();
+        Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
+
+        // 2. 提取所有白色 (此时白衣服和白字都在里面)
+        // V亮度极高(200-255)，S饱和度极低(0-40)
+        Scalar lowerWhite = new Scalar(0, 0, 200);
+        Scalar upperWhite = new Scalar(180, 40, 255);
+        Mat allWhiteMask = new Mat();
+        Core.inRange(hsv, lowerWhite, upperWhite, allWhiteMask);
+
+        // 3. 🔪 核心杀招：腐蚀操作 (Erosion)
+        // 创建一个 3x3 的打磨砂纸。对于 1~2 像素宽的细丝文字，3x3 的砂纸一蹭就没了！
+        // 但对于一大坨白衣服，3x3 的砂纸蹭完，核心还是一大块白色。
+        Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new org.opencv.core.Size(3, 3));
+        Mat thickWhiteMask = new Mat();
+        Imgproc.erode(allWhiteMask, thickWhiteMask, kernel);
+
+        // 4. 提取真正的细丝文字： 所有白色 - 粗壮白色 = 纤细文字
+        Mat textOnlyMask = new Mat();
+        Core.subtract(allWhiteMask, thickWhiteMask, textOnlyMask);
+
+        saveDebugImage(textOnlyMask, "debug_thin_white_text.png");
+
+        // 5. 统计真正的文字像素数量
+        int thinWhiteCount = Core.countNonZero(textOnlyMask);
+
+        // 释放内存
+        src.release(); hsv.release(); allWhiteMask.release();
+        thickWhiteMask.release(); kernel.release(); textOnlyMask.release();
+
+        return thinWhiteCount;
+    }
+
+    /**
      * 📊 雷达2号终极版：测算画面的“纹理平滑度 (标准差)”
      */
     public static double getImageStandardDeviation(BufferedImage img) {
@@ -220,13 +267,13 @@ public class ImagePreprocessor {
         // 没开框时：这里面应该有各种深浅不一的花纹。
         // 开框时：这里面应该是一片均匀的灰色。
         // ==========================================
-//        try {
-//            java.io.File debugDir = new java.io.File("images/temp");
-//            if (!debugDir.exists()) debugDir.mkdirs();
-//            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_smoothness_gray.png", gray);
-//        } catch (Exception e) {
-//            log.error("保存灰度图失败", e);
-//        }
+        try {
+            java.io.File debugDir = new java.io.File("images/temp");
+            if (!debugDir.exists()) debugDir.mkdirs();
+            org.opencv.imgcodecs.Imgcodecs.imwrite("images/temp/debug_smoothness_gray.png", gray);
+        } catch (Exception e) {
+            log.error("保存灰度图失败", e);
+        }
 
         // 2. 算标准差
         org.opencv.core.MatOfDouble mean = new org.opencv.core.MatOfDouble();

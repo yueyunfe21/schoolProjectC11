@@ -27,10 +27,10 @@ public class BattleRadarService {
     // 📐 ROI 测绘数据：请首领量一下“自动”按钮可能出现的矩形区域！
     // 只需要框住那个按钮的范围即可，越小越快！(相对游戏窗口左上角的逻辑坐标)
     // ==========================================
-    private static final int AUTO_BTN_AREA_X = 800;  // 示例值，请修改
-    private static final int AUTO_BTN_AREA_Y = 600;  // 示例值，请修改
-    private static final int AUTO_BTN_AREA_W = 150;  // 示例值，越小越好
-    private static final int AUTO_BTN_AREA_H = 80;   // 示例值，越小越好
+    private static final int AUTO_BTN_AREA_X = 974;  // 示例值，请修改
+    private static final int AUTO_BTN_AREA_Y = 630;  // 示例值，请修改
+    private static final int AUTO_BTN_AREA_W = 51;  // 示例值，越小越好
+    private static final int AUTO_BTN_AREA_H = 20;   // 示例值，越小越好
 
     /**
      * 👁️ 雷达扫描：当前是否处于战斗画面？
@@ -39,7 +39,7 @@ public class BattleRadarService {
     public boolean checkAndSyncCombatState() {
         // 🌟 1. 局部极速截图 (仅截取右下角很小的一块)
         int[] rect = coordinateHelper.getScaledRect(AUTO_BTN_AREA_X, AUTO_BTN_AREA_Y, AUTO_BTN_AREA_W, AUTO_BTN_AREA_H);
-        String localScanPath = "images/temp/battle_radar_scan.png";
+        String localScanPath = "images/temp/flag_battle.png";
 
         // 用裸奔截图，因为这块区域通常没有需要套盾的紫字
         tracker.captureToFile("战斗局部雷达", localScanPath, rect[0], rect[1], rect[2], rect[3]);

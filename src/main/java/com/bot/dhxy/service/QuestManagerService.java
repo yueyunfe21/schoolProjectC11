@@ -6,6 +6,7 @@ import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.QuestTargetInfo;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.tools.ImagePreprocessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ import java.util.regex.Pattern;
 
 /**
  * 🧠 任务情报总管 (Task Manager)
- * 武器库版：同时搭载【零 OCR 原生盲狙】与【深度 OCR 坐标解析】双引擎！
+ * 纯净重构版：消灭魔法数字，彻底拥抱 DRY 原则！
  */
 @Slf4j
 @Component
@@ -31,11 +32,10 @@ public class QuestManagerService {
     private final GameContext context;
 
     // ==========================================
-    // 📐 面板测绘数据 (以“分享”按钮为锚点)
+    // 📐 第一战区：面板测绘与锚点数据
     // ==========================================
     private static final String ANCHOR_TEMPLATE_PATH = "images/template/task_fenxiang.png";
 
-    // 左右双切切割数据
     private static final int OFFSET_TO_EDGE_X = -497;
     private static final int OFFSET_TO_EDGE_Y = 8;
     private static final int DETAIL_H = 295;
@@ -44,195 +44,228 @@ public class QuestManagerService {
     private static final int DETAIL_W_LEFT = DETAIL_W_TOTAL - DETAIL_W_RIGHT;
     private static final int OFFSET_TO_EDGE_X_RIGHT = OFFSET_TO_EDGE_X + DETAIL_W_LEFT;
 
-    // 🎯 五环专属：P1 右侧超链接盲狙点 (首领测绘)
     private static final int P1_LINK_OFFSET_X = -209;
     private static final int P1_LINK_OFFSET_Y = 37;
 
-    // 🧠 修罗专属：OCR 正则提取器
     private static final Pattern QUEST_PATTERN = Pattern.compile("([^\\(]+).*?在\\s*([\\u4e00-\\u9fa5]+)\\s*\\((\\d+)\\s*,\\s*(\\d+)\\)");
 
-    // =========================================================================================
-    // 🚀 轻武器引擎：原生寻路劫持 (专攻五环，0 OCR成本)
-    // =========================================================================================
-// ==========================================
-    // 🚦 专为原生寻路定义的三态信号灯
-    // ==========================================
-    public enum PathingResult {
-        SUCCESS,    // ✅ 成功找到并点击了盲狙点
-        FINISHED,   // 🎉 确认任务列表里没有该任务了（真做完了）
-        UI_ERROR    // ⚠️ 界面卡顿、没找到锚点（需要重试）
-    }
+    private static final String[] P2_MONSTER_TEMPLATES = {
+            "images/template/wuhuan/p2_guanpian.png",
+            "images/template/wuhuan/p2_daohaozei.png",
+            "images/template/wuhuan/p2_wuchi.png",
+            "images/template/wuhuan/p2_shiyinggui.png"
+    };
 
-    /**
-     * 🚀 P1 阶段：五环专属原生寻路引擎 (写死特征图，极致精简)
-     */
+    public enum PathingResult { SUCCESS, FINISHED, UI_ERROR }
+
+    // ==========================================
+    // ⚙️ 第二战区：全局调控参数 (魔法数字终结者)
+    // ==========================================
+
+    // 1. 匹配阈值
+    private static final double THRESHOLD_STRICT = 0.85;
+    private static final double THRESHOLD_NORMAL = 0.80;
+
+    // 2. 拟人化延时参数 (毫秒)
+    private static final long DELAY_SHORT = 200;
+    private static final long DELAY_NORMAL = 500;
+    private static final long DELAY_LONG = 800;
+
+    // 3. 字体发光检测参数 (白像素探针)
+    private static final int GLOW_RGB_MIN = 220;         // 发光字体RGB最低下限
+    private static final int GLOW_PIXELS_TARGET = 15;    // 判定为高亮的白像素个数阈值
+    private static final int PROBE_OFFSET_X = -40;       // 探针截取框相对中心的X偏移
+    private static final int PROBE_OFFSET_Y = -10;       // 探针截取框相对中心的Y偏移
+    private static final int PROBE_W = 80;               // 探针截取框宽度
+    private static final int PROBE_H = 20;               // 探针截取框高度
+
+    // 4. 滚轮与翻页参数
+    private static final int SCROLL_HOVER_OFFSET_X = -400; // 鼠标悬停滚动区的X偏移
+    private static final int SCROLL_HOVER_OFFSET_Y = 174;  // 鼠标悬停滚动区的Y偏移
+    private static final int SCROLL_STEPS_EXPAND = 2;      // 展开文件夹后向下滚动的格数
+    private static final int SCROLL_STEPS_PAGE = 3;        // 找不到时翻页滚动的格数
+    private static final int MAX_SCROLL_PAGES = 2;         // 最多向下翻几页
+
+
+    // =========================================================================================
+    // 🚀 轻武器引擎：原生寻路劫持 (专攻五环)
+    // =========================================================================================
+
     public PathingResult triggerWuHuanNativePathingP1() {
         log.info("📡 [五环制导] 准备劫持 P1 阶段内置寻路...");
 
-        inputProvider.pressAltQ();
-        sleep(800);
+        if (!activateTaskIfPresent("wuhuan", true)) {
+            log.info("🎉 [五环制导] 通用雷达扫描完毕，未发现五环任务，判定五环全部结束！");
+            return PathingResult.FINISHED;
+        }
 
         Point anchor = findFenXiangAnchor();
         if (anchor == null) {
-            log.warn("⚠️ [五环制导] 未找到任务面板锚点，可能是UI延迟！");
-            inputProvider.pressAltQ();
-            return PathingResult.UI_ERROR;
+            return closePanelAndReturn(PathingResult.UI_ERROR);
         }
 
-        // ==========================================
-        // 🧠 阶段 1：拟人化焦点感知 (直接写死五环的图)
-        // ==========================================
-        int[] leftRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X, OFFSET_TO_EDGE_Y, DETAIL_W_LEFT, DETAIL_H);
-        String leftScanPath = "images/temp/quest_list_scan.png";
-        tracker.captureToFile("任务列表扫描", leftScanPath, leftRect[0], leftRect[1], leftRect[2], leftRect[3]);
-
-        // 👁️ 第一眼：找五环高亮状态
-        String selectedPath = "images/template/wuhuan/wuhuan_selected.png";
-        Point selectedPt = coordinateHelper.findImageAbsoluteCoordinate(selectedPath, 0.85);
-
-        if (selectedPt != null) {
-            log.info("🎯 [拟人化] 发现五环任务已高亮选中，直接进入盲狙环节！");
-        } else {
-            // 👁️ 第二眼：找五环普通状态
-            String unselectedPath = "images/template/wuhuan/wuhuan_unselected.png";
-            Point unselectedPt = coordinateHelper.findImageAbsoluteCoordinate(unselectedPath, 0.85);
-
-            if (unselectedPt != null) {
-                log.info("🖱️ [拟人化] 焦点偏移，正在手动选中五环任务...");
-                inputProvider.clickLeft(unselectedPt.x, unselectedPt.y, 100);
-                sleep(500);
-            } else {
-                // 👁️ 第三眼：都没找到，五环彻底做完了
-                log.info("🎉 [五环制导] 左右侦测均未发现五环任务，判定五环全部结束！");
-                inputProvider.pressAltQ();
-                return PathingResult.FINISHED;
-            }
-        }
-
-        // ==========================================
-        // 🚀 阶段 2：安全盲狙！
-        // ==========================================
-        int baseClickX = anchor.x + P1_LINK_OFFSET_X;
-        int baseClickY = anchor.y + P1_LINK_OFFSET_Y;
-
-        // 生成抖动坐标
-        Point safeClick = coordinateHelper.getRandomizedPoint(baseClickX, baseClickY, 30, 8);
-
-        log.info("🖱️ [五环制导] 坐标锁定: ({}, {}), 开火！", safeClick.x, safeClick.y);
-        inputProvider.clickLeft(safeClick.x, safeClick.y, 100);
-        sleep(500);
-
-        inputProvider.pressAltQ();
-        return PathingResult.SUCCESS;
+        executeSafeClick(anchor.x + P1_LINK_OFFSET_X, anchor.y + P1_LINK_OFFSET_Y, 30, 8, DELAY_NORMAL);
+        return closePanelAndReturn(PathingResult.SUCCESS);
     }
 
-    // ==========================================
-    // 🎯 五环专属：P2 怪物特征图阵列
-    // ==========================================
-    private static final String[] P2_MONSTER_TEMPLATES = {
-            "images/template/wuhuan/p2_guanpian.png",      // 惯骗
-            "images/template/wuhuan/p2_daohaozei.png",     // 盗号贼
-            "images/template/wuhuan/p2_wuchi.png",         // 武痴
-            "images/template/wuhuan/p2_shiyinggui.png"     // 食婴鬼手下的手下
-    };
-
-    /**
-     * 🚀 P2 阶段：五环专属打怪寻路引擎 (ROI 局部阵列扫描)
-     */
     public PathingResult triggerWuHuanNativePathingP2() {
         log.info("📡 [五环P2制导] 准备劫持 P2 阶段打怪内置寻路...");
 
-        inputProvider.pressAltQ();
-        sleep(800);
+        if (!activateTaskIfPresent("wuhuan", true)) {
+            log.warn("⚠️ [五环P2制导] 未找到五环任务！");
+            return PathingResult.UI_ERROR;
+        }
 
-        // 1. 找锚点 (这一步底层已经刷新了全局视野)
         Point anchor = findFenXiangAnchor();
         if (anchor == null) {
-            log.warn("⚠️ [五环P2制导] 未找到任务面板锚点，UI可能未加载！");
-            inputProvider.pressAltQ();
-            return PathingResult.UI_ERROR;
+            return closePanelAndReturn(PathingResult.UI_ERROR);
         }
 
-        // ==========================================
-        // ✂️ 阶段 1：精准切割右侧详情面板 (绝不全屏瞎找)
-        // ==========================================
         int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X_RIGHT, OFFSET_TO_EDGE_Y, DETAIL_W_RIGHT, DETAIL_H);
-        String rightScanPath = "images/temp/p2_right_panel_scan.png";
+        String rawScanPath = "images/temp/p2_right_panel_scan_raw.png";
 
-        // 把右侧截取下来
-        if (!tracker.captureToFile("P2右侧扫描", rightScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-            inputProvider.pressAltQ();
-            return PathingResult.UI_ERROR;
-        }
+//        if (!tracker.captureToFile("P2右侧扫描", rawScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
+//            return closePanelAndReturn(PathingResult.UI_ERROR);
+//        }
 
-        // ==========================================
-        // 🚀 阶段 2：局部特征图匹配 (极速，不到 5 毫秒)
-        // ==========================================
-        log.info("👁️ [五环P2制导] 启动局部雷达，在右侧面板内扫描怪物...");
+        String washedScanPath = "images/temp/p2_right_panel_scan_washed.png";
+        ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
+        log.info("🚿 [五环P2制导] 右侧面板洗图完成！");
 
         String foundMonsterName = "";
         double[] localMatchResult = null;
 
-        // 遍历怪物图库，直接在刚才切下来的右侧小图里找！
         for (String monsterTemplate : P2_MONSTER_TEMPLATES) {
-            // 调用底层的纯核心方法，不涉及任何全屏坐标系
-            localMatchResult = com.bot.dhxy.core.ImageFinder.find(rightScanPath, monsterTemplate, 0.85);
+            localMatchResult = com.bot.dhxy.core.ImageFinder.find(washedScanPath, monsterTemplate, THRESHOLD_STRICT);
             if (localMatchResult != null && localMatchResult.length >= 2) {
                 foundMonsterName = monsterTemplate;
-                break; // 找到了！立刻跳出
+                break;
             }
         }
 
         if (localMatchResult != null) {
-            // 🌟 核心计算：局部坐标 -> 全局绝对物理坐标
-            // localMatchResult 给出的是在右侧小图里的位置，我们要把它加上右侧小图的起点坐标
             int absoluteClickX = rightRect[0] + (int) Math.round(localMatchResult[0]);
             int absoluteClickY = rightRect[1] + (int) Math.round(localMatchResult[1]);
 
-            // 注入拟人化灵魂 (因为字较小，X轴抖动范围缩小到 8，Y轴 4)
-            Point safeClick = coordinateHelper.getRandomizedPoint(absoluteClickX, absoluteClickY, 8, 4);
-
-            log.info("🖱️ [五环P2制导] 锁定怪物 [{}], 防封坐标: ({}, {}), 开火！", foundMonsterName, safeClick.x, safeClick.y);
-            inputProvider.clickLeft(safeClick.x, safeClick.y, 100);
-            sleep(500);
-
-            inputProvider.pressAltQ();
-            return PathingResult.SUCCESS;
+            log.info("🖱️ [五环P2制导] 锁定怪物 [{}]", foundMonsterName);
+            executeSafeClick(absoluteClickX, absoluteClickY, 8, 4, DELAY_NORMAL);
+            return closePanelAndReturn(PathingResult.SUCCESS);
         }
 
-        // 走到这里，说明是真没找到怪 (UI卡了，或者刷了新怪)
-        // 注意：这里绝不返回 FINISHED，因为 P2 阶段不存在任务做完的可能，只可能是识别失败！
-        log.warn("⚠️ [五环P2制导] 未在右侧面板找到任何已知怪物！如果是新怪，请截图添加到图库！");
-        inputProvider.pressAltQ();
-        return PathingResult.UI_ERROR;
+        log.warn("⚠️ [五环P2制导] 黑白雷达扫描失败！");
+        return closePanelAndReturn(PathingResult.UI_ERROR);
     }
 
     // =========================================================================================
-    // 🛠️ 重武器引擎：深度 OCR 坐标解析 (专攻修罗/抓鬼，消耗 Token，但情报详尽)
+    // 🕵️ 核心引擎：发光文字探针雷达
     // =========================================================================================
-    /**
-     * 获取当前任务的具体坐标情报 (保留修罗使用)
-     * @param expectedTaskImage 左侧任务列表中目标任务的名字截图 (例如："task_name_xiuluo.png")
-     * @return 包含地图、坐标、NPC名字的实体对象
-     */
+
+    public boolean activateTaskIfPresent(String taskBaseName) {
+        return activateTaskIfPresent(taskBaseName, false);
+    }
+
+    public boolean activateTaskIfPresent(String taskBaseName, boolean keepPanelOpen) {
+        log.info("🕵️ [任务总管] 启动雷达扫描任务: [{}], 阅后即焚: {}", taskBaseName, !keepPanelOpen);
+
+        Point anchor = ensurePanelOpenAndGetAnchor();
+        if (anchor == null) {
+            log.warn("⚠️ [任务总管] 呼出任务面板失败，退出！");
+            return false;
+        }
+
+        int[] leftListRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X, OFFSET_TO_EDGE_Y, DETAIL_W_LEFT, DETAIL_H);
+        String taskPath = "images/template/task/" + taskBaseName + ".png";
+        String titlePath = "images/template/task/" + taskBaseName + "_title.png";
+
+        for (int page = 0; page < MAX_SCROLL_PAGES; page++) {
+            if (page > 0) log.info("👁️ [任务总管] 正在扫描 第 {} 页...", page + 1);
+
+            // 👉 动作 1：找子任务 & 发光探测
+            Point taskPt = coordinateHelper.findImageInRegion(taskPath, leftListRect, THRESHOLD_STRICT);
+            if (taskPt != null) {
+                log.info("🎯 [任务总管] 找到目标中心点: ({}, {})", taskPt.x, taskPt.y);
+
+                int textX1 = taskPt.x + PROBE_OFFSET_X;
+                int textY1 = taskPt.y + PROBE_OFFSET_Y;
+                int textX2 = textX1 + PROBE_W;
+                int textY2 = textY1 + PROBE_H;
+
+                java.awt.image.BufferedImage textImg = tracker.captureToMemory("text_probe", textX1, textY1, textX2, textY2);
+                if (textImg != null) {
+                    int whitePixelCount = 0;
+                    for (int x = 0; x < textImg.getWidth(); x++) {
+                        for (int y = 0; y < textImg.getHeight(); y++) {
+                            int rgb = textImg.getRGB(x, y);
+                            int r = (rgb >> 16) & 0xFF;
+                            int g = (rgb >> 8) & 0xFF;
+                            int b = rgb & 0xFF;
+
+                            if (r > GLOW_RGB_MIN && g > GLOW_RGB_MIN && b > GLOW_RGB_MIN) {
+                                whitePixelCount++;
+                            }
+                        }
+                    }
+                    textImg.flush();
+
+                    if (whitePixelCount > GLOW_PIXELS_TARGET) {
+                        log.info("✅ [任务总管] 侦测到发光白像素: {}个，【已高亮】", whitePixelCount);
+                    } else {
+                        log.info("🖱️ [任务总管] 侦测到发光白像素: {}个，【未高亮】，执行激活...", whitePixelCount);
+                        executeSafeClick(taskPt.x, taskPt.y, 20, 5, DELAY_NORMAL);
+                    }
+
+                    if (!keepPanelOpen) inputProvider.pressAltQ();
+                    return true;
+                }
+            }
+
+            // 👉 动作 2：找大标题(文件夹) 处理折叠
+            Point titlePt = coordinateHelper.findImageInRegion(titlePath, leftListRect, THRESHOLD_STRICT);
+            if (titlePt != null) {
+                log.info("📁 [任务总管] 发现标题，点击展开并下滚...");
+                executeSafeClick(titlePt.x + 30, titlePt.y + 5, 20, 5, DELAY_LONG);
+
+                Point hoverPt = coordinateHelper.getRandomizedPoint(anchor.x + SCROLL_HOVER_OFFSET_X, anchor.y + SCROLL_HOVER_OFFSET_Y, 50, 100);
+                inputProvider.moveMouse(hoverPt.x, hoverPt.y);
+                sleep(DELAY_SHORT);
+                inputProvider.scrollDown(SCROLL_STEPS_EXPAND);
+                sleep(DELAY_NORMAL);
+
+                page--; // 重搜当前页
+                continue;
+            }
+
+            // 👉 动作 3：滚轮翻页
+            if (page < MAX_SCROLL_PAGES - 1) {
+                log.info("⏬ [任务总管] 当前页未找到，向下翻页...");
+                Point hoverPt = coordinateHelper.getRandomizedPoint(anchor.x + SCROLL_HOVER_OFFSET_X, anchor.y + SCROLL_HOVER_OFFSET_Y, 50, 100);
+                inputProvider.moveMouse(hoverPt.x, hoverPt.y);
+                sleep(DELAY_SHORT);
+                inputProvider.scrollDown(SCROLL_STEPS_PAGE);
+                sleep(DELAY_LONG); // 翻页稍微多等一下渲染
+            }
+        }
+
+        log.info("⏭️ [任务总管] 翻遍所有页未发现任务。");
+        inputProvider.pressAltQ();
+        return false;
+    }
+
+    // =========================================================================================
+    // 🛠️ 重武器引擎：深度 OCR 坐标解析 (修罗/抓鬼保留)
+    // =========================================================================================
+
     public QuestTargetInfo fetchCurrentQuestInfo(String expectedTaskImage) {
         log.info("📡 [深度解析] 启动重型 OCR 引擎获取任务情报...");
 
+        // 强制初始化面板
         inputProvider.pressAltQ();
-        sleep(800);
-        Point anchor = findFenXiangAnchor();
-        if (anchor == null) {
-            inputProvider.pressAltQ();
-            return null;
-        }
-
-        // 🛡️ 阶段 1：左侧安全扫描
-        int[] leftRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X, OFFSET_TO_EDGE_Y, DETAIL_W_LEFT, DETAIL_H);
-        String leftScanPath = "images/temp/quest_list_scan.png";
-        tracker.captureToFile("任务列表扫描", leftScanPath, leftRect[0], leftRect[1], leftRect[2], leftRect[3]);
+        sleep(DELAY_LONG);
+        Point anchor = ensurePanelOpenAndGetAnchor();
+        if (anchor == null) return null;
 
         String taskTemplatePath = "images/template/" + expectedTaskImage;
-        Point taskLabelPoint = coordinateHelper.findImageAbsoluteCoordinate(taskTemplatePath, 0.85);
+        Point taskLabelPoint = coordinateHelper.findImageAbsoluteCoordinate(taskTemplatePath, THRESHOLD_STRICT);
 
         if (taskLabelPoint == null) {
             log.info("🎉 [深度解析] 未发现目标任务标签 [{}]，判定任务已完成！", expectedTaskImage);
@@ -240,20 +273,17 @@ public class QuestManagerService {
             return null;
         }
 
-        // 🎯 阶段 2：强制纠正焦点
-        inputProvider.clickLeft(taskLabelPoint.x, taskLabelPoint.y, 100);
-        sleep(500);
+        executeSafeClick(taskLabelPoint.x, taskLabelPoint.y, 20, 5, DELAY_NORMAL);
 
-        // 💸 阶段 3：调用 OCR 提纯右侧
         int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X_RIGHT, OFFSET_TO_EDGE_Y, DETAIL_W_RIGHT, DETAIL_H);
         String rightScanPath = "images/temp/quest_detail_scan.png";
-        if (!tracker.captureToFile("任务详情扫描", rightScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-            inputProvider.pressAltQ();
-            return null;
-        }
+        // if (!tracker.captureToFile("任务详情扫描", rightScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
+        //     inputProvider.pressAltQ();
+        //     return null;
+        // }
 
         inputProvider.pressAltQ();
-        sleep(500);
+        sleep(DELAY_NORMAL);
 
         List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResults(rightScanPath);
         if (results == null || results.isEmpty()) return null;
@@ -280,9 +310,46 @@ public class QuestManagerService {
         return null;
     }
 
-    private Point findFenXiangAnchor() {
-        return coordinateHelper.findImageAbsoluteCoordinate(ANCHOR_TEMPLATE_PATH, 0.8);
+    // =========================================================================================
+    // 🧰 DRY 共用工具库 (底层辅助)
+    // =========================================================================================
+
+    /**
+     * 获取面板锚点，如果未打开则自动按 Alt+Q 尝试呼出
+     */
+    private Point ensurePanelOpenAndGetAnchor() {
+        Point anchor = findFenXiangAnchor();
+        if (anchor == null) {
+            log.info("🪟 [面板调控] 任务面板未开启，尝试 Alt+Q 呼出...");
+            inputProvider.pressAltQ();
+            sleep(DELAY_LONG);
+            anchor = findFenXiangAnchor();
+        }
+        return anchor;
     }
 
-    private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
+    /**
+     * 封装带随机漂移的拟人化点击，并强制包含后续动作等待
+     */
+    private void executeSafeClick(int baseX, int baseY, int randRadiusX, int randRadiusY, long postDelayMs) {
+        Point safePt = coordinateHelper.getRandomizedPoint(baseX, baseY, randRadiusX, randRadiusY);
+        inputProvider.clickLeft(safePt.x, safePt.y, 100);
+        sleep(postDelayMs);
+    }
+
+    /**
+     * 简化关闭面板并返回结果的操作
+     */
+    private <T> T closePanelAndReturn(T returnValue) {
+        inputProvider.pressAltQ();
+        return returnValue;
+    }
+
+    private Point findFenXiangAnchor() {
+        return coordinateHelper.findImageAbsoluteCoordinate(ANCHOR_TEMPLATE_PATH, THRESHOLD_NORMAL);
+    }
+
+    private void sleep(long ms) {
+        try { Thread.sleep(ms); } catch (Exception ignored) {}
+    }
 }

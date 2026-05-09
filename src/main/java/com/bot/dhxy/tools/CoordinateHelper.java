@@ -204,4 +204,33 @@ public class CoordinateHelper {
 
         return new int[]{startX, startY, endX, endY};
     }
+
+    // ==========================================
+    // 🎯 新增：指定区域找图 (ROI 局部雷达)
+    // ==========================================
+    public Point findImageInRegion(String templatePath, int[] rect, double matchRate) {
+        if (!tracker.bringWindowToFront()) {
+            log.warn("❌ [局部雷达] 游戏窗口无法置顶！");
+            return null;
+        }
+
+        String roiPath = "images/temp/roi_scan.png";
+        // rect[0]=startX, rect[1]=startY, rect[2]=endX, rect[3]=endY
+        if (!tracker.captureToFile("ROI-Scan", roiPath, rect[0], rect[1], rect[2], rect[3])) {
+            return null;
+        }
+
+        double[] result = ImageFinder.find(roiPath, templatePath, matchRate);
+
+        if (result != null && result.length >= 2) {
+            // 参考您在 P2 打怪阶段写的最稳计算公式：局部偏移直接加到矩形起点上
+            int absoluteX = rect[0] + (int) Math.round(result[0]);
+            int absoluteY = rect[1] + (int) Math.round(result[1]);
+
+            log.info("✅ [局部雷达] 在指定区域内锁定目标 [{}] 中心点，绝对坐标:({},{})", templatePath, absoluteX, absoluteY);
+            return new Point(absoluteX, absoluteY);
+        }
+
+        return null;
+    }
 }

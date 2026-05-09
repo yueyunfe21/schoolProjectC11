@@ -2,7 +2,8 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.service.*;
-import com.bot.dhxy.model.QuestTargetInfo;
+import com.bot.dhxy.service.QuestManagerService.PathingResult; // 🌟 引入咱们定义的三态枚举
+import com.bot.dhxy.tools.GameStateUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,7 @@ public class FiveRingTask {
     private final PlayerStateService playerStateService;
     private final QuestManagerService questManager;
     private final BattleRadarService battleRadarService;
+    private final BagService bagService; // 🌟 注入您心心念念的万能包裹引擎
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -28,161 +30,136 @@ public class FiveRingTask {
     private final int npc_coor_x = 87;
     private final int npc_coor_y = 174;
 
-    private static final String WUHUAN_TASK_IMAGE = "wuhuang_unselected.png"; // 记得去游戏里截个图放在 images/template/ 下
-
     // 🌟 首领特调的常量，打死不能删！
     private static final int TUNE_X = -10;
     private static final int TUNE_Y = 0;
-    private static final String KEY_ITEM_NAME = "/wuhuan/shoe.png";
+    // 稍微修剪了开头的 "/" 以适配 ImageFinder 的相对路径要求
+    private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 
-    private static final int MAX_RETRY = 5; // 全局最大允许重试次数
-
+    private static final int MAX_RETRY = 5; // 用于接初始任务的兜底
+    private final GameStateUtil gameStateUtil;
 
     public void execute() {
         log.info("====================================");
-        log.info("🔥 启动【全自动五环印钞机】(高容错重试版)");
+        log.info("🔥 启动【全自动五环印钞机】(纯享版: 无状态响应式架构)");
         log.info("====================================");
 
         playerStateService.syncAll();
         context.setBotStatus(GameContext.BotStatus.RUNNING);
 
         // ==========================================
-        // 阶段一：死磕墨意 (接取总任务)
+        // 🌟 战前准备：情报收集
         // ==========================================
-        log.info("▶️ 阶段一：前往长安寻找墨意接任务...");
-        if (!setupInitialTask()) {
-            log.error("❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！");
-            context.setBotStatus(GameContext.BotStatus.ERROR);
-            return;
+        log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
+        // 使用只读模式寻找鞋子，绝不点击！
+        Integer shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
+
+        if (shoeBagIndex != null) {
+            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", shoeBagIndex + 1);
+        } else {
+            log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
         }
 
-        // 接完任务，进入核验状态
-        context.setCurrentActionState(GameContext.ActionState.TASK_VERIFYING);
-        sleep(2000);
+        // ==========================================
+        // ==========================================
+        // 🌟 阶段一：中途接管侦测 (热启动)
+        // ==========================================
+        log.info("▶️ 阶段一：正在进行【中途接管】侦测...");
+
+        boolean isTaskAlreadyRunning = questManager.activateTaskIfPresent("wuhuan");
+        if (isTaskAlreadyRunning) {
+            log.info("✅ 侦测到五环任务已经在列表中！跳过起始 NPC 交涉，直接切入无缝接管模式！");
+        } else {
+            log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
+            if (!setupInitialTask()) {
+                log.error("❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！");
+                context.setBotStatus(GameContext.BotStatus.ERROR);
+                return;
+            }
+            sleep(2000); // 等待任务刷新到 Alt+Q 面板
+        }
 
         // ==========================================
-        // 阶段二：无限跑环流水线 (严格 Switch 状态机)
+        // 阶段二：无限跑环流水线 (降维打击：纯响应式行为树)
         // ==========================================
-        log.info("▶️ 阶段二：启动状态机驱动跑环引擎...");
+        // ... (下方的 while 循环代码完全不用动) ...
 
-        int emptyTaskCount = 0;
-        int actionRetryCount = 0; // 🌟 动作重试计数器
-        QuestTargetInfo currentTarget = null; // 当前目标情报
+        // ==========================================
+        // 阶段二：无限跑环流水线 (降维打击：纯响应式行为树)
+        // ==========================================
+        log.info("▶️ 阶段二：启动无状态响应式跑环引擎...");
+
+        int finishConfirmCount = 0; // 专属防抖计数器
 
         while (context.getBotStatus() == GameContext.BotStatus.RUNNING) {
 
-            // 🛡️ 战时管制：如果在打架，原地待命！
+            // 🥇 绝对优先级 1：战斗挂起 (雷达发现交火，立刻原地装死)
             if (battleRadarService.checkAndSyncCombatState()) {
                 sleep(battleRadarService.getDynamicPollingIntervalMs());
                 continue;
             }
 
-            // 🧠 根据当前大脑的状态，执行对应的动作！(失败不退出，重试！)
-            switch (context.getCurrentActionState()) {
+            // 🥇 绝对优先级 2：跑路挂起 (只要角色在移动，绝对不抢鼠标按 Alt+Q！)
+            // ⚠️ 注意：这里假设您的 playerStateService 中有 isMoving() 方法，如果没有，请换成您对应的移动检测判定。
+            if (gameStateUtil.isMovingByPixelDiff()) {
+                sleep(800); // 让子弹飞一会儿
+                continue;
+            }
 
-                // ------------------------------------------------
-                // 状态 A：情报核验中 (查 Alt+Q)
-                // ------------------------------------------------
-                case TASK_VERIFYING:
-                case FREE:
-                    currentTarget = questManager.fetchCurrentQuestInfo(WUHUAN_TASK_IMAGE);
+            // 🥈 突发层：对话框绞肉机 (彻底干掉原来的 P2 和 INTERACTING 状态)
+            // 这里调用咱们升级后的带情报透传的 handleDialog
+            boolean hasDialogProcessed = dialogService.handleDialog(null, null, KEY_ITEM_NAME, shoeBagIndex);
+            if (hasDialogProcessed) {
+                log.info("💬 成功粉碎了一个对话框！");
+                finishConfirmCount = 0; // 干活了，清零防抖
+                continue; // 对话处理完，立刻进入下一轮查岗
+            }
 
-                    if (currentTarget == null) {
-                        emptyTaskCount++;
-                        if (emptyTaskCount >= 3) {
-                            log.info("🎉 连续 3 次确认任务栏空白，五环任务圆满结束！");
-                            context.setBotStatus(GameContext.BotStatus.IDLE);
-                            context.setCurrentActionState(GameContext.ActionState.FREE);
-                            return; // 唯一正常结束的出口
-                        }
-                        log.warn("⚠️ 未读到任务，{} 秒后重试...", emptyTaskCount * 2);
-                        sleep(2000);
-                    } else {
-                        // 成功拿到情报，清零计数器，流转到寻路状态！
-                        emptyTaskCount = 0;
-                        actionRetryCount = 0;
-                        log.info("🎯 锁定新目标，准备出发...");
-                        context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
-                    }
-                    break;
+            // --- 走到这里，说明角色肯定像个木头人一样站着发呆，没打架、没跑路、没弹窗 ---
 
-                // ------------------------------------------------
-                // 状态 B：寻路赶路中
-                // ------------------------------------------------
-                case NAVIGATING:
-                    if (currentTarget == null) {
-                        context.setCurrentActionState(GameContext.ActionState.TASK_VERIFYING); // 异常兜底
-                        break;
-                    }
+            // 🥉 业务层 1：找怪 (优先执行 P3 打怪)
+            PathingResult p3Result = questManager.triggerWuHuanNativePathingP2();
+            if (p3Result == PathingResult.SUCCESS) {
+                finishConfirmCount = 0;
+                log.info("🏃 锁定怪物，引擎轰鸣，全速追击！");
+                sleep(2000); // 稍微睡一下等角色起步，下一次循环就会被 isMoving() 完美接管
+                continue;
+            }
 
-                    boolean navSuccess = navigationService.navigateToNPC(
-                            currentTarget.getMapName(), currentTarget.getTargetX(), currentTarget.getTargetY());
-
-                    if (navSuccess) {
-                        // 寻路成功，流转到交互状态！
-                        actionRetryCount = 0;
-                        context.setCurrentActionState(GameContext.ActionState.INTERACTING);
-                    } else {
-                        // 🌟 寻路失败：死磕重试！不准跳过！
-                        actionRetryCount++;
-                        log.warn("⚠️ 寻路卡住失败 (重试 {}/{})", actionRetryCount, MAX_RETRY);
-                        if (actionRetryCount >= MAX_RETRY) {
-                            log.error("❌ 寻路彻底卡死，触发防卡死回城重置机制...");
-                            // TODO: 可以在这里加一个使用飞行符回长安的兜底操作
-                            context.setCurrentActionState(GameContext.ActionState.TASK_VERIFYING); // 重新读一次任务确认下
-                        }
-                    }
-                    break;
-
-                // ------------------------------------------------
-                // 状态 C：交互点 NPC
-                // ------------------------------------------------
-                case INTERACTING:
-                    if (currentTarget == null) break;
-
-                    boolean clickSuccess = npcClickService.clickNpcSmart(
-                            context.getMe(), currentTarget.getMapName(),
-                            currentTarget.getTargetX(), currentTarget.getTargetY(),
-                            currentTarget.getNpcName(), 0, 0);
-
-                    if (clickSuccess) {
-                        // 🌟 点击成功，处理对话框，流转回核验状态！
-                        //dialogService.handleDialog(null, null);
-                        actionRetryCount = 0;
-                        log.info("✨ 当前环节动作结束，等待战术核验...");
-                        context.setCurrentActionState(GameContext.ActionState.TASK_VERIFYING);
-                        sleep(2000);
-                    } else {
-                        // 🌟 点击失败：死磕重试！可能是被人挡住了！
-                        actionRetryCount++;
-                        log.warn("⚠️ 无法点中目标 NPC [{}] (重试 {}/{})", currentTarget.getNpcName(), actionRetryCount, MAX_RETRY);
-                        sleep(1500); // 等一下，可能挡住 NPC 的玩家走开了
-
-                        if (actionRetryCount >= MAX_RETRY) {
-                            log.error("❌ NPC 彻底点不到，强行退回寻路状态稍微走动一下...");
-                            actionRetryCount = 0;
-                            // 退回寻路状态，让寻路模块重新走两步
-                            context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
-                        }
-                    }
-                    break;
-
-                default:
-                    sleep(1000);
-                    break;
+            // 🥉 业务层 2：找怪失败，那肯定是找人 (执行 P1 找替身)
+            PathingResult p1Result = questManager.triggerWuHuanNativePathingP1();
+            if (p1Result == PathingResult.SUCCESS) {
+                finishConfirmCount = 0;
+                log.info("🏃 锁定下一环 NPC，全速前往交涉！");
+                sleep(2000); // 稍微睡一下等起步
+                continue;
+            } else if (p1Result == PathingResult.FINISHED) {
+                // 🏁 收工防抖层
+                finishConfirmCount++;
+                if (finishConfirmCount >= 3) {
+                    log.info("🎉 连续 3 次确认任务栏清空，五环任务圆满结束！");
+                    context.setBotStatus(GameContext.BotStatus.IDLE);
+                    context.setCurrentActionState(GameContext.ActionState.FREE);
+                    return; // 唯一正常结束的出口
+                }
+                log.warn("⚠️ 面板未发现五环，可能是延迟，{} 秒后进行第 {} 次最终核实...",
+                        finishConfirmCount * 2, finishConfirmCount + 1);
+                sleep(2000);
+            } else {
+                // p1Result == UI_ERROR (界面卡了，锚点没找到)
+                sleep(1000);
             }
         }
         log.info("🎉 印钞机停机！");
     }
 
     /**
-     * 独立封装的接取初始任务逻辑 (自带死磕重试机制)
+     * 独立封装的接取初始任务逻辑 (自带死磕重试机制，保持不变)
      */
     private boolean setupInitialTask() {
         int retry = 0;
         while (retry < MAX_RETRY) {
             // 1. 寻路
-            context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
             if (!navigationService.navigateToNPC(targetMapName, npc_coor_x, npc_coor_y)) {
                 log.warn("⚠️ 无法到达墨意身边 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
@@ -191,7 +168,6 @@ public class FiveRingTask {
             }
 
             // 2. 点击
-            context.setCurrentActionState(GameContext.ActionState.INTERACTING);
             if (!npcClickService.clickNpcSmart(context.getMe(), targetMapName, npc_coor_x, npc_coor_y, targetNPCName, TUNE_X, TUNE_Y)) {
                 log.warn("⚠️ 无法点中墨意 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
@@ -200,6 +176,7 @@ public class FiveRingTask {
             }
 
             // 3. 对话
+            // ⚠️ 这里调用您 DialogService 里原本保留的 acceptTask 快捷方法即可
             dialogService.acceptTask(DIALOG_START_OFFSET_X, DIALOG_START_OFFSET_Y);
             log.info("✅ 成功接取五环总任务！");
             return true;
