@@ -287,7 +287,7 @@ public class NavigationService {
     }
 
     private boolean isWorldMapOpened() {
-        Point titlePoint = coordinateHelper.findImageAbsoluteCoordinate("images/template/worldmap_title.png", 0.8);
+        Point titlePoint = coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8);
         return titlePoint != null;
     }
 

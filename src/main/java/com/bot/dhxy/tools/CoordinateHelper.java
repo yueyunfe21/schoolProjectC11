@@ -233,4 +233,29 @@ public class CoordinateHelper {
 
         return null;
     }
+
+    public Point findGreenTextInRegion(String templatePath, int[] rect, double matchRate) {
+        if (!tracker.bringWindowToFront()) {
+            log.warn("❌ [局部雷达] 游戏窗口无法置顶！");
+            return null;
+        }
+        String rawScanPath = "images/temp/tem_dialog_cut.png";
+
+        if (!tracker.captureToFile("临时截图处理黑白", rawScanPath, rect[0], rect[1], rect[2], rect[3])) {
+            return null;
+        }
+        String washedScanPath = "images/temp/tem_dialog_cut_washed.png";
+        ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
+
+        double[] result = ImageFinder.find(washedScanPath, templatePath, matchRate);
+        if (result != null && result.length >= 2) {
+            // 参考您在 P2 打怪阶段写的最稳计算公式：局部偏移直接加到矩形起点上
+            int absoluteX = rect[0] + (int) Math.round(result[0]);
+            int absoluteY = rect[1] + (int) Math.round(result[1]);
+
+            log.info("✅ [局部雷达] 在洗图区域内匹配到已经洗好的绿色文字 [{}] 中心点，绝对坐标:({},{})", templatePath, absoluteX, absoluteY);
+            return new Point(absoluteX, absoluteY);
+        }
+        return null;
+    }
 }

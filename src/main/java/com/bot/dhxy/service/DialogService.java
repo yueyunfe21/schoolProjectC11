@@ -88,7 +88,8 @@ public class DialogService {
 
                 // 🌟 寻物给予侦测：把页码情报透传下去！
                 if (itemToGive != null) {
-                    Point giveTextPt = coordinateHelper.findImageAbsoluteCoordinate(OPTION_GIVE_TEXT, 0.85);
+                    Point giveTextPt = coordinateHelper.findGreenTextInRegion(OPTION_GIVE_TEXT,
+                            getSmallDialogRect(), 0.85);
                     if (giveTextPt != null) {
                         log.info("🎯 [对话框总线] 发现【送你啦】特殊选项！携带包裹情报[{}]呼叫给予引擎...", knownBagIndex);
 
@@ -258,6 +259,10 @@ public class DialogService {
 
     private int[] getDialogRect() {
         return coordinateHelper.getScaledRect(DIALOG_LARGE_X, DIALOG_LARGE_Y, DIALOG_LARGE_W, DIALOG_LARGE_H);
+    }
+
+    private int[] getSmallDialogRect() {
+        return coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, DIALOG_SMALL_H);
     }
 
     private void clickAbsolutePoint(int x, int y) {

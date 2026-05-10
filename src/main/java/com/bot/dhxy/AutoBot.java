@@ -9,6 +9,7 @@ import com.bot.dhxy.service.BagService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.task.FiveRingTask;
+import com.bot.dhxy.tools.ImagePreprocessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -31,6 +32,11 @@ public class AutoBot implements CommandLineRunner {
     private final BagService bagService;
     private final QuestManagerService questManagerService;
 
+    private static final int DIALOG_SMALL_X = 250;
+    private static final int DIALOG_SMALL_Y = 345;
+    private static final int DIALOG_SMALL_W = 529;
+    private static final int DIALOG_SMALL_H = 143;
+
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
         builder.headless(false).run(args);
@@ -44,21 +50,30 @@ public class AutoBot implements CommandLineRunner {
 
 
         boolean success = tracker.locateWindow();
+        boolean ready = tracker.bringWindowToFront();
+        int[] rightRect = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, DIALOG_SMALL_H);
+        String rawScanPath = "images/temp/tem_dialog_cut.png";
+
+        if (!tracker.captureToFile("临时截图处理黑白", rawScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
+            return;
+        }
+
+        String washedScanPath = "images/temp/tem_dialog_cut_washed.png";
+        ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
 
         if (success) {
             System.out.println("🎉 太棒了！Win32 API 成功抓到了大话西游的基址！");
-            boolean ready = tracker.bringWindowToFront();
+            //boolean ready = tracker.bringWindowToFront();
             if (!ready) {
                 System.out.println("❌ 无法唤醒游戏，停止任务。");
                 return;
             }
-            testTaskSelected();
             // ==========================================
             // 🎯 首领专属：洗图匹配沙盒测试专场！
             // ==========================================
 
             // ⚠️ 测试阶段，把主流程注释掉，专心看洗图结果
-             //fiveRingTask.execute();
+            fiveRingTask.execute();
 
         } else {
             System.err.println("❌ 定位失败，请确认你的大话西游没被最小化，且 GAME_WINDOW_KEYWORD 填对了！");

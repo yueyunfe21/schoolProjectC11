@@ -53,7 +53,8 @@ public class QuestManagerService {
             "images/template/wuhuan/p2_guanpian.png",
             "images/template/wuhuan/p2_daohaozei.png",
             "images/template/wuhuan/p2_wuchi.png",
-            "images/template/wuhuan/p2_shiyinggui.png"
+            "images/template/wuhuan/p2_shiyinggui.png",
+            "images/template/wuhuan/p2_xie.png"
     };
 
     public enum PathingResult { SUCCESS, FINISHED, UI_ERROR }
@@ -124,9 +125,9 @@ public class QuestManagerService {
         int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X_RIGHT, OFFSET_TO_EDGE_Y, DETAIL_W_RIGHT, DETAIL_H);
         String rawScanPath = "images/temp/p2_right_panel_scan_raw.png";
 
-//        if (!tracker.captureToFile("P2右侧扫描", rawScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-//            return closePanelAndReturn(PathingResult.UI_ERROR);
-//        }
+        if (!tracker.captureToFile("P2右侧扫描", rawScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
+            return closePanelAndReturn(PathingResult.UI_ERROR);
+        }
 
         String washedScanPath = "images/temp/p2_right_panel_scan_washed.png";
         ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
@@ -277,10 +278,10 @@ public class QuestManagerService {
 
         int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_TO_EDGE_X_RIGHT, OFFSET_TO_EDGE_Y, DETAIL_W_RIGHT, DETAIL_H);
         String rightScanPath = "images/temp/quest_detail_scan.png";
-        // if (!tracker.captureToFile("任务详情扫描", rightScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-        //     inputProvider.pressAltQ();
-        //     return null;
-        // }
+         if (!tracker.captureToFile("任务详情扫描", rightScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
+             inputProvider.pressAltQ();
+             return null;
+         }
 
         inputProvider.pressAltQ();
         sleep(DELAY_NORMAL);
