@@ -4,6 +4,7 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -25,6 +26,11 @@ public class NavigationService {
     private static final int DEFAULT_LOGICAL_COORDINATE = Integer.MIN_VALUE;
     private static final int MAP_SEARCH_RECT_WIDTH = 392;
     private static final int MAP_SEARCH_RECT_HEIGHT = 242;
+    private static double THRESHOLD_NORMAL = 0.8;
+    private static final int MAP_POPUP_RECT_X_OFFSET = 278;
+    private static final int MAP_POPUP_RECT_Y_OFFSET = 595;
+    private static final int MAP_POPUP_RECT_WIDTH = 406;
+    private static final int MAP_POPUP_RECT_HEIGHT = 137;
 
     private final BotProperties config;
     private final GameContext context;
@@ -43,11 +49,14 @@ public class NavigationService {
     private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
     private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
 
+
     public boolean navigateToNPC(String targetMapName, int targetX, int targetY){
         if (!navigateToMap(targetMapName)) {
             return false;
         }
-        return navigateInCurrentMap(targetX, targetY);
+        boolean result = navigateInCurrentMap(targetX, targetY);
+        uiCleanerService.cleanUpAll();
+        return result;
     }
 
     /**
@@ -164,7 +173,6 @@ public class NavigationService {
                 me.setCurrentMapName(locationInfo.mapName);
                 if (targetMapName.equals(locationInfo.mapName)) {
                     log.info("[导航] 成功抵达目标地图: [{}]", targetMapName);
-                    uiCleanerService.cleanUpAll();
                     return true;
                 }
             }
@@ -301,6 +309,53 @@ public class NavigationService {
                 return;
             }
         }
+    }
+
+    /**
+     * 🗺️ 初始化检测：确保小地图的“点任务追踪不弹小地图”已被勾选
+     */
+    public void ensureMapTrackingOption() {
+        log.info("🔍 正在检查小地图追踪选项状态...");
+        // 1. 打开小地图
+        inputProvider.pressAlt1();
+        sleepInterruptible(400);
+        // 2. 侦测 A：是否【已经勾选】？
+        String checkedTemplate = "images/template/map/checkbox_checked.png";
+        int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
+                MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
+
+        // 🌟 核心修复：使用极其严苛的 0.95 阈值！逼迫雷达分辨出那个微小的白色“√”
+        double STRICT_THRESHOLD = 0.95;
+        Point checkedRes = coordinateHelper.findImageInRegion(checkedTemplate, rect, STRICT_THRESHOLD);
+
+        if (checkedRes != null) {
+            log.info("✅ 【点任务追踪不弹小地图】已是开启状态！无需操作，准备退出...");
+            inputProvider.pressAlt1();
+            return;
+        }
+
+        // 3. 侦测 B：是否【未勾选】？
+        String uncheckedTemplate = "images/template/map/checkbox_unchecked.png";
+        Point uncheckedRes = coordinateHelper.findImageInRegion(uncheckedTemplate, rect, STRICT_THRESHOLD);
+
+        if (uncheckedRes != null) {
+            log.warn("⚠️ 发现选项未勾选！正在执行物理点击...");
+
+            // ImageFinder 返回的是模板中心点，只要您截的图包含方框，点中心大概率能触发
+            // 为了绝对稳妥，您可以往左侧方框的位置稍微偏移几个像素
+
+            inputProvider.clickLeft(uncheckedRes.x - 13, uncheckedRes.y, 150);
+
+            // 给游戏引擎半秒钟的时间来渲染那个白色的“√”
+            try { Thread.sleep(500); } catch (Exception ignored) {}
+
+            log.info("✅ 勾选动作完成！准备退出...");
+            inputProvider.pressAlt1();
+            return;
+        }
+
+        // 4. 彻底没找到（可能没打开小地图界面）
+        log.error("❌ 屏幕上未发现该选项框！请确认当前是否处于大地图/小地图界面。");
     }
 
     private void closeMapByDoubleRightClick() {

@@ -1,11 +1,9 @@
 package com.bot.dhxy;
 
 import com.bot.dhxy.core.GameClientTracker;
+import com.bot.dhxy.driver.WinApiMouseController;
+import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.AutoGridCalibrator;
-import com.bot.dhxy.service.DialogService;
-import com.bot.dhxy.service.NavigationService;
-import com.bot.dhxy.service.QuestManagerService;
-import com.bot.dhxy.service.BagService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.task.FiveRingTask;
@@ -16,6 +14,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 
+import java.awt.image.BufferedImage;
 import java.io.File;
 
 @SpringBootApplication
@@ -30,12 +29,15 @@ public class AutoBot implements CommandLineRunner {
     private final NavigationService navigationService;
     private final DialogService dialogService;
     private final BagService bagService;
+    private final LocationVisionService locationVisionService;
     private final QuestManagerService questManagerService;
+    private final BattleRadarService battleRadarService;
 
     private static final int DIALOG_SMALL_X = 250;
     private static final int DIALOG_SMALL_Y = 345;
     private static final int DIALOG_SMALL_W = 529;
     private static final int DIALOG_SMALL_H = 143;
+    private final WinApiMouseController winApiMouseController;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -47,23 +49,17 @@ public class AutoBot implements CommandLineRunner {
         System.out.println("🚀 Spring 容器装配完毕！准备测试底层的 Win32 窗口雷达...");
         Thread.sleep(1000);
 
-
-
         boolean success = tracker.locateWindow();
-        boolean ready = tracker.bringWindowToFront();
-        int[] rightRect = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, DIALOG_SMALL_H);
-        String rawScanPath = "images/temp/tem_dialog_cut.png";
 
-        if (!tracker.captureToFile("临时截图处理黑白", rawScanPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-            return;
-        }
-
-        String washedScanPath = "images/temp/tem_dialog_cut_washed.png";
-        ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
-
+        navigationService.ensureMapTrackingOption();
+        //tracker.bringWindowToFront();
+        //tracker.testBackgroundAlt8();
+        //testbattle();
+        //battleRadarService.checkAndSyncCombatState();
+        //testStoryDialog();
         if (success) {
             System.out.println("🎉 太棒了！Win32 API 成功抓到了大话西游的基址！");
-            //boolean ready = tracker.bringWindowToFront();
+            boolean ready = tracker.bringWindowToFront();
             if (!ready) {
                 System.out.println("❌ 无法唤醒游戏，停止任务。");
                 return;
@@ -133,5 +129,36 @@ public class AutoBot implements CommandLineRunner {
 
     }
 
+    public void testStoryDialog(){
+        BufferedImage frame = ImagePreprocessor.pathToBufferedImage("images/temp/story_scan.png");
+        if (frame == null) return;
+
+        // 🌟 换用带有【腐蚀滤网】的测算器，彻底无视白衣服和雪地的干扰！
+        int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame);
+        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame);
+        frame.flush();
+
+        int totalTextPixels = thinWhiteCount + greenCount;
+        log.info("thinWhiteCount: {}", thinWhiteCount);
+        log.info("greenCount: {}", greenCount);
+        // 经过腐蚀过滤后，剩下的绝对是纯净的文字，不再有胖白色的干扰
+        log.info("totalTextPixels: {}", totalTextPixels);
+    }
+
+    public void testbattle(){
+        tracker.bringWindowToFront();
+        tracker.updateGlobalVision();
+        String path = "images/temp/latest_vision.png";
+        BufferedImage frame = ImagePreprocessor.pathToBufferedImage(path);
+        if (frame == null) return;
+
+        // 🌟 换用带有【腐蚀滤网】的测算器，彻底无视白衣服和雪地的干扰！
+        int greenCount = ImagePreprocessor.countThinWhitePixelsHSV(frame);
+        frame.flush();
+
+
+        log.info("greenCount: {}", greenCount);
+
+    }
 
 }

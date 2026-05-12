@@ -13,7 +13,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired; // 🌟 新增引入
 import org.springframework.context.annotation.Lazy; // 🌟 新增引入
 import org.springframework.stereotype.Component;
-
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.WPARAM;
+import com.sun.jna.platform.win32.WinDef.LPARAM;
 import java.awt.image.BufferedImage;
 
 @Component
@@ -51,6 +53,10 @@ public class GameClientTracker {
     public boolean updateGlobalVision() {
         if (!checkBaseAddress()) return false;
 
+        if (!bringWindowToFront()) {
+            System.out.println("❌ 无法唤醒游戏，停止任务。");
+            return false;
+        }
         int x1 = windowBaseX;
         int y1 = windowBaseY;
         int x2 = x1 + WINDOW_WIDTH;
@@ -168,5 +174,30 @@ public class GameClientTracker {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    public void testBackgroundAlt8() {
+        if (this.gameHwnd == null) {
+            System.out.println("❌ gameHwnd 为空，请先执行 locateWindow() !");
+            return;
+        }
+
+        System.out.println("🎯 直接使用缓存的句柄投递后台 Alt+8...");
+
+        int WM_SYSKEYDOWN = 0x0104;
+        int WM_SYSKEYUP = 0x0105;
+        int VK_8 = 0x38;
+
+        // 构造 lParam 欺骗系统 Alt 键被按下了
+        // 🌟 换成 0x09！真正物理键盘的 8！
+        long lParamDown = (1 << 29) | (0x09 << 16) | 1;
+        long lParamUp = (1L << 31) | (1 << 30) | (1 << 29) | (0x09 << 16) | 1;
+
+        // 📩 绕过屏幕，直接塞进信箱 (注意：这里完全没有调用 SetForegroundWindow！)
+        User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
+        try { Thread.sleep(50); } catch (InterruptedException e) { }
+        User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
+
+        System.out.println("📩 后台指令投递完毕！");
     }
 }

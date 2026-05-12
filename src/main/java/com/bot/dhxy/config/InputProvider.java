@@ -20,5 +20,7 @@ public interface InputProvider {
     void pasteText(String text);
     void typeTextUnicode(String text);
     void scrollDown(int clicks);
+    void pressAlt8();
+    void dragAndDrop(int startX, int startY, int endX, int endY);
     void scrollUp(int clicks);
 }

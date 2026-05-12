@@ -20,7 +20,7 @@ public class GiveItemService {
     private final CoordinateHelper coordinateHelper;
     private final BagService bagService; // 🌟 注入万能包裹引擎
 
-    private static final String BTN_GIVE_TEMPLATE = "images/template/btn_give.png";
+    private static final String BTN_GIVE_TEMPLATE = "images/template/300huan/btn_give.png";
 
     public boolean executeGive(String targetItemTemplate, Integer knownBagIndex) {
         log.info("🎁 [给予流程] 界面已就绪，呼叫底层包裹引擎搜索: [{}]", targetItemTemplate);

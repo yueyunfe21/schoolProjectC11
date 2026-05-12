@@ -68,7 +68,7 @@ public class AutoGridCalibrator {
      * 核心动作：同时获取逻辑坐标和物理坐标
      */
     private CalibPoint capturePoint(PlayerCharacter player) {
-        tracker.bringWindowToFront();
+
         tracker.updateGlobalVision();
 
         // 获取逻辑坐标 (调你的左上角 OCR)

@@ -46,9 +46,7 @@ public class UICleanerService {
         }
 
         // 2. 查对话框
-        if (dialogService.detectDialogType() != DialogService.DialogType.NONE) {
-            log.info("🧹 [UI清理] 发现残留【NPC对话框】，执行强制关闭...");
-            forceCloseDialog();
+        if (forceCloseDialog()) {
             needWait = true;
         }
 
@@ -128,7 +126,20 @@ public class UICleanerService {
     /**
      * 💬 专属的“强杀对话框”逻辑，不掺杂任何找路代码
      */
-    private void forceCloseDialog() {
+    public boolean forceCloseDialog() {
+        DialogService.DialogType type = dialogService.detectDialogType();
+        if (type == DialogService.DialogType.NONE) {
+            return false;
+        }
+
+        if (type == DialogService.DialogType.STORY) {
+            log.info("🧹 [UI清理] 发现纯剧情对话框，执行快速跳过...");
+            dialogService.fastClickStoryDialog();
+            return true;
+        }
+
+        log.info("🧹 [UI清理] 发现选项对话框，执行 OCR 关键词扫描并强制关闭...");
+
         int[] dialogRect = coordinateHelper.getScaledRect(250, 312, 529, 208);
         String imgPath = "images/temp/dialog_close_scan.png";
         tracker.captureToFile("扫除对话框", imgPath, dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
@@ -143,7 +154,7 @@ public class UICleanerService {
                 for (TextRecognizer.OcrWordResult word : allWords) {
                     if (word.getText().contains(keyword)) {
                         clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY());
-                        return;
+                        return true;
                     }
                 }
             }
@@ -151,6 +162,7 @@ public class UICleanerService {
         // 兜底中心点击
         log.warn("🛡️ [UI清理] 对话框未找到关闭词，触发中心点击兜底！");
         clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2, dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2);
+        return true;
     }
 
     private void clickAbsolutePoint(int x, int y) {

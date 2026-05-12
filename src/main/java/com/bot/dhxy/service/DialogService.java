@@ -140,6 +140,7 @@ public class DialogService {
 
     public DialogType detectDialogType() {
         // 🛡️ 第 0 关：平滑度门卫 (大区探测)
+        sleep(700 + random.nextInt(100));
         if (!hasDialogMask()) {
             // 背景太粗糙（比如草地、砖头），绝对没有对话框，直接省下后续的洗图算力
             return DialogType.NONE;
@@ -208,7 +209,7 @@ public class DialogService {
         int totalTextPixels = thinWhiteCount + greenCount;
 
         // 经过腐蚀过滤后，剩下的绝对是纯净的文字，不再有胖白色的干扰
-        boolean hasText = totalTextPixels > 100;
+        boolean hasText = totalTextPixels > 200;
 
         if (hasText) {
             log.debug("📝 [雷达] 上半区洗出细丝文字: 白={}, 绿={}, 确认剧情！", thinWhiteCount, greenCount);
@@ -218,13 +219,14 @@ public class DialogService {
     }
 
 
-    private void fastClickStoryDialog() {
+    public void fastClickStoryDialog() {
+        sleep(600 + random.nextInt(100));
         int[] rect = getDialogRect();
         double scale = coordinateHelper.getScaleRatio();
         int cx = rect[0] + (rect[2] - rect[0]) / 2;
         int cy = rect[3] - (int)Math.round(40 / scale);
         clickAbsolutePoint(cx + randomOffset(30), cy + randomOffset(10));
-        sleep(400 + random.nextInt(100));
+        sleep(600 + random.nextInt(100));
     }
 
     private boolean processOptionsWithOCR(String targetKeyword) {
@@ -249,7 +251,7 @@ public class DialogService {
 
     //reminder for needing refactoy
     private boolean doFallbackClick(int[] rect, String reason) {
-        log.warn("🛡️ [兜底] {} -> 盲选第一个选项", reason);
+        log.warn("🛡️ [兜底] {} ->盲选第一个选项", reason);
         double scale = coordinateHelper.getScaleRatio();
         int cx = rect[0] + (rect[2] - rect[0]) / 2;
         int cy = rect[3] - (int)Math.round(100 / scale);

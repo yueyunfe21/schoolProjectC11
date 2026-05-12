@@ -16,9 +16,9 @@ import java.io.File;
 @RequiredArgsConstructor
 public class GameStateUtil {
 
-    private static final long MOVE_DETECT_WINDOW_MS = 3000;
-    private static final long MOVE_SAMPLE_INTERVAL_MS = 250;
-    private static final double MOVE_HIT_RATIO_THRESHOLD = 0.2; // 1/5
+    private static final long MOVE_DETECT_WINDOW_MS = 2500;
+    private static final long MOVE_SAMPLE_INTERVAL_MS = 500;
+    private static final double MOVE_HIT_RATIO_THRESHOLD = 0.25; // 1/5
     private static final double MOVE_DIFF_RATIO = 0.05; // 默认两帧匹配阈值
 
     private final GameClientTracker tracker;

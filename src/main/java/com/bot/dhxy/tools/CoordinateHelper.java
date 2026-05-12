@@ -173,14 +173,23 @@ public class CoordinateHelper {
     // ==========================================
 
     public Point findImageAbsoluteCoordinate(String templatePath, double matchRate) {
-        if (!tracker.bringWindowToFront()) {
-            log.warn("❌ [坐标计算] 游戏窗口无法置顶！");
-            return null;
-        }
-
         tracker.updateGlobalVision();
         String screenPath = GameClientTracker.LATEST_VISION_PATH;
 
+        double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
+
+        if (result != null && result.length >= 2) {
+            int absoluteX = (int) Math.round(result[0] / systemScaleRatio) + tracker.getWindowBaseX();
+            int absoluteY = (int) Math.round(result[1] / systemScaleRatio) + tracker.getWindowBaseY();
+
+            log.info("✅ [坐标雷达] 锁定目标 [{}] 中心点，屏幕绝对坐标:({},{})", templatePath, absoluteX, absoluteY);
+            return new Point(absoluteX, absoluteY);
+        }
+
+        return null;
+    }
+
+    public Point findImageAbsoluteCoordinateByImagePath(String templatePath, String screenPath, double matchRate) {
         double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
 
         if (result != null && result.length >= 2) {

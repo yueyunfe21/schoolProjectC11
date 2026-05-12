@@ -11,6 +11,9 @@ import com.sun.jna.platform.win32.WinUser.INPUT;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinDef.WPARAM;
+import com.sun.jna.platform.win32.WinDef.LPARAM;
 
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
@@ -40,6 +43,8 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_E = 0x12;
     private static final int SCAN_Q = 0x10;
     private static final int SCAN_ENTER = 0x1C;
+    // 把原来的 0x0A 改成 0x09 ！！！
+    private static final int SCAN_8 = 0x09; // 键盘顶排数字 8 的正确硬件扫描码
 
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
@@ -47,6 +52,50 @@ public class WinApiMouseController implements InputProvider {
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
+
+
+
+    @Override
+    public void pressAlt8() {
+        pressAltScan(SCAN_8, "ALT+8");
+    }
+
+    @Override
+    public void dragAndDrop(int startX, int startY, int endX, int endY) {
+        try {
+            // 1. 移动到起点并稳住
+            moveCursorToLogicalPoint(startX, startY);
+            Thread.sleep(200);
+
+            // 2. 狠狠按下左键（不松开）
+            INPUT inputDown = buildMouseInput(FLAG_MOUSE_LEFT_DOWN);
+            sendInput(inputDown);
+            Thread.sleep(300); // 给游戏引擎一点时间反应“已被按住”
+
+            // 🌟 3. 核心修复：平滑滑轨算法 (模拟真人拖拽)
+            int steps = 25; // 把整段距离切成 25 步
+            for (int i = 1; i <= steps; i++) {
+                // 利用线性插值算出现在这一步的落脚点
+                int currentX = startX + (endX - startX) * i / steps;
+                int currentY = startY + (endY - startY) * i / steps;
+
+                moveCursorToLogicalPoint(currentX, currentY);
+                Thread.sleep(15); // 极其短暂的停顿，连起来就是极其丝滑的滑动！
+            }
+
+            // 4. 到达终点，屏住呼吸稳一下，防止惯性漂移
+            Thread.sleep(200);
+
+            // 5. 潇洒松开左键
+            INPUT inputUp = buildMouseInput(FLAG_MOUSE_LEFT_UP);
+            sendInput(inputUp);
+            Thread.sleep(150);
+
+            log.info("🖱️ 物理滑轨拖拽完成：({},{}) -> ({},{})", startX, startY, endX, endY);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
 
     @Override
     public void clickLeft(int x, int y, int delayMs) {
@@ -61,6 +110,7 @@ public class WinApiMouseController implements InputProvider {
             Thread.currentThread().interrupt();
         }
     }
+
 
     @Override
     public void clickRight(int x, int y, int delayMs) {

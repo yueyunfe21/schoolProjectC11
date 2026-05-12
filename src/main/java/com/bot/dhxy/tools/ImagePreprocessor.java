@@ -15,6 +15,7 @@ import java.io.File;
 import org.opencv.core.CvType;
 
 import java.awt.image.DataBufferByte;
+import java.io.IOException;
 
 @Slf4j
 public class ImagePreprocessor {
@@ -217,8 +218,8 @@ public class ImagePreprocessor {
 
         // 2. 提取所有白色 (此时白衣服和白字都在里面)
         // V亮度极高(200-255)，S饱和度极低(0-40)
-        Scalar lowerWhite = new Scalar(0, 0, 200);
-        Scalar upperWhite = new Scalar(180, 40, 255);
+        Scalar lowerWhite = new Scalar(0, 0, 225);
+        Scalar upperWhite = new Scalar(180, 15, 255);
         Mat allWhiteMask = new Mat();
         Core.inRange(hsv, lowerWhite, upperWhite, allWhiteMask);
 
@@ -359,6 +360,23 @@ public class ImagePreprocessor {
             src.release(); hsv.release(); mask.release(); result.release();
         } catch (Exception e) {
             log.error("❌ 极简洗字失败", e);
+        }
+    }
+
+    /**
+     * 将本地图片路径转换为 BufferedImage
+     *
+     * @param imagePath 图片的绝对路径或相对路径
+     * @return BufferedImage 对象，如果读取失败则返回 null
+     */
+    public static BufferedImage pathToBufferedImage(String imagePath) {
+        try {
+            // 核心就是这一句！
+            return ImageIO.read(new File(imagePath));
+        } catch (IOException e) {
+            // 加上咱们的日志捕获，如果路径写错了或者文件不存在，一眼就能看出来
+            log.error("❌ 读取图片失败，找不到文件或格式不支持。路径: {}", imagePath, e);
+            return null;
         }
     }
 }
