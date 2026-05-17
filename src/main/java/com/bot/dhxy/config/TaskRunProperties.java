@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 任务队列启动配置。
@@ -32,4 +33,36 @@ public class TaskRunProperties {
      * 测试模式：只验证任务注册与队列调度，不真正执行任务逻辑。
      */
     private boolean testMode = false;
+
+    /**
+     * 是否在启动前自动初始化游戏窗口。
+     *
+     * 正式运行时应该保持 true。
+     * 后面如果只想测试 UI 或任务队列，可以临时改成 false。
+     */
+    private boolean initGameWindow = true;
+
+    /**
+     * 清洗后的任务编码列表，去掉空白项。
+     */
+    public List<String> getNormalizedTasks() {
+        if (tasks == null || tasks.isEmpty()) {
+            return List.of();
+        }
+        return tasks.stream()
+                .map(String::trim)
+                .filter(task -> !task.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    public boolean hasTasks() {
+        return !getNormalizedTasks().isEmpty();
+    }
+
+    public String toLogText() {
+        return "tasks=" + getNormalizedTasks()
+                + " | loop=" + loop
+                + " | testMode=" + testMode
+                + " | initGameWindow=" + initGameWindow;
+    }
 }
