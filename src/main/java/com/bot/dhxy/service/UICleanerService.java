@@ -36,31 +36,26 @@ public class UICleanerService {
      */
     public void cleanUpAll() {
         log.info("🧹 [UI清理] 开始执行全局 UI 状态大扫除...");
-        boolean needWait = false;
+        boolean cleanedAny = false;
 
-        // 1. 查地图
+        // 1. 查地图 (内部自带等待)
         if (isWorldMapOpened()) {
             log.info("🧹 [UI清理] 发现残留【世界地图】，执行关闭...");
             closeMapByDoubleRightClick();
-            needWait = true;
+            cleanedAny = true;
         }
 
-        // 2. 查对话框
+        // 2. 查对话框 (内部自带等待)
         if (forceCloseDialog()) {
-            needWait = true;
+            cleanedAny = true;
         }
 
-        // 稍微等一下地图和对话框的关闭动画
-        if (needWait) {
-            sleepInterruptible(1000);
-        }
-
-        // 3. 查其他所有带 X 的面板（包裹、帮派、活动等）
+        // 3. 查其他所有带 X 的面板 (包裹、帮派、活动、任务框等，内部自带等待)
         if (closeAllGenericWindows()) {
-            needWait = true;
+            cleanedAny = true;
         }
 
-        if (needWait) {
+        if (cleanedAny) {
             log.info("🧹 [UI清理] 清理完毕，当前界面已干净！");
         } else {
             log.info("🧹 [UI清理] 当前界面非常清爽，无需清理。");
@@ -71,7 +66,6 @@ public class UICleanerService {
      * 🗺️ 检查并关闭世界地图
      */
     private boolean isWorldMapOpened() {
-        // 🌟 直接调用万能雷达，它返回的就是中心点，用来做判定足够了
         return coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8) != null;
     }
 
@@ -79,6 +73,9 @@ public class UICleanerService {
         int closeX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
         int closeY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
         inputProvider.doubleRightClick(closeX, closeY, 150, 500);
+
+        // 🌟 独立挂载等待时间：等待地图关闭动画
+        sleepInterruptible(1000);
     }
 
     /**
@@ -91,24 +88,22 @@ public class UICleanerService {
                 "images/template/x2.png"
         };
 
-        log.info("🧹 [UI清理] 开始扫描通用关闭按钮...");
-
         for (int i = 0; i < 3; i++) {
             boolean foundInThisPass = false;
 
             for (String templatePath : closeButtonTemplates) {
-                // 🌟 直接调用万能雷达，拿到的刚好是 'X' 按钮的正中心，直接可以开火！
                 Point closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinate(templatePath, 0.8);
 
                 if (closeBtnPoint != null) {
-                    log.info("🧹 [UI清理] 发现关闭按钮 [{}], 中心点坐标: {}, 执行点击",
-                            templatePath, closeBtnPoint.x, closeBtnPoint.y);
+                    log.info("🧹 [UI清理] 发现关闭按钮 [{}], 执行点击", templatePath);
 
                     int clickX = closeBtnPoint.x + (random.nextInt(5) - 2);
                     int clickY = closeBtnPoint.y + (random.nextInt(5) - 2);
 
                     inputProvider.clickLeft(clickX, clickY, 150);
-                    sleepInterruptible(500);
+
+                    // 🌟 独立挂载等待时间：点击 X 后等待窗口消失
+                    sleepInterruptible(800);
 
                     foundInThisPass = true;
                     closedAny = true;
@@ -124,7 +119,7 @@ public class UICleanerService {
     }
 
     /**
-     * 💬 专属的“强杀对话框”逻辑，不掺杂任何找路代码
+     * 💬 专属的“强杀对话框”逻辑
      */
     public boolean forceCloseDialog() {
         DialogService.DialogType type = dialogService.detectDialogType();
@@ -135,6 +130,8 @@ public class UICleanerService {
         if (type == DialogService.DialogType.STORY) {
             log.info("🧹 [UI清理] 发现纯剧情对话框，执行快速跳过...");
             dialogService.fastClickStoryDialog();
+            // 🌟 独立挂载等待时间
+            sleepInterruptible(1000);
             return true;
         }
 
@@ -154,14 +151,18 @@ public class UICleanerService {
                 for (TextRecognizer.OcrWordResult word : allWords) {
                     if (word.getText().contains(keyword)) {
                         clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY());
+                        // 🌟 独立挂载等待时间
+                        sleepInterruptible(1000);
                         return true;
                     }
                 }
             }
         }
-        // 兜底中心点击
+
         log.warn("🛡️ [UI清理] 对话框未找到关闭词，触发中心点击兜底！");
         clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2, dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2);
+        // 🌟 独立挂载等待时间
+        sleepInterruptible(1000);
         return true;
     }
 

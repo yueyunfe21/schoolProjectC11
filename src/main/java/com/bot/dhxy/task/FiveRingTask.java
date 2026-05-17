@@ -47,7 +47,7 @@ public class FiveRingTask {
         playerStateService.syncAll();
         context.setBotStatus(GameContext.BotStatus.RUNNING);
         uiCleanerService.cleanUpAll();
-
+        playerStateService.ensureSheYaoXiangActive();
         log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
         Integer shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
 

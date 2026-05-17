@@ -26,6 +26,8 @@ public class BattleRadarService {
     private final GameContext context;
     // 🌟 新增注入：物理外设驱动
     private final InputProvider inputProvider;
+    private final PlayerStateService playerStateService;
+    private final UICleanerService uiCleanerService;
 
     private static final String BATTLE_FLAG_PATH = "images/template/battle/flag_battle.png";
     private static final String ZHAOHUAN_PATH = "images/template/battle/zhaohuan.png";
@@ -129,6 +131,9 @@ public class BattleRadarService {
         }
 
         updateCombatState(false);
+        // 🌟 核心挂载：只要雷达判定不在战斗中（全局心跳），就摸一下脉！
+        // （由于自带时间戳防抖锁，它不会发生任何卡顿）
+        playerStateService.performFirstAidCheck();
         return false;
     }
 
@@ -165,6 +170,16 @@ public class BattleRadarService {
         battleCount++;
         log.info("⚔️ [自动挂机] 当前是第 {} 场战斗", battleCount);
 
+        // 🌟 新增逻辑：战前防爆清理
+        // 故意休眠 1.5 秒，让由于延迟误按 Alt+Q 导致的任务框“彻底弹出来”
+        log.info("⚔️ 战前准备：等待 1.5 秒，扫描并清理可能误触弹出的界面...");
+        sleep(1500);
+
+        // 调用独立解耦的清理方法，专门针对带 X 的窗口！
+        if (uiCleanerService.closeAllGenericWindows()) {
+            log.info("⚔️ 战前清理完毕，成功关掉了挡视线的异常窗口！");
+        }
+
         // 第 1 场，或者每逢 5 的倍数，执行物理纠察
         if (!isAutoPanelSet || battleCount % 5 == 1) {
             executeStrictCheckAndAlign();
@@ -179,6 +194,8 @@ public class BattleRadarService {
             autoCombatRounds -= 3; // 盲扣 3 回合
             log.info("🕊️ [自动挂机] 战斗结束，自动扣除 3 回合，大脑估算剩余: {} 回合", autoCombatRounds);
         }
+        playerStateService.resetCheckCounter();
+        playerStateService.ensureSheYaoXiangActive();
     }
 
     private void executeStrictCheckAndAlign() {

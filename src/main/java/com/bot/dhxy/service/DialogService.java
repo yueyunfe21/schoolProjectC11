@@ -259,11 +259,11 @@ public class DialogService {
         return true;
     }
 
-    private int[] getDialogRect() {
+    public int[] getDialogRect() {
         return coordinateHelper.getScaledRect(DIALOG_LARGE_X, DIALOG_LARGE_Y, DIALOG_LARGE_W, DIALOG_LARGE_H);
     }
 
-    private int[] getSmallDialogRect() {
+    public int[] getSmallDialogRect() {
         return coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, DIALOG_SMALL_H);
     }
 

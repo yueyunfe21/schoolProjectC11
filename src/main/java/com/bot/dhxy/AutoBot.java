@@ -38,6 +38,7 @@ public class AutoBot implements CommandLineRunner {
     private static final int DIALOG_SMALL_W = 529;
     private static final int DIALOG_SMALL_H = 143;
     private final WinApiMouseController winApiMouseController;
+    private final PlayerStateService playerStateService;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -51,15 +52,10 @@ public class AutoBot implements CommandLineRunner {
 
         boolean success = tracker.locateWindow();
 
-        navigationService.ensureMapTrackingOption();
-        //tracker.bringWindowToFront();
-        //tracker.testBackgroundAlt8();
-        //testbattle();
-        //battleRadarService.checkAndSyncCombatState();
-        //testStoryDialog();
         if (success) {
             System.out.println("🎉 太棒了！Win32 API 成功抓到了大话西游的基址！");
             boolean ready = tracker.bringWindowToFront();
+            navigationService.ensureMapTrackingOption();
             if (!ready) {
                 System.out.println("❌ 无法唤醒游戏，停止任务。");
                 return;
