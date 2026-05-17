@@ -67,7 +67,15 @@ public class TaskRunner {
                 } else {
                     result = task.execute();
                 }
+
                 log.info("✅ 任务执行结束: [{}] {} | result={}", task.getTaskCode(), task.getTaskName(), result);
+                if (shouldStopQueue(result)) {
+                    log.info("🛑 任务结果为 STOPPED，终止后续任务队列。");
+                    return;
+                }
+                if (result == TaskRunResult.FAILED) {
+                    log.warn("⚠️ 任务失败，但根据当前策略继续执行后续任务。");
+                }
             }
         } while (queue.isLoop() && !stopRequested && !testMode);
 
@@ -80,6 +88,10 @@ public class TaskRunner {
     public void stop() {
         stopRequested = true;
         taskMap.values().forEach(GameTask::stop);
+    }
+
+    private boolean shouldStopQueue(TaskRunResult result) {
+        return result == TaskRunResult.STOPPED;
     }
 
     private String getRegisteredTaskSummary() {
