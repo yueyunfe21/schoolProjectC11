@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 根据用户勾选结果调度任务。
@@ -28,6 +29,7 @@ public class TaskRunner {
             }
             log.info("✅ 注册任务: [{}] {}", task.getTaskCode(), task.getTaskName());
         }
+        log.info("📋 当前已注册任务清单: {}", getRegisteredTaskSummary());
     }
 
     public void run(TaskQueue queue) {
@@ -52,7 +54,7 @@ public class TaskRunner {
 
                 GameTask task = taskMap.get(taskCode);
                 if (task == null) {
-                    log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。", taskCode);
+                    log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。已注册任务: {}", taskCode, getRegisteredTaskSummary());
                     continue;
                 }
 
@@ -75,5 +77,11 @@ public class TaskRunner {
     public void stop() {
         stopRequested = true;
         taskMap.values().forEach(GameTask::stop);
+    }
+
+    private String getRegisteredTaskSummary() {
+        return taskMap.values().stream()
+                .map(task -> task.getTaskCode() + "=" + task.getTaskName())
+                .collect(Collectors.joining(", "));
     }
 }
