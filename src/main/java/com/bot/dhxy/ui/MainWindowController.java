@@ -35,11 +35,20 @@ public class MainWindowController {
     private final TaskViewService taskViewService;
     private final TaskControlService taskControlService;
 
-    private final VBox taskBox = new VBox(8);
-    private final TableView<TaskRecordView> recordTable = new TableView<>();
-    private final ListView<String> logList = new ListView<>();
+    /**
+     * 这些 JavaFX 控件不能在 Spring 创建 Bean 时初始化。
+     *
+     * 原因：Spring 容器启动时 JavaFX Toolkit 还没有初始化，
+     * 如果在字段里直接 new VBox/TableView/ListView，会触发 Toolkit not initialized。
+     * 所以这里只声明，真正创建放到 buildView() 里。
+     */
+    private VBox taskBox;
+    private TableView<TaskRecordView> recordTable;
+    private ListView<String> logList;
 
     public Parent buildView() {
+        initControls();
+
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(12));
 
@@ -50,6 +59,12 @@ public class MainWindowController {
 
         refreshDashboard();
         return root;
+    }
+
+    private void initControls() {
+        taskBox = new VBox(8);
+        recordTable = new TableView<>();
+        logList = new ListView<>();
     }
 
     private Parent buildTopBar() {
