@@ -1,6 +1,7 @@
 package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.QuestManagerService.PathingResult;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -56,7 +57,7 @@ public class FiveRingTask implements GameTask {
     }
 
     @Override
-    public void execute() {
+    public TaskRunResult execute() {
         log.info("====================================");
         log.info("🔥 启动【全自动五环印钞机】(极速退出优化版)");
         log.info("====================================");
@@ -87,7 +88,7 @@ public class FiveRingTask implements GameTask {
             if (!setupInitialTask()) {
                 log.error("❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！");
                 context.setBotStatus(GameContext.BotStatus.ERROR);
-                return;
+                return TaskRunResult.FAILED;
             }
             sleep(2000);
             needTaskSync = true;
@@ -127,7 +128,7 @@ public class FiveRingTask implements GameTask {
                         log.info("🎉 洗地后确认任务栏确实已清空，五环任务真·圆满结束！下班！");
                         context.setBotStatus(GameContext.BotStatus.IDLE);
                         context.setCurrentActionState(GameContext.ActionState.FREE);
-                        return;
+                        return TaskRunResult.SUCCESS;
                     } else {
                         log.info("😅 虚惊一场！洗地后发现任务其实还在，只是刚才被挡住了，继续干活！");
                         needTaskSync = false;
@@ -169,6 +170,7 @@ public class FiveRingTask implements GameTask {
             }
         }
         log.info("🎉 印钞机停机！");
+        return TaskRunResult.STOPPED;
     }
 
     private boolean setupInitialTask() {
