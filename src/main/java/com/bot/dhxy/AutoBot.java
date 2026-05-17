@@ -28,32 +28,46 @@ public class AutoBot implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        log.info("🚀 Spring 容器装配完毕，准备初始化游戏窗口...");
+        log.info("🚀 Spring 容器装配完毕。");
+        log.info("🧾 当前任务配置: {}", taskRunProperties.toLogText());
+
+        if (!taskRunProperties.hasTasks()) {
+            log.warn("⚠️ 当前没有配置任何任务，程序不会执行任务队列。");
+            return;
+        }
+
+        if (taskRunProperties.isInitGameWindow()) {
+            if (!initGameWindow()) {
+                return;
+            }
+        } else {
+            log.warn("⚠️ 当前配置跳过游戏窗口初始化，仅适合测试任务队列或 UI。正式运行请保持 bot.run.init-game-window=true。");
+        }
+
+        taskRunner.run(
+                new TaskQueue(taskRunProperties.getNormalizedTasks(), taskRunProperties.isLoop()),
+                taskRunProperties.isTestMode()
+        );
+    }
+
+    private boolean initGameWindow() throws InterruptedException {
+        log.info("🎮 准备初始化游戏窗口...");
         Thread.sleep(1000);
 
         boolean success = tracker.locateWindow();
         if (!success) {
             log.error("❌ 定位失败，请确认大话西游没有被最小化，并且 GAME_WINDOW_KEYWORD 配置正确。");
-            return;
+            return false;
         }
 
         log.info("🎉 Win32 API 成功抓到大话西游窗口。");
         boolean ready = tracker.bringWindowToFront();
         if (!ready) {
             log.error("❌ 无法唤醒游戏窗口，停止任务。");
-            return;
+            return false;
         }
 
         navigationService.ensureMapTrackingOption();
-
-        log.info("🧾 当前任务配置: tasks={} | loop={} | testMode={}",
-                taskRunProperties.getTasks(),
-                taskRunProperties.isLoop(),
-                taskRunProperties.isTestMode());
-
-        taskRunner.run(
-                new TaskQueue(taskRunProperties.getTasks(), taskRunProperties.isLoop()),
-                taskRunProperties.isTestMode()
-        );
+        return true;
     }
 }
