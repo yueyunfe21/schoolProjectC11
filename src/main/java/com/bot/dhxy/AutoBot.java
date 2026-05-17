@@ -4,6 +4,7 @@ import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.runner.TaskControlService;
 import com.bot.dhxy.service.NavigationService;
+import com.bot.dhxy.ui.MainWindowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -19,6 +20,7 @@ public class AutoBot implements CommandLineRunner {
     private final NavigationService navigationService;
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
+    private final MainWindowService mainWindowService;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -31,8 +33,17 @@ public class AutoBot implements CommandLineRunner {
         log.info("📋 当前可用任务: {}", taskControlService.getRegisteredTaskSummary());
         log.info("🧾 当前任务配置: {}", taskRunProperties.toLogText());
 
+        if (taskRunProperties.isShowUi()) {
+            mainWindowService.showMainWindow();
+        }
+
         if (!taskRunProperties.hasTasks()) {
             log.warn("⚠️ 当前没有配置任何任务，程序不会执行任务队列。");
+            return;
+        }
+
+        if (!taskRunProperties.isAutoStart()) {
+            log.info("🕹️ autoStart=false，等待用户从 UI 点击开始。若不显示 UI 且希望自动运行，请设置 bot.run.auto-start=true。");
             return;
         }
 
