@@ -1,18 +1,15 @@
 package com.bot.dhxy;
 
+import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.runner.TaskQueue;
 import com.bot.dhxy.runner.TaskRunner;
 import com.bot.dhxy.service.NavigationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-
-import java.util.Arrays;
-import java.util.List;
 
 @SpringBootApplication
 @RequiredArgsConstructor
@@ -22,12 +19,7 @@ public class AutoBot implements CommandLineRunner {
     private final GameClientTracker tracker;
     private final NavigationService navigationService;
     private final TaskRunner taskRunner;
-
-    @Value("${bot.tasks:wuhuan}")
-    private String taskCodes;
-
-    @Value("${bot.loop:false}")
-    private boolean loop;
+    private final TaskRunProperties taskRunProperties;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -54,16 +46,14 @@ public class AutoBot implements CommandLineRunner {
 
         navigationService.ensureMapTrackingOption();
 
-        List<String> selectedTaskCodes = parseTaskCodes(taskCodes);
-        log.info("🧾 当前任务配置: tasks={} | loop={}", selectedTaskCodes, loop);
+        log.info("🧾 当前任务配置: tasks={} | loop={} | testMode={}",
+                taskRunProperties.getTasks(),
+                taskRunProperties.isLoop(),
+                taskRunProperties.isTestMode());
 
-        taskRunner.run(new TaskQueue(selectedTaskCodes, loop));
-    }
-
-    private List<String> parseTaskCodes(String rawTaskCodes) {
-        return Arrays.stream(rawTaskCodes.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
+        taskRunner.run(
+                new TaskQueue(taskRunProperties.getTasks(), taskRunProperties.isLoop()),
+                taskRunProperties.isTestMode()
+        );
     }
 }
