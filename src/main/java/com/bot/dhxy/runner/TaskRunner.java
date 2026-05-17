@@ -21,9 +21,11 @@ import java.util.stream.Collectors;
 public class TaskRunner {
 
     private final Map<String, GameTask> taskMap = new LinkedHashMap<>();
+    private final TaskRunHistoryService taskRunHistoryService;
     private volatile boolean stopRequested = false;
 
-    public TaskRunner(List<GameTask> tasks) {
+    public TaskRunner(List<GameTask> tasks, TaskRunHistoryService taskRunHistoryService) {
+        this.taskRunHistoryService = taskRunHistoryService;
         for (GameTask task : tasks) {
             GameTask old = taskMap.put(task.getTaskCode(), task);
             if (old != null) {
@@ -69,11 +71,13 @@ public class TaskRunner {
                             .message("未注册的任务编码")
                             .build();
                     summary.record(record);
+                    taskRunHistoryService.addRecord(record);
                     continue;
                 }
 
                 TaskRunRecord record = runSingleTask(task, testMode);
                 summary.record(record);
+                taskRunHistoryService.addRecord(record);
                 TaskRunResult result = record.getResult();
 
                 if (shouldStopQueue(result)) {
