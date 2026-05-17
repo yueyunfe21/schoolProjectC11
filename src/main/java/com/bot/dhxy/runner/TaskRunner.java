@@ -5,6 +5,7 @@ import com.bot.dhxy.task.GameTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,12 +60,21 @@ public class TaskRunner {
                 GameTask task = taskMap.get(taskCode);
                 if (task == null) {
                     log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。已注册任务: {}", taskCode, getRegisteredTaskSummary());
-                    summary.record(TaskRunResult.SKIPPED);
+                    TaskRunRecord record = TaskRunRecord.builder()
+                            .taskCode(taskCode)
+                            .taskName("未注册任务")
+                            .startTime(LocalDateTime.now())
+                            .endTime(LocalDateTime.now())
+                            .result(TaskRunResult.SKIPPED)
+                            .message("未注册的任务编码")
+                            .build();
+                    summary.record(record);
                     continue;
                 }
 
-                TaskRunResult result = runSingleTask(task, testMode);
-                summary.record(result);
+                TaskRunRecord record = runSingleTask(task, testMode);
+                summary.record(record);
+                TaskRunResult result = record.getResult();
 
                 if (shouldStopQueue(result)) {
                     log.info("🛑 任务结果为 STOPPED，终止后续任务队列。");
@@ -90,27 +100,45 @@ public class TaskRunner {
         taskMap.values().forEach(GameTask::stop);
     }
 
-    private TaskRunResult runSingleTask(GameTask task, boolean testMode) {
-        log.info("▶️ 开始执行任务: [{}] {}", task.getTaskCode(), task.getTaskName());
+    private TaskRunRecord runSingleTask(GameTask task, boolean testMode) {
+        LocalDateTime startTime = LocalDateTime.now();
+        LocalDateTime endTime;
         TaskRunResult result;
+        String message = null;
+
+        log.info("▶️ 开始执行任务: [{}] {}", task.getTaskCode(), task.getTaskName());
         if (testMode) {
             log.info("🧪 测试模式：跳过真实任务逻辑，仅验证任务队列调度。");
             result = TaskRunResult.SKIPPED;
+            message = "测试模式跳过真实执行";
         } else {
             try {
                 result = task.execute();
                 if (result == null) {
                     log.warn("⚠️ 任务 [{}] {} 返回了 null，自动按 FAILED 处理。", task.getTaskCode(), task.getTaskName());
                     result = TaskRunResult.FAILED;
+                    message = "任务返回 null";
                 }
             } catch (Exception e) {
                 log.error("💥 任务执行异常: [{}] {}，本任务记为 FAILED，继续执行后续任务。",
                         task.getTaskCode(), task.getTaskName(), e);
                 result = TaskRunResult.FAILED;
+                message = e.getClass().getSimpleName() + ": " + e.getMessage();
             }
         }
-        log.info("✅ 任务执行结束: [{}] {} | result={}", task.getTaskCode(), task.getTaskName(), result);
-        return result;
+        endTime = LocalDateTime.now();
+
+        TaskRunRecord record = TaskRunRecord.builder()
+                .taskCode(task.getTaskCode())
+                .taskName(task.getTaskName())
+                .startTime(startTime)
+                .endTime(endTime)
+                .result(result)
+                .message(message)
+                .build();
+
+        log.info("✅ 任务执行结束: {}", record.toLogText());
+        return record;
     }
 
     private boolean shouldStopQueue(TaskRunResult result) {
@@ -119,6 +147,9 @@ public class TaskRunner {
 
     private void logSummary(TaskRunSummary summary) {
         log.info("📊 任务汇总: {}", summary.toLogText());
+        for (TaskRunRecord record : summary.getRecords()) {
+            log.info("📌 任务记录: {}", record.toLogText());
+        }
     }
 
     private String getRegisteredTaskSummary() {
