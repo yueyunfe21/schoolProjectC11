@@ -22,18 +22,24 @@ public class TaskRunner {
 
     private final Map<String, GameTask> taskMap = new LinkedHashMap<>();
     private final TaskRunHistoryService taskRunHistoryService;
+    private final TaskLogService taskLogService;
     private volatile boolean stopRequested = false;
 
-    public TaskRunner(List<GameTask> tasks, TaskRunHistoryService taskRunHistoryService) {
+    public TaskRunner(List<GameTask> tasks,
+                      TaskRunHistoryService taskRunHistoryService,
+                      TaskLogService taskLogService) {
         this.taskRunHistoryService = taskRunHistoryService;
+        this.taskLogService = taskLogService;
         for (GameTask task : tasks) {
             GameTask old = taskMap.put(task.getTaskCode(), task);
             if (old != null) {
                 throw new IllegalStateException("重复的任务编码: " + task.getTaskCode());
             }
             log.info("✅ 注册任务: [{}] {}", task.getTaskCode(), task.getTaskName());
+            taskLogService.info(task.getTaskCode(), task.getTaskName(), "任务已注册");
         }
         log.info("📋 当前已注册任务清单: {}", getRegisteredTaskSummary());
+        taskLogService.info(null, null, "当前已注册任务清单: " + getRegisteredTaskSummary());
     }
 
     public TaskRunSummary run(TaskQueue queue) {
@@ -45,16 +51,19 @@ public class TaskRunner {
 
         if (queue == null || queue.isEmpty()) {
             log.warn("⚠️ 没有选择任何任务，TaskRunner 不执行。");
+            taskLogService.warn(null, null, "没有选择任何任务，TaskRunner 不执行");
             return summary;
         }
 
         stopRequested = false;
         log.info("🚀 启动任务队列: {} | loop={} | testMode={}", queue.getSelectedTaskCodes(), queue.isLoop(), testMode);
+        taskLogService.info(null, null, "启动任务队列: " + queue.getSelectedTaskCodes() + " | loop=" + queue.isLoop() + " | testMode=" + testMode);
 
         do {
             for (String taskCode : queue.getSelectedTaskCodes()) {
                 if (stopRequested) {
                     log.info("🛑 收到停止信号，任务队列中止。");
+                    taskLogService.warn(null, null, "收到停止信号，任务队列中止");
                     logSummary(summary);
                     return summary;
                 }
@@ -62,6 +71,7 @@ public class TaskRunner {
                 GameTask task = taskMap.get(taskCode);
                 if (task == null) {
                     log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。已注册任务: {}", taskCode, getRegisteredTaskSummary());
+                    taskLogService.warn(taskCode, "未注册任务", "未注册的任务编码，已跳过");
                     TaskRunRecord record = TaskRunRecord.builder()
                             .taskCode(taskCode)
                             .taskName("未注册任务")
@@ -82,25 +92,30 @@ public class TaskRunner {
 
                 if (shouldStopQueue(result)) {
                     log.info("🛑 任务结果为 STOPPED，终止后续任务队列。");
+                    taskLogService.warn(task.getTaskCode(), task.getTaskName(), "任务结果为 STOPPED，终止后续任务队列");
                     logSummary(summary);
                     return summary;
                 }
                 if (result == TaskRunResult.FAILED) {
                     log.warn("⚠️ 任务失败，但根据当前策略继续执行后续任务。");
+                    taskLogService.warn(task.getTaskCode(), task.getTaskName(), "任务失败，但继续执行后续任务");
                 }
             }
         } while (queue.isLoop() && !stopRequested && !testMode);
 
         if (testMode && queue.isLoop()) {
             log.info("🧪 测试模式下不会真的循环执行，避免无限刷日志。");
+            taskLogService.info(null, null, "测试模式下不会真的循环执行，避免无限刷日志");
         }
         log.info("🎉 任务队列执行完毕。");
+        taskLogService.info(null, null, "任务队列执行完毕");
         logSummary(summary);
         return summary;
     }
 
     public void stop() {
         stopRequested = true;
+        taskLogService.warn(null, null, "收到停止任务队列请求");
         taskMap.values().forEach(GameTask::stop);
     }
 
@@ -111,8 +126,10 @@ public class TaskRunner {
         String message = null;
 
         log.info("▶️ 开始执行任务: [{}] {}", task.getTaskCode(), task.getTaskName());
+        taskLogService.info(task.getTaskCode(), task.getTaskName(), "开始执行任务");
         if (testMode) {
             log.info("🧪 测试模式：跳过真实任务逻辑，仅验证任务队列调度。");
+            taskLogService.info(task.getTaskCode(), task.getTaskName(), "测试模式：跳过真实任务逻辑，仅验证任务队列调度");
             result = TaskRunResult.SKIPPED;
             message = "测试模式跳过真实执行";
         } else {
@@ -120,6 +137,7 @@ public class TaskRunner {
                 result = task.execute();
                 if (result == null) {
                     log.warn("⚠️ 任务 [{}] {} 返回了 null，自动按 FAILED 处理。", task.getTaskCode(), task.getTaskName());
+                    taskLogService.warn(task.getTaskCode(), task.getTaskName(), "任务返回 null，自动按 FAILED 处理");
                     result = TaskRunResult.FAILED;
                     message = "任务返回 null";
                 }
@@ -128,6 +146,7 @@ public class TaskRunner {
                         task.getTaskCode(), task.getTaskName(), e);
                 result = TaskRunResult.FAILED;
                 message = e.getClass().getSimpleName() + ": " + e.getMessage();
+                taskLogService.fail(task.getTaskCode(), task.getTaskName(), "任务执行异常: " + message);
             }
         }
         endTime = LocalDateTime.now();
@@ -142,6 +161,7 @@ public class TaskRunner {
                 .build();
 
         log.info("✅ 任务执行结束: {}", record.toLogText());
+        taskLogService.info(task.getTaskCode(), task.getTaskName(), "任务执行结束: result=" + result + ", cost=" + record.getCostMillis() + "ms");
         return record;
     }
 
@@ -151,6 +171,7 @@ public class TaskRunner {
 
     private void logSummary(TaskRunSummary summary) {
         log.info("📊 任务汇总: {}", summary.toLogText());
+        taskLogService.info(null, null, "任务汇总: " + summary.toLogText());
         for (TaskRunRecord record : summary.getRecords()) {
             log.info("📌 任务记录: {}", record.toLogText());
         }
