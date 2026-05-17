@@ -31,13 +31,17 @@ public class TaskRunner {
     }
 
     public void run(TaskQueue queue) {
+        run(queue, false);
+    }
+
+    public void run(TaskQueue queue, boolean testMode) {
         if (queue == null || queue.isEmpty()) {
             log.warn("⚠️ 没有选择任何任务，TaskRunner 不执行。");
             return;
         }
 
         stopRequested = false;
-        log.info("🚀 启动任务队列: {} | loop={}", queue.getSelectedTaskCodes(), queue.isLoop());
+        log.info("🚀 启动任务队列: {} | loop={} | testMode={}", queue.getSelectedTaskCodes(), queue.isLoop(), testMode);
 
         do {
             for (String taskCode : queue.getSelectedTaskCodes()) {
@@ -53,11 +57,18 @@ public class TaskRunner {
                 }
 
                 log.info("▶️ 开始执行任务: [{}] {}", task.getTaskCode(), task.getTaskName());
-                task.execute();
+                if (testMode) {
+                    log.info("🧪 测试模式：跳过真实任务逻辑，仅验证任务队列调度。");
+                } else {
+                    task.execute();
+                }
                 log.info("✅ 任务执行结束: [{}] {}", task.getTaskCode(), task.getTaskName());
             }
-        } while (queue.isLoop() && !stopRequested);
+        } while (queue.isLoop() && !stopRequested && !testMode);
 
+        if (testMode && queue.isLoop()) {
+            log.info("🧪 测试模式下不会真的循环执行，避免无限刷日志。");
+        }
         log.info("🎉 任务队列执行完毕。");
     }
 
