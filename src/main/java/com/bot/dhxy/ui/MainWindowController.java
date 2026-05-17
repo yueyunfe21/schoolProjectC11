@@ -1,0 +1,133 @@
+package com.bot.dhxy.ui;
+
+import com.bot.dhxy.runner.TaskControlService;
+import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
+import com.bot.dhxy.ui.viewmodel.TaskLogView;
+import com.bot.dhxy.ui.viewmodel.TaskOptionView;
+import com.bot.dhxy.ui.viewmodel.TaskRecordView;
+import javafx.geometry.Insets;
+import javafx.scene.Parent;
+import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableView;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * JavaFX 主界面控制器。
+ *
+ * 当前先提供基础界面骨架：任务勾选、开始/停止按钮、任务记录表、日志列表。
+ * 后面再逐步接入真正的按钮事件和定时刷新。
+ */
+@Component
+@RequiredArgsConstructor
+public class MainWindowController {
+
+    private final TaskViewService taskViewService;
+    private final TaskControlService taskControlService;
+
+    private final VBox taskBox = new VBox(8);
+    private final TableView<TaskRecordView> recordTable = new TableView<>();
+    private final ListView<String> logList = new ListView<>();
+
+    public Parent buildView() {
+        BorderPane root = new BorderPane();
+        root.setPadding(new Insets(12));
+
+        root.setTop(buildTopBar());
+        root.setLeft(buildTaskPanel());
+        root.setCenter(buildRecordTable());
+        root.setBottom(buildLogPanel());
+
+        refreshDashboard();
+        return root;
+    }
+
+    private Parent buildTopBar() {
+        Label title = new Label("DHXY Robot 控制台");
+        Button refreshButton = new Button("刷新");
+        Button startButton = new Button("开始");
+        Button stopButton = new Button("停止");
+
+        refreshButton.setOnAction(event -> refreshDashboard());
+        startButton.setOnAction(event -> taskControlService.startConfiguredTasks());
+        stopButton.setOnAction(event -> taskControlService.stop());
+
+        HBox box = new HBox(10, title, refreshButton, startButton, stopButton);
+        box.setPadding(new Insets(0, 0, 12, 0));
+        return box;
+    }
+
+    private Parent buildTaskPanel() {
+        Label label = new Label("任务选择");
+        VBox wrapper = new VBox(10, label, taskBox);
+        wrapper.setPadding(new Insets(0, 12, 0, 0));
+        wrapper.setPrefWidth(180);
+        return wrapper;
+    }
+
+    private Parent buildRecordTable() {
+        TableColumn<TaskRecordView, String> taskNameCol = new TableColumn<>("任务");
+        taskNameCol.setCellValueFactory(new PropertyValueFactory<>("taskName"));
+        taskNameCol.setPrefWidth(120);
+
+        TableColumn<TaskRecordView, String> resultCol = new TableColumn<>("结果");
+        resultCol.setCellValueFactory(new PropertyValueFactory<>("result"));
+        resultCol.setPrefWidth(90);
+
+        TableColumn<TaskRecordView, Long> costCol = new TableColumn<>("耗时(ms)");
+        costCol.setCellValueFactory(new PropertyValueFactory<>("costMillis"));
+        costCol.setPrefWidth(90);
+
+        TableColumn<TaskRecordView, String> messageCol = new TableColumn<>("备注");
+        messageCol.setCellValueFactory(new PropertyValueFactory<>("message"));
+        messageCol.setPrefWidth(260);
+
+        recordTable.getColumns().setAll(List.of(taskNameCol, resultCol, costCol, messageCol));
+        return recordTable;
+    }
+
+    private Parent buildLogPanel() {
+        VBox wrapper = new VBox(6, new Label("任务日志"), logList);
+        wrapper.setPadding(new Insets(12, 0, 0, 0));
+        wrapper.setPrefHeight(220);
+        return wrapper;
+    }
+
+    private void refreshDashboard() {
+        TaskDashboardView dashboard = taskViewService.getDashboardView();
+        refreshTaskOptions(dashboard.getTaskOptions());
+        refreshRecordTable(dashboard.getRecentRecords());
+        refreshLogList(dashboard.getRecentLogs());
+    }
+
+    private void refreshTaskOptions(List<TaskOptionView> options) {
+        taskBox.getChildren().clear();
+        for (TaskOptionView option : options) {
+            CheckBox checkBox = new CheckBox(option.getTaskName() + " (" + option.getTaskCode() + ")");
+            checkBox.setSelected(option.isSelected());
+            checkBox.setDisable(!option.isEnabled());
+            taskBox.getChildren().add(checkBox);
+        }
+    }
+
+    private void refreshRecordTable(List<TaskRecordView> records) {
+        recordTable.getItems().setAll(records);
+    }
+
+    private void refreshLogList(List<TaskLogView> logs) {
+        logList.getItems().clear();
+        for (TaskLogView log : logs) {
+            logList.getItems().add("[" + log.getTime() + "] " + log.getType() + " " + log.getMessage());
+        }
+    }
+}
