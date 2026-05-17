@@ -3,7 +3,10 @@ package com.bot.dhxy.runner;
 import com.bot.dhxy.model.TaskRunResult;
 import lombok.Getter;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,6 +17,7 @@ public class TaskRunSummary {
 
     private int total;
     private final Map<TaskRunResult, Integer> resultCounts = new EnumMap<>(TaskRunResult.class);
+    private final List<TaskRunRecord> records = new ArrayList<>();
 
     public TaskRunSummary() {
         for (TaskRunResult result : TaskRunResult.values()) {
@@ -27,6 +31,19 @@ public class TaskRunSummary {
         }
         total++;
         resultCounts.put(result, resultCounts.getOrDefault(result, 0) + 1);
+    }
+
+    public void record(TaskRunRecord record) {
+        if (record == null) {
+            record(TaskRunResult.FAILED);
+            return;
+        }
+        records.add(record);
+        record(record.getResult());
+    }
+
+    public List<TaskRunRecord> getRecords() {
+        return Collections.unmodifiableList(records);
     }
 
     public int getSuccessCount() {
