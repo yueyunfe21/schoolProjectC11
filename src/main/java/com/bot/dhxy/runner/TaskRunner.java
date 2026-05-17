@@ -6,9 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -20,26 +17,17 @@ import java.util.stream.Collectors;
 @Component
 public class TaskRunner {
 
-    private final Map<String, GameTask> taskMap = new LinkedHashMap<>();
+    private final TaskRegistryService taskRegistryService;
     private final TaskRunHistoryService taskRunHistoryService;
     private final TaskLogService taskLogService;
     private volatile boolean stopRequested = false;
 
-    public TaskRunner(List<GameTask> tasks,
+    public TaskRunner(TaskRegistryService taskRegistryService,
                       TaskRunHistoryService taskRunHistoryService,
                       TaskLogService taskLogService) {
+        this.taskRegistryService = taskRegistryService;
         this.taskRunHistoryService = taskRunHistoryService;
         this.taskLogService = taskLogService;
-        for (GameTask task : tasks) {
-            GameTask old = taskMap.put(task.getTaskCode(), task);
-            if (old != null) {
-                throw new IllegalStateException("重复的任务编码: " + task.getTaskCode());
-            }
-            log.info("✅ 注册任务: [{}] {}", task.getTaskCode(), task.getTaskName());
-            taskLogService.info(task.getTaskCode(), task.getTaskName(), "任务已注册");
-        }
-        log.info("📋 当前已注册任务清单: {}", getRegisteredTaskSummary());
-        taskLogService.info(null, null, "当前已注册任务清单: " + getRegisteredTaskSummary());
     }
 
     public TaskRunSummary run(TaskQueue queue) {
@@ -68,9 +56,9 @@ public class TaskRunner {
                     return summary;
                 }
 
-                GameTask task = taskMap.get(taskCode);
+                GameTask task = taskRegistryService.getTaskByCode(taskCode);
                 if (task == null) {
-                    log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。已注册任务: {}", taskCode, getRegisteredTaskSummary());
+                    log.warn("⚠️ 未注册的任务编码: [{}]，已跳过。已注册任务: {}", taskCode, taskRegistryService.getRegisteredTaskSummary());
                     taskLogService.warn(taskCode, "未注册任务", "未注册的任务编码，已跳过");
                     TaskRunRecord record = TaskRunRecord.builder()
                             .taskCode(taskCode)
@@ -116,7 +104,7 @@ public class TaskRunner {
     public void stop() {
         stopRequested = true;
         taskLogService.warn(null, null, "收到停止任务队列请求");
-        taskMap.values().forEach(GameTask::stop);
+        taskRegistryService.getAllTasks().forEach(GameTask::stop);
     }
 
     private TaskRunRecord runSingleTask(GameTask task, boolean testMode) {
@@ -175,11 +163,5 @@ public class TaskRunner {
         for (TaskRunRecord record : summary.getRecords()) {
             log.info("📌 任务记录: {}", record.toLogText());
         }
-    }
-
-    private String getRegisteredTaskSummary() {
-        return taskMap.values().stream()
-                .map(task -> task.getTaskCode() + "=" + task.getTaskName())
-                .collect(Collectors.joining(", "));
     }
 }
