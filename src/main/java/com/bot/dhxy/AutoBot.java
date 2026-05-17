@@ -6,9 +6,13 @@ import com.bot.dhxy.runner.TaskRunner;
 import com.bot.dhxy.service.NavigationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+
+import java.util.Arrays;
+import java.util.List;
 
 @SpringBootApplication
 @RequiredArgsConstructor
@@ -18,6 +22,12 @@ public class AutoBot implements CommandLineRunner {
     private final GameClientTracker tracker;
     private final NavigationService navigationService;
     private final TaskRunner taskRunner;
+
+    @Value("${bot.tasks:wuhuan}")
+    private String taskCodes;
+
+    @Value("${bot.loop:false}")
+    private boolean loop;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -44,8 +54,16 @@ public class AutoBot implements CommandLineRunner {
 
         navigationService.ensureMapTrackingOption();
 
-        // 临时默认队列：当前还没有 UI，先默认运行五环。
-        // 后面接 UI 后，这里会替换成用户勾选结果，例如：TaskQueue.once(selectedTaskCodes)。
-        taskRunner.run(TaskQueue.single("wuhuan"));
+        List<String> selectedTaskCodes = parseTaskCodes(taskCodes);
+        log.info("🧾 当前任务配置: tasks={} | loop={}", selectedTaskCodes, loop);
+
+        taskRunner.run(new TaskQueue(selectedTaskCodes, loop));
+    }
+
+    private List<String> parseTaskCodes(String rawTaskCodes) {
+        return Arrays.stream(rawTaskCodes.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
     }
 }
