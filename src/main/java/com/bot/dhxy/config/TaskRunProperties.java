@@ -43,6 +43,19 @@ public class TaskRunProperties {
     private boolean initGameWindow = true;
 
     /**
+     * 是否显示 JavaFX 主界面。
+     */
+    private boolean showUi = true;
+
+    /**
+     * 显示 UI 后是否自动启动任务。
+     *
+     * showUi=true 时建议先保持 false，让用户从界面点开始。
+     * showUi=false 时可以保持 true，让程序启动后直接跑任务。
+     */
+    private boolean autoStart = false;
+
+    /**
      * 清洗后的任务编码列表，去掉空白项。
      */
     public List<String> getNormalizedTasks() {
@@ -63,6 +76,8 @@ public class TaskRunProperties {
         return "tasks=" + getNormalizedTasks()
                 + " | loop=" + loop
                 + " | testMode=" + testMode
-                + " | initGameWindow=" + initGameWindow;
+                + " | initGameWindow=" + initGameWindow
+                + " | showUi=" + showUi
+                + " | autoStart=" + autoStart;
     }
 }
