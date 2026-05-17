@@ -1,5 +1,7 @@
 package com.bot.dhxy.task;
 
+import com.bot.dhxy.model.TaskRunResult;
+
 /**
  * 统一任务接口。
  *
@@ -19,9 +21,9 @@ public interface GameTask {
     String getTaskName();
 
     /**
-     * 执行任务主流程。
+     * 执行任务主流程，并返回本次执行结果。
      */
-    void execute();
+    TaskRunResult execute();
 
     /**
      * 请求停止任务。
