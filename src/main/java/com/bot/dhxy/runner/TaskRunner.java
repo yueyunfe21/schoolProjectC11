@@ -1,5 +1,6 @@
 package com.bot.dhxy.runner;
 
+import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.task.GameTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -59,12 +60,14 @@ public class TaskRunner {
                 }
 
                 log.info("▶️ 开始执行任务: [{}] {}", task.getTaskCode(), task.getTaskName());
+                TaskRunResult result;
                 if (testMode) {
                     log.info("🧪 测试模式：跳过真实任务逻辑，仅验证任务队列调度。");
+                    result = TaskRunResult.SKIPPED;
                 } else {
-                    task.execute();
+                    result = task.execute();
                 }
-                log.info("✅ 任务执行结束: [{}] {}", task.getTaskCode(), task.getTaskName());
+                log.info("✅ 任务执行结束: [{}] {} | result={}", task.getTaskCode(), task.getTaskName(), result);
             }
         } while (queue.isLoop() && !stopRequested && !testMode);
 
