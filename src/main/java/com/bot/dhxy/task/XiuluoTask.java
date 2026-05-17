@@ -1,5 +1,6 @@
 package com.bot.dhxy.task;
 
+import com.bot.dhxy.model.TaskRunResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -24,8 +25,9 @@ public class XiuluoTask implements GameTask {
     }
 
     @Override
-    public void execute() {
+    public TaskRunResult execute() {
         log.info("⚔️ 修罗任务已被调度，但当前还是占位版本，暂未实现具体逻辑。");
+        return TaskRunResult.SKIPPED;
     }
 
     @Override
