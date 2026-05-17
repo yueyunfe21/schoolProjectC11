@@ -2,9 +2,7 @@ package com.bot.dhxy;
 
 import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.core.GameClientTracker;
-import com.bot.dhxy.runner.TaskQueue;
-import com.bot.dhxy.runner.TaskRegistryService;
-import com.bot.dhxy.runner.TaskRunner;
+import com.bot.dhxy.runner.TaskControlService;
 import com.bot.dhxy.service.NavigationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +17,7 @@ public class AutoBot implements CommandLineRunner {
 
     private final GameClientTracker tracker;
     private final NavigationService navigationService;
-    private final TaskRunner taskRunner;
-    private final TaskRegistryService taskRegistryService;
+    private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
 
     public static void main(String[] args) {
@@ -31,7 +28,7 @@ public class AutoBot implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         log.info("🚀 Spring 容器装配完毕。");
-        log.info("📋 当前可用任务: {}", taskRegistryService.getRegisteredTaskSummary());
+        log.info("📋 当前可用任务: {}", taskControlService.getRegisteredTaskSummary());
         log.info("🧾 当前任务配置: {}", taskRunProperties.toLogText());
 
         if (!taskRunProperties.hasTasks()) {
@@ -47,10 +44,7 @@ public class AutoBot implements CommandLineRunner {
             log.warn("⚠️ 当前配置跳过游戏窗口初始化，仅适合测试任务队列或 UI。正式运行请保持 bot.run.init-game-window=true。");
         }
 
-        taskRunner.run(
-                new TaskQueue(taskRunProperties.getNormalizedTasks(), taskRunProperties.isLoop()),
-                taskRunProperties.isTestMode()
-        );
+        taskControlService.startConfiguredTasks();
     }
 
     private boolean initGameWindow() throws InterruptedException {
