@@ -52,6 +52,14 @@ public class InputAction {
         return new InputAction(InputActionType.DRAG_AND_DROP, startX, startY, endX, endY, 0, 0, 0, null);
     }
 
+    public static InputAction holdCtrl() {
+        return simple(InputActionType.HOLD_CTRL);
+    }
+
+    public static InputAction releaseCtrl() {
+        return simple(InputActionType.RELEASE_CTRL);
+    }
+
     public static InputAction typeTextUnicode(String text) {
         return new InputAction(InputActionType.TYPE_TEXT_UNICODE, 0, 0, 0, 0, 0, 0, 0, text);
     }
