@@ -68,6 +68,7 @@ public class TaskControlService {
             log.info("生成任务执行计划: {}", plan.toLogText());
             taskLogService.info(null, null, "接收到任务启动请求: " + request.toLogText());
             taskLogService.info(null, null, "生成任务执行计划: " + plan.toLogText());
+            logPlanWarnings(plan);
 
             if (!prepareBeforeRun(plan, startedAt, summary)) {
                 return TaskRunResult.accepted(TaskRunStatus.FAILED, "启动失败：游戏窗口初始化失败", request, plan, summary);
@@ -129,6 +130,9 @@ public class TaskControlService {
     private TaskRunResult rejectStart(TaskRunRequest request, TaskExecutionPlan plan, String message) {
         log.warn(message);
         taskLogService.warn(null, null, message);
+        if (plan != null && plan.hasIgnoredTasks()) {
+            logPlanWarnings(plan);
+        }
         runtimeState = TaskRuntimeState.builder()
                 .status(TaskRunStatus.REJECTED)
                 .running(running.get())
@@ -140,6 +144,15 @@ public class TaskControlService {
                 .statusText(message)
                 .build();
         return TaskRunResult.rejected(TaskRunStatus.REJECTED, message, request, plan);
+    }
+
+    private void logPlanWarnings(TaskExecutionPlan plan) {
+        if (plan == null || !plan.hasIgnoredTasks()) {
+            return;
+        }
+        String warningText = plan.getWarningText();
+        log.warn(warningText);
+        taskLogService.warn(null, null, warningText);
     }
 
     private boolean prepareBeforeRun(TaskExecutionPlan plan, LocalDateTime startedAt, TaskRunSummary summary) {
