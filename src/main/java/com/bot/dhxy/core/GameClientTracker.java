@@ -1,7 +1,7 @@
 package com.bot.dhxy.core;
 
 import com.bot.dhxy.config.BotProperties;
-import com.bot.dhxy.config.InputProvider;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.config.VisionProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.sun.jna.Native;

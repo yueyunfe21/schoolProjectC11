@@ -40,6 +40,8 @@ public class MapVerifyTester implements CommandLineRunner {
         if (targetPoint != null) {
             log.info("📍 矩阵计算成功！目标物理像素坐标: X={}, Y={}", targetPoint.x, targetPoint.y);
 
+            // TODO: Route this dev-only physical mouse move through the input layer
+            // once InputProvider exposes a physical-coordinate move API.
             // 3. 模拟鼠标移动（不点击，只悬停）
             Robot robot = new Robot();
             robot.mouseMove(targetPoint.x, targetPoint.y);

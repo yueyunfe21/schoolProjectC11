@@ -1,6 +1,6 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.config.InputProvider;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.tools.CoordinateHelper;

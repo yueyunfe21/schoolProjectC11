@@ -1,6 +1,6 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.config.InputProvider;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
