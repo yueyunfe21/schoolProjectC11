@@ -6,6 +6,8 @@ import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.QuestManagerService.PathingResult;
+import com.bot.dhxy.task.startup.TaskStartupCheckResult;
+import com.bot.dhxy.task.startup.TaskStartupCheckService;
 import com.bot.dhxy.task.template.BaseTaskTemplate;
 import com.bot.dhxy.task.template.TaskStepExecutor;
 import com.bot.dhxy.task.template.TaskStepResult;
@@ -33,6 +35,7 @@ public class FiveRingTask extends BaseTaskTemplate {
     private final BagService bagService;
     private final GameStateUtil gameStateUtil;
     private final UICleanerService uiCleanerService;
+    private final TaskStartupCheckService taskStartupCheckService;
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -58,7 +61,8 @@ public class FiveRingTask extends BaseTaskTemplate {
                         BagService bagService,
                         GameStateUtil gameStateUtil,
                         UICleanerService uiCleanerService,
-                        TaskStepExecutor taskStepExecutor) {
+                        TaskStepExecutor taskStepExecutor,
+                        TaskStartupCheckService taskStartupCheckService) {
         super(context, taskStepExecutor);
         this.navigationService = navigationService;
         this.npcClickService = npcClickService;
@@ -69,6 +73,7 @@ public class FiveRingTask extends BaseTaskTemplate {
         this.bagService = bagService;
         this.gameStateUtil = gameStateUtil;
         this.uiCleanerService = uiCleanerService;
+        this.taskStartupCheckService = taskStartupCheckService;
     }
 
     @Override
@@ -97,6 +102,13 @@ public class FiveRingTask extends BaseTaskTemplate {
         logTaskBanner();
 
         TaskExecutionContext context = resolveExecutionContext(executionContext);
+        TaskStartupCheckResult checkResult = taskStartupCheckService.checkFiveRing(context);
+        if (checkResult.isBlocked()) {
+            log.info("五环前置判断未通过：{}", checkResult.getReason());
+            return checkResult.getBlockedResult();
+        }
+        log.info("五环前置判断通过：{}", checkResult.getReason());
+
         FiveRingRuntimeState runtimeState = new FiveRingRuntimeState();
 
         TaskRunResult startupResult = runStartupSteps(context, runtimeState);
