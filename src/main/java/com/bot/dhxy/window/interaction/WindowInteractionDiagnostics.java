@@ -4,6 +4,9 @@ import com.bot.dhxy.window.runner.WindowTaskSnapshot;
 import com.bot.dhxy.window.runtime.WindowNativeBinding;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * 窗口交互诊断服务。
  */
@@ -34,6 +37,13 @@ public class WindowInteractionDiagnostics {
         );
     }
 
+    public List<WindowInteractionReport> inspectAll(List<WindowTaskSnapshot> snapshots) {
+        if (snapshots == null || snapshots.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return snapshots.stream().map(this::inspect).toList();
+    }
+
     public WindowInteractionReport focusTest(WindowTaskSnapshot snapshot) {
         WindowInteractionReport report = inspect(snapshot);
         if (!report.isReady()) {
@@ -49,5 +59,22 @@ public class WindowInteractionDiagnostics {
                 focused,
                 focused ? "窗口激活成功" : "窗口激活失败"
         );
+    }
+
+    public List<WindowInteractionReport> focusTestAll(List<WindowTaskSnapshot> snapshots) {
+        if (snapshots == null || snapshots.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return snapshots.stream().map(this::focusTest).toList();
+    }
+
+    public long countReady(List<WindowTaskSnapshot> snapshots) {
+        return inspectAll(snapshots).stream().filter(WindowInteractionReport::isReady).count();
+    }
+
+    public String summarize(List<WindowTaskSnapshot> snapshots) {
+        List<WindowInteractionReport> reports = inspectAll(snapshots);
+        long ready = reports.stream().filter(WindowInteractionReport::isReady).count();
+        return "窗口交互诊断：ready=" + ready + "/" + reports.size();
     }
 }
