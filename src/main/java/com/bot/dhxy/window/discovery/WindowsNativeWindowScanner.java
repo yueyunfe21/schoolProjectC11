@@ -1,11 +1,13 @@
 package com.bot.dhxy.window.discovery;
 
+import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
-import com.sun.jna.platform.win32.WinUser;
+import com.sun.jna.ptr.IntByReference;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -29,7 +31,9 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
             }
             return true;
         }, null);
-        return windows;
+        return windows.stream()
+                .sorted(Comparator.comparing(NativeWindowInfo::getTitle, String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     @Override
@@ -59,24 +63,30 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
         User32.INSTANCE.GetClassName(hwnd, classBuffer, classBuffer.length);
         String className = cleanNativeString(classBuffer);
 
-        int[] processIdRef = new int[1];
+        IntByReference processIdRef = new IntByReference();
         User32.INSTANCE.GetWindowThreadProcessId(hwnd, processIdRef);
 
         WinDef.RECT rect = new WinDef.RECT();
         User32.INSTANCE.GetWindowRect(hwnd, rect);
-        int width = rect.right - rect.left;
-        int height = rect.bottom - rect.top;
+        int width = Math.max(rect.right - rect.left, 0);
+        int height = Math.max(rect.bottom - rect.top, 0);
 
         return new NativeWindowInfo(
-                Long.toHexString(WinDef.HWND.nativeValue(hwnd).longValue()).toUpperCase(Locale.ROOT),
+                toHandleText(hwnd),
                 title,
                 className,
-                Integer.toUnsignedLong(processIdRef[0]),
+                Integer.toUnsignedLong(processIdRef.getValue()),
                 rect.left,
                 rect.top,
                 width,
                 height
         );
+    }
+
+    private String toHandleText(WinDef.HWND hwnd) {
+        Pointer pointer = hwnd.getPointer();
+        long value = pointer == null ? 0L : Pointer.nativeValue(pointer);
+        return Long.toHexString(value).toUpperCase(Locale.ROOT);
     }
 
     private boolean looksLikeGameWindow(NativeWindowInfo info) {
