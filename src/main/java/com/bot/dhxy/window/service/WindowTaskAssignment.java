@@ -23,7 +23,7 @@ public class WindowTaskAssignment {
         this.role = role == null ? WindowRole.UNKNOWN : role;
         this.taskType = taskType == null ? TaskType.UNKNOWN : taskType;
         this.executable = executable;
-        this.reason = reason;
+        this.reason = reason == null ? "" : reason;
     }
 
     public static WindowTaskAssignment executable(String windowId, WindowRole role, TaskType taskType) {
@@ -34,23 +34,19 @@ public class WindowTaskAssignment {
         return new WindowTaskAssignment(windowId, role, taskType, false, reason);
     }
 
-    public String getWindowId() {
-        return windowId;
-    }
+    public String getWindowId() { return windowId; }
 
-    public WindowRole getRole() {
-        return role;
-    }
+    public WindowRole getRole() { return role; }
 
-    public TaskType getTaskType() {
-        return taskType;
-    }
+    public TaskType getTaskType() { return taskType; }
 
-    public boolean isExecutable() {
-        return executable;
-    }
+    public boolean isExecutable() { return executable; }
 
-    public String getReason() {
-        return reason;
-    }
+    public boolean isSkipped() { return !executable; }
+
+    public String getReason() { return reason; }
+
+    public String getRoleDisplayName() { return role.getDisplayName(); }
+
+    public String getTaskDisplayName() { return taskType.getDisplayName(); }
 }
