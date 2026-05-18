@@ -12,6 +12,7 @@ import java.util.Objects;
  * 单个游戏窗口的运行上下文。
  *
  * 一个独立游戏窗口对应一个 WindowRuntimeContext。
+ * 这里保存窗口元信息、窗口级 GameContext.State、当前任务状态和最近一次运行信息。
  */
 public class WindowRuntimeContext {
 
@@ -28,7 +29,8 @@ public class WindowRuntimeContext {
     private volatile String lastMessage;
 
     public WindowRuntimeContext(String windowId, GameContext gameContext) {
-        this.windowId = Objects.requireNonNull(windowId, "windowId must not be null");
+        String normalizedWindowId = normalizeWindowId(windowId);
+        this.windowId = Objects.requireNonNull(normalizedWindowId, "windowId must not be blank");
         this.gameContext = Objects.requireNonNull(gameContext, "gameContext must not be null");
         this.gameState = gameContext.newState();
     }
@@ -50,7 +52,7 @@ public class WindowRuntimeContext {
     }
 
     public void setRoleName(String roleName) {
-        this.roleName = roleName;
+        this.roleName = normalize(roleName);
     }
 
     public WindowRole getRole() {
@@ -67,11 +69,11 @@ public class WindowRuntimeContext {
     }
 
     public boolean isLeader() {
-        return role == WindowRole.LEADER;
+        return role.isLeader();
     }
 
     public boolean isMember() {
-        return role == WindowRole.MEMBER;
+        return role.isMember();
     }
 
     public WindowRuntimeStatus getStatus() {
@@ -80,6 +82,10 @@ public class WindowRuntimeContext {
 
     public void setStatus(WindowRuntimeStatus status) {
         this.status = status == null ? WindowRuntimeStatus.IDLE : status;
+    }
+
+    public boolean isBusy() {
+        return status != null && status.isBusy();
     }
 
     public TaskType getSelectedTaskType() {
@@ -92,6 +98,14 @@ public class WindowRuntimeContext {
 
     public LocalDateTime getLastStartedAt() {
         return lastStartedAt;
+    }
+
+    public LocalDateTime getLastFinishedAt() {
+        return lastFinishedAt;
+    }
+
+    public String getLastMessage() {
+        return lastMessage;
     }
 
     public void markQueued(TaskType taskType) {
@@ -109,20 +123,47 @@ public class WindowRuntimeContext {
 
     public void markStopping(String message) {
         this.status = WindowRuntimeStatus.STOPPING;
-        this.lastMessage = message;
-    }
-
-    public LocalDateTime getLastFinishedAt() {
-        return lastFinishedAt;
-    }
-
-    public String getLastMessage() {
-        return lastMessage;
+        this.lastMessage = normalize(message);
     }
 
     public void markFinished(WindowRuntimeStatus status, String message) {
         this.status = status == null ? WindowRuntimeStatus.IDLE : status;
         this.lastFinishedAt = LocalDateTime.now();
-        this.lastMessage = message;
+        this.lastMessage = normalize(message);
+    }
+
+    public void markError(String message) {
+        markFinished(WindowRuntimeStatus.ERROR, message);
+    }
+
+    public void resetRuntimeState() {
+        this.status = WindowRuntimeStatus.IDLE;
+        this.lastStartedAt = null;
+        this.lastFinishedAt = null;
+        this.lastMessage = null;
+        this.gameState.resetRuntimeState();
+    }
+
+    public void applyRegistration(WindowRegistrationRequest request, boolean allowTaskChange) {
+        if (request == null) {
+            return;
+        }
+        updateRole(request.getRole(), request.getRoleName());
+        if (allowTaskChange) {
+            setSelectedTaskType(request.getSelectedTaskType());
+        }
+    }
+
+    private static String normalizeWindowId(String value) {
+        String normalized = normalize(value);
+        return normalized == null ? null : normalized;
+    }
+
+    private static String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
