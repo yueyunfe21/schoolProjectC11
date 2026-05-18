@@ -154,7 +154,9 @@ public class WindowRuntimeContext {
             return;
         }
         updateRole(request.getRole(), request.getRoleName());
-        setNativeBinding(request.getNativeBinding());
+        if (request.hasNativeBinding()) {
+            setNativeBinding(request.getNativeBinding());
+        }
         if (allowTaskChange) {
             setSelectedTaskType(request.getSelectedTaskType());
         }
