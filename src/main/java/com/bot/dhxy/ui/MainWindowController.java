@@ -96,11 +96,14 @@ public class MainWindowController {
     private ComboBox<TaskType> windowTaskTypeComboBox;
     private Button registerWindowButton;
     private Button registerTeamButton;
+    private Button selectAllWindowsButton;
+    private Button clearWindowSelectionButton;
     private Button startByRoleButton;
     private Button startWindowSelectedTaskButton;
     private Button stopSelectedWindowsButton;
     private Button stopAllWindowsButton;
     private Button unregisterSelectedWindowsButton;
+    private Button unregisterAllWindowsButton;
     private Button refreshWindowButton;
     private Label windowSystemLabel;
 
@@ -164,11 +167,14 @@ public class MainWindowController {
 
         registerWindowButton = new Button("注册/刷新窗口");
         registerTeamButton = new Button("快速注册队伍");
+        selectAllWindowsButton = new Button("全选窗口");
+        clearWindowSelectionButton = new Button("取消选择");
         startByRoleButton = new Button("按身份启动");
         startWindowSelectedTaskButton = new Button("启动已选任务");
         stopSelectedWindowsButton = new Button("停止选中窗口");
         stopAllWindowsButton = new Button("停止全部窗口");
         unregisterSelectedWindowsButton = new Button("移除选中窗口");
+        unregisterAllWindowsButton = new Button("移除全部窗口");
         refreshWindowButton = new Button("刷新窗口表");
         windowSystemLabel = new Label("窗口：-");
 
@@ -252,6 +258,8 @@ public class MainWindowController {
 
         registerWindowButton.setOnAction(event -> registerOrRefreshWindowFromUi());
         registerTeamButton.setOnAction(event -> registerTeamFromUi());
+        selectAllWindowsButton.setOnAction(event -> selectAllWindows());
+        clearWindowSelectionButton.setOnAction(event -> clearWindowSelection());
         startByRoleButton.setOnAction(event -> runWindowCommandInBackground(() ->
                 windowTaskControlService.start(WindowTaskStartRequest.detectedRole(getSelectedWindowIds(), windowTaskTypeComboBox.getValue()))));
         startWindowSelectedTaskButton.setOnAction(event -> runWindowCommandInBackground(() ->
@@ -261,6 +269,7 @@ public class MainWindowController {
         stopAllWindowsButton.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::stopAll));
         unregisterSelectedWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
                 windowTaskControlService.unregisterWindows(getSelectedWindowIds())));
+        unregisterAllWindowsButton.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::unregisterAll));
         refreshWindowButton.setOnAction(event -> refreshWindowPanel());
 
         HBox formRow = new HBox(8,
@@ -275,13 +284,18 @@ public class MainWindowController {
                 registerTeamButton,
                 new Label("快速注册会生成：第1个队长，其余队员"));
 
-        HBox actionRow = new HBox(8,
+        HBox selectionRow = new HBox(8,
                 refreshWindowButton,
+                selectAllWindowsButton,
+                clearWindowSelectionButton,
+                unregisterSelectedWindowsButton,
+                unregisterAllWindowsButton);
+
+        HBox actionRow = new HBox(8,
                 startByRoleButton,
                 startWindowSelectedTaskButton,
                 stopSelectedWindowsButton,
-                stopAllWindowsButton,
-                unregisterSelectedWindowsButton);
+                stopAllWindowsButton);
 
         windowTable.setPrefHeight(185);
         VBox wrapper = new VBox(6,
@@ -289,6 +303,7 @@ public class MainWindowController {
                 windowSystemLabel,
                 formRow,
                 batchRow,
+                selectionRow,
                 actionRow,
                 windowTable);
         wrapper.setPadding(new Insets(0, 0, 8, 0));
@@ -576,6 +591,18 @@ public class MainWindowController {
         handleWindowCommandResult(windowTaskControlService.registerWindows(requests));
     }
 
+    private void selectAllWindows() {
+        if (windowTable != null) {
+            windowTable.getSelectionModel().selectAll();
+        }
+    }
+
+    private void clearWindowSelection() {
+        if (windowTable != null) {
+            windowTable.getSelectionModel().clearSelection();
+        }
+    }
+
     private void runWindowCommandInBackground(WindowCommand command) {
         setWindowButtonsDisabled(true);
         Thread worker = new Thread(() -> {
@@ -602,6 +629,12 @@ public class MainWindowController {
         if (registerTeamButton != null) {
             registerTeamButton.setDisable(disabled);
         }
+        if (selectAllWindowsButton != null) {
+            selectAllWindowsButton.setDisable(disabled);
+        }
+        if (clearWindowSelectionButton != null) {
+            clearWindowSelectionButton.setDisable(disabled);
+        }
         if (startByRoleButton != null) {
             startByRoleButton.setDisable(disabled);
         }
@@ -616,6 +649,9 @@ public class MainWindowController {
         }
         if (unregisterSelectedWindowsButton != null) {
             unregisterSelectedWindowsButton.setDisable(disabled);
+        }
+        if (unregisterAllWindowsButton != null) {
+            unregisterAllWindowsButton.setDisable(disabled);
         }
         if (refreshWindowButton != null) {
             refreshWindowButton.setDisable(disabled);
