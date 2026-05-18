@@ -1,10 +1,13 @@
 package com.bot.dhxy.ui;
 
+import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.runner.TaskControlService;
+import com.bot.dhxy.service.GameWindowService;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
@@ -20,13 +23,14 @@ import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * JavaFX 主界面控制器。
  *
  * 当前先提供基础界面骨架：任务勾选、开始/停止按钮、任务记录表、日志列表。
- * 后面再逐步接入真正的按钮事件和定时刷新。
+ * 后面再逐步接入定时刷新和更完整的界面样式。
  */
 @Component
 @RequiredArgsConstructor
@@ -34,6 +38,8 @@ public class MainWindowController {
 
     private final TaskViewService taskViewService;
     private final TaskControlService taskControlService;
+    private final TaskRunProperties taskRunProperties;
+    private final GameWindowService gameWindowService;
 
     /**
      * 这些 JavaFX 控件不能在 Spring 创建 Bean 时初始化。
@@ -45,6 +51,8 @@ public class MainWindowController {
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
     private ListView<String> logList;
+    private Button startButton;
+    private Button stopButton;
 
     public Parent buildView() {
         initControls();
@@ -65,17 +73,20 @@ public class MainWindowController {
         taskBox = new VBox(8);
         recordTable = new TableView<>();
         logList = new ListView<>();
+        startButton = new Button("开始");
+        stopButton = new Button("停止");
     }
 
     private Parent buildTopBar() {
         Label title = new Label("DHXY Robot 控制台");
         Button refreshButton = new Button("刷新");
-        Button startButton = new Button("开始");
-        Button stopButton = new Button("停止");
 
         refreshButton.setOnAction(event -> refreshDashboard());
-        startButton.setOnAction(event -> taskControlService.startConfiguredTasks());
-        stopButton.setOnAction(event -> taskControlService.stop());
+        startButton.setOnAction(event -> startSelectedTasksInBackground());
+        stopButton.setOnAction(event -> {
+            taskControlService.stop();
+            refreshDashboard();
+        });
 
         HBox box = new HBox(10, title, refreshButton, startButton, stopButton);
         box.setPadding(new Insets(0, 0, 12, 0));
@@ -118,6 +129,57 @@ public class MainWindowController {
         return wrapper;
     }
 
+    private void startSelectedTasksInBackground() {
+        List<String> selectedTaskCodes = getSelectedTaskCodesFromUi();
+        if (selectedTaskCodes.isEmpty()) {
+            logList.getItems().add(0, "没有勾选任何任务，无法开始。");
+            return;
+        }
+
+        startButton.setDisable(true);
+        Thread worker = new Thread(() -> {
+            try {
+                if (taskRunProperties.isInitGameWindow()) {
+                    boolean ready = gameWindowService.initGameWindow();
+                    if (!ready) {
+                        Platform.runLater(() -> {
+                            logList.getItems().add(0, "游戏窗口初始化失败，任务未启动。");
+                            startButton.setDisable(false);
+                            refreshDashboard();
+                        });
+                        return;
+                    }
+                }
+
+                taskControlService.startTasks(
+                        selectedTaskCodes,
+                        taskRunProperties.isLoop(),
+                        taskRunProperties.isTestMode()
+                );
+            } finally {
+                Platform.runLater(() -> {
+                    startButton.setDisable(false);
+                    refreshDashboard();
+                });
+            }
+        }, "task-ui-start-worker");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private List<String> getSelectedTaskCodesFromUi() {
+        List<String> selectedTaskCodes = new ArrayList<>();
+        for (javafx.scene.Node node : taskBox.getChildren()) {
+            if (node instanceof CheckBox checkBox && checkBox.isSelected()) {
+                Object userData = checkBox.getUserData();
+                if (userData instanceof String taskCode && !taskCode.isBlank()) {
+                    selectedTaskCodes.add(taskCode);
+                }
+            }
+        }
+        return selectedTaskCodes;
+    }
+
     private void refreshDashboard() {
         TaskDashboardView dashboard = taskViewService.getDashboardView();
         refreshTaskOptions(dashboard.getTaskOptions());
@@ -129,6 +191,7 @@ public class MainWindowController {
         taskBox.getChildren().clear();
         for (TaskOptionView option : options) {
             CheckBox checkBox = new CheckBox(option.getTaskName() + " (" + option.getTaskCode() + ")");
+            checkBox.setUserData(option.getTaskCode());
             checkBox.setSelected(option.isSelected());
             checkBox.setDisable(!option.isEnabled());
             taskBox.getChildren().add(checkBox);
