@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -31,6 +32,11 @@ public class TaskControlService {
      * 防止重复启动任务队列。
      */
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+    /**
+     * 当前运行状态快照。
+     */
+    private volatile TaskRuntimeState runtimeState = TaskRuntimeState.idle();
 
     /**
      * 按 application.properties 里的 bot.run 配置启动任务队列。
@@ -63,9 +69,14 @@ public class TaskControlService {
      * 以后如果增加任务运行次数、任务间隔、失败策略等参数，只需要扩展 TaskRunRequest。
      */
     public TaskRunSummary startTasks(TaskRunRequest request) {
-        if (request == null || !request.hasTasks()) {
+        if (request == null || request.isEmpty()) {
             log.warn("⚠️ 任务启动请求为空，或者没有有效任务，忽略启动请求。");
             taskLogService.warn(null, null, "任务启动请求为空，或者没有有效任务，忽略启动请求");
+            runtimeState = TaskRuntimeState.builder()
+                    .running(false)
+                    .statusText("启动失败：没有有效任务")
+                    .finishedAt(LocalDateTime.now())
+                    .build();
             return new TaskRunSummary();
         }
 
@@ -75,25 +86,64 @@ public class TaskControlService {
             return new TaskRunSummary();
         }
 
+        LocalDateTime startedAt = LocalDateTime.now();
+        runtimeState = TaskRuntimeState.builder()
+                .running(true)
+                .currentRequest(request)
+                .startedAt(startedAt)
+                .statusText("运行中：准备启动任务")
+                .build();
+
+        TaskRunSummary summary = new TaskRunSummary();
         try {
             log.info("🚀 接收到任务启动请求: {}", request.toLogText());
             taskLogService.info(null, null, "接收到任务启动请求: " + request.toLogText());
 
             if (request.isInitGameWindow()) {
+                runtimeState = TaskRuntimeState.builder()
+                        .running(true)
+                        .currentRequest(request)
+                        .startedAt(startedAt)
+                        .statusText("运行中：正在初始化游戏窗口")
+                        .build();
                 taskLogService.info(null, null, "准备初始化游戏窗口");
                 boolean ready = gameWindowService.initGameWindow();
                 if (!ready) {
                     log.error("❌ 游戏窗口初始化失败，本次任务队列不启动。");
                     taskLogService.fail(null, null, "游戏窗口初始化失败，本次任务队列不启动");
-                    return new TaskRunSummary();
+                    runtimeState = TaskRuntimeState.builder()
+                            .running(false)
+                            .currentRequest(request)
+                            .lastSummary(summary)
+                            .startedAt(startedAt)
+                            .finishedAt(LocalDateTime.now())
+                            .statusText("启动失败：游戏窗口初始化失败")
+                            .build();
+                    return summary;
                 }
             } else {
                 log.warn("⚠️ 本次任务启动请求跳过游戏窗口初始化，仅适合测试任务队列或 UI。");
                 taskLogService.warn(null, null, "本次任务启动请求跳过游戏窗口初始化");
             }
 
+            runtimeState = TaskRuntimeState.builder()
+                    .running(true)
+                    .currentRequest(request)
+                    .startedAt(startedAt)
+                    .statusText("运行中：任务队列执行中")
+                    .build();
+
             TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
-            return taskRunner.run(queue, request.isTestMode());
+            summary = taskRunner.run(queue, request.isTestMode());
+            runtimeState = TaskRuntimeState.builder()
+                    .running(false)
+                    .currentRequest(request)
+                    .lastSummary(summary)
+                    .startedAt(startedAt)
+                    .finishedAt(LocalDateTime.now())
+                    .statusText("空闲：任务队列执行完毕")
+                    .build();
+            return summary;
         } finally {
             running.set(false);
         }
@@ -104,6 +154,15 @@ public class TaskControlService {
      */
     public void stop() {
         taskRunner.stop();
+        runtimeState = TaskRuntimeState.builder()
+                .running(false)
+                .currentRequest(runtimeState.getCurrentRequest())
+                .lastSummary(runtimeState.getLastSummary())
+                .startedAt(runtimeState.getStartedAt())
+                .finishedAt(LocalDateTime.now())
+                .statusText("已请求停止")
+                .build();
+        running.set(false);
     }
 
     /**
@@ -111,6 +170,13 @@ public class TaskControlService {
      */
     public boolean isRunning() {
         return running.get();
+    }
+
+    /**
+     * 获取当前任务运行状态快照。
+     */
+    public TaskRuntimeState getRuntimeState() {
+        return runtimeState;
     }
 
     /**
