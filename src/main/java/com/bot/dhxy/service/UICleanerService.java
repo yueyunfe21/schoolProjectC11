@@ -1,9 +1,10 @@
 package com.bot.dhxy.service;
 
 import com.bot.dhxy.config.BotProperties;
-import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
+import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,7 @@ import java.util.Random;
 @RequiredArgsConstructor
 public class UICleanerService {
 
-    private final InputProvider inputProvider;
+    private final InputSequences inputSequences;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
@@ -30,41 +31,26 @@ public class UICleanerService {
 
     private final Random random = new Random();
 
-    /**
-     * 👑 总指挥：全局 UI 大扫除主入口
-     * 顺序：关大地图 -> 关对话框 -> 关通用 X 窗口
-     */
     public void cleanUpAll() {
-        log.info("🧹 [UI清理] 开始执行全局 UI 状态大扫除...");
+        log.info("UI cleanup started");
         boolean cleanedAny = false;
 
-        // 1. 查地图 (内部自带等待)
         if (isWorldMapOpened()) {
-            log.info("🧹 [UI清理] 发现残留【世界地图】，执行关闭...");
             closeMapByDoubleRightClick();
             cleanedAny = true;
         }
 
-        // 2. 查对话框 (内部自带等待)
         if (forceCloseDialog()) {
             cleanedAny = true;
         }
 
-        // 3. 查其他所有带 X 的面板 (包裹、帮派、活动、任务框等，内部自带等待)
         if (closeAllGenericWindows()) {
             cleanedAny = true;
         }
 
-        if (cleanedAny) {
-            log.info("🧹 [UI清理] 清理完毕，当前界面已干净！");
-        } else {
-            log.info("🧹 [UI清理] 当前界面非常清爽，无需清理。");
-        }
+        log.info(cleanedAny ? "UI cleanup finished" : "UI already clean");
     }
 
-    /**
-     * 🗺️ 检查并关闭世界地图
-     */
     private boolean isWorldMapOpened() {
         return coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8) != null;
     }
@@ -72,15 +58,12 @@ public class UICleanerService {
     private void closeMapByDoubleRightClick() {
         int closeX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
         int closeY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-        inputProvider.doubleRightClick(closeX, closeY, 150, 500);
-
-        // 🌟 独立挂载等待时间：等待地图关闭动画
-        sleepInterruptible(1000);
+        inputSequences.submitAndWait("uiCleanup:closeMap", List.of(
+                InputAction.doubleRightClick(closeX, closeY, 150, 500),
+                InputAction.sleep(1000)
+        ));
     }
 
-    /**
-     * ❌ 暴力大扫除：扫描屏幕上的所有通用“X”关闭按钮并点击
-     */
     public boolean closeAllGenericWindows() {
         boolean closedAny = false;
         String[] closeButtonTemplates = {
@@ -95,15 +78,13 @@ public class UICleanerService {
                 Point closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinate(templatePath, 0.8);
 
                 if (closeBtnPoint != null) {
-                    log.info("🧹 [UI清理] 发现关闭按钮 [{}], 执行点击", templatePath);
-
                     int clickX = closeBtnPoint.x + (random.nextInt(5) - 2);
                     int clickY = closeBtnPoint.y + (random.nextInt(5) - 2);
 
-                    inputProvider.clickLeft(clickX, clickY, 150);
-
-                    // 🌟 独立挂载等待时间：点击 X 后等待窗口消失
-                    sleepInterruptible(800);
+                    inputSequences.submitAndWait("uiCleanup:closeGenericWindow", List.of(
+                            InputAction.clickLeft(clickX, clickY, 150),
+                            InputAction.sleep(800)
+                    ));
 
                     foundInThisPass = true;
                     closedAny = true;
@@ -118,9 +99,6 @@ public class UICleanerService {
         return closedAny;
     }
 
-    /**
-     * 💬 专属的“强杀对话框”逻辑
-     */
     public boolean forceCloseDialog() {
         DialogService.DialogType type = dialogService.detectDialogType();
         if (type == DialogService.DialogType.NONE) {
@@ -128,14 +106,10 @@ public class UICleanerService {
         }
 
         if (type == DialogService.DialogType.STORY) {
-            log.info("🧹 [UI清理] 发现纯剧情对话框，执行快速跳过...");
             dialogService.fastClickStoryDialog();
-            // 🌟 独立挂载等待时间
             sleepInterruptible(1000);
             return true;
         }
-
-        log.info("🧹 [UI清理] 发现选项对话框，执行 OCR 关键词扫描并强制关闭...");
 
         int[] dialogRect = coordinateHelper.getScaledRect(250, 312, 529, 208);
         String imgPath = "images/temp/dialog_close_scan.png";
@@ -150,8 +124,7 @@ public class UICleanerService {
             for (String keyword : closeKeywords) {
                 for (TextRecognizer.OcrWordResult word : allWords) {
                     if (word.getText().contains(keyword)) {
-                        clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY());
-                        // 🌟 独立挂载等待时间
+                        clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY(), "uiCleanup:dialogCloseKeyword");
                         sleepInterruptible(1000);
                         return true;
                     }
@@ -159,15 +132,15 @@ public class UICleanerService {
             }
         }
 
-        log.warn("🛡️ [UI清理] 对话框未找到关闭词，触发中心点击兜底！");
-        clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2, dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2);
-        // 🌟 独立挂载等待时间
+        clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2,
+                dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2,
+                "uiCleanup:dialogFallback");
         sleepInterruptible(1000);
         return true;
     }
 
-    private void clickAbsolutePoint(int x, int y) {
-        inputProvider.clickLeft(x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 150);
+    private void clickAbsolutePoint(int x, int y, String description) {
+        inputSequences.clickLeft(description, x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 150);
     }
 
     private void sleepInterruptible(long ms) {
