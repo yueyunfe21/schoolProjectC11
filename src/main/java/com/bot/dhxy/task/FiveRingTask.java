@@ -2,12 +2,19 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.runner.TaskExecutionContext;
+import com.bot.dhxy.runner.TaskRetryPolicy;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.QuestManagerService.PathingResult;
+import com.bot.dhxy.task.template.TaskStep;
+import com.bot.dhxy.task.template.TaskStepExecutor;
+import com.bot.dhxy.task.template.TaskStepResult;
 import com.bot.dhxy.tools.GameStateUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
 
 @Component
 @RequiredArgsConstructor
@@ -22,6 +29,9 @@ public class FiveRingTask implements GameTask {
     private final QuestManagerService questManager;
     private final BattleRadarService battleRadarService;
     private final BagService bagService;
+    private final GameStateUtil gameStateUtil;
+    private final UICleanerService uiCleanerService;
+    private final TaskStepExecutor taskStepExecutor;
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -36,8 +46,6 @@ public class FiveRingTask implements GameTask {
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 
     private static final int MAX_RETRY = 5;
-    private final GameStateUtil gameStateUtil;
-    private final UICleanerService uiCleanerService;
 
     @Override
     public String getTaskCode() {
@@ -62,6 +70,8 @@ public class FiveRingTask implements GameTask {
         log.info("🔥 启动【全自动五环印钞机】(极速退出优化版)");
         log.info("====================================");
 
+        TaskExecutionContext executionContext = buildStepExecutionContext();
+
         playerStateService.syncAll();
         context.setBotStatus(GameContext.BotStatus.RUNNING);
         uiCleanerService.cleanUpAll();
@@ -85,7 +95,12 @@ public class FiveRingTask implements GameTask {
             needTaskSync = false;
         } else {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
-            if (!setupInitialTask()) {
+            TaskStepResult setupResult = executeSetupInitialTaskStep(executionContext);
+            if (setupResult == TaskStepResult.STOPPED) {
+                log.info("🎉 五环任务在接取初始任务阶段停止");
+                return TaskRunResult.STOPPED;
+            }
+            if (setupResult != TaskStepResult.SUCCESS) {
                 log.error("❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！");
                 context.setBotStatus(GameContext.BotStatus.ERROR);
                 return TaskRunResult.FAILED;
@@ -173,9 +188,28 @@ public class FiveRingTask implements GameTask {
         return TaskRunResult.STOPPED;
     }
 
-    private boolean setupInitialTask() {
+    private TaskStepResult executeSetupInitialTaskStep(TaskExecutionContext executionContext) {
+        TaskStep setupInitialTaskStep = new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return setupInitialTask(context);
+            }
+
+            @Override
+            public String getStepName() {
+                return "接取五环初始任务";
+            }
+        };
+        return taskStepExecutor.execute(executionContext, setupInitialTaskStep, TaskRetryPolicy.none());
+    }
+
+    private TaskStepResult setupInitialTask(TaskExecutionContext executionContext) {
         int retry = 0;
         while (retry < MAX_RETRY) {
+            if (executionContext != null) {
+                executionContext.throwIfStopRequested();
+            }
+
             if (!navigationService.navigateToNPC(targetMapName, npc_coor_x, npc_coor_y)) {
                 log.warn("⚠️ 无法到达墨意身边 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
@@ -199,14 +233,23 @@ public class FiveRingTask implements GameTask {
 
             if (reallyGotTask) {
                 log.info("✅ 雷达确认：成功接取五环总任务！");
-                return true;
+                return TaskStepResult.SUCCESS;
             } else {
                 log.warn("⚠️ 疑似卡顿：点完对话框但任务没进列表！(重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
                 sleep(1500);
             }
         }
-        return false;
+        return TaskStepResult.FAILED;
+    }
+
+    private TaskExecutionContext buildStepExecutionContext() {
+        return TaskExecutionContext.builder()
+                .taskCode(getTaskCode())
+                .taskName(getTaskName())
+                .retryPolicy(TaskRetryPolicy.none())
+                .startedAt(LocalDateTime.now())
+                .build();
     }
 
     private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
