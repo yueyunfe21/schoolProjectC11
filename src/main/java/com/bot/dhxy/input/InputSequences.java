@@ -5,6 +5,7 @@ import com.bot.dhxy.input.action.InputActionQueue;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Groups multi-step physical input sequences so another window cannot steal focus
@@ -21,6 +22,10 @@ public class InputSequences {
 
     public boolean submitAndWait(String description, List<InputAction> actions) {
         return inputActionQueue.submitAndWait(description, actions);
+    }
+
+    public boolean submitExclusiveAndWait(String description, Supplier<Boolean> callback) {
+        return inputActionQueue.submitExclusiveAndWait(description, callback);
     }
 
     public boolean clickLeft(String description, int x, int y, int delayMs) {
