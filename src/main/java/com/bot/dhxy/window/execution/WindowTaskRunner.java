@@ -131,11 +131,14 @@ public class WindowTaskRunner {
                 windowContext.getStatus(),
                 windowContext.getSelectedTaskType(),
                 taskHandle == null ? null : taskHandle.getTaskType(),
+                windowContext.getLastTaskType(),
+                windowContext.getLastResult(),
                 running,
                 taskHandle == null ? null : taskHandle.getStartedAt(),
                 windowContext.getLastStartedAt(),
                 windowContext.getLastFinishedAt(),
                 windowContext.getLastMessage(),
+                windowContext.getLastResultMessage(),
                 windowContext.getNativeBinding()
         );
     }
@@ -170,17 +173,21 @@ public class WindowTaskRunner {
         log.info("{} 窗口 [{}] 开始执行任务：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
 
         TaskRunResult result = TaskRunResult.FAILED;
+        String finishMessage = "任务结束：" + result;
         try {
             result = task.execute(executionContext);
+            finishMessage = "任务结束：" + result;
         } catch (TaskStopRequestedException | CancellationException e) {
             log.info("{} 窗口 [{}] 任务被停止：{}，原因：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e.getMessage());
             result = TaskRunResult.STOPPED;
+            finishMessage = "任务停止：" + normalizeMessage(e.getMessage());
         } catch (Exception e) {
             log.error("{} 窗口 [{}] 任务异常：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e);
             result = TaskRunResult.FAILED;
+            finishMessage = "任务异常：" + e.getClass().getSimpleName();
         } finally {
             WindowRuntimeStatus status = toWindowStatus(result);
-            windowContext.markFinished(status, "任务结束：" + result);
+            windowContext.markFinished(status, taskType, result, finishMessage);
             log.info("{} 窗口 [{}] 任务结束：{} -> {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), result);
             currentTask = null;
         }
@@ -216,5 +223,9 @@ public class WindowTaskRunner {
             case STOPPED -> WindowRuntimeStatus.STOPPED;
             case SKIPPED -> WindowRuntimeStatus.IDLE;
         };
+    }
+
+    private String normalizeMessage(String message) {
+        return message == null || message.isBlank() ? "-" : message;
     }
 }
