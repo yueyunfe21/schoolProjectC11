@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.function.Function;
 
 @Component
 @RequiredArgsConstructor
@@ -166,18 +167,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        TaskStep prepareStep = new TaskStep() {
-            @Override
-            public TaskStepResult execute(TaskExecutionContext context) {
-                return prepareBeforeRun(context, runtimeState);
-            }
-
-            @Override
-            public String getStepName() {
-                return "五环战前准备";
-            }
-        };
-        return taskStepExecutor.execute(executionContext, prepareStep, TaskRetryPolicy.none());
+        return executeStep(executionContext, "五环战前准备", context -> prepareBeforeRun(context, runtimeState));
     }
 
     private TaskStepResult prepareBeforeRun(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -203,18 +193,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeDetectHandoverStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        TaskStep handoverStep = new TaskStep() {
-            @Override
-            public TaskStepResult execute(TaskExecutionContext context) {
-                return detectHandover(context, runtimeState);
-            }
-
-            @Override
-            public String getStepName() {
-                return "五环中途接管侦测";
-            }
-        };
-        return taskStepExecutor.execute(executionContext, handoverStep, TaskRetryPolicy.none());
+        return executeStep(executionContext, "五环中途接管侦测", context -> detectHandover(context, runtimeState));
     }
 
     private TaskStepResult detectHandover(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -237,18 +216,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeSetupInitialTaskStep(TaskExecutionContext executionContext) {
-        TaskStep setupInitialTaskStep = new TaskStep() {
-            @Override
-            public TaskStepResult execute(TaskExecutionContext context) {
-                return setupInitialTask(context);
-            }
-
-            @Override
-            public String getStepName() {
-                return "接取五环初始任务";
-            }
-        };
-        return taskStepExecutor.execute(executionContext, setupInitialTaskStep, TaskRetryPolicy.none());
+        return executeStep(executionContext, "接取五环初始任务", this::setupInitialTask);
     }
 
     private TaskStepResult setupInitialTask(TaskExecutionContext executionContext) {
@@ -292,18 +260,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeRunLoopOnceStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        TaskStep loopStep = new TaskStep() {
-            @Override
-            public TaskStepResult execute(TaskExecutionContext context) {
-                return runLoopOnce(context, runtimeState);
-            }
-
-            @Override
-            public String getStepName() {
-                return "五环跑环单轮处理";
-            }
-        };
-        return taskStepExecutor.execute(executionContext, loopStep, TaskRetryPolicy.none());
+        return executeStep(executionContext, "五环跑环单轮处理", context -> runLoopOnce(context, runtimeState));
     }
 
     private TaskStepResult runLoopOnce(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -427,6 +384,26 @@ public class FiveRingTask implements GameTask {
             runtimeState.needTaskSync = true;
             sleep(1000);
         }
+    }
+
+    private TaskStepResult executeStep(TaskExecutionContext executionContext,
+                                       String stepName,
+                                       Function<TaskExecutionContext, TaskStepResult> action) {
+        return taskStepExecutor.execute(executionContext, namedStep(stepName, action), TaskRetryPolicy.none());
+    }
+
+    private TaskStep namedStep(String stepName, Function<TaskExecutionContext, TaskStepResult> action) {
+        return new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return action.apply(context);
+            }
+
+            @Override
+            public String getStepName() {
+                return stepName;
+            }
+        };
     }
 
     private TaskExecutionContext buildStepExecutionContext() {
