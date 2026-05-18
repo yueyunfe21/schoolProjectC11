@@ -79,8 +79,17 @@ public class InputActionWorker {
             case CLICK_RIGHT -> inputProvider.clickRight(action.getX(), action.getY(), action.getDelayMs());
             case DOUBLE_RIGHT_CLICK -> inputProvider.doubleRightClick(
                     action.getX(), action.getY(), action.getDelayMs(), action.getIntervalMs());
+            case MOVE_MOUSE -> inputProvider.moveMouse(action.getX(), action.getY());
+            case DRAG_AND_DROP -> inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
             case TYPE_TEXT_UNICODE -> inputProvider.typeTextUnicode(action.getText());
+            case PASTE_TEXT -> inputProvider.pasteText(action.getText());
             case PRESS_ENTER -> inputProvider.pressEnter();
+            case PRESS_ALT_1 -> inputProvider.pressAlt1();
+            case PRESS_ALT_2 -> inputProvider.pressAlt2();
+            case PRESS_ALT_4 -> inputProvider.pressAlt4();
+            case PRESS_ALT_8 -> inputProvider.pressAlt8();
+            case PRESS_ALT_E -> inputProvider.pressAltE();
+            case PRESS_ALT_Q -> inputProvider.pressAltQ();
             case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
             case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
             case SLEEP -> sleepQuietly(action.getDelayMs());
