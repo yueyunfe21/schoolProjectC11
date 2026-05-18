@@ -14,6 +14,7 @@ import com.bot.dhxy.task.wuhuan.FiveRingLoopDecision;
 import com.bot.dhxy.task.wuhuan.FiveRingRuntimeState;
 import com.bot.dhxy.task.wuhuan.FiveRingTaskSyncDecision;
 import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.window.interaction.TaskWindowRuntimeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
@@ -33,6 +34,7 @@ public class FiveRingTask extends BaseTaskTemplate {
     private final BagService bagService;
     private final GameStateUtil gameStateUtil;
     private final UICleanerService uiCleanerService;
+    private final TaskWindowRuntimeService taskWindowRuntimeService;
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -58,7 +60,8 @@ public class FiveRingTask extends BaseTaskTemplate {
                         BagService bagService,
                         GameStateUtil gameStateUtil,
                         UICleanerService uiCleanerService,
-                        TaskStepExecutor taskStepExecutor) {
+                        TaskStepExecutor taskStepExecutor,
+                        TaskWindowRuntimeService taskWindowRuntimeService) {
         super(context, taskStepExecutor);
         this.navigationService = navigationService;
         this.npcClickService = npcClickService;
@@ -69,6 +72,7 @@ public class FiveRingTask extends BaseTaskTemplate {
         this.bagService = bagService;
         this.gameStateUtil = gameStateUtil;
         this.uiCleanerService = uiCleanerService;
+        this.taskWindowRuntimeService = taskWindowRuntimeService;
     }
 
     @Override
@@ -97,6 +101,9 @@ public class FiveRingTask extends BaseTaskTemplate {
         logTaskBanner();
 
         TaskExecutionContext context = resolveExecutionContext(executionContext);
+        logWindowContext(context);
+        activateWindowBeforeRun(context);
+
         FiveRingRuntimeState runtimeState = new FiveRingRuntimeState();
 
         TaskRunResult startupResult = runStartupSteps(context, runtimeState);
@@ -111,6 +118,13 @@ public class FiveRingTask extends BaseTaskTemplate {
         log.info("====================================");
         log.info("🔥 启动【全自动五环印钞机】(极速退出优化版)");
         log.info("====================================");
+    }
+
+    private void activateWindowBeforeRun(TaskExecutionContext context) {
+        boolean activated = activateWindowIfReady(taskWindowRuntimeService, context, "五环队长任务");
+        if (activated) {
+            sleepSafely(context, 300);
+        }
     }
 
     private TaskRunResult runStartupSteps(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
