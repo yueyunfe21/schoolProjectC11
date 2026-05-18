@@ -99,19 +99,27 @@ public class WindowRuntimeContext {
     public String getLastResultMessage() { return lastResultMessage; }
 
     public void markQueued(TaskType taskType) {
-        this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
+        if (taskType != null && taskType != TaskType.UNKNOWN) {
+            this.selectedTaskType = taskType;
+            this.lastTaskType = taskType;
+        } else {
+            this.lastTaskType = this.selectedTaskType;
+        }
         this.status = WindowRuntimeStatus.QUEUED;
-        this.lastTaskType = this.selectedTaskType;
-        this.lastMessage = "任务已排队：" + this.selectedTaskType.getDisplayName();
+        this.lastMessage = "任务已排队：" + this.lastTaskType.getDisplayName();
         this.lastResultMessage = null;
     }
 
     public void markStarted(TaskType taskType) {
-        this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
+        if (taskType != null && taskType != TaskType.UNKNOWN) {
+            this.selectedTaskType = taskType;
+            this.lastTaskType = taskType;
+        } else {
+            this.lastTaskType = this.selectedTaskType;
+        }
         this.status = WindowRuntimeStatus.RUNNING;
-        this.lastTaskType = this.selectedTaskType;
         this.lastStartedAt = LocalDateTime.now();
-        this.lastMessage = "任务开始：" + this.selectedTaskType.getDisplayName();
+        this.lastMessage = "任务开始：" + this.lastTaskType.getDisplayName();
         this.lastResult = null;
         this.lastResultMessage = null;
     }
@@ -128,7 +136,7 @@ public class WindowRuntimeContext {
     public void markFinished(WindowRuntimeStatus status, TaskType taskType, TaskRunResult result, String message) {
         this.status = status == null ? WindowRuntimeStatus.IDLE : status;
         this.lastFinishedAt = LocalDateTime.now();
-        if (taskType != null) {
+        if (taskType != null && taskType != TaskType.UNKNOWN) {
             this.lastTaskType = taskType;
         }
         this.lastResult = result;
@@ -153,11 +161,14 @@ public class WindowRuntimeContext {
         if (request == null) {
             return;
         }
-        updateRole(request.getRole(), request.getRoleName());
+        if ((request.getRole() != null && request.getRole() != WindowRole.UNKNOWN)
+                || request.getRoleName() != null) {
+            updateRole(request.getRole(), request.getRoleName());
+        }
         if (request.hasNativeBinding()) {
             setNativeBinding(request.getNativeBinding());
         }
-        if (allowTaskChange) {
+        if (allowTaskChange && request.hasSelectedTask()) {
             setSelectedTaskType(request.getSelectedTaskType());
         }
     }
