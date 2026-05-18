@@ -26,6 +26,8 @@ public class WindowAwareInputCoordinator {
     private final WindowFocusService windowFocusService;
     private final WindowIsolationProperties windowIsolationProperties;
 
+    private final ThreadLocal<Boolean> inputTransactionActive = ThreadLocal.withInitial(() -> false);
+
     public WindowAwareInputCoordinator(GlobalInputLock globalInputLock,
                                        WindowTaskContextHolder windowTaskContextHolder,
                                        WindowFocusService windowFocusService,
@@ -37,6 +39,11 @@ public class WindowAwareInputCoordinator {
     }
 
     public void runInput(String actionName, Runnable action) {
+        if (inputTransactionActive.get()) {
+            focusCurrentWindowWithoutLock(actionName);
+            action.run();
+            return;
+        }
         globalInputLock.runWithLock(() -> {
             focusCurrentWindowWithoutLock(actionName);
             action.run();
@@ -44,9 +51,39 @@ public class WindowAwareInputCoordinator {
     }
 
     public <T> T callInput(String actionName, Supplier<T> action) {
+        if (inputTransactionActive.get()) {
+            focusCurrentWindowWithoutLock(actionName);
+            return action.get();
+        }
         return globalInputLock.callWithLock(() -> {
             focusCurrentWindowWithoutLock(actionName);
             return action.get();
+        });
+    }
+
+    public void runInputTransaction(String actionName, Runnable action) {
+        globalInputLock.runWithLock(() -> {
+            boolean previous = inputTransactionActive.get();
+            inputTransactionActive.set(true);
+            try {
+                focusCurrentWindowWithoutLock(actionName);
+                action.run();
+            } finally {
+                inputTransactionActive.set(previous);
+            }
+        });
+    }
+
+    public <T> T callInputTransaction(String actionName, Supplier<T> action) {
+        return globalInputLock.callWithLock(() -> {
+            boolean previous = inputTransactionActive.get();
+            inputTransactionActive.set(true);
+            try {
+                focusCurrentWindowWithoutLock(actionName);
+                return action.get();
+            } finally {
+                inputTransactionActive.set(previous);
+            }
         });
     }
 
