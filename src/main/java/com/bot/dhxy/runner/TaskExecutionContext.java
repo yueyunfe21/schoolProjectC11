@@ -1,6 +1,9 @@
 package com.bot.dhxy.runner;
 
 import com.bot.dhxy.runner.parameter.TaskParameterValue;
+import com.bot.dhxy.runner.policy.TaskErrorPolicy;
+import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import lombok.Builder;
 import lombok.Getter;
 
