@@ -2,6 +2,7 @@ package com.bot.dhxy.window.discovery;
 
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRole;
+import com.bot.dhxy.window.runtime.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import org.springframework.stereotype.Component;
 
@@ -24,9 +25,28 @@ public class NativeWindowRegistrationMapper {
             }
             WindowRole role = i == 0 ? WindowRole.LEADER : WindowRole.MEMBER;
             TaskType taskType = role.isLeader() ? safeLeaderTask : TaskType.AUTO_BATTLE;
-            requests.add(WindowRegistrationRequest.of(window.toWindowId(), role, window.toDisplayName(), taskType));
+            requests.add(WindowRegistrationRequest.of(
+                    window.toWindowId(),
+                    role,
+                    window.toDisplayName(),
+                    taskType,
+                    toBinding(window)
+            ));
         }
         return requests;
+    }
+
+    private WindowNativeBinding toBinding(NativeWindowInfo window) {
+        return new WindowNativeBinding(
+                window.getHandle(),
+                window.getTitle(),
+                window.getClassName(),
+                window.getProcessId(),
+                window.getX(),
+                window.getY(),
+                window.getWidth(),
+                window.getHeight()
+        );
     }
 
     private TaskType normalizeLeaderTask(TaskType taskType) {
