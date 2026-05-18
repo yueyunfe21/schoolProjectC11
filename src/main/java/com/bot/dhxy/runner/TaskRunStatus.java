@@ -21,6 +21,9 @@ public enum TaskRunStatus {
     /** 已发送停止请求，等待任务真正退出。 */
     STOPPING,
 
+    /** 任务队列已经停止。 */
+    STOPPED,
+
     /** 任务队列正常执行完成。 */
     COMPLETED,
 
