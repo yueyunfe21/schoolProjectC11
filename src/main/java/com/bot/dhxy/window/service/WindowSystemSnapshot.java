@@ -1,0 +1,58 @@
+package com.bot.dhxy.window.service;
+
+import com.bot.dhxy.window.runner.WindowTaskSnapshot;
+
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * 多窗口系统整体状态快照。
+ *
+ * UI 可以用它一次性刷新窗口表、容量信息和运行统计。
+ */
+public class WindowSystemSnapshot {
+
+    private final int registeredWindowCount;
+    private final int runningWindowCount;
+    private final int maxWindowCount;
+    private final int remainingWindowCapacity;
+    private final boolean capacityFull;
+    private final List<WindowTaskSnapshot> windows;
+
+    public WindowSystemSnapshot(int registeredWindowCount,
+                                int runningWindowCount,
+                                int maxWindowCount,
+                                int remainingWindowCapacity,
+                                List<WindowTaskSnapshot> windows) {
+        this.registeredWindowCount = Math.max(registeredWindowCount, 0);
+        this.runningWindowCount = Math.max(runningWindowCount, 0);
+        this.maxWindowCount = Math.max(maxWindowCount, 0);
+        this.remainingWindowCapacity = Math.max(remainingWindowCapacity, 0);
+        this.capacityFull = this.maxWindowCount > 0 && this.registeredWindowCount >= this.maxWindowCount;
+        this.windows = windows == null ? Collections.emptyList() : List.copyOf(windows);
+    }
+
+    public int getRegisteredWindowCount() {
+        return registeredWindowCount;
+    }
+
+    public int getRunningWindowCount() {
+        return runningWindowCount;
+    }
+
+    public int getMaxWindowCount() {
+        return maxWindowCount;
+    }
+
+    public int getRemainingWindowCapacity() {
+        return remainingWindowCapacity;
+    }
+
+    public boolean isCapacityFull() {
+        return capacityFull;
+    }
+
+    public List<WindowTaskSnapshot> getWindows() {
+        return windows;
+    }
+}
