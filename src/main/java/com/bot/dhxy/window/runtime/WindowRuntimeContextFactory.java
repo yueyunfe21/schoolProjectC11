@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 /**
  * 创建窗口级运行上下文。
  *
- * 目前 GameContext 仍是全局兼容模式；后续真正多窗口时，应通过这里切换为窗口级 GameContext。
+ * 多窗口目前共用同一个 GameContext Bean，但每个 WindowRuntimeContext 内部持有独立 GameContext.State。
  */
 @Component
 public class WindowRuntimeContextFactory {
@@ -19,9 +19,13 @@ public class WindowRuntimeContextFactory {
     }
 
     public WindowRuntimeContext create(WindowRegistrationRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("window registration request must not be null");
+        }
+        request.requireValid();
+
         WindowRuntimeContext context = new WindowRuntimeContext(request.getWindowId(), gameContextProvider.getObject());
-        context.updateRole(request.getRole(), request.getRoleName());
-        context.setSelectedTaskType(request.getSelectedTaskType());
+        context.applyRegistration(request, true);
         return context;
     }
 }
