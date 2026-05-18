@@ -59,7 +59,7 @@ public class WindowTaskControlService {
             boolean success = taskManager.registerWindow(request) != null;
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新，任务=" + getTaskDisplayName(request.getTaskType())));
+                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新，任务=" + getTaskDisplayName(request.getSelectedTaskType())));
             } else {
                 details.add(WindowTaskCommandDetail.failed(request.getWindowId(), "窗口注册失败，可能已达到容量上限"));
             }
