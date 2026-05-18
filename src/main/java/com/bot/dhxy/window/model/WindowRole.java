@@ -7,11 +7,33 @@ package com.bot.dhxy.window.model;
  */
 public enum WindowRole {
     /** 队长窗口，负责跑主任务、寻路、点 NPC。 */
-    LEADER,
+    LEADER("队长"),
 
     /** 队员窗口，只负责自动战斗、补状态、处理简单弹窗。 */
-    MEMBER,
+    MEMBER("队员"),
 
     /** 暂时无法判断身份。 */
-    UNKNOWN
+    UNKNOWN("未知");
+
+    private final String displayName;
+
+    WindowRole(String displayName) {
+        this.displayName = displayName;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public boolean isLeader() {
+        return this == LEADER;
+    }
+
+    public boolean isMember() {
+        return this == MEMBER;
+    }
+
+    public boolean isUnknown() {
+        return this == UNKNOWN;
+    }
 }
