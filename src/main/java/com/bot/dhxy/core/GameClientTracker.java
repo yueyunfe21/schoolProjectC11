@@ -41,10 +41,6 @@ public class GameClientTracker {
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
 
-    /**
-     * 单窗口旧流程使用 sharedState。
-     * 多窗口任务线程使用 ThreadLocal state，避免不同窗口互相覆盖 gameHwnd/windowBaseX/windowBaseY。
-     */
     private final TrackerState sharedState = new TrackerState();
     private final ThreadLocal<TrackerState> threadState = ThreadLocal.withInitial(TrackerState::new);
 
@@ -64,6 +60,7 @@ public class GameClientTracker {
                 return false;
             }
             TrackerState s = state();
+            logTrackerState("updateGlobalVision");
             int x1 = s.windowBaseX;
             int y1 = s.windowBaseY;
             int x2 = x1 + WINDOW_WIDTH;
@@ -74,6 +71,7 @@ public class GameClientTracker {
 
     public boolean locateWindow() {
         if (useBoundWindowIfAvailable()) {
+            logTrackerState("locateWindow-bound");
             return true;
         }
 
@@ -104,6 +102,7 @@ public class GameClientTracker {
         updateBaseFromHwnd(targetHwnd[0], targetTitle[0]);
         TrackerState s = state();
         System.out.println("✅ [定位成功] 目标: " + s.fullWindowTitle + " | 窗口基址 X:" + s.windowBaseX + " Y:" + s.windowBaseY);
+        logTrackerState("locateWindow-title-search");
         return true;
     }
 
@@ -114,6 +113,7 @@ public class GameClientTracker {
     public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
+            logTrackerState("captureToFileWithShield:" + elementName);
             System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
             inputProvider.pressAlt4();
             sleepQuietly(400);
@@ -129,13 +129,16 @@ public class GameClientTracker {
     public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return null;
+            logTrackerState("captureToMemory:" + elementName);
             return eyes.captureRegionByCoordinates(x1, y1, x2, y2);
         });
     }
 
     private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!checkBaseAddress()) return false;
-        System.out.println("📸 [" + elementName + "] 正在截取画面保存至: " + savePath);
+        logTrackerState("captureToFile:" + elementName);
+        System.out.println("📸 [" + elementName + "] 正在截取画面保存至: " + savePath
+                + " | rect=(" + x1 + "," + y1 + ")-(" + x2 + "," + y2 + ")");
         return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
     }
 
@@ -191,6 +194,7 @@ public class GameClientTracker {
             return false;
         }
         TrackerState s = state();
+        logTrackerState("bringWindowToFront");
         System.out.println("🔄 正在将游戏窗口唤醒并置顶...");
         User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
         User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
@@ -200,6 +204,18 @@ public class GameClientTracker {
 
     private TrackerState state() {
         return windowTaskContextHolder.current().isPresent() ? threadState.get() : sharedState;
+    }
+
+    private void logTrackerState(String action) {
+        TrackerState s = state();
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        String windowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_WINDOW_CONTEXT");
+        String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
+        System.out.println("🧭 [Tracker] action=" + action
+                + " | windowId=" + windowId
+                + " | base=(" + s.windowBaseX + "," + s.windowBaseY + ")"
+                + " | hwnd=" + hwndText
+                + " | title=" + s.fullWindowTitle);
     }
 
     private HWND toHwnd(String handleText) {
