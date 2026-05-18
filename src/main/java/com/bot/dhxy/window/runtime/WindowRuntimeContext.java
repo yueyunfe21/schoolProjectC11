@@ -56,6 +56,19 @@ public class WindowRuntimeContext {
         this.role = role == null ? WindowRole.UNKNOWN : role;
     }
 
+    public void updateRole(WindowRole role, String roleName) {
+        setRole(role);
+        setRoleName(roleName);
+    }
+
+    public boolean isLeader() {
+        return role == WindowRole.LEADER;
+    }
+
+    public boolean isMember() {
+        return role == WindowRole.MEMBER;
+    }
+
     public WindowRuntimeStatus getStatus() {
         return status;
     }
@@ -76,11 +89,22 @@ public class WindowRuntimeContext {
         return lastStartedAt;
     }
 
+    public void markQueued(TaskType taskType) {
+        this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
+        this.status = WindowRuntimeStatus.QUEUED;
+        this.lastMessage = null;
+    }
+
     public void markStarted(TaskType taskType) {
         this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
         this.status = WindowRuntimeStatus.RUNNING;
         this.lastStartedAt = LocalDateTime.now();
         this.lastMessage = null;
+    }
+
+    public void markStopping(String message) {
+        this.status = WindowRuntimeStatus.STOPPING;
+        this.lastMessage = message;
     }
 
     public LocalDateTime getLastFinishedAt() {
