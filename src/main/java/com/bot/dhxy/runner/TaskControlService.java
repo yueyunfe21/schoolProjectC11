@@ -180,6 +180,18 @@ public class TaskControlService {
     }
 
     /**
+     * 重置运行状态。
+     *
+     * 主要用于 UI 清空日志时，把底部状态栏也恢复到空闲。
+     */
+    public void resetRuntimeState() {
+        if (running.get()) {
+            return;
+        }
+        runtimeState = TaskRuntimeState.idle();
+    }
+
+    /**
      * 获取当前程序支持的任务列表，用于 UI 生成勾选框。
      */
     public List<TaskDefinition> getAvailableTasks() {
@@ -201,11 +213,12 @@ public class TaskControlService {
     }
 
     /**
-     * 清空任务运行记录和任务日志。
+     * 清空任务运行记录、任务日志和空闲状态下的运行状态。
      */
     public void clearRuntimeLogs() {
         taskRunHistoryService.clear();
         taskLogService.clear();
+        resetRuntimeState();
     }
 
     /**
