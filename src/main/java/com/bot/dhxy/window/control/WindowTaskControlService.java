@@ -3,6 +3,7 @@ package com.bot.dhxy.window.control;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
+import com.bot.dhxy.window.execution.WindowTaskSubmitResult;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import org.springframework.stereotype.Service;
 
@@ -99,12 +100,12 @@ public class WindowTaskControlService {
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            boolean success = taskManager.submit(windowId, taskType);
-            if (success) {
+            WindowTaskSubmitResult submitResult = taskManager.submitWithResult(windowId, taskType);
+            if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动任务：" + taskType.getDisplayName()));
+                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动任务：" + submitResult.getTaskDisplayName() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
+                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
             }
         }
 
@@ -120,13 +121,12 @@ public class WindowTaskControlService {
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            WindowTaskSnapshot snapshot = taskManager.getSnapshot(windowId).orElse(null);
-            boolean success = taskManager.submitSelectedTask(windowId);
-            if (success) {
+            WindowTaskSubmitResult submitResult = taskManager.submitSelectedTaskWithResult(windowId);
+            if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动已选任务：" + getTaskDisplayName(snapshot == null ? null : snapshot.getSelectedTaskType())));
+                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动已选任务：" + submitResult.getTaskDisplayName() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、未选择任务或已有任务运行"));
+                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
             }
         }
 
@@ -158,12 +158,12 @@ public class WindowTaskControlService {
                 details.add(WindowTaskCommandDetail.failed(windowId, "测试按身份跳过：" + assignment.getReason()));
                 continue;
             }
-            boolean success = taskManager.submit(assignment.getWindowId(), assignment.getTaskType());
-            if (success) {
+            WindowTaskSubmitResult submitResult = taskManager.submitWithResult(assignment.getWindowId(), assignment.getTaskType());
+            if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "测试按身份已启动任务：" + assignment.getTaskDisplayName()));
+                details.add(WindowTaskCommandDetail.success(windowId, "测试按身份已启动任务：" + assignment.getTaskDisplayName() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
+                details.add(WindowTaskCommandDetail.failed(windowId, "测试按身份启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
             }
         }
 
