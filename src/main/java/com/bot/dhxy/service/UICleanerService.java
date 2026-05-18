@@ -7,6 +7,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -28,6 +29,7 @@ public class UICleanerService {
     private final GameStateUtil gameStateUtil;
     private final BotProperties config;
     private final DialogService dialogService;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     private final Random random = new Random();
 
@@ -112,7 +114,7 @@ public class UICleanerService {
         }
 
         int[] dialogRect = coordinateHelper.getScaledRect(250, 312, 529, 208);
-        String imgPath = "images/temp/dialog_close_scan.png";
+        String imgPath = windowScopedTempPath.resolve("dialog_close_scan.png");
         tracker.captureToFile("扫除对话框", imgPath, dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
 
         List<TextRecognizer.OcrWordResult> allWords = ocr.getAllTextResults(imgPath);
