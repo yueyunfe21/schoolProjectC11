@@ -184,6 +184,7 @@ public class MainWindowController {
                 .taskCodes(selectedTaskCodes)
                 .loop(loop)
                 .testMode(testMode)
+                .initGameWindow(initGameWindow)
                 .build();
 
         startButton.setDisable(true);
@@ -192,7 +193,7 @@ public class MainWindowController {
         updateStatusLabel();
         Thread worker = new Thread(() -> {
             try {
-                if (initGameWindow) {
+                if (request.isInitGameWindow()) {
                     boolean ready = gameWindowService.initGameWindow();
                     if (!ready) {
                         Platform.runLater(() -> {
