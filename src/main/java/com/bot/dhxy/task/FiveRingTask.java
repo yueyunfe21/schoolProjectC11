@@ -6,21 +6,21 @@ import com.bot.dhxy.runner.TaskExecutionContext;
 import com.bot.dhxy.runner.TaskRetryPolicy;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.QuestManagerService.PathingResult;
+import com.bot.dhxy.task.template.BaseTaskTemplate;
 import com.bot.dhxy.task.template.TaskStep;
 import com.bot.dhxy.task.template.TaskStepExecutor;
 import com.bot.dhxy.task.template.TaskStepResult;
 import com.bot.dhxy.tools.GameStateUtil;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.function.Function;
+import java.util.Collections;
+import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
-public class FiveRingTask implements GameTask {
+public class FiveRingTask extends BaseTaskTemplate {
 
     private final GameContext context;
     private final NavigationService navigationService;
@@ -32,7 +32,6 @@ public class FiveRingTask implements GameTask {
     private final BagService bagService;
     private final GameStateUtil gameStateUtil;
     private final UICleanerService uiCleanerService;
-    private final TaskStepExecutor taskStepExecutor;
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -47,6 +46,30 @@ public class FiveRingTask implements GameTask {
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 
     private static final int MAX_RETRY = 5;
+
+    public FiveRingTask(GameContext context,
+                        NavigationService navigationService,
+                        NpcClickService npcClickService,
+                        DialogService dialogService,
+                        PlayerStateService playerStateService,
+                        QuestManagerService questManager,
+                        BattleRadarService battleRadarService,
+                        BagService bagService,
+                        GameStateUtil gameStateUtil,
+                        UICleanerService uiCleanerService,
+                        TaskStepExecutor taskStepExecutor) {
+        super(context, taskStepExecutor);
+        this.context = context;
+        this.navigationService = navigationService;
+        this.npcClickService = npcClickService;
+        this.dialogService = dialogService;
+        this.playerStateService = playerStateService;
+        this.questManager = questManager;
+        this.battleRadarService = battleRadarService;
+        this.bagService = bagService;
+        this.gameStateUtil = gameStateUtil;
+        this.uiCleanerService = uiCleanerService;
+    }
 
     private enum HandoverState {
         ALREADY_RUNNING,
@@ -86,6 +109,11 @@ public class FiveRingTask implements GameTask {
         log.info("🛑 收到停止五环任务请求");
         context.setBotStatus(GameContext.BotStatus.IDLE);
         context.setCurrentActionState(GameContext.ActionState.FREE);
+    }
+
+    @Override
+    protected List<TaskStep> buildSteps(TaskExecutionContext context) {
+        return Collections.emptyList();
     }
 
     @Override
@@ -167,7 +195,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        return executeStep(executionContext, "五环战前准备", context -> prepareBeforeRun(context, runtimeState));
+        return executeStep(executionContext, "五环战前准备", context -> prepareBeforeRun(context, runtimeState), TaskRetryPolicy.none());
     }
 
     private TaskStepResult prepareBeforeRun(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -193,7 +221,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeDetectHandoverStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        return executeStep(executionContext, "五环中途接管侦测", context -> detectHandover(context, runtimeState));
+        return executeStep(executionContext, "五环中途接管侦测", context -> detectHandover(context, runtimeState), TaskRetryPolicy.none());
     }
 
     private TaskStepResult detectHandover(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -216,7 +244,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeSetupInitialTaskStep(TaskExecutionContext executionContext) {
-        return executeStep(executionContext, "接取五环初始任务", this::setupInitialTask);
+        return executeStep(executionContext, "接取五环初始任务", this::setupInitialTask, TaskRetryPolicy.none());
     }
 
     private TaskStepResult setupInitialTask(TaskExecutionContext executionContext) {
@@ -260,7 +288,7 @@ public class FiveRingTask implements GameTask {
     }
 
     private TaskStepResult executeRunLoopOnceStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        return executeStep(executionContext, "五环跑环单轮处理", context -> runLoopOnce(context, runtimeState));
+        return executeStep(executionContext, "五环跑环单轮处理", context -> runLoopOnce(context, runtimeState), TaskRetryPolicy.none());
     }
 
     private TaskStepResult runLoopOnce(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -384,26 +412,6 @@ public class FiveRingTask implements GameTask {
             runtimeState.needTaskSync = true;
             sleep(1000);
         }
-    }
-
-    private TaskStepResult executeStep(TaskExecutionContext executionContext,
-                                       String stepName,
-                                       Function<TaskExecutionContext, TaskStepResult> action) {
-        return taskStepExecutor.execute(executionContext, namedStep(stepName, action), TaskRetryPolicy.none());
-    }
-
-    private TaskStep namedStep(String stepName, Function<TaskExecutionContext, TaskStepResult> action) {
-        return new TaskStep() {
-            @Override
-            public TaskStepResult execute(TaskExecutionContext context) {
-                return action.apply(context);
-            }
-
-            @Override
-            public String getStepName() {
-                return stepName;
-            }
-        };
     }
 
     private TaskExecutionContext buildStepExecutionContext() {
