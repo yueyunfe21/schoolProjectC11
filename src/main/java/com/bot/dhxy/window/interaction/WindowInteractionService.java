@@ -30,21 +30,49 @@ public class WindowInteractionService {
         return focusService.focus(binding);
     }
 
+    public void clickCenter(WindowNativeBinding binding) {
+        mouseService.clickCenter(binding);
+    }
+
+    public void clickRelative(WindowNativeBinding binding, int relativeX, int relativeY) {
+        mouseService.clickRelative(binding, relativeX, relativeY);
+    }
+
+    public void moveRelative(WindowNativeBinding binding, int relativeX, int relativeY) {
+        mouseService.moveTo(binding, relativeX, relativeY);
+    }
+
     public void focusAndClickCenter(WindowNativeBinding binding) {
         focus(binding);
-        mouseService.clickCenter(binding);
+        clickCenter(binding);
     }
 
     public void focusAndClickRelative(WindowNativeBinding binding, int relativeX, int relativeY) {
         focus(binding);
-        mouseService.clickRelative(binding, relativeX, relativeY);
+        clickRelative(binding, relativeX, relativeY);
+    }
+
+    public BufferedImage captureWindow(WindowNativeBinding binding) {
+        return screenshotService.captureWindow(binding);
     }
 
     public BufferedImage captureClientArea(WindowNativeBinding binding) {
         return screenshotService.captureClientArea(binding);
     }
 
+    public WindowRect windowArea(WindowNativeBinding binding) {
+        return coordinateService.toWindowRect(binding);
+    }
+
     public WindowRect clientArea(WindowNativeBinding binding) {
         return coordinateService.estimateClientArea(binding);
+    }
+
+    public WindowPoint center(WindowNativeBinding binding) {
+        return coordinateService.center(binding);
+    }
+
+    public WindowPoint screenPoint(WindowNativeBinding binding, int relativeX, int relativeY) {
+        return coordinateService.toScreenPoint(binding, relativeX, relativeY);
     }
 }
