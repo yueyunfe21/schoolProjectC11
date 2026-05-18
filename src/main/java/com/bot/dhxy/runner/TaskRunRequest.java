@@ -34,6 +34,13 @@ public class TaskRunRequest {
     private final boolean testMode;
 
     /**
+     * 是否在启动任务前初始化游戏窗口。
+     *
+     * 注意：这个字段只表达启动意图，真正初始化动作由 UI 或 AutoBot 侧调用 GameWindowService 完成。
+     */
+    private final boolean initGameWindow;
+
+    /**
      * 清洗后的任务编码列表，去掉 null、空白项和前后空格。
      */
     public List<String> getNormalizedTaskCodes() {
@@ -53,6 +60,7 @@ public class TaskRunRequest {
     public String toLogText() {
         return "tasks=" + getNormalizedTaskCodes()
                 + " | loop=" + loop
-                + " | testMode=" + testMode;
+                + " | testMode=" + testMode
+                + " | initGameWindow=" + initGameWindow;
     }
 }
