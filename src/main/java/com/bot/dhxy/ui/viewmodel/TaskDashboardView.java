@@ -28,4 +28,9 @@ public class TaskDashboardView {
      * 最近任务日志。
      */
     private final List<TaskLogView> recentLogs;
+
+    /**
+     * 当前任务运行状态。
+     */
+    private final TaskRuntimeStateView runtimeState;
 }
