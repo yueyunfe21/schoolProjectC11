@@ -33,4 +33,9 @@ public class TaskDashboardView {
      * 当前任务运行状态。
      */
     private final TaskRuntimeStateView runtimeState;
+
+    /**
+     * 当前任务执行计划预览。
+     */
+    private final TaskPlanView planView;
 }
