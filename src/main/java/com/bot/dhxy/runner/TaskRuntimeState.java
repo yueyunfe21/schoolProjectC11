@@ -10,13 +10,14 @@ import java.time.LocalDateTime;
  * 任务运行时状态快照。
  *
  * 作用：给 UI 查询当前任务系统状态。
- * 包含当前是否运行、最近启动请求、最近运行结果、开始结束时间和状态说明。
+ * 包含当前是否运行、是否正在停止、最近启动请求、最近运行结果、开始结束时间和状态说明。
  */
 @Getter
 @Builder
 public class TaskRuntimeState {
 
     private final boolean running;
+    private final boolean stopping;
     private final TaskRunRequest currentRequest;
     private final TaskRunSummary lastSummary;
     private final LocalDateTime startedAt;
@@ -26,6 +27,7 @@ public class TaskRuntimeState {
     public static TaskRuntimeState idle() {
         return TaskRuntimeState.builder()
                 .running(false)
+                .stopping(false)
                 .statusText("空闲")
                 .build();
     }
