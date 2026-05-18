@@ -17,8 +17,32 @@ import java.util.Locale;
 @Component
 public class WindowsNativeWindowScanner implements NativeWindowScanner {
 
+    /**
+     * 游戏窗口标题关键词。
+     *
+     * 注意：不要使用 dhxy 作为关键词，因为浏览器页面标题、控制台标题、项目名都可能包含 DHXY，容易误判。
+     */
     private static final String[] GAME_TITLE_KEYWORDS = {
-            "大话西游", "dhxy", "xy2", "xy3", "西游"
+            "大话西游", "大话西游2", "xy2", "xy3", "西游"
+    };
+
+    /**
+     * 明显不是游戏窗口的标题 / className 关键词。
+     */
+    private static final String[] EXCLUDED_WINDOW_KEYWORDS = {
+            "dhxy robot",
+            "robot 控制台",
+            "控制台",
+            "google chrome",
+            "chrome",
+            "intellij",
+            "idea",
+            "github",
+            "codex",
+            "任务执行流程",
+            "chatgpt",
+            "microsoft edge",
+            "edge"
     };
 
     @Override
@@ -91,8 +115,18 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
 
     private boolean looksLikeGameWindow(NativeWindowInfo info) {
         String text = (info.getTitle() + " " + info.getClassName()).toLowerCase(Locale.ROOT);
-        for (String keyword : GAME_TITLE_KEYWORDS) {
-            if (text.contains(keyword.toLowerCase(Locale.ROOT))) {
+        if (containsAny(text, EXCLUDED_WINDOW_KEYWORDS)) {
+            return false;
+        }
+        return containsAny(text, GAME_TITLE_KEYWORDS);
+    }
+
+    private boolean containsAny(String text, String[] keywords) {
+        if (text == null || text.isBlank() || keywords == null || keywords.length == 0) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (keyword != null && !keyword.isBlank() && text.contains(keyword.toLowerCase(Locale.ROOT))) {
                 return true;
             }
         }
