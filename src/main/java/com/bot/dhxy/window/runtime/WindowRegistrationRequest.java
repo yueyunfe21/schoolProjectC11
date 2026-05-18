@@ -31,6 +31,13 @@ public class WindowRegistrationRequest {
         return new WindowRegistrationRequest(windowId, roleName, role, TaskType.UNKNOWN);
     }
 
+    public static WindowRegistrationRequest of(String windowId,
+                                               WindowRole role,
+                                               String roleName,
+                                               TaskType selectedTaskType) {
+        return new WindowRegistrationRequest(windowId, roleName, role, selectedTaskType);
+    }
+
     public String getWindowId() {
         return windowId;
     }
@@ -45,5 +52,9 @@ public class WindowRegistrationRequest {
 
     public TaskType getSelectedTaskType() {
         return selectedTaskType;
+    }
+
+    public boolean hasSelectedTask() {
+        return selectedTaskType != null && selectedTaskType != TaskType.UNKNOWN;
     }
 }
