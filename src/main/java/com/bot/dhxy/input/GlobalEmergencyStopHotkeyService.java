@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * F12 用于在游戏抢占鼠标时快速停止全部任务。
  */
 @Slf4j
-@Service
+@Service("inputGlobalEmergencyStopHotkeyService")
 public class GlobalEmergencyStopHotkeyService {
 
     private static final int HOTKEY_ID_EMERGENCY_STOP = 0x0F12;
