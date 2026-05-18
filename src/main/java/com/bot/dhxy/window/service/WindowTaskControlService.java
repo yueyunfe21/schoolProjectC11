@@ -6,6 +6,7 @@ import com.bot.dhxy.window.runner.MultiWindowTaskManager;
 import com.bot.dhxy.window.runner.WindowTaskSnapshot;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -95,9 +96,11 @@ public class WindowTaskControlService {
         }
 
         int accepted = 0;
+        List<WindowTaskAssignment> assignments = new ArrayList<>();
         for (String windowId : ids) {
             WindowTaskSnapshot snapshot = taskManager.getSnapshot(windowId).orElse(null);
             WindowTaskAssignment assignment = assignmentPolicy.assignDefaultTask(snapshot, leaderTaskType);
+            assignments.add(assignment);
             if (assignment.isExecutable() && taskManager.submit(assignment.getWindowId(), assignment.getTaskType())) {
                 accepted++;
             }
@@ -107,7 +110,8 @@ public class WindowTaskControlService {
                 ids.size(),
                 accepted,
                 "按识别身份启动完成：" + accepted + "/" + ids.size(),
-                taskManager.getAllSnapshots()
+                taskManager.getAllSnapshots(),
+                assignments
         );
     }
 
