@@ -19,6 +19,26 @@ public class InputSequences {
         this.inputActionQueue = inputActionQueue;
     }
 
+    public boolean submitAndWait(String description, List<InputAction> actions) {
+        return inputActionQueue.submitAndWait(description, actions);
+    }
+
+    public boolean clickLeft(String description, int x, int y, int delayMs) {
+        return submitAndWait(description, List.of(InputAction.clickLeft(x, y, delayMs)));
+    }
+
+    public boolean doubleRightClick(String description, int x, int y, int clickDelayMs, int intervalMs) {
+        return submitAndWait(description, List.of(InputAction.doubleRightClick(x, y, clickDelayMs, intervalMs)));
+    }
+
+    public boolean pressAlt1(String description) {
+        return submitAndWait(description, List.of(InputAction.pressAlt1()));
+    }
+
+    public boolean pressAlt2(String description) {
+        return submitAndWait(description, List.of(InputAction.pressAlt2()));
+    }
+
     public boolean typeTextEnterAndScroll(String text, int scrollFocusX, int scrollFocusY) {
         return inputActionQueue.submitAndWait("typeTextEnterAndScroll", List.of(
                 InputAction.typeTextUnicode(text),
