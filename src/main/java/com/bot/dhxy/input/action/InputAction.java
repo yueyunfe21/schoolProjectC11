@@ -44,12 +44,48 @@ public class InputAction {
         return new InputAction(InputActionType.DOUBLE_RIGHT_CLICK, x, y, 0, 0, clickDelayMs, intervalMs, 0, null);
     }
 
+    public static InputAction moveMouse(int x, int y) {
+        return new InputAction(InputActionType.MOVE_MOUSE, x, y, 0, 0, 0, 0, 0, null);
+    }
+
+    public static InputAction dragAndDrop(int startX, int startY, int endX, int endY) {
+        return new InputAction(InputActionType.DRAG_AND_DROP, startX, startY, endX, endY, 0, 0, 0, null);
+    }
+
     public static InputAction typeTextUnicode(String text) {
         return new InputAction(InputActionType.TYPE_TEXT_UNICODE, 0, 0, 0, 0, 0, 0, 0, text);
     }
 
+    public static InputAction pasteText(String text) {
+        return new InputAction(InputActionType.PASTE_TEXT, 0, 0, 0, 0, 0, 0, 0, text);
+    }
+
     public static InputAction pressEnter() {
         return new InputAction(InputActionType.PRESS_ENTER, 0, 0, 0, 0, 0, 0, 0, null);
+    }
+
+    public static InputAction pressAlt1() {
+        return simple(InputActionType.PRESS_ALT_1);
+    }
+
+    public static InputAction pressAlt2() {
+        return simple(InputActionType.PRESS_ALT_2);
+    }
+
+    public static InputAction pressAlt4() {
+        return simple(InputActionType.PRESS_ALT_4);
+    }
+
+    public static InputAction pressAlt8() {
+        return simple(InputActionType.PRESS_ALT_8);
+    }
+
+    public static InputAction pressAltE() {
+        return simple(InputActionType.PRESS_ALT_E);
+    }
+
+    public static InputAction pressAltQ() {
+        return simple(InputActionType.PRESS_ALT_Q);
     }
 
     public static InputAction scrollDown(int clicks) {
@@ -62,6 +98,10 @@ public class InputAction {
 
     public static InputAction sleep(int delayMs) {
         return new InputAction(InputActionType.SLEEP, 0, 0, 0, 0, delayMs, 0, 0, null);
+    }
+
+    private static InputAction simple(InputActionType type) {
+        return new InputAction(type, 0, 0, 0, 0, 0, 0, 0, null);
     }
 
     public InputActionType getType() { return type; }
@@ -88,6 +128,8 @@ public class InputAction {
                 "type=" + type +
                 ", x=" + x +
                 ", y=" + y +
+                ", endX=" + endX +
+                ", endY=" + endY +
                 ", delayMs=" + delayMs +
                 ", intervalMs=" + intervalMs +
                 ", clicks=" + clicks +
