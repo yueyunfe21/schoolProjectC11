@@ -35,12 +35,29 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有需要注册的窗口", taskManager.getAllSnapshots());
         }
 
-        int registered = taskManager.registerWindows(requests);
+        int registered = 0;
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
+        for (WindowRegistrationRequest request : requests) {
+            if (request == null || request.getWindowId() == null || request.getWindowId().isBlank()) {
+                details.add(WindowTaskCommandDetail.failed(null, "窗口注册请求无效"));
+                continue;
+            }
+            boolean success = taskManager.registerWindow(request) != null;
+            if (success) {
+                registered++;
+                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(request.getWindowId(), "窗口注册失败，可能已达到容量上限"));
+            }
+        }
+
         return WindowTaskCommandResult.of(
                 requests.size(),
                 registered,
                 "窗口注册完成：" + registered + "/" + requests.size(),
-                taskManager.getAllSnapshots()
+                taskManager.getAllSnapshots(),
+                Collections.emptyList(),
+                details
         );
     }
 
@@ -65,12 +82,25 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.of(ids.size(), 0, "任务类型无效", taskManager.getAllSnapshots());
         }
 
-        int accepted = taskManager.submit(ids, taskType);
+        int accepted = 0;
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
+        for (String windowId : ids) {
+            boolean success = taskManager.submit(windowId, taskType);
+            if (success) {
+                accepted++;
+                details.add(WindowTaskCommandDetail.success(windowId, "已启动任务：" + taskType.getDisplayName()));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
+            }
+        }
+
         return WindowTaskCommandResult.of(
                 ids.size(),
                 accepted,
                 "批量启动统一任务完成：" + accepted + "/" + ids.size(),
-                taskManager.getAllSnapshots()
+                taskManager.getAllSnapshots(),
+                Collections.emptyList(),
+                details
         );
     }
 
@@ -80,12 +110,25 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有选中的窗口", taskManager.getAllSnapshots());
         }
 
-        int accepted = taskManager.submitSelectedTasks(ids);
+        int accepted = 0;
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
+        for (String windowId : ids) {
+            boolean success = taskManager.submitSelectedTask(windowId);
+            if (success) {
+                accepted++;
+                details.add(WindowTaskCommandDetail.success(windowId, "已启动窗口已选任务"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、未选择任务或已有任务运行"));
+            }
+        }
+
         return WindowTaskCommandResult.of(
                 ids.size(),
                 accepted,
                 "按窗口已选任务启动完成：" + accepted + "/" + ids.size(),
-                taskManager.getAllSnapshots()
+                taskManager.getAllSnapshots(),
+                Collections.emptyList(),
+                details
         );
     }
 
@@ -97,12 +140,21 @@ public class WindowTaskControlService {
 
         int accepted = 0;
         List<WindowTaskAssignment> assignments = new ArrayList<>();
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
             WindowTaskSnapshot snapshot = taskManager.getSnapshot(windowId).orElse(null);
             WindowTaskAssignment assignment = assignmentPolicy.assignDefaultTask(snapshot, leaderTaskType);
             assignments.add(assignment);
-            if (assignment.isExecutable() && taskManager.submit(assignment.getWindowId(), assignment.getTaskType())) {
+            if (!assignment.isExecutable()) {
+                details.add(WindowTaskCommandDetail.failed(windowId, "跳过：" + assignment.getReason()));
+                continue;
+            }
+            boolean success = taskManager.submit(assignment.getWindowId(), assignment.getTaskType());
+            if (success) {
                 accepted++;
+                details.add(WindowTaskCommandDetail.success(windowId, "已按身份启动任务：" + assignment.getTaskType().getDisplayName()));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
             }
         }
 
@@ -111,7 +163,8 @@ public class WindowTaskControlService {
                 accepted,
                 "按识别身份启动完成：" + accepted + "/" + ids.size(),
                 taskManager.getAllSnapshots(),
-                assignments
+                assignments,
+                details
         );
     }
 
@@ -121,14 +174,22 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有选中的窗口", taskManager.getAllSnapshots());
         }
 
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            taskManager.stop(windowId);
+            if (taskManager.getRunner(windowId).isPresent()) {
+                taskManager.stop(windowId);
+                details.add(WindowTaskCommandDetail.success(windowId, "已请求停止"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "窗口不存在"));
+            }
         }
         return WindowTaskCommandResult.of(
                 ids.size(),
-                ids.size(),
-                "停止选中窗口任务完成：" + ids.size(),
-                taskManager.getAllSnapshots()
+                (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count(),
+                "停止选中窗口任务完成",
+                taskManager.getAllSnapshots(),
+                Collections.emptyList(),
+                details
         );
     }
 
@@ -149,14 +210,22 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有需要移除的窗口", taskManager.getAllSnapshots());
         }
 
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            taskManager.unregisterWindow(windowId);
+            if (taskManager.getRunner(windowId).isPresent()) {
+                taskManager.unregisterWindow(windowId);
+                details.add(WindowTaskCommandDetail.success(windowId, "窗口已移除"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "窗口不存在"));
+            }
         }
         return WindowTaskCommandResult.of(
                 ids.size(),
-                ids.size(),
-                "窗口移除完成：" + ids.size(),
-                taskManager.getAllSnapshots()
+                (int) details.stream().filter(WindowTaskCommandDetail::isSuccess).count(),
+                "窗口移除完成",
+                taskManager.getAllSnapshots(),
+                Collections.emptyList(),
+                details
         );
     }
 
