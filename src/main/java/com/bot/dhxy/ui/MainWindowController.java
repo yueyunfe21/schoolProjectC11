@@ -9,6 +9,7 @@ import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskPlanView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
 import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
+import com.bot.dhxy.window.discovery.GameWindowRegistrationService;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runner.WindowTaskSnapshot;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
@@ -68,6 +69,7 @@ public class MainWindowController {
     private final TaskRunProperties taskRunProperties;
     private final WindowTaskControlService windowTaskControlService;
     private final WindowRegistrationBatchBuilder windowRegistrationBatchBuilder;
+    private final GameWindowRegistrationService gameWindowRegistrationService;
 
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
@@ -96,6 +98,7 @@ public class MainWindowController {
     private ComboBox<TaskType> windowTaskTypeComboBox;
     private Button registerWindowButton;
     private Button registerTeamButton;
+    private Button scanGameWindowsButton;
     private Button selectAllWindowsButton;
     private Button clearWindowSelectionButton;
     private Button startByRoleButton;
@@ -167,6 +170,7 @@ public class MainWindowController {
 
         registerWindowButton = new Button("注册/刷新窗口");
         registerTeamButton = new Button("快速注册队伍");
+        scanGameWindowsButton = new Button("扫描游戏窗口");
         selectAllWindowsButton = new Button("全选窗口");
         clearWindowSelectionButton = new Button("取消选择");
         startByRoleButton = new Button("按身份启动");
@@ -258,6 +262,8 @@ public class MainWindowController {
 
         registerWindowButton.setOnAction(event -> registerOrRefreshWindowFromUi());
         registerTeamButton.setOnAction(event -> registerTeamFromUi());
+        scanGameWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                gameWindowRegistrationService.registerDetectedGameWindows(windowTaskTypeComboBox.getValue())));
         selectAllWindowsButton.setOnAction(event -> selectAllWindows());
         clearWindowSelectionButton.setOnAction(event -> clearWindowSelection());
         startByRoleButton.setOnAction(event -> runWindowCommandInBackground(() ->
@@ -282,7 +288,8 @@ public class MainWindowController {
         HBox batchRow = new HBox(8,
                 new Label("队伍窗口数"), windowBatchCountField,
                 registerTeamButton,
-                new Label("快速注册会生成：第1个队长，其余队员"));
+                scanGameWindowsButton,
+                new Label("快速注册：第1个队长，其余队员"));
 
         HBox selectionRow = new HBox(8,
                 refreshWindowButton,
@@ -628,6 +635,9 @@ public class MainWindowController {
         }
         if (registerTeamButton != null) {
             registerTeamButton.setDisable(disabled);
+        }
+        if (scanGameWindowsButton != null) {
+            scanGameWindowsButton.setDisable(disabled);
         }
         if (selectAllWindowsButton != null) {
             selectAllWindowsButton.setDisable(disabled);
