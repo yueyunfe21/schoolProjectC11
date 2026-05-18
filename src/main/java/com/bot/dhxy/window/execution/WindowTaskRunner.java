@@ -101,7 +101,7 @@ public class WindowTaskRunner {
             return;
         }
         windowContext.markStopping("用户请求停止窗口任务");
-        taskHandle.requestStop("用户请求停止窗口任务");
+        windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("用户请求停止窗口任务"));
     }
 
     public RunningTaskHandle getCurrentTask() {
@@ -142,12 +142,27 @@ public class WindowTaskRunner {
 
     public void shutdownNow() {
         shutdown = true;
-        stopCurrentTask();
+        RunningTaskHandle taskHandle = currentTask;
+        if (taskHandle != null) {
+            windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("窗口执行器关闭"));
+            taskHandle.forceCancel("窗口执行器关闭");
+        }
         executor.shutdownNow();
     }
 
     private void runTask(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
-        windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> runTaskWithBoundGameState(taskType, task, executionContext));
+        RunningTaskHandle taskHandle = currentTask;
+        if (taskHandle != null) {
+            taskHandle.markRunningThread(Thread.currentThread());
+        }
+        try {
+            windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> runTaskWithBoundGameState(taskType, task, executionContext));
+        } finally {
+            RunningTaskHandle latestHandle = currentTask;
+            if (latestHandle != null) {
+                latestHandle.clearRunningThread();
+            }
+        }
     }
 
     private void runTaskWithBoundGameState(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {

@@ -6,6 +6,7 @@ import com.bot.dhxy.task.model.TaskType;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class RunningTaskHandle {
 
@@ -15,6 +16,7 @@ public class RunningTaskHandle {
     private final TaskStopToken stopToken;
     private final Future<?> future;
     private final LocalDateTime startedAt;
+    private final AtomicReference<Thread> runningThread = new AtomicReference<>();
 
     public RunningTaskHandle(String windowId,
                              TaskType taskType,
@@ -45,12 +47,32 @@ public class RunningTaskHandle {
 
     public boolean isRunning() { return future != null && !future.isDone(); }
 
+    public void markRunningThread(Thread thread) {
+        if (thread != null) {
+            runningThread.set(thread);
+        }
+    }
+
+    public void clearRunningThread() {
+        runningThread.set(null);
+    }
+
     public void requestStop(String reason) {
         if (stopToken != null) {
             stopToken.requestStop(reason);
         }
         if (task != null) {
             task.stop();
+        }
+        Thread thread = runningThread.get();
+        if (thread != null) {
+            thread.interrupt();
+        }
+    }
+
+    public void forceCancel(String reason) {
+        if (stopToken != null) {
+            stopToken.requestStop(reason);
         }
         if (future != null) {
             future.cancel(true);
