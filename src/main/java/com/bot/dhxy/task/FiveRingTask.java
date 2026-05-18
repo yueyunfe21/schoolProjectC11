@@ -13,13 +13,10 @@ import com.bot.dhxy.tools.GameStateUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-
 @Component
 @Slf4j
 public class FiveRingTask extends BaseTaskTemplate {
 
-    private final GameContext context;
     private final NavigationService navigationService;
     private final NpcClickService npcClickService;
     private final DialogService dialogService;
@@ -33,10 +30,10 @@ public class FiveRingTask extends BaseTaskTemplate {
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
 
-    private final String targetMapName = "长安";
-    private final String targetNPCName = "墨意";
-    private final int npc_coor_x = 87;
-    private final int npc_coor_y = 174;
+    private static final String TARGET_MAP_NAME = "长安";
+    private static final String TARGET_NPC_NAME = "墨意";
+    private static final int NPC_COOR_X = 87;
+    private static final int NPC_COOR_Y = 174;
 
     private static final int TUNE_X = -10;
     private static final int TUNE_Y = 0;
@@ -56,7 +53,6 @@ public class FiveRingTask extends BaseTaskTemplate {
                         UICleanerService uiCleanerService,
                         TaskStepExecutor taskStepExecutor) {
         super(context, taskStepExecutor);
-        this.context = context;
         this.navigationService = navigationService;
         this.npcClickService = npcClickService;
         this.dialogService = dialogService;
@@ -104,17 +100,14 @@ public class FiveRingTask extends BaseTaskTemplate {
     @Override
     public void stop() {
         log.info("🛑 收到停止五环任务请求");
-        context.setBotStatus(GameContext.BotStatus.IDLE);
-        context.setCurrentActionState(GameContext.ActionState.FREE);
+        markTaskIdle();
     }
 
     @Override
     public TaskRunResult execute() {
-        log.info("====================================");
-        log.info("🔥 启动【全自动五环印钞机】(极速退出优化版)");
-        log.info("====================================");
+        logTaskBanner();
 
-        TaskExecutionContext executionContext = buildStepExecutionContext();
+        TaskExecutionContext executionContext = buildExecutionContext();
         FiveRingRuntimeState runtimeState = new FiveRingRuntimeState();
 
         TaskRunResult startupResult = runStartupSteps(executionContext, runtimeState);
@@ -122,28 +115,17 @@ public class FiveRingTask extends BaseTaskTemplate {
             return startupResult;
         }
 
-        log.info("▶️ 阶段二：启动极速跑环流水线...");
-        while (context.getBotStatus() == GameContext.BotStatus.RUNNING) {
-            TaskStepResult loopResult = executeRunLoopOnceStep(executionContext, runtimeState);
+        return runMainLoop(executionContext, runtimeState);
+    }
 
-            if (loopResult == TaskStepResult.STOPPED) {
-                return TaskRunResult.STOPPED;
-            }
-            if (loopResult == TaskStepResult.FAILED) {
-                markTaskFailed();
-                return TaskRunResult.FAILED;
-            }
-            if (runtimeState.loopDecision == LoopDecision.FINISHED) {
-                return TaskRunResult.SUCCESS;
-            }
-        }
-
-        log.info("🎉 印钞机停机！");
-        return TaskRunResult.STOPPED;
+    private void logTaskBanner() {
+        log.info("====================================");
+        log.info("🔥 启动【全自动五环印钞机】(极速退出优化版)");
+        log.info("====================================");
     }
 
     private TaskRunResult runStartupSteps(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        TaskRunResult prepareResult = resolveStartupStepResult(
+        TaskRunResult prepareResult = resolveStepResult(
                 executePrepareBeforeRunStep(executionContext, runtimeState),
                 "🎉 五环任务在战前准备阶段停止",
                 "❌ 五环战前准备失败，任务终止！"
@@ -152,7 +134,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             return prepareResult;
         }
 
-        TaskRunResult handoverResult = resolveStartupStepResult(
+        TaskRunResult handoverResult = resolveStepResult(
                 executeDetectHandoverStep(executionContext, runtimeState),
                 "🎉 五环任务在中途接管侦测阶段停止",
                 "❌ 五环中途接管侦测失败，任务终止！"
@@ -170,7 +152,7 @@ public class FiveRingTask extends BaseTaskTemplate {
 
         if (runtimeState.handoverState == HandoverState.NEED_SETUP) {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
-            TaskRunResult setupResult = resolveStartupStepResult(
+            TaskRunResult setupResult = resolveStepResult(
                     executeSetupInitialTaskStep(executionContext),
                     "🎉 五环任务在接取初始任务阶段停止",
                     "❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！"
@@ -185,7 +167,27 @@ public class FiveRingTask extends BaseTaskTemplate {
         return TaskRunResult.SUCCESS;
     }
 
-    private TaskRunResult resolveStartupStepResult(TaskStepResult stepResult, String stoppedLog, String failedLog) {
+    private TaskRunResult runMainLoop(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
+        log.info("▶️ 阶段二：启动极速跑环流水线...");
+        while (gameContext.getBotStatus() == GameContext.BotStatus.RUNNING) {
+            TaskRunResult loopResult = resolveStepResult(
+                    executeRunLoopOnceStep(executionContext, runtimeState),
+                    "🎉 五环任务在跑环单轮处理阶段停止",
+                    "❌ 五环跑环单轮处理失败，任务终止！"
+            );
+            if (loopResult != TaskRunResult.SUCCESS) {
+                return loopResult;
+            }
+            if (runtimeState.loopDecision == LoopDecision.FINISHED) {
+                return TaskRunResult.SUCCESS;
+            }
+        }
+
+        log.info("🎉 印钞机停机！");
+        return TaskRunResult.STOPPED;
+    }
+
+    private TaskRunResult resolveStepResult(TaskStepResult stepResult, String stoppedLog, String failedLog) {
         if (stepResult == TaskStepResult.STOPPED) {
             log.info(stoppedLog);
             return TaskRunResult.STOPPED;
@@ -199,7 +201,12 @@ public class FiveRingTask extends BaseTaskTemplate {
     }
 
     private void markTaskFailed() {
-        context.setBotStatus(GameContext.BotStatus.ERROR);
+        gameContext.setBotStatus(GameContext.BotStatus.ERROR);
+    }
+
+    private void markTaskIdle() {
+        gameContext.setBotStatus(GameContext.BotStatus.IDLE);
+        gameContext.setCurrentActionState(GameContext.ActionState.FREE);
     }
 
     private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
@@ -212,7 +219,7 @@ public class FiveRingTask extends BaseTaskTemplate {
         }
 
         playerStateService.syncAll();
-        context.setBotStatus(GameContext.BotStatus.RUNNING);
+        gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
         uiCleanerService.cleanUpAll();
         playerStateService.ensureSheYaoXiangActive();
 
@@ -262,14 +269,14 @@ public class FiveRingTask extends BaseTaskTemplate {
                 executionContext.throwIfStopRequested();
             }
 
-            if (!navigationService.navigateToNPC(targetMapName, npc_coor_x, npc_coor_y)) {
+            if (!navigationService.navigateToNPC(TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y)) {
                 log.warn("⚠️ 无法到达墨意身边 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
                 sleep(2000);
                 continue;
             }
 
-            if (!npcClickService.clickNpcSmart(context.getMe(), targetMapName, npc_coor_x, npc_coor_y, targetNPCName, TUNE_X, TUNE_Y)) {
+            if (!npcClickService.clickNpcSmart(gameContext.getMe(), TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y, TARGET_NPC_NAME, TUNE_X, TUNE_Y)) {
                 log.warn("⚠️ 无法点中墨意 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
                 sleep(2000);
@@ -369,8 +376,7 @@ public class FiveRingTask extends BaseTaskTemplate {
 
             if (!realHasTask) {
                 log.info("🎉 洗地后确认任务栏确实已清空，五环任务真·圆满结束！下班！");
-                context.setBotStatus(GameContext.BotStatus.IDLE);
-                context.setCurrentActionState(GameContext.ActionState.FREE);
+                markTaskIdle();
                 return TaskSyncDecision.FINISHED;
             }
 
@@ -420,15 +426,6 @@ public class FiveRingTask extends BaseTaskTemplate {
             runtimeState.needTaskSync = true;
             sleep(1000);
         }
-    }
-
-    private TaskExecutionContext buildStepExecutionContext() {
-        return TaskExecutionContext.builder()
-                .taskCode(getTaskCode())
-                .taskName(getTaskName())
-                .retryPolicy(TaskRetryPolicy.none())
-                .startedAt(LocalDateTime.now())
-                .build();
     }
 
     private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
