@@ -304,7 +304,9 @@ public class MainWindowController {
                 stopSelectedWindowsButton,
                 stopAllWindowsButton);
 
-        windowTable.setPrefHeight(185);
+        windowTable.setPrefHeight(145);
+        windowTable.setMinHeight(120);
+        windowTable.setMaxHeight(160);
         VBox wrapper = new VBox(6,
                 new Label("多窗口控制"),
                 windowSystemLabel,
@@ -321,6 +323,10 @@ public class MainWindowController {
         TableColumn<WindowTaskSnapshot, String> windowIdCol = new TableColumn<>("窗口ID");
         windowIdCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getWindowId())));
         windowIdCol.setPrefWidth(95);
+
+        TableColumn<WindowTaskSnapshot, String> geometryCol = new TableColumn<>("坐标/大小");
+        geometryCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getGeometryText())));
+        geometryCol.setPrefWidth(130);
 
         TableColumn<WindowTaskSnapshot, String> roleNameCol = new TableColumn<>("角色名");
         roleNameCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getRoleName())));
@@ -350,7 +356,7 @@ public class MainWindowController {
         messageCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getLastMessage())));
         messageCol.setPrefWidth(260);
 
-        windowTable.getColumns().setAll(List.of(windowIdCol, roleNameCol, roleCol, selectedTaskCol,
+        windowTable.getColumns().setAll(List.of(windowIdCol, geometryCol, roleNameCol, roleCol, selectedTaskCol,
                 runningTaskCol, statusCol, runningCol, messageCol));
     }
 
@@ -379,6 +385,8 @@ public class MainWindowController {
         messageCol.setCellValueFactory(new PropertyValueFactory<>("message"));
         messageCol.setPrefWidth(260);
 
+        recordTable.setPrefHeight(130);
+        recordTable.setMinHeight(90);
         recordTable.getColumns().setAll(List.of(taskNameCol, resultCol, startCol, endCol, costCol, messageCol));
         return recordTable;
     }
