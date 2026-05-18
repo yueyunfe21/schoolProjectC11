@@ -48,7 +48,7 @@ public class TaskControlService {
      */
     public TaskRunSummary startTasks(List<String> taskCodes, boolean loop, boolean testMode) {
         if (!running.compareAndSet(false, true)) {
-            log.warn("⚠️ 当前已有任务队列正在运行，忽略重复启动请求。{}");
+            log.warn("⚠️ 当前已有任务队列正在运行，忽略重复启动请求。");
             taskLogService.warn(null, null, "当前已有任务队列正在运行，忽略重复启动请求");
             return new TaskRunSummary();
         }
