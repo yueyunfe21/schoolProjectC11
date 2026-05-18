@@ -85,6 +85,8 @@ public class WindowRegistrationRequest {
 
     public boolean hasSelectedTask() { return selectedTaskType != null && selectedTaskType != TaskType.UNKNOWN; }
 
+    public boolean hasNativeBinding() { return nativeBinding != null && nativeBinding.hasNativeHandle(); }
+
     public void requireValid() {
         if (!hasWindowId()) {
             throw new IllegalArgumentException("windowId must not be blank");
