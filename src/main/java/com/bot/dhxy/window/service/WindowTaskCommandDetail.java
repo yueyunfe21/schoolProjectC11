@@ -12,7 +12,7 @@ public class WindowTaskCommandDetail {
     private WindowTaskCommandDetail(String windowId, boolean success, String message) {
         this.windowId = windowId;
         this.success = success;
-        this.message = message;
+        this.message = message == null ? "" : message;
     }
 
     public static WindowTaskCommandDetail success(String windowId, String message) {
@@ -23,15 +23,11 @@ public class WindowTaskCommandDetail {
         return new WindowTaskCommandDetail(windowId, false, message);
     }
 
-    public String getWindowId() {
-        return windowId;
-    }
+    public String getWindowId() { return windowId; }
 
-    public boolean isSuccess() {
-        return success;
-    }
+    public boolean isSuccess() { return success; }
 
-    public String getMessage() {
-        return message;
-    }
+    public boolean isFailed() { return !success; }
+
+    public String getMessage() { return message; }
 }
