@@ -36,7 +36,7 @@ public class TaskRunRequest {
     /**
      * 是否在启动任务前初始化游戏窗口。
      *
-     * 注意：这个字段只表达启动意图，真正初始化动作由 UI 或 AutoBot 侧调用 GameWindowService 完成。
+     * 注意：这个字段只表达启动意图，真正初始化动作由 TaskControlService 调用 GameWindowService 完成。
      */
     private final boolean initGameWindow;
 
@@ -57,8 +57,17 @@ public class TaskRunRequest {
         return !getNormalizedTaskCodes().isEmpty();
     }
 
+    public boolean isEmpty() {
+        return !hasTasks();
+    }
+
+    public int getTaskCount() {
+        return getNormalizedTaskCodes().size();
+    }
+
     public String toLogText() {
-        return "tasks=" + getNormalizedTaskCodes()
+        return "taskCount=" + getTaskCount()
+                + " | tasks=" + getNormalizedTaskCodes()
                 + " | loop=" + loop
                 + " | testMode=" + testMode
                 + " | initGameWindow=" + initGameWindow;
