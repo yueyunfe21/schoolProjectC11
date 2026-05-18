@@ -2,6 +2,7 @@ package com.bot.dhxy.core;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.VisionProvider;
+import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -40,6 +41,7 @@ public class GameClientTracker {
     private final CoordinateHelper coordinateHelper;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final GlobalInputLock globalInputLock;
+    private final WindowIsolationProperties windowIsolationProperties;
 
     @Lazy
     @Autowired
@@ -164,7 +166,10 @@ public class GameClientTracker {
     }
 
     private boolean useBoundWindowIfAvailable() {
-        Optional<WindowRuntimeContext> current = windowTaskContextHolder.current();
+        if (!windowIsolationProperties.isBoundWindowTrackerActive()) {
+            return false;
+        }
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty()) {
             return false;
         }
@@ -212,7 +217,9 @@ public class GameClientTracker {
     }
 
     private TrackerState state() {
-        return windowTaskContextHolder.current().isPresent() ? threadState.get() : sharedState;
+        return windowIsolationProperties.isTrackerStateIsolationActive() && windowTaskContextHolder.rawCurrent().isPresent()
+                ? threadState.get()
+                : sharedState;
     }
 
     private void logTrackerState(String action) {
