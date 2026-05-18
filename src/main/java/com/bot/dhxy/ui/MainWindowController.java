@@ -2,6 +2,7 @@ package com.bot.dhxy.ui;
 
 import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.runner.TaskControlService;
+import com.bot.dhxy.runner.TaskRunRequest;
 import com.bot.dhxy.service.GameWindowService;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
@@ -179,6 +180,11 @@ public class MainWindowController {
         boolean loop = loopCheckBox.isSelected();
         boolean testMode = testModeCheckBox.isSelected();
         boolean initGameWindow = initGameWindowCheckBox.isSelected();
+        TaskRunRequest request = TaskRunRequest.builder()
+                .taskCodes(selectedTaskCodes)
+                .loop(loop)
+                .testMode(testMode)
+                .build();
 
         startButton.setDisable(true);
         stopButton.setDisable(false);
@@ -198,7 +204,7 @@ public class MainWindowController {
                     }
                 }
 
-                taskControlService.startTasks(selectedTaskCodes, loop, testMode);
+                taskControlService.startTasks(request);
             } finally {
                 Platform.runLater(() -> {
                     updateRunningStateControls();
