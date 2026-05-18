@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 任务控制门面服务。
@@ -25,6 +26,11 @@ public class TaskControlService {
     private final TaskRunProperties taskRunProperties;
 
     /**
+     * 防止重复启动任务队列。
+     */
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    /**
      * 按 application.properties 里的 bot.run 配置启动任务队列。
      */
     public TaskRunSummary startConfiguredTasks() {
@@ -41,8 +47,18 @@ public class TaskControlService {
      * 后面 UI 勾选任务后，可以直接调用这个方法。
      */
     public TaskRunSummary startTasks(List<String> taskCodes, boolean loop, boolean testMode) {
-        TaskQueue queue = new TaskQueue(taskCodes, loop);
-        return taskRunner.run(queue, testMode);
+        if (!running.compareAndSet(false, true)) {
+            log.warn("⚠️ 当前已有任务队列正在运行，忽略重复启动请求。{}");
+            taskLogService.warn(null, null, "当前已有任务队列正在运行，忽略重复启动请求");
+            return new TaskRunSummary();
+        }
+
+        try {
+            TaskQueue queue = new TaskQueue(taskCodes, loop);
+            return taskRunner.run(queue, testMode);
+        } finally {
+            running.set(false);
+        }
     }
 
     /**
@@ -50,6 +66,13 @@ public class TaskControlService {
      */
     public void stop() {
         taskRunner.stop();
+    }
+
+    /**
+     * 当前是否有任务队列正在运行。
+     */
+    public boolean isRunning() {
+        return running.get();
     }
 
     /**
