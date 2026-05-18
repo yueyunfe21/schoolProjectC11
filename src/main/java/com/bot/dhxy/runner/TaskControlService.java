@@ -78,9 +78,10 @@ public class TaskControlService {
             log.warn("⚠️ 任务启动请求为空，或者没有有效任务，忽略启动请求。");
             taskLogService.warn(null, null, "任务启动请求为空，或者没有有效任务，忽略启动请求");
             runtimeState = TaskRuntimeState.builder()
+                    .status(TaskRunStatus.REJECTED)
                     .running(false)
                     .stopping(false)
-                    .statusText("启动失败：没有有效任务")
+                    .statusText("启动被拒绝：没有有效任务")
                     .finishedAt(LocalDateTime.now())
                     .build();
             return new TaskRunSummary();
@@ -89,12 +90,23 @@ public class TaskControlService {
         if (!running.compareAndSet(false, true)) {
             log.warn("⚠️ 当前已有任务队列正在运行，忽略重复启动请求。");
             taskLogService.warn(null, null, "当前已有任务队列正在运行，忽略重复启动请求");
+            runtimeState = TaskRuntimeState.builder()
+                    .status(TaskRunStatus.REJECTED)
+                    .running(true)
+                    .stopping(stopping.get())
+                    .currentRequest(runtimeState.getCurrentRequest())
+                    .lastSummary(runtimeState.getLastSummary())
+                    .startedAt(runtimeState.getStartedAt())
+                    .finishedAt(runtimeState.getFinishedAt())
+                    .statusText("启动被拒绝：当前已有任务正在运行")
+                    .build();
             return new TaskRunSummary();
         }
 
         stopping.set(false);
         LocalDateTime startedAt = LocalDateTime.now();
         runtimeState = TaskRuntimeState.builder()
+                .status(TaskRunStatus.STARTING)
                 .running(true)
                 .stopping(false)
                 .currentRequest(request)
@@ -109,6 +121,7 @@ public class TaskControlService {
 
             if (request.isInitGameWindow()) {
                 runtimeState = TaskRuntimeState.builder()
+                        .status(TaskRunStatus.INITIALIZING_WINDOW)
                         .running(true)
                         .stopping(false)
                         .currentRequest(request)
@@ -121,6 +134,7 @@ public class TaskControlService {
                     log.error("❌ 游戏窗口初始化失败，本次任务队列不启动。");
                     taskLogService.fail(null, null, "游戏窗口初始化失败，本次任务队列不启动");
                     runtimeState = TaskRuntimeState.builder()
+                            .status(TaskRunStatus.FAILED)
                             .running(false)
                             .stopping(false)
                             .currentRequest(request)
@@ -137,6 +151,7 @@ public class TaskControlService {
             }
 
             runtimeState = TaskRuntimeState.builder()
+                    .status(TaskRunStatus.RUNNING)
                     .running(true)
                     .stopping(false)
                     .currentRequest(request)
@@ -146,21 +161,23 @@ public class TaskControlService {
 
             TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
             summary = taskRunner.run(queue, request.isTestMode());
-            String finalStatusText = stopping.get() ? "空闲：任务队列已停止" : "空闲：任务队列执行完毕";
+            boolean stopped = stopping.get();
             runtimeState = TaskRuntimeState.builder()
+                    .status(stopped ? TaskRunStatus.STOPPING : TaskRunStatus.COMPLETED)
                     .running(false)
                     .stopping(false)
                     .currentRequest(request)
                     .lastSummary(summary)
                     .startedAt(startedAt)
                     .finishedAt(LocalDateTime.now())
-                    .statusText(finalStatusText)
+                    .statusText(stopped ? "空闲：任务队列已停止" : "空闲：任务队列执行完毕")
                     .build();
             return summary;
         } catch (Exception e) {
             log.error("💥 任务启动或执行流程发生异常。", e);
             taskLogService.fail(null, null, "任务启动或执行流程发生异常: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             runtimeState = TaskRuntimeState.builder()
+                    .status(TaskRunStatus.FAILED)
                     .running(false)
                     .stopping(false)
                     .currentRequest(request)
@@ -185,6 +202,7 @@ public class TaskControlService {
     public void stop() {
         if (!running.get()) {
             runtimeState = TaskRuntimeState.builder()
+                    .status(TaskRunStatus.IDLE)
                     .running(false)
                     .stopping(false)
                     .currentRequest(runtimeState.getCurrentRequest())
@@ -199,6 +217,7 @@ public class TaskControlService {
         stopping.set(true);
         taskRunner.stop();
         runtimeState = TaskRuntimeState.builder()
+                .status(TaskRunStatus.STOPPING)
                 .running(true)
                 .stopping(true)
                 .currentRequest(runtimeState.getCurrentRequest())
@@ -209,32 +228,18 @@ public class TaskControlService {
         taskLogService.warn(null, null, "已发送停止请求，等待任务退出");
     }
 
-    /**
-     * 当前是否有任务队列正在运行。
-     */
     public boolean isRunning() {
         return running.get();
     }
 
-    /**
-     * 当前是否已经请求停止。
-     */
     public boolean isStopping() {
         return stopping.get();
     }
 
-    /**
-     * 获取当前任务运行状态快照。
-     */
     public TaskRuntimeState getRuntimeState() {
         return runtimeState;
     }
 
-    /**
-     * 重置运行状态。
-     *
-     * 主要用于 UI 清空日志时，把底部状态栏也恢复到空闲。
-     */
     public void resetRuntimeState() {
         if (running.get()) {
             return;
@@ -242,39 +247,24 @@ public class TaskControlService {
         runtimeState = TaskRuntimeState.idle();
     }
 
-    /**
-     * 获取当前程序支持的任务列表，用于 UI 生成勾选框。
-     */
     public List<TaskDefinition> getAvailableTasks() {
         return taskRegistryService.getAllTaskDefinitions();
     }
 
-    /**
-     * 获取最近任务执行记录，用于 UI 任务记录表。
-     */
     public List<TaskRunRecord> getRecentTaskRecords() {
         return taskRunHistoryService.getRecentRecords();
     }
 
-    /**
-     * 获取最近任务日志，用于 UI 日志面板。
-     */
     public List<TaskLogEntry> getRecentLogs() {
         return taskLogService.getRecentLogs();
     }
 
-    /**
-     * 清空任务运行记录、任务日志和空闲状态下的运行状态。
-     */
     public void clearRuntimeLogs() {
         taskRunHistoryService.clear();
         taskLogService.clear();
         resetRuntimeState();
     }
 
-    /**
-     * 获取当前程序支持任务的一行说明。
-     */
     public String getRegisteredTaskSummary() {
         return taskRegistryService.getRegisteredTaskSummary();
     }
