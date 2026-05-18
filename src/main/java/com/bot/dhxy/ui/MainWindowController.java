@@ -245,7 +245,6 @@ public class MainWindowController {
             stopButton.setDisable(!running);
         }
         lockRunOptions(running);
-        updateStatusFromUiSelection();
     }
 
     private void lockRunOptions(boolean locked) {
@@ -284,7 +283,8 @@ public class MainWindowController {
             updateStatusFromUiSelection();
             return;
         }
-        statusLabel.setText("状态：" + runtimeState.getStatusText()
+        statusLabel.setText("状态：" + nullToDash(runtimeState.getStatusText())
+                + " | 耗时=" + nullToDash(runtimeState.getElapsedText())
                 + " | started=" + nullToDash(runtimeState.getStartedAt())
                 + " | finished=" + nullToDash(runtimeState.getFinishedAt()));
         requestLabel.setText("请求：" + nullToDash(runtimeState.getRequestText()));
