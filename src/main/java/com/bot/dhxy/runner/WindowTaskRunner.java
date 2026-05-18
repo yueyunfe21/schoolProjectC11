@@ -3,9 +3,9 @@ package com.bot.dhxy.runner;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
-import com.bot.dhxy.task.TaskType;
-import com.bot.dhxy.window.WindowRuntimeContext;
-import com.bot.dhxy.window.WindowRuntimeStatus;
+import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
