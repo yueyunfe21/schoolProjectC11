@@ -24,6 +24,7 @@ public class WindowRuntimeContext {
     private volatile WindowRole role = WindowRole.UNKNOWN;
     private volatile WindowRuntimeStatus status = WindowRuntimeStatus.IDLE;
     private volatile TaskType selectedTaskType = TaskType.UNKNOWN;
+    private volatile WindowNativeBinding nativeBinding = WindowNativeBinding.empty();
     private volatile LocalDateTime lastStartedAt;
     private volatile LocalDateTime lastFinishedAt;
     private volatile String lastMessage;
@@ -35,78 +36,56 @@ public class WindowRuntimeContext {
         this.gameState = gameContext.newState();
     }
 
-    public String getWindowId() {
-        return windowId;
-    }
+    public String getWindowId() { return windowId; }
 
-    public GameContext getGameContext() {
-        return gameContext;
-    }
+    public GameContext getGameContext() { return gameContext; }
 
-    public GameContext.State getGameState() {
-        return gameState;
-    }
+    public GameContext.State getGameState() { return gameState; }
 
-    public String getRoleName() {
-        return roleName;
-    }
+    public String getRoleName() { return roleName; }
 
-    public void setRoleName(String roleName) {
-        this.roleName = normalize(roleName);
-    }
+    public void setRoleName(String roleName) { this.roleName = normalize(roleName); }
 
-    public WindowRole getRole() {
-        return role;
-    }
+    public WindowRole getRole() { return role; }
 
-    public void setRole(WindowRole role) {
-        this.role = role == null ? WindowRole.UNKNOWN : role;
-    }
+    public void setRole(WindowRole role) { this.role = role == null ? WindowRole.UNKNOWN : role; }
 
     public void updateRole(WindowRole role, String roleName) {
         setRole(role);
         setRoleName(roleName);
     }
 
-    public boolean isLeader() {
-        return role.isLeader();
-    }
+    public boolean isLeader() { return role.isLeader(); }
 
-    public boolean isMember() {
-        return role.isMember();
-    }
+    public boolean isMember() { return role.isMember(); }
 
-    public WindowRuntimeStatus getStatus() {
-        return status;
-    }
+    public WindowRuntimeStatus getStatus() { return status; }
 
-    public void setStatus(WindowRuntimeStatus status) {
-        this.status = status == null ? WindowRuntimeStatus.IDLE : status;
-    }
+    public void setStatus(WindowRuntimeStatus status) { this.status = status == null ? WindowRuntimeStatus.IDLE : status; }
 
-    public boolean isBusy() {
-        return status != null && status.isBusy();
-    }
+    public boolean isBusy() { return status != null && status.isBusy(); }
 
-    public TaskType getSelectedTaskType() {
-        return selectedTaskType;
-    }
+    public TaskType getSelectedTaskType() { return selectedTaskType; }
 
     public void setSelectedTaskType(TaskType selectedTaskType) {
         this.selectedTaskType = selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
     }
 
-    public LocalDateTime getLastStartedAt() {
-        return lastStartedAt;
+    public WindowNativeBinding getNativeBinding() { return nativeBinding; }
+
+    public void setNativeBinding(WindowNativeBinding nativeBinding) {
+        this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
     }
 
-    public LocalDateTime getLastFinishedAt() {
-        return lastFinishedAt;
+    public boolean hasNativeBinding() {
+        return nativeBinding != null && nativeBinding.hasNativeHandle();
     }
 
-    public String getLastMessage() {
-        return lastMessage;
-    }
+    public LocalDateTime getLastStartedAt() { return lastStartedAt; }
+
+    public LocalDateTime getLastFinishedAt() { return lastFinishedAt; }
+
+    public String getLastMessage() { return lastMessage; }
 
     public void markQueued(TaskType taskType) {
         this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
@@ -132,9 +111,7 @@ public class WindowRuntimeContext {
         this.lastMessage = normalize(message);
     }
 
-    public void markError(String message) {
-        markFinished(WindowRuntimeStatus.ERROR, message);
-    }
+    public void markError(String message) { markFinished(WindowRuntimeStatus.ERROR, message); }
 
     public void resetRuntimeState() {
         this.status = WindowRuntimeStatus.IDLE;
@@ -149,6 +126,7 @@ public class WindowRuntimeContext {
             return;
         }
         updateRole(request.getRole(), request.getRoleName());
+        setNativeBinding(request.getNativeBinding());
         if (allowTaskChange) {
             setSelectedTaskType(request.getSelectedTaskType());
         }
