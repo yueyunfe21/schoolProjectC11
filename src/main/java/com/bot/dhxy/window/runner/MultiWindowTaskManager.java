@@ -2,7 +2,9 @@ package com.bot.dhxy.window.runner;
 
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -22,10 +24,21 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MultiWindowTaskManager {
 
     private final TaskFactory taskFactory;
+    private final WindowRuntimeContextFactory windowRuntimeContextFactory;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
-    public MultiWindowTaskManager(TaskFactory taskFactory) {
+    public MultiWindowTaskManager(TaskFactory taskFactory,
+                                  WindowRuntimeContextFactory windowRuntimeContextFactory) {
         this.taskFactory = taskFactory;
+        this.windowRuntimeContextFactory = windowRuntimeContextFactory;
+    }
+
+    public WindowTaskRunner registerWindow(WindowRegistrationRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("window registration request must not be null");
+        }
+        WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
+        return registerWindow(windowContext);
     }
 
     public WindowTaskRunner registerWindow(WindowRuntimeContext windowContext) {
@@ -33,6 +46,18 @@ public class MultiWindowTaskManager {
                 windowContext.getWindowId(),
                 ignored -> new WindowTaskRunner(windowContext, taskFactory)
         );
+    }
+
+    public int registerWindows(Collection<WindowRegistrationRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            return 0;
+        }
+        int registered = 0;
+        for (WindowRegistrationRequest request : requests) {
+            registerWindow(request);
+            registered++;
+        }
+        return registered;
     }
 
     public boolean submit(String windowId, TaskType taskType) {
