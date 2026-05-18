@@ -11,6 +11,7 @@ import lombok.Getter;
 public class TaskRuntimeStateView {
 
     private final boolean running;
+    private final boolean stopping;
     private final String statusText;
     private final String startedAt;
     private final String finishedAt;
