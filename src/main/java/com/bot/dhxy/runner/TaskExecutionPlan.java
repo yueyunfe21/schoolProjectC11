@@ -15,27 +15,68 @@ import java.util.List;
 @Builder
 public class TaskExecutionPlan {
 
+    /**
+     * 原始启动请求。
+     */
     private final TaskRunRequest request;
-    private final List<String> taskCodes;
+
+    /**
+     * 用户请求中清洗后的任务编码。
+     */
+    private final List<String> requestedTaskCodes;
+
+    /**
+     * 最终允许执行的任务编码。
+     */
+    private final List<String> executableTaskCodes;
+
+    /**
+     * 被忽略的任务编码，比如未注册、重复、空白项等。
+     */
+    private final List<String> ignoredTaskCodes;
+
     private final boolean loop;
     private final boolean testMode;
     private final boolean initGameWindow;
     private final String summaryText;
+    private final String warningText;
+
+    /**
+     * 兼容旧调用：以前字段名叫 taskCodes。
+     */
+    public List<String> getTaskCodes() {
+        return executableTaskCodes;
+    }
 
     public int getTaskCount() {
-        return taskCodes == null ? 0 : taskCodes.size();
+        return executableTaskCodes == null ? 0 : executableTaskCodes.size();
+    }
+
+    public int getIgnoredTaskCount() {
+        return ignoredTaskCodes == null ? 0 : ignoredTaskCodes.size();
+    }
+
+    public boolean hasIgnoredTasks() {
+        return getIgnoredTaskCount() > 0;
+    }
+
+    public boolean isValid() {
+        return getTaskCount() > 0;
     }
 
     public boolean isEmpty() {
-        return getTaskCount() <= 0;
+        return !isValid();
     }
 
     public String toLogText() {
         return "taskCount=" + getTaskCount()
-                + " | tasks=" + taskCodes
+                + " | requested=" + requestedTaskCodes
+                + " | executable=" + executableTaskCodes
+                + " | ignored=" + ignoredTaskCodes
                 + " | loop=" + loop
                 + " | testMode=" + testMode
                 + " | initGameWindow=" + initGameWindow
-                + " | summary=" + summaryText;
+                + " | summary=" + summaryText
+                + " | warning=" + warningText;
     }
 }
