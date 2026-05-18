@@ -36,7 +36,7 @@ public class InputActionQueue {
                     context.getWindowId(), description);
             return false;
         }
-        InputActionRequest request = new InputActionRequest(context.getWindowId(), binding, description, actions);
+        InputActionRequest request = new InputActionRequest(context, description, actions);
         queue.offer(request);
         try {
             return request.getResult().get(120, TimeUnit.SECONDS);
