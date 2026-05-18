@@ -38,6 +38,7 @@ public class TaskControlService {
                 .taskCodes(taskRunProperties.getNormalizedTasks())
                 .loop(taskRunProperties.isLoop())
                 .testMode(taskRunProperties.isTestMode())
+                .initGameWindow(taskRunProperties.isInitGameWindow())
                 .build());
     }
 
