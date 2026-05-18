@@ -7,8 +7,8 @@ import org.springframework.stereotype.Component;
 /**
  * 多窗口隔离功能开关。
  *
- * 默认关闭，优先保证旧的单窗口五环稳定。
- * 后续测试多窗口时再逐项打开。
+ * 默认全部关闭，优先保证旧的单窗口五环稳定。
+ * 多窗口测试时必须逐项打开，不能一次把所有隔离能力全开。
  */
 @Data
 @Component
@@ -16,10 +16,44 @@ import org.springframework.stereotype.Component;
 public class WindowIsolationProperties {
 
     /**
-     * 是否启用多窗口隔离。
-     *
-     * false：尽量保持旧单窗口行为。
-     * true：启用任务线程绑定窗口、输入前激活当前 hwnd、tracker 线程隔离等多窗口能力。
+     * 多窗口隔离总开关。
+     * false 时所有细分隔离能力都视为关闭。
      */
     private boolean isolationEnabled = false;
+
+    /**
+     * 输入前是否根据当前 WindowTaskRunner 绑定的 hwnd 激活窗口。
+     */
+    private boolean inputFocusEnabled = false;
+
+    /**
+     * GameClientTracker 是否按窗口任务线程隔离 gameHwnd / windowBaseX / windowBaseY。
+     */
+    private boolean trackerStateIsolationEnabled = false;
+
+    /**
+     * GameClientTracker 是否优先使用当前窗口绑定的 native hwnd，而不是按标题搜索第一个窗口。
+     */
+    private boolean boundWindowTrackerEnabled = false;
+
+    /**
+     * 截图文件是否按 windowId 分目录。当前默认必须关闭，否则旧识别代码会读不到图。
+     */
+    private boolean scopedTempPathEnabled = false;
+
+    public boolean isInputFocusActive() {
+        return isolationEnabled && inputFocusEnabled;
+    }
+
+    public boolean isTrackerStateIsolationActive() {
+        return isolationEnabled && trackerStateIsolationEnabled;
+    }
+
+    public boolean isBoundWindowTrackerActive() {
+        return isolationEnabled && boundWindowTrackerEnabled;
+    }
+
+    public boolean isScopedTempPathActive() {
+        return isolationEnabled && scopedTempPathEnabled;
+    }
 }
