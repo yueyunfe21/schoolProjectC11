@@ -103,6 +103,7 @@ public class TaskViewService {
             return TaskRuntimeStateView.builder()
                     .running(false)
                     .statusText("空闲")
+                    .elapsedText("0ms")
                     .build();
         }
         return TaskRuntimeStateView.builder()
@@ -110,6 +111,7 @@ public class TaskViewService {
                 .statusText(state.getStatusText())
                 .startedAt(state.getStartedAt() == null ? "" : TIME_FORMATTER.format(state.getStartedAt()))
                 .finishedAt(state.getFinishedAt() == null ? "" : TIME_FORMATTER.format(state.getFinishedAt()))
+                .elapsedText(state.getElapsedText())
                 .requestText(state.getCurrentRequest() == null ? "" : state.getCurrentRequest().toLogText())
                 .summaryText(state.getLastSummary() == null ? "" : state.getLastSummary().toLogText())
                 .build();
