@@ -51,6 +51,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
         log.info("====================================");
         log.info("⚔️ 启动自动战斗任务：{}", context.getLogPrefix());
         log.info("====================================");
+        logWindowContext(context);
 
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
         focusWindowIfPossible(context);
@@ -73,12 +74,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
     }
 
     private void focusWindowIfPossible(TaskExecutionContext context) {
-        if (context == null || !taskWindowRuntimeService.ready(context)) {
-            log.info("自动战斗未绑定真实窗口，跳过窗口激活。");
-            return;
-        }
-        boolean focused = taskWindowRuntimeService.activate(context);
-        log.info("自动战斗窗口激活结果：{} | {}", focused, context.getNativeWindowGeometryText());
+        activateWindowIfReady(taskWindowRuntimeService, context, "自动战斗");
         sleepSafely(context, 300);
     }
 
