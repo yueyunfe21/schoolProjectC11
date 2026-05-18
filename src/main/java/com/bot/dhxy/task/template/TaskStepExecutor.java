@@ -6,7 +6,7 @@ import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-@Component
+@Component("templateTaskStepExecutor")
 @Slf4j
 public class TaskStepExecutor {
 

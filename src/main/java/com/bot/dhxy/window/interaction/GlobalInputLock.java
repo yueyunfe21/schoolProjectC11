@@ -10,7 +10,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * 真实鼠标是全局资源，多窗口并发时必须串行化输入操作。
  */
-@Component
+@Component("windowGlobalInputLock")
 public class GlobalInputLock {
 
     private final ReentrantLock lock = new ReentrantLock(true);

@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  * 作用：统一处理任务步骤的停止检查、异常转换、重试和日志。
  */
 @Slf4j
-@Component
+@Component("runnerTaskStepExecutor")
 @RequiredArgsConstructor
 public class TaskStepExecutor {
 
