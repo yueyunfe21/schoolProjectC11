@@ -65,6 +65,7 @@ public class MainWindowService {
         stage.setOnCloseRequest(event -> {
             log.info("主窗口关闭，停止 UI 刷新并请求停止任务队列。");
             mainWindowController.shutdownUi();
+            Platform.exit();
         });
         stage.show();
     }
