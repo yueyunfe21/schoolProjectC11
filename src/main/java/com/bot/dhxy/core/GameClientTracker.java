@@ -16,13 +16,21 @@ import com.sun.jna.platform.win32.WinDef.LPARAM;
 import com.sun.jna.platform.win32.WinDef.RECT;
 import com.sun.jna.platform.win32.WinDef.WPARAM;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class GameClientTracker {
@@ -40,6 +48,7 @@ public class GameClientTracker {
     public static final String LATEST_VISION_PATH = "images/temp/latest_vision.png";
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
+    private static final Path TRACKER_DIAGNOSTIC_LOG = Path.of("logs", "tracker-coordinate.log");
 
     private final TrackerState sharedState = new TrackerState();
     private final ThreadLocal<TrackerState> threadState = ThreadLocal.withInitial(TrackerState::new);
@@ -211,11 +220,28 @@ public class GameClientTracker {
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         String windowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_WINDOW_CONTEXT");
         String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
-        System.out.println("🧭 [Tracker] action=" + action
+        String line = LocalDateTime.now()
+                + " | action=" + action
                 + " | windowId=" + windowId
                 + " | base=(" + s.windowBaseX + "," + s.windowBaseY + ")"
                 + " | hwnd=" + hwndText
-                + " | title=" + s.fullWindowTitle);
+                + " | title=" + s.fullWindowTitle;
+        log.info("[TrackerCoordinate] {}", line);
+        System.out.println("🧭 [Tracker] " + line);
+        appendTrackerDiagnostic(line);
+    }
+
+    private void appendTrackerDiagnostic(String line) {
+        try {
+            Files.createDirectories(TRACKER_DIAGNOSTIC_LOG.getParent());
+            Files.writeString(TRACKER_DIAGNOSTIC_LOG,
+                    line + System.lineSeparator(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            log.debug("无法写入 tracker 坐标诊断日志：{}", e.getMessage());
+        }
     }
 
     private HWND toHwnd(String handleText) {
