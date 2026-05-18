@@ -10,6 +10,7 @@ import lombok.Getter;
 @Builder
 public class TaskRuntimeStateView {
 
+    private final String status;
     private final boolean running;
     private final boolean stopping;
     private final String statusText;
@@ -18,4 +19,8 @@ public class TaskRuntimeStateView {
     private final String elapsedText;
     private final String requestText;
     private final String summaryText;
+
+    public boolean isBusy() {
+        return running || stopping;
+    }
 }
