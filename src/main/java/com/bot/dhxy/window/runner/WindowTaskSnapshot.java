@@ -38,10 +38,10 @@ public class WindowTaskSnapshot {
                               String lastMessage) {
         this.windowId = windowId;
         this.roleName = roleName;
-        this.role = role;
-        this.status = status;
-        this.selectedTaskType = selectedTaskType;
-        this.runningTaskType = runningTaskType;
+        this.role = role == null ? WindowRole.UNKNOWN : role;
+        this.status = status == null ? WindowRuntimeStatus.IDLE : status;
+        this.selectedTaskType = selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
+        this.runningTaskType = runningTaskType == null ? TaskType.UNKNOWN : runningTaskType;
         this.running = running;
         this.taskStartedAt = taskStartedAt;
         this.lastStartedAt = lastStartedAt;
@@ -49,47 +49,35 @@ public class WindowTaskSnapshot {
         this.lastMessage = lastMessage;
     }
 
-    public String getWindowId() {
-        return windowId;
-    }
+    public String getWindowId() { return windowId; }
 
-    public String getRoleName() {
-        return roleName;
-    }
+    public String getRoleName() { return roleName; }
 
-    public WindowRole getRole() {
-        return role;
-    }
+    public WindowRole getRole() { return role; }
 
-    public WindowRuntimeStatus getStatus() {
-        return status;
-    }
+    public WindowRuntimeStatus getStatus() { return status; }
 
-    public TaskType getSelectedTaskType() {
-        return selectedTaskType;
-    }
+    public TaskType getSelectedTaskType() { return selectedTaskType; }
 
-    public TaskType getRunningTaskType() {
-        return runningTaskType;
-    }
+    public TaskType getRunningTaskType() { return runningTaskType; }
 
-    public boolean isRunning() {
-        return running;
-    }
+    public boolean isRunning() { return running; }
 
-    public LocalDateTime getTaskStartedAt() {
-        return taskStartedAt;
-    }
+    public boolean isBusy() { return running || status.isBusy(); }
 
-    public LocalDateTime getLastStartedAt() {
-        return lastStartedAt;
-    }
+    public LocalDateTime getTaskStartedAt() { return taskStartedAt; }
 
-    public LocalDateTime getLastFinishedAt() {
-        return lastFinishedAt;
-    }
+    public LocalDateTime getLastStartedAt() { return lastStartedAt; }
 
-    public String getLastMessage() {
-        return lastMessage;
-    }
+    public LocalDateTime getLastFinishedAt() { return lastFinishedAt; }
+
+    public String getLastMessage() { return lastMessage; }
+
+    public String getRoleDisplayName() { return role.getDisplayName(); }
+
+    public String getStatusDisplayName() { return status.getDisplayName(); }
+
+    public String getSelectedTaskDisplayName() { return selectedTaskType.getDisplayName(); }
+
+    public String getRunningTaskDisplayName() { return runningTaskType.getDisplayName(); }
 }
