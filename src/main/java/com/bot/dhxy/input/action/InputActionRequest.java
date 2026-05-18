@@ -5,6 +5,7 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 public class InputActionRequest {
 
@@ -13,16 +14,31 @@ public class InputActionRequest {
     private final WindowNativeBinding nativeBinding;
     private final String description;
     private final List<InputAction> actions;
+    private final Supplier<Boolean> exclusiveCallback;
     private final CompletableFuture<Boolean> result = new CompletableFuture<>();
 
     public InputActionRequest(WindowRuntimeContext windowContext,
                               String description,
                               List<InputAction> actions) {
+        this(windowContext, description, actions, null);
+    }
+
+    public InputActionRequest(WindowRuntimeContext windowContext,
+                              String description,
+                              Supplier<Boolean> exclusiveCallback) {
+        this(windowContext, description, List.of(), exclusiveCallback);
+    }
+
+    private InputActionRequest(WindowRuntimeContext windowContext,
+                               String description,
+                               List<InputAction> actions,
+                               Supplier<Boolean> exclusiveCallback) {
         this.windowContext = windowContext;
         this.windowId = windowContext == null ? null : windowContext.getWindowId();
         this.nativeBinding = windowContext == null ? null : windowContext.getNativeBinding();
         this.description = description == null ? "" : description;
         this.actions = actions == null ? List.of() : List.copyOf(actions);
+        this.exclusiveCallback = exclusiveCallback;
     }
 
     public WindowRuntimeContext getWindowContext() { return windowContext; }
@@ -34,6 +50,10 @@ public class InputActionRequest {
     public String getDescription() { return description; }
 
     public List<InputAction> getActions() { return actions; }
+
+    public Supplier<Boolean> getExclusiveCallback() { return exclusiveCallback; }
+
+    public boolean hasExclusiveCallback() { return exclusiveCallback != null; }
 
     public CompletableFuture<Boolean> getResult() { return result; }
 }
