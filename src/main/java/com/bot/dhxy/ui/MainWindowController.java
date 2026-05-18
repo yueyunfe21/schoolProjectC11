@@ -7,6 +7,8 @@ import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Parent;
@@ -20,6 +22,7 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -32,7 +35,7 @@ import java.util.Map;
  * JavaFX 主界面控制器。
  *
  * 当前提供基础界面骨架：任务勾选、运行选项、开始/停止按钮、任务记录表、日志列表。
- * 后面再逐步接入定时刷新和更完整的界面样式。
+ * 后面再逐步接入更完整的界面样式。
  */
 @Component
 @RequiredArgsConstructor
@@ -58,6 +61,7 @@ public class MainWindowController {
     private CheckBox loopCheckBox;
     private CheckBox testModeCheckBox;
     private CheckBox initGameWindowCheckBox;
+    private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
         initControls();
@@ -71,6 +75,7 @@ public class MainWindowController {
         root.setBottom(buildLogPanel());
 
         refreshDashboard();
+        startAutoRefresh();
         return root;
     }
 
@@ -87,6 +92,7 @@ public class MainWindowController {
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
         initGameWindowCheckBox.setSelected(taskRunProperties.isInitGameWindow());
+        updateRunningButtons();
     }
 
     private Parent buildTopBar() {
@@ -148,6 +154,12 @@ public class MainWindowController {
     }
 
     private void startSelectedTasksInBackground() {
+        if (taskControlService.isRunning()) {
+            logList.getItems().add(0, "当前已有任务正在运行，请勿重复开始。");
+            updateRunningButtons();
+            return;
+        }
+
         List<String> selectedTaskCodes = getSelectedTaskCodesFromUi();
         if (selectedTaskCodes.isEmpty()) {
             logList.getItems().add(0, "没有勾选任何任务，无法开始。");
@@ -159,6 +171,7 @@ public class MainWindowController {
         boolean initGameWindow = initGameWindowCheckBox.isSelected();
 
         startButton.setDisable(true);
+        stopButton.setDisable(false);
         Thread worker = new Thread(() -> {
             try {
                 if (initGameWindow) {
@@ -166,7 +179,7 @@ public class MainWindowController {
                     if (!ready) {
                         Platform.runLater(() -> {
                             logList.getItems().add(0, "游戏窗口初始化失败，任务未启动。");
-                            startButton.setDisable(false);
+                            updateRunningButtons();
                             refreshDashboard();
                         });
                         return;
@@ -176,13 +189,35 @@ public class MainWindowController {
                 taskControlService.startTasks(selectedTaskCodes, loop, testMode);
             } finally {
                 Platform.runLater(() -> {
-                    startButton.setDisable(false);
+                    updateRunningButtons();
                     refreshDashboard();
                 });
             }
         }, "task-ui-start-worker");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private void startAutoRefresh() {
+        if (autoRefreshTimeline != null) {
+            autoRefreshTimeline.stop();
+        }
+        autoRefreshTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
+            refreshDashboard();
+            updateRunningButtons();
+        }));
+        autoRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
+        autoRefreshTimeline.play();
+    }
+
+    private void updateRunningButtons() {
+        boolean running = taskControlService.isRunning();
+        if (startButton != null) {
+            startButton.setDisable(running);
+        }
+        if (stopButton != null) {
+            stopButton.setDisable(!running);
+        }
     }
 
     private List<String> getSelectedTaskCodesFromUi() {
@@ -220,6 +255,7 @@ public class MainWindowController {
         refreshTaskOptions(dashboard.getTaskOptions(), currentSelection);
         refreshRecordTable(dashboard.getRecentRecords());
         refreshLogList(dashboard.getRecentLogs());
+        updateRunningButtons();
     }
 
     private void refreshTaskOptions(List<TaskOptionView> options, Map<String, Boolean> currentSelection) {
