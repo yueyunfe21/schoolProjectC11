@@ -23,6 +23,13 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
     };
 
     /**
+     * 主游戏窗口通常带有 Revision / ID 等信息；聊天窗口、工具窗口即使命中游戏标题也不应注册。
+     */
+    private static final String[] MAIN_GAME_WINDOW_HINTS = {
+            "revision", "id:", "id："
+    };
+
+    /**
      * xy2 / xy3 只允许作为独立词出现，避免 DHXY2Robot 这种项目窗口被误判。
      */
     private static final Pattern GAME_CODE_PATTERN = Pattern.compile("(^|[^a-z0-9])xy[23]([^a-z0-9]|$)");
@@ -32,6 +39,9 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
             "dhxy2robot",
             "robot 控制台",
             "控制台",
+            "聊天窗口",
+            "chat window",
+            "chat",
             "google chrome",
             "chrome",
             "intellij",
@@ -119,7 +129,14 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
         if (containsAny(text, EXCLUDED_WINDOW_KEYWORDS)) {
             return false;
         }
-        return containsAny(text, GAME_TITLE_KEYWORDS) || GAME_CODE_PATTERN.matcher(text).find();
+
+        boolean hasGameTitle = containsAny(text, GAME_TITLE_KEYWORDS) || GAME_CODE_PATTERN.matcher(text).find();
+        if (!hasGameTitle) {
+            return false;
+        }
+
+        // 大话西游会产生聊天窗口等子窗口。为了避免把子窗口注册成角色窗口，优先要求主窗口特征。
+        return containsAny(text, MAIN_GAME_WINDOW_HINTS);
     }
 
     private boolean containsAny(String text, String[] keywords) {

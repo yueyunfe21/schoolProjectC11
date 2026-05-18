@@ -6,6 +6,7 @@ import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.task.GameTask;
+import com.bot.dhxy.window.interaction.TaskWindowRuntimeService;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -153,6 +154,36 @@ public abstract class BaseTaskTemplate implements GameTask {
         if (context != null) {
             context.throwIfStopRequested();
         }
+    }
+
+    protected void logWindowContext(TaskExecutionContext context) {
+        if (context == null || !context.hasWindow()) {
+            log.info("{} 未绑定多窗口上下文，按单窗口兼容模式执行。", getTaskName());
+            return;
+        }
+        log.info("{} 窗口上下文：windowId={}，role={}，hwnd={}，geometry={}，title={}",
+                getTaskName(),
+                context.getWindowId(),
+                context.getWindowRole(),
+                context.hasNativeWindow() ? context.getNativeWindowHandle() : "-",
+                context.getNativeWindowGeometryText(),
+                context.getNativeWindowTitle() == null || context.getNativeWindowTitle().isBlank() ? "-" : context.getNativeWindowTitle());
+    }
+
+    protected boolean activateWindowIfReady(TaskWindowRuntimeService taskWindowRuntimeService,
+                                            TaskExecutionContext context,
+                                            String actionName) {
+        if (taskWindowRuntimeService == null) {
+            log.info("{} 未注入窗口运行服务，跳过窗口激活。", actionName);
+            return false;
+        }
+        if (context == null || !taskWindowRuntimeService.ready(context)) {
+            log.info("{} 未绑定可用真实窗口，跳过窗口激活。", actionName);
+            return false;
+        }
+        boolean activated = taskWindowRuntimeService.activate(context);
+        log.info("{} 窗口激活结果：{} | {}", actionName, activated, taskWindowRuntimeService.describe(context));
+        return activated;
     }
 
     protected TaskExecutionContext resolveExecutionContext(TaskExecutionContext executionContext) {
