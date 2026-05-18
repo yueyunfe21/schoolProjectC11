@@ -104,21 +104,21 @@ public class WindowTaskRunner {
 
     private void runTask(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
         windowContext.markStarted(taskType);
-        log.info("窗口 [{}] 开始执行任务：{}", windowContext.getWindowId(), task.getTaskName());
+        log.info("{} 窗口 [{}] 开始执行任务：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
 
         TaskRunResult result = TaskRunResult.FAILED;
         try {
             result = task.execute(executionContext);
         } catch (TaskStopRequestedException | CancellationException e) {
-            log.info("窗口 [{}] 任务被停止：{}，原因：{}", windowContext.getWindowId(), task.getTaskName(), e.getMessage());
+            log.info("{} 窗口 [{}] 任务被停止：{}，原因：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e.getMessage());
             result = TaskRunResult.STOPPED;
         } catch (Exception e) {
-            log.error("窗口 [{}] 任务异常：{}", windowContext.getWindowId(), task.getTaskName(), e);
+            log.error("{} 窗口 [{}] 任务异常：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e);
             result = TaskRunResult.FAILED;
         } finally {
             WindowRuntimeStatus status = toWindowStatus(result);
             windowContext.markFinished(status, "任务结束：" + result);
-            log.info("窗口 [{}] 任务结束：{} -> {}", windowContext.getWindowId(), task.getTaskName(), result);
+            log.info("{} 窗口 [{}] 任务结束：{} -> {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), result);
             currentTask = null;
         }
     }
@@ -127,6 +127,8 @@ public class WindowTaskRunner {
         return TaskExecutionContext.builder()
                 .taskCode(task.getTaskCode())
                 .taskName(task.getTaskName())
+                .windowId(windowContext.getWindowId())
+                .windowRole(windowContext.getRole().name())
                 .stopToken(stopToken)
                 .startedAt(LocalDateTime.now())
                 .build();
