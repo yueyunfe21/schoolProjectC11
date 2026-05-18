@@ -15,9 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 @RequiredArgsConstructor
@@ -65,6 +62,14 @@ public class FiveRingTask implements GameTask {
         FINISHED
     }
 
+    private static class FiveRingRuntimeState {
+        private Integer shoeBagIndex;
+        private HandoverState handoverState;
+        private boolean needTaskSync = true;
+        private int uiErrorCount = 0;
+        private LoopDecision loopDecision = LoopDecision.CONTINUE;
+    }
+
     @Override
     public String getTaskCode() {
         return "wuhuan";
@@ -89,26 +94,16 @@ public class FiveRingTask implements GameTask {
         log.info("====================================");
 
         TaskExecutionContext executionContext = buildStepExecutionContext();
-        AtomicReference<Integer> shoeBagIndexRef = new AtomicReference<>();
-        AtomicReference<HandoverState> handoverStateRef = new AtomicReference<>();
-        AtomicBoolean needTaskSyncRef = new AtomicBoolean(true);
-        AtomicInteger uiErrorCountRef = new AtomicInteger(0);
-        AtomicReference<LoopDecision> loopDecisionRef = new AtomicReference<>(LoopDecision.CONTINUE);
+        FiveRingRuntimeState runtimeState = new FiveRingRuntimeState();
 
-        TaskRunResult startupResult = runStartupSteps(executionContext, shoeBagIndexRef, handoverStateRef, needTaskSyncRef);
+        TaskRunResult startupResult = runStartupSteps(executionContext, runtimeState);
         if (startupResult != TaskRunResult.SUCCESS) {
             return startupResult;
         }
 
         log.info("▶️ 阶段二：启动极速跑环流水线...");
         while (context.getBotStatus() == GameContext.BotStatus.RUNNING) {
-            TaskStepResult loopResult = executeRunLoopOnceStep(
-                    executionContext,
-                    shoeBagIndexRef,
-                    needTaskSyncRef,
-                    uiErrorCountRef,
-                    loopDecisionRef
-            );
+            TaskStepResult loopResult = executeRunLoopOnceStep(executionContext, runtimeState);
 
             if (loopResult == TaskStepResult.STOPPED) {
                 return TaskRunResult.STOPPED;
@@ -117,7 +112,7 @@ public class FiveRingTask implements GameTask {
                 context.setBotStatus(GameContext.BotStatus.ERROR);
                 return TaskRunResult.FAILED;
             }
-            if (loopDecisionRef.get() == LoopDecision.FINISHED) {
+            if (runtimeState.loopDecision == LoopDecision.FINISHED) {
                 return TaskRunResult.SUCCESS;
             }
         }
@@ -126,11 +121,8 @@ public class FiveRingTask implements GameTask {
         return TaskRunResult.STOPPED;
     }
 
-    private TaskRunResult runStartupSteps(TaskExecutionContext executionContext,
-                                          AtomicReference<Integer> shoeBagIndexRef,
-                                          AtomicReference<HandoverState> handoverStateRef,
-                                          AtomicBoolean needTaskSyncRef) {
-        TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, shoeBagIndexRef);
+    private TaskRunResult runStartupSteps(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
+        TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, runtimeState);
         if (prepareResult == TaskStepResult.STOPPED) {
             log.info("🎉 五环任务在战前准备阶段停止");
             return TaskRunResult.STOPPED;
@@ -141,20 +133,20 @@ public class FiveRingTask implements GameTask {
             return TaskRunResult.FAILED;
         }
 
-        TaskStepResult handoverResult = executeDetectHandoverStep(executionContext, handoverStateRef);
+        TaskStepResult handoverResult = executeDetectHandoverStep(executionContext, runtimeState);
         if (handoverResult == TaskStepResult.STOPPED) {
             log.info("🎉 五环任务在中途接管侦测阶段停止");
             return TaskRunResult.STOPPED;
         }
-        if (handoverResult != TaskStepResult.SUCCESS || handoverStateRef.get() == null) {
+        if (handoverResult != TaskStepResult.SUCCESS || runtimeState.handoverState == null) {
             log.error("❌ 五环中途接管侦测失败，任务终止！");
             context.setBotStatus(GameContext.BotStatus.ERROR);
             return TaskRunResult.FAILED;
         }
 
-        needTaskSyncRef.set(handoverStateRef.get() != HandoverState.ALREADY_RUNNING);
+        runtimeState.needTaskSync = runtimeState.handoverState != HandoverState.ALREADY_RUNNING;
 
-        if (handoverStateRef.get() == HandoverState.NEED_SETUP) {
+        if (runtimeState.handoverState == HandoverState.NEED_SETUP) {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
             TaskStepResult setupResult = executeSetupInitialTaskStep(executionContext);
             if (setupResult == TaskStepResult.STOPPED) {
@@ -167,17 +159,17 @@ public class FiveRingTask implements GameTask {
                 return TaskRunResult.FAILED;
             }
             sleep(2000);
-            needTaskSyncRef.set(true);
+            runtimeState.needTaskSync = true;
         }
 
         return TaskRunResult.SUCCESS;
     }
 
-    private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, AtomicReference<Integer> shoeBagIndexRef) {
+    private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         TaskStep prepareStep = new TaskStep() {
             @Override
             public TaskStepResult execute(TaskExecutionContext context) {
-                return prepareBeforeRun(context, shoeBagIndexRef);
+                return prepareBeforeRun(context, runtimeState);
             }
 
             @Override
@@ -188,7 +180,7 @@ public class FiveRingTask implements GameTask {
         return taskStepExecutor.execute(executionContext, prepareStep, TaskRetryPolicy.none());
     }
 
-    private TaskStepResult prepareBeforeRun(TaskExecutionContext executionContext, AtomicReference<Integer> shoeBagIndexRef) {
+    private TaskStepResult prepareBeforeRun(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         if (executionContext != null) {
             executionContext.throwIfStopRequested();
         }
@@ -199,11 +191,10 @@ public class FiveRingTask implements GameTask {
         playerStateService.ensureSheYaoXiangActive();
 
         log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
-        Integer shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
-        shoeBagIndexRef.set(shoeBagIndex);
+        runtimeState.shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
 
-        if (shoeBagIndex != null) {
-            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", shoeBagIndex + 1);
+        if (runtimeState.shoeBagIndex != null) {
+            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", runtimeState.shoeBagIndex + 1);
         } else {
             log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
         }
@@ -211,11 +202,11 @@ public class FiveRingTask implements GameTask {
         return TaskStepResult.SUCCESS;
     }
 
-    private TaskStepResult executeDetectHandoverStep(TaskExecutionContext executionContext, AtomicReference<HandoverState> handoverStateRef) {
+    private TaskStepResult executeDetectHandoverStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         TaskStep handoverStep = new TaskStep() {
             @Override
             public TaskStepResult execute(TaskExecutionContext context) {
-                return detectHandover(context, handoverStateRef);
+                return detectHandover(context, runtimeState);
             }
 
             @Override
@@ -226,7 +217,7 @@ public class FiveRingTask implements GameTask {
         return taskStepExecutor.execute(executionContext, handoverStep, TaskRetryPolicy.none());
     }
 
-    private TaskStepResult detectHandover(TaskExecutionContext executionContext, AtomicReference<HandoverState> handoverStateRef) {
+    private TaskStepResult detectHandover(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         if (executionContext != null) {
             executionContext.throwIfStopRequested();
         }
@@ -236,10 +227,10 @@ public class FiveRingTask implements GameTask {
 
         if (isTaskAlreadyRunning) {
             log.info("✅ 侦测到五环任务已经在列表中！切入无缝接管模式！");
-            handoverStateRef.set(HandoverState.ALREADY_RUNNING);
+            runtimeState.handoverState = HandoverState.ALREADY_RUNNING;
         } else {
             log.info("🧭 未发现进行中的五环，需要先接取初始任务");
-            handoverStateRef.set(HandoverState.NEED_SETUP);
+            runtimeState.handoverState = HandoverState.NEED_SETUP;
         }
 
         return TaskStepResult.SUCCESS;
@@ -300,15 +291,11 @@ public class FiveRingTask implements GameTask {
         return TaskStepResult.FAILED;
     }
 
-    private TaskStepResult executeRunLoopOnceStep(TaskExecutionContext executionContext,
-                                                  AtomicReference<Integer> shoeBagIndexRef,
-                                                  AtomicBoolean needTaskSyncRef,
-                                                  AtomicInteger uiErrorCountRef,
-                                                  AtomicReference<LoopDecision> loopDecisionRef) {
+    private TaskStepResult executeRunLoopOnceStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         TaskStep loopStep = new TaskStep() {
             @Override
             public TaskStepResult execute(TaskExecutionContext context) {
-                return runLoopOnce(context, shoeBagIndexRef, needTaskSyncRef, uiErrorCountRef, loopDecisionRef);
+                return runLoopOnce(context, runtimeState);
             }
 
             @Override
@@ -319,15 +306,11 @@ public class FiveRingTask implements GameTask {
         return taskStepExecutor.execute(executionContext, loopStep, TaskRetryPolicy.none());
     }
 
-    private TaskStepResult runLoopOnce(TaskExecutionContext executionContext,
-                                       AtomicReference<Integer> shoeBagIndexRef,
-                                       AtomicBoolean needTaskSyncRef,
-                                       AtomicInteger uiErrorCountRef,
-                                       AtomicReference<LoopDecision> loopDecisionRef) {
+    private TaskStepResult runLoopOnce(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         if (executionContext != null) {
             executionContext.throwIfStopRequested();
         }
-        loopDecisionRef.set(LoopDecision.CONTINUE);
+        runtimeState.loopDecision = LoopDecision.CONTINUE;
 
         if (handleCombatIfNeeded()) {
             return TaskStepResult.SUCCESS;
@@ -337,14 +320,14 @@ public class FiveRingTask implements GameTask {
             return TaskStepResult.SUCCESS;
         }
 
-        if (handleDialogIfNeeded(shoeBagIndexRef.get())) {
+        if (handleDialogIfNeeded(runtimeState.shoeBagIndex)) {
             return TaskStepResult.SUCCESS;
         }
 
-        if (needTaskSyncRef.get()) {
-            TaskSyncDecision syncDecision = syncTaskState(needTaskSyncRef);
+        if (runtimeState.needTaskSync) {
+            TaskSyncDecision syncDecision = syncTaskState(runtimeState);
             if (syncDecision == TaskSyncDecision.FINISHED) {
-                loopDecisionRef.set(LoopDecision.FINISHED);
+                runtimeState.loopDecision = LoopDecision.FINISHED;
                 return TaskStepResult.SUCCESS;
             }
         }
@@ -353,7 +336,7 @@ public class FiveRingTask implements GameTask {
             return TaskStepResult.SUCCESS;
         }
 
-        triggerP1PathingOrRepairState(needTaskSyncRef, uiErrorCountRef);
+        triggerP1PathingOrRepairState(runtimeState);
         return TaskStepResult.SUCCESS;
     }
 
@@ -381,7 +364,7 @@ public class FiveRingTask implements GameTask {
         return hasDialogProcessed;
     }
 
-    private TaskSyncDecision syncTaskState(AtomicBoolean needTaskSyncRef) {
+    private TaskSyncDecision syncTaskState(FiveRingRuntimeState runtimeState) {
         log.info("🔍 [状态查岗] 触发全量任务雷达扫描...");
         boolean hasTask = questManager.activateTaskIfPresent("wuhuan", true);
 
@@ -399,12 +382,12 @@ public class FiveRingTask implements GameTask {
             }
 
             log.info("😅 虚惊一场！洗地后发现任务其实还在，只是刚才被挡住了，继续干活！");
-            needTaskSyncRef.set(false);
+            runtimeState.needTaskSync = false;
             return TaskSyncDecision.CONTINUE;
         }
 
         log.info("✅ [状态查岗] 五环任务已重新锁定！");
-        needTaskSyncRef.set(false);
+        runtimeState.needTaskSync = false;
         return TaskSyncDecision.CONTINUE;
     }
 
@@ -419,29 +402,29 @@ public class FiveRingTask implements GameTask {
         return true;
     }
 
-    private void triggerP1PathingOrRepairState(AtomicBoolean needTaskSyncRef, AtomicInteger uiErrorCountRef) {
+    private void triggerP1PathingOrRepairState(FiveRingRuntimeState runtimeState) {
         PathingResult p1Result = questManager.triggerWuHuanNativePathingP1(true);
         if (p1Result == PathingResult.SUCCESS) {
-            uiErrorCountRef.set(0);
+            runtimeState.uiErrorCount = 0;
             log.info("🏃 尝试点击下一环 NPC 链接...");
             sleep(2500);
 
             if (!gameStateUtil.isMovingByPixelDiff()) {
                 log.warn("⚠️ 盲狙 NPC 失败（角色未移动），状态发生错乱，请求重新查岗！");
-                needTaskSyncRef.set(true);
+                runtimeState.needTaskSync = true;
             }
             return;
         }
 
         if (p1Result == PathingResult.UI_ERROR) {
-            int errorCount = uiErrorCountRef.incrementAndGet();
+            runtimeState.uiErrorCount++;
             log.warn("⚠️ 界面打开失败或异常，请求重新查岗！");
-            if (errorCount >= 3) {
+            if (runtimeState.uiErrorCount >= 3) {
                 log.error("💥 连续 3 次打不开面板，触发特警队洗地！");
                 uiCleanerService.cleanUpAll();
-                uiErrorCountRef.set(0);
+                runtimeState.uiErrorCount = 0;
             }
-            needTaskSyncRef.set(true);
+            runtimeState.needTaskSync = true;
             sleep(1000);
         }
     }
