@@ -5,6 +5,7 @@ import com.bot.dhxy.runner.TaskControlService;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
+import com.bot.dhxy.ui.viewmodel.TaskPlanView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
 import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
 import javafx.animation.KeyFrame;
@@ -58,6 +59,11 @@ public class MainWindowController {
     private Label statusLabel;
     private Label requestLabel;
     private Label summaryLabel;
+    private Label planSummaryLabel;
+    private Label planExecutableLabel;
+    private Label planIgnoredLabel;
+    private Label planOptionsLabel;
+    private Label planWarningLabel;
     private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
@@ -92,10 +98,18 @@ public class MainWindowController {
         statusLabel = new Label("状态：初始化中");
         requestLabel = new Label("请求：-");
         summaryLabel = new Label("结果：-");
+        planSummaryLabel = new Label("计划：-");
+        planExecutableLabel = new Label("执行：-");
+        planIgnoredLabel = new Label("忽略：-");
+        planOptionsLabel = new Label("选项：-");
+        planWarningLabel = new Label("警告：-");
 
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
         initGameWindowCheckBox.setSelected(taskRunProperties.isInitGameWindow());
+        loopCheckBox.setOnAction(event -> refreshDashboard());
+        testModeCheckBox.setOnAction(event -> refreshDashboard());
+        initGameWindowCheckBox.setOnAction(event -> refreshDashboard());
         applyRuntimeControls(null);
     }
 
@@ -121,10 +135,22 @@ public class MainWindowController {
 
     private Parent buildTaskPanel() {
         Label label = new Label("任务选择");
-        VBox wrapper = new VBox(10, label, taskBox);
+        VBox wrapper = new VBox(10, label, taskBox, buildPlanPanel());
         wrapper.setPadding(new Insets(0, 12, 0, 0));
-        wrapper.setPrefWidth(180);
+        wrapper.setPrefWidth(260);
         return wrapper;
+    }
+
+    private Parent buildPlanPanel() {
+        VBox box = new VBox(4,
+                new Label("执行计划预览"),
+                planSummaryLabel,
+                planExecutableLabel,
+                planIgnoredLabel,
+                planOptionsLabel,
+                planWarningLabel);
+        box.setPadding(new Insets(12, 0, 0, 0));
+        return box;
     }
 
     private Parent buildRecordTable() {
@@ -286,6 +312,22 @@ public class MainWindowController {
         summaryLabel.setText("结果：" + nullToDash(runtimeState.getSummaryText()));
     }
 
+    private void updatePlanPreview(TaskPlanView planView) {
+        if (planView == null) {
+            planSummaryLabel.setText("计划：-");
+            planExecutableLabel.setText("执行：-");
+            planIgnoredLabel.setText("忽略：-");
+            planOptionsLabel.setText("选项：-");
+            planWarningLabel.setText("警告：-");
+            return;
+        }
+        planSummaryLabel.setText("计划：" + nullToDash(planView.getSummaryText()));
+        planExecutableLabel.setText("执行(" + planView.getExecutableCount() + ")：" + nullToDash(planView.getExecutableTasksText()));
+        planIgnoredLabel.setText("忽略(" + planView.getIgnoredCount() + ")：" + nullToDash(planView.getIgnoredTasksText()));
+        planOptionsLabel.setText("选项：" + nullToDash(planView.getOptionsText()));
+        planWarningLabel.setText("警告：" + nullToDash(planView.getWarningText()));
+    }
+
     private String nullToDash(String text) {
         return text == null || text.isBlank() ? "-" : text;
     }
@@ -323,13 +365,20 @@ public class MainWindowController {
     }
 
     private void refreshDashboard() {
+        List<String> selectedTaskCodes = getSelectedTaskCodesFromUi();
         Map<String, Boolean> currentSelection = getCurrentTaskSelectionMap();
-        TaskDashboardView dashboard = taskViewService.getDashboardView();
+        TaskDashboardView dashboard = taskViewService.getDashboardView(
+                selectedTaskCodes,
+                loopCheckBox.isSelected(),
+                testModeCheckBox.isSelected(),
+                initGameWindowCheckBox.isSelected()
+        );
         TaskRuntimeStateView runtimeState = dashboard.getRuntimeState();
         refreshTaskOptions(dashboard.getTaskOptions(), currentSelection, runtimeState);
         refreshRecordTable(dashboard.getRecentRecords());
         refreshLogList(dashboard.getRecentLogs());
         updateRuntimeState(runtimeState);
+        updatePlanPreview(dashboard.getPlanView());
         applyRuntimeControls(runtimeState);
     }
 
@@ -343,7 +392,7 @@ public class MainWindowController {
             checkBox.setUserData(option.getTaskCode());
             checkBox.setSelected(currentSelection.getOrDefault(option.getTaskCode(), option.isSelected()));
             checkBox.setDisable(busy || !option.isEnabled());
-            checkBox.setOnAction(event -> updateStatusFromUiSelection());
+            checkBox.setOnAction(event -> refreshDashboard());
             taskBox.getChildren().add(checkBox);
         }
     }
