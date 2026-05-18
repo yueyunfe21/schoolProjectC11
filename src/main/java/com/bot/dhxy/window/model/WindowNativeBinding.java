@@ -1,5 +1,7 @@
 package com.bot.dhxy.window.model;
 
+import com.bot.dhxy.window.runtime.WindowHandleParser;
+
 /**
  * 游戏窗口与系统原生窗口的绑定信息。
  */
@@ -68,6 +70,10 @@ public class WindowNativeBinding {
             return null;
         }
         String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        Long parsedHexHandle = WindowHandleParser.parseHexHandle(trimmed);
+        return parsedHexHandle == null ? trimmed : Long.toUnsignedString(parsedHexHandle);
     }
 }
