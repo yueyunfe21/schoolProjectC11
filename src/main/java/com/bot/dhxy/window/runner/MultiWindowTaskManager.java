@@ -37,8 +37,14 @@ public class MultiWindowTaskManager {
         if (request == null) {
             throw new IllegalArgumentException("window registration request must not be null");
         }
-        WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
-        return registerWindow(windowContext);
+        return runnersByWindowId.compute(request.getWindowId(), (windowId, existingRunner) -> {
+            if (existingRunner != null) {
+                existingRunner.refreshRegistration(request);
+                return existingRunner;
+            }
+            WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
+            return new WindowTaskRunner(windowContext, taskFactory);
+        });
     }
 
     public WindowTaskRunner registerWindow(WindowRuntimeContext windowContext) {
