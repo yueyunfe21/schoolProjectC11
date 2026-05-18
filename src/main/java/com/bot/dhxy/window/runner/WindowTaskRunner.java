@@ -69,8 +69,7 @@ public class WindowTaskRunner {
         });
 
         currentTask = new RunningTaskHandle(windowContext.getWindowId(), taskType, task, stopToken, futureTask);
-        windowContext.setSelectedTaskType(taskType);
-        windowContext.setStatus(WindowRuntimeStatus.QUEUED);
+        windowContext.markQueued(taskType);
         executor.execute(futureTask);
         return true;
     }
@@ -80,7 +79,7 @@ public class WindowTaskRunner {
         if (taskHandle == null) {
             return;
         }
-        windowContext.setStatus(WindowRuntimeStatus.STOPPING);
+        windowContext.markStopping("用户请求停止窗口任务");
         taskHandle.requestStop("用户请求停止窗口任务");
     }
 
