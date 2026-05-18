@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.execution;
 
+import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
@@ -20,11 +21,14 @@ public class WindowTaskSnapshot {
     private final WindowRuntimeStatus status;
     private final TaskType selectedTaskType;
     private final TaskType runningTaskType;
+    private final TaskType lastTaskType;
+    private final TaskRunResult lastResult;
     private final boolean running;
     private final LocalDateTime taskStartedAt;
     private final LocalDateTime lastStartedAt;
     private final LocalDateTime lastFinishedAt;
     private final String lastMessage;
+    private final String lastResultMessage;
     private final WindowNativeBinding nativeBinding;
 
     public WindowTaskSnapshot(String windowId,
@@ -38,8 +42,8 @@ public class WindowTaskSnapshot {
                               LocalDateTime lastStartedAt,
                               LocalDateTime lastFinishedAt,
                               String lastMessage) {
-        this(windowId, roleName, role, status, selectedTaskType, runningTaskType, running,
-                taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, WindowNativeBinding.empty());
+        this(windowId, roleName, role, status, selectedTaskType, runningTaskType, TaskType.UNKNOWN, null, running,
+                taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, null, WindowNativeBinding.empty());
     }
 
     public WindowTaskSnapshot(String windowId,
@@ -54,17 +58,39 @@ public class WindowTaskSnapshot {
                               LocalDateTime lastFinishedAt,
                               String lastMessage,
                               WindowNativeBinding nativeBinding) {
+        this(windowId, roleName, role, status, selectedTaskType, runningTaskType, TaskType.UNKNOWN, null, running,
+                taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, null, nativeBinding);
+    }
+
+    public WindowTaskSnapshot(String windowId,
+                              String roleName,
+                              WindowRole role,
+                              WindowRuntimeStatus status,
+                              TaskType selectedTaskType,
+                              TaskType runningTaskType,
+                              TaskType lastTaskType,
+                              TaskRunResult lastResult,
+                              boolean running,
+                              LocalDateTime taskStartedAt,
+                              LocalDateTime lastStartedAt,
+                              LocalDateTime lastFinishedAt,
+                              String lastMessage,
+                              String lastResultMessage,
+                              WindowNativeBinding nativeBinding) {
         this.windowId = windowId;
         this.roleName = roleName;
         this.role = role == null ? WindowRole.UNKNOWN : role;
         this.status = status == null ? WindowRuntimeStatus.IDLE : status;
         this.selectedTaskType = selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
         this.runningTaskType = runningTaskType == null ? TaskType.UNKNOWN : runningTaskType;
+        this.lastTaskType = lastTaskType == null ? TaskType.UNKNOWN : lastTaskType;
+        this.lastResult = lastResult;
         this.running = running;
         this.taskStartedAt = taskStartedAt;
         this.lastStartedAt = lastStartedAt;
         this.lastFinishedAt = lastFinishedAt;
         this.lastMessage = lastMessage;
+        this.lastResultMessage = lastResultMessage;
         this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
     }
 
@@ -80,6 +106,10 @@ public class WindowTaskSnapshot {
 
     public TaskType getRunningTaskType() { return runningTaskType; }
 
+    public TaskType getLastTaskType() { return lastTaskType; }
+
+    public TaskRunResult getLastResult() { return lastResult; }
+
     public boolean isRunning() { return running; }
 
     public boolean isBusy() { return running || status.isBusy(); }
@@ -91,6 +121,8 @@ public class WindowTaskSnapshot {
     public LocalDateTime getLastFinishedAt() { return lastFinishedAt; }
 
     public String getLastMessage() { return lastMessage; }
+
+    public String getLastResultMessage() { return lastResultMessage; }
 
     public WindowNativeBinding getNativeBinding() { return nativeBinding; }
 
@@ -113,4 +145,8 @@ public class WindowTaskSnapshot {
     public String getSelectedTaskDisplayName() { return selectedTaskType.getDisplayName(); }
 
     public String getRunningTaskDisplayName() { return runningTaskType.getDisplayName(); }
+
+    public String getLastTaskDisplayName() { return lastTaskType.getDisplayName(); }
+
+    public String getLastResultDisplayName() { return lastResult == null ? "-" : lastResult.name(); }
 }
