@@ -5,10 +5,12 @@ import com.bot.dhxy.runner.TaskControlService;
 import com.bot.dhxy.runner.TaskDefinition;
 import com.bot.dhxy.runner.TaskLogEntry;
 import com.bot.dhxy.runner.TaskRunRecord;
+import com.bot.dhxy.runner.TaskRuntimeState;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
+import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +38,7 @@ public class TaskViewService {
                 .taskOptions(getTaskOptions())
                 .recentRecords(getRecentRecords())
                 .recentLogs(getRecentLogs())
+                .runtimeState(getRuntimeState())
                 .build();
     }
 
@@ -58,6 +61,10 @@ public class TaskViewService {
                 .toList();
     }
 
+    public TaskRuntimeStateView getRuntimeState() {
+        return toTaskRuntimeStateView(taskControlService.getRuntimeState());
+    }
+
     private TaskOptionView toTaskOptionView(TaskDefinition task, Set<String> selectedCodes) {
         return TaskOptionView.builder()
                 .taskCode(task.getTaskCode())
@@ -68,13 +75,15 @@ public class TaskViewService {
     }
 
     private TaskRecordView toTaskRecordView(TaskRunRecord record) {
+        long costMillis = record.getCostMillis();
         return TaskRecordView.builder()
                 .taskCode(record.getTaskCode())
                 .taskName(record.getTaskName())
                 .result(record.getResult() == null ? "" : record.getResult().name())
                 .startTime(record.getStartTime() == null ? "" : TIME_FORMATTER.format(record.getStartTime()))
                 .endTime(record.getEndTime() == null ? "" : TIME_FORMATTER.format(record.getEndTime()))
-                .costMillis(record.getCostMillis())
+                .costMillis(costMillis)
+                .costText(formatCost(costMillis))
                 .message(record.getMessage())
                 .build();
     }
@@ -87,5 +96,35 @@ public class TaskViewService {
                 .taskName(entry.getTaskName())
                 .message(entry.getMessage())
                 .build();
+    }
+
+    private TaskRuntimeStateView toTaskRuntimeStateView(TaskRuntimeState state) {
+        if (state == null) {
+            return TaskRuntimeStateView.builder()
+                    .running(false)
+                    .statusText("空闲")
+                    .build();
+        }
+        return TaskRuntimeStateView.builder()
+                .running(state.isRunning())
+                .statusText(state.getStatusText())
+                .startedAt(state.getStartedAt() == null ? "" : TIME_FORMATTER.format(state.getStartedAt()))
+                .finishedAt(state.getFinishedAt() == null ? "" : TIME_FORMATTER.format(state.getFinishedAt()))
+                .requestText(state.getCurrentRequest() == null ? "" : state.getCurrentRequest().toLogText())
+                .summaryText(state.getLastSummary() == null ? "" : state.getLastSummary().toLogText())
+                .build();
+    }
+
+    private String formatCost(long costMillis) {
+        if (costMillis < 1000) {
+            return costMillis + "ms";
+        }
+        long seconds = costMillis / 1000;
+        long minutes = seconds / 60;
+        long remainSeconds = seconds % 60;
+        if (minutes <= 0) {
+            return seconds + "s";
+        }
+        return minutes + "m " + remainSeconds + "s";
     }
 }
