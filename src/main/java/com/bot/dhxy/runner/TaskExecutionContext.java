@@ -21,16 +21,19 @@ public class TaskExecutionContext {
 
     private final String taskCode;
     private final String taskName;
-    /**
-     * 多窗口模式下的窗口标识。
-     * 单窗口兼容模式下可以为空。
-     */
+    /** 多窗口模式下的窗口标识。单窗口兼容模式下可以为空。 */
     private final String windowId;
-    /**
-     * 多窗口模式下当前窗口识别到的角色身份，例如 LEADER / MEMBER / UNKNOWN。
-     * 这里使用字符串，避免通用 runner 包反向依赖 window 包。
-     */
+    /** 多窗口模式下当前窗口识别到的角色身份，例如 LEADER / MEMBER / UNKNOWN。 */
     private final String windowRole;
+    /** Windows 原生窗口句柄文本，通常是十六进制 HWND。 */
+    private final String nativeWindowHandle;
+    private final String nativeWindowTitle;
+    private final String nativeWindowClassName;
+    private final long nativeWindowProcessId;
+    private final int nativeWindowX;
+    private final int nativeWindowY;
+    private final int nativeWindowWidth;
+    private final int nativeWindowHeight;
     private final TaskRunRequest request;
     private final TaskExecutionPlan plan;
     private final TaskStopToken stopToken;
@@ -53,11 +56,30 @@ public class TaskExecutionContext {
         return windowId != null && !windowId.isBlank();
     }
 
+    public boolean hasNativeWindow() {
+        return nativeWindowHandle != null && !nativeWindowHandle.isBlank();
+    }
+
+    public boolean hasNativeWindowGeometry() {
+        return nativeWindowWidth > 0 && nativeWindowHeight > 0;
+    }
+
+    public String getNativeWindowGeometryText() {
+        if (!hasNativeWindowGeometry()) {
+            return "-";
+        }
+        return nativeWindowX + "," + nativeWindowY + " " + nativeWindowWidth + "x" + nativeWindowHeight;
+    }
+
     public String getLogPrefix() {
         if (!hasWindow()) {
             return "[single-window]";
         }
-        return "[window=" + windowId + ", role=" + (windowRole == null ? "UNKNOWN" : windowRole) + "]";
+        String roleText = windowRole == null ? "UNKNOWN" : windowRole;
+        if (!hasNativeWindow()) {
+            return "[window=" + windowId + ", role=" + roleText + "]";
+        }
+        return "[window=" + windowId + ", role=" + roleText + ", hwnd=" + nativeWindowHandle + "]";
     }
 
     public List<TaskParameterValue> getTaskParameters(String code) {
