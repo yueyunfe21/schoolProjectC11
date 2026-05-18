@@ -1,22 +1,27 @@
 package com.bot.dhxy.core;
 
 import com.bot.dhxy.config.BotProperties;
-import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.config.VisionProvider;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.sun.jna.Native;
+import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinDef.LPARAM;
 import com.sun.jna.platform.win32.WinDef.RECT;
+import com.sun.jna.platform.win32.WinDef.WPARAM;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Autowired; // 🌟 新增引入
-import org.springframework.context.annotation.Lazy; // 🌟 新增引入
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
-import com.sun.jna.platform.win32.User32;
-import com.sun.jna.platform.win32.WinDef.WPARAM;
-import com.sun.jna.platform.win32.WinDef.LPARAM;
+
 import java.awt.image.BufferedImage;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -25,10 +30,8 @@ public class GameClientTracker {
     private final VisionProvider eyes;
     private final BotProperties config;
     private final CoordinateHelper coordinateHelper;
+    private final WindowTaskContextHolder windowTaskContextHolder;
 
-    // ==========================================
-    // 🌟 核心破局点：去掉 final，改用 @Lazy 延迟注入，打破死循环！
-    // ==========================================
     @Lazy
     @Autowired
     private InputProvider inputProvider;
@@ -47,12 +50,8 @@ public class GameClientTracker {
     @Getter
     private HWND gameHwnd = null;
 
-    /**
-     * 🌍 刷新全局视野（每次任务循环/决策前，调用一次即可）
-     */
     public boolean updateGlobalVision() {
         if (!checkBaseAddress()) return false;
-
         if (!bringWindowToFront()) {
             System.out.println("❌ 无法唤醒游戏，停止任务。");
             return false;
@@ -61,14 +60,14 @@ public class GameClientTracker {
         int y1 = windowBaseY;
         int x2 = x1 + WINDOW_WIDTH;
         int y2 = y1 + WINDOW_HEIGHT;
-
         return captureToFile("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
     }
 
-    /**
-     * 🛰️ 定位并锁定游戏窗口
-     */
     public boolean locateWindow() {
+        if (useBoundWindowIfAvailable()) {
+            return true;
+        }
+
         String target = config.getWindowKeyword();
         final HWND[] targetHwnd = {null};
 
@@ -79,7 +78,6 @@ public class GameClientTracker {
             char[] windowText = new char[512];
             User32.INSTANCE.GetWindowText(hwnd, windowText, 512);
             String wText = Native.toString(windowText).trim();
-
             if (wText.contains(target)) {
                 targetHwnd[0] = hwnd;
                 fullWindowTitle = wText;
@@ -94,20 +92,10 @@ public class GameClientTracker {
             return false;
         }
 
-        RECT rect = new RECT();
-        User32.INSTANCE.GetWindowRect(targetHwnd[0], rect);
-
-        double scale = coordinateHelper.getScaleRatio();
-        windowBaseX = (int) (rect.left / scale);
-        windowBaseY = (int) (rect.top / scale);
-
+        updateBaseFromHwnd(targetHwnd[0], fullWindowTitle);
         System.out.println("✅ [定位成功] 目标: " + fullWindowTitle + " | 窗口基址 X:" + windowBaseX + " Y:" + windowBaseY);
         return true;
     }
-
-    // ==========================================
-    // 📸 极简截图接口
-    // ==========================================
 
     public boolean captureToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!checkBaseAddress()) return false;
@@ -115,24 +103,14 @@ public class GameClientTracker {
         return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
     }
 
-    // ========================================================================
-    // 🛡️ 2. 装甲版照相机 (自带 ALT+4 物理清屏)
-    // ========================================================================
     public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!checkBaseAddress()) return false;
         System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
-
-        // 1. 开盾
         inputProvider.pressAlt4();
-
-        // 🌟 必须等400毫秒卸载模型，防止残影！
         sleepQuietly(400);
-
         try {
-            // 2. 调用基础截图保存文件
             return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
         } finally {
-            // 3. 关盾恢复
             inputProvider.pressAlt4();
             System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
         }
@@ -144,28 +122,64 @@ public class GameClientTracker {
     }
 
     private boolean checkBaseAddress() {
+        if (useBoundWindowIfAvailable()) {
+            return true;
+        }
         if (windowBaseX == -1 || gameHwnd == null) {
             return locateWindow();
         }
-        RECT rect = new RECT();
-        User32.INSTANCE.GetWindowRect(gameHwnd, rect);
-
-        double scale = coordinateHelper.getScaleRatio();
-        windowBaseX = (int) (rect.left / scale);
-        windowBaseY = (int) (rect.top / scale);
-
+        updateBaseFromHwnd(gameHwnd, fullWindowTitle);
         return true;
     }
 
+    private boolean useBoundWindowIfAvailable() {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.current();
+        if (current.isEmpty()) {
+            return false;
+        }
+        WindowNativeBinding binding = current.get().getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            return false;
+        }
+        HWND hwnd = toHwnd(binding.getNativeHandle());
+        if (hwnd == null) {
+            return false;
+        }
+        String title = binding.getTitle() == null || binding.getTitle().isBlank()
+                ? current.get().getWindowId()
+                : binding.getTitle();
+        updateBaseFromHwnd(hwnd, title);
+        return true;
+    }
+
+    private void updateBaseFromHwnd(HWND hwnd, String title) {
+        RECT rect = new RECT();
+        User32.INSTANCE.GetWindowRect(hwnd, rect);
+        double scale = coordinateHelper.getScaleRatio();
+        windowBaseX = (int) (rect.left / scale);
+        windowBaseY = (int) (rect.top / scale);
+        gameHwnd = hwnd;
+        fullWindowTitle = title == null ? "" : title;
+    }
+
     public boolean bringWindowToFront() {
-        if (gameHwnd == null) {
-            if (!locateWindow()) return false;
+        if (!checkBaseAddress()) {
+            return false;
         }
         System.out.println("🔄 正在将游戏窗口唤醒并置顶...");
         User32.INSTANCE.ShowWindow(gameHwnd, 9);
         User32.INSTANCE.SetForegroundWindow(gameHwnd);
         sleepQuietly(500);
         return true;
+    }
+
+    private HWND toHwnd(String handleText) {
+        try {
+            long value = Long.parseUnsignedLong(handleText, 16);
+            return new HWND(new Pointer(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void sleepQuietly(long ms) {
@@ -181,23 +195,15 @@ public class GameClientTracker {
             System.out.println("❌ gameHwnd 为空，请先执行 locateWindow() !");
             return;
         }
-
         System.out.println("🎯 直接使用缓存的句柄投递后台 Alt+8...");
-
         int WM_SYSKEYDOWN = 0x0104;
         int WM_SYSKEYUP = 0x0105;
         int VK_8 = 0x38;
-
-        // 构造 lParam 欺骗系统 Alt 键被按下了
-        // 🌟 换成 0x09！真正物理键盘的 8！
         long lParamDown = (1 << 29) | (0x09 << 16) | 1;
         long lParamUp = (1L << 31) | (1 << 30) | (1 << 29) | (0x09 << 16) | 1;
-
-        // 📩 绕过屏幕，直接塞进信箱 (注意：这里完全没有调用 SetForegroundWindow！)
         User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
-        try { Thread.sleep(50); } catch (InterruptedException e) { }
+        try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
-
         System.out.println("📩 后台指令投递完毕！");
     }
 }
