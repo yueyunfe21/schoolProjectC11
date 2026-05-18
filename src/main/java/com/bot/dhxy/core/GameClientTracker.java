@@ -86,6 +86,12 @@ public class GameClientTracker {
             return true;
         }
 
+        if (windowIsolationProperties.isBoundWindowTrackerActive()
+                && windowTaskContextHolder.rawCurrent().isPresent()) {
+            logTrackerMiss("bound-required-skip-title-search");
+            return false;
+        }
+
         String target = config.getWindowKeyword();
         final HWND[] targetHwnd = {null};
         final String[] targetTitle = {""};
@@ -156,6 +162,11 @@ public class GameClientTracker {
     private boolean checkBaseAddress() {
         if (useBoundWindowIfAvailable()) {
             return true;
+        }
+        if (windowIsolationProperties.isBoundWindowTrackerActive()
+                && windowTaskContextHolder.rawCurrent().isPresent()) {
+            logTrackerMiss("bound-required-skip-check-base-title-search");
+            return false;
         }
         TrackerState s = state();
         if (s.windowBaseX == -1 || s.gameHwnd == null) {
