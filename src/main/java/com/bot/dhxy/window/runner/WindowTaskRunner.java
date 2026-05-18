@@ -36,6 +36,7 @@ public class WindowTaskRunner {
     private final ExecutorService executor;
 
     private volatile RunningTaskHandle currentTask;
+    private volatile boolean shutdown;
 
     public WindowTaskRunner(WindowRuntimeContext windowContext, TaskFactory taskFactory) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
@@ -49,15 +50,26 @@ public class WindowTaskRunner {
     }
 
     public synchronized boolean submit(TaskType taskType) {
+        TaskType safeTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
+        if (shutdown) {
+            windowContext.markError("窗口执行器已关闭");
+            log.warn("窗口 [{}] 执行器已关闭，拒绝提交任务：{}", windowContext.getWindowId(), safeTaskType);
+            return false;
+        }
+        if (safeTaskType == TaskType.UNKNOWN) {
+            windowContext.markError("任务类型无效");
+            log.warn("窗口 [{}] 任务类型无效，拒绝提交", windowContext.getWindowId());
+            return false;
+        }
         if (isRunning()) {
-            log.warn("窗口 [{}] 已有任务运行，拒绝提交新任务：{}", windowContext.getWindowId(), taskType);
+            log.warn("窗口 [{}] 已有任务运行，拒绝提交新任务：{}", windowContext.getWindowId(), safeTaskType);
             return false;
         }
 
-        GameTask task = taskFactory.createTask(windowContext, taskType);
+        GameTask task = taskFactory.createTask(windowContext, safeTaskType);
         if (task == null) {
-            windowContext.markFinished(WindowRuntimeStatus.ERROR, "无法创建任务：" + taskType);
-            log.error("窗口 [{}] 无法创建任务：{}", windowContext.getWindowId(), taskType);
+            windowContext.markError("无法创建任务：" + safeTaskType);
+            log.error("窗口 [{}] 无法创建任务：{}", windowContext.getWindowId(), safeTaskType);
             return false;
         }
 
@@ -65,12 +77,12 @@ public class WindowTaskRunner {
         TaskExecutionContext executionContext = buildExecutionContext(task, stopToken);
 
         FutureTask<Void> futureTask = new FutureTask<>(() -> {
-            runTask(taskType, task, executionContext);
+            runTask(safeTaskType, task, executionContext);
             return null;
         });
 
-        currentTask = new RunningTaskHandle(windowContext.getWindowId(), taskType, task, stopToken, futureTask);
-        windowContext.markQueued(taskType);
+        currentTask = new RunningTaskHandle(windowContext.getWindowId(), safeTaskType, task, stopToken, futureTask);
+        windowContext.markQueued(safeTaskType);
         executor.execute(futureTask);
         return true;
     }
@@ -79,15 +91,12 @@ public class WindowTaskRunner {
         if (request == null) {
             return;
         }
-        windowContext.updateRole(request.getRole(), request.getRoleName());
-        if (!isRunning()) {
-            windowContext.setSelectedTaskType(request.getSelectedTaskType());
-        }
+        windowContext.applyRegistration(request, !isRunning());
     }
 
     public void stopCurrentTask() {
         RunningTaskHandle taskHandle = currentTask;
-        if (taskHandle == null) {
+        if (taskHandle == null || !taskHandle.isRunning()) {
             return;
         }
         windowContext.markStopping("用户请求停止窗口任务");
@@ -104,12 +113,16 @@ public class WindowTaskRunner {
 
     public boolean isRunning() {
         RunningTaskHandle taskHandle = currentTask;
-        return taskHandle != null && taskHandle.getFuture() != null && !taskHandle.getFuture().isDone();
+        return taskHandle != null && taskHandle.isRunning();
+    }
+
+    public boolean isShutdown() {
+        return shutdown;
     }
 
     public WindowTaskSnapshot snapshot() {
         RunningTaskHandle taskHandle = currentTask;
-        boolean running = isRunning();
+        boolean running = taskHandle != null && taskHandle.isRunning();
         return new WindowTaskSnapshot(
                 windowContext.getWindowId(),
                 windowContext.getRoleName(),
@@ -126,6 +139,7 @@ public class WindowTaskRunner {
     }
 
     public void shutdownNow() {
+        shutdown = true;
         stopCurrentTask();
         executor.shutdownNow();
     }
