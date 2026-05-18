@@ -31,7 +31,7 @@ public abstract class BaseTaskTemplate implements GameTask {
 
     @Override
     public TaskRunResult execute(TaskExecutionContext executionContext) {
-        TaskExecutionContext context = executionContext == null ? buildExecutionContext() : executionContext;
+        TaskExecutionContext context = resolveExecutionContext(executionContext);
         log.info("====================================");
         log.info("启动任务：{}({})", getTaskName(), getTaskCode());
         log.info("====================================");
@@ -153,6 +153,10 @@ public abstract class BaseTaskTemplate implements GameTask {
         if (context != null) {
             context.throwIfStopRequested();
         }
+    }
+
+    protected TaskExecutionContext resolveExecutionContext(TaskExecutionContext executionContext) {
+        return executionContext == null ? buildExecutionContext() : executionContext;
     }
 
     protected TaskExecutionContext buildExecutionContext() {
