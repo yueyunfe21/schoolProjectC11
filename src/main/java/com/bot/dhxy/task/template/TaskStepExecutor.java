@@ -1,8 +1,8 @@
 package com.bot.dhxy.task.template;
 
 import com.bot.dhxy.runner.TaskExecutionContext;
-import com.bot.dhxy.runner.TaskRetryPolicy;
-import com.bot.dhxy.runner.TaskStopRequestedException;
+import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
