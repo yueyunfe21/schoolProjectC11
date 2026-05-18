@@ -74,6 +74,31 @@ public class MultiWindowTaskManager {
         return runner.submit(taskType);
     }
 
+    public boolean submitSelectedTask(String windowId) {
+        WindowTaskRunner runner = runnersByWindowId.get(windowId);
+        if (runner == null) {
+            return false;
+        }
+        TaskType selectedTaskType = runner.getWindowContext().getSelectedTaskType();
+        if (selectedTaskType == null || selectedTaskType == TaskType.UNKNOWN) {
+            return false;
+        }
+        return runner.submit(selectedTaskType);
+    }
+
+    public int submitSelectedTasks(Collection<String> windowIds) {
+        if (windowIds == null || windowIds.isEmpty()) {
+            return 0;
+        }
+        int accepted = 0;
+        for (String windowId : windowIds) {
+            if (submitSelectedTask(windowId)) {
+                accepted++;
+            }
+        }
+        return accepted;
+    }
+
     public int submit(Collection<String> windowIds, TaskType taskType) {
         if (windowIds == null || windowIds.isEmpty()) {
             return 0;
