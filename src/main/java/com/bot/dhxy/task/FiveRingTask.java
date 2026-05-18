@@ -213,7 +213,7 @@ public class FiveRingTask extends BaseTaskTemplate {
         playerStateService.ensureSheYaoXiangActive();
 
         log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
-        runtimeState.setShoeBagIndex(bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME));
+        runtimeState.setShoeBagIndex(bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME, executionContext));
 
         if (runtimeState.getShoeBagIndex() != null) {
             log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", runtimeState.getShoeBagIndex() + 1);
