@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class GlobalEmergencyStopHotkeyService {
 
-    private static final int HOTKEY_ID_EMERGENCY_STOP = 0xD11F12;
+    private static final int HOTKEY_ID_EMERGENCY_STOP = 0x0F12;
     private static final int MOD_NOREPEAT = 0x4000;
     private static final int VK_F12 = 0x7B;
 
