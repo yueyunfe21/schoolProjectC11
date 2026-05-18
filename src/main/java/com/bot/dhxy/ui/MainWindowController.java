@@ -12,6 +12,7 @@ import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runner.WindowTaskSnapshot;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import com.bot.dhxy.window.service.WindowRegistrationBatchBuilder;
 import com.bot.dhxy.window.service.WindowSystemSnapshot;
 import com.bot.dhxy.window.service.WindowTaskCommandDetail;
 import com.bot.dhxy.window.service.WindowTaskCommandResult;
@@ -36,6 +37,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
+import javafx.util.StringConverter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -50,7 +52,8 @@ import java.util.Map;
  * JavaFX 主界面控制器。
  *
  * 只负责界面构建、读取 UI 状态、刷新展示。
- * 任务开始/停止/清空动作统一交给 TaskUiActionService。
+ * 单窗口任务动作交给 TaskUiActionService。
+ * 多窗口任务动作交给 WindowTaskControlService。
  */
 @Component
 @RequiredArgsConstructor
@@ -64,6 +67,7 @@ public class MainWindowController {
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
     private final WindowTaskControlService windowTaskControlService;
+    private final WindowRegistrationBatchBuilder windowRegistrationBatchBuilder;
 
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
@@ -156,6 +160,8 @@ public class MainWindowController {
         windowTaskTypeComboBox = new ComboBox<>();
         windowTaskTypeComboBox.getItems().setAll(TaskType.values());
         windowTaskTypeComboBox.setValue(TaskType.WUHuan);
+        configureWindowComboBoxText();
+
         registerWindowButton = new Button("注册/刷新窗口");
         registerTeamButton = new Button("快速注册队伍");
         startByRoleButton = new Button("按身份启动");
@@ -173,6 +179,31 @@ public class MainWindowController {
         testModeCheckBox.setOnAction(event -> refreshDashboard());
         initGameWindowCheckBox.setOnAction(event -> refreshDashboard());
         applyRuntimeControls(null);
+    }
+
+    private void configureWindowComboBoxText() {
+        windowRoleComboBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(WindowRole role) {
+                return role == null ? "-" : role.getDisplayName();
+            }
+
+            @Override
+            public WindowRole fromString(String string) {
+                return WindowRole.UNKNOWN;
+            }
+        });
+        windowTaskTypeComboBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(TaskType taskType) {
+                return taskType == null ? "-" : taskType.getDisplayName();
+            }
+
+            @Override
+            public TaskType fromString(String string) {
+                return TaskType.UNKNOWN;
+            }
+        });
     }
 
     private Parent buildTopBar() {
@@ -274,19 +305,19 @@ public class MainWindowController {
         roleNameCol.setPrefWidth(85);
 
         TableColumn<WindowTaskSnapshot, String> roleCol = new TableColumn<>("身份");
-        roleCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getRole() == null ? "-" : cell.getValue().getRole().name()));
+        roleCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getRoleDisplayName()));
         roleCol.setPrefWidth(80);
 
         TableColumn<WindowTaskSnapshot, String> selectedTaskCol = new TableColumn<>("已选任务");
-        selectedTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(taskName(cell.getValue().getSelectedTaskType())));
+        selectedTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getSelectedTaskDisplayName()));
         selectedTaskCol.setPrefWidth(90);
 
         TableColumn<WindowTaskSnapshot, String> runningTaskCol = new TableColumn<>("运行任务");
-        runningTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(taskName(cell.getValue().getRunningTaskType())));
+        runningTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getRunningTaskDisplayName()));
         runningTaskCol.setPrefWidth(90);
 
         TableColumn<WindowTaskSnapshot, String> statusCol = new TableColumn<>("状态");
-        statusCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getStatus() == null ? "-" : cell.getValue().getStatus().name()));
+        statusCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getStatusDisplayName()));
         statusCol.setPrefWidth(85);
 
         TableColumn<WindowTaskSnapshot, String> runningCol = new TableColumn<>("运行中");
@@ -481,10 +512,6 @@ public class MainWindowController {
         return text == null || text.isBlank() ? "-" : text;
     }
 
-    private String taskName(TaskType taskType) {
-        return taskType == null ? "-" : taskType.getDisplayName();
-    }
-
     private List<String> getSelectedTaskCodesFromUi() {
         List<String> selectedTaskCodes = new ArrayList<>();
         if (taskBox == null) {
@@ -539,50 +566,14 @@ public class MainWindowController {
     }
 
     private void registerTeamFromUi() {
-        String prefix = normalizeWindowPrefix(windowIdField.getText());
-        String roleNamePrefix = normalizeRoleNamePrefix(windowRoleNameField.getText());
-        int count = parsePositiveInt(windowBatchCountField.getText(), 5);
-        List<WindowRegistrationRequest> requests = new ArrayList<>();
-        for (int i = 1; i <= count; i++) {
-            WindowRole role = i == 1 ? WindowRole.LEADER : WindowRole.MEMBER;
-            TaskType taskType = i == 1 ? windowTaskTypeComboBox.getValue() : TaskType.AUTO_BATTLE;
-            requests.add(WindowRegistrationRequest.of(prefix + "-" + i, role, roleNamePrefix + i, taskType));
-        }
+        int count = windowRegistrationBatchBuilder.parseCount(windowBatchCountField.getText());
+        List<WindowRegistrationRequest> requests = windowRegistrationBatchBuilder.buildTeam(
+                windowIdField.getText(),
+                windowRoleNameField.getText(),
+                count,
+                windowTaskTypeComboBox.getValue()
+        );
         handleWindowCommandResult(windowTaskControlService.registerWindows(requests));
-    }
-
-    private String normalizeWindowPrefix(String text) {
-        if (text == null || text.isBlank()) {
-            return "window";
-        }
-        String value = text.trim();
-        int dashIndex = value.lastIndexOf('-');
-        if (dashIndex > 0 && dashIndex < value.length() - 1 && value.substring(dashIndex + 1).chars().allMatch(Character::isDigit)) {
-            return value.substring(0, dashIndex);
-        }
-        return value;
-    }
-
-    private String normalizeRoleNamePrefix(String text) {
-        if (text == null || text.isBlank()) {
-            return "角色";
-        }
-        String value = text.trim();
-        int lastDigitStart = value.length();
-        while (lastDigitStart > 0 && Character.isDigit(value.charAt(lastDigitStart - 1))) {
-            lastDigitStart--;
-        }
-        String prefix = value.substring(0, lastDigitStart);
-        return prefix.isBlank() ? "角色" : prefix;
-    }
-
-    private int parsePositiveInt(String text, int defaultValue) {
-        try {
-            int value = Integer.parseInt(text == null ? "" : text.trim());
-            return Math.max(value, 1);
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
     }
 
     private void runWindowCommandInBackground(WindowCommand command) {
@@ -640,8 +631,8 @@ public class MainWindowController {
         if (result.hasAssignments()) {
             for (var assignment : result.getAssignments()) {
                 addWindowLog("分配：" + nullToDash(assignment.getWindowId())
-                        + " | " + assignment.getRole()
-                        + " -> " + taskName(assignment.getTaskType())
+                        + " | " + assignment.getRoleDisplayName()
+                        + " -> " + assignment.getTaskDisplayName()
                         + " | " + assignment.getReason());
             }
         }
@@ -707,6 +698,7 @@ public class MainWindowController {
         windowSystemLabel.setText("窗口：已注册 " + snapshot.getRegisteredWindowCount()
                 + " / " + snapshot.getMaxWindowCount()
                 + " | 运行中 " + snapshot.getRunningWindowCount()
+                + " | 空闲 " + snapshot.getIdleWindowCount()
                 + " | 剩余 " + snapshot.getRemainingWindowCapacity()
                 + " | 已满=" + snapshot.isCapacityFull());
     }
