@@ -6,10 +6,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 窗口任务控制命令的返回结果。
- *
- * UI 层以后调用批量注册、启动、停止窗口任务时，可以直接拿这个对象展示执行结果，
- * 不需要直接接触 WindowTaskRunner / Future / Thread 这些内部实现。
+ * 窗口任务控制命令的统一返回结果。
  */
 public class WindowTaskCommandResult {
 
@@ -43,9 +40,9 @@ public class WindowTaskCommandResult {
                                    List<WindowTaskAssignment> assignments,
                                    List<WindowTaskCommandDetail> details) {
         this.requestedCount = Math.max(requestedCount, 0);
-        this.successCount = Math.max(successCount, 0);
+        this.successCount = Math.min(Math.max(successCount, 0), this.requestedCount);
         this.failedCount = Math.max(this.requestedCount - this.successCount, 0);
-        this.message = message;
+        this.message = message == null ? "" : message;
         this.snapshots = snapshots == null ? Collections.emptyList() : List.copyOf(snapshots);
         this.assignments = assignments == null ? Collections.emptyList() : List.copyOf(assignments);
         this.details = details == null ? Collections.emptyList() : List.copyOf(details);
@@ -79,47 +76,27 @@ public class WindowTaskCommandResult {
         return new WindowTaskCommandResult(0, 0, message, snapshots);
     }
 
-    public int getRequestedCount() {
-        return requestedCount;
-    }
+    public int getRequestedCount() { return requestedCount; }
 
-    public int getSuccessCount() {
-        return successCount;
-    }
+    public int getSuccessCount() { return successCount; }
 
-    public int getFailedCount() {
-        return failedCount;
-    }
+    public int getFailedCount() { return failedCount; }
 
-    public String getMessage() {
-        return message;
-    }
+    public String getMessage() { return message; }
 
-    public List<WindowTaskSnapshot> getSnapshots() {
-        return snapshots;
-    }
+    public List<WindowTaskSnapshot> getSnapshots() { return snapshots; }
 
-    public List<WindowTaskAssignment> getAssignments() {
-        return assignments;
-    }
+    public List<WindowTaskAssignment> getAssignments() { return assignments; }
 
-    public List<WindowTaskCommandDetail> getDetails() {
-        return details;
-    }
+    public List<WindowTaskCommandDetail> getDetails() { return details; }
 
-    public boolean hasAssignments() {
-        return !assignments.isEmpty();
-    }
+    public boolean hasAssignments() { return !assignments.isEmpty(); }
 
-    public boolean hasDetails() {
-        return !details.isEmpty();
-    }
+    public boolean hasDetails() { return !details.isEmpty(); }
 
-    public boolean isAllSuccess() {
-        return requestedCount > 0 && failedCount == 0;
-    }
+    public boolean isAllSuccess() { return requestedCount > 0 && failedCount == 0; }
 
-    public boolean hasAnySuccess() {
-        return successCount > 0;
-    }
+    public boolean hasAnySuccess() { return successCount > 0; }
+
+    public boolean isEmpty() { return requestedCount == 0; }
 }
