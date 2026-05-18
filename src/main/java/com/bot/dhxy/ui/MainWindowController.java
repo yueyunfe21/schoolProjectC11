@@ -55,6 +55,8 @@ public class MainWindowController {
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
     private ListView<String> logList;
+    private Button refreshButton;
+    private Button clearButton;
     private Button startButton;
     private Button stopButton;
     private CheckBox loopCheckBox;
@@ -87,6 +89,8 @@ public class MainWindowController {
         taskBox = new VBox(8);
         recordTable = new TableView<>();
         logList = new ListView<>();
+        refreshButton = new Button("刷新");
+        clearButton = new Button("清空日志");
         startButton = new Button("开始");
         stopButton = new Button("停止");
         loopCheckBox = new CheckBox("循环执行");
@@ -99,13 +103,11 @@ public class MainWindowController {
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
         initGameWindowCheckBox.setSelected(taskRunProperties.isInitGameWindow());
-        updateRunningStateControls();
+        applyRuntimeControls(null);
     }
 
     private Parent buildTopBar() {
         Label title = new Label("DHXY Robot 控制台");
-        Button refreshButton = new Button("刷新");
-        Button clearButton = new Button("清空日志");
 
         refreshButton.setOnAction(event -> refreshDashboard());
         clearButton.setOnAction(event -> {
@@ -177,7 +179,7 @@ public class MainWindowController {
     private void startSelectedTasksInBackground() {
         if (taskControlService.isRunning()) {
             logList.getItems().add(0, "当前已有任务正在运行，请勿重复开始。");
-            updateRunningStateControls();
+            refreshDashboard();
             return;
         }
 
@@ -194,18 +196,15 @@ public class MainWindowController {
                 .initGameWindow(initGameWindowCheckBox.isSelected())
                 .build();
 
+        lockRunOptions(true);
         startButton.setDisable(true);
         stopButton.setDisable(false);
-        lockRunOptions(true);
-        updateStatusFromUiSelection();
+        clearButton.setDisable(true);
         Thread worker = new Thread(() -> {
             try {
                 taskControlService.startTasks(request);
             } finally {
-                javafx.application.Platform.runLater(() -> {
-                    updateRunningStateControls();
-                    refreshDashboard();
-                });
+                javafx.application.Platform.runLater(this::refreshDashboard);
             }
         }, "task-ui-start-worker");
         worker.setDaemon(true);
@@ -216,10 +215,7 @@ public class MainWindowController {
         if (autoRefreshTimeline != null) {
             autoRefreshTimeline.stop();
         }
-        autoRefreshTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
-            refreshDashboard();
-            updateRunningStateControls();
-        }));
+        autoRefreshTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> refreshDashboard()));
         autoRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
         autoRefreshTimeline.play();
     }
@@ -236,15 +232,26 @@ public class MainWindowController {
         taskControlService.stop();
     }
 
-    private void updateRunningStateControls() {
-        boolean running = taskControlService.isRunning();
+    private void applyRuntimeControls(TaskRuntimeStateView runtimeState) {
+        boolean running = runtimeState != null && runtimeState.isRunning();
+        boolean stopping = runtimeState != null && runtimeState.isStopping();
+        boolean busy = running || stopping;
+
         if (startButton != null) {
-            startButton.setDisable(running);
+            startButton.setText("开始");
+            startButton.setDisable(busy);
         }
         if (stopButton != null) {
-            stopButton.setDisable(!running);
+            stopButton.setText(stopping ? "停止中..." : "停止");
+            stopButton.setDisable(!running || stopping);
         }
-        lockRunOptions(running);
+        if (clearButton != null) {
+            clearButton.setDisable(busy);
+        }
+        if (refreshButton != null) {
+            refreshButton.setDisable(false);
+        }
+        lockRunOptions(busy);
     }
 
     private void lockRunOptions(boolean locked) {
@@ -284,6 +291,7 @@ public class MainWindowController {
             return;
         }
         statusLabel.setText("状态：" + nullToDash(runtimeState.getStatusText())
+                + " | status=" + nullToDash(runtimeState.getStatus())
                 + " | 耗时=" + nullToDash(runtimeState.getElapsedText())
                 + " | started=" + nullToDash(runtimeState.getStartedAt())
                 + " | finished=" + nullToDash(runtimeState.getFinishedAt()));
@@ -330,21 +338,24 @@ public class MainWindowController {
     private void refreshDashboard() {
         Map<String, Boolean> currentSelection = getCurrentTaskSelectionMap();
         TaskDashboardView dashboard = taskViewService.getDashboardView();
-        refreshTaskOptions(dashboard.getTaskOptions(), currentSelection);
+        TaskRuntimeStateView runtimeState = dashboard.getRuntimeState();
+        refreshTaskOptions(dashboard.getTaskOptions(), currentSelection, runtimeState);
         refreshRecordTable(dashboard.getRecentRecords());
         refreshLogList(dashboard.getRecentLogs());
-        updateRuntimeState(dashboard.getRuntimeState());
-        updateRunningStateControls();
+        updateRuntimeState(runtimeState);
+        applyRuntimeControls(runtimeState);
     }
 
-    private void refreshTaskOptions(List<TaskOptionView> options, Map<String, Boolean> currentSelection) {
-        boolean running = taskControlService.isRunning();
+    private void refreshTaskOptions(List<TaskOptionView> options,
+                                    Map<String, Boolean> currentSelection,
+                                    TaskRuntimeStateView runtimeState) {
+        boolean busy = runtimeState != null && runtimeState.isBusy();
         taskBox.getChildren().clear();
         for (TaskOptionView option : options) {
             CheckBox checkBox = new CheckBox(option.getTaskName() + " (" + option.getTaskCode() + ")");
             checkBox.setUserData(option.getTaskCode());
             checkBox.setSelected(currentSelection.getOrDefault(option.getTaskCode(), option.isSelected()));
-            checkBox.setDisable(running || !option.isEnabled());
+            checkBox.setDisable(busy || !option.isEnabled());
             checkBox.setOnAction(event -> updateStatusFromUiSelection());
             taskBox.getChildren().add(checkBox);
         }
