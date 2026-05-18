@@ -15,7 +15,6 @@ import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.platform.win32.WinDef.LPARAM;
 import com.sun.jna.platform.win32.WinDef.RECT;
 import com.sun.jna.platform.win32.WinDef.WPARAM;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -42,15 +41,20 @@ public class GameClientTracker {
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
 
-    @Getter
-    private int windowBaseX = -1;
-    @Getter
-    private int windowBaseY = -1;
-    @Getter
-    private String fullWindowTitle = "";
+    /**
+     * 单窗口旧流程使用 sharedState。
+     * 多窗口任务线程使用 ThreadLocal state，避免不同窗口互相覆盖 gameHwnd/windowBaseX/windowBaseY。
+     */
+    private final TrackerState sharedState = new TrackerState();
+    private final ThreadLocal<TrackerState> threadState = ThreadLocal.withInitial(TrackerState::new);
 
-    @Getter
-    private HWND gameHwnd = null;
+    public int getWindowBaseX() { return state().windowBaseX; }
+
+    public int getWindowBaseY() { return state().windowBaseY; }
+
+    public String getFullWindowTitle() { return state().fullWindowTitle; }
+
+    public HWND getGameHwnd() { return state().gameHwnd; }
 
     public boolean updateGlobalVision() {
         return globalInputLock.callWithLock(() -> {
@@ -59,11 +63,12 @@ public class GameClientTracker {
                 System.out.println("❌ 无法唤醒游戏，停止任务。");
                 return false;
             }
-            int x1 = windowBaseX;
-            int y1 = windowBaseY;
+            TrackerState s = state();
+            int x1 = s.windowBaseX;
+            int y1 = s.windowBaseY;
             int x2 = x1 + WINDOW_WIDTH;
             int y2 = y1 + WINDOW_HEIGHT;
-            return captureToFileWithoutLock("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
+            return captureToFileWithoutLock("全局视野", scopedTempPath("latest_vision.png"), x1, y1, x2, y2);
         });
     }
 
@@ -74,6 +79,7 @@ public class GameClientTracker {
 
         String target = config.getWindowKeyword();
         final HWND[] targetHwnd = {null};
+        final String[] targetTitle = {""};
 
         User32.INSTANCE.EnumWindows((hwnd, pointer) -> {
             if (!User32.INSTANCE.IsWindowVisible(hwnd)) {
@@ -84,8 +90,7 @@ public class GameClientTracker {
             String wText = Native.toString(windowText).trim();
             if (wText.contains(target)) {
                 targetHwnd[0] = hwnd;
-                fullWindowTitle = wText;
-                gameHwnd = hwnd;
+                targetTitle[0] = wText;
                 return false;
             }
             return true;
@@ -96,23 +101,25 @@ public class GameClientTracker {
             return false;
         }
 
-        updateBaseFromHwnd(targetHwnd[0], fullWindowTitle);
-        System.out.println("✅ [定位成功] 目标: " + fullWindowTitle + " | 窗口基址 X:" + windowBaseX + " Y:" + windowBaseY);
+        updateBaseFromHwnd(targetHwnd[0], targetTitle[0]);
+        TrackerState s = state();
+        System.out.println("✅ [定位成功] 目标: " + s.fullWindowTitle + " | 窗口基址 X:" + s.windowBaseX + " Y:" + s.windowBaseY);
         return true;
     }
 
     public boolean captureToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2));
+        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, scopedTempPath(savePath), x1, y1, x2, y2));
     }
 
     public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
+            String scopedPath = scopedTempPath(savePath);
             System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
             inputProvider.pressAlt4();
             sleepQuietly(400);
             try {
-                return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
+                return eyes.captureRegionToFile(scopedPath, x1, y1, x2, y2);
             } finally {
                 inputProvider.pressAlt4();
                 System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
@@ -137,10 +144,11 @@ public class GameClientTracker {
         if (useBoundWindowIfAvailable()) {
             return true;
         }
-        if (windowBaseX == -1 || gameHwnd == null) {
+        TrackerState s = state();
+        if (s.windowBaseX == -1 || s.gameHwnd == null) {
             return locateWindow();
         }
-        updateBaseFromHwnd(gameHwnd, fullWindowTitle);
+        updateBaseFromHwnd(s.gameHwnd, s.fullWindowTitle);
         return true;
     }
 
@@ -168,10 +176,11 @@ public class GameClientTracker {
         RECT rect = new RECT();
         User32.INSTANCE.GetWindowRect(hwnd, rect);
         double scale = coordinateHelper.getScaleRatio();
-        windowBaseX = (int) (rect.left / scale);
-        windowBaseY = (int) (rect.top / scale);
-        gameHwnd = hwnd;
-        fullWindowTitle = title == null ? "" : title;
+        TrackerState s = state();
+        s.windowBaseX = (int) (rect.left / scale);
+        s.windowBaseY = (int) (rect.top / scale);
+        s.gameHwnd = hwnd;
+        s.fullWindowTitle = title == null ? "" : title;
     }
 
     public boolean bringWindowToFront() {
@@ -182,11 +191,32 @@ public class GameClientTracker {
         if (!checkBaseAddress()) {
             return false;
         }
+        TrackerState s = state();
         System.out.println("🔄 正在将游戏窗口唤醒并置顶...");
-        User32.INSTANCE.ShowWindow(gameHwnd, 9);
-        User32.INSTANCE.SetForegroundWindow(gameHwnd);
+        User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
+        User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
         sleepQuietly(500);
         return true;
+    }
+
+    private TrackerState state() {
+        return windowTaskContextHolder.current().isPresent() ? threadState.get() : sharedState;
+    }
+
+    private String scopedTempPath(String path) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.current();
+        if (current.isEmpty() || path == null || path.isBlank()) {
+            return path;
+        }
+        String normalized = path.replace('\\', '/');
+        if (!normalized.startsWith("images/temp/")) {
+            return path;
+        }
+        String fileName = normalized.substring("images/temp/".length());
+        if (fileName.startsWith(current.get().getWindowId() + "/")) {
+            return path;
+        }
+        return "images/temp/" + current.get().getWindowId() + "/" + fileName;
     }
 
     private HWND toHwnd(String handleText) {
@@ -228,7 +258,8 @@ public class GameClientTracker {
     }
 
     public void testBackgroundAlt8() {
-        if (this.gameHwnd == null) {
+        TrackerState s = state();
+        if (s.gameHwnd == null) {
             System.out.println("❌ gameHwnd 为空，请先执行 locateWindow() !");
             return;
         }
@@ -238,9 +269,16 @@ public class GameClientTracker {
         int VK_8 = 0x38;
         long lParamDown = (1 << 29) | (0x09 << 16) | 1;
         long lParamUp = (1L << 31) | (1 << 30) | (1 << 29) | (0x09 << 16) | 1;
-        User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
+        User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
         try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        User32.INSTANCE.PostMessage(this.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
+        User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
         System.out.println("📩 后台指令投递完毕！");
+    }
+
+    private static class TrackerState {
+        private int windowBaseX = -1;
+        private int windowBaseY = -1;
+        private String fullWindowTitle = "";
+        private HWND gameHwnd = null;
     }
 }
