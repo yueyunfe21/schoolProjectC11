@@ -1,6 +1,5 @@
 package com.bot.dhxy.runner;
 
-import com.bot.dhxy.model.TaskRunResult;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -20,7 +19,7 @@ public class TaskRunRecord {
     private final String taskName;
     private final LocalDateTime startTime;
     private final LocalDateTime endTime;
-    private final TaskRunResult result;
+    private final com.bot.dhxy.model.TaskRunResult result;
     private final String message;
 
     public long getCostMillis() {
