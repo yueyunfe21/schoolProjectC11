@@ -141,7 +141,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             if (setupResult != TaskRunResult.SUCCESS) {
                 return setupResult;
             }
-            sleep(2000);
+            sleepSafely(executionContext, 2000);
             runtimeState.setNeedTaskSync(true);
         }
 
@@ -253,21 +253,21 @@ public class FiveRingTask extends BaseTaskTemplate {
             if (!navigationService.navigateToNPC(TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y)) {
                 log.warn("⚠️ 无法到达墨意身边 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
-                sleep(2000);
+                sleepSafely(executionContext, 2000);
                 continue;
             }
 
             if (!npcClickService.clickNpcSmart(gameContext.getMe(), TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y, TARGET_NPC_NAME, TUNE_X, TUNE_Y)) {
                 log.warn("⚠️ 无法点中墨意 (重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
-                sleep(2000);
+                sleepSafely(executionContext, 2000);
                 continue;
             }
 
             dialogService.acceptTask(DIALOG_START_OFFSET_X, DIALOG_START_OFFSET_Y);
 
             log.info("⏳ 点击了接任务，等待服务器响应确认...");
-            sleep(2000);
+            sleepSafely(executionContext, 2000);
 
             boolean reallyGotTask = questManager.activateTaskIfPresent("wuhuan", false);
 
@@ -277,7 +277,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             } else {
                 log.warn("⚠️ 疑似卡顿：点完对话框但任务没进列表！(重试 {}/{})", retry + 1, MAX_RETRY);
                 retry++;
-                sleep(1500);
+                sleepSafely(executionContext, 1500);
             }
         }
         return TaskStepResult.FAILED;
@@ -293,11 +293,11 @@ public class FiveRingTask extends BaseTaskTemplate {
         }
         runtimeState.resetLoopDecision();
 
-        if (handleCombatIfNeeded()) {
+        if (handleCombatIfNeeded(executionContext)) {
             return TaskStepResult.SUCCESS;
         }
 
-        if (waitIfMoving()) {
+        if (waitIfMoving(executionContext)) {
             return TaskStepResult.SUCCESS;
         }
 
@@ -313,27 +313,27 @@ public class FiveRingTask extends BaseTaskTemplate {
             }
         }
 
-        if (triggerP2PathingIfPossible()) {
+        if (triggerP2PathingIfPossible(executionContext)) {
             return TaskStepResult.SUCCESS;
         }
 
-        triggerP1PathingOrRepairState(runtimeState);
+        triggerP1PathingOrRepairState(executionContext, runtimeState);
         return TaskStepResult.SUCCESS;
     }
 
-    private boolean handleCombatIfNeeded() {
+    private boolean handleCombatIfNeeded(TaskExecutionContext executionContext) {
         if (!battleRadarService.checkAndSyncCombatState()) {
             return false;
         }
-        sleep(battleRadarService.getDynamicPollingIntervalMs());
+        sleepSafely(executionContext, battleRadarService.getDynamicPollingIntervalMs());
         return true;
     }
 
-    private boolean waitIfMoving() {
+    private boolean waitIfMoving(TaskExecutionContext executionContext) {
         if (!gameStateUtil.isMovingByPixelDiff()) {
             return false;
         }
-        sleep(800);
+        sleepSafely(executionContext, 800);
         return true;
     }
 
@@ -371,23 +371,23 @@ public class FiveRingTask extends BaseTaskTemplate {
         return FiveRingTaskSyncDecision.CONTINUE;
     }
 
-    private boolean triggerP2PathingIfPossible() {
+    private boolean triggerP2PathingIfPossible(TaskExecutionContext executionContext) {
         PathingResult p2Result = questManager.triggerWuHuanNativePathingP2(true);
         if (p2Result != PathingResult.SUCCESS) {
             return false;
         }
 
         log.info("🏃 锁定怪物，引擎轰鸣，全速追击！");
-        sleep(2000);
+        sleepSafely(executionContext, 2000);
         return true;
     }
 
-    private void triggerP1PathingOrRepairState(FiveRingRuntimeState runtimeState) {
+    private void triggerP1PathingOrRepairState(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         PathingResult p1Result = questManager.triggerWuHuanNativePathingP1(true);
         if (p1Result == PathingResult.SUCCESS) {
             runtimeState.resetUiErrorCount();
             log.info("🏃 尝试点击下一环 NPC 链接...");
-            sleep(2500);
+            sleepSafely(executionContext, 2500);
 
             if (!gameStateUtil.isMovingByPixelDiff()) {
                 log.warn("⚠️ 盲狙 NPC 失败（角色未移动），状态发生错乱，请求重新查岗！");
@@ -405,9 +405,7 @@ public class FiveRingTask extends BaseTaskTemplate {
                 runtimeState.resetUiErrorCount();
             }
             runtimeState.setNeedTaskSync(true);
-            sleep(1000);
+            sleepSafely(executionContext, 1000);
         }
     }
-
-    private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
 }
