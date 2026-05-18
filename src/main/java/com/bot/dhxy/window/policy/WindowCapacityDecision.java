@@ -12,11 +12,15 @@ public class WindowCapacityDecision {
     private WindowCapacityDecision(String windowId, boolean allowed, String reason) {
         this.windowId = windowId;
         this.allowed = allowed;
-        this.reason = reason;
+        this.reason = reason == null ? "" : reason;
     }
 
     public static WindowCapacityDecision allowed(String windowId) {
-        return new WindowCapacityDecision(windowId, true, "OK");
+        return allowed(windowId, "OK");
+    }
+
+    public static WindowCapacityDecision allowed(String windowId, String reason) {
+        return new WindowCapacityDecision(windowId, true, reason);
     }
 
     public static WindowCapacityDecision rejected(String windowId, String reason) {
@@ -29,6 +33,10 @@ public class WindowCapacityDecision {
 
     public boolean isAllowed() {
         return allowed;
+    }
+
+    public boolean isRejected() {
+        return !allowed;
     }
 
     public String getReason() {
