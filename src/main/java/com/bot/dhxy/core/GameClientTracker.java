@@ -167,18 +167,30 @@ public class GameClientTracker {
 
     private boolean useBoundWindowIfAvailable() {
         if (!windowIsolationProperties.isBoundWindowTrackerActive()) {
+            logTrackerMiss("bound-switch-off");
             return false;
         }
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty()) {
+            logTrackerMiss("raw-current-empty");
             return false;
         }
         WindowNativeBinding binding = current.get().getNativeBinding();
-        if (binding == null || !binding.hasNativeHandle()) {
+        if (binding == null) {
+            logTrackerMiss("native-binding-null windowId=" + current.get().getWindowId());
+            return false;
+        }
+        if (!binding.hasNativeHandle()) {
+            logTrackerMiss("native-handle-empty windowId=" + current.get().getWindowId()
+                    + " title=" + binding.getTitle()
+                    + " class=" + binding.getClassName()
+                    + " pid=" + binding.getProcessId());
             return false;
         }
         HWND hwnd = toHwnd(binding.getNativeHandle());
         if (hwnd == null) {
+            logTrackerMiss("native-handle-parse-failed windowId=" + current.get().getWindowId()
+                    + " handle=" + binding.getNativeHandle());
             return false;
         }
         String title = binding.getTitle() == null || binding.getTitle().isBlank()
@@ -235,6 +247,22 @@ public class GameClientTracker {
                 + " | title=" + s.fullWindowTitle;
         log.info("[TrackerCoordinate] {}", line);
         System.out.println("🧭 [Tracker] " + line);
+        appendTrackerDiagnostic(line);
+    }
+
+    private void logTrackerMiss(String reason) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        String rawWindowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_RAW_WINDOW_CONTEXT");
+        String line = LocalDateTime.now()
+                + " | action=bound-tracker-miss"
+                + " | reason=" + reason
+                + " | rawWindowId=" + rawWindowId
+                + " | isolation=" + windowIsolationProperties.isIsolationEnabled()
+                + " | inputFocus=" + windowIsolationProperties.isInputFocusEnabled()
+                + " | trackerState=" + windowIsolationProperties.isTrackerStateIsolationEnabled()
+                + " | boundTracker=" + windowIsolationProperties.isBoundWindowTrackerEnabled()
+                + " | scopedTemp=" + windowIsolationProperties.isScopedTempPathEnabled();
+        log.info("[TrackerCoordinate] {}", line);
         appendTrackerDiagnostic(line);
     }
 
