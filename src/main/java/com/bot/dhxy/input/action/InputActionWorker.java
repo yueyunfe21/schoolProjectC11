@@ -3,6 +3,7 @@ package com.bot.dhxy.input.action;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.window.interaction.WindowFocusService;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,17 +17,20 @@ public class InputActionWorker {
     private final InputProvider inputProvider;
     private final WindowAwareInputCoordinator inputCoordinator;
     private final WindowFocusService windowFocusService;
+    private final WindowTaskContextHolder windowTaskContextHolder;
 
     public InputActionWorker(InputActionQueue inputActionQueue,
                              InputActionDeadLetter deadLetter,
                              InputProvider inputProvider,
                              WindowAwareInputCoordinator inputCoordinator,
-                             WindowFocusService windowFocusService) {
+                             WindowFocusService windowFocusService,
+                             WindowTaskContextHolder windowTaskContextHolder) {
         this.inputActionQueue = inputActionQueue;
         this.deadLetter = deadLetter;
         this.inputProvider = inputProvider;
         this.inputCoordinator = inputCoordinator;
         this.windowFocusService = windowFocusService;
+        this.windowTaskContextHolder = windowTaskContextHolder;
     }
 
     @PostConstruct
@@ -52,19 +56,21 @@ public class InputActionWorker {
 
     private void handle(InputActionRequest request) {
         try {
-            boolean ok = inputCoordinator.callInputTransaction("queued:" + request.getDescription(), () -> {
-                if (!windowFocusService.focusWithoutLock(request.getNativeBinding())) {
-                    log.warn("Input queue failed to focus window: windowId={} description={}",
-                            request.getWindowId(), request.getDescription());
-                    return false;
-                }
-                for (InputAction action : request.getActions()) {
-                    execute(action);
-                }
-                return true;
-            });
-            request.getResult().complete(ok);
-            if (!ok) {
+            Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
+                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), () -> {
+                        if (!windowFocusService.focusWithoutLock(request.getNativeBinding())) {
+                            log.warn("Input queue failed to focus window: windowId={} description={}",
+                                    request.getWindowId(), request.getDescription());
+                            return false;
+                        }
+                        for (InputAction action : request.getActions()) {
+                            execute(action);
+                        }
+                        return true;
+                    })
+            );
+            request.getResult().complete(Boolean.TRUE.equals(ok));
+            if (!Boolean.TRUE.equals(ok)) {
                 deadLetter.record(request, null);
             }
         } catch (Throwable e) {
