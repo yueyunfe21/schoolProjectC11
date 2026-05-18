@@ -12,12 +12,12 @@ import java.util.Objects;
  * 单个游戏窗口的运行上下文。
  *
  * 一个独立游戏窗口对应一个 WindowRuntimeContext。
- * 后续多窗口并行时，不同窗口必须使用不同的 GameContext 和运行状态。
  */
 public class WindowRuntimeContext {
 
     private final String windowId;
     private final GameContext gameContext;
+    private final GameContext.State gameState;
 
     private volatile String roleName;
     private volatile WindowRole role = WindowRole.UNKNOWN;
@@ -30,6 +30,7 @@ public class WindowRuntimeContext {
     public WindowRuntimeContext(String windowId, GameContext gameContext) {
         this.windowId = Objects.requireNonNull(windowId, "windowId must not be null");
         this.gameContext = Objects.requireNonNull(gameContext, "gameContext must not be null");
+        this.gameState = gameContext.newState();
     }
 
     public String getWindowId() {
@@ -38,6 +39,10 @@ public class WindowRuntimeContext {
 
     public GameContext getGameContext() {
         return gameContext;
+    }
+
+    public GameContext.State getGameState() {
+        return gameState;
     }
 
     public String getRoleName() {
