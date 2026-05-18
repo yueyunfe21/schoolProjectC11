@@ -61,6 +61,7 @@ public class MainWindowController {
     private CheckBox loopCheckBox;
     private CheckBox testModeCheckBox;
     private CheckBox initGameWindowCheckBox;
+    private Label statusLabel;
     private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
@@ -69,10 +70,12 @@ public class MainWindowController {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(12));
 
+        VBox bottomArea = new VBox(8, buildLogPanel(), buildStatusBar());
+
         root.setTop(buildTopBar());
         root.setLeft(buildTaskPanel());
         root.setCenter(buildRecordTable());
-        root.setBottom(buildLogPanel());
+        root.setBottom(bottomArea);
 
         refreshDashboard();
         startAutoRefresh();
@@ -88,6 +91,7 @@ public class MainWindowController {
         loopCheckBox = new CheckBox("循环执行");
         testModeCheckBox = new CheckBox("测试模式");
         initGameWindowCheckBox = new CheckBox("初始化游戏窗口");
+        statusLabel = new Label("状态：初始化中");
 
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
@@ -153,6 +157,12 @@ public class MainWindowController {
         return wrapper;
     }
 
+    private Parent buildStatusBar() {
+        HBox box = new HBox(10, statusLabel);
+        box.setPadding(new Insets(4, 0, 0, 0));
+        return box;
+    }
+
     private void startSelectedTasksInBackground() {
         if (taskControlService.isRunning()) {
             logList.getItems().add(0, "当前已有任务正在运行，请勿重复开始。");
@@ -172,6 +182,7 @@ public class MainWindowController {
 
         startButton.setDisable(true);
         stopButton.setDisable(false);
+        updateStatusLabel();
         Thread worker = new Thread(() -> {
             try {
                 if (initGameWindow) {
@@ -210,6 +221,18 @@ public class MainWindowController {
         autoRefreshTimeline.play();
     }
 
+    /**
+     * 窗口关闭前调用。
+     *
+     * 作用：停止自动刷新计时器，并请求停止任务队列。
+     */
+    public void shutdownUi() {
+        if (autoRefreshTimeline != null) {
+            autoRefreshTimeline.stop();
+        }
+        taskControlService.stop();
+    }
+
     private void updateRunningButtons() {
         boolean running = taskControlService.isRunning();
         if (startButton != null) {
@@ -218,10 +241,26 @@ public class MainWindowController {
         if (stopButton != null) {
             stopButton.setDisable(!running);
         }
+        updateStatusLabel();
+    }
+
+    private void updateStatusLabel() {
+        if (statusLabel == null) {
+            return;
+        }
+        String status = taskControlService.isRunning() ? "运行中" : "空闲";
+        int selectedCount = getSelectedTaskCodesFromUi().size();
+        statusLabel.setText("状态：" + status + " | 已选择任务：" + selectedCount
+                + " | 循环=" + loopCheckBox.isSelected()
+                + " | 测试模式=" + testModeCheckBox.isSelected()
+                + " | 初始化窗口=" + initGameWindowCheckBox.isSelected());
     }
 
     private List<String> getSelectedTaskCodesFromUi() {
         List<String> selectedTaskCodes = new ArrayList<>();
+        if (taskBox == null) {
+            return selectedTaskCodes;
+        }
         for (javafx.scene.Node node : taskBox.getChildren()) {
             if (node instanceof CheckBox checkBox && checkBox.isSelected()) {
                 Object userData = checkBox.getUserData();
@@ -265,6 +304,7 @@ public class MainWindowController {
             checkBox.setUserData(option.getTaskCode());
             checkBox.setSelected(currentSelection.getOrDefault(option.getTaskCode(), option.isSelected()));
             checkBox.setDisable(!option.isEnabled());
+            checkBox.setOnAction(event -> updateStatusLabel());
             taskBox.getChildren().add(checkBox);
         }
     }
