@@ -7,6 +7,7 @@ import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
+import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.geometry.Insets;
@@ -60,6 +61,8 @@ public class MainWindowController {
     private CheckBox testModeCheckBox;
     private CheckBox initGameWindowCheckBox;
     private Label statusLabel;
+    private Label requestLabel;
+    private Label summaryLabel;
     private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
@@ -90,6 +93,8 @@ public class MainWindowController {
         testModeCheckBox = new CheckBox("测试模式");
         initGameWindowCheckBox = new CheckBox("初始化游戏窗口");
         statusLabel = new Label("状态：初始化中");
+        requestLabel = new Label("请求：-");
+        summaryLabel = new Label("结果：-");
 
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
@@ -130,21 +135,29 @@ public class MainWindowController {
     private Parent buildRecordTable() {
         TableColumn<TaskRecordView, String> taskNameCol = new TableColumn<>("任务");
         taskNameCol.setCellValueFactory(new PropertyValueFactory<>("taskName"));
-        taskNameCol.setPrefWidth(120);
+        taskNameCol.setPrefWidth(100);
 
         TableColumn<TaskRecordView, String> resultCol = new TableColumn<>("结果");
         resultCol.setCellValueFactory(new PropertyValueFactory<>("result"));
-        resultCol.setPrefWidth(90);
+        resultCol.setPrefWidth(80);
 
-        TableColumn<TaskRecordView, Long> costCol = new TableColumn<>("耗时(ms)");
-        costCol.setCellValueFactory(new PropertyValueFactory<>("costMillis"));
-        costCol.setPrefWidth(90);
+        TableColumn<TaskRecordView, String> startCol = new TableColumn<>("开始时间");
+        startCol.setCellValueFactory(new PropertyValueFactory<>("startTime"));
+        startCol.setPrefWidth(150);
+
+        TableColumn<TaskRecordView, String> endCol = new TableColumn<>("结束时间");
+        endCol.setCellValueFactory(new PropertyValueFactory<>("endTime"));
+        endCol.setPrefWidth(150);
+
+        TableColumn<TaskRecordView, String> costCol = new TableColumn<>("耗时");
+        costCol.setCellValueFactory(new PropertyValueFactory<>("costText"));
+        costCol.setPrefWidth(80);
 
         TableColumn<TaskRecordView, String> messageCol = new TableColumn<>("备注");
         messageCol.setCellValueFactory(new PropertyValueFactory<>("message"));
         messageCol.setPrefWidth(260);
 
-        recordTable.getColumns().setAll(List.of(taskNameCol, resultCol, costCol, messageCol));
+        recordTable.getColumns().setAll(List.of(taskNameCol, resultCol, startCol, endCol, costCol, messageCol));
         return recordTable;
     }
 
@@ -156,7 +169,7 @@ public class MainWindowController {
     }
 
     private Parent buildStatusBar() {
-        HBox box = new HBox(10, statusLabel);
+        VBox box = new VBox(4, statusLabel, requestLabel, summaryLabel);
         box.setPadding(new Insets(4, 0, 0, 0));
         return box;
     }
@@ -184,7 +197,7 @@ public class MainWindowController {
         startButton.setDisable(true);
         stopButton.setDisable(false);
         lockRunOptions(true);
-        updateStatusLabel();
+        updateStatusFromUiSelection();
         Thread worker = new Thread(() -> {
             try {
                 taskControlService.startTasks(request);
@@ -232,7 +245,7 @@ public class MainWindowController {
             stopButton.setDisable(!running);
         }
         lockRunOptions(running);
-        updateStatusLabel();
+        updateStatusFromUiSelection();
     }
 
     private void lockRunOptions(boolean locked) {
@@ -254,7 +267,7 @@ public class MainWindowController {
         }
     }
 
-    private void updateStatusLabel() {
+    private void updateStatusFromUiSelection() {
         if (statusLabel == null) {
             return;
         }
@@ -264,6 +277,22 @@ public class MainWindowController {
                 + " | 循环=" + loopCheckBox.isSelected()
                 + " | 测试模式=" + testModeCheckBox.isSelected()
                 + " | 初始化窗口=" + initGameWindowCheckBox.isSelected());
+    }
+
+    private void updateRuntimeState(TaskRuntimeStateView runtimeState) {
+        if (runtimeState == null) {
+            updateStatusFromUiSelection();
+            return;
+        }
+        statusLabel.setText("状态：" + runtimeState.getStatusText()
+                + " | started=" + nullToDash(runtimeState.getStartedAt())
+                + " | finished=" + nullToDash(runtimeState.getFinishedAt()));
+        requestLabel.setText("请求：" + nullToDash(runtimeState.getRequestText()));
+        summaryLabel.setText("结果：" + nullToDash(runtimeState.getSummaryText()));
+    }
+
+    private String nullToDash(String text) {
+        return text == null || text.isBlank() ? "-" : text;
     }
 
     private List<String> getSelectedTaskCodesFromUi() {
@@ -304,6 +333,7 @@ public class MainWindowController {
         refreshTaskOptions(dashboard.getTaskOptions(), currentSelection);
         refreshRecordTable(dashboard.getRecentRecords());
         refreshLogList(dashboard.getRecentLogs());
+        updateRuntimeState(dashboard.getRuntimeState());
         updateRunningStateControls();
     }
 
@@ -315,7 +345,7 @@ public class MainWindowController {
             checkBox.setUserData(option.getTaskCode());
             checkBox.setSelected(currentSelection.getOrDefault(option.getTaskCode(), option.isSelected()));
             checkBox.setDisable(running || !option.isEnabled());
-            checkBox.setOnAction(event -> updateStatusLabel());
+            checkBox.setOnAction(event -> updateStatusFromUiSelection());
             taskBox.getChildren().add(checkBox);
         }
     }
@@ -327,7 +357,10 @@ public class MainWindowController {
     private void refreshLogList(List<TaskLogView> logs) {
         logList.getItems().clear();
         for (TaskLogView log : logs) {
-            logList.getItems().add("[" + log.getTime() + "] " + log.getType() + " " + log.getMessage());
+            String taskText = log.getTaskCode() == null || log.getTaskCode().isBlank()
+                    ? ""
+                    : " [" + log.getTaskCode() + "/" + nullToDash(log.getTaskName()) + "]";
+            logList.getItems().add("[" + log.getTime() + "] " + log.getType() + taskText + " " + log.getMessage());
         }
     }
 }
