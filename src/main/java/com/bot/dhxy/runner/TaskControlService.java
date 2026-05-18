@@ -1,6 +1,7 @@
 package com.bot.dhxy.runner;
 
 import com.bot.dhxy.config.TaskRunProperties;
+import com.bot.dhxy.service.GameWindowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,7 @@ public class TaskControlService {
     private final TaskRunHistoryService taskRunHistoryService;
     private final TaskLogService taskLogService;
     private final TaskRunProperties taskRunProperties;
+    private final GameWindowService gameWindowService;
 
     /**
      * 防止重复启动任务队列。
@@ -76,6 +78,20 @@ public class TaskControlService {
         try {
             log.info("🚀 接收到任务启动请求: {}", request.toLogText());
             taskLogService.info(null, null, "接收到任务启动请求: " + request.toLogText());
+
+            if (request.isInitGameWindow()) {
+                taskLogService.info(null, null, "准备初始化游戏窗口");
+                boolean ready = gameWindowService.initGameWindow();
+                if (!ready) {
+                    log.error("❌ 游戏窗口初始化失败，本次任务队列不启动。");
+                    taskLogService.fail(null, null, "游戏窗口初始化失败，本次任务队列不启动");
+                    return new TaskRunSummary();
+                }
+            } else {
+                log.warn("⚠️ 本次任务启动请求跳过游戏窗口初始化，仅适合测试任务队列或 UI。");
+                taskLogService.warn(null, null, "本次任务启动请求跳过游戏窗口初始化");
+            }
+
             TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
             return taskRunner.run(queue, request.isTestMode());
         } finally {
