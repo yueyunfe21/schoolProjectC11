@@ -89,17 +89,22 @@ public class FiveRingTask extends BaseTaskTemplate {
 
     @Override
     public TaskRunResult execute() {
+        return execute(null);
+    }
+
+    @Override
+    public TaskRunResult execute(TaskExecutionContext executionContext) {
         logTaskBanner();
 
-        TaskExecutionContext executionContext = buildExecutionContext();
+        TaskExecutionContext context = resolveExecutionContext(executionContext);
         FiveRingRuntimeState runtimeState = new FiveRingRuntimeState();
 
-        TaskRunResult startupResult = runStartupSteps(executionContext, runtimeState);
+        TaskRunResult startupResult = runStartupSteps(context, runtimeState);
         if (startupResult != TaskRunResult.SUCCESS) {
             return startupResult;
         }
 
-        return runMainLoop(executionContext, runtimeState);
+        return runMainLoop(context, runtimeState);
     }
 
     private void logTaskBanner() {
