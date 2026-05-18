@@ -1,5 +1,7 @@
 package com.bot.dhxy.runner;
 
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.task.GameTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
