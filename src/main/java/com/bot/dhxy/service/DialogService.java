@@ -6,6 +6,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,7 @@ public class DialogService {
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
     private final GiveItemService giveItemService;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     private final Random random = new Random();
 
@@ -134,7 +136,7 @@ public class DialogService {
     private boolean hasOptionInLowerHalf() {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y + CROP_TOP_Y, DIALOG_SMALL_W, DIALOG_SMALL_H - CROP_TOP_Y);
         BufferedImage frame = tracker.captureToMemory("opt-scan", area[0], area[1], area[2], area[3]);
-        ImagePreprocessor.saveDebugImage(frame, "opt-scan-debug.png");
+        ImagePreprocessor.saveDebugImage(frame, windowScopedTempPath.resolve("opt-scan-debug.png"));
         if (frame == null) return false;
 
         int count = ImagePreprocessor.countGreenPixelsHSV(frame);
@@ -157,7 +159,7 @@ public class DialogService {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, CROP_TOP_Y);
         BufferedImage frame = tracker.captureToMemory("story-scan", area[0], area[1], area[2], area[3]);
         if (frame == null) return false;
-        ImagePreprocessor.saveDebugImage(frame,"story_scan.png");
+        ImagePreprocessor.saveDebugImage(frame, windowScopedTempPath.resolve("story_scan.png"));
         int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame);
         int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame);
         frame.flush();
@@ -178,7 +180,7 @@ public class DialogService {
 
     private boolean processOptionsWithOCR(String targetKeyword) {
         int[] rect = getDialogRect();
-        String path = "images/temp/dialog_active_scan.png";
+        String path = windowScopedTempPath.resolve("dialog_active_scan.png");
         if (!tracker.captureToFile("OCR-Scan", path, rect[0], rect[1], rect[2], rect[3])) return false;
 
         List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResults(path);
