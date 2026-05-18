@@ -14,6 +14,8 @@ import java.util.Objects;
 
 /**
  * 面向 UI / 控制层的多窗口任务控制服务。
+ *
+ * 正式职责：窗口层只管理窗口和任务提交，不判断队长/队员。
  */
 @Service
 public class WindowTaskControlService {
@@ -56,13 +58,13 @@ public class WindowTaskControlService {
             boolean success = taskManager.registerWindow(request) != null;
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新"));
+                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新，任务=" + getTaskDisplayName(request.getTaskType())));
             } else {
                 details.add(WindowTaskCommandDetail.failed(request.getWindowId(), "窗口注册失败，可能已达到容量上限"));
             }
         }
 
-        return buildResult(requests.size(), successCount, "窗口注册完成", Collections.emptyList(), details);
+        return buildResult(requests.size(), successCount, "独立窗口注册完成", Collections.emptyList(), details);
     }
 
     public WindowTaskCommandResult start(WindowTaskStartRequest request) {
@@ -73,8 +75,16 @@ public class WindowTaskControlService {
         return switch (request.getStartMode()) {
             case SAME_TASK -> startSameTask(request.getWindowIds(), request.getTaskType());
             case SELECTED_TASK -> startSelectedTasks(request.getWindowIds());
-            case DETECTED_ROLE -> startByDetectedRole(request.getWindowIds(), request.getTaskType());
+            case DETECTED_ROLE -> startByDetectedRoleForTest(request.getWindowIds(), request.getTaskType());
         };
+    }
+
+    /**
+     * 正式主流程：选中的每个窗口都启动同一个指定任务。
+     * window 层不判断队长/队员，任务内部自己判断是否应该继续。
+     */
+    public WindowTaskCommandResult startIndependentWindows(Collection<String> windowIds, TaskType taskType) {
+        return startSameTask(windowIds, taskType);
     }
 
     public WindowTaskCommandResult startSameTask(Collection<String> windowIds, TaskType taskType) {
@@ -92,13 +102,13 @@ public class WindowTaskControlService {
             boolean success = taskManager.submit(windowId, taskType);
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "已启动任务：" + taskType.getDisplayName()));
+                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动任务：" + taskType.getDisplayName()));
             } else {
                 details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
             }
         }
 
-        return buildResult(ids.size(), successCount, "批量启动统一任务完成", Collections.emptyList(), details);
+        return buildResult(ids.size(), successCount, "独立窗口批量启动完成", Collections.emptyList(), details);
     }
 
     public WindowTaskCommandResult startSelectedTasks(Collection<String> windowIds) {
@@ -110,19 +120,28 @@ public class WindowTaskControlService {
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
+            WindowTaskSnapshot snapshot = taskManager.getSnapshot(windowId).orElse(null);
             boolean success = taskManager.submitSelectedTask(windowId);
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "已启动窗口已选任务"));
+                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动已选任务：" + getTaskDisplayName(snapshot == null ? null : snapshot.getSelectedTaskType())));
             } else {
                 details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、未选择任务或已有任务运行"));
             }
         }
 
-        return buildResult(ids.size(), successCount, "按窗口已选任务启动完成", Collections.emptyList(), details);
+        return buildResult(ids.size(), successCount, "独立窗口已选任务启动完成", Collections.emptyList(), details);
     }
 
+    /**
+     * @deprecated 只用于未来身份识别功能测试。正式窗口流程不要在 window 层判断队长/队员。
+     */
+    @Deprecated
     public WindowTaskCommandResult startByDetectedRole(Collection<String> windowIds, TaskType leaderTaskType) {
+        return startByDetectedRoleForTest(windowIds, leaderTaskType);
+    }
+
+    private WindowTaskCommandResult startByDetectedRoleForTest(Collection<String> windowIds, TaskType leaderTaskType) {
         List<String> ids = normalizeWindowIds(windowIds);
         if (ids.isEmpty()) {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
@@ -136,19 +155,19 @@ public class WindowTaskControlService {
             WindowTaskAssignment assignment = assignmentPolicy.assignDefaultTask(snapshot, leaderTaskType);
             assignments.add(assignment);
             if (!assignment.isExecutable()) {
-                details.add(WindowTaskCommandDetail.failed(windowId, "跳过：" + assignment.getReason()));
+                details.add(WindowTaskCommandDetail.failed(windowId, "测试按身份跳过：" + assignment.getReason()));
                 continue;
             }
             boolean success = taskManager.submit(assignment.getWindowId(), assignment.getTaskType());
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "已按身份启动任务：" + assignment.getTaskDisplayName()));
+                details.add(WindowTaskCommandDetail.success(windowId, "测试按身份已启动任务：" + assignment.getTaskDisplayName()));
             } else {
                 details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：窗口不存在、已有任务运行或任务不可创建"));
             }
         }
 
-        return buildResult(ids.size(), successCount, "按识别身份启动完成", assignments, details);
+        return buildResult(ids.size(), successCount, "测试按身份启动完成", assignments, details);
     }
 
     public WindowTaskCommandResult stopWindows(Collection<String> windowIds) {
@@ -222,5 +241,9 @@ public class WindowTaskControlService {
                 .filter(id -> !id.isEmpty())
                 .distinct()
                 .toList();
+    }
+
+    private String getTaskDisplayName(TaskType taskType) {
+        return taskType == null ? "-" : taskType.getDisplayName();
     }
 }
