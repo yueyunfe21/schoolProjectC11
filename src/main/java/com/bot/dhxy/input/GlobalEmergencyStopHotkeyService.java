@@ -14,15 +14,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Windows 全局紧急停止热键。
  *
- * F12 用于在游戏抢占鼠标时快速停止全部任务。
+ * Ctrl + Shift + F12 用于在游戏抢占鼠标时快速停止全部任务。
  */
 @Slf4j
 @Service("inputGlobalEmergencyStopHotkeyService")
 public class GlobalEmergencyStopHotkeyService {
 
     private static final int HOTKEY_ID_EMERGENCY_STOP = 0x0F12;
+    private static final int MOD_CONTROL = 0x0002;
+    private static final int MOD_SHIFT = 0x0004;
     private static final int MOD_NOREPEAT = 0x4000;
+    private static final int EMERGENCY_STOP_MODIFIERS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
     private static final int VK_F12 = 0x7B;
+    private static final String HOTKEY_TEXT = "Ctrl+Shift+F12";
 
     private final TaskControlService taskControlService;
     private final WindowTaskControlService windowTaskControlService;
@@ -39,7 +43,7 @@ public class GlobalEmergencyStopHotkeyService {
 
     public void start() {
         if (!isWindows()) {
-            log.info("当前系统不是 Windows，跳过 F12 全局紧急停止热键注册。");
+            log.info("当前系统不是 Windows，跳过 {} 全局紧急停止热键注册。", HOTKEY_TEXT);
             return;
         }
         if (!started.compareAndSet(false, true)) {
@@ -72,12 +76,12 @@ public class GlobalEmergencyStopHotkeyService {
     private void runHotkeyLoop() {
         boolean registered = false;
         try {
-            registered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP, MOD_NOREPEAT, VK_F12);
+            registered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP, EMERGENCY_STOP_MODIFIERS, VK_F12);
             if (!registered) {
-                log.warn("F12 全局紧急停止热键注册失败，可能已被其他程序占用。");
+                log.warn("{} 全局紧急停止热键注册失败，可能已被其他程序占用。", HOTKEY_TEXT);
                 return;
             }
-            log.info("✅ 已注册全局紧急停止热键：F12");
+            log.info("✅ 已注册全局紧急停止热键：{}", HOTKEY_TEXT);
 
             WinUser.MSG msg = new WinUser.MSG();
             while (running.get()) {
@@ -90,30 +94,30 @@ public class GlobalEmergencyStopHotkeyService {
                 }
             }
         } catch (Exception e) {
-            log.error("F12 全局紧急停止热键线程异常", e);
+            log.error("{} 全局紧急停止热键线程异常", HOTKEY_TEXT, e);
         } finally {
             if (registered) {
                 User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP);
             }
             running.set(false);
             started.set(false);
-            log.info("F12 全局紧急停止热键已释放。");
+            log.info("{} 全局紧急停止热键已释放。", HOTKEY_TEXT);
         }
     }
 
     private void triggerEmergencyStop() {
-        log.warn("🛑 F12 紧急停止触发：正在请求停止单窗口任务和所有多窗口任务...");
+        log.warn("🛑 {} 紧急停止触发：正在请求停止单窗口任务和所有多窗口任务...", HOTKEY_TEXT);
         try {
             taskControlService.stop();
         } catch (Exception e) {
-            log.warn("F12 紧急停止：停止单窗口任务时出现异常", e);
+            log.warn("{} 紧急停止：停止单窗口任务时出现异常", HOTKEY_TEXT, e);
         }
         try {
             windowTaskControlService.stopAll();
         } catch (Exception e) {
-            log.warn("F12 紧急停止：停止多窗口任务时出现异常", e);
+            log.warn("{} 紧急停止：停止多窗口任务时出现异常", HOTKEY_TEXT, e);
         }
-        log.warn("🛑 F12 紧急停止请求已发送。");
+        log.warn("🛑 {} 紧急停止请求已发送。", HOTKEY_TEXT);
     }
 
     private boolean isWindows() {
