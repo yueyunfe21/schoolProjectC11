@@ -7,8 +7,6 @@ import java.util.List;
 
 /**
  * 多窗口系统整体状态快照。
- *
- * UI 可以用它一次性刷新窗口表、容量信息和运行统计。
  */
 public class WindowSystemSnapshot {
 
@@ -32,27 +30,19 @@ public class WindowSystemSnapshot {
         this.windows = windows == null ? Collections.emptyList() : List.copyOf(windows);
     }
 
-    public int getRegisteredWindowCount() {
-        return registeredWindowCount;
-    }
+    public int getRegisteredWindowCount() { return registeredWindowCount; }
 
-    public int getRunningWindowCount() {
-        return runningWindowCount;
-    }
+    public int getRunningWindowCount() { return runningWindowCount; }
 
-    public int getMaxWindowCount() {
-        return maxWindowCount;
-    }
+    public int getIdleWindowCount() { return Math.max(registeredWindowCount - runningWindowCount, 0); }
 
-    public int getRemainingWindowCapacity() {
-        return remainingWindowCapacity;
-    }
+    public int getMaxWindowCount() { return maxWindowCount; }
 
-    public boolean isCapacityFull() {
-        return capacityFull;
-    }
+    public int getRemainingWindowCapacity() { return remainingWindowCapacity; }
 
-    public List<WindowTaskSnapshot> getWindows() {
-        return windows;
-    }
+    public boolean isCapacityFull() { return capacityFull; }
+
+    public boolean hasWindows() { return !windows.isEmpty(); }
+
+    public List<WindowTaskSnapshot> getWindows() { return windows; }
 }
