@@ -2,7 +2,6 @@ package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
-import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.policy.WindowCapacityPolicy;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -86,23 +85,52 @@ public class MultiWindowTaskManager {
     }
 
     public boolean submit(String windowId, TaskType taskType) {
-        WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
-        if (runner == null) {
-            return false;
+        return submitWithResult(windowId, taskType).isSuccess();
+    }
+
+    public WindowTaskSubmitResult submitWithResult(String windowId, TaskType taskType) {
+        String normalizedWindowId = normalizeWindowId(windowId);
+        if (normalizedWindowId == null) {
+            return WindowTaskSubmitResult.failed(windowId, taskType, "窗口ID为空");
         }
-        return runner.submit(taskType);
+        if (taskType == null || taskType == TaskType.UNKNOWN) {
+            return WindowTaskSubmitResult.failed(normalizedWindowId, taskType, "任务类型无效");
+        }
+        WindowTaskRunner runner = runnersByWindowId.get(normalizedWindowId);
+        if (runner == null) {
+            return WindowTaskSubmitResult.failed(normalizedWindowId, taskType, "窗口不存在或尚未注册");
+        }
+        if (runner.isShutdown()) {
+            return WindowTaskSubmitResult.failed(normalizedWindowId, taskType, "窗口执行器已关闭");
+        }
+        if (runner.isRunning()) {
+            return WindowTaskSubmitResult.failed(normalizedWindowId, taskType, "窗口已有任务正在运行");
+        }
+        boolean submitted = runner.submit(taskType);
+        if (!submitted) {
+            return WindowTaskSubmitResult.failed(normalizedWindowId, taskType, "任务提交失败，可能无法创建任务或执行器拒绝提交");
+        }
+        return WindowTaskSubmitResult.success(normalizedWindowId, taskType, "任务已提交到窗口执行器");
     }
 
     public boolean submitSelectedTask(String windowId) {
-        WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
+        return submitSelectedTaskWithResult(windowId).isSuccess();
+    }
+
+    public WindowTaskSubmitResult submitSelectedTaskWithResult(String windowId) {
+        String normalizedWindowId = normalizeWindowId(windowId);
+        if (normalizedWindowId == null) {
+            return WindowTaskSubmitResult.failed(windowId, TaskType.UNKNOWN, "窗口ID为空");
+        }
+        WindowTaskRunner runner = runnersByWindowId.get(normalizedWindowId);
         if (runner == null) {
-            return false;
+            return WindowTaskSubmitResult.failed(normalizedWindowId, TaskType.UNKNOWN, "窗口不存在或尚未注册");
         }
         TaskType selectedTaskType = runner.getWindowContext().getSelectedTaskType();
         if (selectedTaskType == null || selectedTaskType == TaskType.UNKNOWN) {
-            return false;
+            return WindowTaskSubmitResult.failed(normalizedWindowId, selectedTaskType, "窗口未选择有效任务");
         }
-        return runner.submit(selectedTaskType);
+        return submitWithResult(normalizedWindowId, selectedTaskType);
     }
 
     public int submitSelectedTasks(Collection<String> windowIds) {
