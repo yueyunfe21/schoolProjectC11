@@ -8,6 +8,7 @@ import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -42,6 +43,7 @@ public class GameClientTracker {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final GlobalInputLock globalInputLock;
     private final WindowIsolationProperties windowIsolationProperties;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     @Lazy
     @Autowired
@@ -63,6 +65,8 @@ public class GameClientTracker {
 
     public HWND getGameHwnd() { return state().gameHwnd; }
 
+    public String getLatestVisionPath() { return windowScopedTempPath.resolve("latest_vision.png"); }
+
     public boolean updateGlobalVision() {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
@@ -76,7 +80,7 @@ public class GameClientTracker {
             int y1 = s.windowBaseY;
             int x2 = x1 + WINDOW_WIDTH;
             int y2 = y1 + WINDOW_HEIGHT;
-            return captureToFileWithoutLock("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
+            return captureToFileWithoutLock("全局视野", getLatestVisionPath(), x1, y1, x2, y2);
         });
     }
 
