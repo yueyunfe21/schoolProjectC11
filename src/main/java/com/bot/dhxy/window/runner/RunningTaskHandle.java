@@ -1,15 +1,12 @@
 package com.bot.dhxy.window.runner;
 
-import com.bot.dhxy.runner.TaskStopToken;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.model.TaskType;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.Future;
 
-/**
- * 单个窗口当前正在执行的任务句柄。
- */
 public class RunningTaskHandle {
 
     private final String windowId;
