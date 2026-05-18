@@ -13,7 +13,8 @@ import java.util.function.Supplier;
 /**
  * 窗口感知输入协调器。
  *
- * 默认只做全局输入串行化；只有 bot.window.isolation-enabled=true 时，
+ * 默认只做全局输入串行化。
+ * 只有 bot.window.isolation-enabled=true 且 bot.window.input-focus-enabled=true 时，
  * 才会在输入前按当前任务线程绑定的 hwnd 自动激活窗口。
  */
 @Slf4j
@@ -50,10 +51,10 @@ public class WindowAwareInputCoordinator {
     }
 
     private void focusCurrentWindowWithoutLock(String actionName) {
-        if (!windowIsolationProperties.isIsolationEnabled()) {
+        if (!windowIsolationProperties.isInputFocusActive()) {
             return;
         }
-        Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.current();
+        Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.rawCurrent();
         if (contextOptional.isEmpty()) {
             return;
         }
