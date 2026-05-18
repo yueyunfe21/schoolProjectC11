@@ -137,6 +137,24 @@ public abstract class BaseTaskTemplate implements GameTask {
         };
     }
 
+    protected void sleepSafely(TaskExecutionContext context, long millis) {
+        if (millis <= 0) {
+            return;
+        }
+        if (context != null) {
+            context.throwIfStopRequested();
+        }
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TaskStopRequestedException("任务等待被中断");
+        }
+        if (context != null) {
+            context.throwIfStopRequested();
+        }
+    }
+
     protected TaskExecutionContext buildExecutionContext() {
         return TaskExecutionContext.builder()
                 .taskCode(getTaskCode())
