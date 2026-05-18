@@ -7,7 +7,6 @@ import com.bot.dhxy.runner.TaskRetryPolicy;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.QuestManagerService.PathingResult;
 import com.bot.dhxy.task.template.BaseTaskTemplate;
-import com.bot.dhxy.task.template.TaskStep;
 import com.bot.dhxy.task.template.TaskStepExecutor;
 import com.bot.dhxy.task.template.TaskStepResult;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -15,8 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.List;
 
 @Component
 @Slf4j
@@ -109,11 +106,6 @@ public class FiveRingTask extends BaseTaskTemplate {
         log.info("🛑 收到停止五环任务请求");
         context.setBotStatus(GameContext.BotStatus.IDLE);
         context.setCurrentActionState(GameContext.ActionState.FREE);
-    }
-
-    @Override
-    protected List<TaskStep> buildSteps(TaskExecutionContext context) {
-        return Collections.emptyList();
     }
 
     @Override
