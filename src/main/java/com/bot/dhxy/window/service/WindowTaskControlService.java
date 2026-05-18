@@ -21,9 +21,12 @@ import java.util.Objects;
 public class WindowTaskControlService {
 
     private final MultiWindowTaskManager taskManager;
+    private final WindowTaskAssignmentPolicy assignmentPolicy;
 
-    public WindowTaskControlService(MultiWindowTaskManager taskManager) {
+    public WindowTaskControlService(MultiWindowTaskManager taskManager,
+                                    WindowTaskAssignmentPolicy assignmentPolicy) {
         this.taskManager = taskManager;
+        this.assignmentPolicy = assignmentPolicy;
     }
 
     public WindowTaskCommandResult registerWindows(Collection<WindowRegistrationRequest> requests) {
@@ -69,6 +72,29 @@ public class WindowTaskControlService {
                 ids.size(),
                 accepted,
                 "按窗口已选任务启动完成：" + accepted + "/" + ids.size(),
+                taskManager.getAllSnapshots()
+        );
+    }
+
+    public WindowTaskCommandResult startByDetectedRole(Collection<String> windowIds, TaskType leaderTaskType) {
+        List<String> ids = normalizeWindowIds(windowIds);
+        if (ids.isEmpty()) {
+            return WindowTaskCommandResult.empty("没有选中的窗口", taskManager.getAllSnapshots());
+        }
+
+        int accepted = 0;
+        for (String windowId : ids) {
+            WindowTaskSnapshot snapshot = taskManager.getSnapshot(windowId).orElse(null);
+            WindowTaskAssignment assignment = assignmentPolicy.assignDefaultTask(snapshot, leaderTaskType);
+            if (assignment.isExecutable() && taskManager.submit(assignment.getWindowId(), assignment.getTaskType())) {
+                accepted++;
+            }
+        }
+
+        return WindowTaskCommandResult.of(
+                ids.size(),
+                accepted,
+                "按识别身份启动完成：" + accepted + "/" + ids.size(),
                 taskManager.getAllSnapshots()
         );
     }
