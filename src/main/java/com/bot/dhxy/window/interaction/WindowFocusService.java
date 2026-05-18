@@ -2,6 +2,7 @@ package com.bot.dhxy.window.interaction;
 
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
@@ -44,32 +45,10 @@ public class WindowFocusService {
     }
 
     private WinDef.HWND toHwnd(String handleText) {
-        Long value = parseHandleValue(handleText);
+        Long value = WindowHandleParser.parseHexHandle(handleText);
         if (value == null || value <= 0) {
             return null;
         }
         return new WinDef.HWND(new Pointer(value));
-    }
-
-    private Long parseHandleValue(String handleText) {
-        if (handleText == null || handleText.isBlank()) {
-            return null;
-        }
-        String value = handleText.trim();
-        try {
-            if (value.startsWith("0x") || value.startsWith("0X")) {
-                return Long.parseUnsignedLong(value.substring(2), 16);
-            }
-            if (value.matches(".*[a-fA-F].*")) {
-                return Long.parseUnsignedLong(value, 16);
-            }
-            try {
-                return Long.parseUnsignedLong(value);
-            } catch (NumberFormatException ignored) {
-                return Long.parseUnsignedLong(value, 16);
-            }
-        } catch (Exception e) {
-            return null;
-        }
     }
 }
