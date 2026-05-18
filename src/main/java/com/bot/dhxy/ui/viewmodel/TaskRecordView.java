@@ -16,5 +16,6 @@ public class TaskRecordView {
     private final String startTime;
     private final String endTime;
     private final long costMillis;
+    private final String costText;
     private final String message;
 }
