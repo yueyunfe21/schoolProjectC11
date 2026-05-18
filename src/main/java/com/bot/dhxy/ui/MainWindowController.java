@@ -24,12 +24,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * JavaFX 主界面控制器。
  *
- * 当前先提供基础界面骨架：任务勾选、开始/停止按钮、任务记录表、日志列表。
+ * 当前提供基础界面骨架：任务勾选、运行选项、开始/停止按钮、任务记录表、日志列表。
  * 后面再逐步接入定时刷新和更完整的界面样式。
  */
 @Component
@@ -53,6 +55,9 @@ public class MainWindowController {
     private ListView<String> logList;
     private Button startButton;
     private Button stopButton;
+    private CheckBox loopCheckBox;
+    private CheckBox testModeCheckBox;
+    private CheckBox initGameWindowCheckBox;
 
     public Parent buildView() {
         initControls();
@@ -75,20 +80,33 @@ public class MainWindowController {
         logList = new ListView<>();
         startButton = new Button("开始");
         stopButton = new Button("停止");
+        loopCheckBox = new CheckBox("循环执行");
+        testModeCheckBox = new CheckBox("测试模式");
+        initGameWindowCheckBox = new CheckBox("初始化游戏窗口");
+
+        loopCheckBox.setSelected(taskRunProperties.isLoop());
+        testModeCheckBox.setSelected(taskRunProperties.isTestMode());
+        initGameWindowCheckBox.setSelected(taskRunProperties.isInitGameWindow());
     }
 
     private Parent buildTopBar() {
         Label title = new Label("DHXY Robot 控制台");
         Button refreshButton = new Button("刷新");
+        Button clearButton = new Button("清空日志");
 
         refreshButton.setOnAction(event -> refreshDashboard());
+        clearButton.setOnAction(event -> {
+            taskControlService.clearRuntimeLogs();
+            refreshDashboard();
+        });
         startButton.setOnAction(event -> startSelectedTasksInBackground());
         stopButton.setOnAction(event -> {
             taskControlService.stop();
             refreshDashboard();
         });
 
-        HBox box = new HBox(10, title, refreshButton, startButton, stopButton);
+        HBox box = new HBox(10, title, refreshButton, clearButton, startButton, stopButton,
+                loopCheckBox, testModeCheckBox, initGameWindowCheckBox);
         box.setPadding(new Insets(0, 0, 12, 0));
         return box;
     }
@@ -136,10 +154,14 @@ public class MainWindowController {
             return;
         }
 
+        boolean loop = loopCheckBox.isSelected();
+        boolean testMode = testModeCheckBox.isSelected();
+        boolean initGameWindow = initGameWindowCheckBox.isSelected();
+
         startButton.setDisable(true);
         Thread worker = new Thread(() -> {
             try {
-                if (taskRunProperties.isInitGameWindow()) {
+                if (initGameWindow) {
                     boolean ready = gameWindowService.initGameWindow();
                     if (!ready) {
                         Platform.runLater(() -> {
@@ -151,11 +173,7 @@ public class MainWindowController {
                     }
                 }
 
-                taskControlService.startTasks(
-                        selectedTaskCodes,
-                        taskRunProperties.isLoop(),
-                        taskRunProperties.isTestMode()
-                );
+                taskControlService.startTasks(selectedTaskCodes, loop, testMode);
             } finally {
                 Platform.runLater(() -> {
                     startButton.setDisable(false);
@@ -180,19 +198,36 @@ public class MainWindowController {
         return selectedTaskCodes;
     }
 
+    private Map<String, Boolean> getCurrentTaskSelectionMap() {
+        Map<String, Boolean> selectionMap = new HashMap<>();
+        if (taskBox == null) {
+            return selectionMap;
+        }
+        for (javafx.scene.Node node : taskBox.getChildren()) {
+            if (node instanceof CheckBox checkBox) {
+                Object userData = checkBox.getUserData();
+                if (userData instanceof String taskCode && !taskCode.isBlank()) {
+                    selectionMap.put(taskCode, checkBox.isSelected());
+                }
+            }
+        }
+        return selectionMap;
+    }
+
     private void refreshDashboard() {
+        Map<String, Boolean> currentSelection = getCurrentTaskSelectionMap();
         TaskDashboardView dashboard = taskViewService.getDashboardView();
-        refreshTaskOptions(dashboard.getTaskOptions());
+        refreshTaskOptions(dashboard.getTaskOptions(), currentSelection);
         refreshRecordTable(dashboard.getRecentRecords());
         refreshLogList(dashboard.getRecentLogs());
     }
 
-    private void refreshTaskOptions(List<TaskOptionView> options) {
+    private void refreshTaskOptions(List<TaskOptionView> options, Map<String, Boolean> currentSelection) {
         taskBox.getChildren().clear();
         for (TaskOptionView option : options) {
             CheckBox checkBox = new CheckBox(option.getTaskName() + " (" + option.getTaskCode() + ")");
             checkBox.setUserData(option.getTaskCode());
-            checkBox.setSelected(option.isSelected());
+            checkBox.setSelected(currentSelection.getOrDefault(option.getTaskCode(), option.isSelected()));
             checkBox.setDisable(!option.isEnabled());
             taskBox.getChildren().add(checkBox);
         }
