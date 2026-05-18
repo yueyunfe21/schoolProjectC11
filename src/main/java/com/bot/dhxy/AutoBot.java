@@ -1,6 +1,7 @@
 package com.bot.dhxy;
 
 import com.bot.dhxy.config.TaskRunProperties;
+import com.bot.dhxy.input.GlobalEmergencyStopHotkeyService;
 import com.bot.dhxy.runner.control.TaskControlService;
 import com.bot.dhxy.ui.MainWindowService;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ public class AutoBot implements CommandLineRunner {
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
     private final MainWindowService mainWindowService;
+    private final GlobalEmergencyStopHotkeyService emergencyStopHotkeyService;
 
     public static void main(String[] args) {
         SpringApplicationBuilder builder = new SpringApplicationBuilder(AutoBot.class);
@@ -28,6 +30,7 @@ public class AutoBot implements CommandLineRunner {
         log.info("🚀 Spring 容器装配完毕。");
         log.info("📋 当前可用任务: {}", taskControlService.getRegisteredTaskSummary());
         log.info("🧾 当前任务配置: {}", taskRunProperties.toLogText());
+        emergencyStopHotkeyService.start();
 
         if (taskRunProperties.isShowUi()) {
             mainWindowService.showMainWindow();
