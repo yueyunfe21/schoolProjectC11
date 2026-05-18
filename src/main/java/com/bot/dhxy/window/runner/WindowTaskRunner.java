@@ -2,6 +2,7 @@ package com.bot.dhxy.window.runner;
 
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.TaskExecutionContext;
+import com.bot.dhxy.runner.TaskStopRequestedException;
 import com.bot.dhxy.runner.TaskStopToken;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
@@ -12,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
@@ -104,18 +106,21 @@ public class WindowTaskRunner {
         windowContext.markStarted(taskType);
         log.info("窗口 [{}] 开始执行任务：{}", windowContext.getWindowId(), task.getTaskName());
 
-        TaskRunResult result;
+        TaskRunResult result = TaskRunResult.FAILED;
         try {
             result = task.execute(executionContext);
+        } catch (TaskStopRequestedException | CancellationException e) {
+            log.info("窗口 [{}] 任务被停止：{}，原因：{}", windowContext.getWindowId(), task.getTaskName(), e.getMessage());
+            result = TaskRunResult.STOPPED;
         } catch (Exception e) {
             log.error("窗口 [{}] 任务异常：{}", windowContext.getWindowId(), task.getTaskName(), e);
             result = TaskRunResult.FAILED;
+        } finally {
+            WindowRuntimeStatus status = toWindowStatus(result);
+            windowContext.markFinished(status, "任务结束：" + result);
+            log.info("窗口 [{}] 任务结束：{} -> {}", windowContext.getWindowId(), task.getTaskName(), result);
+            currentTask = null;
         }
-
-        WindowRuntimeStatus status = toWindowStatus(result);
-        windowContext.markFinished(status, "任务结束：" + result);
-        log.info("窗口 [{}] 任务结束：{} -> {}", windowContext.getWindowId(), task.getTaskName(), result);
-        currentTask = null;
     }
 
     private TaskExecutionContext buildExecutionContext(GameTask task, TaskStopToken stopToken) {
