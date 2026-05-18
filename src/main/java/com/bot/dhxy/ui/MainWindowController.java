@@ -39,6 +39,8 @@ import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,6 +55,9 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class MainWindowController {
+
+    private static final DateTimeFormatter UI_LOG_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private static final int MAX_WINDOW_COMMAND_LOGS = 80;
 
     private final TaskViewService taskViewService;
     private final TaskUiActionService taskUiActionService;
@@ -82,16 +87,20 @@ public class MainWindowController {
     private TableView<WindowTaskSnapshot> windowTable;
     private TextField windowIdField;
     private TextField windowRoleNameField;
+    private TextField windowBatchCountField;
     private ComboBox<WindowRole> windowRoleComboBox;
     private ComboBox<TaskType> windowTaskTypeComboBox;
     private Button registerWindowButton;
+    private Button registerTeamButton;
     private Button startByRoleButton;
     private Button startWindowSelectedTaskButton;
     private Button stopSelectedWindowsButton;
     private Button stopAllWindowsButton;
+    private Button unregisterSelectedWindowsButton;
     private Button refreshWindowButton;
     private Label windowSystemLabel;
 
+    private final List<String> windowCommandLogs = new ArrayList<>();
     private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
@@ -139,6 +148,8 @@ public class MainWindowController {
         windowIdField.setPrefWidth(110);
         windowRoleNameField = new TextField("角色A");
         windowRoleNameField.setPrefWidth(90);
+        windowBatchCountField = new TextField("5");
+        windowBatchCountField.setPrefWidth(48);
         windowRoleComboBox = new ComboBox<>();
         windowRoleComboBox.getItems().setAll(WindowRole.values());
         windowRoleComboBox.setValue(WindowRole.UNKNOWN);
@@ -146,10 +157,12 @@ public class MainWindowController {
         windowTaskTypeComboBox.getItems().setAll(TaskType.values());
         windowTaskTypeComboBox.setValue(TaskType.WUHuan);
         registerWindowButton = new Button("注册/刷新窗口");
+        registerTeamButton = new Button("快速注册队伍");
         startByRoleButton = new Button("按身份启动");
         startWindowSelectedTaskButton = new Button("启动已选任务");
         stopSelectedWindowsButton = new Button("停止选中窗口");
         stopAllWindowsButton = new Button("停止全部窗口");
+        unregisterSelectedWindowsButton = new Button("移除选中窗口");
         refreshWindowButton = new Button("刷新窗口表");
         windowSystemLabel = new Label("窗口：-");
 
@@ -168,6 +181,7 @@ public class MainWindowController {
         refreshButton.setOnAction(event -> refreshDashboard());
         clearButton.setOnAction(event -> {
             taskUiActionService.clearFromUi();
+            clearWindowLogs();
             refreshDashboard();
         });
         startButton.setOnAction(event -> startSelectedTasksInBackground());
@@ -206,6 +220,7 @@ public class MainWindowController {
         buildWindowTableColumns();
 
         registerWindowButton.setOnAction(event -> registerOrRefreshWindowFromUi());
+        registerTeamButton.setOnAction(event -> registerTeamFromUi());
         startByRoleButton.setOnAction(event -> runWindowCommandInBackground(() ->
                 windowTaskControlService.start(WindowTaskStartRequest.detectedRole(getSelectedWindowIds(), windowTaskTypeComboBox.getValue()))));
         startWindowSelectedTaskButton.setOnAction(event -> runWindowCommandInBackground(() ->
@@ -213,27 +228,36 @@ public class MainWindowController {
         stopSelectedWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
                 windowTaskControlService.stopWindows(getSelectedWindowIds())));
         stopAllWindowsButton.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::stopAll));
+        unregisterSelectedWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                windowTaskControlService.unregisterWindows(getSelectedWindowIds())));
         refreshWindowButton.setOnAction(event -> refreshWindowPanel());
 
         HBox formRow = new HBox(8,
-                new Label("窗口ID"), windowIdField,
+                new Label("窗口ID/前缀"), windowIdField,
                 new Label("角色名"), windowRoleNameField,
                 new Label("身份"), windowRoleComboBox,
                 new Label("任务"), windowTaskTypeComboBox,
                 registerWindowButton);
+
+        HBox batchRow = new HBox(8,
+                new Label("队伍窗口数"), windowBatchCountField,
+                registerTeamButton,
+                new Label("快速注册会生成：第1个队长，其余队员"));
 
         HBox actionRow = new HBox(8,
                 refreshWindowButton,
                 startByRoleButton,
                 startWindowSelectedTaskButton,
                 stopSelectedWindowsButton,
-                stopAllWindowsButton);
+                stopAllWindowsButton,
+                unregisterSelectedWindowsButton);
 
         windowTable.setPrefHeight(185);
         VBox wrapper = new VBox(6,
                 new Label("多窗口控制"),
                 windowSystemLabel,
                 formRow,
+                batchRow,
                 actionRow,
                 windowTable);
         wrapper.setPadding(new Insets(0, 0, 8, 0));
@@ -321,14 +345,14 @@ public class MainWindowController {
 
     private void startSelectedTasksInBackground() {
         if (taskControlService.isRunning()) {
-            logList.getItems().add(0, "当前已有任务正在运行，请勿重复开始。");
+            addWindowLog("当前已有单窗口任务正在运行，请勿重复开始。");
             refreshDashboard();
             return;
         }
 
         List<String> selectedTaskCodes = getSelectedTaskCodesFromUi();
         if (selectedTaskCodes.isEmpty()) {
-            logList.getItems().add(0, "没有勾选任何任务，无法开始。");
+            addWindowLog("没有勾选任何任务，无法开始。");
             return;
         }
 
@@ -514,6 +538,53 @@ public class MainWindowController {
         handleWindowCommandResult(windowTaskControlService.registerWindows(List.of(request)));
     }
 
+    private void registerTeamFromUi() {
+        String prefix = normalizeWindowPrefix(windowIdField.getText());
+        String roleNamePrefix = normalizeRoleNamePrefix(windowRoleNameField.getText());
+        int count = parsePositiveInt(windowBatchCountField.getText(), 5);
+        List<WindowRegistrationRequest> requests = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            WindowRole role = i == 1 ? WindowRole.LEADER : WindowRole.MEMBER;
+            TaskType taskType = i == 1 ? windowTaskTypeComboBox.getValue() : TaskType.AUTO_BATTLE;
+            requests.add(WindowRegistrationRequest.of(prefix + "-" + i, role, roleNamePrefix + i, taskType));
+        }
+        handleWindowCommandResult(windowTaskControlService.registerWindows(requests));
+    }
+
+    private String normalizeWindowPrefix(String text) {
+        if (text == null || text.isBlank()) {
+            return "window";
+        }
+        String value = text.trim();
+        int dashIndex = value.lastIndexOf('-');
+        if (dashIndex > 0 && dashIndex < value.length() - 1 && value.substring(dashIndex + 1).chars().allMatch(Character::isDigit)) {
+            return value.substring(0, dashIndex);
+        }
+        return value;
+    }
+
+    private String normalizeRoleNamePrefix(String text) {
+        if (text == null || text.isBlank()) {
+            return "角色";
+        }
+        String value = text.trim();
+        int lastDigitStart = value.length();
+        while (lastDigitStart > 0 && Character.isDigit(value.charAt(lastDigitStart - 1))) {
+            lastDigitStart--;
+        }
+        String prefix = value.substring(0, lastDigitStart);
+        return prefix.isBlank() ? "角色" : prefix;
+    }
+
+    private int parsePositiveInt(String text, int defaultValue) {
+        try {
+            int value = Integer.parseInt(text == null ? "" : text.trim());
+            return Math.max(value, 1);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     private void runWindowCommandInBackground(WindowCommand command) {
         setWindowButtonsDisabled(true);
         Thread worker = new Thread(() -> {
@@ -537,6 +608,9 @@ public class MainWindowController {
         if (registerWindowButton != null) {
             registerWindowButton.setDisable(disabled);
         }
+        if (registerTeamButton != null) {
+            registerTeamButton.setDisable(disabled);
+        }
         if (startByRoleButton != null) {
             startByRoleButton.setDisable(disabled);
         }
@@ -548,6 +622,9 @@ public class MainWindowController {
         }
         if (stopAllWindowsButton != null) {
             stopAllWindowsButton.setDisable(disabled);
+        }
+        if (unregisterSelectedWindowsButton != null) {
+            unregisterSelectedWindowsButton.setDisable(disabled);
         }
         if (refreshWindowButton != null) {
             refreshWindowButton.setDisable(disabled);
@@ -579,9 +656,21 @@ public class MainWindowController {
     }
 
     private void addWindowLog(String message) {
-        if (logList != null && message != null && !message.isBlank()) {
-            logList.getItems().add(0, "[多窗口] " + message);
+        if (message == null || message.isBlank()) {
+            return;
         }
+        String line = "[" + LocalTime.now().format(UI_LOG_TIME_FORMATTER) + "] [多窗口] " + message;
+        windowCommandLogs.add(0, line);
+        while (windowCommandLogs.size() > MAX_WINDOW_COMMAND_LOGS) {
+            windowCommandLogs.remove(windowCommandLogs.size() - 1);
+        }
+        if (logList != null) {
+            renderLogList(List.of());
+        }
+    }
+
+    private void clearWindowLogs() {
+        windowCommandLogs.clear();
     }
 
     private void refreshDashboard() {
@@ -608,7 +697,13 @@ public class MainWindowController {
             return;
         }
         WindowSystemSnapshot snapshot = windowTaskControlService.getSystemSnapshot();
+        List<String> selectedWindowIds = getSelectedWindowIds();
         windowTable.getItems().setAll(snapshot.getWindows());
+        for (WindowTaskSnapshot window : windowTable.getItems()) {
+            if (selectedWindowIds.contains(window.getWindowId())) {
+                windowTable.getSelectionModel().select(window);
+            }
+        }
         windowSystemLabel.setText("窗口：已注册 " + snapshot.getRegisteredWindowCount()
                 + " / " + snapshot.getMaxWindowCount()
                 + " | 运行中 " + snapshot.getRunningWindowCount()
@@ -636,7 +731,12 @@ public class MainWindowController {
     }
 
     private void refreshLogList(List<TaskLogView> logs) {
+        renderLogList(logs);
+    }
+
+    private void renderLogList(List<TaskLogView> logs) {
         logList.getItems().clear();
+        logList.getItems().addAll(windowCommandLogs);
         for (TaskLogView log : logs) {
             String taskText = log.getTaskCode() == null || log.getTaskCode().isBlank()
                     ? ""
