@@ -8,6 +8,7 @@ import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.extern.slf4j.Slf4j;
 
@@ -72,6 +73,16 @@ public class WindowTaskRunner {
         windowContext.markQueued(taskType);
         executor.execute(futureTask);
         return true;
+    }
+
+    public void refreshRegistration(WindowRegistrationRequest request) {
+        if (request == null) {
+            return;
+        }
+        windowContext.updateRole(request.getRole(), request.getRoleName());
+        if (!isRunning()) {
+            windowContext.setSelectedTaskType(request.getSelectedTaskType());
+        }
     }
 
     public void stopCurrentTask() {
