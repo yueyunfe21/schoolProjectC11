@@ -3,14 +3,12 @@ package com.bot.dhxy.ui;
 import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.runner.TaskControlService;
 import com.bot.dhxy.runner.TaskRunRequest;
-import com.bot.dhxy.service.GameWindowService;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
-import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
@@ -45,7 +43,6 @@ public class MainWindowController {
     private final TaskViewService taskViewService;
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
-    private final GameWindowService gameWindowService;
 
     /**
      * 这些 JavaFX 控件不能在 Spring 创建 Bean 时初始化。
@@ -177,14 +174,11 @@ public class MainWindowController {
             return;
         }
 
-        boolean loop = loopCheckBox.isSelected();
-        boolean testMode = testModeCheckBox.isSelected();
-        boolean initGameWindow = initGameWindowCheckBox.isSelected();
         TaskRunRequest request = TaskRunRequest.builder()
                 .taskCodes(selectedTaskCodes)
-                .loop(loop)
-                .testMode(testMode)
-                .initGameWindow(initGameWindow)
+                .loop(loopCheckBox.isSelected())
+                .testMode(testModeCheckBox.isSelected())
+                .initGameWindow(initGameWindowCheckBox.isSelected())
                 .build();
 
         startButton.setDisable(true);
@@ -193,21 +187,9 @@ public class MainWindowController {
         updateStatusLabel();
         Thread worker = new Thread(() -> {
             try {
-                if (request.isInitGameWindow()) {
-                    boolean ready = gameWindowService.initGameWindow();
-                    if (!ready) {
-                        Platform.runLater(() -> {
-                            logList.getItems().add(0, "游戏窗口初始化失败，任务未启动。");
-                            updateRunningStateControls();
-                            refreshDashboard();
-                        });
-                        return;
-                    }
-                }
-
                 taskControlService.startTasks(request);
             } finally {
-                Platform.runLater(() -> {
+                javafx.application.Platform.runLater(() -> {
                     updateRunningStateControls();
                     refreshDashboard();
                 });
