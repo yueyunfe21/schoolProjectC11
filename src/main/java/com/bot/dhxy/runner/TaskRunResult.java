@@ -33,6 +33,11 @@ public class TaskRunResult {
     private final TaskRunRequest request;
 
     /**
+     * 本次实际执行计划。
+     */
+    private final TaskExecutionPlan plan;
+
+    /**
      * 任务执行汇总。
      */
     private final TaskRunSummary summary;
@@ -47,12 +52,32 @@ public class TaskRunResult {
                 .build();
     }
 
+    public static TaskRunResult rejected(TaskRunStatus status, String message, TaskRunRequest request, TaskExecutionPlan plan) {
+        return TaskRunResult.builder()
+                .accepted(false)
+                .status(status)
+                .message(message)
+                .request(request)
+                .plan(plan)
+                .summary(new TaskRunSummary())
+                .build();
+    }
+
     public static TaskRunResult accepted(TaskRunStatus status, String message, TaskRunRequest request, TaskRunSummary summary) {
+        return accepted(status, message, request, null, summary);
+    }
+
+    public static TaskRunResult accepted(TaskRunStatus status,
+                                         String message,
+                                         TaskRunRequest request,
+                                         TaskExecutionPlan plan,
+                                         TaskRunSummary summary) {
         return TaskRunResult.builder()
                 .accepted(true)
                 .status(status)
                 .message(message)
                 .request(request)
+                .plan(plan)
                 .summary(summary == null ? new TaskRunSummary() : summary)
                 .build();
     }
@@ -62,6 +87,7 @@ public class TaskRunResult {
                 + " | status=" + status
                 + " | message=" + message
                 + " | request=" + (request == null ? "-" : request.toLogText())
+                + " | plan=" + (plan == null ? "-" : plan.toLogText())
                 + " | summary=" + (summary == null ? "-" : summary.toLogText());
     }
 }
