@@ -2,7 +2,6 @@ package com.bot.dhxy.ui;
 
 import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.runner.TaskControlService;
-import com.bot.dhxy.runner.TaskRunRequest;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
@@ -34,24 +33,18 @@ import java.util.Map;
 /**
  * JavaFX 主界面控制器。
  *
- * 当前提供基础界面骨架：任务勾选、运行选项、开始/停止按钮、任务记录表、日志列表。
- * 后面再逐步接入更完整的界面样式。
+ * 只负责界面构建、读取 UI 状态、刷新展示。
+ * 任务开始/停止/清空动作统一交给 TaskUiActionService。
  */
 @Component
 @RequiredArgsConstructor
 public class MainWindowController {
 
     private final TaskViewService taskViewService;
+    private final TaskUiActionService taskUiActionService;
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
 
-    /**
-     * 这些 JavaFX 控件不能在 Spring 创建 Bean 时初始化。
-     *
-     * 原因：Spring 容器启动时 JavaFX Toolkit 还没有初始化，
-     * 如果在字段里直接 new VBox/TableView/ListView，会触发 Toolkit not initialized。
-     * 所以这里只声明，真正创建放到 buildView() 里。
-     */
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
     private ListView<String> logList;
@@ -111,12 +104,12 @@ public class MainWindowController {
 
         refreshButton.setOnAction(event -> refreshDashboard());
         clearButton.setOnAction(event -> {
-            taskControlService.clearRuntimeLogs();
+            taskUiActionService.clearFromUi();
             refreshDashboard();
         });
         startButton.setOnAction(event -> startSelectedTasksInBackground());
         stopButton.setOnAction(event -> {
-            taskControlService.stop();
+            taskUiActionService.stopFromUi();
             refreshDashboard();
         });
 
@@ -189,20 +182,19 @@ public class MainWindowController {
             return;
         }
 
-        TaskRunRequest request = TaskRunRequest.builder()
-                .taskCodes(selectedTaskCodes)
-                .loop(loopCheckBox.isSelected())
-                .testMode(testModeCheckBox.isSelected())
-                .initGameWindow(initGameWindowCheckBox.isSelected())
-                .build();
-
         lockRunOptions(true);
         startButton.setDisable(true);
         stopButton.setDisable(false);
         clearButton.setDisable(true);
+
         Thread worker = new Thread(() -> {
             try {
-                taskControlService.startTasks(request);
+                taskUiActionService.startFromUi(
+                        selectedTaskCodes,
+                        loopCheckBox.isSelected(),
+                        testModeCheckBox.isSelected(),
+                        initGameWindowCheckBox.isSelected()
+                );
             } finally {
                 javafx.application.Platform.runLater(this::refreshDashboard);
             }
@@ -220,16 +212,11 @@ public class MainWindowController {
         autoRefreshTimeline.play();
     }
 
-    /**
-     * 窗口关闭前调用。
-     *
-     * 作用：停止自动刷新计时器，并请求停止任务队列。
-     */
     public void shutdownUi() {
         if (autoRefreshTimeline != null) {
             autoRefreshTimeline.stop();
         }
-        taskControlService.stop();
+        taskUiActionService.stopFromUi();
     }
 
     private void applyRuntimeControls(TaskRuntimeStateView runtimeState) {
