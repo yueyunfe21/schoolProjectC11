@@ -36,19 +36,19 @@ public class WindowAwareInputCoordinator {
 
     public void runInput(String actionName, Runnable action) {
         globalInputLock.runWithLock(() -> {
-            focusCurrentWindow(actionName);
+            focusCurrentWindowWithoutLock(actionName);
             action.run();
         });
     }
 
     public <T> T callInput(String actionName, Supplier<T> action) {
         return globalInputLock.callWithLock(() -> {
-            focusCurrentWindow(actionName);
+            focusCurrentWindowWithoutLock(actionName);
             return action.get();
         });
     }
 
-    private void focusCurrentWindow(String actionName) {
+    private void focusCurrentWindowWithoutLock(String actionName) {
         Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.current();
         if (contextOptional.isEmpty()) {
             return;
@@ -57,7 +57,7 @@ public class WindowAwareInputCoordinator {
         if (!context.hasNativeBinding()) {
             return;
         }
-        boolean focused = windowFocusService.focus(context.getNativeBinding());
+        boolean focused = windowFocusService.focusWithoutLock(context.getNativeBinding());
         if (!focused) {
             log.debug("输入前窗口激活失败：windowId={} action={}", context.getWindowId(), actionName);
         }
