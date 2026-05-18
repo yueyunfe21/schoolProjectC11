@@ -63,6 +63,9 @@ public class InputActionWorker {
                                     request.getWindowId(), request.getDescription());
                             return false;
                         }
+                        if (request.hasExclusiveCallback()) {
+                            return Boolean.TRUE.equals(request.getExclusiveCallback().get());
+                        }
                         for (InputAction action : request.getActions()) {
                             execute(action);
                         }
