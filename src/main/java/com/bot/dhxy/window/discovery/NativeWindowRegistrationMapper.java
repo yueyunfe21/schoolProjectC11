@@ -1,8 +1,8 @@
 package com.bot.dhxy.window.discovery;
 
 import com.bot.dhxy.task.model.TaskType;
-import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +12,37 @@ import java.util.List;
 @Component
 public class NativeWindowRegistrationMapper {
 
+    /**
+     * 正式扫描注册逻辑：每个真实游戏窗口都是一个独立角色。
+     *
+     * window 层不判断队长/队员，也不默认第一个窗口是队长。
+     * 后续是否队长、是否继续执行，由具体任务内部根据游戏状态自己判断。
+     */
+    public List<WindowRegistrationRequest> toIndependentRegistrationRequests(List<NativeWindowInfo> windows, TaskType taskType) {
+        List<WindowRegistrationRequest> requests = new ArrayList<>();
+        if (windows == null || windows.isEmpty()) {
+            return requests;
+        }
+        TaskType safeTaskType = normalizeTask(taskType);
+        for (NativeWindowInfo window : windows) {
+            if (window == null) {
+                continue;
+            }
+            requests.add(WindowRegistrationRequest.of(
+                    window.toWindowId(),
+                    WindowRole.UNKNOWN,
+                    window.toDisplayName(),
+                    safeTaskType,
+                    toBinding(window)
+            ));
+        }
+        return requests;
+    }
+
+    /**
+     * @deprecated 仅保留给旧的“测试按身份启动”流程。正式流程请使用 toIndependentRegistrationRequests。
+     */
+    @Deprecated
     public List<WindowRegistrationRequest> toRegistrationRequests(List<NativeWindowInfo> windows, TaskType leaderTaskType) {
         List<WindowRegistrationRequest> requests = new ArrayList<>();
         if (windows == null || windows.isEmpty()) {
@@ -47,6 +78,10 @@ public class NativeWindowRegistrationMapper {
                 window.getWidth(),
                 window.getHeight()
         );
+    }
+
+    private TaskType normalizeTask(TaskType taskType) {
+        return taskType == null ? TaskType.UNKNOWN : taskType;
     }
 
     private TaskType normalizeLeaderTask(TaskType taskType) {
