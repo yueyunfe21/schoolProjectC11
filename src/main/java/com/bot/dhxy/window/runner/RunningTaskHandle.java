@@ -25,36 +25,28 @@ public class RunningTaskHandle {
                              TaskStopToken stopToken,
                              Future<?> future) {
         this.windowId = windowId;
-        this.taskType = taskType;
+        this.taskType = taskType == null ? TaskType.UNKNOWN : taskType;
         this.task = task;
         this.stopToken = stopToken;
         this.future = future;
         this.startedAt = LocalDateTime.now();
     }
 
-    public String getWindowId() {
-        return windowId;
-    }
+    public String getWindowId() { return windowId; }
 
-    public TaskType getTaskType() {
-        return taskType;
-    }
+    public TaskType getTaskType() { return taskType; }
 
-    public GameTask getTask() {
-        return task;
-    }
+    public GameTask getTask() { return task; }
 
-    public TaskStopToken getStopToken() {
-        return stopToken;
-    }
+    public TaskStopToken getStopToken() { return stopToken; }
 
-    public Future<?> getFuture() {
-        return future;
-    }
+    public Future<?> getFuture() { return future; }
 
-    public LocalDateTime getStartedAt() {
-        return startedAt;
-    }
+    public LocalDateTime getStartedAt() { return startedAt; }
+
+    public boolean isDone() { return future == null || future.isDone(); }
+
+    public boolean isRunning() { return future != null && !future.isDone(); }
 
     public void requestStop(String reason) {
         if (stopToken != null) {
