@@ -33,9 +33,30 @@ public class WindowFocusService {
     }
 
     private WinDef.HWND toHwnd(String handleText) {
+        Long value = parseHandleValue(handleText);
+        if (value == null || value <= 0) {
+            return null;
+        }
+        return new WinDef.HWND(new Pointer(value));
+    }
+
+    private Long parseHandleValue(String handleText) {
+        if (handleText == null || handleText.isBlank()) {
+            return null;
+        }
+        String value = handleText.trim();
         try {
-            long value = Long.parseUnsignedLong(handleText, 16);
-            return new WinDef.HWND(new Pointer(value));
+            if (value.startsWith("0x") || value.startsWith("0X")) {
+                return Long.parseUnsignedLong(value.substring(2), 16);
+            }
+            if (value.matches(".*[a-fA-F].*")) {
+                return Long.parseUnsignedLong(value, 16);
+            }
+            try {
+                return Long.parseUnsignedLong(value);
+            } catch (NumberFormatException ignored) {
+                return Long.parseUnsignedLong(value, 16);
+            }
         } catch (Exception e) {
             return null;
         }
