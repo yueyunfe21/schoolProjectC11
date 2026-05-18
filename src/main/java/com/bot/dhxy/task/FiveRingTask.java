@@ -48,6 +48,11 @@ public class FiveRingTask implements GameTask {
 
     private static final int MAX_RETRY = 5;
 
+    private enum HandoverState {
+        ALREADY_RUNNING,
+        NEED_SETUP
+    }
+
     @Override
     public String getTaskCode() {
         return "wuhuan";
@@ -73,6 +78,7 @@ public class FiveRingTask implements GameTask {
 
         TaskExecutionContext executionContext = buildStepExecutionContext();
         AtomicReference<Integer> shoeBagIndexRef = new AtomicReference<>();
+        AtomicReference<HandoverState> handoverStateRef = new AtomicReference<>();
 
         TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, shoeBagIndexRef);
         if (prepareResult == TaskStepResult.STOPPED) {
@@ -85,15 +91,20 @@ public class FiveRingTask implements GameTask {
             return TaskRunResult.FAILED;
         }
 
-        boolean needTaskSync = true;
+        TaskStepResult handoverResult = executeDetectHandoverStep(executionContext, handoverStateRef);
+        if (handoverResult == TaskStepResult.STOPPED) {
+            log.info("🎉 五环任务在中途接管侦测阶段停止");
+            return TaskRunResult.STOPPED;
+        }
+        if (handoverResult != TaskStepResult.SUCCESS || handoverStateRef.get() == null) {
+            log.error("❌ 五环中途接管侦测失败，任务终止！");
+            context.setBotStatus(GameContext.BotStatus.ERROR);
+            return TaskRunResult.FAILED;
+        }
 
-        log.info("▶️ 阶段一：正在进行【中途接管】侦测...");
-        boolean isTaskAlreadyRunning = questManager.activateTaskIfPresent("wuhuan");
+        boolean needTaskSync = handoverStateRef.get() != HandoverState.ALREADY_RUNNING;
 
-        if (isTaskAlreadyRunning) {
-            log.info("✅ 侦测到五环任务已经在列表中！切入无缝接管模式！");
-            needTaskSync = false;
-        } else {
+        if (handoverStateRef.get() == HandoverState.NEED_SETUP) {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
             TaskStepResult setupResult = executeSetupInitialTaskStep(executionContext);
             if (setupResult == TaskStepResult.STOPPED) {
@@ -221,6 +232,40 @@ public class FiveRingTask implements GameTask {
             log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", shoeBagIndex + 1);
         } else {
             log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
+        }
+
+        return TaskStepResult.SUCCESS;
+    }
+
+    private TaskStepResult executeDetectHandoverStep(TaskExecutionContext executionContext, AtomicReference<HandoverState> handoverStateRef) {
+        TaskStep handoverStep = new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return detectHandover(context, handoverStateRef);
+            }
+
+            @Override
+            public String getStepName() {
+                return "五环中途接管侦测";
+            }
+        };
+        return taskStepExecutor.execute(executionContext, handoverStep, TaskRetryPolicy.none());
+    }
+
+    private TaskStepResult detectHandover(TaskExecutionContext executionContext, AtomicReference<HandoverState> handoverStateRef) {
+        if (executionContext != null) {
+            executionContext.throwIfStopRequested();
+        }
+
+        log.info("▶️ 阶段一：正在进行【中途接管】侦测...");
+        boolean isTaskAlreadyRunning = questManager.activateTaskIfPresent("wuhuan");
+
+        if (isTaskAlreadyRunning) {
+            log.info("✅ 侦测到五环任务已经在列表中！切入无缝接管模式！");
+            handoverStateRef.set(HandoverState.ALREADY_RUNNING);
+        } else {
+            log.info("🧭 未发现进行中的五环，需要先接取初始任务");
+            handoverStateRef.set(HandoverState.NEED_SETUP);
         }
 
         return TaskStepResult.SUCCESS;
