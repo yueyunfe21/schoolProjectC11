@@ -14,6 +14,7 @@ public class TaskRuntimeStateView {
     private final String statusText;
     private final String startedAt;
     private final String finishedAt;
+    private final String elapsedText;
     private final String requestText;
     private final String summaryText;
 }
