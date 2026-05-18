@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Windows 顶层窗口扫描实现。
@@ -17,20 +18,18 @@ import java.util.Locale;
 @Component
 public class WindowsNativeWindowScanner implements NativeWindowScanner {
 
-    /**
-     * 游戏窗口标题关键词。
-     *
-     * 注意：不要使用 dhxy 作为关键词，因为浏览器页面标题、控制台标题、项目名都可能包含 DHXY，容易误判。
-     */
     private static final String[] GAME_TITLE_KEYWORDS = {
-            "大话西游", "大话西游2", "xy2", "xy3", "西游"
+            "大话西游", "大话西游2", "西游"
     };
 
     /**
-     * 明显不是游戏窗口的标题 / className 关键词。
+     * xy2 / xy3 只允许作为独立词出现，避免 DHXY2Robot 这种项目窗口被误判。
      */
+    private static final Pattern GAME_CODE_PATTERN = Pattern.compile("(^|[^a-z0-9])xy[23]([^a-z0-9]|$)");
+
     private static final String[] EXCLUDED_WINDOW_KEYWORDS = {
             "dhxy robot",
+            "dhxy2robot",
             "robot 控制台",
             "控制台",
             "google chrome",
@@ -40,6 +39,8 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
             "github",
             "codex",
             "任务执行流程",
+            "diff for file",
+            ".java",
             "chatgpt",
             "microsoft edge",
             "edge"
@@ -118,7 +119,7 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
         if (containsAny(text, EXCLUDED_WINDOW_KEYWORDS)) {
             return false;
         }
-        return containsAny(text, GAME_TITLE_KEYWORDS);
+        return containsAny(text, GAME_TITLE_KEYWORDS) || GAME_CODE_PATTERN.matcher(text).find();
     }
 
     private boolean containsAny(String text, String[] keywords) {
