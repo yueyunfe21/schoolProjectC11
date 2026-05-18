@@ -3,6 +3,7 @@ package com.bot.dhxy.window.runner;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.runtime.WindowNativeBinding;
 
 import java.time.LocalDateTime;
 
@@ -24,6 +25,7 @@ public class WindowTaskSnapshot {
     private final LocalDateTime lastStartedAt;
     private final LocalDateTime lastFinishedAt;
     private final String lastMessage;
+    private final WindowNativeBinding nativeBinding;
 
     public WindowTaskSnapshot(String windowId,
                               String roleName,
@@ -36,6 +38,22 @@ public class WindowTaskSnapshot {
                               LocalDateTime lastStartedAt,
                               LocalDateTime lastFinishedAt,
                               String lastMessage) {
+        this(windowId, roleName, role, status, selectedTaskType, runningTaskType, running,
+                taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, WindowNativeBinding.empty());
+    }
+
+    public WindowTaskSnapshot(String windowId,
+                              String roleName,
+                              WindowRole role,
+                              WindowRuntimeStatus status,
+                              TaskType selectedTaskType,
+                              TaskType runningTaskType,
+                              boolean running,
+                              LocalDateTime taskStartedAt,
+                              LocalDateTime lastStartedAt,
+                              LocalDateTime lastFinishedAt,
+                              String lastMessage,
+                              WindowNativeBinding nativeBinding) {
         this.windowId = windowId;
         this.roleName = roleName;
         this.role = role == null ? WindowRole.UNKNOWN : role;
@@ -47,6 +65,7 @@ public class WindowTaskSnapshot {
         this.lastStartedAt = lastStartedAt;
         this.lastFinishedAt = lastFinishedAt;
         this.lastMessage = lastMessage;
+        this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
     }
 
     public String getWindowId() { return windowId; }
@@ -72,6 +91,20 @@ public class WindowTaskSnapshot {
     public LocalDateTime getLastFinishedAt() { return lastFinishedAt; }
 
     public String getLastMessage() { return lastMessage; }
+
+    public WindowNativeBinding getNativeBinding() { return nativeBinding; }
+
+    public String getNativeHandle() { return nativeBinding.getNativeHandle(); }
+
+    public String getNativeTitle() { return nativeBinding.getTitle(); }
+
+    public String getNativeClassName() { return nativeBinding.getClassName(); }
+
+    public long getNativeProcessId() { return nativeBinding.getProcessId(); }
+
+    public String getGeometryText() { return nativeBinding.getGeometryText(); }
+
+    public boolean hasNativeBinding() { return nativeBinding.hasNativeHandle(); }
 
     public String getRoleDisplayName() { return role.getDisplayName(); }
 
