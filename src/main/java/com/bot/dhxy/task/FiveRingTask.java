@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 @RequiredArgsConstructor
@@ -71,18 +72,17 @@ public class FiveRingTask implements GameTask {
         log.info("====================================");
 
         TaskExecutionContext executionContext = buildStepExecutionContext();
+        AtomicReference<Integer> shoeBagIndexRef = new AtomicReference<>();
 
-        playerStateService.syncAll();
-        context.setBotStatus(GameContext.BotStatus.RUNNING);
-        uiCleanerService.cleanUpAll();
-        playerStateService.ensureSheYaoXiangActive();
-        log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
-        Integer shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
-
-        if (shoeBagIndex != null) {
-            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", shoeBagIndex + 1);
-        } else {
-            log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
+        TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, shoeBagIndexRef);
+        if (prepareResult == TaskStepResult.STOPPED) {
+            log.info("🎉 五环任务在战前准备阶段停止");
+            return TaskRunResult.STOPPED;
+        }
+        if (prepareResult != TaskStepResult.SUCCESS) {
+            log.error("❌ 五环战前准备失败，任务终止！");
+            context.setBotStatus(GameContext.BotStatus.ERROR);
+            return TaskRunResult.FAILED;
         }
 
         boolean needTaskSync = true;
@@ -123,7 +123,7 @@ public class FiveRingTask implements GameTask {
                 continue;
             }
 
-            boolean hasDialogProcessed = dialogService.handleDialog(null, null, KEY_ITEM_NAME, shoeBagIndex);
+            boolean hasDialogProcessed = dialogService.handleDialog(null, null, KEY_ITEM_NAME, shoeBagIndexRef.get());
             if (hasDialogProcessed) {
                 log.info("💬 成功粉碎了一个对话框！");
                 continue;
@@ -186,6 +186,44 @@ public class FiveRingTask implements GameTask {
         }
         log.info("🎉 印钞机停机！");
         return TaskRunResult.STOPPED;
+    }
+
+    private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, AtomicReference<Integer> shoeBagIndexRef) {
+        TaskStep prepareStep = new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return prepareBeforeRun(context, shoeBagIndexRef);
+            }
+
+            @Override
+            public String getStepName() {
+                return "五环战前准备";
+            }
+        };
+        return taskStepExecutor.execute(executionContext, prepareStep, TaskRetryPolicy.none());
+    }
+
+    private TaskStepResult prepareBeforeRun(TaskExecutionContext executionContext, AtomicReference<Integer> shoeBagIndexRef) {
+        if (executionContext != null) {
+            executionContext.throwIfStopRequested();
+        }
+
+        playerStateService.syncAll();
+        context.setBotStatus(GameContext.BotStatus.RUNNING);
+        uiCleanerService.cleanUpAll();
+        playerStateService.ensureSheYaoXiangActive();
+
+        log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
+        Integer shoeBagIndex = bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME);
+        shoeBagIndexRef.set(shoeBagIndex);
+
+        if (shoeBagIndex != null) {
+            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", shoeBagIndex + 1);
+        } else {
+            log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
+        }
+
+        return TaskStepResult.SUCCESS;
     }
 
     private TaskStepResult executeSetupInitialTaskStep(TaskExecutionContext executionContext) {
