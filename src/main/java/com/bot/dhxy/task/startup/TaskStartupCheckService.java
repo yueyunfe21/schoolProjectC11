@@ -2,6 +2,7 @@ package com.bot.dhxy.task.startup;
 
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.team.TeamRoleDetectionService;
+import com.bot.dhxy.team.TeamRoleStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -22,18 +23,24 @@ public class TaskStartupCheckService {
     }
 
     public TaskStartupCheckResult checkFiveRing(TaskExecutionContext context) {
+        TeamRoleStatus role = teamRoleDetectionService.detectCurrentRole(context);
         if (!teamRoleDetectionService.shouldRunFiveRing(context)) {
-            String prefix = context == null ? "五环" : context.getLogPrefix();
-            return TaskStartupCheckResult.skip(prefix + " 当前角色不是五环执行者，跳过五环任务");
+            return TaskStartupCheckResult.skip(buildReason(context, "五环", role, "当前角色不是五环执行者，跳过五环任务"));
         }
-        return TaskStartupCheckResult.allow("五环前置判断通过");
+        return TaskStartupCheckResult.allow(buildReason(context, "五环", role, "允许执行"));
     }
 
     public TaskStartupCheckResult checkAutoBattle(TaskExecutionContext context) {
+        TeamRoleStatus role = teamRoleDetectionService.detectCurrentRole(context);
         if (!teamRoleDetectionService.shouldRunAutoBattle(context)) {
-            String prefix = context == null ? "自动战斗" : context.getLogPrefix();
-            return TaskStartupCheckResult.skip(prefix + " 当前角色不需要自动战斗，跳过自动战斗任务");
+            return TaskStartupCheckResult.skip(buildReason(context, "自动战斗", role, "当前角色不需要自动战斗，跳过自动战斗任务"));
         }
-        return TaskStartupCheckResult.allow("自动战斗前置判断通过");
+        return TaskStartupCheckResult.allow(buildReason(context, "自动战斗", role, "允许执行"));
+    }
+
+    private String buildReason(TaskExecutionContext context, String taskName, TeamRoleStatus role, String message) {
+        String prefix = context == null ? taskName : context.getLogPrefix();
+        TeamRoleStatus safeRole = role == null ? TeamRoleStatus.UNKNOWN : role;
+        return prefix + " | role=" + safeRole.name() + " | " + message;
     }
 }
