@@ -8,6 +8,7 @@ import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.runtime.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.extern.slf4j.Slf4j;
@@ -171,11 +172,20 @@ public class WindowTaskRunner {
     }
 
     private TaskExecutionContext buildExecutionContext(GameTask task, TaskStopToken stopToken) {
+        WindowNativeBinding binding = windowContext.getNativeBinding();
         return TaskExecutionContext.builder()
                 .taskCode(task.getTaskCode())
                 .taskName(task.getTaskName())
                 .windowId(windowContext.getWindowId())
                 .windowRole(windowContext.getRole().name())
+                .nativeWindowHandle(binding.getNativeHandle())
+                .nativeWindowTitle(binding.getTitle())
+                .nativeWindowClassName(binding.getClassName())
+                .nativeWindowProcessId(binding.getProcessId())
+                .nativeWindowX(binding.getX())
+                .nativeWindowY(binding.getY())
+                .nativeWindowWidth(binding.getWidth())
+                .nativeWindowHeight(binding.getHeight())
                 .stopToken(stopToken)
                 .startedAt(LocalDateTime.now())
                 .build();
