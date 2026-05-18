@@ -26,6 +26,7 @@ public class TaskControlService {
     private final TaskLogService taskLogService;
     private final TaskRunProperties taskRunProperties;
     private final GameWindowService gameWindowService;
+    private final TaskPlanService taskPlanService;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean stopping = new AtomicBoolean(false);
@@ -49,11 +50,12 @@ public class TaskControlService {
     }
 
     public TaskRunResult startTasks(TaskRunRequest request) {
-        if (request == null || request.isEmpty()) {
-            return rejectStart(request, "启动被拒绝：没有有效任务");
+        TaskExecutionPlan plan = taskPlanService.buildPlan(request);
+        if (plan.isEmpty()) {
+            return rejectStart(request, plan, "启动被拒绝：没有可执行任务");
         }
         if (!running.compareAndSet(false, true)) {
-            return rejectStart(request, "启动被拒绝：当前已有任务正在运行");
+            return rejectStart(request, plan, "启动被拒绝：当前已有任务正在运行");
         }
 
         stopping.set(false);
@@ -63,27 +65,29 @@ public class TaskControlService {
         TaskRunSummary summary = new TaskRunSummary();
         try {
             log.info("接收到任务启动请求: {}", request.toLogText());
+            log.info("生成任务执行计划: {}", plan.toLogText());
             taskLogService.info(null, null, "接收到任务启动请求: " + request.toLogText());
+            taskLogService.info(null, null, "生成任务执行计划: " + plan.toLogText());
 
-            if (!prepareBeforeRun(request, startedAt, summary)) {
-                return TaskRunResult.accepted(TaskRunStatus.FAILED, "启动失败：游戏窗口初始化失败", request, summary);
+            if (!prepareBeforeRun(plan, startedAt, summary)) {
+                return TaskRunResult.accepted(TaskRunStatus.FAILED, "启动失败：游戏窗口初始化失败", request, plan, summary);
             }
 
             runtimeState = buildState(TaskRunStatus.RUNNING, true, false, request, null, startedAt, null, "运行中：任务队列执行中");
-            TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
-            summary = taskRunner.run(queue, request.isTestMode());
+            TaskQueue queue = new TaskQueue(plan.getTaskCodes(), plan.isLoop());
+            summary = taskRunner.run(queue, plan.isTestMode());
 
             boolean stopped = stopping.get();
             TaskRunStatus finalStatus = stopped ? TaskRunStatus.STOPPED : TaskRunStatus.COMPLETED;
             String finalMessage = stopped ? "空闲：任务队列已停止" : "空闲：任务队列执行完毕";
             runtimeState = buildState(finalStatus, false, false, request, summary, startedAt, LocalDateTime.now(), finalMessage);
-            return TaskRunResult.accepted(finalStatus, finalMessage, request, summary);
+            return TaskRunResult.accepted(finalStatus, finalMessage, request, plan, summary);
         } catch (Exception e) {
             String message = "异常结束：" + e.getClass().getSimpleName();
             log.error("任务启动或执行流程发生异常。", e);
             taskLogService.fail(null, null, "任务启动或执行流程发生异常: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             runtimeState = buildState(TaskRunStatus.FAILED, false, false, request, summary, startedAt, LocalDateTime.now(), message);
-            return TaskRunResult.accepted(TaskRunStatus.FAILED, message, request, summary);
+            return TaskRunResult.accepted(TaskRunStatus.FAILED, message, request, plan, summary);
         } finally {
             stopping.set(false);
             running.set(false);
@@ -122,7 +126,7 @@ public class TaskControlService {
         return TaskRunResult.accepted(TaskRunStatus.STOPPING, message, runtimeState.getCurrentRequest(), runtimeState.getLastSummary());
     }
 
-    private TaskRunResult rejectStart(TaskRunRequest request, String message) {
+    private TaskRunResult rejectStart(TaskRunRequest request, TaskExecutionPlan plan, String message) {
         log.warn(message);
         taskLogService.warn(null, null, message);
         runtimeState = TaskRuntimeState.builder()
@@ -135,11 +139,12 @@ public class TaskControlService {
                 .finishedAt(runtimeState.getFinishedAt())
                 .statusText(message)
                 .build();
-        return TaskRunResult.rejected(TaskRunStatus.REJECTED, message, request);
+        return TaskRunResult.rejected(TaskRunStatus.REJECTED, message, request, plan);
     }
 
-    private boolean prepareBeforeRun(TaskRunRequest request, LocalDateTime startedAt, TaskRunSummary summary) {
-        if (!request.isInitGameWindow()) {
+    private boolean prepareBeforeRun(TaskExecutionPlan plan, LocalDateTime startedAt, TaskRunSummary summary) {
+        TaskRunRequest request = plan.getRequest();
+        if (!plan.isInitGameWindow()) {
             log.warn("本次任务启动请求跳过游戏窗口初始化，仅适合测试任务队列或 UI。");
             taskLogService.warn(null, null, "本次任务启动请求跳过游戏窗口初始化");
             return true;
