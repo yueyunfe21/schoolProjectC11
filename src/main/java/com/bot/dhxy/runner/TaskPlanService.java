@@ -52,7 +52,7 @@ public class TaskPlanService {
             }
 
             String normalizedCode = taskCode.trim();
-            if (!taskRegistryService.getTaskByCode(normalizedCode).isPresent()) {
+            if (taskRegistryService.getTaskByCode(normalizedCode) == null) {
                 ignored.add(normalizedCode);
                 continue;
             }
