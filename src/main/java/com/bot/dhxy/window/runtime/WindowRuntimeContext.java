@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.runtime;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
@@ -29,6 +30,9 @@ public class WindowRuntimeContext {
     private volatile LocalDateTime lastStartedAt;
     private volatile LocalDateTime lastFinishedAt;
     private volatile String lastMessage;
+    private volatile TaskType lastTaskType = TaskType.UNKNOWN;
+    private volatile TaskRunResult lastResult;
+    private volatile String lastResultMessage;
 
     public WindowRuntimeContext(String windowId, GameContext gameContext) {
         String normalizedWindowId = normalizeWindowId(windowId);
@@ -88,17 +92,28 @@ public class WindowRuntimeContext {
 
     public String getLastMessage() { return lastMessage; }
 
+    public TaskType getLastTaskType() { return lastTaskType; }
+
+    public TaskRunResult getLastResult() { return lastResult; }
+
+    public String getLastResultMessage() { return lastResultMessage; }
+
     public void markQueued(TaskType taskType) {
         this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
         this.status = WindowRuntimeStatus.QUEUED;
-        this.lastMessage = null;
+        this.lastTaskType = this.selectedTaskType;
+        this.lastMessage = "任务已排队：" + this.selectedTaskType.getDisplayName();
+        this.lastResultMessage = null;
     }
 
     public void markStarted(TaskType taskType) {
         this.selectedTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
         this.status = WindowRuntimeStatus.RUNNING;
+        this.lastTaskType = this.selectedTaskType;
         this.lastStartedAt = LocalDateTime.now();
-        this.lastMessage = null;
+        this.lastMessage = "任务开始：" + this.selectedTaskType.getDisplayName();
+        this.lastResult = null;
+        this.lastResultMessage = null;
     }
 
     public void markStopping(String message) {
@@ -107,18 +122,30 @@ public class WindowRuntimeContext {
     }
 
     public void markFinished(WindowRuntimeStatus status, String message) {
-        this.status = status == null ? WindowRuntimeStatus.IDLE : status;
-        this.lastFinishedAt = LocalDateTime.now();
-        this.lastMessage = normalize(message);
+        markFinished(status, null, null, message);
     }
 
-    public void markError(String message) { markFinished(WindowRuntimeStatus.ERROR, message); }
+    public void markFinished(WindowRuntimeStatus status, TaskType taskType, TaskRunResult result, String message) {
+        this.status = status == null ? WindowRuntimeStatus.IDLE : status;
+        this.lastFinishedAt = LocalDateTime.now();
+        if (taskType != null) {
+            this.lastTaskType = taskType;
+        }
+        this.lastResult = result;
+        this.lastMessage = normalize(message);
+        this.lastResultMessage = normalize(message);
+    }
+
+    public void markError(String message) { markFinished(WindowRuntimeStatus.ERROR, null, TaskRunResult.FAILED, message); }
 
     public void resetRuntimeState() {
         this.status = WindowRuntimeStatus.IDLE;
         this.lastStartedAt = null;
         this.lastFinishedAt = null;
         this.lastMessage = null;
+        this.lastTaskType = TaskType.UNKNOWN;
+        this.lastResult = null;
+        this.lastResultMessage = null;
         this.gameState.resetRuntimeState();
     }
 
