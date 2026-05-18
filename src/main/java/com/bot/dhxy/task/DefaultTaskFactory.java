@@ -3,16 +3,17 @@ package com.bot.dhxy.task;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
 public class DefaultTaskFactory implements TaskFactory {
 
-    private final FiveRingTask fiveRingTask;
+    private final ObjectProvider<FiveRingTask> fiveRingTaskProvider;
 
-    public DefaultTaskFactory(FiveRingTask fiveRingTask) {
-        this.fiveRingTask = fiveRingTask;
+    public DefaultTaskFactory(ObjectProvider<FiveRingTask> fiveRingTaskProvider) {
+        this.fiveRingTaskProvider = fiveRingTaskProvider;
     }
 
     @Override
@@ -24,12 +25,13 @@ public class DefaultTaskFactory implements TaskFactory {
         return switch (taskType) {
             case WUHuan -> {
                 /*
-                 * Temporary compatibility path: FiveRingTask is still a Spring singleton
-                 * with a shared GameContext and service graph. Real multi-window execution
-                 * must create a window-scoped task instance from WindowRuntimeContext
-                 * instead of sharing this singleton across windows.
+                 * This now asks Spring for a fresh FiveRingTask instance.
+                 *
+                 * Remaining multi-window limitation:
+                 * FiveRingTask still depends on the current shared GameContext/service graph.
+                 * Real per-window execution still needs window-scoped GameContext/services.
                  */
-                yield fiveRingTask;
+                yield fiveRingTaskProvider.getObject();
             }
             case AUTO_BATTLE -> {
                 log.warn("AUTO_BATTLE task creation is not implemented yet for window [{}]",
