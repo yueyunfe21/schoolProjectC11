@@ -19,12 +19,13 @@ public class WindowTaskCommandResult {
     private final String message;
     private final List<WindowTaskSnapshot> snapshots;
     private final List<WindowTaskAssignment> assignments;
+    private final List<WindowTaskCommandDetail> details;
 
     public WindowTaskCommandResult(int requestedCount,
                                    int successCount,
                                    String message,
                                    List<WindowTaskSnapshot> snapshots) {
-        this(requestedCount, successCount, message, snapshots, Collections.emptyList());
+        this(requestedCount, successCount, message, snapshots, Collections.emptyList(), Collections.emptyList());
     }
 
     public WindowTaskCommandResult(int requestedCount,
@@ -32,12 +33,22 @@ public class WindowTaskCommandResult {
                                    String message,
                                    List<WindowTaskSnapshot> snapshots,
                                    List<WindowTaskAssignment> assignments) {
+        this(requestedCount, successCount, message, snapshots, assignments, Collections.emptyList());
+    }
+
+    public WindowTaskCommandResult(int requestedCount,
+                                   int successCount,
+                                   String message,
+                                   List<WindowTaskSnapshot> snapshots,
+                                   List<WindowTaskAssignment> assignments,
+                                   List<WindowTaskCommandDetail> details) {
         this.requestedCount = Math.max(requestedCount, 0);
         this.successCount = Math.max(successCount, 0);
         this.failedCount = Math.max(this.requestedCount - this.successCount, 0);
         this.message = message;
         this.snapshots = snapshots == null ? Collections.emptyList() : List.copyOf(snapshots);
         this.assignments = assignments == null ? Collections.emptyList() : List.copyOf(assignments);
+        this.details = details == null ? Collections.emptyList() : List.copyOf(details);
     }
 
     public static WindowTaskCommandResult of(int requestedCount,
@@ -53,6 +64,15 @@ public class WindowTaskCommandResult {
                                              List<WindowTaskSnapshot> snapshots,
                                              List<WindowTaskAssignment> assignments) {
         return new WindowTaskCommandResult(requestedCount, successCount, message, snapshots, assignments);
+    }
+
+    public static WindowTaskCommandResult of(int requestedCount,
+                                             int successCount,
+                                             String message,
+                                             List<WindowTaskSnapshot> snapshots,
+                                             List<WindowTaskAssignment> assignments,
+                                             List<WindowTaskCommandDetail> details) {
+        return new WindowTaskCommandResult(requestedCount, successCount, message, snapshots, assignments, details);
     }
 
     public static WindowTaskCommandResult empty(String message, List<WindowTaskSnapshot> snapshots) {
@@ -83,8 +103,16 @@ public class WindowTaskCommandResult {
         return assignments;
     }
 
+    public List<WindowTaskCommandDetail> getDetails() {
+        return details;
+    }
+
     public boolean hasAssignments() {
         return !assignments.isEmpty();
+    }
+
+    public boolean hasDetails() {
+        return !details.isEmpty();
     }
 
     public boolean isAllSuccess() {
