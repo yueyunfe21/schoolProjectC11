@@ -62,6 +62,10 @@ public class MainWindowService {
         Stage stage = new Stage();
         stage.setTitle("DHXY Robot 控制台");
         stage.setScene(new Scene(mainWindowController.buildView(), 980, 640));
+        stage.setOnCloseRequest(event -> {
+            log.info("主窗口关闭，停止 UI 刷新并请求停止任务队列。");
+            mainWindowController.shutdownUi();
+        });
         stage.show();
     }
 }
