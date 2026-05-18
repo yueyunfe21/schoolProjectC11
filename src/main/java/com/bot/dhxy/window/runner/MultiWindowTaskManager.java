@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,8 +72,22 @@ public class MultiWindowTaskManager {
         return Optional.ofNullable(runnersByWindowId.get(windowId));
     }
 
+    public Optional<WindowTaskSnapshot> getSnapshot(String windowId) {
+        return getRunner(windowId).map(WindowTaskRunner::snapshot);
+    }
+
+    public List<WindowTaskSnapshot> getAllSnapshots() {
+        return runnersByWindowId.values().stream()
+                .map(WindowTaskRunner::snapshot)
+                .toList();
+    }
+
     public Collection<WindowTaskRunner> getAllRunners() {
         return Collections.unmodifiableCollection(runnersByWindowId.values());
+    }
+
+    public int getRegisteredWindowCount() {
+        return runnersByWindowId.size();
     }
 
     public void unregisterWindow(String windowId) {
