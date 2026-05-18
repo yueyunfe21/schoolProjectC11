@@ -97,6 +97,24 @@ public class WindowTaskRunner {
         return taskHandle != null && taskHandle.getFuture() != null && !taskHandle.getFuture().isDone();
     }
 
+    public WindowTaskSnapshot snapshot() {
+        RunningTaskHandle taskHandle = currentTask;
+        boolean running = isRunning();
+        return new WindowTaskSnapshot(
+                windowContext.getWindowId(),
+                windowContext.getRoleName(),
+                windowContext.getRole(),
+                windowContext.getStatus(),
+                windowContext.getSelectedTaskType(),
+                taskHandle == null ? null : taskHandle.getTaskType(),
+                running,
+                taskHandle == null ? null : taskHandle.getStartedAt(),
+                windowContext.getLastStartedAt(),
+                windowContext.getLastFinishedAt(),
+                windowContext.getLastMessage()
+        );
+    }
+
     public void shutdownNow() {
         stopCurrentTask();
         executor.shutdownNow();
