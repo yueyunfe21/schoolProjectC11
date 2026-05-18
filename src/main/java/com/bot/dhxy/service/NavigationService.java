@@ -6,6 +6,7 @@ import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -14,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
+import java.util.List;
 import java.util.Random;
 
 @Slf4j
@@ -71,12 +73,9 @@ public class NavigationService {
         long startTime = System.currentTimeMillis();
         long timeoutMs = 60000;
 
-        inputProvider.pressAlt1();
-        sleepInterruptible(800);
-        inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
-        sleepInterruptible(500);
-        inputProvider.pressAlt1();
-        sleepInterruptible(1500);
+        if (!clickMiniMapPoint(pixelPoint, "navigateInCurrentMap:first")) {
+            return false;
+        }
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             if (battleRadarService.checkAndSyncCombatState()) {
@@ -96,12 +95,9 @@ public class NavigationService {
                     return true;
                 }
 
-                inputProvider.pressAlt1();
-                sleepInterruptible(800);
-                inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
-                sleepInterruptible(500);
-                inputProvider.pressAlt1();
-                sleepInterruptible(1500);
+                if (!clickMiniMapPoint(pixelPoint, "navigateInCurrentMap:retry")) {
+                    return false;
+                }
             }
 
             sleepInterruptible(500);
@@ -175,11 +171,13 @@ public class NavigationService {
                 int clickX = lastAbsoluteLogicalX + random.nextInt(7) - 3;
                 int clickY = lastAbsoluteLogicalY + random.nextInt(7) - 3;
                 if (openMap()) {
-                    inputProvider.clickLeft(clickX, clickY, 150);
-                    if (!sleepInterruptible(2000)) {
+                    if (!inputSequences.submitAndWait("clickLastNavPoint:reclick", List.of(
+                            InputAction.clickLeft(clickX, clickY, 150),
+                            InputAction.sleep(2000),
+                            closeMapAction()
+                    ))) {
                         return false;
                     }
-                    closeMapByDoubleRightClick();
                 }
                 return true;
             }
@@ -203,13 +201,11 @@ public class NavigationService {
         lastAbsoluteLogicalX = mapRect[0] + relativeCenter.x;
         lastAbsoluteLogicalY = mapRect[1] + relativeCenter.y;
 
-        inputProvider.clickLeft(lastAbsoluteLogicalX, lastAbsoluteLogicalY, 150);
-        if (!sleepInterruptible(2000)) {
-            return false;
-        }
-
-        closeMapByDoubleRightClick();
-        return true;
+        return inputSequences.submitAndWait("clickLastNavPoint:first", List.of(
+                InputAction.clickLeft(lastAbsoluteLogicalX, lastAbsoluteLogicalY, 150),
+                InputAction.sleep(2000),
+                closeMapAction()
+        ));
     }
 
     private boolean openMapAndInputTarget(String targetMapName) {
@@ -225,8 +221,10 @@ public class NavigationService {
         }
 
         if (!isWorldMapOpened()) {
-            inputProvider.pressAlt2();
-            if (!sleepInterruptible(500)) {
+            if (!inputSequences.submitAndWait("openMap:pressAlt2", List.of(
+                    InputAction.pressAlt2(),
+                    InputAction.sleep(500)
+            ))) {
                 return false;
             }
         }
@@ -236,8 +234,10 @@ public class NavigationService {
             return false;
         }
 
-        inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
-        return sleepInterruptible(250);
+        return inputSequences.submitAndWait("openMap:clickXunlu", List.of(
+                InputAction.clickLeft(xunluPoint.x, xunluPoint.y, 120),
+                InputAction.sleep(250)
+        ));
     }
 
     private boolean inputTarget(String targetMapName) {
@@ -252,18 +252,19 @@ public class NavigationService {
     }
 
     public void forceScrollToBottom(int targetX, int targetY) {
-        inputProvider.clickLeft(targetX, targetY, 50);
-        for (int i = 0; i < 2; i++) {
-            inputProvider.scrollDown(2);
-            if (!sleepInterruptible(100)) {
-                return;
-            }
-        }
+        inputSequences.submitAndWait("forceScrollToBottom", List.of(
+                InputAction.clickLeft(targetX, targetY, 50),
+                InputAction.scrollDown(2),
+                InputAction.sleep(100),
+                InputAction.scrollDown(2)
+        ));
     }
 
     public void ensureMapTrackingOption() {
-        inputProvider.pressAlt1();
-        sleepInterruptible(400);
+        inputSequences.submitAndWait("ensureMapTrackingOption:open", List.of(
+                InputAction.pressAlt1(),
+                InputAction.sleep(400)
+        ));
 
         int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
                 MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
@@ -271,22 +272,35 @@ public class NavigationService {
 
         Point checkedRes = coordinateHelper.findImageInRegion("images/template/map/checkbox_checked.png", rect, strictThreshold);
         if (checkedRes != null) {
-            inputProvider.pressAlt1();
+            inputSequences.pressAlt1("ensureMapTrackingOption:closeChecked");
             return;
         }
 
         Point uncheckedRes = coordinateHelper.findImageInRegion("images/template/map/checkbox_unchecked.png", rect, strictThreshold);
         if (uncheckedRes != null) {
-            inputProvider.clickLeft(uncheckedRes.x - 13, uncheckedRes.y, 150);
-            sleepInterruptible(500);
-            inputProvider.pressAlt1();
+            inputSequences.submitAndWait("ensureMapTrackingOption:checkAndClose", List.of(
+                    InputAction.clickLeft(uncheckedRes.x - 13, uncheckedRes.y, 150),
+                    InputAction.sleep(500),
+                    InputAction.pressAlt1()
+            ));
         }
     }
 
-    private void closeMapByDoubleRightClick() {
+    private boolean clickMiniMapPoint(Point pixelPoint, String description) {
+        return inputSequences.submitAndWait(description, List.of(
+                InputAction.pressAlt1(),
+                InputAction.sleep(800),
+                InputAction.clickLeft(pixelPoint.x, pixelPoint.y, 200),
+                InputAction.sleep(500),
+                InputAction.pressAlt1(),
+                InputAction.sleep(1500)
+        ));
+    }
+
+    private InputAction closeMapAction() {
         int closeX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
         int closeY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-        inputProvider.doubleRightClick(closeX, closeY, 150, 500);
+        return InputAction.doubleRightClick(closeX, closeY, 150, 500);
     }
 
     private boolean sleepInterruptible(long ms) {
