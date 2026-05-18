@@ -1,49 +1,168 @@
 package com.bot.dhxy.core;
 
 import com.bot.dhxy.model.PlayerCharacter;
-import lombok.Data;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
+import java.util.function.Supplier;
+
 /**
- * 🧠 游戏全局上下文（外挂的大脑与记忆区）
- * 绝对不要把业务逻辑写在这里，这里只存状态！
+ * 游戏运行上下文。
+ *
+ * 单窗口兼容模式下使用默认状态。
+ * 多窗口任务线程中由 WindowTaskRunner 绑定窗口专属 State，避免多个窗口共享同一份角色/任务状态。
  */
-@Data
 @Component
 public class GameContext {
 
-    // ==========================================
-    // 1. 身体档案：我是谁，我在哪
-    // ==========================================
-    private PlayerCharacter me = new PlayerCharacter();
+    private final State defaultState = new State();
+    private final ThreadLocal<State> threadLocalState = ThreadLocal.withInitial(() -> defaultState);
 
-    // ==========================================
-    // 2. 宏观运行状态：脚本的电源开关
-    // ==========================================
     public enum BotStatus {
-        IDLE,       // 待机中（尚未启动任何主线）
-        RUNNING,    // 疯狂印钞中
-        PAUSED,     // 玩家按下了暂停键（挂起所有动作）
-        ERROR       // 发生死机级错误（如断线）
+        IDLE,
+        RUNNING,
+        PAUSED,
+        ERROR
     }
-    private BotStatus botStatus = BotStatus.IDLE;
 
-    // ==========================================
-    // 3. 微观行为状态：角色当前到底在干嘛？
-    // ==========================================
     public enum ActionState {
-        FREE,           // 闲置发呆（随时可以接新任务）
-        NAVIGATING,     // 🏃 赶路中（此时遇敌是意外暗雷）
-        INTERACTING,    // 💬 交互中（正在点NPC或弹对话框）
-        IN_COMBAT,      // ⚔️ 战斗中！（最高优先级，挂起一切操作）
-        TASK_VERIFYING  // 🔍 核验中（战斗结束或交完任务，正在等Alt+Q的情报）
+        FREE,
+        NAVIGATING,
+        INTERACTING,
+        IN_COMBAT,
+        TASK_VERIFYING
     }
-    // 默认处于发呆状态
-    private ActionState currentActionState = ActionState.FREE;
 
-    // ==========================================
-    // 4. 当前任务记忆 (Task Memory)
-    // ==========================================
-    private String currentTaskName = "";    // 例："五环"
-    private int currentTaskProgress = 0;    // 例：3 (代表当前跑到了第3环)
+    public static class State {
+        private PlayerCharacter me = new PlayerCharacter();
+        private BotStatus botStatus = BotStatus.IDLE;
+        private ActionState currentActionState = ActionState.FREE;
+        private String currentTaskName = "";
+        private int currentTaskProgress = 0;
+
+        public PlayerCharacter getMe() {
+            return me;
+        }
+
+        public void setMe(PlayerCharacter me) {
+            this.me = me == null ? new PlayerCharacter() : me;
+        }
+
+        public BotStatus getBotStatus() {
+            return botStatus;
+        }
+
+        public void setBotStatus(BotStatus botStatus) {
+            this.botStatus = botStatus == null ? BotStatus.IDLE : botStatus;
+        }
+
+        public ActionState getCurrentActionState() {
+            return currentActionState;
+        }
+
+        public void setCurrentActionState(ActionState currentActionState) {
+            this.currentActionState = currentActionState == null ? ActionState.FREE : currentActionState;
+        }
+
+        public String getCurrentTaskName() {
+            return currentTaskName;
+        }
+
+        public void setCurrentTaskName(String currentTaskName) {
+            this.currentTaskName = currentTaskName == null ? "" : currentTaskName;
+        }
+
+        public int getCurrentTaskProgress() {
+            return currentTaskProgress;
+        }
+
+        public void setCurrentTaskProgress(int currentTaskProgress) {
+            this.currentTaskProgress = currentTaskProgress;
+        }
+
+        public void resetRuntimeState() {
+            botStatus = BotStatus.IDLE;
+            currentActionState = ActionState.FREE;
+            currentTaskName = "";
+            currentTaskProgress = 0;
+        }
+    }
+
+    public State newState() {
+        return new State();
+    }
+
+    public State currentState() {
+        return threadLocalState.get();
+    }
+
+    public void bindState(State state) {
+        threadLocalState.set(Objects.requireNonNull(state, "game context state must not be null"));
+    }
+
+    public void clearBoundState() {
+        threadLocalState.remove();
+    }
+
+    public <T> T callWithState(State state, Supplier<T> action) {
+        bindState(state);
+        try {
+            return action.get();
+        } finally {
+            clearBoundState();
+        }
+    }
+
+    public void runWithState(State state, Runnable action) {
+        bindState(state);
+        try {
+            action.run();
+        } finally {
+            clearBoundState();
+        }
+    }
+
+    public PlayerCharacter getMe() {
+        return currentState().getMe();
+    }
+
+    public void setMe(PlayerCharacter me) {
+        currentState().setMe(me);
+    }
+
+    public BotStatus getBotStatus() {
+        return currentState().getBotStatus();
+    }
+
+    public void setBotStatus(BotStatus botStatus) {
+        currentState().setBotStatus(botStatus);
+    }
+
+    public ActionState getCurrentActionState() {
+        return currentState().getCurrentActionState();
+    }
+
+    public void setCurrentActionState(ActionState currentActionState) {
+        currentState().setCurrentActionState(currentActionState);
+    }
+
+    public String getCurrentTaskName() {
+        return currentState().getCurrentTaskName();
+    }
+
+    public void setCurrentTaskName(String currentTaskName) {
+        currentState().setCurrentTaskName(currentTaskName);
+    }
+
+    public int getCurrentTaskProgress() {
+        return currentState().getCurrentTaskProgress();
+    }
+
+    public void setCurrentTaskProgress(int currentTaskProgress) {
+        currentState().setCurrentTaskProgress(currentTaskProgress);
+    }
+
+    public void resetRuntimeState() {
+        currentState().resetRuntimeState();
+    }
 }
