@@ -1,6 +1,7 @@
 package com.bot.dhxy.task;
 
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.runner.TaskExecutionContext;
 
 /**
  * 统一任务接口。
@@ -24,6 +25,15 @@ public interface GameTask {
      * 执行任务主流程，并返回本次执行结果。
      */
     TaskRunResult execute();
+
+    /**
+     * 带上下文执行任务。
+     *
+     * 新任务建议实现这个方法；老任务可以继续只实现 execute()。
+     */
+    default TaskRunResult execute(TaskExecutionContext context) {
+        return execute();
+    }
 
     /**
      * 请求停止任务。
