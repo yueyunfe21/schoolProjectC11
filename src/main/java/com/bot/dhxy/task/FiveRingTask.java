@@ -15,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
@@ -53,6 +55,16 @@ public class FiveRingTask implements GameTask {
         NEED_SETUP
     }
 
+    private enum LoopDecision {
+        CONTINUE,
+        FINISHED
+    }
+
+    private enum TaskSyncDecision {
+        CONTINUE,
+        FINISHED
+    }
+
     @Override
     public String getTaskCode() {
         return "wuhuan";
@@ -79,7 +91,45 @@ public class FiveRingTask implements GameTask {
         TaskExecutionContext executionContext = buildStepExecutionContext();
         AtomicReference<Integer> shoeBagIndexRef = new AtomicReference<>();
         AtomicReference<HandoverState> handoverStateRef = new AtomicReference<>();
+        AtomicBoolean needTaskSyncRef = new AtomicBoolean(true);
+        AtomicInteger uiErrorCountRef = new AtomicInteger(0);
+        AtomicReference<LoopDecision> loopDecisionRef = new AtomicReference<>(LoopDecision.CONTINUE);
 
+        TaskRunResult startupResult = runStartupSteps(executionContext, shoeBagIndexRef, handoverStateRef, needTaskSyncRef);
+        if (startupResult != TaskRunResult.SUCCESS) {
+            return startupResult;
+        }
+
+        log.info("▶️ 阶段二：启动极速跑环流水线...");
+        while (context.getBotStatus() == GameContext.BotStatus.RUNNING) {
+            TaskStepResult loopResult = executeRunLoopOnceStep(
+                    executionContext,
+                    shoeBagIndexRef,
+                    needTaskSyncRef,
+                    uiErrorCountRef,
+                    loopDecisionRef
+            );
+
+            if (loopResult == TaskStepResult.STOPPED) {
+                return TaskRunResult.STOPPED;
+            }
+            if (loopResult == TaskStepResult.FAILED) {
+                context.setBotStatus(GameContext.BotStatus.ERROR);
+                return TaskRunResult.FAILED;
+            }
+            if (loopDecisionRef.get() == LoopDecision.FINISHED) {
+                return TaskRunResult.SUCCESS;
+            }
+        }
+
+        log.info("🎉 印钞机停机！");
+        return TaskRunResult.STOPPED;
+    }
+
+    private TaskRunResult runStartupSteps(TaskExecutionContext executionContext,
+                                          AtomicReference<Integer> shoeBagIndexRef,
+                                          AtomicReference<HandoverState> handoverStateRef,
+                                          AtomicBoolean needTaskSyncRef) {
         TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, shoeBagIndexRef);
         if (prepareResult == TaskStepResult.STOPPED) {
             log.info("🎉 五环任务在战前准备阶段停止");
@@ -102,7 +152,7 @@ public class FiveRingTask implements GameTask {
             return TaskRunResult.FAILED;
         }
 
-        boolean needTaskSync = handoverStateRef.get() != HandoverState.ALREADY_RUNNING;
+        needTaskSyncRef.set(handoverStateRef.get() != HandoverState.ALREADY_RUNNING);
 
         if (handoverStateRef.get() == HandoverState.NEED_SETUP) {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
@@ -117,86 +167,10 @@ public class FiveRingTask implements GameTask {
                 return TaskRunResult.FAILED;
             }
             sleep(2000);
-            needTaskSync = true;
+            needTaskSyncRef.set(true);
         }
 
-        log.info("▶️ 阶段二：启动极速跑环流水线...");
-        int errorCount = 0;
-        while (context.getBotStatus() == GameContext.BotStatus.RUNNING) {
-
-            if (battleRadarService.checkAndSyncCombatState()) {
-                sleep(battleRadarService.getDynamicPollingIntervalMs());
-                continue;
-            }
-
-            if (gameStateUtil.isMovingByPixelDiff()) {
-                sleep(800);
-                continue;
-            }
-
-            boolean hasDialogProcessed = dialogService.handleDialog(null, null, KEY_ITEM_NAME, shoeBagIndexRef.get());
-            if (hasDialogProcessed) {
-                log.info("💬 成功粉碎了一个对话框！");
-                continue;
-            }
-
-            if (needTaskSync) {
-                log.info("🔍 [状态查岗] 触发全量任务雷达扫描...");
-                boolean hasTask = questManager.activateTaskIfPresent("wuhuan", true);
-
-                if (!hasTask) {
-                    log.warn("⚠️ 任务栏疑似清空，出动特警队洗地，防止被广告遮挡误判！");
-                    uiCleanerService.cleanUpAll();
-
-                    boolean realHasTask = questManager.activateTaskIfPresent("wuhuan", true);
-
-                    if (!realHasTask) {
-                        log.info("🎉 洗地后确认任务栏确实已清空，五环任务真·圆满结束！下班！");
-                        context.setBotStatus(GameContext.BotStatus.IDLE);
-                        context.setCurrentActionState(GameContext.ActionState.FREE);
-                        return TaskRunResult.SUCCESS;
-                    } else {
-                        log.info("😅 虚惊一场！洗地后发现任务其实还在，只是刚才被挡住了，继续干活！");
-                        needTaskSync = false;
-                    }
-                } else {
-                    log.info("✅ [状态查岗] 五环任务已重新锁定！");
-                    needTaskSync = false;
-                }
-            }
-
-            PathingResult p2Result = questManager.triggerWuHuanNativePathingP2(true);
-            if (p2Result == PathingResult.SUCCESS) {
-                log.info("🏃 锁定怪物，引擎轰鸣，全速追击！");
-                sleep(2000);
-                continue;
-            }
-
-            PathingResult p1Result = questManager.triggerWuHuanNativePathingP1(true);
-            if (p1Result == PathingResult.SUCCESS) {
-                errorCount = 0;
-                log.info("🏃 尝试点击下一环 NPC 链接...");
-                sleep(2500);
-
-                if (!gameStateUtil.isMovingByPixelDiff()) {
-                    log.warn("⚠️ 盲狙 NPC 失败（角色未移动），状态发生错乱，请求重新查岗！");
-                    needTaskSync = true;
-                }
-                continue;
-            } else if (p1Result == PathingResult.UI_ERROR) {
-                errorCount++;
-                log.warn("⚠️ 界面打开失败或异常，请求重新查岗！");
-                if (errorCount >= 3) {
-                    log.error("💥 连续 3 次打不开面板，触发特警队洗地！");
-                    uiCleanerService.cleanUpAll();
-                    errorCount = 0;
-                }
-                needTaskSync = true;
-                sleep(1000);
-            }
-        }
-        log.info("🎉 印钞机停机！");
-        return TaskRunResult.STOPPED;
+        return TaskRunResult.SUCCESS;
     }
 
     private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, AtomicReference<Integer> shoeBagIndexRef) {
@@ -324,6 +298,152 @@ public class FiveRingTask implements GameTask {
             }
         }
         return TaskStepResult.FAILED;
+    }
+
+    private TaskStepResult executeRunLoopOnceStep(TaskExecutionContext executionContext,
+                                                  AtomicReference<Integer> shoeBagIndexRef,
+                                                  AtomicBoolean needTaskSyncRef,
+                                                  AtomicInteger uiErrorCountRef,
+                                                  AtomicReference<LoopDecision> loopDecisionRef) {
+        TaskStep loopStep = new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return runLoopOnce(context, shoeBagIndexRef, needTaskSyncRef, uiErrorCountRef, loopDecisionRef);
+            }
+
+            @Override
+            public String getStepName() {
+                return "五环跑环单轮处理";
+            }
+        };
+        return taskStepExecutor.execute(executionContext, loopStep, TaskRetryPolicy.none());
+    }
+
+    private TaskStepResult runLoopOnce(TaskExecutionContext executionContext,
+                                       AtomicReference<Integer> shoeBagIndexRef,
+                                       AtomicBoolean needTaskSyncRef,
+                                       AtomicInteger uiErrorCountRef,
+                                       AtomicReference<LoopDecision> loopDecisionRef) {
+        if (executionContext != null) {
+            executionContext.throwIfStopRequested();
+        }
+        loopDecisionRef.set(LoopDecision.CONTINUE);
+
+        if (handleCombatIfNeeded()) {
+            return TaskStepResult.SUCCESS;
+        }
+
+        if (waitIfMoving()) {
+            return TaskStepResult.SUCCESS;
+        }
+
+        if (handleDialogIfNeeded(shoeBagIndexRef.get())) {
+            return TaskStepResult.SUCCESS;
+        }
+
+        if (needTaskSyncRef.get()) {
+            TaskSyncDecision syncDecision = syncTaskState(needTaskSyncRef);
+            if (syncDecision == TaskSyncDecision.FINISHED) {
+                loopDecisionRef.set(LoopDecision.FINISHED);
+                return TaskStepResult.SUCCESS;
+            }
+        }
+
+        if (triggerP2PathingIfPossible()) {
+            return TaskStepResult.SUCCESS;
+        }
+
+        triggerP1PathingOrRepairState(needTaskSyncRef, uiErrorCountRef);
+        return TaskStepResult.SUCCESS;
+    }
+
+    private boolean handleCombatIfNeeded() {
+        if (!battleRadarService.checkAndSyncCombatState()) {
+            return false;
+        }
+        sleep(battleRadarService.getDynamicPollingIntervalMs());
+        return true;
+    }
+
+    private boolean waitIfMoving() {
+        if (!gameStateUtil.isMovingByPixelDiff()) {
+            return false;
+        }
+        sleep(800);
+        return true;
+    }
+
+    private boolean handleDialogIfNeeded(Integer shoeBagIndex) {
+        boolean hasDialogProcessed = dialogService.handleDialog(null, null, KEY_ITEM_NAME, shoeBagIndex);
+        if (hasDialogProcessed) {
+            log.info("💬 成功粉碎了一个对话框！");
+        }
+        return hasDialogProcessed;
+    }
+
+    private TaskSyncDecision syncTaskState(AtomicBoolean needTaskSyncRef) {
+        log.info("🔍 [状态查岗] 触发全量任务雷达扫描...");
+        boolean hasTask = questManager.activateTaskIfPresent("wuhuan", true);
+
+        if (!hasTask) {
+            log.warn("⚠️ 任务栏疑似清空，出动特警队洗地，防止被广告遮挡误判！");
+            uiCleanerService.cleanUpAll();
+
+            boolean realHasTask = questManager.activateTaskIfPresent("wuhuan", true);
+
+            if (!realHasTask) {
+                log.info("🎉 洗地后确认任务栏确实已清空，五环任务真·圆满结束！下班！");
+                context.setBotStatus(GameContext.BotStatus.IDLE);
+                context.setCurrentActionState(GameContext.ActionState.FREE);
+                return TaskSyncDecision.FINISHED;
+            }
+
+            log.info("😅 虚惊一场！洗地后发现任务其实还在，只是刚才被挡住了，继续干活！");
+            needTaskSyncRef.set(false);
+            return TaskSyncDecision.CONTINUE;
+        }
+
+        log.info("✅ [状态查岗] 五环任务已重新锁定！");
+        needTaskSyncRef.set(false);
+        return TaskSyncDecision.CONTINUE;
+    }
+
+    private boolean triggerP2PathingIfPossible() {
+        PathingResult p2Result = questManager.triggerWuHuanNativePathingP2(true);
+        if (p2Result != PathingResult.SUCCESS) {
+            return false;
+        }
+
+        log.info("🏃 锁定怪物，引擎轰鸣，全速追击！");
+        sleep(2000);
+        return true;
+    }
+
+    private void triggerP1PathingOrRepairState(AtomicBoolean needTaskSyncRef, AtomicInteger uiErrorCountRef) {
+        PathingResult p1Result = questManager.triggerWuHuanNativePathingP1(true);
+        if (p1Result == PathingResult.SUCCESS) {
+            uiErrorCountRef.set(0);
+            log.info("🏃 尝试点击下一环 NPC 链接...");
+            sleep(2500);
+
+            if (!gameStateUtil.isMovingByPixelDiff()) {
+                log.warn("⚠️ 盲狙 NPC 失败（角色未移动），状态发生错乱，请求重新查岗！");
+                needTaskSyncRef.set(true);
+            }
+            return;
+        }
+
+        if (p1Result == PathingResult.UI_ERROR) {
+            int errorCount = uiErrorCountRef.incrementAndGet();
+            log.warn("⚠️ 界面打开失败或异常，请求重新查岗！");
+            if (errorCount >= 3) {
+                log.error("💥 连续 3 次打不开面板，触发特警队洗地！");
+                uiCleanerService.cleanUpAll();
+                uiErrorCountRef.set(0);
+            }
+            needTaskSyncRef.set(true);
+            sleep(1000);
+        }
     }
 
     private TaskExecutionContext buildStepExecutionContext() {
