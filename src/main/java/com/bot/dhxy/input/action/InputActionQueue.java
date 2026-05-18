@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 @Slf4j
 @Component
@@ -30,19 +31,42 @@ public class InputActionQueue {
             return false;
         }
         WindowRuntimeContext context = current.get();
+        if (!hasNativeBinding(context, description)) {
+            return false;
+        }
+        return await(new InputActionRequest(context, description, actions));
+    }
+
+    public boolean submitExclusiveAndWait(String description, Supplier<Boolean> callback) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            log.warn("Input exclusive action rejected because no window context exists: {}", description);
+            return false;
+        }
+        WindowRuntimeContext context = current.get();
+        if (!hasNativeBinding(context, description)) {
+            return false;
+        }
+        return await(new InputActionRequest(context, description, callback));
+    }
+
+    private boolean hasNativeBinding(WindowRuntimeContext context, String description) {
         WindowNativeBinding binding = context.getNativeBinding();
         if (binding == null || !binding.hasNativeHandle()) {
             log.warn("Input action rejected because no native binding exists: windowId={} description={}",
                     context.getWindowId(), description);
             return false;
         }
-        InputActionRequest request = new InputActionRequest(context, description, actions);
+        return true;
+    }
+
+    private boolean await(InputActionRequest request) {
         queue.offer(request);
         try {
             return request.getResult().get(120, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.warn("Input action timed out or interrupted: windowId={} description={} reason={}",
-                    context.getWindowId(), description, e.getMessage());
+                    request.getWindowId(), request.getDescription(), e.getMessage());
             return false;
         }
     }
