@@ -26,12 +26,12 @@ public abstract class BaseTaskTemplate implements GameTask {
 
     @Override
     public TaskRunResult execute() {
-        return execute(buildDefaultExecutionContext());
+        return execute(buildExecutionContext());
     }
 
     @Override
     public TaskRunResult execute(TaskExecutionContext executionContext) {
-        TaskExecutionContext context = executionContext == null ? buildDefaultExecutionContext() : executionContext;
+        TaskExecutionContext context = executionContext == null ? buildExecutionContext() : executionContext;
         log.info("====================================");
         log.info("启动任务：{}({})", getTaskName(), getTaskCode());
         log.info("====================================");
@@ -137,7 +137,7 @@ public abstract class BaseTaskTemplate implements GameTask {
         };
     }
 
-    private TaskExecutionContext buildDefaultExecutionContext() {
+    protected TaskExecutionContext buildExecutionContext() {
         return TaskExecutionContext.builder()
                 .taskCode(getTaskCode())
                 .taskName(getTaskName())
