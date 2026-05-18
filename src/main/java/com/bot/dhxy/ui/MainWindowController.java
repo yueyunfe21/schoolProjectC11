@@ -2,22 +2,35 @@ package com.bot.dhxy.ui;
 
 import com.bot.dhxy.config.TaskRunProperties;
 import com.bot.dhxy.runner.TaskControlService;
+import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.ui.viewmodel.TaskDashboardView;
 import com.bot.dhxy.ui.viewmodel.TaskLogView;
 import com.bot.dhxy.ui.viewmodel.TaskOptionView;
 import com.bot.dhxy.ui.viewmodel.TaskPlanView;
 import com.bot.dhxy.ui.viewmodel.TaskRecordView;
 import com.bot.dhxy.ui.viewmodel.TaskRuntimeStateView;
+import com.bot.dhxy.window.model.WindowRole;
+import com.bot.dhxy.window.runner.WindowTaskSnapshot;
+import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import com.bot.dhxy.window.service.WindowSystemSnapshot;
+import com.bot.dhxy.window.service.WindowTaskCommandDetail;
+import com.bot.dhxy.window.service.WindowTaskCommandResult;
+import com.bot.dhxy.window.service.WindowTaskControlService;
+import com.bot.dhxy.window.service.WindowTaskStartRequest;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.geometry.Insets;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextField;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -45,6 +58,7 @@ public class MainWindowController {
     private final TaskUiActionService taskUiActionService;
     private final TaskControlService taskControlService;
     private final TaskRunProperties taskRunProperties;
+    private final WindowTaskControlService windowTaskControlService;
 
     private VBox taskBox;
     private TableView<TaskRecordView> recordTable;
@@ -64,6 +78,20 @@ public class MainWindowController {
     private Label planIgnoredLabel;
     private Label planOptionsLabel;
     private Label planWarningLabel;
+
+    private TableView<WindowTaskSnapshot> windowTable;
+    private TextField windowIdField;
+    private TextField windowRoleNameField;
+    private ComboBox<WindowRole> windowRoleComboBox;
+    private ComboBox<TaskType> windowTaskTypeComboBox;
+    private Button registerWindowButton;
+    private Button startByRoleButton;
+    private Button startWindowSelectedTaskButton;
+    private Button stopSelectedWindowsButton;
+    private Button stopAllWindowsButton;
+    private Button refreshWindowButton;
+    private Label windowSystemLabel;
+
     private Timeline autoRefreshTimeline;
 
     public Parent buildView() {
@@ -72,11 +100,12 @@ public class MainWindowController {
         BorderPane root = new BorderPane();
         root.setPadding(new Insets(12));
 
+        VBox centerArea = new VBox(8, buildWindowPanel(), buildRecordTable());
         VBox bottomArea = new VBox(8, buildLogPanel(), buildStatusBar());
 
         root.setTop(buildTopBar());
         root.setLeft(buildTaskPanel());
-        root.setCenter(buildRecordTable());
+        root.setCenter(centerArea);
         root.setBottom(bottomArea);
 
         refreshDashboard();
@@ -103,6 +132,26 @@ public class MainWindowController {
         planIgnoredLabel = new Label("忽略：-");
         planOptionsLabel = new Label("选项：-");
         planWarningLabel = new Label("警告：-");
+
+        windowTable = new TableView<>();
+        windowTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        windowIdField = new TextField("window-1");
+        windowIdField.setPrefWidth(110);
+        windowRoleNameField = new TextField("角色A");
+        windowRoleNameField.setPrefWidth(90);
+        windowRoleComboBox = new ComboBox<>();
+        windowRoleComboBox.getItems().setAll(WindowRole.values());
+        windowRoleComboBox.setValue(WindowRole.UNKNOWN);
+        windowTaskTypeComboBox = new ComboBox<>();
+        windowTaskTypeComboBox.getItems().setAll(TaskType.values());
+        windowTaskTypeComboBox.setValue(TaskType.WUHuan);
+        registerWindowButton = new Button("注册/刷新窗口");
+        startByRoleButton = new Button("按身份启动");
+        startWindowSelectedTaskButton = new Button("启动已选任务");
+        stopSelectedWindowsButton = new Button("停止选中窗口");
+        stopAllWindowsButton = new Button("停止全部窗口");
+        refreshWindowButton = new Button("刷新窗口表");
+        windowSystemLabel = new Label("窗口：-");
 
         loopCheckBox.setSelected(taskRunProperties.isLoop());
         testModeCheckBox.setSelected(taskRunProperties.isTestMode());
@@ -151,6 +200,81 @@ public class MainWindowController {
                 planWarningLabel);
         box.setPadding(new Insets(12, 0, 0, 0));
         return box;
+    }
+
+    private Parent buildWindowPanel() {
+        buildWindowTableColumns();
+
+        registerWindowButton.setOnAction(event -> registerOrRefreshWindowFromUi());
+        startByRoleButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                windowTaskControlService.start(WindowTaskStartRequest.detectedRole(getSelectedWindowIds(), windowTaskTypeComboBox.getValue()))));
+        startWindowSelectedTaskButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                windowTaskControlService.start(WindowTaskStartRequest.selectedTask(getSelectedWindowIds()))));
+        stopSelectedWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                windowTaskControlService.stopWindows(getSelectedWindowIds())));
+        stopAllWindowsButton.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::stopAll));
+        refreshWindowButton.setOnAction(event -> refreshWindowPanel());
+
+        HBox formRow = new HBox(8,
+                new Label("窗口ID"), windowIdField,
+                new Label("角色名"), windowRoleNameField,
+                new Label("身份"), windowRoleComboBox,
+                new Label("任务"), windowTaskTypeComboBox,
+                registerWindowButton);
+
+        HBox actionRow = new HBox(8,
+                refreshWindowButton,
+                startByRoleButton,
+                startWindowSelectedTaskButton,
+                stopSelectedWindowsButton,
+                stopAllWindowsButton);
+
+        windowTable.setPrefHeight(185);
+        VBox wrapper = new VBox(6,
+                new Label("多窗口控制"),
+                windowSystemLabel,
+                formRow,
+                actionRow,
+                windowTable);
+        wrapper.setPadding(new Insets(0, 0, 8, 0));
+        return wrapper;
+    }
+
+    private void buildWindowTableColumns() {
+        TableColumn<WindowTaskSnapshot, String> windowIdCol = new TableColumn<>("窗口ID");
+        windowIdCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getWindowId())));
+        windowIdCol.setPrefWidth(95);
+
+        TableColumn<WindowTaskSnapshot, String> roleNameCol = new TableColumn<>("角色名");
+        roleNameCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getRoleName())));
+        roleNameCol.setPrefWidth(85);
+
+        TableColumn<WindowTaskSnapshot, String> roleCol = new TableColumn<>("身份");
+        roleCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getRole() == null ? "-" : cell.getValue().getRole().name()));
+        roleCol.setPrefWidth(80);
+
+        TableColumn<WindowTaskSnapshot, String> selectedTaskCol = new TableColumn<>("已选任务");
+        selectedTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(taskName(cell.getValue().getSelectedTaskType())));
+        selectedTaskCol.setPrefWidth(90);
+
+        TableColumn<WindowTaskSnapshot, String> runningTaskCol = new TableColumn<>("运行任务");
+        runningTaskCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(taskName(cell.getValue().getRunningTaskType())));
+        runningTaskCol.setPrefWidth(90);
+
+        TableColumn<WindowTaskSnapshot, String> statusCol = new TableColumn<>("状态");
+        statusCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getStatus() == null ? "-" : cell.getValue().getStatus().name()));
+        statusCol.setPrefWidth(85);
+
+        TableColumn<WindowTaskSnapshot, String> runningCol = new TableColumn<>("运行中");
+        runningCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().isRunning() ? "是" : "否"));
+        runningCol.setPrefWidth(65);
+
+        TableColumn<WindowTaskSnapshot, String> messageCol = new TableColumn<>("备注");
+        messageCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getLastMessage())));
+        messageCol.setPrefWidth(260);
+
+        windowTable.getColumns().setAll(List.of(windowIdCol, roleNameCol, roleCol, selectedTaskCol,
+                runningTaskCol, statusCol, runningCol, messageCol));
     }
 
     private Parent buildRecordTable() {
@@ -243,6 +367,7 @@ public class MainWindowController {
             autoRefreshTimeline.stop();
         }
         taskUiActionService.stopFromUi();
+        windowTaskControlService.stopAll();
     }
 
     private void applyRuntimeControls(TaskRuntimeStateView runtimeState) {
@@ -332,6 +457,10 @@ public class MainWindowController {
         return text == null || text.isBlank() ? "-" : text;
     }
 
+    private String taskName(TaskType taskType) {
+        return taskType == null ? "-" : taskType.getDisplayName();
+    }
+
     private List<String> getSelectedTaskCodesFromUi() {
         List<String> selectedTaskCodes = new ArrayList<>();
         if (taskBox == null) {
@@ -364,6 +493,97 @@ public class MainWindowController {
         return selectionMap;
     }
 
+    private List<String> getSelectedWindowIds() {
+        if (windowTable == null) {
+            return List.of();
+        }
+        return windowTable.getSelectionModel().getSelectedItems().stream()
+                .map(WindowTaskSnapshot::getWindowId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private void registerOrRefreshWindowFromUi() {
+        WindowRegistrationRequest request = WindowRegistrationRequest.of(
+                windowIdField.getText(),
+                windowRoleComboBox.getValue(),
+                windowRoleNameField.getText(),
+                windowTaskTypeComboBox.getValue()
+        );
+        handleWindowCommandResult(windowTaskControlService.registerWindows(List.of(request)));
+    }
+
+    private void runWindowCommandInBackground(WindowCommand command) {
+        setWindowButtonsDisabled(true);
+        Thread worker = new Thread(() -> {
+            WindowTaskCommandResult result;
+            try {
+                result = command.execute();
+            } catch (Exception e) {
+                result = WindowTaskCommandResult.empty("窗口命令异常：" + e.getMessage(), windowTaskControlService.getSnapshots());
+            }
+            WindowTaskCommandResult finalResult = result;
+            javafx.application.Platform.runLater(() -> {
+                handleWindowCommandResult(finalResult);
+                setWindowButtonsDisabled(false);
+            });
+        }, "window-task-ui-worker");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void setWindowButtonsDisabled(boolean disabled) {
+        if (registerWindowButton != null) {
+            registerWindowButton.setDisable(disabled);
+        }
+        if (startByRoleButton != null) {
+            startByRoleButton.setDisable(disabled);
+        }
+        if (startWindowSelectedTaskButton != null) {
+            startWindowSelectedTaskButton.setDisable(disabled);
+        }
+        if (stopSelectedWindowsButton != null) {
+            stopSelectedWindowsButton.setDisable(disabled);
+        }
+        if (stopAllWindowsButton != null) {
+            stopAllWindowsButton.setDisable(disabled);
+        }
+        if (refreshWindowButton != null) {
+            refreshWindowButton.setDisable(disabled);
+        }
+    }
+
+    private void handleWindowCommandResult(WindowTaskCommandResult result) {
+        if (result == null) {
+            refreshWindowPanel();
+            return;
+        }
+        addWindowLog(result.getMessage());
+        if (result.hasAssignments()) {
+            for (var assignment : result.getAssignments()) {
+                addWindowLog("分配：" + nullToDash(assignment.getWindowId())
+                        + " | " + assignment.getRole()
+                        + " -> " + taskName(assignment.getTaskType())
+                        + " | " + assignment.getReason());
+            }
+        }
+        if (result.hasDetails()) {
+            for (WindowTaskCommandDetail detail : result.getDetails()) {
+                addWindowLog((detail.isSuccess() ? "成功：" : "失败：")
+                        + nullToDash(detail.getWindowId()) + " | " + nullToDash(detail.getMessage()));
+            }
+        }
+        refreshWindowPanel();
+        refreshDashboard();
+    }
+
+    private void addWindowLog(String message) {
+        if (logList != null && message != null && !message.isBlank()) {
+            logList.getItems().add(0, "[多窗口] " + message);
+        }
+    }
+
     private void refreshDashboard() {
         List<String> selectedTaskCodes = getSelectedTaskCodesFromUi();
         Map<String, Boolean> currentSelection = getCurrentTaskSelectionMap();
@@ -380,6 +600,20 @@ public class MainWindowController {
         updateRuntimeState(runtimeState);
         updatePlanPreview(dashboard.getPlanView());
         applyRuntimeControls(runtimeState);
+        refreshWindowPanel();
+    }
+
+    private void refreshWindowPanel() {
+        if (windowTable == null || windowSystemLabel == null) {
+            return;
+        }
+        WindowSystemSnapshot snapshot = windowTaskControlService.getSystemSnapshot();
+        windowTable.getItems().setAll(snapshot.getWindows());
+        windowSystemLabel.setText("窗口：已注册 " + snapshot.getRegisteredWindowCount()
+                + " / " + snapshot.getMaxWindowCount()
+                + " | 运行中 " + snapshot.getRunningWindowCount()
+                + " | 剩余 " + snapshot.getRemainingWindowCapacity()
+                + " | 已满=" + snapshot.isCapacityFull());
     }
 
     private void refreshTaskOptions(List<TaskOptionView> options,
@@ -409,5 +643,10 @@ public class MainWindowController {
                     : " [" + log.getTaskCode() + "/" + nullToDash(log.getTaskName()) + "]";
             logList.getItems().add("[" + log.getTime() + "] " + log.getType() + taskText + " " + log.getMessage());
         }
+    }
+
+    @FunctionalInterface
+    private interface WindowCommand {
+        WindowTaskCommandResult execute();
     }
 }
