@@ -10,6 +10,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -44,6 +45,7 @@ public class NavigationService {
     private final CoordinateHelper coordinateHelper;
     private final UICleanerService uiCleanerService;
     private final DialogService dialogService;
+    private final WindowScopedTempPath windowScopedTempPath;
     private final Random random = new Random();
     private final PlayerStateService playerStateService;
     private final BattleRadarService battleRadarService;
@@ -188,7 +190,7 @@ public class NavigationService {
                 config.getAnchor_windowTo_map_search_X(), config.getAnchor_windowTo_map_search_Y(),
                 MAP_SEARCH_RECT_WIDTH, MAP_SEARCH_RECT_HEIGHT);
 
-        String mapResultImagePath = "images/temp/map_result_scan.png";
+        String mapResultImagePath = windowScopedTempPath.resolve("map_result_scan.png");
         if (!tracker.captureToFile("map result", mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3])) {
             return false;
         }
