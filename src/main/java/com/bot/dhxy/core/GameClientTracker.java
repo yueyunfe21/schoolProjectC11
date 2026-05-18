@@ -2,6 +2,7 @@ package com.bot.dhxy.core;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.VisionProvider;
+import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowNativeBinding;
@@ -31,6 +32,7 @@ public class GameClientTracker {
     private final BotProperties config;
     private final CoordinateHelper coordinateHelper;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final GlobalInputLock globalInputLock;
 
     @Lazy
     @Autowired
@@ -51,16 +53,18 @@ public class GameClientTracker {
     private HWND gameHwnd = null;
 
     public boolean updateGlobalVision() {
-        if (!checkBaseAddress()) return false;
-        if (!bringWindowToFront()) {
-            System.out.println("❌ 无法唤醒游戏，停止任务。");
-            return false;
-        }
-        int x1 = windowBaseX;
-        int y1 = windowBaseY;
-        int x2 = x1 + WINDOW_WIDTH;
-        int y2 = y1 + WINDOW_HEIGHT;
-        return captureToFile("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
+        return globalInputLock.callWithLock(() -> {
+            if (!checkBaseAddress()) return false;
+            if (!bringWindowToFrontWithoutLock()) {
+                System.out.println("❌ 无法唤醒游戏，停止任务。");
+                return false;
+            }
+            int x1 = windowBaseX;
+            int y1 = windowBaseY;
+            int x2 = x1 + WINDOW_WIDTH;
+            int y2 = y1 + WINDOW_HEIGHT;
+            return captureToFileWithoutLock("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
+        });
     }
 
     public boolean locateWindow() {
@@ -98,27 +102,35 @@ public class GameClientTracker {
     }
 
     public boolean captureToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        if (!checkBaseAddress()) return false;
-        System.out.println("📸 [" + elementName + "] 正在截取画面保存至: " + savePath);
-        return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
+        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2));
     }
 
     public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        if (!checkBaseAddress()) return false;
-        System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
-        inputProvider.pressAlt4();
-        sleepQuietly(400);
-        try {
-            return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
-        } finally {
+        return globalInputLock.callWithLock(() -> {
+            if (!checkBaseAddress()) return false;
+            System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
             inputProvider.pressAlt4();
-            System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
-        }
+            sleepQuietly(400);
+            try {
+                return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
+            } finally {
+                inputProvider.pressAlt4();
+                System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
+            }
+        });
     }
 
     public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
-        if (!checkBaseAddress()) return null;
-        return eyes.captureRegionByCoordinates(x1, y1, x2, y2);
+        return globalInputLock.callWithLock(() -> {
+            if (!checkBaseAddress()) return null;
+            return eyes.captureRegionByCoordinates(x1, y1, x2, y2);
+        });
+    }
+
+    private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
+        if (!checkBaseAddress()) return false;
+        System.out.println("📸 [" + elementName + "] 正在截取画面保存至: " + savePath);
+        return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
     }
 
     private boolean checkBaseAddress() {
@@ -163,6 +175,10 @@ public class GameClientTracker {
     }
 
     public boolean bringWindowToFront() {
+        return globalInputLock.callWithLock(this::bringWindowToFrontWithoutLock);
+    }
+
+    private boolean bringWindowToFrontWithoutLock() {
         if (!checkBaseAddress()) {
             return false;
         }
