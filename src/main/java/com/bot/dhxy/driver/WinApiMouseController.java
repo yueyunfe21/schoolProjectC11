@@ -1,8 +1,8 @@
 package com.bot.dhxy.driver;
 
 import com.bot.dhxy.core.GameClientTracker;
-import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.input.InputProvider;
+import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.DWORD;
@@ -49,77 +49,87 @@ public class WinApiMouseController implements InputProvider {
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final GlobalInputLock globalInputLock;
+    private final WindowAwareInputCoordinator inputCoordinator;
 
     @Override
     public void clickLeft(int x, int y, int delayMs) {
-        globalInputLock.runWithLock(() -> doClick(x, y, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
+        inputCoordinator.runInput("clickLeft", () -> doClick(x, y, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
     }
 
     @Override
     public void clickRight(int x, int y, int delayMs) {
-        globalInputLock.runWithLock(() -> doClick(x, y, delayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP));
+        inputCoordinator.runInput("clickRight", () -> doClick(x, y, delayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP));
     }
 
     @Override
     public void doubleRightClick(int x, int y, int clickDelayMs, int intervalMs) {
-        globalInputLock.runWithLock(() -> doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP));
-        sleepQuietly(intervalMs);
-        globalInputLock.runWithLock(() -> doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP));
+        inputCoordinator.runInput("doubleRightClick", () -> {
+            doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP);
+            sleepQuietly(intervalMs);
+            doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP);
+        });
     }
 
     @Override
     public void ctrlClickNpcTarget(int npcX, int npcY, int yellowNpcX, int yellowNpcY, int delayMs) {
+        inputCoordinator.runInput("ctrlClickNpcTarget", () -> {
+            doHoldCtrl();
+            try {
+                doClick(npcX, npcY, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP);
+            } finally {
+                doReleaseCtrl();
+            }
+        });
     }
 
     @Override
     public void moveMouse(int x, int y) {
-        globalInputLock.runWithLock(() -> moveCursorToLogicalPoint(x, y));
+        inputCoordinator.runInput("moveMouse", () -> moveCursorToLogicalPoint(x, y));
     }
 
     @Override
     public void holdCtrl() {
-        globalInputLock.runWithLock(this::doHoldCtrl);
+        inputCoordinator.runInput("holdCtrl", this::doHoldCtrl);
     }
 
     @Override
     public void releaseCtrl() {
-        globalInputLock.runWithLock(this::doReleaseCtrl);
+        inputCoordinator.runInput("releaseCtrl", this::doReleaseCtrl);
     }
 
     @Override
     public void pressAlt1() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_1, "ALT+1"));
+        inputCoordinator.runInput("pressAlt1", () -> pressAltScan(SCAN_1, "ALT+1"));
     }
 
     @Override
     public void pressAlt2() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_2, "ALT+2"));
+        inputCoordinator.runInput("pressAlt2", () -> pressAltScan(SCAN_2, "ALT+2"));
     }
 
     @Override
     public void pressAlt4() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_4, "ALT+4"));
+        inputCoordinator.runInput("pressAlt4", () -> pressAltScan(SCAN_4, "ALT+4"));
     }
 
     @Override
     public void pressAlt8() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_8, "ALT+8"));
+        inputCoordinator.runInput("pressAlt8", () -> pressAltScan(SCAN_8, "ALT+8"));
     }
 
     @Override
     public void pressAltE() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_E, "ALT+E"));
+        inputCoordinator.runInput("pressAltE", () -> pressAltScan(SCAN_E, "ALT+E"));
     }
 
     @Override
     public void pressAltQ() {
-        globalInputLock.runWithLock(() -> pressAltScan(SCAN_Q, "ALT+Q"));
+        inputCoordinator.runInput("pressAltQ", () -> pressAltScan(SCAN_Q, "ALT+Q"));
     }
 
     @Override
     public void pressEnter() {
-        globalInputLock.runWithLock(this::doPressEnter);
+        inputCoordinator.runInput("pressEnter", this::doPressEnter);
     }
 
     @Override
@@ -127,7 +137,7 @@ public class WinApiMouseController implements InputProvider {
         if (text == null) {
             return;
         }
-        globalInputLock.runWithLock(() -> doPasteText(text));
+        inputCoordinator.runInput("pasteText", () -> doPasteText(text));
     }
 
     @Override
@@ -135,22 +145,22 @@ public class WinApiMouseController implements InputProvider {
         if (text == null || text.isEmpty()) {
             return;
         }
-        globalInputLock.runWithLock(() -> doTypeTextUnicode(text));
+        inputCoordinator.runInput("typeTextUnicode", () -> doTypeTextUnicode(text));
     }
 
     @Override
     public void scrollDown(int clicks) {
-        globalInputLock.runWithLock(() -> doScroll(-120 * clicks));
+        inputCoordinator.runInput("scrollDown", () -> doScroll(-120 * clicks));
     }
 
     @Override
     public void scrollUp(int clicks) {
-        globalInputLock.runWithLock(() -> doScroll(120 * clicks));
+        inputCoordinator.runInput("scrollUp", () -> doScroll(120 * clicks));
     }
 
     @Override
     public void dragAndDrop(int startX, int startY, int endX, int endY) {
-        globalInputLock.runWithLock(() -> doDragAndDrop(startX, startY, endX, endY));
+        inputCoordinator.runInput("dragAndDrop", () -> doDragAndDrop(startX, startY, endX, endY));
     }
 
     private void doClick(int x, int y, int delayMs, int downFlag, int upFlag) {
