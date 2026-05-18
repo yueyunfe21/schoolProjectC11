@@ -134,7 +134,8 @@ public class WindowTaskRunner {
                 taskHandle == null ? null : taskHandle.getStartedAt(),
                 windowContext.getLastStartedAt(),
                 windowContext.getLastFinishedAt(),
-                windowContext.getLastMessage()
+                windowContext.getLastMessage(),
+                windowContext.getNativeBinding()
         );
     }
 
