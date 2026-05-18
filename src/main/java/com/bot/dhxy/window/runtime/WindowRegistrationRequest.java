@@ -14,15 +14,25 @@ public class WindowRegistrationRequest {
     private final String roleName;
     private final WindowRole role;
     private final TaskType selectedTaskType;
+    private final WindowNativeBinding nativeBinding;
 
     public WindowRegistrationRequest(String windowId,
                                      String roleName,
                                      WindowRole role,
                                      TaskType selectedTaskType) {
+        this(windowId, roleName, role, selectedTaskType, WindowNativeBinding.empty());
+    }
+
+    public WindowRegistrationRequest(String windowId,
+                                     String roleName,
+                                     WindowRole role,
+                                     TaskType selectedTaskType,
+                                     WindowNativeBinding nativeBinding) {
         this.windowId = normalize(windowId);
         this.roleName = normalize(roleName);
         this.role = role == null ? WindowRole.UNKNOWN : role;
         this.selectedTaskType = selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
+        this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
     }
 
     public static WindowRegistrationRequest of(String windowId) {
@@ -40,37 +50,39 @@ public class WindowRegistrationRequest {
         return new WindowRegistrationRequest(windowId, roleName, role, selectedTaskType);
     }
 
+    public static WindowRegistrationRequest of(String windowId,
+                                               WindowRole role,
+                                               String roleName,
+                                               TaskType selectedTaskType,
+                                               WindowNativeBinding nativeBinding) {
+        return new WindowRegistrationRequest(windowId, roleName, role, selectedTaskType, nativeBinding);
+    }
+
     public WindowRegistrationRequest withRole(WindowRole newRole, String newRoleName) {
-        return new WindowRegistrationRequest(windowId, newRoleName, newRole, selectedTaskType);
+        return new WindowRegistrationRequest(windowId, newRoleName, newRole, selectedTaskType, nativeBinding);
     }
 
     public WindowRegistrationRequest withSelectedTask(TaskType taskType) {
-        return new WindowRegistrationRequest(windowId, roleName, role, taskType);
+        return new WindowRegistrationRequest(windowId, roleName, role, taskType, nativeBinding);
     }
 
-    public String getWindowId() {
-        return windowId;
+    public WindowRegistrationRequest withNativeBinding(WindowNativeBinding binding) {
+        return new WindowRegistrationRequest(windowId, roleName, role, selectedTaskType, binding);
     }
 
-    public String getRoleName() {
-        return roleName;
-    }
+    public String getWindowId() { return windowId; }
 
-    public WindowRole getRole() {
-        return role;
-    }
+    public String getRoleName() { return roleName; }
 
-    public TaskType getSelectedTaskType() {
-        return selectedTaskType;
-    }
+    public WindowRole getRole() { return role; }
 
-    public boolean hasWindowId() {
-        return windowId != null && !windowId.isBlank();
-    }
+    public TaskType getSelectedTaskType() { return selectedTaskType; }
 
-    public boolean hasSelectedTask() {
-        return selectedTaskType != null && selectedTaskType != TaskType.UNKNOWN;
-    }
+    public WindowNativeBinding getNativeBinding() { return nativeBinding; }
+
+    public boolean hasWindowId() { return windowId != null && !windowId.isBlank(); }
+
+    public boolean hasSelectedTask() { return selectedTaskType != null && selectedTaskType != TaskType.UNKNOWN; }
 
     public void requireValid() {
         if (!hasWindowId()) {
@@ -93,6 +105,7 @@ public class WindowRegistrationRequest {
                 ", roleName='" + roleName + '\'' +
                 ", role=" + role +
                 ", selectedTaskType=" + selectedTaskType +
+                ", nativeHandle=" + nativeBinding.getNativeHandle() +
                 '}';
     }
 
@@ -107,11 +120,12 @@ public class WindowRegistrationRequest {
         return Objects.equals(windowId, that.windowId)
                 && Objects.equals(roleName, that.roleName)
                 && role == that.role
-                && selectedTaskType == that.selectedTaskType;
+                && selectedTaskType == that.selectedTaskType
+                && Objects.equals(nativeBinding.getNativeHandle(), that.nativeBinding.getNativeHandle());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(windowId, roleName, role, selectedTaskType);
+        return Objects.hash(windowId, roleName, role, selectedTaskType, nativeBinding.getNativeHandle());
     }
 }
