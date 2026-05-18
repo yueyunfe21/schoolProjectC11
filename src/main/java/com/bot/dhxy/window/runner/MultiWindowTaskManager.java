@@ -2,6 +2,7 @@ package com.bot.dhxy.window.runner;
 
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.policy.WindowCapacityPolicy;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
@@ -25,12 +26,15 @@ public class MultiWindowTaskManager {
 
     private final TaskFactory taskFactory;
     private final WindowRuntimeContextFactory windowRuntimeContextFactory;
+    private final WindowCapacityPolicy windowCapacityPolicy;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     public MultiWindowTaskManager(TaskFactory taskFactory,
-                                  WindowRuntimeContextFactory windowRuntimeContextFactory) {
+                                  WindowRuntimeContextFactory windowRuntimeContextFactory,
+                                  WindowCapacityPolicy windowCapacityPolicy) {
         this.taskFactory = taskFactory;
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
+        this.windowCapacityPolicy = windowCapacityPolicy;
     }
 
     public WindowTaskRunner registerWindow(WindowRegistrationRequest request) {
@@ -42,12 +46,21 @@ public class MultiWindowTaskManager {
                 existingRunner.refreshRegistration(request);
                 return existingRunner;
             }
+            if (!windowCapacityPolicy.canRegister(runnersByWindowId.size())) {
+                return null;
+            }
             WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
             return new WindowTaskRunner(windowContext, taskFactory);
         });
     }
 
     public WindowTaskRunner registerWindow(WindowRuntimeContext windowContext) {
+        if (runnersByWindowId.containsKey(windowContext.getWindowId())) {
+            return runnersByWindowId.get(windowContext.getWindowId());
+        }
+        if (!windowCapacityPolicy.canRegister(runnersByWindowId.size())) {
+            return null;
+        }
         return runnersByWindowId.computeIfAbsent(
                 windowContext.getWindowId(),
                 ignored -> new WindowTaskRunner(windowContext, taskFactory)
@@ -60,8 +73,9 @@ public class MultiWindowTaskManager {
         }
         int registered = 0;
         for (WindowRegistrationRequest request : requests) {
-            registerWindow(request);
-            registered++;
+            if (registerWindow(request) != null) {
+                registered++;
+            }
         }
         return registered;
     }
@@ -144,6 +158,14 @@ public class MultiWindowTaskManager {
 
     public int getRegisteredWindowCount() {
         return runnersByWindowId.size();
+    }
+
+    public int getMaxWindowCount() {
+        return windowCapacityPolicy.getMaxWindowCount();
+    }
+
+    public int getRemainingWindowCapacity() {
+        return windowCapacityPolicy.remainingCapacity(runnersByWindowId.size());
     }
 
     public void unregisterWindow(String windowId) {
