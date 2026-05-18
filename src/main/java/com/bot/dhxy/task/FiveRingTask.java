@@ -15,9 +15,12 @@ import com.bot.dhxy.task.wuhuan.FiveRingRuntimeState;
 import com.bot.dhxy.task.wuhuan.FiveRingTaskSyncDecision;
 import com.bot.dhxy.tools.GameStateUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @Slf4j
 public class FiveRingTask extends BaseTaskTemplate {
 
