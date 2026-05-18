@@ -6,6 +6,8 @@ public enum InputActionType {
     DOUBLE_RIGHT_CLICK,
     MOVE_MOUSE,
     DRAG_AND_DROP,
+    HOLD_CTRL,
+    RELEASE_CTRL,
     TYPE_TEXT_UNICODE,
     PASTE_TEXT,
     PRESS_ENTER,
