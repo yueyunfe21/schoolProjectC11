@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Function;
 
 @Slf4j
 public abstract class BaseTaskTemplate implements GameTask {
@@ -104,6 +105,33 @@ public abstract class BaseTaskTemplate implements GameTask {
             return context.getRetryPolicy();
         }
         return TaskRetryPolicy.none();
+    }
+
+    protected TaskStepResult executeStep(TaskExecutionContext executionContext,
+                                         String stepName,
+                                         Function<TaskExecutionContext, TaskStepResult> action) {
+        return executeStep(executionContext, stepName, action, null);
+    }
+
+    protected TaskStepResult executeStep(TaskExecutionContext executionContext,
+                                         String stepName,
+                                         Function<TaskExecutionContext, TaskStepResult> action,
+                                         TaskRetryPolicy retryPolicy) {
+        return taskStepExecutor.execute(executionContext, namedStep(stepName, action), retryPolicy);
+    }
+
+    protected TaskStep namedStep(String stepName, Function<TaskExecutionContext, TaskStepResult> action) {
+        return new TaskStep() {
+            @Override
+            public TaskStepResult execute(TaskExecutionContext context) {
+                return action.apply(context);
+            }
+
+            @Override
+            public String getStepName() {
+                return stepName;
+            }
+        };
     }
 
     private TaskExecutionContext buildDefaultExecutionContext() {
