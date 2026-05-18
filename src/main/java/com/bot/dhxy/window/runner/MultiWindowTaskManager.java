@@ -160,6 +160,16 @@ public class MultiWindowTaskManager {
         return runnersByWindowId.size();
     }
 
+    public int getRunningWindowCount() {
+        return (int) runnersByWindowId.values().stream()
+                .filter(WindowTaskRunner::isRunning)
+                .count();
+    }
+
+    public boolean hasRunningTasks() {
+        return getRunningWindowCount() > 0;
+    }
+
     public int getMaxWindowCount() {
         return windowCapacityPolicy.getMaxWindowCount();
     }
