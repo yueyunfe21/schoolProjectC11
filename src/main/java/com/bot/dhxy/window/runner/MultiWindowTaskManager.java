@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,6 +42,7 @@ public class MultiWindowTaskManager {
         if (request == null) {
             throw new IllegalArgumentException("window registration request must not be null");
         }
+        request.requireValid();
         return runnersByWindowId.compute(request.getWindowId(), (windowId, existingRunner) -> {
             if (existingRunner != null) {
                 existingRunner.refreshRegistration(request);
@@ -55,16 +57,18 @@ public class MultiWindowTaskManager {
     }
 
     public WindowTaskRunner registerWindow(WindowRuntimeContext windowContext) {
-        if (runnersByWindowId.containsKey(windowContext.getWindowId())) {
-            return runnersByWindowId.get(windowContext.getWindowId());
+        if (windowContext == null) {
+            throw new IllegalArgumentException("window context must not be null");
+        }
+        String windowId = windowContext.getWindowId();
+        WindowTaskRunner existing = runnersByWindowId.get(windowId);
+        if (existing != null) {
+            return existing;
         }
         if (!windowCapacityPolicy.canRegister(runnersByWindowId.size())) {
             return null;
         }
-        return runnersByWindowId.computeIfAbsent(
-                windowContext.getWindowId(),
-                ignored -> new WindowTaskRunner(windowContext, taskFactory)
-        );
+        return runnersByWindowId.computeIfAbsent(windowId, ignored -> new WindowTaskRunner(windowContext, taskFactory));
     }
 
     public int registerWindows(Collection<WindowRegistrationRequest> requests) {
@@ -73,7 +77,7 @@ public class MultiWindowTaskManager {
         }
         int registered = 0;
         for (WindowRegistrationRequest request : requests) {
-            if (registerWindow(request) != null) {
+            if (request != null && request.hasWindowId() && registerWindow(request) != null) {
                 registered++;
             }
         }
@@ -81,7 +85,7 @@ public class MultiWindowTaskManager {
     }
 
     public boolean submit(String windowId, TaskType taskType) {
-        WindowTaskRunner runner = runnersByWindowId.get(windowId);
+        WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
         if (runner == null) {
             return false;
         }
@@ -89,7 +93,7 @@ public class MultiWindowTaskManager {
     }
 
     public boolean submitSelectedTask(String windowId) {
-        WindowTaskRunner runner = runnersByWindowId.get(windowId);
+        WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
         if (runner == null) {
             return false;
         }
@@ -128,7 +132,7 @@ public class MultiWindowTaskManager {
     }
 
     public void stop(String windowId) {
-        WindowTaskRunner runner = runnersByWindowId.get(windowId);
+        WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
         if (runner != null) {
             runner.stopCurrentTask();
         }
@@ -139,7 +143,7 @@ public class MultiWindowTaskManager {
     }
 
     public Optional<WindowTaskRunner> getRunner(String windowId) {
-        return Optional.ofNullable(runnersByWindowId.get(windowId));
+        return Optional.ofNullable(runnersByWindowId.get(normalizeWindowId(windowId)));
     }
 
     public Optional<WindowTaskSnapshot> getSnapshot(String windowId) {
@@ -149,6 +153,7 @@ public class MultiWindowTaskManager {
     public List<WindowTaskSnapshot> getAllSnapshots() {
         return runnersByWindowId.values().stream()
                 .map(WindowTaskRunner::snapshot)
+                .sorted(Comparator.comparing(WindowTaskSnapshot::getWindowId, Comparator.nullsLast(String::compareTo)))
                 .toList();
     }
 
@@ -179,9 +184,21 @@ public class MultiWindowTaskManager {
     }
 
     public void unregisterWindow(String windowId) {
-        WindowTaskRunner runner = runnersByWindowId.remove(windowId);
+        WindowTaskRunner runner = runnersByWindowId.remove(normalizeWindowId(windowId));
         if (runner != null) {
             runner.shutdownNow();
         }
+    }
+
+    public void unregisterAll() {
+        runnersByWindowId.keySet().forEach(this::unregisterWindow);
+    }
+
+    private String normalizeWindowId(String windowId) {
+        if (windowId == null) {
+            return null;
+        }
+        String trimmed = windowId.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
