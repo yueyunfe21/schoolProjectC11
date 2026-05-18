@@ -34,6 +34,11 @@ public class TaskControlService {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     /**
+     * 是否已经发送停止请求。
+     */
+    private final AtomicBoolean stopping = new AtomicBoolean(false);
+
+    /**
      * 当前运行状态快照。
      */
     private volatile TaskRuntimeState runtimeState = TaskRuntimeState.idle();
@@ -74,6 +79,7 @@ public class TaskControlService {
             taskLogService.warn(null, null, "任务启动请求为空，或者没有有效任务，忽略启动请求");
             runtimeState = TaskRuntimeState.builder()
                     .running(false)
+                    .stopping(false)
                     .statusText("启动失败：没有有效任务")
                     .finishedAt(LocalDateTime.now())
                     .build();
@@ -86,9 +92,11 @@ public class TaskControlService {
             return new TaskRunSummary();
         }
 
+        stopping.set(false);
         LocalDateTime startedAt = LocalDateTime.now();
         runtimeState = TaskRuntimeState.builder()
                 .running(true)
+                .stopping(false)
                 .currentRequest(request)
                 .startedAt(startedAt)
                 .statusText("运行中：准备启动任务")
@@ -102,6 +110,7 @@ public class TaskControlService {
             if (request.isInitGameWindow()) {
                 runtimeState = TaskRuntimeState.builder()
                         .running(true)
+                        .stopping(false)
                         .currentRequest(request)
                         .startedAt(startedAt)
                         .statusText("运行中：正在初始化游戏窗口")
@@ -113,6 +122,7 @@ public class TaskControlService {
                     taskLogService.fail(null, null, "游戏窗口初始化失败，本次任务队列不启动");
                     runtimeState = TaskRuntimeState.builder()
                             .running(false)
+                            .stopping(false)
                             .currentRequest(request)
                             .lastSummary(summary)
                             .startedAt(startedAt)
@@ -128,6 +138,7 @@ public class TaskControlService {
 
             runtimeState = TaskRuntimeState.builder()
                     .running(true)
+                    .stopping(false)
                     .currentRequest(request)
                     .startedAt(startedAt)
                     .statusText("运行中：任务队列执行中")
@@ -135,34 +146,67 @@ public class TaskControlService {
 
             TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
             summary = taskRunner.run(queue, request.isTestMode());
+            String finalStatusText = stopping.get() ? "空闲：任务队列已停止" : "空闲：任务队列执行完毕";
             runtimeState = TaskRuntimeState.builder()
                     .running(false)
+                    .stopping(false)
                     .currentRequest(request)
                     .lastSummary(summary)
                     .startedAt(startedAt)
                     .finishedAt(LocalDateTime.now())
-                    .statusText("空闲：任务队列执行完毕")
+                    .statusText(finalStatusText)
+                    .build();
+            return summary;
+        } catch (Exception e) {
+            log.error("💥 任务启动或执行流程发生异常。", e);
+            taskLogService.fail(null, null, "任务启动或执行流程发生异常: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            runtimeState = TaskRuntimeState.builder()
+                    .running(false)
+                    .stopping(false)
+                    .currentRequest(request)
+                    .lastSummary(summary)
+                    .startedAt(startedAt)
+                    .finishedAt(LocalDateTime.now())
+                    .statusText("异常结束：" + e.getClass().getSimpleName())
                     .build();
             return summary;
         } finally {
+            stopping.set(false);
             running.set(false);
         }
     }
 
     /**
      * 请求停止当前任务队列。
+     *
+     * 注意：这里只发送停止请求，不立刻把 running 改成 false。
+     * running 会在任务线程真正退出 startTasks() 时释放，避免旧任务未停完又启动新任务。
      */
     public void stop() {
+        if (!running.get()) {
+            runtimeState = TaskRuntimeState.builder()
+                    .running(false)
+                    .stopping(false)
+                    .currentRequest(runtimeState.getCurrentRequest())
+                    .lastSummary(runtimeState.getLastSummary())
+                    .startedAt(runtimeState.getStartedAt())
+                    .finishedAt(runtimeState.getFinishedAt())
+                    .statusText("空闲：当前没有正在运行的任务")
+                    .build();
+            return;
+        }
+
+        stopping.set(true);
         taskRunner.stop();
         runtimeState = TaskRuntimeState.builder()
-                .running(false)
+                .running(true)
+                .stopping(true)
                 .currentRequest(runtimeState.getCurrentRequest())
                 .lastSummary(runtimeState.getLastSummary())
                 .startedAt(runtimeState.getStartedAt())
-                .finishedAt(LocalDateTime.now())
-                .statusText("已请求停止")
+                .statusText("停止中：已发送停止请求，等待任务退出")
                 .build();
-        running.set(false);
+        taskLogService.warn(null, null, "已发送停止请求，等待任务退出");
     }
 
     /**
@@ -170,6 +214,13 @@ public class TaskControlService {
      */
     public boolean isRunning() {
         return running.get();
+    }
+
+    /**
+     * 当前是否已经请求停止。
+     */
+    public boolean isStopping() {
+        return stopping.get();
     }
 
     /**
