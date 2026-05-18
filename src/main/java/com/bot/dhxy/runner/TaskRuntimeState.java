@@ -3,6 +3,7 @@ package com.bot.dhxy.runner;
 import lombok.Builder;
 import lombok.Getter;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
@@ -27,5 +28,33 @@ public class TaskRuntimeState {
                 .running(false)
                 .statusText("空闲")
                 .build();
+    }
+
+    /**
+     * 获取当前状态持续时间。
+     *
+     * 运行中：从 startedAt 到当前时间。
+     * 已结束：从 startedAt 到 finishedAt。
+     */
+    public long getElapsedMillis() {
+        if (startedAt == null) {
+            return 0L;
+        }
+        LocalDateTime end = running || finishedAt == null ? LocalDateTime.now() : finishedAt;
+        return Math.max(0L, Duration.between(startedAt, end).toMillis());
+    }
+
+    public String getElapsedText() {
+        long costMillis = getElapsedMillis();
+        if (costMillis < 1000) {
+            return costMillis + "ms";
+        }
+        long seconds = costMillis / 1000;
+        long minutes = seconds / 60;
+        long remainSeconds = seconds % 60;
+        if (minutes <= 0) {
+            return seconds + "s";
+        }
+        return minutes + "m " + remainSeconds + "s";
     }
 }
