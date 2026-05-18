@@ -9,6 +9,7 @@ import com.bot.dhxy.task.GameTask;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
 
@@ -80,7 +81,9 @@ public abstract class BaseTaskTemplate implements GameTask {
         }
     }
 
-    protected abstract List<TaskStep> buildSteps(TaskExecutionContext context);
+    protected List<TaskStep> buildSteps(TaskExecutionContext context) {
+        return Collections.emptyList();
+    }
 
     protected void beforeTask(TaskExecutionContext context) {
         if (gameContext != null) {
