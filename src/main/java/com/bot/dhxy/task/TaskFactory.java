@@ -1,6 +1,7 @@
 package com.bot.dhxy.task;
 
-import com.bot.dhxy.window.WindowRuntimeContext;
+import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
 /**
  * 根据窗口上下文和任务类型创建任务实例。
