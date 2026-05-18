@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.runtime;
 
+import com.bot.dhxy.config.WindowIsolationProperties;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -8,13 +9,18 @@ import java.util.function.Supplier;
 /**
  * 当前任务线程绑定的窗口上下文。
  *
- * 多窗口并发时，业务服务里很多旧代码还没有显式传 TaskExecutionContext。
- * 这里先用 ThreadLocal 让底层输入层知道“当前线程正在操作哪个窗口”。
+ * 默认情况下隐藏绑定上下文，保持旧单窗口行为。
+ * 只有 bot.window.isolation-enabled=true 时，底层输入/截图层才会读取当前窗口上下文。
  */
 @Component
 public class WindowTaskContextHolder {
 
+    private final WindowIsolationProperties windowIsolationProperties;
     private final ThreadLocal<WindowRuntimeContext> currentContext = new ThreadLocal<>();
+
+    public WindowTaskContextHolder(WindowIsolationProperties windowIsolationProperties) {
+        this.windowIsolationProperties = windowIsolationProperties;
+    }
 
     public void bind(WindowRuntimeContext context) {
         if (context == null) {
@@ -29,6 +35,13 @@ public class WindowTaskContextHolder {
     }
 
     public Optional<WindowRuntimeContext> current() {
+        if (!windowIsolationProperties.isIsolationEnabled()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(currentContext.get());
+    }
+
+    public Optional<WindowRuntimeContext> rawCurrent() {
         return Optional.ofNullable(currentContext.get());
     }
 
