@@ -11,6 +11,7 @@ import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -21,12 +22,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 单个游戏窗口的任务执行器。
- *
- * 一个 WindowTaskRunner 只负责一个独立游戏窗口。
- * 窗口内部使用单线程执行，避免同一个角色同时跑多个任务。
- */
 @Slf4j
 public class WindowTaskRunner {
 
@@ -34,14 +29,16 @@ public class WindowTaskRunner {
 
     private final WindowRuntimeContext windowContext;
     private final TaskFactory taskFactory;
+    private final WindowTaskContextHolder contextHolder;
     private final ExecutorService executor;
 
     private volatile RunningTaskHandle currentTask;
     private volatile boolean shutdown;
 
-    public WindowTaskRunner(WindowRuntimeContext windowContext, TaskFactory taskFactory) {
+    public WindowTaskRunner(WindowRuntimeContext windowContext, TaskFactory taskFactory, WindowTaskContextHolder contextHolder) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
         this.taskFactory = Objects.requireNonNull(taskFactory, "taskFactory must not be null");
+        this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder must not be null");
         this.executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable);
             thread.setName("window-task-" + windowContext.getWindowId() + "-" + THREAD_ID.getAndIncrement());
@@ -53,30 +50,29 @@ public class WindowTaskRunner {
     public synchronized boolean submit(TaskType taskType) {
         TaskType safeTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
         if (shutdown) {
-            windowContext.markError("窗口执行器已关闭");
-            log.warn("窗口 [{}] 执行器已关闭，拒绝提交任务：{}", windowContext.getWindowId(), safeTaskType);
+            windowContext.markError("runner is closed");
+            log.warn("window [{}] runner is closed, reject task {}", windowContext.getWindowId(), safeTaskType);
             return false;
         }
         if (safeTaskType == TaskType.UNKNOWN) {
-            windowContext.markError("任务类型无效");
-            log.warn("窗口 [{}] 任务类型无效，拒绝提交", windowContext.getWindowId());
+            windowContext.markError("invalid task type");
+            log.warn("window [{}] invalid task type", windowContext.getWindowId());
             return false;
         }
         if (isRunning()) {
-            log.warn("窗口 [{}] 已有任务运行，拒绝提交新任务：{}", windowContext.getWindowId(), safeTaskType);
+            log.warn("window [{}] already has running task, reject {}", windowContext.getWindowId(), safeTaskType);
             return false;
         }
 
         GameTask task = taskFactory.createTask(windowContext, safeTaskType);
         if (task == null) {
-            windowContext.markError("无法创建任务：" + safeTaskType);
-            log.error("窗口 [{}] 无法创建任务：{}", windowContext.getWindowId(), safeTaskType);
+            windowContext.markError("cannot create task: " + safeTaskType);
+            log.error("window [{}] cannot create task: {}", windowContext.getWindowId(), safeTaskType);
             return false;
         }
 
         TaskStopToken stopToken = new TaskStopToken();
         TaskExecutionContext executionContext = buildExecutionContext(task, stopToken);
-
         FutureTask<Void> futureTask = new FutureTask<>(() -> {
             runTask(safeTaskType, task, executionContext);
             return null;
@@ -89,10 +85,9 @@ public class WindowTaskRunner {
     }
 
     public void refreshRegistration(WindowRegistrationRequest request) {
-        if (request == null) {
-            return;
+        if (request != null) {
+            windowContext.applyRegistration(request, !isRunning());
         }
-        windowContext.applyRegistration(request, !isRunning());
     }
 
     public void stopCurrentTask() {
@@ -100,26 +95,20 @@ public class WindowTaskRunner {
         if (taskHandle == null || !taskHandle.isRunning()) {
             return;
         }
-        windowContext.markStopping("用户请求停止窗口任务");
-        windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("用户请求停止窗口任务"));
+        windowContext.markStopping("stop requested");
+        windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("stop requested"));
     }
 
-    public RunningTaskHandle getCurrentTask() {
-        return currentTask;
-    }
+    public RunningTaskHandle getCurrentTask() { return currentTask; }
 
-    public WindowRuntimeContext getWindowContext() {
-        return windowContext;
-    }
+    public WindowRuntimeContext getWindowContext() { return windowContext; }
 
     public boolean isRunning() {
         RunningTaskHandle taskHandle = currentTask;
         return taskHandle != null && taskHandle.isRunning();
     }
 
-    public boolean isShutdown() {
-        return shutdown;
-    }
+    public boolean isShutdown() { return shutdown; }
 
     public WindowTaskSnapshot snapshot() {
         RunningTaskHandle taskHandle = currentTask;
@@ -147,8 +136,8 @@ public class WindowTaskRunner {
         shutdown = true;
         RunningTaskHandle taskHandle = currentTask;
         if (taskHandle != null) {
-            windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("窗口执行器关闭"));
-            taskHandle.forceCancel("窗口执行器关闭");
+            windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("runner closed"));
+            taskHandle.forceCancel("runner closed");
         }
         executor.shutdownNow();
     }
@@ -159,7 +148,9 @@ public class WindowTaskRunner {
             taskHandle.markRunningThread(Thread.currentThread());
         }
         try {
-            windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> runTaskWithBoundGameState(taskType, task, executionContext));
+            contextHolder.runWith(windowContext,
+                    () -> windowContext.getGameContext().runWithState(windowContext.getGameState(),
+                            () -> runTaskWithBoundGameState(taskType, task, executionContext)));
         } finally {
             RunningTaskHandle latestHandle = currentTask;
             if (latestHandle != null) {
@@ -170,25 +161,25 @@ public class WindowTaskRunner {
 
     private void runTaskWithBoundGameState(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
         windowContext.markStarted(taskType);
-        log.info("{} 窗口 [{}] 开始执行任务：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
+        log.info("{} window [{}] start task: {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
 
         TaskRunResult result = TaskRunResult.FAILED;
-        String finishMessage = "任务结束：" + result;
+        String finishMessage = "task result: " + result;
         try {
             result = task.execute(executionContext);
-            finishMessage = "任务结束：" + result;
+            finishMessage = "task result: " + result;
         } catch (TaskStopRequestedException | CancellationException e) {
-            log.info("{} 窗口 [{}] 任务被停止：{}，原因：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e.getMessage());
             result = TaskRunResult.STOPPED;
-            finishMessage = "任务停止：" + normalizeMessage(e.getMessage());
+            finishMessage = "task stopped: " + normalizeMessage(e.getMessage());
+            log.info("{} window [{}] task stopped: {} reason={}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e.getMessage());
         } catch (Exception e) {
-            log.error("{} 窗口 [{}] 任务异常：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e);
             result = TaskRunResult.FAILED;
-            finishMessage = "任务异常：" + e.getClass().getSimpleName();
+            finishMessage = "task exception: " + e.getClass().getSimpleName();
+            log.error("{} window [{}] task error: {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e);
         } finally {
             WindowRuntimeStatus status = toWindowStatus(result);
             windowContext.markFinished(status, taskType, result, finishMessage);
-            log.info("{} 窗口 [{}] 任务结束：{} -> {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), result);
+            log.info("{} window [{}] task finished: {} -> {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), result);
             currentTask = null;
         }
     }
