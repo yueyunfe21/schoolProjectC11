@@ -21,6 +21,16 @@ public class TaskExecutionContext {
 
     private final String taskCode;
     private final String taskName;
+    /**
+     * 多窗口模式下的窗口标识。
+     * 单窗口兼容模式下可以为空。
+     */
+    private final String windowId;
+    /**
+     * 多窗口模式下当前窗口识别到的角色身份，例如 LEADER / MEMBER / UNKNOWN。
+     * 这里使用字符串，避免通用 runner 包反向依赖 window 包。
+     */
+    private final String windowRole;
     private final TaskRunRequest request;
     private final TaskExecutionPlan plan;
     private final TaskStopToken stopToken;
@@ -37,6 +47,17 @@ public class TaskExecutionContext {
         if (stopToken != null) {
             stopToken.throwIfStopRequested();
         }
+    }
+
+    public boolean hasWindow() {
+        return windowId != null && !windowId.isBlank();
+    }
+
+    public String getLogPrefix() {
+        if (!hasWindow()) {
+            return "[single-window]";
+        }
+        return "[window=" + windowId + ", role=" + (windowRole == null ? "UNKNOWN" : windowRole) + "]";
     }
 
     public List<TaskParameterValue> getTaskParameters(String code) {
