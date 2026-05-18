@@ -99,6 +99,7 @@ public class MainWindowController {
     private Button registerWindowButton;
     private Button registerTeamButton;
     private Button scanGameWindowsButton;
+    private Button startIndependentWindowsButton;
     private Button selectAllWindowsButton;
     private Button clearWindowSelectionButton;
     private Button startByRoleButton;
@@ -169,11 +170,12 @@ public class MainWindowController {
         configureWindowComboBoxText();
 
         registerWindowButton = new Button("注册/刷新窗口");
-        registerTeamButton = new Button("快速注册队伍");
+        registerTeamButton = new Button("测试注册窗口");
         scanGameWindowsButton = new Button("扫描游戏窗口");
+        startIndependentWindowsButton = new Button("一键启动独立窗口");
         selectAllWindowsButton = new Button("全选窗口");
         clearWindowSelectionButton = new Button("取消选择");
-        startByRoleButton = new Button("按身份启动");
+        startByRoleButton = new Button("测试按身份启动");
         startWindowSelectedTaskButton = new Button("启动已选任务");
         stopSelectedWindowsButton = new Button("停止选中窗口");
         stopAllWindowsButton = new Button("停止全部窗口");
@@ -218,6 +220,7 @@ public class MainWindowController {
 
     private Parent buildTopBar() {
         Label title = new Label("DHXY Robot 控制台");
+        Label emergencyStopLabel = new Label("紧急停止：Ctrl+Shift+F12");
 
         refreshButton.setOnAction(event -> refreshDashboard());
         clearButton.setOnAction(event -> {
@@ -232,7 +235,7 @@ public class MainWindowController {
         });
 
         HBox box = new HBox(10, title, refreshButton, clearButton, startButton, stopButton,
-                loopCheckBox, testModeCheckBox, initGameWindowCheckBox);
+                loopCheckBox, testModeCheckBox, initGameWindowCheckBox, emergencyStopLabel);
         box.setPadding(new Insets(0, 0, 12, 0));
         return box;
     }
@@ -264,6 +267,8 @@ public class MainWindowController {
         registerTeamButton.setOnAction(event -> registerTeamFromUi());
         scanGameWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
                 gameWindowRegistrationService.registerDetectedGameWindows(windowTaskTypeComboBox.getValue())));
+        startIndependentWindowsButton.setOnAction(event -> runWindowCommandInBackground(() ->
+                gameWindowRegistrationService.scanRegisterAndStartIndependentWindows(windowTaskTypeComboBox.getValue())));
         selectAllWindowsButton.setOnAction(event -> selectAllWindows());
         clearWindowSelectionButton.setOnAction(event -> clearWindowSelection());
         startByRoleButton.setOnAction(event -> runWindowCommandInBackground(() ->
@@ -281,15 +286,16 @@ public class MainWindowController {
         HBox formRow = new HBox(8,
                 new Label("窗口ID/前缀"), windowIdField,
                 new Label("角色名"), windowRoleNameField,
-                new Label("身份"), windowRoleComboBox,
+                new Label("显示身份"), windowRoleComboBox,
                 new Label("任务"), windowTaskTypeComboBox,
                 registerWindowButton);
 
         HBox batchRow = new HBox(8,
-                new Label("队伍窗口数"), windowBatchCountField,
+                new Label("测试窗口数"), windowBatchCountField,
                 registerTeamButton,
                 scanGameWindowsButton,
-                new Label("快速注册：第1个队长，其余队员"));
+                startIndependentWindowsButton,
+                new Label("正式模式：每个窗口独立执行当前任务，不判断队长/队员"));
 
         HBox selectionRow = new HBox(8,
                 refreshWindowButton,
@@ -299,8 +305,8 @@ public class MainWindowController {
                 unregisterAllWindowsButton);
 
         HBox actionRow = new HBox(8,
-                startByRoleButton,
                 startWindowSelectedTaskButton,
+                startByRoleButton,
                 stopSelectedWindowsButton,
                 stopAllWindowsButton);
 
@@ -332,7 +338,7 @@ public class MainWindowController {
         roleNameCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(nullToDash(cell.getValue().getRoleName())));
         roleNameCol.setPrefWidth(85);
 
-        TableColumn<WindowTaskSnapshot, String> roleCol = new TableColumn<>("身份");
+        TableColumn<WindowTaskSnapshot, String> roleCol = new TableColumn<>("显示身份");
         roleCol.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getRoleDisplayName()));
         roleCol.setPrefWidth(80);
 
@@ -597,7 +603,7 @@ public class MainWindowController {
 
     private void registerTeamFromUi() {
         int count = windowRegistrationBatchBuilder.parseCount(windowBatchCountField.getText());
-        List<WindowRegistrationRequest> requests = windowRegistrationBatchBuilder.buildTeam(
+        List<WindowRegistrationRequest> requests = windowRegistrationBatchBuilder.buildIndependentWindows(
                 windowIdField.getText(),
                 windowRoleNameField.getText(),
                 count,
@@ -647,6 +653,9 @@ public class MainWindowController {
         if (scanGameWindowsButton != null) {
             scanGameWindowsButton.setDisable(disabled);
         }
+        if (startIndependentWindowsButton != null) {
+            startIndependentWindowsButton.setDisable(disabled);
+        }
         if (selectAllWindowsButton != null) {
             selectAllWindowsButton.setDisable(disabled);
         }
@@ -684,7 +693,7 @@ public class MainWindowController {
         addWindowLog(result.getMessage());
         if (result.hasAssignments()) {
             for (var assignment : result.getAssignments()) {
-                addWindowLog("分配：" + nullToDash(assignment.getWindowId())
+                addWindowLog("测试身份分配：" + nullToDash(assignment.getWindowId())
                         + " | " + assignment.getRoleDisplayName()
                         + " -> " + assignment.getTaskDisplayName()
                         + " | " + assignment.getReason());
