@@ -7,9 +7,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * UI 点击“启动”时传入的统一请求对象。
- */
 public class WindowTaskStartRequest {
 
     private final List<String> windowIds;
@@ -50,6 +47,22 @@ public class WindowTaskStartRequest {
 
     public boolean hasWindows() {
         return !windowIds.isEmpty();
+    }
+
+    public int getWindowCount() {
+        return windowIds.size();
+    }
+
+    public boolean isSameTaskMode() {
+        return startMode == WindowTaskStartMode.SAME_TASK;
+    }
+
+    public boolean isSelectedTaskMode() {
+        return startMode == WindowTaskStartMode.SELECTED_TASK;
+    }
+
+    public boolean isDetectedRoleMode() {
+        return startMode == WindowTaskStartMode.DETECTED_ROLE;
     }
 
     private static List<String> normalizeWindowIds(Collection<String> windowIds) {
