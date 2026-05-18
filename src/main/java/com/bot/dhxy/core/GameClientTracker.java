@@ -68,7 +68,7 @@ public class GameClientTracker {
             int y1 = s.windowBaseY;
             int x2 = x1 + WINDOW_WIDTH;
             int y2 = y1 + WINDOW_HEIGHT;
-            return captureToFileWithoutLock("全局视野", scopedTempPath("latest_vision.png"), x1, y1, x2, y2);
+            return captureToFileWithoutLock("全局视野", LATEST_VISION_PATH, x1, y1, x2, y2);
         });
     }
 
@@ -108,18 +108,17 @@ public class GameClientTracker {
     }
 
     public boolean captureToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, scopedTempPath(savePath), x1, y1, x2, y2));
+        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2));
     }
 
     public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
-            String scopedPath = scopedTempPath(savePath);
             System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
             inputProvider.pressAlt4();
             sleepQuietly(400);
             try {
-                return eyes.captureRegionToFile(scopedPath, x1, y1, x2, y2);
+                return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
             } finally {
                 inputProvider.pressAlt4();
                 System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
@@ -201,22 +200,6 @@ public class GameClientTracker {
 
     private TrackerState state() {
         return windowTaskContextHolder.current().isPresent() ? threadState.get() : sharedState;
-    }
-
-    private String scopedTempPath(String path) {
-        Optional<WindowRuntimeContext> current = windowTaskContextHolder.current();
-        if (current.isEmpty() || path == null || path.isBlank()) {
-            return path;
-        }
-        String normalized = path.replace('\\', '/');
-        if (!normalized.startsWith("images/temp/")) {
-            return path;
-        }
-        String fileName = normalized.substring("images/temp/".length());
-        if (fileName.startsWith(current.get().getWindowId() + "/")) {
-            return path;
-        }
-        return "images/temp/" + current.get().getWindowId() + "/" + fileName;
     }
 
     private HWND toHwnd(String handleText) {
