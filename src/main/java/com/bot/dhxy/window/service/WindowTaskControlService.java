@@ -30,6 +30,16 @@ public class WindowTaskControlService {
         this.assignmentPolicy = assignmentPolicy;
     }
 
+    public WindowSystemSnapshot getSystemSnapshot() {
+        return new WindowSystemSnapshot(
+                taskManager.getRegisteredWindowCount(),
+                taskManager.getRunningWindowCount(),
+                taskManager.getMaxWindowCount(),
+                taskManager.getRemainingWindowCapacity(),
+                taskManager.getAllSnapshots()
+        );
+    }
+
     public WindowTaskCommandResult registerWindows(Collection<WindowRegistrationRequest> requests) {
         if (requests == null || requests.isEmpty()) {
             return WindowTaskCommandResult.empty("没有需要注册的窗口", taskManager.getAllSnapshots());
