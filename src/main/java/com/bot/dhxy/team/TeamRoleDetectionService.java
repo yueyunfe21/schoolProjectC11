@@ -1,5 +1,6 @@
 package com.bot.dhxy.team;
 
+import com.bot.dhxy.config.TeamTaskProperties;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,8 +15,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class TeamRoleDetectionService {
 
+    private final TeamTaskProperties teamTaskProperties;
+
+    public TeamRoleDetectionService(TeamTaskProperties teamTaskProperties) {
+        this.teamTaskProperties = teamTaskProperties;
+    }
+
     /**
-     * 当前默认不拦截任何任务，避免影响现有五环流程。
+     * 当前默认不做真实识别，返回 UNKNOWN。
      *
      * 后续补上真实识别后，可以返回 LEADER / MEMBER / SOLO / UNKNOWN。
      */
@@ -29,19 +36,34 @@ public class TeamRoleDetectionService {
     /**
      * 五环是否允许继续执行。
      *
-     * 当前默认 true，保证现有五环不被影响。
-     * 后续真实识别完成后，可以改成：LEADER / SOLO 允许，MEMBER 跳过。
+     * 规则只在任务内部生效，window 层不参与队长/队员判断。
      */
     public boolean shouldRunFiveRing(TaskExecutionContext context) {
-        return true;
+        TeamRoleStatus role = detectCurrentRole(context);
+        if (!teamTaskProperties.isFiveRingRequiresLeader()) {
+            return true;
+        }
+        if (role.isLeader()) {
+            return true;
+        }
+        return role.isUnknown() && teamTaskProperties.isAllowFiveRingWhenRoleUnknown();
     }
 
     /**
      * 自动战斗是否允许继续执行。
-     *
-     * 当前默认 true。后续可以按是否队员、是否战斗状态进一步收紧。
      */
     public boolean shouldRunAutoBattle(TaskExecutionContext context) {
-        return true;
+        TeamRoleStatus role = detectCurrentRole(context);
+        if (!teamTaskProperties.isAutoBattleRequiresMember()) {
+            return true;
+        }
+        if (role.isMember()) {
+            return true;
+        }
+        return role.isUnknown() && teamTaskProperties.isAllowAutoBattleWhenRoleUnknown();
+    }
+
+    public String describeCurrentRole(TaskExecutionContext context) {
+        return detectCurrentRole(context).name();
     }
 }
