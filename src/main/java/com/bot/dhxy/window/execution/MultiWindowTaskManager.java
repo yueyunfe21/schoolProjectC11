@@ -6,6 +6,7 @@ import com.bot.dhxy.window.policy.WindowCapacityPolicy;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -16,26 +17,23 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 多窗口任务管理器。
- *
- * 每个独立游戏窗口对应一个 WindowTaskRunner。
- * 窗口内部串行执行；窗口之间可以并行执行。
- */
 @Component
 public class MultiWindowTaskManager {
 
     private final TaskFactory taskFactory;
     private final WindowRuntimeContextFactory windowRuntimeContextFactory;
     private final WindowCapacityPolicy windowCapacityPolicy;
+    private final WindowTaskContextHolder windowTaskContextHolder;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     public MultiWindowTaskManager(TaskFactory taskFactory,
                                   WindowRuntimeContextFactory windowRuntimeContextFactory,
-                                  WindowCapacityPolicy windowCapacityPolicy) {
+                                  WindowCapacityPolicy windowCapacityPolicy,
+                                  WindowTaskContextHolder windowTaskContextHolder) {
         this.taskFactory = taskFactory;
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
         this.windowCapacityPolicy = windowCapacityPolicy;
+        this.windowTaskContextHolder = windowTaskContextHolder;
     }
 
     public WindowTaskRunner registerWindow(WindowRegistrationRequest request) {
@@ -52,7 +50,7 @@ public class MultiWindowTaskManager {
                 return null;
             }
             WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
-            return new WindowTaskRunner(windowContext, taskFactory);
+            return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder);
         });
     }
 
@@ -68,7 +66,7 @@ public class MultiWindowTaskManager {
         if (!windowCapacityPolicy.canRegister(runnersByWindowId.size())) {
             return null;
         }
-        return runnersByWindowId.computeIfAbsent(windowId, ignored -> new WindowTaskRunner(windowContext, taskFactory));
+        return runnersByWindowId.computeIfAbsent(windowId, ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder));
     }
 
     public int registerWindows(Collection<WindowRegistrationRequest> requests) {
