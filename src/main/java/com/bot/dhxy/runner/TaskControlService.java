@@ -34,11 +34,11 @@ public class TaskControlService {
      * 按 application.properties 里的 bot.run 配置启动任务队列。
      */
     public TaskRunSummary startConfiguredTasks() {
-        return startTasks(
-                taskRunProperties.getNormalizedTasks(),
-                taskRunProperties.isLoop(),
-                taskRunProperties.isTestMode()
-        );
+        return startTasks(TaskRunRequest.builder()
+                .taskCodes(taskRunProperties.getNormalizedTasks())
+                .loop(taskRunProperties.isLoop())
+                .testMode(taskRunProperties.isTestMode())
+                .build());
     }
 
     /**
@@ -47,6 +47,25 @@ public class TaskControlService {
      * 后面 UI 勾选任务后，可以直接调用这个方法。
      */
     public TaskRunSummary startTasks(List<String> taskCodes, boolean loop, boolean testMode) {
+        return startTasks(TaskRunRequest.builder()
+                .taskCodes(taskCodes)
+                .loop(loop)
+                .testMode(testMode)
+                .build());
+    }
+
+    /**
+     * 按启动请求对象启动任务队列。
+     *
+     * 以后如果增加任务运行次数、任务间隔、失败策略等参数，只需要扩展 TaskRunRequest。
+     */
+    public TaskRunSummary startTasks(TaskRunRequest request) {
+        if (request == null || !request.hasTasks()) {
+            log.warn("⚠️ 任务启动请求为空，或者没有有效任务，忽略启动请求。");
+            taskLogService.warn(null, null, "任务启动请求为空，或者没有有效任务，忽略启动请求");
+            return new TaskRunSummary();
+        }
+
         if (!running.compareAndSet(false, true)) {
             log.warn("⚠️ 当前已有任务队列正在运行，忽略重复启动请求。");
             taskLogService.warn(null, null, "当前已有任务队列正在运行，忽略重复启动请求");
@@ -54,8 +73,10 @@ public class TaskControlService {
         }
 
         try {
-            TaskQueue queue = new TaskQueue(taskCodes, loop);
-            return taskRunner.run(queue, testMode);
+            log.info("🚀 接收到任务启动请求: {}", request.toLogText());
+            taskLogService.info(null, null, "接收到任务启动请求: " + request.toLogText());
+            TaskQueue queue = new TaskQueue(request.getNormalizedTaskCodes(), request.isLoop());
+            return taskRunner.run(queue, request.isTestMode());
         } finally {
             running.set(false);
         }
