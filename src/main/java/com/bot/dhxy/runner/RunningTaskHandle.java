@@ -1,7 +1,7 @@
 package com.bot.dhxy.runner;
 
 import com.bot.dhxy.task.GameTask;
-import com.bot.dhxy.task.TaskType;
+import com.bot.dhxy.task.model.TaskType;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.Future;
