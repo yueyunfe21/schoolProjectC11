@@ -7,6 +7,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,7 @@ public class BagService {
     private final InputSequences inputSequences;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     public enum ItemAction { SELECT, USE }
 
@@ -183,7 +185,7 @@ public class BagService {
         int endX = startX + (int) Math.round(layout.gridW / scale);
         int endY = startY + (int) Math.round(layout.gridH / scale);
 
-        String path = "images/temp/bag_scan.png";
+        String path = windowScopedTempPath.resolve("bag_scan.png");
         if (!tracker.captureToFile("局部扫描", path, startX, startY, endX, endY)) return null;
         throwIfStopRequested(context);
 
