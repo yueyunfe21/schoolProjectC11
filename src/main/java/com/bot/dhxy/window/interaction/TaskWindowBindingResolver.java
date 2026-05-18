@@ -1,7 +1,7 @@
 package com.bot.dhxy.window.interaction;
 
 import com.bot.dhxy.runner.context.TaskExecutionContext;
-import com.bot.dhxy.window.runtime.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import org.springframework.stereotype.Component;
 
 /**

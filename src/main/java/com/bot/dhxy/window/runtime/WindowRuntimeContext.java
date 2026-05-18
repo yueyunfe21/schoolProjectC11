@@ -2,6 +2,7 @@ package com.bot.dhxy.window.runtime;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 

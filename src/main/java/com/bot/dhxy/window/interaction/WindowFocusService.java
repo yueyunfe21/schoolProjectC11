@@ -1,6 +1,6 @@
 package com.bot.dhxy.window.interaction;
 
-import com.bot.dhxy.window.runtime.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;

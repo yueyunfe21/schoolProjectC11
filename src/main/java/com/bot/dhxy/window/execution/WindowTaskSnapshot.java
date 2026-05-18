@@ -1,9 +1,9 @@
-package com.bot.dhxy.window.runner;
+package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
-import com.bot.dhxy.window.runtime.WindowNativeBinding;
 
 import java.time.LocalDateTime;
 

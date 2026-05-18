@@ -1,4 +1,4 @@
-package com.bot.dhxy.window.runner;
+package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
@@ -7,8 +7,8 @@ import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
-import com.bot.dhxy.window.runtime.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.extern.slf4j.Slf4j;

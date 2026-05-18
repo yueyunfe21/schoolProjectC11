@@ -1,4 +1,4 @@
-package com.bot.dhxy.window.service;
+package com.bot.dhxy.window.control;
 
 /**
  * UI 启动窗口任务时的模式。

@@ -1,4 +1,4 @@
-package com.bot.dhxy.window.service;
+package com.bot.dhxy.window.control;
 
 /**
  * 单个窗口在一次批量命令中的执行明细。

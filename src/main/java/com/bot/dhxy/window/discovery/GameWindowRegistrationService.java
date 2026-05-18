@@ -2,8 +2,8 @@ package com.bot.dhxy.window.discovery;
 
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
-import com.bot.dhxy.window.service.WindowTaskCommandResult;
-import com.bot.dhxy.window.service.WindowTaskControlService;
+import com.bot.dhxy.window.control.WindowTaskCommandResult;
+import com.bot.dhxy.window.control.WindowTaskControlService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;

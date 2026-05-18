@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.runtime;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 

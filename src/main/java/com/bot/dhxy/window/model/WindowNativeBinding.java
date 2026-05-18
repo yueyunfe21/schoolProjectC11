@@ -1,4 +1,4 @@
-package com.bot.dhxy.window.runtime;
+package com.bot.dhxy.window.model;
 
 /**
  * 游戏窗口与系统原生窗口的绑定信息。

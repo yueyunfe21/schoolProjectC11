@@ -1,9 +1,9 @@
-package com.bot.dhxy.window.service;
+package com.bot.dhxy.window.control;
 
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.window.execution.MultiWindowTaskManager;
+import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
-import com.bot.dhxy.window.runner.MultiWindowTaskManager;
-import com.bot.dhxy.window.runner.WindowTaskSnapshot;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
