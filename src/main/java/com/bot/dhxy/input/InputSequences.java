@@ -1,6 +1,10 @@
 package com.bot.dhxy.input;
 
+import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionQueue;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * Groups multi-step physical input sequences so another window cannot steal focus
@@ -9,39 +13,22 @@ import org.springframework.stereotype.Component;
 @Component
 public class InputSequences {
 
-    private final WindowAwareInputCoordinator inputCoordinator;
-    private final InputProvider inputProvider;
+    private final InputActionQueue inputActionQueue;
 
-    public InputSequences(WindowAwareInputCoordinator inputCoordinator, InputProvider inputProvider) {
-        this.inputCoordinator = inputCoordinator;
-        this.inputProvider = inputProvider;
+    public InputSequences(InputActionQueue inputActionQueue) {
+        this.inputActionQueue = inputActionQueue;
     }
 
     public boolean typeTextEnterAndScroll(String text, int scrollFocusX, int scrollFocusY) {
-        return inputCoordinator.callInputTransaction("typeTextEnterAndScroll", () -> {
-            inputProvider.typeTextUnicode(text);
-            if (!sleepInterruptible(100)) {
-                return false;
-            }
-            inputProvider.pressEnter();
-            inputProvider.clickLeft(scrollFocusX, scrollFocusY, 50);
-            for (int i = 0; i < 2; i++) {
-                inputProvider.scrollDown(2);
-                if (!sleepInterruptible(100)) {
-                    return false;
-                }
-            }
-            return sleepInterruptible(500);
-        });
-    }
-
-    private boolean sleepInterruptible(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return inputActionQueue.submitAndWait("typeTextEnterAndScroll", List.of(
+                InputAction.typeTextUnicode(text),
+                InputAction.sleep(100),
+                InputAction.pressEnter(),
+                InputAction.clickLeft(scrollFocusX, scrollFocusY, 50),
+                InputAction.scrollDown(2),
+                InputAction.sleep(100),
+                InputAction.scrollDown(2),
+                InputAction.sleep(500)
+        ));
     }
 }
