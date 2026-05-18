@@ -2,7 +2,8 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.input.InputProvider;
+import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -11,54 +12,51 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
+import java.util.List;
 
 /**
- * 🎒 万能包裹/物品栏自动化服务 (智能环境管理版)
+ * 万能包裹/物品栏自动化服务。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class BagService {
 
-    private final InputProvider inputProvider;
+    private final InputSequences inputSequences;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
 
     public enum ItemAction { SELECT, USE }
 
-    // ========================================================================
-    // 📐 包裹图纸定义
-    // ========================================================================
     public static class BagLayout {
         final String anchorTemplate;
-        final boolean autoManageUI; // 🌟 核心开关：是否自动执行 Alt+E 的开启与关闭
+        final boolean autoManageUI;
         final int gridOffsetX, gridOffsetY, gridW, gridH;
         final int tabOffsetX, tabOffsetY, tabStepY;
 
-        public BagLayout(String anchorTemplate, boolean autoManageUI, int gridOffsetX, int gridOffsetY, int gridW, int gridH, int tabOffsetX, int tabOffsetY, int tabStepY) {
+        public BagLayout(String anchorTemplate, boolean autoManageUI, int gridOffsetX, int gridOffsetY,
+                         int gridW, int gridH, int tabOffsetX, int tabOffsetY, int tabStepY) {
             this.anchorTemplate = anchorTemplate;
             this.autoManageUI = autoManageUI;
-            this.gridOffsetX = gridOffsetX; this.gridOffsetY = gridOffsetY;
-            this.gridW = gridW; this.gridH = gridH;
-            this.tabOffsetX = tabOffsetX; this.tabOffsetY = tabOffsetY; this.tabStepY = tabStepY;
+            this.gridOffsetX = gridOffsetX;
+            this.gridOffsetY = gridOffsetY;
+            this.gridW = gridW;
+            this.gridH = gridH;
+            this.tabOffsetX = tabOffsetX;
+            this.tabOffsetY = tabOffsetY;
+            this.tabStepY = tabStepY;
         }
     }
 
-    // 🌟 主背包：需要自动管理 UI (Alt+E)
     public static final BagLayout MAIN_BAG = new BagLayout(
             "images/template/anchor_huanzhuang.png", true,
             -299, 16, 312, 208, 29, 32, 35
     );
 
-    // 🌟 给予包裹：不需要自动管理 (由 NPC 对话触发)
     public static final BagLayout GIVE_BAG = new BagLayout(
             null, false,
             359, 276, 308, 206, 681, 292, 35
     );
-
-    // ========================================================================
-    // 🚀 公共接口 (已注入环境管理)
-    // ========================================================================
 
     public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate) {
         return findItemPageIndex(layout, targetItemTemplate, null);
@@ -70,7 +68,6 @@ public class BagService {
 
         Integer foundIndex = null;
         try {
-            log.info("🎒 [包裹引擎-侦察] 搜索物品: [{}]", targetItemTemplate);
             Point baseAnchor = getBaseAnchor(layout, context);
             if (baseAnchor != null) {
                 for (int i = 0; i <= 4; i++) {
@@ -103,37 +100,31 @@ public class BagService {
         return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE, context);
     }
 
-    // ========================================================================
-    // ⚙️ 智能环境管理引擎
-    // ========================================================================
-
-    /**
-     * 🚪 确保包裹已打开
-     * 只有 layout.autoManageUI 为 true 时，才会尝试 Alt+E
-     */
     private boolean ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
-        if (!layout.autoManageUI) return true; // 不需要自动管理的，默认视为已打开
+        if (!layout.autoManageUI) return true;
 
         Point p = getBaseAnchor(layout, context);
         if (p == null) {
-            log.info("🚪 [环境管理] 主包裹未开启，按下 Alt+E 唤起...");
-            inputProvider.pressAltE();
-            sleep(context, 800); // 等待 UI 弹出
+            log.info("Main bag not open, pressing Alt+E");
+            if (!inputSequences.submitAndWait("bag:openAltE", List.of(
+                    InputAction.pressAltE(),
+                    InputAction.sleep(800)
+            ))) {
+                return false;
+            }
             p = getBaseAnchor(layout, context);
         }
 
         return p != null;
     }
 
-    /**
-     * 🚪 操作完成后的“随手关门”逻辑
-     */
     private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
         if (layout.autoManageUI) {
-            log.info("🚪 [环境管理] 操作结束，按下 Alt+E 关闭主包裹，清理战场。");
-            inputProvider.pressAltE();
-            sleep(context, 500);
+            inputSequences.submitAndWait("bag:closeAltE", List.of(
+                    InputAction.pressAltE(),
+                    InputAction.sleep(500)
+            ));
         }
     }
 
@@ -173,10 +164,6 @@ public class BagService {
         return success;
     }
 
-    // ========================================================================
-    // 👁️ 底层视觉引擎
-    // ========================================================================
-
     private Point getBaseAnchor(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
         if (layout.anchorTemplate == null) {
@@ -212,16 +199,22 @@ public class BagService {
         double scale = coordinateHelper.getScaleRatio();
         int tx = baseAnchor.x + (int) Math.round(layout.tabOffsetX / scale);
         int ty = baseAnchor.y + (int) Math.round((layout.tabOffsetY + tabIndex * layout.tabStepY) / scale);
-        inputProvider.clickLeft(tx, ty, 100);
-        sleep(context, 500);
+        inputSequences.submitAndWait("bag:switchTab", List.of(
+                InputAction.clickLeft(tx, ty, 100),
+                InputAction.sleep(500)
+        ));
     }
 
     private void executeSafeAction(Point raw, ItemAction action, TaskExecutionContext context) {
         throwIfStopRequested(context);
         Point p = coordinateHelper.getRandomizedPoint(raw, 10, 10);
-        if (action == ItemAction.USE) inputProvider.clickRight(p.x, p.y, 100);
-        else inputProvider.clickLeft(p.x, p.y, 100);
-        sleep(context, 500);
+        InputAction clickAction = action == ItemAction.USE
+                ? InputAction.clickRight(p.x, p.y, 100)
+                : InputAction.clickLeft(p.x, p.y, 100);
+        inputSequences.submitAndWait("bag:itemAction:" + action, List.of(
+                clickAction,
+                InputAction.sleep(500)
+        ));
     }
 
     private void throwIfStopRequested(TaskExecutionContext context) {
