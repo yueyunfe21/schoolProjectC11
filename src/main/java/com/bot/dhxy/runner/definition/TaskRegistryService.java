@@ -1,5 +1,6 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.definition;
 
+import com.bot.dhxy.runner.log.TaskLogService;
 import com.bot.dhxy.task.GameTask;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

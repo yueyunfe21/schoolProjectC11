@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.log;
 
 /**
  * 任务日志类型。

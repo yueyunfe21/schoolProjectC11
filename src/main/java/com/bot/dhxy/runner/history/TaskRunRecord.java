@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.history;
 
 import lombok.Builder;
 import lombok.Getter;

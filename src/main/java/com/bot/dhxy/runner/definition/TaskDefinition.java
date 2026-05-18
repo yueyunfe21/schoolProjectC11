@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.definition;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;

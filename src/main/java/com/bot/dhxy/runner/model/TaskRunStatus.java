@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.model;
 
 /**
  * 任务运行状态。

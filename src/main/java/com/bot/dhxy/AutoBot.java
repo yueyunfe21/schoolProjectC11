@@ -1,7 +1,7 @@
 package com.bot.dhxy;
 
 import com.bot.dhxy.config.TaskRunProperties;
-import com.bot.dhxy.runner.TaskControlService;
+import com.bot.dhxy.runner.control.TaskControlService;
 import com.bot.dhxy.ui.MainWindowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

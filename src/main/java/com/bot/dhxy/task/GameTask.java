@@ -1,7 +1,7 @@
 package com.bot.dhxy.task;
 
 import com.bot.dhxy.model.TaskRunResult;
-import com.bot.dhxy.runner.TaskExecutionContext;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
 
 /**
  * 统一任务接口。

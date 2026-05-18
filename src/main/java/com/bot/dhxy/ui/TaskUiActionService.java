@@ -1,10 +1,10 @@
 package com.bot.dhxy.ui;
 
-import com.bot.dhxy.runner.TaskControlService;
-import com.bot.dhxy.runner.TaskExecutionPlan;
-import com.bot.dhxy.runner.TaskPlanService;
-import com.bot.dhxy.runner.TaskRunRequest;
-import com.bot.dhxy.runner.TaskRunResult;
+import com.bot.dhxy.runner.control.TaskControlService;
+import com.bot.dhxy.runner.model.TaskRunRequest;
+import com.bot.dhxy.runner.model.TaskRunResult;
+import com.bot.dhxy.runner.plan.TaskExecutionPlan;
+import com.bot.dhxy.runner.plan.TaskPlanService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

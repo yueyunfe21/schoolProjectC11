@@ -1,5 +1,6 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.model;
 
+import com.bot.dhxy.runner.plan.TaskExecutionPlan;
 import lombok.Builder;
 import lombok.Getter;
 

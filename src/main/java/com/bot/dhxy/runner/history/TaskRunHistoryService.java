@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.history;
 
 import org.springframework.stereotype.Component;
 

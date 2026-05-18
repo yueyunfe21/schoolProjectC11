@@ -2,7 +2,7 @@ package com.bot.dhxy.task.template;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
-import com.bot.dhxy.runner.TaskExecutionContext;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.task.GameTask;

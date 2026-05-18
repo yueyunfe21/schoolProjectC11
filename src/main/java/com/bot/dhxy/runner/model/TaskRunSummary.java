@@ -1,6 +1,7 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.model;
 
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.runner.history.TaskRunRecord;
 import lombok.Getter;
 
 import java.util.ArrayList;

@@ -1,4 +1,4 @@
-package com.bot.dhxy.runner;
+package com.bot.dhxy.runner.model;
 
 import com.bot.dhxy.runner.parameter.TaskParameterValue;
 import lombok.Builder;
