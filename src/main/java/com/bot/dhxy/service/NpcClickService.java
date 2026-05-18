@@ -9,6 +9,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -29,6 +30,7 @@ public class NpcClickService {
     private final TextRecognizer ocr;
     private final LocationVisionService locationVisionService;
     private final DialogService dialogService;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     private static final double UX = 20.0;
     private static final double UY = 0.0;
@@ -69,8 +71,8 @@ public class NpcClickService {
         int scanH = 120;
         int scanX = testX;
         int scanY = testY - scanH;
-        String menuScanPath = "images/temp/npc_menu_scan.png";
-        String cleanPath = "images/temp/npc_menu_clean.png";
+        String menuScanPath = windowScopedTempPath.resolve("npc_menu_scan.png");
+        String cleanPath = windowScopedTempPath.resolve("npc_menu_clean.png");
 
         tracker.captureToFileWithShield("菜单侦查", menuScanPath, scanX, scanY, scanX + scanW, testY);
         ImagePreprocessor.washYellowText(menuScanPath, cleanPath);
@@ -118,8 +120,8 @@ public class NpcClickService {
         int scanStartX = screenCenterX - (scanWidth / 2);
         int scanStartY = screenCenterY - (scanHeight / 2);
 
-        String centerScanPath = "images/temp/center_scan_layer1.png";
-        String playerScanPath = "images/temp/center_scan_player.png";
+        String centerScanPath = windowScopedTempPath.resolve("center_scan_layer1.png");
+        String playerScanPath = windowScopedTempPath.resolve("center_scan_player.png");
 
         tracker.captureToFileWithShield("中心区域侦查", centerScanPath, scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
         ImagePreprocessor.washPurpleTextToBlackAndWhite(centerScanPath, playerScanPath);
@@ -169,13 +171,13 @@ public class NpcClickService {
             boolean success = inputSequences.submitExclusiveAndWait("npcClick:ctrlProbe", () -> {
                 sleepQuietly(50);
                 BufferedImage frameBefore = tracker.captureToMemory("menu_before", scanX, scanY, scanX + scanW, testY);
-                ImagePreprocessor.saveDebugImage(frameBefore, "menu_before.png");
+                ImagePreprocessor.saveDebugImage(frameBefore, windowScopedTempPath.resolve("menu_before.png"));
                 inputProvider.moveMouse(testX, testY);
                 inputProvider.holdCtrl();
                 try {
                     sleepQuietly(200);
                     BufferedImage frameAfter = tracker.captureToMemory("menu_after", scanX, scanY, scanX + scanW, testY);
-                    ImagePreprocessor.saveDebugImage(frameAfter, "menu_after.png");
+                    ImagePreprocessor.saveDebugImage(frameAfter, windowScopedTempPath.resolve("menu_after.png"));
                     if (frameBefore != null && frameAfter != null) {
                         boolean changed = !ImageFinder.isMatch(frameBefore, frameAfter, 0.05);
                         frameBefore.flush();
