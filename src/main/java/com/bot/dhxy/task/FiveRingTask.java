@@ -130,7 +130,7 @@ public class FiveRingTask extends BaseTaskTemplate {
                 return TaskRunResult.STOPPED;
             }
             if (loopResult == TaskStepResult.FAILED) {
-                context.setBotStatus(GameContext.BotStatus.ERROR);
+                markTaskFailed();
                 return TaskRunResult.FAILED;
             }
             if (runtimeState.loopDecision == LoopDecision.FINISHED) {
@@ -143,25 +143,26 @@ public class FiveRingTask extends BaseTaskTemplate {
     }
 
     private TaskRunResult runStartupSteps(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
-        TaskStepResult prepareResult = executePrepareBeforeRunStep(executionContext, runtimeState);
-        if (prepareResult == TaskStepResult.STOPPED) {
-            log.info("🎉 五环任务在战前准备阶段停止");
-            return TaskRunResult.STOPPED;
-        }
-        if (prepareResult != TaskStepResult.SUCCESS) {
-            log.error("❌ 五环战前准备失败，任务终止！");
-            context.setBotStatus(GameContext.BotStatus.ERROR);
-            return TaskRunResult.FAILED;
+        TaskRunResult prepareResult = resolveStartupStepResult(
+                executePrepareBeforeRunStep(executionContext, runtimeState),
+                "🎉 五环任务在战前准备阶段停止",
+                "❌ 五环战前准备失败，任务终止！"
+        );
+        if (prepareResult != TaskRunResult.SUCCESS) {
+            return prepareResult;
         }
 
-        TaskStepResult handoverResult = executeDetectHandoverStep(executionContext, runtimeState);
-        if (handoverResult == TaskStepResult.STOPPED) {
-            log.info("🎉 五环任务在中途接管侦测阶段停止");
-            return TaskRunResult.STOPPED;
+        TaskRunResult handoverResult = resolveStartupStepResult(
+                executeDetectHandoverStep(executionContext, runtimeState),
+                "🎉 五环任务在中途接管侦测阶段停止",
+                "❌ 五环中途接管侦测失败，任务终止！"
+        );
+        if (handoverResult != TaskRunResult.SUCCESS) {
+            return handoverResult;
         }
-        if (handoverResult != TaskStepResult.SUCCESS || runtimeState.handoverState == null) {
-            log.error("❌ 五环中途接管侦测失败，任务终止！");
-            context.setBotStatus(GameContext.BotStatus.ERROR);
+        if (runtimeState.handoverState == null) {
+            log.error("❌ 五环中途接管侦测失败，任务状态为空，任务终止！");
+            markTaskFailed();
             return TaskRunResult.FAILED;
         }
 
@@ -169,21 +170,36 @@ public class FiveRingTask extends BaseTaskTemplate {
 
         if (runtimeState.handoverState == HandoverState.NEED_SETUP) {
             log.info("▶️ 未发现进行中的五环，前往长安寻找墨意接取初始任务...");
-            TaskStepResult setupResult = executeSetupInitialTaskStep(executionContext);
-            if (setupResult == TaskStepResult.STOPPED) {
-                log.info("🎉 五环任务在接取初始任务阶段停止");
-                return TaskRunResult.STOPPED;
-            }
-            if (setupResult != TaskStepResult.SUCCESS) {
-                log.error("❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！");
-                context.setBotStatus(GameContext.BotStatus.ERROR);
-                return TaskRunResult.FAILED;
+            TaskRunResult setupResult = resolveStartupStepResult(
+                    executeSetupInitialTaskStep(executionContext),
+                    "🎉 五环任务在接取初始任务阶段停止",
+                    "❌ 经过多次重试，彻底无法接取起始任务，印钞机停机！"
+            );
+            if (setupResult != TaskRunResult.SUCCESS) {
+                return setupResult;
             }
             sleep(2000);
             runtimeState.needTaskSync = true;
         }
 
         return TaskRunResult.SUCCESS;
+    }
+
+    private TaskRunResult resolveStartupStepResult(TaskStepResult stepResult, String stoppedLog, String failedLog) {
+        if (stepResult == TaskStepResult.STOPPED) {
+            log.info(stoppedLog);
+            return TaskRunResult.STOPPED;
+        }
+        if (stepResult != TaskStepResult.SUCCESS) {
+            log.error(failedLog);
+            markTaskFailed();
+            return TaskRunResult.FAILED;
+        }
+        return TaskRunResult.SUCCESS;
+    }
+
+    private void markTaskFailed() {
+        context.setBotStatus(GameContext.BotStatus.ERROR);
     }
 
     private TaskStepResult executePrepareBeforeRunStep(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
