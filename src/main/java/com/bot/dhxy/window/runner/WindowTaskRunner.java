@@ -131,6 +131,10 @@ public class WindowTaskRunner {
     }
 
     private void runTask(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
+        windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> runTaskWithBoundGameState(taskType, task, executionContext));
+    }
+
+    private void runTaskWithBoundGameState(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
         windowContext.markStarted(taskType);
         log.info("{} 窗口 [{}] 开始执行任务：{}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
 
