@@ -5,6 +5,8 @@ import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.service.BattleRadarService;
+import com.bot.dhxy.task.startup.TaskStartupCheckResult;
+import com.bot.dhxy.task.startup.TaskStartupCheckService;
 import com.bot.dhxy.task.template.BaseTaskTemplate;
 import com.bot.dhxy.task.template.TaskStepExecutor;
 import com.bot.dhxy.window.interaction.TaskWindowRuntimeService;
@@ -20,14 +22,17 @@ public class AutoBattleTask extends BaseTaskTemplate {
 
     private final BattleRadarService battleRadarService;
     private final TaskWindowRuntimeService taskWindowRuntimeService;
+    private final TaskStartupCheckService taskStartupCheckService;
 
     public AutoBattleTask(GameContext gameContext,
                           TaskStepExecutor taskStepExecutor,
                           BattleRadarService battleRadarService,
-                          TaskWindowRuntimeService taskWindowRuntimeService) {
+                          TaskWindowRuntimeService taskWindowRuntimeService,
+                          TaskStartupCheckService taskStartupCheckService) {
         super(gameContext, taskStepExecutor);
         this.battleRadarService = battleRadarService;
         this.taskWindowRuntimeService = taskWindowRuntimeService;
+        this.taskStartupCheckService = taskStartupCheckService;
     }
 
     @Override
@@ -49,9 +54,16 @@ public class AutoBattleTask extends BaseTaskTemplate {
     public TaskRunResult execute(TaskExecutionContext executionContext) {
         TaskExecutionContext context = resolveExecutionContext(executionContext);
         log.info("====================================");
-        log.info("⚔️ 启动自动战斗任务：{}", context.getLogPrefix());
+        log.info("启动自动战斗任务：{}", context.getLogPrefix());
         log.info("====================================");
         logWindowContext(context);
+
+        TaskStartupCheckResult checkResult = taskStartupCheckService.checkAutoBattle(context);
+        if (checkResult.isBlocked()) {
+            log.info("自动战斗前置判断未通过：{}", checkResult.getReason());
+            return checkResult.getBlockedResult();
+        }
+        log.info("自动战斗前置判断通过：{}", checkResult.getReason());
 
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
         focusWindowIfPossible(context);
@@ -68,7 +80,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
 
     @Override
     public void stop() {
-        log.info("🛑 收到停止自动战斗任务请求");
+        log.info("收到停止自动战斗任务请求");
         gameContext.setBotStatus(GameContext.BotStatus.IDLE);
         gameContext.setCurrentActionState(GameContext.ActionState.FREE);
     }
