@@ -43,6 +43,18 @@ public class WindowTaskControlService {
         );
     }
 
+    public WindowTaskCommandResult start(WindowTaskStartRequest request) {
+        if (request == null || !request.hasWindows()) {
+            return WindowTaskCommandResult.empty("没有选中的窗口", taskManager.getAllSnapshots());
+        }
+
+        return switch (request.getStartMode()) {
+            case SAME_TASK -> startSameTask(request.getWindowIds(), request.getTaskType());
+            case SELECTED_TASK -> startSelectedTasks(request.getWindowIds());
+            case DETECTED_ROLE -> startByDetectedRole(request.getWindowIds(), request.getTaskType());
+        };
+    }
+
     public WindowTaskCommandResult startSameTask(Collection<String> windowIds, TaskType taskType) {
         List<String> ids = normalizeWindowIds(windowIds);
         if (ids.isEmpty()) {
