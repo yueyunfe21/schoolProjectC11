@@ -101,6 +101,7 @@ public class TaskViewService {
     private TaskRuntimeStateView toTaskRuntimeStateView(TaskRuntimeState state) {
         if (state == null) {
             return TaskRuntimeStateView.builder()
+                    .status("IDLE")
                     .running(false)
                     .stopping(false)
                     .statusText("空闲")
@@ -108,6 +109,7 @@ public class TaskViewService {
                     .build();
         }
         return TaskRuntimeStateView.builder()
+                .status(state.getStatus() == null ? "IDLE" : state.getStatus().name())
                 .running(state.isRunning())
                 .stopping(state.isStopping())
                 .statusText(state.getStatusText())
