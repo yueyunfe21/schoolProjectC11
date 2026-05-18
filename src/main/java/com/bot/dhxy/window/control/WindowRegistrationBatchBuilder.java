@@ -11,13 +11,38 @@ import java.util.List;
 /**
  * 批量构建窗口注册请求。
  *
- * UI 快速注册队伍、后续窗口扫描模块批量导入窗口，都可以复用这里的规则。
+ * 默认模式：每个窗口都是独立角色，window 层不判断队长/队员。
  */
 @Component
 public class WindowRegistrationBatchBuilder {
 
-    private static final int DEFAULT_TEAM_SIZE = 5;
+    private static final int DEFAULT_WINDOW_COUNT = 5;
 
+    public List<WindowRegistrationRequest> buildIndependentWindows(String windowIdPrefix,
+                                                                    String roleNamePrefix,
+                                                                    int count,
+                                                                    TaskType taskType) {
+        String normalizedWindowPrefix = normalizeWindowPrefix(windowIdPrefix);
+        String normalizedRoleNamePrefix = normalizeRoleNamePrefix(roleNamePrefix);
+        int safeCount = normalizeCount(count);
+        TaskType safeTaskType = taskType == null ? TaskType.UNKNOWN : taskType;
+
+        List<WindowRegistrationRequest> requests = new ArrayList<>();
+        for (int i = 1; i <= safeCount; i++) {
+            requests.add(WindowRegistrationRequest.of(
+                    normalizedWindowPrefix + "-" + i,
+                    WindowRole.UNKNOWN,
+                    normalizedRoleNamePrefix + i,
+                    safeTaskType
+            ));
+        }
+        return requests;
+    }
+
+    /**
+     * @deprecated 仅保留给旧的测试按身份流程。正式流程请使用 buildIndependentWindows。
+     */
+    @Deprecated
     public List<WindowRegistrationRequest> buildTeam(String windowIdPrefix,
                                                      String roleNamePrefix,
                                                      int count,
@@ -67,17 +92,17 @@ public class WindowRegistrationBatchBuilder {
     }
 
     public int normalizeCount(int count) {
-        return count <= 0 ? DEFAULT_TEAM_SIZE : count;
+        return count <= 0 ? DEFAULT_WINDOW_COUNT : count;
     }
 
     public int parseCount(String text) {
         if (text == null || text.isBlank()) {
-            return DEFAULT_TEAM_SIZE;
+            return DEFAULT_WINDOW_COUNT;
         }
         try {
             return normalizeCount(Integer.parseInt(text.trim()));
         } catch (NumberFormatException e) {
-            return DEFAULT_TEAM_SIZE;
+            return DEFAULT_WINDOW_COUNT;
         }
     }
 
