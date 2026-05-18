@@ -76,7 +76,7 @@ public class TaskControlService {
 
             runtimeState = buildState(TaskRunStatus.RUNNING, true, false, request, null, startedAt, null, "运行中：任务队列执行中");
             TaskQueue queue = new TaskQueue(plan.getTaskCodes(), plan.isLoop());
-            summary = taskRunner.run(queue, plan.isTestMode());
+            summary = taskRunner.run(queue, plan.isTestMode(), request, plan);
 
             boolean stopped = stopping.get();
             TaskRunStatus finalStatus = stopped ? TaskRunStatus.STOPPED : TaskRunStatus.COMPLETED;
