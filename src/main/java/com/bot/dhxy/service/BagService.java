@@ -1,8 +1,10 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.input.InputProvider;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,34 +61,46 @@ public class BagService {
     // ========================================================================
 
     public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate) {
-        // 1. 尝试开启环境
-        if (!ensureBagOpened(layout)) return null;
+        return findItemPageIndex(layout, targetItemTemplate, null);
+    }
+
+    public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate, TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        if (!ensureBagOpened(layout, context)) return null;
 
         Integer foundIndex = null;
         try {
             log.info("🎒 [包裹引擎-侦察] 搜索物品: [{}]", targetItemTemplate);
-            Point baseAnchor = getBaseAnchor(layout);
+            Point baseAnchor = getBaseAnchor(layout, context);
             if (baseAnchor != null) {
                 for (int i = 0; i <= 4; i++) {
-                    if (searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i) != null) {
+                    throwIfStopRequested(context);
+                    if (searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context) != null) {
                         foundIndex = i;
                         break;
                     }
                 }
             }
         } finally {
-            // 2. 无论是否找到，只要是主包裹，操作完都要随手关门
-            closeBagIfNeeded(layout);
+            closeBagIfNeeded(layout, context);
         }
         return foundIndex;
     }
 
     public boolean findAndSelectItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex) {
-        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.SELECT);
+        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.SELECT, null);
+    }
+
+    public boolean findAndSelectItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, TaskExecutionContext context) {
+        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.SELECT, context);
     }
 
     public boolean findAndUseItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex) {
-        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE);
+        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE, null);
+    }
+
+    public boolean findAndUseItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, TaskExecutionContext context) {
+        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE, context);
     }
 
     // ========================================================================
@@ -97,15 +111,16 @@ public class BagService {
      * 🚪 确保包裹已打开
      * 只有 layout.autoManageUI 为 true 时，才会尝试 Alt+E
      */
-    private boolean ensureBagOpened(BagLayout layout) {
+    private boolean ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
+        throwIfStopRequested(context);
         if (!layout.autoManageUI) return true; // 不需要自动管理的，默认视为已打开
 
-        Point p = getBaseAnchor(layout);
+        Point p = getBaseAnchor(layout, context);
         if (p == null) {
             log.info("🚪 [环境管理] 主包裹未开启，按下 Alt+E 唤起...");
             inputProvider.pressAltE();
-            sleep(800); // 等待 UI 弹出
-            p = getBaseAnchor(layout);
+            sleep(context, 800); // 等待 UI 弹出
+            p = getBaseAnchor(layout, context);
         }
 
         return p != null;
@@ -114,62 +129,67 @@ public class BagService {
     /**
      * 🚪 操作完成后的“随手关门”逻辑
      */
-    private void closeBagIfNeeded(BagLayout layout) {
+    private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
         if (layout.autoManageUI) {
             log.info("🚪 [环境管理] 操作结束，按下 Alt+E 关闭主包裹，清理战场。");
             inputProvider.pressAltE();
-            sleep(500);
+            sleep(context, 500);
         }
     }
 
-    private boolean interactWithItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, ItemAction action) {
-        if (!ensureBagOpened(layout)) return false;
+    private boolean interactWithItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, ItemAction action, TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        if (!ensureBagOpened(layout, context)) return false;
 
         boolean success = false;
         try {
-            Point baseAnchor = getBaseAnchor(layout);
+            Point baseAnchor = getBaseAnchor(layout, context);
             if (baseAnchor == null) return false;
 
-            // 1. 尝试已知页码
             if (knownBagIndex != null && knownBagIndex >= 0 && knownBagIndex <= 4) {
-                Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, knownBagIndex);
+                throwIfStopRequested(context);
+                Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, knownBagIndex, context);
                 if (pt != null) {
-                    executeSafeAction(pt, action);
+                    executeSafeAction(pt, action, context);
                     success = true;
                 }
             }
 
-            // 2. 兜底扫荡
             if (!success) {
                 for (int i = 0; i <= 4; i++) {
+                    throwIfStopRequested(context);
                     if (knownBagIndex != null && i == knownBagIndex) continue;
-                    Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i);
+                    Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context);
                     if (pt != null) {
-                        executeSafeAction(pt, action);
+                        executeSafeAction(pt, action, context);
                         success = true;
                         break;
                     }
                 }
             }
         } finally {
-            closeBagIfNeeded(layout);
+            closeBagIfNeeded(layout, context);
         }
         return success;
     }
 
     // ========================================================================
-    // 👁️ 底层视觉引擎 (保持不变)
+    // 👁️ 底层视觉引擎
     // ========================================================================
 
-    private Point getBaseAnchor(BagLayout layout) {
+    private Point getBaseAnchor(BagLayout layout, TaskExecutionContext context) {
+        throwIfStopRequested(context);
         if (layout.anchorTemplate == null) {
             return new Point(tracker.getWindowBaseX(), tracker.getWindowBaseY());
         }
         return coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, 0.8);
     }
 
-    private Point searchItemInTabOnly(BagLayout layout, Point baseAnchor, String targetItemTemplate, int tabIndex) {
-        switchBagTab(layout, baseAnchor, tabIndex);
+    private Point searchItemInTabOnly(BagLayout layout, Point baseAnchor, String targetItemTemplate, int tabIndex, TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        switchBagTab(layout, baseAnchor, tabIndex, context);
+        throwIfStopRequested(context);
+
         double scale = coordinateHelper.getScaleRatio();
         int startX = baseAnchor.x + (int) Math.round(layout.gridOffsetX / scale);
         int startY = baseAnchor.y + (int) Math.round(layout.gridOffsetY / scale);
@@ -178,27 +198,49 @@ public class BagService {
 
         String path = "images/temp/bag_scan.png";
         if (!tracker.captureToFile("局部扫描", path, startX, startY, endX, endY)) return null;
+        throwIfStopRequested(context);
 
         double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, 0.85);
+        throwIfStopRequested(context);
         if (res == null || res.length < 2) return null;
 
         return new Point(startX + (int)Math.round(res[0]/scale), startY + (int)Math.round(res[1]/scale));
     }
 
-    private void switchBagTab(BagLayout layout, Point baseAnchor, int tabIndex) {
+    private void switchBagTab(BagLayout layout, Point baseAnchor, int tabIndex, TaskExecutionContext context) {
+        throwIfStopRequested(context);
         double scale = coordinateHelper.getScaleRatio();
         int tx = baseAnchor.x + (int) Math.round(layout.tabOffsetX / scale);
         int ty = baseAnchor.y + (int) Math.round((layout.tabOffsetY + tabIndex * layout.tabStepY) / scale);
         inputProvider.clickLeft(tx, ty, 100);
-        sleep(500);
+        sleep(context, 500);
     }
 
-    private void executeSafeAction(Point raw, ItemAction action) {
+    private void executeSafeAction(Point raw, ItemAction action, TaskExecutionContext context) {
+        throwIfStopRequested(context);
         Point p = coordinateHelper.getRandomizedPoint(raw, 10, 10);
         if (action == ItemAction.USE) inputProvider.clickRight(p.x, p.y, 100);
         else inputProvider.clickLeft(p.x, p.y, 100);
-        sleep(500);
+        sleep(context, 500);
     }
 
-    private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
+    private void throwIfStopRequested(TaskExecutionContext context) {
+        if (context != null) {
+            context.throwIfStopRequested();
+        }
+    }
+
+    private void sleep(TaskExecutionContext context, long ms) {
+        if (ms <= 0) {
+            return;
+        }
+        throwIfStopRequested(context);
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TaskStopRequestedException("包裹操作等待被中断");
+        }
+        throwIfStopRequested(context);
+    }
 }
