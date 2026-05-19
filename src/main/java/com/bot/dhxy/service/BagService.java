@@ -66,22 +66,35 @@ public class BagService {
 
     public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate, TaskExecutionContext context) {
         throwIfStopRequested(context);
-        if (!ensureBagOpened(layout, context)) return null;
+        log.info("🎒 [包裹] 开始查找物品页：template={} autoManageUI={}", targetItemTemplate, layout.autoManageUI);
+        if (!ensureBagOpened(layout, context)) {
+            log.warn("🎒 [包裹] 打开/确认包裹失败，终止查找：template={}", targetItemTemplate);
+            return null;
+        }
 
         Integer foundIndex = null;
         try {
             Point baseAnchor = getBaseAnchor(layout, context);
             if (baseAnchor != null) {
+                log.info("🎒 [包裹] 已确认包裹 anchor=({}, {})，开始逐页扫描", baseAnchor.x, baseAnchor.y);
                 for (int i = 0; i <= 4; i++) {
                     throwIfStopRequested(context);
-                    if (searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context) != null) {
+                    Point found = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context);
+                    if (found != null) {
                         foundIndex = i;
+                        log.info("✅ [包裹] 找到物品：template={} page={} point=({}, {})", targetItemTemplate, i + 1, found.x, found.y);
                         break;
                     }
                 }
+            } else {
+                log.warn("🎒 [包裹] 包裹 anchor 为空，无法扫描：template={}", targetItemTemplate);
             }
         } finally {
             closeBagIfNeeded(layout, context);
+        }
+
+        if (foundIndex == null) {
+            log.warn("⚠️ [包裹] 未找到物品：template={}", targetItemTemplate);
         }
         return foundIndex;
     }
@@ -104,25 +117,40 @@ public class BagService {
 
     private boolean ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
-        if (!layout.autoManageUI) return true;
-
-        Point p = getBaseAnchor(layout, context);
-        if (p == null) {
-            log.info("Main bag not open, pressing Alt+E");
-            if (!inputSequences.submitAndWait("bag:openAltE", List.of(
-                    InputAction.pressAltE(),
-                    InputAction.sleep(800)
-            ))) {
-                return false;
-            }
-            p = getBaseAnchor(layout, context);
+        if (!layout.autoManageUI) {
+            log.info("🎒 [包裹] 当前布局不需要自动打开 UI，直接使用窗口基址");
+            return true;
         }
 
-        return p != null;
+        Point p = getBaseAnchor(layout, context);
+        if (p != null) {
+            log.info("🎒 [包裹] 主包裹已打开，anchor=({}, {})", p.x, p.y);
+            return true;
+        }
+
+        log.info("🎒 [包裹] 主包裹未打开，准备按 Alt+E");
+        boolean opened = inputSequences.submitAndWait("bag:openAltE", List.of(
+                InputAction.pressAltE(),
+                InputAction.sleep(1200)
+        ));
+        if (!opened) {
+            log.warn("🎒 [包裹] Alt+E 输入序列失败");
+            return false;
+        }
+
+        p = getBaseAnchor(layout, context);
+        if (p == null) {
+            log.warn("🎒 [包裹] Alt+E 后仍未找到主包裹 anchor：{}", layout.anchorTemplate);
+            return false;
+        }
+
+        log.info("🎒 [包裹] Alt+E 后找到主包裹 anchor=({}, {})", p.x, p.y);
+        return true;
     }
 
     private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
         if (layout.autoManageUI) {
+            log.info("🎒 [包裹] 关闭主包裹 Alt+E");
             inputSequences.submitAndWait("bag:closeAltE", List.of(
                     InputAction.pressAltE(),
                     InputAction.sleep(500)
@@ -132,15 +160,21 @@ public class BagService {
 
     private boolean interactWithItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, ItemAction action, TaskExecutionContext context) {
         throwIfStopRequested(context);
+        log.info("🎒 [包裹] 开始执行物品动作：template={} knownPage={} action={}",
+                targetItemTemplate, knownBagIndex == null ? "unknown" : knownBagIndex + 1, action);
         if (!ensureBagOpened(layout, context)) return false;
 
         boolean success = false;
         try {
             Point baseAnchor = getBaseAnchor(layout, context);
-            if (baseAnchor == null) return false;
+            if (baseAnchor == null) {
+                log.warn("🎒 [包裹] 执行动作失败：anchor 为空 template={}", targetItemTemplate);
+                return false;
+            }
 
             if (knownBagIndex != null && knownBagIndex >= 0 && knownBagIndex <= 4) {
                 throwIfStopRequested(context);
+                log.info("🎒 [包裹] 优先扫描已知页：page={}", knownBagIndex + 1);
                 Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, knownBagIndex, context);
                 if (pt != null) {
                     executeSafeAction(pt, action, context);
@@ -163,19 +197,25 @@ public class BagService {
         } finally {
             closeBagIfNeeded(layout, context);
         }
+        log.info("🎒 [包裹] 物品动作完成：template={} action={} success={}", targetItemTemplate, action, success);
         return success;
     }
 
     private Point getBaseAnchor(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
         if (layout.anchorTemplate == null) {
-            return new Point(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+            Point base = new Point(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+            log.debug("🎒 [包裹] 无 anchorTemplate，使用窗口基址：({}, {})", base.x, base.y);
+            return base;
         }
-        return coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, 0.8);
+        Point anchor = coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, 0.8);
+        log.debug("🎒 [包裹] anchor 搜索结果：template={} point={}", layout.anchorTemplate, anchor);
+        return anchor;
     }
 
     private Point searchItemInTabOnly(BagLayout layout, Point baseAnchor, String targetItemTemplate, int tabIndex, TaskExecutionContext context) {
         throwIfStopRequested(context);
+        log.info("🎒 [包裹] 切换并扫描第 {} 页：template={}", tabIndex + 1, targetItemTemplate);
         switchBagTab(layout, baseAnchor, tabIndex, context);
         throwIfStopRequested(context);
 
@@ -186,14 +226,23 @@ public class BagService {
         int endY = startY + (int) Math.round(layout.gridH / scale);
 
         String path = windowScopedTempPath.resolve("bag_scan.png");
-        if (!tracker.captureToFile("局部扫描", path, startX, startY, endX, endY)) return null;
+        log.info("🎒 [包裹] 截图扫描第 {} 页：path={} rect=({}, {})-({}, {})", tabIndex + 1, path, startX, startY, endX, endY);
+        if (!tracker.captureToFile("局部扫描", path, startX, startY, endX, endY)) {
+            log.warn("🎒 [包裹] 第 {} 页截图失败", tabIndex + 1);
+            return null;
+        }
         throwIfStopRequested(context);
 
         double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, 0.85);
         throwIfStopRequested(context);
-        if (res == null || res.length < 2) return null;
+        if (res == null || res.length < 2) {
+            log.info("🎒 [包裹] 第 {} 页未匹配到：template={}", tabIndex + 1, targetItemTemplate);
+            return null;
+        }
 
-        return new Point(startX + (int)Math.round(res[0]/scale), startY + (int)Math.round(res[1]/scale));
+        Point found = new Point(startX + (int)Math.round(res[0]/scale), startY + (int)Math.round(res[1]/scale));
+        log.info("✅ [包裹] 第 {} 页匹配到：template={} point=({}, {})", tabIndex + 1, targetItemTemplate, found.x, found.y);
+        return found;
     }
 
     private void switchBagTab(BagLayout layout, Point baseAnchor, int tabIndex, TaskExecutionContext context) {
@@ -201,6 +250,7 @@ public class BagService {
         double scale = coordinateHelper.getScaleRatio();
         int tx = baseAnchor.x + (int) Math.round(layout.tabOffsetX / scale);
         int ty = baseAnchor.y + (int) Math.round((layout.tabOffsetY + tabIndex * layout.tabStepY) / scale);
+        log.info("🎒 [包裹] 点击第 {} 页 tab：({}, {})", tabIndex + 1, tx, ty);
         inputSequences.submitAndWait("bag:switchTab", List.of(
                 InputAction.clickLeft(tx, ty, 100),
                 InputAction.sleep(500)
@@ -213,6 +263,7 @@ public class BagService {
         InputAction clickAction = action == ItemAction.USE
                 ? InputAction.clickRight(p.x, p.y, 100)
                 : InputAction.clickLeft(p.x, p.y, 100);
+        log.info("🎒 [包裹] 执行物品点击：action={} raw=({}, {}) click=({}, {})", action, raw.x, raw.y, p.x, p.y);
         inputSequences.submitAndWait("bag:itemAction:" + action, List.of(
                 clickAction,
                 InputAction.sleep(500)
