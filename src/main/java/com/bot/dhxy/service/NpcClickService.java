@@ -48,33 +48,41 @@ public class NpcClickService {
     private static final String NPC_TAG_REGEX = "(?i).*(NPC|IPC|PC|NP).*";
 
     private boolean executeClickAndVerify(int x, int y, long firstWaitMs, int maxRetries) {
+        if (shouldStop()) return false;
         inputSequences.submitAndWait("npcClick:clickAndVerify:first", List.of(
                 InputAction.clickLeft(x, y, 100),
                 InputAction.sleep((int) firstWaitMs)
         ));
 
+        if (shouldStop()) return false;
         if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
 
         for (int i = 1; i <= maxRetries; i++) {
+            if (shouldStop()) return false;
             log.warn("NPC click retry {}", i);
             inputSequences.submitAndWait("npcClick:clickAndVerify:retry", List.of(
                     InputAction.clickLeft(x, y, 100),
                     InputAction.sleep(1000)
             ));
+            if (shouldStop()) return false;
             if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
         }
         return false;
     }
 
     private boolean executeClickAndVerifyDirect(int x, int y, long firstWaitMs, int maxRetries) {
+        if (shouldStop()) return false;
         inputProvider.clickLeft(x, y, 100);
-        sleepQuietly(firstWaitMs);
+        if (!sleepQuietly(firstWaitMs)) return false;
+        if (shouldStop()) return false;
         if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
 
         for (int i = 1; i <= maxRetries; i++) {
+            if (shouldStop()) return false;
             log.warn("NPC direct click retry {}", i);
             inputProvider.clickLeft(x, y, 100);
-            sleepQuietly(1000);
+            if (!sleepQuietly(1000)) return false;
+            if (shouldStop()) return false;
             if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
         }
         return false;
@@ -89,6 +97,7 @@ public class NpcClickService {
     }
 
     private boolean scanMenuAndVerifyInternal(int testX, int testY, String targetName, boolean directInput) {
+        if (shouldStop()) return false;
         int scanW = 150;
         int scanH = 120;
         int scanX = testX;
@@ -97,12 +106,14 @@ public class NpcClickService {
         String cleanPath = windowScopedTempPath.resolve("npc_menu_clean.png");
 
         tracker.captureToFileWithShield("菜单侦查", menuScanPath, scanX, scanY, scanX + scanW, testY);
+        if (shouldStop()) return false;
         ImagePreprocessor.washYellowText(menuScanPath, cleanPath);
 
         List<TextRecognizer.OcrWordResult> menuWords = ocr.getAllTextResults(cleanPath);
 
         if (menuWords != null) {
             for (TextRecognizer.OcrWordResult w : menuWords) {
+                if (shouldStop()) return false;
                 String text = w.getText();
                 if (text == null) continue;
 
@@ -115,7 +126,7 @@ public class NpcClickService {
                     log.info("NPC menu matched text={} directInput={} click=({}, {})", text, directInput, clickX, clickY);
                     if (directInput) {
                         inputProvider.moveMouse(clickX, clickY);
-                        sleepQuietly(100);
+                        if (!sleepQuietly(100)) return false;
                         return executeClickAndVerifyDirect(clickX, clickY, 800, 1);
                     }
                     inputSequences.submitAndWait("npcClick:menuMove", List.of(
@@ -130,6 +141,7 @@ public class NpcClickService {
     }
 
     public boolean clickNpcSmart(PlayerCharacter player, String mapName, int mapX, int mapY, String npcName, int tuneX, int tuneY) {
+        if (shouldStop()) return false;
         if (!tracker.bringWindowToFront()) {
             log.warn("NPC click aborted because game window cannot focus");
             return false;
@@ -152,6 +164,7 @@ public class NpcClickService {
         String playerScanPath = windowScopedTempPath.resolve("center_scan_player.png");
 
         tracker.captureToFileWithShield("中心区域侦查", centerScanPath, scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
+        if (shouldStop()) return false;
         ImagePreprocessor.washPurpleTextToBlackAndWhite(centerScanPath, playerScanPath);
 
         List<TextRecognizer.OcrWordResult> playerWords = ocr.getAllTextResults(playerScanPath);
@@ -181,7 +194,7 @@ public class NpcClickService {
                 return true;
             }
 
-            sleepQuietly(1500);
+            if (!sleepQuietly(1500)) return false;
         } else if (locInfo != null) {
             log.info("playerAnchor is null, give up the first shot");
         } else {
@@ -189,6 +202,10 @@ public class NpcClickService {
         }
 
         for (int[] offset : DENSE_BLIND_OFFSETS) {
+            if (shouldStop()) {
+                log.info("NPC click loop stopped before ctrl probe");
+                return false;
+            }
             int testX = screenCenterX + offset[0];
             int testY = screenCenterY + offset[1] + 20;
             int scanW = 150;
@@ -197,13 +214,15 @@ public class NpcClickService {
             int scanY = testY - scanH;
 
             boolean success = inputSequences.submitExclusiveAndWait("npcClick:ctrlProbe", () -> {
-                sleepQuietly(50);
+                if (shouldStop()) return false;
+                if (!sleepQuietly(50)) return false;
                 BufferedImage frameBefore = tracker.captureToMemory("menu_before", scanX, scanY, scanX + scanW, testY);
                 ImagePreprocessor.saveDebugImage(frameBefore, windowScopedTempPath.resolve("menu_before.png"));
                 inputProvider.moveMouse(testX, testY);
                 inputProvider.holdCtrl();
                 try {
-                    sleepQuietly(200);
+                    if (!sleepQuietly(200)) return false;
+                    if (shouldStop()) return false;
                     BufferedImage frameAfter = tracker.captureToMemory("menu_after", scanX, scanY, scanX + scanW, testY);
                     ImagePreprocessor.saveDebugImage(frameAfter, windowScopedTempPath.resolve("menu_after.png"));
                     if (frameBefore != null && frameAfter != null) {
@@ -221,16 +240,22 @@ public class NpcClickService {
                 }
             });
 
+            if (shouldStop()) {
+                log.info("NPC click loop stopped after ctrl probe");
+                return false;
+            }
             if (success) {
                 return true;
             }
         }
 
+        if (shouldStop()) return false;
         tracker.captureToFileWithShield("中心区域侦查(新)", centerScanPath, scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
         List<TextRecognizer.OcrWordResult> centerWordsNew = ocr.getAllTextResults(centerScanPath);
 
         if (centerWordsNew != null) {
             for (TextRecognizer.OcrWordResult w : centerWordsNew) {
+                if (shouldStop()) return false;
                 if (w.getText() != null && w.getText().contains(npcName)) {
                     int clickX = scanStartX + w.getX();
                     int clickY = scanStartY + w.getY() - 50;
@@ -252,11 +277,17 @@ public class NpcClickService {
         return false;
     }
 
-    private void sleepQuietly(long ms) {
+    private boolean shouldStop() {
+        return Thread.currentThread().isInterrupted();
+    }
+
+    private boolean sleepQuietly(long ms) {
         try {
             Thread.sleep(ms);
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return false;
         }
     }
 }
