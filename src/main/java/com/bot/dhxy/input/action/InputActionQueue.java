@@ -64,8 +64,15 @@ public class InputActionQueue {
         queue.offer(request);
         try {
             return request.getResult().get(120, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            request.cancel("waiter interrupted");
+            Thread.currentThread().interrupt();
+            log.warn("Input action wait interrupted: windowId={} description={}",
+                    request.getWindowId(), request.getDescription());
+            return false;
         } catch (Exception e) {
-            log.warn("Input action timed out or interrupted: windowId={} description={} reason={}",
+            request.cancel("wait failed");
+            log.warn("Input action wait failed: windowId={} description={} reason={}",
                     request.getWindowId(), request.getDescription(), e.getMessage());
             return false;
         }
