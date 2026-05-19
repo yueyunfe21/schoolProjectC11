@@ -140,6 +140,83 @@ public class NpcClickService {
         return false;
     }
 
+    /**
+     * 调试用：只跑 clickNpcSmart 前半段的首点推算，并把鼠标移动/点击到计算出的 NPC 目标点。
+     * 不进入 Ctrl 盲扫，不进入兜底 OCR 点击，用来确认公式算出来的点到底落在哪里。
+     */
+    public boolean debugClickNpcSmartFirstShot(PlayerCharacter player, String mapName, int mapX, int mapY, String npcName, int tuneX, int tuneY) {
+        log.info("🧪 [NPC首点调试] 开始：map={} targetNpc={} targetCoord=({}, {}) tune=({}, {})",
+                mapName, npcName, mapX, mapY, tuneX, tuneY);
+
+        if (shouldStop()) return false;
+        if (!tracker.bringWindowToFront()) {
+            log.warn("🧪 [NPC首点调试] 窗口置前失败");
+            return false;
+        }
+
+        int gameBaseX = tracker.getWindowBaseX();
+        int gameBaseY = tracker.getWindowBaseY();
+        int screenCenterX = gameBaseX + (1024 / 2);
+        int screenCenterY = gameBaseY + (768 / 2);
+        log.info("🧪 [NPC首点调试] windowBase=({}, {}) screenCenter=({}, {})",
+                gameBaseX, gameBaseY, screenCenterX, screenCenterY);
+
+        TextRecognizer.LocationInfo locInfo = locationVisionService.scanCurrentLocation();
+        if (locInfo == null) {
+            log.warn("🧪 [NPC首点调试] locInfo 为空，无法计算 delta");
+            return false;
+        }
+        log.info("🧪 [NPC首点调试] currentLocation map={} coord=({}, {})", locInfo.mapName, locInfo.x, locInfo.y);
+
+        int scanWidth = 350;
+        int scanHeight = 200;
+        int scanStartX = screenCenterX - (scanWidth / 2);
+        int scanStartY = screenCenterY - (scanHeight / 2);
+        log.info("🧪 [NPC首点调试] playerAnchor scanRect=({}, {})-({}, {}) size={}x{}",
+                scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight, scanWidth, scanHeight);
+
+        String centerScanPath = windowScopedTempPath.resolve("debug_npc_firstshot_center_raw.png");
+        String playerScanPath = windowScopedTempPath.resolve("debug_npc_firstshot_player_washed.png");
+
+        tracker.captureToFileWithShield("NPC首点调试-中心截图", centerScanPath,
+                scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
+        ImagePreprocessor.washPurpleTextToBlackAndWhite(centerScanPath, playerScanPath);
+
+        List<TextRecognizer.OcrWordResult> playerWords = ocr.getAllTextResults(playerScanPath);
+        Point playerAnchor = null;
+        if (playerWords != null && player != null && player.getName() != null) {
+            playerAnchor = locationVisionService.extractPlayerPhysicalAnchor(
+                    playerWords, player.getName(), scanStartX, scanStartY, 0);
+        }
+        if (playerAnchor == null) {
+            log.warn("🧪 [NPC首点调试] playerAnchor 为空，playerName={} washedPath={}",
+                    player == null ? null : player.getName(), playerScanPath);
+            return false;
+        }
+        log.info("🧪 [NPC首点调试] playerAnchor=({}, {}) playerName={}",
+                playerAnchor.x, playerAnchor.y, player == null ? null : player.getName());
+
+        int deltaLogicX = mapX - locInfo.x;
+        int deltaLogicY = mapY - locInfo.y;
+        int deltaPhysX = (int) Math.round(deltaLogicX * UX + deltaLogicY * VX);
+        int deltaPhysY = (int) Math.round(deltaLogicX * UY + deltaLogicY * VY);
+        int targetX = playerAnchor.x + deltaPhysX + tuneX;
+        int targetY = playerAnchor.y + deltaPhysY - 50 + tuneY;
+
+        log.info("🧪 [NPC首点调试] deltaLogic=({}, {}) deltaPhys=({}, {}) formula: target=playerAnchor+deltaPhys+tune+(0,-50)",
+                deltaLogicX, deltaLogicY, deltaPhysX, deltaPhysY);
+        log.info("🧪 [NPC首点调试] FINAL_CLICK_POINT=({}, {})", targetX, targetY);
+
+        boolean ok = inputSequences.submitAndWait("npcClick:debugFirstShot", List.of(
+                InputAction.moveMouse(targetX, targetY),
+                InputAction.sleep(500),
+                InputAction.clickLeft(targetX, targetY, 100),
+                InputAction.sleep(800)
+        ));
+        log.info("🧪 [NPC首点调试] 点击执行结果：{}", ok);
+        return ok;
+    }
+
     public boolean clickNpcSmart(PlayerCharacter player, String mapName, int mapX, int mapY, String npcName, int tuneX, int tuneY) {
         if (shouldStop()) return false;
         if (!tracker.bringWindowToFront()) {
