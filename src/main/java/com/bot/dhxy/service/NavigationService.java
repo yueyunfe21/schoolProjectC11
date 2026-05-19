@@ -117,7 +117,7 @@ public class NavigationService {
             return true;
         }
 
-        if (!openMapAndInputTarget(targetMapName) || !clickLastNavPoint(targetMapName, false)) {
+        if (!openMapInputTargetAndClickLastNavPoint(targetMapName)) {
             log.warn("first navigate attempt failed, entering retry loop");
         }
 
@@ -150,7 +150,7 @@ public class NavigationService {
 
             stuckCount++;
             if (stuckCount >= 5) {
-                if (openMapAndInputTarget(targetMapName) && clickLastNavPoint(targetMapName, false)) {
+                if (openMapInputTargetAndClickLastNavPoint(targetMapName)) {
                     stuckCount = 0;
                 }
             } else {
@@ -183,58 +183,43 @@ public class NavigationService {
                 }
                 return true;
             }
-            return targetMapName != null && !targetMapName.isBlank() && openMapAndInputTarget(targetMapName);
+            return targetMapName != null && !targetMapName.isBlank() && openMapInputTargetAndClickLastNavPoint(targetMapName);
         }
 
-        int[] mapRect = coordinateHelper.getScaledRect(
-                config.getAnchor_windowTo_map_search_X(), config.getAnchor_windowTo_map_search_Y(),
-                MAP_SEARCH_RECT_WIDTH, MAP_SEARCH_RECT_HEIGHT);
-
-        String mapResultImagePath = windowScopedTempPath.resolve("map_result_scan.png");
-        if (!tracker.captureToFile("map result", mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3])) {
-            return false;
-        }
-
-        Point relativeCenter = ocr.findLastCoordinateLink(mapResultImagePath);
-        if (relativeCenter == null) {
-            return false;
-        }
-
-        lastAbsoluteLogicalX = mapRect[0] + relativeCenter.x;
-        lastAbsoluteLogicalY = mapRect[1] + relativeCenter.y;
-
-        return inputSequences.submitAndWait("clickLastNavPoint:first", List.of(
-                InputAction.clickLeft(lastAbsoluteLogicalX, lastAbsoluteLogicalY, 150),
-                InputAction.sleep(2000),
-                closeMapAction()
-        ));
+        return clickLastNavPointFromCurrentMapResult("clickLastNavPoint:first");
     }
 
-    private boolean openMapAndInputTarget(String targetMapName) {
-        return inputSequences.submitExclusiveAndWait("openMapAndInputTarget:" + targetMapName,
-                () -> openMapAndInputTargetExclusive(targetMapName));
+    private boolean openMapInputTargetAndClickLastNavPoint(String targetMapName) {
+        return inputSequences.submitExclusiveAndWait("openMapInputTargetAndClickLastNavPoint:" + targetMapName,
+                () -> openMapInputTargetAndClickLastNavPointExclusive(targetMapName));
     }
 
-    private boolean openMapAndInputTargetExclusive(String targetMapName) {
+    private boolean openMapInputTargetAndClickLastNavPointExclusive(String targetMapName) {
+        log.info("🧭 [导航串行] 开始打开地图并输入目标：{}", targetMapName);
         if (!tracker.bringWindowToFront()) {
+            log.warn("🧭 [导航串行] 窗口置前失败，目标：{}", targetMapName);
             return false;
         }
 
         if (!isWorldMapOpened()) {
+            log.info("🧭 [导航串行] 世界地图未打开，按 Alt+2");
             inputProvider.pressAlt2();
             sleepInterruptible(500);
         }
 
         Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
         if (xunluPoint == null) {
+            log.warn("🧭 [导航串行] 未找到寻路按钮，目标：{}", targetMapName);
             return false;
         }
 
+        log.info("🧭 [导航串行] 点击寻路按钮：({}, {})", xunluPoint.x, xunluPoint.y);
         inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
         sleepInterruptible(250);
 
         int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
         int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
+        log.info("🧭 [导航串行] 输入地图名：{}", targetMapName);
         inputProvider.typeTextUnicode(targetMapName);
         sleepInterruptible(100);
         inputProvider.pressEnter();
@@ -243,6 +228,40 @@ public class NavigationService {
         sleepInterruptible(100);
         inputProvider.scrollDown(2);
         sleepInterruptible(500);
+
+        boolean clicked = clickLastNavPointFromCurrentMapResult("openMapInputTargetAndClickLastNavPoint:lastLink");
+        log.info("🧭 [导航串行] 点击最后坐标链接结果：{}", clicked);
+        return clicked;
+    }
+
+    private boolean clickLastNavPointFromCurrentMapResult(String description) {
+        int[] mapRect = coordinateHelper.getScaledRect(
+                config.getAnchor_windowTo_map_search_X(), config.getAnchor_windowTo_map_search_Y(),
+                MAP_SEARCH_RECT_WIDTH, MAP_SEARCH_RECT_HEIGHT);
+
+        String mapResultImagePath = windowScopedTempPath.resolve("map_result_scan.png");
+        log.info("🧭 [导航串行] 扫描地图结果区域：{} rect=({}, {})-({}, {})",
+                mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3]);
+        if (!tracker.captureToFile("map result", mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3])) {
+            log.warn("🧭 [导航串行] 地图结果截图失败");
+            return false;
+        }
+
+        Point relativeCenter = ocr.findLastCoordinateLink(mapResultImagePath);
+        if (relativeCenter == null) {
+            log.warn("🧭 [导航串行] 未识别到最后坐标链接");
+            return false;
+        }
+
+        lastAbsoluteLogicalX = mapRect[0] + relativeCenter.x;
+        lastAbsoluteLogicalY = mapRect[1] + relativeCenter.y;
+        log.info("🧭 [导航串行] 最后坐标链接：relative=({}, {}) absolute=({}, {})",
+                relativeCenter.x, relativeCenter.y, lastAbsoluteLogicalX, lastAbsoluteLogicalY);
+
+        inputProvider.clickLeft(lastAbsoluteLogicalX, lastAbsoluteLogicalY, 150);
+        sleepInterruptible(2000);
+        InputAction close = closeMapAction();
+        inputProvider.doubleRightClick(close.getX(), close.getY(), close.getDelayMs(), close.getIntervalMs());
         return true;
     }
 
@@ -269,12 +288,6 @@ public class NavigationService {
                 InputAction.clickLeft(xunluPoint.x, xunluPoint.y, 120),
                 InputAction.sleep(250)
         ));
-    }
-
-    private boolean inputTarget(String targetMapName) {
-        int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
-        int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-        return inputSequences.typeTextEnterAndScroll(targetMapName, scrollFocusX, scrollFocusY);
     }
 
     private boolean isWorldMapOpened() {
