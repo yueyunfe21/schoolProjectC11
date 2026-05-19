@@ -58,15 +58,23 @@ public class InputActionWorker {
         try {
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
                     inputCoordinator.callInputTransaction("queued:" + request.getDescription(), () -> {
-                        if (!windowFocusService.focusWithoutLock(request.getNativeBinding())) {
-                            log.warn("Input queue failed to focus window: windowId={} description={}",
-                                    request.getWindowId(), request.getDescription());
+                        if (request.isCancelled()) {
                             return false;
                         }
+
+                        boolean focused = windowFocusService.focusWithoutLock(request.getNativeBinding());
+                        if (!focused) {
+                            log.warn("Input queue focus not confirmed, continuing input sequence: windowId={} description={}",
+                                    request.getWindowId(), request.getDescription());
+                        }
+
                         if (request.hasExclusiveCallback()) {
                             return Boolean.TRUE.equals(request.getExclusiveCallback().get());
                         }
                         for (InputAction action : request.getActions()) {
+                            if (request.isCancelled() || Thread.currentThread().isInterrupted()) {
+                                return false;
+                            }
                             execute(action);
                         }
                         return true;
@@ -86,8 +94,7 @@ public class InputActionWorker {
         switch (action.getType()) {
             case CLICK_LEFT -> inputProvider.clickLeft(action.getX(), action.getY(), action.getDelayMs());
             case CLICK_RIGHT -> inputProvider.clickRight(action.getX(), action.getY(), action.getDelayMs());
-            case DOUBLE_RIGHT_CLICK -> inputProvider.doubleRightClick(
-                    action.getX(), action.getY(), action.getDelayMs(), action.getIntervalMs());
+            case DOUBLE_RIGHT_CLICK -> inputProvider.doubleRightClick(action.getX(), action.getY(), action.getDelayMs(), action.getIntervalMs());
             case MOVE_MOUSE -> inputProvider.moveMouse(action.getX(), action.getY());
             case DRAG_AND_DROP -> inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
             case HOLD_CTRL -> inputProvider.holdCtrl();
