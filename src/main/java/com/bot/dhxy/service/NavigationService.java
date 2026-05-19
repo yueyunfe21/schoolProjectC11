@@ -211,10 +211,39 @@ public class NavigationService {
     }
 
     private boolean openMapAndInputTarget(String targetMapName) {
-        if (!openMap()) {
+        return inputSequences.submitExclusiveAndWait("openMapAndInputTarget:" + targetMapName,
+                () -> openMapAndInputTargetExclusive(targetMapName));
+    }
+
+    private boolean openMapAndInputTargetExclusive(String targetMapName) {
+        if (!tracker.bringWindowToFront()) {
             return false;
         }
-        return inputTarget(targetMapName);
+
+        if (!isWorldMapOpened()) {
+            inputProvider.pressAlt2();
+            sleepInterruptible(500);
+        }
+
+        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
+        if (xunluPoint == null) {
+            return false;
+        }
+
+        inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
+        sleepInterruptible(250);
+
+        int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
+        int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
+        inputProvider.typeTextUnicode(targetMapName);
+        sleepInterruptible(100);
+        inputProvider.pressEnter();
+        inputProvider.clickLeft(scrollFocusX, scrollFocusY, 50);
+        inputProvider.scrollDown(2);
+        sleepInterruptible(100);
+        inputProvider.scrollDown(2);
+        sleepInterruptible(500);
+        return true;
     }
 
     private boolean openMap() {
