@@ -1,13 +1,15 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
+import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.QuestTargetInfo;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,23 +21,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 🧠 任务情报总管 (Task Manager)
- * 修复版：已修复洗图方法的类型不匹配 (String vs BufferedImage) 以及所有红线问题！
+ * 任务情报总管。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class QuestManagerService {
 
-    private final InputProvider inputProvider;
+    private final InputSequences inputSequences;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
     private final GameContext context;
+    private final WindowScopedTempPath windowScopedTempPath;
 
-    // ==========================================
-    // 📐 第一部分：面板测绘与 UI 常量
-    // ==========================================
     private static final String ANCHOR_PATH = "images/template/task_fenxiang.png";
 
     private static final int OFFSET_X = -497;
@@ -51,9 +50,6 @@ public class QuestManagerService {
     private static final double THRESHOLD_STRICT = 0.85;
     private static final double THRESHOLD_NORMAL = 0.80;
 
-    // ==========================================
-    // ⚙️ 第二部分：发光探测与时间常量
-    // ==========================================
     private static final int GLOW_RGB_MIN = 220;
     private static final int GLOW_TARGET = 15;
 
@@ -73,10 +69,6 @@ public class QuestManagerService {
 
     public enum PathingResult { SUCCESS, FINISHED, UI_ERROR }
 
-    // =========================================================================================
-    // 🚀 核心逻辑：五环极速制导
-    // =========================================================================================
-
     public PathingResult triggerWuHuanNativePathingP1() { return triggerWuHuanNativePathingP1(false); }
 
     public PathingResult triggerWuHuanNativePathingP1(boolean skipScan) {
@@ -85,9 +77,13 @@ public class QuestManagerService {
         Point anchor = ensurePanel();
         if (anchor == null) return PathingResult.UI_ERROR;
 
-        click(anchor.x + P1_X, anchor.y + P1_Y, 30, 8, MID);
-        inputProvider.pressAltQ();
-        return PathingResult.SUCCESS;
+        Point p = coordinateHelper.getRandomizedPoint(anchor.x + P1_X, anchor.y + P1_Y, 30, 8);
+        boolean ok = inputSequences.submitAndWait("quest:p1ClickAndClose", List.of(
+                InputAction.clickLeft(p.x, p.y, 100),
+                InputAction.sleep((int) MID),
+                InputAction.pressAltQ()
+        ));
+        return ok ? PathingResult.SUCCESS : PathingResult.UI_ERROR;
     }
 
     public PathingResult triggerWuHuanNativePathingP2() { return triggerWuHuanNativePathingP2(false); }
@@ -100,32 +96,31 @@ public class QuestManagerService {
 
         int[] rect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X_RIGHT, OFFSET_Y, W_RIGHT, PANEL_H);
 
-        // 🌟 已修复红线死穴：恢复为生成本地文件，因为洗图工具需要读取硬盘文件路径！
-        String rawPath = "images/temp/p2_raw.png";
+        String rawPath = windowScopedTempPath.resolve("p2_raw.png");
         if (!tracker.captureToFile("P2右侧", rawPath, rect[0], rect[1], rect[2], rect[3])) {
-            inputProvider.pressAltQ();
+            closePanel("quest:p2CaptureFailedClose");
             return PathingResult.UI_ERROR;
         }
 
-        String washedPath = "images/temp/p2_washed.png";
+        String washedPath = windowScopedTempPath.resolve("p2_washed.png");
         ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
 
         for (String m : MONSTERS) {
             double[] res = ImageFinder.find(washedPath, m, THRESHOLD_NORMAL);
             if (res != null && res.length >= 2) {
                 log.info("P2识图已经匹配成功");
-                click(rect[0] + (int)res[0], rect[1] + (int)res[1], 8, 4, MID);
-                inputProvider.pressAltQ();
-                return PathingResult.SUCCESS;
+                Point p = coordinateHelper.getRandomizedPoint(rect[0] + (int) res[0], rect[1] + (int) res[1], 8, 4);
+                boolean ok = inputSequences.submitAndWait("quest:p2ClickAndClose", List.of(
+                        InputAction.clickLeft(p.x, p.y, 100),
+                        InputAction.sleep((int) MID),
+                        InputAction.pressAltQ()
+                ));
+                return ok ? PathingResult.SUCCESS : PathingResult.UI_ERROR;
             }
         }
         log.info("P2识图匹配失败");
         return PathingResult.UI_ERROR;
     }
-
-    // =========================================================================================
-    // 🕵️ 雷达引擎：发光文字探测
-    // =========================================================================================
 
     public boolean activateTaskIfPresent(String task) { return activateTaskIfPresent(task, false); }
 
@@ -146,7 +141,7 @@ public class QuestManagerService {
                     log.info("🖱️ 激活任务 [{}]", task);
                     click(taskPt.x, taskPt.y, 20, 5, MID);
                 }
-                if (!keepOpen) inputProvider.pressAltQ();
+                if (!keepOpen) closePanel("quest:activateClose");
                 return true;
             }
 
@@ -154,25 +149,24 @@ public class QuestManagerService {
             if (titlePt != null) {
                 click(titlePt.x + 30, titlePt.y + 5, 20, 5, SLOW);
                 scroll(anchor, 2);
-                p--; continue;
+                p--;
+                continue;
             }
 
             if (p < 1) scroll(anchor, 3);
         }
 
-        inputProvider.pressAltQ();
+        closePanel("quest:activateNotFoundClose");
         return false;
     }
-
-    // =========================================================================================
-    // 📖 深度解析：OCR 坐标情报
-    // =========================================================================================
 
     public QuestTargetInfo fetchCurrentQuestInfo(String expectedTaskImage) {
         log.info("📡 [深度解析] 启动重型 OCR 引擎获取任务情报...");
 
-        inputProvider.pressAltQ();
-        sleep(SLOW);
+        inputSequences.submitAndWait("quest:fetchOpenPanel", List.of(
+                InputAction.pressAltQ(),
+                InputAction.sleep((int) SLOW)
+        ));
         Point anchor = ensurePanel();
         if (anchor == null) return null;
 
@@ -182,20 +176,20 @@ public class QuestManagerService {
 
         if (taskLabelPoint == null) {
             log.warn("⏭️ 未发现任务标签 [{}]，判定可能已完成", expectedTaskImage);
-            inputProvider.pressAltQ();
+            closePanel("quest:fetchNoTaskClose");
             return null;
         }
 
         click(taskLabelPoint.x, taskLabelPoint.y, 20, 5, MID);
 
         int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X_RIGHT, OFFSET_Y, W_RIGHT, PANEL_H);
-        String detailPath = "images/temp/quest_detail_scan.png";
+        String detailPath = windowScopedTempPath.resolve("quest_detail_scan.png");
 
         tracker.captureToFile("任务详情", detailPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3]);
 
         List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResults(detailPath);
         if (results == null || results.isEmpty()) {
-            inputProvider.pressAltQ();
+            closePanel("quest:fetchEmptyOcrClose");
             return null;
         }
 
@@ -217,23 +211,21 @@ public class QuestManagerService {
             log.info("✅ 情报解锁 -> NPC: [{}], 地图: [{}], 坐标: ({}, {})", npc, map, x, y);
             context.setCurrentTaskName(npc);
 
-            inputProvider.pressAltQ();
+            closePanel("quest:fetchParsedClose");
             return new QuestTargetInfo(npc, map, x, y, cleanText);
         }
 
-        inputProvider.pressAltQ();
+        closePanel("quest:fetchParseFailedClose");
         return null;
     }
-
-    // =========================================================================================
-    // 🧰 私有辅助工具
-    // =========================================================================================
 
     private Point ensurePanel() {
         Point a = findAnchor();
         if (a == null) {
-            inputProvider.pressAltQ();
-            sleep(SLOW);
+            inputSequences.submitAndWait("quest:ensurePanelAltQ", List.of(
+                    InputAction.pressAltQ(),
+                    InputAction.sleep((int) SLOW)
+            ));
             a = findAnchor();
         }
         return a;
@@ -246,7 +238,11 @@ public class QuestManagerService {
         for (int x = 0; x < img.getWidth(); x++) {
             for (int y = 0; y < img.getHeight(); y++) {
                 int c = img.getRGB(x, y);
-                if (((c>>16)&0xFF)>GLOW_RGB_MIN && ((c>>8)&0xFF)>GLOW_RGB_MIN && (c&0xFF)>GLOW_RGB_MIN) count++;
+                if (((c >> 16) & 0xFF) > GLOW_RGB_MIN
+                        && ((c >> 8) & 0xFF) > GLOW_RGB_MIN
+                        && (c & 0xFF) > GLOW_RGB_MIN) {
+                    count++;
+                }
             }
         }
         img.flush();
@@ -255,19 +251,25 @@ public class QuestManagerService {
 
     private void click(int x, int y, int rx, int ry, long delay) {
         Point p = coordinateHelper.getRandomizedPoint(x, y, rx, ry);
-        inputProvider.clickLeft(p.x, p.y, 100);
-        sleep(delay);
+        inputSequences.submitAndWait("quest:click", List.of(
+                InputAction.clickLeft(p.x, p.y, 100),
+                InputAction.sleep((int) delay)
+        ));
     }
 
     private void scroll(Point a, int steps) {
         Point h = coordinateHelper.getRandomizedPoint(a.x - 400, a.y + 174, 50, 100);
-        inputProvider.moveMouse(h.x, h.y);
-        sleep(FAST);
-        inputProvider.scrollDown(steps);
-        sleep(MID);
+        inputSequences.submitAndWait("quest:scroll", List.of(
+                InputAction.moveMouse(h.x, h.y),
+                InputAction.sleep((int) FAST),
+                InputAction.scrollDown(steps),
+                InputAction.sleep((int) MID)
+        ));
+    }
+
+    private void closePanel(String description) {
+        inputSequences.submitAndWait(description, List.of(InputAction.pressAltQ()));
     }
 
     private Point findAnchor() { return coordinateHelper.findImageAbsoluteCoordinate(ANCHOR_PATH, THRESHOLD_NORMAL); }
-
-    private void sleep(long ms) { try { Thread.sleep(ms); } catch (Exception ignored) {} }
 }
