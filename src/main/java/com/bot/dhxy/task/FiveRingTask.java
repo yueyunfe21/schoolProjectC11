@@ -17,6 +17,7 @@ import com.bot.dhxy.task.wuhuan.FiveRingRuntimeState;
 import com.bot.dhxy.task.wuhuan.FiveRingTaskSyncDecision;
 import com.bot.dhxy.tools.GameStateUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -36,6 +37,9 @@ public class FiveRingTask extends BaseTaskTemplate {
     private final GameStateUtil gameStateUtil;
     private final UICleanerService uiCleanerService;
     private final TaskStartupCheckService taskStartupCheckService;
+
+    @Value("${debug.npc-first-shot:false}")
+    private boolean debugNpcFirstShot;
 
     private static final int DIALOG_START_OFFSET_X = 427;
     private static final int DIALOG_START_OFFSET_Y = 420;
@@ -102,6 +106,10 @@ public class FiveRingTask extends BaseTaskTemplate {
         logTaskBanner();
 
         TaskExecutionContext context = resolveExecutionContext(executionContext);
+        if (debugNpcFirstShot) {
+            return executeNpcFirstShotDebug(context);
+        }
+
         TaskStartupCheckResult checkResult = taskStartupCheckService.checkFiveRing(context);
         if (checkResult.isBlocked()) {
             log.info("五环前置判断未通过：{}", checkResult.getReason());
@@ -117,6 +125,30 @@ public class FiveRingTask extends BaseTaskTemplate {
         }
 
         return runMainLoop(context, runtimeState);
+    }
+
+    private TaskRunResult executeNpcFirstShotDebug(TaskExecutionContext executionContext) {
+        log.warn("🧪 [五环NPC首点调试模式] 已启用 debug.npc-first-shot=true，本次不会跑完整五环，只测试墨意首点点击。以后正常跑五环请改回 false。");
+        if (executionContext != null) {
+            executionContext.throwIfStopRequested();
+        }
+        gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
+        try {
+            log.info("🧪 [五环NPC首点调试模式] 同步当前角色身份和位置...");
+            playerStateService.syncAll();
+            if (executionContext != null) {
+                executionContext.throwIfStopRequested();
+            }
+            boolean ok = npcClickService.debugClickNpcSmartFirstShot(
+                    gameContext.getMe(), TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y, TARGET_NPC_NAME, TUNE_X, TUNE_Y);
+            log.info("🧪 [五环NPC首点调试模式] 执行完成，result={}", ok);
+            markTaskIdle();
+            return ok ? TaskRunResult.SUCCESS : TaskRunResult.FAILED;
+        } catch (Exception e) {
+            log.error("🧪 [五环NPC首点调试模式] 执行异常", e);
+            markTaskFailed();
+            return TaskRunResult.FAILED;
+        }
     }
 
     private void logTaskBanner() {
