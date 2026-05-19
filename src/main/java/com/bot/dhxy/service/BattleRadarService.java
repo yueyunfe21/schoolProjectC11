@@ -4,14 +4,18 @@ import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.util.List;
 
 /**
  * ⚔️ 战斗检测雷达 & 全自动战斗大管家 (融合版)
@@ -24,10 +28,11 @@ public class BattleRadarService {
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final GameContext context;
-    // 🌟 新增注入：物理外设驱动
     private final InputProvider inputProvider;
+    private final InputSequences inputSequences;
     private final PlayerStateService playerStateService;
     private final UICleanerService uiCleanerService;
+    private final WindowScopedTempPath windowScopedTempPath;
 
     private static final String BATTLE_FLAG_PATH = "images/template/battle/flag_battle.png";
     private static final String ZHAOHUAN_PATH = "images/template/battle/zhaohuan.png";
@@ -37,7 +42,6 @@ public class BattleRadarService {
     private static final String QUXIAO_ZIDONG_PATH = "images/template/battle/quxiao_zidong_green.png";
     private static final String ZIDONGHAI_PATH = "images/template/battle/zidonghai_white.png";
 
-    // ROI 测绘数据
     private static final int AUTO_BTN_AREA_X = 974;
     private static final int AUTO_BTN_AREA_Y = 630;
     private static final int AUTO_BTN_AREA_W = 51;
@@ -53,55 +57,47 @@ public class BattleRadarService {
     private static final int TOP_BTN_AREA_W = 123;
     private static final int TOP_BTN_AREA_H = 39;
 
-    // ==========================================
-    // 🧠 战斗管家大脑中枢 (状态变量)
-    // ==========================================
-    private boolean isAutoPanelSet = false; // 面板是否已经开启并归位
-    private int autoCombatRounds = -1;      // 脑补的剩余回合数
-    private int battleCount = 0;            // 战斗场次计数器
+    private boolean isAutoPanelSet = false;
+    private int autoCombatRounds = -1;
+    private int battleCount = 0;
 
-    // 📍 绝对安全区：您希望面板被拖拽到的固定坐标 (请按需修改)
     private static final int TARGET_PANEL_X_OFFSET = 448;
     private static final int TARGET_PANEL_Y_OFFSET = 735;
 
-
     private java.awt.Point findAutoCombatBox() {
         tracker.updateGlobalVision();
-        String rawPath = GameClientTracker.LATEST_VISION_PATH;
+        String rawPath = tracker.getLatestVisionPath();
 
         BufferedImage rawImage = ImagePreprocessor.pathToBufferedImage(rawPath);
         if (rawImage == null) {
-            log.error("❌ 无法读取游戏截图，雷达瘫痪！");
+            log.error("❌ 无法读取游戏截图，雷达瘫痪！path={}", rawPath);
             return null;
         }
 
-        // 🟢 第一道防线：主炮【洗绿字】
         ImagePreprocessor.countGreenPixelsHSV(rawImage);
-        String washedGreenPath = "images/temp/debug_hsv_mask_green.png";
+        String washedGreenPath = windowScopedTempPath.resolve("debug_hsv_mask_green.png");
         Point greenPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(QUXIAO_ZIDONG_PATH, washedGreenPath, 0.80);
         if (greenPoint == null) {
-            log.warn("⚠️ 绿字指纹疑似被污染丢失，启动第二道防线：洗白字探测！");
+            log.warn("⚠️ 绿字指纹疑似被污染丢失，启动第二道防线：洗白字探测！path={}", washedGreenPath);
         } else {
-            log.info("🎯 [主炮命中] 绿字指纹识别成功！");
+            log.info("🎯 [主炮命中] 绿字指纹识别成功！point=({}, {})", greenPoint.x, greenPoint.y);
+            rawImage.flush();
             return new java.awt.Point(greenPoint.x + 20, greenPoint.y - 28);
         }
 
-        // ⚪ 第二道防线：副炮兜底【洗白字】
-
         ImagePreprocessor.countThinWhitePixelsHSV(rawImage);
-        String washedWhitePath = "images/temp/debug_thin_white_text.png";
+        String washedWhitePath = windowScopedTempPath.resolve("debug_thin_white_text.png");
         Point whitePoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(ZIDONGHAI_PATH, washedWhitePath, 0.80);
+        rawImage.flush();
 
         if (whitePoint == null) {
-            log.warn("⚠️ 白字同样没有识别，得出结论：未发现面板");
+            log.warn("⚠️ 白字同样没有识别，得出结论：未发现面板 path={}", washedWhitePath);
             return null;
         } else {
-            log.info("🎯 [副炮命中] 白字指纹兜底成功！极度舒适！");
-            return new java.awt.Point(whitePoint.x + 43, (int)whitePoint.y + 28);
+            log.info("🎯 [副炮命中] 白字指纹兜底成功！point=({}, {})", whitePoint.x, whitePoint.y);
+            return new java.awt.Point(whitePoint.x + 43, whitePoint.y + 28);
         }
-
     }
-
 
     public boolean checkAndSyncCombatState() {
         int[] autoRect = coordinateHelper.getScaledRect(AUTO_BTN_AREA_X, AUTO_BTN_AREA_Y, AUTO_BTN_AREA_W, AUTO_BTN_AREA_H);
@@ -111,7 +107,7 @@ public class BattleRadarService {
         }
 
         int[] selectRect = coordinateHelper.getScaledRect(SELECTION_BTN_AREA_X, SELECTION_BTN_AREA_Y, SELECTION_BTN_AREA_W, SELECTION_BTN_AREA_H);
-        String selectScanPath = "images/temp/select_scan.png";
+        String selectScanPath = windowScopedTempPath.resolve("select_scan.png");
         tracker.captureToFile("战斗选项扫描", selectScanPath, selectRect[0], selectRect[1], selectRect[2], selectRect[3]);
         boolean hasSelection = ImageFinder.find(selectScanPath, ZHAOHUAN_PATH, 0.8) != null ||
                 ImageFinder.find(selectScanPath, CHEHUI_PATH, 0.8) != null;
@@ -121,7 +117,7 @@ public class BattleRadarService {
         }
 
         int[] topRect = coordinateHelper.getScaledRect(TOP_BTN_AREA_X, TOP_BTN_AREA_Y, TOP_BTN_AREA_W, TOP_BTN_AREA_H);
-        String topScanPath = "images/temp/top_scan.png";
+        String topScanPath = windowScopedTempPath.resolve("top_scan.png");
         tracker.captureToFile("战斗顶部扫描", topScanPath, topRect[0], topRect[1], topRect[2], topRect[3]);
         boolean hasTopIcons = ImageFinder.find(topScanPath, NU_PATH, 0.8) != null &&
                 ImageFinder.find(topScanPath, YUAN_PATH, 0.8) != null;
@@ -131,67 +127,45 @@ public class BattleRadarService {
         }
 
         updateCombatState(false);
-        // 🌟 核心挂载：只要雷达判定不在战斗中（全局心跳），就摸一下脉！
-        // （由于自带时间戳防抖锁，它不会发生任何卡顿）
         playerStateService.performFirstAidCheck();
         return false;
     }
 
-    /**
-     * 🌟 核心引擎：状态机与战斗动作的完美融合处！
-     */
     private void updateCombatState(boolean isCurrentlyInCombat) {
         GameContext.ActionState rememberedState = context.getCurrentActionState();
 
-        // ⚔️ 刚刚进入战斗的瞬间
         if (isCurrentlyInCombat && rememberedState != GameContext.ActionState.IN_COMBAT) {
             log.warn("⚔️ [战斗雷达] 警报！检测到进入战斗画面，大脑状态强制切入 IN_COMBAT！");
             context.setCurrentActionState(GameContext.ActionState.IN_COMBAT);
-
-            // 触发入场逻辑
             onEnterCombat();
-
-        }
-        // 🕊️ 刚刚脱离战斗的瞬间
-        else if (!isCurrentlyInCombat && rememberedState == GameContext.ActionState.IN_COMBAT) {
+        } else if (!isCurrentlyInCombat && rememberedState == GameContext.ActionState.IN_COMBAT) {
             log.info("🕊️ [战斗雷达] 战斗结束！脱离战斗状态，进入战后核验阶段...");
             context.setCurrentActionState(GameContext.ActionState.TASK_VERIFYING);
-
-            // 触发出场逻辑
             onExitCombat();
         }
     }
-
-    // ==========================================
-    // 🛠️ 战斗管家战术动作
-    // ==========================================
 
     private void onEnterCombat() {
         battleCount++;
         log.info("⚔️ [自动挂机] 当前是第 {} 场战斗", battleCount);
 
-        // 🌟 新增逻辑：战前防爆清理
-        // 故意休眠 1.5 秒，让由于延迟误按 Alt+Q 导致的任务框“彻底弹出来”
         log.info("⚔️ 战前准备：等待 1.5 秒，扫描并清理可能误触弹出的界面...");
         sleep(1500);
 
-        // 调用独立解耦的清理方法，专门针对带 X 的窗口！
         if (uiCleanerService.closeAllGenericWindows()) {
             log.info("⚔️ 战前清理完毕，成功关掉了挡视线的异常窗口！");
         }
 
-        // 第 1 场，或者每逢 5 的倍数，执行物理纠察
         if (!isAutoPanelSet || battleCount % 5 == 1) {
             executeStrictCheckAndAlign();
         } else {
-            // 平时执行脑补信任模式
             executeTrustMode();
         }
     }
 
     private void onExitCombat() {
         if (autoCombatRounds > 0) {
-            autoCombatRounds -= 3; // 盲扣 3 回合
+            autoCombatRounds -= 3;
             log.info("🕊️ [自动挂机] 战斗结束，自动扣除 3 回合，大脑估算剩余: {} 回合", autoCombatRounds);
         }
         playerStateService.resetCheckCounter();
@@ -202,25 +176,24 @@ public class BattleRadarService {
         log.info("🔍 [纠察模式] 核实自动战斗面板状态...");
         java.awt.Point p = this.findAutoCombatBox();
 
-        // 没找到？按 Alt+8 强开！
         if (p == null) {
             log.warn("⚠️ 未发现面板！正在盲按 Alt+8 强制开启...");
-            inputProvider.pressAlt8();
-            sleep(1000);
+            inputSequences.submitAndWait("battle:openAutoPanel", List.of(
+                    InputAction.pressAlt8(),
+                    InputAction.sleep(1000)
+            ));
             p = this.findAutoCombatBox();
         }
 
         if (p != null) {
             int dropX = tracker.getWindowBaseX() + TARGET_PANEL_X_OFFSET;
             int dropY = tracker.getWindowBaseY() + TARGET_PANEL_Y_OFFSET;
-            // 检查它的位置有没有偏离我们的 TARGET (容差 20 像素)
             if (p.distance(dropX, dropY) > 20.0) {
-                log.info("📦 发现面板不在安全区！执行强制拖拽归位...");
-
-                // 抓取面板的标题栏（往上提 80 像素，避开按钮）
-
-                inputProvider.dragAndDrop(p.x, p.y, dropX, dropY);
-                sleep(500);
+                log.info("📦 发现面板不在安全区！执行强制拖拽归位 from=({}, {}) to=({}, {})", p.x, p.y, dropX, dropY);
+                inputSequences.submitAndWait("battle:dragAutoPanel", List.of(
+                        InputAction.dragAndDrop(p.x, p.y, dropX, dropY),
+                        InputAction.sleep(500)
+                ));
             } else {
                 log.info("✅ 面板乖乖待在安全区，无需挪动。");
             }
@@ -237,7 +210,7 @@ public class BattleRadarService {
         log.info("⚡ [信任模式] 不扫图，当前估算剩余回合：{}", autoCombatRounds);
         if (autoCombatRounds < 10) {
             log.warn("🪫 警告：粮草不足 (剩余<10)，执行 Alt+8 盲充能！");
-            inputProvider.pressAlt8();
+            inputSequences.submitAndWait("battle:trustModeAlt8", List.of(InputAction.pressAlt8()));
             autoCombatRounds = 25;
             log.info("🔋 充能完毕，满血复活 25 回合！");
         } else {
