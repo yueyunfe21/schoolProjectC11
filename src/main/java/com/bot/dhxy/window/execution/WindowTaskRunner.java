@@ -97,6 +97,7 @@ public class WindowTaskRunner {
         }
         windowContext.markStopping("stop requested");
         windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("stop requested"));
+        taskHandle.forceCancel("stop requested");
     }
 
     public RunningTaskHandle getCurrentTask() { return currentTask; }
