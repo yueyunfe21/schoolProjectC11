@@ -70,6 +70,34 @@ public class NpcClickService {
         return false;
     }
 
+    private boolean executeMoveClickAndVerify(String description, int x, int y, long firstWaitMs, int maxRetries) {
+        if (shouldStop()) return false;
+        log.info("NPC move+click sequence: {} point=({}, {})", description, x, y);
+        inputSequences.submitAndWait(description, List.of(
+                InputAction.moveMouse(x, y),
+                InputAction.sleep(150),
+                InputAction.clickLeft(x, y, 100),
+                InputAction.sleep((int) firstWaitMs)
+        ));
+
+        if (shouldStop()) return false;
+        if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
+
+        for (int i = 1; i <= maxRetries; i++) {
+            if (shouldStop()) return false;
+            log.warn("NPC move+click retry {} point=({}, {})", i, x, y);
+            inputSequences.submitAndWait(description + ":retry", List.of(
+                    InputAction.moveMouse(x, y),
+                    InputAction.sleep(150),
+                    InputAction.clickLeft(x, y, 100),
+                    InputAction.sleep(1000)
+            ));
+            if (shouldStop()) return false;
+            if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
+        }
+        return false;
+    }
+
     private boolean executeClickAndVerifyDirect(int x, int y, long firstWaitMs, int maxRetries) {
         if (shouldStop()) return false;
         inputProvider.clickLeft(x, y, 100);
@@ -129,11 +157,7 @@ public class NpcClickService {
                         if (!sleepQuietly(100)) return false;
                         return executeClickAndVerifyDirect(clickX, clickY, 800, 1);
                     }
-                    inputSequences.submitAndWait("npcClick:menuMove", List.of(
-                            InputAction.moveMouse(clickX, clickY),
-                            InputAction.sleep(100)
-                    ));
-                    return executeClickAndVerify(clickX, clickY, 800, 1);
+                    return executeMoveClickAndVerify("npcClick:menuMoveClick", clickX, clickY, 800, 1);
                 }
             }
         }
@@ -260,12 +284,7 @@ public class NpcClickService {
             int targetX = playerAnchor.x + deltaPhysX + tuneX;
             int targetY = playerAnchor.y + deltaPhysY - 50 + tuneY;
 
-            inputSequences.submitAndWait("npcClick:firstShotMove", List.of(
-                    InputAction.moveMouse(targetX, targetY),
-                    InputAction.sleep(150)
-            ));
-
-            if (executeClickAndVerify(targetX, targetY, 1500, 0)) {
+            if (executeMoveClickAndVerify("npcClick:firstShotMoveClick", targetX, targetY, 1500, 0)) {
                 return true;
             }
 
@@ -335,12 +354,7 @@ public class NpcClickService {
                     int clickX = scanStartX + w.getX();
                     int clickY = scanStartY + w.getY() - 50;
 
-                    inputSequences.submitAndWait("npcClick:visionMove", List.of(
-                            InputAction.moveMouse(clickX, clickY),
-                            InputAction.sleep(150)
-                    ));
-
-                    if (executeClickAndVerify(clickX, clickY, 2000, 1)) {
+                    if (executeMoveClickAndVerify("npcClick:visionMoveClick", clickX, clickY, 2000, 1)) {
                         return true;
                     }
                     break;
