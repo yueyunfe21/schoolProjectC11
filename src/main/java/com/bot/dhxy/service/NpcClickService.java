@@ -207,14 +207,12 @@ public class NpcClickService {
                 deltaLogicX, deltaLogicY, deltaPhysX, deltaPhysY);
         log.info("🧪 [NPC首点调试] FINAL_CLICK_POINT=({}, {})", targetX, targetY);
 
-        boolean ok = inputSequences.submitAndWait("npcClick:debugFirstShot", List.of(
-                InputAction.moveMouse(targetX, targetY),
-                InputAction.sleep(500),
-                InputAction.clickLeft(targetX, targetY, 100),
-                InputAction.sleep(800)
-        ));
-        log.info("🧪 [NPC首点调试] 点击执行结果：{}", ok);
-        return ok;
+        inputProvider.moveMouse(targetX, targetY);
+        sleepQuietly(500);
+        inputProvider.clickLeft(targetX, targetY, 100);
+        sleepQuietly(800);
+        log.info("🧪 [NPC首点调试] 直接点击执行完成：point=({}, {})", targetX, targetY);
+        return true;
     }
 
     public boolean clickNpcSmart(PlayerCharacter player, String mapName, int mapX, int mapY, String npcName, int tuneX, int tuneY) {
