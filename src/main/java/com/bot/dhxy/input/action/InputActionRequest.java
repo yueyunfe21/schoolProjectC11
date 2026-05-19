@@ -5,6 +5,7 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 public class InputActionRequest {
@@ -16,6 +17,7 @@ public class InputActionRequest {
     private final List<InputAction> actions;
     private final Supplier<Boolean> exclusiveCallback;
     private final CompletableFuture<Boolean> result = new CompletableFuture<>();
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
     public InputActionRequest(WindowRuntimeContext windowContext,
                               String description,
@@ -56,4 +58,13 @@ public class InputActionRequest {
     public boolean hasExclusiveCallback() { return exclusiveCallback != null; }
 
     public CompletableFuture<Boolean> getResult() { return result; }
+
+    public void cancel(String reason) {
+        cancelled.set(true);
+        result.complete(false);
+    }
+
+    public boolean isCancelled() {
+        return cancelled.get() || result.isCancelled();
+    }
 }
