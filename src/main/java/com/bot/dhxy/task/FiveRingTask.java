@@ -412,10 +412,15 @@ public class FiveRingTask extends BaseTaskTemplate {
         if (p1Result == PathingResult.SUCCESS) {
             runtimeState.resetUiErrorCount();
             log.info("🏃 尝试点击下一环 NPC 链接...");
-            sleepSafely(executionContext, 2500);
+            sleepSafely(executionContext, 1200);
+
+            if (dialogService.detectDialogType() != DialogService.DialogType.NONE) {
+                log.info("✅ P1 点击后直接出现对话框，判定盲狙成功。");
+                return;
+            }
 
             if (!gameStateUtil.isMovingByPixelDiff()) {
-                log.warn("⚠️ 盲狙 NPC 失败（角色未移动），状态发生错乱，请求重新查岗！");
+                log.warn("⚠️ 盲狙 NPC 失败（角色未移动且无对话框），状态发生错乱，请求重新查岗！");
                 runtimeState.setNeedTaskSync(true);
             }
             return;
