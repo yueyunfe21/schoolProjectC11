@@ -78,11 +78,14 @@ public class QuestManagerService {
         if (anchor == null) return PathingResult.UI_ERROR;
 
         Point p = coordinateHelper.getRandomizedPoint(anchor.x + P1_X, anchor.y + P1_Y, 30, 8);
+        log.info("🎯 [P1盲狙] 准备点击下一环 NPC 链接：anchor=({}, {}) offset=({}, {}) click=({}, {})",
+                anchor.x, anchor.y, P1_X, P1_Y, p.x, p.y);
         boolean ok = inputSequences.submitAndWait("quest:p1ClickAndClose", List.of(
                 InputAction.clickLeft(p.x, p.y, 100),
-                InputAction.sleep((int) MID),
+                InputAction.sleep(1200),
                 InputAction.pressAltQ()
         ));
+        log.info("🎯 [P1盲狙] 点击序列结果：{}", ok);
         return ok ? PathingResult.SUCCESS : PathingResult.UI_ERROR;
     }
 
