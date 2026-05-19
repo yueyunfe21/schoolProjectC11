@@ -71,7 +71,7 @@ public class GameClientTracker {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
             if (!bringWindowToFrontWithoutLock()) {
-                System.out.println("❌ 无法唤醒游戏，停止任务。");
+                log.warn("无法唤醒游戏窗口，停止本次视觉更新");
                 return false;
             }
             TrackerState s = state();
@@ -116,13 +116,11 @@ public class GameClientTracker {
         }, null);
 
         if (targetHwnd[0] == null) {
-            System.out.println("❌ [定位失败] 未找到包含关键字 [" + target + "] 的窗口");
+            log.warn("定位失败，未找到包含关键字 [{}] 的窗口", target);
             return false;
         }
 
         updateBaseFromHwnd(targetHwnd[0], targetTitle[0]);
-        TrackerState s = state();
-        System.out.println("✅ [定位成功] 目标: " + s.fullWindowTitle + " | 窗口基址 X:" + s.windowBaseX + " Y:" + s.windowBaseY);
         logTrackerState("locateWindow-title-search");
         return true;
     }
@@ -135,14 +133,14 @@ public class GameClientTracker {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
             logTrackerState("captureToFileWithShield:" + elementName);
-            System.out.println("🛡️ [装甲截图] 准备截取 " + elementName + ": 启动强制清屏 (ALT+4)...");
+            log.debug("装甲截图开始：{} savePath={}", elementName, savePath);
             inputProvider.pressAlt4();
             sleepQuietly(400);
             try {
                 return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
             } finally {
                 inputProvider.pressAlt4();
-                System.out.println("🔰 [装甲截图] " + elementName + " 截图完毕，画面已恢复。");
+                log.debug("装甲截图结束：{}", elementName);
             }
         });
     }
@@ -158,8 +156,7 @@ public class GameClientTracker {
     private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!checkBaseAddress()) return false;
         logTrackerState("captureToFile:" + elementName);
-        System.out.println("📸 [" + elementName + "] 正在截取画面保存至: " + savePath
-                + " | rect=(" + x1 + "," + y1 + ")-(" + x2 + "," + y2 + ")");
+        log.debug("截图：{} savePath={} rect=({}, {})-({}, {})", elementName, savePath, x1, y1, x2, y2);
         return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
     }
 
@@ -236,11 +233,23 @@ public class GameClientTracker {
         }
         TrackerState s = state();
         logTrackerState("bringWindowToFront");
-        System.out.println("🔄 正在将游戏窗口唤醒并置顶...");
         User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
-        User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
-        sleepQuietly(500);
-        return true;
+        User32.INSTANCE.BringWindowToTop(s.gameHwnd);
+        User32.INSTANCE.SetActiveWindow(s.gameHwnd);
+        boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
+        sleepQuietly(200);
+        HWND foreground = User32.INSTANCE.GetForegroundWindow();
+        boolean focused = foreground != null
+                && s.gameHwnd != null
+                && Pointer.nativeValue(foreground.getPointer()) == Pointer.nativeValue(s.gameHwnd.getPointer());
+        if (!foregroundOk || !focused) {
+            log.warn("窗口置前可能失败：title={} hwnd={} foregroundOk={} focused={}",
+                    s.fullWindowTitle,
+                    s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()),
+                    foregroundOk,
+                    focused);
+        }
+        return focused || foregroundOk;
     }
 
     private TrackerState state() {
@@ -260,8 +269,7 @@ public class GameClientTracker {
                 + " | base=(" + s.windowBaseX + "," + s.windowBaseY + ")"
                 + " | hwnd=" + hwndText
                 + " | title=" + s.fullWindowTitle;
-        log.info("[TrackerCoordinate] {}", line);
-        System.out.println("🧭 [Tracker] " + line);
+        log.debug("[TrackerCoordinate] {}", line);
         appendTrackerDiagnostic(line);
     }
 
@@ -277,7 +285,7 @@ public class GameClientTracker {
                 + " | trackerState=" + windowIsolationProperties.isTrackerStateIsolationEnabled()
                 + " | boundTracker=" + windowIsolationProperties.isBoundWindowTrackerEnabled()
                 + " | scopedTemp=" + windowIsolationProperties.isScopedTempPathEnabled();
-        log.info("[TrackerCoordinate] {}", line);
+        log.debug("[TrackerCoordinate] {}", line);
         appendTrackerDiagnostic(line);
     }
 
@@ -335,10 +343,9 @@ public class GameClientTracker {
     public void testBackgroundAlt8() {
         TrackerState s = state();
         if (s.gameHwnd == null) {
-            System.out.println("❌ gameHwnd 为空，请先执行 locateWindow() !");
+            log.warn("gameHwnd 为空，请先执行 locateWindow");
             return;
         }
-        System.out.println("🎯 直接使用缓存的句柄投递后台 Alt+8...");
         int WM_SYSKEYDOWN = 0x0104;
         int WM_SYSKEYUP = 0x0105;
         int VK_8 = 0x38;
@@ -347,7 +354,7 @@ public class GameClientTracker {
         User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
         try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
-        System.out.println("📩 后台指令投递完毕！");
+        log.info("后台 Alt+8 指令投递完毕");
     }
 
     private static class TrackerState {
