@@ -6,6 +6,7 @@ import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
  *
  * 和真实鼠标/键盘输入共用同一把 input.GlobalInputLock，避免多窗口同时激活/点击互相打架。
  */
+@Slf4j
 @Service
 public class WindowFocusService {
 
@@ -40,8 +42,27 @@ public class WindowFocusService {
         if (hwnd == null) {
             return false;
         }
+
         User32.INSTANCE.ShowWindow(hwnd, 9);
-        return User32.INSTANCE.SetForegroundWindow(hwnd);
+        User32.INSTANCE.BringWindowToTop(hwnd);
+        User32.INSTANCE.SetActiveWindow(hwnd);
+        boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd);
+
+        sleepQuietly(200);
+
+        WinDef.HWND foreground = User32.INSTANCE.GetForegroundWindow();
+        boolean focused = sameHwnd(hwnd, foreground);
+        if (!foregroundOk || !focused) {
+            log.warn("窗口激活可能失败：handle={} title={} foregroundOk={} focused={}",
+                    binding.getNativeHandle(), binding.getTitle(), foregroundOk, focused);
+        }
+        return focused || foregroundOk;
+    }
+
+    private boolean sameHwnd(WinDef.HWND expected, WinDef.HWND actual) {
+        return expected != null
+                && actual != null
+                && Pointer.nativeValue(expected.getPointer()) == Pointer.nativeValue(actual.getPointer());
     }
 
     private WinDef.HWND toHwnd(String handleText) {
@@ -50,5 +71,13 @@ public class WindowFocusService {
             return null;
         }
         return new WinDef.HWND(new Pointer(value));
+    }
+
+    private void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }
