@@ -45,7 +45,6 @@ public class WindowFocusService {
 
         User32.INSTANCE.ShowWindow(hwnd, 9);
         User32.INSTANCE.BringWindowToTop(hwnd);
-        User32.INSTANCE.SetActiveWindow(hwnd);
         boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd);
 
         sleepQuietly(200);
