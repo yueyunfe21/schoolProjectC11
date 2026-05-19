@@ -45,7 +45,7 @@ public class FiveRingTask extends BaseTaskTemplate {
     private static final int DIALOG_START_OFFSET_Y = 420;
 
     private static final String TARGET_MAP_NAME = "长安";
-    private static final String TARGET_NPC_NAME = "墨意";
+    private static final String TARGET_NPC_NAME = "云游大师";
     private static final int NPC_COOR_X = 87;
     private static final int NPC_COOR_Y = 174;
 
