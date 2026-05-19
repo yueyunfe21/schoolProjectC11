@@ -66,7 +66,29 @@ public class NpcClickService {
         return false;
     }
 
+    private boolean executeClickAndVerifyDirect(int x, int y, long firstWaitMs, int maxRetries) {
+        inputProvider.clickLeft(x, y, 100);
+        sleepQuietly(firstWaitMs);
+        if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
+
+        for (int i = 1; i <= maxRetries; i++) {
+            log.warn("NPC direct click retry {}", i);
+            inputProvider.clickLeft(x, y, 100);
+            sleepQuietly(1000);
+            if (dialogService.detectDialogType() == DialogService.DialogType.OPTION) return true;
+        }
+        return false;
+    }
+
     private boolean scanMenuAndVerify(int testX, int testY, String targetName) {
+        return scanMenuAndVerifyInternal(testX, testY, targetName, false);
+    }
+
+    private boolean scanMenuAndVerifyDirect(int testX, int testY, String targetName) {
+        return scanMenuAndVerifyInternal(testX, testY, targetName, true);
+    }
+
+    private boolean scanMenuAndVerifyInternal(int testX, int testY, String targetName, boolean directInput) {
         int scanW = 150;
         int scanH = 120;
         int scanX = testX;
@@ -90,6 +112,12 @@ public class NpcClickService {
                 if (isNameMatch || isTagMatch) {
                     int clickX = scanX + w.getX();
                     int clickY = scanY + w.getY();
+                    log.info("NPC menu matched text={} directInput={} click=({}, {})", text, directInput, clickX, clickY);
+                    if (directInput) {
+                        inputProvider.moveMouse(clickX, clickY);
+                        sleepQuietly(100);
+                        return executeClickAndVerifyDirect(clickX, clickY, 800, 1);
+                    }
                     inputSequences.submitAndWait("npcClick:menuMove", List.of(
                             InputAction.moveMouse(clickX, clickY),
                             InputAction.sleep(100)
@@ -186,7 +214,7 @@ public class NpcClickService {
                             return false;
                         }
                     }
-                    return scanMenuAndVerify(testX, testY, npcName);
+                    return scanMenuAndVerifyDirect(testX, testY, npcName);
                 } finally {
                     inputProvider.releaseCtrl();
                     sleepQuietly(100);
