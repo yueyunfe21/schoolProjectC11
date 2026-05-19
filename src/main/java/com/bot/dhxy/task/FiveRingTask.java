@@ -219,18 +219,23 @@ public class FiveRingTask extends BaseTaskTemplate {
             executionContext.throwIfStopRequested();
         }
 
+        log.info("🧭 [五环战前准备-1] 开始同步角色身份和当前位置");
         playerStateService.syncAll();
+
+        log.info("🧹 [五环战前准备-2] 开始清理地图/对话框/普通窗口");
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
         uiCleanerService.cleanUpAll();
+
+        log.info("🕯️ [五环战前准备-3] 开始检查摄妖香状态");
         playerStateService.ensureSheYaoXiangActive();
 
-        log.info("▶️ 战前准备：清点背包物资，寻找特征 [{}]...", KEY_ITEM_NAME);
+        log.info("🎒 [五环战前准备-4] 开始清点背包物资，寻找特征 [{}]", KEY_ITEM_NAME);
         runtimeState.setShoeBagIndex(bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME, executionContext));
 
         if (runtimeState.getShoeBagIndex() != null) {
-            log.info("✅ 情报确认：鞋子在第 {} 页，随时准备上交！", runtimeState.getShoeBagIndex() + 1);
+            log.info("✅ [五环战前准备完成] 鞋子在第 {} 页，随时准备上交！", runtimeState.getShoeBagIndex() + 1);
         } else {
-            log.warn("⚠️ 情报确认：没发现鞋子！可能是刚开始跑还没买，继续执行...");
+            log.warn("⚠️ [五环战前准备完成] 没发现鞋子，可能是刚开始跑还没买，继续执行...");
         }
 
         return TaskStepResult.SUCCESS;
