@@ -61,8 +61,8 @@ public class UICleanerService {
         int closeX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
         int closeY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
         inputSequences.submitAndWait("uiCleanup:closeMap", List.of(
-                InputAction.doubleRightClick(closeX, closeY, 150, 500),
-                InputAction.sleep(1000)
+                InputAction.doubleRightClick(closeX, closeY, 120, 300),
+                InputAction.sleep(300)
         ));
     }
 
@@ -74,29 +74,30 @@ public class UICleanerService {
         };
 
         for (int i = 0; i < 3; i++) {
-            boolean foundInThisPass = false;
-
+            if (!tracker.updateGlobalVision()) {
+                break;
+            }
+            String screenPath = tracker.getLatestVisionPath();
+            Point closeBtnPoint = null;
             for (String templatePath : closeButtonTemplates) {
-                Point closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinate(templatePath, 0.8);
-
+                closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
                 if (closeBtnPoint != null) {
-                    int clickX = closeBtnPoint.x + (random.nextInt(5) - 2);
-                    int clickY = closeBtnPoint.y + (random.nextInt(5) - 2);
-
-                    inputSequences.submitAndWait("uiCleanup:closeGenericWindow", List.of(
-                            InputAction.clickLeft(clickX, clickY, 150),
-                            InputAction.sleep(800)
-                    ));
-
-                    foundInThisPass = true;
-                    closedAny = true;
                     break;
                 }
             }
 
-            if (!foundInThisPass) {
+            if (closeBtnPoint == null) {
                 break;
             }
+
+            int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
+            int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
+
+            inputSequences.submitAndWait("uiCleanup:closeGenericWindow", List.of(
+                    InputAction.clickLeft(clickX, clickY, 80),
+                    InputAction.sleep(250)
+            ));
+            closedAny = true;
         }
         return closedAny;
     }
@@ -109,7 +110,7 @@ public class UICleanerService {
 
         if (type == DialogService.DialogType.STORY) {
             dialogService.fastClickStoryDialog();
-            sleepInterruptible(1000);
+            sleepInterruptible(350);
             return true;
         }
 
@@ -127,7 +128,7 @@ public class UICleanerService {
                 for (TextRecognizer.OcrWordResult word : allWords) {
                     if (word.getText().contains(keyword)) {
                         clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY(), "uiCleanup:dialogCloseKeyword");
-                        sleepInterruptible(1000);
+                        sleepInterruptible(350);
                         return true;
                     }
                 }
@@ -137,12 +138,12 @@ public class UICleanerService {
         clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2,
                 dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2,
                 "uiCleanup:dialogFallback");
-        sleepInterruptible(1000);
+        sleepInterruptible(350);
         return true;
     }
 
     private void clickAbsolutePoint(int x, int y, String description) {
-        inputSequences.clickLeft(description, x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 150);
+        inputSequences.clickLeft(description, x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 80);
     }
 
     private void sleepInterruptible(long ms) {
