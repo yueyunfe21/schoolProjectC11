@@ -235,7 +235,6 @@ public class GameClientTracker {
         logTrackerState("bringWindowToFront");
         User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
         User32.INSTANCE.BringWindowToTop(s.gameHwnd);
-        User32.INSTANCE.SetActiveWindow(s.gameHwnd);
         boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
         sleepQuietly(200);
         HWND foreground = User32.INSTANCE.GetForegroundWindow();
