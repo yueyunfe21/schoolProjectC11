@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 /**
  * Windows 原生窗口激活服务。
  *
- * 和真实鼠标/键盘输入共用同一把 input.GlobalInputLock，避免多窗口同时激活/点击互相打架。
+ * SetForegroundWindow 在 Windows 前台权限限制下经常返回 false，
+ * 但真实鼠标/键盘动作仍然可能正常执行。因此这里把 focus 视为 best-effort：
+ * 只要 hwnd 合法并完成置前尝试，就不阻断输入队列。
  */
 @Slf4j
 @Service
@@ -46,22 +48,11 @@ public class WindowFocusService {
         User32.INSTANCE.ShowWindow(hwnd, 9);
         User32.INSTANCE.BringWindowToTop(hwnd);
         boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd);
+        sleepQuietly(50);
 
-        sleepQuietly(200);
-
-        WinDef.HWND foreground = User32.INSTANCE.GetForegroundWindow();
-        boolean focused = sameHwnd(hwnd, foreground);
-        if (!foregroundOk || !focused) {
-            log.warn("窗口激活可能失败：handle={} title={} foregroundOk={} focused={}",
-                    binding.getNativeHandle(), binding.getTitle(), foregroundOk, focused);
-        }
-        return focused || foregroundOk;
-    }
-
-    private boolean sameHwnd(WinDef.HWND expected, WinDef.HWND actual) {
-        return expected != null
-                && actual != null
-                && Pointer.nativeValue(expected.getPointer()) == Pointer.nativeValue(actual.getPointer());
+        log.debug("窗口置前尝试完成：handle={} title={} foregroundOk={}",
+                binding.getNativeHandle(), binding.getTitle(), foregroundOk);
+        return true;
     }
 
     private WinDef.HWND toHwnd(String handleText) {
