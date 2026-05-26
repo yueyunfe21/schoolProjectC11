@@ -41,6 +41,21 @@ public class WindowIsolationProperties {
      */
     private boolean scopedTempPathEnabled = false;
 
+    /**
+     * 是否在绑定窗口上下文中优先使用 Win32 HWND 截图，避免 Robot 被遮挡窗口污染。
+     */
+    private boolean hwndCaptureEnabled = false;
+
+    /**
+     * HWND 截图失败时是否退回 Robot 可见屏幕截图。
+     */
+    private boolean hwndCaptureFallbackToRobotEnabled = true;
+
+    /**
+     * 是否允许已验证的键盘快捷键通过 HWND 后台消息发送。
+     */
+    private boolean hwndKeyboardEnabled = false;
+
     public boolean isInputFocusActive() {
         return isolationEnabled && inputFocusEnabled;
     }
@@ -55,5 +70,17 @@ public class WindowIsolationProperties {
 
     public boolean isScopedTempPathActive() {
         return isolationEnabled && scopedTempPathEnabled;
+    }
+
+    public boolean isHwndCaptureActive() {
+        return isolationEnabled && boundWindowTrackerEnabled && hwndCaptureEnabled;
+    }
+
+    public boolean isHwndCaptureFallbackToRobotActive() {
+        return !isHwndCaptureActive() || hwndCaptureFallbackToRobotEnabled;
+    }
+
+    public boolean isHwndKeyboardActive() {
+        return isolationEnabled && boundWindowTrackerEnabled && hwndKeyboardEnabled;
     }
 }

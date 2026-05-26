@@ -1,0 +1,473 @@
+{
+  "瑶池" : {
+    "leftCameraX" : 30.55,
+    "rightCameraX" : 101.7,
+    "topCameraY" : 77.45,
+    "bottomCameraY" : 11.5,
+    "centerAnchorX" : 370.0,
+    "centerAnchorY" : 506.0,
+    "leftSamples" : null,
+    "rightSamples" : null,
+    "topSamples" : null,
+    "bottomSamples" : null,
+    "correctionSamples" : null
+  },
+  "长安" : {
+    "leftCameraX" : 24.9,
+    "rightCameraX" : 437.0,
+    "topCameraY" : 233.6,
+    "bottomCameraY" : 17.2,
+    "centerAnchorX" : 371.0,
+    "centerAnchorY" : 506.0,
+    "leftSamples" : null,
+    "rightSamples" : null,
+    "topSamples" : null,
+    "bottomSamples" : null,
+    "correctionSamples" : null
+  },
+  "凤巢七层" : {
+    "leftCameraX" : 41.25,
+    "rightCameraX" : 102.8,
+    "topCameraY" : 64.3,
+    "bottomCameraY" : 16.85,
+    "centerAnchorX" : 828.0,
+    "centerAnchorY" : 379.0,
+    "leftSamples" : [ {
+      "axisCoordinate" : 4.0,
+      "cameraCoordinate" : 81.95
+    }, {
+      "axisCoordinate" : 5.0,
+      "cameraCoordinate" : 64.05
+    }, {
+      "axisCoordinate" : 6.0,
+      "cameraCoordinate" : 24.5
+    }, {
+      "axisCoordinate" : 8.0,
+      "cameraCoordinate" : 41.25
+    }, {
+      "axisCoordinate" : 12.0,
+      "cameraCoordinate" : 40.4
+    }, {
+      "axisCoordinate" : 23.0,
+      "cameraCoordinate" : 41.55
+    }, {
+      "axisCoordinate" : 34.0,
+      "cameraCoordinate" : 41.0
+    } ],
+    "rightSamples" : [ {
+      "axisCoordinate" : 37.0,
+      "cameraCoordinate" : 102.8
+    } ],
+    "topSamples" : [ {
+      "axisCoordinate" : 49.0,
+      "cameraCoordinate" : 64.3
+    } ],
+    "bottomSamples" : [ {
+      "axisCoordinate" : 10.0,
+      "cameraCoordinate" : 16.85
+    }, {
+      "axisCoordinate" : 13.0,
+      "cameraCoordinate" : 16.9
+    }, {
+      "axisCoordinate" : 18.0,
+      "cameraCoordinate" : 17.6
+    }, {
+      "axisCoordinate" : 22.0,
+      "cameraCoordinate" : 17.4
+    }, {
+      "axisCoordinate" : 47.0,
+      "cameraCoordinate" : 18.05
+    }, {
+      "axisCoordinate" : 68.0,
+      "cameraCoordinate" : 16.45
+    } ],
+    "correctionSamples" : [ {
+      "mapX" : 111.0,
+      "mapY" : 47.0,
+      "baseRelX" : 679.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 699.0,
+      "actualRelY" : 386.0,
+      "errorX" : 20.0,
+      "errorY" : 6.0
+    }, {
+      "mapX" : 100.0,
+      "mapY" : 58.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 517.0,
+      "actualRelY" : 378.0,
+      "errorX" : 2.0,
+      "errorY" : -2.0
+    }, {
+      "mapX" : 109.0,
+      "mapY" : 70.0,
+      "baseRelX" : 639.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 663.0,
+      "actualRelY" : 385.0,
+      "errorX" : 24.0,
+      "errorY" : 5.0
+    }, {
+      "mapX" : 57.0,
+      "mapY" : 31.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 515.0,
+      "actualRelY" : 386.0,
+      "errorX" : 0.0,
+      "errorY" : 6.0
+    }, {
+      "mapX" : 22.0,
+      "mapY" : 41.0,
+      "baseRelX" : 460.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 455.0,
+      "actualRelY" : 376.0,
+      "errorX" : -5.0,
+      "errorY" : -4.0
+    }, {
+      "mapX" : 32.0,
+      "mapY" : 22.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 519.0,
+      "actualRelY" : 380.0,
+      "errorX" : 4.0,
+      "errorY" : 0.0
+    }, {
+      "mapX" : 17.0,
+      "mapY" : 9.0,
+      "baseRelX" : 364.0,
+      "baseRelY" : 529.0,
+      "actualRelX" : 355.0,
+      "actualRelY" : 559.0,
+      "errorX" : -9.0,
+      "errorY" : 30.0
+    }, {
+      "mapX" : 55.0,
+      "mapY" : 17.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 518.0,
+      "actualRelY" : 383.0,
+      "errorX" : 3.0,
+      "errorY" : 3.0
+    }, {
+      "mapX" : 69.0,
+      "mapY" : 8.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 549.0,
+      "actualRelX" : 516.0,
+      "actualRelY" : 560.0,
+      "errorX" : 1.0,
+      "errorY" : 11.0
+    }, {
+      "mapX" : 81.0,
+      "mapY" : 41.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 519.0,
+      "actualRelY" : 379.0,
+      "errorX" : 4.0,
+      "errorY" : -1.0
+    }, {
+      "mapX" : 79.0,
+      "mapY" : 27.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 521.0,
+      "actualRelY" : 376.0,
+      "errorX" : 6.0,
+      "errorY" : -4.0
+    }, {
+      "mapX" : 63.0,
+      "mapY" : 4.0,
+      "baseRelX" : 136.0,
+      "baseRelY" : 629.0,
+      "actualRelX" : 132.0,
+      "actualRelY" : 382.0,
+      "errorX" : -4.0,
+      "errorY" : -247.0
+    }, {
+      "mapX" : 14.0,
+      "mapY" : 32.0,
+      "baseRelX" : 246.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 291.0,
+      "actualRelY" : 375.0,
+      "errorX" : 45.0,
+      "errorY" : -5.0
+    }, {
+      "mapX" : 73.0,
+      "mapY" : 5.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 609.0,
+      "actualRelX" : 150.0,
+      "actualRelY" : 362.0,
+      "errorX" : -365.0,
+      "errorY" : -247.0
+    }, {
+      "mapX" : 19.0,
+      "mapY" : 30.0,
+      "baseRelX" : 292.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 390.0,
+      "actualRelY" : 379.0,
+      "errorX" : 98.0,
+      "errorY" : -1.0
+    }, {
+      "mapX" : 83.0,
+      "mapY" : 5.0,
+      "baseRelX" : 515.0,
+      "baseRelY" : 609.0,
+      "actualRelX" : 170.0,
+      "actualRelY" : 392.0,
+      "errorX" : -345.0,
+      "errorY" : -217.0
+    }, {
+      "mapX" : 18.0,
+      "mapY" : 30.0,
+      "baseRelX" : 272.0,
+      "baseRelY" : 380.0,
+      "actualRelX" : 368.0,
+      "actualRelY" : 380.0,
+      "errorX" : 96.0,
+      "errorY" : 0.0
+    }, {
+      "mapX" : 47.0,
+      "mapY" : 10.0,
+      "baseRelX" : 623.0,
+      "baseRelY" : 540.0,
+      "actualRelX" : 832.0,
+      "actualRelY" : 538.0,
+      "errorX" : 209.0,
+      "errorY" : -2.0
+    }, {
+      "mapX" : 43.0,
+      "mapY" : 5.0,
+      "baseRelX" : 407.0,
+      "baseRelY" : 638.0,
+      "actualRelX" : 146.0,
+      "actualRelY" : 241.0,
+      "errorX" : -261.0,
+      "errorY" : -397.0
+    }, {
+      "mapX" : 25.0,
+      "mapY" : 17.0,
+      "baseRelX" : 617.0,
+      "baseRelY" : 389.0,
+      "actualRelX" : 505.0,
+      "actualRelY" : 391.0,
+      "errorX" : -112.0,
+      "errorY" : 2.0
+    }, {
+      "mapX" : 27.0,
+      "mapY" : 19.0,
+      "baseRelX" : 545.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 522.0,
+      "actualRelY" : 392.0,
+      "errorX" : -23.0,
+      "errorY" : 13.0
+    }, {
+      "mapX" : 35.0,
+      "mapY" : 21.0,
+      "baseRelX" : 701.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 505.0,
+      "actualRelY" : 380.0,
+      "errorX" : -196.0,
+      "errorY" : 1.0
+    }, {
+      "mapX" : 34.0,
+      "mapY" : 41.0,
+      "baseRelX" : 688.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 520.0,
+      "actualRelY" : 377.0,
+      "errorX" : -168.0,
+      "errorY" : -2.0
+    }, {
+      "mapX" : 42.0,
+      "mapY" : 47.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 520.0,
+      "actualRelY" : 383.0,
+      "errorX" : -308.0,
+      "errorY" : 4.0
+    }, {
+      "mapX" : 46.0,
+      "mapY" : 54.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 522.0,
+      "actualRelY" : 380.0,
+      "errorX" : -306.0,
+      "errorY" : 1.0
+    }, {
+      "mapX" : 50.0,
+      "mapY" : 59.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 523.0,
+      "actualRelY" : 380.0,
+      "errorX" : -305.0,
+      "errorY" : 1.0
+    }, {
+      "mapX" : 57.0,
+      "mapY" : 63.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 513.0,
+      "actualRelY" : 413.0,
+      "errorX" : -315.0,
+      "errorY" : 34.0
+    }, {
+      "mapX" : 49.0,
+      "mapY" : 65.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 365.0,
+      "actualRelX" : 516.0,
+      "actualRelY" : 378.0,
+      "errorX" : -312.0,
+      "errorY" : 13.0
+    }, {
+      "mapX" : 75.0,
+      "mapY" : 64.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 519.0,
+      "actualRelY" : 385.0,
+      "errorX" : -309.0,
+      "errorY" : 6.0
+    }, {
+      "mapX" : 47.0,
+      "mapY" : 11.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 520.0,
+      "actualRelX" : 512.0,
+      "actualRelY" : 490.0,
+      "errorX" : -316.0,
+      "errorY" : -30.0
+    }, {
+      "mapX" : 98.0,
+      "mapY" : 27.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 518.0,
+      "actualRelY" : 383.0,
+      "errorX" : -310.0,
+      "errorY" : 4.0
+    }, {
+      "mapX" : 105.0,
+      "mapY" : 33.0,
+      "baseRelX" : 872.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 588.0,
+      "actualRelY" : 382.0,
+      "errorX" : -284.0,
+      "errorY" : 3.0
+    }, {
+      "mapX" : 108.0,
+      "mapY" : 63.0,
+      "baseRelX" : 932.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 643.0,
+      "actualRelY" : 386.0,
+      "errorX" : -289.0,
+      "errorY" : 7.0
+    }, {
+      "mapX" : 36.0,
+      "mapY" : 14.0,
+      "baseRelX" : 736.0,
+      "baseRelY" : 454.0,
+      "actualRelX" : 537.0,
+      "actualRelY" : 362.0,
+      "errorX" : -199.0,
+      "errorY" : -92.0
+    }, {
+      "mapX" : 23.0,
+      "mapY" : 12.0,
+      "baseRelX" : 480.0,
+      "baseRelY" : 488.0,
+      "actualRelX" : 492.0,
+      "actualRelY" : 386.0,
+      "errorX" : 12.0,
+      "errorY" : -102.0
+    }, {
+      "mapX" : 18.0,
+      "mapY" : 9.0,
+      "baseRelX" : 367.0,
+      "baseRelY" : 551.0,
+      "actualRelX" : 398.0,
+      "actualRelY" : 459.0,
+      "errorX" : 31.0,
+      "errorY" : -92.0
+    }, {
+      "mapX" : 10.0,
+      "mapY" : 8.0,
+      "baseRelX" : 203.0,
+      "baseRelY" : 556.0,
+      "actualRelX" : 244.0,
+      "actualRelY" : 446.0,
+      "errorX" : 41.0,
+      "errorY" : -110.0
+    }, {
+      "mapX" : 10.0,
+      "mapY" : 6.0,
+      "baseRelX" : 538.0,
+      "baseRelY" : 596.0,
+      "actualRelX" : 239.0,
+      "actualRelY" : 521.0,
+      "errorX" : -299.0,
+      "errorY" : -75.0
+    }, {
+      "mapX" : 16.0,
+      "mapY" : 8.0,
+      "baseRelX" : 323.0,
+      "baseRelY" : 565.0,
+      "actualRelX" : 359.0,
+      "actualRelY" : 483.0,
+      "errorX" : 36.0,
+      "errorY" : -82.0
+    }, {
+      "mapX" : 20.0,
+      "mapY" : 10.0,
+      "baseRelX" : 411.0,
+      "baseRelY" : 529.0,
+      "actualRelX" : 423.0,
+      "actualRelY" : 536.0,
+      "errorX" : 12.0,
+      "errorY" : 7.0
+    }, {
+      "mapX" : 28.0,
+      "mapY" : 14.0,
+      "baseRelX" : 576.0,
+      "baseRelY" : 450.0,
+      "actualRelX" : 521.0,
+      "actualRelY" : 455.0,
+      "errorX" : -55.0,
+      "errorY" : 5.0
+    }, {
+      "mapX" : 68.0,
+      "mapY" : 19.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 379.0,
+      "actualRelX" : 514.0,
+      "actualRelY" : 388.0,
+      "errorX" : -314.0,
+      "errorY" : 9.0
+    }, {
+      "mapX" : 71.0,
+      "mapY" : 13.0,
+      "baseRelX" : 828.0,
+      "baseRelY" : 448.0,
+      "actualRelX" : 517.0,
+      "actualRelY" : 469.0,
+      "errorX" : -311.0,
+      "errorY" : 21.0
+    } ]
+  }
+}

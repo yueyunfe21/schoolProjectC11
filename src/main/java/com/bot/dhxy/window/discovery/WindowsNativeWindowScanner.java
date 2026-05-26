@@ -4,6 +4,7 @@ import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.ptr.IntByReference;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import java.util.regex.Pattern;
  * Windows 顶层窗口扫描实现。
  */
 @Component
+@Slf4j
 public class WindowsNativeWindowScanner implements NativeWindowScanner {
 
     private static final String[] GAME_TITLE_KEYWORDS = {
@@ -73,9 +75,15 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
 
     @Override
     public List<NativeWindowInfo> scanGameWindows() {
-        return scanWindows().stream()
+        long startedAt = System.currentTimeMillis();
+        List<NativeWindowInfo> allWindows = scanWindows();
+        List<NativeWindowInfo> gameWindows = allWindows.stream()
                 .filter(this::looksLikeGameWindow)
                 .toList();
+        log.info("Native game window scan done: allVisible={} gameMatched={} elapsedMs={} matches={}",
+                allWindows.size(), gameWindows.size(), System.currentTimeMillis() - startedAt,
+                describeWindows(gameWindows));
+        return gameWindows;
     }
 
     private NativeWindowInfo readWindow(WinDef.HWND hwnd) {
@@ -149,6 +157,19 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
             }
         }
         return false;
+    }
+
+    private String describeWindows(List<NativeWindowInfo> windows) {
+        if (windows == null || windows.isEmpty()) {
+            return "[]";
+        }
+        return windows.stream()
+                .map(window -> window.toWindowId() + "|" + window.getTitle()
+                        + "|class=" + window.getClassName()
+                        + "|pid=" + window.getProcessId()
+                        + "|rect=" + window.getX() + "," + window.getY() + "," + window.getWidth() + "x" + window.getHeight())
+                .toList()
+                .toString();
     }
 
     private String cleanNativeString(char[] chars) {

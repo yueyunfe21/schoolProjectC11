@@ -1,9 +1,9 @@
-package com.bot.dhxy.service;
+package com.bot.dhxy.tools;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.PlayerCharacter;
-import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.vision.LocationVisionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

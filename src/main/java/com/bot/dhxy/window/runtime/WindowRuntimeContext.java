@@ -6,6 +6,7 @@ import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -33,6 +34,10 @@ public class WindowRuntimeContext {
     private volatile TaskType lastTaskType = TaskType.UNKNOWN;
     private volatile TaskRunResult lastResult;
     private volatile String lastResultMessage;
+    private volatile String lastQueueDisplayText;
+    private volatile TaskRunResult lastQueueResult;
+    private volatile String lastQueueMessage;
+    private volatile WindowTaskFailurePolicy lastQueueFailurePolicy;
 
     public WindowRuntimeContext(String windowId, GameContext gameContext) {
         String normalizedWindowId = normalizeWindowId(windowId);
@@ -98,25 +103,23 @@ public class WindowRuntimeContext {
 
     public String getLastResultMessage() { return lastResultMessage; }
 
+    public String getLastQueueDisplayText() { return lastQueueDisplayText; }
+
+    public TaskRunResult getLastQueueResult() { return lastQueueResult; }
+
+    public String getLastQueueMessage() { return lastQueueMessage; }
+
+    public WindowTaskFailurePolicy getLastQueueFailurePolicy() { return lastQueueFailurePolicy; }
+
     public void markQueued(TaskType taskType) {
-        if (taskType != null && taskType != TaskType.UNKNOWN) {
-            this.selectedTaskType = taskType;
-            this.lastTaskType = taskType;
-        } else {
-            this.lastTaskType = this.selectedTaskType;
-        }
+        this.lastTaskType = resolveTaskForRuntimeEvent(taskType);
         this.status = WindowRuntimeStatus.QUEUED;
         this.lastMessage = "任务已排队：" + this.lastTaskType.getDisplayName();
         this.lastResultMessage = null;
     }
 
     public void markStarted(TaskType taskType) {
-        if (taskType != null && taskType != TaskType.UNKNOWN) {
-            this.selectedTaskType = taskType;
-            this.lastTaskType = taskType;
-        } else {
-            this.lastTaskType = this.selectedTaskType;
-        }
+        this.lastTaskType = resolveTaskForRuntimeEvent(taskType);
         this.status = WindowRuntimeStatus.RUNNING;
         this.lastStartedAt = LocalDateTime.now();
         this.lastMessage = "任务开始：" + this.lastTaskType.getDisplayName();
@@ -126,6 +129,16 @@ public class WindowRuntimeContext {
 
     public void markStopping(String message) {
         this.status = WindowRuntimeStatus.STOPPING;
+        this.lastMessage = normalize(message);
+    }
+
+    public void markPauseRequested(String message) {
+        this.status = WindowRuntimeStatus.PAUSED;
+        this.lastMessage = normalize(message);
+    }
+
+    public void markResumed(String message) {
+        this.status = WindowRuntimeStatus.RUNNING;
         this.lastMessage = normalize(message);
     }
 
@@ -144,7 +157,40 @@ public class WindowRuntimeContext {
         this.lastResultMessage = normalize(message);
     }
 
+    public void markQueueFinished(WindowRuntimeStatus status,
+                                  TaskRunResult result,
+                                  String queueDisplayText,
+                                  WindowTaskFailurePolicy failurePolicy,
+                                  String message) {
+        this.status = status == null ? WindowRuntimeStatus.IDLE : status;
+        this.lastFinishedAt = LocalDateTime.now();
+        this.lastMessage = normalize(message);
+        this.lastQueueDisplayText = normalize(queueDisplayText);
+        this.lastQueueResult = result;
+        this.lastQueueMessage = normalize(message);
+        this.lastQueueFailurePolicy = failurePolicy;
+    }
+
     public void markError(String message) { markFinished(WindowRuntimeStatus.ERROR, null, TaskRunResult.FAILED, message); }
+
+    /**
+     * Mark an already-terminal window as explicitly stopped by the user.
+     *
+     * <p>This is used when the UI sends a stop command after a task has already failed and no
+     * runner thread is active anymore. The window-level status should stop showing "异常" once the
+     * user has acknowledged/stopped it, but the last task result/message are preserved so the detail
+     * panel can still explain the original failure.</p>
+     *
+     * @param message user-facing status message for the stop acknowledgement.
+     */
+    public void markStoppedAfterTerminalStop(String message) {
+        this.status = WindowRuntimeStatus.STOPPED;
+        this.lastMessage = normalize(message);
+        if (this.lastResult == null) {
+            this.lastResult = TaskRunResult.STOPPED;
+            this.lastResultMessage = normalize(message);
+        }
+    }
 
     public void resetRuntimeState() {
         this.status = WindowRuntimeStatus.IDLE;
@@ -154,6 +200,10 @@ public class WindowRuntimeContext {
         this.lastTaskType = TaskType.UNKNOWN;
         this.lastResult = null;
         this.lastResultMessage = null;
+        this.lastQueueDisplayText = null;
+        this.lastQueueResult = null;
+        this.lastQueueMessage = null;
+        this.lastQueueFailurePolicy = null;
         this.gameState.resetRuntimeState();
     }
 
@@ -184,5 +234,12 @@ public class WindowRuntimeContext {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private TaskType resolveTaskForRuntimeEvent(TaskType taskType) {
+        if (taskType != null && taskType != TaskType.UNKNOWN) {
+            return taskType;
+        }
+        return selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
     }
 }

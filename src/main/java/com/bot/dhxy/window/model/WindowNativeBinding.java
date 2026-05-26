@@ -58,6 +58,18 @@ public class WindowNativeBinding {
 
     public boolean hasGeometry() { return width > 0 && height > 0; }
 
+    public WindowNativeBinding withGeometry(int x, int y, int width, int height) {
+        return new WindowNativeBinding(nativeHandle, title, className, processId, x, y, width, height);
+    }
+
+    public boolean hasSameGeometry(WindowNativeBinding other) {
+        return other != null
+                && x == other.x
+                && y == other.y
+                && width == other.width
+                && height == other.height;
+    }
+
     public String getGeometryText() {
         if (!hasGeometry()) {
             return "-";
@@ -73,7 +85,7 @@ public class WindowNativeBinding {
         if (trimmed.isEmpty()) {
             return null;
         }
-        Long parsedHexHandle = WindowHandleParser.parseHexHandle(trimmed);
-        return parsedHexHandle == null ? trimmed : Long.toUnsignedString(parsedHexHandle);
+        Long parsedHandle = WindowHandleParser.parseHandle(trimmed);
+        return parsedHandle == null ? trimmed : Long.toUnsignedString(parsedHandle);
     }
 }

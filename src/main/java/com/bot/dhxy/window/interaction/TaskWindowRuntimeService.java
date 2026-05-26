@@ -2,76 +2,36 @@ package com.bot.dhxy.window.interaction;
 
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import org.springframework.stereotype.Service;
-
-import java.awt.image.BufferedImage;
 
 @Service
 public class TaskWindowRuntimeService {
 
     private final TaskWindowBindingResolver bindingResolver;
-    private final WindowInteractionService windowInteractionService;
+    private final WindowFocusService windowFocusService;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     public TaskWindowRuntimeService(TaskWindowBindingResolver bindingResolver,
-                                    WindowInteractionService windowInteractionService) {
+                                    WindowFocusService windowFocusService,
+                                    WindowNativeBindingRefreshService bindingRefreshService) {
         this.bindingResolver = bindingResolver;
-        this.windowInteractionService = windowInteractionService;
+        this.windowFocusService = windowFocusService;
+        this.bindingRefreshService = bindingRefreshService;
     }
 
     public WindowNativeBinding binding(TaskExecutionContext context) {
-        return bindingResolver.resolve(context);
+        WindowNativeBinding binding = bindingResolver.resolve(context);
+        return bindingRefreshService.refreshGeometry(binding).orElse(binding);
     }
 
     public boolean ready(TaskExecutionContext context) {
-        return bindingResolver.hasUsableWindow(context);
+        WindowNativeBinding binding = binding(context);
+        return binding.hasNativeHandle() && binding.hasGeometry();
     }
 
     public boolean activate(TaskExecutionContext context) {
-        return windowInteractionService.focus(binding(context));
-    }
-
-    public void clickCenter(TaskExecutionContext context) {
-        windowInteractionService.clickCenter(binding(context));
-    }
-
-    public void clickRelative(TaskExecutionContext context, int relativeX, int relativeY) {
-        windowInteractionService.clickRelative(binding(context), relativeX, relativeY);
-    }
-
-    public void moveRelative(TaskExecutionContext context, int relativeX, int relativeY) {
-        windowInteractionService.moveRelative(binding(context), relativeX, relativeY);
-    }
-
-    public void activateAndClickCenter(TaskExecutionContext context) {
-        windowInteractionService.focusAndClickCenter(binding(context));
-    }
-
-    public void activateAndClickRelative(TaskExecutionContext context, int relativeX, int relativeY) {
-        windowInteractionService.focusAndClickRelative(binding(context), relativeX, relativeY);
-    }
-
-    public BufferedImage capture(TaskExecutionContext context) {
-        return windowInteractionService.captureClientArea(binding(context));
-    }
-
-    public BufferedImage captureWindow(TaskExecutionContext context) {
-        return windowInteractionService.captureWindow(binding(context));
-    }
-
-    public WindowRect client(TaskExecutionContext context) {
-        return windowInteractionService.clientArea(binding(context));
-    }
-
-    public WindowRect window(TaskExecutionContext context) {
-        return windowInteractionService.windowArea(binding(context));
-    }
-
-    public WindowPoint center(TaskExecutionContext context) {
-        return windowInteractionService.center(binding(context));
-    }
-
-    public WindowPoint screenPoint(TaskExecutionContext context, int relativeX, int relativeY) {
-        return windowInteractionService.screenPoint(binding(context), relativeX, relativeY);
+        return windowFocusService.focus(binding(context));
     }
 
     public String describe(TaskExecutionContext context) {

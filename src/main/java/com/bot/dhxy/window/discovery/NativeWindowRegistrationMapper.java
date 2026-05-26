@@ -69,7 +69,7 @@ public class NativeWindowRegistrationMapper {
 
     private WindowNativeBinding toBinding(NativeWindowInfo window) {
         return new WindowNativeBinding(
-                window.getHandle(),
+                scannerHandleForBinding(window.getHandle()),
                 window.getTitle(),
                 window.getClassName(),
                 window.getProcessId(),
@@ -78,6 +78,17 @@ public class NativeWindowRegistrationMapper {
                 window.getWidth(),
                 window.getHeight()
         );
+    }
+
+    private String scannerHandleForBinding(String handle) {
+        if (handle == null || handle.isBlank()) {
+            return handle;
+        }
+        String value = handle.trim();
+        if (value.startsWith("0x") || value.startsWith("0X")) {
+            return value;
+        }
+        return "0x" + value;
     }
 
     private TaskType normalizeTask(TaskType taskType) {

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DHXY Task Selector Options</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --surface: #ffffff;
+      --soft: #f8fafc;
+      --line: #d9e2ee;
+      --text: #172033;
+      --muted: #667085;
+      --primary: #2563eb;
+      --primary-soft: #eaf2ff;
+      --shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", Arial, sans-serif;
+      font-size: 13px;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .header h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .header p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
+
+    .option {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .option-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .option-head strong {
+      font-size: 15px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-weight: 800;
+    }
+
+    .option-body {
+      padding: 14px;
+    }
+
+    .hint {
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .task-square-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 74px);
+      gap: 9px;
+    }
+
+    .task-square {
+      position: relative;
+      width: 74px;
+      height: 74px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      display: grid;
+      place-items: center;
+      padding: 10px 7px 7px;
+      text-align: center;
+      cursor: default;
+    }
+
+    .task-square.selected {
+      border-color: var(--primary);
+      background: var(--surface);
+    }
+
+    .order {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .selected .order {
+      display: flex;
+    }
+
+    .task-name {
+      font-weight: 800;
+      line-height: 1.25;
+    }
+
+    .task-sub {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .icon-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 78px);
+      gap: 10px;
+    }
+
+    .icon-task {
+      position: relative;
+      width: 78px;
+      min-height: 88px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 7px 5px;
+      text-align: center;
+      cursor: default;
+    }
+
+    .icon-task.selected {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+
+    .icon-box {
+      width: 46px;
+      height: 46px;
+      margin: 3px auto 7px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #edf4ff);
+      color: var(--primary);
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .icon-task .order {
+      top: 4px;
+      right: 4px;
+    }
+
+    .check-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 10px;
+    }
+
+    .check-item {
+      position: relative;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--soft);
+      padding: 8px 8px 8px 34px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .check-item::before {
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 14px;
+      height: 14px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+    }
+
+    .check-item.selected {
+      border-color: #bdd1f7;
+      background: #fbfdff;
+    }
+
+    .check-item.selected::before {
+      border-color: var(--primary);
+      background: var(--primary);
+      box-shadow: inset 0 0 0 3px var(--surface);
+    }
+
+    .check-order {
+      margin-left: auto;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .task-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    button {
+      height: 30px;
+      border: 1px solid var(--primary);
+      background: var(--primary);
+      color: white;
+      border-radius: 7px;
+      padding: 0 12px;
+      font: inherit;
+      font-weight: 800;
+    }
+
+    @media (max-width: 1080px) {
+      .option-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <h1>任务选择区域 A / B / C</h1>
+        <p>只比较任务选择本身，不讨论其它主控页面布局。</p>
+      </div>
+    </div>
+
+    <div class="option-grid">
+      <section class="option">
+        <div class="option-head">
+          <strong>A. 安静小方块</strong>
+          <span class="badge">推荐</span>
+        </div>
+        <div class="option-body">
+          <div class="task-square-grid">
+            <div class="task-square selected"><span class="order">1</span><div><div class="task-name">五环</div><div class="task-sub">日常</div></div></div>
+            <div class="task-square selected"><span class="order">2</span><div><div class="task-name">自动战斗</div><div class="task-sub">挂机</div></div></div>
+            <div class="task-square"><span class="order"></span><div><div class="task-name">坐标调试</div><div class="task-sub">诊断</div></div></div>
+            <div class="task-square"><span class="order"></span><div><div class="task-name">队伍识别</div><div class="task-sub">识别</div></div></div>
+            <div class="task-square"><span class="order"></span><div><div class="task-name">召唤兽</div><div class="task-sub">维护</div></div></div>
+            <div class="task-square"><span class="order"></span><div><div class="task-name">验证码</div><div class="task-sub">人工</div></div></div>
+          </div>
+          <div class="task-bar"><span>选中：五环 → 自动战斗</span><button>启动所选</button></div>
+          <p class="hint">优点：规整、安静、密度高。适合放在主控页底部，不会抢窗口表格的注意力。</p>
+        </div>
+      </section>
+
+      <section class="option">
+        <div class="option-head">
+          <strong>B. 图标宫格</strong>
+          <span class="badge">更像 App</span>
+        </div>
+        <div class="option-body">
+          <div class="icon-grid">
+            <div class="icon-task selected"><span class="order">1</span><div class="icon-box">环</div><div class="task-name">五环</div></div>
+            <div class="icon-task selected"><span class="order">2</span><div class="icon-box">战</div><div class="task-name">自动战斗</div></div>
+            <div class="icon-task"><span class="order"></span><div class="icon-box">坐</div><div class="task-name">坐标调试</div></div>
+            <div class="icon-task"><span class="order"></span><div class="icon-box">队</div><div class="task-name">队伍识别</div></div>
+            <div class="icon-task"><span class="order"></span><div class="icon-box">召</div><div class="task-name">召唤兽</div></div>
+            <div class="icon-task"><span class="order"></span><div class="icon-box">验</div><div class="task-name">验证码</div></div>
+          </div>
+          <div class="task-bar"><span>选中：五环 → 自动战斗</span><button>启动所选</button></div>
+          <p class="hint">优点：辨识度强，也更有设计感。风险是图标规则要定好，不然会显得花。</p>
+        </div>
+      </section>
+
+      <section class="option">
+        <div class="option-head">
+          <strong>C. 紧凑勾选列表</strong>
+          <span class="badge">最清楚</span>
+        </div>
+        <div class="option-body">
+          <div class="check-list">
+            <div class="check-item selected"><span>五环</span><span class="check-order">1</span></div>
+            <div class="check-item selected"><span>自动战斗</span><span class="check-order">2</span></div>
+            <div class="check-item"><span>坐标调试</span></div>
+            <div class="check-item"><span>队伍识别</span></div>
+            <div class="check-item"><span>召唤兽技能</span></div>
+            <div class="check-item"><span>验证码处理</span></div>
+          </div>
+          <div class="task-bar"><span>选中：五环 → 自动战斗</span><button>启动所选</button></div>
+          <p class="hint">优点：最工具化、最不容易误解。缺点是没有方块那种“任务盘”的感觉。</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

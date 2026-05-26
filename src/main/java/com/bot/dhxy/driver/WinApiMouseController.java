@@ -1,9 +1,11 @@
 package com.bot.dhxy.driver;
 
-import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.DWORD;
 import com.sun.jna.platform.win32.WinDef.WORD;
@@ -13,8 +15,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.awt.AWTException;
+import java.awt.Robot;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.KeyEvent;
 
 @Component
 @RequiredArgsConstructor
@@ -35,34 +40,42 @@ public class WinApiMouseController implements InputProvider {
     private static final int VK_V = 0x56;
 
     private static final int SCAN_LALT = 0x38;
+    private static final int SCAN_LCTRL = 0x1D;
     private static final int SCAN_1 = 0x02;
     private static final int SCAN_2 = 0x03;
     private static final int SCAN_4 = 0x05;
+    private static final int SCAN_6 = 0x07;
     private static final int SCAN_8 = 0x09;
     private static final int SCAN_E = 0x12;
+    private static final int SCAN_O = 0x18;
     private static final int SCAN_Q = 0x10;
+    private static final int SCAN_T = 0x14;
     private static final int SCAN_ENTER = 0x1C;
 
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
     private static final DWORD INPUT_ARRAY_SIZE_ONE = new DWORD(1);
 
-    private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final WindowAwareInputCoordinator inputCoordinator;
+    private final WindowTaskContextHolder windowTaskContextHolder;
 
     @Override
     public void clickLeft(int x, int y, int delayMs) {
+        traceInput("clickLeft", "button=LEFT x=" + x + " y=" + y + " delayMs=" + delayMs);
         inputCoordinator.runInput("clickLeft", () -> doClick(x, y, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
     }
 
     @Override
     public void clickRight(int x, int y, int delayMs) {
+        traceInput("clickRight", "button=RIGHT x=" + x + " y=" + y + " delayMs=" + delayMs);
         inputCoordinator.runInput("clickRight", () -> doClick(x, y, delayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP));
     }
 
     @Override
     public void doubleRightClick(int x, int y, int clickDelayMs, int intervalMs) {
+        traceInput("doubleRightClick", "button=RIGHT x=" + x + " y=" + y
+                + " clickDelayMs=" + clickDelayMs + " intervalMs=" + intervalMs);
         inputCoordinator.runInput("doubleRightClick", () -> {
             doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP);
             sleepQuietly(intervalMs);
@@ -71,64 +84,80 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
-    public void ctrlClickNpcTarget(int npcX, int npcY, int yellowNpcX, int yellowNpcY, int delayMs) {
-        inputCoordinator.runInput("ctrlClickNpcTarget", () -> {
-            doHoldCtrl();
-            try {
-                doClick(npcX, npcY, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP);
-            } finally {
-                doReleaseCtrl();
-            }
-        });
-    }
-
-    @Override
     public void moveMouse(int x, int y) {
+        traceInput("moveMouse", "x=" + x + " y=" + y);
         inputCoordinator.runInput("moveMouse", () -> moveCursorToLogicalPoint(x, y));
     }
 
     @Override
     public void holdCtrl() {
+        traceInput("holdCtrl", "");
         inputCoordinator.runInput("holdCtrl", this::doHoldCtrl);
     }
 
     @Override
     public void releaseCtrl() {
+        traceInput("releaseCtrl", "");
         inputCoordinator.runInput("releaseCtrl", this::doReleaseCtrl);
     }
 
     @Override
     public void pressAlt1() {
+        traceInput("pressAlt1", "shortcut=ALT+1");
         inputCoordinator.runInput("pressAlt1", () -> pressAltScan(SCAN_1, "ALT+1"));
     }
 
     @Override
     public void pressAlt2() {
+        traceInput("pressAlt2", "shortcut=ALT+2");
         inputCoordinator.runInput("pressAlt2", () -> pressAltScan(SCAN_2, "ALT+2"));
     }
 
     @Override
     public void pressAlt4() {
+        traceInput("pressAlt4", "shortcut=ALT+4");
         inputCoordinator.runInput("pressAlt4", () -> pressAltScan(SCAN_4, "ALT+4"));
     }
 
     @Override
+    public void pressAlt6() {
+        traceInput("pressAlt6", "shortcut=ALT+6");
+        inputCoordinator.runInput("pressAlt6", () -> pressAltScan(SCAN_6, "ALT+6"));
+    }
+
+    @Override
     public void pressAlt8() {
+        traceInput("pressAlt8", "shortcut=ALT+8");
         inputCoordinator.runInput("pressAlt8", () -> pressAltScan(SCAN_8, "ALT+8"));
     }
 
     @Override
+    public void pressAltT() {
+        traceInput("pressAltT", "shortcut=ALT+T");
+        inputCoordinator.runInput("pressAltT", () -> pressAltScan(SCAN_T, "ALT+T"));
+    }
+
+    @Override
+    public void pressAltO() {
+        traceInput("pressAltO", "shortcut=ALT+O");
+        inputCoordinator.runInput("pressAltO", () -> pressAltScan(SCAN_O, "ALT+O"));
+    }
+
+    @Override
     public void pressAltE() {
+        traceInput("pressAltE", "shortcut=ALT+E");
         inputCoordinator.runInput("pressAltE", () -> pressAltScan(SCAN_E, "ALT+E"));
     }
 
     @Override
     public void pressAltQ() {
+        traceInput("pressAltQ", "shortcut=ALT+Q");
         inputCoordinator.runInput("pressAltQ", () -> pressAltScan(SCAN_Q, "ALT+Q"));
     }
 
     @Override
     public void pressEnter() {
+        traceInput("pressEnter", "key=ENTER");
         inputCoordinator.runInput("pressEnter", this::doPressEnter);
     }
 
@@ -137,6 +166,7 @@ public class WinApiMouseController implements InputProvider {
         if (text == null) {
             return;
         }
+        traceInput("pasteText", "length=" + text.length());
         inputCoordinator.runInput("pasteText", () -> doPasteText(text));
     }
 
@@ -145,22 +175,43 @@ public class WinApiMouseController implements InputProvider {
         if (text == null || text.isEmpty()) {
             return;
         }
+        traceInput("typeTextUnicode", "length=" + text.length());
         inputCoordinator.runInput("typeTextUnicode", () -> doTypeTextUnicode(text));
     }
 
     @Override
     public void scrollDown(int clicks) {
+        traceInput("scrollDown", "clicks=" + clicks);
         inputCoordinator.runInput("scrollDown", () -> doScroll(-120 * clicks));
     }
 
     @Override
     public void scrollUp(int clicks) {
+        traceInput("scrollUp", "clicks=" + clicks);
         inputCoordinator.runInput("scrollUp", () -> doScroll(120 * clicks));
     }
 
     @Override
     public void dragAndDrop(int startX, int startY, int endX, int endY) {
+        traceInput("dragAndDrop", "from=(" + startX + "," + startY + ") to=(" + endX + "," + endY + ")");
         inputCoordinator.runInput("dragAndDrop", () -> doDragAndDrop(startX, startY, endX, endY));
+    }
+
+    private void traceInput(String operation, String detail) {
+        WindowRuntimeContext context = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowNativeBinding binding = context == null ? null : context.getNativeBinding();
+        String source = inputCoordinator.currentInputActionName();
+        if (source == null || source.isBlank()) {
+            source = "direct:" + operation;
+        }
+        log.info("[INPUT_TRACE] physical operation={} source={} windowId={} hwnd={} role={} title={} {}",
+                operation,
+                source,
+                context == null ? "-" : context.getWindowId(),
+                binding == null ? "-" : binding.getNativeHandle(),
+                context == null ? "-" : context.getRole(),
+                binding == null ? "" : binding.getTitle(),
+                detail == null ? "" : detail);
     }
 
     private void doClick(int x, int y, int delayMs, int downFlag, int upFlag) {
@@ -192,10 +243,15 @@ public class WinApiMouseController implements InputProvider {
 
     private void doHoldCtrl() {
         try {
-            if (!tracker.bringWindowToFront()) {
-                return;
-            }
-            sendInput(buildKeyboardInput(VK_CONTROL, false));
+            /*
+             * DHXY listens more reliably to hardware scan codes, the same way Alt+number
+             * shortcuts are sent below. VK_CONTROL can be accepted by Windows but ignored by
+             * the game client, which makes Ctrl-hover NPC menus never appear. Robot is sent as
+             * an additional focused-input fallback because Ctrl is held across a following mouse
+             * movement rather than delivered as a simple key stroke.
+             */
+            sendInput(buildKeyboardScanInput(SCAN_LCTRL, false));
+            sendRobotCtrl(false);
         } catch (Exception e) {
             log.warn("[Input] hold Ctrl failed: {}", e.getMessage());
         }
@@ -203,9 +259,29 @@ public class WinApiMouseController implements InputProvider {
 
     private void doReleaseCtrl() {
         try {
-            sendInput(buildKeyboardInput(VK_CONTROL, true));
+            sendInput(buildKeyboardScanInput(SCAN_LCTRL, true));
+            sendRobotCtrl(true);
         } catch (Exception e) {
             log.warn("[Input] release Ctrl failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Send a focused Robot Ctrl event as a compatibility layer for Ctrl-hover menus.
+     *
+     * @param keyUp true to release Ctrl, false to press and hold it.
+     */
+    private void sendRobotCtrl(boolean keyUp) {
+        try {
+            Robot robot = new Robot();
+            if (keyUp) {
+                robot.keyRelease(KeyEvent.VK_CONTROL);
+            } else {
+                robot.keyPress(KeyEvent.VK_CONTROL);
+            }
+            robot.delay(20);
+        } catch (AWTException e) {
+            log.debug("[Input] Robot Ctrl fallback unavailable: {}", e.getMessage());
         }
     }
 
@@ -263,9 +339,6 @@ public class WinApiMouseController implements InputProvider {
 
     private void pressAltScan(int scanCode, String label) {
         try {
-            if (!tracker.bringWindowToFront()) {
-                return;
-            }
             sleepQuietly(200);
             sendInput(buildKeyboardScanInput(SCAN_LALT, false));
             sleepQuietly(60);

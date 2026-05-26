@@ -39,6 +39,23 @@ Important behavior constraints:
 
 5. Use Chinese in conversation with the user unless they switch language.
 
+## Code documentation rule
+
+- Temporary lightweight policy: keep comments useful, but do not turn every small code change into a documentation pass.
+- New or modified public APIs only need JavaDoc when the behavior is non-obvious, externally reused, or safety-sensitive. Simple UI handlers, trivial getters/setters, and self-explanatory private helpers do not need forced JavaDoc.
+- Main/high-frequency methods must have top-level JavaDoc that explains the method inputs and output. For every parameter, state what it represents and include coordinate space/unit/nullability when relevant. This is mandatory for navigation, OCR, input, window binding, task execution, and UI command entry methods.
+- Must document logic that is risky or hard to infer:
+  - physical input, focus, HWND/window binding, screenshot provider choice;
+  - OCR/template matching fallback order;
+  - task stop/pause handling, task transaction/yield decisions, retry policy;
+  - persisted data formats, config switches, and debug-only behavior;
+  - coordinate-space conversions, especially screen-absolute vs window-relative values.
+- For complex multi-stage methods, add short block comments at the important decision points only. The goal is to make the flow reviewable, not to write a full SOP for every branch.
+- Comments should explain why the logic exists, what invariant or safety rule matters, and what should not be changed casually. Avoid comments that merely repeat the code.
+- When touching undocumented code, add concise comments only for the touched risky section. Do not broaden the edit just to document unrelated old code.
+- Do not remove existing useful comments unless the code they describe is removed or the comment is being replaced with a more accurate one.
+- Java file layout rule: keep public classes, public APIs, and the main workflow near the top. Private nested helper types (`private class`, `private record`, `private enum`, private interfaces) should be placed at the bottom of the enclosing class/file, after the main public and private workflow methods, unless Java syntax makes that impossible.
+
 ## Safety and scope
 
 This repository controls the user's local desktop/game client. Be cautious with anything that sends input.

@@ -1,12 +1,16 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
+import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
+import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,29 +21,51 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * Handles non-task UI interruptions for the currently bound game window.
+ *
+ * <p>This service is intentionally conservative: it may close world-map/generic windows and click
+ * known leave/cancel style options, but business maintenance dialogs such as heal-pet or repair
+ * equipment are delegated to {@link DialogService}. Mouse clicks are serialized through
+ * {@link InputSequences}; methods ending in {@code Direct} are only used while already inside an
+ * exclusive input section.</p>
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class UICleanerService {
+    private static final int MAP_POPUP_RECT_X_OFFSET = 278;
+    private static final int MAP_POPUP_RECT_Y_OFFSET = 595;
+    private static final int MAP_POPUP_RECT_WIDTH = 406;
+    private static final int MAP_POPUP_RECT_HEIGHT = 137;
+
 
     private final InputSequences inputSequences;
+    private final InputProvider inputProvider;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
     private final GameStateUtil gameStateUtil;
-    private final BotProperties config;
     private final DialogService dialogService;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final GameContext gameContext;
+    private final WindowTaskContextHolder windowTaskContextHolder;
 
     private final Random random = new Random();
 
+    /**
+     * Run the broad cleanup used before/after generic task transitions.
+     *
+     * <p>Side effects: may press Alt+1, click dialog options, and click generic close buttons in the
+     * current game window. Do not use this immediately after opening a business NPC dialog unless the
+     * caller has first confirmed the dialog is safe to close.</p>
+     */
     public void cleanUpAll() {
         log.info("UI cleanup started");
         boolean cleanedAny = false;
 
         if (isWorldMapOpened()) {
-            closeMapByDoubleRightClick();
-            cleanedAny = true;
+            cleanedAny = closeMapWindow() || cleanedAny;
         }
 
         if (forceCloseDialog()) {
@@ -54,61 +80,195 @@ public class UICleanerService {
     }
 
     private boolean isWorldMapOpened() {
-        return coordinateHelper.findImageAbsoluteCoordinate("images/template/world_map_title.png", 0.8) != null;
+        if (coordinateHelper.findImageAbsoluteCoordinate("images/template/map/world_map_title.png", 0.8) != null) {
+            return true;
+        }
+
+        int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
+                MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
+        return coordinateHelper.findImageInRegion("images/template/map/checkbox_checked.png", rect, 0.95) != null
+                || coordinateHelper.findImageInRegion("images/template/map/checkbox_unchecked.png", rect, 0.95) != null;
     }
 
-    private void closeMapByDoubleRightClick() {
-        int closeX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
-        int closeY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-        inputSequences.submitAndWait("uiCleanup:closeMap", List.of(
-                InputAction.doubleRightClick(closeX, closeY, 120, 300),
-                InputAction.sleep(300)
+    private boolean closeMapWindow() {
+        boolean submitted = inputSequences.submitAndWait("uiCleanup:closeMapAlt1", List.of(
+                InputAction.pressAlt1(),
+                InputAction.sleep(500)
         ));
+        if (submitted && !isWorldMapOpened()) {
+            return true;
+        }
+
+        if (submitted) {
+            log.warn("UI cleanup pressed Alt+1 but map still appears open; falling back to close button");
+        }
+        return clickCloseButtonOnce("uiCleanup:closeMapButton");
     }
 
+    /**
+     * Close generic X-button windows without processing business dialogs.
+     *
+     * @return true when at least one close button was clicked; false when no generic close button was
+     * found or the thread was interrupted.
+     */
     public boolean closeAllGenericWindows() {
         boolean closedAny = false;
-        String[] closeButtonTemplates = {
-                "images/template/x1.png",
-                "images/template/x2.png"
-        };
-
         for (int i = 0; i < 3; i++) {
-            if (!tracker.updateGlobalVision()) {
+            if (!clickCloseButtonOnce("uiCleanup:closeGenericWindow")) {
                 break;
             }
-            String screenPath = tracker.getLatestVisionPath();
-            Point closeBtnPoint = null;
-            for (String templatePath : closeButtonTemplates) {
-                closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
-                if (closeBtnPoint != null) {
-                    break;
-                }
-            }
-
-            if (closeBtnPoint == null) {
-                break;
-            }
-
-            int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
-            int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
-
-            inputSequences.submitAndWait("uiCleanup:closeGenericWindow", List.of(
-                    InputAction.clickLeft(clickX, clickY, 80),
-                    InputAction.sleep(250)
-            ));
             closedAny = true;
         }
         return closedAny;
     }
 
+    /**
+     * Handle lightweight interruptions while an idle/member window is allowed to stay mostly quiet.
+     *
+     * @param sourceTask diagnostic task name written to logs.
+     * @return true when a known business option or generic close button was handled; false when there
+     * was nothing actionable or cleanup was interrupted.
+     */
+    public boolean cleanLightweightInterruptions(String sourceTask) {
+        DialogHandleResult dialogResult = dialogService.handleDialog(DialogHandleRequest.clickBusinessOption(sourceTask));
+        if (dialogResult == DialogHandleResult.BUSINESS_OPTION_CLICKED) {
+            log.info("UI lightweight cleanup handled business dialog: source={}", sourceTask);
+            return true;
+        }
+        if (dialogResult == DialogHandleResult.INTERRUPTED) {
+            log.info("UI lightweight cleanup interrupted: source={}", sourceTask);
+            return false;
+        }
+        if (dialogResult == DialogHandleResult.FAILED) {
+            log.warn("UI lightweight cleanup business dialog scan failed: source={}", sourceTask);
+            return false;
+        }
+
+        if (closeAllGenericWindows()) {
+            log.info("UI lightweight cleanup closed generic window: source={}", sourceTask);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Process team-wide maintenance broadcasts such as heal-pet and repair-equipment prompts.
+     *
+     * @param sourceTask diagnostic task name written to logs.
+     * @return true when a known maintenance option was clicked; false when no such prompt is visible
+     * or OCR/template capture failed.
+     */
+    public boolean handleMaintenanceBroadcast(String sourceTask) {
+        DialogService.DialogType type = dialogService.detectDialogTypeNoFocus(sourceTask + ":maintenance-broadcast-precheck");
+        if (type == DialogService.DialogType.NONE) {
+            return false;
+        }
+        DialogHandleResult dialogResult = dialogService.handleDialog(DialogHandleRequest.clickMaintenanceBroadcastOption(sourceTask));
+        if (dialogResult == DialogHandleResult.BUSINESS_OPTION_CLICKED) {
+            log.info("UI maintenance broadcast handled: source={}", sourceTask);
+            return true;
+        }
+        if (dialogResult == DialogHandleResult.INTERRUPTED) {
+            log.info("UI maintenance broadcast interrupted: source={}", sourceTask);
+            return false;
+        }
+        if (dialogResult == DialogHandleResult.FAILED) {
+            log.warn("UI maintenance broadcast scan failed: source={}", sourceTask);
+            return false;
+        }
+        return false;
+    }
+
+    private boolean clickCloseButtonOnce(String description) {
+        return inputSequences.submitExclusiveAndWait(description, () -> clickCloseButtonOnceDirect(description));
+    }
+
+    /**
+     * Close the world-map search/input overlay by clicking only the {@code x2.png} close button.
+     *
+     * <p>This is intentionally narrower than {@link #closeAllGenericWindows()}: route navigation calls
+     * it immediately after clicking a world-map route result, where using other generic close-button
+     * templates could close an unrelated panel or dialog. The method sends direct mouse input and must
+     * therefore only be called by code that already owns the input worker's exclusive callback.</p>
+     *
+     * @param description diagnostic source written to input and cleanup logs.
+     * @return true when the {@code x2.png} button was found and clicked; false when it was not visible
+     *         or the capture failed.
+     */
+    public boolean closeMapSearchInputByX2Direct(String description) {
+        if (!tracker.updateGlobalVision()) {
+            log.warn("UI cleanup x2-only close skipped: capture failed description={}", description);
+            return false;
+        }
+        String screenPath = tracker.getLatestVisionPath();
+        Point closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(
+                "images/template/cancel/x2.png", screenPath, 0.8);
+        if (closeBtnPoint == null) {
+            log.info("UI cleanup x2-only close skipped: x2 not found description={}", description);
+            return false;
+        }
+
+        int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
+        int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
+        log.info("UI cleanup x2-only close matched: description={} click=({}, {})", description, clickX, clickY);
+        inputProvider.clickLeft(clickX, clickY, 80);
+        sleepInterruptible(250);
+        return !Thread.currentThread().isInterrupted();
+    }
+
+    private boolean clickCloseButtonOnceDirect(String description) {
+        if (!tracker.updateGlobalVision()) {
+            return false;
+        }
+        String screenPath = tracker.getLatestVisionPath();
+        Point closeBtnPoint = null;
+        String[] closeButtonTemplates = {
+                "images/template/cancel/x1.png",
+                "images/template/cancel/x2.png",
+                "images/template/cancel/x3.png"
+        };
+        for (String templatePath : closeButtonTemplates) {
+            closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
+            if (closeBtnPoint != null) {
+                break;
+            }
+        }
+
+        if (closeBtnPoint == null) {
+            return false;
+        }
+
+        int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
+        int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
+        log.info("UI cleanup close button matched: description={} click=({}, {})", description, clickX, clickY);
+
+        inputProvider.clickLeft(clickX, clickY, 80);
+        sleepInterruptible(250);
+        return !Thread.currentThread().isInterrupted();
+    }
+
+    /**
+     * Close the currently visible dialog only when it matches a generic safe-close pattern.
+     *
+     * <p>Story dialogs are only fast-clicked when the current window/task state allows it. Option
+     * dialogs first try known close/cancel keywords, then fall back to the last green option. The
+     * method can send real clicks through the input queue.</p>
+     *
+     * @return true when a dialog was closed; false when no dialog was present or it was unsafe to
+     * close automatically.
+     */
     public boolean forceCloseDialog() {
-        DialogService.DialogType type = dialogService.detectDialogType();
+        DialogService.DialogType type = dialogService.detectDialogTypeNoFocus("ui-cleaner:force-close");
         if (type == DialogService.DialogType.NONE) {
             return false;
         }
 
         if (type == DialogService.DialogType.STORY) {
+            if (!canFastClickStoryDialog()) {
+                log.info("UI cleanup story dialog fast-click skipped: role={} actionState={}",
+                        currentWindowRoleText(), gameContext.getCurrentActionState());
+                return false;
+            }
             dialogService.fastClickStoryDialog();
             sleepInterruptible(350);
             return true;
@@ -116,9 +276,11 @@ public class UICleanerService {
 
         int[] dialogRect = coordinateHelper.getScaledRect(250, 312, 529, 208);
         String imgPath = windowScopedTempPath.resolve("dialog_close_scan.png");
-        tracker.captureToFile("扫除对话框", imgPath, dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
+        tracker.captureToFile("ui-cleaner-dialog-close-scan", imgPath,
+                dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
 
-        List<TextRecognizer.OcrWordResult> allWords = ocr.getAllTextResults(imgPath);
+        List<TextRecognizer.OcrWordResult> allWords = ocr.getAllTextResultsForMatch(
+                imgPath, "ui-cleaner-close-dialog", this::containsCloseDialogKeyword);
         if (allWords != null && !allWords.isEmpty()) {
             List<String> closeKeywords = Arrays.asList(
                     "取消", "离开", "看一看", "哪儿也", "以后再说", "原来你",
@@ -135,11 +297,46 @@ public class UICleanerService {
             }
         }
 
-        clickAbsolutePoint(dialogRect[0] + (dialogRect[2] - dialogRect[0]) / 2,
-                dialogRect[1] + (dialogRect[3] - dialogRect[1]) / 2,
-                "uiCleanup:dialogFallback");
-        sleepInterruptible(350);
-        return true;
+        DialogHandleResult fallbackResult = dialogService.handleDialog(DialogHandleRequest.fallbackLastOption("ui-cleaner"));
+        log.info("UI cleanup dialog fallback last option result={}", fallbackResult);
+        return fallbackResult == DialogHandleResult.FALLBACK_CLICKED;
+    }
+
+    private boolean containsCloseDialogKeyword(List<TextRecognizer.OcrWordResult> words) {
+        if (words == null || words.isEmpty()) {
+            return false;
+        }
+        List<String> closeKeywords = Arrays.asList(
+                "\u53d6\u6d88", "\u79bb\u5f00", "\u770b\u4e00\u770b", "\u54ea\u513f\u4e5f\u4e0d", "\u4ee5\u540e\u518d\u8bf4", "\u539f\u6765\u5982\u6b64",
+                "\u770b\u770b", "\u6211\u8fd8\u6709\u4e8b", "\u4e0d\u4e86", "\u7b97\u4e86", "\u6682\u65f6", "\u8def\u8fc7", "\u518d\u4f1a"
+        );
+        for (TextRecognizer.OcrWordResult word : words) {
+            if (word == null || word.getText() == null) {
+                continue;
+            }
+            for (String keyword : closeKeywords) {
+                if (word.getText().contains(keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean canFastClickStoryDialog() {
+        boolean member = windowTaskContextHolder.rawCurrent()
+                .map(windowContext -> windowContext.isMember())
+                .orElse(false);
+        if (!member) {
+            return true;
+        }
+        return gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
+    }
+
+    private String currentWindowRoleText() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(windowContext -> windowContext.getRole().name())
+                .orElse("UNKNOWN");
     }
 
     private void clickAbsolutePoint(int x, int y, String description) {

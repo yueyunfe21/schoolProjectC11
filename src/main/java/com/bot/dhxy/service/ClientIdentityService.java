@@ -13,12 +13,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 客户端身份服务。
- * 专门负责从窗口标题提取账号、服务器、角色名等元数据。
+ * Synchronizes the current player's identity from the bound native game-window title.
+ *
+ * <p>The service is window-binding aware. Multi-window task execution must prefer the title from
+ * the current {@link WindowRuntimeContext}, because the tracker title can lag during startup and
+ * debug runs. This service mutates the supplied {@link PlayerCharacter} only; it does not send
+ * input, capture screenshots, or call OCR.</p>
  */
 @Slf4j
 @Service
 public class ClientIdentityService {
+
+    /**
+     * Matches titles such as:
+     * 大话西游2经典版 $Revision: 2020549 - 江山如画 - 刑部ヾ忍者（ID：67555）
+     *
+     * <p>Both ASCII and Chinese parentheses/colons are accepted because the title text can be
+     * produced by different Windows/input-method encodings.</p>
+     */
+    private static final Pattern TITLE_IDENTITY_PATTERN = Pattern.compile(
+            "-\\s*(.+?)\\s*-\\s*(.+?)\\s*[（(]\\s*ID\\s*[:：]\\s*(\\d+)\\s*[）)]");
 
     private final GameClientTracker tracker;
     private final WindowTaskContextHolder windowTaskContextHolder;
@@ -30,33 +44,42 @@ public class ClientIdentityService {
     }
 
     /**
-     * 从当前 WindowTaskRunner 绑定的原生窗口标题中提取角色基本信息。
-     * 多窗口模式下优先读取 WindowRuntimeContext.nativeBinding.title，避免 tracker 尚未刷新时拿到空标题。
+     * Parse server/name/id from the current bound window title and write them into player state.
+     *
+     * @param me current per-window player state to mutate; null means no state is available and the
+     *           sync is skipped.
      */
     public void scanAndSyncIdentity(PlayerCharacter me) {
-        String title = resolveCurrentWindowTitle();
-        if (title == null || title.isBlank()) {
-            log.warn("⚠️ [身份识别] 当前窗口标题为空，无法提取身份信息。");
+        if (me == null) {
+            log.warn("[identity] skip sync: player state is null");
             return;
         }
 
-        log.info("🪪 [身份识别] 使用窗口标题解析角色档案：{}", title);
+        String title = resolveCurrentWindowTitle();
+        if (title == null || title.isBlank()) {
+            log.warn("[identity] current window title is blank; cannot parse player identity");
+            return;
+        }
 
-        String regex = "-\\s+(.+?)\\s+-\\s+(.+?)\\s*[\\(（]ID[:：]\\s*(\\d+)[\\)）]";
-        Pattern pattern = Pattern.compile(regex);
-        Matcher matcher = pattern.matcher(title);
-
+        log.info("[identity] parse player identity from title: {}", title);
+        Matcher matcher = TITLE_IDENTITY_PATTERN.matcher(title);
         if (matcher.find()) {
             me.setGameServerName(matcher.group(1));
             me.setName(matcher.group(2));
             me.setId(matcher.group(3));
-            log.info("🪪 [身份识别] 成功提取：server={} name={} id={}",
+            log.info("[identity] parsed player identity: server={} name={} id={}",
                     me.getGameServerName(), me.getName(), me.getId());
         } else {
-            log.warn("⚠️ [身份识别] 窗口标题格式不匹配，无法提取身份信息。标题: {}", title);
+            log.warn("[identity] title did not match expected player identity format: {}", title);
         }
     }
 
+    /**
+     * Resolve the title in the same priority order as the multi-window architecture.
+     *
+     * @return native title from current window binding, tracker cache, or locate-window fallback;
+     * null when no title can be found.
+     */
     private String resolveCurrentWindowTitle() {
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isPresent()) {

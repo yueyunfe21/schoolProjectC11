@@ -5,13 +5,13 @@
     "scaleX" : 1.6649076517150396,
     "scaleY" : -1.6647727272727273
   },
-  "洛阳" : {
+  "洛阳城" : {
     "zeroOffsetX" : 77,
     "zeroOffsetY" : 620,
     "scaleX" : 1.667487684729064,
     "scaleY" : -1.6666666666666667
   },
-  "长安东" : {
+  "长安城东" : {
     "zeroOffsetX" : 226,
     "zeroOffsetY" : 632,
     "scaleX" : 1.585,
@@ -148,5 +148,11 @@
     "zeroOffsetY" : 669,
     "scaleX" : 3.912280701754386,
     "scaleY" : -4.6
+  },
+  "瑶池" : {
+    "zeroOffsetX" : 198,
+    "zeroOffsetY" : 627,
+    "scaleX" : 4.371134020618556,
+    "scaleY" : -4.375
   }
 }

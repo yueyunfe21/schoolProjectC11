@@ -9,6 +9,9 @@ import org.opencv.imgproc.Imgproc;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 public class ImageFinder {
 
@@ -28,6 +31,8 @@ public class ImageFinder {
 
         Mat result = new Mat();
 
+        // OpenCV returns a response matrix where each cell is the template score at one
+        // top-left position in source. We only need the strongest candidate here.
         Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
         Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
         double[] coordsAndSim = null;
@@ -41,6 +46,61 @@ public class ImageFinder {
         target.release();
         result.release();
         return coordsAndSim;
+    }
+
+    /**
+     * 在大图中查找所有超过阈值的小图候选点，返回 [centerX, centerY, score]。
+     * 结果会按相似度从高到低做一次近邻去重，避免同一个目标周围连续命中多个像素。
+     */
+    public static List<double[]> findAll(String sourcePath, String targetPath, double threshold, double minDistance) {
+        Mat source = Imgcodecs.imread(sourcePath);
+        Mat target = Imgcodecs.imread(targetPath);
+        List<double[]> matches = new ArrayList<>();
+        if (source.empty() || target.empty()) {
+            source.release();
+            target.release();
+            return matches;
+        }
+
+        Mat result = new Mat();
+        Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
+
+        // Collect every raw hit over threshold first. Adjacent pixels around the same
+        // visual target often all pass the threshold, so they are de-duplicated below.
+        List<double[]> rawMatches = new ArrayList<>();
+        for (int y = 0; y < result.rows(); y++) {
+            for (int x = 0; x < result.cols(); x++) {
+                double score = result.get(y, x)[0];
+                if (score >= threshold) {
+                    double centerX = x + target.cols() / 2.0;
+                    double centerY = y + target.rows() / 2.0;
+                    rawMatches.add(new double[]{centerX, centerY, score});
+                }
+            }
+        }
+
+        // Keep strongest hits first and discard nearby duplicates so callers receive one
+        // candidate per visual object instead of a cluster of almost-identical pixels.
+        rawMatches.sort(Comparator.comparingDouble((double[] item) -> item[2]).reversed());
+        for (double[] candidate : rawMatches) {
+            boolean duplicate = false;
+            for (double[] accepted : matches) {
+                double dx = candidate[0] - accepted[0];
+                double dy = candidate[1] - accepted[1];
+                if (Math.sqrt(dx * dx + dy * dy) < minDistance) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                matches.add(candidate);
+            }
+        }
+
+        source.release();
+        target.release();
+        result.release();
+        return matches;
     }
 
     /**
@@ -105,6 +165,8 @@ public class ImageFinder {
         long diffCount = 0;
         int colorTolerance = 15;
 
+        // Count pixels whose RGB channels differ beyond tolerance. This is intended for
+        // same-size stability checks, not for locating a template inside a larger image.
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 int rgb1 = img1.getRGB(x, y);
@@ -150,6 +212,8 @@ public class ImageFinder {
         int colorTolerance = 15;
         int maxAllowedDiffs = (int) (tWidth * tHeight * tolerance);
 
+        // Pure Java sliding-window fallback. It is slower than OpenCV but useful in code
+        // paths that already have BufferedImages and only need a yes/no exact-ish match.
         for (int y = 0; y <= sHeight - tHeight; y++) {
             for (int x = 0; x <= sWidth - tWidth; x++) {
                 int diffCount = 0;
@@ -171,6 +235,8 @@ public class ImageFinder {
                                 || Math.abs(g1 - g2) > colorTolerance
                                 || Math.abs(b1 - b2) > colorTolerance) {
                             diffCount++;
+                            // Stop checking this candidate as soon as it cannot satisfy
+                            // the requested tolerance. This keeps mismatches cheap.
                             if (diffCount > maxAllowedDiffs) {
                                 matched = false;
                                 break;

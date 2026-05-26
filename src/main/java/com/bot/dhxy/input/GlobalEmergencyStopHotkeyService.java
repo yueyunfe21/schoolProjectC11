@@ -1,6 +1,5 @@
 package com.bot.dhxy.input;
 
-import com.bot.dhxy.runner.control.TaskControlService;
 import com.bot.dhxy.window.control.WindowTaskControlService;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
@@ -12,9 +11,9 @@ import org.springframework.stereotype.Service;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Windows 全局紧急停止热键。
+ * Windows global emergency stop hotkey.
  *
- * Ctrl + Shift + F12 用于在游戏抢占鼠标时快速停止全部任务。
+ * Ctrl + Shift + F12 stops all registered window tasks.
  */
 @Slf4j
 @Service("inputGlobalEmergencyStopHotkeyService")
@@ -28,22 +27,19 @@ public class GlobalEmergencyStopHotkeyService {
     private static final int VK_F12 = 0x7B;
     private static final String HOTKEY_TEXT = "Ctrl+Shift+F12";
 
-    private final TaskControlService taskControlService;
     private final WindowTaskControlService windowTaskControlService;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     private Thread hotkeyThread;
 
-    public GlobalEmergencyStopHotkeyService(TaskControlService taskControlService,
-                                            WindowTaskControlService windowTaskControlService) {
-        this.taskControlService = taskControlService;
+    public GlobalEmergencyStopHotkeyService(WindowTaskControlService windowTaskControlService) {
         this.windowTaskControlService = windowTaskControlService;
     }
 
     public void start() {
         if (!isWindows()) {
-            log.info("当前系统不是 Windows，跳过 {} 全局紧急停止热键注册。", HOTKEY_TEXT);
+            log.info("Current system is not Windows, skip {} emergency stop hotkey registration.", HOTKEY_TEXT);
             return;
         }
         if (!started.compareAndSet(false, true)) {
@@ -62,7 +58,7 @@ public class GlobalEmergencyStopHotkeyService {
         try {
             User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP);
         } catch (Exception ignored) {
-            // JVM 退出阶段不再抛出额外异常。
+            // JVM shutdown should not surface extra hotkey cleanup noise.
         }
         if (hotkeyThread != null) {
             hotkeyThread.interrupt();
@@ -78,10 +74,10 @@ public class GlobalEmergencyStopHotkeyService {
         try {
             registered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP, EMERGENCY_STOP_MODIFIERS, VK_F12);
             if (!registered) {
-                log.warn("{} 全局紧急停止热键注册失败，可能已被其他程序占用。", HOTKEY_TEXT);
+                log.warn("{} emergency stop hotkey registration failed; it may be used by another program.", HOTKEY_TEXT);
                 return;
             }
-            log.info("✅ 已注册全局紧急停止热键：{}", HOTKEY_TEXT);
+            log.info("Registered global emergency stop hotkey: {}", HOTKEY_TEXT);
 
             WinUser.MSG msg = new WinUser.MSG();
             while (running.get()) {
@@ -94,30 +90,25 @@ public class GlobalEmergencyStopHotkeyService {
                 }
             }
         } catch (Exception e) {
-            log.error("{} 全局紧急停止热键线程异常", HOTKEY_TEXT, e);
+            log.error("{} emergency stop hotkey thread error", HOTKEY_TEXT, e);
         } finally {
             if (registered) {
                 User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP);
             }
             running.set(false);
             started.set(false);
-            log.info("{} 全局紧急停止热键已释放。", HOTKEY_TEXT);
+            log.info("{} emergency stop hotkey released.", HOTKEY_TEXT);
         }
     }
 
     private void triggerEmergencyStop() {
-        log.warn("🛑 {} 紧急停止触发：正在请求停止单窗口任务和所有多窗口任务...", HOTKEY_TEXT);
-        try {
-            taskControlService.stop();
-        } catch (Exception e) {
-            log.warn("{} 紧急停止：停止单窗口任务时出现异常", HOTKEY_TEXT, e);
-        }
+        log.warn("{} emergency stop triggered: stopping all window tasks...", HOTKEY_TEXT);
         try {
             windowTaskControlService.stopAll();
         } catch (Exception e) {
-            log.warn("{} 紧急停止：停止多窗口任务时出现异常", HOTKEY_TEXT, e);
+            log.warn("{} emergency stop failed while stopping window tasks", HOTKEY_TEXT, e);
         }
-        log.warn("🛑 {} 紧急停止请求已发送。", HOTKEY_TEXT);
+        log.warn("{} emergency stop request sent.", HOTKEY_TEXT);
     }
 
     private boolean isWindows() {

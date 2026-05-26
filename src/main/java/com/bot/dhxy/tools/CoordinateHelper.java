@@ -102,9 +102,14 @@ public class CoordinateHelper {
             log.error("Missing map transform: {}", mapName);
             return null;
         }
+        tracker.refreshWindowState();
         int absoluteX = (int) Math.round(tracker.getWindowBaseX() + transform.zeroOffsetX + logicalX * transform.scaleX);
         int absoluteY = (int) Math.round(tracker.getWindowBaseY() + transform.zeroOffsetY + logicalY * transform.scaleY);
         return new Point(absoluteX, absoluteY);
+    }
+
+    public MapTransform getMapTransform(String mapName) {
+        return mapTransforms.get(mapName);
     }
 
     public Point getRandomizedPoint(int baseX, int baseY, int maxRadiusX, int maxRadiusY) {
@@ -123,6 +128,7 @@ public class CoordinateHelper {
     }
 
     public int[] getScaledRect(int offsetX, int offsetY, int width, int height) {
+        tracker.refreshWindowState();
         int xStart = tracker.getWindowBaseX() + offsetX;
         int yStart = tracker.getWindowBaseY() + offsetY;
         int xEnd = xStart + width;
@@ -131,6 +137,7 @@ public class CoordinateHelper {
     }
 
     public int[] getOffsets(int physicalX, int physicalY) {
+        tracker.refreshWindowState();
         int logicalX = (int) Math.round(physicalX / systemScaleRatio) - tracker.getWindowBaseX();
         int logicalY = (int) Math.round(physicalY / systemScaleRatio) - tracker.getWindowBaseY();
         log.info("Offset from window: X={}, Y={}", logicalX, logicalY);
@@ -144,6 +151,7 @@ public class CoordinateHelper {
         double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
 
         if (result != null && result.length >= 2) {
+            tracker.refreshWindowState();
             int absoluteX = (int) Math.round(result[0] / systemScaleRatio) + tracker.getWindowBaseX();
             int absoluteY = (int) Math.round(result[1] / systemScaleRatio) + tracker.getWindowBaseY();
             log.info("Image matched [{}] at absolute coordinate ({},{})", templatePath, absoluteX, absoluteY);
@@ -157,6 +165,7 @@ public class CoordinateHelper {
         double[] result = ImageFinder.find(screenPath, templatePath, matchRate);
 
         if (result != null && result.length >= 2) {
+            tracker.refreshWindowState();
             int absoluteX = (int) Math.round(result[0] / systemScaleRatio) + tracker.getWindowBaseX();
             int absoluteY = (int) Math.round(result[1] / systemScaleRatio) + tracker.getWindowBaseY();
             log.info("Image matched [{}] at absolute coordinate ({},{})", templatePath, absoluteX, absoluteY);
@@ -176,11 +185,6 @@ public class CoordinateHelper {
     }
 
     public Point findImageInRegion(String templatePath, int[] rect, double matchRate) {
-        if (!tracker.bringWindowToFront()) {
-            log.warn("Region image search failed because game window cannot focus");
-            return null;
-        }
-
         String roiPath = windowScopedTempPath.resolve("roi_scan.png");
         if (!tracker.captureToFile("ROI-Scan", roiPath, rect[0], rect[1], rect[2], rect[3])) {
             return null;
@@ -199,10 +203,6 @@ public class CoordinateHelper {
     }
 
     public Point findGreenTextInRegion(String templatePath, int[] rect, double matchRate) {
-        if (!tracker.bringWindowToFront()) {
-            log.warn("Green text search failed because game window cannot focus");
-            return null;
-        }
         String rawScanPath = windowScopedTempPath.resolve("tem_dialog_cut.png");
 
         if (!tracker.captureToFile("临时截图处理黑白", rawScanPath, rect[0], rect[1], rect[2], rect[3])) {

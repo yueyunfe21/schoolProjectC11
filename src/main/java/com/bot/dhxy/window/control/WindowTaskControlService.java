@@ -2,9 +2,12 @@ package com.bot.dhxy.window.control;
 
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
+import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
+import com.bot.dhxy.window.execution.WindowTaskQueue;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.execution.WindowTaskSubmitResult;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -13,12 +16,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * 面向 UI / 控制层的多窗口任务控制服务。
- *
- * 正式职责：窗口层只管理窗口和任务提交，不判断队长/队员。
- */
 @Service
+@Slf4j
 public class WindowTaskControlService {
 
     private final MultiWindowTaskManager taskManager;
@@ -59,7 +58,8 @@ public class WindowTaskControlService {
             boolean success = taskManager.registerWindow(request) != null;
             if (success) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(request.getWindowId(), "窗口已注册或已刷新，任务=" + getTaskDisplayName(request.getSelectedTaskType())));
+                details.add(WindowTaskCommandDetail.success(request.getWindowId(),
+                        "窗口已注册或已刷新，任务=" + getTaskDisplayName(request.getSelectedTaskType())));
             } else {
                 details.add(WindowTaskCommandDetail.failed(request.getWindowId(), "窗口注册失败，可能已达到容量上限"));
             }
@@ -74,38 +74,54 @@ public class WindowTaskControlService {
         }
 
         return switch (request.getStartMode()) {
-            case SAME_TASK -> startSameTask(request.getWindowIds(), request.getTaskType());
+            case SAME_TASK -> startSameQueue(request.getWindowIds(), request.getTaskQueue());
             case SELECTED_TASK -> startSelectedTasks(request.getWindowIds());
             case DETECTED_ROLE -> startByDetectedRoleForTest(request.getWindowIds(), request.getTaskType());
         };
     }
 
-    /**
-     * 正式主流程：选中的每个窗口都启动同一个指定任务。
-     * window 层不判断队长/队员，任务内部自己判断是否应该继续。
-     */
     public WindowTaskCommandResult startIndependentWindows(Collection<String> windowIds, TaskType taskType) {
         return startSameTask(windowIds, taskType);
     }
 
     public WindowTaskCommandResult startSameTask(Collection<String> windowIds, TaskType taskType) {
+        return startSameQueue(windowIds, WindowTaskQueue.single(taskType));
+    }
+
+    public WindowTaskCommandResult startSameTask(Collection<String> windowIds,
+                                                 TaskType taskType,
+                                                 WindowTaskFailurePolicy failurePolicy) {
+        return startSameQueue(windowIds, WindowTaskQueue.single(taskType).withFailurePolicy(failurePolicy));
+    }
+
+    public WindowTaskCommandResult startSameQueue(Collection<String> windowIds, WindowTaskQueue queue) {
         List<String> ids = normalizeWindowIds(windowIds);
         if (ids.isEmpty()) {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
         }
-        if (taskType == null || taskType == TaskType.UNKNOWN) {
-            return buildResult(ids.size(), 0, "任务类型无效", Collections.emptyList(), List.of(WindowTaskCommandDetail.failed(null, "任务类型无效")));
+        WindowTaskQueue safeQueue = queue == null ? WindowTaskQueue.empty() : queue;
+        if (safeQueue.isEmpty()) {
+            return buildResult(ids.size(), 0, "任务队列无效", Collections.emptyList(),
+                    List.of(WindowTaskCommandDetail.failed(null, "任务队列无效")));
         }
 
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            WindowTaskSubmitResult submitResult = taskManager.submitWithResult(windowId, taskType);
+            WindowTaskSubmitResult submitResult = taskManager.submitQueueWithResult(windowId, safeQueue);
+            log.info("UI start same queue submit result: windowId={} success={} status={} message={} queue={}",
+                    submitResult.getWindowId(),
+                    submitResult.isSuccess(),
+                    submitResult.getStatusDisplayName(),
+                    submitResult.getMessage(),
+                    submitResult.getTaskQueue().toLogText());
             if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动任务：" + submitResult.getTaskDisplayName() + " | " + submitResult.getMessage()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "独立窗口已启动任务队列：" + submitResult.getTaskQueueDisplayText() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "启动失败：" + submitResult.getMessage() + " | 队列=" + submitResult.getTaskQueueDisplayText()));
             }
         }
 
@@ -124,18 +140,17 @@ public class WindowTaskControlService {
             WindowTaskSubmitResult submitResult = taskManager.submitSelectedTaskWithResult(windowId);
             if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "独立窗口已启动已选任务：" + submitResult.getTaskDisplayName() + " | " + submitResult.getMessage()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "独立窗口已启动已选任务：" + submitResult.getTaskDisplayName() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
             }
         }
 
         return buildResult(ids.size(), successCount, "独立窗口已选任务启动完成", Collections.emptyList(), details);
     }
 
-    /**
-     * @deprecated 只用于未来身份识别功能测试。正式窗口流程不要在 window 层判断队长/队员。
-     */
     @Deprecated
     public WindowTaskCommandResult startByDetectedRole(Collection<String> windowIds, TaskType leaderTaskType) {
         return startByDetectedRoleForTest(windowIds, leaderTaskType);
@@ -161,9 +176,11 @@ public class WindowTaskControlService {
             WindowTaskSubmitResult submitResult = taskManager.submitWithResult(assignment.getWindowId(), assignment.getTaskType());
             if (submitResult.isSuccess()) {
                 successCount++;
-                details.add(WindowTaskCommandDetail.success(windowId, "测试按身份已启动任务：" + assignment.getTaskDisplayName() + " | " + submitResult.getMessage()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "测试按身份已启动任务：" + assignment.getTaskDisplayName() + " | " + submitResult.getMessage()));
             } else {
-                details.add(WindowTaskCommandDetail.failed(windowId, "测试按身份启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
+                details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
+                        "测试按身份启动失败：" + submitResult.getMessage() + " | 任务=" + submitResult.getTaskDisplayName()));
             }
         }
 
@@ -176,6 +193,7 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
         }
 
+        log.info("UI requested stop selected windows: {}", ids);
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
@@ -192,8 +210,63 @@ public class WindowTaskControlService {
 
     public WindowTaskCommandResult stopAll() {
         int total = taskManager.getRegisteredWindowCount();
+        log.info("UI requested stop all windows: total={}", total);
         taskManager.stopAll();
         return WindowTaskCommandResult.of(total, total, "已请求停止全部窗口任务：" + total, getSnapshots());
+    }
+
+    public WindowTaskCommandResult pauseWindows(Collection<String> windowIds) {
+        List<String> ids = normalizeWindowIds(windowIds);
+        if (ids.isEmpty()) {
+            return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
+        }
+
+        log.info("UI requested pause selected windows: {}", ids);
+        int successCount = 0;
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
+        for (String windowId : ids) {
+            if (taskManager.pause(windowId)) {
+                successCount++;
+                details.add(WindowTaskCommandDetail.success(windowId, "已请求暂停"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "窗口不存在或当前没有运行任务"));
+            }
+        }
+        return buildResult(ids.size(), successCount, "暂停选中窗口任务完成", Collections.emptyList(), details);
+    }
+
+    public WindowTaskCommandResult resumeWindows(Collection<String> windowIds) {
+        List<String> ids = normalizeWindowIds(windowIds);
+        if (ids.isEmpty()) {
+            return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
+        }
+
+        log.info("UI requested resume selected windows: {}", ids);
+        int successCount = 0;
+        List<WindowTaskCommandDetail> details = new ArrayList<>();
+        for (String windowId : ids) {
+            if (taskManager.resume(windowId)) {
+                successCount++;
+                details.add(WindowTaskCommandDetail.success(windowId, "已请求继续"));
+            } else {
+                details.add(WindowTaskCommandDetail.failed(windowId, "窗口不存在或当前没有运行任务"));
+            }
+        }
+        return buildResult(ids.size(), successCount, "继续选中窗口任务完成", Collections.emptyList(), details);
+    }
+
+    public WindowTaskCommandResult pauseAll() {
+        int total = taskManager.getRegisteredWindowCount();
+        log.info("UI requested pause all windows: total={}", total);
+        int successCount = taskManager.pauseAll();
+        return WindowTaskCommandResult.of(total, successCount, "已请求暂停全部运行中窗口任务：" + successCount + "/" + total, getSnapshots());
+    }
+
+    public WindowTaskCommandResult resumeAll() {
+        int total = taskManager.getRegisteredWindowCount();
+        log.info("UI requested resume all windows: total={}", total);
+        int successCount = taskManager.resumeAll();
+        return WindowTaskCommandResult.of(total, successCount, "已请求继续全部运行中窗口任务：" + successCount + "/" + total, getSnapshots());
     }
 
     public WindowTaskCommandResult unregisterWindows(Collection<String> windowIds) {

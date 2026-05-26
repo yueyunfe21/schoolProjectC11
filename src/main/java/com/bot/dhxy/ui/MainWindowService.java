@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.net.URL;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -61,12 +62,25 @@ public class MainWindowService {
     private void createStage() {
         Stage stage = new Stage();
         stage.setTitle("DHXY Robot 控制台");
-        stage.setScene(new Scene(mainWindowController.buildView(), 980, 640));
+        Scene scene = new Scene(mainWindowController.buildView(), 1120, 720);
+        applyStylesheet(scene);
+        stage.setScene(scene);
         stage.setOnCloseRequest(event -> {
+            event.consume();
             log.info("主窗口关闭，停止 UI 刷新并请求停止任务队列。");
             mainWindowController.shutdownUi();
+            stage.hide();
             Platform.exit();
         });
         stage.show();
+    }
+
+    private void applyStylesheet(Scene scene) {
+        URL stylesheet = getClass().getResource("/styles/dhxy-fluent.css");
+        if (stylesheet == null) {
+            log.warn("未找到 JavaFX 样式文件：/styles/dhxy-fluent.css");
+            return;
+        }
+        scene.getStylesheets().add(stylesheet.toExternalForm());
     }
 }

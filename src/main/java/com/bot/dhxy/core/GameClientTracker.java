@@ -3,11 +3,14 @@ package com.bot.dhxy.core;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.VisionProvider;
 import com.bot.dhxy.config.WindowIsolationProperties;
+import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.GlobalInputLock;
-import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
+import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.sun.jna.Native;
@@ -19,10 +22,10 @@ import com.sun.jna.platform.win32.WinDef.RECT;
 import com.sun.jna.platform.win32.WinDef.WPARAM;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -44,10 +47,10 @@ public class GameClientTracker {
     private final GlobalInputLock globalInputLock;
     private final WindowIsolationProperties windowIsolationProperties;
     private final WindowScopedTempPath windowScopedTempPath;
-
-    @Lazy
-    @Autowired
-    private InputProvider inputProvider;
+    private final WindowFocusService windowFocusService;
+    private final BoundWindowCaptureService boundWindowCaptureService;
+    private final WindowInteractionMetricsService windowInteractionMetricsService;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     public static final String LATEST_VISION_PATH = "images/temp/latest_vision.png";
     private static final int WINDOW_WIDTH = 1024;
@@ -67,13 +70,13 @@ public class GameClientTracker {
 
     public String getLatestVisionPath() { return windowScopedTempPath.resolve("latest_vision.png"); }
 
+    public boolean refreshWindowState() {
+        return globalInputLock.callWithLock(this::checkBaseAddress);
+    }
+
     public boolean updateGlobalVision() {
         return globalInputLock.callWithLock(() -> {
             if (!checkBaseAddress()) return false;
-            if (!bringWindowToFrontWithoutLock()) {
-                log.warn("无法唤醒游戏窗口，停止本次视觉更新");
-                return false;
-            }
             TrackerState s = state();
             logTrackerState("updateGlobalVision");
             int x1 = s.windowBaseX;
@@ -129,35 +132,287 @@ public class GameClientTracker {
         return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2));
     }
 
-    public boolean captureToFileWithShield(String elementName, String savePath, int x1, int y1, int x2, int y2) {
+    public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
         return globalInputLock.callWithLock(() -> {
-            if (!checkBaseAddress()) return false;
-            logTrackerState("captureToFileWithShield:" + elementName);
-            log.debug("装甲截图开始：{} savePath={}", elementName, savePath);
-            inputProvider.pressAlt4();
-            sleepQuietly(400);
+            if (!isValidRect(x1, y1, x2, y2)) {
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "INVALID_RECT");
+                return null;
+            }
+            if (!checkBaseAddress()) {
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "CHECK_BASE_FAILED");
+                return null;
+            }
+            Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
+            if (hwndCapture.isPresent()) {
+                BoundWindowCaptureService.CaptureResult result = hwndCapture.get();
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, true, "OK", result.provider().name());
+                return result.image();
+            }
+            if (!windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false,
+                        "HWND_CAPTURE_FAILED", "HWND");
+                return null;
+            }
+            if (!focusCurrentWindowForScreenCaptureWithoutLock(elementName)) {
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false,
+                        "FOCUS_NOT_CONFIRMED", "ROBOT");
+                return null;
+            }
+            logTrackerState("captureToMemory:" + elementName);
             try {
-                return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
-            } finally {
-                inputProvider.pressAlt4();
-                log.debug("装甲截图结束：{}", elementName);
+                BufferedImage image = eyes.captureRegionByCoordinates(x1, y1, x2, y2);
+                boolean success = image != null;
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, success,
+                        success ? "OK" : "CAPTURE_PROVIDER_FAILED", "ROBOT");
+                return image;
+            } catch (Exception e) {
+                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "EXCEPTION:" + e.getClass().getSimpleName());
+                throw e;
             }
         });
     }
 
-    public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
-        return globalInputLock.callWithLock(() -> {
-            if (!checkBaseAddress()) return null;
-            logTrackerState("captureToMemory:" + elementName);
-            return eyes.captureRegionByCoordinates(x1, y1, x2, y2);
+    public void captureRegionDiagnostics(String elementName, String savePathPrefix,
+                                         int x1, int y1, int x2, int y2) {
+        globalInputLock.callWithLock(() -> {
+            if (!isValidRect(x1, y1, x2, y2)) {
+                log.warn("capture diagnostics skipped: element={} reason=INVALID_RECT rect=({}, {})-({}, {})",
+                        elementName, x1, y1, x2, y2);
+                return null;
+            }
+            if (!checkBaseAddress()) {
+                log.warn("capture diagnostics skipped: element={} reason=CHECK_BASE_FAILED rect=({}, {})-({}, {})",
+                        elementName, x1, y1, x2, y2);
+                return null;
+            }
+
+            String hwndPath = savePathPrefix + "_hwnd_raw.png";
+            String robotPath = savePathPrefix + "_robot_raw.png";
+            String hwndFullOverlayPath = savePathPrefix + "_hwnd_full_overlay.png";
+            String robotFullOverlayPath = savePathPrefix + "_robot_full_overlay.png";
+            String robotReason = "NOT_ATTEMPTED";
+            boolean hwndSaved = false;
+            boolean robotSaved = false;
+            boolean hwndFullOverlaySaved = false;
+            boolean robotFullOverlaySaved = false;
+
+            Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
+            String hwndProvider = hwndCapture.map(result -> result.provider().name()).orElse("NONE");
+            if (hwndCapture.isPresent()) {
+                hwndSaved = writeCaptureToFile(hwndCapture.get().image(), hwndPath);
+            }
+
+            String foregroundBefore = windowFocusService.getForegroundNativeHandleText();
+            TrackerState s = state();
+            int fullX1 = s.windowBaseX;
+            int fullY1 = s.windowBaseY;
+            int fullX2 = fullX1 + WINDOW_WIDTH;
+            int fullY2 = fullY1 + WINDOW_HEIGHT;
+            Optional<BoundWindowCaptureService.CaptureResult> hwndFullCapture = captureToMemoryByHwndIfAvailable(
+                    fullX1, fullY1, fullX2, fullY2);
+            if (hwndFullCapture.isPresent()) {
+                hwndFullOverlaySaved = writeCaptureOverlayToFile(
+                        hwndFullCapture.get().image(), hwndFullOverlayPath,
+                        x1, y1, x2, y2, fullX1, fullY1);
+            }
+
+            if (windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
+                try {
+                    BufferedImage robotImage = eyes.captureRegionByCoordinates(x1, y1, x2, y2);
+                    robotSaved = writeCaptureToFile(robotImage, robotPath);
+                    robotReason = robotImage == null ? "NULL_IMAGE" : "OK";
+                    BufferedImage robotFullImage = eyes.captureRegionByCoordinates(fullX1, fullY1, fullX2, fullY2);
+                    robotFullOverlaySaved = writeCaptureOverlayToFile(
+                            robotFullImage, robotFullOverlayPath,
+                            x1, y1, x2, y2, fullX1, fullY1);
+                } catch (Exception e) {
+                    robotReason = "EXCEPTION:" + e.getClass().getSimpleName();
+                    log.warn("capture diagnostics robot capture failed: element={} reason={}",
+                            elementName, e.getMessage(), e);
+                }
+            } else {
+                robotReason = "ROBOT_DISABLED";
+            }
+            String foregroundAfter = windowFocusService.getForegroundNativeHandleText();
+
+            Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+            String windowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_WINDOW_CONTEXT");
+            String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
+            log.info("capture diagnostics: element={} windowId={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} "
+                            + "relativeRect=({}, {})-({}, {}) foregroundBefore={} foregroundAfter={} "
+                            + "hwndProvider={} hwndSaved={} hwndPath={} hwndFullOverlaySaved={} hwndFullOverlayPath={} "
+                            + "robotSaved={} robotReason={} robotPath={} robotFullOverlaySaved={} robotFullOverlayPath={}",
+                    elementName, windowId, x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText,
+                    x1 - s.windowBaseX, y1 - s.windowBaseY, x2 - s.windowBaseX, y2 - s.windowBaseY,
+                    foregroundBefore, foregroundAfter, hwndProvider, hwndSaved, hwndPath,
+                    hwndFullOverlaySaved, hwndFullOverlayPath,
+                    robotSaved, robotReason, robotPath, robotFullOverlaySaved, robotFullOverlayPath);
+            return null;
         });
     }
 
     private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        if (!checkBaseAddress()) return false;
+        if (!isValidRect(x1, y1, x2, y2)) {
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false, "INVALID_RECT");
+            return false;
+        }
+        if (!checkBaseAddress()) {
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false, "CHECK_BASE_FAILED");
+            return false;
+        }
+        Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
+        if (hwndCapture.isPresent()) {
+            BoundWindowCaptureService.CaptureResult result = hwndCapture.get();
+            boolean success = writeCaptureToFile(result.image(), savePath);
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, success,
+                    success ? "OK" : "WRITE_FAILED", result.provider().name());
+            return success;
+        }
+        if (!windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false,
+                    "HWND_CAPTURE_FAILED", "HWND");
+            return false;
+        }
+        if (!focusCurrentWindowForScreenCaptureWithoutLock(elementName)) {
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false,
+                    "FOCUS_NOT_CONFIRMED", "ROBOT");
+            return false;
+        }
         logTrackerState("captureToFile:" + elementName);
         log.debug("截图：{} savePath={} rect=({}, {})-({}, {})", elementName, savePath, x1, y1, x2, y2);
-        return eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
+        try {
+            boolean success = eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, success,
+                    success ? "OK" : "CAPTURE_PROVIDER_FAILED", "ROBOT");
+            return success;
+        } catch (Exception e) {
+            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false, "EXCEPTION:" + e.getClass().getSimpleName());
+            throw e;
+        }
+    }
+
+    private Optional<BoundWindowCaptureService.CaptureResult> captureToMemoryByHwndIfAvailable(int x1, int y1, int x2, int y2) {
+        if (!windowIsolationProperties.isHwndCaptureActive()) {
+            return Optional.empty();
+        }
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            return Optional.empty();
+        }
+        WindowNativeBinding binding = current.get().getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            return Optional.empty();
+        }
+        TrackerState s = state();
+        Optional<BoundWindowCaptureService.CaptureResult> result = boundWindowCaptureService.captureRegion(
+                binding, s.windowBaseX, s.windowBaseY, x1, y1, x2, y2);
+        if (result.isEmpty()) {
+            log.debug("HWND capture unavailable, fallback decision follows: windowId={} hwnd={} rect=({}, {})-({}, {}) base=({}, {})",
+                    current.get().getWindowId(), binding.getNativeHandle(), x1, y1, x2, y2, s.windowBaseX, s.windowBaseY);
+        }
+        return result;
+    }
+
+    private boolean writeCaptureToFile(BufferedImage image, String savePath) {
+        if (image == null || savePath == null || savePath.isBlank()) {
+            return false;
+        }
+        try {
+            Path path = Path.of(savePath);
+            Path parent = path.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            return ImageIO.write(image, "png", path.toFile());
+        } catch (Exception e) {
+            log.warn("截图写入失败：path={} reason={}", savePath, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    private boolean writeCaptureOverlayToFile(BufferedImage image, String savePath,
+                                              int x1, int y1, int x2, int y2,
+                                              int baseX, int baseY) {
+        if (image == null || savePath == null || savePath.isBlank()) {
+            return false;
+        }
+        BufferedImage copy = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = copy.createGraphics();
+        try {
+            g.drawImage(image, 0, 0, null);
+            g.setColor(Color.RED);
+            g.setStroke(new BasicStroke(3));
+            g.drawRect(x1 - baseX, y1 - baseY, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
+        } finally {
+            g.dispose();
+        }
+        try {
+            return writeCaptureToFile(copy, savePath);
+        } finally {
+            copy.flush();
+        }
+    }
+
+    private boolean isValidRect(int x1, int y1, int x2, int y2) {
+        return x1 != x2 && y1 != y2;
+    }
+
+    private void logCaptureResult(String mode, String elementName, String savePath,
+                                  int x1, int y1, int x2, int y2,
+                                  boolean success, String reason) {
+        logCaptureResult(mode, elementName, savePath, x1, y1, x2, y2, success, reason, "UNKNOWN");
+    }
+
+    private void logCaptureResult(String mode, String elementName, String savePath,
+                                  int x1, int y1, int x2, int y2,
+                                  boolean success, String reason, String provider) {
+        TrackerState s = state();
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        String windowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_WINDOW_CONTEXT");
+        String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
+        String foregroundHwnd = windowFocusService.getForegroundNativeHandleText();
+        windowInteractionMetricsService.recordCapture(windowId, provider, success, mode, elementName);
+        log.info("Capture result: mode={} element={} windowId={} result={} reason={} provider={} path={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} foreground={} title={}",
+                mode, elementName, windowId, success ? "success" : "failed", reason, provider, savePath,
+                x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText, foregroundHwnd, s.fullWindowTitle);
+    }
+
+    private boolean focusCurrentWindowForScreenCaptureWithoutLock(String elementName) {
+        if (!windowIsolationProperties.isInputFocusActive()) {
+            return true;
+        }
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            return true;
+        }
+        WindowNativeBinding binding = current.get().getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            return true;
+        }
+
+        String before = windowFocusService.getForegroundNativeHandleText();
+        windowFocusService.focusWithoutLock(binding);
+        String after = windowFocusService.getForegroundNativeHandleText();
+
+        Long expected = parseHandleValue(binding.getNativeHandle());
+        boolean focused = expected != null && after != null && after.equals(String.valueOf(expected));
+        windowInteractionMetricsService.recordFocus(current.get().getWindowId(), "capture:" + elementName, focused);
+        if (!focused) {
+            log.warn("Capture focus not confirmed before screenshot: element={} windowId={} expectedHwnd={} beforeForeground={} afterForeground={} title={}",
+                    elementName, current.get().getWindowId(), binding.getNativeHandle(), before, after, binding.getTitle());
+        }
+        String line = LocalDateTime.now()
+                + " | action=capture-focus"
+                + " | element=" + elementName
+                + " | windowId=" + current.get().getWindowId()
+                + " | expectedHwnd=" + binding.getNativeHandle()
+                + " | beforeForeground=" + before
+                + " | afterForeground=" + after
+                + " | focused=" + focused
+                + " | title=" + binding.getTitle();
+        log.debug("[TrackerCoordinate] {}", line);
+        appendTrackerDiagnostic(line);
+        return focused;
     }
 
     private boolean checkBaseAddress() {
@@ -187,13 +442,14 @@ public class GameClientTracker {
             logTrackerMiss("raw-current-empty");
             return false;
         }
-        WindowNativeBinding binding = current.get().getNativeBinding();
+        WindowRuntimeContext context = current.get();
+        WindowNativeBinding binding = context.getNativeBinding();
         if (binding == null) {
-            logTrackerMiss("native-binding-null windowId=" + current.get().getWindowId());
+            logTrackerMiss("native-binding-null windowId=" + context.getWindowId());
             return false;
         }
         if (!binding.hasNativeHandle()) {
-            logTrackerMiss("native-handle-empty windowId=" + current.get().getWindowId()
+            logTrackerMiss("native-handle-empty windowId=" + context.getWindowId()
                     + " title=" + binding.getTitle()
                     + " class=" + binding.getClassName()
                     + " pid=" + binding.getProcessId());
@@ -201,15 +457,35 @@ public class GameClientTracker {
         }
         HWND hwnd = toHwnd(binding.getNativeHandle());
         if (hwnd == null) {
-            logTrackerMiss("native-handle-parse-failed windowId=" + current.get().getWindowId()
+            logTrackerMiss("native-handle-parse-failed windowId=" + context.getWindowId()
                     + " handle=" + binding.getNativeHandle());
             return false;
         }
-        String title = binding.getTitle() == null || binding.getTitle().isBlank()
-                ? current.get().getWindowId()
-                : binding.getTitle();
-        updateBaseFromHwnd(hwnd, title);
+        Optional<WindowNativeBinding> refreshed = bindingRefreshService.refreshGeometry(binding);
+        if (refreshed.isEmpty()) {
+            logTrackerMiss("native-binding-live-geometry-unavailable windowId=" + context.getWindowId()
+                    + " handle=" + binding.getNativeHandle());
+            return false;
+        }
+        WindowNativeBinding liveBinding = refreshed.get();
+        if (!binding.hasSameGeometry(liveBinding)) {
+            context.setNativeBinding(liveBinding);
+        }
+        String title = liveBinding.getTitle() == null || liveBinding.getTitle().isBlank()
+                ? context.getWindowId()
+                : liveBinding.getTitle();
+        updateBaseFromBinding(liveBinding, hwnd, title);
         return true;
+    }
+
+    private void updateBaseFromBinding(WindowNativeBinding binding, HWND hwnd, String title) {
+        double scale = coordinateHelper.getScaleRatio();
+        TrackerState s = state();
+        s.windowBaseX = (int) (binding.getX() / scale);
+        s.windowBaseY = (int) (binding.getY() / scale);
+        s.gameHwnd = hwnd;
+        s.fullWindowTitle = title == null ? "" : title;
+        logBindingLiveDelta(binding, hwnd, scale);
     }
 
     private void updateBaseFromHwnd(HWND hwnd, String title) {
@@ -221,6 +497,39 @@ public class GameClientTracker {
         s.windowBaseY = (int) (rect.top / scale);
         s.gameHwnd = hwnd;
         s.fullWindowTitle = title == null ? "" : title;
+    }
+
+    private void logBindingLiveDelta(WindowNativeBinding binding, HWND hwnd, double scale) {
+        RECT live = new RECT();
+        User32.INSTANCE.GetWindowRect(hwnd, live);
+        int liveX = (int) (live.left / scale);
+        int liveY = (int) (live.top / scale);
+        int bindingX = (int) (binding.getX() / scale);
+        int bindingY = (int) (binding.getY() / scale);
+        int dx = liveX - bindingX;
+        int dy = liveY - bindingY;
+        if (dx == 0 && dy == 0) {
+            TrackerState s = state();
+            s.lastBindingLiveDeltaX = 0;
+            s.lastBindingLiveDeltaY = 0;
+            return;
+        }
+        TrackerState s = state();
+        if (s.lastBindingLiveDeltaX == dx && s.lastBindingLiveDeltaY == dy) {
+            return;
+        }
+        s.lastBindingLiveDeltaX = dx;
+        s.lastBindingLiveDeltaY = dy;
+        String line = LocalDateTime.now()
+                + " | action=bound-geometry-live-delta"
+                + " | binding=(" + bindingX + "," + bindingY + " " + binding.getWidth() + "x" + binding.getHeight() + ")"
+                + " | live=(" + liveX + "," + liveY + " "
+                + Math.max(live.right - live.left, 0) + "x" + Math.max(live.bottom - live.top, 0) + ")"
+                + " | delta=(" + dx + "," + dy + ")"
+                + " | hwnd=" + Pointer.nativeValue(hwnd.getPointer())
+                + " | title=" + binding.getTitle();
+        log.debug("[TrackerCoordinate] {}", line);
+        appendTrackerDiagnostic(line);
     }
 
     public boolean bringWindowToFront() {
@@ -361,5 +670,7 @@ public class GameClientTracker {
         private int windowBaseY = -1;
         private String fullWindowTitle = "";
         private HWND gameHwnd = null;
+        private int lastBindingLiveDeltaX = Integer.MIN_VALUE;
+        private int lastBindingLiveDeltaY = Integer.MIN_VALUE;
     }
 }

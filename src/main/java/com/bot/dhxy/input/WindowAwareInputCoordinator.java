@@ -1,6 +1,7 @@
 package com.bot.dhxy.input;
 
 import com.bot.dhxy.config.WindowIsolationProperties;
+import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
 import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -11,11 +12,11 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * 窗口感知输入协调器。
+ * Window-aware input coordinator.
  *
- * 默认只做全局输入串行化。
- * 只有 bot.window.isolation-enabled=true 且 bot.window.input-focus-enabled=true 时，
- * 才会在输入前按当前任务线程绑定的 hwnd 自动激活窗口。
+ * By default it only serializes global input. When window isolation and input
+ * focus are enabled, it focuses the hwnd bound to the current window task before
+ * real input is sent.
  */
 @Slf4j
 @Component
@@ -25,83 +26,136 @@ public class WindowAwareInputCoordinator {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowFocusService windowFocusService;
     private final WindowIsolationProperties windowIsolationProperties;
+    private final WindowInteractionMetricsService windowInteractionMetricsService;
 
     private final ThreadLocal<Boolean> inputTransactionActive = ThreadLocal.withInitial(() -> false);
+    private final ThreadLocal<String> currentInputActionName = new ThreadLocal<>();
 
     public WindowAwareInputCoordinator(GlobalInputLock globalInputLock,
                                        WindowTaskContextHolder windowTaskContextHolder,
                                        WindowFocusService windowFocusService,
-                                       WindowIsolationProperties windowIsolationProperties) {
+                                       WindowIsolationProperties windowIsolationProperties,
+                                       WindowInteractionMetricsService windowInteractionMetricsService) {
         this.globalInputLock = globalInputLock;
         this.windowTaskContextHolder = windowTaskContextHolder;
         this.windowFocusService = windowFocusService;
         this.windowIsolationProperties = windowIsolationProperties;
+        this.windowInteractionMetricsService = windowInteractionMetricsService;
     }
 
     public void runInput(String actionName, Runnable action) {
         if (inputTransactionActive.get()) {
-            focusCurrentWindowWithoutLock(actionName);
             action.run();
             return;
         }
         globalInputLock.runWithLock(() -> {
-            focusCurrentWindowWithoutLock(actionName);
-            action.run();
+            String previousActionName = currentInputActionName.get();
+            currentInputActionName.set(actionName);
+            try {
+                focusCurrentWindowWithoutLock(actionName);
+                action.run();
+            } finally {
+                restoreActionName(previousActionName);
+            }
         });
     }
 
     public <T> T callInput(String actionName, Supplier<T> action) {
         if (inputTransactionActive.get()) {
-            focusCurrentWindowWithoutLock(actionName);
             return action.get();
         }
         return globalInputLock.callWithLock(() -> {
-            focusCurrentWindowWithoutLock(actionName);
-            return action.get();
+            String previousActionName = currentInputActionName.get();
+            currentInputActionName.set(actionName);
+            try {
+                focusCurrentWindowWithoutLock(actionName);
+                return action.get();
+            } finally {
+                restoreActionName(previousActionName);
+            }
         });
     }
 
     public void runInputTransaction(String actionName, Runnable action) {
+        runInputTransaction(actionName, true, action);
+    }
+
+    public void runInputTransaction(String actionName, boolean focusBeforeInput, Runnable action) {
         globalInputLock.runWithLock(() -> {
             boolean previous = inputTransactionActive.get();
+            String previousActionName = currentInputActionName.get();
             inputTransactionActive.set(true);
+            currentInputActionName.set(actionName);
             try {
-                focusCurrentWindowWithoutLock(actionName);
+                if (focusBeforeInput) {
+                    focusCurrentWindowWithoutLock(actionName);
+                }
                 action.run();
             } finally {
                 inputTransactionActive.set(previous);
+                restoreActionName(previousActionName);
             }
         });
     }
 
     public <T> T callInputTransaction(String actionName, Supplier<T> action) {
+        return callInputTransaction(actionName, true, action);
+    }
+
+    public <T> T callInputTransaction(String actionName, boolean focusBeforeInput, Supplier<T> action) {
         return globalInputLock.callWithLock(() -> {
             boolean previous = inputTransactionActive.get();
+            String previousActionName = currentInputActionName.get();
             inputTransactionActive.set(true);
+            currentInputActionName.set(actionName);
             try {
-                focusCurrentWindowWithoutLock(actionName);
+                if (focusBeforeInput) {
+                    focusCurrentWindowWithoutLock(actionName);
+                }
                 return action.get();
             } finally {
                 inputTransactionActive.set(previous);
+                restoreActionName(previousActionName);
             }
         });
     }
 
-    private void focusCurrentWindowWithoutLock(String actionName) {
+    public String currentInputActionName() {
+        return currentInputActionName.get();
+    }
+
+    public boolean focusCurrentWindowInActiveTransaction(String actionName) {
+        if (!inputTransactionActive.get()) {
+            throw new IllegalStateException("focusCurrentWindowInActiveTransaction must run inside input transaction");
+        }
+        return focusCurrentWindowWithoutLock(actionName);
+    }
+
+    private boolean focusCurrentWindowWithoutLock(String actionName) {
         if (!windowIsolationProperties.isInputFocusActive()) {
-            return;
+            return false;
         }
         Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.rawCurrent();
         if (contextOptional.isEmpty()) {
-            return;
+            return false;
         }
         WindowRuntimeContext context = contextOptional.get();
         if (!context.hasNativeBinding()) {
-            return;
+            return false;
         }
         boolean focused = windowFocusService.focusWithoutLock(context.getNativeBinding());
+        windowInteractionMetricsService.recordFocus(context.getWindowId(), actionName, focused);
         if (!focused) {
-            log.debug("输入前窗口激活失败：windowId={} action={}", context.getWindowId(), actionName);
+            log.debug("Input window focus failed before action: windowId={} action={}", context.getWindowId(), actionName);
+        }
+        return focused;
+    }
+
+    private void restoreActionName(String previousActionName) {
+        if (previousActionName == null) {
+            currentInputActionName.remove();
+        } else {
+            currentInputActionName.set(previousActionName);
         }
     }
 }

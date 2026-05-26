@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.runtime;
 
+import com.bot.dhxy.config.WindowIsolationProperties;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -13,13 +14,19 @@ import java.util.Optional;
 public class WindowScopedTempPath {
 
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final WindowIsolationProperties windowIsolationProperties;
 
-    public WindowScopedTempPath(WindowTaskContextHolder windowTaskContextHolder) {
+    public WindowScopedTempPath(WindowTaskContextHolder windowTaskContextHolder,
+                                WindowIsolationProperties windowIsolationProperties) {
         this.windowTaskContextHolder = windowTaskContextHolder;
+        this.windowIsolationProperties = windowIsolationProperties;
     }
 
     public String resolve(String fileName) {
         String safeName = sanitizeFileName(fileName);
+        if (!windowIsolationProperties.isScopedTempPathActive()) {
+            return Path.of("images", "temp", safeName).toString();
+        }
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty()) {
             return Path.of("images", "temp", safeName).toString();

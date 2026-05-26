@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DHXY Robot Fluent Mock</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --surface: #ffffff;
+      --soft: #f8fafc;
+      --line: #dbe4ef;
+      --text: #172033;
+      --muted: #667085;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+      --danger: #dc2626;
+      --success: #15803d;
+      --warning: #b45309;
+      --shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+    }
+
+    body.dark {
+      --bg: #0f172a;
+      --surface: #172033;
+      --soft: #111827;
+      --line: #334155;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --primary: #60a5fa;
+      --primary-soft: #1e3a5f;
+      --danger: #f87171;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", Arial, sans-serif;
+      font-size: 13px;
+    }
+
+    .app {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 18px;
+    }
+
+    .topbar {
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .brand strong {
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .brand span {
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button, select, input {
+      height: 32px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 0 12px;
+      font: inherit;
+    }
+
+    button.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+      font-weight: 700;
+    }
+
+    button.danger {
+      color: var(--danger);
+      border-color: rgba(220, 38, 38, 0.35);
+      background: var(--surface);
+      font-weight: 700;
+    }
+
+    button.ghost {
+      background: var(--soft);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 184px minmax(0, 1fr);
+      min-height: 760px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .sidebar {
+      background: var(--soft);
+      border-right: 1px solid var(--line);
+      padding: 12px;
+    }
+
+    .nav-item {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      margin-bottom: 6px;
+      border-radius: 9px;
+      color: var(--muted);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .nav-item.active {
+      color: var(--primary);
+      background: var(--primary-soft);
+    }
+
+    .content {
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .page {
+      display: none;
+      height: 100%;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      height: 100%;
+    }
+
+    .summary-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 10px;
+    }
+
+    .metric, .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .metric label {
+      display: block;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .metric strong {
+      font-size: 20px;
+    }
+
+    .workbench {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      font-weight: 800;
+    }
+
+    .window-toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .window-tools-left {
+      display: grid;
+      grid-template-columns: auto 106px 220px;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .window-toolbar input {
+      width: 100%;
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .bulk-actions {
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .bulk-gap {
+      width: 10px;
+      height: 24px;
+      border-left: 1px solid var(--line);
+      margin-left: 2px;
+    }
+
+    .start-action, .bulk-danger-action {
+      min-width: 86px;
+      height: 36px;
+      padding: 0 18px;
+      font-weight: 900;
+    }
+
+    .start-action {
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+    }
+
+    .bulk-danger-action {
+      box-shadow: 0 8px 18px rgba(220, 38, 38, 0.16);
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    .row-actions button {
+      min-width: 0;
+      width: auto;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--primary);
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .row-actions button:hover {
+      color: var(--text);
+    }
+
+    .row-actions .stop-action {
+      color: var(--danger);
+      font-size: 18px;
+    }
+
+    .row-actions .detail-action {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 2px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--soft);
+      font-weight: 800;
+    }
+
+    th.select-col, td.select-col {
+      width: 36px;
+      text-align: center;
+    }
+
+    tr.selected {
+      background: var(--primary-soft);
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: var(--soft);
+      color: var(--muted);
+    }
+
+    .chip.ok { color: var(--success); }
+    .chip.warn { color: var(--warning); }
+    .chip.bad { color: var(--danger); }
+    .chip.blue { color: var(--primary); }
+
+    .detail-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .detail-item {
+      display: grid;
+      grid-template-columns: 80px minmax(0, 1fr);
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .detail-item label {
+      color: var(--muted);
+    }
+
+    .task-select-panel {
+      display: grid;
+      gap: 12px;
+    }
+
+    .task-card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 82px);
+      gap: 10px;
+    }
+
+    .task-card {
+      position: relative;
+      width: 82px;
+      height: 82px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 8px 8px;
+      background: var(--soft);
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+      text-align: center;
+    }
+
+    .task-card:hover {
+      border-color: var(--primary);
+    }
+
+    .task-card.selected {
+      border-color: var(--primary);
+      background: var(--surface);
+    }
+
+    .task-card strong {
+      display: block;
+      min-height: 32px;
+      margin: 12px 0 4px;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: normal;
+    }
+
+    .task-meta {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .task-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 34px;
+      height: 18px;
+      margin-top: 5px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 10px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+    }
+
+    .task-card.selected .task-count {
+      color: var(--primary);
+      border-color: rgba(37, 99, 235, 0.35);
+    }
+
+    .task-count:hover {
+      color: var(--primary);
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+
+    .count-popover {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .count-popover.open {
+      display: flex;
+    }
+
+    .count-popover strong {
+      min-width: 72px;
+    }
+
+    .count-stepper {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .count-stepper button {
+      width: 28px;
+      padding: 0;
+      font-weight: 900;
+    }
+
+    .count-stepper input {
+      width: 58px;
+      text-align: center;
+    }
+
+    .count-stepper input::-webkit-outer-spin-button,
+    .count-stepper input::-webkit-inner-spin-button {
+      margin: 0;
+      -webkit-appearance: none;
+    }
+
+    .count-stepper input[type="number"] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+
+    .order-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      font-weight: 800;
+      font-size: 11px;
+      box-shadow: none;
+    }
+
+    .task-card.selected .order-badge {
+      display: flex;
+    }
+
+    .task-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .task-order-text {
+      color: var(--muted);
+    }
+
+    .settings-section {
+      display: grid;
+      gap: 12px;
+    }
+
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+
+    .settings-header h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .settings-header span {
+      color: var(--muted);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .field-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .field-row input[type="number"] {
+      width: 86px;
+    }
+
+    .switch-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 34px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .switch-line:last-child {
+      border-bottom: 0;
+    }
+
+    .switch-line span {
+      color: var(--muted);
+    }
+
+    .settings-grid, .debug-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 6px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+    }
+
+    .log-line {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+
+    .placeholder {
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 150px minmax(0, 1fr); }
+      .summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workbench { grid-template-columns: 1fr; }
+      .window-toolbar, .window-tools-left { grid-template-columns: 1fr; }
+      .bulk-actions { justify-content: flex-start; }
+      .settings-grid, .debug-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .summary-row, .task-card-grid { grid-template-columns: 1fr; }
+      .shell { grid-template-columns: 1fr; }
+      .sidebar {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-item { flex: 0 0 auto; margin-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="brand">
+        <strong>DHXY Robot 控制台</strong>
+        <span>Windows Fluent Light mock view · 先定结构，再落 JavaFX</span>
+      </div>
+      <div class="toolbar">
+        <button class="ghost" onclick="toggleTheme()">深色模式</button>
+        <button class="danger">紧急停止 Ctrl+Shift+F12</button>
+      </div>
+    </div>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="nav-item active" data-page="main">主控</div>
+        <div class="nav-item" data-page="settings">设置</div>
+        <div class="nav-item" data-page="auth">验证</div>
+        <div class="nav-item" data-page="debug">调试</div>
+        <div class="nav-item" data-page="logs">日志</div>
+        <div class="nav-item" data-page="about">说明</div>
+      </aside>
+
+      <main class="content">
+        <section id="main" class="page active">
+          <div class="main-grid">
+            <div class="summary-row">
+              <div class="metric"><label>窗口</label><strong>5 / 8</strong></div>
+              <div class="metric"><label>运行中</label><strong>2</strong></div>
+              <div class="metric"><label>异常</label><strong>0</strong></div>
+            </div>
+
+            <div class="workbench">
+              <div class="panel">
+                <div class="panel-title">
+                  <span>窗口与任务</span>
+                  <span class="task-order-text">已选窗口：2</span>
+                </div>
+                <div class="window-toolbar">
+                  <div class="window-tools-left">
+                    <button class="ghost">刷新</button>
+                    <select>
+                      <option>全部窗口</option>
+                      <option>运行中</option>
+                      <option>空闲</option>
+                      <option>暂停中</option>
+                      <option>异常</option>
+                    </select>
+                    <input type="search" placeholder="搜索角色 / ID / 服务器">
+                  </div>
+                  <div class="panel-actions bulk-actions">
+                    <button>暂停</button>
+                    <button class="danger bulk-danger-action">停止</button>
+                    <button class="ghost">取消选择</button>
+                    <span class="bulk-gap"></span>
+                    <button class="ghost">全选</button>
+                    <button class="primary start-action">启动</button>
+                  </div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="select-col"></th><th>角色名</th><th>服务器</th><th>ID</th><th>状态</th><th>运行任务</th><th>进度</th><th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="selected">
+                      <td class="select-col"><input type="checkbox" checked></td>
+                      <td>唐德测试号</td><td>水晶宫</td><td>103928</td><td><span class="chip ok">运行中</span></td><td>五环</td><td>1/2</td>
+                      <td><div class="row-actions"><button title="暂停">⏸</button><button class="stop-action" title="停止">⏹</button><button class="detail-action">详情</button></div></td>
+                    </tr>
+                    <tr class="selected">
+                      <td class="select-col"><input type="checkbox" checked></td>
+                      <td>队员壹</td><td>水晶宫</td><td>103929</td><td><span class="chip blue">空闲</span></td><td>-</td><td>-</td>
+                      <td><div class="row-actions"><button title="启动">▶</button><button class="detail-action">详情</button></div></td>
+                    </tr>
+                    <tr>
+                      <td class="select-col"><input type="checkbox"></td>
+                      <td>队员贰</td><td>水晶宫</td><td>103930</td><td><span class="chip warn">暂停</span></td><td>自动战斗</td><td>2/2</td>
+                      <td><div class="row-actions"><button title="继续">▶</button><button class="stop-action" title="停止">⏹</button><button class="detail-action">详情</button></div></td>
+                    </tr>
+                    <tr>
+                      <td class="select-col"><input type="checkbox"></td>
+                      <td>队员叁</td><td>水晶宫</td><td>103931</td><td><span class="chip bad">异常</span></td><td>-</td><td>-</td>
+                      <td><div class="row-actions"><button title="重试">↻</button><button class="detail-action">详情</button></div></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <aside class="panel">
+                <div class="panel-title">
+                  <span>角色详情</span>
+                  <button class="ghost">收起</button>
+                </div>
+                <div class="detail-list">
+                  <div class="detail-item"><label>角色</label><span>唐德测试号 · 水晶宫 · 103928</span></div>
+                  <div class="detail-item"><label>窗口</label><span>hwnd=0x0012099A · pid=8420</span></div>
+                  <div class="detail-item"><label>当前</label><span>五环 · 执行进度 1/2</span></div>
+                  <div class="detail-item"><label>上次执行</label><span>五环 → 自动战斗 · 失败后继续</span></div>
+                  <div class="detail-item"><label>消息</label><span>正在执行 NPC 寻路，等待移动完成</span></div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="panel task-select-panel">
+              <div class="panel-title">
+                <span>任务选择</span>
+                <div class="panel-actions">
+                  <span class="task-order-text" id="taskOrderText">已选择：五环 → 自动战斗</span>
+                  <button class="ghost">次数</button>
+                </div>
+              </div>
+              <div class="task-card-grid">
+                <div class="task-card selected" data-task="五环" onclick="toggleTask(this)">
+                  <span class="order-badge">1</span>
+                  <strong>五环</strong>
+                  <div class="task-meta">日常</div>
+                  <button class="task-count" data-count-task="五环" data-count-value="1" data-count-unit="轮" onclick="openCountPopover(event)">1轮</button>
+                </div>
+                <div class="task-card selected" data-task="自动战斗" onclick="toggleTask(this)">
+                  <span class="order-badge">2</span>
+                  <strong>自动战斗</strong>
+                  <div class="task-meta">挂机</div>
+                  <button class="task-count" data-count-task="自动战斗" data-count-value="60" data-count-unit="分" onclick="openCountPopover(event)">60分</button>
+                </div>
+                <div class="task-card" data-task="坐标调试" onclick="toggleTask(this)">
+                  <span class="order-badge"></span>
+                  <strong>坐标调试</strong>
+                  <div class="task-meta">诊断</div>
+                  <button class="task-count" data-count-task="坐标调试" data-count-value="1" data-count-unit="次" onclick="openCountPopover(event)">手动</button>
+                </div>
+                <div class="task-card" data-task="队伍识别测试" onclick="toggleTask(this)">
+                  <span class="order-badge"></span>
+                  <strong>队伍识别</strong>
+                  <div class="task-meta">识别</div>
+                  <button class="task-count" data-count-task="队伍识别" data-count-value="1" data-count-unit="次" onclick="openCountPopover(event)">1次</button>
+                </div>
+                <div class="task-card" data-task="召唤兽技能" onclick="toggleTask(this)">
+                  <span class="order-badge"></span>
+                  <strong>召唤兽</strong>
+                  <div class="task-meta">维护</div>
+                  <button class="task-count" data-count-task="召唤兽" data-count-value="3" data-count-unit="轮" onclick="openCountPopover(event)">3轮</button>
+                </div>
+                <div class="task-card" data-task="验证码处理" onclick="toggleTask(this)">
+                  <span class="order-badge"></span>
+                  <strong>验证码</strong>
+                  <div class="task-meta">人工</div>
+                  <button class="task-count" data-count-task="验证码" data-count-value="1" data-count-unit="次" onclick="openCountPopover(event)">按需</button>
+                </div>
+              </div>
+              <div class="count-popover" id="countPopover">
+                <strong id="countPopoverTitle">五环次数</strong>
+                <div class="count-stepper">
+                  <button onclick="stepCount(-1)">-</button>
+                  <input id="countPopoverInput" type="number" value="1">
+                  <button onclick="stepCount(1)">+</button>
+                  <span class="task-order-text" id="countPopoverUnit">轮</span>
+                </div>
+                <button class="primary" onclick="applyCountPopover()">应用</button>
+                <button class="ghost" onclick="closeCountPopover()">取消</button>
+              </div>
+              <div class="task-actions">
+                <span class="task-order-text">点击任务方块决定执行顺序；再次点击取消，并自动重排编号。</span>
+                <div class="panel-actions">
+                  <button onclick="clearTasks()">清空任务选择</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="settings" class="page">
+          <div class="settings-section">
+            <div class="settings-header">
+              <div>
+                <h2>设置</h2>
+                <span>常用配置直接在这里改，不再进入二级窗口。</span>
+              </div>
+              <div class="panel-actions">
+                <button class="ghost">恢复默认</button>
+                <button class="primary">保存设置</button>
+              </div>
+            </div>
+
+            <div class="settings-grid">
+              <div class="panel">
+                <div class="panel-title">补给设置</div>
+                <div class="form-grid">
+                  <div class="field"><label>人物 HP</label><div class="field-row"><input type="number" value="45"><span class="task-order-text">% 以下补血</span></div></div>
+                  <div class="field"><label>人物 MP</label><div class="field-row"><input type="number" value="30"><span class="task-order-text">% 以下补蓝</span></div></div>
+                  <div class="field"><label>召唤兽 HP</label><div class="field-row"><input type="number" value="40"><span class="task-order-text">% 以下补血</span></div></div>
+                  <div class="field"><label>召唤兽 MP</label><div class="field-row"><input type="number" value="25"><span class="task-order-text">% 以下补蓝</span></div></div>
+                </div>
+                <div class="switch-line"><strong>启用自动补给</strong><input type="checkbox" checked></div>
+                <div class="switch-line"><span>战斗结束后立即检查补给</span><input type="checkbox" checked></div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">召唤兽技能</div>
+                <div class="switch-line"><strong>启用三技能维护</strong><input type="checkbox" checked></div>
+                <div class="switch-line"><span>自动识别并删除指定技能</span><input type="checkbox" checked></div>
+                <div class="form-grid">
+                  <div class="field"><label>三技能间隔</label><div class="field-row"><input type="number" value="3"><span class="task-order-text">轮</span></div></div>
+                  <div class="field"><label>失败重试</label><div class="field-row"><input type="number" value="2"><span class="task-order-text">次</span></div></div>
+                  <div class="field"><label>技能策略</label><select><option>保留三技能</option><option>只检测不删除</option><option>按模板维护</option></select></div>
+                  <div class="field"><label>检测时机</label><select><option>任务开始前</option><option>每轮战斗后</option><option>手动触发</option></select></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">任务次数</div>
+                <div class="form-grid">
+                  <div class="field"><label>五环</label><div class="field-row"><input type="number" value="1"><span class="task-order-text">轮</span></div></div>
+                  <div class="field"><label>抓鬼</label><div class="field-row"><input type="number" value="10"><span class="task-order-text">轮</span></div></div>
+                  <div class="field"><label>修罗</label><div class="field-row"><input type="number" value="20"><span class="task-order-text">轮</span></div></div>
+                  <div class="field"><label>自动战斗</label><div class="field-row"><input type="number" value="60"><span class="task-order-text">分钟</span></div></div>
+                </div>
+                <p class="placeholder">这里先完整放在设置里；如果主页面需要，后面可以只显示当前任务的轻量次数摘要。</p>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">运行安全</div>
+                <div class="switch-line"><strong>启动前自动刷新窗口</strong><input type="checkbox" checked></div>
+                <div class="switch-line"><span>跳过已经运行中的窗口</span><input type="checkbox" checked></div>
+                <div class="switch-line"><span>未选择窗口时默认选择空闲窗口</span><input type="checkbox" checked></div>
+                <div class="switch-line"><span>异常时停止当前窗口任务</span><input type="checkbox" checked></div>
+                <div class="field"><label>紧急停止</label><input value="Ctrl+Shift+F12"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="auth" class="page">
+          <div class="panel"><div class="panel-title">验证码 / Authentication</div><p class="placeholder">验证码截图、人工确认、第三方识别结果、处理历史放在这里。</p></div>
+        </section>
+
+        <section id="debug" class="page">
+          <div class="debug-grid">
+            <div class="panel"><div class="panel-title">任务调试</div><p class="placeholder">坐标调试、队伍识别测试、NPC 首点调试。</p></div>
+            <div class="panel"><div class="panel-title">截图 / OCR</div><p class="placeholder">窗口截图、中心区域截图、OCR 洗图、模板匹配结果。</p></div>
+            <div class="panel"><div class="panel-title">日志路径</div><p class="placeholder">logs/dhxy-console.log<br>logs/tracker-coordinate.log</p></div>
+            <div class="panel"><div class="panel-title">模板诊断</div><p class="placeholder">坐标数字、对话框、NPC 菜单、召唤兽技能模板。</p></div>
+          </div>
+        </section>
+
+        <section id="logs" class="page">
+          <div class="panel">
+            <div class="panel-title">
+              <span>命令日志</span>
+              <div class="panel-actions"><button>只看失败</button><button>清空</button></div>
+            </div>
+            <div class="log-list">
+              <div class="log-line">[07:20:11] [成功] window-1 | 任务=五环 → 自动战斗 | 提交=ACCEPTED</div>
+              <div class="log-line">[07:19:44] 命令结果：启动 | 请求=2 成功=2 失败=0</div>
+              <div class="log-line">[07:18:32] 调试：当前任务选择已切到坐标调试</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="about" class="page">
+          <div class="panel"><div class="panel-title">说明</div><p class="placeholder">这个 mock 用来讨论布局和 panel 信息架构，不代表最终 JavaFX 代码结构。主控页使用任务卡片表达可选任务，点击顺序就是执行顺序；后续再定每个 tab 的 panel 和控件细节。</p></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+        item.classList.add('active');
+        document.getElementById(item.dataset.page).classList.add('active');
+      });
+    });
+
+    function toggleTheme() {
+      document.body.classList.toggle('dark');
+    }
+
+    let selectedTasks = Array.from(document.querySelectorAll('.task-card.selected'))
+      .map(card => card.dataset.task);
+    let activeCountBadge = null;
+
+    function toggleTask(card) {
+      const task = card.dataset.task;
+      if (selectedTasks.includes(task)) {
+        selectedTasks = selectedTasks.filter(item => item !== task);
+      } else {
+        selectedTasks.push(task);
+      }
+      renderTaskOrder();
+    }
+
+    function clearTasks() {
+      selectedTasks = [];
+      renderTaskOrder();
+    }
+
+    function renderTaskOrder() {
+      document.querySelectorAll('.task-card').forEach(card => {
+        const index = selectedTasks.indexOf(card.dataset.task);
+        const badge = card.querySelector('.order-badge');
+        card.classList.toggle('selected', index >= 0);
+        badge.textContent = index >= 0 ? String(index + 1) : '';
+      });
+
+      const orderText = document.getElementById('taskOrderText');
+      orderText.textContent = selectedTasks.length
+        ? `已选择：${selectedTasks.join(' → ')}`
+        : '还没有选择任务';
+    }
+
+    function openCountPopover(event) {
+      event.stopPropagation();
+      activeCountBadge = event.currentTarget;
+      const popover = document.getElementById('countPopover');
+      const title = document.getElementById('countPopoverTitle');
+      const input = document.getElementById('countPopoverInput');
+      const unit = document.getElementById('countPopoverUnit');
+      title.textContent = `${activeCountBadge.dataset.countTask}次数`;
+      input.value = activeCountBadge.dataset.countValue;
+      unit.textContent = activeCountBadge.dataset.countUnit;
+      popover.classList.add('open');
+    }
+
+    function closeCountPopover() {
+      document.getElementById('countPopover').classList.remove('open');
+      activeCountBadge = null;
+    }
+
+    function stepCount(delta) {
+      const input = document.getElementById('countPopoverInput');
+      const next = Math.max(1, Number(input.value || 1) + delta);
+      input.value = next;
+    }
+
+    function applyCountPopover() {
+      if (!activeCountBadge) {
+        return;
+      }
+      const input = document.getElementById('countPopoverInput');
+      const value = Math.max(1, Number(input.value || 1));
+      const unit = activeCountBadge.dataset.countUnit;
+      activeCountBadge.dataset.countValue = String(value);
+      activeCountBadge.textContent = `${value}${unit}`;
+      closeCountPopover();
+    }
+  </script>
+</body>
+</html>

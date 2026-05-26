@@ -9,6 +9,7 @@ import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.file.Files;
@@ -71,33 +72,46 @@ public class ImagePreprocessor {
             BufferedImage img = ImageIO.read(new File(inputPath));
             if (img == null) return;
 
-            int width = img.getWidth();
-            int height = img.getHeight();
-            BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
-
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    if (isOptionGreen(img.getRGB(x, y))) {
-                        out.setRGB(x, y, 0xFFFFFF);
-                    } else {
-                        out.setRGB(x, y, 0x000000);
-                    }
-                }
-            }
+            BufferedImage out = washGreenTextToBlackAndWhite(img);
             ImageIO.write(out, "png", new File(outputPath));
+            img.flush();
+            out.flush();
         } catch (Exception e) {
             log.error("wash green text failed", e);
         }
     }
 
+    public static BufferedImage washGreenTextToBlackAndWhite(BufferedImage img) {
+        int width = img.getWidth();
+        int height = img.getHeight();
+        BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                out.setRGB(x, y, isOptionGreen(img.getRGB(x, y)) ? 0xFFFFFF : 0x000000);
+            }
+        }
+        return out;
+    }
+
     public static int countGreenPixelsHSV(BufferedImage img) {
+        return countGreenPixelsHSV(img, "debug_hsv_mask_green.png");
+    }
+
+    public static int countGreenPixelsHSV(BufferedImage img, String debugOutputPath) {
         if (img == null) return 0;
 
         BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
-        convertedImg.getGraphics().drawImage(img, 0, 0, null);
+        Graphics2D graphics = convertedImg.createGraphics();
+        try {
+            graphics.drawImage(img, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
         byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
         Mat src = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC3);
         src.put(0, 0, data);
+        convertedImg.flush();
 
         Mat hsv = new Mat();
         Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
@@ -108,7 +122,7 @@ public class ImagePreprocessor {
         Mat mask = new Mat();
         Core.inRange(hsv, lowerGreen, upperGreen, mask);
 
-        saveDebugImage(mask, "debug_hsv_mask_green.png");
+        saveDebugImage(mask, debugOutputPath);
 
         int count = Core.countNonZero(mask);
 
@@ -119,43 +133,20 @@ public class ImagePreprocessor {
         return count;
     }
 
-    public static int countWhitePixelsHSV(BufferedImage img) {
+    public static int countThinWhitePixelsHSV(BufferedImage img, String debugOutputPath) {
         if (img == null) return 0;
 
         BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
-        convertedImg.getGraphics().drawImage(img, 0, 0, null);
-        byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
-        Mat src = new Mat(img.getHeight(), img.getWidth(), org.opencv.core.CvType.CV_8UC3);
-        src.put(0, 0, data);
-
-        Mat hsv = new Mat();
-        Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
-
-        Scalar lowerWhite = new Scalar(0, 0, 200);
-        Scalar upperWhite = new Scalar(180, 40, 255);
-
-        Mat mask = new Mat();
-        Core.inRange(hsv, lowerWhite, upperWhite, mask);
-
-        saveDebugImage(mask, "debug_hsv_mask_white.png");
-
-        int count = Core.countNonZero(mask);
-
-        src.release();
-        hsv.release();
-        mask.release();
-
-        return count;
-    }
-
-    public static int countThinWhitePixelsHSV(BufferedImage img) {
-        if (img == null) return 0;
-
-        BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
-        convertedImg.getGraphics().drawImage(img, 0, 0, null);
+        Graphics2D graphics = convertedImg.createGraphics();
+        try {
+            graphics.drawImage(img, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
         byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
         Mat src = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC3);
         src.put(0, 0, data);
+        convertedImg.flush();
 
         Mat hsv = new Mat();
         Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
@@ -172,7 +163,7 @@ public class ImagePreprocessor {
         Mat textOnlyMask = new Mat();
         Core.subtract(allWhiteMask, thickWhiteMask, textOnlyMask);
 
-        saveDebugImage(textOnlyMask, "debug_thin_white_text.png");
+        saveDebugImage(textOnlyMask, debugOutputPath);
 
         int thinWhiteCount = Core.countNonZero(textOnlyMask);
 
@@ -182,19 +173,25 @@ public class ImagePreprocessor {
         return thinWhiteCount;
     }
 
-    public static double getImageStandardDeviation(BufferedImage img) {
+    public static double getImageStandardDeviation(BufferedImage img, String debugOutputPath) {
         if (img == null) return 100.0;
 
         BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
-        convertedImg.getGraphics().drawImage(img, 0, 0, null);
+        Graphics2D graphics = convertedImg.createGraphics();
+        try {
+            graphics.drawImage(img, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
         byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
         Mat src = new Mat(img.getHeight(), img.getWidth(), org.opencv.core.CvType.CV_8UC3);
         src.put(0, 0, data);
+        convertedImg.flush();
 
         Mat gray = new Mat();
         Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY);
 
-        saveDebugImage(gray, "debug_smoothness_gray.png");
+        saveDebugImage(gray, debugOutputPath);
 
         org.opencv.core.MatOfDouble mean = new org.opencv.core.MatOfDouble();
         org.opencv.core.MatOfDouble stddev = new org.opencv.core.MatOfDouble();
@@ -244,28 +241,142 @@ public class ImagePreprocessor {
         return path.toFile();
     }
 
+    /**
+     * Wash yellow in-game text into a cleaned black/white OCR image.
+     *
+     * <p>This is the single public yellow-text washing entry point. It writes {@code outputPath}
+     * as a binary image where retained yellow text pixels are white and everything else is black,
+     * then removes long horizontal noise and tiny connected components. Both paths are filesystem
+     * paths; callers are responsible for passing window-scoped output paths when running multiple
+     * game windows.</p>
+     *
+     * @param inputPath source screenshot path.
+     * @param outputPath destination cleaned binary image path.
+     */
     public static void washYellowText(String inputPath, String outputPath) {
+        washYellowTextToCleanBlackAndWhite(inputPath, outputPath);
+    }
+
+    public static boolean isYellowTextPixel(int r, int g, int b) {
+        return r >= 150
+                && g >= 110
+                && b <= 110
+                && Math.abs(r - g) <= 110
+                && r > b + 60
+                && g > b + 40;
+    }
+
+    public static int countYellowPixels(BufferedImage image) {
+        if (image == null) {
+            return 0;
+        }
+
+        int count = 0;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                int rgb = image.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                if (isYellowTextPixel(r, g, b)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+
+    /**
+     * Build the cleaned yellow-text OCR image used by all yellow-text readers.
+     *
+     * <p>The method first extracts yellow pixels with the shared RGB predicate, then removes long
+     * horizontal artifacts and very small connected components. It writes a temporary mask beside
+     * {@code outputPath}, so concurrent window-scoped calls do not share a global temp file.</p>
+     *
+     * @param inputPath source screenshot path.
+     * @param outputPath destination cleaned binary image path.
+     */
+    private static void washYellowTextToCleanBlackAndWhite(String inputPath, String outputPath) {
         try {
-            Mat src = Imgcodecs.imread(inputPath);
-            if (src.empty()) return;
+            BufferedImage img = ImageIO.read(new File(inputPath));
+            if (img == null) {
+                log.warn("wash yellow clean failed, input not readable: {}", inputPath);
+                return;
+            }
 
-            Mat hsv = new Mat();
-            Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
+            int width = img.getWidth();
+            int height = img.getHeight();
+            BufferedImage yellowMask = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
 
-            Scalar lowerYellow = new Scalar(20, 100, 100);
-            Scalar upperYellow = new Scalar(35, 255, 255);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int rgb = img.getRGB(x, y);
+                    int r = (rgb >> 16) & 0xFF;
+                    int g = (rgb >> 8) & 0xFF;
+                    int b = rgb & 0xFF;
+                    yellowMask.setRGB(x, y, isYellowTextPixel(r, g, b) ? 0xFFFFFF : 0x000000);
+                }
+            }
 
-            Mat mask = new Mat();
-            Core.inRange(hsv, lowerYellow, upperYellow, mask);
+            File output = new File(outputPath);
+            File parent = output.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            String tempPath = outputPath + ".yellow-mask.tmp.png";
+            ImageIO.write(yellowMask, "png", new File(tempPath));
+            img.flush();
+            yellowMask.flush();
 
-            Mat result = new Mat();
-            Core.bitwise_not(mask, result);
+            Mat src = Imgcodecs.imread(tempPath, Imgcodecs.IMREAD_GRAYSCALE);
+            if (src.empty()) {
+                log.warn("wash yellow clean failed, temp not readable: {}", tempPath);
+                return;
+            }
 
-            Imgcodecs.imwrite(outputPath, result);
+            Mat horizontal = new Mat();
+            Mat horizontalKernel = Imgproc.getStructuringElement(
+                    Imgproc.MORPH_RECT,
+                    new org.opencv.core.Size(35, 1)
+            );
+            Imgproc.morphologyEx(src, horizontal, Imgproc.MORPH_OPEN, horizontalKernel);
 
-            src.release(); hsv.release(); mask.release(); result.release();
+            Mat noLines = new Mat();
+            Core.subtract(src, horizontal, noLines);
+
+            Mat labels = new Mat();
+            Mat stats = new Mat();
+            Mat centroids = new Mat();
+            int numLabels = Imgproc.connectedComponentsWithStats(noLines, labels, stats, centroids);
+            Mat cleaned = Mat.zeros(noLines.size(), CvType.CV_8UC1);
+
+            for (int i = 1; i < numLabels; i++) {
+                int area = (int) stats.get(i, Imgproc.CC_STAT_AREA)[0];
+                int componentWidth = (int) stats.get(i, Imgproc.CC_STAT_WIDTH)[0];
+                int componentHeight = (int) stats.get(i, Imgproc.CC_STAT_HEIGHT)[0];
+                if (area < 3 || (componentWidth > 40 && componentHeight <= 3)) {
+                    continue;
+                }
+                Mat mask = new Mat();
+                Core.compare(labels, new Scalar(i), mask, Core.CMP_EQ);
+                cleaned.setTo(new Scalar(255), mask);
+                mask.release();
+            }
+
+            Imgcodecs.imwrite(outputPath, cleaned);
+            Files.deleteIfExists(Path.of(tempPath));
+
+            src.release();
+            horizontal.release();
+            horizontalKernel.release();
+            noLines.release();
+            labels.release();
+            stats.release();
+            centroids.release();
+            cleaned.release();
         } catch (Exception e) {
-            log.error("wash yellow text failed", e);
+            log.error("wash yellow clean text failed", e);
         }
     }
 

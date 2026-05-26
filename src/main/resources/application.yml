@@ -1,10 +1,54 @@
 bot:
+  team:
+    # Team role detection is enabled for member-only auto-battle/lightweight cleanup gates.
+    role-detection-enabled: true
+    auto-battle-requires-member: true
+    allow-auto-battle-when-role-unknown: false
+    team-hover-x: 644
+    team-hover-y: 91
+    team-hover-random-radius-x: 8
+    team-hover-random-radius-y: 6
+    team-tooltip-rect-x: 680
+    team-tooltip-rect-y: 124
+    team-tooltip-rect-w: 111
+    team-tooltip-rect-h: 84
+    team-hover-delay-ms: 500
+    team-tooltip-probe-max-attempts: 2
+    team-tooltip-white-pixel-threshold: 100
+    team-tooltip-purple-pixel-threshold: 20
+    team-tooltip-text-min-rows: 8
+    team-tooltip-text-min-columns: 20
+    team-tooltip-text-min-transitions: 20
+    team-tooltip-text-max-row-coverage-percent: 80
+    team-panel-role-detection-max-attempts: 2
+    team-panel-open-delay-ms: 800
+    team-panel-close-delay-ms: 150
+    team-panel-transfer-leader-rect-x: 767
+    team-panel-transfer-leader-rect-y: 254
+    team-panel-transfer-leader-rect-w: 69
+    team-panel-transfer-leader-rect-h: 15
+    team-panel-transfer-leader-template: images/template/team/transfer_leader_button.png
+    team-panel-transfer-leader-match-rate: 0.85
+    team-panel-member-marker-rect-x: 765
+    team-panel-member-marker-rect-y: 254
+    team-panel-member-marker-rect-w: 37
+    team-panel-member-marker-rect-h: 15
+    team-panel-member-marker-template: images/template/team/member_marker.png
+    team-panel-member-marker-match-rate: 0.85
+    close-team-panel-after-role-detection: true
+    lightweight-cleanup-requires-member: true
+    allow-lightweight-cleanup-when-role-unknown: false
+
   dhxy:
-    # --- 游戏客户端配置 ---
+    # Game client window config.
     window-keyword: 大话西游2经典版
 
-    # --- 百度云 OCR 视觉配置 ---
+    # Baidu OCR config.
     ocr:
+      # baidu / local / compare / hybrid
+      provider: hybrid
+      local-endpoint: http://127.0.0.1:18761
+      local-timeout-ms: 10000
       app-id: 7663260
       api-key: sPCs5AFdc13mfgtqHnovGP5b
       secret-key: yoDcd7FEqh4fkC5qLaE3igfQ0wEbPudx
@@ -12,5 +56,30 @@ bot:
     anchor_windowTo_map_scroll_X: 560
     anchor_windowTo_map_scroll_Y: 370
 
-    anchor_windowTo_map_search_X: 320
-    anchor_windowTo_map_search_Y: 293
+    anchor_windowTo_map_search_X: 348
+    anchor_windowTo_map_search_Y: 376
+
+    # Post-combat HP/MP supply config.
+    # Recommended thresholds: 30 / 50 / 70. Code normalizes to those levels.
+    player-hp-supply-enabled: true
+    player-hp-supply-threshold: 70
+    player-mp-supply-enabled: true
+    player-mp-supply-threshold: 70
+    pet-hp-supply-enabled: true
+    pet-hp-supply-threshold: 70
+    pet-mp-supply-enabled: true
+    pet-mp-supply-threshold: 70
+
+    # Auto-battle maintenance config.
+    auto-battle-refresh-interval-ms: 120000
+    auto-battle-ui-clean-interval-ms: 30000
+    return-team-area-x: 342
+    return-team-area-y: 57
+    return-team-area-w: 272
+    return-team-area-h: 69
+    return-team-match-rate: 0.85
+
+    # Summon skill cleanup config.
+    summon-skill-clean-enabled: true
+    summon-skill-clean-interval-ms: 1200000
+    summon-skill-clean-run-immediately-on-start: false

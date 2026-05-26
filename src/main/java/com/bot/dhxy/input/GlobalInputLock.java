@@ -11,7 +11,7 @@ import java.util.function.Supplier;
  * 多窗口并行时，截图识别可以并行，但真实点击、按键、拖动必须经过这个全局锁，
  * 否则多个窗口会互相抢鼠标。
  */
-@Component("legacyGlobalInputLock")
+@Component("globalInputLock")
 public class GlobalInputLock {
 
     private final ReentrantLock lock = new ReentrantLock(true);
