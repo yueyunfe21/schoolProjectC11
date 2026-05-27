@@ -2,7 +2,6 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
@@ -11,14 +10,11 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
-@RequiredArgsConstructor
 public class DebugXiuluoMockObjectiveTask implements GameTask {
 
     private static final String MOCK_MAP_NAME = "瑶池";
     private static final int MOCK_X = 69;
     private static final int MOCK_Y = 95;
-
-    private final XiuluoTask xiuluoTask;
 
     @Override
     public String getTaskCode() {
@@ -38,13 +34,13 @@ public class DebugXiuluoMockObjectiveTask implements GameTask {
     @Override
     public TaskRunResult execute(TaskExecutionContext context) {
         String prefix = context == null ? "[window=unknown]" : context.getLogPrefix();
-        log.info("{} [debug-xiuluo-mock-objective] start: mock existing task objective {}({}, {})",
+        log.warn("{} [debug-xiuluo-mock-objective] disabled because legacy XiuluoTask is intentionally commented out: mockObjective={}({}, {})",
                 prefix, MOCK_MAP_NAME, MOCK_X, MOCK_Y);
-        return xiuluoTask.executeDebugMockObjective(context, MOCK_MAP_NAME, MOCK_X, MOCK_Y);
+        return TaskRunResult.FAILED;
     }
 
     @Override
     public void stop() {
-        xiuluoTask.stop();
+        log.info("[debug-xiuluo-mock-objective] stop ignored because the task is disabled");
     }
 }

@@ -3,7 +3,7 @@ package com.bot.dhxy.task;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.model.dialog.DialogType;
-import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.PathingResult;
 import com.bot.dhxy.model.npc.NpcMovementType;
 import com.bot.dhxy.model.npc.NpcRole;
@@ -368,7 +368,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             }
 
             if (dialogService.detectDialogType() == DialogType.NONE) {
-                if (!navigationService.navigateToNPC(NpcNavigationRequest.builder()
+                if (!navigationService.navigateToNPC(NavigationRequest.builder()
                         .targetMapName(TARGET_MAP_NAME)
                         .targetX(NPC_COOR_X)
                         .targetY(NPC_COOR_Y)

@@ -4,30 +4,43 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.TaskRunResult;
-import com.bot.dhxy.model.navigation.MapNavigationRequest;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
-import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.model.npc.NpcMovementType;
 import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcTarget;
+import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
+import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.BagService;
+import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.NavigationService;
+import com.bot.dhxy.service.NpcClickService;
+import com.bot.dhxy.service.QuestManagerService;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.transaction.TaskTransactionOutcome;
 import com.bot.dhxy.task.transaction.TaskTransactionResult;
 import com.bot.dhxy.task.transaction.TaskTransactionRunner;
 import com.bot.dhxy.task.transaction.TaskYieldPolicy;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.vision.ObjectiveTextRecognitionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import java.awt.image.BufferedImage;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -50,6 +63,12 @@ public class XiuluoTaskV2 implements GameTask {
     private static final String ACCEPT_NPC_NAME = "灵兽村使者";
     private static final int ACCEPT_NPC_X = 112;
     private static final int ACCEPT_NPC_Y = 93;
+    private static final String XIULUO_TARGET_KEYWORD = "修罗";
+    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo_accept_xianlaiwu.png";
+    private static final String ENTER_BATTLE_TEMPLATE = "images/template/dialog/xiuluo_enter_battle_kanda.png";
+    private static final String RETURN_ITEM_TEMPLATE = "bag/xiuluo_return_item.png";
+    private static final String OPTION_ACCEPT_TASK = "accept-task";
+    private static final int STORY_OBJECTIVE_ATTEMPTS = 3;
     private static final NpcTarget ACCEPT_NPC = NpcTarget.builder()
             .key("xiuluo.acceptNpc")
             .mapName(START_MAP_NAME)
@@ -58,6 +77,7 @@ public class XiuluoTaskV2 implements GameTask {
             .y(ACCEPT_NPC_Y)
             .role(NpcRole.QUEST_GIVER)
             .movementType(NpcMovementType.FIXED)
+            .expectedDialogTemplatePath(ACCEPT_OPTION_TEMPLATE)
             .source("xiuluo-v2")
             .build();
 
@@ -65,6 +85,13 @@ public class XiuluoTaskV2 implements GameTask {
     private final GameContext gameContext;
     private final NavigationService navigationService;
     private final CoordinateHelper coordinateHelper;
+    private final GameStateUtil gameStateUtil;
+    private final NpcClickService npcClickService;
+    private final DialogService dialogService;
+    private final QuestManagerService questManagerService;
+    private final ObjectiveTextRecognitionService objectiveTextRecognitionService;
+    private final AutoCombatService autoCombatService;
+    private final BagService bagService;
     private final XiuluoHotStartResolver hotStartResolver;
     private final TaskTransactionRunner taskTransactionRunner;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
@@ -218,8 +245,7 @@ public class XiuluoTaskV2 implements GameTask {
             case ACCEPT_TASK_CLICK_NPC -> clickTaskNpc(context, state);
             case ACCEPT_TASK_DIALOG -> acceptTaskDialog(context, state);
             case READ_OBJECTIVE -> readObjective(context, state);
-            case NAVIGATE_TO_TARGET_MAP -> navigateToTargetMap(context, state);
-            case NAVIGATE_TO_TARGET_POINT -> navigateToTargetPoint(context, state);
+            case NAVIGATE_TO_TARGET -> navigateToTarget(context, state);
             case CLICK_TARGET_NPC -> clickTargetNpc(context, state);
             case CONFIRM_ENTER_BATTLE -> confirmEnterBattle(context, state);
             case WAIT_COMBAT -> waitCombat(context, state);
@@ -236,71 +262,173 @@ public class XiuluoTaskV2 implements GameTask {
     }
 
     private XiuluoStepOutcome navigateToTaskNpc(TaskExecutionContext context, XiuluoRoundContext state) {
+        XiuluoStepOutcome pendingPathing = continueIfNavigationStillPathing(context, state, "navigate to accept NPC");
+        if (pendingPathing != null) {
+            return pendingPathing;
+        }
+        XiuluoRoundContext activeState = state.clearPathingWait("navigation-retry:" + state.phase());
         // 🧭 ACCEPT NPC NAV: go to the fixed task giver before opening/handling its dialog.
-        NavigationResult result = navigationService.navigateToNPC(NpcNavigationRequest.builder()
+        NavigationResult result = navigationService.navigateToNPC(NavigationRequest.builder()
                 .targetMapName(ACCEPT_NPC.getMapName())
                 .targetX(ACCEPT_NPC.getX())
                 .targetY(ACCEPT_NPC.getY())
                 .targetName(ACCEPT_NPC.getName())
-                .keepTaskTurnUntilHandled(true)
+                .returnOnPathingStarted(true)
                 .source("xiuluo-v2:acceptNpc")
                 .build());
-        return navigationOutcome(state, result, XiuluoPhase.ACCEPT_TASK_CLICK_NPC, "navigate to accept NPC");
+        return navigationOutcome(activeState, result, XiuluoPhase.ACCEPT_TASK_CLICK_NPC, "navigate to accept NPC");
     }
 
     private XiuluoStepOutcome clickTaskNpc(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.ACCEPT_TASK_DIALOG);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        /*
+         * Normal entry clicks the fixed 灵兽村使者. NpcClickService owns tooltip/yellow-name/Ctrl
+         * fallback order and records successful click evidence, while the phase only decides where
+         * the Xiuluo transaction should continue.
+         */
+        boolean clicked = npcClickService.clickNpcSmart(ACCEPT_NPC.toClickRequest(gameContext.getMe()));
+        if (!clicked) {
+            return XiuluoStepOutcome.failed(state, "accept NPC click failed");
+        }
+        return XiuluoStepOutcome.continueTo(
+                state.next(XiuluoPhase.ACCEPT_TASK_DIALOG, "accept-npc-clicked"),
+                "accept NPC clicked");
     }
 
     private XiuluoStepOutcome acceptTaskDialog(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.READ_OBJECTIVE);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        String matched = dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
+                List.of(new GreenTemplateClickSpec(
+                        OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
+                "xiuluo-v2:accept:" + state.source());
+        if (!OPTION_ACCEPT_TASK.equals(matched)) {
+            return XiuluoStepOutcome.failed(state, "accept dialog option not matched");
+        }
+        TaskSleep.sleepOrStop(context, 250L, "Xiuluo V2 task interrupted");
+        return XiuluoStepOutcome.continueTo(
+                state.next(XiuluoPhase.READ_OBJECTIVE, "accept-option-clicked"),
+                "accept option clicked");
     }
 
     private XiuluoStepOutcome readObjective(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.NAVIGATE_TO_TARGET_MAP);
-    }
-
-    private XiuluoStepOutcome navigateToTargetMap(TaskExecutionContext context, XiuluoRoundContext state) {
-        // 🗺️ TARGET MAP NAV: objective map must be known before cross-map routing starts.
-        NpcTarget objective = state.objective();
-        if (objective == null) {
-            return XiuluoStepOutcome.failed(state, "cannot navigate to target map without objective");
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        Optional<NpcTarget> storyObjective = tryReadCurrentStoryObjective(context, state.source());
+        if (storyObjective.isPresent()) {
+            return XiuluoStepOutcome.continueTo(
+                    state.withObjective(XiuluoPhase.NAVIGATE_TO_TARGET, storyObjective.get(), "objective:story"),
+                    "objective parsed from story dialog");
         }
-        NavigationResult result = navigationService.navigateToMap(MapNavigationRequest.builder()
-                .targetMapName(objective.getMapName())
-                .keepTaskTurnUntilHandled(true)
-                .source("xiuluo-v2:targetMap")
-                .build());
-        return navigationOutcome(state, result, XiuluoPhase.NAVIGATE_TO_TARGET_POINT, "navigate to target map");
+
+        log.warn("[xiuluo-v2] story objective parse failed; trying task-panel fallback");
+        Optional<NpcTarget> panelObjective = tryReadObjectiveFromTaskPanel(context, state.source() + ":task-panel");
+        if (panelObjective.isPresent()) {
+            return XiuluoStepOutcome.continueTo(
+                    state.withObjective(XiuluoPhase.NAVIGATE_TO_TARGET, panelObjective.get(), "objective:task-panel"),
+                    "objective parsed from task panel");
+        }
+
+        return XiuluoStepOutcome.failed(state, "objective not found");
     }
 
-    private XiuluoStepOutcome navigateToTargetPoint(TaskExecutionContext context, XiuluoRoundContext state) {
-        // 📍 TARGET POINT NAV: convert objective coordinate to an approach point, then mini-map path.
-        NpcTarget objective = state.objective();
+    private XiuluoStepOutcome navigateToTarget(TaskExecutionContext context, XiuluoRoundContext state) {
+        XiuluoStepOutcome pendingPathing = continueIfNavigationStillPathing(context, state, "navigate to target");
+        if (pendingPathing != null) {
+            return pendingPathing;
+        }
+        XiuluoRoundContext activeState = state.clearPathingWait("navigation-retry:" + state.phase());
+        // 🗺️ TARGET NAV: task layer names the target; NavigationService owns map/current-map details.
+        NpcTarget objective = activeState.objective();
         if (objective == null) {
-            return XiuluoStepOutcome.failed(state, "cannot navigate to target point without objective");
+            return XiuluoStepOutcome.failed(activeState, "cannot navigate to target without objective");
         }
         MapCoordinate approach = coordinateHelper.calculateApproachCoordinate(
                 objective.getMapName(), objective.getX(), objective.getY());
-        NavigationResult result = navigationService.navigateInCurrentMap(approach.getX(), approach.getY());
-        return navigationOutcome(state, result, XiuluoPhase.CLICK_TARGET_NPC, "navigate to target point");
+        NavigationResult result = navigationService.navigateToNPC(NavigationRequest.builder()
+                .targetMapName(objective.getMapName())
+                .targetX(approach.getX())
+                .targetY(approach.getY())
+                .targetName(objective.getName())
+                .returnOnPathingStarted(true)
+                .source("xiuluo-v2:target")
+                .build());
+        return navigationOutcome(activeState, result, XiuluoPhase.CLICK_TARGET_NPC, "navigate to target");
     }
 
     private XiuluoStepOutcome clickTargetNpc(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.CONFIRM_ENTER_BATTLE);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        NpcTarget objective = state.objective();
+        if (objective == null) {
+            return XiuluoStepOutcome.failed(state, "cannot click target without objective");
+        }
+        /*
+         * This is the same smart-click boundary as task NPC clicking. For combat targets, success is
+         * verified by the "看打!" dialog template instead of assuming the mouse hit was enough.
+         */
+        NpcTarget combatTarget = NpcTarget.builder()
+                .key(objective.getKey())
+                .mapName(objective.getMapName())
+                .name(objective.getName())
+                .x(objective.getX())
+                .y(objective.getY())
+                .role(objective.getRole())
+                .movementType(objective.getMovementType())
+                .tuneX(objective.getTuneX())
+                .tuneY(objective.getTuneY())
+                .expectedDialogTemplatePath(ENTER_BATTLE_TEMPLATE)
+                .source("xiuluo-v2:combatTarget:" + objective.getSource())
+                .build();
+        boolean clicked = npcClickService.clickNpcSmart(combatTarget.toClickRequest(gameContext.getMe()));
+        if (!clicked) {
+            return XiuluoStepOutcome.failed(state, "target click failed");
+        }
+        return XiuluoStepOutcome.continueTo(
+                state.next(XiuluoPhase.CONFIRM_ENTER_BATTLE, "target-clicked"),
+                "target clicked");
     }
 
     private XiuluoStepOutcome confirmEnterBattle(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.WAIT_COMBAT);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        /*
+         * "看打!" is short; keep the click close to the matched glyph center so random offset does
+         * not drift into blank dialog space.
+         */
+        boolean confirmed = dialogService.clickGreenTemplateOption(
+                ENTER_BATTLE_TEMPLATE, "xiuluo-v2:enter-battle:" + state.source(), 6, 4);
+        if (!confirmed) {
+            return XiuluoStepOutcome.failed(state, "enter battle option not matched");
+        }
+        autoCombatService.initializeForCurrentWindow();
+        TaskSleep.sleepOrStop(context, 1200L, "Xiuluo V2 task interrupted");
+        return XiuluoStepOutcome.sharedState(
+                state.next(XiuluoPhase.WAIT_COMBAT, "battle-confirmed"),
+                "battle confirmed");
     }
 
     private XiuluoStepOutcome waitCombat(TaskExecutionContext context, XiuluoRoundContext state) {
-        // Real version: battle handoff belongs here; once in combat, the task must yield.
-        return skeletonContinue(context, state, XiuluoPhase.RETURN_HOME);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        AutoCombatService.TickResult tick = autoCombatService.handleCombatTick(context, "xiuluo-v2", true);
+        if (tick == AutoCombatService.TickResult.EXIT_RECOVERED) {
+            return XiuluoStepOutcome.continueTo(
+                    state.next(XiuluoPhase.RETURN_HOME, "combat-finished"),
+                    "combat exit recovered");
+        }
+        if (tick == AutoCombatService.TickResult.IN_COMBAT) {
+            TaskSleep.sleepOrStop(context, autoCombatService.getDynamicPollingIntervalMs(), "Xiuluo V2 task interrupted");
+            return XiuluoStepOutcome.sharedState(state, "combat still running");
+        }
+        TaskSleep.sleepOrStop(context, 1000L, "Xiuluo V2 task interrupted");
+        return XiuluoStepOutcome.sharedState(state, "waiting for combat state");
     }
 
     private XiuluoStepOutcome returnHome(TaskExecutionContext context, XiuluoRoundContext state) {
-        return skeletonContinue(context, state, XiuluoPhase.WAIT_TEAM_RETURN);
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        boolean used = bagService.findAndUseItemFromBack(BagService.MAIN_BAG, RETURN_ITEM_TEMPLATE, 5, context);
+        if (!used) {
+            return XiuluoStepOutcome.failed(state, "return item not found or not used");
+        }
+        return XiuluoStepOutcome.continueTo(
+                state.next(XiuluoPhase.WAIT_TEAM_RETURN, "return-item-used"),
+                "return item used");
     }
 
     private XiuluoStepOutcome waitTeamReturn(TaskExecutionContext context, XiuluoRoundContext state) {
@@ -314,6 +442,69 @@ public class XiuluoTaskV2 implements GameTask {
         log.info("[xiuluo-v2] skeleton phase: round={} phase={} source={} objective={} -> {}",
                 state.round(), state.phase(), state.source(), state.objective(), nextPhase);
         return XiuluoStepOutcome.continueTo(state.next(nextPhase, "skeleton:" + state.phase()), "skeleton transition");
+    }
+
+    /**
+     * Read the objective that appears immediately after accepting Xiuluo.
+     *
+     * @param context current task context for stop checks during repeated story screenshots.
+     * @param source diagnostic source added to screenshot/OCR logs.
+     * @return combat target parsed from the current story dialog, or empty when the dialog is not
+     *         visible/recognizable.
+     */
+    private Optional<NpcTarget> tryReadCurrentStoryObjective(TaskExecutionContext context, String source) {
+        for (int i = 1; i <= STORY_OBJECTIVE_ATTEMPTS; i++) {
+            TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+            String reason = "xiuluo-v2:story-objective:" + source + ":try" + i;
+            Optional<NpcTarget> objective = parseObjective(dialogService.captureCurrentStoryImage(reason), reason);
+            if (objective.isPresent()) {
+                log.info("[xiuluo-v2] objective parsed from story: target={}", objective.get());
+                return objective;
+            }
+            TaskSleep.sleepOrStop(context, 500L, "Xiuluo V2 task interrupted");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Fallback objective reader using the task panel after the accept story was missed.
+     *
+     * @param context current task context for stop checks before opening the task panel.
+     * @param source diagnostic source added to screenshot/OCR logs.
+     * @return combat target parsed from the current quest detail panel, or empty when unavailable.
+     */
+    private Optional<NpcTarget> tryReadObjectiveFromTaskPanel(TaskExecutionContext context, String source) {
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        QuestDetailCapture capture = questManagerService.captureCurrentQuestDetailForTask(TASK_CODE);
+        return parseObjective(capture.image(), "xiuluo-v2:task-panel:" + source);
+    }
+
+    /**
+     * Convert a captured green objective image into the target model used by navigation/clicking.
+     *
+     * @param image story or task-detail image; this method takes ownership and flushes it.
+     * @param source diagnostic source passed through to the objective recognizer.
+     * @return Xiuluo combat target with logical map coordinates, or empty for normal template miss.
+     */
+    private Optional<NpcTarget> parseObjective(BufferedImage image, String source) {
+        if (image == null) {
+            return Optional.empty();
+        }
+        try {
+            Optional<ObjectiveTextResult> result = objectiveTextRecognitionService.recognize(image, source);
+            return result.map(value -> NpcTarget.builder()
+                    .key("xiuluo.combatTarget")
+                    .mapName(value.mapName())
+                    .name(XIULUO_TARGET_KEYWORD)
+                    .x(value.x())
+                    .y(value.y())
+                    .role(NpcRole.COMBAT_TARGET)
+                    .movementType(NpcMovementType.ROAMING)
+                    .source("xiuluoObjective:" + value.mapSlug() + ":" + value.mapScore())
+                    .build());
+        } finally {
+            image.flush();
+        }
     }
 
     // 🔵 NAVIGATION RESULT BRIDGE: NavigationService facts become task phase/yield decisions here.
@@ -331,7 +522,9 @@ public class XiuluoTaskV2 implements GameTask {
         }
         // 🏃 PATHING: movement has started; yield so another window can use the task turn.
         if (status == NavigationResultStatus.PATHING_STARTED) {
-            return XiuluoStepOutcome.pathingStarted(state, actionName + " pathing started");
+            return XiuluoStepOutcome.pathingStarted(
+                    state.waitForPathing("pathing:" + state.phase()),
+                    actionName + " pathing started");
         }
         // ⛔ STOPPED: preserve explicit stop separately from ordinary navigation failure.
         if (status == NavigationResultStatus.STOPPED) {
@@ -339,6 +532,31 @@ public class XiuluoTaskV2 implements GameTask {
         }
         // ❌ FAILED: retry/fallback policy will live in the calling phase, not NavigationService.
         return XiuluoStepOutcome.failed(state, actionName + " failed: " + status);
+    }
+
+    private XiuluoStepOutcome continueIfNavigationStillPathing(TaskExecutionContext context,
+                                                               XiuluoRoundContext state,
+                                                               String actionName) {
+        if (!state.waitingPathing()) {
+            return null;
+        }
+
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        boolean moving = gameStateUtil.isMovingByPixelDiff();
+        if (moving) {
+            /*
+             * The previous NavigationService call already clicked a route or mini-map point. While
+             * the character is still pathing, this phase must only yield; submitting another map
+             * search here is the retry storm seen in the logs.
+             */
+            log.info("[xiuluo-v2] navigation still pathing: phase={} action={}",
+                    state.phase(), actionName);
+            return XiuluoStepOutcome.pathingStarted(state, actionName + " still pathing");
+        }
+
+        log.info("[xiuluo-v2] navigation pathing wait ended: phase={} action={}",
+                state.phase(), actionName);
+        return null;
     }
 
     private TaskExecutionContext resolveExecutionContext(TaskExecutionContext executionContext) {

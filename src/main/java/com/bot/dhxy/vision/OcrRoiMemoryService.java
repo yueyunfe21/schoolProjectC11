@@ -114,6 +114,10 @@ public class OcrRoiMemoryService {
      * @param mapName target map name if known; nullable.
      * @param mapX target logical in-game X coordinate if known; nullable.
      * @param mapY target logical in-game Y coordinate if known; nullable.
+     * @param playerMapX current player logical X coordinate when the screenshot/click is produced;
+     *                   nullable disables learned-region reuse.
+     * @param playerMapY current player logical Y coordinate when the screenshot/click is produced;
+     *                   nullable disables learned-region reuse.
      * @param targetName NPC name or task keyword; nullable for roaming task targets.
      * @param roamingTarget true when the target coordinate came from a refreshed task objective.
      * @return ordered, de-duplicated visual work regions with both persisted window-relative bounds
@@ -121,12 +125,14 @@ public class OcrRoiMemoryService {
      * default full-window masked fallback source from {@link OcrWindowScanService}.
      */
     public synchronized List<ResolvedNpcClickRegion> recommendNpcClickRegions(String mapName,
-                                                                              Integer mapX,
-                                                                              Integer mapY,
-                                                                              String targetName,
-                                                                              boolean roamingTarget) {
+                                                                               Integer mapX,
+                                                                               Integer mapY,
+                                                                               Integer playerMapX,
+                                                                               Integer playerMapY,
+                                                                               String targetName,
+                                                                               boolean roamingTarget) {
         List<OcrWindowRegion> windowRegions = recommendNpcClickWindowRegions(
-                mapName, mapX, mapY, targetName, roamingTarget);
+                mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
         if (windowRegions.isEmpty()) {
             return List.of();
         }
@@ -139,10 +145,12 @@ public class OcrRoiMemoryService {
     }
 
     public synchronized List<OcrWindowRegion> recommendNpcClickWindowRegions(String mapName,
-                                                                            Integer mapX,
-                                                                            Integer mapY,
-                                                                            String targetName,
-                                                                            boolean roamingTarget) {
+                                                                             Integer mapX,
+                                                                             Integer mapY,
+                                                                             Integer playerMapX,
+                                                                             Integer playerMapY,
+                                                                             String targetName,
+                                                                             boolean roamingTarget) {
         /*
          * Normalize the target identity first. Fixed NPCs require a concrete name because their ROI
          * key is map + NPC name + exact coordinate. Roaming Xiuluo-style targets may use "any-name"
@@ -166,7 +174,7 @@ public class OcrRoiMemoryService {
          * Fixed NPCs use an exact coordinate key; roaming targets try the current coordinate bucket
          * and nearby buckets so a nearby real sample can seed the first crop.
          */
-        for (String key : npcTargetRoiPolicyKeys(mapName, mapX, mapY, target, roamingTarget)) {
+        for (String key : npcTargetRoiPolicyKeys(mapName, mapX, mapY, playerMapX, playerMapY, target, roamingTarget)) {
             addPolicyRegion(learnedRegions, memory, key);
         }
 
@@ -174,14 +182,14 @@ public class OcrRoiMemoryService {
          * Secondary source: verified NPC click samples. They do not prove the yellow text rectangle,
          * but a verified click point is close enough to propose a broad crop around that target.
          */
-        addNpcClickSampleRegion(learnedRegions, memory, mapName, mapX, mapY, target, roamingTarget);
+        addNpcClickSampleRegion(learnedRegions, memory, mapName, mapX, mapY, playerMapX, playerMapY, target, roamingTarget);
 
         /*
          * Compatibility source: older entries that only stored MemoryEntry.recommendedRoi. This is
          * read-only compatibility for existing JSON data, not a place to introduce new hardcoded
          * regions.
          */
-        for (String key : npcClickRegionMemoryKeys(mapName, mapX, mapY, target)) {
+        for (String key : npcClickRegionMemoryKeys(mapName, mapX, mapY, playerMapX, playerMapY, target)) {
             addLegacyRoiRegion(learnedRegions, memory, key);
         }
 
@@ -194,8 +202,8 @@ public class OcrRoiMemoryService {
         List<OcrWindowRegion> regions = limitLearnedNpcRegions(learnedRegions, maxLearnedRegions);
         addUniqueRegion(regions, OcrWindowScanService.defaultMaskedWindowRegion());
 
-        log.info("[ocr-roi-memory] npc click regions target={} map={} coord=({}, {}) roaming={} learnedCandidates={} maxLearned={} regions={}",
-                target, safe(mapName), mapX, mapY, roamingTarget, learnedRegions.size(), maxLearnedRegions,
+        log.info("[ocr-roi-memory] npc click regions target={} map={} coord=({}, {}) player=({}, {}) roaming={} learnedCandidates={} maxLearned={} regions={}",
+                target, safe(mapName), mapX, mapY, playerMapX, playerMapY, roamingTarget, learnedRegions.size(), maxLearnedRegions,
                 summarizeRegions(regions));
         return List.copyOf(regions);
     }
@@ -213,6 +221,8 @@ public class OcrRoiMemoryService {
      * @param mapName target map name; nullable.
      * @param targetMapX logical target X coordinate; nullable.
      * @param targetMapY logical target Y coordinate; nullable.
+     * @param playerMapX current player logical X coordinate at capture/click time.
+     * @param playerMapY current player logical Y coordinate at capture/click time.
      * @param targetName expected NPC name or task keyword; nullable for roaming task targets.
      * @param roamingTarget true for roaming targets that should learn by coordinate bucket.
      * @param scanRegion window-relative OCR region scanned.
@@ -225,11 +235,13 @@ public class OcrRoiMemoryService {
      * @return record result with the primary policy key, or skipped when the target lacks enough identity.
      */
     public synchronized RecordResult recordNpcTargetOcrObservation(String source,
-                                                                   String mapName,
-                                                                   Integer targetMapX,
-                                                                   Integer targetMapY,
-                                                                   String targetName,
-                                                                   boolean roamingTarget,
+                                                                    String mapName,
+                                                                    Integer targetMapX,
+                                                                    Integer targetMapY,
+                                                                    Integer playerMapX,
+                                                                    Integer playerMapY,
+                                                                    String targetName,
+                                                                    boolean roamingTarget,
                                                                    OcrWindowRegion scanRegion,
                                                                    OcrWindowRegion textRect,
                                                                    Point clickPoint,
@@ -241,20 +253,25 @@ public class OcrRoiMemoryService {
         if (target == null) {
             return RecordResult.skipped(null, "missing NPC target OCR identity");
         }
+        if (playerMapX == null || playerMapY == null) {
+            return RecordResult.skipped(null, "missing player coordinate for NPC target OCR observation");
+        }
 
         MemoryFile memory = loadMemory();
         memory.memoryType = "vision-memory-v2";
         memory.updatedAt = LocalDateTime.now().toString();
 
-        List<String> keys = npcTargetRoiPolicyKeys(mapName, targetMapX, targetMapY, target, roamingTarget);
+        List<String> keys = npcTargetRoiPolicyKeys(mapName, targetMapX, targetMapY, playerMapX, playerMapY, target, roamingTarget);
         String primaryKey = keys.isEmpty() ? null : keys.get(0);
         TargetCandidateSample sample = TargetCandidateSample.from(
                 primaryKey,
                 source,
-                mapName,
-                targetMapX,
-                targetMapY,
-                target,
+                 mapName,
+                 targetMapX,
+                 targetMapY,
+                 playerMapX,
+                 playerMapY,
+                 target,
                 roamingTarget,
                 scanRegion,
                 textRect,
@@ -276,6 +293,7 @@ public class OcrRoiMemoryService {
                 + " target=" + safe(target)
                 + " map=" + safe(mapName)
                 + " coord=" + nullablePoint(targetMapX, targetMapY)
+                + " player=" + nullablePoint(playerMapX, playerMapY)
                 + " roaming=" + roamingTarget
                 + " matched=" + matched
                 + " verified=" + verified
@@ -457,6 +475,8 @@ public class OcrRoiMemoryService {
                 null,
                 null,
                 null,
+                null,
+                null,
                 targetText,
                 false,
                 scanRegion,
@@ -532,6 +552,9 @@ public class OcrRoiMemoryService {
                                                            String verificationStrength) {
         if (!hasAnyTargetIdentity(mapName, npcName, targetMapX, targetMapY)) {
             return RecordResult.skipped(null, "missing NPC click identity");
+        }
+        if (playerMapX == null || playerMapY == null) {
+            return RecordResult.skipped(null, "missing player coordinate for NPC click memory");
         }
 
         String key = buildNpcClickKey(mapName, npcName, targetMapX, targetMapY);
@@ -616,21 +639,32 @@ public class OcrRoiMemoryService {
      * @param npcName NPC or monster name used in the click strategy.
      * @param targetMapX logical in-game target X coordinate.
      * @param targetMapY logical in-game target Y coordinate.
+     * @param playerMapX current player logical X coordinate at the time of reuse.
+     * @param playerMapY current player logical Y coordinate at the time of reuse.
      * @return learned click point in 1024x768 window-relative pixels, or empty when memory is too
      * weak, unstable, or the latest attempt failed.
      */
     public synchronized Optional<LearnedNpcClickPoint> recommendedNpcClickPoint(String mapName,
-                                                                                String npcName,
-                                                                                Integer targetMapX,
-                                                                                Integer targetMapY) {
+                                                                                 String npcName,
+                                                                                 Integer targetMapX,
+                                                                                 Integer targetMapY,
+                                                                                 Integer playerMapX,
+                                                                                 Integer playerMapY) {
         if (!hasAnyTargetIdentity(mapName, npcName, targetMapX, targetMapY)) {
+            return Optional.empty();
+        }
+        if (playerMapX == null || playerMapY == null) {
+            log.info("[vision-memory] learned NPC point skipped: target={} map={} reason=missing-player-coordinate",
+                    safe(npcName), safe(mapName));
             return Optional.empty();
         }
 
         String key = buildNpcClickKey(mapName, npcName, targetMapX, targetMapY);
         MemoryFile memory = loadMemory();
         List<NpcClickSample> sameTarget = memory.npcClickSamples.stream()
-                .filter(sample -> sample != null && key.equals(sample.key))
+                .filter(sample -> sample != null
+                        && key.equals(sample.key)
+                        && samePlayerCoordinate(sample.playerMapX, sample.playerMapY, playerMapX, playerMapY))
                 .toList();
         if (sameTarget.isEmpty()) {
             return Optional.empty();
@@ -743,13 +777,16 @@ public class OcrRoiMemoryService {
     }
 
     private void addNpcClickSampleRegion(List<OcrWindowRegion> regions,
-                                         MemoryFile memory,
-                                         String mapName,
-                                         Integer mapX,
-                                         Integer mapY,
-                                         String targetName,
-                                         boolean roamingTarget) {
-        OcrWindowRegion region = regionFromNpcClickSamples(memory, mapName, mapX, mapY, targetName, roamingTarget);
+                                          MemoryFile memory,
+                                          String mapName,
+                                          Integer mapX,
+                                          Integer mapY,
+                                          Integer playerMapX,
+                                          Integer playerMapY,
+                                          String targetName,
+                                          boolean roamingTarget) {
+        OcrWindowRegion region = regionFromNpcClickSamples(
+                memory, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
         if (region != null && region.isValid()) {
             addUniqueRegion(regions, region);
         }
@@ -764,6 +801,8 @@ public class OcrRoiMemoryService {
                                                       String mapName,
                                                       Integer mapX,
                                                       Integer mapY,
+                                                      Integer playerMapX,
+                                                      Integer playerMapY,
                                                       String targetName,
                                                       boolean roamingTarget) {
         if (memory == null || memory.npcClickSamples == null || memory.npcClickSamples.isEmpty()) {
@@ -772,7 +811,7 @@ public class OcrRoiMemoryService {
         List<Point> points = new ArrayList<>();
         for (int i = memory.npcClickSamples.size() - 1; i >= 0 && points.size() < MAX_LEARNED_NPC_RECENT_SAMPLES; i--) {
             NpcClickSample sample = memory.npcClickSamples.get(i);
-            if (!isCompatibleNpcClickSample(sample, mapName, mapX, mapY, targetName, roamingTarget)) {
+            if (!isCompatibleNpcClickSample(sample, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget)) {
                 continue;
             }
             Point point = npcSampleClickPoint(sample);
@@ -787,15 +826,20 @@ public class OcrRoiMemoryService {
     }
 
     private boolean isCompatibleNpcClickSample(NpcClickSample sample,
-                                               String mapName,
-                                               Integer mapX,
-                                               Integer mapY,
-                                               String targetName,
-                                               boolean roamingTarget) {
+                                                String mapName,
+                                                Integer mapX,
+                                                Integer mapY,
+                                                Integer playerMapX,
+                                                Integer playerMapY,
+                                                String targetName,
+                                                boolean roamingTarget) {
         if (sample == null || !sample.clicked || !sample.success || !hasStrongNpcVerification(sample)) {
             return false;
         }
         if (!sameNormalized(sample.mapName, mapName)) {
+            return false;
+        }
+        if (!samePlayerCoordinate(sample.playerMapX, sample.playerMapY, playerMapX, playerMapY)) {
             return false;
         }
         if (roamingTarget) {
@@ -851,12 +895,17 @@ public class OcrRoiMemoryService {
         }
         RoiPolicy policy = memory.policies.roiPolicies.computeIfAbsent(key, ignored -> new RoiPolicy());
         policy.key = key;
-        policy.targetKind = sample.roamingTarget ? "clickable-target" : "fixed-npc";
+        policy.targetKind = key.startsWith("roi|")
+                ? (sample.roamingTarget ? "clickable-target" : "fixed-npc")
+                : "generic-ocr";
         policy.taskType = sample.source;
         policy.mapName = sample.mapName;
         policy.targetName = sample.targetName;
         policy.targetMapX = sample.targetMapX;
         policy.targetMapY = sample.targetMapY;
+        policy.playerMapX = sample.playerMapX;
+        policy.playerMapY = sample.playerMapY;
+        policy.playerCoordinate = sample.playerCoordinate;
         policy.coordinateBucket = sample.coordinateBucket;
         policy.lastAttemptAt = memory.updatedAt;
         policy.lastMessage = sample.message;
@@ -929,7 +978,18 @@ public class OcrRoiMemoryService {
         return policy != null
                 && policy.recommendedRoi != null
                 && !policy.stale
-                && policy.failureStreak < ROI_POLICY_FAILURE_STALE_THRESHOLD;
+                && policy.failureStreak < ROI_POLICY_FAILURE_STALE_THRESHOLD
+                && hasPlayerCoordinateForNpcPolicy(policy);
+    }
+
+    private boolean hasPlayerCoordinateForNpcPolicy(RoiPolicy policy) {
+        if (policy == null) {
+            return false;
+        }
+        if (!"fixed-npc".equals(policy.targetKind) && !"clickable-target".equals(policy.targetKind)) {
+            return true;
+        }
+        return policy.playerMapX != null && policy.playerMapY != null;
     }
 
     private String roiStage(int successCount) {
@@ -946,19 +1006,25 @@ public class OcrRoiMemoryService {
     }
 
     private List<String> npcTargetRoiPolicyKeys(String mapName,
-                                                Integer mapX,
-                                                Integer mapY,
-                                                String targetName,
-                                                boolean roamingTarget) {
+                                                 Integer mapX,
+                                                 Integer mapY,
+                                                 Integer playerMapX,
+                                                 Integer playerMapY,
+                                                 String targetName,
+                                                 boolean roamingTarget) {
         /*
          * V2 keys are intentionally namespaced by target kind. Fixed NPCs should not borrow from
          * roaming monsters, and roaming targets should not require a stable OCR-visible name.
          */
         String map = safe(mapName);
         String target = safe(targetName);
+        String player = playerCoordinateText(playerMapX, playerMapY);
+        if ("player:unknown".equals(player)) {
+            return List.of();
+        }
         if (!roamingTarget) {
             return List.of("roi|fixed-npc|npc-click|" + map + "|" + target + "|"
-                    + nullablePoint(mapX, mapY) + "|1024x768|yellow-name");
+                    + nullablePoint(mapX, mapY) + "|" + player + "|1024x768|yellow-name");
         }
 
         /*
@@ -968,7 +1034,8 @@ public class OcrRoiMemoryService {
          */
         List<String> keys = new ArrayList<>();
         for (String bucket : nearbyCoordinateBuckets(mapX, mapY)) {
-            keys.add("roi|clickable-target|npc-click|" + map + "|" + bucket + "|any-name|1024x768|yellow-name");
+            keys.add("roi|clickable-target|npc-click|" + map + "|" + bucket + "|any-name|"
+                    + player + "|1024x768|yellow-name");
         }
         return List.copyOf(keys);
     }
@@ -1005,20 +1072,35 @@ public class OcrRoiMemoryService {
                 + "," + Math.floorDiv(mapY, NPC_COORD_BUCKET_SIZE);
     }
 
-    private List<String> npcClickRegionMemoryKeys(String mapName, Integer mapX, Integer mapY, String targetName) {
+    private static String playerCoordinateText(Integer playerMapX, Integer playerMapY) {
+        if (playerMapX == null || playerMapY == null) {
+            return "player:unknown";
+        }
+        return "player:" + playerMapX + "," + playerMapY;
+    }
+
+    private static boolean samePlayerCoordinate(Integer samplePlayerMapX,
+                                                Integer samplePlayerMapY,
+                                                Integer currentPlayerMapX,
+                                                Integer currentPlayerMapY) {
+        return samplePlayerMapX != null
+                && samplePlayerMapY != null
+                && samplePlayerMapX.equals(currentPlayerMapX)
+                && samplePlayerMapY.equals(currentPlayerMapY);
+    }
+
+    private List<String> npcClickRegionMemoryKeys(String mapName,
+                                                  Integer mapX,
+                                                  Integer mapY,
+                                                  Integer playerMapX,
+                                                  Integer playerMapY,
+                                                  String targetName) {
         /*
-         * Legacy keys predate v2 RoiPolicy. Keep reading them so existing JSON remains useful, but
-         * new learning should write through recordNpcTargetOcrObservation/updateRoiPolicy.
+         * Legacy keys predate player-coordinate-aware vision memory. They are intentionally disabled
+         * for NPC/monster recommendations because screen-relative crops are not reusable unless the
+         * player's logical coordinate also matches the saved sample.
          */
-        String map = safe(mapName);
-        String target = safe(targetName);
-        String coordinate = mapX == null || mapY == null ? "unknown" : mapX + "," + mapY;
-        return List.of(
-                "npc-click-region:" + map + ":" + target + ":" + coordinate,
-                "npc-click-region:" + map + ":" + target,
-                "npc-yellow-window:" + target,
-                "npc-yellow-window:" + map + ":" + target
-        );
+        return List.of();
     }
 
     private void addUniqueRegion(List<OcrWindowRegion> regions, OcrWindowRegion candidate) {
@@ -1199,6 +1281,9 @@ public class OcrRoiMemoryService {
         public String targetName;
         public Integer targetMapX;
         public Integer targetMapY;
+        public Integer playerMapX;
+        public Integer playerMapY;
+        public String playerCoordinate;
         public String coordinateBucket;
         public int attemptCount;
         public int failureCount;
@@ -1423,6 +1508,9 @@ public class OcrRoiMemoryService {
         public String mapName;
         public Integer targetMapX;
         public Integer targetMapY;
+        public Integer playerMapX;
+        public Integer playerMapY;
+        public String playerCoordinate;
         public String coordinateBucket;
         public String targetName;
         public boolean roamingTarget;
@@ -1436,10 +1524,12 @@ public class OcrRoiMemoryService {
 
         static TargetCandidateSample from(String key,
                                           String source,
-                                          String mapName,
-                                          Integer targetMapX,
-                                          Integer targetMapY,
-                                          String targetName,
+                                           String mapName,
+                                           Integer targetMapX,
+                                           Integer targetMapY,
+                                           Integer playerMapX,
+                                           Integer playerMapY,
+                                           String targetName,
                                           boolean roamingTarget,
                                           OcrWindowRegion scanRegion,
                                           OcrWindowRegion textRect,
@@ -1455,6 +1545,9 @@ public class OcrRoiMemoryService {
             sample.mapName = mapName;
             sample.targetMapX = targetMapX;
             sample.targetMapY = targetMapY;
+            sample.playerMapX = playerMapX;
+            sample.playerMapY = playerMapY;
+            sample.playerCoordinate = playerCoordinateText(playerMapX, playerMapY);
             sample.coordinateBucket = roamingTarget ? coordinateBucketText(targetMapX, targetMapY) : null;
             sample.targetName = targetName;
             sample.roamingTarget = roamingTarget;

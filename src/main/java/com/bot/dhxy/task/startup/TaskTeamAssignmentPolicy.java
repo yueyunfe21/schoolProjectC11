@@ -62,6 +62,7 @@ public class TaskTeamAssignmentPolicy {
 
     private boolean isLeaderOnlyTask(TaskType taskType) {
         return taskType == TaskType.XIULUO
+                || taskType == TaskType.XIULUO_V2
                 || taskType == TaskType.DEBUG_XIULUO_MOCK_OBJECTIVE;
     }
 }

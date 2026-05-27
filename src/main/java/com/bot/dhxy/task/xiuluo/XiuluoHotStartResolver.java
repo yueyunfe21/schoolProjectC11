@@ -38,12 +38,28 @@ public class XiuluoHotStartResolver {
                 round, screenState, snapshot.dialogType(), allowTaskPanelFallback);
 
         return switch (screenState) {
-            case IN_COMBAT -> new XiuluoRoundContext(XiuluoPhase.WAIT_COMBAT, null, round, "hot-start:in-combat");
-            case STORY_DIALOG -> new XiuluoRoundContext(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:story-dialog");
-            case OPTION_DIALOG -> new XiuluoRoundContext(XiuluoPhase.ACCEPT_TASK_DIALOG, null, round, "hot-start:option-dialog");
-            case NONE -> allowTaskPanelFallback
-                    ? new XiuluoRoundContext(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:task-panel-fallback")
-                    : XiuluoRoundContext.start(round);
+            case IN_COMBAT -> XiuluoRoundContext.builder()
+                    .phase(XiuluoPhase.WAIT_COMBAT)
+                    .round(round)
+                    .source("hot-start:in-combat")
+                    .build();
+            case STORY_DIALOG -> XiuluoRoundContext.builder()
+                    .phase(XiuluoPhase.READ_OBJECTIVE)
+                    .round(round)
+                    .source("hot-start:story-dialog")
+                    .build();
+            case OPTION_DIALOG -> XiuluoRoundContext.builder()
+                    .phase(XiuluoPhase.ACCEPT_TASK_DIALOG)
+                    .round(round)
+                    .source("hot-start:option-dialog")
+                    .build();
+            /*
+             * NONE only proves that no dialog/combat is currently taking over the screen. It does
+             * not prove an unfinished Xiuluo task exists, so normal startup must begin from the
+             * accept-task chain. Task-panel takeover needs a positive objective read before we can
+             * safely jump into READ_OBJECTIVE/NAVIGATE_TO_TARGET.
+             */
+            case NONE -> XiuluoRoundContext.start(round);
         };
     }
 }

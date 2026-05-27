@@ -12,7 +12,6 @@ import org.springframework.stereotype.Component;
 public class DefaultTaskFactory implements TaskFactory {
 
     private final ObjectProvider<FiveRingTask> fiveRingTaskProvider;
-    private final ObjectProvider<XiuluoTask> xiuluoTaskProvider;
     private final ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider;
     private final ObjectProvider<AutoBattleTask> autoBattleTaskProvider;
     private final ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider;
@@ -23,7 +22,6 @@ public class DefaultTaskFactory implements TaskFactory {
     private final ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider;
 
     public DefaultTaskFactory(ObjectProvider<FiveRingTask> fiveRingTaskProvider,
-                              ObjectProvider<XiuluoTask> xiuluoTaskProvider,
                               ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider,
                               ObjectProvider<AutoBattleTask> autoBattleTaskProvider,
                               ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider,
@@ -33,7 +31,6 @@ public class DefaultTaskFactory implements TaskFactory {
                               ObjectProvider<DebugXiuluoTaskPanelObjectiveTask> debugXiuluoTaskPanelObjectiveTaskProvider,
                               ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider) {
         this.fiveRingTaskProvider = fiveRingTaskProvider;
-        this.xiuluoTaskProvider = xiuluoTaskProvider;
         this.xiuluoTaskV2Provider = xiuluoTaskV2Provider;
         this.autoBattleTaskProvider = autoBattleTaskProvider;
         this.debugCoordinateTaskProvider = debugCoordinateTaskProvider;
@@ -52,7 +49,7 @@ public class DefaultTaskFactory implements TaskFactory {
 
         return switch (taskType) {
             case WUHuan -> fiveRingTaskProvider.getObject();
-            case XIULUO -> xiuluoTaskProvider.getObject();
+            case XIULUO -> xiuluoTaskV2Provider.getObject();
             case XIULUO_V2 -> xiuluoTaskV2Provider.getObject();
             case AUTO_BATTLE -> autoBattleTaskProvider.getObject();
             case DEBUG_COORDINATE -> debugCoordinateTaskProvider.getObject();

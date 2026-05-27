@@ -660,10 +660,17 @@ public class NpcClickService {
              * OCR/ROI memory supplies scan regions so old task-local rectangles do not bypass policy.
              */
             tracker.updateGlobalVision();
-            List<ResolvedNpcClickRegion> targetScanRegions = resolveNpcScanRegions(request);
+            LocationInfo playerLocation = cachedPlayerLocation(request);
+            if (playerLocation == null) {
+                log.warn("NPC smart click has no cached player coordinate; learning/recommendation will use full-window fallback only: npcName={} map={} target=({}, {})",
+                        request.npcName(), request.mapName(), request.mapX(), request.mapY());
+            }
+            List<ResolvedNpcClickRegion> targetScanRegions = resolveNpcScanRegions(request, playerLocation);
             List<CtrlProbeOrigin> ctrlProbeOrigins = new ArrayList<>();
-            log.info("NPC smart click request: npcName={} map={} target=({}, {}) roaming={} regions={} expectedTemplate={}",
+            log.info("NPC smart click request: npcName={} map={} target=({}, {}) player=({}, {}) roaming={} regions={} expectedTemplate={}",
                     request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                    playerLocation == null ? null : playerLocation.x,
+                    playerLocation == null ? null : playerLocation.y,
                     request.roamingTarget(), summarizeRegions(targetScanRegions), request.expectedDialogTemplatePath());
 
             /*
@@ -673,8 +680,8 @@ public class NpcClickService {
              * database/memory point is mature enough to replace screenshot matching for stable NPCs.
              */
             NpcClickStrategyResult learnedResult = clickNpcByLearnedMemory(request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), request.expectedDialogTemplatePath());
-            recordSmartClickEvidence(request, learnedResult);
+                    request.npcName(), playerLocation, request.expectedDialogTemplatePath());
+            recordSmartClickEvidence(request, learnedResult, playerLocation);
             if (learnedResult.verified()) {
                 result = true;
                 return true;
@@ -689,7 +696,7 @@ public class NpcClickService {
              * found in a recommended ROI and the expected dialog verifies.
              */
             NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions);
-            recordSmartClickEvidence(request, tooltipResult);
+            recordSmartClickEvidence(request, tooltipResult, playerLocation);
             if (tooltipResult.verified()) {
                 result = true;
                 return true;
@@ -708,7 +715,7 @@ public class NpcClickService {
                         i + 1, targetScanRegions.size(), region.toShortText());
                 YellowTargetClickResult yellowResult = clickNpcByYellowTargetName(
                         request, region);
-                recordSmartClickEvidence(request, yellowResult.evidence());
+                recordSmartClickEvidence(request, yellowResult.evidence(), playerLocation);
                 if (yellowResult.status() == YellowTargetClickStatus.CLICK_VERIFIED) {
                     result = true;
                     return true;
@@ -734,13 +741,13 @@ public class NpcClickService {
                     ? null
                     : calculatePlayerAnchorFormulaPoint(
                     request.player(), request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0));
+                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
             addCtrlProbeOrigin(ctrlProbeOrigins,
                     formulaPrediction == null ? null : formulaPrediction.predictedClickAbs(),
                     "formula-target", CtrlProbeScanProfile.SMALL_RING);
             NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
                     formulaPrediction, request.expectedDialogTemplatePath());
-            recordSmartClickEvidence(request, formulaResult);
+            recordSmartClickEvidence(request, formulaResult, playerLocation);
             if (formulaResult.verified()) {
                 result = true;
                 return true;
@@ -755,7 +762,7 @@ public class NpcClickService {
              */
             NpcClickStrategyResult ctrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
                     request.expectedDialogTemplatePath(), ctrlProbeOrigins);
-            recordSmartClickEvidence(request, ctrlResult);
+            recordSmartClickEvidence(request, ctrlResult, playerLocation);
             if (ctrlResult.verified()) {
                 result = true;
                 return true;
@@ -869,8 +876,15 @@ public class NpcClickService {
      * @param result strategy evidence produced inside {@code clickNpcSmart}; null or not-attempted
      *               results are ignored.
      */
-    private void recordSmartClickEvidence(NpcClickRequest request, NpcClickStrategyResult result) {
+    private void recordSmartClickEvidence(NpcClickRequest request,
+                                          NpcClickStrategyResult result,
+                                          LocationInfo playerLocation) {
         if (request == null || result == null || !result.attempted()) {
+            return;
+        }
+        if (playerLocation == null) {
+            log.warn("[vision-memory] smart-click evidence skipped because player coordinate is missing: source={} npc={} target=({}, {}) message={}",
+                    result.source(), request.npcName(), request.mapX(), request.mapY(), result.message());
             return;
         }
         WindowBase windowBase = currentWindowBase("smart-click-evidence");
@@ -902,8 +916,8 @@ public class NpcClickService {
                 ocrRoiMemoryService.recordNpcClickAttempt(
                         result.source().memorySource(),
                         request.mapName(),
-                        null,
-                        null,
+                        playerLocation.x,
+                        playerLocation.y,
                         request.npcName(),
                         request.mapX(),
                         request.mapY(),
@@ -946,6 +960,8 @@ public class NpcClickService {
                         request.mapName(),
                         request.mapX(),
                         request.mapY(),
+                        playerLocation.x,
+                        playerLocation.y,
                         request.npcName(),
                         request.roamingTarget(),
                         result.scanRegion(),
@@ -1235,9 +1251,40 @@ public class NpcClickService {
         return normalized.isValid() ? normalized : null;
     }
 
-    private List<ResolvedNpcClickRegion> resolveNpcScanRegions(NpcClickRequest request) {
+    /**
+     * Read the task-maintained player coordinate without triggering another minimap OCR pass.
+     *
+     * <p>Navigation/hot-start flows are responsible for refreshing {@link PlayerCharacter#getX()}
+     * and {@link PlayerCharacter#getY()} through {@link PlayerStateService#syncMyPosition()} before
+     * smart-click runs. This method deliberately treats an all-zero coordinate as unavailable so
+     * vision memory does not learn or reuse samples anchored to the default PlayerCharacter state.</p>
+     */
+    private LocationInfo cachedPlayerLocation(NpcClickRequest request) {
+        PlayerCharacter player = request == null ? null : request.player();
+        if (player == null) {
+            return null;
+        }
+        int x = player.getX();
+        int y = player.getY();
+        if (x == 0 && y == 0) {
+            return null;
+        }
+        String mapName = player.getCurrentMapName();
+        if (mapName == null || mapName.isBlank()) {
+            mapName = request.mapName();
+        }
+        return new LocationInfo(mapName, x, y);
+    }
+
+    private List<ResolvedNpcClickRegion> resolveNpcScanRegions(NpcClickRequest request, LocationInfo playerLocation) {
         return ocrRoiMemoryService.recommendNpcClickRegions(
-                request.mapName(), request.mapX(), request.mapY(), request.npcName(), request.roamingTarget());
+                request.mapName(),
+                request.mapX(),
+                request.mapY(),
+                playerLocation == null ? null : playerLocation.x,
+                playerLocation == null ? null : playerLocation.y,
+                request.npcName(),
+                request.roamingTarget());
     }
 
     private String summarizeRegions(List<ResolvedNpcClickRegion> regions) {
@@ -1411,12 +1458,19 @@ public class NpcClickService {
                                                            int mapX,
                                                            int mapY,
                                                            String npcName,
+                                                           LocationInfo playerLocation,
                                                            String expectedDialogTemplatePath) {
         if (shouldStop()) {
             return NpcClickStrategyResult.failed(NpcClickStrategySource.LEARNED_MEMORY, "interrupted-before-learned-click");
         }
         Optional<LearnedNpcClickPoint> learned =
-                ocrRoiMemoryService.recommendedNpcClickPoint(mapName, npcName, mapX, mapY);
+                ocrRoiMemoryService.recommendedNpcClickPoint(
+                        mapName,
+                        npcName,
+                        mapX,
+                        mapY,
+                        playerLocation == null ? null : playerLocation.x,
+                        playerLocation == null ? null : playerLocation.y);
         if (learned.isEmpty()) {
             return NpcClickStrategyResult.skipped(NpcClickStrategySource.LEARNED_MEMORY, "no-learned-point");
         }
@@ -1864,6 +1918,9 @@ public class NpcClickService {
      * @param tuneX screen-pixel X correction.
      * @param tuneY screen-pixel Y correction.
      * @param scanRegion resolved visual work region for purple-name OCR.
+     * @param cachedPlayerLocation current player logical coordinate already maintained by the
+     *                             task/navigation flow; this method does not perform a fresh OCR
+     *                             location sync.
      * @return true only when the computed click opens the expected dialog.
      */
     private FormulaClickPrediction calculatePlayerAnchorFormulaPoint(PlayerCharacter player,
@@ -1873,7 +1930,8 @@ public class NpcClickService {
                                                                     String npcName,
                                                                     int tuneX,
                                                                     int tuneY,
-                                                                    ResolvedNpcClickRegion scanRegion) {
+                                                                    ResolvedNpcClickRegion scanRegion,
+                                                                    LocationInfo cachedPlayerLocation) {
         if (shouldStop()) return null;
         /*
          * The formula path needs the current player's identity to verify the purple name anchor.
@@ -1892,7 +1950,7 @@ public class NpcClickService {
         int gameBaseY = windowBase.y();
         int scanStartX = scanRegion.screenX1();
         int scanStartY = scanRegion.screenY1();
-        LocationInfo locInfo = playerStateService.syncMyPosition();
+        LocationInfo locInfo = cachedPlayerLocation;
 
         String centerScanPath = windowScopedTempPath.resolve("center_scan_layer1.png");
         String playerScanPath = windowScopedTempPath.resolve("center_scan_player.png");

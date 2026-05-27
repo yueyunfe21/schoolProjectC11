@@ -56,6 +56,7 @@ Important behavior constraints:
 - Do not remove existing useful comments unless the code they describe is removed or the comment is being replaced with a more accurate one.
 - Java file layout rule: keep public classes, public APIs, and the main workflow near the top. Private nested helper types (`private class`, `private record`, `private enum`, private interfaces) should be placed at the bottom of the enclosing class/file, after the main public and private workflow methods, unless Java syntax makes that impossible.
 - Do not add trivial wrapper layers just to expose a second name for the same operation. If an existing method can naturally return useful data while preserving its side effect, prefer changing that method's return type and letting callers ignore the return value. Add a wrapper only when it enforces a real boundary, policy, or compatibility requirement.
+- Task stop/pause checkpoint rule: use `TaskCheckpoint` directly for task stop/interruption checkpoints. Do not add local wrappers such as `checkpoint(...)`, `checkpointTask(...)`, `throwIfStopRequested(...)`, or ad-hoc `Thread.currentThread().isInterrupted()` exception checks in task/service code. A local helper is allowed only when it adds real domain behavior beyond the standard checkpoint. Boolean loop guards in worker/debug/control loops may still check interruption directly.
 
 ## Java / Spring / Lombok / logging conventions
 

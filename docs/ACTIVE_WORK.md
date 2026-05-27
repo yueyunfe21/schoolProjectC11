@@ -28,7 +28,8 @@ Done:
 - Added `TaskCheckpoint` as the shared stop/interruption checkpoint boundary.
 - `TaskCheckpoint` supports explicit `TaskExecutionContext` and current-thread `TaskExecutionContextHolder` checks.
 - `TaskSleep.sleepOrStop(...)` now delegates pre/post stop checks to `TaskCheckpoint`.
-- Existing local `checkpoint(...)` helpers in task/vision/service code now delegate to `TaskCheckpoint` instead of reimplementing token and interruption checks.
+- Rule tightened after review: task/service code should call `TaskCheckpoint` directly for standard stop/interruption checkpoints. Do not add local wrappers such as `checkpoint(...)`, `checkpointTask(...)`, `throwIfStopRequested(...)`, or ad-hoc interruption-to-exception blocks unless the helper adds real domain behavior.
+- Removed `NavigationService.checkpointTask()` and replaced its call sites with direct `TaskCheckpoint.throwIfStopRequested(...)`.
 - Left direct interruption checks in worker loops, debug tasks, and boolean "is still running" helpers alone because those are control-loop conditions, not task checkpoint policies.
 
 Validation:

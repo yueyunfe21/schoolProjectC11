@@ -13,7 +13,7 @@
 //import com.bot.dhxy.model.PlayerCharacter;
 //import com.bot.dhxy.model.dialog.DialogType;
 //import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
-//import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+//import com.bot.dhxy.model.navigation.NavigationRequest;
 //import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 //import com.bot.dhxy.model.npc.NpcClickRequest;
 //import com.bot.dhxy.model.quest.QuestDetailCapture;
@@ -162,12 +162,11 @@
 //            }
 //
 //            long navStart = System.currentTimeMillis();
-//            boolean navOk = ctx.navigationService.navigateToNPC(NpcNavigationRequest.builder()
+//            boolean navOk = ctx.navigationService.navigateToNPC(NavigationRequest.builder()
 //                    .targetMapName(START_MAP_NAME)
 //                    .targetX(ACCEPT_NPC_X)
 //                    .targetY(ACCEPT_NPC_Y)
 //                    .targetName(ACCEPT_NPC_NAME)
-//                    .keepTaskTurnUntilHandled(true)
 //                    .source("xiuluo-benchmark:navigateToNPC")
 //                    .build()).success();
 //            trace("step=navigateToAcceptNpc ok=" + navOk
@@ -248,7 +247,12 @@
 //    private static boolean moveToBenchmarkStartPoint(BenchmarkContext ctx, long startedAt) {
 //        ctx.gameContext.getMe().setCurrentMapName(START_MAP_NAME);
 //        long stepStartedAt = System.currentTimeMillis();
-//        boolean ok = ctx.navigationService.navigateInCurrentMap(BENCHMARK_START_X, BENCHMARK_START_Y).success();
+//        boolean ok = ctx.navigationService.navigateToNPC(NavigationRequest.builder()
+//                .targetMapName(START_MAP_NAME)
+//                .targetX(BENCHMARK_START_X)
+//                .targetY(BENCHMARK_START_Y)
+//                .source("xiuluo-benchmark:start-point")
+//                .build()).success();
 //        trace("step=prepositionToStart target=(" + BENCHMARK_START_X + "," + BENCHMARK_START_Y + ")"
 //                + " ok=" + ok
 //                + " elapsedMs=" + (System.currentTimeMillis() - stepStartedAt)
@@ -334,7 +338,7 @@
 //     *
 //     * <p>The probe reads the current mini-map location first, derives the same approach coordinate
 //     * through {@link CoordinateHelper#calculateApproachCoordinate(String, int, int)}, runs
-//     * {@link NavigationService#navigateInCurrentMap(int, int)}, then reads the location again. It
+//     * {@link NavigationService#navigateToNPC(NavigationRequest)}, then reads the location again. It
 //     * deliberately stops before any NPC/monster click.</p>
 //     */
 //    private static void runCombatApproachProbe(BenchmarkContext ctx, int targetX, int targetY, long startedAt) {
@@ -360,7 +364,12 @@
 //                + " elapsedMs=" + (System.currentTimeMillis() - startedAt));
 //
 //        long navStartedAt = System.currentTimeMillis();
-//        boolean ok = ctx.navigationService.navigateInCurrentMap(approach.getX(), approach.getY()).success();
+//        boolean ok = ctx.navigationService.navigateToNPC(NavigationRequest.builder()
+//                .targetMapName(ctx.gameContext.getMe().getCurrentMapName())
+//                .targetX(approach.getX())
+//                .targetY(approach.getY())
+//                .source("xiuluo-benchmark:combat-approach")
+//                .build()).success();
 //        LocationInfo after = ctx.locationVisionService.scanCurrentLocation();
 //        trace("step=combatApproachProbeResult"
 //                + " ok=" + ok

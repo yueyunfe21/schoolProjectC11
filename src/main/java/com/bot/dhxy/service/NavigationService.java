@@ -1,31 +1,27 @@
 package com.bot.dhxy.service;
 
-
-
-import com.bot.dhxy.model.ocr.LocationInfo;
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
-import com.bot.dhxy.model.navigation.MapNavigationRequest;
+import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
-import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.NavigationResultStatus;
 import com.bot.dhxy.model.npc.NpcClickRequest;
-import com.bot.dhxy.service.dialog.DialogHandleRequest;
-import com.bot.dhxy.service.dialog.DialogHandleResult;
+import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
+import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
-import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.tools.LatencyMetrics;
+import com.bot.dhxy.vision.GameTextLineOcrService;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
@@ -33,9 +29,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -95,7 +88,7 @@ public class NavigationService {
     private final GameClientTracker tracker;
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
-    private final TextRecognizer ocr;
+    private final GameTextLineOcrService gameTextLineOcrService;
     private final GameStateUtil gameStateUtil;
     private final CoordinateHelper coordinateHelper;
     private final UICleanerService uiCleanerService;
@@ -119,39 +112,46 @@ public class NavigationService {
      * Navigate to a fixed NPC coordinate, optionally keeping the current task turn after pathing starts.
      *
      * @param request NPC navigation request. Coordinates are logical in-game map coordinates; nullable
-     *                fields such as target name/source are used only for diagnostics.
+     *                fields such as target name/source are used only for diagnostics. When
+     *                returnOnPathingStarted is true, the method reports PATHING_STARTED as soon as
+     *                either the map route or the current-map click begins moving.
      * @return structured navigation result. ARRIVED means map navigation and current-map coordinate
      *         navigation completed; other statuses tell task code whether to retry, yield, or fail.
      */
-    public NavigationResult navigateToNPC(NpcNavigationRequest request) {
+    public NavigationResult navigateToNPC(NavigationRequest request) {
         if (request == null) {
             log.warn("navigateToNPC skipped: request is null");
             return NavigationResult.failed("request is null");
         }
+        if (request.getTargetMapName() == null || request.getTargetMapName().isBlank()
+                || request.getTargetX() == null || request.getTargetY() == null) {
+            log.warn("navigateToNPC skipped: incomplete target request={}", request);
+            return NavigationResult.failed("incomplete target request");
+        }
         long latencyStart = LatencyMetrics.start();
         NavigationResult result = NavigationResult.failed("not started");
         try {
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
             // Step 1: only solve the cross-map route. This method must not hide map+coordinate as a new abstraction.
-            NavigationResult mapResult = navigateToMap(MapNavigationRequest.builder()
-                    .targetMapName(request.getTargetMapName())
-                    .keepTaskTurnUntilHandled(request.isKeepTaskTurnUntilHandled())
+            NavigationResult mapResult = navigateToMap(request.toBuilder()
                     .source(request.getSource() + ":map")
                     .build());
             if (!mapResult.success()) {
                 result = mapResult;
                 return result;
             }
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
             // Step 2: after the map is correct, click/path to the NPC's logical coordinate on that map.
-            NavigationResult currentMapResult = navigateInCurrentMap(request.getTargetX(), request.getTargetY());
+            NavigationResult currentMapResult = navigateInCurrentMap(request.toBuilder()
+                    .source(request.getSource() + ":currentMap")
+                    .build());
             if (!currentMapResult.success()) {
                 result = currentMapResult;
                 return result;
             }
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
             // Step 3: NPC navigation never cleans dialogs here; the task layer owns the opened option/story dialog.
             log.info("skip arrival cleanup after NPC navigation; task layer will process any opened dialog");
@@ -161,7 +161,7 @@ public class NavigationService {
             LatencyMetrics.info(log, "navigation.toNpc", latencyStart,
                     "result=" + result.getStatus() + " source=" + request.getSource() + " target=" + request.getTargetMapName()
                             + "(" + request.getTargetX() + "," + request.getTargetY() + ")"
-                            + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
+                            + " returnOnPathing=" + request.isReturnOnPathingStarted());
         }
     }
 
@@ -169,11 +169,12 @@ public class NavigationService {
      * Navigate across maps using the world-map search UI.
      *
      * @param request map navigation request. The target map name is the game-visible map name used
-     *                for route search and arrival confirmation.
+     *                for route search and arrival confirmation. returnOnPathingStarted lets phase
+     *                tasks yield after the world-map route begins moving.
      * @return structured navigation result. ARRIVED means the game reaches the target map or already
      *         appears to be there.
      */
-    public NavigationResult navigateToMap(MapNavigationRequest request) {
+    private NavigationResult navigateToMap(NavigationRequest request) {
         if (request == null) {
             log.warn("navigateToMap skipped: request is null");
             return NavigationResult.failed("request is null");
@@ -199,7 +200,7 @@ public class NavigationService {
              * If the cache is blank, do exactly one shared map confirmation before submitting input.
              * A blank map usually means startup/registration has not refreshed identity/location yet.
              */
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
             if (me.getCurrentMapName() == null || me.getCurrentMapName().isBlank()) {
                 log.info("current map is unknown before navigation, confirming target map once");
                 boolean arrivedAfterSync = gameStateUtil.confirmCurrentMapFresh(
@@ -217,10 +218,7 @@ public class NavigationService {
              * NPC chain instead of falling through to a generic route search for the target map.
              */
             if (MAP_LING_SHOU_VILLAGE.equals(targetMapName)) {
-                boolean lingShouArrived = navigateToLingShouVillageViaZhangWen(request);
-                result = lingShouArrived
-                        ? NavigationResult.arrived("Ling Shou Village reached through Zhang Wen")
-                        : NavigationResult.mapNotReached("Ling Shou Village route failed");
+                result = navigateToLingShouVillageViaZhangWen(request);
                 return result;
             }
 
@@ -238,27 +236,27 @@ public class NavigationService {
             String lastObservedMapName = me.getCurrentMapName();
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
-                checkpointTask();
-                if (Thread.currentThread().isInterrupted()) {
-                    result = NavigationResult.stopped("thread interrupted");
-                    return result;
-                }
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
                 /*
                  * Movement means the submitted route is still making progress. Do not fight for focus
                  * or re-click the world-map result while the game is already pathing.
                  */
                 GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (isActiveNavigationMovement(movementState)) {
                     stuckCount = 0;
+                    if (request.isReturnOnPathingStarted()) {
+                        result = NavigationResult.pathingStarted("map route pathing started");
+                        return result;
+                    }
                     log.info("navigate to map yielding while moving: target={} state={} sleepMs={}",
                             targetMapName, movementState, MOVING_NAVIGATION_YIELD_MS);
                     if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
                         result = NavigationResult.stopped("interrupted while waiting for map pathing");
                         return result;
                     }
-                    checkpointTask();
+                    TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                     continue;
                 }
 
@@ -268,7 +266,7 @@ public class NavigationService {
                  */
                 DialogHandleResult dialogResult = dialogService.handleDialog(
                         DialogHandleRequest.clickKeyword("navigation", targetMapName, true));
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (dialogResult == DialogHandleResult.OPTION_KEYWORD_CLICKED
                         || dialogResult == DialogHandleResult.FALLBACK_CLICKED) {
                     stuckCount = 0;
@@ -276,7 +274,7 @@ public class NavigationService {
                         result = NavigationResult.stopped("interrupted after route dialog handling");
                         return result;
                     }
-                    checkpointTask();
+                    TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                     continue;
                 }
 
@@ -285,7 +283,7 @@ public class NavigationService {
                  * intentionally after dialog handling because route dialogs can block the mini-map label.
                  */
                 LocationInfo locationInfo = playerStateService.syncMyPosition();
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (locationInfo != null) {
                     if (targetMapName.equals(locationInfo.mapName)) {
                         log.info("arrived map: {}", targetMapName);
@@ -308,7 +306,7 @@ public class NavigationService {
                             result = NavigationResult.stopped("interrupted while waiting on intermediate map");
                             return result;
                         }
-                        checkpointTask();
+                        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                         continue;
                     }
                 }
@@ -334,13 +332,13 @@ public class NavigationService {
                 } else {
                     retryWorldMapDestinationClick(targetMapName);
                 }
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
                 if (!TaskSleep.sleep(1500)) {
                     result = NavigationResult.stopped("interrupted while waiting before map retry");
                     return result;
                 }
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
             }
 
             log.error("map navigation timeout");
@@ -349,19 +347,30 @@ public class NavigationService {
         } finally {
             LatencyMetrics.info(log, "navigation.toMap", latencyStart,
                     "result=" + result.getStatus() + " source=" + source + " target=" + targetMapName
-                            + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
+                            + " returnOnPathing=" + request.isReturnOnPathingStarted());
         }
     }
 
     /**
      * Navigate within the current map by clicking mini-map logical coordinates until arrival.
      *
-     * @param targetX logical in-game X coordinate on the active map.
-     * @param targetY logical in-game Y coordinate on the active map.
+     * @param request current-map navigation request. targetX/targetY are logical in-game coordinates
+     *                on the active map; returnOnPathingStarted lets phase tasks yield after a mini-map
+     *                click starts movement.
      * @return structured navigation result. ARRIVED means the current window reaches the coordinate
      *         tolerance; POINT_NOT_REACHED means timeout or exhausted click candidates.
      */
-    public NavigationResult navigateInCurrentMap(int targetX, int targetY) {
+    private NavigationResult navigateInCurrentMap(NavigationRequest request) {
+        if (request == null) {
+            log.warn("navigateInCurrentMap skipped: request is null");
+            return NavigationResult.failed("request is null");
+        }
+        if (request.getTargetX() == null || request.getTargetY() == null) {
+            log.warn("navigateInCurrentMap skipped: target coordinate is null request={}", request);
+            return NavigationResult.failed("target coordinate is null");
+        }
+        int targetX = request.getTargetX();
+        int targetY = request.getTargetY();
         long latencyStart = LatencyMetrics.start();
         NavigationResult result = NavigationResult.pointNotReached("not started");
         try {
@@ -373,11 +382,7 @@ public class NavigationService {
             int failedMiniMapClicks = 0;
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
-                checkpointTask();
-                if (Thread.currentThread().isInterrupted()) {
-                    result = NavigationResult.stopped("thread interrupted");
-                    return result;
-                }
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
                 if (battleRadarService.checkAndSyncCombatState()) {
                     log.warn("navigate in current map interrupted by battle: target=({}, {})", targetX, targetY);
@@ -393,15 +398,19 @@ public class NavigationService {
                 }
 
                 GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (isActiveNavigationMovement(movementState)) {
+                    if (request.isReturnOnPathingStarted()) {
+                        result = NavigationResult.pathingStarted("current-map pathing already active");
+                        return result;
+                    }
                     log.info("navigate in current map yielding while moving: target=({}, {}) state={} sleepMs={}",
                             targetX, targetY, movementState, MOVING_NAVIGATION_YIELD_MS);
                     if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
                         result = NavigationResult.stopped("interrupted while waiting for map pathing");
                         return result;
                     }
-                    checkpointTask();
+                    TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                     continue;
                 }
 
@@ -416,10 +425,14 @@ public class NavigationService {
 
                 MiniMapPathingAttemptResult attemptResult = clickMiniMapPointAndConfirm(
                         clickPoint, "navigateInCurrentMap:click");
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (attemptResult == MiniMapPathingAttemptResult.PATHING_STARTED) {
                     log.info("navigate in current map mini-map click started pathing: target=({}, {}) clickPoint=({}, {}) reason={}",
                             targetX, targetY, clickPoint.logicalX(), clickPoint.logicalY(), clickPoint.reason());
+                    if (request.isReturnOnPathingStarted()) {
+                        result = NavigationResult.pathingStarted("current-map mini-map click started pathing");
+                        return result;
+                    }
                     continue;
                 }
                 if (attemptResult == MiniMapPathingAttemptResult.NO_PATHING) {
@@ -439,7 +452,7 @@ public class NavigationService {
                     result = NavigationResult.stopped("interrupted while waiting before current-map retry");
                     return result;
                 }
-                checkpointTask();
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
             }
 
             log.error("navigate timeout");
@@ -447,7 +460,9 @@ public class NavigationService {
             return result;
         } finally {
             LatencyMetrics.info(log, "navigation.currentMap", latencyStart,
-                    "result=" + result.getStatus() + " target=(" + targetX + "," + targetY + ")");
+                    "result=" + result.getStatus() + " source=" + request.getSource()
+                            + " target=(" + targetX + "," + targetY + ")"
+                            + " returnOnPathing=" + request.isReturnOnPathingStarted());
         }
     }
 
@@ -463,39 +478,57 @@ public class NavigationService {
      * The individual steps keep using their existing retry/fallback behavior; this method only
      * composes the validated transfer chain.</p>
      */
-    private boolean navigateToLingShouVillageViaZhangWen(MapNavigationRequest request) {
+    private NavigationResult navigateToLingShouVillageViaZhangWen(NavigationRequest request) {
         PlayerCharacter me = context.getMe();
         log.info("navigate to Ling Shou Village through Zhang Wen: current={}", me.getCurrentMapName());
-        checkpointTask();
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
-        if (!navigateToMap(request.toBuilder()
+        /*
+         * This special route is still step-wise navigation. If going to Chang'an or approaching
+         * Zhang Wen starts movement, return PATHING_STARTED so the task phase can yield like any
+         * other navigation leg. The next task turn will re-enter this method and continue from the
+         * current map/state instead of hiding a long route chain inside NavigationService.
+         */
+        NavigationResult changAnResult = navigateToMap(request.toBuilder()
                 .targetMapName(MAP_CHANG_AN)
                 .source(request.getSource() + ":viaChangAn")
-                .build()).success()) {
-            log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
-            return false;
+                .build());
+        if (changAnResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+            return changAnResult;
         }
-        checkpointTask();
+        if (!changAnResult.success()) {
+            log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
+            return NavigationResult.mapNotReached("Ling Shou Village route failed before Zhang Wen");
+        }
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
-        if (!navigateInCurrentMap(ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y).success()) {
+        NavigationResult zhangWenApproachResult = navigateInCurrentMap(request.toBuilder()
+                .targetX(ZHANG_WEN_APPROACH_X)
+                .targetY(ZHANG_WEN_APPROACH_Y)
+                .source(request.getSource() + ":zhangWenApproach")
+                .build());
+        if (zhangWenApproachResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+            return zhangWenApproachResult;
+        }
+        if (!zhangWenApproachResult.success()) {
             log.warn("Ling Shou Village route failed: unable to approach Zhang Wen target=({}, {})",
                     ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y);
-            return false;
+            return NavigationResult.pointNotReached("Ling Shou Village route failed near Zhang Wen");
         }
-        checkpointTask();
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
         boolean npcClicked = npcClickService.clickNpcSmart(NpcClickRequest.fixed(
                 me, MAP_CHANG_AN, ZHANG_WEN_NPC_X, ZHANG_WEN_NPC_Y, NPC_ZHANG_WEN, null));
         if (!npcClicked) {
             log.warn("Ling Shou Village route Zhang Wen click not verified, checking dialog anyway");
         }
-        checkpointTask();
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
         DialogHandleResult dialogResult = dialogService.handleDialog(
                 DialogHandleRequest.clickKeyword("navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false));
         if (dialogResult != DialogHandleResult.OPTION_KEYWORD_CLICKED) {
             log.warn("Ling Shou Village route transfer option not handled: result={}", dialogResult);
-            return false;
+            return NavigationResult.mapNotReached("Ling Shou Village transfer option not handled");
         }
 
         boolean arrived = gameStateUtil.confirmCurrentMap(
@@ -503,7 +536,9 @@ public class NavigationService {
                 LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS,
                 "navigateToLingShouVillage");
         log.info("Ling Shou Village route confirm result={}", arrived);
-        return arrived;
+        return arrived
+                ? NavigationResult.arrived("Ling Shou Village reached through Zhang Wen")
+                : NavigationResult.mapNotReached("Ling Shou Village route confirm failed");
     }
 
     // ========================
@@ -618,25 +653,18 @@ public class NavigationService {
             log.warn("navigation map search: map result capture failed");
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
-        if (!verifyMapRouteDestinationBeforeClick(mapResultImagePath, expectedDestinationName)) {
+        GameTextLineOcrService.WorldMapRouteDestinationResult destinationResult =
+                gameTextLineOcrService.verifyWorldMapRouteDestination(mapResultImagePath, expectedDestinationName);
+        if (!destinationResult.allowClick()) {
+            log.warn("navigation map search: destination mismatch before route click, will retype target expected={} actual={} yellow={}",
+                    expectedDestinationName, destinationResult.rawActual(), destinationResult.yellowImagePath());
             return WorldMapDestinationClickResult.WRONG_DESTINATION;
         }
-        String routeOcrImagePath = preprocessMapRouteResultForCoordinateOcr(mapResultImagePath);
 
-        /*
-         * Route-result OCR is the expensive part of the world-map search path. Keep a dedicated
-         * timing log here so delays after scrolling can be separated from scroll/input latency.
-         */
-        long routeOcrStartedAt = System.currentTimeMillis();
-        Point relativeCenter = ocr.findLastCoordinateLink(routeOcrImagePath);
-        boolean usedGreenPreprocessedImage = !routeOcrImagePath.equals(mapResultImagePath);
-        if (relativeCenter == null && usedGreenPreprocessedImage) {
-            log.info("navigation map search: green route OCR missed, fallback raw image={}", mapResultImagePath);
-            relativeCenter = ocr.findLastCoordinateLink(mapResultImagePath);
-            routeOcrImagePath = mapResultImagePath;
-        }
-        log.info("navigation map search: route coordinate OCR elapsedMs={} found={} image={}",
-                System.currentTimeMillis() - routeOcrStartedAt, relativeCenter != null, routeOcrImagePath);
+        GameTextLineOcrService.WorldMapRouteCoordinateResult coordinateResult =
+                gameTextLineOcrService.findLastWorldMapRouteCoordinate(mapResultImagePath);
+        Point relativeCenter = coordinateResult.relativeCenter();
+        String routeOcrImagePath = coordinateResult.ocrImagePath();
         if (relativeCenter == null) {
             log.warn("navigation route scan found no coordinate link");
             return WorldMapDestinationClickResult.NOT_FOUND;
@@ -668,201 +696,6 @@ public class NavigationService {
             gameStateUtil.recordMovementIntent(description);
         }
         return submitted ? WorldMapDestinationClickResult.CLICKED : WorldMapDestinationClickResult.NOT_FOUND;
-    }
-
-    /**
-     * Confirm the route-result destination before clicking the final green coordinate.
-     *
-     * <p>The route result screenshot contains yellow map names on the left and green clickable
-     * coordinates on the right. If OCR can read the final yellow map name and it does not match the
-     * requested destination, this method stops the click so the caller can close the stale search
-     * input and the navigation retry path can type the destination again. If yellow OCR is empty,
-     * the method deliberately allows the old green-coordinate behavior to continue.</p>
-     *
-     * @param rawImagePath window-scoped route-result screenshot path.
-     * @param expectedDestinationName map name originally typed into the world-map search box; null
-     *                                or blank disables this guard for callers that only reuse an
-     *                                already visible route result.
-     * @return true when clicking may continue; false only for a clear yellow-destination mismatch.
-     */
-    private boolean verifyMapRouteDestinationBeforeClick(String rawImagePath, String expectedDestinationName) {
-        if (expectedDestinationName == null || expectedDestinationName.isBlank()) {
-            return true;
-        }
-        String yellowPath = preprocessMapRouteDestinationForOcr(rawImagePath);
-        if (yellowPath.equals(rawImagePath)) {
-            log.info("navigation map search: destination guard skipped, yellow preprocessing unavailable raw={}",
-                    rawImagePath);
-            return true;
-        }
-
-        long startedAt = System.currentTimeMillis();
-        String lastYellowName = findLastYellowRouteDestination(yellowPath);
-        String expected = normalizeRouteDestinationName(expectedDestinationName);
-        String actual = normalizeRouteDestinationName(lastYellowName);
-        boolean matched = !actual.isBlank() && actual.equals(expected);
-        log.info("navigation map search: destination guard elapsedMs={} expected={} actual={} rawActual={} matched={} yellow={}",
-                System.currentTimeMillis() - startedAt, expected, actual, lastYellowName, matched, yellowPath);
-        if (actual.isBlank()) {
-            return true;
-        }
-        if (!matched) {
-            log.warn("navigation map search: destination mismatch before route click, will retype target expected={} actual={} yellow={}",
-                    expectedDestinationName, lastYellowName, yellowPath);
-        }
-        return matched;
-    }
-
-    /**
-     * Build the yellow-map-name OCR image from the same route-result screenshot used for green
-     * coordinate detection.
-     *
-     * @param rawImagePath filesystem path to the current route-result screenshot.
-     * @return yellow-washed image path, or the raw path when preprocessing fails.
-     */
-    private String preprocessMapRouteDestinationForOcr(String rawImagePath) {
-        Path rawPath = Path.of(rawImagePath);
-        String rawFileName = rawPath.getFileName().toString();
-        String yellowFileName = rawFileName.endsWith(".png")
-                ? rawFileName.substring(0, rawFileName.length() - ".png".length()) + "_yellow.png"
-                : rawFileName + "_yellow.png";
-        Path yellowPath = rawPath.resolveSibling(yellowFileName);
-        try {
-            ImagePreprocessor.washYellowText(rawImagePath, yellowPath.toString());
-            if (Files.exists(yellowPath)) {
-                log.info("navigation map search: route destination yellow preprocessing raw={} yellow={}",
-                        rawImagePath, yellowPath);
-                return yellowPath.toString();
-            }
-            log.warn("navigation map search: route destination yellow preprocessing produced no file raw={}", rawImagePath);
-        } catch (Exception e) {
-            log.warn("navigation map search: route destination yellow preprocessing failed raw={} reason={}",
-                    rawImagePath, e.getMessage(), e);
-        }
-        return rawImagePath;
-    }
-
-    /**
-     * Read the bottom-most yellow route map name from a washed route-result image.
-     *
-     * @param yellowImagePath yellow-washed route-result image path. OCR boxes are image-local and
-     *                        do not need coordinate translation because only text order is used.
-     * @return final yellow route name, or an empty string when local OCR finds no usable text.
-     */
-    private String findLastYellowRouteDestination(String yellowImagePath) {
-        List<OcrWordResult> words = ocr.getAllTextResultsLocalOnly(yellowImagePath);
-        OcrWordResult last = null;
-        for (OcrWordResult word : words) {
-            if (word == null || word.getText() == null || word.getText().isBlank()) {
-                continue;
-            }
-            if (last == null || word.getTop() + word.getHeight() > last.getTop() + last.getHeight()) {
-                last = word;
-            }
-        }
-        String value = findLastYellowRouteDestinationLine(words);
-        if (value.isBlank() && last != null) {
-            value = last.getText();
-        }
-        log.info("navigation map search: last yellow destination OCR words={} last={}",
-                formatRouteOcrWords(words), value);
-        return value;
-    }
-
-    private String findLastYellowRouteDestinationLine(List<OcrWordResult> words) {
-        List<OcrWordResult> usable = new ArrayList<>();
-        for (OcrWordResult word : words) {
-            if (word == null || word.getText() == null || word.getText().isBlank()) {
-                continue;
-            }
-            usable.add(word);
-        }
-        if (usable.isEmpty()) {
-            return "";
-        }
-
-        OcrWordResult bottom = usable.get(0);
-        for (OcrWordResult word : usable) {
-            if (centerY(word) > centerY(bottom)) {
-                bottom = word;
-            }
-        }
-
-        int bottomCenterY = centerY(bottom);
-        int rowTolerance = Math.max(8, bottom.getHeight());
-        List<OcrWordResult> bottomLine = new ArrayList<>();
-        for (OcrWordResult word : usable) {
-            if (Math.abs(centerY(word) - bottomCenterY) <= rowTolerance) {
-                bottomLine.add(word);
-            }
-        }
-        bottomLine.sort((a, b) -> Integer.compare(a.getLeft(), b.getLeft()));
-
-        StringBuilder builder = new StringBuilder();
-        for (OcrWordResult word : bottomLine) {
-            builder.append(word.getText());
-        }
-        return builder.toString();
-    }
-
-    private int centerY(OcrWordResult word) {
-        return word.getTop() + Math.max(1, word.getHeight()) / 2;
-    }
-
-    private String formatRouteOcrWords(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return "[]";
-        }
-        return words.stream()
-                .map(word -> word == null ? "null" : word.getText() + "@("
-                        + word.getLeft() + "," + word.getTop() + ","
-                        + word.getWidth() + "x" + word.getHeight() + ")")
-                .toList()
-                .toString();
-    }
-
-    private String normalizeRouteDestinationName(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replaceAll("[^\\u4E00-\\u9FFFA-Za-z0-9]+", "").trim();
-    }
-
-    /**
-     * Build the OCR source image for the final route-coordinate click.
-     *
-     * <p>The world-map route result mixes bright-green clickable coordinates with white explanatory
-     * text, panel texture, scrollbars, and borders. For this specific navigation step we care only
-     * about the green coordinate/link text, so the raw capture is normalized into a same-sized
-     * black/white image before OCR. Keeping the same dimensions preserves the OCR point coordinate
-     * space: the returned point is still local to {@code rawImagePath}'s map-result rectangle.</p>
-     *
-     * @param rawImagePath filesystem path to the freshly captured route-result image. The image is
-     *                     window-scoped and owned by the current navigation attempt.
-     * @return filesystem path passed to OCR. Normally this is {@code rawImagePath + "_green.png"};
-     * when preprocessing fails or cannot write the debug image, the raw path is returned so
-     * navigation can still use the old OCR behavior.
-     */
-    private String preprocessMapRouteResultForCoordinateOcr(String rawImagePath) {
-        Path rawPath = Path.of(rawImagePath);
-        String rawFileName = rawPath.getFileName().toString();
-        String greenFileName = rawFileName.endsWith(".png")
-                ? rawFileName.substring(0, rawFileName.length() - ".png".length()) + "_green.png"
-                : rawFileName + "_green.png";
-        Path greenPath = rawPath.resolveSibling(greenFileName);
-        try {
-            ImagePreprocessor.washGreenTextToBlackAndWhite(rawImagePath, greenPath.toString());
-            if (Files.exists(greenPath)) {
-                log.info("navigation map search: route OCR green preprocessing raw={} green={}",
-                        rawImagePath, greenPath);
-                return greenPath.toString();
-            }
-            log.warn("navigation map search: route OCR green preprocessing produced no file raw={}", rawImagePath);
-        } catch (Exception e) {
-            log.warn("navigation map search: route OCR green preprocessing failed raw={} reason={}",
-                    rawImagePath, e.getMessage(), e);
-        }
-        return rawImagePath;
     }
 
     /**
@@ -1060,13 +893,10 @@ public class NavigationService {
     private MiniMapPathingAttemptResult confirmMiniMapPathingStarted(String source) {
         long deadline = System.currentTimeMillis() + MINI_MAP_PATHING_CONFIRM_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
-            checkpointTask();
-            if (Thread.currentThread().isInterrupted()) {
-                return MiniMapPathingAttemptResult.INCONCLUSIVE;
-            }
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
             GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
             if (movementState == GameStateUtil.MovementState.MOVING
                     || movementState == GameStateUtil.MovementState.MAYBE_MOVING) {
                 log.info("mini-map pathing confirmation: movement detected source={} state={}",
@@ -1078,7 +908,7 @@ public class NavigationService {
             if (!TaskSleep.sleep(MINI_MAP_PATHING_CONFIRM_POLL_MS)) {
                 return MiniMapPathingAttemptResult.INCONCLUSIVE;
             }
-            checkpointTask();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
         }
         return MiniMapPathingAttemptResult.NO_PATHING;
     }
@@ -1091,10 +921,6 @@ public class NavigationService {
         return state == GameStateUtil.MovementState.MOVING
                 || state == GameStateUtil.MovementState.PATHING_ACTIVE
                 || state == GameStateUtil.MovementState.MAYBE_MOVING;
-    }
-
-    private void checkpointTask() {
-        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
     }
 
     private NavigationRuntimeState state() {
