@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.npc;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.model.PlayerCharacter;
 
 /**
@@ -21,15 +27,21 @@ import com.bot.dhxy.model.PlayerCharacter;
  *                      static NPC table. This flag is retained for future roaming-specific strategy
  *                      selection; it does not currently skip coordinate-formula clicking.
  */
-public record NpcClickRequest(PlayerCharacter player,
-                              String mapName,
-                              int mapX,
-                              int mapY,
-                              String npcName,
-                              int tuneX,
-                              int tuneY,
-                              String expectedDialogTemplatePath,
-                              boolean roamingTarget) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class NpcClickRequest {
+    PlayerCharacter player;
+    String mapName;
+    int mapX;
+    int mapY;
+    String npcName;
+    int tuneX;
+    int tuneY;
+    String expectedDialogTemplatePath;
+    boolean roamingTarget;
+
     /**
      * Build a fixed-coordinate target request. OCR regions are resolved later by vision memory.
      */
@@ -70,4 +82,5 @@ public record NpcClickRequest(PlayerCharacter player,
         return new NpcClickRequest(player, mapName, mapX, mapY, npcName,
                 0, 0, expectedDialogTemplatePath, true);
     }
+
 }

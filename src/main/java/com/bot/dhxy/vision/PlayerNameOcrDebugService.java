@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 
 import com.bot.dhxy.model.ocr.LocationInfo;
@@ -648,7 +654,33 @@ public class PlayerNameOcrDebugService {
         return point == null ? "null" : point.x + "," + point.y;
     }
 
-    public record ScanRect(int x, int y, int width, int height) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class ScanRect {
+
+
+        int x;
+
+
+        int y;
+
+
+        int width;
+
+
+        int height;
+
+
     }
 
     private enum TextColorMode {
@@ -656,7 +688,35 @@ public class PlayerNameOcrDebugService {
         YELLOW
     }
 
-    private record ComponentBox(int minX, int minY, int maxX, int maxY, List<Point> points) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class ComponentBox {
+
+
+        int minX;
+
+
+        int minY;
+
+
+        int maxX;
+
+
+        int maxY;
+
+
+        List<Point> points;
+
         int centerX() {
             return (minX + maxX) / 2;
         }
@@ -676,6 +736,9 @@ public class PlayerNameOcrDebugService {
         int pixelCount() {
             return points == null ? 0 : points.size();
         }
+    
+
+
     }
 
     private static final class TextLineBox {
@@ -746,21 +809,76 @@ public class PlayerNameOcrDebugService {
         }
     }
 
-    private record PackedLineBox(int sourceX,
-                                 int sourceY,
-                                 int sourceWidth,
-                                 int sourceHeight,
-                                 int packedX,
-                                 int packedY,
-                                 int packedWidth,
-                                 int packedHeight) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class PackedLineBox {
+
+
+        int sourceX;
+
+
+        int sourceY;
+
+
+        int sourceWidth;
+
+
+        int sourceHeight;
+
+
+        int packedX;
+
+
+        int packedY;
+
+
+        int packedWidth;
+
+
+        int packedHeight;
+
+
     }
 
-    public record OcrVariant(String path,
-                             int blackPixelCount,
-                             int wordCount,
-                             String wordsSummary,
-                             List<OcrWordResult> words) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class OcrVariant {
+
+
+        String path;
+
+
+        int blackPixelCount;
+
+
+        int wordCount;
+
+
+        String wordsSummary;
+
+
+        List<OcrWordResult> words;
+
         public static OcrVariant empty() {
             return new OcrVariant(null, 0, 0, "-", List.of());
         }
@@ -786,32 +904,97 @@ public class PlayerNameOcrDebugService {
                     + ", words=" + wordCount
                     + ", text=" + wordsSummary;
         }
+    
+
+
     }
 
-    public record DebugResult(boolean success,
-                              String windowId,
-                              String expectedName,
-                              String rawPath,
-                              String washedPath,
-                              String yellowWashedPath,
-                              String purpleClosedPath,
-                              String yellowClosedPath,
-                              ScanRect scanRect,
-                              int wordCount,
-                              String wordsSummary,
-                              int yellowPixelCount,
-                              int yellowWordCount,
-                              String yellowWordsSummary,
-                              int purpleClosedPixelCount,
-                              int yellowClosedPixelCount,
-                              int yellowClosedWordCount,
-                              String yellowClosedWordsSummary,
-                              OcrVariant purpleEnhanced,
-                              OcrVariant yellowEnhanced,
-                              Point anchorRelative,
-                              Point anchorAbsolute,
-                              boolean mouseMoved,
-                              String message) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class DebugResult {
+
+
+        boolean success;
+
+
+        String windowId;
+
+
+        String expectedName;
+
+
+        String rawPath;
+
+
+        String washedPath;
+
+
+        String yellowWashedPath;
+
+
+        String purpleClosedPath;
+
+
+        String yellowClosedPath;
+
+
+        ScanRect scanRect;
+
+
+        int wordCount;
+
+
+        String wordsSummary;
+
+
+        int yellowPixelCount;
+
+
+        int yellowWordCount;
+
+
+        String yellowWordsSummary;
+
+
+        int purpleClosedPixelCount;
+
+
+        int yellowClosedPixelCount;
+
+
+        int yellowClosedWordCount;
+
+
+        String yellowClosedWordsSummary;
+
+
+        OcrVariant purpleEnhanced;
+
+
+        OcrVariant yellowEnhanced;
+
+
+        Point anchorRelative;
+
+
+        Point anchorAbsolute;
+
+
+        boolean mouseMoved;
+
+
+        String message;
+
 
         public static DebugResult failed(String windowId, String expectedName, String message) {
             return of(false, windowId, expectedName, null, null, null, null, null, null,
@@ -868,5 +1051,8 @@ public class PlayerNameOcrDebugService {
                     + " | purpleSegmentedEnhanced=" + purpleEnhanced.toDetailText()
                     + " | yellowSegmentedEnhanced=" + yellowEnhanced.toDetailText();
         }
+    
+
+
     }
 }

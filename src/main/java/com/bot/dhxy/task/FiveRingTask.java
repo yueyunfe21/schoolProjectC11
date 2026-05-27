@@ -10,6 +10,7 @@ import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.service.*;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.task.startup.TaskStartupCheckResult;
@@ -373,7 +374,7 @@ public class FiveRingTask extends BaseTaskTemplate {
                         .targetY(NPC_COOR_Y)
                         .targetName(TARGET_NPC_NAME)
                         .source("wuhuan:acceptNpc:navigate")
-                        .build())) {
+                        .build()).success()) {
                     checkpoint(executionContext);
                     if (tryAcceptInitialTaskFromCurrentScreen(executionContext, "setup:navigate-failed")) {
                         return TaskStepResult.SUCCESS;
@@ -894,8 +895,6 @@ public class FiveRingTask extends BaseTaskTemplate {
     }
 
     private void checkpoint(TaskExecutionContext executionContext) {
-        if (executionContext != null) {
-            executionContext.throwIfStopRequested();
-        }
+        TaskCheckpoint.throwIfStopRequested(executionContext, "Five-ring task interrupted");
     }
 }

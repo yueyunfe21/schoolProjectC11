@@ -1,5 +1,11 @@
 package com.bot.dhxy.task;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.MapCoordinate;
@@ -16,6 +22,7 @@ import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.BagService;
 import com.bot.dhxy.service.AutoCombatService;
@@ -62,14 +69,14 @@ import org.springframework.stereotype.Component;
 public class XiuluoTask implements GameTask {
     private static final Logger log = LoggerFactory.getLogger(XiuluoTask.class);
     private static final String TASK_CODE = "xiuluo";
-    private static final String TASK_NAME = "\u4fee\u7f57";
-    private static final String START_MAP_NAME = "\u7075\u517d\u6751";
-    private static final String ACCEPT_NPC_NAME = "\u7075\u517d\u6751\u4f7f\u8005";
+    private static final String TASK_NAME = "修罗";
+    private static final String START_MAP_NAME = "灵兽村";
+    private static final String ACCEPT_NPC_NAME = "灵兽村使者";
     private static final int ACCEPT_NPC_X = 112;
     private static final int ACCEPT_NPC_Y = 93;
     private static final int EXIT_POINT_X = 11;
     private static final int EXIT_POINT_Y = 8;
-    private static final String XIULUO_TARGET_KEYWORD = "\u4fee\u7f57";
+    private static final String XIULUO_TARGET_KEYWORD = "修罗";
     private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo_accept_xianlaiwu.png";
     private static final String UNDER_FIVE_CONFIRM_TEMPLATE = "images/template/dialog/xiuluo_underfive_confirm.png";
     private static final String UNDER_FIVE_WAIT_TEMPLATE = "images/template/dialog/xiuluo_underfive_wait.png";
@@ -113,7 +120,7 @@ public class XiuluoTask implements GameTask {
      */
     @Override
     public String getTaskName() {
-        return "\u4fee\u7f57";
+        return "修罗";
     }
 
     /**
@@ -324,7 +331,7 @@ public class XiuluoTask implements GameTask {
             if (alreadyInTargetMap) {
                 log.info("[xiuluo] already in target map, skip world map pathing: targetMap={}", objective.mapName());
             }
-            if (!this.navigationService.navigateToMap(MapNavigationRequest.toMap(objective.mapName()))) {
+            if (!this.navigationService.navigateToMap(MapNavigationRequest.toMap(objective.mapName())).success()) {
                 log.warn("[xiuluo] map navigation to objective failed: objective={}", (Object)objective);
                 return this.interrupted() ? TaskRunResult.STOPPED : TaskRunResult.FAILED;
             }
@@ -411,7 +418,7 @@ public class XiuluoTask implements GameTask {
                 objective.mapName(), objective.x(), objective.y());
         log.info("[xiuluo] navigate to objective approach coordinate: source={} objective=({}, {}) approach=({}, {}) map={}",
                 source, objective.x(), objective.y(), approach.getX(), approach.getY(), objective.mapName());
-        if (this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY())) {
+        if (this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY()).success()) {
             return true;
         }
 
@@ -425,7 +432,7 @@ public class XiuluoTask implements GameTask {
         this.uiCleanerService.cleanUpAll();
         TaskSleep.sleepOrStop(context, 300L, "Xiuluo task interrupted");
         this.checkpoint(context);
-        return this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY());
+        return this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY()).success();
     }
 
     /**
@@ -634,7 +641,7 @@ public class XiuluoTask implements GameTask {
                     .targetName(ACCEPT_NPC_NAME)
                     .keepTaskTurnUntilHandled(true)
                     .source("xiuluo:acceptNpc:navigate")
-                    .build())) {
+                    .build()).success()) {
                 log.warn("[xiuluo] failed to navigate to accept NPC attempt={}", (Object)attempt);
                 AcceptDialogProbeResult visibleAfterNavigationFailure = this.tryGetObjectiveFromVisibleXiuluoDialog(context, "after-navigation-failed-attempt" + attempt);
                 if (visibleAfterNavigationFailure.state() == AcceptDialogProbeState.BLOCKING_DIALOG_UNHANDLED) {
@@ -1099,7 +1106,7 @@ public class XiuluoTask implements GameTask {
     }
 
     private void checkpoint(TaskExecutionContext context) {
-        TaskSleep.throwIfStopRequested(context, "Xiuluo task interrupted");
+        TaskCheckpoint.throwIfStopRequested(context, "Xiuluo task interrupted");
     }
 
     private boolean interrupted() {
@@ -1148,10 +1155,46 @@ public class XiuluoTask implements GameTask {
         this.coordinateHelper = coordinateHelper;
     }
 
-    private record XiuluoObjective(String mapName, int x, int y, String rawText) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class XiuluoObjective {
+
+        String mapName;
+
+        int x;
+
+        int y;
+
+        String rawText;
+
     }
 
-    private record XiuluoHotStartResult(XiuluoHotStartState state, XiuluoObjective objective) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class XiuluoHotStartResult {
+
+
+        XiuluoHotStartState state;
+
+
+        XiuluoObjective objective;
+
         private static XiuluoHotStartResult none() {
             return new XiuluoHotStartResult(XiuluoHotStartState.NONE, null);
         }
@@ -1175,6 +1218,9 @@ public class XiuluoTask implements GameTask {
         private static XiuluoHotStartResult stopped() {
             return new XiuluoHotStartResult(XiuluoHotStartState.STOPPED, null);
         }
+    
+
+
     }
 
     private static enum XiuluoHotStartState {
@@ -1194,7 +1240,20 @@ public class XiuluoTask implements GameTask {
      *              {@code BLOCKING_DIALOG_UNHANDLED} means a dialog is visible but not safely handled.
      * @param objective parsed objective when {@code state} is {@code OBJECTIVE_READY}; otherwise null.
      */
-    private record AcceptDialogProbeResult(AcceptDialogProbeState state, XiuluoObjective objective) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class AcceptDialogProbeResult {
+
+        AcceptDialogProbeState state;
+
+        XiuluoObjective objective;
+
         private static AcceptDialogProbeResult noDialog() {
             return new AcceptDialogProbeResult(AcceptDialogProbeState.NO_DIALOG, null);
         }
@@ -1206,6 +1265,8 @@ public class XiuluoTask implements GameTask {
         private static AcceptDialogProbeResult blockingDialogUnhandled() {
             return new AcceptDialogProbeResult(AcceptDialogProbeState.BLOCKING_DIALOG_UNHANDLED, null);
         }
+    
+
     }
 
     /**
@@ -1217,6 +1278,26 @@ public class XiuluoTask implements GameTask {
         BLOCKING_DIALOG_UNHANDLED
     }
 
-    private record UnderFivePromptResult(boolean declined, XiuluoObjective objective) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class UnderFivePromptResult {
+
+
+        boolean declined;
+
+
+        XiuluoObjective objective;
+
+
     }
 }

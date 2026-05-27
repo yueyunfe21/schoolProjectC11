@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Shared OCR text matching helpers for short in-game names.
  *
@@ -196,11 +202,16 @@ public final class OcrTextMatcher {
      * @param normalizedTarget normalized expected name.
      * @param normalizedText normalized OCR text.
      */
-    public record MatchResult(boolean hit,
-                              int score,
-                              int editDistance,
-                              int longestCommonSubstring,
-                              String normalizedTarget,
-                              String normalizedText) {
+    @Value
+    @Builder
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+    @Accessors(fluent = true)
+    public static class MatchResult {
+        boolean hit;
+        int score;
+        int editDistance;
+        int longestCommonSubstring;
+        String normalizedTarget;
+        String normalizedText;
     }
 }

@@ -8,9 +8,9 @@ public enum TaskType {
     DEBUG_COORDINATE("debug_coordinate", "坐标调试"),
     DEBUG_MAP_CALIBRATOR("debug_map_calibrator", "地图校准"),
     DEBUG_TEAM_ROLE("debug_team_role", "队伍识别测试"),
-    DEBUG_XIULUO_STORY_OBJECTIVE("debug_xiuluo_story_objective", "\u4fee\u7f57Story\u76ee\u6807\u6d4b\u8bd5"),
-    DEBUG_XIULUO_TASK_PANEL_OBJECTIVE("debug_xiuluo_task_panel_objective", "\u4fee\u7f57\u4efb\u52a1\u680f\u76ee\u6807\u6d4b\u8bd5"),
-    DEBUG_XIULUO_MOCK_OBJECTIVE("debug_xiuluo_mock_objective", "\u4fee\u7f57\u6a21\u62df\u76ee\u6807\u5bfc\u822a\u6d4b\u8bd5"),
+    DEBUG_XIULUO_STORY_OBJECTIVE("debug_xiuluo_story_objective", "修罗Story目标测试"),
+    DEBUG_XIULUO_TASK_PANEL_OBJECTIVE("debug_xiuluo_task_panel_objective", "修罗任务栏目标测试"),
+    DEBUG_XIULUO_MOCK_OBJECTIVE("debug_xiuluo_mock_objective", "修罗模拟目标导航测试"),
     UNKNOWN("unknown", "未知任务");
 
     private final String code;

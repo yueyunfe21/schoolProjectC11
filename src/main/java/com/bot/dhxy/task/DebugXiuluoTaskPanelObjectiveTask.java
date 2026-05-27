@@ -1,5 +1,11 @@
 package com.bot.dhxy.task;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.TextRecognizer;
@@ -41,7 +47,7 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
 
     @Override
     public String getTaskName() {
-        return "\u4fee\u7f57\u4efb\u52a1\u680f\u76ee\u6807\u6d4b\u8bd5";
+        return "修罗任务栏目标测试";
     }
 
     @Override
@@ -148,7 +154,35 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
         }
     }
 
-    private record OcrProbeResult(boolean hit, String mapCandidate, String x, String y, String raw) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class OcrProbeResult {
+
+
+        boolean hit;
+
+
+        String mapCandidate;
+
+
+        String x;
+
+
+        String y;
+
+
+        String raw;
+
         private static OcrProbeResult hit(String mapCandidate, String x, String y, String raw) {
             return new OcrProbeResult(true, mapCandidate, x, y, raw);
         }
@@ -163,5 +197,8 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
             }
             return "OK mapCandidate=" + mapCandidate + " coord=(" + x + "," + y + ")";
         }
+    
+
+
     }
 }

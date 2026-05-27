@@ -1,5 +1,11 @@
 package com.bot.dhxy.window.diagnostics;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.runner.stop.TaskSleep;
 
 import com.bot.dhxy.driver.BoundWindowCaptureService;
@@ -302,18 +308,53 @@ public class WindowMessageInputExperimentService {
         boolean EnumChildWindows(WinDef.HWND hwndParent, WinUser.WNDENUMPROC enumFunc, Pointer data);
     }
 
-    private record ChildWindowInfo(WinDef.HWND hwnd,
-                                   String handleText,
-                                   String className,
-                                   String title,
-                                   int left,
-                                   int top,
-                                   int right,
-                                   int bottom,
-                                   boolean visible) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class ChildWindowInfo {
+
+
+        WinDef.HWND hwnd;
+
+
+        String handleText;
+
+
+        String className;
+
+
+        String title;
+
+
+        int left;
+
+
+        int top;
+
+
+        int right;
+
+
+        int bottom;
+
+
+        boolean visible;
+
         private int area() {
             return Math.max(0, right - left) * Math.max(0, bottom - top);
         }
+    
+
+
     }
 
     public static class WindowMessageInputExperimentResult {

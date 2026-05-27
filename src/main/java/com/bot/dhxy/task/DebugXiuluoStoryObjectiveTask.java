@@ -30,7 +30,7 @@ public class DebugXiuluoStoryObjectiveTask implements GameTask {
 
     @Override
     public String getTaskName() {
-        return "\u4fee\u7f57Story\u76ee\u6807\u6d4b\u8bd5";
+        return "修罗Story目标测试";
     }
 
     @Override

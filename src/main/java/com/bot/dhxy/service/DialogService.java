@@ -1,5 +1,11 @@
 package com.bot.dhxy.service;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
@@ -853,7 +859,36 @@ public class DialogService {
         return new GreenTextBand(minX, startY, maxX, endY, greenPixels);
     }
 
-    private record GreenTextBand(int minX, int minY, int maxX, int maxY, int pixels) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class GreenTextBand {
+
+
+        int minX;
+
+
+        int minY;
+
+
+        int maxX;
+
+
+        int maxY;
+
+
+        int pixels;
+
+
     }
 
     private boolean doFallbackClick(int[] rect, String reason) {

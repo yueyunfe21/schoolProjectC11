@@ -14,12 +14,13 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.navigation.MapNavigationRequest;
+import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NpcNavigationRequest;
 import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
-import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -80,9 +81,9 @@ public class NavigationService {
     private static final long MINI_MAP_PATHING_CONFIRM_POLL_MS = 250L;
     private static final int MAP_NAVIGATION_RECLICK_STUCK_SCANS = 2;
     private static final int MAP_NAVIGATION_REOPEN_STUCK_SCANS = 3;
-    private static final String MAP_LING_SHOU_VILLAGE = "\u7075\u517d\u6751";
-    private static final String MAP_CHANG_AN = "\u957f\u5b89";
-    private static final String NPC_ZHANG_WEN = "\u5f20\u95fb";
+    private static final String MAP_LING_SHOU_VILLAGE = "灵兽村";
+    private static final String MAP_CHANG_AN = "长安";
+    private static final String NPC_ZHANG_WEN = "张闻";
     private static final int ZHANG_WEN_APPROACH_X = 219;
     private static final int ZHANG_WEN_APPROACH_Y = 100;
     private static final int ZHANG_WEN_NPC_X = 224;
@@ -105,7 +106,6 @@ public class NavigationService {
     private final PlayerStateService playerStateService;
     private final BattleRadarService battleRadarService;
     private final WindowTaskContextHolder windowTaskContextHolder;
-    private final TaskTurnCoordinator taskTurnCoordinator;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
 
@@ -120,50 +120,46 @@ public class NavigationService {
      *
      * @param request NPC navigation request. Coordinates are logical in-game map coordinates; nullable
      *                fields such as target name/source are used only for diagnostics.
-     * @return true when map navigation and current-map coordinate navigation complete; false when
-     *         input fails, transforms are missing, the task stops, or timeout occurs.
+     * @return structured navigation result. ARRIVED means map navigation and current-map coordinate
+     *         navigation completed; other statuses tell task code whether to retry, yield, or fail.
      */
-    public boolean navigateToNPC(NpcNavigationRequest request) {
+    public NavigationResult navigateToNPC(NpcNavigationRequest request) {
         if (request == null) {
             log.warn("navigateToNPC skipped: request is null");
-            return false;
+            return NavigationResult.failed("request is null");
         }
         long latencyStart = LatencyMetrics.start();
-        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
-        boolean result = false;
+        NavigationResult result = NavigationResult.failed("not started");
         try {
             checkpointTask();
 
             // Step 1: only solve the cross-map route. This method must not hide map+coordinate as a new abstraction.
-            if (!navigateToMap(MapNavigationRequest.builder()
+            NavigationResult mapResult = navigateToMap(MapNavigationRequest.builder()
                     .targetMapName(request.getTargetMapName())
                     .keepTaskTurnUntilHandled(request.isKeepTaskTurnUntilHandled())
                     .source(request.getSource() + ":map")
-                    .build())) {
-                if (releaseTurnOnPathing) {
-                    taskTurnCoordinator.forceRelease("navigation:" + request.getSource() + ":map-failed");
-                }
-                return false;
+                    .build());
+            if (!mapResult.success()) {
+                result = mapResult;
+                return result;
             }
             checkpointTask();
 
             // Step 2: after the map is correct, click/path to the NPC's logical coordinate on that map.
-            boolean currentMapResult = navigateInCurrentMap(request.getTargetX(), request.getTargetY());
-            if (!currentMapResult) {
-                if (releaseTurnOnPathing) {
-                    taskTurnCoordinator.forceRelease("navigation:" + request.getSource() + ":current-map-failed");
-                }
-                return false;
+            NavigationResult currentMapResult = navigateInCurrentMap(request.getTargetX(), request.getTargetY());
+            if (!currentMapResult.success()) {
+                result = currentMapResult;
+                return result;
             }
             checkpointTask();
 
             // Step 3: NPC navigation never cleans dialogs here; the task layer owns the opened option/story dialog.
             log.info("skip arrival cleanup after NPC navigation; task layer will process any opened dialog");
-            result = true;
-            return true;
+            result = NavigationResult.arrived("npc coordinate reached");
+            return result;
         } finally {
             LatencyMetrics.info(log, "navigation.toNpc", latencyStart,
-                    "result=" + result + " source=" + request.getSource() + " target=" + request.getTargetMapName()
+                    "result=" + result.getStatus() + " source=" + request.getSource() + " target=" + request.getTargetMapName()
                             + "(" + request.getTargetX() + "," + request.getTargetY() + ")"
                             + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
         }
@@ -174,18 +170,18 @@ public class NavigationService {
      *
      * @param request map navigation request. The target map name is the game-visible map name used
      *                for route search and arrival confirmation.
-     * @return true when the game reaches the target map or already appears to be there.
+     * @return structured navigation result. ARRIVED means the game reaches the target map or already
+     *         appears to be there.
      */
-    public boolean navigateToMap(MapNavigationRequest request) {
+    public NavigationResult navigateToMap(MapNavigationRequest request) {
         if (request == null) {
             log.warn("navigateToMap skipped: request is null");
-            return false;
+            return NavigationResult.failed("request is null");
         }
         String targetMapName = request.getTargetMapName();
         String source = request.getSource();
-        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
         long latencyStart = LatencyMetrics.start();
-        boolean result = false;
+        NavigationResult result = NavigationResult.mapNotReached("not started");
         try {
             PlayerCharacter me = context.getMe();
             log.info("navigate to map: {} current={}", targetMapName, me.getCurrentMapName());
@@ -195,8 +191,8 @@ public class NavigationService {
              * and burning input queue time when no cross-map route is needed.
              */
             if (targetMapName.equals(me.getCurrentMapName())) {
-                result = true;
-                return true;
+                result = NavigationResult.arrived("already on target map");
+                return result;
             }
 
             /*
@@ -210,8 +206,8 @@ public class NavigationService {
                         targetMapName, 0L, "navigateToMap:blankCurrentMap");
                 log.info("navigate to map after sync: {} current={}", targetMapName, me.getCurrentMapName());
                 if (arrivedAfterSync) {
-                    result = true;
-                    return true;
+                    result = NavigationResult.arrived("target map confirmed after sync");
+                    return result;
                 }
             }
 
@@ -221,7 +217,10 @@ public class NavigationService {
              * NPC chain instead of falling through to a generic route search for the target map.
              */
             if (MAP_LING_SHOU_VILLAGE.equals(targetMapName)) {
-                result = navigateToLingShouVillageViaZhangWen(request);
+                boolean lingShouArrived = navigateToLingShouVillageViaZhangWen(request);
+                result = lingShouArrived
+                        ? NavigationResult.arrived("Ling Shou Village reached through Zhang Wen")
+                        : NavigationResult.mapNotReached("Ling Shou Village route failed");
                 return result;
             }
 
@@ -229,8 +228,7 @@ public class NavigationService {
              * First route submission: open the world map, search the target map, scroll to the bottom
              * result, and click the last route link. The called method owns the exclusive input section.
              */
-            ensureTaskTurn("navigateToMap:firstPathing");
-            if (!submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing)) {
+            if (!submitWorldMapSearchAndClickDestination(targetMapName)) {
                 log.warn("first navigate attempt failed, entering retry loop");
             }
 
@@ -242,7 +240,8 @@ public class NavigationService {
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 checkpointTask();
                 if (Thread.currentThread().isInterrupted()) {
-                    return false;
+                    result = NavigationResult.stopped("thread interrupted");
+                    return result;
                 }
 
                 /*
@@ -256,7 +255,8 @@ public class NavigationService {
                     log.info("navigate to map yielding while moving: target={} state={} sleepMs={}",
                             targetMapName, movementState, MOVING_NAVIGATION_YIELD_MS);
                     if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
-                        return false;
+                        result = NavigationResult.stopped("interrupted while waiting for map pathing");
+                        return result;
                     }
                     checkpointTask();
                     continue;
@@ -266,7 +266,6 @@ public class NavigationService {
                  * Stopped movement may be a route option dialog rather than a real failure. Handle the
                  * route dialog before paying for OCR or re-clicking the last search result.
                  */
-                ensureTaskTurn("navigateToMap:dialogOrRetry");
                 DialogHandleResult dialogResult = dialogService.handleDialog(
                         DialogHandleRequest.clickKeyword("navigation", targetMapName, true));
                 checkpointTask();
@@ -274,7 +273,8 @@ public class NavigationService {
                         || dialogResult == DialogHandleResult.FALLBACK_CLICKED) {
                     stuckCount = 0;
                     if (!TaskSleep.sleep(1500)) {
-                        return false;
+                        result = NavigationResult.stopped("interrupted after route dialog handling");
+                        return result;
                     }
                     checkpointTask();
                     continue;
@@ -289,8 +289,8 @@ public class NavigationService {
                 if (locationInfo != null) {
                     if (targetMapName.equals(locationInfo.mapName)) {
                         log.info("arrived map: {}", targetMapName);
-                        result = true;
-                        return true;
+                        result = NavigationResult.arrived("target map reached");
+                        return result;
                     }
                     /*
                      * Multi-hop world-map routes can briefly stop on intermediate maps such as
@@ -305,7 +305,8 @@ public class NavigationService {
                         lastObservedMapName = locationInfo.mapName;
                         stuckCount = 0;
                         if (!TaskSleep.sleep(1500)) {
-                            return false;
+                            result = NavigationResult.stopped("interrupted while waiting on intermediate map");
+                            return result;
                         }
                         checkpointTask();
                         continue;
@@ -327,27 +328,27 @@ public class NavigationService {
                     log.info("navigate to map non-target still frame, wait before retry: target={} current={} stuckScan={}/{}",
                             targetMapName, me.getCurrentMapName(), stuckCount, MAP_NAVIGATION_RECLICK_STUCK_SCANS);
                 } else if (stuckCount >= MAP_NAVIGATION_REOPEN_STUCK_SCANS) {
-                    ensureTaskTurn("navigateToMap:reopenPathing");
-                    if (submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing)) {
+                    if (submitWorldMapSearchAndClickDestination(targetMapName)) {
                         stuckCount = 0;
                     }
                 } else {
-                    ensureTaskTurn("navigateToMap:reclickPathing");
-                    retryWorldMapDestinationClick(targetMapName, releaseTurnOnPathing);
+                    retryWorldMapDestinationClick(targetMapName);
                 }
                 checkpointTask();
 
                 if (!TaskSleep.sleep(1500)) {
-                    return false;
+                    result = NavigationResult.stopped("interrupted while waiting before map retry");
+                    return result;
                 }
                 checkpointTask();
             }
 
             log.error("map navigation timeout");
-            return false;
+            result = NavigationResult.mapNotReached("map navigation timeout");
+            return result;
         } finally {
             LatencyMetrics.info(log, "navigation.toMap", latencyStart,
-                    "result=" + result + " source=" + source + " target=" + targetMapName
+                    "result=" + result.getStatus() + " source=" + source + " target=" + targetMapName
                             + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
         }
     }
@@ -357,12 +358,12 @@ public class NavigationService {
      *
      * @param targetX logical in-game X coordinate on the active map.
      * @param targetY logical in-game Y coordinate on the active map.
-     * @return true when the current window reaches the coordinate tolerance; false on stop, battle,
-     *         exhausted click candidates, or timeout.
+     * @return structured navigation result. ARRIVED means the current window reaches the coordinate
+     *         tolerance; POINT_NOT_REACHED means timeout or exhausted click candidates.
      */
-    public boolean navigateInCurrentMap(int targetX, int targetY) {
+    public NavigationResult navigateInCurrentMap(int targetX, int targetY) {
         long latencyStart = LatencyMetrics.start();
-        boolean result = false;
+        NavigationResult result = NavigationResult.pointNotReached("not started");
         try {
             String mapName = context.getMe().getCurrentMapName();
             log.info("navigate in map: {} target=({}, {})", mapName, targetX, targetY);
@@ -374,19 +375,21 @@ public class NavigationService {
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 checkpointTask();
                 if (Thread.currentThread().isInterrupted()) {
-                    return false;
+                    result = NavigationResult.stopped("thread interrupted");
+                    return result;
                 }
 
                 if (battleRadarService.checkAndSyncCombatState()) {
                     log.warn("navigate in current map interrupted by battle: target=({}, {})", targetX, targetY);
-                    return false;
+                    result = NavigationResult.interrupted("interrupted by battle");
+                    return result;
                 }
 
                 context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
 
                 if (syncAndCheckArrived(targetX, targetY, "navigateInCurrentMap:loop")) {
-                    result = true;
-                    return true;
+                    result = NavigationResult.arrived("target coordinate reached");
+                    return result;
                 }
 
                 GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
@@ -395,20 +398,20 @@ public class NavigationService {
                     log.info("navigate in current map yielding while moving: target=({}, {}) state={} sleepMs={}",
                             targetX, targetY, movementState, MOVING_NAVIGATION_YIELD_MS);
                     if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
-                        return false;
+                        result = NavigationResult.stopped("interrupted while waiting for map pathing");
+                        return result;
                     }
                     checkpointTask();
                     continue;
                 }
-
-                ensureTaskTurn("navigateInCurrentMap:activeCheck");
 
                 CoordinateHelper.MiniMapClickPoint clickPoint = coordinateHelper.resolveMiniMapClickPoint(
                         mapName, targetX, targetY, failedMiniMapClicks);
                 if (clickPoint == null) {
                     log.warn("navigate in current map exhausted mini-map click points: target=({}, {}) failedClicks={}",
                             targetX, targetY, failedMiniMapClicks);
-                    return false;
+                    result = NavigationResult.pointNotReached("exhausted mini-map click points");
+                    return result;
                 }
 
                 MiniMapPathingAttemptResult attemptResult = clickMiniMapPointAndConfirm(
@@ -423,24 +426,28 @@ public class NavigationService {
                     if (battleRadarService.checkAndSyncCombatState()) {
                         log.warn("navigate in current map mini-map confirmation was interrupted by battle; keep original click point: target=({}, {})",
                                 targetX, targetY);
-                        return false;
+                        result = NavigationResult.interrupted("mini-map click interrupted by battle");
+                        return result;
                     }
                     failedMiniMapClicks++;
                 } else {
-                    return false;
+                    result = NavigationResult.pointNotReached("mini-map click failed");
+                    return result;
                 }
 
                 if (!TaskSleep.sleep(500)) {
-                    return false;
+                    result = NavigationResult.stopped("interrupted while waiting before current-map retry");
+                    return result;
                 }
                 checkpointTask();
             }
 
             log.error("navigate timeout");
-            return false;
+            result = NavigationResult.pointNotReached("current-map navigation timeout");
+            return result;
         } finally {
             LatencyMetrics.info(log, "navigation.currentMap", latencyStart,
-                    "result=" + result + " target=(" + targetX + "," + targetY + ")");
+                    "result=" + result.getStatus() + " target=(" + targetX + "," + targetY + ")");
         }
     }
 
@@ -457,7 +464,6 @@ public class NavigationService {
      * composes the validated transfer chain.</p>
      */
     private boolean navigateToLingShouVillageViaZhangWen(MapNavigationRequest request) {
-        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
         PlayerCharacter me = context.getMe();
         log.info("navigate to Ling Shou Village through Zhang Wen: current={}", me.getCurrentMapName());
         checkpointTask();
@@ -465,20 +471,19 @@ public class NavigationService {
         if (!navigateToMap(request.toBuilder()
                 .targetMapName(MAP_CHANG_AN)
                 .source(request.getSource() + ":viaChangAn")
-                .build())) {
+                .build()).success()) {
             log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
             return false;
         }
         checkpointTask();
 
-        if (!navigateInCurrentMap(ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y)) {
+        if (!navigateInCurrentMap(ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y).success()) {
             log.warn("Ling Shou Village route failed: unable to approach Zhang Wen target=({}, {})",
                     ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y);
             return false;
         }
         checkpointTask();
 
-        ensureTaskTurn("navigateToLingShouVillage:zhangWen");
         boolean npcClicked = npcClickService.clickNpcSmart(NpcClickRequest.fixed(
                 me, MAP_CHANG_AN, ZHANG_WEN_NPC_X, ZHANG_WEN_NPC_Y, NPC_ZHANG_WEN, null));
         if (!npcClicked) {
@@ -486,7 +491,6 @@ public class NavigationService {
         }
         checkpointTask();
 
-        ensureTaskTurn("navigateToLingShouVillage:transferOption");
         DialogHandleResult dialogResult = dialogService.handleDialog(
                 DialogHandleRequest.clickKeyword("navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false));
         if (dialogResult != DialogHandleResult.OPTION_KEYWORD_CLICKED) {
@@ -506,8 +510,7 @@ public class NavigationService {
     // World-map search helpers
     // ========================
 
-    private boolean retryWorldMapDestinationClick(String targetMapName, boolean releaseTurnOnPathing) {
-        ensureTaskTurn("retryWorldMapDestinationClick");
+    private boolean retryWorldMapDestinationClick(String targetMapName) {
         NavigationRuntimeState state = state();
         if (state.lastAbsoluteLogicalX != DEFAULT_LOGICAL_COORDINATE
                 && state.lastAbsoluteLogicalY != DEFAULT_LOGICAL_COORDINATE) {
@@ -524,17 +527,13 @@ public class NavigationService {
                 gameStateUtil.recordMovementIntent("retryWorldMapDestinationClick");
                 return true;
             });
-            if (clicked && releaseTurnOnPathing) {
-                releaseTaskTurnAfterPathing("retryWorldMapDestinationClick");
-            }
             return clicked;
         }
         return targetMapName != null && !targetMapName.isBlank()
-                && submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing);
+                && submitWorldMapSearchAndClickDestination(targetMapName);
     }
 
-    private boolean submitWorldMapSearchAndClickDestination(String targetMapName, boolean releaseTurnOnPathing) {
-        ensureTaskTurn("submitWorldMapSearchAndClickDestination");
+    private boolean submitWorldMapSearchAndClickDestination(String targetMapName) {
         boolean clicked = inputSequences.submitExclusiveAndWait("submitWorldMapSearchAndClickDestination:" + targetMapName,
                 () -> {
                     log.info("navigation map search start: target={}", targetMapName);
@@ -602,9 +601,6 @@ public class NavigationService {
                         }
                     }
                 });
-        if (clicked && releaseTurnOnPathing) {
-            releaseTaskTurnAfterPathing("submitWorldMapSearchAndClickDestination:" + targetMapName);
-        }
         return clicked;
     }
 
@@ -670,7 +666,6 @@ public class NavigationService {
         ));
         if (submitted) {
             gameStateUtil.recordMovementIntent(description);
-            releaseTaskTurnAfterPathing(description);
         }
         return submitted ? WorldMapDestinationClickResult.CLICKED : WorldMapDestinationClickResult.NOT_FOUND;
     }
@@ -943,7 +938,6 @@ public class NavigationService {
      * @return true if the queue accepted and completed the sequence.
      */
     private boolean submitMiniMapClick(Point pixelPoint, String description) {
-        ensureTaskTurn(description);
         return inputSequences.submitExclusiveAndWait(description, () -> {
             if (!isWorldMapOpened()) {
                 pressAlt1ForMiniMap(description + ":open");
@@ -1099,40 +1093,8 @@ public class NavigationService {
                 || state == GameStateUtil.MovementState.MAYBE_MOVING;
     }
 
-    /**
-     * Release the task-level turn after the game has accepted a pathing command.
-     *
-     * <p>Once the character is auto-moving, this window usually does not need to keep exclusive
-     * business ownership. Releasing here lets follower/other windows run safe background checks until
-     * this navigation flow later calls {@link #ensureTaskTurn(String)} before the next focused action.</p>
-     *
-     * @param source short diagnostic label for the navigation action that started pathing.
-     */
-    private void releaseTaskTurnAfterPathing(String source) {
-        log.info("navigation pathing started, release task turn: source={}", source);
-        taskTurnCoordinator.forceRelease("navigation:pathing-started:" + source);
-    }
-
-    /**
-     * Acquire the task-level turn before navigation performs a focused or state-mutating action.
-     *
-     * <p>This is different from the physical input queue. The input queue serializes one
-     * mouse/keyboard sequence, while the task turn decides which window is allowed to continue a
-     * larger business chain such as opening the world map, handling a route dialog, re-clicking a
-     * route result, or cleaning UI after arrival. Navigation may release the turn after pathing
-     * starts so other windows can do safe maintenance; any later focused action must call this method
-     * to re-enter the turn.</p>
-     *
-     * @param source short diagnostic suffix describing the navigation stage requesting the turn;
-     *               it is appended to the `navigation:` transaction name in logs. Must be non-null
-     *               enough for debugging, but it does not affect routing behavior.
-     */
-    private void ensureTaskTurn(String source) {
-        taskTurnCoordinator.enter("navigation:" + source);
-    }
-
     private void checkpointTask() {
-        taskExecutionContextHolder.checkpointIfPresent();
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
     }
 
     private NavigationRuntimeState state() {

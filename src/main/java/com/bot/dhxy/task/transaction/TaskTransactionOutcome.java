@@ -1,5 +1,11 @@
 package com.bot.dhxy.task.transaction;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Immutable result of one task transaction.
  *
@@ -10,17 +16,22 @@ package com.bot.dhxy.task.transaction;
  * @param completed false when the transaction did not finish, usually because exclusive input could
  *                  not complete or the waiting thread was interrupted.
  */
-public record TaskTransactionOutcome(
-        String name,
-        TaskTransactionResult expectedResult,
-        TaskYieldPolicy yieldPolicy,
-        TaskTransactionResult result,
-        boolean completed
-) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class TaskTransactionOutcome {
+    String name;
+    TaskTransactionResult expectedResult;
+    TaskYieldPolicy yieldPolicy;
+    TaskTransactionResult result;
+    boolean completed;
+
     /**
      * @return true only when the action completed and returned the caller's expected result.
      */
     public boolean reachedExpectedResult() {
         return completed && result == expectedResult;
     }
+
 }

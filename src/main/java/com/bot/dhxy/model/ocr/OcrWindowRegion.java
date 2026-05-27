@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Immutable rectangular OCR region in game-window-relative pixels.
  *
@@ -12,7 +18,16 @@ package com.bot.dhxy.model.ocr;
  * @param x2 right edge in window-relative pixels, exclusive.
  * @param y2 bottom edge in window-relative pixels, exclusive.
  */
-public record OcrWindowRegion(int x1, int y1, int x2, int y2) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class OcrWindowRegion {
+    int x1;
+    int y1;
+    int x2;
+    int y2;
+
 
     /**
      * Clamp this region to an image/window size.
@@ -74,4 +89,5 @@ public record OcrWindowRegion(int x1, int y1, int x2, int y2) {
     private static int clampValue(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
+
 }

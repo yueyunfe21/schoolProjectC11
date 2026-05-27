@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>This resolver must not execute task actions. It only classifies the current screen and returns
  * the phase that should run next. Later we will plug in objective parsing and option-dialog matching
- * here, but the output should remain a {@link XiuluoRoundState}.</p>
+ * here, but the output should remain a {@link XiuluoRoundContext}.</p>
  */
 @Slf4j
 @Component
@@ -31,19 +31,19 @@ public class XiuluoHotStartResolver {
      *                               text may belong to an accepted unfinished Xiuluo task.
      * @return round state whose phase is the hot-start insertion point.
      */
-    public XiuluoRoundState resolve(int round, boolean allowTaskPanelFallback) {
+    public XiuluoRoundContext resolve(int round, boolean allowTaskPanelFallback) {
         TaskHotStartSnapshot snapshot = taskHotStartService.snapshot(TASK_CODE, "xiuluo-v2:round-start");
         TaskHotStartScreenState screenState = snapshot.state();
         log.info("[xiuluo-v2] hot-start snapshot: round={} state={} dialogType={} allowTaskPanelFallback={}",
                 round, screenState, snapshot.dialogType(), allowTaskPanelFallback);
 
         return switch (screenState) {
-            case IN_COMBAT -> new XiuluoRoundState(XiuluoPhase.WAIT_COMBAT, null, round, "hot-start:in-combat");
-            case STORY_DIALOG -> new XiuluoRoundState(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:story-dialog");
-            case OPTION_DIALOG -> new XiuluoRoundState(XiuluoPhase.ACCEPT_TASK_DIALOG, null, round, "hot-start:option-dialog");
+            case IN_COMBAT -> new XiuluoRoundContext(XiuluoPhase.WAIT_COMBAT, null, round, "hot-start:in-combat");
+            case STORY_DIALOG -> new XiuluoRoundContext(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:story-dialog");
+            case OPTION_DIALOG -> new XiuluoRoundContext(XiuluoPhase.ACCEPT_TASK_DIALOG, null, round, "hot-start:option-dialog");
             case NONE -> allowTaskPanelFallback
-                    ? new XiuluoRoundState(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:task-panel-fallback")
-                    : XiuluoRoundState.start(round);
+                    ? new XiuluoRoundContext(XiuluoPhase.READ_OBJECTIVE, null, round, "hot-start:task-panel-fallback")
+                    : XiuluoRoundContext.start(round);
         };
     }
 }

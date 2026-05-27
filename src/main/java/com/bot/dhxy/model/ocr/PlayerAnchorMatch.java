@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import java.awt.Point;
 
 /**
@@ -13,13 +19,19 @@ import java.awt.Point;
  * @param textRect OCR text rectangle in the same coordinate space as {@code anchor}.
  * @param score OCR confidence score when available.
  */
-public record PlayerAnchorMatch(Point anchor,
-                                String matchedText,
-                                String matchedFragment,
-                                String matchMode,
-                                int compensationX,
-                                OcrWindowRegion textRect,
-                                double score) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class PlayerAnchorMatch {
+    Point anchor;
+    String matchedText;
+    String matchedFragment;
+    String matchMode;
+    int compensationX;
+    OcrWindowRegion textRect;
+    double score;
+
     /**
      * @return compact diagnostic text for click-formula and vision-memory logs.
      */
@@ -32,4 +44,5 @@ public record PlayerAnchorMatch(Point anchor,
                 + ", textRect=" + (textRect == null ? "-" : textRect.toShortText())
                 + ", score=" + String.format("%.3f", score);
     }
+
 }

@@ -1,6 +1,13 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.tools.ImagePreprocessor;
@@ -860,33 +867,205 @@ public class ObjectiveTextRecognitionService {
      *              stack traces understandable when a long local template scan is interrupted.
      */
     private void checkpoint(String stage) {
-        taskExecutionContextHolder.checkpointIfPresent();
-        if (Thread.currentThread().isInterrupted()) {
-            throw new TaskStopRequestedException("objective recognition interrupted at " + stage);
-        }
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "objective recognition interrupted at " + stage);
     }
 
-    private record TemplateBundle(Map<String, MapNameTemplate> mapNames,
-                                  Map<String, List<BufferedImage>> digits) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class TemplateBundle {
+
+        Map<String, MapNameTemplate> mapNames;
+
+        Map<String, List<BufferedImage>> digits;
+
     }
 
-    private record MapNameTemplate(String slug, String mapName, Path path, BufferedImage image) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class MapNameTemplate {
+
+
+        String slug;
+
+
+        String mapName;
+
+
+        Path path;
+
+
+        BufferedImage image;
+
+
     }
 
-    private record MapNameMatch(String slug, String mapName, Path path, double score,
-                                int x, int y, int width, int height) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class MapNameMatch {
+
+
+        String slug;
+
+
+        String mapName;
+
+
+        Path path;
+
+
+        double score;
+
+
+        int x;
+
+
+        int y;
+
+
+        int width;
+
+
+        int height;
+
+
     }
 
-    private record SymbolMatch(String symbol, double centerX, double centerY, double score) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class SymbolMatch {
+
+
+        String symbol;
+
+
+        double centerX;
+
+
+        double centerY;
+
+
+        double score;
+
+
     }
 
-    private record TemplateMatch(double score, int x, int y) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class TemplateMatch {
+
+
+        double score;
+
+
+        int x;
+
+
+        int y;
+
+
     }
 
-    private record ForegroundCrop(BufferedImage image, int offsetX, int offsetY) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class ForegroundCrop {
+
+
+        BufferedImage image;
+
+
+        int offsetX;
+
+
+        int offsetY;
+
+
     }
 
-    private record GlyphBox(int minX, int minY, int maxX, int maxY, int pixelCount) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class GlyphBox {
+
+
+        int minX;
+
+
+        int minY;
+
+
+        int maxX;
+
+
+        int maxY;
+
+
+        int pixelCount;
+
         private int width() {
             return maxX - minX + 1;
         }
@@ -904,5 +1083,8 @@ public class ObjectiveTextRecognitionService {
                     pixelCount
             );
         }
+    
+
+
     }
 }

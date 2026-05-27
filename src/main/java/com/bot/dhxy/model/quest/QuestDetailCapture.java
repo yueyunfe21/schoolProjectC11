@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.quest;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import java.awt.image.BufferedImage;
 
 /**
@@ -8,7 +14,14 @@ import java.awt.image.BufferedImage;
  * @param image captured detail-panel image; caller owns and should flush it after use.
  * @param imagePath debug image path written during capture, or blank when unavailable.
  */
-public record QuestDetailCapture(BufferedImage image, String imagePath) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class QuestDetailCapture {
+    BufferedImage image;
+    String imagePath;
+
     /**
      * @return an empty failed capture result.
      */
@@ -22,4 +35,5 @@ public record QuestDetailCapture(BufferedImage image, String imagePath) {
     public boolean hasImage() {
         return image != null;
     }
+
 }

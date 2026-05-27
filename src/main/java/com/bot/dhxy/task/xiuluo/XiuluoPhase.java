@@ -4,7 +4,7 @@ package com.bot.dhxy.task.xiuluo;
  * One explicit step in the Xiuluo leader workflow.
  *
  * <p>The phase is the only place where Xiuluo V2 decides "where to resume". Hot-start code should
- * return a {@link XiuluoRoundState} with one of these phases instead of running task logic directly.</p>
+ * return a {@link XiuluoRoundContext} with one of these phases instead of running task logic directly.</p>
  */
 public enum XiuluoPhase {
     PREPARE_ROUND,

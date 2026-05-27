@@ -311,8 +311,8 @@ public class UICleanerService {
             return false;
         }
         List<String> closeKeywords = Arrays.asList(
-                "\u53d6\u6d88", "\u79bb\u5f00", "\u770b\u4e00\u770b", "\u54ea\u513f\u4e5f\u4e0d", "\u4ee5\u540e\u518d\u8bf4", "\u539f\u6765\u5982\u6b64",
-                "\u770b\u770b", "\u6211\u8fd8\u6709\u4e8b", "\u4e0d\u4e86", "\u7b97\u4e86", "\u6682\u65f6", "\u8def\u8fc7", "\u518d\u4f1a"
+                "取消", "离开", "看一看", "哪儿也不", "以后再说", "原来如此",
+                "看看", "我还有事", "不了", "算了", "暂时", "路过", "再会"
         );
         for (OcrWordResult word : words) {
             if (word == null || word.getText() == null) {

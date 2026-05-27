@@ -1,5 +1,11 @@
 package com.bot.dhxy.service;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 
 import com.bot.dhxy.model.ocr.LocationInfo;
@@ -14,6 +20,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
@@ -824,9 +831,7 @@ public class PlayerStateService {
     }
 
     private void checkpoint(TaskExecutionContext taskContext) {
-        if (taskContext != null) {
-            taskContext.throwIfStopRequested();
-        }
+        TaskCheckpoint.throwIfStopRequested(taskContext, "Player state sync interrupted");
     }
 
     private boolean isInputWorkerThread() {
@@ -845,10 +850,25 @@ public class PlayerStateService {
      * @param remainingHours OCR-read remaining hour number. Empty means either no icon matched or
      *                       the icon had no cyan hour number visible.
      */
-    private record IncenseStatusProbe(java.awt.Point iconPoint, OptionalInt remainingHours) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class IncenseStatusProbe {
+
+        java.awt.Point iconPoint;
+
+        OptionalInt remainingHours;
+
         private static IncenseStatusProbe notFound() {
             return new IncenseStatusProbe(null, OptionalInt.empty());
         }
+    
+
     }
 
     private static class PlayerRuntimeState {

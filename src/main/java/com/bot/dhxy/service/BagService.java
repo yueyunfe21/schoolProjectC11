@@ -5,8 +5,8 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -386,15 +386,11 @@ public class BagService {
     }
 
     private void throwIfStopRequested(TaskExecutionContext context) {
-        if (context != null) {
-            context.throwIfStopRequested();
-        }
+        TaskCheckpoint.throwIfStopRequested(context, "Bag operation was interrupted");
     }
 
     private void throwIfInterrupted(String message) {
-        if (Thread.currentThread().isInterrupted()) {
-            throw new TaskStopRequestedException(message);
-        }
+        TaskCheckpoint.throwIfInterrupted(message);
     }
 
     private boolean isInputWorkerThread() {

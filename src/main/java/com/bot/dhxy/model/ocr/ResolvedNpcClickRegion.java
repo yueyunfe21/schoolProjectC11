@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * NPC click visual work region resolved from window-relative OCR memory to screen-absolute pixels.
  *
@@ -15,13 +21,19 @@ package com.bot.dhxy.model.ocr;
  * @param screenX2 right edge in screen-absolute pixels, exclusive.
  * @param screenY2 bottom edge in screen-absolute pixels, exclusive.
  */
-public record ResolvedNpcClickRegion(OcrWindowRegion windowRegion,
-                                     int windowBaseX,
-                                     int windowBaseY,
-                                     int screenX1,
-                                     int screenY1,
-                                     int screenX2,
-                                     int screenY2) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class ResolvedNpcClickRegion {
+    OcrWindowRegion windowRegion;
+    int windowBaseX;
+    int windowBaseY;
+    int screenX1;
+    int screenY1;
+    int screenX2;
+    int screenY2;
+
     /**
      * Resolve a window-relative OCR region against the current bound window base.
      *
@@ -55,4 +67,5 @@ public record ResolvedNpcClickRegion(OcrWindowRegion windowRegion,
         return windowRegion.toShortText()
                 + " abs=[" + screenX1 + "," + screenY1 + "," + screenX2 + "," + screenY2 + "]";
     }
+
 }

@@ -45,11 +45,11 @@ public final class TaskSleep {
         if (millis <= 0) {
             return;
         }
-        throwIfStopRequested(context);
+        TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
         if (!sleep(millis)) {
             throw new TaskStopRequestedException(interruptedMessage);
         }
-        throwIfStopRequested(context);
+        TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
     }
 
     /**
@@ -59,15 +59,6 @@ public final class TaskSleep {
      * @param interruptedMessage message used when the current thread is already interrupted.
      */
     public static void throwIfStopRequested(TaskExecutionContext context, String interruptedMessage) {
-        throwIfStopRequested(context);
-        if (Thread.currentThread().isInterrupted()) {
-            throw new TaskStopRequestedException(interruptedMessage);
-        }
-    }
-
-    private static void throwIfStopRequested(TaskExecutionContext context) {
-        if (context != null) {
-            context.throwIfStopRequested();
-        }
+        TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
     }
 }

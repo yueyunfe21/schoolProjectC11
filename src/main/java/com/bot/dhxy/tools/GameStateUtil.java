@@ -1,5 +1,11 @@
 package com.bot.dhxy.tools;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.core.GameClientTracker;
@@ -9,8 +15,8 @@ import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -437,11 +443,7 @@ public class GameStateUtil {
     }
 
     private void checkpointStateProbe(String action) {
-        taskExecutionContextHolder.checkpointIfPresent();
-        if (Thread.currentThread().isInterrupted()) {
-            Thread.currentThread().interrupt();
-            throw new TaskStopRequestedException(action + " interrupted");
-        }
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, action + " interrupted");
     }
 
     private MovementIntentState activeMovementIntent() {
@@ -469,10 +471,33 @@ public class GameStateUtil {
         UNKNOWN
     }
 
-    private record CoordinateProbeResult(MovementState state,
-                                         MapCoordinate lastCoordinate,
-                                         int validSamples,
-                                         int unknownSamples) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CoordinateProbeResult {
+
+
+        MovementState state;
+
+
+        MapCoordinate lastCoordinate;
+
+
+        int validSamples;
+
+
+        int unknownSamples;
+
+
     }
 
     private static class MovementIntentState {

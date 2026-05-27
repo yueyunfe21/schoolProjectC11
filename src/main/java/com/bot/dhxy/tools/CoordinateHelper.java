@@ -1,5 +1,11 @@
 package com.bot.dhxy.tools;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.model.MapCoordinate;
@@ -224,7 +230,15 @@ public class CoordinateHelper {
      * @param reason diagnostic label such as {@code original}, {@code edge-fallback-1}, or
      *               {@code near-fallback-3}.
      */
-    public record MiniMapClickPoint(int logicalX, int logicalY, Point pixelPoint, String reason) {
+    @Value
+    @Builder
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+    @Accessors(fluent = true)
+    public static class MiniMapClickPoint {
+        int logicalX;
+        int logicalY;
+        Point pixelPoint;
+        String reason;
     }
 
     /**

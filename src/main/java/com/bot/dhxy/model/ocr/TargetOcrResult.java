@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Result of matching yellow OCR lines against a target NPC name.
  *
@@ -10,12 +16,18 @@ package com.bot.dhxy.model.ocr;
  * @param normalizedTarget normalized expected name.
  * @param normalizedText normalized OCR text for the selected line.
  */
-public record TargetOcrResult(OcrLineResult lineResult,
-                              boolean hit,
-                              int editDistance,
-                              int longestCommonSubstring,
-                              String normalizedTarget,
-                              String normalizedText) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class TargetOcrResult {
+    OcrLineResult lineResult;
+    boolean hit;
+    int editDistance;
+    int longestCommonSubstring;
+    String normalizedTarget;
+    String normalizedText;
+
     /**
      * @return compact diagnostic text including selected line, normalized OCR text, and match score.
      */
@@ -27,4 +39,5 @@ public record TargetOcrResult(OcrLineResult lineResult,
                 + ", dist=" + editDistance
                 + ", common=" + longestCommonSubstring;
     }
+
 }

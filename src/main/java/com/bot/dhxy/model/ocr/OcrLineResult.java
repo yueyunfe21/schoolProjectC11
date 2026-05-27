@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import java.nio.file.Path;
 import java.util.List;
 
@@ -13,12 +19,18 @@ import java.util.List;
  * @param wordsSummary compact diagnostic string for logs/UI.
  * @param words OCR words in the original source image coordinate space.
  */
-public record OcrLineResult(String path,
-                            String variantName,
-                            int blackPixelCount,
-                            int wordCount,
-                            String wordsSummary,
-                            List<OcrWordResult> words) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class OcrLineResult {
+    String path;
+    String variantName;
+    int blackPixelCount;
+    int wordCount;
+    String wordsSummary;
+    List<OcrWordResult> words;
+
     /**
      * Build an empty scan result after no foreground line was detected.
      *
@@ -57,4 +69,5 @@ public record OcrLineResult(String path,
                 + ", words=" + wordCount
                 + ", text=" + (wordsSummary == null || wordsSummary.isBlank() ? "-" : wordsSummary);
     }
+
 }

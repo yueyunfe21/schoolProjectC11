@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
@@ -376,15 +382,47 @@ public class OcrWindowScanService {
         return configured.trim();
     }
 
-    public record WindowOcrScanResult(boolean success,
-                                      String mode,
-                                      String rawPath,
-                                      String maskedPath,
-                                      String overlayPath,
-                                      String roiPath,
-                                      OcrWindowRegion roi,
-                                      List<OcrWordResult> words,
-                                      String message) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class WindowOcrScanResult {
+
+
+        boolean success;
+
+
+        String mode;
+
+
+        String rawPath;
+
+
+        String maskedPath;
+
+
+        String overlayPath;
+
+
+        String roiPath;
+
+
+        OcrWindowRegion roi;
+
+
+        List<OcrWordResult> words;
+
+
+        String message;
+
 
         /**
          * Build a successful scan result.
@@ -438,5 +476,8 @@ public class OcrWindowScanService {
                     + " roiPath=" + (roiPath == null ? "-" : roiPath)
                     + " message=" + message;
         }
+    
+
+
     }
 }

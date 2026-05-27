@@ -1,5 +1,11 @@
 package com.bot.dhxy.tools;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -695,10 +701,42 @@ public class CoordinateDigitTemplateBuilder {
         }
     }
 
-    private record BracketSpan(int minX, int maxX, int minY, int maxY) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class BracketSpan {
+
+        int minX;
+
+        int maxX;
+
+        int minY;
+
+        int maxY;
+
     }
 
-    private record LabeledGlyph(char symbol, int index, GlyphBox box) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class LabeledGlyph {
+
+        char symbol;
+
+        int index;
+
+        GlyphBox box;
+
     }
 
 }

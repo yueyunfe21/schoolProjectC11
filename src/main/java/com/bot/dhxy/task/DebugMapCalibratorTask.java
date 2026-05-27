@@ -1,5 +1,11 @@
 package com.bot.dhxy.task;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.config.BotProperties;
@@ -254,9 +260,70 @@ public class DebugMapCalibratorTask implements GameTask {
         return value.trim();
     }
 
-    private record SamplePoint(int relativeX, int relativeY, int logicX, int logicY, String rawPath) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class SamplePoint {
+
+
+        int relativeX;
+
+
+        int relativeY;
+
+
+        int logicX;
+
+
+        int logicY;
+
+
+        String rawPath;
+
+
     }
 
-    private record CoordinateCandidate(String text, int logicX, int logicY, int centerX, int centerY, int distance) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CoordinateCandidate {
+
+
+        String text;
+
+
+        int logicX;
+
+
+        int logicY;
+
+
+        int centerX;
+
+
+        int centerY;
+
+
+        int distance;
+
+
     }
 }

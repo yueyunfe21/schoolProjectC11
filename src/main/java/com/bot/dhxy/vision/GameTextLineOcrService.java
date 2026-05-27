@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.ocr.OcrLineResult;
@@ -1211,7 +1217,35 @@ public class GameTextLineOcrService {
         YELLOW_LOOSE
     }
 
-    private record ComponentBox(int minX, int minY, int maxX, int maxY, List<Point> points) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class ComponentBox {
+
+
+        int minX;
+
+
+        int minY;
+
+
+        int maxX;
+
+
+        int maxY;
+
+
+        List<Point> points;
+
         int centerY() {
             return (minY + maxY) / 2;
         }
@@ -1227,6 +1261,9 @@ public class GameTextLineOcrService {
         int pixelCount() {
             return points == null ? 0 : points.size();
         }
+    
+
+
     }
 
     private static final class TextLineBox {
@@ -1297,29 +1334,114 @@ public class GameTextLineOcrService {
         }
     }
 
-    private record PackedLineBox(int sourceX,
-                                 int sourceY,
-                                 int sourceWidth,
-                                 int sourceHeight,
-                                 int packedX,
-                                 int packedY,
-                                 int packedWidth,
-                                 int packedHeight) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class PackedLineBox {
+
+
+        int sourceX;
+
+
+        int sourceY;
+
+
+        int sourceWidth;
+
+
+        int sourceHeight;
+
+
+        int packedX;
+
+
+        int packedY;
+
+
+        int packedWidth;
+
+
+        int packedHeight;
+
+
     }
 
-    private record CandidateResult(String variantName,
-                                   Path path,
-                                   int blackPixelCount,
-                                   List<OcrWordResult> words,
-                                   String joinedText,
-                                   TargetMatch match,
-                                   int score) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CandidateResult {
+
+
+        String variantName;
+
+
+        Path path;
+
+
+        int blackPixelCount;
+
+
+        List<OcrWordResult> words;
+
+
+        String joinedText;
+
+
+        TargetMatch match;
+
+
+        int score;
+
+
     }
 
-    private record TargetMatch(boolean hit, int editDistance, int longestCommonSubstring) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class TargetMatch {
+
+
+        boolean hit;
+
+
+        int editDistance;
+
+
+        int longestCommonSubstring;
+
         static TargetMatch empty() {
             return new TargetMatch(false, 999, 0);
         }
+    
+
+
     }
 
 }

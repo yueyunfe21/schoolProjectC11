@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import java.awt.Point;
 import java.util.List;
 
@@ -12,10 +18,16 @@ import java.util.List;
  * @param overlayPath optional debug overlay path written by the scan.
  * @param message diagnostic message for empty or failed scans.
  */
-public record TextCandidateScanResult(TextCandidateScanStatus status,
-                                      List<TextCandidate> candidates,
-                                      String overlayPath,
-                                      String message) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class TextCandidateScanResult {
+    TextCandidateScanStatus status;
+    List<TextCandidate> candidates;
+    String overlayPath;
+    String message;
+
     /**
      * Build a result from mutable local candidates.
      *
@@ -50,4 +62,5 @@ public record TextCandidateScanResult(TextCandidateScanStatus status,
                 .map(TextCandidate::clickPoint)
                 .toList();
     }
+
 }

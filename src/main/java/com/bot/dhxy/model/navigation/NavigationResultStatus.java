@@ -7,6 +7,8 @@ package com.bot.dhxy.model.navigation;
  * task state machines can decide whether to continue, retry, or fail without parsing log text.</p>
  */
 public enum NavigationResultStatus {
+    ARRIVED,
+    PATHING_STARTED,
     SUCCESS,
     FAILED,
     STOPPED,

@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.navigation.MapLabelTemplateMatch;
@@ -983,15 +989,77 @@ public class MiniMapCoordinateReader {
         }
     }
 
-    private record BracketSpan(int minX, int leftMaxX, int rightMinX, int maxX, int minY, int maxY) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class BracketSpan {
+
+        int minX;
+
+        int leftMaxX;
+
+        int rightMinX;
+
+        int maxX;
+
+        int minY;
+
+        int maxY;
+
     }
 
-    private record CoordinateRecognition(String mapLabelPath, Optional<MapCoordinate> coordinate) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class CoordinateRecognition {
+
+        String mapLabelPath;
+
+        Optional<MapCoordinate> coordinate;
+
     }
 
-    private record DigitRecognition(String text, List<GlyphBox> boxes, double score) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class DigitRecognition {
+
+        String text;
+
+        List<GlyphBox> boxes;
+
+        double score;
+
     }
 
-    private record GlyphMatch(String symbol, double score) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class GlyphMatch {
+
+        String symbol;
+
+        double score;
+
     }
 }

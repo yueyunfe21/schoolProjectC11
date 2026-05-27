@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class DebugXiuluoMockObjectiveTask implements GameTask {
 
-    private static final String MOCK_MAP_NAME = "\u7476\u6c60";
+    private static final String MOCK_MAP_NAME = "瑶池";
     private static final int MOCK_X = 69;
     private static final int MOCK_Y = 95;
 
@@ -27,7 +27,7 @@ public class DebugXiuluoMockObjectiveTask implements GameTask {
 
     @Override
     public String getTaskName() {
-        return "\u4fee\u7f57\u6a21\u62df\u76ee\u6807\u5bfc\u822a\u6d4b\u8bd5";
+        return "修罗模拟目标导航测试";
     }
 
     @Override

@@ -1,5 +1,11 @@
 package com.bot.dhxy.window.diagnostics;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -246,15 +252,34 @@ public class WindowInteractionMetricsService {
         }
     }
 
-    private record MetricsSnapshot(String windowId,
-                                   long focusAttempts,
-                                   long focusSuccess,
-                                   long focusFailure,
-                                   long hwndCaptureSuccess,
-                                   long robotCaptureSuccess,
-                                   long captureFailure,
-                                   long hwndKeyboardSuccess,
-                                   long hwndKeyboardFailure) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class MetricsSnapshot {
+
+        String windowId;
+
+        long focusAttempts;
+
+        long focusSuccess;
+
+        long focusFailure;
+
+        long hwndCaptureSuccess;
+
+        long robotCaptureSuccess;
+
+        long captureFailure;
+
+        long hwndKeyboardSuccess;
+
+        long hwndKeyboardFailure;
+
         private long maxCounter() {
             return Math.max(focusAttempts,
                     Math.max(hwndCaptureSuccess,
@@ -262,6 +287,8 @@ public class WindowInteractionMetricsService {
                                     Math.max(captureFailure,
                                             Math.max(hwndKeyboardSuccess, hwndKeyboardFailure)))));
         }
+    
+
     }
 
     private String escape(String value) {

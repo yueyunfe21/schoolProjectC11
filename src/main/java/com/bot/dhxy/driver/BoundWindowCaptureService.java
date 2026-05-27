@@ -1,5 +1,11 @@
 package com.bot.dhxy.driver;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.sun.jna.Memory;
@@ -287,9 +293,37 @@ public class BoundWindowCaptureService {
         HWND_BITBLT
     }
 
-    public record CaptureResult(BufferedImage image, CaptureProvider provider) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    public static class CaptureResult {
+
+        BufferedImage image;
+
+        CaptureProvider provider;
+
     }
 
-    private record BlankProbe(boolean blank, int differentSamples, String firstRgbHex) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class BlankProbe {
+
+        boolean blank;
+
+        int differentSamples;
+
+        String firstRgbHex;
+
     }
 }

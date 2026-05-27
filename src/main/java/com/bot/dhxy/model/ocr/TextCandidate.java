@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import java.awt.Point;
 
 /**
@@ -15,15 +21,21 @@ import java.awt.Point;
  * @param longColumnCount number of long vertical runs, used to penalize frame lines.
  * @param reason compact score explanation for logs/debug UI.
  */
-public record TextCandidate(OcrWindowRegion region,
-                            Point clickPoint,
-                            int score,
-                            int pixelCount,
-                            int componentCount,
-                            double density,
-                            int longRowCount,
-                            int longColumnCount,
-                            String reason) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class TextCandidate {
+    OcrWindowRegion region;
+    Point clickPoint;
+    int score;
+    int pixelCount;
+    int componentCount;
+    double density;
+    int longRowCount;
+    int longColumnCount;
+    String reason;
+
     /**
      * @return compact debug text for logs.
      */
@@ -33,4 +45,5 @@ public record TextCandidate(OcrWindowRegion region,
                 + ", score=" + score
                 + ", " + reason;
     }
+
 }

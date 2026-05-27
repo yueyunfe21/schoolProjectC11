@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Result returned after writing or skipping a vision-memory observation.
  *
@@ -8,7 +14,16 @@ package com.bot.dhxy.model.ocr;
  * @param summary human-readable diagnostic summary.
  * @param recommendedRoi current recommended ROI text after the write, or {@code "-"} when skipped.
  */
-public record RecordResult(boolean recorded, String key, String summary, String recommendedRoi) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class RecordResult {
+    boolean recorded;
+    String key;
+    String summary;
+    String recommendedRoi;
+
     /**
      * Build a skipped result without changing memory.
      *
@@ -19,4 +34,5 @@ public record RecordResult(boolean recorded, String key, String summary, String 
     public static RecordResult skipped(String key, String reason) {
         return new RecordResult(false, key, reason == null ? "" : reason, "-");
     }
+
 }

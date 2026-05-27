@@ -11,6 +11,7 @@ import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
@@ -352,10 +353,7 @@ public class LocationVisionService {
      * @param stage diagnostic name for the current location-recognition stage.
      */
     private void checkpoint(String stage) {
-        taskExecutionContextHolder.checkpointIfPresent();
-        if (Thread.currentThread().isInterrupted()) {
-            throw new TaskStopRequestedException("location scan interrupted at " + stage);
-        }
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "location scan interrupted at " + stage);
     }
 
     // 估算角色名字符宽度，用 OCR 片段反推角色脚底锚点。

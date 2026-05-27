@@ -1,5 +1,11 @@
 package com.bot.dhxy.model.ocr;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 /**
  * Conservative learned direct-click recommendation for one NPC target.
  *
@@ -10,12 +16,18 @@ package com.bot.dhxy.model.ocr;
  * @param spreadPx maximum distance in pixels from the averaged point.
  * @param lastOutcome last recorded NPC-click outcome for diagnostics.
  */
-public record LearnedNpcClickPoint(String key,
-                                   int x,
-                                   int y,
-                                   int sampleCount,
-                                   int spreadPx,
-                                   String lastOutcome) {
+@Value
+@Builder
+@AllArgsConstructor(access = AccessLevel.PUBLIC)
+@Accessors(fluent = true)
+public class LearnedNpcClickPoint {
+    String key;
+    int x;
+    int y;
+    int sampleCount;
+    int spreadPx;
+    String lastOutcome;
+
     /**
      * @return compact diagnostic text for logs and strategy result messages.
      */
@@ -30,4 +42,5 @@ public record LearnedNpcClickPoint(String key,
     private static String safe(String text) {
         return text == null || text.isBlank() ? "-" : text;
     }
+
 }

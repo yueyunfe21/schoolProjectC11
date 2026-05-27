@@ -1,5 +1,11 @@
 package com.bot.dhxy.service;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 
 import com.bot.dhxy.model.ocr.LearnedNpcClickPoint;
@@ -1108,16 +1114,36 @@ public class NpcClickService {
      * @param verified true when the expected dialog/battle verification succeeded.
      * @param message concise diagnostic text for logs and vision memory.
      */
-    private record NpcClickStrategyResult(NpcClickStrategySource source,
-                                          NpcClickStrategyStatus status,
-                                          OcrWindowRegion scanRegion,
-                                          OcrWindowRegion matchedRect,
-                                          Point clickPointAbs,
-                                          Point clickPointRel,
-                                          boolean matched,
-                                          boolean clicked,
-                                          boolean verified,
-                                          String message) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class NpcClickStrategyResult {
+
+        NpcClickStrategySource source;
+
+        NpcClickStrategyStatus status;
+
+        OcrWindowRegion scanRegion;
+
+        OcrWindowRegion matchedRect;
+
+        Point clickPointAbs;
+
+        Point clickPointRel;
+
+        boolean matched;
+
+        boolean clicked;
+
+        boolean verified;
+
+        String message;
+
         static NpcClickStrategyResult skipped(NpcClickStrategySource source, String message) {
             return new NpcClickStrategyResult(source, NpcClickStrategyStatus.SKIPPED,
                     null, null, null, null, false, false, false, message);
@@ -1163,6 +1189,8 @@ public class NpcClickService {
         boolean attempted() {
             return status != NpcClickStrategyStatus.SKIPPED;
         }
+    
+
     }
 
     /**
@@ -1346,7 +1374,22 @@ public class NpcClickService {
      *               yellow-candidate.
      * @param profile offset profile used around this origin.
      */
-    private record CtrlProbeOrigin(Point point, String source, CtrlProbeScanProfile profile) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class CtrlProbeOrigin {
+
+        Point point;
+
+        String source;
+
+        CtrlProbeScanProfile profile;
+
     }
 
     /**
@@ -1680,11 +1723,26 @@ public class NpcClickService {
      *                                     on/near the visible name while direct click uses a
      *                                     different NPC-body offset.
      */
-    private record YellowTargetClickResult(YellowTargetClickStatus status,
-                                           Point attemptedClickPointAbs,
-                                           List<YellowTextCandidate> fallbackCandidates,
-                                           List<Point> exactMatchCtrlProbePointsAbs,
-                                           NpcClickStrategyResult evidence) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class YellowTargetClickResult {
+
+        YellowTargetClickStatus status;
+
+        Point attemptedClickPointAbs;
+
+        List<YellowTextCandidate> fallbackCandidates;
+
+        List<Point> exactMatchCtrlProbePointsAbs;
+
+        NpcClickStrategyResult evidence;
+
         static YellowTargetClickResult targetNotFound(OcrWindowRegion scanRegion, String observedText) {
             return new YellowTargetClickResult(
                     YellowTargetClickStatus.TARGET_NOT_FOUND,
@@ -1741,6 +1799,8 @@ public class NpcClickService {
             }
             return List.copyOf(points);
         }
+    
+
     }
 
     /**
@@ -1754,12 +1814,28 @@ public class NpcClickService {
      * @param sourceText optional recognized text. Shape-only candidates currently leave this blank.
      * @param reason compact diagnostic reason including geometry and penalty metrics.
      */
-    private record YellowTextCandidate(Point textCenterAbs,
-                                       Point clickPointAbs,
-                                       OcrWindowRegion textRectAbs,
-                                       double score,
-                                       String sourceText,
-                                       String reason) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class YellowTextCandidate {
+
+        Point textCenterAbs;
+
+        Point clickPointAbs;
+
+        OcrWindowRegion textRectAbs;
+
+        double score;
+
+        String sourceText;
+
+        String reason;
+
         String toSummaryText() {
             return "textCenter=(" + textCenterAbs.x + "," + textCenterAbs.y + ")"
                     + ", click=(" + clickPointAbs.x + "," + clickPointAbs.y + ")"
@@ -1767,6 +1843,8 @@ public class NpcClickService {
                     + ", rect=" + textRectAbs.toShortText()
                     + ", reason=" + reason;
         }
+    
+
     }
 
     /**
@@ -2269,16 +2347,36 @@ public class NpcClickService {
      * @param tuneX screen-pixel X correction applied to the prediction.
      * @param tuneY screen-pixel Y correction applied to the prediction.
      */
-    private record FormulaClickPrediction(String targetMapName,
-                                          LocationInfo locInfo,
-                                          String npcName,
-                                          int targetMapX,
-                                          int targetMapY,
-                                          Point windowBaseAbs,
-                                          Point playerAnchorAbs,
-                                          Point predictedClickAbs,
-                                          int tuneX,
-                                          int tuneY) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class FormulaClickPrediction {
+
+        String targetMapName;
+
+        LocationInfo locInfo;
+
+        String npcName;
+
+        int targetMapX;
+
+        int targetMapY;
+
+        Point windowBaseAbs;
+
+        Point playerAnchorAbs;
+
+        Point predictedClickAbs;
+
+        int tuneX;
+
+        int tuneY;
+
     }
 
     /**
@@ -2287,6 +2385,19 @@ public class NpcClickService {
      * @param x screen-absolute X coordinate.
      * @param y screen-absolute Y coordinate.
      */
-    private record WindowBase(int x, int y) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class WindowBase {
+
+        int x;
+
+        int y;
+
     }
 }

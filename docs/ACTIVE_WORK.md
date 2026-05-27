@@ -1,5 +1,40 @@
 # DHXY Active Work
 
+### Tang De - 2026-05-27 task checkpoint consolidation
+
+Status: implemented / compile passed
+
+Goal:
+
+- Stop each task/service from reimplementing task stop and thread-interrupt checkpoints differently.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/runner/stop/TaskCheckpoint.java`
+- `src/main/java/com/bot/dhxy/runner/stop/TaskSleep.java`
+- `src/main/java/com/bot/dhxy/task/FiveRingTask.java`
+- `src/main/java/com/bot/dhxy/task/XiuluoTask.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+- `src/main/java/com/bot/dhxy/service/BagService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+- `src/main/java/com/bot/dhxy/tools/GameStateUtil.java`
+- `src/main/java/com/bot/dhxy/vision/LocationVisionService.java`
+- `src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added `TaskCheckpoint` as the shared stop/interruption checkpoint boundary.
+- `TaskCheckpoint` supports explicit `TaskExecutionContext` and current-thread `TaskExecutionContextHolder` checks.
+- `TaskSleep.sleepOrStop(...)` now delegates pre/post stop checks to `TaskCheckpoint`.
+- Existing local `checkpoint(...)` helpers in task/vision/service code now delegate to `TaskCheckpoint` instead of reimplementing token and interruption checks.
+- Left direct interruption checks in worker loops, debug tasks, and boolean "is still running" helpers alone because those are control-loop conditions, not task checkpoint policies.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
 ### Tang De - 2026-05-26 NPC target model seed
 
 Status: implemented / compile passed

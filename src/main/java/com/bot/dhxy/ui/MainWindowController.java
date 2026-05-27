@@ -1,5 +1,11 @@
 package com.bot.dhxy.ui;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.auth.LicenseAuthResult;
 import com.bot.dhxy.auth.LicenseAuthService;
 import com.bot.dhxy.config.BotProperties;
@@ -1767,7 +1773,20 @@ public class MainWindowController {
         }
     }
 
-    private record TaskCountDisplay(int value, String unit) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class TaskCountDisplay {
+
+        int value;
+
+        String unit;
+
     }
 
     private void openTaskCountEditor(TaskType taskType) {
@@ -2858,10 +2877,27 @@ public class MainWindowController {
         MapSurveyService.SurveyResult execute(WindowTaskSnapshot selected, String mapName);
     }
 
-    private record WindowIdentityView(String roleName, String serverName, String playerId) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class WindowIdentityView {
+
+        String roleName;
+
+        String serverName;
+
+        String playerId;
+
         private static WindowIdentityView empty() {
             return new WindowIdentityView("-", "-", "-");
         }
+    
+
     }
 
     private enum WindowTableFilter {

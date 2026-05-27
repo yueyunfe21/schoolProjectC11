@@ -1,5 +1,11 @@
 package com.bot.dhxy.team;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -486,7 +492,7 @@ public class TeamRoleDetectionService {
         List<TooltipIdCandidate> candidates = new ArrayList<>();
         for (OcrWordResult word : words) {
             String text = word.getText() == null ? "" : word.getText().trim();
-            if (text.isBlank() || text.contains("\u7ea7")) {
+            if (text.isBlank() || text.contains("级")) {
                 continue;
             }
             Matcher matcher = DIGIT_SEQUENCE_PATTERN.matcher(text);
@@ -549,7 +555,7 @@ public class TeamRoleDetectionService {
 
     private OptionalIntBox findLevelRowTop(List<OcrWordResult> words) {
         return words.stream()
-                .filter(word -> word.getText() != null && word.getText().contains("\u7ea7"))
+                .filter(word -> word.getText() != null && word.getText().contains("级"))
                 .mapToInt(OcrWordResult::getTop)
                 .min()
                 .stream()
@@ -905,7 +911,22 @@ public class TeamRoleDetectionService {
      *                       failed and the whole hover-to-panel sequence should be retried once.
      * @param reason short diagnostic reason logged before retrying or throwing.
      */
-    private record RoleDetectionPassResult(TeamRoleStatus role, boolean retryWholeFlow, String reason) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class RoleDetectionPassResult {
+
+        TeamRoleStatus role;
+
+        boolean retryWholeFlow;
+
+        String reason;
+
         private static RoleDetectionPassResult done(TeamRoleStatus role, String reason) {
             return new RoleDetectionPassResult(role == null ? TeamRoleStatus.UNKNOWN : role, false, reason);
         }
@@ -913,6 +934,8 @@ public class TeamRoleDetectionService {
         private static RoleDetectionPassResult retry(String reason) {
             return new RoleDetectionPassResult(TeamRoleStatus.UNKNOWN, true, reason);
         }
+    
+
     }
 
     /**
@@ -925,16 +948,34 @@ public class TeamRoleDetectionService {
      * @param purplePixels number of purple tooltip text pixels.
      * @param distribution text-like distribution metrics from the raw crop.
      */
-    private record TeamTooltipProbe(boolean detected,
-                                    String rawPath,
-                                    String purplePath,
-                                    int whitePixels,
-                                    int purplePixels,
-                                    TextDistribution distribution) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class TeamTooltipProbe {
+
+        boolean detected;
+
+        String rawPath;
+
+        String purplePath;
+
+        int whitePixels;
+
+        int purplePixels;
+
+        TextDistribution distribution;
+
         private static TeamTooltipProbe missed(String rawPath, String purplePath) {
             return new TeamTooltipProbe(false, rawPath, purplePath, 0, 0,
                     new TextDistribution(0, 0, 0, 0));
         }
+    
+
     }
 
     /**
@@ -945,7 +986,24 @@ public class TeamRoleDetectionService {
      * @param left image-local left pixel of the source OCR word.
      * @param sourceText full OCR word text that contained the digit sequence.
      */
-    private record TooltipIdCandidate(String id, int top, int left, String sourceText) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class TooltipIdCandidate {
+
+        String id;
+
+        int top;
+
+        int left;
+
+        String sourceText;
+
     }
 
     /**
@@ -954,7 +1012,20 @@ public class TeamRoleDetectionService {
      * @param present whether a value exists.
      * @param value integer value when present.
      */
-    private record OptionalIntBox(boolean present, int value) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class OptionalIntBox {
+
+        boolean present;
+
+        int value;
+
         private static OptionalIntBox present(int value) {
             return new OptionalIntBox(true, value);
         }
@@ -962,6 +1033,8 @@ public class TeamRoleDetectionService {
         private static OptionalIntBox empty() {
             return new OptionalIntBox(false, 0);
         }
+    
+
     }
 
     /**
@@ -972,6 +1045,23 @@ public class TeamRoleDetectionService {
      * @param transitions horizontal starts of text-colored runs.
      * @param maxRowPixels widest text-colored row, used to reject solid backgrounds.
      */
-    private record TextDistribution(int rows, int columns, int transitions, int maxRowPixels) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    private static class TextDistribution {
+
+        int rows;
+
+        int columns;
+
+        int transitions;
+
+        int maxRowPixels;
+
     }
 }

@@ -1,5 +1,11 @@
 package com.bot.dhxy.driver;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.runner.stop.TaskSleep;
 
 import com.bot.dhxy.config.WindowIsolationProperties;
@@ -111,13 +117,69 @@ public class BoundWindowKeyboardService {
         boolean PostMessage(WinDef.HWND hwnd, int msg, WinDef.WPARAM wParam, WinDef.LPARAM lParam);
     }
 
-    public record ShortcutAttempt(boolean attempted, boolean success, String reason) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class ShortcutAttempt {
+
+
+        boolean attempted;
+
+
+        boolean success;
+
+
+        String reason;
+
         private static ShortcutAttempt notAttempted(String reason) {
             return new ShortcutAttempt(false, false, reason);
         }
+    
+
+
     }
 
-    private record PostResult(boolean success, int lastError, int message, int virtualKey, int scanCode, long lParam) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class PostResult {
+
+
+        boolean success;
+
+
+        int lastError;
+
+
+        int message;
+
+
+        int virtualKey;
+
+
+        int scanCode;
+
+
+        long lParam;
+
         private String toLogText() {
             return "success=" + success
                     + ",lastError=" + lastError
@@ -126,6 +188,9 @@ public class BoundWindowKeyboardService {
                     + ",scan=0x" + Integer.toHexString(scanCode)
                     + ",lParam=0x" + Long.toHexString(lParam);
         }
+    
+
+
     }
 
     public enum AltShortcut {

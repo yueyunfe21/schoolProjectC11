@@ -1,5 +1,11 @@
 package com.bot.dhxy.vision;
 
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Value;
+import lombok.experimental.Accessors;
+
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
@@ -749,7 +755,29 @@ public class MapSurveyService {
         }
     }
 
-    public record SurveyResult(String windowId, boolean success, String message) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class SurveyResult {
+
+
+        String windowId;
+
+
+        boolean success;
+
+
+        String message;
+
         public static SurveyResult success(String windowId, String message) {
             return new SurveyResult(windowId, true, message);
         }
@@ -757,20 +785,44 @@ public class MapSurveyService {
         public static SurveyResult failed(String windowId, String message) {
             return new SurveyResult(windowId, false, message);
         }
+    
+
+
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record CameraBounds(Double leftCameraX,
-                               Double rightCameraX,
-                               Double topCameraY,
-                               Double bottomCameraY,
-                               Double centerAnchorX,
-                               Double centerAnchorY,
-                               List<BoundarySample> leftSamples,
-                               List<BoundarySample> rightSamples,
-                               List<BoundarySample> topSamples,
-                               List<BoundarySample> bottomSamples,
-                               List<PointCorrectionSample> correctionSamples) {
+    @Value
+
+    @Builder
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+    @Accessors(fluent = true)
+
+    public static class CameraBounds {
+
+        Double leftCameraX;
+
+        Double rightCameraX;
+
+        Double topCameraY;
+
+        Double bottomCameraY;
+
+        Double centerAnchorX;
+
+        Double centerAnchorY;
+
+        List<BoundarySample> leftSamples;
+
+        List<BoundarySample> rightSamples;
+
+        List<BoundarySample> topSamples;
+
+        List<BoundarySample> bottomSamples;
+
+        List<PointCorrectionSample> correctionSamples;
+
         public CameraBounds() {
             this(null, null, null, null, null, null, null, null, null, null, null);
         }
@@ -1240,18 +1292,68 @@ public class MapSurveyService {
         private static int size(List<?> samples) {
             return samples == null ? 0 : samples.size();
         }
+    
+
     }
 
-    public record BoundarySample(Double axisCoordinate, Double cameraCoordinate) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class BoundarySample {
+
+
+        Double axisCoordinate;
+
+
+        Double cameraCoordinate;
+
+
     }
 
-    public record CalibrationUndoEntry(String kind,
-                                       Double previousScalarValue,
-                                       Double previousCenterX,
-                                       Double previousCenterY,
-                                       Integer previousListSize,
-                                       Integer previousCorrectionSize,
-                                       List<BoundarySample> previousBoundarySamples) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class CalibrationUndoEntry {
+
+
+        String kind;
+
+
+        Double previousScalarValue;
+
+
+        Double previousCenterX;
+
+
+        Double previousCenterY;
+
+
+        Integer previousListSize;
+
+
+        Integer previousCorrectionSize;
+
+
+        List<BoundarySample> previousBoundarySamples;
+
         public static CalibrationUndoEntry forBoundary(CameraBoundaryDirection direction,
                                                        Double previousScalarValue,
                                                        List<BoundarySample> previousBoundarySamples) {
@@ -1259,27 +1361,107 @@ public class MapSurveyService {
             return new CalibrationUndoEntry(direction == null ? null : direction.name(), previousScalarValue, null, null,
                     snapshot == null ? 0 : snapshot.size(), 0, snapshot);
         }
+    
+
+
     }
 
-    public record UndoResult(CameraBounds bounds, String description) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class UndoResult {
+
+
+        CameraBounds bounds;
+
+
+        String description;
+
+
     }
 
-    public record PointCorrectionSample(Double mapX,
-                                        Double mapY,
-                                        Double baseRelX,
-                                        Double baseRelY,
-                                        Double actualRelX,
-                                        Double actualRelY,
-                                        Double errorX,
-                                        Double errorY) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    public static class PointCorrectionSample {
+
+
+        Double mapX;
+
+
+        Double mapY;
+
+
+        Double baseRelX;
+
+
+        Double baseRelY;
+
+
+        Double actualRelX;
+
+
+        Double actualRelY;
+
+
+        Double errorX;
+
+
+        Double errorY;
+
+
     }
 
-    private record CorrectionDelta(int deltaX,
-                                   int deltaY,
-                                   double nearestDistance,
-                                   int sampleCount,
-                                   String source,
-                                   String detail) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CorrectionDelta {
+
+
+        int deltaX;
+
+
+        int deltaY;
+
+
+        double nearestDistance;
+
+
+        int sampleCount;
+
+
+        String source;
+
+
+        String detail;
+
         private static CorrectionDelta empty() {
             return empty("no-correction");
         }
@@ -1287,17 +1469,66 @@ public class MapSurveyService {
         private static CorrectionDelta empty(String detail) {
             return new CorrectionDelta(0, 0, 0.0, 0, "none", detail);
         }
+    
+
+
     }
 
-    private record CorrectionCandidate(int deltaX,
-                                       int deltaY,
-                                       double mapDistance,
-                                       int sampleCount,
-                                       double residual,
-                                       String detail) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CorrectionCandidate {
+
+
+        int deltaX;
+
+
+        int deltaY;
+
+
+        double mapDistance;
+
+
+        int sampleCount;
+
+
+        double residual;
+
+
+        String detail;
+
+
     }
 
-    private record CorrectionFitResult(CorrectionCandidate candidate, String rejectReason) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class CorrectionFitResult {
+
+
+        CorrectionCandidate candidate;
+
+
+        String rejectReason;
+
         private static CorrectionFitResult accepted(CorrectionCandidate candidate) {
             return new CorrectionFitResult(candidate, null);
         }
@@ -1309,27 +1540,111 @@ public class MapSurveyService {
         private boolean accepted() {
             return candidate != null;
         }
+    
+
+
     }
 
-    private record FitPin(PointCorrectionSample sample, double mapDistance) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class FitPin {
+
+
+        PointCorrectionSample sample;
+
+
+        double mapDistance;
+
+
     }
 
-    private record BasePoint(int relativeX, int relativeY) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class BasePoint {
+
+
+        int relativeX;
+
+
+        int relativeY;
+
+
     }
 
-    private record ProjectionContext(String mapName,
-                                     MapCoordinate coordinate,
-                                     CameraBounds bounds,
-                                     Double leftCameraX,
-                                     Double rightCameraX,
-                                     Double bottomCameraY,
-                                     Double topCameraY,
-                                     double cameraX,
-                                     double cameraY,
-                                     double anchorX,
-                                     double anchorY,
-                                     int baseRelativeX,
-                                     int baseRelativeY) {
+    @Value
+
+
+    @Builder
+
+
+    @AllArgsConstructor(access = AccessLevel.PUBLIC)
+
+
+    @Accessors(fluent = true)
+
+
+    private static class ProjectionContext {
+
+
+        String mapName;
+
+
+        MapCoordinate coordinate;
+
+
+        CameraBounds bounds;
+
+
+        Double leftCameraX;
+
+
+        Double rightCameraX;
+
+
+        Double bottomCameraY;
+
+
+        Double topCameraY;
+
+
+        double cameraX;
+
+
+        double cameraY;
+
+
+        double anchorX;
+
+
+        double anchorY;
+
+
+        int baseRelativeX;
+
+
+        int baseRelativeY;
+
+
     }
 
 }
