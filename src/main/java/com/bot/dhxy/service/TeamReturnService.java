@@ -4,6 +4,7 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -77,7 +78,7 @@ public class TeamReturnService {
 
         while (System.currentTimeMillis() < deadlineAtMs) {
             context.throwIfStopRequested();
-            sleep(pollMs);
+            TaskSleep.sleep(pollMs);
             if (!isReturnTeamSignalPresent()) {
                 log.info("{} team return: return signal disappeared, continue leader task",
                         context.getLogPrefix());
@@ -151,11 +152,4 @@ public class TeamReturnService {
         return configured > 0 ? configured : DEFAULT_LEADER_WAIT_POLL_MS;
     }
 
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

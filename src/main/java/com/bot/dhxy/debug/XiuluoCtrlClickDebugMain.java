@@ -2,12 +2,14 @@ package com.bot.dhxy.debug;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.NpcClickService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.vision.OcrRoiMemoryService;
-import com.bot.dhxy.vision.OcrWindowRegion;
 import com.bot.dhxy.window.discovery.GameWindowRegistrationService;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskRunner;
@@ -100,7 +102,7 @@ public class XiuluoCtrlClickDebugMain {
                 + " title=" + debug.window.getNativeBinding().getTitle());
 
         if (MODE_SMART_CLICK.equalsIgnoreCase(System.getProperty("xiuluo.ctrl.mode"))) {
-            boolean clicked = debug.npcClickService.clickNpcSmart(NpcClickService.NpcClickRequest.fixed(
+            boolean clicked = debug.npcClickService.clickNpcSmart(NpcClickRequest.fixed(
                     debug.window.getGameState().getMe(),
                     START_MAP_NAME,
                     ACCEPT_NPC_X,
@@ -110,7 +112,7 @@ public class XiuluoCtrlClickDebugMain {
             log("smart-mode clickedExpectedDialog=" + clicked);
             if (clicked) {
                 String matched = debug.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
-                        List.of(new DialogService.GreenTemplateClickSpec(
+                        List.of(new GreenTemplateClickSpec(
                                 OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
                         "xiuluo-ctrl-debug:smart-accept-option");
                 log("smart-mode acceptOption matched=" + matched);
@@ -122,7 +124,7 @@ public class XiuluoCtrlClickDebugMain {
             log("tooltip-mode clickedExpectedDialog=" + clicked);
             if (clicked) {
                 String matched = debug.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
-                        List.of(new DialogService.GreenTemplateClickSpec(
+                        List.of(new GreenTemplateClickSpec(
                                 OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
                         "xiuluo-ctrl-debug:tooltip-accept-option");
                 log("tooltip-mode acceptOption matched=" + matched);
@@ -142,7 +144,7 @@ public class XiuluoCtrlClickDebugMain {
         }
 
         String matched = debug.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
-                List.of(new DialogService.GreenTemplateClickSpec(
+                List.of(new GreenTemplateClickSpec(
                         OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
                 "xiuluo-ctrl-debug:accept-option");
         log("acceptOption matched=" + matched);
@@ -163,7 +165,7 @@ public class XiuluoCtrlClickDebugMain {
      * @return true when clicking the tooltip opens the Xiuluo accept option dialog.
      */
     private static boolean clickTaskTooltipFromRecommendedRegions(DebugContext debug) {
-        List<OcrWindowRegion> regions = debug.roiMemoryService.recommendNpcClickRegions(
+        List<OcrWindowRegion> regions = debug.roiMemoryService.recommendNpcClickWindowRegions(
                 START_MAP_NAME, ACCEPT_NPC_X, ACCEPT_NPC_Y, ACCEPT_NPC_NAME, false);
         int baseX = debug.window.getNativeBinding().getX();
         int baseY = debug.window.getNativeBinding().getY();

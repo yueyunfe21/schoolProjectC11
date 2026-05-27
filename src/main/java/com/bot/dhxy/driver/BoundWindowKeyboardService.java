@@ -1,5 +1,7 @@
 package com.bot.dhxy.driver;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
@@ -64,11 +66,11 @@ public class BoundWindowKeyboardService {
         }
 
         PostResult altDown = postKey(hwnd, WM_SYSKEYDOWN, VK_MENU, SCAN_ALT, true, false);
-        sleepQuietly(40);
+        TaskSleep.sleep(40);
         PostResult keyDown = postKey(hwnd, WM_SYSKEYDOWN, shortcut.virtualKey(), shortcut.scanCode(), true, false);
-        sleepQuietly(60);
+        TaskSleep.sleep(60);
         PostResult keyUp = postKey(hwnd, WM_SYSKEYUP, shortcut.virtualKey(), shortcut.scanCode(), true, true);
-        sleepQuietly(40);
+        TaskSleep.sleep(40);
         PostResult altUp = postKey(hwnd, WM_SYSKEYUP, VK_MENU, SCAN_ALT, false, true);
         boolean success = altDown.success() && keyDown.success() && keyUp.success() && altUp.success();
         windowInteractionMetricsService.recordHwndKeyboard(contextOptional.get().getWindowId(), shortcut.displayName(), success);
@@ -101,14 +103,6 @@ public class BoundWindowKeyboardService {
             return null;
         }
         return new WinDef.HWND(new Pointer(handle));
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private interface User32Keyboard extends StdCallLibrary {

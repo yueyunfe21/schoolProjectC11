@@ -1,6 +1,8 @@
 package com.bot.dhxy.debug;
 
 import com.bot.dhxy.vision.GameTextLineOcrService;
+import com.bot.dhxy.model.ocr.TextCandidate;
+import com.bot.dhxy.model.ocr.TextCandidateScanResult;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -42,9 +44,9 @@ public class NpcTextCandidateDebugMain {
         }
         try {
             GameTextLineOcrService service = new GameTextLineOcrService(null);
-            GameTextLineOcrService.TextCandidateScanResult result =
+            TextCandidateScanResult result =
                     service.findTextLikeCandidateResultFromWashedImage(image, overlayPath);
-            List<GameTextLineOcrService.TextCandidate> candidates = result.candidates();
+            List<TextCandidate> candidates = result.candidates();
             System.out.println("input=" + inputPath);
             System.out.println("overlay=" + overlayPath);
             System.out.println("status=" + result.status());

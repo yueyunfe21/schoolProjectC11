@@ -1,4 +1,4 @@
-package com.bot.dhxy.vision;
+package com.bot.dhxy.model.ocr;
 
 /**
  * Immutable rectangular OCR region in game-window-relative pixels.

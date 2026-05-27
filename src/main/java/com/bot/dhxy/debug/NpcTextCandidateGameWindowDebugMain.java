@@ -6,7 +6,9 @@ import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.vision.GameTextLineOcrService;
 import com.bot.dhxy.vision.OcrRoiMemoryService;
 import com.bot.dhxy.vision.OcrWindowScanService;
-import com.bot.dhxy.vision.OcrWindowRegion;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
+import com.bot.dhxy.model.ocr.TextCandidate;
+import com.bot.dhxy.model.ocr.TextCandidateScanResult;
 import com.bot.dhxy.window.discovery.GameWindowRegistrationService;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskRunner;
@@ -153,9 +155,9 @@ public class NpcTextCandidateGameWindowDebugMain {
         }
         try {
             ImageIO.write(scanImage, "png", rawPath.toFile());
-            GameTextLineOcrService.TextCandidateScanResult result =
+            TextCandidateScanResult result =
                     debug.textLineService.findYellowTextCandidateResult(scanImage, washedPath, overlayPath);
-            List<GameTextLineOcrService.TextCandidate> candidates = result.candidates();
+            List<TextCandidate> candidates = result.candidates();
 
             log("regionIndex=" + index + " scanRegionWindowRelative=" + region.toShortText());
             log("regionIndex=" + index + " defaultMaskedWindow="
@@ -203,7 +205,7 @@ public class NpcTextCandidateGameWindowDebugMain {
     private static List<OcrWindowRegion> selectedRegions(DebugContext debug, DebugTarget target) {
         String value = System.getProperty("npc.text.region", "recommended");
         if (value == null || value.isBlank() || "recommended".equalsIgnoreCase(value)) {
-            return debug.roiMemoryService.recommendNpcClickRegions(
+            return debug.roiMemoryService.recommendNpcClickWindowRegions(
                     target.mapName(), target.targetX(), target.targetY(), target.targetName(), target.roaming());
         }
         if ("fallback".equalsIgnoreCase(value)) {

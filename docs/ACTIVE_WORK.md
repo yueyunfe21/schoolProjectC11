@@ -1,5 +1,74 @@
 # DHXY Active Work
 
+### Tang De - 2026-05-26 NPC target model seed
+
+Status: implemented / compile passed
+
+Goal:
+
+- Add a canonical NPC/monster model so task code can describe "what target is this" instead of spreading name, map, coordinate, purpose, and fixed/roaming flags across call sites.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/model/npc/NpcTarget.java`
+- `src/main/java/com/bot/dhxy/model/npc/NpcRole.java`
+- `src/main/java/com/bot/dhxy/model/npc/NpcMovementType.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added `NpcTarget` with map name, logical X/Y coordinate, primary name, aliases, role, movement type, formula tune offsets, expected dialog template, key, and source.
+- Added `NpcRole` for task giver, combat target, interaction target, and debug target.
+- Added `NpcMovementType` for fixed, roaming, floating, and unknown targets.
+- Added `NpcTarget.toClickRequest(PlayerCharacter)` so the model can feed the current `NpcClickRequest` pipeline without forcing a big refactor now.
+- Boundary decision: do not pass the full `NpcTarget` into `NavigationService`. Navigation should keep using its narrow request/coordinate inputs because it only needs map and logical coordinates, not NPC role, aliases, OCR template, or click tuning.
+- Cleanup after boundary review:
+  - Removed `NpcNavigationRequest.fromTarget(NpcTarget)`.
+  - Removed large static `NpcTarget` builder constants from task constant sections.
+  - Navigation call sites now build `NpcNavigationRequest` from narrow map/coordinate/name fields.
+- Migrated first examples:
+  - 五环 accept NPC now has `NpcTarget ACCEPT_NPC` and uses it for debug click, navigation coordinates, logs, and smart-click request creation.
+  - 修罗 accept NPC now has `NpcTarget ACCEPT_NPC` and uses it for navigation and smart-click request creation.
+  - 修罗 combat objective now builds a per-objective `NpcTarget` with role `COMBAT_TARGET` and movement type `ROAMING` before entering the smart-click pipeline.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### He Li - 2026-05-26 approach coordinate boundary
+
+Status: implemented / compile passed
+
+Decision:
+
+- `NavigationService` only navigates to the logical coordinate it is given. It should not know whether that coordinate came from an NPC, 修罗怪, or another task target.
+- Task flows that need to stand near a target should first call `CoordinateHelper.calculateApproachCoordinate(mapName, targetX, targetY)`.
+- The returned coordinate is still a logical in-game map coordinate and is then passed to `NavigationService.navigateInCurrentMap(...)`.
+- 修罗 now derives its approach coordinate through `CoordinateHelper` before current-map navigation; the benchmark probe uses the same helper.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/tools/CoordinateHelper.java`
+- `src/main/java/com/bot/dhxy/task/XiuluoTask.java`
+- `src/main/java/com/bot/dhxy/debug/XiuluoAcceptBenchmarkMain.java`
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### He Li - 2026-05-26 Java/Spring/Lombok/logging SOP
+
+Status: decided
+
+Rule:
+
+- Use Spring Boot beans and constructor injection for real services/collaborators. Do not manually `new` service dependencies in task/business code.
+- Put shared request/result/value objects in a proper model package, not under service implementation packages.
+- For immutable request/result/value objects, use the existing Lombok pattern: `@Value` + `@Builder`, with `@Builder.Default` for defaults. Static factories should call `builder()` and then `build()`.
+- Use enums for operation/status/policy values that cross service/task boundaries.
+- Use SLF4J logging for normal app code. Avoid `System.out.println` outside temporary local debug tools.
+- Logs for automation-sensitive paths should include source task, window context when available, target map/NPC/coordinate, result status, and timing where useful.
+
 ### He Li - 2026-05-26 Java file layout SOP
 
 Status: decided
@@ -40,7 +109,7 @@ Events now emitted:
 - `input.request`
 - `task.transaction`
 - `npc.click.smart`
-- `navigation.mapPoint`
+- `navigation.mapCoordinate`
 - `navigation.toMap`
 - `navigation.currentMap`
 - `dialog.detect`
@@ -55,13 +124,266 @@ Validation:
 
 - `mvn -q -DskipTests compile` passed.
 
+### Tang De - 2026-05-26 Xiuluo map confirm wrapper cleanup
+
+Status: completed
+
+Goal:
+
+- Remove thin Xiuluo task wrappers around current-map confirmation so map checks call `GameStateUtil` directly.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/XiuluoTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Removed `XiuluoTask.isAlreadyInTargetMap(...)`.
+- Inlined its only call site in `runObjectiveReadyFlow(...)` with a direct `gameStateUtil.confirmCurrentMap(...)` call.
+- Kept Xiuluo-specific logs at the call site so the formal pathing precheck remains readable without another wrapper method.
+- Re-scanned map confirmation usages: remaining normal flow calls go directly through `GameStateUtil.confirmCurrentMap(...)` or `confirmCurrentMapFresh(...)`.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 NPC region resolution moved to memory service
+
+Status: completed
+
+Goal:
+
+- Move current-window coordinate conversion out of `NpcClickService` so consumers receive already resolved NPC click regions.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `src/main/java/com/bot/dhxy/debug/XiuluoCtrlClickDebugMain.java`
+- `src/main/java/com/bot/dhxy/debug/NpcTextCandidateGameWindowDebugMain.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `OcrRoiMemoryService.recommendNpcClickRegions(...)` now returns `ResolvedNpcClickRegion`, which includes:
+  - persisted window-relative region;
+  - current window base;
+  - screen-absolute rectangle.
+- The conversion uses the current bound `WindowRuntimeContext` native binding when present, and falls back to `GameClientTracker` only for standalone/debug paths.
+- Added `recommendNpcClickWindowRegions(...)` for debug tools that still need raw window-relative regions.
+- Removed the temporary `NpcClickService.NpcScanRegion`; `NpcClickService` now consumes the resolved region from the recommendation service directly.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 NPC scan region coordinate boundary
+
+Status: completed
+
+Goal:
+
+- Stop each NPC click strategy from manually converting recommended window-relative regions to screen-absolute rectangles.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added `NpcScanRegion`, a resolved scan-region record that keeps both:
+  - `windowRegion`: 1024x768 game-window-relative region used for OCR memory and evidence.
+  - `screenRect`: screen-absolute rectangle used for screenshot/template capture.
+- `resolveNpcScanRegions(...)` now converts recommended regions once using the current bound window base.
+- Tooltip template, yellow-name OCR, and purple player-anchor formula now receive resolved regions instead of recalculating `base + x/y` independently.
+- `captureCleanNameRegionToMemory(...)` now captures with the resolved screen-absolute rectangle directly.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 NPC visual work region semantics
+
+Status: completed
+
+Goal:
+
+- Treat learned NPC click regions as visual work areas that can support both yellow target-name OCR and purple player-anchor formula OCR.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Updated the recommendation JavaDoc to describe visual work regions instead of tight OCR-only boxes.
+- Replaced shrinking success-count-based ROI sizing with a fixed work-region sizing policy:
+  - padding: `240 x 190`
+  - minimum size: `520 x 360`
+- Both policy-derived regions and click-sample-derived regions now use the same `npcVisionWorkRegion(...)` helper.
+- This keeps the learned region broad enough to include the target yellow name and the current player's purple name after navigation moves the character near the target.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 NPC OCR region recommendation cap
+
+Status: completed
+
+Goal:
+
+- Keep NPC OCR region recommendations small enough to avoid repeated screenshot/OCR scans.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Fixed targets now return at most one learned/recommended OCR region plus the default masked full-window fallback.
+- Roaming targets now return at most two learned/recommended OCR regions plus the default masked full-window fallback.
+- The recommendation collector can still consider policy, sample, and legacy sources, but the returned list is capped before default is appended.
+- Logs now include `learnedCandidates` and `maxLearned` so it is visible when many historical candidates were trimmed.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 NPC OCR mask path cleanup
+
+Status: completed
+
+Goal:
+
+- Make yellow NPC-name OCR and purple player-anchor OCR use the same default full-window mask rule.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Replaced the yellow-only `prepareYellowTargetScanImage(...)` helper with shared `prepareNpcOcrScanImage(...)`.
+- Yellow target OCR and purple player-anchor OCR now both capture to `BufferedImage` first and use the same default-region mask decision.
+- Purple player-anchor still writes the prepared image to a temp file before washing because `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)` currently accepts file paths.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 Position scan gateway cleanup
+
+Status: completed
+
+Goal:
+
+- Reduce normal business use of `LocationVisionService.scanCurrentLocation()` so current-position reads go through the player state sync gateway.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `src/main/java/com/bot/dhxy/tools/GameStateUtil.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Changed `PlayerStateService.syncMyPosition()` into the central business entry for no-input current-position scans; it now returns the latest recognized location so no extra wrapper method is needed.
+- Updated map navigation arrival checks, NPC first-shot debug, NPC player-anchor formula, and `GameStateUtil.confirmCurrentMap(...)` to use `syncMyPosition()`.
+- Normal service/task code no longer directly calls `LocationVisionService.scanCurrentLocation()` outside `PlayerStateService`.
+- Remaining direct calls are limited to debug/calibration helpers:
+  - `debug/XiuluoAcceptBenchmarkMain`
+  - `tools/AutoGridCalibrator`
+  - `vision/PlayerNameOcrDebugService`
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 Pause/stop movement detection checkpoint
+
+Status: completed
+
+Goal:
+
+- Diagnose why pause/stop can feel slow after sleep consolidation.
+- Fix the concrete slow checkpoint found in the latest log.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/tools/GameStateUtil.java`
+- `docs/ACTIVE_WORK.md`
+
+Findings:
+
+- Latest log showed the UI command was pause, not stop.
+- Four windows reached `TaskPauseToken` checkpoint quickly, but one Xiuluo window continued inside `GameStateUtil` movement detection for about six seconds before pausing.
+- The slow path was the movement detector's coordinate sampling plus pixel fallback. It only checked thread interruption, not the current task pause/stop token.
+
+Done:
+
+- `GameStateUtil` now reads the current task context through `TaskExecutionContextHolder`.
+- Coordinate movement detection and pixel fallback loops now call a shared movement checkpoint before/after waits and captures.
+- Pause requests can now be observed inside movement detection instead of waiting for the whole detector to finish.
+- Thread interruption inside movement detection now becomes a `TaskStopRequestedException`, so stop exits through the normal STOPPED task path.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-26 Task sleep utility consolidation
+
+Status: completed
+
+Goal:
+
+- Stop duplicating small `Thread.sleep` / interrupt handling helpers in every task/service file.
+- Give task waits one shared interrupt policy so stop/pause responsiveness is easier to audit.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/runner/stop/TaskSleep.java`
+- `src/main/java/com/bot/dhxy/task/template/BaseTaskTemplate.java`
+- `src/main/java/com/bot/dhxy/task/XiuluoTask.java`
+- `src/main/java/com/bot/dhxy/service/BagService.java`
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/service/GiveItemService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+- `src/main/java/com/bot/dhxy/service/QuestManagerService.java`
+- `src/main/java/com/bot/dhxy/service/SummonSkillService.java`
+- `src/main/java/com/bot/dhxy/service/TeamReturnService.java`
+- `src/main/java/com/bot/dhxy/service/UICleanerService.java`
+- `src/main/java/com/bot/dhxy/vision/MapSurveyService.java`
+
+Done:
+
+- Added `TaskSleep` as the shared task/service sleep helper.
+- `TaskSleep.sleep(...)` returns false on interruption and always restores the interrupted flag.
+- `TaskSleep.sleepOrStop(...)` checks the task context before and after sleeping, and throws `TaskStopRequestedException` when interrupted.
+- Replaced duplicate local sleep helpers in the main task/navigation/dialog/NPC/item/team-return/vision flows.
+- Follow-up scan tightened the rule: non-debug Java code now uses `TaskSleep` instead of local `Thread.sleep` helpers, including driver, tracker, input worker, focus, team role detection, movement detection, and standalone tool classes that compile with the main source set.
+- Explicit `Debug*` classes and `debug` package experiments are left alone per user direction because they are temporary and may be deleted later.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
 ### He Li - 2026-05-25 NPC smart-click learning record boundary
 
 Status: implemented in `NpcClickService`; cleanup rule remains active
 
 Decision:
 
-- `NpcClickService.clickNpcSmart(...)` is the single production entry for clicking NPCs and clickable combat targets.
+- `NpcClickService.clickNpcSmart(...)` is the single production entry for clicking NPCs and task targets.
 - Vision-memory learning for NPC/monster click behavior must be centralized behind this entry.
 - Task code should only provide target facts through `NpcClickRequest`: map name, logical target coordinate, target name/keyword, roaming/fixed flag, and expected verification template.
 - Internal strategies may differ, but they are implementation details of `clickNpcSmart(...)`:
@@ -8430,7 +8752,7 @@ Changed files:
 
 Done:
 
-- Documented the `navigateToMapPointInternal(...)` stage split: cross-map route, current-map coordinate click, and arrival cleanup.
+- Documented the map-and-coordinate navigation stage split: cross-map route, current-map coordinate click, and arrival cleanup.
 - Documented the `navigateToMapInternal(...)` loop stages: cached-map fast path, one-time unknown-map sync, first world-map route submission, movement wait/yield, dialog handling, OCR arrival check, and stuck retry policy.
 - Kept the wrapper/internal separation intact; no navigation logic was changed.
 

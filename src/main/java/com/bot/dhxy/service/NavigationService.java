@@ -1,32 +1,32 @@
 package com.bot.dhxy.service;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
-import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.model.navigation.MapNavigationRequest;
+import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
-import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
-import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
-import com.bot.dhxy.team.TeamRoleDetectionService;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.tools.LatencyMetrics;
-import com.bot.dhxy.vision.LocationVisionService;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
-import com.bot.dhxy.window.interaction.WindowFocusService;
-import com.bot.dhxy.window.model.WindowNativeBinding;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -35,22 +35,20 @@ import java.awt.Point;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Coordinates map navigation for the currently bound game window.
  *
- * <p>This service owns the task-level navigation contract: it converts logical
- * game map coordinates into screen-absolute click points, submits real input
- * through {@link InputSequences}, releases the task turn when pathing has
- * safely started, and keeps screenshots/OCR tied to the current
+ * <p>This service owns navigation mechanics: it converts logical game map
+ * coordinates into screen-absolute click points, submits real input through
+ * {@link InputSequences}, and keeps screenshots/OCR tied to the current
  * {@link WindowTaskContextHolder} binding. Callers must pass logical in-game
- * map coordinates, not screen pixels.</p>
+ * map coordinates, not screen pixels. Task-level turn/yield policy belongs to
+ * the task transaction layer, not the mini-map click helper.</p>
  */
 @Slf4j
 @Component
@@ -73,48 +71,26 @@ public class NavigationService {
     private static final int MAP_POPUP_RECT_Y_OFFSET = 595;
     private static final int MAP_POPUP_RECT_WIDTH = 406;
     private static final int MAP_POPUP_RECT_HEIGHT = 137;
-    private static final double MAP_STARTUP_OPTION_MATCH_RATE = 0.95;
-    private static final String MAP_TRACKING_CHECKED_TEMPLATE = "images/template/map/checkbox_checked.png";
-    private static final String MAP_TRACKING_UNCHECKED_TEMPLATE = "images/template/map/checkbox_unchecked.png";
-    private static final String AUTO_CLOSE_MAP_CHECKED_TEMPLATE = "images/template/map/auto_close_map_checked.png";
-    private static final String AUTO_CLOSE_MAP_UNCHECKED_TEMPLATE = "images/template/map/auto_close_map_unchecked.png";
-    private static final String OPEN_FLY_CHECKED_TEMPLATE = "images/template/map/open_fly_checked.png";
-    private static final String OPEN_FLY_UNCHECKED_TEMPLATE = "images/template/map/open_fly_unchecked.png";
     private static final int MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS = 2;
     private static final int MAP_RESULT_SCROLL_DOWN_UNITS = 3;
     private static final long MAP_RESULT_SCROLL_INTERVAL_MS = 80L;
     private static final long MAP_RESULT_SCROLL_SETTLE_MS = 300L;
     private static final long MOVING_NAVIGATION_YIELD_MS = 1500L;
-    private static final long NPC_DIALOG_FAST_POLL_TIMEOUT_MS = 20000L;
-    private static final long NPC_DIALOG_FAST_POLL_INTERVAL_MS = 350L;
-    private static final long NPC_DIALOG_MOVEMENT_CHECK_INTERVAL_MS = 1600L;
-    /*
-     * NPC mini-map clicks are only a pre-positioning step before clickNpcSmart/tooltip matching.
-     * If no dialog appears and the movement detector is already inactive on the first scheduled
-     * check, return to the task layer quickly instead of burning several seconds in a hard wait.
-     */
-    private static final long NPC_DIALOG_MIN_WAIT_BEFORE_INACTIVE_FALLBACK_MS = 1600L;
-    private static final String ALT6_VISIBILITY_TEMPLATE = "images/template/status/blacklist_crowd.png";
-    private static final int ALT6_VISIBILITY_RECT_X_OFFSET = 359;
-    private static final int ALT6_VISIBILITY_RECT_Y_OFFSET = 271;
-    private static final int ALT6_VISIBILITY_RECT_WIDTH = 317;
-    private static final int ALT6_VISIBILITY_RECT_HEIGHT = 288;
-    private static final double ALT6_VISIBILITY_MATCH_RATE = 0.85;
-    private static final int ALT6_VISIBILITY_MAX_ATTEMPTS = 3;
-    private static final long ALT6_VISIBILITY_RECHECK_DELAY_MS = 500L;
-    private static final long ALT6_OVERLAY_FADEOUT_WAIT_MS = 1000L;
-    private static final int GAME_CLIENT_WIDTH = 1024;
-    private static final int GAME_CLIENT_HEIGHT = 768;
-    private static final int MINI_MAP_EDGE_INSET_TRIGGER_PX = 240;
     private static final long MINI_MAP_PATHING_CONFIRM_TIMEOUT_MS = 2200L;
     private static final long MINI_MAP_PATHING_CONFIRM_POLL_MS = 250L;
-    private static final int COMBAT_TARGET_APPROACH_OFFSET = 2;
     private static final int MAP_NAVIGATION_RECLICK_STUCK_SCANS = 2;
     private static final int MAP_NAVIGATION_REOPEN_STUCK_SCANS = 3;
+    private static final String MAP_LING_SHOU_VILLAGE = "\u7075\u517d\u6751";
+    private static final String MAP_CHANG_AN = "\u957f\u5b89";
+    private static final String NPC_ZHANG_WEN = "\u5f20\u95fb";
+    private static final int ZHANG_WEN_APPROACH_X = 219;
+    private static final int ZHANG_WEN_APPROACH_Y = 100;
+    private static final int ZHANG_WEN_NPC_X = 224;
+    private static final int ZHANG_WEN_NPC_Y = 100;
+    private static final long LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS = 20000L;
 
     private final BotProperties config;
     private final GameContext context;
-    private final LocationVisionService locationRadar;
     private final GameClientTracker tracker;
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
@@ -123,458 +99,91 @@ public class NavigationService {
     private final CoordinateHelper coordinateHelper;
     private final UICleanerService uiCleanerService;
     private final DialogService dialogService;
+    private final NpcClickService npcClickService;
     private final WindowScopedTempPath windowScopedTempPath;
-    private final WindowFocusService windowFocusService;
     private final Random random = new Random();
     private final PlayerStateService playerStateService;
     private final BattleRadarService battleRadarService;
     private final WindowTaskContextHolder windowTaskContextHolder;
-    private final TeamRoleDetectionService teamRoleDetectionService;
     private final TaskTurnCoordinator taskTurnCoordinator;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
 
     private final Map<String, NavigationRuntimeState> runtimeStates = new ConcurrentHashMap<>();
-    private static final long LIGHTWEIGHT_CLEAN_INTERVAL_MS = 2500L;
+
+    // ==============================
+    // Public navigation entry points
+    // ==============================
 
     /**
-     * Navigate to an NPC coordinate on a target map using normal task-turn release behavior.
+     * Navigate to a fixed NPC coordinate, optionally keeping the current task turn after pathing starts.
      *
-     * @param targetMapName target map name as shown by the game/OCR route system.
-     * @param targetX logical in-game map X coordinate of the NPC.
-     * @param targetY logical in-game map Y coordinate of the NPC.
-     * @return true when the map and current-map navigation steps complete; false when map
-     *         transforms are missing, input cannot be submitted, the task is stopped, or timeout occurs.
+     * @param request NPC navigation request. Coordinates are logical in-game map coordinates; nullable
+     *                fields such as target name/source are used only for diagnostics.
+     * @return true when map navigation and current-map coordinate navigation complete; false when
+     *         input fails, transforms are missing, the task stops, or timeout occurs.
      */
-    public boolean navigateToNPC(String targetMapName, int targetX, int targetY) {
-        return navigateToNPC(targetMapName, targetX, targetY, true);
-    }
-
-    /**
-     * Navigate to an NPC without releasing the task turn after pathing starts.
-     *
-     * <p>This is used for leader-only task startup/acceptance flows where the leader must keep
-     * ownership until the next task transaction explicitly decides to yield. The coordinates are
-     * logical in-game map coordinates.</p>
-     *
-     * @param targetMapName target map name.
-     * @param targetX logical in-game map X coordinate.
-     * @param targetY logical in-game map Y coordinate.
-     * @return true on successful navigation setup; false on missing transform, failed input, stop, or timeout.
-     */
-    public boolean navigateToNPCWithoutTurnRelease(String targetMapName, int targetX, int targetY) {
-        return navigateToNPC(targetMapName, targetX, targetY, false);
-    }
-
-    private boolean navigateToNPC(String targetMapName, int targetX, int targetY, boolean releaseTurnOnPathing) {
-        return navigateToMapPoint(targetMapName, targetX, targetY, releaseTurnOnPathing, "navigateToNPC");
-    }
-
-    /**
-     * Navigate near a combat target, not exactly onto the target coordinate.
-     *
-     * <p>Monster/NPC battle targets can overlap the player if we path to the exact coordinate.
-     * This method first computes a small logical approach coordinate via
-     * {@link #calculateCombatTargetApproach(String, int, int)}, then delegates to normal navigation.
-     * The original target coordinate remains the business target for later OCR/NPC-click logic.</p>
-     *
-     * @param targetMapName target map name.
-     * @param targetX logical in-game X coordinate of the combat target.
-     * @param targetY logical in-game Y coordinate of the combat target.
-     * @return true when the approach coordinate is reached; false when normal navigation fails.
-     */
-    public boolean navigateToCombatTarget(String targetMapName, int targetX, int targetY) {
-        MapCoordinate approach = calculateCombatTargetApproach(targetMapName, targetX, targetY);
-        return navigateToMapPoint(targetMapName, approach.getX(), approach.getY(), true,
-                "navigateToCombatTarget", true, true);
-    }
-
-    /**
-     * Shared map-then-coordinate navigation wrapper.
-     *
-     * <p>The method intentionally performs arrival cleanup only after checking whether a business
-     * dialog is already open. Navigation may directly trigger an NPC/task option dialog; in that
-     * case generic UI cleanup must not close it before the task layer can process it.</p>
-     */
-    private boolean navigateToMapPoint(String targetMapName,
-                                       int targetX,
-                                       int targetY,
-                                       boolean releaseTurnOnPathing,
-                                       String source) {
-        return navigateToMapPoint(targetMapName, targetX, targetY, releaseTurnOnPathing, source, false, false);
-    }
-
-    /**
-     * Shared map-then-coordinate navigation wrapper with task-specific performance switches.
-     *
-     * <p>The extra switches are intentionally private because they encode business semantics,
-     * not generic navigation preferences. Combat-target approach navigation must always submit
-     * the first mini-map click so the character is positioned for the later NPC/monster click,
-     * and it can skip generic arrival cleanup because the task layer immediately performs the
-     * target interaction. Ordinary navigation keeps the safer default checks.</p>
-     *
-     * @param targetMapName destination map name as used by the world-map search input.
-     * @param targetX logical in-game X coordinate on the destination map.
-     * @param targetY logical in-game Y coordinate on the destination map.
-     * @param releaseTurnOnPathing whether the task turn may be yielded after pathing starts.
-     * @param source short log source used to separate NPC, combat target, and normal map calls.
-     * @param forceFirstMiniMapClick true to skip the expensive pre-click arrival sync and click
-     *                               the mini-map once even when cached coordinates look close.
-     * @param skipArrivalCleanup true when the caller will immediately handle the next UI/dialog
-     *                           state and generic cleanup would only add latency.
-     * @return true when map navigation plus current-map coordinate navigation succeeds; false on
-     *         failed map search/click, current-map navigation failure, stop, or interruption.
-     */
-    private boolean navigateToMapPoint(String targetMapName,
-                                       int targetX,
-                                       int targetY,
-                                       boolean releaseTurnOnPathing,
-                                       String source,
-                                       boolean forceFirstMiniMapClick,
-                                       boolean skipArrivalCleanup) {
+    public boolean navigateToNPC(NpcNavigationRequest request) {
+        if (request == null) {
+            log.warn("navigateToNPC skipped: request is null");
+            return false;
+        }
         long latencyStart = LatencyMetrics.start();
-        boolean result = navigateToMapPointInternal(targetMapName, targetX, targetY, releaseTurnOnPathing,
-                source, forceFirstMiniMapClick, skipArrivalCleanup);
-        LatencyMetrics.info(log, "navigation.mapPoint", latencyStart,
-                "result=" + result + " source=" + source + " target=" + targetMapName
-                        + "(" + targetX + "," + targetY + ") releaseTurn=" + releaseTurnOnPathing);
-        return result;
-    }
+        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
+        boolean result = false;
+        try {
+            checkpointTask();
 
-    private boolean navigateToMapPointInternal(String targetMapName,
-                                               int targetX,
-                                               int targetY,
-                                               boolean releaseTurnOnPathing,
-                                               String source,
-                                               boolean forceFirstMiniMapClick,
-                                               boolean skipArrivalCleanup) {
-        checkpointTask();
-
-        /*
-         * Stage 1: get onto the destination map through the world-map search UI. This only solves
-         * the cross-map route; the target coordinate is handled by the mini-map stage below.
-         */
-        if (!navigateToMap(targetMapName, releaseTurnOnPathing)) {
-            if (releaseTurnOnPathing) {
-                taskTurnCoordinator.forceRelease("navigation:" + source + ":map-failed");
+            // Step 1: only solve the cross-map route. This method must not hide map+coordinate as a new abstraction.
+            if (!navigateToMap(MapNavigationRequest.builder()
+                    .targetMapName(request.getTargetMapName())
+                    .keepTaskTurnUntilHandled(request.isKeepTaskTurnUntilHandled())
+                    .source(request.getSource() + ":map")
+                    .build())) {
+                if (releaseTurnOnPathing) {
+                    taskTurnCoordinator.forceRelease("navigation:" + request.getSource() + ":map-failed");
+                }
+                return false;
             }
-            return false;
-        }
-        checkpointTask();
+            checkpointTask();
 
-        /*
-         * Stage 2: after the map is correct, click the current-map mini-map coordinate. NPC routes
-         * keep a different success rule because opening the NPC dialog is a valid arrival signal.
-         */
-        boolean expectNpcDialog = "navigateToNPC".equals(source);
-        boolean result = navigateInCurrentMap(targetX, targetY, releaseTurnOnPathing, expectNpcDialog, forceFirstMiniMapClick);
-        if (!result) {
-            if (releaseTurnOnPathing) {
-                taskTurnCoordinator.forceRelease("navigation:" + source + ":current-map-failed");
+            // Step 2: after the map is correct, click/path to the NPC's logical coordinate on that map.
+            boolean currentMapResult = navigateInCurrentMap(request.getTargetX(), request.getTargetY());
+            if (!currentMapResult) {
+                if (releaseTurnOnPathing) {
+                    taskTurnCoordinator.forceRelease("navigation:" + request.getSource() + ":current-map-failed");
+                }
+                return false;
             }
-            return false;
-        }
-        checkpointTask();
+            checkpointTask();
 
-        /*
-         * Stage 3: clean only when the caller is not about to handle a dialog/target interaction.
-         * This avoids closing a business dialog that navigation just opened successfully.
-         */
-        if (expectNpcDialog) {
+            // Step 3: NPC navigation never cleans dialogs here; the task layer owns the opened option/story dialog.
             log.info("skip arrival cleanup after NPC navigation; task layer will process any opened dialog");
+            result = true;
             return true;
+        } finally {
+            LatencyMetrics.info(log, "navigation.toNpc", latencyStart,
+                    "result=" + result + " source=" + request.getSource() + " target=" + request.getTargetMapName()
+                            + "(" + request.getTargetX() + "," + request.getTargetY() + ")"
+                            + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
         }
-        if (skipArrivalCleanup) {
-            log.info("skip arrival cleanup after {} navigation; task layer will process target interaction", source);
-            return true;
-        }
-        ensureTaskTurn(source + ":arrivalCleanup");
-        DialogService.DialogType type = dialogService.detectDialogTypeNoFocus(source + ":arrivalCleanup-check");
-        if (type == DialogService.DialogType.NONE) {
-            uiCleanerService.cleanUpAll();
-        } else {
-            log.info("skip arrival cleanup because dialog is open: type={}", type);
-        }
-        return true;
     }
-
-    /**
-     * Navigate within the current map to a logical in-game coordinate.
-     *
-     * @param targetX logical in-game map X coordinate on the current map.
-     * @param targetY logical in-game map Y coordinate on the current map.
-     * @return true when pathing reaches the coordinate tolerance or opens a dialog; false on input failure,
-     *         missing transform, interruption, or timeout.
-     */
-    public boolean navigateInCurrentMap(int targetX, int targetY) {
-        return navigateInCurrentMap(targetX, targetY, true);
-    }
-
-    /**
-     * Navigate within the current map to a combat-target approach coordinate.
-     *
-     * <p>The provided coordinate is the real monster/NPC logical coordinate. The method computes
-     * a small nearby approach coordinate first so the character does not stand directly under the
-     * target nameplate. This method still uses the existing mini-map navigation implementation.</p>
-     *
-     * @param targetX logical in-game X coordinate of the combat target.
-     * @param targetY logical in-game Y coordinate of the combat target.
-     * @return true when normal current-map navigation succeeds for the approach coordinate.
-     */
-    public boolean navigateInCurrentMapNearCombatTarget(int targetX, int targetY) {
-        String mapName = context.getMe().getCurrentMapName();
-        MapCoordinate approach = calculateCombatTargetApproach(mapName, targetX, targetY);
-        return navigateInCurrentMap(approach.getX(), approach.getY(), true);
-    }
-
-    /**
-     * Mini-map pathing loop for one logical coordinate.
-     *
-     * <p>All real Alt+1/click/Alt+1 sequences go through the input queue. When movement starts,
-     * this method may release the task turn so follower windows can perform safe background work.
-     * It also treats an opened dialog as success because an NPC/business dialog can be the desired
-     * arrival signal.</p>
-     */
-    private boolean navigateInCurrentMap(int targetX, int targetY, boolean releaseTurnOnPathing) {
-        return navigateInCurrentMap(targetX, targetY, releaseTurnOnPathing, false);
-    }
-
-    private boolean navigateInCurrentMap(int targetX, int targetY, boolean releaseTurnOnPathing, boolean expectNpcDialog) {
-        return navigateInCurrentMap(targetX, targetY, releaseTurnOnPathing, expectNpcDialog, false);
-    }
-
-    /**
-     * Mini-map pathing loop with an optional forced first click.
-     *
-     * <p>Normally this method can return before clicking if a fresh minimap read says the player
-     * is already within tolerance. Combat-target approach calls deliberately bypass that shortcut:
-     * the task needs a real mini-map click to center/position the character before the following
-     * tooltip/NPC-click pipeline. The forced-click flag only affects the first pre-click shortcut;
-     * all later movement, dialog, retry, and stop handling remains the shared navigation logic.</p>
-     */
-    private boolean navigateInCurrentMap(int targetX,
-                                         int targetY,
-                                         boolean releaseTurnOnPathing,
-                                         boolean expectNpcDialog,
-                                         boolean forceFirstMiniMapClick) {
-        long latencyStart = LatencyMetrics.start();
-        boolean result = navigateInCurrentMapInternal(targetX, targetY, releaseTurnOnPathing,
-                expectNpcDialog, forceFirstMiniMapClick);
-        LatencyMetrics.info(log, "navigation.currentMap", latencyStart,
-                "result=" + result + " target=(" + targetX + "," + targetY + ")"
-                        + " expectNpcDialog=" + expectNpcDialog
-                        + " forceFirstClick=" + forceFirstMiniMapClick);
-        return result;
-    }
-
-    private boolean navigateInCurrentMapInternal(int targetX,
-                                                 int targetY,
-                                                 boolean releaseTurnOnPathing,
-                                                 boolean expectNpcDialog,
-                                                 boolean forceFirstMiniMapClick) {
-        String mapName = context.getMe().getCurrentMapName();
-        log.info("navigate in map: {} target=({}, {})", mapName, targetX, targetY);
-
-        Point pixelPoint = coordinateHelper.getPhysicalMapPoint(mapName, targetX, targetY);
-        if (pixelPoint == null) {
-            log.error("map transform missing: {}", mapName);
-            return false;
-        }
-        List<MiniMapClickCandidate> clickCandidates = buildMiniMapClickCandidates(mapName, targetX, targetY, pixelPoint);
-
-        long startTime = System.currentTimeMillis();
-        long timeoutMs = 60000;
-
-        /*
-         * Ordinary coordinate navigation may finish before clicking when the minimap coordinate is
-         * already within tolerance. NPC-accept navigation is different: the purpose is to make the
-         * game path/click into the NPC interaction state. Being within +/-2 logical coordinates is
-         * not enough because the character can still be off-center for the later yellow-name/Ctrl
-         * click pipeline. For NPC navigation, log the near-arrival but still submit the first
-         * mini-map click.
-         */
-        if (!forceFirstMiniMapClick && !expectNpcDialog
-                && syncAndCheckArrived(targetX, targetY, "navigateInCurrentMap:before-first-click")) {
-            return true;
-        } else if (forceFirstMiniMapClick) {
-            log.info("force first mini-map click before arrival sync: target=({}, {}) source=combat-target-approach",
-                    targetX, targetY);
-        } else if (expectNpcDialog) {
-            syncAndLogNearArrived(targetX, targetY, "navigateInCurrentMap:npc-before-first-click");
-        }
-
-        MiniMapClickOutcome firstClickOutcome = clickMiniMapPointAndConfirm(
-                clickCandidates, "navigateInCurrentMap:first", releaseTurnOnPathing, false,
-                targetX, targetY, expectNpcDialog, forceFirstMiniMapClick);
-        if (firstClickOutcome == MiniMapClickOutcome.ARRIVED) {
-            return true;
-        }
-        if (firstClickOutcome == MiniMapClickOutcome.FAILED) {
-            return false;
-        }
-        if (firstClickOutcome == MiniMapClickOutcome.DIALOG_OPENED) {
-            log.info("navigate in current map reached dialog during first mini-map click: target=({}, {})",
-                    targetX, targetY);
-            return true;
-        }
-        if (expectNpcDialog && firstClickOutcome == MiniMapClickOutcome.PENDING_CONFIRMATION
-                && waitForExpectedNpcDialogAfterMiniMapClick(targetX, targetY)) {
-            return true;
-        }
-        if (expectNpcDialog && syncAndCheckArrived(targetX, targetY, "navigateInCurrentMap:npc-after-first-click")) {
-            log.info("NPC navigation reached target after forced mini-map click; delegate final NPC interaction to task layer: target=({}, {})",
-                    targetX, targetY);
-            return true;
-        }
-
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            checkpointTask();
-            if (Thread.currentThread().isInterrupted()) {
-                return false;
-            }
-
-            if (battleRadarService.checkAndSyncCombatState()) {
-                checkpointTask();
-                if (!sleepInterruptible(battleRadarService.getDynamicPollingIntervalMs())) {
-                    return false;
-                }
-                checkpointTask();
-                startTime = System.currentTimeMillis();
-                continue;
-            }
-
-            context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
-
-            /*
-             * Ordinary current-map navigation is a coordinate problem, so a stable in-tolerance
-             * minimap coordinate can complete the call. NPC navigation is an interaction problem:
-             * the task needs the NPC dialog or a clean fallback into clickNpcSmart, so coordinate
-             * proximity alone must not short-circuit the retry loop.
-             */
-            if (syncAndCheckArrived(targetX, targetY, expectNpcDialog
-                    ? "navigateInCurrentMap:npc-loop-after-click"
-                    : "navigateInCurrentMap:loop")) {
-                if (expectNpcDialog) {
-                    log.info("NPC navigation reached target after mini-map click; task layer will handle dialog/NPC smart click: target=({}, {})",
-                            targetX, targetY);
-                }
-                return true;
-            }
-
-            GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-            checkpointTask();
-            if (isActiveNavigationMovement(movementState)) {
-                log.info("navigate in current map yielding while moving: target=({}, {}) state={} sleepMs={}",
-                        targetX, targetY, movementState, MOVING_NAVIGATION_YIELD_MS);
-                if (!sleepInterruptible(MOVING_NAVIGATION_YIELD_MS)) {
-                    return false;
-                }
-                checkpointTask();
-                continue;
-            }
-
-            ensureTaskTurn("navigateInCurrentMap:activeCheck");
-            cleanLightweightInterruptions("navigateInCurrentMap");
-
-            DialogService.DialogType dialogType = dialogService.detectDialogTypeNoFocus("navigateInCurrentMap:stopped-dialog-check");
-            checkpointTask();
-            if (dialogType != DialogService.DialogType.NONE) {
-                log.info("navigate in current map stopped on dialog: target=({}, {}) type={}", targetX, targetY, dialogType);
-                return true;
-            }
-
-            MiniMapClickOutcome retryOutcome = clickMiniMapPointAndConfirm(
-                    clickCandidates, "navigateInCurrentMap:retry", releaseTurnOnPathing, true, targetX, targetY, expectNpcDialog);
-            if (!expectNpcDialog && retryOutcome == MiniMapClickOutcome.ARRIVED) {
-                return true;
-            }
-            if (retryOutcome == MiniMapClickOutcome.FAILED) {
-                return false;
-            }
-            if (retryOutcome == MiniMapClickOutcome.DIALOG_OPENED) {
-                log.info("navigate in current map reached dialog during retry mini-map click: target=({}, {})",
-                        targetX, targetY);
-                return true;
-            }
-            checkpointTask();
-
-            if (!sleepInterruptible(500)) {
-                return false;
-            }
-            checkpointTask();
-        }
-
-        log.error("navigate timeout");
-        return false;
-    }
-
-    /**
-     * Start mini-map pathing on the current map without releasing the task turn.
-     *
-     * <p>This is a low-level helper for task transactions that need to initiate movement but keep
-     * ownership until the caller records a transaction result. It submits one queued physical input
-     * sequence: open mini-map with Alt+1, click the screen-absolute pixel mapped from the logical
-     * coordinate, close the mini-map, and record movement intent.</p>
-     *
-     * @param mapName map whose transform should be used.
-     * @param targetX logical in-game X coordinate.
-     * @param targetY logical in-game Y coordinate.
-     * @param source log/input-queue description; blank values are replaced by a default label.
-     * @return true when the input sequence was accepted by the queue; false if the map transform is missing
-     *         or queue submission fails.
-     */
-    public boolean triggerMiniMapPathingWithoutTurnRelease(String mapName, int targetX, int targetY, String source) {
-        String safeSource = source == null || source.isBlank() ? "triggerMiniMapPathingWithoutTurnRelease" : source;
-        Point pixelPoint = coordinateHelper.getPhysicalMapPoint(mapName, targetX, targetY);
-        if (pixelPoint == null) {
-            log.error("mini-map pathing trigger failed, map transform missing: source={} map={} target=({}, {})",
-                    safeSource, mapName, targetX, targetY);
-            return false;
-        }
-        boolean submitted = inputSequences.submitAndWait(safeSource, List.of(
-                InputAction.pressAlt1(),
-                InputAction.sleep(800),
-                InputAction.clickLeft(pixelPoint.x, pixelPoint.y, 200),
-                InputAction.sleep(500),
-                InputAction.pressAlt1(),
-                InputAction.sleep(1200)
-        ));
-        if (submitted) {
-            gameStateUtil.recordMovementIntent(safeSource);
-        }
-        return submitted;
-    }
-
-    /**
-     * Trigger world-map routing to a map name without releasing the task turn.
-     *
-     * <p>The whole map search flow runs inside one exclusive input callback because opening the map,
-     * typing the map name, scrolling results, and clicking the final route link are one atomic user
-     * action. Nested queue calls must not be used inside that callback.</p>
-     *
-     * @param targetMapName map name to type into the world-map route search.
-     * @param source log/input-queue source label.
-     * @return true if the route link was clicked and movement intent was recorded.
-     */
-    public boolean triggerWorldMapPathingWithoutTurnRelease(String targetMapName, String source) {
-        String safeSource = source == null || source.isBlank() ? "triggerWorldMapPathingWithoutTurnRelease" : source;
-        boolean clicked = inputSequences.submitExclusiveAndWait(safeSource + ":" + targetMapName,
-                () -> openMapInputTargetAndClickLastNavPointExclusive(targetMapName));
-        if (clicked) {
-            gameStateUtil.recordMovementIntent(safeSource);
-        }
-        return clicked;
-    }
-
 
     /**
      * Navigate across maps using the world-map search UI.
      *
-     * <p>Business dialogs are handled between movement checks because pathing can require clicking
-     * route-option dialogs. When movement is active the method sleeps and yields quickly instead of
-     * repeatedly fighting for input focus.</p>
+     * @param request map navigation request. The target map name is the game-visible map name used
+     *                for route search and arrival confirmation.
+     * @return true when the game reaches the target map or already appears to be there.
      */
-    private boolean navigateToMap(String targetMapName, boolean releaseTurnOnPathing) {
+    public boolean navigateToMap(MapNavigationRequest request) {
+        if (request == null) {
+            log.warn("navigateToMap skipped: request is null");
+            return false;
+        }
+        String targetMapName = request.getTargetMapName();
+        String source = request.getSource();
+        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
         long latencyStart = LatencyMetrics.start();
         boolean result = false;
         try {
@@ -591,18 +200,29 @@ public class NavigationService {
             }
 
             /*
-             * If the cache is blank, do exactly one bound-window position sync before submitting input.
+             * If the cache is blank, do exactly one shared map confirmation before submitting input.
              * A blank map usually means startup/registration has not refreshed identity/location yet.
              */
             checkpointTask();
             if (me.getCurrentMapName() == null || me.getCurrentMapName().isBlank()) {
-                log.info("current map is unknown before navigation, syncing position once");
-                playerStateService.syncMyPosition();
+                log.info("current map is unknown before navigation, confirming target map once");
+                boolean arrivedAfterSync = gameStateUtil.confirmCurrentMapFresh(
+                        targetMapName, 0L, "navigateToMap:blankCurrentMap");
                 log.info("navigate to map after sync: {} current={}", targetMapName, me.getCurrentMapName());
-                if (targetMapName.equals(me.getCurrentMapName())) {
+                if (arrivedAfterSync) {
                     result = true;
                     return true;
                 }
+            }
+
+            /*
+             * Ling Shou Village cannot be reached by the normal world-map search. Its validated
+             * entrance is Chang'an -> Zhang Wen -> transfer option, so failures here must retry that
+             * NPC chain instead of falling through to a generic route search for the target map.
+             */
+            if (MAP_LING_SHOU_VILLAGE.equals(targetMapName)) {
+                result = navigateToLingShouVillageViaZhangWen(request);
+                return result;
             }
 
             /*
@@ -610,7 +230,7 @@ public class NavigationService {
              * result, and click the last route link. The called method owns the exclusive input section.
              */
             ensureTaskTurn("navigateToMap:firstPathing");
-            if (!openMapInputTargetAndClickLastNavPoint(targetMapName, releaseTurnOnPathing)) {
+            if (!submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing)) {
                 log.warn("first navigate attempt failed, entering retry loop");
             }
 
@@ -635,7 +255,7 @@ public class NavigationService {
                     stuckCount = 0;
                     log.info("navigate to map yielding while moving: target={} state={} sleepMs={}",
                             targetMapName, movementState, MOVING_NAVIGATION_YIELD_MS);
-                    if (!sleepInterruptible(MOVING_NAVIGATION_YIELD_MS)) {
+                    if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
                         return false;
                     }
                     checkpointTask();
@@ -653,7 +273,7 @@ public class NavigationService {
                 if (dialogResult == DialogHandleResult.OPTION_KEYWORD_CLICKED
                         || dialogResult == DialogHandleResult.FALLBACK_CLICKED) {
                     stuckCount = 0;
-                    if (!sleepInterruptible(1500)) {
+                    if (!TaskSleep.sleep(1500)) {
                         return false;
                     }
                     checkpointTask();
@@ -664,10 +284,9 @@ public class NavigationService {
                  * OCR/template location confirmation is the authoritative map-arrival check. It is
                  * intentionally after dialog handling because route dialogs can block the mini-map label.
                  */
-                TextRecognizer.LocationInfo locationInfo = locationRadar.scanCurrentLocation();
+                LocationInfo locationInfo = playerStateService.syncMyPosition();
                 checkpointTask();
                 if (locationInfo != null) {
-                    me.setCurrentMapName(locationInfo.mapName);
                     if (targetMapName.equals(locationInfo.mapName)) {
                         log.info("arrived map: {}", targetMapName);
                         result = true;
@@ -685,7 +304,7 @@ public class NavigationService {
                                 targetMapName, lastObservedMapName, locationInfo.mapName, locationInfo.x, locationInfo.y);
                         lastObservedMapName = locationInfo.mapName;
                         stuckCount = 0;
-                        if (!sleepInterruptible(1500)) {
+                        if (!TaskSleep.sleep(1500)) {
                             return false;
                         }
                         checkpointTask();
@@ -709,16 +328,16 @@ public class NavigationService {
                             targetMapName, me.getCurrentMapName(), stuckCount, MAP_NAVIGATION_RECLICK_STUCK_SCANS);
                 } else if (stuckCount >= MAP_NAVIGATION_REOPEN_STUCK_SCANS) {
                     ensureTaskTurn("navigateToMap:reopenPathing");
-                    if (openMapInputTargetAndClickLastNavPoint(targetMapName, releaseTurnOnPathing)) {
+                    if (submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing)) {
                         stuckCount = 0;
                     }
                 } else {
                     ensureTaskTurn("navigateToMap:reclickPathing");
-                    clickLastNavPoint(targetMapName, true, releaseTurnOnPathing);
+                    retryWorldMapDestinationClick(targetMapName, releaseTurnOnPathing);
                 }
                 checkpointTask();
 
-                if (!sleepInterruptible(1500)) {
+                if (!TaskSleep.sleep(1500)) {
                     return false;
                 }
                 checkpointTask();
@@ -728,142 +347,270 @@ public class NavigationService {
             return false;
         } finally {
             LatencyMetrics.info(log, "navigation.toMap", latencyStart,
-                    "result=" + result + " target=" + targetMapName + " releaseTurn=" + releaseTurnOnPathing);
+                    "result=" + result + " source=" + source + " target=" + targetMapName
+                            + " keepTurn=" + request.isKeepTaskTurnUntilHandled());
         }
-    }
-
-    private boolean isActiveNavigationMovement(GameStateUtil.MovementState state) {
-        return state == GameStateUtil.MovementState.MOVING
-                || state == GameStateUtil.MovementState.PATHING_ACTIVE
-                || state == GameStateUtil.MovementState.MAYBE_MOVING;
     }
 
     /**
-     * Re-click the most recent route result or open a fresh map search.
+     * Navigate within the current map by clicking mini-map logical coordinates until arrival.
      *
-     * @param targetMapName map name for fresh search fallback; may be blank only when reclick is false.
-     * @param reclick true to reuse the last remembered screen-absolute route-link point.
-     * @return true when a route click was submitted or performed.
+     * @param targetX logical in-game X coordinate on the active map.
+     * @param targetY logical in-game Y coordinate on the active map.
+     * @return true when the current window reaches the coordinate tolerance; false on stop, battle,
+     *         exhausted click candidates, or timeout.
      */
-    public boolean clickLastNavPoint(String targetMapName, boolean reclick) {
-        return clickLastNavPoint(targetMapName, reclick, true);
+    public boolean navigateInCurrentMap(int targetX, int targetY) {
+        long latencyStart = LatencyMetrics.start();
+        boolean result = false;
+        try {
+            String mapName = context.getMe().getCurrentMapName();
+            log.info("navigate in map: {} target=({}, {})", mapName, targetX, targetY);
+
+            long startTime = System.currentTimeMillis();
+            long timeoutMs = 60000;
+            int failedMiniMapClicks = 0;
+
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                checkpointTask();
+                if (Thread.currentThread().isInterrupted()) {
+                    return false;
+                }
+
+                if (battleRadarService.checkAndSyncCombatState()) {
+                    log.warn("navigate in current map interrupted by battle: target=({}, {})", targetX, targetY);
+                    return false;
+                }
+
+                context.setCurrentActionState(GameContext.ActionState.NAVIGATING);
+
+                if (syncAndCheckArrived(targetX, targetY, "navigateInCurrentMap:loop")) {
+                    result = true;
+                    return true;
+                }
+
+                GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
+                checkpointTask();
+                if (isActiveNavigationMovement(movementState)) {
+                    log.info("navigate in current map yielding while moving: target=({}, {}) state={} sleepMs={}",
+                            targetX, targetY, movementState, MOVING_NAVIGATION_YIELD_MS);
+                    if (!TaskSleep.sleep(MOVING_NAVIGATION_YIELD_MS)) {
+                        return false;
+                    }
+                    checkpointTask();
+                    continue;
+                }
+
+                ensureTaskTurn("navigateInCurrentMap:activeCheck");
+
+                CoordinateHelper.MiniMapClickPoint clickPoint = coordinateHelper.resolveMiniMapClickPoint(
+                        mapName, targetX, targetY, failedMiniMapClicks);
+                if (clickPoint == null) {
+                    log.warn("navigate in current map exhausted mini-map click points: target=({}, {}) failedClicks={}",
+                            targetX, targetY, failedMiniMapClicks);
+                    return false;
+                }
+
+                MiniMapPathingAttemptResult attemptResult = clickMiniMapPointAndConfirm(
+                        clickPoint, "navigateInCurrentMap:click");
+                checkpointTask();
+                if (attemptResult == MiniMapPathingAttemptResult.PATHING_STARTED) {
+                    log.info("navigate in current map mini-map click started pathing: target=({}, {}) clickPoint=({}, {}) reason={}",
+                            targetX, targetY, clickPoint.logicalX(), clickPoint.logicalY(), clickPoint.reason());
+                    continue;
+                }
+                if (attemptResult == MiniMapPathingAttemptResult.NO_PATHING) {
+                    if (battleRadarService.checkAndSyncCombatState()) {
+                        log.warn("navigate in current map mini-map confirmation was interrupted by battle; keep original click point: target=({}, {})",
+                                targetX, targetY);
+                        return false;
+                    }
+                    failedMiniMapClicks++;
+                } else {
+                    return false;
+                }
+
+                if (!TaskSleep.sleep(500)) {
+                    return false;
+                }
+                checkpointTask();
+            }
+
+            log.error("navigate timeout");
+            return false;
+        } finally {
+            LatencyMetrics.info(log, "navigation.currentMap", latencyStart,
+                    "result=" + result + " target=(" + targetX + "," + targetY + ")");
+        }
     }
 
-    private boolean clickLastNavPoint(String targetMapName, boolean reclick, boolean releaseTurnOnPathing) {
-        ensureTaskTurn("clickLastNavPoint");
-        if (reclick) {
-            NavigationRuntimeState state = state();
-            if (state.lastAbsoluteLogicalX != DEFAULT_LOGICAL_COORDINATE
-                    && state.lastAbsoluteLogicalY != DEFAULT_LOGICAL_COORDINATE) {
-                int clickX = state.lastAbsoluteLogicalX + random.nextInt(7) - 3;
-                int clickY = state.lastAbsoluteLogicalY + random.nextInt(7) - 3;
-                boolean clicked = inputSequences.submitExclusiveAndWait("clickLastNavPoint:reclick", () -> {
-                    if (!openMapDirect()) {
-                        return false;
-                    }
-                    inputProvider.clickLeft(clickX, clickY, 150);
-                    if (!sleepInterruptible(2000)) {
-                        return false;
-                    }
-                    gameStateUtil.recordMovementIntent("clickLastNavPoint:reclick");
-                    return true;
-                });
-                if (clicked && releaseTurnOnPathing) {
-                    releaseTaskTurnAfterPathing("clickLastNavPoint:reclick");
-                }
-                return clicked;
-            }
-            return targetMapName != null && !targetMapName.isBlank()
-                    && openMapInputTargetAndClickLastNavPoint(targetMapName, releaseTurnOnPathing);
+    // =========================
+    // Special map-entry routes
+    // =========================
+
+    /**
+     * Enter Ling Shou Village through Zhang Wen in Chang'an.
+     *
+     * <p>This is a map-entry rule rather than a Xiuluo-task shortcut. The world-map search cannot
+     * reach Ling Shou Village directly, so the normal route target is redirected to Chang'an first.
+     * The individual steps keep using their existing retry/fallback behavior; this method only
+     * composes the validated transfer chain.</p>
+     */
+    private boolean navigateToLingShouVillageViaZhangWen(MapNavigationRequest request) {
+        boolean releaseTurnOnPathing = !request.isKeepTaskTurnUntilHandled();
+        PlayerCharacter me = context.getMe();
+        log.info("navigate to Ling Shou Village through Zhang Wen: current={}", me.getCurrentMapName());
+        checkpointTask();
+
+        if (!navigateToMap(request.toBuilder()
+                .targetMapName(MAP_CHANG_AN)
+                .source(request.getSource() + ":viaChangAn")
+                .build())) {
+            log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
+            return false;
+        }
+        checkpointTask();
+
+        if (!navigateInCurrentMap(ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y)) {
+            log.warn("Ling Shou Village route failed: unable to approach Zhang Wen target=({}, {})",
+                    ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y);
+            return false;
+        }
+        checkpointTask();
+
+        ensureTaskTurn("navigateToLingShouVillage:zhangWen");
+        boolean npcClicked = npcClickService.clickNpcSmart(NpcClickRequest.fixed(
+                me, MAP_CHANG_AN, ZHANG_WEN_NPC_X, ZHANG_WEN_NPC_Y, NPC_ZHANG_WEN, null));
+        if (!npcClicked) {
+            log.warn("Ling Shou Village route Zhang Wen click not verified, checking dialog anyway");
+        }
+        checkpointTask();
+
+        ensureTaskTurn("navigateToLingShouVillage:transferOption");
+        DialogHandleResult dialogResult = dialogService.handleDialog(
+                DialogHandleRequest.clickKeyword("navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false));
+        if (dialogResult != DialogHandleResult.OPTION_KEYWORD_CLICKED) {
+            log.warn("Ling Shou Village route transfer option not handled: result={}", dialogResult);
+            return false;
         }
 
-        return clickLastNavPointFromCurrentMapResult("clickLastNavPoint:first", false, targetMapName) == RouteClickStatus.CLICKED;
+        boolean arrived = gameStateUtil.confirmCurrentMap(
+                MAP_LING_SHOU_VILLAGE,
+                LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS,
+                "navigateToLingShouVillage");
+        log.info("Ling Shou Village route confirm result={}", arrived);
+        return arrived;
     }
 
-    private boolean openMapInputTargetAndClickLastNavPoint(String targetMapName) {
-        return openMapInputTargetAndClickLastNavPoint(targetMapName, true);
+    // ========================
+    // World-map search helpers
+    // ========================
+
+    private boolean retryWorldMapDestinationClick(String targetMapName, boolean releaseTurnOnPathing) {
+        ensureTaskTurn("retryWorldMapDestinationClick");
+        NavigationRuntimeState state = state();
+        if (state.lastAbsoluteLogicalX != DEFAULT_LOGICAL_COORDINATE
+                && state.lastAbsoluteLogicalY != DEFAULT_LOGICAL_COORDINATE) {
+            int clickX = state.lastAbsoluteLogicalX + random.nextInt(7) - 3;
+            int clickY = state.lastAbsoluteLogicalY + random.nextInt(7) - 3;
+            boolean clicked = inputSequences.submitExclusiveAndWait("retryWorldMapDestinationClick", () -> {
+                if (!openWorldMapRoutePanelDirect()) {
+                    return false;
+                }
+                inputProvider.clickLeft(clickX, clickY, 150);
+                if (!TaskSleep.sleep(2000)) {
+                    return false;
+                }
+                gameStateUtil.recordMovementIntent("retryWorldMapDestinationClick");
+                return true;
+            });
+            if (clicked && releaseTurnOnPathing) {
+                releaseTaskTurnAfterPathing("retryWorldMapDestinationClick");
+            }
+            return clicked;
+        }
+        return targetMapName != null && !targetMapName.isBlank()
+                && submitWorldMapSearchAndClickDestination(targetMapName, releaseTurnOnPathing);
     }
 
-    private boolean openMapInputTargetAndClickLastNavPoint(String targetMapName, boolean releaseTurnOnPathing) {
-        ensureTaskTurn("openMapInputTargetAndClickLastNavPoint");
-        boolean clicked = inputSequences.submitExclusiveAndWait("openMapInputTargetAndClickLastNavPoint:" + targetMapName,
-                () -> openMapInputTargetAndClickLastNavPointExclusive(targetMapName));
+    private boolean submitWorldMapSearchAndClickDestination(String targetMapName, boolean releaseTurnOnPathing) {
+        ensureTaskTurn("submitWorldMapSearchAndClickDestination");
+        boolean clicked = inputSequences.submitExclusiveAndWait("submitWorldMapSearchAndClickDestination:" + targetMapName,
+                () -> {
+                    log.info("navigation map search start: target={}", targetMapName);
+                    if (!isWorldMapOpened()) {
+                        log.info("navigation map search: world map not open, press Alt+2");
+                        inputProvider.pressAlt2();
+                        TaskSleep.sleep(500);
+                    }
+
+                    Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
+                    if (xunluPoint == null) {
+                        log.warn("navigation map search: xunlu button not found, target={}", targetMapName);
+                        return false;
+                    }
+
+                    boolean searchInputTouched = false;
+                    boolean routeClicked = false;
+                    try {
+                        for (int attempt = 1; attempt <= 2; attempt++) {
+                            /*
+                             * From this point the route-search input may stay on screen if OCR/scroll/click
+                             * fails. Always use the narrow x2-only cleanup on failure so later Alt+1 mini-map
+                             * navigation does not click through a stale search overlay.
+                             */
+                            log.info("navigation map search: click xunlu button=({}, {}) attempt={}/{}",
+                                    xunluPoint.x, xunluPoint.y, attempt, 2);
+                            inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
+                            searchInputTouched = true;
+                            TaskSleep.sleep(250);
+
+                            int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
+                            int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
+                            log.info("navigation map search: type target map={} attempt={}/{}", targetMapName, attempt, 2);
+                            inputProvider.typeTextUnicode(targetMapName);
+                            TaskSleep.sleep(100);
+                            inputProvider.pressEnter();
+                            if (!scrollWorldMapSearchResultsToBottomDirect(scrollFocusX, scrollFocusY,
+                                    "submitWorldMapSearchAndClickDestination:" + targetMapName + ":attempt" + attempt)) {
+                                return false;
+                            }
+
+                            WorldMapDestinationClickResult status = clickDestinationFromWorldMapSearchResults(
+                                    "submitWorldMapSearchAndClickDestination:lastLink", true, targetMapName);
+                            routeClicked = status == WorldMapDestinationClickResult.CLICKED;
+                            log.info("navigation map search: last coordinate click result={} status={} attempt={}/{}",
+                                    routeClicked, status, attempt, 2);
+                            if (routeClicked) {
+                                return true;
+                            }
+                            if (status == WorldMapDestinationClickResult.WRONG_DESTINATION && attempt < 2) {
+                                closeMapSearchInputAfterRouteClick(
+                                        "submitWorldMapSearchAndClickDestination:destinationMismatch:attempt" + attempt);
+                                searchInputTouched = false;
+                                if (!TaskSleep.sleep(250)) {
+                                    return false;
+                                }
+                                continue;
+                            }
+                            return false;
+                        }
+                        return false;
+                    } finally {
+                        if (searchInputTouched && !routeClicked) {
+                            closeMapSearchInputAfterRouteClick("submitWorldMapSearchAndClickDestination:failed");
+                        }
+                    }
+                });
         if (clicked && releaseTurnOnPathing) {
-            releaseTaskTurnAfterPathing("openMapInputTargetAndClickLastNavPoint:" + targetMapName);
+            releaseTaskTurnAfterPathing("submitWorldMapSearchAndClickDestination:" + targetMapName);
         }
         return clicked;
     }
 
-    private boolean openMapInputTargetAndClickLastNavPointExclusive(String targetMapName) {
-        log.info("navigation map search start: target={}", targetMapName);
-        if (!isWorldMapOpened()) {
-            log.info("navigation map search: world map not open, press Alt+2");
-            inputProvider.pressAlt2();
-            sleepInterruptible(500);
-        }
-
-        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
-        if (xunluPoint == null) {
-            log.warn("navigation map search: xunlu button not found, target={}", targetMapName);
-            return false;
-        }
-
-        boolean searchInputTouched = false;
-        boolean clicked = false;
-        try {
-            for (int attempt = 1; attempt <= 2; attempt++) {
-                /*
-                 * From this point the route-search input may stay on screen if OCR/scroll/click
-                 * fails. Always use the narrow x2-only cleanup on failure so later Alt+1 mini-map
-                 * navigation does not click through a stale search overlay.
-                 */
-                log.info("navigation map search: click xunlu button=({}, {}) attempt={}/{}",
-                        xunluPoint.x, xunluPoint.y, attempt, 2);
-                inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
-                searchInputTouched = true;
-                sleepInterruptible(250);
-
-                int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
-                int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-                log.info("navigation map search: type target map={} attempt={}/{}", targetMapName, attempt, 2);
-                inputProvider.typeTextUnicode(targetMapName);
-                sleepInterruptible(100);
-                inputProvider.pressEnter();
-                if (!forceScrollToBottomDirect(scrollFocusX, scrollFocusY,
-                        "openMapInputTargetAndClickLastNavPoint:" + targetMapName + ":attempt" + attempt)) {
-                    return false;
-                }
-
-                RouteClickStatus status = clickLastNavPointFromCurrentMapResult(
-                        "openMapInputTargetAndClickLastNavPoint:lastLink", true, targetMapName);
-                clicked = status == RouteClickStatus.CLICKED;
-                log.info("navigation map search: last coordinate click result={} status={} attempt={}/{}",
-                        clicked, status, attempt, 2);
-                if (clicked) {
-                    return true;
-                }
-                if (status == RouteClickStatus.DESTINATION_MISMATCH && attempt < 2) {
-                    closeMapSearchInputAfterRouteClick(
-                            "openMapInputTargetAndClickLastNavPoint:destinationMismatch:attempt" + attempt);
-                    searchInputTouched = false;
-                    if (!sleepInterruptible(250)) {
-                        return false;
-                    }
-                    continue;
-                }
-                return false;
-            }
-            return false;
-        } finally {
-            if (searchInputTouched && !clicked) {
-                closeMapSearchInputAfterRouteClick("openMapInputTargetAndClickLastNavPoint:failed");
-            }
-        }
-    }
-
-    private RouteClickStatus clickLastNavPointFromCurrentMapResult(String description,
-                                                                   boolean directInput,
-                                                                   String expectedDestinationName) {
+    private WorldMapDestinationClickResult clickDestinationFromWorldMapSearchResults(String description,
+                                                                                    boolean directInput,
+                                                                                    String expectedDestinationName) {
         int[] mapRect = coordinateHelper.getScaledRect(
                 config.getAnchor_windowTo_map_search_X(), config.getAnchor_windowTo_map_search_Y(),
                 MAP_SEARCH_RECT_WIDTH, MAP_SEARCH_RECT_HEIGHT);
@@ -873,10 +620,10 @@ public class NavigationService {
                 mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3]);
         if (!tracker.captureToFile("map result", mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3])) {
             log.warn("navigation map search: map result capture failed");
-            return RouteClickStatus.NOT_FOUND;
+            return WorldMapDestinationClickResult.NOT_FOUND;
         }
         if (!verifyMapRouteDestinationBeforeClick(mapResultImagePath, expectedDestinationName)) {
-            return RouteClickStatus.DESTINATION_MISMATCH;
+            return WorldMapDestinationClickResult.WRONG_DESTINATION;
         }
         String routeOcrImagePath = preprocessMapRouteResultForCoordinateOcr(mapResultImagePath);
 
@@ -896,15 +643,14 @@ public class NavigationService {
                 System.currentTimeMillis() - routeOcrStartedAt, relativeCenter != null, routeOcrImagePath);
         if (relativeCenter == null) {
             log.warn("navigation route scan found no coordinate link");
-            return RouteClickStatus.NOT_FOUND;
+            return WorldMapDestinationClickResult.NOT_FOUND;
         }
 
         NavigationRuntimeState state = state();
         state.lastAbsoluteLogicalX = mapRect[0] + relativeCenter.x;
         state.lastAbsoluteLogicalY = mapRect[1] + relativeCenter.y;
-        log.info("navigation route coordinate click: windowId={} boundHwnd={} foregroundHwnd={} base=({}, {}) "
-                        + "mapRect=({}, {})-({}, {}) image={} relative=({}, {}) absolute=({}, {})",
-                currentWindowId(), currentBoundHandle(), windowFocusService.getForegroundNativeHandleText(),
+        log.info("navigation route coordinate click: base=({}, {}) mapRect=({}, {})-({}, {}) "
+                        + "image={} relative=({}, {}) absolute=({}, {})",
                 tracker.getWindowBaseX(), tracker.getWindowBaseY(),
                 mapRect[0], mapRect[1], mapRect[2], mapRect[3], routeOcrImagePath,
                 relativeCenter.x, relativeCenter.y, state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY);
@@ -912,11 +658,11 @@ public class NavigationService {
         if (directInput) {
             inputProvider.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150);
             closeMapSearchInputAfterRouteClick(description);
-            if (!sleepInterruptible(2000)) {
-                return RouteClickStatus.NOT_FOUND;
+            if (!TaskSleep.sleep(2000)) {
+                return WorldMapDestinationClickResult.NOT_FOUND;
             }
             gameStateUtil.recordMovementIntent(description);
-            return RouteClickStatus.CLICKED;
+            return WorldMapDestinationClickResult.CLICKED;
         }
         boolean submitted = inputSequences.submitAndWait(description, List.of(
                 InputAction.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150),
@@ -926,7 +672,7 @@ public class NavigationService {
             gameStateUtil.recordMovementIntent(description);
             releaseTaskTurnAfterPathing(description);
         }
-        return submitted ? RouteClickStatus.CLICKED : RouteClickStatus.NOT_FOUND;
+        return submitted ? WorldMapDestinationClickResult.CLICKED : WorldMapDestinationClickResult.NOT_FOUND;
     }
 
     /**
@@ -1009,9 +755,9 @@ public class NavigationService {
      * @return final yellow route name, or an empty string when local OCR finds no usable text.
      */
     private String findLastYellowRouteDestination(String yellowImagePath) {
-        List<TextRecognizer.OcrWordResult> words = ocr.getAllTextResultsLocalOnly(yellowImagePath);
-        TextRecognizer.OcrWordResult last = null;
-        for (TextRecognizer.OcrWordResult word : words) {
+        List<OcrWordResult> words = ocr.getAllTextResultsLocalOnly(yellowImagePath);
+        OcrWordResult last = null;
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null || word.getText().isBlank()) {
                 continue;
             }
@@ -1028,9 +774,9 @@ public class NavigationService {
         return value;
     }
 
-    private String findLastYellowRouteDestinationLine(List<TextRecognizer.OcrWordResult> words) {
-        List<TextRecognizer.OcrWordResult> usable = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+    private String findLastYellowRouteDestinationLine(List<OcrWordResult> words) {
+        List<OcrWordResult> usable = new ArrayList<>();
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null || word.getText().isBlank()) {
                 continue;
             }
@@ -1040,8 +786,8 @@ public class NavigationService {
             return "";
         }
 
-        TextRecognizer.OcrWordResult bottom = usable.get(0);
-        for (TextRecognizer.OcrWordResult word : usable) {
+        OcrWordResult bottom = usable.get(0);
+        for (OcrWordResult word : usable) {
             if (centerY(word) > centerY(bottom)) {
                 bottom = word;
             }
@@ -1049,8 +795,8 @@ public class NavigationService {
 
         int bottomCenterY = centerY(bottom);
         int rowTolerance = Math.max(8, bottom.getHeight());
-        List<TextRecognizer.OcrWordResult> bottomLine = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : usable) {
+        List<OcrWordResult> bottomLine = new ArrayList<>();
+        for (OcrWordResult word : usable) {
             if (Math.abs(centerY(word) - bottomCenterY) <= rowTolerance) {
                 bottomLine.add(word);
             }
@@ -1058,17 +804,17 @@ public class NavigationService {
         bottomLine.sort((a, b) -> Integer.compare(a.getLeft(), b.getLeft()));
 
         StringBuilder builder = new StringBuilder();
-        for (TextRecognizer.OcrWordResult word : bottomLine) {
+        for (OcrWordResult word : bottomLine) {
             builder.append(word.getText());
         }
         return builder.toString();
     }
 
-    private int centerY(TextRecognizer.OcrWordResult word) {
+    private int centerY(OcrWordResult word) {
         return word.getTop() + Math.max(1, word.getHeight()) / 2;
     }
 
-    private String formatRouteOcrWords(List<TextRecognizer.OcrWordResult> words) {
+    private String formatRouteOcrWords(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "[]";
         }
@@ -1139,31 +885,10 @@ public class NavigationService {
         log.info("navigation map search: x2-only close after route click source={} closed={}", source, closed);
     }
 
-    private boolean openMap() {
-        if (!isWorldMapOpened()) {
-            if (!inputSequences.submitAndWait("openMap:pressAlt2", List.of(
-                    InputAction.pressAlt2(),
-                    InputAction.sleep(500)
-            ))) {
-                return false;
-            }
-        }
-
-        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
-        if (xunluPoint == null) {
-            return false;
-        }
-
-        return inputSequences.submitAndWait("openMap:clickXunlu", List.of(
-                InputAction.clickLeft(xunluPoint.x, xunluPoint.y, 120),
-                InputAction.sleep(250)
-        ));
-    }
-
-    private boolean openMapDirect() {
+    private boolean openWorldMapRoutePanelDirect() {
         if (!isWorldMapOpened()) {
             inputProvider.pressAlt2();
-            if (!sleepInterruptible(500)) {
+            if (!TaskSleep.sleep(500)) {
                 return false;
             }
         }
@@ -1174,7 +899,7 @@ public class NavigationService {
         }
 
         inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
-        return sleepInterruptible(250);
+        return TaskSleep.sleep(250);
     }
 
     private boolean isWorldMapOpened() {
@@ -1189,253 +914,23 @@ public class NavigationService {
                 || coordinateHelper.findImageInRegion("images/template/map/checkbox_unchecked.png", rect, 0.95) != null;
     }
 
-    /**
-     * Debug/manual helper that scrolls a world-map result list to the bottom.
-     *
-     * @param targetX screen-absolute X coordinate used to focus the scroll area.
-     * @param targetY screen-absolute Y coordinate used to focus the scroll area.
-     */
-    public void forceScrollToBottom(int targetX, int targetY) {
-        List<InputAction> actions = new ArrayList<>();
-        actions.add(InputAction.clickLeft(targetX, targetY, 50));
-        for (int i = 0; i < MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS; i++) {
-            actions.add(InputAction.scrollDown(MAP_RESULT_SCROLL_DOWN_UNITS));
-            actions.add(InputAction.sleep((int) MAP_RESULT_SCROLL_INTERVAL_MS));
-        }
-        actions.add(InputAction.sleep((int) MAP_RESULT_SCROLL_SETTLE_MS));
-        inputSequences.submitAndWait("forceScrollToBottom", actions);
-    }
 
-    private boolean forceScrollToBottomDirect(int targetX, int targetY, String source) {
+    private boolean scrollWorldMapSearchResultsToBottomDirect(int targetX, int targetY, String source) {
         log.info("navigation map search: force scroll to bottom source={} focus=({}, {}) attempts={} units={}",
                 source, targetX, targetY, MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS, MAP_RESULT_SCROLL_DOWN_UNITS);
         inputProvider.clickLeft(targetX, targetY, 50);
         for (int i = 1; i <= MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS; i++) {
             inputProvider.scrollDown(MAP_RESULT_SCROLL_DOWN_UNITS);
-            if (!sleepInterruptible(MAP_RESULT_SCROLL_INTERVAL_MS)) {
+            if (!TaskSleep.sleep(MAP_RESULT_SCROLL_INTERVAL_MS)) {
                 return false;
             }
         }
-        return sleepInterruptible(MAP_RESULT_SCROLL_SETTLE_MS);
+        return TaskSleep.sleep(MAP_RESULT_SCROLL_SETTLE_MS);
     }
 
-    /**
-     * Ensure the mini-map tracking checkbox is enabled.
-     *
-     * <p>The complete open/check/click/close flow runs as one exclusive input callback so another
-     * window cannot focus or click between opening the map and closing it.</p>
-     *
-     * @return true when the checked state is confirmed or successfully enabled; false when the checkbox
-     *         templates cannot be found or the operation is interrupted.
-     */
-    public boolean ensureMapTrackingOption() {
-        return inputSequences.submitExclusiveAndWait("ensureMapTrackingOption", () -> {
-            return ensureMapTrackingOptionDirect();
-        });
-    }
-
-    /**
-     * Run the leader task startup visibility preparation.
-     *
-     * <p>This performs mini-map tracking setup and Alt+6 visibility setup in one exclusive input
-     * section. The final wait lets the game's "hide players" overlay fade out before later dialog
-     * detection captures screenshots.</p>
-     *
-     * @return true when both map tracking and Alt+6 visibility are confirmed.
-     */
-    public boolean prepareTaskStartupWindow() {
-        return inputSequences.submitExclusiveAndWait("taskStartup:mapTrackingAndAlt6", () -> {
-            boolean mapReady = ensureMapTrackingOptionDirect();
-            if (!sleepInterruptible(200)) {
-                return false;
-            }
-            boolean visibilityReady = ensureAlt6VisibilityDirect();
-            if (visibilityReady) {
-                log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
-                if (!sleepInterruptible(ALT6_OVERLAY_FADEOUT_WAIT_MS)) {
-                    return false;
-                }
-            }
-            return mapReady && visibilityReady;
-        });
-    }
-
-    /**
-     * Run startup preparation for tasks that only require mini-map tracking.
-     *
-     * @return true when the mini-map tracking checkbox is enabled; false on detection/input failure.
-     */
-    public boolean prepareTaskStartupMapOnly() {
-        return inputSequences.submitExclusiveAndWait("taskStartup:mapTrackingOnly", () -> {
-            log.info("task startup map-only: ensure map tracking option without Alt+6");
-            return ensureMapTrackingOptionDirect();
-        });
-    }
-
-    /**
-     * Confirm the Alt+6 player-visibility state and press Alt+6 until the configured template appears.
-     *
-     * <p>This method is called only from an exclusive input callback; it uses direct
-     * {@link InputProvider} calls to avoid queue-in-queue deadlock.</p>
-     */
-    private boolean ensureAlt6VisibilityDirect() {
-        if (isAlt6VisibilityConfirmed()) {
-            log.info("task startup visibility: already confirmed by template={}", ALT6_VISIBILITY_TEMPLATE);
-            return true;
-        }
-
-        for (int attempt = 1; attempt <= ALT6_VISIBILITY_MAX_ATTEMPTS; attempt++) {
-            log.info("task startup visibility: press Alt+6 attempt={}/{}",
-                    attempt, ALT6_VISIBILITY_MAX_ATTEMPTS);
-            inputProvider.pressAlt6();
-            if (!sleepInterruptible(ALT6_VISIBILITY_RECHECK_DELAY_MS)) {
-                return false;
-            }
-            if (isAlt6VisibilityConfirmed()) {
-                log.info("task startup visibility: confirmed after Alt+6 attempt={}", attempt);
-                return true;
-            }
-        }
-
-        log.warn("task startup visibility: template confirmation failed after {} attempts template={}",
-                ALT6_VISIBILITY_MAX_ATTEMPTS, ALT6_VISIBILITY_TEMPLATE);
-        return false;
-    }
-
-    private boolean isAlt6VisibilityConfirmed() {
-        int[] rect = coordinateHelper.getScaledRect(
-                ALT6_VISIBILITY_RECT_X_OFFSET,
-                ALT6_VISIBILITY_RECT_Y_OFFSET,
-                ALT6_VISIBILITY_RECT_WIDTH,
-                ALT6_VISIBILITY_RECT_HEIGHT);
-        Point matched = coordinateHelper.findImageInRegion(
-                ALT6_VISIBILITY_TEMPLATE,
-                rect,
-                ALT6_VISIBILITY_MATCH_RATE);
-        boolean confirmed = matched != null;
-        log.info("task startup visibility check: confirmed={} template={} rect=({}, {})-({}, {}) match={}",
-                confirmed, ALT6_VISIBILITY_TEMPLATE, rect[0], rect[1], rect[2], rect[3],
-                matched == null ? "-" : matched.x + "," + matched.y);
-        return confirmed;
-    }
-
-    /**
-     * Direct implementation of mini-map tracking setup.
-     *
-     * <p>The method opens the mini-map with Alt+1, searches a window-relative option area, toggles
-     * required startup options when needed, and always attempts to close the map. It assumes the caller
-     * already owns the input queue worker, so it uses direct {@link InputProvider} calls rather than
-     * submitting nested queue requests.</p>
-     */
-    private boolean ensureMapTrackingOptionDirect() {
-        inputProvider.pressAlt1();
-        if (!sleepInterruptible(400)) {
-            return false;
-        }
-
-        int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
-                MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
-        String startupOptionsScanPath = windowScopedTempPath.resolve("map_startup_options_scan.png");
-        if (!tracker.captureToFile("map startup options", startupOptionsScanPath, rect[0], rect[1], rect[2], rect[3])) {
-            log.warn("ensureMapTrackingOption failed to capture startup option region: rect=({}, {})-({}, {})",
-                    rect[0], rect[1], rect[2], rect[3]);
-            inputProvider.pressAlt1();
-            warnIfMapStillOpenAfterAlt1Close();
-            return false;
-        }
-
-        /*
-         * All three options live in the same Alt+1 settings panel. Keep them in one open/close
-         * sequence and one screenshot so multi-window startup cannot steal focus between option
-         * toggles and template checks cannot observe different frames.
-         */
-        boolean trackingReady = ensureStartupMapPanelOption(
-                "map-tracking",
-                MAP_TRACKING_CHECKED_TEMPLATE,
-                MAP_TRACKING_UNCHECKED_TEMPLATE,
-                rect,
-                startupOptionsScanPath);
-        boolean autoCloseReady = ensureStartupMapPanelOption(
-                "auto-close-map",
-                AUTO_CLOSE_MAP_CHECKED_TEMPLATE,
-                AUTO_CLOSE_MAP_UNCHECKED_TEMPLATE,
-                rect,
-                startupOptionsScanPath);
-        boolean openFlyReady = ensureStartupMapPanelOption(
-                "open-fly",
-                OPEN_FLY_CHECKED_TEMPLATE,
-                OPEN_FLY_UNCHECKED_TEMPLATE,
-                rect,
-                startupOptionsScanPath);
-
-        log.info("ensureMapTrackingOption startup option check finished: tracking={} autoCloseMap={} openFly={} pressing Alt+1 to close map",
-                trackingReady, autoCloseReady, openFlyReady);
-        inputProvider.pressAlt1();
-        warnIfMapStillOpenAfterAlt1Close();
-        return trackingReady && autoCloseReady && openFlyReady;
-    }
-
-    /**
-     * Ensure one startup option in the Alt+1 map settings panel is enabled.
-     *
-     * @param optionName log label for the option being checked.
-     * @param checkedTemplate template path for the already-enabled state.
-     * @param uncheckedTemplate template path for the disabled state that should be clicked.
-     * @param rect screen-absolute search rectangle returned by {@link CoordinateHelper#getScaledRect};
-     *             it covers only the map settings option rows, not the full client.
-     * @param scanPath window-scoped screenshot of {@code rect}; all startup options in the current
-     *                 pass must share this same image to avoid re-capturing between template checks.
-     * @return true when the option is already enabled or was clicked to enable; false when neither
-     *         state template was found or the task was interrupted while waiting after the click.
-     */
-    private boolean ensureStartupMapPanelOption(String optionName, String checkedTemplate, String uncheckedTemplate, int[] rect, String scanPath) {
-        Point checkedRes = findStartupMapOptionInCapturedRegion(checkedTemplate, rect, scanPath);
-        if (checkedRes != null) {
-            log.info("ensureMapTrackingOption startup option already checked: option={} point=({}, {})",
-                    optionName, checkedRes.x, checkedRes.y);
-            return true;
-        }
-
-        Point uncheckedRes = findStartupMapOptionInCapturedRegion(uncheckedTemplate, rect, scanPath);
-        if (uncheckedRes == null) {
-            log.warn("ensureMapTrackingOption startup option template missing: option={} checked={} unchecked={}",
-                    optionName, checkedTemplate, uncheckedTemplate);
-            return false;
-        }
-
-        /*
-         * Existing checkbox templates are captured from the option text/icon area; clicking slightly
-         * left of the matched point lands on the actual checkbox for all three startup options.
-         */
-        int clickX = uncheckedRes.x - 13;
-        int clickY = uncheckedRes.y;
-        log.info("ensureMapTrackingOption enabling startup option: option={} click=({}, {}) matched=({}, {})",
-                optionName, clickX, clickY, uncheckedRes.x, uncheckedRes.y);
-        inputProvider.clickLeft(clickX, clickY, 150);
-        return sleepInterruptible(500);
-    }
-
-    /**
-     * Match one startup option template inside the already-captured Alt+1 panel region.
-     *
-     * @param templatePath template to match inside {@code scanPath}.
-     * @param rect screen-absolute ROI rectangle used to produce {@code scanPath}; its top-left corner
-     *             is added back to the image-local match point.
-     * @param scanPath window-scoped ROI image captured once by {@link #ensureMapTrackingOptionDirect()}.
-     * @return screen-absolute top-left match point, or null when the template is not present.
-     */
-    private Point findStartupMapOptionInCapturedRegion(String templatePath, int[] rect, String scanPath) {
-        double[] imagePoint = ImageFinder.find(scanPath, templatePath, MAP_STARTUP_OPTION_MATCH_RATE);
-        if (imagePoint == null || imagePoint.length < 2) {
-            return null;
-        }
-        int imageX = (int) Math.round(imagePoint[0]);
-        int imageY = (int) Math.round(imagePoint[1]);
-        Point absolutePoint = new Point(rect[0] + imageX, rect[1] + imageY);
-        log.info("ensureMapTrackingOption startup option template matched: template={} image=({}, {}) absolute=({}, {})",
-                templatePath, imageX, imageY, absolutePoint.x, absolutePoint.y);
-        return absolutePoint;
-    }
+    // =====================
+    // Mini-map click helpers
+    // =====================
 
     /**
      * Submit one atomic mini-map click sequence.
@@ -1449,52 +944,49 @@ public class NavigationService {
      */
     private boolean submitMiniMapClick(Point pixelPoint, String description) {
         ensureTaskTurn(description);
-        return inputSequences.submitExclusiveAndWait(description,
-                () -> submitMiniMapClickDirect(pixelPoint, description));
-    }
+        return inputSequences.submitExclusiveAndWait(description, () -> {
+            if (!isWorldMapOpened()) {
+                pressAlt1ForMiniMap(description + ":open");
+                if (!TaskSleep.sleep(800)) {
+                    return false;
+                }
+            } else {
+                log.info("mini-map already open before coordinate click: source={}", description);
+            }
 
-    private boolean submitMiniMapClickDirect(Point pixelPoint, String description) {
-        if (!isWorldMapOpened()) {
-            pressAlt1ForMiniMap(description + ":open");
-            if (!sleepInterruptible(800)) {
+            if (!isWorldMapOpened()) {
+                log.warn("mini-map did not open after Alt+1, retrying shortcut without title-bar click: source={}",
+                        description);
+                pressAlt1ForMiniMap(description + ":open-retry");
+                if (!TaskSleep.sleep(800)) {
+                    return false;
+                }
+            }
+
+            if (!isWorldMapOpened()) {
+                log.warn("mini-map still not open after retry, abort coordinate click: source={} pixel=({}, {})",
+                        description, pixelPoint.x, pixelPoint.y);
                 return false;
             }
-        } else {
-            log.info("mini-map already open before coordinate click: source={}", description);
-        }
 
-        if (!isWorldMapOpened()) {
-            log.warn("mini-map did not open after Alt+1, refocusing title bar before retry: source={}", description);
-            clickWindowTitleBarForShortcutFocus(description);
-            pressAlt1ForMiniMap(description + ":open-retry");
-            if (!sleepInterruptible(800)) {
+            inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
+            if (!TaskSleep.sleep(500)) {
                 return false;
             }
-        }
-
-        if (!isWorldMapOpened()) {
-            log.warn("mini-map still not open after retry, abort coordinate click: source={} pixel=({}, {})",
-                    description, pixelPoint.x, pixelPoint.y);
-            return false;
-        }
-
-        inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
-        if (!sleepInterruptible(500)) {
-            return false;
-        }
-        pressAlt1ForMiniMap(description + ":close");
-        if (!sleepInterruptible(300)) {
-            return false;
-        }
-
-        if (isWorldMapOpened()) {
-            log.warn("mini-map remained open after close shortcut, pressing Alt+1 once more: source={}", description);
-            pressAlt1ForMiniMap(description + ":close-retry");
-            if (!sleepInterruptible(300)) {
+            pressAlt1ForMiniMap(description + ":close");
+            if (!TaskSleep.sleep(300)) {
                 return false;
             }
-        }
-        return true;
+
+            if (isWorldMapOpened()) {
+                log.warn("mini-map remained open after close shortcut, pressing Alt+1 once more: source={}", description);
+                pressAlt1ForMiniMap(description + ":close-retry");
+                if (!TaskSleep.sleep(300)) {
+                    return false;
+                }
+            }
+            return true;
+        });
     }
 
     private void pressAlt1ForMiniMap(String source) {
@@ -1514,152 +1006,35 @@ public class NavigationService {
         inputProvider.pressAlt1();
     }
 
-    private void clickWindowTitleBarForShortcutFocus(String source) {
-        WindowNativeBinding binding = windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getNativeBinding())
-                .orElse(null);
-        if (binding == null || !binding.hasGeometry()) {
-            log.warn("mini-map focus retry skipped, no bound window geometry: source={}", source);
-            return;
+
+    /**
+     * Submit one mini-map click point and confirm only whether it started pathing.
+     *
+     * @param clickPoint logical point and screen-absolute click point to try.
+     * @param description log/input source prefix for this physical input sequence.
+     * @return PATHING_STARTED when movement begins; NO_PATHING only when the click was submitted but
+     *         produced no movement; INCONCLUSIVE when input/stop prevents judging the point.
+     */
+    private MiniMapPathingAttemptResult clickMiniMapPointAndConfirm(CoordinateHelper.MiniMapClickPoint clickPoint,
+                                                                    String description) {
+        if (clickPoint == null) {
+            return MiniMapPathingAttemptResult.INCONCLUSIVE;
         }
-
-        int focusX = binding.getX() + Math.max(80, binding.getWidth() / 4);
-        int focusY = binding.getY() + 14;
-        log.info("mini-map focus retry click title bar: source={} point=({}, {}) window={}",
-                source, focusX, focusY, binding.getGeometryText());
-        inputProvider.clickLeft(focusX, focusY, 120);
-        sleepInterruptible(120);
-    }
-
-    /**
-     * Try mini-map click candidates until movement or a dialog is confirmed.
-     *
-     * <p>Movement confirmation is intentionally separated from click submission: the click itself is
-     * serialized through the input queue, while screenshot-based confirmation can run afterward using
-     * the current window binding. A dialog is a success because clicking an NPC coordinate can open
-     * the business dialog immediately.</p>
-     */
-    private MiniMapClickOutcome clickMiniMapPointAndConfirm(List<MiniMapClickCandidate> candidates,
-                                                            String description,
-                                                            boolean releaseTurnOnPathing,
-                                                            boolean allowCandidateFallback,
-                                                            int targetX,
-                                                            int targetY) {
-        return clickMiniMapPointAndConfirm(candidates, description, releaseTurnOnPathing,
-                allowCandidateFallback, targetX, targetY, false);
-    }
-
-    /**
-     * Try mini-map click candidates until movement or a dialog is confirmed.
-     *
-     * @param candidates ordered mini-map click candidates in logical/pixel coordinates.
-     * @param description log/input source prefix.
-     * @param releaseTurnOnPathing whether to yield the task turn after movement starts.
-     * @param allowCandidateFallback whether later inset/nearby candidates may be tried immediately.
-     * @param targetX logical in-game X coordinate used for ordinary arrival checks.
-     * @param targetY logical in-game Y coordinate used for ordinary arrival checks.
-     * @param requireNpcDialog true for NPC-accept navigation. In that mode coordinate tolerance is
-     *                         only diagnostic; this method must submit a mini-map click and must not
-     *                         return ARRIVED without seeing movement/dialog evidence.
-     * @return outcome describing movement/dialog/arrival/failure.
-     */
-    private MiniMapClickOutcome clickMiniMapPointAndConfirm(List<MiniMapClickCandidate> candidates,
-                                                            String description,
-                                                            boolean releaseTurnOnPathing,
-                                                            boolean allowCandidateFallback,
-                                                            int targetX,
-                                                            int targetY,
-                                                            boolean requireNpcDialog) {
-        return clickMiniMapPointAndConfirm(candidates, description, releaseTurnOnPathing,
-                allowCandidateFallback, targetX, targetY, requireNpcDialog, false);
-    }
-
-    /**
-     * Try mini-map click candidates until movement or a dialog is confirmed.
-     *
-     * <p>The {@code skipBeforeClickArrivalCheck} switch is only for an already-decided forced first
-     * click, currently combat-target approach navigation. The outer caller has deliberately chosen
-     * to submit one mini-map click even when cached/current coordinates look close, so doing another
-     * {@link #syncAndCheckArrived(int, int, String)} inside this method would re-enter the slow
-     * position OCR path and defeat that decision. Retry candidates keep the normal pre-click check.</p>
-     *
-     * @param candidates ordered mini-map click candidates in logical/pixel coordinates.
-     * @param description log/input source prefix.
-     * @param releaseTurnOnPathing whether to yield the task turn after movement starts.
-     * @param allowCandidateFallback whether later inset/nearby candidates may be tried immediately.
-     * @param targetX logical in-game X coordinate used for ordinary arrival checks.
-     * @param targetY logical in-game Y coordinate used for ordinary arrival checks.
-     * @param requireNpcDialog true for NPC-accept navigation where coordinate tolerance is only
-     *                         diagnostic and dialog evidence is preferred.
-     * @param skipBeforeClickArrivalCheck true to submit the first click without the internal
-     *                                    pre-click coordinate sync/OCR.
-     * @return outcome describing movement/dialog/arrival/failure.
-     */
-    private MiniMapClickOutcome clickMiniMapPointAndConfirm(List<MiniMapClickCandidate> candidates,
-                                                            String description,
-                                                            boolean releaseTurnOnPathing,
-                                                            boolean allowCandidateFallback,
-                                                            int targetX,
-                                                            int targetY,
-                                                            boolean requireNpcDialog,
-                                                            boolean skipBeforeClickArrivalCheck) {
-        for (MiniMapClickCandidate candidate : candidates) {
-            checkpointTask();
-            if (Thread.currentThread().isInterrupted()) {
-                return MiniMapClickOutcome.FAILED;
-            }
-
-            String source = description + ":" + candidate.reason();
-            if (!skipBeforeClickArrivalCheck && !requireNpcDialog
-                    && syncAndCheckArrived(targetX, targetY, source + ":before-click")) {
-                return MiniMapClickOutcome.ARRIVED;
-            } else if (skipBeforeClickArrivalCheck) {
-                log.info("skip mini-map pre-click arrival sync: source={} target=({}, {})",
-                        source, targetX, targetY);
-            } else if (requireNpcDialog) {
-                syncAndLogNearArrived(targetX, targetY, source + ":npc-before-click");
-            }
-
-            log.info("mini-map pathing click attempt: source={} logical=({}, {}) pixel=({}, {})",
-                    source, candidate.logicalX(), candidate.logicalY(),
-                    candidate.pixelPoint().x, candidate.pixelPoint().y);
-
-            if (!submitMiniMapClick(candidate.pixelPoint(), source)) {
-                return MiniMapClickOutcome.FAILED;
-            }
-
-            if (!allowCandidateFallback) {
-                log.info("mini-map pathing click submitted, defer first-attempt confirmation to navigation loop: source={}",
-                        source);
-                return MiniMapClickOutcome.PENDING_CONFIRMATION;
-            }
-
-            MiniMapPathingConfirm confirm = confirmMiniMapPathingStarted(source);
-            if (confirm == MiniMapPathingConfirm.MOVING) {
-                gameStateUtil.recordMovementIntent(source);
-                if (releaseTurnOnPathing) {
-                    releaseTaskTurnAfterPathing(source);
-                }
-                return MiniMapClickOutcome.PATHING_STARTED;
-            }
-            if (confirm == MiniMapPathingConfirm.DIALOG_OPENED) {
-                log.info("mini-map pathing click opened dialog directly: source={}", source);
-                return MiniMapClickOutcome.DIALOG_OPENED;
-            }
-            if (!requireNpcDialog && syncAndCheckArrived(targetX, targetY, source + ":after-confirm")) {
-                return MiniMapClickOutcome.ARRIVED;
-            } else if (requireNpcDialog) {
-                syncAndLogNearArrived(targetX, targetY, source + ":npc-after-confirm");
-            }
-            checkpointTask();
-
-            log.warn("mini-map pathing click produced no movement, try next candidate: source={} confirm={}",
-                    source, confirm);
+        String source = description + ":" + clickPoint.reason()
+                + ":logical=(" + clickPoint.logicalX() + "," + clickPoint.logicalY() + ")";
+        if (!submitMiniMapClick(clickPoint.pixelPoint(), source)) {
+            log.warn("mini-map click input failed: source={} pixel=({}, {})",
+                    source, clickPoint.pixelPoint().x, clickPoint.pixelPoint().y);
+            return MiniMapPathingAttemptResult.INCONCLUSIVE;
         }
-
-        log.warn("mini-map pathing click exhausted candidates without movement: description={} attempts={}",
-                description, candidates.size());
-        return MiniMapClickOutcome.FAILED;
+        MiniMapPathingAttemptResult confirmResult = confirmMiniMapPathingStarted(source);
+        if (confirmResult != MiniMapPathingAttemptResult.PATHING_STARTED) {
+            log.info("mini-map click did not start pathing: source={} pixel=({}, {})",
+                    source, clickPoint.pixelPoint().x, clickPoint.pixelPoint().y);
+            return confirmResult;
+        }
+        gameStateUtil.recordMovementIntent(source);
+        return MiniMapPathingAttemptResult.PATHING_STARTED;
     }
 
     /**
@@ -1682,106 +1057,18 @@ public class NavigationService {
     }
 
     /**
-     * Refresh the minimap coordinate and log whether the window is near an NPC target without
-     * allowing that proximity to complete navigation.
-     *
-     * <p>NPC-accept flows need a real mini-map click or an opened option dialog. A coordinate that
-     * is merely within tolerance can still leave the player off-center, which makes the later yellow
-     * text and Ctrl-menu click strategies unstable. This helper preserves the diagnostic arrival
-     * evidence while keeping the NPC navigation pipeline moving.</p>
-     *
-     * @param targetX logical in-game X coordinate of the NPC.
-     * @param targetY logical in-game Y coordinate of the NPC.
-     * @param source diagnostic source written to the log.
-     */
-    private boolean syncAndLogNearArrived(int targetX, int targetY, String source) {
-        playerStateService.syncMyPosition();
-        PlayerCharacter me = context.getMe();
-        boolean near = Math.abs(me.getX() - targetX) <= 2 && Math.abs(me.getY() - targetY) <= 2;
-        if (near) {
-            log.info("near NPC target but continue mini-map click: source={} current=({}, {}) target=({}, {})",
-                    source, me.getX(), me.getY(), targetX, targetY);
-        }
-        return near;
-    }
-
-    /**
-     * Fast path for NPC navigation.
-     *
-     * <p>When the mini-map click is aimed at an NPC, the useful completion signal is usually the
-     * option dialog, not "stable stopped". Polling the full movement detector before every dialog
-     * check can delay the task by several seconds after the dialog is already visible. This helper
-     * keeps dialog checks frequent and only samples movement occasionally to escape quickly when the
-     * click clearly did not start pathing.</p>
-     */
-    private boolean waitForExpectedNpcDialogAfterMiniMapClick(int targetX, int targetY) {
-        long startedAt = System.currentTimeMillis();
-        long deadline = startedAt + NPC_DIALOG_FAST_POLL_TIMEOUT_MS;
-        long nextMovementCheckAt = startedAt + NPC_DIALOG_MOVEMENT_CHECK_INTERVAL_MS;
-        while (System.currentTimeMillis() < deadline) {
-            checkpointTask();
-            if (Thread.currentThread().isInterrupted()) {
-                return false;
-            }
-
-            DialogService.DialogType dialogType = dialogService.detectDialogTypeNoFocus("navigateInCurrentMap:npc-dialog-fast");
-            checkpointTask();
-            if (dialogType != DialogService.DialogType.NONE) {
-                long elapsedMs = System.currentTimeMillis() - startedAt;
-                log.info("navigate in current map reached expected NPC dialog: target=({}, {}) type={} elapsedMs={}",
-                        targetX, targetY, dialogType, elapsedMs);
-                return true;
-            }
-
-            long now = System.currentTimeMillis();
-            if (now >= nextMovementCheckAt) {
-                long elapsedMs = now - startedAt;
-                if (elapsedMs < NPC_DIALOG_MIN_WAIT_BEFORE_INACTIVE_FALLBACK_MS) {
-                    log.info("expected NPC dialog still pending, skip heavy movement check during minimum wait: target=({}, {}) elapsedMs={}",
-                            targetX, targetY, elapsedMs);
-                    nextMovementCheckAt = now + NPC_DIALOG_MOVEMENT_CHECK_INTERVAL_MS;
-                    continue;
-                }
-                GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-                checkpointTask();
-                if (!isActiveNavigationMovement(movementState)) {
-                    log.info("expected NPC dialog not open and movement is inactive, return to normal navigation loop: target=({}, {}) state={}",
-                            targetX, targetY, movementState);
-                    return false;
-                }
-                nextMovementCheckAt = now + NPC_DIALOG_MOVEMENT_CHECK_INTERVAL_MS;
-            }
-
-            if (!sleepInterruptible(NPC_DIALOG_FAST_POLL_INTERVAL_MS)) {
-                return false;
-            }
-        }
-
-        log.info("expected NPC dialog fast poll timed out, return to normal navigation loop: target=({}, {})",
-                targetX, targetY);
-        return false;
-    }
-
-    /**
-     * Poll for the observable result of a mini-map click.
+     * Poll for the observable movement result of a mini-map click.
      *
      * @param source log label for the click attempt being confirmed.
-     * @return MOVING when pixel/coordinate movement starts, DIALOG_OPENED when a dialog appears,
-     *         NO_MOVEMENT on timeout, or INTERRUPTED when task stop interrupts polling.
+     * @return PATHING_STARTED when pixel/coordinate movement starts, NO_PATHING on a clean timeout,
+     *         or INCONCLUSIVE when task stop interrupts polling.
      */
-    private MiniMapPathingConfirm confirmMiniMapPathingStarted(String source) {
+    private MiniMapPathingAttemptResult confirmMiniMapPathingStarted(String source) {
         long deadline = System.currentTimeMillis() + MINI_MAP_PATHING_CONFIRM_TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline) {
             checkpointTask();
             if (Thread.currentThread().isInterrupted()) {
-                return MiniMapPathingConfirm.INTERRUPTED;
-            }
-
-            DialogService.DialogType dialogType = dialogService.detectDialogTypeNoFocus(source + ":confirm-dialog");
-            checkpointTask();
-            if (dialogType != DialogService.DialogType.NONE) {
-                log.info("mini-map pathing confirmation: dialog opened source={} type={}", source, dialogType);
-                return MiniMapPathingConfirm.DIALOG_OPENED;
+                return MiniMapPathingAttemptResult.INCONCLUSIVE;
             }
 
             GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
@@ -1790,147 +1077,26 @@ public class NavigationService {
                     || movementState == GameStateUtil.MovementState.MAYBE_MOVING) {
                 log.info("mini-map pathing confirmation: movement detected source={} state={}",
                         source, movementState);
-                return MiniMapPathingConfirm.MOVING;
+                return MiniMapPathingAttemptResult.PATHING_STARTED;
             }
 
             log.info("mini-map pathing confirmation: no movement yet source={} state={}", source, movementState);
-            if (!sleepInterruptible(MINI_MAP_PATHING_CONFIRM_POLL_MS)) {
-                return MiniMapPathingConfirm.INTERRUPTED;
+            if (!TaskSleep.sleep(MINI_MAP_PATHING_CONFIRM_POLL_MS)) {
+                return MiniMapPathingAttemptResult.INCONCLUSIVE;
             }
             checkpointTask();
         }
-        return MiniMapPathingConfirm.NO_MOVEMENT;
+        return MiniMapPathingAttemptResult.NO_PATHING;
     }
 
-    /**
-     * Calculate a nearby logical approach coordinate for combat targets.
-     *
-     * <p>The returned coordinate is still a logical in-game map coordinate. It is offset two logical
-     * steps toward the screen center/map interior so pathing stops near the monster/NPC instead of
-     * exactly under its nameplate. If the map transform is unavailable, the original coordinate is
-     * returned and logged as a fallback.</p>
-     *
-     * @param mapName map whose transform maps logical coordinates to screen pixels.
-     * @param targetX original logical in-game X coordinate of the combat target.
-     * @param targetY original logical in-game Y coordinate of the combat target.
-     * @return approach coordinate to pass into normal mini-map navigation.
-     */
-    public MapCoordinate calculateCombatTargetApproach(String mapName, int targetX, int targetY) {
-        Point originalPixelPoint = coordinateHelper.getPhysicalMapPoint(mapName, targetX, targetY);
-        CoordinateHelper.MapTransform transform = coordinateHelper.getMapTransform(mapName);
-        if (originalPixelPoint == null || transform == null) {
-            log.warn("mini-map combat target approach fallback to original: map={} target=({}, {}) transformMissing={} pixelMissing={}",
-                    mapName, targetX, targetY, transform == null, originalPixelPoint == null);
-            return new MapCoordinate(targetX, targetY);
-        }
+    // ==========================
+    // Shared navigation utilities
+    // ==========================
 
-        tracker.refreshWindowState();
-        int relativeX = originalPixelPoint.x - tracker.getWindowBaseX();
-        int relativeY = originalPixelPoint.y - tracker.getWindowBaseY();
-        int pixelDirectionX = relativeX < GAME_CLIENT_WIDTH / 2 ? 1 : -1;
-        int pixelDirectionY = relativeY < GAME_CLIENT_HEIGHT / 2 ? 1 : -1;
-        int dx = logicalStepForPixelDirection(pixelDirectionX, transform.scaleX);
-        int dy = logicalStepForPixelDirection(pixelDirectionY, transform.scaleY);
-        int approachX = targetX + dx * COMBAT_TARGET_APPROACH_OFFSET;
-        int approachY = targetY + dy * COMBAT_TARGET_APPROACH_OFFSET;
-
-        log.info("mini-map combat target approach: map={} target=({}, {}) approach=({}, {}) relative=({}, {}) logicalStep=({}, {})",
-                mapName, targetX, targetY, approachX, approachY, relativeX, relativeY, dx, dy);
-        return new MapCoordinate(approachX, approachY);
-    }
-
-    /**
-     * Build fallback logical coordinates for mini-map pathing.
-     *
-     * <p>The first candidate is always the requested target. Extra candidates only cover edge cases
-     * where clicking the exact point does not start movement, such as map-border coordinates or tiny
-     * click target inaccuracies. This method does not know task business semantics.</p>
-     */
-    private List<MiniMapClickCandidate> buildMiniMapClickCandidates(String mapName,
-                                                                    int targetX,
-                                                                    int targetY,
-                                                                    Point originalPixelPoint) {
-        List<MiniMapClickCandidate> candidates = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-
-        CoordinateHelper.MapTransform transform = coordinateHelper.getMapTransform(mapName);
-        if (transform == null) {
-            addMiniMapCandidate(candidates, seen, mapName, targetX, targetY, originalPixelPoint, "original");
-            return candidates;
-        }
-
-        tracker.refreshWindowState();
-        int relativeX = originalPixelPoint.x - tracker.getWindowBaseX();
-        int relativeY = originalPixelPoint.y - tracker.getWindowBaseY();
-
-        addMiniMapCandidate(candidates, seen, mapName, targetX, targetY, originalPixelPoint, "original");
-
-        int dx = 0;
-        int dy = 0;
-        if (relativeX <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
-            dx = logicalStepForPixelDirection(1, transform.scaleX);
-        } else if (GAME_CLIENT_WIDTH - relativeX <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
-            dx = logicalStepForPixelDirection(-1, transform.scaleX);
-        }
-        if (relativeY <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
-            dy = logicalStepForPixelDirection(1, transform.scaleY);
-        } else if (GAME_CLIENT_HEIGHT - relativeY <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
-            dy = logicalStepForPixelDirection(-1, transform.scaleY);
-        }
-
-        log.info("mini-map edge inset analysis: map={} target=({}, {}) pixel=({}, {}) relative=({}, {}) dx={} dy={}",
-                mapName, targetX, targetY, originalPixelPoint.x, originalPixelPoint.y, relativeX, relativeY, dx, dy);
-
-        if (dy != 0) {
-            addMiniMapCandidate(candidates, seen, mapName, targetX, targetY + dy, null, "inset-y1");
-            addMiniMapCandidate(candidates, seen, mapName, targetX, targetY + dy * 2, null, "inset-y2");
-            addMiniMapCandidate(candidates, seen, mapName, targetX - 1, targetY + dy, null, "inset-y-left");
-            addMiniMapCandidate(candidates, seen, mapName, targetX + 1, targetY + dy, null, "inset-y-right");
-        }
-        if (dx != 0) {
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx, targetY, null, "inset-x1");
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx * 2, targetY, null, "inset-x2");
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx, targetY - 1, null, "inset-x-up");
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx, targetY + 1, null, "inset-x-down");
-        }
-        if (dx != 0 && dy != 0) {
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx, targetY + dy, null, "inset-corner1");
-            addMiniMapCandidate(candidates, seen, mapName, targetX + dx * 2, targetY + dy * 2, null, "inset-corner2");
-        }
-
-        addMiniMapCandidate(candidates, seen, mapName, targetX, targetY - 1, null, "near-up");
-        addMiniMapCandidate(candidates, seen, mapName, targetX, targetY + 1, null, "near-down");
-        addMiniMapCandidate(candidates, seen, mapName, targetX - 1, targetY, null, "near-left");
-        addMiniMapCandidate(candidates, seen, mapName, targetX + 1, targetY, null, "near-right");
-
-        return candidates;
-    }
-
-    private void addMiniMapCandidate(List<MiniMapClickCandidate> candidates,
-                                     Set<String> seen,
-                                     String mapName,
-                                     int logicalX,
-                                     int logicalY,
-                                     Point knownPixelPoint,
-                                     String reason) {
-        String key = logicalX + "," + logicalY;
-        if (!seen.add(key)) {
-            return;
-        }
-        Point pixelPoint = knownPixelPoint == null
-                ? coordinateHelper.getPhysicalMapPoint(mapName, logicalX, logicalY)
-                : knownPixelPoint;
-        if (pixelPoint == null) {
-            return;
-        }
-        candidates.add(new MiniMapClickCandidate(logicalX, logicalY, pixelPoint, reason));
-    }
-
-    private int logicalStepForPixelDirection(int pixelDirection, double scale) {
-        if (scale == 0) {
-            return 0;
-        }
-        return pixelDirection / scale > 0 ? 1 : -1;
+    private boolean isActiveNavigationMovement(GameStateUtil.MovementState state) {
+        return state == GameStateUtil.MovementState.MOVING
+                || state == GameStateUtil.MovementState.PATHING_ACTIVE
+                || state == GameStateUtil.MovementState.MAYBE_MOVING;
     }
 
     /**
@@ -1969,15 +1135,6 @@ public class NavigationService {
         taskExecutionContextHolder.checkpointIfPresent();
     }
 
-    private void warnIfMapStillOpenAfterAlt1Close() {
-        if (!sleepInterruptible(400)) {
-            return;
-        }
-        if (isWorldMapOpened()) {
-            log.warn("ensureMapTrackingOption pressed Alt+1 but map still appears open; later UI cleanup will handle it");
-        }
-    }
-
     private NavigationRuntimeState state() {
         String key = windowTaskContextHolder.rawCurrent()
                 .map(windowContext -> windowContext.getWindowId())
@@ -1985,80 +1142,20 @@ public class NavigationService {
         return runtimeStates.computeIfAbsent(key, ignored -> new NavigationRuntimeState());
     }
 
-    private String currentWindowId() {
-        return windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getWindowId())
-                .orElse("default");
-    }
-
-    private String currentBoundHandle() {
-        return windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getNativeBinding().getNativeHandle())
-                .orElse(null);
-    }
-
-    private boolean sleepInterruptible(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
-    private void cleanLightweightInterruptions(String source) {
-        if (!isAutoBattleRunningInCurrentWindow()) {
-            return;
-        }
-        if (!teamRoleDetectionService.shouldRunLightweightCleanup((TaskExecutionContext) null)) {
-            return;
-        }
-        NavigationRuntimeState state = state();
-        long now = System.currentTimeMillis();
-        if (state.lastLightweightCleanAt > 0
-                && now - state.lastLightweightCleanAt < LIGHTWEIGHT_CLEAN_INTERVAL_MS) {
-            return;
-        }
-        state.lastLightweightCleanAt = now;
-        if (uiCleanerService.cleanLightweightInterruptions("navigation:" + source)) {
-            log.info("navigation lightweight cleanup handled interruption: source={}", source);
-        }
-    }
-
-    private boolean isAutoBattleRunningInCurrentWindow() {
-        return windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getLastTaskType() == TaskType.AUTO_BATTLE)
-                .orElse(false);
-    }
-
     private static class NavigationRuntimeState {
         private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
         private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
-        private long lastLightweightCleanAt = 0L;
     }
 
-    private record MiniMapClickCandidate(int logicalX, int logicalY, Point pixelPoint, String reason) {
-    }
-
-    private enum MiniMapPathingConfirm {
-        MOVING,
-        DIALOG_OPENED,
-        NO_MOVEMENT,
-        INTERRUPTED
-    }
-
-    private enum MiniMapClickOutcome {
-        ARRIVED,
+    private enum MiniMapPathingAttemptResult {
         PATHING_STARTED,
-        DIALOG_OPENED,
-        PENDING_CONFIRMATION,
-        FAILED
+        NO_PATHING,
+        INCONCLUSIVE
     }
 
-    private enum RouteClickStatus {
+    private enum WorldMapDestinationClickResult {
         CLICKED,
         NOT_FOUND,
-        DESTINATION_MISMATCH
+        WRONG_DESTINATION
     }
 }

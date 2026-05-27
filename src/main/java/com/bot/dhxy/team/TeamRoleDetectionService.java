@@ -1,5 +1,9 @@
 package com.bot.dhxy.team;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.TeamTaskProperties;
 import com.bot.dhxy.core.GameClientTracker;
@@ -337,7 +341,7 @@ public class TeamRoleDetectionService {
             log.warn("team role tooltip probe missed, will retry if possible: pass={} attempt={}/{}",
                     pass, attempt, maxAttempts);
             if (attempt < maxAttempts) {
-                sleepQuietly(TEAM_TOOLTIP_RETRY_DELAY_MS);
+                TaskSleep.sleep(TEAM_TOOLTIP_RETRY_DELAY_MS);
             }
         }
         return Optional.empty();
@@ -376,7 +380,7 @@ public class TeamRoleDetectionService {
         boolean completed = inputSequences.submitExclusiveAndWait("teamRole:hoverAndCaptureTooltip:pass" + pass + ":attempt" + attempt, () -> {
             focusCurrentWindowForProbe("hover");
             inputProvider.moveMouse(hoverPoint.x, hoverPoint.y);
-            sleepQuietly(Math.max(0, teamTaskProperties.getTeamHoverDelayMs()));
+            TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamHoverDelayMs()));
             BufferedImage image = tracker.captureToMemory("team-role-tooltip",
                     tooltipRect[0], tooltipRect[1], tooltipRect[2], tooltipRect[3]);
             if (image == null) {
@@ -472,7 +476,7 @@ public class TeamRoleDetectionService {
             return Optional.empty();
         }
 
-        List<TextRecognizer.OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(probe.rawPath());
+        List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(probe.rawPath());
         if (words.isEmpty()) {
             log.warn("team role tooltip OCR returned no words: raw={}", probe.rawPath());
             return Optional.empty();
@@ -480,7 +484,7 @@ public class TeamRoleDetectionService {
 
         OptionalIntBox levelTop = findLevelRowTop(words);
         List<TooltipIdCandidate> candidates = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             String text = word.getText() == null ? "" : word.getText().trim();
             if (text.isBlank() || text.contains("\u7ea7")) {
                 continue;
@@ -543,10 +547,10 @@ public class TeamRoleDetectionService {
         return Optional.of(matcher.group(1));
     }
 
-    private OptionalIntBox findLevelRowTop(List<TextRecognizer.OcrWordResult> words) {
+    private OptionalIntBox findLevelRowTop(List<OcrWordResult> words) {
         return words.stream()
                 .filter(word -> word.getText() != null && word.getText().contains("\u7ea7"))
-                .mapToInt(TextRecognizer.OcrWordResult::getTop)
+                .mapToInt(OcrWordResult::getTop)
                 .min()
                 .stream()
                 .mapToObj(OptionalIntBox::present)
@@ -558,14 +562,14 @@ public class TeamRoleDetectionService {
         return !levelTop.present() || candidate.top() > levelTop.value();
     }
 
-    private String summarizeOcrWords(List<TextRecognizer.OcrWordResult> words) {
+    private String summarizeOcrWords(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "[]";
         }
         int limit = Math.min(8, words.size());
         List<String> summary = new ArrayList<>();
         for (int i = 0; i < limit; i++) {
-            TextRecognizer.OcrWordResult word = words.get(i);
+            OcrWordResult word = words.get(i);
             summary.add("'" + word.getText() + "'@(" + word.getLeft() + "," + word.getTop()
                     + "," + word.getWidth() + "x" + word.getHeight() + ")");
         }
@@ -680,7 +684,7 @@ public class TeamRoleDetectionService {
         boolean probed = inputSequences.submitExclusiveAndWait("teamRole:panelProbe:attempt" + attempt, () -> {
             focusCurrentWindowForProbe("panel");
             inputProvider.pressAltT();
-            sleepQuietly(Math.max(0, teamTaskProperties.getTeamPanelOpenDelayMs()));
+            TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamPanelOpenDelayMs()));
             try {
                 if (detectTransferLeaderButton()) {
                     detected[0] = TeamRoleStatus.LEADER;
@@ -762,7 +766,7 @@ public class TeamRoleDetectionService {
             return;
         }
         inputProvider.pressAltT();
-        sleepQuietly(Math.max(0, teamTaskProperties.getTeamPanelCloseDelayMs()));
+        TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamPanelCloseDelayMs()));
     }
 
     private void focusCurrentWindowForProbe(String phase) {
@@ -969,13 +973,5 @@ public class TeamRoleDetectionService {
      * @param maxRowPixels widest text-colored row, used to reject solid backgrounds.
      */
     private record TextDistribution(int rows, int columns, int transitions, int maxRowPixels) {
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

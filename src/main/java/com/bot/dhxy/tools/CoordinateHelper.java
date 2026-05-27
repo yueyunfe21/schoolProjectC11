@@ -2,6 +2,7 @@ package com.bot.dhxy.tools;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +31,10 @@ public class CoordinateHelper {
     private final Random random = new Random();
 
     private static final String MAP_CONFIG_PATH = "config/maps.json";
+    private static final int GAME_CLIENT_WIDTH = 1024;
+    private static final int GAME_CLIENT_HEIGHT = 768;
+    private static final int APPROACH_LOGICAL_OFFSET = 2;
+    private static final int MINI_MAP_EDGE_INSET_TRIGGER_PX = 240;
     private Map<String, MapTransform> mapTransforms = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -110,6 +115,163 @@ public class CoordinateHelper {
 
     public MapTransform getMapTransform(String mapName) {
         return mapTransforms.get(mapName);
+    }
+
+    /**
+     * Resolve the mini-map logical coordinate and screen-absolute click point for a navigation attempt.
+     *
+     * <p>{@code failedClickCount == 0} returns the original target point. Higher values calculate one
+     * fallback logical coordinate at a time, using the original target's screen-relative position to
+     * bias edge fallbacks away from the map border before trying nearby coordinates. This keeps
+     * NavigationService from pre-building candidate lists or duplicating map-transform math.</p>
+     *
+     * @param mapName map name whose transform is registered in {@code config/maps.json}; null or
+     *                unknown maps return null.
+     * @param targetX original logical in-game X coordinate.
+     * @param targetY original logical in-game Y coordinate.
+     * @param failedClickCount number of prior mini-map clicks that did not start pathing; zero means
+     *                         use the original point.
+     * @return resolved logical coordinate, screen-absolute pixel point, and diagnostic reason; null
+     *         when the transform is missing or all fallback points are exhausted.
+     */
+    public MiniMapClickPoint resolveMiniMapClickPoint(String mapName,
+                                                      int targetX,
+                                                      int targetY,
+                                                      int failedClickCount) {
+        Point originalPixelPoint = getPhysicalMapPoint(mapName, targetX, targetY);
+        if (originalPixelPoint == null) {
+            return null;
+        }
+        if (failedClickCount <= 0) {
+            return new MiniMapClickPoint(targetX, targetY, originalPixelPoint, "original");
+        }
+
+        MapTransform transform = getMapTransform(mapName);
+        if (transform == null) {
+            return null;
+        }
+
+        tracker.refreshWindowState();
+        int relativeX = originalPixelPoint.x - tracker.getWindowBaseX();
+        int relativeY = originalPixelPoint.y - tracker.getWindowBaseY();
+        int dx = 0;
+        int dy = 0;
+        if (relativeX <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
+            dx = logicalStepForPixelDirection(1, transform.scaleX);
+        } else if (GAME_CLIENT_WIDTH - relativeX <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
+            dx = logicalStepForPixelDirection(-1, transform.scaleX);
+        }
+        if (relativeY <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
+            dy = logicalStepForPixelDirection(1, transform.scaleY);
+        } else if (GAME_CLIENT_HEIGHT - relativeY <= MINI_MAP_EDGE_INSET_TRIGGER_PX) {
+            dy = logicalStepForPixelDirection(-1, transform.scaleY);
+        }
+
+        log.info("mini-map fallback analysis after failed click: map={} target=({}, {}) pixel=({}, {}) relative=({}, {}) dx={} dy={} failedClicks={}",
+                mapName, targetX, targetY, originalPixelPoint.x, originalPixelPoint.y,
+                relativeX, relativeY, dx, dy, failedClickCount);
+
+        int fallbackIndex = failedClickCount - 1;
+        int cursor = 0;
+        int[][] edgeOffsets = new int[][] {
+                {0, dy},
+                {0, dy * 2},
+                {-1, dy},
+                {1, dy},
+                {dx, 0},
+                {dx * 2, 0},
+                {dx, -1},
+                {dx, 1},
+                {dx, dy},
+                {dx * 2, dy * 2}
+        };
+        for (int[] offset : edgeOffsets) {
+            if (offset[0] == 0 && offset[1] == 0) {
+                continue;
+            }
+            if (cursor++ == fallbackIndex) {
+                return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
+                        "edge-fallback-" + failedClickCount);
+            }
+        }
+
+        int[][] nearOffsets = new int[][] {
+                {0, -1},
+                {0, 1},
+                {-1, 0},
+                {1, 0}
+        };
+        for (int[] offset : nearOffsets) {
+            if (cursor++ == fallbackIndex) {
+                return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
+                        "near-fallback-" + failedClickCount);
+            }
+        }
+        return null;
+    }
+
+    private MiniMapClickPoint resolveMiniMapFallbackPoint(String mapName, int logicalX, int logicalY, String reason) {
+        Point pixelPoint = getPhysicalMapPoint(mapName, logicalX, logicalY);
+        return pixelPoint == null ? null : new MiniMapClickPoint(logicalX, logicalY, pixelPoint, reason);
+    }
+
+    /**
+     * Resolved mini-map click target.
+     *
+     * @param logicalX logical in-game X coordinate that will be clicked on the mini-map.
+     * @param logicalY logical in-game Y coordinate that will be clicked on the mini-map.
+     * @param pixelPoint screen-absolute pixel point for the physical click.
+     * @param reason diagnostic label such as {@code original}, {@code edge-fallback-1}, or
+     *               {@code near-fallback-3}.
+     */
+    public record MiniMapClickPoint(int logicalX, int logicalY, Point pixelPoint, String reason) {
+    }
+
+    /**
+     * Calculate a nearby logical coordinate for task targets that should be approached, not stood on.
+     *
+     * <p>The input and output coordinates are logical in-game map coordinates. The helper uses the
+     * current bound window base plus the map transform to infer which side of the visible game area
+     * the target is on, then offsets the coordinate slightly toward the screen center/interior. This
+     * keeps task code from duplicating map-transform math while keeping navigation itself unaware of
+     * business concepts such as 修罗怪 or NPC interaction policy.</p>
+     *
+     * @param mapName map name whose transform is registered in {@code config/maps.json}; nullable
+     *                or unknown maps return the original coordinate.
+     * @param targetX original logical in-game X coordinate.
+     * @param targetY original logical in-game Y coordinate.
+     * @return logical in-game coordinate near the target; returns the original coordinate when the
+     *         transform or physical point cannot be calculated.
+     */
+    public MapCoordinate calculateApproachCoordinate(String mapName, int targetX, int targetY) {
+        Point originalPixelPoint = getPhysicalMapPoint(mapName, targetX, targetY);
+        MapTransform transform = getMapTransform(mapName);
+        if (originalPixelPoint == null || transform == null) {
+            log.warn("approach coordinate fallback to original: map={} target=({}, {}) transformMissing={} pixelMissing={}",
+                    mapName, targetX, targetY, transform == null, originalPixelPoint == null);
+            return new MapCoordinate(targetX, targetY);
+        }
+
+        tracker.refreshWindowState();
+        int relativeX = originalPixelPoint.x - tracker.getWindowBaseX();
+        int relativeY = originalPixelPoint.y - tracker.getWindowBaseY();
+        int pixelDirectionX = relativeX < GAME_CLIENT_WIDTH / 2 ? 1 : -1;
+        int pixelDirectionY = relativeY < GAME_CLIENT_HEIGHT / 2 ? 1 : -1;
+        int dx = logicalStepForPixelDirection(pixelDirectionX, transform.scaleX);
+        int dy = logicalStepForPixelDirection(pixelDirectionY, transform.scaleY);
+        int approachX = targetX + dx * APPROACH_LOGICAL_OFFSET;
+        int approachY = targetY + dy * APPROACH_LOGICAL_OFFSET;
+
+        log.info("approach coordinate calculated: map={} target=({}, {}) approach=({}, {}) relative=({}, {}) logicalStep=({}, {})",
+                mapName, targetX, targetY, approachX, approachY, relativeX, relativeY, dx, dy);
+        return new MapCoordinate(approachX, approachY);
+    }
+
+    private int logicalStepForPixelDirection(int pixelDirection, double scale) {
+        if (scale == 0) {
+            return 0;
+        }
+        return pixelDirection / scale > 0 ? 1 : -1;
     }
 
     public Point getRandomizedPoint(int baseX, int baseY, int maxRadiusX, int maxRadiusY) {

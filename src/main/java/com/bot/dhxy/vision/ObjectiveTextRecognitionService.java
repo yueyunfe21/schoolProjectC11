@@ -2,6 +2,7 @@ package com.bot.dhxy.vision;
 
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -574,7 +575,7 @@ public class ObjectiveTextRecognitionService {
         }
         List<GlyphBox> out = new ArrayList<>();
         boolean skippedLeadingBracket = false;
-        // Remove only the outer bracket-like runs. Internal comma/digit runs are preserved
+        // Remove only the outer bracket-like runs. Inner comma/digit runs are preserved
         // because the digit reader needs their original left-to-right order.
         for (int i = 0; i < coordinateRuns.size(); i++) {
             GlyphBox run = coordinateRuns.get(i);
@@ -863,10 +864,6 @@ public class ObjectiveTextRecognitionService {
         if (Thread.currentThread().isInterrupted()) {
             throw new TaskStopRequestedException("objective recognition interrupted at " + stage);
         }
-    }
-
-    public record ObjectiveTextResult(String mapSlug, String mapName, int x, int y,
-                                      double mapScore, String source) {
     }
 
     private record TemplateBundle(Map<String, MapNameTemplate> mapNames,

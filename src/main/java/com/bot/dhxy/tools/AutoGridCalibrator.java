@@ -1,5 +1,11 @@
 package com.bot.dhxy.tools;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.PlayerCharacter;
@@ -48,14 +54,14 @@ public class AutoGridCalibrator {
 
         // 2. 让首领跑动，抓取点 B
         log.info("🏃‍♂️ 【行动指令】: 请往右下方或者右边跑两步！5秒后自动抓拍...");
-        sleep(10000);
+        TaskSleep.sleep(10000);
         CalibPoint pointB = capturePoint(player);
         if (pointB == null) return;
         log.info("✅ 点B抓取成功: 逻辑[{},{}], 物理脚底[{},{}]", pointB.logicX, pointB.logicY, pointB.physX, pointB.physY);
 
         // 3. 让首领换个方向跑，抓取点 C (解二元一次方程必须要有3个不在一条直线上的点)
         log.info("🏃‍♂️ 【行动指令】: 请换个方向，往左下方或者左边跑两步！5秒后自动抓拍...");
-        sleep(10000);
+        TaskSleep.sleep(10000);
         CalibPoint pointC = capturePoint(player);
         if (pointC == null) return;
         log.info("✅ 点C抓取成功: 逻辑[{},{}], 物理脚底[{},{}]", pointC.logicX, pointC.logicY, pointC.physX, pointC.physY);
@@ -72,7 +78,7 @@ public class AutoGridCalibrator {
         tracker.updateGlobalVision();
 
         // 获取逻辑坐标 (调你的左上角 OCR)
-        TextRecognizer.LocationInfo locInfo = locationVisionService.scanCurrentLocation();
+        LocationInfo locInfo = locationVisionService.scanCurrentLocation();
         if (locInfo == null || locInfo.mapName == null) {
             log.error("❌ 抓取失败：未识别到左上角逻辑坐标！");
             return null;
@@ -90,7 +96,7 @@ public class AutoGridCalibrator {
         tracker.captureToFile("中心抓拍", centerScanPath, scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
         ImagePreprocessor.washPurpleTextToBlackAndWhite(centerScanPath, playerScanPath);
 
-        List<TextRecognizer.OcrWordResult> playerWords = ocr.getAllTextResults(playerScanPath);
+        List<OcrWordResult> playerWords = ocr.getAllTextResults(playerScanPath);
         Point physicalAnchor = locationVisionService.extractPlayerPhysicalAnchor(playerWords, player.getName(), scanStartX, scanStartY, 0);
 
         if (physicalAnchor == null) {
@@ -131,9 +137,5 @@ public class AutoGridCalibrator {
         log.info("常量 uy (X逻辑变化导致屏幕Y移动) = {}", String.format("%.4f", uy));
         log.info("常量 vy (Y逻辑变化导致屏幕Y移动) = {}", String.format("%.4f", vy));
         log.info("========================================");
-    }
-
-    private void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
     }
 }

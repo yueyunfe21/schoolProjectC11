@@ -2,10 +2,15 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.PathingResult;
+import com.bot.dhxy.model.npc.NpcMovementType;
+import com.bot.dhxy.model.npc.NpcRole;
+import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.service.*;
-import com.bot.dhxy.service.QuestManagerService.PathingResult;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.task.startup.TaskStartupCheckResult;
 import com.bot.dhxy.task.startup.TaskStartupCheckService;
@@ -149,8 +154,10 @@ public class FiveRingTask extends BaseTaskTemplate {
             if (executionContext != null) {
                 executionContext.throwIfStopRequested();
             }
+            NpcTarget acceptNpc = fiveRingAcceptNpc();
             boolean ok = npcClickService.debugClickNpcSmartFirstShot(
-                    gameContext.getMe(), TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y, TARGET_NPC_NAME, TUNE_X, TUNE_Y);
+                    gameContext.getMe(), acceptNpc.getMapName(), acceptNpc.getX(), acceptNpc.getY(),
+                    acceptNpc.getName(), acceptNpc.getTuneX(), acceptNpc.getTuneY());
             log.info("[five-ring NPC first-shot debug] finished: result={}", ok);
             markTaskIdle();
             return ok ? TaskRunResult.SUCCESS : TaskRunResult.FAILED;
@@ -359,8 +366,14 @@ public class FiveRingTask extends BaseTaskTemplate {
                 return TaskStepResult.SUCCESS;
             }
 
-            if (dialogService.detectDialogType() == DialogService.DialogType.NONE) {
-                if (!navigationService.navigateToNPC(TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y)) {
+            if (dialogService.detectDialogType() == DialogType.NONE) {
+                if (!navigationService.navigateToNPC(NpcNavigationRequest.builder()
+                        .targetMapName(TARGET_MAP_NAME)
+                        .targetX(NPC_COOR_X)
+                        .targetY(NPC_COOR_Y)
+                        .targetName(TARGET_NPC_NAME)
+                        .source("wuhuan:acceptNpc:navigate")
+                        .build())) {
                     checkpoint(executionContext);
                     if (tryAcceptInitialTaskFromCurrentScreen(executionContext, "setup:navigate-failed")) {
                         return TaskStepResult.SUCCESS;
@@ -407,8 +420,8 @@ public class FiveRingTask extends BaseTaskTemplate {
             executionContext.throwIfStopRequested();
         }
 
-        DialogService.DialogType dialogType = dialogService.detectDialogType();
-        if (dialogType == DialogService.DialogType.NONE) {
+        DialogType dialogType = dialogService.detectDialogType();
+        if (dialogType == DialogType.NONE) {
             log.info("[five-ring accept] no accept dialog on current screen, skip direct accept: reason={}", reason);
             return false;
         }
@@ -466,16 +479,29 @@ public class FiveRingTask extends BaseTaskTemplate {
                 TaskYieldPolicy.CONTINUE_CHAIN,
                 () -> {
                     checkpoint(executionContext);
-                    boolean clicked = npcClickService.clickNpcSmart(NpcClickService.NpcClickRequest.fixedWithTune(
-                            gameContext.getMe(), TARGET_MAP_NAME, NPC_COOR_X, NPC_COOR_Y,
-                            TARGET_NPC_NAME, TUNE_X, TUNE_Y,
-                            ACCEPT_OPTION_TEMPLATE));
+                    boolean clicked = npcClickService.clickNpcSmart(fiveRingAcceptNpc().toClickRequest(gameContext.getMe()));
                     return clicked ? TaskTransactionResult.READY_TO_CONTINUE : TaskTransactionResult.RETRYABLE_ERROR;
                 });
         if (outcome.result() == TaskTransactionResult.STOPPED) {
             checkpoint(executionContext);
         }
         return outcome.reachedExpectedResult();
+    }
+
+    private static NpcTarget fiveRingAcceptNpc() {
+        return NpcTarget.builder()
+                .key("wuhuan.acceptNpc")
+                .mapName(TARGET_MAP_NAME)
+                .name(TARGET_NPC_NAME)
+                .x(NPC_COOR_X)
+                .y(NPC_COOR_Y)
+                .role(NpcRole.QUEST_GIVER)
+                .movementType(NpcMovementType.FIXED)
+                .tuneX(TUNE_X)
+                .tuneY(TUNE_Y)
+                .expectedDialogTemplatePath(ACCEPT_OPTION_TEMPLATE)
+                .source("five-ring")
+                .build();
     }
 
     private void cleanupUnexpectedAcceptDialog(String reason) {
@@ -818,7 +844,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             log.info("[five-ring] P1 blind click triggered next NPC link");
             sleepSafely(executionContext, 1200);
 
-            if (dialogService.detectDialogType() != DialogService.DialogType.NONE) {
+            if (dialogService.detectDialogType() != DialogType.NONE) {
                 checkpoint(executionContext);
                 log.info("P1 click opened a dialog directly; blind click succeeded");
                 return;

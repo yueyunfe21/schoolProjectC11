@@ -1,6 +1,7 @@
 package com.bot.dhxy.task.hotstart;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.service.BattleRadarService;
 import com.bot.dhxy.service.DialogService;
 import lombok.RequiredArgsConstructor;
@@ -24,13 +25,13 @@ public class TaskHotStartService {
                 && gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
         if (inCombat) {
             TaskHotStartSnapshot snapshot = new TaskHotStartSnapshot(
-                    safeTaskCode, safeSource, TaskHotStartScreenState.IN_COMBAT, DialogService.DialogType.NONE);
+                    safeTaskCode, safeSource, TaskHotStartScreenState.IN_COMBAT, DialogType.NONE);
             log.info("task hot-start snapshot: task={} source={} state={}",
                     snapshot.taskCode(), snapshot.source(), snapshot.state());
             return snapshot;
         }
 
-        DialogService.DialogType dialogType = dialogService.detectDialogTypeNoFocus(
+        DialogType dialogType = dialogService.detectDialogTypeNoFocus(
                 "hot-start:" + safeTaskCode + ":" + safeSource);
         TaskHotStartScreenState state = switch (dialogType) {
             case OPTION -> TaskHotStartScreenState.OPTION_DIALOG;

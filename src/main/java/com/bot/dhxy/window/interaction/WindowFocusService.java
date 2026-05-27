@@ -1,5 +1,7 @@
 package com.bot.dhxy.window.interaction;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowHandleParser;
@@ -56,14 +58,14 @@ public class WindowFocusService {
         User32.INSTANCE.ShowWindow(hwnd, 9);
         User32.INSTANCE.BringWindowToTop(hwnd);
         boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd);
-        sleepQuietly(80);
+        TaskSleep.sleep(80);
 
         boolean focused = isFocused(hwnd);
         if (!foregroundOk || !focused) {
             unlockForegroundPermission();
             User32.INSTANCE.BringWindowToTop(hwnd);
             foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd) || foregroundOk;
-            sleepQuietly(120);
+            TaskSleep.sleep(120);
             focused = isFocused(hwnd);
         }
         if (!foregroundOk || !focused) {
@@ -105,7 +107,7 @@ public class WindowFocusService {
             User32.INSTANCE.BringWindowToTop(hwnd);
             User32.INSTANCE.SetFocus(hwnd);
             boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd);
-            sleepQuietly(120);
+            TaskSleep.sleep(120);
             boolean focused = isFocused(hwnd);
             log.info("Attached focus attempt: hwnd={} currentThread={} targetThread={} foregroundThread={} attachedTarget={} attachedForeground={} foregroundOk={} focused={}",
                     Pointer.nativeValue(hwnd.getPointer()), currentThreadId, targetThreadId, foregroundThreadId,
@@ -169,13 +171,5 @@ public class WindowFocusService {
             return null;
         }
         return new WinDef.HWND(new Pointer(value));
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

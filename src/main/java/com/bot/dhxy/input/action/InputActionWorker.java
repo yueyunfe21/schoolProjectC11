@@ -1,5 +1,7 @@
 package com.bot.dhxy.input.action;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
@@ -150,7 +152,7 @@ public class InputActionWorker {
                     pressAltShortcut(action.getType(), preferBackgroundKeyboard);
             case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
             case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
-            case SLEEP -> sleepQuietly(action.getDelayMs());
+            case SLEEP -> TaskSleep.sleep(action.getDelayMs());
         }
         return !Thread.currentThread().isInterrupted();
     }
@@ -227,14 +229,6 @@ public class InputActionWorker {
             case PRESS_ALT_E -> inputProvider.pressAltE();
             case PRESS_ALT_Q -> inputProvider.pressAltQ();
             default -> throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
-        }
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 }

@@ -4,7 +4,9 @@ import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.MapCoordinate;
-import com.bot.dhxy.vision.MiniMapCoordinateReader.MapLabelTemplateMatch;
+import com.bot.dhxy.model.navigation.MapLabelTemplateMatch;
+import com.bot.dhxy.model.navigation.MiniMapSnapshot;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
@@ -148,7 +150,7 @@ public class MapSurveyService {
 
         log.info("[map-survey] boundary prepare: windowId={} map={} direction={} waitMs={} move mouse to character now",
                 snapshotWindowId(snapshot), normalizedMapName, direction.displayName(), BOUNDARY_MOUSE_PREPARE_MS);
-        if (!sleepInterruptible(BOUNDARY_MOUSE_PREPARE_MS)) {
+        if (!TaskSleep.sleep(BOUNDARY_MOUSE_PREPARE_MS)) {
             return SurveyResult.failed(snapshotWindowId(snapshot), "记录边界已中断");
         }
 
@@ -157,7 +159,7 @@ public class MapSurveyService {
             return SurveyResult.failed(snapshotWindowId(snapshot), "小地图坐标条截图失败");
         }
         try {
-            MiniMapCoordinateReader.MiniMapSnapshot location =
+            MiniMapSnapshot location =
                     miniMapCoordinateReader.readLocationSnapshotFromCoordinateStrip(strip.get(), false, true);
             MapCoordinate coordinate = location.coordinate();
             if (coordinate == null) {
@@ -207,7 +209,7 @@ public class MapSurveyService {
 
         log.info("[map-survey] center anchor prepare: windowId={} map={} waitMs={} move mouse to character now",
                 snapshotWindowId(snapshot), normalizedMapName, CENTER_MOUSE_PREPARE_MS);
-        if (!sleepInterruptible(CENTER_MOUSE_PREPARE_MS)) {
+        if (!TaskSleep.sleep(CENTER_MOUSE_PREPARE_MS)) {
             return SurveyResult.failed(snapshotWindowId(snapshot), "记录中心点已中断");
         }
 
@@ -262,7 +264,7 @@ public class MapSurveyService {
         log.info("[map-survey] correction prepare: windowId={} map={} coord=({}, {}) waitMs={} move mouse to real player point now",
                 snapshotWindowId(snapshot), projection.mapName(), projection.coordinate().getX(), projection.coordinate().getY(),
                 CORRECTION_MOUSE_PREPARE_MS);
-        if (!sleepInterruptible(CORRECTION_MOUSE_PREPARE_MS)) {
+        if (!TaskSleep.sleep(CORRECTION_MOUSE_PREPARE_MS)) {
             return SurveyResult.failed(snapshotWindowId(snapshot), "记录修正点已中断");
         }
 
@@ -453,7 +455,7 @@ public class MapSurveyService {
                 normalizedMapName = best.mapName();
             }
 
-            MiniMapCoordinateReader.MiniMapSnapshot location =
+            MiniMapSnapshot location =
                     miniMapCoordinateReader.readLocationSnapshotFromCoordinateStrip(strip.get(), false, true);
             MapCoordinate coordinate = location.coordinate();
             if (coordinate == null) {
@@ -728,16 +730,6 @@ public class MapSurveyService {
             return upperBoundary;
         }
         return coordinate;
-    }
-
-    private boolean sleepInterruptible(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
     }
 
     public enum CameraBoundaryDirection {

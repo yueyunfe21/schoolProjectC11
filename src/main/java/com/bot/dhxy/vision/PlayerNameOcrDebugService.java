@@ -1,5 +1,12 @@
 package com.bot.dhxy.vision;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.OcrLineResult;
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.ocr.PlayerAnchorMatch;
+import com.bot.dhxy.model.ocr.RecordResult;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputSequences;
@@ -96,20 +103,20 @@ public class PlayerNameOcrDebugService {
                         gameTextLineOcrService.scanPurpleLines(raw, purpleEnhancedPath));
                 OcrVariant yellowEnhanced = toOcrVariant(
                         gameTextLineOcrService.scanYellowLines(raw, yellowEnhancedPath));
-                List<TextRecognizer.OcrWordResult> mappedPurpleWords =
+                List<OcrWordResult> mappedPurpleWords =
                         mapRawWordsToWindow(purpleEnhanced.words(), rect);
-                LocationVisionService.PlayerAnchorMatch segmentedMatch =
+                PlayerAnchorMatch segmentedMatch =
                         locationVisionService.extractPlayerAnchorMatch(mappedPurpleWords, expectedName, 0, 0, 0);
-                LocationVisionService.PlayerAnchorMatch selectedMatch = segmentedMatch;
+                PlayerAnchorMatch selectedMatch = segmentedMatch;
                 String anchorSource = segmentedMatch != null ? "SEGMENTED_CENTER" : "NONE";
                 Point anchorRel = selectedMatch == null ? null : selectedMatch.anchor();
                 Point anchorAbs = anchorRel == null
                         ? null
                         : new Point(binding.getX() + anchorRel.x, binding.getY() + anchorRel.y);
-                TextRecognizer.LocationInfo locationInfo = selectedMatch == null
+                LocationInfo locationInfo = selectedMatch == null
                         ? null
                         : scanCurrentLocationWithContext(snapshot);
-                OcrRoiMemoryService.RecordResult visionRecord = selectedMatch == null
+                RecordResult visionRecord = selectedMatch == null
                         ? null
                         : ocrRoiMemoryService.recordPlayerAnchorSuccess(
                         memoryKeyForPlayerName(expectedName),
@@ -168,7 +175,7 @@ public class PlayerNameOcrDebugService {
         }
     }
 
-    private OcrVariant toOcrVariant(GameTextLineOcrService.OcrLineResult result) {
+    private OcrVariant toOcrVariant(OcrLineResult result) {
         if (result == null) {
             return OcrVariant.empty();
         }
@@ -205,10 +212,10 @@ public class PlayerNameOcrDebugService {
         List<TextLineBox> lines = groupTextLines(filteredMask);
         List<PackedLineBox> packedLines = new ArrayList<>();
         int blackPixelCount = writePackedLineMask(filteredMask, lines, packedLines, outputPath);
-        List<TextRecognizer.OcrWordResult> packedWords = Files.exists(outputPath)
+        List<OcrWordResult> packedWords = Files.exists(outputPath)
                 ? textRecognizer.getAllTextResultsLocalOnly(outputPath.toString())
                 : List.of();
-        List<TextRecognizer.OcrWordResult> rawWords = mapPackedWordsToRaw(packedWords, packedLines);
+        List<OcrWordResult> rawWords = mapPackedWordsToRaw(packedWords, packedLines);
         return OcrVariant.of(outputPath.toString(), blackPixelCount,
                 rawWords.size(), summarizeWords(rawWords), rawWords);
     }
@@ -410,13 +417,13 @@ public class PlayerNameOcrDebugService {
         }
     }
 
-    private List<TextRecognizer.OcrWordResult> mapPackedWordsToRaw(List<TextRecognizer.OcrWordResult> words,
+    private List<OcrWordResult> mapPackedWordsToRaw(List<OcrWordResult> words,
                                                                    List<PackedLineBox> packedLines) {
         if (words == null || words.isEmpty() || packedLines == null || packedLines.isEmpty()) {
             return List.of();
         }
-        List<TextRecognizer.OcrWordResult> mapped = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+        List<OcrWordResult> mapped = new ArrayList<>();
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
@@ -428,13 +435,13 @@ public class PlayerNameOcrDebugService {
             int rawTop = line.sourceY() + Math.round((float) (word.getTop() - line.packedY()) / ENHANCED_OCR_SCALE);
             int rawWidth = Math.max(1, Math.round((float) word.getWidth() / ENHANCED_OCR_SCALE));
             int rawHeight = Math.max(1, Math.round((float) word.getHeight() / ENHANCED_OCR_SCALE));
-            mapped.add(new TextRecognizer.OcrWordResult(
+            mapped.add(new OcrWordResult(
                     word.getText(), rawLeft, rawTop, rawWidth, rawHeight));
         }
         return mapped;
     }
 
-    private PackedLineBox findPackedLine(TextRecognizer.OcrWordResult word, List<PackedLineBox> packedLines) {
+    private PackedLineBox findPackedLine(OcrWordResult word, List<PackedLineBox> packedLines) {
         int centerY = word.getY();
         int centerX = word.getX();
         for (PackedLineBox line : packedLines) {
@@ -462,13 +469,13 @@ public class PlayerNameOcrDebugService {
         return false;
     }
 
-    private List<TextRecognizer.OcrWordResult> mapRawWordsToWindow(List<TextRecognizer.OcrWordResult> words,
+    private List<OcrWordResult> mapRawWordsToWindow(List<OcrWordResult> words,
                                                                    ScanRect scanRect) {
         if (words == null || words.isEmpty() || scanRect == null) {
             return List.of();
         }
-        List<TextRecognizer.OcrWordResult> mapped = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+        List<OcrWordResult> mapped = new ArrayList<>();
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
@@ -476,7 +483,7 @@ public class PlayerNameOcrDebugService {
             int top = scanRect.y() + word.getTop();
             int width = Math.max(1, word.getWidth());
             int height = Math.max(1, word.getHeight());
-            mapped.add(new TextRecognizer.OcrWordResult(word.getText(), left, top, width, height));
+            mapped.add(new OcrWordResult(word.getText(), left, top, width, height));
         }
         return mapped;
     }
@@ -523,11 +530,11 @@ public class PlayerNameOcrDebugService {
                 && g > b + 16;
     }
 
-    private String anchorDetail(LocationVisionService.PlayerAnchorMatch match) {
+    private String anchorDetail(PlayerAnchorMatch match) {
         return match == null ? "-" : match.toDetailText();
     }
 
-    private TextRecognizer.LocationInfo scanCurrentLocationWithContext(WindowTaskSnapshot snapshot) {
+    private LocationInfo scanCurrentLocationWithContext(WindowTaskSnapshot snapshot) {
         String windowId = snapshot == null ? null : snapshot.getWindowId();
         if (windowId == null || windowId.isBlank()) {
             return locationVisionService.scanCurrentLocation();
@@ -545,7 +552,7 @@ public class PlayerNameOcrDebugService {
         return normalized.isEmpty() ? "player-name|unknown" : "player-name|" + normalized;
     }
 
-    private String locationText(TextRecognizer.LocationInfo locationInfo) {
+    private String locationText(LocationInfo locationInfo) {
         if (locationInfo == null) {
             return "-";
         }
@@ -553,7 +560,7 @@ public class PlayerNameOcrDebugService {
                 + "(" + locationInfo.x + "," + locationInfo.y + ")";
     }
 
-    private String visionRecordText(OcrRoiMemoryService.RecordResult result) {
+    private String visionRecordText(RecordResult result) {
         if (result == null) {
             return "-";
         }
@@ -615,7 +622,7 @@ public class PlayerNameOcrDebugService {
         }
     }
 
-    private String summarizeWords(List<TextRecognizer.OcrWordResult> words) {
+    private String summarizeWords(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "-";
         }
@@ -753,7 +760,7 @@ public class PlayerNameOcrDebugService {
                              int blackPixelCount,
                              int wordCount,
                              String wordsSummary,
-                             List<TextRecognizer.OcrWordResult> words) {
+                             List<OcrWordResult> words) {
         public static OcrVariant empty() {
             return new OcrVariant(null, 0, 0, "-", List.of());
         }
@@ -767,7 +774,7 @@ public class PlayerNameOcrDebugService {
                                     int blackPixelCount,
                                     int wordCount,
                                     String wordsSummary,
-                                    List<TextRecognizer.OcrWordResult> words) {
+                                    List<OcrWordResult> words) {
             return new OcrVariant(path, blackPixelCount, wordCount,
                     wordsSummary == null || wordsSummary.isBlank() ? "-" : wordsSummary,
                     words == null ? List.of() : List.copyOf(words));

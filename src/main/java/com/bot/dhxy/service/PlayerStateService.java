@@ -1,5 +1,9 @@
 package com.bot.dhxy.service;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
@@ -10,6 +14,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.vision.LocationVisionService;
@@ -117,19 +122,24 @@ public class PlayerStateService {
     }
 
     /**
-     * Refresh the current map name and logical coordinates from the minimap/location reader.
+     * Refresh the current map name and logical coordinates, then return the fresh scan result.
      *
-     * <p>Side effect: mutates {@link GameContext#getMe()}; no physical input is sent.</p>
+     * <p>This is the business-layer gateway for current-position scans. Callers that need a fresh
+     * location should use this method instead of calling {@code LocationVisionService} directly, so
+     * future caching, fallback tuning, and per-window state updates stay centralized.</p>
+     *
+     * @return latest recognized map/coordinate, or {@code null} when all no-input readers miss.
      */
-    public void syncMyPosition() {
+    public LocationInfo syncMyPosition() {
         long latencyStart = LatencyMetrics.start();
         boolean updated = false;
         String mapName = null;
         Integer x = null;
         Integer y = null;
+        LocationInfo info = null;
         log.info("🤖 [状态中枢] 请求雷达扫描当前位置...");
         try {
-            TextRecognizer.LocationInfo info = locationRadar.scanCurrentLocation();
+            info = locationRadar.scanCurrentLocation();
 
             if (info != null) {
                 PlayerCharacter me = context.getMe();
@@ -149,6 +159,7 @@ public class PlayerStateService {
                     "updated=" + updated + " map=" + safeLatencyValue(mapName)
                             + " coord=" + (x == null || y == null ? "-" : x + "," + y));
         }
+        return info;
     }
 
     public void syncAll() {
@@ -328,79 +339,75 @@ public class PlayerStateService {
     public void ensureSheYaoXiangActive(TaskExecutionContext taskContext) {
         long latencyStart = LatencyMetrics.start();
         try {
-            ensureSheYaoXiangActiveInternal(taskContext);
+            checkpoint(taskContext);
+            PlayerRuntimeState state = state();
+            long now = System.currentTimeMillis();
+            if (state.lastIncenseUsedTime > 0 && now - state.lastIncenseUsedTime < INCENSE_REFRESH_AFTER_MS) {
+                long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
+                long refreshAfterMinutes = INCENSE_REFRESH_AFTER_MS / 60000;
+                log.info("🕯️ 摄妖香由本程序补充后仅过去 {} 分钟，未达到 {} 分钟主动补香线，跳过包裹检查。",
+                        elapsedMinutes, refreshAfterMinutes);
+                return;
+            }
+
+            if (state.lastIncenseUsedTime > 0) {
+                long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
+                log.info("🕯️ 摄妖香由本程序补充后已过去 {} 分钟，进入剩余约 20 分钟主动补香窗口。", elapsedMinutes);
+            } else {
+                log.info("🕯️ 摄妖香没有本程序补充时间记录，开始执行安全校验...");
+            }
+
+            if (now < state.nextIncenseRetryTime) {
+                long remainingSeconds = Math.max(1, (state.nextIncenseRetryTime - now + 999) / 1000);
+                log.warn("⚠️ 摄妖香上次补充失败，仍在重试冷却中，剩余 {} 秒，跳过包裹检查。", remainingSeconds);
+                return;
+            }
+
+            int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
+            IncenseStatusProbe statusProbe = probeIncenseStatus(statusRect);
+            java.awt.Point buffIcon = statusProbe.iconPoint();
+
+            /*
+             * Template match means the incense buff exists. A cyan hour number in the same crop means
+             * the remaining time is at least that many hours; use it to calibrate the in-memory watch
+             * and skip the bag. If the icon exists but no cyan number is readable, treat it as below
+             * one hour and refill, which is the conservative behavior the user requested.
+             */
+            if (buffIcon != null && statusProbe.remainingHours().isPresent()) {
+                int remainingHours = statusProbe.remainingHours().getAsInt();
+                state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingHours(now, remainingHours);
+                state.nextIncenseRetryTime = 0;
+                log.info("sheyaoxiang status matched with remainingHours={}; calibrate watch and skip refill. point=({}, {})",
+                        remainingHours, buffIcon.x, buffIcon.y);
+                return;
+            }
+
+            if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
+                log.warn("⚠️ 摄妖香状态图标未发现，准备打开包裹补充...");
+            } else if (state.lastIncenseUsedTime > 0) {
+                log.info("🕯️ 摄妖香状态仍在，但已经进入主动补香窗口，准备打开包裹补充。");
+            } else if (buffIcon != null) {
+                log.info("✅ 发现摄妖香状态图标还在，但没有本程序补香时间记录，主动补一根以重建计时基准。point=({}, {})",
+                        buffIcon.x, buffIcon.y);
+            } else {
+                log.warn("⚠️ 未发现摄妖香状态，准备打开包裹补充...");
+            }
+            boolean used = bagService.findAndUseItem(
+                    BagService.MAIN_BAG, "bag/sheyaoxiang_item.png", null, taskContext);
+            checkpoint(taskContext);
+
+            if (used) {
+                log.info("✅ 成功使用摄妖香，怀表已重置为 1 小时。等待吃香动画...");
+                state.lastIncenseUsedTime = System.currentTimeMillis();
+                state.nextIncenseRetryTime = 0;
+                TaskSleep.sleep(1000);
+            } else {
+                log.error("❌ 包裹内未找到摄妖香，请及时购买补充。1 分钟后才会再试。 ");
+                state.nextIncenseRetryTime = System.currentTimeMillis() + 60000;
+            }
         } finally {
             LatencyMetrics.info(log, "player.sheyaoxiang.ensure", latencyStart,
                     "context=" + (taskContext == null ? "-" : taskContext.getTaskCode()));
-        }
-    }
-
-    private void ensureSheYaoXiangActiveInternal(TaskExecutionContext taskContext) {
-        checkpoint(taskContext);
-        PlayerRuntimeState state = state();
-        long now = System.currentTimeMillis();
-        if (state.lastIncenseUsedTime > 0 && now - state.lastIncenseUsedTime < INCENSE_REFRESH_AFTER_MS) {
-            long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-            long refreshAfterMinutes = INCENSE_REFRESH_AFTER_MS / 60000;
-            log.info("🕯️ 摄妖香由本程序补充后仅过去 {} 分钟，未达到 {} 分钟主动补香线，跳过包裹检查。",
-                    elapsedMinutes, refreshAfterMinutes);
-            return;
-        }
-
-        if (state.lastIncenseUsedTime > 0) {
-            long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-            log.info("🕯️ 摄妖香由本程序补充后已过去 {} 分钟，进入剩余约 20 分钟主动补香窗口。", elapsedMinutes);
-        } else {
-            log.info("🕯️ 摄妖香没有本程序补充时间记录，开始执行安全校验...");
-        }
-
-        if (now < state.nextIncenseRetryTime) {
-            long remainingSeconds = Math.max(1, (state.nextIncenseRetryTime - now + 999) / 1000);
-            log.warn("⚠️ 摄妖香上次补充失败，仍在重试冷却中，剩余 {} 秒，跳过包裹检查。", remainingSeconds);
-            return;
-        }
-
-        int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
-        IncenseStatusProbe statusProbe = probeIncenseStatus(statusRect);
-        java.awt.Point buffIcon = statusProbe.iconPoint();
-
-        /*
-         * Template match means the incense buff exists. A cyan hour number in the same crop means
-         * the remaining time is at least that many hours; use it to calibrate the in-memory watch
-         * and skip the bag. If the icon exists but no cyan number is readable, treat it as below
-         * one hour and refill, which is the conservative behavior the user requested.
-         */
-        if (buffIcon != null && statusProbe.remainingHours().isPresent()) {
-            int remainingHours = statusProbe.remainingHours().getAsInt();
-            state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingHours(now, remainingHours);
-            state.nextIncenseRetryTime = 0;
-            log.info("sheyaoxiang status matched with remainingHours={}; calibrate watch and skip refill. point=({}, {})",
-                    remainingHours, buffIcon.x, buffIcon.y);
-            return;
-        }
-
-        if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
-            log.warn("⚠️ 摄妖香状态图标未发现，准备打开包裹补充...");
-        } else if (state.lastIncenseUsedTime > 0) {
-            log.info("🕯️ 摄妖香状态仍在，但已经进入主动补香窗口，准备打开包裹补充。");
-        } else if (buffIcon != null) {
-            log.info("✅ 发现摄妖香状态图标还在，但没有本程序补香时间记录，主动补一根以重建计时基准。point=({}, {})",
-                    buffIcon.x, buffIcon.y);
-        } else {
-            log.warn("⚠️ 未发现摄妖香状态，准备打开包裹补充...");
-        }
-        boolean used = bagService.findAndUseItem(
-                BagService.MAIN_BAG, "bag/sheyaoxiang_item.png", null, taskContext);
-        checkpoint(taskContext);
-
-        if (used) {
-            log.info("✅ 成功使用摄妖香，怀表已重置为 1 小时。等待吃香动画...");
-            state.lastIncenseUsedTime = System.currentTimeMillis();
-            state.nextIncenseRetryTime = 0;
-            sleepQuietly(1000);
-        } else {
-            log.error("❌ 包裹内未找到摄妖香，请及时购买补充。1 分钟后才会再试。 ");
-            state.nextIncenseRetryTime = System.currentTimeMillis() + 60000;
         }
     }
 
@@ -480,7 +487,7 @@ public class PlayerStateService {
             return;
         }
         inputProvider.moveMouse(tracker.getWindowBaseX() + SAFE_MOUSE_REL_X, tracker.getWindowBaseY() + SAFE_MOUSE_REL_Y);
-        sleepQuietly(80);
+        TaskSleep.sleep(80);
     }
 
     private boolean checkAndHealFromSnapshotIfEnabled(BufferedImage bars, String name,
@@ -507,7 +514,7 @@ public class PlayerStateService {
             return false;
         }
 
-        sleepQuietly(HEAL_CONFIRM_DELAY_MS);
+        TaskSleep.sleep(HEAL_CONFIRM_DELAY_MS);
         BufferedImage confirmBars = captureBarsSnapshotNoFocus();
         if (confirmBars == null) {
             log.warn("[{}] no-focus precheck confirm failed, skip supply to avoid false click", name);
@@ -584,7 +591,7 @@ public class PlayerStateService {
             return false;
         }
 
-        sleepQuietly(HEAL_CONFIRM_DELAY_MS);
+        TaskSleep.sleep(HEAL_CONFIRM_DELAY_MS);
         BufferedImage confirmBars = captureBarsSnapshot();
         if (confirmBars == null) {
             log.warn("[{}] 疑似低于 {}%，但二次截图失败，跳过补给以避免误点", name, normalizedThreshold);
@@ -651,7 +658,7 @@ public class PlayerStateService {
                     name, normalizedThreshold, r, g, b);
             if (isInputWorkerThread()) {
                 inputProvider.clickRight(absX, absY, 100);
-                sleepQuietly(800);
+                TaskSleep.sleep(800);
             } else {
                 inputSequences.submitAndWait("playerState:heal:" + name, List.of(
                         InputAction.clickRight(absX, absY, 100),
@@ -749,9 +756,9 @@ public class PlayerStateService {
 
             String washedPath = windowScopedTempPath.resolve("sheyaoxiang_status_cyan_digits.png");
             writeImage(washed, washedPath, "sheyaoxiang cyan digit OCR");
-            List<TextRecognizer.OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
+            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
             String text = words.stream()
-                    .map(TextRecognizer.OcrWordResult::getText)
+                    .map(OcrWordResult::getText)
                     .filter(value -> value != null && !value.isBlank())
                     .reduce("", String::concat);
             Matcher matcher = SHEYAOXIANG_REMAINING_HOUR_PATTERN.matcher(text == null ? "" : text);
@@ -828,14 +835,6 @@ public class PlayerStateService {
 
     private String safeLatencyValue(String value) {
         return value == null || value.isBlank() ? "-" : value;
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     /**

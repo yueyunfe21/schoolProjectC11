@@ -1,10 +1,10 @@
 package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.runner.context.TaskExecutionContext;
-import com.bot.dhxy.service.NavigationService;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.startup.TaskStartupWindowPreparationService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -21,17 +21,17 @@ import org.springframework.stereotype.Component;
 @Component
 public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupInitializer {
 
-    private final NavigationService navigationService;
+    private final TaskStartupWindowPreparationService startupWindowPreparationService;
     private final PlayerStateService playerStateService;
 
     /**
-     * @param navigationService navigation service that owns startup map/Alt+6 preparation.
+     * @param startupWindowPreparationService service that owns startup map/Alt+6 preparation.
      * @param playerStateService player-state service used to synchronize identity and position into
      *                           the current window-bound {@code GameContext.State}.
      */
-    public DefaultWindowTaskStartupInitializer(NavigationService navigationService,
+    public DefaultWindowTaskStartupInitializer(TaskStartupWindowPreparationService startupWindowPreparationService,
                                                PlayerStateService playerStateService) {
-        this.navigationService = navigationService;
+        this.startupWindowPreparationService = startupWindowPreparationService;
         this.playerStateService = playerStateService;
     }
 
@@ -70,7 +70,7 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
         }
 
         log.info("{} window [{}] startup init: leader ensure map tracking option and Alt+6 visibility", prefix, windowId);
-        boolean ready = navigationService.prepareTaskStartupWindow();
+        boolean ready = startupWindowPreparationService.prepareTaskStartupWindow();
         if (!ready) {
             log.warn("{} window [{}] startup init warning: map tracking option was not confirmed", prefix, windowId);
         }

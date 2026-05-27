@@ -3,6 +3,7 @@ package com.bot.dhxy.task.model;
 public enum TaskType {
     WUHuan("wuhuan", "五环"),
     XIULUO("xiuluo", "修罗"),
+    XIULUO_V2("xiuluo_v2", "修罗V2"),
     AUTO_BATTLE("auto_battle", "自动战斗"),
     DEBUG_COORDINATE("debug_coordinate", "坐标调试"),
     DEBUG_MAP_CALIBRATOR("debug_map_calibrator", "地图校准"),

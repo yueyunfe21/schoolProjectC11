@@ -1,4 +1,6 @@
 //package com.bot.dhxy;
+
+import com.bot.dhxy.model.ocr.LocationInfo;
 //
 //import com.bot.dhxy.config.VisionProvider;
 //import com.bot.dhxy.core.GameClientTracker;
@@ -54,7 +56,7 @@
 //        // 4. 将截好的图送入 OCR 大脑
 //        // =======================================================
 //        System.out.println("\n🧠 正在呼叫百度云 OCR 识别坐标文字...");
-//        TextRecognizer.LocationInfo loc = ocr.parseLocation(savePath);
+//        LocationInfo loc = ocr.parseLocation(savePath);
 //
 //        System.out.println("\n=============================================");
 //        if (loc != null) {

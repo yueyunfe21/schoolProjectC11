@@ -1,5 +1,7 @@
 package com.bot.dhxy.service;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
@@ -7,7 +9,10 @@ import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.model.navigation.PathingResult;
+import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.model.QuestTargetInfo;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -80,8 +85,6 @@ public class QuestManagerService {
             "images/template/wuhuan/p2_xie.png",
     };
 
-    public enum PathingResult { SUCCESS, FINISHED, UI_ERROR }
-
     public PathingResult activateAndTriggerWuHuanPathing() {
         AtomicReference<PathingResult> result = new AtomicReference<>(PathingResult.UI_ERROR);
         boolean completed = inputSequences.submitExclusiveAndWait("quest:wuhuanActivateAndPathingTransaction", () -> {
@@ -143,7 +146,7 @@ public class QuestManagerService {
         log.info("🎯 [P1盲狙] 准备点击下一环 NPC 链接：anchor=({}, {}) offset=({}, {}) click=({}, {})",
                 anchor.x, anchor.y, P1_X, P1_Y, p.x, p.y);
         inputProvider.clickLeft(p.x, p.y, 100);
-        boolean ok = sleepInterruptible(1200);
+        boolean ok = TaskSleep.sleep(1200);
         log.info("🎯 [P1盲狙] 点击序列结果：{}", ok);
         return ok ? PathingResult.SUCCESS : PathingResult.UI_ERROR;
     }
@@ -182,7 +185,7 @@ public class QuestManagerService {
                 log.info("P2识图已经匹配成功");
                 Point p = coordinateHelper.getRandomizedPoint(rect[0] + (int) res[0], rect[1] + (int) res[1], 8, 4);
                 inputProvider.clickLeft(p.x, p.y, 100);
-                if (!sleepInterruptible(MID)) return PathingResult.UI_ERROR;
+                if (!TaskSleep.sleep(MID)) return PathingResult.UI_ERROR;
                 log.info("P2 pathing clicked, skip Alt+Q close after pathing click");
                 return PathingResult.SUCCESS;
             }
@@ -417,14 +420,14 @@ public class QuestManagerService {
                 return "";
             }
 
-            List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResults(detailPath);
+            List<OcrWordResult> results = ocr.getAllTextResults(detailPath);
             if (results == null || results.isEmpty()) {
                 log.info("quest detail OCR empty: task={} path={}", task, detailPath);
                 return "";
             }
 
             StringBuilder fullText = new StringBuilder();
-            for (TextRecognizer.OcrWordResult word : results) {
+            for (OcrWordResult word : results) {
                 if (word.getText() != null) {
                     fullText.append(word.getText());
                 }
@@ -464,7 +467,7 @@ public class QuestManagerService {
 
         tracker.captureToFile("任务详情", detailPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3]);
 
-        List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResultsForMatch(
+        List<OcrWordResult> results = ocr.getAllTextResultsForMatch(
                 detailPath,
                 "quest-target-info:" + expectedTaskImage,
                 this::matchesQuestTargetInfo);
@@ -474,7 +477,7 @@ public class QuestManagerService {
         }
 
         StringBuilder fullText = new StringBuilder();
-        for (TextRecognizer.OcrWordResult word : results) {
+        for (OcrWordResult word : results) {
             fullText.append(word.getText());
         }
 
@@ -501,12 +504,12 @@ public class QuestManagerService {
         return null;
     }
 
-    private boolean matchesQuestTargetInfo(List<TextRecognizer.OcrWordResult> words) {
+    private boolean matchesQuestTargetInfo(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return false;
         }
         StringBuilder fullText = new StringBuilder();
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word != null && word.getText() != null) {
                 fullText.append(word.getText());
             }
@@ -533,7 +536,7 @@ public class QuestManagerService {
         Point a = findAnchor();
         if (a == null) {
             inputProvider.pressAltQ();
-            if (!sleepInterruptible(SLOW)) {
+            if (!TaskSleep.sleep(SLOW)) {
                 return null;
             }
             a = findAnchor();
@@ -567,7 +570,7 @@ public class QuestManagerService {
         log.info("quest panel select current-task tab direct: anchor=({}, {}) offset=({}, {}) click=({}, {})",
                 anchor.x, anchor.y, CURRENT_TASK_TAB_X, CURRENT_TASK_TAB_Y, tab.x, tab.y);
         inputProvider.clickLeft(tab.x, tab.y, 100);
-        return sleepInterruptible(FAST);
+        return TaskSleep.sleep(FAST);
     }
 
     private boolean isTextGlowing(Point pt) {
@@ -599,7 +602,7 @@ public class QuestManagerService {
     private boolean clickDirect(int x, int y, int rx, int ry, long delay) {
         Point p = coordinateHelper.getRandomizedPoint(x, y, rx, ry);
         inputProvider.clickLeft(p.x, p.y, 100);
-        return sleepInterruptible(delay);
+        return TaskSleep.sleep(delay);
     }
 
     private void scroll(Point a, int steps) {
@@ -615,11 +618,11 @@ public class QuestManagerService {
     private boolean scrollDirect(Point a, int steps) {
         Point h = coordinateHelper.getRandomizedPoint(a.x - 400, a.y + 174, 50, 100);
         inputProvider.moveMouse(h.x, h.y);
-        if (!sleepInterruptible(FAST)) {
+        if (!TaskSleep.sleep(FAST)) {
             return false;
         }
         inputProvider.scrollDown(steps);
-        return sleepInterruptible(MID);
+        return TaskSleep.sleep(MID);
     }
 
     private void closePanel(String description) {
@@ -630,29 +633,10 @@ public class QuestManagerService {
         inputProvider.pressAltQ();
     }
 
-    private boolean sleepInterruptible(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
     private boolean isInputWorkerThread() {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
     }
 
     private Point findAnchor() { return coordinateHelper.findImageAbsoluteCoordinate(ANCHOR_PATH, THRESHOLD_NORMAL); }
 
-    public record QuestDetailCapture(BufferedImage image, String imagePath) {
-        private static QuestDetailCapture empty() {
-            return new QuestDetailCapture(null, "");
-        }
-
-        public boolean hasImage() {
-            return image != null;
-        }
-    }
 }

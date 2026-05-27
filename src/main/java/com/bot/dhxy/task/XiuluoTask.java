@@ -2,11 +2,21 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.navigation.MapNavigationRequest;
+import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
+import com.bot.dhxy.model.npc.NpcMovementType;
+import com.bot.dhxy.model.npc.NpcRole;
+import com.bot.dhxy.model.npc.NpcTarget;
+import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
-import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.BagService;
 import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.BattleRadarService;
@@ -24,6 +34,7 @@ import com.bot.dhxy.task.transaction.TaskTransactionOutcome;
 import com.bot.dhxy.task.transaction.TaskTransactionResult;
 import com.bot.dhxy.task.transaction.TaskTransactionRunner;
 import com.bot.dhxy.task.transaction.TaskYieldPolicy;
+import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.vision.ObjectiveTextRecognitionService;
 import java.awt.image.BufferedImage;
@@ -87,6 +98,7 @@ public class XiuluoTask implements GameTask {
     private final TeamReturnService teamReturnService;
     private final TaskHotStartService taskHotStartService;
     private final UICleanerService uiCleanerService;
+    private final CoordinateHelper coordinateHelper;
 
     /**
      * @return stable task code used by startup policy and UI selection.
@@ -297,18 +309,28 @@ public class XiuluoTask implements GameTask {
                 me.setCurrentMapName(objective.mapName());
             }
             log.info("[xiuluo] target map assumed ready; skip formal pathing and target-map wait: objective={}", (Object)objective);
-            if (!this.navigateNearCombatTargetWithCleanupRetry(context, objective, "assume-target-map")) {
+            if (!this.navigateToObjectiveCoordinateWithCleanupRetry(context, objective, "assume-target-map")) {
                 log.warn("[xiuluo] failed to navigate in target map: objective={}", (Object)objective);
                 return this.interrupted() ? TaskRunResult.STOPPED : TaskRunResult.FAILED;
             }
         } else {
-            if (!this.isAlreadyInTargetMap(context, objective) && !this.preMoveToExitBeforeFormalPathing(context, objective)) {
-                log.warn("[xiuluo] pre-move to exit failed before formal pathing: objective={}", (Object)objective);
+            this.checkpoint(context);
+            boolean alreadyInTargetMap = this.gameStateUtil.confirmCurrentMap(
+                    objective.mapName(), 0L, "xiuluo:formalPathingPrecheck");
+            PlayerCharacter me = this.gameContext.getMe();
+            String currentMap = me == null ? null : me.getCurrentMapName();
+            log.info("[xiuluo] current map precheck before formal pathing: current={} target={} matched={}",
+                    currentMap, objective.mapName(), alreadyInTargetMap);
+            if (alreadyInTargetMap) {
+                log.info("[xiuluo] already in target map, skip world map pathing: targetMap={}", objective.mapName());
+            }
+            if (!this.navigationService.navigateToMap(MapNavigationRequest.toMap(objective.mapName()))) {
+                log.warn("[xiuluo] map navigation to objective failed: objective={}", (Object)objective);
                 return this.interrupted() ? TaskRunResult.STOPPED : TaskRunResult.FAILED;
             }
-            if (!this.navigationService.navigateToCombatTarget(objective.mapName(), objective.x(), objective.y())) {
-                log.warn("[xiuluo] generic navigation to objective failed, try target-map cleanup retry if already arrived: objective={}", (Object)objective);
-                if (!this.retryNearCombatTargetIfAlreadyInTargetMap(context, objective, "formal-pathing-failed")) {
+            if (!this.navigateToObjectiveCoordinateWithCleanupRetry(context, objective, "formal-pathing")) {
+                log.warn("[xiuluo] current-map objective navigation failed, try target-map cleanup retry if already arrived: objective={}", (Object)objective);
+                if (!this.retryObjectiveCoordinateIfAlreadyInTargetMap(context, objective, "formal-pathing-failed")) {
                     return this.interrupted() ? TaskRunResult.STOPPED : TaskRunResult.FAILED;
                 }
             }
@@ -345,7 +367,7 @@ public class XiuluoTask implements GameTask {
             log.warn("[xiuluo] objective flow failed; clean UI and return to accept NPC recovery attempt={}/{} previousResult={}",
                     attempt, OBJECTIVE_FAILURE_ACCEPT_RECOVERY_ATTEMPTS, previousResult);
             this.uiCleanerService.cleanUpAll();
-            this.sleep(context, 500L);
+            TaskSleep.sleepOrStop(context, 500L, "Xiuluo task interrupted");
 
             XiuluoObjective recoveredObjective = this.obtainObjectiveForRoundStart(context);
             if (recoveredObjective == null) {
@@ -368,10 +390,10 @@ public class XiuluoTask implements GameTask {
     }
 
     /**
-     * Retry current-map combat-target approach after clearing blocking UI.
+     * Retry current-map objective-coordinate navigation after clearing blocking UI.
      *
      * <p>Xiuluo target navigation has two layers: generic map routing gets the leader to the target
-     * map, then current-map mini-map routing moves near the monster. If the latter fails, the common
+     * map, then current-map mini-map routing moves to the task coordinate. If the latter fails, the common
      * cause is a stale map/search/dialog overlay blocking Alt+1 or the mini-map click. The task layer
      * owns this retry because it knows the objective is still valid and that the next safe action is
      * to clear UI before trying the current-map approach again.</p>
@@ -379,13 +401,17 @@ public class XiuluoTask implements GameTask {
      * @param context current execution context used for stop checkpoints.
      * @param objective Xiuluo objective whose map name and logical monster coordinate remain valid.
      * @param source diagnostic source for logs.
-     * @return true when either the first approach succeeds or the cleanup retry succeeds.
+     * @return true when either the first coordinate navigation succeeds or the cleanup retry succeeds.
      */
-    private boolean navigateNearCombatTargetWithCleanupRetry(TaskExecutionContext context,
-                                                            XiuluoObjective objective,
-                                                            String source) {
+    private boolean navigateToObjectiveCoordinateWithCleanupRetry(TaskExecutionContext context,
+                                                                 XiuluoObjective objective,
+                                                                 String source) {
         this.checkpoint(context);
-        if (this.navigationService.navigateInCurrentMapNearCombatTarget(objective.x(), objective.y())) {
+        MapCoordinate approach = this.coordinateHelper.calculateApproachCoordinate(
+                objective.mapName(), objective.x(), objective.y());
+        log.info("[xiuluo] navigate to objective approach coordinate: source={} objective=({}, {}) approach=({}, {}) map={}",
+                source, objective.x(), objective.y(), approach.getX(), approach.getY(), objective.mapName());
+        if (this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY())) {
             return true;
         }
 
@@ -394,53 +420,41 @@ public class XiuluoTask implements GameTask {
          * this helper only removes UI that may have blocked the first mini-map click.
          */
         this.checkpoint(context);
-        log.warn("[xiuluo] current-map combat navigation failed; clean UI and retry once: source={} objective={}",
+        log.warn("[xiuluo] current-map objective navigation failed; clean UI and retry once: source={} objective={}",
                 source, objective);
         this.uiCleanerService.cleanUpAll();
-        this.sleep(context, 300L);
+        TaskSleep.sleepOrStop(context, 300L, "Xiuluo task interrupted");
         this.checkpoint(context);
-        return this.navigationService.navigateInCurrentMapNearCombatTarget(objective.x(), objective.y());
+        return this.navigationService.navigateInCurrentMap(approach.getX(), approach.getY());
     }
 
     /**
      * Recover from a failed map+coordinate navigation when the leader has already reached the target map.
      *
-     * <p>{@link NavigationService#navigateToCombatTarget(String, int, int)} can fail after the map
-     * route completed but before the current-map approach succeeded. In that case Xiuluo should not
-     * end immediately; it should clear stale UI and retry only the current-map mini-map approach.</p>
+     * <p>World-map routing can succeed while the current-map coordinate click fails. In that case Xiuluo should not
+     * end immediately; it should clear stale UI and retry only the current-map mini-map coordinate.</p>
      *
      * @param context current execution context used for stop checkpoints.
      * @param objective Xiuluo objective being pursued.
      * @param source diagnostic source for logs.
      * @return true when recovery is possible and current-map retry succeeds; false otherwise.
      */
-    private boolean retryNearCombatTargetIfAlreadyInTargetMap(TaskExecutionContext context,
-                                                             XiuluoObjective objective,
-                                                             String source) {
+    private boolean retryObjectiveCoordinateIfAlreadyInTargetMap(TaskExecutionContext context,
+                                                                XiuluoObjective objective,
+                                                                String source) {
         this.checkpoint(context);
-        this.playerStateService.syncMyPosition();
+        boolean reachedTargetMap = this.gameStateUtil.confirmCurrentMapFresh(
+                objective.mapName(), 0L, "xiuluo:retryObjectiveCoordinate:" + source);
         PlayerCharacter me = this.gameContext.getMe();
         String currentMap = me == null ? null : me.getCurrentMapName();
-        if (!objective.mapName().equals(currentMap)) {
+        if (!reachedTargetMap) {
             log.warn("[xiuluo] skip current-map cleanup retry because target map is not reached: source={} current={} objective={}",
                     source, currentMap, objective);
             return false;
         }
-        log.info("[xiuluo] target map reached after generic navigation failure; retry current-map approach: source={} current={} objective={}",
+        log.info("[xiuluo] target map reached after navigation failure; retry current-map coordinate: source={} current={} objective={}",
                 source, currentMap, objective);
-        return this.navigateNearCombatTargetWithCleanupRetry(context, objective, source);
-    }
-
-    private boolean isAlreadyInTargetMap(TaskExecutionContext context, XiuluoObjective objective) {
-        this.checkpoint(context);
-        PlayerCharacter me = this.gameContext.getMe();
-        String currentMap = me == null ? null : me.getCurrentMapName();
-        boolean matched = objective.mapName().equals(currentMap);
-        log.info("[xiuluo] cached current map precheck before formal pathing: current={} target={} matched={}", new Object[]{currentMap, objective.mapName(), matched});
-        if (matched) {
-            log.info("[xiuluo] already in target map, skip world map pathing: targetMap={}", (Object)objective.mapName());
-        }
-        return matched;
+        return this.navigateToObjectiveCoordinateWithCleanupRetry(context, objective, source);
     }
 
     private XiuluoHotStartResult prepareObjectiveForPathing(TaskExecutionContext context, boolean allowExistingTaskPanelHotStart) {
@@ -541,19 +555,19 @@ public class XiuluoTask implements GameTask {
     }
 
     private XiuluoHotStartResult handleVisibleOptionHotStart(TaskExecutionContext context, String source) {
-        ArrayList<DialogService.GreenTemplateClickSpec> specs = new ArrayList<DialogService.GreenTemplateClickSpec>();
-        specs.add(new DialogService.GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4));
+        ArrayList<GreenTemplateClickSpec> specs = new ArrayList<GreenTemplateClickSpec>();
+        specs.add(new GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4));
         /*
          * "看打!" is a very short option. A wide +/-30px random X offset can land outside the
          * clickable green text, leaving the dialog open while the task believes battle was
          * confirmed. Keep this click close to the template center; longer accept-task options use
          * their own wider offsets in the accept flow.
          */
-        specs.add(new DialogService.GreenTemplateClickSpec(OPTION_ENTER_BATTLE, ENTER_BATTLE_TEMPLATE, -6, 6, 4));
+        specs.add(new GreenTemplateClickSpec(OPTION_ENTER_BATTLE, ENTER_BATTLE_TEMPLATE, -6, 6, 4));
         if (this.botProperties.isXiuluoAllowUnderFiveMembers()) {
-            specs.add(new DialogService.GreenTemplateClickSpec(OPTION_UNDER_FIVE_CONFIRM, UNDER_FIVE_CONFIRM_TEMPLATE, 24, 24, 4));
+            specs.add(new GreenTemplateClickSpec(OPTION_UNDER_FIVE_CONFIRM, UNDER_FIVE_CONFIRM_TEMPLATE, 24, 24, 4));
         } else {
-            specs.add(new DialogService.GreenTemplateClickSpec(OPTION_UNDER_FIVE_WAIT, UNDER_FIVE_WAIT_TEMPLATE, 24, 24, 4));
+            specs.add(new GreenTemplateClickSpec(OPTION_UNDER_FIVE_WAIT, UNDER_FIVE_WAIT_TEMPLATE, 24, 24, 4));
         }
         String matched = this.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(specs, "xiuluo:hot-start-option:" + source);
         if (matched == null) {
@@ -561,7 +575,7 @@ public class XiuluoTask implements GameTask {
             return XiuluoHotStartResult.none();
         }
         if (OPTION_ACCEPT_TASK.equals(matched)) {
-            this.sleep(context, 250L);
+            TaskSleep.sleepOrStop(context, 250L, "Xiuluo task interrupted");
             XiuluoObjective objective = this.readObjectiveAfterAcceptOptionClicked(context, source);
             if (objective != null) {
                 this.logHotStartAction(source, "OPTION_DIALOG", "ACCEPT_TASK", objective);
@@ -572,7 +586,7 @@ public class XiuluoTask implements GameTask {
             return XiuluoHotStartResult.none();
         }
         if (OPTION_UNDER_FIVE_CONFIRM.equals(matched)) {
-            this.sleep(context, 900L);
+            TaskSleep.sleepOrStop(context, 900L, "Xiuluo task interrupted");
             XiuluoObjective objective = this.tryReadCurrentStoryObjective(context, source, 3);
             if (objective != null) {
                 this.logHotStartAction(source, "OPTION_DIALOG", "HANDLE_UNDER_FIVE", objective);
@@ -583,7 +597,7 @@ public class XiuluoTask implements GameTask {
             return XiuluoHotStartResult.none();
         }
         if (OPTION_UNDER_FIVE_WAIT.equals(matched)) {
-            this.sleep(context, 600L);
+            TaskSleep.sleepOrStop(context, 600L, "Xiuluo task interrupted");
             this.logHotStartAction(source, "OPTION_DIALOG", "DECLINE_UNDER_FIVE", null);
             return XiuluoHotStartResult.failed();
         }
@@ -613,7 +627,14 @@ public class XiuluoTask implements GameTask {
                 this.cleanBlockingAcceptDialog(context, "round-start-attempt" + attempt);
                 continue;
             }
-            if (!this.navigationService.navigateToNPCWithoutTurnRelease(START_MAP_NAME, 112, 93)) {
+            if (!this.navigationService.navigateToNPC(NpcNavigationRequest.builder()
+                    .targetMapName(START_MAP_NAME)
+                    .targetX(ACCEPT_NPC_X)
+                    .targetY(ACCEPT_NPC_Y)
+                    .targetName(ACCEPT_NPC_NAME)
+                    .keepTaskTurnUntilHandled(true)
+                    .source("xiuluo:acceptNpc:navigate")
+                    .build())) {
                 log.warn("[xiuluo] failed to navigate to accept NPC attempt={}", (Object)attempt);
                 AcceptDialogProbeResult visibleAfterNavigationFailure = this.tryGetObjectiveFromVisibleXiuluoDialog(context, "after-navigation-failed-attempt" + attempt);
                 if (visibleAfterNavigationFailure.state() == AcceptDialogProbeState.BLOCKING_DIALOG_UNHANDLED) {
@@ -682,10 +703,7 @@ public class XiuluoTask implements GameTask {
     }
 
     private boolean clickAcceptNpcAndOpenDialog() {
-        PlayerCharacter me = this.gameContext.getMe();
-        boolean clicked = this.npcClickService.clickNpcSmart(NpcClickService.NpcClickRequest.fixed(
-                me, START_MAP_NAME, 112, 93, ACCEPT_NPC_NAME,
-                ACCEPT_OPTION_TEMPLATE));
+        boolean clicked = this.npcClickService.clickNpcSmart(xiuluoAcceptNpc().toClickRequest(this.gameContext.getMe()));
         if (!clicked) {
             log.warn("[xiuluo] failed to click accept NPC");
         }
@@ -707,7 +725,7 @@ public class XiuluoTask implements GameTask {
      */
     private AcceptDialogProbeResult tryGetObjectiveFromVisibleXiuluoDialog(TaskExecutionContext context, String source) {
         long startedAt = System.currentTimeMillis();
-        DialogService.DialogType dialogType = this.dialogService.detectDialogTypeNoFocus("xiuluo:accept-fast:" + source);
+        DialogType dialogType = this.dialogService.detectDialogTypeNoFocus("xiuluo:accept-fast:" + source);
         log.info("[xiuluo][accept-flow] dialog precheck source={} type={} elapsedMs={}", new Object[]{source, dialogType, System.currentTimeMillis() - startedAt});
         TaskHotStartScreenState screenState = switch (dialogType) {
             case STORY -> TaskHotStartScreenState.STORY_DIALOG;
@@ -715,7 +733,7 @@ public class XiuluoTask implements GameTask {
             case NONE -> TaskHotStartScreenState.NONE;
         };
         TaskHotStartSnapshot snapshot = new TaskHotStartSnapshot(TASK_CODE, source, screenState, dialogType);
-        if (dialogType == DialogService.DialogType.NONE) {
+        if (dialogType == DialogType.NONE) {
             return AcceptDialogProbeResult.noDialog();
         }
         if (snapshot.state() == TaskHotStartScreenState.STORY_DIALOG) {
@@ -755,7 +773,7 @@ public class XiuluoTask implements GameTask {
         this.checkpoint(context);
         log.warn("[xiuluo][accept-flow] blocking dialog not handled; clean before retry: source={}", (Object)source);
         this.uiCleanerService.cleanUpAll();
-        this.sleep(context, 300L);
+        TaskSleep.sleepOrStop(context, 300L, "Xiuluo task interrupted");
     }
 
     private boolean isVisibleDialogUsableForXiuluoObjective(TaskHotStartSnapshot snapshot, String source) {
@@ -769,11 +787,11 @@ public class XiuluoTask implements GameTask {
     private boolean clickVisibleAcceptOption(TaskExecutionContext context, String source) {
         TaskTransactionOutcome outcome = this.taskTransactionRunner.runExclusive("xiuluo:acceptOption:" + source, TaskTransactionResult.READY_TO_CONTINUE, TaskYieldPolicy.CONTINUE_CHAIN, () -> {
             this.checkpoint(context);
-            String matched = this.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(List.of(new DialogService.GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)), "xiuluo:accept:" + source);
+            String matched = this.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(List.of(new GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, -5, 80, 4)), "xiuluo:accept:" + source);
             if (!OPTION_ACCEPT_TASK.equals(matched)) {
                 return TaskTransactionResult.RETRYABLE_ERROR;
             }
-            this.sleep(context, 250L);
+            TaskSleep.sleepOrStop(context, 250L, "Xiuluo task interrupted");
             return TaskTransactionResult.READY_TO_CONTINUE;
         });
         return outcome.reachedExpectedResult();
@@ -818,7 +836,7 @@ public class XiuluoTask implements GameTask {
                 log.info("[xiuluo] objective parsed from story template: {}", (Object)templateObjective);
                 return templateObjective;
             }
-            this.sleep(context, 500L);
+            TaskSleep.sleepOrStop(context, 500L, "Xiuluo task interrupted");
         }
         return null;
     }
@@ -826,7 +844,7 @@ public class XiuluoTask implements GameTask {
     private XiuluoObjective tryReadObjectiveFromTaskPanel(TaskExecutionContext context, String source) {
         this.checkpoint(context);
         log.info("[xiuluo] trying task-panel objective fallback: source={}", (Object)source);
-        QuestManagerService.QuestDetailCapture detailCapture = this.questManagerService.captureCurrentQuestDetailForTask(TASK_CODE);
+        QuestDetailCapture detailCapture = this.questManagerService.captureCurrentQuestDetailForTask(TASK_CODE);
         XiuluoObjective detailObjective = this.parseObjective(detailCapture.image(), "xiuluo:task-panel-detail");
         if (detailObjective != null) {
             log.info("[xiuluo] objective parsed from task panel template fallback: {}", (Object)detailObjective);
@@ -845,7 +863,7 @@ public class XiuluoTask implements GameTask {
                     return TaskTransactionResult.RETRYABLE_ERROR;
                 }
                 log.info("[xiuluo] under-five confirmation accepted by config: source={}", (Object)source);
-                this.sleep(context, 900L);
+                TaskSleep.sleepOrStop(context, 900L, "Xiuluo task interrupted");
                 return TaskTransactionResult.READY_TO_CONTINUE;
             }
             boolean declined = this.dialogService.clickGreenTemplateOptionDirectForExclusive(UNDER_FIVE_WAIT_TEMPLATE, "xiuluo:under-five-decline:" + source, 24, 4);
@@ -853,7 +871,7 @@ public class XiuluoTask implements GameTask {
                 return TaskTransactionResult.RETRYABLE_ERROR;
             }
             log.warn("[xiuluo] under-five confirmation declined by config; stop this round: source={}", (Object)source);
-            this.sleep(context, 600L);
+            TaskSleep.sleepOrStop(context, 600L, "Xiuluo task interrupted");
             return TaskTransactionResult.FAILED;
         });
         if (!outcome.reachedExpectedResult()) {
@@ -868,7 +886,7 @@ public class XiuluoTask implements GameTask {
                 log.info("[xiuluo] objective parsed after under-five confirm template: {}", (Object)templateObjective);
                 return new UnderFivePromptResult(false, templateObjective);
             }
-            this.sleep(context, 500L);
+            TaskSleep.sleepOrStop(context, 500L, "Xiuluo task interrupted");
         }
         log.warn("[xiuluo] under-five fallback clicked but objective parse still failed: source={}", (Object)source);
         return new UnderFivePromptResult(false, null);
@@ -886,28 +904,13 @@ public class XiuluoTask implements GameTask {
             return null;
         }
         try {
-            Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> result = this.objectiveTextRecognitionService.recognize(image, source);
+            Optional<ObjectiveTextResult> result = this.objectiveTextRecognitionService.recognize(image, source);
             XiuluoObjective xiuluoObjective = result.map(value -> new XiuluoObjective(value.mapName(), value.x(), value.y(), "template:" + value.mapSlug() + ":" + value.mapScore())).orElse(null);
             return xiuluoObjective;
         }
         finally {
             image.flush();
         }
-    }
-
-    private boolean preMoveToExitBeforeFormalPathing(TaskExecutionContext context, XiuluoObjective objective) {
-        log.info("[xiuluo] pre-move to exit before generic map navigation: targetMap={} target=({}, {})", new Object[]{objective.mapName(), objective.x(), objective.y()});
-        TaskTransactionOutcome outcome = this.taskTransactionRunner.run("xiuluo:preMoveToExitBeforeMapNavigation", TaskTransactionResult.PATHING_STARTED, TaskYieldPolicy.CONTINUE_CHAIN, () -> {
-            this.checkpoint(context);
-            if (!this.navigationService.triggerMiniMapPathingWithoutTurnRelease(START_MAP_NAME, 11, 8, "xiuluo:preMoveToExit")) {
-                return TaskTransactionResult.RETRYABLE_ERROR;
-            }
-            this.checkpoint(context);
-            log.info("[xiuluo] pre-move to exit started; generic NavigationService will handle map navigation retry");
-            return TaskTransactionResult.PATHING_STARTED;
-        });
-        log.info("[xiuluo] pre-move transaction outcome: expected={} result={} completed={} reached={}", new Object[]{TaskTransactionResult.PATHING_STARTED, outcome.result(), outcome.completed(), outcome.reachedExpectedResult()});
-        return outcome.reachedExpectedResult();
     }
 
     private boolean clickTargetAndEnterBattle(TaskExecutionContext context, XiuluoObjective objective) {
@@ -920,10 +923,8 @@ public class XiuluoTask implements GameTask {
          * template pass on every successful route; the post-click check below remains the source
          * of truth for confirming battle entry.
          */
-        boolean clicked = this.npcClickService.clickNpcSmart(NpcClickService.NpcClickRequest.roaming(
-                this.gameContext.getMe(), objective.mapName(), objective.x(), objective.y(),
-                XIULUO_TARGET_KEYWORD,
-                ENTER_BATTLE_TEMPLATE));
+        NpcTarget combatTarget = xiuluoCombatTarget(objective);
+        boolean clicked = this.npcClickService.clickNpcSmart(combatTarget.toClickRequest(this.gameContext.getMe()));
         if (!clicked) {
             log.warn("[xiuluo] target click failed: objective={}", (Object)objective);
             return false;
@@ -932,8 +933,36 @@ public class XiuluoTask implements GameTask {
         if (!this.tryConfirmEnterBattleDialog(context, "after-target-click")) {
             return false;
         }
-        this.sleep(context, 1200L);
+        TaskSleep.sleepOrStop(context, 1200L, "Xiuluo task interrupted");
         return true;
+    }
+
+    private NpcTarget xiuluoCombatTarget(XiuluoObjective objective) {
+        return NpcTarget.builder()
+                .key("xiuluo.combatTarget")
+                .mapName(objective.mapName())
+                .name(XIULUO_TARGET_KEYWORD)
+                .x(objective.x())
+                .y(objective.y())
+                .role(NpcRole.COMBAT_TARGET)
+                .movementType(NpcMovementType.ROAMING)
+                .expectedDialogTemplatePath(ENTER_BATTLE_TEMPLATE)
+                .source("xiuluoObjective:" + objective.rawText())
+                .build();
+    }
+
+    private static NpcTarget xiuluoAcceptNpc() {
+        return NpcTarget.builder()
+                .key("xiuluo.acceptNpc")
+                .mapName(START_MAP_NAME)
+                .name(ACCEPT_NPC_NAME)
+                .x(ACCEPT_NPC_X)
+                .y(ACCEPT_NPC_Y)
+                .role(NpcRole.QUEST_GIVER)
+                .movementType(NpcMovementType.FIXED)
+                .expectedDialogTemplatePath(ACCEPT_OPTION_TEMPLATE)
+                .source("xiuluo")
+                .build();
     }
 
     private boolean tryConfirmEnterBattleDialog(TaskExecutionContext context, String source) {
@@ -958,7 +987,7 @@ public class XiuluoTask implements GameTask {
             return false;
         }
         log.info("[xiuluo] currently in combat, wait");
-        this.sleep(context, this.battleRadarService.getDynamicPollingIntervalMs());
+        TaskSleep.sleepOrStop(context, this.battleRadarService.getDynamicPollingIntervalMs(), "Xiuluo task interrupted");
         return true;
     }
 
@@ -988,7 +1017,7 @@ public class XiuluoTask implements GameTask {
                 log.info("[xiuluo] combat entered and exited quickly for round {}", (Object)round);
                 return true;
             }
-            this.sleep(context, 1000L);
+            TaskSleep.sleepOrStop(context, 1000L, "Xiuluo task interrupted");
         }
         if (this.gameContext.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
             log.warn("[xiuluo] battle did not start after confirm");
@@ -1001,7 +1030,7 @@ public class XiuluoTask implements GameTask {
                 log.info("[xiuluo] combat finished for round {}", (Object)round);
                 return true;
             }
-            this.sleep(context, this.battleRadarService.getDynamicPollingIntervalMs());
+            TaskSleep.sleepOrStop(context, this.battleRadarService.getDynamicPollingIntervalMs(), "Xiuluo task interrupted");
         }
     }
 
@@ -1042,7 +1071,7 @@ public class XiuluoTask implements GameTask {
         long deadlineAtMs = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadlineAtMs) {
             this.checkpoint(context);
-            this.sleep(context, pollMs);
+            TaskSleep.sleepOrStop(context, pollMs, "Xiuluo task interrupted");
             if (this.bagService.isMainBagOpen(context)) {
                 log.warn("[xiuluo] return verify skipped because main bag is still open");
                 continue;
@@ -1070,24 +1099,7 @@ public class XiuluoTask implements GameTask {
     }
 
     private void checkpoint(TaskExecutionContext context) {
-        if (context != null) {
-            context.throwIfStopRequested();
-        }
-        if (Thread.currentThread().isInterrupted()) {
-            throw new TaskStopRequestedException("Xiuluo task interrupted");
-        }
-    }
-
-    private void sleep(TaskExecutionContext context, long ms) {
-        this.checkpoint(context);
-        try {
-            Thread.sleep(ms);
-        }
-        catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            this.checkpoint(context);
-        }
-        this.checkpoint(context);
+        TaskSleep.throwIfStopRequested(context, "Xiuluo task interrupted");
     }
 
     private boolean interrupted() {
@@ -1114,8 +1126,9 @@ public class XiuluoTask implements GameTask {
      * @param teamReturnService post-return team-member wait policy.
      * @param taskHotStartService current-screen classifier used before accepting a new objective.
      * @param uiCleanerService shared UI cleanup service used only after a blocking dialog is detected.
+     * @param coordinateHelper map-coordinate helper used to derive approach coordinates from raw task targets.
      */
-    public XiuluoTask(GameContext gameContext, BotProperties botProperties, PlayerStateService playerStateService, NavigationService navigationService, NpcClickService npcClickService, DialogService dialogService, BagService bagService, AutoCombatService autoCombatService, BattleRadarService battleRadarService, GameStateUtil gameStateUtil, TaskTransactionRunner taskTransactionRunner, QuestManagerService questManagerService, ObjectiveTextRecognitionService objectiveTextRecognitionService, TeamReturnService teamReturnService, TaskHotStartService taskHotStartService, UICleanerService uiCleanerService) {
+    public XiuluoTask(GameContext gameContext, BotProperties botProperties, PlayerStateService playerStateService, NavigationService navigationService, NpcClickService npcClickService, DialogService dialogService, BagService bagService, AutoCombatService autoCombatService, BattleRadarService battleRadarService, GameStateUtil gameStateUtil, TaskTransactionRunner taskTransactionRunner, QuestManagerService questManagerService, ObjectiveTextRecognitionService objectiveTextRecognitionService, TeamReturnService teamReturnService, TaskHotStartService taskHotStartService, UICleanerService uiCleanerService, CoordinateHelper coordinateHelper) {
         this.gameContext = gameContext;
         this.botProperties = botProperties;
         this.playerStateService = playerStateService;
@@ -1132,6 +1145,7 @@ public class XiuluoTask implements GameTask {
         this.teamReturnService = teamReturnService;
         this.taskHotStartService = taskHotStartService;
         this.uiCleanerService = uiCleanerService;
+        this.coordinateHelper = coordinateHelper;
     }
 
     private record XiuluoObjective(String mapName, int x, int y, String rawText) {

@@ -1,5 +1,7 @@
 package com.bot.dhxy.debug;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
@@ -126,7 +128,7 @@ public class DialogKeywordOcrDebugMain {
                                        Path imagePath,
                                        String label) {
         long startedAt = System.currentTimeMillis();
-        List<TextRecognizer.OcrWordResult> words = debug.ocr.getAllTextResultsForMatch(
+        List<OcrWordResult> words = debug.ocr.getAllTextResultsForMatch(
                 imagePath.toString(),
                 "dialog-keyword-debug:" + label + ":" + targetKeyword,
                 found -> hasAnyKeyword(found, aliases));
@@ -138,7 +140,7 @@ public class DialogKeywordOcrDebugMain {
                 + " matched=" + match.matched()
                 + " alias=" + nullToDash(match.alias())
                 + " text=" + nullToDash(match.text()));
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
@@ -150,15 +152,15 @@ public class DialogKeywordOcrDebugMain {
         }
     }
 
-    private static boolean hasAnyKeyword(List<TextRecognizer.OcrWordResult> words, List<String> aliases) {
+    private static boolean hasAnyKeyword(List<OcrWordResult> words, List<String> aliases) {
         return findFirstMatch(words, aliases).matched();
     }
 
-    private static MatchResult findFirstMatch(List<TextRecognizer.OcrWordResult> words, List<String> aliases) {
+    private static MatchResult findFirstMatch(List<OcrWordResult> words, List<String> aliases) {
         if (words == null || aliases == null) {
             return MatchResult.none();
         }
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null) {
                 continue;
             }

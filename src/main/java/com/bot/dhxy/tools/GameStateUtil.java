@@ -1,8 +1,17 @@
 package com.bot.dhxy.tools;
 
+
+import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.core.GameClientTracker;
+import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
+import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
@@ -31,10 +40,15 @@ public class GameStateUtil {
     private static final double MOVE_DIFF_RATIO = 0.05; // 默认两帧匹配阈值// 默认两帧匹配阈值
 
     private static final double DEFAULT_MAP_LABEL_SAME_TOLERANCE = 0.08;
+    private static final long DEFAULT_MAP_CONFIRM_POLL_MS = 1200L;
+    private static final long MIN_MAP_CONFIRM_POLL_MS = 100L;
+    private final GameContext context;
     private final GameClientTracker tracker;
+    private final PlayerStateService playerStateService;
     private final CoordinateHelper coordinateHelper;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final Map<String, MovementIntentState> movementIntentStates = new ConcurrentHashMap<>();
 
     /**
@@ -82,6 +96,130 @@ public class GameStateUtil {
             return changed;
         } finally {
             current.flush();
+        }
+    }
+
+    /**
+     * Confirm that the current bound game window is already on the expected map.
+     *
+     * <p>This is the shared map-arrival probe for navigation, teleport, and task recovery flows. It
+     * first trusts the cached {@link PlayerCharacter#getCurrentMapName()} value when it already
+     * matches, then asks {@link PlayerStateService#syncMyPosition()} for fresh no-input
+     * position syncs. A successful sync mutates the current {@link GameContext#getMe()} map name and
+     * logical coordinate. Callers pass in-game map names such as {@code 长安}; timeout and polling
+     * values are in milliseconds.</p>
+     *
+     * @param targetMapName expected in-game map name; blank values are treated as a failed check.
+     * @param timeoutMs maximum time in milliseconds to keep scanning. Zero performs a single
+     *                  immediate check.
+     * @param reason log label describing the caller, for example {@code navigateToMap}.
+     * @return true when the cached or scanned current map equals {@code targetMapName}; false when
+     *         the timeout expires or recognition fails. Task stop checkpoints may throw
+     *         {@link TaskStopRequestedException}.
+     */
+    public boolean confirmCurrentMap(String targetMapName, long timeoutMs, String reason) {
+        return confirmCurrentMap(targetMapName, timeoutMs, DEFAULT_MAP_CONFIRM_POLL_MS, reason);
+    }
+
+    /**
+     * Confirm the current map using an explicit polling interval.
+     *
+     * @param targetMapName expected in-game map name; blank values are treated as a failed check.
+     * @param timeoutMs maximum time in milliseconds to keep scanning.
+     * @param pollMs delay in milliseconds between scans; values below 100ms are clamped.
+     * @param reason log label describing the caller.
+     * @return true when the current map is confirmed as {@code targetMapName}; otherwise false.
+     */
+    public boolean confirmCurrentMap(String targetMapName, long timeoutMs, long pollMs, String reason) {
+        return confirmCurrentMap(targetMapName, timeoutMs, pollMs, true, reason);
+    }
+
+    /**
+     * Confirm the current map by forcing at least one fresh location scan before trusting state.
+     *
+     * <p>Use this when the caller is recovering from a navigation failure and stale cached map
+     * state would be more dangerous than the extra scan cost.</p>
+     *
+     * @param targetMapName expected in-game map name; blank values are treated as a failed check.
+     * @param timeoutMs maximum time in milliseconds to keep scanning.
+     * @param reason log label describing the caller.
+     * @return true when a fresh scan confirms {@code targetMapName}; otherwise false.
+     */
+    public boolean confirmCurrentMapFresh(String targetMapName, long timeoutMs, String reason) {
+        return confirmCurrentMap(targetMapName, timeoutMs, DEFAULT_MAP_CONFIRM_POLL_MS, false, reason);
+    }
+
+    private boolean confirmCurrentMap(String targetMapName,
+                                      long timeoutMs,
+                                      long pollMs,
+                                      boolean allowCachedMatch,
+                                      String reason) {
+        long latencyStart = LatencyMetrics.start();
+        String safeReason = safeReason(reason);
+        String expected = targetMapName == null ? "" : targetMapName.trim();
+        boolean result = false;
+        String lastMap = null;
+        Integer lastX = null;
+        Integer lastY = null;
+
+        try {
+            if (expected.isBlank()) {
+                log.warn("[map-confirm] target map is blank reason={}", safeReason);
+                return false;
+            }
+
+            long safeTimeoutMs = Math.max(timeoutMs, 0L);
+            long safePollMs = Math.max(pollMs, MIN_MAP_CONFIRM_POLL_MS);
+            long deadline = System.currentTimeMillis() + safeTimeoutMs;
+
+            do {
+                checkpointStateProbe("confirm current map");
+
+                PlayerCharacter me = context.getMe();
+                if (allowCachedMatch && me != null && expected.equals(me.getCurrentMapName())) {
+                    lastMap = me.getCurrentMapName();
+                    lastX = me.getX();
+                    lastY = me.getY();
+                    log.info("[map-confirm] cached match reason={} target={} coord=({}, {})",
+                            safeReason, expected, lastX, lastY);
+                    result = true;
+                    return true;
+                }
+
+                LocationInfo locationInfo = playerStateService.syncMyPosition();
+                if (locationInfo != null) {
+                    lastMap = locationInfo.mapName;
+                    lastX = locationInfo.x;
+                    lastY = locationInfo.y;
+                    log.info("[map-confirm] scanned reason={} target={} current={} coord=({}, {})",
+                            safeReason, expected, locationInfo.mapName, locationInfo.x, locationInfo.y);
+                    if (expected.equals(locationInfo.mapName)) {
+                        result = true;
+                        return true;
+                    }
+                } else {
+                    log.info("[map-confirm] scan empty reason={} target={}", safeReason, expected);
+                }
+
+                long now = System.currentTimeMillis();
+                if (now >= deadline) {
+                    break;
+                }
+                long sleepMs = Math.min(safePollMs, Math.max(deadline - now, 1L));
+                if (!TaskSleep.sleep(sleepMs)) {
+                    return false;
+                }
+            } while (System.currentTimeMillis() <= deadline);
+
+            PlayerCharacter me = context.getMe();
+            result = allowCachedMatch && me != null && expected.equals(me.getCurrentMapName());
+            return result;
+        } finally {
+            LatencyMetrics.info(log, "gameState.confirmCurrentMap", latencyStart,
+                    "result=" + result + " reason=" + safeReason + " target=" + expected
+                            + " cachedAllowed=" + allowCachedMatch
+                            + " last=" + safeLatencyValue(lastMap)
+                            + " coord=" + (lastX == null || lastY == null ? "-" : lastX + "," + lastY));
         }
     }
 
@@ -143,16 +281,15 @@ public class GameStateUtil {
         MapCoordinate previous = null;
 
         while (System.currentTimeMillis() < deadline) {
-            if (Thread.currentThread().isInterrupted()) {
-                return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
-            }
+            checkpointMovementProbe();
 
             MapCoordinate current = miniMapCoordinateReader.readCurrentCoordinate().orElse(null);
             if (current == null) {
                 unknownSamples++;
-                if (!sleepQuietly(MOVE_SAMPLE_INTERVAL_MS)) {
+                if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
                     return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
                 }
+                checkpointMovementProbe();
                 continue;
             }
 
@@ -185,9 +322,10 @@ public class GameStateUtil {
                 previousAt = System.currentTimeMillis();
             }
 
-            if (!sleepQuietly(MOVE_SAMPLE_INTERVAL_MS)) {
+            if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
                 return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
             }
+            checkpointMovementProbe();
         }
 
         if (validSamples >= COORD_MIN_STABLE_SAMPLES) {
@@ -210,16 +348,19 @@ public class GameStateUtil {
         int changedHits = 0;
 
         while (System.currentTimeMillis() < deadline) {
+            checkpointMovementProbe();
             BufferedImage frame1 = tracker.captureToMemory("moving-check-frame1", x1, y1, x2, y2);
             if (frame1 == null) {
-                if (!sleepQuietly(MOVE_SAMPLE_INTERVAL_MS)) return false;
+                if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) return false;
+                checkpointMovementProbe();
                 continue;
             }
 
-            if (!sleepQuietly(MOVE_SAMPLE_INTERVAL_MS)) {
+            if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
                 frame1.flush();
                 return false;
             }
+            checkpointMovementProbe();
 
             BufferedImage frame2 = tracker.captureToMemory("moving-check-frame2", x1, y1, x2, y2);
             if (frame2 == null) {
@@ -243,6 +384,7 @@ public class GameStateUtil {
 
             frame1.flush();
             frame2.flush();
+            checkpointMovementProbe();
         }
 
         // 如果死等了 3.2 秒，变动次数还是没达到 2 次，那就是彻彻底底的真停了！
@@ -281,22 +423,25 @@ public class GameStateUtil {
         return reason == null || reason.isBlank() ? "unknown" : reason;
     }
 
-    /**
-     * 封装 sleep 和中断处理，避免主流程重复 try/catch。
-     */
-    private boolean sleepQuietly(long sleepMs) {
-        try {
-            Thread.sleep(sleepMs);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
     public boolean isInBattle() {
         log.warn("isInBattle() is not implemented yet, defaulting to false");
         return false;
+    }
+
+    private String safeLatencyValue(String value) {
+        return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private void checkpointMovementProbe() {
+        checkpointStateProbe("movement detection");
+    }
+
+    private void checkpointStateProbe(String action) {
+        taskExecutionContextHolder.checkpointIfPresent();
+        if (Thread.currentThread().isInterrupted()) {
+            Thread.currentThread().interrupt();
+            throw new TaskStopRequestedException(action + " interrupted");
+        }
     }
 
     private MovementIntentState activeMovementIntent() {

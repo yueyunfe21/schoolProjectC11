@@ -1,5 +1,12 @@
 package com.bot.dhxy.vision;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.ocr.OcrLineResult;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
+import com.bot.dhxy.model.ocr.TargetOcrResult;
+import com.bot.dhxy.model.ocr.TextCandidate;
+import com.bot.dhxy.model.ocr.TextCandidateScanResult;
 import com.bot.dhxy.core.TextRecognizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -286,10 +293,10 @@ public class GameTextLineOcrService {
         List<TextLineBox> lines = groupTextLines(mask);
         List<PackedLineBox> packedLines = new ArrayList<>();
         int blackPixelCount = writePackedLineMask(mask, lines, packedLines, outputPath);
-        List<TextRecognizer.OcrWordResult> packedWords = Files.exists(outputPath)
+        List<OcrWordResult> packedWords = Files.exists(outputPath)
                 ? textRecognizer.getAllTextResultsLocalOnly(outputPath.toString())
                 : List.of();
-        List<TextRecognizer.OcrWordResult> rawWords = mapPackedWordsToRaw(packedWords, packedLines);
+        List<OcrWordResult> rawWords = mapPackedWordsToRaw(packedWords, packedLines);
         return new OcrLineResult(outputPath.toString(), variantName, blackPixelCount,
                 rawWords.size(), summarizeWords(rawWords), rawWords);
     }
@@ -337,7 +344,7 @@ public class GameTextLineOcrService {
             List<PackedLineBox> packedLines = new ArrayList<>();
             TextLineBox candidateLine = lineFromCandidate(visualCandidate);
             int blackPixelCount = writePackedLineMask(mask, List.of(candidateLine), packedLines, candidatePath);
-            List<TextRecognizer.OcrWordResult> words =
+            List<OcrWordResult> words =
                     textRecognizer.getAllTextResultsLocalOnly(candidatePath.toString());
             ocrCalls++;
             String joinedText = joinText(words);
@@ -592,13 +599,13 @@ public class GameTextLineOcrService {
      * @param packedLines line mappings produced while writing the packed image.
      * @return OCR words in original source-image coordinates.
      */
-    private List<TextRecognizer.OcrWordResult> mapPackedWordsToRaw(List<TextRecognizer.OcrWordResult> words,
+    private List<OcrWordResult> mapPackedWordsToRaw(List<OcrWordResult> words,
                                                                    List<PackedLineBox> packedLines) {
         if (words == null || words.isEmpty() || packedLines == null || packedLines.isEmpty()) {
             return List.of();
         }
-        List<TextRecognizer.OcrWordResult> mapped = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+        List<OcrWordResult> mapped = new ArrayList<>();
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
@@ -610,13 +617,13 @@ public class GameTextLineOcrService {
             int rawTop = line.sourceY() + Math.round((float) (word.getTop() - line.packedY()) / OCR_SCALE);
             int rawWidth = Math.max(1, Math.round((float) word.getWidth() / OCR_SCALE));
             int rawHeight = Math.max(1, Math.round((float) word.getHeight() / OCR_SCALE));
-            mapped.add(new TextRecognizer.OcrWordResult(
+            mapped.add(new OcrWordResult(
                     word.getText(), rawLeft, rawTop, rawWidth, rawHeight));
         }
         return mapped;
     }
 
-    private PackedLineBox findPackedLine(TextRecognizer.OcrWordResult word, List<PackedLineBox> packedLines) {
+    private PackedLineBox findPackedLine(OcrWordResult word, List<PackedLineBox> packedLines) {
         int centerY = word.getY();
         int centerX = word.getX();
         for (PackedLineBox line : packedLines) {
@@ -1135,7 +1142,7 @@ public class GameTextLineOcrService {
         return score + Math.min(wordCount, 4);
     }
 
-    private String summarizeWords(List<TextRecognizer.OcrWordResult> words) {
+    private String summarizeWords(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "-";
         }
@@ -1152,12 +1159,12 @@ public class GameTextLineOcrService {
                 .collect(Collectors.joining(" | "));
     }
 
-    private String joinText(List<TextRecognizer.OcrWordResult> words) {
+    private String joinText(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "";
         }
         StringBuilder builder = new StringBuilder();
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word != null && word.getText() != null) {
                 builder.append(word.getText());
             }
@@ -1303,7 +1310,7 @@ public class GameTextLineOcrService {
     private record CandidateResult(String variantName,
                                    Path path,
                                    int blackPixelCount,
-                                   List<TextRecognizer.OcrWordResult> words,
+                                   List<OcrWordResult> words,
                                    String joinedText,
                                    TargetMatch match,
                                    int score) {
@@ -1315,179 +1322,4 @@ public class GameTextLineOcrService {
         }
     }
 
-    /**
-     * OCR output for one packed colored-text scan.
-     *
-     * @param path debug image path for the packed OCR input.
-     * @param variantName preprocessing variant name.
-     * @param blackPixelCount number of foreground pixels written to the packed image.
-     * @param wordCount number of OCR words mapped back to source coordinates.
-     * @param wordsSummary compact diagnostic string for logs/UI.
-     * @param words OCR words in the original source image coordinate space.
-     */
-    public record OcrLineResult(String path,
-                                String variantName,
-                                int blackPixelCount,
-                                int wordCount,
-                                String wordsSummary,
-                                List<TextRecognizer.OcrWordResult> words) {
-        /**
-         * Build an empty scan result after no foreground line was detected.
-         *
-         * @param outputPath debug image path where a 1x1 blank image was written.
-         * @param variantName preprocessing variant name.
-         * @return empty OCR result with zero words.
-         */
-        public static OcrLineResult empty(Path outputPath, String variantName) {
-            return new OcrLineResult(outputPath == null ? null : outputPath.toString(),
-                    variantName, 0, 0, "-", List.of());
-        }
-
-        /**
-         * @return all OCR word texts concatenated in OCR order.
-         */
-        public String joinedText() {
-            if (words == null || words.isEmpty()) {
-                return "";
-            }
-            StringBuilder builder = new StringBuilder();
-            for (TextRecognizer.OcrWordResult word : words) {
-                if (word != null && word.getText() != null) {
-                    builder.append(word.getText());
-                }
-            }
-            return builder.toString();
-        }
-
-        /**
-         * @return compact diagnostic text for logs and debug UI.
-         */
-        public String toDetailText() {
-            return "variant=" + variantName
-                    + ", path=" + path
-                    + ", blackPixels=" + blackPixelCount
-                    + ", words=" + wordCount
-                    + ", text=" + (wordsSummary == null || wordsSummary.isBlank() ? "-" : wordsSummary);
-        }
-    }
-
-    /**
-     * Result of matching yellow OCR lines against a target NPC name.
-     *
-     * @param lineResult selected line scan result in source-image coordinates.
-     * @param hit true when fuzzy matching accepted the target.
-     * @param editDistance normalized-name edit distance between OCR and expected text.
-     * @param longestCommonSubstring longest common substring length between OCR and expected text.
-     * @param normalizedTarget normalized expected name.
-     * @param normalizedText normalized OCR text for the selected line.
-     */
-    public record TargetOcrResult(OcrLineResult lineResult,
-                                  boolean hit,
-                                  int editDistance,
-                                  int longestCommonSubstring,
-                                  String normalizedTarget,
-                                  String normalizedText) {
-        /**
-         * @return compact diagnostic text including selected line, normalized OCR text, and match score.
-         */
-        public String toDetailText() {
-            return (lineResult == null ? "-" : lineResult.toDetailText())
-                    + ", target=" + normalizedTarget
-                    + ", normalizedText=" + normalizedText
-                    + ", hit=" + hit
-                    + ", dist=" + editDistance
-                    + ", common=" + longestCommonSubstring;
-        }
-    }
-
-    /**
-     * Shape-based candidate for an NPC-name-like text line in a washed image.
-     *
-     * @param region image-local rectangle around the candidate text line.
-     * @param clickPoint image-local suggested click point below the candidate name.
-     * @param score higher means the shape looks more like a text line and less like noise/UI frame.
-     * @param pixelCount foreground black pixels inside {@code region}.
-     * @param componentCount connected foreground fragments inside {@code region}.
-     * @param density foreground density inside {@code region}.
-     * @param longRowCount number of long horizontal runs, used to penalize frame lines.
-     * @param longColumnCount number of long vertical runs, used to penalize frame lines.
-     * @param reason compact score explanation for logs/debug UI.
-     */
-    public record TextCandidate(OcrWindowRegion region,
-                                Point clickPoint,
-                                int score,
-                                int pixelCount,
-                                int componentCount,
-                                double density,
-                                int longRowCount,
-                                int longColumnCount,
-                                String reason) {
-        /**
-         * @return compact debug text for logs.
-         */
-        public String toSummaryText() {
-            return "region=" + region.toShortText()
-                    + ", click=(" + clickPoint.x + "," + clickPoint.y + ")"
-                    + ", score=" + score
-                    + ", " + reason;
-        }
-    }
-
-    /**
-     * Result object for washed-image text candidate extraction.
-     *
-     * @param status high-level scan status. A non-empty candidate list currently implies
-     * {@link TextCandidateScanStatus#FOUND_CANDIDATES}.
-     * @param candidates sorted immutable image-local candidates.
-     * @param overlayPath optional debug overlay path written by the scan.
-     * @param message diagnostic message for empty or failed scans.
-     */
-    public record TextCandidateScanResult(TextCandidateScanStatus status,
-                                          List<TextCandidate> candidates,
-                                          String overlayPath,
-                                          String message) {
-        /**
-         * Build a result from mutable internal candidates.
-         *
-         * @param candidates already sorted mutable candidates owned by the extractor.
-         * @param overlayPath optional overlay image path.
-         * @return result whose candidate list is immutable and owned by the result.
-         */
-        public static TextCandidateScanResult of(List<TextCandidate> candidates, String overlayPath) {
-            List<TextCandidate> immutable = candidates == null ? List.of() : List.copyOf(candidates);
-            TextCandidateScanStatus status = immutable.isEmpty()
-                    ? TextCandidateScanStatus.NO_CANDIDATES
-                    : TextCandidateScanStatus.FOUND_CANDIDATES;
-            return new TextCandidateScanResult(status, immutable, overlayPath,
-                    immutable.isEmpty() ? "no text-like candidate found" : "ok");
-        }
-
-        /**
-         * Build an empty failed/invalid scan result.
-         *
-         * @param message reason for the empty result.
-         * @return immutable empty result.
-         */
-        public static TextCandidateScanResult empty(String message) {
-            return new TextCandidateScanResult(TextCandidateScanStatus.SCAN_FAILED, List.of(), null, message);
-        }
-
-        /**
-         * @return sorted immutable candidate click points in image-local coordinates.
-         */
-        public List<Point> fallbackClickPoints() {
-            return candidates.stream()
-                    .map(TextCandidate::clickPoint)
-                    .toList();
-        }
-    }
-
-    /**
-     * Shape-only candidate scan status for washed images.
-     */
-    public enum TextCandidateScanStatus {
-        FOUND_CANDIDATES,
-        NO_CANDIDATES,
-        SCAN_FAILED
-    }
 }

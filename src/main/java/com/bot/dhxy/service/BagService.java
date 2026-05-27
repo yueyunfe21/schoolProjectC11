@@ -5,6 +5,7 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
@@ -164,18 +165,18 @@ public class BagService {
 
         log.info("[bag] main bag not open, press Alt+E");
         inputProvider.pressAltE();
-        sleep(context, 1200);
+        TaskSleep.sleepOrStop(context, 1200, "Bag operation wait was interrupted");
 
         p = getBaseAnchor(layout, context);
         if (p == null) {
             log.warn("[bag] Alt+E did not confirm anchor immediately, retry after short wait: template={}", layout.anchorTemplate);
-            sleep(context, 700);
+            TaskSleep.sleepOrStop(context, 700, "Bag operation wait was interrupted");
             p = getBaseAnchor(layout, context);
         }
         if (p == null) {
             log.warn("[bag] Alt+E first attempt still has no anchor, sending one retry");
             inputProvider.pressAltE();
-            sleep(context, 1200);
+            TaskSleep.sleepOrStop(context, 1200, "Bag operation wait was interrupted");
             p = getBaseAnchor(layout, context);
         }
         if (p == null) {
@@ -191,7 +192,7 @@ public class BagService {
         if (layout.autoManageUI) {
             log.info("[bag] close main bag by Alt+E");
             inputProvider.pressAltE();
-            sleep(context, 500);
+            TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
         }
     }
 
@@ -368,7 +369,7 @@ public class BagService {
         int ty = baseAnchor.y + (int) Math.round((layout.tabOffsetY + tabIndex * layout.tabStepY) / scale);
         log.info("[bag] click page {} tab: ({}, {})", tabIndex + 1, tx, ty);
         inputProvider.clickLeft(tx, ty, 100);
-        sleep(context, 500);
+        TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
     }
 
     private void executeSafeAction(Point raw, ItemAction action, TaskExecutionContext context) {
@@ -381,7 +382,7 @@ public class BagService {
         } else {
             inputProvider.clickLeft(p.x, p.y, 100);
         }
-        sleep(context, 500);
+        TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
     }
 
     private void throwIfStopRequested(TaskExecutionContext context) {
@@ -398,19 +399,5 @@ public class BagService {
 
     private boolean isInputWorkerThread() {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
-    }
-
-    private void sleep(TaskExecutionContext context, long ms) {
-        if (ms <= 0) {
-            return;
-        }
-        throwIfStopRequested(context);
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new TaskStopRequestedException("Bag operation wait was interrupted");
-        }
-        throwIfStopRequested(context);
     }
 }

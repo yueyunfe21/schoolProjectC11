@@ -2,6 +2,9 @@ package com.bot.dhxy.vision;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.MapCoordinate;
+import com.bot.dhxy.model.navigation.MapLabelTemplateMatch;
+import com.bot.dhxy.model.navigation.MiniMapSnapshot;
+import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
@@ -981,18 +984,6 @@ public class MiniMapCoordinateReader {
     }
 
     private record BracketSpan(int minX, int leftMaxX, int rightMinX, int maxX, int minY, int maxY) {
-    }
-
-    public record MiniMapSnapshot(String mapLabelPath, MapCoordinate coordinate) {
-    }
-
-    public record TemplateLocationInfo(String mapName,
-                                       MapCoordinate coordinate,
-                                       double mapLabelScore,
-                                       String mapLabelPath) {
-    }
-
-    public record MapLabelTemplateMatch(String mapName, double score) {
     }
 
     private record CoordinateRecognition(String mapLabelPath, Optional<MapCoordinate> coordinate) {

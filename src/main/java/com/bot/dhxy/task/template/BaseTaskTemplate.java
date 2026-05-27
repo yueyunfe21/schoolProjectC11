@@ -4,6 +4,7 @@ import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.window.interaction.TaskWindowRuntimeService;
@@ -139,21 +140,7 @@ public abstract class BaseTaskTemplate implements GameTask {
     }
 
     protected void sleepSafely(TaskExecutionContext context, long millis) {
-        if (millis <= 0) {
-            return;
-        }
-        if (context != null) {
-            context.throwIfStopRequested();
-        }
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new TaskStopRequestedException("任务等待被中断");
-        }
-        if (context != null) {
-            context.throwIfStopRequested();
-        }
+        TaskSleep.sleepOrStop(context, millis, "任务等待被中断");
     }
 
     protected void logWindowContext(TaskExecutionContext context) {

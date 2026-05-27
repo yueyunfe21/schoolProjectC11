@@ -1,5 +1,7 @@
 package com.bot.dhxy.driver;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -78,7 +80,7 @@ public class WinApiMouseController implements InputProvider {
                 + " clickDelayMs=" + clickDelayMs + " intervalMs=" + intervalMs);
         inputCoordinator.runInput("doubleRightClick", () -> {
             doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP);
-            sleepQuietly(intervalMs);
+            TaskSleep.sleep(intervalMs);
             doClick(x, y, clickDelayMs, FLAG_MOUSE_RIGHT_DOWN, FLAG_MOUSE_RIGHT_UP);
         });
     }
@@ -217,27 +219,27 @@ public class WinApiMouseController implements InputProvider {
     private void doClick(int x, int y, int delayMs, int downFlag, int upFlag) {
         moveCursorToLogicalPoint(x, y);
         sendInput(buildMouseInput(downFlag));
-        sleepQuietly(delayMs);
+        TaskSleep.sleep(delayMs);
         sendInput(buildMouseInput(upFlag));
     }
 
     private void doDragAndDrop(int startX, int startY, int endX, int endY) {
         moveCursorToLogicalPoint(startX, startY);
-        sleepQuietly(200);
+        TaskSleep.sleep(200);
         sendInput(buildMouseInput(FLAG_MOUSE_LEFT_DOWN));
-        sleepQuietly(300);
+        TaskSleep.sleep(300);
 
         int steps = 25;
         for (int i = 1; i <= steps; i++) {
             int currentX = startX + (endX - startX) * i / steps;
             int currentY = startY + (endY - startY) * i / steps;
             moveCursorToLogicalPoint(currentX, currentY);
-            sleepQuietly(15);
+            TaskSleep.sleep(15);
         }
 
-        sleepQuietly(200);
+        TaskSleep.sleep(200);
         sendInput(buildMouseInput(FLAG_MOUSE_LEFT_UP));
-        sleepQuietly(150);
+        TaskSleep.sleep(150);
         log.info("Physical drag completed: ({},{}) -> ({},{})", startX, startY, endX, endY);
     }
 
@@ -288,9 +290,9 @@ public class WinApiMouseController implements InputProvider {
     private void doPressEnter() {
         try {
             sendInput(buildKeyboardScanInput(SCAN_ENTER, false));
-            sleepQuietly(60);
+            TaskSleep.sleep(60);
             sendInput(buildKeyboardScanInput(SCAN_ENTER, true));
-            sleepQuietly(60);
+            TaskSleep.sleep(60);
         } catch (Exception e) {
             log.warn("[Input] Enter send failed: {}", e.getMessage());
         }
@@ -300,11 +302,11 @@ public class WinApiMouseController implements InputProvider {
         try {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
             sendInput(buildKeyboardInput(VK_CONTROL, false));
-            sleepQuietly(50);
+            TaskSleep.sleep(50);
             sendInput(buildKeyboardInput(VK_V, false));
-            sleepQuietly(50);
+            TaskSleep.sleep(50);
             sendInput(buildKeyboardInput(VK_V, true));
-            sleepQuietly(50);
+            TaskSleep.sleep(50);
             sendInput(buildKeyboardInput(VK_CONTROL, true));
             log.info("Pasted text: {}", text);
         } catch (Exception e) {
@@ -317,7 +319,7 @@ public class WinApiMouseController implements InputProvider {
             for (char c : text.toCharArray()) {
                 sendInput(buildUnicodeInput(c, false));
                 sendInput(buildUnicodeInput(c, true));
-                sleepQuietly(20);
+                TaskSleep.sleep(20);
             }
         } catch (Exception e) {
             log.warn("[Input] Unicode typing failed: {}", e.getMessage());
@@ -332,20 +334,20 @@ public class WinApiMouseController implements InputProvider {
             input.input.mi.dwFlags = new DWORD(FLAG_MOUSE_WHEEL);
             input.input.mi.mouseData = new DWORD(wheelDelta);
             sendInput(input);
-            sleepQuietly(50);
+            TaskSleep.sleep(50);
         } catch (Exception ignored) {
         }
     }
 
     private void pressAltScan(int scanCode, String label) {
         try {
-            sleepQuietly(200);
+            TaskSleep.sleep(200);
             sendInput(buildKeyboardScanInput(SCAN_LALT, false));
-            sleepQuietly(60);
+            TaskSleep.sleep(60);
             sendInput(buildKeyboardScanInput(scanCode, false));
-            sleepQuietly(80);
+            TaskSleep.sleep(80);
             sendInput(buildKeyboardScanInput(scanCode, true));
-            sleepQuietly(60);
+            TaskSleep.sleep(60);
             sendInput(buildKeyboardScanInput(SCAN_LALT, true));
         } catch (Exception e) {
             log.warn("[Input] {} send failed: {}", label, e.getMessage());
@@ -403,13 +405,5 @@ public class WinApiMouseController implements InputProvider {
         input.input.ki.wScan = new WORD(c);
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_UNICODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
-    }
-
-    private static void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

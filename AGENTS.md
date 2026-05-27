@@ -55,6 +55,17 @@ Important behavior constraints:
 - When touching undocumented code, add concise comments only for the touched risky section. Do not broaden the edit just to document unrelated old code.
 - Do not remove existing useful comments unless the code they describe is removed or the comment is being replaced with a more accurate one.
 - Java file layout rule: keep public classes, public APIs, and the main workflow near the top. Private nested helper types (`private class`, `private record`, `private enum`, private interfaces) should be placed at the bottom of the enclosing class/file, after the main public and private workflow methods, unless Java syntax makes that impossible.
+- Do not add trivial wrapper layers just to expose a second name for the same operation. If an existing method can naturally return useful data while preserving its side effect, prefer changing that method's return type and letting callers ignore the return value. Add a wrapper only when it enforces a real boundary, policy, or compatibility requirement.
+
+## Java / Spring / Lombok / logging conventions
+
+- Use the existing Spring Boot style instead of manual object wiring. Services should normally be Spring beans (`@Service`, `@Component`, `@Configuration`, etc.) and dependencies should be injected through constructors, preferably with Lombok `@RequiredArgsConstructor` when it matches nearby code.
+- Do not create ad-hoc singleton/service holders or manually `new` service dependencies inside business code. If a dependency is a real collaborator, inject it.
+- Model/request/result classes should live in an appropriate model package, not inside service implementation packages unless they are truly private implementation details.
+- Request/result/value objects should follow the existing Lombok style: use `@Value` + `@Builder` for immutable data objects, and use `@Builder.Default` for defaults. Static convenience factories are allowed, but they should build through `builder()` rather than bypassing the builder path.
+- Use enums for stable operation/status/policy values instead of hard-coded strings when the value crosses service/task boundaries.
+- Use SLF4J logging (`private static final Logger log = LoggerFactory.getLogger(...)`, or the project's existing Lombok logging style if a class already uses it). Do not use `System.out.println` in normal application code; reserve it only for throwaway local debug tools when there is no logger context.
+- Logs should include enough structured context to debug multi-window behavior: window id/title when available, source task, target map/NPC/coordinate, result status, elapsed time for high-latency paths, and whether input/screenshot used HWND or focused real input when relevant.
 
 ## Safety and scope
 

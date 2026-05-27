@@ -1,5 +1,7 @@
 package com.bot.dhxy.task;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
@@ -186,7 +188,7 @@ public class DebugMapCalibratorTask implements GameTask {
             return null;
         }
 
-        List<TextRecognizer.OcrWordResult> words = textRecognizer.getAllTextResults(rawPath);
+        List<OcrWordResult> words = textRecognizer.getAllTextResults(rawPath);
         CoordinateCandidate best = findNearestCoordinateCandidate(words, relativeX, relativeY, prefix, pointName);
         if (best == null) {
             log.warn("{} [map-calibrator] no coordinate candidate for point {} rawPath={}",
@@ -199,7 +201,7 @@ public class DebugMapCalibratorTask implements GameTask {
         return new SamplePoint(relativeX, relativeY, best.logicX(), best.logicY(), rawPath);
     }
 
-    private CoordinateCandidate findNearestCoordinateCandidate(List<TextRecognizer.OcrWordResult> words,
+    private CoordinateCandidate findNearestCoordinateCandidate(List<OcrWordResult> words,
                                                                int relativeX,
                                                                int relativeY,
                                                                String prefix,
@@ -208,7 +210,7 @@ public class DebugMapCalibratorTask implements GameTask {
             return null;
         }
         CoordinateCandidate best = null;
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null) {
                 continue;
             }

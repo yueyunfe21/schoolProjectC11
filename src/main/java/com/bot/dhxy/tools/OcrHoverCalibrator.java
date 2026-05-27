@@ -1,5 +1,9 @@
 package com.bot.dhxy.tools;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +51,7 @@ public class OcrHoverCalibrator implements CommandLineRunner {
         System.out.println("✅ 点 A 抓取成功！逻辑坐标: " + p1.logicX + "," + p1.logicY);
 
         System.out.println("\n⏳ 请移动鼠标到另一个位置，等待 3 秒...");
-        Thread.sleep(3000);
+        TaskSleep.sleep(3000);
 
         SamplePoint p2 = capturePointWithOcr("点 B");
         if (p2 == null) return;
@@ -71,7 +75,7 @@ public class OcrHoverCalibrator implements CommandLineRunner {
         long stableStartTime = System.currentTimeMillis();
 
         while (true) {
-            Thread.sleep(50);
+            TaskSleep.sleep(50);
             Point currentPos = MouseInfo.getPointerInfo().getLocation();
 
             if (!currentPos.equals(lastPos)) {
@@ -93,12 +97,12 @@ public class OcrHoverCalibrator implements CommandLineRunner {
 
                     tracker.captureToFile("坐标识别区", imgPath, scanX1, scanY1, scanX2, scanY2);
 
-                    List<TextRecognizer.OcrWordResult> words = ocr.getAllTextResults(imgPath);
+                    List<OcrWordResult> words = ocr.getAllTextResults(imgPath);
 
                     // 🌟 核心改进：更严格的坐标筛选算法
                     Pattern coordPattern = Pattern.compile("(\\d+)[^\\d]+(\\d+)");
 
-                    for (TextRecognizer.OcrWordResult w : words) {
+                    for (OcrWordResult w : words) {
                         String text = w.getText();
                         System.out.println("🔍 [分析] 正在检查: [" + text + "]");
 

@@ -1,7 +1,11 @@
 package com.bot.dhxy.task;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
+import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.vision.ObjectiveTextRecognitionService;
 import com.bot.dhxy.service.QuestManagerService;
@@ -51,12 +55,12 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
         long startedAt = System.currentTimeMillis();
         log.info("{} [debug-xiuluo-task-panel-objective] start: will open Alt+Q once, activate Xiuluo, capture detail panel, then run template+OCR probes", prefix);
 
-        QuestManagerService.QuestDetailCapture capture = questManagerService.captureCurrentQuestDetailForTask(TASK_CODE);
+        QuestDetailCapture capture = questManagerService.captureCurrentQuestDetailForTask(TASK_CODE);
         try {
-            Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> templateResult = runTemplateProbe(prefix, capture);
+            Optional<ObjectiveTextResult> templateResult = runTemplateProbe(prefix, capture);
             OcrProbeResult ocrResult = runOcrProbe(prefix, capture);
             if (templateResult.isPresent()) {
-                ObjectiveTextRecognitionService.ObjectiveTextResult value = templateResult.get();
+                ObjectiveTextResult value = templateResult.get();
                 log.info("{} ✅ [XIULUO_TASK_PANEL_OBJECTIVE][OK] template=OK map={} slug={} coord=({}, {}) score={} ocr={} elapsedMs={}",
                         prefix, value.mapName(), value.mapSlug(), value.x(), value.y(), value.mapScore(),
                         ocrResult.toSummary(), System.currentTimeMillis() - startedAt);
@@ -75,42 +79,42 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
         }
     }
 
-    private Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> runTemplateProbe(
-            String prefix, QuestManagerService.QuestDetailCapture capture) {
+    private Optional<ObjectiveTextResult> runTemplateProbe(
+            String prefix, QuestDetailCapture capture) {
         BufferedImage detailImage = capture.image();
         if (detailImage == null) {
             log.warn("{} [debug-xiuluo-task-panel-objective] TEMPLATE_MISS: detail capture failed or Xiuluo task not found", prefix);
             return Optional.empty();
         }
 
-        Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> result =
+        Optional<ObjectiveTextResult> result =
                 objectiveTextRecognitionService.recognize(detailImage, "debug-xiuluo-task-panel-objective");
         if (result.isEmpty()) {
             log.warn("{} [debug-xiuluo-task-panel-objective] TEMPLATE_MISS", prefix);
             return Optional.empty();
         }
 
-        ObjectiveTextRecognitionService.ObjectiveTextResult value = result.get();
+        ObjectiveTextResult value = result.get();
         log.info("{} [debug-xiuluo-task-panel-objective] TEMPLATE_HIT map={} slug={} coord=({}, {}) score={} source={}",
                 prefix, value.mapName(), value.mapSlug(), value.x(), value.y(), value.mapScore(), value.source());
         return result;
     }
 
-    private OcrProbeResult runOcrProbe(String prefix, QuestManagerService.QuestDetailCapture capture) {
+    private OcrProbeResult runOcrProbe(String prefix, QuestDetailCapture capture) {
         String imagePath = capture.imagePath();
         if (imagePath == null || imagePath.isBlank()) {
             log.warn("{} [debug-xiuluo-task-panel-objective] OCR_MISS: empty image path", prefix);
             return OcrProbeResult.miss("empty_image_path");
         }
 
-        java.util.List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResults(imagePath);
+        java.util.List<OcrWordResult> results = ocr.getAllTextResults(imagePath);
         if (results == null || results.isEmpty()) {
             log.warn("{} [debug-xiuluo-task-panel-objective] OCR_MISS: empty text", prefix);
             return OcrProbeResult.miss("empty");
         }
 
         StringBuilder fullText = new StringBuilder();
-        for (TextRecognizer.OcrWordResult word : results) {
+        for (OcrWordResult word : results) {
             if (word.getText() != null) {
                 fullText.append(word.getText());
             }
@@ -138,7 +142,7 @@ public class DebugXiuluoTaskPanelObjectiveTask implements GameTask {
         // One-shot debug task; nothing to stop.
     }
 
-    private void release(QuestManagerService.QuestDetailCapture capture) {
+    private void release(QuestDetailCapture capture) {
         if (capture != null && capture.image() != null) {
             capture.image().flush();
         }

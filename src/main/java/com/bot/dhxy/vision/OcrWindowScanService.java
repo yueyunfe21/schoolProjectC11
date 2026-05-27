@@ -1,5 +1,8 @@
 package com.bot.dhxy.vision;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -165,7 +168,7 @@ public class OcrWindowScanService {
                 OcrWindowRegion roi = learnedRoi.get().clamp(masked.getWidth(), masked.getHeight());
                 if (roi.isValid()) {
                     String roiPath = windowScopedTempPath.resolve("ocr_" + safePurpose + "_roi.png");
-                    List<TextRecognizer.OcrWordResult> roiWords = readRoiWords(masked, roi, roiPath, localOnly);
+                    List<OcrWordResult> roiWords = readRoiWords(masked, roi, roiPath, localOnly);
                     boolean roiMatched = targetText == null || targetText.isBlank()
                             ? !roiWords.isEmpty()
                             : containsTarget(roiWords, targetText);
@@ -186,7 +189,7 @@ public class OcrWindowScanService {
 
             // Full masked-window fallback is the correctness path. It also records enough evidence
             // for the memory layer to recompute future ROI recommendations.
-            List<TextRecognizer.OcrWordResult> words = localOnly
+            List<OcrWordResult> words = localOnly
                     ? textRecognizer.getAllTextResultsLocalOnly(maskedPath)
                     : textRecognizer.getAllTextResults(maskedPath);
             boolean fullMatched = targetText == null || targetText.isBlank()
@@ -214,7 +217,7 @@ public class OcrWindowScanService {
         }
     }
 
-    private List<TextRecognizer.OcrWordResult> readRoiWords(BufferedImage masked,
+    private List<OcrWordResult> readRoiWords(BufferedImage masked,
                                                             OcrWindowRegion roi,
                                                             String roiPath,
                                                             boolean localOnly) throws Exception {
@@ -228,22 +231,22 @@ public class OcrWindowScanService {
             graphics.dispose();
             copy.flush();
         }
-        List<TextRecognizer.OcrWordResult> rawWords = localOnly
+        List<OcrWordResult> rawWords = localOnly
                 ? textRecognizer.getAllTextResultsLocalOnly(roiPath)
                 : textRecognizer.getAllTextResults(roiPath);
         return shiftWords(rawWords, roi.x1(), roi.y1());
     }
 
-    private List<TextRecognizer.OcrWordResult> shiftWords(List<TextRecognizer.OcrWordResult> words, int dx, int dy) {
+    private List<OcrWordResult> shiftWords(List<OcrWordResult> words, int dx, int dy) {
         if (words == null || words.isEmpty()) {
             return List.of();
         }
-        List<TextRecognizer.OcrWordResult> shifted = new ArrayList<>();
-        for (TextRecognizer.OcrWordResult word : words) {
+        List<OcrWordResult> shifted = new ArrayList<>();
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
-            shifted.add(new TextRecognizer.OcrWordResult(
+            shifted.add(new OcrWordResult(
                     word.getText(),
                     word.getX() + dx,
                     word.getY() + dy,
@@ -322,12 +325,12 @@ public class OcrWindowScanService {
         ImageIO.write(image, "png", path.toFile());
     }
 
-    private boolean containsTarget(List<TextRecognizer.OcrWordResult> words, String targetText) {
+    private boolean containsTarget(List<OcrWordResult> words, String targetText) {
         String target = normalizeText(targetText);
         if (target.isBlank()) {
             return false;
         }
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             String text = normalizeText(word == null ? null : word.getText());
             if (!text.isBlank() && (text.contains(target) || target.contains(text) && text.length() >= 2)) {
                 return true;
@@ -336,7 +339,7 @@ public class OcrWindowScanService {
         return false;
     }
 
-    private String summarize(List<TextRecognizer.OcrWordResult> words) {
+    private String summarize(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "-";
         }
@@ -380,7 +383,7 @@ public class OcrWindowScanService {
                                       String overlayPath,
                                       String roiPath,
                                       OcrWindowRegion roi,
-                                      List<TextRecognizer.OcrWordResult> words,
+                                      List<OcrWordResult> words,
                                       String message) {
 
         /**
@@ -401,7 +404,7 @@ public class OcrWindowScanService {
                                                   String overlayPath,
                                                   String roiPath,
                                                   OcrWindowRegion roi,
-                                                  List<TextRecognizer.OcrWordResult> words) {
+                                                  List<OcrWordResult> words) {
             return new WindowOcrScanResult(true, mode, rawPath, maskedPath, overlayPath, roiPath, roi,
                     words == null ? List.of() : List.copyOf(words), "");
         }

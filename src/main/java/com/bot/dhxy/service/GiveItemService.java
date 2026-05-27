@@ -3,6 +3,7 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +33,7 @@ public class GiveItemService {
         }
 
         log.info("Give item flow started: {}", targetItemTemplate);
-        if (!sleep(800)) {
+        if (!TaskSleep.sleep(800)) {
             return false;
         }
 
@@ -52,7 +53,7 @@ public class GiveItemService {
         }
 
         log.info("Give item exclusive flow started: {}", targetItemTemplate);
-        if (!sleep(800)) {
+        if (!TaskSleep.sleep(800)) {
             return false;
         }
 
@@ -94,7 +95,7 @@ public class GiveItemService {
 
         Point safeBtnClick = coordinateHelper.getRandomizedPoint(btnGivePoint, 20, 8);
         inputProvider.clickLeft(safeBtnClick.x, safeBtnClick.y, 100);
-        boolean slept = sleep(1000);
+        boolean slept = TaskSleep.sleep(1000);
         if (slept) {
             log.info("Give item exclusive flow finished");
         }
@@ -105,13 +106,4 @@ public class GiveItemService {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
     }
 
-    private boolean sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
 }

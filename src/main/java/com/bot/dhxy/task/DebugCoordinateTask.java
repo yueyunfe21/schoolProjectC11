@@ -2,6 +2,7 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.navigation.MiniMapSnapshot;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import lombok.extern.slf4j.Slf4j;
@@ -55,7 +56,7 @@ public class DebugCoordinateTask implements GameTask {
             }
 
             count++;
-            MiniMapCoordinateReader.MiniMapSnapshot snapshot = miniMapCoordinateReader.readCurrentLocationSnapshot();
+            MiniMapSnapshot snapshot = miniMapCoordinateReader.readCurrentLocationSnapshot();
             String mapLabelPath = snapshot.mapLabelPath() == null || snapshot.mapLabelPath().isBlank()
                     ? "-"
                     : snapshot.mapLabelPath();

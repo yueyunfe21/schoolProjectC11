@@ -1,6 +1,7 @@
 package com.bot.dhxy.task;
 
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.vision.ObjectiveTextRecognitionService;
@@ -51,7 +52,7 @@ public class DebugXiuluoStoryObjectiveTask implements GameTask {
         }
 
         try {
-            Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> result =
+            Optional<ObjectiveTextResult> result =
                     objectiveTextRecognitionService.recognize(storyImage, "debug-xiuluo-story-objective");
             if (result.isEmpty()) {
                 log.warn("{} ❌ [XIULUO_STORY_OBJECTIVE][MISS] reason=template_not_matched elapsedMs={}",
@@ -59,7 +60,7 @@ public class DebugXiuluoStoryObjectiveTask implements GameTask {
                 return TaskRunResult.FAILED;
             }
 
-            ObjectiveTextRecognitionService.ObjectiveTextResult value = result.get();
+            ObjectiveTextResult value = result.get();
             log.info("{} ✅ [XIULUO_STORY_OBJECTIVE][OK] map={} slug={} coord=({}, {}) score={} elapsedMs={}",
                     prefix, value.mapName(), value.mapSlug(), value.x(), value.y(), value.mapScore(),
                     System.currentTimeMillis() - startedAt);

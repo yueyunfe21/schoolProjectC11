@@ -2,6 +2,7 @@ package com.bot.dhxy.task.template;
 
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -76,12 +77,7 @@ public class TaskStepExecutor {
         if (delayMillis <= 0) {
             return;
         }
-        try {
-            Thread.sleep(delayMillis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new TaskStopRequestedException("重试等待被中断");
-        }
+        TaskSleep.sleepOrStop(null, delayMillis, "重试等待被中断");
     }
 
     private void logStepResult(String stepName, TaskStepResult result) {

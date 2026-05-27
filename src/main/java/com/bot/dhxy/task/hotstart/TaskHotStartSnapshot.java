@@ -1,12 +1,12 @@
 package com.bot.dhxy.task.hotstart;
 
-import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.model.dialog.DialogType;
 
 public record TaskHotStartSnapshot(
         String taskCode,
         String source,
         TaskHotStartScreenState state,
-        DialogService.DialogType dialogType
+        DialogType dialogType
 ) {
     public boolean hasDialog() {
         return state == TaskHotStartScreenState.OPTION_DIALOG

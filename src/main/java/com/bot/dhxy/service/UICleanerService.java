@@ -1,11 +1,15 @@
 package com.bot.dhxy.service;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -159,8 +163,8 @@ public class UICleanerService {
      * or OCR/template capture failed.
      */
     public boolean handleMaintenanceBroadcast(String sourceTask) {
-        DialogService.DialogType type = dialogService.detectDialogTypeNoFocus(sourceTask + ":maintenance-broadcast-precheck");
-        if (type == DialogService.DialogType.NONE) {
+        DialogType type = dialogService.detectDialogTypeNoFocus(sourceTask + ":maintenance-broadcast-precheck");
+        if (type == DialogType.NONE) {
             return false;
         }
         DialogHandleResult dialogResult = dialogService.handleDialog(DialogHandleRequest.clickMaintenanceBroadcastOption(sourceTask));
@@ -212,7 +216,7 @@ public class UICleanerService {
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
         log.info("UI cleanup x2-only close matched: description={} click=({}, {})", description, clickX, clickY);
         inputProvider.clickLeft(clickX, clickY, 80);
-        sleepInterruptible(250);
+        TaskSleep.sleep(250);
         return !Thread.currentThread().isInterrupted();
     }
 
@@ -243,7 +247,7 @@ public class UICleanerService {
         log.info("UI cleanup close button matched: description={} click=({}, {})", description, clickX, clickY);
 
         inputProvider.clickLeft(clickX, clickY, 80);
-        sleepInterruptible(250);
+        TaskSleep.sleep(250);
         return !Thread.currentThread().isInterrupted();
     }
 
@@ -258,19 +262,19 @@ public class UICleanerService {
      * close automatically.
      */
     public boolean forceCloseDialog() {
-        DialogService.DialogType type = dialogService.detectDialogTypeNoFocus("ui-cleaner:force-close");
-        if (type == DialogService.DialogType.NONE) {
+        DialogType type = dialogService.detectDialogTypeNoFocus("ui-cleaner:force-close");
+        if (type == DialogType.NONE) {
             return false;
         }
 
-        if (type == DialogService.DialogType.STORY) {
+        if (type == DialogType.STORY) {
             if (!canFastClickStoryDialog()) {
                 log.info("UI cleanup story dialog fast-click skipped: role={} actionState={}",
                         currentWindowRoleText(), gameContext.getCurrentActionState());
                 return false;
             }
             dialogService.fastClickStoryDialog();
-            sleepInterruptible(350);
+            TaskSleep.sleep(350);
             return true;
         }
 
@@ -279,7 +283,7 @@ public class UICleanerService {
         tracker.captureToFile("ui-cleaner-dialog-close-scan", imgPath,
                 dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
 
-        List<TextRecognizer.OcrWordResult> allWords = ocr.getAllTextResultsForMatch(
+        List<OcrWordResult> allWords = ocr.getAllTextResultsForMatch(
                 imgPath, "ui-cleaner-close-dialog", this::containsCloseDialogKeyword);
         if (allWords != null && !allWords.isEmpty()) {
             List<String> closeKeywords = Arrays.asList(
@@ -287,10 +291,10 @@ public class UICleanerService {
                     "看看", "我还有事", "不", "算了", "暂时", "路过", "再会"
             );
             for (String keyword : closeKeywords) {
-                for (TextRecognizer.OcrWordResult word : allWords) {
+                for (OcrWordResult word : allWords) {
                     if (word.getText().contains(keyword)) {
                         clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY(), "uiCleanup:dialogCloseKeyword");
-                        sleepInterruptible(350);
+                        TaskSleep.sleep(350);
                         return true;
                     }
                 }
@@ -302,7 +306,7 @@ public class UICleanerService {
         return fallbackResult == DialogHandleResult.FALLBACK_CLICKED;
     }
 
-    private boolean containsCloseDialogKeyword(List<TextRecognizer.OcrWordResult> words) {
+    private boolean containsCloseDialogKeyword(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return false;
         }
@@ -310,7 +314,7 @@ public class UICleanerService {
                 "\u53d6\u6d88", "\u79bb\u5f00", "\u770b\u4e00\u770b", "\u54ea\u513f\u4e5f\u4e0d", "\u4ee5\u540e\u518d\u8bf4", "\u539f\u6765\u5982\u6b64",
                 "\u770b\u770b", "\u6211\u8fd8\u6709\u4e8b", "\u4e0d\u4e86", "\u7b97\u4e86", "\u6682\u65f6", "\u8def\u8fc7", "\u518d\u4f1a"
         );
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null) {
                 continue;
             }
@@ -343,11 +347,4 @@ public class UICleanerService {
         inputSequences.clickLeft(description, x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 80);
     }
 
-    private void sleepInterruptible(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

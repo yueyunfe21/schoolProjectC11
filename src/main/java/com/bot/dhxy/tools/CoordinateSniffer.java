@@ -1,5 +1,7 @@
 package com.bot.dhxy.core; // 根据你的实际路径修改
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
@@ -15,7 +17,7 @@ public class CoordinateSniffer {
 
     public static void main(String[] args) throws Exception {
         System.out.println("⏳ 3秒后将冻结屏幕，请切回游戏画面准备框选...");
-        Thread.sleep(3000);
+        TaskSleep.sleep(3000);
 
         // 1. 咔嚓！截取全屏
         Robot robot = new Robot();

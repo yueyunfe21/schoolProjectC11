@@ -1,5 +1,7 @@
 package com.bot.dhxy.debug;
 
+
+import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.TextRecognizer;
@@ -7,7 +9,14 @@ import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.navigation.NpcNavigationRequest;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
+import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.NavigationService;
@@ -153,8 +162,14 @@ public class XiuluoAcceptBenchmarkMain {
             }
 
             long navStart = System.currentTimeMillis();
-            boolean navOk = ctx.navigationService.navigateToNPCWithoutTurnRelease(
-                    START_MAP_NAME, ACCEPT_NPC_X, ACCEPT_NPC_Y);
+            boolean navOk = ctx.navigationService.navigateToNPC(NpcNavigationRequest.builder()
+                    .targetMapName(START_MAP_NAME)
+                    .targetX(ACCEPT_NPC_X)
+                    .targetY(ACCEPT_NPC_Y)
+                    .targetName(ACCEPT_NPC_NAME)
+                    .keepTaskTurnUntilHandled(true)
+                    .source("xiuluo-benchmark:navigateToNPC")
+                    .build());
             trace("step=navigateToAcceptNpc ok=" + navOk
                     + " elapsedMs=" + (System.currentTimeMillis() - navStart)
                     + " totalMs=" + (System.currentTimeMillis() - startedAt));
@@ -190,7 +205,7 @@ public class XiuluoAcceptBenchmarkMain {
      * Click the known Xiuluo accept option after NPC navigation has already verified an option dialog.
      *
      * <p>This skips the extra {@link DialogService#detectDialogTypeNoFocus(String)} pass that was
-     * previously performed immediately after {@code navigateToNPCWithoutTurnRelease}. The navigation
+     * previously performed immediately after {@code navigateToNPC}. The navigation
      * service has already reported the expected NPC option dialog, so the benchmark can go straight to
      * matching the "闲来无事" template. If the template does not match, the caller falls back to the
      * older NPC click path.</p>
@@ -203,7 +218,7 @@ public class XiuluoAcceptBenchmarkMain {
     private static XiuObjective clickAcceptOptionFromKnownVisibleDialog(BenchmarkContext ctx, String source, long startedAt) {
         long acceptStart = System.currentTimeMillis();
         String matched = ctx.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
-                List.of(new DialogService.GreenTemplateClickSpec(
+                List.of(new GreenTemplateClickSpec(
                         "ACCEPT_TASK", ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
                 "xiuluo-copy:accept:" + source);
         boolean accepted = "ACCEPT_TASK".equals(matched);
@@ -303,7 +318,7 @@ public class XiuluoAcceptBenchmarkMain {
             ctx.gameStateUtil.recordMovementIntent("xiuluo-copy:" + source, 2500);
         }
         GameStateUtil.MovementState movementState = ctx.gameStateUtil.detectMovementState();
-        DialogService.DialogType dialogType = ctx.dialogService.detectDialogTypeNoFocus(
+        DialogType dialogType = ctx.dialogService.detectDialogTypeNoFocus(
                 "xiuluo-copy:" + source + ":after-probe");
         trace("step=miniMapProbeResult source=" + source
                 + " submitted=" + submitted
@@ -315,15 +330,15 @@ public class XiuluoAcceptBenchmarkMain {
     }
 
     /**
-     * Run only the production combat-target approach path on the current map.
+     * Run only the production current-map approach-coordinate path.
      *
-     * <p>The probe reads the current mini-map location first, calculates the same nearby approach
-     * coordinate used by Xiuluo target navigation, runs
-     * {@link NavigationService#navigateInCurrentMapNearCombatTarget(int, int)}, then reads the
-     * location again. It deliberately stops before any NPC/monster click.</p>
+     * <p>The probe reads the current mini-map location first, derives the same approach coordinate
+     * through {@link CoordinateHelper#calculateApproachCoordinate(String, int, int)}, runs
+     * {@link NavigationService#navigateInCurrentMap(int, int)}, then reads the location again. It
+     * deliberately stops before any NPC/monster click.</p>
      */
     private static void runCombatApproachProbe(BenchmarkContext ctx, int targetX, int targetY, long startedAt) {
-        TextRecognizer.LocationInfo before = ctx.locationVisionService.scanCurrentLocation();
+        LocationInfo before = ctx.locationVisionService.scanCurrentLocation();
         if (before == null) {
             trace("step=combatApproachProbe ok=false reason=location-scan-failed"
                     + " target=(" + targetX + "," + targetY + ")"
@@ -336,8 +351,7 @@ public class XiuluoAcceptBenchmarkMain {
         me.setX(before.x);
         me.setY(before.y);
 
-        com.bot.dhxy.model.MapCoordinate approach =
-                ctx.navigationService.calculateCombatTargetApproach(before.mapName, targetX, targetY);
+        MapCoordinate approach = ctx.coordinateHelper.calculateApproachCoordinate(before.mapName, targetX, targetY);
         trace("step=combatApproachProbeStart"
                 + " currentMap=" + before.mapName
                 + " before=(" + before.x + "," + before.y + ")"
@@ -346,8 +360,8 @@ public class XiuluoAcceptBenchmarkMain {
                 + " elapsedMs=" + (System.currentTimeMillis() - startedAt));
 
         long navStartedAt = System.currentTimeMillis();
-        boolean ok = ctx.navigationService.navigateInCurrentMapNearCombatTarget(targetX, targetY);
-        TextRecognizer.LocationInfo after = ctx.locationVisionService.scanCurrentLocation();
+        boolean ok = ctx.navigationService.navigateInCurrentMap(approach.getX(), approach.getY());
+        LocationInfo after = ctx.locationVisionService.scanCurrentLocation();
         trace("step=combatApproachProbeResult"
                 + " ok=" + ok
                 + " currentMap=" + before.mapName
@@ -386,29 +400,29 @@ public class XiuluoAcceptBenchmarkMain {
 
     private static boolean clickAcceptNpcAndOpenDialog(BenchmarkContext ctx) {
         PlayerCharacter me = ctx.gameContext.getMe();
-        return ctx.npcClickService.clickNpcSmart(NpcClickService.NpcClickRequest.fixed(
+        return ctx.npcClickService.clickNpcSmart(NpcClickRequest.fixed(
                 me, START_MAP_NAME, ACCEPT_NPC_X, ACCEPT_NPC_Y,
                 ACCEPT_NPC_NAME, ACCEPT_OPTION_TEMPLATE));
     }
 
     private static XiuObjective tryObjectiveFromVisibleDialog(BenchmarkContext ctx, String source, long startedAt) {
         long detectStart = System.currentTimeMillis();
-        DialogService.DialogType type = ctx.dialogService.detectDialogTypeNoFocus("xiuluo-copy:" + source);
+        DialogType type = ctx.dialogService.detectDialogTypeNoFocus("xiuluo-copy:" + source);
         trace("step=dialogPrecheck source=" + source
                 + " type=" + type
                 + " elapsedMs=" + (System.currentTimeMillis() - detectStart)
                 + " totalMs=" + (System.currentTimeMillis() - startedAt));
-        if (type == DialogService.DialogType.NONE) {
+        if (type == DialogType.NONE) {
             return null;
         }
 
-        if (type == DialogService.DialogType.STORY) {
+        if (type == DialogType.STORY) {
             return readStoryObjective(ctx, source, startedAt);
         }
 
         long acceptStart = System.currentTimeMillis();
         String matched = ctx.dialogService.clickFirstKnownOptionGreenTemplateDirectForExclusive(
-                List.of(new DialogService.GreenTemplateClickSpec(
+                List.of(new GreenTemplateClickSpec(
                         "ACCEPT_TASK", ACCEPT_OPTION_TEMPLATE, -5, 80, 4)),
                 "xiuluo-copy:accept:" + source);
         boolean accepted = "ACCEPT_TASK".equals(matched);
@@ -469,7 +483,7 @@ public class XiuluoAcceptBenchmarkMain {
 
     private static XiuObjective readTaskPanelObjective(BenchmarkContext ctx, String source, long startedAt) {
         long panelStart = System.currentTimeMillis();
-        QuestManagerService.QuestDetailCapture capture =
+        QuestDetailCapture capture =
                 ctx.questManagerService.captureCurrentQuestDetailForTask("xiuluo");
         XiuObjective result = recognize(ctx, capture.image(), "xiuluo-copy:task-panel:" + source);
         trace("step=readTaskPanelObjective source=" + source
@@ -484,7 +498,7 @@ public class XiuluoAcceptBenchmarkMain {
             return null;
         }
         try {
-            Optional<ObjectiveTextRecognitionService.ObjectiveTextResult> parsed =
+            Optional<ObjectiveTextResult> parsed =
                     ctx.objectiveTextRecognitionService.recognize(image, source);
             return parsed.map(value -> new XiuObjective(value.mapName(), value.x(), value.y())).orElse(null);
         } finally {
@@ -629,13 +643,13 @@ public class XiuluoAcceptBenchmarkMain {
             for (WindowTaskRunner runner : runners) {
                 WindowRuntimeContext probeWindow = runner.getWindowContext();
                 try {
-                    AtomicReference<DialogService.DialogType> typeRef =
-                            new AtomicReference<>(DialogService.DialogType.NONE);
+                    AtomicReference<DialogType> typeRef =
+                            new AtomicReference<>(DialogType.NONE);
                     windowHolder.runWith(probeWindow,
                             () -> gameContext.runWithState(probeWindow.getGameState(),
                                     () -> typeRef.set(dialogService.detectDialogTypeNoFocus(
                                             "xiuluo-copy:window-select:" + probeWindow.getWindowId()))));
-                    DialogService.DialogType type = typeRef.get();
+                    DialogType type = typeRef.get();
                     dialogProbes.add(new DialogProbe(runner, type));
                     trace("candidateDialog windowId=" + probeWindow.getWindowId() + " type=" + type);
                 } catch (Exception e) {
@@ -644,7 +658,7 @@ public class XiuluoAcceptBenchmarkMain {
                 }
             }
             Optional<WindowTaskRunner> dialogWindow = dialogProbes.stream()
-                    .filter(probe -> probe.type() != DialogService.DialogType.NONE)
+                    .filter(probe -> probe.type() != DialogType.NONE)
                     .map(DialogProbe::runner)
                     .findFirst();
             if (dialogWindow.isPresent()) {
@@ -682,6 +696,6 @@ public class XiuluoAcceptBenchmarkMain {
         }
     }
 
-    private record DialogProbe(WindowTaskRunner runner, DialogService.DialogType type) {
+    private record DialogProbe(WindowTaskRunner runner, DialogType type) {
     }
 }

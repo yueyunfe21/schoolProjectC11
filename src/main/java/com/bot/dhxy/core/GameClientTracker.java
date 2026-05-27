@@ -1,5 +1,7 @@
 package com.bot.dhxy.core;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.VisionProvider;
 import com.bot.dhxy.config.WindowIsolationProperties;
@@ -545,7 +547,7 @@ public class GameClientTracker {
         User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
         User32.INSTANCE.BringWindowToTop(s.gameHwnd);
         boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
-        sleepQuietly(200);
+        TaskSleep.sleep(200);
         HWND foreground = User32.INSTANCE.GetForegroundWindow();
         boolean focused = foreground != null
                 && s.gameHwnd != null
@@ -640,14 +642,6 @@ public class GameClientTracker {
         }
     }
 
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
     public void testBackgroundAlt8() {
         TrackerState s = state();
         if (s.gameHwnd == null) {
@@ -660,7 +654,7 @@ public class GameClientTracker {
         long lParamDown = (1 << 29) | (0x09 << 16) | 1;
         long lParamUp = (1L << 31) | (1 << 30) | (1 << 29) | (0x09 << 16) | 1;
         User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
-        try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        TaskSleep.sleep(50);
         User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
         log.info("后台 Alt+8 指令投递完毕");
     }

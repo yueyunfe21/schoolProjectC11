@@ -1,6 +1,19 @@
 package com.bot.dhxy.vision;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.LearnedNpcClickPoint;
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
+import com.bot.dhxy.model.ocr.PlayerAnchorMatch;
+import com.bot.dhxy.model.ocr.RecordResult;
+import com.bot.dhxy.model.ocr.ResolvedNpcClickRegion;
+import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,12 +55,25 @@ public class OcrRoiMemoryService {
     private static final int MIN_LEARNED_NPC_SUCCESS_SAMPLES = 3;
     private static final int MAX_LEARNED_NPC_RECENT_SAMPLES = 12;
     private static final int MAX_LEARNED_NPC_POINT_SPREAD_PX = 45;
+    private static final int MAX_FIXED_NPC_LEARNED_REGIONS = 1;
+    private static final int MAX_ROAMING_NPC_LEARNED_REGIONS = 2;
+    private static final int NPC_VISION_WORK_PAD_X = 240;
+    private static final int NPC_VISION_WORK_PAD_Y = 190;
+    private static final int NPC_VISION_WORK_MIN_WIDTH = 520;
+    private static final int NPC_VISION_WORK_MIN_HEIGHT = 360;
     private static final int NPC_COORD_BUCKET_SIZE = 10;
     private static final int NPC_COORD_NEIGHBOR_RADIUS = 1;
     private static final int MAX_TARGET_CANDIDATE_SAMPLES = 1000;
     private static final int ROI_POLICY_FAILURE_STALE_THRESHOLD = 3;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final GameClientTracker tracker;
+    private final WindowTaskContextHolder windowTaskContextHolder;
+
+    public OcrRoiMemoryService(GameClientTracker tracker, WindowTaskContextHolder windowTaskContextHolder) {
+        this.tracker = tracker;
+        this.windowTaskContextHolder = windowTaskContextHolder;
+    }
 
     /**
      * Read the current learned OCR region for a memory key.
@@ -77,28 +103,46 @@ public class OcrRoiMemoryService {
     }
 
     /**
-     * Recommend OCR scan regions for an NPC/monster click request from learned vision memory.
+     * Recommend visual work regions for an NPC/monster click request from learned vision memory.
      *
-     * <p>The policy deliberately handles fixed NPCs and roaming combat targets differently. Fixed
-     * NPCs can learn by map/name/exact coordinate. Combat targets learn by map plus coordinate
-     * bucket so nearby 修罗/怪物 targets can reuse a scan window without requiring the OCR-visible
-     * monster name to be stable. Returned regions are ordered hints in 1024x768 window-relative
+     * <p>A learned region is deliberately a work area, not only a tight yellow-name box. The smart
+     * click pipeline reuses the same area for yellow NPC/monster text and the purple player-name
+     * anchor formula, so the derived region must keep enough surrounding context after the character
+     * has moved near the target. Returned regions are ordered hints in 1024x768 window-relative
      * pixels; callers must still verify the expected dialog/battle signal after clicking.</p>
      *
      * @param mapName target map name if known; nullable.
      * @param mapX target logical in-game X coordinate if known; nullable.
      * @param mapY target logical in-game Y coordinate if known; nullable.
-     * @param targetName NPC name or task keyword; nullable for roaming combat targets.
+     * @param targetName NPC name or task keyword; nullable for roaming task targets.
      * @param roamingTarget true when the target coordinate came from a refreshed task objective.
-     * @return ordered, de-duplicated OCR regions in window-relative pixels. Learned/sample-derived
-     * regions come first, followed by the default full-window masked fallback source from
-     * {@link OcrWindowScanService}.
+     * @return ordered, de-duplicated visual work regions with both persisted window-relative bounds
+     * and current screen-absolute bounds. Learned/sample-derived regions come first, followed by the
+     * default full-window masked fallback source from {@link OcrWindowScanService}.
      */
-    public synchronized List<OcrWindowRegion> recommendNpcClickRegions(String mapName,
-                                                                       Integer mapX,
-                                                                       Integer mapY,
-                                                                       String targetName,
-                                                                       boolean roamingTarget) {
+    public synchronized List<ResolvedNpcClickRegion> recommendNpcClickRegions(String mapName,
+                                                                              Integer mapX,
+                                                                              Integer mapY,
+                                                                              String targetName,
+                                                                              boolean roamingTarget) {
+        List<OcrWindowRegion> windowRegions = recommendNpcClickWindowRegions(
+                mapName, mapX, mapY, targetName, roamingTarget);
+        if (windowRegions.isEmpty()) {
+            return List.of();
+        }
+        Point windowBase = currentWindowBase();
+        List<ResolvedNpcClickRegion> resolved = new ArrayList<>();
+        for (OcrWindowRegion region : windowRegions) {
+            resolved.add(ResolvedNpcClickRegion.from(region, windowBase.x, windowBase.y));
+        }
+        return List.copyOf(resolved);
+    }
+
+    public synchronized List<OcrWindowRegion> recommendNpcClickWindowRegions(String mapName,
+                                                                            Integer mapX,
+                                                                            Integer mapY,
+                                                                            String targetName,
+                                                                            boolean roamingTarget) {
         /*
          * Normalize the target identity first. Fixed NPCs require a concrete name because their ROI
          * key is map + NPC name + exact coordinate. Roaming Xiuluo-style targets may use "any-name"
@@ -115,7 +159,7 @@ public class OcrRoiMemoryService {
          * old/raw samples can still help while a policy is not mature yet.
          */
         MemoryFile memory = loadMemory();
-        List<OcrWindowRegion> regions = new ArrayList<>();
+        List<OcrWindowRegion> learnedRegions = new ArrayList<>();
 
         /*
          * Primary source: v2 ROI policies created from verified yellow-name OCR observations.
@@ -123,14 +167,14 @@ public class OcrRoiMemoryService {
          * and nearby buckets so a nearby real sample can seed the first crop.
          */
         for (String key : npcTargetRoiPolicyKeys(mapName, mapX, mapY, target, roamingTarget)) {
-            addPolicyRegion(regions, memory, key);
+            addPolicyRegion(learnedRegions, memory, key);
         }
 
         /*
          * Secondary source: verified NPC click samples. They do not prove the yellow text rectangle,
          * but a verified click point is close enough to propose a broad crop around that target.
          */
-        addNpcClickSampleRegion(regions, memory, mapName, mapX, mapY, target, roamingTarget);
+        addNpcClickSampleRegion(learnedRegions, memory, mapName, mapX, mapY, target, roamingTarget);
 
         /*
          * Compatibility source: older entries that only stored MemoryEntry.recommendedRoi. This is
@@ -138,7 +182,7 @@ public class OcrRoiMemoryService {
          * regions.
          */
         for (String key : npcClickRegionMemoryKeys(mapName, mapX, mapY, target)) {
-            addLegacyRoiRegion(regions, memory, key);
+            addLegacyRoiRegion(learnedRegions, memory, key);
         }
 
         /*
@@ -146,10 +190,13 @@ public class OcrRoiMemoryService {
          * as OcrWindowScanService's full-window OCR. The region marks the source image; it is not a
          * request to scan raw UI noise.
          */
+        int maxLearnedRegions = roamingTarget ? MAX_ROAMING_NPC_LEARNED_REGIONS : MAX_FIXED_NPC_LEARNED_REGIONS;
+        List<OcrWindowRegion> regions = limitLearnedNpcRegions(learnedRegions, maxLearnedRegions);
         addUniqueRegion(regions, OcrWindowScanService.defaultMaskedWindowRegion());
 
-        log.info("[ocr-roi-memory] npc click regions target={} map={} coord=({}, {}) roaming={} regions={}",
-                target, safe(mapName), mapX, mapY, roamingTarget, summarizeRegions(regions));
+        log.info("[ocr-roi-memory] npc click regions target={} map={} coord=({}, {}) roaming={} learnedCandidates={} maxLearned={} regions={}",
+                target, safe(mapName), mapX, mapY, roamingTarget, learnedRegions.size(), maxLearnedRegions,
+                summarizeRegions(regions));
         return List.copyOf(regions);
     }
 
@@ -166,8 +213,8 @@ public class OcrRoiMemoryService {
      * @param mapName target map name; nullable.
      * @param targetMapX logical target X coordinate; nullable.
      * @param targetMapY logical target Y coordinate; nullable.
-     * @param targetName expected NPC name or task keyword; nullable for roaming combat targets.
-     * @param roamingTarget true for combat/roaming targets that should learn by coordinate bucket.
+     * @param targetName expected NPC name or task keyword; nullable for roaming task targets.
+     * @param roamingTarget true for roaming targets that should learn by coordinate bucket.
      * @param scanRegion window-relative OCR region scanned.
      * @param textRect matched text rectangle in window-relative pixels; nullable on miss.
      * @param clickPoint window-relative click/probe point; nullable when no concrete candidate was clicked.
@@ -275,8 +322,8 @@ public class OcrRoiMemoryService {
 
     public synchronized RecordResult recordPlayerAnchorSuccess(String key,
                                                                String source,
-                                                               LocationVisionService.PlayerAnchorMatch match,
-                                                               TextRecognizer.LocationInfo location,
+                                                               PlayerAnchorMatch match,
+                                                               LocationInfo location,
                                                                int windowWidth,
                                                                int windowHeight,
                                                                String provider,
@@ -351,7 +398,7 @@ public class OcrRoiMemoryService {
                                                       String regionType,
                                                       OcrWindowRegion scanRegion,
                                                       String targetText,
-                                                      List<TextRecognizer.OcrWordResult> words,
+                                                      List<OcrWordResult> words,
                                                       boolean matched,
                                                       String message,
                                                       int windowWidth,
@@ -369,7 +416,7 @@ public class OcrRoiMemoryService {
 
         // Store both the full OCR attempt and, when matched, the concrete word rectangle that can
         // tighten the next ROI recommendation.
-        TextRecognizer.OcrWordResult matchedWord = matched
+        OcrWordResult matchedWord = matched
                 ? findMatchedWord(words, targetText)
                 : null;
         OcrWindowRegion textRect = wordToRegion(matchedWord);
@@ -664,15 +711,7 @@ public class OcrRoiMemoryService {
             return null;
         }
 
-        int successCount = Math.max(0, entry.successCount);
-        int padX = successCount >= 10 ? 110 : successCount >= 3 ? 150 : 220;
-        int padY = successCount >= 10 ? 80 : successCount >= 3 ? 110 : 160;
-        int minWidth = successCount >= 10 ? 220 : successCount >= 3 ? 300 : 420;
-        int minHeight = successCount >= 10 ? 160 : successCount >= 3 ? 220 : 300;
-
-        OcrWindowRegion expanded = new OcrWindowRegion(minX, minY, maxX + 1, maxY + 1)
-                .expand(padX, padY, IMAGE_WIDTH, IMAGE_HEIGHT);
-        return enforceMinimumSize(expanded, minWidth, minHeight);
+        return npcVisionWorkRegion(minX, minY, maxX, maxY);
     }
 
     private void addPolicyRegion(List<OcrWindowRegion> regions, MemoryFile memory, String key) {
@@ -788,22 +827,18 @@ public class OcrRoiMemoryService {
         if (maxX < minX || maxY < minY) {
             return null;
         }
-        int count = points.size();
-        int padX = roamingTarget
-                ? count >= 10 ? 140 : count >= 3 ? 190 : 260
-                : count >= 10 ? 110 : count >= 3 ? 150 : 220;
-        int padY = roamingTarget
-                ? count >= 10 ? 100 : count >= 3 ? 140 : 190
-                : count >= 10 ? 80 : count >= 3 ? 110 : 160;
-        int minWidth = roamingTarget
-                ? count >= 10 ? 260 : count >= 3 ? 380 : 520
-                : count >= 10 ? 220 : count >= 3 ? 300 : 420;
-        int minHeight = roamingTarget
-                ? count >= 10 ? 190 : count >= 3 ? 260 : 360
-                : count >= 10 ? 160 : count >= 3 ? 220 : 300;
+        return npcVisionWorkRegion(minX, minY, maxX, maxY);
+    }
+
+    /*
+     * NPC click recommendations are intentionally visual work regions. They must remain large enough
+     * to contain both the target yellow name and the current player's purple name after navigation
+     * moves the character near the target; shrinking to a tight OCR text box breaks the formula path.
+     */
+    private OcrWindowRegion npcVisionWorkRegion(int minX, int minY, int maxX, int maxY) {
         OcrWindowRegion expanded = new OcrWindowRegion(minX, minY, maxX + 1, maxY + 1)
-                .expand(padX, padY, IMAGE_WIDTH, IMAGE_HEIGHT);
-        return enforceMinimumSize(expanded, minWidth, minHeight);
+                .expand(NPC_VISION_WORK_PAD_X, NPC_VISION_WORK_PAD_Y, IMAGE_WIDTH, IMAGE_HEIGHT);
+        return enforceMinimumSize(expanded, NPC_VISION_WORK_MIN_WIDTH, NPC_VISION_WORK_MIN_HEIGHT);
     }
 
     private void updateRoiPolicy(MemoryFile memory,
@@ -990,6 +1025,38 @@ public class OcrRoiMemoryService {
         if (candidate != null && !regions.contains(candidate)) {
             regions.add(candidate);
         }
+    }
+
+    private List<OcrWindowRegion> limitLearnedNpcRegions(List<OcrWindowRegion> learnedRegions, int maxRegions) {
+        if (learnedRegions == null || learnedRegions.isEmpty() || maxRegions <= 0) {
+            return new ArrayList<>();
+        }
+        List<OcrWindowRegion> limited = new ArrayList<>();
+        OcrWindowRegion defaultRegion = OcrWindowScanService.defaultMaskedWindowRegion();
+        for (OcrWindowRegion region : learnedRegions) {
+            if (region == null || defaultRegion.equals(region)) {
+                continue;
+            }
+            addUniqueRegion(limited, region);
+            if (limited.size() >= maxRegions) {
+                break;
+            }
+        }
+        return limited;
+    }
+
+    private Point currentWindowBase() {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isPresent()) {
+            WindowNativeBinding binding = current.get().getNativeBinding();
+            if (binding != null && binding.hasGeometry()) {
+                return new Point(binding.getX(), binding.getY());
+            }
+        }
+        Point fallback = new Point(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+        log.warn("[ocr-roi-memory] resolved NPC region using tracker fallback base=({}, {})",
+                fallback.x, fallback.y);
+        return fallback;
     }
 
     private String summarizeRegions(List<OcrWindowRegion> regions) {
@@ -1212,8 +1279,8 @@ public class OcrRoiMemoryService {
 
         static MemorySample fromPlayerAnchor(String key,
                                              String source,
-                                             LocationVisionService.PlayerAnchorMatch match,
-                                             TextRecognizer.LocationInfo location,
+                                             PlayerAnchorMatch match,
+                                             LocationInfo location,
                                              int windowWidth,
                                              int windowHeight,
                                              String provider,
@@ -1279,9 +1346,9 @@ public class OcrRoiMemoryService {
                                      String regionType,
                                      OcrWindowRegion scanRegion,
                                      String targetText,
-                                     List<TextRecognizer.OcrWordResult> words,
+                                     List<OcrWordResult> words,
                                      boolean matched,
-                                     TextRecognizer.OcrWordResult matchedWord,
+                                     OcrWordResult matchedWord,
                                      String message,
                                      int windowWidth,
                                      int windowHeight,
@@ -1437,38 +1504,7 @@ public class OcrRoiMemoryService {
         }
     }
 
-    public record RecordResult(boolean recorded, String key, String summary, String recommendedRoi) {
-        static RecordResult skipped(String key, String reason) {
-            return new RecordResult(false, key, reason == null ? "" : reason, "-");
-        }
-    }
-
-    /**
-     * Conservative learned direct-click recommendation for one NPC target.
-     *
-     * @param key stable vision-memory key used to derive the point.
-     * @param x window-relative X coordinate in the 1024x768 game client.
-     * @param y window-relative Y coordinate in the 1024x768 game client.
-     * @param sampleCount number of recent successful samples used.
-     * @param spreadPx maximum distance in pixels from the averaged point.
-     * @param lastOutcome last recorded NPC-click outcome for diagnostics.
-     */
-    public record LearnedNpcClickPoint(String key,
-                                       int x,
-                                       int y,
-                                       int sampleCount,
-                                       int spreadPx,
-                                       String lastOutcome) {
-        public String toSummaryText() {
-            return "key=" + key
-                    + " point=(" + x + "," + y + ")"
-                    + " samples=" + sampleCount
-                    + " spreadPx=" + spreadPx
-                    + " lastOutcome=" + safe(lastOutcome);
-        }
-    }
-
-    private static TextRecognizer.OcrWordResult findMatchedWord(List<TextRecognizer.OcrWordResult> words,
+    private static OcrWordResult findMatchedWord(List<OcrWordResult> words,
                                                                 String targetText) {
         if (words == null || words.isEmpty()) {
             return null;
@@ -1477,7 +1513,7 @@ public class OcrRoiMemoryService {
         if (target.isBlank()) {
             return words.stream().filter(word -> word != null && word.getText() != null).findFirst().orElse(null);
         }
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             String text = normalizeTextStatic(word == null ? null : word.getText());
             if (!text.isBlank() && (text.contains(target) || target.contains(text) && text.length() >= 2)) {
                 return word;
@@ -1486,7 +1522,7 @@ public class OcrRoiMemoryService {
         return null;
     }
 
-    private static OcrWindowRegion wordToRegion(TextRecognizer.OcrWordResult word) {
+    private static OcrWindowRegion wordToRegion(OcrWordResult word) {
         if (word == null) {
             return null;
         }
@@ -1498,7 +1534,7 @@ public class OcrRoiMemoryService {
         ).clamp(IMAGE_WIDTH, IMAGE_HEIGHT);
     }
 
-    private static Point wordToPoint(TextRecognizer.OcrWordResult word) {
+    private static Point wordToPoint(OcrWordResult word) {
         if (word == null) {
             return null;
         }

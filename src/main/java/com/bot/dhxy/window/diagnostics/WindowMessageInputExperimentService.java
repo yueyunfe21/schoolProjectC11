@@ -1,5 +1,7 @@
 package com.bot.dhxy.window.diagnostics;
 
+import com.bot.dhxy.runner.stop.TaskSleep;
+
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.model.WindowNativeBinding;
@@ -116,7 +118,7 @@ public class WindowMessageInputExperimentService {
 
             saveWindowCapture(binding, beforePath);
             boolean posted = action.post(hwnd);
-            sleepQuietly(650);
+            TaskSleep.sleep(650);
             saveWindowCapture(binding, afterPath);
 
             WindowMessageInputExperimentResult result = new WindowMessageInputExperimentResult(
@@ -149,11 +151,11 @@ public class WindowMessageInputExperimentService {
 
     private boolean postAltShortcut(WinDef.HWND hwnd, int virtualKey, int scanCode) {
         boolean altDown = postKey(hwnd, WM_SYSKEYDOWN, VK_MENU, SCAN_ALT, true, false);
-        sleepQuietly(40);
+        TaskSleep.sleep(40);
         boolean keyDown = postKey(hwnd, WM_SYSKEYDOWN, virtualKey, scanCode, true, false);
-        sleepQuietly(60);
+        TaskSleep.sleep(60);
         boolean keyUp = postKey(hwnd, WM_SYSKEYUP, virtualKey, scanCode, true, true);
-        sleepQuietly(40);
+        TaskSleep.sleep(40);
         boolean altUp = postKey(hwnd, WM_SYSKEYUP, VK_MENU, SCAN_ALT, false, true);
         return altDown && keyDown && keyUp && altUp;
     }
@@ -192,9 +194,9 @@ public class WindowMessageInputExperimentService {
         int y = Math.max(1, (rect.bottom - rect.top) / 2);
         WinDef.LPARAM point = new WinDef.LPARAM(packPoint(x, y));
         boolean moved = User32Message.INSTANCE.PostMessage(hwnd, WM_MOUSEMOVE, new WinDef.WPARAM(0), point);
-        sleepQuietly(40);
+        TaskSleep.sleep(40);
         boolean down = User32Message.INSTANCE.PostMessage(hwnd, downMessage, new WinDef.WPARAM(buttonState), point);
-        sleepQuietly(80);
+        TaskSleep.sleep(80);
         boolean up = User32Message.INSTANCE.PostMessage(hwnd, upMessage, new WinDef.WPARAM(0), point);
         return moved && down && up;
     }
@@ -283,14 +285,6 @@ public class WindowMessageInputExperimentService {
             return "window";
         }
         return value.replaceAll("[^a-zA-Z0-9._-]", "_");
-    }
-
-    private void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     @FunctionalInterface

@@ -1,10 +1,15 @@
 package com.bot.dhxy.service;
 
+
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.service.dialog.DialogStoryPolicy;
@@ -72,27 +77,6 @@ public class DialogService {
     private static final double BUSINESS_OPTION_MATCH_RATE = 0.70;
 
     /**
-     * High-level dialog shape detected from the current window screenshot.
-     */
-    public enum DialogType { NONE, OPTION, STORY }
-
-    /**
-     * Template-click descriptor for green option text inside the standard dialog rectangle.
-     *
-     * @param name diagnostic label written to logs.
-     * @param templatePath template image path under the project image folder.
-     * @param minOffsetX minimum randomized X offset from the template anchor, in screen pixels.
-     * @param maxOffsetX maximum randomized X offset from the template anchor, in screen pixels.
-     * @param randomRadiusY randomized Y radius from the template anchor, in screen pixels.
-     */
-    public record GreenTemplateClickSpec(String name,
-                                         String templatePath,
-                                         int minOffsetX,
-                                         int maxOffsetX,
-                                         int randomRadiusY) {
-    }
-
-    /**
      * Handle one dialog according to an explicit operation policy.
      *
      * @param request policy object that declares whether to click story dialogs, match keywords,
@@ -112,7 +96,7 @@ public class DialogService {
             Point p = request.getInitialClick();
             log.info("dialog request initial click: ({},{})", p.x, p.y);
             inputSequences.clickLeft("dialog:requestInitialClick", p.x, p.y, 150);
-            if (!sleep(600 + random.nextInt(200))) {
+            if (!TaskSleep.sleep(600 + random.nextInt(200))) {
                 return DialogHandleResult.INTERRUPTED;
             }
         }
@@ -193,7 +177,7 @@ public class DialogService {
         log.info("business dialog option matched: option={} score={} click=({}, {})",
                 optionName, result.length > 2 ? result[2] : 0.0, safeClick.x, safeClick.y);
         inputSequences.clickLeft("dialog:businessOption:" + optionName, safeClick.x, safeClick.y, 150);
-        return sleep(800 + random.nextInt(300));
+        return TaskSleep.sleep(800 + random.nextInt(300));
     }
 
     private DialogHandleResult handleKeywordOption(DialogHandleRequest request) {
@@ -266,7 +250,7 @@ public class DialogService {
 
         Point safeClick = coordinateHelper.getRandomizedPoint(giveTextPt, 20, 5);
         inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-        if (!sleep(800)) {
+        if (!TaskSleep.sleep(800)) {
             return DialogHandleResult.INTERRUPTED;
         }
 
@@ -307,7 +291,7 @@ public class DialogService {
     }
 
     private DialogType detectDialogTypeDirect() {
-        if (!sleep(700 + random.nextInt(100))) {
+        if (!TaskSleep.sleep(700 + random.nextInt(100))) {
             return DialogType.NONE;
         }
         if (!hasDialogMask()) {
@@ -380,14 +364,14 @@ public class DialogService {
     }
 
     private boolean fastClickStoryDialogDirect() {
-        if (!sleep(600 + random.nextInt(100))) return false;
+        if (!TaskSleep.sleep(600 + random.nextInt(100))) return false;
         int[] rect = getDialogRect();
         double scale = coordinateHelper.getScaleRatio();
         int cx = rect[0] + (rect[2] - rect[0]) / 2;
         int cy = rect[3] - (int)Math.round(40 / scale);
         Point safeClick = coordinateHelper.getRandomizedPoint(new Point(cx, cy), 30, 10);
         inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-        return sleep(600 + random.nextInt(100));
+        return TaskSleep.sleep(600 + random.nextInt(100));
     }
 
     private boolean processOptionsWithOCR(String targetKeyword) {
@@ -400,13 +384,13 @@ public class DialogService {
         if (!captureToFileExclusive("dialog:ocrCapture", "OCR-Scan", path, rect)) return false;
 
         List<String> aliases = MAP_ALIASES.getOrDefault(targetKeyword, java.util.Collections.singletonList(targetKeyword));
-        List<TextRecognizer.OcrWordResult> results = ocr.getAllTextResultsForMatch(
+        List<OcrWordResult> results = ocr.getAllTextResultsForMatch(
                 path,
                 "dialog-options:" + targetKeyword,
                 words -> hasAnyKeyword(words, aliases));
 
         for (String alias : aliases) {
-            for (TextRecognizer.OcrWordResult word : results) {
+            for (OcrWordResult word : results) {
                 if (word.getText().contains(alias)) {
                     log.info("dialog OCR hit alias={} target={} path={}", alias, targetKeyword, path);
                     inputSequences.clickLeft("dialog:ocrOption", rect[0] + word.getX(), rect[1] + word.getY(), 150);
@@ -422,11 +406,11 @@ public class DialogService {
         return clickLastGreenOption(rect, "OCR target not matched");
     }
 
-    private boolean hasAnyKeyword(List<TextRecognizer.OcrWordResult> words, List<String> keywords) {
+    private boolean hasAnyKeyword(List<OcrWordResult> words, List<String> keywords) {
         if (words == null || words.isEmpty() || keywords == null || keywords.isEmpty()) {
             return false;
         }
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null || word.getText() == null) {
                 continue;
             }
@@ -439,13 +423,13 @@ public class DialogService {
         return false;
     }
 
-    private String summarizeWords(List<TextRecognizer.OcrWordResult> words) {
+    private String summarizeWords(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "-";
         }
         StringBuilder builder = new StringBuilder();
         int count = 0;
-        for (TextRecognizer.OcrWordResult word : words) {
+        for (OcrWordResult word : words) {
             if (word == null) {
                 continue;
             }
@@ -599,38 +583,36 @@ public class DialogService {
     private boolean clickGreenTemplateOptionDirectWithXRange(String templatePath, String reason,
                                                             int minOffsetX, int maxOffsetX, int randomRadiusY) {
         long latencyStart = LatencyMetrics.start();
-        boolean result = clickGreenTemplateOptionDirectWithXRangeInternal(
-                templatePath, reason, minOffsetX, maxOffsetX, randomRadiusY);
-        LatencyMetrics.info(log, "dialog.greenTemplateClick", latencyStart,
-                "result=" + result + " reason=" + reason + " template=" + templatePath);
-        return result;
-    }
-
-    private boolean clickGreenTemplateOptionDirectWithXRangeInternal(String templatePath, String reason,
-                                                                    int minOffsetX, int maxOffsetX, int randomRadiusY) {
-        if (templatePath == null || templatePath.isBlank()) {
-            log.warn("dialog green template option requested without template: reason={}", reason);
-            return false;
+        boolean result = false;
+        try {
+            if (templatePath == null || templatePath.isBlank()) {
+                log.warn("dialog green template option requested without template: reason={}", reason);
+                return false;
+            }
+            DialogType type = detectDialogTypeDirect();
+            if (type != DialogType.OPTION) {
+                log.info("dialog green template option skipped: reason={} type={}", reason, type);
+                return false;
+            }
+            Point optionPoint = coordinateHelper.findGreenTextInRegion(templatePath, getDialogRect(), 0.85);
+            if (optionPoint == null) {
+                log.info("dialog green template option not matched: reason={} template={}", reason, templatePath);
+                return false;
+            }
+            int lowX = Math.min(minOffsetX, maxOffsetX);
+            int highX = Math.max(minOffsetX, maxOffsetX);
+            int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
+            int offsetY = randomRadiusY <= 0 ? 0 : random.nextInt(randomRadiusY * 2 + 1) - randomRadiusY;
+            Point safeClick = new Point(optionPoint.x + offsetX, optionPoint.y + offsetY);
+            log.info("dialog green template option matched: reason={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
+                    reason, templatePath, optionPoint.x, optionPoint.y, offsetX, offsetY, safeClick.x, safeClick.y);
+            inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+            result = true;
+            return true;
+        } finally {
+            LatencyMetrics.info(log, "dialog.greenTemplateClick", latencyStart,
+                    "result=" + result + " reason=" + reason + " template=" + templatePath);
         }
-        DialogType type = detectDialogTypeDirect();
-        if (type != DialogType.OPTION) {
-            log.info("dialog green template option skipped: reason={} type={}", reason, type);
-            return false;
-        }
-        Point optionPoint = coordinateHelper.findGreenTextInRegion(templatePath, getDialogRect(), 0.85);
-        if (optionPoint == null) {
-            log.info("dialog green template option not matched: reason={} template={}", reason, templatePath);
-            return false;
-        }
-        int lowX = Math.min(minOffsetX, maxOffsetX);
-        int highX = Math.max(minOffsetX, maxOffsetX);
-        int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
-        int offsetY = randomRadiusY <= 0 ? 0 : random.nextInt(randomRadiusY * 2 + 1) - randomRadiusY;
-        Point safeClick = new Point(optionPoint.x + offsetX, optionPoint.y + offsetY);
-        log.info("dialog green template option matched: reason={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
-                reason, templatePath, optionPoint.x, optionPoint.y, offsetX, offsetY, safeClick.x, safeClick.y);
-        inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-        return true;
     }
 
     private String clickFirstGreenTemplateOptionDirect(List<GreenTemplateClickSpec> specs, String reason) {
@@ -641,71 +623,69 @@ public class DialogService {
                                                        String reason,
                                                        boolean verifyDialogType) {
         long latencyStart = LatencyMetrics.start();
-        String matched = clickFirstGreenTemplateOptionDirectInternal(specs, reason, verifyDialogType);
-        LatencyMetrics.info(log, "dialog.greenTemplateFirst", latencyStart,
-                "matched=" + (matched == null ? "-" : matched) + " reason=" + reason
-                        + " specCount=" + (specs == null ? 0 : specs.size()));
-        return matched;
-    }
-
-    private String clickFirstGreenTemplateOptionDirectInternal(List<GreenTemplateClickSpec> specs,
-                                                              String reason,
-                                                              boolean verifyDialogType) {
-        /*
-         * 多模板 option 匹配的快路径：dialog 类型、截图、洗绿字都只做一次。
-         * 调用方负责按业务优先级传 specs，谁先命中就点谁，避免同一个对话框重复截图。
-         */
-        if (specs == null || specs.isEmpty()) {
-            log.warn("dialog green template multi-match requested without specs: reason={}", reason);
-            return null;
-        }
-        if (verifyDialogType) {
-            DialogType type = detectDialogTypeDirect();
-            if (type != DialogType.OPTION) {
-                log.info("dialog green template multi-match skipped: reason={} type={}", reason, type);
+        String matched = null;
+        try {
+            /*
+             * 多模板 option 匹配的快路径：dialog 类型、截图、洗绿字都只做一次。
+             * 调用方负责按业务优先级传 specs，谁先命中就点谁，避免同一个对话框重复截图。
+             */
+            if (specs == null || specs.isEmpty()) {
+                log.warn("dialog green template multi-match requested without specs: reason={}", reason);
                 return null;
             }
-        }
+            if (verifyDialogType) {
+                DialogType type = detectDialogTypeDirect();
+                if (type != DialogType.OPTION) {
+                    log.info("dialog green template multi-match skipped: reason={} type={}", reason, type);
+                    return null;
+                }
+            }
 
-        int[] rect = getDialogRect();
-        String rawPath = windowScopedTempPath.resolve("dialog_green_multi_raw.png");
-        String washedPath = windowScopedTempPath.resolve("dialog_green_multi_washed.png");
-        if (!tracker.captureToFile("dialog-green-multi", rawPath, rect[0], rect[1], rect[2], rect[3])) {
-            log.warn("dialog green template multi-match capture failed: reason={}", reason);
+            int[] rect = getDialogRect();
+            String rawPath = windowScopedTempPath.resolve("dialog_green_multi_raw.png");
+            String washedPath = windowScopedTempPath.resolve("dialog_green_multi_washed.png");
+            if (!tracker.captureToFile("dialog-green-multi", rawPath, rect[0], rect[1], rect[2], rect[3])) {
+                log.warn("dialog green template multi-match capture failed: reason={}", reason);
+                return null;
+            }
+            // Normalize green option text before template matching so background texture is less noisy.
+            ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
+
+            for (GreenTemplateClickSpec spec : specs) {
+                if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
+                    continue;
+                }
+                double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
+                if (result == null || result.length < 2) {
+                    log.info("dialog green template multi-match miss: reason={} name={} template={}",
+                            reason, spec.name(), spec.templatePath());
+                    continue;
+                }
+
+                int absoluteX = rect[0] + (int) Math.round(result[0]);
+                int absoluteY = rect[1] + (int) Math.round(result[1]);
+                int lowX = Math.min(spec.minOffsetX(), spec.maxOffsetX());
+                int highX = Math.max(spec.minOffsetX(), spec.maxOffsetX());
+                int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
+                int offsetY = spec.randomRadiusY() <= 0
+                        ? 0
+                        : random.nextInt(spec.randomRadiusY() * 2 + 1) - spec.randomRadiusY();
+                Point safeClick = new Point(absoluteX + offsetX, absoluteY + offsetY);
+                log.info("dialog green template multi-match hit: reason={} name={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
+                        reason, spec.name(), spec.templatePath(), absoluteX, absoluteY,
+                        offsetX, offsetY, safeClick.x, safeClick.y);
+                inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+                matched = spec.name();
+                return matched;
+            }
+
+            log.info("dialog green template multi-match no hit: reason={} candidates={}", reason, specs.size());
             return null;
+        } finally {
+            LatencyMetrics.info(log, "dialog.greenTemplateFirst", latencyStart,
+                    "matched=" + (matched == null ? "-" : matched) + " reason=" + reason
+                            + " specCount=" + (specs == null ? 0 : specs.size()));
         }
-        // Normalize green option text before template matching so background texture is less noisy.
-        ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
-
-        for (GreenTemplateClickSpec spec : specs) {
-            if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
-                continue;
-            }
-            double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
-            if (result == null || result.length < 2) {
-                log.info("dialog green template multi-match miss: reason={} name={} template={}",
-                        reason, spec.name(), spec.templatePath());
-                continue;
-            }
-
-            int absoluteX = rect[0] + (int) Math.round(result[0]);
-            int absoluteY = rect[1] + (int) Math.round(result[1]);
-            int lowX = Math.min(spec.minOffsetX(), spec.maxOffsetX());
-            int highX = Math.max(spec.minOffsetX(), spec.maxOffsetX());
-            int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
-            int offsetY = spec.randomRadiusY() <= 0
-                    ? 0
-                    : random.nextInt(spec.randomRadiusY() * 2 + 1) - spec.randomRadiusY();
-            Point safeClick = new Point(absoluteX + offsetX, absoluteY + offsetY);
-            log.info("dialog green template multi-match hit: reason={} name={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
-                    reason, spec.name(), spec.templatePath(), absoluteX, absoluteY,
-                    offsetX, offsetY, safeClick.x, safeClick.y);
-            inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-            return spec.name();
-        }
-
-        log.info("dialog green template multi-match no hit: reason={} candidates={}", reason, specs.size());
-        return null;
     }
 
     public String readCurrentStoryGreenText(String reason) {
@@ -780,19 +760,19 @@ public class DialogService {
             return false;
         }
         try {
-            List<GreenTextBand> bands = findGreenTextBands(frame);
-            GreenTextBand band = pickGreenTextBand(bands, first);
-            if (band == null) {
-                log.warn("dialog green option not found: reason={} first={}", reason, first);
-                return false;
-            }
-            int clickX = rect[0] + (band.minX + band.maxX) / 2;
-            int clickY = rect[1] + (band.minY + band.maxY) / 2;
-            Point safeClick = coordinateHelper.getRandomizedPoint(new Point(clickX, clickY), 12, 3);
-            log.info("dialog click green option: reason={} first={} band={} click=({}, {})",
-                    reason, first, band, safeClick.x, safeClick.y);
-            inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-            return true;
+                List<GreenTextBand> bands = findGreenTextBands(frame);
+                GreenTextBand band = pickGreenTextBand(bands, first);
+                if (band == null) {
+                    log.warn("dialog green option not found: reason={} first={}", reason, first);
+                    return false;
+                }
+                int clickX = rect[0] + (band.minX + band.maxX) / 2;
+                int clickY = rect[1] + (band.minY + band.maxY) / 2;
+                Point safeClick = coordinateHelper.getRandomizedPoint(new Point(clickX, clickY), 12, 3);
+                log.info("dialog click green option: reason={} first={} band={} click=({}, {})",
+                        reason, first, band, safeClick.x, safeClick.y);
+                inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+                return true;
         } finally {
             frame.flush();
         }
@@ -898,13 +878,4 @@ public class DialogService {
                 () -> tracker.captureToFile(elementName, path, rect[0], rect[1], rect[2], rect[3]));
     }
 
-    private boolean sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-            return true;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
 }

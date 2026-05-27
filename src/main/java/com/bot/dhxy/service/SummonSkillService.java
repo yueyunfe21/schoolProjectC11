@@ -4,6 +4,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -218,7 +219,7 @@ public class SummonSkillService {
     private boolean openSummonSkillPanelDirect() {
         log.info("summon skill clean: press Alt+O to open summon panel");
         inputProvider.pressAltO();
-        sleep(900);
+        TaskSleep.sleep(900);
 
         Point anchor = findAttributeAnchor();
         if (anchor == null) {
@@ -242,7 +243,7 @@ public class SummonSkillService {
                 "skill entry"
         );
         inputProvider.clickLeft(skillButton.x, skillButton.y, 150);
-        sleep(OPEN_SKILL_PANEL_WAIT_MS);
+        TaskSleep.sleep(OPEN_SKILL_PANEL_WAIT_MS);
         log.info("summon skill clean: skill tab clicked");
         return true;
     }
@@ -390,7 +391,7 @@ public class SummonSkillService {
         Point hoverPoint = randomizeHoverPoint(toAbsolutePoint(new Point(EXTRA_SKILL_SLOT_HOVER_X, EXTRA_SKILL_SLOT_HOVER_Y)),
                 "extra skill slot hover");
         inputProvider.moveMouse(hoverPoint.x, hoverPoint.y);
-        sleep(SKILL_HOVER_WAIT_MS);
+        TaskSleep.sleep(SKILL_HOVER_WAIT_MS);
 
         YellowTipScan scan = captureAndWashYellowTipOnce("extra_slot", buildTipRectByHoverPoint(hoverPoint));
         if (scan == null || scan.yellowCount < MIN_YELLOW_PIXEL_COUNT) {
@@ -419,7 +420,7 @@ public class SummonSkillService {
     private SkillSlotStatus inspectSkillSlotDirect(Point slotAbsPoint) {
         Point hoverPoint = randomizeHoverPoint(slotAbsPoint, "skill slot hover");
         inputProvider.moveMouse(hoverPoint.x, hoverPoint.y);
-        sleep(SKILL_HOVER_WAIT_MS);
+        TaskSleep.sleep(SKILL_HOVER_WAIT_MS);
         return inspectCurrentHoverTip(hoverPoint);
     }
     private SkillSlotStatus inspectCurrentHoverTip(Point hoverAbsPoint) {
@@ -467,12 +468,12 @@ public class SummonSkillService {
         Point slotClickPoint = randomizeClickPoint(slotAbsPoint, SKILL_SLOT_CLICK_RANDOM_X, SKILL_SLOT_CLICK_RANDOM_Y,
                 "skill slot");
         inputProvider.clickLeft(slotClickPoint.x, slotClickPoint.y, 120);
-        sleep(SELECT_SKILL_WAIT_MS);
+        TaskSleep.sleep(SELECT_SKILL_WAIT_MS);
 
         Point deleteButton = randomizeClickPoint(toAbsolutePoint(new Point(DELETE_SKILL_BUTTON_X, DELETE_SKILL_BUTTON_Y)),
                 NORMAL_CLICK_RANDOM_X, NORMAL_CLICK_RANDOM_Y, "delete skill button");
         inputProvider.clickLeft(deleteButton.x, deleteButton.y, 120);
-        sleep(DELETE_DIALOG_WAIT_MS);
+        TaskSleep.sleep(DELETE_DIALOG_WAIT_MS);
 
         Point confirmButtonPoint = findForgetConfirmButton();
         if (confirmButtonPoint == null) {
@@ -483,7 +484,7 @@ public class SummonSkillService {
         Point confirmClickPoint = randomizeClickPoint(confirmButtonPoint, CONFIRM_CLICK_RANDOM_X, CONFIRM_CLICK_RANDOM_Y,
                 "forget confirm button");
         inputProvider.clickLeft(confirmClickPoint.x, confirmClickPoint.y, 120);
-        sleep(FORGET_DONE_WAIT_MS);
+        TaskSleep.sleep(FORGET_DONE_WAIT_MS);
         return true;
     }
 
@@ -537,7 +538,7 @@ public class SummonSkillService {
                 "summon panel drag to"
         );
         inputProvider.dragAndDrop(dragFrom.x, dragFrom.y, dragTo.x, dragTo.y);
-        sleep(DRAG_PANEL_WAIT_MS);
+        TaskSleep.sleep(DRAG_PANEL_WAIT_MS);
         return true;
     }
 
@@ -694,11 +695,4 @@ public class SummonSkillService {
         return true;
     }
 
-    private void sleep(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

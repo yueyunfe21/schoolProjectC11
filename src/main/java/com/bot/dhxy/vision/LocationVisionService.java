@@ -1,8 +1,15 @@
 package com.bot.dhxy.vision;
 
+
+
+import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.ocr.OcrWindowRegion;
+import com.bot.dhxy.model.ocr.PlayerAnchorMatch;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
+import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -56,11 +63,11 @@ public class LocationVisionService {
      * @return recognized location, or {@code null} when capture/recognition fails. If the current
      *         task has requested stop, this method throws {@link TaskStopRequestedException}.
      */
-    public TextRecognizer.LocationInfo scanCurrentLocation() {
+    public LocationInfo scanCurrentLocation() {
         long startedAt = System.currentTimeMillis();
         long latencyStart = LatencyMetrics.start();
         String provider = "NONE";
-        TextRecognizer.LocationInfo selected = null;
+        LocationInfo selected = null;
         String path = windowScopedTempPath.resolve("tmp_pos.png");
         try {
             checkpoint("start location scan");
@@ -78,7 +85,7 @@ public class LocationVisionService {
              * Stage 1: use the fast mini-map template reader first. This keeps normal position sync off
              * the OCR/network path when the local map label and coordinate templates are confident.
              */
-            TextRecognizer.LocationInfo templateLocation = scanByMiniMapTemplate(startedAt);
+            LocationInfo templateLocation = scanByMiniMapTemplate(startedAt);
             checkpoint("after minimap template location scan");
             if (templateLocation != null) {
                 provider = "MINIMAP_TEMPLATE";
@@ -95,7 +102,7 @@ public class LocationVisionService {
                 checkpoint("after coordinate strip capture");
                 long localStartedAt = System.currentTimeMillis();
                 checkpoint("before local location OCR");
-                TextRecognizer.LocationInfo local = ocr.parseLocationLocalOnly(path);
+                LocationInfo local = ocr.parseLocationLocalOnly(path);
                 checkpoint("after local location OCR");
                 if (local != null) {
                     provider = "LOCAL_OCR";
@@ -114,7 +121,7 @@ public class LocationVisionService {
                  */
                 long baiduStartedAt = System.currentTimeMillis();
                 checkpoint("before baidu location OCR");
-                TextRecognizer.LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
+                LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
                 checkpoint("after baidu location OCR");
                 provider = baidu == null ? "NONE" : "BAIDU_OCR";
                 selected = baidu;
@@ -133,7 +140,7 @@ public class LocationVisionService {
         }
     }
 
-    public Point extractPlayerPhysicalAnchor(List<TextRecognizer.OcrWordResult> ocrResults,
+    public Point extractPlayerPhysicalAnchor(List<OcrWordResult> ocrResults,
                                              String fullName,
                                              int scanStartX,
                                              int scanStartY,
@@ -142,7 +149,7 @@ public class LocationVisionService {
         return match == null ? null : match.anchor();
     }
 
-    public PlayerAnchorMatch extractPlayerAnchorMatch(List<TextRecognizer.OcrWordResult> ocrResults,
+    public PlayerAnchorMatch extractPlayerAnchorMatch(List<OcrWordResult> ocrResults,
                                                       String fullName,
                                                       int scanStartX,
                                                       int scanStartY,
@@ -153,7 +160,7 @@ public class LocationVisionService {
 
         String cleanFullName = fullName.replace(" ", "");
 
-        for (TextRecognizer.OcrWordResult w : ocrResults) {
+        for (OcrWordResult w : ocrResults) {
             String text = w.getText();
             if (text == null) {
                 continue;
@@ -201,25 +208,7 @@ public class LocationVisionService {
         return null;
     }
 
-    public record PlayerAnchorMatch(Point anchor,
-                                    String matchedText,
-                                    String matchedFragment,
-                                    String matchMode,
-                                    int compensationX,
-                                    OcrWindowRegion textRect,
-                                    double score) {
-        public String toDetailText() {
-            return "anchor=" + (anchor == null ? "null" : anchor.x + "," + anchor.y)
-                    + ", text=" + matchedText
-                    + ", fragment=" + matchedFragment
-                    + ", mode=" + matchMode
-                    + ", compensationX=" + compensationX
-                    + ", textRect=" + (textRect == null ? "-" : textRect.toShortText())
-                    + ", score=" + String.format("%.3f", score);
-        }
-    }
-
-    private TextRecognizer.LocationInfo scanByMiniMapTemplate(long startedAt) {
+    private LocationInfo scanByMiniMapTemplate(long startedAt) {
         long templateStartedAt = System.currentTimeMillis();
         try {
             checkpoint("before minimap template reader");
@@ -235,13 +224,13 @@ public class LocationVisionService {
                          * stay on the fast template path.
                          */
                         if (isDungeonFloorMap(location.mapName())) {
-                            TextRecognizer.LocationInfo verified = verifyFloorTemplateWithOcr(location, startedAt);
+                            LocationInfo verified = verifyFloorTemplateWithOcr(location, startedAt);
                             if (verified != null) {
                                 return verified;
                             }
                         }
                         MapCoordinate coordinate = location.coordinate();
-                        TextRecognizer.LocationInfo info = new TextRecognizer.LocationInfo(
+                        LocationInfo info = new LocationInfo(
                                 location.mapName(),
                                 coordinate.getX(),
                                 coordinate.getY()
@@ -280,7 +269,7 @@ public class LocationVisionService {
      * @return OCR-verified location when OCR disagrees with the template or learns a missing label;
      *         null when the template candidate can remain the selected result.
      */
-    private TextRecognizer.LocationInfo verifyFloorTemplateWithOcr(MiniMapCoordinateReader.TemplateLocationInfo templateLocation,
+    private LocationInfo verifyFloorTemplateWithOcr(TemplateLocationInfo templateLocation,
                                                                    long scanStartedAt) {
         String path = windowScopedTempPath.resolve("tmp_pos_floor_verify.png");
         if (!captureCurrentLocationStrip(path)) {
@@ -290,7 +279,7 @@ public class LocationVisionService {
         }
 
         long localStartedAt = System.currentTimeMillis();
-        TextRecognizer.LocationInfo local = ocr.parseLocationLocalOnly(path);
+        LocationInfo local = ocr.parseLocationLocalOnly(path);
         if (local == null) {
             log.info("[location] floor template OCR verify local miss: templateMap={} score={} label={}",
                     templateLocation.mapName(),
