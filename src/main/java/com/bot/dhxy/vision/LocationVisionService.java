@@ -9,6 +9,7 @@ import com.bot.dhxy.model.ocr.PlayerAnchorMatch;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
+import com.bot.dhxy.model.navigation.MapLabelTemplateMatch;
 import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
@@ -21,12 +22,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.imageio.ImageIO;
 import java.awt.Point;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 位置视觉服务：只负责截图、OCR/template 识别和返回坐标，不执行真实输入。
@@ -49,6 +53,10 @@ public class LocationVisionService {
     private static final int height = 35;
     private static final int width = 178;
     private static final int NAME_CHAR_GAP_PX = 4;
+    private static final double MAP_LABEL_CONFIDENT_DIFFERENT_MATCH_SCORE = 0.62;
+    private static final int MAP_LABEL_LEARN_MIN_WHITE_PIXELS = 12;
+    private static final double MAP_LABEL_LEARN_MIN_DENSITY = 0.02;
+    private static final double MAP_LABEL_LEARN_MAX_DENSITY = 0.65;
     private static final Path MAP_LABEL_TEMPLATE_DIR = Path.of("images", "template", "map_label")
             .toAbsolutePath()
             .normalize();
@@ -108,6 +116,7 @@ public class LocationVisionService {
                 if (local != null) {
                     provider = "LOCAL_OCR";
                     selected = local;
+                    learnMissingMapLabelTemplate(local.mapName, path, true);
                     log.info("[location] selected provider=LOCAL_OCR elapsedMs={} localElapsedMs={} location={}",
                             System.currentTimeMillis() - startedAt,
                             System.currentTimeMillis() - localStartedAt,
@@ -126,6 +135,9 @@ public class LocationVisionService {
                 checkpoint("after baidu location OCR");
                 provider = baidu == null ? "NONE" : "BAIDU_OCR";
                 selected = baidu;
+                if (baidu != null) {
+                    learnMissingMapLabelTemplate(baidu.mapName, path, true);
+                }
                 log.info("[location] selected provider={} elapsedMs={} baiduElapsedMs={} location={}",
                         provider,
                         System.currentTimeMillis() - startedAt,
@@ -289,7 +301,7 @@ public class LocationVisionService {
             return null;
         }
 
-        learnMissingMapLabelTemplate(local.mapName, templateLocation.mapLabelPath());
+        learnMissingMapLabelTemplate(local.mapName, templateLocation.mapLabelPath(), false);
         if (!templateLocation.mapName().equals(local.mapName)) {
             log.info("[location] floor template corrected by OCR: templateMap={} ocrMap={} coord=({}, {}) "
                             + "templateScore={} elapsedMs={} localElapsedMs={} label={}",
@@ -308,10 +320,12 @@ public class LocationVisionService {
      * missing.
      *
      * @param mapName OCR-read map name. Blank values are ignored.
-     * @param cleanedLabelPath window-scoped cleaned label image produced by the template reader.
+     * @param sourceImagePath window-scoped cleaned label image or the captured coordinate strip.
+     * @param sourceIsCoordinateStrip true when {@code sourceImagePath} is the full mini-map
+     *                                coordinate strip and the map label still needs cropping.
      */
-    private void learnMissingMapLabelTemplate(String mapName, String cleanedLabelPath) {
-        if (mapName == null || mapName.isBlank() || cleanedLabelPath == null || cleanedLabelPath.isBlank()) {
+    private void learnMissingMapLabelTemplate(String mapName, String sourceImagePath, boolean sourceIsCoordinateStrip) {
+        if (mapName == null || mapName.isBlank() || sourceImagePath == null || sourceImagePath.isBlank()) {
             return;
         }
         Path target = MAP_LABEL_TEMPLATE_DIR.resolve(safeTemplateFileName(mapName) + ".png").normalize();
@@ -320,12 +334,110 @@ public class LocationVisionService {
         }
         try {
             Files.createDirectories(MAP_LABEL_TEMPLATE_DIR);
-            Files.copy(Path.of(cleanedLabelPath), target, StandardCopyOption.REPLACE_EXISTING);
-            log.info("[location] learned missing minimap label template: map={} path={}", mapName, target);
+            if (sourceIsCoordinateStrip) {
+                BufferedImage strip = ImageIO.read(Path.of(sourceImagePath).toFile());
+                if (strip == null) {
+                    log.warn("[location] learn minimap label template skipped: map={} source={} reason=strip-read-null",
+                            mapName, sourceImagePath);
+                    return;
+                }
+                try {
+                    Optional<BufferedImage> label = miniMapCoordinateReader.extractCleanMapLabelImageFromCoordinateStrip(strip);
+                    if (label.isEmpty()) {
+                        log.warn("[location] learn minimap label template skipped: map={} source={} reason=label-crop-miss",
+                                mapName, sourceImagePath);
+                        return;
+                    }
+                    try {
+                        if (!shouldLearnMapLabelTemplate(mapName, label.get(), sourceImagePath, true)) {
+                            return;
+                        }
+                        ImageIO.write(label.get(), "png", target.toFile());
+                    } finally {
+                        label.get().flush();
+                    }
+                } finally {
+                    strip.flush();
+                }
+            } else {
+                BufferedImage label = ImageIO.read(Path.of(sourceImagePath).toFile());
+                if (label == null) {
+                    log.warn("[location] learn minimap label template skipped: map={} source={} reason=label-read-null",
+                            mapName, sourceImagePath);
+                    return;
+                }
+                try {
+                    if (!shouldLearnMapLabelTemplate(mapName, label, sourceImagePath, false)) {
+                        return;
+                    }
+                } finally {
+                    label.flush();
+                }
+                Files.copy(Path.of(sourceImagePath), target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            miniMapCoordinateReader.invalidateMapLabelTemplateCache();
+            log.info("[location] learned missing minimap label template: map={} path={} source={} sourceType={}",
+                    mapName, target, sourceImagePath, sourceIsCoordinateStrip ? "coordinate-strip" : "clean-label");
         } catch (IOException e) {
             log.warn("[location] learn minimap label template failed: map={} source={} target={} reason={}",
-                    mapName, cleanedLabelPath, target, e.getMessage(), e);
+                    mapName, sourceImagePath, target, e.getMessage(), e);
         }
+    }
+
+    private boolean shouldLearnMapLabelTemplate(String mapName,
+                                                BufferedImage label,
+                                                String sourceImagePath,
+                                                boolean sourceIsCoordinateStrip) {
+        if (!isLearnableMapName(mapName)) {
+            log.warn("[location] learn minimap label template skipped: map={} source={} reason=bad-map-name",
+                    mapName, sourceImagePath);
+            return false;
+        }
+        if (!isLearnableLabelImage(label)) {
+            log.warn("[location] learn minimap label template skipped: map={} source={} reason=bad-label-image",
+                    mapName, sourceImagePath);
+            return false;
+        }
+
+        Optional<MapLabelTemplateMatch> best = miniMapCoordinateReader.recognizeMapLabelImage(label);
+        if (best.isPresent()
+                && best.get().score() >= MAP_LABEL_CONFIDENT_DIFFERENT_MATCH_SCORE
+                && !mapName.equals(best.get().mapName())) {
+            log.warn("[location] learn minimap label template skipped: map={} source={} reason=confident-other-map "
+                            + "bestMap={} bestScore={} sourceType={}",
+                    mapName, sourceImagePath, best.get().mapName(),
+                    String.format("%.3f", best.get().score()),
+                    sourceIsCoordinateStrip ? "coordinate-strip" : "clean-label");
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isLearnableMapName(String mapName) {
+        String value = mapName == null ? "" : mapName.trim();
+        return value.length() >= 2
+                && value.length() <= 12
+                && value.matches(".*[\\u4E00-\\u9FFF].*")
+                && !value.matches(".*[\\s,，。.;；:：()（）\\[\\]【】{}<>《》].*");
+    }
+
+    private boolean isLearnableLabelImage(BufferedImage label) {
+        if (label == null || label.getWidth() < 8 || label.getHeight() < 6) {
+            return false;
+        }
+        int whitePixels = 0;
+        for (int y = 0; y < label.getHeight(); y++) {
+            for (int x = 0; x < label.getWidth(); x++) {
+                if ((label.getRGB(x, y) & 0x00FFFFFF) == 0x00FFFFFF) {
+                    whitePixels++;
+                }
+            }
+        }
+        int totalPixels = Math.max(1, label.getWidth() * label.getHeight());
+        double density = whitePixels / (double) totalPixels;
+        return whitePixels >= MAP_LABEL_LEARN_MIN_WHITE_PIXELS
+                && density >= MAP_LABEL_LEARN_MIN_DENSITY
+                && density <= MAP_LABEL_LEARN_MAX_DENSITY;
     }
 
     private String safeTemplateFileName(String mapName) {

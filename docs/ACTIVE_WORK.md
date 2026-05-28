@@ -1,5 +1,35 @@
 # DHXY Active Work
 
+### He Li - 2026-05-27 backlog: mounted purple player-name anchor
+
+Status: backlog / paused
+
+Context:
+
+- While debugging 修罗 route click through `张闻`, the `PLAYER_ANCHOR_FORMULA` path failed because the purple player-name anchor could not be extracted.
+- The failing run knew the bound role name was `『忍者』影`, but the purple OCR path returned no words and then rejected the blob fallback:
+  - `center_scan_player.png` OCR returned no text.
+  - blob fallback saw a large noisy mask, for example `darkPixels=5592 rect=(36,143)-(308,314) size=273x172`, and correctly refused to use it as a player-name anchor.
+- A temporary local experiment captured the mounted scene and produced:
+  - `purpleWords=-`
+  - `wordCount=0`
+  - `blackPixels=21152`
+  - result `name-not-matched`
+- Visual inspection showed the washed purple image was dominated by mount/effect noise; the actual role-name text was not isolated into OCR-friendly lines.
+
+Decision:
+
+- Pause this work for now. It is not blocking the immediate 修罗 route/debug priority.
+- Do not broaden production `NpcClickService` for this until we have a clean, name-aware purple candidate extraction experiment.
+
+Future direction:
+
+- Build a safe non-clicking experiment that captures one bound window and extracts multiple small purple text-line candidates.
+- Use the known bound role name from `ClientIdentityService` / `GameContext.State.me` as the required match target.
+- Reject large mount/effect blobs before OCR; only OCR compact, horizontal, text-like candidates.
+- If a candidate matches the known role name or a strong fragment, return a `PlayerAnchorMatch`; otherwise return no anchor.
+- Keep the experiment outside the formal task path until it is reliable on mounted characters.
+
 ### Tang De - 2026-05-27 task checkpoint consolidation
 
 Status: implemented / compile passed

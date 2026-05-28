@@ -60,8 +60,6 @@ public class FiveRingTask extends BaseTaskTemplate {
     private static final int NPC_COOR_Y = 174;
     private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/wuhuan_accept_first_option.png";
 
-    private static final int TUNE_X = -10;
-    private static final int TUNE_Y = 0;
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 
     private static final int MAX_RETRY = 5;
@@ -498,8 +496,6 @@ public class FiveRingTask extends BaseTaskTemplate {
                 .y(NPC_COOR_Y)
                 .role(NpcRole.QUEST_GIVER)
                 .movementType(NpcMovementType.FIXED)
-                .tuneX(TUNE_X)
-                .tuneY(TUNE_Y)
                 .expectedDialogTemplatePath(ACCEPT_OPTION_TEMPLATE)
                 .source("five-ring")
                 .build();

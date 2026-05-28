@@ -1484,13 +1484,17 @@ public class GameTextLineOcrService {
      *
      * <p>Game yellow-name OCR can drop the first or last characters, for example recognizing
      * "灵兽村使者" as only "村使". This method keeps the shared matcher as the primary rule, then
-     * allows a weaker two-character contiguous hit for this yellow-target path only. The caller
-     * still verifies the expected dialog after clicking, so a weak yellow hit cannot complete the
-     * NPC click by itself.</p>
+     * allows a weaker two-character contiguous hit for this yellow-target path only. For two-character
+     * NPC names, allow one OCR substitution as well: 张闻 can be read as 收闻 while the visual block
+     * is still clearly the intended short yellow NPC name. The caller still verifies the expected
+     * dialog after clicking, so a weak yellow hit cannot complete the NPC click by itself.</p>
      */
     private TargetMatch targetMatch(String ocrText, String expected) {
         OcrTextMatcher.MatchResult result = OcrTextMatcher.matchShortName(ocrText, expected);
-        boolean yellowHit = result.hit() || result.longestCommonSubstring() >= 2;
+        boolean shortNameOneGlyphOff = result.normalizedTarget().length() == 2
+                && result.normalizedText().length() == 2
+                && result.editDistance() <= 1;
+        boolean yellowHit = result.hit() || result.longestCommonSubstring() >= 2 || shortNameOneGlyphOff;
         return new TargetMatch(yellowHit, result.editDistance(), result.longestCommonSubstring());
     }
 

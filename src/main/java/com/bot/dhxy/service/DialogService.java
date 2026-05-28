@@ -18,6 +18,7 @@ import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
+import com.bot.dhxy.service.dialog.DialogOptionClickResult;
 import com.bot.dhxy.service.dialog.DialogStoryPolicy;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
@@ -107,8 +108,9 @@ public class DialogService {
             }
         }
 
-        // Stage 2: classify the visible dialog without focusing the window again.
-        DialogType type = detectDialogTypeNoFocus("handle-dialog:" + request.getOperation());
+        // Stage 2: classify once and pass the same screenshot into option OCR.
+        DialogDetection detection = detectDialogSnapshotDirect("handle-dialog:" + request.getOperation());
+        DialogType type = detection.type();
         if (type == DialogType.NONE) {
             return finishRequest(request, type, DialogHandleResult.NO_DIALOG);
         }
@@ -125,7 +127,7 @@ public class DialogService {
         // Stage 4: option dialogs are handled by the request's explicit option policy.
         DialogHandleResult result = switch (request.getOptionPolicy()) {
             case IGNORE -> DialogHandleResult.OPTION_IGNORED;
-            case CLICK_KEYWORD -> handleKeywordOption(request);
+            case CLICK_KEYWORD -> handleKeywordOption(request, detection);
             case CLICK_BUSINESS_OPTION -> handleBusinessOption(request.isIncludeCleanupBusinessOptions());
             case GIVE_ITEM_IF_AVAILABLE -> tryGiveItemFromCurrentOptionDialog(request.getItemToGive(), request.getKnownBagIndex());
             case FALLBACK_FIRST_OPTION -> clickFirstGreenOption(getDialogRect(), "request fallback first green option")
@@ -186,16 +188,15 @@ public class DialogService {
         return TaskSleep.sleep(800 + random.nextInt(300));
     }
 
-    private DialogHandleResult handleKeywordOption(DialogHandleRequest request) {
+    private DialogHandleResult handleKeywordOption(DialogHandleRequest request, DialogDetection detection) {
         if (request.getTargetKeyword() == null) {
             log.warn("dialog keyword option requested without targetKeyword");
             return DialogHandleResult.OPTION_KEYWORD_NOT_FOUND;
         }
-        boolean clicked = processOptionsWithOCR(request.getTargetKeyword(), request.isAllowFallbackOptionClick());
-        if (clicked) {
-            return DialogHandleResult.OPTION_KEYWORD_CLICKED;
-        }
-        return DialogHandleResult.OPTION_KEYWORD_NOT_FOUND;
+        return processOptionsWithOCRDetailed(
+                request.getTargetKeyword(),
+                request.isAllowFallbackOptionClick(),
+                detection).getResult();
     }
 
     private DialogHandleResult tryGiveItemFromCurrentOptionDialog(String itemToGive, Integer knownBagIndex) {
@@ -230,7 +231,7 @@ public class DialogService {
             return handleDialog(DialogHandleRequest.giveItemIfAvailable("dialog-direct", itemToGive, knownBagIndex));
         }
 
-        DialogType type = detectDialogTypeDirect();
+        DialogType type = detectDialogSnapshotDirect("give-item-current-option").type();
         if (type == DialogType.NONE) {
             return DialogHandleResult.NO_DIALOG;
         }
@@ -288,58 +289,145 @@ public class DialogService {
      * @return detected dialog type; {@link DialogType#NONE} means no known dialog frame matched.
      */
     public DialogType detectDialogTypeNoFocus(String reason) {
-        long latencyStart = LatencyMetrics.start();
-        DialogType type = detectDialogTypeDirect();
-        log.info("dialog detect no-focus: reason={} result={}", reason, type);
-        LatencyMetrics.info(log, "dialog.detect", latencyStart,
-                "reason=" + reason + " result=" + type);
-        return type;
+        return detectDialogSnapshotDirect(reason).type();
     }
 
-    private DialogType detectDialogTypeDirect() {
-        if (!TaskSleep.sleep(700 + random.nextInt(100))) {
-            return DialogType.NONE;
-        }
-        if (!hasDialogMask()) {
-            return DialogType.NONE;
+    /**
+     * Click a target keyword in the current option dialog and return the clicked point for learning.
+     *
+     * @param sourceTask short source string for logs.
+     * @param targetKeyword keyword or map alias expected in the green option text.
+     * @param allowFallbackOptionClick whether to click the last green option when OCR cannot match
+     *                                 the keyword. Fallback clicks are not returned as learnable
+     *                                 points because they are not tied to a matched target.
+     * @return dialog click result with dialog-relative coordinates when OCR matched the keyword.
+     */
+    public DialogOptionClickResult clickKeywordOptionWithPoint(String sourceTask,
+                                                               String targetKeyword,
+                                                               boolean allowFallbackOptionClick) {
+        log.info("dialog keyword click with point: source={} target={} fallback={}",
+                sourceTask, targetKeyword, allowFallbackOptionClick);
+        if (targetKeyword == null || targetKeyword.isBlank()) {
+            return DialogOptionClickResult.of(DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
         }
 
-        if (hasOptionInLowerHalf()) {
-            return DialogType.OPTION;
+        DialogDetection detection = detectDialogSnapshotDirect("keyword-click-point:" + sourceTask);
+        if (detection.type() == DialogType.NONE) {
+            /*
+             * Route transfer dialogs can occasionally pass the dark dialog-mask test but miss the
+             * option/story classifier because their green text sits near a crop boundary. In this
+             * uncertain state, try keyword OCR only and deliberately disable fallback clicks so a
+             * map overlay or unrelated panel cannot be clicked blindly.
+             */
+            if (detection.image() != null) {
+                DialogOptionClickResult uncertainResult = processOptionsWithOCRDetailed(targetKeyword, false, detection);
+                if (uncertainResult.getResult() == DialogHandleResult.OPTION_KEYWORD_CLICKED) {
+                    log.info("dialog keyword click recovered from uncertain dialog type: source={} target={}",
+                            sourceTask, targetKeyword);
+                    return uncertainResult;
+                }
+            }
+            return DialogOptionClickResult.of(DialogHandleResult.NO_DIALOG);
         }
-
-        if (hasStoryInUpperHalf()) {
-            return DialogType.STORY;
+        if (detection.type() == DialogType.STORY) {
+            return DialogOptionClickResult.of(DialogHandleResult.STORY_IGNORED);
         }
+        if (detection.type() != DialogType.OPTION) {
+            return DialogOptionClickResult.of(DialogHandleResult.OPTION_IGNORED);
+        }
+        return processOptionsWithOCRDetailed(targetKeyword, allowFallbackOptionClick, detection);
+    }
 
-        log.debug("dialog mask exists but no text found");
-        return DialogType.NONE;
+    /**
+     * Click a previously learned dialog-relative option point after verifying an option dialog exists.
+     *
+     * @param relativeX X relative to {@link #getDialogRect()}.
+     * @param relativeY Y relative to {@link #getDialogRect()}.
+     * @param reason short diagnostic source.
+     * @return true when an option dialog was present and the point was clicked.
+     */
+    public boolean clickRememberedOptionPointDirectForExclusive(int relativeX, int relativeY, String reason) {
+        if (!isInputWorkerThread()) {
+            return inputSequences.submitExclusiveAndWait("dialog:rememberedOption:" + reason,
+                    () -> clickRememberedOptionPointDirectForExclusive(relativeX, relativeY, reason));
+        }
+        DialogType type = detectDialogSnapshotDirect("remembered-option:" + reason).type();
+        if (type != DialogType.OPTION) {
+            log.info("dialog remembered option skipped: reason={} type={}", reason, type);
+            return false;
+        }
+        int[] rect = getDialogRect();
+        int x = rect[0] + relativeX;
+        int y = rect[1] + relativeY;
+        Point safeClick = coordinateHelper.getRandomizedPoint(new Point(x, y), 4, 3);
+        log.info("dialog remembered option click: reason={} rel=({}, {}) click=({}, {})",
+                reason, relativeX, relativeY, safeClick.x, safeClick.y);
+        inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+        return TaskSleep.sleep(500 + random.nextInt(150));
+    }
+
+    private DialogDetection detectDialogSnapshotDirect(String reason) {
+        long latencyStart = LatencyMetrics.start();
+        DialogDetection detection = DialogDetection.none();
+        try {
+            if (!TaskSleep.sleep(700 + random.nextInt(100))) {
+                return detection;
+            }
+            detection = captureDialogSnapshot(reason);
+            if (detection.image() == null) {
+                return detection;
+            }
+            if (!hasDialogMask(detection)) {
+                return detection;
+            }
+
+            if (hasOptionInLowerHalf(detection)) {
+                detection = detection.withType(DialogType.OPTION);
+                return detection;
+            }
+
+            if (hasStoryInUpperHalf(detection)) {
+                detection = detection.withType(DialogType.STORY);
+                return detection;
+            }
+
+            log.debug("dialog mask exists but no text found");
+            return detection;
+        } finally {
+            log.info("dialog detect no-focus: reason={} result={}", reason, detection.type());
+            LatencyMetrics.info(log, "dialog.detect", latencyStart,
+                    "reason=" + reason + " result=" + detection.type());
+        }
     }
 
     private boolean isInputWorkerThread() {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
     }
 
-    private boolean hasOptionInLowerHalf() {
-        int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y + CROP_TOP_Y, DIALOG_SMALL_W, DIALOG_SMALL_H - CROP_TOP_Y);
-        BufferedImage frame = tracker.captureToMemory("opt-scan", area[0], area[1], area[2], area[3]);
-        ImagePreprocessor.saveDebugImage(frame, windowScopedTempPath.resolve("opt-scan-debug.png"));
-        if (frame == null) return false;
-
-        int count = ImagePreprocessor.countGreenPixelsHSV(frame, windowScopedTempPath.resolve("debug_hsv_mask_green.png"));
-        frame.flush();
-        return count > 150;
+    private DialogDetection captureDialogSnapshot(String reason) {
+        int[] rect = getDialogRect();
+        BufferedImage image = tracker.captureToMemory("dialog-snapshot:" + reason, rect[0], rect[1], rect[2], rect[3]);
+        if (image == null) {
+            return DialogDetection.none();
+        }
+        return new DialogDetection(DialogType.NONE, rect, null, image);
     }
 
-    private boolean hasDialogMask() {
-        int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X + CROP_LEFT_X, DIALOG_SMALL_Y + CROP_DEV_Y, DIALOG_SMALL_W - CROP_LEFT_X, DIALOG_SMALL_H - CROP_DEV_Y);
-        BufferedImage frame = tracker.captureToMemory("std-scan", area[0], area[1], area[2], area[3]);
+    private boolean hasOptionInLowerHalf(DialogDetection detection) {
+        int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y + CROP_TOP_Y, DIALOG_SMALL_W, DIALOG_SMALL_H - CROP_TOP_Y);
+        BufferedImage frame = cropFromSnapshot(detection, area);
         if (frame == null) return false;
 
-        String diagnosticPrefix = windowScopedTempPath.resolve("debug_dialog_std_scan");
-        ImagePreprocessor.saveDebugImage(frame, diagnosticPrefix + "_capture_raw.png");
-        tracker.captureRegionDiagnostics("dialog-std-scan", diagnosticPrefix,
-                area[0], area[1], area[2], area[3]);
+        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, windowScopedTempPath.resolve("debug_hsv_mask_green.png"));
+        int yellowCount = ImagePreprocessor.countYellowPixels(frame);
+        frame.flush();
+        return greenCount > 150 || yellowCount > 120;
+    }
+
+    private boolean hasDialogMask(DialogDetection detection) {
+        int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X + CROP_LEFT_X, DIALOG_SMALL_Y + CROP_DEV_Y, DIALOG_SMALL_W - CROP_LEFT_X, DIALOG_SMALL_H - CROP_DEV_Y);
+        BufferedImage frame = cropFromSnapshot(detection, area);
+        if (frame == null) return false;
 
         double stddev = ImagePreprocessor.getImageStandardDeviation(frame, windowScopedTempPath.resolve("debug_smoothness_gray.png"));
         frame.flush();
@@ -347,17 +435,66 @@ public class DialogService {
         return stddev < 30.0;
     }
 
-    private boolean hasStoryInUpperHalf() {
+    private boolean hasStoryInUpperHalf(DialogDetection detection) {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, CROP_TOP_Y);
-        BufferedImage frame = tracker.captureToMemory("story-scan", area[0], area[1], area[2], area[3]);
+        BufferedImage frame = cropFromSnapshot(detection, area);
         if (frame == null) return false;
-        ImagePreprocessor.saveDebugImage(frame, windowScopedTempPath.resolve("story_scan.png"));
         int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame, windowScopedTempPath.resolve("debug_thin_white_text.png"));
         int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, windowScopedTempPath.resolve("debug_hsv_mask_green.png"));
         frame.flush();
 
         int totalTextPixels = thinWhiteCount + greenCount;
         return totalTextPixels > 200;
+    }
+
+    private BufferedImage cropFromSnapshot(DialogDetection detection, int[] absoluteRect) {
+        if (detection == null || detection.image() == null || detection.dialogRect() == null || absoluteRect == null) {
+            return null;
+        }
+        int left = Math.max(absoluteRect[0], detection.dialogRect()[0]);
+        int top = Math.max(absoluteRect[1], detection.dialogRect()[1]);
+        int right = Math.min(absoluteRect[2], detection.dialogRect()[2]);
+        int bottom = Math.min(absoluteRect[3], detection.dialogRect()[3]);
+        if (right <= left || bottom <= top) {
+            log.warn("dialog snapshot crop outside source: source={} target={}", rectToString(detection.dialogRect()), rectToString(absoluteRect));
+            return null;
+        }
+        BufferedImage subimage = detection.image().getSubimage(
+                left - detection.dialogRect()[0],
+                top - detection.dialogRect()[1],
+                right - left,
+                bottom - top);
+        BufferedImage copy = new BufferedImage(subimage.getWidth(), subimage.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = copy.createGraphics();
+        try {
+            graphics.drawImage(subimage, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+        return copy;
+    }
+
+    private boolean saveImage(BufferedImage image, String path) {
+        try {
+            File file = new File(path);
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                log.warn("dialog snapshot output directory could not be created: {}", parent);
+                return false;
+            }
+            ImageIO.write(image, "png", file);
+            return true;
+        } catch (IOException e) {
+            log.warn("dialog snapshot save failed: path={}", path, e);
+            return false;
+        }
+    }
+
+    private String rectToString(int[] rect) {
+        if (rect == null || rect.length < 4) {
+            return "-";
+        }
+        return "[" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3] + "]";
     }
 
     public void fastClickStoryDialog() {
@@ -380,36 +517,104 @@ public class DialogService {
         return TaskSleep.sleep(600 + random.nextInt(100));
     }
 
-    private boolean processOptionsWithOCR(String targetKeyword) {
-        return processOptionsWithOCR(targetKeyword, true);
-    }
 
-    private boolean processOptionsWithOCR(String targetKeyword, boolean allowFallbackOptionClick) {
-        int[] rect = getDialogRect();
-        String path = windowScopedTempPath.resolve("dialog_active_scan.png");
-        if (!captureToFileExclusive("dialog:ocrCapture", "OCR-Scan", path, rect)) return false;
+    private DialogOptionClickResult processOptionsWithOCRDetailed(String targetKeyword,
+                                                                  boolean allowFallbackOptionClick,
+                                                                  DialogDetection detection) {
+        int[] rect = detection != null && detection.dialogRect() != null ? detection.dialogRect() : getDialogRect();
+        String rawPath = detection == null ? null : detection.rawPath();
+        if ((rawPath == null || rawPath.isBlank()) && detection != null && detection.image() != null) {
+            rawPath = windowScopedTempPath.resolve("dialog_snapshot_raw.png");
+            if (!saveImage(detection.image(), rawPath)) {
+                rawPath = null;
+            }
+        }
+        if (rawPath == null || rawPath.isBlank()) {
+            rawPath = windowScopedTempPath.resolve("dialog_active_scan.png");
+            if (!captureToFileExclusive("dialog:ocrCapture", "OCR-Scan", rawPath, rect)) {
+                return DialogOptionClickResult.of(DialogHandleResult.FAILED);
+            }
+        }
 
         List<String> aliases = MAP_ALIASES.getOrDefault(targetKeyword, java.util.Collections.singletonList(targetKeyword));
-        List<OcrWordResult> results = ocr.getAllTextResultsForMatch(
-                path,
-                "dialog-options:" + targetKeyword,
-                words -> hasAnyKeyword(words, aliases));
+        OptionOcrScan scan = readOptionWords(rawPath, targetKeyword, aliases);
 
         for (String alias : aliases) {
-            for (OcrWordResult word : results) {
+            for (OcrWordResult word : scan.words()) {
                 if (word.getText().contains(alias)) {
-                    log.info("dialog OCR hit alias={} target={} path={}", alias, targetKeyword, path);
-                    inputSequences.clickLeft("dialog:ocrOption", rect[0] + word.getX(), rect[1] + word.getY(), 150);
-                    return true;
+                    log.info("dialog OCR hit alias={} target={} color={} path={}",
+                            alias, targetKeyword, scan.color(), scan.path());
+                    int absoluteX = rect[0] + word.getX();
+                    int absoluteY = rect[1] + word.getY();
+                    inputSequences.clickLeft("dialog:ocrOption", absoluteX, absoluteY, 150);
+                    return DialogOptionClickResult.builder()
+                            .result(DialogHandleResult.OPTION_KEYWORD_CLICKED)
+                            .relativeX(word.getX())
+                            .relativeY(word.getY())
+                            .absoluteX(absoluteX)
+                            .absoluteY(absoluteY)
+                            .matchedText(word.getText())
+                            .build();
                 }
             }
         }
         if (!allowFallbackOptionClick) {
             log.warn("dialog OCR target not matched and fallback disabled: target={} aliases={} path={} words={}",
-                    targetKeyword, aliases, path, summarizeWords(results));
-            return false;
+                    targetKeyword, aliases, scan.path(), summarizeWords(scan.words()));
+            return DialogOptionClickResult.of(DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
         }
-        return clickLastGreenOption(rect, "OCR target not matched");
+        return DialogOptionClickResult.of(clickLastGreenOption(rect, "OCR target not matched")
+                ? DialogHandleResult.FALLBACK_CLICKED
+                : DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
+    }
+
+    private OptionOcrScan readOptionWords(String rawPath, String targetKeyword, List<String> aliases) {
+        String greenPath = windowScopedTempPath.resolve("dialog_active_green.png");
+        ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, greenPath);
+        if (!new File(greenPath).exists()) {
+            List<OcrWordResult> words = ocr.getAllTextResultsForMatch(
+                    rawPath,
+                    "dialog-options:" + targetKeyword + ":raw",
+                    result -> hasAnyKeyword(result, aliases));
+            return new OptionOcrScan("raw", rawPath, words);
+        }
+
+        /*
+         * Normal option text is green, but route recommendation choices can be yellow. Keep green
+         * first for ordinary dialogs, then retry the same raw snapshot with the shared yellow-text
+         * wash so transfer choices such as "长安桥(400两)" do not disappear before OCR.
+         */
+        List<OcrWordResult> greenWords = ocr.getAllTextResultsForMatch(
+                greenPath,
+                "dialog-options:" + targetKeyword + ":green",
+                words -> hasAnyKeyword(words, aliases));
+        if (hasAnyKeyword(greenWords, aliases)) {
+            return new OptionOcrScan("green", greenPath, greenWords);
+        }
+
+        String yellowPath = windowScopedTempPath.resolve("dialog_active_yellow.png");
+        ImagePreprocessor.washYellowText(rawPath, yellowPath);
+        if (!new File(yellowPath).exists()) {
+            return new OptionOcrScan("green", greenPath, greenWords);
+        }
+        List<OcrWordResult> yellowWords = ocr.getAllTextResultsForMatch(
+                yellowPath,
+                "dialog-options:" + targetKeyword + ":yellow",
+                words -> hasAnyKeyword(words, aliases));
+        return hasAnyKeyword(yellowWords, aliases)
+                ? new OptionOcrScan("yellow", yellowPath, yellowWords)
+                : new OptionOcrScan("green+yellow", yellowPath, mergeWords(greenWords, yellowWords));
+    }
+
+    private List<OcrWordResult> mergeWords(List<OcrWordResult> first, List<OcrWordResult> second) {
+        java.util.ArrayList<OcrWordResult> merged = new java.util.ArrayList<>();
+        if (first != null) {
+            merged.addAll(first);
+        }
+        if (second != null) {
+            merged.addAll(second);
+        }
+        return merged;
     }
 
     private boolean hasAnyKeyword(List<OcrWordResult> words, List<String> keywords) {
@@ -466,7 +671,7 @@ public class DialogService {
             return inputSequences.submitExclusiveAndWait("dialog:lastGreenOption:" + reason,
                     () -> clickLastGreenOptionDirectForExclusive(reason));
         }
-        DialogType type = detectDialogTypeDirect();
+        DialogType type = detectDialogSnapshotDirect("last-green-option:" + reason).type();
         if (type != DialogType.OPTION) {
             log.info("dialog last green option skipped: reason={} type={}", reason, type);
             return false;
@@ -569,7 +774,7 @@ public class DialogService {
             log.warn("dialog green template visibility requested without template: reason={}", reason);
             return false;
         }
-        DialogType type = detectDialogTypeDirect();
+        DialogType type = detectDialogSnapshotDirect("green-template-visible:" + reason).type();
         if (type != DialogType.OPTION) {
             log.info("dialog green template visibility skipped: reason={} type={}", reason, type);
             return false;
@@ -595,7 +800,7 @@ public class DialogService {
                 log.warn("dialog green template option requested without template: reason={}", reason);
                 return false;
             }
-            DialogType type = detectDialogTypeDirect();
+            DialogType type = detectDialogSnapshotDirect("green-template-click:" + reason).type();
             if (type != DialogType.OPTION) {
                 log.info("dialog green template option skipped: reason={} type={}", reason, type);
                 return false;
@@ -640,7 +845,7 @@ public class DialogService {
                 return null;
             }
             if (verifyDialogType) {
-                DialogType type = detectDialogTypeDirect();
+                DialogType type = detectDialogSnapshotDirect("green-template-first:" + reason).type();
                 if (type != DialogType.OPTION) {
                     log.info("dialog green template multi-match skipped: reason={} type={}", reason, type);
                     return null;
@@ -911,6 +1116,20 @@ public class DialogService {
     private boolean captureToFileExclusive(String description, String elementName, String path, int[] rect) {
         return inputSequences.submitExclusiveAndWait(description,
                 () -> tracker.captureToFile(elementName, path, rect[0], rect[1], rect[2], rect[3]));
+    }
+
+    private record OptionOcrScan(String color, String path, List<OcrWordResult> words) {
+    }
+
+    private record DialogDetection(DialogType type, int[] dialogRect, String rawPath, BufferedImage image) {
+
+        private static DialogDetection none() {
+            return new DialogDetection(DialogType.NONE, null, null, null);
+        }
+
+        private DialogDetection withType(DialogType newType) {
+            return new DialogDetection(newType, dialogRect, rawPath, image);
+        }
     }
 
 }

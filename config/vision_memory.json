@@ -1,832 +1,1605 @@
 {
-  "memoryType": "vision-memory-v2",
-  "updatedAt": "2026-05-27T17:16:45.320Z",
-  "entries": {
-    "player-name|刑部ㄨ忍者": {
-      "attemptCount": 4,
-      "failureCount": 0,
-      "successCount": 5,
-      "lastAttemptAt": "2026-05-24T15:01:49.192948700",
-      "lastSuccessAt": "2026-05-24T15:01:49.192948700",
-      "recommendedRoi": null,
-      "samples": [
-        {
-          "createdAt": "2026-05-24T14:56:40.731244600",
-          "key": "player-name|刑部ㄨ忍者",
-          "source": "SEGMENTED_CENTER",
-          "mapName": "凤巢七层",
-          "mapX": 40,
-          "mapY": 32,
-          "textRect": {
-            "x1": 482,
-            "y1": 447,
-            "x2": 560,
-            "y2": 463
-          },
-          "clickPoint": {
-            "x": 521,
-            "y": 455
-          },
-          "anchor": {
-            "x": 521,
-            "y": 455
-          },
-          "centerAnchor": {
-            "x": 518,
-            "y": 391
-          },
-          "anchorDelta": {
-            "x": 3,
-            "y": 64
-          },
-          "cameraState": "DOWN",
-          "matchedText": "刑部忍者",
-          "matchedFragment": "刑部ㄨ忍者",
-          "matchMode": "WHOLE_NAME_CORE",
-          "compensationX": 0,
-          "score": 0,
-          "windowWidth": 1036,
-          "windowHeight": 783,
-          "provider": null,
-          "preprocessVariant": null,
-          "imagePath": null,
-          "secondaryImagePath": null,
-          "locationSource": null
+  "memoryType" : "vision-memory-v2",
+  "updatedAt" : "2026-05-27T23:56:59.440112400",
+  "entries" : {
+    "player-name|刑部ㄨ忍者" : {
+      "attemptCount" : 4,
+      "failureCount" : 0,
+      "successCount" : 5,
+      "lastAttemptAt" : "2026-05-24T15:01:49.192948700",
+      "lastSuccessAt" : "2026-05-24T15:01:49.192948700",
+      "recommendedRoi" : null,
+      "samples" : [ {
+        "createdAt" : "2026-05-24T14:56:40.731244600",
+        "key" : "player-name|刑部ㄨ忍者",
+        "source" : "SEGMENTED_CENTER",
+        "mapName" : "凤巢七层",
+        "mapX" : 40,
+        "mapY" : 32,
+        "textRect" : {
+          "x1" : 482,
+          "y1" : 447,
+          "x2" : 560,
+          "y2" : 463
         },
-        {
-          "createdAt": "2026-05-24T14:57:43.629053700",
-          "key": "player-name|刑部ㄨ忍者",
-          "source": "SEGMENTED_CENTER",
-          "mapName": "凤巢七层",
-          "mapX": 40,
-          "mapY": 32,
-          "textRect": {
-            "x1": 481,
-            "y1": 446,
-            "x2": 560,
-            "y2": 463
-          },
-          "clickPoint": {
-            "x": 544,
-            "y": 454
-          },
-          "anchor": {
-            "x": 544,
-            "y": 454
-          },
-          "centerAnchor": {
-            "x": 518,
-            "y": 391
-          },
-          "anchorDelta": {
-            "x": 26,
-            "y": 63
-          },
-          "cameraState": "DOWN",
-          "matchedText": "刑部x忍者",
-          "matchedFragment": "刑部",
-          "matchMode": "FRAGMENT",
-          "compensationX": 24,
-          "score": 0,
-          "windowWidth": 1036,
-          "windowHeight": 783,
-          "provider": null,
-          "preprocessVariant": null,
-          "imagePath": null,
-          "secondaryImagePath": null,
-          "locationSource": null
+        "clickPoint" : {
+          "x" : 521,
+          "y" : 455
         },
-        {
-          "createdAt": "2026-05-24T14:58:30.528457800",
-          "key": "player-name|刑部ㄨ忍者",
-          "source": "SEGMENTED_CENTER",
-          "mapName": "凤巢七层",
-          "mapX": 40,
-          "mapY": 32,
-          "textRect": {
-            "x1": 481,
-            "y1": 446,
-            "x2": 560,
-            "y2": 463
-          },
-          "clickPoint": {
-            "x": 520,
-            "y": 454
-          },
-          "anchor": {
-            "x": 520,
-            "y": 454
-          },
-          "centerAnchor": {
-            "x": 518,
-            "y": 391
-          },
-          "anchorDelta": {
-            "x": 2,
-            "y": 63
-          },
-          "cameraState": "DOWN",
-          "matchedText": "刑部忍者",
-          "matchedFragment": "刑部ㄨ忍者",
-          "matchMode": "WHOLE_NAME_CORE",
-          "compensationX": 0,
-          "score": 0,
-          "windowWidth": 1036,
-          "windowHeight": 783,
-          "provider": null,
-          "preprocessVariant": null,
-          "imagePath": null,
-          "secondaryImagePath": null,
-          "locationSource": null
+        "anchor" : {
+          "x" : 521,
+          "y" : 455
         },
-        {
-          "createdAt": "2026-05-24T15:01:49.192948700",
-          "key": "player-name|刑部ㄨ忍者",
-          "source": "SEGMENTED_CENTER",
-          "mapName": "凤巢七层",
-          "mapX": 32,
-          "mapY": 38,
-          "textRect": {
-            "x1": 478,
-            "y1": 443,
-            "x2": 509,
-            "y2": 461
-          },
-          "clickPoint": {
-            "x": 517,
-            "y": 452
-          },
-          "anchor": {
-            "x": 517,
-            "y": 452
-          },
-          "centerAnchor": {
-            "x": 518,
-            "y": 391
-          },
-          "anchorDelta": {
-            "x": -1,
-            "y": 61
-          },
-          "cameraState": "DOWN",
-          "matchedText": "刑部",
-          "matchedFragment": "刑部",
-          "matchMode": "FRAGMENT",
-          "compensationX": 24,
-          "score": 0,
-          "windowWidth": 1036,
-          "windowHeight": 783,
-          "provider": null,
-          "preprocessVariant": null,
-          "imagePath": null,
-          "secondaryImagePath": null,
-          "locationSource": null
-        }
-      ],
-      "lastCameraState": "DOWN",
-      "lastMapName": "凤巢七层",
-      "lastMapX": 32,
-      "lastMapY": 38,
-      "lastAnchor": {
-        "x": 517,
-        "y": 452
+        "centerAnchor" : {
+          "x" : 518,
+          "y" : 391
+        },
+        "anchorDelta" : {
+          "x" : 3,
+          "y" : 64
+        },
+        "cameraState" : "DOWN",
+        "matchedText" : "刑部忍者",
+        "matchedFragment" : "刑部ㄨ忍者",
+        "matchMode" : "WHOLE_NAME_CORE",
+        "compensationX" : 0,
+        "score" : 0.0,
+        "windowWidth" : 1036,
+        "windowHeight" : 783,
+        "provider" : null,
+        "preprocessVariant" : null,
+        "imagePath" : null,
+        "secondaryImagePath" : null,
+        "locationSource" : null
+      }, {
+        "createdAt" : "2026-05-24T14:57:43.629053700",
+        "key" : "player-name|刑部ㄨ忍者",
+        "source" : "SEGMENTED_CENTER",
+        "mapName" : "凤巢七层",
+        "mapX" : 40,
+        "mapY" : 32,
+        "textRect" : {
+          "x1" : 481,
+          "y1" : 446,
+          "x2" : 560,
+          "y2" : 463
+        },
+        "clickPoint" : {
+          "x" : 544,
+          "y" : 454
+        },
+        "anchor" : {
+          "x" : 544,
+          "y" : 454
+        },
+        "centerAnchor" : {
+          "x" : 518,
+          "y" : 391
+        },
+        "anchorDelta" : {
+          "x" : 26,
+          "y" : 63
+        },
+        "cameraState" : "DOWN",
+        "matchedText" : "刑部x忍者",
+        "matchedFragment" : "刑部",
+        "matchMode" : "FRAGMENT",
+        "compensationX" : 24,
+        "score" : 0.0,
+        "windowWidth" : 1036,
+        "windowHeight" : 783,
+        "provider" : null,
+        "preprocessVariant" : null,
+        "imagePath" : null,
+        "secondaryImagePath" : null,
+        "locationSource" : null
+      }, {
+        "createdAt" : "2026-05-24T14:58:30.528457800",
+        "key" : "player-name|刑部ㄨ忍者",
+        "source" : "SEGMENTED_CENTER",
+        "mapName" : "凤巢七层",
+        "mapX" : 40,
+        "mapY" : 32,
+        "textRect" : {
+          "x1" : 481,
+          "y1" : 446,
+          "x2" : 560,
+          "y2" : 463
+        },
+        "clickPoint" : {
+          "x" : 520,
+          "y" : 454
+        },
+        "anchor" : {
+          "x" : 520,
+          "y" : 454
+        },
+        "centerAnchor" : {
+          "x" : 518,
+          "y" : 391
+        },
+        "anchorDelta" : {
+          "x" : 2,
+          "y" : 63
+        },
+        "cameraState" : "DOWN",
+        "matchedText" : "刑部忍者",
+        "matchedFragment" : "刑部ㄨ忍者",
+        "matchMode" : "WHOLE_NAME_CORE",
+        "compensationX" : 0,
+        "score" : 0.0,
+        "windowWidth" : 1036,
+        "windowHeight" : 783,
+        "provider" : null,
+        "preprocessVariant" : null,
+        "imagePath" : null,
+        "secondaryImagePath" : null,
+        "locationSource" : null
+      }, {
+        "createdAt" : "2026-05-24T15:01:49.192948700",
+        "key" : "player-name|刑部ㄨ忍者",
+        "source" : "SEGMENTED_CENTER",
+        "mapName" : "凤巢七层",
+        "mapX" : 32,
+        "mapY" : 38,
+        "textRect" : {
+          "x1" : 478,
+          "y1" : 443,
+          "x2" : 509,
+          "y2" : 461
+        },
+        "clickPoint" : {
+          "x" : 517,
+          "y" : 452
+        },
+        "anchor" : {
+          "x" : 517,
+          "y" : 452
+        },
+        "centerAnchor" : {
+          "x" : 518,
+          "y" : 391
+        },
+        "anchorDelta" : {
+          "x" : -1,
+          "y" : 61
+        },
+        "cameraState" : "DOWN",
+        "matchedText" : "刑部",
+        "matchedFragment" : "刑部",
+        "matchMode" : "FRAGMENT",
+        "compensationX" : 24,
+        "score" : 0.0,
+        "windowWidth" : 1036,
+        "windowHeight" : 783,
+        "provider" : null,
+        "preprocessVariant" : null,
+        "imagePath" : null,
+        "secondaryImagePath" : null,
+        "locationSource" : null
+      } ],
+      "lastCameraState" : "DOWN",
+      "lastMapName" : "凤巢七层",
+      "lastMapX" : 32,
+      "lastMapY" : 38,
+      "lastAnchor" : {
+        "x" : 517,
+        "y" : 452
       },
-      "lastAnchorDelta": {
-        "x": -1,
-        "y": 61
+      "lastAnchorDelta" : {
+        "x" : -1,
+        "y" : 61
       },
-      "lastNpcClickAt": null,
-      "lastNpcClickOutcome": null,
-      "lastPredictedClick": null
+      "lastNpcClickAt" : null,
+      "lastNpcClickOutcome" : null,
+      "lastPredictedClick" : null
+    },
+    "npc-click|长安|张闻|224,100" : {
+      "attemptCount" : 7,
+      "failureCount" : 3,
+      "successCount" : 4,
+      "lastAttemptAt" : "2026-05-27T23:56:36.441000800",
+      "lastSuccessAt" : "2026-05-27T23:56:36.441000800",
+      "recommendedRoi" : null,
+      "samples" : [ ],
+      "lastCameraState" : null,
+      "lastMapName" : null,
+      "lastMapX" : null,
+      "lastMapY" : null,
+      "lastAnchor" : null,
+      "lastAnchorDelta" : null,
+      "lastNpcClickAt" : "2026-05-27T23:56:36.441000800",
+      "lastNpcClickOutcome" : "VERIFIED",
+      "lastPredictedClick" : {
+        "x" : 609,
+        "y" : 404
+      }
+    },
+    "npc-click|灵兽村|灵兽村使者|112,93" : {
+      "attemptCount" : 3,
+      "failureCount" : 1,
+      "successCount" : 2,
+      "lastAttemptAt" : "2026-05-27T23:56:59.435122400",
+      "lastSuccessAt" : "2026-05-27T23:56:59.435122400",
+      "recommendedRoi" : null,
+      "samples" : [ ],
+      "lastCameraState" : null,
+      "lastMapName" : null,
+      "lastMapX" : null,
+      "lastMapY" : null,
+      "lastAnchor" : null,
+      "lastAnchorDelta" : null,
+      "lastNpcClickAt" : "2026-05-27T23:56:59.435122400",
+      "lastNpcClickOutcome" : "VERIFIED",
+      "lastPredictedClick" : {
+        "x" : 470,
+        "y" : 390
+      }
     }
   },
-  "playerAnchorSamples": [
-    {
-      "createdAt": "2026-05-24T14:56:40.731244600",
-      "key": "player-name|刑部ㄨ忍者",
-      "source": "SEGMENTED_CENTER",
-      "mapName": "凤巢七层",
-      "mapX": 40,
-      "mapY": 32,
-      "textRect": {
-        "x1": 482,
-        "y1": 447,
-        "x2": 560,
-        "y2": 463
-      },
-      "clickPoint": {
-        "x": 521,
-        "y": 455
-      },
-      "anchor": {
-        "x": 521,
-        "y": 455
-      },
-      "centerAnchor": {
-        "x": 518,
-        "y": 391
-      },
-      "anchorDelta": {
-        "x": 3,
-        "y": 64
-      },
-      "cameraState": "DOWN",
-      "matchedText": "刑部忍者",
-      "matchedFragment": "刑部ㄨ忍者",
-      "matchMode": "WHOLE_NAME_CORE",
-      "compensationX": 0,
-      "score": 0,
-      "windowWidth": 1036,
-      "windowHeight": 783,
-      "provider": null,
-      "preprocessVariant": null,
-      "imagePath": null,
-      "secondaryImagePath": null,
-      "locationSource": null
+  "playerAnchorSamples" : [ {
+    "createdAt" : "2026-05-24T14:56:40.731244600",
+    "key" : "player-name|刑部ㄨ忍者",
+    "source" : "SEGMENTED_CENTER",
+    "mapName" : "凤巢七层",
+    "mapX" : 40,
+    "mapY" : 32,
+    "textRect" : {
+      "x1" : 482,
+      "y1" : 447,
+      "x2" : 560,
+      "y2" : 463
     },
-    {
-      "createdAt": "2026-05-24T14:57:43.629053700",
-      "key": "player-name|刑部ㄨ忍者",
-      "source": "SEGMENTED_CENTER",
-      "mapName": "凤巢七层",
-      "mapX": 40,
-      "mapY": 32,
-      "textRect": {
-        "x1": 481,
-        "y1": 446,
-        "x2": 560,
-        "y2": 463
-      },
-      "clickPoint": {
-        "x": 544,
-        "y": 454
-      },
-      "anchor": {
-        "x": 544,
-        "y": 454
-      },
-      "centerAnchor": {
-        "x": 518,
-        "y": 391
-      },
-      "anchorDelta": {
-        "x": 26,
-        "y": 63
-      },
-      "cameraState": "DOWN",
-      "matchedText": "刑部x忍者",
-      "matchedFragment": "刑部",
-      "matchMode": "FRAGMENT",
-      "compensationX": 24,
-      "score": 0,
-      "windowWidth": 1036,
-      "windowHeight": 783,
-      "provider": null,
-      "preprocessVariant": null,
-      "imagePath": null,
-      "secondaryImagePath": null,
-      "locationSource": null
+    "clickPoint" : {
+      "x" : 521,
+      "y" : 455
     },
-    {
-      "createdAt": "2026-05-24T14:58:30.528457800",
-      "key": "player-name|刑部ㄨ忍者",
-      "source": "SEGMENTED_CENTER",
-      "mapName": "凤巢七层",
-      "mapX": 40,
-      "mapY": 32,
-      "textRect": {
-        "x1": 481,
-        "y1": 446,
-        "x2": 560,
-        "y2": 463
-      },
-      "clickPoint": {
-        "x": 520,
-        "y": 454
-      },
-      "anchor": {
-        "x": 520,
-        "y": 454
-      },
-      "centerAnchor": {
-        "x": 518,
-        "y": 391
-      },
-      "anchorDelta": {
-        "x": 2,
-        "y": 63
-      },
-      "cameraState": "DOWN",
-      "matchedText": "刑部忍者",
-      "matchedFragment": "刑部ㄨ忍者",
-      "matchMode": "WHOLE_NAME_CORE",
-      "compensationX": 0,
-      "score": 0,
-      "windowWidth": 1036,
-      "windowHeight": 783,
-      "provider": null,
-      "preprocessVariant": null,
-      "imagePath": null,
-      "secondaryImagePath": null,
-      "locationSource": null
+    "anchor" : {
+      "x" : 521,
+      "y" : 455
     },
-    {
-      "createdAt": "2026-05-24T15:01:49.192948700",
-      "key": "player-name|刑部ㄨ忍者",
-      "source": "SEGMENTED_CENTER",
-      "mapName": "凤巢七层",
-      "mapX": 32,
-      "mapY": 38,
-      "textRect": {
-        "x1": 478,
-        "y1": 443,
-        "x2": 509,
-        "y2": 461
-      },
-      "clickPoint": {
-        "x": 517,
-        "y": 452
-      },
-      "anchor": {
-        "x": 517,
-        "y": 452
-      },
-      "centerAnchor": {
-        "x": 518,
-        "y": 391
-      },
-      "anchorDelta": {
-        "x": -1,
-        "y": 61
-      },
-      "cameraState": "DOWN",
-      "matchedText": "刑部",
-      "matchedFragment": "刑部",
-      "matchMode": "FRAGMENT",
-      "compensationX": 24,
-      "score": 0,
-      "windowWidth": 1036,
-      "windowHeight": 783,
-      "provider": null,
-      "preprocessVariant": null,
-      "imagePath": null,
-      "secondaryImagePath": null,
-      "locationSource": null
-    }
-  ],
-  "ocrAttempts": [],
-  "npcClickSamples": [
-    {
-      "createdAt": "2026-05-24T23:16:45.979533700",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 84,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 9,
-      "windowBase": {
-        "x": 825,
-        "y": 245
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "centerAnchor" : {
+      "x" : 518,
+      "y" : 391
     },
-    {
-      "createdAt": "2026-05-24T23:23:57.814337200",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 84,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 9,
-      "windowBase": {
-        "x": 825,
-        "y": 245
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "anchorDelta" : {
+      "x" : 3,
+      "y" : 64
     },
-    {
-      "createdAt": "2026-05-25T00:12:22.891269300",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 113,
-      "playerMapY": 78,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": -1,
-      "deltaMapY": 15,
-      "windowBase": {
-        "x": 1440,
-        "y": 203
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "cameraState" : "DOWN",
+    "matchedText" : "刑部忍者",
+    "matchedFragment" : "刑部ㄨ忍者",
+    "matchMode" : "WHOLE_NAME_CORE",
+    "compensationX" : 0,
+    "score" : 0.0,
+    "windowWidth" : 1036,
+    "windowHeight" : 783,
+    "provider" : null,
+    "preprocessVariant" : null,
+    "imagePath" : null,
+    "secondaryImagePath" : null,
+    "locationSource" : null
+  }, {
+    "createdAt" : "2026-05-24T14:57:43.629053700",
+    "key" : "player-name|刑部ㄨ忍者",
+    "source" : "SEGMENTED_CENTER",
+    "mapName" : "凤巢七层",
+    "mapX" : 40,
+    "mapY" : 32,
+    "textRect" : {
+      "x1" : 481,
+      "y1" : 446,
+      "x2" : 560,
+      "y2" : 463
     },
-    {
-      "createdAt": "2026-05-25T00:13:14.902807200",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 113,
-      "playerMapY": 78,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": -1,
-      "deltaMapY": 15,
-      "windowBase": {
-        "x": 1440,
-        "y": 203
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "clickPoint" : {
+      "x" : 544,
+      "y" : 454
     },
-    {
-      "createdAt": "2026-05-25T01:28:25.789088700",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 1436,
-        "y": 226
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "anchor" : {
+      "x" : 544,
+      "y" : 454
     },
-    {
-      "createdAt": "2026-05-25T01:29:16.272813700",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 1436,
-        "y": 226
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "centerAnchor" : {
+      "x" : 518,
+      "y" : 391
     },
-    {
-      "createdAt": "2026-05-25T11:30:59.156425600",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 628,
-        "y": 380
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "anchorDelta" : {
+      "x" : 26,
+      "y" : 63
     },
-    {
-      "createdAt": "2026-05-25T11:31:34.407383600",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 110,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 2,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 628,
-        "y": 380
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "cameraState" : "DOWN",
+    "matchedText" : "刑部x忍者",
+    "matchedFragment" : "刑部",
+    "matchMode" : "FRAGMENT",
+    "compensationX" : 24,
+    "score" : 0.0,
+    "windowWidth" : 1036,
+    "windowHeight" : 783,
+    "provider" : null,
+    "preprocessVariant" : null,
+    "imagePath" : null,
+    "secondaryImagePath" : null,
+    "locationSource" : null
+  }, {
+    "createdAt" : "2026-05-24T14:58:30.528457800",
+    "key" : "player-name|刑部ㄨ忍者",
+    "source" : "SEGMENTED_CENTER",
+    "mapName" : "凤巢七层",
+    "mapX" : 40,
+    "mapY" : 32,
+    "textRect" : {
+      "x1" : 481,
+      "y1" : 446,
+      "x2" : 560,
+      "y2" : 463
     },
-    {
-      "createdAt": "2026-05-25T19:33:11.959613400",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 111,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 1,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 576,
-        "y": 191
-      },
-      "playerAnchorAbs": {
-        "x": 1102,
-        "y": 579
-      },
-      "playerAnchorRel": {
-        "x": 526,
-        "y": 388
-      },
-      "predictedClickAbs": {
-        "x": 1122,
-        "y": 529
-      },
-      "predictedClickRel": {
-        "x": 546,
-        "y": 338
-      },
-      "actualClickAbs": {
-        "x": 1122,
-        "y": 529
-      },
-      "actualClickRel": {
-        "x": 546,
-        "y": 338
-      },
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": true,
-      "success": false,
-      "outcome": "NO_DIALOG_AFTER_FIRST_SHOT",
-      "verification": "executeMoveClickAndVerify dialog OPTION check",
-      "actualClickMeasured": false,
-      "actualClickSource": "predicted-click-point",
-      "verificationStrength": "NONE"
+    "clickPoint" : {
+      "x" : 520,
+      "y" : 454
     },
-    {
-      "createdAt": "2026-05-25T20:16:54.497584",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 111,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 1,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 246,
-        "y": 247
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "anchor" : {
+      "x" : 520,
+      "y" : 454
     },
-    {
-      "createdAt": "2026-05-25T21:17:01.463420900",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 112,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 0,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 454,
-        "y": 144
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "centerAnchor" : {
+      "x" : 518,
+      "y" : 391
     },
-    {
-      "createdAt": "2026-05-25T21:18:05.552325500",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 112,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 0,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 454,
-        "y": 144
-      },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
+    "anchorDelta" : {
+      "x" : 2,
+      "y" : 63
     },
-    {
-      "createdAt": "2026-05-25T21:19:11.786796400",
-      "key": "npc-click|灵兽村|灵兽村使者|112,93",
-      "source": "NPC_FIRST_SHOT_FORMAL",
-      "mapName": "灵兽村",
-      "playerMapX": 112,
-      "playerMapY": 93,
-      "npcName": "灵兽村使者",
-      "targetMapX": 112,
-      "targetMapY": 93,
-      "deltaMapX": 0,
-      "deltaMapY": 0,
-      "windowBase": {
-        "x": 454,
-        "y": 144
+    "cameraState" : "DOWN",
+    "matchedText" : "刑部忍者",
+    "matchedFragment" : "刑部ㄨ忍者",
+    "matchMode" : "WHOLE_NAME_CORE",
+    "compensationX" : 0,
+    "score" : 0.0,
+    "windowWidth" : 1036,
+    "windowHeight" : 783,
+    "provider" : null,
+    "preprocessVariant" : null,
+    "imagePath" : null,
+    "secondaryImagePath" : null,
+    "locationSource" : null
+  }, {
+    "createdAt" : "2026-05-24T15:01:49.192948700",
+    "key" : "player-name|刑部ㄨ忍者",
+    "source" : "SEGMENTED_CENTER",
+    "mapName" : "凤巢七层",
+    "mapX" : 32,
+    "mapY" : 38,
+    "textRect" : {
+      "x1" : 478,
+      "y1" : 443,
+      "x2" : 509,
+      "y2" : 461
+    },
+    "clickPoint" : {
+      "x" : 517,
+      "y" : 452
+    },
+    "anchor" : {
+      "x" : 517,
+      "y" : 452
+    },
+    "centerAnchor" : {
+      "x" : 518,
+      "y" : 391
+    },
+    "anchorDelta" : {
+      "x" : -1,
+      "y" : 61
+    },
+    "cameraState" : "DOWN",
+    "matchedText" : "刑部",
+    "matchedFragment" : "刑部",
+    "matchMode" : "FRAGMENT",
+    "compensationX" : 24,
+    "score" : 0.0,
+    "windowWidth" : 1036,
+    "windowHeight" : 783,
+    "provider" : null,
+    "preprocessVariant" : null,
+    "imagePath" : null,
+    "secondaryImagePath" : null,
+    "locationSource" : null
+  } ],
+  "ocrAttempts" : [ ],
+  "npcClickSamples" : [ {
+    "createdAt" : "2026-05-24T23:16:45.979533700",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 84,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 9,
+    "windowBase" : {
+      "x" : 825,
+      "y" : 245
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-24T23:23:57.814337200",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 84,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 9,
+    "windowBase" : {
+      "x" : 825,
+      "y" : 245
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T00:12:22.891269300",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 113,
+    "playerMapY" : 78,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : -1,
+    "deltaMapY" : 15,
+    "windowBase" : {
+      "x" : 1440,
+      "y" : 203
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T00:13:14.902807200",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 113,
+    "playerMapY" : 78,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : -1,
+    "deltaMapY" : 15,
+    "windowBase" : {
+      "x" : 1440,
+      "y" : 203
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T01:28:25.789088700",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 1436,
+      "y" : 226
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T01:29:16.272813700",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 1436,
+      "y" : 226
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T11:30:59.156425600",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 628,
+      "y" : 380
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T11:31:34.407383600",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 110,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 2,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 628,
+      "y" : 380
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T19:33:11.959613400",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 111,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 1,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 576,
+      "y" : 191
+    },
+    "playerAnchorAbs" : {
+      "x" : 1102,
+      "y" : 579
+    },
+    "playerAnchorRel" : {
+      "x" : 526,
+      "y" : 388
+    },
+    "predictedClickAbs" : {
+      "x" : 1122,
+      "y" : 529
+    },
+    "predictedClickRel" : {
+      "x" : 546,
+      "y" : 338
+    },
+    "actualClickAbs" : {
+      "x" : 1122,
+      "y" : 529
+    },
+    "actualClickRel" : {
+      "x" : 546,
+      "y" : 338
+    },
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : true,
+    "success" : false,
+    "outcome" : "NO_DIALOG_AFTER_FIRST_SHOT",
+    "verification" : "executeMoveClickAndVerify dialog OPTION check",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "predicted-click-point",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T20:16:54.497584",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 111,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 1,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 246,
+      "y" : 247
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T21:17:01.463420900",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 0,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 454,
+      "y" : 144
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T21:18:05.552325500",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 0,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 454,
+      "y" : 144
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-25T21:19:11.786796400",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_FIRST_SHOT_FORMAL",
+    "mapName" : "灵兽村",
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 0,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 454,
+      "y" : 144
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : null,
+    "predictedClickRel" : null,
+    "actualClickAbs" : null,
+    "actualClickRel" : null,
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
+    "clicked" : false,
+    "success" : false,
+    "outcome" : "MISSING_PLAYER_ANCHOR",
+    "verification" : "first shot skipped before click",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "not-clicked",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-27T17:06:23.843132300",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 5,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 789,
+      "y" : 640
+    },
+    "predictedClickRel" : {
+      "x" : 621,
+      "y" : 406
+    },
+    "actualClickAbs" : {
+      "x" : 789,
+      "y" : 640
+    },
+    "actualClickRel" : {
+      "x" : 621,
+      "y" : 406
+    },
+    "tuneX" : 0,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : false,
+    "outcome" : "CLICK_NOT_VERIFIED",
+    "verification" : "formula click not verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-27T17:41:09.643840",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "灵兽村",
+    "playerMapX" : 217,
+    "playerMapY" : 99,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : -105,
+    "deltaMapY" : -6,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : -1426,
+      "y" : 756
+    },
+    "predictedClickRel" : {
+      "x" : -1594,
+      "y" : 522
+    },
+    "actualClickAbs" : {
+      "x" : -1426,
+      "y" : 756
+    },
+    "actualClickRel" : {
+      "x" : -1594,
+      "y" : 522
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : false,
+    "outcome" : "CLICK_NOT_VERIFIED",
+    "verification" : "formula click not verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-27T17:41:32.989151200",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 217,
+    "playerMapY" : 99,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 7,
+    "deltaMapY" : 1,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 815,
+      "y" : 616
+    },
+    "predictedClickRel" : {
+      "x" : 647,
+      "y" : 382
+    },
+    "actualClickAbs" : {
+      "x" : 815,
+      "y" : 616
+    },
+    "actualClickRel" : {
+      "x" : 647,
+      "y" : 382
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "formula click verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  }, {
+    "createdAt" : "2026-05-27T17:42:27.210381900",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 217,
+    "playerMapY" : 99,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 7,
+    "deltaMapY" : 1,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 816,
+      "y" : 617
+    },
+    "predictedClickRel" : {
+      "x" : 648,
+      "y" : 383
+    },
+    "actualClickAbs" : {
+      "x" : 816,
+      "y" : 617
+    },
+    "actualClickRel" : {
+      "x" : 648,
+      "y" : 383
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : false,
+    "outcome" : "CLICK_NOT_VERIFIED",
+    "verification" : "formula click not verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-27T17:46:08.438128200",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 217,
+    "playerMapY" : 99,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 7,
+    "deltaMapY" : 1,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 818,
+      "y" : 616
+    },
+    "predictedClickRel" : {
+      "x" : 650,
+      "y" : 382
+    },
+    "actualClickAbs" : {
+      "x" : 818,
+      "y" : 616
+    },
+    "actualClickRel" : {
+      "x" : 650,
+      "y" : 382
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "formula click verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  }, {
+    "createdAt" : "2026-05-27T18:03:56.491545500",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 5,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 787,
+      "y" : 640
+    },
+    "predictedClickRel" : {
+      "x" : 619,
+      "y" : 406
+    },
+    "actualClickAbs" : {
+      "x" : 787,
+      "y" : 640
+    },
+    "actualClickRel" : {
+      "x" : 619,
+      "y" : 406
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "formula click verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  }, {
+    "createdAt" : "2026-05-27T18:04:27.165448",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "mapName" : "灵兽村",
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 0,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 168,
+      "y" : 234
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 638,
+      "y" : 624
+    },
+    "predictedClickRel" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "actualClickAbs" : {
+      "x" : 638,
+      "y" : 624
+    },
+    "actualClickRel" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_TASK_TOOLTIP_TEMPLATE",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "task-tooltip template verified; recordPoint=tooltipCenterY+90",
+    "actualClickMeasured" : true,
+    "actualClickSource" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  }, {
+    "createdAt" : "2026-05-27T22:55:09.898037600",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 5,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 84,
+      "y" : 318
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 581,
+      "y" : 531
+    },
+    "predictedClickRel" : {
+      "x" : 497,
+      "y" : 213
+    },
+    "actualClickAbs" : {
+      "x" : 581,
+      "y" : 531
+    },
+    "actualClickRel" : {
+      "x" : 497,
+      "y" : 213
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : false,
+    "outcome" : "CLICK_NOT_VERIFIED",
+    "verification" : "formula click not verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "NONE"
+  }, {
+    "createdAt" : "2026-05-27T23:56:36.441000800",
+    "key" : "npc-click|长安|张闻|224,100",
+    "source" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "mapName" : "长安",
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "npcName" : "张闻",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "deltaMapX" : 5,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 354,
+      "y" : 339
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 963,
+      "y" : 743
+    },
+    "predictedClickRel" : {
+      "x" : 609,
+      "y" : 404
+    },
+    "actualClickAbs" : {
+      "x" : 963,
+      "y" : 743
+    },
+    "actualClickRel" : {
+      "x" : 609,
+      "y" : 404
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_PLAYER_ANCHOR_FORMULA",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "formula click verified",
+    "actualClickMeasured" : false,
+    "actualClickSource" : "NPC_PLAYER_ANCHOR_FORMULA",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  }, {
+    "createdAt" : "2026-05-27T23:56:59.435122400",
+    "key" : "npc-click|灵兽村|灵兽村使者|112,93",
+    "source" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "mapName" : "灵兽村",
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "npcName" : "灵兽村使者",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "deltaMapX" : 0,
+    "deltaMapY" : 0,
+    "windowBase" : {
+      "x" : 354,
+      "y" : 339
+    },
+    "playerAnchorAbs" : null,
+    "playerAnchorRel" : null,
+    "predictedClickAbs" : {
+      "x" : 824,
+      "y" : 729
+    },
+    "predictedClickRel" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "actualClickAbs" : {
+      "x" : 824,
+      "y" : 729
+    },
+    "actualClickRel" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "tuneX" : -10,
+    "tuneY" : 0,
+    "formulaVersion" : "npc-smart-click:NPC_TASK_TOOLTIP_TEMPLATE",
+    "clicked" : true,
+    "success" : true,
+    "outcome" : "VERIFIED",
+    "verification" : "task-tooltip template verified; recordPoint=tooltipCenterY+90",
+    "actualClickMeasured" : true,
+    "actualClickSource" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "verificationStrength" : "DIALOG_TEMPLATE"
+  } ],
+  "targetCandidateSamples" : [ {
+    "createdAt" : "2026-05-27T17:06:17.733441500",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 0,
+      "y1" : 0,
+      "x2" : 1024,
+      "y2" : 768
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found with candidates text=常规专用点允假使者"
+  }, {
+    "createdAt" : "2026-05-27T18:03:52.029296400",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 0,
+      "y1" : 0,
+      "x2" : 1024,
+      "y2" : 768
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found with candidates text=常规专用点充值使者"
+  }, {
+    "createdAt" : "2026-05-27T18:04:27.168471700",
+    "key" : "roi|fixed-npc|npc-click|灵兽村|灵兽村使者|112,93|player:112,93|1024x768|yellow-name",
+    "source" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "mapName" : "灵兽村",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "playerCoordinate" : "player:112,93",
+    "coordinateBucket" : null,
+    "targetName" : "灵兽村使者",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 0,
+      "y1" : 0,
+      "x2" : 1024,
+      "y2" : 768
+    },
+    "textRect" : {
+      "x1" : 454,
+      "y1" : 292,
+      "x2" : 486,
+      "y2" : 308
+    },
+    "clickPoint" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "matched" : true,
+    "verified" : true,
+    "observedText" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "message" : "task-tooltip template verified; recordPoint=tooltipCenterY+90"
+  }, {
+    "createdAt" : "2026-05-27T22:55:11.349454300",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 359,
+      "y1" : 216,
+      "x2" : 879,
+      "y2" : 597
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found text="
+  }, {
+    "createdAt" : "2026-05-27T23:06:24.470080600",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 359,
+      "y1" : 216,
+      "x2" : 879,
+      "y2" : 597
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found text="
+  }, {
+    "createdAt" : "2026-05-27T23:06:29.948346600",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 0,
+      "y1" : 0,
+      "x2" : 1024,
+      "y2" : 768
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found with candidates text=常规专用卢充值使者"
+  }, {
+    "createdAt" : "2026-05-27T23:24:10.842534200",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 359,
+      "y1" : 216,
+      "x2" : 879,
+      "y2" : 597
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found with candidates text=收闻"
+  }, {
+    "createdAt" : "2026-05-27T23:24:16.288570100",
+    "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+    "source" : "NPC_YELLOW_TARGET",
+    "mapName" : "长安",
+    "targetMapX" : 224,
+    "targetMapY" : 100,
+    "playerMapX" : 219,
+    "playerMapY" : 100,
+    "playerCoordinate" : "player:219,100",
+    "coordinateBucket" : null,
+    "targetName" : "张闻",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 0,
+      "y1" : 0,
+      "x2" : 1024,
+      "y2" : 768
+    },
+    "textRect" : null,
+    "clickPoint" : null,
+    "matched" : false,
+    "verified" : false,
+    "observedText" : "NPC_YELLOW_TARGET",
+    "message" : "yellow target not found with candidates text=常规专用中充值使者"
+  }, {
+    "createdAt" : "2026-05-27T23:56:59.440112400",
+    "key" : "roi|fixed-npc|npc-click|灵兽村|灵兽村使者|112,93|player:112,93|1024x768|yellow-name",
+    "source" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "mapName" : "灵兽村",
+    "targetMapX" : 112,
+    "targetMapY" : 93,
+    "playerMapX" : 112,
+    "playerMapY" : 93,
+    "playerCoordinate" : "player:112,93",
+    "coordinateBucket" : null,
+    "targetName" : "灵兽村使者",
+    "roamingTarget" : false,
+    "scanRegion" : {
+      "x1" : 210,
+      "y1" : 102,
+      "x2" : 730,
+      "y2" : 581
+    },
+    "textRect" : {
+      "x1" : 454,
+      "y1" : 292,
+      "x2" : 486,
+      "y2" : 308
+    },
+    "clickPoint" : {
+      "x" : 470,
+      "y" : 390
+    },
+    "matched" : true,
+    "verified" : true,
+    "observedText" : "NPC_TASK_TOOLTIP_TEMPLATE",
+    "message" : "task-tooltip template verified; recordPoint=tooltipCenterY+90"
+  } ],
+  "policies" : {
+    "roiPolicies" : {
+      "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name" : {
+        "key" : "roi|fixed-npc|npc-click|长安|张闻|224,100|player:219,100|1024x768|yellow-name",
+        "targetKind" : "fixed-npc",
+        "taskType" : "NPC_YELLOW_TARGET",
+        "mapName" : "长安",
+        "targetName" : "张闻",
+        "targetMapX" : 224,
+        "targetMapY" : 100,
+        "playerMapX" : 219,
+        "playerMapY" : 100,
+        "playerCoordinate" : "player:219,100",
+        "coordinateBucket" : null,
+        "attemptCount" : 7,
+        "failureCount" : 7,
+        "successCount" : 0,
+        "failureStreak" : 7,
+        "stale" : true,
+        "confidence" : 0.0,
+        "stage" : null,
+        "lastAttemptAt" : "2026-05-27T23:24:16.288570100",
+        "lastSuccessAt" : null,
+        "lastMessage" : "yellow target not found with candidates text=常规专用中充值使者",
+        "recommendedRoi" : null,
+        "recentRects" : [ ],
+        "recentPoints" : [ ]
       },
-      "playerAnchorAbs": null,
-      "playerAnchorRel": null,
-      "predictedClickAbs": null,
-      "predictedClickRel": null,
-      "actualClickAbs": null,
-      "actualClickRel": null,
-      "tuneX": 0,
-      "tuneY": 0,
-      "formulaVersion": "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-      "clicked": false,
-      "success": false,
-      "outcome": "MISSING_PLAYER_ANCHOR",
-      "verification": "first shot skipped before click",
-      "actualClickMeasured": false,
-      "actualClickSource": "not-clicked",
-      "verificationStrength": "NONE"
-    }
-  ],
-  "targetCandidateSamples": [],
-  "policies": {
-    "roiPolicies": {},
-    "clickPolicies": {}
+      "roi|fixed-npc|npc-click|灵兽村|灵兽村使者|112,93|player:112,93|1024x768|yellow-name" : {
+        "key" : "roi|fixed-npc|npc-click|灵兽村|灵兽村使者|112,93|player:112,93|1024x768|yellow-name",
+        "targetKind" : "fixed-npc",
+        "taskType" : "NPC_TASK_TOOLTIP_TEMPLATE",
+        "mapName" : "灵兽村",
+        "targetName" : "灵兽村使者",
+        "targetMapX" : 112,
+        "targetMapY" : 93,
+        "playerMapX" : 112,
+        "playerMapY" : 93,
+        "playerCoordinate" : "player:112,93",
+        "coordinateBucket" : null,
+        "attemptCount" : 2,
+        "failureCount" : 0,
+        "successCount" : 2,
+        "failureStreak" : 0,
+        "stale" : false,
+        "confidence" : 0.2,
+        "stage" : "coarse",
+        "lastAttemptAt" : "2026-05-27T23:56:59.440112400",
+        "lastSuccessAt" : "2026-05-27T23:56:59.440112400",
+        "lastMessage" : "task-tooltip template verified; recordPoint=tooltipCenterY+90",
+        "recommendedRoi" : {
+          "x1" : 210,
+          "y1" : 102,
+          "x2" : 730,
+          "y2" : 581
+        },
+        "recentRects" : [ {
+          "x1" : 454,
+          "y1" : 292,
+          "x2" : 486,
+          "y2" : 308
+        }, {
+          "x1" : 454,
+          "y1" : 292,
+          "x2" : 486,
+          "y2" : 308
+        } ],
+        "recentPoints" : [ {
+          "x" : 470,
+          "y" : 390
+        }, {
+          "x" : 470,
+          "y" : 390
+        } ]
+      }
+    },
+    "clickPolicies" : { }
   }
 }

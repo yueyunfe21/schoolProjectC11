@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -57,6 +58,8 @@ public class MiniMapCoordinateReader {
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
+    private volatile List<MapLabelTemplate> mapLabelTemplateCache;
+    private volatile List<DigitTemplate> digitTemplateCache;
 
     public Optional<MapCoordinate> readCurrentCoordinate() {
         MiniMapSnapshot snapshot = readCurrentSnapshot(false, false);
@@ -64,6 +67,7 @@ public class MiniMapCoordinateReader {
     }
 
     public Optional<TemplateLocationInfo> readCurrentTemplateLocation() {
+        long startedAt = System.currentTimeMillis();
         // Stage 1: capture the mini-map coordinate strip once and reuse that same pixels
         // for both coordinate digits and map-label matching. Re-capturing here can mix
         // two different frames if the player moves or the window refreshes mid-read.
@@ -72,31 +76,48 @@ public class MiniMapCoordinateReader {
             return Optional.empty();
         }
         try {
+            long captureElapsedMs = System.currentTimeMillis() - startedAt;
             // Stage 2: parse the numeric coordinate with local digit templates. The map
             // label is handled separately below because Chinese map labels use full-word
             // templates instead of per-digit glyph splitting.
+            long coordStartedAt = System.currentTimeMillis();
             CoordinateRecognition recognition = recognizeCoordinate(raw, false, false);
+            long coordElapsedMs = System.currentTimeMillis() - coordStartedAt;
             MapCoordinate coordinate = recognition.coordinate().orElse(null);
             if (coordinate == null) {
+                log.info("[minimap-location] template stage failed: reason=coordinate-miss captureMs={} coordMs={}",
+                        captureElapsedMs, coordElapsedMs);
                 return Optional.empty();
             }
 
             // Stage 3: crop the cleaned map label to the left of the coordinate brackets
             // and match it against saved map-label templates. A bad label match must fail
             // this fast path so the caller can fall back to local/Baidu OCR.
+            long labelCropStartedAt = System.currentTimeMillis();
             BufferedImage label = extractCleanMapLabelImage(raw);
+            long labelCropElapsedMs = System.currentTimeMillis() - labelCropStartedAt;
             if (label == null) {
+                log.info("[minimap-location] template stage failed: reason=label-crop-miss captureMs={} coordMs={} labelCropMs={}",
+                        captureElapsedMs, coordElapsedMs, labelCropElapsedMs);
                 return Optional.empty();
             }
             try {
                 String labelPath = saveDebugImage(label, "minimap_map_label_clean.png");
+                long labelMatchStartedAt = System.currentTimeMillis();
                 Optional<MapLabelTemplateMatch> match = recognizeMapLabelImage(label);
+                long labelMatchElapsedMs = System.currentTimeMillis() - labelMatchStartedAt;
                 if (match.isEmpty() || match.get().score() < MAP_LABEL_MATCH_THRESHOLD) {
                     match.ifPresent(best -> log.info("[minimap-location] map label low score: map={} score={} threshold={}",
                             best.mapName(), String.format("%.3f", best.score()), MAP_LABEL_MATCH_THRESHOLD));
+                    log.info("[minimap-location] template stage failed: reason=label-low-score captureMs={} coordMs={} labelCropMs={} labelMatchMs={}",
+                            captureElapsedMs, coordElapsedMs, labelCropElapsedMs, labelMatchElapsedMs);
                     return Optional.empty();
                 }
                 MapLabelTemplateMatch best = match.get();
+                log.info("[minimap-location] template stage hit: map={} coord=({}, {}) score={} captureMs={} coordMs={} labelCropMs={} labelMatchMs={}",
+                        best.mapName(), coordinate.getX(), coordinate.getY(),
+                        String.format("%.3f", best.score()),
+                        captureElapsedMs, coordElapsedMs, labelCropElapsedMs, labelMatchElapsedMs);
                 return Optional.of(new TemplateLocationInfo(
                         best.mapName(),
                         coordinate,
@@ -145,6 +166,13 @@ public class MiniMapCoordinateReader {
 
     public Optional<MapLabelTemplateMatch> recognizeMapLabelImage(BufferedImage label) {
         return findBestMapLabelMatch(label);
+    }
+
+    /**
+     * Clears cached map-label template images after a new learned label is written to disk.
+     */
+    public void invalidateMapLabelTemplateCache() {
+        mapLabelTemplateCache = null;
     }
 
     public MiniMapSnapshot readCurrentLocationSnapshot() {
@@ -579,28 +607,16 @@ public class MiniMapCoordinateReader {
     private GlyphMatch recognizeOneGlyphScored(BufferedImage glyphImage) {
         double bestScore = 0.0;
         String bestSymbol = null;
+        WhitePixelSet glyphPixels = collectWhitePixels(glyphImage);
 
         // Compare the normalized glyph with each digit template. Templates are cleaned
         // again at read time so old or hand-generated template files still use the same
         // thresholding rules as live screenshots.
-        for (String symbol : List.of("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")) {
-            File templateFile = new File(TEMPLATE_DIR, symbol + ".png");
-            if (!templateFile.exists()) {
-                continue;
-            }
-
-            BufferedImage template = readTemplate(templateFile);
-            if (template == null) {
-                continue;
-            }
-            BufferedImage cleanTemplate = trimToForeground(template, 1);
-            double score = foregroundSimilarity(glyphImage, cleanTemplate);
-            cleanTemplate.flush();
-            template.flush();
-
+        for (DigitTemplate template : loadDigitTemplates()) {
+            double score = foregroundSimilarity(glyphPixels, template.pixels());
             if (score > bestScore) {
                 bestScore = score;
-                bestSymbol = symbol;
+                bestSymbol = template.symbol();
             }
         }
 
@@ -613,6 +629,48 @@ public class MiniMapCoordinateReader {
             return new GlyphMatch("?", bestScore);
         }
         return new GlyphMatch(bestSymbol, bestScore);
+    }
+
+    private List<DigitTemplate> loadDigitTemplates() {
+        List<DigitTemplate> cached = digitTemplateCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            cached = digitTemplateCache;
+            if (cached != null) {
+                return cached;
+            }
+            digitTemplateCache = readDigitTemplates();
+            return digitTemplateCache;
+        }
+    }
+
+    private List<DigitTemplate> readDigitTemplates() {
+        List<DigitTemplate> templates = new ArrayList<>();
+        for (String symbol : List.of("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")) {
+            File templateFile = new File(TEMPLATE_DIR, symbol + ".png");
+            if (!templateFile.exists()) {
+                continue;
+            }
+            BufferedImage template = readTemplate(templateFile);
+            if (template == null) {
+                continue;
+            }
+            try {
+                BufferedImage cleanTemplate = trimToForeground(template, 1);
+                try {
+                    templates.add(new DigitTemplate(symbol, collectWhitePixels(cleanTemplate)));
+                } finally {
+                    cleanTemplate.flush();
+                }
+            } finally {
+                template.flush();
+            }
+        }
+        log.info("[minimap-location] loaded coordinate digit templates: count={} dir={}",
+                templates.size(), TEMPLATE_DIR);
+        return templates;
     }
 
     private Optional<MapCoordinate> parseCoordinate(String text, String mapLabelPath, boolean debugOutput) {
@@ -714,23 +772,11 @@ public class MiniMapCoordinateReader {
         // Count foreground pixels in both images first. The final score is Dice-style
         // overlap, so blank templates must fail instead of accidentally returning a
         // perfect match.
-        int whiteA = 0;
-        int whiteB = 0;
-        for (int y = 0; y < a.getHeight(); y++) {
-            for (int x = 0; x < a.getWidth(); x++) {
-                if (isWhite(a, x, y)) {
-                    whiteA++;
-                }
-            }
-        }
-        for (int y = 0; y < b.getHeight(); y++) {
-            for (int x = 0; x < b.getWidth(); x++) {
-                if (isWhite(b, x, y)) {
-                    whiteB++;
-                }
-            }
-        }
-        if (whiteA == 0 || whiteB == 0) {
+        return foregroundSimilarity(collectWhitePixels(a), collectWhitePixels(b));
+    }
+
+    private double foregroundSimilarity(WhitePixelSet a, WhitePixelSet b) {
+        if (a.whitePixels() == 0 || b.whitePixels() == 0) {
             return 0.0;
         }
 
@@ -740,26 +786,41 @@ public class MiniMapCoordinateReader {
         for (int dy = -2; dy <= 2; dy++) {
             for (int dx = -2; dx <= 2; dx++) {
                 int overlap = 0;
-                for (int y = 0; y < a.getHeight(); y++) {
-                    for (int x = 0; x < a.getWidth(); x++) {
-                        int bx = x + dx;
-                        int by = y + dy;
-                        if (bx < 0 || by < 0 || bx >= b.getWidth() || by >= b.getHeight()) {
-                            continue;
-                        }
-                        if (isWhite(a, x, y) && isWhite(b, bx, by)) {
-                            overlap++;
-                        }
+                for (int i = 0; i < a.whitePixels(); i++) {
+                    int bx = a.xs()[i] + dx;
+                    int by = a.ys()[i] + dy;
+                    if (b.isWhite(bx, by)) {
+                        overlap++;
                     }
                 }
-                best = Math.max(best, (2.0 * overlap) / (whiteA + whiteB));
+                best = Math.max(best, (2.0 * overlap) / (a.whitePixels() + b.whitePixels()));
             }
         }
         // Similar-looking text at very different sizes is suspicious; penalize size
         // differences so short map names do not win against longer labels.
-        double sizePenalty = Math.abs(a.getWidth() - b.getWidth()) * 0.08
-                + Math.abs(a.getHeight() - b.getHeight()) * 0.04;
+        double sizePenalty = Math.abs(a.width() - b.width()) * 0.08
+                + Math.abs(a.height() - b.height()) * 0.04;
         return Math.max(0.0, best - sizePenalty);
+    }
+
+    private WhitePixelSet collectWhitePixels(BufferedImage image) {
+        List<Point> points = new ArrayList<>();
+        boolean[] mask = new boolean[image.getWidth() * image.getHeight()];
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (isWhite(image, x, y)) {
+                    points.add(new Point(x, y));
+                    mask[y * image.getWidth() + x] = true;
+                }
+            }
+        }
+        int[] xs = new int[points.size()];
+        int[] ys = new int[points.size()];
+        for (int i = 0; i < points.size(); i++) {
+            xs[i] = points.get(i).x;
+            ys[i] = points.get(i).y;
+        }
+        return new WhitePixelSet(image.getWidth(), image.getHeight(), mask, xs, ys);
     }
 
     private BufferedImage crop(BufferedImage source, GlyphBox box) {
@@ -866,35 +927,67 @@ public class MiniMapCoordinateReader {
     }
 
     private Optional<MapLabelTemplateMatch> findBestMapLabelMatch(BufferedImage label) {
-        if (!Files.isDirectory(MAP_LABEL_TEMPLATE_DIR)) {
+        List<MapLabelTemplate> templates = loadMapLabelTemplates();
+        if (templates.isEmpty()) {
             return Optional.empty();
         }
-        try (Stream<Path> stream = Files.list(MAP_LABEL_TEMPLATE_DIR)) {
-            // Score every saved map-name template against the current cleaned label and
-            // return the strongest candidate; thresholding is left to callers because
-            // survey/debug paths may want to log low-score best matches.
-            return stream
-                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".png"))
-                    .map(path -> scoreMapLabel(label, path))
-                    .filter(Optional::isPresent)
-                    .map(Optional::get)
-                    .max(Comparator.comparingDouble(MapLabelTemplateMatch::score));
-        } catch (IOException e) {
-            log.warn("[minimap-location] read map label templates failed: {}", e.getMessage());
-            return Optional.empty();
+
+        WhitePixelSet labelPixels = collectWhitePixels(label);
+        // Score every saved map-name template against the current cleaned label and
+        // return the strongest candidate; thresholding is left to callers because
+        // survey/debug paths may want to log low-score best matches.
+        return templates.stream()
+                .map(template -> new MapLabelTemplateMatch(
+                        template.mapName(),
+                        foregroundSimilarity(labelPixels, template.pixels())))
+                .max(Comparator.comparingDouble(MapLabelTemplateMatch::score));
+    }
+
+    private List<MapLabelTemplate> loadMapLabelTemplates() {
+        List<MapLabelTemplate> cached = mapLabelTemplateCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            cached = mapLabelTemplateCache;
+            if (cached != null) {
+                return cached;
+            }
+            mapLabelTemplateCache = readMapLabelTemplates();
+            return mapLabelTemplateCache;
         }
     }
 
-    private Optional<MapLabelTemplateMatch> scoreMapLabel(BufferedImage label, Path templatePath) {
+    private List<MapLabelTemplate> readMapLabelTemplates() {
+        if (!Files.isDirectory(MAP_LABEL_TEMPLATE_DIR)) {
+            return List.of();
+        }
+        try (Stream<Path> stream = Files.list(MAP_LABEL_TEMPLATE_DIR)) {
+            List<MapLabelTemplate> templates = stream
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".png"))
+                    .map(this::readMapLabelTemplate)
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .toList();
+            log.info("[minimap-location] loaded map label templates: count={} dir={}",
+                    templates.size(), MAP_LABEL_TEMPLATE_DIR);
+            return templates;
+        } catch (IOException e) {
+            log.warn("[minimap-location] read map label templates failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private Optional<MapLabelTemplate> readMapLabelTemplate(Path templatePath) {
         try {
             BufferedImage template = ImageIO.read(templatePath.toFile());
             if (template == null) {
                 return Optional.empty();
             }
+            String fileName = templatePath.getFileName().toString();
+            String mapName = fileName.substring(0, fileName.length() - 4);
             try {
-                String fileName = templatePath.getFileName().toString();
-                String mapName = fileName.substring(0, fileName.length() - 4);
-                return Optional.of(new MapLabelTemplateMatch(mapName, foregroundSimilarity(label, template)));
+                return Optional.of(new MapLabelTemplate(mapName, collectWhitePixels(template)));
             } finally {
                 template.flush();
             }
@@ -986,6 +1079,22 @@ public class MiniMapCoordinateReader {
         @Override
         public String toString() {
             return "GlyphBox[x=" + minX + ",y=" + minY + ",w=" + width() + ",h=" + height() + ",p=" + pixelCount + "]";
+        }
+    }
+
+    private record MapLabelTemplate(String mapName, WhitePixelSet pixels) {
+    }
+
+    private record DigitTemplate(String symbol, WhitePixelSet pixels) {
+    }
+
+    private record WhitePixelSet(int width, int height, boolean[] mask, int[] xs, int[] ys) {
+        private int whitePixels() {
+            return xs.length;
+        }
+
+        private boolean isWhite(int x, int y) {
+            return x >= 0 && y >= 0 && x < width && y < height && mask[y * width + x];
         }
     }
 

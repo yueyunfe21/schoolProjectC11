@@ -26,6 +26,8 @@ import com.bot.dhxy.model.PlayerCharacter;
  * @param roamingTarget true when the logical coordinate may come from a task refresh instead of a
  *                      static NPC table. This flag is retained for future roaming-specific strategy
  *                      selection; it does not currently skip coordinate-formula clicking.
+ * @param tooltipType expected visual tooltip category for this target; non-null values control
+ *                    whether the task-tooltip template strategy is allowed.
  */
 @Value
 @Builder
@@ -41,6 +43,8 @@ public class NpcClickRequest {
     int tuneY;
     String expectedDialogTemplatePath;
     boolean roamingTarget;
+    @Builder.Default
+    NpcTooltipType tooltipType = NpcTooltipType.TASK;
 
     /**
      * Build a fixed-coordinate target request. OCR regions are resolved later by vision memory.
@@ -52,7 +56,7 @@ public class NpcClickRequest {
                                         String npcName,
                                         String expectedDialogTemplatePath) {
         return new NpcClickRequest(player, mapName, mapX, mapY, npcName,
-                0, 0, expectedDialogTemplatePath, false);
+                0, 0, expectedDialogTemplatePath, false, NpcTooltipType.TASK);
     }
 
     /**
@@ -67,7 +71,7 @@ public class NpcClickRequest {
                                                 int tuneY,
                                                 String expectedDialogTemplatePath) {
         return new NpcClickRequest(player, mapName, mapX, mapY, npcName,
-                tuneX, tuneY, expectedDialogTemplatePath, false);
+                tuneX, tuneY, expectedDialogTemplatePath, false, NpcTooltipType.TASK);
     }
 
     /**
@@ -80,7 +84,7 @@ public class NpcClickRequest {
                                           String npcName,
                                           String expectedDialogTemplatePath) {
         return new NpcClickRequest(player, mapName, mapX, mapY, npcName,
-                0, 0, expectedDialogTemplatePath, true);
+                0, 0, expectedDialogTemplatePath, true, NpcTooltipType.TASK);
     }
 
 }

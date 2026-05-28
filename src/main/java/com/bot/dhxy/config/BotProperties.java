@@ -72,6 +72,15 @@ public class BotProperties {
     private boolean summonSkillCleanRunImmediatelyOnStart = false;
 
     /**
+     * Development switch for the slow pre-task UI preparation chain.
+     *
+     * <p>When disabled, leader tasks skip startup-only checks such as Alt+1 map options, Alt+U
+     * expand/zoom state, and Alt+6 visibility setup. Keep this off during fast local debugging, and
+     * enable it when validating real multi-window runs.</p>
+     */
+    private boolean taskStartupPreparationEnabled = false;
+
+    /**
      * Game-task run count limits surfaced by the JavaFX Settings page.
      * A value <= 0 means "keep running until manually stopped" for task code that supports it.
      * Some tasks are not wired to these limits yet; the UI still keeps the values here so task

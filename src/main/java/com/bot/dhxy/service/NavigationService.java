@@ -11,13 +11,16 @@ import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
-import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.npc.NpcMovementType;
+import com.bot.dhxy.model.npc.NpcRole;
+import com.bot.dhxy.model.npc.NpcTarget;
+import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogHandleResult;
+import com.bot.dhxy.service.dialog.DialogOptionClickResult;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.LatencyMetrics;
@@ -70,6 +73,9 @@ public class NavigationService {
     private static final long MAP_RESULT_SCROLL_INTERVAL_MS = 80L;
     private static final long MAP_RESULT_SCROLL_SETTLE_MS = 300L;
     private static final long MOVING_NAVIGATION_YIELD_MS = 1500L;
+    private static final long ROUTE_DIALOG_SETTLE_MS = 500L;
+    private static final long ROUTE_DIALOG_ARRIVAL_CONFIRM_TIMEOUT_MS = 3500L;
+    private static final long ROUTE_DIALOG_ARRIVAL_CONFIRM_POLL_MS = 500L;
     private static final long MINI_MAP_PATHING_CONFIRM_TIMEOUT_MS = 2200L;
     private static final long MINI_MAP_PATHING_CONFIRM_POLL_MS = 250L;
     private static final int MAP_NAVIGATION_RECLICK_STUCK_SCANS = 2;
@@ -81,6 +87,17 @@ public class NavigationService {
     private static final int ZHANG_WEN_APPROACH_Y = 100;
     private static final int ZHANG_WEN_NPC_X = 224;
     private static final int ZHANG_WEN_NPC_Y = 100;
+    private static final NpcTarget ZHANG_WEN_NPC = NpcTarget.builder()
+            .key("navigation.zhangWen")
+            .mapName(MAP_CHANG_AN)
+            .name(NPC_ZHANG_WEN)
+            .x(ZHANG_WEN_NPC_X)
+            .y(ZHANG_WEN_NPC_Y)
+            .role(NpcRole.INTERACTION_TARGET)
+            .movementType(NpcMovementType.FIXED)
+            .tooltipType(NpcTooltipType.NONE)
+            .source("navigation")
+            .build();
     private static final long LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS = 20000L;
 
     private final BotProperties config;
@@ -101,6 +118,7 @@ public class NavigationService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
+    private final TransferChoiceMemoryService transferChoiceMemoryService;
 
     private final Map<String, NavigationRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
@@ -223,10 +241,59 @@ public class NavigationService {
             }
 
             /*
+             * A previous PATHING_STARTED return can resume here while a route-transfer dialog is
+             * already open, such as the Luoyang inn choice after a world-map route from Datang
+             * Border. Handle that dialog first; only open the world map when no current option can
+             * advance the route.
+             */
+            RouteDialogClickResult existingRouteDialog = clickRouteDialogOption(
+                    "navigation:existing-route-dialog", targetMapName, true);
+            DialogHandleResult existingDialogResult = existingRouteDialog.result();
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+            boolean existingDialogClickedTarget = existingDialogResult == DialogHandleResult.OPTION_KEYWORD_CLICKED;
+            boolean existingDialogHandled = existingDialogClickedTarget
+                    || existingDialogResult == DialogHandleResult.FALLBACK_CLICKED;
+            if (existingDialogHandled) {
+                log.info("navigate to map handled existing route dialog before world-map search: target={} result={} settleMs={}",
+                        targetMapName, existingDialogResult, ROUTE_DIALOG_SETTLE_MS);
+                if (!TaskSleep.sleep(ROUTE_DIALOG_SETTLE_MS)) {
+                    result = NavigationResult.stopped("interrupted after existing route dialog handling");
+                    return result;
+                }
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+
+                /*
+                 * Route option dialogs are terminal choices: after clicking "长安桥" or similar, the
+                 * expected next proof is the target map itself. Running movement detection first is
+                 * both slower and misleading because these transfers may complete as a map switch
+                 * rather than visible walking.
+                 */
+                if (existingDialogClickedTarget) {
+                    boolean arrivedAfterRouteDialog = gameStateUtil.confirmCurrentMap(
+                            targetMapName,
+                            ROUTE_DIALOG_ARRIVAL_CONFIRM_TIMEOUT_MS,
+                            ROUTE_DIALOG_ARRIVAL_CONFIRM_POLL_MS,
+                            "navigation:existing-route-dialog:" + targetMapName);
+                    TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+                    if (arrivedAfterRouteDialog) {
+                        recordRouteDialogOutcome(existingRouteDialog, true, "navigation:existing-route-dialog");
+                        closeMapSearchInputAfterRouteDialog("navigation:existing-route-dialog:" + targetMapName);
+                        log.info("navigate to map arrived after existing route dialog: target={} result={}",
+                                targetMapName, existingDialogResult);
+                        result = NavigationResult.arrived("target map reached after route dialog");
+                        return result;
+                    }
+                    recordRouteDialogOutcome(existingRouteDialog, false, "navigation:existing-route-dialog");
+                    log.warn("navigate to map route dialog click did not confirm target map: target={} result={}",
+                            targetMapName, existingDialogResult);
+                }
+            }
+
+            /*
              * First route submission: open the world map, search the target map, scroll to the bottom
              * result, and click the last route link. The called method owns the exclusive input section.
              */
-            if (!submitWorldMapSearchAndClickDestination(targetMapName)) {
+            if (!existingDialogHandled && !submitWorldMapSearchAndClickDestination(targetMapName)) {
                 log.warn("first navigate attempt failed, entering retry loop");
             }
 
@@ -264,17 +331,31 @@ public class NavigationService {
                  * Stopped movement may be a route option dialog rather than a real failure. Handle the
                  * route dialog before paying for OCR or re-clicking the last search result.
                  */
-                DialogHandleResult dialogResult = dialogService.handleDialog(
-                        DialogHandleRequest.clickKeyword("navigation", targetMapName, true));
+                RouteDialogClickResult routeDialog = clickRouteDialogOption("navigation", targetMapName, true);
+                DialogHandleResult dialogResult = routeDialog.result();
                 TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (dialogResult == DialogHandleResult.OPTION_KEYWORD_CLICKED
                         || dialogResult == DialogHandleResult.FALLBACK_CLICKED) {
                     stuckCount = 0;
-                    if (!TaskSleep.sleep(1500)) {
+                    if (!TaskSleep.sleep(ROUTE_DIALOG_SETTLE_MS)) {
                         result = NavigationResult.stopped("interrupted after route dialog handling");
                         return result;
                     }
                     TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+                    if (dialogResult == DialogHandleResult.OPTION_KEYWORD_CLICKED) {
+                        boolean arrivedAfterRouteDialog = gameStateUtil.confirmCurrentMap(
+                                targetMapName,
+                                ROUTE_DIALOG_ARRIVAL_CONFIRM_TIMEOUT_MS,
+                                ROUTE_DIALOG_ARRIVAL_CONFIRM_POLL_MS,
+                                "navigation:route-dialog:" + targetMapName);
+                        recordRouteDialogOutcome(routeDialog, arrivedAfterRouteDialog, "navigation:route-dialog");
+                        if (arrivedAfterRouteDialog) {
+                            closeMapSearchInputAfterRouteDialog("navigation:route-dialog:" + targetMapName);
+                            log.info("navigate to map arrived after route dialog: target={}", targetMapName);
+                            result = NavigationResult.arrived("target map reached after route dialog");
+                            return result;
+                        }
+                    }
                     continue;
                 }
 
@@ -517,15 +598,15 @@ public class NavigationService {
         }
         TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
-        boolean npcClicked = npcClickService.clickNpcSmart(NpcClickRequest.fixed(
-                me, MAP_CHANG_AN, ZHANG_WEN_NPC_X, ZHANG_WEN_NPC_Y, NPC_ZHANG_WEN, null));
+        boolean npcClicked = npcClickService.clickNpcSmart(ZHANG_WEN_NPC.toClickRequest(me));
         if (!npcClicked) {
             log.warn("Ling Shou Village route Zhang Wen click not verified, checking dialog anyway");
         }
         TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
-        DialogHandleResult dialogResult = dialogService.handleDialog(
-                DialogHandleRequest.clickKeyword("navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false));
+        RouteDialogClickResult routeDialog = clickRouteDialogOption(
+                "navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false);
+        DialogHandleResult dialogResult = routeDialog.result();
         if (dialogResult != DialogHandleResult.OPTION_KEYWORD_CLICKED) {
             log.warn("Ling Shou Village route transfer option not handled: result={}", dialogResult);
             return NavigationResult.mapNotReached("Ling Shou Village transfer option not handled");
@@ -535,6 +616,10 @@ public class NavigationService {
                 MAP_LING_SHOU_VILLAGE,
                 LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS,
                 "navigateToLingShouVillage");
+        recordRouteDialogOutcome(routeDialog, arrived, "navigation:ling-shou-village");
+        if (arrived) {
+            closeMapSearchInputAfterRouteDialog("navigation:ling-shou-village");
+        }
         log.info("Ling Shou Village route confirm result={}", arrived);
         return arrived
                 ? NavigationResult.arrived("Ling Shou Village reached through Zhang Wen")
@@ -566,6 +651,86 @@ public class NavigationService {
         }
         return targetMapName != null && !targetMapName.isBlank()
                 && submitWorldMapSearchAndClickDestination(targetMapName);
+    }
+
+    /**
+     * Click a route-transfer option with learned memory first, then OCR fallback.
+     *
+     * @param source short diagnostic source.
+     * @param targetMapName destination map expected after this transfer dialog.
+     * @param allowFallbackOptionClick whether the OCR path may click the last green option when the
+     *                                 target text is not matched. Fallback clicks are never learned.
+     * @return route dialog click result with enough context to update transfer memory after arrival
+     * confirmation.
+     */
+    private RouteDialogClickResult clickRouteDialogOption(String source,
+                                                          String targetMapName,
+                                                          boolean allowFallbackOptionClick) {
+        LocationInfo before = playerStateService.syncMyPosition();
+        String fromMap = before != null && before.mapName != null && !before.mapName.isBlank()
+                ? before.mapName
+                : context.getMe().getCurrentMapName();
+        Integer fromX = before == null ? null : before.x;
+        Integer fromY = before == null ? null : before.y;
+
+        /*
+         * Transfer memory is scoped to an active navigation transaction. It is safe to try before OCR
+         * because the caller is already expecting a route option dialog for targetMapName.
+         */
+        var remembered = transferChoiceMemoryService.findUsable(fromMap, targetMapName);
+        if (remembered.isPresent()) {
+            TransferChoiceMemoryService.TransferChoiceEntry entry = remembered.get();
+            boolean clicked = dialogService.clickRememberedOptionPointDirectForExclusive(
+                    entry.relativeX, entry.relativeY, source + ":memory");
+            if (clicked) {
+                log.info("[transfer-memory] clicked remembered route option: source={} from={} target={} rel=({}, {})",
+                        source, fromMap, targetMapName, entry.relativeX, entry.relativeY);
+                return new RouteDialogClickResult(
+                        DialogHandleResult.OPTION_KEYWORD_CLICKED,
+                        true,
+                        fromMap,
+                        fromX,
+                        fromY,
+                        targetMapName,
+                        entry.relativeX,
+                        entry.relativeY,
+                        entry.optionText);
+            }
+        }
+
+        DialogOptionClickResult ocrResult = dialogService.clickKeywordOptionWithPoint(
+                source, targetMapName, allowFallbackOptionClick);
+        return new RouteDialogClickResult(
+                ocrResult.getResult(),
+                false,
+                fromMap,
+                fromX,
+                fromY,
+                targetMapName,
+                ocrResult.getRelativeX(),
+                ocrResult.getRelativeY(),
+                ocrResult.getMatchedText());
+    }
+
+    private void recordRouteDialogOutcome(RouteDialogClickResult routeDialog, boolean arrived, String source) {
+        if (routeDialog == null || routeDialog.relativeX() == null || routeDialog.relativeY() == null) {
+            return;
+        }
+        if (arrived) {
+            transferChoiceMemoryService.recordSuccess(
+                    routeDialog.fromMap(),
+                    routeDialog.fromX(),
+                    routeDialog.fromY(),
+                    routeDialog.targetMap(),
+                    routeDialog.relativeX(),
+                    routeDialog.relativeY(),
+                    routeDialog.optionText(),
+                    source);
+            return;
+        }
+        if (routeDialog.fromMemory()) {
+            transferChoiceMemoryService.recordFailure(routeDialog.fromMap(), routeDialog.targetMap(), source);
+        }
     }
 
     private boolean submitWorldMapSearchAndClickDestination(String targetMapName) {
@@ -711,6 +876,12 @@ public class NavigationService {
     private void closeMapSearchInputAfterRouteClick(String source) {
         boolean closed = uiCleanerService.closeMapSearchInputByX2Direct("navigation:" + source + ":closeMapSearchInput");
         log.info("navigation map search: x2-only close after route click source={} closed={}", source, closed);
+    }
+
+    private void closeMapSearchInputAfterRouteDialog(String source) {
+        boolean closed = inputSequences.submitExclusiveAndWait("navigation:routeDialogCloseX2:" + source,
+                () -> uiCleanerService.closeMapSearchInputByX2Direct(source + ":closeMapSearchInput"));
+        log.info("navigation route dialog: x2-only close after confirmed arrival source={} closed={}", source, closed);
     }
 
     private boolean openWorldMapRoutePanelDirect() {
@@ -933,6 +1104,18 @@ public class NavigationService {
     private static class NavigationRuntimeState {
         private int lastAbsoluteLogicalX = DEFAULT_LOGICAL_COORDINATE;
         private int lastAbsoluteLogicalY = DEFAULT_LOGICAL_COORDINATE;
+    }
+
+    private record RouteDialogClickResult(
+            DialogHandleResult result,
+            boolean fromMemory,
+            String fromMap,
+            Integer fromX,
+            Integer fromY,
+            String targetMap,
+            Integer relativeX,
+            Integer relativeY,
+            String optionText) {
     }
 
     private enum MiniMapPathingAttemptResult {

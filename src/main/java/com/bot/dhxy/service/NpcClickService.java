@@ -26,6 +26,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -264,18 +265,15 @@ public class NpcClickService {
             log.warn("NPC ctrl menu scan requested without target keyword");
             return NpcClickStrategyResult.skipped(NpcClickStrategySource.CTRL_MENU, "missing-target-keyword");
         }
-        if (expectedDialogTemplatePath == null || expectedDialogTemplatePath.isBlank()) {
-            log.warn("NPC ctrl menu scan requested without expected dialog template: keyword={}", targetKeyword);
-            return NpcClickStrategyResult.skipped(NpcClickStrategySource.CTRL_MENU, "missing-expected-dialog-template");
-        }
         if (shouldStop()) {
             return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, "interrupted-before-ctrl-scan");
         }
 
         /*
-         * Ctrl-menu probing is intentionally last-resort. The window center is tried first because
-         * it is the most stable generic fallback. Higher-confidence origins get a small offset ring,
-         * while noisy shape-only yellow candidates only test their own point.
+         * Ctrl-menu probing is intentionally last-resort. Try task-derived origins first: formula
+         * origins already account for the difference between the NPC coordinate and the approach
+         * coordinate the task navigated to. The window center remains as the broad generic fallback
+         * after those higher-confidence points.
          */
         WindowBase windowBase = currentWindowBase("ctrl-menu-scan");
         int gameBaseX = windowBase.x();
@@ -633,6 +631,58 @@ public class NpcClickService {
     }
 
     /**
+     * Debug only the production purple-name player-anchor formula path.
+     *
+     * <p>This intentionally bypasses learned memory, task-tooltip templates, yellow target OCR, and
+     * Ctrl-menu probing. Use it when the formula itself looks suspicious: the method reuses the same
+     * cached player coordinate, ROI recommendation, purple-name wash/OCR, formula math, and dialog
+     * verification used by production {@link #clickNpcSmart(NpcClickRequest)}.</p>
+     *
+     * @param request target facts. mapX/mapY are logical game coordinates; tuneX/tuneY are
+     *                screen-pixel formula corrections; expectedDialogTemplatePath may be blank, in
+     *                which case generic OPTION-dialog detection is used.
+     * @return true only when the purple formula click opens/verifies a dialog.
+     */
+    public boolean debugClickNpcByPurpleAnchorOnly(NpcClickRequest request) {
+        if (request == null) {
+            log.warn("[npc-purple-debug] skipped: request is null");
+            return false;
+        }
+        long latencyStart = LatencyMetrics.start();
+        boolean result = false;
+        try {
+            tracker.updateGlobalVision();
+            LocationInfo playerLocation = cachedPlayerLocation(request);
+            List<ResolvedNpcClickRegion> targetScanRegions = resolveNpcScanRegions(request, playerLocation);
+            log.info("[npc-purple-debug] start npc={} map={} target=({}, {}) player=({}, {}) tune=({}, {}) regions={} expectedTemplate={}",
+                    request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                    playerLocation == null ? null : playerLocation.x,
+                    playerLocation == null ? null : playerLocation.y,
+                    request.tuneX(), request.tuneY(), summarizeRegions(targetScanRegions),
+                    request.expectedDialogTemplatePath());
+            if (targetScanRegions == null || targetScanRegions.isEmpty()) {
+                log.warn("[npc-purple-debug] no ROI region available; cannot run purple formula");
+                return false;
+            }
+
+            FormulaClickPrediction prediction = calculatePlayerAnchorFormulaPoint(
+                    request.player(), request.mapName(), request.mapX(), request.mapY(),
+                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
+            NpcClickStrategyResult formulaResult =
+                    clickNpcByPlayerAnchorFormula(prediction, request.expectedDialogTemplatePath());
+            recordSmartClickEvidence(request, formulaResult, playerLocation);
+            result = formulaResult.verified();
+            log.info("[npc-purple-debug] result={} status={} message={}",
+                    result, formulaResult.status(), formulaResult.message());
+            return result;
+        } finally {
+            LatencyMetrics.info(log, "npc.click.purpleDebug", latencyStart,
+                    "result=" + result + " target=" + request.npcName() + "@"
+                            + request.mapName() + "(" + request.mapX() + "," + request.mapY() + ")");
+        }
+    }
+
+    /**
      * Click an NPC or task target through the single public smart-click entry.
      *
      * <p>The caller supplies business facts only: target name, logical map coordinate, an optional
@@ -690,10 +740,9 @@ public class NpcClickService {
                     "learned-memory", CtrlProbeScanProfile.SMALL_RING);
 
             /*
-             * 2. Visible tooltip path: if the game already shows the NPC task tooltip, click that
-             * tooltip directly. This handles the common Xiuluo accept-NPC case after learned memory has
-             * had the first chance. A miss is non-destructive: no input is sent unless the template is
-             * found in a recommended ROI and the expected dialog verifies.
+             * 2. Visible tooltip path: only targets that can show the standard task tooltip should
+             * try this. Fixed transfer NPCs such as 张闻 do not have that tooltip; probing it only
+             * delays the formula path that is already calibrated for them.
              */
             NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions);
             recordSmartClickEvidence(request, tooltipResult, playerLocation);
@@ -703,11 +752,33 @@ public class NpcClickService {
             }
 
             /*
-             * 3. Normal visual path: search vision-memory recommended regions in order. Region
+             * 3. Use the historical player-anchor formula before paying for yellow-name OCR. A
+             * roaming request still carries the current task coordinate; for Xiuluo this coordinate
+             * is refreshed from the task panel after reaching the target map, so it remains useful
+             * as a fixed point until a future roaming-specific strategy is introduced.
+             */
+            FormulaClickPrediction formulaPrediction = targetScanRegions.isEmpty()
+                    ? null
+                    : calculatePlayerAnchorFormulaPoint(
+                    request.player(), request.mapName(), request.mapX(), request.mapY(),
+                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
+            addCtrlProbeOrigin(ctrlProbeOrigins,
+                    formulaPrediction == null ? null : formulaPrediction.predictedClickAbs(),
+                    "formula-target", CtrlProbeScanProfile.SMALL_RING);
+            NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
+                    formulaPrediction, request.expectedDialogTemplatePath());
+            recordSmartClickEvidence(request, formulaResult, playerLocation);
+            if (formulaResult.verified()) {
+                result = true;
+                return true;
+            }
+
+            /*
+             * 4. Yellow-name visual path: search vision-memory recommended regions in order. Region
              * expansion is only allowed when the smaller region does not contain the target text. If
              * the target text is found but the resulting click does not verify the dialog, a larger
              * region would only add noise and may click another candidate, so the service moves to the
-             * coordinate/Ctrl fallbacks instead.
+             * Ctrl fallback instead.
              */
             for (int i = 0; i < targetScanRegions.size(); i++) {
                 ResolvedNpcClickRegion region = targetScanRegions.get(i);
@@ -729,28 +800,6 @@ public class NpcClickService {
                             request.npcName(), yellowResult.status(), region.toShortText());
                     break;
                 }
-            }
-
-            /*
-             * 4. Use the historical player-anchor formula. A roaming request still carries the current
-             * task coordinate; for Xiuluo this coordinate is refreshed from the task panel after reaching
-             * the target map, so it remains useful as a fixed point until a future roaming-specific
-             * strategy is introduced.
-             */
-            FormulaClickPrediction formulaPrediction = targetScanRegions.isEmpty()
-                    ? null
-                    : calculatePlayerAnchorFormulaPoint(
-                    request.player(), request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
-            addCtrlProbeOrigin(ctrlProbeOrigins,
-                    formulaPrediction == null ? null : formulaPrediction.predictedClickAbs(),
-                    "formula-target", CtrlProbeScanProfile.SMALL_RING);
-            NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
-                    formulaPrediction, request.expectedDialogTemplatePath());
-            recordSmartClickEvidence(request, formulaResult, playerLocation);
-            if (formulaResult.verified()) {
-                result = true;
-                return true;
             }
 
             /*
@@ -798,6 +847,13 @@ public class NpcClickService {
     private NpcClickStrategyResult clickNpcByTaskTooltipTemplate(
             NpcClickRequest request,
             List<ResolvedNpcClickRegion> targetScanRegions) {
+        if (request.tooltipType() == NpcTooltipType.NONE) {
+            log.info("NPC task-tooltip template skipped: npcName={} tooltipType={}",
+                    request.npcName(), request.tooltipType());
+            return NpcClickStrategyResult.skipped(
+                    NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
+                    "tooltip-disabled");
+        }
         if (targetScanRegions == null || targetScanRegions.isEmpty()) {
             log.info("NPC task-tooltip template skipped: npcName={} reason=no-recommended-regions", request.npcName());
             return NpcClickStrategyResult.skipped(
@@ -1340,24 +1396,23 @@ public class NpcClickService {
      * @param includeWindowCenterFallback true for production smart-click fallback, false for
      *                                    point-isolation debug runs where the caller wants to test
      *                                    only the supplied origins.
-     * @return ordered screen-absolute origins. The center fallback is placed first when enabled
-     *         because Ctrl menu probing is a generic fallback; noisy yellow/visual candidates must
-     *         not outrank the stable center probe when earlier direct-click strategies have already
-     *         failed.
+     * @return ordered screen-absolute origins. Caller-provided origins are kept first because they
+     *         can encode task-specific offsets, such as a 修罗 approach point that deliberately
+     *         stands beside the monster. The center fallback is appended only as the final broad scan.
      */
     private List<CtrlProbeOrigin> normalizeCtrlProbeOrigins(List<CtrlProbeOrigin> preferredOrigins,
                                                             Point centerFallback,
                                                             WindowBase windowBase,
                                                             boolean includeWindowCenterFallback) {
         List<CtrlProbeOrigin> normalized = new ArrayList<>();
-        if (includeWindowCenterFallback) {
-            addNormalizedCtrlProbeOrigin(normalized,
-                    new CtrlProbeOrigin(centerFallback, "window-center", CtrlProbeScanProfile.FULL_RING), windowBase);
-        }
         if (preferredOrigins != null) {
             for (CtrlProbeOrigin origin : preferredOrigins) {
                 addNormalizedCtrlProbeOrigin(normalized, origin, windowBase);
             }
+        }
+        if (includeWindowCenterFallback) {
+            addNormalizedCtrlProbeOrigin(normalized,
+                    new CtrlProbeOrigin(centerFallback, "window-center", CtrlProbeScanProfile.FULL_RING), windowBase);
         }
         return List.copyOf(normalized);
     }

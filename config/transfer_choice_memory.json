@@ -1,0 +1,36 @@
+{
+  "entries" : {
+    "洛阳城->长安" : {
+      "fromMap" : "洛阳城",
+      "fromX" : 153,
+      "fromY" : 47,
+      "targetMap" : "长安",
+      "relativeX" : 65,
+      "relativeY" : 126,
+      "optionText" : "长安桥（400两）",
+      "source" : "navigation:existing-route-dialog",
+      "successCount" : 1,
+      "failCount" : 0,
+      "disabled" : false,
+      "lastSuccessAt" : "2026-05-27T23:56:20.569543800",
+      "lastFailureAt" : null,
+      "usable" : true
+    },
+    "长安->灵兽村" : {
+      "fromMap" : "长安",
+      "fromX" : 219,
+      "fromY" : 100,
+      "targetMap" : "灵兽村",
+      "relativeX" : 182,
+      "relativeY" : 109,
+      "optionText" : "请送我去灵兽村（800两，可参加召唤兽赛跑活动）",
+      "source" : "navigation:ling-shou-village",
+      "successCount" : 1,
+      "failCount" : 0,
+      "disabled" : false,
+      "lastSuccessAt" : "2026-05-27T23:56:40.736644",
+      "lastFailureAt" : null,
+      "usable" : true
+    }
+  }
+}

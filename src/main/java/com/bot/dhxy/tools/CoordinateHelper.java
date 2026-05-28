@@ -366,15 +366,40 @@ public class CoordinateHelper {
             return null;
         }
 
-        double[] result = ImageFinder.find(roiPath, templatePath, matchRate);
+        long start = LatencyMetrics.start();
+        double[] result;
+        try {
+            result = ImageFinder.find(roiPath, templatePath, matchRate);
+        } catch (Throwable e) {
+            log.warn("[latency] event=coordinate.findImageInRegion elapsedMs={} detail={}",
+                    LatencyMetrics.elapsedMs(start),
+                    "result=exception template=" + templatePath
+                            + " roi=" + roiPath
+                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
+                            + " matchRate=" + matchRate
+                            + " error=" + e.getClass().getName() + ":" + e.getMessage());
+            log.warn("findImageInRegion ImageFinder failed: template={} roi={} rect=({}, {})-({}, {}) matchRate={}",
+                    templatePath, roiPath, rect[0], rect[1], rect[2], rect[3], matchRate, e);
+            throw e;
+        }
 
         if (result != null && result.length >= 2) {
             int absoluteX = rect[0] + (int) Math.round(result[0]);
             int absoluteY = rect[1] + (int) Math.round(result[1]);
+            LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
+                    "result=matched template=" + templatePath
+                            + " roi=" + roiPath
+                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
+                            + " point=" + absoluteX + "," + absoluteY);
             log.info("Region image matched [{}] at ({},{})", templatePath, absoluteX, absoluteY);
             return new Point(absoluteX, absoluteY);
         }
 
+        LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
+                "result=miss template=" + templatePath
+                        + " roi=" + roiPath
+                        + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
+                        + " matchRate=" + matchRate);
         return null;
     }
 

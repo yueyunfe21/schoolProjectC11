@@ -62,6 +62,9 @@ public interface InputProvider {
     /** Press Alt+T. */
     void pressAltT();
 
+    /** Press Alt+U. */
+    void pressAltU();
+
     /** Press Alt+O. */
     void pressAltO();
 

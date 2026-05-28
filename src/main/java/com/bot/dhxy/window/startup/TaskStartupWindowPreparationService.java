@@ -2,6 +2,7 @@ package com.bot.dhxy.window.startup;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -45,12 +46,20 @@ public class TaskStartupWindowPreparationService {
     private static final int ALT6_VISIBILITY_MAX_ATTEMPTS = 3;
     private static final long ALT6_VISIBILITY_RECHECK_DELAY_MS = 500L;
     private static final long ALT6_OVERLAY_FADEOUT_WAIT_MS = 1000L;
+    private static final String EXPAND_CHECKED_TEMPLATE = "images/template/status/expand_checked.png";
+    private static final String EXPAND_UNCHECKED_TEMPLATE = "images/template/status/expand_unchecked.png";
+    private static final int EXPAND_OPTION_RECT_X_OFFSET = 346;
+    private static final int EXPAND_OPTION_RECT_Y_OFFSET = 587;
+    private static final int EXPAND_OPTION_RECT_WIDTH = 106;
+    private static final int EXPAND_OPTION_RECT_HEIGHT = 23;
+    private static final double EXPAND_OPTION_MATCH_RATE = 0.95;
 
     private final GameClientTracker tracker;
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final BotProperties botProperties;
 
     /**
      * Ensure the mini-map tracking checkbox is enabled.
@@ -75,8 +84,16 @@ public class TaskStartupWindowPreparationService {
      * @return true when both map tracking and Alt+6 visibility are confirmed.
      */
     public boolean prepareTaskStartupWindow() {
+        if (!botProperties.isTaskStartupPreparationEnabled()) {
+            log.info("task startup preparation skipped: develop switch disabled");
+            return true;
+        }
         return inputSequences.submitExclusiveAndWait("taskStartup:mapTrackingAndAlt6", () -> {
             boolean mapReady = ensureMapTrackingOptionDirect();
+            if (!TaskSleep.sleep(200)) {
+                return false;
+            }
+            boolean expandReady = ensureExpandOptionUncheckedDirect();
             if (!TaskSleep.sleep(200)) {
                 return false;
             }
@@ -87,8 +104,58 @@ public class TaskStartupWindowPreparationService {
                     return false;
                 }
             }
-            return mapReady && visibilityReady;
+            return mapReady && expandReady && visibilityReady;
         });
+    }
+
+    /**
+     * Ensure the Alt+U status panel's expand/zoom option is disabled before leader tasks start.
+     *
+     * <p>Flying mounts can change the visible scene scale when this option is enabled. NPC formula
+     * clicks depend on stable purple-name-to-body geometry, so startup forces this option to the
+     * unchecked state. The method runs only inside the startup exclusive input callback and therefore
+     * uses direct input provider calls.</p>
+     */
+    private boolean ensureExpandOptionUncheckedDirect() {
+        inputProvider.pressAltU();
+        if (!TaskSleep.sleep(400)) {
+            return false;
+        }
+
+        try {
+            int[] rect = coordinateHelper.getScaledRect(
+                    EXPAND_OPTION_RECT_X_OFFSET,
+                    EXPAND_OPTION_RECT_Y_OFFSET,
+                    EXPAND_OPTION_RECT_WIDTH,
+                    EXPAND_OPTION_RECT_HEIGHT);
+            String scanPath = windowScopedTempPath.resolve("status_expand_option_scan.png");
+            if (!tracker.captureToFile("status expand option", scanPath, rect[0], rect[1], rect[2], rect[3])) {
+                log.warn("task startup expand option: failed to capture region rect=({}, {})-({}, {})",
+                        rect[0], rect[1], rect[2], rect[3]);
+                return false;
+            }
+
+            Point unchecked = findTemplateInCapturedRegion(EXPAND_UNCHECKED_TEMPLATE, rect, scanPath, EXPAND_OPTION_MATCH_RATE);
+            if (unchecked != null) {
+                log.info("task startup expand option: already unchecked point=({}, {})", unchecked.x, unchecked.y);
+                return true;
+            }
+
+            Point checked = findTemplateInCapturedRegion(EXPAND_CHECKED_TEMPLATE, rect, scanPath, EXPAND_OPTION_MATCH_RATE);
+            if (checked == null) {
+                log.warn("task startup expand option: neither checked nor unchecked template found checked={} unchecked={}",
+                        EXPAND_CHECKED_TEMPLATE, EXPAND_UNCHECKED_TEMPLATE);
+                return false;
+            }
+
+            Point click = new Point(checked.x - 35, checked.y);
+            log.info("task startup expand option: disabling checked option click=({}, {}) matched=({}, {}) offsetX=-35",
+                    click.x, click.y, checked.x, checked.y);
+            inputProvider.clickLeft(click.x, click.y, 150);
+            return TaskSleep.sleep(500);
+        } finally {
+            inputProvider.pressAltU();
+        }
     }
 
     /**
@@ -248,14 +315,18 @@ public class TaskStartupWindowPreparationService {
      * @return screen-absolute top-left match point, or null when the template is not present.
      */
     private Point findStartupMapOptionInCapturedRegion(String templatePath, int[] rect, String scanPath) {
-        double[] imagePoint = ImageFinder.find(scanPath, templatePath, MAP_STARTUP_OPTION_MATCH_RATE);
+        return findTemplateInCapturedRegion(templatePath, rect, scanPath, MAP_STARTUP_OPTION_MATCH_RATE);
+    }
+
+    private Point findTemplateInCapturedRegion(String templatePath, int[] rect, String scanPath, double matchRate) {
+        double[] imagePoint = ImageFinder.find(scanPath, templatePath, matchRate);
         if (imagePoint == null || imagePoint.length < 2) {
             return null;
         }
         int imageX = (int) Math.round(imagePoint[0]);
         int imageY = (int) Math.round(imagePoint[1]);
         Point absolutePoint = new Point(rect[0] + imageX, rect[1] + imageY);
-        log.info("ensureMapTrackingOption startup option template matched: template={} image=({}, {}) absolute=({}, {})",
+        log.info("startup option template matched: template={} image=({}, {}) absolute=({}, {})",
                 templatePath, imageX, imageY, absolutePoint.x, absolutePoint.y);
         return absolutePoint;
     }

@@ -65,9 +65,12 @@ public class NpcTarget {
 
     /**
      * Screen-pixel X correction used only by formula click fallback.
+     *
+     * <p>The default follows the validated 五环 NPC body-click correction. Target-specific tuning
+     * should only override this after an actual measured failure.</p>
      */
     @Builder.Default
-    int tuneX = 0;
+    int tuneX = -10;
 
     /**
      * Screen-pixel Y correction used only by formula click fallback.
@@ -79,6 +82,13 @@ public class NpcTarget {
      * Green dialog-option template used to verify that a click opened the expected dialog.
      */
     String expectedDialogTemplatePath;
+
+    /**
+     * Tooltip style expected above this target. Use {@link NpcTooltipType#NONE} for fixed transfer
+     * NPCs such as 张闻 where probing for a task tooltip only wastes time before formula/OCR paths.
+     */
+    @Builder.Default
+    NpcTooltipType tooltipType = NpcTooltipType.TASK;
 
     /**
      * Short origin label for logs, config migration, or learned OCR memory.
@@ -94,6 +104,7 @@ public class NpcTarget {
      */
     public NpcClickRequest toClickRequest(PlayerCharacter player) {
         boolean roaming = movementType == NpcMovementType.ROAMING || movementType == NpcMovementType.FLOATING;
-        return new NpcClickRequest(player, mapName, x, y, name, tuneX, tuneY, expectedDialogTemplatePath, roaming);
+        return new NpcClickRequest(player, mapName, x, y, name, tuneX, tuneY,
+                expectedDialogTemplatePath, roaming, tooltipType);
     }
 }

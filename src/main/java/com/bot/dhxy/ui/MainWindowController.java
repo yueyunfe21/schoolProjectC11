@@ -205,6 +205,7 @@ public class MainWindowController {
     private TextField tiantingRunCountField;
     private TextField zhuaguiRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
+    private CheckBox taskStartupPreparationEnabledCheckBox;
     private ComboBox<Integer> summonSkillIntervalMinutesComboBox;
     private Button applyGameConfigButton;
     private Button clearButton;
@@ -411,6 +412,8 @@ public class MainWindowController {
         syncTaskCountSummariesFromProperties();
         summonSkillCleanEnabledCheckBox = new CheckBox("启用三技能维护");
         summonSkillCleanEnabledCheckBox.setSelected(botProperties.isSummonSkillCleanEnabled());
+        taskStartupPreparationEnabledCheckBox = new CheckBox("任务启动前置检查");
+        taskStartupPreparationEnabledCheckBox.setSelected(botProperties.isTaskStartupPreparationEnabled());
         summonSkillIntervalMinutesComboBox = buildSummonSkillIntervalComboBox(botProperties.getSummonSkillCleanIntervalMs());
         applyGameConfigButton = new Button("应用游戏设置");
         windowSystemLabel = new Label("窗口：");
@@ -565,6 +568,7 @@ public class MainWindowController {
         botProperties.setTiantingMaxRuns(tiantingRuns);
         botProperties.setZhuaguiMaxRuns(zhuaguiRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
+        botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
                 summonSkillIntervalMinutesComboBox.getValue()) * 60_000L);
         syncTaskCountSummariesFromProperties();
@@ -574,6 +578,7 @@ public class MainWindowController {
                 + " 五倍=" + botProperties.getFivefoldMaxRuns()
                 + " 天庭=" + botProperties.getTiantingMaxRuns()
                 + " 抓鬼=" + botProperties.getZhuaguiMaxRuns()
+                + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
                 + " 三技能=" + (botProperties.isSummonSkillCleanEnabled() ? "开" : "关")
                 + "/" + normalizeSummonSkillIntervalMinutes(botProperties.getSummonSkillCleanIntervalMs()) + "分钟");
         renderLogList();
@@ -1090,6 +1095,7 @@ public class MainWindowController {
 
     private Parent buildSummonSkillConfigPanel() {
         FlowPane summonRow = buildControlRow(
+                taskStartupPreparationEnabledCheckBox,
                 summonSkillCleanEnabledCheckBox,
                 new Label("三技能间隔"),
                 summonSkillIntervalMinutesComboBox,

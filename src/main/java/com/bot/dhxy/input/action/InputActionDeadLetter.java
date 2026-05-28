@@ -15,10 +15,18 @@ public class InputActionDeadLetter {
     public void record(InputActionRequest request, Throwable error) {
         failedRequests.add(request);
         String message = error == null ? "unknown" : error.getMessage();
-        log.warn("Input action moved to dead letter: windowId={} description={} reason={}",
+        log.warn("Input action moved to dead letter: windowId={} description={} actions={} exclusive={} reason={}",
                 request == null ? "null" : request.getWindowId(),
                 request == null ? "null" : request.getDescription(),
+                request == null ? -1 : request.getActions().size(),
+                request != null && request.hasExclusiveCallback(),
                 message);
+        if (error != null) {
+            log.warn("Input action dead letter stack: windowId={} description={}",
+                    request == null ? "null" : request.getWindowId(),
+                    request == null ? "null" : request.getDescription(),
+                    error);
+        }
     }
 
     public List<InputActionRequest> snapshot() {

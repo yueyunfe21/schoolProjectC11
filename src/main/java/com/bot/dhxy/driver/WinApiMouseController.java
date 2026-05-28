@@ -52,6 +52,7 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_O = 0x18;
     private static final int SCAN_Q = 0x10;
     private static final int SCAN_T = 0x14;
+    private static final int SCAN_U = 0x16;
     private static final int SCAN_ENTER = 0x1C;
 
     private static final String UNION_FIELD_MOUSE = "mi";
@@ -137,6 +138,12 @@ public class WinApiMouseController implements InputProvider {
     public void pressAltT() {
         traceInput("pressAltT", "shortcut=ALT+T");
         inputCoordinator.runInput("pressAltT", () -> pressAltScan(SCAN_T, "ALT+T"));
+    }
+
+    @Override
+    public void pressAltU() {
+        traceInput("pressAltU", "shortcut=ALT+U");
+        inputCoordinator.runInput("pressAltU", () -> pressAltScan(SCAN_U, "ALT+U"));
     }
 
     @Override
