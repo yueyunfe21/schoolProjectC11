@@ -24,10 +24,12 @@ import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
-import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.DialogResult;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
@@ -225,10 +227,10 @@ public class NpcClickService {
      * dialog option. Without a template, this falls back to generic OPTION dialog detection.</p>
      */
     private boolean isExpectedDialogVisible(String expectedDialogTemplatePath, String reason) {
-        if (expectedDialogTemplatePath == null || expectedDialogTemplatePath.isBlank()) {
-            return dialogService.detectDialogType() == DialogType.OPTION;
-        }
-        return dialogService.isGreenTemplateOptionVisibleDirectForExclusive(expectedDialogTemplatePath, reason);
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyExpectedOptionDialog(
+                "npc-click:expected-dialog:" + reason, expectedDialogTemplatePath));
+        return result.getStatus() == DialogResultStatus.OPTION_VISIBLE
+                || result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_VISIBLE;
     }
 
     /**
@@ -762,15 +764,29 @@ public class NpcClickService {
                     : calculatePlayerAnchorFormulaPoint(
                     request.player(), request.mapName(), request.mapX(), request.mapY(),
                     request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
-            addCtrlProbeOrigin(ctrlProbeOrigins,
-                    formulaPrediction == null ? null : formulaPrediction.predictedClickAbs(),
-                    "formula-target", CtrlProbeScanProfile.SMALL_RING);
             NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
                     formulaPrediction, request.expectedDialogTemplatePath());
             recordSmartClickEvidence(request, formulaResult, playerLocation);
             if (formulaResult.verified()) {
                 result = true;
                 return true;
+            }
+            /*
+             * If the player-anchor formula lands near the target but misses the direct left click,
+             * pay for a very small Ctrl probe immediately. Recent Xiuluo logs showed this fixes the
+             * common "off by a few pixels" case faster than running broad yellow-name OCR first.
+             */
+            if (formulaPrediction != null && formulaPrediction.predictedClickAbs() != null) {
+                List<CtrlProbeOrigin> formulaCtrlOrigins = new ArrayList<>();
+                addCtrlProbeOrigin(formulaCtrlOrigins, formulaPrediction.predictedClickAbs(),
+                        "formula-target:immediate", CtrlProbeScanProfile.SMALL_RING);
+                NpcClickStrategyResult formulaCtrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
+                        request.expectedDialogTemplatePath(), formulaCtrlOrigins, false);
+                recordSmartClickEvidence(request, formulaCtrlResult, playerLocation);
+                if (formulaCtrlResult.verified()) {
+                    result = true;
+                    return true;
+                }
             }
 
             /*
@@ -819,6 +835,15 @@ public class NpcClickService {
 
             log.error("NPC click failed: {}", request.npcName());
             return false;
+        } catch (RuntimeException e) {
+            log.error("NPC smart click exception: npcName={} map={} target=({}, {}) expectedTemplate={}",
+                    request == null ? null : request.npcName(),
+                    request == null ? null : request.mapName(),
+                    request == null ? null : request.mapX(),
+                    request == null ? null : request.mapY(),
+                    request == null ? null : request.expectedDialogTemplatePath(),
+                    e);
+            throw e;
         } finally {
             String target = request == null ? "-" : request.npcName() + "@" + request.mapName()
                     + "(" + request.mapX() + "," + request.mapY() + ")";

@@ -1,9 +1,11 @@
 package com.bot.dhxy.task.hotstart;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.service.BattleRadarService;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,8 +33,9 @@ public class TaskHotStartService {
             return snapshot;
         }
 
-        DialogType dialogType = dialogService.detectDialogTypeNoFocus(
-                "hot-start:" + safeTaskCode + ":" + safeSource);
+        DialogResult dialogResult = dialogService.handleDialog(DialogHandleRequest.inspect(
+                "hot-start:" + safeTaskCode + ":" + safeSource));
+        DialogType dialogType = dialogResult.getDialogType();
         TaskHotStartScreenState state = switch (dialogType) {
             case OPTION -> TaskHotStartScreenState.OPTION_DIALOG;
             case STORY -> TaskHotStartScreenState.STORY_DIALOG;

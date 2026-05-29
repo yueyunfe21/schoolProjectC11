@@ -1,9 +1,11 @@
 package com.bot.dhxy.service.dialog;
 
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import lombok.Builder;
 import lombok.Value;
 
 import java.awt.Point;
+import java.util.List;
 
 @Value
 @Builder
@@ -24,12 +26,31 @@ public class DialogHandleRequest {
     String targetKeyword;
     String itemToGive;
     Integer knownBagIndex;
+    Integer rememberedRelativeX;
+    Integer rememberedRelativeY;
+    List<GreenTemplateClickSpec> greenTemplateSpecs;
+    String expectedTemplateActionKey;
+    String expectedTemplatePath;
 
     @Builder.Default
     boolean allowFallbackOptionClick = false;
 
     @Builder.Default
     boolean includeCleanupBusinessOptions = true;
+
+    @Builder.Default
+    boolean verifyDialogType = true;
+
+    public static DialogHandleRequest inspect(String sourceTask) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.INSPECT)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.IGNORE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .allowFallbackOptionClick(false)
+                .build();
+    }
 
     public static DialogHandleRequest giveItemIfAvailable(String sourceTask, String itemToGive, Integer knownBagIndex) {
         return DialogHandleRequest.builder()
@@ -44,7 +65,7 @@ public class DialogHandleRequest {
                 .build();
     }
 
-    public static DialogHandleRequest clickKeyword(String sourceTask, String targetKeyword, boolean allowFallbackOptionClick) {
+    public static DialogHandleRequest handleKeywordOption(String sourceTask, String targetKeyword, boolean allowFallbackOptionClick) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_KEYWORD)
@@ -58,7 +79,40 @@ public class DialogHandleRequest {
                 .build();
     }
 
-    public static DialogHandleRequest clickBusinessOption(String sourceTask) {
+    public static DialogHandleRequest handleRouteKeywordOption(String sourceTask,
+                                                               String targetKeyword,
+                                                               boolean allowFallbackOptionClick) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.ROUTE_TRANSFER)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.CLICK_KEYWORD)
+                .fallbackPolicy(allowFallbackOptionClick
+                        ? DialogFallbackPolicy.CLICK_FIRST_OPTION
+                        : DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .targetKeyword(targetKeyword)
+                .allowFallbackOptionClick(allowFallbackOptionClick)
+                .build();
+    }
+
+    public static DialogHandleRequest handleRememberedRouteOption(String sourceTask,
+                                                                  int relativeX,
+                                                                  int relativeY,
+                                                                  String targetKeyword) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.CLICK_REMEMBERED_OPTION)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.CLICK_REMEMBERED_POINT)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .targetKeyword(targetKeyword)
+                .rememberedRelativeX(relativeX)
+                .rememberedRelativeY(relativeY)
+                .allowFallbackOptionClick(false)
+                .build();
+    }
+
+    public static DialogHandleRequest handleBusinessOption(String sourceTask) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_BUSINESS_OPTION)
@@ -69,7 +123,7 @@ public class DialogHandleRequest {
                 .build();
     }
 
-    public static DialogHandleRequest clickMaintenanceBroadcastOption(String sourceTask) {
+    public static DialogHandleRequest handleMaintenanceBroadcastOption(String sourceTask) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_BUSINESS_OPTION)
@@ -101,6 +155,73 @@ public class DialogHandleRequest {
                 .optionPolicy(DialogOptionPolicy.FALLBACK_LAST_OPTION)
                 .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
                 .allowFallbackOptionClick(false)
+                .build();
+    }
+
+    public static DialogHandleRequest clickStory(String sourceTask) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.CLEANUP)
+                .storyPolicy(DialogStoryPolicy.CLICK_THROUGH)
+                .optionPolicy(DialogOptionPolicy.IGNORE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .allowFallbackOptionClick(false)
+                .build();
+    }
+
+    public static DialogHandleRequest handleGreenTemplateOption(String sourceTask,
+                                                                List<GreenTemplateClickSpec> specs,
+                                                                boolean verifyDialogType) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.CLICK_GREEN_TEMPLATE)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.CLICK_GREEN_TEMPLATE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .greenTemplateSpecs(specs)
+                .verifyDialogType(verifyDialogType)
+                .build();
+    }
+
+    public static DialogHandleRequest verifyExpectedOptionDialog(String sourceTask, String expectedGreenTemplatePath) {
+        DialogOptionPolicy optionPolicy = expectedGreenTemplatePath == null || expectedGreenTemplatePath.isBlank()
+                ? DialogOptionPolicy.VERIFY_OPTION
+                : DialogOptionPolicy.VERIFY_GREEN_TEMPLATE;
+        List<GreenTemplateClickSpec> specs = expectedGreenTemplatePath == null || expectedGreenTemplatePath.isBlank()
+                ? null
+                : List.of(new GreenTemplateClickSpec("expectedDialog", expectedGreenTemplatePath, 0, 0, 0));
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.VERIFY_EXPECTED_DIALOG)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(optionPolicy)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .greenTemplateSpecs(specs)
+                .verifyDialogType(true)
+                .build();
+    }
+
+    public static DialogHandleRequest readStoryObjective(String sourceTask) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.READ_STORY_OBJECTIVE)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.IGNORE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .build();
+    }
+
+    public static DialogHandleRequest verifyWhiteTemplate(String sourceTask,
+                                                          String actionKey,
+                                                          String templatePath) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.VERIFY_WHITE_TEMPLATE)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.IGNORE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .expectedTemplateActionKey(actionKey)
+                .expectedTemplatePath(templatePath)
                 .build();
     }
 }

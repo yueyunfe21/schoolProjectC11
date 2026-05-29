@@ -1,6 +1,7 @@
 package com.bot.dhxy.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +29,8 @@ public class TransferChoiceMemoryService {
     private static final Path MEMORY_PATH = Path.of("config", "transfer_choice_memory.json");
     private static final int MAX_FAILURES_BEFORE_DISABLE = 3;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private MemoryFile cache;
 
     /**

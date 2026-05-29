@@ -26,9 +26,12 @@ import javax.imageio.ImageIO;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,12 +57,18 @@ public class LocationVisionService {
     private static final int width = 178;
     private static final int NAME_CHAR_GAP_PX = 4;
     private static final double MAP_LABEL_CONFIDENT_DIFFERENT_MATCH_SCORE = 0.62;
+    private static final double FLOOR_TEMPLATE_TRUST_SCORE = 0.995;
     private static final int MAP_LABEL_LEARN_MIN_WHITE_PIXELS = 12;
     private static final double MAP_LABEL_LEARN_MIN_DENSITY = 0.02;
     private static final double MAP_LABEL_LEARN_MAX_DENSITY = 0.65;
+    private static final int LOCATION_COORDINATE_PLAUSIBLE_MARGIN_PX = 80;
     private static final Path MAP_LABEL_TEMPLATE_DIR = Path.of("images", "template", "map_label")
             .toAbsolutePath()
             .normalize();
+    private static final Path LOCATION_FAILURE_CASE_DIR = Path.of("images", "failure-cases", "location")
+            .toAbsolutePath()
+            .normalize();
+    private static final DateTimeFormatter FAILURE_CASE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS");
 
     /**
      * Scans the current bound game window for the player's map name and coordinate.
@@ -114,6 +123,11 @@ public class LocationVisionService {
                 LocationInfo local = ocr.parseLocationLocalOnly(path);
                 checkpoint("after local location OCR");
                 if (local != null) {
+                    if (!isPlausibleLocation(local, path, "LOCAL_OCR")) {
+                        local = null;
+                    }
+                }
+                if (local != null) {
                     provider = "LOCAL_OCR";
                     selected = local;
                     learnMissingMapLabelTemplate(local.mapName, path, true);
@@ -133,6 +147,9 @@ public class LocationVisionService {
                 checkpoint("before baidu location OCR");
                 LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
                 checkpoint("after baidu location OCR");
+                if (baidu != null && !isPlausibleLocation(baidu, path, "BAIDU_OCR")) {
+                    baidu = null;
+                }
                 provider = baidu == null ? "NONE" : "BAIDU_OCR";
                 selected = baidu;
                 if (baidu != null) {
@@ -151,6 +168,70 @@ public class LocationVisionService {
             LatencyMetrics.info(log, "location.scanCurrent", latencyStart,
                     "provider=" + provider + " result=" + (selected == null ? "NONE" : selected.toString()));
         }
+    }
+
+    private boolean isPlausibleLocation(LocationInfo location, String sourceImagePath, String provider) {
+        if (location == null) {
+            return false;
+        }
+        boolean plausible = coordinateHelper.isLogicalCoordinatePlausible(
+                location.mapName,
+                location.x,
+                location.y,
+                LOCATION_COORDINATE_PLAUSIBLE_MARGIN_PX);
+        if (plausible) {
+            return true;
+        }
+        archiveRejectedLocationSample(location, sourceImagePath, provider, "coordinate-out-of-transform-bounds");
+        log.warn("[location] rejected implausible OCR coordinate: provider={} map={} coord=({}, {}) source={} reason=coordinate-out-of-transform-bounds",
+                provider, location.mapName, location.x, location.y, sourceImagePath);
+        return false;
+    }
+
+    /**
+     * Archive rejected coordinate strips as local regression samples.
+     *
+     * <p>The live window-scoped {@code tmp_pos.png} is overwritten by the next location scan. When a
+     * bad OCR value is rejected, copy the image immediately so future coordinate/parser fixes can be
+     * tested against every known failure before another in-game run.</p>
+     */
+    private void archiveRejectedLocationSample(LocationInfo location,
+                                               String sourceImagePath,
+                                               String provider,
+                                               String reason) {
+        try {
+            String time = LocalDateTime.now().format(FAILURE_CASE_TIME_FORMAT);
+            String mapName = safeFailureFileName(location == null ? "unknown" : location.mapName);
+            String safeReason = safeFailureFileName(reason == null ? "unknown" : reason);
+            Path caseDir = LOCATION_FAILURE_CASE_DIR.resolve(time + "_" + mapName + "_" + safeReason).normalize();
+            Files.createDirectories(caseDir);
+
+            Path copiedImage = null;
+            if (sourceImagePath != null && !sourceImagePath.isBlank()) {
+                Path source = Path.of(sourceImagePath);
+                if (Files.exists(source)) {
+                    copiedImage = caseDir.resolve("tmp_pos.png");
+                    Files.copy(source, copiedImage, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            String metadata = "reason=" + reason + '\n'
+                    + "provider=" + provider + '\n'
+                    + "map=" + (location == null ? "-" : location.mapName) + '\n'
+                    + "coord=" + (location == null ? "-" : location.x + "," + location.y) + '\n'
+                    + "sourceImage=" + sourceImagePath + '\n'
+                    + "copiedImage=" + (copiedImage == null ? "-" : copiedImage) + '\n';
+            Files.writeString(caseDir.resolve("metadata.txt"), metadata, StandardCharsets.UTF_8);
+            log.warn("[location] rejected sample archived: dir={} provider={} location={} reason={}",
+                    caseDir, provider, location, reason);
+        } catch (Exception e) {
+            log.warn("[location] rejected sample archive failed: provider={} location={} source={} reason={} error={}",
+                    provider, location, sourceImagePath, reason, e.getMessage(), e);
+        }
+    }
+
+    private String safeFailureFileName(String value) {
+        String text = value == null || value.isBlank() ? "unknown" : value.trim();
+        return text.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
     }
 
     public Point extractPlayerPhysicalAnchor(List<OcrWordResult> ocrResults,
@@ -236,11 +317,23 @@ public class LocationVisionService {
                          * OCR result for this scan and persist the cleaned label so the next run can
                          * stay on the fast template path.
                          */
-                        if (isDungeonFloorMap(location.mapName())) {
+                        if (isDungeonFloorMap(location.mapName())
+                                && location.mapLabelScore() < FLOOR_TEMPLATE_TRUST_SCORE) {
                             LocationInfo verified = verifyFloorTemplateWithOcr(location, startedAt);
                             if (verified != null) {
                                 return verified;
                             }
+                        } else if (isDungeonFloorMap(location.mapName())) {
+                            /*
+                             * Exact floor-label template hits are trusted. The OCR verifier exists
+                             * for nearest-neighbor floor mistakes, but running it after a 1.000
+                             * label hit adds several seconds to every arrival check near combat
+                             * targets.
+                             */
+                            log.info("[location] floor template OCR verify skipped: map={} score={} reason=confident-template label={}",
+                                    location.mapName(),
+                                    String.format("%.3f", location.mapLabelScore()),
+                                    location.mapLabelPath());
                         }
                         MapCoordinate coordinate = location.coordinate();
                         LocationInfo info = new LocationInfo(

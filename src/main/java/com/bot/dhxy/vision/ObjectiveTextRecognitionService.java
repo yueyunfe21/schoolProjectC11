@@ -106,7 +106,6 @@ public class ObjectiveTextRecognitionService {
         }
 
         // Normalize green objective text into a binary image before running local template matching.
-        // This path is pure detection and must remain cooperative with task stop requests.
         BufferedImage clean = ImagePreprocessor.washGreenTextToBlackAndWhite(raw);
         try {
             ForegroundCrop foreground = cropToForeground(clean, 4);
@@ -1038,8 +1037,6 @@ public class ObjectiveTextRecognitionService {
     }
 
     @Value
-
-
     @Builder
 
 

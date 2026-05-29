@@ -29,6 +29,7 @@ public class TaskTurnCoordinator {
     private final ReentrantLock turnLock = new ReentrantLock(true);
     private final ThreadLocal<Integer> holdDepth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<String> heldWindowId = new ThreadLocal<>();
+    private final ThreadLocal<Boolean> optionalTryRunHold = ThreadLocal.withInitial(() -> false);
 
     /**
      * Acquire the task turn for the current bound window.
@@ -110,15 +111,16 @@ public class TaskTurnCoordinator {
         }
 
         String windowId = currentWindowId();
-        log.info("task turn try: windowId={} transaction={}", windowId, transactionName);
+        log.debug("task turn try: windowId={} transaction={}", windowId, transactionName);
         if (!turnLock.tryLock()) {
-            log.info("task turn busy: windowId={} transaction={}", windowId, transactionName);
+            log.debug("task turn busy: windowId={} transaction={}", windowId, transactionName);
             return false;
         }
 
         holdDepth.set(1);
         heldWindowId.set(windowId);
-        log.info("task turn acquired: windowId={} transaction={}", windowId, transactionName);
+        optionalTryRunHold.set(true);
+        log.debug("task turn acquired: windowId={} transaction={}", windowId, transactionName);
         try {
             return Boolean.TRUE.equals(action.get());
         } finally {
@@ -147,11 +149,17 @@ public class TaskTurnCoordinator {
             return;
         }
         String windowId = heldWindowId.get();
+        boolean optionalTryRun = Boolean.TRUE.equals(optionalTryRunHold.get());
         holdDepth.remove();
         heldWindowId.remove();
+        optionalTryRunHold.remove();
         turnLock.unlock();
         if (outcome == null) {
-            log.info("task turn released: windowId={} reason={}", windowId, reason);
+            if (optionalTryRun) {
+                log.debug("task turn released: windowId={} reason={}", windowId, reason);
+            } else {
+                log.info("task turn released: windowId={} reason={}", windowId, reason);
+            }
         } else {
             log.info("task turn released: windowId={} transaction={} result={} yieldPolicy={}",
                     windowId, outcome.name(), outcome.result(), outcome.yieldPolicy());

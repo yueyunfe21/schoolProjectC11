@@ -6,6 +6,7 @@ import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
@@ -172,6 +173,11 @@ public class WindowTaskRunner {
             }
             return;
         }
+        log.info("window [{}] stop requested: queue={} progress={} currentTask={}",
+                windowContext.getWindowId(),
+                taskHandle.getTaskQueueDisplayText(),
+                taskHandle.getTaskProgressText(),
+                taskHandle.getTaskType());
         windowContext.markStopping("stop requested");
         windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("stop requested"));
         taskHandle.forceCancel("stop requested");
@@ -329,55 +335,62 @@ public class WindowTaskRunner {
         WindowTaskFailurePolicy failurePolicy = queue.getFailurePolicy();
         TaskRunResult queueResult = TaskRunResult.SKIPPED;
         int completedCount = 0;
-        for (int i = 0; i < taskTypes.size(); i++) {
-            TaskType requestedTaskType = taskTypes.get(i);
-            TaskType taskType = requestedTaskType;
-            if (Thread.currentThread().isInterrupted() || (stopToken != null && stopToken.isStopRequested())) {
-                windowContext.markFinished(WindowRuntimeStatus.STOPPED, taskType, TaskRunResult.STOPPED, "task queue stopped");
-                queueResult = TaskRunResult.STOPPED;
-                break;
-            }
+        TaskType activeTaskType = TaskType.UNKNOWN;
+        try {
+            for (int i = 0; i < taskTypes.size(); i++) {
+                TaskType requestedTaskType = taskTypes.get(i);
+                activeTaskType = requestedTaskType;
+                TaskExecutionContext preflightContext = buildExecutionContext(requestedTaskType, stopToken, pauseToken);
+                TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped before preflight");
 
-            TaskExecutionContext preflightContext = buildExecutionContext(requestedTaskType, stopToken, pauseToken);
-            taskType = resolveTaskTypeBeforeStart(requestedTaskType, preflightContext);
-            if (taskType == TaskType.UNKNOWN) {
-                windowContext.markFinished(WindowRuntimeStatus.IDLE, requestedTaskType, TaskRunResult.SKIPPED, "task skipped by team role policy");
-                log.info("{} window [{}] skip task by team role policy: requested={}",
-                        preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType);
+                TaskType taskType = resolveTaskTypeBeforeStart(requestedTaskType, preflightContext);
+                activeTaskType = taskType == TaskType.UNKNOWN ? requestedTaskType : taskType;
+                TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped after preflight");
+                if (taskType == TaskType.UNKNOWN) {
+                    windowContext.markFinished(WindowRuntimeStatus.IDLE, requestedTaskType, TaskRunResult.SKIPPED, "task skipped by team role policy");
+                    log.info("{} window [{}] skip task by team role policy: requested={}",
+                            preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType);
+                    completedCount++;
+                    queueResult = mergeQueueResult(queueResult, TaskRunResult.SKIPPED);
+                    continue;
+                }
+
+                GameTask task = taskFactory.createTask(windowContext, taskType);
+                if (task == null) {
+                    windowContext.markError("cannot create task: " + taskType);
+                    log.error("window [{}] cannot create task: {}", windowContext.getWindowId(), taskType);
+                    queueResult = TaskRunResult.FAILED;
+                    if (shouldStopQueueAfterFailure(failurePolicy)) {
+                        log.warn("window [{}] stop task queue after task creation failure: policy={}",
+                                windowContext.getWindowId(), failurePolicy);
+                        break;
+                    }
+                    continue;
+                }
+
+                RunningTaskHandle taskHandle = currentTask;
+                if (taskHandle != null) {
+                    taskHandle.updateTask(i, taskType, task);
+                }
+                TaskExecutionContext executionContext = buildExecutionContext(requestedTaskType, task, stopToken, pauseToken);
+                TaskRunResult result = runTaskWithBoundGameState(taskType, task, executionContext);
                 completedCount++;
-                queueResult = mergeQueueResult(queueResult, TaskRunResult.SKIPPED);
-                continue;
-            }
-
-            GameTask task = taskFactory.createTask(windowContext, taskType);
-            if (task == null) {
-                windowContext.markError("cannot create task: " + taskType);
-                log.error("window [{}] cannot create task: {}", windowContext.getWindowId(), taskType);
-                queueResult = TaskRunResult.FAILED;
-                if (shouldStopQueueAfterFailure(failurePolicy)) {
-                    log.warn("window [{}] stop task queue after task creation failure: policy={}",
-                            windowContext.getWindowId(), failurePolicy);
+                queueResult = mergeQueueResult(queueResult, result);
+                if (result == TaskRunResult.STOPPED) {
                     break;
                 }
-                continue;
+                if (result == TaskRunResult.FAILED && shouldStopQueueAfterFailure(failurePolicy)) {
+                    log.warn("window [{}] stop task queue after failed task: task={} policy={}",
+                            windowContext.getWindowId(), taskType, failurePolicy);
+                    break;
+                }
             }
-
-            RunningTaskHandle taskHandle = currentTask;
-            if (taskHandle != null) {
-                taskHandle.updateTask(i, taskType, task);
-            }
-            TaskExecutionContext executionContext = buildExecutionContext(requestedTaskType, task, stopToken, pauseToken);
-            TaskRunResult result = runTaskWithBoundGameState(taskType, task, executionContext);
-            completedCount++;
-            queueResult = mergeQueueResult(queueResult, result);
-            if (result == TaskRunResult.STOPPED) {
-                break;
-            }
-            if (result == TaskRunResult.FAILED && shouldStopQueueAfterFailure(failurePolicy)) {
-                log.warn("window [{}] stop task queue after failed task: task={} policy={}",
-                        windowContext.getWindowId(), taskType, failurePolicy);
-                break;
-            }
+        } catch (TaskStopRequestedException | CancellationException e) {
+            queueResult = TaskRunResult.STOPPED;
+            String message = "task queue stopped: " + normalizeMessage(e.getMessage());
+            windowContext.markFinished(WindowRuntimeStatus.STOPPED, activeTaskType, TaskRunResult.STOPPED, message);
+            log.info("window [{}] task queue stopped before task finished: queue={} activeTask={} reason={}",
+                    windowContext.getWindowId(), queue.toLogText(), activeTaskType, e.getMessage());
         }
         String queueMessage = "task queue result: " + queueResult
                 + " completed=" + completedCount + "/" + taskTypes.size()
@@ -433,8 +446,9 @@ public class WindowTaskRunner {
         if (!taskTeamAssignmentPolicy.shouldDetectRoleBeforeStart(requestedTaskType)) {
             return requestedTaskType;
         }
-        preflightContext.throwIfStopRequested();
+        TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped before team role detection");
         TeamRoleStatus role = teamRoleDetectionService.detectCurrentRole(preflightContext);
+        TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped during team role detection");
         syncWindowRole(role);
         TaskType resolvedTaskType = taskTeamAssignmentPolicy.resolveTaskForRole(requestedTaskType, role);
         if (resolvedTaskType != requestedTaskType) {
@@ -445,7 +459,7 @@ public class WindowTaskRunner {
             log.info("{} window [{}] task kept by team role: requested={} role={}",
                     preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType, role);
         }
-        preflightContext.throwIfStopRequested();
+        TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped after team role assignment");
         return resolvedTaskType;
     }
 

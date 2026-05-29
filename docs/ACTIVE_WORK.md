@@ -1,5 +1,427 @@
 # DHXY Active Work
 
+### He Li - 2026-05-29 修罗暂存与五倍切换交接
+
+Status: paused / Xiuluo mainline stored / next focus is 五倍
+
+Why this entry exists:
+
+- 用户决定先暂停修罗主线，后续再继续打磨修罗；当前更急的是开始写五倍任务。
+- 本条把修罗目前已经形成的结构、已验证点、刚修过的问题和未完成风险集中存档，避免后续新线程或新任务把修罗上下文重新猜一遍。
+
+Current Xiuluo code shape:
+
+- Formal leader flow is now `XiuluoTaskV2` with explicit phase/context:
+  - `XiuluoPhase`
+  - `XiuluoRoundContext`
+  - `XiuluoStepOutcome`
+- 修罗 phase 是当前恢复/热启动的主线状态，不要再回到旧的“一大坨 while + 隐式分支”写法。
+- `XiuluoRoundContext` 保存本轮目标、是否正在等待 pathing、是否由修罗自己点 `看打` 进入战斗、当前 phase retry 次数和 recovery 次数。
+- `NavigationService` 已向 `NavigationRequest` / `NavigationResult` 方向收敛。任务层决定 phase/retry/fallback，导航层只报告结果，不应该知道修罗业务。
+- `NpcClickService.clickNpcSmart(...)` 是正式点 NPC/怪的统一入口。修罗接任务 NPC、修罗战斗目标都应该走这个入口，不要再另起修罗专用 Ctrl 点击链。
+- `DialogService.handleDialog(DialogHandleRequest)` 是正式 dialog 入口。修罗业务只根据 `DialogResult` 决定 phase，不让 `DialogService` 知道 `XiuluoPhase`。
+
+Important recent fix:
+
+- 修罗接任务 dialog 的第一行 `闲来无事，要我帮忙吗` 有时会被游戏高亮成黄色，而不是绿色。
+- 原来 `VERIFY_GREEN_TEMPLATE` 只洗绿色，导致正确 dialog 已经打开但模板找不到。
+- 已新增/接入 `ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(...)`，只用于 dialog option 模板匹配路径。
+- 这个新洗图保留绿色选项和高亮黄色选项，但不改变通用绿色 OCR，不影响 route transfer 的黄字逻辑。
+- Route/车夫传送 dialog 本来已有黄字兜底路径：`handleRouteKeywordOptionWithRetry(...)` / `processOptionsWithOCRDetailed(...)`。
+
+Known Xiuluo templates / dialogs:
+
+- 接任务 option：`xiuluo.acceptTask`，常用模板是 `xiuluo_accept_xianlaiwu.png`。
+- 接任务同屏备用证明：取消任务模板能证明当前是修罗任务 NPC 的 option dialog，但当前不一定要点击它。
+- 目标 story：接任务后出现，里面有目标地图和坐标；修罗读取后进入导航目标。
+- 人数不足五人 option：由修罗决定是否继续或等待，取决于 UI 配置。
+- 三人以下 blocked story/dialog：模板已加入，应该作为硬阻塞/等待类结果处理，不要泛清理后无限 retry。
+- 进入战斗 option：`xiuluo.enterBattle`，匹配 `看打` 后进入 `WAIT_COMBAT`，并标记 `enteredBattleByXiuluo=true`。
+
+Known validated / useful behavior:
+
+- 三开测试中，两个队长和一个自动战斗窗口可以跑到修罗接任务 NPC 附近；窗口串扰比早期低。
+- 修罗导航、接受任务、读 story/objective、地图导航、点怪、进入战斗的主链已经多次跑通过局部片段。
+- 五环/修罗都应继续遵守：移动/导航开始后才是安全放权点；普通准备动作不要过早放权。
+- HWND 截图和后台 Alt 快捷键方向仍然有效；鼠标点击仍按真实输入队列处理。
+
+Current unfinished Xiuluo items:
+
+- Fallback 还没有最终稳定：
+  - phase 内失败应先本地 retry；
+  - 再清理 UI 后 retry 当前 phase；
+  - 再根据具体 phase 恢复到上一关键状态或回接任务；
+  - 不应该一遇到 `FAILED` 就结束整个任务。
+- `RETURN_HOME` 需要继续确认：
+  - 使用修罗回城道具后要验证是否回到灵兽村；
+  - 使用失败时 fallback 到导航回灵兽村；
+  - 战斗热启动退出后不能直接默认进入回城，除非确认是修罗目标战斗或任务栏目标已消失。
+- `WAIT_COMBAT` / auto-battle handoff 需要继续看多窗口效率：
+  - 队长进入战斗后必须放权；
+  - 成员应能及时进入自动战斗；
+  - 如果某个窗口在战斗内长期不动，优先看 battle radar、task turn、auto-battle触发日志。
+- `NAVIGATE_TO_TARGET` / `CLICK_TARGET_NPC` 仍有一些真实地图边缘和目标点误差问题，失败样本应该继续保存到按类别区分的样本目录。
+- 修罗次数统计未完成。推荐以后以 phase 状态和任务面板校验结合：
+  - 正常完成一轮以后自增预测次数；
+  - 只有任务面板刚好被打开时顺便读真实次数并校正，不要每轮强制 OCR。
+- 医宝宝/修装备/三技能维护只保留 hook，不要现在强塞进修罗主线。长期应通过薄的 `TaskMaintenanceService` 统一调度。
+
+Files to inspect first when resuming Xiuluo:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoPhase.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoRoundContext.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoStepOutcome.java`
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java`
+- `src/main/java/com/bot/dhxy/tools/CoordinateHelper.java`
+- `config/vision_memory.json`
+- `config/transfer_choice_memory.json`
+
+Suggested Xiuluo resume prompt:
+
+> 请先阅读 AGENTS.md、docs/DHXY_CONTEXT.md、docs/ACTIVE_WORK.md 里 2026-05-29 的“修罗暂存与五倍切换交接”。我们继续修罗 V2，不要重写架构，先从 fallback、RETURN_HOME 验证、WAIT_COMBAT 放权和失败样本保存继续。
+
+五倍切换提醒:
+
+- 写五倍前优先复用修罗沉淀出来的公共能力：`NavigationService`、`NpcClickService.clickNpcSmart(...)`、`DialogService.handleDialog(...)`、`TaskTransactionRunner` / `TaskTurnCoordinator`。
+- 不要把五倍的 dialog / NPC 点击 / 导航再写成一套独立专用链。五倍只应该定义自己的 task phases、模板、目标读取和业务 retry 策略。
+- 如果五倍需要维护、医保宝、修装备、三技能，只先预留 hook；不要在五倍里复制修罗的维护细节。
+
+### Xie Shuai - 2026-05-28 通用维护入口边界讨论
+
+Status: proposal / waiting for Xiuluo owner review
+
+Context:
+
+- 用户在修罗长跑中没有看到“三技能维护”触发。
+- 代码检查后发现三技能能力本身存在于 `SummonSkillService.cleanSummonSkillsOnce()`，医保宝/修理
+  弹窗能力也存在于 `DialogService` 的 scoped dialog handling 里。
+- 但当前没有一个真正被所有任务调用的“通用维护调度入口”。现状是维护逻辑散在多个地方：
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` 调用医保宝/修理 broadcast 和三技能，但只覆盖真正
+    auto-battle 空闲窗口。
+  - follower-support 成员模式会跳过个人三技能维护。
+  - `XiuluoTaskV2` 有 `AFTER_ACCEPT_MAINTENANCE_CHECK` 和
+    `BEFORE_ROUTE_MAINTENANCE_CHECK` 两个维护阶段，但目前只是 log `hook skipped` 后继续。
+  - `UICleanerService.handleMaintenanceBroadcast(...)` 当前负责医保宝/修理 broadcast，语义不合适：
+    医保宝/修装备是业务维护，不是 UI cleanup。
+
+Problem statement:
+
+- “三技能”不应该挂在修罗专属逻辑上；它和医保宝、修理一样，属于任务运行期间的通用维护。
+- “医保宝/修理”也不应该继续由 `UICleanerService` 对外承载。`UICleanerService` 应只负责关闭/清理
+  UI 干扰，例如地图、普通 X 窗口、取消/离开/放弃修理这类关闭行为。
+- 当前任务如果想使用维护，只能各自知道零散服务和调用顺序，后续抓鬼/修罗/五环都会重复或漏接。
+
+Proposed boundary:
+
+- 新增一个单一通用维护调度服务，建议名：`TaskMaintenanceService`。
+- `TaskMaintenanceService` 只负责任务维护的调度、优先级、冷却、任务权控制和日志，不把具体点击算法
+  全搬进去。
+- 具体能力继续复用现有服务：
+  - 医保宝/修理 broadcast：`DialogService.handleDialog(DialogHandleRequest.handleMaintenanceBroadcastOption(...))`
+  - 三技能：`SummonSkillService.cleanSummonSkillsOnce()`
+  - 血法补给：`PlayerStateService`
+  - 归队/等队员：`TeamReturnService`
+  - 普通窗口关闭：`UICleanerService`
+
+Suggested maintenance priority:
+
+1. 团队 broadcast 弹窗优先，例如医保宝、修装备。它们由队长触发，队员错过会影响团队节奏。
+2. 归队/等队员这类团队状态优先于个人维护。
+3. 血法补给优先于三技能；如果本轮需要补血/补蓝，就不要同时清三技能。
+4. 三技能最后处理。三技能失败不更新时间，下一轮有空再重试。
+
+Task integration proposal:
+
+- 修罗、五环、未来抓鬼等任务不要直接写医保宝/修理/三技能细节。
+- 任务只在安全阶段调用一个通用入口，例如：
+  `taskMaintenanceService.runOpportunisticMaintenance(context, request)`。
+- `XiuluoTaskV2` 当前两个维护阶段可以作为第一批接入点：
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK`：读到任务目标后、离开接任务区域前。
+  - `BEFORE_ROUTE_MAINTENANCE_CHECK`：长距离寻路前。
+- `AutoBattleTask.maybeRunIdleMaintenance(...)` 也应改为调用同一个维护入口，而不是自己调
+  `UICleanerService` 和 `SummonSkillService`。
+
+Task-turn / input constraints:
+
+- 任何会 focus、点击、拖动的维护动作都必须经过 `TaskTurnCoordinator` 或当前任务已持有的任务权。
+- 三技能必须拿到权限后从打开面板到检查/删除/确认一整套做完再放权。
+- 三技能失败必须返回失败并且不刷新 cooldown。
+- 当队长仍在关键路径中持权，例如战后还没回程/还没进入下一轮安全移动阶段，成员窗口不能插入三技能。
+
+Open review questions for the Xiuluo owner:
+
+- 修罗两个维护阶段是否就是合适的通用维护调用点，还是需要只保留其中一个？
+- 修罗在 `BEFORE_ROUTE_MAINTENANCE_CHECK` 执行维护时，是否允许处理血法补给和三技能，还是只允许团队 broadcast？
+- `TaskMaintenanceService` 的首次落地是否先只迁医保宝/修理 + 三技能，归队/血法补给后续再并入？
+
+### He Li Review - 2026-05-28 通用维护入口边界
+
+Status: reviewed / recommend deferring implementation until Xiuluo mainline stabilizes
+
+Overall take:
+
+- `TaskMaintenanceService` 这个边界方向是对的，但它必须保持很薄。
+- 它应该只负责维护调度、优先级、冷却、任务权语义和日志，不应该把医保宝、修装备、三技能、血法补给等具体点击算法搬进去。
+- 具体动作仍然应该复用现有能力：
+  - `DialogService` 处理医保宝/修装备这类业务弹窗；
+  - `SummonSkillService` 处理三技能；
+  - `PlayerStateService` 处理血法/摄妖香等角色状态；
+  - `TeamReturnService` 处理归队/等队员；
+  - `UICleanerService` 只处理 UI 干扰清理。
+
+Important boundary clarifications:
+
+1. `UICleanerService` 不应该继续承载医保宝/修装备业务语义。
+   - 它只能负责关闭/清理窗口、地图、普通 X 窗口、取消/离开等干扰。
+   - 医保宝/修装备是任务维护，不是 UI cleanup。
+
+2. 维护失败不能让主任务失败。
+   - 三技能失败、医保宝/修装备弹窗没识别到、维护窗口没打开，都应该返回类似 `SKIPPED`、`DEFERRED`、`FAILED_RETRY_LATER` 的语义。
+   - 这些结果不能映射成修罗 phase `FAILED`，更不能让窗口任务结束。
+   - 只有明确的用户停止、配置禁止继续、或任务自身硬阻塞，才应该终止任务。
+
+3. Task turn 和 physical input 是两层锁。
+   - `TaskTurnCoordinator` 只决定哪个窗口的业务可以继续推进。
+   - 鼠标/键盘仍然必须走 `InputSequences` / input queue。
+   - 维护动作如果会 focus、点击、拖动，必须同时满足：当前任务持有 task turn，且物理输入通过 input queue 串行执行。
+
+4. 修罗当前两个维护 hook 可以保留，但不要急着接满逻辑。
+   - `AFTER_ACCEPT_MAINTENANCE_CHECK`：读到任务目标后、离开接任务区域前。
+   - `BEFORE_ROUTE_MAINTENANCE_CHECK`：长距离寻路前。
+   - 这两个位置作为预留点合理，但当前修罗主线还在调 phase/retry/fallback，建议先只保留 hook 和日志，不马上把三技能接进正式修罗主线。
+
+5. 建议先定义 request/result，而不是直接写完整业务。
+   - `TaskMaintenanceRequest` 描述当前任务、窗口角色、允许的维护类型、安全点、是否允许放权、当前阶段等。
+   - `TaskMaintenanceResult` 描述执行了什么、跳过了什么、是否需要稍后重试、是否发生硬阻塞。
+   - result 不能直接返回任务 phase；调用方任务自己决定下一步。
+
+Recommendation:
+
+- 短期：不要现在实现完整 `TaskMaintenanceService`。先把修罗主线的失败恢复、点怪、回接任务流程跑稳。
+- 中期：先落一个很薄的 `TaskMaintenanceService` 壳，只接入最安全的一两个动作，并保证维护失败只会 defer/retry，不会中断主任务。
+- 长期：五环、修罗、抓鬼、五倍、天庭都通过同一个维护入口调用，不再各自散落调用医保宝/修装备/三技能。
+
+### Tang De - 2026-05-28 UI game settings persistence
+
+Status: implemented / compile passed 2026-05-28
+
+Goal:
+
+- Fix the issue where UI task counts and game settings reset to defaults after restarting the app.
+
+Root cause:
+
+- The Settings tab and main task-tile count editor only updated the in-memory `BotProperties`.
+- On restart, controls were rebuilt from `application.properties`, so user edits disappeared.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/GameUiSettingsStore.java`
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `.gitignore`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added `config/ui-game-settings.properties` as a local persisted UI settings file.
+- UI startup now loads saved game settings into `BotProperties` before controls are created.
+- Applying game settings, applying supply settings, and applying the main-page task count editor now
+  save the current values.
+- The local UI settings file is ignored by Git.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-28 stop during runner preflight
+
+Status: implemented / compile passed 2026-05-28
+
+Goal:
+
+- Diagnose why pressing stop could leave some windows showing `停止中` instead of reaching `已停止`.
+- Fix the runner-level stop path without changing Xiuluo/Five Ring business logic.
+
+Log finding:
+
+- Latest stop sequence showed stop at `17:11:23.895`.
+- Windows already inside `AutoBattleTask` stopped normally.
+- Other windows were still in pre-task team-role detection / task reassignment (`teamRole:*`,
+  `task reassigned by team role`) when stop arrived.
+- Those preflight paths used task-context stop checks but did not consistently convert thread
+  interruption into a queue-level STOPPED result, so the UI could keep seeing `STOPPING`.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `WindowTaskRunner` now logs each stop request with queue/progress/current task.
+- Queue execution now catches stop/cancel during preflight and always writes a STOPPED queue finish.
+- Team-role detection boundaries now use `TaskCheckpoint` so stop/interrupt is honored before and
+  after role detection/reassignment.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### He Li - 2026-05-28 scoped DialogResult design for DialogService cleanup
+
+Status: implemented by 谢帅 / compile passed 2026-05-28
+
+Goal:
+
+- Clean up `DialogService` so task code can use one structured dialog result instead of scattered
+  template checks, while avoiding slow "scan every known dialog" behavior during normal gameplay.
+
+Core boundary:
+
+- Task code decides **when** a dialog should be inspected. `DialogService` must not run as a
+  background scanner.
+- `DialogService` owns screenshot/detection/template/OCR click mechanics and returns a structured
+  result.
+- The current task owns business phase decisions. `DialogService` should not know `XiuluoPhase`.
+
+Unified result direction:
+
+- Use one structured result type, tentatively `DialogResult`.
+- The result should distinguish whether it is an action result or a text/objective result.
+- Suggested fields:
+  - `kind`: `ACTION`, `TEXT`, `UNKNOWN`, `NO_DIALOG`, `FAILED`, etc.
+  - `dialogType`: `OPTION`, `STORY`, `NONE`, etc.
+  - `actionKey`: stable key such as `xiuluo.acceptTask`, `xiuluo.enterBattle`,
+    `xiuluo.underFiveConfirm`, `xiuluo.underThreeBlocked`; null for text/no-dialog cases.
+  - `objective`: optional `NpcTarget` or task objective payload for text/story readers.
+  - `clicked`: whether the service clicked an option.
+  - `matchedText`: OCR/template text that produced the result.
+  - clicked point fields: absolute and/or dialog-relative coordinates when available.
+
+Scope rule to control latency:
+
+- Every `handleDialog` call must include a narrow scope/request. Do not scan every known task dialog
+  just because the current task is 修罗.
+- Example scopes:
+  - `XIULUO_HOT_START`: startup-only; may check multiple known 修罗 option dialogs.
+  - `XIULUO_ACCEPT_TASK`: only match accept-task / under-five / under-three dialogs.
+  - `XIULUO_READ_OBJECTIVE`: only read the accepted-task story/objective text.
+  - `XIULUO_ENTER_BATTLE`: only match/click "看打".
+  - `ROUTE_TRANSFER`: route/carriage destination dialog; not 修罗-specific.
+  - `GENERIC_CLEANUP`: generic close/ignore policy only; no task-template sweep.
+
+Xiuluo known dialog mapping:
+
+- Accept task option: `xiuluo.acceptTask` -> 修罗 maps this to `READ_OBJECTIVE`.
+- Under-five confirm/wait option: `xiuluo.underFiveConfirm` or `xiuluo.underFiveWait` -> 修罗 decides
+  whether to continue/read objective or wait based on config.
+- Under-three blocked dialog: `xiuluo.underThreeBlocked` -> 修罗 should stop/wait/fail according to
+  the later policy; do not repeatedly generic-clean/retry it.
+- Objective story: result kind `TEXT` with objective/NpcTarget -> 修罗 maps this to
+  `NAVIGATE_TO_TARGET`.
+- Enter battle option: `xiuluo.enterBattle` -> 修罗 maps this to `WAIT_COMBAT` and marks
+  `enteredBattleByXiuluo=true`.
+
+Implementation notes for the cleanup agent:
+
+- Prefer placing cross-boundary request/result/value objects under `model.dialog` unless they are
+  private to `DialogService`.
+- Keep task-specific action keys stable. Prefer enums if they cross service/task boundaries; avoid
+  hard-coded strings spread through task code.
+- Do not make `DialogService` return task phases.
+- Do not broaden normal runtime checks. Hot start can afford broader matching; normal phase calls
+  should be narrow and fast.
+
+Implementation note:
+
+- `DialogService.handleDialog(DialogHandleRequest)` is now the structured public entry for scoped
+  dialog handling.
+- Green-template option handling now uses `DialogHandleRequest.handleGreenTemplateOption(...)` with a
+  narrow list of `GreenTemplateClickSpec`; the returned `DialogResult.actionKey` is the task-owned
+  stable action key.
+- Green-template option handling is also entered through `DialogService.handleDialog(...)`; the
+  concrete template click implementation stays private. Click ranges live in each
+  `GreenTemplateClickSpec` instead of separate `withRange`/direct click methods.
+- `XiuluoTaskV2` has been migrated for accept-task, under-five, and enter-battle template clicks.
+- `XiuluoTaskV2` recovery paths now also use `DialogService.handleDialog(...)` for:
+  - accept NPC click false-positive recovery: click the known accept-task option if it is already open,
+    or recognize an already-open story dialog and continue to objective reading.
+  - target click false-positive recovery: click the known enter-battle template first, then OCR-click
+    `看打` through the same structured handler before cleaning the UI.
+- `DialogResult` now carries an optional `ObjectiveTextResult` payload for story/objective readers.
+  `DialogHandleRequest.readStoryObjective(...)` and `DialogOperation.READ_STORY_OBJECTIVE` let 修罗
+  read the accepted-task story dialog through `handleDialog(...)` without turning DialogService into
+  a task phase machine.
+- `XiuluoTaskV2` now calls `handleDialog(...)` for all formal dialog interactions. The task still maps
+  the returned `ObjectiveTextResult` into its own `NpcTarget`, so DialogService does not know
+  `XiuluoPhase` or 修罗 business transitions.
+- Navigation route-transfer dialogs now also enter through `DialogService.handleDialog(...)`:
+  - remembered transfer-option points use `DialogHandleRequest.handleRememberedRouteOption(...)`;
+  - OCR route choices use `DialogHandleRequest.handleRouteKeywordOption(...)`;
+  - uncertain route dialogs may still OCR the captured dialog image, preserving the old transfer
+    recovery behavior without exposing `handleKeywordOptionWithPoint(...)` to `NavigationService`.
+- `NpcClickService` expected-dialog verification now uses `handleDialog(...)` in inspect-only mode:
+  - no expected template: verify that an option dialog is visible;
+  - expected green template: verify that the template is visible without clicking the option.
+- `TaskHotStartService` now uses `DialogHandleRequest.inspect(...)` through `handleDialog(...)` to
+  classify startup dialogs without clicking them.
+- `UICleanerService` now uses `handleDialog(...)` for maintenance precheck, story fast-click, and
+  generic dialog inspection. Generic OCR close/fallback-last behavior remains owned by UICleaner.
+- `FiveRingTask` now also uses `DialogHandleRequest.inspect(...)` through `handleDialog(...)` for
+  the remaining formal dialog-type probes, while preserving the original 五环 accept/P1 branch logic.
+- Remaining direct `DialogService` calls outside `handleDialog(...)` are limited to commented legacy
+  修罗/debug code and `DebugXiuluoStoryObjectiveTask`; formal runtime paths have been moved to the
+  unified entry.
+- `DialogService` public surface is now reduced to the formal `handleDialog(...)` entry plus the
+  existing debug-only story capture helper. Old keyword/remembered-point/green-template/story-text
+  public helpers were removed or made private after formal callers moved to the structured request.
+- `DialogHandleResult` has been removed. Internal dialog option/give/business helpers now return
+  `DialogResultStatus` directly, so `DialogResultStatus` is the single status enum crossing the
+  dialog service boundary.
+- `XiuluoTaskV2` now has a narrow known-option router for 修罗 option dialogs. Accept-task, enter-battle,
+  and under-five confirm/wait templates are matched through the structured `handleDialog(...)` path,
+  and the task maps the returned action key to `READ_OBJECTIVE`, `WAIT_COMBAT`, or `WAIT_TEAM_RETURN`.
+  `READ_OBJECTIVE` uses this same router after story/task-panel objective parsing misses, so
+  under-five prompts no longer fall through the generic objective failure recovery.
+- Xiuluo dialog template boundary:
+  - `xiuluo_accept_xianlaiwu.png`, `xiuluo_cancel_task.png`, `xiuluo_underfive_confirm.png`,
+    `xiuluo_underfive_wait.png`, and `xiuluo_enter_battle_kanda.png` are generated black/white
+    templates, but their runtime source is green option text. They must use the green option
+    template path.
+  - `xiuluo_cancel_task.png` is visibility-only proof for the accept-task dialog. Do not click it in
+    the accept flow; it only tells 修罗 that the correct NPC option dialog is open when the accept
+    template itself missed.
+  - `xiuluo_underthree_yichangqiangda.png` is different: its runtime source is a white story/prompt
+    dialog with no option row. It uses `DialogHandleRequest.verifyWhiteTemplate(...)` and maps to
+    `xiuluo.underThreeBlocked`, which 修罗 treats as a hard blocked state rather than retrying or
+    generic-cleaning the dialog.
+- Xiuluo V2 now reserves two no-op team-maintenance hook phases without changing current runtime
+  behavior:
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK`: after objective is read and before leaving the task-giver area.
+    This is the future cheap insert point for heal-pet style team maintenance.
+  - `BEFORE_ROUTE_MAINTENANCE_CHECK`: immediately before long target navigation. This is the future
+    insert point for repair-equipment style detours, after which the same 修罗 objective should resume.
+  - These hooks only log and continue today. The actual heal-pet/repair transaction should be shared
+    across long team tasks rather than implemented as 修罗-only business logic.
+- Xiuluo V2 return cleanup now has an explicit fallback phase:
+  - If the Xiuluo return item cannot be found/used or does not verify arrival at 灵兽村 after retry,
+    the task enters `NAVIGATE_BACK_TO_START` instead of immediately marking the round done.
+  - `NAVIGATE_BACK_TO_START` uses the normal NavigationService route to the fixed 灵兽村使者 location,
+    yields while pathing, and only finishes the current round after the start-area navigation arrives.
+  - This keeps max-run accounting from reporting success while the leader is still stranded on a
+    remote map.
+- Xiuluo V2 objective-read recovery now rechecks scoped 修罗 dialogs before generic cleanup:
+  - If story objective and task-panel objective both miss, it first routes known 修罗 option dialogs
+    through the same action-key path used by normal phases.
+  - It then checks the white under-three blocked prompt.
+  - Only after those scoped checks miss does it close generic X windows and retry/recover. This avoids
+    accidentally treating known 修罗 prompts as unknown UI while still keeping unrelated dialogs out of
+    the task-specific template scan.
+
 ### He Li - 2026-05-27 backlog: mounted purple player-name anchor
 
 Status: backlog / paused
@@ -7645,7 +8067,7 @@ Status: completed
 
 Done:
 
-- Renamed the shared request factory to `DialogHandleRequest.clickBusinessOption(...)`.
+- Renamed the shared request factory to `DialogHandleRequest.handleBusinessOption(...)`.
 - Clarified the intent: 医宝宝 / 修装备 / 装备无需修理 are shared `DialogService` capabilities available to any task.
 - Kept auto battle as a narrow caller that only uses this shared business-option capability during idle maintenance.
 
@@ -7661,7 +8083,7 @@ Validation:
 
 Open issues:
 
-- Other tasks can now call `dialogService.handleDialog(DialogHandleRequest.clickBusinessOption("task-name"))` when they want this same known-business-dialog behavior.
+- Other tasks can now call `dialogService.handleDialog(DialogHandleRequest.handleBusinessOption("task-name"))` when they want this same known-business-dialog behavior.
 
 Needs from others:
 

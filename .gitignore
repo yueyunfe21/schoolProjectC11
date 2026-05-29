@@ -9,8 +9,17 @@ target/
 # 🌟 游戏截图产生的临时文件（只封杀 temp 这一个文件夹，里面不管什么格式全不要）
 images/temp/
 
+# 运行中自动沉淀的失败截图样本，本机回归用，不上传 Git
+images/failure-cases/
+
 # 如果你根目录下有日志，可以忽略日志
 *.log
+
+# JavaFX UI 本机偏好设置，不上传到 Git
+config/ui-game-settings.properties
+
+# 运行时配置备份，不上传 Git
+config/backup/
 
 # 本地一次性调试入口，不上传到 Git
 src/main/java/com/bot/dhxy/debug/LocationSyncBenchmarkMain.java

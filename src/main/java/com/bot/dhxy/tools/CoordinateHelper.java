@@ -41,6 +41,7 @@ public class CoordinateHelper {
     private static final int GAME_CLIENT_HEIGHT = 768;
     private static final int APPROACH_LOGICAL_OFFSET = 2;
     private static final int MINI_MAP_EDGE_INSET_TRIGGER_PX = 240;
+    private static final int MINI_MAP_CLICK_RANDOM_RADIUS_PX = 4;
     private Map<String, MapTransform> mapTransforms = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -124,6 +125,35 @@ public class CoordinateHelper {
     }
 
     /**
+     * Check whether a logical map coordinate is plausible for the configured mini-map transform.
+     *
+     * <p>Location OCR can occasionally read an extra digit, for example {@code 135} as
+     * {@code 1135}. A coordinate like that maps far outside the 1024x768 game client and must not be
+     * written into runtime player state. This guard validates the logical coordinate in window-local
+     * mini-map pixel space without using or changing the current window focus.</p>
+     *
+     * @param mapName configured in-game map name; unknown maps return true so new maps are not
+     *                blocked before calibration.
+     * @param logicalX OCR/template logical X coordinate.
+     * @param logicalY OCR/template logical Y coordinate.
+     * @param marginPx tolerated pixel overflow around the 1024x768 client for edge labels/jitter.
+     * @return false when the known transform maps the coordinate far outside the game client.
+     */
+    public boolean isLogicalCoordinatePlausible(String mapName, int logicalX, int logicalY, int marginPx) {
+        MapTransform transform = mapTransforms.get(mapName);
+        if (transform == null) {
+            return true;
+        }
+        double relativeX = transform.zeroOffsetX + logicalX * transform.scaleX;
+        double relativeY = transform.zeroOffsetY + logicalY * transform.scaleY;
+        int margin = Math.max(0, marginPx);
+        return relativeX >= -margin
+                && relativeX <= GAME_CLIENT_WIDTH + margin
+                && relativeY >= -margin
+                && relativeY <= GAME_CLIENT_HEIGHT + margin;
+    }
+
+    /**
      * Resolve the mini-map logical coordinate and screen-absolute click point for a navigation attempt.
      *
      * <p>{@code failedClickCount == 0} returns the original target point. Higher values calculate one
@@ -149,7 +179,7 @@ public class CoordinateHelper {
             return null;
         }
         if (failedClickCount <= 0) {
-            return new MiniMapClickPoint(targetX, targetY, originalPixelPoint, "original");
+            return buildMiniMapClickPoint(targetX, targetY, originalPixelPoint, "original");
         }
 
         MapTransform transform = getMapTransform(mapName);
@@ -218,7 +248,43 @@ public class CoordinateHelper {
 
     private MiniMapClickPoint resolveMiniMapFallbackPoint(String mapName, int logicalX, int logicalY, String reason) {
         Point pixelPoint = getPhysicalMapPoint(mapName, logicalX, logicalY);
-        return pixelPoint == null ? null : new MiniMapClickPoint(logicalX, logicalY, pixelPoint, reason);
+        return pixelPoint == null ? null : buildMiniMapClickPoint(logicalX, logicalY, pixelPoint, reason);
+    }
+
+    private MiniMapClickPoint buildMiniMapClickPoint(int logicalX, int logicalY, Point basePixelPoint, String reason) {
+        Point randomizedPixelPoint = randomizeMiniMapClickPoint(basePixelPoint);
+        int jitterX = randomizedPixelPoint.x - basePixelPoint.x;
+        int jitterY = randomizedPixelPoint.y - basePixelPoint.y;
+        return MiniMapClickPoint.builder()
+                .logicalX(logicalX)
+                .logicalY(logicalY)
+                .basePixelPoint(basePixelPoint)
+                .pixelPoint(randomizedPixelPoint)
+                .jitterX(jitterX)
+                .jitterY(jitterY)
+                .reason(reason)
+                .build();
+    }
+
+    private Point randomizeMiniMapClickPoint(Point basePixelPoint) {
+        tracker.refreshWindowState();
+        int offsetX = random.nextInt(MINI_MAP_CLICK_RANDOM_RADIUS_PX * 2 + 1) - MINI_MAP_CLICK_RANDOM_RADIUS_PX;
+        int offsetY = random.nextInt(MINI_MAP_CLICK_RANDOM_RADIUS_PX * 2 + 1) - MINI_MAP_CLICK_RANDOM_RADIUS_PX;
+        if (offsetX == 0 && offsetY == 0) {
+            offsetX = 1;
+        }
+
+        int minX = tracker.getWindowBaseX() + 2;
+        int maxX = tracker.getWindowBaseX() + GAME_CLIENT_WIDTH - 2;
+        int minY = tracker.getWindowBaseY() + 2;
+        int maxY = tracker.getWindowBaseY() + GAME_CLIENT_HEIGHT - 2;
+        int randomizedX = clamp(basePixelPoint.x + offsetX, minX, maxX);
+        int randomizedY = clamp(basePixelPoint.y + offsetY, minY, maxY);
+        return new Point(randomizedX, randomizedY);
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     /**
@@ -226,7 +292,11 @@ public class CoordinateHelper {
      *
      * @param logicalX logical in-game X coordinate that will be clicked on the mini-map.
      * @param logicalY logical in-game Y coordinate that will be clicked on the mini-map.
-     * @param pixelPoint screen-absolute pixel point for the physical click.
+     * @param basePixelPoint screen-absolute point calculated directly from the map transform, before
+     *                       physical-click randomization.
+     * @param pixelPoint final screen-absolute pixel point for the physical click.
+     * @param jitterX X random offset in screen pixels applied to {@code basePixelPoint}.
+     * @param jitterY Y random offset in screen pixels applied to {@code basePixelPoint}.
      * @param reason diagnostic label such as {@code original}, {@code edge-fallback-1}, or
      *               {@code near-fallback-3}.
      */
@@ -237,7 +307,10 @@ public class CoordinateHelper {
     public static class MiniMapClickPoint {
         int logicalX;
         int logicalY;
+        Point basePixelPoint;
         Point pixelPoint;
+        int jitterX;
+        int jitterY;
         String reason;
     }
 
@@ -297,6 +370,27 @@ public class CoordinateHelper {
     public Point getRandomizedPoint(Point base, int maxRadiusX, int maxRadiusY) {
         if (base == null) return null;
         return getRandomizedPoint(base.x, base.y, maxRadiusX, maxRadiusY);
+    }
+
+    /**
+     * Apply an asymmetric random offset to a screen-absolute point.
+     *
+     * @param base screen-absolute base point. Null returns null.
+     * @param minOffsetX minimum X offset in screen pixels.
+     * @param maxOffsetX maximum X offset in screen pixels.
+     * @param randomRadiusY symmetric Y random radius in screen pixels. Values less than or equal to
+     *                      zero keep Y unchanged.
+     * @return randomized screen-absolute point.
+     */
+    public Point getRandomizedPoint(Point base, int minOffsetX, int maxOffsetX, int randomRadiusY) {
+        if (base == null) {
+            return null;
+        }
+        int lowX = Math.min(minOffsetX, maxOffsetX);
+        int highX = Math.max(minOffsetX, maxOffsetX);
+        int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
+        int offsetY = randomRadiusY <= 0 ? 0 : random.nextInt(randomRadiusY * 2 + 1) - randomRadiusY;
+        return new Point(base.x + offsetX, base.y + offsetY);
     }
 
     public double getScaleRatio() {
@@ -360,6 +454,23 @@ public class CoordinateHelper {
         return new int[]{startX, startY, endX, endY};
     }
 
+    /**
+     * Convert an image-template match inside a captured rectangle into a screen-absolute point.
+     *
+     * @param rect screen-absolute capture rectangle as {@code [left, top, right, bottom]}.
+     * @param matchResult result returned by {@link ImageFinder#find(String, String, double)}. The
+     *                    first two values are image-local X/Y inside {@code rect}.
+     * @return screen-absolute point, or null when the inputs do not contain a usable match.
+     */
+    public Point resolveMatchedPointInRect(int[] rect, double[] matchResult) {
+        if (rect == null || rect.length < 2 || matchResult == null || matchResult.length < 2) {
+            return null;
+        }
+        int absoluteX = rect[0] + (int) Math.round(matchResult[0]);
+        int absoluteY = rect[1] + (int) Math.round(matchResult[1]);
+        return new Point(absoluteX, absoluteY);
+    }
+
     public Point findImageInRegion(String templatePath, int[] rect, double matchRate) {
         String roiPath = windowScopedTempPath.resolve("roi_scan.png");
         if (!tracker.captureToFile("ROI-Scan", roiPath, rect[0], rect[1], rect[2], rect[3])) {
@@ -384,15 +495,14 @@ public class CoordinateHelper {
         }
 
         if (result != null && result.length >= 2) {
-            int absoluteX = rect[0] + (int) Math.round(result[0]);
-            int absoluteY = rect[1] + (int) Math.round(result[1]);
+            Point absolute = resolveMatchedPointInRect(rect, result);
             LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
                     "result=matched template=" + templatePath
                             + " roi=" + roiPath
                             + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
-                            + " point=" + absoluteX + "," + absoluteY);
-            log.info("Region image matched [{}] at ({},{})", templatePath, absoluteX, absoluteY);
-            return new Point(absoluteX, absoluteY);
+                            + " point=" + absolute.x + "," + absolute.y);
+            log.info("Region image matched [{}] at ({},{})", templatePath, absolute.x, absolute.y);
+            return absolute;
         }
 
         LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
@@ -414,10 +524,9 @@ public class CoordinateHelper {
 
         double[] result = ImageFinder.find(washedScanPath, templatePath, matchRate);
         if (result != null && result.length >= 2) {
-            int absoluteX = rect[0] + (int) Math.round(result[0]);
-            int absoluteY = rect[1] + (int) Math.round(result[1]);
-            log.info("Green text matched [{}] at ({},{})", templatePath, absoluteX, absoluteY);
-            return new Point(absoluteX, absoluteY);
+            Point absolute = resolveMatchedPointInRect(rect, result);
+            log.info("Green text matched [{}] at ({},{})", templatePath, absolute.x, absolute.y);
+            return absolute;
         }
         return null;
     }

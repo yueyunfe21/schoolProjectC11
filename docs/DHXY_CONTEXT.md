@@ -1318,3 +1318,25 @@ Next validation:
 - User should run `本地OCR测名字` on real windows and compare the logged local OCR words/anchor coordinates.
 - If local OCR is reliable enough, switch selected OCR-heavy paths to `local` or use `hybrid` for normal flows.
 
+## 16. Xiuluo Pause / Wubei Next Direction
+
+This is a short long-term pointer from 2026-05-29.
+
+Current decision:
+
+- 修罗 V2 work is paused and stored for later continuation.
+- The next urgent task line is 五倍.
+- The detailed 修罗 handoff is in `docs/ACTIVE_WORK.md`, entry:
+  `He Li - 2026-05-29 修罗暂存与五倍切换交接`.
+
+When starting 五倍:
+
+- Reuse the common task infrastructure already shaped by 修罗:
+  - `NavigationService`
+  - `NpcClickService.clickNpcSmart(...)`
+  - `DialogService.handleDialog(...)`
+  - `TaskTransactionRunner` / `TaskTurnCoordinator`
+- Do not create a separate private navigation/dialog/NPC-click stack for 五倍.
+- 五倍 should define its own phases, templates, objective reading, retry/fallback policy, and task-specific dialog mapping.
+- Generic maintenance such as 医宝宝、修装备、三技能 should stay as hooks until the shared maintenance service boundary is finalized.
+

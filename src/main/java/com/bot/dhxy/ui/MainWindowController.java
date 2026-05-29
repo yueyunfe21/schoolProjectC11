@@ -77,6 +77,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -94,6 +95,8 @@ public class MainWindowController {
     private static final DateTimeFormatter UI_DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss");
     private static final Pattern WINDOW_IDENTITY_PATTERN = Pattern.compile("-\\s+(.+?)\\s+-\\s+(.+?)\\s*[\\(（]ID[:：]\\s*(\\d+)[\\)）]");
     private static final int MAX_WINDOW_COMMAND_LOGS = 120;
+    private static final List<String> SELECTED_WINDOW_DETAIL_KEYS = List.of(
+            "窗口", "角色", "状态", "绑定", "当前", "上次执行", "最近任务", "结束时间", "消息", "标题");
 
     private final WindowTaskControlService windowTaskControlService;
     private final WindowRegistrationBatchBuilder windowRegistrationBatchBuilder;
@@ -103,6 +106,7 @@ public class MainWindowController {
     private final WindowMessageInputExperimentService windowMessageInputExperimentService;
     private final LicenseAuthService licenseAuthService;
     private final BotProperties botProperties;
+    private final GameUiSettingsStore gameUiSettingsStore;
     private final MapSurveyService mapSurveyService;
     private final PlayerNameOcrDebugService playerNameOcrDebugService;
     private final CoordinateHelper coordinateHelper;
@@ -234,6 +238,7 @@ public class MainWindowController {
     private final List<TaskType> pendingTaskQueue = new ArrayList<>();
     private final Map<TaskType, String> taskCountSummaries = createDefaultTaskCountSummaries();
     private final List<Button> taskTileButtons = new ArrayList<>();
+    private final Map<String, Label> selectedWindowDetailValueLabels = new LinkedHashMap<>();
     private List<String> pendingAutoSelectedWindowIds = List.of();
     private TaskType activeTaskCountType;
     private Timeline taskCountHoldTimeline;
@@ -245,6 +250,7 @@ public class MainWindowController {
         Map<TaskType, String> summaries = new EnumMap<>(TaskType.class);
         summaries.put(TaskType.WUHuan, "1轮");
         summaries.put(TaskType.XIULUO, "1次");
+        summaries.put(TaskType.XIULUO_V2, "1次");
         summaries.put(TaskType.AUTO_BATTLE, "60分");
         summaries.put(TaskType.DEBUG_COORDINATE, "手动");
         summaries.put(TaskType.DEBUG_MAP_CALIBRATOR, "2点");
@@ -254,6 +260,7 @@ public class MainWindowController {
     }
 
     public Parent buildView() {
+        gameUiSettingsStore.loadInto(botProperties);
         initControls();
 
         rootPane = new BorderPane();
@@ -548,6 +555,7 @@ public class MainWindowController {
         botProperties.setPetHpSupplyThreshold(normalizeSupplyThreshold(petHpThresholdComboBox.getValue()));
         botProperties.setPetMpSupplyEnabled(petMpSupplyCheckBox.isSelected());
         botProperties.setPetMpSupplyThreshold(normalizeSupplyThreshold(petMpThresholdComboBox.getValue()));
+        gameUiSettingsStore.save(botProperties);
 
         addWindowLog("补给配置已应用：人物血=" + supplyText(botProperties.isPlayerHpSupplyEnabled(), botProperties.getPlayerHpSupplyThreshold())
                 + " 人物法=" + supplyText(botProperties.isPlayerMpSupplyEnabled(), botProperties.getPlayerMpSupplyThreshold())
@@ -572,6 +580,7 @@ public class MainWindowController {
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
                 summonSkillIntervalMinutesComboBox.getValue()) * 60_000L);
         syncTaskCountSummariesFromProperties();
+        gameUiSettingsStore.save(botProperties);
 
         addWindowLog("游戏设置已应用：修罗=" + botProperties.getXiuluoMaxRuns()
                 + " 五环=" + botProperties.getWuhuanMaxRuns()
@@ -664,6 +673,7 @@ public class MainWindowController {
      */
     private void syncTaskCountSummariesFromProperties() {
         taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
+        taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUHuan, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         refreshTaskTiles();
     }
@@ -684,6 +694,7 @@ public class MainWindowController {
                     TaskCountDisplay display = parseTaskCountDisplay(taskCountSummaries.get(taskType));
                     syncTaskRunCountToProperties(taskType, display.value());
                 });
+        gameUiSettingsStore.save(botProperties);
         refreshTaskTiles();
     }
 
@@ -695,12 +706,13 @@ public class MainWindowController {
     private void syncTaskRunCountToProperties(TaskType taskType, int value) {
         int normalized = normalizeRunCount(value);
         switch (taskType) {
-            case XIULUO -> {
+            case XIULUO, XIULUO_V2 -> {
                 botProperties.setXiuluoMaxRuns(normalized);
                 if (xiuluoRunCountField != null) {
                     xiuluoRunCountField.setText(String.valueOf(normalized));
                 }
                 taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(normalized, "次"));
+                taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(normalized, "次"));
             }
             case WUHuan -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
@@ -1743,6 +1755,7 @@ public class MainWindowController {
                 : taskCountEditorUnitLabel.getText().trim();
         taskCountSummaries.put(activeTaskCountType, value + unit);
         syncTaskRunCountToProperties(activeTaskCountType, value);
+        gameUiSettingsStore.save(botProperties);
         refreshPendingTaskQueueView();
         refreshTaskTiles();
         hideTaskCountEditor();
@@ -2669,9 +2682,10 @@ public class MainWindowController {
         if (selectedWindowDetailBox == null) {
             return;
         }
+        ensureSelectedWindowDetailRows();
         List<WindowTaskSnapshot> selected = getSelectedWindowSnapshots();
-        selectedWindowDetailBox.getChildren().clear();
         if (selected.isEmpty()) {
+            updateDetailRows(Map.of());
             return;
         }
         WindowTaskSnapshot snapshot = selected.get(0);
@@ -2680,32 +2694,55 @@ public class MainWindowController {
                 ? nullToDash(snapshot.getWindowId())
                 : selected.size() + " 个已选，当前显示 " + nullToDash(snapshot.getWindowId());
         String processId = snapshot.getNativeProcessId() <= 0 ? "-" : String.valueOf(snapshot.getNativeProcessId());
-        addDetailRow("窗口", selectedPrefix);
-        addDetailRow("角色", identity.roleName() + " · " + identity.serverName() + " · " + identity.playerId());
-        addDetailRow("状态", snapshot.getStatusDisplayName()
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("窗口", selectedPrefix);
+        values.put("角色", identity.roleName() + " · " + identity.serverName() + " · " + identity.playerId());
+        values.put("状态", snapshot.getStatusDisplayName()
                 + " · 可接任务 " + (snapshot.isAcceptingTaskQueue() ? "是" : "否"));
-        addDetailRow("绑定", "hwnd=" + nullToDash(snapshot.getNativeHandle()) + " · pid=" + processId);
-        addDetailRow("当前", snapshot.getRunningTaskDisplayName()
+        values.put("绑定", "hwnd=" + nullToDash(snapshot.getNativeHandle()) + " · pid=" + processId);
+        values.put("当前", snapshot.getRunningTaskDisplayName()
                 + " · 进度 " + snapshot.getRunningQueueProgressText());
-        addDetailRow("上次执行", nullToDash(snapshot.getLastQueueDisplayText())
+        values.put("上次执行", nullToDash(snapshot.getLastQueueDisplayText())
                 + " · " + snapshot.getLastQueueResultDisplayName());
-        addDetailRow("最近任务", snapshot.getLastTaskDisplayName()
+        values.put("最近任务", snapshot.getLastTaskDisplayName()
                 + " · " + snapshot.getLastResultDisplayName());
-        addDetailRow("结束时间", formatDateTime(snapshot.getLastFinishedAt()));
-        addDetailRow("消息", firstNotBlank(snapshot.getLastQueueMessage(), snapshot.getLastResultMessage(), snapshot.getLastMessage()));
-        addDetailRow("标题", nullToDash(snapshot.getNativeTitle()));
+        values.put("结束时间", formatDateTime(snapshot.getLastFinishedAt()));
+        values.put("消息", firstNotBlank(snapshot.getLastQueueMessage(), snapshot.getLastResultMessage(), snapshot.getLastMessage()));
+        values.put("标题", nullToDash(snapshot.getNativeTitle()));
+        updateDetailRows(values);
     }
 
-    private void addDetailRow(String key, String value) {
+    private void ensureSelectedWindowDetailRows() {
+        if (!selectedWindowDetailValueLabels.isEmpty()) {
+            return;
+        }
+        /*
+         * This panel refreshes every second. Reusing the same JavaFX nodes avoids accumulating
+         * millions of detached Label/HBox objects in the JavaFX/CSS heap during long debug runs.
+         */
+        selectedWindowDetailBox.getChildren().clear();
+        for (String key : SELECTED_WINDOW_DETAIL_KEYS) {
+            addDetailRow(key);
+        }
+    }
+
+    private void updateDetailRows(Map<String, String> values) {
+        for (Map.Entry<String, Label> entry : selectedWindowDetailValueLabels.entrySet()) {
+            entry.getValue().setText(nullToDash(values.get(entry.getKey())));
+        }
+    }
+
+    private void addDetailRow(String key) {
         Label keyLabel = new Label(key);
         keyLabel.getStyleClass().add("detail-key");
-        Label valueLabel = new Label(nullToDash(value));
+        Label valueLabel = new Label("-");
         valueLabel.setWrapText(true);
         valueLabel.getStyleClass().add("detail-value");
         HBox row = new HBox(10, keyLabel, valueLabel);
         row.getStyleClass().add("detail-row");
         HBox.setHgrow(valueLabel, Priority.ALWAYS);
         selectedWindowDetailBox.getChildren().add(row);
+        selectedWindowDetailValueLabels.put(key, valueLabel);
     }
 
     private void renderLogList() {

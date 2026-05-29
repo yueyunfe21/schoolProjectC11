@@ -1,10 +1,13 @@
 package com.bot.dhxy.vision;
 
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
+
+import java.util.List;
 
 /**
  * Shared OCR text matching helpers for short in-game names.
@@ -86,6 +89,35 @@ public final class OcrTextMatcher {
      */
     public static boolean isShortNameMatch(String ocrText, String expectedName) {
         return shortNameMatchScore(ocrText, expectedName) > 0;
+    }
+
+    /**
+     * Check whether any OCR word contains one of the accepted keywords exactly.
+     *
+     * <p>This intentionally uses conservative {@code contains} matching rather than fuzzy name
+     * matching. Dialog menu options often contain map names plus extra suffixes, for example
+     * {@code 长安} should match {@code 长安桥}; loose fuzzy matching would be too risky for menu
+     * clicks.</p>
+     *
+     * @param words OCR word boxes from one image, with image-local coordinates.
+     * @param keywords accepted exact substrings; null/blank entries are ignored.
+     * @return true when any OCR word text contains any keyword.
+     */
+    public static boolean hasAnyKeyword(List<OcrWordResult> words, List<String> keywords) {
+        if (words == null || words.isEmpty() || keywords == null || keywords.isEmpty()) {
+            return false;
+        }
+        for (OcrWordResult word : words) {
+            if (word == null || word.getText() == null) {
+                continue;
+            }
+            for (String keyword : keywords) {
+                if (keyword != null && !keyword.isBlank() && word.getText().contains(keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

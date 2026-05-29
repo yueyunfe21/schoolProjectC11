@@ -2,7 +2,10 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.dialog.DialogResult;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.PathingResult;
 import com.bot.dhxy.model.npc.NpcMovementType;
@@ -12,7 +15,7 @@ import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.service.*;
-import com.bot.dhxy.service.dialog.DialogHandleResult;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.task.startup.TaskStartupCheckResult;
 import com.bot.dhxy.task.startup.TaskStartupCheckService;
 import com.bot.dhxy.task.template.BaseTaskTemplate;
@@ -32,6 +35,7 @@ import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
@@ -365,7 +369,7 @@ public class FiveRingTask extends BaseTaskTemplate {
                 return TaskStepResult.SUCCESS;
             }
 
-            if (dialogService.detectDialogType() == DialogType.NONE) {
+            if (dialogService.handleDialog(DialogHandleRequest.inspect("wuhuan:setup-dialog-check")).getDialogType() == DialogType.NONE) {
                 if (!navigationService.navigateToNPC(NavigationRequest.builder()
                         .targetMapName(TARGET_MAP_NAME)
                         .targetX(NPC_COOR_X)
@@ -419,7 +423,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             executionContext.throwIfStopRequested();
         }
 
-        DialogType dialogType = dialogService.detectDialogType();
+        DialogType dialogType = dialogService.handleDialog(DialogHandleRequest.inspect("wuhuan:current-screen-accept-check")).getDialogType();
         if (dialogType == DialogType.NONE) {
             log.info("[five-ring accept] no accept dialog on current screen, skip direct accept: reason={}", reason);
             return false;
@@ -444,7 +448,11 @@ public class FiveRingTask extends BaseTaskTemplate {
                 TaskTransactionResult.PATHING_STARTED,
                 TaskYieldPolicy.CONTINUE_CHAIN,
                 () -> {
-            boolean clickedAccept = dialogService.clickFirstGreenOptionIfFiveRingAcceptDialogDirectForExclusive();
+            DialogResult acceptResult = dialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(
+                    "wuhuan:accept-dialog",
+                    List.of(new GreenTemplateClickSpec("wuhuan.acceptTask", ACCEPT_OPTION_TEMPLATE, 20, 20, 4)),
+                    true));
+            boolean clickedAccept = acceptResult.isClicked();
             log.info("[five-ring accept] accept dialog click result={}", clickedAccept);
             if (!clickedAccept) {
                 return TaskTransactionResult.RETRYABLE_ERROR;
@@ -573,25 +581,25 @@ public class FiveRingTask extends BaseTaskTemplate {
     private boolean handleDialogIfNeeded(TaskExecutionContext executionContext, FiveRingRuntimeState runtimeState) {
         checkpoint(executionContext);
 
-        DialogHandleResult giveResult = tryGiveItemAndTriggerPathingIfPossible(executionContext, runtimeState);
+        DialogResultStatus giveResult = tryGiveItemAndTriggerPathingIfPossible(executionContext, runtimeState);
         checkpoint(executionContext);
-        if (giveResult == DialogHandleResult.GIVE_ITEM_DONE) {
+        if (giveResult == DialogResultStatus.GIVE_ITEM_DONE) {
             return true;
         }
-        if (giveResult == DialogHandleResult.NO_DIALOG) {
+        if (giveResult == DialogResultStatus.NO_DIALOG) {
             return false;
         }
-        if (giveResult == DialogHandleResult.STORY_IGNORED) {
+        if (giveResult == DialogResultStatus.STORY_IGNORED) {
             log.info("five-ring story dialog ignored; continue task-panel P2/P1 advancement");
             return false;
         }
-        if (giveResult == DialogHandleResult.GIVE_OPTION_NOT_FOUND) {
+        if (giveResult == DialogResultStatus.GIVE_OPTION_NOT_FOUND) {
             log.warn("five-ring detected an unknown option dialog without give entry; clean it and retry later");
             cleanupRetryableDialog("wuhuan:giveOptionNotFound");
             runtimeState.setNeedTaskSync(true);
             return true;
         }
-        if (giveResult == DialogHandleResult.GIVE_ITEM_FAILED || giveResult == DialogHandleResult.INTERRUPTED) {
+        if (giveResult == DialogResultStatus.GIVE_ITEM_FAILED || giveResult == DialogResultStatus.INTERRUPTED) {
             log.warn("five-ring give-item dialog handling failed, continue with P2/P1 fallback");
             return false;
         }
@@ -599,9 +607,9 @@ public class FiveRingTask extends BaseTaskTemplate {
         return false;
     }
 
-    private DialogHandleResult tryGiveItemAndTriggerPathingIfPossible(TaskExecutionContext executionContext,
+    private DialogResultStatus tryGiveItemAndTriggerPathingIfPossible(TaskExecutionContext executionContext,
                                                                       FiveRingRuntimeState runtimeState) {
-        AtomicReference<DialogHandleResult> dialogResult = new AtomicReference<>(DialogHandleResult.NO_DIALOG);
+        AtomicReference<DialogResultStatus> dialogResult = new AtomicReference<>(DialogResultStatus.NO_DIALOG);
         AtomicReference<PathingResult> pathingResult = new AtomicReference<>(PathingResult.UI_ERROR);
 
         TaskTransactionOutcome outcome = taskTransactionRunner.runExclusive(
@@ -609,9 +617,9 @@ public class FiveRingTask extends BaseTaskTemplate {
                 TaskTransactionResult.PATHING_STARTED,
                 TaskYieldPolicy.CONTINUE_CHAIN,
                 () -> {
-            dialogResult.set(dialogService.tryGiveItemIfCurrentOptionDialogDirectForExclusive(
-                    KEY_ITEM_NAME, runtimeState.getShoeBagIndex()));
-            if (dialogResult.get() != DialogHandleResult.GIVE_ITEM_DONE) {
+            dialogResult.set(dialogService.handleDialog(DialogHandleRequest.giveItemIfAvailable(
+                    "wuhuan:give-item", KEY_ITEM_NAME, runtimeState.getShoeBagIndex())).getStatus());
+            if (dialogResult.get() != DialogResultStatus.GIVE_ITEM_DONE) {
                 return mapGiveDialogResultToTransactionResult(dialogResult.get());
             }
 
@@ -629,10 +637,10 @@ public class FiveRingTask extends BaseTaskTemplate {
         });
 
         if (!outcome.completed()) {
-            return DialogHandleResult.INTERRUPTED;
+            return DialogResultStatus.INTERRUPTED;
         }
 
-        if (dialogResult.get() == DialogHandleResult.GIVE_ITEM_DONE) {
+        if (dialogResult.get() == DialogResultStatus.GIVE_ITEM_DONE) {
             if (pathingResult.get() == PathingResult.SUCCESS) {
                 runtimeState.resetUiErrorCount();
                 runtimeState.setNeedTaskSync(false);
@@ -646,7 +654,7 @@ public class FiveRingTask extends BaseTaskTemplate {
         return dialogResult.get();
     }
 
-    private TaskTransactionResult mapGiveDialogResultToTransactionResult(DialogHandleResult result) {
+    private TaskTransactionResult mapGiveDialogResultToTransactionResult(DialogResultStatus result) {
         return switch (result) {
             case NO_DIALOG, STORY_IGNORED -> TaskTransactionResult.READY_TO_CONTINUE;
             case GIVE_OPTION_NOT_FOUND -> TaskTransactionResult.RETRYABLE_ERROR;
@@ -841,7 +849,7 @@ public class FiveRingTask extends BaseTaskTemplate {
             log.info("[five-ring] P1 blind click triggered next NPC link");
             sleepSafely(executionContext, 1200);
 
-            if (dialogService.detectDialogType() != DialogType.NONE) {
+            if (dialogService.handleDialog(DialogHandleRequest.inspect("wuhuan:p1-after-click-dialog-check")).getDialogType() != DialogType.NONE) {
                 checkpoint(executionContext);
                 log.info("P1 click opened a dialog directly; blind click succeeded");
                 return;

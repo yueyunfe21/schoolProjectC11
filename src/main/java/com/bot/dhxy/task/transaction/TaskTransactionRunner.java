@@ -126,6 +126,7 @@ public class TaskTransactionRunner {
                 log.info("task transaction stopped: name={}", name);
                 return TaskTransactionResult.STOPPED;
             }
+            log.error("task transaction exception: name={}", name, e);
             throw e;
         }
     }

@@ -1,39 +1,36 @@
 package com.bot.dhxy.service;
 
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Value;
-import lombok.experimental.Accessors;
-
-
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.dialog.DialogDetection;
+import com.bot.dhxy.model.dialog.DialogResult;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
+import com.bot.dhxy.model.ocr.OcrLineResult;
+import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
-import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.service.dialog.DialogOptionClickResult;
 import com.bot.dhxy.service.dialog.DialogStoryPolicy;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.tools.LatencyMetrics;
+import com.bot.dhxy.vision.GameTextLineOcrService;
+import com.bot.dhxy.vision.ObjectiveTextRecognitionService;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -57,9 +54,10 @@ public class DialogService {
     private final InputProvider inputProvider;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final TextRecognizer ocr;
     private final GiveItemService giveItemService;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final GameTextLineOcrService gameTextLineOcrService;
+    private final ObjectiveTextRecognitionService objectiveTextRecognitionService;
 
     private final Random random = new Random();
 
@@ -77,22 +75,23 @@ public class DialogService {
     private static final int DIALOG_LARGE_H = 208;
 
     private static final String OPTION_GIVE_TEXT = "images/template/dialog/dialog_opt_give.png";
-    private static final String WUHAN_ACCEPT_FIRST_OPTION_TEXT = "images/template/dialog/wuhuan_accept_first_option.png";
     private static final String HEAL_PET_OPTION_TEXT = "images/template/dialog/heal_pet_option.png";
     private static final String REPAIR_EQUIPMENT_OPTION_TEXT = "images/template/dialog/repair_equipment_option.png";
     private static final String REPAIR_EQUIPMENT_GIVEUP_OPTION_TEXT = "images/template/dialog/repair_equipment_option_giveup.png";
     private static final double BUSINESS_OPTION_MATCH_RATE = 0.70;
+    private static final int ROUTE_TRANSFER_DIALOG_ATTEMPTS = 2;
+    private static final long ROUTE_TRANSFER_RETRY_DELAY_MS = 650L;
 
     /**
-     * Handle one dialog according to an explicit operation policy.
+     * Handle one dialog according to an explicit operation policy and return structured details.
      *
-     * @param request policy object that declares whether to click story dialogs, match keywords,
-     * give an item, handle business maintenance options, or use a fallback green option. The optional
-     * initial click is screen-absolute and is sent before detection.
-     * @return result describing whether a dialog was absent, clicked, ignored, interrupted, or failed.
-     * Side effects may include OCR, screenshot writes, item usage, and serialized mouse clicks.
+     * @param request policy object that declares the narrow dialog operation to run. Green-template
+     *                requests carry only the templates that this task phase expects, so the service
+     *                does not sweep every known task dialog.
+     * @return structured status, optional action key, and click coordinates when a concrete option
+     * was clicked.
      */
-    public DialogHandleResult handleDialog(DialogHandleRequest request) {
+    public DialogResult handleDialog(DialogHandleRequest request) {
         log.info("dialog handle request: source={} operation={} storyPolicy={} optionPolicy={} fallbackPolicy={} itemToGive={} targetKeyword={}",
                 request.getSourceTask(), request.getOperation(), request.getStoryPolicy(), request.getOptionPolicy(),
                 request.getFallbackPolicy(),
@@ -104,40 +103,204 @@ public class DialogService {
             log.info("dialog request initial click: ({},{})", p.x, p.y);
             inputSequences.clickLeft("dialog:requestInitialClick", p.x, p.y, 150);
             if (!TaskSleep.sleep(600 + random.nextInt(200))) {
-                return DialogHandleResult.INTERRUPTED;
+                return finishRequest(request, DialogResult.simple(DialogResultStatus.INTERRUPTED, DialogType.NONE));
             }
+        }
+
+        if (request.getOptionPolicy() == com.bot.dhxy.service.dialog.DialogOptionPolicy.CLICK_GREEN_TEMPLATE) {
+            return finishRequest(request, handleGreenTemplateOption(request));
         }
 
         // Stage 2: classify once and pass the same screenshot into option OCR.
         DialogDetection detection = detectDialogSnapshotDirect("handle-dialog:" + request.getOperation());
         DialogType type = detection.type();
         if (type == DialogType.NONE) {
-            return finishRequest(request, type, DialogHandleResult.NO_DIALOG);
+            if (request.getOperation() == com.bot.dhxy.service.dialog.DialogOperation.ROUTE_TRANSFER
+                    && request.getOptionPolicy() == com.bot.dhxy.service.dialog.DialogOptionPolicy.CLICK_KEYWORD
+                    && detection.image() != null) {
+                DialogResult uncertainResult = handleRouteKeywordOptionWithRetry(request, detection);
+                if (uncertainResult.getStatus() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
+                    return finishRequest(request, uncertainResult);
+                }
+            }
+            return finishRequest(request, DialogResult.simple(DialogResultStatus.NO_DIALOG, type));
         }
 
         // Stage 3: story dialogs are either clicked through or deliberately left alone.
         if (type == DialogType.STORY) {
-            if (request.getStoryPolicy() == DialogStoryPolicy.CLICK_THROUGH) {
-                fastClickStoryDialog();
-                return finishRequest(request, type, DialogHandleResult.STORY_CLICKED);
+            if (request.getOperation() == com.bot.dhxy.service.dialog.DialogOperation.READ_STORY_OBJECTIVE) {
+                return finishRequest(request, handleStoryObjective(request, detection));
             }
-            return finishRequest(request, type, DialogHandleResult.STORY_IGNORED);
+            if (request.getOperation() == com.bot.dhxy.service.dialog.DialogOperation.VERIFY_WHITE_TEMPLATE) {
+                return finishRequest(request, verifyWhiteStoryTemplate(request, detection));
+            }
+            if (request.getStoryPolicy() == DialogStoryPolicy.CLICK_THROUGH) {
+                handleStoryDialog();
+                return finishRequest(request, DialogResult.simple(DialogResultStatus.STORY_CLICKED, type));
+            }
+            return finishRequest(request, DialogResult.simple(DialogResultStatus.STORY_IGNORED, type));
         }
 
         // Stage 4: option dialogs are handled by the request's explicit option policy.
-        DialogHandleResult result = switch (request.getOptionPolicy()) {
-            case IGNORE -> DialogHandleResult.OPTION_IGNORED;
-            case CLICK_KEYWORD -> handleKeywordOption(request, detection);
-            case CLICK_BUSINESS_OPTION -> handleBusinessOption(request.isIncludeCleanupBusinessOptions());
-            case GIVE_ITEM_IF_AVAILABLE -> tryGiveItemFromCurrentOptionDialog(request.getItemToGive(), request.getKnownBagIndex());
-            case FALLBACK_FIRST_OPTION -> clickFirstGreenOption(getDialogRect(), "request fallback first green option")
-                    ? DialogHandleResult.FALLBACK_CLICKED
-                    : DialogHandleResult.FAILED;
-            case FALLBACK_LAST_OPTION -> clickLastGreenOption(getDialogRect(), "request fallback last green option")
-                    ? DialogHandleResult.FALLBACK_CLICKED
-                    : DialogHandleResult.FAILED;
+        DialogResult result = switch (request.getOptionPolicy()) {
+            case IGNORE -> DialogResult.simple(DialogResultStatus.OPTION_IGNORED, type);
+            case VERIFY_OPTION -> DialogResult.simple(DialogResultStatus.OPTION_VISIBLE, type);
+            case CLICK_KEYWORD -> request.getOperation() == com.bot.dhxy.service.dialog.DialogOperation.ROUTE_TRANSFER
+                    ? handleRouteKeywordOptionWithRetry(request, detection)
+                    : handleKeywordOption(request, detection);
+            case CLICK_REMEMBERED_POINT -> handleRememberedOption(request, detection);
+            case CLICK_BUSINESS_OPTION -> fromHandleResult(handleBusinessOption(request.isIncludeCleanupBusinessOptions()), type);
+            case GIVE_ITEM_IF_AVAILABLE -> fromHandleResult(
+                    tryGiveItemFromCurrentOptionDialog(request.getItemToGive(), request.getKnownBagIndex()), type);
+            case CLICK_GREEN_TEMPLATE -> handleGreenTemplateOption(request);
+            case VERIFY_GREEN_TEMPLATE -> verifyGreenTemplateOption(request, detection);
+            case FALLBACK_FIRST_OPTION -> DialogResult.simple(
+                    clickGreenOption(getDialogRect(), "request fallback first green option", true)
+                            ? DialogResultStatus.FALLBACK_CLICKED
+                            : DialogResultStatus.FAILED,
+                    type);
+            case FALLBACK_LAST_OPTION -> DialogResult.simple(
+                    clickGreenOption(getDialogRect(), "request fallback last green option", false)
+                            ? DialogResultStatus.FALLBACK_CLICKED
+                            : DialogResultStatus.FAILED,
+                    type);
         };
-        return finishRequest(request, type, result);
+        return finishRequest(request, result);
+    }
+
+    private DialogResult verifyGreenTemplateOption(DialogHandleRequest request, DialogDetection detection) {
+        List<GreenTemplateClickSpec> specs = request.getGreenTemplateSpecs();
+        if (specs == null || specs.isEmpty()) {
+            log.warn("dialog expected template verification requested without specs: source={}", request.getSourceTask());
+            return DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, detection.type());
+        }
+
+        int[] rect = detection.dialogRect() != null ? detection.dialogRect() : getDialogRect();
+        String rawPath = detection.rawPath();
+        if ((rawPath == null || rawPath.isBlank()) && detection.image() != null) {
+            rawPath = windowScopedTempPath.resolve("dialog_expected_verify_raw.png");
+            if (!ImagePreprocessor.saveImage(detection.image(), rawPath)) {
+                rawPath = null;
+            }
+        }
+        if (rawPath == null || rawPath.isBlank()) {
+            return DialogResult.simple(DialogResultStatus.FAILED, detection.type());
+        }
+
+        String washedPath = windowScopedTempPath.resolve("dialog_expected_verify_green.png");
+        ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(rawPath, washedPath);
+        for (GreenTemplateClickSpec spec : specs) {
+            if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
+                continue;
+            }
+            double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
+            if (result == null || result.length < 2) {
+                continue;
+            }
+            Point point = coordinateHelper.resolveMatchedPointInRect(rect, result);
+            log.info("dialog expected template visible: source={} template={} point=({}, {})",
+                    request.getSourceTask(), spec.templatePath(), point.x, point.y);
+            return DialogResult.statusBuilder(DialogResultStatus.GREEN_TEMPLATE_VISIBLE, detection.type())
+                    .actionKey(spec.name())
+                    .matchedText(spec.templatePath())
+                    .relativeX(point.x - rect[0])
+                    .relativeY(point.y - rect[1])
+                    .absoluteX(point.x)
+                    .absoluteY(point.y)
+                    .build();
+        }
+        log.info("dialog expected template not visible: source={} candidates={}",
+                request.getSourceTask(), specs.size());
+        return DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, detection.type());
+    }
+
+    private DialogResult verifyWhiteStoryTemplate(DialogHandleRequest request, DialogDetection detection) {
+        String templatePath = request.getExpectedTemplatePath();
+        if (templatePath == null || templatePath.isBlank()) {
+            log.warn("dialog white template verification requested without template: source={}", request.getSourceTask());
+            return DialogResult.simple(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND, detection.type());
+        }
+
+        int[] rect = detection.dialogRect() != null ? detection.dialogRect() : getDialogRect();
+        String rawPath = detection.rawPath();
+        if ((rawPath == null || rawPath.isBlank()) && detection.image() != null) {
+            rawPath = windowScopedTempPath.resolve("dialog_white_template_raw.png");
+            if (!ImagePreprocessor.saveImage(detection.image(), rawPath)) {
+                rawPath = null;
+            }
+        }
+        if (rawPath == null || rawPath.isBlank()) {
+            return DialogResult.simple(DialogResultStatus.FAILED, detection.type());
+        }
+
+        String washedPath = windowScopedTempPath.resolve("dialog_white_template_washed.png");
+        ImagePreprocessor.washThinWhiteTextToBlackAndWhite(rawPath, washedPath);
+        double[] result = ImageFinder.find(washedPath, templatePath, 0.85);
+        if (result == null || result.length < 2) {
+            log.info("dialog white template not visible: source={} template={}",
+                    request.getSourceTask(), templatePath);
+            return DialogResult.simple(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND, detection.type());
+        }
+
+        Point point = coordinateHelper.resolveMatchedPointInRect(rect, result);
+        log.info("dialog white template visible: source={} template={} point=({}, {})",
+                request.getSourceTask(), templatePath, point.x, point.y);
+        return DialogResult.statusBuilder(DialogResultStatus.WHITE_TEMPLATE_VISIBLE, detection.type())
+                .actionKey(request.getExpectedTemplateActionKey())
+                .matchedText(templatePath)
+                .relativeX(point.x - rect[0])
+                .relativeY(point.y - rect[1])
+                .absoluteX(point.x)
+                .absoluteY(point.y)
+                .build();
+    }
+
+    private DialogResult handleRouteKeywordOptionWithRetry(DialogHandleRequest request,
+                                                           DialogDetection firstDetection) {
+        if (request.getTargetKeyword() == null) {
+            log.warn("dialog route keyword option requested without targetKeyword");
+            return DialogResult.simple(DialogResultStatus.OPTION_KEYWORD_NOT_FOUND,
+                    firstDetection == null ? DialogType.NONE : firstDetection.type());
+        }
+
+        DialogDetection detection = firstDetection;
+        DialogResult lastResult = DialogResult.simple(DialogResultStatus.NO_DIALOG, DialogType.NONE);
+        for (int attempt = 1; attempt <= ROUTE_TRANSFER_DIALOG_ATTEMPTS; attempt++) {
+            if (detection == null || detection.image() == null) {
+                lastResult = DialogResult.simple(DialogResultStatus.NO_DIALOG, DialogType.NONE);
+            } else {
+                /*
+                 * Route option text is normally green. Yellow is only a supplement for rare
+                 * recommendation choices; fresh transfer fee/status text can also be yellow and can
+                 * briefly overlap the dialog area. Therefore fallback clicking is delayed until the
+                 * final attempt, after the transient yellow hint has had a chance to disappear.
+                 */
+                boolean allowFallback = attempt == ROUTE_TRANSFER_DIALOG_ATTEMPTS
+                        && request.isAllowFallbackOptionClick();
+                DialogOptionClickResult clickResult = processOptionsWithOCRDetailed(
+                        request.getTargetKeyword(),
+                        allowFallback,
+                        detection);
+                lastResult = fromOptionClickResult(clickResult, detection.type(), request.getTargetKeyword());
+                if (clickResult.getResult() == DialogResultStatus.OPTION_KEYWORD_CLICKED
+                        || clickResult.getResult() == DialogResultStatus.FALLBACK_CLICKED) {
+                    log.info("dialog route keyword handled: source={} target={} attempt={} status={}",
+                            request.getSourceTask(), request.getTargetKeyword(), attempt, clickResult.getResult());
+                    return lastResult;
+                }
+            }
+
+            if (attempt < ROUTE_TRANSFER_DIALOG_ATTEMPTS) {
+                log.info("dialog route keyword not matched, retry current dialog after transient hint: source={} target={} attempt={} delayMs={}",
+                        request.getSourceTask(), request.getTargetKeyword(), attempt, ROUTE_TRANSFER_RETRY_DELAY_MS);
+                if (!TaskSleep.sleep(ROUTE_TRANSFER_RETRY_DELAY_MS)) {
+                    return DialogResult.simple(DialogResultStatus.INTERRUPTED,
+                            detection == null ? DialogType.NONE : detection.type());
+                }
+                detection = detectDialogSnapshotDirect("route-transfer-retry:" + request.getSourceTask());
+            }
+        }
+        return lastResult;
     }
 
     /**
@@ -147,29 +310,51 @@ public class DialogService {
      * repair-equipment. The optional repair-giveup cleanup template is only included when the caller
      * explicitly allows cleanup options.</p>
      */
-    private DialogHandleResult handleBusinessOption(boolean includeCleanupOptions) {
+    private DialogResultStatus handleBusinessOption(boolean includeCleanupOptions) {
         int[] rect = getDialogRect();
         String rawPath = windowScopedTempPath.resolve("business_dialog_raw.png");
         String washedPath = windowScopedTempPath.resolve("business_dialog_washed.png");
-        if (!captureToFileExclusive("dialog:businessCapture", "business-dialog-scan", rawPath, rect)) {
+        boolean captured;
+        if (isInputWorkerThread()) {
+            BufferedImage image = tracker.captureToMemory("business-dialog-scan", rect[0], rect[1], rect[2], rect[3]);
+            try {
+                captured = ImagePreprocessor.saveImage(image, rawPath);
+            } finally {
+                if (image != null) {
+                    image.flush();
+                }
+            }
+        } else {
+            captured = inputSequences.submitExclusiveAndWait("dialog:businessCapture", () -> {
+                BufferedImage image = tracker.captureToMemory("business-dialog-scan", rect[0], rect[1], rect[2], rect[3]);
+                try {
+                    return ImagePreprocessor.saveImage(image, rawPath);
+                } finally {
+                    if (image != null) {
+                        image.flush();
+                    }
+                }
+            });
+        }
+        if (!captured) {
             log.warn("business dialog capture failed");
-            return DialogHandleResult.FAILED;
+            return DialogResultStatus.FAILED;
         }
 
         ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
         if (tryClickBusinessOptionInWashedImage(washedPath, rect, HEAL_PET_OPTION_TEXT, "heal-pet")) {
-            return DialogHandleResult.BUSINESS_OPTION_CLICKED;
+            return DialogResultStatus.BUSINESS_OPTION_CLICKED;
         }
         if (tryClickBusinessOptionInWashedImage(washedPath, rect, REPAIR_EQUIPMENT_OPTION_TEXT, "repair-equipment")) {
-            return DialogHandleResult.BUSINESS_OPTION_CLICKED;
+            return DialogResultStatus.BUSINESS_OPTION_CLICKED;
         }
         if (includeCleanupOptions
                 && tryClickBusinessOptionInWashedImage(washedPath, rect, REPAIR_EQUIPMENT_GIVEUP_OPTION_TEXT, "repair-equipment-giveup")) {
-            return DialogHandleResult.BUSINESS_OPTION_CLICKED;
+            return DialogResultStatus.BUSINESS_OPTION_CLICKED;
         }
 
         log.info("business dialog option not matched");
-        return DialogHandleResult.BUSINESS_OPTION_NOT_FOUND;
+        return DialogResultStatus.BUSINESS_OPTION_NOT_FOUND;
     }
 
     private boolean tryClickBusinessOptionInWashedImage(String washedPath, int[] rect, String templatePath, String optionName) {
@@ -179,72 +364,70 @@ public class DialogService {
             return false;
         }
 
-        int absoluteX = rect[0] + (int) Math.round(result[0]);
-        int absoluteY = rect[1] + (int) Math.round(result[1]);
-        Point safeClick = coordinateHelper.getRandomizedPoint(new Point(absoluteX, absoluteY), 4, 3);
+        Point optionPoint = coordinateHelper.resolveMatchedPointInRect(rect, result);
+        Point safeClick = coordinateHelper.getRandomizedPoint(optionPoint, 4, 3);
         log.info("business dialog option matched: option={} score={} click=({}, {})",
                 optionName, result.length > 2 ? result[2] : 0.0, safeClick.x, safeClick.y);
         inputSequences.clickLeft("dialog:businessOption:" + optionName, safeClick.x, safeClick.y, 150);
         return TaskSleep.sleep(800 + random.nextInt(300));
     }
 
-    private DialogHandleResult handleKeywordOption(DialogHandleRequest request, DialogDetection detection) {
+    private DialogResult handleKeywordOption(DialogHandleRequest request, DialogDetection detection) {
         if (request.getTargetKeyword() == null) {
             log.warn("dialog keyword option requested without targetKeyword");
-            return DialogHandleResult.OPTION_KEYWORD_NOT_FOUND;
+            return DialogResult.simple(DialogResultStatus.OPTION_KEYWORD_NOT_FOUND, detection.type());
         }
-        return processOptionsWithOCRDetailed(
+        DialogOptionClickResult clickResult = processOptionsWithOCRDetailed(
                 request.getTargetKeyword(),
                 request.isAllowFallbackOptionClick(),
-                detection).getResult();
+                detection);
+        return fromOptionClickResult(clickResult, detection.type(), request.getTargetKeyword());
     }
 
-    private DialogHandleResult tryGiveItemFromCurrentOptionDialog(String itemToGive, Integer knownBagIndex) {
+    private DialogResult handleRememberedOption(DialogHandleRequest request, DialogDetection detection) {
+        Integer relativeX = request.getRememberedRelativeX();
+        Integer relativeY = request.getRememberedRelativeY();
+        if (relativeX == null || relativeY == null) {
+            log.warn("dialog remembered option requested without relative point: source={}", request.getSourceTask());
+            return DialogResult.simple(DialogResultStatus.OPTION_KEYWORD_NOT_FOUND, detection.type());
+        }
+        if (detection.type() != DialogType.OPTION) {
+            return DialogResult.simple(DialogResultStatus.OPTION_IGNORED, detection.type());
+        }
+
+        int[] rect = detection.dialogRect() != null ? detection.dialogRect() : getDialogRect();
+        int x = rect[0] + relativeX;
+        int y = rect[1] + relativeY;
+        Point safeClick = coordinateHelper.getRandomizedPoint(new Point(x, y), 4, 3);
+        log.info("dialog remembered option click: source={} target={} rel=({}, {}) click=({}, {})",
+                request.getSourceTask(), request.getTargetKeyword(), relativeX, relativeY, safeClick.x, safeClick.y);
+        inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+        if (!TaskSleep.sleep(500 + random.nextInt(150))) {
+            return DialogResult.simple(DialogResultStatus.INTERRUPTED, detection.type());
+        }
+        return DialogResult.statusBuilder(DialogResultStatus.OPTION_KEYWORD_CLICKED, detection.type())
+                .actionKey(request.getTargetKeyword())
+                .matchedText("remembered-option")
+                .relativeX(relativeX)
+                .relativeY(relativeY)
+                .absoluteX(safeClick.x)
+                .absoluteY(safeClick.y)
+                .build();
+    }
+
+    private DialogResultStatus tryGiveItemFromCurrentOptionDialog(String itemToGive, Integer knownBagIndex) {
         if (itemToGive == null) {
             log.warn("give-item option requested without itemToGive");
-            return DialogHandleResult.GIVE_ITEM_FAILED;
+            return DialogResultStatus.GIVE_ITEM_FAILED;
         }
 
-        if (isInputWorkerThread()) {
-            return tryGiveItemFromCurrentOptionDialogDirect(itemToGive, knownBagIndex);
-        }
-
-        AtomicReference<DialogHandleResult> result = new AtomicReference<>(DialogHandleResult.GIVE_ITEM_FAILED);
-        boolean completed = inputSequences.submitExclusiveAndWait("dialog:giveItemFlow", () -> {
-            result.set(tryGiveItemFromCurrentOptionDialogDirect(itemToGive, knownBagIndex));
-            return true;
-        });
-        return completed ? result.get() : DialogHandleResult.INTERRUPTED;
-    }
-
-    /**
-     * Give an item only when the current dialog is an option dialog.
-     *
-     * @param itemToGive template path for the item to give; null means the operation fails.
-     * @param knownBagIndex optional bag page hint owned by the caller; null allows the bag service
-     * to search.
-     * @return give-item result or a dialog classification result. When already inside the input
-     * worker, this method uses direct input calls; otherwise it delegates to {@link #handleDialog}.
-     */
-    public DialogHandleResult tryGiveItemIfCurrentOptionDialogDirectForExclusive(String itemToGive, Integer knownBagIndex) {
         if (!isInputWorkerThread()) {
-            return handleDialog(DialogHandleRequest.giveItemIfAvailable("dialog-direct", itemToGive, knownBagIndex));
-        }
-
-        DialogType type = detectDialogSnapshotDirect("give-item-current-option").type();
-        if (type == DialogType.NONE) {
-            return DialogHandleResult.NO_DIALOG;
-        }
-        if (type != DialogType.OPTION) {
-            return DialogHandleResult.STORY_IGNORED;
-        }
-        return tryGiveItemFromCurrentOptionDialogDirect(itemToGive, knownBagIndex);
-    }
-
-    private DialogHandleResult tryGiveItemFromCurrentOptionDialogDirect(String itemToGive, Integer knownBagIndex) {
-        if (itemToGive == null) {
-            log.warn("give-item option requested without itemToGive");
-            return DialogHandleResult.GIVE_ITEM_FAILED;
+            AtomicReference<DialogResultStatus> result = new AtomicReference<>(DialogResultStatus.GIVE_ITEM_FAILED);
+            boolean completed = inputSequences.submitExclusiveAndWait("dialog:giveItemFlow", () -> {
+                result.set(tryGiveItemFromCurrentOptionDialog(itemToGive, knownBagIndex));
+                return true;
+            });
+            return completed ? result.get() : DialogResultStatus.INTERRUPTED;
         }
 
         log.info("give-item option dialog detected, checking give option");
@@ -252,34 +435,81 @@ public class DialogService {
                 getSmallDialogRect(), 0.85);
         if (giveTextPt == null) {
             log.warn("give-item option dialog has no give entry");
-            return DialogHandleResult.GIVE_OPTION_NOT_FOUND;
+            return DialogResultStatus.GIVE_OPTION_NOT_FOUND;
         }
 
         Point safeClick = coordinateHelper.getRandomizedPoint(giveTextPt, 20, 5);
         inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
         if (!TaskSleep.sleep(800)) {
-            return DialogHandleResult.INTERRUPTED;
+            return DialogResultStatus.INTERRUPTED;
         }
 
         if (giveItemService.executeGiveDirectForExclusive(itemToGive, knownBagIndex)) {
-            return DialogHandleResult.GIVE_ITEM_DONE;
+            return DialogResultStatus.GIVE_ITEM_DONE;
         }
-        return DialogHandleResult.GIVE_ITEM_FAILED;
+        return DialogResultStatus.GIVE_ITEM_FAILED;
     }
 
-    private DialogHandleResult finishRequest(DialogHandleRequest request, DialogType type, DialogHandleResult result) {
-        log.info("dialog handle result: source={} operation={} type={} result={}",
-                request.getSourceTask(), request.getOperation(), type, result);
+    private DialogResult finishRequest(DialogHandleRequest request, DialogResult result) {
+        log.info("dialog handle result: source={} operation={} type={} status={} kind={} actionKey={} clicked={}",
+                request.getSourceTask(), request.getOperation(), result.getDialogType(), result.getStatus(),
+                result.getKind(), result.getActionKey(), result.isClicked());
         return result;
     }
 
-    /**
-     * Detect the current dialog type using the current window screenshot.
-     *
-     * @return {@link DialogType#NONE} when no known dialog frame is visible.
-     */
-    public DialogType detectDialogType() {
-        return detectDialogTypeNoFocus("detect-dialog-type");
+    private DialogResult handleStoryObjective(DialogHandleRequest request, DialogDetection detection) {
+        BufferedImage image = detection.image();
+        if (image == null) {
+            return DialogResult.simple(DialogResultStatus.STORY_OBJECTIVE_NOT_FOUND, detection.type());
+        }
+
+        /*
+         * 修罗接任务后的 story 文本在小对话框内。detection 为了统一判断会截最大框，
+         * 但最大框在小 story 场景下会带入上下背景，洗绿字时可能把场景特效当成文本。
+         * 这里复用同一次截图，只裁出小 story 框，避免重新截图和背景污染。
+         */
+        BufferedImage objectiveImage = cropStoryObjectiveImage(detection);
+        saveStoryObjectiveDebugImage(request.getSourceTask(), objectiveImage);
+        Optional<ObjectiveTextResult> objective = objectiveTextRecognitionService.recognize(
+                objectiveImage, "dialog-story-objective:" + request.getSourceTask());
+        if (objectiveImage != image) {
+            objectiveImage.flush();
+        }
+        if (objective.isEmpty()) {
+            return DialogResult.simple(DialogResultStatus.STORY_OBJECTIVE_NOT_FOUND, detection.type());
+        }
+        ObjectiveTextResult value = objective.get();
+        return DialogResult.statusBuilder(DialogResultStatus.STORY_OBJECTIVE_READ, detection.type())
+                .objective(value)
+                .matchedText(value.mapName() + "(" + value.x() + "," + value.y() + ")")
+                .build();
+    }
+
+    private BufferedImage cropStoryObjectiveImage(DialogDetection detection) {
+        BufferedImage image = detection.image();
+        if (image == null || detection.dialogRect() == null) {
+            return image;
+        }
+        BufferedImage cropped = ImagePreprocessor.cropAbsoluteRect(image, detection.dialogRect(), getSmallDialogRect());
+        return cropped != null ? cropped : image;
+    }
+
+    private DialogResult fromOptionClickResult(DialogOptionClickResult clickResult,
+                                               DialogType type,
+                                               String actionKey) {
+        DialogResultStatus status = clickResult.getResult();
+        return DialogResult.statusBuilder(status, type)
+                .actionKey(status == DialogResultStatus.OPTION_KEYWORD_CLICKED ? actionKey : null)
+                .matchedText(clickResult.getMatchedText())
+                .relativeX(clickResult.getRelativeX())
+                .relativeY(clickResult.getRelativeY())
+                .absoluteX(clickResult.getAbsoluteX())
+                .absoluteY(clickResult.getAbsoluteY())
+                .build();
+    }
+
+    private DialogResult fromHandleResult(DialogResultStatus status, DialogType type) {
+        return DialogResult.simple(status, type);
     }
 
     /**
@@ -288,82 +518,8 @@ public class DialogService {
      * @param reason short diagnostic label for logs and screenshots.
      * @return detected dialog type; {@link DialogType#NONE} means no known dialog frame matched.
      */
-    public DialogType detectDialogTypeNoFocus(String reason) {
+    private DialogType detectDialogTypeNoFocus(String reason) {
         return detectDialogSnapshotDirect(reason).type();
-    }
-
-    /**
-     * Click a target keyword in the current option dialog and return the clicked point for learning.
-     *
-     * @param sourceTask short source string for logs.
-     * @param targetKeyword keyword or map alias expected in the green option text.
-     * @param allowFallbackOptionClick whether to click the last green option when OCR cannot match
-     *                                 the keyword. Fallback clicks are not returned as learnable
-     *                                 points because they are not tied to a matched target.
-     * @return dialog click result with dialog-relative coordinates when OCR matched the keyword.
-     */
-    public DialogOptionClickResult clickKeywordOptionWithPoint(String sourceTask,
-                                                               String targetKeyword,
-                                                               boolean allowFallbackOptionClick) {
-        log.info("dialog keyword click with point: source={} target={} fallback={}",
-                sourceTask, targetKeyword, allowFallbackOptionClick);
-        if (targetKeyword == null || targetKeyword.isBlank()) {
-            return DialogOptionClickResult.of(DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
-        }
-
-        DialogDetection detection = detectDialogSnapshotDirect("keyword-click-point:" + sourceTask);
-        if (detection.type() == DialogType.NONE) {
-            /*
-             * Route transfer dialogs can occasionally pass the dark dialog-mask test but miss the
-             * option/story classifier because their green text sits near a crop boundary. In this
-             * uncertain state, try keyword OCR only and deliberately disable fallback clicks so a
-             * map overlay or unrelated panel cannot be clicked blindly.
-             */
-            if (detection.image() != null) {
-                DialogOptionClickResult uncertainResult = processOptionsWithOCRDetailed(targetKeyword, false, detection);
-                if (uncertainResult.getResult() == DialogHandleResult.OPTION_KEYWORD_CLICKED) {
-                    log.info("dialog keyword click recovered from uncertain dialog type: source={} target={}",
-                            sourceTask, targetKeyword);
-                    return uncertainResult;
-                }
-            }
-            return DialogOptionClickResult.of(DialogHandleResult.NO_DIALOG);
-        }
-        if (detection.type() == DialogType.STORY) {
-            return DialogOptionClickResult.of(DialogHandleResult.STORY_IGNORED);
-        }
-        if (detection.type() != DialogType.OPTION) {
-            return DialogOptionClickResult.of(DialogHandleResult.OPTION_IGNORED);
-        }
-        return processOptionsWithOCRDetailed(targetKeyword, allowFallbackOptionClick, detection);
-    }
-
-    /**
-     * Click a previously learned dialog-relative option point after verifying an option dialog exists.
-     *
-     * @param relativeX X relative to {@link #getDialogRect()}.
-     * @param relativeY Y relative to {@link #getDialogRect()}.
-     * @param reason short diagnostic source.
-     * @return true when an option dialog was present and the point was clicked.
-     */
-    public boolean clickRememberedOptionPointDirectForExclusive(int relativeX, int relativeY, String reason) {
-        if (!isInputWorkerThread()) {
-            return inputSequences.submitExclusiveAndWait("dialog:rememberedOption:" + reason,
-                    () -> clickRememberedOptionPointDirectForExclusive(relativeX, relativeY, reason));
-        }
-        DialogType type = detectDialogSnapshotDirect("remembered-option:" + reason).type();
-        if (type != DialogType.OPTION) {
-            log.info("dialog remembered option skipped: reason={} type={}", reason, type);
-            return false;
-        }
-        int[] rect = getDialogRect();
-        int x = rect[0] + relativeX;
-        int y = rect[1] + relativeY;
-        Point safeClick = coordinateHelper.getRandomizedPoint(new Point(x, y), 4, 3);
-        log.info("dialog remembered option click: reason={} rel=({}, {}) click=({}, {})",
-                reason, relativeX, relativeY, safeClick.x, safeClick.y);
-        inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-        return TaskSleep.sleep(500 + random.nextInt(150));
     }
 
     private DialogDetection detectDialogSnapshotDirect(String reason) {
@@ -381,12 +537,12 @@ public class DialogService {
                 return detection;
             }
 
-            if (hasOptionInLowerHalf(detection)) {
+            if (hasOptionInLowerHalf(detection, reason)) {
                 detection = detection.withType(DialogType.OPTION);
                 return detection;
             }
 
-            if (hasStoryInUpperHalf(detection)) {
+            if (hasStoryInUpperHalf(detection, reason)) {
                 detection = detection.withType(DialogType.STORY);
                 return detection;
             }
@@ -394,9 +550,16 @@ public class DialogService {
             log.debug("dialog mask exists but no text found");
             return detection;
         } finally {
-            log.info("dialog detect no-focus: reason={} result={}", reason, detection.type());
-            LatencyMetrics.info(log, "dialog.detect", latencyStart,
-                    "reason=" + reason + " result=" + detection.type());
+            if (detection.type() == DialogType.NONE) {
+                log.debug("dialog detect no-focus: reason={} result={}", reason, detection.type());
+                log.debug("[latency] event=dialog.detect elapsedMs={} detail={}",
+                        LatencyMetrics.elapsedMs(latencyStart),
+                        "reason=" + reason + " result=" + detection.type());
+            } else {
+                log.info("dialog detect no-focus: reason={} result={}", reason, detection.type());
+                LatencyMetrics.info(log, "dialog.detect", latencyStart,
+                        "reason=" + reason + " result=" + detection.type());
+            }
         }
     }
 
@@ -410,94 +573,92 @@ public class DialogService {
         if (image == null) {
             return DialogDetection.none();
         }
-        return new DialogDetection(DialogType.NONE, rect, null, image);
+        String rawPath = windowScopedTempPath.resolve("dialog_detect_" + safeDebugName(reason) + "_raw.png");
+        if (!ImagePreprocessor.saveImage(image, rawPath)) {
+            rawPath = null;
+        }
+        return DialogDetection.builder()
+                .type(DialogType.NONE)
+                .dialogRect(rect)
+                .rawPath(rawPath)
+                .image(image)
+                .build();
     }
 
-    private boolean hasOptionInLowerHalf(DialogDetection detection) {
+    private boolean hasOptionInLowerHalf(DialogDetection detection, String reason) {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y + CROP_TOP_Y, DIALOG_SMALL_W, DIALOG_SMALL_H - CROP_TOP_Y);
-        BufferedImage frame = cropFromSnapshot(detection, area);
+        BufferedImage frame = ImagePreprocessor.cropAbsoluteRect(detection.image(), detection.dialogRect(), area);
         if (frame == null) return false;
 
-        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, windowScopedTempPath.resolve("debug_hsv_mask_green.png"));
+        String debugPrefix = "dialog_detect_" + safeDebugName(reason) + "_option_lower";
+        String optionRawPath = windowScopedTempPath.resolve(debugPrefix + "_raw.png");
+        String optionGreenPath = windowScopedTempPath.resolve(debugPrefix + "_green.png");
+        String optionYellowPath = windowScopedTempPath.resolve(debugPrefix + "_yellow.png");
+        ImagePreprocessor.saveImage(frame, optionRawPath);
+        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, optionGreenPath);
         int yellowCount = ImagePreprocessor.countYellowPixels(frame);
+        ImagePreprocessor.washYellowText(optionRawPath, optionYellowPath);
         frame.flush();
-        return greenCount > 150 || yellowCount > 120;
+        boolean option = greenCount > 150 || yellowCount > 120;
+        if (option) {
+            log.info("dialog option lower check: reason={} rect={} raw={} green={} yellow={} greenPath={} yellowPath={} result={}",
+                    reason, ImagePreprocessor.rectToString(area), optionRawPath, greenCount, yellowCount,
+                    optionGreenPath, optionYellowPath, true);
+        } else {
+            log.debug("dialog option lower check: reason={} rect={} raw={} green={} yellow={} greenPath={} yellowPath={} result={}",
+                    reason, ImagePreprocessor.rectToString(area), optionRawPath, greenCount, yellowCount,
+                    optionGreenPath, optionYellowPath, false);
+        }
+        return option;
     }
 
     private boolean hasDialogMask(DialogDetection detection) {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X + CROP_LEFT_X, DIALOG_SMALL_Y + CROP_DEV_Y, DIALOG_SMALL_W - CROP_LEFT_X, DIALOG_SMALL_H - CROP_DEV_Y);
-        BufferedImage frame = cropFromSnapshot(detection, area);
+        BufferedImage frame = ImagePreprocessor.cropAbsoluteRect(detection.image(), detection.dialogRect(), area);
         if (frame == null) return false;
 
         double stddev = ImagePreprocessor.getImageStandardDeviation(frame, windowScopedTempPath.resolve("debug_smoothness_gray.png"));
         frame.flush();
-        log.info("sstddev: {}", stddev);
+        log.debug("dialog mask stddev={}", stddev);
         return stddev < 30.0;
     }
 
-    private boolean hasStoryInUpperHalf(DialogDetection detection) {
+    private boolean hasStoryInUpperHalf(DialogDetection detection, String reason) {
         int[] area = coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, CROP_TOP_Y);
-        BufferedImage frame = cropFromSnapshot(detection, area);
+        BufferedImage frame = ImagePreprocessor.cropAbsoluteRect(detection.image(), detection.dialogRect(), area);
         if (frame == null) return false;
-        int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame, windowScopedTempPath.resolve("debug_thin_white_text.png"));
-        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, windowScopedTempPath.resolve("debug_hsv_mask_green.png"));
+        String debugPrefix = "dialog_detect_" + safeDebugName(reason) + "_story_upper";
+        String storyRawPath = windowScopedTempPath.resolve(debugPrefix + "_raw.png");
+        String storyWhitePath = windowScopedTempPath.resolve(debugPrefix + "_white.png");
+        String storyGreenPath = windowScopedTempPath.resolve(debugPrefix + "_green.png");
+        ImagePreprocessor.saveImage(frame, storyRawPath);
+        int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame, storyWhitePath);
+        int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, storyGreenPath);
         frame.flush();
 
         int totalTextPixels = thinWhiteCount + greenCount;
-        return totalTextPixels > 200;
+        boolean story = totalTextPixels > 200;
+        if (story) {
+            log.info("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} whitePath={} greenPath={} result={}",
+                    reason, ImagePreprocessor.rectToString(area), storyRawPath, thinWhiteCount, greenCount,
+                    totalTextPixels, storyWhitePath, storyGreenPath, true);
+        } else {
+            log.debug("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} whitePath={} greenPath={} result={}",
+                    reason, ImagePreprocessor.rectToString(area), storyRawPath, thinWhiteCount, greenCount,
+                    totalTextPixels, storyWhitePath, storyGreenPath, false);
+        }
+        return story;
     }
 
-    private BufferedImage cropFromSnapshot(DialogDetection detection, int[] absoluteRect) {
-        if (detection == null || detection.image() == null || detection.dialogRect() == null || absoluteRect == null) {
-            return null;
+    private String safeDebugName(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return "unknown";
         }
-        int left = Math.max(absoluteRect[0], detection.dialogRect()[0]);
-        int top = Math.max(absoluteRect[1], detection.dialogRect()[1]);
-        int right = Math.min(absoluteRect[2], detection.dialogRect()[2]);
-        int bottom = Math.min(absoluteRect[3], detection.dialogRect()[3]);
-        if (right <= left || bottom <= top) {
-            log.warn("dialog snapshot crop outside source: source={} target={}", rectToString(detection.dialogRect()), rectToString(absoluteRect));
-            return null;
-        }
-        BufferedImage subimage = detection.image().getSubimage(
-                left - detection.dialogRect()[0],
-                top - detection.dialogRect()[1],
-                right - left,
-                bottom - top);
-        BufferedImage copy = new BufferedImage(subimage.getWidth(), subimage.getHeight(), BufferedImage.TYPE_INT_RGB);
-        Graphics2D graphics = copy.createGraphics();
-        try {
-            graphics.drawImage(subimage, 0, 0, null);
-        } finally {
-            graphics.dispose();
-        }
-        return copy;
+        String value = reason.replaceAll("[^a-zA-Z0-9._-]+", "_");
+        return value.length() <= 120 ? value : value.substring(0, 120);
     }
 
-    private boolean saveImage(BufferedImage image, String path) {
-        try {
-            File file = new File(path);
-            File parent = file.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                log.warn("dialog snapshot output directory could not be created: {}", parent);
-                return false;
-            }
-            ImageIO.write(image, "png", file);
-            return true;
-        } catch (IOException e) {
-            log.warn("dialog snapshot save failed: path={}", path, e);
-            return false;
-        }
-    }
-
-    private String rectToString(int[] rect) {
-        if (rect == null || rect.length < 4) {
-            return "-";
-        }
-        return "[" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3] + "]";
-    }
-
-    public void fastClickStoryDialog() {
+    private void handleStoryDialog() {
         if (isInputWorkerThread()) {
             fastClickStoryDialogDirect();
             return;
@@ -525,30 +686,58 @@ public class DialogService {
         String rawPath = detection == null ? null : detection.rawPath();
         if ((rawPath == null || rawPath.isBlank()) && detection != null && detection.image() != null) {
             rawPath = windowScopedTempPath.resolve("dialog_snapshot_raw.png");
-            if (!saveImage(detection.image(), rawPath)) {
+            if (!ImagePreprocessor.saveImage(detection.image(), rawPath)) {
                 rawPath = null;
             }
         }
         if (rawPath == null || rawPath.isBlank()) {
             rawPath = windowScopedTempPath.resolve("dialog_active_scan.png");
-            if (!captureToFileExclusive("dialog:ocrCapture", "OCR-Scan", rawPath, rect)) {
-                return DialogOptionClickResult.of(DialogHandleResult.FAILED);
+            boolean captured;
+            if (isInputWorkerThread()) {
+                BufferedImage image = tracker.captureToMemory("OCR-Scan", rect[0], rect[1], rect[2], rect[3]);
+                try {
+                    captured = ImagePreprocessor.saveImage(image, rawPath);
+                } finally {
+                    if (image != null) {
+                        image.flush();
+                    }
+                }
+            } else {
+                String capturePath = rawPath;
+                captured = inputSequences.submitExclusiveAndWait("dialog:ocrCapture", () -> {
+                    BufferedImage image = tracker.captureToMemory("OCR-Scan", rect[0], rect[1], rect[2], rect[3]);
+                    try {
+                        return ImagePreprocessor.saveImage(image, capturePath);
+                    } finally {
+                        if (image != null) {
+                            image.flush();
+                        }
+                    }
+                });
+            }
+            if (!captured) {
+                return DialogOptionClickResult.of(DialogResultStatus.FAILED);
             }
         }
 
         List<String> aliases = MAP_ALIASES.getOrDefault(targetKeyword, java.util.Collections.singletonList(targetKeyword));
-        OptionOcrScan scan = readOptionWords(rawPath, targetKeyword, aliases);
+        OcrLineResult scan = gameTextLineOcrService.readDialogOptionWords(
+                rawPath,
+                targetKeyword,
+                aliases,
+                Path.of(windowScopedTempPath.resolve("dialog_active_green.png")),
+                Path.of(windowScopedTempPath.resolve("dialog_active_yellow.png")));
 
         for (String alias : aliases) {
             for (OcrWordResult word : scan.words()) {
                 if (word.getText().contains(alias)) {
                     log.info("dialog OCR hit alias={} target={} color={} path={}",
-                            alias, targetKeyword, scan.color(), scan.path());
+                            alias, targetKeyword, scan.variantName(), scan.path());
                     int absoluteX = rect[0] + word.getX();
                     int absoluteY = rect[1] + word.getY();
                     inputSequences.clickLeft("dialog:ocrOption", absoluteX, absoluteY, 150);
                     return DialogOptionClickResult.builder()
-                            .result(DialogHandleResult.OPTION_KEYWORD_CLICKED)
+                            .result(DialogResultStatus.OPTION_KEYWORD_CLICKED)
                             .relativeX(word.getX())
                             .relativeY(word.getY())
                             .absoluteX(absoluteX)
@@ -560,295 +749,54 @@ public class DialogService {
         }
         if (!allowFallbackOptionClick) {
             log.warn("dialog OCR target not matched and fallback disabled: target={} aliases={} path={} words={}",
-                    targetKeyword, aliases, scan.path(), summarizeWords(scan.words()));
-            return DialogOptionClickResult.of(DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
+                    targetKeyword, aliases, scan.path(), scan.wordsSummary());
+            return DialogOptionClickResult.of(DialogResultStatus.OPTION_KEYWORD_NOT_FOUND);
         }
-        return DialogOptionClickResult.of(clickLastGreenOption(rect, "OCR target not matched")
-                ? DialogHandleResult.FALLBACK_CLICKED
-                : DialogHandleResult.OPTION_KEYWORD_NOT_FOUND);
+        return DialogOptionClickResult.of(clickGreenOption(rect, "OCR target not matched", false)
+                ? DialogResultStatus.FALLBACK_CLICKED
+                : DialogResultStatus.OPTION_KEYWORD_NOT_FOUND);
     }
 
-    private OptionOcrScan readOptionWords(String rawPath, String targetKeyword, List<String> aliases) {
-        String greenPath = windowScopedTempPath.resolve("dialog_active_green.png");
-        ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, greenPath);
-        if (!new File(greenPath).exists()) {
-            List<OcrWordResult> words = ocr.getAllTextResultsForMatch(
-                    rawPath,
-                    "dialog-options:" + targetKeyword + ":raw",
-                    result -> hasAnyKeyword(result, aliases));
-            return new OptionOcrScan("raw", rawPath, words);
-        }
-
-        /*
-         * Normal option text is green, but route recommendation choices can be yellow. Keep green
-         * first for ordinary dialogs, then retry the same raw snapshot with the shared yellow-text
-         * wash so transfer choices such as "长安桥(400两)" do not disappear before OCR.
-         */
-        List<OcrWordResult> greenWords = ocr.getAllTextResultsForMatch(
-                greenPath,
-                "dialog-options:" + targetKeyword + ":green",
-                words -> hasAnyKeyword(words, aliases));
-        if (hasAnyKeyword(greenWords, aliases)) {
-            return new OptionOcrScan("green", greenPath, greenWords);
-        }
-
-        String yellowPath = windowScopedTempPath.resolve("dialog_active_yellow.png");
-        ImagePreprocessor.washYellowText(rawPath, yellowPath);
-        if (!new File(yellowPath).exists()) {
-            return new OptionOcrScan("green", greenPath, greenWords);
-        }
-        List<OcrWordResult> yellowWords = ocr.getAllTextResultsForMatch(
-                yellowPath,
-                "dialog-options:" + targetKeyword + ":yellow",
-                words -> hasAnyKeyword(words, aliases));
-        return hasAnyKeyword(yellowWords, aliases)
-                ? new OptionOcrScan("yellow", yellowPath, yellowWords)
-                : new OptionOcrScan("green+yellow", yellowPath, mergeWords(greenWords, yellowWords));
-    }
-
-    private List<OcrWordResult> mergeWords(List<OcrWordResult> first, List<OcrWordResult> second) {
-        java.util.ArrayList<OcrWordResult> merged = new java.util.ArrayList<>();
-        if (first != null) {
-            merged.addAll(first);
-        }
-        if (second != null) {
-            merged.addAll(second);
-        }
-        return merged;
-    }
-
-    private boolean hasAnyKeyword(List<OcrWordResult> words, List<String> keywords) {
-        if (words == null || words.isEmpty() || keywords == null || keywords.isEmpty()) {
-            return false;
-        }
-        for (OcrWordResult word : words) {
-            if (word == null || word.getText() == null) {
-                continue;
-            }
-            for (String keyword : keywords) {
-                if (keyword != null && !keyword.isBlank() && word.getText().contains(keyword)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private String summarizeWords(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return "-";
-        }
-        StringBuilder builder = new StringBuilder();
-        int count = 0;
-        for (OcrWordResult word : words) {
-            if (word == null) {
-                continue;
-            }
-            if (count++ >= 8) {
-                builder.append("...");
-                break;
-            }
-            if (!builder.isEmpty()) {
-                builder.append(" | ");
-            }
-            builder.append(word.getText()).append("@(")
-                    .append(word.getX()).append(",")
-                    .append(word.getY()).append(")");
-        }
-        return builder.isEmpty() ? "-" : builder.toString();
-    }
-
-    private boolean clickFirstGreenOption(int[] rect, String reason) {
-        return clickGreenOption(rect, reason, true);
-    }
-
-    private boolean clickLastGreenOption(int[] rect, String reason) {
-        return clickGreenOption(rect, reason, false);
-    }
-
-    public boolean clickLastGreenOptionDirectForExclusive(String reason) {
-        if (!isInputWorkerThread()) {
-            return inputSequences.submitExclusiveAndWait("dialog:lastGreenOption:" + reason,
-                    () -> clickLastGreenOptionDirectForExclusive(reason));
-        }
-        DialogType type = detectDialogSnapshotDirect("last-green-option:" + reason).type();
-        if (type != DialogType.OPTION) {
-            log.info("dialog last green option skipped: reason={} type={}", reason, type);
-            return false;
-        }
-        return clickGreenOptionDirect(getDialogRect(), reason, false);
-    }
-
-    public boolean clickFirstGreenOptionIfFiveRingAcceptDialog() {
-        return inputSequences.submitExclusiveAndWait("dialog:wuhuanAcceptFirstOption",
-                this::clickFirstGreenOptionIfFiveRingAcceptDialogDirect);
-    }
-
-    public boolean clickFirstGreenOptionIfFiveRingAcceptDialogDirectForExclusive() {
-        if (!isInputWorkerThread()) {
-            return clickFirstGreenOptionIfFiveRingAcceptDialog();
-        }
-        return clickFirstGreenOptionIfFiveRingAcceptDialogDirect();
-    }
-
-    private boolean clickFirstGreenOptionIfFiveRingAcceptDialogDirect() {
-        if (detectDialogType() != DialogType.OPTION) {
-            log.info("wuhuan accept dialog verification failed: current dialog is not OPTION");
-            return false;
-        }
-        Point optionPoint = coordinateHelper.findGreenTextInRegion(WUHAN_ACCEPT_FIRST_OPTION_TEXT, getDialogRect(), 0.85);
-        if (optionPoint == null) {
-            log.info("五环接任务对话验证失败：未匹配到模板 {}", WUHAN_ACCEPT_FIRST_OPTION_TEXT);
-            return false;
-        }
-        Point safeClick = coordinateHelper.getRandomizedPoint(optionPoint, 20, 4);
-        log.info("五环接任务对话验证成功：template={} click=({}, {})",
-                WUHAN_ACCEPT_FIRST_OPTION_TEXT, safeClick.x, safeClick.y);
-        inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-        return true;
-    }
-
-    public boolean clickGreenTemplateOption(String templatePath, String reason, int randomRadiusX, int randomRadiusY) {
-        return inputSequences.submitExclusiveAndWait("dialog:greenTemplateOption:" + reason,
-                () -> clickGreenTemplateOptionDirect(templatePath, reason, randomRadiusX, randomRadiusY));
-    }
-
-    public boolean clickGreenTemplateOptionWithXRange(String templatePath, String reason,
-                                                      int minOffsetX, int maxOffsetX, int randomRadiusY) {
-        return inputSequences.submitExclusiveAndWait("dialog:greenTemplateOption:" + reason,
-                () -> clickGreenTemplateOptionDirectWithXRange(templatePath, reason, minOffsetX, maxOffsetX, randomRadiusY));
-    }
-
-    public boolean clickGreenTemplateOptionDirectForExclusive(String templatePath, String reason,
-                                                              int randomRadiusX, int randomRadiusY) {
-        if (!isInputWorkerThread()) {
-            return clickGreenTemplateOption(templatePath, reason, randomRadiusX, randomRadiusY);
-        }
-        return clickGreenTemplateOptionDirect(templatePath, reason, randomRadiusX, randomRadiusY);
-    }
-
-    public boolean clickGreenTemplateOptionDirectForExclusive(String templatePath, String reason,
-                                                             int minOffsetX, int maxOffsetX, int randomRadiusY) {
-        if (!isInputWorkerThread()) {
-            return clickGreenTemplateOptionWithXRange(templatePath, reason, minOffsetX, maxOffsetX, randomRadiusY);
-        }
-        return clickGreenTemplateOptionDirectWithXRange(templatePath, reason, minOffsetX, maxOffsetX, randomRadiusY);
-    }
-
-    public boolean isGreenTemplateOptionVisibleDirectForExclusive(String templatePath, String reason) {
-        if (!isInputWorkerThread()) {
-            return inputSequences.submitExclusiveAndWait("dialog:greenTemplateVisible:" + reason,
-                    () -> isGreenTemplateOptionVisibleDirect(templatePath, reason));
-        }
-        return isGreenTemplateOptionVisibleDirect(templatePath, reason);
-    }
-
-    public String clickFirstGreenTemplateOptionDirectForExclusive(List<GreenTemplateClickSpec> specs, String reason) {
+    /**
+     * Handle the first matching green option template declared by the request.
+     *
+     * @param request must use {@link com.bot.dhxy.service.dialog.DialogOptionPolicy#CLICK_GREEN_TEMPLATE}
+     *                and carry one or more {@link GreenTemplateClickSpec}; each spec owns its own
+     *                click X range and Y radius in screen pixels.
+     * @return structured result with the matched spec name in {@code actionKey}.
+     */
+    private DialogResult handleGreenTemplateOption(DialogHandleRequest request) {
         if (isInputWorkerThread()) {
-            return clickFirstGreenTemplateOptionDirect(specs, reason);
+            return handleGreenTemplateOptionDirect(request);
         }
 
-        AtomicReference<String> matched = new AtomicReference<>();
-        boolean completed = inputSequences.submitExclusiveAndWait("dialog:greenTemplateFirst:" + reason, () -> {
-            matched.set(clickFirstGreenTemplateOptionDirect(specs, reason));
+        AtomicReference<DialogResult> result = new AtomicReference<>(
+                DialogResult.simple(DialogResultStatus.INTERRUPTED, DialogType.NONE));
+        boolean completed = inputSequences.submitExclusiveAndWait("dialog:greenTemplateOption:" + request.getSourceTask(), () -> {
+            result.set(handleGreenTemplateOptionDirect(request));
             return true;
         });
-        return completed ? matched.get() : null;
+        return completed ? result.get() : DialogResult.simple(DialogResultStatus.INTERRUPTED, DialogType.NONE);
     }
 
-    public String clickFirstKnownOptionGreenTemplateDirectForExclusive(List<GreenTemplateClickSpec> specs, String reason) {
-        if (isInputWorkerThread()) {
-            return clickFirstGreenTemplateOptionDirect(specs, reason, false);
-        }
-
-        AtomicReference<String> matched = new AtomicReference<>();
-        boolean completed = inputSequences.submitExclusiveAndWait("dialog:knownOptionGreenTemplateFirst:" + reason, () -> {
-            matched.set(clickFirstGreenTemplateOptionDirect(specs, reason, false));
-            return true;
-        });
-        return completed ? matched.get() : null;
-    }
-
-    private boolean isGreenTemplateOptionVisibleDirect(String templatePath, String reason) {
-        if (templatePath == null || templatePath.isBlank()) {
-            log.warn("dialog green template visibility requested without template: reason={}", reason);
-            return false;
-        }
-        DialogType type = detectDialogSnapshotDirect("green-template-visible:" + reason).type();
-        if (type != DialogType.OPTION) {
-            log.info("dialog green template visibility skipped: reason={} type={}", reason, type);
-            return false;
-        }
-        Point optionPoint = coordinateHelper.findGreenTextInRegion(templatePath, getDialogRect(), 0.85);
-        boolean matched = optionPoint != null;
-        log.info("dialog green template visibility: reason={} template={} matched={} point={}",
-                reason, templatePath, matched, matched ? "(" + optionPoint.x + "," + optionPoint.y + ")" : "-");
-        return matched;
-    }
-
-    private boolean clickGreenTemplateOptionDirect(String templatePath, String reason,
-                                                   int randomRadiusX, int randomRadiusY) {
-        return clickGreenTemplateOptionDirectWithXRange(templatePath, reason, -randomRadiusX, randomRadiusX, randomRadiusY);
-    }
-
-    private boolean clickGreenTemplateOptionDirectWithXRange(String templatePath, String reason,
-                                                            int minOffsetX, int maxOffsetX, int randomRadiusY) {
+    private DialogResult handleGreenTemplateOptionDirect(DialogHandleRequest request) {
         long latencyStart = LatencyMetrics.start();
-        boolean result = false;
+        DialogResult outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, DialogType.NONE);
         try {
-            if (templatePath == null || templatePath.isBlank()) {
-                log.warn("dialog green template option requested without template: reason={}", reason);
-                return false;
-            }
-            DialogType type = detectDialogSnapshotDirect("green-template-click:" + reason).type();
-            if (type != DialogType.OPTION) {
-                log.info("dialog green template option skipped: reason={} type={}", reason, type);
-                return false;
-            }
-            Point optionPoint = coordinateHelper.findGreenTextInRegion(templatePath, getDialogRect(), 0.85);
-            if (optionPoint == null) {
-                log.info("dialog green template option not matched: reason={} template={}", reason, templatePath);
-                return false;
-            }
-            int lowX = Math.min(minOffsetX, maxOffsetX);
-            int highX = Math.max(minOffsetX, maxOffsetX);
-            int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
-            int offsetY = randomRadiusY <= 0 ? 0 : random.nextInt(randomRadiusY * 2 + 1) - randomRadiusY;
-            Point safeClick = new Point(optionPoint.x + offsetX, optionPoint.y + offsetY);
-            log.info("dialog green template option matched: reason={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
-                    reason, templatePath, optionPoint.x, optionPoint.y, offsetX, offsetY, safeClick.x, safeClick.y);
-            inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-            result = true;
-            return true;
-        } finally {
-            LatencyMetrics.info(log, "dialog.greenTemplateClick", latencyStart,
-                    "result=" + result + " reason=" + reason + " template=" + templatePath);
-        }
-    }
-
-    private String clickFirstGreenTemplateOptionDirect(List<GreenTemplateClickSpec> specs, String reason) {
-        return clickFirstGreenTemplateOptionDirect(specs, reason, true);
-    }
-
-    private String clickFirstGreenTemplateOptionDirect(List<GreenTemplateClickSpec> specs,
-                                                       String reason,
-                                                       boolean verifyDialogType) {
-        long latencyStart = LatencyMetrics.start();
-        String matched = null;
-        try {
-            /*
-             * 多模板 option 匹配的快路径：dialog 类型、截图、洗绿字都只做一次。
-             * 调用方负责按业务优先级传 specs，谁先命中就点谁，避免同一个对话框重复截图。
-             */
+            List<GreenTemplateClickSpec> specs = request.getGreenTemplateSpecs();
             if (specs == null || specs.isEmpty()) {
-                log.warn("dialog green template multi-match requested without specs: reason={}", reason);
-                return null;
+                log.warn("dialog green template requested without specs: reason={}", request.getSourceTask());
+                outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, DialogType.NONE);
+                return outcome;
             }
-            if (verifyDialogType) {
-                DialogType type = detectDialogSnapshotDirect("green-template-first:" + reason).type();
+
+            DialogType type = DialogType.OPTION;
+            if (request.isVerifyDialogType()) {
+                type = detectDialogSnapshotDirect("green-template-click:" + request.getSourceTask()).type();
                 if (type != DialogType.OPTION) {
-                    log.info("dialog green template multi-match skipped: reason={} type={}", reason, type);
-                    return null;
+                    log.info("dialog green template skipped: reason={} type={}", request.getSourceTask(), type);
+                    outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, type);
+                    return outcome;
                 }
             }
 
@@ -856,11 +804,15 @@ public class DialogService {
             String rawPath = windowScopedTempPath.resolve("dialog_green_multi_raw.png");
             String washedPath = windowScopedTempPath.resolve("dialog_green_multi_washed.png");
             if (!tracker.captureToFile("dialog-green-multi", rawPath, rect[0], rect[1], rect[2], rect[3])) {
-                log.warn("dialog green template multi-match capture failed: reason={}", reason);
-                return null;
+                log.warn("dialog green template capture failed: reason={}", request.getSourceTask());
+                outcome = DialogResult.simple(DialogResultStatus.FAILED, type);
+                return outcome;
             }
-            // Normalize green option text before template matching so background texture is less noisy.
-            ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
+            /*
+             * 多模板 option 匹配的快路径：dialog 类型、截图、洗绿字都只做一次。
+             * 调用方负责按业务优先级传 specs，谁先命中就点谁，避免同一个对话框重复截图。
+             */
+            ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(rawPath, washedPath);
 
             for (GreenTemplateClickSpec spec : specs) {
                 if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
@@ -869,53 +821,44 @@ public class DialogService {
                 double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
                 if (result == null || result.length < 2) {
                     log.info("dialog green template multi-match miss: reason={} name={} template={}",
-                            reason, spec.name(), spec.templatePath());
+                            request.getSourceTask(), spec.name(), spec.templatePath());
                     continue;
                 }
 
-                int absoluteX = rect[0] + (int) Math.round(result[0]);
-                int absoluteY = rect[1] + (int) Math.round(result[1]);
-                int lowX = Math.min(spec.minOffsetX(), spec.maxOffsetX());
-                int highX = Math.max(spec.minOffsetX(), spec.maxOffsetX());
-                int offsetX = lowX == highX ? lowX : random.nextInt(highX - lowX + 1) + lowX;
-                int offsetY = spec.randomRadiusY() <= 0
-                        ? 0
-                        : random.nextInt(spec.randomRadiusY() * 2 + 1) - spec.randomRadiusY();
-                Point safeClick = new Point(absoluteX + offsetX, absoluteY + offsetY);
+                Point optionPoint = coordinateHelper.resolveMatchedPointInRect(rect, result);
+                Point safeClick = coordinateHelper.getRandomizedPoint(
+                        optionPoint,
+                        spec.minOffsetX(),
+                        spec.maxOffsetX(),
+                        spec.randomRadiusY());
+                int offsetX = safeClick.x - optionPoint.x;
+                int offsetY = safeClick.y - optionPoint.y;
                 log.info("dialog green template multi-match hit: reason={} name={} template={} match=({}, {}) offset=({}, {}) click=({}, {})",
-                        reason, spec.name(), spec.templatePath(), absoluteX, absoluteY,
+                        request.getSourceTask(), spec.name(), spec.templatePath(), optionPoint.x, optionPoint.y,
                         offsetX, offsetY, safeClick.x, safeClick.y);
                 inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-                matched = spec.name();
-                return matched;
+                outcome = DialogResult.statusBuilder(DialogResultStatus.GREEN_TEMPLATE_CLICKED, type)
+                        .actionKey(spec.name())
+                        .matchedText(spec.templatePath())
+                        .relativeX(safeClick.x - rect[0])
+                        .relativeY(safeClick.y - rect[1])
+                        .absoluteX(safeClick.x)
+                        .absoluteY(safeClick.y)
+                        .build();
+                return outcome;
             }
 
-            log.info("dialog green template multi-match no hit: reason={} candidates={}", reason, specs.size());
-            return null;
+            log.info("dialog green template multi-match no hit: reason={} candidates={}",
+                    request.getSourceTask(), specs.size());
+            outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, type);
+            return outcome;
         } finally {
             LatencyMetrics.info(log, "dialog.greenTemplateFirst", latencyStart,
-                    "matched=" + (matched == null ? "-" : matched) + " reason=" + reason
-                            + " specCount=" + (specs == null ? 0 : specs.size()));
+                    "status=" + outcome.getStatus()
+                            + " actionKey=" + (outcome.getActionKey() == null ? "-" : outcome.getActionKey())
+                            + " reason=" + request.getSourceTask()
+                            + " specCount=" + (request.getGreenTemplateSpecs() == null ? 0 : request.getGreenTemplateSpecs().size()));
         }
-    }
-
-    public String readCurrentStoryGreenText(String reason) {
-        DialogType type = detectDialogTypeNoFocus("read-story-green:" + reason);
-        if (type != DialogType.STORY) {
-            log.info("dialog story green read skipped: reason={} type={}", reason, type);
-            return "";
-        }
-        int[] rect = getDialogRect();
-        String rawPath = windowScopedTempPath.resolve("story_green_raw.png");
-        String washedPath = windowScopedTempPath.resolve("story_green_washed.png");
-        if (!tracker.captureToFile("story-green-read", rawPath, rect[0], rect[1], rect[2], rect[3])) {
-            log.warn("dialog story green read capture failed: reason={}", reason);
-            return "";
-        }
-        ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, washedPath);
-        String text = ocr.readText(washedPath);
-        log.info("dialog story green read: reason={} text={}", reason, text);
-        return text == null ? "" : text.trim();
     }
 
     public BufferedImage captureCurrentStoryImage(String reason) {
@@ -944,26 +887,18 @@ public class DialogService {
     }
 
     private void saveStoryObjectiveDebugImageToPath(String reason, BufferedImage image, String path) {
-        File file = new File(path);
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
-            log.warn("dialog story objective debug mkdir failed: path={}", parent);
-            return;
-        }
-        try {
-            ImageIO.write(image, "png", file);
+        if (ImagePreprocessor.saveImage(image, path)) {
             log.info("dialog story objective debug saved: reason={} path={}", reason, path);
-        } catch (IOException e) {
-            log.warn("dialog story objective debug save failed: reason={} path={}", reason, path, e);
+        } else {
+            log.warn("dialog story objective debug save failed: reason={} path={}", reason, path);
         }
     }
 
     private boolean clickGreenOption(int[] rect, String reason, boolean first) {
-        return inputSequences.submitExclusiveAndWait(first ? "dialog:firstGreenOption" : "dialog:lastGreenOption",
-                () -> clickGreenOptionDirect(rect, reason, first));
-    }
-
-    private boolean clickGreenOptionDirect(int[] rect, String reason, boolean first) {
+        if (!isInputWorkerThread()) {
+            return inputSequences.submitExclusiveAndWait(first ? "dialog:firstGreenOption" : "dialog:lastGreenOption",
+                    () -> clickGreenOption(rect, reason, first));
+        }
         String elementName = first ? "dialog-first-green-option" : "dialog-last-green-option";
         BufferedImage frame = tracker.captureToMemory(elementName, rect[0], rect[1], rect[2], rect[3]);
         if (frame == null) {
@@ -971,165 +906,30 @@ public class DialogService {
             return false;
         }
         try {
-                List<GreenTextBand> bands = findGreenTextBands(frame);
-                GreenTextBand band = pickGreenTextBand(bands, first);
-                if (band == null) {
-                    log.warn("dialog green option not found: reason={} first={}", reason, first);
-                    return false;
-                }
-                int clickX = rect[0] + (band.minX + band.maxX) / 2;
-                int clickY = rect[1] + (band.minY + band.maxY) / 2;
-                Point safeClick = coordinateHelper.getRandomizedPoint(new Point(clickX, clickY), 12, 3);
-                log.info("dialog click green option: reason={} first={} band={} click=({}, {})",
-                        reason, first, band, safeClick.x, safeClick.y);
-                inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
-                return true;
+            List<ImagePreprocessor.GreenTextBand> bands = ImagePreprocessor.findGreenTextBands(frame);
+            ImagePreprocessor.GreenTextBand band = ImagePreprocessor.pickGreenTextBand(bands, first);
+            if (band == null) {
+                log.warn("dialog green option not found: reason={} first={}", reason, first);
+                return false;
+            }
+            int clickX = rect[0] + (band.minX() + band.maxX()) / 2;
+            int clickY = rect[1] + (band.minY() + band.maxY()) / 2;
+            Point safeClick = coordinateHelper.getRandomizedPoint(new Point(clickX, clickY), 12, 3);
+            log.info("dialog click green option: reason={} first={} band={} click=({}, {})",
+                    reason, first, band, safeClick.x, safeClick.y);
+            inputProvider.clickLeft(safeClick.x, safeClick.y, 150);
+            return true;
         } finally {
             frame.flush();
         }
     }
 
-    private List<GreenTextBand> findGreenTextBands(BufferedImage frame) {
-        int height = frame.getHeight();
-        int width = frame.getWidth();
-        int[] rowCounts = new int[height];
-        for (int y = 0; y < height; y++) {
-            int count = 0;
-            for (int x = 0; x < width; x++) {
-                if (ImagePreprocessor.isOptionGreen(frame.getRGB(x, y))) {
-                    count++;
-                }
-            }
-            rowCounts[y] = count;
-        }
-
-        List<GreenTextBand> bands = new java.util.ArrayList<>();
-        int startY = -1;
-        int endY = -1;
-        int gap = 0;
-        for (int y = 0; y < height; y++) {
-            if (rowCounts[y] >= 3) {
-                if (startY < 0) {
-                    startY = y;
-                }
-                endY = y;
-                gap = 0;
-            } else if (startY >= 0) {
-                gap++;
-                if (gap > 2) {
-                    GreenTextBand band = buildGreenTextBand(frame, startY, endY);
-                    if (band != null) {
-                        bands.add(band);
-                    }
-                    startY = -1;
-                    endY = -1;
-                    gap = 0;
-                }
-            }
-        }
-        if (startY >= 0) {
-            GreenTextBand band = buildGreenTextBand(frame, startY, endY);
-            if (band != null) {
-                bands.add(band);
-            }
-        }
-
-        return bands;
-    }
-
-    private GreenTextBand pickGreenTextBand(List<GreenTextBand> bands, boolean first) {
-        if (bands == null || bands.isEmpty()) {
-            return null;
-        }
-        return first ? bands.get(0) : bands.get(bands.size() - 1);
-    }
-
-    private GreenTextBand buildGreenTextBand(BufferedImage frame, int startY, int endY) {
-        int minX = frame.getWidth();
-        int maxX = -1;
-        int greenPixels = 0;
-        for (int y = startY; y <= endY; y++) {
-            for (int x = 0; x < frame.getWidth(); x++) {
-                if (ImagePreprocessor.isOptionGreen(frame.getRGB(x, y))) {
-                    minX = Math.min(minX, x);
-                    maxX = Math.max(maxX, x);
-                    greenPixels++;
-                }
-            }
-        }
-
-        if (greenPixels < 30 || maxX < minX) {
-            return null;
-        }
-        return new GreenTextBand(minX, startY, maxX, endY, greenPixels);
-    }
-
-    @Value
-
-
-    @Builder
-
-
-    @AllArgsConstructor(access = AccessLevel.PUBLIC)
-
-
-    @Accessors(fluent = true)
-
-
-    private static class GreenTextBand {
-
-
-        int minX;
-
-
-        int minY;
-
-
-        int maxX;
-
-
-        int maxY;
-
-
-        int pixels;
-
-
-    }
-
-    private boolean doFallbackClick(int[] rect, String reason) {
-        log.warn("dialog fixed fallback click: {}", reason);
-        double scale = coordinateHelper.getScaleRatio();
-        int cx = rect[0] + (rect[2] - rect[0]) / 2;
-        int cy = rect[3] - (int)Math.round(100 / scale);
-        inputSequences.clickLeft("dialog:fallback", cx, cy, 150);
-        return true;
-    }
-
-    public int[] getDialogRect() {
+    private int[] getDialogRect() {
         return coordinateHelper.getScaledRect(DIALOG_LARGE_X, DIALOG_LARGE_Y, DIALOG_LARGE_W, DIALOG_LARGE_H);
     }
 
-    public int[] getSmallDialogRect() {
+    private int[] getSmallDialogRect() {
         return coordinateHelper.getScaledRect(DIALOG_SMALL_X, DIALOG_SMALL_Y, DIALOG_SMALL_W, DIALOG_SMALL_H);
-    }
-
-    private boolean captureToFileExclusive(String description, String elementName, String path, int[] rect) {
-        return inputSequences.submitExclusiveAndWait(description,
-                () -> tracker.captureToFile(elementName, path, rect[0], rect[1], rect[2], rect[3]));
-    }
-
-    private record OptionOcrScan(String color, String path, List<OcrWordResult> words) {
-    }
-
-    private record DialogDetection(DialogType type, int[] dialogRect, String rawPath, BufferedImage image) {
-
-        private static DialogDetection none() {
-            return new DialogDetection(DialogType.NONE, null, null, null);
-        }
-
-        private DialogDetection withType(DialogType newType) {
-            return new DialogDetection(newType, dialogRect, rawPath, image);
-        }
     }
 
 }

@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class AutoBattleTask extends BaseTaskTemplate {
     private static final long FREE_PATROL_INTERVAL_MS = 3000L;
+    private static final long FOLLOWER_SUPPORT_POLL_INTERVAL_MS = 700L;
 
     private final AutoCombatService autoCombatService;
     private final TaskStartupCheckService taskStartupCheckService;
@@ -150,23 +151,23 @@ public class AutoBattleTask extends BaseTaskTemplate {
             context.throwIfStopRequested();
             AutoCombatService.TickResult combatResult = handleAutoCombatTick(context);
             if (combatResult != AutoCombatService.TickResult.NONE) {
-                sleepSafely(context, getPollingIntervalMs());
+                sleepSafely(context, getPollingIntervalMs(context));
                 continue;
             }
             if (gameContext.getCurrentActionState() == GameContext.ActionState.FREE
                     && maybeRunFollowerSupportSupply(context)) {
-                sleepSafely(context, getPollingIntervalMs());
+                sleepSafely(context, getPollingIntervalMs(context));
                 continue;
             }
             if (maybeClickFollowerReturnTeam(context)) {
-                sleepSafely(context, getPollingIntervalMs());
+                sleepSafely(context, getPollingIntervalMs(context));
                 continue;
             }
             if (gameContext.getCurrentActionState() == GameContext.ActionState.FREE
                     && !isFollowerSupportMode(context)) {
                 maybeRunIdleMaintenance(context);
             }
-            sleepSafely(context, getPollingIntervalMs());
+            sleepSafely(context, getPollingIntervalMs(context));
         }
 
         log.info("自动战斗任务结束：{}", context.getLogPrefix());
@@ -200,7 +201,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
         });
 
         if (!ran) {
-            log.info("{} auto-battle follower support combat tick skipped: task turn busy",
+            log.debug("{} auto-battle follower support combat tick skipped: task turn busy",
                     context.getLogPrefix());
             return gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT
                     ? AutoCombatService.TickResult.IN_COMBAT
@@ -232,7 +233,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
             return true;
         });
         if (!ran) {
-            log.info("{} auto-battle follower support team return skipped: task turn busy",
+            log.debug("{} auto-battle follower support team return skipped: task turn busy",
                     context.getLogPrefix());
         }
         return clicked.get();
@@ -279,7 +280,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
             return true;
         });
         if (!completed) {
-            log.info("{} auto-battle follower support supply skipped: task turn busy", context.getLogPrefix());
+            log.debug("{} auto-battle follower support supply skipped: task turn busy", context.getLogPrefix());
         }
         return completed;
     }
@@ -377,9 +378,15 @@ public class AutoBattleTask extends BaseTaskTemplate {
     /**
      * Select the patrol interval for the next loop tick.
      *
-     * @return three-second idle interval while free, otherwise the dynamic combat radar interval.
+     * @param context current window context; follower-support members use a short poll so they can
+     *                catch the leader's narrow task-turn handoff window during pathing/combat.
+     * @return three-second idle interval for true auto-battle, short follower-support interval for
+     *         reassigned members, otherwise the dynamic combat radar interval.
      */
-    private long getPollingIntervalMs() {
+    private long getPollingIntervalMs(TaskExecutionContext context) {
+        if (isFollowerSupportMode(context)) {
+            return FOLLOWER_SUPPORT_POLL_INTERVAL_MS;
+        }
         if (gameContext.getCurrentActionState() == GameContext.ActionState.FREE) {
             return FREE_PATROL_INTERVAL_MS;
         }

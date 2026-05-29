@@ -8,10 +8,9 @@ import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
-import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
-import com.bot.dhxy.service.dialog.DialogHandleResult;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -134,16 +133,16 @@ public class UICleanerService {
      * was nothing actionable or cleanup was interrupted.
      */
     public boolean cleanLightweightInterruptions(String sourceTask) {
-        DialogHandleResult dialogResult = dialogService.handleDialog(DialogHandleRequest.clickBusinessOption(sourceTask));
-        if (dialogResult == DialogHandleResult.BUSINESS_OPTION_CLICKED) {
+        DialogResultStatus dialogResult = dialogService.handleDialog(DialogHandleRequest.handleBusinessOption(sourceTask)).getStatus();
+        if (dialogResult == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
             log.info("UI lightweight cleanup handled business dialog: source={}", sourceTask);
             return true;
         }
-        if (dialogResult == DialogHandleResult.INTERRUPTED) {
+        if (dialogResult == DialogResultStatus.INTERRUPTED) {
             log.info("UI lightweight cleanup interrupted: source={}", sourceTask);
             return false;
         }
-        if (dialogResult == DialogHandleResult.FAILED) {
+        if (dialogResult == DialogResultStatus.FAILED) {
             log.warn("UI lightweight cleanup business dialog scan failed: source={}", sourceTask);
             return false;
         }
@@ -163,20 +162,16 @@ public class UICleanerService {
      * or OCR/template capture failed.
      */
     public boolean handleMaintenanceBroadcast(String sourceTask) {
-        DialogType type = dialogService.detectDialogTypeNoFocus(sourceTask + ":maintenance-broadcast-precheck");
-        if (type == DialogType.NONE) {
-            return false;
-        }
-        DialogHandleResult dialogResult = dialogService.handleDialog(DialogHandleRequest.clickMaintenanceBroadcastOption(sourceTask));
-        if (dialogResult == DialogHandleResult.BUSINESS_OPTION_CLICKED) {
+        DialogResultStatus dialogResult = dialogService.handleDialog(DialogHandleRequest.handleMaintenanceBroadcastOption(sourceTask)).getStatus();
+        if (dialogResult == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
             log.info("UI maintenance broadcast handled: source={}", sourceTask);
             return true;
         }
-        if (dialogResult == DialogHandleResult.INTERRUPTED) {
+        if (dialogResult == DialogResultStatus.INTERRUPTED) {
             log.info("UI maintenance broadcast interrupted: source={}", sourceTask);
             return false;
         }
-        if (dialogResult == DialogHandleResult.FAILED) {
+        if (dialogResult == DialogResultStatus.FAILED) {
             log.warn("UI maintenance broadcast scan failed: source={}", sourceTask);
             return false;
         }
@@ -262,18 +257,18 @@ public class UICleanerService {
      * close automatically.
      */
     public boolean forceCloseDialog() {
-        DialogType type = dialogService.detectDialogTypeNoFocus("ui-cleaner:force-close");
-        if (type == DialogType.NONE) {
+        var dialogInspect = dialogService.handleDialog(DialogHandleRequest.inspect("ui-cleaner:force-close"));
+        if (dialogInspect.getStatus() == DialogResultStatus.NO_DIALOG) {
             return false;
         }
 
-        if (type == DialogType.STORY) {
+        if (dialogInspect.getStatus() == DialogResultStatus.STORY_IGNORED) {
             if (!canFastClickStoryDialog()) {
                 log.info("UI cleanup story dialog fast-click skipped: role={} actionState={}",
                         currentWindowRoleText(), gameContext.getCurrentActionState());
                 return false;
             }
-            dialogService.fastClickStoryDialog();
+            dialogService.handleDialog(DialogHandleRequest.clickStory("ui-cleaner:force-close-story"));
             TaskSleep.sleep(350);
             return true;
         }
@@ -288,7 +283,7 @@ public class UICleanerService {
         if (allWords != null && !allWords.isEmpty()) {
             List<String> closeKeywords = Arrays.asList(
                     "取消", "离开", "看一看", "哪儿也", "以后再说", "原来你",
-                    "看看", "我还有事", "不", "算了", "暂时", "路过", "再会"
+                    "看看", "我还有事", "不", "算了", "暂时", "路过", "再会", "我还是"
             );
             for (String keyword : closeKeywords) {
                 for (OcrWordResult word : allWords) {
@@ -301,9 +296,9 @@ public class UICleanerService {
             }
         }
 
-        DialogHandleResult fallbackResult = dialogService.handleDialog(DialogHandleRequest.fallbackLastOption("ui-cleaner"));
+        DialogResultStatus fallbackResult = dialogService.handleDialog(DialogHandleRequest.fallbackLastOption("ui-cleaner")).getStatus();
         log.info("UI cleanup dialog fallback last option result={}", fallbackResult);
-        return fallbackResult == DialogHandleResult.FALLBACK_CLICKED;
+        return fallbackResult == DialogResultStatus.FALLBACK_CLICKED;
     }
 
     private boolean containsCloseDialogKeyword(List<OcrWordResult> words) {

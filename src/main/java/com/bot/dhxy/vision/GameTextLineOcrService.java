@@ -64,8 +64,11 @@ public class GameTextLineOcrService {
     private static final int ROUTE_YELLOW_ROW_TOLERANCE_PX = 8;
     private static final int ROUTE_YELLOW_WRAP_LEFT_MAX_X = 80;
     private static final int ROUTE_YELLOW_WRAP_RIGHT_MARGIN_X = 80;
+    private static final int ROUTE_COORDINATE_ROW_TOLERANCE_PX = 22;
+    private static final int ROUTE_COORDINATE_DESTINATION_ROW_UP_PX = 7;
+    private static final int ROUTE_COORDINATE_DESTINATION_ROW_DOWN_PX = 9;
     private static final Pattern COORDINATE_LINK_PATTERN =
-            Pattern.compile("[\\(（]\\s*\\d+\\s*[,，]\\s*\\d+\\s*[\\)）]");
+            Pattern.compile("[\\(（]\\s*\\d+\\s*[,，]\\s*\\d+\\s*[\\)）]?");
 
     private final TextRecognizer textRecognizer;
 
@@ -91,6 +94,68 @@ public class GameTextLineOcrService {
      */
     public OcrLineResult scanYellowLines(BufferedImage raw, Path outputPath) throws Exception {
         return scanPackedLines(raw, outputPath, TextColorMode.YELLOW_LOOSE, false, "yellow-line");
+    }
+
+    /**
+     * Read option-dialog words with the standard green-first/yellow-fallback pipeline.
+     *
+     * <p>The caller owns dialog detection, screenshot capture, and click decisions. This method only
+     * owns colored-text preprocessing and OCR routing for an already captured dialog image. Output
+     * paths should be window-scoped by the caller because they are written as debug/intermediate
+     * images.</p>
+     *
+     * @param rawPath source dialog screenshot path.
+     * @param targetKeyword diagnostic target text written into OCR logs.
+     * @param aliases target aliases accepted by the caller. Empty or null falls back to
+     *                {@code targetKeyword}.
+     * @param greenPath window-scoped path for the green-text washed image.
+     * @param yellowPath window-scoped path for the yellow-text washed image.
+     * @return OCR result for the first matching color pass, or a combined green/yellow result when
+     * neither pass matches. Word coordinates are image-local to {@code rawPath}.
+     */
+    public OcrLineResult readDialogOptionWords(String rawPath,
+                                               String targetKeyword,
+                                               List<String> aliases,
+                                               Path greenPath,
+                                               Path yellowPath) {
+        List<String> keywords = aliases == null || aliases.isEmpty()
+                ? List.of(targetKeyword)
+                : aliases;
+        String targetLabel = targetKeyword == null ? "unknown" : targetKeyword;
+
+        ImagePreprocessor.washGreenTextToBlackAndWhite(rawPath, greenPath.toString());
+        if (!Files.exists(greenPath)) {
+            List<OcrWordResult> words = textRecognizer.getAllTextResultsForMatch(
+                    rawPath,
+                    "dialog-options:" + targetLabel + ":raw",
+                    result -> OcrTextMatcher.hasAnyKeyword(result, keywords));
+            return dialogOptionWordsResult("raw", rawPath, words);
+        }
+
+        /*
+         * Normal option text is green, but route recommendation choices can be yellow. Keep green
+         * first for ordinary dialogs, then retry the same raw snapshot with the shared yellow-text
+         * wash so transfer choices such as "长安桥(400两)" do not disappear before OCR.
+         */
+        List<OcrWordResult> greenWords = textRecognizer.getAllTextResultsForMatch(
+                greenPath.toString(),
+                "dialog-options:" + targetLabel + ":green",
+                words -> OcrTextMatcher.hasAnyKeyword(words, keywords));
+        if (OcrTextMatcher.hasAnyKeyword(greenWords, keywords)) {
+            return dialogOptionWordsResult("green", greenPath.toString(), greenWords);
+        }
+
+        ImagePreprocessor.washYellowText(rawPath, yellowPath.toString());
+        if (!Files.exists(yellowPath)) {
+            return dialogOptionWordsResult("green", greenPath.toString(), greenWords);
+        }
+        List<OcrWordResult> yellowWords = textRecognizer.getAllTextResultsForMatch(
+                yellowPath.toString(),
+                "dialog-options:" + targetLabel + ":yellow",
+                words -> OcrTextMatcher.hasAnyKeyword(words, keywords));
+        return OcrTextMatcher.hasAnyKeyword(yellowWords, keywords)
+                ? dialogOptionWordsResult("yellow", yellowPath.toString(), yellowWords)
+                : dialogOptionWordsResult("green+yellow", yellowPath.toString(), mergeWords(greenWords, yellowWords));
     }
 
     /**
@@ -197,8 +262,9 @@ public class GameTextLineOcrService {
      *
      * <p>The caller owns screenshot capture and input. This method owns only text handling: it
      * writes a yellow-only debug image beside the raw screenshot, runs local OCR on that image, then
-     * parses the bottom route destination. Empty OCR is treated as inconclusive so legacy green
-     * coordinate clicking can still proceed; a non-empty mismatch blocks the click.</p>
+     * parses the bottom route destination. Once yellow OCR runs, the destination must equal the
+     * expected map name before the caller is allowed to click a green coordinate link. Do not relax
+     * this to substring matching: map names such as 长安/长安城东 and 凤巢六层/凤巢七层 must stay distinct.</p>
      *
      * @param rawImagePath route-result screenshot path.
      * @param expectedDestinationName map name that was typed into the world-map search box.
@@ -220,7 +286,7 @@ public class GameTextLineOcrService {
             log.info("[game-text-ocr] route destination guard skipped, yellow preprocessing unavailable raw={}",
                     rawImagePath);
             return WorldMapRouteDestinationResult.builder()
-                    .allowClick(true)
+                    .allowClick(false)
                     .checked(false)
                     .matched(false)
                     .yellowImagePath(yellowPath)
@@ -228,22 +294,25 @@ public class GameTextLineOcrService {
                     .build();
         }
 
-        long startedAt = System.currentTimeMillis();
-        String rawActual = findLastWorldMapRouteDestination(yellowPath);
         String expected = normalizeRouteDestinationName(expectedDestinationName);
+        long startedAt = System.currentTimeMillis();
+        RouteDestinationMatch destinationMatch = findLastWorldMapRouteDestination(yellowPath, expected);
+        String rawActual = destinationMatch.text();
         String actual = normalizeRouteDestinationName(rawActual);
-        boolean matched = !actual.isBlank() && actual.equals(expected);
+        boolean matched = !actual.isBlank() && (actual.equals(expected) || destinationMatch.acceptedExpected());
         long elapsedMs = System.currentTimeMillis() - startedAt;
         log.info("[game-text-ocr] route destination guard elapsedMs={} expected={} actual={} rawActual={} matched={} yellow={}",
                 elapsedMs, expected, actual, rawActual, matched, yellowPath);
         return WorldMapRouteDestinationResult.builder()
-                .allowClick(actual.isBlank() || matched)
+                .allowClick(matched)
                 .checked(true)
                 .matched(matched)
                 .expected(expected)
                 .actual(actual)
                 .rawActual(rawActual)
                 .yellowImagePath(yellowPath)
+                .destinationCenterX(destinationMatch.centerX())
+                .destinationCenterY(destinationMatch.centerY())
                 .elapsedMs(elapsedMs)
                 .message(actual.isBlank() ? "actual destination is blank" : (matched ? "matched" : "mismatched"))
                 .build();
@@ -258,14 +327,28 @@ public class GameTextLineOcrService {
      * the washed image keeps identical dimensions.</p>
      *
      * @param rawImagePath route-result screenshot path.
+     * @param destination yellow destination OCR result from the same route-result screenshot. When
+     *                    present, its center row is used to choose the green route coordinate line
+     *                    before falling back to full OCR.
      * @return coordinate result with the OCR image path used for the winning match.
      */
-    public WorldMapRouteCoordinateResult findLastWorldMapRouteCoordinate(String rawImagePath) {
+    public WorldMapRouteCoordinateResult findLastWorldMapRouteCoordinate(String rawImagePath,
+                                                                         WorldMapRouteDestinationResult destination) {
         String greenPath = preprocessWorldMapRouteCoordinateGreen(rawImagePath);
         long startedAt = System.currentTimeMillis();
-        Point point = findLastCoordinateLink(greenPath);
         String ocrImagePath = greenPath;
         boolean usedPreprocessedImage = !greenPath.equals(rawImagePath);
+
+        /*
+         * Search-result routes can wrap the last green coordinate across two visual rows. In that
+         * case OCR may read the complete text in joinedText but cannot attach a word box to the
+         * final coordinate. The yellow destination row is the reliable anchor: click the green text
+         * segment on the same row first, then fall back to normal coordinate OCR.
+         */
+        Point point = findRouteCoordinateByDestinationRow(greenPath, destination);
+        if (point == null) {
+            point = findLastCoordinateLink(greenPath);
+        }
         if (point == null && usedPreprocessedImage) {
             log.info("[game-text-ocr] green route OCR missed, fallback raw image={}", rawImagePath);
             point = findLastCoordinateLink(rawImagePath);
@@ -328,7 +411,7 @@ public class GameTextLineOcrService {
         return rawImagePath;
     }
 
-    private String findLastWorldMapRouteDestination(String yellowImagePath) {
+    private RouteDestinationMatch findLastWorldMapRouteDestination(String yellowImagePath, String expected) {
         List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(yellowImagePath);
         OcrWordResult last = null;
         for (OcrWordResult word : words) {
@@ -339,16 +422,16 @@ public class GameTextLineOcrService {
                 last = word;
             }
         }
-        String value = findLastWorldMapRouteDestinationLine(words);
-        if (value.isBlank() && last != null) {
-            value = last.getText();
+        RouteDestinationMatch value = findLastWorldMapRouteDestinationLine(words, expected);
+        if (value.text().isBlank() && last != null) {
+            value = new RouteDestinationMatch(last.getText(), last.getX(), centerY(last), false);
         }
         log.info("[game-text-ocr] route destination OCR words={} last={}",
-                formatRouteOcrWords(words), value);
+                formatRouteOcrWords(words), value.text());
         return value;
     }
 
-    private String findLastWorldMapRouteDestinationLine(List<OcrWordResult> words) {
+    private RouteDestinationMatch findLastWorldMapRouteDestinationLine(List<OcrWordResult> words, String expected) {
         List<OcrWordResult> usable = new ArrayList<>();
         for (OcrWordResult word : words) {
             if (word == null || word.getText() == null || word.getText().isBlank()) {
@@ -357,7 +440,7 @@ public class GameTextLineOcrService {
             usable.add(word);
         }
         if (usable.isEmpty()) {
-            return "";
+            return RouteDestinationMatch.empty();
         }
 
         /*
@@ -370,12 +453,24 @@ public class GameTextLineOcrService {
          */
         List<List<OcrWordResult>> rows = buildRouteYellowRows(usable);
         if (rows.isEmpty()) {
-            return "";
+            return RouteDestinationMatch.empty();
         }
+
+        /*
+         * The typed map name is the strongest signal. Search every yellow cluster first and choose
+         * the bottom-most exact match for that target. This avoids stitching unrelated route rows
+         * such as "北俱芦" + "长安" while still allowing a real wrapped destination when the joined
+         * text exactly equals the requested map name.
+         */
+        RouteDestinationMatch exact = findExpectedRouteDestination(rows, usable, expected);
+        if (!exact.text().isBlank()) {
+            return exact;
+        }
+
         List<OcrWordResult> bottomRow = rows.get(rows.size() - 1);
         List<List<OcrWordResult>> bottomClusters = clusterRouteYellowWords(bottomRow);
         if (bottomClusters.isEmpty()) {
-            return "";
+            return RouteDestinationMatch.empty();
         }
 
         List<OcrWordResult> rightMostCluster = bottomClusters.get(bottomClusters.size() - 1);
@@ -384,11 +479,113 @@ public class GameTextLineOcrService {
             if (!previousClusters.isEmpty()) {
                 List<OcrWordResult> previousRightMost = previousClusters.get(previousClusters.size() - 1);
                 if (isRightEdgeRoutePrefix(previousRightMost, usable)) {
-                    return joinRouteYellowWords(previousRightMost) + joinRouteYellowWords(rightMostCluster);
+                    return new RouteDestinationMatch(
+                            joinRouteYellowWords(previousRightMost) + joinRouteYellowWords(rightMostCluster),
+                            averageCenterX(rightMostCluster),
+                            averageCenterY(rightMostCluster),
+                            false);
                 }
             }
         }
-        return joinRouteYellowWords(rightMostCluster);
+        return new RouteDestinationMatch(
+                joinRouteYellowWords(rightMostCluster),
+                averageCenterX(rightMostCluster),
+                averageCenterY(rightMostCluster),
+                false);
+    }
+
+    private RouteDestinationMatch findExpectedRouteDestination(List<List<OcrWordResult>> rows,
+                                                              List<OcrWordResult> usable,
+                                                              String expected) {
+        if (expected == null || expected.isBlank()) {
+            return RouteDestinationMatch.empty();
+        }
+
+        List<RouteDestinationMatch> exactMatches = new ArrayList<>();
+        RouteDestinationMatch bestFuzzy = RouteDestinationMatch.empty();
+        int bestFuzzyScore = 0;
+        for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+            List<List<OcrWordResult>> clusters = clusterRouteYellowWords(rows.get(rowIndex));
+            for (List<OcrWordResult> cluster : clusters) {
+                RouteDestinationMatch direct = toRouteDestinationMatch(cluster);
+                if (expected.equals(normalizeRouteDestinationName(direct.text()))) {
+                    exactMatches.add(direct.accepted());
+                } else {
+                    OcrTextMatcher.MatchResult fuzzy = OcrTextMatcher.matchShortName(direct.text(), expected);
+                    if (fuzzy.hit() && isBetterRouteFuzzyMatch(direct, fuzzy.score(), bestFuzzy, bestFuzzyScore)) {
+                        bestFuzzy = direct.accepted();
+                        bestFuzzyScore = fuzzy.score();
+                    }
+                }
+
+                if (isLeftWrappedRouteContinuation(cluster) && rowIndex > 0) {
+                    List<List<OcrWordResult>> previousClusters = clusterRouteYellowWords(rows.get(rowIndex - 1));
+                    if (!previousClusters.isEmpty()) {
+                        List<OcrWordResult> previousRightMost = previousClusters.get(previousClusters.size() - 1);
+                        if (isRightEdgeRoutePrefix(previousRightMost, usable)) {
+                            RouteDestinationMatch wrapped = new RouteDestinationMatch(
+                                    joinRouteYellowWords(previousRightMost) + joinRouteYellowWords(cluster),
+                                    averageCenterX(cluster),
+                                    averageCenterY(cluster),
+                                    false);
+                            if (expected.equals(normalizeRouteDestinationName(wrapped.text()))) {
+                                exactMatches.add(wrapped.accepted());
+                            } else {
+                                OcrTextMatcher.MatchResult fuzzy = OcrTextMatcher.matchShortName(wrapped.text(), expected);
+                                if (fuzzy.hit() && isBetterRouteFuzzyMatch(wrapped, fuzzy.score(), bestFuzzy, bestFuzzyScore)) {
+                                    bestFuzzy = wrapped.accepted();
+                                    bestFuzzyScore = fuzzy.score();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        RouteDestinationMatch exact = exactMatches.stream()
+                .max(Comparator.comparing((RouteDestinationMatch match) -> match.centerY() == null ? -1 : match.centerY())
+                        .thenComparing(match -> match.centerX() == null ? -1 : match.centerX()))
+                .orElse(RouteDestinationMatch.empty());
+        if (!exact.text().isBlank()) {
+            return exact;
+        }
+        if (!bestFuzzy.text().isBlank()) {
+            log.info("[game-text-ocr] route destination fuzzy match: expected={} actual={} score={}",
+                    expected, bestFuzzy.text(), bestFuzzyScore);
+        }
+        return bestFuzzy;
+    }
+
+    private boolean isBetterRouteFuzzyMatch(RouteDestinationMatch candidate,
+                                            int candidateScore,
+                                            RouteDestinationMatch current,
+                                            int currentScore) {
+        if (candidate.text().isBlank()) {
+            return false;
+        }
+        if (current.text().isBlank() || candidateScore != currentScore) {
+            return candidateScore > currentScore;
+        }
+        int candidateY = candidate.centerY() == null ? -1 : candidate.centerY();
+        int currentY = current.centerY() == null ? -1 : current.centerY();
+        if (candidateY != currentY) {
+            return candidateY > currentY;
+        }
+        int candidateX = candidate.centerX() == null ? -1 : candidate.centerX();
+        int currentX = current.centerX() == null ? -1 : current.centerX();
+        return candidateX > currentX;
+    }
+
+    private RouteDestinationMatch toRouteDestinationMatch(List<OcrWordResult> cluster) {
+        if (cluster == null || cluster.isEmpty()) {
+            return RouteDestinationMatch.empty();
+        }
+        return new RouteDestinationMatch(
+                joinRouteYellowWords(cluster),
+                averageCenterX(cluster),
+                averageCenterY(cluster),
+                false);
     }
 
     private Point findLastCoordinateLink(String imagePath) {
@@ -426,6 +623,152 @@ public class GameTextLineOcrService {
         }
 
         return lastX == -1 ? null : new Point(lastX, lastY);
+    }
+
+    private Point findRouteCoordinateByDestinationRow(String greenImagePath,
+                                                      WorldMapRouteDestinationResult destination) {
+        if (destination == null || destination.destinationCenterY() == null) {
+            return null;
+        }
+        try {
+            BufferedImage greenImage = ImageIO.read(Path.of(greenImagePath).toFile());
+            if (greenImage == null) {
+                return null;
+            }
+            try {
+                boolean[][] mask = buildBrightPixelMask(greenImage);
+                int destinationY = destination.destinationCenterY();
+                int rowMinY = Math.max(0, destinationY - ROUTE_COORDINATE_DESTINATION_ROW_UP_PX);
+                int rowMaxY = Math.min(greenImage.getHeight() - 1, destinationY + ROUTE_COORDINATE_DESTINATION_ROW_DOWN_PX);
+                List<TextLineBox> destinationRowSegments = splitHorizontalSegmentsInBand(mask, rowMinY, rowMaxY);
+                TextLineBox sameVisualRow = null;
+                for (TextLineBox segment : destinationRowSegments) {
+                    if (destination.destinationCenterX() != null
+                            && segment.minX() >= destination.destinationCenterX()) {
+                        continue;
+                    }
+                    if (sameVisualRow == null
+                            || segment.maxX() > sameVisualRow.maxX()
+                            || (segment.maxX() == sameVisualRow.maxX()
+                            && segment.pixelCount() > sameVisualRow.pixelCount())) {
+                        sameVisualRow = segment;
+                    }
+                }
+                if (sameVisualRow == null && !destinationRowSegments.isEmpty()) {
+                    for (TextLineBox segment : destinationRowSegments) {
+                        if (sameVisualRow == null || segment.maxX() > sameVisualRow.maxX()) {
+                            sameVisualRow = segment;
+                        }
+                    }
+                }
+                if (sameVisualRow != null) {
+                    Point point = new Point(sameVisualRow.centerX(), sameVisualRow.centerY());
+                    log.info("[game-text-ocr] route coordinate visual-row match: destination=({}, {}) "
+                                    + "sameRow=({}, {})-({}, {}) point=({}, {}) bandY=({}, {})",
+                            destination.destinationCenterX(), destination.destinationCenterY(),
+                            sameVisualRow.minX(), sameVisualRow.minY(), sameVisualRow.maxX(), sameVisualRow.maxY(),
+                            point.x, point.y, rowMinY, rowMaxY);
+                    return point;
+                }
+
+                List<TextLineBox> segments = new ArrayList<>();
+                for (TextLineBox line : groupTextLines(mask)) {
+                    segments.addAll(splitLineByHorizontalGaps(mask, line));
+                }
+                TextLineBox best = null;
+                int bestDelta = Integer.MAX_VALUE;
+                TextLineBox rightEdgeBest = null;
+                int rightEdgeBestDelta = Integer.MAX_VALUE;
+                int rightEdgeX = Math.max(0, greenImage.getWidth() - ROUTE_YELLOW_WRAP_RIGHT_MARGIN_X);
+                for (TextLineBox segment : segments) {
+                    int delta = Math.abs(segment.centerY() - destination.destinationCenterY());
+                    if (delta > ROUTE_COORDINATE_ROW_TOLERANCE_PX) {
+                        continue;
+                    }
+                    /*
+                     * Wrapped route rows put the real final coordinate prefix at the right edge
+                     * while the yellow destination is on the next visual line. Do not require the
+                     * green segment to be left of the yellow text; prefer right-edge segments on
+                     * the destination row, then fall back to the closest/rightmost row segment.
+                     */
+                    if (segment.maxX() >= rightEdgeX
+                            && (rightEdgeBest == null
+                            || delta < rightEdgeBestDelta
+                            || (delta == rightEdgeBestDelta && segment.maxX() > rightEdgeBest.maxX()))) {
+                        rightEdgeBest = segment;
+                        rightEdgeBestDelta = delta;
+                    }
+                    if (best == null
+                            || delta < bestDelta
+                            || (delta == bestDelta && segment.maxX() > best.maxX())) {
+                        best = segment;
+                        bestDelta = delta;
+                    }
+                }
+                TextLineBox chosen = rightEdgeBest != null ? rightEdgeBest : best;
+                int chosenDelta = rightEdgeBest != null ? rightEdgeBestDelta : bestDelta;
+                if (chosen == null) {
+                    return null;
+                }
+                Point point = new Point(chosen.centerX(), chosen.centerY());
+                log.info("[game-text-ocr] route coordinate visual-row match: destination=({}, {}) "
+                                + "segment=({}, {})-({}, {}) point=({}, {}) deltaY={} rightEdgePreferred={}",
+                        destination.destinationCenterX(), destination.destinationCenterY(),
+                        chosen.minX(), chosen.minY(), chosen.maxX(), chosen.maxY(), point.x, point.y,
+                        chosenDelta, rightEdgeBest != null);
+                return point;
+            } finally {
+                greenImage.flush();
+            }
+        } catch (Exception e) {
+            log.warn("[game-text-ocr] route coordinate visual-row match failed: image={} reason={}",
+                    greenImagePath, e.getMessage(), e);
+                return null;
+        }
+    }
+
+    private List<TextLineBox> splitHorizontalSegmentsInBand(boolean[][] mask, int minY, int maxY) {
+        int width = mask[0].length;
+        int maxBlankGap = 16;
+        List<TextLineBox> segments = new ArrayList<>();
+        int segmentStart = -1;
+        int lastInkX = -1;
+        int segmentMinY = Integer.MAX_VALUE;
+        int segmentMaxY = Integer.MIN_VALUE;
+        int segmentPixels = 0;
+
+        for (int x = 0; x < width; x++) {
+            int columnPixels = 0;
+            int columnMinY = Integer.MAX_VALUE;
+            int columnMaxY = Integer.MIN_VALUE;
+            for (int y = minY; y <= maxY; y++) {
+                if (mask[y][x]) {
+                    columnPixels++;
+                    columnMinY = Math.min(columnMinY, y);
+                    columnMaxY = Math.max(columnMaxY, y);
+                }
+            }
+            if (columnPixels > 0) {
+                if (segmentStart >= 0 && lastInkX >= 0 && x - lastInkX > maxBlankGap) {
+                    addSplitSegment(segments, segmentStart, segmentMinY, lastInkX, segmentMaxY, segmentPixels);
+                    segmentStart = -1;
+                    segmentMinY = Integer.MAX_VALUE;
+                    segmentMaxY = Integer.MIN_VALUE;
+                    segmentPixels = 0;
+                }
+                if (segmentStart < 0) {
+                    segmentStart = x;
+                }
+                lastInkX = x;
+                segmentMinY = Math.min(segmentMinY, columnMinY);
+                segmentMaxY = Math.max(segmentMaxY, columnMaxY);
+                segmentPixels += columnPixels;
+            }
+        }
+        if (segmentStart >= 0) {
+            addSplitSegment(segments, segmentStart, segmentMinY, lastInkX, segmentMaxY, segmentPixels);
+        }
+        return segments;
     }
 
     private List<List<OcrWordResult>> buildRouteYellowRows(List<OcrWordResult> words) {
@@ -489,6 +832,14 @@ public class GameTextLineOcrService {
         if (cluster.isEmpty()) {
             return false;
         }
+        /*
+         * Real wrapped destinations look like a right-edge prefix followed by a left-edge
+         * continuation. A vertical result list such as 凤巢六层 / 凤巢七层 also has left-edge words,
+         * so never stitch two left-edge rows together or the destination guard rejects valid input.
+         */
+        if (cluster.get(0).getLeft() <= ROUTE_YELLOW_WRAP_LEFT_MAX_X) {
+            return false;
+        }
         return clusterRight(cluster) >= maxWordRight(allWords) - ROUTE_YELLOW_WRAP_RIGHT_MARGIN_X;
     }
 
@@ -496,6 +847,14 @@ public class GameTextLineOcrService {
         int total = 0;
         for (OcrWordResult word : row) {
             total += centerY(word);
+        }
+        return total / Math.max(1, row.size());
+    }
+
+    private int averageCenterX(List<OcrWordResult> row) {
+        int total = 0;
+        for (OcrWordResult word : row) {
+            total += word.getX();
         }
         return total / Math.max(1, row.size());
     }
@@ -1165,6 +1524,41 @@ public class GameTextLineOcrService {
     }
 
     /**
+     * Convert white-on-black washed text into a foreground mask.
+     *
+     * <p>World-map route green washes currently keep retained green glyphs as white pixels on a
+     * black background. Route-row geometry must therefore read bright glyphs; using the normal
+     * black-pixel mask would treat the panel background as one huge component and erase the text.</p>
+     */
+    private boolean[][] buildBrightPixelMask(BufferedImage washed) {
+        int width = washed.getWidth();
+        int height = washed.getHeight();
+        boolean[][] sourceMask = new boolean[height][width];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                sourceMask[y][x] = isBrightWashedPixel(washed.getRGB(x, y));
+            }
+        }
+
+        boolean[][] keptMask = new boolean[height][width];
+        boolean[][] visited = new boolean[height][width];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (!sourceMask[y][x] || visited[y][x]) {
+                    continue;
+                }
+                ComponentBox component = collectComponent(sourceMask, visited, x, y);
+                if (shouldKeepWashedComponent(component)) {
+                    for (Point point : component.points()) {
+                        keptMask[point.y][point.x] = true;
+                    }
+                }
+            }
+        }
+        return keptMask;
+    }
+
+    /**
      * Keep glyph fragments while dropping isolated dust and large UI art blocks.
      */
     private boolean shouldKeepWashedComponent(ComponentBox component) {
@@ -1422,6 +1816,14 @@ public class GameTextLineOcrService {
         return luminance < 150;
     }
 
+    private boolean isBrightWashedPixel(int rgb) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        int luminance = (r * 30 + g * 59 + b * 11) / 100;
+        return luminance > 180;
+    }
+
     /**
      * Write a boolean text mask as black glyphs on a white background.
      *
@@ -1532,6 +1934,29 @@ public class GameTextLineOcrService {
                 .collect(Collectors.joining(" | "));
     }
 
+    private OcrLineResult dialogOptionWordsResult(String variantName, String path, List<OcrWordResult> words) {
+        List<OcrWordResult> safeWords = words == null ? List.of() : words;
+        return OcrLineResult.builder()
+                .path(path)
+                .variantName(variantName)
+                .blackPixelCount(0)
+                .wordCount(safeWords.size())
+                .wordsSummary(summarizeWords(safeWords))
+                .words(safeWords)
+                .build();
+    }
+
+    private List<OcrWordResult> mergeWords(List<OcrWordResult> first, List<OcrWordResult> second) {
+        List<OcrWordResult> merged = new ArrayList<>();
+        if (first != null) {
+            merged.addAll(first);
+        }
+        if (second != null) {
+            merged.addAll(second);
+        }
+        return merged;
+    }
+
     private String joinText(List<OcrWordResult> words) {
         if (words == null || words.isEmpty()) {
             return "";
@@ -1596,8 +2021,20 @@ public class GameTextLineOcrService {
         String actual;
         String rawActual;
         String yellowImagePath;
+        Integer destinationCenterX;
+        Integer destinationCenterY;
         long elapsedMs;
         String message;
+    }
+
+    private record RouteDestinationMatch(String text, Integer centerX, Integer centerY, boolean acceptedExpected) {
+        private static RouteDestinationMatch empty() {
+            return new RouteDestinationMatch("", null, null, false);
+        }
+
+        private RouteDestinationMatch accepted() {
+            return new RouteDestinationMatch(text, centerX, centerY, true);
+        }
     }
 
     @Value
@@ -1644,6 +2081,10 @@ public class GameTextLineOcrService {
 
         int centerY() {
             return (minY + maxY) / 2;
+        }
+
+        int centerX() {
+            return (minX + maxX) / 2;
         }
 
         int width() {
@@ -1715,6 +2156,10 @@ public class GameTextLineOcrService {
 
         int centerY() {
             return (minY + maxY) / 2;
+        }
+
+        int centerX() {
+            return (minX + maxX) / 2;
         }
 
         int width() {
