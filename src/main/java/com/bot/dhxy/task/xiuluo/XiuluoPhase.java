@@ -20,6 +20,7 @@ public enum XiuluoPhase {
     WAIT_COMBAT,
     RETURN_HOME,
     NAVIGATE_BACK_TO_START,
+    WAIT_TEAM_READY,
     WAIT_TEAM_RETURN,
     ROUND_DONE,
     FAILED,

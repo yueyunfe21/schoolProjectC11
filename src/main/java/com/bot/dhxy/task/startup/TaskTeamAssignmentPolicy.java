@@ -1,7 +1,9 @@
 package com.bot.dhxy.task.startup;
 
+import com.bot.dhxy.config.TeamTaskProperties;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.team.TeamRoleStatus;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -9,12 +11,15 @@ import org.springframework.stereotype.Component;
  * Maps a requested task to the task a window should actually run after role detection.
  *
  * <p>The policy keeps member windows out of leader-only or leader/solo main-task flows by assigning
- * them to auto-battle support. Solo or unknown windows are allowed to run tasks that support solo
+ * them to the normal auto-battle task. Solo or unknown windows are allowed to run tasks that support solo
  * mode, but are blocked from strict leader-only tasks.</p>
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class TaskTeamAssignmentPolicy {
+
+    private final TeamTaskProperties teamTaskProperties;
 
     /**
      * Resolve the effective task for one detected role.
@@ -32,8 +37,10 @@ public class TaskTeamAssignmentPolicy {
             return safeTaskType;
         }
 
-        if (safeRole.isMember() && (isLeaderOrSoloMainTask(safeTaskType) || isLeaderOnlyTask(safeTaskType))) {
-            log.info("task team assignment: member window receives auto-battle instead of {}", safeTaskType);
+        if (safeRole.isMember()
+                && ((isFiveRingTask(safeTaskType) && teamTaskProperties.isFiveRingRequiresLeader())
+                || isLeaderOnlyTask(safeTaskType))) {
+            log.info("task team assignment: member window receives normal auto-battle instead of {}", safeTaskType);
             return TaskType.AUTO_BATTLE;
         }
 
@@ -53,16 +60,24 @@ public class TaskTeamAssignmentPolicy {
      */
     public boolean shouldDetectRoleBeforeStart(TaskType requestedTaskType) {
         TaskType safeTaskType = requestedTaskType == null ? TaskType.UNKNOWN : requestedTaskType;
-        return isLeaderOrSoloMainTask(safeTaskType) || isLeaderOnlyTask(safeTaskType);
+        /*
+         * Five Ring is normally a solo-capable task. Only run the live hover/Alt+T detector when the
+         * user explicitly enables the leader-only gate; otherwise a fragile role probe can prevent
+         * perfectly valid multi-window Five Ring runs from even starting.
+         */
+        return (isFiveRingTask(safeTaskType) && teamTaskProperties.isFiveRingRequiresLeader())
+                || isLeaderOnlyTask(safeTaskType);
     }
 
-    private boolean isLeaderOrSoloMainTask(TaskType taskType) {
-        return taskType == TaskType.WUHuan;
+    private boolean isFiveRingTask(TaskType taskType) {
+        return taskType == TaskType.WUHuan
+                || taskType == TaskType.WUHuan_V2;
     }
 
     private boolean isLeaderOnlyTask(TaskType taskType) {
         return taskType == TaskType.XIULUO
                 || taskType == TaskType.XIULUO_V2
+                || taskType == TaskType.WUBEI
                 || taskType == TaskType.DEBUG_XIULUO_MOCK_OBJECTIVE;
     }
 }

@@ -1,0 +1,415 @@
+package com.bot.dhxy.service;
+
+import com.bot.dhxy.config.BotProperties;
+import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.dialog.DialogResult;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.model.maintenance.SummonSkillCleanupRequest;
+import com.bot.dhxy.model.maintenance.SummonSkillCleanupResult;
+import com.bot.dhxy.model.maintenance.SummonSkillSlotStatus;
+import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
+import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
+import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * Thin scheduler for task maintenance that is shared by auto-battle and formal task flows.
+ *
+ * <p>This service owns priority, cooldown, and logging only. It deliberately delegates concrete UI
+ * work to the existing domain services: broadcast option dialogs go through {@link DialogService},
+ * and summon-skill cleanup goes through {@link SummonSkillService}. Callers still decide when a
+ * maintenance pass is safe for their task turn.</p>
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class TaskMaintenanceService {
+
+    private static final String DEFAULT_WINDOW_KEY = "default";
+    private static final long SUMMON_SKILL_NOT_DUE_LOG_INTERVAL_MS = 60_000L;
+
+    private final BotProperties botProperties;
+    private final GameContext gameContext;
+    private final DialogService dialogService;
+    private final SummonSkillService summonSkillService;
+    private final WindowTaskContextHolder windowTaskContextHolder;
+    private final Map<String, Long> lastSummonSkillCleanAtByWindow = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastSummonSkillNotDueLogAtByWindow = new ConcurrentHashMap<>();
+    private final Map<String, SummonSkillWindowState> summonSkillStateByWindow = new ConcurrentHashMap<>();
+    private final Map<String, Integer> activeTeamRoundByKey = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> summonSkillClaimsByTeamRound = new ConcurrentHashMap<>();
+
+    /**
+     * Reset summon-skill cooldown for a newly started task window.
+     *
+     * @param context current task execution context; null falls back to the bound window context.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void initializeForTaskStart(TaskExecutionContext context, String sourceTask) {
+        String windowKey = currentWindowKey(context);
+        if (botProperties.isSummonSkillCleanRunImmediatelyOnStart()) {
+            lastSummonSkillCleanAtByWindow.remove(windowKey);
+            log.info("{} maintenance init: summon skill can run immediately source={}",
+                    logPrefix(context), sourceTask);
+            return;
+        }
+        lastSummonSkillCleanAtByWindow.put(windowKey, System.currentTimeMillis());
+        log.info("{} maintenance init: summon skill cooldown starts now source={}",
+                logPrefix(context), sourceTask);
+    }
+
+    /**
+     * Register the current formal task round so follower windows can share the same maintenance slot.
+     *
+     * @param context current leader task context.
+     * @param teamMaintenanceKey stable team task key, usually the formal task code.
+     * @param round one-based round number.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void beginTeamMaintenanceRound(TaskExecutionContext context,
+                                          String teamMaintenanceKey,
+                                          int round,
+                                          String sourceTask) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        activeTeamRoundByKey.put(teamKey, round);
+        pruneOlderTeamRoundClaims(teamKey, round);
+        log.info("{} maintenance team round active: teamKey={} round={} source={}",
+                logPrefix(context), teamKey, round, sourceTask);
+    }
+
+    /**
+     * Run one maintenance pass in the requested priority order.
+     *
+     * @param context current task execution context. Used for stop/pause checkpoints and per-window
+     *                cooldown identity; may be null for legacy callers.
+     * @param request describes which maintenance capabilities are allowed at this task point.
+     * @return structured result. Non-success statuses are defer/retry hints, not task failures.
+     */
+    public TaskMaintenanceResult runOpportunisticMaintenance(TaskExecutionContext context,
+                                                             TaskMaintenanceRequest request) {
+        TaskMaintenanceRequest safeRequest = normalize(request);
+        checkpoint(context);
+
+        if (safeRequest.isHandleMaintenanceBroadcast()) {
+            TaskMaintenanceResult broadcastResult = handleMaintenanceBroadcast(context, safeRequest.getSourceTask());
+            if (broadcastResult.isHandled()
+                    || broadcastResult.getStatus() == TaskMaintenanceStatus.BROADCAST_FAILED
+                    || broadcastResult.getStatus() == TaskMaintenanceStatus.INTERRUPTED) {
+                return broadcastResult;
+            }
+        }
+
+        if (safeRequest.isCleanSummonSkill()) {
+            return maybeCleanSummonSkill(context, safeRequest);
+        }
+
+        return TaskMaintenanceResult.noAction("no maintenance action");
+    }
+
+    private TaskMaintenanceResult handleMaintenanceBroadcast(TaskExecutionContext context, String sourceTask) {
+        DialogResult dialogResult = dialogService.handleDialog(
+                DialogHandleRequest.handleMaintenanceBroadcastOption(sourceTask));
+        DialogResultStatus status = dialogResult.getStatus();
+        if (status == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
+            log.info("{} maintenance broadcast handled: source={} actionKey={}",
+                    logPrefix(context), sourceTask, dialogResult.getActionKey());
+            return TaskMaintenanceResult.broadcastHandled("maintenance broadcast handled");
+        }
+        if (status == DialogResultStatus.INTERRUPTED) {
+            log.info("{} maintenance broadcast interrupted: source={}", logPrefix(context), sourceTask);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.INTERRUPTED,
+                    "maintenance broadcast interrupted");
+        }
+        if (status == DialogResultStatus.FAILED) {
+            log.warn("{} maintenance broadcast scan failed: source={}", logPrefix(context), sourceTask);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.BROADCAST_FAILED,
+                    "maintenance broadcast scan failed");
+        }
+        return TaskMaintenanceResult.noAction("no maintenance broadcast");
+    }
+
+    private TaskMaintenanceResult maybeCleanSummonSkill(TaskExecutionContext context,
+                                                        TaskMaintenanceRequest request) {
+        String windowKey = currentWindowKey(context);
+        if (!botProperties.isSummonSkillCleanEnabled()) {
+            log.info("{} maintenance: summon skill disabled by config source={} windowKey={}",
+                    logPrefix(context), request.getSourceTask(), windowKey);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DISABLED,
+                    "summon skill maintenance disabled");
+        }
+        long intervalMs = botProperties.getSummonSkillCleanIntervalMs();
+        if (intervalMs <= 0) {
+            log.info("{} maintenance: summon skill interval disabled intervalMs={} source={} windowKey={}",
+                    logPrefix(context), intervalMs, request.getSourceTask(), windowKey);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DISABLED,
+                    "summon skill interval disabled");
+        }
+        if (request.isRequireFreeStateForSummonSkill()
+                && gameContext.getCurrentActionState() != GameContext.ActionState.FREE) {
+            log.info("{} maintenance: summon skill deferred by action state state={} source={} windowKey={}",
+                    logPrefix(context), gameContext.getCurrentActionState(), request.getSourceTask(), windowKey);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
+                    "summon skill deferred: action state is not free");
+        }
+
+        long now = System.currentTimeMillis();
+        Long lastCleanAt = lastSummonSkillCleanAtByWindow.get(windowKey);
+        if (lastCleanAt != null && now - lastCleanAt < intervalMs) {
+            logSummonSkillNotDue(context, request, windowKey, now, lastCleanAt, intervalMs);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_NOT_DUE,
+                    "summon skill not due");
+        }
+        log.info("{} maintenance: summon skill due source={} windowKey={} lastCleanAt={} elapsedMs={} intervalMs={}",
+                logPrefix(context), request.getSourceTask(), windowKey, lastCleanAt,
+                lastCleanAt == null ? -1 : now - lastCleanAt, intervalMs);
+        String teamRoundKey = resolveTeamRoundKey(context, request);
+        if (request.isOneSummonSkillPerTeamRound()) {
+            if (teamRoundKey == null) {
+                log.info("{} maintenance: summon skill deferred, no active team round source={} windowKey={} teamKey={}",
+                        logPrefix(context), request.getSourceTask(), windowKey,
+                        normalizeTeamKey(request.getTeamMaintenanceKey(), context));
+                return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
+                        "summon skill deferred: no active team round");
+            }
+            Set<String> claims = summonSkillClaimsByTeamRound.computeIfAbsent(
+                    teamRoundKey, ignored -> ConcurrentHashMap.newKeySet());
+            int maxClaims = Math.max(1, request.getMaxSummonSkillCleanersPerTeamRound());
+            synchronized (claims) {
+                if (claims.contains(windowKey)) {
+                    log.info("{} maintenance: summon skill round already claimed by same window teamRound={} windowKey={} source={}",
+                            logPrefix(context), teamRoundKey, windowKey, request.getSourceTask());
+                    return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_ROUND_ALREADY_CLAIMED,
+                            "summon skill round already claimed by " + windowKey);
+                }
+                if (claims.size() >= maxClaims) {
+                    log.info("{} maintenance: summon skill round claim limit reached teamRound={} claims={} maxClaims={} windowKey={} source={}",
+                            logPrefix(context), teamRoundKey, claims, maxClaims, windowKey, request.getSourceTask());
+                    return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_ROUND_ALREADY_CLAIMED,
+                            "summon skill round claim limit reached: " + claims);
+                }
+                claims.add(windowKey);
+            }
+            log.info("{} maintenance: summon skill round claimed teamRound={} windowKey={} claimCount={} maxClaims={} source={}",
+                    logPrefix(context), teamRoundKey, windowKey, claims.size(), maxClaims, request.getSourceTask());
+        }
+
+        checkpoint(context);
+        GameContext.ActionState previousState = gameContext.getCurrentActionState();
+        gameContext.setCurrentActionState(GameContext.ActionState.INTERACTING);
+        SummonSkillWindowState windowState = summonSkillStateByWindow.computeIfAbsent(
+                windowKey, key -> new SummonSkillWindowState());
+        SummonSkillCleanupRequest cleanupRequest = buildSummonSkillCleanupRequest(windowState, now);
+        SummonSkillCleanupResult cleanupResult = SummonSkillCleanupResult.failed("summon skill not attempted");
+        long startedAt = System.currentTimeMillis();
+        try {
+            log.info("{} maintenance: start summon skill clean source={} windowKey={} previousState={} teamRound={} cachedSkillCount={} cachedStartSlot={} skipUltimateCorner={}",
+                    logPrefix(context), request.getSourceTask(), windowKey, previousState, teamRoundKey,
+                    windowState.skillCount, windowState.nextStartIndex == null ? null : windowState.nextStartIndex + 1,
+                    cleanupRequest.isSkipUltimateCornerCheck());
+            cleanupResult = summonSkillService.cleanSummonSkillsOnce(cleanupRequest);
+            log.info("{} maintenance: summon skill clean finished success={} source={} windowKey={} elapsedMs={} skillCount={} nextStartSlot={} ultimateClicked={} ultimateSucceeded={} message={}",
+                    logPrefix(context), cleanupResult.isSuccess(), request.getSourceTask(), windowKey,
+                    System.currentTimeMillis() - startedAt, cleanupResult.getSkillCount(),
+                    cleanupResult.getNextStartIndex() + 1, cleanupResult.isUltimateGenerateClicked(),
+                    cleanupResult.isUltimateGenerateSucceeded(), cleanupResult.getMessage());
+        } finally {
+            if (cleanupResult.isSuccess()) {
+                updateSummonSkillWindowState(windowKey, windowState, cleanupResult);
+                lastSummonSkillCleanAtByWindow.put(windowKey, System.currentTimeMillis());
+                lastSummonSkillNotDueLogAtByWindow.remove(windowKey);
+            } else if (cleanupResult.isUltimateGenerateSucceeded()) {
+                windowState.lastUltimateGenerateSuccessAt = System.currentTimeMillis();
+                log.info("{} maintenance: summon skill ultimate generation succeeded before cleanup failure, cooldown recorded windowKey={} lastSuccessAt={}",
+                        logPrefix(context), windowKey, windowState.lastUltimateGenerateSuccessAt);
+            }
+            if (gameContext.getCurrentActionState() == GameContext.ActionState.INTERACTING) {
+                gameContext.setCurrentActionState(previousState);
+            }
+        }
+
+        if (cleanupResult.isSuccess()) {
+            return TaskMaintenanceResult.summonSkillCleaned("summon skill cleaned");
+        }
+        if (!hasSummonSkillStateChange(cleanupResult)) {
+            releaseSummonSkillRoundClaimIfOwned(teamRoundKey, windowKey, cleanupResult);
+        }
+        return TaskMaintenanceResult.builder()
+                .status(TaskMaintenanceStatus.SUMMON_SKILL_FAILED_RETRY_LATER)
+                .summonSkillAttempted(true)
+                .message("summon skill failed; retry later")
+                .build();
+    }
+
+    private void logSummonSkillNotDue(TaskExecutionContext context,
+                                      TaskMaintenanceRequest request,
+                                      String windowKey,
+                                      long now,
+                                      long lastCleanAt,
+                                      long intervalMs) {
+        Long lastLogAt = lastSummonSkillNotDueLogAtByWindow.get(windowKey);
+        if (lastLogAt != null && now - lastLogAt < SUMMON_SKILL_NOT_DUE_LOG_INTERVAL_MS) {
+            return;
+        }
+        lastSummonSkillNotDueLogAtByWindow.put(windowKey, now);
+        long elapsedMs = now - lastCleanAt;
+        long remainingMs = Math.max(0, intervalMs - elapsedMs);
+        log.info("{} maintenance: summon skill not due source={} windowKey={} elapsedMs={} remainingMs={} intervalMs={} lastCleanAt={}",
+                logPrefix(context), request.getSourceTask(), windowKey, elapsedMs, remainingMs, intervalMs, lastCleanAt);
+    }
+
+    private SummonSkillCleanupRequest buildSummonSkillCleanupRequest(SummonSkillWindowState state, long now) {
+        long ultimateCooldownMs = botProperties.getSummonSkillUltimateGenerateCooldownMs();
+        boolean skipUltimateCorner = ultimateCooldownMs > 0
+                && state.lastUltimateGenerateSuccessAt > 0
+                && now - state.lastUltimateGenerateSuccessAt < ultimateCooldownMs;
+        if (skipUltimateCorner) {
+            log.info("maintenance: summon skill ultimate corner cooldown active elapsedMs={} remainingMs={}",
+                    now - state.lastUltimateGenerateSuccessAt,
+                    ultimateCooldownMs - (now - state.lastUltimateGenerateSuccessAt));
+        }
+        return SummonSkillCleanupRequest.builder()
+                .expectedSkillCount(state.skillCount)
+                .startSlotIndex(state.nextStartIndex)
+                .skipUltimateCornerCheck(skipUltimateCorner)
+                .build();
+    }
+
+    private void updateSummonSkillWindowState(String windowKey,
+                                              SummonSkillWindowState state,
+                                              SummonSkillCleanupResult result) {
+        if (state.skillCount == null || state.skillCount != result.getSkillCount()) {
+            state.slotStatusByIndex.clear();
+            state.lastUltimateGenerateSuccessAt = 0L;
+        }
+        state.skillCount = result.getSkillCount();
+        state.nextStartIndex = result.getNextStartIndex();
+        state.slotStatusByIndex.putAll(result.getObservedStatusesByIndex());
+        if (result.isUltimateGenerateSucceeded()) {
+            state.lastUltimateGenerateSuccessAt = System.currentTimeMillis();
+        }
+        log.info("maintenance: summon skill window state updated windowKey={} skillCount={} nextStartSlot={} observedSlots={} ultimateLastSuccessAt={}",
+                windowKey, state.skillCount, state.nextStartIndex == null ? null : state.nextStartIndex + 1,
+                state.slotStatusByIndex, state.lastUltimateGenerateSuccessAt);
+    }
+
+    private void releaseSummonSkillRoundClaimIfOwned(String teamRoundKey,
+                                                     String windowKey,
+                                                     SummonSkillCleanupResult cleanupResult) {
+        if (teamRoundKey == null) {
+            return;
+        }
+        Set<String> claims = summonSkillClaimsByTeamRound.get(teamRoundKey);
+        boolean released = false;
+        if (claims != null) {
+            synchronized (claims) {
+                released = claims.remove(windowKey);
+                if (claims.isEmpty()) {
+                    summonSkillClaimsByTeamRound.remove(teamRoundKey, claims);
+                }
+            }
+        }
+        if (released) {
+            log.info("maintenance: summon skill round claim released after failed pass teamRound={} windowKey={} ultimateSucceeded={} message={}",
+                    teamRoundKey, windowKey, cleanupResult.isUltimateGenerateSucceeded(), cleanupResult.getMessage());
+        }
+    }
+
+    private boolean hasSummonSkillStateChange(SummonSkillCleanupResult cleanupResult) {
+        return cleanupResult.isUltimateGenerateClicked()
+                || cleanupResult.isUltimateGenerateSucceeded()
+                || cleanupResult.getDeletedCount() > 0;
+    }
+
+    private TaskMaintenanceRequest normalize(TaskMaintenanceRequest request) {
+        if (request == null) {
+            return TaskMaintenanceRequest.builder()
+                    .sourceTask("unknown")
+                    .build();
+        }
+        if (request.getSourceTask() == null || request.getSourceTask().isBlank()) {
+            return request.toBuilder()
+                    .sourceTask("unknown")
+                    .build();
+        }
+        return request;
+    }
+
+    private void checkpoint(TaskExecutionContext context) {
+        if (context != null) {
+            context.throwIfStopRequested();
+        }
+    }
+
+    private String currentWindowKey(TaskExecutionContext context) {
+        if (context != null && context.hasWindow()) {
+            return context.getWindowId();
+        }
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getWindowId)
+                .filter(id -> !id.isBlank())
+                .orElse(DEFAULT_WINDOW_KEY);
+    }
+
+    private String logPrefix(TaskExecutionContext context) {
+        return context == null ? "[window=unknown]" : context.getLogPrefix();
+    }
+
+    private String resolveTeamRoundKey(TaskExecutionContext context, TaskMaintenanceRequest request) {
+        if (!request.isOneSummonSkillPerTeamRound()) {
+            return null;
+        }
+        String teamKey = normalizeTeamKey(request.getTeamMaintenanceKey(), context);
+        Integer round = request.getTeamRound();
+        if (round == null) {
+            round = activeTeamRoundByKey.get(teamKey);
+        }
+        if (round == null || round <= 0) {
+            return null;
+        }
+        return teamKey + "#" + round;
+    }
+
+    private String normalizeTeamKey(String explicitKey, TaskExecutionContext context) {
+        if (explicitKey != null && !explicitKey.isBlank()) {
+            return explicitKey;
+        }
+        if (context != null && context.getRequestedTaskCode() != null && !context.getRequestedTaskCode().isBlank()) {
+            return context.getRequestedTaskCode();
+        }
+        if (context != null && context.getTaskCode() != null && !context.getTaskCode().isBlank()) {
+            return context.getTaskCode();
+        }
+        return DEFAULT_WINDOW_KEY;
+    }
+
+    private void pruneOlderTeamRoundClaims(String teamKey, int activeRound) {
+        String prefix = teamKey + "#";
+        summonSkillClaimsByTeamRound.keySet().removeIf(key -> {
+            if (!key.startsWith(prefix)) {
+                return false;
+            }
+            try {
+                return Integer.parseInt(key.substring(prefix.length())) < activeRound;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        });
+    }
+
+    private static class SummonSkillWindowState {
+        private Integer skillCount;
+        private Integer nextStartIndex;
+        private long lastUltimateGenerateSuccessAt;
+        private final Map<Integer, SummonSkillSlotStatus> slotStatusByIndex = new ConcurrentHashMap<>();
+    }
+}

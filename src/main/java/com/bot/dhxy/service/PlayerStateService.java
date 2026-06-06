@@ -199,6 +199,61 @@ public class PlayerStateService {
     }
 
     /**
+     * Run a task-start supply check regardless of the previous post-combat throttle state.
+     *
+     * <p>Startup preparation is a different safety boundary from post-combat idle checks: a window
+     * may have been sitting with low MP before the task starts, so the first task phase must inspect
+     * HP/MP once even if the last idle/combat pass already consumed the normal between-battle quota.</p>
+     *
+     * @param taskContext optional task stop token for the current window task.
+     */
+    public void performStartupFirstAidCheck(TaskExecutionContext taskContext) {
+        checkpoint(taskContext);
+        PlayerRuntimeState state = state();
+        state.checksDoneThisRound = 0;
+        state.lastCombatExitTime = 0;
+        log.info("🩺 启动急救检查：重置本窗口急救计数，准备检查人物/宝宝血法");
+        performFirstAidCheck(true, taskContext, false);
+    }
+
+    /**
+     * Run one post-combat supply pass only when a no-focus bar probe says HP/MP is low.
+     *
+     * <p>This is the quiet path for member windows during leader navigation: healthy windows should
+     * not grab focus merely to confirm that no supply is needed. The round counter is still consumed
+     * after a healthy no-focus result so later idle loops do not repeat the same post-combat check.</p>
+     *
+     * @param taskContext optional task stop token; null is allowed for legacy callers.
+     */
+    public void performFirstAidCheckNowIfNeeded(TaskExecutionContext taskContext) {
+        performFirstAidCheck(true, taskContext, true);
+    }
+
+    /**
+     * Run the quiet HP/MP probe and consume the post-combat check only when the window is healthy.
+     *
+     * <p>Follower windows call this immediately after a combat-exit signal. The probe uses a
+     * no-focus HWND screenshot only. A healthy result is enough to avoid joining the task-turn
+     * queue; a low or unknown result still lets the caller defer real recovery until it can safely
+     * own physical input.</p>
+     *
+     * @param taskContext optional task stop token; null is allowed for legacy callers.
+     * @param source short diagnostic label for logs.
+     * @return precise no-focus probe outcome so callers can decide whether to defer real input.
+     */
+    public FirstAidNoFocusProbeResult probeAndConsumeHealthyFirstAidNoFocus(TaskExecutionContext taskContext,
+                                                                           String source) {
+        FirstAidNoFocusProbeResult result = probeFirstAidSupplyNoFocus(taskContext);
+        if (result == FirstAidNoFocusProbeResult.HEALTHY) {
+            PlayerRuntimeState state = state();
+            state.checksDoneThisRound++;
+            log.info("🩺 战后体检 no-focus 预检健康，跳过 pending 补给：source={} 当前空闲期已查次数: {}/{}",
+                    safeReason(source), state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
+        }
+        return result;
+    }
+
+    /**
      * Check whether player/pet HP or MP appears below configured thresholds without focusing.
      *
      * @param taskContext optional task stop token; null is allowed for legacy callers.
@@ -206,22 +261,34 @@ public class PlayerStateService {
      * needed, the check has already run this round, or the screenshot is unavailable.
      */
     public boolean needsFirstAidSupplyNoFocus(TaskExecutionContext taskContext) {
+        return probeFirstAidSupplyNoFocus(taskContext) == FirstAidNoFocusProbeResult.SUPPLY_NEEDED;
+    }
+
+    /**
+     * Check whether player/pet HP or MP appears below configured thresholds without focusing.
+     *
+     * @param taskContext optional task stop token; null is allowed for legacy callers.
+     * @return SUPPLY_NEEDED only when a visible enabled bar is below threshold; HEALTHY when the
+     * no-focus screenshot is readable and all enabled bars pass; UNKNOWN when the safe screenshot
+     * cannot be read.
+     */
+    public FirstAidNoFocusProbeResult probeFirstAidSupplyNoFocus(TaskExecutionContext taskContext) {
         checkpoint(taskContext);
         PlayerRuntimeState state = state();
         if (state.checksDoneThisRound >= MAX_CHECKS_BETWEEN_BATTLES) {
             log.info("first-aid no-focus precheck skipped: checks already done {}/{}",
                     state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
-            return false;
+            return FirstAidNoFocusProbeResult.ALREADY_DONE;
         }
         if (tracker.getWindowBaseX() == -1) {
             log.warn("first-aid no-focus precheck skipped: window base unavailable");
-            return false;
+            return FirstAidNoFocusProbeResult.UNKNOWN;
         }
 
         BufferedImage bars = captureBarsSnapshotNoFocus();
         if (bars == null) {
             log.warn("first-aid no-focus precheck failed: bars snapshot unavailable");
-            return false;
+            return FirstAidNoFocusProbeResult.UNKNOWN;
         }
         try {
             boolean needed = isSupplyNeededFromSnapshotIfEnabled(bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
@@ -233,7 +300,46 @@ public class PlayerStateService {
                     || isSupplyNeededFromSnapshotIfEnabled(bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
                     BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold());
             log.info("first-aid no-focus precheck result: needed={}", needed);
-            return needed;
+            return needed ? FirstAidNoFocusProbeResult.SUPPLY_NEEDED : FirstAidNoFocusProbeResult.HEALTHY;
+        } finally {
+            bars.flush();
+        }
+    }
+
+    /**
+     * Check whether the top-right player/pet HP/MP bars are still visible without sending input.
+     *
+     * <p>This is a lightweight state probe for Alt+A direct-combat mode detection. It only captures
+     * the small status-bar strip and counts red/blue bar pixels; it does not move the mouse, open UI,
+     * heal, or run OCR. In direct-combat mode the normal bars disappear together with other UI, so a
+     * missing bar strip is supporting evidence that the mode is active.</p>
+     *
+     * @param reason log label describing the caller.
+     * @return true when enough red/blue status-bar pixels are visible in the normal bar area.
+     */
+    public boolean areStatusBarsVisibleNoFocus(String reason) {
+        BufferedImage bars = captureBarsSnapshotNoFocus();
+        if (bars == null) {
+            log.warn("[player-bars] visibility probe capture failed: reason={}", safeReason(reason));
+            return false;
+        }
+        try {
+            int redPixels = 0;
+            int bluePixels = 0;
+            for (int y = 0; y < bars.getHeight(); y++) {
+                for (int x = 0; x < bars.getWidth(); x++) {
+                    int rgb = bars.getRGB(x, y);
+                    if (isHealthyColor(rgb, true)) {
+                        redPixels++;
+                    } else if (isHealthyColor(rgb, false)) {
+                        bluePixels++;
+                    }
+                }
+            }
+            boolean visible = redPixels + bluePixels >= 16 && (redPixels >= 4 || bluePixels >= 4);
+            log.info("[player-bars] visibility probe: reason={} visible={} redPixels={} bluePixels={} size={}x{}",
+                    safeReason(reason), visible, redPixels, bluePixels, bars.getWidth(), bars.getHeight());
+            return visible;
         } finally {
             bars.flush();
         }
@@ -244,6 +350,12 @@ public class PlayerStateService {
     }
 
     private void performFirstAidCheck(boolean ignoreTimeInterval, TaskExecutionContext taskContext) {
+        performFirstAidCheck(ignoreTimeInterval, taskContext, false);
+    }
+
+    private void performFirstAidCheck(boolean ignoreTimeInterval,
+                                      TaskExecutionContext taskContext,
+                                      boolean requireNoFocusNeed) {
         checkpoint(taskContext);
         PlayerRuntimeState state = state();
         if (state.checksDoneThisRound >= MAX_CHECKS_BETWEEN_BATTLES) {
@@ -253,6 +365,13 @@ public class PlayerStateService {
         if (tracker.getWindowBaseX() == -1) return;
 
         if (!ignoreTimeInterval && System.currentTimeMillis() - state.lastCombatExitTime < HEAL_TIME_INTERVAL) {
+            return;
+        }
+
+        if (requireNoFocusNeed && !needsFirstAidSupplyNoFocus(taskContext)) {
+            state.checksDoneThisRound++;
+            log.info("🩺 战后体检 no-focus 预检健康，跳过抢窗口补给。当前空闲期已查次数: {}/{}",
+                    state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
             return;
         }
 
@@ -333,8 +452,8 @@ public class PlayerStateService {
         }
     }
 
-    public void ensureSheYaoXiangActive() {
-        ensureSheYaoXiangActive(null);
+    public boolean ensureSheYaoXiangActive() {
+        return ensureSheYaoXiangActive(null);
     }
 
     /**
@@ -343,7 +462,25 @@ public class PlayerStateService {
      * @param taskContext optional stop token. The method may open the bag and click an item, so it
      * should only be called when the current task is allowed to use physical input.
      */
-    public void ensureSheYaoXiangActive(TaskExecutionContext taskContext) {
+    public boolean ensureSheYaoXiangActive(TaskExecutionContext taskContext) {
+        return ensureSheYaoXiangActive(taskContext,
+                (targetItemTemplate, context) -> bagService.findAndUseItem(
+                        BagService.MAIN_BAG, targetItemTemplate, null, context));
+    }
+
+    /**
+     * Ensure the incense buff while the caller already owns an opened main-bag session.
+     *
+     * @param mainBag opened main-bag session from {@link BagService#withMainBagOpen}.
+     * @param taskContext optional stop token.
+     * @return true only when this call actually used a 摄妖香 item.
+     */
+    public boolean ensureSheYaoXiangActiveInOpenMainBag(BagService.MainBagSession mainBag,
+                                                        TaskExecutionContext taskContext) {
+        return ensureSheYaoXiangActive(taskContext, (targetItemTemplate, context) -> mainBag.useItem(targetItemTemplate, null));
+    }
+
+    private boolean ensureSheYaoXiangActive(TaskExecutionContext taskContext, IncenseItemUser itemUser) {
         long latencyStart = LatencyMetrics.start();
         try {
             checkpoint(taskContext);
@@ -354,7 +491,7 @@ public class PlayerStateService {
                 long refreshAfterMinutes = INCENSE_REFRESH_AFTER_MS / 60000;
                 log.info("🕯️ 摄妖香由本程序补充后仅过去 {} 分钟，未达到 {} 分钟主动补香线，跳过包裹检查。",
                         elapsedMinutes, refreshAfterMinutes);
-                return;
+                return false;
             }
 
             if (state.lastIncenseUsedTime > 0) {
@@ -367,7 +504,7 @@ public class PlayerStateService {
             if (now < state.nextIncenseRetryTime) {
                 long remainingSeconds = Math.max(1, (state.nextIncenseRetryTime - now + 999) / 1000);
                 log.warn("⚠️ 摄妖香上次补充失败，仍在重试冷却中，剩余 {} 秒，跳过包裹检查。", remainingSeconds);
-                return;
+                return false;
             }
 
             int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
@@ -386,7 +523,7 @@ public class PlayerStateService {
                 state.nextIncenseRetryTime = 0;
                 log.info("sheyaoxiang status matched with remainingHours={}; calibrate watch and skip refill. point=({}, {})",
                         remainingHours, buffIcon.x, buffIcon.y);
-                return;
+                return false;
             }
 
             if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
@@ -399,8 +536,7 @@ public class PlayerStateService {
             } else {
                 log.warn("⚠️ 未发现摄妖香状态，准备打开包裹补充...");
             }
-            boolean used = bagService.findAndUseItem(
-                    BagService.MAIN_BAG, "bag/sheyaoxiang_item.png", null, taskContext);
+            boolean used = itemUser.use("bag/sheyaoxiang_item.png", taskContext);
             checkpoint(taskContext);
 
             if (used) {
@@ -408,9 +544,11 @@ public class PlayerStateService {
                 state.lastIncenseUsedTime = System.currentTimeMillis();
                 state.nextIncenseRetryTime = 0;
                 TaskSleep.sleep(1000);
+                return true;
             } else {
                 log.error("❌ 包裹内未找到摄妖香，请及时购买补充。1 分钟后才会再试。 ");
                 state.nextIncenseRetryTime = System.currentTimeMillis() + 60000;
+                return false;
             }
         } finally {
             LatencyMetrics.info(log, "player.sheyaoxiang.ensure", latencyStart,
@@ -418,8 +556,8 @@ public class PlayerStateService {
         }
     }
 
-    public void ensureSheYaoXiangActiveForLeaderTask(String source) {
-        ensureSheYaoXiangActiveForLeaderTask(source, null);
+    public boolean ensureSheYaoXiangActiveForLeaderTask(String source) {
+        return ensureSheYaoXiangActiveForLeaderTask(source, null);
     }
 
     /**
@@ -428,14 +566,14 @@ public class PlayerStateService {
      * @param source diagnostic caller name.
      * @param taskContext optional stop token.
      */
-    public void ensureSheYaoXiangActiveForLeaderTask(String source, TaskExecutionContext taskContext) {
+    public boolean ensureSheYaoXiangActiveForLeaderTask(String source, TaskExecutionContext taskContext) {
         checkpoint(taskContext);
         String caller = source == null || source.isBlank() ? "unknown" : source;
         var currentWindow = windowTaskContextHolder.rawCurrent();
         if (currentWindow.isPresent() && currentWindow.get().isMember()) {
             log.info("摄妖香检查跳过：source={} windowId={} role={}，队员窗口不负责摄妖香",
                     caller, currentWindow.get().getWindowId(), currentWindow.get().getRole().getDisplayName());
-            return;
+            return false;
         }
         if (currentWindow.isPresent()) {
             log.info("摄妖香检查允许：source={} windowId={} role={}",
@@ -443,7 +581,7 @@ public class PlayerStateService {
         } else {
             log.info("摄妖香检查允许：source={} 无窗口上下文，按单窗口/队长任务兼容处理", caller);
         }
-        ensureSheYaoXiangActive(taskContext);
+        return ensureSheYaoXiangActive(taskContext);
     }
 
     public boolean checkAndHeal(String name, int relX, int relY, boolean expectRed) {
@@ -838,6 +976,15 @@ public class PlayerStateService {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
     }
 
+    @FunctionalInterface
+    private interface IncenseItemUser {
+        boolean use(String targetItemTemplate, TaskExecutionContext context);
+    }
+
+    private String safeReason(String reason) {
+        return reason == null || reason.isBlank() ? "-" : reason;
+    }
+
     private String safeLatencyValue(String value) {
         return value == null || value.isBlank() ? "-" : value;
     }
@@ -876,5 +1023,12 @@ public class PlayerStateService {
         private long nextIncenseRetryTime = 0;
         private int checksDoneThisRound = 0;
         private long lastCombatExitTime = 0;
+    }
+
+    public enum FirstAidNoFocusProbeResult {
+        SUPPLY_NEEDED,
+        HEALTHY,
+        ALREADY_DONE,
+        UNKNOWN
     }
 }

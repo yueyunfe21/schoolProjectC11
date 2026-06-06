@@ -1,7 +1,10 @@
 package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
@@ -14,6 +17,7 @@ import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -45,6 +49,10 @@ public class MultiWindowTaskManager {
     private final TeamRoleDetectionService teamRoleDetectionService;
     private final TaskTeamAssignmentPolicy taskTeamAssignmentPolicy;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final AutomationMetricsService automationMetricsService;
+    private final AutoCombatService autoCombatService;
+    private final MiniMapCoordinateReader miniMapCoordinateReader;
+    private final DialogService dialogService;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     /**
@@ -60,6 +68,10 @@ public class MultiWindowTaskManager {
      * @param teamRoleDetectionService live team-role detector.
      * @param taskTeamAssignmentPolicy role-based task reassignment policy.
      * @param bindingRefreshService native binding geometry refresh service.
+     * @param automationMetricsService local business metrics sink for runner lifecycle events.
+     * @param autoCombatService shared combat guard used by window runners.
+     * @param miniMapCoordinateReader lightweight mini-map location reader used by runner watchers.
+     * @param dialogService dialog detector used by runner watchers for prepare-only matching.
      */
     public MultiWindowTaskManager(TaskFactory taskFactory,
                                   WindowRuntimeContextFactory windowRuntimeContextFactory,
@@ -70,7 +82,11 @@ public class MultiWindowTaskManager {
                                   InputSequences inputSequences,
                                   TeamRoleDetectionService teamRoleDetectionService,
                                   TaskTeamAssignmentPolicy taskTeamAssignmentPolicy,
-                                  WindowNativeBindingRefreshService bindingRefreshService) {
+                                  WindowNativeBindingRefreshService bindingRefreshService,
+                                  AutomationMetricsService automationMetricsService,
+                                  AutoCombatService autoCombatService,
+                                  MiniMapCoordinateReader miniMapCoordinateReader,
+                                  DialogService dialogService) {
         this.taskFactory = taskFactory;
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
         this.windowCapacityPolicy = windowCapacityPolicy;
@@ -81,6 +97,10 @@ public class MultiWindowTaskManager {
         this.teamRoleDetectionService = teamRoleDetectionService;
         this.taskTeamAssignmentPolicy = taskTeamAssignmentPolicy;
         this.bindingRefreshService = bindingRefreshService;
+        this.automationMetricsService = automationMetricsService;
+        this.autoCombatService = autoCombatService;
+        this.miniMapCoordinateReader = miniMapCoordinateReader;
+        this.dialogService = dialogService;
     }
 
     /**
@@ -104,7 +124,8 @@ public class MultiWindowTaskManager {
             }
             WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
-                    taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy);
+                    taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
+                    automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService);
         });
     }
 
@@ -128,7 +149,8 @@ public class MultiWindowTaskManager {
         }
         return runnersByWindowId.computeIfAbsent(windowId,
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
-                        taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy));
+                        taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
+                        automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService));
     }
 
     /**
@@ -305,19 +327,27 @@ public class MultiWindowTaskManager {
 
     /**
      * Stop one registered window's current task queue.
+     *
+     * @return true when a runner existed and had a live/terminal task state to stop or clear.
      */
-    public void stop(String windowId) {
+    public boolean stop(String windowId) {
         WindowTaskRunner runner = runnersByWindowId.get(normalizeWindowId(windowId));
-        if (runner != null) {
-            runner.stopCurrentTask();
-        }
+        return runner != null && runner.stopCurrentTask();
     }
 
     /**
      * Stop all registered windows.
+     *
+     * @return number of runners that accepted a stop request.
      */
-    public void stopAll() {
-        runnersByWindowId.values().forEach(WindowTaskRunner::stopCurrentTask);
+    public int stopAll() {
+        int accepted = 0;
+        for (WindowTaskRunner runner : runnersByWindowId.values()) {
+            if (runner.stopCurrentTask()) {
+                accepted++;
+            }
+        }
+        return accepted;
     }
 
     /**

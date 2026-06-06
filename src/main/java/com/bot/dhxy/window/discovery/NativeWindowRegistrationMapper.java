@@ -28,9 +28,10 @@ public class NativeWindowRegistrationMapper {
             if (window == null) {
                 continue;
             }
+            WindowRole role = roleForIndependentTask(safeTaskType);
             requests.add(WindowRegistrationRequest.of(
                     window.toWindowId(),
-                    WindowRole.UNKNOWN,
+                    role,
                     window.toDisplayName(),
                     safeTaskType,
                     toBinding(window)
@@ -93,6 +94,17 @@ public class NativeWindowRegistrationMapper {
 
     private TaskType normalizeTask(TaskType taskType) {
         return taskType == null ? TaskType.UNKNOWN : taskType;
+    }
+
+    private WindowRole roleForIndependentTask(TaskType taskType) {
+        if (taskType == TaskType.AUTO_BATTLE) {
+            /*
+             * 用户显式选择“自动战斗”时，含义就是这些窗口按队员挂机窗口处理。
+             * 不再等待队伍身份探测，否则 UNKNOWN 会被自动战斗前置判断跳过。
+             */
+            return WindowRole.MEMBER;
+        }
+        return WindowRole.UNKNOWN;
     }
 
     private TaskType normalizeLeaderTask(TaskType taskType) {

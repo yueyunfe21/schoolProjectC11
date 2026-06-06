@@ -70,6 +70,10 @@ public class BotProperties {
     private boolean summonSkillCleanEnabled = true;
     private long summonSkillCleanIntervalMs = 20 * 60 * 1000L;
     private boolean summonSkillCleanRunImmediatelyOnStart = false;
+    private long summonSkillUltimateGenerateCooldownMs = 4 * 60 * 60 * 1000L;
+    private long xiuluoHealPetMaintenanceIntervalMs = 30 * 60 * 1000L;
+    private long xiuluoRepairEquipmentMaintenanceIntervalMs = 55 * 60 * 1000L;
+    private boolean xiuluoMaintenanceRunImmediatelyOnStart = false;
 
     /**
      * Development switch for the slow pre-task UI preparation chain.

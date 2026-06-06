@@ -62,7 +62,7 @@ public class FiveRingTask extends BaseTaskTemplate {
     private static final String TARGET_NPC_NAME = "云游大师";
     private static final int NPC_COOR_X = 87;
     private static final int NPC_COOR_Y = 174;
-    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/wuhuan_accept_first_option.png";
+    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_accept_first_option.png";
 
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 

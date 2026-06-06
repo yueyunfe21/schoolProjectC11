@@ -1,15 +1,24 @@
 package com.bot.dhxy.window.runtime;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.dialog.DialogPreparationRequest;
+import com.bot.dhxy.model.dialog.DialogPreparationPhase;
+import com.bot.dhxy.model.dialog.DialogPreparationStatus;
+import com.bot.dhxy.model.dialog.PreparedDialogAction;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingSnapshot;
+import com.bot.dhxy.window.model.WindowPathingState;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 单个游戏窗口的运行上下文。
@@ -38,6 +47,12 @@ public class WindowRuntimeContext {
     private volatile TaskRunResult lastQueueResult;
     private volatile String lastQueueMessage;
     private volatile WindowTaskFailurePolicy lastQueueFailurePolicy;
+    private final AtomicReference<WindowPathingSnapshot> pathingSnapshot =
+            new AtomicReference<>(WindowPathingSnapshot.idle());
+    private final AtomicReference<DialogPreparationRequest> dialogPreparationRequest = new AtomicReference<>();
+    private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
+    private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
+            new AtomicReference<>(DialogPreparationStatus.none());
 
     public WindowRuntimeContext(String windowId, GameContext gameContext) {
         String normalizedWindowId = normalizeWindowId(windowId);
@@ -84,7 +99,11 @@ public class WindowRuntimeContext {
     public WindowNativeBinding getNativeBinding() { return nativeBinding; }
 
     public void setNativeBinding(WindowNativeBinding nativeBinding) {
-        this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
+        WindowNativeBinding next = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
+        if (!sameNativeBinding(this.nativeBinding, next)) {
+            clearDialogPreparationRequest("native binding changed");
+        }
+        this.nativeBinding = next;
     }
 
     public boolean hasNativeBinding() {
@@ -110,6 +129,144 @@ public class WindowRuntimeContext {
     public String getLastQueueMessage() { return lastQueueMessage; }
 
     public WindowTaskFailurePolicy getLastQueueFailurePolicy() { return lastQueueFailurePolicy; }
+
+    public WindowPathingSnapshot getPathingSnapshot() { return pathingSnapshot.get(); }
+
+    public DialogPreparationRequest getDialogPreparationRequest() { return dialogPreparationRequest.get(); }
+
+    public PreparedDialogAction getPreparedDialogAction() { return preparedDialogAction.get(); }
+
+    public DialogPreparationStatus getDialogPreparationStatus() { return dialogPreparationStatus.get(); }
+
+    public void updateDialogPreparationRequest(DialogPreparationRequest request) {
+        dialogPreparationRequest.set(request);
+        if (request == null) {
+            preparedDialogAction.set(null);
+            dialogPreparationStatus.set(DialogPreparationStatus.none());
+            return;
+        }
+        dialogPreparationStatus.set(DialogPreparationStatus.builder()
+                .phase(DialogPreparationPhase.REQUESTED)
+                .operation(request.getOperation())
+                .targetKeyword(request.getTargetKeyword())
+                .source(request.getSource())
+                .requestCreatedAtMs(request.getCreatedAtMs())
+                .build());
+    }
+
+    public void clearDialogPreparationRequest(String reason) {
+        dialogPreparationRequest.set(null);
+        preparedDialogAction.set(null);
+        dialogPreparationStatus.set(DialogPreparationStatus.none());
+    }
+
+    public void markDialogPreparationStarted(DialogPreparationRequest request) {
+        if (request == null || dialogPreparationRequest.get() != request) {
+            return;
+        }
+        dialogPreparationStatus.set(DialogPreparationStatus.builder()
+                .phase(DialogPreparationPhase.PREPARING)
+                .operation(request.getOperation())
+                .targetKeyword(request.getTargetKeyword())
+                .source(request.getSource())
+                .requestCreatedAtMs(request.getCreatedAtMs())
+                .preparingStartedAtMs(System.currentTimeMillis())
+                .build());
+    }
+
+    public void markDialogPreparationFailed(DialogPreparationRequest request, String reason) {
+        if (request == null || dialogPreparationRequest.get() != request) {
+            return;
+        }
+        dialogPreparationStatus.set(DialogPreparationStatus.builder()
+                .phase(DialogPreparationPhase.FAILED)
+                .operation(request.getOperation())
+                .targetKeyword(request.getTargetKeyword())
+                .source(request.getSource())
+                .requestCreatedAtMs(request.getCreatedAtMs())
+                .completedAtMs(System.currentTimeMillis())
+                .failureReason(normalize(reason))
+                .build());
+    }
+
+    /**
+     * Store the latest prepared dialog click candidate for this bound window.
+     *
+     * <p>The watcher may update this without taking task ownership, but it must never click or
+     * advance a task phase. Task code later decides whether the cached action still matches its
+     * current operation before sending real input.</p>
+     *
+     * @param action prepared action for this window; null clears the cache.
+     */
+    public void updatePreparedDialogAction(PreparedDialogAction action) {
+        preparedDialogAction.set(action);
+        if (action != null) {
+            dialogPreparationStatus.set(DialogPreparationStatus.builder()
+                    .phase(DialogPreparationPhase.READY)
+                    .operation(action.getOperation())
+                    .targetKeyword(action.getTargetKeyword())
+                    .source(action.getSource())
+                    .preparingStartedAtMs(action.getPreparedAtMs())
+                    .completedAtMs(System.currentTimeMillis())
+                    .build());
+        }
+    }
+
+    public void clearPreparedDialogAction(String reason) {
+        preparedDialogAction.set(null);
+        DialogPreparationStatus status = dialogPreparationStatus.get();
+        if (status != null && status.getPhase() == DialogPreparationPhase.READY) {
+            dialogPreparationStatus.set(DialogPreparationStatus.none());
+        }
+    }
+
+    public Optional<WindowPathingIntent> getActivePathingIntent() {
+        WindowPathingSnapshot snapshot = pathingSnapshot.get();
+        if (snapshot == null || !snapshot.hasActiveIntent()) {
+            return Optional.empty();
+        }
+        return Optional.of(snapshot.getIntent());
+    }
+
+    /**
+     * Register a navigation/pathing target for the window-level background observer.
+     *
+     * <p>This method only records intent; it never sends input. The watcher thread uses it to refresh
+     * cached map/coordinate state while the task turn is released, so later task phases can resume
+     * without paying a fresh slow sync just to discover the window already arrived.</p>
+     *
+     * @param intent destination and diagnostic source for the active pathing operation.
+     */
+    public void markPathingStarted(WindowPathingIntent intent) {
+        if (intent == null) {
+            clearPathingSignal("null intent");
+            return;
+        }
+        pathingSnapshot.set(WindowPathingSnapshot.builder()
+                .state(WindowPathingState.ACTIVE)
+                .intent(intent)
+                .locationChangedAtMs(intent.getCreatedAtMs())
+                .message("pathing intent registered")
+                .build());
+    }
+
+    /**
+     * Update the latest background observation for this window's active pathing intent.
+     *
+     * @param snapshot fresh observation from the window watcher. Null is ignored.
+     */
+    public void updatePathingSnapshot(WindowPathingSnapshot snapshot) {
+        if (snapshot != null) {
+            pathingSnapshot.set(snapshot);
+        }
+    }
+
+    public void clearPathingSignal(String reason) {
+        pathingSnapshot.set(WindowPathingSnapshot.builder()
+                .state(WindowPathingState.NONE)
+                .message(normalize(reason))
+                .build());
+    }
 
     public void markQueued(TaskType taskType) {
         this.lastTaskType = resolveTaskForRuntimeEvent(taskType);
@@ -139,6 +296,16 @@ public class WindowRuntimeContext {
 
     public void markResumed(String message) {
         this.status = WindowRuntimeStatus.RUNNING;
+        this.lastMessage = normalize(message);
+    }
+
+    /**
+     * Update the user-facing message while preserving the current running/busy state.
+     *
+     * <p>This is for non-fatal conditions that need human attention but should not stop an idle
+     * helper task, such as auto-battle panel refresh staying unverified for a long time.</p>
+     */
+    public void markRuntimeWarning(String message) {
         this.lastMessage = normalize(message);
     }
 
@@ -204,6 +371,8 @@ public class WindowRuntimeContext {
         this.lastQueueResult = null;
         this.lastQueueMessage = null;
         this.lastQueueFailurePolicy = null;
+        clearPathingSignal("runtime reset");
+        clearDialogPreparationRequest("runtime reset");
         this.gameState.resetRuntimeState();
     }
 
@@ -226,6 +395,20 @@ public class WindowRuntimeContext {
     private static String normalizeWindowId(String value) {
         String normalized = normalize(value);
         return normalized == null ? null : normalized;
+    }
+
+    private static boolean sameNativeBinding(WindowNativeBinding left, WindowNativeBinding right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return Objects.equals(left.getNativeHandle(), right.getNativeHandle())
+                && left.getX() == right.getX()
+                && left.getY() == right.getY()
+                && left.getWidth() == right.getWidth()
+                && left.getHeight() == right.getHeight();
     }
 
     private static String normalize(String value) {

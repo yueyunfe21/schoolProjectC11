@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=长安城东
+coord=129,1196
+sourceImage=images\temp\hwnd-271128\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260528-231054-392_长安城东_coordinate-out-of-transform-bounds\tmp_pos.png

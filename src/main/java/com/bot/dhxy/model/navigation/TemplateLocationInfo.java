@@ -14,7 +14,7 @@ import com.bot.dhxy.model.MapCoordinate;
  * @param mapName recognized map name.
  * @param coordinate recognized in-game coordinate.
  * @param mapLabelScore template similarity score for the map label.
- * @param mapLabelPath optional debug image path for the cleaned map label.
+ * @param mapLabelPath optional debug image path for the cleaned map label; null on normal in-memory fast paths.
  */
 @Value
 @Builder

@@ -18,6 +18,8 @@ public enum InputActionType {
     HOLD_CTRL,
     /** Release Ctrl. */
     RELEASE_CTRL,
+    /** Press Ctrl+C once. */
+    PRESS_CTRL_C,
     /** Type Unicode text through the active input provider. */
     TYPE_TEXT_UNICODE,
     /** Paste text through the active input provider. */
@@ -42,6 +44,8 @@ public enum InputActionType {
     PRESS_ALT_E,
     /** Press Alt+Q. */
     PRESS_ALT_Q,
+    /** Press Alt+A. */
+    PRESS_ALT_A,
     /** Mouse wheel down. */
     SCROLL_DOWN,
     /** Mouse wheel up. */

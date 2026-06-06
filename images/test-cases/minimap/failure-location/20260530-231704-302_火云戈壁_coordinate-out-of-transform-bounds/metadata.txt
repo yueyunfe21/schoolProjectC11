@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=火云戈壁
+coord=106,1145
+sourceImage=images\temp\hwnd-CA0BFC\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260530-231704-302_火云戈壁_coordinate-out-of-transform-bounds\tmp_pos.png

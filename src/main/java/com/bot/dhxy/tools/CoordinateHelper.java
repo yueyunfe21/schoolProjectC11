@@ -21,9 +21,13 @@ import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * 坐标与矩阵计算核心大脑。
@@ -42,6 +46,7 @@ public class CoordinateHelper {
     private static final int APPROACH_LOGICAL_OFFSET = 2;
     private static final int MINI_MAP_EDGE_INSET_TRIGGER_PX = 240;
     private static final int MINI_MAP_CLICK_RANDOM_RADIUS_PX = 4;
+    private static final int MINI_MAP_FALLBACK_MAX_RING_RADIUS = 10;
     private Map<String, MapTransform> mapTransforms = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -207,43 +212,56 @@ public class CoordinateHelper {
                 mapName, targetX, targetY, originalPixelPoint.x, originalPixelPoint.y,
                 relativeX, relativeY, dx, dy, failedClickCount);
 
+        List<int[]> fallbackOffsets = buildMiniMapFallbackOffsets(dx, dy);
         int fallbackIndex = failedClickCount - 1;
-        int cursor = 0;
-        int[][] edgeOffsets = new int[][] {
-                {0, dy},
-                {0, dy * 2},
-                {-1, dy},
-                {1, dy},
-                {dx, 0},
-                {dx * 2, 0},
-                {dx, -1},
-                {dx, 1},
-                {dx, dy},
-                {dx * 2, dy * 2}
-        };
-        for (int[] offset : edgeOffsets) {
-            if (offset[0] == 0 && offset[1] == 0) {
-                continue;
-            }
-            if (cursor++ == fallbackIndex) {
-                return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
-                        "edge-fallback-" + failedClickCount);
-            }
-        }
-
-        int[][] nearOffsets = new int[][] {
-                {0, -1},
-                {0, 1},
-                {-1, 0},
-                {1, 0}
-        };
-        for (int[] offset : nearOffsets) {
-            if (cursor++ == fallbackIndex) {
-                return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
-                        "near-fallback-" + failedClickCount);
-            }
+        if (fallbackIndex >= 0 && fallbackIndex < fallbackOffsets.size()) {
+            int[] offset = fallbackOffsets.get(fallbackIndex);
+            return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
+                    "fallback-" + failedClickCount + "-offset=(" + offset[0] + "," + offset[1] + ")");
         }
         return null;
+    }
+
+    /**
+     * Build mini-map retry offsets from small nudges to wider rings.
+     *
+     * <p>Some cave maps, especially 蜂巢, contain hollow areas that repeatedly swallow tiny
+     * +/-1 retries. Keep edge-biased offsets first when the target is near a visible map border,
+     * then expand in logical-coordinate rings so later retries actually escape the same hollow
+     * patch. A linked set keeps the sequence deterministic and prevents duplicate logical points.</p>
+     */
+    private List<int[]> buildMiniMapFallbackOffsets(int edgeDx, int edgeDy) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<int[]> offsets = new ArrayList<>();
+
+        addMiniMapOffset(offsets, seen, 0, edgeDy);
+        addMiniMapOffset(offsets, seen, 0, edgeDy * 2);
+        addMiniMapOffset(offsets, seen, edgeDx, 0);
+        addMiniMapOffset(offsets, seen, edgeDx * 2, 0);
+        addMiniMapOffset(offsets, seen, edgeDx, edgeDy);
+        addMiniMapOffset(offsets, seen, edgeDx * 2, edgeDy * 2);
+
+        for (int radius = 1; radius <= MINI_MAP_FALLBACK_MAX_RING_RADIUS; radius++) {
+            addMiniMapOffset(offsets, seen, 0, -radius);
+            addMiniMapOffset(offsets, seen, 0, radius);
+            addMiniMapOffset(offsets, seen, -radius, 0);
+            addMiniMapOffset(offsets, seen, radius, 0);
+            addMiniMapOffset(offsets, seen, -radius, -radius);
+            addMiniMapOffset(offsets, seen, -radius, radius);
+            addMiniMapOffset(offsets, seen, radius, -radius);
+            addMiniMapOffset(offsets, seen, radius, radius);
+        }
+        return offsets;
+    }
+
+    private void addMiniMapOffset(List<int[]> offsets, Set<String> seen, int dx, int dy) {
+        if (dx == 0 && dy == 0) {
+            return;
+        }
+        String key = dx + "," + dy;
+        if (seen.add(key)) {
+            offsets.add(new int[] {dx, dy});
+        }
     }
 
     private MiniMapClickPoint resolveMiniMapFallbackPoint(String mapName, int logicalX, int logicalY, String reason) {
@@ -331,6 +349,16 @@ public class CoordinateHelper {
      *         transform or physical point cannot be calculated.
      */
     public MapCoordinate calculateApproachCoordinate(String mapName, int targetX, int targetY) {
+        if (shouldUseOriginalTargetCoordinate(mapName)) {
+            /*
+             * 龙窟/凤巢有大量中空地形。这里如果把修罗目标改成“靠近点”，
+             * 小地图点击很容易落到不可走空洞，反而比原始任务坐标更不稳。
+             */
+            log.info("approach coordinate skipped for cave map: map={} target=({}, {})",
+                    mapName, targetX, targetY);
+            return new MapCoordinate(targetX, targetY);
+        }
+
         Point originalPixelPoint = getPhysicalMapPoint(mapName, targetX, targetY);
         MapTransform transform = getMapTransform(mapName);
         if (originalPixelPoint == null || transform == null) {
@@ -352,6 +380,10 @@ public class CoordinateHelper {
         log.info("approach coordinate calculated: map={} target=({}, {}) approach=({}, {}) relative=({}, {}) logicalStep=({}, {})",
                 mapName, targetX, targetY, approachX, approachY, relativeX, relativeY, dx, dy);
         return new MapCoordinate(approachX, approachY);
+    }
+
+    private boolean shouldUseOriginalTargetCoordinate(String mapName) {
+        return mapName != null && (mapName.contains("龙窟") || mapName.contains("凤巢"));
     }
 
     private int logicalStepForPixelDirection(int pixelDirection, double scale) {
@@ -496,21 +528,79 @@ public class CoordinateHelper {
 
         if (result != null && result.length >= 2) {
             Point absolute = resolveMatchedPointInRect(rect, result);
-            LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
+            log.debug("[latency] event=coordinate.findImageInRegion elapsedMs={} detail={}",
+                    LatencyMetrics.elapsedMs(start),
                     "result=matched template=" + templatePath
                             + " roi=" + roiPath
                             + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
                             + " point=" + absolute.x + "," + absolute.y);
-            log.info("Region image matched [{}] at ({},{})", templatePath, absolute.x, absolute.y);
+            log.debug("Region image matched [{}] at ({},{})", templatePath, absolute.x, absolute.y);
             return absolute;
         }
 
-        LatencyMetrics.info(log, "coordinate.findImageInRegion", start,
+        log.debug("[latency] event=coordinate.findImageInRegion elapsedMs={} detail={}",
+                LatencyMetrics.elapsedMs(start),
                 "result=miss template=" + templatePath
                         + " roi=" + roiPath
                         + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
                         + " matchRate=" + matchRate);
         return null;
+    }
+
+    /**
+     * Find multiple template centers inside one screen-absolute capture rectangle.
+     *
+     * @param templatePath template image path.
+     * @param rect screen-absolute rectangle in {@code [left, top, right, bottom]} form.
+     * @param matchRate minimum OpenCV correlation score.
+     * @param minDistancePx minimum screen-pixel distance for de-duplicating nearby hits.
+     * @return score-sorted screen-absolute centers. Empty means no match or capture failure.
+     */
+    public List<Point> findImagesInRegion(String templatePath, int[] rect, double matchRate, double minDistancePx) {
+        String roiPath = windowScopedTempPath.resolve("roi_scan_all.png");
+        if (!tracker.captureToFile("ROI-Scan-All", roiPath, rect[0], rect[1], rect[2], rect[3])) {
+            return List.of();
+        }
+
+        long start = LatencyMetrics.start();
+        List<double[]> results;
+        try {
+            results = ImageFinder.findAll(roiPath, templatePath, matchRate, minDistancePx);
+        } catch (Throwable e) {
+            log.warn("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
+                    LatencyMetrics.elapsedMs(start),
+                    "result=exception template=" + templatePath
+                            + " roi=" + roiPath
+                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
+                            + " matchRate=" + matchRate
+                            + " error=" + e.getClass().getName() + ":" + e.getMessage());
+            throw e;
+        }
+
+        if (results == null || results.isEmpty()) {
+            log.debug("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
+                    LatencyMetrics.elapsedMs(start),
+                    "result=miss template=" + templatePath
+                            + " roi=" + roiPath
+                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
+                            + " matchRate=" + matchRate);
+            return List.of();
+        }
+
+        List<Point> points = new ArrayList<>();
+        for (double[] result : results) {
+            Point absolute = resolveMatchedPointInRect(rect, result);
+            if (absolute != null) {
+                points.add(absolute);
+            }
+        }
+        log.info("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
+                LatencyMetrics.elapsedMs(start),
+                "result=matched template=" + templatePath
+                        + " roi=" + roiPath
+                        + " count=" + points.size()
+                        + " points=" + points);
+        return List.copyOf(points);
     }
 
     public Point findGreenTextInRegion(String templatePath, int[] rect, double matchRate) {

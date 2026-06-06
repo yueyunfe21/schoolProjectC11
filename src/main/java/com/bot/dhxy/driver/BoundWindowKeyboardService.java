@@ -202,7 +202,8 @@ public class BoundWindowKeyboardService {
         ALT_Q("Alt+Q", 0x51, 0x10),
         ALT_T("Alt+T", 0x54, 0x14),
         ALT_O("Alt+O", 0x4F, 0x18),
-        ALT_E("Alt+E", 0x45, 0x12);
+        ALT_E("Alt+E", 0x45, 0x12),
+        ALT_A("Alt+A", 0x41, 0x1E);
 
         private final String displayName;
         private final int virtualKey;

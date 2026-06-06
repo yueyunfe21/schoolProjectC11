@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=长安城东
+coord=136,1134
+sourceImage=images\temp\hwnd-40FC2\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260528-230828-688_长安城东_coordinate-out-of-transform-bounds\tmp_pos.png

@@ -62,10 +62,17 @@ public class WindowInteractionMetricsService {
         } else if (!success) {
             metrics.captureFailure.incrementAndGet();
         }
-        log.info("Interaction metrics: windowId={} event=capture provider={} success={} mode={} element={} focusTotal={} hwndCapture={} robotCapture={} captureFailure={} hwndKeyboardSuccess={} hwndKeyboardFailure={}",
+        String message = "Interaction metrics: windowId={} event=capture provider={} success={} mode={} element={} focusTotal={} hwndCapture={} robotCapture={} captureFailure={} hwndKeyboardSuccess={} hwndKeyboardFailure={}";
+        Object[] args = {
                 key(windowId), normalizedProvider, success, mode, elementName,
                 metrics.focusAttempts.get(), metrics.hwndCaptureSuccess.get(), metrics.robotCaptureSuccess.get(),
-                metrics.captureFailure.get(), metrics.hwndKeyboardSuccess.get(), metrics.hwndKeyboardFailure.get());
+                metrics.captureFailure.get(), metrics.hwndKeyboardSuccess.get(), metrics.hwndKeyboardFailure.get()
+        };
+        if (!success || "ROBOT".equals(normalizedProvider)) {
+            log.info(message, args);
+        } else {
+            log.debug(message, args);
+        }
         writeDashboardThrottled();
     }
 

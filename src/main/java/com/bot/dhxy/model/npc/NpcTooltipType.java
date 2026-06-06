@@ -10,6 +10,11 @@ public enum NpcTooltipType {
     TASK,
 
     /**
+     * Super witch doctor / heal-pet NPC tooltip.
+     */
+    WUYI,
+
+    /**
      * The target is not expected to show a clickable task tooltip, so template probing should skip it.
      */
     NONE

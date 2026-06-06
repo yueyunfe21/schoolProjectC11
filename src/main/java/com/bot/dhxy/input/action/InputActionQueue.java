@@ -94,14 +94,16 @@ public class InputActionQueue {
             return request.getResult().get(120, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             request.cancel("waiter interrupted");
+            boolean removed = queue.remove(request);
             Thread.currentThread().interrupt();
-            log.warn("Input action wait interrupted: windowId={} description={}",
-                    request.getWindowId(), request.getDescription());
+            log.warn("Input action wait interrupted: windowId={} description={} removedFromQueue={}",
+                    request.getWindowId(), request.getDescription(), removed);
             return false;
         } catch (Exception e) {
             request.cancel("wait failed");
-            log.warn("Input action wait failed: windowId={} description={} reason={}",
-                    request.getWindowId(), request.getDescription(), e.getMessage());
+            boolean removed = queue.remove(request);
+            log.warn("Input action wait failed: windowId={} description={} removedFromQueue={} reason={}",
+                    request.getWindowId(), request.getDescription(), removed, e.getMessage());
             return false;
         }
     }

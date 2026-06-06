@@ -1,36 +1,56 @@
 package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.input.InputSequences;
-import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.metrics.AutomationMetricsService;
+import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.dialog.DialogFingerprintWashMode;
+import com.bot.dhxy.model.dialog.DialogPreparationPhase;
+import com.bot.dhxy.model.dialog.DialogPreparationRequest;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskPauseToken;
+import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
+import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
 import com.bot.dhxy.team.TeamRoleDetectionService;
 import com.bot.dhxy.team.TeamRoleStatus;
+import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingSnapshot;
+import com.bot.dhxy.window.model.WindowPathingState;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import lombok.extern.slf4j.Slf4j;
 
+import java.awt.image.BufferedImage;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -47,6 +67,16 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WindowTaskRunner {
 
     private static final AtomicInteger THREAD_ID = new AtomicInteger(1);
+    private static final long WINDOW_COMBAT_GUARD_IDLE_INTERVAL_MS = 6_000L;
+    private static final long WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS = 1_000L;
+    private static final long WINDOW_PATHING_PROBE_MIN_INTERVAL_MS = 2_000L;
+    private static final long WINDOW_PATHING_COORDINATE_STOPPED_AWAY_MS = 2_200L;
+    private static final long WINDOW_PATHING_MAP_ROUTE_STOPPED_AWAY_MS = 8_000L;
+    private static final long WINDOW_PATHING_COORDINATE_AWAY_STOPPED_MS = 30_000L;
+    private static final long WINDOW_PATHING_SLOW_PROBE_LOG_MS = 1_500L;
+    private static final long WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS = 100L;
+    private static final long WINDOW_DIALOG_PREPARED_RECENT_MS = 2_500L;
+    private static final int WINDOW_DIALOG_FINGERPRINT_MAX_DISTANCE = 8;
 
     private final WindowRuntimeContext windowContext;
     private final TaskFactory taskFactory;
@@ -56,7 +86,12 @@ public class WindowTaskRunner {
     private final InputSequences inputSequences;
     private final TeamRoleDetectionService teamRoleDetectionService;
     private final TaskTeamAssignmentPolicy taskTeamAssignmentPolicy;
+    private final AutomationMetricsService automationMetricsService;
+    private final AutoCombatService autoCombatService;
+    private final MiniMapCoordinateReader miniMapCoordinateReader;
+    private final DialogService dialogService;
     private final ExecutorService executor;
+    private final ExecutorService combatWatcherExecutor;
 
     private volatile RunningTaskHandle currentTask;
     private volatile boolean shutdown;
@@ -72,6 +107,11 @@ public class WindowTaskRunner {
      * @param inputSequences serialized input API used by tasks.
      * @param teamRoleDetectionService live role detector used before leader/team tasks.
      * @param taskTeamAssignmentPolicy role-to-task reassignment policy.
+     * @param automationMetricsService local business metrics sink for task start/end events.
+     * @param autoCombatService window-level combat guard reused by normal task runners.
+     * @param miniMapCoordinateReader lightweight mini-map location reader used by the background
+     *                                watcher to refresh pathing state without taking the task turn.
+     * @param dialogService dialog detector used by the watcher for prepare-only option matching.
      */
     public WindowTaskRunner(WindowRuntimeContext windowContext,
                             TaskFactory taskFactory,
@@ -80,7 +120,11 @@ public class WindowTaskRunner {
                             TaskExecutionContextHolder taskExecutionContextHolder,
                             InputSequences inputSequences,
                             TeamRoleDetectionService teamRoleDetectionService,
-                            TaskTeamAssignmentPolicy taskTeamAssignmentPolicy) {
+                            TaskTeamAssignmentPolicy taskTeamAssignmentPolicy,
+                            AutomationMetricsService automationMetricsService,
+                            AutoCombatService autoCombatService,
+                            MiniMapCoordinateReader miniMapCoordinateReader,
+                            DialogService dialogService) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
         this.taskFactory = Objects.requireNonNull(taskFactory, "taskFactory must not be null");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder must not be null");
@@ -89,9 +133,19 @@ public class WindowTaskRunner {
         this.inputSequences = Objects.requireNonNull(inputSequences, "inputSequences must not be null");
         this.teamRoleDetectionService = Objects.requireNonNull(teamRoleDetectionService, "teamRoleDetectionService must not be null");
         this.taskTeamAssignmentPolicy = Objects.requireNonNull(taskTeamAssignmentPolicy, "taskTeamAssignmentPolicy must not be null");
+        this.automationMetricsService = Objects.requireNonNull(automationMetricsService, "automationMetricsService must not be null");
+        this.autoCombatService = Objects.requireNonNull(autoCombatService, "autoCombatService must not be null");
+        this.miniMapCoordinateReader = Objects.requireNonNull(miniMapCoordinateReader, "miniMapCoordinateReader must not be null");
+        this.dialogService = Objects.requireNonNull(dialogService, "dialogService must not be null");
         this.executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable);
             thread.setName("window-task-" + windowContext.getWindowId() + "-" + THREAD_ID.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.combatWatcherExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setName("window-combat-watch-" + windowContext.getWindowId() + "-" + THREAD_ID.getAndIncrement());
             thread.setDaemon(true);
             return thread;
         });
@@ -161,8 +215,10 @@ public class WindowTaskRunner {
      * <p>The method marks runtime state, requests cooperative stop, interrupts the runner thread, and
      * cancels the future. It does not directly release the global input worker; in-flight input
      * requests finish or observe interruption through their own paths.</p>
+     *
+     * @return true when a live task queue existed and accepted the stop request.
      */
-    public void stopCurrentTask() {
+    public boolean stopCurrentTask() {
         RunningTaskHandle taskHandle = getActiveTaskHandle();
         if (taskHandle == null) {
             if (windowContext.getStatus() == WindowRuntimeStatus.ERROR
@@ -170,8 +226,10 @@ public class WindowTaskRunner {
                 windowContext.markStoppedAfterTerminalStop("stop requested after task already ended");
                 log.info("window [{}] terminal task state cleared by stop command: status={}",
                         windowContext.getWindowId(), windowContext.getStatus());
+                return true;
             }
-            return;
+            log.info("window [{}] stop ignored: no active task queue", windowContext.getWindowId());
+            return false;
         }
         log.info("window [{}] stop requested: queue={} progress={} currentTask={}",
                 windowContext.getWindowId(),
@@ -181,6 +239,7 @@ public class WindowTaskRunner {
         windowContext.markStopping("stop requested");
         windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("stop requested"));
         taskHandle.forceCancel("stop requested");
+        return true;
     }
 
     /**
@@ -287,6 +346,7 @@ public class WindowTaskRunner {
             windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("runner closed"));
             taskHandle.forceCancel("runner closed");
         }
+        combatWatcherExecutor.shutdownNow();
         executor.shutdownNow();
     }
 
@@ -391,6 +451,18 @@ public class WindowTaskRunner {
             windowContext.markFinished(WindowRuntimeStatus.STOPPED, activeTaskType, TaskRunResult.STOPPED, message);
             log.info("window [{}] task queue stopped before task finished: queue={} activeTask={} reason={}",
                     windowContext.getWindowId(), queue.toLogText(), activeTaskType, e.getMessage());
+        } catch (RuntimeException e) {
+            queueResult = TaskRunResult.FAILED;
+            String message = "task queue exception before/around task start: "
+                    + e.getClass().getSimpleName() + ": " + normalizeMessage(e.getMessage());
+            windowContext.markFinished(WindowRuntimeStatus.ERROR, activeTaskType, TaskRunResult.FAILED, message);
+            /*
+             * FutureTask swallows uncaught runtime exceptions from the runner thread. Without this
+             * guard the UI can stay at QUEUED while the task handle has already disappeared, which
+             * makes the table show "排队中 / 未知任务" and hides the real startup failure.
+             */
+            log.error("window [{}] task queue crashed: queue={} activeTask={}",
+                    windowContext.getWindowId(), queue.toLogText(), activeTaskType, e);
         }
         String queueMessage = "task queue result: " + queueResult
                 + " completed=" + completedCount + "/" + taskTypes.size()
@@ -403,11 +475,14 @@ public class WindowTaskRunner {
      * Run one concrete task with startup initialization and task execution context binding.
      */
     private TaskRunResult runTaskWithBoundGameState(TaskType taskType, GameTask task, TaskExecutionContext executionContext) {
+        long startedMs = System.currentTimeMillis();
         windowContext.markStarted(taskType);
+        automationMetricsService.recordTaskStarted(executionContext);
         log.info("{} window [{}] start task: {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName());
 
         TaskRunResult result = TaskRunResult.FAILED;
         AtomicReference<String> finishMessage = new AtomicReference<>("task result: " + result);
+        AtomicReference<String> errorCode = new AtomicReference<>();
         try {
             result = taskExecutionContextHolder.callWith(executionContext, () -> {
                 if (!startupInitializer.beforeTask(windowContext, executionContext)) {
@@ -417,7 +492,12 @@ public class WindowTaskRunner {
                     return TaskRunResult.FAILED;
                 }
                 executionContext.throwIfStopRequested();
-                return task.execute(executionContext);
+                CombatWatcherHandle combatWatcher = startCombatWatcherIfNeeded(taskType, executionContext);
+                try {
+                    return task.execute(executionContext);
+                } finally {
+                    combatWatcher.stop();
+                }
             });
             if (!"window startup initialization failed".equals(finishMessage.get())) {
                 finishMessage.set("task result: " + result);
@@ -428,14 +508,575 @@ public class WindowTaskRunner {
             log.info("{} window [{}] task stopped: {} reason={}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e.getMessage());
         } catch (Exception e) {
             result = TaskRunResult.FAILED;
-            finishMessage.set("task exception: " + e.getClass().getSimpleName());
+            errorCode.set(e.getClass().getSimpleName());
+            finishMessage.set("task exception: " + e.getClass().getSimpleName()
+                    + ": " + normalizeMessage(e.getMessage()));
             log.error("{} window [{}] task error: {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), e);
         } finally {
             WindowRuntimeStatus status = toWindowStatus(result);
             windowContext.markFinished(status, taskType, result, finishMessage.get());
+            automationMetricsService.recordTaskFinished(executionContext, taskType, result, finishMessage.get(),
+                    Math.max(0L, System.currentTimeMillis() - startedMs), errorCode.get());
             log.info("{} window [{}] task finished: {} -> {}", executionContext.getLogPrefix(), windowContext.getWindowId(), task.getTaskName(), result);
         }
         return result;
+    }
+
+    /**
+     * Start the window-level observer for combat and opt-in pathing probes.
+     *
+     * <p>Normal business tasks still use this watcher as a combat guard. The debug navigation stress
+     * task uses the same thread as a pathing-only observer, so it can validate window-level arrival
+     * signals without triggering auto-combat input.</p>
+     *
+     * @param taskType resolved task type currently executing in this window.
+     * @param executionContext bound execution context shared with the task for stop checks.
+     * @return handle that must be stopped when the task exits.
+     */
+    private CombatWatcherHandle startCombatWatcherIfNeeded(TaskType taskType, TaskExecutionContext executionContext) {
+        if (!shouldRunWindowObserver(taskType)) {
+            return CombatWatcherHandle.noop();
+        }
+        AtomicBoolean running = new AtomicBoolean(true);
+        Future<?> future = combatWatcherExecutor.submit(() -> runCombatWatcherLoop(taskType, executionContext, running));
+        log.info("{} window [{}] window observer started for task={} combatGuard={} pathingProbe={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                shouldRunWindowCombatGuard(taskType), taskType == TaskType.DEBUG_NAVIGATION_STRESS);
+        return new CombatWatcherHandle(running, future);
+    }
+
+    private boolean shouldRunWindowObserver(TaskType taskType) {
+        return shouldRunWindowCombatGuard(taskType)
+                || taskType == TaskType.DEBUG_NAVIGATION_STRESS;
+    }
+
+    private boolean shouldRunWindowCombatGuard(TaskType taskType) {
+        return taskType == TaskType.WUHuan
+                || taskType == TaskType.WUHuan_V2
+                || taskType == TaskType.XIULUO
+                || taskType == TaskType.XIULUO_V2
+                || taskType == TaskType.WUBEI;
+    }
+
+    private void runCombatWatcherLoop(TaskType taskType,
+                                      TaskExecutionContext executionContext,
+                                      AtomicBoolean running) {
+        try {
+            contextHolder.runWith(windowContext,
+                    () -> windowContext.getGameContext().runWithState(windowContext.getGameState(),
+                            () -> taskExecutionContextHolder.callWith(executionContext, () -> {
+                                boolean combatGuardEnabled = shouldRunWindowCombatGuard(taskType);
+                                if (combatGuardEnabled) {
+                                    autoCombatService.initializeForCurrentWindow();
+                                }
+                                while (running.get() && !Thread.currentThread().isInterrupted()) {
+                                    executionContext.throwIfStopRequested();
+                                    AutoCombatService.TickResult tick = combatGuardEnabled
+                                            ? autoCombatService.handleWindowCombatGuardTick(
+                                                    executionContext, "window-combat-watch:" + taskType.getCode())
+                                            : AutoCombatService.TickResult.NONE;
+                                    boolean dialogPreparationActive = windowContext.getDialogPreparationRequest() != null
+                                            || windowContext.getPreparedDialogAction() != null;
+                                    boolean pathingIntentActive = windowContext.getActivePathingIntent().isPresent();
+                                    PreparedDialogAction preparedDialogAction = null;
+                                    WindowPathingSnapshot pathingSnapshot = null;
+                                    if (pathingIntentActive) {
+                                        /*
+                                         * Pathing observation is the scheduler signal for released navigation turns.
+                                         * Do it before any dialog OCR: dialog preparation can spend seconds on OCR when
+                                         * no route dialog is present, and starving this snapshot makes task code keep
+                                         * waiting forever even though the window has already stopped or arrived.
+                                         */
+                                        pathingSnapshot = refreshPathingSignal(taskType, executionContext);
+                                        if (dialogPreparationActive) {
+                                            /*
+                                             * A map-route click can leave pathing marked ACTIVE while a transfer dialog
+                                             * is already open. If we wait for STOPPED_AWAY first, the task keeps yielding
+                                             * and may reopen the world map instead of consuming the dialog.
+                                             */
+                                            preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                        }
+                                    } else {
+                                        preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                    }
+                                    long intervalMs = tick == AutoCombatService.TickResult.IN_COMBAT
+                                            ? autoCombatService.getDynamicPollingIntervalMs()
+                                            : WINDOW_COMBAT_GUARD_IDLE_INTERVAL_MS;
+                                    if (pathingSnapshot != null && pathingSnapshot.hasActiveIntent()) {
+                                        intervalMs = Math.min(intervalMs, WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS);
+                                    }
+                                    if (windowContext.getDialogPreparationRequest() != null || preparedDialogAction != null) {
+                                        intervalMs = Math.min(intervalMs, WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS);
+                                    }
+                                    if (!TaskSleep.sleep(intervalMs)) {
+                                        break;
+                                    }
+                                }
+                                return null;
+                            })));
+        } catch (TaskStopRequestedException | CancellationException e) {
+            log.info("{} window [{}] combat watcher stopped: task={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("{} window [{}] combat watcher failed: task={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, e);
+        }
+    }
+
+    private PreparedDialogAction refreshDialogPreparationSignal(TaskType taskType,
+                                                                TaskExecutionContext executionContext) {
+        DialogPreparationRequest request = windowContext.getDialogPreparationRequest();
+        if (request == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        if (request.isExpired(now)) {
+            windowContext.clearDialogPreparationRequest("dialog preparation request expired");
+            log.info("{} window [{}] dialog preparation expired: task={} operation={} target={} source={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    request.getOperation(), request.getTargetKeyword(), request.getSource());
+            return null;
+        }
+        PreparedDialogAction existing = windowContext.getPreparedDialogAction();
+        if (existing != null && existing.matches(request.getOperation(), request.getTargetKeyword())) {
+            if (validatePreparedDialogAction(existing, taskType, executionContext)) {
+                return windowContext.getPreparedDialogAction();
+            }
+        }
+        if (request.getOperation() != DialogOperation.ROUTE_TRANSFER) {
+            return null;
+        }
+        long startedAt = System.currentTimeMillis();
+        try {
+            DialogType visibleType = dialogService.detectDialogTypeNoFocus(
+                    "window-dialog-preparation:" + taskType.getCode() + ":" + request.getTargetKeyword(),
+                    false);
+            if (visibleType != DialogType.OPTION) {
+                log.debug("{} window [{}] dialog preparation probe skipped: task={} operation={} target={} visibleType={} requestAgeMs={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        request.getOperation(), request.getTargetKeyword(), visibleType,
+                        Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()));
+                return null;
+            }
+            log.info("{} window [{}] dialog preparation probe start: task={} operation={} target={} source={} requestAgeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    request.getOperation(), request.getTargetKeyword(), request.getSource(),
+                    Math.max(0L, startedAt - request.getCreatedAtMs()));
+            windowContext.markDialogPreparationStarted(request);
+            Optional<PreparedDialogAction> prepared = request.getRememberedRelativeX() != null
+                    && request.getRememberedRelativeY() != null
+                    ? dialogService.prepareRememberedRouteOption(
+                    request.getSource(),
+                    request.getTargetKeyword(),
+                    request.getRememberedRelativeX(),
+                    request.getRememberedRelativeY(),
+                    request.getRememberedOptionText())
+                    : dialogService.prepareRouteKeywordOption(request.getSource(), request.getTargetKeyword());
+            return prepared
+                    .map(action -> {
+                        DialogPreparationRequest currentRequest = windowContext.getDialogPreparationRequest();
+                        if (currentRequest != request) {
+                            windowContext.markDialogPreparationFailed(request, "stale request");
+                            log.info("{} window [{}] discard stale dialog preparation: task={} operation={} target={} elapsedMs={}",
+                                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                                    request.getOperation(), request.getTargetKeyword(),
+                                    Math.max(0L, System.currentTimeMillis() - startedAt));
+                            return null;
+                        }
+                        PreparedDialogAction boundAction = action.toBuilder()
+                                .windowId(windowContext.getWindowId())
+                                .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                                .build();
+                        windowContext.updatePreparedDialogAction(boundAction);
+                        log.info("{} window [{}] dialog prepared: task={} operation={} target={} matched={} click=({}, {}) elapsedMs={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                                request.getOperation(), request.getTargetKeyword(), boundAction.getMatchedText(),
+                                boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
+                                Math.max(0L, System.currentTimeMillis() - startedAt));
+                        return boundAction;
+                    })
+                    .orElseGet(() -> {
+                        windowContext.markDialogPreparationFailed(request, "prepare miss");
+                        log.info("{} window [{}] dialog preparation probe miss: task={} operation={} target={} elapsedMs={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                                request.getOperation(), request.getTargetKeyword(),
+                                Math.max(0L, System.currentTimeMillis() - startedAt));
+                        return null;
+                    });
+        } catch (RuntimeException e) {
+            log.info("{} window [{}] dialog preparation probe failed: task={} operation={} target={} elapsedMs={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    request.getOperation(), request.getTargetKeyword(),
+                    Math.max(0L, System.currentTimeMillis() - startedAt), e.getMessage());
+            windowContext.markDialogPreparationFailed(request, e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean validatePreparedDialogAction(PreparedDialogAction action,
+                                                 TaskType taskType,
+                                                 TaskExecutionContext executionContext) {
+        if (action == null || action.getFingerprint() == null || action.getFingerprint().isBlank()) {
+            return false;
+        }
+        if (!matchesCurrentWindowBinding(action)) {
+            windowContext.clearPreparedDialogAction("dialog prepared action belongs to another binding");
+            return false;
+        }
+        int left = action.getValidationLeft();
+        int top = action.getValidationTop();
+        int right = action.getValidationRight();
+        int bottom = action.getValidationBottom();
+        if (right <= left || bottom <= top) {
+            windowContext.clearPreparedDialogAction("invalid dialog validation rect");
+            return false;
+        }
+        BufferedImage raw = null;
+        BufferedImage washed = null;
+        try {
+            raw = dialogService.captureDialogValidationImage("dialog-prepare-validate:" + taskType.getCode(),
+                    left, top, right, bottom);
+            washed = washPreparedValidationCrop(raw, action.getWashMode());
+            String currentFingerprint = ImagePreprocessor.buildBinaryFingerprint(washed);
+            int distance = ImagePreprocessor.binaryFingerprintDistance(action.getFingerprint(), currentFingerprint);
+            DialogPreparationRequest currentRequest = windowContext.getDialogPreparationRequest();
+            if (currentRequest == null || currentRequest.getOperation() != action.getOperation()
+                    || !action.matches(currentRequest.getOperation(), currentRequest.getTargetKeyword())) {
+                log.debug("{} window [{}] dialog prepared action validation skipped: task={} operation={} target={} reason=request-consumed",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        action.getOperation(), action.getTargetKeyword());
+                return false;
+            }
+            if (distance <= WINDOW_DIALOG_FINGERPRINT_MAX_DISTANCE) {
+                PreparedDialogAction refreshed = action.toBuilder()
+                        .lastVerifiedAtMs(System.currentTimeMillis())
+                        .build();
+                windowContext.updatePreparedDialogAction(refreshed);
+                log.debug("{} window [{}] dialog prepared action verified: task={} operation={} target={} distance={} click=({}, {})",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        action.getOperation(), action.getTargetKeyword(), distance,
+                        action.getAbsoluteX(), action.getAbsoluteY());
+                return true;
+            }
+            windowContext.clearPreparedDialogAction("dialog validation fingerprint changed");
+            log.info("{} window [{}] dialog prepared action invalidated: task={} operation={} target={} distance={} maxDistance={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    action.getOperation(), action.getTargetKeyword(), distance,
+                    WINDOW_DIALOG_FINGERPRINT_MAX_DISTANCE);
+            return false;
+        } catch (RuntimeException e) {
+            log.debug("{} window [{}] dialog prepared action validation failed: task={} operation={} target={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    action.getOperation(), action.getTargetKeyword(), e.getMessage());
+            return false;
+        } finally {
+            if (raw != null) {
+                raw.flush();
+            }
+            if (washed != null && washed != raw) {
+                washed.flush();
+            }
+        }
+    }
+
+    private BufferedImage washPreparedValidationCrop(BufferedImage raw, DialogFingerprintWashMode washMode) {
+        if (raw == null) {
+            return null;
+        }
+        if (washMode == DialogFingerprintWashMode.YELLOW) {
+            return ImagePreprocessor.washYellowTextToBlackAndWhite(raw);
+        }
+        if (washMode == DialogFingerprintWashMode.GREEN) {
+            return ImagePreprocessor.washGreenTextToBlackAndWhite(raw);
+        }
+        return ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(raw);
+    }
+
+    private boolean matchesCurrentWindowBinding(PreparedDialogAction action) {
+        if (action == null) {
+            return false;
+        }
+        if (action.getWindowId() != null && !Objects.equals(action.getWindowId(), windowContext.getWindowId())) {
+            return false;
+        }
+        String currentHwnd = windowContext.getNativeBinding().getNativeHandle();
+        return action.getHwnd() == null || Objects.equals(action.getHwnd(), currentHwnd);
+    }
+
+    /**
+     * Refresh the background pathing signal for this window without taking the task turn.
+     *
+     * <p>The watcher only observes HWND-backed mini-map state and updates the per-window cached
+     * player map/coordinate. It never sends input and never advances task phases. Task code can later
+     * consume this fresh state immediately after reacquiring the turn.</p>
+     *
+     * @param taskType task currently running on this window, used only for logs.
+     * @param executionContext current task execution context for stop checks and log prefix.
+     * @return latest pathing snapshot, or null when there is no active pathing intent.
+     */
+    private WindowPathingSnapshot refreshPathingSignal(TaskType taskType, TaskExecutionContext executionContext) {
+        return windowContext.getActivePathingIntent()
+                .map(intent -> refreshPathingSignal(taskType, executionContext, intent))
+                .orElse(null);
+    }
+
+    private WindowPathingSnapshot refreshPathingSignal(TaskType taskType,
+                                                       TaskExecutionContext executionContext,
+                                                       WindowPathingIntent intent) {
+        long startedAt = System.currentTimeMillis();
+        WindowPathingSnapshot previous = windowContext.getPathingSnapshot();
+        if (previous != null
+                && previous.getIntent() != null
+                && !isSamePathingIntent(previous.getIntent(), intent)) {
+            log.debug("{} window [{}] skip pathing probe because snapshot intent changed before start: task={} source={} target={}({}, {})",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    intent.getSource(), intent.getTargetMapName(), intent.getTargetX(), intent.getTargetY());
+            return previous;
+        }
+        if (shouldReuseRecentPathingSnapshot(previous, intent, startedAt)) {
+            return previous;
+        }
+        WindowPathingSnapshot probeSnapshot = markPathingProbeStarted(previous, intent, startedAt);
+        windowContext.updatePathingSnapshot(probeSnapshot);
+        try {
+            return miniMapCoordinateReader.readCurrentTemplateLocation()
+                    .map(location -> updatePathingFromLocation(taskType, executionContext, intent, previous, location, startedAt))
+                    .orElseGet(() -> updateUnknownPathing(taskType, executionContext, intent, previous, startedAt,
+                            "mini-map template location miss"));
+        } catch (RuntimeException e) {
+            log.debug("{} window [{}] pathing watcher probe failed: task={} source={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    intent.getSource(), e.getMessage());
+            return updateUnknownPathing(taskType, executionContext, intent, previous, startedAt, e.getClass().getSimpleName());
+        }
+    }
+
+    private boolean shouldReuseRecentPathingSnapshot(WindowPathingSnapshot previous,
+                                                     WindowPathingIntent intent,
+                                                     long now) {
+        if (previous == null || previous.getIntent() == null || !isSamePathingIntent(previous.getIntent(), intent)) {
+            return false;
+        }
+        // Dialog preparation can wake the watcher at 100ms cadence. Reuse a fresh pathing
+        // observation so multiple windows do not repeatedly queue mini-map captures for the same intent.
+        if (previous.isProbeInProgress()) {
+            return true;
+        }
+        long lastProbeAt = previous.getProbeFinishedAtMs() > 0L
+                ? previous.getProbeFinishedAtMs()
+                : previous.getUpdatedAtMs();
+        return lastProbeAt > 0L && now - lastProbeAt < WINDOW_PATHING_PROBE_MIN_INTERVAL_MS;
+    }
+
+    private WindowPathingSnapshot markPathingProbeStarted(WindowPathingSnapshot previous,
+                                                          WindowPathingIntent intent,
+                                                          long startedAt) {
+        if (previous == null) {
+            return WindowPathingSnapshot.builder()
+                    .state(WindowPathingState.ACTIVE)
+                    .intent(intent)
+                    .message("pathing watcher probe in progress")
+                    .locationChangedAtMs(0L)
+                    .updatedAtMs(0L)
+                    .probeStartedAtMs(startedAt)
+                    .probeInProgress(true)
+                    .build();
+        }
+        return previous.toBuilder()
+                .intent(intent)
+                .probeStartedAtMs(startedAt)
+                .probeInProgress(true)
+                .build();
+    }
+
+    private WindowPathingSnapshot updatePathingFromLocation(TaskType taskType,
+                                                            TaskExecutionContext executionContext,
+                                                            WindowPathingIntent intent,
+                                                            WindowPathingSnapshot previous,
+                                                            TemplateLocationInfo location,
+                                                            long startedAt) {
+        MapCoordinate coordinate = location.coordinate();
+        long now = System.currentTimeMillis();
+        if (!isCurrentPathingIntent(intent)) {
+            log.info("{} window [{}] discard stale pathing probe result: task={} source={} target={}({}, {}) probeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    intent.getSource(), intent.getTargetMapName(), intent.getTargetX(), intent.getTargetY(),
+                    Math.max(0L, now - startedAt));
+            return windowContext.getPathingSnapshot();
+        }
+        PlayerCharacter me = windowContext.getGameState().getMe();
+        if (me != null && coordinate != null) {
+            me.setCurrentMapName(location.mapName());
+            me.setX(coordinate.getX());
+            me.setY(coordinate.getY());
+        }
+
+        boolean locationChanged = hasLocationChanged(previous, location.mapName(), coordinate);
+        long locationChangedAtMs = locationChanged || previous == null
+                ? now
+                : previous.getLocationChangedAtMs();
+        WindowPathingState state = classifyPathingState(intent, previous, location, locationChanged,
+                locationChangedAtMs, now);
+        long probeMs = Math.max(0L, now - startedAt);
+        WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
+                .state(state)
+                .intent(intent)
+                .currentMapName(location.mapName())
+                .currentX(coordinate == null ? null : coordinate.getX())
+                .currentY(coordinate == null ? null : coordinate.getY())
+                .message("mini-map template location refreshed")
+                .locationChangedAtMs(locationChangedAtMs)
+                .updatedAtMs(now)
+                .probeStartedAtMs(startedAt)
+                .probeFinishedAtMs(now)
+                .probeInProgress(false)
+                .build();
+        windowContext.updatePathingSnapshot(snapshot);
+
+        long wallStationaryMs = Math.max(0L, now - locationChangedAtMs);
+        long observedStationaryMs = Math.max(0L, snapshot.getUpdatedAtMs() - locationChangedAtMs);
+        boolean stateChanged = previous == null || state != previous.getState();
+        if (state == WindowPathingState.ARRIVED || stateChanged) {
+            log.info("{} window [{}] pathing watcher update: task={} state={} source={} target={}({}, {}) current={}({}, {}) observedStationaryMs={} wallStationaryMs={} probeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, state,
+                    intent.getSource(), intent.getTargetMapName(), intent.getTargetX(), intent.getTargetY(),
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                    observedStationaryMs, wallStationaryMs, probeMs);
+        } else if (probeMs >= WINDOW_PATHING_SLOW_PROBE_LOG_MS) {
+            log.info("{} window [{}] pathing watcher slow probe: task={} state={} source={} target={}({}, {}) current={}({}, {}) observedStationaryMs={} wallStationaryMs={} probeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, state,
+                    intent.getSource(), intent.getTargetMapName(), intent.getTargetX(), intent.getTargetY(),
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                    observedStationaryMs, wallStationaryMs, probeMs);
+        }
+        return snapshot;
+    }
+
+    private WindowPathingSnapshot updateUnknownPathing(TaskType taskType,
+                                                       TaskExecutionContext executionContext,
+                                                       WindowPathingIntent intent,
+                                                       WindowPathingSnapshot previous,
+                                                       long startedAt,
+                                                       String message) {
+        long now = System.currentTimeMillis();
+        if (!isCurrentPathingIntent(intent)) {
+            log.info("{} window [{}] discard stale pathing unknown result: task={} source={} target={}({}, {}) reason={} probeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    intent.getSource(), intent.getTargetMapName(), intent.getTargetX(), intent.getTargetY(),
+                    message, Math.max(0L, now - startedAt));
+            return windowContext.getPathingSnapshot();
+        }
+        long previousUpdatedAtMs = previous == null ? 0L : previous.getUpdatedAtMs();
+        WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
+                .state(WindowPathingState.UNKNOWN)
+                .intent(intent)
+                .currentMapName(previous == null ? null : previous.getCurrentMapName())
+                .currentX(previous == null ? null : previous.getCurrentX())
+                .currentY(previous == null ? null : previous.getCurrentY())
+                .message(message)
+                .locationChangedAtMs(previous == null ? 0L : previous.getLocationChangedAtMs())
+                .updatedAtMs(previousUpdatedAtMs)
+                .probeStartedAtMs(startedAt)
+                .probeFinishedAtMs(now)
+                .probeInProgress(false)
+                .build();
+        windowContext.updatePathingSnapshot(snapshot);
+        long probeMs = Math.max(0L, now - startedAt);
+        if (probeMs >= WINDOW_PATHING_SLOW_PROBE_LOG_MS) {
+            log.info("{} window [{}] pathing watcher unknown slow probe: task={} source={} reason={} probeMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, intent.getSource(),
+                    message, probeMs);
+        } else {
+            log.debug("{} window [{}] pathing watcher unknown: task={} source={} reason={} probeMs={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, intent.getSource(),
+                    message, probeMs);
+        }
+        return snapshot;
+    }
+
+    private WindowPathingState classifyPathingState(WindowPathingIntent intent,
+                                                    WindowPathingSnapshot previous,
+                                                    TemplateLocationInfo location,
+                                                    boolean locationChanged,
+                                                    long locationChangedAtMs,
+                                                    long now) {
+        MapCoordinate coordinate = location.coordinate();
+        if (hasArrived(intent, location.mapName(), coordinate)) {
+            return WindowPathingState.ARRIVED;
+        }
+        if (locationChanged) {
+            return WindowPathingState.ACTIVE;
+        }
+        long stoppedAwayMs = resolvePathingStoppedAwayMs(intent, location.mapName());
+        if (locationChangedAtMs > 0L
+                && now - locationChangedAtMs >= stoppedAwayMs
+                && now - intent.getCreatedAtMs() >= stoppedAwayMs) {
+            return WindowPathingState.STOPPED_AWAY;
+        }
+        return WindowPathingState.ACTIVE;
+    }
+
+    private long resolvePathingStoppedAwayMs(WindowPathingIntent intent, String currentMapName) {
+        if (intent.getTargetX() == null || intent.getTargetY() == null) {
+            return WINDOW_PATHING_MAP_ROUTE_STOPPED_AWAY_MS;
+        }
+        if (intent.getTargetMapName() != null
+                && currentMapName != null
+                && !Objects.equals(intent.getTargetMapName(), currentMapName)) {
+            return WINDOW_PATHING_COORDINATE_AWAY_STOPPED_MS;
+        }
+        return WINDOW_PATHING_COORDINATE_STOPPED_AWAY_MS;
+    }
+
+    private boolean isCurrentPathingIntent(WindowPathingIntent intent) {
+        return windowContext.getActivePathingIntent()
+                .map(current -> isSamePathingIntent(current, intent))
+                .orElse(false);
+    }
+
+    private boolean isSamePathingIntent(WindowPathingIntent left, WindowPathingIntent right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return Objects.equals(left.getSource(), right.getSource())
+                && Objects.equals(left.getTargetMapName(), right.getTargetMapName())
+                && Objects.equals(left.getTargetX(), right.getTargetX())
+                && Objects.equals(left.getTargetY(), right.getTargetY())
+                && left.getTolerance() == right.getTolerance()
+                && left.getCreatedAtMs() == right.getCreatedAtMs();
+    }
+
+    private boolean hasArrived(WindowPathingIntent intent, String currentMapName, MapCoordinate coordinate) {
+        if (intent.getTargetMapName() != null
+                && currentMapName != null
+                && !intent.getTargetMapName().equals(currentMapName)) {
+            return false;
+        }
+        if (intent.getTargetX() == null || intent.getTargetY() == null) {
+            return intent.getTargetMapName() == null || intent.getTargetMapName().equals(currentMapName);
+        }
+        if (coordinate == null) {
+            return false;
+        }
+        int tolerance = Math.max(0, intent.getTolerance());
+        return Math.abs(coordinate.getX() - intent.getTargetX()) <= tolerance
+                && Math.abs(coordinate.getY() - intent.getTargetY()) <= tolerance;
+    }
+
+    private boolean hasLocationChanged(WindowPathingSnapshot previous, String currentMapName, MapCoordinate coordinate) {
+        if (previous == null || coordinate == null) {
+            return false;
+        }
+        if (!Objects.equals(previous.getCurrentMapName(), currentMapName)) {
+            return true;
+        }
+        return previous.getCurrentX() == null
+                || previous.getCurrentY() == null
+                || previous.getCurrentX() != coordinate.getX()
+                || previous.getCurrentY() != coordinate.getY();
     }
 
     /**
@@ -548,5 +1189,30 @@ public class WindowTaskRunner {
 
     private String normalizeMessage(String message) {
         return message == null || message.isBlank() ? "-" : message;
+    }
+
+    private static class CombatWatcherHandle {
+        private static final CombatWatcherHandle NOOP = new CombatWatcherHandle(null, null);
+
+        private final AtomicBoolean running;
+        private final Future<?> future;
+
+        private CombatWatcherHandle(AtomicBoolean running, Future<?> future) {
+            this.running = running;
+            this.future = future;
+        }
+
+        private static CombatWatcherHandle noop() {
+            return NOOP;
+        }
+
+        private void stop() {
+            if (running != null) {
+                running.set(false);
+            }
+            if (future != null) {
+                future.cancel(true);
+            }
+        }
     }
 }

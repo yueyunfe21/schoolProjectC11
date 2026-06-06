@@ -48,6 +48,8 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_4 = 0x05;
     private static final int SCAN_6 = 0x07;
     private static final int SCAN_8 = 0x09;
+    private static final int SCAN_A = 0x1E;
+    private static final int SCAN_C = 0x2E;
     private static final int SCAN_E = 0x12;
     private static final int SCAN_O = 0x18;
     private static final int SCAN_Q = 0x10;
@@ -58,6 +60,7 @@ public class WinApiMouseController implements InputProvider {
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
     private static final DWORD INPUT_ARRAY_SIZE_ONE = new DWORD(1);
+    private static final int LEFT_CLICK_HOLD_MS = 150;
 
     private final CoordinateHelper coordinateHelper;
     private final WindowAwareInputCoordinator inputCoordinator;
@@ -65,8 +68,10 @@ public class WinApiMouseController implements InputProvider {
 
     @Override
     public void clickLeft(int x, int y, int delayMs) {
-        traceInput("clickLeft", "button=LEFT x=" + x + " y=" + y + " delayMs=" + delayMs);
-        inputCoordinator.runInput("clickLeft", () -> doClick(x, y, delayMs, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
+        traceInput("clickLeft", "button=LEFT x=" + x + " y=" + y
+                + " requestedDelayMs=" + delayMs + " effectiveDelayMs=" + LEFT_CLICK_HOLD_MS);
+        inputCoordinator.runInput("clickLeft", () -> doClick(x, y, LEFT_CLICK_HOLD_MS,
+                FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
     }
 
     @Override
@@ -102,6 +107,18 @@ public class WinApiMouseController implements InputProvider {
     public void releaseCtrl() {
         traceInput("releaseCtrl", "");
         inputCoordinator.runInput("releaseCtrl", this::doReleaseCtrl);
+    }
+
+    @Override
+    public void pressCtrlC() {
+        traceInput("pressCtrlC", "shortcut=CTRL+C");
+        inputCoordinator.runInput("pressCtrlC", this::doPressCtrlC);
+    }
+
+    @Override
+    public void pressCtrlA() {
+        traceInput("pressCtrlA", "shortcut=CTRL+A");
+        inputCoordinator.runInput("pressCtrlA", () -> pressCtrlScan(SCAN_A, "CTRL+A"));
     }
 
     @Override
@@ -162,6 +179,12 @@ public class WinApiMouseController implements InputProvider {
     public void pressAltQ() {
         traceInput("pressAltQ", "shortcut=ALT+Q");
         inputCoordinator.runInput("pressAltQ", () -> pressAltScan(SCAN_Q, "ALT+Q"));
+    }
+
+    @Override
+    public void pressAltA() {
+        traceInput("pressAltA", "shortcut=ALT+A");
+        inputCoordinator.runInput("pressAltA", () -> pressAltScan(SCAN_A, "ALT+A"));
     }
 
     @Override
@@ -302,6 +325,30 @@ public class WinApiMouseController implements InputProvider {
             TaskSleep.sleep(60);
         } catch (Exception e) {
             log.warn("[Input] Enter send failed: {}", e.getMessage());
+        }
+    }
+
+    private void doPressCtrlC() {
+        pressCtrlScan(SCAN_C, "CTRL+C");
+    }
+
+    private void pressCtrlScan(int scanCode, String label) {
+        try {
+            sendInput(buildKeyboardScanInput(SCAN_LCTRL, false));
+            TaskSleep.sleep(60);
+            sendInput(buildKeyboardScanInput(scanCode, false));
+            TaskSleep.sleep(80);
+            sendInput(buildKeyboardScanInput(scanCode, true));
+            TaskSleep.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_LCTRL, true));
+            TaskSleep.sleep(160);
+        } catch (Exception e) {
+            log.warn("[Input] {} send failed: {}", label, e.getMessage());
+            try {
+                sendInput(buildKeyboardScanInput(scanCode, true));
+                sendInput(buildKeyboardScanInput(SCAN_LCTRL, true));
+            } catch (Exception ignored) {
+            }
         }
     }
 

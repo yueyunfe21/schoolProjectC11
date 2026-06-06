@@ -76,10 +76,10 @@
 //    private static final int EXIT_POINT_X = 11;
 //    private static final int EXIT_POINT_Y = 8;
 //    private static final String XIULUO_TARGET_KEYWORD = "修罗";
-//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo_accept_xianlaiwu.png";
-//    private static final String UNDER_FIVE_CONFIRM_TEMPLATE = "images/template/dialog/xiuluo_underfive_confirm.png";
-//    private static final String UNDER_FIVE_WAIT_TEMPLATE = "images/template/dialog/xiuluo_underfive_wait.png";
-//    private static final String ENTER_BATTLE_TEMPLATE = "images/template/dialog/xiuluo_enter_battle_kanda.png";
+//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png";
+//    private static final String UNDER_FIVE_CONFIRM_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_underfive_confirm.png";
+//    private static final String UNDER_FIVE_WAIT_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_underfive_wait.png";
+//    private static final String ENTER_BATTLE_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png";
 //    private static final String NPC_TAG_TEMPLATE = "images/template/npc/npc_tag.png";
 //    private static final String RETURN_ITEM_TEMPLATE = "bag/xiuluo_return_item.png";
 //    private static final String OPTION_ACCEPT_TASK = "accept-task";

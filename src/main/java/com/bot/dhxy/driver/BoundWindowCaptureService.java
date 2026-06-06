@@ -136,7 +136,7 @@ public class BoundWindowCaptureService {
         Optional<BufferedImage> printWindow = captureWithCompatibleBitmap(hwnd, width, height,
                 (windowDc, memoryDc) -> User32.INSTANCE.PrintWindow(hwnd, memoryDc, PRINT_WINDOW_RENDER_FULL_CONTENT));
         BlankProbe printWindowBlankProbe = probeBlank(printWindow.orElse(null));
-        log.info("HWND capture probe: hwnd={} title={} provider=PRINTWINDOW present={} blank={} differentSamples={} firstRgb={} size={}x{}",
+        log.debug("HWND capture probe: hwnd={} title={} provider=PRINTWINDOW present={} blank={} differentSamples={} firstRgb={} size={}x{}",
                 hwndValue, binding.getTitle(), printWindow.isPresent(), printWindowBlankProbe.blank(),
                 printWindowBlankProbe.differentSamples(), printWindowBlankProbe.firstRgbHex(), width, height);
         if (printWindow.isPresent() && !printWindowBlankProbe.blank()) {
@@ -146,7 +146,7 @@ public class BoundWindowCaptureService {
         Optional<BufferedImage> bitBlt = captureWithCompatibleBitmap(hwnd, width, height,
                 (windowDc, memoryDc) -> GDI32.INSTANCE.BitBlt(memoryDc, 0, 0, width, height, windowDc, 0, 0, SRCCOPY));
         BlankProbe bitBltBlankProbe = probeBlank(bitBlt.orElse(null));
-        log.info("HWND capture probe: hwnd={} title={} provider=BITBLT present={} blank={} differentSamples={} firstRgb={} size={}x{}",
+        log.debug("HWND capture probe: hwnd={} title={} provider=BITBLT present={} blank={} differentSamples={} firstRgb={} size={}x{}",
                 hwndValue, binding.getTitle(), bitBlt.isPresent(), bitBltBlankProbe.blank(),
                 bitBltBlankProbe.differentSamples(), bitBltBlankProbe.firstRgbHex(), width, height);
         if (bitBlt.isPresent() && !bitBltBlankProbe.blank()) {

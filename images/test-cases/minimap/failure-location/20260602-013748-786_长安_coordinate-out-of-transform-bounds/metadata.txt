@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=长安
+coord=144,1125
+sourceImage=images\temp\hwnd-20B34\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260602-013748-786_长安_coordinate-out-of-transform-bounds\tmp_pos.png

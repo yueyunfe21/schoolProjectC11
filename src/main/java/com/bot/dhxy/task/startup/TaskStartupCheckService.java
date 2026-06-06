@@ -48,11 +48,17 @@ public class TaskStartupCheckService {
             return TaskStartupCheckResult.skip(buildReason(context, "auto-battle", contextRole, "leader should skip auto-battle"));
         }
 
-        TeamRoleStatus role = teamRoleDetectionService.detectCurrentRole(context);
-        if (!teamRoleDetectionService.shouldRunAutoBattle(role)) {
-            return TaskStartupCheckResult.skip(buildReason(context, "auto-battle", role, "current role should skip auto-battle"));
+        /*
+         * 自动战斗是手动选择的后台挂机模式，启动时不能为了判定队员身份去 hover 队伍头像或
+         * 打开队伍面板。真实队伍检测会抢前台，也会在战斗中启动时误判并直接结束任务。
+         * 这里仅使用 window 层已经传下来的 role；没有预判身份时按配置决定是否放行。
+         */
+        if (teamTaskProperties.isAllowAutoBattleWhenRoleUnknown()) {
+            return TaskStartupCheckResult.allow(buildReason(context, "auto-battle", TeamRoleStatus.UNKNOWN,
+                    "allowed because live role detection is skipped"));
         }
-        return TaskStartupCheckResult.allow(buildReason(context, "auto-battle", role, "allowed"));
+        return TaskStartupCheckResult.skip(buildReason(context, "auto-battle", TeamRoleStatus.UNKNOWN,
+                "role unknown and live role detection is skipped"));
     }
 
     private TeamRoleStatus roleFromContext(TaskExecutionContext context) {

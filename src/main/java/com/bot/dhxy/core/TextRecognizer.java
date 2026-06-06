@@ -306,14 +306,35 @@ public class TextRecognizer {
             return null;
         }
         log.info("[ocr] location raw text: {}", rawText);
-        Pattern pattern = Pattern.compile("([^0-9\\[]+).*?\\[(\\d+)\\s*,\\s*(\\d+)\\]");
+        Pattern pattern = Pattern.compile("([^0-9\\[]+).*?\\[(\\d{1,3})\\s*[,，]\\s*(\\d{1,4})\\]");
         Matcher matcher = pattern.matcher(rawText);
 
         if (matcher.find()) {
             String mapName = matcher.group(1).trim();
             int x = Integer.parseInt(matcher.group(2));
-            int y = Integer.parseInt(matcher.group(3));
+            String yText = normalizeLocationCoordinateSide(matcher.group(3), rawText);
+            if (yText == null) {
+                return null;
+            }
+            int y = Integer.parseInt(yText);
             return new LocationInfo(mapName, x, y);
+        }
+        return null;
+    }
+
+    private String normalizeLocationCoordinateSide(String text, String rawText) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String digits = text.trim();
+        if (digits.length() <= 3) {
+            return digits;
+        }
+        if (digits.length() == 4 && digits.charAt(0) == '1') {
+            String normalized = digits.substring(1);
+            log.info("[ocr-location] corrected noisy coordinate side: raw='{}' side='{}' normalized='{}'",
+                    abbreviate(rawText), digits, normalized);
+            return normalized;
         }
         return null;
     }

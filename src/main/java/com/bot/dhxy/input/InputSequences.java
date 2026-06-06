@@ -61,6 +61,24 @@ public class InputSequences {
     }
 
     /**
+     * Move to a known screen point and left-click it in one queued request.
+     *
+     * @param description diagnostic label.
+     * @param x screen-absolute X pixel.
+     * @param y screen-absolute Y pixel.
+     * @param settleMs delay after moving before clicking, in milliseconds.
+     * @param delayMs post-click delay in milliseconds.
+     * @return true when the move and click complete without interruption.
+     */
+    public boolean moveAndClickLeft(String description, int x, int y, int settleMs, int delayMs) {
+        return submitAndWait(description, List.of(
+                InputAction.moveMouse(x, y),
+                InputAction.sleep(settleMs),
+                InputAction.clickLeft(x, y, delayMs)
+        ));
+    }
+
+    /**
      * Submit one double-right-click sequence.
      *
      * @param description diagnostic label.
@@ -88,6 +106,10 @@ public class InputSequences {
 
     public boolean pressAltT(String description) {
         return submitAndWait(description, List.of(InputAction.pressAltT()));
+    }
+
+    public boolean pressCtrlC(String description) {
+        return submitAndWait(description, List.of(InputAction.pressCtrlC()));
     }
 
     /**

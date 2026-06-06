@@ -1,0 +1,8 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=长安城东
+coord=135,1135
+expectedAround=137,136
+sourceImage=images\temp\hwnd-271128\tmp_pos.png
+logWindow=2026-05-28 22:49:34..22:50:27
+note=OCR read y as 1135/1137 during 长安城东 current-map navigation, preventing tooltip/NPC click from running.

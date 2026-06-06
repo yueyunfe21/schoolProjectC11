@@ -546,6 +546,107 @@ public class ImagePreprocessor {
         return count;
     }
 
+    public static BufferedImage washYellowTextToBlackAndWhite(BufferedImage image) {
+        if (image == null) {
+            return null;
+        }
+        BufferedImage yellowMask = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                int rgb = image.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                yellowMask.setRGB(x, y, isYellowTextPixel(r, g, b) ? 0xFFFFFF : 0x000000);
+            }
+        }
+        BufferedImage cleaned = cleanYellowTextMask(yellowMask);
+        if (cleaned != yellowMask) {
+            yellowMask.flush();
+        }
+        return cleaned;
+    }
+
+    /**
+     * Build a compact binary fingerprint from an already cleaned validation crop.
+     *
+     * <p>The caller should pass a small black/white image, usually cropped around the selected dialog
+     * option. The resulting string includes dimensions plus packed bits, so later watcher checks can
+     * compare the same area without rerunning OCR or template matching.</p>
+     *
+     * @param image cleaned validation crop; bright pixels are treated as text.
+     * @return dimension-prefixed hex fingerprint, or empty when the image is unavailable.
+     */
+    public static String buildBinaryFingerprint(BufferedImage image) {
+        if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+            return "";
+        }
+        StringBuilder bits = new StringBuilder((image.getWidth() * image.getHeight() + 3) / 4);
+        int nibble = 0;
+        int bitCount = 0;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                int rgb = image.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                int luminance = (r + g + b) / 3;
+                nibble = (nibble << 1) | (luminance >= 128 ? 1 : 0);
+                bitCount++;
+                if (bitCount == 4) {
+                    bits.append(Character.forDigit(nibble, 16));
+                    nibble = 0;
+                    bitCount = 0;
+                }
+            }
+        }
+        if (bitCount > 0) {
+            bits.append(Character.forDigit(nibble << (4 - bitCount), 16));
+        }
+        return image.getWidth() + "x" + image.getHeight() + ":" + bits;
+    }
+
+    /**
+     * Compare two dimension-prefixed binary fingerprints.
+     *
+     * @param left fingerprint from {@link #buildBinaryFingerprint(BufferedImage)}.
+     * @param right fingerprint from {@link #buildBinaryFingerprint(BufferedImage)}.
+     * @return bit-level Hamming distance, or {@link Integer#MAX_VALUE} when dimensions differ or a
+     * fingerprint is missing.
+     */
+    public static int binaryFingerprintDistance(String left, String right) {
+        if (left == null || right == null || left.isBlank() || right.isBlank()) {
+            return Integer.MAX_VALUE;
+        }
+        int leftSeparator = left.indexOf(':');
+        int rightSeparator = right.indexOf(':');
+        if (leftSeparator <= 0 || rightSeparator <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        if (!left.substring(0, leftSeparator).equals(right.substring(0, rightSeparator))) {
+            return Integer.MAX_VALUE;
+        }
+        String leftBits = left.substring(leftSeparator + 1);
+        String rightBits = right.substring(rightSeparator + 1);
+        if (leftBits.length() != rightBits.length()) {
+            return Integer.MAX_VALUE;
+        }
+        int distance = 0;
+        for (int i = 0; i < leftBits.length(); i++) {
+            int leftNibble = Character.digit(leftBits.charAt(i), 16);
+            int rightNibble = Character.digit(rightBits.charAt(i), 16);
+            if (leftNibble < 0 || rightNibble < 0) {
+                return Integer.MAX_VALUE;
+            }
+            distance += Integer.bitCount(leftNibble ^ rightNibble);
+        }
+        return distance;
+    }
+
+    public static boolean isBinaryFingerprintSimilar(String left, String right, int maxDistance) {
+        return binaryFingerprintDistance(left, right) <= maxDistance;
+    }
+
 
     /**
      * Build the cleaned yellow-text OCR image used by all yellow-text readers.
@@ -565,51 +666,65 @@ public class ImagePreprocessor {
                 return;
             }
 
-            int width = img.getWidth();
-            int height = img.getHeight();
-            BufferedImage yellowMask = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
-
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int rgb = img.getRGB(x, y);
-                    int r = (rgb >> 16) & 0xFF;
-                    int g = (rgb >> 8) & 0xFF;
-                    int b = rgb & 0xFF;
-                    yellowMask.setRGB(x, y, isYellowTextPixel(r, g, b) ? 0xFFFFFF : 0x000000);
-                }
-            }
-
             File output = new File(outputPath);
             File parent = output.getParentFile();
             if (parent != null && !parent.exists()) {
                 parent.mkdirs();
             }
-            String tempPath = outputPath + ".yellow-mask.tmp.png";
-            ImageIO.write(yellowMask, "png", new File(tempPath));
+            BufferedImage cleanedImage = washYellowTextToBlackAndWhite(img);
             img.flush();
-            yellowMask.flush();
-
-            Mat src = Imgcodecs.imread(tempPath, Imgcodecs.IMREAD_GRAYSCALE);
-            if (src.empty()) {
-                log.warn("wash yellow clean failed, temp not readable: {}", tempPath);
+            if (cleanedImage == null) {
+                log.warn("wash yellow clean failed, cleaned image unavailable: {}", inputPath);
                 return;
             }
+            ImageIO.write(cleanedImage, "png", output);
+            cleanedImage.flush();
+        } catch (Exception e) {
+            log.error("wash yellow clean text failed", e);
+        }
+    }
 
-            Mat horizontal = new Mat();
-            Mat horizontalKernel = Imgproc.getStructuringElement(
+    private static BufferedImage cleanYellowTextMask(BufferedImage yellowMask) {
+        if (yellowMask == null) {
+            return null;
+        }
+        Mat src = null;
+        Mat horizontal = null;
+        Mat horizontalKernel = null;
+        Mat noLines = null;
+        Mat labels = null;
+        Mat stats = null;
+        Mat centroids = null;
+        Mat cleaned = null;
+        try {
+            int width = yellowMask.getWidth();
+            int height = yellowMask.getHeight();
+            byte[] pixels = new byte[width * height];
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int rgb = yellowMask.getRGB(x, y);
+                    int luminance = (((rgb >> 16) & 0xFF) + ((rgb >> 8) & 0xFF) + (rgb & 0xFF)) / 3;
+                    pixels[y * width + x] = (byte) (luminance >= 128 ? 255 : 0);
+                }
+            }
+            src = new Mat(height, width, CvType.CV_8UC1);
+            src.put(0, 0, pixels);
+
+            horizontal = new Mat();
+            horizontalKernel = Imgproc.getStructuringElement(
                     Imgproc.MORPH_RECT,
                     new org.opencv.core.Size(35, 1)
             );
             Imgproc.morphologyEx(src, horizontal, Imgproc.MORPH_OPEN, horizontalKernel);
 
-            Mat noLines = new Mat();
+            noLines = new Mat();
             Core.subtract(src, horizontal, noLines);
 
-            Mat labels = new Mat();
-            Mat stats = new Mat();
-            Mat centroids = new Mat();
+            labels = new Mat();
+            stats = new Mat();
+            centroids = new Mat();
             int numLabels = Imgproc.connectedComponentsWithStats(noLines, labels, stats, centroids);
-            Mat cleaned = Mat.zeros(noLines.size(), CvType.CV_8UC1);
+            cleaned = Mat.zeros(noLines.size(), CvType.CV_8UC1);
 
             for (int i = 1; i < numLabels; i++) {
                 int area = (int) stats.get(i, Imgproc.CC_STAT_AREA)[0];
@@ -623,20 +738,28 @@ public class ImagePreprocessor {
                 cleaned.setTo(new Scalar(255), mask);
                 mask.release();
             }
-
-            Imgcodecs.imwrite(outputPath, cleaned);
-            Files.deleteIfExists(Path.of(tempPath));
-
-            src.release();
-            horizontal.release();
-            horizontalKernel.release();
-            noLines.release();
-            labels.release();
-            stats.release();
-            centroids.release();
-            cleaned.release();
+            byte[] cleanedPixels = new byte[width * height];
+            cleaned.get(0, 0, cleanedPixels);
+            BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int value = Byte.toUnsignedInt(cleanedPixels[y * width + x]);
+                    out.setRGB(x, y, value >= 128 ? 0xFFFFFF : 0x000000);
+                }
+            }
+            return out;
         } catch (Exception e) {
-            log.error("wash yellow clean text failed", e);
+            log.error("clean yellow text mask failed", e);
+            return yellowMask;
+        } finally {
+            if (src != null) src.release();
+            if (horizontal != null) horizontal.release();
+            if (horizontalKernel != null) horizontalKernel.release();
+            if (noLines != null) noLines.release();
+            if (labels != null) labels.release();
+            if (stats != null) stats.release();
+            if (centroids != null) centroids.release();
+            if (cleaned != null) cleaned.release();
         }
     }
 

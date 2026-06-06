@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
 
-
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
@@ -17,6 +16,7 @@ import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -35,6 +35,7 @@ public class GameStateUtil {
 
     private static final long COORD_DETECT_WINDOW_MS = 1400;
     private static final long PIXEL_FALLBACK_WINDOW_MS = 1200;
+    private static final long COORD_QUIET_PIXEL_FALLBACK_WINDOW_MS = 1800;
     private static final long MOVE_SAMPLE_INTERVAL_MS = 300; // 🌟 加快采样：每 300 毫秒看一眼
     private static final int COORD_MIN_STABLE_SAMPLES = 4;
     private static final int COORD_STRONG_MOVE_DISTANCE = 3;
@@ -43,6 +44,7 @@ public class GameStateUtil {
     private static final int COORD_MAYBE_MOVE_HITS_FOR_MOVING = 2;
     private static final long DEFAULT_PATHING_PROTECTION_MS = 5500;
     private static final int FAST_PASS_HITS = 2; // 🌟 极速放行：只要累计看到 2 次画面变动，立刻判定为跑动
+    private static final int COORD_QUIET_PIXEL_FALLBACK_HITS = 4;
     private static final double MOVE_DIFF_RATIO = 0.05; // 默认两帧匹配阈值// 默认两帧匹配阈值
 
     private static final double DEFAULT_MAP_LABEL_SAME_TOLERANCE = 0.08;
@@ -55,6 +57,7 @@ public class GameStateUtil {
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
+    private final MapNameCanonicalizer mapNameCanonicalizer;
     private final Map<String, MovementIntentState> movementIntentStates = new ConcurrentHashMap<>();
 
     /**
@@ -65,6 +68,138 @@ public class GameStateUtil {
         return state == MovementState.MOVING
                 || state == MovementState.PATHING_ACTIVE
                 || state == MovementState.MAYBE_MOVING;
+    }
+
+    /**
+     * Confirm whether a just-submitted tracker/pathing click appears to have started movement using
+     * only lightweight edge-frame pixel comparison.
+     *
+     * <p>This method intentionally does not read mini-map coordinates and does not call OCR. It is
+     * for task-tracker green-link clicks where the click itself is the movement intent and a heavy
+     * coordinate sync would stall multi-window scheduling. Two edge probes must change in the same
+     * sample so one animated background patch cannot falsely confirm movement.</p>
+     *
+     * @param reason log label describing the caller.
+     * @return true when both edge probes changed for enough samples inside the short confirmation window.
+     */
+    public boolean confirmPathingStartedByEdgePixelDiff(String reason) {
+        int[] leftProbe = coordinateHelper.getScaledRect(20, 400, 30, 30);
+        int[] rightProbe = coordinateHelper.getScaledRect(999, 176, 30, 30);
+        int stripX1 = Math.min(leftProbe[0], rightProbe[0]);
+        int stripY1 = Math.min(leftProbe[1], rightProbe[1]);
+        int stripX2 = Math.max(leftProbe[2], rightProbe[2]);
+        int stripY2 = Math.max(leftProbe[3], rightProbe[3]);
+        long startedAt = System.currentTimeMillis();
+        long deadline = startedAt + PIXEL_FALLBACK_WINDOW_MS;
+        int attempts = 0;
+        int changedHits = 0;
+        int leftChangedHits = 0;
+        int rightChangedHits = 0;
+        String safeReason = safeReason(reason);
+
+        while (System.currentTimeMillis() < deadline) {
+            checkpointMovementProbe();
+            // Capture both edge probes from the same parent frame so the left/right samples are time-aligned.
+            BufferedImage frame1 = tracker.captureToMemory(
+                    "pathing-click-edge-strip-frame1", stripX1, stripY1, stripX2, stripY2);
+            if (frame1 == null) {
+                if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
+                    return false;
+                }
+                continue;
+            }
+
+            if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
+                flushPixelProbes(frame1, null);
+                return false;
+            }
+            checkpointMovementProbe();
+
+            BufferedImage frame2 = tracker.captureToMemory(
+                    "pathing-click-edge-strip-frame2", stripX1, stripY1, stripX2, stripY2);
+            try {
+                if (frame2 == null) {
+                    continue;
+                }
+
+                BufferedImage leftFrame1 = frame1.getSubimage(
+                        leftProbe[0] - stripX1,
+                        leftProbe[1] - stripY1,
+                        leftProbe[2] - leftProbe[0],
+                        leftProbe[3] - leftProbe[1]);
+                BufferedImage leftFrame2 = frame2.getSubimage(
+                        leftProbe[0] - stripX1,
+                        leftProbe[1] - stripY1,
+                        leftProbe[2] - leftProbe[0],
+                        leftProbe[3] - leftProbe[1]);
+                BufferedImage rightFrame1 = frame1.getSubimage(
+                        rightProbe[0] - stripX1,
+                        rightProbe[1] - stripY1,
+                        rightProbe[2] - rightProbe[0],
+                        rightProbe[3] - rightProbe[1]);
+                BufferedImage rightFrame2 = frame2.getSubimage(
+                        rightProbe[0] - stripX1,
+                        rightProbe[1] - stripY1,
+                        rightProbe[2] - rightProbe[0],
+                        rightProbe[3] - rightProbe[1]);
+
+                attempts++;
+                boolean leftChanged = !ImageFinder.isMatch(leftFrame1, leftFrame2, MOVE_DIFF_RATIO);
+                boolean rightChanged = !ImageFinder.isMatch(rightFrame1, rightFrame2, MOVE_DIFF_RATIO);
+                if (leftChanged && rightChanged) {
+                    changedHits++;
+                    if (changedHits >= FAST_PASS_HITS) {
+                        log.info("🏃 [移动侦测] 双边缘像素确认寻路开始：reason={} attempts={} changedHits={} elapsedMs={}",
+                                safeReason, attempts, changedHits, System.currentTimeMillis() - startedAt);
+                        return true;
+                    }
+                } else if (leftChanged || rightChanged) {
+                    if (leftChanged) {
+                        leftChangedHits++;
+                    }
+                    if (rightChanged) {
+                        rightChangedHits++;
+                    }
+                    int singleEdgeHits = Math.max(leftChangedHits, rightChangedHits);
+                    if (singleEdgeHits >= FAST_PASS_HITS) {
+                        log.info("🏃 [移动侦测] 单边缘连续变化确认寻路开始：reason={} attempts={} leftHits={} rightHits={} elapsedMs={}",
+                                safeReason, attempts, leftChangedHits, rightChangedHits,
+                                System.currentTimeMillis() - startedAt);
+                        return true;
+                    }
+                    log.info("🟡 [移动侦测] 单边缘像素变化，暂不确认寻路：reason={} leftChanged={} rightChanged={} attempts={} changedHits={}",
+                            safeReason, leftChanged, rightChanged, attempts, changedHits);
+                }
+            } finally {
+                flushPixelProbes(frame1, frame2);
+            }
+        }
+
+        log.info("🛑 [移动侦测] 边缘像素未确认寻路：reason={} attempts={} bothHits={}/{} leftHits={} rightHits={} windowMs={} elapsedMs={}",
+                safeReason, attempts, changedHits, FAST_PASS_HITS, leftChangedHits, rightChangedHits, PIXEL_FALLBACK_WINDOW_MS,
+                System.currentTimeMillis() - startedAt);
+        return false;
+    }
+
+    /**
+     * Probe whether the game is likely in the Alt+A direct combat-click mode.
+     *
+     * <p>That mode hides both the normal mini-map coordinate strip and the top-right HP/MP bars.
+     * Use two lightweight no-input probes and require both to miss. Do not call
+     * {@link PlayerStateService#syncMyPosition()} here because the business position sync falls
+     * through to local/Baidu OCR when the mini-map template reader misses.</p>
+     *
+     * @param reason log label describing the caller.
+     * @return true when the mini-map coordinate cannot be read, which is a likely signal that the
+     *         Alt+A combat-click overlay is active. False means coordinates are still visible.
+     */
+    public boolean isDirectCombatClickModeLikely(String reason) {
+        boolean coordinateReadable = miniMapCoordinateReader.readCurrentCoordinate().isPresent();
+        boolean barsVisible = playerStateService.areStatusBarsVisibleNoFocus(reason);
+        boolean likely = !coordinateReadable && !barsVisible;
+        log.info("[direct-combat-mode] probe reason={} coordinateReadable={} barsVisible={} modeLikely={}",
+                reason == null ? "-" : reason, coordinateReadable, barsVisible, likely);
+        return likely;
     }
 
     public BufferedImage captureCurrentMapLabelSnapshot(String reason) {
@@ -121,7 +256,7 @@ public class GameStateUtil {
      * @param reason log label describing the caller, for example {@code navigateToMap}.
      * @return true when the cached or scanned current map equals {@code targetMapName}; false when
      *         the timeout expires or recognition fails. Task stop checkpoints may throw
-     *         {@link TaskStopRequestedException}.
+     *
      */
     public boolean confirmCurrentMap(String targetMapName, long timeoutMs, String reason) {
         return confirmCurrentMap(targetMapName, timeoutMs, DEFAULT_MAP_CONFIRM_POLL_MS, reason);
@@ -155,6 +290,50 @@ public class GameStateUtil {
         return confirmCurrentMap(targetMapName, timeoutMs, DEFAULT_MAP_CONFIRM_POLL_MS, false, reason);
     }
 
+    /**
+     * Check exact in-game map-name equality for cached or scanned location state.
+     *
+     * @param currentMapName current in-game map name; null or blank is treated as not matching.
+     * @param targetMapName expected in-game map name; null or blank is treated as not matching.
+     * @return true only when both non-blank names are exactly equal.
+     */
+    public boolean isSameMapName(String currentMapName, String targetMapName) {
+        String current = canonicalMapName(currentMapName, "game-state:current-map");
+        String target = canonicalMapName(targetMapName, "game-state:target-map");
+        return !current.isBlank() && !target.isBlank() && current.equals(target);
+    }
+
+    /**
+     * Check whether a logical in-game position is near a target position.
+     *
+     * <p>When {@code targetMapName} is blank, this performs coordinate-only comparison. Otherwise
+     * the current map must exactly match the target map before the coordinate tolerance is checked.</p>
+     *
+     * @param currentMapName current in-game map name; may be null when the caller only needs coordinate comparison.
+     * @param currentX current logical in-game X coordinate.
+     * @param currentY current logical in-game Y coordinate.
+     * @param targetMapName expected in-game map name; null or blank skips the map-name check.
+     * @param targetX target logical in-game X coordinate.
+     * @param targetY target logical in-game Y coordinate.
+     * @param tolerance maximum allowed absolute delta on each axis; negative values are clamped to 0.
+     * @return true when the map requirement matches and both coordinate deltas are within {@code tolerance}.
+     */
+    public boolean isNearCoordinate(String currentMapName,
+                                    int currentX,
+                                    int currentY,
+                                    String targetMapName,
+                                    int targetX,
+                                    int targetY,
+                                    int tolerance) {
+        if (targetMapName != null && !targetMapName.isBlank()
+                && !isSameMapName(currentMapName, targetMapName)) {
+            return false;
+        }
+        int safeTolerance = Math.max(0, tolerance);
+        return Math.abs(currentX - targetX) <= safeTolerance
+                && Math.abs(currentY - targetY) <= safeTolerance;
+    }
+
     private boolean confirmCurrentMap(String targetMapName,
                                       long timeoutMs,
                                       long pollMs,
@@ -162,7 +341,7 @@ public class GameStateUtil {
                                       String reason) {
         long latencyStart = LatencyMetrics.start();
         String safeReason = safeReason(reason);
-        String expected = targetMapName == null ? "" : targetMapName.trim();
+        String expected = canonicalMapName(targetMapName, "map-confirm:target");
         boolean result = false;
         String lastMap = null;
         Integer lastX = null;
@@ -182,7 +361,7 @@ public class GameStateUtil {
                 checkpointStateProbe("confirm current map");
 
                 PlayerCharacter me = context.getMe();
-                if (allowCachedMatch && me != null && expected.equals(me.getCurrentMapName())) {
+                if (allowCachedMatch && me != null && isSameMapName(me.getCurrentMapName(), expected)) {
                     lastMap = me.getCurrentMapName();
                     lastX = me.getX();
                     lastY = me.getY();
@@ -199,7 +378,7 @@ public class GameStateUtil {
                     lastY = locationInfo.y;
                     log.info("[map-confirm] scanned reason={} target={} current={} coord=({}, {})",
                             safeReason, expected, locationInfo.mapName, locationInfo.x, locationInfo.y);
-                    if (expected.equals(locationInfo.mapName)) {
+                    if (isSameMapName(locationInfo.mapName, expected)) {
                         result = true;
                         return true;
                     }
@@ -218,7 +397,7 @@ public class GameStateUtil {
             } while (System.currentTimeMillis() <= deadline);
 
             PlayerCharacter me = context.getMe();
-            result = allowCachedMatch && me != null && expected.equals(me.getCurrentMapName());
+            result = allowCachedMatch && me != null && isSameMapName(me.getCurrentMapName(), expected);
             return result;
         } finally {
             LatencyMetrics.info(log, "gameState.confirmCurrentMap", latencyStart,
@@ -227,6 +406,13 @@ public class GameStateUtil {
                             + " last=" + safeLatencyValue(lastMap)
                             + " coord=" + (lastX == null || lastY == null ? "-" : lastX + "," + lastY));
         }
+    }
+
+    private String canonicalMapName(String mapName, String source) {
+        if (mapName == null || mapName.isBlank()) {
+            return "";
+        }
+        return mapNameCanonicalizer.canonicalize(mapName, source).trim();
     }
 
     public void recordMovementIntent(String source) {
@@ -265,6 +451,32 @@ public class GameStateUtil {
             return MovementState.STOPPED_STABLE;
         }
 
+        if (coordinateResult.validSamples() > 0) {
+            /*
+             * A readable but non-moving coordinate should reduce the weight of the tiny pixel
+             * fallback, not remove it. Require stronger pixel evidence in this case so animated map
+             * scenery cannot overrule a quiet mini-map coordinate, while real movement can still be
+             * surfaced as MAYBE_MOVING when the coordinate reader is too slow to gather 4 samples.
+             */
+            boolean strongPixelMoving = detectMovementByPixelDiff(
+                    COORD_QUIET_PIXEL_FALLBACK_WINDOW_MS,
+                    COORD_QUIET_PIXEL_FALLBACK_HITS,
+                    "coord-quiet");
+            if (strongPixelMoving) {
+                log.info("🏃 [移动侦测] 坐标未动但像素强变化，判定 MAYBE_MOVING：coord={} validSamples={} unknownSamples={}",
+                        formatCoordinate(coordinateResult.lastCoordinate()),
+                        coordinateResult.validSamples(), coordinateResult.unknownSamples());
+                return MovementState.MAYBE_MOVING;
+            }
+            MovementState quietState = coordinateResult.validSamples() >= 2
+                    ? MovementState.STOPPED_STABLE
+                    : MovementState.UNKNOWN;
+            log.info("🛑 [移动侦测] 坐标弱稳定压住像素弱变化：coord={} validSamples={} unknownSamples={} state={}",
+                    formatCoordinate(coordinateResult.lastCoordinate()),
+                    coordinateResult.validSamples(), coordinateResult.unknownSamples(), quietState);
+            return quietState;
+        }
+
         boolean pixelMoving = detectMovementByPixelDiff();
         if (pixelMoving) {
             log.info("🏃 [移动侦测] 坐标未确认移动，但像素检测仍有变化，判定 MAYBE_MOVING");
@@ -285,6 +497,9 @@ public class GameStateUtil {
         long previousAt = 0L;
         MapCoordinate first = null;
         MapCoordinate previous = null;
+        int[] pixelProbeRect = coordinateHelper.getScaledRect(20, 400, 30, 30);
+        BufferedImage firstPixelProbe = null;
+        BufferedImage lastPixelProbe = null;
 
         while (System.currentTimeMillis() < deadline) {
             checkpointMovementProbe();
@@ -293,6 +508,7 @@ public class GameStateUtil {
             if (current == null) {
                 unknownSamples++;
                 if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
+                    flushPixelProbes(firstPixelProbe, lastPixelProbe);
                     return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
                 }
                 checkpointMovementProbe();
@@ -300,6 +516,19 @@ public class GameStateUtil {
             }
 
             validSamples++;
+            BufferedImage currentPixelProbe = tracker.captureToMemory(
+                    "moving-check-coord-window",
+                    pixelProbeRect[0], pixelProbeRect[1], pixelProbeRect[2], pixelProbeRect[3]);
+            if (currentPixelProbe != null) {
+                if (firstPixelProbe == null) {
+                    firstPixelProbe = currentPixelProbe;
+                } else {
+                    if (lastPixelProbe != null) {
+                        lastPixelProbe.flush();
+                    }
+                    lastPixelProbe = currentPixelProbe;
+                }
+            }
             if (first == null) {
                 first = current;
                 previous = current;
@@ -311,6 +540,7 @@ public class GameStateUtil {
                 if (isStrongCoordinateMovement(distance, elapsedMs)) {
                     log.info("🏃 [移动侦测] 坐标速度确认移动：{} -> {} distance={} elapsedMs={} validSamples={} unknownSamples={}",
                             formatCoordinate(previous), formatCoordinate(current), distance, elapsedMs, validSamples, unknownSamples);
+                    flushPixelProbes(firstPixelProbe, lastPixelProbe);
                     return new CoordinateProbeResult(MovementState.MOVING, current, validSamples, unknownSamples);
                 }
 
@@ -321,6 +551,7 @@ public class GameStateUtil {
                 previous = current;
                 previousAt = now;
                 if (maybeMoveHits >= COORD_MAYBE_MOVE_HITS_FOR_MOVING) {
+                    flushPixelProbes(firstPixelProbe, lastPixelProbe);
                     return new CoordinateProbeResult(MovementState.MAYBE_MOVING, current, validSamples, unknownSamples);
                 }
             } else {
@@ -329,27 +560,52 @@ public class GameStateUtil {
             }
 
             if (!TaskSleep.sleep(MOVE_SAMPLE_INTERVAL_MS)) {
+                flushPixelProbes(firstPixelProbe, lastPixelProbe);
                 return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
             }
             checkpointMovementProbe();
         }
 
         if (validSamples >= COORD_MIN_STABLE_SAMPLES) {
+            if (firstPixelProbe != null && lastPixelProbe != null
+                    && !ImageFinder.isMatch(firstPixelProbe, lastPixelProbe, MOVE_DIFF_RATIO)) {
+                log.info("🏃 [移动侦测] 坐标稳定但同窗口像素变化，判定 MAYBE_MOVING：coord={} validSamples={} unknownSamples={} elapsedMs={}",
+                        formatCoordinate(previous), validSamples, unknownSamples, System.currentTimeMillis() - startAt);
+                flushPixelProbes(firstPixelProbe, lastPixelProbe);
+                return new CoordinateProbeResult(MovementState.MAYBE_MOVING, previous, validSamples, unknownSamples);
+            }
             log.info("🛑 [移动侦测] 坐标稳定，直接确认停稳：coord={} validSamples={} unknownSamples={} elapsedMs={}",
                     formatCoordinate(first), validSamples, unknownSamples, System.currentTimeMillis() - startAt);
+            flushPixelProbes(firstPixelProbe, lastPixelProbe);
             return new CoordinateProbeResult(MovementState.STOPPED_STABLE, previous, validSamples, unknownSamples);
         }
 
         log.info("❔ [移动侦测] 坐标样本不足，回退像素检测：validSamples={} unknownSamples={}",
                 validSamples, unknownSamples);
+        flushPixelProbes(firstPixelProbe, lastPixelProbe);
         return new CoordinateProbeResult(MovementState.UNKNOWN, previous, validSamples, unknownSamples);
     }
 
+    private void flushPixelProbes(BufferedImage firstPixelProbe, BufferedImage lastPixelProbe) {
+        if (firstPixelProbe != null) {
+            firstPixelProbe.flush();
+        }
+        if (lastPixelProbe != null && lastPixelProbe != firstPixelProbe) {
+            lastPixelProbe.flush();
+        }
+    }
+
     private boolean detectMovementByPixelDiff() {
+        return detectMovementByPixelDiff(PIXEL_FALLBACK_WINDOW_MS, FAST_PASS_HITS, "normal");
+    }
+
+    private boolean detectMovementByPixelDiff(long windowMs, int requiredHits, String mode) {
         int[] pics = coordinateHelper.getScaledRect(20, 400, 30, 30);
         int x1 = pics[0], y1 = pics[1], x2 = pics[2], y2 = pics[3];
 
-        long deadline = System.currentTimeMillis() + PIXEL_FALLBACK_WINDOW_MS;
+        long safeWindowMs = Math.max(windowMs, MOVE_SAMPLE_INTERVAL_MS);
+        int safeRequiredHits = Math.max(requiredHits, 1);
+        long deadline = System.currentTimeMillis() + safeWindowMs;
         int attempts = 0;
         int changedHits = 0;
 
@@ -380,7 +636,7 @@ public class GameStateUtil {
             if (changed) {
                 changedHits++;
                 // 🌟 核心改造：极速放行！一旦满 2 次立刻打断循环，绝不傻等！
-                if (changedHits >= FAST_PASS_HITS) {
+                if (changedHits >= safeRequiredHits) {
                     // log.info("🏃 [移动侦测] 提前确认跑动！(耗时: {}ms)", System.currentTimeMillis() - (deadline - MOVE_DETECT_WINDOW_MS));
                     frame1.flush();
                     frame2.flush();
@@ -394,8 +650,8 @@ public class GameStateUtil {
         }
 
         // 如果死等了 3.2 秒，变动次数还是没达到 2 次，那就是彻彻底底的真停了！
-        log.info("🛑 [移动侦测] 像素兜底结束 -> {}秒内仅变动 {} 次，判定为：已停下",
-                PIXEL_FALLBACK_WINDOW_MS / 1000.0, changedHits);
+        log.info("🛑 [移动侦测] 像素兜底结束 -> mode={} {}秒内变动 {}/{} 次，判定为：已停下",
+                mode, safeWindowMs / 1000.0, changedHits, safeRequiredHits);
         return false;
     }
 

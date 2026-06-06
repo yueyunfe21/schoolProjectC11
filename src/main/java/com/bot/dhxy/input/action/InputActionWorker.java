@@ -88,10 +88,17 @@ public class InputActionWorker {
         long latencyStart = LatencyMetrics.start();
         boolean completed = false;
         try {
+            if (request.isCancelled()) {
+                log.info("Input request skipped before focus because it was cancelled: windowId={} description={}",
+                        request.getWindowId(), request.getDescription());
+                request.getResult().complete(false);
+                return;
+            }
             boolean preferBackgroundKeyboard = canUseBackgroundKeyboard(request);
             boolean focusBeforeInput = request.hasExclusiveCallback() || !preferBackgroundKeyboard;
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
-                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), focusBeforeInput, () -> {
+                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), focusBeforeInput, () ->
+                            InputActionScope.callWith(request, () -> {
                         if (request.isCancelled()) {
                             return false;
                         }
@@ -113,7 +120,7 @@ public class InputActionWorker {
                             }
                         }
                         return true;
-                    })
+                    }))
             );
             completed = Boolean.TRUE.equals(ok);
             request.getResult().complete(completed);
@@ -144,11 +151,12 @@ public class InputActionWorker {
             case DRAG_AND_DROP -> inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
             case HOLD_CTRL -> inputProvider.holdCtrl();
             case RELEASE_CTRL -> inputProvider.releaseCtrl();
+            case PRESS_CTRL_C -> inputProvider.pressCtrlC();
             case TYPE_TEXT_UNICODE -> inputProvider.typeTextUnicode(action.getText());
             case PASTE_TEXT -> inputProvider.pasteText(action.getText());
             case PRESS_ENTER -> inputProvider.pressEnter();
             case PRESS_ALT_1, PRESS_ALT_2, PRESS_ALT_4, PRESS_ALT_6, PRESS_ALT_8,
-                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q ->
+                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A ->
                     pressAltShortcut(action.getType(), preferBackgroundKeyboard);
             case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
             case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
@@ -209,6 +217,7 @@ public class InputActionWorker {
             case PRESS_ALT_O -> BoundWindowKeyboardService.AltShortcut.ALT_O;
             case PRESS_ALT_E -> BoundWindowKeyboardService.AltShortcut.ALT_E;
             case PRESS_ALT_Q -> BoundWindowKeyboardService.AltShortcut.ALT_Q;
+            case PRESS_ALT_A -> BoundWindowKeyboardService.AltShortcut.ALT_A;
             default -> null;
         };
     }
@@ -228,6 +237,7 @@ public class InputActionWorker {
             case PRESS_ALT_O -> inputProvider.pressAltO();
             case PRESS_ALT_E -> inputProvider.pressAltE();
             case PRESS_ALT_Q -> inputProvider.pressAltQ();
+            case PRESS_ALT_A -> inputProvider.pressAltA();
             default -> throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
         }
     }

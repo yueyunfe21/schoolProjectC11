@@ -47,6 +47,17 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
     public boolean beforeTask(WindowRuntimeContext windowContext, TaskExecutionContext executionContext) {
         String prefix = executionContext == null ? "window-startup" : executionContext.getLogPrefix();
         String windowId = windowContext == null ? "-" : windowContext.getWindowId();
+        String taskCode = executionContext == null ? null : executionContext.getTaskCode();
+        if ("debug_navigation_stress".equals(taskCode)) {
+            /*
+             * The navigation stress task measures turn handoff latency. A full startup position OCR
+             * can spend several seconds before the window even asks for the task turn, which hides
+             * the latency being tested. Navigation itself still performs its own map checks.
+             */
+            log.info("{} window [{}] startup sync: identity only for navigation stress; position deferred", prefix, windowId);
+            playerStateService.syncMyIdentity();
+            return !Thread.currentThread().isInterrupted();
+        }
         /*
          * This is the common UI-start path. Keep identity/position sync here instead of inside each
          * task so Five Ring, Xiuluo, future team tasks, and member auto-battle windows all start from

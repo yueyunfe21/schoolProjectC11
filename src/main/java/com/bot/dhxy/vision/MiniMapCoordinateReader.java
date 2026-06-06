@@ -48,6 +48,7 @@ public class MiniMapCoordinateReader {
     private static final int MAX_COORD_DIGITS = 3;
     private static final double TEMPLATE_MATCH_THRESHOLD = 0.45;
     private static final double MAP_LABEL_MATCH_THRESHOLD = 0.62;
+    private static final int MAP_LABEL_CANONICAL_HEIGHT = 18;
     private static final String TEMPLATE_DIR = "images/template/coord_digits";
     private static final Path MAP_LABEL_TEMPLATE_DIR = Path.of("images", "template", "map_label")
             .toAbsolutePath()
@@ -102,13 +103,16 @@ public class MiniMapCoordinateReader {
                 return Optional.empty();
             }
             try {
-                String labelPath = saveDebugImage(label, "minimap_map_label_clean.png");
                 long labelMatchStartedAt = System.currentTimeMillis();
                 Optional<MapLabelTemplateMatch> match = recognizeMapLabelImage(label);
                 long labelMatchElapsedMs = System.currentTimeMillis() - labelMatchStartedAt;
                 if (match.isEmpty() || match.get().score() < MAP_LABEL_MATCH_THRESHOLD) {
-                    match.ifPresent(best -> log.info("[minimap-location] map label low score: map={} score={} threshold={}",
-                            best.mapName(), String.format("%.3f", best.score()), MAP_LABEL_MATCH_THRESHOLD));
+                    match.ifPresent(best -> {
+                        String debugPath = saveMapLabelLowScoreDebugImages(raw, label, best);
+                        log.info("[minimap-location] map label low score: map={} score={} threshold={} debugPath={}",
+                                best.mapName(), String.format("%.3f", best.score()),
+                                MAP_LABEL_MATCH_THRESHOLD, debugPath);
+                    });
                     log.info("[minimap-location] template stage failed: reason=label-low-score captureMs={} coordMs={} labelCropMs={} labelMatchMs={}",
                             captureElapsedMs, coordElapsedMs, labelCropElapsedMs, labelMatchElapsedMs);
                     return Optional.empty();
@@ -122,7 +126,7 @@ public class MiniMapCoordinateReader {
                         best.mapName(),
                         coordinate,
                         best.score(),
-                        labelPath
+                        null
                 ));
             } finally {
                 label.flush();
@@ -150,6 +154,55 @@ public class MiniMapCoordinateReader {
             return Optional.empty();
         }
         return Optional.ofNullable(extractCleanMapLabelImage(raw));
+    }
+
+    /**
+     * Normalizes an already-cropped mini-map label before it is learned as a reusable template.
+     *
+     * @param mapName OCR-confirmed map name that this template should represent; used only to
+     *                choose the expected mini-map label width bucket.
+     * @param source label-like image in mini-map coordinate text style, usually from an older
+     *               debug/snapshot label path; may contain a leaked coordinate bracket.
+     * @return a binary label image cropped to the same map-name-only format used by coordinate
+     *         strip extraction, or empty when no text-like pixels are found.
+     */
+    public Optional<BufferedImage> normalizeMapLabelTemplateImage(String mapName, BufferedImage source) {
+        if (source == null) {
+            return Optional.empty();
+        }
+        BufferedImage clean = cleanCoordinateText(source);
+        try {
+            List<GlyphBox> glyphs = segmentGlyphs(clean).stream()
+                    .filter(g -> g.pixelCount >= 2)
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+            if (glyphs.isEmpty()) {
+                return Optional.empty();
+            }
+            expectedMapLabelWidthRange(mapName)
+                    .ifPresent(range -> trimLeakedBracketForKnownMapName(glyphs, range));
+            return Optional.ofNullable(cropLabelGlyphs(clean, glyphs));
+        } finally {
+            clean.flush();
+        }
+    }
+
+    /**
+     * Checks whether a learned map-label image has already been normalized to the canonical size
+     * for its map name.
+     *
+     * @param mapName expected Chinese map name.
+     * @param label binary or color label image that will be saved under {@code mapName}.
+     * @return true when the saved label has the exact canonical size, or when the map-name length
+     *         is outside the calibrated 2-5 Chinese-character buckets.
+     */
+    public boolean isMapLabelWidthPlausible(String mapName, BufferedImage label) {
+        if (label == null) {
+            return false;
+        }
+        Optional<MapLabelWidthRange> range = expectedMapLabelWidthRange(mapName);
+        return range.isEmpty()
+                || (label.getWidth() == range.get().canonicalWidth()
+                && label.getHeight() == MAP_LABEL_CANONICAL_HEIGHT);
     }
 
     public Optional<MapLabelTemplateMatch> recognizeMapLabelFromCoordinateStrip(BufferedImage raw) {
@@ -405,8 +458,17 @@ public class MiniMapCoordinateReader {
                         continue;
                     }
 
-                    double score = leftDigits.score() + rightDigits.score()
-                            - Math.abs(width - 55) * 0.01
+                    /*
+                     * Do not prefer a narrower bracket span just because it is visually close to an
+                     * old "ideal" width. Three-digit coordinates such as [137,124] are naturally
+                     * wider; the previous width penalty could make the leading "1" look like the
+                     * left bracket and decode the coordinate as [37,124]. Prefer the span that
+                     * explains more coordinate digits, then use template score and comma position
+                     * only as tie breakers.
+                     */
+                    int digitCount = leftDigits.text().length() + rightDigits.text().length();
+                    double score = digitCount * 0.12
+                            + leftDigits.score() + rightDigits.score()
                             - Math.abs(comma.minX - (span.minX + width * 0.42)) * 0.005;
                     if (score > bestScore) {
                         best = span;
@@ -897,17 +959,149 @@ public class MiniMapCoordinateReader {
                 .filter(g -> g.maxX < rightLimit)
                 .filter(g -> g.minX > 6)
                 .filter(g -> g.pixelCount >= 2)
-                .toList();
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        // When bracket detection chooses a later coordinate envelope during movement,
+        // the real left coordinate bracket can leak into the map-name crop. The width
+        // guard below prevents deleting a real final Chinese character, e.g. turning
+        // normal 4-character labels (~54-56px) into 3-character labels (~39-43px).
+        labelGlyphs = stripTrailingCoordinateBracketGlyphs(labelGlyphs, rightLimit);
         if (labelGlyphs.isEmpty()) {
             return null;
         }
 
+        return cropLabelGlyphs(clean, labelGlyphs);
+    }
+
+    private List<GlyphBox> stripTrailingCoordinateBracketGlyphs(List<GlyphBox> glyphs, int rightLimit) {
+        List<GlyphBox> result = new ArrayList<>(glyphs);
+        while (result.size() > 1) {
+            GlyphBox tail = result.get(result.size() - 1);
+            if (!isTrailingCoordinateBracketGlyph(tail)) {
+                break;
+            }
+            List<GlyphBox> candidate = new ArrayList<>(result);
+            candidate.remove(candidate.size() - 1);
+            if (!shouldStripTrailingCoordinateBracketGlyph(result, candidate, tail, rightLimit)) {
+                break;
+            }
+            result = candidate;
+        }
+        return result;
+    }
+
+    private boolean shouldStripTrailingCoordinateBracketGlyph(List<GlyphBox> current,
+                                                             List<GlyphBox> candidate,
+                                                             GlyphBox tail,
+                                                             int rightLimit) {
+        int gapToBracketBoundary = rightLimit - tail.maxX;
+        if (gapToBracketBoundary <= 3) {
+            return true;
+        }
+
+        int beforeWidth = glyphSpanWidth(current);
+        int afterWidth = glyphSpanWidth(candidate);
+        return beforeWidth >= 64 && beforeWidth <= 74
+                && afterWidth >= 53 && afterWidth <= 59;
+    }
+
+    private void trimLeakedBracketForKnownMapName(List<GlyphBox> glyphs, MapLabelWidthRange expectedWidth) {
+        while (glyphs.size() > 1 && glyphSpanWidth(glyphs) > expectedWidth.max()) {
+            GlyphBox tail = glyphs.get(glyphs.size() - 1);
+            if (!isTrailingCoordinateBracketGlyph(tail)) {
+                break;
+            }
+            glyphs.remove(glyphs.size() - 1);
+        }
+    }
+
+    private BufferedImage cropLabelGlyphs(BufferedImage clean, List<GlyphBox> labelGlyphs) {
         GlyphBox bounds = labelGlyphs.get(0).copy();
         for (int i = 1; i < labelGlyphs.size(); i++) {
             bounds.include(labelGlyphs.get(i));
         }
         GlyphBox padded = bounds.expand(clean.getWidth(), clean.getHeight(), 2);
-        return cropColor(clean, padded.minX, padded.minY, padded.maxX, padded.maxY);
+        BufferedImage cropped = cropColor(clean, padded.minX, padded.minY, padded.maxX, padded.maxY);
+        if (cropped == null) {
+            return null;
+        }
+        try {
+            return normalizeMapLabelCanvas(cropped);
+        } finally {
+            cropped.flush();
+        }
+    }
+
+    private int glyphSpanWidth(List<GlyphBox> glyphs) {
+        if (glyphs == null || glyphs.isEmpty()) {
+            return 0;
+        }
+        int minX = glyphs.stream().mapToInt(g -> g.minX).min().orElse(0);
+        int maxX = glyphs.stream().mapToInt(g -> g.maxX).max().orElse(-1);
+        return Math.max(0, maxX - minX + 1 + 4);
+    }
+
+    private boolean isTrailingCoordinateBracketGlyph(GlyphBox box) {
+        return box.width() <= 6
+                && box.height() >= 8
+                && box.height() <= 18
+                && box.pixelCount >= 6;
+    }
+
+    private Optional<MapLabelWidthRange> expectedMapLabelWidthRange(String mapName) {
+        int hanCount = countHanCharacters(mapName);
+        return switch (hanCount) {
+            case 2 -> Optional.of(new MapLabelWidthRange(26, 33, 30));
+            case 3 -> Optional.of(new MapLabelWidthRange(38, 45, 43));
+            case 4 -> Optional.of(new MapLabelWidthRange(53, 59, 56));
+            case 5 -> Optional.of(new MapLabelWidthRange(67, 72, 69));
+            default -> Optional.empty();
+        };
+    }
+
+    private Optional<MapLabelWidthRange> expectedMapLabelWidthRange(int naturalWidth) {
+        if (naturalWidth >= 26 && naturalWidth <= 33) {
+            return Optional.of(new MapLabelWidthRange(26, 33, 30));
+        }
+        if (naturalWidth >= 38 && naturalWidth <= 45) {
+            return Optional.of(new MapLabelWidthRange(38, 45, 43));
+        }
+        if (naturalWidth >= 53 && naturalWidth <= 59) {
+            return Optional.of(new MapLabelWidthRange(53, 59, 56));
+        }
+        if (naturalWidth >= 67 && naturalWidth <= 72) {
+            return Optional.of(new MapLabelWidthRange(67, 72, 69));
+        }
+        return Optional.empty();
+    }
+
+    private BufferedImage normalizeMapLabelCanvas(BufferedImage cropped) {
+        Optional<MapLabelWidthRange> range = expectedMapLabelWidthRange(cropped.getWidth());
+        int targetWidth = range.map(MapLabelWidthRange::canonicalWidth).orElse(cropped.getWidth());
+        int targetHeight = MAP_LABEL_CANONICAL_HEIGHT;
+        BufferedImage normalized = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_BYTE_BINARY);
+        Graphics2D g = normalized.createGraphics();
+        try {
+            g.setColor(Color.BLACK);
+            g.fillRect(0, 0, targetWidth, targetHeight);
+            g.drawImage(cropped, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return normalized;
+    }
+
+    private int countHanCharacters(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        int count = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch >= '\u4E00' && ch <= '\u9FFF') {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String saveFailureDebugImages(BufferedImage raw, BufferedImage clean, String reason) {
@@ -919,6 +1113,21 @@ public class MiniMapCoordinateReader {
                 + "_" + safeReason;
         String rawPath = saveDebugImage(raw, prefix + "_raw.png");
         saveDebugImage(clean, prefix + "_clean.png");
+        return rawPath;
+    }
+
+    private String saveMapLabelLowScoreDebugImages(BufferedImage raw,
+                                                   BufferedImage label,
+                                                   MapLabelTemplateMatch best) {
+        String safeMap = best.mapName() == null || best.mapName().isBlank()
+                ? "unknown"
+                : best.mapName().replaceAll("[^\\p{IsHan}A-Za-z0-9_-]", "_");
+        String prefix = "minimap_label_low_score_"
+                + LocalDateTime.now().format(FAILURE_TIME_FORMAT)
+                + "_" + safeMap
+                + "_" + String.format("%.3f", best.score()).replace('.', '_');
+        String rawPath = saveDebugImage(raw, prefix + "_raw.png");
+        saveDebugImage(label, prefix + "_label.png");
         return rawPath;
     }
 
@@ -1086,6 +1295,9 @@ public class MiniMapCoordinateReader {
     }
 
     private record DigitTemplate(String symbol, WhitePixelSet pixels) {
+    }
+
+    private record MapLabelWidthRange(int min, int max, int canonicalWidth) {
     }
 
     private record WhitePixelSet(int width, int height, boolean[] mask, int[] xs, int[] ys) {

@@ -72,7 +72,7 @@
 //    private static final int ACCEPT_NPC_Y = 93;
 //    private static final int BENCHMARK_START_X = 113;
 //    private static final int BENCHMARK_START_Y = 76;
-//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo_accept_xianlaiwu.png";
+//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png";
 //    private static final Path BENCHMARK_LOG = Path.of("logs", "xiuluo-accept-copy.log");
 //    private static final DateTimeFormatter TRACE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 //    private static final boolean ACCEPT_ONLY =

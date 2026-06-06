@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=龙宫
+coord=64,1122
+sourceImage=images\temp\hwnd-5FD0A28\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260601-104712-380_龙宫_coordinate-out-of-transform-bounds\tmp_pos.png

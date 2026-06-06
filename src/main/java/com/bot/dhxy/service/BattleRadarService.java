@@ -219,7 +219,7 @@ public class BattleRadarService {
         GameContext.ActionState state = context.getCurrentActionState();
         switch (state) {
             case IN_COMBAT:
-                return 3000;
+                return 4000;
             case NAVIGATING:
             case INTERACTING:
                 return 2000;

@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=洛阳城
+coord=157,1162
+sourceImage=images\temp\hwnd-3FD0F90\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260530-155802-833_洛阳城_coordinate-out-of-transform-bounds\tmp_pos.png

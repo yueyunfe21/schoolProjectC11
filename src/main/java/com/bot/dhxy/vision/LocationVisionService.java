@@ -365,8 +365,8 @@ public class LocationVisionService {
      * <p>This is only used after the mini-map template matcher selected a map whose name ends with
      * {@code 层}. Floor names are visually similar, so missing templates can make "一层" look like
      * the nearest saved "三层" template. OCR is used as a verifier; when it reads a different map
-     * name that has no template file yet, the cleaned label image captured by the template path is
-     * copied into {@code images/template/map_label}. This keeps the first encounter safe and makes
+     * name that has no template file yet, the freshly captured coordinate strip is normalized and
+     * saved into {@code images/template/map_label}. This keeps the first encounter safe and makes
      * later encounters faster.</p>
      *
      * @param templateLocation template-based location candidate, including a window-scoped cleaned
@@ -394,7 +394,7 @@ public class LocationVisionService {
             return null;
         }
 
-        learnMissingMapLabelTemplate(local.mapName, templateLocation.mapLabelPath(), false);
+        learnMissingMapLabelTemplate(local.mapName, path, true);
         if (!templateLocation.mapName().equals(local.mapName)) {
             log.info("[location] floor template corrected by OCR: templateMap={} ocrMap={} coord=({}, {}) "
                             + "templateScore={} elapsedMs={} localElapsedMs={} label={}",
@@ -435,19 +435,19 @@ public class LocationVisionService {
                     return;
                 }
                 try {
-                    Optional<BufferedImage> label = miniMapCoordinateReader.extractCleanMapLabelImageFromCoordinateStrip(strip);
-                    if (label.isEmpty()) {
+                    Optional<BufferedImage> croppedLabel = miniMapCoordinateReader.extractCleanMapLabelImageFromCoordinateStrip(strip);
+                    if (croppedLabel.isEmpty()) {
                         log.warn("[location] learn minimap label template skipped: map={} source={} reason=label-crop-miss",
                                 mapName, sourceImagePath);
                         return;
                     }
                     try {
-                        if (!shouldLearnMapLabelTemplate(mapName, label.get(), sourceImagePath, true)) {
+                        if (!shouldLearnMapLabelTemplate(mapName, croppedLabel.get(), sourceImagePath, true)) {
                             return;
                         }
-                        ImageIO.write(label.get(), "png", target.toFile());
+                        ImageIO.write(croppedLabel.get(), "png", target.toFile());
                     } finally {
-                        label.get().flush();
+                        croppedLabel.get().flush();
                     }
                 } finally {
                     strip.flush();
@@ -460,13 +460,23 @@ public class LocationVisionService {
                     return;
                 }
                 try {
-                    if (!shouldLearnMapLabelTemplate(mapName, label, sourceImagePath, false)) {
+                    Optional<BufferedImage> normalized = miniMapCoordinateReader.normalizeMapLabelTemplateImage(mapName, label);
+                    if (normalized.isEmpty()) {
+                        log.warn("[location] learn minimap label template skipped: map={} source={} reason=label-normalize-miss",
+                                mapName, sourceImagePath);
                         return;
+                    }
+                    try {
+                        if (!shouldLearnMapLabelTemplate(mapName, normalized.get(), sourceImagePath, false)) {
+                            return;
+                        }
+                        ImageIO.write(normalized.get(), "png", target.toFile());
+                    } finally {
+                        normalized.get().flush();
                     }
                 } finally {
                     label.flush();
                 }
-                Files.copy(Path.of(sourceImagePath), target, StandardCopyOption.REPLACE_EXISTING);
             }
             miniMapCoordinateReader.invalidateMapLabelTemplateCache();
             log.info("[location] learned missing minimap label template: map={} path={} source={} sourceType={}",
@@ -489,6 +499,11 @@ public class LocationVisionService {
         if (!isLearnableLabelImage(label)) {
             log.warn("[location] learn minimap label template skipped: map={} source={} reason=bad-label-image",
                     mapName, sourceImagePath);
+            return false;
+        }
+        if (!miniMapCoordinateReader.isMapLabelWidthPlausible(mapName, label)) {
+            log.warn("[location] learn minimap label template skipped: map={} source={} reason=bad-label-width size={}x{}",
+                    mapName, sourceImagePath, label.getWidth(), label.getHeight());
             return false;
         }
 

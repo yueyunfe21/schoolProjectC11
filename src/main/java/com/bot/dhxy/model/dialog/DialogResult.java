@@ -14,6 +14,7 @@ import lombok.Value;
  * @param actionKey stable action key such as {@code xiuluo.acceptTask}; null when no action matched.
  * @param objective objective text payload parsed from a story/task dialog; null for action/no-dialog results.
  * @param matchedText OCR text or template path that produced the result, if available.
+ * @param preparedAction optional reusable click candidate built from a successful option match.
  * @param clicked whether the service sent a click.
  * @param relativeX clicked X relative to the dialog rectangle; null when no concrete point clicked.
  * @param relativeY clicked Y relative to the dialog rectangle; null when no concrete point clicked.
@@ -29,6 +30,7 @@ public class DialogResult {
     String actionKey;
     ObjectiveTextResult objective;
     String matchedText;
+    PreparedDialogAction preparedAction;
     boolean clicked;
     Integer relativeX;
     Integer relativeY;

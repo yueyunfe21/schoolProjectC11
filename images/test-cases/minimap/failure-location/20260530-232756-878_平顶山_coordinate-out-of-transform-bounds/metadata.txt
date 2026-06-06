@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=平顶山
+coord=159,1107
+sourceImage=images\temp\hwnd-CA0BFC\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260530-232756-878_平顶山_coordinate-out-of-transform-bounds\tmp_pos.png

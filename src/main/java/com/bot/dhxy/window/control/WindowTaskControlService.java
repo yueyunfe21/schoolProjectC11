@@ -6,6 +6,7 @@ import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 import com.bot.dhxy.window.execution.WindowTaskQueue;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.execution.WindowTaskSubmitResult;
+import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -197,10 +198,11 @@ public class WindowTaskControlService {
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            if (taskManager.getRunner(windowId).isPresent()) {
-                taskManager.stop(windowId);
+            if (taskManager.stop(windowId)) {
                 successCount++;
                 details.add(WindowTaskCommandDetail.success(windowId, "已请求停止"));
+            } else if (taskManager.getRunner(windowId).isPresent()) {
+                details.add(WindowTaskCommandDetail.failed(windowId, "当前没有运行任务"));
             } else {
                 details.add(WindowTaskCommandDetail.failed(windowId, "窗口不存在"));
             }
@@ -211,8 +213,9 @@ public class WindowTaskControlService {
     public WindowTaskCommandResult stopAll() {
         int total = taskManager.getRegisteredWindowCount();
         log.info("UI requested stop all windows: total={}", total);
-        taskManager.stopAll();
-        return WindowTaskCommandResult.of(total, total, "已请求停止全部窗口任务：" + total, getSnapshots());
+        int successCount = taskManager.stopAll();
+        return WindowTaskCommandResult.of(total, successCount,
+                "已请求停止全部窗口任务：" + successCount + " / " + total, getSnapshots());
     }
 
     public WindowTaskCommandResult pauseWindows(Collection<String> windowIds) {
@@ -267,6 +270,28 @@ public class WindowTaskControlService {
         log.info("UI requested resume all windows: total={}", total);
         int successCount = taskManager.resumeAll();
         return WindowTaskCommandResult.of(total, successCount, "已请求继续全部运行中窗口任务：" + successCount + "/" + total, getSnapshots());
+    }
+
+    /**
+     * Toggle all live window tasks between pause and resume.
+     *
+     * <p>Mixed state intentionally pauses instead of resuming: if any selected/live task is still
+     * running, the user's global hotkey intent is to make every active window safe.</p>
+     *
+     * @return command result from the chosen pause/resume operation.
+     */
+    public WindowTaskCommandResult togglePauseResumeAll() {
+        List<WindowTaskSnapshot> liveSnapshots = getSnapshots().stream()
+                .filter(WindowTaskSnapshot::isRunning)
+                .toList();
+        if (liveSnapshots.isEmpty()) {
+            return WindowTaskCommandResult.empty("当前没有运行中的窗口任务", getSnapshots());
+        }
+        boolean shouldResume = liveSnapshots.stream()
+                .allMatch(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED);
+        log.info("UI requested toggle pause/resume all windows: live={} action={}",
+                liveSnapshots.size(), shouldResume ? "resume" : "pause");
+        return shouldResume ? resumeAll() : pauseAll();
     }
 
     public WindowTaskCommandResult unregisterWindows(Collection<String> windowIds) {

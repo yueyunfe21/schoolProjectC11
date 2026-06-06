@@ -13,6 +13,7 @@ public enum NavigationResultStatus {
     FAILED,
     STOPPED,
     INTERRUPTED,
+    DIALOG_PREPARING,
     MAP_NOT_REACHED,
     POINT_NOT_REACHED,
     DIALOG_OPENED

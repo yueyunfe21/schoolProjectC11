@@ -1,5 +1,1319 @@
 # DHXY Active Work
 
+### 谢帅 - 2026-06-06 watcher stale ACTIVE 误判重导修复方案
+
+Status: implemented / compile passed / waiting live rerun
+
+Problem:
+
+- 五窗口 `DEBUG_NAVIGATION_STRESS` 中，`岁月醉白头` 在 `#3 大唐边境(137,121)` 重复输入 `大唐边境`。
+- 关键链路：
+  - `09:30:25` 当前地图坐标点击 `大唐边境(137,121)`，`coordinateIntent=true`。
+  - 游戏自动寻路实际绕路：`大唐边境 -> 北俱芦洲 -> 洛阳城 -> 四圣庄 -> 大唐边境`。
+  - `09:30:28` watcher 新扫到 `北俱芦洲(46,30)`。
+  - `09:30:33` stress task 用 `now - locationChangedAtMs = 5113ms` 判定停住，清 pathing signal 并重新 world-map 导航。
+  - `09:30:34` watcher 才扫到 `洛阳城(152,46)`；`09:30:47` watcher 到达 `大唐边境(135,121)`，证明原始自动寻路并没有失败。
+
+Root cause:
+
+- `WindowTaskRunner` 的 pathing watcher 是同步执行 `MiniMapCoordinateReader.readCurrentTemplateLocation()`，识别完成后才更新 snapshot，然后再 sleep。
+- `WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS=1000ms` 只表示“一轮识别结束后最多睡 1 秒”，不是“每秒一定产出新坐标”。
+- 五窗口下单轮截图/地图模板/坐标 OCR 可能耗时 2-9 秒，所以 `snapshot` 几秒未变不等于角色停住。
+- `DebugNavigationStressTask` 把 `locationChangedAtMs` 当成实时运动证据使用，用 task 自己的 wall clock 熬出 5 秒停滞，这是语义错误。
+
+Hook/Jason consensus:
+
+- 不改绿色链接点击算法。
+- 不改 `GameStateUtil.isMovingByPixelDiff()`。
+- 不靠单纯把 `PATHING_STATIONARY_RETRY_MS` 调大解决。
+- watcher 应明确暴露 probe 生命周期/耗时，task 侧只用“fresh watcher 完成观察”判断是否真的停住。
+- `coordinateIntent=true` 时，当前地图坐标寻路也可能临时跨图绕行；非目标地图上的 ACTIVE 不能直接按 5 秒停滞重开世界地图。
+
+Implementation plan:
+
+1. `WindowPathingSnapshot`
+   - 增加 watcher probe 字段：
+     - `probeStartedAtMs`
+     - `probeFinishedAtMs`
+     - `probeInProgress`
+     - 可选 `probeElapsedMs`，也可以由 `finished-started` 计算。
+   - 不改变 `updatedAtMs` 语义：它仍只表示“上一轮完成并写入可消费观察”的时间。
+
+2. `WindowTaskRunner.refreshPathingSignal(...)`
+   - 识别开始时写入 probe heartbeat：
+     - 保留旧 `state/currentMap/currentX/currentY/locationChangedAtMs/updatedAtMs`。
+     - 只更新 `probeStartedAtMs` 和 `probeInProgress=true`。
+   - 识别完成后：
+     - `updatePathingFromLocation(...)` / `updateUnknownPathing(...)` 写 `probeInProgress=false`、`probeFinishedAtMs=now`。
+   - 慢 probe 打 info 日志，建议阈值 `>=1500ms` 或 `>=2500ms`。
+   - 日志字段至少包括：`probeMs`、`snapshotAgeBeforeMs`、`observedStationaryMs`、`wallStationaryMs`、`target`、`current`。
+
+3. `WindowTaskRunner.classifyPathingState(...)`
+   - `coordinateIntent=true` 且 `currentMapName != targetMapName` 时，不使用 2.2 秒坐标 stopped-away 阈值。
+   - 使用 map-route 阈值或单独常量，例如 `COORDINATE_ROUTE_AWAY_STOPPED_MS=10000~15000`。
+   - 目的：中间地图短暂停留不能被 watcher 自己过早标成 `STOPPED_AWAY`。
+
+4. `DebugNavigationStressTask.waitForPathing(...)` ACTIVE 分支
+   - 拆开两个概念：
+     - `wallStationaryMs = now - locationChangedAtMs`，只做日志。
+     - `observedStationaryMs = snapshot.updatedAtMs - locationChangedAtMs`，只用 watcher 已完成观察来判断是否真停住。
+   - `coordinateIntent=true && currentMap != targetMap` 时：
+     - 视为 `coordinate-leg map-transit`，继续等待 watcher terminal state。
+     - 在 grace 内不允许 world-map retry。
+     - 建议常量：`COORDINATE_LEG_CROSS_MAP_GRACE_MS=30000`。
+   - 真正允许重入导航的条件应同时满足：
+     - snapshot fresh；
+     - `!probeInProgress`；
+     - `observedStationaryMs >= PATHING_STATIONARY_RETRY_MS`；
+     - 当前坐标不在目标附近；
+     - 当前不是 coordinate intent 的跨图中间态；
+     - 最后再用轻量 pixel diff 做防误判确认。
+
+5. `DebugNavigationStressTask.waitForPathing(...)` UNKNOWN 分支
+   - 同步应用 probe/fresh 规则。
+   - probe 正在跑或 snapshot stale 时，不直接 retry。
+   - 保留现有 edge pixel diff，但它只能作为补充证据，不能在 watcher 正在慢扫时强行重导。
+
+6. Recovery cooldown
+   - 可在 `NavigationStressState` 中记录：
+     - `lastPathingRecoveryAtMs`
+     - `pathingRecoveryRetryCount`
+   - 避免同一个 target 每 5 秒重复 world-map 输入。
+   - 真正重入时日志改成更明确的：
+     - `re-enter navigation after confirmed stalled fresh snapshot`
+   - 不再使用容易误导的 `observer active but position stalled` 作为最终判定日志。
+
+Validation plan:
+
+- 跑五窗口 navigation stress。
+- 重点 grep：
+
+```powershell
+rg --color never "hwnd-311168|target=#3 大唐边境|coordinate-leg|probeMs|probeElapsedMs|re-enter navigation after confirmed stalled|observer active but position stalled" logs/dhxy-console.log
+```
+
+Expected:
+
+- `北俱芦洲(...) coordinateIntent=true` 后，不再出现旧的 `observer active but position stalled; re-enter world-map navigation`。
+- 应出现类似 `coordinate-leg active on off-target map; keep waiting for map transit`。
+- watcher 最终 `ARRIVED` 或 active-near-target 后，task 消费完成当前 target。
+- 慢 watcher 日志能解释每轮识别耗时，而不是只能看到几秒没有更新。
+
+Risk:
+
+- 如果当前地图点击真的失败，等待可能比现在长；但有全局 timeout 和 confirmed stalled recovery，比中途重复打开世界地图更安全。
+- probe heartbeat 不能刷新 `updatedAtMs`，否则会污染所有 recent snapshot 判断。
+- 日志要节流：state change、terminal、slow probe、confirmed retry 用 info，其余 debug。
+
+Next concrete step:
+
+- 已实现 `WindowPathingSnapshot` + `WindowTaskRunner` probe 字段和慢 probe 日志。
+- 已改 `DebugNavigationStressTask` ACTIVE/UNKNOWN retry 条件。
+- Hook/Jason CR 后补了三处问题：
+  - 慢 probe 结束前校验当前 active intent，不允许旧 probe 结果覆盖已清除/新注册的 pathing intent。
+  - UNKNOWN probe miss 不再刷新 `updatedAtMs`，避免“旧坐标 + 新更新时间”伪造静止证明。
+  - coordinateIntent 非目标地图的 stopped-away 阈值和 stress task 的 30 秒 grace 对齐，并且 STOPPED_AWAY 分支也尊重 grace。
+- `mvn -q -DskipTests compile` passed.
+- 下一步让用户重跑五窗口压测，重点看是否出现：
+  - `coordinate-leg active on off-target map; keep waiting for map transit`
+  - `discard stale pathing probe result`
+  - `pathing watcher slow probe`
+  - 不应再出现旧的 `observer active but position stalled; re-enter world-map navigation`
+
+### 谢帅 - 2026-06-06 route dialog prepared 后及时抢回导航 turn
+
+Status: implemented / compile passed
+
+Observed:
+
+- 08:19 附近日志显示 `hwnd-531070A` 后台已经算出 `长安桥` 的 prepared action：
+  - `dialog prepared: ... target=长安 matched=长安桥（400两） click=(1156, 811)`
+- 但该窗口任务线程仍处于 `wait:1-长安` 的 pathing 等待里，继续等 watcher 的 `ARRIVED` / `STOPPED_AWAY`。
+- 紧接着 input worker 去服务其它窗口的 `submitWorldMapSearchAndClickDestination:长安城东`，所以用户看到像是“刚切回来准备点 dialog 又被别的窗口抢走”。
+- 根因不是坐标点错，而是 debug navigation stress 的等待状态没有把 `PreparedDialogAction` 当成一个可以立即恢复导航 turn 的终态信号。
+
+Changed:
+
+- `DebugNavigationStressTask.waitForPathing(...)`
+  - 在 pathing 等待开始处检查当前窗口 runtime 里是否已有匹配当前目标地图的 `PreparedDialogAction`。
+  - 如果匹配 `DialogOperation.ROUTE_TRANSFER + target.mapName`，立即结束 pathing wait，返回 `READY_TO_CONTINUE`。
+  - 下一轮会回到 `NavigationService`，优先消费已准备好的 route dialog 点击，避免继续等待 watcher 导致其它窗口插入一整段世界地图搜索。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next verification:
+
+- 下一轮如果后台先算出 route dialog，应看到：
+  - `prepared route dialog interrupts pathing wait; re-enter navigation`
+  - 随后 `route dialog probe uses prepared action`
+- 如果仍出现“prepared 了但没点”，继续查 `PreparedDialogAction.matches(...)` 是否因为目标名不一致没有命中。
+
+### 谢帅 - 2026-06-06 导航压测结果与 route dialog 预计算 Alt+4 降噪
+
+Status: implemented / compile passed
+
+Observed:
+
+- 最新一轮导航压测 5 个窗口全部完成：`导航压力测试 -> SUCCESS` 共 5 个。
+- 没有新的 `ERROR` / `Exception` / NPE；上一轮 `WindowPathingSnapshot.currentX/currentY == null` 的崩溃已消失。
+- 点寻路后早关世界地图已生效：`close world map immediately after xunlu click` 出现 28 次。
+- route dialog 后台预计算开始发挥作用：`route dialog probe uses prepared action` 出现 13 次，`prepared action not usable` 为 0。
+- 仍发现一个输入队列噪音：`dialog:hidePlayerNames:window-dialog-preparation...` 出现约 390 次。后台 route dialog watcher 不应该为了预判 dialog 去按 `Alt+4`，这会占用全局输入队列并拖慢多窗口节奏。
+
+Changed:
+
+- `DialogService.detectDialogTypeNoFocus(String reason, boolean hidePlayerNames)`
+  - 增加一个可控版本，允许调用方明确不发送 `Alt+4`。
+  - 普通业务 dialog 检测仍保留原来的 `detectDialogTypeNoFocus(String reason)`，默认会隐藏玩家名。
+- `WindowTaskRunner.refreshDialogPreparationSignal(...)`
+  - route dialog 后台预计算的预判断改为 `hidePlayerNames=false`。
+  - 这条 watcher 路径只做后台截图判断，不再抢输入队列；真正点击仍交给任务拿到 turn 后执行。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next verification:
+
+- 下一轮重点看 `dialog:hidePlayerNames:window-dialog-preparation` 是否从几百次降到 0 或接近 0。
+- 继续观察 `route dialog probe uses prepared action` 是否仍能命中；如果命中下降，说明不按 `Alt+4` 后需要单独优化 route dialog 的截图/洗图，而不是恢复全局 Alt+4。
+- 继续看 `stage=world-map-submit` 的大耗时；现在日志里的大值多半包含等待输入队列，后续如果还慢，需要再拆“排队等待”和“实际地图 OCR/点击”两段。
+
+### 谢帅 - 2026-06-06 导航压测小地图 handoff 确认与 map-leg 等待日志优化
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.clickMiniMapPointForHandoff(...)`
+  - 小地图 handoff 点击后，先用 `GameStateUtil.confirmPathingStartedByEdgePixelDiff(...)` 做快速移动确认。
+  - 如果边缘像素没有确认移动，再回到原来的 `confirmMiniMapPathingStarted(...)` 小地图坐标确认。
+  - 这样保留失败重试语义：快速确认成功时更快放权；快速确认不成功时仍用坐标确认判断是否需要交给 watcher / 后续 retry。
+- `DebugNavigationStressTask.waitForPathing(...)`
+  - `map-leg ACTIVE + stationary` 仍然不重开世界地图，继续等 watcher 的 `ARRIVED` / `STOPPED_AWAY` / 全局 timeout。
+  - 该等待日志增加 5 秒节流，并打印 `timeoutMs`，避免大雁塔二层中间地图停顿时刷屏，同时保留可诊断性。
+- `WindowTaskRunner.refreshDialogPreparationSignal(...)`
+  - route dialog 后台 preparation 先调用轻量 `DialogService.detectDialogTypeNoFocus(...)`。
+  - 只有当前画面明确是 `DialogType.OPTION` 时，才进入完整 route option OCR / remembered click preparation。
+  - `NONE` / `STORY` 不再标记 prepare failed，也不跑完整 OCR；request 保留给 watcher 下一轮继续看，避免无 dialog 背景反复重 OCR。
+- `NavigationService.navigateToMap(...)`
+  - 增加 `[productionNavigate-latency]` 分层耗时日志：
+    - `stage=map-confirm`
+    - `stage=route-dialog-precheck`
+    - `stage=world-map-submit`
+    - `stage=loop-position-sync`
+  - 下一轮可以直接区分慢在地图确认、route dialog 预处理、世界地图 OCR/点击，还是循环里的坐标同步。
+- `NavigationService.submitWorldMapSearchAndClickDestination(...)`
+  - 正常点击到 `寻路` 按钮后，立刻按一次 `Alt+2` 关闭底层世界地图，再继续在 route panel 输入目标。
+  - 原因：点中 `寻路` 能证明世界地图此刻一定打开；如果等路线链接点击后再关，游戏可能已经自动关闭世界地图，晚到的 `Alt+2` 反而会把世界地图重新打开。
+- `DebugNavigationStressTask.waitForPathing(...)`
+  - 补齐 watcher snapshot 空坐标保护。刚注册 pathing intent 时可能是 `ACTIVE current=null(null,null)`，此时不能直接拿 `currentX/currentY` 算 near target。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next verification:
+
+- 重跑导航压测，重点看：
+  - 小地图当前地图点击后是否出现 `mini-map handoff pathing confirmed by fast edge pixels`，如果出现，说明本轮没有走重坐标确认。
+  - 如果 fast edge 没确认，是否出现 `mini-map handoff coordinate fallback completed`，并关注 `fallbackElapsedMs`。
+  - 大雁塔二层途中可以出现 `map-leg active position stalled but still waiting for observer terminal state`，但应该最多约 5 秒一条，不应恢复成 5 秒重开世界地图。
+  - `dialog preparation probe miss` 数量应该明显下降；正常无 dialog 时应更多看到 debug 级 `dialog preparation probe skipped ... visibleType=NONE`。
+  - 若还有 20 秒以上导航，按 `[productionNavigate-latency]` 的 stage 定位具体慢段。
+  - 正常世界地图搜索应在点击寻路后出现 `close world map immediately after xunlu click`，后面不应因为晚到 `Alt+2` 把世界地图重新打开。
+
+### 唐德 - 2026-06-06 导航压测避免 near target 反复点与 map-leg 重开世界地图
+
+Status: implemented / compile passed
+
+Observed:
+
+- 最新一轮日志开头已滚到 `23:49:42` 的 `#4 龙宫`，所以 `#3 长安城东(166,118)` 的最早完整过程不在当前 `dhxy-console.log` 里。
+- 当前日志仍能看到同类风险：
+  - watcher 在 coordinate leg 下可能已经读到接近目标的坐标，但任务层只等 `ARRIVED` 或停滞分支，容易多提交一次小地图点击。
+  - `#5 大雁塔二层(76,73)` 的 map leg 中，窗口仍处于 `大雁塔一层` / `长安城东` 等中间状态时，旧逻辑把 `ACTIVE + stationaryMs >= 5000` 当作需要 `READY_TO_CONTINUE`，从而可能重新打开世界地图再搜目标。
+
+Changed:
+
+- `DebugNavigationStressTask.waitForPathing(...)`
+  - 对同一 watcher intent，如果 `coordinateIntent=true` 且当前 watcher 坐标已经 near target，立即消费并完成目标，不再等 `ARRIVED` 状态或停滞分支。
+  - 对 `map-leg` 的 `ACTIVE + stationary`，不再清 pathing signal / 不再重进世界地图；继续等待 watcher 给出 `ARRIVED` / `STOPPED_AWAY` / 全局超时。
+
+Reason:
+
+- 当前地图坐标点击是否需要重试，应由 coordinate intent 的 near target / ARRIVED 来决定。
+- 跨地图 map leg 中间可能会经过大雁塔一层、长安城东等地图，短时间坐标不变不等于 route 失败；重开世界地图反而会打断正在进行的路线。
+
+Next verification:
+
+- 再跑导航压测，重点看：
+  - 到 `长安城东(166,118)` 附近后，如果 watcher 坐标已在 tolerance 内，应直接 `target reached by active watcher coordinate`，不再二次小地图点击。
+  - 到 `大雁塔二层` 途中，如果仍在 `大雁塔一层` 移动/等待，不应再出现 `observer active but position stalled; re-enter world-map navigation`。
+
+### 唐德 - 2026-06-06 小地图第一次点击跳过面板匹配
+
+Status: implemented / compile passed
+
+Decision:
+
+- 用户确认当前地图小地图点击不要每次都先匹配面板。
+- 第一次尝试直接假设 Alt+1 小地图是关闭的：按一次 `Alt+1`，等待短暂 settle，然后直接点击目标坐标。
+- 只有第二次及后续重试才做 `isMiniMapPanelVisible()` 正向检测：
+  - 命中时说明小地图面板已经打开，跳过 `Alt+1`，避免把已打开的面板关掉。
+  - 未命中时不当成硬失败，仍按一次 `Alt+1` 后点击，因为模板 miss 不能证明面板一定没开。
+
+Changed:
+
+- `NavigationService.submitMiniMapClick(...)` 新增 `checkPanelBeforeOpen` 参数。
+- `navigateInCurrentMap(...)` 用 `failedMiniMapClicks > 0` 决定是否启用面板检测。
+- `clickMiniMapPointForHandoff(...)` / `clickMiniMapPointAndConfirm(...)` 透传该策略。
+- `closeAfterClick=false` 的当前地图点击不再为了关闭面板而额外匹配一次，保留“未知/可能打开”状态；如果需要重试，由重试路径做正向检测。
+
+Next verification:
+
+- 重跑 `岁月醉白头` 到 `长安城东(166,118)`。
+- 第一次当前地图点击日志应直接出现 `mini-map Alt+1 open assumed ... checkPanelBeforeOpen=false`，不应先出现 `mini-map panel visible before coordinate click`。
+- 如果第一次 `NO_PATHING`，第二次重试才允许出现 panel visible/skip Alt+1 相关日志。
+
+### 谢帅 - 2026-06-06 导航压测输入取消与 route dialog 交接修复
+
+Status: second review fixes implemented / compile passed / waiting live rerun
+
+Why this entry exists:
+
+- 多窗口导航压测中，旧窗口有时在已经失去任务等待方以后还继续执行 direct input，表现为某个窗口刚 focus 准备重试，马上又被旧输入动作抢走。
+- CR 指出 `InputActionQueue.await()` 取消等待方以后，只能取消还没被 worker 取走的请求；如果 exclusive callback 已经进入 worker，里面的 direct input 仍可能继续跑。
+- 另一类问题是 route dialog 已经弹出或后台准备中时，任务层会过早重新打开世界地图，导致窗口互相抢和重复导航。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/input/action/InputActionQueue.java`
+- `src/main/java/com/bot/dhxy/input/action/InputActionWorker.java`
+- `src/main/java/com/bot/dhxy/input/action/InputActionScope.java`
+- `src/main/java/com/bot/dhxy/input/InputSequences.java`
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+
+Done:
+
+- `InputActionQueue.await()` 被打断或等待失败时，会取消 request 并尝试从队列移除，日志增加 `removedFromQueue`。
+- `InputActionWorker` 取到已取消 request 时不再 focus；执行 request 时通过 `InputActionScope` 暴露当前 request 给 exclusive callback。
+- `NavigationService.submitWorldMapSearchAndClickDestination(...)` 在 direct input 的关键步骤之间检查 `InputActionScope.isCancelled()`。
+- 如果 route 搜索 exclusive callback 已取消，失败收尾不会再调用 `closeMapSearchInputAfterRouteClick(...)` 做额外 direct input，避免旧导航抢新窗口。
+- 世界地图搜索结果滚动 helper 也补了取消检查，取消后不会继续滚完本轮滚轮。
+- route dialog prepared action 和 remembered route option 的前台点击改为 `moveAndClickLeft(...)`，保持 move+click 原子序列。
+- map-route 类型的 `STOPPED_AWAY` 阈值和坐标导航阈值分开：坐标仍为 2.2 秒，map route 使用 8 秒，避免路线弹窗/跨图阶段过早判停。
+- watcher 在 pathing active 且 dialog preparation active 时也会刷新 dialog preparation，避免 route dialog 已经弹出但任务层一直等 pathing 停止。
+- 未改 `长安 -> 大雁塔` 这类路线别名，也未改世界地图绿色链接选择算法。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Second CR findings and follow-up fixes:
+
+- Jason/Ferade 二次 review 结论：上轮改动已经缓解旧输入抢窗口和 prepared route 消费，但还不能说彻底解决。
+- 已补 P0：`clickDestinationFromWorldMapSearchResults(...)` 在 destination OCR 后、coordinate OCR 后、direct route click 前都会检查 `InputActionScope.isCancelled()`，避免旧 exclusive callback 在长 OCR 结束后继续点击。
+- 已补 P1：prepared route action 正常点击成功后同时清理 `DialogPreparationRequest` 和 `PreparedDialogAction`，和 late prepared 分支保持一致，避免 stale prepared action 影响下一轮。
+- 已补 P1：`navigateToMap` 在正式重新打开世界地图前，如果最近 pathing snapshot 是同目标的 `STOPPED_AWAY`，会尝试一次 `visible-route-dialog-rescue`。这个 rescue 不创建新的后台 preparation request，避免重新引入无 dialog 空算。
+- 已补 P1：`WindowTaskRunner` pathing watcher 首帧 `previous == null` 时不再空指针；首次 mini-map miss 会生成 UNKNOWN snapshot，而不是让 watcher 线程异常退出。
+- 已补 P2：`DialogService` 在 input worker 内消费 remembered/prepared route click 前也检查 `InputActionScope.isCancelled()`。
+
+Next verification:
+
+- 重新跑 3 到 5 窗口导航压测，重点看：
+  - 被 stop/重试取消的旧 `submitWorldMapSearchAndClickDestination` 是否还会在之后抢窗口；
+  - 日志是否出现 `navigation map search cleanup skipped because input request was cancelled`；
+  - 如果 OCR 期间发生取消，是否出现 `navigation map search cancelled after destination OCR` 或 `navigation map search cancelled after coordinate OCR`；
+  - 若 route dialog 已经弹出但 request 丢失/过期，是否出现 `try visible route dialog rescue before world-map search`，并且不再直接重新 Alt+2；
+  - route dialog 已弹出时是否优先消费 prepared/memory action，而不是重新打开世界地图；
+  - 多窗口中是否还出现某窗口刚 focus 就立刻被另一个旧导航动作抢走。
+- 如果仍出现抢窗口，下一步检查 `WindowAwareInputCoordinator` 的 focus transaction 是否需要在 focus 前后感知 request cancellation。
+
+### 唐德 - 2026-06-05 岁月醉白头长安城东小地图点击状态修正
+
+Status: implemented / compile passed
+
+Observed:
+
+- 用户确认本轮只看 `岁月醉白头`，问题不是“它输入导航”，而是它已经在 `长安城东` 后没有正常点击当前地图小地图目的地，最后视觉上又看到路线面板绿色链接点击。
+- 日志对应窗口为 `hwnd-14210A0` / hwnd `21106848`。
+- 关键链路：
+  - `22:28:24` watcher 已确认 map leg 到达：`current=长安城东(27,231)`。
+  - 随后任务进入 `navigateInCurrentMap`，目标是 `长安城东(166,118)`。
+  - `22:28:25`、`22:29:25`、`22:29:45` 多次点击 `pixel=(1851/1852,550/551)` 后坐标仍为 `(27,231)`，返回 `NO_PATHING`。
+  - 这些重试前出现 `mini-map already open before coordinate click`，说明代码复用了 `miniMapOpenByNavigation=true`，没有重新 `Alt+1` 打开/确认小地图。
+
+Root cause:
+
+- `NavigationService.submitMiniMapClick(...)` 曾经相信本地 `miniMapOpenByNavigation` 标志。
+- 但跨地图、传送、游戏 UI 切换会自动关闭 Alt+1 小地图；这个动作不会回写 Java 内存状态。
+- 一旦 stale 为 true，当前地图坐标点击会跳过 `Alt+1`，直接在错误 UI 层/旧面板层点坐标，表现就是“看起来没有点小地图目的地”。
+- Alt+1 panel 的 checkbox 模板也不能作为硬条件；模板 miss 不能直接让导航失败，也不能因为 miss 就盲按第二次 Alt+1，否则可能把真实已打开的 panel 关掉。
+
+Changed:
+
+- `NavigationService.submitMiniMapClick(...)`
+  - 移除 `miniMapOpenByNavigation` 决策，不再用内存判断 Alt+1 小地图是否打开。
+  - 当前地图坐标点击采用“正向检测可信，反向检测不可信”：
+    - 如果 `isMiniMapPanelVisible()` 命中 checkbox 区域，说明 Alt+1 panel 已开，直接点击坐标，不再按 Alt+1。
+    - 如果 `isMiniMapPanelVisible()` miss，不证明 panel 关闭；但默认按“关闭”处理，先按一次 Alt+1，再继续尝试坐标点击。
+    - 按 Alt+1 后如果 panel 仍然 miss，只记录 warning，不把模板 miss 当成硬失败。
+  - 点击后只有在 `isMiniMapPanelVisible()` 正向命中时才请求关闭 Alt+1 小地图；如果 panel miss，不盲按 Alt+1，避免反向打开它。
+  - 不允许用 `Alt+2` 世界地图标题 `world_map_title.png` 来校验 Alt+1 小地图状态；世界地图路线面板和当前地图小地图不是同一个 UI 语义。
+  - 已拆分职责：
+    - `isWorldMapTitleVisible()` 只判断 Alt+2 世界地图/路线面板标题。
+    - `isMiniMapPanelVisible()` 只判断 Alt+1 小地图/地图设置面板 checkbox 区域。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next verification:
+
+- 重新只跑/只观察 `岁月醉白头`。
+- 到 `长安城东` 后如果需要点击 `(166,118)`，应看到：
+  - 如果 panel 正向命中：`mini-map panel visible before coordinate click; skip Alt+1 open`；
+  - 如果 panel miss：`mini-map Alt+1 sent ... :open`，之后即使仍 miss 也继续点击；
+  - 不应再用 `world_map_title.png` 判断小地图开关。
+- 如果仍点击 `185x,55x` 不移动，下一步要看该窗口的 `CoordinateHelper.resolveMiniMapClickPoint(...)` 对 `长安城东(166,118)` 映射是否错误，而不是再改 route dialog。
+
+### 唐德 - 2026-06-05 导航压测 ACTIVE 无坐标不再提前重进
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 最新日志里 watcher 后来确实报了坐标 leg 的 `ARRIVED`，但 `DebugNavigationStressTask` 已经在 5 秒 `ACTIVE + current=null` 时清掉 pathing signal 并退出等待。
+- 这不是“等 5 秒不够”的问题；本质是把“observer 还没产出坐标”误当成“导航失败”。
+- 如果只把 5 秒放宽成 15 秒，下一次 capture/窗口负载导致 20 秒才产出坐标时仍然会复现。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `waitForPathing(...)` 的 `WindowPathingState.ACTIVE` 分支不再因为 `current=null(null,null)` 超过 5 秒就 `clearPathingSignal()` / `finishWaitingForPathing()`。
+- `ACTIVE` 但没有坐标现在只表示 watcher 还没有可用 mini-map sample，任务继续返回 `PATHING_STARTED` 等待。
+- 仍保留“有具体坐标且停滞 5 秒”的重进逻辑，因为那个才是可以用于判断 stopped/stalled 的证据。
+
+Next verification:
+
+- 重新跑导航压力测试，重点看之前的 `observer active without position; re-enter navigation` 是否消失。
+- 如果 watcher 后续报 `ARRIVED`，任务应在 wait loop 里消费并完成当前 target，而不是重新进入完整 `navigateToNPC()`。
+- 22:10 后续日志又确认另一个问题：`hwnd-70D66 / うprinoe大叔` 在 `#2 长安城东(166,118)` 时，watcher 报的是 map-only arrival：
+  - `target=长安城东(null, null)`
+  - `current=长安城东(27, 231)`
+  - 但 `navigateNextTarget(...)` 的 pre-navigation 快路径把任何 `ARRIVED` 都当成目标完成，直接进入 `#3 大唐边境`。
+- 已修正：pre-navigation 快路径只有在 coordinate intent 到达，或当前坐标确实接近目标坐标时，才 `completeCurrentTarget(...)`。
+- map-only `ARRIVED` 现在只会被清掉并继续进入当前地图坐标导航，避免刚进地图边缘就跳下一目标。
+
+### 谢帅 - 2026-06-05 route dialog 空算与漏算修复
+
+Status: second fix implemented / compile passed / waiting live rerun
+
+Why this entry exists:
+
+- 五窗口导航压测里，`岁月醉白头` 对应窗口能拿到 turn，但一直停在 `洛阳城(311,116)` 目标 `长安(216,129)`。
+- 日志显示它反复进入 `route dialog preparation reuses active request ... phase=PREPARING`，随后 `DIALOG_PREPARING` 让出窗口。
+- 第一轮核心原因不是 watcher 慢，而是 `NavigationService.navigateToMap()` 一开始无条件调用 `clickRouteDialogOption("navigation:existing-route-dialog", ...)`。
+- 当时窗口没有移动、也没有任何 dialog，这个“existing-route-dialog probe”仍然创建 `DialogPreparationRequest`，导致 watcher 对空背景做 route dialog 准备并不断 miss。
+- 后续 19:17 实测又暴露相反问题：世界地图路线链接已经点下去，游戏必然弹出路线/传送 dialog，但当前代码只注册 pathing intent，没有注册 `DialogPreparationRequest`，所以 watcher 不会检测 dialog，最后只会把窗口判成 `STOPPED_AWAY` 并重新打开世界地图。
+- 21:10 实测确认 request 已经能挂上，但 watcher 在处理 dialog preparation 之前先跑 `refreshPathingSignal()` / 小地图截图。多窗口下小地图捕获出现 `captureMs=7256/17277`，导致 route dialog prepare 20 秒后才完成，另一个窗口直接 request expired。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 撤掉 `NavigationService.navigateToMap()` 开局的 `existing-route-dialog` 处理；`navigateToMap` 是通用导航入口，不能每次导航都先扫/处理 dialog。
+- 启动/热启动时残留 dialog 应该在任务启动或恢复层处理，不放在每次地图导航开局。
+- 导航等待循环里的 speculative route-dialog probe 已撤掉；停下后优先做当前位置确认，不再因为每次 stopped movement 都准备 route dialog。
+- 之前加的 `ROUTE_DIALOG_PREPARING_YIELD_MAX_MS=1500` 仍保留为慢 watcher 兜底，但正常无 dialog 场景不应该再创建 PREPARING。
+- 新增精确触发点：只有 `submitWorldMapSearchAndClickDestination(...)` 成功点击路线链接后，才给当前窗口登记 `ROUTE_TRANSFER` 的后台 dialog preparation request。
+- `navigateToMap()` 重新进入时，如果当前窗口已有同目标的 `REQUESTED/PREPARING/READY` route-dialog 状态或可用 prepared action，会先调用现有 `clickRouteDialogOption(...)` 消费 dialog，再考虑重新打开世界地图。
+- `WindowTaskRunner` 现在在存在 dialog preparation request / prepared action 时，先执行 `refreshDialogPreparationSignal(...)`，再考虑 pathing/minimap watcher，避免路线 dialog 被慢截图挡住。
+- `ROUTE_DIALOG_PREPARE_REQUEST_TTL_MS` 从 15 秒调整到 45 秒，给五窗口排队和慢捕获留出余量；这不是导航算法变化，只是防止正确 request 在 watcher 轮到前过期。
+- 21:17 复测发现上面的优先级过硬：`prepare miss` 会把状态标成 `FAILED`，但 request 仍保留，导致 watcher 每轮都优先尝试 dialog preparation，不再刷新 pathing/minimap。已修正为：只有 `REQUESTED/PREPARING/READY` 或已有 prepared action 时才阻止 pathing；`FAILED` 状态必须继续刷新 pathing，避免全窗口停在旧快照。
+- 21:21 复测后仍出现“其他窗口都等着不动”。日志显示它们并不是没跑线程，而是 `DebugNavigationStressTask.waitForPathing()` 一直收到 `WindowPathingState.ACTIVE`，其中有的 `current=null(null,null)`，有的坐标几十秒不变。旧逻辑对 ACTIVE 只等 90 秒超时，不会提前重试。已加 5 秒停滞出口：ACTIVE 但无位置、或位置不变且未到目标时，清理 pathing signal 并返回 `READY_TO_CONTINUE` 重新进入导航。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next verification:
+
+- 下一轮重点看 `岁月醉白头` 是否还会在无 dialog 状态下反复出现 `route dialog preparation reuses active request`。
+- 普通 `navigateToMap` 不应出现 `navigation:existing-route-dialog` 的 `handleDialog` 或 route preparation request。
+- 点完世界地图路线链接后，应出现 `route dialog preparation requested after map route click`。
+- 真正出现路线 option dialog 时，应由 watcher 准备，随后 `navigateToMap()` 先消费 prepared action / memory / OCR 原路径，而不是直接重新搜索世界地图。
+- 下一轮如果仍卡 dialog，重点看 `dialog preparation probe start` 是否紧跟 `route dialog preparation requested after map route click`，以及 `requestAgeMs` 是否还会超过 5 秒。
+- 同时确认 `dialog preparation probe miss` 后仍能看到对应窗口的 `[minimap-location]` / `pathing watcher update`，不能再出现所有窗口只报 `PATHING_STARTED` 但位置状态不更新。
+- 下一轮还要看是否出现 `observer active without position` / `observer active but position stalled`，出现后对应窗口应重新进入 `navigate` transaction，而不是继续无限 `wait`。
+
+### 谢帅 - 2026-06-05 后台 Dialog 预计算 memory 快路径
+
+Status: consume/cleanup fix implemented / compile passed / waiting live rerun
+
+Why this entry exists:
+
+- 用户提醒多人协作规则：关键实验结论和下一步改动必须写入 ActiveMD，不能只在聊天里说。
+- 2026-06-05 最近一次导航压测显示，后台 Dialog 预计算调度已经能更快启动，但没有真正被消费：
+  - 日志出现 `route dialog prepared wait finished ... usable=false`，短等 200ms 后仍没有可用 prepared action。
+  - 没有看到 `route dialog probe uses prepared action`。
+  - watcher 请求年龄已经降到几十到两百毫秒级，但完整 prepare 仍慢，例如 `detectMs=884 ocrMs=1152 totalMs=2036`、`detectMs=1404 ocrMs=1172 totalMs=2576`。
+- 结论：问题不再主要是 watcher 启动慢，而是每次 route dialog prepare 还在跑重 OCR。正常路径经常先用 `transfer-memory` 点完，prepared action 才算出来并被废弃。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/model/dialog/DialogPreparationRequest.java`
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `src/main/java/com/bot/dhxy/vision/MiniMapCoordinateReader.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `WindowTaskRunner` 的 active dialog prepare 轮询间隔已调到 `200ms`，只在存在 preparation request 或 prepared action 时生效。
+- `NavigationService` 在声明 route dialog preparation request 后，短等最多 `200ms`，如果已有可用 prepared action 就直接走缓存点击，否则回到原来的 `transfer-memory / OCR` 路径。
+- `DialogPreparationRequest` 现在可以携带 `fromMap`、已记忆的 route 选项相对点击点、以及记忆选项文本。
+- `NavigationService` 会先查 `TransferChoiceMemoryService.findUsable(fromMap, targetMapName)`；如果已有可用记忆点，会把这个点放进 preparation request。
+- `WindowTaskRunner` 收到带记忆点的 request 时，优先调用 `DialogService.prepareRememberedRouteOption(...)`，只检测当前是否为 option dialog，并在记忆点附近生成 fingerprint，不再先跑整轮 route OCR。
+- 如果没有记忆点，仍回退到现有 `DialogService.prepareRouteKeywordOption(...)`。
+- `MiniMapCoordinateReader` 额外修了小地图 label 裁剪尾部 `[` 干扰的问题，并保存 low-score debug 图，避免 `长安城东 [` 这类裁剪导致低分误判。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- 小地图 low-score 离线样本已确认：之前的 9 张 `长安城东 [` 类低分样本，裁掉尾部 bracket 后均可回到 `长安城东 score=1.0`。
+
+Next verification:
+
+- 下一轮 2 窗口导航压测重点看这些日志：
+  - `route dialog preparation requested ... memory=true`
+  - `dialog prepare remembered route result`
+  - `route dialog prepared wait finished ... usable=true`
+  - `route dialog probe uses prepared action`
+- 2026-06-05 13:40-13:43 实跑验证到 runner 已经接上 memory 快路径，但还没完全达到目标：
+  - 已出现 `memory=true` 和 `dialog prepare remembered route result`。
+  - 没有出现 `route dialog probe uses prepared action`。
+  - 典型耗时：runner `requestAgeMs=1` 启动，但 `prepareRememberedRouteOption` 仍约 `880-1113ms`；`NavigationService` 只短等 `200ms`，所以主线先回到正常 `CLICK_REMEMBERED_OPTION`。
+  - route 点击后旧 request 没及时清理，导致后续不断出现 `dialog prepare remembered route miss ... type=NONE`，runner 在无 dialog 状态下白算。
+- 已补两个修正：
+  - 短等结束后重新取当前时间判断 prepared action 是否可用，避免用发 request 前的旧 `now`。
+  - 进入 `CLICK_REMEMBERED_OPTION` 前再检查一次最新 prepared action；如果 runner 在短等后、正式 memory 点击前算好了，就直接点 prepared 坐标。
+  - memory 正常点击成功后立即清 `DialogPreparationRequest` 和旧 `PreparedDialogAction`，避免 route 已经提交后 watcher 继续反复探测旧 dialog。
+- 下一轮还要额外看：
+  - 是否出现 `route dialog memory path uses late prepared action`。
+  - route 点击成功后是否不再反复出现同一 target 的 `dialog prepare remembered route miss ... type=NONE`。
+- 如果 `memory=true` 仍然没有在 200ms 内变成 usable，下一步不是再加等待，而是继续拆 `detectDialogSnapshotDirect(...)` 的耗时，或者让 watcher 在 pathing intent 阶段更早预热。
+- 如果 prepared action 已被消费，再对比 route dialog 占权是否从 2-12 秒下降到接近一次短点击。
+
+### 唐德 - 2026-06-05 导航压力测试暂停超时补偿
+
+Status: completed / compile passed
+
+Why this entry exists:
+
+- 最近一次 2 窗口导航压力测试在用户暂停后恢复，两个窗口立刻失败：
+  - `hwnd-180B4E`：`ageMs=140801 timeoutMs=90000`
+  - `hwnd-860A3C`：`ageMs=130500 timeoutMs=90000`
+- 日志显示暂停约 121 秒被算进了 pathing wait timeout，导致恢复瞬间触发超时。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- 在 `DebugNavigationStressTask.waitForPathing(...)` 的暂停 checkpoint 后增加计时补偿。
+- 如果 checkpoint 因暂停阻塞超过 1 秒，会把 `pathingStartedAt`、`lastYieldAt`、`lastPathingSyncAt` 往后平移对应阻塞时长。
+- 新增日志：
+  - `[nav-stress] pathing wait timer paused`
+- 这样暂停期间不会计入 90 秒寻路等待超时，恢复后继续按真实运行时间判断。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-04 后台 Dialog 预计算设计
+
+Status: phase 1 implemented / compile passed
+
+Why this entry exists:
+
+- 导航压测里已经确认，窗口之间放权/接权本身可以很快，但 `route dialog` 处理会在拿到窗口后再做 OCR/模板匹配，单次可能占用 4-12 秒。
+- 目标是让 watcher 在后台先把“当前 Dialog 应该点哪里”算好。等窗口真正拿到输入权时，只做一次短点击，减少窗口切换后的等待。
+- 用户明确要求：不要新增 `RouteDialog` 类型，不要用 OCR 做二次验证，不要全屏扫，不要让 watcher 自己点击或推进任务阶段。
+
+Core design:
+
+- Dialog 类型仍然只使用现有 `DialogType.NONE / OPTION / STORY`。
+- “路线传送框”不是新类型，而是 `DialogType.OPTION + DialogOperation.ROUTE_TRANSFER` 的一种业务操作。
+- 第一次发现 Dialog 时，后台只截固定 Dialog 区域，不截全屏。
+- 第一次匹配可以复用现有 `DialogService` 的绿色/黄色洗图、OCR、模板匹配结果；不要为了 fingerprint 再整张重洗一次。
+- 命中目标后，从已经洗过的图里裁一个很小的验证区域，生成 fingerprint 字符串，并记录绝对点击点。
+- 后续 watcher 验证只截命中目标附近的小区域，按第一次使用的同一套洗色规则生成 fingerprint；只比较 fingerprint 相似度，不再 OCR，也不再模板匹配。
+- fingerprint 不能要求完全相等，要允许轻微抗锯齿/闪烁差异，可以用汉明距离或黑白像素差异阈值。
+- 缓存不是只靠 1.5-2.5 秒 TTL。只要 watcher 持续验证 fingerprint 没变，prepared action 就可以继续有效；短 TTL 只用于“最后一次验证距离真正点击太久”的兜底。
+
+Prepared action should contain:
+
+- window id / hwnd binding；
+- `DialogType`、`DialogOperation`、目标关键词或业务目标；
+- 命中的 OCR 文本或模板名；
+- 屏幕绝对点击点；
+- 小验证区域的屏幕绝对矩形；
+- 洗色类型，例如 green/yellow/template-specific；
+- fingerprint 字符串、`preparedAtMs`、`lastVerifiedAtMs`；
+- debug 图片路径或 source 标记，方便日志追踪。
+
+Execution rule:
+
+- watcher 只能准备和验证 prepared action，不能点击，不能切 phase，不能改变任务状态。
+- 任务真正拿到窗口输入权时，先查当前窗口是否有同 operation/target 的 prepared action。
+- 如果 prepared action 最近被 watcher 验证过，就直接走输入队列点击缓存坐标。
+- 如果没有 prepared action、operation 不匹配、fingerprint 已变化、验证太旧，就回到现有 `DialogService.handleDialog(...)` 正常路径。
+
+Safety / fallback:
+
+- `DialogType.NONE` 必须直接返回 `NO_DIALOG`，不能拿非 Dialog 背景去做 route OCR。
+- 如果 watcher 发现 Dialog 区域变化，必须立即废弃旧 prepared action，重新跑完整匹配。
+- 所有截图/临时图仍然走窗口绑定和 window-scoped temp path，不能共享固定 temp 文件导致多窗口串图。
+- 真正鼠标点击仍必须走 `InputSequences`，并保持 move + click 原子动作。
+
+Implementation steps:
+
+- 已加 Lombok `@Value + @Builder` 的 prepared action model，放在 dialog model 包里，不放 service 实现包。
+- 已在 `WindowRuntimeContext` 增加 per-window preparation request 和 prepared action 引用，供 watcher 写入、任务读取。
+- 已在 `ImagePreprocessor` 增加小图 binary fingerprint 计算/距离比较能力。
+- 已让 `DialogService` 的 route/keyword OCR 命中结果能生成 prepared action；正常 handle 路径仍会按原逻辑点击。
+- 已加 `DialogService.prepareRouteKeywordOption(...)`，复用现有 route OCR，但 prepare-only 不发送点击。
+- 已接 `WindowTaskRunner` watcher：只有当前窗口存在 `DialogPreparationRequest` 时才后台 prepare，当前只覆盖 `DialogOperation.ROUTE_TRANSFER`。
+- 已接 watcher 小区域 fingerprint 验证：prepared action 存在时先截命中点附近小区域，按 green/yellow/template-specific 洗图后比较 fingerprint；验证通过刷新 `lastVerifiedAtMs`，验证失败废弃缓存并重新 prepare。
+- 已接 `NavigationService.clickRouteDialogOption(...)`：声明 route preparation request；若当前窗口已有同 target 且最近验证的 prepared action，优先点缓存坐标，否则回到 transfer memory / OCR 原路径。
+
+Remaining:
+
+- `NavigationService` 只有进入 route dialog 分支时才声明 preparation request；如果要更早预热，需要在更上层确认 route dialog 即将出现时提前写 request。
+- 后续实测要看日志里的 `dialog prepared` 和 `route dialog probe uses prepared action` 是否成对出现，以及 route dialog 占权是否下降。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-04 导航压力测试调度修正
+
+Status: implemented / compile passed / latest 2-window rerun success
+
+Why this entry exists:
+
+- 接昨天的导航压力测试复盘继续处理两个问题：
+  - 跑路过程中不应该再次打开/点击小地图；
+  - `route-dialog` 在 task turn 内跑完整 `DialogService.handleDialog(...)`，导致一个窗口占权 4-12 秒，其他窗口接权慢。
+- 用户明确要求不要动已验证的正式导航算法。本次只改 `DebugNavigationStressTask`，没有改生产 `NavigationService`。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 在 `observer UNKNOWN` 准备判定 stalled 并重新进入 debug-local navigation 前，重新读取一次最新 `WindowPathingSnapshot`。
+- 如果边缘像素检测期间 watcher 已经刷新为 `ARRIVED`，或最新坐标已经接近目标，直接消费 arrival 并完成当前目标，不再重新点小地图。
+- 如果 watcher 在边缘像素检测期间刷新过，但还没有明确到达，则跳过旧 snapshot 的重试，下一轮用新 snapshot 判断，避免移动中基于旧坐标误重试。
+- `pendingRouteDialog` 不再通过 `TaskTransactionRunner.run(...)` 持有粗粒度 task turn；它现在和 debug navigation 一样在 task turn 外执行。
+- 真实鼠标点击仍由 `DialogService` 内部输入队列串行处理；本次只移除 route dialog OCR/匹配期间的 task-turn 占用。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- 2026-06-04 12:20 重新绑定 2 个窗口后 live rerun：
+  - 注册结果：`requested=2 success=2`。
+  - `hwnd-E9058C / 刑部ㄨ忍者`：2 个目标完成，`task finished: 导航压力测试 -> SUCCESS`。
+  - `hwnd-59099E / 忆叶知秋`：2 个目标完成，`task finished: 导航压力测试 -> SUCCESS`。
+  - 旧快照兜底生效：`observer refreshed while checking edge pixels; consume arrival before retry`，没有因为旧 UNKNOWN 快照再重开小地图。
+  - 视觉上可能像只有一个号在跑，是因为其中一个窗口起点已经接近第一个目标，第一段很快完成并放权。
+
+### 谢帅 - 2026-06-04 导航压力测试收尾复盘
+
+Status: latest 2-window stress run finished / remaining latency bottleneck identified
+
+Why this entry exists:
+
+- 用户要求睡前把本轮导航压力测试日志看完并写入 MD，明天继续。
+- 当前目标仍然是验证五环式多窗口跑图的放权/接权延迟：一个窗口点完小地图开始移动后，应尽快释放 task turn，下一个窗口接手不应超过约 3 秒。
+- 用户明确要求不要再改已经验证过的正式导航算法；后续如果要试新的导航节奏，应在 `DebugNavigationStressTask` 或单独 debug copy 里做，不要动生产 `NavigationService` 的核心寻路算法。
+
+Latest run observed:
+
+- 日志文件：`logs/dhxy-console.log`
+- 本轮可见窗口：
+  - `hwnd-2471120`，title/角色包含 `忆叶知秋`
+  - `hwnd-412B2`，title/角色包含 `刑部ㄨ忍者`
+- 两个窗口最终都完成：
+  - `03:01:55.019`，`hwnd-2471120`：`task finished: 导航压力测试 -> SUCCESS`
+  - `03:01:59.257`，`hwnd-412B2`：`task finished: 导航压力测试 -> SUCCESS`
+
+What was fixed/confirmed in this round:
+
+- 之前 `observer UNKNOWN` 时会一直 `keep yielding without navigation retry`，可能空转到 `PATHING_TARGET_WAIT_TIMEOUT_MS=90000`。
+- 当前 debug 路径已不再这样死等：UNKNOWN 时会优先看 watcher snapshot 的当前坐标；坐标停住太久才用边缘像素兜底确认是否仍在移动；确实停住才重新进入 debug-local navigation。
+- 最新日志没有再出现旧的 90 秒卡死。`waitPathing` 多数 transaction 是 `0-4ms`，窗口 handoff 多数是 `0-260ms`。
+- 边缘像素确认移动的兜底耗时约 `887-916ms`，仍低于 3 秒目标。
+
+Remaining problems:
+
+- 最大延迟已经转移到 route dialog 处理，而不是 task turn 本身：
+  - `03:00:43.275`，`hwnd-2471120`，`debug-nav-stress:route-dialog:1-长安` held `12247ms`
+  - `03:01:16.689`，`hwnd-2471120`，`debug-nav-stress:route-dialog:2-长安城东` held `5104ms`
+  - `03:01:30.700`，`hwnd-412B2`，`debug-nav-stress:route-dialog:2-长安城东` held `4512ms`
+  - `hwnd-412B2` 的 `route-dialog:1-长安` 本轮约 `2864ms`，勉强在 3 秒内。
+- `DebugNavigationStressTask` 现在的 `routeDialogProbe` 仍走 `DialogService.handleDialog(...)`，会做较重的 OCR/选项处理，并且在 task turn 内执行，所以会挡住其他窗口接权。
+- `03:01:58.036` watcher 已经报 `hwnd-412B2` 到达 `长安城东(166,117)`，但随后 task wait 分支仍基于旧 snapshot `长安城东(110,162)` 继续边缘像素兜底，最后 `03:01:59.257` 才通过 `cached coordinate already near target` 收尾。这里不是死循环，但有一次不必要的重入/兜底。
+- 用户肉眼观察到：窗口正在跑路过程中，中间仍然又打开/点击了几次小地图。这不应该发生；它说明 debug wait/pathing 判断链路某一刻把“仍在移动”误判成“停下或需要重试”，于是重新进入导航点击。明天需要从日志里把这些重复小地图点击的时间点串出来，重点查 `observer UNKNOWN`、旧 snapshot、边缘像素兜底、`READY_TO_CONTINUE` 重入之间是哪一步导致了移动中重试。
+
+Next steps:
+
+- 不动正式 `NavigationService` 寻路算法。
+- 优先处理 `DebugNavigationStressTask` 的 route dialog 占权：
+  - 方案 A：把 debug route dialog 的重 OCR/handleDialog 从 task turn 内移走，只把真正需要物理点击的短输入动作排队。
+  - 方案 B：给压测写一个 debug-only 的轻量 route option 点击路径，不走完整业务 `DialogService.handleDialog(...)` 两轮兜底。
+- 在 `waitForPathing` 的边缘像素兜底后，决定 `re-enter debug-local navigation` 前重新读取一次最新 `WindowPathingSnapshot`；如果 watcher 已经是 `ARRIVED`，直接完成目标，避免旧快照造成额外 1 秒左右尾巴。
+- 专门复盘“移动中再次点击小地图”的时间线：只要已经确认 PATHING_STARTED，除非 watcher 明确 `STOPPED_AWAY` 或最新坐标长时间静止且边缘像素也确认没动，否则不应该重新点击小地图。
+- 继续用 2 窗口、小目标数压测，要求日志能直接看出：
+  - 上一个窗口点击路线后什么时候释放；
+  - 下一个窗口什么时候接权；
+  - route dialog、waitPathing、navigate 每段各自耗时；
+  - 是否还有任何单段超过 3 秒。
+
+### Tang De - 2026-06-03 路线结果原生测试图整理
+
+Status: copied / no source files moved
+
+Why this entry exists:
+
+- 用户希望把非 failure-case 的路线结果原生截图整理到 `failure-cases` 旁边，作为后续回归测试样本库。
+- 只收原生路线结果图，不收 `yellow`、`green`、`marked`、`mask` 等派生处理图。
+
+Changed files:
+
+- `images/test-cases/world-map-route/raw/*`
+- `images/test-cases/world-map-route/raw/manifest.csv`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 从 `images/temp/world_map_route_online_dry_run/**/case_*_raw.png`、各窗口 `map_result_scan.png`、`route_guard_ascii/raw_current.png`、`route_replay_ascii/raw.png` 复制样本。
+- 没有移动或删除原始临时图，也没有改动 `images/failure-cases`。
+
+Validation:
+
+- 共复制 `272` 张 raw PNG。
+- 文件名派生图检查：`yellow|green|marked|mask|preview|after_click` 命中数为 `0`。
+- 追加内容清洗：移出 `5` 张没有导航绿字/不是路线结果的图到 `images/test-cases/world-map-route/rejected/no-green-or-no-route/`。
+- 清洗后 raw 测试集剩余 `264` 张 PNG；绿色像素复查 `GreenLt1=0`，没有绿字为 0 的图。
+
+### Tang De - 2026-06-03 小地图大唐境内模板重建
+
+Status: implemented / live probe passed
+
+Why this entry exists:
+
+- 用户确认 `『忍者』影` 当前在大唐境内，但本地小地图模板识别返回 `大唐边境 score=0.652`。
+- 检查模板尺寸发现 `大唐境内.png` 被裁成 `51x14`，而当前清洗图和同类四字地图模板通常是约 `55/56x18`，导致 `大唐边境.png` 更容易被误收。
+
+Changed files:
+
+- `images/template/map_label/大唐境内.png`
+- `docs/ACTIVE_WORK.md`
+
+Validation:
+
+- 用 `images/temp/hwnd-20097C/minimap_map_label_clean.png` 覆盖重建 `大唐境内.png`，尺寸变为 `55x18`。
+- 重新跑无输入本地探针后，`『忍者』影` 命中 `map=大唐境内 coord=(54,143) score=1.000 provider=MINIMAP_TEMPLATE`。
+
+### Tang De - 2026-06-03 五环 WAIT_PATHING 战斗后空转修正
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户复盘 12:49 左右五环五开日志，指出窗口从战斗出来后仍停在 `WAIT_PATHING`，随后花数秒做移动检测、`CHECK_COMBAT`、再进入 `giveItemAndTriggerPathing`，整条链路都不应该发生。
+- 典型例子：`岁月醉白头 hwnd-2520B6C` 在 `12:49:30` 左右拿到 turn 后，仍按寻路等待处理，约 4 秒后才判停，再无条件进入对话/给鞋分支。
+
+Root cause:
+
+- 五环 V2 的 `WAIT_PATHING` 同时承担“绿字寻路后等待移动”“战斗中等待结束”“弹窗后继续处理”三种语义。
+- 战斗可能由 window-level combat watcher 发现并维护，但五环自己的 phase 仍停留在旧的 `WAIT_PATHING`。
+- `CHECK_COMBAT` 在无战斗时默认进入 `HANDLE_DIALOG`，而 `HANDLE_DIALOG` 默认先尝试 `giveItemAndTriggerPathing`，导致没有点 NPC、没有交鞋场景时也会 focus 并尝试给鞋。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingPhaseContext.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `WAIT_PATHING` 开头先调用 `autoCombatService.handleCombatTick(...)`，优先处理战斗进入/退出。
+- 如果战斗已退出，直接进入 `SYNC_TASK_PANEL`，不再调用 `detectMovementState()` 证明角色停下。
+- 如果战斗仍在进行，记录 `combatObservedSincePathing` 并 yield 到 `CHECK_COMBAT`。
+- 只有已经看到过真实移动的 `WAIT_PATHING`，才允许调用重型 `gameStateUtil.detectMovementState()` 判断停稳。
+- 如果尚未观察到移动，只做轻量弹窗检查和短重试；超过轻量确认次数后直接回 `SYNC_TASK_PANEL`，不再把“没动过”当成“移动后停下”。
+- `CHECK_COMBAT` 对 `pathing-dialog-before-move-check-combat`、`pathing-combat-running` 或 `combatObservedSincePathing=true` 的状态，在无战斗时直接回 `SYNC_TASK_PANEL`，不再落入 `HANDLE_DIALOG -> giveItemAndTriggerPathing`。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-03 五环任务追踪块测试图整理
+
+Status: completed
+
+Goal:
+
+- Preserve the useful 五环 task-tracker block screenshots from the heavy experiment directory as a focused test-case set.
+
+Changed files:
+
+- `images/test-cases/task-tracker/wuhuan-task-panel-block/README.md`
+- `images/test-cases/task-tracker/wuhuan-task-panel-block/manifest.csv`
+- `images/test-cases/task-tracker/wuhuan-task-panel-block/raw/**`
+- `images/test-cases/task-tracker/wubei-task-panel/README.md`
+- `images/test-cases/task-tracker/wubei-task-panel/manifest.csv`
+- `images/test-cases/task-tracker/wubei-task-panel/raw/**`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Copied only the 303 `wuhuan_tracker_*_block_raw.png` images from `images/temp/hwnd-20B3E`.
+- Did not move or delete the original temp images.
+- Kept the 五环 images flat under `wuhuan-task-panel-block/raw/`; no nested folders.
+- Excluded `yellow`, `click_debug`, and marked/derived images.
+- Added `manifest.csv` with source path, target path, file size, and source timestamp.
+- Copied 342 五倍 task-tracker raw images into `wubei-task-panel/raw/`, also flat with no nested folders.
+- Prefixed 五倍 raw filenames with source hwnd to avoid collisions across temp directories.
+- 五倍 categories are recorded in the manifest only:
+  - `panel-raw`: 144
+  - `panel-wide-raw`: 141
+  - `destination-hint-raw`: 57
+
+Validation:
+
+- Verified 五环 raw PNG count is 303 and `raw/` has 0 subdirectories.
+- Verified 五倍 raw PNG count is 342 and `raw/` has 0 subdirectories.
+
+### Tang De - 2026-06-02 五倍黄袍连战队员补给窗口
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈 23:10 左右黄袍冠/黄袍怪战斗结束后，其他角色没有得到补给机会。
+- 日志显示 `23:11:00` 队员 `hwnd-50CB4` 战后 no-focus 预检发现人物法力低于 50%，并设置了 pending first-aid。
+- 但 `23:11:01` 队长已经继续点击下一场 `wubei:enter-battle`，`23:11:03` 该队员重新进入战斗，pending first-aid 没来得及拿到 task turn。
+
+Root cause:
+
+- 黄袍连战路径不是普通 phase handoff，而是在 `returnHomeAfterCombatOrContinueSpecialTarget(...)` 里用内部 `while` 连续完成“战后扫任务追踪 -> 点下一场 -> 等下一场战斗结束”。
+- 这个内部循环持有队长 task turn，绕过了之前为 `post-battle-chained-recovered` 加的 handoff delay，所以队员只能标记 pending first-aid，无法真正执行补给。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 移除黄袍连战内部 `waitForBattleAndFinish(...)` 隐藏循环。
+- `RETURN_HOME` 阶段现在每次只处理一次黄袍战后追踪判断：
+  - 如果任务追踪还有 `黄袍`，点击下一场后返回 `WAIT_BATTLE_FINISH` 的 shared-state outcome，让状态机释放 task turn。
+  - 如果任务追踪不再有 `黄袍`，才使用回程物品并进入归队检查。
+- 增加 `currentRoundChainedCombatContinueCount` 记录本轮黄袍连战次数，仍保留 `MAX_CHAINED_COMBAT_ATTEMPTS` 上限。
+- 这样每场黄袍之间都会回到主状态机，队员 pending first-aid 有机会抢到 task turn 补给。
+- 23:15 复盘追加：队长不是没进黄袍战斗，而是 `23:11:04` 已进战斗；`23:14:48` 因黄袍战斗等待超过原 180 秒被误判 timeout，随后恢复流程重新去点接任务 NPC `降魔侍卫`。
+- 黄袍连战等待战斗结束 timeout 单独放宽到 300 秒，普通五倍战斗仍保留 180 秒；timeout 日志现在会打印 chained/elapsed/timeout。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-06-02 五倍医保宝维护选项兜底
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈最近五倍卡在医保宝/沙拉买提附近，队员看起来也没有收到医保宝处理。
+- 日志显示队长已经到达沙拉买提，并且 `NpcClickService` 已验证 `heal_pet_option.png` 可见；真正失败点在后续 `DialogService` 的 `wubei:heal-pet-broadcast` 点击阶段返回 `BUSINESS_OPTION_NOT_FOUND`。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 保留自动战斗维护轮询用的固定小区域 fast path，避免每次维护扫描都扩大成本。
+- 固定区域也已同步调宽：医保宝和修装备的左上角 Y 各自按原始区域上移约 30px，避免只截到文字下半段或边缘。
+- 当固定小区域的 `heal-pet` 和 `repair-equipment` 都未命中时，新增一次通用业务选项兜底：重新检测当前对话框，然后复用已有 `handleBusinessOption(false, detection)`。
+- 这个兜底仍然在 `handleDialog` 入口内执行，不新增外部快捷链路，也不绕过对话框处理策略。
+- 队员没看到医保宝的直接原因是队长这次 broadcast 选项没有点成功，成员窗口还在等待 task turn / 维护处理，随后用户发起了暂停。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-06-02 通用地图名 OCR 纠错服务
+
+Status: implemented / compile passed / applied to shared map-name entrances
+
+Why this entry exists:
+
+- 用户指出地图名不应该完全相信 OCR 原文，例如 `莲花洞` 被任务追踪浮框 OCR 成 `莲花同`，后续所有用地图名的逻辑都可能误判。
+- 项目里已经有合法地图名来源：`images/template/map_label/*.png` 和 `config/maps.json`，可以用来做最近匹配纠错。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/MapNameCanonicalizer.java`
+- `src/main/java/com/bot/dhxy/vision/LocationVisionService.java`
+- `src/main/java/com/bot/dhxy/tools/GameStateUtil.java`
+- `src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java`
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 新增 `MapNameCanonicalizer`：
+  - 第一次调用时懒加载合法地图名集合。
+  - 来源包括小地图名字模板文件名和 `config/maps.json` key。
+  - 后续只做内存字符串编辑距离匹配，不重复读磁盘。
+- 匹配规则：
+  - exact match 直接返回合法地图名。
+  - 编辑距离 `1` 直接纠正。
+  - 编辑距离 `2` 只在第一名明显优于第二名时纠正。
+  - 模糊时保留 OCR 原文并打 WARN，避免误改成别的地图。
+- 五倍 `sameLooseMapName(...)` 已改为先 canonicalize 当前地图名和任务追踪目的地地图名，再比较。
+- `LocationVisionService.scanCurrentLocation()` 已接入纠错：小地图模板、本地 OCR、百度 OCR 返回的位置都会先规范地图名再进入 `syncMyPosition()`/全局记忆。
+- `GameStateUtil.isSameMapName(...)` 和 `confirmCurrentMap(...)` 已接入纠错：导航、修罗、五倍等共享地图确认逻辑会统一比较 canonical map name。
+- `ObjectiveTextRecognitionService` 已接入纠错：修罗/任务 story objective 输出的 `ObjectiveTextResult.mapName` 会规范化后再进入后续导航。
+- 移除了五倍内部临时的 `同 -> 洞` 规则；后续新增地图名 OCR 入口应优先复用 `MapNameCanonicalizer`。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-06-02 五倍显形镜目的地校验修正
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈 19:59-20:00 五倍队长做显形镜任务时没有打开包裹、没有使用显形镜，随后判定任务失败。
+- 日志确认本轮已识别到任务追踪黄字 `宝象述情|显|形镜`，并进入 `probe-objective tracker detected` 分支。
+- 第一条绿字寻路读到目的地浮框 `莲花同(62,44)`，实际小地图识别为 `莲花洞(71,43)`；因为地图名 OCR 把“洞”误读成“同”，且坐标 dx=9 超过原容差 8，被判 `near=false`。
+- 第二条绿字没有读到可信目的地浮框，代码按保护逻辑 `refuse item usage`，所以没有打开包裹使用显形镜。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 五倍任务追踪目的地地图名归一新增 `同 -> 洞`，覆盖 `莲花洞` 被 OCR 成 `莲花同` 的情况。
+- 显形镜目的地到达容差从 `8` 调整为 `12`，避免已经接近目标点但小地图/浮框坐标有轻微偏差时拒绝使用显形镜。
+- 仍保留“必须有目的地 hint 且当前位置接近 hint 才能用显形镜”的保护，不会无条件开包裹。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-06-02 五倍黄袍连战队员补给缓冲
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户在 19:48 的五倍日志里观察到：打完黄袍后，`岁月醉白头` 明显要补法，但队长已经点进下一场，补给时间不够。
+- 日志确认：队长 `hwnd-2043A` 在 `19:48:20.302` 先出战斗并完成战后体检，`19:48:29.971` 已点击 `wubei:enter-battle`；队员 `岁月醉白头 hwnd-100060A` 到 `19:48:29.477` 才确认出战斗，`19:48:31.190` 才执行 `playerState:healAll` 右键补法。
+- 这不是队员没有触发补给，而是五倍黄袍连战续打太快；原本只有约 `800ms + 900ms` 的补给窗口，不足以覆盖队员晚出战斗的情况。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 在五倍 `post-battle-chained-recovered` 的 task-turn handoff 上增加按窗口数计算的队员补给缓冲。
+- 缓冲发生在释放 task turn 之后，避免队长占着回合睡眠，确保队员窗口能拿到回合执行 `AutoCombatService` 的战后检测和 `playerState:healAll`。
+- 当前计算：每个队员窗口 `2200ms`，最大 `10000ms`。五开时通常给约 `8800ms`，覆盖本次日志里队员比队长晚出战斗约 9 秒的场景。
+- 只影响五倍黄袍类 chained combat 战后续打；普通五倍回程、五环、修罗不受影响。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-06-02 本地 OCR 启动命令修正
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- UI 启动已改成必须等待本地 OCR 就绪后才允许扫描/控制窗口，但本机 `python` 命令解析到 WindowsApps 商店别名，sidecar 进程会启动失败或直接退出。
+- `py -3` 能正常加载 RapidOCR 和 ONNXRuntime，因此启动命令应优先走 Windows Python launcher。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/LocalOcrSidecarService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `LocalOcrSidecarService.ensureProcessStarted()` 现在优先执行 `py -3 scripts/local_ocr_server.py --host ... --port ...`。
+- 只有 `py -3` 启动失败时才回退到 plain `python`。
+- 这避免被 WindowsApps 的假 `python.exe` 吞掉 OCR sidecar 启动。
+- 手动拉起的 OCR 进程已关闭，当前 18761 health 不可用，便于用户从 UI 启动链路重新验证。
+
+Validation:
+
+- `py -3` 可以成功初始化 RapidOCR engine。
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-31 自动战斗维护弹窗 fast-path
+
+Status: implemented / compile passed / heal-pet region tested
+
+Why this entry exists:
+
+- 用户指出自动战斗只关心医保宝和修装备两个维护弹窗，其他 dialog 不需要完整识别，应直接忽略。
+- 约束：仍必须通过 `DialogService.handleDialog(...)` 入口，不在外部新增快捷检测入口。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `handleDialog(...)` 现在会先识别自动战斗维护选项请求：`sourceTask` 以 `auto-battle` 开头、`CLICK_BUSINESS_OPTION`、且不包含 cleanup 选项。
+- 命中该场景时，不走通用 dialog mask / story / option / OCR 流程，直接截当前绑定窗口的两个固定相对区域：
+  - 医保宝：`(262,382)-(372,402)`
+  - 修装备：`(258,390)-(338,414)`
+- 两个区域只匹配各自模板：`heal_pet_option.png` / `repair_equipment_option.png`。命中才点击，未命中返回 `BUSINESS_OPTION_NOT_FOUND`。
+- 其他任务 dialog 和非自动战斗业务选项仍走原有通用 `handleDialog` 流程。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- 用户当前游戏窗口 base 为 `(1316,358)`，按绝对区域 `(1578,740)-(1688,760)` 截取医保宝区域，洗绿字后与 `images/template/dialog/maintenance/heal_pet_option.png` 匹配结果为 `[63.5, 11.0, 1.0]`，说明该区域和模板能命中。
+- 后续在修装备弹窗上验证：原用户给定修装备区域截到的是“修理身上”上一行，不能命中 `确认修理`；改为相对 `(258,390)-(338,414)` 后，绝对 `(1574,748)-(1654,772)` 截图与 `images/template/dialog/maintenance/repair_equipment_option.png` 匹配结果为 `[39.0, 11.5, 1.0]`。
+- 未做实际点击测试，避免误点当前窗口。
+
+### Tang De - 2026-05-31 删除 AutoBattleTask 内部 follower-support 模式
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户明确要求不要再有单独的 follower-support 模式；队员窗口如果被分配到自动战斗，也应该只跑同一种自动战斗逻辑。
+- 之前先把 `700ms` 降到 `3000ms`，但这仍保留了第二套内部分支；本次直接删掉 `AutoBattleTask` 里的 follower-support 分支。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/AutoBattleTask.java`
+- `src/main/java/com/bot/dhxy/task/startup/TaskTeamAssignmentPolicy.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `AutoBattleTask` 不再判断 `windowRole=MEMBER` / `requestedTaskCode != auto_battle`，也不再有 follower 专属 combat tick、归队、补给、维护广播或三技能路径。
+- 所有进入 `AutoBattleTask` 的窗口都走同一套循环：战斗 tick -> 空闲维护 -> 统一轮询间隔。
+- `TaskTeamAssignmentPolicy` 仍可把不能跑主任务的队员分配到 `AUTO_BATTLE`，但这只是任务分配，不再代表第二种内部模式。
+- 后续仍需要单独处理维护顺序：三技能/维护未到时间时，不应先跑维护弹窗检测。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-31 五倍接入 Alt+A 直点战斗兜底
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户确认修罗的 Alt+A 直点战斗兜底也需要接到五倍上，用来处理怪物头顶任务 tooltip 被固定 UI 挡住、普通 `clickNpcSmart` 无法触发进战斗弹窗的情况。
+- 当前不先加 NPC attribute；五倍先靠调用位置限制风险，只在战斗目标路径使用，不碰接任务/补给/修理 NPC。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 五倍 `tickWaitBattleFinish(...)` 现在在任务追踪寻路停稳、目的地 hint 判定已到达、已知进战斗弹窗未命中、普通任务 tooltip fallback 也未命中后，才调用 `npcClickService.tryDirectCombatTargetClick(...)`。
+- 直点目标名从任务追踪黄字里解析；连续战斗的黄袍场景优先使用 `黄袍` 关键字。
+- 直点请求使用目的地浮框 OCR 出来的地图和坐标，标记为 roaming target，并继续复用 `NpcClickService` 的 smart-click pipeline 和 Alt+A 退出验证。
+- `ACCEPT_NPC_NAME` 会被过滤；五倍接任务 NPC、补召唤兽、修装备仍只走普通 smart click / 业务弹窗流程。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-30 主控停止按钮语义和停止结果修正
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈战斗中点“停止运行”看起来没有停。最新日志显示选中的 `hwnd-264100A` 已立即收到 stop 并停止，但其他窗口仍在运行，UI 的“停止”语义容易被理解成停止全部。
+- 之前 `stopWindows(...)` 对已经没有活任务的窗口也会计为成功，导致后续点击停止/暂停的提示容易误导调试。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `src/main/java/com/bot/dhxy/window/execution/MultiWindowTaskManager.java`
+- `src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 主控工具栏红色按钮改为 `停止所选`，旁边新增可见的 `停止全部`，避免误把所选停止当成全局停止。
+- `WindowTaskRunner.stopCurrentTask()` 改为返回 boolean：只有存在活任务，或正在清理 ERROR/STOPPING 终态时，才算接受停止。
+- `WindowTaskControlService.stopWindows(...)` 现在会区分 `已请求停止`、`当前没有运行任务`、`窗口不存在`。
+- `WindowTaskControlService.stopAll()` 现在返回实际接受停止的窗口数，而不是把所有注册窗口都算成功。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-30 运行/暂停期间锁定配置修改
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户决定把配置生效规则定死：任务运行或暂停期间不允许改配置，避免有些参数热生效、有些参数需要重启任务的灰区。
+- 用户期望用户先停止任务，等窗口不再运行/暂停后，再改设置并重新启动。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 设置页新增锁定提示：所有窗口任务都停稳后才允许修改。
+- 只要任一窗口处于 `QUEUED` / `RUNNING` / `PAUSED` / `STOPPING`，设置页任务次数、三技能/维护、补给相关控件和应用按钮都会禁用。
+- 主控任务方块的次数快捷编辑也会在 busy 状态禁用；真正 apply 时再做一次保护检查。
+- 锁定的是“脚本任务配置”，不要求关闭游戏客户端或重启整个 APP；要求先停止全部任务。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-30 主控隐藏地图测绘入口并新增暂停快捷键
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户希望主控任务选择下面的地图校准/测绘按钮先不要显示，后续如果需要再恢复。
+- 用户希望增加全局快捷暂停键，使用 `Ctrl+Shift+F11`；现有 `Ctrl+Shift+F12` 继续作为紧急停止。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `src/main/java/com/bot/dhxy/input/GlobalEmergencyStopHotkeyService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 主控任务选择面板不再挂载地图校准名、地图测绘按钮和提示文案；相关按钮/后端方法暂时保留，未删除。
+- 全局 hotkey service 新增注册 `Ctrl+Shift+F11`，触发 `WindowTaskControlService.pauseAll()`。
+- `Ctrl+Shift+F12` 仍触发 `WindowTaskControlService.stopAll()`。
+- 顶部提示改为同时展示暂停和紧急停止快捷键。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-30 主控任务入口清理：只展示新版修罗
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户要求 UI 里不要同时出现“修罗”和“修罗V2”；现在只保留新版修罗入口，对外显示为“修罗”。
+- 用户还要求从主控任务选择里移除 `队伍识别测试`、`修罗Story目标测试`、`修罗任务栏目标测试`、`修罗模拟目标导航测试`。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/model/TaskType.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `TaskType.XIULUO_V2` 的 display name 改为 `修罗`。
+- `XiuluoTaskV2` 的任务运行名改为 `修罗`，日志/运行任务列不再显示 `修罗V2`。
+- UI 下拉框和任务方块改走同一个 `selectableTaskTypes()` 过滤列表。
+- `selectableTaskTypes()` 隐藏旧 `XIULUO` 和上述 4 个调试任务；enum 暂时保留，避免旧保存值/并行代码引用直接断裂。
+- 删除主控里单独的 `队伍识别测试` 按钮入口。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-30 修复暂停卡在 NPC Ctrl 探测后才生效
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈点暂停后没有及时暂停。
+- 最新 `logs/dhxy-console.log` 显示 UI 在 `14:11:27.346` 已经给 5 个窗口发出暂停请求，4 个窗口约 1.3 秒后到达 pause checkpoint；`hwnd-3FD0F90` 卡在 `NpcClickService` 的 `npcClick:ctrlMenuScan:灵兽村使者` 探测循环里，直到 `14:11:41.050` 才碰到 checkpoint。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `NpcClickService` 注入 `TaskExecutionContextHolder`。
+- `clickNpcByCtrlMenuScan(...)` 在 Ctrl 探测开始前、每个 probe 前、每个 probe 后直接调用 `TaskCheckpoint.throwIfStopRequested(...)`。
+- 单次已经进入 input worker 的 Ctrl 原子探测不被中途拆开，但外层不会再连续跑完整个 probe 列表才响应暂停。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Xie Shuai - 2026-05-29 通用维护入口第一版落地
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户要求把“医保宝 / 修装备 broadcast / 三技能”这套维护能力落实成通用维护入口，避免继续散在
+  `AutoBattleTask`、`UICleanerService` 和任务 hook 里。
+- 当前第一版只做调度边界迁移：具体识别、点击、面板操作仍然复用已有服务，不重写业务算法。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`
+- `src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceRequest.java`
+- `src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceResult.java`
+- `src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceStatus.java`
+- `src/main/java/com/bot/dhxy/task/AutoBattleTask.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+- `src/main/java/com/bot/dhxy/service/UICleanerService.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 新增薄的 `TaskMaintenanceService`：
+  - 医保宝 / 修装备 broadcast 继续走 `DialogService.handleDialog(...)`。
+  - 三技能继续走 `SummonSkillService.cleanSummonSkillsOnce()`。
+  - 维护服务只负责优先级、cooldown、状态切换和日志。
+- `AutoBattleTask` 不再自己维护三技能 cooldown，也不再通过 `UICleanerService` 对外处理维护 broadcast。
+- 删除 `UICleanerService.handleMaintenanceBroadcast(...)` 旧入口，避免后续继续把业务维护放回 cleanup。
+- 自动战斗真实挂机窗口会按顺序处理：归队按钮 -> broadcast -> 三技能。
+- reassigned member / follower-support 窗口现在每 3 秒节流跑维护入口：broadcast 优先，三技能只能通过团队 round gate，避免成员窗口各自乱抢。
+- 修罗 V2 的两个维护 hook 已接到通用入口，但第一版只处理已出现的 broadcast，不在修罗关键链路里执行长时间三技能。
+- 修罗第一个维护 hook 已接主动医保宝：
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK` 会在灵兽村导航到 `超级巫医(116,70)`。
+  - 导航目标会通过 `CoordinateHelper.getRandomizedPoint(...)` 在逻辑坐标附近轻微随机，且短距离不主动放权。
+  - 到达后用 `NpcClickService.clickNpcSmart(...)` 点击 NPC，并用 `npc_wuyi_tooltip.png` / `heal_pet_option.png` 验证/处理医保宝选项。
+  - 医保宝 hook 有独立间隔 `xiuluoHealPetMaintenanceIntervalMs`，默认 30 分钟，UI 游戏设置页可调。
+  - 如果导航/点击/选项处理失败，只记录并清轻量干扰，不中断修罗主线。
+- 第二步补上三技能 round gate：
+  - `TaskMaintenanceService.beginTeamMaintenanceRound(...)` 记录当前正式团队任务轮次。
+  - `TaskMaintenanceRequest.oneSummonSkillPerTeamRound=true` 时，同一个 `teamKey#round` 只允许一个窗口 claim 三技能名额。
+  - follower-support 队员在补给、归队、broadcast 之后才会尝试三技能，而且被 3 秒巡查节流和 round gate 限制。
+  - 修罗队长启动时也初始化三技能 cooldown，和自动战斗窗口共用 `summonSkillCleanRunImmediatelyOnStart` 语义。
+  - 修罗队长在目标导航已经开始并放权后，等 handoff delay，再作为候选尝试一次三技能；如果队员已 claim，本轮跳过。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 实跑修罗时重点看日志里的 `maintenance: summon skill round claimed`，确认每轮最多一个窗口 claim。
+- 如果后面要严格等“所有窗口短维护都完成”再放三技能，需要再加窗口级 ready 统计；当前版本是机会式 gate。
+
+### Tang De - 2026-05-29 降低多窗口截图诊断日志噪声
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户反馈修罗/多窗口运行时 `logs/dhxy-console.log` 基本读不了；五开时同一个底层扫描动作会乘以窗口数刷出大量 INFO。
+- 最新日志显示主要噪声来自成功截图、截图指标累计、ROI 模板 miss/latency，而不是任务主流程本身。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/driver/BoundWindowCaptureService.java`
+- `src/main/java/com/bot/dhxy/core/GameClientTracker.java`
+- `src/main/java/com/bot/dhxy/window/diagnostics/WindowInteractionMetricsService.java`
+- `src/main/java/com/bot/dhxy/tools/CoordinateHelper.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- `HWND capture probe` 成功探针日志从 INFO 降为 DEBUG；空白/兜底 WARN 保留。
+- `Capture result` 成功且 provider 为 HWND 的日志从 INFO 降为 DEBUG；失败和 Robot fallback 仍保留 INFO。
+- `Interaction metrics` 的普通 HWND capture 累计从 INFO 降为 DEBUG；失败和 Robot capture 仍保留 INFO。
+- `coordinate.findImageInRegion` 的普通 matched/miss latency 从 INFO 降为 DEBUG；异常仍保留 WARN。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Tang De - 2026-05-29 本地 OCR 随 UI 启动后台拉起
+
+Status: implemented / compile passed
+
+Why this entry exists:
+
+- 用户发现主控页点“启动”时不会自动确认本地 OCR sidecar 是否已运行，导致后续本地 OCR 入口仍依赖手动先启动服务。
+- 目标是启动任务前先后台检查 `bot.ocr.local-endpoint`，若本地 OCR 未响应，则异步启动 `scripts/local_ocr_server.py`，不阻塞窗口扫描和任务启动。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/LocalOcrSidecarService.java`
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `docs/ACTIVE_WORK.md`
+
+Implementation notes:
+
+- 新增 `LocalOcrSidecarService.ensureRunningAsync()`：先做 `/health` 检查；未运行时用后台单线程启动本地 OCR 进程。
+- 默认启动命令来自当前工作目录：`python scripts/local_ocr_server.py --host 127.0.0.1 --port 18761`，如果 `python` 启动失败，再尝试 `py -3`。
+- OCR sidecar 的 stdout/stderr 追加写入 `logs/local-ocr-sidecar.log`，方便排查 RapidOCR/Python 依赖问题。
+- `MainWindowController` 的主启动、队列启动、指定窗口启动入口都会先触发这个后台检查；启动不会等待 OCR 完全加载。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
 ### He Li - 2026-05-29 修罗暂存与五倍切换交接
 
 Status: paused / Xiuluo mainline stored / next focus is 五倍
@@ -1245,8 +2559,8 @@ Changed:
 - Replaced the separate Xiuluo Ctrl-click paths with one `NpcClickService.clickNpcByCtrlMenuScan(targetKeyword, npcTagTemplatePath, expectedDialogTemplatePath)` entry.
 - The unified Ctrl path tries `(NPC)` template candidates first, then falls back to OCR keyword matching.
 - `NpcClickService` only clicks the NPC/menu candidate and verifies that the expected option-dialog template is visible. It no longer clicks the task option itself.
-- Xiuluo now passes `修罗`, `images/template/npc/npc_tag.png`, and `images/template/dialog/xiuluo_enter_battle_kanda.png`.
-- Wuhuan `clickNpcSmart(...)` now receives `images/template/dialog/wuhuan_accept_first_option.png` as the expected accept-dialog template.
+- Xiuluo now passes `修罗`, `images/template/npc/npc_tag.png`, and `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png`.
+- Wuhuan `clickNpcSmart(...)` now receives `images/template/dialog/wuhuan/wuhuan_accept_first_option.png` as the expected accept-dialog template.
 - Removed the public old split methods `clickNpcByCtrlMenuKeyword(...)` and `clickNpcByCtrlMenuNpcTagCandidates(...)`.
 - Added `DialogService.isGreenTemplateOptionVisibleDirectForExclusive(...)` so NPC-click code can verify a business dialog without clicking its option.
 
@@ -2223,10 +3537,10 @@ Validation:
 Open after phase 1:
 
 - Need create/verify template PNGs:
-  - `images/template/dialog/xiuluo_accept_xianlaiwu.png`
-  - `images/template/dialog/xiuluo_underfive_confirm.png`
-  - `images/template/dialog/xiuluo_underfive_wait.png`
-  - `images/template/dialog/xiuluo_enter_battle_kanda.png`
+  - `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png`
+  - `images/template/dialog/xiuluo/xiuluo_underfive_confirm.png`
+  - `images/template/dialog/xiuluo/xiuluo_underfive_wait.png`
+  - `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png`
   - `images/template/item/xiuluo_return_item.png`
 - Task-panel fallback target parsing is logged as not implemented yet.
 - Cancel-task recovery branch is not implemented yet.
@@ -2242,11 +3556,11 @@ Template tooling update:
   - `return_item.png`
   - `objective_story_example.png`
 - Generated and visually checked the current Xiuluo templates:
-  - `images/template/dialog/xiuluo_accept_xianlaiwu.png` = "闲来无"
-  - `images/template/dialog/xiuluo_cancel_task.png` = "我想取消任务"
-  - `images/template/dialog/xiuluo_underfive_confirm.png` = "确定"
-  - `images/template/dialog/xiuluo_underfive_wait.png` = "我再想想"
-  - `images/template/dialog/xiuluo_enter_battle_kanda.png` = "看打!"
+  - `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png` = "闲来无"
+  - `images/template/dialog/xiuluo/xiuluo_cancel_task.png` = "我想取消任务"
+  - `images/template/dialog/xiuluo/xiuluo_underfive_confirm.png` = "确定"
+  - `images/template/dialog/xiuluo/xiuluo_underfive_wait.png` = "我再想想"
+  - `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png` = "看打!"
   - `images/template/item/xiuluo_return_item.png`
   - `images/template/npc/npc_tag.png` = "(NPC)"
 - `ImageFinder` now has `findAll(...)` for multi-candidate template matching.
@@ -8300,9 +9614,9 @@ Planned files:
 - `src/main/java/com/bot/dhxy/service/dialog/DialogHandleResult.java`
 - `src/main/java/com/bot/dhxy/service/DialogService.java`
 - `src/main/java/com/bot/dhxy/task/AutoBattleTask.java`
-- `images/template/dialog/heal_pet_option.png`
-- `images/template/dialog/repair_equipment_option.png`
-- `images/template/dialog/repair_equipment_option_giveup.png`
+- `images/template/dialog/maintenance/heal_pet_option.png`
+- `images/template/dialog/maintenance/repair_equipment_option.png`
+- `images/template/dialog/maintenance/repair_equipment_option_giveup.png`
 - `docs/ACTIVE_WORK.md`
 
 Needs from others:
@@ -9321,6 +10635,84 @@ Done:
 - Complex methods should have concise decision-point comments, not full SOP-style narration for every branch.
 - Agents should document only the touched risky section and avoid broad unrelated documentation passes.
 
+### Tang De - 2026-05-31 Alt+A direct combat fallback
+
+Status: completed
+
+Goal:
+
+- Add a 修罗 combat-target fallback for monsters whose tooltip/dialog trigger is blocked by fixed game UI or screen-edge layout.
+- Reuse the existing `NpcClickService.clickNpcSmart(...)` targeting strategy instead of creating a second NPC-click algorithm.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/input/action/InputActionType.java`
+- `src/main/java/com/bot/dhxy/input/action/InputAction.java`
+- `src/main/java/com/bot/dhxy/input/InputProvider.java`
+- `src/main/java/com/bot/dhxy/input/action/InputActionWorker.java`
+- `src/main/java/com/bot/dhxy/driver/WinApiMouseController.java`
+- `src/main/java/com/bot/dhxy/driver/BoundWindowKeyboardService.java`
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+- `src/main/java/com/bot/dhxy/tools/GameStateUtil.java`
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added queued/background-capable `Alt+A` input support.
+- Added `NpcClickService.tryDirectCombatTargetClick(...)`.
+- The new method presses `Alt+A`, then runs the same learned-memory, tooltip, player-anchor formula, yellow OCR, and Ctrl-menu pipeline used by `clickNpcSmart(...)`.
+- Normal `clickNpcSmart(...)` still verifies the expected dialog; direct-combat fallback verifies by `BattleRadarService.checkAndSyncCombatState()`.
+- Direct-combat mode probe now avoids side-effect probes such as `Alt+E`.
+- `GameStateUtil.isDirectCombatClickModeLikely(...)` now uses an AND check:
+  - mini-map coordinate digit reader cannot read the coordinate;
+  - top-right HP/MP bars are not visible.
+- `PlayerStateService.areStatusBarsVisibleNoFocus(...)` captures only the small HP/MP strip and counts red/blue bar pixels. It does not move the mouse, open UI, heal, or run OCR.
+- If direct-combat clicks fail normally, `NpcClickService` right-clicks near the current purple/player anchor to exit the mode. If the task is stopped/interrupted, it does not perform cleanup, per user preference.
+- Exit is now verified with `GameStateUtil.isDirectCombatClickModeLikely(...)` after each right-click. It retries the exit click up to 3 times; if the mode still appears active, the service aborts follow-up cleanup/retry instead of continuing while stuck in Alt+A mode.
+- `XiuluoTaskV2.recoverTargetClickFailure(...)` now tries the direct-combat fallback after the normal template/OCR "看打!" dialog recovery misses and before UI cleanup/retry.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- Run 修罗目标点击 on a blocked/edge monster case and confirm logs show `NPC direct-combat click mode entered`, direct-combat verification attempts, and either battle radar success or right-click exit.
+- If mode detection is too strict/loose, tune only the status-bar pixel thresholds or mini-map readability probe; do not add package-opening probes.
+
+### Tang De - 2026-06-02 Local OCR startup gate for task start
+
+Status: completed
+
+Goal:
+
+- Prevent task startup from controlling game windows when the local OCR sidecar is not healthy.
+- Fix the observed 五环 loop where world-map search already showed `长安`, but local OCR was unavailable, so the route guard read an empty destination and repeatedly closed/retyped the search input.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/ui/LocalOcrSidecarService.java`
+- `src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `LocalOcrSidecarService` now exposes `ensureRunningBlocking()`, waiting up to 60 seconds for `/health`.
+- Main task start, queue start, and per-window start now run an OCR readiness gate inside the background UI worker before scanning/registering windows or submitting tasks.
+- If local OCR is not healthy, the command returns a clear failure message and does not touch game windows.
+- The old UI message saying local OCR startup "does not block window startup" was replaced with a startup-gate message.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Notes:
+
+- Latest log showed the OCR sidecar was requested at `2026-06-02 00:09:15`, but the previous async warmup timed out after 12 seconds while tasks continued anyway.
+- The route failure itself was not a bad map result: archived `raw.png` visibly contained `长安`; the failure was caused by OCR unavailable and the guard returning `actual=` blank.
+
 ### Tang De - 2026-05-26 Xiuluo stop during location OCR
 
 Status: completed
@@ -9434,3 +10826,783 @@ Why:
 Validation:
 
 - `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-02 五倍战斗等待暂停计时修正
+
+Status: completed
+
+Goal:
+
+- Fix 五倍 `WAIT_BATTLE_FINISH` timeout when the user pauses during combat.
+- The timeout should measure active waiting time, not wall-clock time spent paused.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Reverted the temporary chained-combat timeout widening; 五倍战斗等待 still uses the normal `180_000ms` timeout.
+- Moved the stop/pause checkpoint ahead of the timeout test in `tickWaitBattleFinish(...)`.
+- Measured how long the checkpoint blocked. If it blocked for at least `1_000ms`, the code shifts `waitBattleStartedAt` and `waitBattleNextTrackerRetryAt` forward by that blocked duration.
+- Added log marker:
+  - `[wubei] wait battle timer paused: blockedMs=... adjustedStartAt=... adjustedNextRetryAt=...`
+
+Why:
+
+- Logs showed the leader entered 黄袍 combat at about `23:11:04`, paused at `23:11:08`, resumed at `23:14:48`, and immediately hit `wait battle timeout`.
+- The old logic used wall-clock `System.currentTimeMillis()` without subtracting pause duration, so paused time was incorrectly counted as active battle waiting time.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-02 全局暂停快捷键改为暂停/继续切换
+
+Status: completed
+
+Goal:
+
+- Make `Ctrl+Shift+F11` behave like a pause/resume toggle instead of only sending pause.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/input/GlobalEmergencyStopHotkeyService.java`
+- `src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- Added `WindowTaskControlService.togglePauseResumeAll()`.
+- If there are no live tasks, the command returns a clear empty result.
+- If all live tasks are already `PAUSED`, the next `Ctrl+Shift+F11` sends `resumeAll()`.
+- Mixed state intentionally sends `pauseAll()`, so one still-running window will be paused rather than accidentally resumed into unsafe motion.
+- Global hotkey `Ctrl+Shift+F11` now calls the toggle method.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-03 五环当前地图导航放权延迟优化
+
+Status: completed
+
+Goal:
+
+- Reduce the delay between current-map mini-map pathing confirmation and task-turn release.
+- Target: after movement is confirmed, the current window should yield quickly so the next window can start its own route instead of waiting 2-3 seconds for UI cleanup.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- In `navigateInCurrentMap(...)`, when `returnOnPathingStarted=true` and the result is `PATHING_STARTED`, skip the final `closeMiniMapIfOpen("navigateInCurrentMap:finish")`.
+- Added log marker:
+  - `navigate in current map skips mini-map close before yield`
+
+Why:
+
+- Logs showed current-map navigation confirmed pathing, then spent about 1.5-2.9 seconds closing the mini-map before releasing the task turn.
+- For phase/yield navigation, the caller only needs to submit the movement and release the shared task turn. UI cleanup can happen later when that same window resumes or enters combat.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-03 战斗进入后后台快速补开自动战斗
+
+Status: completed
+
+Goal:
+
+- When a window-level combat watcher detects battle entry, quickly ensure automatic combat is opened.
+- Do not wait for the 五环 main task turn to reach `CHECK_COMBAT` before sending the first auto-combat shortcut.
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/AutoCombatService.java`
+- `src/main/java/com/bot/dhxy/service/AutoCombatPanelService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `AutoCombatService.handleWindowCombatGuardTick(...)` now consumes the combat-enter signal and calls the same combat-entry handler used by the task tick.
+- Refactored auto-combat panel handling into shared steps:
+  - `ensurePanelVisible(...)`: check panel, send background `Alt+8` if missing, then recheck.
+  - `alignPanelIfNeeded(...)`: drag panel only during the full task-owned verify flow.
+  - `verifyRemainingRounds(...)`: OCR/refresh rounds only during the full task-owned verify flow.
+- Added `AutoCombatPanelService.ensureAutoCombatPanelVisibleFast(...)` as the combat-watcher entry point. It only calls `ensurePanelVisible(...)`.
+- The fast path intentionally does not drag the panel, OCR remaining rounds, run first-aid, or do post-combat recovery. Those stay in the owning task flow.
+
+Why:
+
+- Logs showed `window-combat-watch-*` detected battle entry several seconds before the 五环 task reached `CHECK_COMBAT`.
+- The watcher previously only updated combat state, so auto-combat panel opening waited behind task-turn scheduling.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 何黎 - 2026-06-03 窗口层 pathing observer 实验层
+
+Status: in progress / experimental
+
+Goal:
+
+- 先把“窗口后台观察跑路状态”这一层搭起来，用导航压力测试验证。
+- 暂时不要接入五环、五倍、修罗正式业务流程。
+- 目标是证明：当任务触发 pathing 并放权后，窗口层可以在后台通过小地图模板持续更新当前地图/坐标，并输出 `ACTIVE / ARRIVED / STOPPED_AWAY / UNKNOWN` 状态。
+
+Why:
+
+- 五开时当前任务轮转太慢。很多窗口已经移动到位，但等重新拿到任务权后才开始同步位置、判断是否到达，导致每个窗口之间反应很慢。
+- 这个问题更像窗口调度/后台观察层的问题，不应该先在五环、五倍、修罗业务里各自硬补。
+
+Current design decision:
+
+- `WindowTaskRunner` 增加窗口层 observer 能力。
+- `WindowRuntimeContext` 保存窗口自己的 `WindowPathingSnapshot`。
+- `NavigationService` 只有在 `NavigationRequest.publishWindowPathingIntent=true` 时才会登记 pathing intent。
+- `NavigationRequest.publishWindowPathingIntent` 默认是 `false`，所以正式任务现在不会自动接入。
+- 目前只有 `DebugNavigationStressTask` 设置 `publishWindowPathingIntent(true)`。
+- `DEBUG_NAVIGATION_STRESS` 会启动纯 pathing observer，但不会跑 combat guard，不会发送自动战斗输入。
+
+Files changed:
+
+- `src/main/java/com/bot/dhxy/model/navigation/NavigationRequest.java`
+- `src/main/java/com/bot/dhxy/window/model/WindowPathingIntent.java`
+- `src/main/java/com/bot/dhxy/window/model/WindowPathingSnapshot.java`
+- `src/main/java/com/bot/dhxy/window/model/WindowPathingState.java`
+- `src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `src/main/java/com/bot/dhxy/window/execution/MultiWindowTaskManager.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+
+Important guardrails for other agents:
+
+- Do not wire this observer into 五环/五倍/修罗 yet.
+- Do not make tasks consume `WindowPathingSnapshot` until the navigation stress test proves the observer is stable.
+- Do not turn `publishWindowPathingIntent` on by default.
+- Do not add task-specific fallback logic here. This layer should only observe and cache window state.
+- Do not send input from the pathing observer. It may screenshot/read mini-map state only.
+
+Logs to watch:
+
+- `window observer started`
+- `window pathing intent registered`
+- `pathing watcher update: ... state=ACTIVE`
+- `pathing watcher update: ... state=ARRIVED`
+- `pathing watcher update: ... state=STOPPED_AWAY`
+- `pathing watcher unknown`
+
+How to test:
+
+- Run the existing navigation pressure task, not 五环/五倍/修罗:
+  - UI: select `导航压力测试`
+  - or IntelliJ: run `src/main/java/com/bot/dhxy/debug/NavigationStressDebugMain.java`
+- Recommended first test:
+  - start with 1 window;
+  - then 2 windows;
+  - only after observer logs are stable, test more windows.
+- Expected result:
+  - after `PATHING_STARTED`, the task should release turn;
+  - the observer should continue logging current map/coordinate changes in the background;
+  - when the window reaches the target, observer should log `ARRIVED` without the task needing to reacquire and run a slow full sync first.
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check` on the touched Java files only reported existing CRLF warnings, no whitespace errors.
+
+Open decision:
+
+- After the observer is verified, decide how to expose readiness to the scheduler:
+  - option A: tasks consume cached `WindowPathingSnapshot` after reacquiring the turn;
+  - option B: task-turn scheduler prioritizes windows whose observer reports `ARRIVED` or `STOPPED_AWAY`;
+  - option C: combine both, but only after logs prove this observer is reliable.
+
+### 唐德 - 2026-06-05 Map label 模板尺寸统计
+
+Status: completed / report only
+
+Goal:
+
+- 先统计 `images/template/map_label/*.png` 的实际尺寸分布，后续再决定是否统一模板尺寸。
+
+Result:
+
+- 新增记录文件：`docs/map-label-template-size-report.md`
+- 当前共 47 张 map label 模板。
+- 高度大多是 18 px，只有 `四圣庄.png` 和 `金兜洞.png` 是 17 px。
+- 宽度按地图名字长度分散为 13 个尺寸组。
+
+No image files were modified.
+
+### 唐德 - 2026-06-05 导航压测当前地图点击误判修正
+
+Status: implemented / compile passed
+
+Goal:
+
+- 修正导航压力测试里当前地图点击已经触发移动、但 1 秒坐标确认窗口没有读到变化时被误判为 `POINT_NOT_REACHED` 的问题。
+
+Observed:
+
+- 用户肉眼确认两个窗口从 `大唐边境(22,271)` 点击后确实移动并最终到达目标附近。
+- 日志显示物理输入已成功：
+  - `Alt+1 success=true`
+  - `physical operation=clickLeft`
+- 但 `NavigationService.confirmMiniMapPathingStarted(...)` 只在约 1 秒内轮询小地图坐标，期间仍读到 `baseline=(22,271) current=(22,271)`，于是返回 `NO_PATHING`。
+- `DebugNavigationStressTask` 的 `MAX_NAVIGATION_RETRY=0`，导致这个短确认误判直接让任务失败。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- 只在 `returnOnPathingStarted=true` 且 `publishWindowPathingIntent=true` 的 observer 压测路径里改判定。
+- 当前地图 mini-map 点击已经成功发出，但短坐标确认没有看到 delta 时，不再立刻返回 `POINT_NOT_REACHED`。
+- 改为返回 `PATHING_STARTED` 并注册窗口级 pathing intent，让 `WindowTaskRunner` 的后台 observer 后续判断 `ACTIVE / ARRIVED / STOPPED_AWAY`。
+- 正式业务里没有开启 `publishWindowPathingIntent` 的路径暂不改变。
+
+Next validation:
+
+- Re-run `导航压力测试`，看 `current-map mini-map click submitted; observer will confirm pathing` 后 watcher 是否继续更新到 `ACTIVE` 或 `ARRIVED`，而不是立即失败。
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-05 导航压测 loop guard 误杀修正
+
+Status: implemented / compile passed
+
+Observed:
+
+- 14:38 最新导航压力测试最后两个窗口不是因为 `POINT_NOT_REACHED` 失败。
+- 两个窗口最终都在第 5 个目标 `大雁塔二层(76,73)` 失败：
+  - `hwnd-4A81470`：`[nav-stress] loop guard exceeded: index=4 waiting=true target=#5 大雁塔二层(76,73)`
+  - `hwnd-C117E`：同样是 `loop guard exceeded`。
+- 当时 watcher 仍在正常报告 `ACTIVE`，例如 `current=长安城东(308,173)`，说明这是 debug task 自己的保护计数误杀，不是导航输入失败。
+
+Cause:
+
+- `DebugNavigationStressTask` 的 `MAX_LOOP_GUARD=600` 在主循环每次都递增。
+- 现在 pathing wait 会每 250ms 轮询一次后台 observer；长路线/多目标会把 600 次很快消耗掉。
+- pathing wait 本身已有 90 秒 wall-clock timeout，不能再用循环次数作为失败条件。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+- `docs/ACTIVE_WORK.md`
+
+Done:
+
+- `waitingPathing=true` 时不再消耗 `loopGuard`。
+- loop guard 只保留给非等待阶段的异常状态 churn。
+- pathing 等待是否失败继续由 `PATHING_TARGET_WAIT_TIMEOUT_MS=90000` 和 watcher 状态判断。
+
+Next validation:
+
+- 重新跑 `导航压力测试`，确认第 5 个目标不会因为 `waiting=true` 的 observer 轮询触发 `loop guard exceeded`。
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-05 route dialog 后台预计算不抢权
+
+Status: implemented / compile passed
+
+Goal:
+
+- route dialog 预计算没有完成时，窗口不要拿到输入机会后在前台干等或重复 OCR。
+- 后台已经在算同一个 route dialog 时，任务层先让出；后台没开始算时，前台接管并取消后台 request。
+
+Changed files:
+
+- `src/main/java/com/bot/dhxy/model/dialog/DialogPreparationPhase.java`
+- `src/main/java/com/bot/dhxy/model/dialog/DialogPreparationStatus.java`
+- `src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `src/main/java/com/bot/dhxy/model/dialog/DialogResultStatus.java`
+- `src/main/java/com/bot/dhxy/model/navigation/NavigationResult.java`
+- `src/main/java/com/bot/dhxy/model/navigation/NavigationResultStatus.java`
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+- `src/main/java/com/bot/dhxy/task/DebugNavigationStressTask.java`
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+
+Done:
+
+- `WindowRuntimeContext` 现在记录 dialog preparation lifecycle：`REQUESTED / PREPARING / READY / FAILED`。
+- `WindowTaskRunner.refreshDialogPreparationSignal(...)` 在 watcher 真正开始算、算空、异常、成功时更新状态。
+- `NavigationService.clickRouteDialogOption(...)` 遇到同目标 `PREPARING` 时返回 `DIALOG_PREPARING`，不继续前台 OCR。
+- 如果只有 `REQUESTED` 但 watcher 还没开始，前台会清掉 request 并自己同步处理，避免后台稍后重复算。
+- `DialogService.handleRememberedOption(...)` 在真正点击 remembered point 前再次检查并消费 prepared action，解决后台结果比 NavigationService 的 200ms 等待稍晚才出现时无法被用上的问题。
+- `DebugNavigationStressTask` 遇到 `DIALOG_PREPARING` 用短让出，不走 3 秒 retry backoff。
+- `FiveRingTaskV2` 遇到 `DIALOG_PREPARING` 走 shared-state retry，避免持有任务权等待后台。
+
+Logs to watch:
+
+- `dialog preparation probe start`
+- `dialog prepared`
+- `route dialog preparation still running; yield before foreground OCR`
+- `route dialog preparation not started; foreground takes over`
+- `dialog remembered option uses prepared action`
+- `[nav-stress-latency] route dialog preparing in background; yield before retry`
+
+Next validation:
+
+- 重新跑 `导航压力测试` 两窗口/五窗口。
+- 重点看 route dialog 场景是否出现：
+  - 后台 `PREPARING` 时当前窗口短让出；
+  - prepared action ready 后前台直接点击；
+  - 不再出现同一个 route dialog 先后台 prepare、再前台 OCR 的双算链。
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-05 15:26 导航压力测试结果复盘
+
+Status: tested / needs follow-up
+
+Observed:
+
+- 本轮只注册并启动了 2 个窗口：
+  - `hwnd-2710776` / `刑部ㄨ忍者（ID：67555）`
+  - `hwnd-59094A` / `忆叶知秋（ID：451753529）`
+- 两个窗口最终都完成：
+  - `15:30:41.662` `hwnd-2710776` `导航压力测试 -> SUCCESS`
+  - `15:31:12.905` `hwnd-59094A` `导航压力测试 -> SUCCESS`
+- 没有看到本轮任务级 `FAILED` 或异常退出。
+
+Latency notes:
+
+- 多个 `productionNavigate` 仍明显超过 3 秒。
+- 跨地图 route submit 常见在 7-12 秒，例如：
+  - `#1 长安`：`7003ms` / `11571ms`
+  - `#2 长安城东`：`7443ms` / `8105ms`
+  - `#4 龙宫`：`9294ms`
+  - `#5 大雁塔二层`：`12507ms`
+- 当前地图小地图点击阶段多在 2.8-4.2 秒，部分仍超过 3 秒，例如：
+  - `#5 大雁塔二层`：`2979ms`
+  - `#3 大唐边境`：`4040ms` / `4173ms`
+
+Route dialog preparation result:
+
+- 后台 route dialog 预计算机制这轮没有真正命中。
+- 每次都是：
+  - `route dialog preparation requested`
+  - 约 `200ms` 后 `route dialog preparation not started; foreground takes over`
+  - `route dialog prepared wait finished ... usable=false`
+  - `route dialog prepared action unavailable; continue normal path`
+- 没有出现：
+  - `DIALOG_PREPARING`
+  - `route dialog preparation still running; yield before foreground OCR`
+  - `dialog remembered option uses prepared action`
+- 结论：当前 request 被创建后，前台 200ms 等待太短或 watcher 没有及时进入 `PREPARING`，所以实际还是前台同步处理 route dialog，后台预计算没有吃到这轮时间差。
+
+Next steps:
+
+- 调整 route dialog request 的接管策略：`REQUESTED` 时不要 200ms 后马上取消，至少先让 watcher 获得一次扫描机会，或者由任务层直接短让出。
+- 给 watcher 开始处理 preparation 的路径补更明确耗时日志，区分“没有扫到 dialog”和“扫到了但还没算完”。
+- 再跑同样两窗口测试，目标是能看到 `DIALOG_PREPARING` 或 `dialog remembered option uses prepared action` 至少一种路径命中。
+
+### 谢帅 - 2026-06-05 18:32 三窗口导航压力测试结果
+
+Status: tested / improved / needs follow-up
+
+Observed:
+
+- 本轮注册并启动了 3 个窗口：`hwnd-2D70B12`、`hwnd-55A06DE`、`hwnd-A41144`。
+- 三个窗口最终都完成，没有任务级失败：
+  - `18:31:37.923` `hwnd-55A06DE` `导航压力测试 -> SUCCESS`
+  - `18:31:46.908` `hwnd-2D70B12` `导航压力测试 -> SUCCESS`
+  - `18:32:08.813` `hwnd-A41144` `导航压力测试 -> SUCCESS`
+
+Route dialog preparation result:
+
+- 后台 route dialog 预计算这轮开始真正命中，比 2 窗口测试有改善。
+- `hwnd-A41144` 在 `长安` route dialog 上命中：
+  - `18:28:05.331` watcher `dialog preparation probe start`
+  - `18:28:05.507` 前台返回 `DIALOG_PREPARING`
+  - `18:28:06.291` watcher `dialog prepared: target=长安 matched=长安桥（400两）`
+  - `18:28:07.431` 前台点击 prepared route option，`PATHING_STARTED`
+- `hwnd-A41144` 在 `龙宫` route dialog 上也命中：
+  - `18:31:02.057` watcher `dialog preparation probe start`
+  - `18:31:02.130` 前台返回 `DIALOG_PREPARING`
+  - `18:31:03.253` watcher `dialog prepared: target=龙宫 matched=龙宫（400两）`
+  - `18:31:09.643` 前台点击 route option，`PATHING_STARTED`
+
+Remaining issues:
+
+- 仍有很多 route dialog 走了 `route dialog preparation not started; foreground takes over`，说明 200ms 内 watcher 没启动的情况还很多，预计算命中率不够稳定。
+- prepared action 点击后出现过 stale invalidation 日志：
+  - `18:28:07.493` `target=长安 distance=621 maxDistance=8`
+  - `18:31:09.791` `target=龙宫 distance=441 maxDistance=8`
+  这可能是点击/转场后旧 prepared state 没及时清干净，也可能是 invalidation 时机太晚，需要下一步确认。
+- 当前地图小地图点击阶段仍常见约 3 秒上下，最终样本里 `navigateInCurrentMap:click` input request 约 `2298ms`，整体 current-map step 约 `2951ms`，已经接近但还没有稳定低于 3 秒。
+
+Next steps:
+
+- 把 route dialog `REQUESTED` 的处理改成“优先让 watcher 至少吃到一轮”：第一次看到同目标 `REQUESTED` 可短让出，而不是 200ms 后立刻前台接管。
+- route option 成功点击或 `PATHING_STARTED` 后及时清理/消费 prepared action，减少后续 stale invalidation 噪声。
+- 再跑 3-5 窗口，重点看 `DIALOG_PREPARING` 命中率和窗口交接是否仍保持顺滑。
+
+### 谢帅 - 2026-06-05 route dialog 五窗口测试前调整
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.clickRouteDialogOption(...)`
+  - 同目标 route dialog 处于 `REQUESTED` 且 request 还很新时，不再 200ms 后马上前台接管。
+  - 新逻辑会返回 `DIALOG_PREPARING`，让任务短让出，给 watcher 至少一次轮询机会。
+  - 如果 request 超过 `800ms` 仍没进入 `PREPARING/READY`，再清掉 request 并走前台正常路径，避免永久等后台。
+  - 新日志：`route dialog preparation requested; yield for watcher start`。
+- `WindowTaskRunner`
+  - 有 dialog preparation request/prepared action 时，watcher active interval 从 `200ms` 降到 `100ms`。
+  - prepared action validation 如果发现 request 已经被前台消费/清掉，不再输出 stale invalidation，只打 debug 级 `request-consumed`。
+
+Why:
+
+- 三窗口实测已经证明后台 prepare 能工作，但很多 dialog 还是因为 watcher 没在 200ms 内启动而被前台抢回。
+- 五窗口测试前先把 request->watcher 的接力窗口放宽一点，目标是提高 `DIALOG_PREPARING` / prepared action 命中率，同时保留前台兜底。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next log checks:
+
+- 期望看到更多：
+  - `route dialog preparation requested; yield for watcher start`
+  - `dialog preparation probe start`
+  - `route dialog preparation still running; yield before foreground OCR`
+  - `route dialog probe uses prepared action`
+  - `route dialog memory path uses late prepared action`
+- 如果仍大量出现 `route dialog preparation not started; foreground takes over`，再看 requestAgeMs 是不是已经超过 `800ms`，判断 watcher 是否被其他工作卡住。
+
+### 谢帅 - 2026-06-05 18:55 五窗口测试中断复盘
+
+Status: bug found / fixed / compile passed
+
+Observed:
+
+- `岁月醉白头` 对应窗口：`hwnd-2000A3C` / hwnd `33557052`。
+- 它不是拿不到 turn；日志显示它反复拿到 turn：
+  - `requestTurn transaction=debug-nav-stress:navigate:1-长安`
+  - `outsideTurnStart transaction=debug-nav-stress:navigate:1-长安`
+- 画面上不动的原因是它第一步一直卡在 `长安` route dialog preparation：
+  - 当前地图一直是 `洛阳城(311,116)`。
+  - 多次返回 `DIALOG_PREPARING`，没有真正进入 route dialog 前台点击。
+  - watcher 反复 `dialog preparation probe miss`，且单次 prepare miss 可达 `7s / 12s / 13s`。
+
+Root cause:
+
+- 上一版只给 `REQUESTED` 阶段加了 `800ms` 上限。
+- 一旦 watcher 进入 `PREPARING`，前台会一直让出，等待后台完成。
+- 如果后台 OCR/模板准备很慢并且最终 miss，窗口就会反复拿 turn、反复让出，但永远不执行前台兜底。
+
+Changed:
+
+- `NavigationService.clickRouteDialogOption(...)`
+  - 新增 `ROUTE_DIALOG_PREPARING_YIELD_MAX_MS = 1500ms`。
+  - 同目标 `PREPARING` 若超过 1.5 秒还没有 prepared action，前台清掉 request 并接管正常 route dialog 流程。
+  - 新日志：`route dialog preparation too slow; foreground takes over`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 再跑 5 窗口。
+- `岁月醉白头` 这类窗口最多应让 watcher 一小段时间；如果 watcher 慢/miss，应出现 `preparation too slow; foreground takes over`，随后进入正常前台点击，而不是一直 `DIALOG_PREPARING`。
+
+### 唐德 - 2026-06-05 五窗口启动无动作 / DIALOG_PREPARING 空转修正
+
+Status: implemented / compile passed
+
+Observed:
+
+- 用户启动后 UI 显示 5 个窗口运行中，但游戏里没有任何输入反应。
+- 最新日志显示本轮实际启动的是 `DEBUG_NAVIGATION_STRESS`，5 个窗口都在处理 `#1 长安` route dialog：
+  - 任务反复输出 `route dialog preparation requested; yield for watcher start`
+  - watcher 反复输出 `dialog preparation probe start` -> `dialog preparation probe miss`
+  - 没有继续出现 `submitWorldMapSearchAndClickDestination:长安` 或后续 `INPUT_TRACE`
+- 所以 UI 的“运行中”不是假状态；任务线程确实在跑，只是卡在 route dialog 后台准备状态，没有进入真实输入路径。
+
+Root cause:
+
+- `NavigationService.clickRouteDialogOption(...)` 每次重试都会重新创建同一个 target 的 `DialogPreparationRequest`。
+- 这会把 `createdAtMs` 重置，导致 `ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS=800ms` 的前台兜底永远等不到超时。
+- watcher miss 以后，下一轮又重新 request，同样继续 `DIALOG_PREPARING`，形成五窗口空转。
+
+Changed:
+
+- `NavigationService.clickRouteDialogOption(...)`
+  - 同一个 route target 如果已有 `REQUESTED/PREPARING` request，不再重复创建 request，只复用已有状态，让 request age 能正常增长并触发前台兜底。
+  - 如果同一个 target 刚刚被 watcher 标记 `FAILED`，短时间内清掉 request 并直接让前台路径接管，避免 miss 后马上再 request。
+  - 新增 `ROUTE_DIALOG_FAILED_FOREGROUND_COOLDOWN_MS=2000ms`，只用于防止同目标 watcher miss 后立即循环。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next test:
+
+- 停掉当前运行中的任务并重启应用/重新启动任务，确认新代码生效。
+- 观察是否从 `DIALOG_PREPARING` 空转变成前台 route option OCR 或 prepared action 命中。
+
+### 谢帅 - 2026-06-06 北俱芦洲 route dialog 被遗忘复盘
+
+Status: investigated / small fix / compile passed
+
+Observed:
+
+- 用户暂停前，`一叶知秋`、`仁者有容`、`刑部` 等窗口在 `北俱芦洲 -> 大唐边境` 路线对话框处卡住。
+- 画面上 route dialog 已经弹出，但窗口再次拿到 turn 后没有直接点击，反而重新打开世界地图并再次搜索导航。
+- 日志里坏路径很明确：
+  - `dialog preparation expired: operation=ROUTE_TRANSFER target=大唐边境 source=navigateToMap:map-route-clicked`
+  - 下一次进入导航时 `route dialog preparation snapshot before world-map search ... statusPhase=NONE ... usable=false`
+  - 随后立刻 `navigation map search start: target=大唐边境`
+- 好路径则是：
+  - `statusPhase=READY ... usable=true`
+  - `consume prepared route dialog before world-map search`
+  - `route dialog probe uses prepared action`
+
+Root cause:
+
+- route dialog preparation request 的 TTL 原来是 `45s`。
+- 五窗口压测时，一个窗口点出路线对话框后可能长时间排队，等它重新拿 turn 时 request 已经过期。
+- `WindowRuntimeContext.clearDialogPreparationRequest(...)` 会同时清掉 request 和 prepared action；所以肉眼看到 dialog 还在，但代码已经没有“这个 dialog 该点哪里”的准备状态。
+- 另外 `visible route dialog rescue` 只接受 `10s` 内的 `STOPPED_AWAY` snapshot；五窗口排队时也偏短，容易错过救援窗口。
+
+Changed:
+
+- `NavigationService`
+  - `ROUTE_DIALOG_PREPARE_REQUEST_TTL_MS`: `45_000ms -> 120_000ms`
+  - `ROUTE_DIALOG_VISIBLE_RESCUE_SNAPSHOT_MAX_AGE_MS`: `10_000ms -> 120_000ms`
+- 没有改世界地图搜索、绿色链接点击、OCR 选项算法，只延长 route dialog 已弹出后的准备/救援有效期。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 重启应用后再跑五窗口导航压测。
+- 重点观察 `北俱芦洲 -> 大唐边境`：
+  - 预期减少 `dialog preparation expired` 后立刻 `navigation map search start`。
+  - 预期更多看到 `consume prepared route dialog before world-map search` 或 `try visible route dialog rescue before world-map search`。
+  - 如果仍旧出现 dialog 明明在但 status 为 `NONE`，下一步应改 request 过期时的清理策略，不要把仍可验证的 prepared action 一起清掉。
+
+### 谢帅 - 2026-06-06 长安城东 map-only arrival 后旧 route dialog 清理
+
+Status: implemented / compile passed
+
+Observed:
+
+- 用户问 08:32-08:33 附近 `大叔` 已经在 `长安城东`，为什么不像是直接打开小地图导航，反而像还在点 route 链接。
+- 按窗口 title/ID 拆日志后，`大叔` 实际已经走到当前地图导航：
+  - 08:32:34 已同步到 `长安城东 (27,231)`。
+  - 08:32:53 执行 `Alt+1`，随后点击当前地图逻辑坐标 `(166,118)`。
+- 真正异常的是同窗口后面仍有一个旧的 `ROUTE_TRANSFER target=长安城东` 后台准备请求：
+  - `dialog preparation probe start ... target=长安城东 ... requestAgeMs=55102`
+  - 但当前 route dialog OCR 里没有 `长安城东` 选项，最终 miss，浪费十几秒且污染日志判断。
+
+Root cause:
+
+- `navigateToMap` fresh confirm 已经确认当前地图就是目标地图时，会直接返回 `ARRIVED`，但没有清掉同目标的旧 route dialog preparation/prepared action。
+- `DebugNavigationStressTask` 消费 map-only `ARRIVED` 并准备继续当前地图坐标导航时，也只清 `pathingSignal`，没有清同目标 route dialog preparation。
+- 这样窗口已经进入当前地图坐标导航后，watcher 仍可能拿旧 target 做 route dialog 准备。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - 当 stale-cache/fresh map guard 确认已在目标地图，并且同目标存在 `ROUTE_TRANSFER` preparation/action 时，清理该旧准备状态。
+- `DebugNavigationStressTask`
+  - 消费 map-only arrival、准备继续坐标导航时，同步清理同目标 `ROUTE_TRANSFER` preparation/action。
+- 没有改世界地图搜索、绿色链接点击、当前地图坐标点击算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 下轮压测看 `长安城东` 已经到图后，是否还出现同窗口旧的 `dialog preparation probe start ... target=长安城东 requestAgeMs=...`。
+- 如果还有，继续查是谁在到图后重新创建 route preparation，而不是改点击算法。
+
+### 谢帅 - 2026-06-06 岁月醉白头龙宫失败前旧 route preparation 清理
+
+Status: implemented / compile passed
+
+Observed:
+
+- 用户指出 `岁月醉白头`（最新运行窗口 `hwnd-311168`，ID `387545229`）在异常失败前像是和其他窗口打架。
+- 失败点：
+  - `08:44:19.409` `target=#4 龙宫(110,54) status=MAP_NOT_REACHED message=map route submit failed`
+  - `08:44:19.417` 窗口任务直接 `FAILED`
+- 复查 `08:44:02-08:44:19` 的 `INPUT_TRACE` 后确认：
+  - 这段是在 `submitWorldMapSearchAndClickDestination:龙宫` 的一个 exclusive input request 内。
+  - 物理输入全是 `hwnd-311168`，没有其他窗口插入鼠标/键盘。
+  - 所以这次不是经典的 input queue 串窗抢输入。
+- 但进入 `龙宫` 导航前 runtime 里还挂着旧状态：
+  - `route dialog preparation snapshot ... target=龙宫 statusPhase=REQUESTED statusTarget=大唐边境 preparedTarget=null`
+  - 这说明上一个 route dialog preparation 没有在目标切换时被清干净。
+- Debug 压测当前 `MAX_NAVIGATION_RETRY=0`，所以一次 map route submit 失败就会直接让该窗口结束。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - 在开始新 target 的 route-dialog precheck 前，如果 runtime 中存在旧的 `ROUTE_TRANSFER` preparation/action，且 `targetKeyword` 不是当前 `targetMapName`，立即清理。
+  - 只清 stale target，不清同 target 的 watcher/prepared action。
+  - 不改世界地图搜索、绿色链接点击、route dialog OCR/点击算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 再跑五窗口压测，重点看 `route dialog preparation snapshot before world-map search`：
+  - 预期不会再看到同一窗口 `target=龙宫 statusTarget=大唐边境` 这种跨目标旧状态。
+  - 如果还出现 `map route submit failed`，下一步查 `DebugNavigationStressTask` 是否应允许 route submit transient failure 重试，而不是 `retry=0/0` 直接终止。
+
+### 谢帅 - 2026-06-06 Jason/Hooke route dialog 架构 CR 后的小修
+
+Status: implemented / compile passed
+
+Review summary:
+
+- Jason 和 Hooke 都认为当前主要问题不是绿色链接点击算法，而是 route dialog / watcher / task-yield 状态消费不统一。
+- 共同风险：
+  - `DebugNavigationStressTask` 对 `REQUESTED/PREPARING` 最多等 30 秒，绕开了 `NavigationService` 自己 3 秒左右的前台兜底。
+  - `READY` 但 prepared action 已超过可点击年龄时，仍可能被 `hasMatchingRouteDialogPreparation(...)` 当成可消费状态。
+  - `MAX_NAVIGATION_RETRY=0` 会把一次 transient `map route submit failed` 直接放大成窗口 FAILED。
+
+Changed:
+
+- `DebugNavigationStressTask`
+  - 新增 `ROUTE_DIALOG_REQUESTED_WAIT_TIMEOUT_MS=3000ms`。
+  - `REQUESTED` 只短等 watcher 接手；超过 3 秒就结束等待并重新进入 `NavigationService` 前台路径。
+  - `PREPARING` 从 30 秒收短到 10 秒；超过后重新进入前台路径。
+  - `MAX_NAVIGATION_RETRY` 从 `0` 改为 `1`，避免一次 route submit 抖动直接杀掉压测窗口。
+- `NavigationService.hasMatchingRouteDialogPreparation(...)`
+  - 只有 `isPreparedRouteDialogActionUsable(...)` 通过的 prepared action 才算可直接消费。
+  - `READY` 但 action 过期/绑定不匹配时返回 false，并记录 `verifiedAgeMs/maxAgeMs`，避免继续卡在 consume prepared 路径。
+- 没有改世界地图绿色链接点击算法，没有改 OCR 结果选择算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 再跑 3-5 窗口导航压测。
+- 重点看：
+  - `route dialog request waiting for watcher` 是否最多 3 秒后转为 `re-enter navigation foreground path`。
+  - `route dialog preparation ready but prepared action is not directly usable` 出现后是否不再长时间空等。
+  - `retry=1/1` 是否能吸收一次 `map route submit failed`，而不是直接 FAILED。
+
+### 唐德 - 2026-06-06 自动战斗手动启动按队员窗口注册
+
+Status: implemented / compile passed
+
+Observed:
+
+- 用户在主控点“自动战斗”后，UI 成功提交 `[auto_battle]` 到 5 个窗口，但所有窗口几秒后回到空闲/未知任务。
+- 最新 `logs/dhxy-console.log` 显示每个窗口都进入了 `AutoBattleTask`，但上下文 role 都是 `UNKNOWN`。
+- `TaskStartupCheckService.checkAutoBattle(...)` 在当前配置 `auto-battle-requires-member=true`、`allow-auto-battle-when-role-unknown=false` 下直接返回 `SKIPPED`：
+  - `自动战斗前置判断未通过 ... role=UNKNOWN | role unknown and live role detection is skipped`
+- 用户确认产品规则：手动点“自动战斗”就表示这些窗口按队员挂机窗口处理，不需要再等队伍身份识别。
+
+Changed:
+
+- `NativeWindowRegistrationMapper.toIndependentRegistrationRequests(...)`
+  - 当扫描/注册任务类型是 `TaskType.AUTO_BATTLE` 时，注册请求直接写入 `WindowRole.MEMBER`。
+  - 其他独立任务仍保持 `WindowRole.UNKNOWN`，不恢复旧的“第一个窗口队长”规则。
+  - 这样 `TaskExecutionContext.windowRole` 会是 `MEMBER`，自动战斗前置判断可以按队员窗口放行。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 用户再次点“自动战斗”后，日志中应看到 `AutoBattleTask` 上下文 role 为 `MEMBER`，并出现 `自动战斗前置判断通过 ... allowed by preflight role`。
+- 如果仍回到空闲，下一步查 `WindowRuntimeContext.applyRegistration(...)` 是否被其他刷新路径用 `UNKNOWN` 覆盖 role。
+
+### 谢帅 - 2026-06-06 导航压测 watcher 坐标刷新滞后导致重复导航
+
+Status: investigating / design review requested from Hook + Jason
+
+Observed:
+
+- 五窗口 `DEBUG_NAVIGATION_STRESS` 压测中，`岁月醉白头`（`hwnd-311168`，ID `387545229`）在目标 `#3 大唐边境(137,121)` 出现重复输入 `大唐边境`。
+- 实际日志链路：
+  - `09:30:20.653` watcher 到达地图：`current=大唐边境(22,271)`。
+  - `09:30:25.084` 当前地图坐标点击已触发：`target=#3 大唐边境(137,121)`，`coordinateIntent=true`。
+  - 游戏自动寻路从大唐边境点位绕回中间地图：`北俱芦洲 -> 洛阳城 -> 四圣庄 -> 大唐边境`。
+  - `09:30:28.484` watcher 新扫到 `北俱芦洲(46,30)`。
+  - `09:30:33.597` `DebugNavigationStressTask` 看到 snapshot 已 5 秒未变，按 `stationaryMs=5113` 判定 stalled，清掉 pathing signal 并重新走 world-map 导航，导致第二次输入 `大唐边境`。
+  - `09:30:34.223` watcher 才扫到 `洛阳城(152,46)`，这次扫描本身很慢：`captureMs=2469 coordMs=1843`。
+  - `09:30:47.158` watcher 最终扫到 `大唐边境(135,121)`，证明原始自动寻路其实可以到达目标。
+
+Current understanding:
+
+- `WindowTaskRunner` 的 pathing watcher 不是固定每秒产出坐标；它是同步执行 `MiniMapCoordinateReader.readCurrentTemplateLocation()`，成功/失败后再 sleep。
+- 有 active pathing intent 时，sleep 间隔上限是 `WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS=1000ms`，但实际刷新间隔约等于“一次识别耗时 + sleep”。
+- 多窗口压测时单次 mini-map 模板/坐标识别可能耗时 2-5 秒，所以 `snapshot` 几秒不更新不等于角色停住。
+- 当前 debug runner 在 `ACTIVE + hasObservedPosition + stationaryMs >= PATHING_STATIONARY_RETRY_MS` 分支中，把“最后一次成功识别的位置没更新”当成“人物停住”，会在跨图绕路时误重试。
+
+Open design question:
+
+- 如何把 `snapshot 没更新`、`watcher 正在慢扫/识别滞后`、`角色真的停住` 三种状态分开？
+- 如何让下次不重复打开世界地图；如果 watcher 仍然慢扫，应该如何补救？
+
+Candidate fix directions to review:
+
+- 在 `DebugNavigationStressTask` 中，`coordinateIntent=true` 且 observed state 仍是 `ACTIVE` 时，不允许只靠 `stationaryMs` 进入 world-map retry。
+- 对 current-map coordinate leg 增加跨图 grace period：如果当前地图不是目标地图，但路径年龄未超过较长阈值，应认为可能在自动寻路跨图绕路，继续等 watcher。
+- retry 前引入更强证据：必须 watcher 明确 `STOPPED_AWAY`，或 snapshot 未更新且轻量移动检测也确认画面不动，才允许 retry。
+- 给 watcher 增加扫描开始/结束/耗时日志，或在 `WindowPathingSnapshot` 中记录本轮 scan started/finished/elapsed，避免只看到成功结果却不知道中间是否在慢扫。
+- 不应改世界地图绿色链接点击算法，不应改 `GameStateUtil.isMovingByPixelDiff()` 这类已验证底层逻辑。
+
+Next:
+
+- 等 Hook/Jason 对 `WindowTaskRunner`、`WindowPathingSnapshot`、`DebugNavigationStressTask` 的方案 review。
+- 汇总后先做最小 patch：优先改 debug runner 的 retry 条件和日志，不动生产导航点击算法。
+
+### 谢帅 - 2026-06-06 pathing watcher slow probe 节流试验
+
+Status: implemented / compile passed
+
+Observed:
+
+- 五窗口导航压测已经能全部完成，但 `pathing watcher slow probe` 仍较多。
+- 当前 watcher slow probe 不是 OCR 慢，而是 `WindowTaskRunner` 后台 watcher 调 `MiniMapCoordinateReader.readCurrentTemplateLocation()` 时被截图/模板读取拖慢。
+- `GameClientTracker.captureToMemory(...)` 仍会进入全局截图锁，多窗口并发时一次 mini-map probe 可能排队数秒。
+- 当 dialog preparation active 时 watcher loop 会被拉到 `100ms` cadence；如果每次 loop 都尝试 pathing probe，会制造额外截图锁竞争。
+
+Changed:
+
+- `WindowTaskRunner.refreshPathingSignal(...)`
+  - 增加 `WINDOW_PATHING_PROBE_MIN_INTERVAL_MS=2000ms`。
+  - 同一个 `WindowPathingIntent` 已有新鲜 snapshot 时直接复用，不重复截图。
+  - 如果旧 snapshot 标记 `probeInProgress=true`，也直接复用，避免同 intent 叠加 probe。
+- 不改 `NavigationService`、世界地图绿字点击、小地图点击、`GameStateUtil` 移动判断。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 再跑 3-5 窗口导航压测。
+- 对比本轮和上一轮：
+  - `pathing watcher slow probe` 数量是否明显下降。
+  - 是否还出现 8-12 秒单次 probe。
+  - 是否仍能及时出现 `state=ARRIVED` 和成功完成全部窗口。

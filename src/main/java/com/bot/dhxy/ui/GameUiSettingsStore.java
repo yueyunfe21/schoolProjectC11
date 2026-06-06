@@ -31,6 +31,9 @@ public class GameUiSettingsStore {
     private static final String ZHUAGUI_MAX_RUNS = "zhuaguiMaxRuns";
     private static final String SUMMON_SKILL_CLEAN_ENABLED = "summonSkillCleanEnabled";
     private static final String SUMMON_SKILL_CLEAN_INTERVAL_MS = "summonSkillCleanIntervalMs";
+    private static final String XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS = "xiuluoHealPetMaintenanceIntervalMs";
+    private static final String XIULUO_REPAIR_EQUIPMENT_MAINTENANCE_INTERVAL_MS = "xiuluoRepairEquipmentMaintenanceIntervalMs";
+    private static final String XIULUO_MAINTENANCE_RUN_IMMEDIATELY_ON_START = "xiuluoMaintenanceRunImmediatelyOnStart";
     private static final String TASK_STARTUP_PREPARATION_ENABLED = "taskStartupPreparationEnabled";
     private static final String PLAYER_HP_SUPPLY_ENABLED = "playerHpSupplyEnabled";
     private static final String PLAYER_HP_SUPPLY_THRESHOLD = "playerHpSupplyThreshold";
@@ -65,6 +68,9 @@ public class GameUiSettingsStore {
         botProperties.setZhuaguiMaxRuns(readInt(properties, ZHUAGUI_MAX_RUNS, botProperties.getZhuaguiMaxRuns()));
         botProperties.setSummonSkillCleanEnabled(readBoolean(properties, SUMMON_SKILL_CLEAN_ENABLED, botProperties.isSummonSkillCleanEnabled()));
         botProperties.setSummonSkillCleanIntervalMs(readLong(properties, SUMMON_SKILL_CLEAN_INTERVAL_MS, botProperties.getSummonSkillCleanIntervalMs()));
+        botProperties.setXiuluoHealPetMaintenanceIntervalMs(readLong(properties, XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, botProperties.getXiuluoHealPetMaintenanceIntervalMs()));
+        botProperties.setXiuluoRepairEquipmentMaintenanceIntervalMs(readLong(properties, XIULUO_REPAIR_EQUIPMENT_MAINTENANCE_INTERVAL_MS, botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs()));
+        botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(readBoolean(properties, XIULUO_MAINTENANCE_RUN_IMMEDIATELY_ON_START, botProperties.isXiuluoMaintenanceRunImmediatelyOnStart()));
         botProperties.setTaskStartupPreparationEnabled(readBoolean(properties, TASK_STARTUP_PREPARATION_ENABLED, botProperties.isTaskStartupPreparationEnabled()));
         botProperties.setPlayerHpSupplyEnabled(readBoolean(properties, PLAYER_HP_SUPPLY_ENABLED, botProperties.isPlayerHpSupplyEnabled()));
         botProperties.setPlayerHpSupplyThreshold(readInt(properties, PLAYER_HP_SUPPLY_THRESHOLD, botProperties.getPlayerHpSupplyThreshold()));
@@ -94,6 +100,9 @@ public class GameUiSettingsStore {
         properties.setProperty(ZHUAGUI_MAX_RUNS, String.valueOf(botProperties.getZhuaguiMaxRuns()));
         properties.setProperty(SUMMON_SKILL_CLEAN_ENABLED, String.valueOf(botProperties.isSummonSkillCleanEnabled()));
         properties.setProperty(SUMMON_SKILL_CLEAN_INTERVAL_MS, String.valueOf(botProperties.getSummonSkillCleanIntervalMs()));
+        properties.setProperty(XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, String.valueOf(botProperties.getXiuluoHealPetMaintenanceIntervalMs()));
+        properties.setProperty(XIULUO_REPAIR_EQUIPMENT_MAINTENANCE_INTERVAL_MS, String.valueOf(botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs()));
+        properties.setProperty(XIULUO_MAINTENANCE_RUN_IMMEDIATELY_ON_START, String.valueOf(botProperties.isXiuluoMaintenanceRunImmediatelyOnStart()));
         properties.setProperty(TASK_STARTUP_PREPARATION_ENABLED, String.valueOf(botProperties.isTaskStartupPreparationEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_ENABLED, String.valueOf(botProperties.isPlayerHpSupplyEnabled()));
         properties.setProperty(PLAYER_HP_SUPPLY_THRESHOLD, String.valueOf(botProperties.getPlayerHpSupplyThreshold()));

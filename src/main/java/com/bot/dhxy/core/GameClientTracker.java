@@ -374,9 +374,16 @@ public class GameClientTracker {
         String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
         String foregroundHwnd = windowFocusService.getForegroundNativeHandleText();
         windowInteractionMetricsService.recordCapture(windowId, provider, success, mode, elementName);
-        log.info("Capture result: mode={} element={} windowId={} result={} reason={} provider={} path={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} foreground={} title={}",
+        String message = "Capture result: mode={} element={} windowId={} result={} reason={} provider={} path={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} foreground={} title={}";
+        Object[] args = {
                 mode, elementName, windowId, success ? "success" : "failed", reason, provider, savePath,
-                x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText, foregroundHwnd, s.fullWindowTitle);
+                x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText, foregroundHwnd, s.fullWindowTitle
+        };
+        if (!success || "ROBOT".equalsIgnoreCase(provider)) {
+            log.info(message, args);
+        } else {
+            log.debug(message, args);
+        }
     }
 
     private boolean focusCurrentWindowForScreenCaptureWithoutLock(String elementName) {

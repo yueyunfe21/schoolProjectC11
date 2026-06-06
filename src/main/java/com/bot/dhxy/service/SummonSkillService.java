@@ -4,7 +4,12 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.model.maintenance.SummonSkillCleanupRequest;
+import com.bot.dhxy.model.maintenance.SummonSkillCleanupResult;
+import com.bot.dhxy.model.maintenance.SummonSkillSlotStatus;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -15,6 +20,8 @@ import org.springframework.stereotype.Service;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Focused summon-skill maintenance service for the current bound game window.
@@ -34,32 +41,8 @@ public class SummonSkillService {
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
     private final UICleanerService uiCleanerService;
+    private final DialogService dialogService;
     private final WindowScopedTempPath windowScopedTempPath;
-
-    /**
-     * Classification of one skill slot after hovering its tooltip.
-     */
-    private enum SkillSlotStatus {
-        NORMAL_SKILL,
-        KEEP_SKILL,
-        LOCKED_OR_EMPTY,
-        UNKNOWN
-    }
-
-    /**
-     * Last inspected real/opened skill slot used when an empty tail slot is encountered.
-     */
-    private static class OpenedSlotResult {
-        private final int index;
-        private final SkillSlotStatus status;
-        private final Point absPoint;
-
-        private OpenedSlotResult(int index, SkillSlotStatus status, Point absPoint) {
-            this.index = index;
-            this.status = status;
-            this.absPoint = absPoint;
-        }
-    }
 
     /**
      * Captured tooltip crop and washed yellow-text debug image.
@@ -101,6 +84,7 @@ public class SummonSkillService {
     private static final long OPEN_SKILL_PANEL_WAIT_MS = 800L;
     private static final long DRAG_PANEL_WAIT_MS = 600L;
     private static final long SKILL_HOVER_WAIT_MS = 700L;
+    private static final long ULTIMATE_CORNER_CLICK_WAIT_MS = 700L;
     private static final long CLEAN_ONCE_TIMEOUT_MS = 40_000L;
 
     private static final String ZHS_ATTRIBUTE_ANCHOR_PATH = "images/template/zhaohuanshou/ZHS_shuxing.png";
@@ -142,6 +126,8 @@ public class SummonSkillService {
     private static final int HOVER_TIP_OFFSET_Y = 0;
     private static final int HOVER_TIP_AREA_W = 237;
     private static final int HOVER_TIP_AREA_H = 123;
+    private static final int ULTIMATE_CORNER_OFFSET_X = 26;
+    private static final int ULTIMATE_CORNER_OFFSET_Y = -26;
 
     private static final int MIN_YELLOW_PIXEL_COUNT = 120;
     private static final int MAX_DELETE_SKILL_COUNT_PER_RUN = 5;
@@ -153,6 +139,7 @@ public class SummonSkillService {
     private static final String SKILL_STATUS_SEALED_PATH = "images/template/zhaohuanshou/status_sealed.png";
     private static final String SKILL_STATUS_UNOBTAINED_PATH = "images/template/zhaohuanshou/status_unobtained.png";
     private static final String SKILL_STATUS_INACTIVE_PATH = "images/template/zhaohuanshou/status_inactive.png";
+    private static final String SKILL_ULTIMATE_CLICK_HINT_PATH = "images/template/zhaohuanshou/click_ultimate_template.png";
     private static final String FORGET_CONFIRM_BUTTON_PATH = "images/template/zhaohuanshou/forget_confirm_button.png";
 
     /**
@@ -164,44 +151,65 @@ public class SummonSkillService {
      * cleanup after the exclusive section releases.
      */
     public boolean cleanSummonSkillsOnce() {
-        final boolean[] result = new boolean[]{false};
+        return cleanSummonSkillsOnce(SummonSkillCleanupRequest.defaults()).isSuccess();
+    }
+
+    /**
+     * Run one summon-skill cleanup pass with maintenance-layer scan memory.
+     *
+     * @param request cached scan hints owned by {@link TaskMaintenanceService}; null means start
+     *                from the default tail slot and allow the right-corner "点击可" check.
+     * @return structured result used by maintenance scheduling to remember the next start slot and
+     * the long cooldown for successful "点击可" generation.
+     */
+    public SummonSkillCleanupResult cleanSummonSkillsOnce(SummonSkillCleanupRequest request) {
+        SummonSkillCleanupRequest safeRequest = request == null ? SummonSkillCleanupRequest.defaults() : request;
+        if (isInputWorkerThread()) {
+            return cleanSummonSkillsOnceDirect(safeRequest);
+        }
+        final SummonSkillCleanupResult[] result = new SummonSkillCleanupResult[]{
+                SummonSkillCleanupResult.failed("summon skill clean not completed")
+        };
+        long startedAt = System.currentTimeMillis();
         boolean completed = inputSequences.submitExclusiveAndWait("summonSkill:cleanOnce", () -> {
-            result[0] = cleanSummonSkillsOnceDirect();
+            result[0] = cleanSummonSkillsOnceDirect(safeRequest);
             return true;
         });
-        boolean success = completed && result[0];
-        if (!success) {
-            log.warn("summon skill clean failed; run UI cleanup after releasing exclusive input");
-            uiCleanerService.cleanUpAll();
-        } else {
-            uiCleanerService.cleanUpAll();
-        }
-        return success;
+        SummonSkillCleanupResult finalResult = completed
+                ? result[0]
+                : SummonSkillCleanupResult.failed("summon skill exclusive input did not complete");
+        boolean success = completed && finalResult.isSuccess();
+        log.info("summon skill clean: exclusive pass finished completed={} success={} elapsedMs={}",
+                completed, success, System.currentTimeMillis() - startedAt);
+        uiCleanerService.cleanLightweightInterruptions("summon-skill:finish");
+        return finalResult;
     }
 
     /**
      * Direct implementation for a full cleanup pass, called only inside serialized input ownership.
      */
-    private boolean cleanSummonSkillsOnceDirect() {
+    private SummonSkillCleanupResult cleanSummonSkillsOnceDirect(SummonSkillCleanupRequest request) {
         long deadlineAtMs = System.currentTimeMillis() + CLEAN_ONCE_TIMEOUT_MS;
-        log.warn("summon skill clean: start one complete pass");
+        long startedAt = System.currentTimeMillis();
+        log.warn("summon skill clean: start one complete pass timeoutMs={}", CLEAN_ONCE_TIMEOUT_MS);
 
         if (!openSummonSkillPanelDirect()) {
             log.warn("summon skill clean: failed to open skill panel");
-            return false;
+            return SummonSkillCleanupResult.failed("failed to open summon skill panel");
         }
         if (isCleanDeadlineExceeded(deadlineAtMs, "after-open-panel")) {
-            return false;
+            return SummonSkillCleanupResult.failed("timeout after opening summon skill panel");
         }
 
-        boolean success = cleanTailNormalSkillsDirect(deadlineAtMs);
-        if (!success) {
+        SummonSkillCleanupResult result = cleanTailNormalSkillsDirect(deadlineAtMs, request);
+        if (!result.isSuccess()) {
             log.warn("summon skill clean: pass did not complete successfully; cooldown should not be updated");
-            return false;
+            return result;
         }
 
-        log.warn("summon skill clean: complete pass finished");
-        return true;
+        log.warn("summon skill clean: complete pass finished elapsedMs={}",
+                System.currentTimeMillis() - startedAt);
+        return result;
     }
     /**
      * Open the summon skill tab for the current window.
@@ -255,9 +263,11 @@ public class SummonSkillService {
      */
     public boolean cleanTailNormalSkills() {
         if (isInputWorkerThread()) {
-            return cleanTailNormalSkillsDirect();
+            return cleanTailNormalSkillsDirect().isSuccess();
         }
-        final boolean[] result = new boolean[]{false};
+        final SummonSkillCleanupResult[] result = new SummonSkillCleanupResult[]{
+                SummonSkillCleanupResult.failed("summon skill clean tail not completed")
+        };
         boolean completed = inputSequences.submitExclusiveAndWait("summonSkill:cleanTail", () -> {
             result[0] = cleanTailNormalSkillsDirect();
             return true;
@@ -265,99 +275,290 @@ public class SummonSkillService {
         if (completed) {
             uiCleanerService.cleanUpAll();
         }
-        return completed && result[0];
+        return completed && result[0].isSuccess();
     }
 
-    private boolean cleanTailNormalSkillsDirect() {
-        return cleanTailNormalSkillsDirect(System.currentTimeMillis() + CLEAN_ONCE_TIMEOUT_MS);
+    private SummonSkillCleanupResult cleanTailNormalSkillsDirect() {
+        return cleanTailNormalSkillsDirect(
+                System.currentTimeMillis() + CLEAN_ONCE_TIMEOUT_MS,
+                SummonSkillCleanupRequest.defaults()
+        );
     }
 
     /**
      * Inspect and delete normal skills from the configured tail slots.
      *
      * @param deadlineAtMs absolute wall-clock deadline in milliseconds for this pass.
-     * @return true when the scan reaches a conservative stop condition without failed input; false on
-     * timeout, interruption, or failed deletion.
+     * @return structured result when the scan reaches a conservative stop condition without failed
+     * input; failed result on timeout, interruption, or failed deletion.
      */
-    private boolean cleanTailNormalSkillsDirect(long deadlineAtMs) {
+    private SummonSkillCleanupResult cleanTailNormalSkillsDirect(long deadlineAtMs,
+                                                                 SummonSkillCleanupRequest request) {
         int skillCount = detectSummonSkillSlotCount();
         Point[] slots = getSkillSlotOffsets(skillCount);
-        int index = getTailCheckStartIndex(skillCount);
+        int defaultStartIndex = getTailCheckStartIndex(skillCount);
+        boolean skillCountChanged = request.getExpectedSkillCount() != null
+                && request.getExpectedSkillCount() != skillCount;
+        SummonSkillCleanupRequest effectiveRequest = skillCountChanged
+                ? request.toBuilder().skipUltimateCornerCheck(false).build()
+                : request;
+        int index = resolveStartIndex(request, skillCount, defaultStartIndex, slots.length);
+        int nextStartIndex = index;
         int deletedCount = 0;
-        OpenedSlotResult lastOpened = null;
+        int inspectedCount = 0;
+        int handledBusinessDialogs = 0;
+        boolean ultimateGenerateClicked = false;
+        boolean ultimateGenerateSucceeded = false;
+        Map<Integer, SummonSkillSlotStatus> observedStatuses = new HashMap<>();
 
-        log.info("summon skill clean: detected {} skill slots, start at slot {}", skillCount, index + 1);
+        log.info("summon skill clean: detected {} skill slots, start at slot {} defaultStart={} expectedSkillCount={} skipUltimateCorner={}",
+                skillCount, index + 1, defaultStartIndex + 1, request.getExpectedSkillCount(),
+                effectiveRequest.isSkipUltimateCornerCheck());
 
         while (index < slots.length) {
             if (Thread.currentThread().isInterrupted()) {
                 log.warn("summon skill clean: interrupted, stop current pass");
-                return false;
-            }
-            if (isCleanDeadlineExceeded(deadlineAtMs, "inspect-loop")) {
-                return false;
-            }
+                return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                        ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                        "interrupted");
+                }
+                if (isCleanDeadlineExceeded(deadlineAtMs, "inspect-loop")) {
+                    return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                            ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                            "timeout during inspect loop");
+                }
+                if (handledBusinessDialogs < 3 && handleBusinessDialogDuringSkillClean("before-slot-" + (index + 1))) {
+                    handledBusinessDialogs++;
+                    continue;
+                }
 
-            Point slotAbsPoint = toAbsolutePoint(slots[index]);
-            SkillSlotStatus status = inspectSkillSlot(slotAbsPoint);
+                Point slotAbsPoint = toAbsolutePoint(slots[index]);
+                SummonSkillSlotStatus status = inspectSkillSlot(slotAbsPoint);
+            inspectedCount++;
+            observedStatuses.put(index, status);
             log.info("summon skill clean: slot {} status {}", index + 1, status);
 
-            if (status == SkillSlotStatus.NORMAL_SKILL) {
+            if (status == SummonSkillSlotStatus.NORMAL_SKILL) {
                 if (isCleanDeadlineExceeded(deadlineAtMs, "before-delete")) {
-                    return false;
+                    return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                            ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                            "timeout before delete");
                 }
                 if (!deleteSkillAtSlot(slotAbsPoint)) {
-                    return false;
+                    return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                            ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                            "delete normal skill failed");
                 }
                 deletedCount++;
-
-                if (index == slots.length - 1
-                        && lastOpened != null
-                        && lastOpened.status == SkillSlotStatus.KEEP_SKILL) {
-                    log.info("summon skill clean: deleted last slot after previous real skill was kept; stop checking");
-                    break;
-                }
 
                 if (deletedCount >= MAX_DELETE_SKILL_COUNT_PER_RUN) {
                     log.warn("summon skill clean: delete limit {} reached, stop this pass", MAX_DELETE_SKILL_COUNT_PER_RUN);
                     break;
                 }
 
-                lastOpened = null;
-                continue;
+                SummonSkillSlotStatus afterDeleteStatus = inspectSkillSlot(slotAbsPoint);
+                inspectedCount++;
+                observedStatuses.put(index, afterDeleteStatus);
+                log.info("summon skill clean: slot {} status after delete {}", index + 1, afterDeleteStatus);
+                if (afterDeleteStatus == SummonSkillSlotStatus.EMPTY_SLOT) {
+                    UltimateCornerResult cornerResult = maybeClickUltimateCorner(
+                            index, slotAbsPoint, effectiveRequest, deadlineAtMs, deletedCount, inspectedCount,
+                            observedStatuses);
+                    deletedCount = cornerResult.deletedCount;
+                    inspectedCount = cornerResult.inspectedCount;
+                    ultimateGenerateClicked = cornerResult.clicked;
+                    ultimateGenerateSucceeded = cornerResult.succeeded;
+                    nextStartIndex = cornerResult.nextStartIndex;
+                    if (!cornerResult.completed) {
+                        return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                                ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                                cornerResult.message);
+                    }
+                    break;
+                }
+                if (afterDeleteStatus == SummonSkillSlotStatus.KEEP_SKILL) {
+                    nextStartIndex = index + 1;
+                    break;
+                }
+                if (afterDeleteStatus == SummonSkillSlotStatus.LOCKED_SLOT) {
+                    nextStartIndex = index;
+                    break;
+                }
+                return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                        ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                        "slot status unknown after deleting normal skill");
             }
 
-            if (status == SkillSlotStatus.KEEP_SKILL) {
-                lastOpened = new OpenedSlotResult(index, status, slotAbsPoint);
+            if (status == SummonSkillSlotStatus.KEEP_SKILL) {
+                nextStartIndex = index + 1;
                 index++;
                 continue;
             }
 
-            if (status == SkillSlotStatus.LOCKED_OR_EMPTY) {
-                OpenedSlotResult nearest = lastOpened != null
-                        ? lastOpened
-                        : findNearestOpenedSlotBackward(slots, index - 1, deadlineAtMs);
-
-                if (nearest == null || nearest.status == SkillSlotStatus.KEEP_SKILL) {
-                    break;
-                }
-
-                if (nearest.status == SkillSlotStatus.NORMAL_SKILL) {
-                    if (isCleanDeadlineExceeded(deadlineAtMs, "before-nearest-delete")) {
-                        return false;
-                    }
-                    if (!deleteSkillAtSlot(nearest.absPoint)) {
-                        return false;
-                    }
-                    deletedCount++;
+            if (status == SummonSkillSlotStatus.EMPTY_SLOT) {
+                UltimateCornerResult cornerResult = maybeClickUltimateCorner(
+                        index, slotAbsPoint, effectiveRequest, deadlineAtMs, deletedCount, inspectedCount,
+                        observedStatuses);
+                deletedCount = cornerResult.deletedCount;
+                inspectedCount = cornerResult.inspectedCount;
+                ultimateGenerateClicked = cornerResult.clicked;
+                ultimateGenerateSucceeded = cornerResult.succeeded;
+                nextStartIndex = cornerResult.nextStartIndex;
+                if (!cornerResult.completed) {
+                    return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                            ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                            cornerResult.message);
                 }
                 break;
             }
 
-            log.warn("summon skill clean: slot {} status unknown, stop conservatively", index + 1);
-            break;
+            if (status == SummonSkillSlotStatus.LOCKED_SLOT) {
+                nextStartIndex = index;
+                break;
+            }
+
+                log.warn("summon skill clean: slot {} status unknown, stop conservatively", index + 1);
+                if (handledBusinessDialogs < 3 && handleBusinessDialogDuringSkillClean("unknown-slot-" + (index + 1))) {
+                    handledBusinessDialogs++;
+                    continue;
+                }
+                return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                        ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                        "slot status unknown");
         }
-        log.info("summon skill clean: tail skill pass finished");
-        return true;
+        if (index >= slots.length) {
+            nextStartIndex = slots.length;
+        }
+        log.info("summon skill clean: tail skill pass finished skillCount={} inspected={} deleted={} startSlot={} nextStartSlot={} ultimateClicked={} ultimateSucceeded={}",
+                skillCount, inspectedCount, deletedCount, index + 1, nextStartIndex + 1,
+                ultimateGenerateClicked, ultimateGenerateSucceeded);
+        return buildCleanupResult(true, skillCount, nextStartIndex, observedStatuses,
+                ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                "summon skill tail pass finished");
+    }
+
+    /**
+     * Let lightweight maintenance broadcast dialogs win over the long summon-skill pass.
+     *
+     * <p>删技能运行在独占输入段里，队长广播的医宝宝/修装备弹窗可能刚好覆盖召唤兽面板。
+     * 这里只调用统一的 {@link DialogService#handleDialog(DialogHandleRequest)} 轻量维护广播入口；
+     * 它只扫固定小区域里的医宝宝/修装备模板，命中后继续当前 slot。</p>
+     */
+    private boolean handleBusinessDialogDuringSkillClean(String stage) {
+        DialogResultStatus status = dialogService
+                .handleDialog(DialogHandleRequest.handleMaintenanceBroadcastOption("summon-skill:" + stage))
+                .getStatus();
+        if (status == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
+            log.info("summon skill clean: handled business dialog during pass stage={}", stage);
+            return true;
+        }
+        return false;
+    }
+
+    private UltimateCornerResult maybeClickUltimateCorner(int index,
+                                                          Point slotAbsPoint,
+                                                          SummonSkillCleanupRequest request,
+                                                          long deadlineAtMs,
+                                                          int deletedCount,
+                                                          int inspectedCount,
+                                                          Map<Integer, SummonSkillSlotStatus> observedStatuses) {
+        if (request.isSkipUltimateCornerCheck()) {
+            log.info("summon skill clean: skip ultimate corner check by cooldown slot={}", index + 1);
+            return UltimateCornerResult.completed(index, false, false, deletedCount, inspectedCount,
+                    "ultimate corner skipped by cooldown");
+        }
+        if (isCleanDeadlineExceeded(deadlineAtMs, "before-ultimate-corner")) {
+            return UltimateCornerResult.failed(index, false, false, deletedCount, inspectedCount,
+                    "timeout before ultimate corner");
+        }
+
+        Point cornerPoint = randomizeHoverPoint(
+                new Point(slotAbsPoint.x + ULTIMATE_CORNER_OFFSET_X, slotAbsPoint.y + ULTIMATE_CORNER_OFFSET_Y),
+                "ultimate corner hover"
+        );
+        inputProvider.moveMouse(cornerPoint.x, cornerPoint.y);
+        TaskSleep.sleep(SKILL_HOVER_WAIT_MS);
+        YellowTipScan scan = captureAndWashYellowTipOnce("ultimate_corner", buildTipRectByHoverPoint(cornerPoint));
+        if (scan == null) {
+            return UltimateCornerResult.failed(index, false, false, deletedCount, inspectedCount,
+                    "ultimate corner tooltip capture failed");
+        }
+        if (scan.yellowCount < MIN_YELLOW_PIXEL_COUNT) {
+            log.info("summon skill clean: ultimate corner no yellow tip slot={} yellowCount={}",
+                    index + 1, scan.yellowCount);
+            return UltimateCornerResult.completed(index, false, false, deletedCount, inspectedCount,
+                    "ultimate corner no yellow tip");
+        }
+        if (!matchYellowTemplateInScan(SKILL_ULTIMATE_CLICK_HINT_PATH, scan, "ultimate-click-hint")) {
+            log.info("summon skill clean: ultimate corner click hint not matched slot={}", index + 1);
+            return UltimateCornerResult.completed(index, false, false, deletedCount, inspectedCount,
+                    "ultimate corner hint not matched");
+        }
+
+        log.info("summon skill clean: ultimate corner hint matched slot={} click=({}, {})",
+                index + 1, cornerPoint.x, cornerPoint.y);
+        inputProvider.clickLeft(cornerPoint.x, cornerPoint.y, 120);
+        TaskSleep.sleep(ULTIMATE_CORNER_CLICK_WAIT_MS);
+        SummonSkillSlotStatus generatedStatus = inspectSkillSlot(slotAbsPoint);
+        inspectedCount++;
+        observedStatuses.put(index, generatedStatus);
+        log.info("summon skill clean: slot {} status after ultimate corner click {}", index + 1, generatedStatus);
+
+        if (generatedStatus == SummonSkillSlotStatus.NORMAL_SKILL) {
+            if (!deleteSkillAtSlot(slotAbsPoint)) {
+                return UltimateCornerResult.failed(index, true, true, deletedCount, inspectedCount,
+                        "delete generated normal skill failed");
+            }
+            deletedCount++;
+            SummonSkillSlotStatus afterGeneratedDelete = inspectSkillSlot(slotAbsPoint);
+            inspectedCount++;
+            observedStatuses.put(index, afterGeneratedDelete);
+            log.info("summon skill clean: slot {} status after generated normal delete {}",
+                    index + 1, afterGeneratedDelete);
+            if (afterGeneratedDelete == SummonSkillSlotStatus.EMPTY_SLOT) {
+                return UltimateCornerResult.completed(index, true, true, deletedCount, inspectedCount,
+                        "generated normal skill deleted");
+            }
+            if (afterGeneratedDelete == SummonSkillSlotStatus.KEEP_SKILL) {
+                return UltimateCornerResult.completed(index + 1, true, true, deletedCount, inspectedCount,
+                        "generated skill changed to keep after delete check");
+            }
+            return UltimateCornerResult.failed(index, true, true, deletedCount, inspectedCount,
+                    "generated normal delete did not leave a stable slot");
+        }
+
+        if (generatedStatus == SummonSkillSlotStatus.KEEP_SKILL) {
+            return UltimateCornerResult.completed(index + 1, true, true, deletedCount, inspectedCount,
+                    "generated keep skill");
+        }
+        if (generatedStatus == SummonSkillSlotStatus.EMPTY_SLOT || generatedStatus == SummonSkillSlotStatus.LOCKED_SLOT) {
+            return UltimateCornerResult.failed(index, true, false, deletedCount, inspectedCount,
+                    "ultimate corner clicked but no skill generated");
+        }
+        return UltimateCornerResult.failed(index, true, false, deletedCount, inspectedCount,
+                "ultimate corner generated unknown status");
+    }
+
+    private SummonSkillCleanupResult buildCleanupResult(boolean success,
+                                                        int skillCount,
+                                                        int nextStartIndex,
+                                                        Map<Integer, SummonSkillSlotStatus> observedStatuses,
+                                                        boolean ultimateGenerateClicked,
+                                                        boolean ultimateGenerateSucceeded,
+                                                        int inspectedCount,
+                                                        int deletedCount,
+                                                        String message) {
+        return SummonSkillCleanupResult.builder()
+                .success(success)
+                .skillCount(skillCount)
+                .nextStartIndex(nextStartIndex)
+                .observedStatusesByIndex(Map.copyOf(observedStatuses))
+                .ultimateGenerateClicked(ultimateGenerateClicked)
+                .ultimateGenerateSucceeded(ultimateGenerateSucceeded)
+                .inspectedCount(inspectedCount)
+                .deletedCount(deletedCount)
+                .message(message)
+                .build();
     }
 
     /**
@@ -402,51 +603,53 @@ public class SummonSkillService {
                 || scan.yellowCount >= STRONG_EXTRA_SLOT_YELLOW_PIXEL_COUNT;
     }
 
-    private SkillSlotStatus inspectSkillSlot(Point slotAbsPoint) {
+    private SummonSkillSlotStatus inspectSkillSlot(Point slotAbsPoint) {
         if (isInputWorkerThread()) {
             return inspectSkillSlotDirect(slotAbsPoint);
         }
-        final SkillSlotStatus[] result = new SkillSlotStatus[]{SkillSlotStatus.UNKNOWN};
+        final SummonSkillSlotStatus[] result = new SummonSkillSlotStatus[]{SummonSkillSlotStatus.UNKNOWN};
         boolean ok = inputSequences.submitExclusiveAndWait("summonSkill:inspectSlot", () -> {
             result[0] = inspectSkillSlotDirect(slotAbsPoint);
             return true;
         });
-        return ok ? result[0] : SkillSlotStatus.UNKNOWN;
+        return ok ? result[0] : SummonSkillSlotStatus.UNKNOWN;
     }
 
     /**
      * Hover one screen-absolute slot point and classify the visible yellow tooltip.
      */
-    private SkillSlotStatus inspectSkillSlotDirect(Point slotAbsPoint) {
+    private SummonSkillSlotStatus inspectSkillSlotDirect(Point slotAbsPoint) {
         Point hoverPoint = randomizeHoverPoint(slotAbsPoint, "skill slot hover");
         inputProvider.moveMouse(hoverPoint.x, hoverPoint.y);
         TaskSleep.sleep(SKILL_HOVER_WAIT_MS);
         return inspectCurrentHoverTip(hoverPoint);
     }
-    private SkillSlotStatus inspectCurrentHoverTip(Point hoverAbsPoint) {
+    private SummonSkillSlotStatus inspectCurrentHoverTip(Point hoverAbsPoint) {
         YellowTipScan scan = captureAndWashYellowTipOnce("slot_tip", buildTipRectByHoverPoint(hoverAbsPoint));
         if (scan == null) {
-            return SkillSlotStatus.UNKNOWN;
+            return SummonSkillSlotStatus.UNKNOWN;
         }
 
         log.info("summon skill clean: hover tip yellow pixel count={}", scan.yellowCount);
         if (scan.yellowCount < MIN_YELLOW_PIXEL_COUNT) {
-            return SkillSlotStatus.UNKNOWN;
+            return SummonSkillSlotStatus.UNKNOWN;
         }
 
         if (matchYellowTemplateInScan(SKILL_STATUS_SEALED_PATH, scan, "sealed")
-                || matchYellowTemplateInScan(SKILL_STATUS_UNOBTAINED_PATH, scan, "unobtained")
-                || matchYellowTemplateInScan(SKILL_STATUS_INACTIVE_PATH, scan, "inactive")) {
-            return SkillSlotStatus.LOCKED_OR_EMPTY;
+                || matchYellowTemplateInScan(SKILL_STATUS_UNOBTAINED_PATH, scan, "unobtained")) {
+            return SummonSkillSlotStatus.LOCKED_SLOT;
+        }
+        if (matchYellowTemplateInScan(SKILL_STATUS_INACTIVE_PATH, scan, "inactive-empty")) {
+            return SummonSkillSlotStatus.EMPTY_SLOT;
         }
         if (matchYellowTemplateInScan(SKILL_STATUS_NORMAL_PATH, scan, "normal")) {
-            return SkillSlotStatus.NORMAL_SKILL;
+            return SummonSkillSlotStatus.NORMAL_SKILL;
         }
         if (matchYellowTemplateInScan(SKILL_STATUS_HIGH_PATH, scan, "high")
                 || matchYellowTemplateInScan(SKILL_STATUS_ULTIMATE_PATH, scan, "ultimate")) {
-            return SkillSlotStatus.KEEP_SKILL;
+            return SummonSkillSlotStatus.KEEP_SKILL;
         }
-        return SkillSlotStatus.UNKNOWN;
+        return SummonSkillSlotStatus.UNKNOWN;
     }
 
     private boolean deleteSkillAtSlot(Point slotAbsPoint) {
@@ -467,6 +670,8 @@ public class SummonSkillService {
     private boolean deleteSkillAtSlotDirect(Point slotAbsPoint) {
         Point slotClickPoint = randomizeClickPoint(slotAbsPoint, SKILL_SLOT_CLICK_RANDOM_X, SKILL_SLOT_CLICK_RANDOM_Y,
                 "skill slot");
+        log.info("summon skill clean: delete normal skill start slot=({}, {}) click=({}, {})",
+                slotAbsPoint.x, slotAbsPoint.y, slotClickPoint.x, slotClickPoint.y);
         inputProvider.clickLeft(slotClickPoint.x, slotClickPoint.y, 120);
         TaskSleep.sleep(SELECT_SKILL_WAIT_MS);
 
@@ -485,6 +690,8 @@ public class SummonSkillService {
                 "forget confirm button");
         inputProvider.clickLeft(confirmClickPoint.x, confirmClickPoint.y, 120);
         TaskSleep.sleep(FORGET_DONE_WAIT_MS);
+        log.info("summon skill clean: delete normal skill confirmed slot=({}, {}) confirm=({}, {})",
+                slotAbsPoint.x, slotAbsPoint.y, confirmClickPoint.x, confirmClickPoint.y);
         return true;
     }
 
@@ -542,20 +749,6 @@ public class SummonSkillService {
         return true;
     }
 
-    private OpenedSlotResult findNearestOpenedSlotBackward(Point[] slots, int startIndex, long deadlineAtMs) {
-        for (int i = startIndex; i >= 0; i--) {
-            if (isCleanDeadlineExceeded(deadlineAtMs, "backward-slot-scan")) {
-                return null;
-            }
-            Point slotAbsPoint = toAbsolutePoint(slots[i]);
-            SkillSlotStatus status = inspectSkillSlot(slotAbsPoint);
-            if (status == SkillSlotStatus.NORMAL_SKILL || status == SkillSlotStatus.KEEP_SKILL) {
-                return new OpenedSlotResult(i, status, slotAbsPoint);
-            }
-        }
-        return null;
-    }
-
     private boolean matchAnySkillStatusTemplate(YellowTipScan scan) {
         return matchYellowTemplateInScan(SKILL_STATUS_SEALED_PATH, scan, "sealed")
                 || matchYellowTemplateInScan(SKILL_STATUS_UNOBTAINED_PATH, scan, "unobtained")
@@ -596,6 +789,8 @@ public class SummonSkillService {
             rawImage.flush();
         }
         ImagePreprocessor.washYellowText(rawPath, washedPath);
+        log.info("summon skill clean: yellow tooltip captured tag={} rect={} yellowCount={} raw={} washed={}",
+                tag, ImagePreprocessor.rectToString(tipRect), yellowCount, rawPath, washedPath);
         return new YellowTipScan(tipRect, washedPath, yellowCount);
     }
 
@@ -627,6 +822,26 @@ public class SummonSkillService {
 
     private int getTailCheckStartIndex(int skillCount) {
         return skillCount == 8 ? 6 : 3;
+    }
+
+    private int resolveStartIndex(SummonSkillCleanupRequest request,
+                                  int detectedSkillCount,
+                                  int defaultStartIndex,
+                                  int slotLength) {
+        Integer expectedSkillCount = request.getExpectedSkillCount();
+        Integer cachedStartIndex = request.getStartSlotIndex();
+        if (expectedSkillCount == null
+                || expectedSkillCount != detectedSkillCount
+                || cachedStartIndex == null) {
+            return defaultStartIndex;
+        }
+        if (cachedStartIndex < defaultStartIndex) {
+            return defaultStartIndex;
+        }
+        if (cachedStartIndex > slotLength) {
+            return slotLength;
+        }
+        return cachedStartIndex;
     }
 
     private Point toAbsolutePoint(Point relativePoint) {
@@ -693,6 +908,52 @@ public class SummonSkillService {
         log.warn("summon skill clean: timeout after {} ms at stage={}, abort current pass",
                 CLEAN_ONCE_TIMEOUT_MS, stage);
         return true;
+    }
+
+    private static class UltimateCornerResult {
+        private final boolean completed;
+        private final int nextStartIndex;
+        private final boolean clicked;
+        private final boolean succeeded;
+        private final int deletedCount;
+        private final int inspectedCount;
+        private final String message;
+
+        private UltimateCornerResult(boolean completed,
+                                     int nextStartIndex,
+                                     boolean clicked,
+                                     boolean succeeded,
+                                     int deletedCount,
+                                     int inspectedCount,
+                                     String message) {
+            this.completed = completed;
+            this.nextStartIndex = nextStartIndex;
+            this.clicked = clicked;
+            this.succeeded = succeeded;
+            this.deletedCount = deletedCount;
+            this.inspectedCount = inspectedCount;
+            this.message = message;
+        }
+
+        private static UltimateCornerResult completed(int nextStartIndex,
+                                                      boolean clicked,
+                                                      boolean succeeded,
+                                                      int deletedCount,
+                                                      int inspectedCount,
+                                                      String message) {
+            return new UltimateCornerResult(true, nextStartIndex, clicked, succeeded, deletedCount, inspectedCount,
+                    message);
+        }
+
+        private static UltimateCornerResult failed(int nextStartIndex,
+                                                   boolean clicked,
+                                                   boolean succeeded,
+                                                   int deletedCount,
+                                                   int inspectedCount,
+                                                   String message) {
+            return new UltimateCornerResult(false, nextStartIndex, clicked, succeeded, deletedCount, inspectedCount,
+                    message);
+        }
     }
 
 }

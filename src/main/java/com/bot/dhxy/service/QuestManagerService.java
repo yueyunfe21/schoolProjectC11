@@ -8,6 +8,7 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.navigation.PathingResult;
 import com.bot.dhxy.model.quest.QuestDetailCapture;
@@ -41,6 +42,7 @@ public class QuestManagerService {
 
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
+    private final WindowAwareInputCoordinator inputCoordinator;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final TextRecognizer ocr;
@@ -74,6 +76,7 @@ public class QuestManagerService {
     private static final long SLOW = 800;
     private static final long MID = 500;
     private static final long FAST = 200;
+    private static final int WUHUAN_TASK_LINK_CLICK_HOLD_MS = 150;
 
     private static final Pattern QUEST_PATTERN = Pattern.compile("([^\\(]+).*?在\\s*([\\u4e00-\\u9fa5]+)\\s*\\((\\d+)\\s*,\\s*(\\d+)\\)");
 
@@ -145,7 +148,10 @@ public class QuestManagerService {
         Point p = coordinateHelper.getRandomizedPoint(anchor.x + P1_X, anchor.y + P1_Y, 30, 8);
         log.info("🎯 [P1盲狙] 准备点击下一环 NPC 链接：anchor=({}, {}) offset=({}, {}) click=({}, {})",
                 anchor.x, anchor.y, P1_X, P1_Y, p.x, p.y);
-        inputProvider.clickLeft(p.x, p.y, 100);
+        boolean focused = inputCoordinator.focusCurrentWindowInActiveTransaction("wuhuan:p1-pathing-click-force-focus");
+        log.info("P1 pathing click forced focus before click: focused={}", focused);
+        TaskSleep.sleep(120);
+        inputProvider.clickLeft(p.x, p.y, WUHUAN_TASK_LINK_CLICK_HOLD_MS);
         boolean ok = TaskSleep.sleep(1200);
         log.info("🎯 [P1盲狙] 点击序列结果：{}", ok);
         return ok ? PathingResult.SUCCESS : PathingResult.UI_ERROR;
@@ -184,7 +190,13 @@ public class QuestManagerService {
             if (res != null && res.length >= 2) {
                 log.info("P2识图已经匹配成功");
                 Point p = coordinateHelper.getRandomizedPoint(rect[0] + (int) res[0], rect[1] + (int) res[1], 8, 4);
-                inputProvider.clickLeft(p.x, p.y, 100);
+                log.info("P2 pathing click point: rect=({}, {})-({}, {}) match=({}, {}) score={} click=({}, {}) holdMs={}",
+                        rect[0], rect[1], rect[2], rect[3], res[0], res[1], res.length >= 3 ? res[2] : -1,
+                        p.x, p.y, WUHUAN_TASK_LINK_CLICK_HOLD_MS);
+                boolean focused = inputCoordinator.focusCurrentWindowInActiveTransaction("wuhuan:p2-pathing-click-force-focus");
+                log.info("P2 pathing click forced focus before click: focused={}", focused);
+                TaskSleep.sleep(120);
+                inputProvider.clickLeft(p.x, p.y, WUHUAN_TASK_LINK_CLICK_HOLD_MS);
                 if (!TaskSleep.sleep(MID)) return PathingResult.UI_ERROR;
                 log.info("P2 pathing clicked, skip Alt+Q close after pathing click");
                 return PathingResult.SUCCESS;
@@ -326,7 +338,12 @@ public class QuestManagerService {
             result.set(captureCurrentQuestDetailForTaskDirect(task));
             return true;
         });
-        return completed ? result.get() : QuestDetailCapture.empty();
+        QuestDetailCapture capture = completed ? result.get() : QuestDetailCapture.empty();
+        BufferedImage image = capture.image();
+        log.info("quest detail capture request finished: task={} completed={} hasImage={} path={} size={}x{}",
+                task, completed, image != null, capture.imagePath(),
+                image == null ? 0 : image.getWidth(), image == null ? 0 : image.getHeight());
+        return capture;
     }
 
     private BufferedImage captureCurrentQuestDetailImageForTaskDirect(String task) {
@@ -340,7 +357,9 @@ public class QuestManagerService {
             return QuestDetailCapture.empty();
         }
 
+        log.info("quest detail capture start: task={}", task);
         boolean activated = activateTaskIfPresentDirect(task, true);
+        log.info("quest detail capture task activation: task={} activated={}", task, activated);
         if (!activated) {
             log.info("quest detail capture skipped, task not found: {}", task);
             return QuestDetailCapture.empty();
@@ -351,10 +370,13 @@ public class QuestManagerService {
             log.warn("quest detail capture failed, panel anchor not found: {}", task);
             return QuestDetailCapture.empty();
         }
+        log.info("quest detail capture panel anchor: task={} anchor=({}, {})", task, anchor.x, anchor.y);
 
         try {
             int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(
                     anchor, DETAIL_TEXT_OFFSET_X, DETAIL_TEXT_OFFSET_Y, DETAIL_TEXT_W, DETAIL_TEXT_H);
+            log.info("quest detail capture rect: task={} x={} y={} w={} h={}",
+                    task, rightRect[0], rightRect[1], rightRect[2], rightRect[3]);
             BufferedImage image = tracker.captureToMemory("quest-detail-image-" + task,
                     rightRect[0], rightRect[1], rightRect[2], rightRect[3]);
             if (image == null) {
@@ -362,6 +384,8 @@ public class QuestManagerService {
                 return QuestDetailCapture.empty();
             }
             String latestPath = saveQuestDetailDebugImage(task, image);
+            log.info("quest detail capture success: task={} path={} size={}x{}",
+                    task, latestPath, image.getWidth(), image.getHeight());
             return new QuestDetailCapture(image, latestPath);
         } finally {
             closePanelDirect();

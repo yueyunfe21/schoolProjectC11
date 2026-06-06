@@ -3,6 +3,7 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,7 @@ public class AutoCombatService {
     private final UICleanerService uiCleanerService;
     private final BotProperties botProperties;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final TaskTurnCoordinator taskTurnCoordinator;
 
     private final Map<String, AutoCombatRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
@@ -54,6 +56,9 @@ public class AutoCombatService {
         state.lastAutoBattleRefreshAt = now;
         state.lastCombatUiCleanAt = now;
         state.pendingCombatEntryMaintenanceAt = 0L;
+        state.pendingFollowerFirstAid = false;
+        state.pendingFollowerFirstAidSource = null;
+        state.lastPendingFollowerFirstAidLogAt = 0L;
     }
 
     /**
@@ -73,14 +78,44 @@ public class AutoCombatService {
                                        boolean checkSheYaoXiangForLeaderTask) {
         context.throwIfStopRequested();
         battleRadarService.checkAndSyncCombatState();
-        maybeScheduleCombatEntryMaintenance(source);
+        maybeHandleCombatEnter(source);
 
         if (consumeExitAndRecover(context, source, checkSheYaoXiangForLeaderTask)) {
             return TickResult.EXIT_RECOVERED;
         }
 
+        if (runPendingFollowerFirstAidIfAllowed(context, source)) {
+            return TickResult.EXIT_RECOVERED;
+        }
+
         if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
             maybeRunCombatMaintenance(context, source);
+            return TickResult.IN_COMBAT;
+        }
+        return TickResult.NONE;
+    }
+
+    /**
+     * Run one window-level combat guard tick without consuming the combat-exit event.
+     *
+     * <p>This path is used by {@code WindowTaskRunner} while a normal task is busy navigating,
+     * reading dialogs, or waiting for movement. It only keeps the per-window combat state fresh.
+     * The watcher is allowed to do only the fast, key-only automatic-combat bootstrap after combat
+     * entry. Dragging the panel, OCR of remaining rounds, and post-combat recovery deliberately
+     * remain with the owning task so one window does not run duplicate heavy work from both the task
+     * thread and watcher thread.</p>
+     *
+     * @param context current bound task execution context for stop checks.
+     * @param source short log/source label.
+     * @return IN_COMBAT while combat is visible; NONE otherwise. EXIT_RECOVERED is never returned
+     *         from this guard path because exit events are not consumed here.
+     */
+    public TickResult handleWindowCombatGuardTick(TaskExecutionContext context, String source) {
+        context.throwIfStopRequested();
+        battleRadarService.checkAndSyncCombatState();
+        maybeHandleCombatEnter(source);
+
+        if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
             return TickResult.IN_COMBAT;
         }
         return TickResult.NONE;
@@ -93,7 +128,15 @@ public class AutoCombatService {
         return battleRadarService.getDynamicPollingIntervalMs();
     }
 
-    private void maybeScheduleCombatEntryMaintenance(String source) {
+    /**
+     * @return true when the current bound follower window already proved it needs focused
+     *         HP/MP supply after battle and is waiting for a task-turn slot to run it.
+     */
+    public boolean hasPendingFollowerFirstAidForCurrentWindow() {
+        return state().pendingFollowerFirstAid;
+    }
+
+    private void maybeHandleCombatEnter(String source) {
         if (!battleRadarService.consumeCombatEnterSignal()) {
             return;
         }
@@ -103,6 +146,7 @@ public class AutoCombatService {
         state.lastCombatUiCleanAt = now;
         log.info("{} auto-combat enter detected: schedule entry maintenance after {} ms",
                 source, COMBAT_ENTRY_MAINTENANCE_DELAY_MS);
+        autoCombatPanelService.ensureAutoCombatPanelVisibleFast(source + ":combat-enter");
     }
 
     private boolean consumeExitAndRecover(TaskExecutionContext context,
@@ -118,13 +162,100 @@ public class AutoCombatService {
         playerStateService.resetCheckCounter();
 
         log.info("{} auto-combat exit detected: run unified post-combat recovery", source);
-        playerStateService.performFirstAidCheckNow(context);
+        if (shouldDeferFollowerFirstAid(context)) {
+            PlayerStateService.FirstAidNoFocusProbeResult probeResult =
+                    playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
+            if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                    || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
+                state.pendingFollowerFirstAid = true;
+                state.pendingFollowerFirstAidSource = source;
+                state.lastPendingFollowerFirstAidLogAt = 0L;
+                log.info("{} post-combat first-aid deferred: follower-support window waits for task turn task={} requested={} role={} precheck={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
+            } else {
+                state.pendingFollowerFirstAid = false;
+                state.pendingFollowerFirstAidSource = null;
+                state.lastPendingFollowerFirstAidLogAt = 0L;
+                log.info("{} post-combat first-aid skipped before task-turn queue: task={} requested={} role={} precheck={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
+            }
+        } else {
+            playerStateService.performFirstAidCheckNowIfNeeded(context);
+        }
         context.throwIfStopRequested();
         if (checkSheYaoXiangForLeaderTask) {
             playerStateService.ensureSheYaoXiangActiveForLeaderTask(source + ":post-combat", context);
         }
         gameContext.setCurrentActionState(GameContext.ActionState.FREE);
         return true;
+    }
+
+    private boolean runPendingFollowerFirstAidIfAllowed(TaskExecutionContext context, String source) {
+        AutoCombatRuntimeState state = state();
+        if (!state.pendingFollowerFirstAid) {
+            return false;
+        }
+        if (gameContext.getCurrentActionState() != GameContext.ActionState.FREE) {
+            return false;
+        }
+
+        String pendingSource = state.pendingFollowerFirstAidSource == null
+                ? source
+                : state.pendingFollowerFirstAidSource;
+        boolean ran = taskTurnCoordinator.tryRun(source + ":pending-follower-first-aid", () -> {
+            log.info("{} pending follower first-aid acquired task turn: task={} requested={} role={} originalSource={}",
+                    source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+            playerStateService.performFirstAidCheckNowIfNeeded(context);
+            state.pendingFollowerFirstAid = false;
+            state.pendingFollowerFirstAidSource = null;
+            state.lastPendingFollowerFirstAidLogAt = 0L;
+            return true;
+        });
+        if (!ran) {
+            logPendingFollowerFirstAidWaiting(state, source, context);
+        }
+        return ran;
+    }
+
+    private void logPendingFollowerFirstAidWaiting(AutoCombatRuntimeState state,
+                                                   String source,
+                                                   TaskExecutionContext context) {
+        long now = System.currentTimeMillis();
+        if (now - state.lastPendingFollowerFirstAidLogAt < 5_000L) {
+            return;
+        }
+        state.lastPendingFollowerFirstAidLogAt = now;
+        log.info("{} pending follower first-aid waiting for task turn: task={} requested={} role={}",
+                source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+    }
+
+    private boolean shouldDeferFollowerFirstAid(TaskExecutionContext context) {
+        if (context == null) {
+            return false;
+        }
+        String taskCode = context.getTaskCode();
+        String requestedTaskCode = context.getRequestedTaskCode();
+        if (!"auto_battle".equalsIgnoreCase(taskCode)) {
+            return false;
+        }
+        if (!"MEMBER".equalsIgnoreCase(context.getWindowRole())) {
+            return false;
+        }
+        return requestedTaskCode != null
+                && !requestedTaskCode.isBlank()
+                && !requestedTaskCode.equalsIgnoreCase(taskCode);
+    }
+
+    private String safeTaskCode(TaskExecutionContext context) {
+        return context == null ? "-" : context.getTaskCode();
+    }
+
+    private String safeRequestedTaskCode(TaskExecutionContext context) {
+        return context == null ? "-" : context.getRequestedTaskCode();
+    }
+
+    private String safeRole(TaskExecutionContext context) {
+        return context == null ? "-" : context.getWindowRole();
     }
 
     private void maybeRunCombatMaintenance(TaskExecutionContext context, String source) {
@@ -174,5 +305,8 @@ public class AutoCombatService {
         private long lastAutoBattleRefreshAt = 0L;
         private long lastCombatUiCleanAt = 0L;
         private long pendingCombatEntryMaintenanceAt = 0L;
+        private boolean pendingFollowerFirstAid = false;
+        private String pendingFollowerFirstAidSource;
+        private long lastPendingFollowerFirstAidLogAt = 0L;
     }
 }

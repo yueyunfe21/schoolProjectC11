@@ -1,6 +1,7 @@
 package com.bot.dhxy.service.dialog;
 
 import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.model.dialog.PreparedDialogAction;
 import lombok.Builder;
 import lombok.Value;
 
@@ -15,6 +16,8 @@ import lombok.Value;
  * @param absoluteX screen-absolute clicked X; diagnostic only.
  * @param absoluteY screen-absolute clicked Y; diagnostic only.
  * @param matchedText OCR text that produced the click, if any.
+ * @param preparedAction optional reusable dialog click candidate. Null for fallback clicks and
+ *                       failed matches.
  */
 @Value
 @Builder
@@ -25,6 +28,7 @@ public class DialogOptionClickResult {
     Integer absoluteX;
     Integer absoluteY;
     String matchedText;
+    PreparedDialogAction preparedAction;
 
     public static DialogOptionClickResult of(DialogResultStatus result) {
         return DialogOptionClickResult.builder()

@@ -154,32 +154,12 @@ public class UICleanerService {
         return false;
     }
 
-    /**
-     * Process team-wide maintenance broadcasts such as heal-pet and repair-equipment prompts.
-     *
-     * @param sourceTask diagnostic task name written to logs.
-     * @return true when a known maintenance option was clicked; false when no such prompt is visible
-     * or OCR/template capture failed.
-     */
-    public boolean handleMaintenanceBroadcast(String sourceTask) {
-        DialogResultStatus dialogResult = dialogService.handleDialog(DialogHandleRequest.handleMaintenanceBroadcastOption(sourceTask)).getStatus();
-        if (dialogResult == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
-            log.info("UI maintenance broadcast handled: source={}", sourceTask);
-            return true;
-        }
-        if (dialogResult == DialogResultStatus.INTERRUPTED) {
-            log.info("UI maintenance broadcast interrupted: source={}", sourceTask);
-            return false;
-        }
-        if (dialogResult == DialogResultStatus.FAILED) {
-            log.warn("UI maintenance broadcast scan failed: source={}", sourceTask);
-            return false;
-        }
-        return false;
-    }
-
     private boolean clickCloseButtonOnce(String description) {
-        return inputSequences.submitExclusiveAndWait(description, () -> clickCloseButtonOnceDirect(description));
+        Point closeBtnPoint = findGenericCloseButtonPoint(description);
+        if (closeBtnPoint == null) {
+            return false;
+        }
+        return inputSequences.submitExclusiveAndWait(description, () -> clickCloseButtonOnceDirect(description, closeBtnPoint));
     }
 
     /**
@@ -215,9 +195,10 @@ public class UICleanerService {
         return !Thread.currentThread().isInterrupted();
     }
 
-    private boolean clickCloseButtonOnceDirect(String description) {
+    private Point findGenericCloseButtonPoint(String description) {
         if (!tracker.updateGlobalVision()) {
-            return false;
+            log.warn("UI cleanup close button scan skipped: capture failed description={}", description);
+            return null;
         }
         String screenPath = tracker.getLatestVisionPath();
         Point closeBtnPoint = null;
@@ -234,9 +215,12 @@ public class UICleanerService {
         }
 
         if (closeBtnPoint == null) {
-            return false;
+            return null;
         }
+        return closeBtnPoint;
+    }
 
+    private boolean clickCloseButtonOnceDirect(String description, Point closeBtnPoint) {
         int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
         log.info("UI cleanup close button matched: description={} click=({}, {})", description, clickX, clickY);

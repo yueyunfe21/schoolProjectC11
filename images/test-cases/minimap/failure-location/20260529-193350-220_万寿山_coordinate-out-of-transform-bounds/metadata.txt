@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=万寿山
+coord=188,1139
+sourceImage=images\temp\hwnd-308E0\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260529-193350-220_万寿山_coordinate-out-of-transform-bounds\tmp_pos.png

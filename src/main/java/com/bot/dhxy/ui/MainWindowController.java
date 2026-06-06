@@ -9,6 +9,7 @@ import lombok.experimental.Accessors;
 import com.bot.dhxy.auth.LicenseAuthResult;
 import com.bot.dhxy.auth.LicenseAuthService;
 import com.bot.dhxy.config.BotProperties;
+import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.vision.MapSurveyService;
 import com.bot.dhxy.vision.PlayerNameOcrDebugService;
 import com.bot.dhxy.task.model.TaskType;
@@ -103,10 +104,12 @@ public class MainWindowController {
     private final GameWindowRegistrationService gameWindowRegistrationService;
     private final WindowCaptureExperimentService windowCaptureExperimentService;
     private final WindowInteractionMetricsService windowInteractionMetricsService;
+    private final AutomationMetricsService automationMetricsService;
     private final WindowMessageInputExperimentService windowMessageInputExperimentService;
     private final LicenseAuthService licenseAuthService;
     private final BotProperties botProperties;
     private final GameUiSettingsStore gameUiSettingsStore;
+    private final LocalOcrSidecarService localOcrSidecarService;
     private final MapSurveyService mapSurveyService;
     private final PlayerNameOcrDebugService playerNameOcrDebugService;
     private final CoordinateHelper coordinateHelper;
@@ -144,6 +147,7 @@ public class MainWindowController {
     private Button backgroundCenterRightClickExperimentButton;
     private Button backgroundChildRightClickExperimentButton;
     private Button interactionMetricsDashboardButton;
+    private Button automationMetricsDashboardButton;
     private Button playerNameOcrDebugButton;
     private Button saveMapLabelSampleButton;
     private Button testMapLabelSampleButton;
@@ -165,7 +169,6 @@ public class MainWindowController {
     private Button clearWindowSelectionButton;
     private Button startCurrentTaskButton;
     private Button startWindowSelectedTaskButton;
-    private Button startTeamRoleDebugButton;
     private Button pauseSelectedWindowsButton;
     private Button resumeSelectedWindowsButton;
     private Button pauseAllWindowsButton;
@@ -210,9 +213,14 @@ public class MainWindowController {
     private TextField zhuaguiRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
     private CheckBox taskStartupPreparationEnabledCheckBox;
+    private CheckBox xiuluoMaintenanceRunImmediatelyCheckBox;
     private ComboBox<Integer> summonSkillIntervalMinutesComboBox;
+    private ComboBox<Integer> xiuluoHealPetIntervalMinutesComboBox;
+    private ComboBox<Integer> xiuluoRepairEquipmentIntervalMinutesComboBox;
     private Button applyGameConfigButton;
     private Button clearButton;
+    private Button taskCountShortcutButton;
+    private Label settingsEditLockLabel;
     private Label windowSystemLabel;
     private Label windowActionHintLabel;
     private Label windowMetricLabel;
@@ -249,13 +257,13 @@ public class MainWindowController {
     private Map<TaskType, String> createDefaultTaskCountSummaries() {
         Map<TaskType, String> summaries = new EnumMap<>(TaskType.class);
         summaries.put(TaskType.WUHuan, "1轮");
-        summaries.put(TaskType.XIULUO, "1次");
+        summaries.put(TaskType.WUHuan_V2, "1轮");
+        summaries.put(TaskType.WUBEI, "1次");
         summaries.put(TaskType.XIULUO_V2, "1次");
         summaries.put(TaskType.AUTO_BATTLE, "60分");
         summaries.put(TaskType.DEBUG_COORDINATE, "手动");
         summaries.put(TaskType.DEBUG_MAP_CALIBRATOR, "2点");
-        summaries.put(TaskType.DEBUG_TEAM_ROLE, "1次");
-        summaries.put(TaskType.DEBUG_XIULUO_MOCK_OBJECTIVE, "瑶池");
+        summaries.put(TaskType.DEBUG_NAVIGATION_STRESS, "5点");
         return summaries;
     }
 
@@ -287,7 +295,7 @@ public class MainWindowController {
         windowBatchCountField.setPrefWidth(48);
 
         windowTaskTypeComboBox = new ComboBox<>();
-        windowTaskTypeComboBox.getItems().setAll(TaskType.values());
+        windowTaskTypeComboBox.getItems().setAll(selectableTaskTypes());
         windowTaskTypeComboBox.setValue(TaskType.WUHuan);
 
         queueTaskTypeComboBox = new ComboBox<>();
@@ -328,6 +336,7 @@ public class MainWindowController {
         backgroundCenterRightClickExperimentButton = new Button("后台鼠标中心右键");
         backgroundChildRightClickExperimentButton = new Button("子窗口中心右键");
         interactionMetricsDashboardButton = new Button("统计 Dashboard");
+        automationMetricsDashboardButton = new Button("业务 Dashboard");
         playerNameOcrDebugButton = new Button("本地OCR测名字");
         saveMapLabelSampleButton = new Button("保存地图名样本");
         testMapLabelSampleButton = new Button("测试地图名");
@@ -349,7 +358,6 @@ public class MainWindowController {
         clearWindowSelectionButton = new Button("取消选择");
         startCurrentTaskButton = new Button("启动当前任务");
         startWindowSelectedTaskButton = new Button("启动已选任务");
-        startTeamRoleDebugButton = new Button("队伍识别测试");
         pauseSelectedWindowsButton = new Button("暂停选中窗口");
         resumeSelectedWindowsButton = new Button("继续选中窗口");
         pauseAllWindowsButton = new Button("暂停全部窗口");
@@ -421,7 +429,11 @@ public class MainWindowController {
         summonSkillCleanEnabledCheckBox.setSelected(botProperties.isSummonSkillCleanEnabled());
         taskStartupPreparationEnabledCheckBox = new CheckBox("任务启动前置检查");
         taskStartupPreparationEnabledCheckBox.setSelected(botProperties.isTaskStartupPreparationEnabled());
+        xiuluoMaintenanceRunImmediatelyCheckBox = new CheckBox("修罗启动维护");
+        xiuluoMaintenanceRunImmediatelyCheckBox.setSelected(botProperties.isXiuluoMaintenanceRunImmediatelyOnStart());
         summonSkillIntervalMinutesComboBox = buildSummonSkillIntervalComboBox(botProperties.getSummonSkillCleanIntervalMs());
+        xiuluoHealPetIntervalMinutesComboBox = buildSummonSkillIntervalComboBox(botProperties.getXiuluoHealPetMaintenanceIntervalMs());
+        xiuluoRepairEquipmentIntervalMinutesComboBox = buildSummonSkillIntervalComboBox(botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs());
         applyGameConfigButton = new Button("应用游戏设置");
         windowSystemLabel = new Label("窗口：");
         windowActionHintLabel = new Label("操作提示：-");
@@ -547,6 +559,10 @@ public class MainWindowController {
     }
 
     private void applySupplyConfigFromUi() {
+        if (isSettingsEditLocked()) {
+            rejectSettingsEditWhileBusy("补给配置");
+            return;
+        }
         botProperties.setPlayerHpSupplyEnabled(playerHpSupplyCheckBox.isSelected());
         botProperties.setPlayerHpSupplyThreshold(normalizeSupplyThreshold(playerHpThresholdComboBox.getValue()));
         botProperties.setPlayerMpSupplyEnabled(playerMpSupplyCheckBox.isSelected());
@@ -565,6 +581,10 @@ public class MainWindowController {
     }
 
     private void applyGameConfigFromUi() {
+        if (isSettingsEditLocked()) {
+            rejectSettingsEditWhileBusy("游戏设置");
+            return;
+        }
         int xiuluoRuns = readRunCountField(xiuluoRunCountField);
         int wuhuanRuns = normalizeWuhuanRunCount(wuhuanRunCountComboBox.getValue());
         int fivefoldRuns = readRunCountField(fivefoldRunCountField);
@@ -577,8 +597,13 @@ public class MainWindowController {
         botProperties.setZhuaguiMaxRuns(zhuaguiRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
         botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
+        botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(xiuluoMaintenanceRunImmediatelyCheckBox.isSelected());
         botProperties.setSummonSkillCleanIntervalMs(normalizeSummonSkillIntervalMinutes(
                 summonSkillIntervalMinutesComboBox.getValue()) * 60_000L);
+        botProperties.setXiuluoHealPetMaintenanceIntervalMs(normalizeSummonSkillIntervalMinutes(
+                xiuluoHealPetIntervalMinutesComboBox.getValue()) * 60_000L);
+        botProperties.setXiuluoRepairEquipmentMaintenanceIntervalMs(normalizeSummonSkillIntervalMinutes(
+                xiuluoRepairEquipmentIntervalMinutesComboBox.getValue()) * 60_000L);
         syncTaskCountSummariesFromProperties();
         gameUiSettingsStore.save(botProperties);
 
@@ -588,8 +613,11 @@ public class MainWindowController {
                 + " 天庭=" + botProperties.getTiantingMaxRuns()
                 + " 抓鬼=" + botProperties.getZhuaguiMaxRuns()
                 + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
+                + " 修罗启动维护=" + (botProperties.isXiuluoMaintenanceRunImmediatelyOnStart() ? "开" : "关")
                 + " 三技能=" + (botProperties.isSummonSkillCleanEnabled() ? "开" : "关")
-                + "/" + normalizeSummonSkillIntervalMinutes(botProperties.getSummonSkillCleanIntervalMs()) + "分钟");
+                + "/" + normalizeSummonSkillIntervalMinutes(botProperties.getSummonSkillCleanIntervalMs()) + "分钟"
+                + " 巫医=" + normalizeSummonSkillIntervalMinutes(botProperties.getXiuluoHealPetMaintenanceIntervalMs()) + "分钟"
+                + " 修理=" + normalizeSummonSkillIntervalMinutes(botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs()) + "分钟");
         renderLogList();
     }
 
@@ -602,11 +630,8 @@ public class MainWindowController {
         if (queue == null || !queue.contains(TaskType.DEBUG_MAP_CALIBRATOR)) {
             return true;
         }
-        if (hasText(botProperties.getDebugMapCalibratorMapName())) {
-            return true;
-        }
 
-        TextInputDialog dialog = new TextInputDialog("");
+        TextInputDialog dialog = new TextInputDialog(botProperties.getDebugMapCalibratorMapName());
         dialog.setTitle("地图校准");
         dialog.setHeaderText("请输入要写入 maps.json 的地图名");
         dialog.setContentText("地图名");
@@ -674,7 +699,9 @@ public class MainWindowController {
     private void syncTaskCountSummariesFromProperties() {
         taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
+        taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(botProperties.getFivefoldMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUHuan, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
+        taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         refreshTaskTiles();
     }
 
@@ -714,17 +741,25 @@ public class MainWindowController {
                 taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(normalized, "次"));
                 taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(normalized, "次"));
             }
-            case WUHuan -> {
+            case WUHuan, WUHuan_V2 -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
                 botProperties.setWuhuanMaxRuns(wuhuanRuns);
                 if (wuhuanRunCountComboBox != null) {
                     wuhuanRunCountComboBox.setValue(wuhuanRuns);
                 }
                 taskCountSummaries.put(TaskType.WUHuan, formatTaskCountSummary(wuhuanRuns, "轮"));
+                taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(wuhuanRuns, "轮"));
+            }
+            case WUBEI -> {
+                botProperties.setFivefoldMaxRuns(normalized);
+                if (fivefoldRunCountField != null) {
+                    fivefoldRunCountField.setText(String.valueOf(normalized));
+                }
+                taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(normalized, "次"));
             }
             case AUTO_BATTLE, DEBUG_COORDINATE, DEBUG_MAP_CALIBRATOR, DEBUG_TEAM_ROLE,
                     DEBUG_XIULUO_STORY_OBJECTIVE, DEBUG_XIULUO_TASK_PANEL_OBJECTIVE,
-                    DEBUG_XIULUO_MOCK_OBJECTIVE, UNKNOWN -> {
+                    DEBUG_XIULUO_MOCK_OBJECTIVE, DEBUG_NAVIGATION_STRESS, UNKNOWN -> {
                 // These badges are labels/durations/debug hints, not max-run task limits.
             }
         }
@@ -783,7 +818,6 @@ public class MainWindowController {
         addStyleClass(startCurrentTaskButton, "primary-button");
         addStyleClass(startCurrentTaskButton, "start-action");
         addStyleClass(startWindowSelectedTaskButton, "primary-button");
-        addStyleClass(startTeamRoleDebugButton, "primary-button");
         addStyleClass(startQueueButton, "primary-button");
         addStyleClass(pauseSelectedWindowsButton, "secondary-button");
         addStyleClass(resumeSelectedWindowsButton, "secondary-button");
@@ -831,7 +865,7 @@ public class MainWindowController {
         title.getStyleClass().add("app-title");
         title.setMinWidth(220);
         title.setPrefWidth(220);
-        Label emergencyStopLabel = new Label("紧急停止：Ctrl+Shift+F12");
+        Label emergencyStopLabel = new Label("暂停：Ctrl+Shift+F11　紧急停止：Ctrl+Shift+F12");
         emergencyStopLabel.getStyleClass().add("emergency-label");
         darkModeCheckBox.setOnAction(event -> applyThemeMode());
 
@@ -955,13 +989,6 @@ public class MainWindowController {
             runWindowCommandInBackground(() ->
                     windowTaskControlService.start(WindowTaskStartRequest.selectedTask(windowIds)));
         });
-        startTeamRoleDebugButton.setOnAction(event -> {
-            syncDebugTaskConfigFromUi(List.of(TaskType.DEBUG_TEAM_ROLE));
-            List<String> windowIds = getSelectedWindowIds();
-            warnUnavailableSelectedWindows("队伍识别测试");
-            runWindowCommandInBackground(() ->
-                    windowTaskControlService.start(WindowTaskStartRequest.sameTask(windowIds, TaskType.DEBUG_TEAM_ROLE)));
-        });
         pauseSelectedWindowsButton.setOnAction(event -> togglePauseResumeSelectedWindows());
         resumeSelectedWindowsButton.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
@@ -1018,13 +1045,15 @@ public class MainWindowController {
         selectAllWindowsButton.setText("全选");
         clearWindowSelectionButton.setText("取消选择");
         pauseSelectedWindowsButton.setText("暂停");
-        stopSelectedWindowsButton.setText("停止");
+        stopSelectedWindowsButton.setText("停止所选");
+        stopAllWindowsButton.setText("停止全部");
         refreshWindowButton.setMinWidth(58);
         windowFilterComboBox.setMinWidth(92);
         windowSearchField.setPrefWidth(160);
         windowSearchField.setMinWidth(132);
         pauseSelectedWindowsButton.setMinWidth(62);
-        stopSelectedWindowsButton.setMinWidth(86);
+        stopSelectedWindowsButton.setMinWidth(76);
+        stopAllWindowsButton.setMinWidth(76);
         clearWindowSelectionButton.setMinWidth(74);
         selectAllWindowsButton.setMinWidth(62);
         playerNameOcrDebugButton.setMinWidth(96);
@@ -1032,6 +1061,7 @@ public class MainWindowController {
         HBox rightTools = new HBox(6,
                 pauseSelectedWindowsButton,
                 stopSelectedWindowsButton,
+                stopAllWindowsButton,
                 clearWindowSelectionButton,
                 selectAllWindowsButton,
                 playerNameOcrDebugButton,
@@ -1084,7 +1114,10 @@ public class MainWindowController {
     }
 
     private Parent buildSettingsPanel() {
+        settingsEditLockLabel = new Label("设置只允许在所有任务停止后修改。");
+        settingsEditLockLabel.getStyleClass().add("queue-summary");
         VBox wrapper = new VBox(8,
+                settingsEditLockLabel,
                 buildTaskRunConfigPanel(),
                 buildSummonSkillConfigPanel(),
                 buildSupplyConfigPanel());
@@ -1108,9 +1141,16 @@ public class MainWindowController {
     private Parent buildSummonSkillConfigPanel() {
         FlowPane summonRow = buildControlRow(
                 taskStartupPreparationEnabledCheckBox,
+                xiuluoMaintenanceRunImmediatelyCheckBox,
                 summonSkillCleanEnabledCheckBox,
                 new Label("三技能间隔"),
                 summonSkillIntervalMinutesComboBox,
+                new Label("分钟"),
+                new Label("巫医间隔"),
+                xiuluoHealPetIntervalMinutesComboBox,
+                new Label("分钟"),
+                new Label("修理间隔"),
+                xiuluoRepairEquipmentIntervalMinutesComboBox,
                 new Label("分钟"));
         return buildSection("召唤兽技能", summonRow);
     }
@@ -1235,6 +1275,7 @@ public class MainWindowController {
         backgroundChildRightClickExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("子窗口中心右键",
                 windowMessageInputExperimentService::rightClickLargestChildCenter));
         interactionMetricsDashboardButton.setOnAction(event -> openInteractionMetricsDashboard());
+        automationMetricsDashboardButton.setOnAction(event -> openAutomationMetricsDashboard());
         saveMapLabelSampleButton.setOnAction(event -> runMapSurveyCommand("保存地图名样本",
                 (snapshot, mapName) -> mapSurveyService.saveMapLabelSample(snapshot, mapName)));
         testMapLabelSampleButton.setOnAction(event -> runMapSurveyCommand("测试地图名", false,
@@ -1271,12 +1312,41 @@ public class MainWindowController {
                 backgroundCenterClickExperimentButton,
                 backgroundCenterRightClickExperimentButton,
                 backgroundChildRightClickExperimentButton,
-                interactionMetricsDashboardButton,
                 new Label("发送后台 WM_* 消息，并保存发送前/后 HWND 截图"));
+        FlowPane dashboardRow = buildControlRow(
+                interactionMetricsDashboardButton,
+                automationMetricsDashboardButton,
+                new Label("打开本地输入/业务统计页面"));
+        FlowPane mapSurveyNameRow = buildControlRow(
+                new Label("地图名"),
+                mapCalibratorMapNameField,
+                new Label("旧“地图校准”任务和测绘按钮都会读取这里"));
+        FlowPane mapSurveySampleRow = buildControlRow(
+                saveMapLabelSampleButton,
+                testMapLabelSampleButton,
+                new Label("保存/测试小地图左上角地图名模板"));
+        FlowPane mapSurveyBoundaryRow = buildControlRow(
+                recordCameraLeftButton,
+                recordCameraRightButton,
+                recordCameraTopButton,
+                recordCameraBottomButton,
+                recordCameraCenterButton);
+        FlowPane mapSurveyPlayerPointRow = buildControlRow(
+                testProjectedPlayerPointButton,
+                recordPlayerPointCorrectionButton,
+                testCorrectedPlayerPointButton,
+                undoPlayerPointCorrectionButton);
         VBox wrapper = new VBox(8,
                 buildSection("任务调试", taskDebugRow),
                 buildSection("截图实验", screenshotDebugRow),
                 buildSection("后台输入实验", inputDebugRow),
+                buildSection("统计面板", dashboardRow),
+                buildSection("地图测绘",
+                        mapSurveyNameRow,
+                        mapSurveySampleRow,
+                        mapSurveyBoundaryRow,
+                        mapSurveyPlayerPointRow,
+                        mapCalibratorHintLabel),
                 buildSection("日志文件",
                         new Label("主日志：logs/dhxy-console.log"),
                         new Label("坐标/窗口诊断：logs/tracker-coordinate.log")),
@@ -1556,31 +1626,15 @@ public class MainWindowController {
         taskTiles.getStyleClass().add("task-tile-grid");
         selectableTaskTypes().forEach(taskType -> taskTiles.getChildren().add(buildTaskTile(taskType)));
         taskCountEditorBar = buildTaskCountEditorBar();
-        HBox mapCalibratorRow = new HBox(8, new Label("地图校准名"), mapCalibratorMapNameField);
-        mapCalibratorRow.setAlignment(Pos.CENTER_LEFT);
-        mapCalibratorRow.getStyleClass().add("task-selector-actions");
-        FlowPane mapSurveyRow = buildControlRow(
-                saveMapLabelSampleButton,
-                testMapLabelSampleButton,
-                recordCameraLeftButton,
-                recordCameraRightButton,
-                recordCameraTopButton,
-                recordCameraBottomButton,
-                recordCameraCenterButton,
-                testProjectedPlayerPointButton,
-                recordPlayerPointCorrectionButton,
-                testCorrectedPlayerPointButton,
-                undoPlayerPointCorrectionButton);
-
         Button clearTasksButton = new Button("清空任务选择");
         clearTasksButton.getStyleClass().add("secondary-button");
         clearTasksButton.setOnAction(event -> clearPendingTaskQueue());
 
-        Button countShortcutButton = new Button("次数");
-        countShortcutButton.getStyleClass().add("secondary-button");
-        countShortcutButton.setOnAction(event -> openFirstTaskCountEditor());
+        taskCountShortcutButton = new Button("次数");
+        taskCountShortcutButton.getStyleClass().add("secondary-button");
+        taskCountShortcutButton.setOnAction(event -> openFirstTaskCountEditor());
 
-        HBox titleActions = new HBox(8, taskSelectionSummaryLabel, countShortcutButton);
+        HBox titleActions = new HBox(8, taskSelectionSummaryLabel, taskCountShortcutButton);
         titleActions.setAlignment(Pos.CENTER_RIGHT);
         HBox.setHgrow(taskSelectionSummaryLabel, Priority.ALWAYS);
         HBox titleRow = new HBox(8, new Label("任务选择"), titleActions);
@@ -1593,8 +1647,7 @@ public class MainWindowController {
         actions.setAlignment(Pos.CENTER_RIGHT);
         actions.getStyleClass().add("task-selector-actions");
 
-        VBox panel = new VBox(8, titleRow, taskTiles, taskCountEditorBar,
-                mapCalibratorRow, mapSurveyRow, mapCalibratorHintLabel, actions);
+        VBox panel = new VBox(8, titleRow, taskTiles, taskCountEditorBar, actions);
         panel.getStyleClass().add("task-selector-panel");
         refreshTaskTiles();
         refreshTaskSelectorSummary();
@@ -1694,6 +1747,10 @@ public class MainWindowController {
     }
 
     private void openTaskCountInlineEditor(TaskType taskType) {
+        if (isSettingsEditLocked()) {
+            rejectSettingsEditWhileBusy("任务次数");
+            return;
+        }
         if (taskType == null || taskType == TaskType.UNKNOWN || taskCountEditorBar == null) {
             return;
         }
@@ -1745,6 +1802,11 @@ public class MainWindowController {
     }
 
     private void applyTaskCountEditor() {
+        if (isSettingsEditLocked()) {
+            rejectSettingsEditWhileBusy("任务次数");
+            hideTaskCountEditor();
+            return;
+        }
         if (activeTaskCountType == null || taskCountEditorField == null || taskCountEditorUnitLabel == null) {
             hideTaskCountEditor();
             return;
@@ -1829,9 +1891,9 @@ public class MainWindowController {
 
     private String taskMetaText(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan -> "日常";
+            case WUHuan, WUHuan_V2 -> "日常";
             case AUTO_BATTLE -> "挂机";
-            case DEBUG_COORDINATE, DEBUG_MAP_CALIBRATOR -> "诊断";
+            case DEBUG_COORDINATE, DEBUG_MAP_CALIBRATOR, DEBUG_NAVIGATION_STRESS -> "诊断";
             case DEBUG_TEAM_ROLE -> "识别";
             case DEBUG_XIULUO_STORY_OBJECTIVE, DEBUG_XIULUO_TASK_PANEL_OBJECTIVE, DEBUG_XIULUO_MOCK_OBJECTIVE -> "修罗";
             default -> "任务";
@@ -2111,11 +2173,17 @@ public class MainWindowController {
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
         addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
+        announceLocalOcrGateForStart();
         WindowTaskQueue queue = WindowTaskQueue.of(pendingTaskQueue);
         List<String> windowIds = getSelectedWindowIds();
         warnUnavailableSelectedWindows("启动队列");
-        runWindowCommandInBackground(() ->
-                windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue)));
+        runWindowCommandInBackground(() -> {
+            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
+            if (ocrGate != null) {
+                return ocrGate;
+            }
+            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue));
+        });
     }
 
     private void startMainSelectedTasks() {
@@ -2132,12 +2200,17 @@ public class MainWindowController {
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
         addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
+        announceLocalOcrGateForStart();
         List<String> selectedWindowIds = getSelectedWindowIds();
         WindowTaskQueue queue = WindowTaskQueue.of(pendingTaskQueue);
         TaskType defaultTaskType = pendingTaskQueue.get(0);
         addWindowLog("启动：自动刷新/发现游戏窗口，然后启动可接任务窗口");
         renderLogList();
         runWindowCommandInBackground(() -> {
+            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
+            if (ocrGate != null) {
+                return ocrGate;
+            }
             log.info("Start selected task flow: refresh/register start defaultTask={} selectedWindows={}",
                     defaultTaskType, selectedWindowIds);
             WindowTaskCommandResult scanResult = gameWindowRegistrationService.registerDetectedGameWindows(defaultTaskType);
@@ -2199,9 +2272,31 @@ public class MainWindowController {
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
         addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
+        announceLocalOcrGateForStart();
         WindowTaskQueue queue = WindowTaskQueue.of(pendingTaskQueue);
-        runWindowCommandInBackground(() ->
-                windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue)));
+        runWindowCommandInBackground(() -> {
+            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
+            if (ocrGate != null) {
+                return ocrGate;
+            }
+            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue));
+        });
+    }
+
+    private void announceLocalOcrGateForStart() {
+        addWindowLog("本地OCR：启动前确认中；未就绪不会控制游戏窗口");
+        renderLogList();
+    }
+
+    private WindowTaskCommandResult ensureLocalOcrReadyForTaskStart() {
+        LocalOcrSidecarService.StartupResult result = localOcrSidecarService.ensureRunningBlocking();
+        if (result.healthy()) {
+            log.info("UI task start OCR gate passed: {}", result.message());
+            return null;
+        }
+        log.warn("UI task start OCR gate blocked: {}", result.message());
+        return WindowTaskCommandResult.empty(result.message() + "，未启动任务",
+                windowTaskControlService.getSnapshots());
     }
 
     private void togglePauseResumeSelectedWindows() {
@@ -2292,6 +2387,21 @@ public class MainWindowController {
             }
         } catch (Exception e) {
             addWindowLog("统计 Dashboard 打开失败：" + e.getMessage());
+        }
+        renderLogList();
+    }
+
+    private void openAutomationMetricsDashboard() {
+        try {
+            Path dashboard = automationMetricsService.writeDashboardNow();
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(dashboard.toUri());
+                addWindowLog("业务 Dashboard 已打开：" + dashboard);
+            } else {
+                addWindowLog("业务 Dashboard 已生成：" + dashboard);
+            }
+        } catch (Exception e) {
+            addWindowLog("业务 Dashboard 打开失败：" + e.getMessage());
         }
         renderLogList();
     }
@@ -2525,7 +2635,7 @@ public class MainWindowController {
                         recordPlayerPointCorrectionButton, testCorrectedPlayerPointButton, undoPlayerPointCorrectionButton,
                         selectAllWindowsButton, selectRunningWindowsButton, selectIdleWindowsButton,
                         selectProblemWindowsButton, selectBoundWindowsButton, selectUnboundWindowsButton, clearWindowSelectionButton,
-                        startCurrentTaskButton, startWindowSelectedTaskButton, startTeamRoleDebugButton,
+                        startCurrentTaskButton, startWindowSelectedTaskButton,
                         pauseSelectedWindowsButton, resumeSelectedWindowsButton, pauseAllWindowsButton, resumeAllWindowsButton,
                         stopSelectedWindowsButton, stopAllWindowsButton, unregisterSelectedWindowsButton,
                         unregisterAllWindowsButton, refreshWindowButton,
@@ -2753,6 +2863,7 @@ public class MainWindowController {
     }
 
     private void refreshControlStates() {
+        refreshSettingsEditLock();
         if (windowCommandRunning) {
             setActionHint("窗口命令执行中...");
             return;
@@ -2765,6 +2876,8 @@ public class MainWindowController {
         boolean hasSelection = selectedCount > 0;
         boolean hasQueue = !pendingTaskQueue.isEmpty();
         boolean showResumeAction = shouldShowResumeAction(selected);
+        boolean hasBusyWindow = windowTaskControlService.getSystemSnapshot().getWindows().stream()
+                .anyMatch(WindowTaskSnapshot::isBusy);
         if (selectedWindowCountLabel != null) {
             selectedWindowCountLabel.setText("已选窗口：" + selectedCount);
         }
@@ -2772,7 +2885,6 @@ public class MainWindowController {
         setButtonDisabled(applySelectedTaskButton, !hasSelection);
         setButtonDisabled(startCurrentTaskButton, !hasQueue);
         setButtonDisabled(startWindowSelectedTaskButton, !hasSelection);
-        setButtonDisabled(startTeamRoleDebugButton, !hasSelection);
         setButtonDisabled(startQueueButton, !hasSelection || !hasQueue);
         setButtonDisabled(windowCaptureExperimentButton, !hasSelection);
         setButtonDisabled(playerNameOcrDebugButton, !hasSelection);
@@ -2786,6 +2898,7 @@ public class MainWindowController {
         setButtonDisabled(pauseSelectedWindowsButton, !hasSelection);
         setButtonDisabled(resumeSelectedWindowsButton, !hasSelection);
         setButtonDisabled(stopSelectedWindowsButton, !hasSelection);
+        setButtonDisabled(stopAllWindowsButton, !hasBusyWindow);
         setButtonDisabled(unregisterSelectedWindowsButton, !hasSelection);
         setMenuItemDisabled(pauseSelectedWindowsMenuItem, !hasSelection);
         setMenuItemDisabled(resumeSelectedWindowsMenuItem, !hasSelection);
@@ -2808,6 +2921,61 @@ public class MainWindowController {
             setActionHint("已选 " + selectedCount + " 个窗口，可接任务 " + acceptingCount
                     + " 个；队列任务 " + pendingTaskQueue.size() + " 个。");
         }
+    }
+
+    private void refreshSettingsEditLock() {
+        boolean locked = isSettingsEditLocked();
+        setSettingsControlsDisabled(locked);
+        if (settingsEditLockLabel != null) {
+            settingsEditLockLabel.setText(locked
+                    ? "设置已锁定：请先停止全部任务，等待窗口不再运行/暂停后再修改。"
+                    : "设置可修改：改完请点应用；任务运行或暂停期间会锁定配置。");
+        }
+    }
+
+    private boolean isSettingsEditLocked() {
+        if (windowCommandRunning) {
+            return true;
+        }
+        WindowSystemSnapshot snapshot = windowTaskControlService.getSystemSnapshot();
+        return snapshot.getWindows().stream().anyMatch(WindowTaskSnapshot::isBusy);
+    }
+
+    private void setSettingsControlsDisabled(boolean disabled) {
+        setNodeDisabled(xiuluoRunCountField, disabled);
+        setNodeDisabled(wuhuanRunCountComboBox, disabled);
+        setNodeDisabled(fivefoldRunCountField, disabled);
+        setNodeDisabled(tiantingRunCountField, disabled);
+        setNodeDisabled(zhuaguiRunCountField, disabled);
+        setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
+        setNodeDisabled(xiuluoMaintenanceRunImmediatelyCheckBox, disabled);
+        setNodeDisabled(summonSkillCleanEnabledCheckBox, disabled);
+        setNodeDisabled(summonSkillIntervalMinutesComboBox, disabled);
+        setNodeDisabled(xiuluoHealPetIntervalMinutesComboBox, disabled);
+        setNodeDisabled(xiuluoRepairEquipmentIntervalMinutesComboBox, disabled);
+        setNodeDisabled(playerHpSupplyCheckBox, disabled);
+        setNodeDisabled(playerHpThresholdComboBox, disabled);
+        setNodeDisabled(playerMpSupplyCheckBox, disabled);
+        setNodeDisabled(playerMpThresholdComboBox, disabled);
+        setNodeDisabled(petHpSupplyCheckBox, disabled);
+        setNodeDisabled(petHpThresholdComboBox, disabled);
+        setNodeDisabled(petMpSupplyCheckBox, disabled);
+        setNodeDisabled(petMpThresholdComboBox, disabled);
+        setNodeDisabled(applyGameConfigButton, disabled);
+        setNodeDisabled(applySupplyConfigButton, disabled);
+        setNodeDisabled(taskCountShortcutButton, disabled);
+        setNodeDisabled(taskCountEditorBar, disabled);
+    }
+
+    private void setNodeDisabled(Node node, boolean disabled) {
+        if (node != null) {
+            node.setDisable(disabled);
+        }
+    }
+
+    private void rejectSettingsEditWhileBusy(String settingName) {
+        addWindowLog(settingName + "未修改：请先停止全部任务，运行/暂停期间锁定配置。");
+        renderLogList();
     }
 
     private void setButtonDisabled(Button button, boolean disabled) {
@@ -2902,6 +3070,11 @@ public class MainWindowController {
     private List<TaskType> selectableTaskTypes() {
         return List.of(TaskType.values()).stream()
                 .filter(taskType -> taskType != TaskType.UNKNOWN)
+                .filter(taskType -> taskType != TaskType.XIULUO)
+                .filter(taskType -> taskType != TaskType.DEBUG_TEAM_ROLE)
+                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_STORY_OBJECTIVE)
+                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_TASK_PANEL_OBJECTIVE)
+                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_MOCK_OBJECTIVE)
                 .toList();
     }
 

@@ -53,7 +53,7 @@
 //    private static final int ACCEPT_NPC_Y = 93;
 //    private static final String NPC_TAG_TEMPLATE = "images/template/npc/npc_tag.png";
 //    private static final String NPC_TASK_TOOLTIP_TEMPLATE = "images/template/npc/npc_task_tooltip.png";
-//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo_accept_xianlaiwu.png";
+//    private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png";
 //    private static final String OPTION_ACCEPT_TASK = "accept-task";
 //    private static final String MODE_SMART_CLICK = "smart";
 //    private static final String MODE_TOOLTIP_CLICK = "tooltip";

@@ -1,0 +1,6 @@
+reason=coordinate-out-of-transform-bounds
+provider=LOCAL_OCR
+map=四圣庄
+coord=184,1109
+sourceImage=images\temp\hwnd-308E0\tmp_pos.png
+copiedImage=D:\mavenProject\DHXY\images\failure-cases\location\20260529-193551-561_四圣庄_coordinate-out-of-transform-bounds\tmp_pos.png

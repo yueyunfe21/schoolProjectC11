@@ -17,7 +17,7 @@
     "scaleX" : 1.585,
     "scaleY" : -1.5888324873096447
   },
-  "长安境内" : {
+  "大唐境内" : {
     "zeroOffsetX" : 77,
     "zeroOffsetY" : 607,
     "scaleX" : 1.668421052631579,
@@ -154,5 +154,35 @@
     "zeroOffsetY" : 627,
     "scaleX" : 4.371134020618556,
     "scaleY" : -4.375
+  },
+  "宝象国" : {
+    "zeroOffsetX" : 159,
+    "zeroOffsetY" : 631,
+    "scaleX" : 1.9435897435897436,
+    "scaleY" : -1.943661971830986
+  },
+  "火云戈壁" : {
+    "zeroOffsetX" : 97,
+    "zeroOffsetY" : 645,
+    "scaleX" : 2.721590909090909,
+    "scaleY" : -2.7375
+  },
+  "平顶山" : {
+    "zeroOffsetX" : 104,
+    "zeroOffsetY" : 628,
+    "scaleX" : 2.3360323886639676,
+    "scaleY" : -2.3181818181818183
+  },
+  "北俱芦洲" : {
+    "zeroOffsetX" : 198,
+    "zeroOffsetY" : 631,
+    "scaleX" : 2.5033112582781456,
+    "scaleY" : -2.5137614678899083
+  },
+  "东海渔村" : {
+    "zeroOffsetX" : 128,
+    "zeroOffsetY" : 623,
+    "scaleX" : 2.4951923076923075,
+    "scaleY" : -2.475
   }
 }

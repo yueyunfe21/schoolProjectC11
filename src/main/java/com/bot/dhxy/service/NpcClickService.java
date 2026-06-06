@@ -28,6 +28,8 @@ import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.model.npc.NpcTooltipType;
+import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -66,7 +68,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * are required to avoid queue-in-queue deadlock. Coordinates passed to public click methods are
  * logical game map coordinates unless explicitly described as screen-absolute or window-relative.</p>
  *
- * <p>The smart-click order is deliberately conservative:</p>
+ * <p>The smart-click order is deliberately conservative. A request may opt into tooltip-first mode
+ * for targets where the body/name can be hidden behind a story dialog while the tooltip is still
+ * visible.</p>
  * <ol>
  *     <li>verified learned click point for the exact target;</li>
  *     <li>visible NPC task tooltip template in the recommended ROI;</li>
@@ -88,6 +92,7 @@ public class NpcClickService {
     private final InputSequences inputSequences;
     private final GameClientTracker tracker;
     private final GameStateUtil gameStateUtil;
+    private final BattleRadarService battleRadarService;
     private final TextRecognizer ocr;
     private final LocationVisionService locationVisionService;
     private final PlayerStateService playerStateService;
@@ -95,6 +100,7 @@ public class NpcClickService {
     private final DialogService dialogService;
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final OcrRoiMemoryService ocrRoiMemoryService;
     private final GameTextLineOcrService gameTextLineOcrService;
 
@@ -105,6 +111,8 @@ public class NpcClickService {
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
     private static final int YELLOW_TARGET_CLICK_RETRIES = 1;
+    private static final String STRICT_YELLOW_TARGET_JIANGMO_SHIWEI = "降魔侍卫";
+    private static final int STRICT_YELLOW_TARGET_JIANGMO_SHIWEI_MIN_COMMON = 3;
     private static final int PURPLE_BLOB_MIN_PIXELS = 20;
     private static final int PURPLE_BLOB_MIN_WIDTH = 8;
     private static final int PURPLE_BLOB_MIN_HEIGHT = 4;
@@ -138,15 +146,29 @@ public class NpcClickService {
     private static final String NPC_TAG_TEMPLATE_PATH = "images/template/npc/npc_tag.png";
     private static final String NPC_TASK_TOOLTIP_TEMPLATE_PATH = "images/template/npc/npc_task_tooltip.png";
     private static final double NPC_TASK_TOOLTIP_MATCH_RATE = 0.82;
+    private static final double NPC_TASK_TOOLTIP_DEDUP_DISTANCE_PX = 36.0;
     private static final int CTRL_MENU_SCAN_W = 150;
     private static final int CTRL_MENU_SCAN_H = 120;
+    private static final int NPC_LEFT_CLICK_HOLD_MS = 150;
+    private static final int DIRECT_COMBAT_EXIT_ATTEMPTS = 3;
 
     private boolean executeMoveClickAndVerify(String description, int x, int y, long firstWaitMs, int maxRetries) {
-        return executeMoveClickAndVerify(description, x, y, firstWaitMs, maxRetries, null);
+        return executeMoveClickAndVerify(description, x, y, firstWaitMs, maxRetries, (String) null);
+    }
+
+    private boolean executeMoveClickAndVerify(
+            String description,
+            int x,
+            int y,
+            long firstWaitMs,
+            int maxRetries,
+            String expectedDialogTemplatePath) {
+        return executeMoveClickAndVerify(description, x, y, firstWaitMs, maxRetries,
+                dialogClickVerifier(expectedDialogTemplatePath));
     }
 
     /**
-     * Submit one atomic move+click request and verify the expected dialog.
+     * Submit one atomic move+click request and verify the caller-defined success signal.
      *
      * <p>Move and click must stay in one input-queue request; splitting them allows another window
      * to insert focus/mouse actions between the move and click. Coordinates are screen-absolute.</p>
@@ -157,13 +179,13 @@ public class NpcClickService {
             int y,
             long firstWaitMs,
             int maxRetries,
-            String expectedDialogTemplatePath) {
+            NpcClickVerifier verifier) {
         if (shouldStop()) return false;
         log.info("NPC move+click sequence: {} point=({}, {})", description, x, y);
         boolean queued = inputSequences.submitAndWait(description, List.of(
                 InputAction.moveMouse(x, y),
                 InputAction.sleep(150),
-                InputAction.clickLeft(x, y, 100),
+                InputAction.clickLeft(x, y, NPC_LEFT_CLICK_HOLD_MS),
                 InputAction.sleep((int) firstWaitMs)
         ));
         if (!queued) {
@@ -172,7 +194,7 @@ public class NpcClickService {
         }
 
         if (shouldStop()) return false;
-        if (isExpectedDialogVisible(expectedDialogTemplatePath, description + ":firstVerify")) return true;
+        if (verifier.verify(description + ":firstVerify")) return true;
 
         for (int i = 1; i <= maxRetries; i++) {
             if (shouldStop()) return false;
@@ -180,7 +202,7 @@ public class NpcClickService {
             queued = inputSequences.submitAndWait(description + ":retry", List.of(
                     InputAction.moveMouse(x, y),
                     InputAction.sleep(150),
-                    InputAction.clickLeft(x, y, 100),
+                    InputAction.clickLeft(x, y, NPC_LEFT_CLICK_HOLD_MS),
                     InputAction.sleep(1000)
             ));
             if (!queued) {
@@ -188,13 +210,13 @@ public class NpcClickService {
                 return false;
             }
             if (shouldStop()) return false;
-            if (isExpectedDialogVisible(expectedDialogTemplatePath, description + ":retryVerify:" + i)) return true;
+            if (verifier.verify(description + ":retryVerify:" + i)) return true;
         }
         return false;
     }
 
     private boolean executeClickAndVerifyDirect(int x, int y, long firstWaitMs, int maxRetries) {
-        return executeClickAndVerifyDirect(x, y, firstWaitMs, maxRetries, null);
+        return executeClickAndVerifyDirect(x, y, firstWaitMs, maxRetries, (String) null);
     }
 
     private boolean executeClickAndVerifyDirect(
@@ -203,19 +225,62 @@ public class NpcClickService {
             long firstWaitMs,
             int maxRetries,
             String expectedDialogTemplatePath) {
+        return executeClickAndVerifyDirect(x, y, firstWaitMs, maxRetries,
+                dialogClickVerifier(expectedDialogTemplatePath));
+    }
+
+    private boolean executeClickAndVerifyDirect(
+            int x,
+            int y,
+            long firstWaitMs,
+            int maxRetries,
+            NpcClickVerifier verifier) {
         if (shouldStop()) return false;
-        inputProvider.clickLeft(x, y, 100);
+        inputProvider.clickLeft(x, y, NPC_LEFT_CLICK_HOLD_MS);
         if (!TaskSleep.sleep(firstWaitMs)) return false;
         if (shouldStop()) return false;
-        if (isExpectedDialogVisible(expectedDialogTemplatePath, "npcClick:direct:firstVerify")) return true;
+        if (verifier.verify("npcClick:direct:firstVerify")) return true;
 
         for (int i = 1; i <= maxRetries; i++) {
             if (shouldStop()) return false;
             log.warn("NPC direct click retry {}", i);
-            inputProvider.clickLeft(x, y, 100);
+            inputProvider.clickLeft(x, y, NPC_LEFT_CLICK_HOLD_MS);
             if (!TaskSleep.sleep(1000)) return false;
             if (shouldStop()) return false;
-            if (isExpectedDialogVisible(expectedDialogTemplatePath, "npcClick:direct:retryVerify:" + i)) return true;
+            if (verifier.verify("npcClick:direct:retryVerify:" + i)) return true;
+        }
+        return false;
+    }
+
+    private NpcClickVerifier dialogClickVerifier(String expectedDialogTemplatePath) {
+        return reason -> isExpectedDialogVisible(expectedDialogTemplatePath, reason);
+    }
+
+    private NpcClickVerifier dialogClickVerifier(NpcClickRequest request) {
+        if (request == null || request.expectedDialogTemplatePaths() == null
+                || request.expectedDialogTemplatePaths().isEmpty()) {
+            return dialogClickVerifier(request == null ? null : request.expectedDialogTemplatePath());
+        }
+        return reason -> isExpectedDialogVisible(request.expectedDialogTemplatePaths(), reason);
+    }
+
+    private NpcClickVerifier combatClickVerifier() {
+        return this::isCombatVisibleAfterDirectClick;
+    }
+
+    private boolean isCombatVisibleAfterDirectClick(String reason) {
+        for (int i = 1; i <= 4; i++) {
+            if (shouldStop()) {
+                return false;
+            }
+            boolean inCombat = battleRadarService.checkAndSyncCombatState();
+            log.info("NPC direct-combat verify: reason={} attempt={} inCombat={}", reason, i, inCombat);
+            if (inCombat) {
+                return true;
+            }
+            if (!TaskSleep.sleep(350)) {
+                return false;
+            }
         }
         return false;
     }
@@ -229,6 +294,13 @@ public class NpcClickService {
     private boolean isExpectedDialogVisible(String expectedDialogTemplatePath, String reason) {
         DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyExpectedOptionDialog(
                 "npc-click:expected-dialog:" + reason, expectedDialogTemplatePath));
+        return result.getStatus() == DialogResultStatus.OPTION_VISIBLE
+                || result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_VISIBLE;
+    }
+
+    private boolean isExpectedDialogVisible(List<String> expectedDialogTemplatePaths, String reason) {
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyExpectedOptionDialog(
+                "npc-click:expected-dialog:" + reason, expectedDialogTemplatePaths));
         return result.getStatus() == DialogResultStatus.OPTION_VISIBLE
                 || result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_VISIBLE;
     }
@@ -254,7 +326,16 @@ public class NpcClickService {
             String expectedDialogTemplatePath,
             List<CtrlProbeOrigin> preferredProbePoints) {
         return clickNpcByCtrlMenuScan(
-                targetKeyword, npcTagTemplatePath, expectedDialogTemplatePath, preferredProbePoints, true);
+                targetKeyword, npcTagTemplatePath, dialogClickVerifier(expectedDialogTemplatePath), preferredProbePoints, true);
+    }
+
+    private NpcClickStrategyResult clickNpcByCtrlMenuScan(
+            String targetKeyword,
+            String npcTagTemplatePath,
+            NpcClickVerifier verifier,
+            List<CtrlProbeOrigin> preferredProbePoints) {
+        return clickNpcByCtrlMenuScan(
+                targetKeyword, npcTagTemplatePath, verifier, preferredProbePoints, true);
     }
 
     private NpcClickStrategyResult clickNpcByCtrlMenuScan(
@@ -263,10 +344,22 @@ public class NpcClickService {
             String expectedDialogTemplatePath,
             List<CtrlProbeOrigin> preferredProbePoints,
             boolean includeWindowCenterFallback) {
+        return clickNpcByCtrlMenuScan(
+                targetKeyword, npcTagTemplatePath, dialogClickVerifier(expectedDialogTemplatePath),
+                preferredProbePoints, includeWindowCenterFallback);
+    }
+
+    private NpcClickStrategyResult clickNpcByCtrlMenuScan(
+            String targetKeyword,
+            String npcTagTemplatePath,
+            NpcClickVerifier verifier,
+            List<CtrlProbeOrigin> preferredProbePoints,
+            boolean includeWindowCenterFallback) {
         if (targetKeyword == null || targetKeyword.isBlank()) {
             log.warn("NPC ctrl menu scan requested without target keyword");
             return NpcClickStrategyResult.skipped(NpcClickStrategySource.CTRL_MENU, "missing-target-keyword");
         }
+        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "npc ctrl menu scan interrupted before start");
         if (shouldStop()) {
             return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, "interrupted-before-ctrl-scan");
         }
@@ -292,6 +385,7 @@ public class NpcClickService {
             int[][] offsets = origin.profile().offsets();
             for (int offsetIndex = 0; offsetIndex < offsets.length; offsetIndex++) {
                 int[] offset = offsets[offsetIndex];
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "npc ctrl menu scan interrupted before probe");
                 if (shouldStop()) {
                     log.info("NPC ctrl menu scan stopped before probe");
                     return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, "interrupted-before-ctrl-probe");
@@ -353,7 +447,7 @@ public class NpcClickService {
                                 scanMenuAndVerifyKeywordDirect(
                                         changeRect,
                                         targetKeyword,
-                                        expectedDialogTemplatePath,
+                                        verifier,
                                         new Point(testX, testY));
                         resultRef.set(result);
                         return result.verified();
@@ -363,6 +457,7 @@ public class NpcClickService {
                     }
                 });
 
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "npc ctrl menu scan interrupted after probe");
                 if (shouldStop()) {
                     log.info("NPC ctrl menu scan stopped after probe");
                     return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, "interrupted-after-ctrl-probe");
@@ -375,8 +470,8 @@ public class NpcClickService {
             }
         }
 
-        log.warn("NPC ctrl menu scan failed: keyword={} npcTagTemplate={} expectedDialog={}",
-                targetKeyword, npcTagTemplatePath, expectedDialogTemplatePath);
+        log.warn("NPC ctrl menu scan failed: keyword={} npcTagTemplate={}",
+                targetKeyword, npcTagTemplatePath);
         return NpcClickStrategyResult.notFound(NpcClickStrategySource.CTRL_MENU, "ctrl menu scan exhausted");
     }
 
@@ -436,6 +531,15 @@ public class NpcClickService {
             String targetKeyword,
             String expectedDialogTemplatePath,
             Point ctrlHoverPointAbs) {
+        return scanMenuAndVerifyKeywordDirect(
+                scanRect, targetKeyword, dialogClickVerifier(expectedDialogTemplatePath), ctrlHoverPointAbs);
+    }
+
+    private NpcClickStrategyResult scanMenuAndVerifyKeywordDirect(
+            int[] scanRect,
+            String targetKeyword,
+            NpcClickVerifier verifier,
+            Point ctrlHoverPointAbs) {
         if (scanRect == null || scanRect.length < 4) {
             return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, "invalid-ctrl-scan-rect");
         }
@@ -445,7 +549,7 @@ public class NpcClickService {
                 scanRect[2],
                 scanRect[3],
                 targetKeyword,
-                expectedDialogTemplatePath,
+                verifier,
                 ctrlHoverPointAbs);
     }
 
@@ -455,7 +559,7 @@ public class NpcClickService {
             int scanRight,
             int scanBottom,
             String targetKeyword,
-            String expectedDialogTemplatePath,
+            NpcClickVerifier verifier,
             Point ctrlHoverPointAbs) {
         String menuScanPath = windowScopedTempPath.resolve("npc_menu_scan.png");
         String cleanPath = windowScopedTempPath.resolve("npc_menu_clean.png");
@@ -508,7 +612,7 @@ public class NpcClickService {
                 if (!TaskSleep.sleep(100)) {
                     return NpcClickStrategyResult.failed(NpcClickStrategySource.CTRL_MENU, scanRegion, "interrupted-before-menu-click");
                 }
-                boolean verified = executeClickAndVerifyDirect(clickX, clickY, 800, 1, expectedDialogTemplatePath);
+                boolean verified = executeClickAndVerifyDirect(clickX, clickY, 800, 1, verifier);
                 return NpcClickStrategyResult.fromClick(
                         NpcClickStrategySource.CTRL_MENU,
                         verified ? NpcClickStrategyStatus.VERIFIED : NpcClickStrategyStatus.CLICK_NOT_VERIFIED,
@@ -609,7 +713,7 @@ public class NpcClickService {
 
         inputProvider.moveMouse(targetX, targetY);
         TaskSleep.sleep(500);
-        inputProvider.clickLeft(targetX, targetY, 100);
+        inputProvider.clickLeft(targetX, targetY, NPC_LEFT_CLICK_HOLD_MS);
         TaskSleep.sleep(800);
         recordNpcClickMemory(
                 "NPC_FIRST_SHOT_DEBUG",
@@ -671,7 +775,7 @@ public class NpcClickService {
                     request.player(), request.mapName(), request.mapX(), request.mapY(),
                     request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
             NpcClickStrategyResult formulaResult =
-                    clickNpcByPlayerAnchorFormula(prediction, request.expectedDialogTemplatePath());
+                    clickNpcByPlayerAnchorFormula(prediction, dialogClickVerifier(request.expectedDialogTemplatePath()));
             recordSmartClickEvidence(request, formulaResult, playerLocation);
             result = formulaResult.verified();
             log.info("[npc-purple-debug] result={} status={} message={}",
@@ -698,6 +802,129 @@ public class NpcClickService {
      * @return true when any strategy opens and verifies the expected dialog.
      */
     public boolean clickNpcSmart(NpcClickRequest request) {
+        return runNpcClickPipeline(request, dialogClickVerifier(request), "dialog");
+    }
+
+    /**
+     * Try to enter combat by switching to the game's direct combat-click mode, then running the
+     * same target-click strategy chain as {@link #clickNpcSmart(NpcClickRequest)}.
+     *
+     * <p>This path is for 修罗/monster targets whose yellow tooltip or dialog trigger is blocked by
+     * fixed UI. It does not invent a second targeting algorithm: learned points, tooltip matching,
+     * player-anchor formula, yellow OCR, and Ctrl-menu probing all stay in the normal pipeline. The
+     * only policy changes are the pre-click Alt+A mode switch and combat-radar verification. If the
+     * task is stopped/interrupted, the method intentionally does not right-click out of the mode, so
+     * the user's stop/pause command remains the owner of recovery.</p>
+     *
+     * @param request immutable NPC/monster target request. Coordinates are logical map coordinates;
+     *                generated click points are screen-absolute through the existing smart-click
+     *                conversion path.
+     * @return true when the same smart-click pipeline causes combat to be detected; false when the
+     *         target is not clicked or combat is not confirmed.
+     */
+    public boolean tryDirectCombatTargetClick(NpcClickRequest request) {
+        if (request == null) {
+            log.warn("NPC direct-combat click requested with null request");
+            return false;
+        }
+        if (shouldStop()) {
+            return false;
+        }
+
+        boolean enteredMode = inputSequences.submitAndWait("npcClick:directCombat:enterAltA", List.of(
+                InputAction.pressAltA(),
+                InputAction.sleep(350)
+        ));
+        if (!enteredMode || shouldStop()) {
+            log.warn("NPC direct-combat click could not enter Alt+A mode: npcName={} enteredMode={}",
+                    request.npcName(), enteredMode);
+            return false;
+        }
+        log.info("NPC direct-combat click mode entered: npcName={} map={} target=({}, {}) modeLikely={}",
+                request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                gameStateUtil.isDirectCombatClickModeLikely("npc-direct-combat-entered"));
+
+        boolean clickedIntoCombat = runNpcClickPipeline(request, combatClickVerifier(), "direct-combat");
+        if (clickedIntoCombat || shouldStop()) {
+            return clickedIntoCombat;
+        }
+
+        boolean exited = exitDirectCombatClickModeAfterFailure(request);
+        if (!exited) {
+            throw new IllegalStateException("Direct combat click mode exit was not confirmed; abort follow-up cleanup/retry");
+        }
+        return false;
+    }
+
+    private boolean exitDirectCombatClickModeAfterFailure(NpcClickRequest request) {
+        if (shouldStop()) {
+            return false;
+        }
+
+        for (int attempt = 1; attempt <= DIRECT_COMBAT_EXIT_ATTEMPTS; attempt++) {
+            if (shouldStop()) {
+                return false;
+            }
+            Point exitPoint = findPlayerAnchorForDirectCombatExit(request);
+            if (exitPoint == null) {
+                WindowBase base = currentWindowBase("direct-combat-exit-fallback");
+                exitPoint = new Point(base.x() + WINDOW_WIDTH / 2, base.y() + WINDOW_HEIGHT / 2 + 40);
+                log.warn("NPC direct-combat exit attempt {} uses window-center fallback: npcName={} point=({}, {})",
+                        attempt, request.npcName(), exitPoint.x, exitPoint.y);
+            } else {
+                log.info("NPC direct-combat exit attempt {} uses purple/player anchor: npcName={} point=({}, {})",
+                        attempt, request.npcName(), exitPoint.x, exitPoint.y);
+            }
+            boolean submitted = inputSequences.submitAndWait("npcClick:directCombat:exitRightClick", List.of(
+                    InputAction.moveMouse(exitPoint.x, exitPoint.y),
+                    InputAction.sleep(120),
+                    InputAction.clickRight(exitPoint.x, exitPoint.y, 120),
+                    InputAction.sleep(600)
+            ));
+            if (!submitted) {
+                log.warn("NPC direct-combat exit right-click was not submitted: attempt={} npcName={}",
+                        attempt, request.npcName());
+                return false;
+            }
+            if (shouldStop()) {
+                return false;
+            }
+            boolean modeLikely = gameStateUtil.isDirectCombatClickModeLikely(
+                    "npc-direct-combat-exit-attempt-" + attempt);
+            log.info("NPC direct-combat exit verification: attempt={} modeLikely={}", attempt, modeLikely);
+            if (!modeLikely) {
+                return true;
+            }
+            TaskSleep.sleep(300);
+        }
+        log.error("NPC direct-combat exit not confirmed after {} attempts: npcName={} map={} target=({}, {})",
+                DIRECT_COMBAT_EXIT_ATTEMPTS, request.npcName(), request.mapName(), request.mapX(), request.mapY());
+        return false;
+    }
+
+    private Point findPlayerAnchorForDirectCombatExit(NpcClickRequest request) {
+        try {
+            LocationInfo playerLocation = cachedPlayerLocation(request);
+            List<ResolvedNpcClickRegion> regions = resolveNpcScanRegions(request, playerLocation);
+            if (regions == null || regions.isEmpty()) {
+                return null;
+            }
+            FormulaClickPrediction prediction = calculatePlayerAnchorFormulaPoint(
+                    request.player(), request.mapName(), request.mapX(), request.mapY(),
+                    request.npcName(), request.tuneX(), request.tuneY(), regions.get(0), playerLocation);
+            return prediction == null || prediction.playerAnchorAbs() == null
+                    ? null
+                    : new Point(prediction.playerAnchorAbs());
+        } catch (RuntimeException e) {
+            log.warn("NPC direct-combat exit anchor probe failed: npcName={} reason={}",
+                    request == null ? null : request.npcName(), e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private boolean runNpcClickPipeline(NpcClickRequest request,
+                                        NpcClickVerifier verifier,
+                                        String verificationMode) {
         long latencyStart = LatencyMetrics.start();
         boolean result = false;
         try {
@@ -726,13 +953,28 @@ public class NpcClickService {
                     request.roamingTarget(), summarizeRegions(targetScanRegions), request.expectedDialogTemplatePath());
 
             /*
+             * 五倍显形镜/白龙马这类目标可能被“位置不对/剧情”story 挡住身体，但任务 tooltip
+             * 仍然露在外面。它们先试 tooltip；普通 NPC 仍保持记忆点优先，避免影响已验证路径。
+             */
+            boolean storyPreparedForDirectSceneClick = false;
+            if (request.tooltipFirst()) {
+                NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions, verifier);
+                recordSmartClickEvidence(request, tooltipResult, playerLocation);
+                if (tooltipResult.verified()) {
+                    result = true;
+                    return true;
+                }
+                storyPreparedForDirectSceneClick = closeStoryBeforeDirectSceneClickIfRequested(request, "after-tooltip-first");
+            }
+
+            /*
              * 1. Fast remembered path: reuse a conservative learned click cluster for the same map/name/point.
              * If it misses, keep the attempted physical point as a Ctrl origin instead of throwing away
              * that evidence. Running this before tooltip matching makes it obvious in logs whether the
              * database/memory point is mature enough to replace screenshot matching for stable NPCs.
              */
             NpcClickStrategyResult learnedResult = clickNpcByLearnedMemory(request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), playerLocation, request.expectedDialogTemplatePath());
+                    request.npcName(), playerLocation, verifier);
             recordSmartClickEvidence(request, learnedResult, playerLocation);
             if (learnedResult.verified()) {
                 result = true;
@@ -741,16 +983,22 @@ public class NpcClickService {
             addCtrlProbeOrigin(ctrlProbeOrigins, learnedResult.clickPointAbs(),
                     "learned-memory", CtrlProbeScanProfile.SMALL_RING);
 
-            /*
-             * 2. Visible tooltip path: only targets that can show the standard task tooltip should
-             * try this. Fixed transfer NPCs such as 张闻 do not have that tooltip; probing it only
-             * delays the formula path that is already calibrated for them.
-             */
-            NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions);
-            recordSmartClickEvidence(request, tooltipResult, playerLocation);
-            if (tooltipResult.verified()) {
-                result = true;
-                return true;
+            if (!request.tooltipFirst()) {
+                /*
+                 * 2. Visible tooltip path: only targets that can show the standard task tooltip should
+                 * try this. Fixed transfer NPCs such as 张闻 do not have that tooltip; probing it only
+                 * delays the formula path that is already calibrated for them.
+                 */
+                NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions, verifier);
+                recordSmartClickEvidence(request, tooltipResult, playerLocation);
+                if (tooltipResult.verified()) {
+                    result = true;
+                    return true;
+                }
+            }
+
+            if (!storyPreparedForDirectSceneClick) {
+                closeStoryBeforeDirectSceneClickIfRequested(request, "before-player-anchor-formula");
             }
 
             /*
@@ -765,7 +1013,7 @@ public class NpcClickService {
                     request.player(), request.mapName(), request.mapX(), request.mapY(),
                     request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
             NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
-                    formulaPrediction, request.expectedDialogTemplatePath());
+                    formulaPrediction, verifier);
             recordSmartClickEvidence(request, formulaResult, playerLocation);
             if (formulaResult.verified()) {
                 result = true;
@@ -781,7 +1029,7 @@ public class NpcClickService {
                 addCtrlProbeOrigin(formulaCtrlOrigins, formulaPrediction.predictedClickAbs(),
                         "formula-target:immediate", CtrlProbeScanProfile.SMALL_RING);
                 NpcClickStrategyResult formulaCtrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
-                        request.expectedDialogTemplatePath(), formulaCtrlOrigins, false);
+                        verifier, formulaCtrlOrigins, false);
                 recordSmartClickEvidence(request, formulaCtrlResult, playerLocation);
                 if (formulaCtrlResult.verified()) {
                     result = true;
@@ -801,7 +1049,7 @@ public class NpcClickService {
                 log.info("NPC yellow target strategy region {}/{}: {}",
                         i + 1, targetScanRegions.size(), region.toShortText());
                 YellowTargetClickResult yellowResult = clickNpcByYellowTargetName(
-                        request, region);
+                        request, region, verifier);
                 recordSmartClickEvidence(request, yellowResult.evidence(), playerLocation);
                 if (yellowResult.status() == YellowTargetClickStatus.CLICK_VERIFIED) {
                     result = true;
@@ -826,7 +1074,7 @@ public class NpcClickService {
              * the same fallback queue.
              */
             NpcClickStrategyResult ctrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
-                    request.expectedDialogTemplatePath(), ctrlProbeOrigins);
+                    verifier, ctrlProbeOrigins);
             recordSmartClickEvidence(request, ctrlResult, playerLocation);
             if (ctrlResult.verified()) {
                 result = true;
@@ -848,8 +1096,19 @@ public class NpcClickService {
             String target = request == null ? "-" : request.npcName() + "@" + request.mapName()
                     + "(" + request.mapX() + "," + request.mapY() + ")";
             LatencyMetrics.info(log, "npc.click.smart", latencyStart,
-                    "result=" + result + " target=" + target);
+                    "result=" + result + " verification=" + verificationMode + " target=" + target);
         }
+    }
+
+    private boolean closeStoryBeforeDirectSceneClickIfRequested(NpcClickRequest request, String reason) {
+        if (request == null || !request.closeStoryBeforeDirectSceneClick()) {
+            return false;
+        }
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.clickStory(
+                "npc-click:close-story-before-direct:" + reason + ":" + request.npcName()));
+        log.info("NPC close story before direct scene click: npcName={} reason={} status={} type={}",
+                request.npcName(), reason, result.getStatus(), result.getDialogType());
+        return true;
     }
 
     /**
@@ -871,7 +1130,8 @@ public class NpcClickService {
      */
     private NpcClickStrategyResult clickNpcByTaskTooltipTemplate(
             NpcClickRequest request,
-            List<ResolvedNpcClickRegion> targetScanRegions) {
+            List<ResolvedNpcClickRegion> targetScanRegions,
+            NpcClickVerifier verifier) {
         if (request.tooltipType() == NpcTooltipType.NONE) {
             log.info("NPC task-tooltip template skipped: npcName={} tooltipType={}",
                     request.npcName(), request.tooltipType());
@@ -886,6 +1146,7 @@ public class NpcClickService {
                     "no-recommended-regions");
         }
 
+        NpcClickStrategyResult lastMiss = null;
         for (int i = 0; i < targetScanRegions.size(); i++) {
             if (shouldStop()) {
                 return NpcClickStrategyResult.failed(
@@ -902,44 +1163,61 @@ public class NpcClickService {
              * cheap and prevents a generic tooltip elsewhere in the client from becoming a click target.
              */
             int[] rect = region.screenRect();
-            Point matchedPoint = coordinateHelper.findImageInRegion(
-                    NPC_TASK_TOOLTIP_TEMPLATE_PATH, rect, NPC_TASK_TOOLTIP_MATCH_RATE);
-            log.info("NPC task-tooltip template region {}/{}: npcName={} region={} rect=[{},{},{},{}] match={}",
-                    i + 1, targetScanRegions.size(), request.npcName(), region.toShortText(),
-                    rect[0], rect[1], rect[2], rect[3], matchedPoint);
-            if (matchedPoint == null) {
+            String tooltipTemplatePath = tooltipTemplatePath(request);
+            List<Point> matchedPoints = coordinateHelper.findImagesInRegion(
+                    tooltipTemplatePath, rect, NPC_TASK_TOOLTIP_MATCH_RATE, NPC_TASK_TOOLTIP_DEDUP_DISTANCE_PX);
+            log.info("NPC task-tooltip template region {}/{}: npcName={} template={} region={} rect=[{},{},{},{}] matches={}",
+                    i + 1, targetScanRegions.size(), request.npcName(), tooltipTemplatePath,
+                    region.toShortText(), rect[0], rect[1], rect[2], rect[3], matchedPoints);
+            if (matchedPoints.isEmpty()) {
                 continue;
             }
 
             /*
-             * A template hit is a strong visual signal, but we still verify the business dialog after
-             * clicking. If the click does not open the expected dialog, later strategies still get a
-             * chance to recover through yellow OCR, formula, and finally Ctrl.
+             * A template hit is a strong visual signal, but adjacent NPC/task tooltips can coexist
+             * around 五倍 targets. Try every de-duplicated hit in score order and only fall through
+             * after all visible tooltip candidates fail the expected dialog verification.
              */
-            boolean verified = executeMoveClickAndVerify(
-                    "npcClick:taskTooltipTemplate",
-                    matchedPoint.x,
-                    matchedPoint.y,
-                    1200,
-                    0,
-                    request.expectedDialogTemplatePath());
-            log.info("NPC task-tooltip template click result: npcName={} point=({}, {}) verified={}",
-                    request.npcName(), matchedPoint.x, matchedPoint.y, verified);
-            return NpcClickStrategyResult.fromClick(
-                    NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
-                    verified ? NpcClickStrategyStatus.VERIFIED : NpcClickStrategyStatus.CLICK_NOT_VERIFIED,
-                    region.windowRegion(),
-                    templateMatchedRegion(matchedPoint, windowBase(region), NPC_TASK_TOOLTIP_TEMPLATE_PATH),
-                    directNpcPointFromTooltipCenter(matchedPoint),
-                    windowRelativePoint(directNpcPointFromTooltipCenter(matchedPoint), windowBase(region)),
-                    true,
-                    verified,
-                    verified ? "task-tooltip template verified; recordPoint=tooltipCenterY+90"
-                            : "task-tooltip clicked but expected dialog not verified; recordPoint=tooltipCenterY+90");
+            for (int matchIndex = 0; matchIndex < matchedPoints.size(); matchIndex++) {
+                Point matchedPoint = matchedPoints.get(matchIndex);
+                boolean verified = executeMoveClickAndVerify(
+                        "npcClick:taskTooltipTemplate#" + (matchIndex + 1),
+                        matchedPoint.x,
+                        matchedPoint.y,
+                        1200,
+                        0,
+                        verifier);
+                log.info("NPC task-tooltip template click result: npcName={} candidate={}/{} point=({}, {}) verified={}",
+                        request.npcName(), matchIndex + 1, matchedPoints.size(), matchedPoint.x, matchedPoint.y, verified);
+                lastMiss = NpcClickStrategyResult.fromClick(
+                        NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
+                        verified ? NpcClickStrategyStatus.VERIFIED : NpcClickStrategyStatus.CLICK_NOT_VERIFIED,
+                        region.windowRegion(),
+                        templateMatchedRegion(matchedPoint, windowBase(region), tooltipTemplatePath),
+                        directNpcPointFromTooltipCenter(matchedPoint),
+                        windowRelativePoint(directNpcPointFromTooltipCenter(matchedPoint), windowBase(region)),
+                        true,
+                        verified,
+                        verified ? "task-tooltip template verified; recordPoint=tooltipCenterY+90"
+                                : "task-tooltip clicked but expected dialog not verified; recordPoint=tooltipCenterY+90");
+                if (verified) {
+                    return lastMiss;
+                }
+            }
+        }
+        if (lastMiss != null) {
+            return lastMiss;
         }
         return NpcClickStrategyResult.notFound(
                 NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
                 "task-tooltip template not found");
+    }
+
+    private String tooltipTemplatePath(NpcClickRequest request) {
+        if (request.tooltipTemplatePath() == null || request.tooltipTemplatePath().isBlank()) {
+            return NPC_TASK_TOOLTIP_TEMPLATE_PATH;
+        }
+        return request.tooltipTemplatePath();
     }
 
     /**
@@ -1539,7 +1817,7 @@ public class NpcClickService {
                                                            int mapY,
                                                            String npcName,
                                                            LocationInfo playerLocation,
-                                                           String expectedDialogTemplatePath) {
+                                                           NpcClickVerifier verifier) {
         if (shouldStop()) {
             return NpcClickStrategyResult.failed(NpcClickStrategySource.LEARNED_MEMORY, "interrupted-before-learned-click");
         }
@@ -1561,7 +1839,7 @@ public class NpcClickService {
         int clickY = windowBase.y() + point.y();
         log.info("NPC learned click candidate: npcName={} {}", npcName, point.toSummaryText());
         boolean verified = executeMoveClickAndVerify("npcClick:learnedMemoryMoveClick",
-                clickX, clickY, 1200, 0, expectedDialogTemplatePath);
+                clickX, clickY, 1200, 0, verifier);
         if (!verified) {
             log.info("NPC learned click missed; fallback to OCR/formula strategies: npcName={} key={}",
                     npcName, point.key());
@@ -1596,7 +1874,8 @@ public class NpcClickService {
      */
     private YellowTargetClickResult clickNpcByYellowTargetName(
             NpcClickRequest request,
-            ResolvedNpcClickRegion scanRegion) {
+            ResolvedNpcClickRegion scanRegion,
+            NpcClickVerifier verifier) {
         if (shouldStop()) return YellowTargetClickResult.scanFailed();
         OcrWindowRegion targetScanRegion = scanRegion == null ? null : scanRegion.windowRegion();
         String outputPath = windowScopedTempPath.resolve("npc_yellow_target.png");
@@ -1637,6 +1916,12 @@ public class NpcClickService {
                             : YellowTargetClickResult.targetNotFoundWithCandidates(
                                     targetScanRegion, fallbackCandidates, result.normalizedText());
                 }
+                int minCommon = strictYellowTargetMinCommon(result.normalizedTarget());
+                if (minCommon > 0 && result.longestCommonSubstring() < minCommon) {
+                    log.info("NPC yellow target rejected by strict common rule: npcName={} normalizedText={} common={} required={}",
+                            npcName, result.normalizedText(), result.longestCommonSubstring(), minCommon);
+                    return YellowTargetClickResult.targetNotFound(targetScanRegion, result.normalizedText());
+                }
                 Point targetInScan = centerOfWords(result.lineResult().words());
                 if (targetInScan == null) {
                     return YellowTargetClickResult.scanFailed(
@@ -1658,7 +1943,7 @@ public class NpcClickService {
                  * a delayed dialog/network response while a wider region may introduce another NPC.
                  */
                 boolean verified = executeMoveClickAndVerify("npcClick:yellowTargetMoveClick",
-                        clickX, clickY, 2000, YELLOW_TARGET_CLICK_RETRIES, request.expectedDialogTemplatePath());
+                        clickX, clickY, 2000, YELLOW_TARGET_CLICK_RETRIES, verifier);
                 return new YellowTargetClickResult(
                         verified ? YellowTargetClickStatus.CLICK_VERIFIED : YellowTargetClickStatus.CLICK_NOT_VERIFIED,
                         new Point(clickX, clickY),
@@ -1685,6 +1970,13 @@ public class NpcClickService {
             }
             raw.flush();
         }
+    }
+
+    private int strictYellowTargetMinCommon(String normalizedTarget) {
+        if (STRICT_YELLOW_TARGET_JIANGMO_SHIWEI.equals(normalizedTarget)) {
+            return STRICT_YELLOW_TARGET_JIANGMO_SHIWEI_MIN_COMMON;
+        }
+        return 0;
     }
 
     /**
@@ -2134,7 +2426,7 @@ public class NpcClickService {
      * @return structured evidence. A skipped result means formula input was unavailable.
      */
     private NpcClickStrategyResult clickNpcByPlayerAnchorFormula(FormulaClickPrediction prediction,
-                                                                 String expectedDialogTemplatePath) {
+                                                                 NpcClickVerifier verifier) {
         if (shouldStop()) {
             return NpcClickStrategyResult.failed(
                     NpcClickStrategySource.PLAYER_ANCHOR_FORMULA,
@@ -2147,7 +2439,7 @@ public class NpcClickService {
         }
         Point target = prediction.predictedClickAbs();
         boolean firstShotOk = executeMoveClickAndVerify("npcClick:firstShotMoveClick",
-                target.x, target.y, 1500, 0, expectedDialogTemplatePath);
+                target.x, target.y, 1500, 0, verifier);
         if (!firstShotOk) {
             TaskSleep.sleep(1500);
         }
@@ -2515,6 +2807,11 @@ public class NpcClickService {
 
         int tuneY;
 
+    }
+
+    @FunctionalInterface
+    private interface NpcClickVerifier {
+        boolean verify(String reason);
     }
 
     /**

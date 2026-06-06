@@ -25,11 +25,19 @@ import java.util.function.Supplier;
 @RequiredArgsConstructor
 public class TaskTurnCoordinator {
 
+    private static final long SLOW_TURN_THRESHOLD_MS = 3_000L;
+
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final ReentrantLock turnLock = new ReentrantLock(true);
     private final ThreadLocal<Integer> holdDepth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<String> heldWindowId = new ThreadLocal<>();
+    private final ThreadLocal<Long> heldStartedAt = new ThreadLocal<>();
     private final ThreadLocal<Boolean> optionalTryRunHold = ThreadLocal.withInitial(() -> false);
+    private volatile long lastReleaseAt;
+    private volatile String lastReleaseWindowId = "-";
+    private volatile String lastReleaseTransaction = "-";
+    private volatile String lastReleaseResult = "-";
+    private volatile int lastReleaseQueuedWaiters;
 
     /**
      * Acquire the task turn for the current bound window.
@@ -50,6 +58,7 @@ public class TaskTurnCoordinator {
         }
 
         String windowId = currentWindowId();
+        long waitStartedAt = System.currentTimeMillis();
         log.info("task turn waiting: windowId={} transaction={}", windowId, transactionName);
         try {
             turnLock.lockInterruptibly();
@@ -57,9 +66,33 @@ public class TaskTurnCoordinator {
             Thread.currentThread().interrupt();
             throw new TaskStopRequestedException("Interrupted while waiting for task turn: " + transactionName);
         }
+        long acquiredAt = System.currentTimeMillis();
         holdDepth.set(1);
         heldWindowId.set(windowId);
-        log.info("task turn acquired: windowId={} transaction={}", windowId, transactionName);
+        heldStartedAt.set(acquiredAt);
+        long waitMs = acquiredAt - waitStartedAt;
+        long afterReleaseMs = lastReleaseAt <= 0L ? -1L : Math.max(0L, acquiredAt - lastReleaseAt);
+        boolean sameAsLastRelease = windowId.equals(lastReleaseWindowId);
+        log.info("[latency] event=task.turn.handoff windowId={} transaction={} waitMs={} afterReleaseMs={} "
+                        + "previousWindowId={} previousTransaction={} previousResult={} sameAsPrevious={} "
+                        + "previousQueuedWaiters={} queuedWaitersNow={}",
+                windowId, transactionName, waitMs, afterReleaseMs, lastReleaseWindowId,
+                lastReleaseTransaction, lastReleaseResult, sameAsLastRelease, lastReleaseQueuedWaiters,
+                turnLock.getQueueLength());
+        String handoffDetail = " afterReleaseMs=" + afterReleaseMs
+                + " previousWindowId=" + lastReleaseWindowId
+                + " previousTransaction=" + lastReleaseTransaction
+                + " previousResult=" + lastReleaseResult
+                + " sameAsPrevious=" + sameAsLastRelease
+                + " previousQueuedWaiters=" + lastReleaseQueuedWaiters
+                + " queuedWaitersNow=" + turnLock.getQueueLength();
+        if (waitMs > SLOW_TURN_THRESHOLD_MS) {
+            log.warn("task turn acquired slowly: windowId={} transaction={} waitMs={} thresholdMs={}{}",
+                    windowId, transactionName, waitMs, SLOW_TURN_THRESHOLD_MS, handoffDetail);
+        } else {
+            log.info("task turn acquired: windowId={} transaction={} waitMs={}{}",
+                    windowId, transactionName, waitMs, handoffDetail);
+        }
     }
 
     /**
@@ -119,6 +152,7 @@ public class TaskTurnCoordinator {
 
         holdDepth.set(1);
         heldWindowId.set(windowId);
+        heldStartedAt.set(System.currentTimeMillis());
         optionalTryRunHold.set(true);
         log.debug("task turn acquired: windowId={} transaction={}", windowId, transactionName);
         try {
@@ -150,19 +184,41 @@ public class TaskTurnCoordinator {
         }
         String windowId = heldWindowId.get();
         boolean optionalTryRun = Boolean.TRUE.equals(optionalTryRunHold.get());
+        Long startedAt = heldStartedAt.get();
+        long heldMs = startedAt == null ? -1L : Math.max(0L, System.currentTimeMillis() - startedAt);
+        int queuedWaiters = turnLock.getQueueLength();
+        lastReleaseAt = System.currentTimeMillis();
+        lastReleaseWindowId = windowId == null ? "-" : windowId;
+        lastReleaseTransaction = outcome == null ? reason : outcome.name();
+        lastReleaseResult = outcome == null ? "force" : outcome.result().name();
+        lastReleaseQueuedWaiters = queuedWaiters;
         holdDepth.remove();
         heldWindowId.remove();
+        heldStartedAt.remove();
         optionalTryRunHold.remove();
         turnLock.unlock();
+        log.info("[latency] event=task.turn.release windowId={} reason={} transaction={} result={} "
+                        + "yieldPolicy={} heldMs={} queuedWaiters={} optionalTryRun={}",
+                windowId, reason, outcome == null ? "-" : outcome.name(),
+                outcome == null ? "force" : outcome.result(),
+                outcome == null ? "-" : outcome.yieldPolicy(), heldMs, queuedWaiters, optionalTryRun);
         if (outcome == null) {
             if (optionalTryRun) {
-                log.debug("task turn released: windowId={} reason={}", windowId, reason);
+                log.debug("task turn released: windowId={} reason={} heldMs={} queuedWaiters={}",
+                        windowId, reason, heldMs, queuedWaiters);
+            } else if (heldMs > SLOW_TURN_THRESHOLD_MS) {
+                log.warn("task turn released after slow hold: windowId={} reason={} heldMs={} thresholdMs={} queuedWaiters={}",
+                        windowId, reason, heldMs, SLOW_TURN_THRESHOLD_MS, queuedWaiters);
             } else {
-                log.info("task turn released: windowId={} reason={}", windowId, reason);
+                log.info("task turn released: windowId={} reason={} heldMs={} queuedWaiters={}",
+                        windowId, reason, heldMs, queuedWaiters);
             }
+        } else if (heldMs > SLOW_TURN_THRESHOLD_MS) {
+            log.warn("task turn released after slow hold: windowId={} transaction={} result={} yieldPolicy={} heldMs={} thresholdMs={} queuedWaiters={}",
+                    windowId, outcome.name(), outcome.result(), outcome.yieldPolicy(), heldMs, SLOW_TURN_THRESHOLD_MS, queuedWaiters);
         } else {
-            log.info("task turn released: windowId={} transaction={} result={} yieldPolicy={}",
-                    windowId, outcome.name(), outcome.result(), outcome.yieldPolicy());
+            log.info("task turn released: windowId={} transaction={} result={} yieldPolicy={} heldMs={} queuedWaiters={}",
+                    windowId, outcome.name(), outcome.result(), outcome.yieldPolicy(), heldMs, queuedWaiters);
         }
     }
 

@@ -84,6 +84,12 @@ public class NpcTarget {
     String expectedDialogTemplatePath;
 
     /**
+     * Optional visual tooltip template above this target. Null falls back to the standard task
+     * tooltip template in {@code NpcClickService}.
+     */
+    String tooltipTemplatePath;
+
+    /**
      * Tooltip style expected above this target. Use {@link NpcTooltipType#NONE} for fixed transfer
      * NPCs such as 张闻 where probing for a task tooltip only wastes time before formula/OCR paths.
      */
@@ -104,7 +110,18 @@ public class NpcTarget {
      */
     public NpcClickRequest toClickRequest(PlayerCharacter player) {
         boolean roaming = movementType == NpcMovementType.ROAMING || movementType == NpcMovementType.FLOATING;
-        return new NpcClickRequest(player, mapName, x, y, name, tuneX, tuneY,
-                expectedDialogTemplatePath, roaming, tooltipType);
+        return NpcClickRequest.builder()
+                .player(player)
+                .mapName(mapName)
+                .mapX(x)
+                .mapY(y)
+                .npcName(name)
+                .tuneX(tuneX)
+                .tuneY(tuneY)
+                .expectedDialogTemplatePath(expectedDialogTemplatePath)
+                .roamingTarget(roaming)
+                .tooltipType(tooltipType)
+                .tooltipTemplatePath(tooltipTemplatePath)
+                .build();
     }
 }

@@ -11,21 +11,25 @@ import org.springframework.stereotype.Service;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Windows global emergency stop hotkey.
+ * Windows global task-control hotkeys.
  *
+ * Ctrl + Shift + F11 toggles pause/resume for all registered window tasks.
  * Ctrl + Shift + F12 stops all registered window tasks.
  */
 @Slf4j
 @Service("inputGlobalEmergencyStopHotkeyService")
 public class GlobalEmergencyStopHotkeyService {
 
+    private static final int HOTKEY_ID_PAUSE_ALL = 0x0F11;
     private static final int HOTKEY_ID_EMERGENCY_STOP = 0x0F12;
     private static final int MOD_CONTROL = 0x0002;
     private static final int MOD_SHIFT = 0x0004;
     private static final int MOD_NOREPEAT = 0x4000;
-    private static final int EMERGENCY_STOP_MODIFIERS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
+    private static final int TASK_CONTROL_MODIFIERS = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT;
+    private static final int VK_F11 = 0x7A;
     private static final int VK_F12 = 0x7B;
-    private static final String HOTKEY_TEXT = "Ctrl+Shift+F12";
+    private static final String PAUSE_HOTKEY_TEXT = "Ctrl+Shift+F11";
+    private static final String STOP_HOTKEY_TEXT = "Ctrl+Shift+F12";
 
     private final WindowTaskControlService windowTaskControlService;
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -39,7 +43,7 @@ public class GlobalEmergencyStopHotkeyService {
 
     public void start() {
         if (!isWindows()) {
-            log.info("Current system is not Windows, skip {} emergency stop hotkey registration.", HOTKEY_TEXT);
+            log.info("Current system is not Windows, skip global task hotkey registration.");
             return;
         }
         if (!started.compareAndSet(false, true)) {
@@ -56,6 +60,7 @@ public class GlobalEmergencyStopHotkeyService {
         running.set(false);
         started.set(false);
         try {
+            User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_PAUSE_ALL);
             User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP);
         } catch (Exception ignored) {
             // JVM shutdown should not surface extra hotkey cleanup noise.
@@ -70,14 +75,21 @@ public class GlobalEmergencyStopHotkeyService {
     }
 
     private void runHotkeyLoop() {
-        boolean registered = false;
+        boolean pauseRegistered = false;
+        boolean stopRegistered = false;
         try {
-            registered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP, EMERGENCY_STOP_MODIFIERS, VK_F12);
-            if (!registered) {
-                log.warn("{} emergency stop hotkey registration failed; it may be used by another program.", HOTKEY_TEXT);
+            pauseRegistered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_PAUSE_ALL, TASK_CONTROL_MODIFIERS, VK_F11);
+            if (!pauseRegistered) {
+                log.warn("{} pause hotkey registration failed; it may be used by another program.", PAUSE_HOTKEY_TEXT);
+            }
+            stopRegistered = User32.INSTANCE.RegisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP, TASK_CONTROL_MODIFIERS, VK_F12);
+            if (!stopRegistered) {
+                log.warn("{} emergency stop hotkey registration failed; it may be used by another program.", STOP_HOTKEY_TEXT);
+            }
+            if (!pauseRegistered && !stopRegistered) {
                 return;
             }
-            log.info("Registered global emergency stop hotkey: {}", HOTKEY_TEXT);
+            log.info("Registered global task hotkeys: pause={} stop={}", pauseRegistered, stopRegistered);
 
             WinUser.MSG msg = new WinUser.MSG();
             while (running.get()) {
@@ -85,30 +97,48 @@ public class GlobalEmergencyStopHotkeyService {
                 if (result <= 0) {
                     break;
                 }
-                if (msg.message == WinUser.WM_HOTKEY && msg.wParam.intValue() == HOTKEY_ID_EMERGENCY_STOP) {
-                    triggerEmergencyStop();
+                if (msg.message == WinUser.WM_HOTKEY) {
+                    int hotkeyId = msg.wParam.intValue();
+                    if (hotkeyId == HOTKEY_ID_PAUSE_ALL) {
+                        triggerPauseAll();
+                    } else if (hotkeyId == HOTKEY_ID_EMERGENCY_STOP) {
+                        triggerEmergencyStop();
+                    }
                 }
             }
         } catch (Exception e) {
-            log.error("{} emergency stop hotkey thread error", HOTKEY_TEXT, e);
+            log.error("Global task hotkey thread error", e);
         } finally {
-            if (registered) {
+            if (pauseRegistered) {
+                User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_PAUSE_ALL);
+            }
+            if (stopRegistered) {
                 User32.INSTANCE.UnregisterHotKey(null, HOTKEY_ID_EMERGENCY_STOP);
             }
             running.set(false);
             started.set(false);
-            log.info("{} emergency stop hotkey released.", HOTKEY_TEXT);
+            log.info("Global task hotkeys released.");
         }
     }
 
+    private void triggerPauseAll() {
+        log.warn("{} pause/resume hotkey triggered: toggling all window tasks...", PAUSE_HOTKEY_TEXT);
+        try {
+            windowTaskControlService.togglePauseResumeAll();
+        } catch (Exception e) {
+            log.warn("{} pause/resume hotkey failed while toggling window tasks", PAUSE_HOTKEY_TEXT, e);
+        }
+        log.warn("{} pause/resume request sent.", PAUSE_HOTKEY_TEXT);
+    }
+
     private void triggerEmergencyStop() {
-        log.warn("{} emergency stop triggered: stopping all window tasks...", HOTKEY_TEXT);
+        log.warn("{} emergency stop triggered: stopping all window tasks...", STOP_HOTKEY_TEXT);
         try {
             windowTaskControlService.stopAll();
         } catch (Exception e) {
-            log.warn("{} emergency stop failed while stopping window tasks", HOTKEY_TEXT, e);
+            log.warn("{} emergency stop failed while stopping window tasks", STOP_HOTKEY_TEXT, e);
         }
-        log.warn("{} emergency stop request sent.", HOTKEY_TEXT);
+        log.warn("{} emergency stop request sent.", STOP_HOTKEY_TEXT);
     }
 
     private boolean isWindows() {

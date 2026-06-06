@@ -82,6 +82,13 @@ public class NavigationResult {
                 .build();
     }
 
+    public static NavigationResult dialogPreparing(String message) {
+        return NavigationResult.builder()
+                .status(NavigationResultStatus.DIALOG_PREPARING)
+                .message(message)
+                .build();
+    }
+
     public boolean success() {
         return status == NavigationResultStatus.SUCCESS
                 || status == NavigationResultStatus.ARRIVED

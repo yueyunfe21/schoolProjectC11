@@ -10,6 +10,10 @@ import java.util.List;
 @Value
 @Builder
 public class DialogHandleRequest {
+    private static final String WUHUAN_SHOE_SHOP_BUY_OPTION_TEMPLATE =
+            "images/template/dialog/wuhuan/wuhuan_shop_buy_option.png";
+    private static final String WUHUAN_SHOE_SHOP_BUY_OPTION_KEYWORD = "买点";
+
     String sourceTask;
     DialogOperation operation;
     Point initialClick;
@@ -183,6 +187,25 @@ public class DialogHandleRequest {
                 .build();
     }
 
+    public static DialogHandleRequest handleWuhuanShoeShopBuyOption(String sourceTask) {
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.WUHUAN_SHOE_SHOP_BUY_OPTION)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(DialogOptionPolicy.CLICK_GREEN_TEMPLATE)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .targetKeyword(WUHUAN_SHOE_SHOP_BUY_OPTION_KEYWORD)
+                .greenTemplateSpecs(List.of(new GreenTemplateClickSpec(
+                        "wuhuan.shoeShopBuyOption",
+                        WUHUAN_SHOE_SHOP_BUY_OPTION_TEMPLATE,
+                        -3,
+                        3,
+                        1)))
+                .verifyDialogType(true)
+                .allowFallbackOptionClick(false)
+                .build();
+    }
+
     public static DialogHandleRequest verifyExpectedOptionDialog(String sourceTask, String expectedGreenTemplatePath) {
         DialogOptionPolicy optionPolicy = expectedGreenTemplatePath == null || expectedGreenTemplatePath.isBlank()
                 ? DialogOptionPolicy.VERIFY_OPTION
@@ -190,6 +213,28 @@ public class DialogHandleRequest {
         List<GreenTemplateClickSpec> specs = expectedGreenTemplatePath == null || expectedGreenTemplatePath.isBlank()
                 ? null
                 : List.of(new GreenTemplateClickSpec("expectedDialog", expectedGreenTemplatePath, 0, 0, 0));
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.VERIFY_EXPECTED_DIALOG)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(optionPolicy)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .greenTemplateSpecs(specs)
+                .verifyDialogType(true)
+                .build();
+    }
+
+    public static DialogHandleRequest verifyExpectedOptionDialog(String sourceTask,
+                                                                 List<String> expectedGreenTemplatePaths) {
+        List<GreenTemplateClickSpec> specs = expectedGreenTemplatePaths == null
+                ? List.of()
+                : expectedGreenTemplatePaths.stream()
+                .filter(path -> path != null && !path.isBlank())
+                .map(path -> new GreenTemplateClickSpec("expectedDialog", path, 0, 0, 0))
+                .toList();
+        DialogOptionPolicy optionPolicy = specs.isEmpty()
+                ? DialogOptionPolicy.VERIFY_OPTION
+                : DialogOptionPolicy.VERIFY_GREEN_TEMPLATE;
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.VERIFY_EXPECTED_DIALOG)

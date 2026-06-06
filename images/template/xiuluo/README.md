@@ -27,10 +27,10 @@ java -cp scripts BuildXiuluoTemplates
 
 输出：
 
-- `images/template/dialog/xiuluo_accept_xianlaiwu.png`
-- `images/template/dialog/xiuluo_cancel_task.png`
-- `images/template/dialog/xiuluo_underfive_confirm.png`
-- `images/template/dialog/xiuluo_underfive_wait.png`
-- `images/template/dialog/xiuluo_enter_battle_kanda.png`
+- `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png`
+- `images/template/dialog/xiuluo/xiuluo_cancel_task.png`
+- `images/template/dialog/xiuluo/xiuluo_underfive_confirm.png`
+- `images/template/dialog/xiuluo/xiuluo_underfive_wait.png`
+- `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png`
 - `images/template/item/xiuluo_return_item.png`
 - `images/template/npc/npc_tag.png`

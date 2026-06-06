@@ -1,6 +1,8 @@
 package com.bot.dhxy.task.transaction;
 
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.metrics.AutomationMetricsService;
+import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.LatencyMetrics;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +28,8 @@ public class TaskTransactionRunner {
 
     private final InputSequences inputSequences;
     private final TaskTurnCoordinator taskTurnCoordinator;
+    private final TaskExecutionContextHolder taskExecutionContextHolder;
+    private final AutomationMetricsService automationMetricsService;
 
     /**
      * Run a transaction while holding the task turn.
@@ -44,6 +48,8 @@ public class TaskTransactionRunner {
                                       Supplier<TaskTransactionResult> action) {
         long latencyStart = LatencyMetrics.start();
         taskTurnCoordinator.enter(name);
+        log.info("task transaction started: name={} expected={} yieldPolicy={} exclusive=false",
+                name, expectedResult, yieldPolicy);
         TaskTransactionOutcome outcome = null;
         try {
             TaskTransactionResult result = safeRun(name, action);
@@ -52,10 +58,13 @@ public class TaskTransactionRunner {
                     name, expectedResult, result, yieldPolicy);
             return outcome;
         } finally {
+            long elapsedMs = LatencyMetrics.elapsedMs(latencyStart);
             LatencyMetrics.info(log, "task.transaction", latencyStart,
                     "name=" + name + " result=" + (outcome == null ? "EXCEPTION" : outcome.result())
                             + " completed=" + (outcome != null && outcome.completed())
                             + " exclusive=false");
+            automationMetricsService.recordTransaction(taskExecutionContextHolder.current().orElse(null),
+                    name, expectedResult, yieldPolicy, outcome, elapsedMs, false);
             taskTurnCoordinator.leave(outcome);
         }
     }
@@ -77,6 +86,8 @@ public class TaskTransactionRunner {
                                                Supplier<TaskTransactionResult> action) {
         long latencyStart = LatencyMetrics.start();
         taskTurnCoordinator.enter(name);
+        log.info("task transaction started: name={} expected={} yieldPolicy={} exclusive=true",
+                name, expectedResult, yieldPolicy);
         TaskTransactionOutcome outcome = null;
         try {
             AtomicReference<TaskTransactionResult> result = new AtomicReference<>(TaskTransactionResult.FAILED);
@@ -97,10 +108,13 @@ public class TaskTransactionRunner {
                     name, expectedResult, finalResult, yieldPolicy, completed);
             return outcome;
         } finally {
+            long elapsedMs = LatencyMetrics.elapsedMs(latencyStart);
             LatencyMetrics.info(log, "task.transaction", latencyStart,
                     "name=" + name + " result=" + (outcome == null ? "EXCEPTION" : outcome.result())
                             + " completed=" + (outcome != null && outcome.completed())
                             + " exclusive=true");
+            automationMetricsService.recordTransaction(taskExecutionContextHolder.current().orElse(null),
+                    name, expectedResult, yieldPolicy, outcome, elapsedMs, true);
             taskTurnCoordinator.leave(outcome);
         }
     }
@@ -127,6 +141,9 @@ public class TaskTransactionRunner {
                 return TaskTransactionResult.STOPPED;
             }
             log.error("task transaction exception: name={}", name, e);
+            throw e;
+        } catch (Error e) {
+            log.error("task transaction fatal error: name={}", name, e);
             throw e;
         }
     }

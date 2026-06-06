@@ -1,0 +1,61 @@
+package com.bot.dhxy.window.model;
+
+import lombok.Builder;
+import lombok.Value;
+
+/**
+ * Latest window-level observation for a registered pathing intent.
+ */
+@Value
+@Builder(toBuilder = true)
+public class WindowPathingSnapshot {
+    @Builder.Default
+    WindowPathingState state = WindowPathingState.NONE;
+    WindowPathingIntent intent;
+    String currentMapName;
+    Integer currentX;
+    Integer currentY;
+    String message;
+    /**
+     * Wall-clock time when the observed map/coordinate last changed.
+     *
+     * <p>This is intentionally separate from {@link #updatedAtMs}: the watcher may refresh
+     * the same pixels every second, but pathing should be considered stopped if the location
+     * itself has not changed for the stopped-away threshold.</p>
+     */
+    @Builder.Default
+    long locationChangedAtMs = System.currentTimeMillis();
+    @Builder.Default
+    long updatedAtMs = System.currentTimeMillis();
+    /**
+     * Wall-clock time when the current background mini-map probe started.
+     *
+     * <p>This is a watcher lifecycle marker only. A probe start must not refresh
+     * {@link #updatedAtMs}, because no new map/coordinate observation has been produced yet.</p>
+     */
+    @Builder.Default
+    long probeStartedAtMs = 0L;
+    /**
+     * Wall-clock time when the latest background mini-map probe completed.
+     */
+    @Builder.Default
+    long probeFinishedAtMs = 0L;
+    /**
+     * True while the watcher is currently spending time in screenshot/template/OCR work.
+     */
+    @Builder.Default
+    boolean probeInProgress = false;
+
+    public static WindowPathingSnapshot idle() {
+        return WindowPathingSnapshot.builder()
+                .state(WindowPathingState.NONE)
+                .message("no active pathing intent")
+                .build();
+    }
+
+    public boolean hasActiveIntent() {
+        return intent != null
+                && state != WindowPathingState.NONE
+                && state != WindowPathingState.ARRIVED;
+    }
+}
