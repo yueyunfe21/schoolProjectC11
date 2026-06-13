@@ -6,6 +6,7 @@ import com.bot.dhxy.model.dialog.DialogPreparationPhase;
 import com.bot.dhxy.model.dialog.DialogPreparationStatus;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.navigation.PendingTransferChoiceMemory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
@@ -51,6 +52,7 @@ public class WindowRuntimeContext {
             new AtomicReference<>(WindowPathingSnapshot.idle());
     private final AtomicReference<DialogPreparationRequest> dialogPreparationRequest = new AtomicReference<>();
     private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
+    private final AtomicReference<PendingTransferChoiceMemory> pendingTransferChoiceMemory = new AtomicReference<>();
     private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
             new AtomicReference<>(DialogPreparationStatus.none());
 
@@ -136,6 +138,8 @@ public class WindowRuntimeContext {
 
     public PreparedDialogAction getPreparedDialogAction() { return preparedDialogAction.get(); }
 
+    public PendingTransferChoiceMemory getPendingTransferChoiceMemory() { return pendingTransferChoiceMemory.get(); }
+
     public DialogPreparationStatus getDialogPreparationStatus() { return dialogPreparationStatus.get(); }
 
     public void updateDialogPreparationRequest(DialogPreparationRequest request) {
@@ -220,6 +224,23 @@ public class WindowRuntimeContext {
         }
     }
 
+    /**
+     * Remember a route-dialog option click until the pathing watcher proves the target map changed.
+     *
+     * @param memory clicked route option metadata. Null clears the pending record.
+     */
+    public void updatePendingTransferChoiceMemory(PendingTransferChoiceMemory memory) {
+        pendingTransferChoiceMemory.set(memory);
+    }
+
+    public PendingTransferChoiceMemory consumePendingTransferChoiceMemory() {
+        return pendingTransferChoiceMemory.getAndSet(null);
+    }
+
+    public void clearPendingTransferChoiceMemory(String reason) {
+        pendingTransferChoiceMemory.set(null);
+    }
+
     public Optional<WindowPathingIntent> getActivePathingIntent() {
         WindowPathingSnapshot snapshot = pathingSnapshot.get();
         if (snapshot == null || !snapshot.hasActiveIntent()) {
@@ -261,11 +282,43 @@ public class WindowRuntimeContext {
         }
     }
 
+    /**
+     * Mark that the current pathing handoff may have left a foreground UI blocker, such as the
+     * Alt+1 mini-map panel, on this window. The watcher still owns movement observation; the task
+     * phase consumes this flag before business clicks that must not be covered by stale UI.
+     *
+     * @param reason diagnostic reason written into the per-window pathing snapshot.
+     */
+    public void markPathingUiCleanupRecommended(String reason) {
+        WindowPathingSnapshot snapshot = pathingSnapshot.get();
+        if (snapshot == null || snapshot.getState() == WindowPathingState.NONE) {
+            return;
+        }
+        pathingSnapshot.set(snapshot.toBuilder()
+                .uiCleanupRecommended(true)
+                .uiCleanupReason(normalize(reason))
+                .uiCleanupRecommendedAtMs(System.currentTimeMillis())
+                .build());
+    }
+
+    public void clearPathingUiCleanupRecommendation(String reason) {
+        WindowPathingSnapshot snapshot = pathingSnapshot.get();
+        if (snapshot == null || !snapshot.isUiCleanupRecommended()) {
+            return;
+        }
+        pathingSnapshot.set(snapshot.toBuilder()
+                .uiCleanupRecommended(false)
+                .uiCleanupReason(normalize(reason))
+                .uiCleanupRecommendedAtMs(0L)
+                .build());
+    }
+
     public void clearPathingSignal(String reason) {
         pathingSnapshot.set(WindowPathingSnapshot.builder()
                 .state(WindowPathingState.NONE)
                 .message(normalize(reason))
                 .build());
+        clearPendingTransferChoiceMemory("pathing signal cleared");
     }
 
     public void markQueued(TaskType taskType) {

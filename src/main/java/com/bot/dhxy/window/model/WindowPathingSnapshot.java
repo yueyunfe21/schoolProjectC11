@@ -45,6 +45,16 @@ public class WindowPathingSnapshot {
      */
     @Builder.Default
     boolean probeInProgress = false;
+    /**
+     * True when the foreground navigation handoff intentionally left a UI overlay in an uncertain
+     * state. The task that consumes this pathing snapshot should run a boundary cleanup before
+     * doing NPC/dialog business clicks.
+     */
+    @Builder.Default
+    boolean uiCleanupRecommended = false;
+    String uiCleanupReason;
+    @Builder.Default
+    long uiCleanupRecommendedAtMs = 0L;
 
     public static WindowPathingSnapshot idle() {
         return WindowPathingSnapshot.builder()

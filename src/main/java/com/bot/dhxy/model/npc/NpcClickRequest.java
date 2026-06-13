@@ -7,6 +7,7 @@ import lombok.Value;
 import lombok.experimental.Accessors;
 
 import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.task.model.TaskType;
 
 import java.util.List;
 
@@ -41,6 +42,14 @@ import java.util.List;
  * @param closeStoryBeforeDirectSceneClick true when a task allows clicking through a blocking story
  *                                        dialog before direct body/name click strategies. Tooltip
  *                                        matching still runs first when {@code tooltipFirst} is true.
+ * @param targetEvidence whether task logic already confirmed the target exists, or is only probing
+ *                       a possible target. This lets the smart-click pipeline keep confirmed combat
+ *                       clicks thorough while making speculative fallbacks cheap.
+ * @param targetRole whether this request is clicking a combat target, a task giver, or another
+ *                   interaction NPC. The smart-click pipeline uses this for strategy/log decisions
+ *                   that differ between entering battle and opening ordinary NPC dialogs.
+ * @param sourceTask task that produced this request, for example 五环/五倍/修罗. This is diagnostic
+ *                   and allows task-scoped strategy tuning without guessing from NPC names.
  */
 @Value
 @Builder
@@ -65,6 +74,12 @@ public class NpcClickRequest {
     boolean tooltipFirst = false;
     @Builder.Default
     boolean closeStoryBeforeDirectSceneClick = false;
+    @Builder.Default
+    NpcTargetEvidence targetEvidence = NpcTargetEvidence.CONFIRMED;
+    @Builder.Default
+    NpcRole targetRole = NpcRole.INTERACTION_TARGET;
+    @Builder.Default
+    TaskType sourceTask = TaskType.UNKNOWN;
 
     /**
      * Build a fixed-coordinate target request. OCR regions are resolved later by vision memory.

@@ -727,7 +727,7 @@ public class DebugNavigationStressTask implements GameTask {
                             state.completeCurrentTarget(context);
                             return state.isFinished() ? TaskTransactionResult.TASK_FINISHED : TaskTransactionResult.READY_TO_CONTINUE;
                         }
-                        boolean moving = gameStateUtil.confirmPathingStartedByEdgePixelDiff(
+                        boolean moving = gameStateUtil.isMovingByPixelDiff(
                                 "nav-stress-active-stalled:" + target.sequence);
                         if (moving) {
                             log.info("{} [nav-stress-latency] active observer looked stalled, but edge pixels still confirm movement: target={} current={}({}, {}) observedStationaryMs={} wallStationaryMs={} snapshotAgeMs={} probeMs={}",
@@ -837,7 +837,7 @@ public class DebugNavigationStressTask implements GameTask {
                                     OBSERVER_SNAPSHOT_MAX_AGE_MS);
                         } else {
 
-                            boolean moving = gameStateUtil.confirmPathingStartedByEdgePixelDiff(
+                            boolean moving = gameStateUtil.isMovingByPixelDiff(
                                     "nav-stress-observer-unknown:" + target.sequence);
                             if (moving) {
                                 log.info("{} [nav-stress-latency] observer unknown but edge pixels still confirm movement: target={} stationaryMs={}",
@@ -1398,8 +1398,6 @@ public class DebugNavigationStressTask implements GameTask {
                     .targetX(x)
                     .targetY(y)
                     .targetName(name)
-                    .returnOnPathingStarted(true)
-                    .publishWindowPathingIntent(true)
                     .arrivalTolerance(TARGET_REACHED_TOLERANCE)
                     .source(source)
                     .build();

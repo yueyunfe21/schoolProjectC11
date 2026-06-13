@@ -1,5 +1,7 @@
 package com.bot.dhxy.service;
 
+import com.bot.dhxy.model.npc.NpcTargetEvidence;
+import com.bot.dhxy.task.model.TaskType;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,6 +28,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
@@ -152,20 +155,6 @@ public class NpcClickService {
     private static final int NPC_LEFT_CLICK_HOLD_MS = 150;
     private static final int DIRECT_COMBAT_EXIT_ATTEMPTS = 3;
 
-    private boolean executeMoveClickAndVerify(String description, int x, int y, long firstWaitMs, int maxRetries) {
-        return executeMoveClickAndVerify(description, x, y, firstWaitMs, maxRetries, (String) null);
-    }
-
-    private boolean executeMoveClickAndVerify(
-            String description,
-            int x,
-            int y,
-            long firstWaitMs,
-            int maxRetries,
-            String expectedDialogTemplatePath) {
-        return executeMoveClickAndVerify(description, x, y, firstWaitMs, maxRetries,
-                dialogClickVerifier(expectedDialogTemplatePath));
-    }
 
     /**
      * Submit one atomic move+click request and verify the caller-defined success signal.
@@ -213,20 +202,6 @@ public class NpcClickService {
             if (verifier.verify(description + ":retryVerify:" + i)) return true;
         }
         return false;
-    }
-
-    private boolean executeClickAndVerifyDirect(int x, int y, long firstWaitMs, int maxRetries) {
-        return executeClickAndVerifyDirect(x, y, firstWaitMs, maxRetries, (String) null);
-    }
-
-    private boolean executeClickAndVerifyDirect(
-            int x,
-            int y,
-            long firstWaitMs,
-            int maxRetries,
-            String expectedDialogTemplatePath) {
-        return executeClickAndVerifyDirect(x, y, firstWaitMs, maxRetries,
-                dialogClickVerifier(expectedDialogTemplatePath));
     }
 
     private boolean executeClickAndVerifyDirect(
@@ -305,29 +280,6 @@ public class NpcClickService {
                 || result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_VISIBLE;
     }
 
-    /**
-     * Scan around the predicted target point with Ctrl held, click a detected menu candidate, and verify a dialog.
-     *
-     * <p>The method first searches for the explicit NPC tag template, then falls back to OCR keyword
-     * matching in the Ctrl menu. It only clicks and verifies that the expected business dialog is
-     * visible; it does not click any task option inside that dialog.</p>
-     *
-     * @param targetKeyword NPC name or task keyword expected in the Ctrl menu OCR result.
-     * @param npcTagTemplatePath template path for the "(NPC)" marker; blank disables the template path.
-     * @param expectedDialogTemplatePath green-option template that proves the right dialog opened.
-     * @param preferredProbePoints ordered screen-absolute target predictions with source-specific
-     *                             scan profiles. The method prepends the game-window center as the
-     *                             safest generic fallback before de-duplication.
-     * @return structured Ctrl-menu evidence for the coordinator recorder.
-     */
-    private NpcClickStrategyResult clickNpcByCtrlMenuScan(
-            String targetKeyword,
-            String npcTagTemplatePath,
-            String expectedDialogTemplatePath,
-            List<CtrlProbeOrigin> preferredProbePoints) {
-        return clickNpcByCtrlMenuScan(
-                targetKeyword, npcTagTemplatePath, dialogClickVerifier(expectedDialogTemplatePath), preferredProbePoints, true);
-    }
 
     private NpcClickStrategyResult clickNpcByCtrlMenuScan(
             String targetKeyword,
@@ -513,27 +465,7 @@ public class NpcClickService {
         return new int[]{left, top, right, bottom};
     }
 
-    /**
-     * OCR the visible Ctrl-menu text and click a fuzzy name/tag match.
-     *
-     * <p>Coordinates are screen-absolute because this method runs inside the Ctrl exclusive input
-     * callback. The crop is washed for yellow text, OCR results are matched through the shared short
-     * name matcher, and success still requires the expected dialog template after clicking.</p>
-     *
-     * @param scanRect screen-absolute [left, top, right, bottom] crop that covers every possible
-     *                 Ctrl-menu quadrant around the cursor probe.
-     * @param targetKeyword expected NPC/monster keyword.
-     * @param expectedDialogTemplatePath green-option template that verifies the target dialog.
-     * @return structured evidence for the matching/click attempt.
-     */
-    private NpcClickStrategyResult scanMenuAndVerifyKeywordDirect(
-            int[] scanRect,
-            String targetKeyword,
-            String expectedDialogTemplatePath,
-            Point ctrlHoverPointAbs) {
-        return scanMenuAndVerifyKeywordDirect(
-                scanRect, targetKeyword, dialogClickVerifier(expectedDialogTemplatePath), ctrlHoverPointAbs);
-    }
+
 
     private NpcClickStrategyResult scanMenuAndVerifyKeywordDirect(
             int[] scanRect,
@@ -938,145 +870,56 @@ public class NpcClickService {
              * Keep this method as a strategy pipeline. Task code supplies target facts only; learned
              * OCR/ROI memory supplies scan regions so old task-local rectangles do not bypass policy.
              */
-            tracker.updateGlobalVision();
             LocationInfo playerLocation = cachedPlayerLocation(request);
             if (playerLocation == null) {
                 log.warn("NPC smart click has no cached player coordinate; learning/recommendation will use full-window fallback only: npcName={} map={} target=({}, {})",
                         request.npcName(), request.mapName(), request.mapX(), request.mapY());
             }
             List<ResolvedNpcClickRegion> targetScanRegions = resolveNpcScanRegions(request, playerLocation);
-            List<CtrlProbeOrigin> ctrlProbeOrigins = new ArrayList<>();
-            log.info("NPC smart click request: npcName={} map={} target=({}, {}) player=({}, {}) roaming={} regions={} expectedTemplate={}",
-                    request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+            NpcClickPipelineState pipelineState = new NpcClickPipelineState(playerLocation, targetScanRegions);
+            log.info("NPC smart click request: npcName={} task={} role={} evidence={} map={} target=({}, {}) player=({}, {}) roaming={} regions={} expectedTemplate={}",
+                    request.npcName(), request.sourceTask(), request.targetRole(), request.targetEvidence(),
+                    request.mapName(), request.mapX(), request.mapY(),
                     playerLocation == null ? null : playerLocation.x,
                     playerLocation == null ? null : playerLocation.y,
                     request.roamingTarget(), summarizeRegions(targetScanRegions), request.expectedDialogTemplatePath());
 
-            /*
-             * 五倍显形镜/白龙马这类目标可能被“位置不对/剧情”story 挡住身体，但任务 tooltip
-             * 仍然露在外面。它们先试 tooltip；普通 NPC 仍保持记忆点优先，避免影响已验证路径。
-             */
-            boolean storyPreparedForDirectSceneClick = false;
-            if (request.tooltipFirst()) {
-                NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions, verifier);
-                recordSmartClickEvidence(request, tooltipResult, playerLocation);
-                if (tooltipResult.verified()) {
+            boolean lightScan = request.targetEvidence().equals(NpcTargetEvidence.TENTATIVE);
+            if (request.sourceTask().equals(TaskType.WUBEI)) {
+                if (tryNormalTooltipStrategy(request, verifier, pipelineState)) {
                     result = true;
                     return true;
                 }
-                storyPreparedForDirectSceneClick = closeStoryBeforeDirectSceneClickIfRequested(request, "after-tooltip-first");
             }
-
-            /*
-             * 1. Fast remembered path: reuse a conservative learned click cluster for the same map/name/point.
-             * If it misses, keep the attempted physical point as a Ctrl origin instead of throwing away
-             * that evidence. Running this before tooltip matching makes it obvious in logs whether the
-             * database/memory point is mature enough to replace screenshot matching for stable NPCs.
-             */
-            NpcClickStrategyResult learnedResult = clickNpcByLearnedMemory(request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), playerLocation, verifier);
-            recordSmartClickEvidence(request, learnedResult, playerLocation);
-            if (learnedResult.verified()) {
+            if (isDialogOpenBeforeNpcProbe(request, "before-learned-memory")) {
                 result = true;
                 return true;
             }
-            addCtrlProbeOrigin(ctrlProbeOrigins, learnedResult.clickPointAbs(),
-                    "learned-memory", CtrlProbeScanProfile.SMALL_RING);
-
-            if (!request.tooltipFirst()) {
-                /*
-                 * 2. Visible tooltip path: only targets that can show the standard task tooltip should
-                 * try this. Fixed transfer NPCs such as 张闻 do not have that tooltip; probing it only
-                 * delays the formula path that is already calibrated for them.
-                 */
-                NpcClickStrategyResult tooltipResult = clickNpcByTaskTooltipTemplate(request, targetScanRegions, verifier);
-                recordSmartClickEvidence(request, tooltipResult, playerLocation);
-                if (tooltipResult.verified()) {
-                    result = true;
-                    return true;
-                }
-            }
-
-            if (!storyPreparedForDirectSceneClick) {
-                closeStoryBeforeDirectSceneClickIfRequested(request, "before-player-anchor-formula");
-            }
-
-            /*
-             * 3. Use the historical player-anchor formula before paying for yellow-name OCR. A
-             * roaming request still carries the current task coordinate; for Xiuluo this coordinate
-             * is refreshed from the task panel after reaching the target map, so it remains useful
-             * as a fixed point until a future roaming-specific strategy is introduced.
-             */
-            FormulaClickPrediction formulaPrediction = targetScanRegions.isEmpty()
-                    ? null
-                    : calculatePlayerAnchorFormulaPoint(
-                    request.player(), request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), request.tuneX(), request.tuneY(), targetScanRegions.get(0), playerLocation);
-            NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(
-                    formulaPrediction, verifier);
-            recordSmartClickEvidence(request, formulaResult, playerLocation);
-            if (formulaResult.verified()) {
+            if (tryLearnedMemoryStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
-            /*
-             * If the player-anchor formula lands near the target but misses the direct left click,
-             * pay for a very small Ctrl probe immediately. Recent Xiuluo logs showed this fixes the
-             * common "off by a few pixels" case faster than running broad yellow-name OCR first.
-             */
-            if (formulaPrediction != null && formulaPrediction.predictedClickAbs() != null) {
-                List<CtrlProbeOrigin> formulaCtrlOrigins = new ArrayList<>();
-                addCtrlProbeOrigin(formulaCtrlOrigins, formulaPrediction.predictedClickAbs(),
-                        "formula-target:immediate", CtrlProbeScanProfile.SMALL_RING);
-                NpcClickStrategyResult formulaCtrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
-                        verifier, formulaCtrlOrigins, false);
-                recordSmartClickEvidence(request, formulaCtrlResult, playerLocation);
-                if (formulaCtrlResult.verified()) {
-                    result = true;
-                    return true;
-                }
+            if (isDialogOpenBeforeNpcProbe(request, "after-learned-memory")) {
+                result = true;
+                return true;
             }
-
-            /*
-             * 4. Yellow-name visual path: search vision-memory recommended regions in order. Region
-             * expansion is only allowed when the smaller region does not contain the target text. If
-             * the target text is found but the resulting click does not verify the dialog, a larger
-             * region would only add noise and may click another candidate, so the service moves to the
-             * Ctrl fallback instead.
-             */
-            for (int i = 0; i < targetScanRegions.size(); i++) {
-                ResolvedNpcClickRegion region = targetScanRegions.get(i);
-                log.info("NPC yellow target strategy region {}/{}: {}",
-                        i + 1, targetScanRegions.size(), region.toShortText());
-                YellowTargetClickResult yellowResult = clickNpcByYellowTargetName(
-                        request, region, verifier);
-                recordSmartClickEvidence(request, yellowResult.evidence(), playerLocation);
-                if (yellowResult.status() == YellowTargetClickStatus.CLICK_VERIFIED) {
-                    result = true;
-                    return true;
-                }
-                addCtrlProbeOrigin(ctrlProbeOrigins, yellowResult.attemptedClickPointAbs(),
-                        "yellow-target:" + yellowResult.status(), CtrlProbeScanProfile.SMALL_RING);
-                addCtrlProbeOrigins(ctrlProbeOrigins, yellowResult.ctrlProbePointsAbs(),
-                        "yellow-candidate:" + yellowResult.status(), CtrlProbeScanProfile.DIRECT);
-                if (!yellowResult.allowsRegionExpansion()) {
-                    log.info("NPC yellow target region expansion stopped: npcName={} result={} region={}",
-                            request.npcName(), yellowResult.status(), region.toShortText());
-                    break;
-                }
+            if (!request.sourceTask().equals(TaskType.WUBEI) && tryNormalTooltipStrategy(request, verifier, pipelineState)) {
+                result = true;
+                return true;
             }
-
-            /*
-             * 5. Last resort: hold Ctrl and inspect the game's nearby-NPC menu. This requires real input
-             * inside one exclusive transaction, so it stays after the cheaper screenshot/OCR attempts.
-             * This consumes every credible physical point produced above, regardless of which strategy
-             * produced it; yellow OCR, learned memory, formula, and future visual candidates all share
-             * the same fallback queue.
-             */
-            NpcClickStrategyResult ctrlResult = clickNpcByCtrlMenuScan(request.npcName(), NPC_TAG_TEMPLATE_PATH,
-                    verifier, ctrlProbeOrigins);
-            recordSmartClickEvidence(request, ctrlResult, playerLocation);
-            if (ctrlResult.verified()) {
+            if (!lightScan && tryPlayerAnchorFormulaStrategy(request, verifier, pipelineState)) {
+                result = true;
+                return true;
+            }
+            if (!lightScan && tryYellowTargetStrategy(request, verifier, pipelineState)) {
+                result = true;
+                return true;
+            }
+            if (isDialogOpenBeforeNpcProbe(request, "before-ctrl-probe")) {
+                result = true;
+                return true;
+            }
+            if (!lightScan && tryCtrlMenuStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
@@ -1100,15 +943,132 @@ public class NpcClickService {
         }
     }
 
-    private boolean closeStoryBeforeDirectSceneClickIfRequested(NpcClickRequest request, String reason) {
-        if (request == null || !request.closeStoryBeforeDirectSceneClick()) {
+
+    private boolean tryLearnedMemoryStrategy(NpcClickRequest request,
+                                             NpcClickVerifier verifier,
+                                             NpcClickPipelineState state) {
+        /*
+         * 1. Fast remembered path: reuse a conservative learned click cluster for the same map/name/point.
+         * If it misses, keep the attempted physical point as a Ctrl origin instead of throwing away
+         * that evidence. Running this before tooltip matching makes it obvious in logs whether the
+         * database/memory point is mature enough to replace screenshot matching for stable NPCs.
+         */
+        if (!hasKnownTargetCoordinate(request)) {
+            log.info("NPC learned-memory strategy skipped: npcName={} reason=unknown-target-coordinate target=({}, {})",
+                    request.npcName(), request.mapX(), request.mapY());
             return false;
         }
-        DialogResult result = dialogService.handleDialog(DialogHandleRequest.clickStory(
-                "npc-click:close-story-before-direct:" + reason + ":" + request.npcName()));
-        log.info("NPC close story before direct scene click: npcName={} reason={} status={} type={}",
-                request.npcName(), reason, result.getStatus(), result.getDialogType());
-        return true;
+        NpcClickStrategyResult learnedResult = clickNpcByLearnedMemory(
+                request.mapName(), request.mapX(), request.mapY(),
+                request.npcName(), state.playerLocation, verifier);
+        recordSmartClickEvidence(request, learnedResult, state.playerLocation);
+        if (learnedResult.verified()) {
+            return true;
+        }
+        addCtrlProbeOrigin(state.ctrlProbeOrigins, learnedResult.clickPointAbs(),
+                "learned-memory", CtrlProbeScanProfile.SMALL_RING);
+        return false;
+    }
+
+    private boolean tryNormalTooltipStrategy(NpcClickRequest request,
+                                             NpcClickVerifier verifier,
+                                             NpcClickPipelineState state) {
+        /*
+         * 2. Visible tooltip path: only targets that can show the standard task tooltip should try this.
+         * Fixed transfer NPCs such as 张闻 do not have that tooltip; probing it only delays the formula
+         * path that is already calibrated for them.
+         */
+        NpcClickStrategyResult tooltipResult =
+                clickNpcByTaskTooltipTemplate(request, state.targetScanRegions, verifier);
+        recordSmartClickEvidence(request, tooltipResult, state.playerLocation);
+        return tooltipResult.verified();
+    }
+
+    private boolean tryPlayerAnchorFormulaStrategy(NpcClickRequest request,
+                                                   NpcClickVerifier verifier,
+                                                   NpcClickPipelineState state) {
+        /*
+         * 3. Use the historical player-anchor formula before paying for yellow-name OCR. A roaming
+         * request still carries the current task coordinate; for Xiuluo this coordinate is refreshed
+         * from the task panel after reaching the target map, so it remains useful as a fixed point
+         * until a future roaming-specific strategy is introduced.
+         */
+        if (!hasKnownTargetCoordinate(request)) {
+            log.info("NPC player-anchor formula strategy skipped: npcName={} reason=unknown-target-coordinate target=({}, {})",
+                    request.npcName(), request.mapX(), request.mapY());
+            return false;
+        }
+        FormulaClickPrediction formulaPrediction = state.targetScanRegions.isEmpty()
+                ? null
+                : calculatePlayerAnchorFormulaPoint(
+                request.player(), request.mapName(), request.mapX(), request.mapY(),
+                request.npcName(), request.tuneX(), request.tuneY(),
+                state.targetScanRegions.get(0), state.playerLocation);
+        NpcClickStrategyResult formulaResult = clickNpcByPlayerAnchorFormula(formulaPrediction, verifier);
+        recordSmartClickEvidence(request, formulaResult, state.playerLocation);
+        if (formulaResult.verified()) {
+            return true;
+        }
+
+        /*
+         * If the player-anchor formula lands near the target but misses the direct left click, pay for
+         * a very small Ctrl probe immediately. Recent Xiuluo logs showed this fixes the common
+         * "off by a few pixels" case faster than running broad yellow-name OCR first.
+         */
+        if (formulaPrediction == null || formulaPrediction.predictedClickAbs() == null) {
+            return false;
+        }
+        List<CtrlProbeOrigin> formulaCtrlOrigins = new ArrayList<>();
+        addCtrlProbeOrigin(formulaCtrlOrigins, formulaPrediction.predictedClickAbs(),
+                "formula-target:immediate", CtrlProbeScanProfile.SMALL_RING);
+        NpcClickStrategyResult formulaCtrlResult = clickNpcByCtrlMenuScan(
+                request.npcName(), NPC_TAG_TEMPLATE_PATH, verifier, formulaCtrlOrigins, false);
+        recordSmartClickEvidence(request, formulaCtrlResult, state.playerLocation);
+        return formulaCtrlResult.verified();
+    }
+
+    private boolean tryYellowTargetStrategy(NpcClickRequest request,
+                                            NpcClickVerifier verifier,
+                                            NpcClickPipelineState state) {
+        /*
+         * 4. Yellow-name visual path: search vision-memory recommended regions in order. Region
+         * expansion is only allowed when the smaller region does not contain the target text. If the
+         * target text is found but the resulting click does not verify the dialog, a larger region
+         * would only add noise and may click another candidate, so the service moves to Ctrl fallback.
+         */
+        for (int i = 0; i < state.targetScanRegions.size(); i++) {
+            ResolvedNpcClickRegion region = state.targetScanRegions.get(i);
+            log.info("NPC yellow target strategy region {}/{}: {}",
+                    i + 1, state.targetScanRegions.size(), region.toShortText());
+            YellowTargetClickResult yellowResult = clickNpcByYellowTargetName(request, region, verifier);
+            recordSmartClickEvidence(request, yellowResult.evidence(), state.playerLocation);
+            if (yellowResult.status() == YellowTargetClickStatus.CLICK_VERIFIED) {
+                return true;
+            }
+            addCtrlProbeOrigin(state.ctrlProbeOrigins, yellowResult.attemptedClickPointAbs(),
+                    "yellow-target:" + yellowResult.status(), CtrlProbeScanProfile.SMALL_RING);
+            addCtrlProbeOrigins(state.ctrlProbeOrigins, yellowResult.ctrlProbePointsAbs(),
+                    "yellow-candidate:" + yellowResult.status(), CtrlProbeScanProfile.DIRECT);
+            if (!yellowResult.allowsRegionExpansion()) {
+                log.info("NPC yellow target region expansion stopped: npcName={} result={} region={}",
+                        request.npcName(), yellowResult.status(), region.toShortText());
+                break;
+            }
+        }
+        return false;
+    }
+
+    private boolean tryCtrlMenuStrategy(NpcClickRequest request,
+                                        NpcClickVerifier verifier,
+                                        NpcClickPipelineState state) {
+        /*
+         * 5. Last resort: hold Ctrl and inspect the game's nearby-NPC menu. This requires real input
+         * inside one exclusive transaction, so it stays after the cheaper screenshot/OCR attempts.
+         */
+        NpcClickStrategyResult ctrlResult = clickNpcByCtrlMenuScan(
+                request.npcName(), NPC_TAG_TEMPLATE_PATH, verifier, state.ctrlProbeOrigins);
+        recordSmartClickEvidence(request, ctrlResult, state.playerLocation);
+        return ctrlResult.verified();
     }
 
     /**
@@ -1135,12 +1095,17 @@ public class NpcClickService {
         if (request.tooltipType() == NpcTooltipType.NONE) {
             log.info("NPC task-tooltip template skipped: npcName={} tooltipType={}",
                     request.npcName(), request.tooltipType());
+            log.info("[npc-tooltip] skipped: task={} npc={} map={} target=({}, {}) reason=tooltip-disabled tooltipType={}",
+                    request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                    request.tooltipType());
             return NpcClickStrategyResult.skipped(
                     NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
                     "tooltip-disabled");
         }
         if (targetScanRegions == null || targetScanRegions.isEmpty()) {
             log.info("NPC task-tooltip template skipped: npcName={} reason=no-recommended-regions", request.npcName());
+            log.info("[npc-tooltip] skipped: task={} npc={} map={} target=({}, {}) reason=no-recommended-regions",
+                    request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY());
             return NpcClickStrategyResult.skipped(
                     NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
                     "no-recommended-regions");
@@ -1169,6 +1134,10 @@ public class NpcClickService {
             log.info("NPC task-tooltip template region {}/{}: npcName={} template={} region={} rect=[{},{},{},{}] matches={}",
                     i + 1, targetScanRegions.size(), request.npcName(), tooltipTemplatePath,
                     region.toShortText(), rect[0], rect[1], rect[2], rect[3], matchedPoints);
+            log.info("[npc-tooltip] scan: task={} npc={} map={} target=({}, {}) regionIndex={}/{} template={} rect=[{},{},{},{}] matches={}",
+                    request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                    i + 1, targetScanRegions.size(), tooltipTemplatePath,
+                    rect[0], rect[1], rect[2], rect[3], matchedPoints);
             if (matchedPoints.isEmpty()) {
                 continue;
             }
@@ -1180,6 +1149,10 @@ public class NpcClickService {
              */
             for (int matchIndex = 0; matchIndex < matchedPoints.size(); matchIndex++) {
                 Point matchedPoint = matchedPoints.get(matchIndex);
+                log.info("[npc-tooltip] click-start: task={} npc={} map={} target=({}, {}) candidate={}/{} point=({}, {}) regionIndex={}/{}",
+                        request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                        matchIndex + 1, matchedPoints.size(), matchedPoint.x, matchedPoint.y,
+                        i + 1, targetScanRegions.size());
                 boolean verified = executeMoveClickAndVerify(
                         "npcClick:taskTooltipTemplate#" + (matchIndex + 1),
                         matchedPoint.x,
@@ -1189,6 +1162,11 @@ public class NpcClickService {
                         verifier);
                 log.info("NPC task-tooltip template click result: npcName={} candidate={}/{} point=({}, {}) verified={}",
                         request.npcName(), matchIndex + 1, matchedPoints.size(), matchedPoint.x, matchedPoint.y, verified);
+                log.info("[npc-tooltip] click-result: task={} npc={} map={} target=({}, {}) candidate={}/{} point=({}, {}) verified={} recordPoint=({}, {})",
+                        request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                        matchIndex + 1, matchedPoints.size(), matchedPoint.x, matchedPoint.y, verified,
+                        directNpcPointFromTooltipCenter(matchedPoint).x,
+                        directNpcPointFromTooltipCenter(matchedPoint).y);
                 lastMiss = NpcClickStrategyResult.fromClick(
                         NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
                         verified ? NpcClickStrategyStatus.VERIFIED : NpcClickStrategyStatus.CLICK_NOT_VERIFIED,
@@ -1206,8 +1184,15 @@ public class NpcClickService {
             }
         }
         if (lastMiss != null) {
+            log.info("[npc-tooltip] exhausted-after-clicks: task={} npc={} map={} target=({}, {}) status={} message={}",
+                    request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                    lastMiss.status(), lastMiss.message());
             return lastMiss;
         }
+        log.info("[npc-tooltip] not-found: task={} npc={} map={} target=({}, {}) regions={} template={} threshold={} dedupDistance={}",
+                request.sourceTask(), request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                targetScanRegions.size(), tooltipTemplatePath(request),
+                NPC_TASK_TOOLTIP_MATCH_RATE, NPC_TASK_TOOLTIP_DEDUP_DISTANCE_PX);
         return NpcClickStrategyResult.notFound(
                 NpcClickStrategySource.TASK_TOOLTIP_TEMPLATE,
                 "task-tooltip template not found");
@@ -1239,6 +1224,11 @@ public class NpcClickService {
                                           NpcClickStrategyResult result,
                                           LocationInfo playerLocation) {
         if (request == null || result == null || !result.attempted()) {
+            return;
+        }
+        if (!hasKnownTargetCoordinate(request)) {
+            log.info("[vision-memory] smart-click evidence skipped because target coordinate is unknown: source={} npc={} target=({}, {}) message={}",
+                    result.source(), request.npcName(), request.mapX(), request.mapY(), result.message());
             return;
         }
         if (playerLocation == null) {
@@ -1337,6 +1327,10 @@ public class NpcClickService {
         }
     }
 
+    private static boolean hasKnownTargetCoordinate(NpcClickRequest request) {
+        return request != null && request.mapX() >= 0 && request.mapY() >= 0;
+    }
+
     /**
      * Convert a screen-absolute click point to a 1024x768 window-relative point.
      *
@@ -1428,6 +1422,25 @@ public class NpcClickService {
             log.warn("NPC template matched-region reconstruction failed: template={} reason={}",
                     templatePath, e.getMessage(), e);
             return null;
+        }
+    }
+
+    /**
+     * Mutable state shared by one {@link #runNpcClickPipeline(NpcClickRequest, NpcClickVerifier, String)} call.
+     *
+     * <p>The strategy methods mutate only Ctrl probe origins and the story-prepared flag. Keeping
+     * those fields in one object makes the pipeline order explicit without changing click behavior.</p>
+     */
+    private static class NpcClickPipelineState {
+        final LocationInfo playerLocation;
+        final List<ResolvedNpcClickRegion> targetScanRegions;
+        final List<CtrlProbeOrigin> ctrlProbeOrigins = new ArrayList<>();
+        boolean storyPreparedForDirectSceneClick;
+
+        NpcClickPipelineState(LocationInfo playerLocation,
+                              List<ResolvedNpcClickRegion> targetScanRegions) {
+            this.playerLocation = playerLocation;
+            this.targetScanRegions = targetScanRegions == null ? List.of() : targetScanRegions;
         }
     }
 
@@ -1608,6 +1621,29 @@ public class NpcClickService {
         OcrWindowRegion normalized = region;
         normalized = normalized.clamp(WINDOW_WIDTH, WINDOW_HEIGHT);
         return normalized.isValid() ? normalized : null;
+    }
+
+    /**
+     * Stop NPC probing once a dialog is already visible.
+     *
+     * <p>Learned-memory clicks and Ctrl-hover probing are only valid when the game scene is open.
+     * If an OPTION/STORY dialog is already on screen, more NPC probing can move the cursor over
+     * unrelated text or behind the dialog and produce the "random click" behavior seen in
+     * multi-window runs. The caller treats this as a handled NPC-click attempt so task code can
+     * process the existing dialog through its normal DialogService path.</p>
+     */
+    private boolean isDialogOpenBeforeNpcProbe(NpcClickRequest request, String stage) {
+        String npcName = request == null ? "unknown" : request.npcName();
+        DialogType type = dialogService.detectDialogTypeNoFocus("npc-click:" + stage + ":" + npcName);
+        boolean open = type != null && type != DialogType.NONE;
+        if (open) {
+            log.info("NPC smart click skips further probing because dialog is already open: npcName={} task={} stage={} type={}",
+                    npcName,
+                    request == null ? null : request.sourceTask(),
+                    stage,
+                    type);
+        }
+        return open;
     }
 
     /**
@@ -1943,7 +1979,7 @@ public class NpcClickService {
                  * a delayed dialog/network response while a wider region may introduce another NPC.
                  */
                 boolean verified = executeMoveClickAndVerify("npcClick:yellowTargetMoveClick",
-                        clickX, clickY, 2000, YELLOW_TARGET_CLICK_RETRIES, verifier);
+                        clickX, clickY, 800, YELLOW_TARGET_CLICK_RETRIES, verifier);
                 return new YellowTargetClickResult(
                         verified ? YellowTargetClickStatus.CLICK_VERIFIED : YellowTargetClickStatus.CLICK_NOT_VERIFIED,
                         new Point(clickX, clickY),
@@ -2134,21 +2170,7 @@ public class NpcClickService {
         SCAN_FAILED
     }
 
-    /**
-     * Yellow-name strategy result plus physical evidence for later Ctrl probing.
-     *
-     * @param status semantic outcome of the yellow-name path.
-     * @param attemptedClickPointAbs screen-absolute point used by the yellow strategy, or null when
-     *                               no concrete candidate was available. Non-null failed attempts
-     *                               are reused as Ctrl probe origins.
-     * @param fallbackCandidates ranked screen-absolute visual candidates from shape scanning. They
-     *                           are used only as Ctrl-menu probe origins when target OCR did not match.
-     * @param exactMatchCtrlProbePointsAbs screen-absolute hover points from an exact yellow-name
-     *                                     match. These deliberately use the text center, not the
-     *                                     direct-click point, because Ctrl menu hover needs to start
-     *                                     on/near the visible name while direct click uses a
-     *                                     different NPC-body offset.
-     */
+
     @Value
 
     @Builder
@@ -2229,17 +2251,6 @@ public class NpcClickService {
 
     }
 
-    /**
-     * Ranked yellow-text visual candidate converted to screen-absolute coordinates.
-     *
-     * @param textCenterAbs screen-absolute center of the candidate text rectangle.
-     * @param clickPointAbs screen-absolute point to use as a Ctrl-menu probe origin; this already
-     *                      includes the candidate extractor's click offset from the text box.
-     * @param textRectAbs screen-absolute rectangle around the visual text candidate.
-     * @param score shape score from {@link GameTextLineOcrService}; higher ranks earlier.
-     * @param sourceText optional recognized text. Shape-only candidates currently leave this blank.
-     * @param reason compact diagnostic reason including geometry and penalty metrics.
-     */
     @Value
 
     @Builder
@@ -2760,23 +2771,6 @@ public class NpcClickService {
         return Math.max(min, Math.min(value, max));
     }
 
-    /**
-     * Result of converting an in-game target coordinate into a screen-absolute click point.
-     *
-     * <p>The same prediction is reused by the first-shot click and by the Ctrl-menu fallback probe,
-     * so Ctrl starts near the expected target instead of falling back to the visual window center.</p>
-     *
-     * @param targetMapName map name supplied by the task.
-     * @param locInfo current map/coordinate read while calculating the formula.
-     * @param npcName target name used for logging and memory.
-     * @param targetMapX target logical X coordinate.
-     * @param targetMapY target logical Y coordinate.
-     * @param windowBaseAbs screen-absolute top-left of the bound game window.
-     * @param playerAnchorAbs screen-absolute player anchor detected from purple-name OCR.
-     * @param predictedClickAbs screen-absolute click/probe point predicted by the formula.
-     * @param tuneX screen-pixel X correction applied to the prediction.
-     * @param tuneY screen-pixel Y correction applied to the prediction.
-     */
     @Value
 
     @Builder
@@ -2814,12 +2808,6 @@ public class NpcClickService {
         boolean verify(String reason);
     }
 
-    /**
-     * Screen-absolute top-left point of the currently targeted game window.
-     *
-     * @param x screen-absolute X coordinate.
-     * @param y screen-absolute Y coordinate.
-     */
     @Value
 
     @Builder

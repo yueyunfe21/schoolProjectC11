@@ -14,6 +14,7 @@ import com.bot.dhxy.model.navigation.TemplateLocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -49,6 +50,7 @@ public class LocationVisionService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
+    private final MapNameCanonicalizer mapNameCanonicalizer;
 
     private static final int ANCHOR_DIFF_X = 46;
     private static final int ANCHOR_DIFF_Y = 59;
@@ -122,6 +124,7 @@ public class LocationVisionService {
                 checkpoint("before local location OCR");
                 LocationInfo local = ocr.parseLocationLocalOnly(path);
                 checkpoint("after local location OCR");
+                local = canonicalizeOcrLocation(local, "location:local-ocr");
                 if (local != null) {
                     if (!isPlausibleLocation(local, path, "LOCAL_OCR")) {
                         local = null;
@@ -147,6 +150,7 @@ public class LocationVisionService {
                 checkpoint("before baidu location OCR");
                 LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
                 checkpoint("after baidu location OCR");
+                baidu = canonicalizeOcrLocation(baidu, "location:baidu-ocr");
                 if (baidu != null && !isPlausibleLocation(baidu, path, "BAIDU_OCR")) {
                     baidu = null;
                 }
@@ -386,6 +390,7 @@ public class LocationVisionService {
 
         long localStartedAt = System.currentTimeMillis();
         LocationInfo local = ocr.parseLocationLocalOnly(path);
+        local = canonicalizeOcrLocation(local, "location:floor-template-verify");
         if (local == null) {
             log.info("[location] floor template OCR verify local miss: templateMap={} score={} label={}",
                     templateLocation.mapName(),
@@ -406,6 +411,19 @@ public class LocationVisionService {
             return local;
         }
         return null;
+    }
+
+    private LocationInfo canonicalizeOcrLocation(LocationInfo location, String source) {
+        if (location == null || location.mapName == null || location.mapName.isBlank()) {
+            return location;
+        }
+        String canonicalMapName = mapNameCanonicalizer.canonicalize(location.mapName, source);
+        if (canonicalMapName.isBlank() || canonicalMapName.equals(location.mapName)) {
+            return location;
+        }
+        log.info("[location] OCR map name canonicalized: source={} raw={} canonical={} coord=({}, {})",
+                source, location.mapName, canonicalMapName, location.x, location.y);
+        return new LocationInfo(canonicalMapName, location.x, location.y);
     }
 
     /**

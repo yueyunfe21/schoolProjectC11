@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Offline replay for world-map route-result screenshots.
@@ -29,10 +31,20 @@ public class WorldMapRouteGuardReplayDebug {
 
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
     private static final Path DEFAULT_FAILURE_ROOT = Path.of("images", "failure-cases", "world-map-route");
+    private static final Path ONLINE_DRY_RUN_ROOT = Path.of("images", "temp", "world_map_route_online_dry_run");
+    private static final List<String> UNSUPPORTED_DIRECT_ROUTE_MAPS =
+            List.of("冰窟", "波月洞", "莲花洞", "金兜洞", "火云洞", "潮狮驼岭");
+    private static final Pattern SUMMARY_ROW = Pattern.compile(
+            "^\\d+,\"([^\"]+)\",(true|false),\"[^\"]*\",\"[^\"]*\",\"[^\"]*\",\"([^\"]+)\".*$");
 
     public static void main(String[] args) throws Exception {
-        String expected = args.length == 0 ? System.getProperty("worldmap.route.expected", "长安") : args[0];
-        List<Path> images = args.length <= 1 ? defaultImages() : explicitImages(args);
+        boolean failureAll = args.length > 0 && "--failure-all".equalsIgnoreCase(args[0]);
+        boolean summaryAll = args.length > 0 && "--summary-all".equalsIgnoreCase(args[0]);
+        String expected = failureAll || args.length == 0 ? System.getProperty("worldmap.route.expected", "长安") : args[0];
+        List<RouteReplayCase> cases = summaryAll
+                ? summaryCases()
+                : toReplayCases(failureAll ? defaultImages(0) : (args.length <= 1 ? defaultImages(5) : explicitImages(args)),
+                image -> failureAll ? expectedFromFailureCase(image, expected) : expected);
         Path outputDir = Path.of("images", "temp", "world_map_route_guard_replay",
                 LocalDateTime.now().format(STAMP)).toAbsolutePath().normalize();
         Files.createDirectories(outputDir);
@@ -43,10 +55,12 @@ public class WorldMapRouteGuardReplayDebug {
 
         int passed = 0;
         int failed = 0;
-        for (Path image : images) {
+        for (RouteReplayCase replayCase : cases) {
+            Path image = replayCase.image();
+            String caseExpected = replayCase.expected();
             String raw = image.toString();
             GameTextLineOcrService.WorldMapRouteDestinationResult destination =
-                    service.verifyWorldMapRouteDestination(raw, expected);
+                    service.verifyWorldMapRouteDestination(raw, caseExpected);
             GameTextLineOcrService.WorldMapRouteCoordinateResult coordinate =
                     destination.allowClick()
                             ? service.findLastWorldMapRouteCoordinate(raw, destination)
@@ -64,14 +78,14 @@ public class WorldMapRouteGuardReplayDebug {
             }
             System.out.println("case=" + image
                     + " ok=" + ok
-                    + " expected=" + expected
+                    + " expected=" + caseExpected
                     + " actual=" + destination.rawActual()
                     + " allowClick=" + destination.allowClick()
                     + " point=" + pointText(coordinate.relativeCenter())
                     + " marked=" + marked);
         }
         System.out.println("summary expected=" + expected
-                + " total=" + images.size()
+                + " total=" + cases.size()
                 + " passed=" + passed
                 + " failed=" + failed
                 + " outputDir=" + outputDir);
@@ -85,13 +99,54 @@ public class WorldMapRouteGuardReplayDebug {
         return images;
     }
 
-    private static List<Path> defaultImages() throws Exception {
+    private static List<RouteReplayCase> summaryCases() throws Exception {
+        List<RouteReplayCase> cases = new ArrayList<>();
+        if (!Files.isDirectory(ONLINE_DRY_RUN_ROOT)) {
+            return cases;
+        }
+        try (var stream = Files.walk(ONLINE_DRY_RUN_ROOT, 2)) {
+            List<Path> summaries = stream.filter(path -> path.getFileName() != null)
+                    .filter(path -> "summary.csv".equalsIgnoreCase(path.getFileName().toString()))
+                    .sorted()
+                    .toList();
+            for (Path summary : summaries) {
+                for (String line : Files.readAllLines(summary)) {
+                    Matcher matcher = SUMMARY_ROW.matcher(line);
+                    if (!matcher.matches() || !"true".equalsIgnoreCase(matcher.group(2))) {
+                        continue;
+                    }
+                    if (UNSUPPORTED_DIRECT_ROUTE_MAPS.contains(matcher.group(1))) {
+                        continue;
+                    }
+                    Path raw = Path.of(matcher.group(3));
+                    if (Files.exists(raw)) {
+                        cases.add(new RouteReplayCase(raw.toAbsolutePath().normalize(), matcher.group(1)));
+                    }
+                }
+            }
+        }
+        return cases;
+    }
+
+    private interface ExpectedResolver {
+        String expected(Path image);
+    }
+
+    private static List<RouteReplayCase> toReplayCases(List<Path> images, ExpectedResolver resolver) {
+        List<RouteReplayCase> cases = new ArrayList<>();
+        for (Path image : images) {
+            cases.add(new RouteReplayCase(image, resolver.expected(image)));
+        }
+        return cases;
+    }
+
+    private static List<Path> defaultImages(int limit) throws Exception {
         List<Path> images = new ArrayList<>();
         if (!Files.isDirectory(DEFAULT_FAILURE_ROOT)) {
             return images;
         }
         try (var stream = Files.walk(DEFAULT_FAILURE_ROOT, 2)) {
-            stream.filter(path -> path.getFileName() != null)
+            var filtered = stream.filter(path -> path.getFileName() != null)
                     .filter(path -> "raw.png".equalsIgnoreCase(path.getFileName().toString()))
                     .sorted((a, b) -> {
                         try {
@@ -99,11 +154,28 @@ public class WorldMapRouteGuardReplayDebug {
                         } catch (Exception e) {
                             return 0;
                         }
-                    })
-                    .limit(5)
-                    .forEach(images::add);
+                    });
+            (limit > 0 ? filtered.limit(limit) : filtered).forEach(images::add);
         }
         return images;
+    }
+
+    private static String expectedFromFailureCase(Path image, String fallback) {
+        Path parent = image.getParent();
+        if (parent == null || parent.getFileName() == null) {
+            return fallback;
+        }
+        String name = parent.getFileName().toString();
+        int suffix = name.indexOf("_destination-mismatch");
+        if (suffix <= 0) {
+            return fallback;
+        }
+        int start = name.lastIndexOf('_', suffix - 1);
+        if (start < 0 || start + 1 >= suffix) {
+            return fallback;
+        }
+        String expected = name.substring(start + 1, suffix);
+        return expected.isBlank() ? fallback : expected;
     }
 
     private static void writeMarkedImage(Path rawPath,
@@ -156,5 +228,23 @@ public class WorldMapRouteGuardReplayDebug {
 
     private static String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private static final class RouteReplayCase {
+        private final Path image;
+        private final String expected;
+
+        private RouteReplayCase(Path image, String expected) {
+            this.image = image;
+            this.expected = expected;
+        }
+
+        private Path image() {
+            return image;
+        }
+
+        private String expected() {
+            return expected;
+        }
     }
 }

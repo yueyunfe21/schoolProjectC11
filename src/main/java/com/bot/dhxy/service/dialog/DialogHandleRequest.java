@@ -1,6 +1,7 @@
 package com.bot.dhxy.service.dialog;
 
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.dialog.WhiteTemplateSpec;
 import lombok.Builder;
 import lombok.Value;
 
@@ -33,8 +34,7 @@ public class DialogHandleRequest {
     Integer rememberedRelativeX;
     Integer rememberedRelativeY;
     List<GreenTemplateClickSpec> greenTemplateSpecs;
-    String expectedTemplateActionKey;
-    String expectedTemplatePath;
+    List<WhiteTemplateSpec> whiteTemplateSpecs;
 
     @Builder.Default
     boolean allowFallbackOptionClick = false;
@@ -44,6 +44,9 @@ public class DialogHandleRequest {
 
     @Builder.Default
     boolean verifyDialogType = true;
+
+    @Builder.Default
+    boolean hidePlayerNamesBeforeCapture = false;
 
     public static DialogHandleRequest inspect(String sourceTask) {
         return DialogHandleRequest.builder()
@@ -103,13 +106,20 @@ public class DialogHandleRequest {
                                                                   int relativeX,
                                                                   int relativeY,
                                                                   String targetKeyword) {
+        return handleRememberedChoiceOption(sourceTask, relativeX, relativeY, targetKeyword);
+    }
+
+    public static DialogHandleRequest handleRememberedChoiceOption(String sourceTask,
+                                                                   int relativeX,
+                                                                   int relativeY,
+                                                                   String actionKey) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_REMEMBERED_OPTION)
                 .storyPolicy(DialogStoryPolicy.IGNORE)
                 .optionPolicy(DialogOptionPolicy.CLICK_REMEMBERED_POINT)
                 .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
-                .targetKeyword(targetKeyword)
+                .targetKeyword(actionKey)
                 .rememberedRelativeX(relativeX)
                 .rememberedRelativeY(relativeY)
                 .allowFallbackOptionClick(false)
@@ -257,16 +267,20 @@ public class DialogHandleRequest {
     }
 
     public static DialogHandleRequest verifyWhiteTemplate(String sourceTask,
-                                                          String actionKey,
-                                                          String templatePath) {
+                                                           String actionKey,
+                                                           String templatePath) {
+        return verifyWhiteTemplates(sourceTask, List.of(new WhiteTemplateSpec(actionKey, templatePath)));
+    }
+
+    public static DialogHandleRequest verifyWhiteTemplates(String sourceTask,
+                                                           List<WhiteTemplateSpec> specs) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.VERIFY_WHITE_TEMPLATE)
                 .storyPolicy(DialogStoryPolicy.IGNORE)
                 .optionPolicy(DialogOptionPolicy.IGNORE)
                 .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
-                .expectedTemplateActionKey(actionKey)
-                .expectedTemplatePath(templatePath)
+                .whiteTemplateSpecs(specs)
                 .build();
     }
 }

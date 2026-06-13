@@ -13,7 +13,6 @@ public enum FiveRingPhase {
     HANDOVER_DETECT,
     ACCEPT_TASK,
     WAIT_PATHING,
-    CHECK_COMBAT,
     HANDLE_DIALOG,
     SYNC_TASK_PANEL,
     FINISHED,

@@ -1,6 +1,7 @@
 package com.bot.dhxy.model.npc;
 
 import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.task.model.TaskType;
 import lombok.Builder;
 import lombok.Singular;
 import lombok.Value;
@@ -109,6 +110,17 @@ public class NpcTarget {
      * @return click request using this target's map/name/coordinate/tuning/template fields.
      */
     public NpcClickRequest toClickRequest(PlayerCharacter player) {
+        return toClickRequest(player, TaskType.UNKNOWN);
+    }
+
+    /**
+     * Convert this canonical target into a smart-click request with task source metadata.
+     *
+     * @param player current player identity for player-anchor formula; nullable when unavailable.
+     * @param sourceTask task currently requesting the click; null becomes {@link TaskType#UNKNOWN}.
+     * @return click request using this target's map/name/coordinate/tuning/template/role fields.
+     */
+    public NpcClickRequest toClickRequest(PlayerCharacter player, TaskType sourceTask) {
         boolean roaming = movementType == NpcMovementType.ROAMING || movementType == NpcMovementType.FLOATING;
         return NpcClickRequest.builder()
                 .player(player)
@@ -122,6 +134,8 @@ public class NpcTarget {
                 .roamingTarget(roaming)
                 .tooltipType(tooltipType)
                 .tooltipTemplatePath(tooltipTemplatePath)
+                .targetRole(role)
+                .sourceTask(sourceTask == null ? TaskType.UNKNOWN : sourceTask)
                 .build();
     }
 }

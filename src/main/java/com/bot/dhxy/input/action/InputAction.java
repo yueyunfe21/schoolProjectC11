@@ -106,6 +106,11 @@ public class InputAction {
         return simple(InputActionType.PRESS_CTRL_C);
     }
 
+    /** @return Ctrl+U key action. */
+    public static InputAction pressCtrlU() {
+        return simple(InputActionType.PRESS_CTRL_U);
+    }
+
     /**
      * @param text Unicode text to type through the input provider. Null handling is provider-specific.
      * @return text typing action.
@@ -175,6 +180,16 @@ public class InputAction {
     /** @return Alt+A key action. */
     public static InputAction pressAltA() {
         return simple(InputActionType.PRESS_ALT_A);
+    }
+
+    /** @return Alt+C key action. */
+    public static InputAction pressAltC() {
+        return simple(InputActionType.PRESS_ALT_C);
+    }
+
+    /** @return Alt+U key action. */
+    public static InputAction pressAltU() {
+        return simple(InputActionType.PRESS_ALT_U);
     }
 
     /**

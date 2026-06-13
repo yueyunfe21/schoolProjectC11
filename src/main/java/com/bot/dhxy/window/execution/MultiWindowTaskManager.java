@@ -4,7 +4,9 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.DialogChoiceMemoryService;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
@@ -53,6 +55,8 @@ public class MultiWindowTaskManager {
     private final AutoCombatService autoCombatService;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final DialogService dialogService;
+    private final TaskTrackerPanelService taskTrackerPanelService;
+    private final DialogChoiceMemoryService dialogChoiceMemoryService;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     /**
@@ -72,6 +76,8 @@ public class MultiWindowTaskManager {
      * @param autoCombatService shared combat guard used by window runners.
      * @param miniMapCoordinateReader lightweight mini-map location reader used by runner watchers.
      * @param dialogService dialog detector used by runner watchers for prepare-only matching.
+     * @param taskTrackerPanelService left task-tracker panel reader used by runner watchers.
+     * @param dialogChoiceMemoryService route-option memory updated after watcher confirmation.
      */
     public MultiWindowTaskManager(TaskFactory taskFactory,
                                   WindowRuntimeContextFactory windowRuntimeContextFactory,
@@ -86,7 +92,9 @@ public class MultiWindowTaskManager {
                                   AutomationMetricsService automationMetricsService,
                                   AutoCombatService autoCombatService,
                                   MiniMapCoordinateReader miniMapCoordinateReader,
-                                  DialogService dialogService) {
+                                  DialogService dialogService,
+                                  TaskTrackerPanelService taskTrackerPanelService,
+                                  DialogChoiceMemoryService dialogChoiceMemoryService) {
         this.taskFactory = taskFactory;
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
         this.windowCapacityPolicy = windowCapacityPolicy;
@@ -101,6 +109,8 @@ public class MultiWindowTaskManager {
         this.autoCombatService = autoCombatService;
         this.miniMapCoordinateReader = miniMapCoordinateReader;
         this.dialogService = dialogService;
+        this.taskTrackerPanelService = taskTrackerPanelService;
+        this.dialogChoiceMemoryService = dialogChoiceMemoryService;
     }
 
     /**
@@ -125,7 +135,8 @@ public class MultiWindowTaskManager {
             WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
-                    automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService);
+                    automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
+                    taskTrackerPanelService, dialogChoiceMemoryService);
         });
     }
 
@@ -150,7 +161,8 @@ public class MultiWindowTaskManager {
         return runnersByWindowId.computeIfAbsent(windowId,
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
-                        automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService));
+                        automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
+                        taskTrackerPanelService, dialogChoiceMemoryService));
     }
 
     /**

@@ -299,7 +299,10 @@ public class GameTextLineOcrService {
         RouteDestinationMatch destinationMatch = findLastWorldMapRouteDestination(yellowPath, expected);
         String rawActual = destinationMatch.text();
         String actual = normalizeRouteDestinationName(rawActual);
-        boolean matched = !actual.isBlank() && (actual.equals(expected) || destinationMatch.acceptedExpected());
+        boolean matched = !actual.isBlank()
+                && (actual.equals(expected)
+                || destinationMatch.acceptedExpected()
+                || isAcceptedRouteDestinationAlias(actual, expected));
         long elapsedMs = System.currentTimeMillis() - startedAt;
         log.info("[game-text-ocr] route destination guard elapsedMs={} expected={} actual={} rawActual={} matched={} yellow={}",
                 elapsedMs, expected, actual, rawActual, matched, yellowPath);
@@ -423,12 +426,65 @@ public class GameTextLineOcrService {
             }
         }
         RouteDestinationMatch value = findLastWorldMapRouteDestinationLine(words, expected);
+        if (!value.acceptedExpected() && expected != null && !expected.isBlank()) {
+            RouteDestinationMatch segmentValue = findRouteDestinationFromPackedYellowSegments(yellowImagePath, expected);
+            if (segmentValue.acceptedExpected()) {
+                value = segmentValue;
+            }
+        }
         if (value.text().isBlank() && last != null) {
             value = new RouteDestinationMatch(last.getText(), last.getX(), centerY(last), false);
         }
         log.info("[game-text-ocr] route destination OCR words={} last={}",
                 formatRouteOcrWords(words), value.text());
         return value;
+    }
+
+    private RouteDestinationMatch findRouteDestinationFromPackedYellowSegments(String yellowImagePath, String expected) {
+        try {
+            BufferedImage yellowImage = ImageIO.read(Path.of(yellowImagePath).toFile());
+            if (yellowImage == null) {
+                return RouteDestinationMatch.empty();
+            }
+            try {
+                boolean[][] mask = buildBrightPixelMask(yellowImage);
+                List<TextLineBox> segments = new ArrayList<>();
+                for (TextLineBox line : groupTextLines(mask)) {
+                    segments.addAll(splitLineByHorizontalGaps(mask, line));
+                }
+                if (segments.isEmpty()) {
+                    return RouteDestinationMatch.empty();
+                }
+
+                /*
+                 * Whole-image OCR can miss very short map names that touch the left edge of the
+                 * route result, for example a final "长安" line. Packing each yellow text segment
+                 * gives the OCR sidecar margin and scale without changing the production click
+                 * coordinate system.
+                 */
+                Path yellowPath = Path.of(yellowImagePath);
+                String fileName = yellowPath.getFileName().toString();
+                String packedFileName = fileName.endsWith(".png")
+                        ? fileName.substring(0, fileName.length() - ".png".length()) + "_segments.png"
+                        : fileName + "_segments.png";
+                Path packedPath = yellowPath.resolveSibling(packedFileName);
+                List<PackedLineBox> packedLines = new ArrayList<>();
+                writePackedLineMask(mask, segments, packedLines, packedPath);
+                List<OcrWordResult> packedWords = textRecognizer.getAllTextResultsLocalOnly(packedPath.toString());
+                List<OcrWordResult> mappedWords = mapPackedWordsToRaw(packedWords, packedLines);
+                RouteDestinationMatch match = findExpectedRouteDestination(
+                        buildRouteYellowRows(mappedWords), mappedWords, expected);
+                log.info("[game-text-ocr] route destination packed-segment OCR expected={} words={} matched={} image={}",
+                        expected, formatRouteOcrWords(mappedWords), match.acceptedExpected(), packedPath);
+                return match;
+            } finally {
+                yellowImage.flush();
+            }
+        } catch (Exception e) {
+            log.warn("[game-text-ocr] route destination packed-segment OCR failed: image={} reason={}",
+                    yellowImagePath, e.getMessage(), e);
+            return RouteDestinationMatch.empty();
+        }
     }
 
     private RouteDestinationMatch findLastWorldMapRouteDestinationLine(List<OcrWordResult> words, String expected) {
@@ -906,6 +962,10 @@ public class GameTextLineOcrService {
         return value.replaceAll("[^\\u4E00-\\u9FFFA-Za-z0-9]+", "").trim();
     }
 
+    private boolean isAcceptedRouteDestinationAlias(String actual, String expected) {
+        return "北俱".equals(actual) && "北俱芦洲".equals(expected);
+    }
+
     private List<TextCandidate> findTextLikeCandidates(boolean[][] mask,
                                                        BufferedImage sourceForContext,
                                                        int imageWidth,
@@ -1072,8 +1132,9 @@ public class GameTextLineOcrService {
             List<PackedLineBox> packedLines = new ArrayList<>();
             TextLineBox candidateLine = lineFromCandidate(visualCandidate);
             int blackPixelCount = writePackedLineMask(mask, List.of(candidateLine), packedLines, candidatePath);
-            List<OcrWordResult> words =
+            List<OcrWordResult> packedWords =
                     textRecognizer.getAllTextResultsLocalOnly(candidatePath.toString());
+            List<OcrWordResult> words = mapPackedWordsToRaw(packedWords, packedLines);
             ocrCalls++;
             String joinedText = joinText(words);
             TargetMatch match = targetMatch(joinedText, expectedTarget);

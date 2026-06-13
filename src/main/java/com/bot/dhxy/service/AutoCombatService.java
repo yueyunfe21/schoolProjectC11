@@ -146,7 +146,7 @@ public class AutoCombatService {
         state.lastCombatUiCleanAt = now;
         log.info("{} auto-combat enter detected: schedule entry maintenance after {} ms",
                 source, COMBAT_ENTRY_MAINTENANCE_DELAY_MS);
-        autoCombatPanelService.ensureAutoCombatPanelVisibleFast(source + ":combat-enter");
+        autoCombatPanelService.ensurePanelVisible(source + ":combat-enter", 500);
     }
 
     private boolean consumeExitAndRecover(TaskExecutionContext context,

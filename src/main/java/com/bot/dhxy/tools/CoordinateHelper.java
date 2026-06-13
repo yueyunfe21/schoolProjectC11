@@ -178,13 +178,14 @@ public class CoordinateHelper {
     public MiniMapClickPoint resolveMiniMapClickPoint(String mapName,
                                                       int targetX,
                                                       int targetY,
-                                                      int failedClickCount) {
+                                                      int failedClickCount,
+                                                      boolean randomizeClickPoint) {
         Point originalPixelPoint = getPhysicalMapPoint(mapName, targetX, targetY);
         if (originalPixelPoint == null) {
             return null;
         }
         if (failedClickCount <= 0) {
-            return buildMiniMapClickPoint(targetX, targetY, originalPixelPoint, "original");
+            return buildMiniMapClickPoint(targetX, targetY, originalPixelPoint, "original", randomizeClickPoint);
         }
 
         MapTransform transform = getMapTransform(mapName);
@@ -217,7 +218,8 @@ public class CoordinateHelper {
         if (fallbackIndex >= 0 && fallbackIndex < fallbackOffsets.size()) {
             int[] offset = fallbackOffsets.get(fallbackIndex);
             return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
-                    "fallback-" + failedClickCount + "-offset=(" + offset[0] + "," + offset[1] + ")");
+                    "fallback-" + failedClickCount + "-offset=(" + offset[0] + "," + offset[1] + ")",
+                    randomizeClickPoint);
         }
         return null;
     }
@@ -264,20 +266,32 @@ public class CoordinateHelper {
         }
     }
 
-    private MiniMapClickPoint resolveMiniMapFallbackPoint(String mapName, int logicalX, int logicalY, String reason) {
+    private MiniMapClickPoint resolveMiniMapFallbackPoint(String mapName,
+                                                          int logicalX,
+                                                          int logicalY,
+                                                          String reason,
+                                                          boolean randomizeClickPoint) {
         Point pixelPoint = getPhysicalMapPoint(mapName, logicalX, logicalY);
-        return pixelPoint == null ? null : buildMiniMapClickPoint(logicalX, logicalY, pixelPoint, reason);
+        return pixelPoint == null
+                ? null
+                : buildMiniMapClickPoint(logicalX, logicalY, pixelPoint, reason, randomizeClickPoint);
     }
 
-    private MiniMapClickPoint buildMiniMapClickPoint(int logicalX, int logicalY, Point basePixelPoint, String reason) {
-        Point randomizedPixelPoint = randomizeMiniMapClickPoint(basePixelPoint);
-        int jitterX = randomizedPixelPoint.x - basePixelPoint.x;
-        int jitterY = randomizedPixelPoint.y - basePixelPoint.y;
+    private MiniMapClickPoint buildMiniMapClickPoint(int logicalX,
+                                                     int logicalY,
+                                                     Point basePixelPoint,
+                                                     String reason,
+                                                     boolean randomizeClickPoint) {
+        Point finalPixelPoint = randomizeClickPoint
+                ? randomizeMiniMapClickPoint(basePixelPoint)
+                : basePixelPoint;
+        int jitterX = finalPixelPoint.x - basePixelPoint.x;
+        int jitterY = finalPixelPoint.y - basePixelPoint.y;
         return MiniMapClickPoint.builder()
                 .logicalX(logicalX)
                 .logicalY(logicalY)
                 .basePixelPoint(basePixelPoint)
-                .pixelPoint(randomizedPixelPoint)
+                .pixelPoint(finalPixelPoint)
                 .jitterX(jitterX)
                 .jitterY(jitterY)
                 .reason(reason)
@@ -436,14 +450,6 @@ public class CoordinateHelper {
         int xEnd = xStart + width;
         int yEnd = yStart + height;
         return new int[]{xStart, yStart, xEnd, yEnd};
-    }
-
-    public int[] getOffsets(int physicalX, int physicalY) {
-        tracker.refreshWindowState();
-        int logicalX = (int) Math.round(physicalX / systemScaleRatio) - tracker.getWindowBaseX();
-        int logicalY = (int) Math.round(physicalY / systemScaleRatio) - tracker.getWindowBaseY();
-        log.info("Offset from window: X={}, Y={}", logicalX, logicalY);
-        return new int[]{logicalX, logicalY};
     }
 
     public Point findImageAbsoluteCoordinate(String templatePath, double matchRate) {

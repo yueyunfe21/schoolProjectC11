@@ -19,6 +19,9 @@ import lombok.Value;
  *                           the current task/requested-task code.
  * @param teamRound one-based team round number. Null uses the latest round registered for the
  *                  teamMaintenanceKey.
+ * @param requireOpenTeamMaintenanceWindow when true, team-round summon cleanup may run only while
+ *                                         the leader task has explicitly opened the shared pathing
+ *                                         maintenance window.
  */
 @Value
 @Builder(toBuilder = true)
@@ -42,4 +45,7 @@ public class TaskMaintenanceRequest {
 
     String teamMaintenanceKey;
     Integer teamRound;
+
+    @Builder.Default
+    boolean requireOpenTeamMaintenanceWindow = false;
 }

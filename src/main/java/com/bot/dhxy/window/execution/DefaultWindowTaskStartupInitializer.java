@@ -73,11 +73,42 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
             log.info("{} window [{}] startup init skipped for debug task: {}", prefix, windowId, executionContext.getTaskCode());
             return !Thread.currentThread().isInterrupted();
         }
+        if (isFiveRingTask(taskCode)) {
+            /*
+             * 五环 can run as solo or as the leader task. Keep this outside the heavy map/startup
+             * preparation switch so the task NPC click starts with nearby player overlays hidden,
+             * while member auto-battle windows still stay quiet.
+             */
+            log.info("{} window [{}] startup init: five-ring ensure Alt+6 visibility only taskCode={}",
+                    prefix, windowId, taskCode);
+            boolean visibilityReady = startupWindowPreparationService.ensureAlt6VisibilityOnly();
+            if (!visibilityReady) {
+                log.warn("{} window [{}] startup init warning: five-ring Alt+6 visibility was not confirmed",
+                        prefix, windowId);
+            }
+            return !Thread.currentThread().isInterrupted();
+        }
         if (isMemberWindow(windowContext, executionContext)) {
             log.info("{} window [{}] startup init skipped for member/auto-battle window: taskCode={} role={}",
                     prefix, windowId, executionContext == null ? "-" : executionContext.getTaskCode(),
                     executionContext == null ? "-" : executionContext.getWindowRole());
             return !Thread.currentThread().isInterrupted();
+        }
+        if (isWubeiTask(taskCode)) {
+            /*
+             * 五倍 leader also depends on hidden player overlays for task/NPC screenshots. Keep this
+             * narrow Alt+6 guard active even when the heavier startup-preparation switch is disabled.
+             */
+            log.info("{} window [{}] startup init: wubei ensure Alt+6 visibility before leader prep taskCode={}",
+                    prefix, windowId, taskCode);
+            boolean visibilityReady = startupWindowPreparationService.ensureAlt6VisibilityOnly();
+            if (!visibilityReady) {
+                log.warn("{} window [{}] startup init warning: wubei Alt+6 visibility was not confirmed",
+                        prefix, windowId);
+            }
+            if (Thread.currentThread().isInterrupted()) {
+                return false;
+            }
         }
 
         log.info("{} window [{}] startup init: leader ensure map tracking option and Alt+6 visibility", prefix, windowId);
@@ -98,6 +129,14 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
                 || "debug_team_role".equals(taskCode)
                 || "debug_xiuluo_story_objective".equals(taskCode)
                 || "debug_xiuluo_task_panel_objective".equals(taskCode);
+    }
+
+    private boolean isFiveRingTask(String taskCode) {
+        return "wuhuan".equals(taskCode) || "wuhuan_v2".equals(taskCode);
+    }
+
+    private boolean isWubeiTask(String taskCode) {
+        return "wubei".equals(taskCode);
     }
 
     /**

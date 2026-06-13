@@ -81,7 +81,6 @@ public class UICleanerService {
 
         log.info(cleanedAny ? "UI cleanup finished" : "UI already clean");
     }
-
     private boolean isWorldMapOpened() {
         if (coordinateHelper.findImageAbsoluteCoordinate("images/template/map/world_map_title.png", 0.8) != null) {
             return true;
@@ -116,6 +115,9 @@ public class UICleanerService {
      */
     public boolean closeAllGenericWindows() {
         boolean closedAny = false;
+        if (isWorldMapOpened()) {
+            closedAny = closeMapWindow() || closedAny;
+        }
         for (int i = 0; i < 3; i++) {
             if (!clickCloseButtonOnce("uiCleanup:closeGenericWindow")) {
                 break;

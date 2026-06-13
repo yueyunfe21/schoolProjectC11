@@ -15,12 +15,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.awt.MouseInfo;
 import java.awt.Point;
+import java.awt.PointerInfo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -42,6 +46,13 @@ public class BagService {
     private static final int BAG_LATE_RENDER_WAIT_MS = 700;
     private static final int BAG_TAB_CLICK_WAIT_MS = 500;
     private static final int MAIN_BAG_TASK_TAB_INDEX = 5;
+    private static final int MAIN_BAG_FIRST_ANCHOR_REL_X = 346;
+    private static final int MAIN_BAG_FIRST_ANCHOR_REL_Y = 440;
+    private static final int MAIN_BAG_FIRST_DRAG_TOLERANCE_PX = 3;
+    private static final int MAIN_BAG_FIRST_DRAG_SETTLE_MS = 600;
+    private static final int MAIN_BAG_MOUSE_SAFE_OFFSET_X = 60;
+    private static final int GAME_CLIENT_WIDTH = 1024;
+    private static final int GAME_CLIENT_HEIGHT = 768;
     private static final int FIRST_SEARCHABLE_PAGE_INDEX = 0;
     private static final int LAST_SEARCHABLE_PAGE_INDEX = 4;
 
@@ -53,6 +64,8 @@ public class BagService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
+    private final Map<String, Point> lastMainBagAnchorCache = new ConcurrentHashMap<>();
+    private final Set<String> mainBagFirstPositionDone = ConcurrentHashMap.newKeySet();
 
     public enum ItemAction { SELECT, USE }
 
@@ -221,6 +234,8 @@ public class BagService {
         if (check.ready()) {
             Point p = check.anchor;
             log.info("[bag] main bag already open: geometryAnchor=({}, {}) source={}", p.x, p.y, check.visibleBy);
+            rememberMainBagAnchor(layout, p, "initial");
+            moveMouseAwayFromMainBagAnchor(layout, p, context, "initial");
             return p;
         }
         if (check.panelVisible) {
@@ -230,6 +245,7 @@ public class BagService {
         }
 
         log.info("[bag] main bag not open, press Alt+E");
+        moveMouseAwayFromCachedMainBagAnchor(layout, context, "before-alt-e-first", true);
         inputProvider.pressAltE();
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
 
@@ -237,6 +253,8 @@ public class BagService {
         if (check.ready()) {
             Point p = check.anchor;
             log.info("[bag] found main bag geometry anchor after Alt+E: ({}, {}) source={}", p.x, p.y, check.visibleBy);
+            rememberMainBagAnchor(layout, p, "after-alt-e-first");
+            moveMouseAwayFromMainBagAnchor(layout, p, context, "after-alt-e-first");
             return p;
         }
         if (check.panelVisible) {
@@ -253,6 +271,8 @@ public class BagService {
                 Point p = check.anchor;
                 log.info("[bag] found main bag geometry anchor after late render wait: ({}, {}) source={}",
                         p.x, p.y, check.visibleBy);
+                rememberMainBagAnchor(layout, p, "after-alt-e-late-render");
+                moveMouseAwayFromMainBagAnchor(layout, p, context, "after-alt-e-late-render");
                 return p;
             }
             if (check.panelVisible) {
@@ -263,6 +283,7 @@ public class BagService {
         }
 
         log.warn("[bag] Alt+E first attempt still has no bag UI indicators, sending one retry");
+        moveMouseAwayFromCachedMainBagAnchor(layout, context, "before-alt-e-second", true);
         inputProvider.pressAltE();
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
         check = checkBagOpened(layout, context, "after-alt-e-second");
@@ -270,6 +291,8 @@ public class BagService {
             Point p = check.anchor;
             log.info("[bag] found main bag geometry anchor after Alt+E retry: ({}, {}) source={}",
                     p.x, p.y, check.visibleBy);
+            rememberMainBagAnchor(layout, p, "after-alt-e-second");
+            moveMouseAwayFromMainBagAnchor(layout, p, context, "after-alt-e-second");
             return p;
         }
         if (check.panelVisible) {
@@ -280,6 +303,129 @@ public class BagService {
                     layout.anchorTemplate, String.join(",", MAIN_BAG_TAB_FALLBACK_TEMPLATES), MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE);
         }
         return null;
+    }
+
+    private void rememberMainBagAnchor(BagLayout layout, Point anchor, String stage) {
+        if (layout != MAIN_BAG || anchor == null) {
+            return;
+        }
+        lastMainBagAnchorCache.put(bagCacheKey(layout), new Point(anchor));
+        log.debug("[bag] remember main bag anchor: stage={} anchor=({}, {})", stage, anchor.x, anchor.y);
+    }
+
+    private void moveMouseAwayFromCachedMainBagAnchor(BagLayout layout, TaskExecutionContext context, String stage, boolean forceMove) {
+        if (layout != MAIN_BAG) {
+            return;
+        }
+        Point cached = lastMainBagAnchorCache.get(bagCacheKey(layout));
+        if (cached == null) {
+            log.debug("[bag] no cached main bag anchor before open: stage={}", stage);
+            return;
+        }
+        moveMouseAwayFromMainBagAnchor(layout, cached, context, stage, forceMove);
+    }
+
+    private void moveMouseAwayFromMainBagAnchor(BagLayout layout, Point anchor, TaskExecutionContext context, String stage) {
+        moveMouseAwayFromMainBagAnchor(layout, anchor, context, stage, false);
+    }
+
+    private void moveMouseAwayFromMainBagAnchor(BagLayout layout, Point anchor, TaskExecutionContext context, String stage, boolean forceMove) {
+        if (layout != MAIN_BAG || anchor == null) {
+            return;
+        }
+
+        int safeMinX = anchor.x + MAIN_BAG_MOUSE_SAFE_OFFSET_X;
+        Point mouse = currentLogicalMousePoint();
+        if (!forceMove && mouse != null && mouse.x >= safeMinX) {
+            log.info("[bag] mouse already right of main bag anchor: stage={} mouse=({}, {}) safeMinX={}",
+                    stage, mouse.x, mouse.y, safeMinX);
+            return;
+        }
+
+        int minX = Math.max(safeMinX, tracker.getWindowBaseX() + 80);
+        int maxX = tracker.getWindowBaseX() + GAME_CLIENT_WIDTH - 80;
+        int minY = tracker.getWindowBaseY() + 90;
+        int maxY = tracker.getWindowBaseY() + GAME_CLIENT_HEIGHT - 90;
+        if (minX > maxX) {
+            minX = tracker.getWindowBaseX() + GAME_CLIENT_WIDTH - 160;
+        }
+        int targetX = randomBetween(minX, maxX);
+        int targetY = randomBetween(minY, maxY);
+        log.info("[bag] move mouse away from main bag anchor: stage={} forceMove={} anchor=({}, {}) mouse={} target=({}, {}) safeMinX={}",
+                stage, forceMove, anchor.x, anchor.y, formatPoint(mouse), targetX, targetY, safeMinX);
+        inputProvider.moveMouse(targetX, targetY);
+        TaskSleep.sleepOrStop(context, 120, "Bag mouse move wait was interrupted");
+    }
+
+    private Point currentLogicalMousePoint() {
+        PointerInfo pointerInfo = MouseInfo.getPointerInfo();
+        if (pointerInfo == null) {
+            return null;
+        }
+        double scale = coordinateHelper.getScaleRatio();
+        Point physical = pointerInfo.getLocation();
+        return new Point((int) Math.round(physical.x / scale), (int) Math.round(physical.y / scale));
+    }
+
+    private int randomBetween(int minInclusive, int maxInclusive) {
+        if (minInclusive >= maxInclusive) {
+            return minInclusive;
+        }
+        return ThreadLocalRandom.current().nextInt(minInclusive, maxInclusive + 1);
+    }
+
+    private String formatPoint(Point point) {
+        return point == null ? "unknown" : "(" + point.x + ", " + point.y + ")";
+    }
+
+    private Point positionMainBagOnce(BagLayout layout, BagOpenCheck check, TaskExecutionContext context, String stage) {
+        Point anchor = check.anchor;
+        if (layout != MAIN_BAG || anchor == null) {
+            return anchor;
+        }
+
+        String cacheKey = bagCacheKey(layout);
+        if (mainBagFirstPositionDone.contains(cacheKey)) {
+            return anchor;
+        }
+        if (!MAIN_BAG_ANCHOR_TEMPLATE.equals(check.visibleBy)) {
+            log.info("[bag] skip first main bag positioning because anchor source is not 换装: stage={} source={}",
+                    stage, check.visibleBy);
+            return anchor;
+        }
+
+        int targetX = tracker.getWindowBaseX() + MAIN_BAG_FIRST_ANCHOR_REL_X;
+        int targetY = tracker.getWindowBaseY() + MAIN_BAG_FIRST_ANCHOR_REL_Y;
+        if (Math.abs(anchor.x - targetX) <= MAIN_BAG_FIRST_DRAG_TOLERANCE_PX
+                && Math.abs(anchor.y - targetY) <= MAIN_BAG_FIRST_DRAG_TOLERANCE_PX) {
+            mainBagFirstPositionDone.add(cacheKey);
+            log.info("[bag] main bag already at first-position target: anchor=({}, {}) target=({}, {}) stage={}",
+                    anchor.x, anchor.y, targetX, targetY, stage);
+            return anchor;
+        }
+
+        /*
+         * This runs inside the bag exclusive input section. Use direct input here; submitting
+         * another queued request from inside the worker would deadlock the single input worker.
+         */
+        log.info("[bag] first main bag positioning drag: from=({}, {}) to=({}, {}) stage={}",
+                anchor.x, anchor.y, targetX, targetY, stage);
+        inputProvider.dragAndDrop(anchor.x, anchor.y, targetX, targetY);
+        TaskSleep.sleepOrStop(context, MAIN_BAG_FIRST_DRAG_SETTLE_MS, "Bag drag wait was interrupted");
+
+        BagOpenCheck after = checkBagOpened(layout, context, "after-first-position-drag");
+        if (after.ready()) {
+            mainBagFirstPositionDone.add(cacheKey);
+            Point confirmed = after.anchor;
+            log.info("[bag] first main bag positioning confirmed: anchor=({}, {}) source={}",
+                    confirmed.x, confirmed.y, after.visibleBy);
+            return confirmed;
+        }
+
+        mainBagFirstPositionDone.add(cacheKey);
+        log.warn("[bag] first main bag positioning could not re-confirm anchor; use target geometry once: target=({}, {})",
+                targetX, targetY);
+        return new Point(targetX, targetY);
     }
 
     private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {

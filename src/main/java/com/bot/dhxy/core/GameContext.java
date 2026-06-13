@@ -39,6 +39,8 @@ public class GameContext {
         private ActionState currentActionState = ActionState.FREE;
         private String currentTaskName = "";
         private int currentTaskProgress = 0;
+        private int autoCombatEstimatedRounds = -1;
+        private long lastAutoCombatRefreshAt = 0L;
 
         public PlayerCharacter getMe() {
             return me;
@@ -80,11 +82,29 @@ public class GameContext {
             this.currentTaskProgress = currentTaskProgress;
         }
 
+        public int getAutoCombatEstimatedRounds() {
+            return autoCombatEstimatedRounds;
+        }
+
+        public void setAutoCombatEstimatedRounds(int autoCombatEstimatedRounds) {
+            this.autoCombatEstimatedRounds = autoCombatEstimatedRounds;
+        }
+
+        public long getLastAutoCombatRefreshAt() {
+            return lastAutoCombatRefreshAt;
+        }
+
+        public void setLastAutoCombatRefreshAt(long lastAutoCombatRefreshAt) {
+            this.lastAutoCombatRefreshAt = Math.max(0L, lastAutoCombatRefreshAt);
+        }
+
         public void resetRuntimeState() {
             botStatus = BotStatus.IDLE;
             currentActionState = ActionState.FREE;
             currentTaskName = "";
             currentTaskProgress = 0;
+            autoCombatEstimatedRounds = -1;
+            lastAutoCombatRefreshAt = 0L;
         }
     }
 
@@ -160,6 +180,22 @@ public class GameContext {
 
     public void setCurrentTaskProgress(int currentTaskProgress) {
         currentState().setCurrentTaskProgress(currentTaskProgress);
+    }
+
+    public int getAutoCombatEstimatedRounds() {
+        return currentState().getAutoCombatEstimatedRounds();
+    }
+
+    public void setAutoCombatEstimatedRounds(int autoCombatEstimatedRounds) {
+        currentState().setAutoCombatEstimatedRounds(autoCombatEstimatedRounds);
+    }
+
+    public long getLastAutoCombatRefreshAt() {
+        return currentState().getLastAutoCombatRefreshAt();
+    }
+
+    public void setLastAutoCombatRefreshAt(long lastAutoCombatRefreshAt) {
+        currentState().setLastAutoCombatRefreshAt(lastAutoCombatRefreshAt);
     }
 
     public void resetRuntimeState() {

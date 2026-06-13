@@ -13,6 +13,7 @@ import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.dialog.WhiteTemplateSpec;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.model.ocr.OcrLineResult;
 import com.bot.dhxy.model.ocr.OcrWordResult;
@@ -138,9 +139,27 @@ public class DialogService {
             return finishRequest(request, handleGreenTemplateOption(request));
         }
 
+        if (request.getOptionPolicy() == com.bot.dhxy.service.dialog.DialogOptionPolicy.CLICK_REMEMBERED_POINT
+                && !request.isVerifyDialogType()) {
+            /*
+             * The caller has already verified the expected option dialog in the same foreground
+             * flow. Reusing the stable large-dialog rectangle avoids a second full no-focus
+             * detection pass before clicking a remembered relative option point.
+             */
+            DialogDetection trustedOption = DialogDetection.builder()
+                    .type(DialogType.OPTION)
+                    .dialogRect(getDialogRect())
+                    .build();
+            log.info("dialog remembered option fast path without detect: source={} target={}",
+                    request.getSourceTask(), request.getTargetKeyword());
+            return finishRequest(request, handleRememberedOption(request, trustedOption));
+        }
+
         // Stage 2: classify once. A successful screenshot is not proof of a dialog:
         // when type is NONE, the fixed dialog area may still contain route text or labels.
-        DialogDetection detection = detectDialogSnapshotDirect("handle-dialog:" + request.getOperation());
+        DialogDetection detection = detectDialogSnapshotDirect(
+                "handle-dialog:" + request.getOperation(),
+                request.isHidePlayerNamesBeforeCapture());
         DialogType type = detection.type();
         if (type == DialogType.NONE) {
             return finishRequest(request, DialogResult.simple(DialogResultStatus.NO_DIALOG, type));
@@ -228,7 +247,7 @@ public class DialogService {
          * by NpcClickService can still be clicked.
          */
         DialogDetection detection = detectDialogSnapshotDirect(
-                "maintenance-broadcast-fallback:" + request.getSourceTask());
+                "maintenance-broadcast-fallback:" + request.getSourceTask(), false);
         try {
             if (detection.type() == DialogType.NONE) {
                 log.info("maintenance broadcast fallback skipped: source={} reason=no-dialog firstStatus={} secondStatus={}",
@@ -349,8 +368,10 @@ public class DialogService {
     }
 
     private DialogResult verifyWhiteStoryTemplate(DialogHandleRequest request, DialogDetection detection) {
-        String templatePath = request.getExpectedTemplatePath();
-        if (templatePath == null || templatePath.isBlank()) {
+        List<WhiteTemplateSpec> specs = request.getWhiteTemplateSpecs() == null
+                ? List.of()
+                : request.getWhiteTemplateSpecs();
+        if (specs.isEmpty()) {
             log.warn("dialog white template verification requested without template: source={}", request.getSourceTask());
             return DialogResult.simple(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND, detection.type());
         }
@@ -369,24 +390,31 @@ public class DialogService {
 
         String washedPath = windowScopedTempPath.resolve("dialog_white_template_washed.png");
         ImagePreprocessor.washThinWhiteTextToBlackAndWhite(rawPath, washedPath);
-        double[] result = ImageFinder.find(washedPath, templatePath, 0.85);
-        if (result == null || result.length < 2) {
-            log.info("dialog white template not visible: source={} template={}",
-                    request.getSourceTask(), templatePath);
-            return DialogResult.simple(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND, detection.type());
+        for (WhiteTemplateSpec spec : specs) {
+            if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
+                continue;
+            }
+            double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
+            if (result == null || result.length < 2) {
+                continue;
+            }
+
+            Point point = coordinateHelper.resolveMatchedPointInRect(rect, result);
+            log.info("dialog white template visible: source={} template={} point=({}, {})",
+                    request.getSourceTask(), spec.templatePath(), point.x, point.y);
+            return DialogResult.statusBuilder(DialogResultStatus.WHITE_TEMPLATE_VISIBLE, detection.type())
+                    .actionKey(spec.name())
+                    .matchedText(spec.templatePath())
+                    .relativeX(point.x - rect[0])
+                    .relativeY(point.y - rect[1])
+                    .absoluteX(point.x)
+                    .absoluteY(point.y)
+                    .build();
         }
 
-        Point point = coordinateHelper.resolveMatchedPointInRect(rect, result);
-        log.info("dialog white template visible: source={} template={} point=({}, {})",
-                request.getSourceTask(), templatePath, point.x, point.y);
-        return DialogResult.statusBuilder(DialogResultStatus.WHITE_TEMPLATE_VISIBLE, detection.type())
-                .actionKey(request.getExpectedTemplateActionKey())
-                .matchedText(templatePath)
-                .relativeX(point.x - rect[0])
-                .relativeY(point.y - rect[1])
-                .absoluteX(point.x)
-                .absoluteY(point.y)
-                .build();
+        log.info("dialog white template not visible: source={} candidates={}",
+                request.getSourceTask(), specs.size());
+        return DialogResult.simple(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND, detection.type());
     }
 
     private DialogResult handleRouteKeywordOptionWithRetry(DialogHandleRequest request,
@@ -530,7 +558,7 @@ public class DialogService {
      *         null when no known maintenance broadcast option is visible.
      */
     public String detectMaintenanceBroadcastActionNoFocus(String sourceTask) {
-        DialogDetection detection = captureDialogSnapshot("maintenance-broadcast-prefilter:" + sourceTask);
+        DialogDetection detection = captureDialogSnapshot("maintenance-broadcast-prefilter:" + sourceTask, false);
         try {
             if (detection.image() == null || !hasDialogMask(detection)
                     || !hasOptionInLowerHalf(detection, "maintenance-broadcast-prefilter:" + sourceTask)) {
@@ -1454,14 +1482,29 @@ public class DialogService {
              */
             ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(rawPath, washedPath);
 
+            StringBuilder missDetails = new StringBuilder();
             for (GreenTemplateClickSpec spec : specs) {
                 if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
                     continue;
                 }
                 double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
                 if (result == null || result.length < 2) {
-                    log.info("dialog green template multi-match miss: reason={} name={} template={}",
-                            request.getSourceTask(), spec.name(), spec.templatePath());
+                    double[] best = ImageFinder.find(washedPath, spec.templatePath(), -1.0);
+                    if (!missDetails.isEmpty()) {
+                        missDetails.append("; ");
+                    }
+                    missDetails.append(spec.name())
+                            .append(" template=").append(spec.templatePath());
+                    if (best != null && best.length >= 3) {
+                        missDetails.append(" best=(")
+                                .append(Math.round(best[0])).append(',')
+                                .append(Math.round(best[1])).append(")")
+                                .append(" score=").append(String.format("%.4f", best[2]));
+                    } else {
+                        missDetails.append(" best=unreadable");
+                    }
+                    log.info("dialog green template multi-match miss: reason={} name={} template={} threshold=0.85 best={}",
+                            request.getSourceTask(), spec.name(), spec.templatePath(), formatTemplateMatch(best));
                     continue;
                 }
 
@@ -1488,8 +1531,9 @@ public class DialogService {
                 return outcome;
             }
 
-            log.info("dialog green template multi-match no hit: reason={} candidates={}",
-                    request.getSourceTask(), specs.size());
+            log.info("dialog green template multi-match no hit: reason={} candidates={} rect=({}, {})-({}, {}) raw={} washed={} missDetails=[{}]",
+                    request.getSourceTask(), specs.size(), rect[0], rect[1], rect[2], rect[3],
+                    rawPath, washedPath, missDetails);
             outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, type);
             return outcome;
         } finally {
@@ -1499,6 +1543,14 @@ public class DialogService {
                             + " reason=" + request.getSourceTask()
                             + " specCount=" + (request.getGreenTemplateSpecs() == null ? 0 : request.getGreenTemplateSpecs().size()));
         }
+    }
+
+    private String formatTemplateMatch(double[] match) {
+        if (match == null || match.length < 3) {
+            return "unreadable";
+        }
+        return "(" + Math.round(match[0]) + "," + Math.round(match[1]) + ") score="
+                + String.format("%.4f", match[2]);
     }
 
     public BufferedImage captureCurrentStoryImage(String reason) {

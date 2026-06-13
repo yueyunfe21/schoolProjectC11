@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class DefaultTaskFactory implements TaskFactory {
 
-    private final ObjectProvider<FiveRingTask> fiveRingTaskProvider;
     private final ObjectProvider<FiveRingTaskV2> fiveRingTaskV2Provider;
     private final ObjectProvider<WubeiTask> wubeiTaskProvider;
     private final ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider;
@@ -26,8 +25,7 @@ public class DefaultTaskFactory implements TaskFactory {
     private final ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider;
     private final ObjectProvider<DebugNavigationStressTask> debugNavigationStressTaskProvider;
 
-    public DefaultTaskFactory(ObjectProvider<FiveRingTask> fiveRingTaskProvider,
-                              ObjectProvider<FiveRingTaskV2> fiveRingTaskV2Provider,
+    public DefaultTaskFactory(ObjectProvider<FiveRingTaskV2> fiveRingTaskV2Provider,
                               ObjectProvider<WubeiTask> wubeiTaskProvider,
                               ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider,
                               ObjectProvider<AutoBattleTask> autoBattleTaskProvider,
@@ -38,7 +36,6 @@ public class DefaultTaskFactory implements TaskFactory {
                               ObjectProvider<DebugXiuluoTaskPanelObjectiveTask> debugXiuluoTaskPanelObjectiveTaskProvider,
                               ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider,
                               ObjectProvider<DebugNavigationStressTask> debugNavigationStressTaskProvider) {
-        this.fiveRingTaskProvider = fiveRingTaskProvider;
         this.fiveRingTaskV2Provider = fiveRingTaskV2Provider;
         this.wubeiTaskProvider = wubeiTaskProvider;
         this.xiuluoTaskV2Provider = xiuluoTaskV2Provider;
@@ -59,7 +56,7 @@ public class DefaultTaskFactory implements TaskFactory {
         }
 
         return switch (taskType) {
-            case WUHuan -> fiveRingTaskProvider.getObject();
+            case WUHuan -> fiveRingTaskV2Provider.getObject();
             case WUHuan_V2 -> fiveRingTaskV2Provider.getObject();
             case WUBEI -> wubeiTaskProvider.getObject();
             case XIULUO -> xiuluoTaskV2Provider.getObject();

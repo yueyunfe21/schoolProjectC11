@@ -38,8 +38,7 @@ public class TaskTeamAssignmentPolicy {
         }
 
         if (safeRole.isMember()
-                && ((isFiveRingTask(safeTaskType) && teamTaskProperties.isFiveRingRequiresLeader())
-                || isLeaderOnlyTask(safeTaskType))) {
+                && (isFiveRingTask(safeTaskType) || isLeaderOnlyTask(safeTaskType))) {
             log.info("task team assignment: member window receives normal auto-battle instead of {}", safeTaskType);
             return TaskType.AUTO_BATTLE;
         }
@@ -61,12 +60,11 @@ public class TaskTeamAssignmentPolicy {
     public boolean shouldDetectRoleBeforeStart(TaskType requestedTaskType) {
         TaskType safeTaskType = requestedTaskType == null ? TaskType.UNKNOWN : requestedTaskType;
         /*
-         * Five Ring is normally a solo-capable task. Only run the live hover/Alt+T detector when the
-         * user explicitly enables the leader-only gate; otherwise a fragile role probe can prevent
-         * perfectly valid multi-window Five Ring runs from even starting.
+         * Five Ring may still run for leader/solo/unknown windows, but member windows must be
+         * reassigned to auto-battle before the task executes. Therefore Five Ring always needs the
+         * role preflight when possible; UNKNOWN is still allowed by resolveTaskForRole.
          */
-        return (isFiveRingTask(safeTaskType) && teamTaskProperties.isFiveRingRequiresLeader())
-                || isLeaderOnlyTask(safeTaskType);
+        return isFiveRingTask(safeTaskType) || isLeaderOnlyTask(safeTaskType);
     }
 
     private boolean isFiveRingTask(TaskType taskType) {

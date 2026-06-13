@@ -152,11 +152,12 @@ public class InputActionWorker {
             case HOLD_CTRL -> inputProvider.holdCtrl();
             case RELEASE_CTRL -> inputProvider.releaseCtrl();
             case PRESS_CTRL_C -> inputProvider.pressCtrlC();
+            case PRESS_CTRL_U -> inputProvider.pressCtrlU();
             case TYPE_TEXT_UNICODE -> inputProvider.typeTextUnicode(action.getText());
             case PASTE_TEXT -> inputProvider.pasteText(action.getText());
             case PRESS_ENTER -> inputProvider.pressEnter();
             case PRESS_ALT_1, PRESS_ALT_2, PRESS_ALT_4, PRESS_ALT_6, PRESS_ALT_8,
-                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A ->
+                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A, PRESS_ALT_C, PRESS_ALT_U ->
                     pressAltShortcut(action.getType(), preferBackgroundKeyboard);
             case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
             case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
@@ -218,6 +219,8 @@ public class InputActionWorker {
             case PRESS_ALT_E -> BoundWindowKeyboardService.AltShortcut.ALT_E;
             case PRESS_ALT_Q -> BoundWindowKeyboardService.AltShortcut.ALT_Q;
             case PRESS_ALT_A -> BoundWindowKeyboardService.AltShortcut.ALT_A;
+            case PRESS_ALT_C -> BoundWindowKeyboardService.AltShortcut.ALT_C;
+            case PRESS_ALT_U -> BoundWindowKeyboardService.AltShortcut.ALT_U;
             default -> null;
         };
     }
@@ -238,6 +241,8 @@ public class InputActionWorker {
             case PRESS_ALT_E -> inputProvider.pressAltE();
             case PRESS_ALT_Q -> inputProvider.pressAltQ();
             case PRESS_ALT_A -> inputProvider.pressAltA();
+            case PRESS_ALT_C -> inputProvider.pressAltC();
+            case PRESS_ALT_U -> inputProvider.pressAltU();
             default -> throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
         }
     }

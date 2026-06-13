@@ -203,7 +203,9 @@ public class BoundWindowKeyboardService {
         ALT_T("Alt+T", 0x54, 0x14),
         ALT_O("Alt+O", 0x4F, 0x18),
         ALT_E("Alt+E", 0x45, 0x12),
-        ALT_A("Alt+A", 0x41, 0x1E);
+        ALT_A("Alt+A", 0x41, 0x1E),
+        ALT_C("Alt+C", 0x43, 0x2E),
+        ALT_U("Alt+U", 0x55, 0x16);
 
         private final String displayName;
         private final int virtualKey;
@@ -227,4 +229,5 @@ public class BoundWindowKeyboardService {
             return scanCode;
         }
     }
+
 }

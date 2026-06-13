@@ -109,6 +109,28 @@ public class TaskStartupWindowPreparationService {
     }
 
     /**
+     * Run only the Alt+6 player-visibility confirmation before a task starts.
+     *
+     * <p>五环 NPC clicking is sensitive to nearby player/task-name overlays, but the full startup
+     * preparation also opens Alt+1/Alt+U panels and is intentionally switchable during debugging.
+     * This method gives task startup a narrow way to enforce the proven Alt+6 visibility state without
+     * changing mini-map or status-panel options.</p>
+     *
+     * @return true when Alt+6 visibility was already confirmed or became confirmed after pressing
+     *         Alt+6; false when interrupted or the confirmation template was not found.
+     */
+    public boolean ensureAlt6VisibilityOnly() {
+        return inputSequences.submitExclusiveAndWait("taskStartup:alt6VisibilityOnly", () -> {
+            boolean visibilityReady = ensureAlt6VisibilityDirect();
+            if (visibilityReady) {
+                log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
+                return TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS);
+            }
+            return false;
+        });
+    }
+
+    /**
      * Ensure the Alt+U status panel's expand/zoom option is disabled before leader tasks start.
      *
      * <p>Flying mounts can change the visible scene scale when this option is enabled. NPC formula

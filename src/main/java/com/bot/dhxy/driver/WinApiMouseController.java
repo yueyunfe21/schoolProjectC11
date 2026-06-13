@@ -6,8 +6,10 @@ import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.DWORD;
 import com.sun.jna.platform.win32.WinDef.WORD;
@@ -70,8 +72,11 @@ public class WinApiMouseController implements InputProvider {
     public void clickLeft(int x, int y, int delayMs) {
         traceInput("clickLeft", "button=LEFT x=" + x + " y=" + y
                 + " requestedDelayMs=" + delayMs + " effectiveDelayMs=" + LEFT_CLICK_HOLD_MS);
-        inputCoordinator.runInput("clickLeft", () -> doClick(x, y, LEFT_CLICK_HOLD_MS,
-                FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP));
+        inputCoordinator.runInput("clickLeft", () -> {
+            logClickForeground("before", x, y);
+            doClick(x, y, LEFT_CLICK_HOLD_MS, FLAG_MOUSE_LEFT_DOWN, FLAG_MOUSE_LEFT_UP);
+            logClickForeground("after", x, y);
+        });
     }
 
     @Override
@@ -113,6 +118,12 @@ public class WinApiMouseController implements InputProvider {
     public void pressCtrlC() {
         traceInput("pressCtrlC", "shortcut=CTRL+C");
         inputCoordinator.runInput("pressCtrlC", this::doPressCtrlC);
+    }
+
+    @Override
+    public void pressCtrlU() {
+        traceInput("pressCtrlU", "shortcut=CTRL+U");
+        inputCoordinator.runInput("pressCtrlU", () -> pressCtrlScan(SCAN_U, "CTRL+U"));
     }
 
     @Override
@@ -188,6 +199,12 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
+    public void pressAltC() {
+        traceInput("pressAltC", "shortcut=ALT+C");
+        inputCoordinator.runInput("pressAltC", () -> pressAltScan(SCAN_C, "ALT+C"));
+    }
+
+    @Override
     public void pressEnter() {
         traceInput("pressEnter", "key=ENTER");
         inputCoordinator.runInput("pressEnter", this::doPressEnter);
@@ -244,6 +261,28 @@ public class WinApiMouseController implements InputProvider {
                 context == null ? "-" : context.getRole(),
                 binding == null ? "" : binding.getTitle(),
                 detail == null ? "" : detail);
+    }
+
+    private void logClickForeground(String stage, int x, int y) {
+        WindowRuntimeContext context = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowNativeBinding binding = context == null ? null : context.getNativeBinding();
+        Long targetHwnd = binding == null ? null : WindowHandleParser.parseHandle(binding.getNativeHandle());
+        Long foregroundHwnd = currentForegroundHwnd();
+        log.info("[INPUT_FOCUS_TRACE] operation=clickLeft stage={} source={} windowId={} targetHwnd={} foregroundHwnd={} sameAsTarget={} x={} y={} title={}",
+                stage,
+                inputCoordinator.currentInputActionName(),
+                context == null ? "-" : context.getWindowId(),
+                targetHwnd == null ? "-" : targetHwnd,
+                foregroundHwnd == null ? "-" : foregroundHwnd,
+                targetHwnd != null && targetHwnd.equals(foregroundHwnd),
+                x,
+                y,
+                binding == null ? "" : binding.getTitle());
+    }
+
+    private Long currentForegroundHwnd() {
+        var foreground = User32.INSTANCE.GetForegroundWindow();
+        return foreground == null ? null : Pointer.nativeValue(foreground.getPointer());
     }
 
     private void doClick(int x, int y, int delayMs, int downFlag, int upFlag) {

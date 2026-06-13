@@ -1,5 +1,874 @@
 # DHXY Active Work
 
+### 唐德 - 2026-06-13 队长路线传送 prepared action 提到 pathing guard 之前
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察 `22:35:30` 到 `22:36:30` 队长前往 `兰若寺` 时，世界地图/路线相关窗口看起来一直开着没人关。
+- 日志确认：
+  - `22:36:09.723` 已匹配路线面板 x2；
+  - `22:36:10.141` `route panel x2 close ... closed=true`，所以世界地图路线搜索框实际已关闭；
+  - `22:36:12.646` watcher 已准备好 `ROUTE_TRANSFER` prepared action，点击点 `(1057,797)`；
+  - 但 `navigateToMap` 先走 stale-cache/pathing guard，旧 `PATHING_ACTIVE` 状态会让任务先返回，导致 prepared action 到 `22:36:17` 才被消费。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - 在 stale-cache/pathing guard 前增加高优先级检查：如果当前窗口已有同目标、同绑定、未过期的 `ROUTE_TRANSFER` prepared action，立即调用 `clickRouteDialogOption(...)` 消费。
+  - 保持 watcher 负责后续到达确认；不改世界地图搜索、OCR、路线记忆算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-12 五环/五倍路线对话框 prepared action 有效期放宽到 10 秒
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户在多窗口测试中看到多个窗口已经弹出路线/传送 option dialog，但切回前台时没有直接点击，后续又重新打开世界地图搜索。
+- 日志确认其中一个关键原因是后台 prepared action 已经算出点击点，但前台拿回 turn 时超过了 `ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS=2500ms`：
+  - `hwnd-1760240` 在 `20:19:51.256` 准备好 `皇宫门口（800两）`，`20:19:55.355` 前台回来时 `verifiedAgeMs=4099`，被判定不可直接使用。
+  - 大叔窗口同类路线 OCR/准备也能成功，但后台 OCR 有时耗时 9-12 秒，仍需后续性能优化。
+
+Changed:
+
+- `NavigationService`
+  - `ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS` 从 `2500ms` 放宽到 `10000ms`。
+  - 不改路线 OCR、记忆点、世界地图点击算法。
+
+Related finding:
+
+- 用户提到的忍者窗口这次“断了”不是同一个 route dialog 过期问题。
+- 最新日志中 `hwnd-12C0E9A / 『忍者』影 / ID=443075411` 是在 `BUY_SHOES` 阶段失败：
+  - `20:23:04.527` `wuhuan-v2:BUY_SHOES result=FAILED`
+  - `20:23:04.529` `phase=BUY_SHOES result=FAILED message=shoe-shop buy phase exceeded retries`
+  - 当时窗口仍在 `万寿山(212,13)`，说明买鞋进店路径/确认没有成功，超过了买鞋阶段 retry 上限。
+
+Follow-up change:
+
+- `FiveRingTaskV2.buyShoes(...)`
+  - 删除 `BUY_SHOES` 阶段的固定 retry 上限退出。
+  - 买鞋/进店失败继续使用原来的 `retrySamePhase(...)` 路径放权重试，不再把五环 V2 标成 `FAILED`。
+  - 保留任务停止/中断的 `TaskCheckpoint`，人工停止仍然会停。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-12 五倍接任务 NPC tooltip 命中后不再继续黄字/Ctrl 兜底
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户查看 `15:20:50` 附近日志时发现：五倍接任务 NPC `降魔侍卫` 已经被点击并打开接任务对话框，但后续仍然进入黄字 OCR 和 Ctrl 菜单探测。
+- 日志链路：
+  - `15:20:36` tooltip 模板命中并点击 `降魔侍卫`。
+  - `15:20:39` `wubei_accept_chumoweiguo.png` 验证成功。
+  - 之后仍继续执行 player-anchor、yellow target、Ctrl menu fallback。
+
+Root cause:
+
+- `NpcClickService.runNpcClickPipeline(...)` 中，`TaskType.WUBEI` 先走 `tryNormalTooltipStrategy(...)`，但之前没有检查返回值。
+- 即使 tooltip 点击已经验证成功，pipeline 仍继续执行后续策略。
+
+Changed:
+
+- `NpcClickService.runNpcClickPipeline(...)`
+  - 五倍 tooltip 策略返回 `true` 时立刻设置 `result=true` 并返回。
+  - 不改黄字 OCR、Ctrl 菜单、公式点击算法本身。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-12 五倍 probe story 白名单处理
+
+Status: implemented / compile passed
+
+Context:
+
+- 五倍白龙马显形镜 probe fallback 里，之前会先检查 story 模板，后面 `NpcClickService` 又可能执行 `closeStoryBeforeDirectSceneClick`，导致重复截图/洗图/handleDialog。
+- 用户确认语义应是白名单式处理：
+  - 命中“目标出现/可点怪”模板：不关 story，直接继续尝试进战斗。
+  - 命中“位置不对”模板：不关 story，回滚本次显形镜尝试并重走当前绿字寻路。
+  - 有 story 但两个模板都没命中：认为是未知 fallback blocker，五倍自己清一次 story。
+
+Changed:
+
+- `WubeiTask.resolveProbeAfterPathing(...)`
+  - 已知两个 probe story 模板都只做分流，不清 dialog。
+  - 新增未知 story 清理：仅当 `VERIFY_WHITE_TEMPLATE` 返回 `WHITE_TEMPLATE_NOT_FOUND` 且 `dialogType=STORY` 时调用一次 `DialogHandleRequest.clickStory(...)`。
+- `WubeiTask.tryClickTrackerCombatTargetSmart(...)`
+  - `NpcClickRequest.closeStoryBeforeDirectSceneClick(false)`，避免 `NpcClickService` 对五倍 probe 再做盲清。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-12 单窗口硬放权回收慢的架构待优化点
+
+Status: noted / not implemented
+
+Context:
+
+- 用户观察到只开一个队长窗口时，任务仍然会按多窗口模型硬放权。
+- 在没有其它窗口可运行的情况下，放权后仍可能等数秒才重新拿回任务 turn，表现为“明明没有别人要做事，当前窗口也站着等”。
+- 这个问题不是某一个业务步骤必然要等，而是 runner / watcher / task yield 的调度策略还偏向多窗口公平轮询。
+
+Current concern:
+
+- 多窗口场景下，移动、战斗、长等待放权是必要的。
+- 单窗口或“其它窗口都不可运行”的场景下，硬放权会变成纯延迟。
+- 如果当前窗口已经有 watcher 结果或 prepared dialog action，任务应该更快恢复，不应等待旧 pathing 状态自然老化。
+
+Future optimization idea:
+
+- 区分 hard yield 和 soft yield。
+- 单窗口 fast path：只有一个 active window 时，yield 后只给 watcher 一个很短的刷新机会，然后快速恢复当前任务。
+- 多窗口 fast path：如果没有其它 runnable window，也快速恢复当前窗口。
+- prepared action 优先：后台已经算好的对话框点击点应高于普通轮询等待。
+
+Open decision:
+
+- 需要后续检查 `WindowTaskRunner` / task turn coordinator 的调度策略，确认 yield 后慢在哪里，再决定是否实现 `no other runnable window -> immediate/short resume`。
+
+### 谢帅 - 2026-06-12 五倍路线对话框 prepared action 不再被 pathing gate 卡住
+
+Status: implemented / compile passed
+
+Context:
+
+- 最新日志里 `平顶山 -> 宝象国` 的路线对话框已经由 watcher 使用记忆点预处理成功：
+  - `dialog prepare remembered route result ... prepared=true totalMs=879`
+  - 但五倍 `accept NPC pathing still active` 门禁一直按旧 pathing intent yield，直到 watcher 老化成 `STOPPED_AWAY` 才重新进入 `NavigationService`。
+- 所以用户看到的 5-10 秒延迟不是记忆点慢，而是五倍任务层没有让已经 ready 的路线对话框优先被消费。
+
+Changed:
+
+- `WubeiTask.waitForAcceptNpcPathingIfStillActive(...)`
+  - 在继续 yield 前检查当前窗口是否已有同目标 `ROUTE_TRANSFER` prepared action。
+  - 如果 action 仍在有效期内，释放五倍 pathing gate，让 `NavigationService` 立刻消费后台算好的点击点。
+  - 不改 OCR、记忆点算法、导航点击算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` 通过。
+
+### 谢帅 - 2026-06-12 当前位置 OCR 地图名入库前校对
+
+Status: implemented / compile passed
+
+Context:
+
+- `PlayerStateService.syncMyPosition()` 会把 `LocationVisionService.scanCurrentLocation()` 返回的 `LocationInfo.mapName` 直接写入 `me.currentMapName`。
+- 小地图模板路线通常返回合法模板名，但 local/Baidu OCR 路线之前会把 OCR 原始地图名直接返回，可能把 `火云洞` 存成 `火云铜`。
+
+Changed:
+
+- `LocationVisionService`
+  - 注入 `MapNameCanonicalizer`。
+  - local OCR、Baidu OCR、楼层模板 OCR 校验结果进入业务状态前统一执行地图名 canonicalize。
+  - 坐标保持不变，只替换 `LocationInfo.mapName`。
+  - 新增日志 `[location] OCR map name canonicalized...`，便于追踪 raw/canonical 映射。
+
+Verify:
+
+- `mvn -q -DskipTests compile` 通过。
+
+### 谢帅 - 2026-06-12 五倍 destination hint 地图名解析即刻校对
+
+Status: implemented / compile passed
+
+Context:
+
+- 五倍绿字点击后的寻路 hint OCR 曾把 `火云洞` 读成 `火云铜`。
+- 项目已有 `MapNameCanonicalizer`，但五倍 `parseTrackerDestinationHint(...)` 之前只在后续地图比较时临时校对，`TrackerDestinationHint.mapName` 本身仍保存 OCR 原文。
+
+Changed:
+
+- `WubeiTask.parseTrackerDestinationHint(...)`
+  - 解析出 raw map name 后立刻调用 `mapNameCanonicalizer.canonicalize(...)`。
+  - `TrackerDestinationHint` 传给后续流程的 `mapName` 改为 canonical 后的合法地图名。
+  - `rawText` 仍保留原始 OCR 文本，方便日志追查 OCR 原始结果。
+
+Verify:
+
+- `mvn -q -DskipTests compile` 通过。
+
+### 谢帅 - 2026-06-11 五倍 task panel 停止保存 wide 图
+
+Status: implemented / compile blocked by existing unrelated errors
+
+Context:
+
+- 用户指出五倍 task panel test case/temp 里同时保存了两种大小的图。
+- 大图 `wubei_tracker_panel_*_wide_raw.png` 只是早期诊断用，不应继续写入该路径。
+
+Changed:
+
+- `WubeiTask.captureTrackerPanelSnapshot(...)`
+  - 删除额外的 wide tracker panel 截图保存。
+  - 日志不再输出 `wideCaptured` / `wideRect` / `wide` 路径。
+- 清理已有 `*_wide*.png`：
+  - `images/temp/**/wubei_tracker_panel*_wide*.png`
+  - `images/test-cases/task-tracker/wubei-task-panel/**/wide*.png` / `*wide*.png`
+
+Verify:
+
+- 检查结果：`tempWide=0 testCaseWide=0`。
+- `mvn -q -DskipTests compile` 当前未通过，但失败来自现有未完成改动：
+  - `TaskTrackerPanelService` 缺少返回语句/缺少方法；
+  - `WubeiTask` / `FiveRingTaskV2` 调用了当前 `TaskTrackerPanelService` 中不存在的方法。
+  - 本次 wide 图清理没有新增这些编译错误。
+
+### 谢帅 - 2026-06-11 自动战斗面板拖动点改用原图蓝点锚点
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认自动战斗面板拖动不应再用 `fallback anchor + 30Y` 推出来的绿字/红点位置。
+- 当前策略需要区分两个点：
+  - `panelCenter`：真实拖动起点，使用原图 `auto_panel_fallback_anchor.png` 命中的蓝点。
+  - `greenMarker`：只用于回合红字截图，由蓝点按 `(+30, +30)` 推出到“自动”模板中心。
+- 如果主锚点失败并走“自动”绿字兜底，则用绿字中心按 `(-30, -30)` 反推拖动起点。
+
+Changed:
+
+- `AutoCombatPanelService`
+  - 面板拖动目标 offset 从 `(450, 760)` 调整为 `(489, 726)`，对应用户给定 base `(1490, 561)` 下目标屏幕点约 `(1979, 1287)`。
+  - `panel-anchor` 命中时返回 `panelCenter=fallbackPoint`、`greenMarker=fallbackPoint + (30, 30)`。
+  - `green-auto` 命中时返回 `panelCenter=greenPoint - (30, 30)`、`greenMarker=greenPoint`。
+  - 绿字兜底日志增加 `inferredPanelAnchor`，方便确认反推点。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 自动战斗面板改为原图锚点优先
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户要求先确认五个窗口里 `auto_panel_fallback_anchor.png` 是否都能命中；如果稳定，就把该原图模板作为主要匹配对象。
+- 当前日志中，多数窗口原本都走 fallback anchor；只有 `hwnd-28812BE` 经常先命中旧的整条绿字模板。
+
+Findings:
+
+- 当前五个窗口 `latest_vision.png` 离线匹配 `auto_panel_fallback_anchor.png` 全部成功：
+  - `hwnd-2C416E6`: `0.9967`
+  - `hwnd-E60101E`: `0.9967`
+  - `hwnd-F0D1194`: `0.9967`
+  - `hwnd-28812BE`: `0.9518`
+  - `hwnd-3D80DD0`: `0.9967`
+- 旧的 `quxiao_zidong_green.png` 整条绿字模板在失败图上最高只有 `0.3887`，低于 `0.80` 阈值。
+
+Changed:
+
+- 新增 `images/template/battle/zidong_green.png`，从旧绿字模板裁出“自动”两个字作为兜底模板。
+- `AutoCombatPanelService.findAutoCombatBox(...)`
+  - 优先在原图上匹配 `auto_panel_fallback_anchor.png`。
+  - 命中后仍按 `fallbackPoint.y + 30` 反推自动面板 marker。
+  - 只有原图 anchor 失败时，才洗绿字并尝试匹配 `zidong_green.png`。
+  - 日志 method 调整为 `panel-anchor` / `green-auto`，更容易区分主路径和兜底路径。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 五倍接任务 NPC 到达容差接入
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户实跑五倍时，队长已经在 `降魔侍卫` 附近，但仍反复打开小地图点击 `宝象国(86,87)`。
+- 日志显示当前位置曾为 `宝象国(80,86)`，默认导航容差为 5，`dx=6` 被判定未到达。
+- 五倍任务自身已有 `ACCEPT_NPC_DIRECT_CLICK_DISTANCE = 12`，但之前没有传给 `NavigationRequest`。
+
+Changed:
+
+- `WubeiTask.runRouteToNPC(...)`
+  - 接任务 NPC 导航请求增加 `.arrivalTolerance(ACCEPT_NPC_DIRECT_CLICK_DISTANCE)`。
+  - 含义：到 `降魔侍卫` 附近 12 格以内时，认为已经到达，可以进入后续 NPC 点击/接任务流程，不再继续小地图点同一个目标坐标。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 自动战斗面板识别与回合 OCR 增加日志
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户需要实测自动战斗面板识别是否命中，以及回合红字 OCR 是否成功。
+- 本次是加 console log，不是新增测试用例。
+
+Changed:
+
+- `AutoCombatPanelService`
+  - 面板可见日志增加 `method`、`center`、`marker`：
+    - `green-marker` 表示通过 `quxiao_zidong_green.png` 命中。
+    - `fallback-anchor` 表示通过 `auto_panel_fallback_anchor.png` 命中后反推 marker。
+  - 红字回合 OCR 前打印截图计划：
+    - `source`
+    - `method`
+    - `center`
+    - `marker`
+    - 截图 `rect`
+  - 红字 OCR 成功时打印：
+    - `rounds`
+    - `redPixels`
+    - OCR 文本
+    - 截图 rect
+  - 红字 OCR 失败或异常时才保留 raw/washed 图片，并在日志里打印路径。
+  - 红字 OCR 成功时删除临时 washed 图，避免正常跑时持续堆截图。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 自动战斗面板拖动锚点改为取消自动中心
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认当前自动战斗面板拖动应以“取消自动”模板命中的中心点作为鼠标按下位置。
+- 实测窗口 base 为 `(1168, 194)`，目标拖动屏幕点为 `(1618, 954)`。
+
+Changed:
+
+- `AutoCombatPanelService`
+  - 面板拖动目标 offset 调整为 `(450, 760)`。
+  - 绿字命中后，`panelCenter`/拖动点改为 `greenPoint` 本身，不再使用旧的 `(+20, -28)` 偏移。
+  - Snipaste fallback 推出的 `inferredGreenMarker` 也直接作为拖动点。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 自动战斗面板兜底改用原图锚点
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认不再使用 `zidonghai_white.png` / 白字“自动还”作为自动战斗面板 fallback。
+- 新增 `images/template/battle/auto_panel_fallback_anchor.png`，用于在原始截图上直接 image match。
+
+Changed:
+
+- `AutoCombatPanelService`
+  - 删除白字 fallback 路径常量和 `countThinWhitePixelsHSV(...)` fallback 匹配。
+  - 新增 `AUTO_PANEL_FALLBACK_ANCHOR_PATH`，在 raw screenshot 上直接匹配 Snipaste 原图模板。
+  - Snipaste fallback 命中后，按 `inferredGreenMarker = (fallbackPoint.x, fallbackPoint.y + 30)` 反推取消自动中心点。
+  - 反推点继续作为红字回合截图锚点，并继续使用当前 `quxiao_zidong_green.png` 的宽度计算红字区域。
+
+Verify:
+
+- `rg` 确认 `AutoCombatPanelService` 不再引用 `zidonghai` / `debug_thin_white_text` / white marker。
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 自动战斗回合红字截图改用取消自动绿字锚点
+
+Status: implemented / compile passed
+
+Context:
+
+- 自动战斗面板更新后，原先按固定面板宽高从中心点推算红字回合区域不够稳。
+- 用户要求以“取消自动”绿字模板命中点作为红字截图锚点。
+
+Changed:
+
+- `AutoCombatPanelService`
+  - 内部面板匹配结果从单个 `Point` 扩展为私有 `AutoCombatPanelMatch`，保留对外 `ensurePanelVisible(...) -> Point` 接口不变。
+  - 绿字命中后记录 `greenMarker` 和当前取消自动模板宽度。
+  - `readRemainingRounds(...)` 优先按绿字 marker 截红字区域：
+    - `left = greenMarker.x`
+    - `top = greenMarker.y - 96`
+    - `right = left + quxiaoTemplateWidth / 2`
+    - `bottom = top + 30`
+  - 白字 fallback 命中但没有绿字 marker 时，继续用旧的面板中心区域兜底。
+  - 如果面板被拖动，拖动后重新扫描一次面板，避免继续使用拖动前的绿字坐标。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 current-map 小地图改为确认移动后同步关闭
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.clickMiniMapPointForHandoff(...)`
+  - 删除 current-map handoff 成功后的异步小地图关闭。
+  - 确认小地图点击已经触发移动后，改为同步通过 input queue 发送 `Alt+1` 关闭小地图，再返回 `PATHING_STARTED`。
+- `NavigationService.closeMiniMapAfterConfirmedPathing(...)`
+  - 新增同步收尾方法，明确 current-map 小地图生命周期由 current-map 自己关闭。
+  - `Alt+1` 后会用小地图 checkbox 模板确认是否仍可见；如果还可见，复用 `UICleanerService.closeAllGenericWindows()` 走通用关闭按钮兜底。
+  - 如果同步关闭请求被中断/取消，不再继续跑模板确认或通用关闭兜底。
+- `NavigationService.registerWindowPathingIntent(...)`
+  - 删除 current-map `PATHING_STARTED` 后继续标记 `uiCleanupRecommended` 的旧逻辑；现在小地图已经在 handoff 返回前同步关闭，不再让五环后续额外消费旧 cleanup 标记。
+
+Behavior:
+
+- 点击失败 / 未触发移动：不关闭小地图，继续在本轮 fallback 下一个候选点。
+- 点击成功 / 已触发移动：立刻同步关闭小地图；如果模板仍显示小地图存在，再点通用关闭按钮兜底，然后才注册 intent / 让权。
+- 所有候选失败、超时或普通退出：仍走 `navigateInCurrentMap:finish` 的 `closeMiniMapIfOpen(...)` 收尾。
+
+Reason:
+
+- current-map 的小地图不会像跨地图路线那样被游戏自动关闭；异步关闭责任边界不清晰，也容易让后续窗口动作看起来被后台 UI 动作干扰。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 current-map retry 恢复为本轮确认移动后再放权
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.navigateInCurrentMap(...)`
+  - 撤销“watcher `STOPPED_AWAY` 后下一轮推进 fallback”的方案。
+  - `failedMiniMapClicks` 恢复为本次调用内的局部计数。
+  - 让权模式下，小地图点击必须先确认已经触发移动，才注册 `WindowPathingIntent` 并返回 `PATHING_STARTED`。
+  - 如果一次小地图点击没有触发移动，不放权、不注册 intent，直接在同一个 foreground turn 里继续尝试下一个 fallback 点。
+- `NavigationRuntimeState`
+  - 删除 current-map retry 目标和失败计数字段，避免同一套 retry 语义被拆到多个 turn。
+- `NavigationService.clickMiniMapPointForHandoff(...)`
+  - 恢复快速边缘像素确认 + 坐标 fallback 确认。
+  - 只有确认 `PATHING_STARTED` 后才异步关闭小地图并交给 runner 后台观察。
+
+Reason:
+
+- 用户实测认为小地图点失败时不能放权，否则第 N 个 fallback 点才成功的场景会被拆成 N 轮，整体延迟过大甚至超时。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-10 current-map handoff 改为点击提交即交给 runner
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.navigateInCurrentMap(...)`
+  - 删除每轮 `context.setCurrentActionState(GameContext.ActionState.NAVIGATING)`，不再由 current-map loop 硬写动作状态。
+  - 让权模式的小地图点击不再前台跑 `isMovingByPixelDiff` / 坐标确认；`submitMiniMapClick(...)` 成功就返回 `PATHING_STARTED`。
+  - `PATHING_STARTED` 后立即注册 `WindowPathingIntent`，再异步关闭小地图。
+- `NavigationService.clickMiniMapPointForHandoff(...)`
+  - 改成纯 handoff 提交函数：只负责提交小地图点击，移动/到达/停半路交给 runner/watcher。
+  - 删除旧的 `confirmMiniMapPathingStartedForHandoff(...)` 前台确认路径。
+- `isCurrentCachedCoordinateNear(...)`
+  - 如果当前窗口有同目标的新鲜 pathing snapshot，优先按 snapshot 判断是否 `ARRIVED`，避免旧 `PlayerCharacter` 缓存抢先判到达。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-10 current-map pathing intent 注册点前移
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.navigateInCurrentMap(...)`
+  - 增加 `pathingIntentRegistered` 标记，避免 finally 重复注册。
+  - 在 current-map 小地图点击确认 `PATHING_STARTED` 时，立即注册 `WindowPathingIntent`。
+  - 在让权模式下，如果点击已提交但本地短确认没有看到移动，也立即注册 intent，交给 runner/watcher 判定 `ACTIVE / ARRIVED / STOPPED_AWAY`。
+- `registerWindowPathingIntent(...)`
+  - 从 `void` 改为 `boolean`，返回是否实际写入当前窗口 `WindowRuntimeContext`。
+
+Intent registration locations:
+
+- `navigateToMap`：跨地图路线返回 `PATHING_STARTED` 后注册，坐标为空。
+- `navigateInCurrentMap`：当前地图小地图点击后注册，带目标坐标。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-10 current-map 导航战斗检测改为消费已同步状态
+
+Status: implemented / compile passed
+
+Changed:
+
+- `NavigationService.navigateInCurrentMap(...)`
+  - 删除 current-map loop 里的主动 `battleRadarService.checkAndSyncCombatState()`。
+  - 改为只读取 `GameContext.ActionState.IN_COMBAT`。
+  - 含义：战斗截图/同步由 runner 的 window combat watcher 负责；导航只消费已经同步好的战斗状态。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- `NavigationService` 中已无 `battleRadarService.checkAndSyncCombatState()` 调用。
+
+### 谢帅 - 2026-06-10 删除小地图 exact 分支并收拢随机开关
+
+Status: implemented / compile passed
+
+Changed:
+
+- 删除 `NavigationRequest.exactMiniMapClickOnly` 字段。
+- 删除 `NavigationService.navigateInCurrentMap(...)` 里的 exact mini-map click 专门 block。
+- `CoordinateHelper.resolveMiniMapClickPoint(...)` 保持唯一 public 入口，不保留 overload。
+- `NavigationRequest.randomizeMiniMapClickPoint` 控制小地图物理点是否加随机偏移：
+  - 默认 `true`，普通导航仍然随机。
+  - 五环买鞋入口传 `false`，走同一条导航流，但 130,130 不加随机偏移。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-10 旧 FiveRingTask 停用后的入口与移动函数改名收尾
+
+Status: implemented / compile passed
+
+User change:
+
+- 旧 `FiveRingTask.java` 已被整文件 comment 掉。
+- `GameStateUtil` 中原来用于“刚点击后快速确认移动”的方法改名为 `isMovingByPixelDiff(String reason)`。
+
+Changed:
+
+- `DefaultTaskFactory`
+  - 移除旧 `ObjectProvider<FiveRingTask>` 注入。
+  - `TaskType.WUHuan` 现在直接返回 `FiveRingTaskV2`，所以 UI/队列里原来的“五环”入口不会因为旧 class 停用而编译失败。
+  - `TaskType.WUHuan_V2` 仍然返回同一个 `FiveRingTaskV2`。
+- `NavigationService` / `DebugNavigationStressTask`
+  - 把旧 `confirmPathingStartedByEdgePixelDiff(...)` 调用统一改成新的 `isMovingByPixelDiff(String reason)`。
+
+Notes:
+
+- `TaskTeamAssignmentPolicy.isFiveRingTask(...)` 和 `DefaultWindowTaskStartupInitializer.isFiveRingTask(...)` 保留；它们是任务类型策略判断，不依赖旧 `FiveRingTask` class。
+- `FiveRingTask.java` 当前只剩注释文本引用，未删除文件，方便用户继续对照旧逻辑。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-10 通用路线 Dialog 记忆记录接入
+
+Status: implemented / compile passed
+
+User decision:
+
+- 先不把 `fromX/fromY` 纳入可用性过滤，保留现有 `fromMap -> targetMap` 维度，实跑观察是否会误用。
+- `relativeX/relativeY` 继续按现有大 Dialog 扫描区域的左上角计算，不改存储结构。
+
+Changed:
+
+- `NavigationService.clickRouteDialogOption(...)`
+  - prepared action、late prepared action、remembered action、OCR/fallback action 只要实际成功点击路线选项，就统一调用 `TransferChoiceMemoryService.recordSuccess(...)`。
+  - 记录 source 会带上 `:prepared` / `:late-prepared` / `:memory` / `:ocr`，方便后续从日志里区分是哪条路径学到的。
+- 移除了只给灵兽村使用的旧 `recordRouteDialogOutcome(...)` 死代码，避免同时存在“点击后记录”和“到达后记录”两套语义。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮实跑看普通路线 dialog 是否出现 `[transfer-memory] success key=...`，并确认灵兽村不会重复累计 success。
+- 如果后面出现误用记忆点，再把 `fromX/fromY` 或当前角色坐标容差加回 `findUsable(...)`。
+
+### 谢帅 - 2026-06-08 NPC 点击恢复完整策略 / 黄字等待降到 800ms
+
+Status: implemented / compile passed
+
+User request:
+
+- 黄字坐标回填确认后，把之前临时 comment 掉的非黄字 NPC 点击策略全部恢复。
+- 黄字点击后的首次验证等待从 2000ms 降到 800ms，减少可见卡顿。
+
+Changed:
+
+- `NpcClickService.runNpcClickPipeline(...)`
+  - 恢复 task tooltip、learned memory、普通 tooltip、story close、player-anchor formula、formula Ctrl、yellow target、最终 Ctrl 菜单兜底的原有 pipeline 顺序。
+  - 移除“黄字-only 调试”的临时 DEBUG 跳过逻辑。
+- `NpcClickService.clickNpcByYellowTargetName(...)`
+  - `npcClick:yellowTargetMoveClick` 的首次等待从 `2000ms` 调整为 `800ms`。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮实跑重点看 `npcClick:yellowTargetMoveClick` 从点击到 `firstVerify` 的耗时是否下降；如果 Dialog 验证仍慢，再看是否能跳过验证前的 `Alt+4`。
+
+### 谢帅 - 2026-06-08 黄字 NPC OCR 坐标回填修正
+
+Status: implemented / compile passed
+
+User report:
+
+- 黄字路径识别 `降魔侍卫` 后点击到了 `(544,445)`，但用户实测名字中心应在 `(987,770)` 附近。
+- 后台用同一张 `latest_vision.png` 洗黄字后，候选真实位置可算到屏幕 `(993,770)`，说明文本候选本身可定位，问题在 OCR 坐标回填。
+
+Changed:
+
+- `GameTextLineOcrService.collectYellowCandidates(...)`
+  - 候选 packed 图 OCR 后，不再直接把 packed 图坐标当作原图坐标。
+  - 新增使用已有 `mapPackedWordsToRaw(packedWords, packedLines)`，后续 `joinText`、匹配、候选记录和点击坐标都使用还原到原始截图坐标的 `words`。
+
+Validation:
+
+- 后台离线计算确认目标黄字候选中心约为屏幕 `(993,770)`，与用户标注 `(987,770)` 只差约 6px。
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 继续实跑黄字-only 路径，确认日志里的 `NPC yellow target matched` 点击点不再是 `(544,445)`，应接近 `(993,720)` 或按当前点击偏移落在目标 NPC 上方合理位置。
+
+### 谢帅 - 2026-06-08 NPC 点击临时黄字-only 调试
+
+Status: implemented / compile passed
+
+User request:
+
+- 临时把 `NpcClickService` 里非黄字 NPC 点击路径全部停掉，只看黄字识别。
+
+Changed:
+
+- `NpcClickService.runNpcClickPipeline(...)`
+  - 临时跳过任务 tooltip、记忆点、玩家紫名公式点、公式点附近 Ctrl 菜单、最终 Ctrl 菜单兜底。
+  - 当前只执行 yellow-name visual path，即 `clickNpcByYellowTargetName(...)`。
+  - 保留黄字 OCR 日志和 yellow evidence 记录，用于下一轮实跑直接确认黄字截图/洗图/OCR/点击验证结果。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Important:
+
+- 这是临时调试状态，不是生产策略。黄字问题确认后，需要恢复完整 NPC click pipeline。
+
+### 谢帅 - 2026-06-08 五倍启动 Alt+6 / 补给 / 摄妖香补齐
+
+Status: implemented / compile passed
+
+User report:
+
+- 五倍启动时队长没有按 Alt+6 屏蔽队员。
+- 启动时没有吃摄妖香。
+- 启动时人物/宝宝血法没有补给。
+
+Findings:
+
+- 最新日志里五倍 leader 已进入 `DefaultWindowTaskStartupInitializer`，但 `config/ui-game-settings.properties` 当前 `taskStartupPreparationEnabled=false`。
+- 因为这个开关关闭，`TaskStartupWindowPreparationService.prepareTaskStartupWindow()` 直接打印 `task startup preparation skipped: develop switch disabled` 并跳过 map/Alt+6。
+- 五倍自身 `WubeiTask.execute()` 没有调用 `PlayerStateService.performStartupFirstAidCheck(...)`，所以启动前不会做人物/宝宝血法补给。
+- 五倍原本只在战后 `wubei:post-combat` 路径检查摄妖香；日志确认第一场战斗后才补了摄妖香，不是启动前补。
+
+Changed:
+
+- `DefaultWindowTaskStartupInitializer`
+  - 五倍 leader 启动时先执行一次 `ensureAlt6VisibilityOnly()`，即使重型“任务启动前置检查”开关关闭，也会保证 Alt+6 隐藏玩家浮层。
+  - 队员/auto-battle 窗口仍然跳过启动热键，避免挂机队员抢窗口。
+- `WubeiTask`
+  - 任务开始后、第一轮接任务前调用 `performStartupFirstAidCheck(context)`。
+  - 同一位置调用 `ensureSheYaoXiangActiveForLeaderTask("wubei:startup", context)`，只允许 leader/solo 主任务窗口处理摄妖香。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下次实跑五倍启动时重点看：
+  - `startup init: wubei ensure Alt+6 visibility before leader prep`
+  - `task startup visibility: press Alt+6` 或 `already confirmed`
+  - `🩺 启动急救检查`
+  - `摄妖香检查允许：source=wubei:startup`
+
+### 谢帅 - 2026-06-07 五环 V2 代码膨胀复盘
+
+Status: investigated / refactor plan needed before adding more fixes
+
+User concern:
+
+- `FiveRingTaskV2.java` 已膨胀到 2844 行，远超五环业务本身复杂度。
+- 当前症状不是单个判断 bug，而是主 task 同时承担太多职责，导致每次修补都容易引入新的窗口让权、tracker、dialog 或导航副作用。
+
+Findings:
+
+- `FiveRingTaskV2` 当前混在一起的职责：
+  - 五环主状态机和 turn / handoff 策略。
+  - 启动供给检查、摄妖香、鞋子检测、快捷买鞋、店铺买鞋、出店兜底。
+  - 接任务、已有任务接管、云游大师点击、接任务 dialog 分支。
+  - 左侧任务追踪 panel 截图、黄字找“五环”、绿字分段、点击点计算、debug 图片输出。
+  - watcher pathing intent 注册与等待策略。
+  - 若干临时 retry / cleanup / legacy QuestManager 收尾确认。
+- `TaskTrackerPanelService` 已经存在，并且已经能做左侧五环任务追踪 panel 后台预计算；但 `FiveRingTaskV2` 里仍保留一套类似的 tracker 截图/洗图/绿字解析/点击算法。这是最明显的重复和膨胀来源。
+- 买鞋逻辑约占 `FiveRingTaskV2` 前半段大量代码，但买鞋是供给/包裹/NPC 店铺流程，不应该长期和主状态机、tracker 解析塞在同一个 class 里。
+- 对照旧版 `FiveRingTask.java`：旧版约 904 行，主结构是 `prepare -> handover/setup -> main loop`，业务边界更窄。V2 约 2844 行但稳定性更差，说明问题不是五环任务复杂，而是 V2 把太多补救/识别/让权细节塞进了任务类。
+
+Proposed cleanup direction:
+
+1. 暂停继续往 `FiveRingTaskV2` 里加补丁，先把状态机主干压回旧五环这种窄流程。
+2. 不建议在当前 2844 行 V2 上继续局部修；更合理的是以旧 `FiveRingTask` 的 900 行骨架为基准，重新接入已经验证过的少数新能力。
+3. 新五环应只保留这些新增点：
+   - 左侧任务追踪 panel 作为任务进行中的来源，不再中途读 Auto+Q。
+   - `DebugNavigationStressTask` 验证过的 pathing 后快速让权模型。
+   - 必要的买鞋能力，但买鞋应作为供给能力被调用，而不是散落在主状态机里。
+4. 优先删除/迁移重复的左侧 tracker 解析逻辑：
+   - 五环主 task 只调用 `TaskTrackerPanelService` 或其扩展结果。
+   - 主 task 不再自己维护 `findWuhuanTitleAnchor`、`scanTrackerGreenLinks`、`splitTrackerGreenLinkSegments` 这一整套算法。
+5. 把买鞋流程从主状态机中抽离到现有供给/包裹/NPC 能力边界附近；如果必须保留五环专属策略，也要让主 task 只看到一个“确保有鞋”的结果，而不是直接持有所有店铺细节。
+6. 保留五环主文件只做：
+   - `PREPARE -> HANDOVER_DETECT -> ACCEPT_TASK -> SYNC_TASK_PANEL -> WAIT_PATHING -> CHECK_COMBAT -> HANDLE_DIALOG` 的状态流转。
+   - turn/yield 决策。
+   - 失败 message 汇总。
+7. 每次瘦身后必须跑 `mvn -q -DskipTests compile`，并用现有 replay/debug case 验证任务追踪绿字点击没有退化。
+
+Next:
+
+- 先不要继续改导航/runner 算法。
+- 下一步应先切掉 `FiveRingTaskV2` 中和 `TaskTrackerPanelService` 重复的 tracker reader 代码，让主 task 只消费 prepared/click result。
+
+### 谢帅 - 2026-06-06 五环 V2 左侧任务追踪 panel 后台预计算
+
+Status: implemented / compile passed / waiting live rerun
+
+2026-06-07 correction after user review:
+
+- Do not confuse two different 五环 V2 limits:
+  - 接任务阶段的 dialog / 云游大师确认框属于 `ACCEPT_TASK` / dialog handling path.
+  - 左侧任务追踪 panel 找不到“五环”属于 `SYNC_TASK_PANEL` / tracker reader path.
+- The latest hard-fail message for “五环左侧任务追踪找不到” only applies after the task is already expected to be visible in the left tracker. It is not the accept-dialog retry limit.
+- Reason for keeping this distinction: if a character already accepted a task, falling back from left-tracker-missing into `ACCEPT_TASK` can make it click 云游大师 again and restart the wrong flow. If the accept dialog itself is wrong, fix the accept-dialog handling path instead of hiding it inside tracker retry logic.
+
+Correction:
+
+- 先前一版错误地把五环 tracker prepared action 放进了 `QuestManagerService`。
+- 已撤回该方向；五环 V2 不应重新走 Quest Manager。
+- 正确归属是左侧“任务追踪 panel”读取能力。
+
+Changed:
+
+- 新增 `TaskTrackerPanelService`
+  - 只负责左侧任务追踪 panel 的截图、黄字找“五环”、裁五环任务块、绿字分段、选择括号/进度前的可点击目标、生成 validation fingerprint。
+  - 不发送任何真实输入。
+- `WindowTaskRunner`
+  - 注入 `TaskTrackerPanelService`。
+  - watcher 在 `WUHuan_V2` 且没有 route dialog request 时，后台准备 `TASK_TRACKER_PATHING`。
+  - 不覆盖 route dialog prepared action。
+- `FiveRingTaskV2`
+  - `SYNC_TASK_PANEL`/tracker 点击前先消费 watcher 准备好的 panel green action。
+  - 有新鲜 prepared action 时直接点击；没有或过期才走原来的现场扫描兜底。
+  - 2026-06-07 follow-up: 左侧 panel 绿色链接点击提交后，不再在前台做 edge-pixel 移动确认；直接记录 movement intent 并进入 `WAIT_PATHING`，让 watcher/等待阶段负责确认移动、dialog 或重试，和 `DebugNavigationStressTask` 的快速让权模型对齐。
+  - 2026-06-07 follow-up: `ACCEPT_TASK` 改为 turn 外执行，沿用原 `NavigationService` 算法和 `InputSequences` 物理输入队列，但不再把地图确认/小地图点击/移动确认这段包在 coarse task turn 里；新增 `acceptOutsideTurnStart/End` latency 日志。
+  - 2026-06-07 follow-up: `SYNC_TASK_PANEL` 改为 turn 外执行。左侧 tracker 截图、OCR/洗图、prepared action 验证不再占用 coarse task turn；真实鼠标点击仍通过 `InputSequences` 串行化。新增 `trackerSyncOutsideTurnStart/End` latency 日志。
+  - 2026-06-07 follow-up: `HANDLE_DIALOG` 也改为 turn 外执行。五环给鞋/故事框/不可处理 dialog 的识别不再占用 coarse task turn；真正点击和给物品流程仍通过 `InputSequences`/exclusive input worker 串行化，避免后台 OCR/handle 阻塞其他窗口接权。
+  - 2026-06-07 follow-up: 修复 turn 外 phase 继承旧 task turn 的释放漏洞。`PREPARE/BUY_SHOES` 仍保持原来的 transaction 行为；但 `ACCEPT_TASK` / `SYNC_TASK_PANEL` / `HANDLE_DIALOG` / `WAIT_PATHING` 如果在 turn 外返回 `PATHING_STARTED`、`SHARED_STATE_TRIGGERED`、失败或停止，会显式 `forceReleaseTurn(...:outside-yield)`，避免日志已经显示移动开始但其他窗口仍卡在旧 turn 上。
+- `DialogOperation`
+  - 增加 `TASK_TRACKER_PATHING`，用于区分左侧任务追踪 panel 点击，不混入 route dialog。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- 2026-06-07 follow-up compile passed after moving `HANDLE_DIALOG` outside the coarse task turn.
+- 2026-06-07 follow-up compile passed after adding outside-yield turn release.
+
+Follow-up rule implemented:
+
+- 五环 V2 启动/热启动/中途同步不再打开 Auto+Q / QuestManager 右侧任务面板确认五环。
+- `detectHandover(...)` 只看左侧任务追踪 panel；左侧没有五环就进入接任务流程。
+- `SYNC_TASK_PANEL` 仍以左侧 panel 为准；只有本轮已经确认接过任务、并且左侧没有五环时，才允许调用 legacy QuestManager 做最终完成确认。
+- 当前 V2 中 `QuestManagerService` 只保留在 `isWuhuanAbsentByFinalLegacyTaskPanel(...)` 这条收尾确认路径，不要再把它接回启动或中途路径。
+- 左侧 panel 连续找不到五环达到上限时，不再只返回普通 `FAILED`；现在抛 `TaskFatalException`，message 会进入 `WindowTaskRunner` 的任务结束信息，后续 UI 可直接展示这个原因。
+
+Next live check:
+
+```powershell
+rg --color never "task tracker panel prepared|prepared 五环 green link|click prepared panel green link|prepared panel action stale|wuhuan-v2:SYNC_TASK_PANEL" logs/dhxy-console.log
+```
+
+Expected:
+
+- 看到 watcher 的 `task tracker panel prepared`。
+- 五环前台优先出现 `click prepared panel green link`。
+- `SYNC_TASK_PANEL` 不应再出现 `task turn acquired/release`，应出现 `trackerSyncOutsideTurnStart/End`。
+- `HANDLE_DIALOG` 不应再出现 `task turn acquired/release`，应出现 `handleDialogOutsideTurnStart/End`。
+- 移动开始后应看到 `task.turn.release ... outside-yield`；如果只在停止任务时看到 `execute-finished` 强制释放，说明仍有 phase 绕过了让权桥。
+- 如果仍在前台现场算，说明 watcher 没准备到或 prepared action 过期，需要看 panel reader 耗时和 watcher 是否被其他窗口/OCR拖住。
+
+### 谢帅 - 2026-06-06 五环 V2 按 debug handoff 模型释放 task turn
+
+Status: implemented / compile passed / waiting live rerun
+
+Problem:
+
+- 用户实测五环 V2 五窗口时仍有窗口长时间霸占 task turn，表现为：
+  - `WAIT_PATHING` 还在拿 task turn 等 watcher/战斗/对话框；
+  - `SYNC_TASK_PANEL` 找不到左侧五环块或点击未确认时，会继续同窗口重试；
+  - 给鞋失败会被映射成硬失败，并且同窗口继续同步 tracker；
+  - tracker 绿色链接点击后还会在前台做一次 dialog inspect，增加持有 turn 的时间。
+- 这些行为和已经验证过的 `DEBUG_NAVIGATION_STRESS` 模型不一致；debug 模型里，移动提交后等待 watcher 的阶段不应占用粗粒度 task turn。
+
+Changed:
+
+- `FiveRingTaskV2.runPhases(...)`
+  - `WAIT_PATHING` 改为 `runWaitPathingWithoutTaskTurn(...)`，不再通过 `taskTransactionRunner.run(...)` 抢 task turn。
+  - 新增日志：
+    - `[five-ring-v2 latency] pathWaitOutsideTurnStart`
+    - `[five-ring-v2 latency] pathWaitOutsideTurnEnd`
+- `FiveRingTaskV2.waitPathing(...)`
+  - 外置等待路径只调用 `autoCombatService.handleWindowCombatGuardTick(...)`。
+  - 不在 task turn 外消费战斗退出、不做战后恢复、不发送完整 auto-combat 维护输入；真正处理留给后续 `CHECK_COMBAT`。
+- `FiveRingTaskV2.handleDialog(...)`
+  - `GIVE_ITEM_FAILED` / `FAILED` 映射为 `RETRYABLE_ERROR`。
+  - 给鞋失败后的五环状态返回 `sharedState(...)`，先释放 turn，再回到 `SYNC_TASK_PANEL` 重试。
+  - 连续给鞋失败达到 6 次后，当前五环轮次进入 failed，避免无限 shared retry。
+- `FiveRingTaskV2.syncTaskPanel(...)`
+  - tracker 找不到五环块时返回 `sharedState(...)`，不再同窗口持有 turn 连续重扫。
+  - tracker 连续找不到达到 9 次后，当前五环轮次进入 failed；达到普通 UI 阈值时只清 tracker 缓存，不重置失败计数。
+- `FiveRingTaskV2.clickWuhuanTrackerGreen(...)`
+  - 保留短 edge-pixel 移动确认。
+  - 移除 post-click `DialogService.handleDialog(inspect...)` 前台兜底，避免绿色链接点击后仍拿着 turn 做 dialog/OCR。
+  - 如果物理点击已提交但 edge-pixel 没确认移动，仍进入 `WAIT_PATHING` 并释放 turn；后续由外置等待检查 dialog/移动/重试，避免丢掉“点击后直接弹 dialog”的成功路径。
+
+Validation:
+
+- `mvn -q -DskipTests compile` passed.
+- Hook/Kant 只读 CR 后指出两个阻塞风险，已处理：
+  - 点击绿字后直接弹 dialog 会被误判为 click failed。
+  - `sharedState` 重试缺少硬出口。
+
+Next verification:
+
+- 重跑五环 V2 五窗口，重点 grep：
+
+```powershell
+rg --color never "pathWaitOutsideTurn|wuhuan-v2:WAIT_PATHING|wuhuan-v2:SYNC_TASK_PANEL|give-item-failed|tracker-retry-later|green click did not confirm|task.turn.release|task.turn.handoff" logs/dhxy-console.log
+```
+
+Expected:
+
+- 不应再看到新的 `wuhuan-v2:WAIT_PATHING` 走 `task turn acquired`。
+- 应看到 `pathWaitOutsideTurnStart/End`。
+- `SYNC_TASK_PANEL` 的慢 hold 应明显减少；如果仍慢，下一步继续拆 tracker capture/OCR/link-click 三段耗时。
+- 给鞋失败和 tracker not found 应释放 turn，不应让同一个窗口连续霸占。
+- 如果持续识别失败，应在达到上限后进入 failed，而不是无限循环。
+
+Risk:
+
+- `WAIT_PATHING` 在 task turn 外只允许观察；当前已改为 `handleWindowCombatGuardTick(...)`，不要在这条路径里加入带真实输入的恢复/维护动作。
+
 ### 谢帅 - 2026-06-06 watcher stale ACTIVE 误判重导修复方案
 
 Status: implemented / compile passed / waiting live rerun
@@ -10947,6 +11816,33 @@ Validation:
 
 - `mvn -q -DskipTests compile` passed.
 
+### 何黎 - 2026-06-07 五环绿字 pathing intent 语义修正
+
+Status: implemented / compile passed
+
+Decision:
+
+- 不新增“绿字 watcher”。仍然使用 `WindowTaskRunner` 里的同一个 window pathing watcher。
+- 但 `WindowPathingIntent` 需要区分语义：
+  - `TARGETED`: 有目标地图/坐标的普通导航，可以产生 `ARRIVED`。
+  - `UNTARGETED_TRACKER`: 五环任务追踪绿字点击。目的地由游戏任务盘决定，代码没有坐标，因此 watcher 不能判断“到达”，只能观察是否开始移动、是否还在移动、是否停住、是否进入/退出战斗。
+- 五环左侧绿字注册为 `UNTARGETED_TRACKER`，`targetMapName/targetX/targetY` 仍为空。
+- `UNTARGETED_TRACKER` 不走 `hasArrived(...)`，避免空目标被误判成 `ARRIVED`。
+- 五环消费 watcher 时，绿字路径应把 terminal 状态理解为“跑路已停/需要继续处理任务盘或对话框”，不是“到达目标坐标”。
+
+Why:
+
+- 五环没有任务目标坐标，点左侧绿字后只能等待游戏自己寻路、弹对话或进战斗。
+- 之前通用 observer 文档只描述坐标导航压测，`ARRIVED / STOPPED_AWAY` 语义适合修罗/五倍/买鞋入口，不适合五环绿字。
+- 这次修正保持同一个 watcher，只修正 intent 类型和分类语义，避免再加一套“任务盘 watcher”。
+
+Files changed:
+
+- `src/main/java/com/bot/dhxy/window/model/WindowPathingIntentType.java`
+- `src/main/java/com/bot/dhxy/window/model/WindowPathingIntent.java`
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+
 ### 何黎 - 2026-06-03 窗口层 pathing observer 实验层
 
 Status: in progress / experimental
@@ -11606,3 +12502,1071 @@ Next validation:
   - `pathing watcher slow probe` 数量是否明显下降。
   - 是否还出现 8-12 秒单次 probe。
   - 是否仍能及时出现 `state=ARRIVED` 和成功完成全部窗口。
+
+### 唐德 - 2026-06-06 五环任务框绿字点击 replay 输出图
+
+Status: implemented / replay output regenerated / waiting visual spot-check
+
+Changed:
+
+- `WuhuanTrackerGreenReplayDebugMain`
+  - replay 输入改为 `images/test-cases/task-tracker/wuhuan-task-panel-block/raw`。
+  - 为每个五环 testcase 生成带点击点的输出图到 `images/test-cases/task-tracker/wuhuan-task-panel-block/output`。
+  - 红色标记从大十字/大圈改成 5px 小红点，方便肉眼检查是否落在绿字中心。
+  - 单段绿色链接也会被接受为可点击目标，避免只有目标词时被误判为 `NO_LINK_SEGMENT`。
+  - replay 先用左上黄色短标题筛掉非五环任务块；混入的“浮生半日闲”样本已从五环 testcase raw 中删除。
+  - 2026-06-06 correction: testcase raw 又按绿色任务行像素签名去重；同一条绿色内容只保留一张，避免 `龙宫(7,60)...[4/5]` 这类重复样本刷屏。
+- `FiveRingTaskV2`
+  - 运行时任务框绿字点击点改为取所选绿色链接 box 的几何中心，不再用绿色像素重心或首段 run。
+  - 运行时 debug 图同样使用小红点。
+  - 单段绿色链接与 replay 工具保持一致。
+  - 2026-06-06 correction: 五环任务追踪绿字目标不是整条 `地图(坐标)目标名` 的中心；运行时和 replay 都改成先按绿色文字行拆分，再优先选坐标括号后的目标名段。若目标名换行，优先使用进度 `[n/5]` 前的可用名字段；只有下一行只剩单字尾巴时，回退到上一行目标名主体，避免点到坐标或单字尾巴。
+  - 五环任务追踪绿字点击不加 random/jitter。真实运行链路为 `resolveTrackerGreenClickPoint(...) -> InputAction.moveMouse/clickLeft -> WinApiMouseController`，当前传递的是精确 screen-absolute 坐标；后续不要在这条窄目标链路上套 `CoordinateHelper.getRandomizedPoint(...)`。
+
+Verify:
+
+- 2026-06-06 latest sample cleanup:
+  - `raw_count=141`
+  - `unique_green=141`
+  - `duplicate_groups=0`
+  - `output_count=141`
+  - `generated=141`
+  - `miss=0`
+- 2026-06-06 target-name replay:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WuhuanTrackerGreenReplayDebugMain"` passed.
+  - `samples=141 ok=141 skipped=0 rejected=0 failed=0 warned=0`
+- 2026-06-06 correction: 红点标准明确为 selected green link box 几何中心；`道号贼` 这类三字目标应落在中间字附近。
+
+Output:
+
+- `images/test-cases/task-tracker/wuhuan-task-panel-block/output`
+- `images/test-cases/task-tracker/wuhuan-task-panel-block/rejected-non-wuhuan`
+
+### 唐德 - 2026-06-07 状态面板飞行状态检测
+
+Status: implemented / compile passed / not yet wired into 五环买鞋
+
+Changed:
+
+- `InputActionType` / `InputAction` / `InputActionWorker` / `InputSequences`
+  - 补齐 `Alt+U` 队列动作，用于打开角色状态面板。
+  - 补齐 `Ctrl+U` 队列动作，用于检测后关闭状态面板。
+- `BoundWindowKeyboardService`
+  - 补齐后台 HWND `Alt+U` 枚举，键盘-only 队列可以优先走后台快捷键。
+- `WinApiMouseController` / `InputProvider`
+  - 补齐 `pressCtrlU()`。
+- `GameStateUtil`
+  - 新增 `FlyingState { FLYING, NOT_FLYING, UNKNOWN }`。
+  - 新增 `detectFlyingState(reason)`：
+    - 先按 `Alt+U` 打开状态面板。
+    - 按用户给定区域检测：base `(767,169)` 下绝对区域 `(1459,690)-(1518,718)`，换算为窗口相对 `(692,521)-(751,549)`。
+    - 先匹配 `images/template/status/flying.png`，命中返回 `FLYING`。
+    - 再匹配 `images/template/status/unflying.png`，命中返回 `NOT_FLYING`。
+    - 都没命中返回 `UNKNOWN`。
+    - `finally` 中按 `Ctrl+U` 关闭状态面板。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 将 `detectFlyingState(...)` 接入五环买鞋入口逻辑：到达/接近长安 `130,130` 后先检测是否仍在飞行；仅在 `FLYING` 时执行下坐骑/进店补救，`UNKNOWN` 时记录日志并走现有 retry。
+
+### 唐德 - 2026-06-07 五环买鞋入口下坐骑策略
+
+Status: implemented / compile passed / waiting runtime validation
+
+Changed:
+
+- `FiveRingTaskV2.buyShoes(...)`
+- 删除原来的 `phaseRetryCount > 0` 就在 retry 前盲按坐骑切换快捷键的逻辑。
+  - 只在鞋店入口 watcher 返回 `ARRIVED` 后执行门口处理。
+- 新增 `handleShoeShopDoorAfterArrival(...)`
+  - 到达长安 `130,130` 后先短等 `2s`，看是否自动进入 `牛记布店`。
+  - 未进入时，默认可能仍在坐骑/飞行状态，先按一次 `Alt+C`。
+  - 再短等 `1.5s` 确认是否进店。
+  - 仍未进店时调用 `GameStateUtil.detectFlyingState(...)`：
+    - `FLYING`：再按一次 `Alt+C`，再确认进店。
+    - `NOT_FLYING`：不再多按，直接让后续 retry 重新精确点 `130,130`。
+    - `UNKNOWN`：记录 warning，直接让后续 retry 重新精确点 `130,130`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 跑一次缺鞋五环，重点看 `『忍者』影` 到达 `长安(130,130)` 后日志：
+  - `arrived at entry door`
+  - `door auto-enter missed, first dismount submitted=...`
+  - 如仍未进店，应出现 `[flying-status]` 和 `flying state after failed first dismount`
+  - 最终应进入 `牛记布店` 或明确进入 `retry exact 130,130`。
+
+### 唐德 - 2026-06-07 五环买鞋入口误触发坐骑检测修正
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 最新日志里 `『忍者』影` 还没到长安 `130,130`，就开始按坐骑切换快捷键和打开飞行/坐骑状态面板。
+- 具体时间线：
+  - `10:42:10` 第一次去长安失败，停在 `大唐境内(309,154)`。
+  - `10:43:25` 第二次只完成了地图级到达：`current=长安(211,105)`，对应 intent 目标是 `target=长安(null,null)`。
+  - 旧逻辑只看 watcher 返回 `ARRIVED`，把这个地图级到达误当成鞋店门口到达，于是提前执行门口下坐骑检测。
+- 状态面板没关闭的原因：日志确认发送的是 `Ctrl+U`，但实际游戏里没有关闭该面板；这个面板应按 `Alt+U` toggle 关闭。
+
+Changed:
+
+- `FiveRingTaskV2`
+  - 新增门口到达过滤：只有 pathing intent 的目标坐标是长安 `130,130`，且当前坐标接近 `130,130` 时，才允许进入鞋店门口下坐骑/飞行检测。
+  - 地图级到达 `长安(null,null)` 会记录 `arrived in target map but not door intent; skip dismount probe`，不会再触发坐骑检测。
+- `GameStateUtil.detectFlyingState(...)`
+  - 状态面板关闭从 `Ctrl+U` 改为再次按 `Alt+U`，和打开动作保持同一个 toggle。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- FiveRingTaskV2.java GameStateUtil.java` only reported CRLF conversion warnings.
+
+Next validation:
+
+- 再跑一次缺鞋五环时，先看 `『忍者』影` 到达 `长安(211,105)` 是否只出现 skip 日志。
+- 只有后续精确点击/移动到 `130,130` 后，才应该出现 `arrived at entry door`、`door auto-enter missed`、`[flying-status]`。
+- 检查 `Alt+U` 打开的状态面板是否在检测后关闭。
+
+### 唐德 - 2026-06-07 五环买鞋已在 130,130 但未下坐骑修正
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 最新一轮 `『忍者』影` 已经被 fresh location 读到 `长安(130,130)`，但仍没有触发下坐骑。
+- 日志显示 exact mini-map click 后边缘像素没有确认移动：
+  - `navigation.currentMap result=POINT_NOT_REACHED`
+  - 随后 fresh position 立即读到 `map=长安 coord=(130,130)`。
+- 旧门口处理只在 watcher terminal `ARRIVED` 分支执行；`POINT_NOT_REACHED` 失败分支即使 fresh 坐标已经在门口，也只是 retry，所以不会按坐骑切换快捷键下坐骑。
+
+Changed:
+
+- `FiveRingTaskV2`
+  - `POINT_NOT_REACHED` 后新增 fresh coordinate fallback：
+    - 调用 `playerStateService.syncMyPosition()`。
+    - 如果当前 fresh 坐标是 `长安(130,130)` 附近，构造一个门口 arrival snapshot，并复用 `handleShoeShopDoorAfterArrival(...)`。
+    - 这样“已经站在门口但没有移动像素变化”的情况，也会进入下坐骑/飞行状态检测/进店确认流程。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- FiveRingTaskV2.java` only reported CRLF conversion warning.
+
+Next validation:
+
+- 下一次如果日志出现 `POINT_NOT_REACHED` 后马上 `map=长安 coord=(130,130)`，应继续看到：
+  - `failed entry click but fresh position is at door; run door handling`
+  - `door auto-enter missed, first dismount submitted=...`
+  - 必要时 `[flying-status]` open/close 都应为 `Alt+U`。
+
+Correction:
+
+- 上面的 fresh-coordinate fallback 是救急方向，已撤掉；五环任务不应该自己判断 `130,130` 门口到达。
+- 真正问题在 `NavigationService.navigateInCurrentMap(...)` 的 exact mini-map click 分支：
+  - 普通 handoff click 在 `NO_PATHING` 时已经会发布 intent 给 watcher。
+  - 但 `exactMiniMapClickOnly` 分支仍使用旧逻辑，边缘像素未确认移动就直接返回 `POINT_NOT_REACHED`，导致 `target=(130,130)` intent 没注册/没保留。
+- 已改为：当 request 设置了 `returnOnPathingStarted=true` 且 `publishWindowPathingIntent=true` 时，exact click 即使没有 immediate edge delta，也返回 `PATHING_STARTED`，由 finally 注册 window pathing intent。
+- 这样 watcher 继续作为到达判定权威；如果后台坐标读到 `长安(130,130)`，watcher 应产出 `ARRIVED`，五环再进入门口下坐骑/进店处理。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- NavigationService.java FiveRingTaskV2.java` only reported CRLF conversion warnings.
+
+Next validation update:
+
+- 下一次看 `『忍者』影` exact click，如果边缘像素仍未确认，应出现：
+  - `exact mini-map click submitted without immediate edge delta; handoff to window observer`
+  - `window pathing intent registered ... target=(130, 130)`
+  - watcher 后续 `state=ARRIVED ... current=长安(130, 130)`
+  - 然后五环才出现 `arrived at entry door` 和下坐骑逻辑。
+
+### 谢帅 - 2026-06-07 五环 V2 PREPARE 启动清理瘦身
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 最新日志中刑部 `hwnd-4188C` 在 `13:48:21.297` 已经因为 `ACCEPT_TASK:outside-yield` 放权，`afterReleaseMs=0`，说明导航放权本身是快的。
+- 但大叔 `hwnd-2210D8` 接权后进入 `wuhuan-v2:PREPARE`，先跑 `uiCleanerService.cleanUpAll()`。
+- `cleanUpAll()` 会进入 `forceCloseDialog()`，从而触发 `DialogService.handleDialog(INSPECT)`、`Alt+4` 等完整 dialog 检测；大叔第一次真实 focus 到 `playerState:healAll` 是 `13:48:26.816`，比拿权晚约 5.5 秒。
+
+Changed:
+
+- `UICleanerService`
+  - 新增 `cleanTaskStartupChromeOnly(source)`：只关世界地图和普通 X 窗，不执行 `forceCloseDialog()`，避免启动前置误跑业务 dialog 检测。
+- `FiveRingTaskV2`
+  - `prepare-1` 从 `uiCleanerService.cleanUpAll()` 改为 `uiCleanerService.cleanTaskStartupChromeOnly("wuhuan-v2:prepare")`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 下一轮五环 V2 日志里，`wuhuan-v2:PREPARE` 开头应看到 `UI startup chrome cleanup...`，不应再出现 `ui-cleaner:force-close` / `dialog:hidePlayerNames:handle-dialog_INSPECT`。
+- 刑部导航 `outside-yield` 后，大叔进入 `PREPARE` 到第一次 focus 的间隔应明显缩短；剩余耗时主要应来自体检和包裹检查。
+
+### 唐德 - 2026-06-07 坐骑快捷键纠正为 Alt+C
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 五环买鞋入口下坐骑之前误用了 `Ctrl+C`。
+- 用户确认游戏里的坐骑/飞行切换快捷键是 `Alt+C`，不是 `Ctrl+C`。
+- 之前日志里即使出现 `PRESS_CTRL_C` / `pressCtrlC`，也不会触发下坐骑，因为快捷键本身错了。
+
+Changed:
+
+- `InputActionType` / `InputAction` / `InputProvider` / `InputSequences`
+  - 新增 `PRESS_ALT_C` / `pressAltC(...)`。
+- `BoundWindowKeyboardService`
+  - `AltShortcut` 新增 `ALT_C("Alt+C", 0x43, 0x2E)`，键盘-only 场景优先走 HWND 后台投递。
+- `InputActionWorker`
+  - 把 `PRESS_ALT_C` 接入 Alt shortcut 分组、后台快捷键映射和真实输入 fallback。
+- `WinApiMouseController`
+  - 新增物理 fallback `pressAltC()`。
+- `FiveRingTaskV2`
+  - 鞋店门口第一次下坐骑和确认 `FLYING` 后第二次下坐骑都改为 `inputSequences.pressAltC(...)`。
+- `XiuluoTaskV2`
+  - retry 前切坐骑也改为 `Alt+C`，避免同类错误。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check` on touched input/task files passed, only CRLF conversion warnings.
+
+Next validation:
+
+- 下一轮缺鞋五环看 `『忍者』影` 到达 `长安(130,130)` 后日志应出现 `PRESS_ALT_C` / `shortcut=Alt+C` / HWND `Alt+C`，不应再出现用于下坐骑的 `PRESS_CTRL_C`。
+- 如果 `Alt+C` 仍未下坐骑，再查 HWND 后台投递是否被游戏接收；但第一层错误已经确定是快捷键写错。
+
+### 谢帅 - 2026-06-08 五倍恢复老式 blocking 导航
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 五倍仍是老式 blocking 导航，没有完整接入 `DebugNavigationStressTask` 的后台 route-dialog preparation 状态机。
+- 但 `NavigationService.navigateToMap(...)` 在世界地图路线点击后无条件创建 `DialogPreparationRequest`。
+- 因此五倍会出现半套新架构：watcher 后台 OCR route dialog，前台 blocking loop 继续等/重试，导致 `宝象国商会` prepared action 被算出后又被 retry 导航打失效。
+
+Changed:
+
+- `NavigationService`
+  - `submitWorldMapSearchAndClickDestination(...)` 成功后，只有 `request.isReturnOnPathingStarted()` 为 true 才调用 `requestRouteDialogPreparationAfterMapRouteClick(...)`。
+  - 五倍当前 `returnOnPathingStarted=false` 的导航会回到老方式：不登记后台 route-dialog preparation，不让 watcher 半路帮它算 `宝象国` 传送选项。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next validation:
+
+- 下一轮五倍到 `宝象国` 时，不应再出现 `window-dialog-preparation:wubei:宝象国` / `dialog prepared action invalidated` 这种后台 prepared action 被打废的日志。
+- 如果仍慢，应继续查老式 blocking 导航自身的前台 route dialog OCR/点击耗时，而不是 watcher-prepared-action 生命周期。
+
+### 唐德 - 2026-06-11 清理维护/兜底导航的 returnOnPathingStarted=false
+
+Status: implemented / compile passed / waiting runtime validation
+
+Context:
+
+- 用户希望逐步收掉 `returnOnPathingStarted(false)` 的旧 blocking 分支，避免长期维护两套路由/寻路语义。
+- 本次先处理用户点名的几条：五倍医保宝/修装备维护、修罗医保宝维护、五环买鞋失败 fallback。Debug 工具暂不管；修罗接任务短距离动态 false 单独保留待讨论。
+
+Changed:
+
+- `WubeiTask`
+  - 五倍维护 hook 导航从 `returnOnPathingStarted(false)` 改为 `true`。
+  - 新增 `PATHING_STARTED` / `STOPPED` 分支：维护 NPC 导航一旦开始寻路，就返回 `WubeiStepOutcome.pathingStarted(...)`，不再继续点 NPC。
+- `XiuluoTaskV2`
+  - heal-pet 维护 hook 调用 `runMaintenanceBroadcastAttempt(...)` 的最后一个参数从 `false` 改为 `true`。
+  - repair-equipment 原本已经是 `true`。
+- `FiveRingTaskV2`
+  - 买鞋失败后的 fallback 导航到修装备 NPC 显式加上 `returnOnPathingStarted(true)`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- WubeiTask.java XiuluoTaskV2.java FiveRingTaskV2.java` passed, only CRLF conversion warnings.
+
+Follow-up:
+
+- 正式 task 中已无显式 `returnOnPathingStarted(false)`。
+- `XiuluoTaskV2` 接任务 NPC 短距离动态 false 也已移除；近距离仍优先直接 `clickNpcSmart(...)`，需要导航时统一 `returnOnPathingStarted(true)`。
+- Debug 工具 `CurrentToChanganEastDebugMain` 仍未显式设置，默认 false，按用户要求暂不处理。
+
+Architecture conclusion:
+
+- 正式业务导航已经迁移到 `returnOnPathingStarted(true)` 语义。
+- 以后 `NavigationService.navigateToNPC(...)` 的正式 task 调用，只要提交了移动/寻路，就应该返回 `PATHING_STARTED` 并放权，由 window watcher / phase state 后续确认到达、停错点、弹窗或重试。
+- 不再维护 `returnOnPathingStarted(false)` 的 blocking 业务分支；后续看到专门为 false case 写的判断、prepared-dialog 分叉、blocking 等待逻辑，应优先评估删除或合并到 true/handoff 语义。
+- `NavigationRequest` 当前 builder 默认值仍是 `false`，这是残留风险。正式业务新调用必须显式写 `.returnOnPathingStarted(true)`，除非是 debug/local one-off，并在代码注释里说明为什么需要 blocking。
+- Debug 工具和注释掉的旧任务代码不纳入本结论。
+
+### 唐德 - 2026-06-11 五环队员窗口改派自动战斗
+
+Status: implemented / compile passed / waiting runtime validation
+
+Issue:
+
+- 用户确认：五环如果是队员窗口启动，不应执行五环业务动作；不要接任务、导航、点 NPC、买鞋等。
+- 队员窗口只需要直接进入自动战斗/挂机逻辑。
+
+Changed:
+
+- `TaskTeamAssignmentPolicy`
+  - 队员窗口请求 `WUHuan` / `WUHuan_V2` 时，一律改派 `TaskType.AUTO_BATTLE`。
+  - 五环启动前现在始终需要 role preflight；UNKNOWN 仍允许跑五环，MEMBER 则改派自动战斗。
+- `WindowTaskRunner`
+  - live role detection 返回 UNKNOWN 时，如果 window context 已经有 `MEMBER` / `LEADER`，使用已有窗口身份参与分派，避免已有队员身份被 UNKNOWN 覆盖。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Runtime expectation:
+
+- 队员窗口启动五环时，日志应出现 `task reassigned by team role: requested=WUHuan... role=MEMBER resolved=AUTO_BATTLE` 或 `WUHuan_V2 -> AUTO_BATTLE`。
+- 队员窗口不应进入 `FiveRingTaskV2` 的 prepare/accept/navigation/buy-shoe 流程。
+
+### 谢帅 - 2026-06-11 收敛 current-map 到 pathing handoff 语义
+
+Status: implemented / compile passed
+
+Context:
+
+- 另一个 agent 已确认正式 task 中没有显式 `returnOnPathingStarted(false)` 调用。
+- 继续保留 current-map 的 true/false 双分支会让五环/压力测试维护两套路由行为，尤其容易出现“点了小地图后是本轮继续 retry 还是交给 watcher”的歧义。
+
+Changed:
+
+- `NavigationRequest`
+  - builder 默认 `returnOnPathingStarted` 从 `false` 改为 `true`。
+  - 注释更新为：正式 task 默认使用 pathing handoff；debug 如需旧 blocking 行为必须显式 opt out 并说明原因。
+- `FiveRingTaskV2`
+  - `clickShoeShopEntryExact(...)` 去掉 `returnOnPathingStarted` 透传参数，内部固定使用 `true`。
+- `XiuluoTaskV2`
+  - `runMaintenanceBroadcastAttempt(...)` 去掉 `returnOnPathingStarted` 透传参数，医保宝/修装备维护 NPC 导航固定使用 `true`。
+- `NavigationService.navigateInCurrentMap(...)`
+  - 移除旧 blocking/current-map false 分支。
+  - 不再做进入 current-map 前的长 movement probe。
+  - 小地图点击仍必须先确认已触发移动；确认后同步关闭小地图，再注册 pathing intent 并返回 `PATHING_STARTED`。
+  - 移除旧的 `clickMiniMapPointAndConfirm(...)` / `syncAndCheckArrived(...)` helper。
+  - 删除 current-map 里只服务旧 debug false/特殊 close 的残留分支。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Remaining:
+
+- `NavigationService.navigateToMap(...)` 里仍有若干 `request.isReturnOnPathingStarted()` 分支。正式调用现在都会走 true/default true，但跨地图 false/blocking loop 的删除范围更大，建议单独一轮处理，避免把 world-map route dialog 已验证逻辑一起改乱。
+
+### 谢帅 - 2026-06-11 清理 navigateToMap 旧 blocking 分支
+
+Status: implemented / compile passed
+
+Context:
+
+- 正式业务导航和 debug pressure path 现在都走 `returnOnPathingStarted=true` / watcher handoff。
+- `navigateToMap(...)` 里仍保留一整段旧 blocking loop：提交世界地图路线后，前台继续检测移动、同步坐标、retry 世界地图。这段只服务旧 false 语义，会和 watcher/runner 的职责重复。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - route dialog preparation target 变更清理、prepared route dialog 消费改为无条件按 handoff 语义执行，不再包 `isReturnOnPathingStarted()`。
+  - 世界地图路线提交失败后立即返回 `MAP_NOT_REACHED`，交给 task 层清理/retry。
+  - 世界地图路线提交成功后立即创建 route-dialog preparation request，返回 `PATHING_STARTED`，由 window watcher 判断移动、到达、停错点或后续 retry。
+  - 删除旧 180 秒 blocking loop：不再在 `navigateToMap(...)` 里前台 `detectMovementState()`、`syncMyPosition()`、重复点世界地图结果。
+  - 删除旧 loop 专用常量和 `isActiveNavigationMovement(...)`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Remaining:
+
+- `NavigationService` 里仅剩日志打印 `returnOnPathing` 字段，没有业务分支依赖 false。
+- 下一轮实测重点看跨地图 route dialog：提交路线后是否快速放权、watcher 是否能正确把 `PATHING_STARTED` 推进到 ARRIVED / STOPPED_AWAY / prepared dialog click。
+
+### 谢帅 - 2026-06-11 删除 NavigationRequest.returnOnPathingStarted 字段
+
+Status: implemented / compile passed
+
+Context:
+
+- `navigateInCurrentMap(...)` 和 `navigateToMap(...)` 已经统一为 pathing handoff 语义。
+- 代码中不再存在 false/blocking 分支，继续保留 request 字段会制造“还有两套导航模式”的错觉。
+
+Changed:
+
+- `NavigationRequest`
+  - 删除 `returnOnPathingStarted` 字段。
+- `NavigationService`
+  - 删除日志里的 `returnOnPathing` 输出。
+  - 更新 `navigateToNPC(...)` JavaDoc，不再描述可配置 return-on-pathing 行为。
+- `DebugNavigationStressTask` / `FiveRingTaskV2` / `XiuluoTaskV2` / `WubeiTask`
+  - 删除所有 `.returnOnPathingStarted(true)` builder 调用。
+
+Verify:
+
+- `rg -n "returnOnPathingStarted|isReturnOnPathingStarted|getReturnOnPathingStarted" src/main/java -S` returns no matches.
+- `mvn -q -DskipTests compile` passed.
+
+Follow-up:
+
+- 后续导航设计不要再新增 blocking/return-on-pathing 开关；如果某个 debug 需要同步等待，应另起明确 debug-only API 或局部测试代码，不能回塞到正式 `NavigationRequest`。
+
+### 谢帅 - 2026-06-11 删除 NavigationRequest.publishWindowPathingIntent 字段
+
+Status: implemented / compile passed
+
+Context:
+
+- `returnOnPathingStarted` 已移除后，所有 `PATHING_STARTED` 都应交给 window watcher/runner 后续判断。
+- `publishWindowPathingIntent=false` 会造成裂缝：导航已经返回 `PATHING_STARTED`，但 runner 没有对应 intent，任务拿不到明确 ARRIVED / STOPPED_AWAY 目标状态。
+
+Changed:
+
+- `NavigationRequest`
+  - 删除 `publishWindowPathingIntent` 字段。
+- `NavigationService`
+  - `registerWindowPathingIntent(...)` 不再检查 request 开关；只要有当前 window runtime，就登记 pathing intent。
+- `DebugNavigationStressTask` / `FiveRingTaskV2`
+  - 删除 `.publishWindowPathingIntent(true)` builder 调用。
+
+Kept:
+
+- `NavigationRequest.randomizeMiniMapClickPoint` 保留。
+  - 这是有效业务参数：普通导航默认加随机偏移；五环买鞋进店这种精确小地图点可设为 `false`。
+
+Verify:
+
+- `rg -n "publishWindowPathingIntent|isPublishWindowPathingIntent|getPublishWindowPathingIntent" src/main/java -S` returns no matches.
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-11 更新自动战斗取消模板
+
+Status: implemented
+
+Context:
+
+- 游戏更新后自动战斗面板尺寸/位置可能变化，用户在 `images/template/battle` 放入了新的 `222.png` 作为取消自动区域截图。
+
+Changed:
+
+- 使用 `ImagePreprocessor.countGreenPixelsHSV(...)` 同等阈值（HSV `50..75 / 150..255 / 180..255`）将 `images/template/battle/222.png` 洗成绿字 mask。
+- 覆盖 `images/template/battle/quxiao_zidong_green.png`。
+
+Verify:
+
+- 新模板尺寸：`102x19`。
+- 绿字像素数：`241`。
+
+Note:
+
+- 本次只替换图片资产，没有调整 `AutoCombatPanelService` 的面板中心 offset；如果后续实测仍偏移，再单独校准 offset。
+
+### 唐德 - 2026-06-11 自动战斗轮数改为估算刷新，不再正式 OCR
+
+Status: implemented / compile passed
+
+Context:
+
+- 多窗口进战斗后，原链路会在 entry maintenance 里对自动战斗面板剩余轮数做本地 OCR。
+- 五个窗口几乎同时进战斗时，Python OCR 会出现 CPU 峰值。
+- 用户确认：正式链路不需要读取屏幕轮数；只要按 `Alt+8` 成功，自动战斗轮数可直接视为重置到 25。
+
+Changed:
+
+- `GameContext.State`
+  - 新增窗口级 `autoCombatEstimatedRounds` 和 `lastAutoCombatRefreshAt`。
+  - 这些状态跟随每个窗口自己的 `GameContext.State`，不再作为任务局部状态。
+- `AutoCombatPanelService`
+  - `verifyAndAlignPanel()` 仍确认面板存在并按需拖拽。
+  - 正式链路不再调用 `readRemainingRounds(...)`，即不再通过本地 OCR 读轮数。
+  - 轮数刷新改成估算策略：
+    - 轮数未知：按 `Alt+8`，直接记 `25`。
+    - 估算轮数 `<= 10`：按 `Alt+8`，直接记 `25`。
+    - 距离上次刷新超过 `bot.dhxy.auto-battle-refresh-interval-ms`：按 `Alt+8`，直接记 `25`。
+    - 其他情况只记录“估算健康”，不 OCR。
+  - `ensurePanelMatchVisible(...)` 如果因为面板未识别而主动发送 `Alt+8`，也会把窗口级估算轮数重置到 `25`。
+  - `recordCombatExit()` 现在从 `GameContext` 读取/扣减估算轮数，每场战斗按 `3` 扣。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Follow-up:
+
+- 下一轮实测看日志中是否不再出现正式链路的 `auto-combat panel rounds OCR result`。
+- 如果仍有 OCR 日志，优先确认是否来自 debug 工具或未迁移的调用点，而不是恢复旧 OCR 逻辑。
+
+### 唐德 - 2026-06-11 本地 OCR sidecar 限制并发与底层线程
+
+Status: implemented / sidecar restarted
+
+Context:
+
+- 用户在任务管理器看到 `Python` 持续/反复接近 40% CPU。
+- 自动战斗轮数 OCR 已从正式链路移除，但启动阶段仍可能有队伍角色、摄妖香、地图路线等 OCR 请求。
+- `scripts/local_ocr_server.py` 使用 `ThreadingHTTPServer`，多窗口请求会并发进入 RapidOCR；RapidOCR/ONNX/OpenMP 默认可为单个请求开多条 native worker 线程，因此并发窗口会把 CPU 峰值放大。
+
+Changed:
+
+- `scripts/local_ocr_server.py`
+  - 在 RapidOCR import/load 前设置线程环境变量：
+    - `OMP_NUM_THREADS=1`
+    - `MKL_NUM_THREADS=1`
+    - `OPENBLAS_NUM_THREADS=1`
+    - `NUMEXPR_NUM_THREADS=1`
+    - `OMP_WAIT_POLICY=PASSIVE`
+  - 新增全局 `OCR_LOCK`，所有 `/ocr/text` 和 `/ocr/words` 请求串行进入 `load_engine()(...)`。
+  - HTTP server 仍可并发接请求，但 OCR 计算本体排队执行，避免五窗口同时把 CPU 拉满。
+
+Verify:
+
+- 已重启本地 OCR sidecar，当前监听 `127.0.0.1:18761` 的 Python PID 为 `242012`。
+- `/health` 返回 `{"ok":true}`。
+- `python -m py_compile scripts/local_ocr_server.py` passed。
+- 空闲 5 秒采样：Python CPU 约 `0%`。
+
+Follow-up:
+
+- 下一轮多窗口启动时观察 Python 峰值是否明显下降；如果仍偏高，再考虑把高频 OCR 调用点本身继续降频/缓存。
+
+### 谢帅 - 2026-06-11 五倍显形镜寻路接入 runner，目标坐标只认 destination hint
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户复盘五倍 23:36 左右日志时发现：
+  - 左侧任务追踪绿字点击后，显形镜阶段等待停稳用了本地 `GameStateUtil.detectMovementState()`，没有优先使用窗口 runner 的 pathing snapshot。
+  - `destination hint` 解析失败后，白龙马/显形镜目标点击直接被 `no-destination-hint` 阻断，即使“点击可/目标出现”story 已经识别成功。
+- 复核后明确：五倍任务怪的目标地图/坐标唯一可信来源就是绿字点击后短暂浮出的 `destination hint`。
+- runner snapshot / `gameContext.getMe()` 只能代表当前角色站位，不能冒充任务怪坐标。
+- 约定：确认移动/停稳交给 runner；目标坐标只从 `destination hint` 来。
+
+Changed:
+
+- `WubeiTask.clickTaskTrackerGreen(...)`
+  - 绿字点击成功后注册 `WindowPathingIntentType.UNTARGETED_TRACKER` 到当前 `WindowRuntimeContext`。
+  - 保留原 `GameStateUtil.recordMovementIntent(...)` 作为兼容信号。
+- `WubeiTask.resolveProbeAfterPathing(...)`
+  - 优先读取当前窗口 `WindowPathingSnapshot`。
+  - runner 仍为 `ACTIVE/UNKNOWN/probeInProgress` 时直接让权等待。
+  - 只有没有可用 tracker snapshot 时，才退回旧的本地 pixel/坐标移动判断。
+- `WubeiTask.tryClickTrackerCombatTargetSmart(...)` / `tryDirectCombatFromTrackerHint(...)`
+  - 删除上一版错误的 runner/player 坐标兜底。
+  - 构造 `NpcClickRequest` 时，`mapName/mapX/mapY` 只使用 `currentTrackerDestinationHint`。
+  - 如果 hint 没解析到，当前坐标不足以定位任务怪，必须清晰记录 `no-destination-hint` 并走任务自己的重试/恢复，而不是伪造目的地。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍显形镜实测重点看：
+  - 是否出现 `[wubei] window pathing intent registered for tracker click`。
+  - 显形镜停稳是否走 `[wubei] resolve probe after runner pathing`，不再卡在本地 `UNKNOWN` 一分钟。
+  - 如果出现 `no-destination-hint`，重点查 hint 截图/OCR/采样时机，而不是从 runner/player 坐标兜底。
+
+### 唐德 - 2026-06-11 路线弹窗记忆改为 watcher 确认后才写成功
+
+Status: implemented / compile passed
+
+Context:
+
+- 23:40 左右五倍队长从 `平顶山` 导航去 `宝象国` 时，路线弹窗实际选项为：
+  - `乌鸡国城外（400两）`
+  - `宝象国北驿寺（400两）`
+  - `清水湖（400两）`
+  - `我哪儿也不去`
+- 旧记忆 `平顶山->宝象国` 存的是 `rel=(80,92)` / `宝象国皇宫（400两）`，该点在当前弹窗上会落到第一项附近。
+- 更大的 bug 是点击路线记忆点后立即 `recordSuccess`，没有等 watcher 确认真的到达目标地图。
+
+Changed:
+
+- 删除 legacy `config/transfer_choice_memory.json` 中错误的 `平顶山->宝象国` 记忆，避免下次迁移到 `dialog_choice_memory.json` 后继续误用。
+- `NavigationService` 路线弹窗点击后不再立即写成功记忆，改为写入窗口级 pending route memory。
+- `WindowTaskRunner` pathing watcher 负责结算 pending route memory：
+  - `ARRIVED` 且目标地图匹配时，调用 `DialogChoiceMemoryService.recordRouteSuccess(...)`。
+  - `STOPPED_AWAY` 时，调用 `DialogChoiceMemoryService.recordRouteFailure(...)`，沿用现有连续失败 disable 机制。
+- 暂时不加二次 OCR 验证，按用户要求只依赖 watcher 到达确认。
+
+Verify:
+
+- `config/transfer_choice_memory.json` 可被 `ConvertFrom-Json` 正常解析，且 `平顶山->宝象国` 已不存在。
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍从 `平顶山` 去 `宝象国` 时观察：
+  - 不应再使用旧的 `宝象国皇宫（400两） rel=(80,92)`。
+  - 日志应先出现 `[dialog-choice-memory] pending route click`。
+  - 只有 watcher 看到 `ARRIVED` 后才出现 `[dialog-choice-memory] success`。
+
+### 谢帅 - 2026-06-12 五倍暗雷重抽后左侧任务面板缓存失效
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户复盘 12:53-12:55 五倍日志时发现：第一次接到 `暗雷怪` 后重抽合理，但后面继续接任务后仍然直接取消。
+- 日志证据：
+  - 第一次 `READ_TRACKER` 有完整 `TaskTrackerPanelService panel read`，读到 `殿前献艺|3只|暗雷怪`，触发 `dark-thunder reroll` 是正常业务规则。
+  - 第二次接任务成功后，`READ_TRACKER` 同一毫秒直接再次输出 `dark-thunder task detected`，中间没有新的 `TaskTrackerPanelService panel read`。
+- 原因：`currentTrackerPanel` 在接任务成功后没有清空；下一次 `READ_TRACKER` 看到缓存仍是 found，就复用了上一轮/上一次重抽的左侧任务追踪结果。
+
+Changed:
+
+- `WubeiTask.runAcceptTaskPhase(...)`
+  - 接任务成功后清空 `currentTrackerPanel`，强制下一步 `READ_TRACKER` 重新截图读取左侧任务面板。
+- `WubeiTask.runReadTrackerPhase(...)`
+  - 命中 `暗雷怪` 并准备重抽前清空 `currentTrackerPanel`，避免重抽路径继续带着旧快照。
+  - 后续复查发现只在接任务/暗雷分支清缓存仍然偏局部，已把 `READ_TRACKER` 改成统一刷新边界：每次进入该 phase 都重新调用 `resolveTrackerPanelWithAnchorRecovery(...)`，不再因为 `currentTrackerPanel.isFound()` 复用旧快照。
+- 暗雷怪重抽规则本身没有改。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-12 修罗路线 dialog preparing 不再进入 nav recovery
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户追查 22:23 附近修罗从长安去万寿山时，路线 dialog 已经弹出，但没有触发移动，随后进入 UI cleanup / nav recovery。
+- 日志确认 `UI cleanup` 不是根因：
+  - `22:23:07` watcher 已看到 `OPTION` 并开始 `ROUTE_TRANSFER` 后台准备。
+  - `22:23:11` `NavigationService` 返回 `DIALOG_PREPARING`，表示后台还在算路线 dialog 点击点。
+  - 同一时刻修罗把该结果当普通失败处理，进入 `recoverTargetNavigationFailure(...)`，从而触发 `uiCleanerService.cleanUpAll()`。
+  - `22:23:12` 后台实际算出了 `万寿山（800两） click=(1083,848)`，但前台已经走进 recovery 链，错过了正常移动触发窗口。
+
+Changed:
+
+- `XiuluoTaskV2.navigationOutcome(...)`
+  - 新增 `NavigationResultStatus.DIALOG_PREPARING` 分支。
+  - 该状态现在会 `sharedState(state.retrySamePhase(...))` 并让权等待 watcher/prepared action。
+  - 不再落入 `FAILED`，因此不会因为“后台正在准备路线 dialog”而立刻触发目标导航恢复和 UI cleanup。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮修罗实测重点看 22:23 这类链路：
+  - `navigation phase result ... status=DIALOG_PREPARING` 后应让权等待；
+  - 下一轮应消费 `dialog prepared` 的 `click=(...)`；
+  - 不应马上出现 `navigation-retry:NAVIGATE_TO_TARGET:nav-recovery` 和 `UI cleanup started`。
+
+### 谢帅 - 2026-06-12 修罗回城后跳过重复 UI cleanup
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察到修罗使用回程道具后，角色已经回到灵兽村，但进入下一轮接任务前会站住几秒。
+- 日志和代码确认：正常回城成功后，下一轮从 `PREPARE_ROUND` 开始，而 `prepareRound()` 里无条件执行 `uiCleanerService.cleanUpAll()`。
+- 修罗各 phase 的失败恢复路径本身已经有 cleanup/fallback；正常成功回城后的每轮 cleanup 属于重复保险。
+
+Changed:
+
+- `XiuluoTaskV2.prepareRound(...)`
+  - 只在 `round == 1` 时执行 broad `cleanUpAll()`，保留启动/热启动脏 UI 保护。
+  - 后续正常轮次跳过 prepare cleanup，直接进入接任务流程。
+  - 失败路径仍由各 phase 自己的 recovery/fallback 清 UI。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮修罗实测重点看 `return item verified` 之后到 `ACCEPT_TASK_NAVIGATE_TO_NPC` 的间隔是否明显缩短。
+- 日志应看到后续轮次：`prepare round: skip clean UI round=... reason=phase-fallbacks-own-cleanup`。
+
+### 谢帅 - 2026-06-12 五倍显形镜目标点击空 hint 异常
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户反馈最新五倍又直接任务异常。
+- 最新异常发生在 `2026-06-12 19:02:09`，窗口 `hwnd-161B42 / 『忍者』影`，phase 为 `wubei:RESOLVE_AFTER_PATHING`。
+- 日志链路：
+  - `resolve probe after runner pathing ... hint=null`
+  - 使用显形镜成功，随后 `wubei_probe_story_koukou.png` 命中，说明目标已出现。
+  - 进入 `tryClickProbeSpawnedTarget(...) -> tryClickTrackerCombatTargetSmart(...)`。
+  - `tryClickTrackerCombatTargetSmart(...)` 直接读取 `currentTrackerDestinationHint.mapName()`，因为 hint 为空抛出 NPE。
+
+Changed:
+
+- `WubeiTask.tryClickTrackerCombatTargetSmart(...)`
+  - 不再直接对 `currentTrackerDestinationHint.mapName()` 解引用。
+  - hint 存在时继续使用 hint 的 map/x/y。
+  - hint 缺失时给 `NpcClickRequest` 传 `mapName=""`、`mapX=0`、`mapY=0`，让后续点击策略自己判断哪些路径可用。
+- `WubeiTask.tryDirectCombatFromTrackerHint(...)`
+  - 同样使用空 map fallback，避免空 hint NPE。
+
+Rationale:
+
+- 五倍显形镜/黄袍连战里，hint 只能作为目的地辅助验证，不能决定“是否允许进战斗”。
+- 当 story 或左侧任务文本已经证明战斗目标出现时，缺失浮框 OCR 不应该让任务异常退出。
+- 不用 runner snapshot 冒充任务怪坐标；这里只做空值防护。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮实测关注 `try smart combat target click ... requestMap=(0, 0)` 是否出现。
+- 如果出现后点怪仍慢或失败，再查 hint 截图/OCR/采样时机，而不是在这里加新的定位兜底。
+
+Update:
+
+- 用户进一步要求未知坐标不要用 `0,0`，改为 `-1,-1` 表示未知。
+- `WubeiTask`
+  - 缺 `currentTrackerDestinationHint` 时构造 `NpcClickRequest` 使用 `mapName=""`、`mapX=-1`、`mapY=-1`。
+- `NpcClickService`
+  - 增加统一保护：`mapX/mapY < 0` 视为未知目标坐标。
+  - 未知目标坐标时跳过 learned-memory 策略。
+  - 未知目标坐标时跳过 player-anchor formula 策略。
+  - 未知目标坐标时不写 smart-click evidence / vision memory，避免写入 `npc-click||白龙马|(-1,-1)` 这类脏 key。
+  - tooltip / 黄字 / Ctrl 菜单等视觉路径仍可继续尝试。
+- `WubeiTask.runRoundPhases(...)`
+  - 单个 phase 抛 `RuntimeException` 时，不再直接让整个五倍任务异常退出。
+  - 现在会记录 `[wubei] phase exception; recover current round`，然后走现有 `recoverRoundAfterFailure(...)` 回到接任务恢复链。
+  - JVM `Error` / 类加载 / 内存这类 fatal 问题不吞，仍保留硬失败。
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-12 五倍黄袍怪连战绿字不再注册寻路
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户在 18:17 附近观察到黄袍怪第二次/连续战斗时，绿字已经点了，但进入战斗对话框处理明显慢。
+- 日志链路确认不是“截图太早错过 dialog”：
+  - `18:17:05.691` 已点击 `chained-combat-1` 绿字。
+  - 随后旧逻辑把它当成一次 `tracker pathing`，进入 `WAIT_BATTLE_FINISH`。
+  - 到 `18:17:13` 左右才回到 `ENTER_BATTLE` resolver，中间被固定等待拖慢约 6 秒。
+- 黄袍怪连战的绿字不是远距离寻路，怪就在附近，点完后应该短等并马上处理进战斗 dialog。
+
+Changed:
+
+- `WubeiTask.clickTaskTrackerGreen(...)`
+  - `chained-combat-*` label 不再调用 `gameStateUtil.recordMovementIntent(...)`。
+  - `chained-combat-*` label 不再注册 runner pathing intent。
+  - `chained-combat-*` label 继续跳过 destination hint capture。
+  - 新增日志：`tracker pathing intent skipped: label=... reason=chained-combat-continuation`。
+- `WubeiTask.returnHomeAfterCombatOrContinueSpecialTarget(...)`
+  - 黄袍怪战后左侧任务追踪仍显示黄袍怪时，点击下一次绿字后只短等 `450ms`。
+  - 下一阶段从旧的 `WAIT_BATTLE_FINISH` 改为直接 `ENTER_BATTLE`，让 `tryClickKnownEnterBattleDialog(...)` 尽快接手。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next test:
+
+- 下一轮黄袍怪连战看日志是否出现：
+  - `tracker pathing intent skipped: label=chained-combat-...`
+  - `chained combat target continues: ... nextState=ENTER_BATTLE`
+  - 绿字点击后约 1 秒内进入 `wubei:enter-battle` 处理，而不是再等 6 秒。
+
+### 谢帅 - 2026-06-12 五倍接任务 option 记忆点快路径
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户查看 17:59:45 附近五倍接任务日志时发现：NPC dialog 已经弹出后，记忆点点击仍明显等了几秒。
+- 日志拆解确认：
+  - `NpcClickService` 已通过 `VERIFY_EXPECTED_DIALOG` 确认接任务 OPTION dialog 可见。
+  - 随后的 `tryRememberedAcceptOption(...)` 又走了一次 `CLICK_REMEMBERED_OPTION` 的完整 `detectDialogTypeNoFocus`，该次耗时约 1727ms。
+  - 真正 `dialog:rememberedOption:wubei.acceptTask` 输入队列点击只耗时约 341ms。
+
+Changed:
+
+- `DialogHandleRequest`
+  - 保持唯一的 `handleRememberedChoiceOption(...)` 工厂函数，不再新增重载。
+  - 五倍这个快路径直接通过 request builder 设置 `verifyDialogType=false`，避免为了一个开关多暴露一个入口。
+- `DialogService.handleDialog(...)`
+  - 当 `CLICK_REMEMBERED_POINT` 且 `verifyDialogType=false` 时，使用默认大 dialog 矩形直接执行记忆点点击。
+  - 新日志：`dialog remembered option fast path without detect`。
+  - 其他普通记忆点、route dialog 记忆点仍保持原有验证。
+- `WubeiTask.tryRememberedAcceptOption(...)`
+  - 五倍接任务 option 记忆点改为 `verifyDialogType=false`，避免重复验证。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍实测看 `normal-round-start:memory` 附近是否出现：
+  - `dialog remembered option fast path without detect`
+  - 不再出现第二次 `reason=handle-dialog:CLICK_REMEMBERED_OPTION` 的 `dialog.detect` 1727ms 级耗时。
+
+### 谢帅 - 2026-06-12 五倍追踪绿字点击后 hint 改为后台解析
+
+Status: implemented / compile passed
+
+Context:
+
+- 16:29:20-16:29:35 日志显示，队长点击左侧任务追踪绿字后已经注册移动 intent：
+  - `16:29:27.932 window pathing intent registered for tracker click`
+  - 但直到 `16:29:32.935` 才释放任务权。
+- 中间约 5 秒被 `destination hint capture` 三次采样和 OCR 阻塞：
+  - sample1/2/3 同步等待。
+  - 第一张 OCR 约 `ocrMs=3222`。
+- 业务结论：hint 只是点击后的辅助信息；点击绿字并注册移动 intent 后应立即放权，hint 不应占住前台 turn。
+
+Changed:
+
+- `WubeiTask.clickTaskTrackerGreen(...)`
+  - 点击成功后不再同步调用 `captureTrackerDestinationHint(...)`。
+  - 改为 `scheduleTrackerDestinationHintCapture(...)` 后台执行。
+- 后台任务会用当前 `WindowRuntimeContext` 临时绑定线程，保证截图/temp 路径仍然是窗口隔离的。
+- 增加 `trackerDestinationHintRequestId`，旧后台 hint 结果如果晚到，会被识别为 stale 并忽略，避免覆盖新一轮任务 hint。
+- `currentTrackerDestinationHint` 改为 `volatile`，允许后台写入、任务线程读取。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍实测重点看：
+  - 绿字点击后应很快出现 `task.turn.release ... result=PATHING_STARTED`。
+  - `destination hint capture scheduled async` 应出现在释放前后，但不应再拖住 `TRACKER_PATHING` transaction 5 秒。
+  - 后台若成功解析，应看到 `destination hint stored async`。
+
+Follow-up:
+
+- 下一轮五倍测试重点看：每次 `ACCEPT_TASK -> READ_TRACKER` 后都应重新出现 `TaskTrackerPanelService panel read`。
+- 热启动会先读一次左侧面板，进入 `READ_TRACKER` 后还会再读一次；这是为了换取缓存安全，后续如果要优化性能，可以给热启动快照加明确版本/时间戳再复用。
+- 如果第二次仍被取消，要看新的 `TaskTrackerPanelService panel read` 读出的 `yellow='...'` 是什么；不能再只凭旧的 `殿前献艺|3只|暗雷怪` 缓存取消。
+
+### 谢帅 - 2026-06-12 Dialog 白字 story 模板参数升级为列表
+
+Status: implemented / compile passed
+
+Context:
+
+- 13:05 左右五倍白龙马 probe 失败复盘发现，`WubeiTask` 连续调用两次 `handleDialog(VERIFY_WHITE_TEMPLATE)`：
+  - 一次查 `probe target-ready` 白字模板。
+  - 一次查 `probe wrong-position` 白字模板。
+- 每次 `handleDialog` 都会重新 `Alt+4`、截图、洗白字和匹配，后续还有 `NpcClickService` 的 story cleanup，导致失败 fallback 时间被放大。
+
+Changed:
+
+- `DialogHandleRequest`
+  - 把白字模板参数从单个 `expectedTemplateActionKey/expectedTemplatePath` 升级为 `List<WhiteTemplateSpec>`。
+  - 保留原来的 `verifyWhiteTemplate(source, actionKey, templatePath)` 工厂方法，内部包装成单元素 list，旧调用点不用改。
+- `DialogService.verifyWhiteStoryTemplate(...)`
+  - 保持原来的 `VERIFY_WHITE_TEMPLATE` 入口不变。
+  - 一次 dialog snapshot、一次洗白字后，遍历 `whiteTemplateSpecs` 匹配，命中后返回对应 `actionKey/templatePath`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一步再改 `WubeiTask`，把 `probe target-ready` 和 `probe wrong-position` 两次白字检查合并成一次 `verifyWhiteTemplates(...)` 请求。
+- 之后再决定是否让五倍 probe 调 `NpcClickService` 时跳过重复 story cleanup。
+
+Update:
+
+- 已把 `WubeiTask` 白龙马显形镜后的两个 story 检查合并：
+  - 主流程仍保留两个 if：先看 `probe target-ready`，再看 `probe wrong-position`。
+  - 底层只调用一次 `inspectProbeStoryOnce(...)` / `handleDialog(VERIFY_WHITE_TEMPLATE)`。
+  - `DialogService` 在同一张 dialog snapshot、同一张白字 washed 图上匹配两个 `WhiteTemplateSpec`。
+- `handleDialog(...)` 默认不再按 `Alt+4`；`Alt+4` 只保留给 `detectDialogTypeNoFocus(reason)` 这类“主动探测是否有 dialog”的入口。
+- 白字 story 模板检查、路线弹窗、任务/维护等业务 `handleDialog(...)` 不再默认占用输入队列去隐藏玩家名字。
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-12 五倍黄袍链战后 title 消失视为完成
+
+Status: implemented / compile passed
+
+Context:
+
+- 15:19 左右五倍黄袍怪连续战斗结束后，`RETURN_HOME` 阶段读取左侧任务追踪：
+  - 面板区域能截到，但五倍 title 模板全部 `not matched`。
+  - 旧逻辑把 `postCombatPanel.isFound()==false` 当成 `chained combat tracker unreadable`，进入失败恢复。
+  - 失败恢复又把状态送回 `ROUTE_TO_MAIN_TASK`，表现为没有用回程道具，而是直接跑回接任务 NPC。
+- 用户确认业务语义：该运行态已经记住本轮是在打黄袍怪链；战后左侧五倍 title 消失，说明黄袍链结束，应正常使用回程道具，不是任务失败，也不是热启动未知状态。
+
+Changed:
+
+- `WubeiTask.returnHomeAfterCombatOrContinueSpecialTarget(...)`
+  - 在 `currentRoundChainedCombatExpected` 的战后分支里，`postCombatPanel.isFound()==false` 改为“黄袍链完成”。
+  - 清空 `currentRoundChainedCombatContinueCount`。
+  - 调用 `useReturnItemAndVerifyStartMap(context, "chained-combat-title-gone")`。
+  - 成功后进入 `WAIT_TEAM_RETURN`，不再走 generic accept-task recovery。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮黄袍怪实测重点看：
+  - `chained combat tracker title gone after battle; treat as completed`
+  - 随后是否出现 `use return item and verify start map: source=chained-combat-title-gone`
+  - 不应再因为战后 title 消失进入 `recover current round from accept task`。
+
+### 谢帅 - 2026-06-12 五倍接任务 NPC probing 增加已有 dialog gate
+
+Status: implemented / compile passed
+
+Context:
+
+- 15:53:45 到 15:54:28 暂停前，队长在五倍接任务恢复链路里表现为“站着不动、鼠标乱探测”。
+- 日志链路：
+  - `READ_TRACKER` 连续 5 次没有命中五倍 title，进入 `recover current round from accept task`。
+  - 导航认为队长已在 `宝象国(92,90)`，接任务 NPC 目标是 `(86,87)`，所以没有移动。
+  - `NpcClickService` tooltip 没找到，使用 learned-memory 点 `(532,634)`。
+  - 点完后 `DialogService` 已检测到 `OPTION`，但 expected template 没命中，于是继续黄字 OCR / Ctrl probe。
+  - 后续 Ctrl probe 用 learned point 和黄字噪点候选 `(365,634)/(599,797)/(667,970)...` 反复 `holdCtrl -> moveMouse -> releaseCtrl`，形成“乱点”现象。
+
+Changed:
+
+- `NpcClickService.clickNpcSmart(...)`
+  - 在 learned-memory 点击前加已有 dialog gate。
+  - 在 learned-memory 点击失败后再加一次已有 dialog gate，拦住“已弹出 dialog 但模板没验证上”的情况。
+  - 在 Ctrl probe 前加已有 dialog gate。
+- gate 使用 `dialogService.detectDialogTypeNoFocus(...)`。如果发现 `OPTION/STORY`，直接停止后续 NPC probing，并让调用方继续走自己的 `DialogService` 业务处理。
+
+Findings:
+
+- 本次 `READ_TRACKER` 失败不是 OCR 算错；保存图 `images/temp/hwnd-161B42/task_tracker_detail_wubei-attempt-5.png` 显示左侧内容是 `[引导] 手揪枯荣[社树之心]`，不在当前五倍 title 模板集合内。
+- 当前五倍 title 模板只有：`三藏封魔`、`宝象谜情`、`殿前献艺`、`智斗黄袍`、`魁星归位`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍接任务实测重点看：
+  - 出现已有 dialog 时，应看到 `NPC smart click skips further probing because dialog is already open`。
+  - 不应继续进入 `npcClick:ctrlMenuScan:降魔侍卫`。
+  - 如果 READ_TRACKER 仍失败，需要确认 `[引导] 手揪枯荣[社树之心]` 是正常五倍分支 title、临时引导任务，还是任务追踪面板截错/残留。
+
+Update:
+
+- 复盘用户截图后，确认还有一个时序风险：接任务选项点击成功后，左侧任务追踪不是瞬间刷新；旧代码马上进入 `READ_TRACKER`，5 次 title retry 之间也没有等待，容易连续读到接任务前/旧任务追踪内容。
+- `WubeiTask.runAcceptTaskPhase(...)`
+  - 接任务成功后先清 `currentTrackerPanel`。
+  - 新增明确日志：`accept task clicked; waiting tracker refresh before READ_TRACKER`。
+  - 等待 `TRACKER_REFRESH_AFTER_ACCEPT_MS=1000ms` 后再进入 `READ_TRACKER`。
+- `WubeiTask.resolveTrackerPanelWithAnchorRecovery(...)`
+  - 每次 title miss 后，下一次 retry 前等待 `350ms`，避免 5 次截图都发生在同一个左侧面板刷新窗口里。
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-12 队员三技能维护未触发原因与修复
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察到五倍里队长已经做过三技能维护，但四个队员一次都没做。
+- 日志里队员窗口只有 `auto-battle` 的补给 / broadcast dialog / 自动战斗面板维护，没有任何 `summon skill due` 或 `start summon skill clean`。
+- 代码确认原因在 `AutoBattleTask.maybeRunIdleMaintenance(...)`：队员作为主任务 follower-support 时，旧逻辑使用 `cleanSummonSkill(!followerSupportMode)`，等于明确禁止队员三技能维护。
+
+Changed:
+
+- `AutoBattleTask.maybeRunIdleMaintenance(...)`
+  - follower-support 队员不再禁用三技能维护。
+  - 队员三技能维护接入 `oneSummonSkillPerTeamRound`，使用当前 `requestedTaskCode` 作为 teamMaintenanceKey。
+  - 保持每轮最多一个窗口执行三技能维护，避免五个窗口同一轮全部抢着做。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮实测看队员日志是否出现：
+  - `maintenance: summon skill due source=auto-battle`
+  - `maintenance: summon skill round claimed teamRound=wubei#... windowKey=... source=auto-battle`
+  - `maintenance: start summon skill clean source=auto-battle`
+- 如果仍然只有队长做，下一步要检查队长 `leader-pathing` 是否总是先抢到 `wubei#round` claim，需要做简单轮转或队员优先策略。
+
+### 谢帅 - 2026-06-12 五倍维护阶段拆分与修装备导航等待
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户在 17:19:50 附近观察到五倍触发修装备维护后，队长已经导航到修装备 NPC 附近，但没有继续点 NPC 触发修装备 broadcast。
+- 日志链路显示五倍在 `TRACKER_PATHING` phase 里同时检查 `heal-pet` 和 `repair-equipment`：
+  - `repair-equipment` 的 `navigateToNPC(...)` 返回 `PATHING_STARTED` 后，下一轮又重新进入同一个 `TRACKER_PATHING`。
+  - 由于五倍没有像修罗一样等待“维护 NPC 导航结束”，后续会重新跑维护判断，甚至串到另一个维护 hook。
+- 修罗 V2 已经把维护拆成两个阶段：
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK`：接任务/读目标后处理医宝宝。
+  - `BEFORE_ROUTE_MAINTENANCE_CHECK`：正式去目标前处理修装备。
+
+Changed:
+
+- `WubeiPhase`
+  - 新增 `AFTER_ACCEPT_MAINTENANCE_CHECK`。
+  - 新增 `BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK`。
+- `WubeiRoundContext`
+  - 新增 `waitingPathing`，用于记录当前 phase 已经提交了维护 NPC 导航，下一轮应先等待导航稳定。
+  - 新增 `waitForPathing(...)` / `clearPathingWait(...)`。
+- `WubeiTask`
+  - `READ_TRACKER` 成功后不再直接进 `TRACKER_PATHING`，而是进入 `AFTER_ACCEPT_MAINTENANCE_CHECK`。
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK` 只处理医宝宝，到下一段维护。
+  - `BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK` 只处理修装备，到真正 `TRACKER_PATHING`。
+  - `TRACKER_PATHING` 不再绑定医宝宝/修装备，避免维护失败后串阶段绕路。
+  - 维护 NPC 导航返回 `PATHING_STARTED` 后，保留当前维护 phase 并设置 `waitingPathing`。
+  - 下一轮同一维护 phase 会先调用 `GameStateUtil.detectMovementState()`，仍在移动则继续放权等待；停止后才继续点维护 NPC。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮五倍实测重点看：
+  - 修装备 hook 出现 `repair-equipment maintenance navigation still pathing` 后，不应立刻串到医宝宝或主追踪绿字。
+  - 到达李道宗附近后，应继续 `NPC smart-click` 并触发修装备 broadcast。
+  - 医宝宝和修装备应该出现在不同 phase 日志里，顺序清晰。
+
+Update:
+
+- 用户进一步明确五倍维护链的业务顺序：
+  - 医宝宝和修装备都属于“接完任务以后、打怪以前”的维护。
+  - 顺序必须是：先医宝宝，再修装备，最后去打怪。
+  - 修装备完成后，不管成功还是失败，本轮都不能回头再医宝宝或再次修装备。
+  - 失败的维护留到下一轮再尝试；如果连续多轮失败，需要停止反复绕路。
+- `WubeiTask`
+  - 保持 `READ_TRACKER -> AFTER_ACCEPT_MAINTENANCE_CHECK -> BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK -> TRACKER_PATHING` 单向链。
+  - 增加 `MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES=3`。
+  - 医宝宝/修装备成功后分别重置自己的连续失败计数。
+  - cooldown 未到的跳过不算失败。
+  - 真正尝试完 `MAX_MAINTENANCE_HOOK_ATTEMPTS` 仍失败才累计一次失败。
+  - 连续失败达到上限后，后续轮次直接跳过该维护，避免每轮都绕去失败的维护 NPC。
+- `mvn -q -DskipTests compile` passed。

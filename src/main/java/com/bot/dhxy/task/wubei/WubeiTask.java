@@ -10,19 +10,26 @@ import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
+import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.dialog.WhiteTemplateSpec;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
 import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
+import com.bot.dhxy.model.navigation.NavigationResultStatus;
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.model.npc.NpcMovementType;
 import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.npc.NpcTargetEvidence;
 import com.bot.dhxy.model.npc.NpcTarget;
+import com.bot.dhxy.model.tasktracker.TaskTrackerGreenLink;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelReadResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
@@ -30,17 +37,20 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.BagService;
+import com.bot.dhxy.service.DialogChoiceMemoryService;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.NavigationService;
 import com.bot.dhxy.service.NpcClickService;
 import com.bot.dhxy.service.PlayerStateService;
-import com.bot.dhxy.service.QuestManagerService;
 import com.bot.dhxy.service.TaskMaintenanceService;
+import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.service.TeamReturnService;
 import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
+import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
+import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.transaction.TaskTransactionOutcome;
 import com.bot.dhxy.task.transaction.TaskTransactionResult;
 import com.bot.dhxy.task.transaction.TaskTransactionRunner;
@@ -50,20 +60,25 @@ import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingIntentType;
+import com.bot.dhxy.window.model.WindowPathingSnapshot;
+import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
-import com.bot.dhxy.vision.OcrWindowScanService;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
-import java.awt.image.BufferedImage;
-import java.io.File;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -120,6 +135,7 @@ public class WubeiTask implements GameTask {
     private static final String BUSINESS_ACTION_HEAL_PET = "heal-pet";
     private static final String BUSINESS_ACTION_REPAIR_EQUIPMENT = "repair-equipment";
     private static final int MAX_MAINTENANCE_HOOK_ATTEMPTS = 5;
+    private static final int MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES = 3;
     private static final String TEAM_RETURN_WAIT_SOURCE_PREFIX = "team-return-wait";
     private static final String TEAM_RETURN_BEFORE_ACCEPT_SOURCE = TEAM_RETURN_WAIT_SOURCE_PREFIX + ":before-accept";
     private static final String TEAM_RETURN_ROUND_DONE_SOURCE = TEAM_RETURN_WAIT_SOURCE_PREFIX + ":round-done";
@@ -143,12 +159,14 @@ public class WubeiTask implements GameTask {
     private static final int TRACKER_PANEL_FROM_ANCHOR_TOP = 12;
     private static final int TRACKER_PANEL_FROM_ANCHOR_RIGHT = 86;
     private static final int TRACKER_PANEL_FROM_ANCHOR_BOTTOM = 73;
-    private static final long TRACKER_REFRESH_AFTER_ACCEPT_MS = 450L;
-    private static final int TRACKER_DEST_HINT_SAMPLES = 3;
-    private static final int TRACKER_DEST_HINT_SAMPLE_DELAY_MS = 180;
-    private static final long TRACKER_DEST_HINT_MAX_CAPTURE_MS = 3_000L;
+    private static final int TRACKER_TASK_BLOCK_HEIGHT = 60;
+    private static final int TRACKER_TITLE_CENTER_FALLBACK_LEFT_SHIFT = 24;
+    private static final long TRACKER_REFRESH_AFTER_ACCEPT_MS = 1_000L;
+    private static final long TRACKER_REFRESH_RETRY_INTERVAL_MS = 350L;
+    private static final int[] TRACKER_DEST_HINT_CAPTURE_OFFSETS_MS = {1_500, 2_500, 3_500};
+    private static final int TRACKER_DEST_HINT_SAMPLES = TRACKER_DEST_HINT_CAPTURE_OFFSETS_MS.length;
     private static final OcrWindowRegion TRACKER_DEST_HINT_REGION =
-            new OcrWindowRegion(250, 345, 779, 488);
+            new OcrWindowRegion(350, 370, 679, 463);
     private static final int TRACKER_DEST_HINT_ARRIVAL_TOLERANCE = 12;
     private static final int RETURN_ITEM_VERIFY_ATTEMPTS = 2;
     private static final long RETURN_VERIFY_DELAY_MS = 500L;
@@ -156,13 +174,13 @@ public class WubeiTask implements GameTask {
     private static final long MAINTENANCE_BROADCAST_HANDOFF_PER_WINDOW_MS = 2_000L;
     private static final long CHAINED_POST_BATTLE_RECOVERY_PER_MEMBER_MS = 2_200L;
     private static final long CHAINED_POST_BATTLE_RECOVERY_MAX_MS = 10_000L;
+    private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 2_500L;
     private static final long WAIT_BATTLE_TIMEOUT_MS = 180_000L;
     private static final long PAUSE_TIMER_COMPENSATION_THRESHOLD_MS = 1_000L;
     private static final Pattern TRACKER_DEST_HINT_PATTERN =
             Pattern.compile("前往(.+?)[(（]\\s*(\\d+)\\s*[,，]\\s*(\\d+)\\s*[)）]");
     private static final Pattern TRACKER_COMBAT_TARGET_PATTERN =
             Pattern.compile("([^|丨:：\\s]+)$");
-
     private static final NpcTarget ACCEPT_NPC = NpcTarget.builder()
             .key("wubei.acceptNpc")
             .mapName(START_MAP_NAME)
@@ -205,10 +223,10 @@ public class WubeiTask implements GameTask {
     private final GameContext gameContext;
     private final NavigationService navigationService;
     private final NpcClickService npcClickService;
+    private final DialogChoiceMemoryService dialogChoiceMemoryService;
     private final DialogService dialogService;
     private final AutoCombatService autoCombatService;
     private final BagService bagService;
-    private final QuestManagerService questManagerService;
     private final PlayerStateService playerStateService;
     private final TaskMaintenanceService taskMaintenanceService;
     private final TeamReturnService teamReturnService;
@@ -223,19 +241,26 @@ public class WubeiTask implements GameTask {
     private final TaskTurnCoordinator taskTurnCoordinator;
     private final MultiWindowTaskManager multiWindowTaskManager;
     private final MapNameCanonicalizer mapNameCanonicalizer;
+    private final WindowTaskContextHolder windowTaskContextHolder;
+    private final TaskTrackerPanelService taskTrackerPanelService;
     private boolean currentRoundChainedCombatExpected;
     private int currentRoundChainedCombatContinueCount;
-    private TrackerPanelSnapshot currentTrackerSnapshot;
-    private TrackerDestinationHint currentTrackerDestinationHint;
-    private List<TrackerGreenLinkSegment> currentProbeSegments = List.of();
+    private TaskTrackerPanelReadResult currentTrackerPanel;
+    private volatile TrackerDestinationHint currentTrackerDestinationHint;
+    private volatile long trackerDestinationHintRequestId;
+    private List<TaskTrackerGreenLink> currentProbeSegments = List.of();
     private boolean[] currentProbeUsed = new boolean[0];
     private int[] currentProbeItemAttempts = new int[0];
     private int currentProbeIndex = -1;
     private long waitBattleStartedAt;
     private long waitBattleNextTrackerRetryAt;
     private boolean waitBattleSawCombat;
+    private long enterBattleStartedAt;
+    private long enterBattleNextRetryAt;
     private long lastHealPetMaintenanceAt;
     private long lastRepairEquipmentMaintenanceAt;
+    private int consecutiveHealPetMaintenanceFailures;
+    private int consecutiveRepairEquipmentMaintenanceFailures;
     private int lastLeaderPathingSummonAttemptRound;
 
     @Override
@@ -273,11 +298,20 @@ public class WubeiTask implements GameTask {
         int completedRuns = 0;
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
         autoCombatService.initializeForCurrentWindow();
+        /*
+         * 五倍 can enter combat almost immediately after accepting the first task. Run the same
+         * startup recovery boundary used by auto-battle/five-ring before the first accept flow so
+         * low player or summon HP/MP is handled before navigation starts.
+         */
+        playerStateService.performStartupFirstAidCheck(context);
+        playerStateService.ensureSheYaoXiangActiveForLeaderTask("wubei:startup", context);
         long maintenanceStartAt = botProperties.isXiuluoMaintenanceRunImmediatelyOnStart()
                 ? 0L
                 : System.currentTimeMillis();
         lastHealPetMaintenanceAt = maintenanceStartAt;
         lastRepairEquipmentMaintenanceAt = maintenanceStartAt;
+        consecutiveHealPetMaintenanceFailures = 0;
+        consecutiveRepairEquipmentMaintenanceFailures = 0;
         taskMaintenanceService.initializeForTaskStart(context, TASK_CODE);
         log.info("[wubei] task started: maxRuns={}", maxRuns <= 0 ? "unlimited" : maxRuns);
 
@@ -322,7 +356,7 @@ public class WubeiTask implements GameTask {
 
     private void resetRoundState(int round) {
         currentRoundChainedCombatExpected = false;
-        currentTrackerSnapshot = null;
+        currentTrackerPanel = null;
         currentTrackerDestinationHint = null;
         resetProbeRuntime();
         lastLeaderPathingSummonAttemptRound = -1;
@@ -341,15 +375,30 @@ public class WubeiTask implements GameTask {
             WubeiRoundContext currentState = roundState;
 
             AtomicReference<WubeiStepOutcome> phaseOutcome = new AtomicReference<>();
-            TaskTransactionOutcome transaction = taskTransactionRunner.run(
-                    "wubei:" + currentState.phase(),
-                    TaskTransactionResult.READY_TO_CONTINUE,
-                    TaskYieldPolicy.CONTINUE_CHAIN,
-                    () -> {
-                        WubeiStepOutcome outcome = runPhase(context, currentState);
-                        phaseOutcome.set(outcome);
-                        return outcome.transactionResult();
-                    });
+            TaskTransactionOutcome transaction;
+            try {
+                transaction = taskTransactionRunner.run(
+                        "wubei:" + currentState.phase(),
+                        TaskTransactionResult.READY_TO_CONTINUE,
+                        TaskYieldPolicy.CONTINUE_CHAIN,
+                        () -> {
+                            WubeiStepOutcome outcome = runPhase(context, currentState);
+                            phaseOutcome.set(outcome);
+                            return outcome.transactionResult();
+                        });
+            } catch (RuntimeException e) {
+                /*
+                 * Business phase exceptions should be handled like a failed phase, so one stale
+                 * screenshot/null hint does not kill the whole 五倍 task. Fatal JVM Errors still
+                 * bubble through TaskTransactionRunner and remain hard failures.
+                 */
+                log.error("[wubei] phase exception; recover current round: phase={} recoveryCount={}",
+                        currentState.phase(), currentState.recoveryCount(), e);
+                roundState = recoverRoundAfterFailure(context, currentState,
+                        WubeiStepOutcome.failed(currentState, "phase exception: " + e.getClass().getSimpleName()));
+                phaseLoopGuard = 0;
+                continue;
+            }
 
             WubeiStepOutcome outcome = phaseOutcome.get();
             if (outcome == null) {
@@ -413,7 +462,7 @@ public class WubeiTask implements GameTask {
         taskTransactionRunner.forceReleaseTurn("wubei-recover:" + failedState.phase());
         uiCleanerService.cleanUpAll();
         TaskSleep.sleepOrStop(context, 800L, "Wubei task interrupted");
-        return failedState.recoverTo(WubeiPhase.ACCEPT_TASK, "recover-from-" + failedState.phase());
+        return failedState.recoverTo(WubeiPhase.ROUTE_TO_MAIN_TASK, "recover-from-" + failedState.phase());
     }
 
     private void yieldAfterMustYield(TaskExecutionContext context, WubeiStepOutcome outcome) {
@@ -532,14 +581,14 @@ public class WubeiTask implements GameTask {
     private WubeiStepOutcome runPhase(TaskExecutionContext context, WubeiRoundContext state) {
         return switch (state.phase()) {
             case HOT_START_DETECT -> runHotStartDetectPhase(state);
+            case ROUTE_TO_MAIN_TASK -> runRouteToNPC(context, state);
             case ACCEPT_TASK -> runAcceptTaskPhase(context, state);
-            case WAIT_TEAM_READY -> runWaitTeamReadyPhase(context, state);
             case READ_TRACKER -> runReadTrackerPhase(context, state);
+            case AFTER_ACCEPT_MAINTENANCE_CHECK -> runAfterAcceptMaintenanceCheck(context, state);
+            case BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK -> runBeforeTrackerPathingMaintenanceCheck(context, state);
             case TRACKER_PATHING -> runTrackerPathingPhase(context, state);
             case RESOLVE_AFTER_PATHING -> runResolveAfterPathingPhase(context, state);
-            case ENTER_BATTLE -> WubeiStepOutcome.continueTo(
-                    state.next(WubeiPhase.WAIT_BATTLE_FINISH, "enter-battle-delegated"),
-                    "enter battle dialog is handled by battle wait loop");
+            case ENTER_BATTLE -> runEnterBattlePhase(context, state);
             case WAIT_BATTLE_FINISH -> runWaitBattleFinishPhase(context, state);
             case POST_BATTLE_RECOVER -> runPostBattleRecoverPhase(context, state);
             case RETURN_HOME -> runReturnHomePhase(context, state);
@@ -555,44 +604,40 @@ public class WubeiTask implements GameTask {
                     state.next(WubeiPhase.WAIT_TEAM_RETURN, TEAM_RETURN_BEFORE_ACCEPT_SOURCE),
                     "team return pending before accept flow");
         }
-        if (hasAcceptedTaskFromPanel()) {
+        currentTrackerPanel = resolveTrackerPanelWithAnchorRecovery(state);
+        if (currentTrackerPanel.isFound()) {
             return WubeiStepOutcome.continueTo(
                     state.next(WubeiPhase.READ_TRACKER, "hot-start-active-task"),
-                    "accepted task found from task panel");
+                    "accepted task found from tracker panel");
         }
         return WubeiStepOutcome.continueTo(
-                state.next(WubeiPhase.ACCEPT_TASK, "hot-start-no-active-task"),
-                "no accepted task found");
+            state.next(WubeiPhase.ROUTE_TO_MAIN_TASK, "hot-start-no-active-task"),
+            "no accepted task found");
     }
 
-    private WubeiStepOutcome runAcceptTaskPhase(TaskExecutionContext context, WubeiRoundContext state) {
-        if (!acceptTask(context)) {
-            return WubeiStepOutcome.failed(state, "accept task failed");
-        }
+    private WubeiStepOutcome runAfterAcceptMaintenanceCheck(TaskExecutionContext context, WubeiRoundContext state) {
         /*
-         * 接任务点击返回不代表左侧任务追踪已经同步刷新。之前日志里 70ms 内就开始裁任务面板，
-         * 容易把旧面板或过渡状态当成当前任务来解析。
+         * Match 修罗's split maintenance model: 医宝宝 belongs right after accepting/reading
+         * the objective, while repair belongs just before the tracker route starts.
          */
-        TaskSleep.sleepOrStop(context, TRACKER_REFRESH_AFTER_ACCEPT_MS, "Wubei task interrupted");
-        return WubeiStepOutcome.continueTo(
-                state.next(WubeiPhase.WAIT_TEAM_READY, "task-accepted"),
-                "task accepted");
-    }
-
-    private WubeiStepOutcome runWaitTeamReadyPhase(TaskExecutionContext context, WubeiRoundContext state) {
-        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
         WubeiStepOutcome healPetOutcome = triggerHealPetBroadcastBeforeTracker(context, state);
         if (healPetOutcome != null) {
             return healPetOutcome;
         }
+        return WubeiStepOutcome.continueTo(
+                state.next(WubeiPhase.BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK, "after-accept-maintenance-checked"),
+                "after-accept maintenance checked");
+    }
+
+    private WubeiStepOutcome runBeforeTrackerPathingMaintenanceCheck(TaskExecutionContext context,
+                                                                     WubeiRoundContext state) {
         WubeiStepOutcome repairOutcome = triggerRepairEquipmentBroadcastBeforeTracker(context, state);
         if (repairOutcome != null) {
             return repairOutcome;
         }
-        log.info("[wubei] wait team ready passed: round={} source={}", state.round(), state.source());
         return WubeiStepOutcome.continueTo(
-                state.next(WubeiPhase.READ_TRACKER, "team-ready"),
-                "team ready passed");
+                state.next(WubeiPhase.TRACKER_PATHING, "before-tracker-maintenance-checked"),
+                "before tracker maintenance checked");
     }
 
     private WubeiStepOutcome triggerHealPetBroadcastBeforeTracker(TaskExecutionContext context, WubeiRoundContext state) {
@@ -601,12 +646,23 @@ public class WubeiTask implements GameTask {
                     botProperties.getXiuluoHealPetMaintenanceIntervalMs(), lastHealPetMaintenanceAt);
             return null;
         }
+        if (consecutiveHealPetMaintenanceFailures >= MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES) {
+            log.warn("[wubei] skip heal-pet hook: consecutive failures reached limit failures={} limit={}",
+                    consecutiveHealPetMaintenanceFailures, MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES);
+            return null;
+        }
 
         WubeiStepOutcome outcome = triggerMaintenanceBroadcastBeforeTracker(
                 context, state, HEAL_PET_NPC, BUSINESS_ACTION_HEAL_PET,
-                "heal-pet", "wubei:heal-pet-npc");
+                "heal-pet", "wubei:heal-pet-npc",
+                WubeiPhase.BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK);
         if (outcome != null && outcome.transactionResult() == TaskTransactionResult.SHARED_STATE_TRIGGERED) {
             lastHealPetMaintenanceAt = System.currentTimeMillis();
+            consecutiveHealPetMaintenanceFailures = 0;
+        } else if (outcome == null) {
+            consecutiveHealPetMaintenanceFailures++;
+            log.warn("[wubei] heal-pet hook failed this round: consecutiveFailures={} limit={}",
+                    consecutiveHealPetMaintenanceFailures, MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES);
         }
         return outcome;
     }
@@ -618,12 +674,23 @@ public class WubeiTask implements GameTask {
                     botProperties.getXiuluoRepairEquipmentMaintenanceIntervalMs(), lastRepairEquipmentMaintenanceAt);
             return null;
         }
+        if (consecutiveRepairEquipmentMaintenanceFailures >= MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES) {
+            log.warn("[wubei] skip repair-equipment hook: consecutive failures reached limit failures={} limit={}",
+                    consecutiveRepairEquipmentMaintenanceFailures, MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES);
+            return null;
+        }
 
         WubeiStepOutcome outcome = triggerMaintenanceBroadcastBeforeTracker(
                 context, state, REPAIR_EQUIPMENT_NPC, BUSINESS_ACTION_REPAIR_EQUIPMENT,
-                "repair-equipment", "wubei:repair-equipment-npc");
+                "repair-equipment", "wubei:repair-equipment-npc",
+                WubeiPhase.TRACKER_PATHING);
         if (outcome != null && outcome.transactionResult() == TaskTransactionResult.SHARED_STATE_TRIGGERED) {
             lastRepairEquipmentMaintenanceAt = System.currentTimeMillis();
+            consecutiveRepairEquipmentMaintenanceFailures = 0;
+        } else if (outcome == null) {
+            consecutiveRepairEquipmentMaintenanceFailures++;
+            log.warn("[wubei] repair-equipment hook failed this round: consecutiveFailures={} limit={}",
+                    consecutiveRepairEquipmentMaintenanceFailures, MAX_CONSECUTIVE_MAINTENANCE_HOOK_FAILURES);
         }
         return outcome;
     }
@@ -633,9 +700,19 @@ public class WubeiTask implements GameTask {
                                                                       NpcTarget npc,
                                                                       String expectedAction,
                                                                       String hookName,
-                                                                      String navigationSource) {
+                                                                      String navigationSource,
+                                                                      WubeiPhase nextPhaseAfterMaintenance) {
+        WubeiRoundContext activeState = state;
         for (int attempt = 1; attempt <= MAX_MAINTENANCE_HOOK_ATTEMPTS; attempt++) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+            WubeiStepOutcome pendingPathing = continueIfMaintenanceNavigationStillPathing(
+                    context, activeState, hookName);
+            if (pendingPathing != null) {
+                return pendingPathing;
+            }
+            if (activeState.waitingPathing()) {
+                activeState = activeState.clearPathingWait(hookName + "-navigation-arrived:" + state.phase());
+            }
             log.info("[wubei] {} hook attempt: attempt={}/{} npc={} map={} coord=({}, {})",
                     hookName, attempt, MAX_MAINTENANCE_HOOK_ATTEMPTS, npc.getName(),
                     npc.getMapName(), npc.getX(), npc.getY());
@@ -644,15 +721,22 @@ public class WubeiTask implements GameTask {
                     .targetX(npc.getX())
                     .targetY(npc.getY())
                     .targetName(npc.getName())
-                    .returnOnPathingStarted(false)
                     .source(navigationSource)
                     .build());
+            if (nav.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+                return WubeiStepOutcome.pathingStarted(
+                        activeState.waitForPathing(hookName + "-npc-pathing-started"),
+                        hookName + " NPC pathing started");
+            }
+            if (nav.getStatus() == NavigationResultStatus.STOPPED) {
+                return WubeiStepOutcome.stopped(activeState, hookName + " navigation stopped");
+            }
             if (!nav.success()) {
                 log.warn("[wubei] {} navigation failed: attempt={} status={} message={}",
                         hookName, attempt, nav.getStatus(), nav.getMessage());
                 continue;
             }
-            if (!npcClickService.clickNpcSmart(npc.toClickRequest(gameContext.getMe()))) {
+            if (!npcClickService.clickNpcSmart(npc.toClickRequest(gameContext.getMe(), TaskType.WUBEI))) {
                 log.warn("[wubei] {} NPC smart-click failed: attempt={}", hookName, attempt);
                 continue;
             }
@@ -670,8 +754,8 @@ public class WubeiTask implements GameTask {
                 log.info("[wubei] {} broadcast handled: expectedAction={} status={}",
                         hookName, expectedAction, maintenanceResult.getStatus());
                 return WubeiStepOutcome.sharedState(
-                        state.next(WubeiPhase.READ_TRACKER, hookName + "-broadcast-handled"),
-                        hookName + " broadcast handled; yield for team");
+                    activeState.next(nextPhaseAfterMaintenance, hookName + "-broadcast-handled"),
+                    hookName + " broadcast handled; recheck before tracker pathing");
             }
             log.warn("[wubei] {} broadcast not handled: attempt={} expectedAction={} status={} message={}",
                     hookName, attempt, expectedAction,
@@ -680,6 +764,35 @@ public class WubeiTask implements GameTask {
 
         log.warn("[wubei] {} hook skipped after {} attempts; continue main task",
                 hookName, MAX_MAINTENANCE_HOOK_ATTEMPTS);
+        return null;
+    }
+
+    private WubeiStepOutcome continueIfMaintenanceNavigationStillPathing(TaskExecutionContext context,
+                                                                         WubeiRoundContext state,
+                                                                         String hookName) {
+        if (!state.waitingPathing()) {
+            return null;
+        }
+
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
+        if (movementState == GameStateUtil.MovementState.MOVING
+                || movementState == GameStateUtil.MovementState.PATHING_ACTIVE) {
+            /*
+             * The previous maintenance NPC navigation already submitted a click. While the runner
+             * still sees pathing, this phase must yield instead of re-submitting maintenance or
+             * falling through into the other maintenance hook.
+             */
+            log.info("[wubei] {} maintenance navigation still pathing: phase={} state={}",
+                    hookName, state.phase(), movementState);
+            return WubeiStepOutcome.pathingStarted(state, hookName + " maintenance navigation still pathing");
+        }
+        if (movementState == GameStateUtil.MovementState.MAYBE_MOVING) {
+            log.info("[wubei] {} maintenance navigation weak movement ignored: phase={} state={}",
+                    hookName, state.phase(), movementState);
+        }
+        log.info("[wubei] {} maintenance navigation wait ended: phase={} state={}",
+                hookName, state.phase(), movementState);
         return null;
     }
 
@@ -703,43 +816,53 @@ public class WubeiTask implements GameTask {
 
     private WubeiStepOutcome runReadTrackerPhase(TaskExecutionContext context, WubeiRoundContext state) {
         resetProbeRuntime();
-        currentTrackerSnapshot = resolveTrackerPanelSnapshotWithAnchorRecovery(context);
-        if (!currentTrackerSnapshot.anchorFound()) {
+        /*
+         * READ_TRACKER is the authoritative snapshot boundary. The left task tracker can change
+         * after accepting/rerolling/finishing chained combat, so do not reuse an older cached
+         * currentTrackerPanel here. Later phases may reuse this freshly captured snapshot.
+         */
+        currentTrackerPanel = resolveTrackerPanelWithAnchorRecovery(context);
+        if (!currentTrackerPanel.isFound()) {
             return WubeiStepOutcome.failed(state, "tracker anchor not found");
         }
-        if (containsDarkThunder(currentTrackerSnapshot.yellowText())) {
+        if (containsDarkThunder(currentTrackerPanel.getYellowText())) {
             log.info("[wubei] dark-thunder task detected; reroll by accepting task again: yellow='{}'",
-                    currentTrackerSnapshot.yellowText());
+                    currentTrackerPanel.getYellowText());
+            /*
+             * 暗雷怪会回到接任务 NPC 重抽任务。这里必须丢掉本次左侧追踪快照，
+             * 否则下一次接完任务后 READ_TRACKER 会复用旧的“暗雷怪”结果。
+             */
+            currentTrackerPanel = null;
             TaskSleep.sleepOrStop(context, 4_000L, "Wubei task interrupted");
             return WubeiStepOutcome.continueTo(
-                    state.next(WubeiPhase.ACCEPT_TASK, "dark-thunder-reroll"),
-                    "dark thunder reroll");
+                state.next(WubeiPhase.ROUTE_TO_MAIN_TASK, "dark-thunder-reroll"),
+                "dark thunder reroll");
         }
-        currentRoundChainedCombatExpected = containsChainedCombatTarget(currentTrackerSnapshot.yellowText());
+        currentRoundChainedCombatExpected = containsChainedCombatTarget(currentTrackerPanel.getYellowText());
         currentRoundChainedCombatContinueCount = 0;
         log.info("[wubei] tracker snapshot ready: yellow='{}' probe={} chainedCombatExpected={}",
-                currentTrackerSnapshot.yellowText(),
-                currentTrackerSnapshot.greenScan().isProbeObjective(),
+                currentTrackerPanel.getYellowText(),
+                currentTrackerPanel.isProbeObjective(),
                 currentRoundChainedCombatExpected);
         return WubeiStepOutcome.continueTo(
-                state.next(WubeiPhase.TRACKER_PATHING, "tracker-ready"),
+                state.next(WubeiPhase.AFTER_ACCEPT_MAINTENANCE_CHECK, "tracker-ready"),
                 "tracker objective ready");
     }
 
     private WubeiStepOutcome runTrackerPathingPhase(TaskExecutionContext context, WubeiRoundContext state) {
-        if (currentTrackerSnapshot == null) {
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        if (currentTrackerPanel == null || !currentTrackerPanel.isFound()) {
             return WubeiStepOutcome.failed(state, "tracker pathing failed");
         }
-        TrackerGreenLinkScan scan = currentTrackerSnapshot.greenScan();
-        if (containsProbeTask(currentTrackerSnapshot.yellowText()) || scan.isProbeObjective()) {
-            if (!startProbeTrackerPathing(context, scan)) {
+        if (containsProbeTask(currentTrackerPanel.getYellowText()) || currentTrackerPanel.isProbeObjective()) {
+            if (!startProbeTrackerPathing(context, currentTrackerPanel)) {
                 return WubeiStepOutcome.failed(state, "probe tracker pathing failed");
             }
             return WubeiStepOutcome.pathingStarted(
                     state.next(WubeiPhase.RESOLVE_AFTER_PATHING, "probe-pathing-started"),
                     "probe tracker pathing started");
         }
-        if (!triggerCombatTrackerPathing(context, scan)) {
+        if (!triggerCombatTrackerPathing(context, currentTrackerPanel)) {
             return WubeiStepOutcome.failed(state, "tracker pathing failed");
         }
         return WubeiStepOutcome.pathingStarted(
@@ -751,9 +874,47 @@ public class WubeiTask implements GameTask {
         if (isProbeRuntimeActive()) {
             return resolveProbeAfterPathing(context, state);
         }
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        WindowPathingSnapshot snapshot = currentWindowPathingSnapshot();
+        if (!isCurrentTrackerPathingSnapshot(snapshot)) {
+            /*
+             * 普通五倍绿字寻路的到达/停住信号由 WindowTaskRunner 后台刷新。这里不再
+             * 现场 OCR 或像素判移动；如果暂时没有对应快照，就让下一轮 runner 继续刷新。
+             */
+            log.info("[wubei] tracker pathing resolve waits for runner snapshot: hasSnapshot={} state={} intent={}",
+                    snapshot != null, snapshot == null ? null : snapshot.getState(),
+                    snapshot == null ? null : snapshot.getIntent());
+            return WubeiStepOutcome.sharedState(state, "waiting tracker runner pathing snapshot");
+        }
+        WindowPathingState pathingState = snapshot.getState();
+        log.info("[wubei] tracker pathing snapshot consumed: state={} current={}({}, {}) probeInProgress={} message={}",
+                pathingState, snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                snapshot.isProbeInProgress(), snapshot.getMessage());
+        if (pathingState == WindowPathingState.ACTIVE
+                || pathingState == WindowPathingState.UNKNOWN
+                || snapshot.isProbeInProgress()) {
+            return WubeiStepOutcome.sharedState(state, "tracker runner pathing still active");
+        }
+        if (pathingState == WindowPathingState.ARRIVED
+                || pathingState == WindowPathingState.STOPPED_AWAY) {
+            clearCurrentPathingSignal("wubei consumed tracker pathing terminal snapshot: " + pathingState);
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.ENTER_BATTLE, "tracker-pathing-terminal-" + pathingState),
+                    "tracker pathing terminal; resolve combat entry");
+        }
         return WubeiStepOutcome.continueTo(
-                state.next(WubeiPhase.WAIT_BATTLE_FINISH, "pathing-resolve-delegated"),
-                "pathing resolve handled by battle wait loop");
+                state.next(WubeiPhase.ENTER_BATTLE, "tracker-pathing-no-active-state"),
+                "tracker pathing no longer active; resolve combat entry");
+    }
+
+    private WubeiStepOutcome runEnterBattlePhase(TaskExecutionContext context, WubeiRoundContext state) {
+        WubeiStepOutcome outcome = tickEnterBattle(context, state);
+        if (outcome.transactionResult() == TaskTransactionResult.FAILED
+                || outcome.transactionResult() == TaskTransactionResult.STOPPED
+                || outcome.nextState().phase() != WubeiPhase.ENTER_BATTLE) {
+            resetEnterBattleRuntime();
+        }
+        return outcome;
     }
 
     private WubeiStepOutcome runWaitBattleFinishPhase(TaskExecutionContext context, WubeiRoundContext state) {
@@ -804,8 +965,8 @@ public class WubeiTask implements GameTask {
         }
         if (TEAM_RETURN_BEFORE_ACCEPT_SOURCE.equals(state.source())) {
             return WubeiStepOutcome.continueTo(
-                    state.next(WubeiPhase.ACCEPT_TASK, "team-return-ready-before-accept"),
-                    "team return ready before accept flow");
+                state.next(WubeiPhase.ACCEPT_TASK, "team-return-ready-before-accept"),
+                "team return ready before accept flow");
         }
         return WubeiStepOutcome.continueTo(
                 state.next(WubeiPhase.ROUND_DONE, "team-return-not-needed"),
@@ -823,33 +984,12 @@ public class WubeiTask implements GameTask {
         return TEAM_RETURN_ROUND_DONE_SOURCE;
     }
 
-    /*
-     * 热启动入口：只在五倍任务刚启动时检查一次。五倍有任务时左侧任务栏会出现
-     * wubei_active；匹配到就跳过接任务，不读取右侧详情。正常跑完一轮回城后必须
-     * 直接重新接任务，不能每轮都打开任务栏查 active。
-     */
-    private boolean hasAcceptedTaskFromPanel() {
-        boolean active = questManagerService.activateTaskIfPresentExclusive(TASK_CODE, false);
-        log.info("[wubei] quest panel active-task check: active={}", active);
-        return active;
-    }
-
-    private boolean acceptTask(TaskExecutionContext context) {
+    private WubeiStepOutcome runRouteToNPC(TaskExecutionContext context, WubeiRoundContext state){
         TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
-        /*
-         * This nearby fast path can submit a real NPC click. Refresh location first so a stale map
-         * cache from the previous round cannot make us click 宝象国 coordinates on another map.
-         */
-        LocationInfo current = playerStateService.syncMyPosition();
-        if (current != null && gameStateUtil.isNearCoordinate(current.mapName, current.x, current.y,
-                ACCEPT_NPC.getMapName(), ACCEPT_NPC.getX(), ACCEPT_NPC.getY(), ACCEPT_NPC_DIRECT_CLICK_DISTANCE)) {
-            log.info("[wubei] accept NPC nearby; try direct smart click before minimap navigation: playerMap={} player=({}, {}) targetMap={} target=({}, {}) tolerance={}",
-                    current.mapName, current.x, current.y,
-                    ACCEPT_NPC.getMapName(), ACCEPT_NPC.getX(), ACCEPT_NPC.getY(), ACCEPT_NPC_DIRECT_CLICK_DISTANCE);
-            if (clickAcceptNpcAndOption("wubei:accept-task-nearby")) {
-                return true;
-            }
-            log.info("[wubei] nearby accept click did not finish task acceptance; fallback to minimap navigation");
+
+        WubeiStepOutcome activePathing = waitForAcceptNpcPathingIfStillActive(state);
+        if (activePathing != null) {
+            return activePathing;
         }
 
         NavigationResult nav = navigationService.navigateToNPC(NavigationRequest.builder()
@@ -857,33 +997,164 @@ public class WubeiTask implements GameTask {
                 .targetX(ACCEPT_NPC_X)
                 .targetY(ACCEPT_NPC_Y)
                 .targetName(ACCEPT_NPC_NAME)
+                .arrivalTolerance(ACCEPT_NPC_DIRECT_CLICK_DISTANCE)
                 .source("wubei:accept-npc")
-                .returnOnPathingStarted(false)
                 .build());
-        if (!nav.success()) {
-            log.warn("[wubei] accept NPC navigation failed: status={} message={}",
-                    nav.getStatus(), nav.getMessage());
-            return false;
+
+        if (nav.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+            return WubeiStepOutcome.pathingStarted(
+                state.next(WubeiPhase.ROUTE_TO_MAIN_TASK, "accept-npc-pathing-started"),
+                "accept NPC pathing started");
         }
 
-        return clickAcceptNpcAndOption("wubei:accept-task");
+        if (nav.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
+            return WubeiStepOutcome.sharedState(
+                state.next(WubeiPhase.ROUTE_TO_MAIN_TASK, "accept-npc-dialog-preparing"),
+                "accept NPC dialog preparing");
+        }
+
+        if (nav.getStatus() != NavigationResultStatus.ARRIVED) {
+            log.warn("[wubei] accept NPC navigation not arrived: status={} message={}",
+                nav.getStatus(), nav.getMessage());
+            return WubeiStepOutcome.failed(
+                state,
+                "accept NPC navigation not arrived: " + nav.getStatus() + " " + nav.getMessage());
+        }
+
+
+        TaskSleep.sleepOrStop(context, TRACKER_REFRESH_AFTER_ACCEPT_MS, "Wubei task interrupted");
+
+        return WubeiStepOutcome.continueTo(
+            state.next(WubeiPhase.WAIT_TEAM_RETURN, TEAM_RETURN_BEFORE_ACCEPT_SOURCE),
+            "accept NPC arrived; wait team return before accepting task");
     }
 
-    private boolean clickAcceptNpcAndOption(String source) {
-        boolean clicked = npcClickService.clickNpcSmart(ACCEPT_NPC.toClickRequest(gameContext.getMe()));
+    private WubeiStepOutcome waitForAcceptNpcPathingIfStillActive(WubeiRoundContext state) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            return null;
+        }
+        WindowPathingSnapshot snapshot = runtime.getPathingSnapshot();
+        if (snapshot == null) {
+            return null;
+        }
+        WindowPathingIntent intent = snapshot.getIntent();
+        if (intent == null || !gameStateUtil.isSameMapName(intent.getTargetMapName(), START_MAP_NAME)) {
+            return null;
+        }
+        boolean stillWorking = snapshot.getState() == WindowPathingState.ACTIVE
+                || snapshot.isProbeInProgress();
+        if (!stillWorking) {
+            return null;
+        }
+        PreparedDialogAction preparedRoute = runtime.getPreparedDialogAction();
+        if (preparedRoute != null
+                && preparedRoute.matches(DialogOperation.ROUTE_TRANSFER, START_MAP_NAME)
+                && preparedRoute.verifiedWithin(System.currentTimeMillis(), PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS)) {
+            /*
+             * A route dialog can be ready while the previous world-map pathing intent is still
+             * ACTIVE. Let NavigationService consume the verified prepared click instead of waiting
+             * for the watcher to age into STOPPED_AWAY.
+             */
+            log.info("[wubei] accept NPC pathing gate released for prepared route dialog: target={} matched={} click=({}, {}) verifiedAgeMs={}",
+                    START_MAP_NAME, preparedRoute.getMatchedText(),
+                    preparedRoute.getAbsoluteX(), preparedRoute.getAbsoluteY(),
+                    Math.max(0L, System.currentTimeMillis() - preparedRoute.getLastVerifiedAtMs()));
+            return null;
+        }
+
+        /*
+         * The accept-NPC route starts with a world-map click and then the watcher owns arrival.
+         * Re-entering this phase while the same target is still ACTIVE must only yield; otherwise
+         * 五倍 can submit the same world-map search again before the previous route finishes.
+         */
+        log.info("[wubei] accept NPC pathing still active; skip duplicate navigation: state={} probe={} target={} current={}({}, {}) source={} message={}",
+                snapshot.getState(), snapshot.isProbeInProgress(), intent.getTargetMapName(),
+                snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                intent.getSource(), snapshot.getMessage());
+        return WubeiStepOutcome.pathingStarted(
+                state.retrySamePhase("accept-npc-pathing-wait"),
+                "accept NPC pathing still active");
+    }
+
+    private WubeiStepOutcome runAcceptTaskPhase(TaskExecutionContext context, WubeiRoundContext state) {
+        boolean clicked = npcClickService.clickNpcSmart(ACCEPT_NPC.toClickRequest(gameContext.getMe(), TaskType.WUBEI));
         if (!clicked) {
             log.warn("[wubei] accept NPC smart-click failed; try visible accept dialog before failing");
         }
-        DialogResult result = dialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(
-                source,
-                // 五倍接任务第一行绿字偏短，只随机到模板右侧中段，避免点到选项外侧。
-                List.of(new GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, 32, 78, 3)),
-                true));
+        DialogResult result = tryRememberedAcceptOption(state.source());
+        if (result == null) {
+            result = dialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(
+                    state.source(),
+                    // 五倍接任务第一行绿字偏短，只随机到模板右侧中段，避免点到选项外侧。
+                    List.of(new GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, 32, 78, 3)),
+                    true));
+            if (result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_CLICKED
+                    && OPTION_ACCEPT_TASK.equals(result.getActionKey())
+                    && result.getRelativeX() != null
+                    && result.getRelativeY() != null) {
+                dialogChoiceMemoryService.recordSuccess(
+                        TASK_CODE, "acceptTask", ACCEPT_NPC_NAME,
+                        START_MAP_NAME, ACCEPT_NPC_X, ACCEPT_NPC_Y, START_MAP_NAME,
+                        result.getRelativeX(), result.getRelativeY(), result.getMatchedText(),
+                        state.source() + ":template");
+            }
+        }
         boolean accepted = OPTION_ACCEPT_TASK.equals(result.getActionKey())
-                && result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_CLICKED;
+                && (result.getStatus() == DialogResultStatus.GREEN_TEMPLATE_CLICKED
+                || result.getStatus() == DialogResultStatus.OPTION_KEYWORD_CLICKED);
         log.info("[wubei] accept option result: status={} action={} clicked={}",
                 result.getStatus(), result.getActionKey(), result.isClicked());
-        return accepted;
+        if (!accepted) {
+            return WubeiStepOutcome.failed(state, "accept NPC click or option failed");
+        }
+        /*
+         * 接任务成功会刷新左侧任务追踪内容。READ_TRACKER 必须重新截图，
+         * 不能沿用热启动或上一轮/上一次重抽留下的 currentTrackerPanel。
+         * 游戏左侧任务追踪不是随点击瞬间刷新，先等一小段时间再读，避免把
+         * 接任务前的旧追踪面板当成本轮任务。
+         */
+        currentTrackerPanel = null;
+        log.info("[wubei] accept task clicked; waiting tracker refresh before READ_TRACKER: waitMs={} source={}",
+                TRACKER_REFRESH_AFTER_ACCEPT_MS, state.source());
+        TaskSleep.sleepOrStop(context, TRACKER_REFRESH_AFTER_ACCEPT_MS, "Wubei task interrupted");
+        return WubeiStepOutcome.continueTo(
+                state.next(WubeiPhase.READ_TRACKER, "task-accepted"),
+                "task accepted");
+    }
+
+    private DialogResult tryRememberedAcceptOption(String source) {
+        Optional<DialogChoiceMemoryService.DialogChoiceEntry> remembered =
+                dialogChoiceMemoryService.findUsable(TASK_CODE, "acceptTask", ACCEPT_NPC_NAME);
+        if (remembered.isEmpty()) {
+            return null;
+        }
+        DialogChoiceMemoryService.DialogChoiceEntry entry = remembered.get();
+        /*
+         * 五倍接任务和传送选项一样，点击点稳定在 dialog 矩形内。记忆只在当前画面
+         * 被识别为 OPTION dialog 时点击；失败马上回落模板路径，避免盲点未知窗口。
+         */
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.builder()
+                .sourceTask(source + ":memory")
+                .operation(com.bot.dhxy.service.dialog.DialogOperation.CLICK_REMEMBERED_OPTION)
+                .storyPolicy(com.bot.dhxy.service.dialog.DialogStoryPolicy.IGNORE)
+                .optionPolicy(com.bot.dhxy.service.dialog.DialogOptionPolicy.CLICK_REMEMBERED_POINT)
+                .fallbackPolicy(com.bot.dhxy.service.dialog.DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .targetKeyword(OPTION_ACCEPT_TASK)
+                .rememberedRelativeX(entry.relativeX)
+                .rememberedRelativeY(entry.relativeY)
+                .allowFallbackOptionClick(false)
+                .verifyDialogType(false)
+                .build());
+        if (result.getStatus() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
+            log.info("[wubei] accept option clicked by dialog memory: rel=({}, {}) successCount={}",
+                    entry.relativeX, entry.relativeY, entry.successCount);
+            return result;
+        }
+        dialogChoiceMemoryService.recordFailure(TASK_CODE, "acceptTask", ACCEPT_NPC_NAME, source + ":memory");
+        log.info("[wubei] accept option memory miss; fallback to template: status={} rel=({}, {})",
+                result.getStatus(), entry.relativeX, entry.relativeY);
+        return null;
     }
 
     private boolean containsDarkThunder(String text) {
@@ -906,10 +1177,10 @@ public class WubeiTask implements GameTask {
         if (currentRoundChainedCombatExpected) {
             return CHAINED_COMBAT_TARGET_KEYWORD;
         }
-        if (currentTrackerSnapshot == null || currentTrackerSnapshot.yellowText() == null) {
+        if (currentTrackerPanel == null || currentTrackerPanel.getYellowText() == null) {
             return "";
         }
-        String normalized = currentTrackerSnapshot.yellowText().replace('丨', '|').replaceAll("\\s+", "");
+        String normalized = currentTrackerPanel.getYellowText().replace('丨', '|').replaceAll("\\s+", "");
         Matcher matcher = TRACKER_COMBAT_TARGET_PATTERN.matcher(normalized);
         if (!matcher.find()) {
             return "";
@@ -921,39 +1192,44 @@ public class WubeiTask implements GameTask {
         return candidate;
     }
 
-    private TrackerPanelSnapshot resolveTrackerPanelSnapshotWithAnchorRecovery(TaskExecutionContext context) {
+    private TaskTrackerPanelReadResult resolveTrackerPanelWithAnchorRecovery(TaskExecutionContext context) {
+        return resolveTrackerPanelWithAnchorRecovery(context, null);
+    }
+
+    private TaskTrackerPanelReadResult resolveTrackerPanelWithAnchorRecovery(WubeiRoundContext state) {
+        return resolveTrackerPanelWithAnchorRecovery(null, state);
+    }
+
+    /*
+     * 五倍推进只认左侧任务追踪 title。Auto+Q 任务面板即使命中“五倍”，也不能提供
+     * 可点击的追踪绿字；如果这里找不到 title，应回到接任务流程，而不是靠任务面板
+     * 判定 active 后继续停在不可推进的状态。
+     */
+    private TaskTrackerPanelReadResult resolveTrackerPanelWithAnchorRecovery(TaskExecutionContext context,
+                                                                             WubeiRoundContext state) {
         for (int attempt = 1; attempt <= MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS; attempt++) {
-            TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
-
-            TrackerPanelSnapshot snapshot = captureTrackerPanelSnapshot("attempt-" + attempt, false);
-            if (snapshot.anchorFound()) {
-                return snapshot;
+            if (context != null) {
+                TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
             }
 
-            log.warn("[wubei] tracker anchor narrow search missed: attempt={}/{}",
-                    attempt, MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS);
-            if (!hasAcceptedTaskFromPanel()) {
-                log.warn("[wubei] no active task after tracker anchor miss; reaccept task: attempt={}/{}",
-                        attempt, MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS);
-                if (!acceptTask(context)) {
-                    return TrackerPanelSnapshot.empty();
-                }
-                continue;
+            String source = state == null
+                    ? "wubei-attempt-" + attempt
+                    : "wubei-" + state.phase() + "-attempt-" + attempt;
+            TaskTrackerPanelReadResult result = taskTrackerPanelService.readWubeiTrackerPanel(source);
+            if (result.isFound()) {
+                return result;
             }
 
-            TrackerPanelSnapshot expandedSnapshot = captureTrackerPanelSnapshot("attempt-" + attempt + "-expanded", true);
-            if (expandedSnapshot.anchorFound()) {
-                return expandedSnapshot;
-            }
-
-            log.warn("[wubei] active task exists but tracker anchor still missing in expanded area; reaccept task: attempt={}/{}",
-                    attempt, MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS);
-            if (!acceptTask(context)) {
-                return TrackerPanelSnapshot.empty();
+            log.warn("[wubei] tracker panel title missed: attempt={}/{} source={}",
+                attempt, MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS, source);
+            if (attempt < MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS) {
+                TaskSleep.sleepOrStop(context, TRACKER_REFRESH_RETRY_INTERVAL_MS, "Wubei task interrupted");
             }
         }
-        log.warn("[wubei] tracker anchor recovery exhausted: attempts={}", MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS);
-        return TrackerPanelSnapshot.empty();
+
+        log.warn("[wubei] tracker title recovery exhausted: attempts={}",
+            MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS);
+        return TaskTrackerPanelReadResult.empty();
     }
 
     private boolean containsProbeTask(String text) {
@@ -967,8 +1243,8 @@ public class WubeiTask implements GameTask {
                 || normalized.contains("显行镜");
     }
 
-    private boolean startProbeTrackerPathing(TaskExecutionContext context, TrackerGreenLinkScan scan) {
-        initializeProbeRuntimeIfNeeded(scan);
+    private boolean startProbeTrackerPathing(TaskExecutionContext context, TaskTrackerPanelReadResult panel) {
+        initializeProbeRuntimeIfNeeded(panel);
         int nextIndex = nextProbeIndexToPath();
         if (nextIndex < 0) {
             log.warn("[wubei] probe objective has no remaining green segment to path: used={} attempts={}",
@@ -977,7 +1253,7 @@ public class WubeiTask implements GameTask {
         }
         currentProbeIndex = nextIndex;
         String label = probeLabel(nextIndex);
-        TrackerGreenLinkSegment segment = currentProbeSegments.get(nextIndex);
+        TaskTrackerGreenLink segment = currentProbeSegments.get(nextIndex);
         currentTrackerDestinationHint = null;
         log.info("[wubei] probe-objective pathing start: label={} index={}/{} used={} attempts={} segment={}",
                 label, nextIndex + 1, currentProbeSegments.size(), probeUsedSummary(), probeAttemptSummary(), segment);
@@ -987,21 +1263,17 @@ public class WubeiTask implements GameTask {
     private WubeiStepOutcome resolveProbeAfterPathing(TaskExecutionContext context, WubeiRoundContext state) {
         int index = currentProbeIndex;
         String label = probeLabel(index);
-        GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-        log.info("[wubei] resolve probe after pathing: label={} state={} used={} attempts={} hint={}",
-                label, movementState, probeUsedSummary(), probeAttemptSummary(), currentTrackerDestinationHint);
-        if (movementState == GameStateUtil.MovementState.MOVING
-                || movementState == GameStateUtil.MovementState.PATHING_ACTIVE
-                || movementState == GameStateUtil.MovementState.MAYBE_MOVING
-                || movementState == GameStateUtil.MovementState.UNKNOWN) {
-            return WubeiStepOutcome.sharedState(state, "probe pathing still active");
-        }
-
-        if (tryClickKnownEnterBattleDialog("wubei:probe-before-item:" + label)) {
-            log.info("[wubei] probe path reached direct battle dialog; treat as combat target: label={}", label);
-            return WubeiStepOutcome.continueTo(
-                    state.next(WubeiPhase.WAIT_BATTLE_FINISH, "probe-direct-battle-dialog"),
-                    "probe direct battle dialog clicked");
+        WindowPathingSnapshot snapshot = currentWindowPathingSnapshot();
+        if (isCurrentTrackerPathingSnapshot(snapshot)) {
+            log.info("[wubei] resolve probe after runner pathing: label={} snapshotState={} probe={} current={}({}, {}) used={} attempts={} hint={}",
+                    label, snapshot.getState(), snapshot.isProbeInProgress(),
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                    probeUsedSummary(), probeAttemptSummary(), currentTrackerDestinationHint);
+            if (snapshot.getState() == WindowPathingState.ACTIVE
+                    || snapshot.getState() == WindowPathingState.UNKNOWN
+                    || snapshot.isProbeInProgress()) {
+                return WubeiStepOutcome.sharedState(state, "probe runner pathing still active");
+            }
         }
 
         if (!useProbeItemWithRuntimeRecord(context, index, label)) {
@@ -1013,7 +1285,8 @@ public class WubeiTask implements GameTask {
             return WubeiStepOutcome.failed(state, "probe item use failed");
         }
 
-        if (isProbeTargetReadyStoryVisible(label)) {
+        DialogResult probeStory = inspectProbeStoryOnce(label);
+        if (isProbeTargetReadyStoryVisible(label, probeStory)) {
             markProbeResolved(index);
             log.info("[wubei] probe target-ready story matched; smart-click spawned target: label={}", label);
             if (tryClickProbeSpawnedTarget(context, label, true)) {
@@ -1024,7 +1297,7 @@ public class WubeiTask implements GameTask {
             return WubeiStepOutcome.failed(state, "probe target story visible but target click failed");
         }
 
-        if (isProbeWrongPositionStoryVisible(label)) {
+        if (isProbeWrongPositionStoryVisible(label, probeStory)) {
             rollbackProbeItemAttempt(index, label, "wrong-position-story");
             /*
              * “位置不对”只证明当前绿字还没真正到位，通常是移动停稳误判导致提前使用显形镜。
@@ -1037,6 +1310,8 @@ public class WubeiTask implements GameTask {
                     "probe wrong position; retry current green link");
         }
 
+        closeUnknownProbeStoryIfNeeded(label, probeStory);
+
         // 成功 story 偶尔会漏检；如果白龙马 tooltip 已经出现，先尝试进入战斗，
         // 不要过早重试显形镜或切到第二个绿字。
         if (tryClickProbeSpawnedTarget(context, label, false)) {
@@ -1046,11 +1321,11 @@ public class WubeiTask implements GameTask {
                     "probe target tooltip clicked without story confirmation");
         }
 
-        if (probeCanRetryItem(index)) {
-            log.warn("[wubei] probe item used but target-ready story not matched; retry same probe point: label={} used={} attempts={}",
-                    label, probeUsedSummary(), probeAttemptSummary());
-            return WubeiStepOutcome.sharedState(state, "probe story missing; retry item");
-        }
+//        if (probeCanRetryItem(index)) {
+//            log.warn("[wubei] probe item used but target-ready story not matched; retry same probe point: label={} used={} attempts={}",
+//                    label, probeUsedSummary(), probeAttemptSummary());
+//            return WubeiStepOutcome.sharedState(state, "probe story missing; retry item");
+//        }
 
         markProbeResolved(index);
         int nextUnused = nextUnusedProbeIndex();
@@ -1068,12 +1343,12 @@ public class WubeiTask implements GameTask {
         return WubeiStepOutcome.failed(state, "probe exhausted without target-ready story");
     }
 
-    private boolean triggerCombatTrackerPathing(TaskExecutionContext context, TrackerGreenLinkScan scan) {
-        if (scan.segments().isEmpty()) {
+    private boolean triggerCombatTrackerPathing(TaskExecutionContext context, TaskTrackerPanelReadResult panel) {
+        if (panel.getGreenLinks().isEmpty()) {
             log.warn("[wubei] no tracker green segment for combat pathing");
             return false;
         }
-        TrackerGreenLinkSegment segment = scan.segments().get(0);
+        TaskTrackerGreenLink segment = panel.getGreenLinks().get(0);
         for (int attempt = 1; attempt <= MAX_TRACKER_CLICK_ATTEMPTS; attempt++) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
             if (clickTaskTrackerGreen(context, segment, "combat", attempt)) {
@@ -1085,11 +1360,11 @@ public class WubeiTask implements GameTask {
         return false;
     }
 
-    private void initializeProbeRuntimeIfNeeded(TrackerGreenLinkScan scan) {
+    private void initializeProbeRuntimeIfNeeded(TaskTrackerPanelReadResult panel) {
         if (isProbeRuntimeActive()) {
             return;
         }
-        currentProbeSegments = List.copyOf(scan.segments());
+        currentProbeSegments = List.copyOf(panel.getGreenLinks());
         currentProbeUsed = new boolean[currentProbeSegments.size()];
         currentProbeItemAttempts = new int[currentProbeSegments.size()];
         currentProbeIndex = currentProbeSegments.isEmpty() ? -1 : 0;
@@ -1140,7 +1415,10 @@ public class WubeiTask implements GameTask {
             return false;
         }
         currentProbeItemAttempts[index]++;
-        boolean used = useProbeItem(context, label);
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        boolean used = bagService.findAndUseItemFromBack(BagService.MAIN_BAG, PROBE_ITEM_TEMPLATE, 5, context);
+        log.info("[wubei] probe item used: label={} used={}", label, used);
+        TaskSleep.sleepOrStop(context, 700L, "Wubei task interrupted");
         log.info("[wubei] probe item runtime record: label={} used={} usedState={} attempts={}",
                 label, used, probeUsedSummary(), probeAttemptSummary());
         return used;
@@ -1200,7 +1478,7 @@ public class WubeiTask implements GameTask {
         return values.toString();
     }
 
-    private boolean clickTaskTrackerGreen(TaskExecutionContext context, TrackerGreenLinkSegment segment, String label, int attempt) {
+    private boolean clickTaskTrackerGreen(TaskExecutionContext context, TaskTrackerGreenLink segment, String label, int attempt) {
         int baseX = segment.minX() + Math.min(18, Math.max(0, segment.width() / 3));
         int baseY = (segment.minY() + segment.maxY()) / 2;
         int randomRadiusX = Math.min(6, Math.max(2, segment.width() / 8));
@@ -1213,10 +1491,68 @@ public class WubeiTask implements GameTask {
                 InputAction.clickLeft(click.x, click.y, 300)
         ));
         if (clicked) {
-            gameStateUtil.recordMovementIntent("wubei:tracker-green-click:" + label);
-            captureTrackerDestinationHint(context, label).ifPresent(hint -> currentTrackerDestinationHint = hint);
+            String intentSource = "wubei:tracker-green-click:" + safeFileToken(label);
+            /*
+             * 黄袍怪连战已经由任务追踪标题确认，后续绿字只是继续原地连战。
+             * 它不是一次远距离寻路，所以不要注册 runner pathing intent；点完短等后
+             * 直接进入 ENTER_BATTLE 去处理弹出的进战斗对话框。
+             */
+            if (shouldCaptureTrackerDestinationHint(label)) {
+                gameStateUtil.recordMovementIntent(intentSource);
+                registerTrackerPathingIntent(intentSource);
+                scheduleTrackerDestinationHintCapture(context, label);
+            } else {
+                log.info("[wubei] tracker pathing intent skipped: label={} reason=chained-combat-continuation",
+                        label);
+            }
         }
         return clicked;
+    }
+
+    private boolean shouldCaptureTrackerDestinationHint(String label) {
+        return label == null || !label.startsWith("chained-combat-");
+    }
+
+    private void scheduleTrackerDestinationHintCapture(TaskExecutionContext context, String label) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        long requestId = ++trackerDestinationHintRequestId;
+        log.info("[wubei] destination hint capture scheduled async: label={} requestId={}", label, requestId);
+        CompletableFuture.runAsync(() -> {
+            try {
+                windowTaskContextHolder.runWith(runtime, () -> {
+                    Optional<TrackerDestinationHint> hint = captureTrackerDestinationHint(context, label);
+                    hint.ifPresent(value -> {
+                        if (trackerDestinationHintRequestId == requestId) {
+                            currentTrackerDestinationHint = value;
+                            log.info("[wubei] destination hint stored async: label={} requestId={} hint={}({}, {}) text='{}'",
+                                    label, requestId, value.mapName(), value.x(), value.y(), value.rawText());
+                        } else {
+                            log.info("[wubei] destination hint ignored as stale: label={} requestId={} currentRequestId={} hint={}({}, {})",
+                                    label, requestId, trackerDestinationHintRequestId,
+                                    value.mapName(), value.x(), value.y());
+                        }
+                    });
+                });
+            } catch (Exception e) {
+                log.warn("[wubei] destination hint async capture failed: label={} requestId={}", label, requestId, e);
+            }
+        });
+    }
+
+    private void registerTrackerPathingIntent(String intentSource) {
+        windowTaskContextHolder.rawCurrent().ifPresent(runtime -> {
+            WindowPathingIntent intent = WindowPathingIntent.builder()
+                    .source(intentSource)
+                    .type(WindowPathingIntentType.UNTARGETED_TRACKER)
+                    .targetMapName(null)
+                    .targetX(null)
+                    .targetY(null)
+                    .tolerance(0)
+                    .build();
+            runtime.markPathingStarted(intent);
+            log.info("[wubei] window pathing intent registered for tracker click: windowId={} source={}",
+                    runtime.getWindowId(), intentSource);
+        });
     }
 
     /*
@@ -1225,16 +1561,24 @@ public class WubeiTask implements GameTask {
      * 绿字点击，否则浮框会自然消失。
      */
     private Optional<TrackerDestinationHint> captureTrackerDestinationHint(TaskExecutionContext context, String label) {
-        long deadline = System.currentTimeMillis() + TRACKER_DEST_HINT_MAX_CAPTURE_MS;
+        long startedAt = System.currentTimeMillis();
+        List<TrackerDestinationHintCapture> captures = new ArrayList<>();
+        CompletableFuture<Optional<TrackerDestinationHint>> firstParseFuture = null;
+        log.info("[wubei] destination hint capture start: label={} offsetsMs={} region={}",
+                label, List.of(1_500, 2_500, 3_500),
+                TRACKER_DEST_HINT_REGION.toShortText());
         for (int sample = 1; sample <= TRACKER_DEST_HINT_SAMPLES; sample++) {
-            long remainingMs = deadline - System.currentTimeMillis();
-            if (remainingMs <= 0) {
-                log.info("[wubei] destination hint capture timeout: label={} maxMs={}",
-                        label, TRACKER_DEST_HINT_MAX_CAPTURE_MS);
-                return Optional.empty();
+            long targetElapsedMs = TRACKER_DEST_HINT_CAPTURE_OFFSETS_MS[sample - 1];
+            long targetAt = startedAt + targetElapsedMs;
+            Optional<TrackerDestinationHint> earlyParsed = waitForDestinationHintOrTarget(
+                    context, label, sample, targetElapsedMs, targetAt, firstParseFuture);
+            if (earlyParsed.isPresent()) {
+                return earlyParsed;
             }
-            TaskSleep.sleepOrStop(context, TRACKER_DEST_HINT_SAMPLE_DELAY_MS, "Wubei task interrupted");
+            long waitMs = Math.max(0L, targetAt - System.currentTimeMillis());
+            long afterDelayAt = System.currentTimeMillis();
             tracker.refreshWindowState();
+            long afterRefreshAt = System.currentTimeMillis();
             String safeLabel = safeFileToken(label);
             String rawPath = windowScopedTempPath.resolve(
                     "wubei_tracker_destination_hint_" + safeLabel + "_" + sample + "_raw.png");
@@ -1246,34 +1590,144 @@ public class WubeiTask implements GameTask {
             int right = tracker.getWindowBaseX() + hintRegion.x2();
             int bottom = tracker.getWindowBaseY() + hintRegion.y2();
             long captureStartedAt = System.currentTimeMillis();
+            log.info("[wubei] destination hint capture attempt: label={} sample={} elapsedMs={} delayMs={} refreshMs={} rect=({}, {})-({}, {}) raw={}",
+                    label, sample, captureStartedAt - startedAt,
+                    Math.max(0L, waitMs), afterRefreshAt - afterDelayAt,
+                    left, top, right, bottom, rawPath);
             if (!tracker.captureToFile("wubei-destination-hint:" + label, rawPath, left, top, right, bottom)) {
-                log.warn("[wubei] destination hint capture failed: label={} sample={} rect=({}, {})-({}, {})",
-                        label, sample, left, top, right, bottom);
+                log.warn("[wubei] destination hint capture failed: label={} sample={} elapsedMs={} delayMs={} refreshMs={} rect=({}, {})-({}, {})",
+                        label, sample, System.currentTimeMillis() - startedAt,
+                        Math.max(0L, waitMs), afterRefreshAt - afterDelayAt,
+                        left, top, right, bottom);
                 continue;
             }
-            long captureMs = System.currentTimeMillis() - captureStartedAt;
-            /*
-             * 浮框位置和小对话框一致，直接复用 dialog-small 窗口相对区域。
-             * 这里不再截整窗，也不再套全局 mask，避免把任务追踪/聊天里的黄字带进 OCR。
-             */
-            ImagePreprocessor.washYellowText(rawPath, yellowPath);
-            /*
-             * 绿字点击后的寻路 hint 生命周期很短，最多只有几秒。这里必须只做本地 OCR；
-             * 混合 matcher 会在本地失败时等待外部 OCR，反而拖住任务窗口权。
-             */
-            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(yellowPath);
-            String text = words.stream().map(OcrWordResult::getText).collect(Collectors.joining(""));
-            Optional<TrackerDestinationHint> parsed = parseTrackerDestinationHint(text);
+            long afterCaptureAt = System.currentTimeMillis();
+            long captureMs = afterCaptureAt - captureStartedAt;
+            log.info("[wubei] destination hint capture saved: label={} sample={} elapsedMs={} captureMs={} raw={}",
+                    label, sample, afterCaptureAt - startedAt, captureMs, rawPath);
+            TrackerDestinationHintCapture capture = new TrackerDestinationHintCapture(
+                    label, sample, hintRegion, rawPath, yellowPath, startedAt,
+                    afterCaptureAt - startedAt, Math.max(0L, waitMs),
+                    afterRefreshAt - afterDelayAt, captureMs);
+            captures.add(capture);
+            if (sample == 1) {
+                firstParseFuture = CompletableFuture.supplyAsync(() -> parseTrackerDestinationHintCapture(capture));
+                Optional<TrackerDestinationHint> parsed = readCompletedDestinationHint(label, firstParseFuture);
+                if (parsed.isPresent()) {
+                    return parsed;
+                }
+            }
+        }
+
+        Optional<TrackerDestinationHint> parsed = waitForDestinationHintParsers(label, captures, firstParseFuture);
+        if (parsed.isPresent()) {
+            return parsed;
+        }
+        log.info("[wubei] destination hint capture exhausted: label={} elapsedMs={} samples={}",
+                label, System.currentTimeMillis() - startedAt, TRACKER_DEST_HINT_SAMPLES);
+        return Optional.empty();
+    }
+
+    private Optional<TrackerDestinationHint> waitForDestinationHintOrTarget(
+            TaskExecutionContext context,
+            String label,
+            int sample,
+            long targetElapsedMs,
+            long targetAt,
+            CompletableFuture<Optional<TrackerDestinationHint>> firstParseFuture) {
+        long initialWaitMs = Math.max(0L, targetAt - System.currentTimeMillis());
+        if (initialWaitMs > 0) {
+            log.info("[wubei] destination hint sample scheduled: label={} sample={} targetElapsedMs={} waitMs={}",
+                    label, sample, targetElapsedMs, initialWaitMs);
+        }
+        while (System.currentTimeMillis() < targetAt) {
+            Optional<TrackerDestinationHint> parsed = readCompletedDestinationHint(label, firstParseFuture);
             if (parsed.isPresent()) {
-                TrackerDestinationHint hint = parsed.get();
-                log.info("[wubei] destination hint parsed: label={} sample={} region={} captureMs={} map={} coord=({}, {}) text='{}' raw={} yellow={}",
-                        label, sample, hintRegion.toShortText(), captureMs, hint.mapName(), hint.x(), hint.y(),
-                        hint.rawText(), rawPath, yellowPath);
                 return parsed;
             }
-            log.info("[wubei] destination hint not parsed: label={} sample={} region={} captureMs={} text='{}' raw={} yellow={}",
-                    label, sample, hintRegion.toShortText(), captureMs, text, rawPath, yellowPath);
+            long waitMs = Math.min(80L, targetAt - System.currentTimeMillis());
+            if (waitMs > 0) {
+                TaskSleep.sleepOrStop(context, waitMs, "Wubei task interrupted");
+            }
         }
+        return readCompletedDestinationHint(label, firstParseFuture);
+    }
+
+    private Optional<TrackerDestinationHint> waitForDestinationHintParsers(
+            String label,
+            List<TrackerDestinationHintCapture> captures,
+            CompletableFuture<Optional<TrackerDestinationHint>> firstParseFuture) {
+        Optional<TrackerDestinationHint> first = readDestinationHintFuture(label, firstParseFuture);
+        if (first.isPresent()) {
+            return first;
+        }
+        for (int i = 1; i < captures.size(); i++) {
+            Optional<TrackerDestinationHint> parsed = parseTrackerDestinationHintCapture(captures.get(i));
+            if (parsed.isPresent()) {
+                return parsed;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<TrackerDestinationHint> readDestinationHintFuture(
+            String label,
+            CompletableFuture<Optional<TrackerDestinationHint>> future) {
+        if (future == null) {
+            return Optional.empty();
+        }
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            log.warn("[wubei] destination hint async parser failed: label={}", label, e);
+            return Optional.empty();
+        }
+    }
+
+    private Optional<TrackerDestinationHint> readCompletedDestinationHint(
+            String label,
+            CompletableFuture<Optional<TrackerDestinationHint>> future) {
+        if (future == null || !future.isDone()) {
+            return Optional.empty();
+        }
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            log.warn("[wubei] destination hint async parser failed: label={}", label, e);
+            return Optional.empty();
+        }
+    }
+
+    private Optional<TrackerDestinationHint> parseTrackerDestinationHintCapture(TrackerDestinationHintCapture capture) {
+        long parseStartedAt = System.currentTimeMillis();
+        /*
+         * 每张截图落盘后立刻启动解析；截图调度仍按固定时间点推进，避免第一张 OCR 慢时
+         * 错过第二、第三张短生命周期浮框。
+         */
+        ImagePreprocessor.washYellowText(capture.rawPath(), capture.yellowPath());
+        long afterWashAt = System.currentTimeMillis();
+        List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(capture.yellowPath());
+        long afterOcrAt = System.currentTimeMillis();
+        String text = words.stream().map(OcrWordResult::getText).collect(Collectors.joining(""));
+        Optional<TrackerDestinationHint> parsed = parseTrackerDestinationHint(text);
+        long afterParseAt = System.currentTimeMillis();
+        if (parsed.isPresent()) {
+            TrackerDestinationHint hint = parsed.get();
+            log.info("[wubei] destination hint parsed: label={} sample={} region={} captureElapsedMs={} parseElapsedMs={} delayMs={} refreshMs={} captureMs={} washMs={} ocrMs={} parseMs={} map={} coord=({}, {}) text='{}' raw={} yellow={}",
+                    capture.label(), capture.sample(), capture.region().toShortText(),
+                    capture.captureElapsedMs(), afterParseAt - capture.startedAt(),
+                    capture.delayMs(), capture.refreshMs(), capture.captureMs(),
+                    afterWashAt - parseStartedAt, afterOcrAt - afterWashAt,
+                    afterParseAt - afterOcrAt, hint.mapName(), hint.x(), hint.y(),
+                    hint.rawText(), capture.rawPath(), capture.yellowPath());
+            return parsed;
+        }
+        log.info("[wubei] destination hint not parsed: label={} sample={} region={} captureElapsedMs={} parseElapsedMs={} delayMs={} refreshMs={} captureMs={} washMs={} ocrMs={} parseMs={} text='{}' raw={} yellow={}",
+                capture.label(), capture.sample(), capture.region().toShortText(),
+                capture.captureElapsedMs(), afterParseAt - capture.startedAt(),
+                capture.delayMs(), capture.refreshMs(), capture.captureMs(),
+                afterWashAt - parseStartedAt, afterOcrAt - afterWashAt,
+                afterParseAt - afterOcrAt, text, capture.rawPath(), capture.yellowPath());
         return Optional.empty();
     }
 
@@ -1287,9 +1741,14 @@ public class WubeiTask implements GameTask {
             return Optional.empty();
         }
         try {
-            String mapName = matcher.group(1).trim();
+            String rawMapName = matcher.group(1).trim();
             int x = Integer.parseInt(matcher.group(2));
             int y = Integer.parseInt(matcher.group(3));
+            if (rawMapName.isEmpty()) {
+                return Optional.empty();
+            }
+            String mapName = mapNameCanonicalizer.canonicalize(
+                    rawMapName, "wubei:tracker-destination-hint-parse");
             if (mapName.isEmpty()) {
                 return Optional.empty();
             }
@@ -1300,274 +1759,16 @@ public class WubeiTask implements GameTask {
         }
     }
 
-    private TrackerPanelSnapshot captureTrackerPanelSnapshot(String source, boolean allowExpandedAnchorSearch) {
-        int[] rect = resolveTrackerPanelRect("green-links", allowExpandedAnchorSearch);
-        if (rect == null) {
-            return TrackerPanelSnapshot.empty();
-        }
-        int left = rect[0];
-        int top = rect[1];
-        int right = rect[2];
-        int bottom = rect[3];
-        String captureId = safeFileToken(source) + "_" + System.currentTimeMillis();
-        String widePath = windowScopedTempPath.resolve("wubei_tracker_panel_" + captureId + "_wide_raw.png");
-        int wideLeft = tracker.getWindowBaseX() + TRACKER_ANCHOR_SEARCH_REL_LEFT;
-        int wideTop = tracker.getWindowBaseY() + TRACKER_ANCHOR_SEARCH_REL_TOP;
-        int wideRight = tracker.getWindowBaseX() + TRACKER_ANCHOR_SEARCH_REL_RIGHT;
-        int wideBottom = tracker.getWindowBaseY() + TRACKER_ANCHOR_SEARCH_REL_BOTTOM;
-        boolean wideCaptured = tracker.captureToFile(
-                "wubei-tracker-panel-wide:" + source,
-                widePath,
-                wideLeft,
-                wideTop,
-                wideRight,
-                wideBottom);
-        String rawPath = windowScopedTempPath.resolve("wubei_tracker_panel_" + captureId + "_raw.png");
-        if (!tracker.captureToFile("wubei-tracker-panel:" + source, rawPath, left, top, right, bottom)) {
-            log.warn("[wubei] tracker panel capture failed: source={} rect=({}, {})-({}, {})",
-                    source, left, top, right, bottom);
-            return TrackerPanelSnapshot.empty();
-        }
-        BufferedImage frame;
-        try {
-            frame = ImageIO.read(new File(rawPath));
-        } catch (Exception e) {
-            log.warn("[wubei] tracker panel image read failed: source={} path={}", source, rawPath, e);
-            return TrackerPanelSnapshot.empty();
-        }
-        if (frame == null) {
-            log.warn("[wubei] tracker panel image unreadable: source={} path={}", source, rawPath);
-            return TrackerPanelSnapshot.empty();
-        }
-        try {
-            log.info("[wubei] tracker panel capture: source={} id={} base=({}, {}) rect=({}, {})-({}, {}) size={}x{} raw={} wideCaptured={} wideRect=({}, {})-({}, {}) wide={}",
-                    source, captureId,
-                    tracker.getWindowBaseX(), tracker.getWindowBaseY(),
-                    left, top, right, bottom,
-                    frame.getWidth(), frame.getHeight(),
-                    rawPath, wideCaptured,
-                    wideLeft, wideTop, wideRight, wideBottom,
-                    widePath);
-            String yellowText = readTrackerYellowText(captureId, rawPath);
-            TrackerGreenLinkScan greenScan = scanTrackerGreenLinks(frame, left, top);
-            log.info("[wubei] tracker panel snapshot: source={} yellow='{}' greenSegments={} probe={} raw={}",
-                    source, yellowText, greenScan.segments(), greenScan.isProbeObjective(), rawPath);
-            return new TrackerPanelSnapshot(true, rect, yellowText, greenScan);
-        } finally {
-            frame.flush();
-        }
-    }
-
-    private String readTrackerYellowText(String captureId, String rawPath) {
-        String yellowPath = windowScopedTempPath.resolve("wubei_tracker_yellow_" + captureId + ".png");
-        ImagePreprocessor.washYellowText(rawPath, yellowPath);
-        List<OcrWordResult> words = textRecognizer.getAllTextResultsForMatch(
-                yellowPath,
-                "wubei-tracker-yellow:" + captureId,
-                result -> !result.isEmpty());
-        String text = words.stream().map(OcrWordResult::getText).collect(Collectors.joining("|"));
-        log.info("[wubei] tracker yellow OCR: id={} text='{}' raw={} yellow={}",
-                captureId, text, rawPath, yellowPath);
-        return text;
-    }
-
-    private TrackerGreenLinkScan scanTrackerGreenLinks(BufferedImage frame, int left, int top) {
-        List<ImagePreprocessor.GreenTextBand> bands = ImagePreprocessor.findGreenTextBands(frame);
-        ImagePreprocessor.GreenTextBand band = ImagePreprocessor.pickGreenTextBand(bands, true);
-        if (band == null) {
-            log.info("[wubei] tracker green link scan: no green band");
-            return TrackerGreenLinkScan.empty();
-        }
-        List<TrackerGreenLinkSegment> segments = splitTrackerGreenLinkSegments(frame, band, left, top);
-        int bandWidth = band.maxX() - band.minX() + 1;
-        boolean probe = segments.size() >= 2
-                || (segments.size() == 1 && bandWidth > TRACKER_LINK_SINGLE_MAX_WIDTH);
-        log.info("[wubei] tracker green link scan: bands={} band=({}, {})-({}, {}) width={} segments={} probe={}",
-                bands.size(), left + band.minX(), top + band.minY(), left + band.maxX(), top + band.maxY(),
-                bandWidth, segments, probe);
-        return new TrackerGreenLinkScan(probe, segments, bandWidth);
-    }
-
-    /*
-     * 五倍任务追踪不是用全屏随便扫绿字：先找“任务追踪”anchor，再按 anchor
-     * 的相对偏移裁出任务内容区。这样后续黄字/绿字判断都只看当前任务面板。
-     */
-    private int[] resolveTrackerPanelRect(String source) {
-        return resolveTrackerPanelRect(source, false);
-    }
-
-    private int[] resolveTrackerPanelRect(String source, boolean allowExpandedAnchorSearch) {
-        tracker.refreshWindowState();
-        int[] searchRect = new int[]{
-                tracker.getWindowBaseX() + TRACKER_ANCHOR_SEARCH_REL_LEFT,
-                tracker.getWindowBaseY() + TRACKER_ANCHOR_SEARCH_REL_TOP,
-                tracker.getWindowBaseX() + TRACKER_ANCHOR_SEARCH_REL_RIGHT,
-                tracker.getWindowBaseY() + TRACKER_ANCHOR_SEARCH_REL_BOTTOM
-        };
-        Point anchor = coordinateHelper.findImageInRegion(TRACKER_ANCHOR_TEMPLATE, searchRect, 0.82);
-        if (anchor != null) {
-            return trackerPanelRectFromAnchor(source, anchor, "narrow");
-        }
-
-        log.warn("[wubei] tracker anchor not found in narrow area: source={} searchRect=({}, {})-({}, {}) allowExpanded={}",
-                source,
-                searchRect[0], searchRect[1], searchRect[2], searchRect[3],
-                allowExpandedAnchorSearch);
-        if (!allowExpandedAnchorSearch) {
-            return null;
-        }
-
-        OcrWindowRegion defaultRegion = OcrWindowScanService.defaultMaskedWindowRegion();
-        int[] expandedRect = new int[]{
-                tracker.getWindowBaseX() + defaultRegion.x1(),
-                tracker.getWindowBaseY() + defaultRegion.y1(),
-                tracker.getWindowBaseX() + defaultRegion.x2(),
-                tracker.getWindowBaseY() + defaultRegion.y2()
-        };
-        Point expandedAnchor = coordinateHelper.findImageInRegion(TRACKER_ANCHOR_TEMPLATE, expandedRect, 0.82);
-        if (expandedAnchor != null) {
-            return trackerPanelRectFromAnchor(source, expandedAnchor, "expanded-default");
-        }
-        log.warn("[wubei] tracker anchor not found in expanded default region: source={} rect=({}, {})-({}, {})",
-                source, expandedRect[0], expandedRect[1], expandedRect[2], expandedRect[3]);
-        return null;
-    }
-
-    private int[] trackerPanelRectFromAnchor(String source, Point anchor, String searchMode) {
-        int[] panelRect = new int[]{
-                anchor.x + TRACKER_PANEL_FROM_ANCHOR_LEFT,
-                anchor.y + TRACKER_PANEL_FROM_ANCHOR_TOP,
-                anchor.x + TRACKER_PANEL_FROM_ANCHOR_RIGHT,
-                anchor.y + TRACKER_PANEL_FROM_ANCHOR_BOTTOM
-        };
-        log.info("[wubei] tracker panel rect resolved by anchor: source={} mode={} anchor=({}, {}) rect=({}, {})-({}, {})",
-                source, searchMode, anchor.x, anchor.y,
-                panelRect[0], panelRect[1], panelRect[2], panelRect[3]);
-        return panelRect;
-    }
-
-    private List<TrackerGreenLinkSegment> splitTrackerGreenLinkSegments(
-            BufferedImage frame,
-            ImagePreprocessor.GreenTextBand band,
-            int absoluteLeft,
-            int absoluteTop) {
-        List<TrackerGreenGlyph> glyphs = collectTrackerGreenGlyphs(frame, band);
-        List<TrackerGreenLinkSegment> segments = new ArrayList<>();
-        int startX = -1;
-        int endX = -1;
-        int pixels = 0;
-        TrackerGreenGlyph previous = null;
-        for (int i = 0; i < glyphs.size(); i++) {
-            TrackerGreenGlyph glyph = glyphs.get(i);
-            boolean delimiter = isTrackerLinkDelimiter(glyph, pixels, remainingPixels(glyphs, i + 1));
-            boolean largeGap = startX >= 0
-                    && previous != null
-                    && glyph.minX() - previous.maxX() - 1 >= TRACKER_LINK_SPLIT_GAP;
-            if (delimiter) {
-                addTrackerSegment(segments, absoluteLeft, absoluteTop, startX, endX, band, pixels);
-                startX = -1;
-                endX = -1;
-                pixels = 0;
-                previous = glyph;
-                continue;
-            }
-            if (largeGap) {
-                addTrackerSegment(segments, absoluteLeft, absoluteTop, startX, endX, band, pixels);
-                startX = -1;
-                endX = -1;
-                pixels = 0;
-            }
-
-            if (startX < 0) {
-                startX = glyph.minX();
-            }
-            endX = glyph.maxX();
-            pixels += glyph.pixels();
-            previous = glyph;
-        }
-        addTrackerSegment(segments, absoluteLeft, absoluteTop, startX, endX, band, pixels);
-        log.info("[wubei] tracker green glyph split: glyphs={} segments={}", glyphs, segments);
-        return segments;
-    }
-
-    private List<TrackerGreenGlyph> collectTrackerGreenGlyphs(BufferedImage frame, ImagePreprocessor.GreenTextBand band) {
-        List<TrackerGreenGlyph> glyphs = new ArrayList<>();
-        int startX = -1;
-        int endX = -1;
-        int pixels = 0;
-        for (int x = band.minX(); x <= band.maxX(); x++) {
-            int columnPixels = 0;
-            for (int y = band.minY(); y <= band.maxY(); y++) {
-                if (ImagePreprocessor.isOptionGreen(frame.getRGB(x, y))) {
-                    columnPixels++;
-                }
-            }
-            if (columnPixels > 0) {
-                if (startX < 0) {
-                    startX = x;
-                }
-                endX = x;
-                pixels += columnPixels;
-            } else if (startX >= 0) {
-                glyphs.add(new TrackerGreenGlyph(startX, endX, pixels));
-                startX = -1;
-                endX = -1;
-                pixels = 0;
-            }
-        }
-        if (startX >= 0) {
-            glyphs.add(new TrackerGreenGlyph(startX, endX, pixels));
-        }
-        return glyphs;
-    }
-
-    private boolean isTrackerLinkDelimiter(TrackerGreenGlyph glyph, int leftPixels, int rightPixels) {
-        return glyph.width() <= TRACKER_LINK_DELIMITER_MAX_WIDTH
-                && glyph.pixels() <= TRACKER_LINK_DELIMITER_MAX_PIXELS
-                && leftPixels >= TRACKER_LINK_MIN_PIXELS
-                && rightPixels >= TRACKER_LINK_MIN_PIXELS;
-    }
-
-    private int remainingPixels(List<TrackerGreenGlyph> glyphs, int fromIndex) {
-        int total = 0;
-        for (int i = fromIndex; i < glyphs.size(); i++) {
-            total += glyphs.get(i).pixels();
-        }
-        return total;
-    }
-
-    private void addTrackerSegment(
-            List<TrackerGreenLinkSegment> segments,
-            int absoluteLeft,
-            int absoluteTop,
-            int startX,
-            int endX,
-            ImagePreprocessor.GreenTextBand band,
-            int pixels) {
-        if (pixels < TRACKER_LINK_MIN_PIXELS || endX < startX) {
-            return;
-        }
-        segments.add(new TrackerGreenLinkSegment(
-                absoluteLeft + startX,
-                absoluteTop + band.minY(),
-                absoluteLeft + endX,
-                absoluteTop + band.maxY(),
-                pixels));
-    }
-
-    private boolean useProbeItem(TaskExecutionContext context, String label) {
-        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
-        boolean used = bagService.findAndUseItemFromBack(BagService.MAIN_BAG, PROBE_ITEM_TEMPLATE, 5, context);
-        log.info("[wubei] probe item used: label={} used={}", label, used);
-        TaskSleep.sleepOrStop(context, 700L, "Wubei task interrupted");
-        return used;
-    }
-
-    private boolean isProbeTargetReadyStoryVisible(String label) {
-        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplate(
+    private DialogResult inspectProbeStoryOnce(String label) {
+        return dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplates(
                 "wubei:probe-story:" + label,
-                STORY_PROBE_TARGET_READY,
-                PROBE_STORY_TEMPLATE));
+                List.of(
+                        new WhiteTemplateSpec(STORY_PROBE_TARGET_READY, PROBE_STORY_TEMPLATE),
+                        new WhiteTemplateSpec(STORY_PROBE_WRONG_POSITION, PROBE_WRONG_POSITION_TEMPLATE)
+                )));
+    }
+
+    private boolean isProbeTargetReadyStoryVisible(String label, DialogResult result) {
         boolean visible = STORY_PROBE_TARGET_READY.equals(result.getActionKey())
                 && result.getStatus() == DialogResultStatus.WHITE_TEMPLATE_VISIBLE;
         log.info("[wubei] probe target-ready story check: label={} visible={} status={}",
@@ -1575,11 +1776,7 @@ public class WubeiTask implements GameTask {
         return visible;
     }
 
-    private boolean isProbeWrongPositionStoryVisible(String label) {
-        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplate(
-                "wubei:probe-wrong-position:" + label,
-                STORY_PROBE_WRONG_POSITION,
-                PROBE_WRONG_POSITION_TEMPLATE));
+    private boolean isProbeWrongPositionStoryVisible(String label, DialogResult result) {
         boolean visible = STORY_PROBE_WRONG_POSITION.equals(result.getActionKey())
                 && result.getStatus() == DialogResultStatus.WHITE_TEMPLATE_VISIBLE;
         log.info("[wubei] probe wrong-position story check: label={} visible={} status={}",
@@ -1587,25 +1784,43 @@ public class WubeiTask implements GameTask {
         return visible;
     }
 
+    private void closeUnknownProbeStoryIfNeeded(String label, DialogResult result) {
+        if (result.getStatus() != DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND
+                || result.getDialogType() != DialogType.STORY) {
+            return;
+        }
+        /*
+         * Known probe stories are semantic signals and are handled above. If a story frame is
+         * present but neither known probe template matched, it is usually a second prompt/fallback
+         * blocker, so 五倍 clears it once here instead of letting NpcClickService repeat a blind
+         * story cleanup during target click.
+         */
+        DialogResult closeResult = dialogService.handleDialog(DialogHandleRequest.clickStory(
+                "wubei:probe-story-unknown:" + label));
+        log.info("[wubei] unknown probe story cleanup: label={} status={} clicked={}",
+                label, closeResult.getStatus(), closeResult.isClicked());
+    }
+
     private boolean tryClickProbeSpawnedTarget(TaskExecutionContext context, String label, boolean storyConfirmed) {
-        boolean clicked = tryClickTrackerCombatTargetSmart(context, label + (storyConfirmed ? "-story" : "-no-story"));
+        boolean clicked = tryClickTrackerCombatTargetSmart(
+                context,
+                label + (storyConfirmed ? "-story" : "-no-story"),
+                storyConfirmed ? NpcTargetEvidence.CONFIRMED : NpcTargetEvidence.TENTATIVE);
         if (clicked || !storyConfirmed) {
             return clicked;
         }
         return tryDirectCombatFromTrackerHint(context, label + "-direct-combat");
     }
 
-    private boolean tryClickTrackerCombatTargetSmart(TaskExecutionContext context, String label) {
+    private boolean tryClickTrackerCombatTargetSmart(TaskExecutionContext context,
+                                                    String label,
+                                                    NpcTargetEvidence targetEvidence) {
         TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
-        if (currentTrackerDestinationHint == null) {
-            log.info("[wubei] smart combat target click skipped: label={} reason=no-destination-hint", label);
-            return false;
-        }
         String targetName = resolveDirectCombatTargetName(label);
         if (targetName.isBlank()) {
             log.warn("[wubei] smart combat target click skipped: label={} reason=no-combat-target yellow='{}' hint={}",
                     label,
-                    currentTrackerSnapshot == null ? null : currentTrackerSnapshot.yellowText(),
+                    currentTrackerPanel == null ? null : currentTrackerPanel.getYellowText(),
                     currentTrackerDestinationHint);
             return false;
         }
@@ -1615,16 +1830,20 @@ public class WubeiTask implements GameTask {
          * yellow-name, formula, and Ctrl probes to the current tracker destination, then the 五倍
          * dialog templates below prove we opened the correct battle dialog before clicking it.
          *
-         * 显形镜刷出的白龙马有一个额外坑：如果“位置不对”的 story 还挡在屏幕中间，
-         * tooltip 仍可能露出来可点，但黄字/紫字/记忆点直点会被 story 遮住。只对白龙马
-         * 启用 tooltip-first，并且只在 tooltip 失败后让 NpcClickService 清一次 story。
+         * Probe story cleanup is owned by resolveProbeAfterPathing(), because only 五倍 knows
+         * whether the current story is an expected probe signal or an unknown blocker.
          */
-        boolean probeTarget = PROBE_TARGET_NPC_NAME.equals(targetName);
+        boolean probeTarget = PROBE_TARGET_NPC_NAME.equals(targetName)
+                || targetName.contains(CHAINED_COMBAT_TARGET_KEYWORD);
+        TrackerDestinationHint hint = currentTrackerDestinationHint;
+        String mapName = hint == null ? "" : hint.mapName();
+        int mapX = hint == null ? -1 : hint.x();
+        int mapY = hint == null ? -1 : hint.y();
         NpcClickRequest request = NpcClickRequest.builder()
                 .player(gameContext.getMe())
-                .mapName(currentTrackerDestinationHint.mapName())
-                .mapX(currentTrackerDestinationHint.x())
-                .mapY(currentTrackerDestinationHint.y())
+                .mapName(mapName)
+                .mapX(mapX)
+                .mapY(mapY)
                 .npcName(targetName)
                 .tuneX(-10)
                 .tuneY(0)
@@ -1632,12 +1851,15 @@ public class WubeiTask implements GameTask {
                         ENTER_BATTLE_TEMPLATE,
                         ENTER_BATTLE_PROVE_TEMPLATE,
                         ENTER_BATTLE_KUIXING_TEMPLATE))
-                .roamingTarget(true)
+                .roamingTarget(false)
+                .targetRole(NpcRole.COMBAT_TARGET)
+                .sourceTask(TaskType.WUBEI)
                 .tooltipFirst(probeTarget)
-                .closeStoryBeforeDirectSceneClick(probeTarget)
+                .closeStoryBeforeDirectSceneClick(false)
+                .targetEvidence(targetEvidence)
                 .build();
-        log.info("[wubei] try smart combat target click: label={} target={} hint={}",
-                label, targetName, currentTrackerDestinationHint);
+        log.info("[wubei] try smart combat target click: label={} target={} evidence={} hint={} requestMap={}({}, {})",
+                label, targetName, targetEvidence, hint, mapName, mapX, mapY);
         if (!npcClickService.clickNpcSmart(request)) {
             return false;
         }
@@ -1646,20 +1868,19 @@ public class WubeiTask implements GameTask {
 
     private boolean tryDirectCombatFromTrackerHint(TaskExecutionContext context, String label) {
         TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
-        if (currentTrackerDestinationHint == null) {
-            log.info("[wubei] direct combat fallback skipped: label={} reason=no-destination-hint", label);
-            return false;
-        }
-
         String targetName = resolveDirectCombatTargetName(label);
         if (targetName.isBlank()) {
             log.warn("[wubei] direct combat fallback skipped: label={} reason=no-combat-target yellow='{}' hint={}",
                     label,
-                    currentTrackerSnapshot == null ? null : currentTrackerSnapshot.yellowText(),
+                    currentTrackerPanel == null ? null : currentTrackerPanel.getYellowText(),
                     currentTrackerDestinationHint);
             return false;
         }
 
+        TrackerDestinationHint hint = currentTrackerDestinationHint;
+        String mapName = hint == null ? "" : hint.mapName();
+        int mapX = hint == null ? -1 : hint.x();
+        int mapY = hint == null ? -1 : hint.y();
         /*
          * This Alt+A fallback is only reached after 五倍 tracker pathing has stopped near the
          * tracker destination. It must not be used for accept/maintenance NPCs, because Alt+A turns
@@ -1667,17 +1888,19 @@ public class WubeiTask implements GameTask {
          */
         NpcClickRequest request = NpcClickRequest.builder()
                 .player(gameContext.getMe())
-                .mapName(currentTrackerDestinationHint.mapName())
-                .mapX(currentTrackerDestinationHint.x())
-                .mapY(currentTrackerDestinationHint.y())
+                .mapName(mapName)
+                .mapX(mapX)
+                .mapY(mapY)
                 .npcName(targetName)
                 .tuneX(-10)
                 .tuneY(0)
                 .expectedDialogTemplatePath(ENTER_BATTLE_TEMPLATE)
                 .roamingTarget(true)
+                .targetRole(NpcRole.COMBAT_TARGET)
+                .sourceTask(TaskType.WUBEI)
                 .build();
-        log.info("[wubei] try direct combat fallback: label={} target={} hint={}",
-                label, targetName, currentTrackerDestinationHint);
+        log.info("[wubei] try direct combat fallback: label={} target={} hint={} requestMap={}({}, {})",
+                label, targetName, hint, mapName, mapX, mapY);
         boolean enteredCombat = npcClickService.tryDirectCombatTargetClick(request);
         if (!enteredCombat) {
             return false;
@@ -1685,6 +1908,25 @@ public class WubeiTask implements GameTask {
         autoCombatService.initializeForCurrentWindow();
         TaskSleep.sleepOrStop(context, 1200L, "Wubei task interrupted");
         return true;
+    }
+
+    private WindowPathingSnapshot currentWindowPathingSnapshot() {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        return runtime == null ? null : runtime.getPathingSnapshot();
+    }
+
+    private boolean isCurrentTrackerPathingSnapshot(WindowPathingSnapshot snapshot) {
+        if (snapshot == null || snapshot.getIntent() == null) {
+            return false;
+        }
+        WindowPathingIntent intent = snapshot.getIntent();
+        return intent.getType() == WindowPathingIntentType.UNTARGETED_TRACKER
+                && intent.getSource() != null
+                && intent.getSource().startsWith("wubei:tracker-green-click:");
+    }
+
+    private void clearCurrentPathingSignal(String reason) {
+        windowTaskContextHolder.rawCurrent().ifPresent(runtime -> runtime.clearPathingSignal(reason));
     }
 
     private String resolveDirectCombatTargetName(String label) {
@@ -1712,6 +1954,102 @@ public class WubeiTask implements GameTask {
         log.info("[wubei] known enter-battle dialog check: source={} clicked={} status={} action={}",
                 source, clicked, confirm.getStatus(), confirm.getActionKey());
         return clicked;
+    }
+
+    private WubeiStepOutcome tickEnterBattle(TaskExecutionContext context, WubeiRoundContext state) {
+        long now = System.currentTimeMillis();
+        if (enterBattleStartedAt <= 0L) {
+            enterBattleStartedAt = now;
+            enterBattleNextRetryAt = now;
+        }
+
+        long checkpointStartedAt = now;
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        now = System.currentTimeMillis();
+        long checkpointBlockedMs = now - checkpointStartedAt;
+        if (checkpointBlockedMs >= PAUSE_TIMER_COMPENSATION_THRESHOLD_MS) {
+            enterBattleStartedAt += checkpointBlockedMs;
+            enterBattleNextRetryAt += checkpointBlockedMs;
+            log.info("[wubei] enter battle timer paused: blockedMs={} adjustedStartAt={} adjustedNextRetryAt={}",
+                    checkpointBlockedMs, enterBattleStartedAt, enterBattleNextRetryAt);
+        }
+
+        if (now - enterBattleStartedAt >= WAIT_BATTLE_TIMEOUT_MS) {
+            log.warn("[wubei] enter battle timeout: elapsedMs={} timeoutMs={}",
+                    now - enterBattleStartedAt, WAIT_BATTLE_TIMEOUT_MS);
+            return WubeiStepOutcome.failed(state, "enter battle timeout");
+        }
+
+        AutoCombatService.TickResult tick = autoCombatService.handleCombatTick(context, TASK_CODE, true);
+        if (tick == AutoCombatService.TickResult.IN_COMBAT) {
+            waitBattleSawCombat = true;
+            return WubeiStepOutcome.sharedState(
+                    state.next(WubeiPhase.WAIT_BATTLE_FINISH, "combat-already-started"),
+                    "combat already started");
+        }
+        if (tick == AutoCombatService.TickResult.EXIT_RECOVERED) {
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.POST_BATTLE_RECOVER, "combat-ended-during-enter-battle"),
+                    "combat ended during enter battle phase");
+        }
+
+        if (tryClickKnownEnterBattleDialog("wubei:enter-battle")) {
+            autoCombatService.initializeForCurrentWindow();
+            TaskSleep.sleepOrStop(context, 1200L, "Wubei task interrupted");
+            return WubeiStepOutcome.sharedState(
+                    state.next(WubeiPhase.WAIT_BATTLE_FINISH, "battle-dialog-clicked"),
+                    "battle dialog clicked; wait for combat entry");
+        }
+
+        if (now < enterBattleNextRetryAt) {
+            return WubeiStepOutcome.sharedState(state, "enter battle retry waiting");
+        }
+
+        WindowPathingSnapshot snapshot = currentWindowPathingSnapshot();
+        boolean nearDestination = isNearCurrentTrackerDestination(snapshot);
+        if (nearDestination) {
+            log.info("[wubei] runner snapshot says leader is near tracker destination; try combat target: hint={} snapshot={}({}, {})",
+                    currentTrackerDestinationHint,
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY());
+            if (tryClickTrackerCombatTargetSmart(context, "runner-destination-smart-click",
+                    NpcTargetEvidence.CONFIRMED)) {
+                enterBattleNextRetryAt = now + 6_000L;
+                return WubeiStepOutcome.sharedState(
+                        state.next(WubeiPhase.WAIT_BATTLE_FINISH, "smart-combat-target-clicked"),
+                        "destination smart target clicked");
+            }
+            if (tryDirectCombatFromTrackerHint(context, "runner-destination-direct-combat")) {
+                enterBattleNextRetryAt = now + 6_000L;
+                return WubeiStepOutcome.sharedState(
+                        state.next(WubeiPhase.WAIT_BATTLE_FINISH, "direct-combat-target-clicked"),
+                        "direct combat click confirmed; wait for combat entry");
+            }
+        } else {
+            log.info("[wubei] enter battle target fallback skipped: nearDestination={} hint={} snapshotState={} snapshot={}({}, {})",
+                    false, currentTrackerDestinationHint,
+                    snapshot == null ? null : snapshot.getState(),
+                    snapshot == null ? null : snapshot.getCurrentMapName(),
+                    snapshot == null ? null : snapshot.getCurrentX(),
+                    snapshot == null ? null : snapshot.getCurrentY());
+        }
+
+        if (shouldRetryTrackerGreenInBattleWait()
+                && currentTrackerPanel != null
+                && !currentTrackerPanel.getGreenLinks().isEmpty()) {
+            boolean clicked = clickTaskTrackerGreen(context, currentTrackerPanel.getGreenLinks().get(0),
+                    "enter-battle-retry", 0);
+            if (clicked) {
+                return WubeiStepOutcome.pathingStarted(
+                        state.next(WubeiPhase.RESOLVE_AFTER_PATHING, "enter-battle-retry-pathing-started"),
+                        "enter battle retry pathing started");
+            }
+        } else {
+            log.info("[wubei] skip enter-battle tracker retry: probeActive={} chained={} hasSnapshot={}",
+                    isProbeRuntimeActive(), currentRoundChainedCombatExpected, currentTrackerPanel != null);
+        }
+
+        enterBattleNextRetryAt = now + 6_000L;
+        return WubeiStepOutcome.sharedState(state, "enter battle unresolved; wait before retry");
     }
 
     private WubeiStepOutcome tickWaitBattleFinish(TaskExecutionContext context, WubeiRoundContext state) {
@@ -1764,45 +2102,11 @@ public class WubeiTask implements GameTask {
             return WubeiStepOutcome.sharedState(state, "combat still running");
         }
 
-        if (tryClickKnownEnterBattleDialog("wubei:enter-battle")) {
-            autoCombatService.initializeForCurrentWindow();
-            TaskSleep.sleepOrStop(context, 1200L, "Wubei task interrupted");
-            return WubeiStepOutcome.sharedState(state, "battle dialog clicked; wait for combat entry");
-        }
-
         if (!waitBattleSawCombat && now >= waitBattleNextTrackerRetryAt) {
-            GameStateUtil.MovementState movementState = gameStateUtil.detectMovementState();
-            if (movementState == GameStateUtil.MovementState.MOVING
-                    || movementState == GameStateUtil.MovementState.PATHING_ACTIVE
-                    || movementState == GameStateUtil.MovementState.MAYBE_MOVING) {
-                log.info("[wubei] skip tracker green retry while pathing: state={} nextRetryMs={}",
-                        movementState, 3_000);
-                waitBattleNextTrackerRetryAt = now + 3_000L;
-                return WubeiStepOutcome.sharedState(state, "pathing toward combat target");
-            }
-            if (isNearCurrentTrackerDestination()) {
-                log.info("[wubei] destination hint says leader has arrived; try tooltip fallback: hint={}",
-                        currentTrackerDestinationHint);
-                if (tryClickTrackerCombatTargetSmart(context, "destination-hint-smart-click")) {
-                    waitBattleNextTrackerRetryAt = now + 6_000L;
-                    return WubeiStepOutcome.sharedState(state, "destination smart target clicked");
-                }
-                if (tryDirectCombatFromTrackerHint(context, "destination-hint-direct-combat")) {
-                    waitBattleNextTrackerRetryAt = now + 6_000L;
-                    return WubeiStepOutcome.sharedState(state, "direct combat click confirmed; wait for combat entry");
-                }
-            }
-            if (shouldRetryTrackerGreenInBattleWait()
-                    && currentTrackerSnapshot != null
-                    && !currentTrackerSnapshot.greenScan().segments().isEmpty()) {
-                clickTaskTrackerGreen(context, currentTrackerSnapshot.greenScan().segments().get(0), "combat-retry", 0);
-            } else {
-                log.info("[wubei] skip generic tracker green retry: probeActive={} chained={} hasSnapshot={}",
-                        isProbeRuntimeActive(),
-                        currentRoundChainedCombatExpected,
-                        currentTrackerSnapshot != null);
-            }
-            waitBattleNextTrackerRetryAt = now + 6_000L;
+            waitBattleNextTrackerRetryAt = now + 3_000L;
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.ENTER_BATTLE, "wait-battle-no-combat-yet"),
+                    "combat not observed yet; return to enter battle resolver");
         }
         return WubeiStepOutcome.sharedState(state, "waiting for battle");
     }
@@ -1821,16 +2125,27 @@ public class WubeiTask implements GameTask {
         waitBattleSawCombat = false;
     }
 
-    private boolean isNearCurrentTrackerDestination() {
+    private void resetEnterBattleRuntime() {
+        enterBattleStartedAt = 0L;
+        enterBattleNextRetryAt = 0L;
+    }
+
+    private boolean isNearCurrentTrackerDestination(WindowPathingSnapshot snapshot) {
         if (currentTrackerDestinationHint == null) {
             return false;
         }
-        LocationInfo location = playerStateService.syncMyPosition();
-        if (location == null || location.mapName == null) {
-            log.info("[wubei] destination hint fallback skipped: current location unavailable hint={}",
-                    currentTrackerDestinationHint);
+        if (snapshot == null
+                || snapshot.getCurrentMapName() == null
+                || snapshot.getCurrentX() == null
+                || snapshot.getCurrentY() == null) {
+            log.info("[wubei] destination hint fallback skipped: runner location unavailable hint={} snapshot={}",
+                    currentTrackerDestinationHint, snapshot);
             return false;
         }
+        LocationInfo location = new LocationInfo(
+                snapshot.getCurrentMapName(),
+                snapshot.getCurrentX(),
+                snapshot.getCurrentY());
         return isNearCurrentTrackerDestination(location, currentTrackerDestinationHint);
     }
 
@@ -1924,16 +2239,29 @@ public class WubeiTask implements GameTask {
          * 黄袍怪是否继续只信战后左侧任务追踪：还有“黄袍”就继续，没有才允许回程。
          * 战斗中右上角标记不能证明战后仍需要续打，所以这里不再做战斗内 marker 扫描。
          */
-        TrackerPanelSnapshot postCombatSnapshot = captureTrackerPanelSnapshot(
-                "post-combat-chained-" + combatCount, true);
-        if (!postCombatSnapshot.anchorFound()) {
-            log.warn("[wubei] chained combat tracker unreadable after battle: count={}", combatCount);
-            return WubeiStepOutcome.failed(state, "chained combat tracker unreadable");
+        TaskTrackerPanelReadResult postCombatPanel =
+                taskTrackerPanelService.readWubeiTrackerPanel("post-combat-chained-" + combatCount);
+        if (!postCombatPanel.isFound()) {
+            /*
+             * We only reach this branch after this runtime already remembered that the current
+             * round was a chained 黄袍怪 fight. After combat, the left tracker title disappearing is
+             * a normal completion signal, not a hot-start unknown state. Treat it as chain complete
+             * and return home instead of falling into the generic accept-task recovery route.
+             */
+            log.info("[wubei] chained combat tracker title gone after battle; treat as completed: count={}",
+                    combatCount);
+            currentRoundChainedCombatContinueCount = 0;
+            if (!useReturnItemAndVerifyStartMap(context, "chained-combat-title-gone")) {
+                return WubeiStepOutcome.failed(state, "return home failed");
+            }
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.WAIT_TEAM_RETURN, TEAM_RETURN_ROUND_DONE_SOURCE),
+                    "chained combat tracker title gone; check team return");
         }
 
-        boolean stillChained = containsChainedCombatTarget(postCombatSnapshot.yellowText());
+        boolean stillChained = containsChainedCombatTarget(postCombatPanel.getYellowText());
         log.info("[wubei] chained combat post-battle tracker: count={} stillChained={} yellow='{}'",
-                combatCount, stillChained, postCombatSnapshot.yellowText());
+                combatCount, stillChained, postCombatPanel.getYellowText());
         if (!stillChained) {
             currentRoundChainedCombatContinueCount = 0;
             if (!useReturnItemAndVerifyStartMap(context, "chained-combat-completed")) {
@@ -1944,31 +2272,33 @@ public class WubeiTask implements GameTask {
                     "chained combat completed; check team return");
         }
 
-        currentTrackerSnapshot = postCombatSnapshot;
+        currentTrackerPanel = postCombatPanel;
         currentRoundChainedCombatContinueCount = combatCount;
-        if (!continueChainedCombatFromTracker(context, postCombatSnapshot, combatCount)) {
+        if (!continueChainedCombatFromTracker(context, postCombatPanel, combatCount)) {
             log.warn("[wubei] chained combat tracker still has target but continue click failed: count={} yellow='{}'",
-                    combatCount, postCombatSnapshot.yellowText());
+                    combatCount, postCombatPanel.getYellowText());
             return WubeiStepOutcome.failed(state, "chained combat continue click failed");
         }
-        log.info("[wubei] chained combat target continues: currentCount={} nextState=WAIT_BATTLE_FINISH",
+        log.info("[wubei] chained combat target continues: currentCount={} nextState=ENTER_BATTLE",
                 combatCount);
-        return WubeiStepOutcome.sharedState(
-                state.next(WubeiPhase.WAIT_BATTLE_FINISH, "chained-combat-continued-" + combatCount),
-                "chained combat target clicked; wait for next battle");
+        TaskSleep.sleepOrStop(context, 450L, "Wubei task interrupted");
+        return WubeiStepOutcome.continueTo(
+                state.next(WubeiPhase.ENTER_BATTLE, "chained-combat-continued-" + combatCount),
+                "chained combat target clicked; resolve enter-battle dialog");
     }
 
     private boolean continueChainedCombatFromTracker(
             TaskExecutionContext context,
-            TrackerPanelSnapshot snapshot,
+            TaskTrackerPanelReadResult panel,
             int combatCount) {
-        if (!snapshot.greenScan().segments().isEmpty()) {
-            TrackerGreenLinkSegment segment = snapshot.greenScan().segments().get(0);
+        if (!panel.getGreenLinks().isEmpty()) {
+            TaskTrackerGreenLink segment = panel.getGreenLinks().get(0);
             return clickTaskTrackerGreen(context, segment, "chained-combat-" + combatCount, 1);
         }
         log.warn("[wubei] chained combat tracker has no green segment; try visible tooltip: count={} yellow='{}'",
-                combatCount, snapshot.yellowText());
-        return tryClickTrackerCombatTargetSmart(context, "chained-combat-tracker-fallback-" + combatCount);
+                combatCount, panel.getYellowText());
+        return tryClickTrackerCombatTargetSmart(
+                context, "chained-combat-tracker-fallback-" + combatCount, NpcTargetEvidence.CONFIRMED);
     }
 
     private TaskExecutionContext resolveExecutionContext(TaskExecutionContext executionContext) {
@@ -1983,35 +2313,19 @@ public class WubeiTask implements GameTask {
                 .build();
     }
 
-    private record TrackerPanelSnapshot(boolean anchorFound,
-                                        int[] rect,
-                                        String yellowText,
-                                        TrackerGreenLinkScan greenScan) {
-        private static TrackerPanelSnapshot empty() {
-            return new TrackerPanelSnapshot(false, null, "", TrackerGreenLinkScan.empty());
-        }
-    }
-
-    private record TrackerGreenLinkScan(boolean isProbeObjective,
-                                        List<TrackerGreenLinkSegment> segments,
-                                        int bandWidth) {
-        private static TrackerGreenLinkScan empty() {
-            return new TrackerGreenLinkScan(false, List.of(), 0);
-        }
-    }
-
-    private record TrackerGreenLinkSegment(int minX, int minY, int maxX, int maxY, int pixels) {
-        private int width() {
-            return maxX - minX + 1;
-        }
-    }
-
-    private record TrackerGreenGlyph(int minX, int maxX, int pixels) {
-        private int width() {
-            return maxX - minX + 1;
-        }
-    }
-
     private record TrackerDestinationHint(String mapName, int x, int y, String rawText) {
+    }
+
+    private record TrackerDestinationHintCapture(
+            String label,
+            int sample,
+            OcrWindowRegion region,
+            String rawPath,
+            String yellowPath,
+            long startedAt,
+            long captureElapsedMs,
+            long delayMs,
+            long refreshMs,
+            long captureMs) {
     }
 }

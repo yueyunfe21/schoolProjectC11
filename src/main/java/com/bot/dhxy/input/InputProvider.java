@@ -29,6 +29,9 @@ public interface InputProvider {
     /** Press Ctrl+C once. */
     void pressCtrlC();
 
+    /** Press Ctrl+U once. */
+    void pressCtrlU();
+
     /** Press Ctrl+A once. */
     void pressCtrlA();
 
@@ -52,6 +55,9 @@ public interface InputProvider {
 
     /** Press Alt+A. */
     void pressAltA();
+
+    /** Press Alt+C. */
+    void pressAltC();
 
     /** Press Enter. */
     void pressEnter();

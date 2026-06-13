@@ -11,6 +11,7 @@ import lombok.Value;
  * @param targetX destination logical X coordinate on the target map, nullable for map-only routes.
  * @param targetY destination logical Y coordinate on the target map, nullable for map-only routes.
  * @param tolerance logical coordinate tolerance used when deciding arrival.
+ * @param type semantic pathing type. Untargeted tracker clicks do not have a coordinate arrival.
  * @param createdAtMs wall-clock timestamp when the pathing intent was registered.
  */
 @Value
@@ -23,6 +24,8 @@ public class WindowPathingIntent {
     Integer targetY;
     @Builder.Default
     int tolerance = 5;
+    @Builder.Default
+    WindowPathingIntentType type = WindowPathingIntentType.TARGETED;
     @Builder.Default
     long createdAtMs = System.currentTimeMillis();
 }

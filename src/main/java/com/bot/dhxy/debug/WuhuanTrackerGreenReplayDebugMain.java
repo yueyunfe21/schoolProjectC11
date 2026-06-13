@@ -28,18 +28,26 @@ import java.util.stream.Stream;
 public class WuhuanTrackerGreenReplayDebugMain {
 
     private static final Path ROOT = Path.of("D:/mavenProject/DHXY");
-    private static final Path IMAGE_ROOT = ROOT.resolve("images/temp");
+    private static final Path IMAGE_ROOT = ROOT.resolve("images/test-cases/task-tracker/wuhuan-task-panel-block/raw");
     private static final Path REPORT = ROOT.resolve("logs/wuhuan-tracker-green-replay.csv");
     private static final Path FAILURE_DIR = ROOT.resolve("images/temp/wuhuan_tracker_replay_failures");
+    private static final Path OUTPUT_DIR = ROOT.resolve("images/test-cases/task-tracker/wuhuan-task-panel-block/output");
+    private static final Path REJECTED_DIR = ROOT.resolve("images/test-cases/task-tracker/wuhuan-task-panel-block/rejected-non-wuhuan");
 
     private static final int TRACKER_LINK_MIN_PIXELS = 20;
     private static final int TRACKER_LINK_SPLIT_GAP = 8;
     private static final int TRACKER_LINK_DELIMITER_MAX_WIDTH = 5;
     private static final int TRACKER_LINK_DELIMITER_MAX_PIXELS = 18;
+    private static final int TRACKER_COORD_GLYPH_MAX_WIDTH = 5;
+    private static final int TRACKER_COORD_GLYPH_MIN_RUN = 5;
 
     public static void main(String[] args) throws Exception {
         Files.createDirectories(REPORT.getParent());
         Files.createDirectories(FAILURE_DIR);
+        Files.createDirectories(OUTPUT_DIR);
+        Files.createDirectories(REJECTED_DIR);
+        clearPngFiles(OUTPUT_DIR);
+        clearPngFiles(REJECTED_DIR);
 
         List<Path> samples;
         try (Stream<Path> stream = Files.walk(IMAGE_ROOT)) {
@@ -53,6 +61,7 @@ public class WuhuanTrackerGreenReplayDebugMain {
         int ok = 0;
         int skipped = 0;
         int failed = 0;
+        int rejected = 0;
         int warned = 0;
         try (BufferedWriter writer = Files.newBufferedWriter(REPORT, StandardCharsets.UTF_8)) {
             writer.write("status,warning,file,width,height,band,segments,selected,click,greenNearClick,reason");
@@ -63,9 +72,16 @@ public class WuhuanTrackerGreenReplayDebugMain {
                     ok++;
                 } else if (result.status == ReplayStatus.SKIP) {
                     skipped++;
+                    if ("NOT_WUHUAN_TITLE".equals(result.reason)) {
+                        rejected++;
+                        saveRejectedImage(sample, result);
+                    }
                 } else {
                     failed++;
                     saveFailureImage(sample, result);
+                }
+                if (result.status == ReplayStatus.OK) {
+                    saveOutputImage(sample, result);
                 }
                 if (!result.warning.isBlank()) {
                     warned++;
@@ -75,8 +91,8 @@ public class WuhuanTrackerGreenReplayDebugMain {
             }
         }
 
-        System.out.printf("WUHUAN_TRACKER_REPLAY samples=%d ok=%d skipped=%d failed=%d warned=%d report=%s failures=%s%n",
-                samples.size(), ok, skipped, failed, warned, REPORT, FAILURE_DIR);
+        System.out.printf("WUHUAN_TRACKER_REPLAY samples=%d ok=%d skipped=%d rejected=%d failed=%d warned=%d report=%s failures=%s output=%s rejectedDir=%s%n",
+                samples.size(), ok, skipped, rejected, failed, warned, REPORT, FAILURE_DIR, OUTPUT_DIR, REJECTED_DIR);
         if (failed > 0) {
             throw new IllegalStateException("五环 tracker 绿字回放存在失败样本: " + failed);
         }
@@ -87,6 +103,9 @@ public class WuhuanTrackerGreenReplayDebugMain {
             BufferedImage image = ImageIO.read(sample.toFile());
             if (image == null) {
                 return ReplayResult.fail(sample, 0, 0, "", "", null, null, 0, "IMAGE_READ_NULL");
+            }
+            if (!looksLikeWuhuanTitle(image)) {
+                return ReplayResult.skip(sample, image.getWidth(), image.getHeight(), "", "", "NOT_WUHUAN_TITLE");
             }
             List<ImagePreprocessor.GreenTextBand> bands = ImagePreprocessor.findGreenTextBands(image);
             ImagePreprocessor.GreenTextBand band = ImagePreprocessor.pickGreenTextBand(bands, true);
@@ -104,11 +123,8 @@ public class WuhuanTrackerGreenReplayDebugMain {
             TrackerGreenLinkSegment segment = selected.get();
             Point click = resolveTrackerGreenClickPoint(image, segment);
             int greenNearClick = countGreenNear(image, click, 4);
-            boolean clickLooksValid = greenNearClick > 0
-                    && click.x >= segment.minX + 1
-                    && click.x <= segment.maxX - 1
-                    && click.y >= segment.minY
-                    && click.y <= segment.maxY;
+            boolean clickLooksValid = click.x == segmentCenterX(segment)
+                    && click.y == segmentCenterY(segment);
             String warning = "";
             if (segment.width() > 80) {
                 warning = "WIDE_SELECTED_SEGMENT";
@@ -125,7 +141,52 @@ public class WuhuanTrackerGreenReplayDebugMain {
         }
     }
 
+    private static boolean looksLikeWuhuanTitle(BufferedImage image) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int pixels = 0;
+        for (int y = 0; y < Math.min(25, image.getHeight()); y++) {
+            for (int x = 0; x < Math.min(90, image.getWidth()); x++) {
+                int rgb = image.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                if (ImagePreprocessor.isYellowTextPixel(r, g, b)) {
+                    pixels++;
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+        if (pixels < 20 || minX == Integer.MAX_VALUE) {
+            return false;
+        }
+        int width = maxX - minX + 1;
+        int height = maxY - minY + 1;
+        /*
+         * Five-ring block titles are the short two-character yellow label "五环".
+         * Longer titles such as "浮生半日闲" are deliberately rejected from this replay set.
+         */
+        return width >= 18 && width <= 40 && height >= 4 && height <= 18;
+    }
+
     private static Optional<TrackerGreenLinkSegment> findTrackerPathingNameSegment(List<TrackerGreenLinkSegment> segments) {
+        if (segments.size() == 1) {
+            TrackerGreenLinkSegment only = segments.get(0);
+            return looksLikePathingLinkSegment(only) ? Optional.of(only) : Optional.empty();
+        }
+        if (segments.size() == 2) {
+            TrackerGreenLinkSegment last = segments.get(1);
+            if (looksLikePathingLinkSegment(last)) {
+                return Optional.of(last);
+            }
+            TrackerGreenLinkSegment first = segments.get(0);
+            return looksLikePathingLinkSegment(first) ? Optional.of(first) : Optional.empty();
+        }
         if (segments.size() < 3) {
             return Optional.empty();
         }
@@ -151,6 +212,16 @@ public class WuhuanTrackerGreenReplayDebugMain {
 
     private static List<TrackerGreenLinkSegment> splitTrackerGreenLinkSegments(BufferedImage frame,
                                                                                ImagePreprocessor.GreenTextBand band) {
+        List<TrackerGreenLinkSegment> targets = new ArrayList<>();
+        for (ImagePreprocessor.GreenTextBand line : splitTrackerGreenLines(frame, band)) {
+            List<TrackerGreenGlyph> lineGlyphs = collectTrackerGreenGlyphs(frame, line);
+            Optional<TrackerGreenLinkSegment> target = resolveTrackerTargetNameSegment(lineGlyphs, line);
+            target.ifPresent(targets::add);
+        }
+        if (!targets.isEmpty()) {
+            return targets;
+        }
+
         List<TrackerGreenGlyph> glyphs = collectTrackerGreenGlyphs(frame, band);
         List<TrackerGreenLinkSegment> segments = new ArrayList<>();
         int startX = -1;
@@ -186,6 +257,138 @@ public class WuhuanTrackerGreenReplayDebugMain {
         }
         addTrackerSegment(segments, startX, endX, band, pixels);
         return segments;
+    }
+
+    private static List<ImagePreprocessor.GreenTextBand> splitTrackerGreenLines(BufferedImage frame,
+                                                                                ImagePreprocessor.GreenTextBand band) {
+        List<ImagePreprocessor.GreenTextBand> lines = new ArrayList<>();
+        int startY = -1;
+        int endY = -1;
+        for (int y = band.minY(); y <= band.maxY(); y++) {
+            int minX = Integer.MAX_VALUE;
+            int maxX = -1;
+            int pixels = 0;
+            for (int x = band.minX(); x <= band.maxX(); x++) {
+                if (ImagePreprocessor.isOptionGreen(frame.getRGB(x, y))) {
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    pixels++;
+                }
+            }
+            if (pixels >= 4) {
+                if (startY < 0) {
+                    startY = y;
+                }
+                endY = y;
+            } else if (startY >= 0) {
+                lines.add(cropGreenBandToRows(frame, band, startY, endY));
+                startY = -1;
+                endY = -1;
+            }
+        }
+        if (startY >= 0) {
+            lines.add(cropGreenBandToRows(frame, band, startY, endY));
+        }
+        return lines;
+    }
+
+    private static ImagePreprocessor.GreenTextBand cropGreenBandToRows(BufferedImage frame,
+                                                                       ImagePreprocessor.GreenTextBand band,
+                                                                       int minY,
+                                                                       int maxY) {
+        int minX = Integer.MAX_VALUE;
+        int maxX = -1;
+        int pixels = 0;
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = band.minX(); x <= band.maxX(); x++) {
+                if (ImagePreprocessor.isOptionGreen(frame.getRGB(x, y))) {
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    pixels++;
+                }
+            }
+        }
+        return new ImagePreprocessor.GreenTextBand(minX, minY, maxX, maxY, pixels);
+    }
+
+    private static Optional<TrackerGreenLinkSegment> resolveTrackerTargetNameSegment(List<TrackerGreenGlyph> glyphs,
+                                                                                    ImagePreprocessor.GreenTextBand line) {
+        if (glyphs.isEmpty()) {
+            return Optional.empty();
+        }
+        int endIndex = findProgressTailStart(glyphs).orElse(glyphs.size()) - 1;
+        if (endIndex < 0) {
+            return Optional.empty();
+        }
+        Optional<Integer> afterCoordinate = findGlyphAfterCoordinateRun(glyphs, endIndex);
+        if (afterCoordinate.isPresent()) {
+            return buildSegmentFromGlyphRange(glyphs, afterCoordinate.get(), endIndex, line);
+        }
+        Optional<Integer> progressStart = findProgressTailStart(glyphs);
+        if (progressStart.isPresent()) {
+            return buildSegmentFromGlyphRange(glyphs, 0, progressStart.get() - 1, line);
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Integer> findProgressTailStart(List<TrackerGreenGlyph> glyphs) {
+        if (glyphs.size() < 2) {
+            return Optional.empty();
+        }
+        TrackerGreenGlyph last = glyphs.get(glyphs.size() - 1);
+        TrackerGreenGlyph beforeLast = glyphs.get(glyphs.size() - 2);
+        int minX = beforeLast.minX;
+        int maxX = last.maxX;
+        int pixels = beforeLast.pixels + last.pixels;
+        if (maxX - minX + 1 <= 24 && pixels <= 80 && beforeLast.width() <= TRACKER_COORD_GLYPH_MAX_WIDTH) {
+            return Optional.of(glyphs.size() - 2);
+        }
+        if (last.width() <= 18 && last.pixels <= 70) {
+            return Optional.of(glyphs.size() - 1);
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Integer> findGlyphAfterCoordinateRun(List<TrackerGreenGlyph> glyphs, int endIndex) {
+        int bestAfter = -1;
+        int runStart = -1;
+        for (int i = 0; i <= endIndex; i++) {
+            boolean narrow = glyphs.get(i).width() <= TRACKER_COORD_GLYPH_MAX_WIDTH;
+            if (narrow) {
+                if (runStart < 0) {
+                    runStart = i;
+                }
+                continue;
+            }
+            if (runStart >= 0 && i - runStart >= TRACKER_COORD_GLYPH_MIN_RUN && i <= endIndex) {
+                bestAfter = i;
+            }
+            runStart = -1;
+        }
+        if (runStart >= 0 && endIndex + 1 - runStart >= TRACKER_COORD_GLYPH_MIN_RUN
+                && endIndex + 1 < glyphs.size()) {
+            bestAfter = endIndex + 1;
+        }
+        return bestAfter >= 0 ? Optional.of(bestAfter) : Optional.empty();
+    }
+
+    private static Optional<TrackerGreenLinkSegment> buildSegmentFromGlyphRange(List<TrackerGreenGlyph> glyphs,
+                                                                                int startIndex,
+                                                                                int endIndex,
+                                                                                ImagePreprocessor.GreenTextBand line) {
+        if (startIndex < 0 || endIndex < startIndex || endIndex >= glyphs.size()) {
+            return Optional.empty();
+        }
+        int minX = glyphs.get(startIndex).minX;
+        int maxX = glyphs.get(endIndex).maxX;
+        int pixels = 0;
+        for (int i = startIndex; i <= endIndex; i++) {
+            pixels += glyphs.get(i).pixels;
+        }
+        if (pixels < TRACKER_LINK_MIN_PIXELS) {
+            return Optional.empty();
+        }
+        return Optional.of(new TrackerGreenLinkSegment(minX, line.minY(), maxX, line.maxY(), pixels));
     }
 
     private static List<TrackerGreenGlyph> collectTrackerGreenGlyphs(BufferedImage frame,
@@ -247,57 +450,15 @@ public class WuhuanTrackerGreenReplayDebugMain {
     }
 
     private static Point resolveTrackerGreenClickPoint(BufferedImage image, TrackerGreenLinkSegment segment) {
-        int[] primaryRun = resolvePrimaryTrackerGreenRun(image, segment.minX, segment.maxX, segment.minY, segment.maxY);
-        int totalPixels = 0;
-        long weightedX = 0L;
-        for (int y = segment.minY; y <= segment.maxY; y++) {
-            for (int x = primaryRun[0]; x <= primaryRun[1]; x++) {
-                if (ImagePreprocessor.isOptionGreen(image.getRGB(x, y))) {
-                    totalPixels++;
-                    weightedX += x;
-                }
-            }
-        }
-        int x = totalPixels > 0 ? (int) Math.round(weightedX / (double) totalPixels)
-                : (primaryRun[0] + primaryRun[1]) / 2;
-        int y = (segment.minY + segment.maxY) / 2;
-        return new Point(x, y);
+        return new Point(segmentCenterX(segment), segmentCenterY(segment));
     }
 
-    private static int[] resolvePrimaryTrackerGreenRun(BufferedImage image, int localX1, int localX2, int localY1, int localY2) {
-        int runStart = -1;
-        int runEnd = -1;
-        int bestStart = localX1;
-        int bestEnd = localX2;
-        int bestPixels = -1;
-        int pixels = 0;
-        for (int x = localX1; x <= localX2; x++) {
-            int columnPixels = 0;
-            for (int y = localY1; y <= localY2; y++) {
-                if (ImagePreprocessor.isOptionGreen(image.getRGB(x, y))) {
-                    columnPixels++;
-                }
-            }
-            if (columnPixels > 0) {
-                if (runStart < 0) {
-                    runStart = x;
-                }
-                runEnd = x;
-                pixels += columnPixels;
-            } else if (runStart >= 0) {
-                if (pixels > bestPixels) {
-                    bestStart = runStart;
-                    bestEnd = runEnd;
-                    bestPixels = pixels;
-                }
-                break;
-            }
-        }
-        if (runStart >= 0 && bestPixels < 0) {
-            bestStart = runStart;
-            bestEnd = runEnd;
-        }
-        return new int[]{bestStart, bestEnd};
+    private static int segmentCenterX(TrackerGreenLinkSegment segment) {
+        return (segment.minX + segment.maxX) / 2;
+    }
+
+    private static int segmentCenterY(TrackerGreenLinkSegment segment) {
+        return (segment.minY + segment.maxY) / 2;
     }
 
     private static int countGreenNear(BufferedImage image, Point click, int radius) {
@@ -313,13 +474,25 @@ public class WuhuanTrackerGreenReplayDebugMain {
     }
 
     private static void saveFailureImage(Path sample, ReplayResult result) {
+        saveAnnotatedImage(sample, result, FAILURE_DIR, "_failure.png");
+    }
+
+    private static void saveOutputImage(Path sample, ReplayResult result) {
+        saveAnnotatedImage(sample, result, OUTPUT_DIR, "_output.png");
+    }
+
+    private static void saveRejectedImage(Path sample, ReplayResult result) {
+        saveAnnotatedImage(sample, result, REJECTED_DIR, "_rejected.png");
+    }
+
+    private static void saveAnnotatedImage(Path sample, ReplayResult result, Path outputDir, String suffix) {
         try {
             BufferedImage image = ImageIO.read(sample.toFile());
             if (image == null) {
                 return;
             }
             Graphics2D g = image.createGraphics();
-            g.setStroke(new BasicStroke(2));
+            g.setStroke(new BasicStroke(1));
             if (result.selected != null) {
                 g.setColor(Color.ORANGE);
                 g.drawRect(result.selected.minX, result.selected.minY,
@@ -327,13 +500,25 @@ public class WuhuanTrackerGreenReplayDebugMain {
             }
             if (result.clickPoint != null) {
                 g.setColor(Color.RED);
-                g.drawLine(result.clickPoint.x - 5, result.clickPoint.y, result.clickPoint.x + 5, result.clickPoint.y);
-                g.drawLine(result.clickPoint.x, result.clickPoint.y - 5, result.clickPoint.x, result.clickPoint.y + 5);
+                g.fillOval(result.clickPoint.x - 2, result.clickPoint.y - 2, 5, 5);
             }
             g.dispose();
-            String safeName = sample.getFileName().toString().replace(".png", "_failure.png");
-            ImageIO.write(image, "png", FAILURE_DIR.resolve(safeName).toFile());
+            String safeName = sample.getFileName().toString().replace(".png", suffix);
+            ImageIO.write(image, "png", outputDir.resolve(safeName).toFile());
         } catch (IOException ignored) {
+        }
+    }
+
+    private static void clearPngFiles(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return;
+        }
+        try (Stream<Path> stream = Files.list(directory)) {
+            for (Path path : stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".png"))
+                    .toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 

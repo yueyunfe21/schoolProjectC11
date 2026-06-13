@@ -7,6 +7,7 @@ import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.maintenance.SummonSkillCleanupRequest;
 import com.bot.dhxy.model.maintenance.SummonSkillCleanupResult;
 import com.bot.dhxy.model.maintenance.SummonSkillSlotStatus;
+import com.bot.dhxy.model.maintenance.TeamMaintenanceWindowState;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
@@ -47,6 +48,7 @@ public class TaskMaintenanceService {
     private final Map<String, Long> lastSummonSkillNotDueLogAtByWindow = new ConcurrentHashMap<>();
     private final Map<String, SummonSkillWindowState> summonSkillStateByWindow = new ConcurrentHashMap<>();
     private final Map<String, Integer> activeTeamRoundByKey = new ConcurrentHashMap<>();
+    private final Map<String, TeamMaintenanceWindowState> teamMaintenanceWindowStateByRound = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> summonSkillClaimsByTeamRound = new ConcurrentHashMap<>();
 
     /**
@@ -83,8 +85,52 @@ public class TaskMaintenanceService {
         String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
         activeTeamRoundByKey.put(teamKey, round);
         pruneOlderTeamRoundClaims(teamKey, round);
+        teamMaintenanceWindowStateByRound.put(teamRoundKey(teamKey, round), TeamMaintenanceWindowState.CLOSED);
         log.info("{} maintenance team round active: teamKey={} round={} source={}",
                 logPrefix(context), teamKey, round, sourceTask);
+    }
+
+    /**
+     * Open the short shared maintenance window after the leader has submitted real pathing.
+     *
+     * @param context current leader task context.
+     * @param teamMaintenanceKey stable task/team key.
+     * @param round one-based task round.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void openTeamPathingMaintenanceWindow(TaskExecutionContext context,
+                                                String teamMaintenanceKey,
+                                                int round,
+                                                String sourceTask) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        activeTeamRoundByKey.put(teamKey, round);
+        String roundKey = teamRoundKey(teamKey, round);
+        TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
+                roundKey, TeamMaintenanceWindowState.PATHING_WINDOW_OPEN);
+        log.info("{} maintenance team pathing window opened: teamRound={} previous={} source={}",
+                logPrefix(context), roundKey, previous, sourceTask);
+    }
+
+    /**
+     * Close the shared maintenance window once the leader reaches the target area or leaves pathing.
+     *
+     * @param context current leader task context.
+     * @param teamMaintenanceKey stable task/team key.
+     * @param round one-based task round.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void closeTeamMaintenanceWindow(TaskExecutionContext context,
+                                           String teamMaintenanceKey,
+                                           int round,
+                                           String sourceTask) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        String roundKey = teamRoundKey(teamKey, round);
+        TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
+                roundKey, TeamMaintenanceWindowState.CLOSED);
+        if (previous == TeamMaintenanceWindowState.PATHING_WINDOW_OPEN) {
+            log.info("{} maintenance team pathing window closed: teamRound={} source={}",
+                    logPrefix(context), roundKey, sourceTask);
+        }
     }
 
     /**
@@ -180,6 +226,14 @@ public class TaskMaintenanceService {
                         normalizeTeamKey(request.getTeamMaintenanceKey(), context));
                 return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
                         "summon skill deferred: no active team round");
+            }
+            if (request.isRequireOpenTeamMaintenanceWindow()
+                    && teamMaintenanceWindowStateByRound.get(teamRoundKey) != TeamMaintenanceWindowState.PATHING_WINDOW_OPEN) {
+                log.info("{} maintenance: summon skill deferred, team pathing window closed teamRound={} state={} source={} windowKey={}",
+                        logPrefix(context), teamRoundKey, teamMaintenanceWindowStateByRound.get(teamRoundKey),
+                        request.getSourceTask(), windowKey);
+                return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
+                        "summon skill deferred: team pathing window closed");
             }
             Set<String> claims = summonSkillClaimsByTeamRound.computeIfAbsent(
                     teamRoundKey, ignored -> ConcurrentHashMap.newKeySet());
@@ -376,7 +430,7 @@ public class TaskMaintenanceService {
         if (round == null || round <= 0) {
             return null;
         }
-        return teamKey + "#" + round;
+        return teamRoundKey(teamKey, round);
     }
 
     private String normalizeTeamKey(String explicitKey, TaskExecutionContext context) {
@@ -404,6 +458,20 @@ public class TaskMaintenanceService {
                 return false;
             }
         });
+        teamMaintenanceWindowStateByRound.keySet().removeIf(key -> {
+            if (!key.startsWith(prefix)) {
+                return false;
+            }
+            try {
+                return Integer.parseInt(key.substring(prefix.length())) < activeRound;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        });
+    }
+
+    private String teamRoundKey(String teamKey, int round) {
+        return teamKey + "#" + round;
     }
 
     private static class SummonSkillWindowState {

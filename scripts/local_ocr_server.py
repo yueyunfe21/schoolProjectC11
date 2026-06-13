@@ -18,13 +18,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 
+def configure_ocr_runtime_threads():
+    # RapidOCR/ONNX may otherwise spin up several native worker threads per request. DHXY can send
+    # bursts from multiple game windows, so keep the sidecar predictable and let requests queue.
+    defaults = {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+        "OMP_WAIT_POLICY": "PASSIVE",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+
+
+configure_ocr_runtime_threads()
+
 OCR_ENGINE = None
+OCR_LOCK = threading.Lock()
 
 
 def load_engine():
@@ -46,7 +65,8 @@ def run_ocr(image_path: str) -> dict[str, Any]:
         raise FileNotFoundError(f"imagePath not found: {image_path}")
 
     started = time.perf_counter()
-    raw = load_engine()(str(path))
+    with OCR_LOCK:
+        raw = load_engine()(str(path))
     words = normalize_result(raw)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     return {

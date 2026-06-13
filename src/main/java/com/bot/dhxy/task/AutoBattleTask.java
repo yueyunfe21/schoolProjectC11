@@ -180,12 +180,15 @@ public class AutoBattleTask extends BaseTaskTemplate {
                         .sourceTask("auto-battle")
                         .handleMaintenanceBroadcast(true)
                         /*
-                         * A member reassigned from a leader task is only a follower-support window;
-                         * the leader task owns summon-skill timing and team-round limits. A window
-                         * that the user explicitly started as auto-battle should still run its own
-                         * summon-skill maintenance.
+                         * Follower-support windows should share the leader task's summon-skill
+                         * maintenance slot. Gate them by the requested team task so one round still
+                         * cleans at most one window, instead of letting only the leader ever run it.
                          */
-                        .cleanSummonSkill(!followerSupportMode)
+                        .cleanSummonSkill(true)
+                        .oneSummonSkillPerTeamRound(followerSupportMode)
+                        .teamMaintenanceKey(followerSupportMode ? context.getRequestedTaskCode() : null)
+                        .requireOpenTeamMaintenanceWindow(followerSupportMode
+                                && "xiuluo_v2".equalsIgnoreCase(context.getRequestedTaskCode()))
                         .build());
         if (result.isHandled()) {
             log.info("{} auto-battle idle maintenance handled: status={} message={}",

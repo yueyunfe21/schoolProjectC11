@@ -13,6 +13,7 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
+import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -45,11 +46,21 @@ public class GameStateUtil {
     private static final long DEFAULT_PATHING_PROTECTION_MS = 5500;
     private static final int FAST_PASS_HITS = 2; // 🌟 极速放行：只要累计看到 2 次画面变动，立刻判定为跑动
     private static final int COORD_QUIET_PIXEL_FALLBACK_HITS = 4;
+    private static final int COORD_QUIET_STOPPED_MIN_SAMPLES = 3;
     private static final double MOVE_DIFF_RATIO = 0.05; // 默认两帧匹配阈值// 默认两帧匹配阈值
 
     private static final double DEFAULT_MAP_LABEL_SAME_TOLERANCE = 0.08;
     private static final long DEFAULT_MAP_CONFIRM_POLL_MS = 1200L;
     private static final long MIN_MAP_CONFIRM_POLL_MS = 100L;
+    private static final String FLYING_STATUS_TEMPLATE = "images/template/status/flying.png";
+    private static final String UNFLYING_STATUS_TEMPLATE = "images/template/status/unflying.png";
+    private static final int FLYING_STATUS_REL_X = 692;
+    private static final int FLYING_STATUS_REL_Y = 521;
+    private static final int FLYING_STATUS_WIDTH = 59;
+    private static final int FLYING_STATUS_HEIGHT = 28;
+    private static final double FLYING_STATUS_MATCH_RATE = 0.84;
+    private static final long FLYING_STATUS_PANEL_SETTLE_MS = 350L;
+    private static final long FLYING_STATUS_PANEL_CLOSE_SETTLE_MS = 180L;
     private final GameContext context;
     private final GameClientTracker tracker;
     private final PlayerStateService playerStateService;
@@ -58,17 +69,9 @@ public class GameStateUtil {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final MapNameCanonicalizer mapNameCanonicalizer;
+    private final InputSequences inputSequences;
     private final Map<String, MovementIntentState> movementIntentStates = new ConcurrentHashMap<>();
 
-    /**
-     * 判断是否在移动（通过边缘像素差异防抖识别）
-     */
-    public boolean isMovingByPixelDiff() {
-        MovementState state = detectMovementState();
-        return state == MovementState.MOVING
-                || state == MovementState.PATHING_ACTIVE
-                || state == MovementState.MAYBE_MOVING;
-    }
 
     /**
      * Confirm whether a just-submitted tracker/pathing click appears to have started movement using
@@ -82,7 +85,7 @@ public class GameStateUtil {
      * @param reason log label describing the caller.
      * @return true when both edge probes changed for enough samples inside the short confirmation window.
      */
-    public boolean confirmPathingStartedByEdgePixelDiff(String reason) {
+    public boolean isMovingByPixelDiff(String reason) {
         int[] leftProbe = coordinateHelper.getScaledRect(20, 400, 30, 30);
         int[] rightProbe = coordinateHelper.getScaledRect(999, 176, 30, 30);
         int stripX1 = Math.min(leftProbe[0], rightProbe[0]);
@@ -200,6 +203,58 @@ public class GameStateUtil {
         log.info("[direct-combat-mode] probe reason={} coordinateReadable={} barsVisible={} modeLikely={}",
                 reason == null ? "-" : reason, coordinateReadable, barsVisible, likely);
         return likely;
+    }
+
+    /**
+     * Open the character/status panel and detect whether the current bound window is mounted/flying.
+     *
+     * <p>The search rectangle is the status icon area supplied from the current 1024x768 client
+     * layout: absolute {@code (1459,690)-(1518,718)} at base {@code (767,169)}, therefore
+     * window-relative {@code (692,521)-(751,549)}. The method owns the panel lifecycle: it sends
+     * {@code Alt+U}, matches {@code images/template/status/flying.png} first, then
+     * {@code images/template/status/unflying.png}, and always toggles {@code Alt+U} in {@code finally}
+     * so callers do not leave the status panel open. It performs no mouse click.</p>
+     *
+     * @param reason log label describing the caller, for example {@code wuhuan-v2:shoe-shop-entry}.
+     * @return {@link FlyingState#FLYING} when the flying template matches,
+     *         {@link FlyingState#NOT_FLYING} when only the non-flying template matches, or
+     *         {@link FlyingState#UNKNOWN} when neither template matches or the panel could not open.
+     */
+    public FlyingState detectFlyingState(String reason) {
+        String safeReason = safeReason(reason);
+        boolean opened = inputSequences.pressAltU("flying-status:open:" + safeReason);
+        if (!opened) {
+            log.warn("[flying-status] open status panel failed: reason={}", safeReason);
+            return FlyingState.UNKNOWN;
+        }
+
+        try {
+            TaskSleep.sleep(FLYING_STATUS_PANEL_SETTLE_MS);
+            int[] rect = coordinateHelper.getScaledRect(
+                    FLYING_STATUS_REL_X,
+                    FLYING_STATUS_REL_Y,
+                    FLYING_STATUS_WIDTH,
+                    FLYING_STATUS_HEIGHT);
+            boolean flyingMatched = coordinateHelper.findImageInRegion(
+                    FLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
+            if (flyingMatched) {
+                log.info("[flying-status] matched flying: reason={} rect=({}, {})-({}, {}) template={}",
+                        safeReason, rect[0], rect[1], rect[2], rect[3], FLYING_STATUS_TEMPLATE);
+                return FlyingState.FLYING;
+            }
+
+            boolean unflyingMatched = coordinateHelper.findImageInRegion(
+                    UNFLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
+            FlyingState state = unflyingMatched ? FlyingState.NOT_FLYING : FlyingState.UNKNOWN;
+            log.info("[flying-status] detected: reason={} state={} rect=({}, {})-({}, {}) flyingTemplate={} unflyingTemplate={} unflyingMatched={}",
+                    safeReason, state, rect[0], rect[1], rect[2], rect[3],
+                    FLYING_STATUS_TEMPLATE, UNFLYING_STATUS_TEMPLATE, unflyingMatched);
+            return state;
+        } finally {
+            boolean closed = inputSequences.pressAltU("flying-status:close:" + safeReason);
+            log.info("[flying-status] close status panel: reason={} submitted={}", safeReason, closed);
+            TaskSleep.sleep(FLYING_STATUS_PANEL_CLOSE_SETTLE_MS);
+        }
     }
 
     public BufferedImage captureCurrentMapLabelSnapshot(String reason) {
@@ -468,12 +523,13 @@ public class GameStateUtil {
                         coordinateResult.validSamples(), coordinateResult.unknownSamples());
                 return MovementState.MAYBE_MOVING;
             }
-            MovementState quietState = coordinateResult.validSamples() >= 2
+            MovementState quietState = coordinateResult.validSamples() >= COORD_QUIET_STOPPED_MIN_SAMPLES
                     ? MovementState.STOPPED_STABLE
                     : MovementState.UNKNOWN;
-            log.info("🛑 [移动侦测] 坐标弱稳定压住像素弱变化：coord={} validSamples={} unknownSamples={} state={}",
+            log.info("🛑 [移动侦测] 坐标弱稳定压住像素弱变化：coord={} validSamples={} unknownSamples={} minStableSamples={} state={}",
                     formatCoordinate(coordinateResult.lastCoordinate()),
-                    coordinateResult.validSamples(), coordinateResult.unknownSamples(), quietState);
+                    coordinateResult.validSamples(), coordinateResult.unknownSamples(),
+                    COORD_QUIET_STOPPED_MIN_SAMPLES, quietState);
             return quietState;
         }
 
@@ -724,6 +780,12 @@ public class GameStateUtil {
         PATHING_ACTIVE,
         MAYBE_MOVING,
         STOPPED_STABLE,
+        UNKNOWN
+    }
+
+    public enum FlyingState {
+        FLYING,
+        NOT_FLYING,
         UNKNOWN
     }
 
