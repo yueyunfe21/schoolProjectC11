@@ -115,12 +115,6 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
-    public void pressCtrlC() {
-        traceInput("pressCtrlC", "shortcut=CTRL+C");
-        inputCoordinator.runInput("pressCtrlC", this::doPressCtrlC);
-    }
-
-    @Override
     public void pressCtrlU() {
         traceInput("pressCtrlU", "shortcut=CTRL+U");
         inputCoordinator.runInput("pressCtrlU", () -> pressCtrlScan(SCAN_U, "CTRL+U"));
@@ -365,10 +359,6 @@ public class WinApiMouseController implements InputProvider {
         } catch (Exception e) {
             log.warn("[Input] Enter send failed: {}", e.getMessage());
         }
-    }
-
-    private void doPressCtrlC() {
-        pressCtrlScan(SCAN_C, "CTRL+C");
     }
 
     private void pressCtrlScan(int scanCode, String label) {

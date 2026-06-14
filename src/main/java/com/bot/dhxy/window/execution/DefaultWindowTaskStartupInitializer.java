@@ -81,7 +81,7 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
              */
             log.info("{} window [{}] startup init: five-ring ensure Alt+6 visibility only taskCode={}",
                     prefix, windowId, taskCode);
-            boolean visibilityReady = startupWindowPreparationService.ensureAlt6VisibilityOnly();
+            boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
             if (!visibilityReady) {
                 log.warn("{} window [{}] startup init warning: five-ring Alt+6 visibility was not confirmed",
                         prefix, windowId);
@@ -101,7 +101,7 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
              */
             log.info("{} window [{}] startup init: wubei ensure Alt+6 visibility before leader prep taskCode={}",
                     prefix, windowId, taskCode);
-            boolean visibilityReady = startupWindowPreparationService.ensureAlt6VisibilityOnly();
+            boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
             if (!visibilityReady) {
                 log.warn("{} window [{}] startup init warning: wubei Alt+6 visibility was not confirmed",
                         prefix, windowId);

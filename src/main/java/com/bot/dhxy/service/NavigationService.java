@@ -254,6 +254,7 @@ public class NavigationService {
         String source = request.getSource();
         long latencyStart = LatencyMetrics.start();
         NavigationResult result = NavigationResult.mapNotReached("not started");
+        boolean pathingIntentAlreadyActive = false;
         try {
             PlayerCharacter me = context.getMe();
             log.info("navigate to map: {} current={}", targetMapName, me.getCurrentMapName());
@@ -314,7 +315,8 @@ public class NavigationService {
                      */
                     DialogType visibleType = dialogService.detectDialogTypeNoFocus(
                             "navigateToMap:pathing-active-dialog-rescue:" + targetMapName,
-                            false);
+                            false,
+                            0);
                     if (visibleType == DialogType.OPTION) {
                         boolean requestUpdated = false;
                         if (!activePreparation) {
@@ -349,6 +351,7 @@ public class NavigationService {
                 }
                 log.info("navigate to map stale-cache guard: target={} current={} pathingActive=true",
                         targetMapName, me.getCurrentMapName());
+                pathingIntentAlreadyActive = true;
                 result = NavigationResult.pathingStarted("recent window pathing still active; observer will confirm map");
                 return result;
             } else {
@@ -478,7 +481,12 @@ public class NavigationService {
             }
         } finally {
             if (result.getStatus() == NavigationResultStatus.PATHING_STARTED) {
-                registerWindowPathingIntent(request, "navigateToMap", result.getMessage(), false);
+                if (pathingIntentAlreadyActive) {
+                    log.info("skip duplicate pathing intent registration: source={} target={} reason=watcher-already-active",
+                            source, targetMapName);
+                } else {
+                    registerWindowPathingIntent(request, "navigateToMap", result.getMessage(), false);
+                }
             }
             LatencyMetrics.info(log, "navigation.toMap", latencyStart,
                     "result=" + result.getStatus() + " source=" + source + " target=" + targetMapName);
@@ -609,6 +617,44 @@ public class NavigationService {
                             clickPoint.reason());
                     pathingIntentRegistered = registerWindowPathingIntent(
                             request, "navigateInCurrentMap", "current-map mini-map click started pathing", true);
+                    if (request.isKeepTurnOnCurrentMapPathing()) {
+                        /*
+                         * Short leader-only corrections should not yield. They are followed
+                         * immediately by NPC/dialog work, so letting another window take the turn
+                         * creates the exact post-return/heal-pet interleave we are avoiding.
+                         */
+                        log.info("navigate in current map keeps turn after short pathing: source={} target=({}, {}) tolerance={}",
+                                request.getSource(), targetX, targetY, arrivalTolerance);
+                        long keepTurnDeadline = System.currentTimeMillis() + Math.min(
+                                10000L, Math.max(1000L, timeoutMs - (System.currentTimeMillis() - startTime)));
+                        while (System.currentTimeMillis() < keepTurnDeadline) {
+                            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+                            if (isCurrentCachedCoordinateNear(targetX, targetY, arrivalTolerance,
+                                    "navigateInCurrentMap:keepTurn")) {
+                                result = NavigationResult.arrived("target coordinate reached after short pathing");
+                                return result;
+                            }
+                            WindowPathingSnapshot snapshot = windowTaskContextHolder.rawCurrent()
+                                    .map(WindowRuntimeContext::getPathingSnapshot)
+                                    .orElse(null);
+                            if (snapshot != null
+                                    && snapshot.getIntent() != null
+                                    && snapshot.getState() == WindowPathingState.STOPPED_AWAY) {
+                                log.info("navigate in current map keep-turn pathing stopped away; retry foreground click: source={} current={}({}, {}) target=({}, {})",
+                                        request.getSource(), snapshot.getCurrentMapName(),
+                                        snapshot.getCurrentX(), snapshot.getCurrentY(), targetX, targetY);
+                                break;
+                            }
+                            if (!TaskSleep.sleep(250)) {
+                                result = NavigationResult.stopped("interrupted while waiting for short current-map pathing");
+                                return result;
+                            }
+                        }
+                        failedMiniMapClicks++;
+                        log.info("navigate in current map keep-turn pathing did not arrive before retry: source={} target=({}, {}) failedClicks={}",
+                                request.getSource(), targetX, targetY, failedMiniMapClicks);
+                        continue;
+                    }
                     result = NavigationResult.pathingStarted("current-map mini-map click started pathing");
                     return result;
                 }
@@ -678,27 +724,30 @@ public class NavigationService {
                 .targetMapName(MAP_CHANG_AN)
                 .source(request.getSource() + ":viaChangAn")
                 .build());
-        if (changAnResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+        if (changAnResult.getStatus() == NavigationResultStatus.PATHING_STARTED
+                || changAnResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
             return changAnResult;
         }
         if (!changAnResult.success()) {
             log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
-            return NavigationResult.mapNotReached("Ling Shou Village route failed before Zhang Wen");
+            return changAnResult;
         }
         TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
         NavigationResult zhangWenApproachResult = navigateInCurrentMap(request.toBuilder()
                 .targetX(ZHANG_WEN_APPROACH_X)
                 .targetY(ZHANG_WEN_APPROACH_Y)
+                .keepTurnOnCurrentMapPathing(true)
                 .source(request.getSource() + ":zhangWenApproach")
                 .build());
-        if (zhangWenApproachResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+        if (zhangWenApproachResult.getStatus() == NavigationResultStatus.PATHING_STARTED
+                || zhangWenApproachResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
             return zhangWenApproachResult;
         }
         if (!zhangWenApproachResult.success()) {
             log.warn("Ling Shou Village route failed: unable to approach Zhang Wen target=({}, {})",
                     ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y);
-            return NavigationResult.pointNotReached("Ling Shou Village route failed near Zhang Wen");
+            return zhangWenApproachResult;
         }
         TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
@@ -711,6 +760,13 @@ public class NavigationService {
         RouteDialogClickResult routeDialog = clickRouteDialogOption(
                 "navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false, true);
         DialogResultStatus dialogResult = routeDialog.result();
+        if (dialogResult == DialogResultStatus.DIALOG_PREPARING) {
+            return NavigationResult.dialogPreparing("Ling Shou Village route dialog preparing");
+        }
+        if (dialogResult == DialogResultStatus.NO_DIALOG
+                && gameStateUtil.isSameMapName(routeDialog.fromMap(), MAP_LING_SHOU_VILLAGE)) {
+            return NavigationResult.arrived("Ling Shou Village already current after route dialog check");
+        }
         if (dialogResult != DialogResultStatus.OPTION_KEYWORD_CLICKED) {
             log.warn("Ling Shou Village route transfer option not handled: result={}", dialogResult);
             return NavigationResult.mapNotReached("Ling Shou Village transfer option not handled");

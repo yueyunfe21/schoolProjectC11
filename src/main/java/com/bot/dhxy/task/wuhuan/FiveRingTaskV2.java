@@ -597,10 +597,41 @@ public class FiveRingTaskV2 implements GameTask {
                             .withNewWatcherPathingStarted("shoe-shop-entry-clicked", SHOE_SHOP_ENTRY_NAV_SOURCE),
                     "shoe-shop entry pathing started");
         }
-        if (result.success()) {
-            return FiveRingStepOutcome.continueTo(
-                    state.retrySamePhase("shoe-shop-entry-clicked-success"),
-                    "shoe-shop entry navigation completed inside current turn");
+        if (status == NavigationResultStatus.ARRIVED || status == NavigationResultStatus.SUCCESS) {
+            WindowRuntimeContext currentRuntime = windowTaskContextHolder.rawCurrent().orElse(null);
+            if (currentRuntime == null) {
+                log.warn("[five-ring-v2 shoe-shop] entry navigation returned {} but no window runtime is bound; retry later",
+                        status);
+                return FiveRingStepOutcome.sharedState(
+                        state.retrySamePhase("shoe-shop-entry-no-runtime"),
+                        "shoe-shop entry arrived but watcher runtime is unavailable");
+            }
+            /*
+             * Do not finish the shoe-shop entry inside the foreground turn. When the character is
+             * already at 长安(130,130), NavigationService can report ARRIVED from cached coordinates
+             * without creating a watcher signal. Register the same target explicitly so the next pass
+             * consumes a fresh WindowPathingSnapshot and runs the unified door/dismount handling.
+             */
+            WindowPathingIntent intent = WindowPathingIntent.builder()
+                    .source(SHOE_SHOP_ENTRY_NAV_SOURCE)
+                    .type(WindowPathingIntentType.TARGETED)
+                    .targetMapName(TARGET_MAP_NAME)
+                    .targetX(SHOE_SHOP_ENTRY_X)
+                    .targetY(SHOE_SHOP_ENTRY_Y)
+                    .tolerance(0)
+                    .build();
+            currentRuntime.markPathingStarted(intent);
+            log.info("[five-ring-v2 shoe-shop] entry navigation returned {}; registered watcher intent instead of completing in foreground: windowId={} target={}({}, {})",
+                    status, currentRuntime.getWindowId(), TARGET_MAP_NAME, SHOE_SHOP_ENTRY_X, SHOE_SHOP_ENTRY_Y);
+            return FiveRingStepOutcome.pathingStarted(
+                    state.retrySamePhase("shoe-shop-entry-arrived-await-watcher")
+                            .withNewWatcherPathingStarted("shoe-shop-entry-arrived-await-watcher", SHOE_SHOP_ENTRY_NAV_SOURCE),
+                    "shoe-shop entry arrived; waiting for watcher door handling");
+        }
+        if (status == NavigationResultStatus.DIALOG_OPENED) {
+            return FiveRingStepOutcome.sharedState(
+                    state.retrySamePhase("shoe-shop-entry-dialog-opened"),
+                    "shoe-shop entry saw dialog; retry through watcher/prepared flow");
         }
         if (gameStateUtil.confirmCurrentMapFresh(SHOE_SHOP_MAP_NAME, 0L,
                 "wuhuan-v2:shoe-shop-phase-after-entry-failure")) {
@@ -680,14 +711,13 @@ public class FiveRingTaskV2 implements GameTask {
         if (snapshot.getCurrentX() == null || snapshot.getCurrentY() == null) {
             return true;
         }
-        int distance = Math.abs(snapshot.getCurrentX() - SHOE_SHOP_ENTRY_X)
-                + Math.abs(snapshot.getCurrentY() - SHOE_SHOP_ENTRY_Y);
-        boolean nearDoor = distance <= 6;
-        if (!nearDoor) {
-            log.info("[five-ring-v2 shoe-shop] exact door intent arrived away from door; skip dismount probe: current={}({}, {}) distance={}",
-                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(), distance);
+        boolean exactDoor = snapshot.getCurrentX() == SHOE_SHOP_ENTRY_X
+                && snapshot.getCurrentY() == SHOE_SHOP_ENTRY_Y;
+        if (!exactDoor) {
+            log.info("[five-ring-v2 shoe-shop] exact door intent arrived away from 130,130; skip dismount probe: current={}({}, {})",
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY());
         }
-        return nearDoor;
+        return exactDoor;
     }
 
     /**
@@ -847,6 +877,7 @@ public class FiveRingTaskV2 implements GameTask {
                 .targetY(SHOE_SHOP_ENTRY_Y)
                 .targetName(SHOE_SHOP_ENTRY_TARGET_NAME)
                 .randomizeMiniMapClickPoint(false)
+                .arrivalTolerance(0)
                 .source(SHOE_SHOP_ENTRY_NAV_SOURCE)
                 .build());
         if (!result.success() && result.getStatus() != NavigationResultStatus.PATHING_STARTED) {
@@ -1215,6 +1246,7 @@ public class FiveRingTaskV2 implements GameTask {
                     if (npcClickFailedAccept != null) {
                         return npcClickFailedAccept;
                     }
+                    cleanupUiBeforeAcceptNpcClick("setup:npc-click-failed-no-current-accept-dialog");
                     log.warn("[five-ring-v2 setup] failed to click {} (retry {}/{})",
                             TARGET_NPC_NAME, retry + 1, MAX_ACCEPT_RETRY);
                     retry++;
@@ -1758,7 +1790,25 @@ public class FiveRingTaskV2 implements GameTask {
             return null;
         }
 
-        log.info("[five-ring-v2 accept] try accepting task from current screen: reason={}", reason);
+        if (dialogType == DialogType.STORY) {
+            boolean dailyLimit = isFiveRingDailyLimitStoryVisible("wuhuan-v2:current-screen-accept-story");
+            boolean finished = !dailyLimit
+                    && isFiveRingFinishedStoryVisible("wuhuan-v2:current-screen-accept-story");
+            if (dailyLimit || finished) {
+                dialogService.handleDialog(DialogHandleRequest.clickStory("wuhuan-v2:current-screen-accept-story-close"));
+                return FiveRingStepOutcome.finished(
+                        state,
+                        dailyLimit
+                                ? "five-ring daily-limit story visible while accepting"
+                                : "five-ring finished story visible while accepting");
+            }
+            log.info("[five-ring-v2 accept] story dialog is not an accept terminal story; close and retry NPC: reason={}",
+                    reason);
+            dialogService.handleDialog(DialogHandleRequest.clickStory("wuhuan-v2:current-screen-unexpected-story-close"));
+            return null;
+        }
+
+        log.info("[five-ring-v2 accept] try accepting task from current option dialog: reason={}", reason);
         AcceptDialogPathingResult acceptResult = acceptInitialDialogAndTriggerPathing(context, "currentScreenAcceptPathing");
         if (acceptResult == AcceptDialogPathingResult.TASK_ACCEPTED_NEEDS_SYNC) {
             log.info("[five-ring-v2 accept] current screen accept clicked; read tracker next");
@@ -1773,7 +1823,21 @@ public class FiveRingTaskV2 implements GameTask {
                     "five-ring current screen accept reported finished/daily limit");
         }
         if (acceptResult == AcceptDialogPathingResult.NOT_ACCEPTED) {
-            log.info("[five-ring-v2 accept] current screen is not a five-ring accept dialog; clean unexpected option dialog: reason={}",
+            DialogResult alreadyTaskResult = dialogService.handleDialog(
+                    DialogHandleRequest.verifyExpectedOptionDialog(
+                            "wuhuan-v2:current-screen-already-has-task",
+                            ALREADY_HAS_TASK_OPTION_TEMPLATE));
+            if (alreadyTaskResult.getStatus() == DialogResultStatus.GREEN_TEMPLATE_VISIBLE) {
+                log.info("[five-ring-v2 accept] current option says task already exists; cleanup and read tracker: reason={} actionKey={} point=({}, {})",
+                        reason, alreadyTaskResult.getActionKey(),
+                        alreadyTaskResult.getAbsoluteX(), alreadyTaskResult.getAbsoluteY());
+                cleanupRetryableDialog("wuhuan-v2:current-screen-already-has-task");
+                return FiveRingStepOutcome.sharedState(
+                        state.withTaskAccepted("current-screen-already-has-task")
+                                .next(FiveRingPhase.SYNC_TASK_PANEL, "current-screen-already-has-task"),
+                        "already-has-task dialog visible; read tracker");
+            }
+            log.info("[five-ring-v2 accept] current option is neither accept nor already-has-task; clean unexpected option dialog: reason={}",
                     reason);
             cleanupUnexpectedAcceptDialog(reason);
         }

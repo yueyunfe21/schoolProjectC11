@@ -18,8 +18,6 @@ public enum InputActionType {
     HOLD_CTRL,
     /** Release Ctrl. */
     RELEASE_CTRL,
-    /** Press Ctrl+C once. */
-    PRESS_CTRL_C,
     /** Press Ctrl+U once. */
     PRESS_CTRL_U,
     /** Type Unicode text through the active input provider. */

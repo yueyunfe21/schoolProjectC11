@@ -39,6 +39,13 @@ Important behavior constraints:
 
 5. Use Chinese in conversation with the user unless they switch language.
 
+6. Visual matching or click-target changes must be verified through testcase replay.
+   - This applies to minimap matching/clicking, world-map search/result clicking, task tracker green-text clicking, NPC/template matching, dialog option matching, and any code that changes where the mouse will click based on screenshot/OCR/template output.
+   - Do not rely only on verbal reasoning, one live observation, or log text. Use or create a repo-local testcase image under an appropriate `images/test-cases/...` folder, run the matching/click algorithm against that testcase, and produce a marked output image showing the detected target and final click point.
+   - The marked output must make the important points visible: for example destination OCR anchor, matched text/template box, and actual click coordinate. The user should be able to inspect the image and confirm the red point/box is correct.
+   - If no testcase exists for the scenario being fixed, save the raw screenshot first, then add/reuse a small replay/debug tool rather than testing only against the live game window.
+   - After the change, record the testcase input, output image path, and command/tool used in `docs/ACTIVE_WORK.md`.
+
 ## Code documentation rule
 
 - Temporary lightweight policy: keep comments useful, but do not turn every small code change into a documentation pass.

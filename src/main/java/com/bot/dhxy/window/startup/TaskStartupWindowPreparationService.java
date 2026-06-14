@@ -3,6 +3,7 @@ package com.bot.dhxy.window.startup;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.config.BotProperties;
+import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -43,7 +44,6 @@ public class TaskStartupWindowPreparationService {
     private static final int ALT6_VISIBILITY_RECT_WIDTH = 317;
     private static final int ALT6_VISIBILITY_RECT_HEIGHT = 288;
     private static final double ALT6_VISIBILITY_MATCH_RATE = 0.85;
-    private static final int ALT6_VISIBILITY_MAX_ATTEMPTS = 3;
     private static final long ALT6_VISIBILITY_RECHECK_DELAY_MS = 500L;
     private static final long ALT6_OVERLAY_FADEOUT_WAIT_MS = 1000L;
     private static final String EXPAND_CHECKED_TEMPLATE = "images/template/status/expand_checked.png";
@@ -60,6 +60,7 @@ public class TaskStartupWindowPreparationService {
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
     private final BotProperties botProperties;
+    private final BoundWindowKeyboardService boundWindowKeyboardService;
 
     /**
      * Ensure the mini-map tracking checkbox is enabled.
@@ -75,13 +76,13 @@ public class TaskStartupWindowPreparationService {
     }
 
     /**
-     * Run the leader task startup visibility preparation.
+     * Run the leader task startup preparation.
      *
-     * <p>This performs mini-map tracking setup and Alt+6 visibility setup in one exclusive input
-     * section. The final wait lets the game's "hide players" overlay fade out before later dialog
-     * detection captures screenshots.</p>
+     * <p>Only the map/expand panel work needs the exclusive foreground input section. Alt+6 is a
+     * keyboard-only visibility hotkey, so it is sent through the bound HWND by
+     * {@link #ensureAlt6Visibility()} instead of using direct focused input.</p>
      *
-     * @return true when both map tracking and Alt+6 visibility are confirmed.
+     * @return true when map tracking, expand state, and Alt+6 visibility are confirmed.
      */
     public boolean prepareTaskStartupWindow() {
         if (!botProperties.isTaskStartupPreparationEnabled()) {
@@ -97,37 +98,40 @@ public class TaskStartupWindowPreparationService {
             if (!TaskSleep.sleep(200)) {
                 return false;
             }
-            boolean visibilityReady = ensureAlt6VisibilityDirect();
-            if (visibilityReady) {
-                log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
-                if (!TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS)) {
-                    return false;
-                }
-            }
+            boolean visibilityReady = ensureAlt6Visibility();
             return mapReady && expandReady && visibilityReady;
         });
     }
 
     /**
-     * Run only the Alt+6 player-visibility confirmation before a task starts.
+     * Press Alt+6 through the bound HWND, then verify the hidden-player overlay state by screenshot.
      *
-     * <p>五环 NPC clicking is sensitive to nearby player/task-name overlays, but the full startup
-     * preparation also opens Alt+1/Alt+U panels and is intentionally switchable during debugging.
-     * This method gives task startup a narrow way to enforce the proven Alt+6 visibility state without
-     * changing mini-map or status-panel options.</p>
+     * <p>五环/五倍启动前只需要屏蔽其他玩家名字，不需要打开任何面板，也不需要鼠标点击。
+     * 所以这里不走 exclusive/focus 输入事务；否则五开启动时会为了 Alt+6 把五个窗口轮流切到前台。
+     * 如果 HWND 后台快捷键失败，本方法直接失败并让后续真实鼠标动作再按需抢前台。</p>
      *
-     * @return true when Alt+6 visibility was already confirmed or became confirmed after pressing
-     *         Alt+6; false when interrupted or the confirmation template was not found.
+     * @return true when the background Alt+6 was sent and the confirmation template appears.
      */
-    public boolean ensureAlt6VisibilityOnly() {
-        return inputSequences.submitExclusiveAndWait("taskStartup:alt6VisibilityOnly", () -> {
-            boolean visibilityReady = ensureAlt6VisibilityDirect();
-            if (visibilityReady) {
-                log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
-                return TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS);
-            }
+    public boolean ensureAlt6Visibility() {
+        log.info("task startup visibility: send Alt+6 to bound HWND without foreground focus");
+        BoundWindowKeyboardService.ShortcutAttempt backgroundAlt6 =
+                boundWindowKeyboardService.pressShortcut(BoundWindowKeyboardService.AltShortcut.ALT_6);
+        if (!backgroundAlt6.attempted() || !backgroundAlt6.success()) {
+            log.warn("task startup visibility: background Alt+6 failed attempted={} reason={}",
+                    backgroundAlt6.attempted(), backgroundAlt6.reason());
             return false;
-        });
+        }
+        if (!TaskSleep.sleep(ALT6_VISIBILITY_RECHECK_DELAY_MS)) {
+            return false;
+        }
+        if (isAlt6VisibilityConfirmed()) {
+            log.info("task startup visibility: confirmed by template after background Alt+6");
+            log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
+            return TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS);
+        }
+        log.warn("task startup visibility: template confirmation failed after background Alt+6 template={}",
+                ALT6_VISIBILITY_TEMPLATE);
+        return false;
     }
 
     /**
@@ -178,36 +182,6 @@ public class TaskStartupWindowPreparationService {
         } finally {
             inputProvider.pressAltU();
         }
-    }
-
-    /**
-     * Confirm the Alt+6 player-visibility state and press Alt+6 until the configured template appears.
-     *
-     * <p>This method is called only from an exclusive input callback; it uses direct
-     * {@link InputProvider} calls to avoid queue-in-queue deadlock.</p>
-     */
-    private boolean ensureAlt6VisibilityDirect() {
-        if (isAlt6VisibilityConfirmed()) {
-            log.info("task startup visibility: already confirmed by template={}", ALT6_VISIBILITY_TEMPLATE);
-            return true;
-        }
-
-        for (int attempt = 1; attempt <= ALT6_VISIBILITY_MAX_ATTEMPTS; attempt++) {
-            log.info("task startup visibility: press Alt+6 attempt={}/{}",
-                    attempt, ALT6_VISIBILITY_MAX_ATTEMPTS);
-            inputProvider.pressAlt6();
-            if (!TaskSleep.sleep(ALT6_VISIBILITY_RECHECK_DELAY_MS)) {
-                return false;
-            }
-            if (isAlt6VisibilityConfirmed()) {
-                log.info("task startup visibility: confirmed after Alt+6 attempt={}", attempt);
-                return true;
-            }
-        }
-
-        log.warn("task startup visibility: template confirmation failed after {} attempts template={}",
-                ALT6_VISIBILITY_MAX_ATTEMPTS, ALT6_VISIBILITY_TEMPLATE);
-        return false;
     }
 
     private boolean isAlt6VisibilityConfirmed() {

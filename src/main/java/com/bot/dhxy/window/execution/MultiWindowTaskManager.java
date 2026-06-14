@@ -15,6 +15,7 @@ import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.policy.WindowCapacityPolicy;
 import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
+import com.bot.dhxy.window.runtime.WindowReadyEventBus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
@@ -57,6 +58,7 @@ public class MultiWindowTaskManager {
     private final DialogService dialogService;
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final WindowReadyEventBus windowReadyEventBus;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     /**
@@ -78,6 +80,7 @@ public class MultiWindowTaskManager {
      * @param dialogService dialog detector used by runner watchers for prepare-only matching.
      * @param taskTrackerPanelService left task-tracker panel reader used by runner watchers.
      * @param dialogChoiceMemoryService route-option memory updated after watcher confirmation.
+     * @param windowReadyEventBus soft wake bus used by runner watchers after terminal observations.
      */
     public MultiWindowTaskManager(TaskFactory taskFactory,
                                   WindowRuntimeContextFactory windowRuntimeContextFactory,
@@ -94,7 +97,8 @@ public class MultiWindowTaskManager {
                                   MiniMapCoordinateReader miniMapCoordinateReader,
                                   DialogService dialogService,
                                   TaskTrackerPanelService taskTrackerPanelService,
-                                  DialogChoiceMemoryService dialogChoiceMemoryService) {
+                                  DialogChoiceMemoryService dialogChoiceMemoryService,
+                                  WindowReadyEventBus windowReadyEventBus) {
         this.taskFactory = taskFactory;
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
         this.windowCapacityPolicy = windowCapacityPolicy;
@@ -111,6 +115,7 @@ public class MultiWindowTaskManager {
         this.dialogService = dialogService;
         this.taskTrackerPanelService = taskTrackerPanelService;
         this.dialogChoiceMemoryService = dialogChoiceMemoryService;
+        this.windowReadyEventBus = windowReadyEventBus;
     }
 
     /**
@@ -136,7 +141,7 @@ public class MultiWindowTaskManager {
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                     automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                    taskTrackerPanelService, dialogChoiceMemoryService);
+                    taskTrackerPanelService, dialogChoiceMemoryService, windowReadyEventBus);
         });
     }
 
@@ -162,7 +167,7 @@ public class MultiWindowTaskManager {
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                         automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                        taskTrackerPanelService, dialogChoiceMemoryService));
+                        taskTrackerPanelService, dialogChoiceMemoryService, windowReadyEventBus));
     }
 
     /**

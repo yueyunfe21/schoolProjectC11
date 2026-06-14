@@ -116,10 +116,6 @@ public class InputSequences {
         return submitAndWait(description, List.of(InputAction.pressAltC()));
     }
 
-    public boolean pressCtrlC(String description) {
-        return submitAndWait(description, List.of(InputAction.pressCtrlC()));
-    }
-
     public boolean pressCtrlU(String description) {
         return submitAndWait(description, List.of(InputAction.pressCtrlU()));
     }

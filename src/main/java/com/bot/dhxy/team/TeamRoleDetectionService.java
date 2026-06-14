@@ -162,7 +162,7 @@ public class TeamRoleDetectionService {
          * client is grouped and silently returning SOLO would hide a broken role detector.
          */
         for (int pass = 1; pass <= TOOLTIP_OCR_FULL_RETRY_LIMIT; pass++) {
-            RoleDetectionPassResult passResult = detectCurrentRolePass(context, pass);
+            RoleDetectionPassResult passResult = detectCurrentRolePass(context, pass, force);
             if (!passResult.retryWholeFlow()) {
                 return passResult.role();
             }
@@ -181,16 +181,16 @@ public class TeamRoleDetectionService {
      * Run one complete role-detection pass.
      *
      * <p>The pass has three ordered exits: tooltip ID OCR, no-tooltip standard-deviation fallback,
-     * and Alt+T panel fallback. Tooltip OCR can request a full retry because the tooltip proves the
-     * account is grouped; no-tooltip fallback can safely return SOLO when both tooltip and status
-     * strip are flat.</p>
+     * and the optional Alt+T panel fallback. The panel fallback opens the real team panel, so normal
+     * task startup must not use it; only explicit debug detection may enable it.</p>
      *
      * @param context current task context, used only to resolve the bound window title and player ID.
      * @param pass one-based outer pass index used in debug image names and logs.
+     * @param allowPanelProbe true only for explicit debug probes that may safely open the team panel.
      * @return a terminal role result, or a retry request when tooltip OCR and panel fallback both
      *         failed after a tooltip was positively detected.
      */
-    private RoleDetectionPassResult detectCurrentRolePass(TaskExecutionContext context, int pass) {
+    private RoleDetectionPassResult detectCurrentRolePass(TaskExecutionContext context, int pass, boolean allowPanelProbe) {
         Optional<TeamTooltipProbe> tooltip = hoverAndCaptureTeamTooltipWithRetries(pass);
         if (tooltip.isPresent()) {
             Optional<TeamRoleStatus> roleFromTooltipId = detectGroupedRoleFromTooltipLeaderId(context, tooltip.get());
@@ -198,6 +198,10 @@ public class TeamRoleDetectionService {
                 return RoleDetectionPassResult.done(roleFromTooltipId.get(), "tooltip-id");
             }
 
+            if (!allowPanelProbe) {
+                log.warn("team role detection: tooltip OCR missed; skip Alt+T panel fallback during normal startup");
+                return RoleDetectionPassResult.done(TeamRoleStatus.UNKNOWN, "tooltip-ocr-miss-panel-disabled");
+            }
             if (!hasConfiguredPanelProbe()) {
                 log.warn("team role detection missing team panel template/rect config after tooltip OCR miss");
                 return RoleDetectionPassResult.done(TeamRoleStatus.UNKNOWN, "tooltip-ocr-miss-panel-config-missing");
@@ -218,6 +222,10 @@ public class TeamRoleDetectionService {
         if (!detectGroupedByTeamStatusDeviationFallback()) {
             log.info("team role detection: no team tooltip/status signal detected, role=SOLO");
             return RoleDetectionPassResult.done(TeamRoleStatus.SOLO, "no-tooltip-low-deviation");
+        }
+        if (!allowPanelProbe) {
+            log.warn("team role detection: status deviation suggested grouped; skip Alt+T panel fallback during normal startup");
+            return RoleDetectionPassResult.done(TeamRoleStatus.UNKNOWN, "status-deviation-panel-disabled");
         }
         if (!hasConfiguredPanelProbe()) {
             log.warn("team role detection missing team panel template/rect config, return UNKNOWN");

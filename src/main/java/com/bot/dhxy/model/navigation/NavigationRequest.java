@@ -40,6 +40,16 @@ public class NavigationRequest {
     boolean randomizeMiniMapClickPoint = true;
 
     /**
+     * Keep the current task turn when an in-map mini-map click starts movement.
+     *
+     * <p>This is for short 修罗 leader-only corrections such as returning home and walking a few
+     * cells to the accept/heal-pet NPC. Long target navigation should keep the default false so
+     * PATHING_STARTED can yield to other windows.</p>
+     */
+    @Builder.Default
+    boolean keepTurnOnCurrentMapPathing = false;
+
+    /**
      * Logical coordinate tolerance for deciding arrival.
      *
      * <p>Normal map/NPC navigation can accept a small logical-coordinate delta because the game often

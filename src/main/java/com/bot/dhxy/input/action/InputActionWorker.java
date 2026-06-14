@@ -151,7 +151,6 @@ public class InputActionWorker {
             case DRAG_AND_DROP -> inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
             case HOLD_CTRL -> inputProvider.holdCtrl();
             case RELEASE_CTRL -> inputProvider.releaseCtrl();
-            case PRESS_CTRL_C -> inputProvider.pressCtrlC();
             case PRESS_CTRL_U -> inputProvider.pressCtrlU();
             case TYPE_TEXT_UNICODE -> inputProvider.typeTextUnicode(action.getText());
             case PASTE_TEXT -> inputProvider.pasteText(action.getText());

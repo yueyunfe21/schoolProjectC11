@@ -10,6 +10,7 @@ import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
+import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,13 +44,17 @@ public class ObjectiveTextRecognitionService {
     private static final double DIGIT_MATCH_THRESHOLD = 0.45;
     private static final double CONTAINED_DIGIT_THRESHOLD = 0.78;
     private static final double SLIDING_DIGIT_THRESHOLD = 0.82;
+    private static final int COORDINATE_PLAUSIBILITY_MARGIN_PX = 80;
 
     private final TaskExecutionContextHolder taskExecutionContextHolder;
+    private final CoordinateHelper coordinateHelper;
 
     private volatile TemplateBundle templateBundle;
 
-    public ObjectiveTextRecognitionService(TaskExecutionContextHolder taskExecutionContextHolder) {
+    public ObjectiveTextRecognitionService(TaskExecutionContextHolder taskExecutionContextHolder,
+                                           CoordinateHelper coordinateHelper) {
         this.taskExecutionContextHolder = taskExecutionContextHolder;
+        this.coordinateHelper = coordinateHelper;
     }
 
     /**
@@ -143,6 +148,14 @@ public class ObjectiveTextRecognitionService {
                             source, mapMatch.mapName(), coordinateText, System.currentTimeMillis() - startedAt);
                     return Optional.empty();
                 }
+                Optional<String> plausibleCoordinate = selectPlausibleCoordinate(
+                        mapMatch.mapName(), coordinateText, source);
+                if (plausibleCoordinate.isEmpty()) {
+                    log.info("[objective-recognition] coordinate rejected by map plausibility: source={} map={} rawCoord={} elapsedMs={}",
+                            source, mapMatch.mapName(), coordinateText, System.currentTimeMillis() - startedAt);
+                    return Optional.empty();
+                }
+                coordinateText = plausibleCoordinate.get();
 
                 String[] parts = coordinateText.split(",");
                 ObjectiveTextResult result = new ObjectiveTextResult(
@@ -170,6 +183,42 @@ public class ObjectiveTextRecognitionService {
         } finally {
             clean.flush();
         }
+    }
+
+    private Optional<String> selectPlausibleCoordinate(String mapName, String rawCoordinate, String source) {
+        Matcher matcher = COORDINATE_TEXT.matcher(rawCoordinate);
+        if (!matcher.matches()) {
+            return Optional.empty();
+        }
+        String[] parts = rawCoordinate.split(",");
+        String xText = parts[0];
+        String yText = parts[1];
+        int rawX = Integer.parseInt(xText);
+        int rawY = Integer.parseInt(yText);
+
+        if (isCoordinatePlausible(mapName, rawX, rawY)) {
+            return Optional.of(rawCoordinate);
+        }
+
+        // The objective story coordinate crop can occasionally treat the left bracket/noise as
+        // an extra leading X digit, e.g. 瑶池(78,64) -> 778,64. Only repair when the raw
+        // coordinate is impossible for this map and the one-digit-trimmed candidate is possible.
+        if (xText.length() > 1) {
+            String repaired = xText.substring(1) + "," + yText;
+            int repairedX = Integer.parseInt(xText.substring(1));
+            if (isCoordinatePlausible(mapName, repairedX, rawY)) {
+                log.info("[objective-recognition] coordinate repaired by map plausibility: source={} map={} rawCoord={} repairedCoord={}",
+                        source, mapName, rawCoordinate, repaired);
+                return Optional.of(repaired);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean isCoordinatePlausible(String mapName, int x, int y) {
+        return coordinateHelper == null
+                || coordinateHelper.isLogicalCoordinatePlausible(
+                mapName, x, y, COORDINATE_PLAUSIBILITY_MARGIN_PX);
     }
 
     private TemplateBundle loadTemplates() {

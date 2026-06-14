@@ -14,6 +14,7 @@ import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -367,6 +368,76 @@ public class ImagePreprocessor {
         thickWhiteMask.release(); kernel.release(); textOnlyMask.release();
 
         return thinWhiteCount;
+    }
+
+    /**
+     * Detect whether a small dialog crop contains horizontal thin-white story text.
+     *
+     * @param img story-upper crop in window/dialog-relative pixels.
+     * @return row-shape statistics; {@link TextLinePatternStats#matched()} means the crop has
+     * enough text-like rows to be considered real story text instead of scattered scene highlights.
+     */
+    public static TextLinePatternStats detectThinWhiteTextLinePattern(BufferedImage img) {
+        if (img == null) {
+            return TextLinePatternStats.empty(false);
+        }
+
+        int qualifyingRows = 0;
+        int maxWhitePixelsInRow = 0;
+        int maxClustersInRow = 0;
+        int maxSpanInRow = 0;
+        for (int y = 0; y < img.getHeight(); y++) {
+            int whitePixels = 0;
+            int clusters = 0;
+            int firstWhiteX = -1;
+            int lastWhiteX = -1;
+            boolean inWhiteRun = false;
+            for (int x = 0; x < img.getWidth(); x++) {
+                boolean white = isThinWhitePixel(img.getRGB(x, y));
+                if (white) {
+                    whitePixels++;
+                    if (firstWhiteX < 0) {
+                        firstWhiteX = x;
+                    }
+                    lastWhiteX = x;
+                    if (!inWhiteRun) {
+                        clusters++;
+                        inWhiteRun = true;
+                    }
+                } else {
+                    inWhiteRun = false;
+                }
+            }
+
+            int span = firstWhiteX < 0 ? 0 : lastWhiteX - firstWhiteX + 1;
+            maxWhitePixelsInRow = Math.max(maxWhitePixelsInRow, whitePixels);
+            maxClustersInRow = Math.max(maxClustersInRow, clusters);
+            maxSpanInRow = Math.max(maxSpanInRow, span);
+            if (whitePixels >= 12 && clusters >= 3 && span >= 60) {
+                qualifyingRows++;
+            }
+        }
+
+        boolean matched = qualifyingRows >= 3 && maxWhitePixelsInRow >= 20;
+        return new TextLinePatternStats(matched, qualifyingRows, maxWhitePixelsInRow, maxClustersInRow, maxSpanInRow);
+    }
+
+    private static boolean isThinWhitePixel(int rgb) {
+        int r = (rgb >> 16) & 0xff;
+        int g = (rgb >> 8) & 0xff;
+        int b = rgb & 0xff;
+        float[] hsb = Color.RGBtoHSB(r, g, b, null);
+        return hsb[1] <= (18f / 255f) && hsb[2] >= (225f / 255f);
+    }
+
+    public record TextLinePatternStats(boolean matched,
+                                       int qualifyingRows,
+                                       int maxWhitePixelsInRow,
+                                       int maxClustersInRow,
+                                       int maxSpanInRow) {
+        static TextLinePatternStats empty(boolean matched) {
+            return new TextLinePatternStats(matched, 0, 0, 0, 0);
+        }
     }
 
     /**

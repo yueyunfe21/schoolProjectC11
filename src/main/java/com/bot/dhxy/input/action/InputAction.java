@@ -101,11 +101,6 @@ public class InputAction {
         return simple(InputActionType.RELEASE_CTRL);
     }
 
-    /** @return Ctrl+C key action. */
-    public static InputAction pressCtrlC() {
-        return simple(InputActionType.PRESS_CTRL_C);
-    }
-
     /** @return Ctrl+U key action. */
     public static InputAction pressCtrlU() {
         return simple(InputActionType.PRESS_CTRL_U);

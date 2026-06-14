@@ -426,9 +426,16 @@ public class GameTextLineOcrService {
             }
         }
         RouteDestinationMatch value = findLastWorldMapRouteDestinationLine(words, expected);
-        if (!value.acceptedExpected() && expected != null && !expected.isBlank()) {
+        /*
+         * Short map names can be hidden by route wrapping. If whole-image OCR only fuzzy-matches a
+         * prefix such as "长安城" for target "长安", still run packed segment OCR so a bottom exact
+         * destination can override the fuzzy row and anchor the coordinate search correctly.
+         */
+        boolean exactExpected = isExactRouteDestinationMatch(value, expected);
+        if (!exactExpected && expected != null && !expected.isBlank()) {
             RouteDestinationMatch segmentValue = findRouteDestinationFromPackedYellowSegments(yellowImagePath, expected);
-            if (segmentValue.acceptedExpected()) {
+            if (isExactRouteDestinationMatch(segmentValue, expected)
+                    || (!value.acceptedExpected() && segmentValue.acceptedExpected())) {
                 value = segmentValue;
             }
         }
@@ -438,6 +445,13 @@ public class GameTextLineOcrService {
         log.info("[game-text-ocr] route destination OCR words={} last={}",
                 formatRouteOcrWords(words), value.text());
         return value;
+    }
+
+    private boolean isExactRouteDestinationMatch(RouteDestinationMatch match, String expected) {
+        return match != null
+                && expected != null
+                && !expected.isBlank()
+                && expected.equals(normalizeRouteDestinationName(match.text()));
     }
 
     private RouteDestinationMatch findRouteDestinationFromPackedYellowSegments(String yellowImagePath, String expected) {

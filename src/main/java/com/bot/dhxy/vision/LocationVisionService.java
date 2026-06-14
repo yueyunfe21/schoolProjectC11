@@ -315,18 +315,13 @@ public class LocationVisionService {
                         checkpoint("convert minimap template result");
                         /*
                          * Dungeon floor labels share a long common prefix, for example "大雁塔一层"
-                         * and "大雁塔三层". The template fast path is still useful, but if OCR reads
-                         * a different floor and that floor has no saved template yet, the template
-                         * hit was probably a nearest-neighbor false positive. In that case use the
-                         * OCR result for this scan and persist the cleaned label so the next run can
-                         * stay on the fast template path.
+                         * and "大雁塔三层". The template result is the authoritative position result;
+                         * OCR is only allowed to learn missing label templates here. OCR is not stable
+                         * enough to override a matched map-label template during normal navigation.
                          */
                         if (isDungeonFloorMap(location.mapName())
                                 && location.mapLabelScore() < FLOOR_TEMPLATE_TRUST_SCORE) {
-                            LocationInfo verified = verifyFloorTemplateWithOcr(location, startedAt);
-                            if (verified != null) {
-                                return verified;
-                            }
+                            verifyFloorTemplateWithOcr(location, startedAt);
                         } else if (isDungeonFloorMap(location.mapName())) {
                             /*
                              * Exact floor-label template hits are trusted. The OCR verifier exists
@@ -364,28 +359,27 @@ public class LocationVisionService {
     }
 
     /**
-     * Verify a floor-map template hit with OCR and auto-learn missing map-label templates.
+     * Learn missing floor-map label templates from OCR without overriding the template hit.
      *
      * <p>This is only used after the mini-map template matcher selected a map whose name ends with
      * {@code 层}. Floor names are visually similar, so missing templates can make "一层" look like
      * the nearest saved "三层" template. OCR is used as a verifier; when it reads a different map
      * name that has no template file yet, the freshly captured coordinate strip is normalized and
-     * saved into {@code images/template/map_label}. This keeps the first encounter safe and makes
-     * later encounters faster.</p>
+     * saved into {@code images/template/map_label}. The OCR result is intentionally not returned as
+     * the selected location because OCR can misread visually similar floor names and should not
+     * overrule an already matched mini-map template.</p>
      *
      * @param templateLocation template-based location candidate, including a window-scoped cleaned
      *                         label image path and logical coordinate.
      * @param scanStartedAt timestamp of the outer location scan, used for consistent elapsed logs.
-     * @return OCR-verified location when OCR disagrees with the template or learns a missing label;
-     *         null when the template candidate can remain the selected result.
      */
-    private LocationInfo verifyFloorTemplateWithOcr(TemplateLocationInfo templateLocation,
-                                                                   long scanStartedAt) {
+    private void verifyFloorTemplateWithOcr(TemplateLocationInfo templateLocation,
+                                            long scanStartedAt) {
         String path = windowScopedTempPath.resolve("tmp_pos_floor_verify.png");
         if (!captureCurrentLocationStrip(path)) {
             log.info("[location] floor template OCR verify skipped: map={} reason=capture-failed label={}",
                     templateLocation.mapName(), templateLocation.mapLabelPath());
-            return null;
+            return;
         }
 
         long localStartedAt = System.currentTimeMillis();
@@ -396,21 +390,19 @@ public class LocationVisionService {
                     templateLocation.mapName(),
                     String.format("%.3f", templateLocation.mapLabelScore()),
                     templateLocation.mapLabelPath());
-            return null;
+            return;
         }
 
         learnMissingMapLabelTemplate(local.mapName, path, true);
         if (!templateLocation.mapName().equals(local.mapName)) {
-            log.info("[location] floor template corrected by OCR: templateMap={} ocrMap={} coord=({}, {}) "
+            log.info("[location] floor template OCR disagreed but template kept: templateMap={} ocrMap={} coord=({}, {}) "
                             + "templateScore={} elapsedMs={} localElapsedMs={} label={}",
                     templateLocation.mapName(), local.mapName, local.x, local.y,
                     String.format("%.3f", templateLocation.mapLabelScore()),
                     System.currentTimeMillis() - scanStartedAt,
                     System.currentTimeMillis() - localStartedAt,
                     templateLocation.mapLabelPath());
-            return local;
         }
-        return null;
     }
 
     private LocationInfo canonicalizeOcrLocation(LocationInfo location, String source) {

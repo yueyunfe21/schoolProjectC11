@@ -734,7 +734,29 @@ public class NpcClickService {
      * @return true when any strategy opens and verifies the expected dialog.
      */
     public boolean clickNpcSmart(NpcClickRequest request) {
-        return runNpcClickPipeline(request, dialogClickVerifier(request), "dialog");
+        NpcClickVerifier verifier = dialogClickVerifier(request);
+        if (runNpcClickPipeline(request, verifier, "dialog")) {
+            return true;
+        }
+        if (shouldStop()) {
+            return false;
+        }
+        log.info("NPC smart click first attempt failed; press Alt+C before retry: npcName={} task={} map={} target=({}, {})",
+                request == null ? null : request.npcName(),
+                request == null ? null : request.sourceTask(),
+                request == null ? null : request.mapName(),
+                request == null ? null : request.mapX(),
+                request == null ? null : request.mapY());
+        boolean dismountSubmitted = inputSequences.submitAndWait("npcClick:retry:altC-dismount", List.of(
+                InputAction.pressAltC(),
+                InputAction.sleep(700)
+        ));
+        if (!dismountSubmitted || shouldStop()) {
+            log.warn("NPC smart click retry skipped after Alt+C submit failed/stopped: npcName={} submitted={}",
+                    request == null ? null : request.npcName(), dismountSubmitted);
+            return false;
+        }
+        return runNpcClickPipeline(request, verifier, "dialog-after-alt-c");
     }
 
     /**
@@ -891,35 +913,31 @@ public class NpcClickService {
                     return true;
                 }
             }
-            if (isDialogOpenBeforeNpcProbe(request, "before-learned-memory")) {
+            DialogType dialogType = dialogService.detectDialogTypeNoFocus("before-learned-memory", true, 0);
+
+            if (dialogType == DialogType.NONE && tryLearnedMemoryStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
-            if (tryLearnedMemoryStrategy(request, verifier, pipelineState)) {
-                result = true;
-                return true;
-            }
-            if (isDialogOpenBeforeNpcProbe(request, "after-learned-memory")) {
-                result = true;
-                return true;
-            }
+
             if (!request.sourceTask().equals(TaskType.WUBEI) && tryNormalTooltipStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
-            if (!lightScan && tryPlayerAnchorFormulaStrategy(request, verifier, pipelineState)) {
+
+            dialogType = dialogService.detectDialogTypeNoFocus("after-tooltip", true, 0);
+
+            if (!lightScan && dialogType == DialogType.NONE && tryPlayerAnchorFormulaStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
-            if (!lightScan && tryYellowTargetStrategy(request, verifier, pipelineState)) {
+
+            if (!lightScan && dialogType == DialogType.NONE && tryYellowTargetStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
-            if (isDialogOpenBeforeNpcProbe(request, "before-ctrl-probe")) {
-                result = true;
-                return true;
-            }
-            if (!lightScan && tryCtrlMenuStrategy(request, verifier, pipelineState)) {
+
+            if (!lightScan && dialogType == DialogType.NONE && tryCtrlMenuStrategy(request, verifier, pipelineState)) {
                 result = true;
                 return true;
             }
@@ -1621,29 +1639,6 @@ public class NpcClickService {
         OcrWindowRegion normalized = region;
         normalized = normalized.clamp(WINDOW_WIDTH, WINDOW_HEIGHT);
         return normalized.isValid() ? normalized : null;
-    }
-
-    /**
-     * Stop NPC probing once a dialog is already visible.
-     *
-     * <p>Learned-memory clicks and Ctrl-hover probing are only valid when the game scene is open.
-     * If an OPTION/STORY dialog is already on screen, more NPC probing can move the cursor over
-     * unrelated text or behind the dialog and produce the "random click" behavior seen in
-     * multi-window runs. The caller treats this as a handled NPC-click attempt so task code can
-     * process the existing dialog through its normal DialogService path.</p>
-     */
-    private boolean isDialogOpenBeforeNpcProbe(NpcClickRequest request, String stage) {
-        String npcName = request == null ? "unknown" : request.npcName();
-        DialogType type = dialogService.detectDialogTypeNoFocus("npc-click:" + stage + ":" + npcName);
-        boolean open = type != null && type != DialogType.NONE;
-        if (open) {
-            log.info("NPC smart click skips further probing because dialog is already open: npcName={} task={} stage={} type={}",
-                    npcName,
-                    request == null ? null : request.sourceTask(),
-                    stage,
-                    type);
-        }
-        return open;
     }
 
     /**

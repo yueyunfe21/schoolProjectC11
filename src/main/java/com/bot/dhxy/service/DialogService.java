@@ -83,6 +83,7 @@ public class DialogService {
     private static final int DIALOG_LARGE_Y = 312;
     private static final int DIALOG_LARGE_W = 529;
     private static final int DIALOG_LARGE_H = 208;
+    private static final double WHITE_STORY_TEMPLATE_THRESHOLD = 0.80;
     private static final int HIDE_PLAYER_NAMES_SETTLE_MS = 220;
 
     private static final String OPTION_GIVE_TEXT = "images/template/dialog/maintenance/dialog_opt_give.png";
@@ -346,7 +347,7 @@ public class DialogService {
             if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
                 continue;
             }
-            double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
+            double[] result = ImageFinder.find(washedPath, spec.templatePath(), WHITE_STORY_TEMPLATE_THRESHOLD);
             if (result == null || result.length < 2) {
                 continue;
             }
@@ -654,7 +655,7 @@ public class DialogService {
          * can steal the global input queue from active task navigation.
          */
         long detectStartedAt = System.currentTimeMillis();
-        DialogDetection detection = detectDialogSnapshotDirect("prepare-route:" + source, false);
+        DialogDetection detection = detectDialogSnapshotDirect("prepare-route:" + source, false, 0);
         long detectElapsedMs = Math.max(0L, System.currentTimeMillis() - detectStartedAt);
         if (detection == null || detection.type() != DialogType.OPTION || detection.image() == null) {
             log.info("dialog prepare route miss: source={} target={} type={} hasImage={} detectMs={} totalMs={}",
@@ -689,7 +690,7 @@ public class DialogService {
                                                                        int relativeY,
                                                                        String optionText) {
         long startedAt = System.currentTimeMillis();
-        DialogDetection detection = detectDialogSnapshotDirect("prepare-route-memory:" + source, false);
+        DialogDetection detection = detectDialogSnapshotDirect("prepare-route-memory:" + source, false, 0);
         if (detection == null || detection.type() != DialogType.OPTION || detection.image() == null
                 || detection.dialogRect() == null) {
             log.info("dialog prepare remembered route miss: source={} target={} type={} hasImage={} totalMs={}",
@@ -955,15 +956,33 @@ public class DialogService {
         return detectDialogSnapshotDirect(reason, hidePlayerNames).type();
     }
 
+    /**
+     * Detect the current dialog type without focus and with caller-controlled pre-capture wait.
+     *
+     * @param reason short diagnostic label for logs and screenshots.
+     * @param hidePlayerNames whether to send Alt+4 before capture.
+     * @param waitBeforeCaptureMs delay before screenshot capture. Use {@code 0} for pure current-screen
+     *                            probes; use a positive value only after a click/keypress that may need
+     *                            time to open a dialog.
+     * @return detected dialog type; {@link DialogType#NONE} means no known dialog frame matched.
+     */
+    public DialogType detectDialogTypeNoFocus(String reason, boolean hidePlayerNames, long waitBeforeCaptureMs) {
+        return detectDialogSnapshotDirect(reason, hidePlayerNames, waitBeforeCaptureMs).type();
+    }
+
     private DialogDetection detectDialogSnapshotDirect(String reason) {
         return detectDialogSnapshotDirect(reason, true);
     }
 
     private DialogDetection detectDialogSnapshotDirect(String reason, boolean hidePlayerNames) {
+        return detectDialogSnapshotDirect(reason, hidePlayerNames, 700 + random.nextInt(100));
+    }
+
+    private DialogDetection detectDialogSnapshotDirect(String reason, boolean hidePlayerNames, long waitBeforeCaptureMs) {
         long latencyStart = LatencyMetrics.start();
         DialogDetection detection = DialogDetection.none();
         try {
-            if (!TaskSleep.sleep(700 + random.nextInt(100))) {
+            if (waitBeforeCaptureMs > 0 && !TaskSleep.sleep(waitBeforeCaptureMs)) {
                 return detection;
             }
             detection = captureDialogSnapshot(reason, hidePlayerNames);
@@ -1103,18 +1122,22 @@ public class DialogService {
         ImagePreprocessor.saveImage(frame, storyRawPath);
         int thinWhiteCount = ImagePreprocessor.countThinWhitePixelsHSV(frame, storyWhitePath);
         int greenCount = ImagePreprocessor.countGreenPixelsHSV(frame, storyGreenPath);
+        ImagePreprocessor.TextLinePatternStats textLineStats =
+                ImagePreprocessor.detectThinWhiteTextLinePattern(frame);
         frame.flush();
 
         int totalTextPixels = thinWhiteCount + greenCount;
-        boolean story = totalTextPixels > 200;
+        boolean story = totalTextPixels > 200 && textLineStats.matched();
         if (story) {
-            log.info("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} whitePath={} greenPath={} result={}",
+            log.info("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} textRows={} maxRowWhite={} maxClusters={} maxSpan={} whitePath={} greenPath={} result={}",
                     reason, ImagePreprocessor.rectToString(area), storyRawPath, thinWhiteCount, greenCount,
-                    totalTextPixels, storyWhitePath, storyGreenPath, true);
+                    totalTextPixels, textLineStats.qualifyingRows(), textLineStats.maxWhitePixelsInRow(),
+                    textLineStats.maxClustersInRow(), textLineStats.maxSpanInRow(), storyWhitePath, storyGreenPath, true);
         } else {
-            log.debug("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} whitePath={} greenPath={} result={}",
+            log.debug("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} textRows={} maxRowWhite={} maxClusters={} maxSpan={} whitePath={} greenPath={} result={}",
                     reason, ImagePreprocessor.rectToString(area), storyRawPath, thinWhiteCount, greenCount,
-                    totalTextPixels, storyWhitePath, storyGreenPath, false);
+                    totalTextPixels, textLineStats.qualifyingRows(), textLineStats.maxWhitePixelsInRow(),
+                    textLineStats.maxClustersInRow(), textLineStats.maxSpanInRow(), storyWhitePath, storyGreenPath, false);
         }
         return story;
     }
@@ -1460,7 +1483,7 @@ public class DialogService {
 
             DialogType type = DialogType.OPTION;
             if (request.isVerifyDialogType()) {
-                type = detectDialogSnapshotDirect("green-template-click:" + request.getSourceTask()).type();
+                type = detectDialogSnapshotDirect("green-template-click:" + request.getSourceTask(), false).type();
                 if (type != DialogType.OPTION) {
                     log.info("dialog green template skipped: reason={} type={}", request.getSourceTask(), type);
                     outcome = DialogResult.simple(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND, type);
@@ -1554,7 +1577,7 @@ public class DialogService {
     }
 
     public BufferedImage captureCurrentStoryImage(String reason) {
-        DialogType type = detectDialogTypeNoFocus("capture-story-image:" + reason);
+        DialogType type = detectDialogTypeNoFocus("capture-story-image:" + reason, false, 0);
         if (type != DialogType.STORY) {
             log.info("dialog story capture skipped: reason={} type={}", reason, type);
             return null;

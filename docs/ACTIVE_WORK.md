@@ -1,5 +1,127 @@
 # DHXY Active Work
 
+### 何黎 - 2026-06-13 Window Ready Event 软 push 骨架
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出当前多窗口轮询模型反应太慢：窗口后台 watcher 已经知道某个窗口停下/到达，但任务通常要等下一轮拿到 turn 后才重新检查。
+- Rawls / Mencius 只读评估后建议先做一个保守的 soft push 机制：
+  - watcher 只发布“窗口状态已更新”的 wake hint；
+  - 不在事件里抢权、focus、点击或推进业务；
+  - 任务消费事件前必须重新读取 `WindowRuntimeContext` / `WindowPathingSnapshot`。
+
+Decision:
+
+- 新增 `WindowReadyEventBus` 作为内存事件总线，只保存每个 window/type 最新事件并唤醒等待者。
+- 第一版只发布 `PATHING_TERMINAL`：
+  - `ARRIVED`
+  - `STOPPED_AWAY`
+- 发布时机在 `WindowTaskRunner.updatePathingFromLocation(...)` 内：
+  - 先更新 `WindowRuntimeContext.pathingSnapshot`；
+  - 再发布 soft event；
+  - 再执行原有 route memory settle。
+- 目前不接入五环/五倍/修罗业务消费，避免一次性改动放权语义。
+
+Changed:
+
+- `WindowReadyEventType`
+- `WindowReadyEvent`
+- `WindowReadyEventBus`
+- `WindowTaskRunner`
+  - 注入 `WindowReadyEventBus`。
+  - pathing watcher 状态变化到 terminal 时发布 `PATHING_TERMINAL`。
+- `MultiWindowTaskManager`
+  - 创建 `WindowTaskRunner` 时传入 event bus。
+
+Follow-up:
+
+- 下一步如果要接业务，只在任务等待点用 `awaitNewer(...)` 缩短等待。
+- 消费端必须把 event 当作“醒来重新检查”的信号，不能直接相信 event 里的旧 snapshot 发鼠标/键盘。
+- 建议先接一个 debug/导航等待点验证日志，再接五环/五倍/修罗。
+
+### 谢帅 - 2026-06-13 NPCClickSmart 首轮失败后 Alt+C 再重试
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户希望 `NPCClickSmart` 第一次失败后，第二次 retry 前先按一次 `Alt+C`。
+- 目标是处理角色骑乘/坐骑遮挡 NPC 或遮挡名字时，第一次点不到 NPC，第二次先下坐骑再尝试。
+
+Changed:
+
+- `NpcClickService.clickNpcSmart(...)`
+  - 首轮 `runNpcClickPipeline(..., "dialog")` 成功则直接返回。
+  - 首轮失败且任务未停止时，走输入队列发送 `Alt+C`，等待 `700ms`。
+  - 然后用同一个 `NpcClickRequest` 再跑一轮 `runNpcClickPipeline(..., "dialog-after-alt-c")`。
+  - 未改 tooltip、黄字 OCR、记忆点、Ctrl 菜单、公式点击等内部识别/点击算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Follow-up cleanup:
+
+- 用户确认游戏内没有旧的无效下坐骑快捷键用途。
+- 已删除输入层旧快捷键链路：
+  - `InputActionType` 里的旧 action type。
+  - `InputAction` 里的旧 action factory。
+  - `InputSequences` 里的旧 shortcut helper。
+  - `WinApiMouseController` 里的旧物理 fallback。
+- 全局搜索确认不再存在旧快捷键相关标识。
+
+### 何黎 - 2026-06-13 修罗 story 目标坐标用地图范围校验修正
+
+Status: implemented / replay passed
+
+Context:
+
+- 修罗接任务后的 story objective 明明是 `瑶池(78,64)`，日志里却被识别成 `瑶池(778,64)`，随后接近点被算成 `(776,62)`，导致小地图导航目标完全错误。
+- 子智能体 Nash 做了只读复查，确认根因在 `ObjectiveTextRecognitionService`：坐标字符串只要满足 `\d{1,3},\d{1,3}` 就会被接受，没有结合地图名做范围校验。
+
+Changed:
+
+- `ObjectiveTextRecognitionService`
+  - 注入 `CoordinateHelper`。
+  - 坐标识别后先用已匹配到的地图名做 `isLogicalCoordinatePlausible(...)` 校验。
+  - 如果原始坐标超出该地图范围，并且去掉 X 最左侧一个疑似噪声数字后落入地图范围，则修正坐标。
+  - 不做硬编码，不禁止合法三位数坐标；未知地图仍保持原行为。
+
+Testcase:
+
+- Input: `images/test-cases/objective-text/raw/story_yaochi_78_64_extra7_raw.png`
+- Manifest: `images/test-cases/objective-text/manifest.csv`
+- Marked output: `images/test-cases/objective-text/output/story_yaochi_78_64_extra7_raw_marked.png`
+- Replay tool: `src/main/java/com/bot/dhxy/debug/ObjectiveTextRecognitionReplayDebugMain.java`
+
+Verify:
+
+- `git diff --check -- src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java src/main/java/com/bot/dhxy/debug/ObjectiveTextRecognitionReplayDebugMain.java images/test-cases/objective-text/manifest.csv`
+- `mvn -q -DskipTests compile exec:java "-Dexec.mainClass=com.bot.dhxy.debug.ObjectiveTextRecognitionReplayDebugMain" "-Dexec.args=--all"`
+- Result: `OBJECTIVE_TEXT_REPLAY total=1 passed=1 failed=0`
+
+### 谢帅 - 2026-06-13 小地图楼层模板命中后不再被 OCR 覆盖
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户追查 `19:36` 附近修罗路线时发现：小地图模板已经命中 `龙窟六层`，但后续仍走楼层 OCR 复核，并被 OCR/canonicalize 改成其它楼层，导致任务认为当前位置不是目标地图并重新导航。
+- 结论：小地图模板匹配比 OCR 更适合判断楼层名；OCR 不能作为更高优先级结果覆盖已命中的模板。
+
+Changed:
+
+- `LocationVisionService.scanByMiniMapTemplate(...)`
+  - 楼层地图模板命中后始终返回模板结果。
+  - 分数低于阈值时仍允许跑 OCR 学习缺失 map label 模板，但 OCR 结果只打日志/学习，不再 `return local` 覆盖模板地图。
+  - 日志从 `floor template corrected by OCR` 改为 `floor template OCR disagreed but template kept`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
 ### 唐德 - 2026-06-13 队长路线传送 prepared action 提到 pathing guard 之前
 
 Status: implemented / compile passed
@@ -12722,9 +12844,9 @@ Status: implemented / compile passed / waiting runtime validation
 
 Issue:
 
-- 五环买鞋入口下坐骑之前误用了 `Ctrl+C`。
-- 用户确认游戏里的坐骑/飞行切换快捷键是 `Alt+C`，不是 `Ctrl+C`。
-- 之前日志里即使出现 `PRESS_CTRL_C` / `pressCtrlC`，也不会触发下坐骑，因为快捷键本身错了。
+- 五环买鞋入口下坐骑之前误用了无效快捷键。
+- 用户确认游戏里的坐骑/飞行切换快捷键是 `Alt+C`。
+- 旧的无效快捷键链路已经不应再用于下坐骑。
 
 Changed:
 
@@ -12748,7 +12870,7 @@ Verify:
 
 Next validation:
 
-- 下一轮缺鞋五环看 `『忍者』影` 到达 `长安(130,130)` 后日志应出现 `PRESS_ALT_C` / `shortcut=Alt+C` / HWND `Alt+C`，不应再出现用于下坐骑的 `PRESS_CTRL_C`。
+- 下一轮缺鞋五环看 `『忍者』影` 到达 `长安(130,130)` 后日志应出现 `PRESS_ALT_C` / `shortcut=Alt+C` / HWND `Alt+C`。
 - 如果 `Alt+C` 仍未下坐骑，再查 HWND 后台投递是否被游戏接收；但第一层错误已经确定是快捷键写错。
 
 ### 谢帅 - 2026-06-08 五倍恢复老式 blocking 导航
@@ -13078,6 +13200,38 @@ Verify:
 
 - `mvn -q -DskipTests compile` passed。
 
+### 谢帅 - 2026-06-13 修罗当前地图短距离导航不放权
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察到修罗队长回城后，若离接任务 NPC / 张闻只差一点距离，会打开小地图点坐标并触发 `PATHING_STARTED`，导致队长放权。
+- 同类问题也出现在接任务后去旁边 `超级巫医` 医宝宝：这一步后面马上要点 NPC 触发 broadcast，不应该在短距离小地图移动时让队友插进来。
+- 普通打怪目标导航仍然应该在移动开始后放权；本次只收窄修罗的短距离 leader-only 修正。
+
+Changed:
+
+- `NavigationRequest`
+  - 新增 `keepTurnOnCurrentMapPathing`，默认 `false`。
+- `NavigationService.navigateInCurrentMap(...)`
+  - 小地图点击确认移动后，默认仍返回 `PATHING_STARTED`。
+  - 当 `keepTurnOnCurrentMapPathing=true` 时，注册 watcher intent 后继续在当前调用里等坐标到达；到达后返回 `ARRIVED`，不把短移动变成 task turn 放权点。
+- `XiuluoTaskV2`
+  - `xiuluo-v2:acceptNpc`、`xiuluo-v2:returnFallback`、`heal-pet` NPC 导航启用该策略。
+  - `xiuluo-v2:target` 打怪目标导航未启用，仍按普通移动放权。
+- `NavigationService.navigateToLingShouVillageViaZhangWen(...)`
+  - 张闻 approach 这段当前地图短距离移动也显式启用该策略，避免特殊路线绕过修罗调用侧的 keep-turn 语义。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next log checks:
+
+- 回城后接任务前不应再看到 `xiuluo-v2:acceptNpc` 因短距离 current-map click 直接释放 turn。
+- 医宝宝 hook 到 `超级巫医` 前不应因短距离 current-map click 释放 turn；真正放权点应仍是 broadcast 被处理后。
+
 Follow-up:
 
 - 下一轮五倍显形镜实测重点看：
@@ -13143,6 +13297,294 @@ Changed:
 
 Verify:
 
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-13 五环买鞋入口必须 exact 到 130,130
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出 ID 末尾 `3529` 的窗口去买鞋时停在 `长安(130,129)`，但买鞋入口逻辑要求必须到 `长安(130,130)`。
+- 日志确认旧行为：
+  - `source=wuhuan-v2:shoe-shop-entry-exact-130-130`
+  - `target=长安(130, 130)`
+  - `current=长安(130, 129)`
+  - watcher 仍返回 `state=ARRIVED`
+- 根因：
+  - `NavigationRequest.arrivalTolerance` 默认是 5。
+  - `clickShoeShopEntryExact(...)` 没显式设置 `arrivalTolerance(0)`。
+  - `ARRIVED/SUCCESS` 后手动注册 `WindowPathingIntent` 时也写了 `tolerance(5)`。
+  - `handleShoeShopDoorAfterArrival(...)` 还允许 `distance <= 6` 进入门口/下坐骑逻辑。
+
+Changed:
+
+- `FiveRingTaskV2.clickShoeShopEntryExact(...)`
+  - 增加 `.arrivalTolerance(0)`，只允许当前坐标等于 `130,130` 才算到达。
+- `FiveRingTaskV2.buyShoes(...)`
+  - 手动注册 `SHOE_SHOP_ENTRY_NAV_SOURCE` watcher intent 时改为 `.tolerance(0)`。
+- `FiveRingTaskV2.handleShoeShopDoorAfterArrival(...)`
+  - 门口处理不再接受 `distance <= 6`。
+  - 只有 `currentX == 130 && currentY == 130` 才进入 auto-enter / dismount 检查。
+  - `130,129` 这类附近点会跳过门口处理并继续重试 exact 入口导航。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-13 DialogService 点击绿字模板不再重复 Alt+4
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户在 19:29:30 附近观察到队长点击修罗 tooltip 进入战斗前有两次 `Alt+4`。
+- 日志来源：
+  - 第一次：`dialog:hidePlayerNames:before-learned-memory`，来自 `NpcClickService` 点击目标前的全屏/场景探测，保留。
+  - 第二次：`dialog:greenTemplateOption:xiuluo-v2:enter-battle:target-clicked`，来自 `DialogService` 已知进入战斗 option 后的绿字模板点击验证，不需要。
+
+Changed:
+
+- `DialogService.handleGreenTemplateOptionDirect(...)`
+  - `CLICK_GREEN_TEMPLATE` 自己验证 dialog 类型时，改为 `detectDialogSnapshotDirect(..., false)`。
+  - 只跳过这条已知 dialog 内处理路径的 `Alt+4`。
+  - 未改 `NpcClickService` 的前置隐藏玩家名，也未改其他全屏探测路径。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-13 视觉点击修改必须走 testcase replay 规则
+
+Status: documented
+
+Context:
+
+- 用户明确要求：凡是修改“怎么识别/怎么点击”的逻辑，不能只靠口头解释或现场观察，必须用 testcase 跑出来并画标记图。
+- 适用范围包括：
+  - 小地图匹配和点击；
+  - 世界地图输入框、路线结果、绿色坐标点击；
+  - 任务追踪绿字点击；
+  - NPC/template/dialog option 这类截图/OCR/模板驱动的点击点。
+
+Changed:
+
+- `AGENTS.md`
+  - 新增规则：visual matching or click-target changes must be verified through testcase replay。
+  - 要求使用或新增 `images/test-cases/...` 下的原始截图，用 replay/debug 工具跑当前算法，输出带红点/红框的 marked image。
+  - marked image 必须能看出识别锚点、匹配框、最终点击点。
+  - 修改后要在 `docs/ACTIVE_WORK.md` 记录 testcase 输入、输出图路径和执行命令。
+
+Verify:
+
+- Markdown-only change，未运行编译。
+
+### 唐德 - 2026-06-12 路线结果回放图增加目的地标记
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户给出“从龙宫到长安”的路线结果截图，怀疑当前算法会误点 `龙宫(140,56)`，需要用当前代码实际跑图并把识别到的目的地画出来。
+- 正式路线识别仍在 `GameTextLineOcrService.verifyWorldMapRouteDestination(...)` 和 `findLastWorldMapRouteCoordinate(...)`，本次只增强离线回放标记，不改正式导航业务。
+
+Changed:
+
+- `WorldMapRouteGuardReplayDebug.writeMarkedImage(...)`
+  - 原来只标红最终绿色坐标点击点 `CLICK`。
+  - 现在额外在黄色目的地 OCR 中心画红框/十字并标 `DEST`，用于确认代码到底把哪个黄色文本当成目的地。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- 已用当前代码回放本地同类路线图：
+  - input: `images/temp/hwnd-3CE0D38/map_result_scan.png`
+  - expected: `兰若寺`
+  - output: `images/temp/world_map_route_guard_replay/20260612_233330/hwnd-3CE0D38_marked.png`
+  - 结果：`DEST` 标到 `兰若寺`，`CLICK` 标到 `长安(374,16)`。
+
+Follow-up:
+
+- 用户这张“龙宫 -> 长安”的原图如果需要精确验证，需要保存为本地文件后用同一个 replay 命令跑：
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=长安 <raw-image-path>"`
+
+Update:
+
+- 用户已把原图保存为 `images/test-cases/world-map-route/raw/img.png`。
+- 复现旧结果：
+  - 整图黄字 OCR 只读到第一段里的 `长安城`。
+  - `matchShortName` 把 `长安城` fuzzy 成目标 `长安`，导致 packed-segment OCR 没有继续跑。
+  - `DEST` 错误落在第一段 `长安城`，`CLICK` 随后落到第一段 `龙宫(140,56)`。
+- 修复：
+  - `GameTextLineOcrService.findLastWorldMapRouteDestination(...)`
+    - 当整图目的地不是“精确等于 expected”时，即使它 fuzzy matched，也继续跑 packed-segment OCR。
+    - 如果 packed-segment 找到精确 expected，优先用 packed 的目的地坐标覆盖 fuzzy 结果。
+- 验证：
+  - `mvn -q -DskipTests compile` passed。
+  - replay 命令：
+    - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=长安 D:\mavenProject\DHXY\images\test-cases\world-map-route\raw\img.png"`
+  - output:
+    - `images/temp/world_map_route_guard_replay/20260613_000057/raw_marked.png`
+  - 新结果：`DEST` 标到底部真正 `长安`，`CLICK` 标到第二段 `长安城东(306,188)`，不再点第一段 `龙宫(140,56)`。
+
+Testcase replay correction:
+
+- 用户指出单图验证不等于走完整 testcase。已补 `WorldMapRouteGuardReplayDebug --testcase-all`：
+  - 从 `images/temp/world_map_route_online_dry_run/**/summary.csv` 读取 expected map。
+  - 映射到 `images/test-cases/world-map-route/raw` 下的 raw testcase 图片运行。
+  - 自动附加手工 case `images/test-cases/world-map-route/raw/img.png`，默认 expected=`长安`。
+  - marked 输出文件名改为原图 stem，避免多张图都写成 `raw_marked.png` 被覆盖。
+- 有效全套命令：
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=--testcase-all"`
+- 全套结果：
+  - total=177
+  - passed=177
+  - failed=0
+  - outputDir=`images/temp/world_map_route_guard_replay/20260613_001405`
+  - marked image count=177
+- 这次才算真正按“视觉点击修改必须走 testcase replay”的规则完成验证。
+
+### 谢帅 / Jason / Hook - 2026-06-12 修罗 V2 Runner/Watcher 框架评估
+
+Status: reviewed / proposal recorded / no code changes in this entry
+
+Context:
+
+- 用户要求重新评估修罗 V2 框架，重点不是修罗业务逻辑，而是 `WindowTaskRunner` / watcher / prepared dialog / pathing snapshot 是否真正被修罗消费。
+- 这轮拉了两个只读评估智能体：
+  - Jason：重点看 `XiuluoTaskV2` 状态机如何接 `NavigationService` 返回值。
+  - Hook：重点看 `WindowTaskRunner`、`WindowRuntimeContext`、`NavigationService` 的 watcher/prepared-action 生命周期。
+- 两边结论一致：修罗 V2 不是完全没接 runner；`TaskType.XIULUO_V2` 已经进入 watcher，route dialog preparation 和 pathing watcher 都能工作。问题在修罗消费层只接了一半，导致后台已经算出的结果没有及时变成前台动作。
+
+Verified current wiring:
+
+- `WindowTaskRunner.shouldRunWindowObserver(...)` 已包含 `TaskType.XIULUO_V2`。
+- `WindowTaskRunner.refreshDialogPreparationSignal(...)` 已处理 `DialogOperation.ROUTE_TRANSFER`，能后台准备路线/传送 dialog 点击点。
+- `WindowTaskRunner.refreshPathingSignal(...)` 能为修罗 pathing intent 产出 `WindowPathingSnapshot`。
+- `NavigationService.navigateToMap(...)` 已经会：
+  - 优先消费 ready `PreparedDialogAction`；
+  - 在路线链接点击后注册 `DialogPreparationRequest`；
+  - 返回 `DIALOG_PREPARING` 让任务层短让权。
+- `XiuluoTaskV2.navigationOutcome(...)` 已补 `DIALOG_PREPARING` 分支：不再把后台正在算路线 dialog 的状态当作 nav failure 进入 cleanup。
+
+Main gaps:
+
+1. `XiuluoTaskV2.continueIfNavigationStillPathing(...)` 没有优先消费 watcher snapshot。
+   - 当前主要还是 `hasReachedTargetApproach(...)` + `GameStateUtil.detectMovementState()`。
+   - 如果 watcher 已经给出 `ARRIVED` / `STOPPED_AWAY` / ready prepared action，修罗仍可能继续按旧前台探测等待。
+   - 这会造成“后台已经知道到了/停了/可点 dialog，但前台继续等或重试”的延迟。
+
+2. `NavigationService.navigateToMap(...)` 复用已有 active pathing snapshot 时，仍可能在 finally 里重新注册 intent。
+   - 重新 `markPathingStarted(...)` 会刷新 snapshot 时间线。
+   - 这可能推迟 `STOPPED_AWAY` 或 arrival 判断，让修罗感觉“走了很久还没结算”。
+
+3. 修罗维护 hook 手写导航状态处理，漏接部分新状态。
+   - `runMaintenanceBroadcastAttempt(...)` 当前主要识别 `PATHING_STARTED` / `STOPPED` / `ARRIVED`。
+   - `DIALOG_PREPARING`、`DIALOG_OPENED`、`POINT_NOT_REACHED` 这类导航层状态容易被当成普通 hook retry。
+   - 后续 heal-pet / repair 维护失败路径可能触发 cleanup，把正常的后台准备状态清掉。
+
+4. `POINT_NOT_REACHED` 在主导航桥里仍容易进入 failure/recovery。
+   - 小地图点击没确认移动、当前地图点位未触发时，不应该立刻升级成完整 nav recovery / `cleanUpAll()`。
+   - 更合理的是轻量 retry 或 shared-state retry，让下一轮根据 watcher snapshot 再判断。
+
+5. `DialogPreparationRequest` 和 `PreparedDialogAction` 清理耦合偏脆。
+   - `WindowRuntimeContext.clearDialogPreparationRequest()` 当前会同时清 request、prepared action、status。
+   - 导航的一些 pathing-active / pathing-consumed 分支可能误清同 target 已准备好的 action。
+
+6. 灵兽村特殊路线仍偏阻塞。
+   - `navigateToLingShouVillageViaZhangWen(...)` 点击张闻/传送后仍有同步确认逻辑。
+   - 它没有完整透传 `DIALOG_PREPARING`，某些 route dialog 状态可能被压成 `MAP_NOT_REACHED`。
+
+7. watcher 启动日志有误导。
+   - 当前日志里的 `pathingProbe` 容易让人误以为只有 `DEBUG_NAVIGATION_STRESS` 才跑 pathing probe。
+   - 实际 `XIULUO_V2` 只要有 active pathing intent 就会跑 watcher。
+
+Recommended fix order:
+
+1. P0: 先改 `XiuluoTaskV2.continueIfNavigationStillPathing(...)`。
+   - 优先读取当前窗口 `WindowPathingSnapshot`。
+   - `ARRIVED` / near-target：消费终态，进入下一 phase。
+   - `STOPPED_AWAY`：消费终态，轻量 retry 当前导航。
+   - `ACTIVE` / `UNKNOWN` / probe in progress：继续短让权。
+   - 如果存在同 target ready `PreparedDialogAction`，不要继续等移动，直接让当前 phase 重新进入 `NavigationService` 消费 prepared action。
+
+2. P0: 修 `NavigationService.navigateToMap(...)` 的重复注册。
+   - 如果本轮返回 `PATHING_ACTIVE` 是因为已有 snapshot/intent 正在工作，不要再次 `markPathingStarted(...)`。
+   - 保留原 watcher 时间线，让 `locationChangedAt` / `createdAt` 能真实反映这次移动。
+
+3. P1: 统一修罗导航桥接策略。
+   - `navigationOutcome(...)` 显式处理 `POINT_NOT_REACHED`，优先 shared retry，不要直接进重 recovery。
+   - `DIALOG_OPENED` 如果后续导航层会返回，应按“可继续交给 dialog/下一阶段处理”的成功类状态，而不是失败。
+
+4. P1: `runMaintenanceBroadcastAttempt(...)` 复用同一套导航状态规则。
+   - `DIALOG_PREPARING`：shared yield，同 phase retry。
+   - `POINT_NOT_REACHED`：轻量 retry，不立刻 cleanup。
+   - `DIALOG_OPENED`：继续交给维护 dialog 处理，而不是走 hook failure。
+
+5. P1/P2: 拆开 dialog preparation 清理语义。
+   - 不要让所有 `clearDialogPreparationRequest()` 场景都连带清掉同 target ready action。
+   - 至少保证 pathing-active/同目标重入时不会误删已准备好的点击点。
+
+6. P2: 修灵兽村特殊路线状态透传。
+   - `navigateToLingShouVillageViaZhangWen(...)` 对 `DIALOG_PREPARING` 直接返回，不压成 `MAP_NOT_REACHED`。
+   - 后续再考虑把它改成 watcher handoff，而不是同步阻塞确认。
+
+7. P2: 补日志。
+   - `WindowTaskRunner` observer 启动日志显示真实 watcher 能力，而不是只显示 debug stress。
+   - 修罗 pathing wait 日志增加 snapshot state、prepared action 是否 ready、target/source，方便下一轮实测看 runner 是否真的被消费。
+
+Do-not-touch for this pass:
+
+- 不改修罗接任务、读 objective、点怪、回城等业务判断。
+- 不改 `GameStateUtil.isMovingByPixelDiff()` 算法。
+- 不改 world-map / minimap 选点算法。
+- 不把维护逻辑重新塞进修罗主线，只修状态桥接和 runner 消费。
+
+Next concrete steps:
+
+1. Done: 实现 P0-1：修罗 `continueIfNavigationStillPathing(...)` 消费 watcher snapshot / prepared action。
+2. Next: 做一轮修罗实测，重点看 `pathing watcher update` 后是否马上进入下一 phase 或消费 prepared dialog。
+3. Next: 实现 P0-2：避免 `navigateToMap(...)` 对已有 active intent 重复注册。
+4. Next: 再跑修罗，比较 `PATHING_ACTIVE` / `STOPPED_AWAY` 的等待时间是否缩短。
+5. Next: 实现维护 hook 的 `DIALOG_PREPARING` / `POINT_NOT_REACHED` 轻量处理。
+6. Later: 根据实测再决定是否拆 `clearDialogPreparationRequest()` 与 `PreparedDialogAction` 清理。
+
+Update:
+
+- `XiuluoTaskV2.continueIfNavigationStillPathing(...)`
+  - 已接入 `WindowTaskContextHolder.rawCurrent()`，读取当前窗口 `WindowPathingSnapshot` 和 `PreparedDialogAction`。
+  - 如果 watcher 已准备好同目标 `ROUTE_TRANSFER` action，修罗不再继续前台移动探测，直接回到导航阶段让 `NavigationService` 消费缓存点击点。
+  - 如果 watcher snapshot 是 `ARRIVED`，清理 pathing signal，并让当前 phase 继续下一步。
+  - 如果 watcher snapshot 是 `STOPPED_AWAY`，清理 pathing signal，并让当前 phase 轻量重试导航。
+  - 如果 snapshot 仍是新鲜的 `ACTIVE/UNKNOWN` 或 probe 正在跑，继续让权，不进入旧前台探测。
+  - 旧的 `hasReachedTargetApproach(...)` 和 `GameStateUtil.detectMovementState()` 保留为 watcher 不可用/过期后的兜底。
+- 新增 `OBSERVER_SNAPSHOT_MAX_AGE_MS=3000ms`，只用于避免吃太旧的 ACTIVE/UNKNOWN watcher 状态。
+- `mvn -q -DskipTests compile` passed。
+
+CR follow-up:
+
+- Jason / Hook 复核后指出 P0-1 还缺一个关键边界：不能消费任意窗口 runtime 里的 pathing snapshot / prepared action，必须确认它属于当前修罗 phase。
+- 已补内联归属校验：
+  - `ACCEPT_TASK_NAVIGATE_TO_NPC` 只吃 `xiuluo-v2:acceptNpc...` -> `灵兽村`。
+  - `AFTER_ACCEPT_MAINTENANCE_CHECK` 只吃 `xiuluo-v2:healPetNpc...` -> `灵兽村`。
+  - `BEFORE_ROUTE_MAINTENANCE_CHECK` 只吃 `xiuluo-v2:repairEquipmentNpc...` -> `洛阳城`。
+  - `NAVIGATE_TO_TARGET` 只吃 `xiuluo-v2:target...` -> 当前 objective map。
+  - `NAVIGATE_BACK_TO_START` 只吃 `xiuluo-v2:returnFallback...` -> `灵兽村`。
+- Prepared route action 现在也要求同 windowId / hwnd 绑定且 10 秒内验证过，避免旧 dialog action 把当前 phase 提前唤醒。
+- watcher probe 卡死保护已补：`probeInProgress` 只有在 10 秒内才会继续压住修罗 phase；超过后打 warn 并回落到旧兜底判断。
+- P0-2 已完成：`NavigationService.navigateToMap(...)` 如果只是 stale-cache guard 发现同一路径已经被 watcher 跟踪中，不再在 finally 里重复注册新的 pathing intent；真正点击路线/传送产生的新 `PATHING_STARTED` 仍正常注册。
+- P1 维护 hook 桥接已补：
+  - `runMaintenanceBroadcastAttempt(...)` 现在把 `DIALOG_PREPARING` 当成 watcher 正在准备路线 dialog，shared-state 让权，不进入 cleanup。
+  - `POINT_NOT_REACHED` 现在轻量 shared retry 下一轮，不走 `cleanupAndLogMaintenanceRetry(...)`。
+  - `DIALOG_OPENED` 继续进入后面的维护 broadcast 处理，不再被普通失败分支吞掉。
+- P1 主导航桥接已补：
+  - `navigationOutcome(...)` 现在把 `POINT_NOT_REACHED` 当成 shared-state retry，不直接进入失败/recovery。
+  - `DIALOG_OPENED` 现在视为导航已把业务 dialog 打开，继续到下一 phase 交给任务/dialog 层处理。
+- P2 灵兽村特殊路线状态透传已补：
+  - `navigateToLingShouVillageViaZhangWen(...)` 不再只透传 `PATHING_STARTED`。
+  - 到长安、靠近张闻、处理张闻传送框时，`DIALOG_PREPARING` 会原样返回给任务层让权等待 watcher。
+  - 子步骤失败时优先返回原始 `NavigationResult`，不再全部压成 `MAP_NOT_REACHED` / `POINT_NOT_REACHED`。
 - `mvn -q -DskipTests compile` passed。
 
 ### 谢帅 - 2026-06-12 修罗路线 dialog preparing 不再进入 nav recovery
@@ -13569,4 +14011,234 @@ Update:
   - cooldown 未到的跳过不算失败。
   - 真正尝试完 `MAX_MAINTENANCE_HOOK_ATTEMPTS` 仍失败才累计一次失败。
   - 连续失败达到上限后，后续轮次直接跳过该维护，避免每轮都绕去失败的维护 NPC。
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-13 五环买鞋入口改为 watcher 门口处理
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户要求导航/dialog 不再保留两套老分支，五环买鞋也要依赖 watcher / preparation 模型。
+- 12:45-12:48 的 `hwnd-1C50FA4` 日志显示，窗口已经在长安 130,129 附近，但买鞋入口阶段反复得到 `NavigationResult.ARRIVED`，一直没有触发 `shoe-shop-door-first-dismount` / `Alt+C` 下坐骑。
+- 根因是 `FiveRingTaskV2.buyShoes(...)` 的直接导航分支把 `ARRIVED/SUCCESS` 当成“本前台 turn 内完成”，没有注册 watcher intent，所以后续不会进入统一的 `handleShoeShopDoorAfterArrival(...)` 门口/下坐骑流程。
+
+Changed:
+
+- `FiveRingTaskV2.buyShoes(...)`
+  - `clickShoeShopEntryExact(...)` 返回 `ARRIVED/SUCCESS` 时，不再直接 `continueTo(...shoe-shop-entry-clicked-success...)`。
+  - 改为注册 `WindowPathingIntent`：`source=SHOE_SHOP_ENTRY_NAV_SOURCE`，目标 `长安(130,130)`，`tolerance=5`。
+  - 随后返回 `PATHING_STARTED` 并放权，下一轮通过 watcher snapshot 统一进入 `handleShoeShopDoorAfterArrival(...)`。
+  - `DIALOG_OPENED` 不再被当作入口成功，改为重试并交回 watcher / prepared flow。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮买鞋实测看日志是否出现：
+  - `entry navigation returned ARRIVED; registered watcher intent instead of completing in foreground`
+  - 下一轮 watcher snapshot 后出现 `arrived at entry door, wait for auto-enter before dismount`
+  - 如果未自动进店，应出现 `shoe-shop-door-first-dismount`。
+- 不应再出现 `shoe-shop-entry-clicked-success` 连续 retry 到 phase loop guard 的情况。
+
+### 唐德 - 2026-06-13 Dialog STORY 白字行特征防误判
+
+Status: implemented / compile passed / testcase replay passed
+
+Context:
+
+- 五环 `ID=451753529 / 忆叶知秋` 在接任务前调用 `NpcClickService.clickNpcSmart(...)`。
+- `NpcClickService` 在真正点击云游大师前先调用 `DialogService.detectDialogTypeNoFocus(...)`。
+- 日志显示 `dialog story upper check` 因 `thinWhite=203 green=0 total=203` 被判为 `STORY`，随后 NPC probing 被短路为成功。
+- 但保存的 `story_upper_raw` 实际是游戏场景/人物/坐骑区域，不是真实 dialog；单纯白点数量阈值太宽。
+
+Changed:
+
+- `ImagePreprocessor`
+  - 新增 `detectThinWhiteTextLinePattern(BufferedImage)`。
+  - 检查 story 上半区是否存在横向白字文本行：每行白点数量、白点簇数量、横向跨度，避免散落场景高光/人物边缘误判。
+- `DialogService.hasStoryInUpperHalf(...)`
+  - 保留原来的 `thinWhite + green > 200` 基础阈值。
+  - 新增 `textLineStats.matched()` 作为 STORY 必要条件。
+  - 日志增加 `textRows/maxRowWhite/maxClusters/maxSpan`，方便后续看误判来源。
+- `DialogStoryDetectionReplayDebug`
+  - 新增 repo-local replay 工具，读取 `images/test-cases/dialog/story-detection/raw`，输出带红色文本行标记的图到 `output`。
+
+Testcases:
+
+- 负例：`images/test-cases/dialog/story-detection/raw/false_scene_player_names_story_upper.png`
+  - 来源：本次 `npc-click:before-learned-memory` 误判图。
+  - Replay 结果：`story=false rows=0 maxWhite=15 clusters=5 span=30`。
+  - 输出：`images/test-cases/dialog/story-detection/output/false_scene_player_names_story_upper_story_replay.png`
+- 正例：`images/test-cases/dialog/story-detection/raw/true_story_white_template_story_upper.png`
+  - 来源：真实 story 白字上半区。
+  - Replay 结果：`story=true rows=14 maxWhite=161 clusters=75 span=498`。
+  - 输出：`images/test-cases/dialog/story-detection/output/true_story_white_template_story_upper_story_replay.png`
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.DialogStoryDetectionReplayDebug"` passed。
+
+Follow-up:
+
+- 这只修 `STORY` 误判来源。
+- 后续仍需要整理 `NpcClickService.isDialogOpenBeforeNpcProbe(...)` 的业务边界：不能因为任意 `STORY/OPTION` 就把 NPC 点击判为成功；有 expected template 时，至少要验证模板或清理后重试。
+
+### 何黎 - 2026-06-13 窗口 watcher 软 push 事件骨架
+
+Status: implemented / compile pending
+
+Context:
+
+- 用户指出当前多窗口调度太像“轮询”：窗口 watcher 已经知道某个窗口 pathing 到达/停住，但任务线程往往要等到下一轮拿权后才重新读取 snapshot。
+- 目标不是让 watcher 执行业务，而是让 watcher 能把“这个窗口有新状态了”推给调度/任务等待处，后续再逐步把五环/五倍/修罗的等待逻辑接上。
+
+Decision:
+
+- 先做 soft push，不做 hard callback。
+- watcher 只发布事件，不点击、不 focus、不推进任务 phase。
+- `WindowRuntimeContext` / `WindowPathingSnapshot` 仍然是事实来源；消费方收到事件后必须重新读取 runtime snapshot 再行动。
+- 第一版只发布 `PATHING_TERMINAL`，表示当前 active pathing intent 已经到达 `ARRIVED` 或停在半路 `STOPPED_AWAY`。
+- 事件按 `windowId + type` 合并，只保留最新事件，避免每秒刷屏。
+
+Changed:
+
+- 新增 `WindowReadyEventType` / `WindowReadyEvent`。
+- 新增 `WindowReadyEventBus`：
+  - `publish(...)`：记录最新事件并 `notifyAll`。
+  - `awaitNewer(...)`：后续任务等待处可按 `windowId + type + sequence` 早醒。
+  - `latest(...)`：查看最近事件。
+- `WindowTaskRunner.refreshPathingSignal(...)` 在 pathing state 首次变成 `ARRIVED` 或 `STOPPED_AWAY` 时发布 `PATHING_TERMINAL`。
+- `MultiWindowTaskManager` 将 Spring 注入的 `WindowReadyEventBus` 传给每个 `WindowTaskRunner`。
+
+Not yet wired:
+
+- 五环/五倍/修罗还没有消费这个事件。
+- 下一步可以先接一个低风险等待点：例如任务自己的 `PATHING_STARTED` 让权等待处，用 `awaitNewer(... PATHING_TERMINAL ...)` 代替固定 sleep 或缩短下一轮轮询延迟。
+
+### 唐德 - 2026-06-13 Dialog no-focus 检测等待参数化
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出 `DialogService.detectDialogTypeNoFocus(...)` 内部固定 `700~800ms` sleep 不合理。
+- “点击/按键之后等待 dialog 出现”需要等待；但“纯粹检查当前屏幕有没有 dialog”不应先睡。
+
+Changed:
+
+- `DialogService`
+  - 新增 `detectDialogTypeNoFocus(String reason, boolean hidePlayerNames, long waitBeforeCaptureMs)`。
+  - 新增内部 `detectDialogSnapshotDirect(String reason, boolean hidePlayerNames, long waitBeforeCaptureMs)`。
+  - 旧重载保留默认 `700 + random(100)` 行为，避免未审计调用行为突变。
+- 改成 `0ms` 的纯当前屏幕探测：
+  - `NpcClickService` 的 `before-learned-memory` dialog precheck。
+  - `NpcClickService` 的 `after-tooltip` dialog precheck。
+  - `NavigationService` 的 pathing-active dialog rescue。
+  - `WindowTaskRunner` 的 route dialog preparation probe。
+  - `DialogService.prepareRouteOption(...)` / `prepareRememberedRouteOption(...)`。
+  - `DialogService.captureCurrentStoryImage(...)`。
+- 暂时保留默认等待的路径：
+  - `handleDialog(...)` 主分类。
+  - `green-template-click` 类型验证。
+  - 鞋店 OCR fallback 等广泛业务路径。
+  - 原因：这些入口有不少接在点击/按键之后，先不把行为一次性改大。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 继续整理 `NpcClickService` 的 true/false 语义：服务只负责点击是否成功，业务层负责 cleanup/retry。
+- 如果后续确认某个 `handleDialog(...)` 调用只是当前屏幕读取，再单独改成 `0ms`，不要全局一刀切。
+
+### 谢帅 - 2026-06-13 五环结束 story 阈值调整
+
+Status: implemented / replay verified
+
+Context:
+
+- 行部/刑部窗口 `hwnd-FF06CC` 在结束五环后显示异常。
+- 日志显示代码确实执行了结束 story 检查：
+  - `source=wuhuan-v2:tracker-miss-finished-story:finished`
+  - `status=WHITE_TEMPLATE_NOT_FOUND`
+- 保存下来的 story 截图实际是“恭喜你完成了一次五环任务...”，说明失败不是没走结束逻辑，而是旧模板未过阈值。
+- 用户确认第一次/第二次完成五环的 story 文案不同，因此不能换成只覆盖当前文案的“了一次五”模板，应继续使用原“恭喜你完”模板。
+
+Changed:
+
+- `images/template/dialog/wuhuan/wuhuan_task_finished_story.png`
+  - 已恢复为原来的“恭喜你完”模板。
+- `DialogService`
+  - 仅把白字 story 模板匹配阈值抽为 `WHITE_STORY_TEMPLATE_THRESHOLD=0.80`。
+  - 绿字 option/template 匹配阈值仍保持 `0.85`。
+  - 原因：旧模板在失败图上的最佳分是 `0.822888`，0.85 不过，0.80 可过。
+
+Replay testcase:
+
+- Input raw:
+  - `images/test-cases/dialog/wuhuan/finished_story_20260613_story_upper_raw.png`
+- Input washed:
+  - `images/test-cases/dialog/wuhuan/finished_story_20260613_story_upper_white.png`
+- Marked output:
+  - `images/test-cases/dialog/wuhuan/finished_story_20260613_marked.png`
+- Command:
+  - `jshell --class-path target/classes;<maven dependency classpath>` 调用 `ImageFinder.find(...)`。
+- Result:
+  - old template full story at 0.80: `[48.5, 56.0, 0.822888195514679]`
+  - old template upper story at 0.80: `[48.5, 23.0, 0.8228883147239685]`
+  - old template upper story at 0.85: `null`
+
+Follow-up:
+
+- 下一轮五环结束时看是否出现：
+  - `[five-ring-v2 finish] completion story visible`
+  - `task finished: 五环V2 -> SUCCESS`
+
+### 唐德 - 2026-06-13 五环接任务 NPC 点击失败后的当前屏幕分流
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户要求捋清 `NpcClickService.clickNpcSmart(...)` 的 false 语义：
+  - `NpcClickService` 只负责证明目标 NPC 是否点击成功。
+  - 五环业务层不能把 `false` 直接等同于“屏幕上没有 dialog”。
+  - 但也不能在 false 分支另写一套套娃 handler；应复用 `tryAcceptInitialTaskFromCurrentScreen(...)` 这个接任务入口。
+
+Changed:
+
+- `FiveRingTaskV2.tryAcceptInitialTaskFromCurrentScreen(...)`
+  - `DialogType.NONE`
+    - 直接返回 `null`，交给外层 NPC retry。
+  - `DialogType.OPTION`
+    - 先走原有接任务模板：
+      - actionKey: `wuhuan.acceptTask`
+      - template: `images/template/dialog/wuhuan/wuhuan_accept_first_option.png`
+      - source: `wuhuan-v2:accept-dialog`
+    - 如果接任务模板未命中，再验证“已有任务”模板：
+      - template: `images/template/dialog/wuhuan/wuhuan_already_has_task_option.png`
+      - source: `wuhuan-v2:current-screen-already-has-task`
+    - 已有任务命中时清理当前 option，并进入 `SYNC_TASK_PANEL`。
+    - 两个 option 都未命中时，清理意外 option 并返回 `null`。
+  - `DialogType.STORY`
+    - 匹配 daily limit story：
+      - actionKey: `wuhuan.dailyLimit`
+      - template: `images/template/dialog/wuhuan/wuhuan_daily_limit_story.png`
+      - source: `wuhuan-v2:current-screen-accept-story:daily-limit`
+    - 匹配 finished story：
+      - actionKey: `wuhuan.finished`
+      - template: `images/template/dialog/wuhuan/wuhuan_task_finished_story.png`
+      - source: `wuhuan-v2:current-screen-accept-story:finished`
+    - 任意一个 story 命中则点掉 story 并结束五环。
+    - 都未命中则点掉/关闭当前 story，返回 `null` 让外层重试 NPC。
+- `FiveRingTaskV2.acceptTask(...)`
+  - `clickInitialNpcForAccept(...)` 返回 false 且当前屏幕接任务入口无法处理时，先执行一次轻量 UI cleanup，再重试 NPC。
+
+Verify:
+
 - `mvn -q -DskipTests compile` passed。

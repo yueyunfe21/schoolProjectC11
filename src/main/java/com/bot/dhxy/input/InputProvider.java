@@ -26,8 +26,6 @@ public interface InputProvider {
     /** Release Ctrl. */
     void releaseCtrl();
 
-    /** Press Ctrl+C once. */
-    void pressCtrlC();
 
     /** Press Ctrl+U once. */
     void pressCtrlU();

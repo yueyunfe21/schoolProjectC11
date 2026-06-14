@@ -36,9 +36,12 @@ import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
 import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.model.WindowReadyEvent;
+import com.bot.dhxy.window.model.WindowReadyEventType;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import com.bot.dhxy.window.runtime.WindowReadyEventBus;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
@@ -96,6 +99,7 @@ public class WindowTaskRunner {
     private final DialogService dialogService;
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final WindowReadyEventBus windowReadyEventBus;
     private final ExecutorService executor;
     private final ExecutorService combatWatcherExecutor;
 
@@ -120,6 +124,7 @@ public class WindowTaskRunner {
      * @param dialogService dialog detector used by the watcher for prepare-only option matching.
      * @param taskTrackerPanelService left task-tracker panel reader used for prepared pathing links.
      * @param dialogChoiceMemoryService route-option memory updated after watcher proof.
+     * @param windowReadyEventBus soft wake bus published after watcher terminal observations.
      */
     public WindowTaskRunner(WindowRuntimeContext windowContext,
                             TaskFactory taskFactory,
@@ -134,7 +139,8 @@ public class WindowTaskRunner {
                             MiniMapCoordinateReader miniMapCoordinateReader,
                             DialogService dialogService,
                             TaskTrackerPanelService taskTrackerPanelService,
-                            DialogChoiceMemoryService dialogChoiceMemoryService) {
+                            DialogChoiceMemoryService dialogChoiceMemoryService,
+                            WindowReadyEventBus windowReadyEventBus) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
         this.taskFactory = Objects.requireNonNull(taskFactory, "taskFactory must not be null");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder must not be null");
@@ -149,6 +155,7 @@ public class WindowTaskRunner {
         this.dialogService = Objects.requireNonNull(dialogService, "dialogService must not be null");
         this.taskTrackerPanelService = Objects.requireNonNull(taskTrackerPanelService, "taskTrackerPanelService must not be null");
         this.dialogChoiceMemoryService = Objects.requireNonNull(dialogChoiceMemoryService, "dialogChoiceMemoryService must not be null");
+        this.windowReadyEventBus = Objects.requireNonNull(windowReadyEventBus, "windowReadyEventBus must not be null");
         this.executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable);
             thread.setName("window-task-" + windowContext.getWindowId() + "-" + THREAD_ID.getAndIncrement());
@@ -699,7 +706,8 @@ public class WindowTaskRunner {
         try {
             DialogType visibleType = dialogService.detectDialogTypeNoFocus(
                     "window-dialog-preparation:" + taskType.getCode() + ":" + request.getTargetKeyword(),
-                    false);
+                    false,
+                    0);
             if (visibleType != DialogType.OPTION) {
                 log.debug("{} window [{}] dialog preparation probe skipped: task={} operation={} target={} visibleType={} requestAgeMs={}",
                         executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
@@ -1004,8 +1012,34 @@ public class WindowTaskRunner {
                     snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
                     observedStationaryMs, wallStationaryMs, probeMs);
         }
+        publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
         settlePendingTransferChoiceMemory(intent, snapshot, state, executionContext);
         return snapshot;
+    }
+
+    private void publishPathingTerminalEventIfNeeded(TaskType taskType,
+                                                     WindowPathingIntent intent,
+                                                     WindowPathingSnapshot snapshot,
+                                                     WindowPathingState state,
+                                                     boolean stateChanged) {
+        if (!stateChanged || (state != WindowPathingState.ARRIVED && state != WindowPathingState.STOPPED_AWAY)) {
+            return;
+        }
+        /*
+         * This is deliberately a soft wake only. The watcher has already written the source of truth
+         * into WindowRuntimeContext; consumers must re-read that snapshot before taking the task turn
+         * or sending input.
+         */
+        windowReadyEventBus.publish(WindowReadyEvent.builder()
+                .windowId(windowContext.getWindowId())
+                .type(WindowReadyEventType.PATHING_TERMINAL)
+                .taskType(taskType)
+                .source(intent == null ? null : intent.getSource())
+                .pathingState(state)
+                .pathingIntent(intent)
+                .pathingSnapshot(snapshot)
+                .createdAtMs(snapshot == null ? System.currentTimeMillis() : snapshot.getUpdatedAtMs())
+                .build());
     }
 
     private void settlePendingTransferChoiceMemory(WindowPathingIntent intent,
