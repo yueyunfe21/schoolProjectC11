@@ -57,6 +57,7 @@ import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
+import com.bot.dhxy.window.model.WindowDialogInterest;
 import com.bot.dhxy.window.model.WindowDialogSnapshot;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
@@ -174,6 +175,7 @@ public class WubeiTask implements GameTask {
     private static final long CHAINED_POST_BATTLE_RECOVERY_PER_MEMBER_MS = 2_200L;
     private static final long CHAINED_POST_BATTLE_RECOVERY_MAX_MS = 10_000L;
     private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 2_500L;
+    private static final long WUBEI_DIALOG_INTEREST_TTL_MS = 15_000L;
     private static final long WAIT_BATTLE_TIMEOUT_MS = 180_000L;
     private static final long PAUSE_TIMER_COMPENSATION_THRESHOLD_MS = 1_000L;
     private static final Pattern TRACKER_DEST_HINT_PATTERN =
@@ -1211,10 +1213,12 @@ public class WubeiTask implements GameTask {
                     operation, source);
             return null;
         }
+        registerWubeiDialogInterest(runtime, operation, source);
         PreparedDialogAction action = runtime.consumePreparedDialogAction(operation, null, source);
         if (action == null) {
             return null;
         }
+        runtime.clearDialogInterest("wubei prepared consumed: " + operation);
         if (!action.isClickRequired()) {
             log.info("[wubei] consumed prepared dialog signal: operation={} target={} matched={} source={} actionSource={}",
                     operation, action.getTargetKeyword(), action.getMatchedText(), source, action.getSource());
@@ -1250,6 +1254,17 @@ public class WubeiTask implements GameTask {
                 .absoluteX(action.getAbsoluteX())
                 .absoluteY(action.getAbsoluteY())
                 .build();
+    }
+
+    private void registerWubeiDialogInterest(WindowRuntimeContext runtime,
+                                             DialogOperation operation,
+                                             String source) {
+        runtime.updateDialogInterest(WindowDialogInterest.builder()
+                .taskType(TaskType.WUBEI)
+                .operations(List.of(operation))
+                .source(source)
+                .expiresAtMs(System.currentTimeMillis() + WUBEI_DIALOG_INTEREST_TTL_MS)
+                .build(), source);
     }
 
     private boolean containsDarkThunder(String text) {

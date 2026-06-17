@@ -3,10 +3,14 @@ package com.bot.dhxy.window.model;
 import lombok.Builder;
 import lombok.Value;
 
+import java.util.UUID;
+
 /**
  * Navigation target currently being watched by a window-level background probe.
  *
  * @param source diagnostic source that started pathing.
+ * @param intentId per-navigation trace id used to reject prepared dialog actions from older route
+ *                 attempts.
  * @param targetMapName destination map name, when known.
  * @param targetX destination logical X coordinate on the target map, nullable for map-only routes.
  * @param targetY destination logical Y coordinate on the target map, nullable for map-only routes.
@@ -19,6 +23,8 @@ import lombok.Value;
 public class WindowPathingIntent {
     @Builder.Default
     String source = "navigation";
+    @Builder.Default
+    String intentId = UUID.randomUUID().toString();
     String targetMapName;
     Integer targetX;
     Integer targetY;

@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.model;
 
+import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.model.TaskType;
 import lombok.Builder;
 import lombok.Value;
@@ -15,9 +16,12 @@ import lombok.Value;
 @Builder(toBuilder = true)
 public class WindowReadyEvent {
     String windowId;
+    String hwnd;
     WindowReadyEventType type;
     TaskType taskType;
     String source;
+    DialogOperation operation;
+    String targetKeyword;
     WindowPathingState pathingState;
     WindowPathingIntent pathingIntent;
     WindowPathingSnapshot pathingSnapshot;

@@ -27,11 +27,12 @@ import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
-import com.bot.dhxy.task.wubei.WubeiDialogCatalog;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
 import com.bot.dhxy.team.TeamRoleDetectionService;
 import com.bot.dhxy.team.TeamRoleStatus;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.dialog.WindowDialogPreparationProvider;
+import com.bot.dhxy.window.model.WindowDialogInterest;
 import com.bot.dhxy.window.model.WindowDialogSnapshot;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
@@ -103,6 +104,7 @@ public class WindowTaskRunner {
     private final DialogService dialogService;
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
     private final ExecutorService executor;
     private final ExecutorService combatWatcherExecutor;
@@ -128,6 +130,8 @@ public class WindowTaskRunner {
      * @param dialogService dialog detector used by the watcher for prepare-only option matching.
      * @param taskTrackerPanelService left task-tracker panel reader used for prepared pathing links.
      * @param dialogChoiceMemoryService route-option memory updated after watcher proof.
+     * @param dialogPreparationProviders task-owned providers used for explicitly registered
+     *                                   business dialogs.
      * @param windowReadyEventBus soft wake bus published after watcher terminal observations.
      */
     public WindowTaskRunner(WindowRuntimeContext windowContext,
@@ -144,6 +148,7 @@ public class WindowTaskRunner {
                             DialogService dialogService,
                             TaskTrackerPanelService taskTrackerPanelService,
                             DialogChoiceMemoryService dialogChoiceMemoryService,
+                            List<WindowDialogPreparationProvider> dialogPreparationProviders,
                             WindowReadyEventBus windowReadyEventBus) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
         this.taskFactory = Objects.requireNonNull(taskFactory, "taskFactory must not be null");
@@ -159,6 +164,9 @@ public class WindowTaskRunner {
         this.dialogService = Objects.requireNonNull(dialogService, "dialogService must not be null");
         this.taskTrackerPanelService = Objects.requireNonNull(taskTrackerPanelService, "taskTrackerPanelService must not be null");
         this.dialogChoiceMemoryService = Objects.requireNonNull(dialogChoiceMemoryService, "dialogChoiceMemoryService must not be null");
+        this.dialogPreparationProviders = dialogPreparationProviders == null
+                ? List.of()
+                : List.copyOf(dialogPreparationProviders);
         this.windowReadyEventBus = Objects.requireNonNull(windowReadyEventBus, "windowReadyEventBus must not be null");
         this.executor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable);
@@ -633,14 +641,14 @@ public class WindowTaskRunner {
                                         preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
                                         routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
                                         if (preparedDialogAction == null) {
-                                            preparedDialogAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
+                                            preparedDialogAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
                                         }
                                     } else {
                                         long routePrepareStartedAt = System.currentTimeMillis();
                                         preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
                                         routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
                                         if (preparedDialogAction == null) {
-                                            preparedDialogAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
+                                            preparedDialogAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
                                         }
                                         if (preparedDialogAction == null) {
                                             long taskTrackerPrepareStartedAt = System.currentTimeMillis();
@@ -777,9 +785,17 @@ public class WindowTaskRunner {
                 .orElse(null);
     }
 
-    private PreparedDialogAction refreshWubeiDialogPreparationSignal(TaskType taskType,
-                                                                     TaskExecutionContext executionContext) {
-        if (taskType != TaskType.WUBEI || windowContext.getDialogPreparationRequest() != null) {
+    private PreparedDialogAction refreshTaskDialogInterestPreparationSignal(TaskType taskType,
+                                                                           TaskExecutionContext executionContext) {
+        if (windowContext.getDialogPreparationRequest() != null) {
+            return null;
+        }
+        Optional<WindowDialogInterest> interestOpt = windowContext.getDialogInterest();
+        if (interestOpt.isEmpty()) {
+            return null;
+        }
+        WindowDialogInterest interest = interestOpt.get();
+        if (interest.getTaskType() != taskType || interest.getOperations() == null || interest.getOperations().isEmpty()) {
             return null;
         }
         Optional<WindowDialogSnapshot> visibleDialogOpt = windowContext.getVisibleDialogSnapshot();
@@ -789,10 +805,9 @@ public class WindowTaskRunner {
                 || now - visibleDialogOpt.get().getDetectedAtMs() > WINDOW_DIALOG_VISIBLE_MAX_AGE_MS) {
             return null;
         }
-        WindowDialogSnapshot visibleDialog = visibleDialogOpt.get();
         PreparedDialogAction existing = windowContext.getPreparedDialogAction();
         if (existing != null) {
-            if (!isWubeiPreparedOperation(existing.getOperation())) {
+            if (!interest.supports(taskType, existing.getOperation())) {
                 return null;
             }
             if (validatePreparedDialogAction(existing, taskType, executionContext)) {
@@ -801,67 +816,36 @@ public class WindowTaskRunner {
         }
 
         long startedAt = System.currentTimeMillis();
-        String source = "window-wubei-dialog-prepare:" + taskType.getCode();
-        Optional<PreparedDialogAction> prepared = dialogService.prepareGreenTemplateOption(
-                source + ":enterBattle",
-                DialogOperation.WUBEI_ENTER_BATTLE,
-                WubeiDialogCatalog.enterBattleSpecs(),
-                false);
-        if (prepared.isEmpty()) {
-            prepared = prepareRememberedWubeiAcceptOption(source + ":acceptMemory");
+        for (DialogOperation operation : interest.getOperations()) {
+            for (WindowDialogPreparationProvider provider : dialogPreparationProviders) {
+                if (!provider.supports(taskType, operation)) {
+                    continue;
+                }
+                String source = "window-task-dialog-prepare:" + taskType.getCode() + ":" + operation;
+                Optional<PreparedDialogAction> prepared = provider.prepare(interest, operation, source);
+                if (prepared.isEmpty()) {
+                    continue;
+                }
+                PreparedDialogAction boundAction = prepared.get().toBuilder()
+                        .windowId(windowContext.getWindowId())
+                        .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                        .build();
+                windowContext.updatePreparedDialogAction(boundAction);
+                publishPreparedActionReady(taskType, boundAction, executionContext,
+                        "task-dialog-interest-prepared");
+                log.info("{} window [{}] task dialog prepared: task={} operation={} target={} matched={} click=({}, {}) clickRequired={} elapsedMs={} interestSource={} provider={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        boundAction.getOperation(), boundAction.getTargetKeyword(),
+                        normalizeMessage(boundAction.getMatchedText()),
+                        boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
+                        boundAction.isClickRequired(),
+                        Math.max(0L, System.currentTimeMillis() - startedAt),
+                        normalizeMessage(interest.getSource()),
+                        provider.getClass().getSimpleName());
+                return boundAction;
+            }
         }
-        if (prepared.isEmpty()) {
-            prepared = dialogService.prepareGreenTemplateOption(
-                    source + ":acceptTask",
-                    DialogOperation.WUBEI_ACCEPT_TASK,
-                    WubeiDialogCatalog.acceptTaskSpecs(),
-                    true);
-        }
-        if (prepared.isEmpty()) {
-            prepared = dialogService.prepareWhiteStoryTemplate(
-                    source + ":probeStory",
-                    DialogOperation.WUBEI_PROBE_STORY,
-                    WubeiDialogCatalog.probeStorySpecs());
-        }
-        return prepared
-                .map(action -> {
-                    PreparedDialogAction boundAction = action.toBuilder()
-                            .windowId(windowContext.getWindowId())
-                            .hwnd(windowContext.getNativeBinding().getNativeHandle())
-                            .build();
-                    windowContext.updatePreparedDialogAction(boundAction);
-                    publishPreparedActionReady(taskType, boundAction, executionContext,
-                            "wubei-dialog-prepared");
-                    log.info("{} window [{}] wubei dialog prepared: task={} operation={} target={} matched={} click=({}, {}) clickRequired={} elapsedMs={}",
-                            executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                            boundAction.getOperation(), boundAction.getTargetKeyword(),
-                            normalizeMessage(boundAction.getMatchedText()),
-                            boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
-                            boundAction.isClickRequired(),
-                            Math.max(0L, System.currentTimeMillis() - startedAt));
-                    return boundAction;
-                })
-                .orElse(null);
-    }
-
-    private Optional<PreparedDialogAction> prepareRememberedWubeiAcceptOption(String source) {
-        Optional<DialogChoiceMemoryService.DialogChoiceEntry> remembered =
-                dialogChoiceMemoryService.findUsable(
-                        WubeiDialogCatalog.TASK_CODE,
-                        "acceptTask",
-                        WubeiDialogCatalog.ACCEPT_NPC_NAME);
-        if (remembered.isEmpty()) {
-            return Optional.empty();
-        }
-        DialogChoiceMemoryService.DialogChoiceEntry entry = remembered.get();
-        return dialogService.prepareRememberedChoiceOption(
-                source,
-                DialogOperation.WUBEI_ACCEPT_TASK,
-                WubeiDialogCatalog.OPTION_ACCEPT_TASK,
-                entry.relativeX,
-                entry.relativeY,
-                entry.optionText,
-                false);
+        return null;
     }
 
     private PreparedDialogAction publishTaskAttentionIfDialogVisible(TaskType taskType,
@@ -932,7 +916,7 @@ public class WindowTaskRunner {
             long prepareStartedAt = System.currentTimeMillis();
             PreparedDialogAction preparedAction = refreshDialogPreparationSignal(taskType, executionContext);
             if (preparedAction == null) {
-                preparedAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
+                preparedAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
             }
             timingMs[2] = Math.max(0L, System.currentTimeMillis() - prepareStartedAt);
             if (preparedAction != null) {
@@ -1245,7 +1229,7 @@ public class WindowTaskRunner {
             String currentFingerprint = ImagePreprocessor.buildBinaryFingerprint(washed);
             int distance = ImagePreprocessor.binaryFingerprintDistance(action.getFingerprint(), currentFingerprint);
             if (action.getOperation() != DialogOperation.TASK_TRACKER_PATHING
-                    && !isWubeiPreparedOperation(action.getOperation())) {
+                    && !isTaskInterestPreparedOperation(taskType, action.getOperation())) {
                 WindowPathingIntent currentIntent = windowContext.getActivePathingIntent().orElse(null);
                 if (action.getIntentId() != null) {
                     if (currentIntent == null || !Objects.equals(action.getIntentId(), currentIntent.getIntentId())) {
@@ -1309,10 +1293,10 @@ public class WindowTaskRunner {
         }
     }
 
-    private boolean isWubeiPreparedOperation(DialogOperation operation) {
-        return operation == DialogOperation.WUBEI_ACCEPT_TASK
-                || operation == DialogOperation.WUBEI_ENTER_BATTLE
-                || operation == DialogOperation.WUBEI_PROBE_STORY;
+    private boolean isTaskInterestPreparedOperation(TaskType taskType, DialogOperation operation) {
+        return windowContext.getDialogInterest()
+                .map(interest -> interest.supports(taskType, operation))
+                .orElse(false);
     }
 
     private void publishPreparedActionReady(TaskType taskType,
