@@ -176,6 +176,7 @@ public class WubeiTask implements GameTask {
     private static final long CHAINED_POST_BATTLE_RECOVERY_MAX_MS = 10_000L;
     private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 2_500L;
     private static final long WUBEI_DIALOG_INTEREST_TTL_MS = 15_000L;
+    private static final long WUBEI_PREPARED_DIALOG_MAX_AGE_MS = 3_000L;
     private static final long WAIT_BATTLE_TIMEOUT_MS = 180_000L;
     private static final long PAUSE_TIMER_COMPENSATION_THRESHOLD_MS = 1_000L;
     private static final Pattern TRACKER_DEST_HINT_PATTERN =
@@ -1211,7 +1212,8 @@ public class WubeiTask implements GameTask {
             return null;
         }
         registerWubeiDialogInterest(runtime, operation, source);
-        PreparedDialogAction action = runtime.consumePreparedDialogAction(operation, null, source);
+        PreparedDialogAction action = runtime.consumePreparedDialogAction(
+                operation, null, source, WUBEI_PREPARED_DIALOG_MAX_AGE_MS);
         if (action == null) {
             return null;
         }

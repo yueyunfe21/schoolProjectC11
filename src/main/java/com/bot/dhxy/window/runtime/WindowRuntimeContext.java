@@ -409,6 +409,23 @@ public class WindowRuntimeContext {
     }
 
     /**
+     * Atomically consume a prepared dialog action only when the watcher verified it recently enough.
+     *
+     * @param expectedOperation operation the caller intends to execute.
+     * @param expectedTargetKeyword expected target keyword; blank means operation-only matching.
+     * @param reason diagnostic reason written to logs.
+     * @param maxVerifiedAgeMs maximum accepted age of {@link PreparedDialogAction#getLastVerifiedAtMs()}.
+     *                         Negative disables the freshness check.
+     * @return consumed prepared action, or null when absent, mismatched, or stale.
+     */
+    public PreparedDialogAction consumePreparedDialogAction(DialogOperation expectedOperation,
+                                                           String expectedTargetKeyword,
+                                                           String reason,
+                                                           long maxVerifiedAgeMs) {
+        return consumePreparedDialogAction(expectedOperation, expectedTargetKeyword, reason, false, maxVerifiedAgeMs);
+    }
+
+    /**
      * Atomically consume a prepared dialog action with an explicit route-only recovery policy.
      *
      * <p>Route dialogs are prepared by the window watcher while a pathing intent is active. A task
@@ -428,6 +445,15 @@ public class WindowRuntimeContext {
                                                            String expectedTargetKeyword,
                                                            String reason,
                                                            boolean allowClearedRouteIntent) {
+        return consumePreparedDialogAction(
+                expectedOperation, expectedTargetKeyword, reason, allowClearedRouteIntent, -1L);
+    }
+
+    private PreparedDialogAction consumePreparedDialogAction(DialogOperation expectedOperation,
+                                                            String expectedTargetKeyword,
+                                                            String reason,
+                                                            boolean allowClearedRouteIntent,
+                                                            long maxVerifiedAgeMs) {
         while (true) {
             PreparedDialogAction current = preparedDialogAction.get();
             if (current == null) {
@@ -439,6 +465,15 @@ public class WindowRuntimeContext {
             if (mismatchReason != null) {
                 logPreparedConsume("mismatch", reason, current, expectedOperation, expectedTargetKeyword,
                         "mismatchReason", mismatchReason);
+                return null;
+            }
+            if (maxVerifiedAgeMs >= 0L && !current.verifiedWithin(System.currentTimeMillis(), maxVerifiedAgeMs)) {
+                if (!preparedDialogAction.compareAndSet(current, null)) {
+                    continue;
+                }
+                clearReadyDialogPreparationStatusFor(current);
+                logPreparedConsume("stale", reason, current, expectedOperation, expectedTargetKeyword,
+                        "maxVerifiedAgeMs", maxVerifiedAgeMs);
                 return null;
             }
             if (!preparedDialogAction.compareAndSet(current, null)) {
@@ -684,6 +719,7 @@ public class WindowRuntimeContext {
         clearPathingSignal("runtime reset");
         clearVisibleDialogSnapshot("runtime reset");
         clearDialogPreparationRequest("runtime reset");
+        clearDialogInterest("runtime reset");
         this.gameState.resetRuntimeState();
     }
 
