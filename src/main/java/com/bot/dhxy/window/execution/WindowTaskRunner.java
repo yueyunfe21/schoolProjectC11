@@ -671,7 +671,9 @@ public class WindowTaskRunner {
                                     if (pathingSnapshot != null && pathingSnapshot.hasActiveIntent()) {
                                         intervalMs = Math.min(intervalMs, WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS);
                                     }
-                                    if (windowContext.getDialogPreparationRequest() != null || preparedDialogAction != null) {
+                                    if (windowContext.getDialogPreparationRequest() != null
+                                            || windowContext.getDialogInterest().isPresent()
+                                            || preparedDialogAction != null) {
                                         intervalMs = Math.min(intervalMs, WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS);
                                     }
                                     logSlowObserverTick(taskType, executionContext, observerBranch, pathingSnapshot,
@@ -798,19 +800,27 @@ public class WindowTaskRunner {
         if (interest.getTaskType() != taskType || interest.getOperations() == null || interest.getOperations().isEmpty()) {
             return null;
         }
-        Optional<WindowDialogSnapshot> visibleDialogOpt = windowContext.getVisibleDialogSnapshot();
-        long now = System.currentTimeMillis();
+        Optional<WindowDialogSnapshot> visibleDialogOpt = windowContext.getVisibleDialogSnapshot(
+                WINDOW_DIALOG_VISIBLE_MAX_AGE_MS);
         if (visibleDialogOpt.isEmpty()
-                || visibleDialogOpt.get().getType() == DialogType.NONE
-                || now - visibleDialogOpt.get().getDetectedAtMs() > WINDOW_DIALOG_VISIBLE_MAX_AGE_MS) {
+                || visibleDialogOpt.get().getType() == DialogType.NONE) {
             return null;
         }
         PreparedDialogAction existing = windowContext.getPreparedDialogAction();
         if (existing != null) {
             if (!interest.supports(taskType, existing.getOperation())) {
-                return null;
+                long existingAgeMs = Math.max(0L, System.currentTimeMillis() - existing.getPreparedAtMs());
+                if (existingAgeMs <= WINDOW_DIALOG_VISIBLE_MAX_AGE_MS) {
+                    log.debug("{} window [{}] task dialog interest blocked by existing prepared action: task={} interestOperations={} existingOperation={} existingTarget={} existingAgeMs={}",
+                            executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                            interest.getOperations(), existing.getOperation(), existing.getTargetKeyword(),
+                            existingAgeMs);
+                    return null;
+                }
+                windowContext.clearPreparedDialogAction("stale prepared action does not match current interest");
             }
-            if (validatePreparedDialogAction(existing, taskType, executionContext)) {
+            PreparedDialogAction current = windowContext.getPreparedDialogAction();
+            if (current != null && validatePreparedDialogAction(current, taskType, executionContext)) {
                 return windowContext.getPreparedDialogAction();
             }
         }
@@ -853,12 +863,6 @@ public class WindowTaskRunner {
                                                                      long[] timingMs) {
         long methodStartedAt = System.currentTimeMillis();
         long now = System.currentTimeMillis();
-        Optional<WindowReadyEvent> recent = windowReadyEventBus.latest(
-                windowContext.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED);
-        if (recent.isPresent() && now - recent.get().getCreatedAtMs() < WINDOW_DIALOG_ATTENTION_RECENT_MS) {
-            timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
-            return null;
-        }
         try {
             String probeSource = "window-task-attention:" + taskType.getCode();
             long detectStartedAt = System.currentTimeMillis();
@@ -868,6 +872,7 @@ public class WindowTaskRunner {
                     0);
             timingMs[0] = Math.max(0L, System.currentTimeMillis() - detectStartedAt);
             if (visibleType == DialogType.NONE) {
+                windowContext.clearVisibleDialogSnapshot("runner-attention-none");
                 log.debug("{} window [{}] visible dialog probe none: task={} source={}",
                         executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, probeSource);
                 timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
@@ -886,16 +891,24 @@ public class WindowTaskRunner {
              * slow when the visible dialog is unstable; the scheduler should still learn quickly
              * that this window needs a foreground turn.
              */
-            long publishStartedAt = System.currentTimeMillis();
-            windowReadyEventBus.publish(WindowReadyEvent.builder()
-                    .windowId(windowContext.getWindowId())
-                    .hwnd(windowContext.getNativeBinding().getNativeHandle())
-                    .type(WindowReadyEventType.TASK_ATTENTION_REQUIRED)
-                    .taskType(taskType)
-                    .source("dialog-visible:" + visibleType)
-                    .createdAtMs(detectedAtMs)
-                    .build());
-            timingMs[1] = Math.max(0L, System.currentTimeMillis() - publishStartedAt);
+            Optional<WindowReadyEvent> recent = windowReadyEventBus.latest(
+                    windowContext.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED);
+            boolean publishVisibleAttention = recent.isEmpty()
+                    || now - recent.get().getCreatedAtMs() >= WINDOW_DIALOG_ATTENTION_RECENT_MS;
+            if (publishVisibleAttention) {
+                long publishStartedAt = System.currentTimeMillis();
+                windowReadyEventBus.publish(WindowReadyEvent.builder()
+                        .windowId(windowContext.getWindowId())
+                        .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                        .type(WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                        .taskType(taskType)
+                        .source("dialog-visible:" + visibleType)
+                        .createdAtMs(detectedAtMs)
+                        .build());
+                timingMs[1] = Math.max(0L, System.currentTimeMillis() - publishStartedAt);
+            } else {
+                timingMs[1] = 0L;
+            }
             WindowPathingIntent activeIntent = windowContext.getActivePathingIntent().orElse(null);
             log.info("{} window [{}] task attention published: windowId={} hwnd={} task={} visibleDialog={} preparedRoute={} activeIntentId={} activeIntentTarget={} activeIntentSource={} activeIntentAgeMs={} reason={} attentionDetectMs={} attentionPublishMs={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(),

@@ -147,6 +147,26 @@ public class WindowRuntimeContext {
         return Optional.ofNullable(visibleDialogSnapshot.get());
     }
 
+    /**
+     * Return the latest visible dialog observation only while it is still fresh.
+     *
+     * @param maxAgeMs maximum accepted age in milliseconds; non-positive values reject all cached
+     *                 observations.
+     * @return fresh visible dialog snapshot, or empty when absent/stale.
+     */
+    public Optional<WindowDialogSnapshot> getVisibleDialogSnapshot(long maxAgeMs) {
+        WindowDialogSnapshot snapshot = visibleDialogSnapshot.get();
+        if (snapshot == null || maxAgeMs <= 0L) {
+            return Optional.empty();
+        }
+        long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getDetectedAtMs());
+        if (ageMs > maxAgeMs) {
+            clearVisibleDialogSnapshot("stale:" + ageMs + "ms");
+            return Optional.empty();
+        }
+        return Optional.of(snapshot);
+    }
+
     public Optional<WindowDialogInterest> getDialogInterest() {
         WindowDialogInterest interest = dialogInterest.get();
         if (interest == null) {

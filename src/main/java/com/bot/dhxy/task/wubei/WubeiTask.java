@@ -1092,9 +1092,6 @@ public class WubeiTask implements GameTask {
                 "accept NPC navigation not arrived: " + nav.getStatus() + " " + nav.getMessage());
         }
 
-
-        TaskSleep.sleepOrStop(context, TRACKER_REFRESH_AFTER_ACCEPT_MS, "Wubei task interrupted");
-
         return WubeiStepOutcome.continueTo(
             state.next(WubeiPhase.WAIT_TEAM_RETURN, TEAM_RETURN_BEFORE_ACCEPT_SOURCE),
             "accept NPC arrived; wait team return before accepting task");
