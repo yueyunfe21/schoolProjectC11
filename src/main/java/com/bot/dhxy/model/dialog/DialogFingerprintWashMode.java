@@ -6,5 +6,6 @@ package com.bot.dhxy.model.dialog;
 public enum DialogFingerprintWashMode {
     GREEN,
     YELLOW,
+    WHITE,
     TEMPLATE_SPECIFIC
 }

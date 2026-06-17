@@ -78,6 +78,11 @@ public class DialogService {
     private static final int CROP_TOP_Y = 42;
     private static final int CROP_DEV_Y = 58;
     private static final int CROP_LEFT_X = 161;
+    private static final int STORY_MIN_TEXT_PIXELS = 450;
+    private static final int STORY_MIN_TEXT_ROWS = 10;
+    private static final int STORY_MIN_MAX_ROW_WHITE = 40;
+    private static final int STORY_MIN_MAX_CLUSTERS = 20;
+    private static final int STORY_MIN_MAX_SPAN = 120;
 
     private static final int DIALOG_LARGE_X = 250;
     private static final int DIALOG_LARGE_Y = 312;
@@ -689,23 +694,91 @@ public class DialogService {
                                                                        int relativeX,
                                                                        int relativeY,
                                                                        String optionText) {
+        return prepareRememberedChoiceOption(source, DialogOperation.ROUTE_TRANSFER,
+                targetKeyword, relativeX, relativeY, optionText, true);
+    }
+
+    public Optional<PreparedDialogAction> prepareRememberedChoiceOption(String source,
+                                                                        DialogOperation operation,
+                                                                        String targetKeyword,
+                                                                        int relativeX,
+                                                                        int relativeY,
+                                                                        String optionText,
+                                                                        boolean verifyDialogType) {
         long startedAt = System.currentTimeMillis();
-        DialogDetection detection = detectDialogSnapshotDirect("prepare-route-memory:" + source, false, 0);
-        if (detection == null || detection.type() != DialogType.OPTION || detection.image() == null
+        DialogDetection detection = detectDialogSnapshotDirect("prepare-choice-memory:" + source, false, 0);
+        boolean typeAccepted = !verifyDialogType || detection != null && detection.type() == DialogType.OPTION;
+        if (detection == null || !typeAccepted || detection.image() == null
                 || detection.dialogRect() == null) {
-            log.info("dialog prepare remembered route miss: source={} target={} type={} hasImage={} totalMs={}",
-                    source, targetKeyword,
+            log.info("dialog prepare remembered choice miss: source={} operation={} target={} type={} hasImage={} totalMs={}",
+                    source, operation, targetKeyword,
                     detection == null ? null : detection.type(),
                     detection != null && detection.image() != null,
                     Math.max(0L, System.currentTimeMillis() - startedAt));
             return Optional.empty();
         }
         PreparedDialogAction action = buildRememberedPreparedDialogAction(
-                source, targetKeyword, relativeX, relativeY, optionText, detection);
-        log.info("dialog prepare remembered route result: source={} target={} matched={} rel=({}, {}) prepared={} totalMs={}",
-                source, targetKeyword, optionText, relativeX, relativeY, action != null,
+                source, operation, targetKeyword, relativeX, relativeY, optionText, detection);
+        log.info("dialog prepare remembered choice result: source={} operation={} target={} matched={} rel=({}, {}) prepared={} totalMs={}",
+                source, operation, targetKeyword, optionText, relativeX, relativeY, action != null,
                 Math.max(0L, System.currentTimeMillis() - startedAt));
         return Optional.ofNullable(action);
+    }
+
+    /**
+     * Prepare a known green-template option without sending input.
+     *
+     * @param source diagnostic source for logs.
+     * @param operation operation stored on the prepared action.
+     * @param specs ordered green-template candidates; first match wins, same as the click path.
+     * @param verifyDialogType true when the dialog must be classified as OPTION before matching.
+     * @return prepared click action, or empty when no candidate is visible.
+     */
+    public Optional<PreparedDialogAction> prepareGreenTemplateOption(String source,
+                                                                     DialogOperation operation,
+                                                                     List<GreenTemplateClickSpec> specs,
+                                                                     boolean verifyDialogType) {
+        DialogHandleRequest request = DialogHandleRequest.handleGreenTemplateOption(source, specs, verifyDialogType);
+        return prepareGreenTemplateOption(request, operation);
+    }
+
+    /**
+     * Prepare a known white story template without sending input.
+     *
+     * @param source diagnostic source for logs.
+     * @param operation operation stored on the prepared action.
+     * @param specs ordered white-template candidates; first match wins.
+     * @return prepared story signal; {@code clickRequired=false} because white story templates are
+     *         semantic markers, not click targets.
+     */
+    public Optional<PreparedDialogAction> prepareWhiteStoryTemplate(String source,
+                                                                    DialogOperation operation,
+                                                                    List<WhiteTemplateSpec> specs) {
+        DialogDetection detection = detectDialogSnapshotDirect("prepare-white-story:" + source, false, 0);
+        if (detection == null || detection.image() == null || detection.dialogRect() == null) {
+            log.info("dialog prepare white story miss: source={} operation={} type={} hasImage={}",
+                    source, operation, detection == null ? null : detection.type(),
+                    detection != null && detection.image() != null);
+            return Optional.empty();
+        }
+        DialogHandleRequest request = DialogHandleRequest.verifyWhiteTemplates(source, specs);
+        DialogResult result = verifyWhiteStoryTemplate(request, detection);
+        if (result.getStatus() != DialogResultStatus.WHITE_TEMPLATE_VISIBLE) {
+            return Optional.empty();
+        }
+        return buildTemplatePreparedDialogAction(
+                source,
+                operation,
+                result.getActionKey(),
+                result.getMatchedText(),
+                result.getRelativeX(),
+                result.getRelativeY(),
+                result.getAbsoluteX(),
+                result.getAbsoluteY(),
+                detection,
+                "white",
+                detection.rawPath(),
+                false);
     }
 
     /**
@@ -1127,7 +1200,13 @@ public class DialogService {
         frame.flush();
 
         int totalTextPixels = thinWhiteCount + greenCount;
-        boolean story = totalTextPixels > 200 && textLineStats.matched();
+        // A real story prompt has multiple dense glyph rows. Scene highlights and white clothing can
+        // produce a few thin-white rows, so keep this stricter than the row-shape helper's baseline.
+        boolean story = totalTextPixels >= STORY_MIN_TEXT_PIXELS
+                && textLineStats.qualifyingRows() >= STORY_MIN_TEXT_ROWS
+                && textLineStats.maxWhitePixelsInRow() >= STORY_MIN_MAX_ROW_WHITE
+                && textLineStats.maxClustersInRow() >= STORY_MIN_MAX_CLUSTERS
+                && textLineStats.maxSpanInRow() >= STORY_MIN_MAX_SPAN;
         if (story) {
             log.info("dialog story upper check: reason={} rect={} raw={} thinWhite={} green={} total={} textRows={} maxRowWhite={} maxClusters={} maxSpan={} whitePath={} greenPath={} result={}",
                     reason, ImagePreprocessor.rectToString(area), storyRawPath, thinWhiteCount, greenCount,
@@ -1356,6 +1435,7 @@ public class DialogService {
     }
 
     private PreparedDialogAction buildRememberedPreparedDialogAction(String source,
+                                                                     DialogOperation operation,
                                                                      String targetKeyword,
                                                                      int relativeX,
                                                                      int relativeY,
@@ -1390,7 +1470,7 @@ public class DialogService {
                 long now = System.currentTimeMillis();
                 return PreparedDialogAction.builder()
                         .dialogType(detection.type())
-                        .operation(DialogOperation.ROUTE_TRANSFER)
+                        .operation(operation)
                         .targetKeyword(targetKeyword)
                         .matchedText(optionText == null || optionText.isBlank() ? "remembered-option" : optionText)
                         .relativeX(relativeX)
@@ -1427,12 +1507,87 @@ public class DialogService {
         return right > left && bottom > top ? new int[]{left, top, right, bottom} : null;
     }
 
+    private Optional<PreparedDialogAction> buildTemplatePreparedDialogAction(String source,
+                                                                            DialogOperation operation,
+                                                                            String targetKeyword,
+                                                                            String matchedText,
+                                                                            Integer relativeX,
+                                                                            Integer relativeY,
+                                                                            Integer absoluteX,
+                                                                            Integer absoluteY,
+                                                                            DialogDetection detection,
+                                                                            String washVariant,
+                                                                            String washedPath,
+                                                                            boolean clickRequired) {
+        if (detection == null || detection.dialogRect() == null
+                || relativeX == null || relativeY == null
+                || absoluteX == null || absoluteY == null) {
+            return Optional.empty();
+        }
+        BufferedImage washed = ImagePreprocessor.pathToBufferedImage(washedPath);
+        if (washed == null) {
+            return Optional.empty();
+        }
+        try {
+            int[] localRect = buildRememberedValidationLocalRect(relativeX, relativeY,
+                    washed.getWidth(), washed.getHeight());
+            if (localRect == null) {
+                return Optional.empty();
+            }
+            BufferedImage crop = ImagePreprocessor.cropCopy(
+                    washed,
+                    localRect[0],
+                    localRect[1],
+                    localRect[2] - localRect[0],
+                    localRect[3] - localRect[1]);
+            if (crop == null) {
+                return Optional.empty();
+            }
+            try {
+                String fingerprint = ImagePreprocessor.buildBinaryFingerprint(crop);
+                if (fingerprint.isBlank()) {
+                    return Optional.empty();
+                }
+                int[] dialogRect = detection.dialogRect();
+                long now = System.currentTimeMillis();
+                return Optional.of(PreparedDialogAction.builder()
+                        .dialogType(detection.type())
+                        .operation(operation)
+                        .targetKeyword(targetKeyword)
+                        .matchedText(matchedText)
+                        .relativeX(relativeX)
+                        .relativeY(relativeY)
+                        .absoluteX(absoluteX)
+                        .absoluteY(absoluteY)
+                        .validationLeft(dialogRect[0] + localRect[0])
+                        .validationTop(dialogRect[1] + localRect[1])
+                        .validationRight(dialogRect[0] + localRect[2])
+                        .validationBottom(dialogRect[1] + localRect[3])
+                        .washMode(resolveFingerprintWashMode(washVariant))
+                        .fingerprint(fingerprint)
+                        .clickRequired(clickRequired)
+                        .preparedAtMs(now)
+                        .lastVerifiedAtMs(now)
+                        .source(source)
+                        .debugImagePath(washedPath)
+                        .build());
+            } finally {
+                crop.flush();
+            }
+        } finally {
+            washed.flush();
+        }
+    }
+
     private DialogFingerprintWashMode resolveFingerprintWashMode(String variantName) {
         if ("yellow".equalsIgnoreCase(variantName)) {
             return DialogFingerprintWashMode.YELLOW;
         }
         if ("green".equalsIgnoreCase(variantName)) {
             return DialogFingerprintWashMode.GREEN;
+        }
+        if ("white".equalsIgnoreCase(variantName)) {
+            return DialogFingerprintWashMode.WHITE;
         }
         return DialogFingerprintWashMode.TEMPLATE_SPECIFIC;
     }
@@ -1468,6 +1623,95 @@ public class DialogService {
             return true;
         });
         return completed ? result.get() : DialogResult.simple(DialogResultStatus.INTERRUPTED, DialogType.NONE);
+    }
+
+    private Optional<PreparedDialogAction> prepareGreenTemplateOption(DialogHandleRequest request,
+                                                                      DialogOperation operation) {
+        long latencyStart = LatencyMetrics.start();
+        try {
+            List<GreenTemplateClickSpec> specs = request.getGreenTemplateSpecs();
+            if (specs == null || specs.isEmpty()) {
+                log.warn("dialog prepare green template requested without specs: reason={}",
+                        request.getSourceTask());
+                return Optional.empty();
+            }
+
+            DialogType type = DialogType.OPTION;
+            if (request.isVerifyDialogType()) {
+                type = detectDialogSnapshotDirect("green-template-prepare:" + request.getSourceTask(), false).type();
+                if (type != DialogType.OPTION) {
+                    log.info("dialog prepare green template skipped: reason={} operation={} type={}",
+                            request.getSourceTask(), operation, type);
+                    return Optional.empty();
+                }
+            }
+
+            int[] rect = getDialogRect();
+            String rawPath = windowScopedTempPath.resolve("dialog_green_prepare_raw.png");
+            String washedPath = windowScopedTempPath.resolve("dialog_green_prepare_washed.png");
+            if (!tracker.captureToFile("dialog-green-prepare", rawPath, rect[0], rect[1], rect[2], rect[3])) {
+                log.warn("dialog prepare green template capture failed: reason={} operation={}",
+                        request.getSourceTask(), operation);
+                return Optional.empty();
+            }
+            ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(rawPath, washedPath);
+
+            StringBuilder missDetails = new StringBuilder();
+            for (GreenTemplateClickSpec spec : specs) {
+                if (spec == null || spec.templatePath() == null || spec.templatePath().isBlank()) {
+                    continue;
+                }
+                double[] result = ImageFinder.find(washedPath, spec.templatePath(), 0.85);
+                if (result == null || result.length < 2) {
+                    double[] best = ImageFinder.find(washedPath, spec.templatePath(), -1.0);
+                    if (!missDetails.isEmpty()) {
+                        missDetails.append("; ");
+                    }
+                    missDetails.append(spec.name())
+                            .append(" template=").append(spec.templatePath())
+                            .append(" best=").append(formatTemplateMatch(best));
+                    continue;
+                }
+
+                Point optionPoint = coordinateHelper.resolveMatchedPointInRect(rect, result);
+                Point safeClick = coordinateHelper.getRandomizedPoint(
+                        optionPoint,
+                        spec.minOffsetX(),
+                        spec.maxOffsetX(),
+                        spec.randomRadiusY());
+                Optional<PreparedDialogAction> prepared = buildTemplatePreparedDialogAction(
+                        request.getSourceTask(),
+                        operation,
+                        spec.name(),
+                        spec.templatePath(),
+                        safeClick.x - rect[0],
+                        safeClick.y - rect[1],
+                        safeClick.x,
+                        safeClick.y,
+                        DialogDetection.builder()
+                                .type(type)
+                                .dialogRect(rect)
+                                .rawPath(rawPath)
+                                .build(),
+                        "green",
+                        washedPath,
+                        true);
+                log.info("dialog prepare green template hit: reason={} operation={} name={} template={} match=({}, {}) click=({}, {}) prepared={}",
+                        request.getSourceTask(), operation, spec.name(), spec.templatePath(),
+                        optionPoint.x, optionPoint.y, safeClick.x, safeClick.y, prepared.isPresent());
+                return prepared;
+            }
+
+            log.info("dialog prepare green template no hit: reason={} operation={} candidates={} rect=({}, {})-({}, {}) raw={} washed={} missDetails=[{}]",
+                    request.getSourceTask(), operation, specs.size(), rect[0], rect[1], rect[2], rect[3],
+                    rawPath, washedPath, missDetails);
+            return Optional.empty();
+        } finally {
+            LatencyMetrics.info(log, "dialog.prepareGreenTemplate", latencyStart,
+                    "operation=" + operation
+                            + " reason=" + request.getSourceTask()
+                            + " specCount=" + (request.getGreenTemplateSpecs() == null ? 0 : request.getGreenTemplateSpecs().size()));
+        }
     }
 
     private DialogResult handleGreenTemplateOptionDirect(DialogHandleRequest request) {

@@ -13,6 +13,8 @@ import lombok.Value;
  *
  * @param windowId owning window runtime id; null only for standalone debug usage.
  * @param hwnd native window handle string when available.
+ * @param intentId route/pathing intent id this action was prepared for; null for non-route actions
+ *                 or legacy debug actions.
  * @param dialogType detected dialog frame type.
  * @param operation business operation this prepared action answers, such as route transfer.
  * @param targetKeyword expected target keyword for operation matching; null for operation-only
@@ -28,6 +30,8 @@ import lombok.Value;
  * @param validationBottom screen-absolute validation crop bottom.
  * @param washMode color-cleaning mode used before fingerprinting the validation crop.
  * @param fingerprint binary fingerprint string for the cleaned validation crop.
+ * @param clickRequired whether consuming task code should click {@code absoluteX/absoluteY}; false
+ *                      for prepared story signals that only report visible text.
  * @param preparedAtMs epoch millis when full OCR/template matching prepared this action.
  * @param lastVerifiedAtMs epoch millis when watcher last confirmed the fingerprint still matched.
  * @param source source task/log label.
@@ -38,6 +42,7 @@ import lombok.Value;
 public class PreparedDialogAction {
     String windowId;
     String hwnd;
+    String intentId;
     DialogType dialogType;
     DialogOperation operation;
     String targetKeyword;
@@ -52,6 +57,8 @@ public class PreparedDialogAction {
     int validationBottom;
     DialogFingerprintWashMode washMode;
     String fingerprint;
+    @Builder.Default
+    boolean clickRequired = true;
     long preparedAtMs;
     long lastVerifiedAtMs;
     String source;

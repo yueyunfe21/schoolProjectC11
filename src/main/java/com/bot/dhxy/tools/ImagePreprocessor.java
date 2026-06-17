@@ -478,6 +478,67 @@ public class ImagePreprocessor {
         }
     }
 
+    /**
+     * Keep thin white dialog glyphs from an in-memory crop.
+     *
+     * <p>This mirrors the path-based white wash above. Runner prepared-action validation uses this
+     * overload so it can fingerprint a small dialog crop without writing another temp file.</p>
+     *
+     * @param img source crop in Java image coordinates; null returns null.
+     * @return black/white mask where kept white glyph pixels are white.
+     */
+    public static BufferedImage washThinWhiteTextToBlackAndWhite(BufferedImage img) {
+        if (img == null) {
+            return null;
+        }
+        BufferedImage convertedImg = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
+        Graphics2D graphics = convertedImg.createGraphics();
+        try {
+            graphics.drawImage(img, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+
+        byte[] data = ((java.awt.image.DataBufferByte) convertedImg.getRaster().getDataBuffer()).getData();
+        Mat src = new Mat(img.getHeight(), img.getWidth(), CvType.CV_8UC3);
+        src.put(0, 0, data);
+        convertedImg.flush();
+
+        Mat hsv = new Mat();
+        Mat allWhiteMask = new Mat();
+        Mat thickWhiteMask = new Mat();
+        Mat textOnlyMask = new Mat();
+        Mat kernel = null;
+        try {
+            Imgproc.cvtColor(src, hsv, Imgproc.COLOR_BGR2HSV);
+            Core.inRange(hsv, new Scalar(0, 0, 225), new Scalar(180, 15, 255), allWhiteMask);
+
+            kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, new org.opencv.core.Size(3, 3));
+            Imgproc.erode(allWhiteMask, thickWhiteMask, kernel);
+            Core.subtract(allWhiteMask, thickWhiteMask, textOnlyMask);
+
+            BufferedImage out = new BufferedImage(textOnlyMask.width(), textOnlyMask.height(), BufferedImage.TYPE_BYTE_BINARY);
+            byte[] mask = new byte[(int) (textOnlyMask.total() * textOnlyMask.channels())];
+            textOnlyMask.get(0, 0, mask);
+            int index = 0;
+            for (int y = 0; y < out.getHeight(); y++) {
+                for (int x = 0; x < out.getWidth(); x++) {
+                    out.setRGB(x, y, (mask[index++] & 0xFF) > 0 ? 0xFFFFFF : 0x000000);
+                }
+            }
+            return out;
+        } finally {
+            src.release();
+            hsv.release();
+            allWhiteMask.release();
+            thickWhiteMask.release();
+            textOnlyMask.release();
+            if (kernel != null) {
+                kernel.release();
+            }
+        }
+    }
+
     public static double getImageStandardDeviation(BufferedImage img, String debugOutputPath) {
         if (img == null) return 100.0;
 

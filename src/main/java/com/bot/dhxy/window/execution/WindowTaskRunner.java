@@ -27,10 +27,12 @@ import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.task.wubei.WubeiDialogCatalog;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
 import com.bot.dhxy.team.TeamRoleDetectionService;
 import com.bot.dhxy.team.TeamRoleStatus;
 import com.bot.dhxy.tools.ImagePreprocessor;
+import com.bot.dhxy.window.model.WindowDialogSnapshot;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
@@ -40,6 +42,7 @@ import com.bot.dhxy.window.model.WindowReadyEvent;
 import com.bot.dhxy.window.model.WindowReadyEventType;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
+import com.bot.dhxy.window.runtime.WindowHandleParser;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
 import com.bot.dhxy.window.runtime.WindowReadyEventBus;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -82,7 +85,8 @@ public class WindowTaskRunner {
     private static final long WINDOW_PATHING_COORDINATE_AWAY_STOPPED_MS = 30_000L;
     private static final long WINDOW_PATHING_SLOW_PROBE_LOG_MS = 1_500L;
     private static final long WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS = 100L;
-    private static final long WINDOW_DIALOG_PREPARED_RECENT_MS = 2_500L;
+    private static final long WINDOW_DIALOG_ATTENTION_RECENT_MS = 2_500L;
+    private static final long WINDOW_DIALOG_VISIBLE_MAX_AGE_MS = 3_000L;
     private static final int WINDOW_DIALOG_FINGERPRINT_MAX_DISTANCE = 8;
 
     private final WindowRuntimeContext windowContext;
@@ -588,11 +592,18 @@ public class WindowTaskRunner {
                                             ? autoCombatService.handleWindowCombatGuardTick(
                                                     executionContext, "window-combat-watch:" + taskType.getCode())
                                             : AutoCombatService.TickResult.NONE;
-                                    boolean dialogPreparationActive = windowContext.getDialogPreparationRequest() != null
-                                            || windowContext.getPreparedDialogAction() != null;
                                     boolean pathingIntentActive = windowContext.getActivePathingIntent().isPresent();
                                     PreparedDialogAction preparedDialogAction = null;
                                     WindowPathingSnapshot pathingSnapshot = null;
+                                    long tickStartedAt = System.currentTimeMillis();
+                                    long pathingElapsedMs = -1L;
+                                    long routePrepareElapsedMs = -1L;
+                                    long taskTrackerPrepareElapsedMs = -1L;
+                                    long attentionDetectElapsedMs = -1L;
+                                    long attentionPublishElapsedMs = -1L;
+                                    long attentionRoutePrepareElapsedMs = -1L;
+                                    long attentionTotalElapsedMs = -1L;
+                                    String observerBranch = pathingIntentActive ? "active-pathing" : "idle";
                                     if (pathingIntentActive) {
                                         /*
                                          * Pathing observation is the scheduler signal for released navigation turns.
@@ -608,20 +619,43 @@ public class WindowTaskRunner {
                                         //小地图读不到，不确定？
                                         //
                                         //里面最终会更新这些状态：
+                                        long pathingStartedAt = System.currentTimeMillis();
                                         pathingSnapshot = refreshPathingSignal(taskType, executionContext);
-                                        if (dialogPreparationActive) {
-                                            /*
-                                             * A map-route click can leave pathing marked ACTIVE while a transfer dialog
-                                             * is already open. If we wait for STOPPED_AWAY first, the task keeps yielding
-                                             * and may reopen the world map instead of consuming the dialog.
-                                             */
-                                            preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                        pathingElapsedMs = Math.max(0L, System.currentTimeMillis() - pathingStartedAt);
+                                        /*
+                                         * Route-transfer dialogs are a stronger signal than pathing state. The game
+                                         * can leave an option dialog open while the lightweight pathing probe still
+                                         * reports ACTIVE/unknown, so do not wait for STOPPED_AWAY before preparing
+                                         * the click. Phase 5 lets the runner prepare from the active intent even when
+                                         * Navigation no longer writes a DialogPreparationRequest.
+                                         */
+                                        long routePrepareStartedAt = System.currentTimeMillis();
+                                        preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                        routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
+                                        if (preparedDialogAction == null) {
+                                            preparedDialogAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
                                         }
                                     } else {
+                                        long routePrepareStartedAt = System.currentTimeMillis();
                                         preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                        routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
                                         if (preparedDialogAction == null) {
-                                            preparedDialogAction = refreshTaskTrackerPreparationSignal(taskType, executionContext);
+                                            preparedDialogAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
                                         }
+                                        if (preparedDialogAction == null) {
+                                            long taskTrackerPrepareStartedAt = System.currentTimeMillis();
+                                            preparedDialogAction = refreshTaskTrackerPreparationSignal(taskType, executionContext);
+                                            taskTrackerPrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - taskTrackerPrepareStartedAt);
+                                        }
+                                    }
+                                    if (preparedDialogAction == null) {
+                                        long[] attentionTimings = new long[] {-1L, -1L, -1L, -1L};
+                                        preparedDialogAction = publishTaskAttentionIfDialogVisible(
+                                                taskType, executionContext, attentionTimings);
+                                        attentionDetectElapsedMs = attentionTimings[0];
+                                        attentionPublishElapsedMs = attentionTimings[1];
+                                        attentionRoutePrepareElapsedMs = attentionTimings[2];
+                                        attentionTotalElapsedMs = attentionTimings[3];
                                     }
                                     long intervalMs = tick == AutoCombatService.TickResult.IN_COMBAT
                                             ? autoCombatService.getDynamicPollingIntervalMs()
@@ -632,6 +666,12 @@ public class WindowTaskRunner {
                                     if (windowContext.getDialogPreparationRequest() != null || preparedDialogAction != null) {
                                         intervalMs = Math.min(intervalMs, WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS);
                                     }
+                                    logSlowObserverTick(taskType, executionContext, observerBranch, pathingSnapshot,
+                                            preparedDialogAction, pathingElapsedMs, routePrepareElapsedMs,
+                                            taskTrackerPrepareElapsedMs, attentionDetectElapsedMs,
+                                            attentionPublishElapsedMs, attentionRoutePrepareElapsedMs,
+                                            attentionTotalElapsedMs,
+                                            Math.max(0L, System.currentTimeMillis() - tickStartedAt), intervalMs);
                                     if (!TaskSleep.sleep(intervalMs)) {
                                         break;
                                     }
@@ -645,6 +685,62 @@ public class WindowTaskRunner {
             log.warn("{} window [{}] combat watcher failed: task={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, e);
         }
+    }
+
+    /**
+     * Log only meaningful watcher latency so multi-window handoff stalls can be diagnosed without
+     * flooding the console on every 100ms dialog-preparation tick.
+     */
+    private void logSlowObserverTick(TaskType taskType,
+                                     TaskExecutionContext executionContext,
+                                     String branch,
+                                     WindowPathingSnapshot pathingSnapshot,
+                                     PreparedDialogAction preparedDialogAction,
+                                     long pathingElapsedMs,
+                                     long routePrepareElapsedMs,
+                                     long taskTrackerPrepareElapsedMs,
+                                     long attentionDetectElapsedMs,
+                                     long attentionPublishElapsedMs,
+                                     long attentionRoutePrepareElapsedMs,
+                                     long attentionTotalElapsedMs,
+                                     long totalElapsedMs,
+                                     long nextIntervalMs) {
+        boolean activePathing = pathingSnapshot != null && pathingSnapshot.hasActiveIntent();
+        boolean slow = totalElapsedMs >= 1_000L
+                || pathingElapsedMs >= 1_000L
+                || routePrepareElapsedMs >= 1_000L
+                || taskTrackerPrepareElapsedMs >= 1_000L
+                || attentionDetectElapsedMs >= 1_000L
+                || attentionPublishElapsedMs >= 1_000L
+                || attentionRoutePrepareElapsedMs >= 1_000L
+                || attentionTotalElapsedMs >= 1_000L;
+        if (!slow && preparedDialogAction == null && !activePathing) {
+            return;
+        }
+        WindowPathingIntent activeIntent = windowContext.getActivePathingIntent().orElse(null);
+        WindowPathingIntent snapshotIntent = pathingSnapshot == null ? null : pathingSnapshot.getIntent();
+        log.info("{} window [{}] window observer tick: task={} branch={} totalMs={} pathingMs={} routePrepareMs={} taskTrackerPrepareMs={} attentionDetectMs={} attentionPublishMs={} attentionRoutePrepareMs={} attentionTotalMs={} nextIntervalMs={} activeIntentId={} activeIntentTarget={} activeIntentAgeMs={} pathingState={} pathingCurrent={} pathingTarget={} preparedOperation={} preparedTarget={}",
+                executionContext.getLogPrefix(),
+                windowContext.getWindowId(),
+                taskType,
+                branch,
+                totalElapsedMs,
+                pathingElapsedMs,
+                routePrepareElapsedMs,
+                taskTrackerPrepareElapsedMs,
+                attentionDetectElapsedMs,
+                attentionPublishElapsedMs,
+                attentionRoutePrepareElapsedMs,
+                attentionTotalElapsedMs,
+                nextIntervalMs,
+                activeIntent == null ? null : activeIntent.getIntentId(),
+                activeIntent == null ? null : activeIntent.getTargetMapName(),
+                activeIntent == null ? -1L : Math.max(0L, System.currentTimeMillis() - activeIntent.getCreatedAtMs()),
+                pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                pathingSnapshot == null ? null : pathingSnapshot.getCurrentMapName(),
+                snapshotIntent == null ? null : snapshotIntent.getTargetMapName(),
+                preparedDialogAction == null ? null : preparedDialogAction.getOperation(),
+                preparedDialogAction == null ? null : preparedDialogAction.getTargetKeyword());
     }
 
     private PreparedDialogAction refreshTaskTrackerPreparationSignal(TaskType taskType,
@@ -670,6 +766,8 @@ public class WindowTaskRunner {
                             .hwnd(windowContext.getNativeBinding().getNativeHandle())
                             .build();
                     windowContext.updatePreparedDialogAction(boundAction);
+                    publishPreparedActionReady(taskType, boundAction, executionContext,
+                            "task-tracker-prepared");
                     log.info("{} window [{}] task tracker panel prepared: task={} operation={} click=({}, {}) elapsedMs={}",
                             executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
                             boundAction.getOperation(), boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
@@ -679,96 +777,445 @@ public class WindowTaskRunner {
                 .orElse(null);
     }
 
+    private PreparedDialogAction refreshWubeiDialogPreparationSignal(TaskType taskType,
+                                                                     TaskExecutionContext executionContext) {
+        if (taskType != TaskType.WUBEI || windowContext.getDialogPreparationRequest() != null) {
+            return null;
+        }
+        Optional<WindowDialogSnapshot> visibleDialogOpt = windowContext.getVisibleDialogSnapshot();
+        long now = System.currentTimeMillis();
+        if (visibleDialogOpt.isEmpty()
+                || visibleDialogOpt.get().getType() == DialogType.NONE
+                || now - visibleDialogOpt.get().getDetectedAtMs() > WINDOW_DIALOG_VISIBLE_MAX_AGE_MS) {
+            return null;
+        }
+        WindowDialogSnapshot visibleDialog = visibleDialogOpt.get();
+        PreparedDialogAction existing = windowContext.getPreparedDialogAction();
+        if (existing != null) {
+            if (!isWubeiPreparedOperation(existing.getOperation())) {
+                return null;
+            }
+            if (validatePreparedDialogAction(existing, taskType, executionContext)) {
+                return windowContext.getPreparedDialogAction();
+            }
+        }
+
+        long startedAt = System.currentTimeMillis();
+        String source = "window-wubei-dialog-prepare:" + taskType.getCode();
+        Optional<PreparedDialogAction> prepared = dialogService.prepareGreenTemplateOption(
+                source + ":enterBattle",
+                DialogOperation.WUBEI_ENTER_BATTLE,
+                WubeiDialogCatalog.enterBattleSpecs(),
+                false);
+        if (prepared.isEmpty()) {
+            prepared = prepareRememberedWubeiAcceptOption(source + ":acceptMemory");
+        }
+        if (prepared.isEmpty()) {
+            prepared = dialogService.prepareGreenTemplateOption(
+                    source + ":acceptTask",
+                    DialogOperation.WUBEI_ACCEPT_TASK,
+                    WubeiDialogCatalog.acceptTaskSpecs(),
+                    true);
+        }
+        if (prepared.isEmpty()) {
+            prepared = dialogService.prepareWhiteStoryTemplate(
+                    source + ":probeStory",
+                    DialogOperation.WUBEI_PROBE_STORY,
+                    WubeiDialogCatalog.probeStorySpecs());
+        }
+        return prepared
+                .map(action -> {
+                    PreparedDialogAction boundAction = action.toBuilder()
+                            .windowId(windowContext.getWindowId())
+                            .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                            .build();
+                    windowContext.updatePreparedDialogAction(boundAction);
+                    publishPreparedActionReady(taskType, boundAction, executionContext,
+                            "wubei-dialog-prepared");
+                    log.info("{} window [{}] wubei dialog prepared: task={} operation={} target={} matched={} click=({}, {}) clickRequired={} elapsedMs={}",
+                            executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                            boundAction.getOperation(), boundAction.getTargetKeyword(),
+                            normalizeMessage(boundAction.getMatchedText()),
+                            boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
+                            boundAction.isClickRequired(),
+                            Math.max(0L, System.currentTimeMillis() - startedAt));
+                    return boundAction;
+                })
+                .orElse(null);
+    }
+
+    private Optional<PreparedDialogAction> prepareRememberedWubeiAcceptOption(String source) {
+        Optional<DialogChoiceMemoryService.DialogChoiceEntry> remembered =
+                dialogChoiceMemoryService.findUsable(
+                        WubeiDialogCatalog.TASK_CODE,
+                        "acceptTask",
+                        WubeiDialogCatalog.ACCEPT_NPC_NAME);
+        if (remembered.isEmpty()) {
+            return Optional.empty();
+        }
+        DialogChoiceMemoryService.DialogChoiceEntry entry = remembered.get();
+        return dialogService.prepareRememberedChoiceOption(
+                source,
+                DialogOperation.WUBEI_ACCEPT_TASK,
+                WubeiDialogCatalog.OPTION_ACCEPT_TASK,
+                entry.relativeX,
+                entry.relativeY,
+                entry.optionText,
+                false);
+    }
+
+    private PreparedDialogAction publishTaskAttentionIfDialogVisible(TaskType taskType,
+                                                                     TaskExecutionContext executionContext,
+                                                                     long[] timingMs) {
+        long methodStartedAt = System.currentTimeMillis();
+        long now = System.currentTimeMillis();
+        Optional<WindowReadyEvent> recent = windowReadyEventBus.latest(
+                windowContext.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED);
+        if (recent.isPresent() && now - recent.get().getCreatedAtMs() < WINDOW_DIALOG_ATTENTION_RECENT_MS) {
+            timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
+            return null;
+        }
+        try {
+            String probeSource = "window-task-attention:" + taskType.getCode();
+            long detectStartedAt = System.currentTimeMillis();
+            DialogType visibleType = dialogService.detectDialogTypeNoFocus(
+                    probeSource,
+                    false,
+                    0);
+            timingMs[0] = Math.max(0L, System.currentTimeMillis() - detectStartedAt);
+            if (visibleType == DialogType.NONE) {
+                log.debug("{} window [{}] visible dialog probe none: task={} source={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, probeSource);
+                timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
+                return null;
+            }
+            long detectedAtMs = System.currentTimeMillis();
+            windowContext.updateVisibleDialogSnapshot(WindowDialogSnapshot.builder()
+                    .windowId(windowContext.getWindowId())
+                    .hwnd(WindowHandleParser.parseHandle(windowContext.getNativeBinding().getNativeHandle()))
+                    .type(visibleType)
+                    .source(probeSource)
+                    .detectedAtMs(detectedAtMs)
+                    .build(), "runner-attention-probe");
+            /*
+             * Publish the soft wake before any route OCR/template preparation. Preparation can be
+             * slow when the visible dialog is unstable; the scheduler should still learn quickly
+             * that this window needs a foreground turn.
+             */
+            long publishStartedAt = System.currentTimeMillis();
+            windowReadyEventBus.publish(WindowReadyEvent.builder()
+                    .windowId(windowContext.getWindowId())
+                    .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                    .type(WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                    .taskType(taskType)
+                    .source("dialog-visible:" + visibleType)
+                    .createdAtMs(detectedAtMs)
+                    .build());
+            timingMs[1] = Math.max(0L, System.currentTimeMillis() - publishStartedAt);
+            WindowPathingIntent activeIntent = windowContext.getActivePathingIntent().orElse(null);
+            log.info("{} window [{}] task attention published: windowId={} hwnd={} task={} visibleDialog={} preparedRoute={} activeIntentId={} activeIntentTarget={} activeIntentSource={} activeIntentAgeMs={} reason={} attentionDetectMs={} attentionPublishMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                    taskType, visibleType, false,
+                    activeIntent == null ? null : activeIntent.getIntentId(),
+                    activeIntent == null ? null : activeIntent.getTargetMapName(),
+                    activeIntent == null ? null : activeIntent.getSource(),
+                    activeIntent == null ? -1L : Math.max(0L, detectedAtMs - activeIntent.getCreatedAtMs()),
+                    "visible-first",
+                    timingMs[0], timingMs[1]);
+
+            /*
+             * If this visible option belongs to the active route intent, prepare the click while
+             * the screenshot is still fresh. The watcher still does not click or close anything;
+             * task/navigation code must later consume the prepared action atomically.
+             */
+            long prepareStartedAt = System.currentTimeMillis();
+            PreparedDialogAction preparedAction = refreshDialogPreparationSignal(taskType, executionContext);
+            if (preparedAction == null) {
+                preparedAction = refreshWubeiDialogPreparationSignal(taskType, executionContext);
+            }
+            timingMs[2] = Math.max(0L, System.currentTimeMillis() - prepareStartedAt);
+            if (preparedAction != null) {
+                long preparedPublishStartedAt = System.currentTimeMillis();
+                windowReadyEventBus.publish(WindowReadyEvent.builder()
+                        .windowId(windowContext.getWindowId())
+                        .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                        .type(WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                        .taskType(taskType)
+                        .source("dialog-visible-prepared:" + visibleType)
+                        .operation(preparedAction.getOperation())
+                        .targetKeyword(preparedAction.getTargetKeyword())
+                        .createdAtMs(System.currentTimeMillis())
+                        .build());
+                timingMs[1] = Math.max(timingMs[1],
+                        Math.max(0L, System.currentTimeMillis() - preparedPublishStartedAt));
+            }
+            timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
+            log.info("{} window [{}] task attention prepared follow-up: windowId={} hwnd={} task={} visibleDialog={} preparedRoute={} activeIntentId={} activeIntentTarget={} activeIntentSource={} activeIntentAgeMs={} reason={} attentionRoutePrepareMs={} attentionTotalMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                    taskType, visibleType, preparedAction != null,
+                    activeIntent == null ? null : activeIntent.getIntentId(),
+                    activeIntent == null ? null : activeIntent.getTargetMapName(),
+                    activeIntent == null ? null : activeIntent.getSource(),
+                    activeIntent == null ? -1L : Math.max(0L, detectedAtMs - activeIntent.getCreatedAtMs()),
+                    preparedAction == null ? "visible-only" : "visible-prepared",
+                    timingMs[2], timingMs[3]);
+            return preparedAction;
+        } catch (RuntimeException e) {
+            timingMs[3] = Math.max(0L, System.currentTimeMillis() - methodStartedAt);
+            log.debug("{} window [{}] task attention probe failed: task={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, e.getMessage());
+            return null;
+        }
+    }
+
     private PreparedDialogAction refreshDialogPreparationSignal(TaskType taskType,
                                                                 TaskExecutionContext executionContext) {
         DialogPreparationRequest request = windowContext.getDialogPreparationRequest();
-        if (request == null) {
+        WindowPathingIntent activeIntent = windowContext.getActivePathingIntent().orElse(null);
+        if (request == null && !isRoutePreparationIntent(activeIntent)) {
             return null;
         }
         long now = System.currentTimeMillis();
-        if (request.isExpired(now)) {
+        if (request != null && request.isExpired(now)) {
             windowContext.clearDialogPreparationRequest("dialog preparation request expired");
             log.info("{} window [{}] dialog preparation expired: task={} operation={} target={} source={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
                     request.getOperation(), request.getTargetKeyword(), request.getSource());
             return null;
         }
+        String targetKeyword = resolveRoutePreparationTarget(request, activeIntent);
+        String source = resolveRoutePreparationSource(request, activeIntent);
+        String intentId = activeIntent == null ? null : activeIntent.getIntentId();
+        long requestAgeMs = request == null ? -1L : Math.max(0L, now - request.getCreatedAtMs());
         PreparedDialogAction existing = windowContext.getPreparedDialogAction();
-        if (existing != null && existing.matches(request.getOperation(), request.getTargetKeyword())) {
+        if (existing != null && existing.matches(DialogOperation.ROUTE_TRANSFER, targetKeyword)
+                && (existing.getIntentId() == null || Objects.equals(existing.getIntentId(), intentId))) {
             if (validatePreparedDialogAction(existing, taskType, executionContext)) {
                 return windowContext.getPreparedDialogAction();
             }
         }
-        if (request.getOperation() != DialogOperation.ROUTE_TRANSFER) {
+        if (request != null && request.getOperation() != DialogOperation.ROUTE_TRANSFER) {
+            logRouteDialogPreparation("skipped-unsupported-operation", taskType, executionContext,
+                    request, activeIntent, targetKeyword, null, requestAgeMs, 0L, null, null, 0, 0);
+            return null;
+        }
+        if (targetKeyword == null) {
+            if (request != null) {
+                windowContext.markDialogPreparationFailed(request, "missing route target");
+            }
+            logRouteDialogPreparation("missing-target", taskType, executionContext,
+                    request, activeIntent, null, null, requestAgeMs, 0L, null, null, 0, 0);
+            return null;
+        }
+        Optional<WindowDialogSnapshot> visibleSnapshot = findUsableRouteDialogSnapshot(
+                taskType, executionContext, request, activeIntent, targetKeyword, now, requestAgeMs);
+        if (visibleSnapshot.isEmpty()) {
             return null;
         }
         long startedAt = System.currentTimeMillis();
         try {
-            DialogType visibleType = dialogService.detectDialogTypeNoFocus(
-                    "window-dialog-preparation:" + taskType.getCode() + ":" + request.getTargetKeyword(),
-                    false,
-                    0);
-            if (visibleType != DialogType.OPTION) {
-                log.debug("{} window [{}] dialog preparation probe skipped: task={} operation={} target={} visibleType={} requestAgeMs={}",
-                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                        request.getOperation(), request.getTargetKeyword(), visibleType,
-                        Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()));
-                return null;
+            logRouteDialogPreparation("start", taskType, executionContext, request, activeIntent, targetKeyword,
+                    visibleSnapshot.get(),
+                    request == null ? -1L : Math.max(0L, startedAt - request.getCreatedAtMs()),
+                    0L, null, null, 0, 0);
+            if (request != null) {
+                windowContext.markDialogPreparationStarted(request);
             }
-            log.info("{} window [{}] dialog preparation probe start: task={} operation={} target={} source={} requestAgeMs={}",
-                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                    request.getOperation(), request.getTargetKeyword(), request.getSource(),
-                    Math.max(0L, startedAt - request.getCreatedAtMs()));
-            windowContext.markDialogPreparationStarted(request);
-            Optional<PreparedDialogAction> prepared = request.getRememberedRelativeX() != null
-                    && request.getRememberedRelativeY() != null
+            DialogChoiceMemoryService.DialogChoiceEntry remembered = request == null
+                    ? findRouteMemoryForIntent(activeIntent, targetKeyword)
+                    : null;
+            Integer rememberedRelativeX = request == null
+                    ? remembered == null ? null : remembered.relativeX
+                    : request.getRememberedRelativeX();
+            Integer rememberedRelativeY = request == null
+                    ? remembered == null ? null : remembered.relativeY
+                    : request.getRememberedRelativeY();
+            String rememberedOptionText = request == null
+                    ? remembered == null ? null : remembered.optionText
+                    : request.getRememberedOptionText();
+            Optional<PreparedDialogAction> prepared = rememberedRelativeX != null && rememberedRelativeY != null
                     ? dialogService.prepareRememberedRouteOption(
-                    request.getSource(),
-                    request.getTargetKeyword(),
-                    request.getRememberedRelativeX(),
-                    request.getRememberedRelativeY(),
-                    request.getRememberedOptionText())
-                    : dialogService.prepareRouteKeywordOption(request.getSource(), request.getTargetKeyword());
+                    source,
+                    targetKeyword,
+                    rememberedRelativeX,
+                    rememberedRelativeY,
+                    rememberedOptionText)
+                    : dialogService.prepareRouteKeywordOption(source, targetKeyword);
             return prepared
                     .map(action -> {
                         DialogPreparationRequest currentRequest = windowContext.getDialogPreparationRequest();
-                        //检查 request 有没有过期/被替换,因为 watcher 准备 action 可能耗时，期间任务线程可能改变
-                        if (currentRequest != request) {
+                        WindowPathingIntent currentIntent = windowContext.getActivePathingIntent().orElse(null);
+                        /*
+                         * OCR/template work can take noticeable time. Before publishing the click
+                         * candidate, ensure the request or active pathing intent that authorized it
+                         * is still the same one.
+                         */
+                        if (request != null && currentRequest != request) {
                             windowContext.markDialogPreparationFailed(request, "stale request");
-                            log.info("{} window [{}] discard stale dialog preparation: task={} operation={} target={} elapsedMs={}",
-                                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                                    request.getOperation(), request.getTargetKeyword(),
-                                    Math.max(0L, System.currentTimeMillis() - startedAt));
+                            logRouteDialogPreparation("stale-request", taskType, executionContext,
+                                    request, activeIntent, targetKeyword, visibleSnapshot.get(),
+                                    Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()),
+                                    Math.max(0L, System.currentTimeMillis() - startedAt),
+                                    action.getMatchedText(), null, 0, 0);
+                            return null;
+                        }
+                        if (request == null && !isSamePathingIntent(activeIntent, currentIntent)) {
+                            logRouteDialogPreparation("stale-intent", taskType, executionContext,
+                                    null, activeIntent, targetKeyword, visibleSnapshot.get(),
+                                    -1L, Math.max(0L, System.currentTimeMillis() - startedAt),
+                                    action.getMatchedText(), null, 0, 0);
                             return null;
                         }
                         PreparedDialogAction boundAction = action.toBuilder()
                                 .windowId(windowContext.getWindowId())
                                 .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                                .intentId(intentId)
+                                .targetKeyword(targetKeyword)
                                 .build();
                         windowContext.updatePreparedDialogAction(boundAction);
-                        log.info("{} window [{}] dialog prepared: task={} operation={} target={} matched={} click=({}, {}) elapsedMs={}",
-                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                                request.getOperation(), request.getTargetKeyword(), boundAction.getMatchedText(),
-                                boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
-                                Math.max(0L, System.currentTimeMillis() - startedAt));
+                        publishPreparedActionReady(taskType, boundAction, executionContext,
+                                "route-dialog-prepared");
+                        logRouteDialogPreparation("prepared", taskType, executionContext,
+                                request, activeIntent, targetKeyword, visibleSnapshot.get(),
+                                request == null ? -1L : Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()),
+                                Math.max(0L, System.currentTimeMillis() - startedAt),
+                                boundAction.getMatchedText(), boundAction.getSource(),
+                                boundAction.getAbsoluteX(), boundAction.getAbsoluteY());
                         return boundAction;
                     })
                     .orElseGet(() -> {
-                        windowContext.markDialogPreparationFailed(request, "prepare miss");
-                        log.info("{} window [{}] dialog preparation probe miss: task={} operation={} target={} elapsedMs={}",
-                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                                request.getOperation(), request.getTargetKeyword(),
-                                Math.max(0L, System.currentTimeMillis() - startedAt));
+                        if (request != null) {
+                            windowContext.markDialogPreparationFailed(request, "prepare miss");
+                        }
+                        logRouteDialogPreparation("prepare-miss", taskType, executionContext,
+                                request, activeIntent, targetKeyword, visibleSnapshot.get(),
+                                request == null ? -1L : Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()),
+                                Math.max(0L, System.currentTimeMillis() - startedAt),
+                                null, null, 0, 0);
                         return null;
                     });
         } catch (RuntimeException e) {
-            log.info("{} window [{}] dialog preparation probe failed: task={} operation={} target={} elapsedMs={} reason={}",
-                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                    request.getOperation(), request.getTargetKeyword(),
-                    Math.max(0L, System.currentTimeMillis() - startedAt), e.getMessage());
-            windowContext.markDialogPreparationFailed(request, e.getMessage());
+            if (request != null) {
+                windowContext.markDialogPreparationFailed(request, e.getMessage());
+            }
+            logRouteDialogPreparation("failed:" + normalizeMessage(e.getMessage()), taskType, executionContext,
+                    request, activeIntent, targetKeyword, visibleSnapshot.get(),
+                    request == null ? -1L : Math.max(0L, System.currentTimeMillis() - request.getCreatedAtMs()),
+                    Math.max(0L, System.currentTimeMillis() - startedAt),
+                    null, null, 0, 0);
             return null;
         }
+    }
+
+    private String resolveRoutePreparationTarget(DialogPreparationRequest request, WindowPathingIntent activeIntent) {
+        String requestTarget = normalizeNullable(request == null ? null : request.getTargetKeyword());
+        if (requestTarget != null) {
+            return requestTarget;
+        }
+        return normalizeNullable(activeIntent == null ? null : activeIntent.getTargetMapName());
+    }
+
+    private String resolveRoutePreparationSource(DialogPreparationRequest request, WindowPathingIntent activeIntent) {
+        String requestSource = normalizeNullable(request == null ? null : request.getSource());
+        if (requestSource != null) {
+            return requestSource;
+        }
+        String intentSource = normalizeNullable(activeIntent == null ? null : activeIntent.getSource());
+        return intentSource == null ? "window-route-intent" : intentSource;
+    }
+
+    private boolean isRoutePreparationIntent(WindowPathingIntent intent) {
+        return intent != null && normalizeNullable(intent.getTargetMapName()) != null;
+    }
+
+    private DialogChoiceMemoryService.DialogChoiceEntry findRouteMemoryForIntent(WindowPathingIntent intent,
+                                                                                 String targetKeyword) {
+        if (intent == null || targetKeyword == null) {
+            return null;
+        }
+        WindowPathingSnapshot snapshot = windowContext.getPathingSnapshot();
+        String fromMap = snapshot == null ? null : snapshot.getCurrentMapName();
+        return dialogChoiceMemoryService.findUsableRoute(fromMap, targetKeyword).orElse(null);
+    }
+
+    private Optional<WindowDialogSnapshot> findUsableRouteDialogSnapshot(TaskType taskType,
+                                                                         TaskExecutionContext executionContext,
+                                                                         DialogPreparationRequest request,
+                                                                         WindowPathingIntent activeIntent,
+                                                                         String targetKeyword,
+                                                                         long now,
+                                                                         long requestAgeMs) {
+        Optional<WindowDialogSnapshot> snapshot = windowContext.getVisibleDialogSnapshot();
+        if (snapshot.isEmpty()) {
+            logRouteDialogPreparation("visible-absent", taskType, executionContext, request, activeIntent, targetKeyword,
+                    null, requestAgeMs, 0L, null, null, 0, 0);
+            return Optional.empty();
+        }
+        WindowDialogSnapshot visible = snapshot.get();
+        long visibleAgeMs = ageMs(now, visible.getDetectedAtMs());
+        if (!Objects.equals(visible.getWindowId(), windowContext.getWindowId())) {
+            if (request != null) {
+                windowContext.markDialogPreparationFailed(request, "visible window mismatch");
+            }
+            logRouteDialogPreparation("visible-window-mismatch", taskType, executionContext, request, activeIntent,
+                    targetKeyword, visible, requestAgeMs, 0L, null, null, 0, 0);
+            return Optional.empty();
+        }
+        Long currentHwnd = WindowHandleParser.parseHandle(windowContext.getNativeBinding().getNativeHandle());
+        if (visible.getHwnd() == null || currentHwnd == null || !Objects.equals(visible.getHwnd(), currentHwnd)) {
+            if (request != null) {
+                windowContext.markDialogPreparationFailed(request, "visible hwnd mismatch");
+            }
+            logRouteDialogPreparation("visible-hwnd-mismatch", taskType, executionContext, request, activeIntent,
+                    targetKeyword, visible, requestAgeMs, 0L, null, null, 0, 0);
+            return Optional.empty();
+        }
+        if (visibleAgeMs > WINDOW_DIALOG_VISIBLE_MAX_AGE_MS) {
+            if (request != null) {
+                windowContext.markDialogPreparationFailed(request, "visible snapshot expired");
+            }
+            logRouteDialogPreparation("visible-expired", taskType, executionContext, request, activeIntent,
+                    targetKeyword, visible, requestAgeMs, 0L, null, null, 0, 0);
+            return Optional.empty();
+        }
+        if (visible.getType() != DialogType.OPTION) {
+            logRouteDialogPreparation("visible-not-option", taskType, executionContext, request, activeIntent,
+                    targetKeyword, visible, requestAgeMs, 0L, null, null, 0, 0);
+            return Optional.empty();
+        }
+        return snapshot;
+    }
+
+    private void logRouteDialogPreparation(String result,
+                                           TaskType taskType,
+                                           TaskExecutionContext executionContext,
+                                           DialogPreparationRequest request,
+                                           WindowPathingIntent activeIntent,
+                                           String targetKeyword,
+                                           WindowDialogSnapshot visible,
+                                           long requestAgeMs,
+                                           long elapsedMs,
+                                           String matchedText,
+                                           String actionSource,
+                                           int absoluteX,
+                                           int absoluteY) {
+        long now = System.currentTimeMillis();
+        DialogOperation operation = request == null ? DialogOperation.ROUTE_TRANSFER : request.getOperation();
+        String source = request == null
+                ? activeIntent == null ? null : activeIntent.getSource()
+                : request.getSource();
+        long intentAgeMs = activeIntent == null ? -1L : ageMs(now, activeIntent.getCreatedAtMs());
+        log.info("{} window [{}] route dialog preparation: result={} windowId={} hwnd={} intentId={} taskType={} operation={} target={} source={} actionSource={} visibleType={} visibleAgeMs={} requestAgeMs={} intentAgeMs={} matchedText={} click=({}, {}) elapsedMs={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), result,
+                windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                activeIntent == null ? null : activeIntent.getIntentId(),
+                taskType, operation, targetKeyword,
+                source, actionSource,
+                visible == null ? null : visible.getType(),
+                visible == null ? -1L : ageMs(now, visible.getDetectedAtMs()),
+                requestAgeMs, intentAgeMs, normalizeMessage(matchedText), absoluteX, absoluteY, elapsedMs);
     }
 
     private boolean validatePreparedDialogAction(PreparedDialogAction action,
@@ -797,10 +1244,31 @@ public class WindowTaskRunner {
             washed = washPreparedValidationCrop(raw, action.getWashMode());
             String currentFingerprint = ImagePreprocessor.buildBinaryFingerprint(washed);
             int distance = ImagePreprocessor.binaryFingerprintDistance(action.getFingerprint(), currentFingerprint);
-            if (action.getOperation() != DialogOperation.TASK_TRACKER_PATHING) {
-                DialogPreparationRequest currentRequest = windowContext.getDialogPreparationRequest();
-                if (currentRequest == null || currentRequest.getOperation() != action.getOperation()
-                        || !action.matches(currentRequest.getOperation(), currentRequest.getTargetKeyword())) {
+            if (action.getOperation() != DialogOperation.TASK_TRACKER_PATHING
+                    && !isWubeiPreparedOperation(action.getOperation())) {
+                WindowPathingIntent currentIntent = windowContext.getActivePathingIntent().orElse(null);
+                if (action.getIntentId() != null) {
+                    if (currentIntent == null || !Objects.equals(action.getIntentId(), currentIntent.getIntentId())) {
+                        log.debug("{} window [{}] dialog prepared action validation skipped: task={} operation={} target={} reason=intent-consumed actionIntentId={} currentIntentId={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                                action.getOperation(), action.getTargetKeyword(), action.getIntentId(),
+                                currentIntent == null ? null : currentIntent.getIntentId());
+                        return false;
+                    }
+                } else {
+                    DialogPreparationRequest currentRequest = windowContext.getDialogPreparationRequest();
+                    if (currentRequest == null || currentRequest.getOperation() != action.getOperation()
+                            || !action.matches(currentRequest.getOperation(), currentRequest.getTargetKeyword())) {
+                        log.debug("{} window [{}] dialog prepared action validation skipped: task={} operation={} target={} reason=request-consumed",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                                action.getOperation(), action.getTargetKeyword());
+                        return false;
+                    }
+                }
+                if (currentIntent != null
+                        && action.getIntentId() == null
+                        && action.getOperation() == DialogOperation.ROUTE_TRANSFER
+                        && !Objects.equals(action.getTargetKeyword(), currentIntent.getTargetMapName())) {
                     log.debug("{} window [{}] dialog prepared action validation skipped: task={} operation={} target={} reason=request-consumed",
                             executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
                             action.getOperation(), action.getTargetKeyword());
@@ -812,6 +1280,8 @@ public class WindowTaskRunner {
                         .lastVerifiedAtMs(System.currentTimeMillis())
                         .build();
                 windowContext.updatePreparedDialogAction(refreshed);
+                publishPreparedActionReady(taskType, refreshed, executionContext,
+                        "prepared-action-verified");
                 log.debug("{} window [{}] dialog prepared action verified: task={} operation={} target={} distance={} click=({}, {})",
                         executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
                         action.getOperation(), action.getTargetKeyword(), distance,
@@ -839,6 +1309,35 @@ public class WindowTaskRunner {
         }
     }
 
+    private boolean isWubeiPreparedOperation(DialogOperation operation) {
+        return operation == DialogOperation.WUBEI_ACCEPT_TASK
+                || operation == DialogOperation.WUBEI_ENTER_BATTLE
+                || operation == DialogOperation.WUBEI_PROBE_STORY;
+    }
+
+    private void publishPreparedActionReady(TaskType taskType,
+                                            PreparedDialogAction action,
+                                            TaskExecutionContext executionContext,
+                                            String reason) {
+        if (action == null || action.getOperation() == null) {
+            return;
+        }
+        windowReadyEventBus.publish(WindowReadyEvent.builder()
+                .windowId(windowContext.getWindowId())
+                .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                .type(WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                .taskType(taskType)
+                .source(reason + ":" + action.getSource())
+                .operation(action.getOperation())
+                .targetKeyword(action.getTargetKeyword())
+                .createdAtMs(System.currentTimeMillis())
+                .build());
+        log.info("{} window [{}] prepared action ready published: task={} operation={} target={} source={} reason={} click=({}, {})",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                action.getOperation(), action.getTargetKeyword(), action.getSource(), reason,
+                action.getAbsoluteX(), action.getAbsoluteY());
+    }
+
     private BufferedImage washPreparedValidationCrop(BufferedImage raw, DialogFingerprintWashMode washMode) {
         if (raw == null) {
             return null;
@@ -848,6 +1347,9 @@ public class WindowTaskRunner {
         }
         if (washMode == DialogFingerprintWashMode.GREEN) {
             return ImagePreprocessor.washGreenTextToBlackAndWhite(raw);
+        }
+        if (washMode == DialogFingerprintWashMode.WHITE) {
+            return ImagePreprocessor.washThinWhiteTextToBlackAndWhite(raw);
         }
         return ImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(raw);
     }
@@ -1032,9 +1534,11 @@ public class WindowTaskRunner {
          */
         windowReadyEventBus.publish(WindowReadyEvent.builder()
                 .windowId(windowContext.getWindowId())
+                .hwnd(windowContext.getNativeBinding().getNativeHandle())
                 .type(WindowReadyEventType.PATHING_TERMINAL)
                 .taskType(taskType)
                 .source(intent == null ? null : intent.getSource())
+                .targetKeyword(intent == null ? null : intent.getTargetMapName())
                 .pathingState(state)
                 .pathingIntent(intent)
                 .pathingSnapshot(snapshot)
@@ -1191,6 +1695,7 @@ public class WindowTaskRunner {
             return false;
         }
         return Objects.equals(left.getSource(), right.getSource())
+                && Objects.equals(left.getIntentId(), right.getIntentId())
                 && left.getType() == right.getType()
                 && Objects.equals(left.getTargetMapName(), right.getTargetMapName())
                 && Objects.equals(left.getTargetX(), right.getTargetX())
@@ -1358,6 +1863,18 @@ public class WindowTaskRunner {
 
     private String normalizeMessage(String message) {
         return message == null || message.isBlank() ? "-" : message;
+    }
+
+    private String normalizeNullable(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static long ageMs(long nowMs, long timestampMs) {
+        return timestampMs <= 0L ? -1L : Math.max(0L, nowMs - timestampMs);
     }
 
     private static class CombatWatcherHandle {
