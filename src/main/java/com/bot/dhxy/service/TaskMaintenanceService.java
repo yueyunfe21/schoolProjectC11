@@ -117,6 +117,34 @@ public class TaskMaintenanceService {
     }
 
     /**
+     * Open a short follower HP/MP recovery-only window.
+     *
+     * <p>This is intentionally weaker than {@link #openTeamPathingMaintenanceWindow(TaskExecutionContext,
+     * String, int, String)}: follower first-aid may use it, but summon-skill cleanup still requires
+     * a real leader pathing window. 黄袍怪连战 uses this gate between consecutive fights.</p>
+     *
+     * @param context current leader task context.
+     * @param teamMaintenanceKey stable task/team key.
+     * @param round one-based task round.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void openTeamFirstAidMaintenanceWindow(TaskExecutionContext context,
+                                                 String teamMaintenanceKey,
+                                                 int round,
+                                                 String sourceTask) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        activeTeamRoundByKey.put(teamKey, round);
+        String roundKey = teamRoundKey(teamKey, round);
+        TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
+                roundKey, TeamMaintenanceWindowState.FIRST_AID_WINDOW_OPEN);
+        synchronized (teamMaintenanceWindowMonitor) {
+            teamMaintenanceWindowMonitor.notifyAll();
+        }
+        log.info("{} maintenance team first-aid window opened: teamRound={} previous={} source={}",
+                logPrefix(context), roundKey, previous, sourceTask);
+    }
+
+    /**
      * Close the shared maintenance window once the leader reaches the target area or leaves pathing.
      *
      * @param context current leader task context.
@@ -132,9 +160,9 @@ public class TaskMaintenanceService {
         String roundKey = teamRoundKey(teamKey, round);
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.CLOSED);
-        if (previous == TeamMaintenanceWindowState.PATHING_WINDOW_OPEN) {
-            log.info("{} maintenance team pathing window closed: teamRound={} source={}",
-                    logPrefix(context), roundKey, sourceTask);
+        if (previous != null && previous != TeamMaintenanceWindowState.CLOSED) {
+            log.info("{} maintenance team window closed: teamRound={} previous={} source={}",
+                    logPrefix(context), roundKey, previous, sourceTask);
         }
     }
 
@@ -150,29 +178,32 @@ public class TaskMaintenanceService {
                                                       String teamMaintenanceKey) {
         String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
         Integer round = activeTeamRoundByKey.get(teamKey);
-        return round != null
-                && teamMaintenanceWindowStateByRound.get(teamRoundKey(teamKey, round))
+        if (round == null) {
+            return false;
+        }
+        return teamMaintenanceWindowStateByRound.get(teamRoundKey(teamKey, round))
                 == TeamMaintenanceWindowState.PATHING_WINDOW_OPEN;
     }
 
     /**
-     * Wait without taking the task turn until the leader opens the pathing maintenance window.
+     * Wait without taking the task turn until the leader opens a follower first-aid-safe window.
      *
      * <p>This is used by follower HP/MP recovery. A follower may already have a no-focus recovery
      * plan, but it must not focus itself while the leader is returning, accepting, or reading the
-     * next task. The leader calls {@link #openTeamPathingMaintenanceWindow(TaskExecutionContext,
-     * String, int, String)} after submitting real movement, which wakes these waiters.</p>
+     * next task. Real pathing windows and explicit first-aid windows both wake these waiters; longer
+     * summon-skill cleanup still checks the stricter {@link TeamMaintenanceWindowState#PATHING_WINDOW_OPEN}
+     * state directly.</p>
      *
      * @param context current follower context, used for stop checks and default team-key resolution.
      * @param teamMaintenanceKey formal task key that owns the current team round.
      * @param timeoutMs maximum time to wait in this call; callers may keep the pending plan and retry
      *                  later if this returns false.
-     * @return true when the pathing maintenance window is open.
+     * @return true when either a real pathing window or a first-aid-only window is open.
      */
-    public boolean awaitTeamPathingMaintenanceWindowOpen(TaskExecutionContext context,
-                                                         String teamMaintenanceKey,
-                                                         long timeoutMs) {
-        if (isTeamPathingMaintenanceWindowOpen(context, teamMaintenanceKey)) {
+    public boolean awaitTeamFirstAidMaintenanceWindowOpen(TaskExecutionContext context,
+                                                          String teamMaintenanceKey,
+                                                          long timeoutMs) {
+        if (isTeamFirstAidWindowOpen(context, teamMaintenanceKey)) {
             return true;
         }
         if (timeoutMs <= 0L) {
@@ -181,7 +212,7 @@ public class TaskMaintenanceService {
 
         long deadline = System.currentTimeMillis() + timeoutMs;
         synchronized (teamMaintenanceWindowMonitor) {
-            while (!isTeamPathingMaintenanceWindowOpen(context, teamMaintenanceKey)) {
+            while (!isTeamFirstAidWindowOpen(context, teamMaintenanceKey)) {
                 checkpoint(context);
                 long remainingMs = deadline - System.currentTimeMillis();
                 if (remainingMs <= 0L) {
@@ -196,6 +227,17 @@ public class TaskMaintenanceService {
             }
         }
         return true;
+    }
+
+    private boolean isTeamFirstAidWindowOpen(TaskExecutionContext context, String teamMaintenanceKey) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        Integer round = activeTeamRoundByKey.get(teamKey);
+        if (round == null) {
+            return false;
+        }
+        TeamMaintenanceWindowState state = teamMaintenanceWindowStateByRound.get(teamRoundKey(teamKey, round));
+        return state == TeamMaintenanceWindowState.PATHING_WINDOW_OPEN
+                || state == TeamMaintenanceWindowState.FIRST_AID_WINDOW_OPEN;
     }
 
     /**

@@ -213,9 +213,9 @@ public class AutoCombatService {
                 : state.pendingFollowerFirstAidSource;
         String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
         if (("wubei".equalsIgnoreCase(requestedTaskCode) || "xiuluo_v2".equalsIgnoreCase(requestedTaskCode))
-                && !taskMaintenanceService.awaitTeamPathingMaintenanceWindowOpen(
+                && !taskMaintenanceService.awaitTeamFirstAidMaintenanceWindowOpen(
                 context, requestedTaskCode, FOLLOWER_FIRST_AID_GATE_WAIT_MS)) {
-            log.info("{} pending follower first-aid deferred: team pathing window closed task={} requested={} role={} originalSource={}",
+            log.info("{} pending follower first-aid deferred: team first-aid gate closed task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
             return false;
         }

@@ -1,5 +1,40 @@
 # DHXY Active Work
 
+### 谢帅 - 2026-06-18 五倍黄袍怪连战战后短补给广播
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 01:13:50 左右黄袍怪连战战后，队员没有获得补血机会。
+- 日志显示部分队员有 pending first-aid，但被 `team pathing window closed` gate 拦住；另外部分队员后台预检健康所以跳过。
+- 队长战后读取左侧任务追踪仍有 `智斗黄袍|黄袍怪`，继续连战时 `chained-combat-*` 点击会 `registerPathing=false`，因此不会打开普通导航的 team maintenance window。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 黄袍怪战后不再在确认左侧任务前直接按窗口数等待。
+  - `POST_BATTLE_RECOVER` 对黄袍怪改为先进入 `RETURN_HOME` 读取左侧任务追踪。
+  - 确认左侧仍有黄袍怪后，打开 first-aid-only maintenance window 作为短补给广播。
+  - 每一场黄袍怪战斗结束后，只要左侧仍有黄袍怪，就必须打开一次 3000ms 补给广播窗口。
+  - 同一次战后检查只打开一次补给广播，避免还没进入下一场战斗时重复回到 `RETURN_HOME` 又开 gate。
+- `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`
+  - 新增 `FIRST_AID_WINDOW_OPEN`，队员战后补血可以通过，三技能仍然只认 `PATHING_WINDOW_OPEN`。
+- `src/main/java/com/bot/dhxy/service/AutoCombatService.java`
+  - pending follower first-aid 等待 first-aid-safe gate；黄袍怪短补给不会误放三技能。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍黄袍怪实测重点看：
+  - 战后如果左侧仍有 `黄袍怪`，应看到 `chained combat first-aid broadcast opened`。
+  - 有 pending first-aid 的队员不应再出现连续 `team pathing window closed`。
+  - 黄袍怪 3 秒短补给期间不应触发队员三技能维护。
+  - 广播约 3 秒后队长应继续点 `chained-combat-*` 绿字进入下一场。
+
 ### Codex - 2026-06-17 五倍白龙马 tooltip 后必须等待 Runner 进战斗结果
 
 Status: DONE / compile passed.

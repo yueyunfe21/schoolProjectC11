@@ -5,5 +5,6 @@ package com.bot.dhxy.model.maintenance;
  */
 public enum TeamMaintenanceWindowState {
     CLOSED,
+    FIRST_AID_WINDOW_OPEN,
     PATHING_WINDOW_OPEN
 }

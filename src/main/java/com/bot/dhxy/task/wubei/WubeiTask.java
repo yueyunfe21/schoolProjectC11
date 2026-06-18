@@ -179,8 +179,8 @@ public class WubeiTask implements GameTask {
     private static final int RETURN_ITEM_VERIFY_ATTEMPTS = 2;
     private static final long RETURN_VERIFY_DELAY_MS = 500L;
     private static final long MAINTENANCE_BROADCAST_HANDOFF_PER_WINDOW_MS = 2_000L;
-    private static final long CHAINED_POST_BATTLE_RECOVERY_PER_MEMBER_MS = 2_200L;
-    private static final long CHAINED_POST_BATTLE_RECOVERY_MAX_MS = 10_000L;
+    private static final long CHAINED_POST_BATTLE_FIRST_AID_BROADCAST_MS = 3_000L;
+    private static final String CHAINED_POST_BATTLE_BROADCAST_SOURCE_PREFIX = "post-battle-chained-broadcast";
     private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 2_500L;
     private static final long ENTER_BATTLE_DIALOG_BLOCK_MAX_AGE_MS = 5_000L;
     private static final long WUBEI_DIALOG_INTEREST_TTL_MS = 15_000L;
@@ -266,6 +266,7 @@ public class WubeiTask implements GameTask {
     private int currentRoundNumber;
     private boolean currentRoundChainedCombatExpected;
     private int currentRoundChainedCombatContinueCount;
+    private int currentRoundChainedCombatRecoveryBroadcastCount;
     private TaskTrackerPanelReadResult currentTrackerPanel;
     private volatile TrackerDestinationHint currentTrackerDestinationHint;
     private volatile long trackerDestinationHintRequestId;
@@ -382,6 +383,7 @@ public class WubeiTask implements GameTask {
     private void resetRoundState(int round) {
         currentRoundNumber = round;
         currentRoundChainedCombatExpected = false;
+        currentRoundChainedCombatRecoveryBroadcastCount = 0;
         currentTrackerPanel = null;
         currentTrackerDestinationHint = null;
         resetProbeRuntime();
@@ -754,15 +756,10 @@ public class WubeiTask implements GameTask {
                     nextState.source(), windowCount, MAINTENANCE_BROADCAST_HANDOFF_PER_WINDOW_MS, delayMs);
             return delayMs;
         }
-        if (nextState != null
-                && "post-battle-chained-recovered".equals(nextState.source())) {
-            int windowCount = Math.max(1, multiWindowTaskManager.getRegisteredWindowCount());
-            long memberSlots = Math.max(0, windowCount - 1L);
-            long delayMs = Math.min(CHAINED_POST_BATTLE_RECOVERY_MAX_MS,
-                    memberSlots * CHAINED_POST_BATTLE_RECOVERY_PER_MEMBER_MS);
-            log.info("[wubei] chained post-battle team recovery delay: windowCount={} memberSlots={} perMemberMs={} delayMs={}",
-                    windowCount, memberSlots, CHAINED_POST_BATTLE_RECOVERY_PER_MEMBER_MS, delayMs);
-            return delayMs;
+        if (nextState != null && isChainedPostBattleBroadcastSource(nextState.source())) {
+            log.info("[wubei] chained post-battle first-aid broadcast delay: source={} delayMs={}",
+                    nextState.source(), CHAINED_POST_BATTLE_FIRST_AID_BROADCAST_MS);
+            return CHAINED_POST_BATTLE_FIRST_AID_BROADCAST_MS;
         }
         if (nextState != null
                 && nextState.source() != null
@@ -771,6 +768,10 @@ public class WubeiTask implements GameTask {
             return configured > 0 ? configured : 3_000L;
         }
         return 0L;
+    }
+
+    private boolean isChainedPostBattleBroadcastSource(String source) {
+        return source != null && source.startsWith(CHAINED_POST_BATTLE_BROADCAST_SOURCE_PREFIX);
     }
 
     private void maybeRunLeaderPathingSummonMaintenance(TaskExecutionContext context, WubeiStepOutcome outcome) {
@@ -1154,6 +1155,7 @@ public class WubeiTask implements GameTask {
         }
         currentRoundChainedCombatExpected = containsChainedCombatTarget(currentTrackerPanel.getYellowText());
         currentRoundChainedCombatContinueCount = 0;
+        currentRoundChainedCombatRecoveryBroadcastCount = 0;
         if (currentTrackerPanel.isProbeObjective() || containsProbeTask(currentTrackerPanel.getYellowText())) {
             currentProbeTaskStartedAt = System.currentTimeMillis();
             log.info("[wubei] probe task timer started: round={} timeoutMs={} yellow='{}'",
@@ -1283,9 +1285,9 @@ public class WubeiTask implements GameTask {
          */
         TaskSleep.sleepOrStop(context, 800L, "Wubei task interrupted");
         if (currentRoundChainedCombatExpected) {
-            return WubeiStepOutcome.sharedState(
-                    state.next(WubeiPhase.RETURN_HOME, "post-battle-chained-recovered"),
-                    "chained combat post battle recovery window");
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.RETURN_HOME, "post-battle-chained-check"),
+                    "chained combat post battle; check tracker before first-aid broadcast");
         }
         return WubeiStepOutcome.continueTo(
                 state.next(WubeiPhase.RETURN_HOME, "post-battle-recovered"),
@@ -2843,6 +2845,10 @@ public class WubeiTask implements GameTask {
 
     private WubeiStepOutcome returnHomeAfterCombatOrContinueSpecialTarget(TaskExecutionContext context,
                                                                           WubeiRoundContext state) {
+        if (isChainedPostBattleBroadcastSource(state.source())) {
+            taskMaintenanceService.closeTeamMaintenanceWindow(context, TASK_CODE, state.round(),
+                    "wubei:chained-combat-first-aid-broadcast-expired");
+        }
         if (!currentRoundChainedCombatExpected) {
             if (!useReturnItemAndVerifyStartMap(context, "normal-combat")) {
                 return WubeiStepOutcome.failed(state, "return home failed");
@@ -2875,6 +2881,7 @@ public class WubeiTask implements GameTask {
             log.info("[wubei] chained combat tracker title gone after battle; treat as completed: count={}",
                     combatCount);
             currentRoundChainedCombatContinueCount = 0;
+            currentRoundChainedCombatRecoveryBroadcastCount = 0;
             if (!useReturnItemAndVerifyStartMap(context, "chained-combat-title-gone")) {
                 return WubeiStepOutcome.failed(state, "return home failed");
             }
@@ -2888,6 +2895,7 @@ public class WubeiTask implements GameTask {
                 combatCount, stillChained, postCombatPanel.getYellowText());
         if (!stillChained) {
             currentRoundChainedCombatContinueCount = 0;
+            currentRoundChainedCombatRecoveryBroadcastCount = 0;
             if (!useReturnItemAndVerifyStartMap(context, "chained-combat-completed")) {
                 return WubeiStepOutcome.failed(state, "return home failed");
             }
@@ -2897,6 +2905,17 @@ public class WubeiTask implements GameTask {
         }
 
         currentTrackerPanel = postCombatPanel;
+        if (currentRoundChainedCombatRecoveryBroadcastCount < combatCount) {
+            currentRoundChainedCombatRecoveryBroadcastCount = combatCount;
+            taskMaintenanceService.openTeamFirstAidMaintenanceWindow(context, TASK_CODE, currentRoundNumber,
+                    "wubei:chained-combat-post-battle-first-aid");
+            log.info("[wubei] chained combat first-aid broadcast opened: count={} delayMs={} yellow='{}'",
+                    combatCount, CHAINED_POST_BATTLE_FIRST_AID_BROADCAST_MS, postCombatPanel.getYellowText());
+            return WubeiStepOutcome.sharedState(
+                    state.next(WubeiPhase.RETURN_HOME,
+                            CHAINED_POST_BATTLE_BROADCAST_SOURCE_PREFIX + "-" + combatCount),
+                    "chained combat first-aid broadcast before next fight");
+        }
         currentRoundChainedCombatContinueCount = combatCount;
         if (!continueChainedCombatFromTracker(context, postCombatPanel, combatCount)) {
             log.warn("[wubei] chained combat tracker still has target but continue click failed: count={} yellow='{}'",
