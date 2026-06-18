@@ -46,6 +46,8 @@ public class MiniMapCoordinateReader {
 
     private static final int CHAR_PAD = 1;
     private static final int MAX_COORD_DIGITS = 3;
+    private static final int COORD_BRACKET_MIN_WIDTH = 30;
+    private static final int COORD_BRACKET_MAX_WIDTH = 80;
     private static final double TEMPLATE_MATCH_THRESHOLD = 0.45;
     private static final double MAP_LABEL_MATCH_THRESHOLD = 0.62;
     private static final int MAP_LABEL_CANONICAL_HEIGHT = 18;
@@ -431,7 +433,12 @@ public class MiniMapCoordinateReader {
                 GlyphBox left = candidates.get(i);
                 GlyphBox right = candidates.get(j);
                 int width = right.maxX - left.minX + 1;
-                if (width < 35 || width > 80) {
+                /*
+                 * Single-digit coordinates such as [4,3] produce a 33px bracket span on
+                 * real captures. Width only filters candidate envelopes; the comma and
+                 * digit recognizers below still decide whether the span is a coordinate.
+                 */
+                if (width < COORD_BRACKET_MIN_WIDTH || width > COORD_BRACKET_MAX_WIDTH) {
                     continue;
                 }
                 // A bracket pair is accepted only when there is a plausible comma inside

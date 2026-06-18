@@ -26,12 +26,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AutoCombatService {
     private static final long COMBAT_ENTRY_MAINTENANCE_DELAY_MS = 4_000L;
     private static final long COMBAT_UI_CLEAN_INTERVAL_MS = 40_000L;
+    private static final long FOLLOWER_FIRST_AID_GATE_WAIT_MS = 3_000L;
 
     private final GameContext gameContext;
     private final BattleRadarService battleRadarService;
     private final AutoCombatPanelService autoCombatPanelService;
     private final PlayerStateService playerStateService;
     private final UICleanerService uiCleanerService;
+    private final TaskMaintenanceService taskMaintenanceService;
     private final BotProperties botProperties;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskTurnCoordinator taskTurnCoordinator;
@@ -58,7 +60,6 @@ public class AutoCombatService {
         state.pendingCombatEntryMaintenanceAt = 0L;
         state.pendingFollowerFirstAid = false;
         state.pendingFollowerFirstAidSource = null;
-        state.lastPendingFollowerFirstAidLogAt = 0L;
     }
 
     /**
@@ -81,6 +82,7 @@ public class AutoCombatService {
         maybeHandleCombatEnter(source);
 
         if (consumeExitAndRecover(context, source, checkSheYaoXiangForLeaderTask)) {
+            runPendingFollowerFirstAidIfAllowed(context, source);
             return TickResult.EXIT_RECOVERED;
         }
 
@@ -169,18 +171,25 @@ public class AutoCombatService {
                     || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
                 state.pendingFollowerFirstAid = true;
                 state.pendingFollowerFirstAidSource = source;
-                state.lastPendingFollowerFirstAidLogAt = 0L;
-                log.info("{} post-combat first-aid deferred: follower-support window waits for task turn task={} requested={} role={} precheck={}",
+                log.info("{} post-combat first-aid queued: follower-support window will wait in task-turn queue task={} requested={} role={} precheck={}",
                         source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
             } else {
                 state.pendingFollowerFirstAid = false;
                 state.pendingFollowerFirstAidSource = null;
-                state.lastPendingFollowerFirstAidLogAt = 0L;
                 log.info("{} post-combat first-aid skipped before task-turn queue: task={} requested={} role={} precheck={}",
                         source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
             }
         } else {
-            playerStateService.performFirstAidCheckNowIfNeeded(context);
+            PlayerStateService.FirstAidNoFocusProbeResult probeResult =
+                    playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
+            if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                    && !playerStateService.performCachedFirstAidPlanNow(context)) {
+                log.warn("{} post-combat first-aid skipped: no-focus plan unavailable task={} role={}",
+                        source, safeTaskCode(context), safeRole(context));
+            } else if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
+                log.warn("{} post-combat first-aid skipped: no-focus probe unknown task={} role={}",
+                        source, safeTaskCode(context), safeRole(context));
+            }
         }
         context.throwIfStopRequested();
         if (checkSheYaoXiangForLeaderTask) {
@@ -202,31 +211,44 @@ public class AutoCombatService {
         String pendingSource = state.pendingFollowerFirstAidSource == null
                 ? source
                 : state.pendingFollowerFirstAidSource;
-        boolean ran = taskTurnCoordinator.tryRun(source + ":pending-follower-first-aid", () -> {
+        String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
+        if (("wubei".equalsIgnoreCase(requestedTaskCode) || "xiuluo_v2".equalsIgnoreCase(requestedTaskCode))
+                && !taskMaintenanceService.awaitTeamPathingMaintenanceWindowOpen(
+                context, requestedTaskCode, FOLLOWER_FIRST_AID_GATE_WAIT_MS)) {
+            log.info("{} pending follower first-aid deferred: team pathing window closed task={} requested={} role={} originalSource={}",
+                    source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+            return false;
+        }
+        String transactionName = source + ":pending-follower-first-aid";
+        /*
+         * This is intentionally blocking. The old tryRun path made follower supply opportunistic:
+         * if the leader still owned the turn, the member merely slept and could miss the next
+         * release. By entering the fair task-turn queue, the already-probed first-aid request waits
+         * as a real queued maintenance action and runs as soon as the coordinator hands off.
+         */
+        log.info("{} pending follower first-aid queued for task turn: task={} requested={} role={} originalSource={}",
+                source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+        taskTurnCoordinator.enter(transactionName);
+        try {
             log.info("{} pending follower first-aid acquired task turn: task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
-            playerStateService.performFirstAidCheckNowIfNeeded(context);
+            if (!playerStateService.performCachedFirstAidPlanNow(context)) {
+                PlayerStateService.FirstAidNoFocusProbeResult retryProbe =
+                        playerStateService.probeFirstAidSupplyNoFocus(context);
+                if (retryProbe == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED) {
+                    playerStateService.performCachedFirstAidPlanNow(context);
+                } else if (retryProbe == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
+                    log.warn("{} pending follower first-aid still unknown after gate opened; keep pending for next safe window",
+                            source);
+                    return false;
+                }
+            }
             state.pendingFollowerFirstAid = false;
             state.pendingFollowerFirstAidSource = null;
-            state.lastPendingFollowerFirstAidLogAt = 0L;
             return true;
-        });
-        if (!ran) {
-            logPendingFollowerFirstAidWaiting(state, source, context);
+        } finally {
+            taskTurnCoordinator.forceRelease(transactionName);
         }
-        return ran;
-    }
-
-    private void logPendingFollowerFirstAidWaiting(AutoCombatRuntimeState state,
-                                                   String source,
-                                                   TaskExecutionContext context) {
-        long now = System.currentTimeMillis();
-        if (now - state.lastPendingFollowerFirstAidLogAt < 5_000L) {
-            return;
-        }
-        state.lastPendingFollowerFirstAidLogAt = now;
-        log.info("{} pending follower first-aid waiting for task turn: task={} requested={} role={}",
-                source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
     }
 
     private boolean shouldDeferFollowerFirstAid(TaskExecutionContext context) {
@@ -307,6 +329,5 @@ public class AutoCombatService {
         private long pendingCombatEntryMaintenanceAt = 0L;
         private boolean pendingFollowerFirstAid = false;
         private String pendingFollowerFirstAidSource;
-        private long lastPendingFollowerFirstAidLogAt = 0L;
     }
 }

@@ -38,12 +38,14 @@ public class TaskMaintenanceService {
 
     private static final String DEFAULT_WINDOW_KEY = "default";
     private static final long SUMMON_SKILL_NOT_DUE_LOG_INTERVAL_MS = 60_000L;
+    private static final long SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS = 2 * 60 * 60 * 1000L;
 
     private final BotProperties botProperties;
     private final GameContext gameContext;
     private final DialogService dialogService;
     private final SummonSkillService summonSkillService;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final Object teamMaintenanceWindowMonitor = new Object();
     private final Map<String, Long> lastSummonSkillCleanAtByWindow = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSummonSkillNotDueLogAtByWindow = new ConcurrentHashMap<>();
     private final Map<String, SummonSkillWindowState> summonSkillStateByWindow = new ConcurrentHashMap<>();
@@ -107,6 +109,9 @@ public class TaskMaintenanceService {
         String roundKey = teamRoundKey(teamKey, round);
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.PATHING_WINDOW_OPEN);
+        synchronized (teamMaintenanceWindowMonitor) {
+            teamMaintenanceWindowMonitor.notifyAll();
+        }
         log.info("{} maintenance team pathing window opened: teamRound={} previous={} source={}",
                 logPrefix(context), roundKey, previous, sourceTask);
     }
@@ -131,6 +136,66 @@ public class TaskMaintenanceService {
             log.info("{} maintenance team pathing window closed: teamRound={} source={}",
                     logPrefix(context), roundKey, sourceTask);
         }
+    }
+
+    /**
+     * Check whether the active team round has already reached the leader-pathing maintenance window.
+     *
+     * @param context current task context. Used only to resolve a default team key when
+     *                {@code teamMaintenanceKey} is blank.
+     * @param teamMaintenanceKey formal task key such as {@code wubei} or {@code xiuluo_v2}.
+     * @return true only after the leader opened the pathing maintenance window for the active round.
+     */
+    public boolean isTeamPathingMaintenanceWindowOpen(TaskExecutionContext context,
+                                                      String teamMaintenanceKey) {
+        String teamKey = normalizeTeamKey(teamMaintenanceKey, context);
+        Integer round = activeTeamRoundByKey.get(teamKey);
+        return round != null
+                && teamMaintenanceWindowStateByRound.get(teamRoundKey(teamKey, round))
+                == TeamMaintenanceWindowState.PATHING_WINDOW_OPEN;
+    }
+
+    /**
+     * Wait without taking the task turn until the leader opens the pathing maintenance window.
+     *
+     * <p>This is used by follower HP/MP recovery. A follower may already have a no-focus recovery
+     * plan, but it must not focus itself while the leader is returning, accepting, or reading the
+     * next task. The leader calls {@link #openTeamPathingMaintenanceWindow(TaskExecutionContext,
+     * String, int, String)} after submitting real movement, which wakes these waiters.</p>
+     *
+     * @param context current follower context, used for stop checks and default team-key resolution.
+     * @param teamMaintenanceKey formal task key that owns the current team round.
+     * @param timeoutMs maximum time to wait in this call; callers may keep the pending plan and retry
+     *                  later if this returns false.
+     * @return true when the pathing maintenance window is open.
+     */
+    public boolean awaitTeamPathingMaintenanceWindowOpen(TaskExecutionContext context,
+                                                         String teamMaintenanceKey,
+                                                         long timeoutMs) {
+        if (isTeamPathingMaintenanceWindowOpen(context, teamMaintenanceKey)) {
+            return true;
+        }
+        if (timeoutMs <= 0L) {
+            return false;
+        }
+
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (teamMaintenanceWindowMonitor) {
+            while (!isTeamPathingMaintenanceWindowOpen(context, teamMaintenanceKey)) {
+                checkpoint(context);
+                long remainingMs = deadline - System.currentTimeMillis();
+                if (remainingMs <= 0L) {
+                    return false;
+                }
+                try {
+                    teamMaintenanceWindowMonitor.wait(remainingMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**
@@ -218,6 +283,32 @@ public class TaskMaintenanceService {
         log.info("{} maintenance: summon skill due source={} windowKey={} lastCleanAt={} elapsedMs={} intervalMs={}",
                 logPrefix(context), request.getSourceTask(), windowKey, lastCleanAt,
                 lastCleanAt == null ? -1 : now - lastCleanAt, intervalMs);
+        SummonSkillWindowState windowState = summonSkillStateByWindow.computeIfAbsent(
+                windowKey, key -> new SummonSkillWindowState());
+        if (isSummonSkillTailSafeCacheExpired(windowState, now)) {
+            log.info("{} maintenance: summon skill tail-safe cache expired source={} windowKey={} cacheAgeMs={} ttlMs={} lastEffectiveSlot={} nextStartSlot={}",
+                    logPrefix(context), request.getSourceTask(), windowKey,
+                    now - windowState.tailSafeCachedAt, SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS,
+                    windowState.lastConfirmedEffectiveSlotIndex == null
+                            ? null
+                            : windowState.lastConfirmedEffectiveSlotIndex + 1,
+                    windowState.nextStartIndex == null ? null : windowState.nextStartIndex + 1);
+            windowState.lastConfirmedEffectiveSlotIndex = null;
+            windowState.tailSafeCachedAt = 0L;
+            windowState.nextStartIndex = null;
+            windowState.slotStatusByIndex.clear();
+        }
+        if (isSummonSkillTailSafeCacheFresh(windowState, now)) {
+            lastSummonSkillCleanAtByWindow.put(windowKey, now);
+            lastSummonSkillNotDueLogAtByWindow.remove(windowKey);
+            log.info("{} maintenance: summon skill skipped by fresh tail-safe cache source={} windowKey={} cacheAgeMs={} ttlMs={} lastEffectiveSlot={} nextStartSlot={}",
+                    logPrefix(context), request.getSourceTask(), windowKey,
+                    now - windowState.tailSafeCachedAt, SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS,
+                    windowState.lastConfirmedEffectiveSlotIndex + 1,
+                    windowState.nextStartIndex + 1);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_NOT_DUE,
+                    "summon skill tail-safe cache fresh");
+        }
         String teamRoundKey = resolveTeamRoundKey(context, request);
         if (request.isOneSummonSkillPerTeamRound()) {
             if (teamRoundKey == null) {
@@ -260,8 +351,6 @@ public class TaskMaintenanceService {
         checkpoint(context);
         GameContext.ActionState previousState = gameContext.getCurrentActionState();
         gameContext.setCurrentActionState(GameContext.ActionState.INTERACTING);
-        SummonSkillWindowState windowState = summonSkillStateByWindow.computeIfAbsent(
-                windowKey, key -> new SummonSkillWindowState());
         SummonSkillCleanupRequest cleanupRequest = buildSummonSkillCleanupRequest(windowState, now);
         SummonSkillCleanupResult cleanupResult = SummonSkillCleanupResult.failed("summon skill not attempted");
         long startedAt = System.currentTimeMillis();
@@ -344,16 +433,59 @@ public class TaskMaintenanceService {
         if (state.skillCount == null || state.skillCount != result.getSkillCount()) {
             state.slotStatusByIndex.clear();
             state.lastUltimateGenerateSuccessAt = 0L;
+            state.lastConfirmedEffectiveSlotIndex = null;
+            state.tailSafeCachedAt = 0L;
         }
+        long now = System.currentTimeMillis();
         state.skillCount = result.getSkillCount();
         state.nextStartIndex = result.getNextStartIndex();
         state.slotStatusByIndex.putAll(result.getObservedStatusesByIndex());
-        if (result.isUltimateGenerateSucceeded()) {
-            state.lastUltimateGenerateSuccessAt = System.currentTimeMillis();
+        Integer lastEffectiveIndex = findLastConfirmedEffectiveSlotIndex(result.getObservedStatusesByIndex());
+        state.lastConfirmedEffectiveSlotIndex = lastEffectiveIndex;
+        if (lastEffectiveIndex != null && state.nextStartIndex != null && state.nextStartIndex > lastEffectiveIndex) {
+            state.tailSafeCachedAt = now;
+        } else {
+            state.tailSafeCachedAt = 0L;
         }
-        log.info("maintenance: summon skill window state updated windowKey={} skillCount={} nextStartSlot={} observedSlots={} ultimateLastSuccessAt={}",
+        if (result.isUltimateGenerateSucceeded()) {
+            state.lastUltimateGenerateSuccessAt = now;
+        }
+        log.info("maintenance: summon skill window state updated windowKey={} skillCount={} nextStartSlot={} lastEffectiveSlot={} tailSafeCachedAt={} observedSlots={} ultimateLastSuccessAt={}",
                 windowKey, state.skillCount, state.nextStartIndex == null ? null : state.nextStartIndex + 1,
-                state.slotStatusByIndex, state.lastUltimateGenerateSuccessAt);
+                state.lastConfirmedEffectiveSlotIndex == null ? null : state.lastConfirmedEffectiveSlotIndex + 1,
+                state.tailSafeCachedAt, state.slotStatusByIndex, state.lastUltimateGenerateSuccessAt);
+    }
+
+    private boolean isSummonSkillTailSafeCacheExpired(SummonSkillWindowState state, long now) {
+        return state.tailSafeCachedAt > 0
+                && now - state.tailSafeCachedAt >= SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS;
+    }
+
+    private boolean isSummonSkillTailSafeCacheFresh(SummonSkillWindowState state, long now) {
+        return state.tailSafeCachedAt > 0
+                && now - state.tailSafeCachedAt < SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS
+                && state.lastConfirmedEffectiveSlotIndex != null
+                && state.nextStartIndex != null
+                && state.nextStartIndex > state.lastConfirmedEffectiveSlotIndex;
+    }
+
+    private Integer findLastConfirmedEffectiveSlotIndex(Map<Integer, SummonSkillSlotStatus> statuses) {
+        Integer lastIndex = null;
+        for (Map.Entry<Integer, SummonSkillSlotStatus> entry : statuses.entrySet()) {
+            if (!isEffectiveSummonSkillSlot(entry.getValue())) {
+                continue;
+            }
+            if (lastIndex == null || entry.getKey() > lastIndex) {
+                lastIndex = entry.getKey();
+            }
+        }
+        return lastIndex;
+    }
+
+    private boolean isEffectiveSummonSkillSlot(SummonSkillSlotStatus status) {
+        return status == SummonSkillSlotStatus.NORMAL_SKILL
+                || status == SummonSkillSlotStatus.KEEP_SKILL
+                || status == SummonSkillSlotStatus.EMPTY_SLOT;
     }
 
     private void releaseSummonSkillRoundClaimIfOwned(String teamRoundKey,
@@ -477,6 +609,8 @@ public class TaskMaintenanceService {
     private static class SummonSkillWindowState {
         private Integer skillCount;
         private Integer nextStartIndex;
+        private Integer lastConfirmedEffectiveSlotIndex;
+        private long tailSafeCachedAt;
         private long lastUltimateGenerateSuccessAt;
         private final Map<Integer, SummonSkillSlotStatus> slotStatusByIndex = new ConcurrentHashMap<>();
     }

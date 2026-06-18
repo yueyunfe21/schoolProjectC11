@@ -23,6 +23,7 @@ public final class WubeiDialogCatalog {
     public static final String OPTION_ENTER_BATTLE_KUIXING = "wubei.enterBattle.kuixing";
     public static final String STORY_PROBE_TARGET_READY = "wubei.probeTargetReady";
     public static final String STORY_PROBE_WRONG_POSITION = "wubei.probeWrongPosition";
+    public static final String STORY_PROBE_NO_TARGET = "wubei.probeNoTarget";
 
     public static final String ACCEPT_OPTION_TEMPLATE =
             "images/template/dialog/wubei/wubei_accept_chumoweiguo.png";

@@ -2,6 +2,8 @@ package com.bot.dhxy.window.runtime;
 
 import com.bot.dhxy.window.model.WindowReadyEvent;
 import com.bot.dhxy.window.model.WindowReadyEventType;
+import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.task.model.TaskType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -25,6 +27,7 @@ public class WindowReadyEventBus {
     private final Object monitor = new Object();
     private final AtomicLong sequence = new AtomicLong();
     private final Map<String, WindowReadyEvent> latestByWindowAndType = new ConcurrentHashMap<>();
+    private final Map<String, WindowReadyEvent> latestPreparedActionByWindow = new ConcurrentHashMap<>();
 
     /**
      * Publish a coalesced wake hint for one window.
@@ -41,12 +44,18 @@ public class WindowReadyEventBus {
                 .createdAtMs(event.getCreatedAtMs() <= 0L ? System.currentTimeMillis() : event.getCreatedAtMs())
                 .build();
         latestByWindowAndType.put(stored.eventKey(), stored);
+        if (stored.getType() == WindowReadyEventType.TASK_ATTENTION_REQUIRED
+                && stored.getOperation() != null) {
+            latestPreparedActionByWindow.put(stored.getWindowId(), stored);
+        }
         synchronized (monitor) {
             monitor.notifyAll();
         }
-        log.info("[latency] event=window.ready.publish windowId={} type={} task={} source={} state={} sequence={}",
-                stored.getWindowId(), stored.getType(), stored.getTaskType(), stored.getSource(),
-                stored.getPathingState(), stored.getSequence());
+        long ageMs = Math.max(0L, System.currentTimeMillis() - stored.getCreatedAtMs());
+        log.info("[latency] event=window.ready.publish windowId={} hwnd={} type={} task={} source={} operation={} target={} state={} sequence={} createdAtMs={} ageMs={}",
+                stored.getWindowId(), stored.getHwnd(), stored.getType(), stored.getTaskType(), stored.getSource(),
+                stored.getOperation(), stored.getTargetKeyword(), stored.getPathingState(), stored.getSequence(),
+                stored.getCreatedAtMs(), ageMs);
         return Optional.of(stored);
     }
 
@@ -101,6 +110,120 @@ public class WindowReadyEventBus {
             return Optional.empty();
         }
         return Optional.ofNullable(latestByWindowAndType.get(windowId + ":" + type));
+    }
+
+    /**
+     * Return the newest fresh event owned by another window.
+     *
+     * <p>This remains a wake hint, not business state. Task code uses it only to yield expensive
+     * foreground OCR/retry work so the window that already has a visible dialog can be scheduled
+     * sooner; the eventual click still has to validate {@link WindowRuntimeContext} state.</p>
+     *
+     * @param currentWindowId window that is about to run normal work.
+     * @param type ready event type to inspect.
+     * @param taskType optional task type filter; null accepts any task type.
+     * @param maxAgeMs maximum event age in milliseconds.
+     * @return newest matching event from a different window, if still fresh.
+     */
+    public Optional<WindowReadyEvent> latestOtherFresh(String currentWindowId,
+                                                       WindowReadyEventType type,
+                                                       TaskType taskType,
+                                                       long maxAgeMs) {
+        if (currentWindowId == null || type == null || maxAgeMs < 0L) {
+            return Optional.empty();
+        }
+        long now = System.currentTimeMillis();
+        WindowReadyEvent newest = null;
+        for (WindowReadyEvent event : latestPreparedActionByWindow.values()) {
+            if (event == null
+                    || event.getWindowId() == null
+                    || event.getWindowId().equals(currentWindowId)
+                    || event.getType() != type
+                    || (taskType != null && event.getTaskType() != taskType)
+                    || now - event.getCreatedAtMs() > maxAgeMs) {
+                continue;
+            }
+            if (newest == null || event.getSequence() > newest.getSequence()) {
+                newest = event;
+            }
+        }
+        return Optional.ofNullable(newest);
+    }
+
+    /**
+     * Return the newest fresh prepared-action signal owned by another window.
+     *
+     * <p>Plain visible STORY/OPTION events are not enough to preempt other windows: they may still
+     * need OCR or business validation. Events with an operation already have a prepared click target
+     * such as a route option or task-tracker green link, so task code may yield to them before the
+     * cached validation expires.</p>
+     *
+     * @param currentWindowId window that is about to run normal work.
+     * @param taskType optional task type filter; null accepts any task type.
+     * @param maxAgeMs maximum event age in milliseconds.
+     * @return newest fresh prepared-action event from a different window.
+     */
+    public Optional<WindowReadyEvent> latestOtherFreshPreparedAction(String currentWindowId,
+                                                                     TaskType taskType,
+                                                                     long maxAgeMs) {
+        if (currentWindowId == null || maxAgeMs < 0L) {
+            return Optional.empty();
+        }
+        long now = System.currentTimeMillis();
+        WindowReadyEvent newest = null;
+        for (WindowReadyEvent event : latestByWindowAndType.values()) {
+            if (event == null
+                    || event.getWindowId() == null
+                    || event.getWindowId().equals(currentWindowId)
+                    || event.getType() != WindowReadyEventType.TASK_ATTENTION_REQUIRED
+                    || event.getOperation() == null
+                    || (taskType != null && event.getTaskType() != taskType)
+                    || now - event.getCreatedAtMs() > maxAgeMs) {
+                continue;
+            }
+            if (newest == null || event.getSequence() > newest.getSequence()) {
+                newest = event;
+            }
+        }
+        return Optional.ofNullable(newest);
+    }
+
+    /**
+     * Return the newest fresh pathing-terminal signal owned by another window.
+     *
+     * <p>This is lower priority than a prepared click action. It is still important because ARRIVED
+     * and STOPPED_AWAY mean the task has stopped doing useful background movement and should resume
+     * its phase before ordinary windows keep scanning.</p>
+     *
+     * @param currentWindowId window that is about to run normal work.
+     * @param taskType optional task type filter; null accepts any task type.
+     * @param maxAgeMs maximum event age in milliseconds.
+     * @return newest fresh terminal event from a different window.
+     */
+    public Optional<WindowReadyEvent> latestOtherFreshPathingTerminal(String currentWindowId,
+                                                                      TaskType taskType,
+                                                                      long maxAgeMs) {
+        if (currentWindowId == null || maxAgeMs < 0L) {
+            return Optional.empty();
+        }
+        long now = System.currentTimeMillis();
+        WindowReadyEvent newest = null;
+        for (WindowReadyEvent event : latestByWindowAndType.values()) {
+            if (event == null
+                    || event.getWindowId() == null
+                    || event.getWindowId().equals(currentWindowId)
+                    || event.getType() != WindowReadyEventType.PATHING_TERMINAL
+                    || (event.getPathingState() != WindowPathingState.ARRIVED
+                            && event.getPathingState() != WindowPathingState.STOPPED_AWAY)
+                    || (taskType != null && event.getTaskType() != taskType)
+                    || now - event.getCreatedAtMs() > maxAgeMs) {
+                continue;
+            }
+            if (newest == null || event.getSequence() > newest.getSequence()) {
+                newest = event;
+            }
+        }
+        return Optional.ofNullable(newest);
     }
 
     private Optional<WindowReadyEvent> findNewer(String windowId,

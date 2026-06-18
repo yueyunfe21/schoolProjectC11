@@ -8,6 +8,7 @@ import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.model.dialog.DialogFingerprintWashMode;
 import com.bot.dhxy.model.dialog.DialogPreparationPhase;
 import com.bot.dhxy.model.dialog.DialogPreparationRequest;
+import com.bot.dhxy.model.dialog.DialogPreparationStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
 import com.bot.dhxy.model.navigation.PendingTransferChoiceMemory;
@@ -88,6 +89,7 @@ public class WindowTaskRunner {
     private static final long WINDOW_DIALOG_PREPARE_ACTIVE_INTERVAL_MS = 100L;
     private static final long WINDOW_DIALOG_ATTENTION_RECENT_MS = 2_500L;
     private static final long WINDOW_DIALOG_VISIBLE_MAX_AGE_MS = 3_000L;
+    private static final long WINDOW_OBSERVER_WAKE_CHECK_INTERVAL_MS = 100L;
     private static final int WINDOW_DIALOG_FINGERPRINT_MAX_DISTANCE = 8;
 
     private final WindowRuntimeContext windowContext;
@@ -596,6 +598,7 @@ public class WindowTaskRunner {
                                 }
                                 while (running.get() && !Thread.currentThread().isInterrupted()) {
                                     executionContext.throwIfStopRequested();
+                                    long observerWakeSeq = windowContext.getObserverWakeSeq();
                                     AutoCombatService.TickResult tick = combatGuardEnabled
                                             ? autoCombatService.handleWindowCombatGuardTick(
                                                     executionContext, "window-combat-watch:" + taskType.getCode())
@@ -613,6 +616,29 @@ public class WindowTaskRunner {
                                     long attentionTotalElapsedMs = -1L;
                                     String observerBranch = pathingIntentActive ? "active-pathing" : "idle";
                                     if (pathingIntentActive) {
+                                        boolean taskDialogInterestActive = hasTaskDialogInterest(taskType);
+                                        if (taskDialogInterestActive) {
+                                            /*
+                                             * Some released pathing flows intentionally wait for a task dialog while
+                                             * standing still, e.g. 五倍 uses 显形镜 and waits for WUBEI_PROBE_STORY.
+                                             * In that state the dialog is the stronger signal; running the minimap
+                                             * pathing probe first can spend seconds in coordinate OCR and delay the
+                                             * already requested dialog/template preparation.
+                                             */
+                                            observerBranch = "active-pathing-dialog-first";
+                                            long[] attentionTimings = new long[] {-1L, -1L, -1L, -1L};
+                                            preparedDialogAction = publishTaskAttentionIfDialogVisible(
+                                                    taskType, executionContext, attentionTimings);
+                                            attentionDetectElapsedMs = attentionTimings[0];
+                                            attentionPublishElapsedMs = attentionTimings[1];
+                                            attentionRoutePrepareElapsedMs = attentionTimings[2];
+                                            attentionTotalElapsedMs = attentionTimings[3];
+                                            if (preparedDialogAction == null) {
+                                                long routePrepareStartedAt = System.currentTimeMillis();
+                                                preparedDialogAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
+                                                routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
+                                            }
+                                        }
                                         /*
                                          * Pathing observation is the scheduler signal for released navigation turns.
                                          * Do it before any dialog OCR: dialog preparation can spend seconds on OCR when
@@ -627,21 +653,23 @@ public class WindowTaskRunner {
                                         //小地图读不到，不确定？
                                         //
                                         //里面最终会更新这些状态：
-                                        long pathingStartedAt = System.currentTimeMillis();
-                                        pathingSnapshot = refreshPathingSignal(taskType, executionContext);
-                                        pathingElapsedMs = Math.max(0L, System.currentTimeMillis() - pathingStartedAt);
-                                        /*
-                                         * Route-transfer dialogs are a stronger signal than pathing state. The game
-                                         * can leave an option dialog open while the lightweight pathing probe still
-                                         * reports ACTIVE/unknown, so do not wait for STOPPED_AWAY before preparing
-                                         * the click. Phase 5 lets the runner prepare from the active intent even when
-                                         * Navigation no longer writes a DialogPreparationRequest.
-                                         */
-                                        long routePrepareStartedAt = System.currentTimeMillis();
-                                        preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
-                                        routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
                                         if (preparedDialogAction == null) {
-                                            preparedDialogAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
+                                            long pathingStartedAt = System.currentTimeMillis();
+                                            pathingSnapshot = refreshPathingSignal(taskType, executionContext);
+                                            pathingElapsedMs = Math.max(0L, System.currentTimeMillis() - pathingStartedAt);
+                                            /*
+                                             * Route-transfer dialogs are a stronger signal than pathing state. The game
+                                             * can leave an option dialog open while the lightweight pathing probe still
+                                             * reports ACTIVE/unknown, so do not wait for STOPPED_AWAY before preparing
+                                             * the click. Phase 5 lets the runner prepare from the active intent even when
+                                             * Navigation no longer writes a DialogPreparationRequest.
+                                             */
+                                            long routePrepareStartedAt = System.currentTimeMillis();
+                                            preparedDialogAction = refreshDialogPreparationSignal(taskType, executionContext);
+                                            routePrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - routePrepareStartedAt);
+                                            if (preparedDialogAction == null && !taskDialogInterestActive) {
+                                                preparedDialogAction = refreshTaskDialogInterestPreparationSignal(taskType, executionContext);
+                                            }
                                         }
                                     } else {
                                         long routePrepareStartedAt = System.currentTimeMillis();
@@ -682,7 +710,7 @@ public class WindowTaskRunner {
                                             attentionPublishElapsedMs, attentionRoutePrepareElapsedMs,
                                             attentionTotalElapsedMs,
                                             Math.max(0L, System.currentTimeMillis() - tickStartedAt), intervalMs);
-                                    if (!TaskSleep.sleep(intervalMs)) {
+                                    if (!sleepObserver(intervalMs, observerWakeSeq)) {
                                         break;
                                     }
                                 }
@@ -695,6 +723,28 @@ public class WindowTaskRunner {
             log.warn("{} window [{}] combat watcher failed: task={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), taskType, e);
         }
+    }
+
+    /**
+     * Sleep between observer ticks, but allow task-owned dialog interest updates to wake the watcher
+     * before the normal 6s idle interval expires.
+     */
+    private boolean sleepObserver(long intervalMs, long initialWakeSeq) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, intervalMs);
+        while (System.currentTimeMillis() < deadline) {
+            if (windowContext.getObserverWakeSeq() != initialWakeSeq) {
+                return true;
+            }
+            long remainingMs = Math.max(0L, deadline - System.currentTimeMillis());
+            long sleepMs = Math.min(WINDOW_OBSERVER_WAKE_CHECK_INTERVAL_MS, remainingMs);
+            if (sleepMs <= 0L) {
+                return true;
+            }
+            if (!TaskSleep.sleep(sleepMs)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -785,6 +835,17 @@ public class WindowTaskRunner {
                     return boundAction;
                 })
                 .orElse(null);
+    }
+
+    private boolean hasTaskDialogInterest(TaskType taskType) {
+        Optional<WindowDialogInterest> interestOpt = windowContext.getDialogInterest();
+        if (interestOpt.isEmpty()) {
+            return false;
+        }
+        WindowDialogInterest interest = interestOpt.get();
+        return interest.getTaskType() == taskType
+                && interest.getOperations() != null
+                && !interest.getOperations().isEmpty();
     }
 
     private PreparedDialogAction refreshTaskDialogInterestPreparationSignal(TaskType taskType,
@@ -1477,6 +1538,7 @@ public class WindowTaskRunner {
         WindowPathingState state = classifyPathingState(intent, previous, location, locationChanged,
                 locationChangedAtMs, now);
         long probeMs = Math.max(0L, now - startedAt);
+        PathingDialogBlock dialogBlock = resolvePathingDialogBlock(now);
         WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
                 .state(state)
                 .intent(intent)
@@ -1492,6 +1554,13 @@ public class WindowTaskRunner {
                 .uiCleanupRecommended(previous != null && previous.isUiCleanupRecommended())
                 .uiCleanupReason(previous == null ? null : previous.getUiCleanupReason())
                 .uiCleanupRecommendedAtMs(previous == null ? 0L : previous.getUiCleanupRecommendedAtMs())
+                .dialogBlocking(dialogBlock.blocking())
+                .dialogBlockingReason(dialogBlock.reason())
+                .dialogBlockingType(dialogBlock.dialogType())
+                .dialogBlockingDetectedAtMs(dialogBlock.detectedAtMs())
+                .dialogPreparationPhase(dialogBlock.preparationPhase())
+                .dialogPreparationOperation(dialogBlock.operation())
+                .dialogPreparationTarget(dialogBlock.targetKeyword())
                 .build();
         windowContext.updatePathingSnapshot(snapshot);
 
@@ -1610,6 +1679,7 @@ public class WindowTaskRunner {
             return windowContext.getPathingSnapshot();
         }
         long previousUpdatedAtMs = previous == null ? 0L : previous.getUpdatedAtMs();
+        PathingDialogBlock dialogBlock = resolvePathingDialogBlock(now);
         WindowPathingSnapshot snapshot = WindowPathingSnapshot.builder()
                 .state(WindowPathingState.UNKNOWN)
                 .intent(intent)
@@ -1625,6 +1695,13 @@ public class WindowTaskRunner {
                 .uiCleanupRecommended(previous != null && previous.isUiCleanupRecommended())
                 .uiCleanupReason(previous == null ? null : previous.getUiCleanupReason())
                 .uiCleanupRecommendedAtMs(previous == null ? 0L : previous.getUiCleanupRecommendedAtMs())
+                .dialogBlocking(dialogBlock.blocking())
+                .dialogBlockingReason(dialogBlock.reason())
+                .dialogBlockingType(dialogBlock.dialogType())
+                .dialogBlockingDetectedAtMs(dialogBlock.detectedAtMs())
+                .dialogPreparationPhase(dialogBlock.preparationPhase())
+                .dialogPreparationOperation(dialogBlock.operation())
+                .dialogPreparationTarget(dialogBlock.targetKeyword())
                 .build();
         windowContext.updatePathingSnapshot(snapshot);
         long probeMs = Math.max(0L, now - startedAt);
@@ -1661,6 +1738,58 @@ public class WindowTaskRunner {
             return WindowPathingState.STOPPED_AWAY;
         }
         return WindowPathingState.ACTIVE;
+    }
+
+    private PathingDialogBlock resolvePathingDialogBlock(long now) {
+        PreparedDialogAction preparedAction = windowContext.getPreparedDialogAction();
+        if (preparedAction != null) {
+            long detectedAtMs = preparedAction.getLastVerifiedAtMs() > 0L
+                    ? preparedAction.getLastVerifiedAtMs()
+                    : preparedAction.getPreparedAtMs();
+            return PathingDialogBlock.blocking(
+                    "prepared-dialog",
+                    preparedAction.getDialogType(),
+                    detectedAtMs,
+                    DialogPreparationPhase.READY,
+                    preparedAction.getOperation(),
+                    preparedAction.getTargetKeyword());
+        }
+
+        DialogPreparationStatus preparationStatus = windowContext.getDialogPreparationStatus();
+        if (preparationStatus != null && isBlockingPreparationPhase(preparationStatus.getPhase())) {
+            long detectedAtMs = preparationStatus.getCompletedAtMs() > 0L
+                    ? preparationStatus.getCompletedAtMs()
+                    : preparationStatus.getPreparingStartedAtMs() > 0L
+                    ? preparationStatus.getPreparingStartedAtMs()
+                    : preparationStatus.getRequestCreatedAtMs();
+            return PathingDialogBlock.blocking(
+                    "dialog-preparation-" + preparationStatus.getPhase(),
+                    null,
+                    detectedAtMs,
+                    preparationStatus.getPhase(),
+                    preparationStatus.getOperation(),
+                    preparationStatus.getTargetKeyword());
+        }
+
+        Optional<WindowDialogSnapshot> visible =
+                windowContext.getVisibleDialogSnapshot(WINDOW_DIALOG_VISIBLE_MAX_AGE_MS);
+        if (visible.isPresent() && visible.get().getType() != DialogType.NONE) {
+            WindowDialogSnapshot snapshot = visible.get();
+            return PathingDialogBlock.blocking(
+                    "visible-dialog-" + snapshot.getType(),
+                    snapshot.getType(),
+                    snapshot.getDetectedAtMs(),
+                    DialogPreparationPhase.NONE,
+                    null,
+                    null);
+        }
+        return PathingDialogBlock.none(now);
+    }
+
+    private boolean isBlockingPreparationPhase(DialogPreparationPhase phase) {
+        return phase == DialogPreparationPhase.REQUESTED
+                || phase == DialogPreparationPhase.PREPARING
+                || phase == DialogPreparationPhase.READY;
     }
 
     private long resolvePathingStoppedAwayMs(WindowPathingIntent intent, String currentMapName) {
@@ -1872,6 +2001,30 @@ public class WindowTaskRunner {
 
     private static long ageMs(long nowMs, long timestampMs) {
         return timestampMs <= 0L ? -1L : Math.max(0L, nowMs - timestampMs);
+    }
+
+    private record PathingDialogBlock(boolean blocking,
+                                      String reason,
+                                      DialogType dialogType,
+                                      long detectedAtMs,
+                                      DialogPreparationPhase preparationPhase,
+                                      DialogOperation operation,
+                                      String targetKeyword) {
+
+        private static PathingDialogBlock blocking(String reason,
+                                                   DialogType dialogType,
+                                                   long detectedAtMs,
+                                                   DialogPreparationPhase preparationPhase,
+                                                   DialogOperation operation,
+                                                   String targetKeyword) {
+            return new PathingDialogBlock(true, reason, dialogType, detectedAtMs,
+                    preparationPhase, operation, targetKeyword);
+        }
+
+        private static PathingDialogBlock none(long now) {
+            return new PathingDialogBlock(false, null, DialogType.NONE, now,
+                    DialogPreparationPhase.NONE, null, null);
+        }
     }
 
     private static class CombatWatcherHandle {

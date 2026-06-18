@@ -61,6 +61,10 @@ public class GameTextLineOcrService {
     private static final int COMPONENT_MAX_PIXELS = 1200;
     private static final int WORD_SUMMARY_LIMIT = 12;
     private static final int DEFAULT_TEXT_CANDIDATE_LIMIT = 3;
+    private static final int YELLOW_TARGET_TEXT_CANDIDATE_LIMIT = 12;
+    private static final int YELLOW_TARGET_TEXT_CANDIDATE_MIN_SCORE = 5;
+    private static final String STRICT_YELLOW_TARGET_JIANGMO_SHIWEI = "降魔侍卫";
+    private static final int STRICT_YELLOW_TARGET_JIANGMO_SHIWEI_MIN_COMMON = 3;
     private static final int ROUTE_YELLOW_ROW_TOLERANCE_PX = 8;
     private static final int ROUTE_YELLOW_WRAP_LEFT_MAX_X = 80;
     private static final int ROUTE_YELLOW_WRAP_RIGHT_MARGIN_X = 80;
@@ -162,8 +166,8 @@ public class GameTextLineOcrService {
      * Find ranked NPC-name-like yellow text candidates directly from a raw game screenshot.
      *
      * <p>This is the formal candidate API for yellow NPC/monster names when exact OCR either has
-     * not run yet or did not match the requested target. It builds the same loose yellow mask used
-     * by the OCR line pipeline, expands nearby yellow shadow pixels, optionally writes a
+     * not run yet or did not match the requested target. It builds the stricter NPC-name yellow
+     * mask used by target clicking, expands nearby yellow shadow pixels, optionally writes a
      * black-on-white washed debug image, then runs the shape-only candidate detector. Coordinates
      * remain image-local to the supplied screenshot; callers that captured a cropped window region
      * must add that crop's origin before producing screen-absolute Ctrl-probe points.</p>
@@ -181,7 +185,7 @@ public class GameTextLineOcrService {
         if (raw == null) {
             return TextCandidateScanResult.empty("raw image is null");
         }
-        boolean[][] mask = buildFilteredMask(raw, TextColorMode.YELLOW_LOOSE);
+        boolean[][] mask = buildFilteredMask(raw, TextColorMode.YELLOW_NPC_TARGET);
         mask = includeNearbyYellowShadow(raw, mask, 2);
         BufferedImage maskImage = toTextMaskImage(mask);
         if (washedPath != null) {
@@ -984,12 +988,22 @@ public class GameTextLineOcrService {
                                                        BufferedImage sourceForContext,
                                                        int imageWidth,
                                                        int imageHeight) {
+        return findTextLikeCandidates(mask, sourceForContext, imageWidth, imageHeight,
+                DEFAULT_TEXT_CANDIDATE_LIMIT, 25);
+    }
+
+    private List<TextCandidate> findTextLikeCandidates(boolean[][] mask,
+                                                       BufferedImage sourceForContext,
+                                                       int imageWidth,
+                                                       int imageHeight,
+                                                       int candidateLimit,
+                                                       int minimumScore) {
         List<TextLineBox> lines = groupTextLines(mask);
         List<TextCandidate> candidates = new ArrayList<>();
         for (TextLineBox line : lines) {
             for (TextLineBox segment : splitLineByHorizontalGaps(mask, line)) {
                 TextCandidate candidate = scoreWashedTextLine(mask, sourceForContext, segment, imageWidth, imageHeight);
-                if (candidate.score() >= 25) {
+                if (candidate.score() >= minimumScore) {
                     candidates.add(candidate);
                 }
             }
@@ -997,7 +1011,7 @@ public class GameTextLineOcrService {
         candidates.sort(Comparator.comparingInt(TextCandidate::score).reversed()
                 .thenComparing(candidate -> candidate.region().y1())
                 .thenComparing(candidate -> candidate.region().x1()));
-        int keepCount = Math.min(DEFAULT_TEXT_CANDIDATE_LIMIT, candidates.size());
+        int keepCount = Math.min(Math.max(1, candidateLimit), candidates.size());
         return List.copyOf(candidates.subList(0, keepCount));
     }
 
@@ -1028,7 +1042,7 @@ public class GameTextLineOcrService {
 
         List<CandidateResult> candidates = new ArrayList<>();
         int ocrCandidateCount = collectYellowCandidates(
-                raw, outputPath, expectedTarget, "yellow-target-loose", false, candidates);
+                raw, outputPath, expectedTarget, "yellow-target-npc", false, candidates);
         CandidateResult best = bestCandidate(candidates);
 
         /*
@@ -1036,9 +1050,9 @@ public class GameTextLineOcrService {
          * the shadow-expanded variant when no exact/fuzzy match was found, otherwise a successful
          * target line would pay a second round of OCR for no benefit.
          */
-        if (best == null || !best.match().hit()) {
+        if (best == null || !isStrongTargetMatch(best.match(), best.joinedText(), expectedTarget)) {
             ocrCandidateCount += collectYellowCandidates(
-                    raw, outputPath, expectedTarget, "yellow-target-shadow", true, candidates);
+                    raw, outputPath, expectedTarget, "yellow-target-npc-shadow", true, candidates);
             best = bestCandidate(candidates);
         }
         if (best == null) {
@@ -1057,8 +1071,13 @@ public class GameTextLineOcrService {
         cleanupCandidateImages(candidates, outputPath);
 
         TargetMatch match = best.match();
+        boolean strongHit = isStrongTargetMatch(match, best.joinedText(), expectedTarget);
+        boolean acceptedHit = match.hit()
+                && (strictYellowTargetMinCommon(normalizedTarget) <= 0 || strongHit);
         String summary = "variant=" + best.variantName()
-                + ", hit=" + match.hit()
+                + ", hit=" + acceptedHit
+                + ", rawHit=" + match.hit()
+                + ", strong=" + strongHit
                 + ", dist=" + match.editDistance()
                 + ", common=" + match.longestCommonSubstring()
                 + ", text=" + summarizeWords(best.words());
@@ -1070,9 +1089,9 @@ public class GameTextLineOcrService {
                 summary,
                 best.words());
         log.info("[game-text-ocr] findYellowTarget done: target={} hit={} bestVariant={} candidates={} ocrCalls={} elapsedMs={} detail={}",
-                normalizedTarget, match.hit(), best.variantName(), candidates.size(), ocrCandidateCount,
+                normalizedTarget, acceptedHit, best.variantName(), candidates.size(), ocrCandidateCount,
                 elapsedMillis(startedAtNanos), summary);
-        return new TargetOcrResult(result, match.hit(), match.editDistance(), match.longestCommonSubstring(),
+        return new TargetOcrResult(result, acceptedHit, match.editDistance(), match.longestCommonSubstring(),
                 normalizedTarget, OcrTextMatcher.normalizeName(best.joinedText()));
     }
 
@@ -1115,14 +1134,15 @@ public class GameTextLineOcrService {
                                         String variantName,
                                         boolean includeShadow,
                                         List<CandidateResult> candidates) throws Exception {
-        boolean[][] mask = buildFilteredMask(raw, TextColorMode.YELLOW_LOOSE);
+        boolean[][] mask = buildFilteredMask(raw, TextColorMode.YELLOW_NPC_TARGET);
         if (includeShadow) {
             mask = includeNearbyYellowShadow(raw, mask, 2);
         }
         BufferedImage maskImage = toTextMaskImage(mask);
         List<TextCandidate> visualCandidates;
         try {
-            visualCandidates = findTextLikeCandidates(mask, maskImage, raw.getWidth(), raw.getHeight());
+            visualCandidates = findTextLikeCandidates(mask, maskImage, raw.getWidth(), raw.getHeight(),
+                    YELLOW_TARGET_TEXT_CANDIDATE_LIMIT, YELLOW_TARGET_TEXT_CANDIDATE_MIN_SCORE);
         } finally {
             maskImage.flush();
         }
@@ -1155,11 +1175,12 @@ public class GameTextLineOcrService {
             int score = score(match, joinedText, expectedTarget, words.size());
             candidates.add(new CandidateResult(variantName, candidatePath, blackPixelCount,
                     words, joinedText, match, score));
-            log.info("[game-text-ocr] yellow target candidate OCR: variant={} index={} visualScore={} ocrScore={} hit={} text={} reason={}",
-                    variantName, i + 1, visualCandidate.score(), score, match.hit(),
+            boolean strongHit = isStrongTargetMatch(match, joinedText, expectedTarget);
+            log.info("[game-text-ocr] yellow target candidate OCR: variant={} index={} visualScore={} ocrScore={} hit={} strong={} text={} reason={}",
+                    variantName, i + 1, visualCandidate.score(), score, match.hit(), strongHit,
                     OcrTextMatcher.normalizeName(joinedText), visualCandidate.reason());
-            if (match.hit()) {
-                log.info("[game-text-ocr] yellow target candidate collection stopped early: variant={} index={} reason=target-hit",
+            if (strongHit) {
+                log.info("[game-text-ocr] yellow target candidate collection stopped early: variant={} index={} reason=strong-target-hit",
                         variantName, i + 1);
                 return ocrCalls;
             }
@@ -1443,6 +1464,9 @@ public class GameTextLineOcrService {
         int r = (rgb >> 16) & 0xFF;
         int g = (rgb >> 8) & 0xFF;
         int b = rgb & 0xFF;
+        if (mode == TextColorMode.YELLOW_NPC_TARGET) {
+            return isNpcTargetYellowTextPixel(r, g, b);
+        }
         if (mode == TextColorMode.YELLOW_LOOSE) {
             return isLooseYellowTextPixel(r, g, b);
         }
@@ -1462,6 +1486,32 @@ public class GameTextLineOcrService {
             return false;
         }
         return isNpcNameYellowSamplePixel(r, g, b);
+    }
+
+    /**
+     * Keep only the low-brightness NPC-name yellow used for in-world target labels.
+     *
+     * <p>Task tracker headers and UI panels often use pure or high-brightness yellow such as
+     * {@code 255,255,0}; those must not become NPC click candidates. This stricter mode is used
+     * only by target clicking, while generic yellow OCR keeps the wider range.</p>
+     */
+    private boolean isNpcTargetYellowTextPixel(int r, int g, int b) {
+        if (isStallVendorGoldPixel(r, g, b)) {
+            return false;
+        }
+        float[] hsb = Color.RGBtoHSB(r, g, b, null);
+        float hueDegrees = hsb[0] * 360.0f;
+        return hueDegrees >= 55.0f
+                && hueDegrees <= 64.5f
+                && r >= 110
+                && g >= 110
+                && r <= 220
+                && g <= 220
+                && b >= 45
+                && b <= 120
+                && Math.abs(r - g) <= 8
+                && r > b + 45
+                && g > b + 45;
     }
 
     /**
@@ -1977,9 +2027,22 @@ public class GameTextLineOcrService {
 
     private int score(TargetMatch match, String ocrText, String expected, int wordCount) {
         if (match != null && match.hit()) {
-            return OcrTextMatcher.shortNameMatchScore(ocrText, expected)
+            boolean strongHit = isStrongTargetMatch(match, ocrText, expected);
+            int base = OcrTextMatcher.shortNameMatchScore(ocrText, expected)
                     + Math.max(0, 20 - match.editDistance() * 2)
                     + match.longestCommonSubstring();
+            if (strongHit) {
+                return 10_000 + base;
+            }
+            /*
+             * Strict target names must not let a two-character fuzzy hit outrank the actual target.
+             * Keep the weak score positive for diagnostics, but low enough that a later strong OCR
+             * candidate wins even when its visual line score is lower.
+             */
+            if (strictYellowTargetMinCommon(OcrTextMatcher.normalizeName(expected)) > 0) {
+                return 100 + match.longestCommonSubstring() * 10 - match.editDistance();
+            }
+            return 1_000 + base;
         }
         String text = OcrTextMatcher.normalizeName(ocrText);
         String target = OcrTextMatcher.normalizeName(expected);
@@ -1990,6 +2053,35 @@ public class GameTextLineOcrService {
             }
         }
         return score + Math.min(wordCount, 4);
+    }
+
+    private boolean isStrongTargetMatch(TargetMatch match, String ocrText, String expected) {
+        if (match == null || !match.hit()) {
+            return false;
+        }
+        String normalizedText = OcrTextMatcher.normalizeName(ocrText);
+        String normalizedTarget = OcrTextMatcher.normalizeName(expected);
+        int strictMinCommon = strictYellowTargetMinCommon(normalizedTarget);
+        if (strictMinCommon <= 0) {
+            return true;
+        }
+        if (normalizedText.isBlank()) {
+            return false;
+        }
+        if (normalizedText.equals(normalizedTarget) || normalizedText.contains(normalizedTarget)) {
+            return true;
+        }
+        int almostFull = Math.max(strictMinCommon, normalizedTarget.length() - 1);
+        return normalizedTarget.contains(normalizedText)
+                && normalizedText.length() >= almostFull
+                && match.longestCommonSubstring() >= almostFull
+                && match.editDistance() <= 1;
+    }
+
+    private int strictYellowTargetMinCommon(String normalizedTarget) {
+        return STRICT_YELLOW_TARGET_JIANGMO_SHIWEI.equals(normalizedTarget)
+                ? STRICT_YELLOW_TARGET_JIANGMO_SHIWEI_MIN_COMMON
+                : 0;
     }
 
     private String summarizeWords(List<OcrWordResult> words) {
@@ -2081,6 +2173,7 @@ public class GameTextLineOcrService {
 
     private enum TextColorMode {
         PURPLE,
+        YELLOW_NPC_TARGET,
         YELLOW_LOOSE
     }
 

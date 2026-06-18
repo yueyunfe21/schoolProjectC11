@@ -1,5 +1,9 @@
 package com.bot.dhxy.task.xiuluo;
 
+import com.bot.dhxy.model.dialog.DialogResult;
+import com.bot.dhxy.model.dialog.DialogResultStatus;
+import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.task.hotstart.TaskHotStartScreenState;
 import com.bot.dhxy.task.hotstart.TaskHotStartService;
 import com.bot.dhxy.task.hotstart.TaskHotStartSnapshot;
@@ -20,8 +24,11 @@ import org.springframework.stereotype.Component;
 public class XiuluoHotStartResolver {
 
     private static final String TASK_CODE = "xiuluo_v2";
+    private static final String STORY_OBJECTIVE_CONFIRM_TEMPLATE =
+            "images/template/dialog/xiuluo/xiuluo_story_miexiu_confirm.png";
 
     private final TaskHotStartService taskHotStartService;
+    private final DialogService dialogService;
 
     /**
      * Resolve the initial phase for one Xiuluo round.
@@ -43,11 +50,7 @@ public class XiuluoHotStartResolver {
                     .round(round)
                     .source("hot-start:in-combat")
                     .build();
-            case STORY_DIALOG -> XiuluoRoundContext.builder()
-                    .phase(XiuluoPhase.READ_OBJECTIVE)
-                    .round(round)
-                    .source("hot-start:story-dialog")
-                    .build();
+            case STORY_DIALOG -> resolveStoryDialogHotStart(round);
             case OPTION_DIALOG -> XiuluoRoundContext.builder()
                     .phase(XiuluoPhase.ACCEPT_TASK_DIALOG)
                     .round(round)
@@ -61,5 +64,29 @@ public class XiuluoHotStartResolver {
              */
             case NONE -> XiuluoRoundContext.start(round);
         };
+    }
+
+    private XiuluoRoundContext resolveStoryDialogHotStart(int round) {
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplate(
+                "xiuluo-v2:hot-start-story-confirm",
+                "xiuluo.storyObjectiveConfirm",
+                STORY_OBJECTIVE_CONFIRM_TEMPLATE));
+        if (result.getStatus() == DialogResultStatus.WHITE_TEMPLATE_VISIBLE) {
+            log.info("[xiuluo-v2] hot-start story confirmed by white template: template={} click=({}, {})",
+                    STORY_OBJECTIVE_CONFIRM_TEMPLATE, result.getAbsoluteX(), result.getAbsoluteY());
+            return XiuluoRoundContext.builder()
+                    .phase(XiuluoPhase.READ_OBJECTIVE)
+                    .round(round)
+                    .source("hot-start:story-dialog")
+                    .build();
+        }
+        /*
+         * A generic STORY classification can be caused by player/NPC labels in the fixed dialog area.
+         * Without the Xiuluo-specific objective template, fall back to the normal accept flow instead
+         * of spending minutes OCR-scanning a non-objective screenshot.
+         */
+        log.info("[xiuluo-v2] hot-start story rejected by white template: status={} template={}",
+                result.getStatus(), STORY_OBJECTIVE_CONFIRM_TEMPLATE);
+        return XiuluoRoundContext.start(round);
     }
 }

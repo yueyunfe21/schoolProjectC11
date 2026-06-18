@@ -62,7 +62,8 @@ public class WubeiDialogPreparationProvider implements WindowDialogPreparationPr
             return dialogService.prepareWhiteStoryTemplate(
                     source + ":probeStory",
                     DialogOperation.WUBEI_PROBE_STORY,
-                    WubeiDialogCatalog.probeStorySpecs());
+                    WubeiDialogCatalog.probeStorySpecs(),
+                    WubeiDialogCatalog.STORY_PROBE_NO_TARGET);
         }
         return Optional.empty();
     }

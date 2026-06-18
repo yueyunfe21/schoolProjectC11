@@ -34,9 +34,10 @@ import org.springframework.stereotype.Service;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -97,8 +98,8 @@ public class PlayerStateService {
     private static final int SAFE_MOUSE_REL_Y = 20;
 
     /*
-     * 摄妖香剩余时间文本颜色。游戏中 RGB=(0,255,255) 表示剩余时间至少还有一小时；
-     * 后续判断只需要确认是否仍为这个颜色，不是这个颜色就按一小时以下处理。
+     * 摄妖香剩余时间文本颜色。游戏中 RGB=(0,255,255) 的青色数字表示剩余小时；
+     * 如果没有青色小时，再读取绿色数字并按剩余分钟处理。
      */
     private static final int SHEYAOXIANG_AT_LEAST_ONE_HOUR_RGB = 0x00FFFF;
     private static final String SHEYAOXIANG_STATUS_TEMPLATE = "images/template/status/sheyaoxiang_buff.png";
@@ -111,9 +112,9 @@ public class PlayerStateService {
      * base=(379,154)、absolute=(1380,277)-(1403,311) 回推得到。
      * 只截状态栏右侧的摄妖香图标窄框，避免把周围按钮/背景也拿去做模板匹配。
      */
-    private static final int STATUS_PANEL_X = 1001;
+    private static final int STATUS_PANEL_X = 901;
     private static final int STATUS_PANEL_Y = 123;
-    private static final int STATUS_PANEL_W = 23;
+    private static final int STATUS_PANEL_W = 123;
     private static final int STATUS_PANEL_H = 34;
 
     /**
@@ -186,18 +187,6 @@ public class PlayerStateService {
         log.info("🔄 战斗结束，急救检查计数器已重置，准备进行战后体检！");
     }
 
-    public void performFirstAidCheck() {
-        performFirstAidCheck(false);
-    }
-
-    public void performFirstAidCheckNow() {
-        performFirstAidCheck(true, null);
-    }
-
-    public void performFirstAidCheckNow(TaskExecutionContext taskContext) {
-        performFirstAidCheck(true, taskContext);
-    }
-
     /**
      * Run a task-start supply check regardless of the previous post-combat throttle state.
      *
@@ -213,20 +202,7 @@ public class PlayerStateService {
         state.checksDoneThisRound = 0;
         state.lastCombatExitTime = 0;
         log.info("🩺 启动急救检查：重置本窗口急救计数，准备检查人物/宝宝血法");
-        performFirstAidCheck(true, taskContext, false);
-    }
-
-    /**
-     * Run one post-combat supply pass only when a no-focus bar probe says HP/MP is low.
-     *
-     * <p>This is the quiet path for member windows during leader navigation: healthy windows should
-     * not grab focus merely to confirm that no supply is needed. The round counter is still consumed
-     * after a healthy no-focus result so later idle loops do not repeat the same post-combat check.</p>
-     *
-     * @param taskContext optional task stop token; null is allowed for legacy callers.
-     */
-    public void performFirstAidCheckNowIfNeeded(TaskExecutionContext taskContext) {
-        performFirstAidCheck(true, taskContext, true);
+        performFirstAidCheck(true, taskContext);
     }
 
     /**
@@ -247,21 +223,11 @@ public class PlayerStateService {
         if (result == FirstAidNoFocusProbeResult.HEALTHY) {
             PlayerRuntimeState state = state();
             state.checksDoneThisRound++;
+            state.pendingNoFocusFirstAidPlan = null;
             log.info("🩺 战后体检 no-focus 预检健康，跳过 pending 补给：source={} 当前空闲期已查次数: {}/{}",
                     safeReason(source), state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
         }
         return result;
-    }
-
-    /**
-     * Check whether player/pet HP or MP appears below configured thresholds without focusing.
-     *
-     * @param taskContext optional task stop token; null is allowed for legacy callers.
-     * @return true when at least one enabled bar appears below threshold; false when no supply is
-     * needed, the check has already run this round, or the screenshot is unavailable.
-     */
-    public boolean needsFirstAidSupplyNoFocus(TaskExecutionContext taskContext) {
-        return probeFirstAidSupplyNoFocus(taskContext) == FirstAidNoFocusProbeResult.SUPPLY_NEEDED;
     }
 
     /**
@@ -282,28 +248,111 @@ public class PlayerStateService {
         }
         if (tracker.getWindowBaseX() == -1) {
             log.warn("first-aid no-focus precheck skipped: window base unavailable");
+            state.pendingNoFocusFirstAidPlan = null;
             return FirstAidNoFocusProbeResult.UNKNOWN;
         }
 
         BufferedImage bars = captureBarsSnapshotNoFocus();
         if (bars == null) {
             log.warn("first-aid no-focus precheck failed: bars snapshot unavailable");
+            state.pendingNoFocusFirstAidPlan = null;
             return FirstAidNoFocusProbeResult.UNKNOWN;
         }
+        int planBaseX = tracker.getWindowBaseX();
+        int planBaseY = tracker.getWindowBaseY();
         try {
-            boolean needed = isSupplyNeededFromSnapshotIfEnabled(bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
-                    BAR_HP_Y, true, config.isPlayerHpSupplyEnabled(), config.getPlayerHpSupplyThreshold())
-                    || isSupplyNeededFromSnapshotIfEnabled(bars, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
-                    BAR_MP_Y, false, config.isPlayerMpSupplyEnabled(), config.getPlayerMpSupplyThreshold())
-                    || isSupplyNeededFromSnapshotIfEnabled(bars, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
-                    BAR_HP_Y, true, config.isPetHpSupplyEnabled(), config.getPetHpSupplyThreshold())
-                    || isSupplyNeededFromSnapshotIfEnabled(bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
-                    BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold());
-            log.info("first-aid no-focus precheck result: needed={}", needed);
-            return needed ? FirstAidNoFocusProbeResult.SUPPLY_NEEDED : FirstAidNoFocusProbeResult.HEALTHY;
+            List<FirstAidTarget> targets = findSupplyTargetsFromSnapshot(bars);
+            if (!targets.isEmpty()) {
+                /*
+                 * This is the 医宝宝-style precompute path: watcher/no-focus work decides exactly
+                 * which bars need supply, so the later focused turn only performs clicks.
+                 */
+                state.pendingNoFocusFirstAidPlan = new FirstAidPlan(
+                        targets, System.currentTimeMillis(), planBaseX, planBaseY);
+            } else {
+                state.pendingNoFocusFirstAidPlan = null;
+            }
+            log.info("first-aid no-focus precheck result: needed={} targets={} planBase=({}, {})",
+                    !targets.isEmpty(), describeFirstAidTargets(targets), planBaseX, planBaseY);
+            return targets.isEmpty() ? FirstAidNoFocusProbeResult.HEALTHY : FirstAidNoFocusProbeResult.SUPPLY_NEEDED;
         } finally {
             bars.flush();
         }
+    }
+
+    /**
+     * Execute the no-focus precomputed first-aid clicks without rescanning every bar.
+     *
+     * @param taskContext optional stop token for the current task.
+     * @return true when a cached plan was consumed; false when no cached no-focus plan is available.
+     */
+    public boolean performCachedFirstAidPlanNow(TaskExecutionContext taskContext) {
+        checkpoint(taskContext);
+        PlayerRuntimeState state = state();
+        FirstAidPlan plan = state.pendingNoFocusFirstAidPlan;
+        state.pendingNoFocusFirstAidPlan = null;
+        if (plan == null || plan.targets().isEmpty()) {
+            return false;
+        }
+        if (plan.baseX() == -1 || plan.baseY() == -1) {
+            log.warn("first-aid cached plan skipped: plan window base unavailable targets={}",
+                    describeFirstAidTargets(plan.targets()));
+            return false;
+        }
+
+        log.info("🩺 执行后台预计算补给计划：targets={} ageMs={} planBase=({}, {})",
+                describeFirstAidTargets(plan.targets()), System.currentTimeMillis() - plan.createdAtMs(),
+                plan.baseX(), plan.baseY());
+        /*
+         * Detection stays fully no-focus/background. Real input deliberately uses the same execution
+         * style as the old working healAll path: an exclusive input callback, focus before callback,
+         * direct InputProvider right-click, then the old 800ms settle delay per click.
+         */
+        boolean completed = inputSequences.submitExclusiveAndWait("playerState:healCachedPlan",
+                () -> performCachedFirstAidPlanDirect(plan));
+        if (!completed) {
+            log.warn("player-state cached first-aid transaction did not complete");
+        }
+        state.checksDoneThisRound++;
+        log.info("✅ 后台预计算补给计划结束。当前空闲期已查次数: {}/{}",
+                state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
+        return true;
+    }
+
+    private boolean performCachedFirstAidPlanDirect(FirstAidPlan plan) {
+        /*
+         * The input worker has its own tracker ThreadLocal. Refresh it after the window context has
+         * been bound, but keep the precheck base as a fallback so cached healing never clicks using
+         * another window's stale coordinates.
+         */
+        int baseX = plan.baseX();
+        int baseY = plan.baseY();
+        boolean refreshed = tracker.refreshWindowState();
+        int refreshedBaseX = tracker.getWindowBaseX();
+        int refreshedBaseY = tracker.getWindowBaseY();
+        if (refreshed && refreshedBaseX != -1 && refreshedBaseY != -1) {
+            if (refreshedBaseX != baseX || refreshedBaseY != baseY) {
+                log.info("first-aid cached plan base refreshed: planBase=({}, {}) refreshedBase=({}, {})",
+                        baseX, baseY, refreshedBaseX, refreshedBaseY);
+            }
+            baseX = refreshedBaseX;
+            baseY = refreshedBaseY;
+        } else {
+            log.warn("first-aid cached plan using stored base: refreshSuccess={} storedBase=({}, {}) refreshedBase=({}, {})",
+                    refreshed, baseX, baseY, refreshedBaseX, refreshedBaseY);
+        }
+
+        inputProvider.moveMouse(baseX + SAFE_MOUSE_REL_X, baseY + SAFE_MOUSE_REL_Y);
+        TaskSleep.sleep(80);
+        for (FirstAidTarget target : plan.targets()) {
+            int absX = baseX + target.relX();
+            int absY = baseY + target.relY();
+            log.warn("🚨 后台预计算命中 [{}]，按当前窗口补给：base=({}, {}) rel=({}, {}) abs=({}, {}) threshold={}%",
+                    target.name(), baseX, baseY, target.relX(), target.relY(), absX, absY, target.threshold());
+            inputProvider.clickRight(absX, absY, 100);
+            TaskSleep.sleep(800);
+        }
+        return !Thread.currentThread().isInterrupted();
     }
 
     /**
@@ -345,17 +394,7 @@ public class PlayerStateService {
         }
     }
 
-    private void performFirstAidCheck(boolean ignoreTimeInterval) {
-        performFirstAidCheck(ignoreTimeInterval, null);
-    }
-
     private void performFirstAidCheck(boolean ignoreTimeInterval, TaskExecutionContext taskContext) {
-        performFirstAidCheck(ignoreTimeInterval, taskContext, false);
-    }
-
-    private void performFirstAidCheck(boolean ignoreTimeInterval,
-                                      TaskExecutionContext taskContext,
-                                      boolean requireNoFocusNeed) {
         checkpoint(taskContext);
         PlayerRuntimeState state = state();
         if (state.checksDoneThisRound >= MAX_CHECKS_BETWEEN_BATTLES) {
@@ -365,13 +404,6 @@ public class PlayerStateService {
         if (tracker.getWindowBaseX() == -1) return;
 
         if (!ignoreTimeInterval && System.currentTimeMillis() - state.lastCombatExitTime < HEAL_TIME_INTERVAL) {
-            return;
-        }
-
-        if (requireNoFocusNeed && !needsFirstAidSupplyNoFocus(taskContext)) {
-            state.checksDoneThisRound++;
-            log.info("🩺 战后体检 no-focus 预检健康，跳过抢窗口补给。当前空闲期已查次数: {}/{}",
-                    state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
             return;
         }
 
@@ -512,18 +544,23 @@ public class PlayerStateService {
             java.awt.Point buffIcon = statusProbe.iconPoint();
 
             /*
-             * Template match means the incense buff exists. A cyan hour number in the same crop means
-             * the remaining time is at least that many hours; use it to calibrate the in-memory watch
-             * and skip the bag. If the icon exists but no cyan number is readable, treat it as below
-             * one hour and refill, which is the conservative behavior the user requested.
+             * Template match means the incense buff exists. Cyan text is an hour count; green text is
+             * a minute count. If neither color yields a readable number, refill conservatively so the
+             * in-memory watch gets rebuilt from a known use time.
              */
-            if (buffIcon != null && statusProbe.remainingHours().isPresent()) {
-                int remainingHours = statusProbe.remainingHours().getAsInt();
-                state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingHours(now, remainingHours);
+            if (buffIcon != null && statusProbe.remainingMs().isPresent()) {
+                long remainingMs = statusProbe.remainingMs().getAsLong();
+                state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(now, remainingMs);
                 state.nextIncenseRetryTime = 0;
-                log.info("sheyaoxiang status matched with remainingHours={}; calibrate watch and skip refill. point=({}, {})",
-                        remainingHours, buffIcon.x, buffIcon.y);
-                return false;
+                if (remainingMs > INCENSE_REFRESH_REMAINING_MS) {
+                    log.info("sheyaoxiang status matched with {}; remainingMinutes={} > refreshLineMinutes={}; skip refill. point=({}, {})",
+                            statusProbe.remainingText(), Math.max(0, remainingMs / 60000),
+                            INCENSE_REFRESH_REMAINING_MS / 60000, buffIcon.x, buffIcon.y);
+                    return false;
+                }
+                log.info("sheyaoxiang status matched with {}; remainingMinutes={} <= refreshLineMinutes={}; refill now. point=({}, {})",
+                        statusProbe.remainingText(), Math.max(0, remainingMs / 60000),
+                        INCENSE_REFRESH_REMAINING_MS / 60000, buffIcon.x, buffIcon.y);
             }
 
             if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
@@ -582,6 +619,65 @@ public class PlayerStateService {
             log.info("摄妖香检查允许：source={} 无窗口上下文，按单窗口/队长任务兼容处理", caller);
         }
         return ensureSheYaoXiangActive(taskContext);
+    }
+
+    /**
+     * Capture only the current incense-status probe rectangle and save it for visual inspection.
+     *
+     * <p>This is a debug-only read path. It saves the raw probe, matches the 摄妖香 icon, crops the
+     * matched icon column, and runs the same cyan-hour/green-minute reader used by normal logic. It
+     * does not open the bag or use physical input.</p>
+     *
+     * @param taskContext optional stop token for the debug task.
+     * @param source short diagnostic label written into the output filename and logs.
+     * @return window-scoped PNG path when capture/save succeeds, or {@code null} when capture fails.
+     */
+    public String captureSheYaoXiangStatusDebugImage(TaskExecutionContext taskContext, String source) {
+        checkpoint(taskContext);
+        String safeSource = safeReason(source);
+        int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
+        BufferedImage statusImage = tracker.captureToMemory(
+                "sheyaoxiang-status-debug", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
+        if (statusImage == null) {
+            log.warn("sheyaoxiang debug status capture failed: source={} rect=({}, {})-({}, {})",
+                    safeSource, statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
+            return null;
+        }
+
+        try {
+            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_debug_" + safeSource + "_raw.png");
+            if (!com.bot.dhxy.tools.ImagePreprocessor.saveImage(statusImage, rawPath)) {
+                log.warn("sheyaoxiang debug status save failed: source={} path={} rect=({}, {})-({}, {}) size={}x{}",
+                        safeSource, rawPath, statusRect[0], statusRect[1], statusRect[2], statusRect[3],
+                        statusImage.getWidth(), statusImage.getHeight());
+                return null;
+            }
+            log.info("sheyaoxiang debug status saved: source={} path={} rect=({}, {})-({}, {}) size={}x{}",
+                    safeSource, rawPath, statusRect[0], statusRect[1], statusRect[2], statusRect[3],
+                    statusImage.getWidth(), statusImage.getHeight());
+            double[] match = ImageFinder.find(rawPath, SHEYAOXIANG_STATUS_TEMPLATE, SHEYAOXIANG_STATUS_MATCH_RATE);
+            if (match != null && match.length >= 2) {
+                BufferedImage matchedColumn = cropSheyaoxiangMatchedColumn(statusImage, match, statusRect, "debug:" + safeSource);
+                if (matchedColumn != null) {
+                    try {
+                        String columnPath = windowScopedTempPath.resolve(
+                                "sheyaoxiang_status_debug_" + safeSource + "_matched_column_raw.png");
+                        if (com.bot.dhxy.tools.ImagePreprocessor.saveImage(matchedColumn, columnPath)) {
+                            log.info("sheyaoxiang debug matched column saved: source={} path={}",
+                                    safeSource, columnPath);
+                        }
+                        IncenseRemainingTime remainingTime = readSheyaoxiangRemainingTime(matchedColumn);
+                        log.info("sheyaoxiang debug matched column read result: source={} remaining={}",
+                                safeSource, remainingTime.describe());
+                    } finally {
+                        matchedColumn.flush();
+                    }
+                }
+            }
+            return rawPath;
+        } finally {
+            statusImage.flush();
+        }
     }
 
     public boolean checkAndHeal(String name, int relX, int relY, boolean expectRed) {
@@ -645,6 +741,38 @@ public class PlayerStateService {
         int normalizedThreshold = normalizeThreshold(threshold);
         int relX = calculateX(leftX, rightX, normalizedThreshold);
         return checkAndHealFromSnapshot(bars, name, relX, relY, expectRed, normalizedThreshold);
+    }
+
+    private List<FirstAidTarget> findSupplyTargetsFromSnapshot(BufferedImage bars) {
+        List<FirstAidTarget> candidates = new ArrayList<>();
+        addSupplyTargetIfNeeded(candidates, bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPlayerHpSupplyEnabled(), config.getPlayerHpSupplyThreshold());
+        addSupplyTargetIfNeeded(candidates, bars, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPlayerMpSupplyEnabled(), config.getPlayerMpSupplyThreshold());
+        addSupplyTargetIfNeeded(candidates, bars, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPetHpSupplyEnabled(), config.getPetHpSupplyThreshold());
+        addSupplyTargetIfNeeded(candidates, bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold());
+        return candidates;
+    }
+
+    private void addSupplyTargetIfNeeded(List<FirstAidTarget> targets,
+                                         BufferedImage bars,
+                                         String name,
+                                         int leftX,
+                                         int rightX,
+                                         int relY,
+                                         boolean expectRed,
+                                         boolean enabled,
+                                         int threshold) {
+        if (!enabled) {
+            return;
+        }
+        int normalizedThreshold = normalizeThreshold(threshold);
+        int relX = calculateX(leftX, rightX, normalizedThreshold);
+        if (isSupplyNeededFromSnapshot(bars, name, relX, relY, expectRed, normalizedThreshold)) {
+            targets.add(new FirstAidTarget(name, relX, relY, expectRed, normalizedThreshold));
+        }
     }
 
     private boolean isSupplyNeededFromSnapshotIfEnabled(BufferedImage bars, String name,
@@ -816,6 +944,17 @@ public class PlayerStateService {
         return false;
     }
 
+    private String describeFirstAidTargets(List<FirstAidTarget> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return "[]";
+        }
+        return targets.stream()
+                .map(target -> target.name() + "@" + target.relX() + "," + target.relY()
+                        + "/" + target.threshold() + "%")
+                .toList()
+                .toString();
+    }
+
     /**
      * Capture the incense status crop once, match the buff template, and optionally read its
      * cyan remaining-hour number.
@@ -859,26 +998,75 @@ public class PlayerStateService {
                     statusRect[1] + (int) Math.round(match[1]));
 
             /*
-             * Stage 2: read only the cyan hour number from the same status crop. This keeps the
-             * extra OCR cost behind a successful template match and avoids a second screenshot.
+             * Stage 2 reads only the vertical strip under the matched icon. Cyan digits are hours;
+             * if no cyan number exists, green digits are treated as minutes.
              */
-            OptionalInt remainingHours = readSheyaoxiangRemainingHours(statusImage);
-            log.info("sheyaoxiang status matched: point=({}, {}) remainingHours={}",
-                    iconPoint.x, iconPoint.y, remainingHours.isPresent() ? remainingHours.getAsInt() : "none");
-            return new IncenseStatusProbe(iconPoint, remainingHours);
+            BufferedImage matchedColumn = cropSheyaoxiangMatchedColumn(statusImage, match, statusRect, "probe");
+            IncenseRemainingTime remainingTime;
+            if (matchedColumn != null) {
+                try {
+                    String columnPath = windowScopedTempPath.resolve("sheyaoxiang_status_matched_column_raw.png");
+                    writeImage(matchedColumn, columnPath, "sheyaoxiang matched column raw");
+                    remainingTime = readSheyaoxiangRemainingTime(matchedColumn);
+                } finally {
+                    matchedColumn.flush();
+                }
+            } else {
+                remainingTime = readSheyaoxiangRemainingTime(statusImage);
+            }
+            log.info("sheyaoxiang status matched: point=({}, {}) remaining={}",
+                    iconPoint.x, iconPoint.y, remainingTime.describe());
+            return new IncenseStatusProbe(iconPoint, remainingTime.remainingMs(), remainingTime.describe());
         } finally {
             statusImage.flush();
         }
     }
 
+    private BufferedImage cropSheyaoxiangMatchedColumn(BufferedImage statusImage,
+                                                       double[] match,
+                                                       int[] statusRect,
+                                                       String source) {
+        BufferedImage template = null;
+        try {
+            template = ImageIO.read(new File(SHEYAOXIANG_STATUS_TEMPLATE));
+            if (template == null) {
+                log.warn("sheyaoxiang matched column crop skipped: source={} template not readable path={}",
+                        source, SHEYAOXIANG_STATUS_TEMPLATE);
+                return null;
+            }
+
+            int left = Math.max(0, (int) Math.round(match[0] - template.getWidth() / 2.0));
+            int right = Math.min(statusImage.getWidth(), left + template.getWidth());
+            if (right <= left) {
+                log.warn("sheyaoxiang matched column crop skipped: source={} localLeft={} localRight={} imageSize={}x{}",
+                        source, left, right, statusImage.getWidth(), statusImage.getHeight());
+                return null;
+            }
+
+            int absLeft = statusRect[0] + left;
+            int absRight = statusRect[0] + right;
+            log.info("sheyaoxiang matched column crop: source={} localX=({}, {}) absX=({}, {}) height={} templateSize={}x{}",
+                    source, left, right, absLeft, absRight, statusImage.getHeight(),
+                    template.getWidth(), template.getHeight());
+            return com.bot.dhxy.tools.ImagePreprocessor.cropCopy(
+                    statusImage, left, 0, right - left, statusImage.getHeight());
+        } catch (IOException e) {
+            log.warn("sheyaoxiang matched column crop failed: source={} reason={}", source, e.getMessage(), e);
+            return null;
+        } finally {
+            if (template != null) {
+                template.flush();
+            }
+        }
+    }
+
     /**
-     * Wash the incense status crop into a black-on-white cyan-digit image and OCR it locally.
+     * Wash the incense status crop into a black-on-white digit image and OCR it locally.
      *
      * @param statusImage captured incense status crop. Ownership stays with the caller.
-     * @return positive hour number when OCR sees digits such as {@code 02}, {@code 03}, or
-     * {@code 11}; empty when no cyan digit text is readable.
+     * @return remaining time. Cyan digits are hours; green digits are minutes.
      */
-    private OptionalInt readSheyaoxiangRemainingHours(BufferedImage statusImage) {
+    private IncenseRemainingTime readSheyaoxiangRemainingTime(BufferedImage statusImage) {
         BufferedImage washed = new BufferedImage(
                 statusImage.getWidth() * SHEYAOXIANG_DIGIT_OCR_SCALE,
                 statusImage.getHeight() * SHEYAOXIANG_DIGIT_OCR_SCALE,
@@ -910,14 +1098,65 @@ public class PlayerStateService {
             if (!matcher.find()) {
                 log.info("sheyaoxiang cyan digit OCR returned no hour digits: path={} text='{}'",
                         washedPath, text);
-                return OptionalInt.empty();
+                return readSheyaoxiangRemainingMinutesGreen(statusImage);
             }
             int hours = Integer.parseInt(matcher.group());
             if (hours <= 0) {
                 log.info("sheyaoxiang cyan digit OCR ignored non-positive hour value: text='{}'", text);
-                return OptionalInt.empty();
+                return readSheyaoxiangRemainingMinutesGreen(statusImage);
             }
-            return OptionalInt.of(hours);
+            long remainingMs = hours * ONE_HOUR_MS;
+            log.info("sheyaoxiang cyan digit OCR matched remainingHours={} remainingMinutes={} path={} text='{}'",
+                    hours, remainingMs / 60000, washedPath, text);
+            return IncenseRemainingTime.found(remainingMs, "cyan-hours=" + hours);
+        } finally {
+            washed.flush();
+        }
+    }
+
+    private IncenseRemainingTime readSheyaoxiangRemainingMinutesGreen(BufferedImage statusImage) {
+        BufferedImage washed = new BufferedImage(
+                statusImage.getWidth() * SHEYAOXIANG_DIGIT_OCR_SCALE,
+                statusImage.getHeight() * SHEYAOXIANG_DIGIT_OCR_SCALE,
+                BufferedImage.TYPE_INT_RGB);
+        try {
+            for (int y = 0; y < statusImage.getHeight(); y++) {
+                for (int x = 0; x < statusImage.getWidth(); x++) {
+                    int rgb = statusImage.getRGB(x, y) & 0xFFFFFF;
+                    int outputRgb = isSheyaoxiangGreenDigitPixel(rgb) ? 0x000000 : 0xFFFFFF;
+                    for (int dy = 0; dy < SHEYAOXIANG_DIGIT_OCR_SCALE; dy++) {
+                        for (int dx = 0; dx < SHEYAOXIANG_DIGIT_OCR_SCALE; dx++) {
+                            washed.setRGB(
+                                    x * SHEYAOXIANG_DIGIT_OCR_SCALE + dx,
+                                    y * SHEYAOXIANG_DIGIT_OCR_SCALE + dy,
+                                    outputRgb);
+                        }
+                    }
+                }
+            }
+
+            String washedPath = windowScopedTempPath.resolve("sheyaoxiang_status_green_digits.png");
+            writeImage(washed, washedPath, "sheyaoxiang green digit OCR");
+            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
+            String text = words.stream()
+                    .map(OcrWordResult::getText)
+                    .filter(value -> value != null && !value.isBlank())
+                    .reduce("", String::concat);
+            Matcher matcher = SHEYAOXIANG_REMAINING_HOUR_PATTERN.matcher(text == null ? "" : text);
+            if (!matcher.find()) {
+                log.info("sheyaoxiang green digit OCR returned no minute digits: path={} text='{}'",
+                        washedPath, text);
+                return IncenseRemainingTime.empty();
+            }
+            int minutes = Integer.parseInt(matcher.group());
+            if (minutes <= 0) {
+                log.info("sheyaoxiang green digit OCR ignored non-positive minute value: text='{}'", text);
+                return IncenseRemainingTime.empty();
+            }
+            long remainingMs = minutes * 60000L;
+            log.info("sheyaoxiang green digit OCR matched remainingMinutes={} path={} text='{}'",
+                    minutes, washedPath, text);
+            return IncenseRemainingTime.found(remainingMs, "green-minutes=" + minutes);
         } finally {
             washed.flush();
         }
@@ -930,8 +1169,15 @@ public class PlayerStateService {
         return r <= 120 && g >= 130 && b >= 130 && Math.abs(g - b) <= 80;
     }
 
-    private long incenseLastUsedTimeForRemainingHours(long now, int remainingHours) {
-        long remainingMs = Math.max(1L, remainingHours) * ONE_HOUR_MS;
+    private boolean isSheyaoxiangGreenDigitPixel(int rgb) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        return g >= 120 && r <= 120 && b <= 120 && g >= r + 50 && g >= b + 50;
+    }
+
+    private long incenseLastUsedTimeForRemainingMs(long now, long remainingMs) {
+        remainingMs = Math.max(1L, remainingMs);
         return now - (INCENSE_DURATION_MS - remainingMs);
     }
 
@@ -994,8 +1240,9 @@ public class PlayerStateService {
      *
      * @param iconPoint screen-absolute point where the incense status template matched; null when
      *                  the buff icon was not found.
-     * @param remainingHours OCR-read remaining hour number. Empty means either no icon matched or
-     *                       the icon had no cyan hour number visible.
+     * @param remainingMs OCR-read remaining time in milliseconds. Empty means either no icon
+     *                    matched or neither cyan-hour nor green-minute digits were readable.
+     * @param remainingText human-readable diagnostic source such as {@code cyan-hours=1}.
      */
     @Value
 
@@ -1009,13 +1256,33 @@ public class PlayerStateService {
 
         java.awt.Point iconPoint;
 
-        OptionalInt remainingHours;
+        OptionalLong remainingMs;
+
+        String remainingText;
 
         private static IncenseStatusProbe notFound() {
-            return new IncenseStatusProbe(null, OptionalInt.empty());
+            return new IncenseStatusProbe(null, OptionalLong.empty(), "none");
         }
     
 
+    }
+
+    @Value
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
+    @Accessors(fluent = true)
+    private static class IncenseRemainingTime {
+
+        OptionalLong remainingMs;
+
+        String describe;
+
+        private static IncenseRemainingTime found(long remainingMs, String describe) {
+            return new IncenseRemainingTime(OptionalLong.of(remainingMs), describe);
+        }
+
+        private static IncenseRemainingTime empty() {
+            return new IncenseRemainingTime(OptionalLong.empty(), "none");
+        }
     }
 
     private static class PlayerRuntimeState {
@@ -1023,6 +1290,13 @@ public class PlayerStateService {
         private long nextIncenseRetryTime = 0;
         private int checksDoneThisRound = 0;
         private long lastCombatExitTime = 0;
+        private FirstAidPlan pendingNoFocusFirstAidPlan;
+    }
+
+    private record FirstAidPlan(List<FirstAidTarget> targets, long createdAtMs, int baseX, int baseY) {
+    }
+
+    private record FirstAidTarget(String name, int relX, int relY, boolean expectRed, int threshold) {
     }
 
     public enum FirstAidNoFocusProbeResult {

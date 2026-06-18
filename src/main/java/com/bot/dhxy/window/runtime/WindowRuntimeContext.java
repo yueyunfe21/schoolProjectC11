@@ -23,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -57,6 +58,7 @@ public class WindowRuntimeContext {
             new AtomicReference<>(WindowPathingSnapshot.idle());
     private final AtomicReference<WindowDialogSnapshot> visibleDialogSnapshot = new AtomicReference<>();
     private final AtomicReference<WindowDialogInterest> dialogInterest = new AtomicReference<>();
+    private final AtomicLong observerWakeSeq = new AtomicLong();
     private final AtomicReference<DialogPreparationRequest> dialogPreparationRequest = new AtomicReference<>();
     private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
     private final AtomicReference<PendingTransferChoiceMemory> pendingTransferChoiceMemory = new AtomicReference<>();
@@ -187,6 +189,8 @@ public class WindowRuntimeContext {
 
     public DialogPreparationStatus getDialogPreparationStatus() { return dialogPreparationStatus.get(); }
 
+    public long getObserverWakeSeq() { return observerWakeSeq.get(); }
+
     /**
      * Store the latest dialog shape observed by this window's background watcher.
      *
@@ -238,9 +242,11 @@ public class WindowRuntimeContext {
             return;
         }
         dialogInterest.set(interest);
-        log.info("[latency] event=window.dialog.interest.update windowId={} task={} operations={} source={} reason={} ttlMs={}",
+        long wakeSeq = observerWakeSeq.incrementAndGet();
+        log.info("[latency] event=window.dialog.interest.update windowId={} task={} operations={} source={} reason={} ttlMs={} wakeSeq={}",
                 windowId, interest.getTaskType(), interest.getOperations(), normalize(interest.getSource()),
-                normalize(reason), Math.max(0L, interest.getExpiresAtMs() - System.currentTimeMillis()));
+                normalize(reason), Math.max(0L, interest.getExpiresAtMs() - System.currentTimeMillis()),
+                wakeSeq);
     }
 
     public void clearDialogInterest(String reason) {

@@ -111,7 +111,8 @@ public class XiuluoTaskV2 implements GameTask {
     private static final int HEAL_PET_NPC_Y = 70;
     private static final int REPAIR_EQUIPMENT_NPC_X = 324;
     private static final int REPAIR_EQUIPMENT_NPC_Y = 109;
-    private static final int TASK_NPC_DIRECT_CLICK_DISTANCE = 10;
+    // isNearCoordinate uses per-axis tolerance; 灵兽村 (101,83) -> 接任务 NPC (112,93) needs 11.
+    private static final int TASK_NPC_DIRECT_CLICK_DISTANCE = 11;
     private static final int START_EXIT_X = 11;
     private static final int START_EXIT_Y = 8;
     private static final int START_EXIT_PREPATH_SKIP_DISTANCE = 3;
@@ -759,16 +760,28 @@ public class XiuluoTaskV2 implements GameTask {
         TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
         Optional<NpcTarget> storyObjective = tryReadCurrentStoryObjective(context, state.source());
         if (storyObjective.isPresent()) {
+            XiuluoPhase nextPhase = state.startExitPrepathStarted()
+                    ? XiuluoPhase.NAVIGATE_TO_TARGET
+                    : XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK;
+            String nextSource = state.startExitPrepathStarted()
+                    ? "objective:story:after-start-exit-prepath"
+                    : "objective:story";
             return XiuluoStepOutcome.continueTo(
-                    state.withObjective(XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK, storyObjective.get(), "objective:story"),
+                    state.withObjective(nextPhase, storyObjective.get(), nextSource),
                     "objective parsed from story dialog");
         }
 
         log.warn("[xiuluo-v2] story objective parse failed; trying task-panel fallback");
         Optional<NpcTarget> panelObjective = tryReadObjectiveFromTaskPanel(context, state.source() + ":task-panel");
         if (panelObjective.isPresent()) {
+            XiuluoPhase nextPhase = state.startExitPrepathStarted()
+                    ? XiuluoPhase.NAVIGATE_TO_TARGET
+                    : XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK;
+            String nextSource = state.startExitPrepathStarted()
+                    ? "objective:task-panel:after-start-exit-prepath"
+                    : "objective:task-panel";
             return XiuluoStepOutcome.continueTo(
-                    state.withObjective(XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK, panelObjective.get(), "objective:task-panel"),
+                    state.withObjective(nextPhase, panelObjective.get(), nextSource),
                     "objective parsed from task panel");
         }
 
@@ -1073,6 +1086,10 @@ public class XiuluoTaskV2 implements GameTask {
     }
 
     private XiuluoStepOutcome startLeavingStartMapIfPresent(XiuluoRoundContext state) {
+        if (state.startExitPrepathStarted()) {
+            log.info("[xiuluo-v2] skip start-map exit pre-pathing: already started source={}", state.source());
+            return null;
+        }
         String currentMap = gameContext.getMe() == null ? null : gameContext.getMe().getCurrentMapName();
         if (!gameStateUtil.isSameMapName(currentMap, START_MAP_NAME)) {
             log.info("[xiuluo-v2] skip start-map exit pre-pathing: current={} startMap={}",
@@ -1113,7 +1130,7 @@ public class XiuluoTaskV2 implements GameTask {
              * still owns PATHING_STARTED/yield once the route to the objective begins.
              */
             return XiuluoStepOutcome.continueTo(
-                    state.next(XiuluoPhase.NAVIGATE_TO_TARGET, "start-exit-pathing"),
+                    state.withStartExitPrepathStarted(XiuluoPhase.NAVIGATE_TO_TARGET, "start-exit-pathing"),
                     "start-map exit pathing started; continue target route while walking");
         }
         return null;
@@ -1150,7 +1167,17 @@ public class XiuluoTaskV2 implements GameTask {
                 .source("xiuluo-v2:target")
                 .build());
         if (result.getStatus() == NavigationResultStatus.PATHING_STARTED) {
-            openTeamPathingMaintenanceWindow(context, activeState, "target-navigation-pathing-started");
+            /*
+             * Cross-map travel can leave time for member maintenance, but once the leader starts the
+             * current-map walk toward the combat target, summon-skill cleanup must stop competing
+             * for the input queue. The existing maintenance gate is enough; do not add watcher-side
+             * service callbacks for this policy.
+             */
+            if ("current-map mini-map click started pathing".equals(result.getMessage())) {
+                closeTeamPathingMaintenanceWindow(context, activeState, "target-current-map-pathing-started");
+            } else {
+                openTeamPathingMaintenanceWindow(context, activeState, "target-navigation-pathing-started");
+            }
         } else if (result.getStatus() == NavigationResultStatus.ARRIVED
                 || result.getStatus() == NavigationResultStatus.SUCCESS) {
             closeTeamPathingMaintenanceWindow(context, activeState, "target-route-arrived");
@@ -1723,23 +1750,45 @@ public class XiuluoTaskV2 implements GameTask {
         return switch (actionKey) {
             case OPTION_ACCEPT_TASK -> {
                 TaskSleep.sleepOrStop(context, 250L, "Xiuluo V2 task interrupted");
-                yield Optional.of(XiuluoStepOutcome.continueTo(
-                        state.next(XiuluoPhase.READ_OBJECTIVE, "known-dialog:accept-task"),
-                        "accept option clicked"));
+                yield Optional.of(continueAfterAcceptOptionClicked(state, "known-dialog:accept-task"));
             }
             case OPTION_ENTER_BATTLE -> Optional.of(
                     enterBattleFromRecoveredDialog(context, state, "known-dialog:enter-battle"));
             case OPTION_UNDER_FIVE_CONFIRM -> {
                 TaskSleep.sleepOrStop(context, 250L, "Xiuluo V2 task interrupted");
-                yield Optional.of(XiuluoStepOutcome.continueTo(
-                        state.next(XiuluoPhase.READ_OBJECTIVE, "known-dialog:under-five-confirm"),
-                        "under-five prompt confirmed; read objective"));
+                yield Optional.of(continueAfterAcceptOptionClicked(state, "known-dialog:under-five-confirm"));
             }
             case OPTION_UNDER_FIVE_WAIT -> Optional.of(XiuluoStepOutcome.sharedState(
                     state.next(XiuluoPhase.WAIT_TEAM_RETURN, "known-dialog:under-five-wait"),
                     "under-five prompt declined by config; wait for team"));
             default -> Optional.empty();
         };
+    }
+
+    private XiuluoStepOutcome continueAfterAcceptOptionClicked(XiuluoRoundContext state, String source) {
+        boolean healPetDue = isHealPetMaintenanceDue();
+        boolean repairEquipmentDue = isRepairEquipmentMaintenanceDue();
+        if (healPetDue || repairEquipmentDue) {
+            log.info("[xiuluo-v2] accept option clicked; read objective before maintenance: source={} healPetDue={} repairEquipmentDue={}",
+                    source, healPetDue, repairEquipmentDue);
+            return XiuluoStepOutcome.continueTo(
+                    state.next(XiuluoPhase.READ_OBJECTIVE, source),
+                    "accept option clicked; read objective before maintenance");
+        }
+
+        /*
+         * No post-accept maintenance is due, so start walking out of 灵兽村 before parsing the story
+         * objective. The story dialog remains available for READ_OBJECTIVE while the leader is moving.
+         */
+        XiuluoStepOutcome exitPathing = startLeavingStartMapIfPresent(state);
+        if (exitPathing != null) {
+            log.info("[xiuluo-v2] accept option clicked; start exit before objective read: source={}", source);
+            return exitPathing;
+        }
+        log.info("[xiuluo-v2] accept option clicked; no start exit pre-pathing needed: source={}", source);
+        return XiuluoStepOutcome.continueTo(
+                state.next(XiuluoPhase.READ_OBJECTIVE, source),
+                "accept option clicked");
     }
 
     private List<GreenTemplateClickSpec> xiuluoKnownOptionSpecs() {
@@ -1846,7 +1895,7 @@ public class XiuluoTaskV2 implements GameTask {
                 .x(value.x())
                 .y(value.y())
                 .role(NpcRole.COMBAT_TARGET)
-                .movementType(NpcMovementType.ROAMING)
+                .movementType(NpcMovementType.FIXED)
                 .source("xiuluoObjective:" + value.mapSlug() + ":" + value.mapScore())
                 .build();
     }
@@ -1886,17 +1935,12 @@ public class XiuluoTaskV2 implements GameTask {
     private Optional<NpcTarget> parseTaskPanelObjective(QuestDetailCapture capture, String source) {
         BufferedImage image = capture.image();
         try {
-            Optional<NpcTarget> ocrTarget = parseTaskPanelObjectiveByOcr(capture.imagePath(), source);
-            if (ocrTarget.isPresent()) {
-                return ocrTarget;
-            }
             /*
-             * Keep the old recognizer only as a last diagnostic fallback, and still validate the
-             * coordinate before accepting it. This prevents the known extra-digit template failure
-             * from becoming a navigation target again.
+             * Xiuluo task-panel hot-start only trusts OCR text that explicitly contains
+             * "前往 地图(x,y)". If the right-side task detail is a normal description, treating it as
+             * a template fallback costs tens of seconds and can invent stale objectives.
              */
-            return parseObjective(image, source + ":template-fallback")
-                    .filter(target -> isObjectivePlausible(target, source + ":template-fallback"));
+            return parseTaskPanelObjectiveByOcr(capture.imagePath(), source);
         } finally {
             if (image != null) {
                 image.flush();
@@ -2160,7 +2204,17 @@ public class XiuluoTaskV2 implements GameTask {
                 return null;
             }
             if (observed == WindowPathingState.STOPPED_AWAY) {
-                runtime.clearPathingSignal("xiuluo consumed watcher stopped-away");
+                PreparedDialogAction preparedRoute = runtime.freshPreparedRouteActionForPathingTerminal(
+                        snapshot, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS);
+                if (preparedRoute != null) {
+                    WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+                    long verifiedAgeMs = Math.max(0L, nowMs - preparedRoute.getLastVerifiedAtMs());
+                    log.info("[xiuluo-v2] pathing terminal clear delayed because prepared route dialog is ready: state={} target={} actionIntentId={} activeIntentId={} verifiedAgeMs={}",
+                            observed, preparedRoute.getTargetKeyword(), preparedRoute.getIntentId(),
+                            activeIntent == null ? null : activeIntent.getIntentId(), verifiedAgeMs);
+                } else {
+                    runtime.clearPathingSignal("xiuluo consumed watcher stopped-away");
+                }
                 log.info("[xiuluo-v2] navigation pathing wait ended by watcher stopped-away; retry navigation: phase={} action={}",
                         state.phase(), actionName);
                 if (state.phase() == XiuluoPhase.NAVIGATE_TO_TARGET) {
@@ -2174,6 +2228,11 @@ public class XiuluoTaskV2 implements GameTask {
             if ((snapshot.isProbeInProgress() && probeAgeMs <= OBSERVER_PROBE_MAX_AGE_MS)
                     || (snapshotAgeMs <= OBSERVER_SNAPSHOT_MAX_AGE_MS
                     && (observed == WindowPathingState.ACTIVE || observed == WindowPathingState.UNKNOWN))) {
+                XiuluoStepOutcome maintenanceOutcome = runLeaderPathingSummonSkillMaintenance(
+                        context, state, "watcher-" + observed);
+                if (maintenanceOutcome != null) {
+                    return maintenanceOutcome;
+                }
                 return XiuluoStepOutcome.pathingStarted(
                         state, actionName + " watcher still pathing: " + observed);
             }
@@ -2192,6 +2251,11 @@ public class XiuluoTaskV2 implements GameTask {
              */
             log.info("[xiuluo-v2] navigation still pathing: phase={} action={} state={}",
                     state.phase(), actionName, movementState);
+            XiuluoStepOutcome maintenanceOutcome = runLeaderPathingSummonSkillMaintenance(
+                    context, state, "movement-" + movementState);
+            if (maintenanceOutcome != null) {
+                return maintenanceOutcome;
+            }
             return XiuluoStepOutcome.pathingStarted(state, actionName + " still pathing");
         }
         if (movementState == GameStateUtil.MovementState.MAYBE_MOVING) {
@@ -2210,6 +2274,36 @@ public class XiuluoTaskV2 implements GameTask {
             closeTeamPathingMaintenanceWindow(context, state, "target-pathing-wait-ended");
         }
         return null;
+    }
+
+    private XiuluoStepOutcome runLeaderPathingSummonSkillMaintenance(TaskExecutionContext context,
+                                                                     XiuluoRoundContext state,
+                                                                     String source) {
+        if (state.phase() != XiuluoPhase.NAVIGATE_TO_TARGET || isMemberWindow(context)) {
+            return null;
+        }
+        TaskMaintenanceResult maintenanceResult = taskMaintenanceService.runOpportunisticMaintenance(context,
+                TaskMaintenanceRequest.builder()
+                        .sourceTask("xiuluo-v2:leader-pathing:" + source)
+                        .handleMaintenanceBroadcast(false)
+                        .cleanSummonSkill(true)
+                        .oneSummonSkillPerTeamRound(true)
+                        .teamMaintenanceKey(TASK_CODE)
+                        .teamRound(state.round())
+                        .requireOpenTeamMaintenanceWindow(false)
+                        .build());
+        if (maintenanceResult.getStatus() == TaskMaintenanceStatus.INTERRUPTED) {
+            return XiuluoStepOutcome.stopped(state, "leader pathing summon-skill maintenance interrupted");
+        }
+        if (maintenanceResult.isHandled()) {
+            log.info("[xiuluo-v2] leader pathing summon-skill maintenance handled: status={} message={} source={}",
+                    maintenanceResult.getStatus(), maintenanceResult.getMessage(), source);
+        }
+        return null;
+    }
+
+    private boolean isMemberWindow(TaskExecutionContext context) {
+        return context != null && "MEMBER".equalsIgnoreCase(context.getWindowRole());
     }
 
     private void openTeamPathingMaintenanceWindow(TaskExecutionContext context,

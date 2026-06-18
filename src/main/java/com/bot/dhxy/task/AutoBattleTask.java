@@ -188,7 +188,8 @@ public class AutoBattleTask extends BaseTaskTemplate {
                         .oneSummonSkillPerTeamRound(followerSupportMode)
                         .teamMaintenanceKey(followerSupportMode ? context.getRequestedTaskCode() : null)
                         .requireOpenTeamMaintenanceWindow(followerSupportMode
-                                && "xiuluo_v2".equalsIgnoreCase(context.getRequestedTaskCode()))
+                                && ("xiuluo_v2".equalsIgnoreCase(context.getRequestedTaskCode())
+                                || "wubei".equalsIgnoreCase(context.getRequestedTaskCode())))
                         .build());
         if (result.isHandled()) {
             log.info("{} auto-battle idle maintenance handled: status={} message={}",

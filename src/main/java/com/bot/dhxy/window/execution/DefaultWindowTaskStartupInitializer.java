@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.execution;
 
+import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.window.model.WindowRole;
@@ -23,16 +24,20 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
 
     private final TaskStartupWindowPreparationService startupWindowPreparationService;
     private final PlayerStateService playerStateService;
+    private final BotProperties botProperties;
 
     /**
      * @param startupWindowPreparationService service that owns startup map/Alt+6 preparation.
      * @param playerStateService player-state service used to synchronize identity and position into
      *                           the current window-bound {@code GameContext.State}.
+     * @param botProperties runtime switches that decide whether heavy startup preparation is enabled.
      */
     public DefaultWindowTaskStartupInitializer(TaskStartupWindowPreparationService startupWindowPreparationService,
-                                               PlayerStateService playerStateService) {
+                                               PlayerStateService playerStateService,
+                                               BotProperties botProperties) {
         this.startupWindowPreparationService = startupWindowPreparationService;
         this.playerStateService = playerStateService;
+        this.botProperties = botProperties;
     }
 
     /**
@@ -96,15 +101,22 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
         }
         if (isWubeiTask(taskCode)) {
             /*
-             * 五倍 leader also depends on hidden player overlays for task/NPC screenshots. Keep this
-             * narrow Alt+6 guard active even when the heavier startup-preparation switch is disabled.
+             * 五倍 leader also depends on hidden player overlays for task/NPC screenshots. When the
+             * full startup preparation is enabled, prepareTaskStartupWindow() below already owns the
+             * single Alt+6 check. Run the narrow guard only as the fast-debug fallback when the full
+             * preparation chain is disabled.
              */
-            log.info("{} window [{}] startup init: wubei ensure Alt+6 visibility before leader prep taskCode={}",
-                    prefix, windowId, taskCode);
-            boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
-            if (!visibilityReady) {
-                log.warn("{} window [{}] startup init warning: wubei Alt+6 visibility was not confirmed",
-                        prefix, windowId);
+            if (!botProperties.isTaskStartupPreparationEnabled()) {
+                log.info("{} window [{}] startup init: wubei ensure Alt+6 visibility only because full preparation is disabled taskCode={}",
+                        prefix, windowId, taskCode);
+                boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
+                if (!visibilityReady) {
+                    log.warn("{} window [{}] startup init warning: wubei Alt+6 visibility was not confirmed",
+                            prefix, windowId);
+                }
+            } else {
+                log.info("{} window [{}] startup init: wubei full preparation will perform Alt+6 visibility check taskCode={}",
+                        prefix, windowId, taskCode);
             }
             if (Thread.currentThread().isInterrupted()) {
                 return false;

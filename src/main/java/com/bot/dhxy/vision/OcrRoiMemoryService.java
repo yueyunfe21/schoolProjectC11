@@ -51,6 +51,8 @@ public class OcrRoiMemoryService {
     private static final int MAX_GLOBAL_SAMPLES = 600;
     private static final int MAX_OCR_ATTEMPTS = 1000;
     private static final int MAX_NPC_CLICK_SAMPLES = 600;
+    private static final int MAX_NPC_CLICK_DEBUG_SAMPLES_PER_PRIMARY_KEY = 1;
+    private static final int MAX_CLICK_POLICY_RECENT_SAMPLES = 5;
     private static final int CAMERA_DELTA_THRESHOLD = 40;
     private static final int MIN_LEARNED_NPC_SUCCESS_SAMPLES = 3;
     private static final int MAX_LEARNED_NPC_RECENT_SAMPLES = 12;
@@ -170,7 +172,9 @@ public class OcrRoiMemoryService {
         List<OcrWindowRegion> learnedRegions = new ArrayList<>();
 
         /*
-         * Primary source: v2 ROI policies created from verified yellow-name OCR observations.
+         * Primary source: v2 ROI policies created from joint yellow-target and purple-player-anchor
+         * observations. Older yellow-only ROI keys are intentionally ignored because they may not
+         * contain the player name needed by the formula path.
          * Fixed NPCs use an exact coordinate key; roaming targets try the current coordinate bucket
          * and nearby buckets so a nearby real sample can seed the first crop.
          */
@@ -179,19 +183,10 @@ public class OcrRoiMemoryService {
         }
 
         /*
-         * Secondary source: verified NPC click samples. They do not prove the yellow text rectangle,
-         * but a verified click point is close enough to propose a broad crop around that target.
+         * Do not seed NPC OCR crops from old click samples or legacy MemoryEntry.recommendedRoi.
+         * A reusable crop is valid only after a same-region yellow-target + purple-player-anchor
+         * observation. Without that joint visual proof, fall back to the full masked window.
          */
-        addNpcClickSampleRegion(learnedRegions, memory, mapName, mapX, mapY, playerMapX, playerMapY, target, roamingTarget);
-
-        /*
-         * Compatibility source: older entries that only stored MemoryEntry.recommendedRoi. This is
-         * read-only compatibility for existing JSON data, not a place to introduce new hardcoded
-         * regions.
-         */
-        for (String key : npcClickRegionMemoryKeys(mapName, mapX, mapY, playerMapX, playerMapY, target)) {
-            addLegacyRoiRegion(learnedRegions, memory, key);
-        }
 
         /*
          * Final fallback: capture the whole game client and let the scan path apply the same masks
@@ -209,13 +204,13 @@ public class OcrRoiMemoryService {
     }
 
     /**
-     * Record a yellow-name OCR observation from NPC/monster smart-click flow.
+     * Record a joint yellow-name/player-anchor OCR observation from NPC/monster smart-click flow.
      *
      * <p>This is the bridge between click verification and OCR-region learning. Only observations
-     * that both match a text candidate and verify the expected dialog/battle path update the derived
-     * ROI policy. Misses and unverified candidates are still stored as raw evidence and may mark the
-     * current policy stale after repeated failures, but they do not widen the recommendation by
-     * themselves.</p>
+     * that match the target yellow text, find the current player's purple name in the same region,
+     * and verify the expected dialog/battle path update the derived ROI policy. Misses and
+     * unverified candidates are still stored as raw evidence and may mark the current policy stale
+     * after repeated failures, but they do not widen the recommendation by themselves.</p>
      *
      * @param source diagnostic source such as {@code NPC_YELLOW_TARGET}.
      * @param mapName target map name; nullable.
@@ -592,7 +587,8 @@ public class OcrRoiMemoryService {
         sample.actualClickSource = actualClickSource;
         sample.verificationStrength = verificationStrength;
 
-        memory.npcClickSamples.add(sample);
+        updateNpcClickPolicy(memory, sample);
+        replaceNpcClickDebugSample(memory.npcClickSamples, sample);
         trimList(memory.npcClickSamples, MAX_NPC_CLICK_SAMPLES);
 
         MemoryEntry entry = memory.entries.computeIfAbsent(key, ignored -> new MemoryEntry());
@@ -623,6 +619,114 @@ public class OcrRoiMemoryService {
                 + " verificationStrength=" + safe(verificationStrength);
         log.info("[vision-memory] NPC click attempt recorded: {}", summary);
         return new RecordResult(true, key, summary, "-");
+    }
+
+    private void updateNpcClickPolicy(MemoryFile memory, NpcClickSample sample) {
+        if (memory == null || sample == null || sample.key == null) {
+            return;
+        }
+        if (memory.policies == null) {
+            memory.policies = new VisionPolicies();
+        }
+        if (memory.policies.clickPolicies == null) {
+            memory.policies.clickPolicies = new LinkedHashMap<>();
+        }
+        String policyKey = buildNpcClickPolicyKey(sample.key, sample.playerMapX, sample.playerMapY);
+        ClickPolicy policy = memory.policies.clickPolicies.computeIfAbsent(policyKey, ignored -> new ClickPolicy());
+        policy.key = policyKey;
+        policy.npcClickKey = sample.key;
+        policy.mapName = sample.mapName;
+        policy.targetName = sample.npcName;
+        policy.targetMapX = sample.targetMapX;
+        policy.targetMapY = sample.targetMapY;
+        policy.playerMapX = sample.playerMapX;
+        policy.playerMapY = sample.playerMapY;
+        policy.playerCoordinate = playerCoordinateText(sample.playerMapX, sample.playerMapY);
+        policy.attemptCount++;
+        policy.lastAttemptAt = sample.createdAt;
+        policy.lastSource = sample.source;
+        policy.lastOutcome = sample.outcome;
+        policy.lastVerificationStrength = sample.verificationStrength;
+
+        boolean strongSuccess = sample.clicked && sample.success && hasStrongNpcVerification(sample)
+                && npcSampleClickPoint(sample) != null;
+        if (strongSuccess) {
+            policy.successCount++;
+            policy.successStreak++;
+            policy.failureStreak = 0;
+            policy.lastSuccessAt = sample.createdAt;
+            policy.recentSamples.add(sample);
+            trimList(policy.recentSamples, MAX_CLICK_POLICY_RECENT_SAMPLES);
+        } else {
+            policy.failureCount++;
+            policy.failureStreak++;
+            policy.successStreak = 0;
+            policy.lastFailureAt = sample.createdAt;
+        }
+        refreshClickPolicyPoint(policy);
+    }
+
+    private void refreshClickPolicyPoint(ClickPolicy policy) {
+        if (policy == null) {
+            return;
+        }
+        List<Point> points = policy.recentSamples == null ? List.of() : policy.recentSamples.stream()
+                .filter(sample -> sample.clicked && sample.success && hasStrongNpcVerification(sample))
+                .map(this::npcSampleClickPoint)
+                .filter(point -> point != null)
+                .toList();
+        policy.sampleCount = points.size();
+        if (points.isEmpty()) {
+            policy.stale = policy.failureStreak >= ROI_POLICY_FAILURE_STALE_THRESHOLD;
+            policy.confidence = confidence(policy.successCount, policy.attemptCount, policy.failureStreak);
+            return;
+        }
+        int averageX = (int) Math.round(points.stream().mapToInt(point -> point.x).average().orElse(0));
+        int averageY = (int) Math.round(points.stream().mapToInt(point -> point.y).average().orElse(0));
+        Point average = clampPoint(new Point(averageX, averageY));
+        policy.point = PointData.from(average);
+        policy.spreadPx = points.stream()
+                .mapToInt(point -> (int) Math.round(point.distance(average)))
+                .max()
+                .orElse(0);
+        policy.stale = policy.failureStreak >= ROI_POLICY_FAILURE_STALE_THRESHOLD
+                || policy.spreadPx > MAX_LEARNED_NPC_POINT_SPREAD_PX;
+        policy.confidence = confidence(policy.successCount, policy.attemptCount, policy.failureStreak);
+    }
+
+    private double confidence(int successCount, int attemptCount, int failureStreak) {
+        if (attemptCount <= 0) {
+            return 0.0;
+        }
+        double base = Math.max(0.0, Math.min(1.0, successCount / (double) attemptCount));
+        double penalty = Math.min(0.6, Math.max(0, failureStreak) * 0.2);
+        return Math.max(0.0, base - penalty);
+    }
+
+    private void replaceNpcClickDebugSample(List<NpcClickSample> samples, NpcClickSample sample) {
+        if (samples == null || sample == null) {
+            return;
+        }
+        samples.removeIf(existing -> sameNpcClickPrimaryKey(existing, sample));
+        samples.add(sample);
+        int sameCount = 0;
+        for (int i = samples.size() - 1; i >= 0; i--) {
+            NpcClickSample existing = samples.get(i);
+            if (!sameNpcClickPrimaryKey(existing, sample)) {
+                continue;
+            }
+            sameCount++;
+            if (sameCount > MAX_NPC_CLICK_DEBUG_SAMPLES_PER_PRIMARY_KEY) {
+                samples.remove(i);
+            }
+        }
+    }
+
+    private boolean sameNpcClickPrimaryKey(NpcClickSample left, NpcClickSample right) {
+        return left != null
+                && right != null
+                && safe(left.key).equals(safe(right.key))
+                && samePlayerCoordinate(left.playerMapX, left.playerMapY, right.playerMapX, right.playerMapY);
     }
 
     /**
@@ -661,6 +765,12 @@ public class OcrRoiMemoryService {
 
         String key = buildNpcClickKey(mapName, npcName, targetMapX, targetMapY);
         MemoryFile memory = loadMemory();
+        Optional<LearnedNpcClickPoint> policyPoint =
+                recommendedNpcClickPointFromPolicy(memory, key, playerMapX, playerMapY);
+        if (policyPoint.isPresent()) {
+            return policyPoint;
+        }
+
         List<NpcClickSample> sameTarget = memory.npcClickSamples.stream()
                 .filter(sample -> sample != null
                         && key.equals(sample.key)
@@ -785,6 +895,12 @@ public class OcrRoiMemoryService {
                                           Integer playerMapY,
                                           String targetName,
                                           boolean roamingTarget) {
+        OcrWindowRegion policyRegion = regionFromNpcClickPolicies(
+                memory, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
+        if (policyRegion != null && policyRegion.isValid()) {
+            addUniqueRegion(regions, policyRegion);
+            return;
+        }
         OcrWindowRegion region = regionFromNpcClickSamples(
                 memory, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
         if (region != null && region.isValid()) {
@@ -823,6 +939,90 @@ public class OcrRoiMemoryService {
             return null;
         }
         return regionAroundPoints(points, roamingTarget);
+    }
+
+    private Optional<LearnedNpcClickPoint> recommendedNpcClickPointFromPolicy(MemoryFile memory,
+                                                                               String npcClickKey,
+                                                                               Integer playerMapX,
+                                                                               Integer playerMapY) {
+        if (memory == null || memory.policies == null || memory.policies.clickPolicies == null) {
+            return Optional.empty();
+        }
+        String policyKey = buildNpcClickPolicyKey(npcClickKey, playerMapX, playerMapY);
+        ClickPolicy policy = memory.policies.clickPolicies.get(policyKey);
+        if (policy != null) {
+            refreshClickPolicyPoint(policy);
+        }
+        if (!isUsableClickPolicy(policy)) {
+            if (policy != null) {
+                log.info("[vision-memory] learned NPC point skipped: key={} reason=policy-unusable stale={} sampleCount={} spread={} failureStreak={}",
+                        npcClickKey, policy.stale, policy.sampleCount, policy.spreadPx, policy.failureStreak);
+            }
+            return Optional.empty();
+        }
+        Point point = clampPoint(policy.point.toPoint());
+        LearnedNpcClickPoint result = new LearnedNpcClickPoint(
+                npcClickKey, point.x, point.y, policy.sampleCount, policy.spreadPx, policy.lastOutcome);
+        log.info("[vision-memory] learned NPC point ready from policy: {}", result.toSummaryText());
+        return Optional.of(result);
+    }
+
+    private OcrWindowRegion regionFromNpcClickPolicies(MemoryFile memory,
+                                                       String mapName,
+                                                       Integer mapX,
+                                                       Integer mapY,
+                                                       Integer playerMapX,
+                                                       Integer playerMapY,
+                                                       String targetName,
+                                                       boolean roamingTarget) {
+        if (memory == null || memory.policies == null || memory.policies.clickPolicies == null) {
+            return null;
+        }
+        List<Point> points = new ArrayList<>();
+        for (ClickPolicy policy : memory.policies.clickPolicies.values()) {
+            if (!isCompatibleClickPolicy(policy, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget)) {
+                continue;
+            }
+            if (policy.point != null) {
+                points.add(policy.point.toPoint());
+            }
+            if (points.size() >= MAX_LEARNED_NPC_RECENT_SAMPLES) {
+                break;
+            }
+        }
+        if (points.isEmpty()) {
+            return null;
+        }
+        return regionAroundPoints(points, roamingTarget);
+    }
+
+    private boolean isCompatibleClickPolicy(ClickPolicy policy,
+                                            String mapName,
+                                            Integer mapX,
+                                            Integer mapY,
+                                            Integer playerMapX,
+                                            Integer playerMapY,
+                                            String targetName,
+                                            boolean roamingTarget) {
+        if (!isUsableClickPolicy(policy) || !sameNormalized(policy.mapName, mapName)) {
+            return false;
+        }
+        if (!samePlayerCoordinate(policy.playerMapX, policy.playerMapY, playerMapX, playerMapY)) {
+            return false;
+        }
+        if (roamingTarget) {
+            return policy.targetMapX != null
+                    && policy.targetMapY != null
+                    && mapX != null
+                    && mapY != null
+                    && coordinateDistance(policy.targetMapX, policy.targetMapY, mapX, mapY)
+                    <= NPC_COORD_BUCKET_SIZE * (NPC_COORD_NEIGHBOR_RADIUS + 1);
+        }
+        return sameNormalized(policy.targetName, targetName)
+                && policy.targetMapX != null
+                && policy.targetMapY != null
+                && policy.targetMapX.equals(mapX)
+                && policy.targetMapY.equals(mapY);
     }
 
     private boolean isCompatibleNpcClickSample(NpcClickSample sample,
@@ -982,6 +1182,17 @@ public class OcrRoiMemoryService {
                 && hasPlayerCoordinateForNpcPolicy(policy);
     }
 
+    private boolean isUsableClickPolicy(ClickPolicy policy) {
+        return policy != null
+                && policy.point != null
+                && !policy.stale
+                && policy.sampleCount >= MIN_LEARNED_NPC_SUCCESS_SAMPLES
+                && policy.spreadPx <= MAX_LEARNED_NPC_POINT_SPREAD_PX
+                && policy.failureStreak < ROI_POLICY_FAILURE_STALE_THRESHOLD
+                && policy.playerMapX != null
+                && policy.playerMapY != null;
+    }
+
     private boolean hasPlayerCoordinateForNpcPolicy(RoiPolicy policy) {
         if (policy == null) {
             return false;
@@ -1024,7 +1235,7 @@ public class OcrRoiMemoryService {
         }
         if (!roamingTarget) {
             return List.of("roi|fixed-npc|npc-click|" + map + "|" + target + "|"
-                    + nullablePoint(mapX, mapY) + "|" + player + "|1024x768|yellow-name");
+                    + nullablePoint(mapX, mapY) + "|" + player + "|1024x768|yellow-player-anchor-v2");
         }
 
         /*
@@ -1035,7 +1246,7 @@ public class OcrRoiMemoryService {
         List<String> keys = new ArrayList<>();
         for (String bucket : nearbyCoordinateBuckets(mapX, mapY)) {
             keys.add("roi|clickable-target|npc-click|" + map + "|" + bucket + "|any-name|"
-                    + player + "|1024x768|yellow-name");
+                    + player + "|1024x768|yellow-player-anchor-v2");
         }
         return List.copyOf(keys);
     }
@@ -1077,6 +1288,10 @@ public class OcrRoiMemoryService {
             return "player:unknown";
         }
         return "player:" + playerMapX + "," + playerMapY;
+    }
+
+    private static String buildNpcClickPolicyKey(String npcClickKey, Integer playerMapX, Integer playerMapY) {
+        return safe(npcClickKey) + "|" + playerCoordinateText(playerMapX, playerMapY);
     }
 
     private static boolean samePlayerCoordinate(Integer samplePlayerMapX,
@@ -1195,6 +1410,11 @@ public class OcrRoiMemoryService {
             if (file.policies.clickPolicies == null) {
                 file.policies.clickPolicies = new LinkedHashMap<>();
             }
+            for (ClickPolicy policy : file.policies.clickPolicies.values()) {
+                if (policy != null && policy.recentSamples == null) {
+                    policy.recentSamples = new ArrayList<>();
+                }
+            }
             if (file.memoryType == null || file.memoryType.isBlank()) {
                 file.memoryType = "vision-memory-v2";
             }
@@ -1302,11 +1522,31 @@ public class OcrRoiMemoryService {
 
     public static class ClickPolicy {
         public String key;
+        public String npcClickKey;
+        public String mapName;
+        public String targetName;
+        public Integer targetMapX;
+        public Integer targetMapY;
+        public Integer playerMapX;
+        public Integer playerMapY;
+        public String playerCoordinate;
         public PointData point;
         public int sampleCount;
+        public int attemptCount;
+        public int successCount;
+        public int failureCount;
+        public int successStreak;
+        public int failureStreak;
         public int spreadPx;
         public boolean stale;
+        public double confidence;
+        public String lastAttemptAt;
+        public String lastSuccessAt;
+        public String lastFailureAt;
+        public String lastSource;
         public String lastOutcome;
+        public String lastVerificationStrength;
+        public List<NpcClickSample> recentSamples = new ArrayList<>();
     }
 
     public static class MemoryEntry {
@@ -1595,6 +1835,10 @@ public class OcrRoiMemoryService {
             data.y = point.y;
             return data;
         }
+
+        Point toPoint() {
+            return new Point(x, y);
+        }
     }
 
     private static OcrWordResult findMatchedWord(List<OcrWordResult> words,
@@ -1641,6 +1885,15 @@ public class OcrRoiMemoryService {
         return PointData.from(new Point(absolute.x - base.x, absolute.y - base.y));
     }
 
+    private static Point clampPoint(Point point) {
+        if (point == null) {
+            return null;
+        }
+        return new Point(
+                Math.max(0, Math.min(IMAGE_WIDTH - 1, point.x)),
+                Math.max(0, Math.min(IMAGE_HEIGHT - 1, point.y)));
+    }
+
     private static <T> void trimList(List<T> list, int maxSize) {
         if (list == null) {
             return;
@@ -1659,18 +1912,16 @@ public class OcrRoiMemoryService {
 
     private boolean hasStrongNpcVerification(NpcClickSample sample) {
         return sample != null
+                && sample.actualClickMeasured
                 && ("DIALOG_OPTION".equalsIgnoreCase(sample.verificationStrength)
-                || "DIALOG_TEMPLATE".equalsIgnoreCase(sample.verificationStrength)
-                || sample.actualClickMeasured);
+                || "DIALOG_TEMPLATE".equalsIgnoreCase(sample.verificationStrength));
     }
 
     private Point npcSampleClickPoint(NpcClickSample sample) {
         if (sample == null) {
             return null;
         }
-        PointData point = sample.actualClickMeasured && sample.actualClickRel != null
-                ? sample.actualClickRel
-                : sample.predictedClickRel;
+        PointData point = sample.actualClickMeasured ? sample.actualClickRel : null;
         return point == null ? null : new Point(point.x, point.y);
     }
 

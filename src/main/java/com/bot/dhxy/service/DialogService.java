@@ -738,8 +738,28 @@ public class DialogService {
                                                                      DialogOperation operation,
                                                                      List<GreenTemplateClickSpec> specs,
                                                                      boolean verifyDialogType) {
+        return prepareGreenTemplateOption(source, operation, specs, verifyDialogType, null);
+    }
+
+    /**
+     * Prepare a known green-template option, optionally returning a negative option signal.
+     *
+     * @param source diagnostic source for logs.
+     * @param operation operation stored on the prepared action.
+     * @param specs ordered green-template candidates; first match wins, same as the click path.
+     * @param verifyDialogType true when the dialog must be classified as OPTION before matching.
+     * @param missTargetKeyword optional action key to publish when an option dialog is visible but
+     *                          none of the templates matched.
+     * @return prepared click action, a negative signal when {@code missTargetKeyword} is set and no
+     *         template matched, or empty when no suitable option dialog is available.
+     */
+    public Optional<PreparedDialogAction> prepareGreenTemplateOption(String source,
+                                                                     DialogOperation operation,
+                                                                     List<GreenTemplateClickSpec> specs,
+                                                                     boolean verifyDialogType,
+                                                                     String missTargetKeyword) {
         DialogHandleRequest request = DialogHandleRequest.handleGreenTemplateOption(source, specs, verifyDialogType);
-        return prepareGreenTemplateOption(request, operation);
+        return prepareGreenTemplateOption(request, operation, missTargetKeyword);
     }
 
     /**
@@ -754,6 +774,26 @@ public class DialogService {
     public Optional<PreparedDialogAction> prepareWhiteStoryTemplate(String source,
                                                                     DialogOperation operation,
                                                                     List<WhiteTemplateSpec> specs) {
+        return prepareWhiteStoryTemplate(source, operation, specs, null);
+    }
+
+    /**
+     * Prepare a known white story template, optionally returning a negative story signal.
+     *
+     * @param source diagnostic source for logs.
+     * @param operation operation stored on the prepared action.
+     * @param specs ordered white-template candidates; first match wins.
+     * @param missTargetKeyword optional action key to publish when a story frame is visible but
+     *                          none of the templates matched. Null keeps the old empty-on-miss
+     *                          behavior.
+     * @return prepared story signal for a matched template, a negative signal when
+     *         {@code missTargetKeyword} is set and the story is visible, or empty when no suitable
+     *         story frame is available.
+     */
+    public Optional<PreparedDialogAction> prepareWhiteStoryTemplate(String source,
+                                                                    DialogOperation operation,
+                                                                    List<WhiteTemplateSpec> specs,
+                                                                    String missTargetKeyword) {
         DialogDetection detection = detectDialogSnapshotDirect("prepare-white-story:" + source, false, 0);
         if (detection == null || detection.image() == null || detection.dialogRect() == null) {
             log.info("dialog prepare white story miss: source={} operation={} type={} hasImage={}",
@@ -764,7 +804,10 @@ public class DialogService {
         DialogHandleRequest request = DialogHandleRequest.verifyWhiteTemplates(source, specs);
         DialogResult result = verifyWhiteStoryTemplate(request, detection);
         if (result.getStatus() != DialogResultStatus.WHITE_TEMPLATE_VISIBLE) {
-            return Optional.empty();
+            if (missTargetKeyword == null || detection.type() != DialogType.STORY) {
+                return Optional.empty();
+            }
+            return buildWhiteStoryMissPreparedAction(source, operation, missTargetKeyword, detection);
         }
         return buildTemplatePreparedDialogAction(
                 source,
@@ -779,6 +822,74 @@ public class DialogService {
                 "white",
                 detection.rawPath(),
                 false);
+    }
+
+    private Optional<PreparedDialogAction> buildWhiteStoryMissPreparedAction(String source,
+                                                                            DialogOperation operation,
+                                                                            String targetKeyword,
+                                                                            DialogDetection detection) {
+        int[] dialogRect = detection == null ? null : detection.dialogRect();
+        if (dialogRect == null || dialogRect.length < 4) {
+            return Optional.empty();
+        }
+        long now = System.currentTimeMillis();
+        int absoluteX = (dialogRect[0] + dialogRect[2]) / 2;
+        int absoluteY = (dialogRect[1] + dialogRect[3]) / 2;
+        return Optional.of(PreparedDialogAction.builder()
+                .dialogType(DialogType.STORY)
+                .operation(operation)
+                .targetKeyword(targetKeyword)
+                .matchedText(DialogResultStatus.WHITE_TEMPLATE_NOT_FOUND.name())
+                .relativeX(Math.max(0, absoluteX - dialogRect[0]))
+                .relativeY(Math.max(0, absoluteY - dialogRect[1]))
+                .absoluteX(absoluteX)
+                .absoluteY(absoluteY)
+                .validationLeft(dialogRect[0])
+                .validationTop(dialogRect[1])
+                .validationRight(dialogRect[2])
+                .validationBottom(dialogRect[3])
+                .washMode(DialogFingerprintWashMode.WHITE)
+                .fingerprint("")
+                .clickRequired(false)
+                .preparedAtMs(now)
+                .lastVerifiedAtMs(now)
+                .source(source + ":white-template-not-found")
+                .debugImagePath(detection.rawPath())
+                .build());
+    }
+
+    private Optional<PreparedDialogAction> buildGreenTemplateMissPreparedAction(String source,
+                                                                               DialogOperation operation,
+                                                                               String targetKeyword,
+                                                                               int[] dialogRect,
+                                                                               String rawPath) {
+        if (dialogRect == null || dialogRect.length < 4) {
+            return Optional.empty();
+        }
+        long now = System.currentTimeMillis();
+        int absoluteX = (dialogRect[0] + dialogRect[2]) / 2;
+        int absoluteY = (dialogRect[1] + dialogRect[3]) / 2;
+        return Optional.of(PreparedDialogAction.builder()
+                .dialogType(DialogType.OPTION)
+                .operation(operation)
+                .targetKeyword(targetKeyword)
+                .matchedText(DialogResultStatus.GREEN_TEMPLATE_NOT_FOUND.name())
+                .relativeX(Math.max(0, absoluteX - dialogRect[0]))
+                .relativeY(Math.max(0, absoluteY - dialogRect[1]))
+                .absoluteX(absoluteX)
+                .absoluteY(absoluteY)
+                .validationLeft(dialogRect[0])
+                .validationTop(dialogRect[1])
+                .validationRight(dialogRect[2])
+                .validationBottom(dialogRect[3])
+                .washMode(DialogFingerprintWashMode.GREEN)
+                .fingerprint("")
+                .clickRequired(false)
+                .preparedAtMs(now)
+                .lastVerifiedAtMs(now)
+                .source(source + ":green-template-not-found")
+                .debugImagePath(rawPath)
+                .build());
     }
 
     /**
@@ -1627,6 +1738,12 @@ public class DialogService {
 
     private Optional<PreparedDialogAction> prepareGreenTemplateOption(DialogHandleRequest request,
                                                                       DialogOperation operation) {
+        return prepareGreenTemplateOption(request, operation, null);
+    }
+
+    private Optional<PreparedDialogAction> prepareGreenTemplateOption(DialogHandleRequest request,
+                                                                      DialogOperation operation,
+                                                                      String missTargetKeyword) {
         long latencyStart = LatencyMetrics.start();
         try {
             List<GreenTemplateClickSpec> specs = request.getGreenTemplateSpecs();
@@ -1705,6 +1822,10 @@ public class DialogService {
             log.info("dialog prepare green template no hit: reason={} operation={} candidates={} rect=({}, {})-({}, {}) raw={} washed={} missDetails=[{}]",
                     request.getSourceTask(), operation, specs.size(), rect[0], rect[1], rect[2], rect[3],
                     rawPath, washedPath, missDetails);
+            if (missTargetKeyword != null && type == DialogType.OPTION) {
+                return buildGreenTemplateMissPreparedAction(
+                        request.getSourceTask(), operation, missTargetKeyword, rect, rawPath);
+            }
             return Optional.empty();
         } finally {
             LatencyMetrics.info(log, "dialog.prepareGreenTemplate", latencyStart,

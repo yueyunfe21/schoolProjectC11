@@ -17,6 +17,8 @@ import com.bot.dhxy.model.npc.NpcTarget;
  * @param source diagnostic source describing how this state was produced.
  * @param waitingPathing true when the previous navigation call already started pathing and this
  *                       phase should observe movement before submitting another navigation command.
+ * @param startExitPrepathStarted true when the leader already clicked the start-map exit before
+ *                                reading the accepted task objective.
  * @param enteredBattleByXiuluo true only after this task clicked the Xiuluo "看打" option. Hot
  *                              starts from an already-open battle keep this false until task-panel
  *                              evidence proves the objective is gone.
@@ -33,44 +35,49 @@ public class XiuluoRoundContext {
     int round;
     String source;
     boolean waitingPathing;
+    boolean startExitPrepathStarted;
     boolean enteredBattleByXiuluo;
     int phaseRetryCount;
     int recoveryCount;
 
     public static XiuluoRoundContext start(int round) {
-        return new XiuluoRoundContext(XiuluoPhase.PREPARE_ROUND, null, round, "normal-start", false, false, 0, 0);
+        return new XiuluoRoundContext(XiuluoPhase.PREPARE_ROUND, null, round, "normal-start", false, false, false, 0, 0);
     }
 
     public XiuluoRoundContext next(XiuluoPhase nextPhase, String nextSource) {
-        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, enteredBattleByXiuluo, 0, recoveryCount);
+        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, 0, recoveryCount);
     }
 
     public XiuluoRoundContext withObjective(XiuluoPhase nextPhase, NpcTarget nextObjective, String nextSource) {
-        return new XiuluoRoundContext(nextPhase, nextObjective, round, nextSource, false, enteredBattleByXiuluo, 0, recoveryCount);
+        return new XiuluoRoundContext(nextPhase, nextObjective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, 0, recoveryCount);
+    }
+
+    public XiuluoRoundContext withStartExitPrepathStarted(XiuluoPhase nextPhase, String nextSource) {
+        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, true, enteredBattleByXiuluo, 0, recoveryCount);
     }
 
     public XiuluoRoundContext withXiuluoBattleStarted(XiuluoPhase nextPhase, String nextSource) {
-        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, true, 0, recoveryCount);
+        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, startExitPrepathStarted, true, 0, recoveryCount);
     }
 
     public XiuluoRoundContext waitForPathing(String nextSource) {
-        return new XiuluoRoundContext(phase, objective, round, nextSource, true, enteredBattleByXiuluo, phaseRetryCount, recoveryCount);
+        return new XiuluoRoundContext(phase, objective, round, nextSource, true, startExitPrepathStarted, enteredBattleByXiuluo, phaseRetryCount, recoveryCount);
     }
 
     public XiuluoRoundContext clearPathingWait(String nextSource) {
-        return new XiuluoRoundContext(phase, objective, round, nextSource, false, enteredBattleByXiuluo, phaseRetryCount, recoveryCount);
+        return new XiuluoRoundContext(phase, objective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, phaseRetryCount, recoveryCount);
     }
 
     public XiuluoRoundContext retrySamePhase(String nextSource) {
-        return new XiuluoRoundContext(phase, objective, round, nextSource, false, enteredBattleByXiuluo, phaseRetryCount + 1, recoveryCount);
+        return new XiuluoRoundContext(phase, objective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, phaseRetryCount + 1, recoveryCount);
     }
 
     public XiuluoRoundContext recoverTo(XiuluoPhase nextPhase, String nextSource) {
-        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, enteredBattleByXiuluo, 0, recoveryCount + 1);
+        return new XiuluoRoundContext(nextPhase, objective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, 0, recoveryCount + 1);
     }
 
     public XiuluoRoundContext recoverToWithObjective(XiuluoPhase nextPhase, NpcTarget nextObjective, String nextSource) {
-        return new XiuluoRoundContext(nextPhase, nextObjective, round, nextSource, false, enteredBattleByXiuluo, 0, recoveryCount + 1);
+        return new XiuluoRoundContext(nextPhase, nextObjective, round, nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, 0, recoveryCount + 1);
     }
 
 }

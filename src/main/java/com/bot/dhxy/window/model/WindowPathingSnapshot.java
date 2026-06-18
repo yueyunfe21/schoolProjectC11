@@ -1,5 +1,8 @@
 package com.bot.dhxy.window.model;
 
+import com.bot.dhxy.model.dialog.DialogPreparationPhase;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.service.dialog.DialogOperation;
 import lombok.Builder;
 import lombok.Value;
 
@@ -55,6 +58,24 @@ public class WindowPathingSnapshot {
     String uiCleanupReason;
     @Builder.Default
     long uiCleanupRecommendedAtMs = 0L;
+    /**
+     * True when this pathing observation coincides with a fresh dialog that is visible, being
+     * prepared by the watcher, or already prepared for task consumption.
+     *
+     * <p>A terminal pathing state with this flag must not be treated as "free to retry movement":
+     * the task should first let the dialog preparation/click path finish, otherwise it can reopen
+     * the world map or re-click the task tracker while the expected route/combat option is already
+     * on screen.</p>
+     */
+    @Builder.Default
+    boolean dialogBlocking = false;
+    String dialogBlockingReason;
+    DialogType dialogBlockingType;
+    @Builder.Default
+    long dialogBlockingDetectedAtMs = 0L;
+    DialogPreparationPhase dialogPreparationPhase;
+    DialogOperation dialogPreparationOperation;
+    String dialogPreparationTarget;
 
     public static WindowPathingSnapshot idle() {
         return WindowPathingSnapshot.builder()

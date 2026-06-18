@@ -88,6 +88,14 @@ public class LocationVisionService {
         long latencyStart = LatencyMetrics.start();
         String provider = "NONE";
         LocationInfo selected = null;
+        long templateElapsedMs = -1L;
+        long captureElapsedMs = -1L;
+        long localOcrElapsedMs = -1L;
+        long localPlausibilityElapsedMs = -1L;
+        long localLearnElapsedMs = -1L;
+        long baiduOcrElapsedMs = -1L;
+        long baiduPlausibilityElapsedMs = -1L;
+        long baiduLearnElapsedMs = -1L;
         String path = windowScopedTempPath.resolve("tmp_pos.png");
         try {
             checkpoint("start location scan");
@@ -105,7 +113,9 @@ public class LocationVisionService {
              * Stage 1: use the fast mini-map template reader first. This keeps normal position sync off
              * the OCR/network path when the local map label and coordinate templates are confident.
              */
+            long templateStartedAt = System.currentTimeMillis();
             LocationInfo templateLocation = scanByMiniMapTemplate(startedAt);
+            templateElapsedMs = System.currentTimeMillis() - templateStartedAt;
             checkpoint("after minimap template location scan");
             if (templateLocation != null) {
                 provider = "MINIMAP_TEMPLATE";
@@ -118,22 +128,30 @@ public class LocationVisionService {
              * capture because HWND/Robot capture can still take noticeable time on a busy desktop.
              */
             checkpoint("before coordinate strip capture");
-            if (captureCurrentLocationStrip(path)) {
+            long captureStartedAt = System.currentTimeMillis();
+            boolean captured = captureCurrentLocationStrip(path);
+            captureElapsedMs = System.currentTimeMillis() - captureStartedAt;
+            if (captured) {
                 checkpoint("after coordinate strip capture");
                 long localStartedAt = System.currentTimeMillis();
                 checkpoint("before local location OCR");
                 LocationInfo local = ocr.parseLocationLocalOnly(path);
                 checkpoint("after local location OCR");
+                localOcrElapsedMs = System.currentTimeMillis() - localStartedAt;
                 local = canonicalizeOcrLocation(local, "location:local-ocr");
                 if (local != null) {
+                    long plausibilityStartedAt = System.currentTimeMillis();
                     if (!isPlausibleLocation(local, path, "LOCAL_OCR")) {
                         local = null;
                     }
+                    localPlausibilityElapsedMs = System.currentTimeMillis() - plausibilityStartedAt;
                 }
                 if (local != null) {
                     provider = "LOCAL_OCR";
                     selected = local;
+                    long learnStartedAt = System.currentTimeMillis();
                     learnMissingMapLabelTemplate(local.mapName, path, true);
+                    localLearnElapsedMs = System.currentTimeMillis() - learnStartedAt;
                     log.info("[location] selected provider=LOCAL_OCR elapsedMs={} localElapsedMs={} location={}",
                             System.currentTimeMillis() - startedAt,
                             System.currentTimeMillis() - localStartedAt,
@@ -150,14 +168,21 @@ public class LocationVisionService {
                 checkpoint("before baidu location OCR");
                 LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
                 checkpoint("after baidu location OCR");
+                baiduOcrElapsedMs = System.currentTimeMillis() - baiduStartedAt;
                 baidu = canonicalizeOcrLocation(baidu, "location:baidu-ocr");
-                if (baidu != null && !isPlausibleLocation(baidu, path, "BAIDU_OCR")) {
-                    baidu = null;
+                if (baidu != null) {
+                    long plausibilityStartedAt = System.currentTimeMillis();
+                    if (!isPlausibleLocation(baidu, path, "BAIDU_OCR")) {
+                        baidu = null;
+                    }
+                    baiduPlausibilityElapsedMs = System.currentTimeMillis() - plausibilityStartedAt;
                 }
                 provider = baidu == null ? "NONE" : "BAIDU_OCR";
                 selected = baidu;
                 if (baidu != null) {
+                    long learnStartedAt = System.currentTimeMillis();
                     learnMissingMapLabelTemplate(baidu.mapName, path, true);
+                    baiduLearnElapsedMs = System.currentTimeMillis() - learnStartedAt;
                 }
                 log.info("[location] selected provider={} elapsedMs={} baiduElapsedMs={} location={}",
                         provider,
@@ -169,6 +194,18 @@ public class LocationVisionService {
             log.warn("[location] coordinate strip capture failed: path={}", path);
             return null;
         } finally {
+            log.info("[latency] event=location.scanCurrent.breakdown provider={} result={} templateMs={} captureMs={} localOcrMs={} localPlausibilityMs={} localLearnMs={} baiduOcrMs={} baiduPlausibilityMs={} baiduLearnMs={} totalMs={}",
+                    provider,
+                    selected == null ? "NONE" : selected.toString(),
+                    templateElapsedMs,
+                    captureElapsedMs,
+                    localOcrElapsedMs,
+                    localPlausibilityElapsedMs,
+                    localLearnElapsedMs,
+                    baiduOcrElapsedMs,
+                    baiduPlausibilityElapsedMs,
+                    baiduLearnElapsedMs,
+                    System.currentTimeMillis() - startedAt);
             LatencyMetrics.info(log, "location.scanCurrent", latencyStart,
                     "provider=" + provider + " result=" + (selected == null ? "NONE" : selected.toString()));
         }

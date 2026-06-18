@@ -1,5 +1,1407 @@
 # DHXY Active Work
 
+### Codex - 2026-06-17 五倍白龙马 tooltip 后必须等待 Runner 进战斗结果
+
+Status: DONE / compile passed.
+
+Context:
+
+- 23:24 白龙马实测中，队长点击白龙马 tooltip 后只等了 `900ms` 的 `WUBEI_ENTER_BATTLE` prepared action。
+- 前台在 `23:24:20.505` 判定 not prepared 并立刻进入 direct-combat fallback，`Alt+A` 被入队；Runner 在 `23:24:20.507` 才发布 `wubei.enterBattle.prove`，只晚了 2ms。
+- 用户明确要求：白龙马 tooltip 点完后，必须等 Runner 对进战斗 dialog 给出回复，再按 Runner prepared 的结果点；不能因为 900ms 短等抢跑。
+- `Alt+A` / direct-combat fallback 是必要后备逻辑，不能被删除。约束是：它不能抢在 Runner 回复之前执行；只有 Runner 明确回复进战斗模板未命中等失败结果后，才允许进入后备。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+  - 绿色模板 prepare 增加 optional miss signal：当 OPTION dialog 可见但模板都没命中时，可以返回 `clickRequired=false` 的 prepared action。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiDialogCatalog.java`
+  - 新增 `wubei.enterBattle.notFound`，表示 Runner 已检查进战斗 dialog 但三个模板都未命中。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiDialogPreparationProvider.java`
+  - `WUBEI_ENTER_BATTLE` 模板 miss 时发布 `wubei.enterBattle.notFound`，不再让前台只能看到 absent。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 接任务仍保留 `900ms` quick wait。
+  - 进战斗 dialog 等待改为“等 Runner 回复”，不再使用 `900ms`，也不引入新的固定秒数。
+  - 白龙马 story-confirmed tooltip 后，如果 Runner 没有回复，不允许直接进入 `Alt+A` fallback。
+  - 只有 Runner 明确返回 `GREEN_TEMPLATE_NOT_FOUND`，才允许保留的 direct-combat / `Alt+A` 后备继续执行。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### Codex - 2026-06-17 五倍 NPC 黄字颜色范围收紧
+
+Status: DONE / compile passed / testcase replay passed.
+
+Context:
+
+- 用户指出 `降魔侍卫` 测试必须使用同一张宝象国原始截图，不能混入其它地点样本。
+- 旧黄字候选会把任务追踪面板、底部自动战斗 UI 的亮黄字也洗出来，导致候选噪点过多。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+  - 给 NPC/怪物点击专用黄字新增更窄的 `YELLOW_NPC_TARGET` 颜色模式。
+  - 仅 `findYellowTarget(...)` 和黄字目标候选走新模式；普通黄字 OCR、route/dialog 黄字逻辑不变。
+  - 新模式保留低亮度、近灰金色 NPC 名字黄字，排除任务面板和 UI 使用的高亮黄。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- Testcase input:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png`
+- Replay command:
+  - `java -Dfile.encoding=UTF-8 -cp <target/classpath.txt;target/classes> com.bot.dhxy.debug.YellowTargetFindReplayDebug images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png 降魔侍卫 images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_selected_line.png images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_marked.png images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_yellow_washed.png images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_yellow_overlay.png`
+- Replay result:
+  - `hit=true`
+  - `center=(328,665)`
+  - `click=(328,615)`
+  - 任务面板黄字和底部自动战斗亮黄不再进入洗黄图。
+- Proof images:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_yellow_washed.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_tuned_proof_root_marked.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/npc_yellow_before_after_contact.png`
+
+### Codex - 2026-06-17 五倍降魔侍卫黄字候选不再被弱命中截停
+
+Status: DONE / compile passed / testcase replay passed.
+
+Context:
+
+- 五倍队长接任务时，黄字扫描窗口本身没有问题；问题在 `findYellowTarget(...)` 的候选规则。
+- 失败样本里旧逻辑先 OCR 到 `宝象国品侍卫`，因为它和 `降魔侍卫` 共享 `侍卫` 两字，被当成 yellow hit 后提前停止。
+- 真实 `降魔侍卫` 在同一张 full-window 图的左下方，但视觉分低于 UI/自动战斗文字，需要继续扫描后面的候选才会被 OCR 到。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+  - `findYellowTarget(...)` 对带目标名的精确黄字识别使用更大的候选池，但普通黄字 fallback 候选仍保持原 top3。
+  - 严格目标（目前 `降魔侍卫`）的两字弱命中不再触发 early stop。
+  - 候选评分改为强命中优先，弱命中只保留低分诊断，不能压过后续真正目标。
+- `src/main/java/com/bot/dhxy/debug/YellowTargetFindReplayDebug.java`
+  - 新增离线 replay 工具，直接调用生产 `findYellowTarget(raw, target, output)`，并输出标注图；不捕获窗口、不发输入。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- Testcase input:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/before_npc_yellow_candidates_overlay.png`
+- Replay command:
+  - `java -cp <target/classpath.txt;target/classes> com.bot.dhxy.debug.YellowTargetFindReplayDebug images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png 降魔侍卫 images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_after.png images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_after.png`
+- Replay result:
+  - `yellow-target-shadow index=3` still sees weak `宝象国品侍卫` but `strong=false` and does not stop.
+  - `yellow-target-shadow index=4` hits `降魔侍卫` with `strong=true`, `dist=0`, `common=4`.
+  - Marked output:
+    - `images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_after.png`
+  - Selected OCR line:
+    - `images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_after.png`
+
+Next:
+
+- 下一轮五倍接任务实测看 `findYellowTarget done`：
+  - `normalizedText` 应为 `降魔侍卫`；
+  - 不应再出现 `宝象国品侍卫` 被选为 best；
+  - 如果 full-window 黄字识别仍慢，再单独优化候选 OCR 次数，不和本次规则修复混在一起。
+
+### Codex - 2026-06-17 NPC OCR ROI 必须同时包含黄字目标和紫色玩家名
+
+Status: DONE / compile passed / testcase marked.
+
+Context:
+
+- 五倍队长在宝象国点 `降魔侍卫` 时，旧 vision memory 推荐了 `355,0 -> 902,407` 这种黄字单独成功过的 ROI。
+- 这个 ROI 是从旧 `yellow-name` policy 里按黄字 `textRect/clickPoint` 加 padding 推出来的，保存时没有验证同一区域里是否有当前玩家紫色名字。
+- 后续玩家锚点公式复用同一个 ROI 时，可能把区域里的其它紫字/tooltip 当成玩家 anchor，最终算出窗口外点击点。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`
+  - NPC OCR 区域推荐只读取新的 `yellow-player-anchor-v2` ROI policy key；旧 `yellow-name` 和刚才错误写出的 `yellow-player-anchor` 都不再命中。
+  - 旧 `yellow-name` ROI policy、旧 click sample 推导区域、legacy `MemoryEntry.recommendedRoi` 都不再作为 NPC OCR crop 来源。
+  - 没有联合 ROI 时直接回退全窗口 masked scan。
+  - learned direct-click policy 读取前会按当前规则重新刷新，只采纳已经被真实 dialog/template 消费确认的样本；未确认的预测点不再参与平均点和 spread。
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - 黄字策略在同一张区域截图里额外洗紫字并 OCR 当前玩家名。
+  - 只有 `黄字目标命中 + 同区域玩家紫名命中` 的结果才允许写 ROI evidence。
+  - ROI evidence 的 matched rect 现在会合并黄字目标框和玩家紫名框，推荐 ROI 会包住两者，而不是只围绕黄字缩小。
+  - Runner-owned 的直接点击点学习改成 pending/confirm 两段：`clickNpcSmart` 只暂存点击点；任务后续真实消费到对应 dialog 后才写 click sample。
+  - 公式点不按来源排除：公式点如果真的打开了对应 NPC dialog，会在确认阶段保存；如果没打开，就不会保存为成功点。
+  - 直接点击点学习继续保留：策略实际发出点击并且后续被确认命中后，就记录 click sample，供下一次 learned-memory 直接点。
+  - ROI 学习和直接点击点学习分开：ROI 必须有黄字+紫字联合视觉证明；直接点击点按上次点击结果学习。
+  - 公式算出的点如果落在窗口外，直接跳过，且不再把坏点加入 Ctrl 探测来源。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 五倍接任务 dialog 被 Runner prepared action 成功消费后，调用 `confirmPendingSmartClick(...)` 确认本轮 NPC 点击点。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- Testcase input:
+  - `images/test-cases/npc-click/joint-roi-jiangmo-guard/input_center_scan_layer1.png`
+  - `images/test-cases/npc-click/joint-roi-jiangmo-guard/input_npc_yellow_candidates_overlay.png`
+- Marked output:
+  - `images/test-cases/npc-click/joint-roi-jiangmo-guard/marked_joint_roi_guard.png`
+- Replay/mark command:
+  - PowerShell `System.Drawing` marked old yellow-only ROI, yellow target hit, bad purple anchor, and off-window formula click.
+- Log replay:
+  - 对 `player:80,75` 的 direct-click policy 按新规则重算后，只剩 5 个黄字实测点：`(627,157), (629,155), (628,154), (628,155), (628,154)`，平均 `(628,155)`，`spread=2`。旧公式预测点 `(764,91)` 不再参与 learned direct-click。
+  - 16:55 的全窗口联合样本日志显示黄字框 `595,198 -> 659,217`，玩家名框约 `482,425 -> 560,449`，v2 ROI 会用二者 union 后再 expand。当前全窗口截图已被后续小 ROI 覆盖，下一轮实测会补真实 v2 marked image。
+
+Next:
+
+- 下一轮五倍接任务看日志：
+  - 第一次没有新联合 ROI 时，应看到 `regions=[0,0 -> 1024,768]` 作为 fallback，而不是旧 `355,0 -> 902,407` / `355,0 -> 900,408`。
+  - NPC 点击后应先看到 `smart-click evidence pending runner confirmation`；只有接任务选项被消费后，才看到 `NPC click attempt recorded`。
+  - `learned NPC point ready from policy` 应优先给出 `628,155` 附近的 direct-click point，避免每轮进入 7-8 秒黄字 OCR。
+  - 黄字成功时应出现 `NPC yellow ROI joint-anchor check ... matched=true/false`。
+  - 只有 matched=true 的样本才会生成新的 `yellow-player-anchor-v2` ROI policy，并且 ROI 应覆盖黄字和玩家名。
+
+### Codex - 2026-06-17 修罗灵兽村特殊路线不再覆盖当前导航 intent
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 最新修罗启动后，队长从宝象国导航接任务 NPC。世界地图本轮输入和点击的是 `长安`，但 active pathing intent 被外层 `灵兽村` 覆盖。
+- 结果 Runner 看到的是宝象国传送 OPTION，OCR 读到 `宝象国皇宫 / 平顶山胡杨林 / 大雁塔 / 我哪儿也不去`，却拿 `灵兽村` 去匹配，最终 `OPTION_KEYWORD_NOT_FOUND`，队长卡在传送 dialogue。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - `navigateToMap(灵兽村)` 进入灵兽村特殊路线后，标记当前 pathing intent 由内部路线拥有。
+  - 如果内部 `navigateToMap(长安)` 已经返回 `PATHING_STARTED`，外层 `finally` 不再用 `灵兽村` request 补注册 intent。
+  - 张闻前当前地图走位显式设置 `targetMapName=长安`，避免“去张闻”这段也带着最终目标 `灵兽村`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮修罗实测重点看宝象国 -> 长安传送菜单：
+  - 应只看到 `targetMap=长安` 的 active intent；
+  - Runner route prepare 应按 `长安` 匹配 `大雁塔` 或对应已记忆路线选项；
+  - 不应再出现 `target=灵兽村` + OCR 文本为 `宝象国皇宫/平顶山胡杨林/大雁塔` 的 mismatch。
+
+### 谢帅 - 2026-06-17 五倍白龙马恢复旧分支但保留 Runner 判定
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户指出白龙马原本逻辑是对的：显形镜后应按旧白龙马分流处理，不能被改成直接 Auto+A、直接回程、或卡死在第一条 prompt。
+- 同时用户明确要求：dialog/story 仍必须由 Runner 后台判定，前台任务只消费 prepared action，不允许在 `WubeiTask` 里重新前台 OCR/模板识别。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 白龙马显形镜前注册 `WUBEI_PROBE_STORY` interest，使用显形镜后当前 turn 只短等 Runner prepared action。
+  - 如果 Runner 暂时没有 prepared story，不再伪造成 `WHITE_TEMPLATE_NOT_FOUND`，也不切第二条 prompt；保持当前 probe，放权等待下一轮继续消费 Runner 结果。
+  - 如果 Runner 明确给出 `target-ready`，沿用旧分支：点击白龙马 tooltip 后只消费 Runner prepared 的进战斗 dialog。
+  - 如果 Runner 明确给出 `wrong-position`，沿用旧分支：回到当前绿字重新寻路。
+  - 删除刚才误加的前台 `dialogService.handleDialog(...)` 兜底；`tryClickKnownEnterBattleDialog(...)` 现在只消费 Runner prepared action。
+  - target-ready story 后如果 tooltip/dialog 路径没点进战斗，恢复旧逻辑：继续走 direct-combat / Auto+A 兜底。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮白龙马实测重点看：
+  - 显形镜后若 Runner 尚未准备好，应看到 `probe story still waiting for runner`，而不是直接切第二条或回程；
+  - tooltip 点击后优先等/消费 `WUBEI_ENTER_BATTLE` prepared action；如果没消费到，应走旧的 Auto+A/direct-combat 兜底；
+  - 如果需要恢复“Runner 明确 no-story 后切第二条 prompt”，应先让 Runner/provider 能产出明确 no-story 结果，再接旧分支，不能由任务侧超时猜。
+
+### 谢帅 - 2026-06-17 五倍白龙马超时不计暂停且不用任务道具回程
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户实测白龙马任务在暂停后恢复，实际 active 时间不到一分钟，却因为 `currentProbeTaskStartedAt` 使用 wall-clock 被判定超过 5 分钟。
+- 超时恢复路径还调用了 `useReturnItemAndVerifyStartMap(...)`，会打开任务道具；但白龙马/五倍 probe 超时不能用任务道具回程，必须回到导航接任务流程。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 在 `runRoundPhases(...)` 的公共 `TaskCheckpoint` 后补偿 probe 计时器：暂停阻塞时间会加回 `currentProbeTaskStartedAt`，并同步补偿正在等待 runner story 的 `currentProbeStoryWaitStartedAt`。
+  - `timeoutProbeTaskBeforeBattleIfNeeded(...)` 超时后不再调用 `useReturnItemAndVerifyStartMap(...)`。
+  - probe 超时现在只清理当前 probe/战斗等待状态，然后跳回 `ROUTE_TO_MAIN_TASK`，让五倍按导航路线重新接任务。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮白龙马实测重点看：
+  - 暂停恢复后日志应出现 `probe timer paused`，且不会立刻因为暂停时长触发 5 分钟超时；
+  - 如果真的 active 超时，日志应为 `route back and reaccept`，不应再出现 `probe-enter-battle-timeout` 触发任务道具回程。
+
+### 唐德 - 2026-06-17 队员战后快速补给恢复老补给输入方式
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户确认旧补给路径以前能加血，但新的“后台预检 + 排队 + 快速右键”路径实测没有补上。
+- 旧补给输入方式是 `submitExclusiveAndWait("playerState:healAll", callback)`，由 input worker 在 callback 前 focus，然后在 callback 内直接 `inputProvider.clickRight(...)`，每次右键后等待 800ms。
+- 新快路径不应回退成旧检测，也不应新增拿权后截图；用户要求检测仍然全部在后台做，但真实右键输入必须和旧补给一致。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+  - 保留 `needsFirstAidSupplyNoFocus(...)` 的后台预检和 `pendingNoFocusFirstAidPlan`。
+  - `performCachedFirstAidPlanNow(...)` 执行阶段改回老补给同款输入方式：
+    - `inputSequences.submitExclusiveAndWait("playerState:healCachedPlan", callback)`；
+    - callback 内先 `moveMouseAwayBeforeBarsSnapshotDirect()`；
+    - 对后台预计算目标逐个 `inputProvider.clickRight(absX, absY, 100)`；
+    - 每次右键后等待 800ms。
+  - 不在拿权后重新截图，不做补后复检；本次只修“新快路径的输入方式必须复用老补给输入层”。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍/五环实测重点看队员战后补给日志：
+  - 应出现 `按旧补给输入方式右键补充`；
+  - 对应 input request 应为 `exclusive=true actions=0`，和旧 `healAll` callback 输入层一致；
+  - 如果仍然肉眼无 focus/无补给，下一步应查 `WindowFocusService.focusWithoutLock(...)` 对该 hwnd 的真实 foreground 状态，而不是再改补给判断。
+
+### 唐德 - 2026-06-17 NPC 点击前置清理旧 Story Dialog
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 一夜之秋在五环 V2 买鞋阶段卡住：窗口前面已有一个 story dialog，`NpcClickService.clickNpcSmart(服装店老板)` 前后都能检测到 `DialogType.STORY`，但旧逻辑只把它当成“已有 dialog，跳过若干策略”，没有清掉。
+- Watcher 和五环 `HANDLE_DIALOG` 都能看见这个 story，但当前五环策略对普通 story 是 `STORY_IGNORED`，所以它会转去同步任务栏，而不会清理阻挡 NPC 点击的旧 dialog。
+- 用户确认这是 NPC 交互的通用前置条件：准备点 NPC 前如果已有 story dialog，应先清掉，否则后续点击/tooltip/验证都会被挡住。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - 在 `clickNpcSmart(...)` 的 `before-learned-memory` dialog 检测后增加前置清理。
+  - 前置 dialog 判断优先读取 `WindowRuntimeContext.getVisibleDialogSnapshot(3000ms)` 的 runner 缓存；只有没有 fresh snapshot 时才 fallback 到 `detectDialogTypeNoFocus(...)`。
+  - 如果检测到 `STORY`，调用现有 `DialogHandleRequest.clickStory("npc-click:pre-clean-story:...")` 清一次，再重新检测。
+  - 如果清理后仍然不是 `NONE`，直接返回 false，避免继续跑 ROI/黄字/Ctrl 菜单制造无效点击。
+  - 如果一开始检测到 `OPTION`，暂时只打日志并返回 false，不做通用 fallback 点击；option 可能是给予、购买、传送等业务选项，必须由业务层明确处理。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮看一夜之秋/买鞋场景日志：
+  - 应出现 `NPC smart click pre-cleaned blocking story dialog`。
+  - 如果 story 清掉，后续 `clickNpcSmart(服装店老板)` 应继续走 learned/tooltip/黄字等正常 NPC 点击策略。
+  - 如果剩余 dialog 是 option，需要回到业务层判断是否应专门处理，不在通用 NPC 点击层乱点。
+
+### 唐德 - 2026-06-16 队员战后补给改为 task-turn 排队等待
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户要求本地战后加血不要再“慢慢等普通巡查碰运气”，而是队长放权后三秒内，已经后台预检好的队员必须尽快补给。
+- 旧链路问题：
+  - `AutoCombatService` 战后只把队员补给标成 `pendingFollowerFirstAid`。
+  - 后续用 `TaskTurnCoordinator.tryRun(...)`，抢不到 task turn 就返回 false，然后 500ms 后再轮询。
+  - 这导致队长放权后，pending 队员不一定已经排在 coordinator 等待队列里，视觉上明显慢于医宝宝广播。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/AutoCombatService.java`
+  - 战后 `consumeExitAndRecover(...)` 后立即尝试执行 pending follower first-aid。
+  - `runPendingFollowerFirstAidIfAllowed(...)` 不再使用非阻塞 `tryRun(...)`。
+  - 改为调用 `TaskTurnCoordinator.enter(...)` 阻塞进入公平 task-turn 等待队列。
+  - 删除 `pending follower first-aid waiting for task turn` 的 5 秒等待日志路径。
+  - 保留 `PlayerStateService.performCachedFirstAidPlanNow(...)`，所以拿到权后仍然执行后台预计算好的快速右键计划，不重新扫四条血蓝。
+
+Expected:
+
+- 队员战后日志应先出现 `post-combat first-aid queued`。
+- 如果队长仍持有 task turn，队员线程应进入 `task turn waiting ... pending-follower-first-aid`。
+- 队长释放后，应尽快出现 `pending follower first-aid acquired task turn` 和 `执行后台预计算补给计划`。
+- 下一轮实测重点核对 leader release 到 member acquired / clickRight 的间隔，目标是 3 秒内。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-16 五倍白龙马 hint 诊断截图防覆盖
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户指出白龙马 `destination hint` 诊断截图会被固定文件名覆盖，导致失败现场无法复盘。
+- 需要保留每一轮 `first-probe` / `second-probe` 的 raw/yellow 截图，后续才能判断是绿字没点中、story 挡住，还是截图区域问题。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `clickTaskTrackerGreen(...)` 增加点击前/点击后 `DialogType` 日志，记录 `dialogBefore/dialogAfter`。
+  - `wrong-position story` 分支日志增加 `storyStatus/storyAction/storyClicked`。
+  - `destination hint` 截图文件名增加 `requestId`，避免 `wubei_tracker_destination_hint_first-probe_1_raw.png` 这类固定文件名互相覆盖。
+
+Next:
+
+- 用户下一轮白龙马实测后，直接查看对应 `requestId` 的 raw/yellow 图，确认 hint 没出现时屏幕上到底是什么。
+
+### 谢帅 - 2026-06-16 五倍白龙马进战斗五分钟超时回城重接
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户要求：如果当前五倍任务是白龙马/显形镜任务，从开始任务到进入战斗超过 5 分钟，就回城并重新接任务。
+- 现有 `ENTER_BATTLE` 只有进入打怪阶段后的 180 秒等待超时，不能覆盖“接完任务 -> 点左侧绿字 -> 显形镜 -> 进入战斗”整条白龙马链路。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 增加 `PROBE_ENTER_BATTLE_TIMEOUT_MS=300_000`。
+  - `READ_TRACKER` 识别到 `probeObjective` / 显形镜任务时记录 `currentProbeTaskStartedAt`。
+  - 每个 phase 执行前检查该计时；超过 5 分钟且还没进入战斗时：
+    - 关闭五倍队伍维护窗口；
+    - 清理本轮 probe runtime / tracker hint / enter/wait battle runtime；
+    - 使用回程道具确认回到宝象国；
+    - 回到 `ROUTE_TO_MAIN_TASK` 重新接任务。
+  - `ENTER_BATTLE` / `WAIT_BATTLE_FINISH` 首次确认 `IN_COMBAT` 时清掉白龙马超时计时。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-16 撤回五倍 STOPPED_AWAY 直接重走绿字尝试
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户澄清五倍显形镜原循环应该保留：绿字点击后即使 runner 判定停下，也应先允许使用显形镜，再根据“位置不对” story 回到同一条绿字。
+- 之前新增的 `STOPPED_AWAY && no hint -> TRACKER_PATHING` 分支会提前打断这个验证循环，方向不对。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 撤回 `resolveProbeAfterPathing(...)` 中的 `STOPPED_AWAY && currentTrackerDestinationHint == null` 直接回 `TRACKER_PATHING` 分支。
+  - 保留原有 `useProbeItemWithRuntimeRecord(...) -> inspectProbeStoryOnce(...) -> wrong-position story -> TRACKER_PATHING` 流程。
+
+Next:
+
+- 继续查真正问题：哪些轮次没有从“位置不对” story 稳定进入 `TRACKER_PATHING`，或者进入后没有实际点击左侧绿字。
+
+### 谢帅 - 2026-06-16 五倍显形镜绿字点击无移动不再用道具
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户指出 `17:44:26` 五倍 first-probe 绿字点击后角色根本没有移动，不能继续猜测为 dialog/位置问题。
+- 复查 `logs/dhxy-console.log`：
+  - `17:44:26.090` 执行 `clickLeft x=297 y=332`。
+  - `17:44:33.060` runner 仍读到 `current=火云洞(17,11)`。
+  - `17:44:39.014` runner 更新为 `STOPPED_AWAY`，`observedStationaryMs=5954`。
+- 结论：这次 tracker 绿字点击没有触发寻路；旧逻辑在 `STOPPED_AWAY` 后仍继续 `useProbeItemWithRuntimeRecord(...)`，导致原地使用显形镜并触发“位置不对”循环。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `resolveProbeAfterPathing(...)` 中，如果当前 snapshot 是同一个 `wubei:tracker-green-click:*` intent，状态为 `STOPPED_AWAY`，且没有 tracker destination hint，则判定为“绿字点击没有产生移动证据”。
+  - 该分支现在直接回 `TRACKER_PATHING` 重试当前绿字，不再继续用显形镜。
+  - 新日志关键字：`probe tracker click produced no movement; retry current green link before using item`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 何黎 - 2026-06-16 小地图单数字坐标与五倍 UNKNOWN 等待修正
+
+Status: DONE / compile passed / minimap replay passed.
+
+Context:
+
+- 五倍显形镜路线停在 `火云洞 [4,3]` 后，`WindowTaskRunner` 反复写入 `WindowPathingState.UNKNOWN`。
+- 根因不是角色仍在移动，而是 `MiniMapCoordinateReader.findBracketSpan(...)` 对坐标括号宽度有 `width < 35` 硬门槛。
+- 实测 `[4,3]` 坐标括号 span 宽度为 33px，因此坐标在进入数字识别前就被拒绝。
+- 五倍 `runResolveAfterPathingPhase(...)` 和 `resolveProbeAfterPathing(...)` 又把 `UNKNOWN` 当成 still active，导致 `probe runner pathing still active` 无限让权。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/MiniMapCoordinateReader.java`
+  - 增加 `COORD_BRACKET_MIN_WIDTH=30` / `COORD_BRACKET_MAX_WIDTH=80`。
+  - 放宽括号候选最小宽度，保留后续逗号和两侧数字校验，覆盖 `[4,3]` 这类单数字坐标。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `UNKNOWN` 不再作为无限等待条件。
+  - `ACTIVE` / `probeInProgress` 仍然继续让权等待 runner。
+  - `UNKNOWN` 会打 warning，然后交回当前 phase 的恢复逻辑继续处理。
+
+Replay:
+
+- 已枚举的小地图离线 testcase 范围：
+  - `images/test-cases/minimap/raw`：47 张原始小地图坐标条。
+  - `images/test-cases/minimap/failure-location`：44 个失败样本目录。
+  - 当前 repo 中没有发现其他小地图离线 replay testcase 目录；`MiniMapLabelLiveProbeDebugMain` 是 live probe，不属于离线 testcase replay。
+- 新增失败样本：
+  - 输入：`images/test-cases/minimap/failure-location/20260616_huoyundong_4_3/tmp_pos.png`
+  - 元数据：`images/test-cases/minimap/failure-location/20260616_huoyundong_4_3/metadata.txt`
+  - 标注：`images/test-cases/minimap/failure-location/20260616_huoyundong_4_3/marked.png`
+- 命令：
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.MiniMapCoordinateReplayDebugMain"`
+- 结果：
+  - `MINIMAP_COORD_REPLAY total=91 passed=91 failed=0`
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- MiniMap coordinate replay passed.
+
+### 唐德 - 2026-06-16 降魔侍卫黄字直接点击强命中门槛
+
+Status: DONE / compile passed / visual testcase pending.
+
+Context:
+
+- 用户确认五倍 `降魔侍卫` 数据已经清空，应该趁现在没有新数据时把弱/强判定修掉。
+- 旧链路里 `GameTextLineOcrService.findYellowTarget(...)` 为了兼容短 NPC 名，允许两字公共子串/短名 fuzzy 命中。
+- 这类弱命中适合作为 Ctrl 探测候选，但不适合直接落鼠标，也不应该写入 direct click policy。
+- 历史备份里曾出现 `降魔侍卫` 目标下识别出 `lt2白龙马` 的 not-verified 记录，说明弱命中确实会污染五倍点击链路的判断。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - 增加严格目标直接点击门槛：`降魔侍卫` 必须是完整命中，或至少 3/4 字的近完整连续命中且 edit distance <= 1。
+  - 严格目标如果只是短名/fuzzy 弱命中，不再直接点击；返回 `TARGET_NOT_FOUND` 或 `TARGET_NOT_FOUND_WITH_CANDIDATES`，允许后续 Ctrl fallback 继续尝试。
+  - 严格目标选词不再 fallback 到 all words；选不到强 span 时直接拒绝 direct click，避免红点被同一行噪点拖偏。
+Invalidated replay:
+
+- 原先使用的 `images/test-cases/npc-yellow-target/raw/wubei_130644_bailongma_ocr_boxes.png` 是根据 OCR boxes 做出来的坐标演示图，不是游戏真实 raw screenshot。
+- 用户指出该图不能作为 testcase；已删除该 raw 图和对应 marked 输出：
+  - `images/test-cases/npc-yellow-target/raw/wubei_130644_bailongma_ocr_boxes.png`
+  - `images/test-cases/npc-yellow-target/output/wubei_130644_bailongma_ocr_boxes_marked.png`
+  - `images/test-cases/npc-yellow-target/output/wubei_130644_bailongma_strict_replay_marked.png`
+  - `images/test-cases/npc-yellow-target/output/wubei_130644_bailongma_as_jiangmo_rejected_marked.png`
+- 当前只保留代码门槛和编译验证；黄字点击 visual testcase 需要下一次用真实游戏 raw screenshot 重新补。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 谢帅 - 2026-06-16 五倍 Auto+A 白龙马黄字点击点修正
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户指出我上一轮生成的 marked 图明显没有命中 `白龙马`，红点落在上方噪点附近，不能作为验证。
+- 复查 `13:06:44` 日志，`findYellowTarget` 确实命中 `白龙马`，但同一 OCR line 里还有噪点：
+  - `LT@(463,479,458,476,10,6)`
+  - `2@(325,553,318,548,14,11)`
+  - `白龙马@(217,684,194,675,46,18)`
+- 旧逻辑用 `centerOfWords(result.lineResult().words())`，把 `LT` 和 `2` 一起纳入外接框，导致旧点击点被拉到 `(331,534)`。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - 黄字目标 OCR 命中后，先从 OCR words 中选择真正组成目标名的最小连续 word span。
+  - 点击点和 evidence textRect 改为基于该目标 word span 计算。
+  - 如果选不到目标 span，才回退旧的 all-words 行为并打 warning。
+  - 日志增加 `targetWords`，下次可以直接看到实际用于点击的是哪几个 OCR box。
+
+Coordinate Replay Invalidated:
+
+- 原先这里引用的是根据 `13:06:44` OCR boxes 做出来的坐标演示图，不是游戏真实 raw screenshot。
+- 用户指出该图不能作为 testcase；相关 raw/marked 图已经删除。
+- 这条历史改动只能说明“all-words 外接框会被噪点拖偏”的代码原因，不能作为视觉验收。
+- 下一次实跑必须保存真实 raw screenshot 和真实 marked output，再确认最终红点是否落在 `白龙马` 身上。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- 追加真实 replay 输入：
+  - `images/img.png`
+  - 命令：`mvn -q -DskipTests compile exec:java "-Dexec.mainClass=com.bot.dhxy.debug.YellowTargetWordSelectionReplayDebug" "-Dexec.args=images/img.png 白龙马 images/temp/yellow_target_word_selection_marked.png"`
+  - 输出：`images/temp/yellow_target_word_selection_marked.png`
+  - 结果：OCR 同时读到中间说明文字 `selected target word:白龙马` 和底部真实 `白龙马`；修正后 `selected=[白龙马@(662,1197,570,1161,184,73)]`，不再选择中间说明文字。实际点击点仍按生产规则取目标文字中心上方 50px：`(662,1147)`。
+
+### 唐德 - 2026-06-16 五环 ready 调度降抖二次修正
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户新跑一轮后反馈视觉上仍然“很笨”：有窗口完成后，剩余窗口没有明显更快接上。
+- 复查最新 `logs/dhxy-console.log`，上一轮调度改动确实触发：
+  - `prepared action ready published` 出现 28 次。
+  - `prepared-action-priority-yield` 出现 1153 次。
+  - `pathing-terminal-priority-yield` 出现 901 次。
+- 任务栏 prepared 到真实点击多数已在 200-600ms 内完成，说明 P1 prepared 点击链路本身有效。
+- 主要问题变成调度抖动：
+  - `WindowReadyEventBus` 仍按 `windowId:type` 只保存一条 latest，普通 `dialog-visible:STORY/OPTION` 会覆盖刚发布的 prepared action。
+  - P2 `PATHING_TERMINAL` 在 `WAIT_PATHING` 窗口之间反复让权，造成互相等待感。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/runtime/WindowReadyEventBus.java`
+  - 增加 prepared-action 专用 latest 缓存。
+  - `latestOtherFreshPreparedAction(...)` 改读专用缓存，避免可执行 prepared action 被普通 STORY/OPTION ready 覆盖。
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+  - P2 terminal 优先级不再打断当前窗口的 `WAIT_PATHING` 阶段。
+  - P1 prepared action 仍可让其他窗口优先消费。
+
+Expected:
+
+- 下一轮应明显减少 `pathing-terminal-priority-yield` 对 `WAIT_PATHING` 的刷屏。
+- `prepared-action-priority-yield` 应更稳定地指向真正可执行的 `TASK_TRACKER_PATHING / ROUTE_TRANSFER`，不再被普通 `dialog-visible` 覆盖。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 唐德 - 2026-06-16 五环 prepared/terminal 调度优先级补齐
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户观察到多窗口五环里存在“窗口已经有可处理 dialog / 任务 Panel / 停止移动，但迟迟拿不到权”的现象。
+- 旧逻辑里 `WindowReadyEventBus` 只是软通知；五环看到其他窗口 ready 后只会 `ready-dialog-priority-yield`，但没有保证 ready 窗口马上被消费。
+- 任务 Panel 绿字 prepared 成功后以前只缓存到 `WindowRuntimeContext`，没有统一发布带 `operation` 的 ready 事件，容易被普通 STORY/OPTION 事件淹没。
+- 鞋铺/给鞋路线里 `STOPPED_AWAY + fresh ROUTE_TRANSFER prepared action` 应该按 P1 处理，不能只当 P2 terminal 等到 route prepared 过期。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/runtime/WindowReadyEventBus.java`
+  - 增加 `latestOtherFreshPreparedAction(...)`：只返回带 `operation` 的可执行 prepared action ready。
+  - 增加 `latestOtherFreshPathingTerminal(...)`：只返回 `ARRIVED / STOPPED_AWAY` terminal。
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+  - `ROUTE_TRANSFER` prepared、`TASK_TRACKER_PATHING` prepared、prepared action 重新验证成功时发布 `TASK_ATTENTION_REQUIRED`，并带上 `operation/target`。
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+  - 五环 ready 优先级改成：
+    - P0：当前窗口 fresh prepared action，当前窗口先消费。
+    - P1：其他窗口 fresh prepared action，当前窗口让权。
+    - P2：其他窗口 fresh pathing terminal，当前窗口让权。
+    - P3：普通公平兜底。
+  - 泛 `STORY/OPTION visible` 不再触发跨窗口让权，避免大家互相空让。
+  - `BUY_SHOES` 纳入 outside/priority 检查边界，使鞋铺 route dialog prepared 不再只按普通队列等待。
+
+Notes:
+
+- Route dialog 的实际点击仍由 `NavigationService` 消费 prepared action，避免绕过 intent/target 校验。
+- 任务 Panel 绿字 prepared 仍由 `FiveRingTaskV2.clickPreparedWuhuanTrackerGreen(...)` 消费。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-16 五环完成框只识别不点击
+
+Status: DONE / compile passed.
+
+Context:
+
+- 五环多窗口收尾时，完成白字模板已经命中，但任务随后又调用 `clickStory(...)` 关闭完成框。
+- 这会进入 `dialog:storyClick`，导致已完成窗口再次 focus 并物理左键点击，抢占其他窗口。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`
+  - `handleDialog(...)` 命中完成 story 后直接返回 `FINISHED`，不再关闭完成框。
+  - `handleTrackerMiss(...)` 命中完成 story 后直接返回 `FINISHED`，不再关闭完成框。
+  - 接任务阶段遇到“今日上限/完成”终止 story 时直接结束，不再点击关闭。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮五环收尾看日志里不应再出现 `source=wuhuan-v2:finished-story-close` 和 `request=dialog:storyClick`。
+
+### 唐德 - 2026-06-15 combat target 跳过 clickNpcSmart 内部 Alt+C 二轮
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户希望减少战斗目标点怪的重复尝试。
+- 普通 NPC 仍需要 `clickNpcSmart` 内部第一轮失败后自动 `Alt+C` 再点一次，例如接任务、传送、买鞋等 NPC。
+- 修罗/五倍战斗目标已经有任务层 recovery：先检查已有进战斗对话框，再走 `Alt+A` direct-combat，最后 phase retry 前由任务层按 `Alt+C`。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - `clickNpcSmart(...)` 第一轮 pipeline 失败后，如果 `request.targetRole() == NpcRole.COMBAT_TARGET`，直接返回 `false`。
+  - 非战斗 NPC 保持原来的内部 `Alt+C` + 第二轮 pipeline 行为。
+
+Resulting policy:
+
+- 战斗目标单个 phase：普通 smart click 一轮 -> recovery 检查“看打” -> `Alt+A` direct-combat 一轮。
+- 只有进入任务层 phase retry 时才按 `Alt+C`。
+- 普通 NPC 不受影响。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-16 Dialog STORY 误判阈值收紧
+
+Status: DONE / compile + offline replay passed.
+
+Context:
+
+- 五环 `忆叶知秋 / hwnd-1E370FB2` 在接任务 NPC 附近卡住，根因之一是 `DialogService` 把无 dialog 的场景图误判成 `STORY`。
+- 误判图里只有人物、白衣服和光效，但旧规则 `totalTextPixels > 200 && textLineStats.matched()` 过于宽松。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/DialogService.java`
+  - `hasStoryInUpperHalf(...)` 改为更严格的组合阈值：
+    - `total >= 450`
+    - `textRows >= 10`
+    - `maxRowWhite >= 40`
+    - `maxClusters >= 20`
+    - `maxSpan >= 120`
+  - 保留原有日志字段，方便继续观察 `thinWhite/green/total/textRows/maxRowWhite/maxClusters/maxSpan`。
+
+Replay:
+
+- 用户提供的最少 story 样本：
+  - 输入：`images/Snipaste_2026-06-16_00-43-06.png`
+  - top42 统计：`thin=506 green=0 total=506 rows=14 maxWhite=48 maxClusters=29 maxSpan=154`
+  - 新规则：`true`
+  - 标注：`images/temp/story_threshold_debug/Snipaste_2026-06-16_00-43-06_marked_top42.png`
+  - 洗白：`images/temp/story_threshold_debug/Snipaste_2026-06-16_00-43-06_top42_white.png`
+- 五环误判样本 1：
+  - 输入：`images/temp/hwnd-1E370FB2/dialog_detect_handle-dialog_INSPECT_story_upper_raw.png`
+  - 统计：`thin=321 green=50 total=371 rows=8 maxWhite=28 maxClusters=7 maxSpan=268`
+  - 新规则：`false`
+- 五环误判样本 2：
+  - 输入：`images/temp/hwnd-1E370FB2/dialog_detect_green-template-click_wuhuan-v2_accept-dialog_story_upper_raw.png`
+  - 统计：`thin=375 green=0 total=375 rows=9 maxWhite=22 maxClusters=6 maxSpan=295`
+  - 新规则：`false`
+- 真实 story 对照样本：
+  - `images/temp/hwnd-61F5A/dialog_detect_handle-dialog_CLEANUP_story_upper_raw.png`
+  - 统计：`thin=604 green=0 total=604 rows=14 maxWhite=62 maxClusters=30 maxSpan=186`
+  - 新规则：`true`
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-15 修罗目标改为固定 NPC 记忆
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出修罗怪不是游走怪，任务给出的地图坐标是固定目标。
+- 之前 `XiuluoTaskV2.toXiuluoObjective(...)` 把修罗目标标为 `NpcMovementType.ROAMING`，导致 `NpcTarget.toClickRequest(...)` 生成 `roamingTarget=true`。
+- 结果是黄色 OCR ROI 记忆走 `clickable-target` / bucket / `any-name` 策略，不符合修罗目标的实际语义。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - 修罗任务目标从 `NpcMovementType.ROAMING` 改为 `NpcMovementType.FIXED`。
+- `config/vision_memory.json`
+  - 将 263 条 `targetName=修罗` 的 `targetCandidateSamples` 从 roaming/clickable-target 迁为 fixed-npc。
+  - 将 2259 条旧 `clickable-target` 修罗 ROI policy 合并为 251 条 fixed-npc policy。
+  - 保留原有 NPC click attempt 记录；这些本来已经是 `npc-click|地图|修罗|x,y` 的固定 key。
+
+Verify:
+
+- JSON 校验：
+  - `xiuluoRoamingCandidates=0`
+  - `xiuluoFixedCandidates=263`
+  - `xiuluoClickablePolicies=0`
+  - `xiuluoFixedPolicies=251`
+- `mvn -q -DskipTests compile` passed。
+
+### 谢帅 - 2026-06-15 世界地图路线输入等待缩短
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认修罗无维护时接任务后先离村，再进入目标导航。
+- 为避免离村路程缩短后仍被世界地图输入等待吃掉时间，先缩短已确认的保守等待，不改路线点击/OCR算法。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - `WORLD_MAP_SEARCH_TYPE_SETTLE_MS`: `500ms -> 200ms`。
+  - `MAP_RESULT_SCROLL_SETTLE_MS`: `300ms -> 200ms`。
+  - 复用已打开路线输入框时：
+    - 输入目标后等待 `300ms -> 200ms`。
+    - 点搜索后等待 `500ms -> 200ms`。
+
+Investigation:
+
+- 修罗离村预走调用当前地图小地图点击时，现有固定等待包括：
+  - `Alt+1` 打开小地图后等 `500ms`。
+  - 点小地图坐标后等 `250ms`。
+  - 如果需要关闭小地图，关闭确认还有 `300ms`。
+- 所以“点离村后到打开世界地图”中间本来就可能有接近一秒以上的输入/确认等待；本次暂不改小地图确认逻辑。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-15 修罗队长目标寻路期间允许三技能维护
+
+Status: DONE / compile passed.
+
+Context:
+
+- 日志确认队长窗口 `hwnd-2291C52` 只有 maintenance broadcast 检查，没有自己的 `summon skill due/start summon skill clean`。
+- 原因是修罗队长的 `after-accept` / `before-route` 维护点明确设置了 `.cleanSummonSkill(false)`；三技能主要由队员 `AutoBattleTask` 触发。
+- 用户确认队长三技能阶段应与队员一致：必须出了灵兽村后；但队长在 `navigateInCurrentMap` 等待期间可以跑三技能，因为队长本身正在等路。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - 在 `continueIfNavigationStillPathing(...)` 的目标寻路等待分支接入队长三技能维护。
+  - 只在 `state.phase() == NAVIGATE_TO_TARGET` 且窗口角色不是 `MEMBER` 时触发。
+  - 使用现有 `TaskMaintenanceService.runOpportunisticMaintenance(...)`，不新增召唤兽逻辑：
+    - `cleanSummonSkill(true)`
+    - `oneSummonSkillPerTeamRound(true)`
+    - `teamMaintenanceKey(TASK_CODE)`
+    - `teamRound(state.round())`
+    - `requireOpenTeamMaintenanceWindow(false)`
+  - 保持队员原有 `AutoBattleTask` gate 不变；队员仍可依赖 `requireOpenTeamMaintenanceWindow`。
+
+Notes:
+
+- 队长三技能维护不依赖 team pathing window，因为 current-map 等待时该窗口会被关闭。
+- 维护成功后仍返回原来的 pathing/yield 流程，不改变修罗目标导航结果。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-15 三技能尾部安全 cache 跳过面板
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户观察到某些窗口三技能维护已经缓存到 `cachedStartSlot=9`，但后续仍会打开召唤兽技能面板空跑。
+- 不能用 `skillCount=6/8` 判断是否完成，因为它只是布局格子数量，不代表召唤兽实际开放/有效到第几个格子。
+- 也不能用 `LOCKED_SLOT` 反推最后有效格；`LOCKED_SLOT` 只表示当前格不是有效格。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`
+  - 新增 2 小时尾部安全 cache TTL：`SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS`。
+  - 成功清理后，只从本次 `observedStatusesByIndex` 中识别最后一个有效格：
+    - `NORMAL_SKILL`
+    - `KEEP_SKILL`
+    - `EMPTY_SLOT`
+  - 如果 `nextStartIndex > lastConfirmedEffectiveSlotIndex`，记录 `tailSafeCachedAt`。
+  - 下次三技能到期时，如果 cache 未超过 2 小时，直接跳过整次召唤兽技能面板打开/检查，并刷新普通维护 cooldown。
+  - 如果 cache 超过 2 小时，清空 tail-safe 状态和 `nextStartIndex`，让下一次按现有扫描逻辑重新确认。
+
+Notes:
+
+- 没有修改 `SummonSkillService` 的格子扫描/停止逻辑。
+- `LOCKED_SLOT` 不参与最后有效格推导。
+- 跳过逻辑发生在 team-round claim 之前，避免“本窗口本来不用检查，却占用本轮三技能名额”。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 看 `navigation map search split: stage=prepare` 是否比之前少约 `300-600ms`。
+- 如果仍然 `prepare/scan-click` 大于 5 秒，下一步应查 OCR/截图/滚动耗时，而不是继续盲砍 sleep。
+
+### 谢帅 - 2026-06-15 修罗接任务后无维护先离村
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认修罗接完任务后的顺序需要分快线/保守线。
+- 无医保宝/修装备维护时，不应原地先读完 story objective 再离村；可以先点灵兽村出口，让角色移动时再读 story objective。
+- 有维护 due 时必须保持先读 objective，因为医保宝/修装备会打开业务 dialog，可能覆盖接任务后的 story dialog。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoRoundContext.java`
+  - 新增 `startExitPrepathStarted` 状态位，记录本轮已经在读 objective 前启动过离村预走。
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - 接任务选项点击成功后走 `continueAfterAcceptOptionClicked(...)`。
+  - 如果医保宝或修装备维护 due：保持旧顺序，进入 `READ_OBJECTIVE`。
+  - 如果没有维护 due：先调用 `startLeavingStartMapIfPresent(...)`，开始离村后再读 objective。
+  - `READ_OBJECTIVE` 发现已经启动离村预走时，读到目标后直接进入 `NAVIGATE_TO_TARGET`，避免再走维护/再点一次离村。
+  - `startLeavingStartMapIfPresent(...)` 遇到已启动离村预走时直接跳过，防止重复点击出口。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 无维护 due 的修罗接任务后应看到：
+  - `accept option clicked; start exit before objective read`
+  - 后续 `objective:story:after-start-exit-prepath`
+- 有医保宝/修装备 due 时应看到：
+  - `accept option clicked; read objective before maintenance`
+  - 后续仍进入 `AFTER_ACCEPT_MAINTENANCE_CHECK` / `BEFORE_ROUTE_MAINTENANCE_CHECK`。
+
+### 唐德 - 2026-06-15 修罗目标当前地图寻路关闭三技能维护窗口
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察 16:03 左右队长已经在目标地图并开始靠近修罗怪，队员仍然触发/重试召唤兽三技能维护，抢占输入队列。
+- 日志确认现有 gate 存在，但粒度过宽：`target-navigation-pathing-started` 会打开 team maintenance window；只有任务线程后续消费 watcher arrival / stopped-away / wait-ended 时才关闭。
+- 需求确认：跨地图路上可以允许队员维护；一旦队长已经进入目标地图、开始当前地图靠近怪物，就应该关闭三技能维护窗口。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - 复用已有 `closeTeamPathingMaintenanceWindow(...)`，没有新增 watcher/service 注入链路。
+  - `navigateToTarget(...)` 收到 `PATHING_STARTED` 时：
+    - 如果 `NavigationResult.message == "current-map mini-map click started pathing"`，直接关闭 team maintenance window，source=`target-current-map-pathing-started`。
+    - 其他跨地图/route pathing 仍然按旧逻辑打开 maintenance window，source=`target-navigation-pathing-started`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 修罗队长到目标地图后，日志应先出现：
+  - `navigate in current map mini-map click started pathing`
+  - `maintenance team pathing window closed: teamRound=xiuluo_v2#... source=xiuluo-v2:target-current-map-pathing-started`
+- 这个时间点之后，队员不应再因为同一轮 `source=auto-battle` 重新 claim 召唤兽三技能维护。
+
+### 唐德 - 2026-06-15 小地图关闭误判证据截图
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户观察 14:55:02 附近可能是 `close-after-confirmed-pathing` 后，小地图可见性检测误判仍然开着，导致 fallback 再按 `Alt+1`，视觉上像小地图又开又关。
+- 本轮只加 debug 证据，不改变关闭/重试行为。
+
+Changed:
+
+- `NavigationService.isMiniMapPanelVisible(...)`
+  - 保留普通检测路径不变。
+  - 新增关键分支 debug 检测：`closeMiniMapAfterConfirmedPathing(...)` 的 after-close check 会保存一次 ROI 图。
+  - 输出日志：
+    - `mini-map panel visible debug matched`
+    - `mini-map panel visible debug miss`
+    - 命中时包含 `template/roi/rect/local/absolute/source`。
+  - debug 图路径形如：
+    - `images/temp/<windowId>/mini_map_panel_visible_check_yyyyMMdd_HHmmss_SSS_roi.png`
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-15 Alt+A direct-combat OCR 跳过默认 mask
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户现场验证修罗怪刷在洛阳角落，目标坐标接近 `(463,1)`，角色也在边缘。
+- `Alt+A` 进入直接点怪模式后，游戏会隐藏 HUD/任务栏等干扰项；此时原来的 full-window default mask 反而会把底部/边角有效怪名和角色紫名一起遮掉。
+- 普通 NPC 点击仍需要 default mask，因为普通模式下 HUD、聊天、快捷栏还在。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - `runNpcClickPipeline(...)` 在 `verificationMode=direct-combat` 时写入 `skipDefaultOcrMask=true`。
+  - 黄名 OCR 路径 `clickNpcByYellowTargetName(...)` 支持按 pipeline state 跳过 default mask。
+  - 紫名锚点公式路径 `calculatePlayerAnchorFormulaPoint(...)` 支持按 pipeline state 跳过 default mask。
+  - `Alt+A` 失败退出时查找紫名锚点也跳过 default mask，避免边缘角色名被遮掉。
+  - 全局 `OcrWindowScanService.DEFAULT_MASKS` 未改；非 `direct-combat` 链路仍按原逻辑 mask。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live check:
+
+- 下次跑角落修罗 `Alt+A` fallback 时，日志应出现：
+  - `NPC purple player-anchor default mask skipped for direct-combat mode`
+  - `NPC yellow target default mask skipped for direct-combat mode`
+- 重点检查窗口 scoped debug 图：
+  - `images/temp/<window-id>/center_scan_layer1.png`
+  - `images/temp/<window-id>/npc_yellow_target.png`
+- 这些图在 `Alt+A` 模式下应该保留完整 full-window 内容，不再把底边/角落 mask 成白块。
+
+Next live-check:
+
+- 下次如果再次出现：
+  - `mini-map still visible after confirmed pathing close; falling back to generic close button`
+- 同一时间附近应能找到：
+  - `mini-map panel visible debug matched ... roi=...`
+  - 或 `mini-map panel visible debug miss ... roi=...`
+- 直接打开对应 `roi` 图片，确认到底是真有小地图 checkbox，还是模板误命中。
+
+### 唐德 - 2026-06-15 Alt+6 屏蔽确认恢复三次尝试
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户确认启动前 `Alt+6` 屏蔽不能只按一次，应该恢复旧语义：最多尝试三次，命中确认模板就停止。
+- 本轮只改启动屏蔽确认逻辑，不改任务业务流程、地图/NPC/dialog 点击算法。
+
+Changed:
+
+- `TaskStartupWindowPreparationService.ensureAlt6Visibility()`
+  - 新增 `ALT6_VISIBILITY_MAX_ATTEMPTS = 3`。
+  - 每次尝试：后台 HWND 发送 `Alt+6` -> 等 `500ms` -> 查 `images/template/status/blacklist_crowd.png`。
+  - 任意一次模板命中即成功，并继续等待 `1000ms` 让浮层淡出。
+  - 每次失败日志带 `attempt=x/3`；三次都失败后输出最终 warning。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `git diff --check -- src/main/java/com/bot/dhxy/window/startup/TaskStartupWindowPreparationService.java` passed，仅 CRLF warning。
+
+Next live-check:
+
+- 启动五环/五倍时日志应出现：
+  - `task startup visibility: send Alt+6 ... attempt=1/3`
+  - 如果第一次没命中，应继续 `attempt=2/3`、`attempt=3/3`。
+  - 成功时应看到 `confirmed by template after background Alt+6 attempt=x/3`。
+
+### 谢帅 - 2026-06-15 摄妖香 cyan 小时 / green 分钟识别
+
+Status: implemented / compile passed
+
+Context:
+
+- 摄妖香状态栏截图区域已扩到用户实测框，先用 `images/template/status/sheyaoxiang_buff.png` 匹配状态图标。
+- 匹配后按图标左右边界裁一条竖列，一直裁到状态截图底部，避免使用旧固定数字位置。
+- 业务规则调整为：cyan 数字表示剩余小时；cyan 没读到时，再读 green 数字，green 数字表示剩余分钟。
+- 模板命中但 cyan/green 都读不到，或模板本身没命中，按保守策略补一根摄妖香，重建 1 小时计时。
+- 剩余时间小于等于 20 分钟时主动补香，大于 20 分钟时跳过补香。
+
+Changed:
+
+- `PlayerStateService`
+  - `probeIncenseStatus(...)` 读取匹配图标下方竖列。
+  - `readSheyaoxiangRemainingTime(...)`：cyan OCR 结果按小时换算。
+  - `readSheyaoxiangRemainingMinutesGreen(...)`：green OCR 结果按分钟换算。
+  - `IncenseStatusProbe` 改为保存剩余毫秒和诊断文本，例如 `cyan-hours=1`、`green-minutes=39`。
+- `DebugSheYaoXiangStatusCaptureMain`
+  - 无 UI 调试入口，注册当前游戏窗口后只截图/匹配/洗图/读数，不点击、不打开包裹。
+
+Verify:
+
+- Command:
+  - `java "-Dfile.encoding=UTF-8" -cp "target/classes;$cp" com.bot.dhxy.debug.DebugSheYaoXiangStatusCaptureMain`
+- Input/output images:
+  - `images/temp/hwnd-1203DA/sheyaoxiang_status_debug_manual_raw.png`
+  - `images/temp/hwnd-1203DA/sheyaoxiang_status_debug_manual_matched_column_raw.png`
+  - `images/temp/hwnd-1203DA/sheyaoxiang_status_cyan_digits.png`
+  - `images/temp/hwnd-1203DA/sheyaoxiang_status_green_digits.png`
+- Observed result:
+  - cyan returned no hour digits.
+  - green returned `39` and logged `remaining=green-minutes=39`.
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-15 ready/prepared latency + 长 phase yield checkpoint
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据最新 MD 任务执行；本轮同时接唐德和谢帅的收尾任务。
+- 目标是在现有协作式优先级模型里补观测和轻量 checkpoint，不做全局 priority queue，不重写 `TaskTurnCoordinator`。
+- 本轮不改世界地图/小地图/NPC/dialog 视觉匹配或点击坐标算法。
+
+Changed:
+
+- `WindowReadyEvent`
+  - ready event 增加 `hwnd`、`operation`、`targetKeyword`，用于串起 ready 发布、prepared action 和五环消费/yield。
+- `WindowReadyEventBus.publish(...)`
+  - ready 发布日志补充 `hwnd/operation/target/createdAtMs/ageMs`。
+- `WindowTaskRunner`
+  - `TASK_ATTENTION_REQUIRED` 发布时带当前 hwnd。
+  - prepared follow-up ready event 带 `PreparedDialogAction.operation/targetKeyword`。
+  - pathing terminal ready event 带 hwnd 和目标地图。
+- `FiveRingTaskV2`
+  - 在 `WAIT_PATHING`、`ACCEPT_TASK`、`HANDLE_DIALOG`、`SYNC_TASK_PANEL` 进入前沿用现有 outside-phase priority gate，补充明确 checkpoint 日志。
+  - 当前窗口有 fresh prepared tracker action 时，优先消费，并记录 ready -> consume latency、prepared age、verified age、click point。
+  - 当前窗口有 route prepared action 时，不抢 Navigation 的消费权，只记录该 action 已可用并保留给 Navigation。
+  - 其他窗口有 fresh `TASK_ATTENTION_REQUIRED` 时，当前窗口短 yield，并记录 ready -> yield latency。
+  - 超过 3000ms 未消费/未处理时输出：
+    - `ready dialog pending too long`
+    - 字段包含 `ageMs/readyWindowId/readySource/phase/currentWindowId/preparedUsable/staleReason`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 路线 option / 任务面板绿字出现后，应能从日志串到：
+  - `event=window.ready.publish ... source=dialog-visible...`
+  - `event=window.ready.publish ... source=dialog-visible-prepared... operation=... target=...`
+  - `[five-ring-v2 priority] long phase checkpoint yields because another window has ready dialog ...`
+  - 或 `[five-ring-v2 priority] long phase consumes current prepared action before continuing ...`
+- 如果 ready 超过 3 秒还没被处理，应看到 `ready dialog pending too long` 和 `staleReason`，下一轮再按原因判断是否需要真正改调度器。
+
+### 唐德 - 2026-06-15 五环买鞋进店 stale target retry 修复
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 里 “唐德任务：修复买鞋进店后的 stale target retry” 执行。
+- 目标只限 `FiveRingTaskV2` 买鞋进店链路：角色已经进入 `牛记布店` 后，不允许再用旧目标 `长安(130,130)` 重新打开世界地图搜索长安。
+- 本轮不改小地图/世界地图点击算法、NPC 点击算法、OCR/template 算法，也不改 route dialog 架构。
+
+Changed:
+
+- `FiveRingTaskV2.buyShoes(...)`
+  - `handleShoeShopDoorAfterArrival(...)` 返回 false 后，新增一次 fresh check `牛记布店`。
+  - 如果已经在 `牛记布店`，直接切到 `BUY_SHOES`，不再落回 `clickShoeShopEntryExact(...)`。
+  - 每次准备调用 `clickShoeShopEntryExact(...)` 前，新增 `牛记布店` fresh check。
+  - 原 `entry failure` 后的店内确认也统一走同一个短路逻辑。
+- 新增日志：
+  - `skip shoe-shop-entry exact navigation because current map is 牛记布店`
+  - 字段包含 `windowId/currentMap/current/oldTargetMap/oldTarget/source`，用于确认是主动阻止旧 `长安(130,130)` target retry。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `git diff --check` passed，仅有 CRLF 转换 warning，无 whitespace error。
+
+Next live-check:
+
+- 如果角色已经进 `牛记布店`，后续同窗口不应再出现：
+  - `navigation.toNpc target=长安(130,130)`
+  - `navigation map search: type target map=长安`
+  - `source=wuhuan-v2:shoe-shop-entry-exact-130-130`
+- 应看到：
+  - `skip shoe-shop-entry exact navigation because current map is 牛记布店 ... oldTargetMap=长安 oldTarget=(130,130)`
+
+### 谢帅 - 2026-06-14 Phase 5C-B route dialog stale/retry 日志补齐
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 5C 工作包 B 执行。
+- 本轮只补 `NavigationService` 调用方验收点和日志，不改世界地图点击、小地图点击、NPCClickSmart、五环/五倍/修罗业务策略。
+
+Changed:
+
+- `NavigationService.isPreparedRouteDialogActionUsable(...)`
+  - 除 operation / target / window binding / verified age 外，额外校验 `PreparedDialogAction.intentId` 是否匹配当前 active pathing intent。
+  - 避免旧 intent 准备出来的 route option action 被后续导航误认为可用。
+- `NavigationService.consumePreparedRouteDialogAction(...)`
+  - prepared action 被消费时，日志补充 `windowId/title/hwnd/actionIntentId/activeIntentId/actionSource/visibleType/visibleSource/visibleAgeMs/matchedText/click/verifiedAgeMs`。
+  - consumed 后发现 stale / binding mismatch / intent mismatch 时，日志明确 `sameBinding`、`sameIntent` 和 click point。
+- `NavigationService.shouldYieldForRouteDialogBeforeWorldMap(...)`
+  - route dialog world-map gate 日志补充 `reason`。
+  - fresh 时能看到 `visible-option` / `requested` / `preparing` / `prepared`。
+  - 允许重新打开世界地图时能看到 `allow-world-map-retry:<visibleReason>/<statusReason>/<preparedReason>`，例如 `visible-stale`、`prepared-intent-mismatch`、`prepared-stale`。
+  - 日志补充 `title/hwnd/activeIntentId/activeIntentTarget/activeIntentSource/intentAgeMs/visibleAgeMs/requestAgeMs/preparedAgeMs`。
+
+Verify:
+
+- `rg -n "legacy-foreground-route-ocr|handleRouteKeywordOption|handleRememberedRouteOption|findUsableRoute" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - no matches。
+- `rg -n "DialogPreparationRequest\\.builder|updateDialogPreparationRequest\\(|detectDialogTypeNoFocus" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - no matches。
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 实跑时重点看：
+  - `route dialog world-map gate: result=false reason=allow-world-map-retry:...` 是否能解释为什么重开世界地图。
+  - `route dialog uses consumed prepared action` 是否带同一个 `actionIntentId` / `activeIntentId`。
+  - 如果仍重复打开世界地图，按日志里的 `visibleReason/statusReason/preparedReason` 定位是 absent、stale 还是 mismatch。
+
+### 谢帅 - 2026-06-14 Phase 5B NavigationService 退到动作边界
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 5 工作包 B 执行。
+- Phase 5A 已让 Runner 可以基于 active pathing intent + visible OPTION 准备 route dialog action；本轮让 `NavigationService` 不再主动创建 route dialog preparation request。
+
+Changed:
+
+- `NavigationService.clickRouteDialogOption(...)`
+  - 删除主动 `runtime.updateDialogPreparationRequest(...)` / `DialogPreparationRequest.builder()`。
+  - 不再制造 REQUESTED/PREPARING 等待分支。
+  - 只优先消费 Runner 已准备好的 `PreparedDialogAction`；没有可用 action 时，再经过 runtime fresh-state gate，最后才走 legacy memory / OCR fallback。
+- `NavigationService.submitWorldMapSearchAndClickDestination(...)`
+  - 世界地图路线链接点击成功后只调用 `registerWindowPathingIntent(...)` 登记 active pathing intent。
+  - 不再写 route dialog preparation request。
+- `NavigationService`
+  - 删除 `requestRouteDialogPreparationAfterMapRouteClick(...)`。
+  - 删除 `DialogPreparationRequest` import 和 request-only 常量/旧 helper。
+
+Verify:
+
+- `rg -n "DialogPreparationRequest\\.builder|updateDialogPreparationRequest\\(" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - no matches。
+- `rg -n "handleRouteKeywordOption|legacy-foreground-route-ocr|detectDialogTypeNoFocus" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - `detectDialogTypeNoFocus` no matches。
+  - `handleRouteKeywordOption` 只剩 `legacy-foreground-route-ocr` fallback。
+- `rg -n "registerPathingIntent|WindowPathingIntent\\.builder|submitWorldMapSearchAndClickDestination|performWorldMapSearchAndClickDestination" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - world-map submit wrapper 仍存在；成功后登记 `WindowPathingIntent`。
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 交给 Phase 5 验收 / 实跑：
+  - 世界地图路线点击后日志应只看到 pathing intent registered，不应再看到 route dialog preparation requested after map route click。
+  - route option dialog 出现后，应由 Runner 输出 `route dialog preparation: result=prepared ... intentId=...`。
+  - 若仍进入 `legacy-foreground-route-ocr`，需要用日志解释 fresh Runner 状态为什么不可用。
+
+### 谢帅 - 2026-06-14 Phase 4B Navigation 世界地图入口 route dialog gate
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 4 工作包 B 执行。
+- 目标是让 `NavigationService` 在任何准备打开/重试世界地图前，先消费 watcher 已准备好的 route dialog action；如果 watcher 看到 route dialog 或正在准备，则返回 `DIALOG_PREPARING`，不要重新打开世界地图。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - 保留 `navigateToMap:before-world-map` gate，正式 world-map submit 前先走 `routeDialogGateBeforeWorldMap(...)`。
+- `NavigationService.submitWorldMapSearchAndClickDestination(NavigationRequest, String, String)`
+  - 成为唯一业务入口。
+  - 入口内部再次执行 `routeDialogGateBeforeWorldMap(...)`，防止未来调用方绕过 `navigateToMap` 前置 gate。
+  - 绿色路线链接点击成功后统一调用 `requestRouteDialogPreparationAfterMapRouteClick(...)`，让 watcher 接管后续 route dialog preparation。
+- `NavigationService.performWorldMapSearchAndClickDestination(...)`
+  - 原底层 boolean 搜索/点击方法改名为 `perform...`，只负责实际世界地图输入和点击，不再作为可直接调用的业务入口。
+- `NavigationService.retryWorldMapDestinationClick(...)`
+  - 开 route panel 前先执行 route dialog gate。
+  - fallback 也改走带 gate 的 `submitWorldMapSearchAndClickDestination(...)` wrapper。
+
+Verify:
+
+- `rg -n "submitWorldMapSearchAndClickDestination\\(|performWorldMapSearchAndClickDestination\\(|retryWorldMapDestinationClick\\(|openWorldMapRoutePanelDirect\\(|requestRouteDialogPreparationAfterMapRouteClick\\(" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - `submitWorldMapSearchAndClickDestination` 只剩正式 wrapper 和调用点；底层实现为 `performWorldMapSearchAndClickDestination`。
+- `rg -n "detectDialogTypeNoFocus|handleRouteKeywordOption|legacy-foreground-route-ocr|waitForPreparedRouteDialogAction" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - `detectDialogTypeNoFocus` / `waitForPreparedRouteDialogAction` no matches。
+  - `handleRouteKeywordOption` 仍只在 `legacy-foreground-route-ocr` fallback。
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 实跑重点看：
+  - `route dialog world-map gate: result=true`
+  - `route dialog uses consumed prepared action`
+  - `route dialog preparation requested after map route click`
+  - 正常情况下不应该在 route dialog 已经打开时继续重新打开世界地图。
+
+### 谢帅 - 2026-06-14 Phase 3 Navigation route dialog 降权
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 3 工作包 B 执行。
+- 目标是让 `NavigationService` 不再拥有 route dialog 的 OCR/模板识别主流程，只负责注册 route preparation request、消费 watcher 准备好的 action，以及在 modal/preparation 新鲜时让权。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - 删除 pathing-active 分支里直接 `detectDialogTypeNoFocus(...)` 的 rescue 探测。
+  - 改为只读取 `WindowRuntimeContext` 中 watcher 写入的 visible dialog snapshot / preparation status / prepared action，再决定 `DIALOG_PREPARING` 或继续原路径。
+- `NavigationService.clickRouteDialogOption(...)`
+  - 移除 `waitForPreparedRouteDialogAction(...)` 200ms 主流程等待。
+  - 请求 background route preparation 后只立即尝试 `consumePreparedRouteDialogAction(...)`；如果 watcher 正在 `REQUESTED/PREPARING`，直接返回 `DIALOG_PREPARING`。
+  - 记忆点点击和 `handleRouteKeywordOption(...)` 前台 OCR 都降级为 legacy fallback，并加上 `legacy-foreground-route-memory` / `legacy-foreground-route-ocr` 日志。
+- 删除旧 `waitForPreparedRouteDialogAction(...)` 方法和相关 wait 常量。
+
+Verify:
+
+- `rg -n "WindowReadyWaitService|waitForPathingWakeOrTimeout|TASK_TRACKER_PREPARED|DIALOG_PREPARED|publishPreparedActionEvent|latestFreshHigherPriority|latestFreshForWindow|currentReadyPriority|priority gate|higherPriority|READY_PRIORITY" src/main/java/com/bot/dhxy -S`
+  - no matches。
+- `rg -n "clickRouteDialogOption|waitForPreparedRouteDialogAction|handleRouteKeywordOption|detectDialogTypeNoFocus|legacy-foreground-route-ocr" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - `waitForPreparedRouteDialogAction` / `detectDialogTypeNoFocus` no matches。
+  - `handleRouteKeywordOption` 只剩 `legacy-foreground-route-ocr` fallback 分支。
+- `rg -n "refreshDialogPreparationSignal|updatePreparedDialogAction|markDialogPreparationStarted|markDialogPreparationFailed" src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java -S`
+  - Runner producer still present。
+- `rg -n "consumePreparedDialogAction" src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - Runtime consumer API and Navigation consumer still present。
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 如果编译通过，下一轮实跑重点看 `route dialog world-map gate`、`route dialog uses consumed prepared action`、`legacy-foreground-route-ocr` 是否符合预期；正常路径不应该频繁进入 legacy OCR。
+
+### 谢帅 - 2026-06-14 Agent 提问响应规则更新
+
+Status: rule updated
+
+Context:
+
+- 用户指出：当用户询问“为什么/怎么看/哪里改/怎么改”时，Agent 不应直接开始写代码。
+- 正确流程应该是先定位问题、解释原因、给出修改方案；只有用户明确同意后才开始改代码。
+
+Changed:
+
+- `AGENTS.md`
+  - 在 `Important behavior constraints` 中新增第 7 条 `Investigation-first rule for user questions`。
+  - 规定涉及行为、导航、OCR/模板匹配、runner/watcher、任务流程、输入等改动时，必须先查日志/截图/调用链/状态流，再给方案。
+  - 只有用户明确说“可以 / 按这个改 / 继续做”等等后，才能开始代码改动。
+
+Follow-up:
+
+- 后续 Agent 新开线程时必须先读 `AGENTS.md`，并遵守这条“先定位和给方案，用户同意后再改”的协作规则。
+
+### 何黎 - 2026-06-14 Window ready 优先级让权调度
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出五环/五倍/修罗多窗口时，已经有 dialog 或 prepared action 的窗口没有优先处理，普通窗口仍会按 fair lock 顺序继续拿权。
+- 典型现象：
+  - 窗口 A 已经有路线 dialog / 给物品 dialog 挂着；
+  - 窗口 B 只是普通下一阶段；
+  - 由于 task turn 原来只按 `ReentrantLock(true)` 公平排队，窗口 B 可能先拿到 turn，导致窗口 A 的 dialog 继续过期或被重新导航覆盖。
+
+Decision:
+
+- 不让 watcher 直接点 dialog，也不让 watcher 执行业务。
+- watcher 只发布“这个窗口需要任务层尽快回来处理”的软优先级信号。
+- 任务层拿到 turn 后仍必须重新读取 runtime state / dialog / prepared action，再决定怎么处理。
+- 优先级只影响 `TaskTurnCoordinator` 的拿权顺序，不改输入队列串行化、不绕过任务自己的 `handleDialog`。
+
+Changed:
+
+- `WindowReadyEventType`
+  - 新增 `TASK_ATTENTION_REQUIRED`。
+- `WindowReadyEvent`
+  - 新增 `priority`。
+- `WindowReadyEventBus`
+  - 给 ready event 增加默认优先级：
+    - `DIALOG_PREPARED = 100`
+    - `TASK_ATTENTION_REQUIRED = 90`
+    - `PATHING_TERMINAL = 70`
+    - `TASK_TRACKER_PREPARED = 60`
+  - 新增 `latestFreshForWindow(...)` / `latestFreshHigherPriority(...)`，只返回未过期的新鲜事件。
+  - publish 日志增加 `priority` / `eventAgeMs`。
+- `WindowTaskRunner`
+  - prepared route / task tracker action 准备好后发布对应 ready event。
+  - 如果没有 prepared action，但当前窗口 no-focus 检测到 `OPTION` 或 `STORY` dialog，发布 `TASK_ATTENTION_REQUIRED`。
+  - 这个信号只是调度 hint，不点击、不清理、不判断业务含义。
+- `TaskTurnCoordinator`
+  - 拿 turn 前最多短等 `500ms`，如果别的窗口有更高优先级 fresh ready event，则让它先拿。
+  - 已经拿到 fair lock 后还会再检查一次；如果此时发现别的窗口优先级更高，会主动释放并短暂让出。
+  - 解决“高优先级事件到来前，低优先级窗口线程已经排在 fair lock 前面”的情况。
+- `FiveRingTaskV2` / `WubeiTask` / `XiuluoTaskV2`
+  - `PATHING_STARTED` 让权等待现在接受 `TASK_ATTENTION_REQUIRED` 早醒。
+  - 五环仍额外接受 `TASK_TRACKER_PREPARED`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next log markers:
+
+- `event=window.ready.publish ... type=TASK_ATTENTION_REQUIRED priority=90`
+- `task attention published: task=... visibleDialog=...`
+- `task turn priority defer ... higherWindowId=... higherType=...`
+- `task turn acquired then yielded to ready window ...`
+
+Important note:
+
+- 如果日志显示窗口已经靠 `TASK_ATTENTION_REQUIRED` 优先拿权，但业务仍没有处理掉 dialog，那下一步就是对应任务的 `handleDialog` / 模板识别问题，不再是调度层没有把窗口排到前面。
+
+### 何黎 - 2026-06-14 修罗跑前 WindowReady CR 修补
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户准备实跑修罗前，要求 Rawls / Mencius 做一次 CR，优先找会影响修罗稳定性的漏洞。
+- 两个 agent 都指出 `WindowReadyWaitService` 的旧 prepared action 快捷唤醒风险较高：只要当前窗口里还有任意 prepared action，就会绕过 event sequence 等待，可能被旧的或非当前目标的 dialog prepared 状态误唤醒。
+
+Changed:
+
+- `WindowReadyWaitService`
+  - 删除 `consumePreparedAlready` 捷径。
+  - 现在只消费 `WindowReadyEventBus` 发布的新事件或 timeout；任务醒来后仍按原流程重读 runtime state。
+- `WindowTaskRunner`
+  - `PATHING_TERMINAL` soft event 改为在 `settlePendingTransferChoiceMemory(...)` 之后发布。
+  - 避免任务被 terminal event 唤醒后清 pathing signal，导致 pending route memory 还没落库就被清掉。
+- `WindowRuntimeContext`
+  - `clearDialogPreparationRequest(...)` / `updateDialogPreparationRequest(null)` 改为经过 `clearPreparedDialogAction(...)` 清理 prepared action。
+  - 这样后续日志能看到 `event=window.ready.clearPrepared`，方便定位 prepared action 是过期、绑定变化还是 runtime reset 清掉的。
+
+CR notes:
+
+- Rawls / Mencius 都认为 `DIALOG_PREPARED` 的实际消费端仍会校验 route target / binding / TTL；本次删除旧 prepared shortcut 是最小风险修补。
+- Mencius 还指出 route dialog 的 `SHARED_STATE_TRIGGERED` 固定 sleep 后续可以继续接 soft wake，但这次先不扩大修改范围。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+### 何黎 - 2026-06-14 任务让权等待接入 WindowReadyEventBus
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出多窗口移动中的响应仍然偏慢：窗口 watcher 已经知道某个窗口 `ARRIVED` / `STOPPED_AWAY`，但任务线程经常还在固定 handoff sleep 或等下一轮轮询。
+- 2026-06-13 已经完成 `WindowReadyEventBus` 和 watcher 端 `PATHING_TERMINAL` 发布，本次只做消费端第一步接入。
+
+Decision:
+
+- 新增 `WindowReadyWaitService`：
+  - 只等待当前 `TaskExecutionContext.windowId` 的 `PATHING_TERMINAL` 事件或原 timeout；
+  - 不抢 task turn、不 focus、不点击、不推进业务；
+  - 事件只作为 soft wake hint，任务醒来后仍必须按原流程重新检查当前状态。
+- 只接 `TaskTransactionResult.PATHING_STARTED` 后的 handoff wait。
+- `SHARED_STATE_TRIGGERED`、战斗、维护广播、归队等待继续走原 fixed delay，避免这次改动扩大到战斗/广播节奏。
+
+Changed:
+
+- `WindowReadyWaitService`
+  - `waitForPathingTerminalOrTimeout(...)`
+  - 记录 `[latency] event=window.ready.consume...` / timeout debug 日志。
+- `WubeiTask`
+  - `PATHING_STARTED` 的 `yieldAfterMustYield(...)` 等 watcher terminal 或原 `delayMs`。
+  - 保留后续 `maybeRunLeaderPathingSummonMaintenance(...)`。
+- `XiuluoTaskV2`
+  - `PATHING_STARTED` 的 `yieldAfterMustYield(...)` 等 watcher terminal 或原 `delayMs`。
+- `FiveRingTaskV2`
+  - `PATHING_STARTED` 的 `yieldAfterMustYield(...)` 等 watcher terminal 或原 `delayMs`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Follow-up:
+
+- 下一步可以用五环/五倍/修罗实跑日志观察：
+  - `event=window.ready.publish`
+  - `event=window.ready.consume`
+  - `event=window.ready.consumeTimeout`
+- 如果消费 timeout 很多，说明任务的 handoff delay 太短或 watcher terminal 来得更晚；下一步应在具体 phase 的等待点接 watcher snapshot，而不是继续加固定 sleep。
+
 ### 何黎 - 2026-06-13 Window Ready Event 软 push 骨架
 
 Status: implemented / compile passed
@@ -13200,6 +14602,46 @@ Verify:
 
 - `mvn -q -DskipTests compile` passed。
 
+### 何黎 - 2026-06-14 窗口 watcher prepared-action 软唤醒
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出窗口 watcher 有时已经在后台算好了可点击的对话框/任务追踪动作，但任务线程仍要等下一轮轮询才处理，导致多窗口切换和接续动作慢。
+- 前一版 `WindowReadyEventBus` 只发布 `PATHING_TERMINAL`，只能唤醒“移动到达/半路停住”。
+- 实际 watcher 还会准备：
+  - 路线/传送 option 的 `PreparedDialogAction`。
+  - 五环任务追踪面板绿字点击的 `PreparedDialogAction`。
+
+Changed:
+
+- `WindowReadyEventType`
+  - 新增 `DIALOG_PREPARED`。
+  - 新增 `TASK_TRACKER_PREPARED`。
+- `WindowTaskRunner`
+  - `refreshDialogPreparationSignal(...)` 成功写入 `WindowRuntimeContext.preparedDialogAction` 后发布 `DIALOG_PREPARED`。
+  - `refreshTaskTrackerPreparationSignal(...)` 成功写入任务追踪 prepared action 后发布 `TASK_TRACKER_PREPARED`。
+  - 事件只是 wake hint；真实业务仍必须重新读取 `WindowRuntimeContext`，不会让 watcher 直接点击/focus/推进 phase。
+- `WindowReadyWaitService`
+  - `waitForPathingTerminalOrTimeout(...)` 改为 `waitForPathingWakeOrTimeout(...)`。
+  - 等待类型扩展为 `PATHING_TERMINAL` / `DIALOG_PREPARED` / `TASK_TRACKER_PREPARED`。
+  - 如果当前窗口已经存在 prepared action，直接早醒返回，避免继续固定 sleep。
+- `WubeiTask` / `XiuluoTaskV2` / `FiveRingTaskV2`
+  - `PATHING_STARTED` 让权后的短等待改成调用新的 wake wait 方法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下次实跑看 `logs/dhxy-console.log` 中：
+  - `event=window.ready.publish type=DIALOG_PREPARED`
+  - `event=window.ready.publish type=TASK_TRACKER_PREPARED`
+  - `event=window.ready.consume ... type=...`
+- 如果 prepared action 已经明显能早醒，再考虑把部分固定 `900ms` 让权等待调短或按任务阶段调参；不要一口气扩大到所有等待点。
+
 ### 谢帅 - 2026-06-13 修罗当前地图短距离导航不放权
 
 Status: implemented / compile passed
@@ -14199,6 +15641,123 @@ Follow-up:
   - `[five-ring-v2 finish] completion story visible`
   - `task finished: 五环V2 -> SUCCESS`
 
+### 何黎 / Rawls - 2026-06-14 Window ready soft wake 反方审查收敛
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户要求先找另一个智能体用反方角度审查“runner prepared 后要不要更快唤醒窗口”的方案。
+- Rawls 的结论：
+  - 现在不要做真正的 priority scheduler。
+  - 不要改 `TaskTurnCoordinator` 的 fair lock。
+  - 不要改 `InputActionQueue` / 输入串行化策略。
+  - ready event 只能作为“软唤醒”，不能直接赋予点击权。
+  - 任务拿到唤醒后仍必须重新读取 `WindowRuntimeContext` / prepared action，确认 windowId/hwnd/operation/target/age 后再执行。
+
+Changed:
+
+- `WindowReadyWaitService`
+  - `waitForPathingWakeOrTimeout(...)` 增加 `EnumSet<WindowReadyEventType> wakeTypes`。
+  - 调用方必须显式声明当前 phase 接受哪些 watcher event。
+  - 只有调用方允许 `DIALOG_PREPARED` 或 `TASK_TRACKER_PREPARED` 时，才会因为已有 prepared action 提前醒。
+  - 纯 `PATHING_TERMINAL` 等待不会被 prepared action 误唤醒。
+  - 消费日志增加 `eventAgeMs`，已有 prepared action 早醒日志增加 `preparedAgeMs` / `verifiedAgeMs`。
+- `WindowReadyEventBus`
+  - 发布日志增加 `eventAgeMs`，用于判断 watcher 发布的是新鲜信号还是旧 snapshot。
+- `WindowRuntimeContext`
+  - `clearPreparedDialogAction(...)` 增加清理日志，包含 reason、operation、target、prepared/verified age。
+- `FiveRingTaskV2`
+  - pathing handoff 等待：
+    - `PATHING_TERMINAL`
+    - `DIALOG_PREPARED`
+    - `TASK_TRACKER_PREPARED`
+  - 原因：五环左侧任务追踪 prepared action 是有效推进信号。
+- `WubeiTask` / `XiuluoTaskV2`
+  - pathing handoff 等待：
+    - `PATHING_TERMINAL`
+    - `DIALOG_PREPARED`
+  - 原因：五倍/修罗当前不应被五环式 task tracker prepared action 唤醒。
+
+Verify:
+
+- `rg -n "waitForPathingWakeOrTimeout|waitForPathingTerminalOrTimeout" src/main/java`
+  - 只剩三个任务调用点和 `WindowReadyWaitService` 定义。
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮实测重点看：
+  - `window.ready.consume` 是否能减少“准备好的 dialog/tracker 等下一轮轮询”的延迟。
+  - 是否出现误唤醒后拿权但无事可做；若有，先补 event age/drop reason 日志，不要立刻改调度锁。
+  - 只有日志证明 fair lock 顺序本身成为瓶颈时，再讨论 coordinator hint/priority。
+
+### 谢帅 - 2026-06-14 Route dialog 传送后同轮接当前地图导航
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户指出：route dialog 传送选项和 world-map 绿色路线链接不是同一种动作。
+- 如果已经点了“长安 -> 洛阳”这种 route dialog 选项，目标就是当前导航目标地图；传送完成后角色通常处于停住状态。
+- 旧逻辑在 route dialog 点成功后直接返回 `PATHING_STARTED`，修罗任务层会 `waitForPathing(...)` 放权，导致到达目标地图后还要下一轮才继续 `navigateInCurrentMap(...)`，中间出现明显延迟。
+
+Changed:
+
+- `NavigationService.navigateToMap(...)`
+  - prepared route dialog 优先消费路径点成功后，不再默认直接返回 `PATHING_STARTED`。
+  - 普通 prepared route dialog 消费路径点成功后，也不再默认直接返回 `PATHING_STARTED`。
+  - 两处都先调用 `gameStateUtil.confirmCurrentMapFresh(targetMapName, ROUTE_DIALOG_ARRIVAL_CONFIRM_TIMEOUT_MS, ...)`。
+  - 如果确认已到目标地图：
+    - 调用 `closeMapSearchInputAfterRouteDialog(...)` 做轻量收尾；
+    - 返回 `NavigationResult.arrived(...)`；
+    - `navigateToNPC(...)` 会在同一轮继续进入 `navigateInCurrentMap(...)`。
+  - 如果确认不到目标地图：
+    - 保留原有 `PATHING_STARTED` 行为，让 watcher/pathing 兜底。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 实测修罗“长安 route dialog -> 洛阳 -> 洛阳当前地图坐标”时，重点看：
+  - route dialog 点成功后是否出现 `target map confirmed`；
+  - 是否不再在洛阳落地后短暂放权；
+  - 如果确认超时，是否仍能走原来的 watcher/pathing 兜底而不死锁。
+
+### 谢帅 - 2026-06-14 Runner visible dialog snapshot 接线
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 1 分工执行。
+- 本阶段只做 Runner 看到弹窗后的 runtime 可观测状态，不改导航 gating、不迁移 route preparation、不改五环/五倍/修罗业务行为。
+
+Changed:
+
+- `WindowRuntimeContext`
+  - 已有 `WindowDialogSnapshot` / `visibleDialogSnapshot` 前置被确认存在。
+  - 补齐重复检查后保留单一 `formatRect(...)`，确保 visible update/clear 日志可编译。
+- `WindowTaskRunner.publishTaskAttentionIfDialogVisible(...)`
+  - no-focus 检测到 `OPTION/STORY` 时，写入 `WindowRuntimeContext.updateVisibleDialogSnapshot(...)`。
+  - snapshot 字段只包含窗口可见事实：`windowId`、`hwnd`、`type`、`source`、`detectedAtMs`、`captureProvider`，不包含 route target / task / business 字段。
+  - 保留原有 `TASK_ATTENTION_REQUIRED` 发布行为。
+  - 明确检测到 `DialogType.NONE` 时，调用 `clearVisibleDialogSnapshot("detected-none:...")`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一轮实测只看日志，不判断业务行为：
+  - `event=window.dialog.visible.update`
+  - `event=window.dialog.visible.clear`
+  - `event=window.ready.publish type=TASK_ATTENTION_REQUIRED`
+- Phase 1 验收前不要继续做 Navigation gating / prepared action consumer。
+
 ### 唐德 - 2026-06-13 五环接任务 NPC 点击失败后的当前屏幕分流
 
 Status: implemented / compile passed
@@ -14242,3 +15801,1102 @@ Changed:
 Verify:
 
 - `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-14 Runner visible dialog snapshot Phase 1
+
+Status: implemented / compile passed
+
+Context:
+
+- 根据 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 1 分工，先只让 Runner 看到的弹窗事实落到 `WindowRuntimeContext`。
+- 本阶段不改 `NavigationService` gating，不迁移 route dialog preparation，不改五环/五倍/修罗业务逻辑。
+
+Changed:
+
+- 新增 `WindowDialogSnapshot`：
+  - file: `src/main/java/com/bot/dhxy/window/model/WindowDialogSnapshot.java`
+  - 字段只保留窗口可见事实：`windowId`、`hwnd`、`DialogType type`、`source`、`detectedAtMs`、`dialogRect`、`captureProvider`。
+  - 没有加入 `targetKeyword` / `suspectedOperation` / 任务名等业务字段。
+- `WindowRuntimeContext`：
+  - 增加 `AtomicReference<WindowDialogSnapshot> visibleDialogSnapshot`。
+  - 增加 `getVisibleDialogSnapshot()`、`updateVisibleDialogSnapshot(...)`、`clearVisibleDialogSnapshot(...)`。
+  - update/clear 会写 `window.dialog.visible.update/clear` 日志，包含 windowId、hwnd、type/source、reason、age、rect、provider。
+  - native binding 变化和 runtime reset 时会清理 visible snapshot。
+- `WindowTaskRunner.publishTaskAttentionIfDialogVisible(...)`：
+  - 沿用原来的探测频率和 `TASK_ATTENTION_REQUIRED` recent-skip。
+  - 正常探测到 `OPTION/STORY` 时写入 runtime visible snapshot，并继续发布原有 soft wake event。
+  - 正常探测到 `NONE` 时清理 runtime visible snapshot。
+  - RuntimeException / 探测失败不会清理旧 snapshot。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 下一步应实测包含路线 OPTION 的场景，确认日志里出现 `window.dialog.visible.update` 和 `window.dialog.visible.clear`。
+- Phase 1 验证后，再讨论是否进入 `consumePreparedDialogAction(...)`、Navigation 只读 modal gating、Runner route prepare 迁移。
+
+### 唐德 - 2026-06-14 Runner visible dialog Phase 1 返工收窄
+
+Status: implemented / compile passed
+
+Context:
+
+- 何黎验收指出 Phase 1 混入了 Phase 2/调度/任务等待改动，需要只保留 visible dialog state。
+
+Changed:
+
+- 保留：
+  - `WindowDialogSnapshot`
+  - `WindowRuntimeContext.visibleDialogSnapshot` 的 get/update/clear
+  - `WindowTaskRunner.publishTaskAttentionIfDialogVisible(...)` 写 visible snapshot
+  - `WindowReadyEventType.TASK_ATTENTION_REQUIRED`
+- 撤出/确认不再存在：
+  - `WindowReadyEvent.priority`
+  - `WindowReadyEventBus` priority / `latestFreshHigherPriority(...)`
+  - `TaskTurnCoordinator` priority gate
+  - `WindowReadyWaitService`
+  - 五环/五倍/修罗 `waitForPathingWakeOrTimeout(...)` 接入
+  - `DIALOG_PREPARED` / `TASK_TRACKER_PREPARED`
+  - `WindowTaskRunner.publishPreparedActionEvent(...)`
+- `DialogType.NONE` 当前只打 `visible dialog probe none` debug 日志，不清旧 snapshot。
+  - 原因：当前 Runner 只拿到 `DialogType`，没有 capture success / imagePresent 结果；为避免截图失败误清，Phase 1 先不做 NONE clear。
+- 把 `WINDOW_DIALOG_PREPARED_RECENT_MS` 改名为 `WINDOW_DIALOG_ATTENTION_RECENT_MS`，避免和 prepared action wake 混淆。
+
+Verify:
+
+- `rg -n "WindowReadyWaitService|waitForPathingWakeOrTimeout|TASK_TRACKER_PREPARED|DIALOG_PREPARED|publishPreparedActionEvent|latestFreshHigherPriority|latestFreshForWindow|currentReadyPriority|priority gate|higherPriority|READY_PRIORITY|WINDOW_DIALOG_PREPARED_RECENT_MS" src/main/java/com/bot/dhxy/window src/main/java/com/bot/dhxy/task`
+  - no matches。
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- Phase 1 实测时重点看 `window.dialog.visible.update` 和 `event=window.ready.publish type=TASK_ATTENTION_REQUIRED`。
+- 如果需要安全 clear，下一步应让 `DialogService` 暴露包含 capture success/imagePresent 的轻量 detection result，再清 `NONE`。
+
+### 谢帅 - 2026-06-14 Runner visible dialog snapshot Phase 1 返工
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 最新验收意见收窄 Phase 1 边界。
+- Phase 1 只允许保留窗口可见弹窗事实和 `TASK_ATTENTION_REQUIRED` 软唤醒；不允许混入 task 等待服务、prepared wake、priority scheduler。
+
+Changed:
+
+- 删除 `WindowReadyWaitService`。
+- 移除 `FiveRingTaskV2` / `WubeiTask` / `XiuluoTaskV2` 对 `WindowReadyWaitService` 的注入和等待调用，恢复为普通 `TaskSleep.sleepOrStop(...)` handoff delay。
+- `WindowReadyEventType` 只保留：
+  - `PATHING_TERMINAL`
+  - `TASK_ATTENTION_REQUIRED`
+- `WindowReadyEvent` 移除 `priority` 字段。
+- `WindowReadyEventBus` 移除 priority 计算、fresh priority 查询和 priority publish 日志。
+- `TaskTurnCoordinator` 移除 ready-event priority gate，恢复 fair lock 基础交权逻辑。
+- `WindowTaskRunner`：
+  - 不再发布 `DIALOG_PREPARED` / `TASK_TRACKER_PREPARED` wake event。
+  - `DialogType.NONE` 不再清理 `visibleDialogSnapshot`；只写 debug 日志，避免一次不可靠 no-focus 探测把旧可见事实抹掉。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮只验证 Phase 1 日志：
+  - `window.dialog.visible.update`
+  - `event=window.ready.publish ... type=TASK_ATTENTION_REQUIRED`
+  - 不应再出现 `DIALOG_PREPARED` / `TASK_TRACKER_PREPARED` event。
+
+### 唐德 - 2026-06-14 Phase 2 PreparedDialogAction 原子消费 API
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 2 唐德工作包执行。
+- 本次只改 `WindowRuntimeContext`，不改 `NavigationService`、任务层、Runner route preparation、EventBus 或调度逻辑。
+
+Changed:
+
+- `WindowRuntimeContext`
+  - 增加 `consumePreparedDialogAction(String reason)`。
+    - 使用 `preparedDialogAction.getAndSet(null)` 原子拿走 action。
+    - 消费后清理 `DialogPreparationStatus.READY`。
+    - action 不存在时记录 `result=absent` 日志。
+  - 增加 `consumePreparedDialogAction(DialogOperation expectedOperation, String expectedTargetKeyword, String reason)`。
+    - 匹配 windowId / hwnd / operation / target。
+    - 匹配失败只记录 `result=mismatch`，不清 action。
+    - 匹配成功后用 `getAndSet(null)` 消费，并清理 READY 状态。
+    - 如果 get 后发生竞态导致实际取出的 action 不匹配，会尝试在引用仍为空时恢复，并记录 `race-mismatch-restored`。
+  - 保留 `clearPreparedDialogAction(...)` 作为 stale/reset/binding changed 的清理入口。
+  - consume 日志包含 windowId、hwnd、reason、operation、target、source、expectedOperation、expectedTarget、preparedAgeMs、verifiedAgeMs、result。
+
+Verify:
+
+- `rg -n "consumePreparedDialogAction" src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java`
+  - method found.
+- `rg -n "WindowReadyWaitService|waitForPathingWakeOrTimeout|TASK_TRACKER_PREPARED|DIALOG_PREPARED|publishPreparedActionEvent|latestFreshHigherPriority|latestFreshForWindow|currentReadyPriority|priority gate|higherPriority|READY_PRIORITY" src/main/java/com/bot/dhxy/window src/main/java/com/bot/dhxy/task`
+  - no matches.
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 谢帅可以在 `NavigationService` 里把 route prepared action 的 get/clear 路径改成调用匹配版 consume API。
+
+### 谢帅 - 2026-06-14 NavigationService route prepared action 消费与 world-map gate
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的谢帅工作包执行。
+- 目标是让 `NavigationService` 不再用 `getPreparedDialogAction() -> click -> clearPreparedDialogAction(...)` 的非原子路径处理 route dialog。
+- 本次不改 Runner route preparation，不改五环/五倍/修罗任务流程，不新增 OCR/template 识别到 `NavigationService`。
+
+Changed:
+
+- `NavigationService`
+  - prepared route dialog 的优先点击路径改为调用 `runtime.consumePreparedDialogAction(DialogOperation.ROUTE_TRANSFER, targetMapName, reason)`。
+  - 抽出 `consumePreparedRouteDialogAction(...)`，统一做：
+    - 原子 consume；
+    - window binding / verified age 校验；
+    - 真实鼠标点击；
+    - 成功后清理 dialog preparation request；
+    - 点击失败时不复用旧 action。
+  - 打开/重开世界地图前增加只读 gating：
+    - fresh visible `OPTION` 且 active pathing intent 仍是同目标时，返回 `DIALOG_PREPARING`；
+    - 同目标 `REQUESTED` / `PREPARING` 且未过期时，返回 `DIALOG_PREPARING`；
+    - usable prepared action 会先被 consume/click，不再走旧 foreground OCR。
+  - 增加 `route dialog world-map gate` 日志，包含 target、windowId、visible snapshot type/age/source、preparation phase/age、prepared target/age/usable、sameTargetIntent。
+  - 将 `ROUTE_DIALOG_PREPARED_*` 常量重命名为 `ROUTE_PREPARED_DIALOG_*`，避免误中废弃 `DIALOG_PREPARED` event 验收搜索。
+- `FiveRingTaskV2`
+  - 仅把 `clearPreparedDialogAction("wuhuan tracker panel action consumed")` 的 reason 改为 `handled`，避免验收搜索把日志 reason 当成非原子 consume 残留；行为不变。
+
+Verify:
+
+- `rg -n 'clearPreparedDialogAction\(\".*consumed|getPreparedDialogAction\(\).*clearPreparedDialogAction|WindowReadyWaitService|DIALOG_PREPARED|TASK_TRACKER_PREPARED|latestFreshHigherPriority|latestFreshForWindow' src/main/java/com/bot/dhxy -S`
+  - no matches。
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 实测 route dialog 场景时重点看：
+  - `event=window.ready.consumePrepared`
+  - `route dialog uses consumed prepared action`
+  - `route dialog world-map gate`
+  - 不应再看到已经有 route dialog / watcher 正在准备时又重复打开世界地图。
+
+### 唐德 - 2026-06-14 Phase 3 Runner route dialog producer 收口
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 3 唐德工作包 A 执行。
+- 本次只收紧 `WindowTaskRunner.refreshDialogPreparationSignal(...)` 的 route dialog producer 边界。
+- 除了给 `NavigationService` 补回两个缺失的 prepared-route wait 常量以恢复编译外，没有改它的行为；也没有改五环/五倍/修罗任务 phase、EventBus priority、任务等待服务或输入队列。
+
+Changed:
+
+- `WindowTaskRunner`
+  - route dialog preparation 仍以 `refreshDialogPreparationSignal(...)` 为 Runner 侧主入口。
+  - 准备目标的来源顺序固定为：
+    - `DialogPreparationRequest.targetKeyword`
+    - request 缺目标时，回退到当前 active pathing intent 的 `targetMapName`
+  - 只处理 `DialogOperation.ROUTE_TRANSFER`。
+  - 准备前必须先读取 `WindowRuntimeContext.visibleDialogSnapshot`：
+    - windowId 必须匹配当前 runtime；
+    - hwnd 必须匹配当前 native binding；
+    - snapshot 不能超过 `WINDOW_DIALOG_VISIBLE_MAX_AGE_MS`；
+    - visible type 必须是 `DialogType.OPTION`。
+  - `visible` 缺失、不是 OPTION、过期或绑定不匹配时，Runner 不准备 action；绑定/过期类失败会标记当前 request failed，但不会清 visible snapshot。
+  - 准备成功后仍通过 `WindowRuntimeContext.updatePreparedDialogAction(...)` 写入 action 和 READY 状态。
+  - 准备失败只调用 `markDialogPreparationFailed(...)`，不关闭窗口、不点击鼠标、不改任务 phase。
+  - route preparation 日志统一为 `route dialog preparation`，包含 result、windowId、hwnd、taskType、operation、target、source、actionSource、visibleType、visibleAgeMs、requestAgeMs、matchedText、click、elapsedMs。
+- `NavigationService`
+  - 只补回缺失常量：
+    - `ROUTE_PREPARED_DIALOG_WAIT_MS = 200L`
+    - `ROUTE_PREPARED_DIALOG_WAIT_POLL_MS = 50L`
+  - 这是为了修复当前工作树已有改名残留导致的 compile failure，不改变 route dialog 行为。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `rg -n "WindowReadyWaitService|waitForPathingWakeOrTimeout|TASK_TRACKER_PREPARED|DIALOG_PREPARED|publishPreparedActionEvent|latestFreshHigherPriority|latestFreshForWindow|currentReadyPriority|priority gate|higherPriority|READY_PRIORITY" src/main/java/com/bot/dhxy -S`
+  - no matches。
+- `rg -n "refreshDialogPreparationSignal|route dialog preparation|detectDialogTypeNoFocus|prepareRememberedRouteOption|prepareRouteKeywordOption|updatePreparedDialogAction|markDialogPreparationFailed" src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java -S`
+  - confirmed Runner producer path and attention probe only.
+
+Follow-up:
+
+- 下一步应由谢帅继续 Phase 3 工作包 B，确认 `NavigationService.clickRouteDialogOption(...)` 的 foreground OCR 路径只作为明确 `legacy-foreground-route-ocr` fallback，而不是主流程。
+
+### 唐德 - 2026-06-14 Phase 4 Runtime/Runner route dialog 状态完整性
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 4 唐德工作包 A 执行。
+- 本阶段不改世界地图点击算法、不改任务 phase、不改 NPC click pipeline、不新增 service。
+- 目标是让 Runtime/Runner 写入的 visible/request/preparing/ready/failed 状态足够可观测，方便 Navigation 判断“不能重复打开世界地图”。
+
+Changed:
+
+- `WindowRuntimeContext`
+  - 保持 `visibleDialogSnapshot` 作为窗口事实模型，不加入业务字段。
+  - 继续在 native binding changed / runtime reset 时清理 visible 和 dialog preparation 状态，避免串 hwnd。
+  - `updateDialogPreparationRequest(...)` 现在记录 `window.dialog.prepare.state phase=requested/request-cleared` 日志。
+  - `clearDialogPreparationRequest(...)` 现在记录 `phase=request-clear` 日志。
+  - `markDialogPreparationStarted(...)` 现在记录 `phase=preparing` 日志。
+  - `markDialogPreparationFailed(...)` 现在记录 `phase=failed` 日志。
+  - `updatePreparedDialogAction(...)` 在 READY 时保留同一 request 的 `requestCreatedAtMs/preparingStartedAtMs`，并记录 `phase=READY` 日志，包含 requestAgeMs、preparingAgeMs、preparedAgeMs、verifiedAgeMs、matchedText、click。
+- `WindowTaskRunner`
+  - 沿用 Phase 3 的 visible snapshot gating：
+    - visible snapshot 过期/绑定不匹配/不是 OPTION 时不准备 route action；
+    - 准备失败只标记 request failed，不清 visible snapshot；
+    - `DialogType.NONE` 只打 debug，不清 visible snapshot。
+- `NavigationService`
+  - 当前工作树已有 Phase 4 B 的半截调用：
+    - `routeDialogGateBeforeWorldMap(...)`
+    - `submitWorldMapSearchAndClickDestination(request, targetMapName, source)`
+  - 为恢复编译并保持 Phase 4 gate 方向，补齐这两个最小入口：
+    - `routeDialogGateBeforeWorldMap(...)` 先 consume prepared route action，再走 `shouldYieldForRouteDialogBeforeWorldMap(...)`；
+    - 新版 `submitWorldMapSearchAndClickDestination(...)` 开图前再过一次 gate，然后复用原 `submitWorldMapSearchAndClickDestination(String)`。
+  - 没有改 world-map 搜索/点击算法。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `rg -n "WindowReadyWaitService|DIALOG_PREPARED|TASK_TRACKER_PREPARED|latestFreshHigherPriority|waitForPathingWakeOrTimeout|READY_PRIORITY|currentReadyPriority" src/main/java/com/bot/dhxy -S`
+  - no matches。
+- `rg -n "window\\.dialog\\.prepare\\.state|window\\.dialog\\.visible|clearVisibleDialogSnapshot|DialogType\\.NONE|route dialog preparation|updatePreparedDialogAction" src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java -S`
+  - confirmed visible/preparation logs and no NONE clear path.
+
+Follow-up:
+
+- 下一步应由谢帅执行 Phase 4 工作包 B：统一 `NavigationService` 所有世界地图入口的 consume/gate 检查，确保 legacy fallback 前也先过 gate。
+
+### 唐德 - 2026-06-14 Phase 5A Runner-owned route dialog preparation
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 5 唐德工作包 A 执行。
+- 本阶段不改 Navigation 世界地图点击算法、不改任务业务 option、不新增 service、不让 Runner 点击鼠标。
+- 目标是让 route dialog 的 prepared action 可以由 `WindowTaskRunner` 根据 active pathing intent 生产，而不是依赖 Navigation 预先写 `DialogPreparationRequest`。
+
+Changed:
+
+- `WindowPathingIntent`
+  - 新增 `intentId`，默认 UUID，用作单次导航 intent 的 trace / stale guard。
+- `PreparedDialogAction`
+  - 新增 `intentId`，route prepared action 会绑定当前 active pathing intent。
+- `WindowRuntimeContext`
+  - `consumePreparedDialogAction(...)` 现在会用 action intentId 对比当前 active pathing intent，旧 intent action 不会被消费。
+  - consume 日志增加 `intentId` / `activeIntentId`，方便判断 prepared action 是否串 intent。
+- `WindowTaskRunner`
+  - watcher 在 active pathing intent 存在时也会刷新 route dialog preparation，不再要求必须有 `DialogPreparationRequest`。
+  - route preparation 目标来源顺序：
+    - request target；
+    - active pathing intent target map。
+  - visible snapshot 仍必须匹配 windowId / hwnd / OPTION / fresh age。
+  - 无 request 时会用 `DialogChoiceMemoryService.findUsableRoute(fromMap, targetMap)` 读取 route memory。
+  - prepared action 发布前再次检查 request 或 active intent 未被替换。
+  - prepared action validation 支持 intent-owned route action：有 intentId 时校验 active intent；无 intentId 时才走旧 request 校验。
+  - route preparation 日志增加 `intentId` / `intentAgeMs`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- 待本轮最终确认：
+  - `rg -n "route dialog preparation: result=prepared|window\\.dialog\\.prepare\\.state|intentId|PreparedDialogAction" src/main/java/com/bot/dhxy/window src/main/java/com/bot/dhxy/model -S`
+
+Follow-up:
+
+- 下一步应由谢帅继续 Phase 5 工作包 B：把 `NavigationService` 从 route dialog preparation request 生产者退回动作边界，确认 `DialogPreparationRequest.builder()` / `updateDialogPreparationRequest(...)` 不再出现在 Navigation route path。
+
+### 唐德 - 2026-06-14 Phase 5C Navigation legacy route dialog cleanup
+
+Status: implemented / compile passed
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 5C 唐德工作包 A 执行。
+- 本阶段只收 `NavigationService` route dialog legacy path。
+- 不改世界地图搜索/结果点击算法，不改小地图/NPC click，不改五环/五倍/修罗业务策略，不新增 service。
+
+Changed:
+
+- `NavigationService`
+  - 删除 `legacy-foreground-route-ocr` 路径。
+  - 删除 route dialog 内部直接调用 `DialogService.handleRouteKeywordOption(...)`。
+  - 删除 route memory 直接点击路径，不再调用 `DialogService.handleRememberedRouteOption(...)`。
+  - 删除 `NavigationService` 内对 `DialogChoiceMemoryService.findUsableRoute(...)` 的直接读取。
+  - `clickRouteDialogOption(...)` 现在只做三件事：
+    - consume Runtime 已准备好的 `ROUTE_TRANSFER` prepared action；
+    - 如果 Runtime 有 fresh visible/preparing/prepared route state，则返回 `DIALOG_PREPARING`，避免重开世界地图；
+    - 如果没有 fresh state，则返回 `NO_DIALOG`，交给调用方决定是否重试导航。
+  - 保留 prepared action 点击成功后的 pending transfer memory 写入；这只是记录实际点击结果，不再由 Navigation 根据 memory 自己点击。
+
+Verify:
+
+- `rg -n "legacy-foreground-route-ocr|handleRouteKeywordOption|handleRememberedRouteOption|findUsableRoute" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - no matches。
+- `rg -n "DialogPreparationRequest\\.builder|updateDialogPreparationRequest\\(|detectDialogTypeNoFocus" src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - no matches。
+- `rg -n "prepareRouteKeywordOption|prepareRememberedRouteOption|findUsableRoute|route dialog preparation" src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/main/java/com/bot/dhxy/service/DialogService.java -S`
+  - Runner/DialogService route preparation still present。
+- `rg -n "consumePreparedDialogAction|intentId|window.ready.consumePrepared" src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java src/main/java/com/bot/dhxy/service/NavigationService.java -S`
+  - consume / intent logs present。
+- `mvn -q -DskipTests compile` passed。
+
+Follow-up:
+
+- 需要谢帅继续 Phase 5C 工作包 B：确认 fresh route dialog gate / stale timeout 日志足够解释“为什么等待”和“为什么允许重开世界地图”。
+- 实跑时重点看是否仍出现 route dialog 可见但重复打开世界地图；如果出现，应从 `route dialog world-map gate`、`window.ready.consumePrepared`、`route dialog preparation` 三类日志定位。
+
+### 何黎 - 2026-06-15 Route dialog visible same-tick preparation
+
+Status: implemented / compile passed
+
+Context:
+
+- 用户 23:59:30 后五窗口实跑：多个窗口卡在路线 option dialog；部分窗口在仍未处理 dialog 时又重开世界地图重复导航。
+- 日志显示 Runner 已能 no-focus 检测到 `OPTION` 并写 `window.dialog.visible.update`，但当时只发布 `TASK_ATTENTION_REQUIRED`。
+- 下一轮 watcher 再做 `refreshDialogPreparationSignal(...)` 时，visible snapshot 已经约 9 秒，被 `visible-expired` 拒绝，导致 `NavigationService` 没有 prepared action 可消费，并继续世界地图重试。
+
+Changed:
+
+- `WindowTaskRunner`
+  - `publishTaskAttentionIfDialogVisible(...)` 从 boolean 改为返回 `PreparedDialogAction`。
+  - 在 no-focus 检测到 visible dialog 并写入 `WindowRuntimeContext` 后，立即同轮调用 `refreshDialogPreparationSignal(...)`。
+  - 仍然只发布 `TASK_ATTENTION_REQUIRED` 软唤醒，不点击、不关闭 dialog、不新增 `DIALOG_PREPARED` 事件。
+  - attention 日志增加 `preparedRoute=true/false`，用于实跑确认是否在 fresh visible 窗口内完成 route prepared action。
+
+Verify:
+
+- `rg -n "publishTaskAttentionIfDialogVisible" src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java -S`
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 路线 option dialog 出现后，应看到：
+  - `event=window.dialog.visible.update ... type=OPTION`
+  - 紧接着 `route dialog preparation: result=start/prepared`
+  - `task attention published ... preparedRoute=true`
+  - 任务/导航消费时出现 `event=window.ready.consumePrepared ... result=consumed` 或 `route dialog uses consumed prepared action`
+- 如果仍重开世界地图，重点看是否仍有 `visible-expired`、`prepare-miss`，或 prepared action 是否被 task generic dialog 分支抢先处理。
+
+### 唐德 - 2026-06-15 Phase 6C-A/B Navigation world-map input split and replay
+
+Status: PARTIAL / compile passed / replay reproduced failure.
+
+Context:
+
+- 按 `docs/codex-handoffs/2026-06-14-runner-dialog-preparation-architecture.md` 的 Phase 6C 唐德任务执行。
+- 07:47 实跑样本证明 same-tick prepared route patch 已加载，但部分窗口仍在 route dialog 缺 fresh prepared action 时重开世界地图。
+- `hwnd-61F5A / 岁月醉白头` 的 `submitWorldMapSearchAndClickDestination:长安` 在旧日志里约占住输入队列 8 到 9 秒；同段出现 `destination mismatch actual=` failure case。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - 将 `performWorldMapSearchAndClickDestination(...)` 从一个大 exclusive callback 拆成三段：
+    - 短 exclusive：打开世界地图/寻路面板、输入目标、滚动结果；
+    - 非 exclusive：截图、OCR、目标判定、failure case 归档；
+    - 短 exclusive：点击最终路线候选并关闭路线面板。
+  - 新增 `prepareWorldMapSearchResultsDirect(...)`，只放真实物理输入。
+  - `clickDestinationFromWorldMapSearchResults(...)` 的最终点击改为短 exclusive，并在点击后关闭路线搜索面板。
+  - 新增分段 latency 日志：`navigation map search split: stage=prepare` / `stage=scan-click`。
+
+Replay:
+
+- 输入图：`images/failure-cases/world-map-route/20260615_074825_705_长安_destination-mismatch/raw.png`
+- 输出图：`images/temp/world_map_route_guard_replay/20260615_081025/raw_marked.png`
+- 命令：
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=长安 D:\mavenProject\DHXY\images\failure-cases\world-map-route\20260615_074825_705_长安_destination-mismatch\raw.png"`
+- 结果：
+  - `ok=false`
+  - expected=`长安`
+  - actual 为空
+  - OCR words=`[]`
+  - final click point 为空
+- 结论：
+  - failure case 的 raw crop 不是完整路线结果行，只截到路线窗口底部/侧边碎片；因此 actual 为空是截图/crop 内容不完整，不是 OCR 把 `长安` 识别成别的目标。
+  - 本轮没有改世界地图视觉匹配或点击坐标算法；replay 是定位和记录用，不是坐标算法改动验收。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `rg -n "legacy-foreground-route-ocr|handleRouteKeywordOption|handleRememberedRouteOption|route dialog probe uses prepared action|route dialog preparation requested after map route click" src\main\java\com\bot\dhxy\service\NavigationService.java -S`
+  - no matches。
+
+Next:
+
+- 下一轮实跑重点看新分段日志：
+  - `stage=prepare` 是否明显短于旧 6 到 9 秒整段 exclusive；
+  - prepared route action 是否仍排在长世界地图动作后；
+  - 如果 `destination mismatch actual=` 再现，先检查 archived raw crop 是否还是不完整路线结果区域。
+
+### 谢帅 - 2026-06-15 Phase 6C-C Runner watcher tick latency split
+
+Status: implemented / compile passed.
+
+Context:
+
+- 07:47 旧日志只能看到 route dialog prepared 覆盖率低，但不能在同一行里区分 watcher 本轮到底慢在 pathing、route dialog prepare、左侧任务面板 prepare，还是 attention probe。
+- 旧样本里 route dialog preparation 可以到 9 秒级；下一轮实跑需要更直接的分段耗时。
+
+Changed:
+
+- `WindowTaskRunner`
+  - 在 watcher loop 内记录：
+    - `pathingMs`
+    - `routePrepareMs`
+    - `taskTrackerPrepareMs`
+    - `attentionMs`
+    - `totalMs`
+    - `nextIntervalMs`
+  - 新增日志：
+    - `window observer tick: task=... branch=... totalMs=... pathingMs=... routePrepareMs=... taskTrackerPrepareMs=... attentionMs=...`
+  - 日志同时带 active intent id / target / age、pathing snapshot state / current map / target、prepared action operation / target。
+
+Behavior boundary:
+
+- 不改 Runner 点击行为。
+- 不改 Navigation / Dialog / 五环 / 五倍 / 修罗业务逻辑。
+- 只在慢 tick、存在 prepared action、或 active pathing snapshot 时打印，避免 100ms tick 刷屏。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next live-check:
+
+- 如果窗口长时间不接权，看 `window observer tick` 中哪一段超过 1000ms。
+- 如果 `routePrepareMs` 高但没有 prepared，继续看同窗口附近的 `dialog prepare route result/miss`。
+- 如果 `pathingMs` 高，结合 `location.scanCurrent.breakdown` 判断是不是截图/capture 慢。
+
+### 唐德 - 2026-06-15 Phase 6C-A/B rework: atomic consume and positive route replay
+
+Status: READY_FOR_REVIEW / compile passed.
+
+Context:
+
+- 何黎验收指出两个必须返工点：
+  - `WindowRuntimeContext.consumePreparedDialogAction(...)` targeted consume 不是条件原子消费；
+  - world-map replay 只有旧 failure 复现，没有 positive PASS 样本。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java`
+  - `consumePreparedDialogAction(DialogOperation expectedOperation, String expectedTargetKeyword, String reason)` 改成 CAS loop。
+  - mismatch 现在非破坏性返回，不会先清空再尝试恢复。
+  - consume 成功后只清理仍然匹配 consumed action 的 READY 状态，避免清掉 watcher 刚写入的新 READY。
+  - `consumePreparedDialogAction(String reason)` 也改成 CAS loop；当前外部调用仍只有 targeted consume。
+- `src/main/java/com/bot/dhxy/window/model/WindowDialogSnapshot.java`
+  - 确认这是 route dialog runtime 方案产物，当前被 Runtime/Runner 引用；提交时必须纳入。
+- `images/test-cases/world-map-route/positive/route_result_changan_complete_raw.png`
+  - 新增真实完整路线结果 positive testcase。
+
+Replay:
+
+- Positive sample:
+  - 输入图：`images/test-cases/world-map-route/positive/route_result_changan_complete_raw.png`
+  - 命令：`mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=长安 D:\mavenProject\DHXY\images\test-cases\world-map-route\positive\route_result_changan_complete_raw.png"`
+  - 结果：`passed=1 failed=0`，actual=`长安`，allowClick=`true`，click point=`(120,93)`。
+  - marked：`images/temp/world_map_route_guard_replay/20260615_090803/route_result_changan_complete_raw_marked.png`
+- Negative diagnostic sample:
+  - 输入图：`images/failure-cases/world-map-route/20260615_074825_705_长安_destination-mismatch/raw.png`
+  - 命令：`mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.WorldMapRouteGuardReplayDebug" "-Dexec.args=长安 D:\mavenProject\DHXY\images\failure-cases\world-map-route\20260615_074825_705_长安_destination-mismatch\raw.png"`
+  - 结果：`passed=0 failed=1`，actual 为空，OCR words=`[]`。
+  - marked：`images/temp/world_map_route_guard_replay/20260615_090821/raw_marked.png`
+  - 结论：旧 failure raw 是坏 crop 诊断样本；尺寸为 `323x138`，但内容不是完整路线结果行。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `rg -n "getAndSet\(null\)|race-mismatch-restored|clearReadyDialogPreparationStatus\(" src\main\java\com\bot\dhxy\window\runtime\WindowRuntimeContext.java -S`
+  - targeted consume 中不再有 `getAndSet(null)` / restore 逻辑。
+
+Next:
+
+- 重新跑一轮五环 route option 样本，看 CAS consume 后是否还出现 prepared action 被错误清空。
+- 如果 `destination mismatch actual=` 再现，先看 archived raw 是否仍是坏 crop；若是，再查 capture 时机/route panel 完整刷新，而不是改 OCR 文字匹配。
+
+### 谢帅 - 2026-06-15 修罗 hot-start STORY 白字模板确认
+
+Status: DONE / compile + replay passed.
+
+Context:
+
+- 热启动时 `TaskHotStartService` 可能把固定区域里的玩家/NPC 名字误判成 `STORY_DIALOG`。
+- 修罗不能只凭 `STORY_DIALOG` 进入 `READ_OBJECTIVE`；必须确认当前 story 文本里有修罗目标提示。
+
+Changed:
+
+- `images/template/dialog/xiuluo/xiuluo_story_miexiu_confirm.png`
+  - 由用户新增原图 `Snipaste_2026-06-15_14-22-49.png` 洗白字生成，内容为“消灭修罗”。
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoHotStartResolver.java`
+  - `STORY_DIALOG` hot-start 改为调用 `DialogService.handleDialog(VERIFY_WHITE_TEMPLATE)`。
+  - 只有命中 `xiuluo_story_miexiu_confirm.png` 时才进入 `READ_OBJECTIVE`。
+  - 未命中时回到正常接任务入口 `XiuluoRoundContext.start(round)`，避免误把非任务 story 截图当成修罗目标。
+- `src/main/java/com/bot/dhxy/debug/XiuluoHotStartStoryTemplateReplayDebug.java`
+  - 新增只读 replay 工具，复用生产链路：`washThinWhiteTextToBlackAndWhite` + `ImageFinder.find`。
+
+Replay:
+
+- Positive sample:
+  - 输入图：`images/test-cases/dialog/xiuluo-hotstart-story/raw/positive_story_raw.png`
+  - 结果：matched=`true`，score=`1.0000`，point=`(31.5,10.0)`。
+  - marked：`images/test-cases/dialog/xiuluo-hotstart-story/output/positive-template-source_marked.png`
+  - washed：`images/test-cases/dialog/xiuluo-hotstart-story/output/positive-template-source_white.png`
+- Negative sample:
+  - 输入图：`images/test-cases/dialog/xiuluo-hotstart-story/raw/false_story_labels_raw.png`
+  - 来源：旧日志里只有场景/人物/NPC 名字、但曾进入 `READ_STORY_OBJECTIVE` 的误判截图。
+  - 结果：matched=`false`。
+  - marked：`images/test-cases/dialog/xiuluo-hotstart-story/output/false-story-labels_marked.png`
+  - washed：`images/test-cases/dialog/xiuluo-hotstart-story/output/false-story-labels_white.png`
+- 命令：
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests exec:java "-Dexec.mainClass=com.bot.dhxy.debug.XiuluoHotStartStoryTemplateReplayDebug"`
+
+Notes:
+
+- 不改 `DialogService` 阈值。
+- 不改变 STORY/OPTION 通用检测，只给修罗 hot-start 加二次确认。
+- `compile` 和 `exec:java` 不要并行跑；并行时可能因为 `target/classes` 正在被重写而出现 transient class-load failure。
+
+### 谢帅 - 2026-06-15 current-map 点击触发跨图绕路修正
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户观察到 14:57:00-14:57:30 队长已经在导航途中，却又打开小地图点了一次，第二次点歪打断原路线。
+- 日志确认：
+  - `14:57:20.428` 第一次 `navigateInCurrentMap` 点击 `logical=(371,80)`。
+  - `14:57:23.073` 点击后小地图读到 `北俱芦洲(40,9)`，而 expected map 是 `大唐边境`。
+  - 旧逻辑把“坐标变化但地图变成 unexpected map”判为 `NO_PATHING`，于是同一 foreground turn 进入 fallback 第二次点击。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - `confirmMiniMapPathingStarted(...)` 中，点击后坐标发生变化但地图短暂变成非 expected map 时，不再返回 `NO_PATHING`。
+  - 改为记录 `coordinate changed on unexpected map, treat as pathing started` 并返回 `PATHING_STARTED`。
+
+Reason:
+
+- 游戏的“当前地图寻路”可能借道传送点，从 A 到 C 时短暂经过 B 图；这说明点击已经触发寻路，不应该再 fallback 点第二次小地图。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+### 唐德 - 2026-06-16 NPC click vision memory 聚合与五倍残数据重置
+
+Status: DONE / compile passed.
+
+Context:
+
+- 本地 `config/vision_memory.json` 中五倍 `宝象国|降魔侍卫|86,87` 数据已经只剩残样本，和 ROI 推荐数据发生断层。
+- 用户决定不再恢复旧五倍数据，改为重新统计；修罗已有数据需要保留并整合。
+- 新约束：同一个目标 + 同一个玩家站位不应无限追加重复样本，应该按主键聚合统计。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`
+  - `recordNpcClickAttempt(...)` 现在同步更新 `policies.clickPolicies`。
+  - `clickPolicies` 主键为 `npcClickKey + player:x,y`，也就是目标身份和玩家逻辑坐标绑定在一起。
+  - 同一主键的 `npcClickSamples` 只保留最新一条诊断样本，避免同站位重复膨胀。
+  - 直接点击推荐和 NPC 点击 ROI 推荐优先读取 `clickPolicies`；旧 `npcClickSamples` 只作为兼容 fallback。
+  - `ClickPolicy` 增加目标、玩家坐标、成功/失败次数、连续成功/失败、最近强验证样本、置信度等字段。
+- `config/vision_memory.json`
+  - 先备份到 `config/vision_memory.json.backup-20260616_144443`。
+  - 删除五倍 `降魔侍卫` 相关残留 NPC click / target candidate / ROI policy 数据，让五倍重新学习。
+  - 将其余 NPC click 样本迁移为按主键聚合的 `clickPolicies`。
+
+Data result:
+
+- `npcClickSamples`: `84 -> 50`
+- `targetCandidateSamples`: `73 -> 59`
+- `roiPolicies`: `64 -> 57`
+- `clickPolicies`: `0 -> 50`
+- `降魔侍卫` 旧 NPC click / ROI 数据：`0`
+- 修罗 click policy：`26`
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `node` 校验确认 `wubeiNpcSamples=0`、`wubeiRoiPolicies=0`、`xiuluoPolicies=26`。
+
+Next:
+
+- 下一轮五倍跑 `降魔侍卫` 时，从 full masked window fallback 重新统计；成功验证达到稳定阈值后才会重新启用 learned click/ROI。
+- 如果再出现 ROI 有数据但 click point 没数据的断层，优先查 `clickPolicies` 是否缺失对应 `npcClickKey + player:x,y`，不要单独相信旧 ROI。
+
+### 谢帅 - 2026-06-16 NPC Ctrl prompt 去中心兜底
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户判断 `window-center` Ctrl prompt 兜底不稳定，要求先不要再用中心点兜底。
+- 更可靠的兜底应该来自紫色玩家名字位置：紫色名字/紫色 blob 基本能代表当前角色所在位置，用它作为 Ctrl prompt origin 比窗口中心更接近目标交互区。
+- 额外约束：非战斗 NPC 的 Ctrl prompt 只考虑靠近目标屏幕预测点的候选 origin；不是按“人物到 NPC 的地图距离”过滤。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - 默认 `clickNpcByCtrlMenuScan(...)` 不再追加 `window-center` origin。
+  - `tryPlayerAnchorFormulaStrategy(...)` 在紫色玩家 anchor 可用时，把 `purple-player-anchor` 加入后续 `state.ctrlProbeOrigins`，供最终 Ctrl prompt 使用。
+  - `tryCtrlMenuStrategy(...)` 对非 `NpcRole.COMBAT_TARGET` 增加候选点距离 gate：先用紫色 player-anchor 公式得到 `predictedClickAbs` 作为目标屏幕参照点，再过滤 `state.ctrlProbeOrigins`；候选 origin 离参照点超过 `15px` 时跳过。
+  - 战斗目标继续允许 Ctrl prompt / direct combat 相关兜底，不受上述距离 gate 影响。
+
+Notes:
+
+- 紫色 anchor 截图入口仍会先按 `Alt+4`，代码路径是 `captureCleanNameRegionToMemory(...)`，用于隐藏其他玩家名字后再截图洗紫色。
+- `direct-combat exit` 内部仍保留一个独立的 `window-center fallback`，本次没有动；它不是普通 NPC prompt 的最终兜底。
+- 本次没有新增点击算法，也没有改黄字/tooltip/learned memory 的匹配顺序。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮实测重点看日志 `NPC ctrl menu probe origins`：
+  - 正常不应再出现 `window-center:FULL_RING`。
+  - 如果紫色 anchor 成功，应出现 `purple-player-anchor:FULL_RING@(x,y)`。
+  - 非战斗 NPC 的远处候选点应出现 `NPC ctrl menu origin skipped for non-combat target ... maxDistancePx=15`。
+
+### 谢帅 - 2026-06-16 五倍队员三技能 gate
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 实测观察到五倍队长刚接完任务、还没有点击左侧任务追踪绿字寻路时，队员 AutoBattle 已经插进来跑三技能。
+- 日志也能复现：队员在 `source=auto-battle` 下 claim 了 `teamRound=wubei#6`，而队长稍后才进入 `TRACKER_PATHING result=PATHING_STARTED`。
+- 既有 `TaskMaintenanceService` 已有团队维护窗口 gate，但 `AutoBattleTask` 之前只对 `xiuluo_v2` 要求该 gate；五倍只注册 round，没有打开/关闭窗口。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/AutoBattleTask.java`
+  - 队员辅助模式下，`requestedTaskCode=wubei` 现在和 `xiuluo_v2` 一样，三技能必须等 `requireOpenTeamMaintenanceWindow=true` 的 gate 打开。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 左侧任务追踪绿字点击成功并注册 tracker pathing intent 后，打开本轮 `wubei` team pathing maintenance window。
+  - 进入 `ENTER_BATTLE` 阶段开头关闭该 window，不依赖地图/坐标读取；这样覆盖普通怪、显形镜白龙马、黄袍怪触发开打 dialog 前的关闭点。
+  - 当前轮恢复入口也会关闭 gate，避免 tracker pathing 后、未进入战斗前失败恢复导致 gate 残留。
+
+Expected behavior:
+
+- 队长没有点击左侧任务追踪绿字寻路前，队员三技能应被 `team pathing window closed` 拦住。
+- 队长点击左侧绿字后到进入打怪处理前，队员最多按本轮 claim 限制跑一个三技能。
+- 进入 `ENTER_BATTLE` 后 gate 关闭；打怪弹窗/显形镜/黄袍怪续战阶段不允许队员三技能抢输入。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮五倍实测看日志：
+  - 接任务后、左侧寻路前，队员如三技能到期应出现 `summon skill deferred: team pathing window closed`。
+  - 队长点击 tracker 绿字后应出现 `maintenance team pathing window opened: teamRound=wubei#...`。
+  - 进入 `ENTER_BATTLE` 后应出现 `maintenance team pathing window closed: teamRound=wubei#...`。
+
+### 唐德 - 2026-06-16 本地补给改为后台预计算计划
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户要求本地战后补给必须尽量像医宝宝维护广播一样快：后台 watcher 先算好每个窗口到底要补哪几条，轮到窗口时只做短点击动作。
+- 旧链路虽然第一步已经是一张截图检查四条血蓝，但 pending 队员拿到权后还会重新 no-focus 预检，并且 focused `healAll` 会逐条确认、逐条等待，视觉上明显慢于医宝宝。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/service/PlayerStateService.java`
+  - `probeFirstAidSupplyNoFocus(...)` 现在会把后台截图中命中的补给目标保存成 `pendingNoFocusFirstAidPlan`，目标包含人物血/人物法/宝宝血/宝宝法的窗口相对点击点和阈值。
+  - 新增 `performCachedFirstAidPlanNow(...)`：轮到窗口时直接消费后台预计算计划，不再重新扫四条血蓝。
+  - 缓存计划执行时走一个 exclusive input transaction，按预计算目标快速右键；当前每个右键后等待 `220ms`，最后等待 `300ms`。
+- `src/main/java/com/bot/dhxy/service/AutoCombatService.java`
+  - pending follower first-aid 获取 task turn 后优先执行缓存补给计划；没有计划时才 fallback 到原来的 focused check。
+
+Expected behavior:
+
+- 战斗退出后，队员窗口应该在 no-focus 阶段输出 `first-aid no-focus precheck result: needed=true targets=[...]`。
+- 队员拿到 pending 补给权后，应该优先输出 `执行后台预计算补给计划`，而不是重新跑 `performFirstAidCheckNowIfNeeded`。
+- 多个队员需要补给时，切到每个窗口后只应执行快速右键序列，不再逐条 350ms 二次确认。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+- `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java src/main/java/com/bot/dhxy/service/AutoCombatService.java` passed（仅有 CRLF warning）。
+
+Next:
+
+- 下一轮五倍/五环实测重点看 `first-aid no-focus precheck result`、`执行后台预计算补给计划`、`playerState:healCachedPlan`。
+- 如果右键过快导致某条没吃上，再只调 `FAST_HEAL_CLICK_DELAY_MS`，不要回退到逐条截图确认。
+
+### 谢帅 - 2026-06-16 五倍白龙马 hint 抢时机收窄
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 日志确认 `first-probe` 与 `second-probe` 的 hint 截图区域一致，都是 `region=350,370 -> 679,463`，实际截图 `rect=(364,452)-(693,545)`。
+- `second-probe` 失败不是区域问题，而是时机问题：物理左键在 `21:14:29.171`，但原逻辑等 `dialogAfter` 检测结束后才 schedule hint，导致第一张截图到 `21:14:33.571`，约 4.4 秒后，浮层已经消失。
+- 用户确认：普通五倍怪左键能直接进入战斗，destination hint 只对白龙马显形镜 probe 有意义。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 左侧任务追踪绿字点击成功后，先 schedule 白龙马 hint 截图，再做 `dialogAfter` 诊断日志。
+  - hint 采样从 `1500/2500/3500ms` 提前到 `500/1000/1500ms`。
+  - hint 捕获条件收窄为 `first-probe` / `second-probe`，普通怪和黄袍怪不再抓 destination hint。
+  - 保留普通 tracker 绿字的 runner pathing intent；只是不再为非白龙马抓 hint。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮白龙马实测看 `destination hint capture start` 是否紧贴 `tracker-green-click:second-probe`。
+- 重点确认 `second-probe` 的第一张 raw 图是否已经能截到“正在自动寻路前往...”浮层。
+
+### 谢帅 - 2026-06-17 五倍白龙马 story prepared 快路径
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 白龙马显形镜 story 本质是 0.5-1 秒级短交互，不应该像长路径导航一样“用完道具就普通放权等下一轮”。
+- 旧逻辑在 `consumePrepared=null` 时会走 no-story 尝试点怪、随后 `markProbeResolved` 并切下一条绿字；这会把“runner 还没准备好”误判成“当前 prompt 失败”。
+- Runner 原 idle interval 是 6000ms；只注册 `WUBEI_PROBE_STORY` interest 不能保证已经睡眠中的 watcher 立刻醒来。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java`
+  - 新增 `observerWakeSeq`；`updateDialogInterest(...)` 会递增 wake 序号并打印 `wakeSeq`。
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+  - observer sleep 改为 100ms 小片段检查 `observerWakeSeq`，让 task 更新 dialog interest 时可以提前唤醒 watcher，不必等满 6 秒 idle。
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `resolveProbeAfterPathing(...)` 在使用显形镜前注册 `WUBEI_PROBE_STORY` interest。
+  - 使用显形镜后当前 turn 短等 800ms，每 80ms 只消费 runner prepared action，不做前台 OCR/截图/模板匹配。
+  - 短等没拿到 prepared 时只保持当前 prompt 等 runner；6 秒总等待超时后重走当前绿字，不再 mark resolved，不再切第二条 prompt。
+  - `wrong-position` story 仍然回到当前绿字重新寻路；`target-ready` story 仍然立即点击白龙马。
+
+Expected behavior:
+
+- 白龙马显形镜弹出 story 后，日志应出现 `window.dialog.interest.update ... WUBEI_PROBE_STORY ... wakeSeq=...`，runner 不应因为 idle sleep 拖 6 秒。
+- 如果 runner 800ms 内准备好，当前 task turn 直接消费并点击白龙马。
+- 如果 runner 没准备好，日志应是 `probe story not prepared yet; keep current probe waiting`，不应再出现因为 story missing 而切到 `probe-next-unused`。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮白龙马实测重点看：
+  - `probe story not prepared yet` 是否明显减少；
+  - `target-ready story matched` 后是否直接点白龙马；
+  - 不应再出现 `probe story still missing after retries; switch to next unused probe` 这类切第二条 prompt 的旧日志。
+
+### 谢帅 - 2026-06-17 五倍白龙马 Runner 框架回归旧业务分支
+
+Status: DONE / compile passed / waiting live validation.
+
+Context:
+
+- 用户确认新版可以继续使用 Runner/PreparedDialogAction 框架，但白龙马业务决策必须按旧版 `6698793` 的逻辑走。
+- 旧版核心分支：
+  - `target-ready` story：标记当前 probe resolved，马上点白龙马，进入 `WAIT_BATTLE_FINISH`。
+  - `wrong-position` story：回滚显形镜尝试次数，不标记 resolved，不切第二条 prompt，回 `TRACKER_PATHING` 重点当前绿字。
+  - story 存在但两个白字模板都没命中：先清一次未知 story，再尝试点白龙马 tooltip；点不到才标记当前 prompt resolved 并切下一条。
+  - 没有 story：尝试点白龙马 tooltip；点不到才标记当前 prompt resolved 并切下一条。
+- 新架构下 `consumePrepared=null` 只能说明 runner 暂时没准备出 `WUBEI_PROBE_STORY`，但最终业务分支仍要映射回旧版 `WHITE_TEMPLATE_NOT_FOUND + DialogType` 结果，而不是无限等待或直接判失败。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `waitForPreparedProbeStory(...)` 改为返回 `DialogResult`，800ms 内只消费 runner prepared action。
+  - 800ms 内没拿到 prepared 时，读取 runner 的 fresh visible dialog snapshot：
+    - fresh `STORY` -> 返回旧版等价的 `WHITE_TEMPLATE_NOT_FOUND/STORY`；
+    - 无 fresh story -> 返回旧版等价的 `WHITE_TEMPLATE_NOT_FOUND/NONE`。
+  - 恢复旧版 `closeUnknownProbeStoryIfNeeded(...)`：未知 story 只清一次，再走 tooltip/direct combat fallback。
+  - `target-ready` / `wrong-position` 分支保持旧版语义；wrong-position 不切 prompt，只回当前绿字。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮白龙马实测看：
+  - runner 已看到 `STORY visible-only` 但没 prepared 时，前台是否按旧版 fallback 继续处理；
+  - `wrong-position` 是否稳定重走当前绿字；
+  - 只有 tooltip/direct combat fallback 也失败时才切第二条 prompt。
+
+### 谢帅 - 2026-06-17 五倍降魔侍卫黄字目标匹配 replay
+
+Status: DONE / compile passed / offline testcase passed.
+
+Context:
+
+- 五倍 `NPCClickSmart` 黄字目标匹配会把共享“侍卫”的非目标文本排到前面，例如 `宝象国品侍卫`，导致 `降魔侍卫` 没有成为第一顺位。
+- 扫描窗口本身没有改；本次只收紧目标匹配排序和强命中条件。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+  - `findYellowTarget(...)` 在目标模式下扩大候选数量，但只有强命中才提前结束。
+  - 对 `降魔侍卫` 增加严格目标判断，必须有足够公共字符并优先完整 OCR 命中，避免共享后缀的弱命中抢第一。
+  - 严格目标没有 strong hit 时返回 `hit=false`，避免 `宝象国品侍卫` 这类共享“侍卫”的候选被当成可点击目标。
+- `src/main/java/com/bot/dhxy/debug/YellowTargetFindReplayDebug.java`
+  - 离线 replay 现在同时输出完整洗黄字图、最终选中的洗后候选行、原图点击标记图。
+  - `yellow_marked.png` 直接在洗黄字图上画最终 accepted target；`hit=false` 时不画点击点。
+
+Replay:
+
+- Command:
+  - `mvn -q -DskipTests compile`
+  - `java "-Dfile.encoding=UTF-8" -cp <target classpath> com.bot.dhxy.debug.YellowTargetFindReplayDebug images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png 降魔侍卫 images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_after.png images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_after.png images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_washed_after.png images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_overlay_after.png`
+- Input:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png`
+- Outputs:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_washed_after.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_overlay_after.png`（洗黄字图上的最终命中/点击标记）
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_after.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_after.png`
+- Result:
+  - `variant=yellow-target-shadow`
+  - selected text `降魔侍卫`
+  - selected relative center `(328,664)`
+  - final click `(328,614)`
+
+Additional replay set:
+
+- `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-6C71E0A/yellow_marked.png`
+  - `hit=true`
+  - selected text `降魔侍卫`
+  - selected relative center `(255,205)`
+  - final click `(255,155)`
+- `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-D7D0DEA/yellow_marked.png`
+  - `hit=true`
+  - selected text `降魔侍卫`
+  - selected relative center `(257,372)`
+  - final click `(257,322)`
+- `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-1EA0D2E/yellow_marked.png`
+  - `hit=false`
+  - best raw weak text was `宝象国品侍卫`, but it is rejected because it is not a strong `降魔侍卫` match.
+- `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-1E370FB2/yellow_marked.png`
+  - `hit=false`
+  - selected diagnostic text `服装店老板`, not accepted.
+- `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-4010E56/yellow_marked.png`
+  - `hit=false`
+  - selected diagnostic text `IL1` / `教书先生`, not accepted.
+
+### 谢帅 - 2026-06-17 五倍降魔侍卫 NPC 黄字颜色范围收紧
+
+Status: DONE / compile passed / replay passed.
+
+Context:
+
+- 用户指出上一轮混用了不同地点的截图；本次只使用原始场景图验证。
+- 目标是把 NPC 名字黄和任务面板/UI 黄分开：NPC target 候选可以看到 `降魔侍卫`，但不要让左侧任务追踪黄、底部战斗面板亮黄进入候选。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+  - 新增 `YELLOW_NPC_TARGET` 颜色模式，仅用于 NPC/怪名字 target 候选。
+  - `findYellowTextCandidateResult(...)` 和 `findYellowTarget(...)` 的 target 候选改用更窄的 NPC 黄范围。
+  - 通用 `YELLOW_LOOSE` 保留给路线黄字、普通黄字 OCR、dialog fallback，不跟随本次收窄。
+  - 日志 variant 从 `yellow-target-loose` 改为 `yellow-target-npc`，避免误导后续排查。
+
+Replay:
+
+- Command:
+  - `mvn -q -DskipTests compile`
+  - `java "-Dfile.encoding=UTF-8" -cp <target classpath> com.bot.dhxy.debug.YellowTargetFindReplayDebug images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png 降魔侍卫 images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_npc_tuned.png images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_npc_tuned.png images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_washed_npc_tuned.png images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_overlay_npc_tuned.png`
+- Input:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/input_center_scan_layer1.png`
+- Outputs:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_washed_npc_tuned.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/yellow_overlay_npc_tuned.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/selected_line_npc_tuned.png`
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/marked_npc_tuned.png`
+- Result:
+  - `hit=true`
+  - `bestVariant=yellow-target-npc`
+  - selected text `降魔侍卫`
+  - selected relative center `(328,665)`
+  - final click `(328,615)`
+  - 洗图中左侧任务追踪黄和底部战斗面板亮黄已被排除；仍保留同类场景 NPC 黄，例如 `宝象国一品侍卫`。
+
+### 唐德 - 2026-06-17 修罗任务栏 hot-start 去掉模板兜底
+
+Status: DONE / compile passed.
+
+Context:
+
+- 14:53:33 修罗启动 hot-start 截到 `images/temp/hwnd-1EA0D2E/quest_detail_xiuluo.png`。
+- 这张图是任务栏右侧“任务目的”普通说明文字，不是 `前往 地图(x,y)` 目标。
+- 14:53:46 百度 OCR 已经读出完整说明文字并确认没有目标坐标，但旧逻辑仍继续走 `ObjectiveTextRecognitionService` 模板兜底，额外耗时约 24 秒。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - `parseTaskPanelObjective(...)` 现在只信任务栏 OCR 解析出的 `前往 地图(x,y)`。
+  - OCR 没有解析出修罗目标时直接返回 empty，表示 task-panel hot-start miss。
+  - 删除修罗任务栏路径里的模板 fallback，避免普通任务说明被继续扫模板、拖慢启动或产生陈旧目标。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed。
+
+Next:
+
+- 下一轮修罗启动观察：如果任务栏右侧仍是普通说明，应该在 OCR miss 后直接进入正常接任务流程，不再出现 20 秒以上的 `template-fallback` 扫描。
+
+### 唐德 - 2026-06-17 五倍接任务 NPC 点击后不再放权等待 accept prepared
+
+Status: DONE / compile passed.
+
+Context:
+
+- 23:29:30 左右五倍队长已经用 learned memory 点中 `降魔侍卫`，但 `WUBEI_ACCEPT_TASK` prepared action 没有立刻 ready。
+- 旧逻辑只在前台等 `900ms`，等不到就返回 `SHARED_STATE_TRIGGERED`，触发 `MUST_YIELD` 和 `task turn handoff delay=900ms`。
+- watcher 本身是后台线程，是否继续准备 dialog 和 task turn 是否放给其他窗口无关；接任务 NPC 已点开的情况下放权会让已打开的接受任务框空等。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `runAcceptTaskPhase(...)` 在 NPC 已点击后改为继续持有当前 task turn 等待 `WUBEI_ACCEPT_TASK` prepared action。
+  - 接任务 accept 等待时间改为使用 dialog interest TTL (`15s`) 作为硬超时，超时后按 phase failed 走恢复，不再返回 `SHARED_STATE_TRIGGERED`。
+  - 删除旧的 `WUBEI_ACCEPT_DIALOG_QUICK_WAIT_MS = 900` 常量，避免后续再走 900ms handoff 语义。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- src\main\java\com\bot\dhxy\task\wubei\WubeiTask.java docs\ACTIVE_WORK.md` passed with CRLF-only warnings.
+
+Next:
+
+- 下一轮五倍观察 `ACCEPT_TASK`：点开降魔侍卫后不应再出现 `source=accept-dialog-wait-prepared delayMs=900`。
+- 如果仍慢，重点看 runner 日志里的 `attentionDetectMs` 与 `attentionRoutePrepareMs`，而不是 task turn handoff。
+
+### 唐德 - 2026-06-18 五倍启动 Alt+6 只保留一条准备链
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户观察到启动五倍时会做两轮 Alt+6/屏蔽检测。
+- 日志确认同一个 leader 窗口先走 `startup init: wubei ensure Alt+6 visibility before leader prep`，随后又走 `startup init: leader ensure map tracking option and Alt+6 visibility`。
+- `ensureAlt6Visibility()` 本身最多会重试 3 次；在两条准备链都调用它时，会出现两轮检查，甚至因为 Alt+6 是 toggle 导致第二轮把已正确状态打坏再重试。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/execution/DefaultWindowTaskStartupInitializer.java`
+  - 注入 `BotProperties`。
+  - 五倍窄版 Alt+6 guard 只在 `bot.dhxy.task-startup-preparation-enabled=false` 时运行。
+  - 当完整 startup preparation 开启时，五倍只走后面的 `prepareTaskStartupWindow()`，由完整准备链负责唯一一次 Alt+6 可见性检查。
+- `src/main/java/com/bot/dhxy/window/startup/TaskStartupWindowPreparationService.java`
+  - `ensureAlt6Visibility()` 先截图确认 `blacklist_crowd` 状态；已经确认时不再先按 Alt+6，避免 toggle 把状态反向切掉。
+  - 保留最多 3 次后台 Alt+6 重试，用于当前状态未确认的场景。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍启动看日志：完整准备开启时应只看到 `wubei full preparation will perform Alt+6 visibility check`，不应再看到五倍窄版和完整准备各跑一轮 Alt+6。
+
+### 谢帅 - 2026-06-18 五倍进入战斗后删除固定等待
+
+Status: DONE / compile passed.
+
+Context:
+
+- 00:12:02-00:12:06 日志显示五倍队长进入 `ENTER_BATTLE` 后，runner 在 00:12:03.543 准备好 `WUBEI_ENTER_BATTLE`，00:12:03.592 被前台消费，00:12:04.476 已确认点击成功。
+- 后续慢点包含五倍代码里的固定 `1200ms` 点击后等待，以及普通 `SHARED_STATE_TRIGGERED` 的 `900ms` task turn handoff delay。
+- 用户明确要求删掉这两个固定等待，不在这里继续做固定 sleep。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 删除普通进入战斗、priority prepared 进入战斗、direct combat fallback 三处点击后 `1200ms` 固定等待。
+  - 删除五倍默认 `TASK_TURN_HANDOFF_DELAY_MS=900`，默认 handoff delay 改为 `0`。
+  - `yieldAfterMustYield(...)` 只有在特殊场景返回正数 delay 时才 sleep；普通 shared/yield 不再固定睡 900ms。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍看 `ENTER_BATTLE`：点击成功后不应再看到 `battle-dialog-clicked delayMs=900`，也不应再因为固定 `1200ms` 导致 `heldMs` 接近 3-4 秒。
+- 如果用户体感仍觉得“进入战斗前”慢，下一步重点看 runner prepare 前的 dialog 出现时间、`window-task-attention` 检测时间，以及 `waitForPreparedWubeiDialogReply(...)` 是否重复刷新 interest。
+
+### 唐德 - 2026-06-18 五倍显形镜 story dialog interest 优先于 pathing probe
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户复盘白龙马显形镜流程，关注 `00:13:35.549 -> 00:13:40.547`：task 已注册 `WUBEI_PROBE_STORY` interest，前台每约 `80ms` 消费 prepared action，却一直 `absent`。
+- 日志确认不是模板匹配慢：`WUBEI_PROBE_STORY` prepare 本身 `301ms`，`WUBEI_ENTER_BATTLE` prepare `154ms`。
+- 真正慢点在 runner observer：`window observer tick totalMs=4708 pathingMs=3871`，即 active-pathing 分支先跑小地图/pathing probe，坐标读取耗时近 4 秒，导致已注册的 dialog interest 被延后处理。
+- 显形镜是在停止点使用，业务上此时更关心“显形镜 story 是否出现”，不应该先等小地图 pathing probe。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+  - active-pathing 分支新增 `active-pathing-dialog-first` 路径。
+  - 当当前窗口存在本任务 `dialogInterest` 时，runner 先执行 `publishTaskAttentionIfDialogVisible(...)` / `refreshTaskDialogInterestPreparationSignal(...)`。
+  - 如果已经准备出 `PreparedDialogAction`，本轮不再先跑 `refreshPathingSignal(...)`，避免显形镜 story 被小地图 OCR/坐标读取拖住。
+  - 如果没有准备出 dialog action，则回到原 active-pathing 的 pathing probe 逻辑。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍显形镜看日志：白龙马 story 出现后应更快看到 `task dialog prepared: operation=WUBEI_PROBE_STORY`。
+- 重点观察是否出现 `branch=active-pathing-dialog-first`，且该 tick 不再先出现 `pathingMs=3xxx` 才处理 `WUBEI_PROBE_STORY`。
+
+### 唐德 - 2026-06-18 五倍 ENTER_BATTLE 提前注册进战斗 interest
+
+Status: DONE / compile passed.
+
+Context:
+
+- 用户观察 `00:32:55-00:33:10` 日志，感觉进战斗识别到以后又等了接近 10 秒。
+- 复盘确认 `00:33:03.973` 才真正进入 `wubei:ENTER_BATTLE`。
+- `00:33:04.316` runner 已经识别到 `OPTION` 对话框，但当时没有 `WUBEI_ENTER_BATTLE` interest，只发布了 `dialog-visible:OPTION`，没有准备点击。
+- `00:33:05.467` task 才第一次注册 `WUBEI_ENTER_BATTLE` interest；`00:33:08.505` runner 才准备出 `WUBEI_ENTER_BATTLE`，模板匹配本身只耗时 `318ms`。
+
+Changed:
+
+- `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - 在 `tickEnterBattle(...)` 首次进入 `ENTER_BATTLE` 阶段时立即注册一次 `WUBEI_ENTER_BATTLE` interest，source 为 `wubei:enter-battle:phase-start`。
+  - 保留原来的 `tryClickKnownEnterBattleDialog(...)` 等待/消费逻辑，后续仍由它负责轮询、续期和点击 prepared action。
+  - 不修改模板、点击坐标、NPC retry 或战斗业务逻辑。
+
+Verify:
+
+- `mvn -q -DskipTests compile` passed.
+
+Next:
+
+- 下一轮五倍进战斗看日志：进入 `ENTER_BATTLE` 后应先看到 `window.dialog.interest.update ... source=wubei:enter-battle:phase-start`。
+- 如果 runner 同一轮看到 `OPTION`，应更早出现 `task dialog prepared: operation=WUBEI_ENTER_BATTLE`，避免之前 `OPTION visible` 但 `preparedRoute=false` 的空转。

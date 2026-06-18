@@ -44,6 +44,7 @@ public class TaskStartupWindowPreparationService {
     private static final int ALT6_VISIBILITY_RECT_WIDTH = 317;
     private static final int ALT6_VISIBILITY_RECT_HEIGHT = 288;
     private static final double ALT6_VISIBILITY_MATCH_RATE = 0.85;
+    private static final int ALT6_VISIBILITY_MAX_ATTEMPTS = 3;
     private static final long ALT6_VISIBILITY_RECHECK_DELAY_MS = 500L;
     private static final long ALT6_OVERLAY_FADEOUT_WAIT_MS = 1000L;
     private static final String EXPAND_CHECKED_TEMPLATE = "images/template/status/expand_checked.png";
@@ -110,27 +111,39 @@ public class TaskStartupWindowPreparationService {
      * 所以这里不走 exclusive/focus 输入事务；否则五开启动时会为了 Alt+6 把五个窗口轮流切到前台。
      * 如果 HWND 后台快捷键失败，本方法直接失败并让后续真实鼠标动作再按需抢前台。</p>
      *
-     * @return true when the background Alt+6 was sent and the confirmation template appears.
+     * @return true when the hidden-player state is already confirmed, or when a background Alt+6
+     *         retry makes the confirmation template appear.
      */
     public boolean ensureAlt6Visibility() {
-        log.info("task startup visibility: send Alt+6 to bound HWND without foreground focus");
-        BoundWindowKeyboardService.ShortcutAttempt backgroundAlt6 =
-                boundWindowKeyboardService.pressShortcut(BoundWindowKeyboardService.AltShortcut.ALT_6);
-        if (!backgroundAlt6.attempted() || !backgroundAlt6.success()) {
-            log.warn("task startup visibility: background Alt+6 failed attempted={} reason={}",
-                    backgroundAlt6.attempted(), backgroundAlt6.reason());
-            return false;
-        }
-        if (!TaskSleep.sleep(ALT6_VISIBILITY_RECHECK_DELAY_MS)) {
-            return false;
-        }
         if (isAlt6VisibilityConfirmed()) {
-            log.info("task startup visibility: confirmed by template after background Alt+6");
-            log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
-            return TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS);
+            log.info("task startup visibility: already confirmed before pressing Alt+6 template={}",
+                    ALT6_VISIBILITY_TEMPLATE);
+            return true;
         }
-        log.warn("task startup visibility: template confirmation failed after background Alt+6 template={}",
-                ALT6_VISIBILITY_TEMPLATE);
+        for (int attempt = 1; attempt <= ALT6_VISIBILITY_MAX_ATTEMPTS; attempt++) {
+            log.info("task startup visibility: send Alt+6 to bound HWND without foreground focus attempt={}/{}",
+                    attempt, ALT6_VISIBILITY_MAX_ATTEMPTS);
+            BoundWindowKeyboardService.ShortcutAttempt backgroundAlt6 =
+                    boundWindowKeyboardService.pressShortcut(BoundWindowKeyboardService.AltShortcut.ALT_6);
+            if (!backgroundAlt6.attempted() || !backgroundAlt6.success()) {
+                log.warn("task startup visibility: background Alt+6 failed attempt={}/{} attempted={} reason={}",
+                        attempt, ALT6_VISIBILITY_MAX_ATTEMPTS, backgroundAlt6.attempted(), backgroundAlt6.reason());
+                continue;
+            }
+            if (!TaskSleep.sleep(ALT6_VISIBILITY_RECHECK_DELAY_MS)) {
+                return false;
+            }
+            if (isAlt6VisibilityConfirmed()) {
+                log.info("task startup visibility: confirmed by template after background Alt+6 attempt={}/{}",
+                        attempt, ALT6_VISIBILITY_MAX_ATTEMPTS);
+                log.info("task startup visibility: waiting overlay fadeout ms={}", ALT6_OVERLAY_FADEOUT_WAIT_MS);
+                return TaskSleep.sleep(ALT6_OVERLAY_FADEOUT_WAIT_MS);
+            }
+            log.warn("task startup visibility: template confirmation failed after background Alt+6 attempt={}/{} template={}",
+                    attempt, ALT6_VISIBILITY_MAX_ATTEMPTS, ALT6_VISIBILITY_TEMPLATE);
+        }
+        log.warn("task startup visibility: Alt+6 visibility confirmation failed after {} attempts template={}",
+                ALT6_VISIBILITY_MAX_ATTEMPTS, ALT6_VISIBILITY_TEMPLATE);
         return false;
     }
 

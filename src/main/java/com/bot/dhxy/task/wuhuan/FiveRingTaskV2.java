@@ -56,7 +56,10 @@ import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
 import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.model.WindowReadyEvent;
+import com.bot.dhxy.window.model.WindowReadyEventType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowReadyEventBus;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.vision.OcrWindowScanService;
@@ -75,6 +78,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -171,7 +175,12 @@ public class FiveRingTaskV2 implements GameTask {
     private static final long PATHING_OBSERVER_FAST_WAIT_MS = 2_500L;
     private static final long PATHING_TARGET_WAIT_TIMEOUT_MS = 90_000L;
     private static final long OBSERVER_SNAPSHOT_MAX_AGE_MS = 3_000L;
+    private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 10_000L;
     private static final long PREPARED_TRACKER_ACTION_MAX_AGE_MS = 2_500L;
+    private static final long READY_EVENT_PRIORITY_MAX_AGE_MS = 3_000L;
+    private static final long READY_EVENT_PENDING_WARN_MS = 3_000L;
+    private static final long READY_EVENT_SETTLE_WAIT_MS = 80L;
+    private static final long READY_EVENT_PRIORITY_YIELD_DELAY_MS = 180L;
     private static final long PATHING_INTENT_CREATED_AT_GRACE_MS = 1_000L;
     private static final long TASK_TURN_HANDOFF_DELAY_MS = 900L;
     private static final int GAME_CLIENT_WIDTH = 1024;
@@ -194,6 +203,7 @@ public class FiveRingTaskV2 implements GameTask {
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final WindowReadyEventBus windowReadyEventBus;
     private final TextRecognizer textRecognizer;
     private final InputSequences inputSequences;
 
@@ -298,10 +308,25 @@ public class FiveRingTaskV2 implements GameTask {
             String transactionName = "wuhuan-v2:" + currentContext.phase();
             TaskTransactionOutcome transaction;
             boolean outsideTaskTurnPhase = currentContext.phase() == FiveRingPhase.WAIT_PATHING
+                    || currentContext.phase() == FiveRingPhase.BUY_SHOES
                     || currentContext.phase() == FiveRingPhase.ACCEPT_TASK
                     || currentContext.phase() == FiveRingPhase.HANDLE_DIALOG
                     || currentContext.phase() == FiveRingPhase.SYNC_TASK_PANEL;
-            if (currentContext.phase() == FiveRingPhase.WAIT_PATHING) {
+            FiveRingStepOutcome priorityOutcome = checkReadyPriorityBeforeOutsidePhase(
+                    context, currentContext, outsideTaskTurnPhase);
+            if (priorityOutcome != null) {
+                phaseOutcome.set(priorityOutcome);
+                transaction = new TaskTransactionOutcome(
+                        transactionName,
+                        TaskTransactionResult.READY_TO_CONTINUE,
+                        TaskYieldPolicy.MUST_YIELD,
+                        priorityOutcome.transactionResult(),
+                        true);
+            } else if (currentContext.phase() == FiveRingPhase.BUY_SHOES) {
+                transaction = runPhaseWithoutTaskTurn(
+                        currentContext, phaseOutcome, transactionName, "buyShoes",
+                        () -> buyShoes(context, currentContext));
+            } else if (currentContext.phase() == FiveRingPhase.WAIT_PATHING) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "pathWait",
                         () -> waitPathing(context, currentContext));
@@ -392,6 +417,181 @@ public class FiveRingTaskV2 implements GameTask {
                 || result == TaskTransactionResult.FAILED
                 || result == TaskTransactionResult.STOPPED
                 || outcome.yieldPolicy() != TaskYieldPolicy.CONTINUE_CHAIN;
+    }
+
+    private FiveRingStepOutcome checkReadyPriorityBeforeOutsidePhase(TaskExecutionContext context,
+                                                                     FiveRingPhaseContext state,
+                                                                     boolean outsideTaskTurnPhase) {
+        if (!outsideTaskTurnPhase) {
+            return null;
+        }
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            return null;
+        }
+
+        WindowReadyEvent currentReady = windowReadyEventBus
+                .latest(runtime.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                .orElse(null);
+        FiveRingStepOutcome currentPrepared = consumeCurrentPreparedBeforeNormalPhase(
+                context, state, runtime, currentReady, "phase-boundary-before:" + state.phase());
+        if (currentPrepared != null) {
+            return currentPrepared;
+        }
+
+        long currentLatestSequence = windowReadyEventBus
+                .latest(runtime.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED)
+                .map(WindowReadyEvent::getSequence)
+                .orElse(0L);
+        Optional<WindowReadyEvent> currentWake = windowReadyEventBus.awaitNewer(
+                runtime.getWindowId(),
+                EnumSet.of(WindowReadyEventType.TASK_ATTENTION_REQUIRED),
+                currentLatestSequence,
+                READY_EVENT_SETTLE_WAIT_MS);
+        if (currentWake.isPresent()) {
+            WindowReadyEvent event = currentWake.get();
+            log.info("[five-ring-v2 priority] current window ready event observed before normal phase: checkpoint={} phase={} windowId={} hwnd={} source={} operation={} target={} sequence={} ageMs={}",
+                    "phase-boundary-wait:" + state.phase(), state.phase(), runtime.getWindowId(),
+                    event.getHwnd(), event.getSource(), event.getOperation(), event.getTargetKeyword(),
+                    event.getSequence(), readyAgeMs(event));
+            currentPrepared = consumeCurrentPreparedBeforeNormalPhase(
+                    context, state, runtime, event, "phase-boundary-wait:" + state.phase());
+            if (currentPrepared != null) {
+                return currentPrepared;
+            }
+            warnReadyPendingTooLongIfNeeded(event, state, runtime, false, "current-prepared-not-usable");
+        }
+
+        Optional<WindowReadyEvent> otherPrepared = windowReadyEventBus.latestOtherFreshPreparedAction(
+                runtime.getWindowId(), TaskType.WUHuan_V2, READY_EVENT_PRIORITY_MAX_AGE_MS);
+        if (otherPrepared.isPresent()) {
+            return yieldToReadyEvent(state, runtime, otherPrepared.get(),
+                    "prepared-action-priority-yield",
+                    "prepared action priority yield");
+        }
+
+        if (state.phase() == FiveRingPhase.WAIT_PATHING) {
+            return null;
+        }
+        Optional<WindowReadyEvent> otherTerminal = windowReadyEventBus.latestOtherFreshPathingTerminal(
+                runtime.getWindowId(), TaskType.WUHuan_V2, READY_EVENT_PRIORITY_MAX_AGE_MS);
+        if (otherTerminal.isEmpty()) {
+            return null;
+        }
+        return yieldToReadyEvent(state, runtime, otherTerminal.get(),
+                "pathing-terminal-priority-yield",
+                "pathing terminal priority yield");
+    }
+
+    private FiveRingStepOutcome yieldToReadyEvent(FiveRingPhaseContext state,
+                                                  WindowRuntimeContext runtime,
+                                                  WindowReadyEvent event,
+                                                  String stateReason,
+                                                  String message) {
+        long ageMs = readyAgeMs(event);
+        log.info("[five-ring-v2 priority] phase yields because another window has executable ready event: checkpoint={} phase={} currentWindowId={} readyWindowId={} readyHwnd={} readyType={} readyState={} readySource={} readyOperation={} readyTarget={} readySeq={} readyAgeMs={} reason={}",
+                "phase-boundary-other:" + state.phase(), state.phase(), runtime.getWindowId(),
+                event.getWindowId(), event.getHwnd(), event.getType(), event.getPathingState(),
+                event.getSource(), event.getOperation(), event.getTargetKeyword(), event.getSequence(),
+                ageMs, stateReason);
+        log.info("[five-ring-v2 priority] normal retry skipped because executable ready event has priority: phase={} source={} currentWindowId={} readyWindowId={} reason={}",
+                state.phase(), state.source(), runtime.getWindowId(), event.getWindowId(), stateReason);
+        warnReadyPendingTooLongIfNeeded(event, state, runtime, true, "yield-to-ready-window");
+        return FiveRingStepOutcome.sharedState(
+                state.retrySamePhase(stateReason),
+                message);
+    }
+
+    private FiveRingStepOutcome consumeCurrentPreparedBeforeNormalPhase(TaskExecutionContext context,
+                                                                       FiveRingPhaseContext state,
+                                                                       WindowRuntimeContext runtime,
+                                                                       WindowReadyEvent relatedReadyEvent,
+                                                                       String checkpoint) {
+        PreparedDialogAction action = runtime.getPreparedDialogAction();
+        if (action == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        if (action.getOperation() == DialogOperation.TASK_TRACKER_PATHING
+                && action.matches(DialogOperation.TASK_TRACKER_PATHING, "wuhuan")
+                && action.verifiedWithin(now, PREPARED_TRACKER_ACTION_MAX_AGE_MS)
+                && clickPreparedWuhuanTrackerGreen(context, "phase-priority:" + state.phase())) {
+            log.info("[five-ring-v2 priority] long phase consumes current prepared action before continuing: checkpoint={} phase={} windowId={} hwnd={} readySeq={} readyAgeMs={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={} click=({}, {})",
+                    checkpoint, state.phase(), runtime.getWindowId(), action.getHwnd(),
+                    relatedReadyEvent == null ? -1L : relatedReadyEvent.getSequence(),
+                    readyAgeMs(relatedReadyEvent), action.getOperation(), action.getTargetKeyword(),
+                    action.getSource(), Math.max(0L, now - action.getPreparedAtMs()),
+                    Math.max(0L, now - action.getLastVerifiedAtMs()), action.getAbsoluteX(), action.getAbsoluteY());
+            return FiveRingStepOutcome.pathingStarted(
+                    state.withTaskAccepted("priority-prepared-tracker-link")
+                            .next(FiveRingPhase.WAIT_PATHING, "priority-prepared-tracker-pathing-started")
+                            .withNewWatcherPathingStarted(
+                                    "priority-prepared-tracker-pathing-started",
+                                    trackerPathingIntentSource("phase-priority:" + state.phase(), true)),
+                    "prepared tracker dialog consumed before normal phase");
+        }
+        if (action.getOperation() == DialogOperation.ROUTE_TRANSFER
+                && action.verifiedWithin(now, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS)) {
+            /*
+             * Route clicks keep using NavigationService's existing consume path because that code
+             * owns route-target and intent validation. This breadcrumb proves the phase gate saw the
+             * prepared route and did not start unrelated normal OCR before the navigation path can
+             * consume it.
+             */
+            log.info("[five-ring-v2 priority] long phase continues with current route prepared action reserved for navigation: checkpoint={} phase={} windowId={} hwnd={} readySeq={} readyAgeMs={} target={} source={} preparedAgeMs={} verifiedAgeMs={} click=({}, {})",
+                    checkpoint, state.phase(), runtime.getWindowId(), action.getHwnd(),
+                    relatedReadyEvent == null ? -1L : relatedReadyEvent.getSequence(),
+                    readyAgeMs(relatedReadyEvent), action.getTargetKeyword(), action.getSource(),
+                    Math.max(0L, now - action.getPreparedAtMs()),
+                    Math.max(0L, now - action.getLastVerifiedAtMs()), action.getAbsoluteX(), action.getAbsoluteY());
+            warnReadyPendingTooLongIfNeeded(relatedReadyEvent, state, runtime, true,
+                    "route-action-awaiting-navigation-consumer");
+            return null;
+        }
+        warnReadyPendingTooLongIfNeeded(relatedReadyEvent, state, runtime, false,
+                stalePreparedReason(action, now));
+        return null;
+    }
+
+    private long readyAgeMs(WindowReadyEvent event) {
+        if (event == null || event.getCreatedAtMs() <= 0L) {
+            return -1L;
+        }
+        return Math.max(0L, System.currentTimeMillis() - event.getCreatedAtMs());
+    }
+
+    private void warnReadyPendingTooLongIfNeeded(WindowReadyEvent event,
+                                                 FiveRingPhaseContext state,
+                                                 WindowRuntimeContext runtime,
+                                                 boolean preparedUsable,
+                                                 String staleReason) {
+        long ageMs = readyAgeMs(event);
+        if (event == null || ageMs < READY_EVENT_PENDING_WARN_MS) {
+            return;
+        }
+        log.warn("[five-ring-v2 priority] ready dialog pending too long: ageMs={} readyWindowId={} readyHwnd={} readySeq={} readySource={} readyOperation={} readyTarget={} phase={} currentWindowId={} preparedUsable={} staleReason={}",
+                ageMs, event.getWindowId(), event.getHwnd(), event.getSequence(), event.getSource(),
+                event.getOperation(), event.getTargetKeyword(), state.phase(),
+                runtime == null ? null : runtime.getWindowId(), preparedUsable, staleReason);
+    }
+
+    private String stalePreparedReason(PreparedDialogAction action, long now) {
+        if (action == null) {
+            return "no-prepared-action";
+        }
+        if (action.getOperation() == DialogOperation.TASK_TRACKER_PATHING
+                && !action.matches(DialogOperation.TASK_TRACKER_PATHING, "wuhuan")) {
+            return "prepared-target-mismatch:" + action.getTargetKeyword();
+        }
+        if (action.getOperation() == DialogOperation.TASK_TRACKER_PATHING
+                && !action.verifiedWithin(now, PREPARED_TRACKER_ACTION_MAX_AGE_MS)) {
+            return "tracker-prepared-stale:" + Math.max(0L, now - action.getLastVerifiedAtMs());
+        }
+        if (action.getOperation() == DialogOperation.ROUTE_TRANSFER
+                && !action.verifiedWithin(now, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS)) {
+            return "route-prepared-stale:" + Math.max(0L, now - action.getLastVerifiedAtMs());
+        }
+        return "unsupported-prepared-operation:" + action.getOperation();
     }
 
     /**
@@ -564,16 +764,37 @@ public class FiveRingTaskV2 implements GameTask {
             }
             if (observed == WindowPathingState.ARRIVED || observed == WindowPathingState.STOPPED_AWAY) {
                 if (runtime != null) {
-                    runtime.clearPathingSignal("five-ring shoe-shop entry consumed watcher terminal state");
+                    PreparedDialogAction preparedRoute = observed == WindowPathingState.STOPPED_AWAY
+                            ? runtime.freshPreparedRouteActionForPathingTerminal(
+                            snapshot, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS)
+                            : null;
+                    if (preparedRoute != null) {
+                        WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+                        long verifiedAgeMs = Math.max(0L, System.currentTimeMillis() - preparedRoute.getLastVerifiedAtMs());
+                        log.info("[five-ring-v2 shoe-shop] pathing terminal clear delayed because prepared route dialog is ready: state={} target={} actionIntentId={} activeIntentId={} verifiedAgeMs={}",
+                                observed, preparedRoute.getTargetKeyword(), preparedRoute.getIntentId(),
+                                activeIntent == null ? null : activeIntent.getIntentId(), verifiedAgeMs);
+                    } else {
+                        runtime.clearPathingSignal("five-ring shoe-shop entry consumed watcher terminal state");
+                    }
                 }
                 log.info("[five-ring-v2 shoe-shop] entry watcher terminal; continue entry confirmation/retry: state={} current={}({}, {}) ageMs={}",
                         observed, snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(), snapshotAgeMs);
                 if (observed == WindowPathingState.ARRIVED
-                        && isShoeShopDoorArrivalSnapshot(snapshot)
-                        && handleShoeShopDoorAfterArrival(context, state, snapshot)) {
-                    return FiveRingStepOutcome.continueTo(
-                            state.next(FiveRingPhase.BUY_SHOES, "shoe-shop-entered-after-door-handling"),
-                            "shoe-shop entered after door handling");
+                        && isShoeShopDoorArrivalSnapshot(snapshot)) {
+                    if (handleShoeShopDoorAfterArrival(context, state, snapshot)) {
+                        return FiveRingStepOutcome.continueTo(
+                                state.next(FiveRingPhase.BUY_SHOES, "shoe-shop-entered-after-door-handling"),
+                                "shoe-shop entered after door handling");
+                    }
+                    FiveRingStepOutcome alreadyInside = continueIfAlreadyInsideShoeShop(
+                            state,
+                            "wuhuan-v2:shoe-shop-door-after-handler-false",
+                            "shoe-shop-entered-after-door-handler-false",
+                            "shoe-shop entered after delayed door handling");
+                    if (alreadyInside != null) {
+                        return alreadyInside;
+                    }
                 }
             }
         } else if (pathingAgeMs(state) < PATHING_OBSERVER_FAST_WAIT_MS) {
@@ -582,6 +803,15 @@ public class FiveRingTaskV2 implements GameTask {
             return FiveRingStepOutcome.pathingStarted(
                     state.withWatcherPathingStarted("shoe-shop-entry-watcher-wait", SHOE_SHOP_ENTRY_NAV_SOURCE),
                     "shoe-shop entry waiting for watcher");
+        }
+
+        FiveRingStepOutcome alreadyInside = continueIfAlreadyInsideShoeShop(
+                state,
+                "wuhuan-v2:shoe-shop-before-entry-retry",
+                "shoe-shop-already-inside-before-entry-retry",
+                "shoe-shop already inside before entry retry");
+        if (alreadyInside != null) {
+            return alreadyInside;
         }
 
         NavigationResult result = clickShoeShopEntryExact(context);
@@ -633,15 +863,41 @@ public class FiveRingTaskV2 implements GameTask {
                     state.retrySamePhase("shoe-shop-entry-dialog-opened"),
                     "shoe-shop entry saw dialog; retry through watcher/prepared flow");
         }
-        if (gameStateUtil.confirmCurrentMapFresh(SHOE_SHOP_MAP_NAME, 0L,
-                "wuhuan-v2:shoe-shop-phase-after-entry-failure")) {
-            return FiveRingStepOutcome.continueTo(
-                    state.next(FiveRingPhase.BUY_SHOES, "shoe-shop-entry-confirmed-after-failure"),
-                    "shoe-shop entry confirmed after input failure");
+        alreadyInside = continueIfAlreadyInsideShoeShop(
+                state,
+                "wuhuan-v2:shoe-shop-phase-after-entry-failure",
+                "shoe-shop-entry-confirmed-after-failure",
+                "shoe-shop entry confirmed after input failure");
+        if (alreadyInside != null) {
+            return alreadyInside;
         }
         return FiveRingStepOutcome.sharedState(
                 state.retrySamePhase("shoe-shop-entry-retry"),
                 "shoe-shop entry click failed; retry later");
+    }
+
+    private FiveRingStepOutcome continueIfAlreadyInsideShoeShop(FiveRingPhaseContext state,
+                                                                String source,
+                                                                String stateReason,
+                                                                String message) {
+        if (!gameStateUtil.confirmCurrentMapFresh(SHOE_SHOP_MAP_NAME, 0L, source)) {
+            return null;
+        }
+        PlayerCharacter me = gameContext.getMe();
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        log.info("[five-ring-v2 shoe-shop] skip shoe-shop-entry exact navigation because current map is {}: windowId={} currentMap={} current=({}, {}) oldTargetMap={} oldTarget=({}, {}) source={}",
+                SHOE_SHOP_MAP_NAME,
+                runtime == null ? null : runtime.getWindowId(),
+                me == null ? null : me.getCurrentMapName(),
+                me == null ? null : me.getX(),
+                me == null ? null : me.getY(),
+                TARGET_MAP_NAME,
+                SHOE_SHOP_ENTRY_X,
+                SHOE_SHOP_ENTRY_Y,
+                source);
+        return FiveRingStepOutcome.continueTo(
+                state.next(FiveRingPhase.BUY_SHOES, stateReason),
+                message);
     }
 
     private boolean handleShoeShopDoorAfterArrival(TaskExecutionContext context,
@@ -1313,7 +1569,17 @@ public class FiveRingTaskV2 implements GameTask {
             }
             if (observed == WindowPathingState.STOPPED_AWAY) {
                 if (runtime != null) {
-                    runtime.clearPathingSignal("five-ring accept NPC navigation consumed stopped-away");
+                    PreparedDialogAction preparedRoute = runtime.freshPreparedRouteActionForPathingTerminal(
+                            snapshot, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS);
+                    if (preparedRoute != null) {
+                        WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+                        long verifiedAgeMs = Math.max(0L, System.currentTimeMillis() - preparedRoute.getLastVerifiedAtMs());
+                        log.info("[five-ring-v2 accept] pathing terminal clear delayed because prepared route dialog is ready: state={} target={} actionIntentId={} activeIntentId={} verifiedAgeMs={}",
+                                observed, preparedRoute.getTargetKeyword(), preparedRoute.getIntentId(),
+                                activeIntent == null ? null : activeIntent.getIntentId(), verifiedAgeMs);
+                    } else {
+                        runtime.clearPathingSignal("five-ring accept NPC navigation consumed stopped-away");
+                    }
                 }
                 log.info("[five-ring-v2 accept] accept NPC navigation stopped away; retry navigation: current={}({}, {}) ageMs={}",
                         snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(), ageMs);
@@ -1446,7 +1712,17 @@ public class FiveRingTaskV2 implements GameTask {
                         "pathing arrived by watcher");
             }
             if (observed == WindowPathingState.STOPPED_AWAY) {
-                runtime.clearPathingSignal("five-ring consumed watcher stopped-away");
+                PreparedDialogAction preparedRoute = runtime.freshPreparedRouteActionForPathingTerminal(
+                        snapshot, PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS);
+                if (preparedRoute != null) {
+                    WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+                    long verifiedAgeMs = Math.max(0L, System.currentTimeMillis() - preparedRoute.getLastVerifiedAtMs());
+                    log.info("[five-ring-v2 pathing] pathing terminal clear delayed because prepared route dialog is ready: state={} target={} actionIntentId={} activeIntentId={} verifiedAgeMs={}",
+                            observed, preparedRoute.getTargetKeyword(), preparedRoute.getIntentId(),
+                            activeIntent == null ? null : activeIntent.getIntentId(), verifiedAgeMs);
+                } else {
+                    runtime.clearPathingSignal("five-ring consumed watcher stopped-away");
+                }
                 return FiveRingStepOutcome.continueTo(
                         state.next(FiveRingPhase.HANDLE_DIALOG, "pathing-stopped-away-by-watcher"),
                         "pathing stopped away by watcher");
@@ -1605,7 +1881,7 @@ public class FiveRingTaskV2 implements GameTask {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
         if (isFiveRingFinishedStoryVisible("wuhuan-v2:handle-dialog-finished-story")) {
-            dialogService.handleDialog(DialogHandleRequest.clickStory("wuhuan-v2:finished-story-close"));
+            log.info("[five-ring-v2 finish] completion story verified; finish without closing dialog");
             return FiveRingStepOutcome.finished(state, "five-ring finished story visible after battle");
         }
 
@@ -1767,7 +2043,7 @@ public class FiveRingTaskV2 implements GameTask {
         }
 
         if (isFiveRingFinishedStoryVisible("wuhuan-v2:tracker-miss-finished-story")) {
-            dialogService.handleDialog(DialogHandleRequest.clickStory("wuhuan-v2:finished-story-close"));
+            log.info("[five-ring-v2 finish] completion story verified after tracker miss; finish without closing dialog");
             return FiveRingStepOutcome.finished(state, "five-ring finished story visible after tracker miss");
         }
         return null;
@@ -1795,7 +2071,8 @@ public class FiveRingTaskV2 implements GameTask {
             boolean finished = !dailyLimit
                     && isFiveRingFinishedStoryVisible("wuhuan-v2:current-screen-accept-story");
             if (dailyLimit || finished) {
-                dialogService.handleDialog(DialogHandleRequest.clickStory("wuhuan-v2:current-screen-accept-story-close"));
+                log.info("[five-ring-v2 finish] terminal story verified while accepting; finish without closing dialog dailyLimit={} finished={}",
+                        dailyLimit, finished);
                 return FiveRingStepOutcome.finished(
                         state,
                         dailyLimit
@@ -2023,7 +2300,7 @@ public class FiveRingTaskV2 implements GameTask {
         if (!clicked) {
             return false;
         }
-        runtime.clearPreparedDialogAction("wuhuan tracker panel action consumed");
+        runtime.clearPreparedDialogAction("wuhuan tracker panel action handled");
         String intentSource = trackerPathingIntentSource(source, true);
         gameStateUtil.recordMovementIntent(intentSource);
         registerTrackerPathingIntent(intentSource);
@@ -2093,6 +2370,10 @@ public class FiveRingTaskV2 implements GameTask {
     }
 
     private long handoffDelayMs(FiveRingStepOutcome outcome) {
+        if ("prepared action priority yield".equals(outcome.message())
+                || "pathing terminal priority yield".equals(outcome.message())) {
+            return READY_EVENT_PRIORITY_YIELD_DELAY_MS;
+        }
         /*
          * Some pathing handoffs deliberately stay in their current phase, for example accept-NPC
          * navigation keeps ACCEPT_TASK while the watcher proves arrival. Treat the transaction result,

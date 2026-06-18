@@ -46,6 +46,12 @@ Important behavior constraints:
    - If no testcase exists for the scenario being fixed, save the raw screenshot first, then add/reuse a small replay/debug tool rather than testing only against the live game window.
    - After the change, record the testcase input, output image path, and command/tool used in `docs/ACTIVE_WORK.md`.
 
+7. Investigation-first rule for user questions.
+   - When the user asks why something happened, asks whether a behavior is correct, asks where/how to change something, or asks for a discussion/plan, do not immediately edit code.
+   - First inspect the relevant logs, screenshots, call path, state transitions, and existing implementation. Then explain the likely root cause and a concrete modification plan.
+   - Only start code changes after the user clearly approves the proposed plan, for example by saying "可以", "按这个改", "继续做", or an equivalent explicit approval.
+   - This rule does not block tiny documentation-only updates requested directly by the user, but it does apply to behavior, navigation, OCR/template matching, runner/watcher, task flow, and input changes.
+
 ## Code documentation rule
 
 - Temporary lightweight policy: keep comments useful, but do not turn every small code change into a documentation pass.

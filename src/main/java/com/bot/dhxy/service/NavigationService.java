@@ -3,17 +3,15 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
-import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.MapCoordinate;
-import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
-import com.bot.dhxy.model.dialog.DialogPreparationRequest;
 import com.bot.dhxy.model.dialog.DialogPreparationPhase;
 import com.bot.dhxy.model.dialog.DialogPreparationStatus;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
@@ -30,7 +28,6 @@ import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
@@ -40,7 +37,11 @@ import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
 import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.model.WindowDialogSnapshot;
+import com.bot.dhxy.window.model.WindowReadyEvent;
+import com.bot.dhxy.window.model.WindowReadyEventType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowReadyEventBus;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +60,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -105,8 +107,8 @@ public class NavigationService {
     private static final int MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS = 3;
     private static final int MAP_RESULT_SCROLL_DOWN_UNITS = 6;
     private static final long MAP_RESULT_SCROLL_INTERVAL_MS = 80L;
-    private static final long MAP_RESULT_SCROLL_SETTLE_MS = 300L;
-    private static final long WORLD_MAP_SEARCH_TYPE_SETTLE_MS = 500L;
+    private static final long MAP_RESULT_SCROLL_SETTLE_MS = 200L;
+    private static final long WORLD_MAP_SEARCH_TYPE_SETTLE_MS = 200L;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_X = 120;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MAX_X = 900;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_Y = 130;
@@ -115,14 +117,14 @@ public class NavigationService {
     private static final DateTimeFormatter FAILURE_CASE_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
     private static final long RECENT_PATHING_SNAPSHOT_MAX_AGE_MS = 1500L;
-    private static final long ROUTE_DIALOG_PREPARE_REQUEST_TTL_MS = 120_000L;
-    private static final long ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS = 10_000L;
-    private static final long ROUTE_DIALOG_PREPARED_WAIT_MS = 200L;
-    private static final long ROUTE_DIALOG_PREPARED_WAIT_POLL_MS = 50L;
+    private static final long ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS = 10_000L;
     private static final long ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS = 3_000L;
     private static final long ROUTE_DIALOG_PREPARING_YIELD_MAX_MS = 30_000L;
-    private static final long ROUTE_DIALOG_FAILED_BACKGROUND_RETRY_MS = 3_000L;
     private static final long ROUTE_DIALOG_VISIBLE_RESCUE_SNAPSHOT_MAX_AGE_MS = 120_000L;
+    private static final long ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS = 10_000L;
+    private static final long ROUTE_DIALOG_ATTENTION_GATE_MAX_AGE_MS = 10_000L;
+    private static final long ROUTE_DIALOG_ACTIVE_INTENT_GATE_MAX_AGE_MS = 60_000L;
+    private static final long ROUTE_DIALOG_UNKNOWN_INTENT_GATE_MAX_AGE_MS = 10_000L;
     private static final long MINI_MAP_OPEN_SETTLE_MS = 500L;
     private static final long MINI_MAP_CLICK_SETTLE_MS = 250L;
     private static final long ROUTE_DIALOG_SETTLE_MS = 500L;
@@ -171,7 +173,7 @@ public class NavigationService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
-    private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final WindowReadyEventBus windowReadyEventBus;
 
     private final Map<String, NavigationRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
@@ -255,6 +257,7 @@ public class NavigationService {
         long latencyStart = LatencyMetrics.start();
         NavigationResult result = NavigationResult.mapNotReached("not started");
         boolean pathingIntentAlreadyActive = false;
+        boolean pathingIntentOwnedByNestedRoute = false;
         try {
             PlayerCharacter me = context.getMe();
             log.info("navigate to map: {} current={}", targetMapName, me.getCurrentMapName());
@@ -262,20 +265,22 @@ public class NavigationService {
             TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
             WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
             if (runtime != null) {
-                PreparedDialogAction action = runtime.getPreparedDialogAction();
-                long now = System.currentTimeMillis();
                 /*
                  * A ready route-transfer dialog is the highest-priority leader action. It means the
                  * watcher has already proven that the transfer option is visible and click-ready; if
                  * we let the stale-cache/pathing guard run first, it can return PATHING_ACTIVE and
                  * leave the transfer dialog sitting open for another turn.
                  */
-                if (isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now)) {
-                    log.info("consume prepared route dialog before pathing guard: target={} source={} click=({}, {}) verifiedAgeMs={}",
-                            targetMapName, source, action.getAbsoluteX(), action.getAbsoluteY(),
-                            Math.max(0L, now - action.getLastVerifiedAtMs()));
-                    RouteDialogClickResult routeDialog = clickRouteDialogOption(
-                            "navigateToMap:prepared-route-dialog-priority", targetMapName, false, true);
+                RouteDialogClickResult routeDialog = consumePreparedRouteDialogAction(
+                        runtime,
+                        targetMapName,
+                        source,
+                        "navigateToMap:prepared-route-dialog-priority",
+                        null,
+                        null,
+                        null,
+                        ":priority-prepared");
+                if (routeDialog != null) {
                     if (routeDialog.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
                         result = NavigationResult.pathingStarted("route dialog clicked before pathing guard; observer will confirm pathing");
                         return result;
@@ -303,38 +308,16 @@ public class NavigationService {
                         && runtime.getActivePathingIntent()
                         .map(intent -> gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName))
                         .orElse(false);
-                boolean activePreparation = status != null
-                        && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)
-                        && (status.getPhase() == DialogPreparationPhase.REQUESTED
-                        || status.getPhase() == DialogPreparationPhase.PREPARING);
                 if (runtime != null && !currentAlreadyTarget && sameTargetIntent) {
-                    /*
-                     * A pathing snapshot can still be ACTIVE while the game has already opened the
-                     * intermediate route option. Register the visible option for the window watcher
-                     * instead of returning plain PATHING_STARTED and letting the leader miss it.
-                     */
-                    DialogType visibleType = dialogService.detectDialogTypeNoFocus(
-                            "navigateToMap:pathing-active-dialog-rescue:" + targetMapName,
-                            false,
-                            0);
-                    if (visibleType == DialogType.OPTION) {
-                        boolean requestUpdated = false;
-                        if (!activePreparation) {
-                            requestRouteDialogPreparationAfterMapRouteClick(
-                                    request, targetMapName, "navigateToMap:pathing-active-dialog-rescue");
-                            requestUpdated = true;
-                        }
-                        log.info("navigate to map pathing-active dialog rescue: source={} target={} current={} snapshotState={} visibleOption=true existingPrepPhase={} preparedTarget={} actionUsable={} requestUpdated={}",
-                                source, targetMapName, me.getCurrentMapName(), snapshotMapCheck,
-                                status == null ? null : status.getPhase(),
-                                action == null ? null : action.getTargetKeyword(),
-                                isPreparedRouteDialogActionUsable(runtime, action, targetMapName, System.currentTimeMillis()),
-                                requestUpdated);
-                        result = NavigationResult.dialogPreparing("pathing active but route option is visible; watcher will prepare route dialog");
+                    if (shouldYieldForRouteDialogBeforeWorldMap(
+                            runtime, targetMapName, source + ":pathing-active-gate")) {
+                        result = isFreshSameTargetRoutePending(runtime, targetMapName, System.currentTimeMillis(), true)
+                                ? NavigationResult.pathingStarted("same target route already submitted; watcher will confirm pathing")
+                                : NavigationResult.dialogPreparing("pathing active but route option is visible; watcher will prepare route dialog");
                         return result;
                     }
-                    log.info("navigate to map pathing-active dialog rescue skipped: source={} target={} current={} visibleType={} existingPrepPhase={} preparedTarget={} sameTargetIntent={}",
-                            source, targetMapName, me.getCurrentMapName(), visibleType,
+                    log.info("navigate to map pathing-active route gate skipped: source={} target={} current={} existingPrepPhase={} preparedTarget={} sameTargetIntent={}",
+                            source, targetMapName, me.getCurrentMapName(),
                             status == null ? null : status.getPhase(),
                             action == null ? null : action.getTargetKeyword(),
                             sameTargetIntent);
@@ -381,6 +364,7 @@ public class NavigationService {
              * NPC chain instead of falling through to a generic route search for the target map.
              */
             if (MAP_LING_SHOU_VILLAGE.equals(targetMapName)) {
+                pathingIntentOwnedByNestedRoute = true;
                 result = navigateToLingShouVillageViaZhangWen(request);
                 return result;
             }
@@ -408,39 +392,10 @@ public class NavigationService {
                 }
             }
             logRouteDialogPreparationSnapshot(runtime, targetMapName, source);
-            if (hasMatchingRouteDialogPreparation(runtime, targetMapName)) {
-                /*
-                 * A previous world-map route click may have opened a transfer dialog while this
-                 * window yielded its turn. Consume that prepared/current dialog before opening the
-                 * world map again, otherwise route handoff turns into a duplicate search loop.
-                 */
-                log.info("consume prepared route dialog before world-map search: target={} source={}",
-                        targetMapName, source);
-                RouteDialogClickResult routeDialog = clickRouteDialogOption(
-                        "navigateToMap:prepared-route-dialog", targetMapName, false, true);
-                if (routeDialog.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
-                    result = NavigationResult.pathingStarted("route dialog clicked; observer will confirm pathing");
-                    return result;
-                }
-                if (routeDialog.result() == DialogResultStatus.NO_DIALOG
-                        && targetMapName.equals(routeDialog.fromMap())) {
-                    result = NavigationResult.arrived("route dialog skipped because target map is already current");
-                    return result;
-                }
-                if (routeDialog.result() == DialogResultStatus.DIALOG_PREPARING) {
-                    result = NavigationResult.dialogPreparing("route dialog preparation in progress");
-                    return result;
-                }
-                /*
-                 * A matching route-dialog preparation means the previous route click may already
-                 * have opened a transfer dialog. A foreground NO_DIALOG read is not proof that the
-                 * dialog is gone; HWND capture/OCR can miss one pass under multi-window load. Yield
-                 * once instead of immediately opening the world map again and closing/covering the
-                 * dialog the watcher is supposed to consume.
-                 */
-                log.info("prepared route dialog not usable yet; yield before world-map retry: target={} result={}",
-                        targetMapName, routeDialog.result());
-                result = NavigationResult.dialogPreparing("route dialog not usable yet; yield before world-map retry");
+            NavigationResult gateResult = routeDialogGateBeforeWorldMap(
+                    targetMapName, source, "navigateToMap:before-world-map");
+            if (gateResult != null) {
+                result = gateResult;
                 return result;
             }
 
@@ -449,7 +404,20 @@ public class NavigationService {
              * result, and click the last route link. The called method owns the exclusive input section.
              */
             stageStartedAt = System.currentTimeMillis();
-            if (!submitWorldMapSearchAndClickDestination(targetMapName)) {
+            NavigationResult submitResult = submitWorldMapSearchAndClickDestination(request, targetMapName, source);
+            if (submitResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
+                result = submitResult;
+                return result;
+            }
+            if (submitResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+                log.info("[productionNavigate-latency] stage=world-map-submit elapsedMs={} totalMs={} target={} source={} result=clicked",
+                        Math.max(0L, System.currentTimeMillis() - stageStartedAt),
+                        LatencyMetrics.elapsedMs(latencyStart),
+                        targetMapName, source);
+                result = submitResult;
+                return result;
+            }
+            if (!submitResult.success()) {
                 log.info("[productionNavigate-latency] stage=world-map-submit elapsedMs={} totalMs={} target={} source={} result=failed",
                         Math.max(0L, System.currentTimeMillis() - stageStartedAt),
                         LatencyMetrics.elapsedMs(latencyStart),
@@ -463,26 +431,16 @@ public class NavigationService {
                  */
                 result = NavigationResult.mapNotReached("map route submit failed");
                 return result;
-            } else {
-                log.info("[productionNavigate-latency] stage=world-map-submit elapsedMs={} totalMs={} target={} source={} result=clicked",
-                        Math.max(0L, System.currentTimeMillis() - stageStartedAt),
-                        LatencyMetrics.elapsedMs(latencyStart),
-                        targetMapName, source);
-                requestRouteDialogPreparationAfterMapRouteClick(
-                        request, targetMapName, "navigateToMap:map-route-clicked");
-                /*
-                 * The route link was clicked successfully. Do not run the old blocking arrival loop:
-                 * world-map route startup can lag behind the click while the map closes or an
-                 * intermediate transfer begins. Register the route intent and let the window pathing
-                 * observer decide whether the window actually moves, arrives, or stalls and needs a retry.
-                 */
-                result = NavigationResult.pathingStarted("map route submitted; observer will confirm pathing");
-                return result;
             }
+            result = submitResult;
+            return result;
         } finally {
             if (result.getStatus() == NavigationResultStatus.PATHING_STARTED) {
                 if (pathingIntentAlreadyActive) {
                     log.info("skip duplicate pathing intent registration: source={} target={} reason=watcher-already-active",
+                            source, targetMapName);
+                } else if (pathingIntentOwnedByNestedRoute) {
+                    log.info("skip outer pathing intent registration: source={} target={} reason=nested-route-owns-current-leg",
                             source, targetMapName);
                 } else {
                     registerWindowPathingIntent(request, "navigateToMap", result.getMessage(), false);
@@ -735,6 +693,7 @@ public class NavigationService {
         TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
 
         NavigationResult zhangWenApproachResult = navigateInCurrentMap(request.toBuilder()
+                .targetMapName(MAP_CHANG_AN)
                 .targetX(ZHANG_WEN_APPROACH_X)
                 .targetY(ZHANG_WEN_APPROACH_Y)
                 .keepTurnOnCurrentMapPathing(true)
@@ -790,6 +749,13 @@ public class NavigationService {
     // ========================
 
     private boolean retryWorldMapDestinationClick(String targetMapName) {
+        NavigationResult gateResult = routeDialogGateBeforeWorldMap(
+                targetMapName, "retryWorldMapDestinationClick", "retryWorldMapDestinationClick:before-open");
+        if (gateResult != null) {
+            log.info("retry world-map route blocked by route dialog gate: target={} status={} message={}",
+                    targetMapName, gateResult.getStatus(), gateResult.getMessage());
+            return gateResult.getStatus() == NavigationResultStatus.PATHING_STARTED;
+        }
         NavigationRuntimeState state = state();
         if (state.lastAbsoluteLogicalX != DEFAULT_LOGICAL_COORDINATE
                 && state.lastAbsoluteLogicalY != DEFAULT_LOGICAL_COORDINATE) {
@@ -815,17 +781,28 @@ public class NavigationService {
                 }
             });
         }
-        return targetMapName != null && !targetMapName.isBlank()
-                && submitWorldMapSearchAndClickDestination(targetMapName);
+        if (targetMapName == null || targetMapName.isBlank()) {
+            return false;
+        }
+        NavigationResult submitResult = submitWorldMapSearchAndClickDestination(
+                null, targetMapName, "retryWorldMapDestinationClick");
+        return submitResult.getStatus() == NavigationResultStatus.PATHING_STARTED
+                || submitResult.success();
     }
 
     /**
-     * Click a route-transfer option with learned memory first, then OCR fallback.
+     * Consume a route-transfer option that the window watcher has already prepared.
+     *
+     * <p>Navigation no longer OCRs or template-matches route options. The only clickable source here
+     * is a `ROUTE_TRANSFER` {@link PreparedDialogAction} written by the runner. If the runner has
+     * fresh visible/preparing/prepared state but has not produced a click action yet, this method
+     * yields instead of reopening the world map. If no fresh runtime state exists, it reports
+     * `NO_DIALOG` and lets the caller decide whether to retry navigation.</p>
      *
      * @param source short diagnostic source.
      * @param targetMapName destination map expected after this transfer dialog.
-     * @param allowFallbackOptionClick whether the OCR path may click the last green option when the
-     *                                 target text is not matched. Fallback clicks are never learned.
+     * @param allowFallbackOptionClick legacy parameter kept to avoid broad caller churn; ignored.
+     * @param allowBackgroundPreparation legacy parameter kept to avoid broad caller churn; ignored.
      * @return route dialog click result with enough context to update transfer memory after arrival
      * confirmation.
      */
@@ -882,281 +859,61 @@ public class NavigationService {
                     null,
                     null);
         }
-        //拿取当前窗口运行环境 runtime。去记忆库里查找以前是不是走过从 fromMap 到 targetMapName 的路。如果
-        // 允许后台准备并且目标不为空，进入超大的判断块。记录当前时间戳 now，并把之前准备好的动作、找到的记忆坐标、
-        // 后台准备状态全部提取出来赋值给变量。立一个 Flag：默认需要向后台发布准备请求
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-        var remembered = dialogChoiceMemoryService.findUsableRoute(fromMap, targetMapName); //怎样的记忆
-        if (runtime != null && targetMapName != null && !targetMapName.isBlank()
-                && allowBackgroundPreparation) {
+        if (runtime != null && targetMapName != null && !targetMapName.isBlank()) {
             long now = System.currentTimeMillis();
-            PreparedDialogAction preparedBeforeRequest = runtime.getPreparedDialogAction();
-            DialogChoiceMemoryService.DialogChoiceEntry rememberedEntry = remembered.orElse(null);
-            DialogPreparationStatus existingPreparationStatus = runtime.getDialogPreparationStatus();
-            boolean shouldRequestBackgroundPreparation = true; //是否重新发单，true表示前台亲自跑, false表示keep runner handling
-            //如果后台已经有一个任务，且任务目标地图和我要去的一致。提取它的阶段 phase。
-            // 如果这个任务正在请求中（REQUESTED）或正在识别中（PREPARING），就把上面的 Flag 改为 false
-            // （不需要发新请求了，复用现在的），并打日志。如果这个任务识别失败了（FAILED），算出失败了多久。
-            // 如果刚失败没多久（小于重试阈值），依然把 Flag 改为 false，保留它让观察者去重试，并打日志。
-            if (existingPreparationStatus != null
-                    && existingPreparationStatus.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)) {
-                DialogPreparationPhase phase = existingPreparationStatus.getPhase();
-                if (phase == DialogPreparationPhase.REQUESTED || phase == DialogPreparationPhase.PREPARING) {
-                    shouldRequestBackgroundPreparation = false;
-                    log.info("route dialog preparation reuses active request: source={} target={} phase={} requestAgeMs={}",
-                            source, targetMapName, phase,
-                            existingPreparationStatus.getRequestCreatedAtMs() <= 0
-                                    ? null
-                                    : Math.max(0L, now - existingPreparationStatus.getRequestCreatedAtMs()));
-                } else if (phase == DialogPreparationPhase.FAILED) {
-                    long failedAgeMs = existingPreparationStatus.getCompletedAtMs() <= 0
-                            ? Long.MAX_VALUE
-                            : Math.max(0L, now - existingPreparationStatus.getCompletedAtMs());
-                    if (failedAgeMs <= ROUTE_DIALOG_FAILED_BACKGROUND_RETRY_MS) {
-                        shouldRequestBackgroundPreparation = false;
-                        log.info("route dialog preparation recently failed; keep request for watcher retry: source={} target={} failedAgeMs={} reason={}",
-                                source, targetMapName, failedAgeMs, existingPreparationStatus.getFailureReason());
-                    }
-                }
+            RouteDialogClickResult consumedResult = consumePreparedRouteDialogAction(
+                    runtime,
+                    targetMapName,
+                    source,
+                    "clickRouteDialogOption:prepared-from-runner",
+                    fromMap,
+                    fromX,
+                    fromY,
+                    ":prepared");
+            if (consumedResult != null) {
+                return consumedResult;
             }
-            if (shouldRequestBackgroundPreparation) {
-                runtime.updateDialogPreparationRequest(DialogPreparationRequest.builder()
-                        .operation(DialogOperation.ROUTE_TRANSFER)
-                        .targetKeyword(targetMapName)
-                        .source(source)
-                        .fromMap(fromMap)
-                        .rememberedRelativeX(rememberedEntry == null ? null : rememberedEntry.relativeX)
-                        .rememberedRelativeY(rememberedEntry == null ? null : rememberedEntry.relativeY)
-                        .rememberedOptionText(rememberedEntry == null ? null : rememberedEntry.optionText)
-                        .createdAtMs(now)
-                        .expiresAtMs(now + ROUTE_DIALOG_PREPARE_REQUEST_TTL_MS)
-                        .build());
-                log.info("route dialog preparation requested: source={} from={} coord=({}, {}) target={} memory={} memoryRel=({}, {}) preparedBefore={} preparedTarget={} preparedVerifiedAgeMs={}",
-                        source, fromMap, fromX, fromY, targetMapName,
-                        rememberedEntry != null,
-                        rememberedEntry == null ? null : rememberedEntry.relativeX,
-                        rememberedEntry == null ? null : rememberedEntry.relativeY,
-                        preparedBeforeRequest != null,
-                        preparedBeforeRequest == null ? null : preparedBeforeRequest.getTargetKeyword(),
-                        preparedBeforeRequest == null || preparedBeforeRequest.getLastVerifiedAtMs() <= 0
-                                ? null
-                                : Math.max(0L, now - preparedBeforeRequest.getLastVerifiedAtMs()));
-            }
-            //200ms was given to the background task to prepare the dialog. If it's validated, it will do the mouse click.
-            PreparedDialogAction preparedAction = waitForPreparedRouteDialogAction(
-                    runtime, targetMapName, now, source);
-            long preparedCheckAt = System.currentTimeMillis();
-            if (preparedAction != null
-                    && preparedAction.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)
-                    && matchesCurrentPreparedDialogBinding(runtime, preparedAction)
-                    && preparedAction.verifiedWithin(preparedCheckAt, ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS)) {
-                log.info("route dialog probe uses prepared action: source={} target={} matched={} click=({}, {}) verifiedAgeMs={}",
-                        source, targetMapName, preparedAction.getMatchedText(),
-                        preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY(),
-                        Math.max(0L, preparedCheckAt - preparedAction.getLastVerifiedAtMs()));
-                boolean clicked = inputSequences.moveAndClickLeft("navigation:preparedRouteDialog:" + targetMapName,
-                        preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY(), 80, 150);
-                //clear prepared action after click no matter success or fail
-                if (!clicked) {
-                    log.warn("route dialog prepared action click failed: source={} target={} click=({}, {})",
-                            source, targetMapName, preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY());
-                    runtime.clearPreparedDialogAction("prepared route dialog click failed");
-                    return new RouteDialogClickResult(
-                            DialogResultStatus.FAILED,
-                            false,
-                            fromMap,
-                            fromX,
-                            fromY,
-                            targetMapName,
-                            preparedAction.getRelativeX(),
-                            preparedAction.getRelativeY(),
-                            preparedAction.getMatchedText());
-                }
-                runtime.clearDialogPreparationRequest("prepared route dialog clicked");
-                runtime.clearPreparedDialogAction("prepared route dialog consumed");
-                RouteDialogClickResult clickedResult = new RouteDialogClickResult(
-                        DialogResultStatus.OPTION_KEYWORD_CLICKED,
-                        false,
-                        fromMap,
-                        fromX,
-                        fromY,
-                        targetMapName,
-                        preparedAction.getRelativeX(),
-                        preparedAction.getRelativeY(),
-                        preparedAction.getMatchedText());
-                rememberPendingRouteDialogClick(clickedResult, source + ":prepared");
-                return clickedResult;
-            }
-            //如果 200ms 后啥也没拿到，打印“动作不可用”日志。如果拿到了但是校验不合格（比如过期了或者地图不对），打印“动作不能用”并把各种细节拼死打印出来查 Bug。
+            PreparedDialogAction preparedAction = runtime.getPreparedDialogAction();
             if (preparedAction == null) {
-                log.info("route dialog prepared action unavailable; continue normal path: source={} target={}",
-                        source, targetMapName);
+                log.info("route dialog prepared action unavailable; navigation will not run OCR fallback: source={} target={} allowFallbackOptionClick={} allowBackgroundPreparation={}",
+                        source, targetMapName, allowFallbackOptionClick, allowBackgroundPreparation);
             } else {
-                log.info("route dialog prepared action not usable; continue normal path: source={} target={} preparedTarget={} sameBinding={} verifiedAgeMs={} maxAgeMs={}",
+                log.info("route dialog prepared action not usable; navigation will not run OCR fallback: source={} target={} preparedTarget={} sameBinding={} verifiedAgeMs={} maxAgeMs={}",
                         source, targetMapName, preparedAction.getTargetKeyword(),
                         matchesCurrentPreparedDialogBinding(runtime, preparedAction),
                         preparedAction.getLastVerifiedAtMs() <= 0
                                 ? null
                                 : Math.max(0L, now - preparedAction.getLastVerifiedAtMs()),
-                        ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS);
-            }
-            //再次拉取状态 preparationStatus。如果状态是“正在进行中”，
-            // 算出进行了多久 preparingAgeMs。如果时间实在太长（超过了挂起的最大容忍时间），
-            // 说明后台卡死了，打警告日志强行清理任务。如果没超时，打日志说“后台还在算，我先撤了”，并返回 DIALOG_PREPARING 给外层，让这个窗口挂起去干别的事
-            DialogPreparationStatus preparationStatus = runtime.getDialogPreparationStatus();
-            if (isMatchingRouteDialogPreparing(preparationStatus, targetMapName)) {
-                long preparingAgeMs = preparationStatus.getPreparingStartedAtMs() <= 0
-                        ? 0L
-                        : Math.max(0L, System.currentTimeMillis() - preparationStatus.getPreparingStartedAtMs());
-                if (preparingAgeMs > ROUTE_DIALOG_PREPARING_YIELD_MAX_MS) {
-                    /*
-                     * Background dialog preparation owns the route-transfer window, but a stuck OCR
-                     * probe must not keep the task yielding forever. Clear the stale request and let
-                     * the foreground path handle the currently visible dialog once.
-                     */
-                    log.warn("route dialog preparation exceeded foreground handoff limit; clear stale request: source={} target={} preparingAgeMs={} maxYieldMs={}",
-                            source, targetMapName, preparingAgeMs, ROUTE_DIALOG_PREPARING_YIELD_MAX_MS);
-                    runtime.clearDialogPreparationRequest("route dialog preparation exceeded foreground handoff limit");
-                } else {
-                    log.info("route dialog preparation still running; yield before foreground OCR: source={} target={} preparingAgeMs={}",
-                            source, targetMapName,
-                            preparingAgeMs);
-                    return new RouteDialogClickResult(
-                            DialogResultStatus.DIALOG_PREPARING,
-                            false,
-                            fromMap,
-                            fromX,
-                            fromY,
-                            targetMapName,
-                            null,
-                            null,
-                            null);
-                }
-            }
-            //如果状态是“已请求还没开工（REQUESTED）”且目标匹配。算出挂在那里多久了。
-            // 如果时间很短，打日志说“在等老大哥开工，我先挂起”，返回 DIALOG_PREPARING。如果请求挂太久没人理，打警告日志，强行清理掉这个旧请求。
-            if (preparationStatus != null
-                    && preparationStatus.getPhase() == DialogPreparationPhase.REQUESTED
-                    && preparationStatus.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)) {
-                long requestAgeMs = preparationStatus.getRequestCreatedAtMs() <= 0
-                        ? 0L
-                        : Math.max(0L, System.currentTimeMillis() - preparationStatus.getRequestCreatedAtMs());
-                /*
-                 * The watcher only sees dialog-preparation requests on its next polling tick. If
-                 * the task immediately takes the foreground path, multi-window runs lose the idle
-                 * time that should have been used for background OCR. Yield briefly once or twice
-                 * while the request is still young, then fall back to foreground handling if the
-                 * watcher never starts.
-                 */
-                if (requestAgeMs <= ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS) {
-                    log.info("route dialog preparation requested; yield for watcher start: source={} target={} requestAgeMs={} maxYieldMs={}",
-                            source, targetMapName, requestAgeMs, ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS);
-                    return new RouteDialogClickResult(
-                            DialogResultStatus.DIALOG_PREPARING,
-                            false,
-                            fromMap,
-                            fromX,
-                            fromY,
-                            targetMapName,
-                            null,
-                            null,
-                            null);
-                }
-                log.warn("route dialog preparation request did not start in time; clear stale request before foreground handling: source={} target={} requestAgeMs={} maxYieldMs={}",
-                        source, targetMapName, requestAgeMs, ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS);
-                runtime.clearDialogPreparationRequest("route dialog request did not start before foreground fallback");
+                        ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS);
             }
         }
 
-        /*
-         * Transfer memory is scoped to an active navigation transaction. It is safe to try before OCR
-         * because the caller is already expecting a route option dialog for targetMapName.
-         */
-        if (remembered.isPresent()) {
-            if (runtime != null) {
-                PreparedDialogAction preparedAction = runtime.getPreparedDialogAction();
-                long now = System.currentTimeMillis();
-                if (isPreparedRouteDialogActionUsable(runtime, preparedAction, targetMapName, now)) {
-                    log.info("route dialog memory path uses late prepared action: source={} target={} matched={} click=({}, {}) verifiedAgeMs={}",
-                            source, targetMapName, preparedAction.getMatchedText(),
-                            preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY(),
-                            Math.max(0L, now - preparedAction.getLastVerifiedAtMs()));
-                    boolean clicked = inputSequences.moveAndClickLeft("navigation:preparedRouteDialog:late:" + targetMapName,
-                            preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY(), 80, 150);
-                    if (!clicked) {
-                        log.warn("route dialog late prepared action click failed: source={} target={} click=({}, {})",
-                                source, targetMapName, preparedAction.getAbsoluteX(), preparedAction.getAbsoluteY());
-                        runtime.clearPreparedDialogAction("late prepared route dialog click failed");
-                        return new RouteDialogClickResult(
-                                DialogResultStatus.FAILED,
-                                false,
-                                fromMap,
-                                fromX,
-                                fromY,
-                                targetMapName,
-                                preparedAction.getRelativeX(),
-                                preparedAction.getRelativeY(),
-                                preparedAction.getMatchedText());
-                    }
-                    runtime.clearDialogPreparationRequest("late prepared route dialog clicked");
-                    runtime.clearPreparedDialogAction("late prepared route dialog consumed");
-                    RouteDialogClickResult clickedResult = new RouteDialogClickResult(
-                            DialogResultStatus.OPTION_KEYWORD_CLICKED,
-                            false,
-                            fromMap,
-                            fromX,
-                            fromY,
-                            targetMapName,
-                            preparedAction.getRelativeX(),
-                            preparedAction.getRelativeY(),
-                            preparedAction.getMatchedText());
-                    rememberPendingRouteDialogClick(clickedResult, source + ":late-prepared");
-                    return clickedResult;
-                }
-            }
-            DialogChoiceMemoryService.DialogChoiceEntry entry = remembered.get();
-            DialogResult rememberedResult = dialogService.handleDialog(DialogHandleRequest.handleRememberedRouteOption(
-                    source + ":memory", entry.relativeX, entry.relativeY, targetMapName));
-            if (rememberedResult.getStatus() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
-                log.info("[transfer-memory] clicked remembered route option: source={} from={} target={} rel=({}, {})",
-                        source, fromMap, targetMapName, entry.relativeX, entry.relativeY);
-                if (runtime != null) {
-                    runtime.clearDialogPreparationRequest("remembered route dialog clicked");
-                    runtime.clearPreparedDialogAction("remembered route dialog consumed");
-                }
-                RouteDialogClickResult clickedResult = new RouteDialogClickResult(
-                        rememberedResult.getStatus(),
-                        true,
-                        fromMap,
-                        fromX,
-                        fromY,
-                        targetMapName,
-                        entry.relativeX,
-                        entry.relativeY,
-                        entry.optionText);
-                rememberPendingRouteDialogClick(clickedResult, source + ":memory");
-                return clickedResult;
-            }
+        if (shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source + ":route-dialog-runner-gate")) {
+            return new RouteDialogClickResult(
+                    DialogResultStatus.DIALOG_PREPARING,
+                    false,
+                    fromMap,
+                    fromX,
+                    fromY,
+                    targetMapName,
+                    null,
+                    null,
+                    null);
         }
 
-        DialogResult ocrResult = dialogService.handleDialog(DialogHandleRequest.handleRouteKeywordOption(
-                source, targetMapName, allowFallbackOptionClick));
-        if (runtime != null && (ocrResult.getStatus() == DialogResultStatus.OPTION_KEYWORD_CLICKED
-                || ocrResult.getStatus() == DialogResultStatus.FALLBACK_CLICKED)) {
-            runtime.clearDialogPreparationRequest("route dialog handled by normal path");
-        }
-        RouteDialogClickResult ocrClickResult = new RouteDialogClickResult(
-                ocrResult.getStatus(),
+        log.info("route dialog no runner-prepared action and no fresh route state: source={} from={} coord=({}, {}) target={}",
+                source, fromMap, fromX, fromY, targetMapName);
+        return new RouteDialogClickResult(
+                DialogResultStatus.NO_DIALOG,
                 false,
                 fromMap,
                 fromX,
                 fromY,
                 targetMapName,
-                ocrResult.getRelativeX(),
-                ocrResult.getRelativeY(),
-                ocrResult.getMatchedText());
-        rememberPendingRouteDialogClick(ocrClickResult, source + ":ocr");
-        return ocrClickResult;
+                null,
+                null,
+                null);
     }
 
     private boolean matchesCurrentPreparedDialogBinding(WindowRuntimeContext runtime, PreparedDialogAction action) {
@@ -1170,30 +927,112 @@ public class NavigationService {
         return action.getHwnd() == null || action.getHwnd().equals(currentHwnd);
     }
 
-    private PreparedDialogAction waitForPreparedRouteDialogAction(WindowRuntimeContext runtime,
-                                                                  String targetMapName,
-                                                                  long requestedAtMs,
-                                                                  String source) {
-        long deadline = requestedAtMs + ROUTE_DIALOG_PREPARED_WAIT_MS;
-        PreparedDialogAction action = runtime.getPreparedDialogAction();
-        while (!isPreparedRouteDialogActionUsable(runtime, action, targetMapName, System.currentTimeMillis())
-                && System.currentTimeMillis() < deadline) {
-            long sleepMs = Math.min(ROUTE_DIALOG_PREPARED_WAIT_POLL_MS,
-                    Math.max(1L, deadline - System.currentTimeMillis()));
-            if (!TaskSleep.sleep(sleepMs)) {
-                return action;
-            }
-            action = runtime.getPreparedDialogAction();
+    private RouteDialogClickResult consumePreparedRouteDialogAction(WindowRuntimeContext runtime,
+                                                                    String targetMapName,
+                                                                    String source,
+                                                                    String reason,
+                                                                    String fromMap,
+                                                                    Integer fromX,
+                                                                    Integer fromY,
+                                                                    String memorySourceSuffix) {
+        if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
+            return null;
+        }
+        PreparedDialogAction action = runtime.consumePreparedDialogAction(
+                DialogOperation.ROUTE_TRANSFER, targetMapName, reason, true);
+        if (action == null) {
+            return null;
         }
         long now = System.currentTimeMillis();
-        boolean usable = isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now);
-        log.info("route dialog prepared wait finished: source={} target={} waitedMs={} usable={} preparedTarget={} verifiedAgeMs={}",
-                source, targetMapName, Math.max(0L, now - requestedAtMs), usable,
-                action == null ? null : action.getTargetKeyword(),
-                action == null || action.getLastVerifiedAtMs() <= 0
-                        ? null
-                        : Math.max(0L, now - action.getLastVerifiedAtMs()));
-        return action;
+        if (!matchesCurrentPreparedDialogBinding(runtime, action)
+                || !matchesActivePreparedRouteIntent(runtime, action)
+                || !action.verifiedWithin(now, ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS)) {
+            WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+            WindowDialogSnapshot visibleSnapshot = runtime.getVisibleDialogSnapshot().orElse(null);
+            log.warn("prepared route dialog consumed but invalid; skip click and continue fallback: source={} windowId={} title={} hwnd={} target={} actionIntentId={} activeIntentId={} actionWindow={} currentWindow={} sameBinding={} sameIntent={} visibleType={} visibleSource={} verifiedAgeMs={} maxAgeMs={} click=({}, {})",
+                    source,
+                    runtime.getWindowId(),
+                    runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getTitle(),
+                    runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle(),
+                    targetMapName,
+                    action.getIntentId(),
+                    activeIntent == null ? null : activeIntent.getIntentId(),
+                    action.getWindowId(),
+                    runtime.getWindowId(),
+                    matchesCurrentPreparedDialogBinding(runtime, action),
+                    matchesActivePreparedRouteIntent(runtime, action),
+                    visibleSnapshot == null ? null : visibleSnapshot.getType(),
+                    visibleSnapshot == null ? null : visibleSnapshot.getSource(),
+                    action.getLastVerifiedAtMs() <= 0 ? null : Math.max(0L, now - action.getLastVerifiedAtMs()),
+                    ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS,
+                    action.getAbsoluteX(),
+                    action.getAbsoluteY());
+            return null;
+        }
+        WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+        WindowDialogSnapshot visibleSnapshot = runtime.getVisibleDialogSnapshot().orElse(null);
+        Long visibleAgeMs = visibleSnapshot == null ? null : Math.max(0L, now - visibleSnapshot.getDetectedAtMs());
+        boolean clearedIntentRecovery = action.getIntentId() != null && activeIntent == null;
+        if (clearedIntentRecovery) {
+            log.info("prepared-route-fresh-with-cleared-intent: source={} windowId={} title={} hwnd={} target={} actionIntentId={} activeIntentId=null preparedAgeMs={} verifiedAgeMs={} click=({}, {}) matched={}",
+                    source,
+                    runtime.getWindowId(),
+                    runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getTitle(),
+                    runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle(),
+                    targetMapName,
+                    action.getIntentId(),
+                    action.getPreparedAtMs() <= 0 ? null : Math.max(0L, now - action.getPreparedAtMs()),
+                    action.getLastVerifiedAtMs() <= 0 ? null : Math.max(0L, now - action.getLastVerifiedAtMs()),
+                    action.getAbsoluteX(),
+                    action.getAbsoluteY(),
+                    action.getMatchedText());
+        }
+        log.info("route dialog uses consumed prepared action: source={} windowId={} title={} hwnd={} target={} actionIntentId={} activeIntentId={} actionSource={} visibleType={} visibleSource={} visibleAgeMs={} matched={} click=({}, {}) verifiedAgeMs={}",
+                source,
+                runtime.getWindowId(),
+                runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getTitle(),
+                runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle(),
+                targetMapName,
+                action.getIntentId(),
+                activeIntent == null ? null : activeIntent.getIntentId(),
+                action.getSource(),
+                visibleSnapshot == null ? null : visibleSnapshot.getType(),
+                visibleSnapshot == null ? null : visibleSnapshot.getSource(),
+                visibleAgeMs,
+                action.getMatchedText(),
+                action.getAbsoluteX(),
+                action.getAbsoluteY(),
+                Math.max(0L, now - action.getLastVerifiedAtMs()));
+        boolean clicked = inputSequences.moveAndClickLeft("navigation:preparedRouteDialog:" + targetMapName,
+                action.getAbsoluteX(), action.getAbsoluteY(), 80, 150);
+        if (!clicked) {
+            log.warn("route dialog consumed prepared action click failed: source={} target={} click=({}, {})",
+                    source, targetMapName, action.getAbsoluteX(), action.getAbsoluteY());
+            runtime.clearDialogPreparationRequest("prepared route dialog click failed");
+            return new RouteDialogClickResult(
+                    DialogResultStatus.FAILED,
+                    false,
+                    fromMap,
+                    fromX,
+                    fromY,
+                    targetMapName,
+                    action.getRelativeX(),
+                    action.getRelativeY(),
+                    action.getMatchedText());
+        }
+        runtime.clearDialogPreparationRequest("prepared route dialog clicked");
+        RouteDialogClickResult clickedResult = new RouteDialogClickResult(
+                DialogResultStatus.OPTION_KEYWORD_CLICKED,
+                false,
+                fromMap,
+                fromX,
+                fromY,
+                targetMapName,
+                action.getRelativeX(),
+                action.getRelativeY(),
+                action.getMatchedText());
+        rememberPendingRouteDialogClick(clickedResult, source + memorySourceSuffix);
+        return clickedResult;
     }
 
     private boolean isPreparedRouteDialogActionUsable(WindowRuntimeContext runtime,
@@ -1203,36 +1042,281 @@ public class NavigationService {
         return action != null
                 && action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)
                 && matchesCurrentPreparedDialogBinding(runtime, action)
-                && action.verifiedWithin(nowMs, ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS);
+                && matchesActivePreparedRouteIntent(runtime, action)
+                && action.verifiedWithin(nowMs, ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS);
     }
 
-    private boolean hasMatchingRouteDialogPreparation(WindowRuntimeContext runtime, String targetMapName) {
+    private boolean matchesActivePreparedIntent(WindowRuntimeContext runtime, PreparedDialogAction action) {
+        if (runtime == null || action == null || action.getIntentId() == null) {
+            return true;
+        }
+        return runtime.getActivePathingIntent()
+                .map(intent -> Objects.equals(intent.getIntentId(), action.getIntentId()))
+                .orElse(false);
+    }
+
+    private boolean matchesActivePreparedRouteIntent(WindowRuntimeContext runtime, PreparedDialogAction action) {
+        if (runtime == null || action == null || action.getIntentId() == null) {
+            return true;
+        }
+        Optional<WindowPathingIntent> activeIntent = runtime.getActivePathingIntent();
+        if (activeIntent.isPresent()) {
+            return Objects.equals(activeIntent.get().getIntentId(), action.getIntentId());
+        }
+        return action.getOperation() == DialogOperation.ROUTE_TRANSFER;
+    }
+
+    private boolean shouldYieldForRouteDialogBeforeWorldMap(WindowRuntimeContext runtime,
+                                                            String targetMapName,
+                                                            String source) {
         if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
             return false;
         }
         long now = System.currentTimeMillis();
-        PreparedDialogAction action = runtime.getPreparedDialogAction();
-        if (isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now)) {
-            return true;
-        }
+        Optional<WindowDialogSnapshot> visible = runtime.getVisibleDialogSnapshot();
+        WindowDialogSnapshot visibleSnapshot = visible.orElse(null);
+        Long visibleAgeMs = visibleSnapshot == null
+                ? null
+                : Math.max(0L, now - visibleSnapshot.getDetectedAtMs());
+        WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+        boolean sameTargetIntent = activeIntent != null
+                && gameStateUtil.isSameMapName(activeIntent.getTargetMapName(), targetMapName);
+        WindowPathingSnapshot pathingSnapshot = runtime.getPathingSnapshot();
+        WindowPathingState pathingState = pathingSnapshot == null ? null : pathingSnapshot.getState();
+        Long pathingSnapshotAgeMs = pathingSnapshot == null || pathingSnapshot.getUpdatedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - pathingSnapshot.getUpdatedAtMs());
+        boolean freshActiveRoutePending = sameTargetIntent
+                && isFreshRoutePendingForWorldMapGate(pathingSnapshot, activeIntent, now);
+        boolean visibleRouteOption = visibleSnapshot != null
+                && visibleSnapshot.getType() == DialogType.OPTION
+                && visibleAgeMs != null
+                && visibleAgeMs <= ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS
+                && sameTargetIntent;
+        boolean freshVisibleDialog = visibleSnapshot != null
+                && visibleSnapshot.getType() != DialogType.NONE
+                && visibleAgeMs != null
+                && visibleAgeMs <= ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS
+                && sameTargetIntent;
+
         DialogPreparationStatus status = runtime.getDialogPreparationStatus();
-        if (status == null || !status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)) {
+        boolean matchingStatus = status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName);
+        boolean freshRequested = matchingStatus
+                && status.getPhase() == DialogPreparationPhase.REQUESTED
+                && ageWithin(now, status.getRequestCreatedAtMs(), ROUTE_DIALOG_REQUESTED_YIELD_MAX_MS);
+        boolean freshPreparing = matchingStatus
+                && status.getPhase() == DialogPreparationPhase.PREPARING
+                && ageWithin(now, status.getPreparingStartedAtMs(), ROUTE_DIALOG_PREPARING_YIELD_MAX_MS);
+
+        PreparedDialogAction action = runtime.getPreparedDialogAction();
+        boolean preparedUsable = isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now);
+        Optional<WindowReadyEvent> taskAttention = windowReadyEventBus.latest(
+                runtime.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED);
+        WindowReadyEvent taskAttentionEvent = taskAttention.orElse(null);
+        Long taskAttentionAgeMs = taskAttentionEvent == null
+                ? null
+                : Math.max(0L, now - taskAttentionEvent.getCreatedAtMs());
+        boolean freshTaskAttention = taskAttentionEvent != null
+                && taskAttentionAgeMs != null
+                && taskAttentionAgeMs <= ROUTE_DIALOG_ATTENTION_GATE_MAX_AGE_MS
+                && sameTargetIntent;
+        boolean gate = freshVisibleDialog
+                || freshRequested
+                || freshPreparing
+                || preparedUsable
+                || freshTaskAttention
+                || freshActiveRoutePending;
+        Long requestAgeMs = status == null || status.getRequestCreatedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - status.getRequestCreatedAtMs());
+        Long preparingAgeMs = status == null || status.getPreparingStartedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - status.getPreparingStartedAtMs());
+        Long preparedAgeMs = action == null || action.getPreparedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - action.getPreparedAtMs());
+        Long preparedVerifiedAgeMs = action == null || action.getLastVerifiedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - action.getLastVerifiedAtMs());
+        Long intentAgeMs = activeIntent == null || activeIntent.getCreatedAtMs() <= 0
+                ? null
+                : Math.max(0L, now - activeIntent.getCreatedAtMs());
+        String visibleReason = visibleSnapshot == null
+                ? "absent"
+                : visibleAgeMs == null || visibleAgeMs > ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS
+                ? "visible-stale"
+                : !sameTargetIntent
+                ? "visible-target-mismatch"
+                : visibleSnapshot.getType() == DialogType.OPTION
+                ? "fresh-visible-option"
+                : visibleSnapshot.getType() == DialogType.STORY
+                ? "fresh-visible-story"
+                : "fresh-visible-dialog";
+        String attentionReason = taskAttentionEvent == null
+                ? "absent"
+                : taskAttentionAgeMs == null || taskAttentionAgeMs > ROUTE_DIALOG_ATTENTION_GATE_MAX_AGE_MS
+                ? "attention-stale"
+                : !sameTargetIntent
+                ? "attention-target-mismatch"
+                : "fresh-attention";
+        String pathingReason = pathingSnapshot == null
+                ? "absent"
+                : !sameTargetIntent
+                ? "pathing-target-mismatch"
+                : pathingState == WindowPathingState.NONE
+                ? "pathing-none"
+                : pathingState == WindowPathingState.ARRIVED
+                ? "pathing-arrived"
+                : pathingState == WindowPathingState.STOPPED_AWAY
+                ? "pathing-stopped-away"
+                : !freshActiveRoutePending
+                ? "pathing-intent-stale"
+                : pathingState == WindowPathingState.UNKNOWN
+                ? "fresh-unknown-intent"
+                : "fresh-active-intent";
+        String statusReason = status == null
+                ? "absent"
+                : !matchingStatus
+                ? "status-target-mismatch"
+                : freshRequested
+                ? "fresh-requested"
+                : freshPreparing
+                ? "fresh-preparing"
+                : "status-stale";
+        String preparedReason = action == null
+                ? "absent"
+                : !action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)
+                ? "prepared-target-mismatch"
+                : !matchesCurrentPreparedDialogBinding(runtime, action)
+                ? "prepared-binding-mismatch"
+                : !matchesActivePreparedRouteIntent(runtime, action)
+                ? "prepared-intent-mismatch"
+                : !action.verifiedWithin(now, ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS)
+                ? "prepared-stale"
+                : "prepared-usable";
+        String gateReason = freshVisibleDialog
+                ? "same-target-visible-dialog-yield"
+                : freshRequested
+                ? "same-target-dialog-requested-yield"
+                : freshPreparing
+                ? "same-target-dialog-preparing-yield"
+                : preparedUsable
+                ? "same-target-prepared-action-yield"
+                : freshTaskAttention
+                ? "same-target-task-attention-yield"
+                : freshActiveRoutePending
+                ? "same-target-active-intent-yield"
+                : "allow-world-map-retry";
+        log.info("route dialog world-map gate: result={} reason={} source={} windowId={} title={} hwnd={} target={} activeIntentId={} activeIntentTarget={} activeIntentSource={} intentAgeMs={} pathingReason={} pathingState={} snapshotAgeMs={} visibleReason={} visibleType={} visibleAgeMs={} visibleSource={} statusReason={} statusPhase={} statusTarget={} requestAgeMs={} preparingAgeMs={} preparedReason={} preparedIntentId={} preparedTarget={} preparedSource={} preparedAgeMs={} preparedVerifiedAgeMs={} preparedUsable={} attentionReason={} attentionAgeMs={} attentionSource={} sameTargetIntent={}",
+                gate,
+                gate ? gateReason : "allow-world-map-retry:" + visibleReason + "/" + statusReason + "/" + preparedReason + "/" + attentionReason + "/" + pathingReason,
+                source,
+                runtime.getWindowId(),
+                runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getTitle(),
+                runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle(),
+                targetMapName,
+                activeIntent == null ? null : activeIntent.getIntentId(),
+                activeIntent == null ? null : activeIntent.getTargetMapName(),
+                activeIntent == null ? null : activeIntent.getSource(),
+                intentAgeMs,
+                pathingReason,
+                pathingState,
+                pathingSnapshotAgeMs,
+                visibleReason,
+                visibleSnapshot == null ? null : visibleSnapshot.getType(),
+                visibleAgeMs,
+                visibleSnapshot == null ? null : visibleSnapshot.getSource(),
+                statusReason,
+                status == null ? null : status.getPhase(),
+                status == null ? null : status.getTargetKeyword(),
+                requestAgeMs,
+                preparingAgeMs,
+                preparedReason,
+                action == null ? null : action.getIntentId(),
+                action == null ? null : action.getTargetKeyword(),
+                action == null ? null : action.getSource(),
+                preparedAgeMs,
+                preparedVerifiedAgeMs,
+                preparedUsable,
+                attentionReason,
+                taskAttentionAgeMs,
+                taskAttentionEvent == null ? null : taskAttentionEvent.getSource(),
+                sameTargetIntent);
+        return gate;
+    }
+
+    private NavigationResult routeDialogGateBeforeWorldMap(String targetMapName,
+                                                           String source,
+                                                           String reason) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        RouteDialogClickResult consumed = consumePreparedRouteDialogAction(
+                runtime,
+                targetMapName,
+                source,
+                reason,
+                null,
+                null,
+                null,
+                ":world-map-gate");
+        if (consumed != null) {
+            if (consumed.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
+                return NavigationResult.pathingStarted("route dialog clicked before world-map search");
+            }
+            if (consumed.result() == DialogResultStatus.FAILED) {
+                return NavigationResult.mapNotReached("route dialog prepared action click failed before world-map search");
+            }
+        }
+        if (shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source + ":" + reason)) {
+            if (isFreshSameTargetRoutePending(runtime, targetMapName, System.currentTimeMillis(), true)) {
+                return NavigationResult.pathingStarted("same target route already submitted before world-map search; watcher will confirm pathing");
+            }
+            return NavigationResult.dialogPreparing("route dialog visible/preparing or route intent pending before world-map search");
+        }
+        return null;
+    }
+
+    private boolean isFreshSameTargetRoutePending(WindowRuntimeContext runtime,
+                                                  String targetMapName,
+                                                  long now,
+                                                  boolean requireActiveState) {
+        if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
             return false;
         }
-        DialogPreparationPhase phase = status.getPhase();
-        if (phase == DialogPreparationPhase.READY) {
-            log.info("route dialog preparation ready but prepared action is not directly usable: target={} preparedTarget={} sameBinding={} verifiedAgeMs={} maxAgeMs={}",
-                    targetMapName,
-                    action == null ? null : action.getTargetKeyword(),
-                    matchesCurrentPreparedDialogBinding(runtime, action),
-                    action == null || action.getLastVerifiedAtMs() <= 0
-                            ? null
-                            : Math.max(0L, now - action.getLastVerifiedAtMs()),
-                    ROUTE_DIALOG_PREPARED_CLICK_MAX_AGE_MS);
+        WindowPathingSnapshot snapshot = runtime.getPathingSnapshot();
+        WindowPathingIntent intent = runtime.getActivePathingIntent().orElse(null);
+        if (intent == null || !gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName)) {
             return false;
         }
-        return phase == DialogPreparationPhase.REQUESTED
-                || phase == DialogPreparationPhase.PREPARING;
+        if (requireActiveState && (snapshot == null || snapshot.getState() != WindowPathingState.ACTIVE)) {
+            return false;
+        }
+        return isFreshRoutePendingForWorldMapGate(snapshot, intent, now);
+    }
+
+    private boolean isFreshRoutePendingForWorldMapGate(WindowPathingSnapshot snapshot,
+                                                       WindowPathingIntent intent,
+                                                       long now) {
+        if (snapshot == null || intent == null) {
+            return false;
+        }
+        WindowPathingState state = snapshot.getState();
+        if (state == null
+                || state == WindowPathingState.NONE
+                || state == WindowPathingState.ARRIVED
+                || state == WindowPathingState.STOPPED_AWAY) {
+            return false;
+        }
+        long maxAgeMs = state == WindowPathingState.UNKNOWN
+                ? ROUTE_DIALOG_UNKNOWN_INTENT_GATE_MAX_AGE_MS
+                : ROUTE_DIALOG_ACTIVE_INTENT_GATE_MAX_AGE_MS;
+        boolean freshIntent = ageWithin(now, intent.getCreatedAtMs(), maxAgeMs);
+        boolean freshSnapshot = snapshot.getUpdatedAtMs() <= 0
+                || now - snapshot.getUpdatedAtMs() <= maxAgeMs;
+        return freshIntent && freshSnapshot;
+    }
+
+    private boolean ageWithin(long nowMs, long timestampMs, long maxAgeMs) {
+        return timestampMs > 0 && maxAgeMs >= 0 && nowMs - timestampMs <= maxAgeMs;
     }
 
     private void logRouteDialogPreparationSnapshot(WindowRuntimeContext runtime,
@@ -1256,60 +1340,6 @@ public class NavigationService {
                         ? null
                         : Math.max(0L, now - action.getLastVerifiedAtMs()),
                 isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now));
-    }
-
-    private boolean isMatchingRouteDialogPreparing(DialogPreparationStatus status, String targetMapName) {
-        return status != null
-                && status.getPhase() == DialogPreparationPhase.PREPARING
-                && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName);
-    }
-
-    private void requestRouteDialogPreparationAfterMapRouteClick(NavigationRequest request,
-                                                                 String targetMapName,
-                                                                 String source) {
-        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-        if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
-            return;
-        }
-        String fromMap = null;
-        Integer fromX = null;
-        Integer fromY = null;
-        WindowPathingSnapshot snapshot = runtime.getPathingSnapshot();
-        if (snapshot != null && snapshot.getCurrentMapName() != null && !snapshot.getCurrentMapName().isBlank()) {
-            long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
-            if (ageMs <= RECENT_PATHING_SNAPSHOT_MAX_AGE_MS) {
-                fromMap = snapshot.getCurrentMapName();
-                fromX = snapshot.getCurrentX();
-                fromY = snapshot.getCurrentY();
-            }
-        }
-        if (fromMap == null) {
-            PlayerCharacter me = context.getMe();
-            fromMap = me == null ? null : me.getCurrentMapName();
-            fromX = me == null ? null : me.getX();
-            fromY = me == null ? null : me.getY();
-        }
-        if (targetMapName.equals(fromMap)) {
-            return;
-        }
-
-        var remembered = dialogChoiceMemoryService.findUsableRoute(fromMap, targetMapName).orElse(null);
-        long now = System.currentTimeMillis();
-        runtime.clearPreparedDialogAction("route link clicked; prepare route dialog from fresh screen");
-        runtime.updateDialogPreparationRequest(DialogPreparationRequest.builder()
-                .operation(DialogOperation.ROUTE_TRANSFER)
-                .targetKeyword(targetMapName)
-                .source(source)
-                .fromMap(fromMap)
-                .rememberedRelativeX(remembered == null ? null : remembered.relativeX)
-                .rememberedRelativeY(remembered == null ? null : remembered.relativeY)
-                .rememberedOptionText(remembered == null ? null : remembered.optionText)
-                .createdAtMs(now)
-                .expiresAtMs(now + ROUTE_DIALOG_PREPARE_REQUEST_TTL_MS)
-                .build());
-        log.info("route dialog preparation requested after map route click: source={} requestSource={} windowId={} from={} coord=({}, {}) target={} memory={}",
-                request == null ? null : request.getSource(), source, runtime.getWindowId(),
-                fromMap, fromX, fromY, targetMapName, remembered != null);
     }
 
     private void rememberPendingRouteDialogClick(RouteDialogClickResult routeDialog, String source) {
@@ -1340,166 +1370,165 @@ public class NavigationService {
                 routeDialog.targetMap(), routeDialog.relativeX(), routeDialog.relativeY(), routeDialog.optionText());
     }
 
-    private boolean submitWorldMapSearchAndClickDestination(String targetMapName) {
-        boolean clicked = inputSequences.submitExclusiveAndWait("submitWorldMapSearchAndClickDestination:" + targetMapName,
-                () -> {
-                    log.info("navigation map search start: target={}", targetMapName);
-                    if (InputActionScope.isCancelled()) {
-                        log.info("navigation map search cancelled before input: target={}", targetMapName);
-                        return false;
-                    }
-                    if (!isWorldMapTitleVisible()) {
-                        log.info("navigation map search: world map not open, press Alt+2");
-                        inputProvider.pressAlt2();
-                        if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
-                            return false;
-                        }
-                    }
+    private boolean performWorldMapSearchAndClickDestination(String targetMapName) {
+        long totalStartMs = System.currentTimeMillis();
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            final int currentAttempt = attempt;
+            final String currentTargetMapName = targetMapName;
+            long prepareStartMs = System.currentTimeMillis();
+            boolean prepared = inputSequences.submitExclusiveAndWait(
+                    "submitWorldMapSearchAndClickDestination:prepare:" + currentTargetMapName + ":attempt" + currentAttempt,
+                    () -> prepareWorldMapSearchResultsDirect(currentTargetMapName, currentAttempt));
+            long prepareElapsedMs = System.currentTimeMillis() - prepareStartMs;
+            log.info("navigation map search split: stage=prepare target={} attempt={}/{} elapsedMs={}",
+                    currentTargetMapName, currentAttempt, 2, prepareElapsedMs);
+            if (!prepared) {
+                return false;
+            }
 
-                    boolean searchInputTouched = false;
-                    boolean routeClicked = false;
-                    try {
-                        for (int attempt = 1; attempt <= 2; attempt++) {
-                            if (InputActionScope.isCancelled()) {
-                                log.info("navigation map search cancelled before attempt: target={} attempt={}/{}",
-                                        targetMapName, attempt, 2);
-                                return false;
-                            }
-                            /*
-                             * From this point the route-search input may stay on screen if OCR/scroll/click
-                             * fails. Always use the narrow x2-only cleanup on failure so later Alt+1 mini-map
-                             * navigation does not click through a stale search overlay.
-                             */
-                            boolean useOpenRoutePanel = false;
-                            Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(
-                                    XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
-                            if (xunluPoint == null && isWorldMapTitleVisible()) {
-                                boolean closed = uiCleanerService.closeMapSearchInputByX2Direct(
-                                        "navigation:stale-route-panel-before-search:" + targetMapName);
-                                log.info("navigation map search: stale route panel close before xunlu target={} closed={}",
-                                        targetMapName, closed);
-                                if (!closed) {
-                                    /*
-                                     * Some stale world-map route panels are the full "from/to/search" page. In that
-                                     * state the normal xunlu button is hidden and no x2 exists, but the destination
-                                     * input is usable. Reuse it directly instead of burning retries on an impossible
-                                     * xunlu template.
-                                     */
-                                    useOpenRoutePanel = true;
-                                    log.info("navigation map search: reuse open route panel input target={} attempt={}/{}",
-                                            targetMapName, attempt, 2);
-                                }
-                                if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                            }
-                            if (!useOpenRoutePanel && xunluPoint == null && !isWorldMapTitleVisible()) {
-                                log.info("navigation map search: world map closed before attempt, press Alt+2 target={}",
-                                        targetMapName);
-                                inputProvider.pressAlt2();
-                                if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(
-                                        XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
-                            }
+            /*
+             * Screenshot/OCR can take close to a second and does not need to monopolize the physical
+             * input worker. Releasing the queue here lets a freshly prepared route dialog click run
+             * instead of waiting behind the whole world-map OCR path.
+             */
+            long scanStartMs = System.currentTimeMillis();
+            WorldMapDestinationClickResult status = clickDestinationFromWorldMapSearchResults(
+                    "submitWorldMapSearchAndClickDestination:lastLink", false, targetMapName);
+            long scanElapsedMs = System.currentTimeMillis() - scanStartMs;
+            log.info("navigation map search split: stage=scan-click target={} attempt={}/{} status={} elapsedMs={} totalMs={}",
+                    currentTargetMapName, currentAttempt, 2, status, scanElapsedMs,
+                    System.currentTimeMillis() - totalStartMs);
+            boolean routeClicked = status == WorldMapDestinationClickResult.CLICKED;
+            log.info("navigation map search: last coordinate click result={} status={} attempt={}/{}",
+                    routeClicked, status, attempt, 2);
+            if (routeClicked) {
+                return true;
+            }
+            if (status == WorldMapDestinationClickResult.WRONG_DESTINATION && attempt < 2) {
+                closeRouteSearchPanelQueued("submitWorldMapSearchAndClickDestination:destinationMismatch:attempt" + attempt);
+                if (!TaskSleep.sleep(250)) {
+                    return false;
+                }
+                continue;
+            }
+            closeRouteSearchPanelQueued("submitWorldMapSearchAndClickDestination:failed");
+            return false;
+        }
+        return false;
+    }
 
-                            int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
-                            int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
-                            if (useOpenRoutePanel) {
-                                int targetInputX = tracker.getWindowBaseX() + MAP_ROUTE_TARGET_INPUT_X;
-                                int targetInputY = tracker.getWindowBaseY() + MAP_ROUTE_TARGET_INPUT_Y;
-                                int searchButtonX = tracker.getWindowBaseX() + MAP_ROUTE_SEARCH_BUTTON_X;
-                                int searchButtonY = tracker.getWindowBaseY() + MAP_ROUTE_SEARCH_BUTTON_Y;
-                                log.info("navigation map search: type target through open route panel target={} input=({}, {}) search=({}, {}) attempt={}/{}",
-                                        targetMapName, targetInputX, targetInputY, searchButtonX, searchButtonY, attempt, 2);
-                                inputProvider.clickLeft(targetInputX, targetInputY, 80);
-                                if (InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                inputProvider.pressCtrlA();
-                                inputProvider.typeTextUnicode(targetMapName);
-                                if (!TaskSleep.sleep(300) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                inputProvider.clickLeft(searchButtonX, searchButtonY, 120);
-                                searchInputTouched = true;
-                                if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                            } else {
-                                if (xunluPoint == null) {
-                                    log.warn("navigation map search: xunlu button not found, target={} attempt={}/{}",
-                                            targetMapName, attempt, 2);
-                                    return false;
-                                }
-                                log.info("navigation map search: click xunlu button=({}, {}) attempt={}/{}",
-                                        xunluPoint.x, xunluPoint.y, attempt, 2);
-                                inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
-                                searchInputTouched = true;
-                                if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                closeWorldMapAfterXunluDirect(targetMapName, attempt);
-                                if (InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                log.info("navigation map search: type target map={} attempt={}/{}", targetMapName, attempt, 2);
-                                inputProvider.typeTextUnicode(targetMapName);
-                                if (!TaskSleep.sleep(WORLD_MAP_SEARCH_TYPE_SETTLE_MS) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                inputProvider.pressEnter();
-                            }
-                            if (InputActionScope.isCancelled()) {
-                                return false;
-                            }
-                            if (!scrollWorldMapSearchResultsToBottomDirect(scrollFocusX, scrollFocusY,
-                                    "submitWorldMapSearchAndClickDestination:" + targetMapName + ":attempt" + attempt)) {
-                                return false;
-                            }
-                            if (InputActionScope.isCancelled()) {
-                                return false;
-                            }
+    private boolean prepareWorldMapSearchResultsDirect(String targetMapName, int attempt) {
+        log.info("navigation map search start: target={} attempt={}/{}", targetMapName, attempt, 2);
+        if (InputActionScope.isCancelled()) {
+            log.info("navigation map search cancelled before input: target={} attempt={}/{}", targetMapName, attempt, 2);
+            return false;
+        }
+        if (!isWorldMapTitleVisible()) {
+            log.info("navigation map search: world map not open, press Alt+2");
+            inputProvider.pressAlt2();
+            if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
+                return false;
+            }
+        }
 
-                            WorldMapDestinationClickResult status = clickDestinationFromWorldMapSearchResults(
-                                    "submitWorldMapSearchAndClickDestination:lastLink", true, targetMapName);
-                            routeClicked = status == WorldMapDestinationClickResult.CLICKED;
-                            log.info("navigation map search: last coordinate click result={} status={} attempt={}/{}",
-                                    routeClicked, status, attempt, 2);
-                            if (routeClicked) {
-                                return true;
-                            }
-                            if (status == WorldMapDestinationClickResult.WRONG_DESTINATION && attempt < 2) {
-                                closeMapSearchInputAfterRouteClick(
-                                        "submitWorldMapSearchAndClickDestination:destinationMismatch:attempt" + attempt);
-                                searchInputTouched = false;
-                                if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
-                                    return false;
-                                }
-                                continue;
-                            }
-                            return false;
-                        }
-                        return false;
-                    } finally {
-                        if (searchInputTouched && !routeClicked) {
-                            if (InputActionScope.isCancelled()) {
-                                /*
-                                 * This callback is already inside the single input worker. Once the waiting task
-                                 * has been interrupted/cancelled, do not perform extra direct-input cleanup here,
-                                 * otherwise an old navigation attempt can steal focus after a newer window gets
-                                 * the turn.
-                                 */
-                                log.info("navigation map search cleanup skipped because input request was cancelled: target={}",
-                                        targetMapName);
-                            } else {
-                                closeMapSearchInputAfterRouteClick("submitWorldMapSearchAndClickDestination:failed");
-                            }
-                        }
-                    }
-                });
-        return clicked;
+        boolean useOpenRoutePanel = false;
+        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
+        if (xunluPoint == null && isWorldMapTitleVisible()) {
+            boolean closed = uiCleanerService.closeMapSearchInputByX2Direct(
+                    "navigation:stale-route-panel-before-search:" + targetMapName);
+            log.info("navigation map search: stale route panel close before xunlu target={} closed={}",
+                    targetMapName, closed);
+            if (!closed) {
+                /*
+                 * Some stale world-map route panels are the full "from/to/search" page. In that
+                 * state the normal xunlu button is hidden and no x2 exists, but the destination
+                 * input is usable. Reuse it directly instead of burning retries on an impossible
+                 * xunlu template.
+                 */
+                useOpenRoutePanel = true;
+                log.info("navigation map search: reuse open route panel input target={} attempt={}/{}",
+                        targetMapName, attempt, 2);
+            }
+            if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
+                return false;
+            }
+        }
+        if (!useOpenRoutePanel && xunluPoint == null && !isWorldMapTitleVisible()) {
+            log.info("navigation map search: world map closed before attempt, press Alt+2 target={}", targetMapName);
+            inputProvider.pressAlt2();
+            if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
+        }
+
+        int scrollFocusX = tracker.getWindowBaseX() + config.getAnchor_windowTo_map_scroll_X();
+        int scrollFocusY = tracker.getWindowBaseY() + config.getAnchor_windowTo_map_scroll_Y();
+        if (useOpenRoutePanel) {
+            int targetInputX = tracker.getWindowBaseX() + MAP_ROUTE_TARGET_INPUT_X;
+            int targetInputY = tracker.getWindowBaseY() + MAP_ROUTE_TARGET_INPUT_Y;
+            int searchButtonX = tracker.getWindowBaseX() + MAP_ROUTE_SEARCH_BUTTON_X;
+            int searchButtonY = tracker.getWindowBaseY() + MAP_ROUTE_SEARCH_BUTTON_Y;
+            log.info("navigation map search: type target through open route panel target={} input=({}, {}) search=({}, {}) attempt={}/{}",
+                    targetMapName, targetInputX, targetInputY, searchButtonX, searchButtonY, attempt, 2);
+            inputProvider.clickLeft(targetInputX, targetInputY, 80);
+            if (InputActionScope.isCancelled()) {
+                return false;
+            }
+            inputProvider.pressCtrlA();
+            inputProvider.typeTextUnicode(targetMapName);
+            if (!TaskSleep.sleep(200) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            inputProvider.clickLeft(searchButtonX, searchButtonY, 120);
+            if (!TaskSleep.sleep(200) || InputActionScope.isCancelled()) {
+                return false;
+            }
+        } else {
+            if (xunluPoint == null) {
+                log.warn("navigation map search: xunlu button not found, target={} attempt={}/{}",
+                        targetMapName, attempt, 2);
+                return false;
+            }
+            log.info("navigation map search: click xunlu button=({}, {}) attempt={}/{}",
+                    xunluPoint.x, xunluPoint.y, attempt, 2);
+            inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
+            if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            closeWorldMapAfterXunluDirect(targetMapName, attempt);
+            if (InputActionScope.isCancelled()) {
+                return false;
+            }
+            log.info("navigation map search: type target map={} attempt={}/{}", targetMapName, attempt, 2);
+            inputProvider.typeTextUnicode(targetMapName);
+            if (!TaskSleep.sleep(WORLD_MAP_SEARCH_TYPE_SETTLE_MS) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            inputProvider.pressEnter();
+        }
+        if (InputActionScope.isCancelled()) {
+            return false;
+        }
+        return scrollWorldMapSearchResultsToBottomDirect(scrollFocusX, scrollFocusY,
+                "submitWorldMapSearchAndClickDestination:" + targetMapName + ":attempt" + attempt);
+    }
+
+    private NavigationResult submitWorldMapSearchAndClickDestination(NavigationRequest request,
+                                                                     String targetMapName,
+                                                                     String source) {
+        NavigationResult gateResult = routeDialogGateBeforeWorldMap(
+                targetMapName, source, "submitWorldMapSearchAndClickDestination:before-open");
+        if (gateResult != null) {
+            return gateResult;
+        }
+        boolean clicked = performWorldMapSearchAndClickDestination(targetMapName);
+        if (!clicked) {
+            return NavigationResult.mapNotReached("world-map route submit failed");
+        }
+        registerWindowPathingIntent(request, "worldMapRouteClick",
+                source + ":map-route-clicked", false);
+        return NavigationResult.pathingStarted("world-map route clicked");
     }
 
     private void closeWorldMapAfterXunluDirect(String targetMapName, int attempt) {
@@ -1581,13 +1610,17 @@ public class NavigationService {
             closeMapSearchInputAfterRouteClick(description + ":routeClicked");
             return WorldMapDestinationClickResult.CLICKED;
         }
-        boolean submitted = inputSequences.submitAndWait(description, List.of(
-                InputAction.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150),
-                InputAction.sleep(2000)
-        ));
-        if (submitted) {
+        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
+            if (InputActionScope.isCancelled()) {
+                log.info("navigation map search queued route click skipped because input request was cancelled: target={}",
+                        expectedDestinationName);
+                return false;
+            }
+            inputProvider.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150);
             gameStateUtil.recordMovementIntent(description);
-        }
+            closeMapSearchInputAfterRouteClick(description + ":routeClicked");
+            return true;
+        });
         return submitted ? WorldMapDestinationClickResult.CLICKED : WorldMapDestinationClickResult.NOT_FOUND;
     }
 
@@ -1713,6 +1746,19 @@ public class NavigationService {
         }
     }
 
+    private void closeRouteSearchPanelQueued(String source) {
+        inputSequences.submitExclusiveAndWait("navigation:routePanelCleanup:" + source,
+                () -> {
+                    if (InputActionScope.isCancelled()) {
+                        log.info("navigation map search cleanup skipped because input request was cancelled: source={}",
+                                source);
+                        return false;
+                    }
+                    closeMapSearchInputAfterRouteClick(source);
+                    return true;
+                });
+    }
+
     private void closeMapSearchInputAfterRouteDialog(String source) {
         boolean closed = inputSequences.submitExclusiveAndWait("navigation:routeDialogCloseX2:" + source,
                 () -> {
@@ -1759,10 +1805,53 @@ public class NavigationService {
     }
 
     private boolean isMiniMapPanelVisible() {
+        return isMiniMapPanelVisible("unspecified", false);
+    }
+
+    private boolean isMiniMapPanelVisible(String source, boolean saveDebugSnapshot) {
         int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
                 MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
+        if (saveDebugSnapshot) {
+            return isMiniMapPanelVisibleWithDebug(source, rect);
+        }
         return coordinateHelper.findImageInRegion(MINI_MAP_PANEL_CHECKED_TEMPLATE, rect, 0.95) != null
                 || coordinateHelper.findImageInRegion(MINI_MAP_PANEL_UNCHECKED_TEMPLATE, rect, 0.95) != null;
+    }
+
+    private boolean isMiniMapPanelVisibleWithDebug(String source, int[] rect) {
+        String timestamp = LocalDateTime.now().format(FAILURE_CASE_TIME_FORMAT);
+        String roiPath = windowScopedTempPath.resolve("mini_map_panel_visible_check_" + timestamp + "_roi.png");
+        if (!tracker.captureToFile("mini-map-panel-visible-debug", roiPath, rect[0], rect[1], rect[2], rect[3])) {
+            log.warn("mini-map panel visible debug capture failed: source={} roi={} rect=({}, {})-({}, {})",
+                    source, roiPath, rect[0], rect[1], rect[2], rect[3]);
+            return false;
+        }
+
+        double[] checkedMatch = findMiniMapPanelTemplateForDebug(roiPath, MINI_MAP_PANEL_CHECKED_TEMPLATE, source);
+        double[] uncheckedMatch = findMiniMapPanelTemplateForDebug(roiPath, MINI_MAP_PANEL_UNCHECKED_TEMPLATE, source);
+        double[] matched = checkedMatch != null ? checkedMatch : uncheckedMatch;
+        String template = checkedMatch != null ? MINI_MAP_PANEL_CHECKED_TEMPLATE : MINI_MAP_PANEL_UNCHECKED_TEMPLATE;
+        if (matched == null) {
+            log.info("mini-map panel visible debug miss: source={} roi={} rect=({}, {})-({}, {})",
+                    source, roiPath, rect[0], rect[1], rect[2], rect[3]);
+            return false;
+        }
+
+        Point absolute = coordinateHelper.resolveMatchedPointInRect(rect, matched);
+        log.warn("mini-map panel visible debug matched: source={} template={} roi={} rect=({}, {})-({}, {}) local=({}, {}) absolute=({}, {})",
+                source, template, roiPath, rect[0], rect[1], rect[2], rect[3],
+                Math.round(matched[0]), Math.round(matched[1]), absolute.x, absolute.y);
+        return true;
+    }
+
+    private double[] findMiniMapPanelTemplateForDebug(String roiPath, String templatePath, String source) {
+        try {
+            return ImageFinder.find(roiPath, templatePath, 0.95);
+        } catch (Throwable e) {
+            log.warn("mini-map panel visible debug match failed: source={} roi={} template={} error={}:{}",
+                    source, roiPath, templatePath, e.getClass().getName(), e.getMessage());
+            return null;
+        }
     }
 
     private boolean scrollWorldMapSearchResultsToBottomDirect(int targetX, int targetY, String source) {
@@ -1969,7 +2058,7 @@ public class NavigationService {
                     source, closeSubmitted);
             return;
         }
-        if (isMiniMapPanelVisible()) {
+        if (isMiniMapPanelVisible(source + ":after-close-check", true)) {
             log.warn("mini-map still visible after confirmed pathing close; falling back to generic close button: source={}",
                     source);
             uiCleanerService.closeAllGenericWindows();
@@ -2052,11 +2141,18 @@ public class NavigationService {
                     if (expectedMap != null
                             && currentMap != null
                             && !gameStateUtil.isSameMapName(currentMap, expectedMap)) {
-                        log.warn("mini-map pathing confirmation rejected: coordinate changed on unexpected map source={} expectedMap={} baselineMap={} currentMap={} baseline={} previous={} current={}",
+                        /*
+                         * A current-map click can still hand control to the game's route planner.
+                         * The planner may step through a nearby transfer point and briefly report a
+                         * different map before it reaches the requested coordinate. Treat any real
+                         * post-click coordinate change as pathing instead of retrying another
+                         * foreground mini-map click that can interrupt the route already in flight.
+                         */
+                        log.info("mini-map pathing confirmation: coordinate changed on unexpected map, treat as pathing started source={} expectedMap={} baselineMap={} currentMap={} baseline={} previous={} current={}",
                                 source, expectedMap, baselineLocation == null ? null : baselineLocation.mapName(),
                                 currentMap, formatCoordinate(baseline), formatCoordinate(previousReadable),
                                 formatCoordinate(current));
-                        return MiniMapPathingAttemptResult.NO_PATHING;
+                        return MiniMapPathingAttemptResult.PATHING_STARTED;
                     }
                     log.info("mini-map pathing confirmation: post-click coordinate changed source={} expectedMap={} currentMap={} baseline={} previous={} current={}",
                             source, expectedMap, currentMap, formatCoordinate(baseline),
@@ -2120,8 +2216,18 @@ public class NavigationService {
                 .tolerance(navigationArrivalTolerance(request))
                 .build();
         windowContext.markPathingStarted(intent);
-        log.info("window pathing intent registered: windowId={} phase={} source={} targetMap={} target=({}, {}) tolerance={}",
-                windowContext.getWindowId(), phase, intent.getSource(), intent.getTargetMapName(),
+        PlayerCharacter me = context.getMe();
+        log.info("window pathing intent registered: windowId={} title={} hwnd={} intentId={} phase={} source={} currentMap={} current=({}, {}) targetMap={} target=({}, {}) tolerance={}",
+                windowContext.getWindowId(),
+                windowContext.getNativeBinding() == null ? null : windowContext.getNativeBinding().getTitle(),
+                windowContext.getNativeBinding() == null ? null : windowContext.getNativeBinding().getNativeHandle(),
+                intent.getIntentId(),
+                phase,
+                intent.getSource(),
+                me == null ? null : me.getCurrentMapName(),
+                me == null ? null : me.getX(),
+                me == null ? null : me.getY(),
+                intent.getTargetMapName(),
                 intent.getTargetX(), intent.getTargetY(), intent.getTolerance());
         return true;
     }
