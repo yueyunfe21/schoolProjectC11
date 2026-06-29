@@ -29,28 +29,48 @@ Important behavior constraints:
    - Example: do not change `GameStateUtil.isMovingByPixelDiff()` just to avoid symptoms.
    - If a validated detector appears wrong, first inspect screenshots, call path, window binding, temp file path, and logs.
 
-2. Do not delete useful comments unless necessary.
+2. Before claiming or implementing any sprint card, every agent must compare against the latest pushed code for the touched business path.
+   - Treat the latest pushed code as the business-logic baseline. Current local business differences are not trusted during migration and must be restored to the pushed behavior by default.
+   - Record the relevant baseline in `docs/ACTIVE_WORK.md` before editing: current branch, latest pushed commit if known, `git status`, and the relevant `git diff` / `git show` evidence for files being touched.
+   - Framework migration work may move scheduling, parking, wakeup, ownership, or diagnostics plumbing, but it must not change task business decisions by accident.
+   - If a patch would change task phase semantics, prompt interpretation, OCR/template/click/navigation order, fallback order, or when a probe/NPC/dialog is considered resolved, stop and write the conflict in Markdown; do not keep the local behavior as part of migration unless the user explicitly opens a new behavior-change story.
+   - Do not convert runner/ready-event negative signals into new business truth unless the latest pushed business logic already did that.
+
+3. Do not delete useful comments unless necessary.
    - Previous work accidentally removed some of the user's comments. Avoid repeating this.
 
-3. Prefer small, targeted commits.
+4. Prefer small, targeted commits.
    - The user tests frequently and wants to understand each change.
 
-4. When the user says a point is already tested, treat it as known unless logs contradict it.
+5. When the user says a point is already tested, treat it as known unless logs contradict it.
 
-5. Use Chinese in conversation with the user unless they switch language.
+6. Use Chinese in conversation with the user unless they switch language.
 
-6. Visual matching or click-target changes must be verified through testcase replay.
+7. Visual matching or click-target changes must be verified through testcase replay.
    - This applies to minimap matching/clicking, world-map search/result clicking, task tracker green-text clicking, NPC/template matching, dialog option matching, and any code that changes where the mouse will click based on screenshot/OCR/template output.
    - Do not rely only on verbal reasoning, one live observation, or log text. Use or create a repo-local testcase image under an appropriate `images/test-cases/...` folder, run the matching/click algorithm against that testcase, and produce a marked output image showing the detected target and final click point.
    - The marked output must make the important points visible: for example destination OCR anchor, matched text/template box, and actual click coordinate. The user should be able to inspect the image and confirm the red point/box is correct.
    - If no testcase exists for the scenario being fixed, save the raw screenshot first, then add/reuse a small replay/debug tool rather than testing only against the live game window.
    - After the change, record the testcase input, output image path, and command/tool used in `docs/ACTIVE_WORK.md`.
 
-7. Investigation-first rule for user questions.
+8. Investigation-first rule for user questions.
    - When the user asks why something happened, asks whether a behavior is correct, asks where/how to change something, or asks for a discussion/plan, do not immediately edit code.
    - First inspect the relevant logs, screenshots, call path, state transitions, and existing implementation. Then explain the likely root cause and a concrete modification plan.
    - Only start code changes after the user clearly approves the proposed plan, for example by saying "可以", "按这个改", "继续做", or an equivalent explicit approval.
    - This rule does not block tiny documentation-only updates requested directly by the user, but it does apply to behavior, navigation, OCR/template matching, runner/watcher, task flow, and input changes.
+
+9. CR log-audit rule.
+   - Before auditing runtime logs or writing a run report, read the current sprint/CR board and identify every CR whose status is not clearly Done/Deprecated/Closed.
+   - The audit must check each open/review CR against the relevant log evidence, not just the newest visible symptom.
+   - If an open/review CR fails in the logs, record the evidence in the CR/report and immediately dispatch a sub-agent to fix that failing CR unless the user explicitly says not to modify code.
+   - Do not leave a failed CR as only a chat summary. The repair owner, expected files, and fresh-runtime verification point must be recorded in Markdown.
+
+10. CR dashboard sync rule.
+   - When an agent claims, creates, updates, reopens, closes, or changes the status/owner/summary of any CR in `docs/PACKAGE_ARCHITECTURE.md`, it must refresh the static dashboard data before handing off.
+   - Before running the dashboard generator, make the CR table row user-facing fields readable in Chinese. The dashboard reads the CR table directly, so `Status`, touched-area text, and especially the summary/description must be a concise Chinese translation/summary of the card, not raw English planning text. Keep technical identifiers, enum names, file names, and log keywords in backticks when useful.
+   - Run `node scripts/generate-cr-dashboard-data.js` from the repository root after the Markdown CR table/card update.
+   - Include the resulting `docs/cr-dashboard-data.js` change together with the Markdown change, so `docs/CR_DASHBOARD.html` reflects the latest CR status after a browser refresh.
+   - If the script cannot run, record that as a blocker in `docs/ACTIVE_WORK.md` and tell the user that the dashboard snapshot is stale.
 
 ## Code documentation rule
 
@@ -70,6 +90,7 @@ Important behavior constraints:
 - Java file layout rule: keep public classes, public APIs, and the main workflow near the top. Private nested helper types (`private class`, `private record`, `private enum`, private interfaces) should be placed at the bottom of the enclosing class/file, after the main public and private workflow methods, unless Java syntax makes that impossible.
 - Before adding a new method, class, helper, wrapper, or nested layer, first inspect the existing workflow and decide whether the change can be made by modifying the current method in place. Prefer adjusting the existing flow, return value, or branch structure when that preserves readability and ownership. Add a new function only when it creates a real reusable boundary, removes meaningful duplication, or isolates a distinct policy. Avoid stacked `internal`/wrapper/helper methods and nested call layers whose only purpose is to route to almost the same logic.
 - Do not add trivial wrapper layers just to expose a second name for the same operation. If an existing method can naturally return useful data while preserving its side effect, prefer changing that method's return type and letting callers ignore the return value. Add a wrapper only when it enforces a real boundary, policy, or compatibility requirement.
+- No "wrapper nesting" anywhere in the codebase. Do not create a method whose main job is to call another same-scope helper which then calls another helper for the same decision. A caller should either show the actual decision inline, or call one clearly named collaborator that owns a real boundary. Do not hide behavior behind chains of one-line helpers, adapter helpers, or "prepare/handle/resolve" nesting when the caller still has to understand all layers to review the flow. This applies to all Java code, not only 五倍.
 - Task stop/pause checkpoint rule: use `TaskCheckpoint` directly for task stop/interruption checkpoints. Do not add local wrappers such as `checkpoint(...)`, `checkpointTask(...)`, `throwIfStopRequested(...)`, or ad-hoc `Thread.currentThread().isInterrupted()` exception checks in task/service code. A local helper is allowed only when it adds real domain behavior beyond the standard checkpoint. Boolean loop guards in worker/debug/control loops may still check interruption directly.
 
 ## Java / Spring / Lombok / logging conventions

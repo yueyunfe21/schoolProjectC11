@@ -5,18 +5,21 @@
       "action" : "routeTransfer",
       "contextKey" : "长安->灵兽村",
       "fromMap" : "长安",
-      "fromX" : 222,
-      "fromY" : 100,
+      "fromX" : 220,
+      "fromY" : 102,
       "targetMap" : "灵兽村",
       "relativeX" : 182,
       "relativeY" : 109,
       "optionText" : "请送我去灵兽村（800两，可参加召唤兽赛跑活动）",
-      "source" : "navigation:ling-shou-village:prepared:watcher-arrived",
-      "successCount" : 8,
+      "source" : "navigation:ling-shou-village:before-zhang-wen-click:prepared:watcher-arrived",
+      "successCount" : 13,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 5,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
-      "lastSuccessAt" : "2026-06-13T21:08:30.017213700",
+      "lastSuccessAt" : "2026-06-23T21:10:22.850871700",
       "lastFailureAt" : null,
+      "stableTaskChoice" : true,
       "usable" : true
     },
     "navigation|routeTransfer|长安->兰若寺" : {
@@ -33,9 +36,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared:watcher-arrived",
       "successCount" : 12,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T22:36:21.784915600",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|长安->洛阳城" : {
@@ -52,9 +58,12 @@
       "source" : "navigateToMap:prepared-route-dialog-priority:prepared:watcher-arrived",
       "successCount" : 24,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-13T21:25:11.994531100",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|北俱芦洲->大唐边境" : {
@@ -71,9 +80,12 @@
       "source" : "navigation:existing-route-dialog",
       "successCount" : 13,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-03T17:20:00.406058900",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|长安->万寿山" : {
@@ -90,9 +102,12 @@
       "source" : "navigateToMap:prepared-route-dialog-priority:prepared:watcher-arrived",
       "successCount" : 11,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-13T21:22:46.900621",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|北俱芦洲->长安" : {
@@ -109,9 +124,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared:watcher-arrived",
       "successCount" : 20,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-14T17:25:13.735919800",
       "lastFailureAt" : "2026-06-14T12:38:21.238349100",
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|洛阳城->蟠桃园" : {
@@ -128,9 +146,12 @@
       "source" : "navigateToMap:prepared-route-dialog-priority:prepared:watcher-arrived",
       "successCount" : 11,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-13T21:32:50.187952100",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|洛阳城->四圣庄" : {
@@ -147,9 +168,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared:watcher-arrived",
       "successCount" : 9,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T22:28:06.902141",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|洛阳城->长安" : {
@@ -166,9 +190,12 @@
       "source" : "navigation:existing-route-dialog",
       "successCount" : 21,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-03T14:20:02.247972900",
       "lastFailureAt" : "2026-06-02T00:11:26.692547200",
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|火云戈壁->宝象国" : {
@@ -185,9 +212,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared",
       "successCount" : 2,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-11T13:15:52.739655600",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|宝象国->长安" : {
@@ -204,9 +234,12 @@
       "source" : "navigation:existing-route-dialog",
       "successCount" : 8,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-03T14:19:52.372201",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|长安城东->龙宫" : {
@@ -223,9 +256,12 @@
       "source" : "navigation:existing-route-dialog",
       "successCount" : 2,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-03T17:21:06.723329500",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|大唐境内->长安" : {
@@ -242,9 +278,12 @@
       "source" : "navigation:existing-route-dialog",
       "successCount" : 6,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-03T22:59:27.244391500",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|长安->宝象国" : {
@@ -261,9 +300,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared",
       "successCount" : 1,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-11T23:30:10.262932100",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|平顶山->宝象国" : {
@@ -280,9 +322,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared:watcher-arrived",
       "successCount" : 5,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T15:20:20.148047",
       "lastFailureAt" : "2026-06-12T15:20:04.609474700",
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "wubei|acceptTask|降魔侍卫" : {
@@ -293,15 +338,18 @@
       "fromX" : 86,
       "fromY" : 87,
       "targetMap" : "宝象国",
-      "relativeX" : 97,
-      "relativeY" : 107,
+      "relativeX" : 79,
+      "relativeY" : 112,
       "optionText" : "images/template/dialog/wubei/wubei_accept_chumoweiguo.png",
       "source" : "normal-round-start:prepared",
-      "successCount" : 77,
+      "successCount" : 649,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 229,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
-      "lastSuccessAt" : "2026-06-18T01:02:29.120634600",
+      "lastSuccessAt" : "2026-06-28T19:03:07.675394200",
       "lastFailureAt" : "2026-06-12T17:46:46.969840400",
+      "stableTaskChoice" : true,
       "usable" : true
     },
     "navigation|routeTransfer|洛阳城->宝象国" : {
@@ -318,9 +366,12 @@
       "source" : "navigateToMap:prepared-route-dialog:ocr:watcher-arrived",
       "successCount" : 2,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T17:20:01.364174800",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|宝象国->洛阳城" : {
@@ -337,9 +388,12 @@
       "source" : "navigateToMap:prepared-route-dialog:ocr:watcher-arrived",
       "successCount" : 2,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T17:20:54.574885300",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|万寿山->长安" : {
@@ -356,9 +410,12 @@
       "source" : "navigateToMap:prepared-route-dialog:prepared:watcher-arrived",
       "successCount" : 5,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-12T20:34:11.239106200",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|兰若寺->长安" : {
@@ -375,9 +432,12 @@
       "source" : "navigateToMap:prepared-route-dialog-priority:prepared:watcher-arrived",
       "successCount" : 6,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-13T13:41:16.141220600",
       "lastFailureAt" : "2026-06-13T13:41:09.128812500",
+      "stableTaskChoice" : false,
       "usable" : true
     },
     "navigation|routeTransfer|长安城东->长安" : {
@@ -394,9 +454,34 @@
       "source" : "navigateToMap:prepared-route-dialog-priority:prepared:watcher-arrived",
       "successCount" : 1,
       "failCount" : 0,
+      "consecutiveSuccessCount" : 0,
+      "consecutiveFailureCount" : 0,
       "disabled" : false,
       "lastSuccessAt" : "2026-06-13T19:08:25.388716300",
       "lastFailureAt" : null,
+      "stableTaskChoice" : false,
+      "usable" : true
+    },
+    "xiuluo_v2|acceptTask|灵兽村使者" : {
+      "scope" : "xiuluo_v2",
+      "action" : "acceptTask",
+      "contextKey" : "灵兽村使者",
+      "fromMap" : "灵兽村",
+      "fromX" : 112,
+      "fromY" : 93,
+      "targetMap" : "灵兽村",
+      "relativeX" : 95,
+      "relativeY" : 113,
+      "optionText" : "images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu.png",
+      "source" : "xiuluo-v2:accept:accept-npc-clicked:template",
+      "successCount" : 3,
+      "failCount" : 0,
+      "consecutiveSuccessCount" : 3,
+      "consecutiveFailureCount" : 0,
+      "disabled" : false,
+      "lastSuccessAt" : "2026-06-21T00:32:19.251407900",
+      "lastFailureAt" : null,
+      "stableTaskChoice" : true,
       "usable" : true
     }
   }

@@ -69,11 +69,20 @@ public class BotProperties {
      */
     private boolean summonSkillCleanEnabled = true;
     private long summonSkillCleanIntervalMs = 20 * 60 * 1000L;
+    private long summonSkillUnknownFailureRetryAfterMs = 5 * 60 * 1000L;
     private boolean summonSkillCleanRunImmediatelyOnStart = false;
     private long summonSkillUltimateGenerateCooldownMs = 4 * 60 * 60 * 1000L;
     private long xiuluoHealPetMaintenanceIntervalMs = 30 * 60 * 1000L;
     private long xiuluoRepairEquipmentMaintenanceIntervalMs = 55 * 60 * 1000L;
     private boolean xiuluoMaintenanceRunImmediatelyOnStart = false;
+
+    /**
+     * CR120 通用盒子开关。
+     *
+     * 队长默认处理盒子；队员默认不处理，避免首次接入时成员战后抢输入。
+     */
+    private boolean leaderCommonBoxEnabled = true;
+    private boolean memberCommonBoxEnabled = false;
 
     /**
      * Development switch for the slow pre-task UI preparation chain.

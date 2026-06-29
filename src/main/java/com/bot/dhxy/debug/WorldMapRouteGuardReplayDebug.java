@@ -26,8 +26,8 @@ import java.util.regex.Pattern;
  * Offline replay for world-map route-result screenshots.
  *
  * <p>This tool does not capture windows or send input. It reuses the production destination guard
- * and coordinate finder on saved route screenshots, then writes a red-marked image so route-click
- * candidates can be reviewed before changing live navigation behavior.</p>
+ * and legacy coordinate finder on saved route screenshots, then writes a red-marked image so the
+ * CR99 yellow destination click candidate can be reviewed before changing live navigation behavior.</p>
  */
 public class WorldMapRouteGuardReplayDebug {
 
@@ -72,9 +72,10 @@ public class WorldMapRouteGuardReplayDebug {
                             .found(false)
                             .message("destination guard failed")
                             .build();
+            Point yellowPoint = yellowDestinationPoint(destination);
             Path marked = outputDir.resolve(fileStem(image) + "_marked.png");
-            writeMarkedImage(image, coordinate.relativeCenter(), destination, coordinate, marked);
-            boolean ok = destination.allowClick() && coordinate.found();
+            writeMarkedImage(image, yellowPoint, destination, coordinate, marked);
+            boolean ok = destination.allowClick() && yellowPoint != null;
             if (ok) {
                 passed++;
             } else {
@@ -85,7 +86,8 @@ public class WorldMapRouteGuardReplayDebug {
                     + " expected=" + caseExpected
                     + " actual=" + destination.rawActual()
                     + " allowClick=" + destination.allowClick()
-                    + " point=" + pointText(coordinate.relativeCenter())
+                    + " yellowPoint=" + pointText(yellowPoint)
+                    + " legacyGreenPoint=" + pointText(coordinate.relativeCenter())
                     + " marked=" + marked);
         }
         System.out.println("summary expected=" + expected
@@ -210,7 +212,7 @@ public class WorldMapRouteGuardReplayDebug {
     }
 
     private static void writeMarkedImage(Path rawPath,
-                                         Point point,
+                                         Point yellowPoint,
                                          GameTextLineOcrService.WorldMapRouteDestinationResult destination,
                                          GameTextLineOcrService.WorldMapRouteCoordinateResult coordinate,
                                          Path outputPath) throws Exception {
@@ -224,12 +226,12 @@ public class WorldMapRouteGuardReplayDebug {
                 g.setColor(Color.RED);
                 g.setStroke(new BasicStroke(3));
                 g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
-                if (point != null) {
-                    g.drawOval(point.x - 9, point.y - 9, 18, 18);
-                    g.drawLine(point.x - 14, point.y, point.x + 14, point.y);
-                    g.drawLine(point.x, point.y - 14, point.x, point.y + 14);
-                    g.drawString("CLICK", Math.min(point.x + 12, image.getWidth() - 45),
-                            Math.max(14, point.y - 12));
+                if (yellowPoint != null) {
+                    g.drawOval(yellowPoint.x - 9, yellowPoint.y - 9, 18, 18);
+                    g.drawLine(yellowPoint.x - 14, yellowPoint.y, yellowPoint.x + 14, yellowPoint.y);
+                    g.drawLine(yellowPoint.x, yellowPoint.y - 14, yellowPoint.x, yellowPoint.y + 14);
+                    g.drawString("YELLOW CLICK", Math.min(yellowPoint.x + 12, image.getWidth() - 95),
+                            Math.max(14, yellowPoint.y - 12));
                 } else {
                     g.drawString("NO POINT", 8, Math.max(16, image.getHeight() - 8));
                 }
@@ -242,9 +244,20 @@ public class WorldMapRouteGuardReplayDebug {
                     g.drawString("DEST", Math.min(destX + 16, image.getWidth() - 40),
                             Math.max(14, destY - 14));
                 }
+                if (coordinate.relativeCenter() != null) {
+                    Point legacyPoint = coordinate.relativeCenter();
+                    g.setColor(new Color(0, 150, 0));
+                    g.drawOval(legacyPoint.x - 7, legacyPoint.y - 7, 14, 14);
+                    g.drawLine(legacyPoint.x - 10, legacyPoint.y, legacyPoint.x + 10, legacyPoint.y);
+                    g.drawLine(legacyPoint.x, legacyPoint.y - 10, legacyPoint.x, legacyPoint.y + 10);
+                    g.drawString("LEGACY GREEN", Math.min(legacyPoint.x + 10, image.getWidth() - 95),
+                            Math.max(14, legacyPoint.y - 10));
+                    g.setColor(Color.RED);
+                }
                 g.drawString("dest=" + nullToDash(destination.rawActual())
                                 + " allow=" + destination.allowClick()
-                                + " coord=" + coordinate.found(),
+                                + " yellowPoint=" + (yellowPoint != null)
+                                + " legacyCoord=" + coordinate.found(),
                         8, image.getHeight() - 8);
             } finally {
                 g.dispose();
@@ -264,6 +277,12 @@ public class WorldMapRouteGuardReplayDebug {
 
     private static String pointText(Point point) {
         return point == null ? "-" : "(" + point.x + "," + point.y + ")";
+    }
+
+    private static Point yellowDestinationPoint(GameTextLineOcrService.WorldMapRouteDestinationResult destination) {
+        return destination.destinationCenterX() == null || destination.destinationCenterY() == null
+                ? null
+                : new Point(destination.destinationCenterX(), destination.destinationCenterY());
     }
 
     private static String nullToDash(String value) {

@@ -45,11 +45,19 @@ public class TaskPauseToken {
         return reason;
     }
 
-    public void waitIfPaused(TaskStopToken stopToken) {
+    /**
+     * Blocks while the task is paused and returns the wall-clock time spent waiting.
+     *
+     * @param stopToken optional stop token checked before and during the pause wait; nullable for
+     *                  legacy/debug callers outside a managed task.
+     * @return milliseconds spent blocked by a user pause, or {@code 0} when no pause was active.
+     */
+    public long waitIfPaused(TaskStopToken stopToken) {
         if (!pauseRequested) {
-            return;
+            return 0L;
         }
         log.info("task pause checkpoint reached: reason={}", reason);
+        long blockedStartMs = System.currentTimeMillis();
         synchronized (monitor) {
             while (pauseRequested) {
                 if (stopToken != null) {
@@ -67,6 +75,7 @@ public class TaskPauseToken {
         if (stopToken != null) {
             stopToken.throwIfStopRequested();
         }
+        return Math.max(0L, System.currentTimeMillis() - blockedStartMs);
     }
 
     private String normalize(String value) {

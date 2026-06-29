@@ -109,7 +109,7 @@ public class NativeWindowRegistrationMapper {
 
     private TaskType normalizeLeaderTask(TaskType taskType) {
         if (taskType == null || taskType == TaskType.UNKNOWN || taskType == TaskType.AUTO_BATTLE) {
-            return TaskType.WUHuan;
+            return TaskType.WUHuan_V2;
         }
         return taskType;
     }

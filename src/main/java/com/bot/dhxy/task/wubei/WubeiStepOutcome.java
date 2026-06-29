@@ -15,6 +15,7 @@ import lombok.experimental.Accessors;
  * @param transactionResult task-turn result reported to the shared turn coordinator.
  * @param yieldPolicy whether this phase should keep or release the task turn.
  * @param message short diagnostic message for logs.
+ * @param waitSpec optional scheduling-only wait policy used after this outcome releases the turn.
  */
 @Value
 @Builder
@@ -25,13 +26,15 @@ public class WubeiStepOutcome {
     TaskTransactionResult transactionResult;
     TaskYieldPolicy yieldPolicy;
     String message;
+    WubeiWaitSpec waitSpec;
 
     public static WubeiStepOutcome continueTo(WubeiRoundContext nextState, String message) {
         return new WubeiStepOutcome(
                 nextState,
                 TaskTransactionResult.READY_TO_CONTINUE,
                 TaskYieldPolicy.CONTINUE_CHAIN,
-                message);
+                message,
+                null);
     }
 
     public static WubeiStepOutcome pathingStarted(WubeiRoundContext nextState, String message) {
@@ -39,7 +42,8 @@ public class WubeiStepOutcome {
                 nextState,
                 TaskTransactionResult.PATHING_STARTED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static WubeiStepOutcome sharedState(WubeiRoundContext nextState, String message) {
@@ -47,7 +51,8 @@ public class WubeiStepOutcome {
                 nextState,
                 TaskTransactionResult.SHARED_STATE_TRIGGERED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static WubeiStepOutcome failed(WubeiRoundContext state, String message) {
@@ -55,7 +60,8 @@ public class WubeiStepOutcome {
                 state.next(WubeiPhase.FAILED, "failed"),
                 TaskTransactionResult.FAILED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static WubeiStepOutcome stopped(WubeiRoundContext state, String message) {
@@ -63,6 +69,11 @@ public class WubeiStepOutcome {
                 state.next(WubeiPhase.STOPPED, "stopped"),
                 TaskTransactionResult.STOPPED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
+    }
+
+    public WubeiStepOutcome withWaitSpec(WubeiWaitSpec waitSpec) {
+        return new WubeiStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec);
     }
 }

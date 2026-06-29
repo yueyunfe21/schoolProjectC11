@@ -4,6 +4,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.model.bag.ReturnItemCachePoint;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -42,6 +43,8 @@ public class BagService {
     };
     private static final double MAIN_BAG_ANCHOR_MATCH_RATE = 0.8;
     private static final double MAIN_BAG_TAB_FALLBACK_MATCH_RATE = 0.8;
+    private static final double BAG_ITEM_MATCH_RATE = 0.85;
+    private static final double BAG_ITEM_MATCH_MIN_DISTANCE = 24.0;
     private static final int BAG_OPEN_WAIT_MS = 1200;
     private static final int BAG_LATE_RENDER_WAIT_MS = 700;
     private static final int BAG_TAB_CLICK_WAIT_MS = 500;
@@ -68,6 +71,15 @@ public class BagService {
     private final Set<String> mainBagFirstPositionDone = ConcurrentHashMap.newKeySet();
 
     public enum ItemAction { SELECT, USE }
+
+    /**
+     * Summary for bounded item counting in an open bag.
+     *
+     * @param count number of distinct template hits found before the requested cap was reached.
+     * @param firstPageIndex zero-based bag page of the first hit, or null when no item matched.
+     */
+    public record ItemCountResult(int count, Integer firstPageIndex) {
+    }
 
     public static class BagLayout {
         final String anchorTemplate;
@@ -216,6 +228,115 @@ public class BagService {
     public boolean findAndUseItemFromBack(BagLayout layout, String targetItemTemplate, int maxBagIndex,
                                           TaskExecutionContext context) {
         return interactWithItemFromBack(layout, targetItemTemplate, maxBagIndex, ItemAction.USE, context);
+    }
+
+    /**
+     * Locate a return item on the main-bag task page without clicking it.
+     *
+     * @param targetItemTemplate item template path relative to {@code images/template/}.
+     * @param source diagnostic source describing why the prescan is running.
+     * @param context optional task context for stop/pause checks.
+     * @return cached screen-absolute item point when the item is found; null otherwise.
+     */
+    public ReturnItemCachePoint prescanMainBagTaskPageItem(String targetItemTemplate,
+                                                           String source,
+                                                           TaskExecutionContext context) {
+        AtomicReference<ReturnItemCachePoint> result = new AtomicReference<>();
+        boolean ok = inputSequences.submitExclusiveAndWait(
+                "bag:prescanTaskPageItem:" + targetItemTemplate,
+                () -> {
+                    result.set(findMainBagTaskPageItemPointExclusive(targetItemTemplate, source, context));
+                    return true;
+                });
+        if (!ok) {
+            throwIfStopRequested(context);
+            throwIfInterrupted("Bag task-page item prescan input was interrupted");
+            return null;
+        }
+        return result.get();
+    }
+
+    /**
+     * Locate a return item by scanning normal main-bag pages from the back without clicking it.
+     *
+     * @param targetItemTemplate item template path relative to {@code images/template/}.
+     * @param maxBagIndex highest zero-based normal bag page to consider.
+     * @param source diagnostic source describing why the prescan is running.
+     * @param context optional task context for stop/pause checks.
+     * @return cached screen-absolute item point when the item is found; null otherwise.
+     */
+    public ReturnItemCachePoint prescanMainBagItemFromBack(String targetItemTemplate,
+                                                           int maxBagIndex,
+                                                           String source,
+                                                           TaskExecutionContext context) {
+        AtomicReference<ReturnItemCachePoint> result = new AtomicReference<>();
+        boolean ok = inputSequences.submitExclusiveAndWait(
+                "bag:prescanItemFromBack:" + targetItemTemplate,
+                () -> {
+                    result.set(findMainBagItemFromBackPointExclusive(targetItemTemplate, maxBagIndex, source, context));
+                    return true;
+                });
+        if (!ok) {
+            throwIfStopRequested(context);
+            throwIfInterrupted("Bag from-back item prescan input was interrupted");
+            return null;
+        }
+        return result.get();
+    }
+
+    /**
+     * Open the main bag and click a previously learned return-item point.
+     *
+     * @param cachedPoint screen-absolute point produced by one of the prescan methods.
+     * @param source diagnostic source describing why the cached point is being consumed.
+     * @param context optional task context for stop/pause checks.
+     * @return true when the bag opened and the cached item click was submitted.
+     */
+    public boolean useCachedMainBagReturnItem(ReturnItemCachePoint cachedPoint,
+                                              String source,
+                                              TaskExecutionContext context) {
+        if (cachedPoint == null) {
+            return false;
+        }
+        AtomicReference<Boolean> result = new AtomicReference<>(false);
+        boolean ok = inputSequences.submitExclusiveAndWait(
+                "bag:useCachedReturnItem:" + cachedPoint.getTemplatePath(),
+                () -> {
+                    result.set(useCachedMainBagReturnItemExclusive(cachedPoint, source, context));
+                    return true;
+                });
+        if (!ok) {
+            throwIfStopRequested(context);
+            throwIfInterrupted("Cached return item input was interrupted");
+            return false;
+        }
+        return result.get();
+    }
+
+    /**
+     * Use a task item that is expected to live only on the main-bag task page.
+     *
+     * @param targetItemTemplate item template path relative to {@code images/template/}, such as
+     *                           {@code bag/xiuluo_return_item.png}; must not be null/blank.
+     * @param context optional task execution context used for stop checks.
+     * @return true when the task page was opened, the template was found there, and the item click
+     *         was submitted; false when the bag cannot be opened or the item is not on the task
+     *         page. This method deliberately does not scan normal bag pages.
+     */
+    public boolean findAndUseMainBagTaskPageItem(String targetItemTemplate, TaskExecutionContext context) {
+        AtomicReference<Boolean> result = new AtomicReference<>(false);
+        boolean ok = inputSequences.submitExclusiveAndWait(
+                "bag:taskPageItemAction:USE:" + targetItemTemplate,
+                () -> {
+                    result.set(interactWithMainBagTaskPageItemExclusive(targetItemTemplate, ItemAction.USE, context));
+                    return true;
+                });
+        if (!ok) {
+            throwIfStopRequested(context);
+            throwIfInterrupted("Bag task-page item action input was interrupted");
+            return false;
+        }
+        return result.get();
     }
 
     public boolean isMainBagOpen(TaskExecutionContext context) {
@@ -501,6 +622,131 @@ public class BagService {
         return success;
     }
 
+    private boolean interactWithMainBagTaskPageItemExclusive(String targetItemTemplate,
+                                                             ItemAction action,
+                                                             TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        log.info("[bag] start task-page item action: template={} action={}", targetItemTemplate, action);
+        Point baseAnchor = ensureBagOpened(MAIN_BAG, context);
+        if (baseAnchor == null) {
+            return false;
+        }
+
+        boolean success = false;
+        try {
+            Point currentPageItem = searchItemInCurrentPageOnly(MAIN_BAG, baseAnchor, targetItemTemplate, context);
+            if (currentPageItem != null) {
+                executeSafeAction(currentPageItem, action, context);
+                success = true;
+            }
+            if (!success) {
+                Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate,
+                        MAIN_BAG_TASK_TAB_INDEX, context);
+                if (pt != null) {
+                    executeSafeAction(pt, action, context);
+                    success = true;
+                }
+            }
+        } finally {
+            closeBagIfNeeded(MAIN_BAG, context);
+        }
+        log.info("[bag] task-page item action finished: template={} action={} success={}",
+                targetItemTemplate, action, success);
+        return success;
+    }
+
+    private ReturnItemCachePoint findMainBagTaskPageItemPointExclusive(String targetItemTemplate,
+                                                                       String source,
+                                                                       TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        log.info("[bag] start task-page item prescan: template={} source={}", targetItemTemplate, source);
+        Point baseAnchor = ensureBagOpened(MAIN_BAG, context);
+        if (baseAnchor == null) {
+            return null;
+        }
+
+        try {
+            Point currentPageItem = searchItemInCurrentPageOnly(MAIN_BAG, baseAnchor, targetItemTemplate, context);
+            if (currentPageItem != null) {
+                return toReturnItemCachePoint(targetItemTemplate, currentPageItem, source + ":current-page");
+            }
+            Point taskPageItem = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate,
+                    MAIN_BAG_TASK_TAB_INDEX, context);
+            return toReturnItemCachePoint(targetItemTemplate, taskPageItem, source + ":task-page");
+        } finally {
+            closeBagIfNeeded(MAIN_BAG, context);
+        }
+    }
+
+    private ReturnItemCachePoint findMainBagItemFromBackPointExclusive(String targetItemTemplate,
+                                                                       int maxBagIndex,
+                                                                       String source,
+                                                                       TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        int safeMaxBagIndex = Math.max(0, Math.min(maxBagIndex, 5));
+        log.info("[bag] start from-back item prescan: template={} maxPage={} source={}",
+                targetItemTemplate, safeMaxBagIndex + 1, source);
+        Point baseAnchor = ensureBagOpened(MAIN_BAG, context);
+        if (baseAnchor == null) {
+            return null;
+        }
+
+        try {
+            Point currentPageItem = searchItemInCurrentPageOnly(MAIN_BAG, baseAnchor, targetItemTemplate, context);
+            if (currentPageItem != null) {
+                return toReturnItemCachePoint(targetItemTemplate, currentPageItem, source + ":current-page");
+            }
+            for (int i = safeMaxBagIndex; i >= FIRST_SEARCHABLE_PAGE_INDEX; i--) {
+                throwIfStopRequested(context);
+                Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate, i, context);
+                if (pt != null) {
+                    rememberItemPage(MAIN_BAG, targetItemTemplate, i);
+                    return toReturnItemCachePoint(targetItemTemplate, pt, source + ":page-" + (i + 1));
+                }
+            }
+            log.warn("[bag] from-back item prescan no match: template={} maxPage={} source={}",
+                    targetItemTemplate, safeMaxBagIndex + 1, source);
+            return null;
+        } finally {
+            closeBagIfNeeded(MAIN_BAG, context);
+        }
+    }
+
+    private boolean useCachedMainBagReturnItemExclusive(ReturnItemCachePoint cachedPoint,
+                                                        String source,
+                                                        TaskExecutionContext context) {
+        throwIfStopRequested(context);
+        log.info("[bag] start cached return item use: template={} point=({}, {}) source={} learnedSource={}",
+                cachedPoint.getTemplatePath(), cachedPoint.getClickX(), cachedPoint.getClickY(),
+                source, cachedPoint.getSource());
+        Point baseAnchor = ensureBagOpened(MAIN_BAG, context);
+        if (baseAnchor == null) {
+            return false;
+        }
+
+        try {
+            executeSafeAction(new Point(cachedPoint.getClickX(), cachedPoint.getClickY()), ItemAction.USE, context);
+            return true;
+        } finally {
+            closeBagIfNeeded(MAIN_BAG, context);
+        }
+    }
+
+    private ReturnItemCachePoint toReturnItemCachePoint(String targetItemTemplate, Point point, String source) {
+        if (point == null) {
+            return null;
+        }
+        log.info("[bag] return item prescan matched: template={} point=({}, {}) source={}",
+                targetItemTemplate, point.x, point.y, source);
+        return ReturnItemCachePoint.builder()
+                .templatePath(targetItemTemplate)
+                .clickX(point.x)
+                .clickY(point.y)
+                .learnedAtMs(System.currentTimeMillis())
+                .source(source)
+                .build();
+    }
+
     private Integer findItemPageIndexInOpenMainBag(Point baseAnchor, String targetItemTemplate,
                                                    TaskExecutionContext context) {
         Integer foundIndex = null;
@@ -521,6 +767,42 @@ public class BagService {
             log.warn("[bag] item not found in open main bag: template={}", targetItemTemplate);
         }
         return foundIndex;
+    }
+
+    private ItemCountResult countItemUpToInOpenMainBag(Point baseAnchor, String targetItemTemplate,
+                                                       int requiredCount, TaskExecutionContext context) {
+        int safeRequiredCount = Math.max(0, requiredCount);
+        if (safeRequiredCount == 0) {
+            return new ItemCountResult(0, null);
+        }
+
+        int count = 0;
+        Integer firstPageIndex = null;
+        int[] scanOrder = pageScanOrder(preferredStartPage(MAIN_BAG, targetItemTemplate), null);
+        log.info("[bag] count open main bag item: template={} required={} order={}",
+                targetItemTemplate, safeRequiredCount, displayPageOrder(scanOrder));
+        for (int i : scanOrder) {
+            throwIfStopRequested(context);
+            List<Point> found = searchItemsInTabOnly(
+                    MAIN_BAG, baseAnchor, targetItemTemplate, i, safeRequiredCount - count, context);
+            if (!found.isEmpty()) {
+                if (firstPageIndex == null) {
+                    firstPageIndex = i;
+                }
+                rememberItemPage(MAIN_BAG, targetItemTemplate, i);
+                count += found.size();
+                log.info("[bag] count open main bag item page matched: template={} page={} pageCount={} total={}/{}",
+                        targetItemTemplate, i + 1, found.size(), count, safeRequiredCount);
+                if (count >= safeRequiredCount) {
+                    break;
+                }
+            }
+        }
+
+        log.info("[bag] count open main bag item result: template={} count={} required={} firstPage={}",
+                targetItemTemplate, count, safeRequiredCount,
+                firstPageIndex == null ? "none" : firstPageIndex + 1);
+        return new ItemCountResult(count, firstPageIndex);
     }
 
     private boolean interactWithItemInOpenMainBag(Point baseAnchor, String targetItemTemplate,
@@ -700,8 +982,16 @@ public class BagService {
 
     private Point searchItemInTabOnly(BagLayout layout, Point baseAnchor, String targetItemTemplate,
                                       int tabIndex, TaskExecutionContext context) {
+        List<Point> found = searchItemsInTabOnly(layout, baseAnchor, targetItemTemplate, tabIndex, 1, context);
+        return found.isEmpty() ? null : found.get(0);
+    }
+
+    private List<Point> searchItemsInTabOnly(BagLayout layout, Point baseAnchor, String targetItemTemplate,
+                                             int tabIndex, int maxMatches, TaskExecutionContext context) {
         throwIfStopRequested(context);
-        log.info("[bag] switch and scan page {}: template={}", tabIndex + 1, targetItemTemplate);
+        int safeMaxMatches = Math.max(1, maxMatches);
+        log.info("[bag] switch and scan page {}: template={} maxMatches={}",
+                tabIndex + 1, targetItemTemplate, safeMaxMatches);
         switchBagTab(layout, baseAnchor, tabIndex, context);
         throwIfStopRequested(context);
 
@@ -716,20 +1006,37 @@ public class BagService {
                 tabIndex + 1, path, startX, startY, endX, endY);
         if (!tracker.captureToFile("bag-scan", path, startX, startY, endX, endY)) {
             log.warn("[bag] page {} capture failed", tabIndex + 1);
-            return null;
+            return List.of();
         }
         throwIfStopRequested(context);
 
-        double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, 0.85);
+        List<double[]> matches = ImageFinder.findAll(
+                path, "images/template/" + targetItemTemplate, BAG_ITEM_MATCH_RATE, BAG_ITEM_MATCH_MIN_DISTANCE);
         throwIfStopRequested(context);
-        if (res == null || res.length < 2) {
+        if (matches.isEmpty()) {
             log.info("[bag] page {} no match: template={}", tabIndex + 1, targetItemTemplate);
-            return null;
+            return List.of();
         }
 
-        Point found = new Point(startX + (int) Math.round(res[0] / scale), startY + (int) Math.round(res[1] / scale));
-        log.info("[bag] page {} matched: template={} point=({}, {})",
-                tabIndex + 1, targetItemTemplate, found.x, found.y);
+        List<Point> found = new ArrayList<>();
+        for (double[] match : matches) {
+            if (match == null || match.length < 2) {
+                continue;
+            }
+            Point point = new Point(
+                    startX + (int) Math.round(match[0] / scale),
+                    startY + (int) Math.round(match[1] / scale));
+            found.add(point);
+            if (found.size() >= safeMaxMatches) {
+                break;
+            }
+        }
+        if (found.isEmpty()) {
+            log.info("[bag] page {} no valid match point after filtering: template={}", tabIndex + 1, targetItemTemplate);
+            return List.of();
+        }
+        log.info("[bag] page {} matched: template={} count={} firstPoint=({}, {})",
+                tabIndex + 1, targetItemTemplate, found.size(), found.get(0).x, found.get(0).y);
         return found;
     }
 
@@ -752,7 +1059,7 @@ public class BagService {
         }
         throwIfStopRequested(context);
 
-        double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, 0.85);
+        double[] res = ImageFinder.find(path, "images/template/" + targetItemTemplate, BAG_ITEM_MATCH_RATE);
         throwIfStopRequested(context);
         if (res == null || res.length < 2) {
             log.info("[bag] current visible page no match: template={}", targetItemTemplate);
@@ -911,6 +1218,10 @@ public class BagService {
 
         public Integer findItemPageIndex(String targetItemTemplate) {
             return findItemPageIndexInOpenMainBag(baseAnchor, targetItemTemplate, context);
+        }
+
+        public ItemCountResult countItemUpTo(String targetItemTemplate, int requiredCount) {
+            return countItemUpToInOpenMainBag(baseAnchor, targetItemTemplate, requiredCount, context);
         }
 
         public boolean useItem(String targetItemTemplate, Integer knownBagIndex) {

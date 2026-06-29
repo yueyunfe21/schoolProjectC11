@@ -39,6 +39,7 @@ public class WindowTaskSnapshot {
     private final WindowNativeBinding nativeBinding;
     private final String runningQueueDisplayText;
     private final String runningQueueProgressText;
+    private final String runningTaskProgressText;
     private final int runningQueueSize;
     private final WindowTaskFailurePolicy runningQueueFailurePolicy;
     private final boolean acceptingTaskQueue;
@@ -56,7 +57,7 @@ public class WindowTaskSnapshot {
                               String lastMessage) {
         this(windowId, roleName, role, status, selectedTaskType, runningTaskType, TaskType.UNKNOWN, null, running,
                 taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, null, WindowNativeBinding.empty(),
-                null, null, null, null, "-", "-", 0, null, !running,
+                null, null, null, null, "-", "-", "-", 0, null, !running,
                 null, null, null);
     }
 
@@ -74,7 +75,7 @@ public class WindowTaskSnapshot {
                               WindowNativeBinding nativeBinding) {
         this(windowId, roleName, role, status, selectedTaskType, runningTaskType, TaskType.UNKNOWN, null, running,
                 taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, null, nativeBinding,
-                null, null, null, null, "-", "-", 0, null, !running,
+                null, null, null, null, "-", "-", "-", 0, null, !running,
                 null, null, null);
     }
 
@@ -95,7 +96,7 @@ public class WindowTaskSnapshot {
                               WindowNativeBinding nativeBinding) {
         this(windowId, roleName, role, status, selectedTaskType, runningTaskType, lastTaskType, lastResult, running,
                 taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, lastResultMessage, nativeBinding,
-                null, null, null, null, "-", "-", 0, null, !running,
+                null, null, null, null, "-", "-", "-", 0, null, !running,
                 null, null, null);
     }
 
@@ -119,7 +120,7 @@ public class WindowTaskSnapshot {
                               int runningQueueSize) {
         this(windowId, roleName, role, status, selectedTaskType, runningTaskType, lastTaskType, lastResult, running,
                 taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, lastResultMessage, nativeBinding,
-                null, null, null, null, runningQueueDisplayText, runningQueueProgressText, runningQueueSize, null, !running,
+                null, null, null, null, runningQueueDisplayText, runningQueueProgressText, "-", runningQueueSize, null, !running,
                 null, null, null);
     }
 
@@ -150,7 +151,7 @@ public class WindowTaskSnapshot {
         this(windowId, roleName, role, status, selectedTaskType, runningTaskType, lastTaskType, lastResult, running,
                 taskStartedAt, lastStartedAt, lastFinishedAt, lastMessage, lastResultMessage, nativeBinding,
                 lastQueueDisplayText, lastQueueResult, lastQueueMessage, lastQueueFailurePolicy,
-                runningQueueDisplayText, runningQueueProgressText, runningQueueSize, runningQueueFailurePolicy,
+                runningQueueDisplayText, runningQueueProgressText, "-", runningQueueSize, runningQueueFailurePolicy,
                 acceptingTaskQueue, null, null, null);
     }
 
@@ -175,6 +176,7 @@ public class WindowTaskSnapshot {
                               WindowTaskFailurePolicy lastQueueFailurePolicy,
                               String runningQueueDisplayText,
                               String runningQueueProgressText,
+                              String runningTaskProgressText,
                               int runningQueueSize,
                               WindowTaskFailurePolicy runningQueueFailurePolicy,
                               boolean acceptingTaskQueue,
@@ -205,6 +207,7 @@ public class WindowTaskSnapshot {
         this.nativeBinding = nativeBinding == null ? WindowNativeBinding.empty() : nativeBinding;
         this.runningQueueDisplayText = runningQueueDisplayText == null || runningQueueDisplayText.isBlank() ? "-" : runningQueueDisplayText;
         this.runningQueueProgressText = runningQueueProgressText == null || runningQueueProgressText.isBlank() ? "-" : runningQueueProgressText;
+        this.runningTaskProgressText = runningTaskProgressText == null || runningTaskProgressText.isBlank() ? "-" : runningTaskProgressText;
         this.runningQueueSize = Math.max(0, runningQueueSize);
         this.runningQueueFailurePolicy = runningQueueFailurePolicy;
         this.acceptingTaskQueue = acceptingTaskQueue;
@@ -259,6 +262,8 @@ public class WindowTaskSnapshot {
     public String getRunningQueueDisplayText() { return runningQueueDisplayText; }
 
     public String getRunningQueueProgressText() { return runningQueueProgressText; }
+
+    public String getRunningTaskProgressText() { return runningTaskProgressText; }
 
     public int getRunningQueueSize() { return runningQueueSize; }
 

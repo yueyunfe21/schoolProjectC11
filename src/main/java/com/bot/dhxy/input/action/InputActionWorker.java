@@ -88,10 +88,20 @@ public class InputActionWorker {
         long latencyStart = LatencyMetrics.start();
         boolean completed = false;
         try {
+            if (isPauseRequested(request, "before-focus")) {
+                request.getResult().complete(false);
+                deadLetter.record(request, null);
+                return;
+            }
             if (request.isCancelled()) {
                 log.info("Input request skipped before focus because it was cancelled: windowId={} description={}",
                         request.getWindowId(), request.getDescription());
                 request.getResult().complete(false);
+                return;
+            }
+            if (!isPlayerIdentityEpochCurrent(request, "before-focus")) {
+                request.getResult().complete(false);
+                deadLetter.record(request, null);
                 return;
             }
             boolean preferBackgroundKeyboard = canUseBackgroundKeyboard(request);
@@ -99,17 +109,26 @@ public class InputActionWorker {
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
                     inputCoordinator.callInputTransaction("queued:" + request.getDescription(), focusBeforeInput, () ->
                             InputActionScope.callWith(request, () -> {
-                        if (request.isCancelled()) {
+                        if (isPauseRequested(request, "before-actions")
+                                || request.isCancelled()
+                                || !isPlayerIdentityEpochCurrent(request, "before-actions")) {
                             return false;
                         }
 
                         if (request.hasExclusiveCallback()) {
+                            if (isPauseRequested(request, "before-exclusive-callback")
+                                    || !isPlayerIdentityEpochCurrent(request, "before-exclusive-callback")) {
+                                return false;
+                            }
                             return Boolean.TRUE.equals(request.getExclusiveCallback().get());
                         }
                         int actionIndex = 0;
                         for (InputAction action : request.getActions()) {
                             actionIndex++;
-                            if (request.isCancelled() || Thread.currentThread().isInterrupted()) {
+                            if (isPauseRequested(request, "action-" + actionIndex)
+                                    || request.isCancelled()
+                                    || Thread.currentThread().isInterrupted()
+                                    || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)) {
                                 return false;
                             }
                             log.info("[INPUT_TRACE] queued-action request={} windowId={} actionIndex={}/{} action={}",
@@ -156,8 +175,9 @@ public class InputActionWorker {
             case PASTE_TEXT -> inputProvider.pasteText(action.getText());
             case PRESS_ENTER -> inputProvider.pressEnter();
             case PRESS_ALT_1, PRESS_ALT_2, PRESS_ALT_4, PRESS_ALT_6, PRESS_ALT_8,
-                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A, PRESS_ALT_C, PRESS_ALT_U ->
-                    pressAltShortcut(action.getType(), preferBackgroundKeyboard);
+                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A, PRESS_ALT_C, PRESS_ALT_U -> {
+                return pressAltShortcut(action.getType(), preferBackgroundKeyboard);
+            }
             case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
             case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
             case SLEEP -> TaskSleep.sleep(action.getDelayMs());
@@ -165,15 +185,44 @@ public class InputActionWorker {
         return !Thread.currentThread().isInterrupted();
     }
 
+    private boolean isPauseRequested(InputActionRequest request, String stage) {
+        if (!request.isPauseRequested()) {
+            return false;
+        }
+        log.warn("Input request skipped because submitting task is paused: windowId={} description={} stage={}",
+                request.getWindowId(), request.getDescription(), stage);
+        request.cancel("task-paused:" + stage);
+        return true;
+    }
+
+    private boolean isPlayerIdentityEpochCurrent(InputActionRequest request, String stage) {
+        if (request.isPlayerIdentityEpochCurrent()) {
+            return true;
+        }
+        long currentEpoch = request.getWindowContext() == null
+                ? -1L
+                : request.getWindowContext().getPlayerIdentityEpoch();
+        log.warn("Input request skipped because player identity epoch changed: windowId={} description={} stage={} requestEpoch={} currentEpoch={}",
+                request.getWindowId(), request.getDescription(), stage,
+                request.getPlayerIdentityEpoch(), currentEpoch);
+        request.cancel("player-identity-epoch-changed:" + stage);
+        return false;
+    }
+
     /**
      * Press an Alt shortcut, preferring background hwnd delivery when the sequence is keyboard-only.
      */
-    private void pressAltShortcut(InputActionType type, boolean preferBackgroundKeyboard) {
+    private boolean pressAltShortcut(InputActionType type, boolean preferBackgroundKeyboard) {
         BoundWindowKeyboardService.AltShortcut shortcut = toAltShortcut(type);
         if (preferBackgroundKeyboard) {
             BoundWindowKeyboardService.ShortcutAttempt attempt = boundWindowKeyboardService.pressShortcut(shortcut);
             if (attempt.attempted() && attempt.success()) {
-                return;
+                return true;
+            }
+            if (attempt.terminalFailure()) {
+                log.warn("HWND {} terminally rejected; skip focused real-input fallback: reason={}",
+                        shortcutDisplayName(shortcut, type), attempt.reason());
+                return false;
             }
             if (attempt.attempted()) {
                 log.warn("HWND {} failed, falling back to focused real input: reason={}",
@@ -185,6 +234,7 @@ public class InputActionWorker {
             inputCoordinator.focusCurrentWindowInActiveTransaction("fallback:" + shortcutDisplayName(shortcut, type));
         }
         pressAltShortcutWithRealInput(type);
+        return !Thread.currentThread().isInterrupted();
     }
 
     /**
@@ -217,9 +267,6 @@ public class InputActionWorker {
             case PRESS_ALT_O -> BoundWindowKeyboardService.AltShortcut.ALT_O;
             case PRESS_ALT_E -> BoundWindowKeyboardService.AltShortcut.ALT_E;
             case PRESS_ALT_Q -> BoundWindowKeyboardService.AltShortcut.ALT_Q;
-            case PRESS_ALT_A -> BoundWindowKeyboardService.AltShortcut.ALT_A;
-            case PRESS_ALT_C -> BoundWindowKeyboardService.AltShortcut.ALT_C;
-            case PRESS_ALT_U -> BoundWindowKeyboardService.AltShortcut.ALT_U;
             default -> null;
         };
     }

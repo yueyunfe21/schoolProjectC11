@@ -17,6 +17,7 @@ public class DefaultTaskFactory implements TaskFactory {
     private final ObjectProvider<WubeiTask> wubeiTaskProvider;
     private final ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider;
     private final ObjectProvider<AutoBattleTask> autoBattleTaskProvider;
+    private final ObjectProvider<SleepComputerTask> sleepComputerTaskProvider;
     private final ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider;
     private final ObjectProvider<DebugMapCalibratorTask> debugMapCalibratorTaskProvider;
     private final ObjectProvider<DebugTeamRoleTask> debugTeamRoleTaskProvider;
@@ -29,6 +30,7 @@ public class DefaultTaskFactory implements TaskFactory {
                               ObjectProvider<WubeiTask> wubeiTaskProvider,
                               ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider,
                               ObjectProvider<AutoBattleTask> autoBattleTaskProvider,
+                              ObjectProvider<SleepComputerTask> sleepComputerTaskProvider,
                               ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider,
                               ObjectProvider<DebugMapCalibratorTask> debugMapCalibratorTaskProvider,
                               ObjectProvider<DebugTeamRoleTask> debugTeamRoleTaskProvider,
@@ -40,6 +42,7 @@ public class DefaultTaskFactory implements TaskFactory {
         this.wubeiTaskProvider = wubeiTaskProvider;
         this.xiuluoTaskV2Provider = xiuluoTaskV2Provider;
         this.autoBattleTaskProvider = autoBattleTaskProvider;
+        this.sleepComputerTaskProvider = sleepComputerTaskProvider;
         this.debugCoordinateTaskProvider = debugCoordinateTaskProvider;
         this.debugMapCalibratorTaskProvider = debugMapCalibratorTaskProvider;
         this.debugTeamRoleTaskProvider = debugTeamRoleTaskProvider;
@@ -56,12 +59,12 @@ public class DefaultTaskFactory implements TaskFactory {
         }
 
         return switch (taskType) {
-            case WUHuan -> fiveRingTaskV2Provider.getObject();
             case WUHuan_V2 -> fiveRingTaskV2Provider.getObject();
             case WUBEI -> wubeiTaskProvider.getObject();
             case XIULUO -> xiuluoTaskV2Provider.getObject();
             case XIULUO_V2 -> xiuluoTaskV2Provider.getObject();
             case AUTO_BATTLE -> autoBattleTaskProvider.getObject();
+            case SLEEP_COMPUTER -> sleepComputerTaskProvider.getObject();
             case DEBUG_COORDINATE -> debugCoordinateTaskProvider.getObject();
             case DEBUG_MAP_CALIBRATOR -> debugMapCalibratorTaskProvider.getObject();
             case DEBUG_TEAM_ROLE -> debugTeamRoleTaskProvider.getObject();

@@ -42,6 +42,7 @@ public final class InputActionScope {
      */
     public static boolean isCancelled() {
         InputActionRequest request = CURRENT.get();
-        return Thread.currentThread().isInterrupted() || (request != null && request.isCancelled());
+        return Thread.currentThread().isInterrupted()
+                || (request != null && (request.isCancelled() || request.isPauseRequested()));
     }
 }

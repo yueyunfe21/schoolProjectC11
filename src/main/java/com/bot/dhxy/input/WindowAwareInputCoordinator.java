@@ -3,6 +3,8 @@ package com.bot.dhxy.input;
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
 import com.bot.dhxy.window.interaction.WindowFocusService;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,7 @@ public class WindowAwareInputCoordinator {
     private final WindowFocusService windowFocusService;
     private final WindowIsolationProperties windowIsolationProperties;
     private final WindowInteractionMetricsService windowInteractionMetricsService;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     private final ThreadLocal<Boolean> inputTransactionActive = ThreadLocal.withInitial(() -> false);
     private final ThreadLocal<String> currentInputActionName = new ThreadLocal<>();
@@ -35,12 +38,14 @@ public class WindowAwareInputCoordinator {
                                        WindowTaskContextHolder windowTaskContextHolder,
                                        WindowFocusService windowFocusService,
                                        WindowIsolationProperties windowIsolationProperties,
-                                       WindowInteractionMetricsService windowInteractionMetricsService) {
+                                       WindowInteractionMetricsService windowInteractionMetricsService,
+                                       WindowNativeBindingRefreshService bindingRefreshService) {
         this.globalInputLock = globalInputLock;
         this.windowTaskContextHolder = windowTaskContextHolder;
         this.windowFocusService = windowFocusService;
         this.windowIsolationProperties = windowIsolationProperties;
         this.windowInteractionMetricsService = windowInteractionMetricsService;
+        this.bindingRefreshService = bindingRefreshService;
     }
 
     public void runInput(String actionName, Runnable action) {
@@ -52,7 +57,9 @@ public class WindowAwareInputCoordinator {
             String previousActionName = currentInputActionName.get();
             currentInputActionName.set(actionName);
             try {
-                focusCurrentWindowWithoutLock(actionName);
+                if (focusCurrentWindowWithoutLock(actionName).abortInput()) {
+                    return;
+                }
                 action.run();
             } finally {
                 restoreActionName(previousActionName);
@@ -68,7 +75,9 @@ public class WindowAwareInputCoordinator {
             String previousActionName = currentInputActionName.get();
             currentInputActionName.set(actionName);
             try {
-                focusCurrentWindowWithoutLock(actionName);
+                if (focusCurrentWindowWithoutLock(actionName).abortInput()) {
+                    return null;
+                }
                 return action.get();
             } finally {
                 restoreActionName(previousActionName);
@@ -87,8 +96,8 @@ public class WindowAwareInputCoordinator {
             inputTransactionActive.set(true);
             currentInputActionName.set(actionName);
             try {
-                if (focusBeforeInput) {
-                    focusCurrentWindowWithoutLock(actionName);
+                if (focusBeforeInput && focusCurrentWindowWithoutLock(actionName).abortInput()) {
+                    return;
                 }
                 action.run();
             } finally {
@@ -109,8 +118,8 @@ public class WindowAwareInputCoordinator {
             inputTransactionActive.set(true);
             currentInputActionName.set(actionName);
             try {
-                if (focusBeforeInput) {
-                    focusCurrentWindowWithoutLock(actionName);
+                if (focusBeforeInput && focusCurrentWindowWithoutLock(actionName).abortInput()) {
+                    return null;
                 }
                 return action.get();
             } finally {
@@ -128,27 +137,42 @@ public class WindowAwareInputCoordinator {
         if (!inputTransactionActive.get()) {
             throw new IllegalStateException("focusCurrentWindowInActiveTransaction must run inside input transaction");
         }
-        return focusCurrentWindowWithoutLock(actionName);
+        FocusPreparationResult result = focusCurrentWindowWithoutLock(actionName);
+        if (result.abortInput()) {
+            throw new IllegalStateException("live binding refresh unavailable before input focus: " + actionName);
+        }
+        return result.focused();
     }
 
-    private boolean focusCurrentWindowWithoutLock(String actionName) {
+    private FocusPreparationResult focusCurrentWindowWithoutLock(String actionName) {
         if (!windowIsolationProperties.isInputFocusActive()) {
-            return false;
+            return FocusPreparationResult.SKIPPED;
         }
         Optional<WindowRuntimeContext> contextOptional = windowTaskContextHolder.rawCurrent();
         if (contextOptional.isEmpty()) {
-            return false;
+            return FocusPreparationResult.SKIPPED;
         }
         WindowRuntimeContext context = contextOptional.get();
         if (!context.hasNativeBinding()) {
-            return false;
+            return FocusPreparationResult.SKIPPED;
         }
-        boolean focused = windowFocusService.focusWithoutLock(context.getNativeBinding());
+        Optional<WindowNativeBinding> refreshedBinding = bindingRefreshService.refreshAndCommit(context);
+        if (refreshedBinding.isEmpty()) {
+            log.warn("Input window focus rejected because live binding refresh is unavailable: windowId={} action={}",
+                    context.getWindowId(), actionName);
+            return FocusPreparationResult.ABORT_INPUT;
+        }
+        WindowNativeBinding binding = context.getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            return FocusPreparationResult.SKIPPED;
+        }
+        context.waitIfIdentitySuspended(null);
+        boolean focused = windowFocusService.focusWithoutLock(binding);
         windowInteractionMetricsService.recordFocus(context.getWindowId(), actionName, focused);
         if (!focused) {
             log.debug("Input window focus failed before action: windowId={} action={}", context.getWindowId(), actionName);
         }
-        return focused;
+        return focused ? FocusPreparationResult.FOCUSED : FocusPreparationResult.SKIPPED;
     }
 
     private void restoreActionName(String previousActionName) {
@@ -156,6 +180,28 @@ public class WindowAwareInputCoordinator {
             currentInputActionName.remove();
         } else {
             currentInputActionName.set(previousActionName);
+        }
+    }
+
+    private enum FocusPreparationResult {
+        SKIPPED(false, false),
+        FOCUSED(false, true),
+        ABORT_INPUT(true, false);
+
+        private final boolean abortInput;
+        private final boolean focused;
+
+        FocusPreparationResult(boolean abortInput, boolean focused) {
+            this.abortInput = abortInput;
+            this.focused = focused;
+        }
+
+        private boolean abortInput() {
+            return abortInput;
+        }
+
+        private boolean focused() {
+            return focused;
         }
     }
 }

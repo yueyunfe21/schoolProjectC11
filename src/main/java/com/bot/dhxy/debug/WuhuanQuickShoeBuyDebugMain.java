@@ -78,7 +78,7 @@ public class WuhuanQuickShoeBuyDebugMain {
         WindowRuntimeContext window = selectWindow(taskManager);
         TaskExecutionContext context = TaskExecutionContext.builder()
                 .taskCode("wuhuan-v2-quick-shoe-buy-debug")
-                .taskName("五环V2快捷买鞋调试")
+                .taskName("五环快捷买鞋调试")
                 .retryPolicy(TaskRetryPolicy.none())
                 .startedAt(LocalDateTime.now())
                 .build();

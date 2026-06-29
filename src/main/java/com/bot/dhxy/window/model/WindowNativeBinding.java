@@ -62,6 +62,24 @@ public class WindowNativeBinding {
         return new WindowNativeBinding(nativeHandle, title, className, processId, x, y, width, height);
     }
 
+    public WindowNativeBinding withLiveState(String title,
+                                             String className,
+                                             long processId,
+                                             int x,
+                                             int y,
+                                             int width,
+                                             int height) {
+        return new WindowNativeBinding(
+                nativeHandle,
+                title,
+                className == null || className.isBlank() ? this.className : className,
+                processId <= 0L ? this.processId : processId,
+                x,
+                y,
+                width,
+                height);
+    }
+
     public boolean hasSameGeometry(WindowNativeBinding other) {
         return other != null
                 && x == other.x

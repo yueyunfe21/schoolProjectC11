@@ -4,6 +4,7 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
@@ -13,13 +14,17 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import javax.imageio.ImageIO;
 import java.awt.Point;
+import java.awt.image.BufferedImage;
+import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
@@ -66,45 +71,83 @@ public class UICleanerService {
     public void cleanUpAll() {
         log.info("UI cleanup started");
         boolean cleanedAny = false;
+        CleanupPass cleanupPass = CleanupPass.start();
 
-        if (isWorldMapOpened()) {
-            cleanedAny = closeMapWindow() || cleanedAny;
+        if (isWorldMapOpened(cleanupPass)) {
+            cleanedAny = closeMapWindow(cleanupPass) || cleanedAny;
         }
 
         if (forceCloseDialog()) {
             cleanedAny = true;
         }
 
-        if (closeAllGenericWindows()) {
+        if (closeAllGenericWindows(cleanupPass)) {
             cleanedAny = true;
         }
 
         log.info(cleanedAny ? "UI cleanup finished" : "UI already clean");
     }
     private boolean isWorldMapOpened() {
-        if (coordinateHelper.findImageAbsoluteCoordinate("images/template/map/world_map_title.png", 0.8) != null) {
+        return isWorldMapOpened(CleanupPass.start());
+    }
+
+    private boolean isWorldMapOpened(CleanupPass cleanupPass) {
+        String screenPath = cleanupPass.screenPath(tracker);
+        if (screenPath == null || screenPath.isBlank()) {
+            return false;
+        }
+        if (coordinateHelper.findImageAbsoluteCoordinateByImagePath(
+                "images/template/map/world_map_title.png", screenPath, 0.8) != null) {
             return true;
         }
 
         int[] rect = coordinateHelper.getScaledRect(MAP_POPUP_RECT_X_OFFSET, MAP_POPUP_RECT_Y_OFFSET,
                 MAP_POPUP_RECT_WIDTH, MAP_POPUP_RECT_HEIGHT);
-        return coordinateHelper.findImageInRegion("images/template/map/checkbox_checked.png", rect, 0.95) != null
-                || coordinateHelper.findImageInRegion("images/template/map/checkbox_unchecked.png", rect, 0.95) != null;
+        return findImageInCachedRegion(screenPath, "images/template/map/checkbox_checked.png", rect, 0.95) != null
+                || findImageInCachedRegion(screenPath, "images/template/map/checkbox_unchecked.png", rect, 0.95) != null;
     }
 
-    private boolean closeMapWindow() {
+    private Point findImageInCachedRegion(String screenPath, String templatePath, int[] rect, double matchRate) {
+        try {
+            BufferedImage frame = ImageIO.read(new File(screenPath));
+            if (frame == null) {
+                return null;
+            }
+            int[] frameRect = new int[]{
+                    tracker.getWindowBaseX(),
+                    tracker.getWindowBaseY(),
+                    tracker.getWindowBaseX() + frame.getWidth(),
+                    tracker.getWindowBaseY() + frame.getHeight()
+            };
+            BufferedImage crop = ImagePreprocessor.cropAbsoluteRect(frame, frameRect, rect);
+            if (crop == null) {
+                return null;
+            }
+            String roiPath = windowScopedTempPath.resolve("ui_cleanup_cached_roi_scan.png");
+            ImageIO.write(crop, "png", new File(roiPath));
+            double[] result = ImageFinder.find(roiPath, templatePath, matchRate);
+            return coordinateHelper.resolveMatchedPointInRect(rect, result);
+        } catch (Exception e) {
+            log.warn("UI cleanup cached ROI match failed: template={} rect=({}, {})-({}, {}) reason={}",
+                    templatePath, rect[0], rect[1], rect[2], rect[3], e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private boolean closeMapWindow(CleanupPass cleanupPass) {
         boolean submitted = inputSequences.submitAndWait("uiCleanup:closeMapAlt1", List.of(
                 InputAction.pressAlt1(),
                 InputAction.sleep(500)
         ));
-        if (submitted && !isWorldMapOpened()) {
+        cleanupPass.invalidateFrame("map window closed");
+        if (submitted && !isWorldMapOpened(cleanupPass)) {
             return true;
         }
 
         if (submitted) {
             log.warn("UI cleanup pressed Alt+1 but map still appears open; falling back to close button");
         }
-        return clickCloseButtonOnce("uiCleanup:closeMapButton");
+        return clickCloseButtonOnce("uiCleanup:closeMapButton", cleanupPass);
     }
 
     /**
@@ -114,15 +157,20 @@ public class UICleanerService {
      * found or the thread was interrupted.
      */
     public boolean closeAllGenericWindows() {
+        return closeAllGenericWindows(CleanupPass.start());
+    }
+
+    private boolean closeAllGenericWindows(CleanupPass cleanupPass) {
         boolean closedAny = false;
-        if (isWorldMapOpened()) {
-            closedAny = closeMapWindow() || closedAny;
+        if (isWorldMapOpened(cleanupPass)) {
+            closedAny = closeMapWindow(cleanupPass) || closedAny;
         }
         for (int i = 0; i < 3; i++) {
-            if (!clickCloseButtonOnce("uiCleanup:closeGenericWindow")) {
+            if (!clickCloseButtonOnce("uiCleanup:closeGenericWindow", cleanupPass)) {
                 break;
             }
             closedAny = true;
+            cleanupPass.invalidateFrame("generic window closed");
         }
         return closedAny;
     }
@@ -157,7 +205,11 @@ public class UICleanerService {
     }
 
     private boolean clickCloseButtonOnce(String description) {
-        Point closeBtnPoint = findGenericCloseButtonPoint(description);
+        return clickCloseButtonOnce(description, CleanupPass.start());
+    }
+
+    private boolean clickCloseButtonOnce(String description, CleanupPass cleanupPass) {
+        Point closeBtnPoint = findGenericCloseButtonPoint(description, cleanupPass);
         if (closeBtnPoint == null) {
             return false;
         }
@@ -198,11 +250,15 @@ public class UICleanerService {
     }
 
     private Point findGenericCloseButtonPoint(String description) {
-        if (!tracker.updateGlobalVision()) {
+        return findGenericCloseButtonPoint(description, CleanupPass.start());
+    }
+
+    private Point findGenericCloseButtonPoint(String description, CleanupPass cleanupPass) {
+        String screenPath = cleanupPass.screenPath(tracker);
+        if (screenPath == null || screenPath.isBlank()) {
             log.warn("UI cleanup close button scan skipped: capture failed description={}", description);
             return null;
         }
-        String screenPath = tracker.getLatestVisionPath();
         Point closeBtnPoint = null;
         String[] closeButtonTemplates = {
                 "images/template/cancel/x1.png",
@@ -217,6 +273,8 @@ public class UICleanerService {
         }
 
         if (closeBtnPoint == null) {
+            log.info("UI cleanup close button not found: description={} screenPath={} templates=x1,x2,x3",
+                    description, screenPath);
             return null;
         }
         return closeBtnPoint;
@@ -230,6 +288,28 @@ public class UICleanerService {
         inputProvider.clickLeft(clickX, clickY, 80);
         TaskSleep.sleep(250);
         return !Thread.currentThread().isInterrupted();
+    }
+
+    private static class CleanupPass {
+        private String screenPath;
+
+        static CleanupPass start() {
+            return new CleanupPass();
+        }
+
+        String screenPath(GameClientTracker tracker) {
+            if (screenPath == null || screenPath.isBlank()) {
+                if (!tracker.updateGlobalVision()) {
+                    return null;
+                }
+                screenPath = tracker.getLatestVisionPath();
+            }
+            return screenPath;
+        }
+
+        void invalidateFrame(String reason) {
+            screenPath = null;
+        }
     }
 
     /**

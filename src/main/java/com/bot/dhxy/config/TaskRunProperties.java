@@ -20,9 +20,9 @@ import java.util.stream.Collectors;
 public class TaskRunProperties {
 
     /**
-     * 用户选择的任务编码，例如：wuhuan、zhuagui、xiuluo。
+     * 用户选择的任务编码，例如：wuhuan_v2、wubei、xiuluo_v2。
      */
-    private List<String> tasks = new ArrayList<>(List.of("wuhuan"));
+    private List<String> tasks = new ArrayList<>(List.of("wuhuan_v2"));
 
     /**
      * 是否循环执行任务队列。

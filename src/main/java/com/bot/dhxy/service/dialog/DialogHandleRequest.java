@@ -43,6 +43,9 @@ public class DialogHandleRequest {
     boolean includeCleanupBusinessOptions = true;
 
     @Builder.Default
+    boolean allowFullMaintenanceBroadcastFallback = true;
+
+    @Builder.Default
     boolean verifyDialogType = true;
 
     @Builder.Default
@@ -113,6 +116,14 @@ public class DialogHandleRequest {
                                                                    int relativeX,
                                                                    int relativeY,
                                                                    String actionKey) {
+        return handleRememberedChoiceOption(sourceTask, relativeX, relativeY, actionKey, true);
+    }
+
+    public static DialogHandleRequest handleRememberedChoiceOption(String sourceTask,
+                                                                   int relativeX,
+                                                                   int relativeY,
+                                                                   String actionKey,
+                                                                   boolean verifyDialogType) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_REMEMBERED_OPTION)
@@ -123,6 +134,7 @@ public class DialogHandleRequest {
                 .rememberedRelativeX(relativeX)
                 .rememberedRelativeY(relativeY)
                 .allowFallbackOptionClick(false)
+                .verifyDialogType(verifyDialogType)
                 .build();
     }
 
@@ -138,6 +150,11 @@ public class DialogHandleRequest {
     }
 
     public static DialogHandleRequest handleMaintenanceBroadcastOption(String sourceTask) {
+        return handleMaintenanceBroadcastOption(sourceTask, true);
+    }
+
+    public static DialogHandleRequest handleMaintenanceBroadcastOption(String sourceTask,
+                                                                       boolean allowFullMaintenanceBroadcastFallback) {
         return DialogHandleRequest.builder()
                 .sourceTask(sourceTask)
                 .operation(DialogOperation.CLICK_BUSINESS_OPTION)
@@ -146,6 +163,7 @@ public class DialogHandleRequest {
                 .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
                 .allowFallbackOptionClick(false)
                 .includeCleanupBusinessOptions(false)
+                .allowFullMaintenanceBroadcastFallback(allowFullMaintenanceBroadcastFallback)
                 .build();
     }
 

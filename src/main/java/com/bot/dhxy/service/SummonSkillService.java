@@ -294,7 +294,14 @@ public class SummonSkillService {
      */
     private SummonSkillCleanupResult cleanTailNormalSkillsDirect(long deadlineAtMs,
                                                                  SummonSkillCleanupRequest request) {
-        int skillCount = detectSummonSkillSlotCount();
+        Integer expectedSkillCount = request.getExpectedSkillCount();
+        int skillCount;
+        if (request.isTrustExpectedSkillCount() && (expectedSkillCount == 6 || expectedSkillCount == 8)) {
+            skillCount = expectedSkillCount;
+            log.info("summon skill clean: use trusted cached skill slot count {}", skillCount);
+        } else {
+            skillCount = detectSummonSkillSlotCount();
+        }
         Point[] slots = getSkillSlotOffsets(skillCount);
         int defaultStartIndex = getTailCheckStartIndex(skillCount);
         boolean skillCountChanged = request.getExpectedSkillCount() != null
@@ -381,7 +388,31 @@ public class SummonSkillService {
                     break;
                 }
                 if (afterDeleteStatus == SummonSkillSlotStatus.LOCKED_SLOT) {
-                    nextStartIndex = index;
+                    SummonSkillTailBoundaryScanner.Result boundaryResult = scanLockedBoundary(
+                            index, slots, deadlineAtMs, observedStatuses);
+                    inspectedCount += boundaryResult.inspectedCount();
+                    deletedCount += boundaryResult.deletedCount();
+                    nextStartIndex = boundaryResult.nextStartIndex();
+                    if (!boundaryResult.success()) {
+                        return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                                ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                                boundaryResult.message());
+                    }
+                    if (boundaryResult.ultimateCheckIndex() != null) {
+                        UltimateCornerResult cornerResult = maybeClickUltimateCorner(
+                                boundaryResult.ultimateCheckIndex(), toAbsolutePoint(slots[boundaryResult.ultimateCheckIndex()]),
+                                effectiveRequest, deadlineAtMs, deletedCount, inspectedCount, observedStatuses);
+                        deletedCount = cornerResult.deletedCount;
+                        inspectedCount = cornerResult.inspectedCount;
+                        ultimateGenerateClicked = cornerResult.clicked;
+                        ultimateGenerateSucceeded = cornerResult.succeeded;
+                        nextStartIndex = cornerResult.nextStartIndex;
+                        if (!cornerResult.completed) {
+                            return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                                    ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                                    cornerResult.message);
+                        }
+                    }
                     break;
                 }
                 return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
@@ -413,7 +444,31 @@ public class SummonSkillService {
             }
 
             if (status == SummonSkillSlotStatus.LOCKED_SLOT) {
-                nextStartIndex = index;
+                SummonSkillTailBoundaryScanner.Result boundaryResult = scanLockedBoundary(
+                        index, slots, deadlineAtMs, observedStatuses);
+                inspectedCount += boundaryResult.inspectedCount();
+                deletedCount += boundaryResult.deletedCount();
+                nextStartIndex = boundaryResult.nextStartIndex();
+                if (!boundaryResult.success()) {
+                    return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                            ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                            boundaryResult.message());
+                }
+                if (boundaryResult.ultimateCheckIndex() != null) {
+                    UltimateCornerResult cornerResult = maybeClickUltimateCorner(
+                            boundaryResult.ultimateCheckIndex(), toAbsolutePoint(slots[boundaryResult.ultimateCheckIndex()]),
+                            effectiveRequest, deadlineAtMs, deletedCount, inspectedCount, observedStatuses);
+                    deletedCount = cornerResult.deletedCount;
+                    inspectedCount = cornerResult.inspectedCount;
+                    ultimateGenerateClicked = cornerResult.clicked;
+                    ultimateGenerateSucceeded = cornerResult.succeeded;
+                    nextStartIndex = cornerResult.nextStartIndex;
+                    if (!cornerResult.completed) {
+                        return buildCleanupResult(false, skillCount, nextStartIndex, observedStatuses,
+                                ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
+                                cornerResult.message);
+                    }
+                }
                 break;
             }
 
@@ -435,6 +490,28 @@ public class SummonSkillService {
         return buildCleanupResult(true, skillCount, nextStartIndex, observedStatuses,
                 ultimateGenerateClicked, ultimateGenerateSucceeded, inspectedCount, deletedCount,
                 "summon skill tail pass finished");
+    }
+
+    private SummonSkillTailBoundaryScanner.Result scanLockedBoundary(int lockedIndex,
+                                                                     Point[] slots,
+                                                                     long deadlineAtMs,
+                                                                     Map<Integer, SummonSkillSlotStatus> observedStatuses) {
+        return SummonSkillTailBoundaryScanner.scanLockedBoundary(
+                lockedIndex,
+                previousIndex -> {
+                    Point previousSlotAbsPoint = toAbsolutePoint(slots[previousIndex]);
+                    SummonSkillSlotStatus previousStatus = inspectSkillSlot(previousSlotAbsPoint);
+                    observedStatuses.put(previousIndex, previousStatus);
+                    log.info("summon skill clean: locked boundary previous slot {} status {}",
+                            previousIndex + 1, previousStatus);
+                    return previousStatus;
+                },
+                previousIndex -> {
+                    Point previousSlotAbsPoint = toAbsolutePoint(slots[previousIndex]);
+                    return deleteSkillAtSlot(previousSlotAbsPoint);
+                },
+                () -> Thread.currentThread().isInterrupted()
+                        || isCleanDeadlineExceeded(deadlineAtMs, "locked-boundary-backward-scan"));
     }
 
     /**
@@ -824,10 +901,10 @@ public class SummonSkillService {
         return skillCount == 8 ? 6 : 3;
     }
 
-    private int resolveStartIndex(SummonSkillCleanupRequest request,
-                                  int detectedSkillCount,
-                                  int defaultStartIndex,
-                                  int slotLength) {
+    static int resolveStartIndex(SummonSkillCleanupRequest request,
+                                 int detectedSkillCount,
+                                 int defaultStartIndex,
+                                 int slotLength) {
         Integer expectedSkillCount = request.getExpectedSkillCount();
         Integer cachedStartIndex = request.getStartSlotIndex();
         if (expectedSkillCount == null
@@ -835,8 +912,8 @@ public class SummonSkillService {
                 || cachedStartIndex == null) {
             return defaultStartIndex;
         }
-        if (cachedStartIndex < defaultStartIndex) {
-            return defaultStartIndex;
+        if (cachedStartIndex < 0) {
+            return 0;
         }
         if (cachedStartIndex > slotLength) {
             return slotLength;

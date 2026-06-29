@@ -14,6 +14,7 @@ import lombok.experimental.Accessors;
  * @param round one-based five-ring run number inside this task execution.
  * @param source diagnostic source describing how this state was produced.
  * @param shoeBagIndex remembered main-bag page index for the shoe item; null means unknown.
+ * @param shoePurchaseCount number of shoes the BUY_SHOES phase should select before clicking buy.
  * @param taskAccepted true once this round has confirmed that the character already owns a 五环
  *                     task, either by clicking the accept option or by finding the task panel entry.
  * @param trackerPanelRegion cached task-tracker panel region in window-relative pixels.
@@ -41,6 +42,7 @@ public class FiveRingPhaseContext {
     int round;
     String source;
     Integer shoeBagIndex;
+    int shoePurchaseCount;
     boolean taskAccepted;
     OcrWindowRegion trackerPanelRegion;
     OcrWindowRegion wuhuanTrackerBlockRegion;
@@ -55,7 +57,7 @@ public class FiveRingPhaseContext {
 
     public static FiveRingPhaseContext start(int round) {
         return new FiveRingPhaseContext(FiveRingPhase.PREPARE, round, "normal-start", null,
-                false, null, null, false, 0L, false, null, false, false, 0, 0);
+                0, false, null, null, false, 0L, false, null, false, false, 0, 0);
     }
 
     public FiveRingPhaseContext next(FiveRingPhase nextPhase, String nextSource) {
@@ -63,13 +65,21 @@ public class FiveRingPhaseContext {
                 ? System.currentTimeMillis()
                 : 0L;
         return new FiveRingPhaseContext(nextPhase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion, false,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion, false,
                 nextPathingStartedAtMs, false, null, false, false, 0, uiErrorCount);
     }
 
     public FiveRingPhaseContext withShoeBagIndex(Integer nextShoeBagIndex, String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, nextShoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
+                pathingMovementObserved, combatObservedSincePathing,
+                phaseRetryCount, uiErrorCount);
+    }
+
+    public FiveRingPhaseContext withShoePurchaseCount(int nextShoePurchaseCount, String nextSource) {
+        return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
+                Math.max(0, nextShoePurchaseCount), taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -77,7 +87,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext withTaskAccepted(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                true, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, true, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -87,7 +97,7 @@ public class FiveRingPhaseContext {
                                                    OcrWindowRegion nextWuhuanTrackerBlockRegion,
                                                    String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, nextTrackerPanelRegion, nextWuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, nextTrackerPanelRegion, nextWuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -95,7 +105,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext clearWuhuanTrackerBlockRegion(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, null,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, null,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -103,7 +113,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext waitForAcceptNpcPathing(String nextSource, String expectedIntentSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 true, System.currentTimeMillis(), true, expectedIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -111,7 +121,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext clearAcceptNpcPathingWait(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 false, 0L, false, null, pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
     }
@@ -143,7 +153,7 @@ public class FiveRingPhaseContext {
                 ? pathingStartedAtMs
                 : System.currentTimeMillis();
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, nextPathingStartedAtMs, nextPathingIntentExpected,
                 nextPathingIntentSource, false, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -151,7 +161,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext withPathingMovementObserved(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 true, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount);
@@ -159,14 +169,14 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext withCombatObservedSincePathing(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, true, phaseRetryCount, uiErrorCount);
     }
 
     public FiveRingPhaseContext retrySamePhase(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount + 1, uiErrorCount);
@@ -174,7 +184,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext resetUiErrorCount(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, 0);
@@ -182,7 +192,7 @@ public class FiveRingPhaseContext {
 
     public FiveRingPhaseContext increaseUiErrorCount(String nextSource) {
         return new FiveRingPhaseContext(phase, round, nextSource, shoeBagIndex,
-                taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
+                shoePurchaseCount, taskAccepted, trackerPanelRegion, wuhuanTrackerBlockRegion,
                 waitingAcceptNpcPathing, pathingStartedAtMs, pathingIntentExpected, pathingIntentSource,
                 pathingMovementObserved, combatObservedSincePathing,
                 phaseRetryCount, uiErrorCount + 1);

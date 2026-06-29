@@ -39,6 +39,7 @@ public class TaskMaintenanceService {
     private static final String DEFAULT_WINDOW_KEY = "default";
     private static final long SUMMON_SKILL_NOT_DUE_LOG_INTERVAL_MS = 60_000L;
     private static final long SUMMON_SKILL_TAIL_SAFE_CACHE_TTL_MS = 2 * 60 * 60 * 1000L;
+    private static final long SUMMON_SKILL_COUNT_CACHE_TTL_MS = 2 * 60 * 60 * 1000L;
 
     private final BotProperties botProperties;
     private final GameContext gameContext;
@@ -48,6 +49,7 @@ public class TaskMaintenanceService {
     private final Object teamMaintenanceWindowMonitor = new Object();
     private final Map<String, Long> lastSummonSkillCleanAtByWindow = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSummonSkillNotDueLogAtByWindow = new ConcurrentHashMap<>();
+    private final Map<String, Long> summonSkillUnknownRetryAfterByWindow = new ConcurrentHashMap<>();
     private final Map<String, SummonSkillWindowState> summonSkillStateByWindow = new ConcurrentHashMap<>();
     private final Map<String, Integer> activeTeamRoundByKey = new ConcurrentHashMap<>();
     private final Map<String, TeamMaintenanceWindowState> teamMaintenanceWindowStateByRound = new ConcurrentHashMap<>();
@@ -254,7 +256,7 @@ public class TaskMaintenanceService {
         checkpoint(context);
 
         if (safeRequest.isHandleMaintenanceBroadcast()) {
-            TaskMaintenanceResult broadcastResult = handleMaintenanceBroadcast(context, safeRequest.getSourceTask());
+            TaskMaintenanceResult broadcastResult = handleMaintenanceBroadcast(context, safeRequest);
             if (broadcastResult.isHandled()
                     || broadcastResult.getStatus() == TaskMaintenanceStatus.BROADCAST_FAILED
                     || broadcastResult.getStatus() == TaskMaintenanceStatus.INTERRUPTED) {
@@ -269,9 +271,12 @@ public class TaskMaintenanceService {
         return TaskMaintenanceResult.noAction("no maintenance action");
     }
 
-    private TaskMaintenanceResult handleMaintenanceBroadcast(TaskExecutionContext context, String sourceTask) {
+    private TaskMaintenanceResult handleMaintenanceBroadcast(TaskExecutionContext context,
+                                                             TaskMaintenanceRequest safeRequest) {
+        String sourceTask = safeRequest.getSourceTask();
         DialogResult dialogResult = dialogService.handleDialog(
-                DialogHandleRequest.handleMaintenanceBroadcastOption(sourceTask));
+                DialogHandleRequest.handleMaintenanceBroadcastOption(
+                        sourceTask, safeRequest.isAllowFullMaintenanceBroadcastFallback()));
         DialogResultStatus status = dialogResult.getStatus();
         if (status == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
             log.info("{} maintenance broadcast handled: source={} actionKey={}",
@@ -316,6 +321,7 @@ public class TaskMaintenanceService {
         }
 
         long now = System.currentTimeMillis();
+        SummonSkillWindowState windowState = summonSkillState(windowKey);
         Long lastCleanAt = lastSummonSkillCleanAtByWindow.get(windowKey);
         if (lastCleanAt != null && now - lastCleanAt < intervalMs) {
             logSummonSkillNotDue(context, request, windowKey, now, lastCleanAt, intervalMs);
@@ -325,8 +331,17 @@ public class TaskMaintenanceService {
         log.info("{} maintenance: summon skill due source={} windowKey={} lastCleanAt={} elapsedMs={} intervalMs={}",
                 logPrefix(context), request.getSourceTask(), windowKey, lastCleanAt,
                 lastCleanAt == null ? -1 : now - lastCleanAt, intervalMs);
-        SummonSkillWindowState windowState = summonSkillStateByWindow.computeIfAbsent(
-                windowKey, key -> new SummonSkillWindowState());
+        Long unknownRetryAfterAt = summonSkillUnknownRetryAfterByWindow.get(windowKey);
+        if (unknownRetryAfterAt != null && now < unknownRetryAfterAt) {
+            long remainingMs = unknownRetryAfterAt - now;
+            log.info("{} maintenance: summon skill unknown retry backoff active source={} windowKey={} remainingMs={} retryAfterAt={}",
+                    logPrefix(context), request.getSourceTask(), windowKey, remainingMs, unknownRetryAfterAt);
+            return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
+                    "summon skill unknown retry backoff active");
+        }
+        if (unknownRetryAfterAt != null) {
+            summonSkillUnknownRetryAfterByWindow.remove(windowKey, unknownRetryAfterAt);
+        }
         if (isSummonSkillTailSafeCacheExpired(windowState, now)) {
             log.info("{} maintenance: summon skill tail-safe cache expired source={} windowKey={} cacheAgeMs={} ttlMs={} lastEffectiveSlot={} nextStartSlot={}",
                     logPrefix(context), request.getSourceTask(), windowKey,
@@ -397,9 +412,10 @@ public class TaskMaintenanceService {
         SummonSkillCleanupResult cleanupResult = SummonSkillCleanupResult.failed("summon skill not attempted");
         long startedAt = System.currentTimeMillis();
         try {
-            log.info("{} maintenance: start summon skill clean source={} windowKey={} previousState={} teamRound={} cachedSkillCount={} cachedStartSlot={} skipUltimateCorner={}",
+            log.info("{} maintenance: start summon skill clean source={} windowKey={} previousState={} teamRound={} cachedSkillCount={} trustSkillCount={} cachedStartSlot={} skipUltimateCorner={}",
                     logPrefix(context), request.getSourceTask(), windowKey, previousState, teamRoundKey,
-                    windowState.skillCount, windowState.nextStartIndex == null ? null : windowState.nextStartIndex + 1,
+                    windowState.skillCount, cleanupRequest.isTrustExpectedSkillCount(),
+                    windowState.nextStartIndex == null ? null : windowState.nextStartIndex + 1,
                     cleanupRequest.isSkipUltimateCornerCheck());
             cleanupResult = summonSkillService.cleanSummonSkillsOnce(cleanupRequest);
             log.info("{} maintenance: summon skill clean finished success={} source={} windowKey={} elapsedMs={} skillCount={} nextStartSlot={} ultimateClicked={} ultimateSucceeded={} message={}",
@@ -409,6 +425,7 @@ public class TaskMaintenanceService {
                     cleanupResult.isUltimateGenerateSucceeded(), cleanupResult.getMessage());
         } finally {
             if (cleanupResult.isSuccess()) {
+                summonSkillUnknownRetryAfterByWindow.remove(windowKey);
                 updateSummonSkillWindowState(windowKey, windowState, cleanupResult);
                 lastSummonSkillCleanAtByWindow.put(windowKey, System.currentTimeMillis());
                 lastSummonSkillNotDueLogAtByWindow.remove(windowKey);
@@ -416,6 +433,15 @@ public class TaskMaintenanceService {
                 windowState.lastUltimateGenerateSuccessAt = System.currentTimeMillis();
                 log.info("{} maintenance: summon skill ultimate generation succeeded before cleanup failure, cooldown recorded windowKey={} lastSuccessAt={}",
                         logPrefix(context), windowKey, windowState.lastUltimateGenerateSuccessAt);
+            }
+            if (!cleanupResult.isSuccess() && isUnknownSummonSkillFailure(cleanupResult)) {
+                long retryMs = Math.max(0L, botProperties.getSummonSkillUnknownFailureRetryAfterMs());
+                long retryAfterAt = System.currentTimeMillis() + retryMs;
+                summonSkillUnknownRetryAfterByWindow.put(windowKey, retryAfterAt);
+                invalidateSummonSkillLayoutCache(windowKey, windowState, cleanupResult);
+                log.warn("{} maintenance: summon skill unknown failure backoff recorded source={} windowKey={} retryAfterMs={} retryAfterAt={} message={} observedSlots={}",
+                        logPrefix(context), request.getSourceTask(), windowKey, retryMs, retryAfterAt,
+                        cleanupResult.getMessage(), cleanupResult.getObservedStatusesByIndex());
             }
             if (gameContext.getCurrentActionState() == GameContext.ActionState.INTERACTING) {
                 gameContext.setCurrentActionState(previousState);
@@ -457,6 +483,15 @@ public class TaskMaintenanceService {
         boolean skipUltimateCorner = ultimateCooldownMs > 0
                 && state.lastUltimateGenerateSuccessAt > 0
                 && now - state.lastUltimateGenerateSuccessAt < ultimateCooldownMs;
+        boolean trustSkillCount = state.skillCount != null
+                && state.skillCountCachedAt > 0
+                && now - state.skillCountCachedAt < SUMMON_SKILL_COUNT_CACHE_TTL_MS;
+        if (state.skillCount != null) {
+            log.info("maintenance: summon skill count cache state skillCount={} trust={} ageMs={} ttlMs={}",
+                    state.skillCount, trustSkillCount,
+                    state.skillCountCachedAt <= 0 ? -1 : now - state.skillCountCachedAt,
+                    SUMMON_SKILL_COUNT_CACHE_TTL_MS);
+        }
         if (skipUltimateCorner) {
             log.info("maintenance: summon skill ultimate corner cooldown active elapsedMs={} remainingMs={}",
                     now - state.lastUltimateGenerateSuccessAt,
@@ -464,6 +499,7 @@ public class TaskMaintenanceService {
         }
         return SummonSkillCleanupRequest.builder()
                 .expectedSkillCount(state.skillCount)
+                .trustExpectedSkillCount(trustSkillCount)
                 .startSlotIndex(state.nextStartIndex)
                 .skipUltimateCornerCheck(skipUltimateCorner)
                 .build();
@@ -480,6 +516,7 @@ public class TaskMaintenanceService {
         }
         long now = System.currentTimeMillis();
         state.skillCount = result.getSkillCount();
+        state.skillCountCachedAt = now;
         state.nextStartIndex = result.getNextStartIndex();
         state.slotStatusByIndex.putAll(result.getObservedStatusesByIndex());
         Integer lastEffectiveIndex = findLastConfirmedEffectiveSlotIndex(result.getObservedStatusesByIndex());
@@ -492,8 +529,9 @@ public class TaskMaintenanceService {
         if (result.isUltimateGenerateSucceeded()) {
             state.lastUltimateGenerateSuccessAt = now;
         }
-        log.info("maintenance: summon skill window state updated windowKey={} skillCount={} nextStartSlot={} lastEffectiveSlot={} tailSafeCachedAt={} observedSlots={} ultimateLastSuccessAt={}",
-                windowKey, state.skillCount, state.nextStartIndex == null ? null : state.nextStartIndex + 1,
+        log.info("maintenance: summon skill window state updated windowKey={} skillCount={} skillCountCachedAt={} nextStartSlot={} lastEffectiveSlot={} tailSafeCachedAt={} observedSlots={} ultimateLastSuccessAt={}",
+                windowKey, state.skillCount, state.skillCountCachedAt,
+                state.nextStartIndex == null ? null : state.nextStartIndex + 1,
                 state.lastConfirmedEffectiveSlotIndex == null ? null : state.lastConfirmedEffectiveSlotIndex + 1,
                 state.tailSafeCachedAt, state.slotStatusByIndex, state.lastUltimateGenerateSuccessAt);
     }
@@ -528,6 +566,38 @@ public class TaskMaintenanceService {
         return status == SummonSkillSlotStatus.NORMAL_SKILL
                 || status == SummonSkillSlotStatus.KEEP_SKILL
                 || status == SummonSkillSlotStatus.EMPTY_SLOT;
+    }
+
+    private boolean isUnknownSummonSkillFailure(SummonSkillCleanupResult cleanupResult) {
+        if (cleanupResult == null || cleanupResult.isSuccess()) {
+            return false;
+        }
+        String message = cleanupResult.getMessage();
+        if (message != null && message.toLowerCase().contains("unknown")) {
+            return true;
+        }
+        return cleanupResult.getObservedStatusesByIndex().containsValue(SummonSkillSlotStatus.UNKNOWN);
+    }
+
+    private void invalidateSummonSkillLayoutCache(String windowKey,
+                                                  SummonSkillWindowState state,
+                                                  SummonSkillCleanupResult cleanupResult) {
+        Integer oldSkillCount = state.skillCount;
+        Integer oldNextStartIndex = state.nextStartIndex;
+        Integer oldLastEffectiveIndex = state.lastConfirmedEffectiveSlotIndex;
+        long oldTailSafeCachedAt = state.tailSafeCachedAt;
+        int oldObservedCount = state.slotStatusByIndex.size();
+        state.skillCount = null;
+        state.skillCountCachedAt = 0L;
+        state.nextStartIndex = null;
+        state.lastConfirmedEffectiveSlotIndex = null;
+        state.tailSafeCachedAt = 0L;
+        state.slotStatusByIndex.clear();
+        log.info("maintenance: summon skill layout cache invalidated after unknown failure windowKey={} oldSkillCount={} oldNextStartSlot={} oldLastEffectiveSlot={} oldTailSafeCachedAt={} oldObservedCount={} message={}",
+                windowKey, oldSkillCount,
+                oldNextStartIndex == null ? null : oldNextStartIndex + 1,
+                oldLastEffectiveIndex == null ? null : oldLastEffectiveIndex + 1,
+                oldTailSafeCachedAt, oldObservedCount, cleanupResult.getMessage());
     }
 
     private void releaseSummonSkillRoundClaimIfOwned(String teamRoundKey,
@@ -586,6 +656,36 @@ public class TaskMaintenanceService {
                 .map(WindowRuntimeContext::getWindowId)
                 .filter(id -> !id.isBlank())
                 .orElse(DEFAULT_WINDOW_KEY);
+    }
+
+    private SummonSkillWindowState summonSkillState(String windowKey) {
+        long epoch = currentPlayerIdentityEpoch();
+        return summonSkillStateByWindow.compute(windowKey, (key, existing) -> {
+            if (existing == null) {
+                SummonSkillWindowState created = new SummonSkillWindowState();
+                created.playerIdentityEpoch = epoch;
+                return created;
+            }
+            if (existing.playerIdentityEpoch != epoch) {
+                log.warn("maintenance: invalidate summon skill cache by player identity drift windowKey={} oldEpoch={} newEpoch={} cachedSkillCount={} nextStartSlot={} tailSafeCachedAt={}",
+                        windowKey, existing.playerIdentityEpoch, epoch, existing.skillCount,
+                        existing.nextStartIndex == null ? null : existing.nextStartIndex + 1,
+                        existing.tailSafeCachedAt);
+                lastSummonSkillCleanAtByWindow.remove(windowKey);
+                lastSummonSkillNotDueLogAtByWindow.remove(windowKey);
+                summonSkillUnknownRetryAfterByWindow.remove(windowKey);
+                SummonSkillWindowState reset = new SummonSkillWindowState();
+                reset.playerIdentityEpoch = epoch;
+                return reset;
+            }
+            return existing;
+        });
+    }
+
+    private long currentPlayerIdentityEpoch() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getPlayerIdentityEpoch)
+                .orElse(0L);
     }
 
     private String logPrefix(TaskExecutionContext context) {
@@ -649,7 +749,9 @@ public class TaskMaintenanceService {
     }
 
     private static class SummonSkillWindowState {
+        private long playerIdentityEpoch;
         private Integer skillCount;
+        private long skillCountCachedAt;
         private Integer nextStartIndex;
         private Integer lastConfirmedEffectiveSlotIndex;
         private long tailSafeCachedAt;

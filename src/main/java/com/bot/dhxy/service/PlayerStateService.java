@@ -25,12 +25,14 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.vision.LocationVisionService;
+import com.bot.dhxy.vision.SheyaoxiangDigitTemplateReader;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
@@ -68,11 +71,12 @@ public class PlayerStateService {
     private final BotProperties config;
     private final TextRecognizer textRecognizer;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final SheyaoxiangDigitTemplateReader sheyaoxiangDigitTemplateReader = new SheyaoxiangDigitTemplateReader();
 
     private final Map<String, PlayerRuntimeState> runtimeStates = new ConcurrentHashMap<>();
     private static final long INCENSE_DURATION_MS = 59 * 60 * 1000L;
     private static final long INCENSE_REFRESH_REMAINING_MS = 20 * 60 * 1000L;
-    private static final long INCENSE_REFRESH_AFTER_MS = INCENSE_DURATION_MS - INCENSE_REFRESH_REMAINING_MS;
+    private static final long INCENSE_MEMORY_TRUST_MS = 50 * 60 * 1000L;
     private static final long ONE_HOUR_MS = 60 * 60 * 1000L;
 
     private static final int MAX_CHECKS_BETWEEN_BATTLES = 1;
@@ -94,8 +98,17 @@ public class PlayerStateService {
     private static final int BAR_SAMPLE_RADIUS_Y = 1;
     private static final int HIGHER_HEALTH_PROBE_OFFSET = 10;
     private static final int HEAL_CONFIRM_DELAY_MS = 350;
-    private static final int SAFE_MOUSE_REL_X = 20;
-    private static final int SAFE_MOUSE_REL_Y = 20;
+    /*
+     * Player-state snapshots read the status bars and 摄妖香 area. Move the cursor to a random
+     * in-window point before capture, but never into the user-confirmed top-right forbidden area:
+     * absolute (2076,180) was measured on base=(1315,33), so its window-relative left-bottom corner
+     * is approximately (761,147). The forbidden rectangle is relX>=761 && relY<=147.
+     */
+    private static final int GAME_CLIENT_WIDTH = 1024;
+    private static final int GAME_CLIENT_HEIGHT = 768;
+    private static final int SAFE_MOUSE_FORBIDDEN_LEFT_REL_X = 761;
+    private static final int SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y = 147;
+    private static final int SAFE_MOUSE_HOVER_CLEAR_DELAY_MS = 300;
 
     /*
      * 摄妖香剩余时间文本颜色。游戏中 RGB=(0,255,255) 的青色数字表示剩余小时；
@@ -116,6 +129,8 @@ public class PlayerStateService {
     private static final int STATUS_PANEL_Y = 123;
     private static final int STATUS_PANEL_W = 123;
     private static final int STATUS_PANEL_H = 34;
+    private static final int INCENSE_CACHED_ICON_PROBE_WIDTH = 48;
+    private static final int INCENSE_CACHED_ICON_PROBE_LEFT_PADDING = 6;
 
     /**
      * Refresh the current character identity from the bound window title and/or OCR fallback.
@@ -342,8 +357,9 @@ public class PlayerStateService {
                     refreshed, baseX, baseY, refreshedBaseX, refreshedBaseY);
         }
 
-        inputProvider.moveMouse(baseX + SAFE_MOUSE_REL_X, baseY + SAFE_MOUSE_REL_Y);
-        TaskSleep.sleep(80);
+        Point safePoint = randomMouseAwayPoint(baseX, baseY);
+        inputProvider.moveMouse(safePoint.x, safePoint.y);
+        TaskSleep.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS);
         for (FirstAidTarget target : plan.targets()) {
             int absX = baseX + target.relX();
             int absY = baseY + target.relY();
@@ -518,17 +534,45 @@ public class PlayerStateService {
             checkpoint(taskContext);
             PlayerRuntimeState state = state();
             long now = System.currentTimeMillis();
-            if (state.lastIncenseUsedTime > 0 && now - state.lastIncenseUsedTime < INCENSE_REFRESH_AFTER_MS) {
+            int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
+            IncenseStatusProbe statusProbe = null;
+            if (state.lastIncenseUsedTime > 0 && now - state.lastIncenseUsedTime < INCENSE_MEMORY_TRUST_MS) {
                 long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-                long refreshAfterMinutes = INCENSE_REFRESH_AFTER_MS / 60000;
-                log.info("🕯️ 摄妖香由本程序补充后仅过去 {} 分钟，未达到 {} 分钟主动补香线，跳过包裹检查。",
-                        elapsedMinutes, refreshAfterMinutes);
-                return false;
+                long trustMinutes = INCENSE_MEMORY_TRUST_MS / 60000;
+                IncenseIconProbe iconProbe = probeIncenseIconPresence(state, statusRect);
+                if (iconProbe.presence() == IncenseIconPresence.PRESENT) {
+                    java.awt.Point iconPoint = iconProbe.iconPoint();
+                    rememberIncenseIconPoint(state, statusRect, iconPoint);
+                    state.nextIncenseRetryTime = 0;
+                    log.info("🕯️ memory-gate-icon-present: 摄妖香由本程序补充后仅过去 {} 分钟，未超过 {} 分钟内存信任窗口；状态栏图标仍在，跳过包裹检查。point=({}, {})",
+                            elapsedMinutes, trustMinutes, iconPoint.x, iconPoint.y);
+                    return false;
+                }
+                if (iconProbe.presence() == IncenseIconPresence.UNKNOWN) {
+                    log.warn("⚠️ memory-gate-icon-unknown-full-probe: fresh memory age={}m < {}m, reason={}，改走完整状态探测。",
+                            elapsedMinutes, trustMinutes, iconProbe.reason());
+                    statusProbe = probeIncenseStatus(statusRect);
+                    if (statusProbe.iconPoint() != null) {
+                        rememberIncenseIconPoint(state, statusRect, statusProbe.iconPoint());
+                        state.nextIncenseRetryTime = 0;
+                        if (statusProbe.remainingMs().isPresent()) {
+                            state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(now, statusProbe.remainingMs().getAsLong());
+                        }
+                        log.info("🕯️ memory-gate-icon-unknown-full-probe-present: 完整探测证明摄妖香图标仍在，跳过包裹检查。point=({}, {}) remaining={}",
+                                statusProbe.iconPoint().x, statusProbe.iconPoint().y, statusProbe.remainingText());
+                        return false;
+                    }
+                    log.warn("⚠️ memory-gate-icon-unknown-full-probe-unproven: 完整探测仍不能证明摄妖香存在，准备补香。");
+                } else {
+                    log.warn("⚠️ memory-gate-icon-absent-refill: fresh memory age={}m < {}m, 但状态栏摄妖香图标不存在，准备补香。",
+                            elapsedMinutes, trustMinutes);
+                    statusProbe = IncenseStatusProbe.notFound();
+                }
             }
 
             if (state.lastIncenseUsedTime > 0) {
                 long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-                log.info("🕯️ 摄妖香由本程序补充后已过去 {} 分钟，进入剩余约 20 分钟主动补香窗口。", elapsedMinutes);
+                log.info("🕯️ 摄妖香由本程序补充后已过去 {} 分钟，进入状态栏/补香校验流程。", elapsedMinutes);
             } else {
                 log.info("🕯️ 摄妖香没有本程序补充时间记录，开始执行安全校验...");
             }
@@ -539,8 +583,9 @@ public class PlayerStateService {
                 return false;
             }
 
-            int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
-            IncenseStatusProbe statusProbe = probeIncenseStatus(statusRect);
+            if (statusProbe == null) {
+                statusProbe = probeIncenseStatus(statusRect);
+            }
             java.awt.Point buffIcon = statusProbe.iconPoint();
 
             /*
@@ -550,6 +595,7 @@ public class PlayerStateService {
              */
             if (buffIcon != null && statusProbe.remainingMs().isPresent()) {
                 long remainingMs = statusProbe.remainingMs().getAsLong();
+                rememberIncenseIconPoint(state, statusRect, buffIcon);
                 state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(now, remainingMs);
                 state.nextIncenseRetryTime = 0;
                 if (remainingMs > INCENSE_REFRESH_REMAINING_MS) {
@@ -561,6 +607,12 @@ public class PlayerStateService {
                 log.info("sheyaoxiang status matched with {}; remainingMinutes={} <= refreshLineMinutes={}; refill now. point=({}, {})",
                         statusProbe.remainingText(), Math.max(0, remainingMs / 60000),
                         INCENSE_REFRESH_REMAINING_MS / 60000, buffIcon.x, buffIcon.y);
+            }
+            if (buffIcon != null && statusProbe.remainingText().startsWith("green-digits-learning")) {
+                rememberIncenseIconPoint(state, statusRect, buffIcon);
+                log.info("sheyaoxiang status matched but minute digits are still learning; skip refill to avoid partial OCR refill. remaining={} point=({}, {})",
+                        statusProbe.remainingText(), buffIcon.x, buffIcon.y);
+                return false;
             }
 
             if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
@@ -700,9 +752,9 @@ public class PlayerStateService {
 
     private BufferedImage captureBarsSnapshot() {
         if (isInputWorkerThread()) {
-            moveMouseAwayBeforeBarsSnapshotDirect();
+            moveMouseAwayBeforePlayerStateSnapshotDirect();
         } else {
-            moveMouseAwayBeforeBarsSnapshot();
+            moveMouseAwayBeforePlayerStateSnapshot();
         }
         int[] rect = coordinateHelper.getScaledRect(BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H);
         return tracker.captureToMemory("player-state-bars", rect[0], rect[1], rect[2], rect[3]);
@@ -713,22 +765,35 @@ public class PlayerStateService {
         return tracker.captureToMemory("player-state-bars-precheck", rect[0], rect[1], rect[2], rect[3]);
     }
 
-    private void moveMouseAwayBeforeBarsSnapshot() {
+    private void moveMouseAwayBeforePlayerStateSnapshot() {
         if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
             return;
         }
-        inputSequences.submitAndWait("playerState:moveMouseAwayBeforeBarsSnapshot", List.of(
-                InputAction.moveMouse(tracker.getWindowBaseX() + SAFE_MOUSE_REL_X, tracker.getWindowBaseY() + SAFE_MOUSE_REL_Y),
-                InputAction.sleep(80)
+        Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+        inputSequences.submitAndWait("playerState:moveMouseAwayBeforeSnapshot", List.of(
+                InputAction.moveMouse(safePoint.x, safePoint.y),
+                InputAction.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS)
         ));
     }
 
-    private void moveMouseAwayBeforeBarsSnapshotDirect() {
+    private void moveMouseAwayBeforePlayerStateSnapshotDirect() {
         if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
             return;
         }
-        inputProvider.moveMouse(tracker.getWindowBaseX() + SAFE_MOUSE_REL_X, tracker.getWindowBaseY() + SAFE_MOUSE_REL_Y);
-        TaskSleep.sleep(80);
+        Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+        inputProvider.moveMouse(safePoint.x, safePoint.y);
+        TaskSleep.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS);
+    }
+
+    private Point randomMouseAwayPoint(int baseX, int baseY) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        int relX;
+        int relY;
+        do {
+            relX = random.nextInt(GAME_CLIENT_WIDTH);
+            relY = random.nextInt(GAME_CLIENT_HEIGHT);
+        } while (relX >= SAFE_MOUSE_FORBIDDEN_LEFT_REL_X && relY <= SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y);
+        return new Point(baseX + relX, baseY + relY);
     }
 
     private boolean checkAndHealFromSnapshotIfEnabled(BufferedImage bars, String name,
@@ -970,6 +1035,11 @@ public class PlayerStateService {
      * matched; empty hours means the icon matched but no cyan hour number was readable.
      */
     private IncenseStatusProbe probeIncenseStatus(int[] statusRect) {
+        if (isInputWorkerThread()) {
+            moveMouseAwayBeforePlayerStateSnapshotDirect();
+        } else {
+            moveMouseAwayBeforePlayerStateSnapshot();
+        }
         BufferedImage statusImage = tracker.captureToMemory(
                 "sheyaoxiang-status", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
         if (statusImage == null) {
@@ -1020,6 +1090,77 @@ public class PlayerStateService {
         } finally {
             statusImage.flush();
         }
+    }
+
+    private IncenseIconProbe probeIncenseIconPresence(PlayerRuntimeState state, int[] statusRect) {
+        if (state.incenseIconOffsetX >= 0 && state.incenseIconOffsetY >= 0) {
+            int[] cachedRect = cachedIncenseIconProbeRect(state, statusRect);
+            IncenseIconProbe cachedProbe = probeIncenseIconPresenceInRect(statusRect, cachedRect, "cached-point");
+            if (cachedProbe.presence() != IncenseIconPresence.ABSENT) {
+                return cachedProbe;
+            }
+            log.info("sheyaoxiang cached icon probe missed; fallback to full status rect. cachedOffset=({}, {}) cachedRect=({}, {})-({}, {})",
+                    state.incenseIconOffsetX, state.incenseIconOffsetY,
+                    cachedRect[0], cachedRect[1], cachedRect[2], cachedRect[3]);
+        }
+        return probeIncenseIconPresenceInRect(statusRect, statusRect, "status-rect");
+    }
+
+    private int[] cachedIncenseIconProbeRect(PlayerRuntimeState state, int[] statusRect) {
+        int panelLeft = statusRect[0];
+        int panelTop = statusRect[1];
+        int panelRight = statusRect[2];
+        int panelBottom = statusRect[3];
+        int panelWidth = Math.max(1, panelRight - panelLeft);
+        int probeWidth = Math.min(panelWidth, INCENSE_CACHED_ICON_PROBE_WIDTH);
+        int cachedAbsX = panelLeft + state.incenseIconOffsetX;
+        int left = cachedAbsX - INCENSE_CACHED_ICON_PROBE_LEFT_PADDING;
+        left = Math.max(panelLeft, Math.min(left, panelRight - probeWidth));
+        return new int[]{left, panelTop, left + probeWidth, panelBottom};
+    }
+
+    private IncenseIconProbe probeIncenseIconPresenceInRect(int[] statusRect, int[] probeRect, String mode) {
+        if (isInputWorkerThread()) {
+            moveMouseAwayBeforePlayerStateSnapshotDirect();
+        } else {
+            moveMouseAwayBeforePlayerStateSnapshot();
+        }
+        BufferedImage statusImage = tracker.captureToMemory(
+                "sheyaoxiang-status-icon-gate-" + mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3]);
+        if (statusImage == null) {
+            log.warn("sheyaoxiang memory-gate icon capture failed: mode={} rect=({}, {})-({}, {})",
+                    mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3]);
+            return IncenseIconProbe.unknown("capture-failed");
+        }
+
+        try {
+            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_icon_gate_" + mode + ".png");
+            writeImage(statusImage, rawPath, "sheyaoxiang memory-gate icon");
+            double[] match = ImageFinder.find(rawPath, SHEYAOXIANG_STATUS_TEMPLATE, SHEYAOXIANG_STATUS_MATCH_RATE);
+            if (match == null || match.length < 2) {
+                log.info("sheyaoxiang memory-gate icon template absent: mode={} path={} template={}",
+                        mode, rawPath, SHEYAOXIANG_STATUS_TEMPLATE);
+                return IncenseIconProbe.absent("template-miss");
+            }
+            java.awt.Point iconPoint = new java.awt.Point(
+                    probeRect[0] + (int) Math.round(match[0]),
+                    probeRect[1] + (int) Math.round(match[1]));
+            log.info("sheyaoxiang memory-gate icon present: mode={} point=({}, {}) offset=({}, {}) score={}",
+                    mode, iconPoint.x, iconPoint.y, iconPoint.x - statusRect[0], iconPoint.y - statusRect[1],
+                    match.length >= 3 ? match[2] : -1);
+            return IncenseIconProbe.present(iconPoint);
+        } catch (RuntimeException e) {
+            log.warn("sheyaoxiang memory-gate icon probe failed: mode={} rect=({}, {})-({}, {}) reason={}",
+                    mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3], e.getMessage(), e);
+            return IncenseIconProbe.unknown("exception");
+        } finally {
+            statusImage.flush();
+        }
+    }
+
+    private void rememberIncenseIconPoint(PlayerRuntimeState state, int[] statusRect, java.awt.Point iconPoint) {
+        state.incenseIconOffsetX = Math.max(0, iconPoint.x - statusRect[0]);
+        state.incenseIconOffsetY = Math.max(0, iconPoint.y - statusRect[1]);
     }
 
     private BufferedImage cropSheyaoxiangMatchedColumn(BufferedImage statusImage,
@@ -1142,6 +1283,27 @@ public class PlayerStateService {
                     .map(OcrWordResult::getText)
                     .filter(value -> value != null && !value.isBlank())
                     .reduce("", String::concat);
+            SheyaoxiangDigitTemplateReader.Result templateResult =
+                    sheyaoxiangDigitTemplateReader.recognizeAndLearn(washed, words, washedPath);
+            if (!templateResult.learnedSymbols().isEmpty()) {
+                log.info("sheyaoxiang green digit template learned symbols={} digitCount={} path={} ocrText='{}'",
+                        templateResult.learnedSymbols(), templateResult.digitCount(), washedPath, text);
+            }
+            if (templateResult.reliable() && templateResult.text() != null && !templateResult.text().isBlank()) {
+                int minutes = Integer.parseInt(templateResult.text());
+                if (minutes > 0) {
+                    long remainingMs = minutes * 60000L;
+                    log.info("sheyaoxiang green digit template matched remainingMinutes={} path={} text='{}' ocrText='{}'",
+                            minutes, washedPath, templateResult.text(), text);
+                    return IncenseRemainingTime.found(remainingMs, "green-minutes-template=" + minutes);
+                }
+            }
+            String digitsOnly = text == null ? "" : text.replaceAll("\\D+", "");
+            if (templateResult.digitCount() > 1 && digitsOnly.length() < templateResult.digitCount()) {
+                log.info("sheyaoxiang green digit OCR partial while templates are learning: digitCount={} path={} text='{}'",
+                        templateResult.digitCount(), washedPath, text);
+                return IncenseRemainingTime.empty("green-digits-learning=" + templateResult.digitCount());
+            }
             Matcher matcher = SHEYAOXIANG_REMAINING_HOUR_PATTERN.matcher(text == null ? "" : text);
             if (!matcher.find()) {
                 log.info("sheyaoxiang green digit OCR returned no minute digits: path={} text='{}'",
@@ -1177,8 +1339,9 @@ public class PlayerStateService {
     }
 
     private long incenseLastUsedTimeForRemainingMs(long now, long remainingMs) {
-        remainingMs = Math.max(1L, remainingMs);
-        return now - (INCENSE_DURATION_MS - remainingMs);
+        // Cyan "1 hour" display can exceed the internal 59-minute duration; never move the memory clock into the future.
+        long boundedRemainingMs = Math.min(INCENSE_DURATION_MS, Math.max(1L, remainingMs));
+        return now - (INCENSE_DURATION_MS - boundedRemainingMs);
     }
 
     private void writeImage(BufferedImage image, String path, String label) {
@@ -1211,7 +1374,25 @@ public class PlayerStateService {
         String key = windowTaskContextHolder.rawCurrent()
                 .map(windowContext -> windowContext.getWindowId())
                 .orElse("default");
-        return runtimeStates.computeIfAbsent(key, ignored -> new PlayerRuntimeState());
+        long epoch = windowTaskContextHolder.rawCurrent()
+                .map(windowContext -> windowContext.getPlayerIdentityEpoch())
+                .orElse(0L);
+        return runtimeStates.compute(key, (ignored, existing) -> {
+            if (existing == null) {
+                PlayerRuntimeState created = new PlayerRuntimeState();
+                created.playerIdentityEpoch = epoch;
+                return created;
+            }
+            if (existing.playerIdentityEpoch != epoch) {
+                log.warn("player-state runtime cache invalidated by player identity drift: windowKey={} oldEpoch={} newEpoch={} lastIncenseUsedTime={} pendingFirstAid={}",
+                        key, existing.playerIdentityEpoch, epoch, existing.lastIncenseUsedTime,
+                        existing.pendingNoFocusFirstAidPlan != null);
+                PlayerRuntimeState reset = new PlayerRuntimeState();
+                reset.playerIdentityEpoch = epoch;
+                return reset;
+            }
+            return existing;
+        });
     }
 
     private void checkpoint(TaskExecutionContext taskContext) {
@@ -1233,6 +1414,36 @@ public class PlayerStateService {
 
     private String safeLatencyValue(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private enum IncenseIconPresence {
+        PRESENT,
+        ABSENT,
+        UNKNOWN
+    }
+
+    @Value
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
+    @Accessors(fluent = true)
+    private static class IncenseIconProbe {
+
+        IncenseIconPresence presence;
+
+        java.awt.Point iconPoint;
+
+        String reason;
+
+        private static IncenseIconProbe present(java.awt.Point iconPoint) {
+            return new IncenseIconProbe(IncenseIconPresence.PRESENT, iconPoint, "template-hit");
+        }
+
+        private static IncenseIconProbe absent(String reason) {
+            return new IncenseIconProbe(IncenseIconPresence.ABSENT, null, reason);
+        }
+
+        private static IncenseIconProbe unknown(String reason) {
+            return new IncenseIconProbe(IncenseIconPresence.UNKNOWN, null, reason);
+        }
     }
 
     /**
@@ -1283,11 +1494,18 @@ public class PlayerStateService {
         private static IncenseRemainingTime empty() {
             return new IncenseRemainingTime(OptionalLong.empty(), "none");
         }
+
+        private static IncenseRemainingTime empty(String describe) {
+            return new IncenseRemainingTime(OptionalLong.empty(), describe);
+        }
     }
 
     private static class PlayerRuntimeState {
+        private long playerIdentityEpoch;
         private long lastIncenseUsedTime = 0;
         private long nextIncenseRetryTime = 0;
+        private int incenseIconOffsetX = -1;
+        private int incenseIconOffsetY = -1;
         private int checksDoneThisRound = 0;
         private long lastCombatExitTime = 0;
         private FirstAidPlan pendingNoFocusFirstAidPlan;

@@ -44,7 +44,8 @@ public class WubeiRoundContext {
     }
 
     public WubeiRoundContext retrySamePhase(String nextSource) {
-        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount + 1, recoveryCount, waitingPathing, waitingAcceptDialog);
+        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount + 1, recoveryCount,
+                waitingPathing, waitingAcceptDialog);
     }
 
     public WubeiRoundContext recoverTo(WubeiPhase nextPhase, String nextSource) {
@@ -52,14 +53,17 @@ public class WubeiRoundContext {
     }
 
     public WubeiRoundContext waitForPathing(String nextSource) {
-        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount, recoveryCount, true, waitingAcceptDialog);
+        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount, recoveryCount,
+                true, waitingAcceptDialog);
     }
 
     public WubeiRoundContext clearPathingWait(String nextSource) {
-        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount, recoveryCount, false, waitingAcceptDialog);
+        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount, recoveryCount,
+                false, waitingAcceptDialog);
     }
 
     public WubeiRoundContext waitForAcceptDialog(String nextSource) {
-        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount + 1, recoveryCount, waitingPathing, true);
+        return new WubeiRoundContext(phase, round, nextSource, phaseRetryCount + 1, recoveryCount,
+                waitingPathing, true);
     }
 }

@@ -7,6 +7,7 @@ import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.LeftTopStatusSwitchService;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.service.TaskMaintenanceService;
 import com.bot.dhxy.service.TeamReturnService;
@@ -38,6 +39,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
     private final TaskStartupCheckService taskStartupCheckService;
     private final TaskMaintenanceService taskMaintenanceService;
     private final TeamReturnService teamReturnService;
+    private final LeftTopStatusSwitchService leftTopStatusSwitchService;
 
     /**
      * Build a prototype task instance for the current window execution.
@@ -50,6 +52,8 @@ public class AutoBattleTask extends BaseTaskTemplate {
      * @param taskMaintenanceService shared maintenance scheduler for broadcast prompts and
      *                               summon-skill cleanup.
      * @param teamReturnService return-team detector/clicker used after combat deaths.
+     * @param leftTopStatusSwitchService CR107 left-top status switch guard consumed during follower
+     *                                   pathing maintenance windows.
      */
     public AutoBattleTask(GameContext gameContext,
                           TaskStepExecutor taskStepExecutor,
@@ -57,13 +61,15 @@ public class AutoBattleTask extends BaseTaskTemplate {
                           PlayerStateService playerStateService,
                           TaskStartupCheckService taskStartupCheckService,
                           TaskMaintenanceService taskMaintenanceService,
-                          TeamReturnService teamReturnService) {
+                          TeamReturnService teamReturnService,
+                          LeftTopStatusSwitchService leftTopStatusSwitchService) {
         super(gameContext, taskStepExecutor);
         this.autoCombatService = autoCombatService;
         this.playerStateService = playerStateService;
         this.taskStartupCheckService = taskStartupCheckService;
         this.taskMaintenanceService = taskMaintenanceService;
         this.teamReturnService = teamReturnService;
+        this.leftTopStatusSwitchService = leftTopStatusSwitchService;
     }
 
     /**
@@ -175,10 +181,17 @@ public class AutoBattleTask extends BaseTaskTemplate {
             return;
         }
         boolean followerSupportMode = isFollowerSupportMode(context);
+        if (followerSupportMode
+                && leftTopStatusSwitchService.isSupportedTaskCode(context.getRequestedTaskCode())
+                && taskMaintenanceService.isTeamPathingMaintenanceWindowOpen(context, context.getRequestedTaskCode())) {
+            leftTopStatusSwitchService.consumeFollowerSafeWindow(context, context.getRequestedTaskCode());
+            context.throwIfStopRequested();
+        }
         TaskMaintenanceResult result = taskMaintenanceService.runOpportunisticMaintenance(context,
                 TaskMaintenanceRequest.builder()
                         .sourceTask("auto-battle")
                         .handleMaintenanceBroadcast(true)
+                        .allowFullMaintenanceBroadcastFallback(false)
                         /*
                          * Follower-support windows should share the leader task's summon-skill
                          * maintenance slot. Gate them by the requested team task so one round still

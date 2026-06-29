@@ -13,6 +13,9 @@ public class NativeWindowInfo {
     private final int y;
     private final int width;
     private final int height;
+    private final boolean minimized;
+    private final boolean foreground;
+    private final int zOrderIndex;
 
     public NativeWindowInfo(String handle,
                             String title,
@@ -22,6 +25,20 @@ public class NativeWindowInfo {
                             int y,
                             int width,
                             int height) {
+        this(handle, title, className, processId, x, y, width, height, false, false, Integer.MAX_VALUE);
+    }
+
+    public NativeWindowInfo(String handle,
+                            String title,
+                            String className,
+                            long processId,
+                            int x,
+                            int y,
+                            int width,
+                            int height,
+                            boolean minimized,
+                            boolean foreground,
+                            int zOrderIndex) {
         this.handle = handle;
         this.title = title == null ? "" : title;
         this.className = className == null ? "" : className;
@@ -30,6 +47,9 @@ public class NativeWindowInfo {
         this.y = y;
         this.width = Math.max(width, 0);
         this.height = Math.max(height, 0);
+        this.minimized = minimized;
+        this.foreground = foreground;
+        this.zOrderIndex = Math.max(zOrderIndex, 0);
     }
 
     public String getHandle() { return handle; }
@@ -47,6 +67,12 @@ public class NativeWindowInfo {
     public int getWidth() { return width; }
 
     public int getHeight() { return height; }
+
+    public boolean isMinimized() { return minimized; }
+
+    public boolean isForeground() { return foreground; }
+
+    public int getZOrderIndex() { return zOrderIndex; }
 
     public boolean hasTitle() { return !title.isBlank(); }
 

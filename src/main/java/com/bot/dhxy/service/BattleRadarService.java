@@ -3,6 +3,7 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.config.TeamTaskProperties;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.awt.image.BufferedImage;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -50,6 +52,11 @@ public class BattleRadarService {
     private static final int TOP_BTN_AREA_H = 39;
 
     private static final int REQUIRED_COMBAT_EXIT_MISSES = 2;
+    private static final long FAST_EXPECTED_EXIT_PROBE_DELAY_MS = 15_000L;
+    private static final long FAST_EXPECTED_EXIT_PROBE_INTERVAL_MS = 1_000L;
+    private static final long FAST_EXPECTED_EXIT_FULL_RADAR_INTERVAL_MS = 4_000L;
+    private static final int FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE = 20;
+    private static final double FAST_EXPECTED_EXIT_DIFF_RATIO_THRESHOLD = 0.35;
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
@@ -57,6 +64,7 @@ public class BattleRadarService {
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
+    private final TeamTaskProperties teamTaskProperties;
 
     private final Map<String, BattleRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
@@ -131,6 +139,182 @@ public class BattleRadarService {
         return updateCombatState(false);
     }
 
+    /**
+     * Run the lightweight expected-combat exit probe against the leader-avatar hover area.
+     *
+     * <p>This probe is only for task-owned expected combat waits. It deliberately looks at one tiny
+     * 20x20 region around the configured team-role hover point instead of running the full battle
+     * template stack every second. The normal radar remains the fallback; this method only
+     * short-circuits exit when the avatar area clearly changes after combat has been running for at
+     * least 15 seconds.</p>
+     *
+     * @param source diagnostic source such as {@code xiuluo-v2}.
+     * @return true when the probe confidently marked combat as finished.
+     */
+    public boolean checkFastExpectedCombatExitByAvatarDiff(String source) {
+        if (context.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            return false;
+        }
+        BattleRuntimeState state = state();
+        long now = System.currentTimeMillis();
+        if (state.combatStartedAtMs <= 0L) {
+            state.combatStartedAtMs = now;
+        }
+        if (state.fastExpectedExitBaselineImage == null) {
+            BufferedImage baseline = captureFastExpectedExitAvatar(source);
+            if (baseline == null) {
+                return false;
+            }
+            state.fastExpectedExitBaselineImage = baseline;
+            state.lastFastExpectedExitProbeAtMs = now;
+            log.info("[battle-radar] fast expected exit avatar baseline captured: source={} delayMs={} intervalMs={} roiSize={} hover=({}, {})",
+                    source, FAST_EXPECTED_EXIT_PROBE_DELAY_MS, FAST_EXPECTED_EXIT_PROBE_INTERVAL_MS,
+                    FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE, teamTaskProperties.getTeamHoverX(),
+                    teamTaskProperties.getTeamHoverY());
+            return false;
+        }
+        long combatAgeMs = now - state.combatStartedAtMs;
+        if (combatAgeMs < FAST_EXPECTED_EXIT_PROBE_DELAY_MS) {
+            return false;
+        }
+        if (state.lastFastExpectedExitProbeAtMs > 0L
+                && now - state.lastFastExpectedExitProbeAtMs < FAST_EXPECTED_EXIT_PROBE_INTERVAL_MS) {
+            return false;
+        }
+        state.lastFastExpectedExitProbeAtMs = now;
+
+        BufferedImage current = captureFastExpectedExitAvatar(source);
+        if (current == null) {
+            return false;
+        }
+        if (!ImageFinder.isMatch(state.fastExpectedExitBaselineImage, current,
+                FAST_EXPECTED_EXIT_DIFF_RATIO_THRESHOLD)) {
+            log.info("[battle-radar] fast expected combat exit detected by avatar diff: source={} combatAgeMs={} diffRatioThreshold={} roiSize={} hover=({}, {})",
+                    source, combatAgeMs, FAST_EXPECTED_EXIT_DIFF_RATIO_THRESHOLD,
+                    FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE,
+                    teamTaskProperties.getTeamHoverX(), teamTaskProperties.getTeamHoverY());
+            return updateCombatState(false);
+        }
+        log.debug("[battle-radar] fast expected combat exit avatar unchanged: source={} combatAgeMs={} diffRatioThreshold={}",
+                source, combatAgeMs, FAST_EXPECTED_EXIT_DIFF_RATIO_THRESHOLD);
+        return false;
+    }
+
+    /**
+     * Arm the current task-owned expected-combat wait.
+     *
+     * <p>五倍/修罗 can enter a new expected battle while the previous combat's one-shot exit signal
+     * is still pending. The arm timestamp is the boundary: FAST_EXPECTED_EXIT may only consume exit
+     * signals produced after this point. Arming does not touch the avatar baseline, because trusted
+     * in-combat correction may have just refreshed it.</p>
+     *
+     * @param source diagnostic task/source label.
+     */
+    public void armExpectedCombatExitWait(String source) {
+        BattleRuntimeState state = state();
+        long now = System.currentTimeMillis();
+        state.expectedCombatExitWaitArmedAtMs = now;
+        if (state.combatExitPending
+                && (state.combatExitPendingAtMs <= 0L || state.combatExitPendingAtMs <= now)) {
+            log.warn("[battle-radar] discard stale combat-exit signal when expected wait arms: source={} battleCount={} pendingAtMs={} armedAtMs={}",
+                    source, state.battleCount, state.combatExitPendingAtMs, now);
+            state.combatExitPending = false;
+            state.combatExitPendingAtMs = 0L;
+            state.combatExitPendingBattleCount = 0;
+        }
+    }
+
+    /**
+     * Replace the fast expected-exit avatar baseline with the current trusted in-combat frame.
+     *
+     * <p>This is used after a return-item false positive is corrected by a read-only trusted combat
+     * probe. The fast-exit mechanism remains enabled; only the stale/incorrect comparison baseline
+     * is replaced.</p>
+     *
+     * @param source diagnostic task/source label.
+     * @return true when a new baseline image was captured.
+     */
+    public boolean refreshFastExpectedCombatExitAvatarBaseline(String source) {
+        BattleRuntimeState state = state();
+        state.fastExpectedExitBaselineImage = null;
+        if (context.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            log.warn("[battle-radar] fast expected exit baseline refresh skipped: source={} actionState={}",
+                    source, context.getCurrentActionState());
+            return false;
+        }
+        BufferedImage baseline = captureFastExpectedExitAvatar(source);
+        if (baseline == null) {
+            log.warn("[battle-radar] fast expected exit baseline refresh failed: source={}", source);
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (state.combatStartedAtMs <= 0L) {
+            state.combatStartedAtMs = now;
+        }
+        state.fastExpectedExitBaselineImage = baseline;
+        state.lastFastExpectedExitProbeAtMs = now;
+        log.info("[battle-radar] fast expected exit avatar baseline refreshed after trusted IN_COMBAT: source={} roiSize={} hover=({}, {})",
+                source, FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE,
+                teamTaskProperties.getTeamHoverX(), teamTaskProperties.getTeamHoverY());
+        return true;
+    }
+
+    /**
+     * @return milliseconds until the next lightweight expected-combat exit probe should run; -1 when
+     *         the current bound window is not in combat.
+     */
+    public long nextFastExpectedCombatExitProbeDelayMs() {
+        if (context.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            return -1L;
+        }
+        BattleRuntimeState state = state();
+        long now = System.currentTimeMillis();
+        long startedAt = state.combatStartedAtMs > 0L ? state.combatStartedAtMs : now;
+        long delayGateAt = startedAt + FAST_EXPECTED_EXIT_PROBE_DELAY_MS;
+        long intervalGateAt = state.lastFastExpectedExitProbeAtMs <= 0L
+                ? now
+                : state.lastFastExpectedExitProbeAtMs + FAST_EXPECTED_EXIT_PROBE_INTERVAL_MS;
+        return Math.max(0L, Math.max(delayGateAt, intervalGateAt) - now);
+    }
+
+    /**
+     * Keep the old full radar fallback sparse while the task also runs the 20x20 fast expected-exit
+     * probe every second.
+     *
+     * @return true when the full radar should run now.
+     */
+    public boolean shouldRunFullRadarForFastExpectedExitFallback() {
+        BattleRuntimeState state = state();
+        long now = System.currentTimeMillis();
+        if (state.lastFastExpectedFullRadarAtMs <= 0L
+                || now - state.lastFastExpectedFullRadarAtMs >= FAST_EXPECTED_EXIT_FULL_RADAR_INTERVAL_MS) {
+            state.lastFastExpectedFullRadarAtMs = now;
+            return true;
+        }
+        return false;
+    }
+
+    private BufferedImage captureFastExpectedExitAvatar(String source) {
+        int hoverX = teamTaskProperties.getTeamHoverX();
+        int hoverY = teamTaskProperties.getTeamHoverY();
+        if (hoverX <= 0 || hoverY <= 0) {
+            log.warn("[battle-radar] fast expected exit avatar probe skipped: team hover point not configured source={} hover=({}, {})",
+                    source, hoverX, hoverY);
+            return null;
+        }
+        int half = FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE / 2;
+        int[] rect = coordinateHelper.getScaledRect(
+                hoverX - half, hoverY - half,
+                FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE, FAST_EXPECTED_EXIT_AVATAR_ROI_SIZE);
+        BufferedImage image = tracker.captureToMemory("battle-fast-expected-exit-avatar",
+                rect[0], rect[1], rect[2], rect[3]);
+        if (image == null) {
+            log.warn("[battle-radar] fast expected exit avatar capture failed: source={} rect=[{},{} -> {},{}]",
+                    source, rect[0], rect[1], rect[2], rect[3]);
+        }
+        return image;
+    }
+
     private void markCombatSignalSeen(String source) {
         BattleRuntimeState state = state();
         if (state.combatExitMisses > 0) {
@@ -164,7 +348,10 @@ public class BattleRadarService {
             state().combatExitMisses = 0;
             log.info("[battle-radar] combat finished; restore action state to FREE and emit exit signal");
             context.setCurrentActionState(GameContext.ActionState.FREE);
-            state().combatExitPending = true;
+            BattleRuntimeState state = state();
+            state.combatExitPending = true;
+            state.combatExitPendingAtMs = System.currentTimeMillis();
+            state.combatExitPendingBattleCount = state.battleCount;
             onExitCombat();
             return true;
         }
@@ -174,11 +361,27 @@ public class BattleRadarService {
     private void onEnterCombat() {
         BattleRuntimeState state = state();
         state.battleCount++;
+        state.combatStartedAtMs = System.currentTimeMillis();
+        state.lastFastExpectedExitProbeAtMs = 0L;
+        state.lastFastExpectedFullRadarAtMs = 0L;
+        state.fastExpectedExitBaselineImage = null;
+        if (state.combatExitPending) {
+            log.warn("[battle-radar] discard stale combat-exit signal on combat enter: battleCount={}",
+                    state.battleCount);
+            state.combatExitPending = false;
+            state.combatExitPendingAtMs = 0L;
+            state.combatExitPendingBattleCount = 0;
+        }
         state.combatEnterPending = true;
         log.info("battle radar detected combat enter: battleCount={}", state.battleCount);
     }
 
     private void onExitCombat() {
+        BattleRuntimeState state = state();
+        state.combatStartedAtMs = 0L;
+        state.lastFastExpectedExitProbeAtMs = 0L;
+        state.lastFastExpectedFullRadarAtMs = 0L;
+        state.fastExpectedExitBaselineImage = null;
     }
 
     /**
@@ -206,6 +409,57 @@ public class BattleRadarService {
             return false;
         }
         state.combatExitPending = false;
+        state.combatExitPendingAtMs = 0L;
+        state.combatExitPendingBattleCount = 0;
+        return true;
+    }
+
+    /**
+     * Consume a combat-exit event only if it was produced after the current expected wait armed.
+     *
+     * @param source diagnostic task/source label.
+     * @return true once for a fresh current expected-combat exit; false for absent or stale exits.
+     */
+    public boolean consumeCombatExitSignalForExpectedWait(String source) {
+        BattleRuntimeState state = state();
+        if (!state.combatExitPending) {
+            return false;
+        }
+        if (state.expectedCombatExitWaitArmedAtMs <= 0L
+                || state.combatExitPendingAtMs < state.expectedCombatExitWaitArmedAtMs) {
+            log.warn("[battle-radar] discard stale expected combat-exit signal: source={} battleCount={} pendingBattleCount={} pendingAtMs={} armedAtMs={}",
+                    source, state.battleCount, state.combatExitPendingBattleCount,
+                    state.combatExitPendingAtMs, state.expectedCombatExitWaitArmedAtMs);
+            state.combatExitPending = false;
+            state.combatExitPendingAtMs = 0L;
+            state.combatExitPendingBattleCount = 0;
+            return false;
+        }
+        state.combatExitPending = false;
+        state.combatExitPendingAtMs = 0L;
+        state.combatExitPendingBattleCount = 0;
+        return true;
+    }
+
+    /**
+     * Drop a stale exit event when the current bound window is already known to be in combat.
+     *
+     * @param source diagnostic caller label.
+     * @return true when a stale exit signal was cleared.
+     */
+    public boolean discardStaleCombatExitSignalIfInCombat(String source) {
+        if (context.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            return false;
+        }
+        BattleRuntimeState state = state();
+        if (!state.combatExitPending) {
+            return false;
+        }
+        state.combatExitPending = false;
+        state.combatExitPendingAtMs = 0L;
+        state.combatExitPendingBattleCount = 0;
+        log.warn("[battle-radar] discard stale combat-exit signal while still IN_COMBAT: source={} battleCount={}",
+                source, state.battleCount);
         return true;
     }
 
@@ -239,7 +493,14 @@ public class BattleRadarService {
     private static class BattleRuntimeState {
         private int battleCount = 0;
         private int combatExitMisses = 0;
+        private long combatStartedAtMs = 0L;
+        private long lastFastExpectedExitProbeAtMs = 0L;
+        private long lastFastExpectedFullRadarAtMs = 0L;
+        private BufferedImage fastExpectedExitBaselineImage = null;
+        private long expectedCombatExitWaitArmedAtMs = 0L;
         private boolean combatEnterPending = false;
         private boolean combatExitPending = false;
+        private long combatExitPendingAtMs = 0L;
+        private int combatExitPendingBattleCount = 0;
     }
 }

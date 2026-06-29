@@ -27,13 +27,29 @@ import java.util.Optional;
 @Service
 public class DialogChoiceMemoryService {
 
-    private static final Path MEMORY_PATH = Path.of("config", "dialog_choice_memory.json");
-    private static final Path LEGACY_TRANSFER_MEMORY_PATH = Path.of("config", "transfer_choice_memory.json");
+    private static final Path DEFAULT_MEMORY_PATH = Path.of("config", "dialog_choice_memory.json");
+    private static final Path DEFAULT_LEGACY_TRANSFER_MEMORY_PATH = Path.of("config", "transfer_choice_memory.json");
     private static final int MAX_FAILURES_BEFORE_DISABLE = 3;
+    private static final int DEFAULT_STABLE_SUCCESS_STREAK = 3;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private final Path memoryPath;
+    private final Path legacyTransferMemoryPath;
     private MemoryFile cache;
+
+    public DialogChoiceMemoryService() {
+        this(DEFAULT_MEMORY_PATH, DEFAULT_LEGACY_TRANSFER_MEMORY_PATH);
+    }
+
+    public DialogChoiceMemoryService(Path memoryPath) {
+        this(memoryPath, null);
+    }
+
+    private DialogChoiceMemoryService(Path memoryPath, Path legacyTransferMemoryPath) {
+        this.memoryPath = memoryPath == null ? DEFAULT_MEMORY_PATH : memoryPath;
+        this.legacyTransferMemoryPath = legacyTransferMemoryPath;
+    }
 
     /**
      * Find a usable remembered option click for a scoped dialog choice.
@@ -45,6 +61,30 @@ public class DialogChoiceMemoryService {
      */
     public synchronized Optional<DialogChoiceEntry> findUsable(String scope, String action, String contextKey) {
         return findByKey(key(scope, action, contextKey));
+    }
+
+    /**
+     * Find a remembered task-option click only after it has proven stable in consecutive runs.
+     *
+     * <p>This is intentionally stricter than generic route-dialog memory. Task accept options should
+     * not become reusable merely because an old total success counter is high; they must build a
+     * fresh consecutive success streak so one bad historical record cannot keep being reused.</p>
+     *
+     * @param scope business scope such as a task code.
+     * @param action stable action within the scope, normally {@code acceptTask}.
+     * @param contextKey stable context key under the action, normally the accept NPC name.
+     * @return remembered dialog-relative click point when the consecutive success streak is stable.
+     */
+    public synchronized Optional<DialogChoiceEntry> findStableTaskChoice(String scope, String action, String contextKey) {
+        String key = key(scope, action, contextKey);
+        if (key == null) {
+            return Optional.empty();
+        }
+        DialogChoiceEntry entry = load().entries.get(key);
+        if (entry == null || !entry.isStableTaskChoice()) {
+            return Optional.empty();
+        }
+        return Optional.of(entry);
     }
 
     /**
@@ -91,12 +131,14 @@ public class DialogChoiceMemoryService {
         entry.optionText = optionText;
         entry.source = source;
         entry.successCount++;
+        entry.consecutiveSuccessCount++;
+        entry.consecutiveFailureCount = 0;
         entry.failCount = 0;
         entry.disabled = false;
         entry.lastSuccessAt = LocalDateTime.now().toString();
         save(memory);
-        log.info("[dialog-choice-memory] success key={} clickRel=({}, {}) option={} successCount={}",
-                key, relativeX, relativeY, optionText, entry.successCount);
+        log.info("[dialog-choice-memory] success key={} clickRel=({}, {}) option={} successCount={} consecutiveSuccessCount={}",
+                key, relativeX, relativeY, optionText, entry.successCount, entry.consecutiveSuccessCount);
     }
 
     /**
@@ -118,14 +160,16 @@ public class DialogChoiceMemoryService {
             return;
         }
         entry.failCount++;
+        entry.consecutiveFailureCount++;
+        entry.consecutiveSuccessCount = 0;
         entry.lastFailureAt = LocalDateTime.now().toString();
         entry.source = source;
         if (entry.failCount >= MAX_FAILURES_BEFORE_DISABLE) {
             entry.disabled = true;
         }
         save(memory);
-        log.warn("[dialog-choice-memory] failure key={} failCount={} disabled={}",
-                key, entry.failCount, entry.disabled);
+        log.warn("[dialog-choice-memory] failure key={} failCount={} consecutiveFailureCount={} disabled={}",
+                key, entry.failCount, entry.consecutiveFailureCount, entry.disabled);
     }
 
     public synchronized Optional<DialogChoiceEntry> findUsableRoute(String fromMap, String targetMap) {
@@ -163,7 +207,9 @@ public class DialogChoiceMemoryService {
         if (cache != null) {
             return cache;
         }
-        Path pathToLoad = Files.exists(MEMORY_PATH) ? MEMORY_PATH : LEGACY_TRANSFER_MEMORY_PATH;
+        Path pathToLoad = Files.exists(memoryPath) || legacyTransferMemoryPath == null
+                ? memoryPath
+                : legacyTransferMemoryPath;
         if (!Files.exists(pathToLoad)) {
             cache = new MemoryFile();
             return cache;
@@ -173,7 +219,7 @@ public class DialogChoiceMemoryService {
             if (cache.entries == null) {
                 cache.entries = new LinkedHashMap<>();
             }
-            if (LEGACY_TRANSFER_MEMORY_PATH.equals(pathToLoad)) {
+            if (legacyTransferMemoryPath != null && legacyTransferMemoryPath.equals(pathToLoad)) {
                 cache.entries = migrateLegacyRouteKeys(cache.entries);
             }
             return cache;
@@ -186,19 +232,19 @@ public class DialogChoiceMemoryService {
 
     private void save(MemoryFile memory) {
         try {
-            Path parent = MEMORY_PATH.getParent();
+            Path parent = memoryPath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Path temp = MEMORY_PATH.resolveSibling(MEMORY_PATH.getFileName() + ".tmp");
+            Path temp = memoryPath.resolveSibling(memoryPath.getFileName() + ".tmp");
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), memory);
             try {
-                Files.move(temp, MEMORY_PATH, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                Files.move(temp, memoryPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException ignored) {
-                Files.move(temp, MEMORY_PATH, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temp, memoryPath, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
-            log.warn("[dialog-choice-memory] save failed: path={}", MEMORY_PATH, e);
+            log.warn("[dialog-choice-memory] save failed: path={}", memoryPath, e);
         }
     }
 
@@ -261,6 +307,8 @@ public class DialogChoiceMemoryService {
         public String source;
         public int successCount;
         public int failCount;
+        public int consecutiveSuccessCount;
+        public int consecutiveFailureCount;
         public boolean disabled;
         public String lastSuccessAt;
         public String lastFailureAt;
@@ -269,6 +317,12 @@ public class DialogChoiceMemoryService {
             return !disabled
                     && successCount > 0
                     && failCount < MAX_FAILURES_BEFORE_DISABLE;
+        }
+
+        public boolean isStableTaskChoice() {
+            return !disabled
+                    && consecutiveSuccessCount >= DEFAULT_STABLE_SUCCESS_STREAK
+                    && consecutiveFailureCount < MAX_FAILURES_BEFORE_DISABLE;
         }
     }
 }

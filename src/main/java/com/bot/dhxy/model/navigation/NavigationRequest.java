@@ -40,6 +40,16 @@ public class NavigationRequest {
     boolean randomizeMiniMapClickPoint = true;
 
     /**
+     * Pixel radius for randomized mini-map clicks when randomization is enabled.
+     *
+     * <p>The value is a screen-pixel radius applied after logical map coordinates are converted to
+     * the mini-map click point. Most navigation should keep the default small radius. Task-specific
+     * broad prepath clicks can set a larger radius without changing the logical target coordinate.</p>
+     */
+    @Builder.Default
+    int miniMapClickRandomRadiusPx = 4;
+
+    /**
      * Keep the current task turn when an in-map mini-map click starts movement.
      *
      * <p>This is for short 修罗 leader-only corrections such as returning home and walking a few

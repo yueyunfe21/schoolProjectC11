@@ -16,6 +16,7 @@ import com.bot.dhxy.task.transaction.TaskYieldPolicy;
  * @param transactionResult task-turn result the phase wants to report.
  * @param yieldPolicy whether the task should keep the business turn or yield after this step.
  * @param message short diagnostic message for logs.
+ * @param waitSpec optional scheduling-only wait policy used after this outcome releases the turn.
  */
 @Value
 @Builder
@@ -26,13 +27,15 @@ public class XiuluoStepOutcome {
     TaskTransactionResult transactionResult;
     TaskYieldPolicy yieldPolicy;
     String message;
+    XiuluoWaitSpec waitSpec;
 
     public static XiuluoStepOutcome continueTo(XiuluoRoundContext nextState, String message) {
         return new XiuluoStepOutcome(
                 nextState,
                 TaskTransactionResult.READY_TO_CONTINUE,
                 TaskYieldPolicy.CONTINUE_CHAIN,
-                message);
+                message,
+                null);
     }
 
     public static XiuluoStepOutcome pathingStarted(XiuluoRoundContext nextState, String message) {
@@ -40,7 +43,8 @@ public class XiuluoStepOutcome {
                 nextState,
                 TaskTransactionResult.PATHING_STARTED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static XiuluoStepOutcome sharedState(XiuluoRoundContext nextState, String message) {
@@ -48,7 +52,8 @@ public class XiuluoStepOutcome {
                 nextState,
                 TaskTransactionResult.SHARED_STATE_TRIGGERED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static XiuluoStepOutcome failed(XiuluoRoundContext state, String message) {
@@ -56,7 +61,8 @@ public class XiuluoStepOutcome {
                 state.next(XiuluoPhase.FAILED, "failed"),
                 TaskTransactionResult.FAILED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
     }
 
     public static XiuluoStepOutcome stopped(XiuluoRoundContext state, String message) {
@@ -64,7 +70,16 @@ public class XiuluoStepOutcome {
                 state.next(XiuluoPhase.STOPPED, "stopped"),
                 TaskTransactionResult.STOPPED,
                 TaskYieldPolicy.MUST_YIELD,
-                message);
+                message,
+                null);
+    }
+
+    public XiuluoStepOutcome withWaitSpec(XiuluoWaitSpec waitSpec) {
+        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec);
+    }
+
+    public XiuluoStepOutcome withNextState(XiuluoRoundContext nextState) {
+        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec);
     }
 
 }

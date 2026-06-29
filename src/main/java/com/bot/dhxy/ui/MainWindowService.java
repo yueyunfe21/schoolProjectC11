@@ -62,7 +62,7 @@ public class MainWindowService {
     private void createStage() {
         Stage stage = new Stage();
         stage.setTitle("DHXY Robot 控制台");
-        Scene scene = new Scene(mainWindowController.buildView(), 1120, 720);
+        Scene scene = new Scene(mainWindowController.buildView(), 1280, 820);
         applyStylesheet(scene);
         stage.setScene(scene);
         stage.setOnCloseRequest(event -> {

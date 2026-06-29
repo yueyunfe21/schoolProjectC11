@@ -68,8 +68,7 @@ public class TaskTeamAssignmentPolicy {
     }
 
     private boolean isFiveRingTask(TaskType taskType) {
-        return taskType == TaskType.WUHuan
-                || taskType == TaskType.WUHuan_V2;
+        return taskType == TaskType.WUHuan_V2;
     }
 
     private boolean isLeaderOnlyTask(TaskType taskType) {

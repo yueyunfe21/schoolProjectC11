@@ -1,6 +1,10 @@
 package com.bot.dhxy.input.action;
 
+import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
+import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
@@ -27,12 +31,20 @@ public class InputActionQueue {
 
     private final BlockingQueue<InputActionRequest> queue = new LinkedBlockingQueue<>();
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final TaskExecutionContextHolder taskExecutionContextHolder;
 
     /**
      * @param windowTaskContextHolder thread-local holder used to capture the submitting window.
+     * @param bindingRefreshService live HWND/title/geometry refresher used before input is queued.
+     * @param taskExecutionContextHolder thread-local holder used to capture the submitting pause token.
      */
-    public InputActionQueue(WindowTaskContextHolder windowTaskContextHolder) {
+    public InputActionQueue(WindowTaskContextHolder windowTaskContextHolder,
+                            WindowNativeBindingRefreshService bindingRefreshService,
+                            TaskExecutionContextHolder taskExecutionContextHolder) {
         this.windowTaskContextHolder = windowTaskContextHolder;
+        this.bindingRefreshService = bindingRefreshService;
+        this.taskExecutionContextHolder = taskExecutionContextHolder;
     }
 
     /**
@@ -50,10 +62,11 @@ public class InputActionQueue {
             return false;
         }
         WindowRuntimeContext context = current.get();
-        if (!hasNativeBinding(context, description)) {
+        if (!refreshAndValidateNativeBinding(context, description)) {
             return false;
         }
-        return await(new InputActionRequest(context, description, actions));
+        TaskPauseToken pauseToken = capturePauseToken();
+        return await(new InputActionRequest(context, description, actions, pauseToken));
     }
 
     /**
@@ -72,19 +85,44 @@ public class InputActionQueue {
             return false;
         }
         WindowRuntimeContext context = current.get();
-        if (!hasNativeBinding(context, description)) {
+        if (!refreshAndValidateNativeBinding(context, description)) {
             return false;
         }
-        return await(new InputActionRequest(context, description, callback));
+        TaskPauseToken pauseToken = capturePauseToken();
+        return await(new InputActionRequest(context, description, callback, pauseToken));
     }
 
-    private boolean hasNativeBinding(WindowRuntimeContext context, String description) {
+    private TaskPauseToken capturePauseToken() {
+        return taskExecutionContextHolder.current()
+                .map(TaskExecutionContext::getPauseToken)
+                .orElse(null);
+    }
+
+    private boolean refreshAndValidateNativeBinding(WindowRuntimeContext context, String description) {
         WindowNativeBinding binding = context.getNativeBinding();
         if (binding == null || !binding.hasNativeHandle()) {
             log.warn("Input action rejected because no native binding exists: windowId={} description={}",
                     context.getWindowId(), description);
             return false;
         }
+        /*
+         * Pure input paths can be the first action after the same HWND is logged into another player.
+         * Refresh before enqueueing so the worker carries the live title/player epoch, not a stale
+         * task-start binding that only later screenshot/tracker code would update.
+         */
+        Optional<WindowNativeBinding> refreshedBinding = bindingRefreshService.refreshAndCommit(context);
+        if (refreshedBinding.isEmpty()) {
+            log.warn("Input action rejected because live binding refresh is unavailable: windowId={} description={}",
+                    context.getWindowId(), description);
+            return false;
+        }
+        WindowNativeBinding refreshed = context.getNativeBinding();
+        if (refreshed == null || !refreshed.hasNativeHandle()) {
+            log.warn("Input action rejected after live binding refresh: windowId={} description={}",
+                    context.getWindowId(), description);
+            return false;
+        }
+        context.waitIfIdentitySuspended(null);
         return true;
     }
 

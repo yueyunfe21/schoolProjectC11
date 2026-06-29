@@ -74,7 +74,7 @@ public class MapNameCanonicalizer {
 
         MapNameCandidate best = ranked.get(0);
         int secondDistance = ranked.size() > 1 ? ranked.get(1).distance() : UNKNOWN_DISTANCE;
-        if (isSafeCorrection(normalized, best.distance(), secondDistance)) {
+        if (isSafeCorrection(normalized, best.distance(), secondDistance, source)) {
             log.info("map name corrected: source={} raw={} canonical={} distance={} secondDistance={}",
                     source, trimmed, best.name(), best.distance(), secondDistance);
             return best.name();
@@ -87,12 +87,17 @@ public class MapNameCanonicalizer {
         return trimmed;
     }
 
-    private boolean isSafeCorrection(String normalizedRaw, int bestDistance, int secondDistance) {
+    private boolean isSafeCorrection(String normalizedRaw, int bestDistance, int secondDistance, String source) {
         if (bestDistance <= 0) {
             return true;
         }
         if (bestDistance == 1) {
             return true;
+        }
+        if (source != null && source.startsWith("wubei-tracker-green-map:")) {
+            return normalizedRaw.length() >= 3
+                    && bestDistance <= 2
+                    && secondDistance >= bestDistance + 1;
         }
         int maxDistance = normalizedRaw.length() >= 4 ? 2 : 1;
         return bestDistance <= maxDistance && secondDistance >= bestDistance + 2;

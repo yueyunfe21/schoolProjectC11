@@ -22,6 +22,7 @@ import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.interaction.WindowFocusService;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -82,6 +83,7 @@ public class TeamRoleDetectionService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowFocusService windowFocusService;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     /**
      * Create the team-role detector.
@@ -108,7 +110,8 @@ public class TeamRoleDetectionService {
                                     InputSequences inputSequences,
                                     WindowTaskContextHolder windowTaskContextHolder,
                                     WindowFocusService windowFocusService,
-                                    WindowScopedTempPath windowScopedTempPath) {
+                                    WindowScopedTempPath windowScopedTempPath,
+                                    WindowNativeBindingRefreshService bindingRefreshService) {
         this.teamTaskProperties = teamTaskProperties;
         this.botProperties = botProperties;
         this.tracker = tracker;
@@ -119,6 +122,7 @@ public class TeamRoleDetectionService {
         this.windowTaskContextHolder = windowTaskContextHolder;
         this.windowFocusService = windowFocusService;
         this.windowScopedTempPath = windowScopedTempPath;
+        this.bindingRefreshService = bindingRefreshService;
     }
 
     /**
@@ -531,21 +535,22 @@ public class TeamRoleDetectionService {
      * Resolve the current player ID from the bound window title.
      *
      * @param context task context supplied by the window runner; may be null.
-     * @return player ID parsed from context title, current runtime binding, or tracker title.
+     * @return player ID parsed from current runtime binding, context title, or tracker title.
      */
     private Optional<String> resolveCurrentPlayerId(TaskExecutionContext context) {
-        Optional<String> fromContext = extractPlayerIdFromTitle(context == null ? null : context.getNativeWindowTitle());
-        if (fromContext.isPresent()) {
-            return fromContext;
-        }
-
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isPresent()) {
-            WindowNativeBinding binding = current.get().getNativeBinding();
+            WindowRuntimeContext runtime = current.get();
+            bindingRefreshService.refreshAndCommit(runtime);
+            WindowNativeBinding binding = runtime.getNativeBinding();
             Optional<String> fromBinding = extractPlayerIdFromTitle(binding == null ? null : binding.getTitle());
             if (fromBinding.isPresent()) {
                 return fromBinding;
             }
+        }
+        Optional<String> fromContext = extractPlayerIdFromTitle(context == null ? null : context.getNativeWindowTitle());
+        if (fromContext.isPresent()) {
+            return fromContext;
         }
         return extractPlayerIdFromTitle(tracker.getFullWindowTitle());
     }

@@ -4,12 +4,14 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -27,6 +29,9 @@ public class AutoCombatService {
     private static final long COMBAT_ENTRY_MAINTENANCE_DELAY_MS = 4_000L;
     private static final long COMBAT_UI_CLEAN_INTERVAL_MS = 40_000L;
     private static final long FOLLOWER_FIRST_AID_GATE_WAIT_MS = 3_000L;
+    private static final long REFRESH_DUE_PANEL_VERIFY_GUARD_MS = 30_000L;
+    private static final long REFRESH_DUE_DEFERRED_LOG_INTERVAL_MS = 10_000L;
+    private static final long URGENT_ROUNDS_PANEL_VERIFY_RETRY_MS = 30_000L;
 
     private final GameContext gameContext;
     private final BattleRadarService battleRadarService;
@@ -34,16 +39,36 @@ public class AutoCombatService {
     private final PlayerStateService playerStateService;
     private final UICleanerService uiCleanerService;
     private final TaskMaintenanceService taskMaintenanceService;
+    private final LeftTopStatusSwitchService leftTopStatusSwitchService;
+    private final CommonBoxService commonBoxService;
     private final BotProperties botProperties;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final TaskTurnCoordinator taskTurnCoordinator;
 
     private final Map<String, AutoCombatRuntimeState> runtimeStates = new ConcurrentHashMap<>();
+    private final RefreshDuePanelVerifyGate refreshDuePanelVerifyGate = new RefreshDuePanelVerifyGate();
 
     public enum TickResult {
         NONE,
         IN_COMBAT,
         EXIT_RECOVERED
+    }
+
+    /**
+     * Recovery mode used after a combat-exit signal is consumed by the task-owned combat tick.
+     */
+    public enum PostCombatRecoveryPolicy {
+        FULL_RECOVERY(false, false),
+        FULL_RECOVERY_WITH_LEADER_INCENSE(true, false),
+        FAST_EXPECTED_EXIT(false, true);
+
+        private final boolean checkSheYaoXiangForLeaderTask;
+        private final boolean deferLeaderRecovery;
+
+        PostCombatRecoveryPolicy(boolean checkSheYaoXiangForLeaderTask, boolean deferLeaderRecovery) {
+            this.checkSheYaoXiangForLeaderTask = checkSheYaoXiangForLeaderTask;
+            this.deferLeaderRecovery = deferLeaderRecovery;
+        }
     }
 
     /**
@@ -60,6 +85,9 @@ public class AutoCombatService {
         state.pendingCombatEntryMaintenanceAt = 0L;
         state.pendingFollowerFirstAid = false;
         state.pendingFollowerFirstAidSource = null;
+        state.fastExpectedExitWatchArmed = false;
+        state.expectedCombatExitWaitArmed = false;
+        state.verifyActualRoundsAfterEntryMaintenance = false;
     }
 
     /**
@@ -77,12 +105,60 @@ public class AutoCombatService {
     public TickResult handleCombatTick(TaskExecutionContext context,
                                        String source,
                                        boolean checkSheYaoXiangForLeaderTask) {
-        context.throwIfStopRequested();
-        battleRadarService.checkAndSyncCombatState();
-        maybeHandleCombatEnter(source);
+        return handleCombatTick(context, source,
+                legacyPostCombatRecoveryPolicy(checkSheYaoXiangForLeaderTask));
+    }
 
-        if (consumeExitAndRecover(context, source, checkSheYaoXiangForLeaderTask)) {
+    /**
+     * Run one auto-combat tick for the current window with an explicit post-combat recovery policy.
+     *
+     * @param context current task execution context; used for stop checks before and after
+     *                maintenance actions.
+     * @param source short log/source label such as a task code.
+     * @param recoveryPolicy controls whether a consumed combat-exit signal runs synchronous
+     *                       recovery now or records a deferred leader recovery check for a later
+     *                       safe point.
+     * @return tick outcome so callers can decide whether to keep waiting, continue task flow, or
+     * handle a recovered post-combat state.
+     */
+    public TickResult handleCombatTick(TaskExecutionContext context,
+                                       String source,
+                                       PostCombatRecoveryPolicy recoveryPolicy) {
+        context.throwIfStopRequested();
+        PostCombatRecoveryPolicy safePolicy = recoveryPolicy == null
+                ? PostCombatRecoveryPolicy.FULL_RECOVERY
+                : recoveryPolicy;
+        AutoCombatRuntimeState state = state();
+        boolean fastExpectedExitPolicy = safePolicy == PostCombatRecoveryPolicy.FAST_EXPECTED_EXIT;
+        if (fastExpectedExitPolicy && !state.expectedCombatExitWaitArmed) {
+            battleRadarService.armExpectedCombatExitWait(source);
+            state.expectedCombatExitWaitArmed = true;
+        }
+        boolean fastExpectedExitWait = fastExpectedExitPolicy
+                && gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
+        if (fastExpectedExitWait) {
+            state.fastExpectedExitWatchArmed = true;
+        }
+        boolean fullRadarDue = true;
+        if (fastExpectedExitWait) {
+            boolean fastExitDetected = battleRadarService.checkFastExpectedCombatExitByAvatarDiff(source);
+            fullRadarDue = !fastExitDetected && battleRadarService.shouldRunFullRadarForFastExpectedExitFallback();
+        }
+        if (fullRadarDue) {
+            battleRadarService.checkAndSyncCombatState();
+        }
+        maybeHandleCombatEnter(source);
+        battleRadarService.discardStaleCombatExitSignalIfInCombat(source);
+
+        if (consumeExitAndRecover(context, source, recoveryPolicy)) {
+            if (runPendingMemberCommonBoxIfAllowed(context, source)) {
+                return TickResult.EXIT_RECOVERED;
+            }
             runPendingFollowerFirstAidIfAllowed(context, source);
+            return TickResult.EXIT_RECOVERED;
+        }
+
+        if (runPendingMemberCommonBoxIfAllowed(context, source)) {
             return TickResult.EXIT_RECOVERED;
         }
 
@@ -95,6 +171,12 @@ public class AutoCombatService {
             return TickResult.IN_COMBAT;
         }
         return TickResult.NONE;
+    }
+
+    private PostCombatRecoveryPolicy legacyPostCombatRecoveryPolicy(boolean checkSheYaoXiangForLeaderTask) {
+        return checkSheYaoXiangForLeaderTask
+                ? PostCombatRecoveryPolicy.FULL_RECOVERY_WITH_LEADER_INCENSE
+                : PostCombatRecoveryPolicy.FULL_RECOVERY;
     }
 
     /**
@@ -124,10 +206,109 @@ public class AutoCombatService {
     }
 
     /**
+     * Probe the current window combat state without consuming combat-enter/exit signals or sending
+     * auto-combat maintenance input.
+     *
+     * <p>This is intentionally narrower than {@link #handleWindowCombatGuardTick(TaskExecutionContext, String)}.
+     * Startup-in-combat deferral must only wait until the current battle ends; it must not open the
+     * auto-combat panel with Alt+8 or schedule task-owned post-combat recovery before the task receives
+     * its {@code AFTER_COMBAT_EXIT_STARTUP} marker.</p>
+     *
+     * @param context current task execution context; used only for stop checks.
+     * @param source short log/source label for the radar refresh path.
+     * @return IN_COMBAT while combat is visible; NONE otherwise.
+     */
+    public TickResult probeWindowCombatStateReadOnly(TaskExecutionContext context, String source) {
+        context.throwIfStopRequested();
+        battleRadarService.checkAndSyncCombatState();
+
+        if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            return TickResult.IN_COMBAT;
+        }
+        return TickResult.NONE;
+    }
+
+    /**
      * @return recommended milliseconds until the next auto-combat/radar tick.
      */
     public int getDynamicPollingIntervalMs() {
         return battleRadarService.getDynamicPollingIntervalMs();
+    }
+
+    /**
+     * Return how long the current bound window may safely stay parked before task-owned combat
+     * maintenance should tick again.
+     *
+     * <p>修罗 leader combat waits are event-driven, but combat-state events only fire on enter/exit
+     * edges. This delay makes scheduled in-combat work a real wake source too: the 4s entry cleanup,
+     * sparse generic UI cleanup, and configured auto-combat panel refresh must not depend on another
+     * combat-state event happening after they become due.</p>
+     *
+     * @return milliseconds until the next known combat-maintenance deadline for the current window;
+     *         {@code -1} only when no deadline exists.
+     */
+    public long nextCombatMaintenanceDelayMs() {
+        AutoCombatRuntimeState state = state();
+        long now = System.currentTimeMillis();
+        long nextDueAt = Long.MAX_VALUE;
+
+        if (state.pendingCombatEntryMaintenanceAt > 0L) {
+            nextDueAt = Math.min(nextDueAt, state.pendingCombatEntryMaintenanceAt);
+        }
+        if (state.lastCombatUiCleanAt <= 0L) {
+            nextDueAt = Math.min(nextDueAt, now);
+        } else {
+            nextDueAt = Math.min(nextDueAt, state.lastCombatUiCleanAt + COMBAT_UI_CLEAN_INTERVAL_MS);
+        }
+
+        long refreshIntervalMs = botProperties.getAutoBattleRefreshIntervalMs();
+        if (refreshIntervalMs > 0L) {
+            AutoCombatPanelService.RoundsRefreshReason refreshReason =
+                    AutoCombatPanelService.resolveRoundsRefreshReason(
+                            gameContext.getAutoCombatEstimatedRounds(),
+                            gameContext.getLastAutoCombatRefreshAt(),
+                            Math.max(0L, refreshIntervalMs),
+                            now);
+            if (refreshReason == AutoCombatPanelService.RoundsRefreshReason.UNKNOWN
+                    || refreshReason == AutoCombatPanelService.RoundsRefreshReason.LOW_ROUNDS
+                    || refreshReason == AutoCombatPanelService.RoundsRefreshReason.REFRESH_DUE) {
+                nextDueAt = Math.min(nextDueAt, now);
+            } else if (state.lastAutoBattleRefreshAt <= 0L) {
+                nextDueAt = Math.min(nextDueAt, now);
+            } else {
+                nextDueAt = Math.min(nextDueAt, state.lastAutoBattleRefreshAt + refreshIntervalMs);
+            }
+        }
+
+        if (nextDueAt == Long.MAX_VALUE) {
+            return -1L;
+        }
+        return Math.max(0L, nextDueAt - now);
+    }
+
+    /**
+     * Return how long the current bound window may stay parked before either normal combat
+     * maintenance or the lightweight expected-combat exit probe should tick again.
+     *
+     * <p>The fast exit probe is armed only while a task is waiting with
+     * {@link PostCombatRecoveryPolicy#FAST_EXPECTED_EXIT}. It keeps 修罗/五倍 expected combat exits
+     * responsive without making the global full battle radar scan every second.</p>
+     *
+     * @return milliseconds until the next combat wake deadline; {@code -1} when no deadline exists.
+     */
+    public long nextCombatWakeDelayMs() {
+        AutoCombatRuntimeState state = state();
+        long nextMaintenanceDelayMs = nextCombatMaintenanceDelayMs();
+        long nextFastExitProbeDelayMs = state.fastExpectedExitWatchArmed
+                ? battleRadarService.nextFastExpectedCombatExitProbeDelayMs()
+                : -1L;
+        if (nextMaintenanceDelayMs < 0L) {
+            return nextFastExitProbeDelayMs;
+        }
+        if (nextFastExitProbeDelayMs < 0L) {
+            return nextMaintenanceDelayMs;
+        }
+        return Math.min(nextMaintenanceDelayMs, nextFastExitProbeDelayMs);
     }
 
     /**
@@ -136,6 +317,14 @@ public class AutoCombatService {
      */
     public boolean hasPendingFollowerFirstAidForCurrentWindow() {
         return state().pendingFollowerFirstAid;
+    }
+
+    /**
+     * @return true when the current bound leader window deferred HP/MP and 摄妖香 recovery after a
+     *         fast expected 修罗/五倍 combat exit.
+     */
+    public boolean hasPendingLeaderPostCombatRecoveryForCurrentWindow() {
+        return state().pendingLeaderPostCombatRecovery;
     }
 
     private void maybeHandleCombatEnter(String source) {
@@ -153,17 +342,39 @@ public class AutoCombatService {
 
     private boolean consumeExitAndRecover(TaskExecutionContext context,
                                           String source,
-                                          boolean checkSheYaoXiangForLeaderTask) {
-        if (!battleRadarService.consumeCombatExitSignal()) {
+                                          PostCombatRecoveryPolicy recoveryPolicy) {
+        PostCombatRecoveryPolicy safePolicy = recoveryPolicy == null
+                ? PostCombatRecoveryPolicy.FULL_RECOVERY
+                : recoveryPolicy;
+        boolean consumedExit = safePolicy == PostCombatRecoveryPolicy.FAST_EXPECTED_EXIT
+                ? battleRadarService.consumeCombatExitSignalForExpectedWait(source)
+                : battleRadarService.consumeCombatExitSignal();
+        if (!consumedExit) {
             return false;
         }
 
         AutoCombatRuntimeState state = state();
+        state.expectedCombatExitWaitArmed = false;
         state.pendingCombatEntryMaintenanceAt = 0L;
         autoCombatPanelService.recordCombatExit();
         playerStateService.resetCheckCounter();
 
-        log.info("{} auto-combat exit detected: run unified post-combat recovery", source);
+        log.info("{} auto-combat exit detected: recoveryPolicy={} task={} requested={} role={}",
+                source, safePolicy, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+        commonBoxService.detectMemberBoxAfterCombatExit(
+                context, safeRequestedTaskCode(context), source + ":combat-exit");
+        if (safePolicy.deferLeaderRecovery) {
+            state.pendingFollowerFirstAid = false;
+            state.pendingFollowerFirstAidSource = null;
+            state.pendingLeaderPostCombatRecovery = true;
+            state.pendingLeaderPostCombatRecoverySource = source;
+            state.fastExpectedExitWatchArmed = false;
+            gameContext.setCurrentActionState(GameContext.ActionState.FREE);
+            log.info("{} post-combat recovery deferred for fast expected exit: task={} requested={} role={}",
+                    source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+            return true;
+        }
+
         if (shouldDeferFollowerFirstAid(context)) {
             PlayerStateService.FirstAidNoFocusProbeResult probeResult =
                     playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
@@ -192,11 +403,100 @@ public class AutoCombatService {
             }
         }
         context.throwIfStopRequested();
-        if (checkSheYaoXiangForLeaderTask) {
+        if (safePolicy.checkSheYaoXiangForLeaderTask) {
             playerStateService.ensureSheYaoXiangActiveForLeaderTask(source + ":post-combat", context);
         }
+        state.fastExpectedExitWatchArmed = false;
         gameContext.setCurrentActionState(GameContext.ActionState.FREE);
         return true;
+    }
+
+    /**
+     * Refresh the avatar-diff baseline after a trusted read-only probe proves the window is still in
+     * the same expected combat.
+     *
+     * @param source diagnostic source for the underlying radar capture.
+     * @return true when a new in-combat avatar baseline was captured.
+     */
+    public boolean refreshFastExpectedExitBaselineAfterTrustedInCombat(String source) {
+        state().fastExpectedExitWatchArmed = true;
+        return battleRadarService.refreshFastExpectedCombatExitAvatarBaseline(source);
+    }
+
+    /**
+     * Consume the deferred leader HP/MP and 摄妖香 recovery created by
+     * {@link PostCombatRecoveryPolicy#FAST_EXPECTED_EXIT}.
+     *
+     * <p>Expected 修罗/五倍 exits use this to keep the foreground path fast: they return home first,
+     * then call this at a known safe point after the return item is verified. The method deliberately
+     * reuses the existing first-aid and 摄妖香 mechanisms; it does not introduce new screenshot,
+     * template, or click behavior.</p>
+     *
+     * @param context current task execution context for stop checks and existing recovery services.
+     * @param source short diagnostic source for logs.
+     * @return true when a pending deferred recovery was consumed; false when nothing was pending or
+     *         the current window is still in combat.
+     */
+    public boolean consumePendingLeaderPostCombatRecoveryIfAllowed(TaskExecutionContext context, String source) {
+        AutoCombatRuntimeState state = state();
+        if (!state.pendingLeaderPostCombatRecovery) {
+            return false;
+        }
+        if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            log.info("{} deferred post-combat recovery kept pending because window is still in combat originalSource={}",
+                    source, state.pendingLeaderPostCombatRecoverySource);
+            return false;
+        }
+
+        String originalSource = state.pendingLeaderPostCombatRecoverySource == null
+                ? source
+                : state.pendingLeaderPostCombatRecoverySource;
+        state.pendingLeaderPostCombatRecovery = false;
+        state.pendingLeaderPostCombatRecoverySource = null;
+        log.info("{} deferred post-combat recovery consuming after fast expected exit: originalSource={} task={} requested={} role={}",
+                source, originalSource, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+
+        PlayerStateService.FirstAidNoFocusProbeResult probeResult =
+                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":deferred-post-combat");
+        if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                && !playerStateService.performCachedFirstAidPlanNow(context)) {
+            log.warn("{} deferred post-combat first-aid skipped: no-focus plan unavailable originalSource={} task={} role={}",
+                    source, originalSource, safeTaskCode(context), safeRole(context));
+        } else if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
+            log.warn("{} deferred post-combat first-aid skipped: no-focus probe unknown originalSource={} task={} role={}",
+                    source, originalSource, safeTaskCode(context), safeRole(context));
+        }
+        context.throwIfStopRequested();
+        playerStateService.ensureSheYaoXiangActiveForLeaderTask(source + ":deferred-post-combat", context);
+        return true;
+    }
+
+    private boolean runPendingMemberCommonBoxIfAllowed(TaskExecutionContext context, String source) {
+        if (gameContext.getCurrentActionState() != GameContext.ActionState.FREE) {
+            return false;
+        }
+        String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
+        if (!commonBoxService.hasPendingBoxForCurrentWindow(context, requestedTaskCode)) {
+            return false;
+        }
+        String transactionName = source + ":pending-member-common-box";
+        log.info("{} pending member common-box queued for task turn: task={} requested={} role={}",
+                source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+        taskTurnCoordinator.enter(transactionName);
+        try {
+            log.info("{} pending member common-box acquired task turn: task={} requested={} role={}",
+                    source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+            boolean clicked = commonBoxService.consumePendingBoxIfAllowed(
+                    context, requestedTaskCode, source + ":pending-member-common-box");
+            if (clicked) {
+                log.info("{} pending member common-box consumed before first-aid gate: task={} requested={} role={} firstAidStillPending={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context),
+                        state().pendingFollowerFirstAid);
+            }
+            return clicked;
+        } finally {
+            taskTurnCoordinator.forceRelease(transactionName);
+        }
     }
 
     private boolean runPendingFollowerFirstAidIfAllowed(TaskExecutionContext context, String source) {
@@ -232,6 +532,12 @@ public class AutoCombatService {
         try {
             log.info("{} pending follower first-aid acquired task turn: task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+            if (commonBoxService.consumePendingBoxIfAllowed(context, safeRequestedTaskCode(context),
+                    source + ":pending-follower-first-aid")) {
+                log.info("{} pending follower first-aid deferred after common-box click: task={} requested={} role={} originalSource={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                return true;
+            }
             if (!playerStateService.performCachedFirstAidPlanNow(context)) {
                 PlayerStateService.FirstAidNoFocusProbeResult retryProbe =
                         playerStateService.probeFirstAidSupplyNoFocus(context);
@@ -285,16 +591,42 @@ public class AutoCombatService {
         AutoCombatRuntimeState state = state();
         long now = System.currentTimeMillis();
 
+        // Compute optional refresh pressure before entry maintenance so an allowed refresh-due
+        // check does not pay a verify-only panel scan and an immediate verify-and-refresh scan.
+        long refreshIntervalMs = botProperties.getAutoBattleRefreshIntervalMs();
+        AutoCombatPanelService.RoundsRefreshReason refreshReason = null;
+        RefreshDuePanelVerifyDecision refreshDueDecision = null;
+        String windowId = currentWindowId();
+        if (refreshIntervalMs > 0L) {
+            refreshReason = AutoCombatPanelService.resolveRoundsRefreshReason(
+                    gameContext.getAutoCombatEstimatedRounds(),
+                    gameContext.getLastAutoCombatRefreshAt(),
+                    Math.max(0L, refreshIntervalMs),
+                    now);
+            if (refreshReason == AutoCombatPanelService.RoundsRefreshReason.REFRESH_DUE) {
+                state.lastRefreshDuePanelVerifyAttemptAt = now;
+                refreshDueDecision = refreshDuePanelVerifyGate.reserveIfAllowed(
+                        safeRequestedTaskCode(context), windowId, now);
+            }
+        }
+
         // First maintenance after entering combat is delayed so battle UI has time to settle.
         if (state.pendingCombatEntryMaintenanceAt > 0 && now >= state.pendingCombatEntryMaintenanceAt) {
             log.info("{} auto-combat entry maintenance: clean generic windows and verify panel",
                     context.getLogPrefix());
             uiCleanerService.closeAllGenericWindows();
-            autoCombatPanelService.verifyAndAlignPanel();
+            if (refreshReason == AutoCombatPanelService.RoundsRefreshReason.REFRESH_DUE
+                    && refreshDueDecision != null
+                    && !refreshDueDecision.deferred()) {
+                log.info("{} auto-combat entry maintenance: merge panel verify into refresh-due check reason={} windowId={}",
+                        context.getLogPrefix(), refreshReason, windowId);
+                state.verifyActualRoundsAfterEntryMaintenance = false;
+            } else {
+                autoCombatPanelService.verifyAndAlignPanel(AutoCombatPanelService.PanelVerifyMode.ENTRY_MAINTENANCE);
+                state.verifyActualRoundsAfterEntryMaintenance = true;
+            }
             state.pendingCombatEntryMaintenanceAt = 0L;
             state.lastCombatUiCleanAt = System.currentTimeMillis();
-            state.lastAutoBattleRefreshAt = state.lastCombatUiCleanAt;
-            return;
         }
 
         // Long combats get occasional generic cleanup, but this must stay sparse to avoid noise.
@@ -302,32 +634,156 @@ public class AutoCombatService {
             log.info("{} auto-combat maintenance: clean generic windows source={}",
                     context.getLogPrefix(), source);
             uiCleanerService.closeAllGenericWindows();
+            leftTopStatusSwitchService.handleCombatMaintenance(context, source);
             state.lastCombatUiCleanAt = System.currentTimeMillis();
         }
 
         // Auto panel refresh is optional and driven by user configuration.
-        long refreshIntervalMs = botProperties.getAutoBattleRefreshIntervalMs();
-        if (refreshIntervalMs > 0
-                && (state.lastAutoBattleRefreshAt == 0L || now - state.lastAutoBattleRefreshAt >= refreshIntervalMs)) {
-            log.info("{} auto-combat maintenance: refresh auto combat panel source={}",
-                    context.getLogPrefix(), source);
-            autoCombatPanelService.verifyAndAlignPanel();
+        if (refreshIntervalMs <= 0L) {
+            return;
+        }
+
+        if (refreshReason == null) {
+            if (state.verifyActualRoundsAfterEntryMaintenance) {
+                long beforeActualRoundReadRefreshAt = gameContext.getLastAutoCombatRefreshAt();
+                boolean refreshed = autoCombatPanelService.verifyAndAlignPanel(
+                        AutoCombatPanelService.PanelVerifyMode.VERIFY_AND_REFRESH);
+                state.verifyActualRoundsAfterEntryMaintenance = false;
+                if (refreshed || gameContext.getLastAutoCombatRefreshAt() != beforeActualRoundReadRefreshAt) {
+                    state.lastAutoBattleRefreshAt = System.currentTimeMillis();
+                }
+            }
+            return;
+        }
+
+        if (refreshReason == AutoCombatPanelService.RoundsRefreshReason.REFRESH_DUE) {
+            RefreshDuePanelVerifyDecision decision = refreshDueDecision == null
+                    ? refreshDuePanelVerifyGate.reserveIfAllowed(safeRequestedTaskCode(context), windowId, now)
+                    : refreshDueDecision;
+            if (decision.deferred()) {
+                logRefreshDueDeferred(context, state, windowId, decision, now);
+                return;
+            }
+        } else if (state.lastUrgentRoundsPanelVerifyAttemptAt > 0L
+                && now - state.lastUrgentRoundsPanelVerifyAttemptAt < URGENT_ROUNDS_PANEL_VERIFY_RETRY_MS) {
+            log.info("{} auto-combat maintenance: urgent rounds panel verify skipped by per-window retry guard source={} reason={} ageMs={} retryMs={}",
+                    context.getLogPrefix(), source, refreshReason,
+                    now - state.lastUrgentRoundsPanelVerifyAttemptAt, URGENT_ROUNDS_PANEL_VERIFY_RETRY_MS);
+            return;
+        } else {
+            state.lastUrgentRoundsPanelVerifyAttemptAt = now;
+        }
+
+        log.info("{} auto-combat maintenance: refresh auto combat panel source={} reason={}",
+                context.getLogPrefix(), source, refreshReason);
+        long beforeActualRoundReadRefreshAt = gameContext.getLastAutoCombatRefreshAt();
+        boolean refreshed = autoCombatPanelService.verifyAndAlignPanel(
+                AutoCombatPanelService.PanelVerifyMode.VERIFY_AND_REFRESH);
+        state.verifyActualRoundsAfterEntryMaintenance = false;
+        if (refreshed || gameContext.getLastAutoCombatRefreshAt() != beforeActualRoundReadRefreshAt) {
             state.lastAutoBattleRefreshAt = System.currentTimeMillis();
         }
     }
 
+    private void logRefreshDueDeferred(TaskExecutionContext context,
+                                       AutoCombatRuntimeState state,
+                                       String windowId,
+                                       RefreshDuePanelVerifyDecision decision,
+                                       long now) {
+        if (state.lastRefreshDuePanelVerifyDeferredLogAt <= 0L
+                || now - state.lastRefreshDuePanelVerifyDeferredLogAt >= REFRESH_DUE_DEFERRED_LOG_INTERVAL_MS) {
+            state.lastRefreshDuePanelVerifyDeferredLogAt = now;
+            log.info("{} refresh-due panel verify deferred by team gate: task={} windowId={} retryAfterMs={} lastTeamRefreshAgeMs={}",
+                    context.getLogPrefix(), safeRequestedTaskCode(context), windowId,
+                    decision.retryAfterMs(), decision.lastTeamRefreshAgeMs());
+        } else {
+            log.debug("{} refresh-due panel verify deferred suppressed by log throttle: task={} windowId={} retryAfterMs={} lastTeamRefreshAgeMs={}",
+                    context.getLogPrefix(), safeRequestedTaskCode(context), windowId,
+                    decision.retryAfterMs(), decision.lastTeamRefreshAgeMs());
+        }
+    }
+
     private AutoCombatRuntimeState state() {
-        String key = windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getWindowId())
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        String windowId = current
+                .map(WindowRuntimeContext::getWindowId)
+                .filter(value -> value != null && !value.isBlank())
                 .orElse("default");
-        return runtimeStates.computeIfAbsent(key, ignored -> new AutoCombatRuntimeState());
+        long epoch = currentPlayerIdentityEpoch();
+        AutoCombatRuntimeState existing = runtimeStates.computeIfAbsent(windowId, ignored -> {
+            AutoCombatRuntimeState created = new AutoCombatRuntimeState();
+            created.playerIdentityEpoch = epoch;
+            return created;
+        });
+        if (existing.playerIdentityEpoch != epoch) {
+            log.info("auto-combat runtime state invalidated by player identity drift: windowId={} oldEpoch={} newEpoch={} pendingEntryAt={} pendingFirstAid={} pendingLeaderRecovery={}",
+                    windowId, existing.playerIdentityEpoch, epoch,
+                    existing.pendingCombatEntryMaintenanceAt, existing.pendingFollowerFirstAid,
+                    existing.pendingLeaderPostCombatRecovery);
+            AutoCombatRuntimeState reset = new AutoCombatRuntimeState();
+            reset.playerIdentityEpoch = epoch;
+            runtimeStates.put(windowId, reset);
+            return reset;
+        }
+        return existing;
+    }
+
+    private long currentPlayerIdentityEpoch() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getPlayerIdentityEpoch)
+                .orElse(0L);
+    }
+
+    private String currentWindowId() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getWindowId)
+                .filter(value -> value != null && !value.isBlank())
+                .orElse("default");
     }
 
     private static class AutoCombatRuntimeState {
+        private long playerIdentityEpoch;
         private long lastAutoBattleRefreshAt = 0L;
         private long lastCombatUiCleanAt = 0L;
         private long pendingCombatEntryMaintenanceAt = 0L;
+        private long lastRefreshDuePanelVerifyAttemptAt = 0L;
+        private long lastRefreshDuePanelVerifyDeferredLogAt = 0L;
+        private long lastUrgentRoundsPanelVerifyAttemptAt = 0L;
+        private boolean verifyActualRoundsAfterEntryMaintenance = false;
         private boolean pendingFollowerFirstAid = false;
         private String pendingFollowerFirstAidSource;
+        private boolean pendingLeaderPostCombatRecovery = false;
+        private String pendingLeaderPostCombatRecoverySource;
+        private boolean fastExpectedExitWatchArmed = false;
+        private boolean expectedCombatExitWaitArmed = false;
+    }
+
+    public record RefreshDuePanelVerifyDecision(boolean deferred, long retryAfterMs, long lastTeamRefreshAgeMs) {
+        private static RefreshDuePanelVerifyDecision allowed() {
+            return new RefreshDuePanelVerifyDecision(false, 0L, -1L);
+        }
+
+        private static RefreshDuePanelVerifyDecision deferred(long retryAfterMs, long lastTeamRefreshAgeMs) {
+            return new RefreshDuePanelVerifyDecision(true, retryAfterMs, lastTeamRefreshAgeMs);
+        }
+    }
+
+    public static class RefreshDuePanelVerifyGate {
+        private final Map<String, Long> lastVerifyByTeam = new ConcurrentHashMap<>();
+
+        public RefreshDuePanelVerifyDecision reserveIfAllowed(String teamKey, String windowId, long now) {
+            String safeTeamKey = teamKey == null || teamKey.isBlank() ? windowId : teamKey;
+            String key = safeTeamKey == null || safeTeamKey.isBlank() ? "default" : safeTeamKey;
+            Long lastAt = lastVerifyByTeam.get(key);
+            if (lastAt != null) {
+                long age = now - lastAt;
+                if (age >= 0L && age < REFRESH_DUE_PANEL_VERIFY_GUARD_MS) {
+                    return RefreshDuePanelVerifyDecision.deferred(
+                            REFRESH_DUE_PANEL_VERIFY_GUARD_MS - age, age);
+                }
+            }
+            lastVerifyByTeam.put(key, now);
+            return RefreshDuePanelVerifyDecision.allowed();
+        }
     }
 }

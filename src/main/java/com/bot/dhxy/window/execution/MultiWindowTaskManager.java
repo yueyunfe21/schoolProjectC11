@@ -4,8 +4,9 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.service.AutoCombatService;
-import com.bot.dhxy.service.DialogChoiceMemoryService;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.MapNameCanonicalizer;
+import com.bot.dhxy.service.MemoryService;
 import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
@@ -22,6 +23,8 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -43,6 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class MultiWindowTaskManager {
 
+    private static final Logger log = LoggerFactory.getLogger(MultiWindowTaskManager.class);
+
     private final TaskFactory taskFactory;
     private final WindowRuntimeContextFactory windowRuntimeContextFactory;
     private final WindowCapacityPolicy windowCapacityPolicy;
@@ -58,7 +63,8 @@ public class MultiWindowTaskManager {
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final DialogService dialogService;
     private final TaskTrackerPanelService taskTrackerPanelService;
-    private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final MapNameCanonicalizer mapNameCanonicalizer;
+    private final MemoryService memoryService;
     private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
@@ -81,7 +87,8 @@ public class MultiWindowTaskManager {
      * @param miniMapCoordinateReader lightweight mini-map location reader used by runner watchers.
      * @param dialogService dialog detector used by runner watchers for prepare-only matching.
      * @param taskTrackerPanelService left task-tracker panel reader used by runner watchers.
-     * @param dialogChoiceMemoryService route-option memory updated after watcher confirmation.
+     * @param mapNameCanonicalizer canonicalizer used by runner watchers for map-name comparisons.
+     * @param memoryService single persisted-memory facade for route dialog and world-map memories.
      * @param dialogPreparationProviders task-owned dialog preparation providers consumed by watchers.
      * @param windowReadyEventBus soft wake bus used by runner watchers after terminal observations.
      */
@@ -100,7 +107,8 @@ public class MultiWindowTaskManager {
                                   MiniMapCoordinateReader miniMapCoordinateReader,
                                   DialogService dialogService,
                                   TaskTrackerPanelService taskTrackerPanelService,
-                                  DialogChoiceMemoryService dialogChoiceMemoryService,
+                                  MapNameCanonicalizer mapNameCanonicalizer,
+                                  MemoryService memoryService,
                                   List<WindowDialogPreparationProvider> dialogPreparationProviders,
                                   WindowReadyEventBus windowReadyEventBus) {
         this.taskFactory = taskFactory;
@@ -118,7 +126,8 @@ public class MultiWindowTaskManager {
         this.miniMapCoordinateReader = miniMapCoordinateReader;
         this.dialogService = dialogService;
         this.taskTrackerPanelService = taskTrackerPanelService;
-        this.dialogChoiceMemoryService = dialogChoiceMemoryService;
+        this.mapNameCanonicalizer = mapNameCanonicalizer;
+        this.memoryService = memoryService;
         this.dialogPreparationProviders = dialogPreparationProviders == null
                 ? List.of()
                 : List.copyOf(dialogPreparationProviders);
@@ -148,8 +157,8 @@ public class MultiWindowTaskManager {
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                     automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                    taskTrackerPanelService, dialogChoiceMemoryService, dialogPreparationProviders,
-                    windowReadyEventBus);
+                    taskTrackerPanelService, mapNameCanonicalizer, memoryService,
+                    dialogPreparationProviders, windowReadyEventBus);
         });
     }
 
@@ -175,8 +184,8 @@ public class MultiWindowTaskManager {
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                         automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                        taskTrackerPanelService, dialogChoiceMemoryService, dialogPreparationProviders,
-                        windowReadyEventBus));
+                        taskTrackerPanelService, mapNameCanonicalizer, memoryService,
+                        dialogPreparationProviders, windowReadyEventBus));
     }
 
     /**
@@ -273,13 +282,9 @@ public class MultiWindowTaskManager {
         if (WindowHandleParser.parseHandle(binding.getNativeHandle()) == null) {
             return false;
         }
-        Optional<WindowNativeBinding> refreshed = bindingRefreshService.refreshGeometry(binding);
+        Optional<WindowNativeBinding> refreshed = bindingRefreshService.refreshAndCommit(runner.getWindowContext());
         if (refreshed.isEmpty()) {
             return false;
-        }
-        WindowNativeBinding liveBinding = refreshed.get();
-        if (!binding.hasSameGeometry(liveBinding)) {
-            runner.getWindowContext().setNativeBinding(liveBinding);
         }
         return true;
     }

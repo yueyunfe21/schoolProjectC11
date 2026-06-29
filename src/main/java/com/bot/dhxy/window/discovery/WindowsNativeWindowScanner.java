@@ -1,16 +1,19 @@
 package com.bot.dhxy.window.discovery;
 
 import com.sun.jna.Pointer;
+import com.sun.jna.Native;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.win32.StdCallLibrary;
+import com.sun.jna.win32.W32APIOptions;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -61,16 +64,16 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
     @Override
     public List<NativeWindowInfo> scanWindows() {
         List<NativeWindowInfo> windows = new ArrayList<>();
+        AtomicInteger zOrderIndex = new AtomicInteger();
+        long foregroundHandle = toHandleValue(User32.INSTANCE.GetForegroundWindow());
         User32.INSTANCE.EnumWindows((hwnd, data) -> {
-            NativeWindowInfo info = readWindow(hwnd);
+            NativeWindowInfo info = readWindow(hwnd, zOrderIndex.getAndIncrement(), foregroundHandle);
             if (info != null && info.hasTitle()) {
                 windows.add(info);
             }
             return true;
         }, null);
-        return windows.stream()
-                .sorted(Comparator.comparing(NativeWindowInfo::getTitle, String.CASE_INSENSITIVE_ORDER))
-                .toList();
+        return List.copyOf(windows);
     }
 
     @Override
@@ -86,7 +89,7 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
         return gameWindows;
     }
 
-    private NativeWindowInfo readWindow(WinDef.HWND hwnd) {
+    private NativeWindowInfo readWindow(WinDef.HWND hwnd, int zOrderIndex, long foregroundHandle) {
         if (hwnd == null || !User32.INSTANCE.IsWindowVisible(hwnd)) {
             return null;
         }
@@ -113,6 +116,7 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
         User32.INSTANCE.GetWindowRect(hwnd, rect);
         int width = Math.max(rect.right - rect.left, 0);
         int height = Math.max(rect.bottom - rect.top, 0);
+        long handleValue = toHandleValue(hwnd);
 
         return new NativeWindowInfo(
                 toHandleText(hwnd),
@@ -122,14 +126,24 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
                 rect.left,
                 rect.top,
                 width,
-                height
+                height,
+                User32MinimizedProbe.INSTANCE.IsIconic(hwnd),
+                foregroundHandle > 0 && handleValue == foregroundHandle,
+                zOrderIndex
         );
     }
 
     private String toHandleText(WinDef.HWND hwnd) {
-        Pointer pointer = hwnd.getPointer();
-        long value = pointer == null ? 0L : Pointer.nativeValue(pointer);
+        long value = toHandleValue(hwnd);
         return Long.toHexString(value).toUpperCase(Locale.ROOT);
+    }
+
+    private long toHandleValue(WinDef.HWND hwnd) {
+        if (hwnd == null) {
+            return 0L;
+        }
+        Pointer pointer = hwnd.getPointer();
+        return pointer == null ? 0L : Pointer.nativeValue(pointer);
     }
 
     private boolean looksLikeGameWindow(NativeWindowInfo info) {
@@ -167,6 +181,9 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
                 .map(window -> window.toWindowId() + "|" + window.getTitle()
                         + "|class=" + window.getClassName()
                         + "|pid=" + window.getProcessId()
+                        + "|minimized=" + window.isMinimized()
+                        + "|foreground=" + window.isForeground()
+                        + "|z=" + window.getZOrderIndex()
                         + "|rect=" + window.getX() + "," + window.getY() + "," + window.getWidth() + "x" + window.getHeight())
                 .toList()
                 .toString();
@@ -178,5 +195,11 @@ public class WindowsNativeWindowScanner implements NativeWindowScanner {
             len++;
         }
         return new String(chars, 0, len).trim();
+    }
+
+    private interface User32MinimizedProbe extends StdCallLibrary {
+        User32MinimizedProbe INSTANCE = Native.load("user32", User32MinimizedProbe.class, W32APIOptions.DEFAULT_OPTIONS);
+
+        boolean IsIconic(WinDef.HWND hwnd);
     }
 }

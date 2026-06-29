@@ -1,8 +1,9 @@
 package com.bot.dhxy.task.wubei;
 
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
-import com.bot.dhxy.service.DialogChoiceMemoryService;
+import com.bot.dhxy.model.dialog.DialogDetection;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.MemoryService;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.dialog.WindowDialogPreparationProvider;
@@ -24,7 +25,7 @@ import java.util.Optional;
 public class WubeiDialogPreparationProvider implements WindowDialogPreparationProvider {
 
     private final DialogService dialogService;
-    private final DialogChoiceMemoryService dialogChoiceMemoryService;
+    private final MemoryService memoryService;
 
     @Override
     public boolean supports(TaskType taskType, DialogOperation operation) {
@@ -38,53 +39,72 @@ public class WubeiDialogPreparationProvider implements WindowDialogPreparationPr
     public Optional<PreparedDialogAction> prepare(WindowDialogInterest interest,
                                                   DialogOperation operation,
                                                   String source) {
+        return prepare(interest, operation, source, null);
+    }
+
+    @Override
+    public Optional<PreparedDialogAction> prepare(WindowDialogInterest interest,
+                                                  DialogOperation operation,
+                                                  String source,
+                                                  DialogDetection suppliedDetection) {
         if (!supports(interest == null ? null : interest.getTaskType(), operation)) {
             return Optional.empty();
         }
         if (operation == DialogOperation.WUBEI_ACCEPT_TASK) {
-            Optional<PreparedDialogAction> remembered = prepareRememberedAcceptOption(source + ":acceptMemory");
+            Optional<PreparedDialogAction> remembered = prepareRememberedAcceptOption(
+                    source + ":acceptMemory", suppliedDetection);
             return remembered.isPresent()
                     ? remembered
                     : dialogService.prepareGreenTemplateOption(
                     source + ":acceptTask",
                     DialogOperation.WUBEI_ACCEPT_TASK,
                     WubeiDialogCatalog.acceptTaskSpecs(),
-                    true);
+                    true,
+                    null,
+                    suppliedDetection);
         }
         if (operation == DialogOperation.WUBEI_ENTER_BATTLE) {
             return dialogService.prepareGreenTemplateOption(
                     source + ":enterBattle",
                     DialogOperation.WUBEI_ENTER_BATTLE,
                     WubeiDialogCatalog.enterBattleSpecs(),
-                    false);
+                    true,
+                    null,
+                    suppliedDetection);
         }
         if (operation == DialogOperation.WUBEI_PROBE_STORY) {
-            return dialogService.prepareWhiteStoryTemplate(
+            boolean absentAllowed = interest != null && interest.isAbsentAllowed(System.currentTimeMillis());
+            return dialogService.prepareWhiteStoryTemplateOrAbsent(
                     source + ":probeStory",
                     DialogOperation.WUBEI_PROBE_STORY,
                     WubeiDialogCatalog.probeStorySpecs(),
-                    WubeiDialogCatalog.STORY_PROBE_NO_TARGET);
+                    WubeiDialogCatalog.STORY_PROBE_NO_TARGET,
+                    absentAllowed ? WubeiDialogCatalog.STORY_PROBE_ABSENT : null,
+                    absentAllowed ? WubeiDialogCatalog.STORY_ABSENT_TEXT : null,
+                    suppliedDetection);
         }
         return Optional.empty();
     }
 
-    private Optional<PreparedDialogAction> prepareRememberedAcceptOption(String source) {
-        Optional<DialogChoiceMemoryService.DialogChoiceEntry> remembered =
-                dialogChoiceMemoryService.findUsable(
+    private Optional<PreparedDialogAction> prepareRememberedAcceptOption(String source,
+                                                                         DialogDetection suppliedDetection) {
+        Optional<MemoryService.DialogChoiceEntry> remembered =
+                memoryService.findStableTaskDialogChoice(
                         WubeiDialogCatalog.TASK_CODE,
                         "acceptTask",
                         WubeiDialogCatalog.ACCEPT_NPC_NAME);
         if (remembered.isEmpty()) {
             return Optional.empty();
         }
-        DialogChoiceMemoryService.DialogChoiceEntry entry = remembered.get();
+        MemoryService.DialogChoiceEntry entry = remembered.get();
         return dialogService.prepareRememberedChoiceOption(
                 source,
                 DialogOperation.WUBEI_ACCEPT_TASK,
                 WubeiDialogCatalog.OPTION_ACCEPT_TASK,
-                entry.relativeX,
-                entry.relativeY,
-                entry.optionText,
-                false);
+                entry.getRelativeX(),
+                entry.getRelativeY(),
+                entry.getOptionText(),
+                false,
+                suppliedDetection);
     }
 }

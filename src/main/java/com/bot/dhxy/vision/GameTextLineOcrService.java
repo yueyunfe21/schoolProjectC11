@@ -1745,7 +1745,7 @@ public class GameTextLineOcrService {
         if (width < 24 || height < 6 || pixels < 12 || componentCount < 2) {
             score -= 35;
         }
-        Point clickPoint = new Point((region.x1() + region.x2()) / 2, region.y2() + 18);
+        Point clickPoint = new Point((region.x1() + region.x2()) / 2, region.y2() - 50);
         String reason = "components=" + componentCount
                 + ",pixels=" + pixels
                 + ",density=" + String.format(java.util.Locale.ROOT, "%.3f", density)

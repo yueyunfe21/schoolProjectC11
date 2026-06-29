@@ -12,6 +12,7 @@ import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowHandleParser;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.sun.jna.Native;
@@ -41,13 +42,16 @@ public class BoundWindowKeyboardService {
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowIsolationProperties windowIsolationProperties;
     private final WindowInteractionMetricsService windowInteractionMetricsService;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     public BoundWindowKeyboardService(WindowTaskContextHolder windowTaskContextHolder,
                                       WindowIsolationProperties windowIsolationProperties,
-                                      WindowInteractionMetricsService windowInteractionMetricsService) {
+                                      WindowInteractionMetricsService windowInteractionMetricsService,
+                                      WindowNativeBindingRefreshService bindingRefreshService) {
         this.windowTaskContextHolder = windowTaskContextHolder;
         this.windowIsolationProperties = windowIsolationProperties;
         this.windowInteractionMetricsService = windowInteractionMetricsService;
+        this.bindingRefreshService = bindingRefreshService;
     }
 
     public ShortcutAttempt pressAltQ() {
@@ -58,6 +62,11 @@ public class BoundWindowKeyboardService {
         if (shortcut == null) {
             return ShortcutAttempt.notAttempted("unsupported-shortcut");
         }
+        if (!shortcut.backgroundHwndSupported()) {
+            log.warn("HWND keyboard shortcut rejected because shortcut is not background-validated: shortcut={}",
+                    shortcut.displayName());
+            return ShortcutAttempt.terminalNotAttempted("unvalidated-background-shortcut");
+        }
         if (!windowIsolationProperties.isHwndKeyboardActive()) {
             return ShortcutAttempt.notAttempted("disabled");
         }
@@ -65,7 +74,20 @@ public class BoundWindowKeyboardService {
         if (contextOptional.isEmpty()) {
             return ShortcutAttempt.notAttempted("no-window-context");
         }
-        WindowNativeBinding binding = contextOptional.get().getNativeBinding();
+        WindowRuntimeContext context = contextOptional.get();
+        long requestEpoch = context.getPlayerIdentityEpoch();
+        Optional<WindowNativeBinding> refreshedBinding = bindingRefreshService.refreshAndCommit(context);
+        if (refreshedBinding.isEmpty()) {
+            log.warn("HWND keyboard shortcut skipped because live binding refresh is unavailable: windowId={} shortcut={} requestEpoch={}",
+                    context.getWindowId(), shortcut.displayName(), requestEpoch);
+            return ShortcutAttempt.terminalNotAttempted("live-binding-refresh-unavailable");
+        }
+        if (requestEpoch != context.getPlayerIdentityEpoch()) {
+            log.warn("HWND keyboard shortcut skipped because live binding refresh changed player identity: windowId={} shortcut={} requestEpoch={} currentEpoch={}",
+                    context.getWindowId(), shortcut.displayName(), requestEpoch, context.getPlayerIdentityEpoch());
+            return ShortcutAttempt.terminalNotAttempted("player-identity-epoch-changed");
+        }
+        WindowNativeBinding binding = context.getNativeBinding();
         WinDef.HWND hwnd = toHwnd(binding);
         if (hwnd == null) {
             return ShortcutAttempt.notAttempted("invalid-hwnd");
@@ -79,11 +101,11 @@ public class BoundWindowKeyboardService {
         TaskSleep.sleep(40);
         PostResult altUp = postKey(hwnd, WM_SYSKEYUP, VK_MENU, SCAN_ALT, false, true);
         boolean success = altDown.success() && keyDown.success() && keyUp.success() && altUp.success();
-        windowInteractionMetricsService.recordHwndKeyboard(contextOptional.get().getWindowId(), shortcut.displayName(), success);
+        windowInteractionMetricsService.recordHwndKeyboard(context.getWindowId(), shortcut.displayName(), success);
         log.info("HWND keyboard shortcut: windowId={} hwnd={} shortcut={} result={} altDown={} keyDown={} keyUp={} altUp={} title={}",
-                contextOptional.get().getWindowId(), binding.getNativeHandle(), shortcut.displayName(), success,
+                context.getWindowId(), binding.getNativeHandle(), shortcut.displayName(), success,
                 altDown.toLogText(), keyDown.toLogText(), keyUp.toLogText(), altUp.toLogText(), binding.getTitle());
-        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed");
+        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
     }
 
     private PostResult postKey(WinDef.HWND hwnd, int message, int virtualKey, int scanCode, boolean altContext, boolean keyUp) {
@@ -140,8 +162,15 @@ public class BoundWindowKeyboardService {
 
         String reason;
 
+
+        boolean terminalFailure;
+
         private static ShortcutAttempt notAttempted(String reason) {
-            return new ShortcutAttempt(false, false, reason);
+            return new ShortcutAttempt(false, false, reason, false);
+        }
+
+        private static ShortcutAttempt terminalNotAttempted(String reason) {
+            return new ShortcutAttempt(false, false, reason, true);
         }
     
 
@@ -194,27 +223,30 @@ public class BoundWindowKeyboardService {
     }
 
     public enum AltShortcut {
-        ALT_1("Alt+1", 0x31, 0x02),
-        ALT_2("Alt+2", 0x32, 0x03),
-        ALT_4("Alt+4", 0x34, 0x05),
-        ALT_6("Alt+6", 0x36, 0x07),
-        ALT_8("Alt+8", 0x38, 0x09),
-        ALT_Q("Alt+Q", 0x51, 0x10),
-        ALT_T("Alt+T", 0x54, 0x14),
-        ALT_O("Alt+O", 0x4F, 0x18),
-        ALT_E("Alt+E", 0x45, 0x12),
-        ALT_A("Alt+A", 0x41, 0x1E),
-        ALT_C("Alt+C", 0x43, 0x2E),
-        ALT_U("Alt+U", 0x55, 0x16);
+        ALT_1("Alt+1", 0x31, 0x02, true),
+        ALT_2("Alt+2", 0x32, 0x03, true),
+        ALT_4("Alt+4", 0x34, 0x05, true),
+        ALT_5("Alt+5", 0x35, 0x06, true),
+        ALT_6("Alt+6", 0x36, 0x07, true),
+        ALT_8("Alt+8", 0x38, 0x09, true),
+        ALT_Q("Alt+Q", 0x51, 0x10, true),
+        ALT_T("Alt+T", 0x54, 0x14, true),
+        ALT_O("Alt+O", 0x4F, 0x18, true),
+        ALT_E("Alt+E", 0x45, 0x12, true),
+        ALT_A("Alt+A", 0x41, 0x1E, false),
+        ALT_C("Alt+C", 0x43, 0x2E, false),
+        ALT_U("Alt+U", 0x55, 0x16, true);
 
         private final String displayName;
         private final int virtualKey;
         private final int scanCode;
+        private final boolean backgroundHwndSupported;
 
-        AltShortcut(String displayName, int virtualKey, int scanCode) {
+        AltShortcut(String displayName, int virtualKey, int scanCode, boolean backgroundHwndSupported) {
             this.displayName = displayName;
             this.virtualKey = virtualKey;
             this.scanCode = scanCode;
+            this.backgroundHwndSupported = backgroundHwndSupported;
         }
 
         public String displayName() {
@@ -227,6 +259,10 @@ public class BoundWindowKeyboardService {
 
         public int scanCode() {
             return scanCode;
+        }
+
+        public boolean backgroundHwndSupported() {
+            return backgroundHwndSupported;
         }
     }
 

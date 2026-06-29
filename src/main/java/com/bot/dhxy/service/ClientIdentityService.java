@@ -3,14 +3,15 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.window.runtime.WindowTitleIdentity;
+import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Synchronizes the current player's identity from the bound native game-window title.
@@ -24,23 +25,16 @@ import java.util.regex.Pattern;
 @Service
 public class ClientIdentityService {
 
-    /**
-     * Matches titles such as:
-     * 大话西游2经典版 $Revision: 2020549 - 江山如画 - 刑部ヾ忍者（ID：67555）
-     *
-     * <p>Both ASCII and Chinese parentheses/colons are accepted because the title text can be
-     * produced by different Windows/input-method encodings.</p>
-     */
-    private static final Pattern TITLE_IDENTITY_PATTERN = Pattern.compile(
-            "-\\s*(.+?)\\s*-\\s*(.+?)\\s*[（(]\\s*ID\\s*[:：]\\s*(\\d+)\\s*[）)]");
-
     private final GameClientTracker tracker;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final WindowNativeBindingRefreshService bindingRefreshService;
 
     public ClientIdentityService(GameClientTracker tracker,
-                                 WindowTaskContextHolder windowTaskContextHolder) {
+                                 WindowTaskContextHolder windowTaskContextHolder,
+                                 WindowNativeBindingRefreshService bindingRefreshService) {
         this.tracker = tracker;
         this.windowTaskContextHolder = windowTaskContextHolder;
+        this.bindingRefreshService = bindingRefreshService;
     }
 
     /**
@@ -62,11 +56,11 @@ public class ClientIdentityService {
         }
 
         log.info("[identity] parse player identity from title: {}", title);
-        Matcher matcher = TITLE_IDENTITY_PATTERN.matcher(title);
-        if (matcher.find()) {
-            me.setGameServerName(matcher.group(1));
-            me.setName(matcher.group(2));
-            me.setId(matcher.group(3));
+        Optional<WindowTitleIdentity> identity = WindowTitleIdentityParser.parse(title);
+        if (identity.isPresent()) {
+            me.setGameServerName(identity.get().server());
+            me.setName(identity.get().playerName());
+            me.setId(identity.get().playerId());
             log.info("[identity] parsed player identity: server={} name={} id={}",
                     me.getGameServerName(), me.getName(), me.getId());
         } else {
@@ -83,7 +77,9 @@ public class ClientIdentityService {
     private String resolveCurrentWindowTitle() {
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isPresent()) {
-            WindowNativeBinding binding = current.get().getNativeBinding();
+            WindowRuntimeContext runtime = current.get();
+            bindingRefreshService.refreshAndCommit(runtime);
+            WindowNativeBinding binding = runtime.getNativeBinding();
             if (binding != null && binding.getTitle() != null && !binding.getTitle().isBlank()) {
                 return binding.getTitle();
             }

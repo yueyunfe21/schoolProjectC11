@@ -49,6 +49,37 @@ public class ImageFinder {
     }
 
     /**
+     * 在内存大图中查找内存小图，命中后返回 [centerX, centerY, score]。
+     */
+    public static double[] find(BufferedImage sourceImage, BufferedImage targetImage, double threshold) {
+        if (sourceImage == null || targetImage == null) {
+            return null;
+        }
+        Mat source = bufferedImageToMat(sourceImage);
+        Mat target = bufferedImageToMat(targetImage);
+        if (source.empty() || target.empty()) {
+            source.release();
+            target.release();
+            return null;
+        }
+
+        Mat result = new Mat();
+        Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
+        Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
+        double[] coordsAndSim = null;
+        if (mmr.maxVal >= threshold) {
+            double centerX = mmr.maxLoc.x + target.cols() / 2.0;
+            double centerY = mmr.maxLoc.y + target.rows() / 2.0;
+            coordsAndSim = new double[]{centerX, centerY, mmr.maxVal};
+        }
+
+        source.release();
+        target.release();
+        result.release();
+        return coordsAndSim;
+    }
+
+    /**
      * 在大图中查找所有超过阈值的小图候选点，返回 [centerX, centerY, score]。
      * 结果会按相似度从高到低做一次近邻去重，避免同一个目标周围连续命中多个像素。
      */

@@ -1,0 +1,1335 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DHXY CR Dashboard</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --surface: #ffffff;
+      --soft: #f8fafc;
+      --line: #d9e2ee;
+      --line-strong: #c3cedd;
+      --text: #172033;
+      --muted: #667085;
+      --primary: #2563eb;
+      --primary-soft: #e8f1ff;
+      --success: #15803d;
+      --success-soft: #e9f8ef;
+      --warning: #b45309;
+      --warning-soft: #fff3d6;
+      --danger: #dc2626;
+      --danger-soft: #fff0f0;
+      --neutral: #475569;
+      --neutral-soft: #eef2f7;
+      --shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, #eef4fb 0%, #f8fafc 46%, #edf3f9 100%);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", Arial, sans-serif;
+      font-size: 13px;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button, .file-button {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover, .file-button:hover {
+      border-color: var(--line-strong);
+      background: var(--soft);
+    }
+
+    button.primary {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+      font-weight: 800;
+    }
+
+    button.danger {
+      border-color: rgba(220, 38, 38, 0.35);
+      color: var(--danger);
+      font-weight: 800;
+    }
+
+    .app {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 18px;
+    }
+
+    .topbar {
+      min-height: 58px;
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .brand h1 {
+      margin: 0 0 5px;
+      font-size: 24px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .file-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .file-button input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 11px 12px;
+      min-height: 72px;
+    }
+
+    .stat-total { background: #edf0f4; border-color: #cbd5e1; }
+    .stat-open { background: #ffe8e8; border-color: #ffc1c1; color: #5f1515; }
+    .stat-review { background: #fff0c2; border-color: #f3ca61; color: #4d2a05; }
+    .stat-ready { background: #dff0ff; border-color: #9bcfff; color: #07345f; }
+    .stat-done { background: #ddf7e6; border-color: #9bd9b0; color: #103d1e; }
+    .stat-deprecated { background: #edf0f4; border-color: #c4ccd7; color: #29313b; }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      margin-bottom: 7px;
+      font-weight: 700;
+    }
+
+    .stat strong {
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 214px minmax(0, 1fr) 390px;
+      min-height: 760px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(18px);
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(248, 250, 252, 0.78);
+      padding: 12px;
+    }
+
+    .side-title {
+      margin: 4px 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .nav-item {
+      min-height: 36px;
+      border: 1px solid var(--nav-border, transparent);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      color: var(--nav-text, var(--neutral));
+      background: var(--nav-bg, transparent);
+      font-weight: 800;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .nav-item:hover {
+      filter: saturate(1.06) brightness(0.985);
+      border-color: var(--nav-strong, var(--line));
+    }
+
+    .nav-item.active {
+      background: var(--nav-active-bg, var(--nav-bg));
+      border-color: var(--nav-strong, var(--primary));
+      box-shadow: inset 0 0 0 1px var(--nav-strong, var(--primary));
+    }
+
+    .nav-count {
+      min-width: 24px;
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 0 8px;
+      font-size: 12px;
+      color: var(--nav-text, var(--neutral));
+    }
+
+    .main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 160px 150px 150px;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .filters input, .filters select {
+      width: 100%;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 10px;
+    }
+
+    .table-head {
+      display: grid;
+      grid-template-columns: 80px 124px 124px minmax(260px, 1fr) 132px;
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .table-head div {
+      padding: 9px 10px;
+    }
+
+    .rows {
+      overflow: auto;
+      max-height: 690px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 80px 124px 124px minmax(260px, 1fr) 132px;
+      min-height: 64px;
+      border-bottom: 1px solid var(--row-border, var(--line));
+      cursor: pointer;
+      background: var(--row-bg, #fff);
+      border-left: 0;
+      color: var(--row-text, var(--text));
+    }
+
+    .row:hover {
+      background: var(--row-hover, #f9fbfe);
+    }
+
+    .row.selected {
+      background: var(--row-selected, var(--row-hover, var(--primary-soft)));
+      box-shadow: inset 0 0 0 2px var(--row-strong, var(--primary));
+    }
+
+    .cell {
+      padding: 10px;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .id {
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .owner {
+      color: var(--muted);
+      font-weight: 800;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .summary {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .summary strong {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .summary span {
+      max-width: 100%;
+      color: var(--row-muted, var(--muted));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pill {
+      min-height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+
+    .status-pill {
+      background: var(--pill-bg, #fff);
+      border-color: var(--pill-border, var(--line));
+      color: var(--pill-text, var(--text));
+    }
+
+    .domain-pill {
+      background: var(--domain-bg, #fff);
+      border-color: var(--domain-border, var(--line));
+      color: var(--domain-text, var(--text));
+    }
+
+    .detail {
+      border-left: 1px solid var(--line);
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .detail-head {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--detail-bg, var(--soft));
+      border-left: 0;
+      color: var(--detail-text, var(--text));
+    }
+
+    .detail-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .detail-title strong {
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .detail-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .detail-actions select {
+      min-width: 0;
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 9px;
+    }
+
+    .detail-body {
+      padding: 14px;
+      overflow: auto;
+      max-height: 705px;
+    }
+
+    .field {
+      margin-bottom: 16px;
+    }
+
+    .field label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      margin-bottom: 7px;
+    }
+
+    .field p {
+      margin: 0;
+      line-height: 1.65;
+    }
+
+    .code-text {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+      color: #334155;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px;
+      overflow-wrap: anywhere;
+      line-height: 1.55;
+    }
+
+    .source-text {
+      max-height: 138px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 92px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      line-height: 1.5;
+    }
+
+    .empty {
+      padding: 42px 16px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 160ms ease, transform 160ms ease;
+      pointer-events: none;
+      max-width: 360px;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1180px) {
+      .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .shell { grid-template-columns: 190px minmax(0, 1fr); }
+      .detail { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+    }
+
+    @media (max-width: 760px) {
+      .app { padding: 12px; }
+      .topbar { align-items: stretch; flex-direction: column; }
+      .actions { justify-content: flex-start; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+      .filters { grid-template-columns: 1fr; }
+      .table-head { display: none; }
+      .row { grid-template-columns: 76px 1fr; }
+      .row .cell:nth-child(2), .row .cell:nth-child(3), .row .cell:nth-child(5) { display: none; }
+      .summary strong, .summary span { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <h1>DHXY CR Dashboard</h1>
+        <p id="subtitle">读取 CR 表，分类看状态，手动标记本地状态。</p>
+      </div>
+      <div class="actions">
+        <label class="file-button">
+          导入 Markdown
+          <input id="importMarkdown" type="file" accept=".md,.txt">
+        </label>
+        <button id="exportOverrides">导出手动状态</button>
+        <button id="copyOpen">复制未关闭清单</button>
+        <button id="resetOverrides" class="danger">清空手动状态</button>
+      </div>
+    </header>
+
+    <section class="stats" id="stats"></section>
+
+    <section class="shell">
+      <aside class="sidebar">
+        <div class="side-title">状态分类</div>
+        <div class="nav-list" id="statusNav"></div>
+        <div class="side-title">业务分类</div>
+        <div class="nav-list" id="domainNav"></div>
+      </aside>
+
+      <main class="main">
+        <div class="filters">
+          <input id="search" type="search" placeholder="搜索 CR、Owner、状态、描述、文件">
+          <select id="ownerFilter"></select>
+          <select id="sortBy">
+            <option value="number-desc">编号从新到旧</option>
+            <option value="number-asc">编号从旧到新</option>
+            <option value="status">状态优先</option>
+            <option value="owner">Owner 优先</option>
+          </select>
+          <select id="rangeFilter">
+            <option value="all">全部编号</option>
+            <option value="65-100">CR65-CR100</option>
+            <option value="100+">CR100+</option>
+            <option value="open-only">只看未关闭</option>
+          </select>
+        </div>
+
+        <div class="table-head">
+          <div>CR</div>
+          <div>状态</div>
+          <div>Owner</div>
+          <div>具体要求</div>
+          <div>验证情况</div>
+        </div>
+        <div class="rows" id="rows"></div>
+      </main>
+
+      <aside class="detail" id="detail"></aside>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="cr-dashboard-data.js"></script>
+  <script>
+    const STORE_KEY = "dhxy-cr-dashboard-overrides-v1";
+    const STATUS_META = {
+      all: { label: "全部", className: "open" },
+      open: { label: "Open", className: "open" },
+      reopened: { label: "Reopened", className: "reopened" },
+      review: { label: "Review", className: "review" },
+      partial: { label: "Partial", className: "partial" },
+      ready: { label: "Ready", className: "ready" },
+      done: { label: "Done", className: "done" },
+      deprecated: { label: "Deprecated", className: "deprecated" }
+    };
+
+    const KIND_THEME = {
+      all: {
+        bg: "#eef2f7",
+        hover: "#e2e8f0",
+        selected: "#dbe4ef",
+        border: "#cbd5e1",
+        strong: "#64748b",
+        text: "#1f2937",
+        muted: "#64748b",
+        pillBg: "#ffffff",
+        pillBorder: "#cbd5e1",
+        pillText: "#334155"
+      },
+      open: {
+        bg: "#ffe8e8",
+        hover: "#ffd7d7",
+        selected: "#ffcaca",
+        border: "#ffc1c1",
+        strong: "#ef4444",
+        text: "#5f1515",
+        muted: "#8a3a3a",
+        pillBg: "#ffffff",
+        pillBorder: "#fca5a5",
+        pillText: "#b91c1c"
+      },
+      reopened: {
+        bg: "#ffdce3",
+        hover: "#ffc8d3",
+        selected: "#ffb1c0",
+        border: "#ff8aa0",
+        strong: "#ff375f",
+        text: "#681527",
+        muted: "#9a3047",
+        pillBg: "#ffffff",
+        pillBorder: "#ff9caf",
+        pillText: "#c5163b"
+      },
+      review: {
+        bg: "#fff0c2",
+        hover: "#ffe59a",
+        selected: "#ffd86f",
+        border: "#f3ca61",
+        strong: "#d97706",
+        text: "#4d2a05",
+        muted: "#80540f",
+        pillBg: "#ffffff",
+        pillBorder: "#f2bd56",
+        pillText: "#92400e"
+      },
+      partial: {
+        bg: "#f0e3ff",
+        hover: "#e4ccff",
+        selected: "#d7b6ff",
+        border: "#c8a1ff",
+        strong: "#8b5cf6",
+        text: "#34135d",
+        muted: "#673c9b",
+        pillBg: "#ffffff",
+        pillBorder: "#c4a1ff",
+        pillText: "#6d28d9"
+      },
+      ready: {
+        bg: "#dff0ff",
+        hover: "#c9e5ff",
+        selected: "#acd6ff",
+        border: "#9bcfff",
+        strong: "#0a84ff",
+        text: "#07345f",
+        muted: "#245c8f",
+        pillBg: "#ffffff",
+        pillBorder: "#94c8ff",
+        pillText: "#075aaf"
+      },
+      done: {
+        bg: "#ddf7e6",
+        hover: "#c8efd5",
+        selected: "#afe6c2",
+        border: "#9bd9b0",
+        strong: "#34c759",
+        text: "#103d1e",
+        muted: "#326b43",
+        pillBg: "#ffffff",
+        pillBorder: "#91d8a8",
+        pillText: "#167235"
+      },
+      deprecated: {
+        bg: "#edf0f4",
+        hover: "#e0e5eb",
+        selected: "#d3dae3",
+        border: "#c4ccd7",
+        strong: "#8e8e93",
+        text: "#29313b",
+        muted: "#5f6b7a",
+        pillBg: "#ffffff",
+        pillBorder: "#c4ccd7",
+        pillText: "#475569"
+      }
+    };
+
+    const DOMAIN_THEME = {
+      "修罗": { bg: "#ffe0dc", border: "#ff8a7a", text: "#9f1d12" },
+      "五倍": { bg: "#e3ddff", border: "#9b8cff", text: "#4930a7" },
+      "五环": { bg: "#d6f5ee", border: "#4fc3a7", text: "#0d6b58" },
+      "窗口/Runner": { bg: "#dff0ff", border: "#73b9ff", text: "#075aaf" },
+      "导航": { bg: "#ffe8c7", border: "#ffb44d", text: "#9a4b00" },
+      "Dialog": { bg: "#ffdced", border: "#ff8fc1", text: "#9d1b5a" },
+      "通用": { bg: "#edf0f4", border: "#c4ccd7", text: "#475569" }
+    };
+
+    const CR_REQUIREMENT_ZH = {
+      CR1: "把阶段边界的 prepared-dialog 消费放回任务 turn 事务里，避免任务外消费。",
+      CR2: "移除普通阶段固定 80ms 等待，减少每轮无意义延迟。",
+      CR3: "旧 no-park/churn 大卡已拆分，不再直接做；看 CR9-CR11/CR18。",
+      CR4: "让延迟脚本统计真实 input/park 事件，避免空计数误导性能判断。",
+      CR5: "删除过期 generic fresh helper，只保留明确 prepared/pathing helper。",
+      CR6: "prepared-dialog 等待期间禁止机会维护，避免等待被维护逻辑打断。",
+      CR7: "统计连续 timeout wake，并在 Runner 不回复 prepared-dialog wait 时打明确诊断。",
+      CR8: "旧 no-park 发现已被 fresh-run 证据替代，不作为实现卡。",
+      CR9: "旧 ready-event satisfied-check 后续已关闭，operation-null 边界由 CR18 负责。",
+      CR10: "旧 null-target tracker terminal 方案废弃，terminal/attention 拆分由 CR20 负责。",
+      CR11: "旧 prepared-action absent-loop 诊断转到 CR18/CR58/CR59。",
+      CR12: "不要恢复旧队员 auto-battle broadcast gate；当前维护压力看 CR65/CR78。",
+      CR13: "旧 turn-boundary 大方案未批准，不直接实现。",
+      CR14: "旧维护大 gate 不做；三技能看 CR63，broadcast 压力看 CR65/CR78。",
+      CR15: "旧接任务 NPC route-wait 拆分卡废弃，当前由 route baseline/ownership 卡接管。",
+      CR16: "旧五倍 WAIT_TEAM_RETURN 事件方案关闭，除非新日志重开。",
+      CR17: "旧五倍 accept prepared-wait 方案废弃，当前看 CR58/CR59/CR75。",
+      CR18: "验证 operation=null 的可见对话不能误唤醒 pathing wait；已有 runtime/compile 证据。",
+      CR19: "旧 accept-route gate 方案废弃，当前由 CR34/CR36 负责。",
+      CR20: "旧 dialog-terminal 审计废弃，普通/黄袍看 CR43/CR50，修罗目标等待看 CR68。",
+      CR21: "旧启动角色不确定方案关闭，除非复现新 startup/role bug。",
+      CR22: "旧 accept-NPC route-dialog stale-intent 卡废弃，当前由 CR34/CR36 负责。",
+      CR23: "旧 accept-NPC current-map ACTIVE recovery 卡废弃。",
+      CR24: "旧 same-target route intent 复用 guard 已由 CR36 恢复 ownership baseline。",
+      CR25: "历史五倍 wait/churn 审计，不作为实现卡；当前性能看 CR32/CR61/CR62/CR68。",
+      CR26: "旧 phase-gate 提案废弃；入战/目标点击问题看 CR30/CR53/CR60/CR64。",
+      CR27: "旧白龙马 probe-pathing handoff 卡废弃，当前由 CR39/CR40/CR53 负责。",
+      CR28: "旧 timeout baseline 冲突卡废弃，白龙马规则看业务逻辑和 CR39/CR40/CR53。",
+      CR29: "旧 probeNoTarget tooltip fallback 已被 CR40 删除，不能再作为当前逻辑。",
+      CR30: "五倍 ENTER_BATTLE 里 fresh prepared 入战动作要优先于 stale combat-exit recovery。",
+      CR31: "性能脚本 timing 字段改 Int64，避免 sentinel 大数崩溃混合日志报告。",
+      CR32: "五倍 WAIT_BATTLE_FINISH 改用 COMBAT_STATE_CHANGED 事件等待，降低 400ms 空转；仍缺完整 fresh runtime。",
+      CR33: "恢复五倍业务 baseline，避免 runner/park 迁移顺手改掉任务语义。",
+      CR34: "五倍接任务 NPC route gate 只允许 fresh matching ROUTE_TRANSFER 释放；仍需 fresh 验证。",
+      CR35: "恢复 auto-battle maintenance baseline，保持 broadcast 不被旧 gate 压掉；需 fresh 压力验证。",
+      CR36: "恢复 route-intent ownership：prepared route 必须匹配 active intent，避免 stale/cross-intent 消费。",
+      CR37: "恢复五倍入战 fallback 顺序，只保留 CR30 的 fresh prepared 优先点。",
+      CR38: "审计五倍 timing migration 是否改变 phase/turn 语义；缺 fresh runtime 证明。",
+      CR39: "白龙马显形镜后取消 15s/80ms 轮询，用事件等待和 explicit STORY_ABSENT 结果。",
+      CR40: "白龙马 noTarget 不再走 tooltip fallback，按现有探测失败/切下一个 probe 逻辑处理。",
+      CR41: "五倍普通怪只用 PREPARED_ACTION_READY 唤醒，不再用普通 TASK_ATTENTION_REQUIRED。",
+      CR42: "普通怪 Runner 只在 OPTION 且入战模板命中时返回结果；STORY/ miss 不唤醒。",
+      CR43: "普通怪 PATHING_TERMINAL 后重点同一个 tracker 绿字，不走 smart/direct/route-transfer；仍缺 exact runtime。",
+      CR44: "普通怪从点绿字到入战设置 5 分钟 pre-battle timeout；超时回到重接任务；仍缺 timeout runtime。",
+      CR45: "整体验收 CR41-CR44：事件唤醒、重导航、timeout、性能和白龙马不回归。",
+      CR46: "黄袍第一战按普通怪 CR41-CR44 合约走，后续连战进入黄袍 hot path。",
+      CR47: "黄袍连战热路径验证：pre-click interest、fresh prepared 消费，不再卡 phase loop。",
+      CR48: "审计黄袍续战 fallback、链结束、保护上限，不要发明新点击策略。",
+      CR49: "黄袍完整 fresh 验收：首战、连战、链结束/回程和性能；还缺 chain-end/return-home 证据。",
+      CR50: "普通/黄袍第一战 STOPPED_AWAY 后清 terminal，再重点当前 tracker 绿字。",
+      CR51: "prepared action 生命周期改 phase-owned，不按旧 15s TTL 过期。",
+      CR52: "普通入战不再固定等 10s，改成 target-map gate 打开后再注册/消费。",
+      CR53: "白龙马 targetReady 后候选等待必须有 6s 上限，避免 300s absent loop。",
+      CR54: "黄袍续战 tracker fast-path 性能优化，并验证 miss 时直接回程不全量读 tracker。",
+      CR55: "world-map route memory 要记录 fresh STOPPED_AWAY / abandoned，避免 clean 永远不产生。",
+      CR56: "修罗接任务时 objective snapshot 后台解析，READ_OBJECTIVE 直接消费结果，不再同步慢读。",
+      CR57: "Runner 同一 tick 的 dialog detect/prepare/attention 复用同一截图，减少重复截图/OCR。",
+      CR58: "prepared action READY 后停止后台 100ms fingerprint 续命，消费时再验证新鲜度。",
+      CR59: "五倍 foreground prepared-dialog wait 改成单次消费 + PREPARED_ACTION_READY 事件，不再 80ms polling。",
+      CR60: "五倍一进战斗就清 dialog prepared 状态，战斗 tick 不再做 dialog/pathing/tracker prepare。",
+      CR61: "通用战斗中 watcher tick 只做战斗守护，不再跑非战斗 prepare 降低卡顿。",
+      CR62: "修罗 WAIT_COMBAT 改成事件等待，保持快脱战但不再 900ms 重进 task turn。",
+      CR63: "恢复三技能尾部锁/空格 backward scan 语义，防止尾部清理误删/漏删。",
+      CR64: "白龙马黄字/Ctrl OCR 不能只点文字中心，需要修正 combat target 点击策略。",
+      CR65: "降低维护/自动战斗压力：非 OPTION 不跑重模板；Auto+8 refresh-due 加 team guard。",
+      CR66: "五倍业务等待移除普通 TASK_ATTENTION_REQUIRED，只保留业务化可消费事件。",
+      CR67: "修复 tracker expanded anchor 坐标空间，window-local 不能当 screen-absolute 用。",
+      CR68: "修罗目标导航点完后 park 等 Runner terminal，不再 900ms 自己 reacquire。",
+      CR69: "修罗 objective 坐标 OCR 边界修复，避免地图命中但坐标读空导致重接。",
+      CR70: "张闻到灵兽村旧路线废弃；新导航由 CR99/CR106 直达灵兽村。",
+      CR71: "修罗战斗中禁止 unknown-combat 回城/读任务面板，避免仍在战斗时乱按 Alt+Q/回旗。",
+      CR72: "战后摄妖香不能只信 lastIncenseUsedTime，需轻量状态证明后再跳过补香。",
+      CR73: "direct-combat/Alt+A 后如果取消或移动，后续重试必须重新导航/定位目标。",
+      CR74: "修罗 world-map route-result memory pending 要能变 clean，而不是永远 abandoned。",
+      CR75: "修罗接任务 remembered option 应走 fast path，不再先做慢 dialog detect。",
+      CR76: "NPC learned-memory 点击先试稳定记忆点，避免每次先 Alt+4 / OCR 名字层准备。",
+      CR77: "修罗出灵兽村预路径改 fire-and-handoff，省掉 fast-edge/坐标确认等待。",
+      CR78: "auto-battle / 轻量成员维护只做小区域模板，不做完整 dialog fallback。",
+      CR79: "修罗看打模板 miss 后先尝试关闭野外怪/挡路取消 dialog，再继续原恢复流程。",
+      CR80: "修罗战前 180s watchdog：未进战斗超过 180s 就失败重开，不被无限前置拖住。",
+      CR81: "只读识别修罗左侧任务追踪绿字坐标，不点击、不接入业务。",
+      CR82: "direct-combat 进入 Alt+A target-pick 后跳过 pre-click dialog 检测，避免 STORY 挡住目标点击。",
+      CR83: "正式维护期间暂停/补偿修罗 180s 与五倍 pre-battle/probe timers。",
+      CR84: "修罗快捷路线状态模型：区分快捷/普通导航、确认战斗/偶发战斗等上下文。",
+      CR85: "修罗接任务成功后优先尝试 tracker 绿字快捷，后台 objective 解析作为 fallback。",
+      CR86: "修罗 tracker 绿字点击后注册 intent、开维护窗口、park 等 Runner，并支持 terminal 后重读/重点。",
+      CR87: "修罗快捷最终看打框由 Runner prepare、任务侧验证消费，并标记 TRACKER_CONFIRM/INCIDENTAL。",
+      CR88: "修罗快捷失败边界：初始 miss fallback 到普通路线，中途失败走明确重接/失败语义。",
+      CR89: "修罗快捷维护窗口边界：绿字点成功后才开，最终对话/战斗/fallback 都要关。",
+      CR90: "修罗快捷端到端验收：接任务、绿字、park、看打、战斗、回程及 fallback 全链路。",
+      CR91: "修罗接任务后同一 snapshot 同时解析 objective 和 tracker，且可重叠出村预路径。",
+      CR92: "event-wait park 要补偿暂停时间，避免 180s / pre-battle timer 把 pause 算进去。",
+      CR94: "三技能 unknown 失败后 5 分钟退避，并失效技能布局缓存，避免 3s 失败风暴。",
+      CR95: "live window identity drift guard：发现 HWND 标题/账号变化后 fail-closed、刷新 epoch/cache。",
+      CR96: "修罗快捷到达目标地图就关闭团队三技能维护窗口，而不是等看打/进战斗。",
+      CR97: "修罗 prepared 看打点了但没进战斗时必须重试或恢复，不能无限 WAIT_COMBAT。",
+      CR98: "战斗中启动修罗/五倍先等战斗结束，再做角色检测、位置同步和启动前置。",
+      CR99: "新版黄字导航：点世界地图结果里的黄色目的地，直接打开目标小地图并点坐标。",
+      CR100: "暂停后必须中断已排队物理输入序列，尤其 move 和 click 之间不能继续点。",
+      CR101: "Runner route-dialog prepare 必须后台限时，不能卡死 watcher 线程。",
+      CR102: "优化 cleanUpAll 空跑：同一轮复用截图，点 dialog 后不重复无意义截图，但多层窗口仍安全。",
+      CR103: "NPC smart-click 的 direct memory 要在后续业务 option/template 被证明成功时落库。",
+      CR104: "修罗 leader WAIT_COMBAT 中 due 自动战斗回合/三技能维护要能唤醒并实际刷新。",
+      CR105: "修罗/五倍 leader broadcast 放权后固定等 3 秒，不再按窗口数每个 2 秒累加。",
+      CR106: "灵兽村导航不再走长安张闻链，默认用 CR99 黄字直达；张闻链只保留不用。",
+      CR107: "修罗/五倍启动和战斗维护左上角状态开关：open 才点，closed/unknown 不点。",
+      CR108: "五环接任务 NPC pathing 仍 active 时不要因为 2.5s grace 到期就重试开小地图。",
+      CR109: "expected 战斗后先快速回程，把 HP/MP 和摄妖香延后到下一轮移动中处理。",
+      CR110: "黄字导航结果行点击也要做记忆，且和旧绿字记忆隔离；需修 stale fallback 清 UI。",
+      CR111: "所有导航完成统一信 Runner/pathing watcher，不再由任务本地 pixel/坐标弱判结束。",
+      CR112: "修罗 WAIT_COMBAT 捕获事件序号要早于 combat tick，避免脱战事件 race 后慢回程。",
+      CR113: "修罗/五倍 expected 战斗用头像 20x20 快速 diff 判断脱战，加快回程。",
+      CR114: "修罗/五倍任务道具查找当前页优先，只查任务页，不再全包 6->1 扫描。",
+      CR115: "修罗看打 interest 要优先于 stale/fresh ROUTE_TRANSFER，避免 route action 抢 OPTION。",
+      CR116: "修罗 180s 战前 watchdog 要变成每次等待的真实预算，不能被无限 park 绕过。",
+      CR117: "摄妖香绿色分钟用自学习数字模板，避免 OCR 把 47 读成 7 导致误补。",
+      CR118: "修罗启动 hot-start 前先做 leader 医宝宝检查，重复轮不额外做 startup 检查。",
+      CR119: "修罗 leader 在 shortcut/pathing park 前如三技能到期要先处理一次。",
+      CR120: "通用盒子逻辑：修罗/五倍按队长/队员开关检测盒子，安全 hook 消费，不走通用维护大框架。",
+      CR121: "给 CR113 快脱战加失败纠正，并把五倍补齐到修罗同一套 expected-combat 快回程逻辑。"
+    };
+
+    const state = {
+      base: Array.isArray(window.CR_DASHBOARD_DATA) ? window.CR_DASHBOARD_DATA : [],
+      overrides: loadOverrides(),
+      status: "all",
+      domain: "all",
+      selectedId: null
+    };
+
+    const els = {
+      stats: document.getElementById("stats"),
+      statusNav: document.getElementById("statusNav"),
+      domainNav: document.getElementById("domainNav"),
+      rows: document.getElementById("rows"),
+      detail: document.getElementById("detail"),
+      search: document.getElementById("search"),
+      ownerFilter: document.getElementById("ownerFilter"),
+      sortBy: document.getElementById("sortBy"),
+      rangeFilter: document.getElementById("rangeFilter"),
+      subtitle: document.getElementById("subtitle"),
+      toast: document.getElementById("toast")
+    };
+
+    function loadOverrides() {
+      try {
+        return JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function saveOverrides() {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state.overrides, null, 2));
+    }
+
+    function normalizeKind(status) {
+      const value = (status || "").toLowerCase();
+      if ((status || "").startsWith("Done")) return "done";
+      if (value.includes("deprecated")) return "deprecated";
+      if (value.includes("reopened") || value.includes("reopen") || value.includes("重开") || value.includes("重新打开") || value.includes("打回")) return "reopened";
+      if (value.includes("ready") || value.includes("unclaimed")) return "ready";
+      if (value.includes("partial")) return "partial";
+      if (value.includes("review") || value.includes("pending")) return "review";
+      return "open";
+    }
+
+    function verificationFromStatus(status) {
+      const value = (status || "").toLowerCase();
+      if ((status || "").startsWith("Done")) return "已验证/已关闭";
+      if (value.includes("reopened") || value.includes("reopen") || value.includes("重开") || value.includes("重新打开") || value.includes("打回")) return "已重开，需重新验证";
+      if (value.includes("fresh runtime pending") || value.includes("needs fresh") || value.includes("runtime pending")) return "缺 fresh runtime";
+      if (value.includes("ready") || value.includes("unclaimed")) return "未实现/未认领";
+      if (value.includes("partial")) return "部分验证";
+      return "需复核";
+    }
+
+    function withOverride(item) {
+      const override = state.overrides[item.id] || {};
+      const status = override.status || item.status;
+      const kind = override.kind || normalizeKind(status);
+      return {
+        ...item,
+        effectiveStatus: status,
+        effectiveKind: kind,
+        effectiveVerification: override.verification || verificationFromStatus(status),
+        note: override.note || "",
+        overriddenAt: override.updatedAt || ""
+      };
+    }
+
+    function items() {
+      return state.base.map(withOverride);
+    }
+
+    function counts(list) {
+      const result = { all: list.length, open: 0, reopened: 0, review: 0, partial: 0, ready: 0, done: 0, deprecated: 0 };
+      for (const item of list) {
+        result[item.effectiveKind] = (result[item.effectiveKind] || 0) + 1;
+      }
+      return result;
+    }
+
+    function filteredItems() {
+      const query = els.search.value.trim().toLowerCase();
+      const owner = els.ownerFilter.value;
+      const range = els.rangeFilter.value;
+      let list = items();
+
+      if (state.status !== "all") list = list.filter(item => item.effectiveKind === state.status);
+      if (state.domain !== "all") list = list.filter(item => item.domain === state.domain);
+      if (owner !== "all") list = list.filter(item => item.owner === owner);
+      if (range === "65-100") list = list.filter(item => item.number >= 65 && item.number <= 100);
+      if (range === "100+") list = list.filter(item => item.number >= 100);
+      if (range === "open-only") list = list.filter(item => !["done", "deprecated"].includes(item.effectiveKind));
+      if (query) {
+        list = list.filter(item => [
+          item.id,
+          item.owner,
+          item.effectiveStatus,
+          item.files,
+          item.summary,
+          readableRequirement(item),
+          item.domain,
+          item.effectiveVerification,
+          item.note
+        ].join(" ").toLowerCase().includes(query));
+      }
+
+      const sort = els.sortBy.value;
+      const order = { reopened: 0, open: 1, review: 2, partial: 3, ready: 4, done: 5, deprecated: 6 };
+      list.sort((a, b) => {
+        if (sort === "number-asc") return a.number - b.number;
+        if (sort === "owner") return a.owner.localeCompare(b.owner, "zh-CN") || b.number - a.number;
+        if (sort === "status") return (order[a.effectiveKind] ?? 9) - (order[b.effectiveKind] ?? 9) || b.number - a.number;
+        return b.number - a.number;
+      });
+      return list;
+    }
+
+    function renderStats() {
+      const all = items();
+      const c = counts(all);
+      const active = c.open + c.reopened + c.review + c.partial + c.ready;
+      const statRows = [
+        ["总 CR", c.all, "total"],
+        ["未关闭", active, "open"],
+        ["Reopened", c.reopened, "reopened"],
+        ["Review", c.review, "review"],
+        ["Ready", c.ready, "ready"],
+        ["Done", c.done, "done"],
+        ["Deprecated", c.deprecated, "deprecated"]
+      ];
+      els.stats.innerHTML = statRows.map(([label, value, kind]) => `
+        <div class="stat stat-${escapeAttr(kind)}" style="${themeStyle(KIND_THEME[kind] || KIND_THEME.all, "nav")}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${value}</strong>
+        </div>
+      `).join("");
+      const overrideCount = Object.keys(state.overrides).length;
+      els.subtitle.textContent = `当前载入 ${all.length} 条 CR，手动状态 ${overrideCount} 条。数据来自 cr-dashboard-data.js；MD 更新后运行 node scripts/generate-cr-dashboard-data.js 或导入 Markdown。`;
+    }
+
+    function renderNav() {
+      const c = counts(items());
+      const statusOrder = ["all", "reopened", "open", "review", "partial", "ready", "done", "deprecated"];
+      els.statusNav.innerHTML = statusOrder.map(kind => navItem(kind, STATUS_META[kind].label, c[kind] || 0, state.status === kind, "status", KIND_THEME[kind] || KIND_THEME.all)).join("");
+
+      const domainCounts = new Map();
+      for (const item of items()) domainCounts.set(item.domain, (domainCounts.get(item.domain) || 0) + 1);
+      const domains = [["all", "全部业务", items().length], ...Array.from(domainCounts.entries()).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, k, v])];
+      els.domainNav.innerHTML = domains.map(([key, label, count]) => navItem(key, label, count, state.domain === key, "domain", key === "all" ? KIND_THEME.all : domainTheme(key))).join("");
+    }
+
+    function navItem(key, label, count, active, type, theme) {
+      return `
+        <div class="nav-item ${active ? "active" : ""}" style="${themeStyle(theme, "nav")}" data-${type}="${escapeAttr(key)}">
+          <span>${escapeHtml(label)}</span>
+          <span class="nav-count">${count}</span>
+        </div>
+      `;
+    }
+
+    function renderOwnerFilter() {
+      const owners = Array.from(new Set(items().map(item => item.owner))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+      const current = els.ownerFilter.value || "all";
+      els.ownerFilter.innerHTML = `<option value="all">全部 Owner</option>` + owners.map(owner => `<option value="${escapeAttr(owner)}">${escapeHtml(owner)}</option>`).join("");
+      els.ownerFilter.value = owners.includes(current) ? current : "all";
+    }
+
+    function renderRows() {
+      const list = filteredItems();
+      if (!state.selectedId || !list.some(item => item.id === state.selectedId)) {
+        state.selectedId = list[0]?.id || null;
+      }
+      els.rows.innerHTML = list.length ? list.map(item => {
+        const meta = STATUS_META[item.effectiveKind] || STATUS_META.open;
+        const statusTheme = KIND_THEME[item.effectiveKind] || KIND_THEME.open;
+        const businessTheme = domainTheme(item.domain);
+        const changed = state.overrides[item.id] ? "本地" : item.domain;
+        const requirement = readableRequirement(item);
+        return `
+          <div class="row kind-${escapeAttr(item.effectiveKind)} ${item.id === state.selectedId ? "selected" : ""}" style="${rowThemeStyle(statusTheme, businessTheme)}" data-id="${escapeAttr(item.id)}">
+            <div class="cell id">${escapeHtml(item.id)}</div>
+            <div class="cell"><span class="pill status-pill">${escapeHtml(meta.label)}</span></div>
+            <div class="cell owner">${escapeHtml(item.owner)}</div>
+            <div class="cell summary">
+              <strong>${escapeHtml(requirement)}</strong>
+              <span>${escapeHtml(item.effectiveStatus)}</span>
+            </div>
+            <div class="cell"><span class="pill domain-pill">${escapeHtml(changed)}</span></div>
+          </div>
+        `;
+      }).join("") : `<div class="empty">没有符合当前筛选的 CR。</div>`;
+      renderDetail();
+    }
+
+    function renderDetail() {
+      const item = items().find(entry => entry.id === state.selectedId);
+      if (!item) {
+        els.detail.innerHTML = `<div class="empty">选择一条 CR 查看详情。</div>`;
+        return;
+      }
+      const meta = STATUS_META[item.effectiveKind] || STATUS_META.open;
+      const statusTheme = KIND_THEME[item.effectiveKind] || KIND_THEME.open;
+      const businessTheme = domainTheme(item.domain);
+      const requirement = readableRequirement(item);
+      els.detail.innerHTML = `
+        <div class="detail-head kind-${escapeAttr(item.effectiveKind)}" style="${detailThemeStyle(statusTheme, businessTheme)}">
+          <div class="detail-title">
+            <strong>${escapeHtml(item.id)}</strong>
+            <span class="pill status-pill">${escapeHtml(meta.label)}</span>
+          </div>
+          <div class="owner">${escapeHtml(item.owner)} · ${escapeHtml(item.domain)}</div>
+          <div class="detail-actions">
+            <select id="detailStatus">
+              ${statusOptions(item.effectiveKind)}
+            </select>
+            <button class="primary" id="applyStatus">保存状态</button>
+          </div>
+        </div>
+        <div class="detail-body">
+          <div class="field">
+            <label>具体要做什么</label>
+            <p>${escapeHtml(requirement)}</p>
+          </div>
+          <div class="field">
+            <label>当前状态</label>
+            <p>${escapeHtml(item.effectiveStatus)}</p>
+          </div>
+          <div class="field">
+            <label>代码 / 相关路径</label>
+            <div class="code-text">${escapeHtml(item.files)}</div>
+          </div>
+          <div class="field">
+            <label>验证判断</label>
+            <p>${escapeHtml(item.effectiveVerification)}</p>
+          </div>
+          <div class="field">
+            <label>技术原文</label>
+            <div class="code-text source-text">${escapeHtml(cleanSourceText(item.summary))}</div>
+          </div>
+          <div class="field">
+            <label>手动备注</label>
+            <textarea id="manualNote" placeholder="写本地备注，例如：用户已确认、等重启、需要派 agent">${escapeHtml(item.note)}</textarea>
+          </div>
+          <div class="actions">
+            <button id="saveNote">保存备注</button>
+            <button id="markDone" class="primary">标记 Done</button>
+            <button id="clearOverride">清除本地修改</button>
+          </div>
+          ${item.overriddenAt ? `<div class="field"><label>本地更新时间</label><p>${escapeHtml(item.overriddenAt)}</p></div>` : ""}
+        </div>
+      `;
+
+      document.getElementById("applyStatus").addEventListener("click", () => {
+        const nextKind = document.getElementById("detailStatus").value;
+        const label = statusLabel(nextKind);
+        applyOverride(item.id, {
+          status: nextKind === "done" ? "Done: manually closed in dashboard" : label,
+          kind: nextKind,
+          verification: nextKind === "done" ? "用户手动标记已关闭" : verificationFromStatus(label)
+        });
+      });
+      document.getElementById("markDone").addEventListener("click", () => {
+        applyOverride(item.id, { status: "Done: manually closed in dashboard", kind: "done", verification: "用户手动标记已关闭" });
+      });
+      document.getElementById("saveNote").addEventListener("click", () => {
+        applyOverride(item.id, { note: document.getElementById("manualNote").value });
+      });
+      document.getElementById("clearOverride").addEventListener("click", () => {
+        delete state.overrides[item.id];
+        saveOverrides();
+        renderAll();
+        toast(`${item.id} 已清除本地修改`);
+      });
+    }
+
+    function statusOptions(current) {
+      return ["reopened", "open", "review", "partial", "ready", "done", "deprecated"].map(kind => {
+        const selected = kind === current ? "selected" : "";
+        return `<option value="${kind}" ${selected}>${escapeHtml(statusLabel(kind))}</option>`;
+      }).join("");
+    }
+
+    function statusLabel(kind) {
+      return {
+        reopened: "Reopened",
+        open: "Open",
+        review: "Review",
+        partial: "Partial",
+        ready: "Ready / Unclaimed",
+        done: "Done",
+        deprecated: "Deprecated"
+      }[kind] || "Open";
+    }
+
+    function applyOverride(id, patch) {
+      state.overrides[id] = {
+        ...(state.overrides[id] || {}),
+        ...patch,
+        updatedAt: new Date().toISOString()
+      };
+      saveOverrides();
+      renderAll();
+      toast(`${id} 已保存本地状态`);
+    }
+
+    function parseMarkdownTable(text) {
+      const parsed = [];
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.startsWith("| CR")) continue;
+        const parts = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(part => part.trim());
+        if (parts.length < 5) continue;
+        const [id, owner, status, files, summary] = parts;
+        if (!/^CR\d+$/.test(id)) continue;
+        const number = Number(id.slice(2));
+        parsed.push({
+          id,
+          number,
+          owner,
+          status,
+          kind: normalizeKind(status),
+          domain: inferDomain(summary),
+          files,
+          summary,
+          verification: verificationFromStatus(status)
+        });
+      }
+      return parsed;
+    }
+
+    function inferDomain(summary) {
+      const text = summary || "";
+      if (/修罗|Xiuluo|XIULUO|xiuluo/.test(text)) return "修罗";
+      if (/五倍|Wubei|WUBEI|wubei/.test(text)) return "五倍";
+      if (/五环|FiveRing|wuhuan|Wuhuan/.test(text)) return "五环";
+      if (/window|Window|窗口|Runner|runner/.test(text)) return "窗口/Runner";
+      if (/navigation|Navigation|导航|pathing|PATHING/.test(text)) return "导航";
+      if (/Dialog|dialog|对话|broadcast/.test(text)) return "Dialog";
+      return "通用";
+    }
+
+    function domainTheme(domain) {
+      return DOMAIN_THEME[domain] || DOMAIN_THEME["通用"];
+    }
+
+    function themeStyle(theme, prefix) {
+      return [
+        `--${prefix}-bg:${theme.bg}`,
+        `--${prefix}-active-bg:${theme.selected || theme.hover || theme.bg}`,
+        `--${prefix}-border:${theme.border}`,
+        `--${prefix}-strong:${theme.strong || theme.border}`,
+        `--${prefix}-text:${theme.text}`
+      ].join(";");
+    }
+
+    function rowThemeStyle(statusTheme, businessTheme) {
+      return [
+        `--row-bg:linear-gradient(90deg, ${businessTheme.border} 0 8px, ${statusTheme.bg} 8px 100%)`,
+        `--row-hover:linear-gradient(90deg, ${businessTheme.border} 0 8px, ${statusTheme.hover} 8px 100%)`,
+        `--row-selected:linear-gradient(90deg, ${businessTheme.border} 0 8px, ${statusTheme.selected} 8px 100%)`,
+        `--row-border:${statusTheme.border}`,
+        `--row-strong:${statusTheme.strong}`,
+        `--row-text:${statusTheme.text}`,
+        `--row-muted:${statusTheme.muted}`,
+        `--pill-bg:${statusTheme.pillBg}`,
+        `--pill-border:${statusTheme.pillBorder}`,
+        `--pill-text:${statusTheme.pillText}`,
+        `--domain-bg:${businessTheme.bg}`,
+        `--domain-border:${businessTheme.border}`,
+        `--domain-text:${businessTheme.text}`
+      ].join(";");
+    }
+
+    function detailThemeStyle(statusTheme, businessTheme) {
+      return [
+        `--detail-bg:linear-gradient(90deg, ${businessTheme.border} 0 10px, ${statusTheme.bg} 10px 100%)`,
+        `--detail-text:${statusTheme.text}`,
+        `--pill-bg:${statusTheme.pillBg}`,
+        `--pill-border:${statusTheme.pillBorder}`,
+        `--pill-text:${statusTheme.pillText}`
+      ].join(";");
+    }
+
+    function firstSentence(text) {
+      const value = (text || "").replace(/`/g, "");
+      const idx = value.search(/[。.!?]/);
+      return idx > 22 ? value.slice(0, idx + 1) : value.slice(0, 150);
+    }
+
+    function readableRequirement(item) {
+      const manual = CR_REQUIREMENT_ZH[item.id];
+      if (manual) return manual;
+      const cleaned = cleanSourceText(item.summary)
+        .replace(/^Implemented locally[:：]\s*/i, "已实现：")
+        .replace(/^Source implemented and compile\/source guard passed[.。]?\s*/i, "源码已实现，并通过编译/源码 guard：")
+        .replace(/^Fresh runtime still needs\s*/i, "仍缺 fresh runtime：")
+        .replace(/^Do not implement\s*/i, "不要实现：")
+        .replace(/\bFresh runtime\b/g, "fresh runtime")
+        .replace(/\bSource review\b/g, "源码 review")
+        .replace(/\bcompile\b/g, "编译")
+        .replace(/\bvalidation\b/g, "验证");
+      return firstSentence(cleaned);
+    }
+
+    function cleanSourceText(text) {
+      return String(text || "")
+        .replace(/\*\*/g, "")
+        .replace(/`/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function exportOverrides() {
+      const blob = new Blob([JSON.stringify(state.overrides, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cr-dashboard-overrides.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function copyOpenList() {
+      const open = items()
+        .filter(item => !["done", "deprecated"].includes(item.effectiveKind))
+        .sort((a, b) => a.number - b.number)
+        .map(item => `- ${item.id}: ${item.effectiveStatus}｜${readableRequirement(item)}`)
+        .join("\n");
+      await navigator.clipboard.writeText(open);
+      toast("未关闭清单已复制");
+    }
+
+    function renderAll() {
+      renderStats();
+      renderOwnerFilter();
+      renderNav();
+      renderRows();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#96;");
+    }
+
+    let toastTimer = null;
+    function toast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => els.toast.classList.remove("show"), 1900);
+    }
+
+    document.addEventListener("click", event => {
+      const statusEl = event.target.closest("[data-status]");
+      if (statusEl) {
+        state.status = statusEl.dataset.status;
+        renderAll();
+        return;
+      }
+      const domainEl = event.target.closest("[data-domain]");
+      if (domainEl) {
+        state.domain = domainEl.dataset.domain;
+        renderAll();
+        return;
+      }
+      const row = event.target.closest(".row[data-id]");
+      if (row) {
+        state.selectedId = row.dataset.id;
+        renderRows();
+      }
+    });
+
+    for (const el of [els.search, els.ownerFilter, els.sortBy, els.rangeFilter]) {
+      el.addEventListener("input", renderRows);
+      el.addEventListener("change", renderRows);
+    }
+
+    document.getElementById("exportOverrides").addEventListener("click", exportOverrides);
+    document.getElementById("copyOpen").addEventListener("click", copyOpenList);
+    document.getElementById("resetOverrides").addEventListener("click", () => {
+      state.overrides = {};
+      saveOverrides();
+      renderAll();
+      toast("手动状态已清空");
+    });
+
+    document.getElementById("importMarkdown").addEventListener("change", async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      const parsed = parseMarkdownTable(text);
+      if (!parsed.length) {
+        toast("没有识别到 CR 表");
+        return;
+      }
+      state.base = parsed;
+      state.selectedId = null;
+      renderAll();
+      toast(`已导入 ${parsed.length} 条 CR`);
+    });
+
+    if (!state.base.length) {
+      els.rows.innerHTML = `<div class="empty">没有载入 CR 数据，请确认 cr-dashboard-data.js 存在，或导入 PACKAGE_ARCHITECTURE.md。</div>`;
+    } else {
+      renderAll();
+    }
+  </script>
+</body>
+</html>

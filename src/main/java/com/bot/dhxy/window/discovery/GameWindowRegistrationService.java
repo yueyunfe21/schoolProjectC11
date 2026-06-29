@@ -19,13 +19,16 @@ import java.util.stream.Collectors;
 public class GameWindowRegistrationService {
 
     private final NativeWindowScanner nativeWindowScanner;
+    private final NativeWindowSelectionPolicy windowSelectionPolicy;
     private final NativeWindowRegistrationMapper registrationMapper;
     private final WindowTaskControlService windowTaskControlService;
 
     public GameWindowRegistrationService(NativeWindowScanner nativeWindowScanner,
+                                         NativeWindowSelectionPolicy windowSelectionPolicy,
                                          NativeWindowRegistrationMapper registrationMapper,
                                          WindowTaskControlService windowTaskControlService) {
         this.nativeWindowScanner = nativeWindowScanner;
+        this.windowSelectionPolicy = windowSelectionPolicy;
         this.registrationMapper = registrationMapper;
         this.windowTaskControlService = windowTaskControlService;
     }
@@ -43,11 +46,12 @@ public class GameWindowRegistrationService {
     public WindowTaskCommandResult registerDetectedGameWindows(TaskType taskType) {
         log.info("Register detected game windows start: taskType={}", taskType);
         List<NativeWindowInfo> windows = scanGameWindows();
+        windows = selectWindowsForRegistration(windows, "registerDetectedGameWindows");
+        pruneIdleStaleRegistrations(windows);
         if (windows.isEmpty()) {
             log.warn("Register detected game windows found no game windows: taskType={}", taskType);
             return WindowTaskCommandResult.empty("没有扫描到游戏窗口", windowTaskControlService.getSnapshots());
         }
-        pruneIdleStaleRegistrations(windows);
         List<WindowRegistrationRequest> requests = registrationMapper.toIndependentRegistrationRequests(windows, taskType);
         log.info("Register detected game windows mapped requests: count={} ids={}",
                 requests.size(), requests.stream().map(WindowRegistrationRequest::getWindowId).toList());
@@ -62,11 +66,12 @@ public class GameWindowRegistrationService {
      */
     public WindowTaskCommandResult scanRegisterAndStartIndependentWindows(TaskType taskType) {
         List<NativeWindowInfo> windows = scanGameWindows();
+        windows = selectWindowsForRegistration(windows, "scanRegisterAndStartIndependentWindows");
+        pruneIdleStaleRegistrations(windows);
         if (windows.isEmpty()) {
             return WindowTaskCommandResult.empty("没有扫描到游戏窗口，无法启动独立窗口任务", windowTaskControlService.getSnapshots());
         }
 
-        pruneIdleStaleRegistrations(windows);
         List<WindowRegistrationRequest> requests = registrationMapper.toIndependentRegistrationRequests(windows, taskType);
         WindowTaskCommandResult registerResult = windowTaskControlService.registerWindows(requests);
         List<String> windowIds = requests.stream()
@@ -129,15 +134,42 @@ public class GameWindowRegistrationService {
         }
     }
 
+    private List<NativeWindowInfo> selectWindowsForRegistration(List<NativeWindowInfo> windows, String source) {
+        int maxWindowCount = windowTaskControlService.getSystemSnapshot().getMaxWindowCount();
+        List<NativeWindowInfo> selected = windowSelectionPolicy.selectForCapacity(windows, maxWindowCount);
+        if (windows != null && windows.size() > selected.size()) {
+            Set<String> selectedIds = selected.stream()
+                    .map(NativeWindowInfo::toWindowId)
+                    .collect(Collectors.toSet());
+            List<String> skipped = windowSelectionPolicy.sortByRegistrationPriority(windows).stream()
+                    .filter(window -> !selectedIds.contains(window.toWindowId()))
+                    .map(this::describeWindow)
+                    .toList();
+            log.info("Game window registration selection clipped: source={} scanned={} selected={} max={} selectedWindows={} skippedWindows={}",
+                    source, windows.size(), selected.size(), maxWindowCount, describeWindows(selected), skipped);
+        } else {
+            log.info("Game window registration selection: source={} scanned={} selected={} max={} selectedWindows={}",
+                    source, windows == null ? 0 : windows.size(), selected.size(), maxWindowCount, describeWindows(selected));
+        }
+        return selected;
+    }
+
     private String describeWindows(List<NativeWindowInfo> windows) {
         if (windows == null || windows.isEmpty()) {
             return "[]";
         }
         return windows.stream()
-                .map(window -> window.toWindowId() + "|" + window.getTitle()
-                        + "|pid=" + window.getProcessId()
-                        + "|rect=" + window.getX() + "," + window.getY() + "," + window.getWidth() + "x" + window.getHeight())
+                .map(this::describeWindow)
                 .toList()
                 .toString();
+    }
+
+    private String describeWindow(NativeWindowInfo window) {
+        return window.toWindowId() + "|" + window.getTitle()
+                + "|pid=" + window.getProcessId()
+                + "|minimized=" + window.isMinimized()
+                + "|foreground=" + window.isForeground()
+                + "|z=" + window.getZOrderIndex()
+                + "|rect=" + window.getX() + "," + window.getY() + "," + window.getWidth() + "x" + window.getHeight();
     }
 }

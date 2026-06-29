@@ -9,6 +9,11 @@ import lombok.Value;
  * @param sourceTask diagnostic task/source name written to logs.
  * @param handleMaintenanceBroadcast whether to handle team-wide maintenance option dialogs such as
  *                                   heal-pet or repair-equipment prompts.
+ * @param allowFullMaintenanceBroadcastFallback whether a maintenance broadcast miss in the two
+ *                                              fixed strips may fall back to a full dialog scan.
+ *                                              Keep true for leader/formal maintenance; set false
+ *                                              for lightweight member idle probes such as
+ *                                              auto-battle.
  * @param cleanSummonSkill whether this pass may run the focused summon-skill cleanup.
  * @param requireFreeStateForSummonSkill when true, summon cleanup is skipped unless the current
  *                                       {@code GameContext.ActionState} is FREE.
@@ -30,6 +35,9 @@ public class TaskMaintenanceRequest {
 
     @Builder.Default
     boolean handleMaintenanceBroadcast = true;
+
+    @Builder.Default
+    boolean allowFullMaintenanceBroadcastFallback = true;
 
     @Builder.Default
     boolean cleanSummonSkill = false;

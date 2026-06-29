@@ -1,11 +1,13 @@
 package com.bot.dhxy.input.action;
 
+import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -20,11 +22,14 @@ public class InputActionRequest {
     private final WindowRuntimeContext windowContext;
     private final String windowId;
     private final WindowNativeBinding nativeBinding;
+    private final long playerIdentityEpoch;
+    private final TaskPauseToken pauseToken;
     private final String description;
     private final List<InputAction> actions;
     private final Supplier<Boolean> exclusiveCallback;
     private final CompletableFuture<Boolean> result = new CompletableFuture<>();
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final AtomicReference<String> cancellationReason = new AtomicReference<>();
 
     /**
      * Create a normal action-list request.
@@ -36,7 +41,22 @@ public class InputActionRequest {
     public InputActionRequest(WindowRuntimeContext windowContext,
                               String description,
                               List<InputAction> actions) {
-        this(windowContext, description, actions, null);
+        this(windowContext, description, actions, null, null);
+    }
+
+    /**
+     * Create a normal action-list request with the submitting task's pause token.
+     *
+     * @param windowContext submitting window context; should have a native binding.
+     * @param description diagnostic label.
+     * @param actions ordered physical actions. The list is copied and null becomes empty.
+     * @param pauseToken pause token captured on the submitting task thread; nullable for debug paths.
+     */
+    public InputActionRequest(WindowRuntimeContext windowContext,
+                              String description,
+                              List<InputAction> actions,
+                              TaskPauseToken pauseToken) {
+        this(windowContext, description, actions, null, pauseToken);
     }
 
     /**
@@ -49,16 +69,34 @@ public class InputActionRequest {
     public InputActionRequest(WindowRuntimeContext windowContext,
                               String description,
                               Supplier<Boolean> exclusiveCallback) {
-        this(windowContext, description, List.of(), exclusiveCallback);
+        this(windowContext, description, List.of(), exclusiveCallback, null);
+    }
+
+    /**
+     * Create an exclusive callback request with the submitting task's pause token.
+     *
+     * @param windowContext submitting window context; should have a native binding.
+     * @param description diagnostic label.
+     * @param exclusiveCallback callback executed on the input worker thread.
+     * @param pauseToken pause token captured on the submitting task thread; nullable for debug paths.
+     */
+    public InputActionRequest(WindowRuntimeContext windowContext,
+                              String description,
+                              Supplier<Boolean> exclusiveCallback,
+                              TaskPauseToken pauseToken) {
+        this(windowContext, description, List.of(), exclusiveCallback, pauseToken);
     }
 
     private InputActionRequest(WindowRuntimeContext windowContext,
                                String description,
                                List<InputAction> actions,
-                               Supplier<Boolean> exclusiveCallback) {
+                               Supplier<Boolean> exclusiveCallback,
+                               TaskPauseToken pauseToken) {
         this.windowContext = windowContext;
         this.windowId = windowContext == null ? null : windowContext.getWindowId();
         this.nativeBinding = windowContext == null ? null : windowContext.getNativeBinding();
+        this.playerIdentityEpoch = windowContext == null ? -1L : windowContext.getPlayerIdentityEpoch();
+        this.pauseToken = pauseToken;
         this.description = description == null ? "" : description;
         this.actions = actions == null ? List.of() : List.copyOf(actions);
         this.exclusiveCallback = exclusiveCallback;
@@ -72,6 +110,26 @@ public class InputActionRequest {
 
     /** @return native binding captured at queue time, possibly null for rejected/debug paths. */
     public WindowNativeBinding getNativeBinding() { return nativeBinding; }
+
+    /** @return player identity epoch captured at queue time. */
+    public long getPlayerIdentityEpoch() { return playerIdentityEpoch; }
+
+    /** @return task pause token captured at queue time, or null outside a managed task. */
+    public TaskPauseToken getPauseToken() { return pauseToken; }
+
+    /**
+     * @return true when the request still belongs to the same player identity epoch.
+     */
+    public boolean isPlayerIdentityEpochCurrent() {
+        return windowContext == null || playerIdentityEpoch == windowContext.getPlayerIdentityEpoch();
+    }
+
+    /**
+     * @return true when the submitting task has been paused after this request was queued.
+     */
+    public boolean isPauseRequested() {
+        return pauseToken != null && pauseToken.isPauseRequested();
+    }
 
     /** @return diagnostic label for logs. */
     public String getDescription() { return description; }
@@ -88,12 +146,16 @@ public class InputActionRequest {
     /** @return completion future used by the submitting task thread. */
     public CompletableFuture<Boolean> getResult() { return result; }
 
+    /** @return first recorded cancellation reason, or null when the request has not been cancelled. */
+    public String getCancellationReason() { return cancellationReason.get(); }
+
     /**
      * Mark the request cancelled and unblock the submitter.
      *
-     * @param reason diagnostic reason; currently stored only in logs by the caller.
+     * @param reason diagnostic reason stored for dead-letter logs.
      */
     public void cancel(String reason) {
+        cancellationReason.compareAndSet(null, reason == null || reason.isBlank() ? "cancelled" : reason);
         cancelled.set(true);
         result.complete(false);
     }
@@ -102,6 +164,6 @@ public class InputActionRequest {
      * @return true when the request was cancelled or its completion future was cancelled.
      */
     public boolean isCancelled() {
-        return cancelled.get() || result.isCancelled();
+        return cancelled.get() || result.isCancelled() || isPauseRequested();
     }
 }

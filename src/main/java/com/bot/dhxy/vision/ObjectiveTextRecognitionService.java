@@ -459,6 +459,10 @@ public class ObjectiveTextRecognitionService {
         if (COORDINATE_TEXT.matcher(stripped).matches() && !stripped.matches("\\d{3},\\d")) {
             return stripped;
         }
+        Optional<String> strippedSubstring = lastCoordinateSubstring(stripped);
+        if (strippedSubstring.isPresent() && !strippedSubstring.get().matches("\\d{3},\\d")) {
+            return strippedSubstring.get();
+        }
         Optional<String> repaired = repairDuplicatedPrefixAndMergedSuffix(stripped);
         if (repaired.isPresent()) {
             return repaired.get();
@@ -469,6 +473,10 @@ public class ObjectiveTextRecognitionService {
         String direct = recognizeCoordinateRuns(clean, coordinateRuns, digits);
         if (COORDINATE_TEXT.matcher(direct).matches()) {
             return direct;
+        }
+        Optional<String> directSubstring = lastCoordinateSubstring(direct);
+        if (directSubstring.isPresent()) {
+            return directSubstring.get();
         }
         return recognizeCoordinateByTemplateScan(clean, digits);
     }
@@ -522,6 +530,18 @@ public class ObjectiveTextRecognitionService {
             return Optional.empty();
         }
         return Optional.of(matcher.group(1) + matcher.group(2) + "," + matcher.group(3) + matcher.group(3));
+    }
+
+    private Optional<String> lastCoordinateSubstring(String text) {
+        if (text == null || text.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher matcher = COORDINATE_TEXT.matcher(text);
+        String best = null;
+        while (matcher.find()) {
+            best = matcher.group();
+        }
+        return Optional.ofNullable(best);
     }
 
     private String recognizeCoordinateByTemplateScan(BufferedImage clean, Map<String, List<BufferedImage>> digits) {

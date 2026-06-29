@@ -14,7 +14,9 @@ public class InputActionDeadLetter {
 
     public void record(InputActionRequest request, Throwable error) {
         failedRequests.add(request);
-        String message = error == null ? "unknown" : error.getMessage();
+        String message = error == null
+                ? (request == null || request.getCancellationReason() == null ? "unknown" : request.getCancellationReason())
+                : error.getMessage();
         log.warn("Input action moved to dead letter: windowId={} description={} actions={} exclusive={} reason={}",
                 request == null ? "null" : request.getWindowId(),
                 request == null ? "null" : request.getDescription(),

@@ -180,12 +180,23 @@ public class CoordinateHelper {
                                                       int targetY,
                                                       int failedClickCount,
                                                       boolean randomizeClickPoint) {
+        return resolveMiniMapClickPoint(mapName, targetX, targetY, failedClickCount,
+                randomizeClickPoint, MINI_MAP_CLICK_RANDOM_RADIUS_PX);
+    }
+
+    public MiniMapClickPoint resolveMiniMapClickPoint(String mapName,
+                                                      int targetX,
+                                                      int targetY,
+                                                      int failedClickCount,
+                                                      boolean randomizeClickPoint,
+                                                      int miniMapClickRandomRadiusPx) {
         Point originalPixelPoint = getPhysicalMapPoint(mapName, targetX, targetY);
         if (originalPixelPoint == null) {
             return null;
         }
         if (failedClickCount <= 0) {
-            return buildMiniMapClickPoint(targetX, targetY, originalPixelPoint, "original", randomizeClickPoint);
+            return buildMiniMapClickPoint(targetX, targetY, originalPixelPoint, "original",
+                    randomizeClickPoint, miniMapClickRandomRadiusPx);
         }
 
         MapTransform transform = getMapTransform(mapName);
@@ -219,7 +230,7 @@ public class CoordinateHelper {
             int[] offset = fallbackOffsets.get(fallbackIndex);
             return resolveMiniMapFallbackPoint(mapName, targetX + offset[0], targetY + offset[1],
                     "fallback-" + failedClickCount + "-offset=(" + offset[0] + "," + offset[1] + ")",
-                    randomizeClickPoint);
+                    randomizeClickPoint, miniMapClickRandomRadiusPx);
         }
         return null;
     }
@@ -270,20 +281,23 @@ public class CoordinateHelper {
                                                           int logicalX,
                                                           int logicalY,
                                                           String reason,
-                                                          boolean randomizeClickPoint) {
+                                                          boolean randomizeClickPoint,
+                                                          int miniMapClickRandomRadiusPx) {
         Point pixelPoint = getPhysicalMapPoint(mapName, logicalX, logicalY);
         return pixelPoint == null
                 ? null
-                : buildMiniMapClickPoint(logicalX, logicalY, pixelPoint, reason, randomizeClickPoint);
+                : buildMiniMapClickPoint(logicalX, logicalY, pixelPoint, reason,
+                randomizeClickPoint, miniMapClickRandomRadiusPx);
     }
 
     private MiniMapClickPoint buildMiniMapClickPoint(int logicalX,
                                                      int logicalY,
                                                      Point basePixelPoint,
                                                      String reason,
-                                                     boolean randomizeClickPoint) {
+                                                     boolean randomizeClickPoint,
+                                                     int miniMapClickRandomRadiusPx) {
         Point finalPixelPoint = randomizeClickPoint
-                ? randomizeMiniMapClickPoint(basePixelPoint)
+                ? randomizeMiniMapClickPoint(basePixelPoint, miniMapClickRandomRadiusPx)
                 : basePixelPoint;
         int jitterX = finalPixelPoint.x - basePixelPoint.x;
         int jitterY = finalPixelPoint.y - basePixelPoint.y;
@@ -298,10 +312,11 @@ public class CoordinateHelper {
                 .build();
     }
 
-    private Point randomizeMiniMapClickPoint(Point basePixelPoint) {
+    private Point randomizeMiniMapClickPoint(Point basePixelPoint, int randomRadiusPx) {
         tracker.refreshWindowState();
-        int offsetX = random.nextInt(MINI_MAP_CLICK_RANDOM_RADIUS_PX * 2 + 1) - MINI_MAP_CLICK_RANDOM_RADIUS_PX;
-        int offsetY = random.nextInt(MINI_MAP_CLICK_RANDOM_RADIUS_PX * 2 + 1) - MINI_MAP_CLICK_RANDOM_RADIUS_PX;
+        int radius = Math.max(0, randomRadiusPx);
+        int offsetX = radius <= 0 ? 0 : random.nextInt(radius * 2 + 1) - radius;
+        int offsetY = radius <= 0 ? 0 : random.nextInt(radius * 2 + 1) - radius;
         if (offsetX == 0 && offsetY == 0) {
             offsetX = 1;
         }

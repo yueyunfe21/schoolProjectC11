@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Service
@@ -31,6 +32,7 @@ public class LicenseAuthService {
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(8))
             .build();
+    private final AtomicReference<String> latestVerifiedLicenseCode = new AtomicReference<>("");
 
     @Value("${license.worker.base-url:https://dhxy-license-worker.yueyunfe.workers.dev}")
     private String baseUrl;
@@ -69,6 +71,18 @@ public class LicenseAuthService {
         return post("/api/license/renew", payload);
     }
 
+    public String getAppId() {
+        return appId;
+    }
+
+    public String getAppVersion() {
+        return appVersion;
+    }
+
+    public String getLatestVerifiedLicenseCode() {
+        return latestVerifiedLicenseCode.get();
+    }
+
     private ObjectNode basePayload(String licenseCode) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("appId", appId);
@@ -94,6 +108,10 @@ public class LicenseAuthService {
             String actionType = root.path("actionType").asText("");
             JsonNode data = root.path("data");
             String expiresAt = data.path("expiresAt").asText("");
+            String responseLicenseCode = data.path("licenseCode").asText(payload.path("licenseCode").asText(""));
+            if (ok && responseLicenseCode != null && !responseLicenseCode.isBlank()) {
+                latestVerifiedLicenseCode.set(responseLicenseCode.trim());
+            }
 
             return new LicenseAuthResult(
                     ok,
@@ -101,7 +119,7 @@ public class LicenseAuthService {
                     mapMessage(code, message),
                     LicenseActionType.fromCode(actionType.isBlank() ? code : actionType),
                     data.path("appId").asText(appId),
-                    data.path("licenseCode").asText(payload.path("licenseCode").asText("")),
+                    responseLicenseCode,
                     formatExpireText(expiresAt),
                     normalize(expiresAt),
                     data.path("bound").asBoolean(false),

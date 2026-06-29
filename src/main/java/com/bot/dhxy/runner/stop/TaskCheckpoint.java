@@ -21,12 +21,15 @@ public final class TaskCheckpoint {
      *
      * @param context current task context; nullable for legacy/debug paths outside a runner.
      * @param interruptedMessage exception message used when the thread has already been interrupted.
+     * @return milliseconds spent blocked by a user pause, or {@code 0} when no pause wait occurred.
      */
-    public static void throwIfStopRequested(TaskExecutionContext context, String interruptedMessage) {
+    public static long throwIfStopRequested(TaskExecutionContext context, String interruptedMessage) {
+        long pauseBlockedMs = 0L;
         if (context != null) {
-            context.throwIfStopRequested();
+            pauseBlockedMs = context.throwIfStopRequested();
         }
         throwIfInterrupted(interruptedMessage);
+        return pauseBlockedMs;
     }
 
     /**
@@ -34,12 +37,15 @@ public final class TaskCheckpoint {
      *
      * @param holder holder that may contain the current task context.
      * @param interruptedMessage exception message used when the thread has already been interrupted.
+     * @return milliseconds spent blocked by a user pause, or {@code 0} when no pause wait occurred.
      */
-    public static void throwIfStopRequested(TaskExecutionContextHolder holder, String interruptedMessage) {
+    public static long throwIfStopRequested(TaskExecutionContextHolder holder, String interruptedMessage) {
+        long pauseBlockedMs = 0L;
         if (holder != null) {
-            holder.checkpointIfPresent();
+            pauseBlockedMs = holder.checkpointIfPresent();
         }
         throwIfInterrupted(interruptedMessage);
+        return pauseBlockedMs;
     }
 
     /**
@@ -52,17 +58,22 @@ public final class TaskCheckpoint {
      * @param context current task context; nullable for legacy/debug paths.
      * @param holder holder that may contain the current task context.
      * @param interruptedMessage exception message used when the thread has already been interrupted.
+     * @return total milliseconds spent blocked by user pause checkpoints, or {@code 0} when no pause
+     *         wait occurred. Existing callers may ignore this value; timeout-owning callers can use
+     *         it to exclude user pause time from business watchdogs.
      */
-    public static void throwIfStopRequested(TaskExecutionContext context,
+    public static long throwIfStopRequested(TaskExecutionContext context,
                                             TaskExecutionContextHolder holder,
                                             String interruptedMessage) {
+        long pauseBlockedMs = 0L;
         if (context != null) {
-            context.throwIfStopRequested();
+            pauseBlockedMs += context.throwIfStopRequested();
         }
         if (holder != null) {
-            holder.checkpointIfPresent();
+            pauseBlockedMs += holder.checkpointIfPresent();
         }
         throwIfInterrupted(interruptedMessage);
+        return pauseBlockedMs;
     }
 
     /**

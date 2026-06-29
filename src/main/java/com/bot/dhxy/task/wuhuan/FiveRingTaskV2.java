@@ -7,12 +7,14 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.model.dialog.DialogResult;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.metrics.AutomationMetricStatus;
 import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
@@ -80,6 +82,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -99,18 +102,21 @@ import java.util.function.Supplier;
 public class FiveRingTaskV2 implements GameTask {
 
     private static final String TASK_CODE = "wuhuan_v2";
-    private static final String TASK_NAME = "五环V2";
+    private static final String TASK_NAME = "五环";
     private static final String TARGET_MAP_NAME = "长安";
     private static final String TARGET_NPC_NAME = "云游大师";
     private static final int NPC_COOR_X = 87;
     private static final int NPC_COOR_Y = 174;
     private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_accept_first_option.png";
+    private static final String OPTION_ACCEPT_TASK = "wuhuan.acceptTask";
     private static final String ALREADY_HAS_TASK_OPTION_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_already_has_task_option.png";
     private static final String FINISHED_STORY_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_task_finished_story.png";
+    private static final String FINISHED_ONCE_STORY_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_task_finished_once_story.png";
     private static final String DAILY_LIMIT_STORY_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_daily_limit_story.png";
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
     private static final String QUICK_SHOE_ANCHOR_TEMPLATE = "images/template/wuhuan/wuhuan_quick_shoe_anchor.png";
     private static final String QUICK_SHOE_FAST_ITEM_TEMPLATE = "images/template/fastItem/wuhuan_quick_shoe_shop_item.png";
+    private static final String QUICK_SHOE_FAST_ITEM_ALT_TEMPLATE = "images/template/fastItem/wuhuan_quick_shoe_shop_item8.png";
     private static final String SHOE_SHOP_BUY_OPTION_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_shop_buy_option.png";
     private static final String SHOE_SHOP_SHOE_TEMPLATE = "images/template/wuhuan/shoe.png";
     private static final String SHOE_SHOP_BUY_BUTTON_TEMPLATE = "images/template/wuhuan/wuhuan_buy_button.png";
@@ -155,10 +161,10 @@ public class FiveRingTaskV2 implements GameTask {
     private static final int QUICK_SHOE_ANCHOR_REL_TOP = 699;
     private static final int QUICK_SHOE_ANCHOR_REL_RIGHT = 1029;
     private static final int QUICK_SHOE_ANCHOR_REL_BOTTOM = 732;
-    private static final int QUICK_SHOE_FAST_ITEM_REL_LEFT = 880;
+    private static final int QUICK_SHOE_FAST_ITEM_REL_LEFT = 719;
     private static final int QUICK_SHOE_FAST_ITEM_REL_TOP = 700;
-    private static final int QUICK_SHOE_FAST_ITEM_REL_RIGHT = 1000;
-    private static final int QUICK_SHOE_FAST_ITEM_REL_BOTTOM = 742;
+    private static final int QUICK_SHOE_FAST_ITEM_REL_RIGHT = 1013;
+    private static final int QUICK_SHOE_FAST_ITEM_REL_BOTTOM = 736;
     private static final int QUICK_SHOE_SHOP_ITEM_REL_LEFT = 365;
     private static final int QUICK_SHOE_SHOP_ITEM_REL_TOP = 250;
     private static final int QUICK_SHOE_SHOP_ITEM_REL_RIGHT = 673;
@@ -206,6 +212,7 @@ public class FiveRingTaskV2 implements GameTask {
     private final WindowReadyEventBus windowReadyEventBus;
     private final TextRecognizer textRecognizer;
     private final InputSequences inputSequences;
+    private final AutomationMetricsService automationMetricsService;
 
     @Override
     public String getTaskCode() {
@@ -250,6 +257,9 @@ public class FiveRingTaskV2 implements GameTask {
             log.info("[five-ring-v2] startup check passed: {}", checkResult.getReason());
 
             gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
+            if (context.getWindowRuntimeContext() != null) {
+                context.getWindowRuntimeContext().updateTaskRunProgress(completedRuns, maxRuns);
+            }
             while (shouldStartNextRun(maxRuns, completedRuns)) {
                 TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
                 int round = completedRuns + 1;
@@ -257,16 +267,37 @@ public class FiveRingTaskV2 implements GameTask {
                 log.info("[five-ring-v2] run {} initial phase: phase={} source={}",
                         round, phaseContext.phase(), phaseContext.source());
 
-                TaskRunResult runResult = runPhases(context, phaseContext);
-                if (runResult != TaskRunResult.SUCCESS) {
-                    gameContext.setBotStatus(runResult == TaskRunResult.STOPPED
+                String roundId = roundMetricId(context, TASK_CODE, round);
+                long roundStartedAt = System.currentTimeMillis();
+                automationMetricsService.recordRoundStarted(context, roundId, round,
+                        roundMetricType(phaseContext), "五环轮次开始",
+                        Map.of("sourcePhase", phaseContext.phase().name(), "source", phaseContext.source()));
+                FiveRingRunResult runResult;
+                try {
+                    runResult = runPhases(context, phaseContext);
+                } catch (RuntimeException e) {
+                    finishRoundMetric(context, roundId, round, phaseContext, TaskRunResult.FAILED,
+                            roundStartedAt, "五环轮次异常: " + e.getClass().getSimpleName());
+                    throw e;
+                }
+                finishRoundMetric(context, roundId, round, phaseContext, runResult.taskResult(),
+                        roundStartedAt, runResult.terminalTask() ? "五环终止条件结束" : "五环轮次结束");
+                if (runResult.taskResult() != TaskRunResult.SUCCESS) {
+                    gameContext.setBotStatus(runResult.taskResult() == TaskRunResult.STOPPED
                             ? GameContext.BotStatus.IDLE
                             : GameContext.BotStatus.ERROR);
-                    return runResult;
+                    return runResult.taskResult();
                 }
 
                 completedRuns++;
-                log.info("[five-ring-v2] run {} finished, completed={}", round, completedRuns);
+                if (context.getWindowRuntimeContext() != null) {
+                    context.getWindowRuntimeContext().updateTaskRunProgress(completedRuns, maxRuns);
+                }
+                log.info("[five-ring-v2] run {} finished, completed={} terminalTask={}",
+                        round, completedRuns, runResult.terminalTask());
+                if (runResult.terminalTask()) {
+                    break;
+                }
             }
 
             markTaskIdle();
@@ -290,7 +321,47 @@ public class FiveRingTaskV2 implements GameTask {
         markTaskIdle();
     }
 
-    private TaskRunResult runPhases(TaskExecutionContext context, FiveRingPhaseContext initialContext) {
+    private String roundMetricId(TaskExecutionContext context, String taskCode, int round) {
+        long taskRunId = context == null ? 0L : context.getTaskRunId();
+        String windowId = context == null ? "window" : context.getWindowId();
+        return taskCode + "-" + (taskRunId > 0L ? taskRunId : windowId) + "-round-" + round;
+    }
+
+    private void finishRoundMetric(TaskExecutionContext context,
+                                   String roundId,
+                                   int round,
+                                   FiveRingPhaseContext phaseContext,
+                                   TaskRunResult result,
+                                   long roundStartedAt,
+                                   String message) {
+        long elapsedMs = Math.max(0L, System.currentTimeMillis() - roundStartedAt);
+        automationMetricsService.recordRoundFinished(context, roundId, round, roundMetricType(phaseContext),
+                roundMetricStatus(result), roundResultCode(result), message, elapsedMs,
+                Map.of("sourcePhase", phaseContext.phase().name(), "source", phaseContext.source()));
+    }
+
+    private String roundMetricType(FiveRingPhaseContext phaseContext) {
+        return phaseContext == null ? "五环" : "五环/" + phaseContext.phase();
+    }
+
+    private AutomationMetricStatus roundMetricStatus(TaskRunResult result) {
+        if (result == TaskRunResult.SUCCESS) {
+            return AutomationMetricStatus.SUCCESS;
+        }
+        if (result == TaskRunResult.STOPPED) {
+            return AutomationMetricStatus.STOPPED;
+        }
+        if (result == TaskRunResult.SKIPPED) {
+            return AutomationMetricStatus.SKIPPED;
+        }
+        return AutomationMetricStatus.FAILED;
+    }
+
+    private String roundResultCode(TaskRunResult result) {
+        return result == null ? "FAILED" : result.name();
+    }
+
+    private FiveRingRunResult runPhases(TaskExecutionContext context, FiveRingPhaseContext initialContext) {
         FiveRingPhaseContext phaseContext = initialContext;
         int phaseLoopGuard = 0;
 
@@ -366,13 +437,16 @@ public class FiveRingTaskV2 implements GameTask {
 
             if (transaction.result() == TaskTransactionResult.STOPPED
                     || outcome.transactionResult() == TaskTransactionResult.STOPPED) {
-                return TaskRunResult.STOPPED;
+                return new FiveRingRunResult(TaskRunResult.STOPPED, false);
             }
             if (outcome.transactionResult() == TaskTransactionResult.FAILED) {
-                return TaskRunResult.FAILED;
+                return new FiveRingRunResult(TaskRunResult.FAILED, false);
             }
             if (outcome.yieldPolicy() == TaskYieldPolicy.MUST_YIELD) {
                 yieldAfterMustYield(context, outcome);
+            }
+            if (outcome.terminalTask()) {
+                return new FiveRingRunResult(TaskRunResult.SUCCESS, true);
             }
             if (outcome.transactionResult() == TaskTransactionResult.PATHING_STARTED
                     || outcome.transactionResult() == TaskTransactionResult.SHARED_STATE_TRIGGERED) {
@@ -380,16 +454,18 @@ public class FiveRingTaskV2 implements GameTask {
             } else if (++phaseLoopGuard > MAX_PHASE_LOOP_GUARD) {
                 log.error("[five-ring-v2] phase loop guard exceeded: round={} phase={} source={}",
                         currentContext.round(), currentContext.phase(), currentContext.source());
-                return TaskRunResult.FAILED;
+                return new FiveRingRunResult(TaskRunResult.FAILED, false);
             }
 
             phaseContext = outcome.nextState();
         }
 
         if (phaseContext.phase() == FiveRingPhase.STOPPED) {
-            return TaskRunResult.STOPPED;
+            return new FiveRingRunResult(TaskRunResult.STOPPED, false);
         }
-        return phaseContext.phase() == FiveRingPhase.FAILED ? TaskRunResult.FAILED : TaskRunResult.SUCCESS;
+        return new FiveRingRunResult(
+                phaseContext.phase() == FiveRingPhase.FAILED ? TaskRunResult.FAILED : TaskRunResult.SUCCESS,
+                false);
     }
 
     private void releaseHeldTurnAfterOutsidePhaseYield(boolean outsideTaskTurnPhase,
@@ -680,31 +756,51 @@ public class FiveRingTaskV2 implements GameTask {
 
     private FiveRingStepOutcome prepare(TaskExecutionContext context, FiveRingPhaseContext state) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
-        log.info("[five-ring-v2 prepare-1] clean startup chrome only");
+        log.info("[five-ring-v2 prepare-1] clean startup chrome before supply checks");
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
+        uiCleanerService.cleanUpAll();
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
         log.info("[five-ring-v2 prepare-2] startup first-aid check before bag supply scan");
         playerStateService.performStartupFirstAidCheck(context);
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
-        log.info("[five-ring-v2 prepare-3] check sheyaoxiang and shoe in one bag session");
-        FiveRingSupplyCheck supplyCheck = checkFiveRingSuppliesInOneBagSession(context);
+        int requiredShoeCount = requiredShoeCountForRun(state);
+        log.info("[five-ring-v2 prepare-3] check sheyaoxiang and shoe in one bag session: round={} requiredShoes={}",
+                state.round(), requiredShoeCount);
+        FiveRingSupplyCheck supplyCheck = checkFiveRingSuppliesInOneBagSession(context, requiredShoeCount);
         Integer shoeBagIndex = supplyCheck == null ? null : supplyCheck.shoeBagIndex();
-        if (shoeBagIndex != null) {
-            log.info("[five-ring-v2 prepare done] shoe found on page {}, ready to give", shoeBagIndex + 1);
+        int shoeCount = supplyCheck == null ? 0 : supplyCheck.shoeCount();
+        int missingShoeCount = Math.max(0, requiredShoeCount - shoeCount);
+        if (missingShoeCount == 0) {
+            log.info("[five-ring-v2 prepare done] shoes found: count={} required={} firstPage={}",
+                    shoeCount, requiredShoeCount, shoeBagIndex == null ? "none" : shoeBagIndex + 1);
         } else {
-            log.warn("[five-ring-v2 prepare] shoe template not found; try quick-buy shoe from fast item panel");
-            boolean boughtShoes = quickBuyShoe(context);
+            log.warn("[five-ring-v2 prepare] shoe count insufficient: count={} required={} missing={}; try quick-buy shoe from fast item panel",
+                    shoeCount, requiredShoeCount, missingShoeCount);
+            boolean boughtShoes = quickBuyShoe(context, missingShoeCount);
             if (!boughtShoes) {
                 log.warn("[five-ring-v2 prepare] quick-buy shoe failed; fall back to shop-owner buy flow");
-                return FiveRingStepOutcome.continueTo(
-                        state.next(FiveRingPhase.BUY_SHOES, "prepare-shoe-shop-required"),
-                        "shoe missing; buy through shop-owner flow");
+                return FiveRingStepOutcome.continueTo(state.withShoePurchaseCount(missingShoeCount,
+                                "prepare-shoe-shop-required")
+                                .next(FiveRingPhase.BUY_SHOES, "prepare-shoe-shop-required"),
+                        "shoe count insufficient; buy through shop-owner flow");
             }
-            shoeBagIndex = boughtShoes ? bagService.findItemPageIndex(BagService.MAIN_BAG, KEY_ITEM_NAME, context) : null;
-            log.info("[five-ring-v2 prepare] quick-buy shoe result={} verifiedPage={}",
-                    boughtShoes, shoeBagIndex == null ? "none" : shoeBagIndex + 1);
+            FiveRingSupplyCheck verifiedCheck = checkFiveRingSuppliesInOneBagSession(context, requiredShoeCount);
+            shoeBagIndex = verifiedCheck == null ? null : verifiedCheck.shoeBagIndex();
+            int verifiedShoeCount = verifiedCheck == null ? 0 : verifiedCheck.shoeCount();
+            log.info("[five-ring-v2 prepare] quick-buy shoe result={} verifiedCount={} required={} firstPage={}",
+                    boughtShoes, verifiedShoeCount, requiredShoeCount,
+                    shoeBagIndex == null ? "none" : shoeBagIndex + 1);
+            int verifiedMissingShoeCount = Math.max(0, requiredShoeCount - verifiedShoeCount);
+            if (verifiedMissingShoeCount > 0) {
+                log.warn("[five-ring-v2 prepare] quick-buy completed but verified shoes are still insufficient: verified={} required={} missing={}; fall back to shop-owner buy flow",
+                        verifiedShoeCount, requiredShoeCount, verifiedMissingShoeCount);
+                return FiveRingStepOutcome.continueTo(state.withShoePurchaseCount(verifiedMissingShoeCount,
+                                "prepare-shoe-shop-after-quick-buy-insufficient")
+                                .next(FiveRingPhase.BUY_SHOES, "prepare-shoe-shop-after-quick-buy-insufficient"),
+                        "quick-buy verified shoe count insufficient; buy through shop-owner flow");
+            }
         }
 
         return FiveRingStepOutcome.continueTo(
@@ -719,7 +815,8 @@ public class FiveRingTaskV2 implements GameTask {
         if (gameStateUtil.confirmCurrentMapFresh(SHOE_SHOP_MAP_NAME, 0L,
                 "wuhuan-v2:shoe-shop-phase-already-inside")) {
             log.info("[five-ring-v2 shoe-shop] already inside {}, buy from shop owner", SHOE_SHOP_MAP_NAME);
-            if (!buyShoeFromShopOwnerWithRetry(context)) {
+            int purchaseCount = shoePurchaseCountForState(state);
+            if (!buyShoeFromShopOwnerWithRetry(context, purchaseCount)) {
                 return FiveRingStepOutcome.sharedState(
                         state.retrySamePhase("shoe-shop-buy-retry"),
                         "shoe-shop owner buy failed; retry later");
@@ -976,6 +1073,24 @@ public class FiveRingTaskV2 implements GameTask {
         return exactDoor;
     }
 
+    private int requiredShoeCountForRun(FiveRingPhaseContext state) {
+        int configuredRuns = botProperties.getWuhuanMaxRuns();
+        if (isUnlimitedRuns(configuredRuns)) {
+            return 1;
+        }
+        int currentRound = state == null ? 1 : Math.max(1, state.round());
+        return normalizeShoePurchaseCount(configuredRuns - currentRound + 1);
+    }
+
+    private int shoePurchaseCountForState(FiveRingPhaseContext state) {
+        int requested = state == null ? 0 : state.shoePurchaseCount();
+        return requested > 0 ? normalizeShoePurchaseCount(requested) : requiredShoeCountForRun(state);
+    }
+
+    private int normalizeShoePurchaseCount(int count) {
+        return count >= 2 ? 2 : 1;
+    }
+
     /**
      * Run the 五环 startup inventory checks with one main-bag open/close cycle.
      *
@@ -984,33 +1099,39 @@ public class FiveRingTaskV2 implements GameTask {
      * immediately opened/closed it again for the shoe pre-scan.</p>
      *
      * @param context optional stop token for the current window task.
+     * @param requiredShoeCount maximum number of shoes the scan needs to prove are available.
      * @return combined startup supply check result, or null if the bag could not be opened.
      */
-    private FiveRingSupplyCheck checkFiveRingSuppliesInOneBagSession(TaskExecutionContext context) {
+    private FiveRingSupplyCheck checkFiveRingSuppliesInOneBagSession(TaskExecutionContext context,
+                                                                     int requiredShoeCount) {
         return bagService.withMainBagOpen("wuhuan-v2:prepare-supplies", context, mainBag -> {
             TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
             boolean incenseRefilled = playerStateService.ensureSheYaoXiangActiveInOpenMainBag(mainBag, context);
             TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
-            log.info("[five-ring-v2 prepare] scan shoe template in already-open main bag: {}", KEY_ITEM_NAME);
-            Integer shoeBagIndex = mainBag.findItemPageIndex(KEY_ITEM_NAME);
-            return new FiveRingSupplyCheck(incenseRefilled, shoeBagIndex);
+            log.info("[five-ring-v2 prepare] count shoe template in already-open main bag: template={} required={}",
+                    KEY_ITEM_NAME, requiredShoeCount);
+            BagService.ItemCountResult shoeCount = mainBag.countItemUpTo(KEY_ITEM_NAME, requiredShoeCount);
+            return new FiveRingSupplyCheck(incenseRefilled, shoeCount.firstPageIndex(), shoeCount.count());
         });
     }
 
     /**
-     * Buy one 五环 shoe through the user-prepared shortcut item panel.
+     * Buy the missing 五环 shoes through the user-prepared shortcut item panel.
      *
      * <p>This path is only entered after the normal one-bag startup scan cannot find shoes. All
      * coordinates are window-relative values measured from the user's current 1024x768 client base.
      * The method does not navigate: it opens the shortcut shop from the bottom-right fast item slot,
-     * chooses the shoe, clicks purchase, and closes the shop so the caller can rescan the bag.</p>
+     * chooses the shoe once per missing item, clicks purchase, and closes the shop so the caller can
+     * rescan the bag.</p>
      *
      * @param context current task stop token; nullable only for legacy direct task execution.
+     * @param purchaseCount number of shoes to select before clicking buy; clamped to the supported
+     *                      五环 UI range of 1..2.
      * @return true when the shortcut panel, shoe template, and buy click all completed; false when the
      *         shortcut is not available or a template is missing.
      */
-    private boolean quickBuyShoe(TaskExecutionContext context) {
+    private boolean quickBuyShoe(TaskExecutionContext context, int purchaseCount) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         int[] shortcutRect = windowRelativeRect(QUICK_SHOE_ANCHOR_REL_LEFT, QUICK_SHOE_ANCHOR_REL_TOP,
                 QUICK_SHOE_ANCHOR_REL_RIGHT, QUICK_SHOE_ANCHOR_REL_BOTTOM);
@@ -1034,7 +1155,8 @@ public class FiveRingTaskV2 implements GameTask {
 
         int[] fastItemRect = windowRelativeRect(QUICK_SHOE_FAST_ITEM_REL_LEFT, QUICK_SHOE_FAST_ITEM_REL_TOP,
                 QUICK_SHOE_FAST_ITEM_REL_RIGHT, QUICK_SHOE_FAST_ITEM_REL_BOTTOM);
-        if (!rightClickTemplateCenter(context, QUICK_SHOE_FAST_ITEM_TEMPLATE, fastItemRect, 0.80,
+        if (!rightClickAnyTemplateCenter(context,
+                List.of(QUICK_SHOE_FAST_ITEM_TEMPLATE, QUICK_SHOE_FAST_ITEM_ALT_TEMPLATE), fastItemRect, 0.80,
                 "wuhuan-v2:quick-buy-shoe:open-shop")) {
             return false;
         }
@@ -1042,8 +1164,9 @@ public class FiveRingTaskV2 implements GameTask {
 
         int[] itemRect = windowRelativeRect(QUICK_SHOE_SHOP_ITEM_REL_LEFT, QUICK_SHOE_SHOP_ITEM_REL_TOP,
                 QUICK_SHOE_SHOP_ITEM_REL_RIGHT, QUICK_SHOE_SHOP_ITEM_REL_BOTTOM);
+        int safePurchaseCount = normalizeShoePurchaseCount(purchaseCount);
         if (!clickTemplateCenterInRect(context, SHOE_SHOP_SHOE_TEMPLATE, itemRect, 0.82,
-                "wuhuan-v2:quick-buy-shoe:select-shoe")) {
+                "wuhuan-v2:quick-buy-shoe:select-shoe", safePurchaseCount)) {
             return false;
         }
         TaskSleep.sleepOrStop(context, 250, "Five-ring V2 task interrupted");
@@ -1065,7 +1188,8 @@ public class FiveRingTaskV2 implements GameTask {
         return true;
     }
 
-    private boolean buyShoeFromShopOwnerWithRetry(TaskExecutionContext context) {
+    private boolean buyShoeFromShopOwnerWithRetry(TaskExecutionContext context, int purchaseCount) {
+        int safePurchaseCount = normalizeShoePurchaseCount(purchaseCount);
         for (int attempt = 1; attempt <= SHOE_SHOP_BUY_FLOW_MAX_ATTEMPTS; attempt++) {
             TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
             log.info("[five-ring-v2 shoe-shop] shop-owner buy flow attempt {}/{}",
@@ -1100,7 +1224,7 @@ public class FiveRingTaskV2 implements GameTask {
             int[] itemRect = windowRelativeRect(SHOE_SHOP_ITEM_REL_LEFT, SHOE_SHOP_ITEM_REL_TOP,
                     SHOE_SHOP_ITEM_REL_RIGHT, SHOE_SHOP_ITEM_REL_BOTTOM);
             if (!clickTemplateCenterInRect(context, SHOE_SHOP_SHOE_TEMPLATE, itemRect, 0.82,
-                    "wuhuan-v2:shoe-shop-click-shoe")) {
+                    "wuhuan-v2:shoe-shop-click-shoe", safePurchaseCount)) {
                 log.warn("[five-ring-v2 shoe-shop] shoe template not matched, close panel and reopen NPC: attempt={}/{}",
                         attempt, SHOE_SHOP_BUY_FLOW_MAX_ATTEMPTS);
                 uiCleanerService.closeAllGenericWindows();
@@ -1255,6 +1379,15 @@ public class FiveRingTaskV2 implements GameTask {
                                               int[] rect,
                                               double matchRate,
                                               String description) {
+        return clickTemplateCenterInRect(context, templatePath, rect, matchRate, description, 1);
+    }
+
+    private boolean clickTemplateCenterInRect(TaskExecutionContext context,
+                                              String templatePath,
+                                              int[] rect,
+                                              double matchRate,
+                                              String description,
+                                              int clickCount) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         File template = new File(templatePath);
         if (!template.exists()) {
@@ -1271,14 +1404,18 @@ public class FiveRingTaskV2 implements GameTask {
         }
 
         Point clickPoint = coordinateHelper.getRandomizedPoint(matchedCenter, 3, 2);
-        log.info("[five-ring-v2 shoe-shop] template matched: description={} template={} center=({}, {}) click=({}, {})",
-                description, templatePath, matchedCenter.x, matchedCenter.y, clickPoint.x, clickPoint.y);
-        return inputSequences.submitAndWait(description, List.of(
-                InputAction.moveMouse(clickPoint.x, clickPoint.y),
-                InputAction.sleep(120),
-                InputAction.clickLeft(clickPoint.x, clickPoint.y, 150),
-                InputAction.sleep(250)
-        ));
+        int safeClickCount = Math.max(1, clickCount);
+        log.info("[five-ring-v2 shoe-shop] template matched: description={} template={} center=({}, {}) click=({}, {}) clickCount={}",
+                description, templatePath, matchedCenter.x, matchedCenter.y, clickPoint.x, clickPoint.y,
+                safeClickCount);
+        List<InputAction> actions = new ArrayList<>();
+        actions.add(InputAction.moveMouse(clickPoint.x, clickPoint.y));
+        actions.add(InputAction.sleep(120));
+        for (int i = 0; i < safeClickCount; i++) {
+            actions.add(InputAction.clickLeft(clickPoint.x, clickPoint.y, 150));
+            actions.add(InputAction.sleep(i + 1 == safeClickCount ? 250 : 120));
+        }
+        return inputSequences.submitAndWait(description, actions);
     }
 
     private Point findQuickShoeShortcut(int[] shortcutRect) {
@@ -1298,23 +1435,34 @@ public class FiveRingTaskV2 implements GameTask {
                                              int[] rect,
                                              double matchRate,
                                              String description) {
-        TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
-        Point matchedCenter = coordinateHelper.findImageInRegion(templatePath, rect, matchRate);
-        if (matchedCenter == null) {
-            log.warn("[five-ring-v2 quick-buy-shoe] template not matched for right click: description={} template={} rect=({}, {})-({}, {})",
-                    description, templatePath, rect[0], rect[1], rect[2], rect[3]);
-            return false;
-        }
+        return rightClickAnyTemplateCenter(context, List.of(templatePath), rect, matchRate, description);
+    }
 
-        Point clickPoint = coordinateHelper.getRandomizedPoint(matchedCenter, 2, 2);
-        log.info("[five-ring-v2 quick-buy-shoe] right click template: description={} center=({}, {}) click=({}, {})",
-                description, matchedCenter.x, matchedCenter.y, clickPoint.x, clickPoint.y);
-        return inputSequences.submitAndWait(description, List.of(
-                InputAction.moveMouse(clickPoint.x, clickPoint.y),
-                InputAction.sleep(120),
-                InputAction.clickRight(clickPoint.x, clickPoint.y, 150),
-                InputAction.sleep(350)
-        ));
+    private boolean rightClickAnyTemplateCenter(TaskExecutionContext context,
+                                                List<String> templatePaths,
+                                                int[] rect,
+                                                double matchRate,
+                                                String description) {
+        TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
+        for (String templatePath : templatePaths) {
+            Point matchedCenter = coordinateHelper.findImageInRegion(templatePath, rect, matchRate);
+            if (matchedCenter == null) {
+                continue;
+            }
+
+            Point clickPoint = coordinateHelper.getRandomizedPoint(matchedCenter, 2, 2);
+            log.info("[five-ring-v2 quick-buy-shoe] right click template: description={} template={} center=({}, {}) click=({}, {})",
+                    description, templatePath, matchedCenter.x, matchedCenter.y, clickPoint.x, clickPoint.y);
+            return inputSequences.submitAndWait(description, List.of(
+                    InputAction.moveMouse(clickPoint.x, clickPoint.y),
+                    InputAction.sleep(120),
+                    InputAction.clickRight(clickPoint.x, clickPoint.y, 150),
+                    InputAction.sleep(350)
+            ));
+        }
+        log.warn("[five-ring-v2 quick-buy-shoe] templates not matched for right click: description={} templates={} rect=({}, {})-({}, {}) rate={}",
+                description, templatePaths, rect[0], rect[1], rect[2], rect[3], matchRate);
+        return false;
     }
 
     private int[] windowRelativeRect(int left, int top, int right, int bottom) {
@@ -1431,7 +1579,7 @@ public class FiveRingTaskV2 implements GameTask {
                                 "nearby accept clicked; read tracker next");
                     }
                     if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
-                        return FiveRingStepOutcome.finished(
+                        return FiveRingStepOutcome.finishedTerminal(
                                 activeState,
                                 "five-ring accept reported finished/daily limit");
                     }
@@ -1523,7 +1671,7 @@ public class FiveRingTaskV2 implements GameTask {
                         "initial task accepted; read tracker instead of accepting again");
             }
             if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
-                return FiveRingStepOutcome.finished(
+                return FiveRingStepOutcome.finishedTerminal(
                         activeState,
                         "five-ring accept reported finished/daily limit");
             }
@@ -1547,6 +1695,7 @@ public class FiveRingTaskV2 implements GameTask {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
+        long pathingAgeMs = pathingAgeMs(state);
         if (isUsablePathingSnapshot(state, snapshot)) {
             WindowPathingState observed = snapshot.getState();
             long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
@@ -1558,14 +1707,6 @@ public class FiveRingTaskV2 implements GameTask {
                 log.info("[five-ring-v2 accept] accept NPC navigation wait ended by watcher: state={} current={}({}, {}) ageMs={}",
                         observed, snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(), ageMs);
                 return null;
-            }
-            if (observed == WindowPathingState.ACTIVE
-                    || observed == WindowPathingState.UNKNOWN
-                    || snapshot.isProbeInProgress()) {
-                log.info("[five-ring-v2 accept] accept NPC navigation watcher still pathing: state={} current={}({}, {}) ageMs={} probeInProgress={}",
-                        observed, snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
-                        ageMs, snapshot.isProbeInProgress());
-                return FiveRingStepOutcome.pathingStarted(state, "accept NPC navigation watcher still pathing");
             }
             if (observed == WindowPathingState.STOPPED_AWAY) {
                 if (runtime != null) {
@@ -1585,17 +1726,53 @@ public class FiveRingTaskV2 implements GameTask {
                         snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(), ageMs);
                 return null;
             }
+            if (pathingAgeMs >= PATHING_TARGET_WAIT_TIMEOUT_MS) {
+                log.warn("[five-ring-v2 accept] accept NPC navigation hard timeout before watcher keep-wait; retry navigation/click from current state: source={} ageMs={} timeoutMs={} observed={} snapshotAgeMs={} probeInProgress={}",
+                        state.pathingIntentSource(), pathingAgeMs, PATHING_TARGET_WAIT_TIMEOUT_MS,
+                        observed, ageMs, snapshot.isProbeInProgress());
+                return null;
+            }
+            if (observed == WindowPathingState.ACTIVE
+                    || observed == WindowPathingState.UNKNOWN
+                    || snapshot.isProbeInProgress()) {
+                log.info("[five-ring-v2 accept] accept NPC navigation watcher still pathing: state={} current={}({}, {}) ageMs={} probeInProgress={}",
+                        observed, snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                        ageMs, snapshot.isProbeInProgress());
+                return FiveRingStepOutcome.pathingStarted(state, "accept NPC navigation watcher still pathing");
+            }
         }
 
-        long pathingAgeMs = pathingAgeMs(state);
         if (pathingAgeMs < PATHING_OBSERVER_FAST_WAIT_MS) {
             log.info("[five-ring-v2 accept] wait for accept NPC watcher before retry: ageMs={} fastWaitMs={}",
                     pathingAgeMs, PATHING_OBSERVER_FAST_WAIT_MS);
             return FiveRingStepOutcome.pathingStarted(state, "accept NPC navigation waiting for watcher");
         }
 
-        log.info("[five-ring-v2 accept] accept NPC navigation wait ended; retry navigation/click from current state");
-        return null;
+        if (pathingAgeMs >= PATHING_TARGET_WAIT_TIMEOUT_MS) {
+            log.warn("[five-ring-v2 accept] accept NPC navigation hard timeout; retry navigation/click from current state: source={} ageMs={} timeoutMs={}",
+                    state.pathingIntentSource(), pathingAgeMs, PATHING_TARGET_WAIT_TIMEOUT_MS);
+            return null;
+        }
+
+        if (hasActiveAcceptNpcPathingIntent(state, runtime)) {
+            log.info("[five-ring-v2 accept] accept NPC navigation active intent still in flight: source={} ageMs={} timeoutMs={}",
+                    state.pathingIntentSource(), pathingAgeMs, PATHING_TARGET_WAIT_TIMEOUT_MS);
+            return FiveRingStepOutcome.pathingStarted(state, "accept NPC navigation active intent still in flight");
+        }
+
+        log.info("[five-ring-v2 accept] accept NPC navigation has no terminal snapshot yet; keep waiting: source={} ageMs={} timeoutMs={}",
+                state.pathingIntentSource(), pathingAgeMs, PATHING_TARGET_WAIT_TIMEOUT_MS);
+        return FiveRingStepOutcome.pathingStarted(state, "accept NPC navigation waiting for terminal snapshot");
+    }
+
+    private boolean hasActiveAcceptNpcPathingIntent(FiveRingPhaseContext state, WindowRuntimeContext runtime) {
+        if (state == null || runtime == null || !state.pathingIntentExpected()) {
+            return false;
+        }
+        WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
+        return activeIntent != null
+                && isExpectedPathingSource(state.pathingIntentSource(), activeIntent.getSource())
+                && isExpectedPathingTarget(state.pathingIntentSource(), activeIntent);
     }
 
     private boolean tryClickNearbyAcceptNpc(TaskExecutionContext context) {
@@ -1699,6 +1876,7 @@ public class FiveRingTaskV2 implements GameTask {
 
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
+        long pathingAgeMs = pathingAgeMs(state);
         if (isUsablePathingSnapshot(state, snapshot)) {
             WindowPathingState observed = snapshot.getState();
             long snapshotAgeMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
@@ -1727,6 +1905,15 @@ public class FiveRingTaskV2 implements GameTask {
                         state.next(FiveRingPhase.HANDLE_DIALOG, "pathing-stopped-away-by-watcher"),
                         "pathing stopped away by watcher");
             }
+            if (pathingAgeMs >= PATHING_TARGET_WAIT_TIMEOUT_MS) {
+                log.warn("[five-ring-v2 pathing] watcher did not produce terminal state before timeout; sync task panel: source={} ageMs={} timeoutMs={} observed={} snapshotAgeMs={} probeInProgress={}",
+                        state.source(), pathingAgeMs, PATHING_TARGET_WAIT_TIMEOUT_MS,
+                        observed, snapshotAgeMs, snapshot.isProbeInProgress());
+                return FiveRingStepOutcome.continueTo(
+                        state.increaseUiErrorCount("pathing-timeout")
+                                .next(FiveRingPhase.SYNC_TASK_PANEL, "pathing-timeout"),
+                        "pathing watcher timeout; sync task panel");
+            }
             if (observed == WindowPathingState.ACTIVE
                     || observed == WindowPathingState.UNKNOWN
                     || snapshot.isProbeInProgress()
@@ -1740,7 +1927,6 @@ public class FiveRingTaskV2 implements GameTask {
                     state.source(), state.pathingIntentSource(), pathingAgeMs(state));
         }
 
-        long pathingAgeMs = pathingAgeMs(state);
         if (pathingAgeMs < PATHING_RECHECK_GRACE_MS) {
             log.info("[five-ring-v2 pathing] grace active before watcher retry: source={} ageMs={} graceMs={}",
                     state.source(), pathingAgeMs, PATHING_RECHECK_GRACE_MS);
@@ -1880,9 +2066,10 @@ public class FiveRingTaskV2 implements GameTask {
     private FiveRingStepOutcome handleDialog(TaskExecutionContext context, FiveRingPhaseContext state) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
-        if (isFiveRingFinishedStoryVisible("wuhuan-v2:handle-dialog-finished-story")) {
-            log.info("[five-ring-v2 finish] completion story verified; finish without closing dialog");
-            return FiveRingStepOutcome.finished(state, "five-ring finished story visible after battle");
+        FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
+                state, "wuhuan-v2:handle-dialog-finished-story", "after battle");
+        if (completionStory != null) {
+            return completionStory;
         }
 
         DialogResultStatus giveResult = tryGiveItemAndTriggerPathingIfPossible(context, state);
@@ -1893,6 +2080,16 @@ public class FiveRingTaskV2 implements GameTask {
                     "gave shoe; read tracker for next green link");
         }
         if (giveResult == DialogResultStatus.STORY_IGNORED) {
+            FiveRingStepOutcome storyIgnoredCompletion = resolveFiveRingCompletionStoryOutcome(
+                    state, "wuhuan-v2:handle-dialog-story-ignored-completion", "after ignored story");
+            if (storyIgnoredCompletion != null) {
+                return storyIgnoredCompletion;
+            }
+            if (isFiveRingDailyLimitStoryVisible("wuhuan-v2:handle-dialog-story-ignored-completion")) {
+                return FiveRingStepOutcome.finishedTerminal(
+                        state,
+                        "five-ring daily-limit story visible after ignored story");
+            }
             /*
              * Story text can appear during the transition into combat. The window observer owns the
              * combat verdict now; 五环 only waits if that observer has already marked this window as
@@ -2042,9 +2239,10 @@ public class FiveRingTaskV2 implements GameTask {
                     "already-has-task dialog returned after accept; cleanup and read tracker");
         }
 
-        if (isFiveRingFinishedStoryVisible("wuhuan-v2:tracker-miss-finished-story")) {
-            log.info("[five-ring-v2 finish] completion story verified after tracker miss; finish without closing dialog");
-            return FiveRingStepOutcome.finished(state, "five-ring finished story visible after tracker miss");
+        FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
+                state, "wuhuan-v2:tracker-miss-finished-story", "after tracker miss");
+        if (completionStory != null) {
+            return completionStory;
         }
         return null;
     }
@@ -2068,16 +2266,16 @@ public class FiveRingTaskV2 implements GameTask {
 
         if (dialogType == DialogType.STORY) {
             boolean dailyLimit = isFiveRingDailyLimitStoryVisible("wuhuan-v2:current-screen-accept-story");
-            boolean finished = !dailyLimit
-                    && isFiveRingFinishedStoryVisible("wuhuan-v2:current-screen-accept-story");
-            if (dailyLimit || finished) {
-                log.info("[five-ring-v2 finish] terminal story verified while accepting; finish without closing dialog dailyLimit={} finished={}",
-                        dailyLimit, finished);
-                return FiveRingStepOutcome.finished(
+            if (dailyLimit) {
+                log.info("[five-ring-v2 finish] daily-limit story verified while accepting; finish all configured runs without closing dialog");
+                return FiveRingStepOutcome.finishedTerminal(
                         state,
-                        dailyLimit
-                                ? "five-ring daily-limit story visible while accepting"
-                                : "five-ring finished story visible while accepting");
+                        "five-ring daily-limit story visible while accepting");
+            }
+            FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
+                    state, "wuhuan-v2:current-screen-accept-story", "while accepting");
+            if (completionStory != null) {
+                return completionStory;
             }
             log.info("[five-ring-v2 accept] story dialog is not an accept terminal story; close and retry NPC: reason={}",
                     reason);
@@ -2095,7 +2293,7 @@ public class FiveRingTaskV2 implements GameTask {
                     "current-screen accept clicked; read tracker instead of accepting again");
         }
         if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
-            return FiveRingStepOutcome.finished(
+            return FiveRingStepOutcome.finishedTerminal(
                     state,
                     "five-ring current screen accept reported finished/daily limit");
         }
@@ -2131,10 +2329,7 @@ public class FiveRingTaskV2 implements GameTask {
                 TaskYieldPolicy.CONTINUE_CHAIN,
                 () -> {
                     for (int attempt = 1; attempt <= 2; attempt++) {
-                        DialogResult acceptResult = dialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(
-                                "wuhuan-v2:accept-dialog",
-                                List.of(new GreenTemplateClickSpec("wuhuan.acceptTask", ACCEPT_OPTION_TEMPLATE, 20, 20, 4)),
-                                true));
+                        DialogResult acceptResult = clickAcceptTaskOption("wuhuan-v2:accept-dialog");
                         boolean clickedAccept = acceptResult.isClicked();
                         log.info("[five-ring-v2 accept] accept dialog click result={} attempt={}/{} status={} actionKey={}",
                                 clickedAccept, attempt, 2, acceptResult.getStatus(), acceptResult.getActionKey());
@@ -2176,6 +2371,13 @@ public class FiveRingTaskV2 implements GameTask {
                 : AcceptDialogPathingResult.NOT_ACCEPTED;
     }
 
+    private DialogResult clickAcceptTaskOption(String source) {
+        return dialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(
+                source,
+                List.of(new GreenTemplateClickSpec(OPTION_ACCEPT_TASK, ACCEPT_OPTION_TEMPLATE, 20, 20, 4)),
+                true));
+    }
+
     private boolean clickInitialNpcForAccept(TaskExecutionContext context) {
         TaskTransactionOutcome outcome = taskTransactionRunner.run(
                 "wuhuan-v2:clickInitialNpcForAccept",
@@ -2202,14 +2404,57 @@ public class FiveRingTaskV2 implements GameTask {
         return result;
     }
 
-    private boolean isFiveRingFinishedStoryVisible(String source) {
-        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplate(
+    private FiveRingStepOutcome resolveFiveRingCompletionStoryOutcome(FiveRingPhaseContext state,
+                                                                      String source,
+                                                                      String contextMessage) {
+        FiveRingCompletionPolicy.Decision decision = resolveFiveRingCompletionStory(state.round(), source);
+        if (decision == FiveRingCompletionPolicy.Decision.STOP_ALL_RUNS) {
+            return FiveRingStepOutcome.finishedTerminal(
+                    state,
+                    "five-ring terminal completion story visible " + contextMessage);
+        }
+        if (decision == FiveRingCompletionPolicy.Decision.FINISH_CURRENT_RUN) {
+            return FiveRingStepOutcome.finished(
+                    state,
+                    "five-ring once completion story visible " + contextMessage);
+        }
+        return null;
+    }
+
+    private FiveRingCompletionPolicy.Decision resolveFiveRingCompletionStory(int currentRound, String source) {
+        boolean finalTemplateVisible = isFiveRingWhiteStoryTemplateVisible(
                 source + ":finished",
                 "wuhuan.finished",
-                FINISHED_STORY_TEMPLATE));
+                FINISHED_STORY_TEMPLATE,
+                "terminal completion");
+        if (finalTemplateVisible) {
+            return FiveRingCompletionPolicy.decide(botProperties.getWuhuanMaxRuns(), currentRound, true, false);
+        }
+        boolean onceTemplateVisible = isFiveRingWhiteStoryTemplateVisible(
+                source + ":finished-once",
+                "wuhuan.finishedOnce",
+                FINISHED_ONCE_STORY_TEMPLATE,
+                "once completion");
+        FiveRingCompletionPolicy.Decision decision = FiveRingCompletionPolicy.decide(
+                botProperties.getWuhuanMaxRuns(), currentRound, false, onceTemplateVisible);
+        if (decision != FiveRingCompletionPolicy.Decision.NO_MATCH) {
+            log.info("[five-ring-v2 finish] once completion policy: source={} configuredRuns={} currentRound={} decision={}",
+                    source, botProperties.getWuhuanMaxRuns(), currentRound, decision);
+        }
+        return decision;
+    }
+
+    private boolean isFiveRingWhiteStoryTemplateVisible(String source,
+                                                       String actionKey,
+                                                       String templatePath,
+                                                       String label) {
+        DialogResult result = dialogService.handleDialog(DialogHandleRequest.verifyWhiteTemplate(
+                source,
+                actionKey,
+                templatePath));
         if (result.getStatus() == DialogResultStatus.WHITE_TEMPLATE_VISIBLE) {
-            log.info("[five-ring-v2 finish] completion story visible: source={} actionKey={} point=({}, {})",
-                    source, result.getActionKey(), result.getAbsoluteX(), result.getAbsoluteY());
+            log.info("[five-ring-v2 finish] {} story visible: source={} actionKey={} template={} point=({}, {})",
+                    label, source, result.getActionKey(), templatePath, result.getAbsoluteX(), result.getAbsoluteY());
             return true;
         }
         return false;
@@ -2441,7 +2686,10 @@ public class FiveRingTaskV2 implements GameTask {
         TASK_ALREADY_FINISHED
     }
 
-    private record FiveRingSupplyCheck(boolean incenseRefilled, Integer shoeBagIndex) {
+    private record FiveRingRunResult(TaskRunResult taskResult, boolean terminalTask) {
+    }
+
+    private record FiveRingSupplyCheck(boolean incenseRefilled, Integer shoeBagIndex, int shoeCount) {
     }
 
     private TaskExecutionContext resolveExecutionContext(TaskExecutionContext executionContext) {

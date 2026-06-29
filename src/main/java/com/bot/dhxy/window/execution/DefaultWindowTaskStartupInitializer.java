@@ -2,6 +2,7 @@ package com.bot.dhxy.window.execution;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.service.LeftTopStatusSwitchService;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -14,7 +15,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Every submitted task first synchronizes the bound window's player identity and current
  * position. Only leader/main-task windows then run the heavier UI preparation: map tracking option
- * check and Alt+6 visibility check. Member windows and debug/auto-battle tasks skip the hotkey/UI
+ * check and Alt+5/Alt+6 visibility checks. Member windows and debug/auto-battle tasks skip the hotkey/UI
  * work so they do not focus the game client or press unnecessary keys before quietly waiting for
  * combat.</p>
  */
@@ -25,19 +26,23 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
     private final TaskStartupWindowPreparationService startupWindowPreparationService;
     private final PlayerStateService playerStateService;
     private final BotProperties botProperties;
+    private final LeftTopStatusSwitchService leftTopStatusSwitchService;
 
     /**
-     * @param startupWindowPreparationService service that owns startup map/Alt+6 preparation.
+     * @param startupWindowPreparationService service that owns startup map/Alt+5/Alt+6 preparation.
      * @param playerStateService player-state service used to synchronize identity and position into
      *                           the current window-bound {@code GameContext.State}.
      * @param botProperties runtime switches that decide whether heavy startup preparation is enabled.
+     * @param leftTopStatusSwitchService left-top status switch guard for task startup/maintenance.
      */
     public DefaultWindowTaskStartupInitializer(TaskStartupWindowPreparationService startupWindowPreparationService,
                                                PlayerStateService playerStateService,
-                                               BotProperties botProperties) {
+                                               BotProperties botProperties,
+                                               LeftTopStatusSwitchService leftTopStatusSwitchService) {
         this.startupWindowPreparationService = startupWindowPreparationService;
         this.playerStateService = playerStateService;
         this.botProperties = botProperties;
+        this.leftTopStatusSwitchService = leftTopStatusSwitchService;
     }
 
     /**
@@ -74,21 +79,48 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
             return false;
         }
 
+        if (isFiveRingTask(taskCode)
+                && windowContext != null
+                && windowContext.isTaskQueueStartupPreparationDone(taskCode)) {
+            log.info("{} window [{}] startup init skipped: five-ring queue startup preparation already completed taskCode={}",
+                    prefix, windowId, taskCode);
+            return true;
+        }
+
+        if (isFiveRingTask(taskCode)) {
+            /*
+             * 五环多窗口启动必须保持后台探测语义：这里最多用 HWND 截图记录 pending，
+             * 不在 startup initializer 里为每个窗口串行抢前台点左上角开关。
+             */
+            leftTopStatusSwitchService.probeMemberStartup(executionContext, requestedTaskCode(executionContext, taskCode));
+        } else if (isMemberWindow(windowContext, executionContext)) {
+            leftTopStatusSwitchService.probeMemberStartup(executionContext, requestedTaskCode(executionContext, taskCode));
+        } else {
+            leftTopStatusSwitchService.handleLeaderStartup(executionContext, taskCode);
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            return false;
+        }
+
         if (executionContext != null && isStartupInitSkippedTask(executionContext.getTaskCode())) {
             log.info("{} window [{}] startup init skipped for debug task: {}", prefix, windowId, executionContext.getTaskCode());
             return !Thread.currentThread().isInterrupted();
         }
         if (isFiveRingTask(taskCode)) {
             /*
-             * 五环 can run as solo or as the leader task. Keep this outside the heavy map/startup
-             * preparation switch so the task NPC click starts with nearby player overlays hidden,
-             * while member auto-battle windows still stay quiet.
+             * 五环五开启动仍要做完整启动 UI 检查，但正常路径必须是后台 HWND probe：
+             * Alt+1/Alt+U 打开面板、截图判断；只有明确发现需要点击修正时才进前台事务。
              */
-            log.info("{} window [{}] startup init: five-ring ensure Alt+6 visibility only taskCode={}",
+            log.info("{} window [{}] startup init: five-ring run background-first startup preparation taskCode={}",
                     prefix, windowId, taskCode);
-            boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
-            if (!visibilityReady) {
-                log.warn("{} window [{}] startup init warning: five-ring Alt+6 visibility was not confirmed",
+            boolean ready = startupWindowPreparationService.prepareTaskStartupWindowBackgroundFirst();
+            if (ready && windowContext != null && !Thread.currentThread().isInterrupted()) {
+                log.info("{} window [{}] startup init: five-ring mark queue startup preparation done taskCode={} ready={}",
+                        prefix, windowId, taskCode, ready);
+                windowContext.markTaskQueueStartupPreparationDone(taskCode);
+            }
+            if (!ready) {
+                log.warn("{} window [{}] startup init warning: five-ring background-first startup preparation was not fully confirmed",
                         prefix, windowId);
             }
             return !Thread.currentThread().isInterrupted();
@@ -101,21 +133,21 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
         }
         if (isWubeiTask(taskCode)) {
             /*
-             * 五倍 leader also depends on hidden player overlays for task/NPC screenshots. When the
+             * 五倍 leader also depends on hidden stalls/player overlays for task/NPC screenshots. When the
              * full startup preparation is enabled, prepareTaskStartupWindow() below already owns the
-             * single Alt+6 check. Run the narrow guard only as the fast-debug fallback when the full
+             * Alt+5/Alt+6 checks. Run the narrow guard only as the fast-debug fallback when the full
              * preparation chain is disabled.
              */
             if (!botProperties.isTaskStartupPreparationEnabled()) {
-                log.info("{} window [{}] startup init: wubei ensure Alt+6 visibility only because full preparation is disabled taskCode={}",
+                log.info("{} window [{}] startup init: wubei ensure Alt+5/Alt+6 visibility only because full preparation is disabled taskCode={}",
                         prefix, windowId, taskCode);
-                boolean visibilityReady = startupWindowPreparationService.ensureAlt6Visibility();
+                boolean visibilityReady = startupWindowPreparationService.ensureStartupVisibilityOverlays();
                 if (!visibilityReady) {
-                    log.warn("{} window [{}] startup init warning: wubei Alt+6 visibility was not confirmed",
+                    log.warn("{} window [{}] startup init warning: wubei startup visibility overlays were not confirmed",
                             prefix, windowId);
                 }
             } else {
-                log.info("{} window [{}] startup init: wubei full preparation will perform Alt+6 visibility check taskCode={}",
+                log.info("{} window [{}] startup init: wubei full preparation will perform Alt+5/Alt+6 visibility checks taskCode={}",
                         prefix, windowId, taskCode);
             }
             if (Thread.currentThread().isInterrupted()) {
@@ -123,7 +155,7 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
             }
         }
 
-        log.info("{} window [{}] startup init: leader ensure map tracking option and Alt+6 visibility", prefix, windowId);
+        log.info("{} window [{}] startup init: leader ensure map tracking option and Alt+5/Alt+6 visibility", prefix, windowId);
         boolean ready = startupWindowPreparationService.prepareTaskStartupWindow();
         if (!ready) {
             log.warn("{} window [{}] startup init warning: map tracking option was not confirmed", prefix, windowId);
@@ -144,11 +176,20 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
     }
 
     private boolean isFiveRingTask(String taskCode) {
-        return "wuhuan".equals(taskCode) || "wuhuan_v2".equals(taskCode);
+        return "wuhuan_v2".equals(taskCode);
     }
 
     private boolean isWubeiTask(String taskCode) {
         return "wubei".equals(taskCode);
+    }
+
+    private String requestedTaskCode(TaskExecutionContext executionContext, String fallbackTaskCode) {
+        if (executionContext != null
+                && executionContext.getRequestedTaskCode() != null
+                && !executionContext.getRequestedTaskCode().isBlank()) {
+            return executionContext.getRequestedTaskCode();
+        }
+        return fallbackTaskCode;
     }
 
     /**

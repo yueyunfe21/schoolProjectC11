@@ -3,6 +3,7 @@ package com.bot.dhxy.runner.context;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.runner.stop.TaskStopToken;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -29,22 +30,39 @@ public class TaskExecutionContext {
     private final TaskStopToken stopToken;
     private final TaskPauseToken pauseToken;
     private final TaskRetryPolicy retryPolicy;
+    private final WindowRuntimeContext windowRuntimeContext;
+    @Builder.Default
+    private final long taskRunId = 0L;
+    @Builder.Default
+    private final TaskStartupMode startupMode = TaskStartupMode.NORMAL;
     private final LocalDateTime startedAt;
 
     public boolean isStopRequested() {
         return stopToken != null && stopToken.isStopRequested();
     }
 
-    public void throwIfStopRequested() {
+    /**
+     * Applies the shared cooperative stop/pause checkpoint for this task.
+     *
+     * @return milliseconds spent blocked by a user pause during this checkpoint, or {@code 0} when
+     *         no pause wait occurred. Callers may ignore the value unless they own a wall-clock
+     *         business timeout that should exclude user pause time.
+     */
+    public long throwIfStopRequested() {
+        long pauseBlockedMs = 0L;
         if (stopToken != null) {
             stopToken.throwIfStopRequested();
         }
         if (pauseToken != null) {
-            pauseToken.waitIfPaused(stopToken);
+            pauseBlockedMs = pauseToken.waitIfPaused(stopToken);
+        }
+        if (windowRuntimeContext != null) {
+            pauseBlockedMs += windowRuntimeContext.waitIfIdentitySuspended(stopToken);
         }
         if (stopToken != null) {
             stopToken.throwIfStopRequested();
         }
+        return pauseBlockedMs;
     }
 
     public boolean isPauseRequested() {
@@ -61,6 +79,10 @@ public class TaskExecutionContext {
 
     public boolean hasNativeWindowGeometry() {
         return nativeWindowWidth > 0 && nativeWindowHeight > 0;
+    }
+
+    public boolean isAfterCombatExitStartup() {
+        return startupMode == TaskStartupMode.AFTER_COMBAT_EXIT_STARTUP;
     }
 
     public String getNativeWindowGeometryText() {

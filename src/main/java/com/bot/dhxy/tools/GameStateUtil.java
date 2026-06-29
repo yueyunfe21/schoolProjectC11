@@ -54,10 +54,10 @@ public class GameStateUtil {
     private static final long MIN_MAP_CONFIRM_POLL_MS = 100L;
     private static final String FLYING_STATUS_TEMPLATE = "images/template/status/flying.png";
     private static final String UNFLYING_STATUS_TEMPLATE = "images/template/status/unflying.png";
-    private static final int FLYING_STATUS_REL_X = 692;
-    private static final int FLYING_STATUS_REL_Y = 521;
-    private static final int FLYING_STATUS_WIDTH = 59;
-    private static final int FLYING_STATUS_HEIGHT = 28;
+    private static final int FLYING_STATUS_REL_X = 660;
+    private static final int FLYING_STATUS_REL_Y = 573;
+    private static final int FLYING_STATUS_WIDTH = 52;
+    private static final int FLYING_STATUS_HEIGHT = 24;
     private static final double FLYING_STATUS_MATCH_RATE = 0.84;
     private static final long FLYING_STATUS_PANEL_SETTLE_MS = 350L;
     private static final long FLYING_STATUS_PANEL_CLOSE_SETTLE_MS = 180L;
@@ -208,9 +208,9 @@ public class GameStateUtil {
     /**
      * Open the character/status panel and detect whether the current bound window is mounted/flying.
      *
-     * <p>The search rectangle is the status icon area supplied from the current 1024x768 client
-     * layout: absolute {@code (1459,690)-(1518,718)} at base {@code (767,169)}, therefore
-     * window-relative {@code (692,521)-(751,549)}. The method owns the panel lifecycle: it sends
+     * <p>The search rectangle is the Alt+U panel's fly/land button area confirmed from the current
+     * leader window layout: absolute {@code (1888,710)-(1940,734)} at base {@code (1228,137)},
+     * therefore window-relative {@code (660,573)-(712,597)}. The method owns the panel lifecycle: it sends
      * {@code Alt+U}, matches {@code images/template/status/flying.png} first, then
      * {@code images/template/status/unflying.png}, and always toggles {@code Alt+U} in {@code finally}
      * so callers do not leave the status panel open. It performs no mouse click.</p>
@@ -235,21 +235,28 @@ public class GameStateUtil {
                     FLYING_STATUS_REL_Y,
                     FLYING_STATUS_WIDTH,
                     FLYING_STATUS_HEIGHT);
-            boolean flyingMatched = coordinateHelper.findImageInRegion(
-                    FLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
-            if (flyingMatched) {
-                log.info("[flying-status] matched flying: reason={} rect=({}, {})-({}, {}) template={}",
-                        safeReason, rect[0], rect[1], rect[2], rect[3], FLYING_STATUS_TEMPLATE);
-                return FlyingState.FLYING;
-            }
+            try {
+                boolean flyingMatched = coordinateHelper.findImageInRegion(
+                        FLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
+                if (flyingMatched) {
+                    log.info("[flying-status] matched flying: reason={} rect=({}, {})-({}, {}) template={}",
+                            safeReason, rect[0], rect[1], rect[2], rect[3], FLYING_STATUS_TEMPLATE);
+                    return FlyingState.FLYING;
+                }
 
-            boolean unflyingMatched = coordinateHelper.findImageInRegion(
-                    UNFLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
-            FlyingState state = unflyingMatched ? FlyingState.NOT_FLYING : FlyingState.UNKNOWN;
-            log.info("[flying-status] detected: reason={} state={} rect=({}, {})-({}, {}) flyingTemplate={} unflyingTemplate={} unflyingMatched={}",
-                    safeReason, state, rect[0], rect[1], rect[2], rect[3],
-                    FLYING_STATUS_TEMPLATE, UNFLYING_STATUS_TEMPLATE, unflyingMatched);
-            return state;
+                boolean unflyingMatched = coordinateHelper.findImageInRegion(
+                        UNFLYING_STATUS_TEMPLATE, rect, FLYING_STATUS_MATCH_RATE) != null;
+                FlyingState state = unflyingMatched ? FlyingState.NOT_FLYING : FlyingState.UNKNOWN;
+                log.info("[flying-status] detected: reason={} state={} rect=({}, {})-({}, {}) flyingTemplate={} unflyingTemplate={} unflyingMatched={}",
+                        safeReason, state, rect[0], rect[1], rect[2], rect[3],
+                        FLYING_STATUS_TEMPLATE, UNFLYING_STATUS_TEMPLATE, unflyingMatched);
+                return state;
+            } catch (RuntimeException e) {
+                log.warn("[flying-status] detection failed; return UNKNOWN: reason={} rect=({}, {})-({}, {}) flyingTemplate={} unflyingTemplate={}",
+                        safeReason, rect[0], rect[1], rect[2], rect[3],
+                        FLYING_STATUS_TEMPLATE, UNFLYING_STATUS_TEMPLATE, e);
+                return FlyingState.UNKNOWN;
+            }
         } finally {
             boolean closed = inputSequences.pressAltU("flying-status:close:" + safeReason);
             log.info("[flying-status] close status panel: reason={} submitted={}", safeReason, closed);

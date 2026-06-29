@@ -8,8 +8,9 @@ import lombok.Value;
  *
  * @param taskKey stable task-specific key used by the caller, for example {@code wubei.baoxiang_miqing}.
  * @param displayName human-readable title shown in logs.
- * @param templatePath repository-relative path to the washed black/white yellow-title template.
- * @param threshold OpenCV template-match threshold in the washed panel image.
+ * @param templatePath repository-relative path to the title template. The reader decides whether
+ *                     to match against a raw or preprocessed panel image.
+ * @param threshold OpenCV template-match threshold in the selected panel image.
  */
 @Value
 @Builder

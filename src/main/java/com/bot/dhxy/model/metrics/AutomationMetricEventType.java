@@ -9,6 +9,9 @@ package com.bot.dhxy.model.metrics;
 public enum AutomationMetricEventType {
     TASK_STARTED,
     TASK_FINISHED,
+    TASK_ROUND_STARTED,
+    TASK_ROUND_FINISHED,
+    TASK_ROUND_STAGE,
     TASK_TRANSACTION,
     XIULUO_FAILURE_CASE,
     AUTO_COMBAT_WARNING,

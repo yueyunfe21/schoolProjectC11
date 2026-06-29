@@ -48,6 +48,7 @@ public class MiniMapCoordinateReader {
     private static final int MAX_COORD_DIGITS = 3;
     private static final int COORD_BRACKET_MIN_WIDTH = 30;
     private static final int COORD_BRACKET_MAX_WIDTH = 80;
+    private static final int MAX_DIGIT_RUNS_TO_PARTITION = 8;
     private static final double TEMPLATE_MATCH_THRESHOLD = 0.45;
     private static final double MAP_LABEL_MATCH_THRESHOLD = 0.62;
     private static final int MAP_LABEL_CANONICAL_HEIGHT = 18;
@@ -78,13 +79,14 @@ public class MiniMapCoordinateReader {
         if (raw == null) {
             return Optional.empty();
         }
+        CoordinateRecognition recognition = null;
         try {
             long captureElapsedMs = System.currentTimeMillis() - startedAt;
             // Stage 2: parse the numeric coordinate with local digit templates. The map
             // label is handled separately below because Chinese map labels use full-word
             // templates instead of per-digit glyph splitting.
             long coordStartedAt = System.currentTimeMillis();
-            CoordinateRecognition recognition = recognizeCoordinate(raw, false, false);
+            recognition = recognizeCoordinate(raw, false, false, true);
             long coordElapsedMs = System.currentTimeMillis() - coordStartedAt;
             MapCoordinate coordinate = recognition.coordinate().orElse(null);
             if (coordinate == null) {
@@ -97,7 +99,7 @@ public class MiniMapCoordinateReader {
             // and match it against saved map-label templates. A bad label match must fail
             // this fast path so the caller can fall back to local/Baidu OCR.
             long labelCropStartedAt = System.currentTimeMillis();
-            BufferedImage label = extractCleanMapLabelImage(raw);
+            BufferedImage label = extractCleanMapLabelImage(raw, recognition);
             long labelCropElapsedMs = System.currentTimeMillis() - labelCropStartedAt;
             if (label == null) {
                 log.info("[minimap-location] template stage failed: reason=label-crop-miss captureMs={} coordMs={} labelCropMs={}",
@@ -134,6 +136,9 @@ public class MiniMapCoordinateReader {
                 label.flush();
             }
         } finally {
+            if (recognition != null && recognition.clean() != null) {
+                recognition.clean().flush();
+            }
             raw.flush();
         }
     }
@@ -259,9 +264,17 @@ public class MiniMapCoordinateReader {
     }
 
     private CoordinateRecognition recognizeCoordinate(BufferedImage raw, boolean saveMapLabel, boolean debugOutput) {
+        return recognizeCoordinate(raw, saveMapLabel, debugOutput, false);
+    }
+
+    private CoordinateRecognition recognizeCoordinate(BufferedImage raw,
+                                                      boolean saveMapLabel,
+                                                      boolean debugOutput,
+                                                      boolean keepIntermediateForLabel) {
         // Stage 1: threshold the mini-map strip into a binary image. Downstream glyph
         // segmentation and template scoring assume white foreground on black background.
         BufferedImage clean = cleanCoordinateText(raw);
+        boolean transferCleanOwnership = false;
         try {
             if (debugOutput) {
                 saveDebugImage(clean, "minimap_coord_clean.png");
@@ -278,7 +291,7 @@ public class MiniMapCoordinateReader {
                     String failurePath = saveFailureDebugImages(raw, clean, "no_glyph");
                     log.info("[坐标数字] 未切出任何候选字符 failPath={}", failurePath);
                 }
-                return new CoordinateRecognition(null, Optional.empty());
+                return new CoordinateRecognition(null, Optional.<MapCoordinate>empty(), null, null, null);
             }
 
             // Stage 3: locate the coordinate bracket pair first, then use the bracket span
@@ -290,7 +303,7 @@ public class MiniMapCoordinateReader {
                     String failurePath = saveFailureDebugImages(raw, clean, "no_bracket");
                     log.info("[坐标数字] 未找到坐标括号区域 glyphs={} failPath={}", glyphs.size(), failurePath);
                 }
-                return new CoordinateRecognition(null, Optional.empty());
+                return new CoordinateRecognition(null, Optional.<MapCoordinate>empty(), null, null, null);
             }
 
             // Stage 4: find a comma whose left and right sides both decode to plausible
@@ -304,7 +317,7 @@ public class MiniMapCoordinateReader {
                     log.info("[坐标数字] 未找到坐标逗号区域 mapLabelPath={} span={} failPath={}",
                             mapLabelPath, span.get(), failurePath);
                 }
-                return new CoordinateRecognition(mapLabelPath, Optional.empty());
+                return new CoordinateRecognition(mapLabelPath, Optional.<MapCoordinate>empty(), null, null, null);
             }
 
             // Stage 5: decode left/right digit ranges and only return a coordinate when
@@ -325,9 +338,20 @@ public class MiniMapCoordinateReader {
                 String failurePath = saveFailureDebugImages(raw, clean, "bad_raw");
                 log.info("[坐标数字] 保存失败帧 failPath={} raw='{}'", failurePath, text);
             }
-            return new CoordinateRecognition(mapLabelPath, coordinate);
+            BufferedImage reusableClean = null;
+            List<GlyphBox> reusableGlyphs = null;
+            BracketSpan reusableSpan = null;
+            if (keepIntermediateForLabel && coordinate.isPresent()) {
+                reusableClean = clean;
+                reusableGlyphs = glyphs;
+                reusableSpan = span.get();
+                transferCleanOwnership = true;
+            }
+            return new CoordinateRecognition(mapLabelPath, coordinate, reusableClean, reusableGlyphs, reusableSpan);
         } finally {
-            clean.flush();
+            if (!transferCleanOwnership) {
+                clean.flush();
+            }
         }
     }
 
@@ -589,6 +613,9 @@ public class MiniMapCoordinateReader {
         if (runs.isEmpty()) {
             return new DigitRecognition("", List.of(), 0.0);
         }
+        if (runs.size() > MAX_DIGIT_RUNS_TO_PARTITION) {
+            runs = mergeClosestRunsUntilWithinLimit(runs, MAX_DIGIT_RUNS_TO_PARTITION);
+        }
 
         DigitRecognition best = null;
         int maxDigits = Math.min(MAX_COORD_DIGITS, runs.size());
@@ -608,6 +635,26 @@ public class MiniMapCoordinateReader {
             }
         }
         return best == null ? new DigitRecognition("", List.of(), 0.0) : best;
+    }
+
+    private List<GlyphBox> mergeClosestRunsUntilWithinLimit(List<GlyphBox> runs, int limit) {
+        List<GlyphBox> merged = new ArrayList<>(runs);
+        while (merged.size() > limit) {
+            int bestIndex = 0;
+            int bestGap = Integer.MAX_VALUE;
+            for (int i = 0; i < merged.size() - 1; i++) {
+                int gap = Math.max(0, merged.get(i + 1).minX - merged.get(i).maxX - 1);
+                if (gap < bestGap) {
+                    bestGap = gap;
+                    bestIndex = i;
+                }
+            }
+            GlyphBox combined = merged.get(bestIndex).copy();
+            combined.include(merged.get(bestIndex + 1));
+            merged.set(bestIndex, combined);
+            merged.remove(bestIndex + 1);
+        }
+        return merged;
     }
 
     private DigitRecognition recognizePartition(BufferedImage clean, List<GlyphBox> runs, int splitMask) {
@@ -938,6 +985,17 @@ public class MiniMapCoordinateReader {
     }
 
     private BufferedImage extractCleanMapLabelImage(BufferedImage raw) {
+        return extractCleanMapLabelImage(raw, null);
+    }
+
+    private BufferedImage extractCleanMapLabelImage(BufferedImage raw, CoordinateRecognition recognition) {
+        if (recognition != null
+                && recognition.clean() != null
+                && recognition.glyphs() != null
+                && recognition.bracketSpan() != null) {
+            return extractCleanMapLabelImage(recognition.clean(), recognition.glyphs(), recognition.bracketSpan());
+        }
+
         // Reuse the coordinate bracket detector to decide where the map label ends. The
         // map name is everything meaningful to the left of the first coordinate bracket.
         BufferedImage clean = cleanCoordinateText(raw);
@@ -956,6 +1014,15 @@ public class MiniMapCoordinateReader {
         } finally {
             clean.flush();
         }
+    }
+
+    private BufferedImage extractCleanMapLabelImage(BufferedImage clean, List<GlyphBox> glyphs, BracketSpan span) {
+        BufferedImage tightLabel = cropTightMapLabel(clean, glyphs, span);
+        if (tightLabel != null) {
+            return tightLabel;
+        }
+        int right = Math.max(0, span.minX() - 2);
+        return cropColor(clean, 0, 0, right, clean.getHeight() - 1);
     }
 
     private BufferedImage cropTightMapLabel(BufferedImage clean, List<GlyphBox> glyphs, BracketSpan span) {
@@ -1354,6 +1421,12 @@ public class MiniMapCoordinateReader {
         String mapLabelPath;
 
         Optional<MapCoordinate> coordinate;
+
+        BufferedImage clean;
+
+        List<GlyphBox> glyphs;
+
+        BracketSpan bracketSpan;
 
     }
 

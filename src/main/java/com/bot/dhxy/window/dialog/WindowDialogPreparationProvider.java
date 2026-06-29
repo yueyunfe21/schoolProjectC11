@@ -1,6 +1,7 @@
 package com.bot.dhxy.window.dialog;
 
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.dialog.DialogDetection;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowDialogInterest;
@@ -35,4 +36,22 @@ public interface WindowDialogPreparationProvider {
     Optional<PreparedDialogAction> prepare(WindowDialogInterest interest,
                                            DialogOperation operation,
                                            String source);
+
+    /**
+     * Prepare one dialog action using a tick-scoped detection that was already captured by the
+     * runner. Implementations may ignore it by delegating to the legacy method, but should reuse it
+     * when it matches the requested operation's dialog type.
+     *
+     * @param interest current task interest.
+     * @param operation operation to prepare.
+     * @param source log/debug source to stamp into prepared action metadata.
+     * @param suppliedDetection optional detection captured earlier in the same watcher tick.
+     * @return prepared action, or empty when the visible dialog does not match this operation.
+     */
+    default Optional<PreparedDialogAction> prepare(WindowDialogInterest interest,
+                                                   DialogOperation operation,
+                                                   String source,
+                                                   DialogDetection suppliedDetection) {
+        return prepare(interest, operation, source);
+    }
 }

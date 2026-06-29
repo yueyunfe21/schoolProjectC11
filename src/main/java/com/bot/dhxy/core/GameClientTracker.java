@@ -15,6 +15,7 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
@@ -61,6 +62,7 @@ public class GameClientTracker {
 
     private final TrackerState sharedState = new TrackerState();
     private final ThreadLocal<TrackerState> threadState = ThreadLocal.withInitial(TrackerState::new);
+    private volatile CaptureAudit lastCaptureAudit = CaptureAudit.empty();
 
     public int getWindowBaseX() { return state().windowBaseX; }
 
@@ -71,6 +73,8 @@ public class GameClientTracker {
     public HWND getGameHwnd() { return state().gameHwnd; }
 
     public String getLatestVisionPath() { return windowScopedTempPath.resolve("latest_vision.png"); }
+
+    public CaptureAudit getLastCaptureAudit() { return lastCaptureAudit; }
 
     public boolean refreshWindowState() {
         return globalInputLock.callWithLock(this::checkBaseAddress);
@@ -374,6 +378,9 @@ public class GameClientTracker {
         String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
         String foregroundHwnd = windowFocusService.getForegroundNativeHandleText();
         windowInteractionMetricsService.recordCapture(windowId, provider, success, mode, elementName);
+        lastCaptureAudit = new CaptureAudit(System.currentTimeMillis(), mode, elementName, savePath,
+                success, reason, provider, x1, y1, x2, y2, s.windowBaseX, s.windowBaseY,
+                windowId, hwndText, foregroundHwnd, s.fullWindowTitle);
         String message = "Capture result: mode={} element={} windowId={} result={} reason={} provider={} path={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} foreground={} title={}";
         Object[] args = {
                 mode, elementName, windowId, success ? "success" : "failed", reason, provider, savePath,
@@ -470,21 +477,43 @@ public class GameClientTracker {
                     + " handle=" + binding.getNativeHandle());
             return false;
         }
-        Optional<WindowNativeBinding> refreshed = bindingRefreshService.refreshGeometry(binding);
+        Optional<WindowNativeBinding> refreshed = bindingRefreshService.refreshAndCommit(context);
         if (refreshed.isEmpty()) {
             logTrackerMiss("native-binding-live-geometry-unavailable windowId=" + context.getWindowId()
                     + " handle=" + binding.getNativeHandle());
             return false;
         }
         WindowNativeBinding liveBinding = refreshed.get();
-        if (!binding.hasSameGeometry(liveBinding)) {
-            context.setNativeBinding(liveBinding);
-        }
-        String title = liveBinding.getTitle() == null || liveBinding.getTitle().isBlank()
-                ? context.getWindowId()
-                : liveBinding.getTitle();
+        String title = resolveBoundWindowTitle(liveBinding, context);
         updateBaseFromBinding(liveBinding, hwnd, title);
         return true;
+    }
+
+    private String resolveBoundWindowTitle(WindowNativeBinding liveBinding, WindowRuntimeContext context) {
+        String liveTitle = normalizeTitle(liveBinding.getTitle());
+        if (liveTitle != null) {
+            return liveTitle;
+        }
+
+        TrackerState s = state();
+        String previousTrackerTitle = normalizeTitle(s.fullWindowTitle);
+        if (previousTrackerTitle != null && WindowTitleIdentityParser.parse(previousTrackerTitle).isPresent()) {
+            log.warn("bound window live title is blank; retaining previous parseable tracker title: windowId={} hwnd={} previousTitle={}",
+                    context.getWindowId(), liveBinding.getNativeHandle(), previousTrackerTitle);
+            return previousTrackerTitle;
+        }
+
+        log.warn("bound window live title is blank and no parseable tracker title exists; tracker title will stay blank: windowId={} hwnd={}",
+                context.getWindowId(), liveBinding.getNativeHandle());
+        return "";
+    }
+
+    private String normalizeTitle(String title) {
+        if (title == null) {
+            return null;
+        }
+        String normalized = title.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private void updateBaseFromBinding(WindowNativeBinding binding, HWND hwnd, String title) {
@@ -664,6 +693,49 @@ public class GameClientTracker {
         TaskSleep.sleep(50);
         User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
         log.info("后台 Alt+8 指令投递完毕");
+    }
+
+    /**
+     * Last screenshot attempt details for callers that need to prove which bound window produced a
+     * diagnostic image without turning every successful HWND capture into a high-volume info log.
+     */
+    public record CaptureAudit(long capturedAtMs,
+                               String mode,
+                               String elementName,
+                               String path,
+                               boolean success,
+                               String reason,
+                               String provider,
+                               int x1,
+                               int y1,
+                               int x2,
+                               int y2,
+                               int baseX,
+                               int baseY,
+                               String windowId,
+                               String hwnd,
+                               String foregroundHwnd,
+                               String title) {
+        private static CaptureAudit empty() {
+            return new CaptureAudit(0L, "-", "-", null, false, "NO_CAPTURE", "UNKNOWN",
+                    0, 0, 0, 0, 0, 0, "-", "-", "-", "-");
+        }
+
+        public String toLogText() {
+            return "capturedAtMs=" + capturedAtMs
+                    + " mode=" + mode
+                    + " element=" + elementName
+                    + " success=" + success
+                    + " reason=" + reason
+                    + " provider=" + provider
+                    + " path=" + path
+                    + " rect=(" + x1 + "," + y1 + ")-(" + x2 + "," + y2 + ")"
+                    + " base=(" + baseX + "," + baseY + ")"
+                    + " windowId=" + windowId
+                    + " hwnd=" + hwnd
+                    + " foreground=" + foregroundHwnd
+                    + " title=" + title;
+        }
     }
 
     private static class TrackerState {

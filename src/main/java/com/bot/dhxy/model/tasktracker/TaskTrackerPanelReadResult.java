@@ -12,10 +12,13 @@ import java.util.List;
  * @param titleTemplate matched task title template; null when {@code found=false}.
  * @param detailRawPath window-scoped raw cropped task block image path.
  * @param detailYellowPath window-scoped yellow-washed task block image path used for OCR.
+ * @param detailAbsoluteLeft screen-absolute X coordinate of the task block image left edge.
+ * @param detailAbsoluteTop screen-absolute Y coordinate of the task block image top edge.
  * @param yellowText OCR text read from yellow title/content in the cropped task block.
  * @param greenLinks clickable green text segments in screen-absolute pixels.
  * @param greenBandWidth width of the selected green text band, in pixels.
- * @param probeObjective true when the green links look like the two-link 显形镜 style.
+ * @param probeObjective true when the green links look like a two-link objective; this is a shape
+ *                       hint only, because 暗雷 multi-map text can also split into two links.
  */
 @Value
 @Builder
@@ -24,6 +27,8 @@ public class TaskTrackerPanelReadResult {
     TaskTrackerTitleTemplate titleTemplate;
     String detailRawPath;
     String detailYellowPath;
+    int detailAbsoluteLeft;
+    int detailAbsoluteTop;
     String yellowText;
 
     @Builder.Default

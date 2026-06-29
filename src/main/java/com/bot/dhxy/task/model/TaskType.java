@@ -1,12 +1,12 @@
 package com.bot.dhxy.task.model;
 
 public enum TaskType {
-    WUHuan("wuhuan", "五环"),
-    WUHuan_V2("wuhuan_v2", "五环V2"),
+    WUHuan_V2("wuhuan_v2", "五环"),
     WUBEI("wubei", "五倍"),
     XIULUO("xiuluo", "修罗"),
     XIULUO_V2("xiuluo_v2", "修罗"),
     AUTO_BATTLE("auto_battle", "自动战斗"),
+    SLEEP_COMPUTER("sleep_computer", "睡眠计算机"),
     DEBUG_COORDINATE("debug_coordinate", "坐标调试"),
     DEBUG_MAP_CALIBRATOR("debug_map_calibrator", "地图校准"),
     DEBUG_TEAM_ROLE("debug_team_role", "队伍识别测试"),

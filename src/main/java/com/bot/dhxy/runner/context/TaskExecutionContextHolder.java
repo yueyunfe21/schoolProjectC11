@@ -34,11 +34,18 @@ public class TaskExecutionContextHolder {
         return Optional.ofNullable(current.get());
     }
 
-    public void checkpointIfPresent() {
+    /**
+     * Applies a checkpoint to the context bound to the current task thread, if any.
+     *
+     * @return milliseconds spent blocked by a user pause, or {@code 0} when no current context
+     *         exists or no pause wait occurred.
+     */
+    public long checkpointIfPresent() {
         TaskExecutionContext context = current.get();
         if (context != null) {
-            context.throwIfStopRequested();
+            return context.throwIfStopRequested();
         }
+        return 0L;
     }
 
     public boolean isPauseRequested() {

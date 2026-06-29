@@ -51,6 +51,7 @@ public class AutoCombatPanelService {
     private static final int AUTO_PANEL_REFRESH_WAIT_MS = 1000;
     private static final long AUTO_PANEL_MISSING_ATTENTION_MS = 10 * 60 * 1000L;
     private static final long AUTO_PANEL_MISSING_ATTENTION_REPEAT_MS = 60 * 1000L;
+    private static final long REFRESH_DUE_TEAM_BURST_GUARD_MS = 30_000L;
     private static final Pattern AUTO_PANEL_ROUND_DIGITS = Pattern.compile("\\d{1,2}");
 
     private final GameClientTracker tracker;
@@ -66,14 +67,24 @@ public class AutoCombatPanelService {
     private final Map<String, AutoCombatPanelRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
     public void verifyAndAlignPanel() {
-        log.info("auto-combat panel: verify and align");
-        AutoCombatPanelMatch panelMatch = ensurePanelMatchVisible("verify", 1000);
+        verifyAndAlignPanel(PanelVerifyMode.VERIFY_AND_REFRESH);
+    }
+
+    public boolean verifyAndAlignPanel(PanelVerifyMode mode) {
+        PanelVerifyMode safeMode = mode == null ? PanelVerifyMode.VERIFY_AND_REFRESH : mode;
+        log.info("auto-combat panel: verify and align mode={}", safeMode);
+        AutoCombatPanelMatch panelMatch = ensurePanelMatchVisible(safeMode.source(), 1000);
         if (panelMatch == null) {
-            return;
+            return false;
         }
 
         panelMatch = alignPanelIfNeeded(panelMatch);
-        refreshAutoCombatRoundsIfNeeded("verify");
+        if (!safeMode.refreshRounds()) {
+            log.info("auto-combat panel rounds refresh skipped: source={} reason=verify-only mode={}",
+                    safeMode.source(), safeMode);
+            return false;
+        }
+        return refreshAutoCombatRoundsIfNeeded(panelMatch, safeMode.source());
     }
 
     public Point ensurePanelVisible(String source, int waitAfterOpenMs) {
@@ -144,36 +155,57 @@ public class AutoCombatPanelService {
         return panelMatch;
     }
 
-    private void refreshAutoCombatRoundsIfNeeded(String source) {
+    public static RoundsRefreshReason resolveRoundsRefreshReason(int estimatedRounds,
+                                                                 long lastRefreshAt,
+                                                                 long refreshIntervalMs,
+                                                                 long now) {
+        if (estimatedRounds < 0) {
+            return RoundsRefreshReason.UNKNOWN;
+        }
+        if (estimatedRounds <= LOW_ROUNDS_REFRESH_THRESHOLD) {
+            return RoundsRefreshReason.LOW_ROUNDS;
+        }
+        if (refreshIntervalMs > 0L && (lastRefreshAt <= 0L || now - lastRefreshAt >= refreshIntervalMs)) {
+            return RoundsRefreshReason.REFRESH_DUE;
+        }
+        return null;
+    }
+
+    private boolean refreshAutoCombatRoundsIfNeeded(AutoCombatPanelMatch panelMatch, String source) {
         int estimatedRounds = gameContext.getAutoCombatEstimatedRounds();
         long lastRefreshAt = gameContext.getLastAutoCombatRefreshAt();
         long now = System.currentTimeMillis();
         long refreshIntervalMs = Math.max(0L, botProperties.getAutoBattleRefreshIntervalMs());
-        boolean unknownRounds = estimatedRounds < 0;
-        boolean lowRounds = estimatedRounds <= LOW_ROUNDS_REFRESH_THRESHOLD;
-        boolean refreshDue = refreshIntervalMs > 0
-                && (lastRefreshAt <= 0L || now - lastRefreshAt >= refreshIntervalMs);
+        OptionalInt visibleRounds = readRemainingRounds(panelMatch, source);
+        if (visibleRounds.isPresent()) {
+            gameContext.setAutoCombatEstimatedRounds(visibleRounds.getAsInt());
+            estimatedRounds = visibleRounds.getAsInt();
+        }
+        RoundsRefreshReason refreshReason = resolveRoundsRefreshReason(
+                estimatedRounds, lastRefreshAt, refreshIntervalMs, now);
 
-        if (!unknownRounds && !lowRounds && !refreshDue) {
-            log.info("auto-combat panel rounds estimate healthy without OCR: source={} estimate={} threshold={} lastRefreshAgoMs={} intervalMs={}",
+        if (refreshReason == null) {
+            log.info("auto-combat panel rounds estimate healthy after visible/cache check: source={} estimate={} visible={} threshold={} lastRefreshAgoMs={} intervalMs={}",
                     source, estimatedRounds, LOW_ROUNDS_REFRESH_THRESHOLD,
+                    visibleRounds.isPresent() ? visibleRounds.getAsInt() : -1,
                     lastRefreshAt <= 0L ? -1L : now - lastRefreshAt, refreshIntervalMs);
-            return;
+            return false;
         }
 
-        String reason = unknownRounds ? "unknown" : lowRounds ? "low-rounds" : "refresh-due";
         log.info("auto-combat panel rounds refresh by Alt+8 without OCR: source={} reason={} estimate={} threshold={} lastRefreshAgoMs={} intervalMs={}",
-                source, reason, estimatedRounds, LOW_ROUNDS_REFRESH_THRESHOLD,
+                source, refreshReason.logValue(), estimatedRounds, LOW_ROUNDS_REFRESH_THRESHOLD,
                 lastRefreshAt <= 0L ? -1L : now - lastRefreshAt, refreshIntervalMs);
-        boolean sent = inputSequences.submitAndWait("battle:refreshAutoPanelRounds:" + source + ":" + reason, List.of(
+        boolean sent = inputSequences.submitAndWait("battle:refreshAutoPanelRounds:" + source + ":" + refreshReason.logValue(), List.of(
                 InputAction.pressAlt8(),
                 InputAction.sleep(AUTO_PANEL_REFRESH_WAIT_MS)
         ));
         if (sent) {
-            recordAutoCombatRefresh("refresh:" + source + ":" + reason);
+            recordAutoCombatRefresh("refresh:" + source + ":" + refreshReason.logValue());
+            return true;
         } else {
             log.warn("auto-combat panel rounds refresh input failed: source={} reason={} estimate={}",
-                    source, reason, estimatedRounds);
+                    source, refreshReason.logValue(), estimatedRounds);
+            return false;
         }
     }
 
@@ -235,12 +267,16 @@ public class AutoCombatPanelService {
     }
 
     private AutoCombatPanelMatch findAutoCombatBox() {
-        tracker.updateGlobalVision();
+        boolean captured = tracker.updateGlobalVision();
         String rawPath = tracker.getLatestVisionPath();
+        GameClientTracker.CaptureAudit captureAudit = tracker.getLastCaptureAudit();
+        log.info("auto-combat panel screenshot audit: captured={} rawPath={} audit={}",
+                captured, rawPath, captureAudit.toLogText());
 
         BufferedImage rawImage = ImagePreprocessor.pathToBufferedImage(rawPath);
         if (rawImage == null) {
-            log.error("auto-combat panel scan failed: cannot read screenshot path={}", rawPath);
+            log.error("auto-combat panel scan failed: cannot read screenshot path={} audit={}",
+                    rawPath, captureAudit.toLogText());
             return null;
         }
 
@@ -250,8 +286,9 @@ public class AutoCombatPanelService {
             Point inferredGreenMarker = new Point(
                     fallbackPoint.x + FALLBACK_ANCHOR_TO_GREEN_MARKER_X,
                     fallbackPoint.y + FALLBACK_ANCHOR_TO_GREEN_MARKER_Y);
-            log.info("auto-combat panel anchor matched: point=({}, {}) inferredGreenMarker=({}, {})",
-                    fallbackPoint.x, fallbackPoint.y, inferredGreenMarker.x, inferredGreenMarker.y);
+            log.info("auto-combat panel anchor matched: point=({}, {}) inferredGreenMarker=({}, {}) audit={}",
+                    fallbackPoint.x, fallbackPoint.y, inferredGreenMarker.x, inferredGreenMarker.y,
+                    captureAudit.toLogText());
             int greenTemplateWidth = readImageWidth(QUXIAO_ZIDONG_PATH);
             rawImage.flush();
             return new AutoCombatPanelMatch(
@@ -260,22 +297,24 @@ public class AutoCombatPanelService {
                     greenTemplateWidth,
                     "panel-anchor");
         }
-        log.warn("auto-combat panel anchor not matched: template={}", AUTO_PANEL_FALLBACK_ANCHOR_PATH);
+        log.warn("auto-combat panel anchor not matched: template={} audit={}",
+                AUTO_PANEL_FALLBACK_ANCHOR_PATH, captureAudit.toLogText());
 
         String washedGreenPath = windowScopedTempPath.resolve("debug_hsv_mask_green.png");
         ImagePreprocessor.countGreenPixelsHSV(rawImage, washedGreenPath);
         rawImage.flush();
         Point greenPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(ZIDONG_GREEN_PATH, washedGreenPath, 0.80);
         if (greenPoint == null) {
-            log.warn("auto-combat panel green auto marker not matched: path={} template={}",
-                    washedGreenPath, ZIDONG_GREEN_PATH);
+            log.warn("auto-combat panel green auto marker not matched: path={} template={} audit={}",
+                    washedGreenPath, ZIDONG_GREEN_PATH, captureAudit.toLogText());
             return null;
         }
         Point inferredPanelAnchor = new Point(
                 greenPoint.x - FALLBACK_ANCHOR_TO_GREEN_MARKER_X,
                 greenPoint.y - FALLBACK_ANCHOR_TO_GREEN_MARKER_Y);
-        log.info("auto-combat panel green auto marker matched: point=({}, {}) inferredPanelAnchor=({}, {})",
-                greenPoint.x, greenPoint.y, inferredPanelAnchor.x, inferredPanelAnchor.y);
+        log.info("auto-combat panel green auto marker matched: point=({}, {}) inferredPanelAnchor=({}, {}) audit={}",
+                greenPoint.x, greenPoint.y, inferredPanelAnchor.x, inferredPanelAnchor.y,
+                captureAudit.toLogText());
         int greenTemplateWidth = readImageWidth(QUXIAO_ZIDONG_PATH);
         return new AutoCombatPanelMatch(inferredPanelAnchor, greenPoint, greenTemplateWidth, "green-auto");
     }
@@ -427,6 +466,74 @@ public class AutoCombatPanelService {
         private boolean panelAligned = false;
         private long autoPanelMissingSinceAt = 0L;
         private long lastAutoPanelMissingAttentionAt = 0L;
+    }
+
+    public enum PanelVerifyMode {
+        ENTRY_MAINTENANCE(false, "entry-maintenance"),
+        VERIFY_AND_REFRESH(true, "verify");
+
+        private final boolean refreshRounds;
+        private final String source;
+
+        PanelVerifyMode(boolean refreshRounds, String source) {
+            this.refreshRounds = refreshRounds;
+            this.source = source;
+        }
+
+        private boolean refreshRounds() {
+            return refreshRounds;
+        }
+
+        private String source() {
+            return source;
+        }
+    }
+
+    public enum RoundsRefreshReason {
+        UNKNOWN("unknown"),
+        LOW_ROUNDS("low-rounds"),
+        REFRESH_DUE("refresh-due");
+
+        private final String logValue;
+
+        RoundsRefreshReason(String logValue) {
+            this.logValue = logValue;
+        }
+
+        private String logValue() {
+            return logValue;
+        }
+    }
+
+    public record RefreshDueBurstDecision(boolean deferred, long retryAfterMs, long lastTeamRefreshAgeMs) {
+        private static RefreshDueBurstDecision allowed() {
+            return new RefreshDueBurstDecision(false, 0L, -1L);
+        }
+
+        private static RefreshDueBurstDecision deferred(long retryAfterMs, long lastTeamRefreshAgeMs) {
+            return new RefreshDueBurstDecision(true, retryAfterMs, lastTeamRefreshAgeMs);
+        }
+    }
+
+    public static class TeamRefreshDueBurstGuard {
+        private final Map<String, Long> lastRefreshDueByTeam = new ConcurrentHashMap<>();
+
+        public RefreshDueBurstDecision reserveIfAllowed(String teamKey, String windowId, String reason, long now) {
+            if (!RoundsRefreshReason.REFRESH_DUE.logValue().equals(reason)) {
+                return RefreshDueBurstDecision.allowed();
+            }
+            String safeTeamKey = teamKey == null || teamKey.isBlank() ? windowId : teamKey;
+            String key = safeTeamKey == null || safeTeamKey.isBlank() ? "default" : safeTeamKey;
+            Long lastAt = lastRefreshDueByTeam.get(key);
+            if (lastAt != null) {
+                long age = now - lastAt;
+                if (age >= 0L && age < REFRESH_DUE_TEAM_BURST_GUARD_MS) {
+                    return RefreshDueBurstDecision.deferred(REFRESH_DUE_TEAM_BURST_GUARD_MS - age, age);
+                }
+            }
+            lastRefreshDueByTeam.put(key, now);
+            return RefreshDueBurstDecision.allowed();
+        }
     }
 
     private static class AutoCombatPanelMatch {
