@@ -8,6 +8,11 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingSnapshot;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTitleIdentity;
+import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -18,7 +23,9 @@ import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Detects and handles the in-game "return to team" signal after a member leaves the team.
@@ -36,6 +43,7 @@ public class TeamReturnService {
     private static final String LEADER_RETURN_SIGNAL_PATH = "images/template/status/zhao.png";
     private static final long DEFAULT_LEADER_WAIT_TIMEOUT_MS = 120_000L;
     private static final long DEFAULT_LEADER_WAIT_POLL_MS = 3_000L;
+    private static final long NO_MATCH_LOG_INTERVAL_MS = 10_000L;
 
     private final CoordinateHelper coordinateHelper;
     private final InputSequences inputSequences;
@@ -43,6 +51,9 @@ public class TeamReturnService {
     private final PlayerStateService playerStateService;
     @Lazy
     private final GameClientTracker tracker;
+    private final Map<String, Long> lastNoMatchLogAtByWindow = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastReturnButtonFoundAtByWindow = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastReturnButtonClickedAtByWindow = new ConcurrentHashMap<>();
 
     /**
      * Click the return-team button if it is visible for this window.
@@ -54,8 +65,10 @@ public class TeamReturnService {
     public boolean clickReturnTeamIfPresent(TaskExecutionContext context, String source) {
         Point buttonPoint = findReturnTeamButton();
         if (buttonPoint == null) {
+            logReturnButtonNoMatch(context, source);
             return false;
         }
+        lastReturnButtonFoundAtByWindow.put(windowKey(context), System.currentTimeMillis());
 
         log.info("{} team return: return button found by {}, ensure sheyaoxiang before clicking return",
                 context.getLogPrefix(), source);
@@ -74,6 +87,7 @@ public class TeamReturnService {
                 InputAction.clickLeft(clickPoint.x, clickPoint.y, 150),
                 InputAction.sleep(500)
         ));
+        lastReturnButtonClickedAtByWindow.put(windowKey(context), System.currentTimeMillis());
         return true;
     }
 
@@ -219,6 +233,130 @@ public class TeamReturnService {
         return coordinateHelper.findImageInRegion(MEMBER_RETURN_BUTTON_PATH, rect, botProperties.getReturnTeamMatchRate());
     }
 
+    private void logReturnButtonNoMatch(TaskExecutionContext context, String source) {
+        String windowKey = windowKey(context);
+        long now = System.currentTimeMillis();
+        Long lastLogAt = lastNoMatchLogAtByWindow.get(windowKey);
+        if (lastLogAt != null && now - lastLogAt < NO_MATCH_LOG_INTERVAL_MS) {
+            return;
+        }
+        lastNoMatchLogAtByWindow.put(windowKey, now);
+        int[] rect = coordinateHelper.getScaledRect(
+                botProperties.getReturnTeamAreaX(),
+                botProperties.getReturnTeamAreaY(),
+                botProperties.getReturnTeamAreaW(),
+                botProperties.getReturnTeamAreaH()
+        );
+        boolean currentWindowReturnMarkerPresent = isReturnTeamSignalPresent();
+        ReturnButtonNoMatchScan memberScan = scanReturnButtonNoMatch(rect, source);
+        Long lastFoundAt = lastReturnButtonFoundAtByWindow.get(windowKey);
+        Long lastClickedAt = lastReturnButtonClickedAtByWindow.get(windowKey);
+        WindowTitleIdentity titleIdentity = parseNativeTitle(context);
+        log.info("{} team return: return button not found source={} task={} requested={} windowId={} role={} hwnd={} nativeTitle={} player={}/{} server={} localSession={} localSupportMember={} leaderPresent={} leaderWindow={} currentWindowReturnMarkerPresent={} runtime={} memberScanCapture={} memberScanElement={} memberScanSize={} bestScore={} bestPoint=({}, {}) bestRect={} area=({}, {}) {}x{} template={} threshold={} lastFoundAgeMs={} lastClickedAgeMs={}",
+                logPrefix(context), source,
+                context == null ? null : context.getTaskCode(),
+                context == null ? null : context.getRequestedTaskCode(),
+                context == null ? null : context.getWindowId(),
+                context == null ? null : context.getWindowRole(),
+                context == null ? null : context.getNativeWindowHandle(),
+                context == null ? null : context.getNativeWindowTitle(),
+                titleIdentity == null ? null : titleIdentity.playerName(),
+                titleIdentity == null ? null : titleIdentity.playerId(),
+                titleIdentity == null ? null : titleIdentity.server(),
+                context == null ? null : context.getLocalTeamSessionKey(),
+                context != null && context.isLocalSupportMember(),
+                context != null && context.isLocalLeaderPresent(),
+                context == null ? null : context.getLocalLeaderWindowId(),
+                currentWindowReturnMarkerPresent,
+                runtimeStateText(context),
+                memberScan.captureStatus(), memberScan.elementName(), memberScan.imageSizeText(),
+                memberScan.bestScore(), memberScan.bestPointX(), memberScan.bestPointY(),
+                memberScan.bestRectText(),
+                rect[0], rect[1], rect[2], rect[3],
+                MEMBER_RETURN_BUTTON_PATH, botProperties.getReturnTeamMatchRate(),
+                lastFoundAt == null ? -1L : now - lastFoundAt,
+                lastClickedAt == null ? -1L : now - lastClickedAt);
+    }
+
+    private ReturnButtonNoMatchScan scanReturnButtonNoMatch(int[] rect, String source) {
+        String elementName = "team-return-no-match-member:" + safeSource(source);
+        BufferedImage snapshot = tracker.captureToMemory(elementName, rect[0], rect[1], rect[2], rect[3]);
+        if (snapshot == null) {
+            return ReturnButtonNoMatchScan.captureFailed(elementName);
+        }
+        try {
+            BufferedImage template = ImageIO.read(Path.of(MEMBER_RETURN_BUTTON_PATH).toFile());
+            double[] best = ImageFinder.find(snapshot, template, -1.0);
+            if (best == null || best.length < 3 || template == null) {
+                return ReturnButtonNoMatchScan.capturedNoBest(
+                        elementName, snapshot.getWidth(), snapshot.getHeight());
+            }
+            Point bestPoint = coordinateHelper.resolveMatchedPointInRect(rect, best);
+            String bestRect = bestPoint == null
+                    ? "-"
+                    : bestRectText(bestPoint, template.getWidth(), template.getHeight());
+            return new ReturnButtonNoMatchScan(
+                    "memory", elementName, snapshot.getWidth(), snapshot.getHeight(),
+                    best[2], bestPoint == null ? -1 : bestPoint.x, bestPoint == null ? -1 : bestPoint.y,
+                    bestRect);
+        } catch (Exception e) {
+            log.warn("team return no-match debug scan failed: source={} element={} template={} reason={}",
+                    source, elementName, MEMBER_RETURN_BUTTON_PATH, e.getMessage(), e);
+            return ReturnButtonNoMatchScan.analysisFailed(elementName, snapshot.getWidth(), snapshot.getHeight());
+        }
+    }
+
+    private String bestRectText(Point center, int width, int height) {
+        int left = center.x - width / 2;
+        int top = center.y - height / 2;
+        return left + "," + top + " " + width + "x" + height;
+    }
+
+    private WindowTitleIdentity parseNativeTitle(TaskExecutionContext context) {
+        if (context == null) {
+            return null;
+        }
+        return WindowTitleIdentityParser.parse(context.getNativeWindowTitle()).orElse(null);
+    }
+
+    private String runtimeStateText(TaskExecutionContext context) {
+        if (context == null || context.getWindowRuntimeContext() == null) {
+            return "-";
+        }
+        WindowRuntimeContext runtime = context.getWindowRuntimeContext();
+        WindowPathingSnapshot pathing = runtime.getPathingSnapshot();
+        String pathingText = pathing == null ? "pathing=null" : pathingText(pathing);
+        String actionText = runtime.getGameState() == null ? "action=null"
+                : "action=" + runtime.getGameState().getCurrentActionState();
+        String mapText = runtime.getGameState() == null || runtime.getGameState().getMe() == null
+                ? "map=null"
+                : "map=" + runtime.getGameState().getMe().getCurrentMapName()
+                + "@" + runtime.getGameState().getMe().getX()
+                + "," + runtime.getGameState().getMe().getY();
+        return "status=" + runtime.getStatus()
+                + "," + actionText
+                + "," + mapText
+                + "," + pathingText
+                + ",identitySuspended=" + runtime.isIdentitySuspended()
+                + ",ownerPlayerId=" + runtime.getTaskOwnerPlayerId()
+                + ",visiblePlayerId=" + runtime.getVisiblePlayerId();
+    }
+
+    private String pathingText(WindowPathingSnapshot pathing) {
+        WindowPathingIntent intent = pathing.getIntent();
+        return "pathing=" + pathing.getState()
+                + ",pathingTarget=" + (intent == null ? null : intent.getTargetMapName())
+                + ",pathingSource=" + (intent == null ? null : intent.getSource())
+                + ",pathingMessage=" + pathing.getMessage();
+    }
+
+    private String safeSource(String source) {
+        if (source == null || source.isBlank()) {
+            return "unknown";
+        }
+        return source.replaceAll("[^a-zA-Z0-9_.:-]", "_");
+    }
+
     /**
      * Template-match the leader-side team-return signal in the configured client area.
      *
@@ -259,6 +397,13 @@ public class TeamReturnService {
 
     private String logPrefix(TaskExecutionContext context) {
         return context == null ? "[window=unknown]" : context.getLogPrefix();
+    }
+
+    private String windowKey(TaskExecutionContext context) {
+        if (context != null && context.getWindowId() != null && !context.getWindowId().isBlank()) {
+            return context.getWindowId();
+        }
+        return "default";
     }
 
     /**
@@ -352,6 +497,31 @@ public class TeamReturnService {
                 return right == null || right.isBlank();
             }
             return left.equals(right);
+        }
+    }
+
+    private record ReturnButtonNoMatchScan(String captureStatus,
+                                           String elementName,
+                                           int imageWidth,
+                                           int imageHeight,
+                                           double bestScore,
+                                           int bestPointX,
+                                           int bestPointY,
+                                           String bestRectText) {
+        private static ReturnButtonNoMatchScan captureFailed(String elementName) {
+            return new ReturnButtonNoMatchScan("capture-failed", elementName, -1, -1, -1.0, -1, -1, "-");
+        }
+
+        private static ReturnButtonNoMatchScan capturedNoBest(String elementName, int width, int height) {
+            return new ReturnButtonNoMatchScan("memory-no-best", elementName, width, height, -1.0, -1, -1, "-");
+        }
+
+        private static ReturnButtonNoMatchScan analysisFailed(String elementName, int width, int height) {
+            return new ReturnButtonNoMatchScan("analysis-failed", elementName, width, height, -1.0, -1, -1, "-");
+        }
+
+        private String imageSizeText() {
+            return imageWidth <= 0 || imageHeight <= 0 ? "-" : imageWidth + "x" + imageHeight;
         }
     }
 

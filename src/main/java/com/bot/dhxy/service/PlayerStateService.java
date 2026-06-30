@@ -32,7 +32,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.awt.MouseInfo;
 import java.awt.Point;
+import java.awt.PointerInfo;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -109,6 +111,7 @@ public class PlayerStateService {
     private static final int SAFE_MOUSE_FORBIDDEN_LEFT_REL_X = 761;
     private static final int SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y = 147;
     private static final int SAFE_MOUSE_HOVER_CLEAR_DELAY_MS = 300;
+    private static final int PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING = 12;
 
     /*
      * 摄妖香剩余时间文本颜色。游戏中 RGB=(0,255,255) 的青色数字表示剩余小时；
@@ -751,12 +754,8 @@ public class PlayerStateService {
     }
 
     private BufferedImage captureBarsSnapshot() {
-        if (isInputWorkerThread()) {
-            moveMouseAwayBeforePlayerStateSnapshotDirect();
-        } else {
-            moveMouseAwayBeforePlayerStateSnapshot();
-        }
         int[] rect = coordinateHelper.getScaledRect(BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H);
+        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("player-state-bars", rect);
         return tracker.captureToMemory("player-state-bars", rect[0], rect[1], rect[2], rect[3]);
     }
 
@@ -765,22 +764,51 @@ public class PlayerStateService {
         return tracker.captureToMemory("player-state-bars-precheck", rect[0], rect[1], rect[2], rect[3]);
     }
 
-    private void moveMouseAwayBeforePlayerStateSnapshot() {
+    private void moveMouseAwayBeforePlayerStateSnapshotIfNeeded(String source, int[] captureRect) {
+        Point mouse = currentLogicalMousePoint();
+        if (!mouseOverCaptureRect(mouse, captureRect)) {
+            log.debug("player-state snapshot mouse clear: source={} mouse={} rect={}",
+                    source, formatPoint(mouse), formatRect(captureRect));
+            return;
+        }
+        if (isInputWorkerThread()) {
+            moveMouseAwayBeforePlayerStateSnapshotDirect(source, mouse, captureRect);
+        } else {
+            moveMouseAwayBeforePlayerStateSnapshot(source, mouse, captureRect);
+        }
+    }
+
+    private boolean mouseOverCaptureRect(Point mouse, int[] captureRect) {
+        if (mouse == null || captureRect == null || captureRect.length < 4) {
+            return false;
+        }
+        int left = Math.min(captureRect[0], captureRect[2]) - PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
+        int right = Math.max(captureRect[0], captureRect[2]) + PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
+        int top = Math.min(captureRect[1], captureRect[3]) - PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
+        int bottom = Math.max(captureRect[1], captureRect[3]) + PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
+        return mouse.x >= left && mouse.x <= right && mouse.y >= top && mouse.y <= bottom;
+    }
+
+    private void moveMouseAwayBeforePlayerStateSnapshot(String source, Point mouse, int[] captureRect) {
         if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
             return;
         }
         Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+        log.info("player-state snapshot mouse overlaps capture; move away before snapshot: source={} mouse={} rect={} target={}",
+                source, formatPoint(mouse), formatRect(captureRect), formatPoint(safePoint));
         inputSequences.submitAndWait("playerState:moveMouseAwayBeforeSnapshot", List.of(
                 InputAction.moveMouse(safePoint.x, safePoint.y),
                 InputAction.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS)
         ));
     }
 
-    private void moveMouseAwayBeforePlayerStateSnapshotDirect() {
+    private void moveMouseAwayBeforePlayerStateSnapshotDirect(String source, Point mouse, int[] captureRect) {
         if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
             return;
         }
         Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
+        log.info("player-state snapshot mouse overlaps capture; move away directly before snapshot: source={} mouse={} rect={} target={}",
+                source, formatPoint(mouse), formatRect(captureRect), formatPoint(safePoint));
         inputProvider.moveMouse(safePoint.x, safePoint.y);
         TaskSleep.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS);
     }
@@ -794,6 +822,27 @@ public class PlayerStateService {
             relY = random.nextInt(GAME_CLIENT_HEIGHT);
         } while (relX >= SAFE_MOUSE_FORBIDDEN_LEFT_REL_X && relY <= SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y);
         return new Point(baseX + relX, baseY + relY);
+    }
+
+    private Point currentLogicalMousePoint() {
+        PointerInfo pointerInfo = MouseInfo.getPointerInfo();
+        if (pointerInfo == null) {
+            return null;
+        }
+        double scale = coordinateHelper.getScaleRatio();
+        Point physical = pointerInfo.getLocation();
+        return new Point((int) Math.round(physical.x / scale), (int) Math.round(physical.y / scale));
+    }
+
+    private String formatPoint(Point point) {
+        return point == null ? "unknown" : "(" + point.x + ", " + point.y + ")";
+    }
+
+    private String formatRect(int[] rect) {
+        if (rect == null || rect.length < 4) {
+            return "unknown";
+        }
+        return "(" + rect[0] + ", " + rect[1] + ")-(" + rect[2] + ", " + rect[3] + ")";
     }
 
     private boolean checkAndHealFromSnapshotIfEnabled(BufferedImage bars, String name,
@@ -1035,11 +1084,7 @@ public class PlayerStateService {
      * matched; empty hours means the icon matched but no cyan hour number was readable.
      */
     private IncenseStatusProbe probeIncenseStatus(int[] statusRect) {
-        if (isInputWorkerThread()) {
-            moveMouseAwayBeforePlayerStateSnapshotDirect();
-        } else {
-            moveMouseAwayBeforePlayerStateSnapshot();
-        }
+        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("sheyaoxiang-status", statusRect);
         BufferedImage statusImage = tracker.captureToMemory(
                 "sheyaoxiang-status", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
         if (statusImage == null) {
@@ -1120,11 +1165,7 @@ public class PlayerStateService {
     }
 
     private IncenseIconProbe probeIncenseIconPresenceInRect(int[] statusRect, int[] probeRect, String mode) {
-        if (isInputWorkerThread()) {
-            moveMouseAwayBeforePlayerStateSnapshotDirect();
-        } else {
-            moveMouseAwayBeforePlayerStateSnapshot();
-        }
+        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("sheyaoxiang-status-icon-gate-" + mode, probeRect);
         BufferedImage statusImage = tracker.captureToMemory(
                 "sheyaoxiang-status-icon-gate-" + mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3]);
         if (statusImage == null) {

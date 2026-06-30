@@ -66,12 +66,12 @@ public final class AutoCombatPostCombatRecoveryPolicyGuard {
         require(wubei.contains("PostCombatRecoveryPolicy.FULL_RECOVERY"),
                 "Wubei unexpected/enter-battle exit checks must keep FULL_RECOVERY");
         String wubeiReturnHome = between(wubei,
-                "private boolean useReturnItemAndVerifyStartMap(",
+                "private ReturnHomeResult useReturnItemAndVerifyStartMap(",
                 "private WubeiStepOutcome returnHomeAfterCombatOrContinueSpecialTarget(");
         require(!wubeiReturnHome.contains("consumePendingLeaderPostCombatRecoveryIfAllowed"),
                 "Wubei must not consume deferred recovery immediately after verified return-home");
-        require(wubei.contains("consumePendingLeaderPostCombatRecoveryIfAllowed(\n                context, \"wubei:after-task-accepted\")"),
-                "Wubei must consume deferred recovery after the next task is accepted");
+        require(wubei.contains("consumePendingLeaderPostCombatRecoveryIfAllowed(\n                        context, \"wubei:tracker-green-click:\" + safeFileToken(label))"),
+                "Wubei must consume deferred recovery after the next accepted task starts tracker-green movement");
     }
 
     private static String read(Path path) throws Exception {

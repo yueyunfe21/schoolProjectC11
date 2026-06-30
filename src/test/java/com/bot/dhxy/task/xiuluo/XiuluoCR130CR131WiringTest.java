@@ -33,7 +33,7 @@ public final class XiuluoCR130CR131WiringTest {
                 "CR130 continuous round loop must not call XiuluoHotStartResolver");
         require(execute.contains("completedRuns == 0"),
                 "CR130 only true startup should run startup-screen resume logic");
-        require(execute.contains(": XiuluoRoundContext.start(round)"),
+        require(execute.contains("roundContext = XiuluoRoundContext.start(round);"),
                 "CR130 later continuous rounds must start from normal PREPARE_ROUND state");
     }
 
@@ -48,7 +48,7 @@ public final class XiuluoCR130CR131WiringTest {
 
     private static void returnHomeSchedulesPrecheckBeforeBag(String xiuluo) {
         String useReturnItem = extractMethod(xiuluo,
-                "private boolean useReturnItemAndVerifyStartMap(");
+                "private ReturnItemUseResult useReturnItem(");
         int precheck = useReturnItem.indexOf("pendingTeamReturnPrecheck = teamReturnService.beginLeaderSignalPrecheck(");
         int bag = useReturnItem.indexOf("bagService.findAndUseMainBagTaskPageItem(");
         require(precheck >= 0, "CR131 return-home must schedule team-return precheck");

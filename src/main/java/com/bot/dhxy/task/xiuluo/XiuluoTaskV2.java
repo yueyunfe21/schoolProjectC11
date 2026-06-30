@@ -348,18 +348,25 @@ public class XiuluoTaskV2 implements GameTask {
                  * the task return item before falling back to the accept-task chain. The older
                  * Alt+Q task-panel OCR startup path remains in this class as a legacy diagnostic path,
                  * but it is no longer the first startup decision.
-                */
+                 */
                 boolean afterCombatExitStartup = completedRuns == 0 && context.isAfterCombatExitStartup();
+                boolean cleanQueueTransitionStartup = completedRuns == 0 && context.isCleanQueueTransitionStartup();
                 if (completedRuns == 0) {
                     playerStateService.performStartupFirstAidCheck(context);
                     ensureStartupIncenseBeforeHotStart(context);
                 }
-                XiuluoRoundContext roundContext = completedRuns == 0
-                        ? resolveStartupTrackerOrReturnItem(context, XiuluoRoundContext.start(round),
-                                afterCombatExitStartup
-                                        ? "after-combat-exit-startup-screen-resume"
-                                        : "startup-screen-resume")
-                        : XiuluoRoundContext.start(round);
+                XiuluoRoundContext roundContext;
+                if (completedRuns == 0 && cleanQueueTransitionStartup) {
+                    log.info("[xiuluo-v2] skip startup-screen resume because clean queued task transition; accept a fresh task");
+                    roundContext = XiuluoRoundContext.start(round);
+                } else if (completedRuns == 0) {
+                    roundContext = resolveStartupTrackerOrReturnItem(context, XiuluoRoundContext.start(round),
+                            afterCombatExitStartup
+                                    ? "after-combat-exit-startup-screen-resume"
+                                    : "startup-screen-resume");
+                } else {
+                    roundContext = XiuluoRoundContext.start(round);
+                }
                 log.info("[xiuluo-v2] round {} initial phase: phase={} source={} objective={}",
                         round, roundContext.phase(), roundContext.source(), roundContext.objective());
                 taskMaintenanceService.beginTeamMaintenanceRound(context, TASK_CODE, round,
@@ -2338,30 +2345,31 @@ public class XiuluoTaskV2 implements GameTask {
 
     private XiuluoStepOutcome attemptVerifiedReturnAfterUnknownCombat(TaskExecutionContext context,
                                                                       XiuluoRoundContext state) {
-        for (int attempt = 1; attempt <= RETURN_ITEM_VERIFY_ATTEMPTS; attempt++) {
-            TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
-            Optional<XiuluoStepOutcome> returnSuppressed = suppressUnknownCombatExitIfActiveCombat(
-                    "unknown-combat-return-attempt" + attempt, state);
-            if (returnSuppressed.isPresent()) {
-                return returnSuppressed.get();
-            }
-            boolean verified = useReturnItemAndVerifyStartMap(
-                    context, state.round(), "unknown-combat", attempt, RETURN_ITEM_VERIFY_ATTEMPTS);
-            if (verified) {
-                return XiuluoStepOutcome.continueTo(
-                        state.next(XiuluoPhase.WAIT_TEAM_RETURN, "unknown-combat-return-verified"),
-                        "unknown combat exit; return item verified");
-            }
+        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
+        Optional<XiuluoStepOutcome> returnSuppressed = suppressUnknownCombatExitIfActiveCombat(
+                "unknown-combat-return-attempt", state);
+        if (returnSuppressed.isPresent()) {
+            return returnSuppressed.get();
+        }
+        ReturnHomeResult returnHome = useReturnItemAndVerifyStartMap(context, state.round(), "unknown-combat");
+        if (returnHome == ReturnHomeResult.VERIFIED) {
+            return XiuluoStepOutcome.continueTo(
+                    state.next(XiuluoPhase.WAIT_TEAM_RETURN, "unknown-combat-return-verified"),
+                    "unknown combat exit; return item verified");
+        }
+        if (returnHome == ReturnHomeResult.STILL_IN_COMBAT) {
+            return resumeWaitCombatAfterTrustedReturnCorrection(
+                    state, "unknown-combat-return-attempt");
+        }
 
-            uiCleanerService.cleanUpAll();
-            Optional<NpcTarget> activeObjective = tryReadObjectiveFromTaskPanel(
-                    context, state.source() + ":unknown-combat-return-attempt" + attempt);
-            if (activeObjective.isPresent()) {
-                log.info("[xiuluo-v2] objective found after failed return attempt: target={}", activeObjective.get());
-                return XiuluoStepOutcome.continueTo(
-                        state.withObjective(XiuluoPhase.NAVIGATE_TO_TARGET, activeObjective.get(), "unknown-combat-objective-after-return"),
-                        "unknown combat exit; objective found after return attempt");
-            }
+        uiCleanerService.cleanUpAll();
+        Optional<NpcTarget> activeObjective = tryReadObjectiveFromTaskPanel(
+                context, state.source() + ":unknown-combat-return-attempt");
+        if (activeObjective.isPresent()) {
+            log.info("[xiuluo-v2] objective found after failed return attempt: target={}", activeObjective.get());
+            return XiuluoStepOutcome.continueTo(
+                    state.withObjective(XiuluoPhase.NAVIGATE_TO_TARGET, activeObjective.get(), "unknown-combat-objective-after-return"),
+                    "unknown combat exit; objective found after return attempt");
         }
 
         pendingTeamReturnPrecheck = null;
@@ -2373,16 +2381,19 @@ public class XiuluoTaskV2 implements GameTask {
 
     private XiuluoStepOutcome returnHome(TaskExecutionContext context, XiuluoRoundContext state) {
         TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
-        boolean returned = false;
-        for (int attempt = 1; attempt <= RETURN_ITEM_VERIFY_ATTEMPTS; attempt++) {
-            returned = useReturnItemAndVerifyStartMap(context, state.round(), "known-combat", attempt, RETURN_ITEM_VERIFY_ATTEMPTS);
-            if (returned) {
-                break;
+        ReturnHomeResult returnHome = useReturnItemAndVerifyStartMap(context, state.round(), "known-combat");
+        if (returnHome != ReturnHomeResult.VERIFIED) {
+            if (returnHome == ReturnHomeResult.STILL_IN_COMBAT) {
+                return resumeWaitCombatAfterTrustedReturnCorrection(
+                        state, "known-combat-return-unverified");
             }
-            uiCleanerService.cleanUpAll();
-        }
-        if (!returned) {
-            pendingTeamReturnPrecheck = null;
+            if (returnHome == ReturnHomeResult.FAILED_AFTER_TRUSTED_NOT_IN_COMBAT) {
+                uiCleanerService.cleanUpAll();
+                log.warn("[xiuluo-v2] return item was used but start map was not verified and trusted combat state is not active; navigate back by normal path");
+                return XiuluoStepOutcome.continueTo(
+                        state.next(XiuluoPhase.NAVIGATE_BACK_TO_START, "return-item-used-unverified"),
+                        "return item used but not verified; navigate back by normal path");
+            }
             Optional<XiuluoStepOutcome> stillInCombat = correctKnownCombatReturnFailureIfStillInCombat(
                     context, state, "known-combat-return-unverified");
             if (stillInCombat.isPresent()) {
@@ -2402,13 +2413,30 @@ public class XiuluoTaskV2 implements GameTask {
             TaskExecutionContext context,
             XiuluoRoundContext state,
             String source) {
-        AutoCombatService.TickResult trustedState = autoCombatService.probeWindowCombatStateReadOnly(
-                context, "xiuluo-v2:" + source);
+        AutoCombatService.TickResult trustedState = probeTrustedCombatStateAfterReturnVerificationFailure(
+                context, source);
         if (trustedState != AutoCombatService.TickResult.IN_COMBAT) {
             log.warn("[xiuluo-v2] expected combat return verification failed and trusted combat state is not active: source={} trustedState={} phase={} combatSource={} enteredBattleByXiuluo={}",
                     source, trustedState, state.phase(), state.combatSource(), state.enteredBattleByXiuluo());
             return Optional.empty();
         }
+        return Optional.of(resumeWaitCombatAfterTrustedReturnCorrection(state, source));
+    }
+
+    private AutoCombatService.TickResult probeTrustedCombatStateAfterReturnVerificationFailure(
+            TaskExecutionContext context,
+            String source) {
+        AutoCombatService.TickResult trustedState = autoCombatService.probeWindowCombatStateReadOnly(
+                context, "xiuluo-v2:" + source);
+        if (trustedState == AutoCombatService.TickResult.IN_COMBAT) {
+            autoCombatService.refreshFastExpectedExitBaselineAfterTrustedInCombat(
+                    "xiuluo-v2:" + source + ":trusted-in-combat");
+        }
+        return trustedState;
+    }
+
+    private XiuluoStepOutcome resumeWaitCombatAfterTrustedReturnCorrection(XiuluoRoundContext state,
+                                                                           String source) {
         /*
          * FAST_EXPECTED_EXIT is only a shortcut. If the return item does not get us to 灵兽村 and
          * the trusted radar still says combat is active, treat the avatar-diff exit as stale and
@@ -2423,10 +2451,10 @@ public class XiuluoTaskV2 implements GameTask {
                         ? XiuluoCombatSource.TRACKER_CONFIRM
                         : state.combatSource(),
                 source + "-still-in-combat");
-        return Optional.of(waitForCombatStateWake(
+        return waitForCombatStateWake(
                 XiuluoStepOutcome.sharedState(combatState,
                         "return verification failed but combat is still active; wait for real exit"),
-                afterSequence));
+                afterSequence);
     }
 
     private void consumeDeferredPostCombatRecoveryDuringNextTaskProgress(TaskExecutionContext context, String source) {
@@ -2497,12 +2525,16 @@ public class XiuluoTaskV2 implements GameTask {
                             context, pendingTeamReturnPrecheck, "xiuluo-v2:" + state.source());
             pendingTeamReturnPrecheck = null;
             if (precheck.conclusive() && !precheck.signalPresent()) {
+                taskMaintenanceService.closeLocalTeamReturnSupportWindow(context,
+                        "xiuluo-v2:" + state.source() + ":precheck-not-needed");
                 log.info("[xiuluo-v2] team return precheck says no wait needed: source={}", state.source());
                 return XiuluoStepOutcome.continueTo(
                         state.next(XiuluoPhase.ROUND_DONE, "team-return-precheck-not-needed"),
                         "team return wait not needed");
             }
             if (precheck.conclusive() && precheck.signalPresent()) {
+                taskMaintenanceService.openLocalTeamReturnSupportWindow(context,
+                        "xiuluo-v2:" + state.source() + ":precheck-signal-present");
                 log.warn("[xiuluo-v2] team return precheck saw return signal; yield for members source={}",
                         state.source());
                 return XiuluoStepOutcome.sharedState(
@@ -2511,11 +2543,15 @@ public class XiuluoTaskV2 implements GameTask {
             }
         }
         if (shouldYieldForTeamReturnSignal()) {
+            taskMaintenanceService.openLocalTeamReturnSupportWindow(context,
+                    "xiuluo-v2:" + state.source() + ":signal-present");
             log.warn("[xiuluo-v2] team return signal still present and under-five is disabled; yield for members");
             return XiuluoStepOutcome.sharedState(
                     state.next(XiuluoPhase.WAIT_TEAM_RETURN, keepTeamReturnWaitSource(state)),
                     "team return still pending");
         }
+        taskMaintenanceService.closeLocalTeamReturnSupportWindow(context,
+                "xiuluo-v2:" + state.source() + ":signal-cleared");
         if (TEAM_RETURN_BEFORE_ACCEPT_SOURCE.equals(state.source())) {
             return XiuluoStepOutcome.continueTo(
                     state.next(XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC, "team-return-ready-before-accept"),
@@ -2850,11 +2886,11 @@ public class XiuluoTaskV2 implements GameTask {
         return verified;
     }
 
-    private boolean useReturnItemAndVerifyStartMap(TaskExecutionContext context,
-                                                   int round,
-                                                   String source,
-                                                   int attempt,
-                                                   int maxAttempts) {
+    private ReturnItemUseResult useReturnItem(TaskExecutionContext context,
+                                              int round,
+                                              String source,
+                                              int attempt,
+                                              int maxAttempts) {
         TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
         log.info("[xiuluo-v2] use return item and verify start map: source={} attempt={}/{}",
                 source, attempt, maxAttempts);
@@ -2870,19 +2906,20 @@ public class XiuluoTaskV2 implements GameTask {
                 log.info("[xiuluo-v2] cached return item verified: source={} location={}", source, cachedReturn);
                 returnItemPrescanService.completeRound(context, TASK_CODE, round, RETURN_ITEM_TEMPLATE,
                         "xiuluo-v2:cached-return-verified");
-                return true;
+                return ReturnItemUseResult.verified(cachedReturn);
             }
-            log.warn("[xiuluo-v2] cached return item used but start map not verified; fallback to full scan: source={} location={}",
+            log.warn("[xiuluo-v2] cached return item used but start map not verified; run trusted combat probe before any further return attempt: source={} location={}",
                     source, cachedReturn);
             returnItemPrescanService.invalidate(context, TASK_CODE, round, RETURN_ITEM_TEMPLATE,
                     "xiuluo-v2:cached-return-unverified:" + source);
+            return ReturnItemUseResult.usedStartMapUnverified(cachedReturn);
         }
 
         boolean used = bagService.findAndUseMainBagTaskPageItem(RETURN_ITEM_TEMPLATE, context);
         if (!used) {
             log.warn("[xiuluo-v2] return item not found/used: source={} attempt={}/{}",
                     source, attempt, maxAttempts);
-            return false;
+            return ReturnItemUseResult.notUsed();
         }
 
         /*
@@ -2896,11 +2933,34 @@ public class XiuluoTaskV2 implements GameTask {
             log.info("[xiuluo-v2] return item verified: source={} location={}", source, afterReturn);
             returnItemPrescanService.completeRound(context, TASK_CODE, round, RETURN_ITEM_TEMPLATE,
                     "xiuluo-v2:return-home-verified");
-            return true;
+            return ReturnItemUseResult.verified(afterReturn);
         }
         log.warn("[xiuluo-v2] return item used but start map not verified: source={} location={}",
                 source, afterReturn);
-        return false;
+        return ReturnItemUseResult.usedStartMapUnverified(afterReturn);
+    }
+
+    private ReturnHomeResult useReturnItemAndVerifyStartMap(TaskExecutionContext context,
+                                                            int round,
+                                                            String source) {
+        for (int attempt = 1; attempt <= RETURN_ITEM_VERIFY_ATTEMPTS; attempt++) {
+            ReturnItemUseResult result = useReturnItem(context, round, source, attempt, RETURN_ITEM_VERIFY_ATTEMPTS);
+            if (result.verifiedStartMap()) {
+                return ReturnHomeResult.VERIFIED;
+            }
+            if (result.usedStartMapUnverified()) {
+                AutoCombatService.TickResult trustedState = probeTrustedCombatStateAfterReturnVerificationFailure(
+                        context, source + ":attempt-" + attempt);
+                pendingTeamReturnPrecheck = null;
+                if (trustedState == AutoCombatService.TickResult.IN_COMBAT) {
+                    return ReturnHomeResult.STILL_IN_COMBAT;
+                }
+                return ReturnHomeResult.FAILED_AFTER_TRUSTED_NOT_IN_COMBAT;
+            }
+            uiCleanerService.cleanUpAll();
+        }
+        pendingTeamReturnPrecheck = null;
+        return ReturnHomeResult.FAILED;
     }
 
     /**
@@ -4173,6 +4233,30 @@ public class XiuluoTaskV2 implements GameTask {
                 }
             }
             return builder.toString();
+        }
+    }
+
+    private enum ReturnHomeResult {
+        VERIFIED,
+        STILL_IN_COMBAT,
+        FAILED_AFTER_TRUSTED_NOT_IN_COMBAT,
+        FAILED
+    }
+
+    private record ReturnItemUseResult(boolean verifiedStartMap,
+                                       boolean usedStartMapUnverified,
+                                       LocationInfo location) {
+
+        private static ReturnItemUseResult verified(LocationInfo location) {
+            return new ReturnItemUseResult(true, false, location);
+        }
+
+        private static ReturnItemUseResult usedStartMapUnverified(LocationInfo location) {
+            return new ReturnItemUseResult(false, true, location);
+        }
+
+        private static ReturnItemUseResult notUsed() {
+            return new ReturnItemUseResult(false, false, null);
         }
     }
 

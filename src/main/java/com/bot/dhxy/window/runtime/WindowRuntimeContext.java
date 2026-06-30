@@ -294,13 +294,17 @@ public class WindowRuntimeContext {
         clearTaskQueueStartupFlyingState(source);
     }
 
-    /** @return true when this task code already ran queue-scoped startup UI preparation. */
-    public boolean isTaskQueueStartupPreparationDone(String taskCode) {
-        String normalized = normalize(taskCode);
-        return normalized != null && normalized.equals(taskQueueStartupPreparationDone.get());
+    /** @return true when this accepted queue already completed common startup UI preparation. */
+    public boolean isTaskQueueStartupPreparationDone() {
+        return taskQueueStartupPreparationDone.get() != null;
     }
 
-    /** Mark queue-scoped startup UI preparation as completed for the current task code. */
+    /** @return true when this accepted queue already completed common startup UI preparation. */
+    public boolean isTaskQueueStartupPreparationDone(String taskCode) {
+        return isTaskQueueStartupPreparationDone();
+    }
+
+    /** Mark queue-scoped common startup UI preparation as completed. */
     public void markTaskQueueStartupPreparationDone(String taskCode) {
         taskQueueStartupPreparationDone.set(normalize(taskCode));
     }

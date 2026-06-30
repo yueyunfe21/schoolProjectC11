@@ -1,5 +1,1559 @@
 # DHXY Active Work
 
+## 2026-06-29 / CR139 连续任务切换复用启动准备
+
+Status: review / source repaired / focused guards, compile, and test-compile passed / fresh runtime pending.
+
+Baseline before editing:
+
+- Branch: `codex/migrate-runner-dialog`.
+- Latest pushed/local HEAD checked before CR139 work: `c155ef3 Checkpoint local work before CR138`
+  (`origin/codex/migrate-runner-dialog` points to the same commit).
+- `git status --short` before CR139 work shows an existing dirty worktree from CR138/CR136 follow-up,
+  including `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`,
+  `TaskExecutionContext`, `AutoBattleTask`, `WubeiTask`, `XiuluoTaskV2`, `WindowTaskRunner`,
+  maintenance services, and CR138/CR136 tests. These changes are not reverted.
+- Relevant source baseline scan:
+  - `WindowTaskRunner.runQueueWithBoundGameState(...)` clears
+    `WindowRuntimeContext.clearTaskQueueStartupPreparationState("task queue started")` once at queue
+    start, then calls `deferStartupIfAlreadyInCombat(...)` before each task.
+  - `TaskStartupMode` currently only distinguishes `NORMAL` and `AFTER_COMBAT_EXIT_STARTUP`.
+  - `WindowRuntimeContext.isTaskQueueStartupPreparationDone(taskCode)` is keyed by task code, so a
+    五倍 marker cannot let the following 修罗 task reuse common startup prep in the same UI queue.
+  - `DefaultWindowTaskStartupInitializer.beforeTask(...)` marks queue startup prep only for 五环;
+    五倍/修罗 leader startup prep is not currently marked as a queue-level common prep completion.
+  - `WubeiTask.execute(...)` still uses `WubeiRoundContext.hotStart(round)` for the first run.
+  - `XiuluoTaskV2.execute(...)` still runs `resolveStartupTrackerOrReturnItem(...)` with
+    `startup-screen-resume` / `after-combat-exit-startup-screen-resume` for first-run startup.
+
+CR139 target:
+
+- Add a clean queued cross-task startup signal for `[五倍 -> 修罗]` / `[修罗 -> 五倍]` after the
+  previous queued task ends with `SUCCESS`.
+- Reuse same-queue common startup preparation only when the queue marker is present.
+- Skip next-task hot-start/startup-screen resume only for the clean cross-task queue transition.
+- Preserve standalone startup, after-combat startup recovery, interrupted/failed queue behavior,
+  and all task-specific OCR/template/click/navigation business logic.
+
+Repair:
+
+- Added `TaskStartupMode.CLEAN_QUEUE_TRANSITION` and
+  `TaskExecutionContext.isCleanQueueTransitionStartup()`.
+- `WindowTaskRunner.runQueueWithBoundGameState(...)` now records the previous queued requested task
+  and result. It upgrades the next startup mode to `CLEAN_QUEUE_TRANSITION` only when:
+  previous result is `SUCCESS`, previous requested task differs from the current requested task,
+  the normal after-combat startup defer did not fire, the current task is `WUBEI` or `XIULUO_V2`,
+  and the queue-level common startup-prep marker is present.
+- `WindowRuntimeContext` startup-prep marker is now queue-level for common startup prep; new UI queue
+  start still clears it through `clearTaskQueueStartupPreparationState("task queue started")`.
+- `DefaultWindowTaskStartupInitializer.beforeTask(...)` still runs identity/position sync, then skips
+  common startup UI prep only for `CLEAN_QUEUE_TRANSITION` with a valid marker. Leader startup prep
+  now marks common prep done after `prepareTaskStartupWindow()` succeeds.
+- `WubeiTask` first run uses `WubeiRoundContext.normalStart(round)` instead of hot-start only under
+  clean queued transition.
+- `XiuluoTaskV2` first run keeps startup first-aid/摄妖香, but skips
+  `resolveStartupTrackerOrReturnItem(...)` only under clean queued transition.
+- Updated CR130/CR131 source guards to recognize the new if/else 修罗 startup structure while still
+  protecting that continuous rounds use normal `PREPARE_ROUND`.
+
+Verification:
+
+- RED: `CR139CleanQueueTransitionStartupWiringTest` first failed with
+  `CR139 needs an explicit CLEAN_QUEUE_TRANSITION startup mode`.
+- GREEN focused source guards:
+  - `CR139CleanQueueTransitionStartupWiringTest`
+  - `WindowTaskRunnerCombatStartupDeferWiringTest`
+  - `AfterCombatStartupRecoveryWiringTest`
+  - `XiuluoContinuousRoundNoHotStartWiringTest`
+  - `XiuluoCR130CR131WiringTest`
+- Maven:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Note: an older `LeftTopStatusSwitchWiringTest` run still fails on a stale CR138
+  `AutoBattleTask` token (`taskMaintenanceService.isTeamPathingMaintenanceWindowOpen`). That failure
+  is not introduced by CR139 and was not repaired in this card.
+
+Fresh runtime still needed:
+
+- Run `[五倍, 修罗]` and confirm logs show:
+  - first task marks common startup preparation done;
+  - second task logs `clean queued task transition startup`;
+  - second task logs `startup init skipped: clean queued task transition reused common startup preparation`;
+  - 修罗 logs `skip startup-screen resume because clean queued task transition` and accepts a fresh
+    task without repeating broad startup prep.
+- Run standalone 修罗 after a finished queue and confirm startup prep / true startup resume still run.
+
+## 2026-06-29 / CR138 fresh continuous runtime acceptance
+
+Status: Done / fresh `[五倍, 修罗x2]` runtime passed / dashboard synced.
+
+Evidence:
+
+- Fresh run started at `2026-06-29 18:37:14.851` with one local-team session
+  `local-team-0844714f-ae96-4770-ad42-032cff583ecb` and queue `[wubei, xiuluo_v2]`.
+- `18:37:26.349` live leader detected as `hwnd-63C065A`.
+- `18:39:28.947` 五倍 finished with `SUCCESS`.
+- 修罗 round 1 manual leave/rejoin path worked:
+  - `18:42:45.168` leader opened local `TEAM_RETURN` and `COMMON_BOX` after return verification.
+  - Member return clicks used `teamReturn:auto-battle:local-team-return-release` and the input focus
+    trace showed `sameAsTarget=true` on the target member windows.
+  - `18:43:52.020` leader closed `TEAM_RETURN` because the return signal cleared, then round 1
+    finished at `18:43:52.023`.
+- Stale-looking member label did not block 修罗 support:
+  - `hwnd-62D09E0` still logged `task=auto_battle requested=wubei role=MEMBER`, but it deferred while
+    local `FIRST_AID` was closed.
+  - After the leader opened 修罗 `FIRST_AID` at `18:44:02.206`, the member consumed pending first-aid
+    at `18:44:04.489-18:44:05.935`.
+- `18:46:05.664` 修罗 round 2 finished and the queue completed with `修罗 -> SUCCESS`.
+- Targeted fresh-window scan found no `Exception`, `NoClassDef`, `task failed`, or phase-loop guard.
+
+Conclusion:
+
+- CR138 acceptance criteria are met for the requested simulation: continuous 五倍 -> 修罗, manual
+  leave/rejoin, local `TEAM_RETURN`, local `FIRST_AID`, and stale `requested=wubei` labels no longer
+  acting as business gates.
+- CR138 was marked Done in `docs/PACKAGE_ARCHITECTURE.md`; `node scripts/generate-cr-dashboard-data.js`
+  completed successfully.
+
+## 2026-06-29 / CR136 修罗 ReturnItemUseResult nested Status NoClassDef follow-up
+
+Status: repaired / focused guard, compile, and test-compile passed / fresh runtime pending.
+
+Context:
+
+- User correctly called out that the `2026-06-29 18:17:25` stop was not a user restart issue. It was
+  a CR136 delivery/runtime safety issue.
+- The fresh restarted app at `18:14:28` ran from `D:\mavenProject\DHXY\target\classes`, started
+  修罗 at `18:14:41`, then failed in first-round `RETURN_HOME` after cached return verification.
+- Failure evidence:
+  - `18:17:25.871` `[xiuluo-v2] cached return item verified ... 灵兽村`.
+  - `18:17:25.872` `task transaction fatal error: name=xiuluo-v2:RETURN_HOME`.
+  - `NoClassDefFoundError: com/bot/dhxy/task/xiuluo/XiuluoTaskV2$ReturnItemUseResult$Status`.
+
+Root cause:
+
+- CR136 修罗 parity introduced `ReturnItemUseResult.Status` as a private enum nested inside the
+  private record `ReturnItemUseResult`.
+- That generates a separate lazy-loaded runtime class:
+  `XiuluoTaskV2$ReturnItemUseResult$Status.class`.
+- The app can start without this class because the branch is loaded only when `ReturnItemUseResult`
+  creates a verified/unverified result. When the first cached return verification succeeded, the JVM
+  tried to load the nested enum and failed.
+- This is still a code-delivery defect under CR136: the CR must not leave the live return-home path
+  dependent on an extra nested enum class that can fail only at first runtime branch execution.
+
+Repair:
+
+- `XiuluoTaskV2.ReturnItemUseResult` no longer has a nested `Status` enum.
+- The result now stores the same three states with simple record booleans:
+  `verifiedStartMap`, `usedStartMapUnverified`, and `location`.
+- `useReturnItemAndVerifyStartMap(...)` now checks `result.verifiedStartMap()` and
+  `result.usedStartMapUnverified()`; CR136 business behavior is unchanged.
+- Added a CR136 source guard to `XiuluoCR136FastExitLifecycleWiringTest` requiring no
+  `ReturnItemUseResult.Status` / `private enum Status` dependency in this return-item result path.
+
+Verification:
+
+- RED:
+  `mvn -q -DskipTests test-compile; java -cp "target/test-classes;target/classes" com.bot.dhxy.task.xiuluo.XiuluoCR136FastExitLifecycleWiringTest`
+  failed with `CR136 return-item result must not depend on an extra nested Status enum class`.
+- GREEN:
+  same command passed after the production change.
+- `mvn -q -DskipTests compile` passed.
+- `target/classes/com/bot/dhxy/task/xiuluo` now contains `XiuluoTaskV2$ReturnItemUseResult.class`
+  and no `XiuluoTaskV2$ReturnItemUseResult$Status.class`.
+
+Fresh runtime still needed:
+
+- Restart from the newly compiled `target/classes` and rerun 修罗. The first cached/normal return-home
+  verification path must not throw `NoClassDefFoundError`, and CR136 false-fast-exit validation still
+  needs live evidence.
+
+## 2026-06-29 / CR138 heartbeat review 22:13 local-session capability gates
+
+Status: review / no new P1-P2 source blocker found / focused guards and test-compile passed / fresh runtime pending.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/PACKAGE_ARCHITECTURE.md`, and current
+  `docs/ACTIVE_WORK.md`.
+- Review-only pass for CR138; no Java behavior changes.
+- Checked whether current CR138 source continues to bloat or drift away from the agreed simplified
+  local-session model.
+
+Review evidence:
+
+- `WindowTaskControlService.startSameQueue(...)` still creates one local-team session candidate for
+  multi-window team-role queues, submits known leader first when available, and marks failed submits
+  complete so the session cannot leak.
+- `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` reports raw `liveRole` to
+  `markLocalTeamWindowRoleDetected(...)`; cached `windowContext.role` remains assignment-only.
+- `TaskMaintenanceService` keeps one `LocalTeamSessionState` per session and uses
+  candidate windows + role-detected windows + completed windows to resolve live leader or
+  leader-absent state.
+- `AutoBattleTask` gates local support return-team on `TEAM_RETURN`, keeps common-box before
+  return-team during that release, and preserves legacy requested-task pathing gate only for
+  non-local follower support.
+- `AutoCombatService` gates local support first-aid, common-box, summon/left-top paths through
+  explicit local capabilities and defers candidate members while leader detection is still pending.
+
+Verification:
+
+- `mvn -q -DskipTests test-compile` passed.
+- Focused guard loop passed:
+  `CR138ReviewCaveatWiringTest`, `TaskMaintenanceCR138LocalSupportCapabilityTest`,
+  `AutoBattleCR138TeamReturnReleaseWiringTest`, `AutoCombatCR138FirstAidGateWiringTest`,
+  `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`, `LeaderTeamReturnCR138ReleaseWiringTest`,
+  `TeamReturnCR138NoMatchDiagnosticsWiringTest`.
+
+Current conclusion:
+
+- No new CR138 P1/P2 source blocker found in this heartbeat review.
+- Keep CR138 in Review, not Done, until fresh continuous `[五倍, 修罗]` runtime proves local support
+  members still obey `FIRST_AID` / `TEAM_RETURN` / `COMMON_BOX` gates and no stale
+  `requestedTaskCode` gate blocks or prematurely releases member maintenance.
+
+## 2026-06-29 / CR136 修罗 fast expected-exit false-positive return retry repair
+
+Status: review / source repaired / focused guards, compile, and test-compile passed / fresh runtime pending.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, current CR136 card, and latest `ACTIVE_WORK`.
+- Investigated fresh 修罗 runtime around `2026-06-29 17:53:29-17:55:04`.
+- Touched only CR136 return-home classification / source guards:
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR136FastExitLifecycleWiringTest.java`
+  - stale source guard markers for the return helper signature.
+- No OCR/template/click coordinate/navigation/avatar ROI/diff threshold/BagService changes.
+
+Evidence:
+
+- `17:53:29.819` 修罗 logged fast expected combat exit and advanced from `WAIT_COMBAT` to
+  `RETURN_HOME`.
+- `17:53:33.232` clicked cached return item `(1297,571)`, but `17:53:34.904` watcher detected
+  combat screen again, proving the first return-home verification path was inside a false exit.
+- Same correction episode continued extra return-item use:
+  `17:53:43.314` full scan `(1287,570)`, `17:53:58.723` attempt=2 full scan `(1279,561)`,
+  and after pause/resume `17:55:01.545` phase-retry full scan `(1291,575)`.
+- Root cause: 修罗 still had a boolean return helper. A cached item click that did not verify
+  `灵兽村` was treated like a cache miss, so it fell through to full bag scan and outer phase retry.
+
+Repair:
+
+- `XiuluoTaskV2` now mirrors the CR136 五倍 result model:
+  - `ReturnItemUseResult` distinguishes verified start-map, actual use but unverified, and not-used.
+  - `ReturnHomeResult` distinguishes verified, trusted still-in-combat, trusted non-combat after
+    actual unverified use, and normal failed.
+- After one actual 修罗 return-item use fails start-map verification, the task immediately runs the
+  trusted read-only combat probe and does not continue to full scan / second attempt in the same
+  correction episode.
+- If trusted state is `IN_COMBAT`, 修罗 refreshes the fast expected-exit avatar baseline and resumes
+  `WAIT_COMBAT`. This does not disable/degrade/invalidate future avatar fast-exit; a later trigger is
+  a new correction episode with a fresh one-use budget.
+- If a return item was actually used but trusted state is not active combat, 修罗 exits the generic
+  phase retry path and falls back to normal start-map navigation instead of consuming more items.
+
+Verification:
+
+- RED guard before repair:
+  `XiuluoCR136FastExitLifecycleWiringTest` failed with
+  `Xiuluo return-home helper must distinguish verified, trusted-IN_COMBAT, and actual-use failures`.
+- Focused guard after repair:
+  `javac -encoding UTF-8 -d target/test-classes src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR136FastExitLifecycleWiringTest.java; java -cp "target/test-classes" com.bot.dhxy.task.xiuluo.XiuluoCR136FastExitLifecycleWiringTest`
+  passed.
+- Affected source guards passed:
+  `XiuluoCR130CR131WiringTest`, `AfterCombatStartupRecoveryWiringTest`,
+  `XiuluoStartupReturnItemTaskPageOnlyWiringTest`, `TeamReturnPrecheckWiringTest`,
+  `WubeiCR132ProbeMirrorSlotReturnCacheWiringTest`, `WubeiCR122TrackerGreenIntentLifecycleWiringTest`,
+  `AutoCombatPostCombatRecoveryPolicyGuard`, `WubeiCR136FastExitLifecycleWiringTest`,
+  `ExpectedCombatReturnVerificationCorrectionGuard`, and
+  `XiuluoActiveCombatUnknownExitGuardWiringTest`.
+- Maven verification:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+
+Current conclusion:
+
+- CR136 now covers both 五倍 and 修罗 source paths.
+- Fresh runtime still needs to prove 修罗 false fast-exit no longer produces repeated return-item
+  clicks inside one correction episode.
+
+## 2026-06-29 / CR138 review repair 21:55 stale-role + non-local follower gate
+
+Status: review / source repaired / source guard, compile, and test-compile passed / fresh runtime pending.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, current CR138 card, latest `ACTIVE_WORK`, and receiving-code-review guidance.
+- Verified the active CR138 review feedback against current source:
+  - stale live-role fallback in `WindowTaskRunner.resolveTaskTypeBeforeStart(...)`;
+  - `17:55` 修罗队员 `requested=xiuluo_v2 localSession=null` running summon-skill maintenance before the leader opened the pathing maintenance window.
+- Touched only CR138 runner/session and auto-battle idle maintenance gates:
+  - `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+  - `src/main/java/com/bot/dhxy/task/AutoBattleTask.java`
+  - `src/test/java/com/bot/dhxy/service/CR138ReviewCaveatWiringTest.java`
+- No OCR/template/click/movement/navigation logic changed.
+
+Findings:
+
+- The stale-role P1 was real:
+  `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` used the cached `windowContext.getRole()` when live role detection returned `UNKNOWN`, then reported that fallback role to `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` as `runner-role-preflight` evidence.
+- The latest `17:55` feedback was also real:
+  `AutoBattleTask.maybeRunIdleMaintenance(...)` only required `SUMMON_SKILL` local capability when
+  `localSupportSession && followerSupportMode`. A follower window with `requested=xiuluo_v2` but
+  `localSession=null` therefore fell through to standalone summon-skill cleanup and could run before
+  `maintenance team pathing window opened`.
+
+Repair:
+
+- `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` now separates:
+  - `liveRole`: raw live-role detector result, used for `syncWindowRole(...)` and CR138 local-session evidence;
+  - `assignmentRole`: effective role used only for task reassignment, where the old cached `windowContext.role`
+    fallback may still preserve assignment behavior.
+- `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` now receives only `liveRole.name()`, so
+  `liveRole=UNKNOWN + cached WindowRole.LEADER` no longer becomes live leader evidence.
+- `AutoBattleTask.maybeRunIdleMaintenance(...)` now has two summon-skill gate modes:
+  - local support session: use local `TeamSupportCapability.SUMMON_SKILL`;
+  - non-local follower support for team tasks (`xiuluo_v2` / `wubei` / `wuhuan_v2`): use the legacy
+    `teamMaintenanceKey=requestedTaskCode` plus `requireOpenTeamMaintenanceWindow=true`.
+- This keeps `17:55`-style队员三技能 blocked until the leader actually opens the pathing maintenance window.
+
+Verification:
+
+- RED guard observed before repair:
+  `CR138ReviewCaveatWiringTest` failed with
+  `runner must keep raw live role separate from assignment fallback role`.
+- RED guard observed before the second repair:
+  `CR138ReviewCaveatWiringTest` failed with
+  `non-local follower support for team tasks must keep the legacy team pathing gate`.
+- Source guard after both repairs:
+  `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+  passed.
+- Fresh Maven verification after the docs update:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+
+Current conclusion:
+
+- CR138 source blockers from the latest reviews have narrow fixes in place.
+- Fresh runtime acceptance is still pending.
+- Fresh continuous `[五倍, 修罗]` runtime is still required before closing CR138.
+
+## 2026-06-29 / CR138 heartbeat review 21:44 stale-role fallback still active
+
+Status: review / existing P1 still active / no new Java behavior changes.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, current CR138 card, and latest `ACTIVE_WORK`.
+- Rechecked current CR138 source after the previous heartbeat warning.
+- Reviewed the active runner/session evidence path:
+  - `WindowTaskRunner.resolveTaskTypeBeforeStart(...)`
+  - `WindowTaskRunner.resolveLocalLeaderWindowId(...)`
+  - `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)`
+  - `TaskMaintenanceService.hasDetectedLocalLeader(...)`
+  - `CR138ReviewCaveatWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- No Java/OCR/template/click/navigation behavior changed.
+
+Findings:
+
+- The 21:16 / 21:34 P1 is still present:
+  - `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` still falls back from live role
+    `UNKNOWN/null` to `windowContext.getRole()`.
+  - The method still calls
+    `taskMaintenanceService.markLocalTeamWindowRoleDetected(..., role.name(), "runner-role-preflight")`
+    after that fallback.
+  - No raw-live-role / effective-assignment-role split is present yet.
+- Existing guards pass but still miss this upstream contamination:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` proves stale submit-time leader ids do not count
+    inside `TaskMaintenanceService`.
+  - `CR138ReviewCaveatWiringTest` proves `hasDetectedLocalLeader(...)` does not trust
+    `getLocalLeaderWindowId()`.
+  - Neither guard proves `liveRole=UNKNOWN + cached WindowRole.LEADER` cannot become
+    `runner-role-preflight` leader evidence.
+- No new P1/P2 found in this narrow pass beyond the existing stale-role fallback blocker.
+
+Verification:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+- `mvn -q exec:java "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" "-Dexec.classpathScope=test"`
+
+Current conclusion:
+
+- CR138 remains Review and source-blocked.
+- Do not run fresh runtime acceptance until the runner reports raw live role evidence separately from
+  cached/registration assignment fallback and adds a guard for cached `WindowRole.LEADER` with live
+  role `UNKNOWN`.
+
+## 2026-06-29 / CR138 heartbeat review 21:34 stale-role fallback still active
+
+Status: review / existing P1 still active / no new Java behavior changes.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, current CR138 card, and latest `ACTIVE_WORK`.
+- Rechecked whether the 21:16 stale-role fallback P1 had been repaired in current source.
+- Reviewed `WindowTaskRunner.resolveTaskTypeBeforeStart(...)`, CR138 focused guards, and current
+  CR138 card text. No Java/OCR/template/click/navigation behavior changed.
+
+Findings:
+
+- The P1 from 21:16 is still present in current source:
+  - `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` still uses `windowContext.getRole()` when
+    live role detection returns `UNKNOWN`.
+  - The same method still calls
+    `taskMaintenanceService.markLocalTeamWindowRoleDetected(..., role.name(), "runner-role-preflight")`
+    after that fallback.
+  - No raw-live-role / assignment-fallback split is present yet.
+- Existing focused guards still pass, but they do not cover this upstream contamination:
+  - `CR138ReviewCaveatWiringTest` checks that `TaskMaintenanceService.hasDetectedLocalLeader(...)`
+    does not trust `context.getLocalLeaderWindowId()`.
+  - It does not yet test that runner live `UNKNOWN` + cached `WindowRole.LEADER` cannot become
+    `runner-role-preflight` leader evidence.
+- No additional P1/P2 found in this narrow pass beyond the already-recorded stale-role fallback P1.
+
+Verification:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+
+Current conclusion:
+
+- CR138 remains Review and source-blocked.
+- Do not start fresh runtime acceptance for CR138 until the runner splits raw live role evidence from
+  effective task-assignment fallback and adds a focused guard for `liveRole=UNKNOWN` with cached
+  `WindowRole.LEADER`.
+
+## 2026-06-29 / CR138 heartbeat review 21:16 stale-role fallback P1
+
+Status: review / new P1 source blocker recorded / no Java behavior changes.
+
+Scope:
+
+- Re-read `AGENTS.md`, `docs/DHXY_CONTEXT.md`, current CR138 card, and latest `ACTIVE_WORK`.
+- Reviewed current CR138 source paths for implementation growth and behavior blockers:
+  - `WindowTaskControlService.startSameQueue(...)`
+  - `MultiWindowTaskManager.submitQueueWithResult(...)`
+  - `WindowTaskRunner.submit(...)`, `resolveTaskTypeBeforeStart(...)`, and context building
+  - `TaskMaintenanceService` local-team session/capability state
+  - `AutoBattleTask`, `AutoCombatService`, `TeamReturnService`
+- No Java/OCR/template/click/navigation behavior changed in this pass.
+
+Finding:
+
+- New P1: CR138 still has a stale-role fallback path before local-session leader evidence.
+- `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` calls
+  `teamRoleDetectionService.detectCurrentRole(...)`, but when that live probe returns `UNKNOWN`, it
+  falls back to `windowContext.getRole()`.
+- The CR138 repair then calls
+  `taskMaintenanceService.markLocalTeamWindowRoleDetected(..., role.name(), "runner-role-preflight")`
+  after that fallback. This means a registration/UI snapshot role can still be recorded as the
+  local-team session's live role evidence.
+- Evidence that `windowContext.role` is not live-only:
+  - `WindowRuntimeContext.applyRegistration(...)` writes `request.getRole()` into the runtime role.
+  - `NativeWindowRegistrationMapper.toRegistrationRequests(...)` can assign the first discovered
+    window `WindowRole.LEADER` and the rest `MEMBER`.
+  - `WindowRegistrationBatchBuilder.buildTeam(...)` also creates legacy team registrations with
+    positional `LEADER/MEMBER` roles.
+- Existing guards cover `TaskMaintenanceService.hasDetectedLocalLeader(...)`, but they do not cover
+  this upstream contamination where the runner passes a fallback role as if it were live evidence.
+
+Impact:
+
+- A selected window whose live role probe is `UNKNOWN` can still be treated as the CR138 local
+  leader because its cached/registration role says `LEADER`.
+- Members may then enter local support capability gates even though no selected local leader was
+  live-detected. This reopens the stale snapshot class of bug from a different entry point.
+
+Required repair direction:
+
+- Split `resolveTaskTypeBeforeStart(...)` into raw live role evidence and effective assignment role.
+- It is acceptable to keep the old `windowContext.role` fallback for task assignment only if the
+  business still wants that behavior, but CR138 session evidence must use the raw live role:
+  - only raw `LEADER` may call/produce local leader evidence;
+  - raw `MEMBER`/`SOLO` may count as non-leader evidence;
+  - raw `UNKNOWN` must not be promoted to leader via `windowContext.role` unless that cached role has
+    explicit fresh-live provenance.
+- Add a focused guard for `liveRole=UNKNOWN` + cached `WindowRole.LEADER`: the session must not
+  become `isLocalSupportMemberSession(...)` from that cached role alone.
+
+Verification this pass:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+
+Current conclusion:
+
+- CR138 is not Done.
+- The previous partial-submit P1 is fixed, but this stale-role fallback is now an active P1 blocker
+  before fresh runtime acceptance.
+
+## 2026-06-29 / CR138 review correction after missed source fix
+
+Status: docs/dashboard update only / reviewer miss corrected / no Java behavior changes.
+
+What was wrong:
+
+- I re-raised the unknown-leader partial-submit concern from the old condition without fully
+  re-reading the latest source and tests.
+- Current source already fixed it: `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)`
+  builds `resolvedWindows` from `roleDetectedWindows` and then adds `completedWindows` before
+  confirming leader-absent.
+- Current guards also already cover it:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` has the
+    `[partial-submit-member, partial-submit-failed]` behavior case.
+  - `CR138ReviewCaveatWiringTest` requires
+    `resolvedWindows.addAll(state.completedWindows)`.
+
+Verification rerun:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+- `mvn -q exec:java "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest"`
+
+Current conclusion:
+
+- Do not treat partial-submit unknown-leader as an active CR138 blocker.
+- Keep CR138 in Review only for fresh continuous `[五倍, 修罗]` runtime acceptance and any separate
+  source review findings found after a complete current-source pass.
+
+## 2026-06-29 / CR138 partial-submit unknown-leader P1 repair
+
+Status: review / P1 source blocker fixed / focused guards pass / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Continued CR138 review after the reported complexity cleanup.
+- Touched only CR138 local-team session resolution and focused guards:
+  - `TaskMaintenanceService`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `CR138ReviewCaveatWiringTest`
+- No OCR/template/click/movement/navigation behavior changed.
+
+Finding:
+
+- Unknown-leader partial-submit could leave members pending forever:
+  - `WindowTaskControlService.startSameQueue(...)` calls `completeLocalTeamSessionWindow(...)` for a
+    submit-failed candidate.
+  - The failed candidate never reaches runner live-role preflight, so it never enters
+    `roleDetectedWindows`.
+  - Before this repair, `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` confirmed
+    leader-absent only when `roleDetectedWindows.containsAll(candidateWindows)`.
+  - If every started candidate live-detected as non-leader, `leaderAbsent` still stayed false because
+    the submit-failed candidate was missing from `roleDetectedWindows`.
+
+Repair:
+
+- `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` now computes resolved candidates from
+  `roleDetectedWindows union completedWindows` before confirming leader-absent.
+- This keeps the existing cleanup semantics while also treating submit-failed/completed-without-role
+  candidates as resolved for the no-local-leader fallback decision.
+- Added a focused behavior guard:
+  unknown-leader candidates `[partial-submit-member, partial-submit-failed]`, failed candidate marked
+  complete, remaining candidate live-detects `MEMBER`; pending leader detection must end and local
+  support must remain off.
+- Added a source guard requiring the leader-absent path to include `completedWindows`.
+
+Verification:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- CR138 focused guard loop:
+  `CR138ReviewCaveatWiringTest`, `AutoCombatCR138FirstAidGateWiringTest`,
+  `TeamReturnCR138NoMatchDiagnosticsWiringTest`, `LeaderTeamReturnCR138ReleaseWiringTest`,
+  `AutoBattleCR138TeamReturnReleaseWiringTest`, `TaskMaintenanceCR138LocalSupportCapabilityTest`,
+  `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+
+## 2026-06-29 / CR138 complexity review
+
+Status: review / complexity cleanup implemented / focused guards pass / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Continued CR138 source review after the stale snapshot leader P1 repair.
+- Focused on whether the implementation is larger than the business model requires.
+- No OCR/template/click/navigation behavior changes in this pass.
+
+Findings:
+
+- No new P1 source blocker found in the inspected CR138 local-team support/session paths.
+- The stale snapshot leader issue remains fixed: `TaskMaintenanceService.hasDetectedLocalLeader(...)`
+  only trusts live-role evidence stored in `LocalTeamSessionState.leaderWindowId`, not submit-time
+  `localLeaderWindowId`.
+- `TaskMaintenanceService` local-team state is now consolidated into one `LocalTeamSessionState`
+  per session instead of separate maps for capabilities, epochs, live leader evidence, candidates,
+  role-detected windows, and leader-absent flags.
+- Added explicit session lifecycle cleanup:
+  - `WindowTaskRunner` calls `completeLocalTeamSessionWindow(...)` when a queue exits;
+  - submit-failed windows are marked complete from `WindowTaskControlService`;
+  - the shared session is removed only after every registered candidate window has completed, so one
+    finished window cannot clear capability gates for another still-running candidate.
+- Updated stale `TeamSupportCapability.SUMMON_SKILL` / `LEFT_TOP_STATUS` comments to reflect that
+  both are consumed during wider pathing releases.
+- Remaining acceptance point: fresh runtime still needs continuous `[五倍, 修罗]` verification before
+  CR138 moves out of Review.
+
+Verification:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `CR138ReviewCaveatWiringTest`
+- `AutoBattleCR138TeamReturnReleaseWiringTest`
+- `AutoCombatCR138FirstAidGateWiringTest`
+- `LeaderTeamReturnCR138ReleaseWiringTest`
+- `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Maven exec: `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+- Maven exec: `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Red first: `mvn -q -DskipTests test-compile` initially failed because
+  `completeLocalTeamSessionWindow(...)` did not exist.
+- Green after cleanup:
+  - `mvn -q -DskipTests test-compile`
+  - CR138 focused guard loop:
+    `CR138ReviewCaveatWiringTest`, `AutoCombatCR138FirstAidGateWiringTest`,
+    `TeamReturnCR138NoMatchDiagnosticsWiringTest`, `LeaderTeamReturnCR138ReleaseWiringTest`,
+    `AutoBattleCR138TeamReturnReleaseWiringTest`, `TaskMaintenanceCR138LocalSupportCapabilityTest`,
+    `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+
+## 2026-06-29 / CR138 stale snapshot leader 修复
+
+Status: review / P1 source blocker fixed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Rechecked the CR138 stale snapshot leader review feedback against current source before editing.
+- Touched only local-team session / capability evidence and focused CR138 guards:
+  - `TaskMaintenanceService`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Source finding:
+
+- `TaskMaintenanceService.hasDetectedLocalLeader(...)` was treating a nonblank
+  `TaskExecutionContext.localLeaderWindowId` as if a leader had already been live-detected.
+- That id can come from the submit-time UI snapshot. If the snapshot is stale, members could enter a
+  local support session and wait for capabilities from a leader that never opens them.
+
+Repair:
+
+- `hasDetectedLocalLeader(...)` now only trusts live leader evidence stored in the local session
+  state, which is populated through `markLocalTeamLeaderDetected(...)`.
+- A submit-time `localLeaderWindowId` remains useful as expected/diagnostic context, but it no longer
+  activates `isLocalSupportMemberSession(...)`.
+- Positive capability tests now explicitly mark a live leader before expecting local support gates to
+  open.
+
+Red/green evidence:
+
+- Red first:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` failed on the previous source with
+    `stale submit-time leader id must not count as a live-detected local leader`.
+- Green:
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - Maven classpath run: `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - Maven classpath run: `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `mvn -q -DskipTests compile`
+
+Fresh runtime to verify:
+
+- Run continuous `[五倍, 修罗]` with stale/unknown UI role snapshots.
+- A stale submit-time leader id should keep candidate members pending until live role reports arrive.
+- If no selected window live-detects as leader, logs should show leader-absent confirmation and those
+  windows should fall back to ordinary/non-local auto-battle behavior.
+- If a leader is live-detected, member logs should use local capability gates, not stale
+  `requested=wubei` / `wubei#80` gates.
+
+## 2026-06-29 / CR138 stale snapshot leader 复审
+
+Status: review / P1 source blocker found / no Java behavior changes in this pass. Owner: 唐德.
+
+Scope:
+
+- Re-reviewed the latest CR138 source after the candidate-session pre-leader fallback repair.
+- Focused on whether local support session activation is based on live role evidence rather than
+  stale UI role snapshots.
+- Updated CR138 card and dashboard only; did not edit Java, OCR/template/click/navigation/task flow.
+
+Accepted:
+
+- Unknown-leader same-queue now registers candidate windows.
+- `WindowTaskRunner` reports every runner live-role preflight to `TaskMaintenanceService`.
+- Pending-leader candidate members are now deferred before:
+  - legacy auto-battle return-team click;
+  - old `requestedTaskCode` first-aid gate;
+  - member common-box consumption;
+  - combat left-top standalone maintenance.
+
+P1 blocker:
+
+- `WindowTaskControlService.startSameQueue(...)` still reads `localLeaderWindowId` from the submit-time
+  UI snapshot before live role preflight.
+- `TaskMaintenanceService.hasDetectedLocalLeader(...)` treats any nonblank
+  `TaskExecutionContext.localLeaderWindowId` as a detected leader.
+- If the UI snapshot says a window is `LEADER`, but live role preflight later detects no real leader,
+  members can still become `isLocalSupportMemberSession(...)` because the expected leader id is
+  nonblank. They then wait for local capabilities that no leader task will open, instead of falling
+  back through leader-absent ordinary auto-battle behavior.
+
+Required repair:
+
+- Split expected/submitted leader id from live-confirmed leader id.
+- `isLocalSupportMemberSession(...)` should require live leader evidence stored by session, not just
+  a nonblank `context.getLocalLeaderWindowId()`.
+- If the expected leader live-detects as non-leader, keep the session pending until all candidates
+  have reported; if none is leader, mark leader-absent and let members behave as standalone/non-local
+  auto-battle.
+- Add a focused guard for stale leader snapshot:
+  - member context has `localLeaderWindowId=stale-leader`;
+  - no `markLocalTeamLeaderDetected(...)` has run;
+  - `isLocalSupportMemberSession(...)` must be false;
+  - after all candidates are marked non-leader, local support gates remain off and fallback is allowed.
+
+Verification run:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green direct guards:
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Green with Maven exec:
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+
+## 2026-06-29 / CR138 candidate-session pre-leader fallback 修复
+
+Status: review / source blocker fixed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Rechecked the new CR138 feedback and verified the blocker against current source before editing.
+- Touched only CR138 local-team session / support gating paths:
+  - `TaskMaintenanceService`
+  - `WindowTaskControlService`
+  - `WindowTaskRunner`
+  - `AutoBattleTask`
+  - `AutoCombatService`
+  - `CR138ReviewCaveatWiringTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Source finding:
+
+- Unknown-leader same-queue starts registered `localLeaderPresent=true` before a live leader was
+  detected.
+- During that pending-leader gap, candidate members were not yet considered
+  `isLocalSupportMemberSession(...)`, so they could still:
+  - run legacy `teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")`;
+  - wait on the old `requestedTaskCode` first-aid gate;
+  - consume member common-box / combat left-top maintenance as standalone.
+
+Repair:
+
+- `WindowTaskControlService.startSameQueue(...)` now registers all selected windows as a local-team
+  candidate session when the UI starts a multi-window team-role queue without a known leader.
+- `WindowTaskRunner` now reports every runner live-role preflight to `TaskMaintenanceService`; a
+  detected `LEADER` promotes the session, while all-candidate-detected-without-leader marks the
+  session as leader-absent so those windows can fall back to ordinary auto-battle behavior.
+- `AutoBattleTask.maybeRunIdleMaintenance(...)` now defers candidate members while leader detection
+  is pending, before the legacy auto-battle return-team click.
+- `AutoCombatService` now defers pending candidate members before old requested-task first-aid gates,
+  member common-box consumption, and combat left-top maintenance.
+
+Verification:
+
+- Red first:
+  - `CR138ReviewCaveatWiringTest` failed on the previous source with
+    `unknown-leader local-team batches must register candidate windows`.
+- Green:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - Maven classpath run: `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - Maven classpath run: `TaskMaintenanceCR138LocalSupportCapabilityTest`
+
+Fresh runtime to verify:
+
+- Start continuous `[五倍, 修罗]` with unknown/stale UI role snapshots.
+- Logs should show `maintenance local-team candidate registered`, then each runner live-role report.
+- Before leader detection resolves, candidate members should log pending-leader defers instead of
+  legacy return-team clicks or old requested-task first-aid gate waits.
+- After `maintenance local-team leader detected`, members should use local capability gates.
+- If no selected local leader is detected, logs should show leader-absent confirmation and then
+  ordinary/non-local auto-battle behavior.
+
+## 2026-06-29 / CR138 candidate-session pre-leader gap 复审
+
+Status: review / source blocker found / docs-dashboard update. No Java, OCR/template, click,
+navigation, task flow, or runtime logic changed in this pass.
+
+Scope:
+
+- Reviewed the latest CR138 implementation after 1384R reported P1/P2 fixed.
+- Focused on the previous blocker areas:
+  - `WindowTaskRunner.submit(...)` queue collapse before live role preflight;
+  - `TeamReturnService` no-match diagnostics;
+  - unknown-role local-team session candidate behavior before a live leader is detected.
+
+Accepted from this review:
+
+- The old submit-time queue collapse blocker is fixed:
+  - `WindowTaskRunner.submit(...)` no longer calls `collapseLocalSupportQueue(...)`.
+  - Live role preflight still owns member -> `AUTO_BATTLE` reassignment through
+    `TaskTeamAssignmentPolicy.resolveTaskForRole(...)`.
+- The old `leaderSignalPresent` diagnostic caveat is fixed:
+  - `TeamReturnService.logReturnButtonNoMatch(...)` now logs `currentWindowReturnMarkerPresent`.
+
+New P1 blocker:
+
+- `WindowTaskControlService.startSameQueue(...)` creates an unknown-leader local-team candidate and
+  submits all selected windows with `localLeaderPresent=true`.
+- Before any runner live-detects `LEADER`, `TaskMaintenanceService.isLocalSupportMemberSession(...)`
+  returns false because `hasDetectedLocalLeader(...)` is not yet satisfied.
+- In that pre-leader-detection gap:
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` may still run the legacy ungated
+    `teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")` path;
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` may fall back to the old
+    `requestedTaskCode` first-aid gate when `requested=wubei/xiuluo_v2`.
+- Risk:
+  - Candidate members can still click return-team before the local leader release.
+  - If no local leader is eventually detected, or if leader detection lags, members can again wait on
+    stale requested-task gates instead of behaving as standalone/non-local auto-battle.
+
+Required repair:
+
+- Separate candidate/pending-leader state from active local-support state and standalone/non-local
+  auto-battle.
+- Candidate members must suppress legacy return-team click and old requested-task first-aid gates
+  until leader detection resolves the session.
+- After live leader detection, members should use capability gates only.
+- If the selected batch is proven to have no local leader, clear/disable the candidate session and
+  let those windows behave as ordinary standalone/non-local auto-battle.
+- Add a focused guard for this exact pre-leader gap.
+
+Verification run:
+
+- Green: `mvn -q -DskipTests test-compile`
+- Green: `mvn -q -DskipTests compile`
+- Green direct source guards:
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Green with Maven exec:
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Note:
+  - Direct `java -cp target/test-classes;target/classes` fails for the two dependency-backed tests
+    because slf4j is not on that stripped classpath; use Maven exec for those.
+
+Dashboard sync:
+
+- Required because CR138 table status/summary changed back to source-blocked.
+- Run `node scripts/generate-cr-dashboard-data.js` after this Markdown update.
+
+## 2026-06-29 / CR138 1384R P1/P2 复审修复
+
+Status: review / 1384R source blockers fixed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Rechecked the new CR138 1384R review feedback and verified both findings against current source
+  before editing.
+- Touched only CR138 runner/session diagnostics paths:
+  - `WindowTaskRunner`
+  - `TeamReturnService`
+  - `CR138ReviewCaveatWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- No OCR/template/click/movement/navigation logic changed.
+- 摄妖香 / 摄药箱 ordering and speed remain intentionally untouched.
+
+Change:
+
+- Fixed P1 by removing submit-time local-support queue collapse from `WindowTaskRunner.submit(...)`.
+  The runner no longer uses stale `windowContext.getRole().isMember()` before live role preflight to
+  irreversibly trim `[五倍, 修罗]`. Live role detection remains the owner of member-to-`AUTO_BATTLE`
+  reassignment through `TaskTeamAssignmentPolicy.resolveTaskForRole(...)`.
+- Fixed P2 by renaming the no-match diagnostic field in `TeamReturnService.logReturnButtonNoMatch(...)`
+  from misleading `leaderSignalPresent` to `currentWindowReturnMarkerPresent`. The value is still the
+  current scanned window marker check, not a leader-window proof.
+- Updated focused guards so this class of stale-role collapse and misleading no-match field cannot
+  silently return.
+
+Verification:
+
+- Red first:
+  - `CR138ReviewCaveatWiringTest` failed on the previous source with
+    `submit must not irreversibly collapse a queue before live role preflight`.
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest` failed on the previous source with
+    `CR138 no-match log must identify the current-window return marker`.
+- Green:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatMemberCommonBoxBehaviorTest`
+  - `git diff --check` only reported existing CRLF warnings.
+
+Fresh runtime to verify:
+
+- Continuous `[五倍, 修罗]` should still log a local session candidate when UI role snapshots are
+  unknown, then `maintenance local-team leader detected` after runner live-detects the selected leader.
+- Member support decisions should show local-session capability gates instead of stale `wubei#80`.
+- A stale submit-time `MEMBER` snapshot must not drop later main queue items before live role preflight.
+- TEAM_RETURN no-match logs should show `currentWindowReturnMarkerPresent=...`, not
+  `leaderSignalPresent`.
+
+## 2026-06-29 / CR138 1384R 复审结论补写
+
+Status: docs/dashboard update only / CR138 source blocker recorded. No Java, OCR/template, click,
+navigation, task flow, or runtime logic changed.
+
+Why this pass:
+
+- User called out that CR138 review conclusions must be written back into the task card instead of
+  staying only in chat.
+- This pass updates `docs/PACKAGE_ARCHITECTURE.md` CR138 and this active-work note, then refreshes
+  the static dashboard data.
+
+Recorded in CR138:
+
+- P1 blocker:
+  - `WindowTaskRunner.submit(...)` still collapses local support member queues before live role
+    preflight, using stale submit-time role state from `windowContext.getRole().isMember()`.
+  - If submit-time role is stale `MEMBER` but live preflight later detects `LEADER` / `SOLO`, the
+    queue may already have been collapsed into support mode and can drop later main tasks such as
+    修罗 from `[五倍, 修罗]`.
+  - Required repair is to move collapse until after live role detection confirms MEMBER, or remove
+    the upfront stale-role collapse and let the member `AUTO_BATTLE` support worker hold naturally.
+- P2 diagnostic caveat:
+  - `TeamReturnService.logReturnButtonNoMatch(...)` logs `leaderSignalPresent`, but the value is
+    sampled from the current member window via `isReturnTeamSignalPresent()`, not the actual leader
+    window.
+  - It should be renamed as a current-window marker if kept, or replaced with local `TEAM_RETURN`
+    capability/source logging for future no-return diagnosis.
+
+Review verification already run before this docs update:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `CR138ReviewCaveatWiringTest`
+- `AutoCombatCR138FirstAidGateWiringTest`
+- `AutoBattleCR138TeamReturnReleaseWiringTest`
+- `LeaderTeamReturnCR138ReleaseWiringTest`
+- `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+
+Next:
+
+- Do not use fresh continuous `[五倍, 修罗]` as final CR138 acceptance until the P1 queue-collapse
+  blocker is fixed and re-reviewed.
+- After source repair, fresh acceptance should verify member logs show
+  `localSession=... localSupportMember=true` after leader detection and later 修罗 queue items are
+  not dropped by support-worker conversion.
+
+## 2026-06-29 / CR138 unknown-role same-queue local session 修复
+
+Status: review / source blocker fixed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Rechecked latest CR138 feedback. The correction is valid: the 14:04 run did click return-team, but
+  those member paths still logged `requested=wubei localSession=null localSupportMember=false`.
+- This pass intentionally does not change 摄妖香 / 摄药箱 / sheyaoxiang ordering or speed. User
+  explicitly scoped this round to the other CR138 issue.
+- Touched only CR138 local-session creation and live leader detection wiring:
+  - `WindowTaskControlService`
+  - `MultiWindowTaskManager`
+  - `WindowTaskRunner`
+  - `TaskMaintenanceService`
+  - `CR138ReviewCaveatWiringTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Root cause:
+
+- UI same-queue submit created the CR138 local-team session only when the current UI snapshot already
+  knew a selected window was `LEADER`.
+- In the fresh run, role detection happened later inside `WindowTaskRunner.resolveTaskTypeBeforeStart(...)`.
+  At submit time the selected windows could still be `UNKNOWN` / stale, so no local session was
+  attached to the batch.
+- Members therefore fell back to old generic `auto_battle requested=wubei` behavior; return-team could
+  still happen through the legacy path, but first-aid / local support capability logs could not prove
+  CR138's session gate was active.
+
+Change:
+
+- `WindowTaskControlService.startSameQueue(...)` now creates a local-team session candidate for
+  multi-window queues that contain team-role main tasks, even when the UI snapshot has no known leader
+  yet. Known-leader submit still uses the safer leader-first path.
+- `WindowTaskRunner.submit(...)` now preserves the local-team session candidate without requiring
+  `localLeaderWindowId != null`; it also resolves the leader window id after live role sync when the
+  runner detects itself as leader.
+- `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` calls
+  `TaskMaintenanceService.markLocalTeamLeaderDetected(...)` after a runner live-detects `LEADER`.
+- `TaskMaintenanceService.isLocalSupportMemberSession(...)` now requires a detected local leader
+  before treating a member as local support. This prevents external-leader / pure挂机 batches from
+  accidentally using a candidate session before a selected local leader is proven.
+- `CR138ReviewCaveatWiringTest` now guards the candidate-session path, the no-`leaderWindowId`
+  submission rule, live leader detection registration, and the detected-leader requirement.
+
+Verification:
+
+- Green: `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+- Green with Maven dependency classpath:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Green: `mvn -q -DskipTests compile`
+
+Fresh runtime to verify:
+
+- Starting continuous `[五倍, 修罗]` with UI roles initially unknown should log
+  `local-team session candidate without known leader`, then a later
+  `maintenance local-team leader detected`.
+- After leader detection, member support logs should show `localSession=... localSupportMember=true`
+  instead of staying on `localSession=null localSupportMember=false`.
+- The previous stale `requested=wubei` label may still appear as an audit/request label in some
+  support paths, but first-aid / left-top / summon-skill / common-box / team-return decisions should
+  be gated by the current local session capability rather than old `wubei#80`.
+
+## 2026-06-29 / CR75 + CR76 + CR77 stale Review rows closure
+
+Status: docs/dashboard update only. No Java, OCR/template, click, navigation, task flow, or runtime
+logic changed.
+
+Why this pass:
+
+- User asked whether earlier Review CRs had been checked before closing only CR129/CR130.
+- Full open/review sweep found the top-level `PACKAGE_ARCHITECTURE` runtime override already treated
+  CR75/CR76/CR77/CR78 as Done from fresh 修罗 evidence, but the long sprint-board rows for CR75-CR77
+  still said Review.
+- This pass updates only those stale rows/cards and records why other earlier CRs stay open.
+
+Closed:
+
+- CR75 -> Done:
+  - Fresh 修罗 accept-memory logs repeatedly showed the remembered option fast path, with no full
+    `handle-dialog:CLICK_REMEMBERED_OPTION` detect on the accepted fast path.
+  - Later run-report samples kept the accept dialog path healthy and did not record green-template or
+    business-option fallback regression.
+- CR76 -> Done:
+  - Fresh 修罗 runtime showed stable `灵兽村使者` learned-memory hits without preceding
+    `npcClick:pipeline-hide-player-names:灵兽村使者`.
+  - Earlier miss / `policy-unusable` / `insufficient-success` cases fell back normally, so the
+    accepted behavior is the stable-memory fast path plus unchanged fallback.
+- CR77 -> Done:
+  - Fresh 修罗 runtime showed `xiuluo-v2:start-exit-prepath:currentMap` using fire-and-handoff, with
+    no start-exit `handoff-fast-edge` or coordinate fallback.
+  - Formal target navigation was not blocked by the optional start-exit prepath intent.
+
+Not closed in this earlier sweep:
+
+- CR32-CR38: 2026-06-28 五倍 80/80 is strong positive, but the report explicitly says round 75
+  `ENTER_BATTLE` loop guard and slow holds mean these cannot be directly closed.
+- CR43/CR44/CR45: ordinary success is positive, but ordinary terminal and timeout branches remain
+  missing.
+- CR48/CR49/CR50/CR135: 黄袍 continuation evidence exists, but chain-end/return-home or ordinary
+  terminal gaps remain; 2026-06-28 round 75 also exposed a fresh 黄袍 loop-guard problem.
+- CR65: yellow broadcast proof exists, but maintenance/auto-combat noise and stale member context
+  remain under Review.
+- CR68: fixed 900ms reacquire churn is improved, but 30s target pathing waits still reproduced.
+- CR72: many positive icon-gate samples exist, but later report found 摄妖香 ordering/safety risk, so
+  it is not closeable.
+- CR92 and CR133: both have positive samples, but their notes still require either user acceptance of
+  partial coverage or a same-scenario replay.
+
+Dashboard sync:
+
+- Required because CR75, CR76, and CR77 changed status to Done.
+- Run `node scripts/generate-cr-dashboard-data.js` after this Markdown update.
+
+## 2026-06-29 / CR129 + CR130 fresh runtime closure
+
+Status: docs/dashboard update only. No Java, OCR/template, click, navigation, or task business logic
+changed.
+
+Baseline / dirty state:
+
+- Current worktree is already dirty before this docs-only closure. `git status --short` shows local
+  edits in `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`, runtime
+  config/memory files, CR138 source files, and new CR138 tests.
+- This pass only updates CR status/card text for CR129 and CR130 plus dashboard data.
+
+Closed:
+
+- CR129 -> Done:
+  - 修罗 fresh runtime `2026-06-27 22:39:01.570`, `22:44:33.314`, `22:46:17.035` showed
+    `ROUND_DONE` / `round skeleton finished` / next `initial phase` happening without waiting for
+    dashboard flush.
+  - 2026-06-28 五倍 80/80 run continued to show writer flushes later in the background, including
+    `17:46:51.989`, `18:46:07.310`, and `18:47:17.813`; 五倍 completed `80/80` at `19:04:55.624`.
+- CR130 -> Done:
+  - 修罗 continuous rounds after the repair start with `source=normal-start` and no
+    `hot-start:xiuluo_v2:xiuluo-v2:round-start`.
+  - Evidence includes `2026-06-27 22:39:01.570` round 4 and 2026-06-28 rounds 4-7 in
+    `19:12:07.106 -> 19:24:23.051`.
+
+Not closed:
+
+- CR131 stays Review. Its precheck capture/consume path is positive, but 2026-06-28 修罗 round 7 had
+  a long `SIGNAL_PRESENT` / `WAIT_TEAM_RETURN` stall later attributed to the CR138 local-support
+  context problem. Keep CR131 open until the post-CR138 fresh run proves the team-return chain is no
+  longer entangled with stale member context.
+- CR133 stays open: later live-round prepared-enter-battle samples are positive, but the original
+  hot-start tracker shortcut failure scenario was not replayed as a same-scenario closure sample.
+
+Dashboard sync:
+
+- Required because CR129 and CR130 changed status to Done.
+- Run `node scripts/generate-cr-dashboard-data.js` after this Markdown update.
+
+## 2026-06-29 / CR138 full local-support gate review 复审
+
+Status: review / source blocker fixed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Rechecked CR138 after the review-watch heartbeat. The latest review correction was valid:
+  CR138 was not only missing fresh runtime; the full design report still required local-support
+  left-top status, summon-skill cleanup, and member support-worker queue semantics to leave stale
+  `requestedTaskCode` / task-round gates.
+- Follow-up review found this entry was too optimistic: the idle auto-battle left-top path was moved
+  behind local `LEFT_TOP_STATUS`, but the combat-maintenance path still bypassed it. This pass fixes
+  that remaining source blocker.
+- Touched only CR138 support/session/scheduling paths:
+  - `AutoCombatService`
+  - `TaskMaintenanceRequest`
+  - `TaskMaintenanceService`
+  - `AutoBattleTask`
+  - `WindowTaskRunner`
+  - `CR138ReviewCaveatWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Change:
+
+- `openTeamPathingMaintenanceWindow(...)` now opens local `SUMMON_SKILL` and `LEFT_TOP_STATUS`
+  capabilities together with `FIRST_AID/PATHING_WINDOW/COMMON_BOX`.
+- `closeTeamMaintenanceWindow(...)` closes those local pathing capabilities. `FIRST_AID_ONLY` still
+  opens only `FIRST_AID`, so 黄袍/连战 short recovery cannot run summon-skill or left-top maintenance.
+- `AutoBattleTask.maybeRunIdleMaintenance(...)` now consumes left-top status through local
+  `LEFT_TOP_STATUS` capability, and summon-skill cleanup through local `SUMMON_SKILL` capability,
+  instead of old `isTeamPathingMaintenanceWindowOpen(context, context.getRequestedTaskCode())` /
+  `teamMaintenanceKey=context.getRequestedTaskCode()`.
+- `TaskMaintenanceRequest.requiredLocalSupportCapability` plus a local capability epoch key gives
+  summon-skill a local-session claim round, so a member that started as `requested=wubei` can follow
+  the current local leader release after the leader moves to 修罗.
+- `WindowTaskRunner.submit(...)` collapses local member queues containing team-role main tasks into a
+  single support worker queue. A member submitted with `[五倍, 修罗]` no longer carries the full
+  two-item main-task queue while running auto-battle support.
+- `AutoCombatService.maybeRunCombatMaintenance(...)` now keeps sparse combat cleanup, but local
+  support members may run combat left-top status maintenance only while the current local leader
+  session has opened `LEFT_TOP_STATUS`. Standalone/non-local auto-battle keeps the previous behavior.
+
+Verification:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green focused guards:
+  - `CR138ReviewCaveatWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatMemberCommonBoxBehaviorTest`
+
+Fresh runtime to verify:
+
+- Continuous `[五倍, 修罗]` should not show member first-aid / summon-skill / left-top deferred on
+  stale `requested=wubei` or `wubei#80` after the leader switches to 修罗.
+- Member HP/MP first-aid, left-top status, summon-skill cleanup, common box, and `TEAM_RETURN` should
+  obey the current local session capability windows.
+- Standalone/non-local auto-battle should not wait on stale requested-task gates.
+
+Resolved blocker (2026-06-29 re-review):
+
+- `AutoCombatService` sparse combat cleanup no longer lets local support members call
+  `leftTopStatusSwitchService.handleCombatMaintenance(context, source)` unless local
+  `LEFT_TOP_STATUS` is open.
+- `CR138ReviewCaveatWiringTest` now guards the combat-maintenance path and requires a deferred log
+  when the local capability is closed.
+
+## 2026-06-29 / CR138 non-local leader fallback review 修复
+
+Status: review / P0 blocker / design-report scope not complete. Owner: 唐德.
+
+Scope:
+
+- Rechecked CR138 after the review-watch correction. The card still had one real open gap:
+  non-local/standalone auto-battle fallback still inherited stale `requestedTaskCode` gates.
+- Touched only CR138 auto-battle support gate paths:
+  - `AutoCombatService`
+  - `AutoBattleTask`
+  - `CR138ReviewCaveatWiringTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Change:
+
+- `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` now uses the old
+  `awaitTeamFirstAidMaintenanceWindowOpen(...)` fallback only when the context explicitly says a
+  local leader is present. A member auto-battle window with no local leader/session no longer waits
+  forever on stale `requested=wubei/xiuluo_v2` gates.
+- `AutoBattleTask.maybeRunIdleMaintenance(...)` now derives the team-maintenance gate flag from an
+  actual local support session. Non-local/standalone auto-battle still keeps its requested task label
+  for logs, but does not inherit the old team window requirement.
+- Extended `CR138ReviewCaveatWiringTest` to guard both non-local fallback rules.
+
+Verification:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green focused guards:
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+
+Blocking review correction:
+
+- CR138 cannot be accepted or sent to fresh runtime yet if the acceptance boundary is the full
+  `docs/run-reports/2026-06-28-auto-battle-local-leader-gate-design.md` design report.
+- Implemented narrow slices are guarded, but full local-support maintenance migration is unfinished:
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` still gates left-top status by
+    `context.getRequestedTaskCode()` and old `isTeamPathingMaintenanceWindowOpen(...)`.
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` still passes `teamMaintenanceKey =
+    context.getRequestedTaskCode()` for summon-skill cleanup.
+  - `TaskMaintenanceService.maybeCleanSummonSkill(...)` still resolves one-round claims from the old
+    `teamMaintenanceKey` / task-round gate, not a local-session capability/round claim.
+  - Member queue semantics have not yet been collapsed into one local support worker for
+    `[五倍, 修罗]`.
+
+Fresh runtime must wait until those blockers are implemented and guarded. Then verify:
+
+- Continuous `[五倍, 修罗]` shows local member first-aid, left-top status, summon-skill cleanup, common
+  box, and `TEAM_RETURN` obeying local session/capability gates instead of stale requested task gates.
+- A member/auto-battle run without a local leader does not log long-lived deferred waits on stale
+  `requested=wubei/xiuluo_v2` team gates.
+- 黄袍/连战 first-aid-only window shows HP/MP only: no common-box, summon-skill, left-top, repair, or
+  heal-pet work.
+- Return-release window may consume common box first, then attempt `TEAM_RETURN`.
+
+Continued review note:
+
+- Re-ran compile/test-compile and focused guards after this slice; no new blocker found inside the
+  already implemented first-aid/common-box/TEAM_RETURN/non-local-fallback slice.
+- Reviewer correction from user: the CR138 boundary is the full design-report migration, so the
+  remaining left-top / summon-skill / support-worker queue gaps are CR138 blockers, not optional later
+  acceptance slices.
+
+## 2026-06-29 / CR138 review caveat follow-up 修复
+
+Status: review / source guards passed / fresh runtime pending. Owner: 唐德.
+
+Scope:
+
+- Continued the CR138 review watch after the `FIRST_AID_ONLY` blocker repair.
+- Verified the two remaining source caveats in the CR138 card against current code before editing.
+- Touched only CR138 support/session/logging paths:
+  - `AutoCombatService`
+  - `WindowTaskControlService`
+  - `CR138ReviewCaveatWiringTest`
+- No OCR/template/click/movement/navigation logic changed.
+
+Change:
+
+- `AutoCombatService.runPendingMemberCommonBoxIfAllowed(...)` now checks
+  `commonBoxService.hasPendingBoxForCurrentWindow(...)` before checking/logging the local
+  `COMMON_BOX` capability gate. This keeps the gate behavior unchanged but removes misleading
+  `pending member common-box deferred` logs when no box is actually pending.
+- `WindowTaskControlService.startSameQueue(...)` now submits the detected local leader first. The
+  local-team session is passed to members only when the leader submit succeeds. If the leader submit
+  fails, members may still start as before, but they start without orphan local-team session metadata.
+- Added `CR138ReviewCaveatWiringTest` to guard both caveat fixes.
+
+Verification:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green focused guards:
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+
+Fresh runtime still needed:
+
+- Continuous `[五倍, 修罗]` should show local member first-aid using `FIRST_AID` capability after the
+  leader switches to 修罗.
+- 黄袍/连战 first-aid-only window should show no common-box consumption.
+- Return-release window may consume common box first, then attempt `TEAM_RETURN`.
+
+## 2026-06-29 / CR138 FIRST_AID_ONLY common-box blocker 修复
+
+Status: review / source guards passed / fresh runtime pending. Owner: 唐德.
+
+Baseline / scope:
+
+- Branch: `codex/migrate-runner-dialog`.
+- Latest pushed checkpoint for this CR line remains `c155ef3 Checkpoint local work before CR138`.
+- Current local workspace already contains CR138 first-aid/session and TEAM_RETURN release slices; this pass only
+  addresses the latest review blocker that `FIRST_AID_ONLY` could still consume common box.
+- Touched behavior path: `AutoCombatService`, `TaskMaintenanceService`, `AutoBattleTask`,
+  `TeamSupportCapability`, and focused CR138 tests. No OCR/template/click/movement/navigation logic changed.
+
+Change:
+
+- `TaskMaintenanceService.openTeamFirstAidMaintenanceWindow(...)` opens only
+  `TeamSupportCapability.FIRST_AID`; it no longer implies common-box permission.
+- Wider safe windows now explicitly open `COMMON_BOX`:
+  - `openTeamPathingMaintenanceWindow(...)` opens `FIRST_AID`, `PATHING_WINDOW`, and `COMMON_BOX`;
+  - `openLocalTeamReturnSupportWindow(...)` opens `TEAM_RETURN` and `COMMON_BOX`.
+- `AutoCombatService.runPendingMemberCommonBoxIfAllowed(...)` now defers local support members unless
+  `COMMON_BOX` is explicitly open for the same local session.
+- `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` no longer calls
+  `commonBoxService.consumePendingBoxIfAllowed(...)` inside the first-aid branch, so
+  `FIRST_AID_ONLY` is HP/MP-only.
+- `AutoBattleTask.tryRunLocalTeamReturnRelease(...)` consumes common box before return-team only when
+  `COMMON_BOX` is also open.
+
+Verification:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green focused guards:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - existing `AutoCombatMemberCommonBoxBehaviorTest`
+
+Fresh runtime still needed:
+
+- Continuous `[五倍, 修罗]` should show local member first-aid using `FIRST_AID` capability after the
+  leader switches to 修罗.
+- 黄袍/连战 first-aid-only window should show no common-box consumption.
+- Return-release window may consume common box first, then attempt `TEAM_RETURN`.
+
+Superseded source review caveats (2026-06-29):
+
+- Re-ran:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatMemberCommonBoxBehaviorTest`
+- Behavior blocker from the previous review is fixed: `FIRST_AID_ONLY + pending common box` does not
+  consume the box, and pathing/return-release windows explicitly carry `COMMON_BOX`.
+- Resolved by the follow-up above: `AutoCombatService.runPendingMemberCommonBoxIfAllowed(...)` logged local
+  `COMMON_BOX` deferred before checking whether a box is actually pending. This is behavior-safe but
+  may spam misleading `pending member common-box deferred` messages in fresh runtime.
+- Resolved by the follow-up above: UI same-queue submit created the local-team session before per-window submit results.
+  If the selected leader rejects the task but a member accepts it, the member can inherit an orphan
+  local session and wait for capabilities from a leader that is not running.
+
+## 2026-06-29 / CR138 本地队伍支援 TEAM_RETURN release 第二片实现
+
+Status: review / source guards passed / fresh runtime pending. Owner: 唐德.
+
+Follow-up after CR138 heartbeat correction:
+
+- Corrected the prior heartbeat behavior: CR138 still had unfinished follow-up acceptance around
+  local member `TEAM_RETURN` release and common-box-before-return ordering, so this pass implemented
+  the next narrow slice instead of only reporting "no new feedback".
+- `TaskMaintenanceService` now exposes explicit local-session `TEAM_RETURN` release methods:
+  `openLocalTeamReturnSupportWindow(...)` and `closeLocalTeamReturnSupportWindow(...)`.
+- `WubeiTask.runWaitTeamReturnPhase(...)` and `XiuluoTaskV2.waitTeamReturn(...)` now open the local
+  `TEAM_RETURN` capability only when the leader-side return signal is still present and the leader is
+  yielding shared state for members. They close it when the precheck/signal says no return wait is
+  needed.
+- `AutoBattleTask` local support members no longer use the legacy ungated
+  `teamReturnService.clickReturnTeamIfPresent(...)` path. In a local support session they first
+  require `TeamSupportCapability.TEAM_RETURN`, then consume pending common box, then use the existing
+  return-team clicker. Standalone/non-local auto-battle keeps the old direct return-team behavior.
+- Added/extended source guards:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` proves `TEAM_RETURN` is not implied by
+    `FIRST_AID`, opens only on explicit leader release, and closes afterward.
+  - `AutoBattleCR138TeamReturnReleaseWiringTest` proves local support members cannot use the legacy
+    ungated return-team path, and common box is consumed before return-team click.
+  - `LeaderTeamReturnCR138ReleaseWiringTest` proves 五倍 and 修罗 leader wait phases open release
+    before yielding shared state and close release when the signal is gone.
+
+Verification:
+
+- Green: `mvn -q -DskipTests compile`
+- Green: `mvn -q -DskipTests test-compile`
+- Green focused guards:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - existing `AutoCombatMemberCommonBoxBehaviorTest`
+
+Fresh runtime still needed:
+
+- Continuous `[五倍, 修罗]` should show local member first-aid using `FIRST_AID` capability and local
+  member return clicks occurring only after leader `TEAM_RETURN` release.
+- If common box and return-team are both pending in the same release opportunity, logs should show
+  common box consumed before return-team.
+
+## 2026-06-28 / CR138 本地队伍支援 first-aid gate 第一片实现
+
+Status: review / fresh runtime pending. Owner: 唐德.
+
+Latest review (2026-06-29):
+
+- Rechecked CR138 after the latest implementation report. The card cannot be accepted as complete.
+- Verified:
+  - `mvn -q -DskipTests test-compile`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Blocker:
+  - `AutoCombatService` still calls `runPendingMemberCommonBoxIfAllowed(...)` before pending follower
+    first-aid in the main tick.
+  - `runPendingFollowerFirstAidIfAllowed(...)` still calls
+    `commonBoxService.consumePendingBoxIfAllowed(...)` after acquiring the first-aid turn.
+  - Therefore `FIRST_AID_ONLY` can still consume common box, violating the CR138 rule that this
+    capability only permits HP/MP first-aid.
+- Required repair before accepting:
+  - common box may remain highest priority only in a window that explicitly permits `COMMON_BOX`;
+  - `FIRST_AID` capability alone must not run common box, summon skill, repair, heal-pet,
+    sheyaoxiang, left-top status, or `TEAM_RETURN`;
+  - add a focused behavior guard for `FIRST_AID_ONLY + pending common box` proving no box is consumed.
+- Superseded open gaps:
+  - non-local-leader auto-battle fallback has been repaired by the top
+    `CR138 non-local leader fallback review 修复` entry.
+  - actual `TEAM_RETURN` click has been moved behind leader-release capability by the later
+    `CR138 本地队伍支援 TEAM_RETURN release 第二片实现` entry.
+
+Review follow-up:
+
+- Rechecked CR138 card acceptance against source. The first implementation already had session
+  `FIRST_AID` gating, but `TeamReturnService` no-match diagnostics were too thin for the card's
+  diagnostic requirement.
+- Narrow fix: `TeamReturnService.logReturnButtonNoMatch(...)` now logs native title, parsed
+  player/server/id, task/requested labels, window role/hwnd, local session/leader flags, runtime
+  status/action/map/pathing/identity state, member ROI capture audit, best template score/point/rect,
+  configured area/template/threshold, and last found/click ages.
+- This does not change `TEAM_RETURN` click semantics: found/click/disappeared branches are unchanged;
+  the extra ROI/best-score probe runs only on throttled no-match diagnostics.
+- Added source guard `TeamReturnCR138NoMatchDiagnosticsWiringTest`.
+
+Baseline:
+
+- Branch: `codex/migrate-runner-dialog`.
+- Latest pushed checkpoint: `c155ef3 Checkpoint local work before CR138`.
+- `git status -sb` after push: clean, tracking `origin/codex/migrate-runner-dialog`.
+- Current CR138 sprint row/card changed from `Unclaimed/Open` to 唐德 / 进行中.
+
+Touched-path evidence to inspect before implementation:
+
+- `src/main/java/com/bot/dhxy/service/AutoCombatService.java` currently gates pending follower
+  first-aid through `requestedTaskCode` and
+  `taskMaintenanceService.awaitTeamFirstAidMaintenanceWindowOpen(context, requestedTaskCode, ...)`.
+- `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java` currently stores team windows by
+  task/round key and normalizes the team key from explicit key or `TaskExecutionContext`.
+- `src/main/java/com/bot/dhxy/task/AutoBattleTask.java` currently runs `TEAM_RETURN` before pending
+  first-aid/maintenance and calls `teamReturnService.clickReturnTeamIfPresent(...)` directly.
+- `src/main/java/com/bot/dhxy/service/TeamReturnService.java` currently returns false when no
+  return button is detected; CR138 requires actionable no-match diagnostics before any later
+  behavior migration.
+
+Implementation boundary for this pass:
+
+- Wrote a failing focused test first for stale `requestedTaskCode` in local support first-aid:
+  `TaskMaintenanceCR138LocalSupportCapabilityTest` initially failed at `test-compile` because
+  `TeamSupportCapability` did not exist.
+- Implemented only the first CR138 slice:
+  - local support/session/capability diagnostics;
+  - leader double-write or equivalent `FIRST_AID` capability observation;
+  - pending follower first-aid can use local-session `FIRST_AID` capability when a local leader exists.
+- Do not migrate 三技能、common box、repair、医宝宝、摄妖香、left-top status, or `TEAM_RETURN`
+  click semantics in this slice.
+- Do not change OCR/template/click/movement/navigation logic.
+
+Files changed:
+
+- Added `TeamSupportCapability` with explicit capability names. Only `FIRST_AID` is consumed in this
+  slice; the other values are placeholders for later CRs and do not change behavior.
+- Added local team fields to `TaskExecutionContext`: `localTeamSessionKey`, `localLeaderWindowId`,
+  `localLeaderPresent`, and `localSupportMember`.
+- `WindowTaskControlService.startSameQueue(...)` now creates one `local-team-*` session when the
+  selected batch contains a local leader, and passes it through `MultiWindowTaskManager` /
+  `WindowTaskRunner` into each task context.
+- `TaskMaintenanceService` keeps the existing `wubei#N` / `xiuluo_v2#N` gates, and additionally
+  opens/closes local-session `FIRST_AID` and `PATHING_WINDOW` capabilities when the leader opens or
+  closes the corresponding old gate.
+- `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` now checks local-session
+  `TeamSupportCapability.FIRST_AID` first for local support members. Only non-session windows fall
+  back to the old `requestedTaskCode` gate.
+- `TeamReturnService.clickReturnTeamIfPresent(...)` now logs throttled no-match diagnostics with
+  requested task, local session, leader window, leader signal presence, configured area/template,
+  threshold, and last found/click age. It still returns false without clicking when no button is found.
+
+Verification:
+
+- Red: `mvn -q -DskipTests test-compile` failed before implementation with missing
+  `TeamSupportCapability`.
+- Green: `mvn -q -DskipTests compile` passed.
+- Green: `mvn -q -DskipTests test-compile` passed.
+- Focused guards passed:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - existing `AutoCombatMemberCommonBoxBehaviorTest`
+
+Fresh runtime still needed:
+
+- Continuous `[五倍, 修罗]` should show member first-aid logs with
+  `gate=local-team capability=FIRST_AID` after the leader has switched to 修罗.
+- The old long loop of `requested=wubei` / `teamRound=wubei#80 state=CLOSED` should no longer block
+  pending follower HP/MP supply for local support members.
+- If return-team is not clicked, logs should include `team return: return button not found ...`
+  instead of silent false.
+
 ## 2026-06-28 / CR138 连续队列本地队伍支援 session gate 与归队诊断卡片创建
 
 Status: docs/card update only. No Java, OCR/template, click, navigation, task business logic,

@@ -72,6 +72,12 @@ Important behavior constraints:
    - Include the resulting `docs/cr-dashboard-data.js` change together with the Markdown change, so `docs/CR_DASHBOARD.html` reflects the latest CR status after a browser refresh.
    - If the script cannot run, record that as a blocker in `docs/ACTIVE_WORK.md` and tell the user that the dashboard snapshot is stale.
 
+11. CR card persistence rule.
+   - Any sprint/CR task discussion that produces a decision, review opinion, blocker, repair direction, verification result, fresh-runtime acceptance point, or "do not run yet" warning must be written back into the corresponding CR card in `docs/PACKAGE_ARCHITECTURE.md` before handoff.
+   - Do not leave CR review conclusions only in chat, a sub-agent reply, terminal output, or `docs/ACTIVE_WORK.md`. `docs/ACTIVE_WORK.md` may summarize the active pass, but the CR card is the durable source of truth for that task.
+   - If a review finds a P0/P1/P2 issue, record the severity, evidence, affected files/methods, required repair direction, and verification/fresh-runtime gate inside the CR card.
+   - If the CR table row status/owner/summary changes as a result, follow the CR dashboard sync rule and regenerate `docs/cr-dashboard-data.js`.
+
 ## Code documentation rule
 
 - Temporary lightweight policy: keep comments useful, but do not turn every small code change into a documentation pass.

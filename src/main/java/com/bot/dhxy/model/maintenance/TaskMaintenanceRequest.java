@@ -27,6 +27,10 @@ import lombok.Value;
  * @param requireOpenTeamMaintenanceWindow when true, team-round summon cleanup may run only while
  *                                         the leader task has explicitly opened the shared pathing
  *                                         maintenance window.
+ * @param requiredLocalSupportCapability local-session capability required before this maintenance
+ *                                       pass can claim a local support slot. This keeps member
+ *                                       support gated by the current local leader session instead
+ *                                       of a stale requested task code.
  */
 @Value
 @Builder(toBuilder = true)
@@ -56,4 +60,6 @@ public class TaskMaintenanceRequest {
 
     @Builder.Default
     boolean requireOpenTeamMaintenanceWindow = false;
+
+    TeamSupportCapability requiredLocalSupportCapability;
 }

@@ -2,11 +2,13 @@ package com.bot.dhxy.task;
 
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.TaskRunResult;
+import com.bot.dhxy.model.maintenance.TeamSupportCapability;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
 import com.bot.dhxy.service.AutoCombatService;
+import com.bot.dhxy.service.CommonBoxService;
 import com.bot.dhxy.service.LeftTopStatusSwitchService;
 import com.bot.dhxy.service.PlayerStateService;
 import com.bot.dhxy.service.TaskMaintenanceService;
@@ -39,6 +41,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
     private final TaskStartupCheckService taskStartupCheckService;
     private final TaskMaintenanceService taskMaintenanceService;
     private final TeamReturnService teamReturnService;
+    private final CommonBoxService commonBoxService;
     private final LeftTopStatusSwitchService leftTopStatusSwitchService;
 
     /**
@@ -52,6 +55,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
      * @param taskMaintenanceService shared maintenance scheduler for broadcast prompts and
      *                               summon-skill cleanup.
      * @param teamReturnService return-team detector/clicker used after combat deaths.
+     * @param commonBoxService delayed common-box consumer used before local return-team clicks.
      * @param leftTopStatusSwitchService CR107 left-top status switch guard consumed during follower
      *                                   pathing maintenance windows.
      */
@@ -62,6 +66,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
                           TaskStartupCheckService taskStartupCheckService,
                           TaskMaintenanceService taskMaintenanceService,
                           TeamReturnService teamReturnService,
+                          CommonBoxService commonBoxService,
                           LeftTopStatusSwitchService leftTopStatusSwitchService) {
         super(gameContext, taskStepExecutor);
         this.autoCombatService = autoCombatService;
@@ -69,6 +74,7 @@ public class AutoBattleTask extends BaseTaskTemplate {
         this.taskStartupCheckService = taskStartupCheckService;
         this.taskMaintenanceService = taskMaintenanceService;
         this.teamReturnService = teamReturnService;
+        this.commonBoxService = commonBoxService;
         this.leftTopStatusSwitchService = leftTopStatusSwitchService;
     }
 
@@ -177,13 +183,27 @@ public class AutoBattleTask extends BaseTaskTemplate {
      */
     private void maybeRunIdleMaintenance(TaskExecutionContext context) {
         context.throwIfStopRequested();
-        if (teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")) {
+        if (tryRunLocalTeamReturnRelease(context)) {
+            return;
+        }
+        if (taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
+            log.info("{} auto-battle idle maintenance deferred: pending local leader detection session={} requested={} role={}",
+                    context.getLogPrefix(), context.getLocalTeamSessionKey(),
+                    context.getRequestedTaskCode(), context.getWindowRole());
+            return;
+        }
+        if (!taskMaintenanceService.isLocalSupportMemberSession(context)
+                && teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")) {
             return;
         }
         boolean followerSupportMode = isFollowerSupportMode(context);
-        if (followerSupportMode
-                && leftTopStatusSwitchService.isSupportedTaskCode(context.getRequestedTaskCode())
-                && taskMaintenanceService.isTeamPathingMaintenanceWindowOpen(context, context.getRequestedTaskCode())) {
+        boolean localSupportSession = taskMaintenanceService.isLocalSupportMemberSession(context);
+        boolean requestedTeamTask = leftTopStatusSwitchService.isSupportedTaskCode(context.getRequestedTaskCode());
+        boolean requireLocalSupportGate = localSupportSession && followerSupportMode;
+        boolean requireLegacyTeamPathingGate = followerSupportMode && !localSupportSession && requestedTeamTask;
+        if (requireLocalSupportGate
+                && taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
+                context, TeamSupportCapability.LEFT_TOP_STATUS)) {
             leftTopStatusSwitchService.consumeFollowerSafeWindow(context, context.getRequestedTaskCode());
             context.throwIfStopRequested();
         }
@@ -193,21 +213,48 @@ public class AutoBattleTask extends BaseTaskTemplate {
                         .handleMaintenanceBroadcast(true)
                         .allowFullMaintenanceBroadcastFallback(false)
                         /*
-                         * Follower-support windows should share the leader task's summon-skill
-                         * maintenance slot. Gate them by the requested team task so one round still
-                         * cleans at most one window, instead of letting only the leader ever run it.
+                         * Local follower-support members share the current UI-started leader session,
+                         * not their original requested task label. This prevents a member that started
+                         * as requested=wubei from waiting on wubei#80 after the leader has moved on to
+                         * xiuluo_v2 in the same queue.
                          */
                         .cleanSummonSkill(true)
-                        .oneSummonSkillPerTeamRound(followerSupportMode)
-                        .teamMaintenanceKey(followerSupportMode ? context.getRequestedTaskCode() : null)
-                        .requireOpenTeamMaintenanceWindow(followerSupportMode
-                                && ("xiuluo_v2".equalsIgnoreCase(context.getRequestedTaskCode())
-                                || "wubei".equalsIgnoreCase(context.getRequestedTaskCode())))
+                        .oneSummonSkillPerTeamRound(requireLocalSupportGate || requireLegacyTeamPathingGate)
+                        .teamMaintenanceKey(requireLegacyTeamPathingGate
+                                ? context.getRequestedTaskCode()
+                                : null)
+                        .requireOpenTeamMaintenanceWindow(requireLegacyTeamPathingGate)
+                        .requiredLocalSupportCapability(requireLocalSupportGate
+                                ? TeamSupportCapability.SUMMON_SKILL
+                                : null)
                         .build());
         if (result.isHandled()) {
             log.info("{} auto-battle idle maintenance handled: status={} message={}",
                     context.getLogPrefix(), result.getStatus(), result.getMessage());
         }
+    }
+
+    private boolean tryRunLocalTeamReturnRelease(TaskExecutionContext context) {
+        if (!taskMaintenanceService.isLocalSupportMemberSession(context)) {
+            return false;
+        }
+        if (!taskMaintenanceService.awaitLocalTeamSupportCapabilityOpen(
+                context, TeamSupportCapability.TEAM_RETURN, 0L)) {
+            return false;
+        }
+
+        String requestedTaskCode = context.getRequestedTaskCode();
+        boolean consumedBox = taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
+                context, TeamSupportCapability.COMMON_BOX)
+                && commonBoxService.consumePendingBoxIfAllowed(
+                context, requestedTaskCode, "auto-battle:team-return-release");
+        if (consumedBox) {
+            log.info("{} auto-battle local return release consumed common-box before return-team: requested={} role={}",
+                    context.getLogPrefix(), requestedTaskCode, context.getWindowRole());
+        }
+        boolean clickedReturn = teamReturnService.clickReturnTeamIfPresent(
+                context, "auto-battle:local-team-return-release");
+        return consumedBox || clickedReturn;
     }
 
     /**

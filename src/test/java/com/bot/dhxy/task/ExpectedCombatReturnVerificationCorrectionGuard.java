@@ -73,7 +73,10 @@ public final class ExpectedCombatReturnVerificationCorrectionGuard {
         }
         int failedIndex = source.indexOf("return WubeiStepOutcome.failed(state, \"return home failed\")", returnIndex);
         int correctionIndex = source.indexOf("correctExpectedReturnFailureIfStillInCombat(", returnIndex);
-        return failedIndex > returnIndex && correctionIndex > returnIndex && correctionIndex < failedIndex;
+        int trustedInCombatIndex = source.indexOf("returnHome == ReturnHomeResult.STILL_IN_COMBAT", returnIndex);
+        return failedIndex > returnIndex
+                && ((trustedInCombatIndex > returnIndex && trustedInCombatIndex < failedIndex)
+                || (correctionIndex > returnIndex && correctionIndex < failedIndex));
     }
 
     private static String read(Path path) throws Exception {

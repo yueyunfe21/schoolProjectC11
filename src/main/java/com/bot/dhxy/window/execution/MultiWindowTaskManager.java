@@ -7,6 +7,7 @@ import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.MemoryService;
+import com.bot.dhxy.service.TaskMaintenanceService;
 import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
@@ -65,6 +66,7 @@ public class MultiWindowTaskManager {
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
+    private final TaskMaintenanceService taskMaintenanceService;
     private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
@@ -89,6 +91,7 @@ public class MultiWindowTaskManager {
      * @param taskTrackerPanelService left task-tracker panel reader used by runner watchers.
      * @param mapNameCanonicalizer canonicalizer used by runner watchers for map-name comparisons.
      * @param memoryService single persisted-memory facade for route dialog and world-map memories.
+     * @param taskMaintenanceService local team support/session capability registry.
      * @param dialogPreparationProviders task-owned dialog preparation providers consumed by watchers.
      * @param windowReadyEventBus soft wake bus used by runner watchers after terminal observations.
      */
@@ -109,6 +112,7 @@ public class MultiWindowTaskManager {
                                   TaskTrackerPanelService taskTrackerPanelService,
                                   MapNameCanonicalizer mapNameCanonicalizer,
                                   MemoryService memoryService,
+                                  TaskMaintenanceService taskMaintenanceService,
                                   List<WindowDialogPreparationProvider> dialogPreparationProviders,
                                   WindowReadyEventBus windowReadyEventBus) {
         this.taskFactory = taskFactory;
@@ -128,6 +132,7 @@ public class MultiWindowTaskManager {
         this.taskTrackerPanelService = taskTrackerPanelService;
         this.mapNameCanonicalizer = mapNameCanonicalizer;
         this.memoryService = memoryService;
+        this.taskMaintenanceService = taskMaintenanceService;
         this.dialogPreparationProviders = dialogPreparationProviders == null
                 ? List.of()
                 : List.copyOf(dialogPreparationProviders);
@@ -157,7 +162,7 @@ public class MultiWindowTaskManager {
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                     automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                    taskTrackerPanelService, mapNameCanonicalizer, memoryService,
+                    taskTrackerPanelService, mapNameCanonicalizer, memoryService, taskMaintenanceService,
                     dialogPreparationProviders, windowReadyEventBus);
         });
     }
@@ -184,7 +189,7 @@ public class MultiWindowTaskManager {
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                         automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                        taskTrackerPanelService, mapNameCanonicalizer, memoryService,
+                        taskTrackerPanelService, mapNameCanonicalizer, memoryService, taskMaintenanceService,
                         dialogPreparationProviders, windowReadyEventBus));
     }
 
@@ -235,6 +240,24 @@ public class MultiWindowTaskManager {
      * @return detailed submit result for UI/logging.
      */
     public WindowTaskSubmitResult submitQueueWithResult(String windowId, WindowTaskQueue queue) {
+        return submitQueueWithResult(windowId, queue, null, null, false);
+    }
+
+    /**
+     * Submit a task queue with optional local-team support session metadata.
+     *
+     * @param windowId logical registered window id.
+     * @param queue task queue to run.
+     * @param localTeamSessionKey shared id for a multi-window UI submission with a local leader.
+     * @param localLeaderWindowId window id of the local leader for diagnostics/member gates.
+     * @param localLeaderPresent true when the submitted batch contains a local leader.
+     * @return detailed submit result for UI/logging.
+     */
+    public WindowTaskSubmitResult submitQueueWithResult(String windowId,
+                                                        WindowTaskQueue queue,
+                                                        String localTeamSessionKey,
+                                                        String localLeaderWindowId,
+                                                        boolean localLeaderPresent) {
         String normalizedWindowId = normalizeWindowId(windowId);
         WindowTaskQueue safeQueue = queue == null ? WindowTaskQueue.empty() : queue;
         if (normalizedWindowId == null) {
@@ -259,7 +282,7 @@ public class MultiWindowTaskManager {
         if (!runner.canAcceptTaskQueue()) {
             return WindowTaskSubmitResult.failed(normalizedWindowId, safeQueue, WindowTaskSubmitStatus.WINDOW_BUSY, "窗口已有任务正在运行");
         }
-        boolean submitted = runner.submit(safeQueue);
+        boolean submitted = runner.submit(safeQueue, localTeamSessionKey, localLeaderWindowId, localLeaderPresent);
         if (!submitted) {
             return WindowTaskSubmitResult.failed(normalizedWindowId, safeQueue, WindowTaskSubmitStatus.SUBMIT_REJECTED, "任务队列提交失败");
         }

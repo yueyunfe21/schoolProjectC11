@@ -26,6 +26,7 @@ import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.DialogService;
 import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.MemoryService;
+import com.bot.dhxy.service.TaskMaintenanceService;
 import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
@@ -117,6 +118,7 @@ public class WindowTaskRunner {
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
+    private final TaskMaintenanceService taskMaintenanceService;
     private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
     private final ExecutorService executor;
@@ -124,6 +126,9 @@ public class WindowTaskRunner {
     private final ExecutorService dialogPreparationExecutor;
     private volatile RunningTaskHandle currentTask;
     private volatile boolean shutdown;
+    private volatile String activeLocalTeamSessionKey;
+    private volatile String activeLocalLeaderWindowId;
+    private volatile boolean activeLocalLeaderPresent;
 
     /**
      * Create a runner for one registered window.
@@ -145,6 +150,7 @@ public class WindowTaskRunner {
      * @param mapNameCanonicalizer canonicalizer used when comparing tracker target maps with
      *                             mini-map OCR/current-map readings.
      * @param memoryService unified memory facade used by watcher-settled dialog and route memories.
+     * @param taskMaintenanceService local team support/session capability registry.
      * @param dialogPreparationProviders task-owned providers used for explicitly registered
      *                                   business dialogs.
      * @param windowReadyEventBus soft wake bus published after watcher terminal observations.
@@ -164,6 +170,7 @@ public class WindowTaskRunner {
                             TaskTrackerPanelService taskTrackerPanelService,
                             MapNameCanonicalizer mapNameCanonicalizer,
                             MemoryService memoryService,
+                            TaskMaintenanceService taskMaintenanceService,
                             List<WindowDialogPreparationProvider> dialogPreparationProviders,
                             WindowReadyEventBus windowReadyEventBus) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
@@ -181,6 +188,7 @@ public class WindowTaskRunner {
         this.taskTrackerPanelService = Objects.requireNonNull(taskTrackerPanelService, "taskTrackerPanelService must not be null");
         this.mapNameCanonicalizer = Objects.requireNonNull(mapNameCanonicalizer, "mapNameCanonicalizer must not be null");
         this.memoryService = Objects.requireNonNull(memoryService, "memoryService must not be null");
+        this.taskMaintenanceService = Objects.requireNonNull(taskMaintenanceService, "taskMaintenanceService must not be null");
         this.dialogPreparationProviders = dialogPreparationProviders == null
                 ? List.of()
                 : List.copyOf(dialogPreparationProviders);
@@ -222,8 +230,23 @@ public class WindowTaskRunner {
      * @return true when the queue is accepted and scheduled.
      */
     public synchronized boolean submit(WindowTaskQueue queue) {
+        return submit(queue, null, null, false);
+    }
+
+    /**
+     * Submit a task queue to this window with optional local-team session metadata.
+     *
+     * @param queue queue of requested task types. The runner accepts only one live queue at a time.
+     * @param localTeamSessionKey shared id for the UI-started local team run; blank means standalone.
+     * @param localLeaderWindowId local leader window id for diagnostics and member gates.
+     * @param localLeaderPresent true when this submitted batch contains a local leader.
+     * @return true when the queue is accepted and scheduled.
+     */
+    public synchronized boolean submit(WindowTaskQueue queue,
+                                       String localTeamSessionKey,
+                                       String localLeaderWindowId,
+                                       boolean localLeaderPresent) {
         WindowTaskQueue safeQueue = queue == null ? WindowTaskQueue.empty() : queue;
-        TaskType firstTaskType = safeQueue.firstTaskType();
         if (shutdown) {
             windowContext.markError("runner is closed");
             log.warn("window [{}] runner is closed, reject queue {}", windowContext.getWindowId(), safeQueue.toLogText());
@@ -241,12 +264,20 @@ public class WindowTaskRunner {
 
         TaskStopToken stopToken = new TaskStopToken();
         TaskPauseToken pauseToken = new TaskPauseToken();
+        String sessionKey = normalizeSessionText(localTeamSessionKey);
+        String leaderWindowId = normalizeSessionText(localLeaderWindowId);
+        boolean leaderPresent = localLeaderPresent && sessionKey != null;
+        WindowTaskQueue executionQueue = safeQueue;
+        TaskType firstTaskType = executionQueue.firstTaskType();
         FutureTask<Void> futureTask = new FutureTask<>(() -> {
-            runQueue(safeQueue, stopToken, pauseToken);
+            activeLocalTeamSessionKey = leaderPresent ? sessionKey : null;
+            activeLocalLeaderWindowId = leaderPresent ? leaderWindowId : null;
+            activeLocalLeaderPresent = leaderPresent;
+            runQueue(executionQueue, stopToken, pauseToken);
             return null;
         });
 
-        currentTask = new RunningTaskHandle(windowContext.getWindowId(), safeQueue, firstTaskType, null, stopToken, pauseToken, futureTask);
+        currentTask = new RunningTaskHandle(windowContext.getWindowId(), executionQueue, firstTaskType, null, stopToken, pauseToken, futureTask);
         windowContext.markQueued(firstTaskType);
         executor.execute(futureTask);
         return true;
@@ -421,6 +452,15 @@ public class WindowTaskRunner {
                     () -> windowContext.getGameContext().runWithState(windowContext.getGameState(),
                             () -> runQueueWithBoundGameState(queue, stopToken, pauseToken)));
         } finally {
+            if (activeLocalTeamSessionKey != null) {
+                taskMaintenanceService.completeLocalTeamSessionWindow(
+                        activeLocalTeamSessionKey,
+                        windowContext.getWindowId(),
+                        "runner-queue-finished");
+            }
+            activeLocalTeamSessionKey = null;
+            activeLocalLeaderWindowId = null;
+            activeLocalLeaderPresent = false;
             if (taskHandle != null) {
                 taskHandle.clearRunningThread();
             }
@@ -455,6 +495,8 @@ public class WindowTaskRunner {
         TaskRunResult queueResult = TaskRunResult.SKIPPED;
         int completedCount = 0;
         TaskType activeTaskType = TaskType.UNKNOWN;
+        TaskRunResult previousTaskResult = null;
+        TaskType previousRequestedTaskType = TaskType.UNKNOWN;
         try {
             for (int i = 0; i < taskTypes.size(); i++) {
                 TaskType requestedTaskType = taskTypes.get(i);
@@ -462,6 +504,8 @@ public class WindowTaskRunner {
                 TaskExecutionContext startupProbeContext = buildExecutionContext(requestedTaskType, stopToken, pauseToken);
                 TaskCheckpoint.throwIfStopRequested(startupProbeContext, "task queue stopped before preflight");
                 TaskStartupMode startupMode = deferStartupIfAlreadyInCombat(requestedTaskType, startupProbeContext);
+                startupMode = resolveCleanQueueTransitionStartupMode(
+                        startupMode, previousRequestedTaskType, requestedTaskType, previousTaskResult);
                 TaskExecutionContext preflightContext = buildExecutionContext(requestedTaskType, stopToken, pauseToken, startupMode);
 
                 TaskType taskType = resolveTaskTypeBeforeStart(requestedTaskType, preflightContext);
@@ -473,6 +517,8 @@ public class WindowTaskRunner {
                             preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType);
                     completedCount++;
                     queueResult = mergeQueueResult(queueResult, TaskRunResult.SKIPPED);
+                    previousTaskResult = TaskRunResult.SKIPPED;
+                    previousRequestedTaskType = requestedTaskType;
                     continue;
                 }
 
@@ -481,6 +527,8 @@ public class WindowTaskRunner {
                     windowContext.markError("cannot create task: " + taskType);
                     log.error("window [{}] cannot create task: {}", windowContext.getWindowId(), taskType);
                     queueResult = TaskRunResult.FAILED;
+                    previousTaskResult = TaskRunResult.FAILED;
+                    previousRequestedTaskType = requestedTaskType;
                     if (shouldStopQueueAfterFailure(failurePolicy)) {
                         log.warn("window [{}] stop task queue after task creation failure: policy={}",
                                 windowContext.getWindowId(), failurePolicy);
@@ -497,6 +545,8 @@ public class WindowTaskRunner {
                 TaskRunResult result = runTaskWithBoundGameState(taskType, task, executionContext);
                 completedCount++;
                 queueResult = mergeQueueResult(queueResult, result);
+                previousTaskResult = result;
+                previousRequestedTaskType = requestedTaskType;
                 if (result == TaskRunResult.STOPPED) {
                     break;
                 }
@@ -530,6 +580,41 @@ public class WindowTaskRunner {
                 + " policy=" + failurePolicy;
         windowContext.markQueueFinished(toWindowStatus(queueResult), queueResult, queue.toDisplayText(), failurePolicy, queueMessage);
         log.info("window [{}] task queue finished: {}", windowContext.getWindowId(), queue.toLogText());
+    }
+
+    private TaskStartupMode resolveCleanQueueTransitionStartupMode(TaskStartupMode startupMode,
+                                                                   TaskType previousRequestedTaskType,
+                                                                   TaskType requestedTaskType,
+                                                                   TaskRunResult previousTaskResult) {
+        if (startupMode != TaskStartupMode.NORMAL) {
+            return startupMode;
+        }
+        if (previousTaskResult != TaskRunResult.SUCCESS) {
+            return startupMode;
+        }
+        if (previousRequestedTaskType == null
+                || previousRequestedTaskType == TaskType.UNKNOWN
+                || requestedTaskType == null
+                || requestedTaskType == TaskType.UNKNOWN
+                || previousRequestedTaskType == requestedTaskType) {
+            return startupMode;
+        }
+        if (!isCleanQueueTransitionStartupTask(requestedTaskType)) {
+            return startupMode;
+        }
+        if (!windowContext.isTaskQueueStartupPreparationDone()) {
+            log.info("window [{}] clean queued task transition not enabled: previous={} requested={} reason=common-startup-marker-missing",
+                    windowContext.getWindowId(), previousRequestedTaskType, requestedTaskType);
+            return startupMode;
+        }
+        log.info("window [{}] clean queued task transition startup: previous={} requested={} mode={}",
+                windowContext.getWindowId(), previousRequestedTaskType, requestedTaskType,
+                TaskStartupMode.CLEAN_QUEUE_TRANSITION);
+        return TaskStartupMode.CLEAN_QUEUE_TRANSITION;
+    }
+
+    private boolean isCleanQueueTransitionStartupTask(TaskType taskType) {
+        return taskType == TaskType.WUBEI || taskType == TaskType.XIULUO_V2;
     }
 
     /**
@@ -2552,25 +2637,33 @@ public class WindowTaskRunner {
             return requestedTaskType;
         }
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped before team role detection");
-        TeamRoleStatus role = teamRoleDetectionService.detectCurrentRole(preflightContext);
+        TeamRoleStatus liveRole = teamRoleDetectionService.detectCurrentRole(preflightContext);
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped during team role detection");
-        if ((role == null || role.isUnknown()) && windowContext.getRole() != null) {
+        TeamRoleStatus assignmentRole = liveRole;
+        if ((assignmentRole == null || assignmentRole.isUnknown()) && windowContext.getRole() != null) {
             TeamRoleStatus contextRole = toTeamRoleStatus(windowContext.getRole());
             if (!contextRole.isUnknown()) {
-                role = contextRole;
-                log.info("{} window [{}] use existing window role after live role unknown: requested={} role={}",
-                        preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType, role);
+                assignmentRole = contextRole;
+                log.info("{} window [{}] use existing window role for assignment after live role unknown: requested={} liveRole={} assignmentRole={}",
+                        preflightContext.getLogPrefix(), windowContext.getWindowId(),
+                        requestedTaskType, liveRole, assignmentRole);
             }
         }
-        syncWindowRole(role);
-        TaskType resolvedTaskType = taskTeamAssignmentPolicy.resolveTaskForRole(requestedTaskType, role);
+        syncWindowRole(liveRole);
+        taskMaintenanceService.markLocalTeamWindowRoleDetected(
+                preflightContext,
+                windowContext.getWindowId(),
+                liveRole == null ? null : liveRole.name(),
+                "runner-role-preflight");
+        TaskType resolvedTaskType = taskTeamAssignmentPolicy.resolveTaskForRole(requestedTaskType, assignmentRole);
         if (resolvedTaskType != requestedTaskType) {
-            log.info("{} window [{}] task reassigned by team role: requested={} role={} resolved={}",
+            log.info("{} window [{}] task reassigned by team role: requested={} liveRole={} assignmentRole={} resolved={}",
                     preflightContext.getLogPrefix(), windowContext.getWindowId(),
-                    requestedTaskType, role, resolvedTaskType);
+                    requestedTaskType, liveRole, assignmentRole, resolvedTaskType);
         } else {
-            log.info("{} window [{}] task kept by team role: requested={} role={}",
-                    preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType, role);
+            log.info("{} window [{}] task kept by team role: requested={} liveRole={} assignmentRole={}",
+                    preflightContext.getLogPrefix(), windowContext.getWindowId(),
+                    requestedTaskType, liveRole, assignmentRole);
         }
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped after team role assignment");
         return resolvedTaskType;
@@ -2653,6 +2746,10 @@ public class WindowTaskRunner {
                 .nativeWindowY(binding.getY())
                 .nativeWindowWidth(binding.getWidth())
                 .nativeWindowHeight(binding.getHeight())
+                .localTeamSessionKey(activeLocalTeamSessionKey)
+                .localLeaderWindowId(resolveLocalLeaderWindowId())
+                .localLeaderPresent(activeLocalLeaderPresent)
+                .localSupportMember(activeLocalLeaderPresent && windowContext.getRole().isMember())
                 .stopToken(stopToken)
                 .pauseToken(pauseToken)
                 .windowRuntimeContext(windowContext)
@@ -2660,6 +2757,23 @@ public class WindowTaskRunner {
                 .startupMode(startupMode == null ? TaskStartupMode.NORMAL : startupMode)
                 .startedAt(LocalDateTime.now())
                 .build();
+    }
+
+    private String resolveLocalLeaderWindowId() {
+        if (activeLocalLeaderWindowId != null && !activeLocalLeaderWindowId.isBlank()) {
+            return activeLocalLeaderWindowId;
+        }
+        if (activeLocalLeaderPresent && windowContext.getRole().isLeader()) {
+            return windowContext.getWindowId();
+        }
+        return activeLocalLeaderWindowId;
+    }
+
+    private String normalizeSessionText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private WindowRuntimeStatus toWindowStatus(TaskRunResult result) {

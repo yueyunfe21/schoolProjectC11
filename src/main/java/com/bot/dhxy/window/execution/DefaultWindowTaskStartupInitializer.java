@@ -79,6 +79,15 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
             return false;
         }
 
+        if (executionContext != null
+                && executionContext.isCleanQueueTransitionStartup()
+                && windowContext != null
+                && windowContext.isTaskQueueStartupPreparationDone()) {
+            log.info("{} window [{}] startup init skipped: clean queued task transition reused common startup preparation taskCode={}",
+                    prefix, windowId, taskCode);
+            return true;
+        }
+
         if (isFiveRingTask(taskCode)
                 && windowContext != null
                 && windowContext.isTaskQueueStartupPreparationDone(taskCode)) {
@@ -159,6 +168,11 @@ public class DefaultWindowTaskStartupInitializer implements WindowTaskStartupIni
         boolean ready = startupWindowPreparationService.prepareTaskStartupWindow();
         if (!ready) {
             log.warn("{} window [{}] startup init warning: map tracking option was not confirmed", prefix, windowId);
+        }
+        if (ready && windowContext != null && !Thread.currentThread().isInterrupted()) {
+            log.info("{} window [{}] startup init: mark queue common startup preparation done taskCode={} ready={}",
+                    prefix, windowId, taskCode, ready);
+            windowContext.markTaskQueueStartupPreparationDone(taskCode);
         }
         return !Thread.currentThread().isInterrupted();
     }

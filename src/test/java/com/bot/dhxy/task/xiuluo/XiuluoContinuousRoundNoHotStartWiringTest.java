@@ -15,7 +15,7 @@ public class XiuluoContinuousRoundNoHotStartWiringTest {
         String source = Files.readString(sourcePath, StandardCharsets.UTF_8);
         String execute = extractMethod(source, "public TaskRunResult execute(TaskExecutionContext executionContext)");
 
-        require(execute.contains(": XiuluoRoundContext.start(round)"),
+        require(execute.contains("roundContext = XiuluoRoundContext.start(round);"),
                 "continuous rounds must enter normal PREPARE_ROUND directly");
         require(!execute.contains(": hotStartResolver.resolve(round, false)"),
                 "continuous rounds must not run per-round hot-start screen inspection");

@@ -1,6 +1,8 @@
 package com.bot.dhxy.window.control;
 
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
+import com.bot.dhxy.service.TaskMaintenanceService;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 import com.bot.dhxy.window.execution.WindowTaskQueue;
@@ -16,6 +18,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 @Slf4j
@@ -23,11 +26,17 @@ public class WindowTaskControlService {
 
     private final MultiWindowTaskManager taskManager;
     private final WindowTaskAssignmentPolicy assignmentPolicy;
+    private final TaskTeamAssignmentPolicy taskTeamAssignmentPolicy;
+    private final TaskMaintenanceService taskMaintenanceService;
 
     public WindowTaskControlService(MultiWindowTaskManager taskManager,
-                                    WindowTaskAssignmentPolicy assignmentPolicy) {
+                                    WindowTaskAssignmentPolicy assignmentPolicy,
+                                    TaskTeamAssignmentPolicy taskTeamAssignmentPolicy,
+                                    TaskMaintenanceService taskMaintenanceService) {
         this.taskManager = taskManager;
         this.assignmentPolicy = assignmentPolicy;
+        this.taskTeamAssignmentPolicy = taskTeamAssignmentPolicy;
+        this.taskMaintenanceService = taskMaintenanceService;
     }
 
     public WindowSystemSnapshot getSystemSnapshot() {
@@ -106,10 +115,61 @@ public class WindowTaskControlService {
                     List.of(WindowTaskCommandDetail.failed(null, "任务队列无效")));
         }
 
+        String localLeaderWindowId = ids.stream()
+                .map(id -> taskManager.getSnapshot(id).orElse(null))
+                .filter(Objects::nonNull)
+                .filter(snapshot -> snapshot.getRole().isLeader())
+                .map(WindowTaskSnapshot::getWindowId)
+                .findFirst()
+                .orElse(null);
+        boolean supportsLocalTeamSession = ids.size() > 1
+                && safeQueue.getTaskTypes().stream()
+                .anyMatch(taskTeamAssignmentPolicy::shouldDetectRoleBeforeStart);
+        boolean knownLocalLeaderPresent = localLeaderWindowId != null;
+        boolean localTeamSessionCandidate = supportsLocalTeamSession;
+        String localTeamSessionKey = localTeamSessionCandidate
+                ? "local-team-" + UUID.randomUUID()
+                : null;
+        if (localTeamSessionCandidate) {
+            taskMaintenanceService.registerLocalTeamSessionCandidate(
+                    localTeamSessionKey, ids, "ui-start-same-queue");
+        }
+        WindowTaskSubmitResult leaderSubmitResult = null;
+        boolean localTeamSessionActive = false;
+        if (knownLocalLeaderPresent) {
+            leaderSubmitResult = taskManager.submitQueueWithResult(
+                    localLeaderWindowId, safeQueue, localTeamSessionKey, localLeaderWindowId, true);
+            localTeamSessionActive = leaderSubmitResult.isSuccess();
+            if (!localTeamSessionActive) {
+                log.warn("UI start same queue local-team session disabled because leader submit failed: leaderWindowId={} status={} message={} queue={}",
+                        localLeaderWindowId,
+                        leaderSubmitResult.getStatusDisplayName(),
+                        leaderSubmitResult.getMessage(),
+                        leaderSubmitResult.getTaskQueue().toLogText());
+                ids.forEach(id -> taskMaintenanceService.completeLocalTeamSessionWindow(
+                        localTeamSessionKey, id, "ui-start-same-queue:leader-submit-failed"));
+            }
+        } else {
+            localTeamSessionActive = localTeamSessionCandidate;
+            if (localTeamSessionActive) {
+                log.info("UI start same queue local-team session candidate without known leader: session={} queue={} windows={}",
+                        localTeamSessionKey, safeQueue.toLogText(), ids);
+            }
+        }
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
-            WindowTaskSubmitResult submitResult = taskManager.submitQueueWithResult(windowId, safeQueue);
+            WindowTaskSubmitResult submitResult;
+            if (knownLocalLeaderPresent && windowId.equals(localLeaderWindowId)) {
+                submitResult = leaderSubmitResult;
+            } else {
+                submitResult = taskManager.submitQueueWithResult(
+                        windowId,
+                        safeQueue,
+                        localTeamSessionActive ? localTeamSessionKey : null,
+                        localTeamSessionActive ? localLeaderWindowId : null,
+                        localTeamSessionActive);
+            }
             log.info("UI start same queue submit result: windowId={} success={} status={} message={} queue={}",
                     submitResult.getWindowId(),
                     submitResult.isSuccess(),
@@ -121,6 +181,10 @@ public class WindowTaskControlService {
                 details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
                         "独立窗口已启动任务队列：" + submitResult.getTaskQueueDisplayText() + " | " + submitResult.getMessage()));
             } else {
+                if (localTeamSessionActive) {
+                    taskMaintenanceService.completeLocalTeamSessionWindow(
+                            localTeamSessionKey, windowId, "ui-start-same-queue:submit-failed");
+                }
                 details.add(WindowTaskCommandDetail.fromSubmitResult(submitResult,
                         "启动失败：" + submitResult.getMessage() + " | 队列=" + submitResult.getTaskQueueDisplayText()));
             }

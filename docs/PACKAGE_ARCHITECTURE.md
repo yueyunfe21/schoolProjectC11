@@ -1302,7 +1302,7 @@ evidence. Do not hide that change inside a runner/park migration card.
 
 ##### Sprint Board
 
-Latest runtime override from `dhxy-1` heartbeat (`2026-06-21 22:35:51-22:46:49` 修罗): CR75, CR76, CR77, and CR78 are treated as Done by fresh runtime evidence; CR68 remains Review because one 30s target wait timeout still occurred even though post-timeout 900ms churn is repaired; CR72 is Blocked because a fresh 4-minute false/early 摄妖香 refill occurred after cached/status-rect icon probes missed. See `docs/ACTIVE_WORK.md` entry `Codex - 2026-06-21 / dhxy-1 修罗 heartbeat 巡检 22:35:51-22:46:49` for exact log evidence. If the older table rows below still show Review for these cards, this override is the newer status until the long-row board is compacted.
+Latest runtime closure note from `dhxy-1` heartbeat (`2026-06-21 22:35:51-22:46:49` 修罗): CR75, CR76, CR77, and CR78 have fresh-runtime Done evidence; the long-row board now records them as Done. CR68 remains Review because one 30s target wait timeout still occurred even though post-timeout 900ms churn is repaired; CR72 is still not closeable because later runtime exposed 摄妖香 ordering/safety risk after otherwise positive icon-gate samples. See `docs/ACTIVE_WORK.md` entry `Codex - 2026-06-21 / dhxy-1 修罗 heartbeat 巡检 22:35:51-22:46:49` and the 2026-06-22/2026-06-28 run-report entries for exact log evidence.
 
 CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 30s soft timeout. `WAIT_TARGET_PATHING_TERMINAL_TIMEOUT_MS` is now `-1L`, so after the leader releases the turn it stays parked until the same-window matching `PATHING_TERMINAL`, matching `PREPARED_ACTION_READY/ROUTE_TRANSFER`, or stop/interruption. This preserves the existing same-intent event filters and removes the repeated 30s timeout/re-attach behavior seen in the 2026-06-22 run reports. Fresh runtime is still required before moving CR68 to Done.
 
@@ -1358,8 +1358,8 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR38 | 唐德 | Review: baseline timing audit documented; needs fresh WUBEI validation or user-approved restore | `WubeiTask`, `WubeiStepOutcome`, `WindowTaskRunner`, WUBEI wait/wake logs | 唐德 heartbeat audit compared the local timing migration against latest pushed baseline `3f0a2e7`. Baseline `WubeiTask.runRoundPhases(...)` checked `checkReadyPriorityBeforePhase(...)` before entering `TaskTransactionRunner.run(...)`, had no `WubeiStepOutcome.waitSpec`, and did not run `parkAfterYieldIfNeeded(...)` after turn release; local code now runs priority handling inside the transaction and parks after yield on 5s pathing / 1.5s route / 1.5s prepared-dialog / 1.5s combat waits. This is a real phase-timing change, not just logging. No behavior restore was made in this audit because fresh WUBEI runtime evidence is absent. Acceptance remains: either fresh logs prove reduced churn with no delayed fallback/timeout/prepared-dialog p95/p99 regression, or a user-approved restore narrows the migration back to the latest-push turn-release timing. |
 | CR39 | 何黎 | Review: heartbeat blockers repaired; compile passed; needs reviewer/fresh 白龙马 validation | `WubeiTask`, `WubeiDialogPreparationProvider`, `DialogService`, `WindowTaskRunner`, WUBEI probe story logs | User-approved 白龙马 point 14/15 behavior change: remove leader-side 15s/80ms `WUBEI_PROBE_STORY` polling fallback and use explicit no-STORY result `targetKeyword=wubei.probeStoryAbsent`, `matchedText=STORY_ABSENT`, `dialogType=NONE`, `clickRequired=false`. PreparedAt lower-bound is repaired. Heartbeat blocker follow-up removed the post-显形镜 700ms sleep, replaced `Thread.onSpinWait()` with current-window `TASK_ATTENTION_REQUIRED` event waiting while keeping task-turn ownership, and makes detection/capture/rect failure produce the explicit click-free `wubei.probeStoryAbsent / STORY_ABSENT` result when absent is allowed. `mvn -q -DskipTests compile` passed. Fresh 白龙马 validation remains required. |
 | CR40 | 唐德 | Review: noTarget tooltip fallback removed; compile passed; needs fresh 白龙马 validation | `WubeiTask`, 白龙马 probe story logs | User-approved 白龙马 point 18 behavior change: deleted the old noTarget -> tooltip fallback path by gating the existing `tryClickProbeSpawnedTarget(..., false)` fallback away from `wubei.probeNoTarget`. noTarget now reuses the existing post-fallback code path that marks the current probe resolved, switches to the next unused probe when available, or fails/reaccepts through the existing failed-task recovery path when probes are exhausted. `probeTargetReady`, `probeWrongPosition`, and `probeStoryAbsent` behavior were left unchanged. `mvn -q -DskipTests compile` passed. Needs fresh 白龙马 validation. |
-| CR41 | 何黎 | Done: long-run ordinary validation passed | `WindowReadyEventType`, `WindowReadyEventBus`, `WindowTaskRunner`, `WubeiTask`, `logs/dhxy-console.log` | Split 五倍 ordinary-monster wake vocabulary: prepared actions now publish/consume `PREPARED_ACTION_READY`; 五倍 pathing/prepared waits no longer include plain `TASK_ATTENTION_REQUIRED`; `PRE_BATTLE_TIMEOUT` vocabulary is available for CR44. Long-run log evidence shows repeated ordinary waits waking by `PREPARED_ACTION_READY`; analyzer summary reported `window.ready.await event=175 timeout=0` and no wait timeout churn. Can close. |
-| CR42 | 唐德 | Done: ordinary dialog boundary validated by long run | `WindowTaskRunner`, `WubeiDialogPreparationProvider`, `DialogService`, `logs/dhxy-console.log` | Implement ordinary-monster Runner dialog boundary from `docs/业务逻辑.md`: only `OPTION` dialog with successful `WUBEI_ENTER_BATTLE` template match produces a result; `OPTION` miss, `STORY`, and other dialogs are ignored and do not wake the leader. Long-run ordinary/probe logs repeatedly continue through battle recovery without stray STORY/OPTION waking ordinary enter-battle waits. Can close. |
+| CR41 | 何黎 | Done: long-run ordinary validation passed | `WindowReadyEventType`, `WindowReadyEventBus`, `WindowTaskRunner`, `WubeiTask`, `logs/dhxy-console.log` | Split 五倍 ordinary-monster wake vocabulary: prepared actions now publish/consume `PREPARED_ACTION_READY`; 五倍 pathing/prepared waits no longer include plain `TASK_ATTENTION_REQUIRED`; `PRE_BATTLE_TIMEOUT` vocabulary is available for CR44. Long-run log evidence shows repeated ordinary waits waking by `PREPARED_ACTION_READY`; analyzer summary reported `window.ready.await event=175 timeout=0` and no wait timeout churn. 已可关闭。 |
+| CR42 | 唐德 | Done: ordinary dialog boundary validated by long run | `WindowTaskRunner`, `WubeiDialogPreparationProvider`, `DialogService`, `logs/dhxy-console.log` | Implement ordinary-monster Runner dialog boundary from `docs/业务逻辑.md`: only `OPTION` dialog with successful `WUBEI_ENTER_BATTLE` template match produces a result; `OPTION` miss, `STORY`, and other dialogs are ignored and do not wake the leader. Long-run ordinary/probe logs repeatedly continue through battle recovery without stray STORY/OPTION waking ordinary enter-battle waits. 已可关闭。 |
 | CR43 | 谢帅 | Review: still needs ordinary terminal validation | `WubeiTask`, ordinary tracker pathing logs | Make ordinary-monster `PATHING_TERMINAL` re-click the same tracker green link and release again; it must not enter `ENTER_BATTLE`, smart-click the monster, run tooltip/yellow OCR, use Alt+A, or wait/consume `ROUTE_TRANSFER` as ordinary business evidence. Long-run evidence includes same-green re-click during 黄袍第一战, but no fresh ordinary-monster `PATHING_TERMINAL` same-green re-click case; keep open until that exact ordinary case appears. |
 | CR44 | Codex | Review: normal path passed; timeout path not exercised | `WindowRuntimeContext`, `WindowTaskRunner`, `WubeiTask`, ordinary pre-battle logs | Add ordinary-monster Runner-side 5 minute pre-battle timeout from the first successful ordinary green-link click to `WUBEI_ENTER_BATTLE` consumption / `WAIT_BATTLE_FINISH`; timeout wakes the leader with `PRE_BATTLE_TIMEOUT` and returns to reaccept. Long-run logs show timer starts and clears on prepared consumption, but no `PRE_BATTLE_TIMEOUT` / timeout wake occurred, so the timeout acceptance path is not yet runtime-validated. |
 | CR45 | Codex | Partial: ordinary success validated; timeout/terminal gaps remain | `logs/dhxy-console.log`, `scripts/analyze_wubei_latency.ps1`, `docs/ACTIVE_WORK.md`, optional test logs | Validate CR41-CR44 against `docs/业务逻辑.md`: fresh ordinary-monster run must prove event-only wakeup, same-target re-navigation, timeout behavior, no idle churn / p95/p99 regression, and no 白龙马 CR39/CR40 regression. CR41/CR42 are closeable from the long run, but CR43 ordinary terminal and CR44 timeout evidence are still missing. |
@@ -1392,9 +1392,9 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR72 | 唐德 | Review: hover-safety source/test/compile passed; fresh runtime pending | `PlayerStateService`, `AutoCombatService`, 摄妖香 status probe/logs/testcase images | 战后摄妖香检查不能只相信 `lastIncenseUsedTime`。Current `ensureSheYaoXiangActive(...)` now treats memory as a 50-minute trust window: within 50 minutes it may skip bag opening only after lightweight status-icon proof; after 50 minutes it must run full status verification and still only refills when remaining time is at or below the separate 20-minute refill threshold, or when the buff is absent/unproven. Fix policy: after combat, before accepting the memory gate, perform a lightweight 摄妖香 icon presence check. Icon present: keep trusting memory, clear stale failed-refill retry cooldown, and do not open bag. Icon absent: refill immediately and reset `lastIncenseUsedTime=now` unless the existing failed-refill retry cooldown applies. Icon unknown/capture uncertain: run the existing full `probeIncenseStatus(...)`; if still unknown/not found, refill conservatively. The icon probe remembers the last matched offset inside the status rect and first checks a small cached-position snapshot; if that misses, it falls back to the fixed window-relative status rect. 2026-06-21 fresh logs showed `67555 / hwnd-60312BA` false `memory-gate-icon-absent-refill` twice at age 7m and 1m while user observed 50+ minutes remaining; root-cause refinement is that status-bar/icon captures must first move the mouse away from the buff area, matching the existing bag/bars hover-avoidance pattern. Full status OCR clamps remaining time to the internal 59-minute duration so a cyan `1 hour` read cannot push `lastIncenseUsedTime` into the future. Do not change item template, bag click algorithm, OCR digit thresholds, or unrelated 五倍/修罗 flow. |
 | CR73 | Codex | Review: partial fresh runtime; flying-state rect replay and exception safety passed, AutoA retry path pending | `NpcClickService`, `XiuluoTaskV2`, `WubeiTask`, `GameStateUtil.detectFlyingState`, direct-combat logs | Global direct-combat / `Alt+A` safety boundary. Fresh `2026-06-21 14:23:44-14:24:46` 修罗 logs show target navigation reached 洛阳城 current-map approach, target click failed, then direct-combat entered `Alt+A` and reused the same stale search/click assumptions. User clarified this is not 修罗-only: canceling `Alt+A` / AutoA can move the character, so any follow-up retry must not assume the original target position; it must rerun the task-owned navigation/current-map approach before another combat-target click. Also, before entering direct-combat mode, the shared path must ensure the leader is not mounted/flying, reusing the existing flying-state / Alt+C semantics instead of inventing a new detector. Applies to all current callers of `NpcClickService.tryDirectCombatTargetClick(...)` (`XiuluoTaskV2`, `WubeiTask`). Fresh `2026-06-21 15:06` and `15:11` 修罗 logs prove the mount/flying preflight is active: target click failed, `flying-status:open:npc-direct-combat:pre-alt-a:修罗` ran, `state=UNKNOWN`, and direct-combat skipped without `AutoA` / `AutoGA`. Codex/user live check then proved the old rect could capture the Alt+U panel page arrow or a ROI smaller than `flying.png`, causing OpenCV to abort 修罗 at `2026-06-22 14:25:09`. The probe rect is now the user-approved current-window relative `(660,573)-(712,597)` with no padding, backed by `images/test-cases/status/flying_status_altu_67555_raw.png`, marked output `images/test-cases/status/flying_status_altu_67555_new_flying_rect_marked.png`, crop output `images/test-cases/status/flying_status_altu_67555_new_flying_rect_crop.png`, `GameStateUtilFlyingStatusRegionReplayTest`, and `GameStateUtilFlyingStatusExceptionSafetyWiringTest`; `test-compile`, direct replay/safety tests, and compile passed. `detectFlyingState(...)` now downgrades template/runtime probe exceptions to `UNKNOWN` while still closing Alt+U, so the helper must not directly fail 修罗. Still not Done: fresh runtime must prove `detectFlyingState(...)` returns `NOT_FLYING`/`FLYING` instead of `UNKNOWN`, and the path where direct-combat actually enters/cancels AutoA reruns task-owned navigation before retrying target click. No OCR/template/click-coordinate algorithm changes without testcase replay. |
 | CR74 | Codex | Done: fresh 修罗 route-memory runtime validated | `NavigationService`, `WindowTaskRunner`, `WindowRuntimeContext`, `WorldMapRouteResultMemoryService`, 修罗 world-map route memory logs | 修罗 world-map route-result memory 从未变 clean。Fresh audit of current `logs/dhxy-console.log` showed the original failure shape: `fast path used=0`, `pending created=36`, `pending success=0`, `pending abandoned=36`, `reason=intent-replaced=37`, while `config/world_map_route_result_memory.json` had `entries=36`, `clean=0`, `successCountSum=0`, `consecutiveSuccessPositive=0`. Root cause was not missing creation: `submitWorldMapSearchAndClickDestination(...)` registered `worldMapRouteClick` and created pending against that intent, then outer `navigateToMap(...)` registered a second same-leg `navigateToMap` intent, so `WindowTaskRunner.settlePendingWorldMapRouteResultMemory(...)` treated the pending as replaced and recorded `intent-replaced`. Codex repair marks successful normal world-map route submission as nested-route-owned before returning `PATHING_STARTED`, so the outer `finally` skips the duplicate `navigateToMap` registration while keeping runner `intent-replaced` abandonment for genuine second navigation. Added `NavigationWorldMapRouteMemoryIntentOwnershipTest`; compile and memory service test passed. Fresh `2026-06-22 15:35-18:24` 修罗 runtime validates the fix: repeated `pending success`, no `pending abandoned` / `intent-replaced`, routes promote to `clean=true`, and clean fast path is used repeatedly, including 白骨山、龙窟七层、兰若寺、长安城东. Do not change world-map OCR/click/scroll algorithms, route-dialog choice memory, 修罗 business phases, or 五倍/WUBEI navigation semantics. |
-| CR75 | Codex | Review: source guard and compile passed; needs fresh 修罗 accept-memory runtime proof | `XiuluoTaskV2.tryRememberedAcceptTaskOption`, `DialogHandleRequest`, `DialogService`, 修罗 accept-memory logs | 修罗接任务 remembered option 没有走现有 fast path。Fresh logs show `xiuluo-v2:accept:*:accept-memory` first runs `dialog detect no-focus: reason=handle-dialog:CLICK_REMEMBERED_OPTION` with `elapsedMs=883/1169/1808/3136`, then clicks remembered `rel=(95,113)`. Current `DialogService` already supports `CLICK_REMEMBERED_POINT && verifyDialogType=false` fast path, but `tryRememberedAcceptTaskOption(...)` used `DialogHandleRequest.handleRememberedChoiceOption(...)` whose default `verifyDialogType=true` dropped the caller's known-dialog fact. Codex added a verifyDialogType-preserving remembered-choice overload and passes `handleKnownXiuluoOptionDialog(...)`'s `verifyDialogType` into 修罗 accept-memory only; existing default factory still verifies dialog type. Added `XiuluoRememberedAcceptOptionFastPathWiringTest`; compile and source tests passed. Fresh runtime still needs to prove accept-memory logs show `dialog remembered option fast path without detect`, no `handle-dialog:CLICK_REMEMBERED_OPTION` detect in that fast path, remembered click succeeds, and misses still fall back to green-template matching unchanged. |
-| CR76 | Codex | Review: source/test pass; fresh 修罗 runtime pending | `NpcClickService.runNpcClickPipeline`, learned NPC click memory, pre-click dialog safety logs, 修罗 accept-NPC logs | NPC learned-memory click currently still pays the generic name-layer preparation cost before trying the remembered point. Fresh logs around `灵兽村使者` show `npcClick:pipeline-hide-player-names` / `Alt+4` plus `400ms` sleep before learned-memory can click, even though a stable learned point does not require hiding names or OCR. Implemented a narrow fast path for stable non-combat NPC learned-memory clicks: non-direct-combat, non-`TaskType.WUBEI`, non-`NpcRole.COMBAT_TARGET` requests now run pre-click dialog safety first, then try learned memory before `prepareNpcPipelineNameLayerOnce(...)`; a verified learned-memory hit returns before Alt+4, while a miss continues through the existing Alt+4 + tooltip/yellow/formula/Ctrl fallback and is not retried a second time in the same pipeline. WUBEI/白龙马 `COMBAT_TARGET` ordering is guarded by source test and still keeps tooltip-first/direct-combat semantics outside the early fast path. Verification passed: `mvn -q -DskipTests compile`, `mvn -q -DskipTests test-compile`, `NpcClickLearnedMemoryFastPathWiringTest`, and existing `NpcClickDirectCombatNameLayerWiringTest`. Runtime acceptance still needed: stable 修罗 accept-NPC clicks show no `npcClick:pipeline-hide-player-names:灵兽村使者` before a verified learned-memory hit; misses still fall back normally and record smart-click evidence. |
-| CR77 | Codex | Review: source gate fixed; fresh runtime pending | `NavigationService.navigateInCurrentMap`, `XiuluoTaskV2.startLeavingStartMapIfPresent`, 修罗 `start-exit-prepath` logs | 修罗出灵兽村预走路 current-map 点击后还要等 `fast-edge` / 坐标变化确认，再关小地图并注册 intent，导致每轮多等约 1.8s movement confirmation + 后续关图检查。Codex added a narrow fire-and-handoff branch gated by `source=xiuluo-v2:start-exit-prepath`, target map `灵兽村`, target coordinate `(11,8)`: after resolving and clicking the mini-map point it skips `isMovingByPixelDiff(...)`, skips coordinate fallback confirmation and alternate mini-map retries, closes Alt+1 with a cheap fixed-settle close, registers the pathing intent with `current-map mini-map click fire-and-handoff`, and returns `PATHING_STARTED` so 修罗 continues formal `NAVIGATE_TO_TARGET`. Normal current-map navigation, 修罗 target current-map approach, 张闻, 五倍, 白龙马, 普通怪, 黄袍怪, route dialog, NPC click, OCR/template/click algorithms are unchanged. Added `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`; compile and related source guards passed. 2026-06-21 40-minute 修罗 audit feedback: not accepted. Fresh `20:55:27-20:55:32` start-exit still logged `handoff-fast-edge`, missed edge confirmation, fell back to `post-click coordinate changed`, and ended with `navigation.currentMap elapsedMs=4949` for `xiuluo-v2:start-exit-prepath:currentMap`; the run had no `fire-and-handoff` line. Root cause found by Codex: `XiuluoTaskV2.startLeavingStartMapIfPresent(...)` submits source `xiuluo-v2:start-exit-prepath`, but `NavigationService.navigateToNPC(...)` always calls `navigateInCurrentMap(...)` with `request.getSource() + ":currentMap"`. The original CR77 gate `isXiuluoStartExitPrepathFireAndHandoff(...)` required exact source equality to `xiuluo-v2:start-exit-prepath`, so the live current-map request source `xiuluo-v2:start-exit-prepath:currentMap` never matched and fell through to normal `clickMiniMapPointForHandoff(...)`. The old source guard test did not catch this because it only checked the raw source marker and gate string, not the post-`navigateToNPC` current-map source. 2026-06-21 Codex repair: the gate now exact-matches the live current-map source `xiuluo-v2:start-exit-prepath:currentMap` while preserving the `灵兽村` / `(11,8)` map-coordinate guard; the source guard test now requires `:currentMap` acceptance and still excludes non-start-exit sources. Verification passed: the source guard was red before the production change, then `mvn -q -DskipTests test-compile` + the direct guard run passed, `mvn -q -DskipTests compile` passed, and `git diff --check` reported only existing CRLF normalization warnings. Runtime acceptance remains: no `handoff-fast-edge` / coordinate fallback logs for `xiuluo-v2:start-exit-prepath:currentMap`, immediate intent registration after cheap close, and no blockage of formal target navigation. |
+| CR75 | Codex | Done: fresh 修罗 accept-memory fast path validated | `XiuluoTaskV2.tryRememberedAcceptTaskOption`, `DialogHandleRequest`, `DialogService`, 修罗 accept-memory logs | 修罗接任务 remembered option 没有走现有 fast path。Fresh logs show `xiuluo-v2:accept:*:accept-memory` first runs `dialog detect no-focus: reason=handle-dialog:CLICK_REMEMBERED_OPTION` with `elapsedMs=883/1169/1808/3136`, then clicks remembered `rel=(95,113)`. Current `DialogService` already supports `CLICK_REMEMBERED_POINT && verifyDialogType=false` fast path, but `tryRememberedAcceptTaskOption(...)` used `DialogHandleRequest.handleRememberedChoiceOption(...)` whose default `verifyDialogType=true` dropped the caller's known-dialog fact. Codex added a verifyDialogType-preserving remembered-choice overload and passes `handleKnownXiuluoOptionDialog(...)`'s `verifyDialogType` into 修罗 accept-memory only; existing default factory still verifies dialog type. Added `XiuluoRememberedAcceptOptionFastPathWiringTest`; compile and source tests passed. Fresh 修罗 runtime accepted: repeated accept-memory samples show the remembered option fast path without full `handle-dialog:CLICK_REMEMBERED_OPTION` detection, remembered clicks succeed, and no green-template/business fallback regression was recorded in the later multi-round reports. 已可关闭。 |
+| CR76 | Codex | Done: fresh 修罗 learned-NPC fast path validated | `NpcClickService.runNpcClickPipeline`, learned NPC click memory, pre-click dialog safety logs, 修罗 accept-NPC logs | NPC learned-memory click currently still pays the generic name-layer preparation cost before trying the remembered point. Fresh logs around `灵兽村使者` show `npcClick:pipeline-hide-player-names` / `Alt+4` plus `400ms` sleep before learned-memory can click, even though a stable learned point does not require hiding names or OCR. Implemented a narrow fast path for stable non-combat NPC learned-memory clicks: non-direct-combat, non-`TaskType.WUBEI`, non-`NpcRole.COMBAT_TARGET` requests now run pre-click dialog safety first, then try learned memory before `prepareNpcPipelineNameLayerOnce(...)`; a verified learned-memory hit returns before Alt+4, while a miss continues through the existing Alt+4 + tooltip/yellow/formula/Ctrl fallback and is not retried a second time in the same pipeline. WUBEI/白龙马 `COMBAT_TARGET` ordering is guarded by source test and still keeps tooltip-first/direct-combat semantics outside the early fast path. Verification passed: `mvn -q -DskipTests compile`, `mvn -q -DskipTests test-compile`, `NpcClickLearnedMemoryFastPathWiringTest`, and existing `NpcClickDirectCombatNameLayerWiringTest`. Fresh 修罗 runtime accepted: later runs show stable `灵兽村使者` learned-memory hits without preceding `npcClick:pipeline-hide-player-names:灵兽村使者`, while earlier miss/insufficient-policy samples fell back normally. 已可关闭。 |
+| CR77 | Codex | Done: fresh 修罗 start-exit fire-and-handoff validated | `NavigationService.navigateInCurrentMap`, `XiuluoTaskV2.startLeavingStartMapIfPresent`, 修罗 `start-exit-prepath` logs | 修罗出灵兽村预走路 current-map 点击后还要等 `fast-edge` / 坐标变化确认，再关小地图并注册 intent，导致每轮多等约 1.8s movement confirmation + 后续关图检查。Codex added a narrow fire-and-handoff branch gated by `source=xiuluo-v2:start-exit-prepath`, target map `灵兽村`, target coordinate `(11,8)`: after resolving and clicking the mini-map point it skips `isMovingByPixelDiff(...)`, skips coordinate fallback confirmation and alternate mini-map retries, closes Alt+1 with a cheap fixed-settle close, registers the pathing intent with `current-map mini-map click fire-and-handoff`, and returns `PATHING_STARTED` so 修罗 continues formal `NAVIGATE_TO_TARGET`. Normal current-map navigation, 修罗 target current-map approach, 张闻, 五倍, 白龙马, 普通怪, 黄袍怪, route dialog, NPC click, OCR/template/click algorithms are unchanged. Added `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`; compile and related source guards passed. 2026-06-21 40-minute 修罗 audit feedback found the live source suffix mismatch (`xiuluo-v2:start-exit-prepath:currentMap`), then Codex repaired the source gate and source guard. Fresh 修罗 runtime accepted: later reports show `start-exit-prepath:currentMap` repeatedly using `fire-and-handoff`, with no start-exit `handoff-fast-edge` / coordinate fallback and no blockage of formal target navigation. 已可关闭。 |
 | CR78 | Codex | Done | `DialogService.handleMaintenanceBroadcastOptionFastPath`, `DialogHandleRequest`, `TaskMaintenanceService`, `AutoBattleTask`, maintenance broadcast logs | Stop doing full dialog fallback for auto-battle / lightweight member maintenance broadcast checks. Implemented and runtime-accepted: auto-battle / lightweight member idle maintenance now only runs the two fixed small-region templates; if both miss, it returns no broadcast immediately and does not run full `detectDialogSnapshotDirect(...)`. Fresh 修罗 runtime kept `maintenance-broadcast-fallback:auto-battle` at `0`; remaining `maintenance broadcast lightweight fallback disabled` / Auto+8 refresh/defer noise is tracked by CR65, not CR78. Leader/formal maintenance broadcast paths keep full fallback. Fixed-strip templates, click coordinates, dialog type detection, heal/repair option matching, maintenance cooldowns, and 五倍/白龙马/普通怪/黄袍/修罗 business phases were not changed by CR78. |
 | CR79 | 谢帅 | Review: source guard, replay, compile/test-compile passed; fresh 修罗 runtime pending | `XiuluoTaskV2`, `images/template/dialog/xiuluo/xiuluo_wild_monster_cancel.png`, 修罗 enter-battle dialog logs | 修罗目标怪点击后，有时先弹出野外怪/挡路取消类 dialog，导致正常 `xiuluo_enter_battle_kanda.png` 看打模板 miss 后走重恢复/OCR/direct-combat。Implemented narrow behavior: only in 修罗入战 dialog recovery, after normal 看打模板 miss, try one additional template made from `images/template/cancel/Snipaste_2026-06-21_23-02-19.png` washed as `images/template/dialog/xiuluo/xiuluo_wild_monster_cancel.png`; if matched, click it to close the blocking dialog, do not treat it as battle entry, do not enter `WAIT_COMBAT`, and continue the existing target-click fallback/retry flow. Verification passed: `mvn -q -DskipTests compile`, `mvn -q -DskipTests test-compile`, `XiuluoWildMonsterCancelRecoveryWiringTest`, and `XiuluoWildMonsterCancelTemplateReplayDebug` with marked output at `images/test-cases/dialog/xiuluo-wild-monster-cancel/output/wild_monster_cancel_option_marked.png`. Fresh runtime still needs to prove logs show `看打` miss -> wild-monster cancel match/click -> target retry, with no false WAIT_COMBAT and no WUBEI/五倍 behavior change. |
 | CR80 | Codex | Review: TDD/source test/compile passed; fresh 修罗 runtime pending | `XiuluoTaskV2`, `XiuluoRoundContext`, 修罗 pre-combat logs | Added 修罗 V2 pre-combat watchdog. Each round now records `preCombatStartedAtMs` in `XiuluoRoundContext` and preserves it across retry/recovery/pathing context copies. `XiuluoTaskV2.runRoundPhases(...)` checks the watchdog before another pre-combat phase; if `enteredBattleByXiuluo=false` and elapsed time reaches 180s, it logs `xiuluo pre-combat watchdog timeout: round={} phase={} elapsedMs={} limitMs=180000 source={}`, records a failed phase outcome, and routes through existing `restartRoundAfterPhaseFailure(...)` / same-round reaccept semantics. `WAIT_COMBAT`, return, back-to-start, team-return, and terminal phases are excluded; true combat entry via combat radar stops the watchdog. Verification passed: RED `XiuluoPreCombatWatchdogWiringTest` failed on missing `preCombatStartedAtMs`, then `mvn -q -DskipTests test-compile`, `XiuluoPreCombatWatchdogWiringTest`, and `mvn -q -DskipTests compile` passed. Bulk direct-java 修罗 test sweep reached an existing classpath issue in `XiuluoTargetMaintenanceGatePolicyTest` (`org/slf4j/LoggerFactory` absent from manual classpath), not a CR80 assertion failure. No OCR/template/click/navigation/return-item/五倍 business logic was changed. |
@@ -1437,7 +1437,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR118 | Codex | Done: user-confirmed fresh runtime passed | `XiuluoTaskV2`, `PlayerStateService`, 修罗 startup / first-aid logs | Run 修罗 startup first-aid before first-round hot-start selection. First 修罗 run calls `performStartupFirstAidCheck(context)` before `ensureStartupIncenseBeforeHotStart(context)` and before `resolveStartupTrackerOrReturnItem(...)`; repeat rounds do not get an extra startup check. User confirmed fresh runtime acceptance on 2026-06-26. |
 | CR119 | Codex | Done: fresh 修罗 runtime passed | `TaskMaintenanceService`, `XiuluoTaskV2`, `WindowReadyEventBus`, 修罗 `WAIT_TRACKER_SHORTCUT_PATHING` logs | Repair 修罗 leader 三技能 due wake while shortcut/pathing waits are parked. Fresh 2026-06-26 runtime round 55 showed the leader firing the before-park due path: `19:59:32.344` `leader maintenance summon skill due`, claim `xiuluo_v2#55`, and `19:59:43.970` cleanup `success=true`; later round 65 also kept member三技能 deferred after CR96 target-map-arrived window close. Slot templates/clicks, tail-boundary cleanup, team-round claim semantics, CR96 target-map-arrived close, and CR116 pre-combat budget were not changed. |
 | CR120 | Kant+Codex+Ramanujan | Review: 五倍早消费源码修复完成；fresh runtime 待验 | `CommonBoxService`, `CommonBoxRole`, `TaskMaintenanceService`, `TaskMaintenanceRequest/Result/Status`, `MainWindowController`, `GameUiSettingsStore`, `BotProperties`, `XiuluoTaskV2`, `WubeiTask`, `AutoCombatService`, `ImageFinder`, `images/template/common/leader_box_marker.png`, common-box replay | Implement the `docs/业务逻辑.md` 通用盒子逻辑 for 修罗 and 五倍. Add independent UI switches `队长要盒子` default on and `队员要盒子` default off; detect the marker in window-relative ROI `(623,590)-(682,618)` using the common template; record per-window pending box hits with 30s TTL instead of clicking immediately; consume pending boxes only at explicit safe hooks, not through generic `TaskMaintenanceRequest/Result/Status`. ROI detection is synchronous at the safe hook and uses in-memory template matching, not common-pool async work or normal-runtime `common_box_roi_*.png` temp files. 队长 detects after verified return-home and consumes after the next task is accepted and movement starts. 队员 detects after combat exit and consumes on its next task turn/input opportunity independent of HP/MP first-aid; if the box consumes first, pending HP/MP first-aid remains pending for the next safe turn. Pending state is window/task-run/role scoped with a process-global monotonic taskRunId, clears on switch-off/expiry/click, rejects stale identity/task-run records, prunes expired entries on detect/consume, and does not intentionally change 修罗/五倍 accept/navigation/combat/return/failure rules. Template caching P3 is fixed with lazy `cachedTemplate`; guard-quality P3 is fixed by shrinking `CommonBoxLogicWiringGuard` to broad architecture tripwires while pending/identity/first-aid boundaries are covered by focused behavior tests. 2026-06-26 runtime blocker fixed: `CommonBoxService` no longer reads mutable `WindowRuntimeContext.getRole()` as business truth; common-box role now comes from `TaskExecutionContext.windowRole`, while runtime context is only used for hwnd/window/identity/task-run anti-cross checks. Fresh 修罗 runtime `2026-06-27 20:32:35.446` proved a leader box hit and pending create, but `20:33:07.489` pruned it as expired before the next-round movement hook at `20:33:11`. Source repair keeps the 30s TTL and adds an earlier highest-priority 修罗 consume hook at `AFTER_ACCEPT_MAINTENANCE_CHECK` before prepath/maintenance; focused guard passed and fresh consume proof is pending. Fresh WUBEI runtime 2026-06-28 00:29 proved the same timing class remains in 五倍: leader pending was created, but heal-pet broadcast plus a 3s handoff ran first and the pending expired before tracker pathing. Ramanujan source repair adds 五倍 `wubei:after-accept-maintenance-check` and `wubei:before-tracker-pathing-maintenance-check` highest-priority consume hooks before maintenance/broadcast/pathing; focused guard, compile, and test-compile passed. Fresh runtime must prove the pending is consumed before any 30s expiry. |
-| CR121 | Codex+Fermat+Descartes | Done: fresh WUBEI bounded combat wait validated | `AutoCombatService`, `BattleRadarService`, `XiuluoTaskV2`, `WubeiTask`, expected-combat return verification logs/tests | 修复 CR113/CR109 快脱战安全纠偏，并把五倍 expected combat 对齐到 `FAST_EXPECTED_EXIT` + 回程先验流程。已保留 avatar-diff 快路径，不加回程前 full-radar 确认；回程验证失败后才用可信战斗状态纠偏，仍在战斗则回到 `WAIT_COMBAT` / `WAIT_BATTLE_FINISH` 并保留 deferred recovery。2026-06-28 旧进程曾暴露 WUBEI `WAIT_BATTLE_FINISH timeoutMs=-1`，Descartes 窄修在 `WubeiTask.parkAfterYieldIfNeeded(...)` 加最终防线：任何 `WAIT_COMBAT_STATE_CHANGE` wait spec 若带 `-1/0` 等非法 timeout，进入 `awaitNewer` 前都会重新用 `autoCombatService.nextCombatWakeDelayMs()` clamp 到 `500..10000ms`，同时保留 `COMBAT_STATE_CHANGED` 立即唤醒。focused guard 覆盖 helper 与生产 park 边界；重启后 fresh WUBEI `01:20:04-01:20:57` 实战 wait 连续显示 `timeoutMs=914/827/920/866/925/3805`，并在 `01:20:17.756` 完成 cached return verification，没有再出现 `timeoutMs=-1`。Can close. |
+| CR121 | Codex+Fermat+Descartes | Done: fresh WUBEI bounded combat wait validated | `AutoCombatService`, `BattleRadarService`, `XiuluoTaskV2`, `WubeiTask`, expected-combat return verification logs/tests | 修复 CR113/CR109 快脱战安全纠偏，并把五倍 expected combat 对齐到 `FAST_EXPECTED_EXIT` + 回程先验流程。已保留 avatar-diff 快路径，不加回程前 full-radar 确认；回程验证失败后才用可信战斗状态纠偏，仍在战斗则回到 `WAIT_COMBAT` / `WAIT_BATTLE_FINISH` 并保留 deferred recovery。2026-06-28 旧进程曾暴露 WUBEI `WAIT_BATTLE_FINISH timeoutMs=-1`，Descartes 窄修在 `WubeiTask.parkAfterYieldIfNeeded(...)` 加最终防线：任何 `WAIT_COMBAT_STATE_CHANGE` wait spec 若带 `-1/0` 等非法 timeout，进入 `awaitNewer` 前都会重新用 `autoCombatService.nextCombatWakeDelayMs()` clamp 到 `500..10000ms`，同时保留 `COMBAT_STATE_CHANGED` 立即唤醒。focused guard 覆盖 helper 与生产 park 边界；重启后 fresh WUBEI `01:20:04-01:20:57` 实战 wait 连续显示 `timeoutMs=914/827/920/866/925/3805`，并在 `01:20:17.756` 完成 cached return verification，没有再出现 `timeoutMs=-1`。已可关闭。 |
 | CR122 | Codex+Aristotle | Review: WUBEI stale-intent repair/guard/compile passed; fresh runtime pending | `NavigationService`, `WindowTaskRunner`, `WindowRuntimeContext`, `XiuluoTaskV2`, `WubeiTask`, CR99/CR110/CR122 tests, 修罗/五倍 navigation logs | Collapse 修罗/五倍 default pathing semantics to two production movement classes: task tracker/shortcut green-link pathing, and mini-map coordinate handoff. Implemented source-level repair: CR99 yellow destination routing now treats the yellow target click only as the way to open the target-map mini-map; after the final target-coordinate click it calls the existing mini-map handoff confirmation before movement intent/logical `PATHING_STARTED` handoff. The coordinate `WindowPathingIntent` is now registered only after `yellow-destination-mini-map-pathing-confirmed`; if movement is not confirmed, the yellow route returns failure/retry instead of parking. Yellow memory and fresh OCR paths both cleanup through queued cleanup on failure/success. Runner stopped-away classification is now only two live buckets, shortcut/tracker and mini-map handoff, both currently `2_200ms`; the old 8s map-route and 30s cross-map-coordinate buckets were removed from the live resolver. 2026-06-27 stale-intent repair adds source-prefix-scoped runtime cleanup and clears `xiuluo-v2:tracker-shortcut` intents on prepared enter-battle consume, `XIULUO_V2` combat entry, verified return-home, and round-start transition. 2026-06-28 WUBEI repair clears `wubei:tracker-green-click` intents at round start, before a new tracker green click registers a fresh intent, after enter-battle dialog consume, on Runner-confirmed WUBEI combat entry, and after verified return-home. Focused WUBEI/Xiuluo CR122 guards and `mvn -q -DskipTests compile` passed. Fresh runtime still needs to prove no stale terminal from a previous round and no 30s `STOPPED_AWAY` after a failed yellow final-coordinate click. |
 | CR123 | Codex | Review: Worker + Java uploader + real R2 smoke passed; runtime opt-in validation pending | `D:/mavenProject/dhxy-case-worker`, Cloudflare Worker, R2, DHXY client case reporter, `logs/cases/*.case.json`, optional dashboard | Remote diagnostic case upload. Worker slice is implemented in sibling project `D:/mavenProject/dhxy-case-worker`: `POST /api/case/upload` validates bearer/header upload token, payload size, required case schema, and license identifier, stores valid structured JSON under `cases/YYYY-MM-DD/<machineHash>/<taskCode>/<caseId>.case.json`, and updates `indexes/YYYY-MM-DD.json` in R2. It accepts the CR124 nested local-case shape (`task.taskCode`, `app.licenseId`, `runtimeSnapshots.environment.machineHash`) while keeping flat-field compatibility. Follow-up slices populated upload identity metadata (CR125), added the default-off Java uploader/retry/status layer (CR126), and validated the real Cloudflare/R2 deployment (CR127). Real public smoke upload to `https://dhxy-case-worker.yueyunfe.workers.dev/api/case/upload` returned `200 CASE_UPLOADED`; remote R2 verification downloaded `indexes/2026-06-27.json` and the case object under `cases/2026-06-27/machine-worker-contract/xiuluo_v2/...case.json`. No R2 credentials were embedded in DHXY Java, and full logs/zips are not uploaded. Remaining acceptance is only an opt-in app-runtime validation with `case.upload.enabled=true`, endpoint, and token supplied outside repo files. |
 | CR124 | Codex | Review: implemented; synthetic + real-log replay passed; upload metadata gap found | `AutomationMetricsService`, `DiagnosticCaseCaptureService`, `logs/cases/YYYY-MM-DD/*.case.json`, `logs/cases-replay/YYYY-MM-DD/*.case.json`, `DiagnosticCaseCaptureServiceTest`, `DiagnosticCaseExistingLogReplayDebug` | Local diagnostic `case.json` generator that feeds CR123 upload later. First version creates a bounded, debug-capable JSON case when a task round/transaction fails, becomes fatal, or is explicitly marked for capture. The payload includes trigger metadata, task/window/failure fields, related metrics/timeline, bounded `dhxy-console.log` excerpt, diagnostic hints, size policy, upload placeholder, and multi-window linked evidence. Multi-window policy is implemented by incident fingerprint: one root case per shared `roundId` / `teamKey`; member windows become lightweight `relatedWindows` entries instead of uploading duplicate full cases. Target size: normal failure `<500KB`, multi-window/visual case `<1.5MB`, hard cap `2MB` by truncating console first. Capture is best-effort and runs from the metrics hook; capture failure logs a warning but does not block or fail tasks. Real-log replay produced `logs/cases-replay/2026-06-27/20260627_111805_596_wuhuan_v2_wuhuan_v2-27-round-2_SUCCESS_hwnd-141770.case.json` from existing metrics + console, size `169841` bytes, with `timelineCount=7`, `metricCount=7`, `consoleLineCount=500`, proving the JSON can reconstruct task/window/phase/pathing context from current logs. CR123 contract audit found this replay case currently lacks `app.licenseId` and `runtimeSnapshots.environment.machineHash`; raw upload is rejected until those fields are populated. If metric time and console time do not overlap, the case marks `console-excerpt-missing-for-trigger-time` instead of attaching unrelated log tail. |
@@ -1445,16 +1445,17 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR126 | Codex | Review: implemented; focused uploader + Spring constructor tests passed | `DiagnosticCaseCaptureService`, `DiagnosticCaseUploaderService`, `application.properties`, `logs/cases/**/*.case.json`, upload status fields/tests | Add the DHXY Java client uploader/retry layer for CR123. Implemented a default-off `DiagnosticCaseUploaderService` driven by `case.upload.*` properties. Upload-eligible cases are enqueued after local case write and posted best-effort in a daemon worker using `Authorization: Bearer <token>`; task execution, metrics capture, OCR, input, and shutdown are not blocked. Upload state is persisted back into the case JSON with `PENDING`, `UPLOADED`, `FAILED_RETRYABLE`, `FAILED_PERMANENT`, attempts, timestamps, response code/message, next retry time, and remote `caseKey/indexKey`. Startup retry scans `logs/cases` for `PENDING` / `FAILED_RETRYABLE` cases only when endpoint/token config is present. Focused fake-server tests cover successful upload, permanent 401 failure, and retryable network failure. Follow-up startup blocker fixed: the uploader production constructor is now explicitly Spring-autowired, and `DiagnosticCaseUploaderSpringContextTest` proves the Bean is constructible without a no-arg constructor. |
 | CR127 | Codex | Done: real Cloudflare/R2 smoke passed | `D:/mavenProject/dhxy-case-worker`, Cloudflare Wrangler/R2 setup notes, smoke-test script, CR123/CR126 docs | Validate the real Cloudflare/R2 end-to-end deployment after CR125 and CR126. Completed: Wrangler OAuth is valid for `poul1303821@gmail.com`; `npx wrangler d1 list` confirms the expected `dhxy_auto_bat_license_db`; R2 was enabled in the Cloudflare Dashboard; `npx wrangler r2 bucket create dhxy-diagnostic-cases` succeeded; `CASE_UPLOAD_TOKEN` was generated locally, stored only in `%TEMP%/dhxy_case_upload_token.txt`, and pushed as a Worker secret; `npx wrangler deploy` deployed `https://dhxy-case-worker.yueyunfe.workers.dev`; public POST smoke upload returned `200 CASE_UPLOADED`; remote R2 verification with `--remote` downloaded `indexes/2026-06-27.json` and the case object under `cases/2026-06-27/machine-worker-contract/xiuluo_v2/...case.json` (`3120` bytes). No R2 credentials were embedded in DHXY Java, and full logs/zips are not uploaded. |
 | CR128 | Codex | Review: background-first source repair/guard passed; fresh runtime pending | `DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `LeftTopStatusSwitchService`, `WindowRuntimeContext`, `FiveRingTaskV2`, startup UI logs/tests | Restore startup UI guards to the validated multi-window model: all startup probes that do not require a physical mouse click must run by background HWND screenshot/shortcut and may run concurrently across the selected windows. 五环 still must run the full startup window checks (Alt+1 map options, Alt+U expand/flying option, Alt+5/Alt+6 visibility), but the normal path must be background-first; only a clearly detected wrong option should trigger the foreground correction transaction. For a two-round 五环 queue, this startup check runs once per accepted task queue, not once per round. Left-top status and future map/flying/minimap click-needed checks should first background-probe and store per-window pending actions; when the window later owns a safe real-input turn, it should consume the already-known pending click immediately without recapturing first. Fresh runtime still needs five-window proof. |
-| CR129 | Zeno+Codex | Review: async/coalesced dashboard write guards passed; fresh runtime pending | `AutomationMetricsService`, `AutomationMetricsAsyncDashboardWiringTest`, `XiuluoTaskV2.finishRoundMetric`, `WubeiTask.finishRoundMetric`, `FiveRingTaskV2.finishRoundMetric`, automation dashboard logs | Make round-finish metrics/dashboard persistence asynchronous so a completed business round can start the next round immediately. Fresh 修罗 `2026-06-27 19:46:18.637 -> 19:46:22.618` showed about 3.981s between `ROUND_DONE` and `round 56 skeleton finished`, and the `20:23:47.825-20:33:16` audit reproduced `ROUND_DONE -> skeleton finished` gaps around 2-3s. Current source keeps round metrics recorded synchronously, queues dashboard persistence through a bounded background writer, preserves manual synchronous `writeDashboardNow()`, and counts/logs coalesced write requests for runtime validation. Focused source guard passed via direct `javac/java`; full Maven `test-compile` is currently blocked by unrelated dirty `MainWindowController` UI symbols. |
-| CR130 | Kant+Codex worker | Review: source guards passed; fresh runtime pending | `XiuluoTaskV2`, `XiuluoHotStartResolver`, 修罗 round-start logs/tests | Remove per-round 修罗 hot-start screen inspection during continuous runs. Fresh 修罗 `19:46:22.618 -> 19:46:26.144` showed round 56 finished, then round 57 immediately ran `hot-start:xiuluo_v2:xiuluo-v2:round-start` dialog inspection before normal `PREPARE_ROUND`; the `20:23:47.825-20:33:16` audit reproduced this for rounds 74/76/77. Local source now runs the startup-screen resume path only when `completedRuns == 0`; continuous rounds start from `XiuluoRoundContext.start(round)`, and the guard proves `execute(...)` no longer calls `hotStartResolver.resolve(...)`. Startup/after-combat recovery still uses the unified tracker/return-item resolver. Fresh runtime must show no internal-round `hot-start:xiuluo_v2:xiuluo-v2:round-start` lines. |
+| CR129 | Zeno+Codex | Done: 修罗/五倍轮次结束 dashboard 异步化已验收 | `AutomationMetricsService`, `AutomationMetricsAsyncDashboardWiringTest`, `XiuluoTaskV2.finishRoundMetric`, `WubeiTask.finishRoundMetric`, `FiveRingTaskV2.finishRoundMetric`, automation dashboard logs | 轮次结束 metrics/dashboard 写盘已从业务完成路径异步化：内存事件仍同步记录，dashboard 持久化进入有界后台 writer，手动 `writeDashboardNow()` 保持同步。Focused guards 通过；fresh 修罗 `2026-06-27 22:39:01.570`、`22:44:33.314`、`22:46:17.035` 均显示 `ROUND_DONE`、`round skeleton finished`、下一轮 `initial phase` 同毫秒/近同毫秒，writer 后台稍后 flush。fresh 五倍 80 轮长跑继续证明 writer 不阻塞轮次推进，典型 flush 在 `2026-06-28 17:46:51.989`、`18:46:07.310`、`18:47:17.813` 等后台发生；五倍最终 `19:04:55.624` 完成 80/80。已可关闭。 |
+| CR130 | Kant+Codex worker | Done: 连续修罗轮次不再跑 round-start hot-start | `XiuluoTaskV2`, `XiuluoHotStartResolver`, 修罗 round-start logs/tests | 连续修罗轮次已移除每轮之间的 `hot-start:xiuluo_v2:xiuluo-v2:round-start` 屏幕检查；真实 UI startup / after-combat startup resume 仍保留。Source guard 证明 round loop 不再调用 `hotStartResolver.resolve(...)`。Fresh 修罗 `2026-06-27 22:39:01.570` 后 round 4 直接 `source=normal-start`，后续 round 7/8 同样无 per-round hot-start；`2026-06-28 19:12:42.742 -> 19:19:55.632` 的 rounds 4-7 也都是 `phase=PREPARE_ROUND source=normal-start`，未见 `task hot-start snapshot` / `round-start` inspect。已可关闭。 |
 | CR131 | Kant+Codex worker | Review: 修罗 + 五倍 source guards passed; fresh runtime pending | `TeamReturnService`, `XiuluoTaskV2`, `WubeiTask`, team-return detection, return-home/bag logs/tests | Start team-leave / team-return precheck before opening the bag for return-home, and consume the result after return verification. Fresh 修罗 `19:46:09.652 -> 19:46:18.637` showed return item use/verify first, then `WAIT_TEAM_RETURN` spent about 3.261s deciding `team return wait not needed`; the `20:23:47.825-20:33:16` audit again showed return-verified to `WAIT_TEAM_RETURN/ROUND_DONE` latency. 修罗 now captures a bound-window team-return precheck before `bagService.findAndUseMainBagTaskPageItem(...)`; 五倍 now does the same before `bagService.findAndUseItemFromBack(...)`. Both consume complete same-window/task-run results before live detection, fall back to existing `WAIT_TEAM_RETURN` on signal present/failed/stale/not-ready, and do not change return item search/use, start-map verification, or team-return business truth. Fresh runtime must show precheck capture before bag and precheck consume after return verification for both 修罗 and 五倍 return-home paths. |
-| CR132 | Codex+Erdos | Done: 显形镜槽位缓存 fresh runtime 通过 | `ReturnItemPrescanService`, `WubeiTask`, `WubeiCR132ProbeMirrorSlotReturnCacheWiringTest`, 修罗/五倍回城道具预扫缓存状态，RETURN_HOME 日志/测试 | 回城道具预扫缓存仍按任务/窗口/taskRun/轮次/hwnd/模板隔离，使用后必须验证起始地图，失败回完整包裹查找。Fresh 五倍普通战斗已闭环：`00:15:47.778` 缓存 `(1433,647)`，`00:16:58.341` 使用缓存，`00:17:03.292` 验证回 `宝象国`。白龙马/显形镜 fresh runtime 已闭环：`01:34:05.754` first-probe 绿字后按 `bag/wubei_probe_item.png` 预扫显形镜槽位，`01:34:09.871` 缓存 `(1428,642)`，`01:36:30.582` `WUBEI_PROBE_STORY target=wubei.probeTargetReady` 准备并消费，`01:36:36.578` `WUBEI_ENTER_BATTLE` 消费进战，`01:37:04.732` RETURN_HOME 选择 `bag/wubei_probe_item.png` 缓存，`01:37:08.905` 使用 `(1428,642)`，`01:37:09.920` `cached-return-verified` 回 `宝象国`。普通五倍 combat/黄袍/修罗继续用原回城模板。源码 focused guard 已过。Can close. |
+| CR132 | Codex+Erdos | Done: 显形镜槽位缓存 fresh runtime 通过 | `ReturnItemPrescanService`, `WubeiTask`, `WubeiCR132ProbeMirrorSlotReturnCacheWiringTest`, 修罗/五倍回城道具预扫缓存状态，RETURN_HOME 日志/测试 | 回城道具预扫缓存仍按任务/窗口/taskRun/轮次/hwnd/模板隔离，使用后必须验证起始地图，失败回完整包裹查找。Fresh 五倍普通战斗已闭环：`00:15:47.778` 缓存 `(1433,647)`，`00:16:58.341` 使用缓存，`00:17:03.292` 验证回 `宝象国`。白龙马/显形镜 fresh runtime 已闭环：`01:34:05.754` first-probe 绿字后按 `bag/wubei_probe_item.png` 预扫显形镜槽位，`01:34:09.871` 缓存 `(1428,642)`，`01:36:30.582` `WUBEI_PROBE_STORY target=wubei.probeTargetReady` 准备并消费，`01:36:36.578` `WUBEI_ENTER_BATTLE` 消费进战，`01:37:04.732` RETURN_HOME 选择 `bag/wubei_probe_item.png` 缓存，`01:37:08.905` 使用 `(1428,642)`，`01:37:09.920` `cached-return-verified` 回 `宝象国`。普通五倍 combat/黄袍/修罗继续用原回城模板。源码 focused guard 已过。已可关闭。 |
 | CR133 | Codex | Open: 21:34 hot-start tracker shortcut stuck; needs source repair | `WindowTaskRunner`, `WindowReadyEventBus`, `XiuluoTaskV2`, 修罗 hot-start / tracker shortcut / prepared enter-battle logs | 修罗热启动命中左侧任务追踪后，绿字点击、`UNTARGETED_TRACKER` intent、`XIULUO_ENTER_BATTLE` interest 都已经注册；但 `2026-06-27 21:34:32` Runner 识别到 `OPTION` 后只写了 `window.dialog.visible.update`，没有继续发布 `TASK_ATTENTION_REQUIRED` 或 `PREPARED_ACTION_READY/XIULUO_ENTER_BATTLE`，本轮 watcher 也没有 `window observer tick` 收尾日志，任务最终靠 CR116 的 180s pre-combat watchdog 超时进入下一轮。修复方向：保证 active tracker/pathing 且存在 `XIULUO_ENTER_BATTLE` interest 时，可见 `OPTION` 必须迅速走完 attention publish / task-dialog preparation / prepared-action wake，且 watcher 不得因可见 dialog 后续准备链路卡住；补充 INFO/WARN 级失败日志，避免只在 debug 吞掉原因。不要改 tracker 绿字点击、NPC/模板坐标、战斗确认业务或 180s watchdog 上限。 |
 | CR134 | 唐德 | Review: 源码实现+focused guard+compile 通过；fresh runtime 待验 | `WubeiTask`, `WubeiCR134PostAcceptPrepathTargetWiringTest`, 五倍接任务/预走路/医宝宝/修装备日志与测试 | 五倍接任务成功后先计算本轮 `prepathTarget`，再 `Alt+C -> navigateInCurrentMap(prepathTarget)`。源码已接入：默认没有医宝宝时仍点宝象国出口 `(88,157)`；医宝宝 due 时第一段预走路坐标直接替换成医宝宝 NPC 坐标；只有修装备 due 时仍点出口，因为修装备去洛阳，路上再走现有修装备导航；医宝宝和修装备都 due 时固定先医宝宝。实现只改变接任务后的预走路目标选择和日志/guard，不改变 tracker 读取、回城、导航算法、mini-map 点击算法或维护执行本身。 |
 | CR135 | Codex | Review: 5 秒保守窗口源码+guard+compile 通过；fresh runtime 待验 | `WubeiTask`, `scripts/check_wubei_chained_first_aid_window.ps1`, 黄袍连战 dialog/脱战/放权/补给日志与测试 | 五倍黄袍连战中间流程已按定稿接入源码：识别到 `WUBEI_ENTER_BATTLE` prepared dialog 后、判断点击结果前立即关闭五倍维护窗口；黄袍脱战后在 `POST_BATTLE_RECOVER` 先开启 5 秒 first-aid-only 队员补血/补蓝窗口，并让队长在同一窗口内后台做 no-focus 血蓝预检；5 秒结束后 `RETURN_HOME` 只消费已发生的窗口结果，不再此时才打开 first-aid 窗口。若仍是黄袍连战，队长先消费缓存补给计划，再点已准备的 tracker 绿字；若不是黄袍连战，直接走正常回城/下一轮，不额外再等 5 秒。Focused guard 和 `mvn -q -DskipTests compile` 已通过，fresh runtime 需验证 5 秒窗口内没有三技能/盒子，且队长恢复后按缓存快速续战。 |
-| CR136 | Peirce+Codex | Review: worker 修复+focused guard+compile/test-compile 通过；fresh runtime 待验 | `AutoCombatService`, `BattleRadarService`, `WubeiTask`, `WubeiCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试 | 五倍 expected 战斗在 `2026-06-28 01:53` 暴露两个连锁问题：新 `WUBEI_ENTER_BATTLE` 点击后 516ms 内进入 `battle finished`，但没有对应 avatar-diff 命中日志，疑似消费上一场遗留 `combatExitPending`；随后回程验证失败且可信状态仍 `IN_COMBAT` 后，任务连续尝试缓存/完整包裹回城。Peirce 窄修已完成：expected wait 增加 arm 时间/exit 时间 fence，fresh wait 不再消费 arm 前 stale exit；同一次 false fast-exit correction episode 内，实际点过一次回城且未验证回 `宝象国` 后立即 trusted probe，不再 full scan / 第二次 full attempt；trusted probe 仍在战斗时回 `WAIT_BATTLE_FINISH` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果下一次又触发 fast-exit，就是新的 correction episode 和新的单次回城预算。focused guard、`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` 由 worker 报告通过；fresh runtime 需验证这些日志点。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。 |
+| CR136 | Peirce+Codex | Review: 五倍/修罗 source guards + compile/test-compile 通过；NoClassDef follow-up fixed；fresh runtime 待验 | `AutoCombatService`, `BattleRadarService`, `WubeiTask`, `XiuluoTaskV2`, `WubeiCR136FastExitLifecycleWiringTest`, `XiuluoCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试 | 五倍 expected 战斗在 `2026-06-28 01:53` 暴露 stale `combatExitPending` 与同一 correction episode 内多次回程；修罗 fresh runtime `2026-06-29 17:53:29-17:55:04` 暴露同类问题：fast expected exit 误判后 `17:53:33.232` 缓存回程、`17:53:43.314` 完整扫包裹、`17:53:58.723` 第二次完整扫包裹、`17:55:01.545` phase retry 再次扫包裹，可信战斗状态直到 `17:54:56.405` 仍未把单次回程预算截断。已修：expected wait 增加 arm/exit fence；五倍/修罗实际点过一次回程但未验证起始地图后立刻 trusted probe，不再继续 full scan / 第二次 attempt；trusted `IN_COMBAT` 时分别回 `WAIT_BATTLE_FINISH` / `WAIT_COMBAT` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果被纠正后再次触发 fast-exit，就是新的 correction episode 和新的单次回程预算。Follow-up 修复 `2026-06-29 18:17:25` fresh restart 后修罗 `RETURN_HOME` 的 `NoClassDefFoundError XiuluoTaskV2$ReturnItemUseResult$Status`：`ReturnItemUseResult` 不再依赖嵌套 `Status` enum，guard 要求 no nested Status，`target/classes` 不再生成该旧 class。Focused guards、`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` 通过；fresh runtime 仍需验证这些日志点。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。 |
 | CR137 | 唐德+Codex | Deprecated: runtime rolled back after fresh WUBEI 黄袍/tracker regression | `WubeiTask`, `WubeiRoundContext`, removed CR137 guard tests, 五倍接任务/暗雷重抽/黄袍 tracker 日志 | CR137 的接任务后后台 `T0/T+1.5s` tracker 预解析与暗雷快速撤销 prepath 已按用户要求整张撤回。Fresh runtime `2026-06-28 04:07:28` 证明该路径能读到 `智斗黄袍` 标题和 `火云戈壁` 绿字，但 `yellow=''`，后续在可见 `OPTION` 下反复重点击同一绿字。Rollback 删除 `WubeiRoundContext.trackerParseFuture`、`WubeiTask` accept-time tracker future/snapshot/fast 暗雷 reroll 方法、`WubeiAcceptWindowSnapshot` 以及 CR137 source guard 测试；五倍恢复为接任务后先保留 CR134 post-accept prepath，再等待 tracker refresh 并现场 `READ_TRACKER`。暗雷回到现场读到 `暗雷怪` 后重抽的旧路径。后续如要重新做暗雷快重抽，应新开 CR，先解决黄袍/绿字/interest 证据，不复用本卡实现。 |
-| CR138 | Unclaimed | Open: P0 本地队伍支援 session/capability gate 与归队诊断待实现 | `AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, local team support/session model, 连续 `[五倍, 修罗]` 日志/测试 | 连续 `[五倍, 修罗]` 暴露队员 `auto_battle requested=wubei` 残留：队长已切到修罗并打开 `xiuluo_v2#N` 维护窗口，部分队员仍等待 `wubei#80` first-aid gate，导致血蓝补给长期 deferred。CR138 要把队员建模为本地队伍支援 worker，而不是普通顺序队列里的五倍/修罗任务项；新增/接入 `teamSessionKey`、本地 leader 信息与 capability gate，`requestedTaskCode` 仅保留为日志/审计字段。首批只迁移 `FIRST_AID` 到 session capability gate，不能顺手放开三技能、修理、医宝宝、摄妖香或左上角状态；黄袍 `FIRST_AID_ONLY` 仍只允许补血/补蓝。`TEAM_RETURN` 必须改成队长战后先完成自身回程/归队节奏并放权后，队员才允许实际点击；队员可后台观察但不能抢先点。在允许 `COMMON_BOX` 的放权窗口内，盒子最高优先级，若盒子和归队同时 pending，先消费盒子再归队。必须先补 `TEAM_RETURN` no-match 诊断，证明找不到归队按钮时的窗口、截图、模板分数、leader release/signal 和最近 found/click 状态。Fresh runtime 验收：连续 `[五倍, 修罗]` 中队员低血低蓝不再因旧 `requested=wubei` gate 卡死；队长放权后盒子/归队按定稿顺序执行；若归队按钮未命中，日志能解释原因。 |
+| CR138 | 唐德 | Done：18:37 连续 `[五倍, 修罗x2]` fresh runtime 通过 | `AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, `WindowTaskControlService`, `LeftTopStatusSwitchService`, 本地队伍支援/session model, 连续 `[五倍, 修罗]` 日志/测试 | 已改：`WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 已拆分 raw `liveRole` 与 `assignmentRole`，CR138 session evidence 只写 raw live role，`UNKNOWN + cached LEADER` 不再能成为 live leader evidence。已改：`AutoBattleTask` 对 `requested=xiuluo_v2/wubei/wuhuan_v2` 但 `localSession=null` 的队员恢复旧 team pathing window gate，避免 `17:55` 这类接任务前 standalone 三技能抢输入。Fresh `2026-06-29 18:37:14-18:46:05` 连续 `[五倍, 修罗]` 验收通过：五倍成功、修罗完成 2 轮；手动离队后 `TEAM_RETURN` gate 打开，队员归队点击都有目标窗口 focus 证据；`requested=wubei` 队员在修罗 `FIRST_AID` gate 打开后成功补法，未见旧 `requestedTaskCode` gate 卡死或提前放行。 |
+| CR139 | 唐德 | Review：连续任务切换复用启动准备 source 修复完成 | `DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `WindowRuntimeContext`, `WindowTaskRunner`, 连续任务队列 startup logs/tests | 已新增 `CLEAN_QUEUE_TRANSITION` startup mode：同一 UI 队列里上一个任务 `SUCCESS`、任务类型切换、且 common startup-prep marker 已存在时，后续五倍/修罗跳过全局启动准备和非必要 hot-start/startup resume；standalone/after-combat/失败或 marker 缺失路径仍保留原恢复逻辑。聚焦 guard、compile、test-compile 通过；fresh `[五倍, 修罗]` runtime 待验收。 |
 
 Card CR129: Round-finish metrics/dashboard writes must not block next round
 
@@ -1541,6 +1542,26 @@ Implementation update 2026-06-27:
   - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.metrics.AutomationRoundDashboardRenderingTest" exec:java`
   - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.metrics.DiagnosticCaseCaptureServiceTest" exec:java`
 
+Closure update 2026-06-29:
+
+- Status changed to Done after reviewing fresh 修罗 and 五倍 runtime evidence.
+- 修罗 positive samples:
+  - `2026-06-27 22:39:01.570` shows `ROUND_DONE`, dashboard write queued, `round 3
+    skeleton finished`, and `round 4 initial phase` without waiting for dashboard flush.
+  - `2026-06-27 22:44:33.314` and `22:46:17.035` repeat the same pattern on later rounds; the
+    background writer flushes later.
+  - `2026-06-28 19:12:42.741 -> 19:12:42.742`,
+    `19:15:10.499 -> 19:15:10.500`, `19:16:47.075 -> 19:16:47.076`, and
+    `19:19:55.631 -> 19:19:55.632` show the same near-immediate round-finish transition after the
+    80/80 五倍 run switched into 修罗.
+- 五倍 positive samples:
+  - The 2026-06-28 80-round 五倍 run repeatedly shows dashboard writer flushes after, not before,
+    round progression, including `17:46:51.989`, `18:46:07.310`, and `18:47:17.813`.
+  - The run completed `80/80` at `2026-06-28 19:04:55.624`, so the async writer did not block
+    continuous 五倍 completion.
+- No later report slice found a renewed `ROUND_DONE -> round skeleton finished` multi-second
+  dashboard-write gap. CR129 已可关闭。
+
 Card CR130: 修罗 continuous rounds should not run startup hot-start inspection between rounds
 
 Business source:
@@ -1613,7 +1634,22 @@ Implementation update 2026-06-27:
   `after-combat-exit-startup-screen-resume`.
 - Added `XiuluoCR130CR131WiringTest` to guard that `execute(...)` does not call
   `hotStartResolver.resolve(...)` for the round loop and still preserves the true startup labels.
-- Fresh runtime remains required before Done.
+
+Closure update 2026-06-29:
+
+- Status changed to Done after reviewing fresh 修罗 runtime evidence.
+- `2026-06-27 22:39:01.570` shows the next internal round starts as
+  `round 4 initial phase: phase=PREPARE_ROUND source=normal-start`; no
+  `hot-start:xiuluo_v2:xiuluo-v2:round-start` appears.
+- Later fresh 修罗 rounds continue the same behavior: report sections for
+  `22:39:14.587 -> 22:47:47.293` and `22:47:47.293 -> 22:54:01.810` both record
+  `source=normal-start` and no per-round hot-start.
+- The 2026-06-28 continuous queue also revalidated it after 五倍 completed 80/80 and switched to
+  修罗: rounds 4-7 in `19:12:07.106 -> 19:24:23.051` were all
+  `phase=PREPARE_ROUND source=normal-start`, with no `task hot-start snapshot` or
+  round-start inspect logs.
+- True startup/hot-start remains outside this closure; CR130 only closes the internal
+  continuous-round hot-start removal.
 
 Card CR131: Return-home should precompute team-return need before bag opens
 
@@ -2129,13 +2165,16 @@ Validation completed:
   passed and guards the CR135 source ordering.
 - `mvn -q -DskipTests compile` passed.
 
-Card CR136: 五倍 expected fast-exit stale signal and repeated return-item guard
+Card CR136: 五倍/修罗 expected fast-exit stale signal and repeated return-item guard
 
 Business source:
 
 - User reported the first clear false-positive around `2026-06-28 01:53:40`: fast-exit judged the
   battle as finished while the character was still in combat, then the task repeatedly used return
   items before trusted combat state eventually corrected the task.
+- User later reported the same class in 修罗 around `2026-06-29 17:53:58`: fast expected exit was
+  trusted too early, then the leader used the 修罗 return item repeatedly before normal phase retry
+  finally returned home.
 - This is a follow-up safety gap under the `docs/业务逻辑.md` rule "Expected 战斗快脱战与回程验证兜底".
   CR121's bounded wait is already Done; CR136 is not about `timeoutMs=-1`.
 
@@ -2159,6 +2198,17 @@ Runtime evidence:
   `01:54:15.682` avatar diff produced another fast-exit detection. The trusted-IN_COMBAT correction
   did not explicitly refresh the fast-exit baseline from a trusted current in-combat frame before
   the next avatar diff.
+- Fresh 修罗 evidence on `2026-06-29`:
+  - `17:53:29.819` logged `fast expected combat exit detected` and advanced from `WAIT_COMBAT`
+    to `RETURN_HOME`.
+  - `17:53:33.232` clicked cached 修罗 return item at `(1297,571)`, but `17:53:34.904`
+    the watcher detected combat screen again.
+  - The same false-exit episode then continued to additional item use:
+    `17:53:43.314` full-scan click `(1287,570)`, `17:53:58.723` attempt=2 full-scan click
+    `(1279,561)`, and after pause/resume `17:55:01.545` phase-retry full-scan click `(1291,575)`.
+  - `17:54:56.405` trusted probe after the first transaction reported `trustedState=NONE`; the
+    修罗 boolean helper did not stop the actual-use path or refresh the in-combat avatar baseline
+    before continuing return-item retries.
 
 Problem statement:
 
@@ -2167,6 +2217,9 @@ Problem statement:
 - When the false exit reaches return-home, the current two-attempt return flow can use the return
   item multiple times before asking the trusted combat state whether the character is still fighting.
   In one false fast-exit correction episode, this must be capped at one actual return-item use.
+- 修罗 had the same boolean-return shape as old 五倍: a cached unverified use was treated like a
+  cache miss and fell through to full scan, then outer phase retry could repeat the same physical
+  item-use sequence.
 - After trusted combat state corrects the false exit, the same combat must keep the fast-exit path
   available, but the avatar baseline has to be replaced with the current trusted in-combat frame so
   the next diff does not reuse stale or false-exit state.
@@ -2180,7 +2233,7 @@ Required behavior:
   immediately. Do not treat that failed use as a cache miss and continue to full scan / second full
   attempt in the same false fast-exit correction path.
 - If that trusted probe says `IN_COMBAT`, stop the remaining return flow immediately and go back to
-  `WAIT_BATTLE_FINISH`; this ends the current correction episode.
+  `WAIT_BATTLE_FINISH` for 五倍 or `WAIT_COMBAT` for 修罗; this ends the current correction episode.
 - After that trusted-IN_COMBAT correction, avatar fast-exit remains allowed. The correction must
   refresh/reset the current combat avatar baseline to the trusted in-combat frame; do not mark the
   current combat invalid or block the next avatar diff.
@@ -2196,8 +2249,8 @@ Boundaries:
 - Do not change `BagService`, item templates, bag page scanning, OCR/template/click/navigation,
   CR121 bounded wait, CR132 return-item prescan/cache strategy, CR134 prepath target choice, or CR135
   黄袍 chained first-aid window.
-- 修罗 should be audited for the same shared-service risk. If a shared service change naturally
-  covers it, record that; otherwise do not broaden the source patch without evidence.
+- 修罗 is now covered by the same single-actual-use correction rule. The patch must stay limited to
+  return-home result classification, trusted probe/baseline refresh, and wait-phase resumption.
 
 Validation:
 
@@ -2209,6 +2262,13 @@ Validation:
   - trusted-IN_COMBAT after failed return verification aborts further return item attempts;
   - the correction refreshes the avatar baseline to the current in-combat frame while leaving the
     next avatar diff enabled.
+- Focused 修罗 guard:
+  - cached 修罗 return item used but unverified returns `USED_START_MAP_UNVERIFIED` before any full
+    bag scan;
+  - `useReturnItemAndVerifyStartMap(...)` runs trusted probe immediately after an actual unverified
+    use and returns `STILL_IN_COMBAT` / `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT` instead of looping;
+  - `returnHome(...)` resumes `WAIT_COMBAT` before generic phase retry when trusted state is
+    `IN_COMBAT`.
 - Fresh 五倍 runtime:
   - after a false fast-exit, at most one actual return-item use occurs in that correction episode
     before the task either resumes `WAIT_BATTLE_FINISH` or enters the existing non-combat failure
@@ -2218,6 +2278,11 @@ Validation:
   - a post-correction `fast expected exit avatar baseline captured` is acceptable only if it is based
     on the refreshed trusted in-combat frame, not the pre-correction stale/false baseline;
   - normal successful fast exits still verify return to `宝象国`.
+- Fresh 修罗 runtime:
+  - after a false fast-exit, at most one actual 修罗 return-item use occurs in that correction
+    episode before either `WAIT_COMBAT` resumes or the non-combat fallback path takes over;
+  - trusted `IN_COMBAT` after an unverified return use must refresh the avatar baseline and wait for
+    the real combat exit, without disabling future fast avatar diff.
 
 Owner / dispatch:
 
@@ -2226,6 +2291,22 @@ Owner / dispatch:
   `WubeiCR136FastExitLifecycleWiringTest`.
 - Reported checks passed: focused `javac/java` guard, `mvn -q -DskipTests compile`,
   `mvn -q -DskipTests test-compile`, and `git diff --check` with only existing line-ending warnings.
+- Codex completed the 修罗 parity repair after the `2026-06-29 17:53` false-positive evidence.
+  Touched scope: `XiuluoTaskV2`, `XiuluoCR136FastExitLifecycleWiringTest`, and stale source-guard
+  marker updates. Checks passed: `XiuluoCR136FastExitLifecycleWiringTest`, affected source guards,
+  `mvn -q -DskipTests compile`, and `mvn -q -DskipTests test-compile`.
+- Follow-up on `2026-06-29 18:17:25` fresh restart failure:
+  - 修罗 first-round `RETURN_HOME` verified cached return to `灵兽村`, then crashed with
+    `NoClassDefFoundError: XiuluoTaskV2$ReturnItemUseResult$Status`.
+  - Root cause was the CR136 修罗 parity result record depending on an extra nested private
+    `Status` enum class that is lazy-loaded only when the return result is created.
+  - `ReturnItemUseResult` now uses simple record booleans (`verifiedStartMap`,
+    `usedStartMapUnverified`) instead of `ReturnItemUseResult.Status`.
+  - `XiuluoCR136FastExitLifecycleWiringTest` now guards against reintroducing
+    `ReturnItemUseResult.Status` / `private enum Status` in this path.
+  - Verification: the guard failed red on the nested enum, then passed after repair;
+    `mvn -q -DskipTests compile` passed; `target/classes` contains no
+    `XiuluoTaskV2$ReturnItemUseResult$Status.class`.
 - Fresh runtime remains required before closing CR136.
 
 Card CR137: 五倍暗雷怪后台识别后快速撤销预走路并重抽
@@ -2275,7 +2356,105 @@ Card CR138: 连续队列本地队伍支援 session gate 与归队诊断
 
 Status:
 
-- Open / P0.
+- Done / fresh continuous `[五倍, 修罗x2]` runtime accepted on 2026-06-29. Owner: 唐德.
+- 18:37 fresh runtime acceptance:
+  - `18:37:14.851` registered one local-team candidate for queue `[wubei, xiuluo_v2]`;
+    `18:37:26.349` live leader detected as `hwnd-63C065A`.
+  - `18:39:28.947` 五倍 finished with `SUCCESS`.
+  - `18:42:45.168` 修罗 round 1 opened local `TEAM_RETURN` and `COMMON_BOX` after return-item
+    verification because the precheck found a return signal. Member return clicks then ran through
+    `teamReturn:auto-battle:local-team-return-release` with `INPUT_FOCUS_TRACE sameAsTarget=true`
+    on the target member windows, and the leader closed `TEAM_RETURN` at `18:43:52.020` after the
+    signal cleared.
+  - A member still logged `task=auto_battle requested=wubei role=MEMBER`, but this was only the
+    audit label: it deferred while local `FIRST_AID` was closed, then at `18:44:02.206` the leader
+    opened 修罗 `FIRST_AID`, and at `18:44:04.489-18:44:05.935` that member consumed the pending
+    first-aid plan and补法 successfully.
+  - `18:46:05.664` 修罗 round 2 finished and the queue completed with `修罗 -> SUCCESS`; targeted
+    scan found no `Exception` / `NoClassDef` / `task failed` / phase-loop guard in this fresh window.
+- 22:13 heartbeat review: current source remains within the simplified one-`LocalTeamSessionState`
+  model and does not add another startup branch. Rechecked `WindowTaskControlService` candidate
+  registration, `MultiWindowTaskManager` submit path, `WindowTaskRunner` raw live-role reporting and
+  session cleanup, `TaskMaintenanceService` leader-absent/capability gates, `AutoBattleTask` return
+  release/legacy fallback, and `AutoCombatService` first-aid/common-box/left-top gates. No new P1/P2
+  source blocker found; keep CR138 in Review only because fresh continuous `[五倍, 修罗]` runtime is
+  still required.
+- 22:13 verification: `mvn -q -DskipTests test-compile` passed; focused guard loop passed:
+  `CR138ReviewCaveatWiringTest`, `TaskMaintenanceCR138LocalSupportCapabilityTest`,
+  `AutoBattleCR138TeamReturnReleaseWiringTest`, `AutoCombatCR138FirstAidGateWiringTest`,
+  `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`, `LeaderTeamReturnCR138ReleaseWiringTest`, and
+  `TeamReturnCR138NoMatchDiagnosticsWiringTest`.
+- 21:55 已改：`WindowTaskRunner.resolveTaskTypeBeforeStart(...)` now keeps raw `liveRole` separate
+  from effective `assignmentRole`. CR138 local-team session evidence is reported from raw live role
+  only; cached `windowContext.role` fallback may affect task assignment but no longer becomes
+  `runner-role-preflight` live leader evidence.
+- 21:55 已改：the `17:55` 修罗 feedback is valid and fixed. `AutoBattleTask` now treats a member-like
+  auto-battle window with team requested task (`xiuluo_v2` / `wubei` / `wuhuan_v2`) but no local
+  support session as legacy team-pathing-gated follower support, not standalone auto-battle.
+  Its summon-skill cleanup now requires the old `teamMaintenanceKey=requestedTaskCode` plus
+  `requireOpenTeamMaintenanceWindow=true`, so it cannot run before the leader opens the pathing
+  maintenance window.
+- Focused source guard:
+  `java -cp "target\\test-classes;target\\classes" com.bot.dhxy.service.CR138ReviewCaveatWiringTest`
+  passes after these repairs.
+- Fresh Maven verification:
+  `mvn -q -DskipTests compile` and `mvn -q -DskipTests test-compile` pass after these repairs.
+  Do not mark CR138 Done until fresh continuous `[五倍, 修罗]` runtime is sampled.
+- Earlier heartbeat review found a P1 in `WindowTaskRunner.resolveTaskTypeBeforeStart(...)`:
+  live role `UNKNOWN` fell back to `windowContext.getRole()`, and the CR138 session marker received
+  that fallback role as `runner-role-preflight` evidence. This is now repaired as described above.
+- `windowContext.role` is not live-only: it can be written from registration/UI snapshot via
+  `WindowRuntimeContext.applyRegistration(...)`; discovery and legacy team registration can assign
+  positional `LEADER/MEMBER` roles before any live probe.
+- Historical impact before 21:55 repair: a cached/registration `LEADER` could become local-session
+  live leader evidence when the real probe returned `UNKNOWN`.
+- Repair applied: split raw live role evidence from effective task-assignment fallback. CR138
+  leader/session evidence uses raw `liveRole`; old `windowContext.role` fallback is assignment-only.
+  `CR138ReviewCaveatWiringTest` now guards `liveRole=UNKNOWN` + cached `WindowRole.LEADER`.
+- Historical 21:34/21:44 heartbeat rechecks confirmed the blocker was still active before this repair:
+  `WindowTaskRunner` still performed `UNKNOWN -> windowContext.getRole()` fallback before
+  `markLocalTeamWindowRoleDetected(...)`, and the guard did not yet cover that upstream fallback.
+- Latest review found and fixed a P1 after the unknown-leader repair: submit-time UI role snapshots
+  no longer count as live-detected leader evidence.
+- `TaskMaintenanceService.hasDetectedLocalLeader(...)` now only trusts `LocalTeamSessionState.leaderWindowId`,
+  which is populated from runner live-role evidence; submit-time
+  `localLeaderWindowId` is expected/diagnostic only.
+- Latest review confirms the previous 1384R P1/P2 were repaired:
+  `WindowTaskRunner.submit(...)` no longer collapses queues before live role preflight, and
+  `TeamReturnService.logReturnButtonNoMatch(...)` now logs `currentWindowReturnMarkerPresent` rather
+  than a misleading leader signal.
+- Latest P1 blocker has been fixed in source: unknown-leader local-team candidates now register
+  selected windows, runner live-role preflight reports every candidate window, and candidate members
+  suppress legacy return / old requested-task first-aid / standalone common-box and combat left-top
+  paths until leader detection resolves.
+- Runtime rule after the repair: once a leader is live-detected, members use local capability gates;
+  if all candidate windows have live role evidence and no local leader exists, the session is marked
+  leader-absent and those windows fall back to standalone/non-local auto-battle behavior.
+- Latest full-design-scope review blocker is fixed in source:
+  `AutoCombatService.maybeRunCombatMaintenance(...)` now lets local support members run combat
+  left-top maintenance only when local `LEFT_TOP_STATUS` is open; standalone/non-local auto-battle
+  keeps the previous behavior.
+- Previously fixed source paths are still useful: local-support idle left-top status, summon-skill cleanup,
+  and member support-worker queue semantics now use local session/capability instead of stale
+  `requestedTaskCode` gates.
+- Latest non-local leader fallback review gap has been fixed in source and
+  `CR138ReviewCaveatWiringTest`.
+- Latest `FIRST_AID_ONLY` common-box blocker has been fixed in source and focused guards.
+- Latest source review caveats and combat-maintenance blocker have also been fixed in source and
+  `CR138ReviewCaveatWiringTest`.
+- Latest complexity cleanup (`2026-06-29`) is implemented in source: local-team state is now folded
+  into one `LocalTeamSessionState` object per session, `WindowTaskRunner` releases the session on
+  queue exit, UI submit-failed windows are marked complete, and stale `TeamSupportCapability`
+  comments were updated. Keep Review until fresh continuous `[五倍, 修罗]` runtime verifies the new
+  cleanup does not regress local support capability gates.
+- Latest partial-submit P1 after cleanup review is fixed in source:
+  `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` now counts
+  `roleDetectedWindows union completedWindows` when confirming leader-absent, so submit-failed /
+  completed-without-role candidates cannot leave started members permanently pending leader
+  detection.
+- Reviewer correction after re-check: this partial-submit repair is present in current source and
+  covered by both `TaskMaintenanceCR138LocalSupportCapabilityTest` and
+  `CR138ReviewCaveatWiringTest`; do not carry the old partial-submit warning as an active blocker.
 - This card is created from `docs/run-reports/2026-06-28-auto-battle-local-leader-gate-design.md`.
 - Do not start Java behavior changes until the implementer records baseline evidence for the touched
   business path in `docs/ACTIVE_WORK.md` as required by `AGENTS.md`.
@@ -2295,9 +2474,9 @@ Business source:
     `requested=wubei` gate.
   - `19:21:47.655` 光牛 exited 修罗 round 7 and again queued first-aid with low HP/MP, but the old
     gate still deferred it.
-  - `19:21:47 -> 19:58:58` has no member `return button found` evidence until `19:58:58.295`; current
-    `TeamReturnService.clickReturnTeamIfPresent(...)` returns `false` silently when no return button
-    is found, so the direct cause of the long no-return gap is not diagnosable from current logs.
+  - `19:21:47 -> 19:58:58` has no member `return button found` evidence until `19:58:58.295`; earlier
+    `TeamReturnService.clickReturnTeamIfPresent(...)` returned `false` silently when no return button
+    was found, so the direct cause of the long no-return gap was not diagnosable from those logs.
 
 Problem split:
 
@@ -2305,6 +2484,481 @@ Problem split:
 P0-A: stale requestedTaskCode / task gate explains first-aid deferred.
 P0-B: TEAM_RETURN no-match is silent, so the round-7 no-return gap remains unproven.
 ```
+
+Latest review follow-up (2026-06-29 / partial-submit unknown-leader P1 repair):
+
+- Reviewer response / 已改:
+  - 已按本轮 review 修复 partial-submit unknown-leader P1；后续 reviewer 可以从这里继续看。
+  - 改动点：`TaskMaintenanceService` leader-absent resolved 判定、`TaskMaintenanceCR138LocalSupportCapabilityTest`
+    partial-submit 行为 guard、`CR138ReviewCaveatWiringTest` source guard。
+  - 当前只剩 fresh 连续 `[五倍, 修罗]` runtime 验证；没有新的源码 blocker 留在本条 follow-up。
+- Source finding:
+  - `WindowTaskControlService.startSameQueue(...)` marks a per-window submit failure with
+    `completeLocalTeamSessionWindow(localTeamSessionKey, windowId, "ui-start-same-queue:submit-failed")`.
+  - `completeLocalTeamSessionWindow(...)` only adds that window to
+    `LocalTeamSessionState.completedWindows`.
+  - `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` confirms leader-absent only when
+    `state.roleDetectedWindows.containsAll(state.candidateWindows)` and no leader was detected.
+  - Therefore a submit-failed candidate is counted for eventual cleanup, but not counted as
+    resolved/non-leader for leader-absent fallback.
+- Failure mode:
+  - UI starts a multi-window team-role queue with unknown leader.
+  - One selected candidate fails to submit, and the remaining started candidates live-detect as
+    `MEMBER` / non-leader.
+  - Because the failed candidate never runs live-role preflight, `roleDetectedWindows` never contains
+    all candidates. `leaderAbsent` stays false, so members keep
+    `isPendingLocalSupportLeaderDetection(...) == true` and suppress fallback forever.
+- Repair:
+  - `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)` now computes no-leader from
+    `(roleDetectedWindows union completedWindows).containsAll(candidateWindows)` when no live leader
+    has been detected.
+  - This preserves the cleanup rule that a session is only removed after all candidates complete,
+    while allowing submit-failed/completed-without-role candidates to count as resolved for
+    leader-absent fallback.
+  - Added a focused behavior guard: unknown-leader session with candidates
+    `[partial-submit-member, partial-submit-failed]`; failed candidate completed without role;
+    remaining candidate live-detects `MEMBER`; pending leader detection ends and local support remains
+    off.
+  - Added a source guard requiring the leader-absent path to include `completedWindows`.
+- Verification after repair:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - CR138 focused guard loop:
+    `CR138ReviewCaveatWiringTest`, `AutoCombatCR138FirstAidGateWiringTest`,
+    `TeamReturnCR138NoMatchDiagnosticsWiringTest`, `LeaderTeamReturnCR138ReleaseWiringTest`,
+    `AutoBattleCR138TeamReturnReleaseWiringTest`, `TaskMaintenanceCR138LocalSupportCapabilityTest`,
+    `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`.
+- Secondary complexity note:
+  - The current `CR138ReviewCaveatWiringTest` still asserts the known-leader submit branch shape
+    (`leaderSubmit`, `leaderReuse`, `member submit only after leader submit succeeded`). That protects
+    current behavior, but it also locks in part of the extra branching the user asked to simplify.
+    After the P1 repair, consider rewriting this guard around behavior rather than preserving the
+    exact submit implementation shape.
+
+Latest review follow-up (2026-06-29 / complexity cleanup after stale snapshot repair):
+
+- Source/test status:
+  - Rechecked current source after the stale snapshot leader repair.
+  - `TaskMaintenanceService.hasDetectedLocalLeader(...)` still only trusts live-role session evidence
+    in `LocalTeamSessionState.leaderWindowId`; it does not use submit-time `localLeaderWindowId`.
+  - CR138 focused guards passed again:
+    `CR138ReviewCaveatWiringTest`, `AutoBattleCR138TeamReturnReleaseWiringTest`,
+    `AutoCombatCR138FirstAidGateWiringTest`, `LeaderTeamReturnCR138ReleaseWiringTest`,
+    `TeamReturnCR138NoMatchDiagnosticsWiringTest`,
+    `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`,
+    `TaskMaintenanceCR138LocalSupportCapabilityTest`, plus `mvn -q -DskipTests compile` and
+    `mvn -q -DskipTests test-compile`.
+- Cleanup implementation:
+  - `TaskMaintenanceService` now keeps local support capabilities, capability epochs, live leader
+    evidence, candidate windows, role-detected windows, leader-absent state, and completed windows
+    inside one `LocalTeamSessionState` object keyed by session.
+  - `completeLocalTeamSessionWindow(...)` clears the session only after every registered candidate
+    window has completed. This prevents one finished runner from clearing gates while another member
+    still needs them, and prevents leader/capability evidence from leaking into the next queue.
+  - `WindowTaskRunner` calls the cleanup method in queue `finally`; `WindowTaskControlService` also
+    marks submit-failed windows complete so a pre-registered candidate session cannot leak when a
+    window never starts.
+  - `TeamSupportCapability.SUMMON_SKILL` and `LEFT_TOP_STATUS` comments now describe the real
+    pathing-release capabilities instead of calling them future work.
+- Red/green evidence:
+  - Red first: `mvn -q -DskipTests test-compile` failed because
+    `completeLocalTeamSessionWindow(...)` did not exist.
+  - Green after source repair: `mvn -q -DskipTests test-compile` and the CR138 focused guard loop
+    passed.
+- Recommendation:
+  - Keep CR138 in Review until fresh continuous `[五倍, 修罗]` runtime confirms that local support
+    members still use `FIRST_AID` / `TEAM_RETURN` / `COMMON_BOX` gates correctly and that session
+    cleanup does not create premature fallback.
+
+Latest review follow-up (2026-06-29 / stale snapshot leader repaired):
+
+- Verified feedback before editing:
+  - The previous unknown-leader repair correctly registered candidates and deferred candidate
+    members, but `TaskMaintenanceService.hasDetectedLocalLeader(...)` still treated a nonblank
+    `TaskExecutionContext.localLeaderWindowId` as live leader evidence.
+  - That id can come from `WindowTaskControlService.startSameQueue(...)` submit-time UI snapshots.
+    If the snapshot says `LEADER` but live preflight later finds no real leader, members could still
+    enter local support session and wait forever on capabilities no leader opens.
+- Source repair:
+  - `hasDetectedLocalLeader(...)` now only checks live leader evidence stored in the local session
+    state for `context.getLocalTeamSessionKey()`.
+  - `localLeaderWindowId` remains available as expected/diagnostic context, but it no longer proves
+    a live local leader and cannot activate `isLocalSupportMemberSession(...)` by itself.
+  - Positive capability tests now explicitly call `markLocalTeamLeaderDetected(...)` before expecting
+    local support capabilities to be open.
+- Red-first evidence:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` failed on the previous source with
+    `stale submit-time leader id must not count as a live-detected local leader`.
+- Green verification:
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - Maven classpath run: `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - Maven classpath run: `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `mvn -q -DskipTests compile`
+- Fresh runtime status:
+  - Keep CR138 in Review, not Done. Run continuous `[五倍, 修罗]` with stale/unknown UI role
+    snapshots.
+  - Expected behavior: stale submit-time leader id keeps candidate members pending until live role
+    evidence resolves; if all candidates report non-leader, logs show leader-absent fallback; if a
+    leader is live-detected, members use local capability gates instead of stale
+    `requested=wubei` / `wubei#80` gates.
+
+Latest review follow-up (2026-06-29 / candidate-session pre-leader fallback repaired):
+
+- Verified feedback before editing:
+  - Unknown-leader same-queue starts were creating a local-team candidate with
+    `localLeaderPresent=true`, but before live leader detection the candidate members were not yet
+    `isLocalSupportMemberSession(...)`.
+  - In that gap, `AutoBattleTask.maybeRunIdleMaintenance(...)` could still use legacy
+    `teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")`.
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` could still fall back to the old
+    `requestedTaskCode` first-aid gate.
+  - Member common-box and combat left-top maintenance also needed to avoid standalone behavior while
+    leader detection was still unresolved.
+- Source repair:
+  - `WindowTaskControlService.startSameQueue(...)` registers candidate window ids for unknown-leader
+    local-team batches.
+  - `WindowTaskRunner` reports each runner live-role preflight through
+    `TaskMaintenanceService.markLocalTeamWindowRoleDetected(...)`.
+  - `TaskMaintenanceService` now tracks candidate windows, role-detected windows, live-detected
+    leaders, and leader-absent sessions separately.
+  - `AutoBattleTask` defers candidate members before the legacy auto-battle return-team path.
+  - `AutoCombatService` defers candidate members before old requested-task first-aid gates, member
+    common-box consumption, and combat left-top maintenance.
+- Red-first evidence:
+  - `CR138ReviewCaveatWiringTest` failed on the previous source with
+    `unknown-leader local-team batches must register candidate windows`.
+- Green verification:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - Maven classpath run: `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - Maven classpath run: `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Fresh runtime status:
+  - Still keep CR138 in Review, not Done. Run continuous `[五倍, 修罗]` with stale/unknown UI role
+    snapshots and verify candidate registration, live-role resolution, pending-leader defers,
+    local capability gates after leader detection, and leader-absent fallback if no selected local
+    leader exists.
+
+Latest review follow-up (2026-06-29 / candidate-session pre-leader gap):
+
+- Confirmed fixed from previous review:
+  - `WindowTaskRunner.submit(...)` no longer calls `collapseLocalSupportQueue(...)`, and the helper
+    is gone. Queue items such as 修罗 are no longer dropped before live role preflight.
+  - `TeamReturnService.logReturnButtonNoMatch(...)` now uses `currentWindowReturnMarkerPresent`, so
+    it no longer labels a member-window marker as `leaderSignalPresent`.
+- P1 blocker:
+  - `WindowTaskControlService.startSameQueue(...)` creates an unknown-leader local-team candidate and
+    submits all selected windows with `localLeaderPresent=true`.
+  - Before any runner live-detects `LEADER`, `TaskMaintenanceService.isLocalSupportMemberSession(...)`
+    returns false because `hasDetectedLocalLeader(...)` is not yet satisfied.
+  - In that pre-leader-detection gap, `AutoBattleTask.maybeRunIdleMaintenance(...)` allows the
+    legacy ungated `teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")` path because
+    the context is not yet considered a local support member.
+  - The same gap makes `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` skip the local
+    `FIRST_AID` capability path and fall into the old `context.isLocalLeaderPresent() &&
+    requestedTaskCode in (wubei, xiuluo_v2)` gate. If the leader has not been detected yet, or the
+    selected batch has no local leader, members can again wait on stale requested-task gates.
+- Required source direction:
+  - Separate "candidate/pending leader" from "standalone/non-local" and from "active local support".
+  - Candidate members should suppress legacy return-team click and old requested-task first-aid gates
+    until leader detection resolves the session.
+  - Once a leader is live-detected, members use only local capability gates. If role preflight proves
+    there is no local leader in the selected batch, clear/disable the candidate session so those
+    windows behave as ordinary standalone/non-local auto-battle.
+  - Add a focused guard for the exact pre-leader gap: unknown-leader candidate + member auto-battle
+    must not call legacy `clickReturnTeamIfPresent(...)` and must not wait on old
+    `awaitTeamFirstAidMaintenanceWindowOpen(...)`.
+- Verification run during review:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - Maven exec passed for `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - Maven exec passed for `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - Direct `java -cp target/test-classes;target/classes` for the two dependency-backed tests fails
+    with missing `org/slf4j/LoggerFactory`, so use Maven exec for those two tests.
+- Fresh runtime status:
+  - This pre-leader gap has now been repaired in source in the later follow-up above; fresh
+    continuous `[五倍, 修罗]` is still required before CR138 can move to Done.
+
+Latest review follow-up (2026-06-29 / 1384R P1/P2 fixed):
+
+- P1 repair:
+  - Removed submit-time `collapseLocalSupportQueue(...)` from `WindowTaskRunner`.
+  - `submit(...)` now keeps the requested queue intact until runner live role preflight. A stale
+    submit-time `MEMBER` snapshot can no longer irreversibly drop later main-task queue items.
+  - Live role preflight still calls `TaskTeamAssignmentPolicy.resolveTaskForRole(...)`; confirmed
+    members still resolve leader/五倍 requests to `AUTO_BATTLE` support.
+- P2 repair:
+  - `TeamReturnService.logReturnButtonNoMatch(...)` renamed the misleading `leaderSignalPresent`
+    diagnostic to `currentWindowReturnMarkerPresent`.
+  - The field now accurately means "the current scanned window has the return marker", not "leader
+    still has a return signal".
+- Red-first guard evidence:
+  - `CR138ReviewCaveatWiringTest` failed on the previous source with
+    `submit must not irreversibly collapse a queue before live role preflight`.
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest` failed on the previous source with
+    `CR138 no-match log must identify the current-window return marker`.
+- Green verification:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoCombatMemberCommonBoxBehaviorTest`
+  - `git diff --check` reported only existing CRLF warnings.
+- Fresh runtime status:
+  - CR138 is no longer source-blocked by 1384R. Fresh continuous `[五倍, 修罗]` should check that
+    member logs show `localSession=... localSupportMember=true` after leader detection, stale
+    `wubei#80` gates are not used for support decisions, and `currentWindowReturnMarkerPresent`
+    appears in no-match diagnostics when relevant.
+
+Latest review correction (2026-06-29 / combat left-top blocker fixed):
+
+- Independent review and local recheck found a source blocker:
+  - `AutoCombatService.maybeRunCombatMaintenance(...)` called
+    `leftTopStatusSwitchService.handleCombatMaintenance(context, source)` during sparse combat
+    cleanup.
+  - `LeftTopStatusSwitchService.handleCombatMaintenance(...)` resolves the task through
+    `context.getRequestedTaskCode()` first and may click immediately when the switch is open.
+  - This path was outside `AutoBattleTask.maybeRunIdleMaintenance(...)`, so it bypassed the new local
+    `LEFT_TOP_STATUS` capability gate.
+- Implemented repair:
+  - Local support members run combat left-top maintenance only when the current local leader session
+    has opened `LEFT_TOP_STATUS`.
+  - Standalone/non-local auto-battle keeps its existing combat maintenance behavior and does not wait
+    on a stale local-team gate.
+  - `CR138ReviewCaveatWiringTest` now specifically covers the combat-maintenance path, not only the
+    idle `AutoBattleTask` path.
+- Observation, not current blocker:
+  - `COMMON_BOX` still uses `requestedTaskCode` as a pending key/source label, but current source also
+    requires local `COMMON_BOX` capability before consumption. Fresh runtime logs may still show
+    `requested=wubei` for box pending/consume; treat that as audit label unless a task-specific box
+    policy diverges.
+
+Latest verification (2026-06-29 / combat left-top blocker):
+
+- Red first: `CR138ReviewCaveatWiringTest` failed on the previous source with
+  `local support combat left-top maintenance must first check local support session`.
+- Green:
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatMemberCommonBoxBehaviorTest`
+  - `mvn -q -DskipTests compile`
+
+Latest verification (2026-06-29 / unknown-role same-queue session blocker):
+
+- Green:
+  - `CR138ReviewCaveatWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `mvn -q -DskipTests compile`
+- Fresh runtime acceptance addendum:
+  - UI role snapshot may be unknown at submit time; this should now log
+    `local-team session candidate without known leader`.
+  - After runner preflight detects the selected leader, logs should show
+    `maintenance local-team leader detected`.
+  - Member support logs should then show `localSession=... localSupportMember=true`, not the old
+    `localSession=null localSupportMember=false` path seen in the 14:04 review sample.
+  - 摄妖香 / 摄药箱 ordering was explicitly left unchanged in this pass.
+
+Previous implementation update (2026-06-29 / partial full design-scope repair):
+
+- Verification run:
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Implemented repair:
+  - `TaskMaintenanceService.openTeamPathingMaintenanceWindow(...)` now publishes local
+    `SUMMON_SKILL` and `LEFT_TOP_STATUS` capability together with the existing
+    `FIRST_AID/PATHING_WINDOW/COMMON_BOX` capabilities.
+  - `TaskMaintenanceService.closeTeamMaintenanceWindow(...)` closes those local capabilities with
+    the pathing window; `FIRST_AID_ONLY` still opens only `FIRST_AID`, so 黄袍/连战 short recovery
+    cannot run summon-skill or left-top maintenance.
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` consumes left-top status only when local
+    `LEFT_TOP_STATUS` is open, and summon-skill cleanup claims a local-session
+    `SUMMON_SKILL` capability round instead of `context.getRequestedTaskCode()`.
+  - `TaskMaintenanceRequest.requiredLocalSupportCapability` and the local capability epoch key keep
+    summon-skill claims unique per local leader release, even when the same session moves from 五倍
+    to 修罗.
+  - Superseded by the 1384R repair above: the previous submit-time member queue collapse was removed
+    because it trusted stale role snapshots before live role preflight. Live role detection now owns
+    member-to-`AUTO_BATTLE` reassignment without trimming the requested queue at submit time.
+- Guard result:
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest` proves `FIRST_AID` does not imply
+    `SUMMON_SKILL` / `LEFT_TOP_STATUS`, and pathing release opens then closes both.
+  - `CR138ReviewCaveatWiringTest` proves local-support left-top, summon-skill, and the no
+    submit-time stale-role collapse rule. Existing CR138 first-aid/common-box/team-return guards
+    still pass.
+- Fresh runtime acceptance:
+  - Run continuous `[五倍, 修罗]` and verify member auto-battle support does not log deferred waits on
+    stale `requested=wubei` / `wubei#80` gates after the leader switches to 修罗.
+  - Verify member HP/MP first-aid, left-top status, summon-skill cleanup, common box, and
+    `TEAM_RETURN` only run during the corresponding local session capability windows.
+  - Verify standalone/non-local auto-battle does not wait on stale requested-task gates.
+
+Superseded implementation update (2026-06-29 / non-local leader fallback review):
+
+- Verification run:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Implemented repair:
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` only uses the old
+    `awaitTeamFirstAidMaintenanceWindowOpen(...)` requested-task fallback when the context has a
+    local leader. A member auto-battle window without a local leader/session no longer waits forever
+    on stale `requested=wubei/xiuluo_v2` gates.
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` now derives `requireTeamMaintenanceGate` from an
+    actual local support session, so non-local/standalone auto-battle keeps its requested label for
+    logs but does not inherit the old team window requirement.
+- Guard result:
+  - `CR138ReviewCaveatWiringTest` now also proves the non-local fallback rules.
+- Continued source review result:
+  - Reviewer correction: the acceptance boundary is the full design report, not only the latest
+    narrow implementation slice. CR138 therefore remains blocked before fresh runtime.
+  - Implemented pieces are still useful and guarded: local-session `FIRST_AID`, `COMMON_BOX`
+    isolation, `TEAM_RETURN` release gating, partial-submit handling, and non-local auto-battle
+    fallback all have focused guards plus compile/test-compile coverage.
+  - Blocking gap: local support left-top status still uses the old requested-task gate:
+    `AutoBattleTask.maybeRunIdleMaintenance(...)` checks
+    `isTeamPathingMaintenanceWindowOpen(context, context.getRequestedTaskCode())` and calls
+    `leftTopStatusSwitchService.consumeFollowerSafeWindow(context, context.getRequestedTaskCode())`.
+  - Blocking gap: summon-skill cleanup still uses the old `requestedTaskCode` / task-round claim gate:
+    `AutoBattleTask.maybeRunIdleMaintenance(...)` passes `teamMaintenanceKey =
+    context.getRequestedTaskCode()`, and `TaskMaintenanceService.maybeCleanSummonSkill(...)` resolves
+    claims from that `teamMaintenanceKey` instead of a local-session capability/round claim.
+  - Blocking gap: member queue semantics are not yet collapsed into a single local support worker for
+    `[五倍, 修罗]`; the report's Phase 6 remains unfinished. Do not run final fresh runtime until these
+    gaps are implemented and guarded.
+
+Superseded implementation update (2026-06-29 / review caveat follow-up):
+
+- Verification run:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `CR138ReviewCaveatWiringTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+- Implemented repair:
+  - `AutoCombatService.runPendingMemberCommonBoxIfAllowed(...)` now checks
+    `commonBoxService.hasPendingBoxForCurrentWindow(...)` before local `COMMON_BOX` gate logging, so
+    no-pending windows no longer emit fake `pending member common-box deferred` diagnostics.
+  - `WindowTaskControlService.startSameQueue(...)` submits the detected local leader first. Member
+    submits receive local-team session metadata only when that leader submit succeeds; if the leader
+    rejects the queue, members remain standalone/fallback auto-battle submissions instead of orphan
+    local-session members.
+- Guard result:
+  - `CR138ReviewCaveatWiringTest` proves both wiring rules.
+
+Superseded implementation update (2026-06-29 / first-aid-only common-box blocker):
+
+- Verification run:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`
+  - `AutoBattleCR138TeamReturnReleaseWiringTest`
+  - `LeaderTeamReturnCR138ReleaseWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+  - existing `AutoCombatMemberCommonBoxBehaviorTest`
+- Implemented repair:
+  - `openTeamFirstAidMaintenanceWindow(...)` opens only `FIRST_AID`, so 黄袍/连战
+    `FIRST_AID_ONLY` cannot imply box/return/summon/left-top maintenance.
+  - `openTeamPathingMaintenanceWindow(...)` explicitly opens `COMMON_BOX` together with
+    `FIRST_AID` and `PATHING_WINDOW`.
+  - `openLocalTeamReturnSupportWindow(...)` explicitly opens `TEAM_RETURN` and `COMMON_BOX`, so a
+    released return opportunity may still consume box before return-team.
+  - `runPendingMemberCommonBoxIfAllowed(...)` now requires `COMMON_BOX` for local support sessions.
+  - `runPendingFollowerFirstAidIfAllowed(...)` no longer calls `consumePendingBoxIfAllowed(...)`
+    inside the first-aid branch.
+  - `AutoBattleTask.tryRunLocalTeamReturnRelease(...)` checks `COMMON_BOX` before box consumption.
+- Guard result:
+  - `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest` proves `FIRST_AID_ONLY + pending common box`
+    does not consume box, while a pathing window can consume it.
+- Resolved follow-up source review caveats:
+  - The old source checked local-session `COMMON_BOX` capability before
+    `commonBoxService.hasPendingBoxForCurrentWindow(...)`, so it could log
+    `pending member common-box deferred` with no real pending box. The follow-up moved the pending
+    check ahead of the deferred log.
+  - The old source created a local-team session before per-window submits, so a failed leader submit
+    could leave successful members with an orphan session. The follow-up submits the local leader
+    first and only passes session metadata to members when that leader submit succeeds.
+
+Superseded implementation review (2026-06-29):
+
+- Verification run:
+  - `mvn -q -DskipTests test-compile`
+  - `TaskMaintenanceCR138LocalSupportCapabilityTest`
+  - `AutoCombatCR138FirstAidGateWiringTest`
+  - `TeamReturnCR138NoMatchDiagnosticsWiringTest`
+- Passing guards prove only the narrow wiring/diagnostic slice:
+  - a stale member `requested=wubei` can observe local-session `TeamSupportCapability.FIRST_AID`;
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` tries local capability before the
+    old requested-task gate;
+  - `TeamReturnService` now emits richer no-match diagnostics.
+- Superseded blocking finding:
+  - `src/main/java/com/bot/dhxy/service/AutoCombatService.java` still calls
+    `runPendingMemberCommonBoxIfAllowed(...)` before pending follower first-aid in the main tick;
+  - the same first-aid path still calls `commonBoxService.consumePendingBoxIfAllowed(...)` after
+    acquiring the pending-follower-first-aid turn;
+  - therefore a 黄袍 `FIRST_AID_ONLY` window can still consume common box, despite the card requiring
+    HP/MP-only behavior.
+- Additional open gaps:
+  - superseded by the latest update: non-local-leader fallback still used the old
+    `requestedTaskCode` task gate and needed a clear standalone auto-battle policy;
+  - actual `TEAM_RETURN` clicking is still direct and not leader-release gated; this remains a later
+    slice, but the full CR cannot close until it is modeled.
+- Repaired by latest update:
+  - keep common-box priority only in windows that explicitly permit `COMMON_BOX`;
+  - ensure `FIRST_AID` capability alone cannot run common box, summon skill, repair, heal-pet,
+    sheyaoxiang, left-top status, or return-team click;
+  - add a behavior guard for `FIRST_AID_ONLY + pending common box` proving the box is not consumed.
+- Repaired by latest non-local fallback update:
+  - no-local-leader auto-battle no longer waits on stale requested-task team gates;
+  - idle maintenance only requires the old team window gate when an actual local support session is
+    present.
 
 Root cause model:
 
@@ -7079,6 +7733,12 @@ Performance / diagnostics:
   clicking the remembered option.
 - This card does not optimize the preceding NPC click. That is CR76.
 
+Closure note (2026-06-29):
+
+- Fresh 修罗 runtime validated the accept-memory fast path over multiple rounds: remembered option
+  clicks no longer pay the full `handle-dialog:CLICK_REMEMBERED_OPTION` detection pass, and no
+  accept-dialog fallback regression was recorded. CR75 is Done.
+
 Card CR76: Try stable NPC learned-memory click before Alt+4 name-layer preparation
 
 Problem statement:
@@ -7155,6 +7815,12 @@ Performance / diagnostics:
 - Expected win on stable learned NPC hits: remove one `Alt+4 + 400ms sleep` plus related input queue
   wait before the learned click.
 - This card does not remove the remembered accept-option dialog detection; that is CR75.
+
+Closure note (2026-06-29):
+
+- Fresh 修罗 runtime validated stable `灵兽村使者` learned-memory hits without preceding
+  `npcClick:pipeline-hide-player-names:灵兽村使者`; earlier miss/insufficient-policy paths fell back
+  normally. CR76 is Done.
 
 Card CR77: Fire-and-handoff 修罗 start-exit prepath without movement confirmation
 
@@ -7242,6 +7908,12 @@ Verification:
   - CR68 target pathing event wait;
   - CR70 route-dialog handoff;
   - CR74 world-map route memory settlement.
+
+Closure note (2026-06-29):
+
+- Fresh 修罗 runtime validated `xiuluo-v2:start-exit-prepath:currentMap` fire-and-handoff over
+  repeated rounds: no start-exit `handoff-fast-edge` / coordinate fallback, and formal target
+  navigation was not blocked by the optional prepath intent. CR77 is Done.
 
 Performance / diagnostics:
 
@@ -12221,6 +12893,160 @@ Accepted:
   only wait on the current window?
 - Should wait intent be added directly to the task phase outcome, or represented by a small
   scheduling policy value object?
+
+Card CR139: 连续任务切换复用启动准备并跳过非必要 hot-start
+
+Status:
+
+- Review. Owner: 唐德.
+- 2026-06-29 唐德 claimed. Baseline recorded in `docs/ACTIVE_WORK.md` before source edits. Scope is limited
+  to same-queue common startup-prep reuse and clean cross-task hot-start/startup-screen-resume skip;
+  no OCR/template/click/navigation target logic should change.
+- 2026-06-29 source repair completed:
+  - Added `TaskStartupMode.CLEAN_QUEUE_TRANSITION` and task-context predicate.
+  - `WindowTaskRunner.runQueueWithBoundGameState(...)` now records previous queued requested task and
+    result, and only emits clean transition when previous result is `SUCCESS`, task type changes,
+    startup mode is still `NORMAL`, current task is `WUBEI`/`XIULUO_V2`, and the queue-level common
+    startup-prep marker is present.
+  - `WindowRuntimeContext` startup-prep marker now represents queue-level common prep for the accepted
+    queue, while new queue submission still clears the marker.
+  - `DefaultWindowTaskStartupInitializer` keeps identity/position sync, then skips common startup prep
+    on clean queued transition with marker; leader startup prep marks common prep done after
+    `prepareTaskStartupWindow()` succeeds.
+  - `WubeiTask` skips first-run `hotStart` only for clean queued transition and starts normal accept.
+  - `XiuluoTaskV2` keeps first-run first-aid/摄妖香 but skips `startup-screen-resume` only for clean
+    queued transition and starts normal accept.
+- Verification:
+  - RED guard first failed: `CR139CleanQueueTransitionStartupWiringTest` reported missing
+    `CLEAN_QUEUE_TRANSITION`.
+  - GREEN guards: `CR139CleanQueueTransitionStartupWiringTest`,
+    `WindowTaskRunnerCombatStartupDeferWiringTest`, `AfterCombatStartupRecoveryWiringTest`,
+    `XiuluoContinuousRoundNoHotStartWiringTest`, `XiuluoCR130CR131WiringTest`.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Known non-CR139 note: `LeftTopStatusSwitchWiringTest` still has a stale CR138
+  `AutoBattleTask` token expectation (`taskMaintenanceService.isTeamPathingMaintenanceWindowOpen`);
+  this was observed during adjacent guard probing but not repaired under CR139.
+- 2026-06-29 review after user complexity concern:
+  - Core behavior is small: one queue-level startup-prep marker, one clean cross-task transition
+    decision in `WindowTaskRunner`, one common-prep skip in `DefaultWindowTaskStartupInitializer`,
+    and first-run hot-start skips in 五倍/修罗.
+  - No P1 behavior blocker found in this pass.
+  - P2 maintainability note: `CR139CleanQueueTransitionStartupWiringTest` over-specifies the
+    implementation shape by requiring an explicit `CLEAN_QUEUE_TRANSITION` mode and source-string
+    fragments. If CR139 is slimmed down later, prefer behavior-oriented guards so the code can stay
+    as close as possible to "same queue already prepared -> skip" without locking in extra naming
+    or wrapper shape.
+- Fresh runtime gate: run `[五倍, 修罗]` and check for common prep mark, `clean queued task transition
+  startup`, startup initializer skip, and 修罗/五倍 clean-transition hot-start skip logs. Then run a
+  fresh standalone 修罗 start to prove true startup resume still exists.
+
+Business source:
+
+- User observed a repeated startup-preparation cost in a continuous UI queue:
+  - Select both 五倍 and 修罗.
+  - 五倍 runs first and performs startup checks such as `Alt+5`, `Alt+6`, left-top status cleanup,
+    mini-map/map-option preparation, flying/zoom expansion checks, and related startup UI closure.
+  - After 五倍 completes, the queue advances to 修罗.
+  - 修罗 runs the same broad startup checks again before accepting the task, even though the same
+    bound leader window just completed those global checks in the same accepted queue.
+- User clarification:
+  - A normal cross-task transition is not a hot-start/resume scenario.
+  - If the previous task was 五倍 and it completed, the next 修罗 task has no 修罗 hot-start state to
+    recover; it should accept a fresh 修罗 task.
+  - If the previous task was 修罗 and the next task is 五倍, the same rule applies: do not run a
+    五倍 hot-start/resume path; accept a fresh 五倍 task.
+- Expected behavior: once the first task in the same UI-submitted queue has successfully completed
+  common startup UI preparation, later tasks in that same queue should skip the common startup prep
+  and any next-task hot-start/startup-screen resume that only makes sense for true UI startup or
+  resume. The later task should go directly into its normal fresh accept-task flow.
+
+Initial source suspicion from code scan:
+
+- `WindowTaskRunner.runTaskWithBoundGameState(...)` invokes `DefaultWindowTaskStartupInitializer`
+  before each concrete task.
+- `WindowRuntimeContext` already has queue-scoped startup UI preparation markers, but the current
+  marker appears to be keyed by task code. That prevents duplicate preparation inside one task, but
+  it does not cover cross-task queues such as `[wubei, xiuluo_v2]`.
+- CR128 covered 五环/two-round queue startup preparation, but does not settle the cross-task
+  `[五倍 -> 修罗]` reuse rule.
+
+Required behavior:
+
+1. Add or clarify a queue-level, per-window "common startup preparation completed" state.
+   - It should live for one accepted task queue on the bound leader window.
+   - It must be cleared when a new UI queue/manual start is submitted.
+   - It must not leak across separate user starts, different bound windows, or debug-only runs.
+2. When the first formal task in the queue completes common startup prep successfully, mark the
+   common prep as done for the queue.
+3. When a later formal task in the same queue starts, skip common/global startup prep if the mark is
+   present and still valid.
+4. Candidate common prep items to skip after they were already completed in the same queue:
+   - `Alt+5` / `Alt+6` visibility or panel checks.
+   - Startup left-top status probe/close.
+   - Startup mini-map / map-option preparation.
+   - Startup flying/zoom/expanded-map checks, when the first task already completed them and there
+     is no evidence the UI state was invalidated.
+5. In a clean cross-task transition, also skip next-task hot-start / startup-screen resume:
+   - `[五倍 -> 修罗]`: do not run 修罗 hot-start/tracker shortcut/startup-screen resume; go accept a
+     fresh 修罗 task.
+   - `[修罗 -> 五倍]`: do not run 五倍 hot-start/startup resume; go accept a fresh 五倍 task.
+   - The signal for this skip must be explicit: previous queued task ended cleanly and the queue is
+     advancing to a different next task.
+6. Keep true startup/resume recovery when it is actually needed:
+   - user starts a standalone task from the UI;
+   - user resumes after pause/stop/interruption;
+   - task starts while already in combat or with an unresolved startup screen;
+   - previous queued task did not end cleanly or left startup state uncertain.
+7. Do not skip normal task business logic after the fresh accept path:
+   - 修罗 first-round/player-state startup checks that are not global UI prep.
+   - 五倍 task classification, task tracker read, task-specific route/prepath decisions.
+   - 摄妖香、盒子、补血补蓝、修装备、医宝宝、回程道具/显形镜 decisions.
+   - Any fallback needed when the first task's common startup prep failed, was interrupted, or was
+     skipped because the task started in combat.
+
+Implementation guardrails:
+
+- Keep this as a startup-prep reuse change only. Do not change OCR/template/click/navigation target
+  selection in this CR.
+- If the implementation changes a visual match or click target, follow `AGENTS.md` testcase replay
+  rules and record the marked output image in `docs/ACTIVE_WORK.md`.
+- Preserve current member/auto-battle skip behavior; this card is about the leader window's common
+  startup preparation across queued tasks.
+- Prefer extending the existing queue-scoped startup marker instead of adding another parallel state
+  model, unless source review proves the existing marker cannot represent common-vs-task-specific
+  startup cleanly.
+- Logs should make the decision obvious:
+  - first task: common startup prep executed and marked complete;
+  - later task: common startup prep skipped because same queue/window already completed it;
+  - later task: hot-start/startup-screen resume skipped because this is a clean cross-task queue
+    transition, not a true resume;
+  - negative path: common startup prep not skipped because marker missing/stale/failed.
+
+Validation plan:
+
+- Source guard:
+  - A continuous queue `[wubei, xiuluo_v2]` has exactly one common startup-prep completion marker for
+    the leader window.
+  - Later task startup can skip common prep and skip next-task hot-start/resume when the previous
+    queued task ended cleanly and the next task is different.
+  - True UI startup/resume still keeps the existing hot-start/recovery path.
+  - Starting a new queue clears the common marker.
+- Fresh runtime:
+  - Start `[五倍, 修罗]`.
+  - Logs show 五倍 executes common startup prep once.
+  - After 五倍 succeeds and 修罗 starts, logs show an explicit skip such as
+    `startup init skipped: queue common startup preparation already completed`.
+  - 修罗 also logs that startup hot-start/resume is skipped because this is a clean cross-task queue
+    transition.
+  - 修罗 should not repeat `Alt+5` / `Alt+6`, startup left-top close, mini-map/map-option prep, or
+    flying/zoom checks that were already completed by 五倍 in the same queue.
+  - 修罗 accepts a fresh task and runs normally.
+- Negative runtime:
+  - Submit a fresh standalone 修罗 queue after the previous queue ends. Common startup prep must run
+    again, and true standalone 修罗 hot-start/startup recovery must remain available.
+  - If the first task's prep failed/was interrupted/started in combat and never marked complete, the
+    second task must not blindly skip common startup prep or hot-start/recovery.
 
 ## Package Rules
 

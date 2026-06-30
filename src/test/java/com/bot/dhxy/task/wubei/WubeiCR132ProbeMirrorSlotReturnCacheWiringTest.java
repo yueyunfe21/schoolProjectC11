@@ -82,7 +82,7 @@ public class WubeiCR132ProbeMirrorSlotReturnCacheWiringTest {
     }
 
     private static void wubeiReturnHomeUsesProbeMirrorCacheKey(String wubei) {
-        String useReturnItem = methodBody(wubei, "private boolean useReturnItem(");
+        String useReturnItem = methodBody(wubei, "private ReturnItemUseResult useReturnItem(");
         require(useReturnItem.contains("String cachedTemplate = returnItemCacheTemplateForCurrentRuntime()"),
                 "RETURN_HOME must choose the cache key from current WUBEI runtime");
         require(useReturnItem.contains("returnItemPrescanService.useCached(context, TASK_CODE, currentRoundNumber")

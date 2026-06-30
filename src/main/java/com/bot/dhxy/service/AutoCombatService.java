@@ -2,6 +2,7 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.model.maintenance.TeamSupportCapability;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -479,6 +480,22 @@ public class AutoCombatService {
         if (!commonBoxService.hasPendingBoxForCurrentWindow(context, requestedTaskCode)) {
             return false;
         }
+        if (taskMaintenanceService != null
+                && taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
+            log.info("{} pending member common-box deferred: pending local leader detection session={} task={} requested={} role={}",
+                    source, context.getLocalTeamSessionKey(),
+                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+            return false;
+        }
+        if (taskMaintenanceService != null
+                && taskMaintenanceService.isLocalSupportMemberSession(context)
+                && !taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
+                context, TeamSupportCapability.COMMON_BOX)) {
+            log.info("{} pending member common-box deferred: gate=local-team capability=COMMON_BOX closed session={} leaderWindow={} task={} requested={} role={}",
+                    source, context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
+                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
+            return false;
+        }
         String transactionName = source + ":pending-member-common-box";
         log.info("{} pending member common-box queued for task turn: task={} requested={} role={}",
                 source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
@@ -512,7 +529,27 @@ public class AutoCombatService {
                 ? source
                 : state.pendingFollowerFirstAidSource;
         String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
-        if (("wubei".equalsIgnoreCase(requestedTaskCode) || "xiuluo_v2".equalsIgnoreCase(requestedTaskCode))
+        if (taskMaintenanceService.isLocalSupportMemberSession(context)) {
+            boolean localGateOpen = taskMaintenanceService.awaitLocalTeamSupportCapabilityOpen(
+                    context, TeamSupportCapability.FIRST_AID, FOLLOWER_FIRST_AID_GATE_WAIT_MS);
+            if (!localGateOpen) {
+                log.info("{} pending follower first-aid deferred: gate=local-team capability=FIRST_AID session={} leaderWindow={} task={} requested={} role={} originalSource={}",
+                        source, context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
+                        safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                return false;
+            }
+            log.info("{} pending follower first-aid gate=local-team capability=FIRST_AID opened: session={} leaderWindow={} task={} requested={} role={} originalSource={}",
+                    source, context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
+                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+        } else if (taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
+            log.info("{} pending follower first-aid deferred: pending local leader detection session={} task={} requested={} role={} originalSource={}",
+                    source, context.getLocalTeamSessionKey(),
+                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+            return false;
+        } else if (context != null
+                && !taskMaintenanceService.isLocalSupportMemberCandidate(context)
+                && context.isLocalLeaderPresent()
+                && ("wubei".equalsIgnoreCase(requestedTaskCode) || "xiuluo_v2".equalsIgnoreCase(requestedTaskCode))
                 && !taskMaintenanceService.awaitTeamFirstAidMaintenanceWindowOpen(
                 context, requestedTaskCode, FOLLOWER_FIRST_AID_GATE_WAIT_MS)) {
             log.info("{} pending follower first-aid deferred: team first-aid gate closed task={} requested={} role={} originalSource={}",
@@ -532,12 +569,6 @@ public class AutoCombatService {
         try {
             log.info("{} pending follower first-aid acquired task turn: task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
-            if (commonBoxService.consumePendingBoxIfAllowed(context, safeRequestedTaskCode(context),
-                    source + ":pending-follower-first-aid")) {
-                log.info("{} pending follower first-aid deferred after common-box click: task={} requested={} role={} originalSource={}",
-                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
-                return true;
-            }
             if (!playerStateService.performCachedFirstAidPlanNow(context)) {
                 PlayerStateService.FirstAidNoFocusProbeResult retryProbe =
                         playerStateService.probeFirstAidSupplyNoFocus(context);
@@ -634,7 +665,22 @@ public class AutoCombatService {
             log.info("{} auto-combat maintenance: clean generic windows source={}",
                     context.getLogPrefix(), source);
             uiCleanerService.closeAllGenericWindows();
-            leftTopStatusSwitchService.handleCombatMaintenance(context, source);
+            if (taskMaintenanceService.isLocalSupportMemberSession(context)) {
+                if (taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
+                        context, TeamSupportCapability.LEFT_TOP_STATUS)) {
+                    leftTopStatusSwitchService.handleCombatMaintenance(context, source);
+                } else {
+                    log.info("{} local support combat left-top deferred: capability=LEFT_TOP_STATUS closed session={} leaderWindow={} task={} requested={} role={} source={}",
+                            context.getLogPrefix(), context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
+                            safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), source);
+                }
+            } else if (taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
+                log.info("{} local support combat left-top deferred: pending local leader detection session={} task={} requested={} role={} source={}",
+                        context.getLogPrefix(), context.getLocalTeamSessionKey(),
+                        safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), source);
+            } else {
+                leftTopStatusSwitchService.handleCombatMaintenance(context, source);
+            }
             state.lastCombatUiCleanAt = System.currentTimeMillis();
         }
 

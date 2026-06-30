@@ -27,6 +27,16 @@ public class TaskExecutionContext {
     private final int nativeWindowY;
     private final int nativeWindowWidth;
     private final int nativeWindowHeight;
+    /**
+     * Shared id for one local multi-window task submission. Members use this for support gates so a
+     * stale requested task label cannot keep them waiting on an old 五倍/修罗 round.
+     */
+    private final String localTeamSessionKey;
+    private final String localLeaderWindowId;
+    @Builder.Default
+    private final boolean localLeaderPresent = false;
+    @Builder.Default
+    private final boolean localSupportMember = false;
     private final TaskStopToken stopToken;
     private final TaskPauseToken pauseToken;
     private final TaskRetryPolicy retryPolicy;
@@ -81,8 +91,16 @@ public class TaskExecutionContext {
         return nativeWindowWidth > 0 && nativeWindowHeight > 0;
     }
 
+    public boolean hasLocalTeamSession() {
+        return localTeamSessionKey != null && !localTeamSessionKey.isBlank();
+    }
+
     public boolean isAfterCombatExitStartup() {
         return startupMode == TaskStartupMode.AFTER_COMBAT_EXIT_STARTUP;
+    }
+
+    public boolean isCleanQueueTransitionStartup() {
+        return startupMode == TaskStartupMode.CLEAN_QUEUE_TRANSITION;
     }
 
     public String getNativeWindowGeometryText() {

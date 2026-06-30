@@ -71,7 +71,7 @@ public class WubeiCR122TrackerGreenIntentLifecycleWiringTest {
                 "prepared enter-battle consume must clear stale WUBEI tracker-green pathing intent");
 
         String returnHome = between(wubei,
-                "private boolean useReturnItemAndVerifyStartMap(",
+                "private ReturnHomeResult useReturnItemAndVerifyStartMap(",
                 "private WubeiStepOutcome returnHomeAfterCombatOrContinueSpecialTarget(");
         require(returnHome.contains("clearTrackerGreenPathingIntent(\"wubei:return-home-verified:\" + source)"),
                 "verified return-home must clear any surviving WUBEI tracker-green pathing intent");

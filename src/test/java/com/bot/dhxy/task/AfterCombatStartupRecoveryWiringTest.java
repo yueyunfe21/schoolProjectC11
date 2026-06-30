@@ -36,7 +36,7 @@ public class AfterCombatStartupRecoveryWiringTest {
                 "Xiuluo tracker hit must continue through existing maintenance + tracker shortcut flow");
         String xiuluoReturnFallback = between(xiuluo,
                 "private boolean tryUseStartupReturnItemOnce(",
-                "private boolean useReturnItemAndVerifyStartMap(");
+                "private ReturnItemUseResult useReturnItem(");
         require(xiuluoReturnFallback.contains("findAndUseMainBagTaskPageItem(RETURN_ITEM_TEMPLATE"),
                 "Xiuluo startup return-item fallback must use the task-page return item probe");
         require(xiuluoReturnFallback.contains("gameStateUtil.isSameMapName(afterReturn.mapName, START_MAP_NAME)"),

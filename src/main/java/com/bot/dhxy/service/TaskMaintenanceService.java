@@ -8,6 +8,7 @@ import com.bot.dhxy.model.maintenance.SummonSkillCleanupRequest;
 import com.bot.dhxy.model.maintenance.SummonSkillCleanupResult;
 import com.bot.dhxy.model.maintenance.SummonSkillSlotStatus;
 import com.bot.dhxy.model.maintenance.TeamMaintenanceWindowState;
+import com.bot.dhxy.model.maintenance.TeamSupportCapability;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
@@ -19,6 +20,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,6 +56,7 @@ public class TaskMaintenanceService {
     private final Map<String, SummonSkillWindowState> summonSkillStateByWindow = new ConcurrentHashMap<>();
     private final Map<String, Integer> activeTeamRoundByKey = new ConcurrentHashMap<>();
     private final Map<String, TeamMaintenanceWindowState> teamMaintenanceWindowStateByRound = new ConcurrentHashMap<>();
+    private final Map<String, LocalTeamSessionState> localTeamSessions = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> summonSkillClaimsByTeamRound = new ConcurrentHashMap<>();
 
     /**
@@ -111,6 +115,11 @@ public class TaskMaintenanceService {
         String roundKey = teamRoundKey(teamKey, round);
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.PATHING_WINDOW_OPEN);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.FIRST_AID, sourceTask);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.PATHING_WINDOW, sourceTask);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.COMMON_BOX, sourceTask);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.SUMMON_SKILL, sourceTask);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.LEFT_TOP_STATUS, sourceTask);
         synchronized (teamMaintenanceWindowMonitor) {
             teamMaintenanceWindowMonitor.notifyAll();
         }
@@ -139,6 +148,7 @@ public class TaskMaintenanceService {
         String roundKey = teamRoundKey(teamKey, round);
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.FIRST_AID_WINDOW_OPEN);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.FIRST_AID, sourceTask);
         synchronized (teamMaintenanceWindowMonitor) {
             teamMaintenanceWindowMonitor.notifyAll();
         }
@@ -162,10 +172,43 @@ public class TaskMaintenanceService {
         String roundKey = teamRoundKey(teamKey, round);
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.CLOSED);
+        closeLocalTeamSupportCapabilities(context, sourceTask,
+                TeamSupportCapability.FIRST_AID,
+                TeamSupportCapability.PATHING_WINDOW,
+                TeamSupportCapability.COMMON_BOX,
+                TeamSupportCapability.SUMMON_SKILL,
+                TeamSupportCapability.LEFT_TOP_STATUS);
         if (previous != null && previous != TeamMaintenanceWindowState.CLOSED) {
             log.info("{} maintenance team window closed: teamRound={} previous={} source={}",
                     logPrefix(context), roundKey, previous, sourceTask);
         }
+    }
+
+    /**
+     * Release local support members to click the return-team button after the leader has already
+     * reached its own post-combat return wait point.
+     *
+     * @param context current leader task context.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void openLocalTeamReturnSupportWindow(TaskExecutionContext context, String sourceTask) {
+        openLocalTeamSupportCapability(context, TeamSupportCapability.TEAM_RETURN, sourceTask);
+        openLocalTeamSupportCapability(context, TeamSupportCapability.COMMON_BOX, sourceTask);
+        synchronized (teamMaintenanceWindowMonitor) {
+            teamMaintenanceWindowMonitor.notifyAll();
+        }
+    }
+
+    /**
+     * Close the local return-team click opportunity once the leader no longer sees a return signal.
+     *
+     * @param context current leader task context.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void closeLocalTeamReturnSupportWindow(TaskExecutionContext context, String sourceTask) {
+        closeLocalTeamSupportCapabilities(context, sourceTask,
+                TeamSupportCapability.TEAM_RETURN,
+                TeamSupportCapability.COMMON_BOX);
     }
 
     /**
@@ -229,6 +272,289 @@ public class TaskMaintenanceService {
             }
         }
         return true;
+    }
+
+    /**
+     * Wait for a local leader capability in the same UI-started session.
+     *
+     * @param context current member context. The local session key and support-member flag are
+     *                trusted only from the runner-created {@link TaskExecutionContext}.
+     * @param capability capability requested by the member path.
+     * @param timeoutMs maximum wait time for this check.
+     * @return true when the local leader has opened the requested capability for this session.
+     */
+    public boolean awaitLocalTeamSupportCapabilityOpen(TaskExecutionContext context,
+                                                       TeamSupportCapability capability,
+                                                       long timeoutMs) {
+        if (!isLocalSupportMemberSession(context) || capability == null) {
+            return false;
+        }
+        if (isLocalTeamSupportCapabilityOpen(context, capability)) {
+            return true;
+        }
+        if (timeoutMs <= 0L) {
+            return false;
+        }
+
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (teamMaintenanceWindowMonitor) {
+            while (!isLocalTeamSupportCapabilityOpen(context, capability)) {
+                checkpoint(context);
+                long remainingMs = deadline - System.currentTimeMillis();
+                if (remainingMs <= 0L) {
+                    return false;
+                }
+                try {
+                    teamMaintenanceWindowMonitor.wait(remainingMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * @param context current task context.
+     * @return true only for local member support workers that belong to a runner-created session.
+     */
+    public boolean isLocalSupportMemberSession(TaskExecutionContext context) {
+        return context != null
+                && context.isLocalLeaderPresent()
+                && context.isLocalSupportMember()
+                && context.hasLocalTeamSession()
+                && hasDetectedLocalLeader(context);
+    }
+
+    /**
+     * Register all selected windows for a local-team session whose leader may only become known
+     * after runner live role preflight.
+     *
+     * @param sessionKey shared local-team session id from the UI same-queue submit.
+     * @param windowIds selected window ids in this submit batch.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void registerLocalTeamSessionCandidate(String sessionKey,
+                                                  Collection<String> windowIds,
+                                                  String sourceTask) {
+        if (sessionKey == null || sessionKey.isBlank() || windowIds == null || windowIds.isEmpty()) {
+            return;
+        }
+        LocalTeamSessionState state = localTeamSessions.computeIfAbsent(
+                sessionKey, ignored -> new LocalTeamSessionState());
+        for (String windowId : windowIds) {
+            if (windowId != null && !windowId.isBlank()) {
+                state.candidateWindows.add(windowId);
+            }
+        }
+        state.leaderAbsent = false;
+        log.info("maintenance local-team candidate registered: session={} windows={} source={}",
+                sessionKey, state.candidateWindows, sourceTask);
+    }
+
+    /**
+     * Record one runner's live role preflight for candidate-session resolution.
+     *
+     * @param context current runner context carrying local session metadata.
+     * @param windowId window whose live role was detected.
+     * @param roleName live role name, such as {@code LEADER}, {@code MEMBER}, or {@code SOLO}.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void markLocalTeamWindowRoleDetected(TaskExecutionContext context,
+                                                String windowId,
+                                                String roleName,
+                                                String sourceTask) {
+        if (context == null || !context.isLocalLeaderPresent() || !context.hasLocalTeamSession()
+                || windowId == null || windowId.isBlank()) {
+            return;
+        }
+        String sessionKey = context.getLocalTeamSessionKey();
+        LocalTeamSessionState state = localTeamSessions.computeIfAbsent(
+                sessionKey, ignored -> new LocalTeamSessionState());
+        state.roleDetectedWindows.add(windowId);
+        if ("LEADER".equalsIgnoreCase(roleName)) {
+            markLocalTeamLeaderDetected(context, windowId, sourceTask);
+            return;
+        }
+        boolean leaderAbsentConfirmed = false;
+        synchronized (state) {
+            Set<String> resolvedWindows = new HashSet<>(state.roleDetectedWindows);
+            resolvedWindows.addAll(state.completedWindows);
+            if (!state.candidateWindows.isEmpty()
+                    && resolvedWindows.containsAll(state.candidateWindows)
+                    && state.leaderWindowId == null
+                    && !state.leaderAbsent) {
+                state.leaderAbsent = true;
+                leaderAbsentConfirmed = true;
+            }
+        }
+        if (leaderAbsentConfirmed) {
+            log.info("{} maintenance local-team leader absent confirmed: session={} detected={} expected={} source={}",
+                    logPrefix(context), sessionKey, state.roleDetectedWindows, state.candidateWindows, sourceTask);
+            synchronized (teamMaintenanceWindowMonitor) {
+                teamMaintenanceWindowMonitor.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * @param context current task context.
+     * @return true for member auto-battle workers that belong to a local-team candidate/session.
+     */
+    public boolean isLocalSupportMemberCandidate(TaskExecutionContext context) {
+        return context != null
+                && context.isLocalLeaderPresent()
+                && context.isLocalSupportMember()
+                && context.hasLocalTeamSession();
+    }
+
+    /**
+     * @param context current member context.
+     * @return true while a local-team candidate has not yet discovered a live local leader and has
+     *         not yet proven that no selected local leader exists.
+     */
+    public boolean isPendingLocalSupportLeaderDetection(TaskExecutionContext context) {
+        LocalTeamSessionState state = context == null || !context.hasLocalTeamSession()
+                ? null
+                : localTeamSessions.get(context.getLocalTeamSessionKey());
+        return isLocalSupportMemberCandidate(context)
+                && !hasDetectedLocalLeader(context)
+                && state != null
+                && !state.leaderAbsent;
+    }
+
+    /**
+     * Mark that a runner in this local-team session has live-detected itself as leader.
+     *
+     * @param context current runner context carrying the local session key.
+     * @param leaderWindowId window id that detected leader role.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void markLocalTeamLeaderDetected(TaskExecutionContext context,
+                                            String leaderWindowId,
+                                            String sourceTask) {
+        if (context == null || !context.isLocalLeaderPresent() || !context.hasLocalTeamSession()
+                || leaderWindowId == null || leaderWindowId.isBlank()) {
+            return;
+        }
+        String sessionKey = context.getLocalTeamSessionKey();
+        LocalTeamSessionState state = localTeamSessions.computeIfAbsent(
+                sessionKey, ignored -> new LocalTeamSessionState());
+        String previous;
+        synchronized (state) {
+            state.leaderAbsent = false;
+            previous = state.leaderWindowId;
+            if (previous == null) {
+                state.leaderWindowId = leaderWindowId;
+            }
+        }
+        if (previous == null) {
+            log.info("{} maintenance local-team leader detected: session={} leaderWindow={} source={}",
+                    logPrefix(context), sessionKey, leaderWindowId, sourceTask);
+        } else if (!previous.equals(leaderWindowId)) {
+            log.warn("{} maintenance local-team leader conflict ignored: session={} existingLeader={} newLeader={} source={}",
+                    logPrefix(context), sessionKey, previous, leaderWindowId, sourceTask);
+        }
+    }
+
+    /**
+     * Check a local-session capability without waiting.
+     *
+     * @param context current leader/member task context. The local session key is used as the
+     *                capability namespace.
+     * @param capability capability requested by the caller.
+     * @return true only when the leader has explicitly opened the capability for this session.
+     */
+    public boolean isLocalTeamSupportCapabilityOpen(TaskExecutionContext context,
+                                                    TeamSupportCapability capability) {
+        if (context == null || capability == null || !context.hasLocalTeamSession()) {
+            return false;
+        }
+        LocalTeamSessionState state = localTeamSessions.get(context.getLocalTeamSessionKey());
+        return state != null && state.capabilities.contains(capability);
+    }
+
+    private boolean hasDetectedLocalLeader(TaskExecutionContext context) {
+        LocalTeamSessionState state = context == null || !context.hasLocalTeamSession()
+                ? null
+                : localTeamSessions.get(context.getLocalTeamSessionKey());
+        return state != null && state.leaderWindowId != null;
+    }
+
+    private void openLocalTeamSupportCapability(TaskExecutionContext context,
+                                                TeamSupportCapability capability,
+                                                String sourceTask) {
+        if (context == null || !context.isLocalLeaderPresent() || !context.hasLocalTeamSession()
+                || capability == null) {
+            return;
+        }
+        LocalTeamSessionState state = localTeamSessions.computeIfAbsent(
+                context.getLocalTeamSessionKey(), ignored -> new LocalTeamSessionState());
+        boolean added = state.capabilities.add(capability);
+        if (added) {
+            int epoch = state.capabilityEpochByCapability.merge(
+                    capability,
+                    1,
+                    Integer::sum);
+            log.info("{} maintenance local-team capability opened: session={} capability={} epoch={} leaderWindow={} task={} source={}",
+                    logPrefix(context), context.getLocalTeamSessionKey(), capability,
+                    epoch, context.getLocalLeaderWindowId(), context.getTaskCode(), sourceTask);
+        }
+    }
+
+    private void closeLocalTeamSupportCapabilities(TaskExecutionContext context,
+                                                   String sourceTask,
+                                                   TeamSupportCapability... capabilitiesToClose) {
+        if (context == null || !context.hasLocalTeamSession() || capabilitiesToClose == null
+                || capabilitiesToClose.length == 0) {
+            return;
+        }
+        LocalTeamSessionState state = localTeamSessions.get(context.getLocalTeamSessionKey());
+        if (state == null || state.capabilities.isEmpty()) {
+            return;
+        }
+        for (TeamSupportCapability capability : capabilitiesToClose) {
+            if (capability != null && state.capabilities.remove(capability)) {
+                log.info("{} maintenance local-team capability closed: session={} capability={} leaderWindow={} task={} source={}",
+                        logPrefix(context), context.getLocalTeamSessionKey(), capability,
+                        context.getLocalLeaderWindowId(), context.getTaskCode(), sourceTask);
+            }
+        }
+    }
+
+    /**
+     * Mark one selected window as finished for a UI-started local-team session.
+     *
+     * <p>CR138 local support state is shared by all windows that were submitted together. A single
+     * finished leader/member must not clear the session while another candidate window is still
+     * running, but once every registered candidate has finished, stale live-leader evidence and open
+     * capabilities must be removed so a later queue cannot inherit them.</p>
+     *
+     * @param sessionKey shared local-team session id.
+     * @param windowId selected window id that just left its task queue.
+     * @param sourceTask diagnostic source written to logs.
+     */
+    public void completeLocalTeamSessionWindow(String sessionKey, String windowId, String sourceTask) {
+        if (sessionKey == null || sessionKey.isBlank()) {
+            return;
+        }
+        LocalTeamSessionState state = localTeamSessions.get(sessionKey);
+        if (state == null) {
+            return;
+        }
+        if (windowId != null && !windowId.isBlank()) {
+            state.completedWindows.add(windowId);
+        }
+        boolean allCandidatesFinished = state.candidateWindows.isEmpty()
+                || state.completedWindows.containsAll(state.candidateWindows);
+        if (allCandidatesFinished && localTeamSessions.remove(sessionKey, state)) {
+            log.info("maintenance local-team session completed: session={} completedWindows={} candidates={} source={}",
+                    sessionKey, state.completedWindows, state.candidateWindows, sourceTask);
+            synchronized (teamMaintenanceWindowMonitor) {
+                teamMaintenanceWindowMonitor.notifyAll();
+            }
+        }
     }
 
     private boolean isTeamFirstAidWindowOpen(TaskExecutionContext context, String teamMaintenanceKey) {
@@ -369,13 +695,23 @@ public class TaskMaintenanceService {
         String teamRoundKey = resolveTeamRoundKey(context, request);
         if (request.isOneSummonSkillPerTeamRound()) {
             if (teamRoundKey == null) {
-                log.info("{} maintenance: summon skill deferred, no active team round source={} windowKey={} teamKey={}",
+                log.info("{} maintenance: summon skill deferred, no active team round source={} windowKey={} teamKey={} localCapability={}",
                         logPrefix(context), request.getSourceTask(), windowKey,
-                        normalizeTeamKey(request.getTeamMaintenanceKey(), context));
+                        normalizeTeamKey(request.getTeamMaintenanceKey(), context),
+                        request.getRequiredLocalSupportCapability());
                 return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
                         "summon skill deferred: no active team round");
             }
-            if (request.isRequireOpenTeamMaintenanceWindow()
+            if (request.getRequiredLocalSupportCapability() != null
+                    && !isLocalTeamSupportCapabilityOpen(context, request.getRequiredLocalSupportCapability())) {
+                log.info("{} maintenance: summon skill deferred, local capability closed capability={} teamRound={} source={} windowKey={}",
+                        logPrefix(context), request.getRequiredLocalSupportCapability(), teamRoundKey,
+                        request.getSourceTask(), windowKey);
+                return TaskMaintenanceResult.simple(TaskMaintenanceStatus.SUMMON_SKILL_DEFERRED,
+                        "summon skill deferred: local support capability closed");
+            }
+            if (request.getRequiredLocalSupportCapability() == null
+                    && request.isRequireOpenTeamMaintenanceWindow()
                     && teamMaintenanceWindowStateByRound.get(teamRoundKey) != TeamMaintenanceWindowState.PATHING_WINDOW_OPEN) {
                 log.info("{} maintenance: summon skill deferred, team pathing window closed teamRound={} state={} source={} windowKey={}",
                         logPrefix(context), teamRoundKey, teamMaintenanceWindowStateByRound.get(teamRoundKey),
@@ -696,6 +1032,9 @@ public class TaskMaintenanceService {
         if (!request.isOneSummonSkillPerTeamRound()) {
             return null;
         }
+        if (request.getRequiredLocalSupportCapability() != null) {
+            return resolveLocalSupportCapabilityRoundKey(context, request.getRequiredLocalSupportCapability());
+        }
         String teamKey = normalizeTeamKey(request.getTeamMaintenanceKey(), context);
         Integer round = request.getTeamRound();
         if (round == null) {
@@ -705,6 +1044,19 @@ public class TaskMaintenanceService {
             return null;
         }
         return teamRoundKey(teamKey, round);
+    }
+
+    private String resolveLocalSupportCapabilityRoundKey(TaskExecutionContext context,
+                                                         TeamSupportCapability capability) {
+        if (!isLocalSupportMemberSession(context) || capability == null) {
+            return null;
+        }
+        LocalTeamSessionState state = localTeamSessions.get(context.getLocalTeamSessionKey());
+        Integer epoch = state == null ? null : state.capabilityEpochByCapability.get(capability);
+        if (epoch == null || epoch <= 0) {
+            return null;
+        }
+        return "local-team:" + context.getLocalTeamSessionKey() + "#" + capability.name() + "#" + epoch;
     }
 
     private String normalizeTeamKey(String explicitKey, TaskExecutionContext context) {
@@ -757,5 +1109,15 @@ public class TaskMaintenanceService {
         private long tailSafeCachedAt;
         private long lastUltimateGenerateSuccessAt;
         private final Map<Integer, SummonSkillSlotStatus> slotStatusByIndex = new ConcurrentHashMap<>();
+    }
+
+    private static final class LocalTeamSessionState {
+        private final Set<TeamSupportCapability> capabilities = ConcurrentHashMap.newKeySet();
+        private final Map<TeamSupportCapability, Integer> capabilityEpochByCapability = new ConcurrentHashMap<>();
+        private final Set<String> candidateWindows = ConcurrentHashMap.newKeySet();
+        private final Set<String> roleDetectedWindows = ConcurrentHashMap.newKeySet();
+        private final Set<String> completedWindows = ConcurrentHashMap.newKeySet();
+        private volatile String leaderWindowId;
+        private volatile boolean leaderAbsent;
     }
 }

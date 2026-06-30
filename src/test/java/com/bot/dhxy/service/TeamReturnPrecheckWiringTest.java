@@ -23,12 +23,12 @@ public class TeamReturnPrecheckWiringTest {
 
         assertTaskPrecheckBeforeBag("XiuluoTaskV2.java",
                 Path.of("src", "main", "java", "com", "bot", "dhxy", "task", "xiuluo", "XiuluoTaskV2.java"),
-                "private boolean useReturnItemAndVerifyStartMap(",
+                "private ReturnItemUseResult useReturnItem(",
                 "bagService.findAndUseMainBagTaskPageItem");
         assertTaskPrecheckBeforeBag("WubeiTask.java",
                 Path.of("src", "main", "java", "com", "bot", "dhxy", "task", "wubei", "WubeiTask.java"),
-                "private boolean useReturnItem(",
-                "bagService.findAndUseItemFromBack");
+                "private ReturnItemUseResult useReturnItem(",
+                "bagService.findAndUseMainBagTaskPageItem");
 
         System.out.println("TeamReturnPrecheckWiringTest passed");
     }

@@ -5,5 +5,6 @@ package com.bot.dhxy.runner.context;
  */
 public enum TaskStartupMode {
     NORMAL,
-    AFTER_COMBAT_EXIT_STARTUP
+    AFTER_COMBAT_EXIT_STARTUP,
+    CLEAN_QUEUE_TRANSITION
 }

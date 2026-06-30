@@ -447,7 +447,7 @@ window.CR_DASHBOARD_DATA = [
     "kind": "done",
     "domain": "五倍",
     "files": "`WindowReadyEventType`, `WindowReadyEventBus`, `WindowTaskRunner`, `WubeiTask`, `logs/dhxy-console.log`",
-    "summary": "Split 五倍 ordinary-monster wake vocabulary: prepared actions now publish/consume `PREPARED_ACTION_READY`; 五倍 pathing/prepared waits no longer include plain `TASK_ATTENTION_REQUIRED`; `PRE_BATTLE_TIMEOUT` vocabulary is available for CR44. Long-run log evidence shows repeated ordinary waits waking by `PREPARED_ACTION_READY`; analyzer summary reported `window.ready.await event=175 timeout=0` and no wait timeout churn. Can close.",
+    "summary": "Split 五倍 ordinary-monster wake vocabulary: prepared actions now publish/consume `PREPARED_ACTION_READY`; 五倍 pathing/prepared waits no longer include plain `TASK_ATTENTION_REQUIRED`; `PRE_BATTLE_TIMEOUT` vocabulary is available for CR44. Long-run log evidence shows repeated ordinary waits waking by `PREPARED_ACTION_READY`; analyzer summary reported `window.ready.await event=175 timeout=0` and no wait timeout churn. 已可关闭。",
     "verification": "已验证/已关闭"
   },
   {
@@ -458,7 +458,7 @@ window.CR_DASHBOARD_DATA = [
     "kind": "done",
     "domain": "五倍",
     "files": "`WindowTaskRunner`, `WubeiDialogPreparationProvider`, `DialogService`, `logs/dhxy-console.log`",
-    "summary": "Implement ordinary-monster Runner dialog boundary from `docs/业务逻辑.md`: only `OPTION` dialog with successful `WUBEI_ENTER_BATTLE` template match produces a result; `OPTION` miss, `STORY`, and other dialogs are ignored and do not wake the leader. Long-run ordinary/probe logs repeatedly continue through battle recovery without stray STORY/OPTION waking ordinary enter-battle waits. Can close.",
+    "summary": "Implement ordinary-monster Runner dialog boundary from `docs/业务逻辑.md`: only `OPTION` dialog with successful `WUBEI_ENTER_BATTLE` template match produces a result; `OPTION` miss, `STORY`, and other dialogs are ignored and do not wake the leader. Long-run ordinary/probe logs repeatedly continue through battle recovery without stray STORY/OPTION waking ordinary enter-battle waits. 已可关闭。",
     "verification": "已验证/已关闭"
   },
   {
@@ -817,34 +817,34 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR75",
     "number": 75,
     "owner": "Codex",
-    "status": "Review: source guard and compile passed; needs fresh 修罗 accept-memory runtime proof",
-    "kind": "review",
+    "status": "Done: fresh 修罗 accept-memory fast path validated",
+    "kind": "done",
     "domain": "修罗",
     "files": "`XiuluoTaskV2.tryRememberedAcceptTaskOption`, `DialogHandleRequest`, `DialogService`, 修罗 accept-memory logs",
-    "summary": "修罗接任务 remembered option 没有走现有 fast path。Fresh logs show `xiuluo-v2:accept:*:accept-memory` first runs `dialog detect no-focus: reason=handle-dialog:CLICK_REMEMBERED_OPTION` with `elapsedMs=883/1169/1808/3136`, then clicks remembered `rel=(95,113)`. Current `DialogService` already supports `CLICK_REMEMBERED_POINT && verifyDialogType=false` fast path, but `tryRememberedAcceptTaskOption(...)` used `DialogHandleRequest.handleRememberedChoiceOption(...)` whose default `verifyDialogType=true` dropped the caller's known-dialog fact. Codex added a verifyDialogType-preserving remembered-choice overload and passes `handleKnownXiuluoOptionDialog(...)`'s `verifyDialogType` into 修罗 accept-memory only; existing default factory still verifies dialog type. Added `XiuluoRememberedAcceptOptionFastPathWiringTest`; compile and source tests passed. Fresh runtime still needs to prove accept-memory logs show `dialog remembered option fast path without detect`, no `handle-dialog:CLICK_REMEMBERED_OPTION` detect in that fast path, remembered click succeeds, and misses still fall back to green-template matching unchanged.",
-    "verification": "缺 fresh runtime"
+    "summary": "修罗接任务 remembered option 没有走现有 fast path。Fresh logs show `xiuluo-v2:accept:*:accept-memory` first runs `dialog detect no-focus: reason=handle-dialog:CLICK_REMEMBERED_OPTION` with `elapsedMs=883/1169/1808/3136`, then clicks remembered `rel=(95,113)`. Current `DialogService` already supports `CLICK_REMEMBERED_POINT && verifyDialogType=false` fast path, but `tryRememberedAcceptTaskOption(...)` used `DialogHandleRequest.handleRememberedChoiceOption(...)` whose default `verifyDialogType=true` dropped the caller's known-dialog fact. Codex added a verifyDialogType-preserving remembered-choice overload and passes `handleKnownXiuluoOptionDialog(...)`'s `verifyDialogType` into 修罗 accept-memory only; existing default factory still verifies dialog type. Added `XiuluoRememberedAcceptOptionFastPathWiringTest`; compile and source tests passed. Fresh 修罗 runtime accepted: repeated accept-memory samples show the remembered option fast path without full `handle-dialog:CLICK_REMEMBERED_OPTION` detection, remembered clicks succeed, and no green-template/business fallback regression was recorded in the later multi-round reports. 已可关闭。",
+    "verification": "已验证/已关闭"
   },
   {
     "id": "CR76",
     "number": 76,
     "owner": "Codex",
-    "status": "Review: source/test pass; fresh 修罗 runtime pending",
-    "kind": "review",
+    "status": "Done: fresh 修罗 learned-NPC fast path validated",
+    "kind": "done",
     "domain": "修罗",
     "files": "`NpcClickService.runNpcClickPipeline`, learned NPC click memory, pre-click dialog safety logs, 修罗 accept-NPC logs",
-    "summary": "NPC learned-memory click currently still pays the generic name-layer preparation cost before trying the remembered point. Fresh logs around `灵兽村使者` show `npcClick:pipeline-hide-player-names` / `Alt+4` plus `400ms` sleep before learned-memory can click, even though a stable learned point does not require hiding names or OCR. Implemented a narrow fast path for stable non-combat NPC learned-memory clicks: non-direct-combat, non-`TaskType.WUBEI`, non-`NpcRole.COMBAT_TARGET` requests now run pre-click dialog safety first, then try learned memory before `prepareNpcPipelineNameLayerOnce(...)`; a verified learned-memory hit returns before Alt+4, while a miss continues through the existing Alt+4 + tooltip/yellow/formula/Ctrl fallback and is not retried a second time in the same pipeline. WUBEI/白龙马 `COMBAT_TARGET` ordering is guarded by source test and still keeps tooltip-first/direct-combat semantics outside the early fast path. Verification passed: `mvn -q -DskipTests compile`, `mvn -q -DskipTests test-compile`, `NpcClickLearnedMemoryFastPathWiringTest`, and existing `NpcClickDirectCombatNameLayerWiringTest`. Runtime acceptance still needed: stable 修罗 accept-NPC clicks show no `npcClick:pipeline-hide-player-names:灵兽村使者` before a verified learned-memory hit; misses still fall back normally and record smart-click evidence.",
-    "verification": "缺 fresh runtime"
+    "summary": "NPC learned-memory click currently still pays the generic name-layer preparation cost before trying the remembered point. Fresh logs around `灵兽村使者` show `npcClick:pipeline-hide-player-names` / `Alt+4` plus `400ms` sleep before learned-memory can click, even though a stable learned point does not require hiding names or OCR. Implemented a narrow fast path for stable non-combat NPC learned-memory clicks: non-direct-combat, non-`TaskType.WUBEI`, non-`NpcRole.COMBAT_TARGET` requests now run pre-click dialog safety first, then try learned memory before `prepareNpcPipelineNameLayerOnce(...)`; a verified learned-memory hit returns before Alt+4, while a miss continues through the existing Alt+4 + tooltip/yellow/formula/Ctrl fallback and is not retried a second time in the same pipeline. WUBEI/白龙马 `COMBAT_TARGET` ordering is guarded by source test and still keeps tooltip-first/direct-combat semantics outside the early fast path. Verification passed: `mvn -q -DskipTests compile`, `mvn -q -DskipTests test-compile`, `NpcClickLearnedMemoryFastPathWiringTest`, and existing `NpcClickDirectCombatNameLayerWiringTest`. Fresh 修罗 runtime accepted: later runs show stable `灵兽村使者` learned-memory hits without preceding `npcClick:pipeline-hide-player-names:灵兽村使者`, while earlier miss/insufficient-policy samples fell back normally. 已可关闭。",
+    "verification": "已验证/已关闭"
   },
   {
     "id": "CR77",
     "number": 77,
     "owner": "Codex",
-    "status": "Review: source gate fixed; fresh runtime pending",
-    "kind": "review",
+    "status": "Done: fresh 修罗 start-exit fire-and-handoff validated",
+    "kind": "done",
     "domain": "修罗",
     "files": "`NavigationService.navigateInCurrentMap`, `XiuluoTaskV2.startLeavingStartMapIfPresent`, 修罗 `start-exit-prepath` logs",
-    "summary": "修罗出灵兽村预走路 current-map 点击后还要等 `fast-edge` / 坐标变化确认，再关小地图并注册 intent，导致每轮多等约 1.8s movement confirmation + 后续关图检查。Codex added a narrow fire-and-handoff branch gated by `source=xiuluo-v2:start-exit-prepath`, target map `灵兽村`, target coordinate `(11,8)`: after resolving and clicking the mini-map point it skips `isMovingByPixelDiff(...)`, skips coordinate fallback confirmation and alternate mini-map retries, closes Alt+1 with a cheap fixed-settle close, registers the pathing intent with `current-map mini-map click fire-and-handoff`, and returns `PATHING_STARTED` so 修罗 continues formal `NAVIGATE_TO_TARGET`. Normal current-map navigation, 修罗 target current-map approach, 张闻, 五倍, 白龙马, 普通怪, 黄袍怪, route dialog, NPC click, OCR/template/click algorithms are unchanged. Added `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`; compile and related source guards passed. 2026-06-21 40-minute 修罗 audit feedback: not accepted. Fresh `20:55:27-20:55:32` start-exit still logged `handoff-fast-edge`, missed edge confirmation, fell back to `post-click coordinate changed`, and ended with `navigation.currentMap elapsedMs=4949` for `xiuluo-v2:start-exit-prepath:currentMap`; the run had no `fire-and-handoff` line. Root cause found by Codex: `XiuluoTaskV2.startLeavingStartMapIfPresent(...)` submits source `xiuluo-v2:start-exit-prepath`, but `NavigationService.navigateToNPC(...)` always calls `navigateInCurrentMap(...)` with `request.getSource() + \":currentMap\"`. The original CR77 gate `isXiuluoStartExitPrepathFireAndHandoff(...)` required exact source equality to `xiuluo-v2:start-exit-prepath`, so the live current-map request source `xiuluo-v2:start-exit-prepath:currentMap` never matched and fell through to normal `clickMiniMapPointForHandoff(...)`. The old source guard test did not catch this because it only checked the raw source marker and gate string, not the post-`navigateToNPC` current-map source. 2026-06-21 Codex repair: the gate now exact-matches the live current-map source `xiuluo-v2:start-exit-prepath:currentMap` while preserving the `灵兽村` / `(11,8)` map-coordinate guard; the source guard test now requires `:currentMap` acceptance and still excludes non-start-exit sources. Verification passed: the source guard was red before the production change, then `mvn -q -DskipTests test-compile` + the direct guard run passed, `mvn -q -DskipTests compile` passed, and `git diff --check` reported only existing CRLF normalization warnings. Runtime acceptance remains: no `handoff-fast-edge` / coordinate fallback logs for `xiuluo-v2:start-exit-prepath:currentMap`, immediate intent registration after cheap close, and no blockage of formal target navigation.",
-    "verification": "缺 fresh runtime"
+    "summary": "修罗出灵兽村预走路 current-map 点击后还要等 `fast-edge` / 坐标变化确认，再关小地图并注册 intent，导致每轮多等约 1.8s movement confirmation + 后续关图检查。Codex added a narrow fire-and-handoff branch gated by `source=xiuluo-v2:start-exit-prepath`, target map `灵兽村`, target coordinate `(11,8)`: after resolving and clicking the mini-map point it skips `isMovingByPixelDiff(...)`, skips coordinate fallback confirmation and alternate mini-map retries, closes Alt+1 with a cheap fixed-settle close, registers the pathing intent with `current-map mini-map click fire-and-handoff`, and returns `PATHING_STARTED` so 修罗 continues formal `NAVIGATE_TO_TARGET`. Normal current-map navigation, 修罗 target current-map approach, 张闻, 五倍, 白龙马, 普通怪, 黄袍怪, route dialog, NPC click, OCR/template/click algorithms are unchanged. Added `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`; compile and related source guards passed. 2026-06-21 40-minute 修罗 audit feedback found the live source suffix mismatch (`xiuluo-v2:start-exit-prepath:currentMap`), then Codex repaired the source gate and source guard. Fresh 修罗 runtime accepted: later reports show `start-exit-prepath:currentMap` repeatedly using `fire-and-handoff`, with no start-exit `handoff-fast-edge` / coordinate fallback and no blockage of formal target navigation. 已可关闭。",
+    "verification": "已验证/已关闭"
   },
   {
     "id": "CR78",
@@ -1316,7 +1316,7 @@ window.CR_DASHBOARD_DATA = [
     "kind": "done",
     "domain": "五倍",
     "files": "`AutoCombatService`, `BattleRadarService`, `XiuluoTaskV2`, `WubeiTask`, expected-combat return verification logs/tests",
-    "summary": "修复 CR113/CR109 快脱战安全纠偏，并把五倍 expected combat 对齐到 `FAST_EXPECTED_EXIT` + 回程先验流程。已保留 avatar-diff 快路径，不加回程前 full-radar 确认；回程验证失败后才用可信战斗状态纠偏，仍在战斗则回到 `WAIT_COMBAT` / `WAIT_BATTLE_FINISH` 并保留 deferred recovery。2026-06-28 旧进程曾暴露 WUBEI `WAIT_BATTLE_FINISH timeoutMs=-1`，Descartes 窄修在 `WubeiTask.parkAfterYieldIfNeeded(...)` 加最终防线：任何 `WAIT_COMBAT_STATE_CHANGE` wait spec 若带 `-1/0` 等非法 timeout，进入 `awaitNewer` 前都会重新用 `autoCombatService.nextCombatWakeDelayMs()` clamp 到 `500..10000ms`，同时保留 `COMBAT_STATE_CHANGED` 立即唤醒。focused guard 覆盖 helper 与生产 park 边界；重启后 fresh WUBEI `01:20:04-01:20:57` 实战 wait 连续显示 `timeoutMs=914/827/920/866/925/3805`，并在 `01:20:17.756` 完成 cached return verification，没有再出现 `timeoutMs=-1`。Can close.",
+    "summary": "修复 CR113/CR109 快脱战安全纠偏，并把五倍 expected combat 对齐到 `FAST_EXPECTED_EXIT` + 回程先验流程。已保留 avatar-diff 快路径，不加回程前 full-radar 确认；回程验证失败后才用可信战斗状态纠偏，仍在战斗则回到 `WAIT_COMBAT` / `WAIT_BATTLE_FINISH` 并保留 deferred recovery。2026-06-28 旧进程曾暴露 WUBEI `WAIT_BATTLE_FINISH timeoutMs=-1`，Descartes 窄修在 `WubeiTask.parkAfterYieldIfNeeded(...)` 加最终防线：任何 `WAIT_COMBAT_STATE_CHANGE` wait spec 若带 `-1/0` 等非法 timeout，进入 `awaitNewer` 前都会重新用 `autoCombatService.nextCombatWakeDelayMs()` clamp 到 `500..10000ms`，同时保留 `COMBAT_STATE_CHANGED` 立即唤醒。focused guard 覆盖 helper 与生产 park 边界；重启后 fresh WUBEI `01:20:04-01:20:57` 实战 wait 连续显示 `timeoutMs=914/827/920/866/925/3805`，并在 `01:20:17.756` 完成 cached return verification，没有再出现 `timeoutMs=-1`。已可关闭。",
     "verification": "已验证/已关闭"
   },
   {
@@ -1400,23 +1400,23 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR129",
     "number": 129,
     "owner": "Zeno+Codex",
-    "status": "Review: async/coalesced dashboard write guards passed; fresh runtime pending",
-    "kind": "review",
+    "status": "Done: 修罗/五倍轮次结束 dashboard 异步化已验收",
+    "kind": "done",
     "domain": "修罗",
     "files": "`AutomationMetricsService`, `AutomationMetricsAsyncDashboardWiringTest`, `XiuluoTaskV2.finishRoundMetric`, `WubeiTask.finishRoundMetric`, `FiveRingTaskV2.finishRoundMetric`, automation dashboard logs",
-    "summary": "Make round-finish metrics/dashboard persistence asynchronous so a completed business round can start the next round immediately. Fresh 修罗 `2026-06-27 19:46:18.637 -> 19:46:22.618` showed about 3.981s between `ROUND_DONE` and `round 56 skeleton finished`, and the `20:23:47.825-20:33:16` audit reproduced `ROUND_DONE -> skeleton finished` gaps around 2-3s. Current source keeps round metrics recorded synchronously, queues dashboard persistence through a bounded background writer, preserves manual synchronous `writeDashboardNow()`, and counts/logs coalesced write requests for runtime validation. Focused source guard passed via direct `javac/java`; full Maven `test-compile` is currently blocked by unrelated dirty `MainWindowController` UI symbols.",
-    "verification": "缺 fresh runtime"
+    "summary": "轮次结束 metrics/dashboard 写盘已从业务完成路径异步化：内存事件仍同步记录，dashboard 持久化进入有界后台 writer，手动 `writeDashboardNow()` 保持同步。Focused guards 通过；fresh 修罗 `2026-06-27 22:39:01.570`、`22:44:33.314`、`22:46:17.035` 均显示 `ROUND_DONE`、`round skeleton finished`、下一轮 `initial phase` 同毫秒/近同毫秒，writer 后台稍后 flush。fresh 五倍 80 轮长跑继续证明 writer 不阻塞轮次推进，典型 flush 在 `2026-06-28 17:46:51.989`、`18:46:07.310`、`18:47:17.813` 等后台发生；五倍最终 `19:04:55.624` 完成 80/80。已可关闭。",
+    "verification": "已验证/已关闭"
   },
   {
     "id": "CR130",
     "number": 130,
     "owner": "Kant+Codex worker",
-    "status": "Review: source guards passed; fresh runtime pending",
-    "kind": "review",
+    "status": "Done: 连续修罗轮次不再跑 round-start hot-start",
+    "kind": "done",
     "domain": "修罗",
     "files": "`XiuluoTaskV2`, `XiuluoHotStartResolver`, 修罗 round-start logs/tests",
-    "summary": "Remove per-round 修罗 hot-start screen inspection during continuous runs. Fresh 修罗 `19:46:22.618 -> 19:46:26.144` showed round 56 finished, then round 57 immediately ran `hot-start:xiuluo_v2:xiuluo-v2:round-start` dialog inspection before normal `PREPARE_ROUND`; the `20:23:47.825-20:33:16` audit reproduced this for rounds 74/76/77. Local source now runs the startup-screen resume path only when `completedRuns == 0`; continuous rounds start from `XiuluoRoundContext.start(round)`, and the guard proves `execute(...)` no longer calls `hotStartResolver.resolve(...)`. Startup/after-combat recovery still uses the unified tracker/return-item resolver. Fresh runtime must show no internal-round `hot-start:xiuluo_v2:xiuluo-v2:round-start` lines.",
-    "verification": "缺 fresh runtime"
+    "summary": "连续修罗轮次已移除每轮之间的 `hot-start:xiuluo_v2:xiuluo-v2:round-start` 屏幕检查；真实 UI startup / after-combat startup resume 仍保留。Source guard 证明 round loop 不再调用 `hotStartResolver.resolve(...)`。Fresh 修罗 `2026-06-27 22:39:01.570` 后 round 4 直接 `source=normal-start`，后续 round 7/8 同样无 per-round hot-start；`2026-06-28 19:12:42.742 -> 19:19:55.632` 的 rounds 4-7 也都是 `phase=PREPARE_ROUND source=normal-start`，未见 `task hot-start snapshot` / `round-start` inspect。已可关闭。",
+    "verification": "已验证/已关闭"
   },
   {
     "id": "CR131",
@@ -1437,7 +1437,7 @@ window.CR_DASHBOARD_DATA = [
     "kind": "done",
     "domain": "修罗",
     "files": "`ReturnItemPrescanService`, `WubeiTask`, `WubeiCR132ProbeMirrorSlotReturnCacheWiringTest`, 修罗/五倍回城道具预扫缓存状态，RETURN_HOME 日志/测试",
-    "summary": "回城道具预扫缓存仍按任务/窗口/taskRun/轮次/hwnd/模板隔离，使用后必须验证起始地图，失败回完整包裹查找。Fresh 五倍普通战斗已闭环：`00:15:47.778` 缓存 `(1433,647)`，`00:16:58.341` 使用缓存，`00:17:03.292` 验证回 `宝象国`。白龙马/显形镜 fresh runtime 已闭环：`01:34:05.754` first-probe 绿字后按 `bag/wubei_probe_item.png` 预扫显形镜槽位，`01:34:09.871` 缓存 `(1428,642)`，`01:36:30.582` `WUBEI_PROBE_STORY target=wubei.probeTargetReady` 准备并消费，`01:36:36.578` `WUBEI_ENTER_BATTLE` 消费进战，`01:37:04.732` RETURN_HOME 选择 `bag/wubei_probe_item.png` 缓存，`01:37:08.905` 使用 `(1428,642)`，`01:37:09.920` `cached-return-verified` 回 `宝象国`。普通五倍 combat/黄袍/修罗继续用原回城模板。源码 focused guard 已过。Can close.",
+    "summary": "回城道具预扫缓存仍按任务/窗口/taskRun/轮次/hwnd/模板隔离，使用后必须验证起始地图，失败回完整包裹查找。Fresh 五倍普通战斗已闭环：`00:15:47.778` 缓存 `(1433,647)`，`00:16:58.341` 使用缓存，`00:17:03.292` 验证回 `宝象国`。白龙马/显形镜 fresh runtime 已闭环：`01:34:05.754` first-probe 绿字后按 `bag/wubei_probe_item.png` 预扫显形镜槽位，`01:34:09.871` 缓存 `(1428,642)`，`01:36:30.582` `WUBEI_PROBE_STORY target=wubei.probeTargetReady` 准备并消费，`01:36:36.578` `WUBEI_ENTER_BATTLE` 消费进战，`01:37:04.732` RETURN_HOME 选择 `bag/wubei_probe_item.png` 缓存，`01:37:08.905` 使用 `(1428,642)`，`01:37:09.920` `cached-return-verified` 回 `宝象国`。普通五倍 combat/黄袍/修罗继续用原回城模板。源码 focused guard 已过。已可关闭。",
     "verification": "已验证/已关闭"
   },
   {
@@ -1477,11 +1477,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR136",
     "number": 136,
     "owner": "Peirce+Codex",
-    "status": "Review: worker 修复+focused guard+compile/test-compile 通过；fresh runtime 待验",
+    "status": "Review: 五倍/修罗 source guards + compile/test-compile 通过；NoClassDef follow-up fixed；fresh runtime 待验",
     "kind": "review",
-    "domain": "五倍",
-    "files": "`AutoCombatService`, `BattleRadarService`, `WubeiTask`, `WubeiCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试",
-    "summary": "五倍 expected 战斗在 `2026-06-28 01:53` 暴露两个连锁问题：新 `WUBEI_ENTER_BATTLE` 点击后 516ms 内进入 `battle finished`，但没有对应 avatar-diff 命中日志，疑似消费上一场遗留 `combatExitPending`；随后回程验证失败且可信状态仍 `IN_COMBAT` 后，任务连续尝试缓存/完整包裹回城。Peirce 窄修已完成：expected wait 增加 arm 时间/exit 时间 fence，fresh wait 不再消费 arm 前 stale exit；同一次 false fast-exit correction episode 内，实际点过一次回城且未验证回 `宝象国` 后立即 trusted probe，不再 full scan / 第二次 full attempt；trusted probe 仍在战斗时回 `WAIT_BATTLE_FINISH` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果下一次又触发 fast-exit，就是新的 correction episode 和新的单次回城预算。focused guard、`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` 由 worker 报告通过；fresh runtime 需验证这些日志点。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。",
+    "domain": "修罗",
+    "files": "`AutoCombatService`, `BattleRadarService`, `WubeiTask`, `XiuluoTaskV2`, `WubeiCR136FastExitLifecycleWiringTest`, `XiuluoCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试",
+    "summary": "五倍 expected 战斗在 `2026-06-28 01:53` 暴露 stale `combatExitPending` 与同一 correction episode 内多次回程；修罗 fresh runtime `2026-06-29 17:53:29-17:55:04` 暴露同类问题：fast expected exit 误判后 `17:53:33.232` 缓存回程、`17:53:43.314` 完整扫包裹、`17:53:58.723` 第二次完整扫包裹、`17:55:01.545` phase retry 再次扫包裹，可信战斗状态直到 `17:54:56.405` 仍未把单次回程预算截断。已修：expected wait 增加 arm/exit fence；五倍/修罗实际点过一次回程但未验证起始地图后立刻 trusted probe，不再继续 full scan / 第二次 attempt；trusted `IN_COMBAT` 时分别回 `WAIT_BATTLE_FINISH` / `WAIT_COMBAT` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果被纠正后再次触发 fast-exit，就是新的 correction episode 和新的单次回程预算。Follow-up 修复 `2026-06-29 18:17:25` fresh restart 后修罗 `RETURN_HOME` 的 `NoClassDefFoundError XiuluoTaskV2$ReturnItemUseResult$Status`：`ReturnItemUseResult` 不再依赖嵌套 `Status` enum，guard 要求 no nested Status，`target/classes` 不再生成该旧 class。Focused guards、`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` 通过；fresh runtime 仍需验证这些日志点。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。",
     "verification": "需复核"
   },
   {
@@ -1498,12 +1498,23 @@ window.CR_DASHBOARD_DATA = [
   {
     "id": "CR138",
     "number": 138,
-    "owner": "Unclaimed",
-    "status": "Open: P0 本地队伍支援 session/capability gate 与归队诊断待实现",
-    "kind": "open",
+    "owner": "唐德",
+    "status": "Done：18:37 连续 `[五倍, 修罗x2]` fresh runtime 通过",
+    "kind": "done",
     "domain": "修罗",
-    "files": "`AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, local team support/session model, 连续 `[五倍, 修罗]` 日志/测试",
-    "summary": "连续 `[五倍, 修罗]` 暴露队员 `auto_battle requested=wubei` 残留：队长已切到修罗并打开 `xiuluo_v2#N` 维护窗口，部分队员仍等待 `wubei#80` first-aid gate，导致血蓝补给长期 deferred。CR138 要把队员建模为本地队伍支援 worker，而不是普通顺序队列里的五倍/修罗任务项；新增/接入 `teamSessionKey`、本地 leader 信息与 capability gate，`requestedTaskCode` 仅保留为日志/审计字段。首批只迁移 `FIRST_AID` 到 session capability gate，不能顺手放开三技能、修理、医宝宝、摄妖香或左上角状态；黄袍 `FIRST_AID_ONLY` 仍只允许补血/补蓝。`TEAM_RETURN` 必须改成队长战后先完成自身回程/归队节奏并放权后，队员才允许实际点击；队员可后台观察但不能抢先点。在允许 `COMMON_BOX` 的放权窗口内，盒子最高优先级，若盒子和归队同时 pending，先消费盒子再归队。必须先补 `TEAM_RETURN` no-match 诊断，证明找不到归队按钮时的窗口、截图、模板分数、leader release/signal 和最近 found/click 状态。Fresh runtime 验收：连续 `[五倍, 修罗]` 中队员低血低蓝不再因旧 `requested=wubei` gate 卡死；队长放权后盒子/归队按定稿顺序执行；若归队按钮未命中，日志能解释原因。",
+    "files": "`AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, `WindowTaskControlService`, `LeftTopStatusSwitchService`, 本地队伍支援/session model, 连续 `[五倍, 修罗]` 日志/测试",
+    "summary": "已改：`WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 已拆分 raw `liveRole` 与 `assignmentRole`，CR138 session evidence 只写 raw live role，`UNKNOWN + cached LEADER` 不再能成为 live leader evidence。已改：`AutoBattleTask` 对 `requested=xiuluo_v2/wubei/wuhuan_v2` 但 `localSession=null` 的队员恢复旧 team pathing window gate，避免 `17:55` 这类接任务前 standalone 三技能抢输入。Fresh `2026-06-29 18:37:14-18:46:05` 连续 `[五倍, 修罗]` 验收通过：五倍成功、修罗完成 2 轮；手动离队后 `TEAM_RETURN` gate 打开，队员归队点击都有目标窗口 focus 证据；`requested=wubei` 队员在修罗 `FIRST_AID` gate 打开后成功补法，未见旧 `requestedTaskCode` gate 卡死或提前放行。",
+    "verification": "已验证/已关闭"
+  },
+  {
+    "id": "CR139",
+    "number": 139,
+    "owner": "唐德",
+    "status": "Review：连续任务切换复用启动准备 source 修复完成",
+    "kind": "review",
+    "domain": "修罗",
+    "files": "`DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `WindowRuntimeContext`, `WindowTaskRunner`, 连续任务队列 startup logs/tests",
+    "summary": "已新增 `CLEAN_QUEUE_TRANSITION` startup mode：同一 UI 队列里上一个任务 `SUCCESS`、任务类型切换、且 common startup-prep marker 已存在时，后续五倍/修罗跳过全局启动准备和非必要 hot-start/startup resume；standalone/after-combat/失败或 marker 缺失路径仍保留原恢复逻辑。聚焦 guard、compile、test-compile 通过；fresh `[五倍, 修罗]` runtime 待验收。",
     "verification": "需复核"
   }
 ];

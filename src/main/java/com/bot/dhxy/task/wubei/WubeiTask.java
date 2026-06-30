@@ -372,8 +372,14 @@ public class WubeiTask implements GameTask {
                 TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
                 int round = completedRuns + 1;
                 resetRoundState(round);
+                boolean cleanQueueTransitionStartup = completedRuns == 0 && context.isCleanQueueTransitionStartup();
+                if (cleanQueueTransitionStartup) {
+                    log.info("[wubei] skip hot-start because clean queued task transition; accept a fresh task");
+                }
                 WubeiRoundContext roundContext = completedRuns == 0
-                        ? WubeiRoundContext.hotStart(round)
+                        ? (cleanQueueTransitionStartup
+                                ? WubeiRoundContext.normalStart(round)
+                                : WubeiRoundContext.hotStart(round))
                         : WubeiRoundContext.normalStart(round);
                 taskMaintenanceService.beginTeamMaintenanceRound(context, TASK_CODE, round,
                         "wubei:round-start");
@@ -1782,12 +1788,16 @@ public class WubeiTask implements GameTask {
                             context, pendingTeamReturnPrecheck, "wubei:" + state.source());
             pendingTeamReturnPrecheck = null;
             if (precheck.conclusive() && !precheck.signalPresent()) {
+                taskMaintenanceService.closeLocalTeamReturnSupportWindow(context,
+                        "wubei:" + state.source() + ":precheck-not-needed");
                 log.info("[wubei] team return precheck says no wait needed: source={}", state.source());
                 return WubeiStepOutcome.continueTo(
                         state.next(WubeiPhase.ROUND_DONE, "team-return-precheck-not-needed"),
                         "team return wait not needed");
             }
             if (precheck.conclusive() && precheck.signalPresent()) {
+                taskMaintenanceService.openLocalTeamReturnSupportWindow(context,
+                        "wubei:" + state.source() + ":precheck-signal-present");
                 log.warn("[wubei] team return precheck saw return signal; yield for members source={}",
                         state.source());
                 return WubeiStepOutcome.sharedState(
@@ -1796,11 +1806,15 @@ public class WubeiTask implements GameTask {
             }
         }
         if (shouldYieldForTeamReturnSignal()) {
+            taskMaintenanceService.openLocalTeamReturnSupportWindow(context,
+                    "wubei:" + state.source() + ":signal-present");
             log.warn("[wubei] team return signal still present; yield for members source={}", state.source());
             return WubeiStepOutcome.sharedState(
                     state.next(WubeiPhase.WAIT_TEAM_RETURN, keepTeamReturnWaitSource(state)),
                     "team return still pending");
         }
+        taskMaintenanceService.closeLocalTeamReturnSupportWindow(context,
+                "wubei:" + state.source() + ":signal-cleared");
         if (TEAM_RETURN_BEFORE_ACCEPT_SOURCE.equals(state.source())) {
             return WubeiStepOutcome.continueTo(
                 state.next(WubeiPhase.ACCEPT_TASK, "team-return-ready-before-accept"),

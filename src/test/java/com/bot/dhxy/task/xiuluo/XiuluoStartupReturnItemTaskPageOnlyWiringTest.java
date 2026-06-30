@@ -33,7 +33,7 @@ public final class XiuluoStartupReturnItemTaskPageOnlyWiringTest {
 
         String startupProbe = between(xiuluo,
                 "private boolean tryUseStartupReturnItemOnce(",
-                "private boolean useReturnItemAndVerifyStartMap(");
+                "private ReturnItemUseResult useReturnItem(");
         require(startupProbe.contains("findAndUseMainBagTaskPageItem(RETURN_ITEM_TEMPLATE"),
                 "startup return-item probe must search only the main-bag task page");
         require(!startupProbe.contains("findAndUseItemFromBack"),
