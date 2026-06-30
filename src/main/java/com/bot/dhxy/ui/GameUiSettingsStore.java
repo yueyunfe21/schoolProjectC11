@@ -27,8 +27,6 @@ public class GameUiSettingsStore {
     private static final String XIULUO_MAX_RUNS = "xiuluoMaxRuns";
     private static final String WUHUAN_MAX_RUNS = "wuhuanMaxRuns";
     private static final String FIVEFOLD_MAX_RUNS = "fivefoldMaxRuns";
-    private static final String TIANTING_MAX_RUNS = "tiantingMaxRuns";
-    private static final String ZHUAGUI_MAX_RUNS = "zhuaguiMaxRuns";
     private static final String SUMMON_SKILL_CLEAN_ENABLED = "summonSkillCleanEnabled";
     private static final String SUMMON_SKILL_CLEAN_INTERVAL_MS = "summonSkillCleanIntervalMs";
     private static final String XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS = "xiuluoHealPetMaintenanceIntervalMs";
@@ -66,8 +64,6 @@ public class GameUiSettingsStore {
         botProperties.setXiuluoMaxRuns(readInt(properties, XIULUO_MAX_RUNS, botProperties.getXiuluoMaxRuns()));
         botProperties.setWuhuanMaxRuns(readInt(properties, WUHUAN_MAX_RUNS, botProperties.getWuhuanMaxRuns()));
         botProperties.setFivefoldMaxRuns(readInt(properties, FIVEFOLD_MAX_RUNS, botProperties.getFivefoldMaxRuns()));
-        botProperties.setTiantingMaxRuns(readInt(properties, TIANTING_MAX_RUNS, botProperties.getTiantingMaxRuns()));
-        botProperties.setZhuaguiMaxRuns(readInt(properties, ZHUAGUI_MAX_RUNS, botProperties.getZhuaguiMaxRuns()));
         botProperties.setSummonSkillCleanEnabled(readBoolean(properties, SUMMON_SKILL_CLEAN_ENABLED, botProperties.isSummonSkillCleanEnabled()));
         botProperties.setSummonSkillCleanIntervalMs(readLong(properties, SUMMON_SKILL_CLEAN_INTERVAL_MS, botProperties.getSummonSkillCleanIntervalMs()));
         botProperties.setXiuluoHealPetMaintenanceIntervalMs(readLong(properties, XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, botProperties.getXiuluoHealPetMaintenanceIntervalMs()));
@@ -100,8 +96,6 @@ public class GameUiSettingsStore {
         properties.setProperty(XIULUO_MAX_RUNS, String.valueOf(botProperties.getXiuluoMaxRuns()));
         properties.setProperty(WUHUAN_MAX_RUNS, String.valueOf(botProperties.getWuhuanMaxRuns()));
         properties.setProperty(FIVEFOLD_MAX_RUNS, String.valueOf(botProperties.getFivefoldMaxRuns()));
-        properties.setProperty(TIANTING_MAX_RUNS, String.valueOf(botProperties.getTiantingMaxRuns()));
-        properties.setProperty(ZHUAGUI_MAX_RUNS, String.valueOf(botProperties.getZhuaguiMaxRuns()));
         properties.setProperty(SUMMON_SKILL_CLEAN_ENABLED, String.valueOf(botProperties.isSummonSkillCleanEnabled()));
         properties.setProperty(SUMMON_SKILL_CLEAN_INTERVAL_MS, String.valueOf(botProperties.getSummonSkillCleanIntervalMs()));
         properties.setProperty(XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, String.valueOf(botProperties.getXiuluoHealPetMaintenanceIntervalMs()));

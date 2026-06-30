@@ -256,25 +256,11 @@ Tracker-only details are in:
 
 Do not rely only on tracker logs. Business flow logs are essential.
 
-## Current debug switch
-
-There is a temporary debug switch:
-
-```properties
-debug.npc-first-shot=false
-```
-
-When set to `true`, starting the 五环 task does not run full 五环. It only runs the 墨意 NPC first-shot debug using the 五环 constants.
-
-Use it to test `clickNpcSmart` first-shot coordinate calculation and click behavior.
-
-After testing, set it back to `false`.
-
 ## Current known stable findings
 
 The recent debug test confirmed:
 
-- `debugClickNpcSmartFirstShot(...)` can calculate a correct `FINAL_CLICK_POINT` for 墨意.
+- The old one-shot NPC first-click debug proved the formula can calculate a correct `FINAL_CLICK_POINT` for 墨意.
 - The point lands on the NPC.
 - Direct input click can click the NPC.
 - Therefore the coordinate formula is probably okay.

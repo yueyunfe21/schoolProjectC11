@@ -594,17 +594,6 @@ public class MiniMapCoordinateReader {
                 .toList();
     }
 
-    private String recognizeDigitBoxes(BufferedImage clean, List<GlyphBox> glyphs) {
-        StringBuilder sb = new StringBuilder();
-        for (GlyphBox glyph : glyphs) {
-            BufferedImage glyphImage = trimToForeground(crop(clean, glyph), 1);
-            String symbol = recognizeOneGlyph(glyphImage);
-            sb.append(symbol == null ? "?" : symbol);
-            glyphImage.flush();
-        }
-        return sb.toString();
-    }
-
     private DigitRecognition recognizeDigitRange(BufferedImage clean, int startX, int endX, int startY, int endY) {
         // Projection splits the requested horizontal range into white-pixel runs. Some
         // rendered digits can be broken into multiple runs, so the next stage tries all
@@ -713,11 +702,6 @@ public class MiniMapCoordinateReader {
             }
         }
         return count;
-    }
-
-    private String recognizeOneGlyph(BufferedImage glyphImage) {
-        GlyphMatch match = recognizeOneGlyphScored(glyphImage);
-        return "?".equals(match.symbol()) ? null : match.symbol();
     }
 
     private GlyphMatch recognizeOneGlyphScored(BufferedImage glyphImage) {

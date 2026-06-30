@@ -872,75 +872,6 @@ public class OcrRoiMemoryService {
         }
     }
 
-    private void addLegacyRoiRegion(List<OcrWindowRegion> regions, MemoryFile memory, String key) {
-        if (memory == null || key == null) {
-            return;
-        }
-        MemoryEntry entry = memory.entries.get(key);
-        if (entry == null || entry.recommendedRoi == null) {
-            return;
-        }
-        OcrWindowRegion region = entry.recommendedRoi.toRegion().clamp(IMAGE_WIDTH, IMAGE_HEIGHT);
-        if (region.isValid()) {
-            addUniqueRegion(regions, region);
-        }
-    }
-
-    private void addNpcClickSampleRegion(List<OcrWindowRegion> regions,
-                                          MemoryFile memory,
-                                          String mapName,
-                                          Integer mapX,
-                                          Integer mapY,
-                                          Integer playerMapX,
-                                          Integer playerMapY,
-                                          String targetName,
-                                          boolean roamingTarget) {
-        OcrWindowRegion policyRegion = regionFromNpcClickPolicies(
-                memory, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
-        if (policyRegion != null && policyRegion.isValid()) {
-            addUniqueRegion(regions, policyRegion);
-            return;
-        }
-        OcrWindowRegion region = regionFromNpcClickSamples(
-                memory, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget);
-        if (region != null && region.isValid()) {
-            addUniqueRegion(regions, region);
-        }
-    }
-
-    /*
-     * NPC click samples are a second, weaker source of OCR region hints. They do not prove where the
-     * yellow name is, but a verified click point is usually close enough to seed a broad OCR crop.
-     * Combat targets use nearby coordinate samples; fixed NPCs use the exact legacy click key.
-     */
-    private OcrWindowRegion regionFromNpcClickSamples(MemoryFile memory,
-                                                      String mapName,
-                                                      Integer mapX,
-                                                      Integer mapY,
-                                                      Integer playerMapX,
-                                                      Integer playerMapY,
-                                                      String targetName,
-                                                      boolean roamingTarget) {
-        if (memory == null || memory.npcClickSamples == null || memory.npcClickSamples.isEmpty()) {
-            return null;
-        }
-        List<Point> points = new ArrayList<>();
-        for (int i = memory.npcClickSamples.size() - 1; i >= 0 && points.size() < MAX_LEARNED_NPC_RECENT_SAMPLES; i--) {
-            NpcClickSample sample = memory.npcClickSamples.get(i);
-            if (!isCompatibleNpcClickSample(sample, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget)) {
-                continue;
-            }
-            Point point = npcSampleClickPoint(sample);
-            if (point != null) {
-                points.add(point);
-            }
-        }
-        if (points.isEmpty()) {
-            return null;
-        }
-        return regionAroundPoints(points, roamingTarget);
-    }
-
     private Optional<LearnedNpcClickPoint> recommendedNpcClickPointFromPolicy(MemoryFile memory,
                                                                                String npcClickKey,
                                                                                Integer playerMapX,
@@ -965,96 +896,6 @@ public class OcrRoiMemoryService {
                 npcClickKey, point.x, point.y, policy.sampleCount, policy.spreadPx, policy.lastOutcome);
         log.info("[vision-memory] learned NPC point ready from policy: {}", result.toSummaryText());
         return Optional.of(result);
-    }
-
-    private OcrWindowRegion regionFromNpcClickPolicies(MemoryFile memory,
-                                                       String mapName,
-                                                       Integer mapX,
-                                                       Integer mapY,
-                                                       Integer playerMapX,
-                                                       Integer playerMapY,
-                                                       String targetName,
-                                                       boolean roamingTarget) {
-        if (memory == null || memory.policies == null || memory.policies.clickPolicies == null) {
-            return null;
-        }
-        List<Point> points = new ArrayList<>();
-        for (ClickPolicy policy : memory.policies.clickPolicies.values()) {
-            if (!isCompatibleClickPolicy(policy, mapName, mapX, mapY, playerMapX, playerMapY, targetName, roamingTarget)) {
-                continue;
-            }
-            if (policy.point != null) {
-                points.add(policy.point.toPoint());
-            }
-            if (points.size() >= MAX_LEARNED_NPC_RECENT_SAMPLES) {
-                break;
-            }
-        }
-        if (points.isEmpty()) {
-            return null;
-        }
-        return regionAroundPoints(points, roamingTarget);
-    }
-
-    private boolean isCompatibleClickPolicy(ClickPolicy policy,
-                                            String mapName,
-                                            Integer mapX,
-                                            Integer mapY,
-                                            Integer playerMapX,
-                                            Integer playerMapY,
-                                            String targetName,
-                                            boolean roamingTarget) {
-        if (!isUsableClickPolicy(policy) || !sameNormalized(policy.mapName, mapName)) {
-            return false;
-        }
-        if (!samePlayerCoordinate(policy.playerMapX, policy.playerMapY, playerMapX, playerMapY)) {
-            return false;
-        }
-        if (roamingTarget) {
-            return policy.targetMapX != null
-                    && policy.targetMapY != null
-                    && mapX != null
-                    && mapY != null
-                    && coordinateDistance(policy.targetMapX, policy.targetMapY, mapX, mapY)
-                    <= NPC_COORD_BUCKET_SIZE * (NPC_COORD_NEIGHBOR_RADIUS + 1);
-        }
-        return sameNormalized(policy.targetName, targetName)
-                && policy.targetMapX != null
-                && policy.targetMapY != null
-                && policy.targetMapX.equals(mapX)
-                && policy.targetMapY.equals(mapY);
-    }
-
-    private boolean isCompatibleNpcClickSample(NpcClickSample sample,
-                                                String mapName,
-                                                Integer mapX,
-                                                Integer mapY,
-                                                Integer playerMapX,
-                                                Integer playerMapY,
-                                                String targetName,
-                                                boolean roamingTarget) {
-        if (sample == null || !sample.clicked || !sample.success || !hasStrongNpcVerification(sample)) {
-            return false;
-        }
-        if (!sameNormalized(sample.mapName, mapName)) {
-            return false;
-        }
-        if (!samePlayerCoordinate(sample.playerMapX, sample.playerMapY, playerMapX, playerMapY)) {
-            return false;
-        }
-        if (roamingTarget) {
-            return sample.targetMapX != null
-                    && sample.targetMapY != null
-                    && mapX != null
-                    && mapY != null
-                    && coordinateDistance(sample.targetMapX, sample.targetMapY, mapX, mapY)
-                    <= NPC_COORD_BUCKET_SIZE * (NPC_COORD_NEIGHBOR_RADIUS + 1);
-        }
-        return sameNormalized(sample.npcName, targetName)
-                && sample.targetMapX != null
-                && sample.targetMapY != null
-                && sample.targetMapX.equals(mapX)
-                && sample.targetMapY.equals(mapY);
     }
 
     private OcrWindowRegion regionAroundPoints(List<Point> points, boolean roamingTarget) {
@@ -1271,10 +1112,6 @@ public class OcrRoiMemoryService {
         return List.copyOf(buckets);
     }
 
-    private String primaryCoordinateBucket(Integer mapX, Integer mapY) {
-        return coordinateBucketText(mapX, mapY);
-    }
-
     private static String coordinateBucketText(Integer mapX, Integer mapY) {
         if (mapX == null || mapY == null) {
             return "bucket:unknown";
@@ -1302,20 +1139,6 @@ public class OcrRoiMemoryService {
                 && samplePlayerMapY != null
                 && samplePlayerMapX.equals(currentPlayerMapX)
                 && samplePlayerMapY.equals(currentPlayerMapY);
-    }
-
-    private List<String> npcClickRegionMemoryKeys(String mapName,
-                                                  Integer mapX,
-                                                  Integer mapY,
-                                                  Integer playerMapX,
-                                                  Integer playerMapY,
-                                                  String targetName) {
-        /*
-         * Legacy keys predate player-coordinate-aware vision memory. They are intentionally disabled
-         * for NPC/monster recommendations because screen-relative crops are not reusable unless the
-         * player's logical coordinate also matches the saved sample.
-         */
-        return List.of();
     }
 
     private void addUniqueRegion(List<OcrWindowRegion> regions, OcrWindowRegion candidate) {
@@ -1462,19 +1285,6 @@ public class OcrRoiMemoryService {
             return target;
         }
         return roamingTarget ? "any-name" : null;
-    }
-
-    private boolean sameNormalized(String a, String b) {
-        String left = normalizeKey(a);
-        String right = normalizeKey(b);
-        if (left == null || right == null) {
-            return left == right;
-        }
-        return left.equals(right);
-    }
-
-    private int coordinateDistance(int x1, int y1, int x2, int y2) {
-        return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
     }
 
     public static class MemoryFile {

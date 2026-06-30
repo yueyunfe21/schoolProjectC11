@@ -584,163 +584,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
     }
 
     /**
-     * Debug-only first-shot probe for the player-anchor coordinate formula.
-     *
-     * <p>This path captures the center player-name region, derives the current player anchor from
-     * purple-name OCR, computes the predicted NPC screen point, and sends one direct click. It does
-     * not run the Ctrl-menu fallback and does not treat the click as independently measured ground
-     * truth in vision memory.</p>
-     *
-     * @param player current player identity; its name is used as the purple-anchor OCR target.
-     * @param mapName target NPC map name for logging/memory only.
-     * @param mapX target NPC logical in-game X coordinate.
-     * @param mapY target NPC logical in-game Y coordinate.
-     * @param npcName target NPC name for logging/memory.
-     * @param tuneX screen-pixel X correction added to the formula result.
-     * @param tuneY screen-pixel Y correction added to the formula result.
-     * @return true after the debug click is sent; false if current location or player anchor is missing.
-     */
-    public boolean debugClickNpcSmartFirstShot(PlayerCharacter player, String mapName, int mapX, int mapY, String npcName, int tuneX, int tuneY) {
-        log.info("[npc-first-shot-debug] start map={} targetNpc={} targetCoord=({}, {}) tune=({}, {})",
-                mapName, npcName, mapX, mapY, tuneX, tuneY);
-
-        if (shouldStop()) return false;
-        WindowBase windowBase = currentWindowBase("debug-first-shot");
-        int gameBaseX = windowBase.x();
-        int gameBaseY = windowBase.y();
-        int screenCenterX = gameBaseX + (1024 / 2);
-        int screenCenterY = gameBaseY + (768 / 2);
-        log.info("[npc-first-shot-debug] windowBase=({}, {}) screenCenter=({}, {})",
-                gameBaseX, gameBaseY, screenCenterX, screenCenterY);
-
-        LocationInfo locInfo = playerStateService.syncMyPosition();
-        if (locInfo == null) {
-            log.warn("[npc-first-shot-debug] current location unavailable; cannot compute map delta");
-            return false;
-        }
-        log.info("[npc-first-shot-debug] currentLocation map={} coord=({}, {})", locInfo.mapName, locInfo.x, locInfo.y);
-
-        int scanWidth = 350;
-        int scanHeight = 200;
-        int scanStartX = screenCenterX - (scanWidth / 2);
-        int scanStartY = screenCenterY - (scanHeight / 2);
-        log.info("[npc-first-shot-debug] playerAnchor scanRect=({}, {})-({}, {}) size={}x{}",
-                scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight, scanWidth, scanHeight);
-
-        String centerScanPath = windowScopedTempPath.resolve("debug_npc_firstshot_center_raw.png");
-        String playerScanPath = windowScopedTempPath.resolve("debug_npc_firstshot_player_washed.png");
-
-        captureCleanNameToFile("NPC first-shot debug player-anchor capture", centerScanPath,
-                scanStartX, scanStartY, scanStartX + scanWidth, scanStartY + scanHeight);
-        ImagePreprocessor.washPurpleTextToBlackAndWhite(centerScanPath, playerScanPath);
-
-        List<OcrWordResult> playerWords = ocr.getAllTextResultsForMatch(
-                playerScanPath,
-                "npc-first-shot-debug-player-anchor:" + (player == null ? "-" : player.getName()),
-                words -> canExtractPlayerAnchor(words, player, scanStartX, scanStartY));
-        Point playerAnchor = null;
-        if (playerWords != null && player != null && player.getName() != null) {
-            playerAnchor = locationVisionService.extractPlayerPhysicalAnchor(
-                    playerWords, player.getName(), scanStartX, scanStartY, 0);
-        }
-        if (playerAnchor == null) {
-            log.warn("[npc-first-shot-debug] playerAnchor unavailable: playerName={} washedPath={}",
-                    player == null ? null : player.getName(), playerScanPath);
-            return false;
-        }
-        log.info("[npc-first-shot-debug] playerAnchor=({}, {}) playerName={}",
-                playerAnchor.x, playerAnchor.y, player == null ? null : player.getName());
-
-        int deltaLogicX = mapX - locInfo.x;
-        int deltaLogicY = mapY - locInfo.y;
-        int deltaPhysX = (int) Math.round(deltaLogicX * UX + deltaLogicY * VX);
-        int deltaPhysY = (int) Math.round(deltaLogicX * UY + deltaLogicY * VY);
-        int targetX = playerAnchor.x + deltaPhysX + tuneX;
-        int targetY = playerAnchor.y + deltaPhysY - 50 + tuneY;
-
-        log.info("[npc-first-shot-debug] deltaLogic=({}, {}) deltaPhys=({}, {}) formula=playerAnchor+deltaPhys+tune+(0,-50)",
-                deltaLogicX, deltaLogicY, deltaPhysX, deltaPhysY);
-        log.info("[npc-first-shot-debug] FINAL_CLICK_POINT=({}, {})", targetX, targetY);
-
-        inputProvider.moveMouse(targetX, targetY);
-        TaskSleep.sleep(500);
-        inputProvider.clickLeft(targetX, targetY, NPC_LEFT_CLICK_HOLD_MS);
-        TaskSleep.sleep(800);
-        recordNpcClickMemory(
-                "NPC_FIRST_SHOT_DEBUG",
-                mapName,
-                locInfo,
-                npcName,
-                mapX,
-                mapY,
-                new Point(gameBaseX, gameBaseY),
-                playerAnchor,
-                new Point(targetX, targetY),
-                new Point(targetX, targetY),
-                tuneX,
-                tuneY,
-                true,
-                true,
-                "DEBUG_CLICK_SENT_UNVERIFIED",
-                "manual debug click path");
-        log.info("[npc-first-shot-debug] direct debug click sent: point=({}, {})", targetX, targetY);
-        return true;
-    }
-
-    /**
-     * Debug only the production purple-name player-anchor formula path.
-     *
-     * <p>This intentionally bypasses learned memory, task-tooltip templates, yellow target OCR, and
-     * Ctrl-menu probing. Use it when the formula itself looks suspicious: the method reuses the same
-     * cached player coordinate, ROI recommendation, purple-name wash/OCR, formula math, and dialog
-     * verification used by production {@link #clickNpcSmart(NpcClickRequest)}.</p>
-     *
-     * @param request target facts. mapX/mapY are logical game coordinates; tuneX/tuneY are
-     *                screen-pixel formula corrections; expectedDialogTemplatePath may be blank, in
-     *                which case generic OPTION-dialog detection is used.
-     * @return true only when the purple formula click opens/verifies a dialog.
-     */
-    public boolean debugClickNpcByPurpleAnchorOnly(NpcClickRequest request) {
-        if (request == null) {
-            log.warn("[npc-purple-debug] skipped: request is null");
-            return false;
-        }
-        long latencyStart = LatencyMetrics.start();
-        boolean result = false;
-        try {
-            tracker.updateGlobalVision();
-            LocationInfo playerLocation = cachedPlayerLocation(request);
-            List<ResolvedNpcClickRegion> targetScanRegions = resolveNpcScanRegions(request, playerLocation);
-            log.info("[npc-purple-debug] start npc={} map={} target=({}, {}) player=({}, {}) tune=({}, {}) regions={} expectedTemplate={}",
-                    request.npcName(), request.mapName(), request.mapX(), request.mapY(),
-                    playerLocation == null ? null : playerLocation.x,
-                    playerLocation == null ? null : playerLocation.y,
-                    request.tuneX(), request.tuneY(), summarizeRegions(targetScanRegions),
-                    request.expectedDialogTemplatePath());
-            if (targetScanRegions == null || targetScanRegions.isEmpty()) {
-                log.warn("[npc-purple-debug] no ROI region available; cannot run purple formula");
-                return false;
-            }
-
-            FormulaClickPrediction prediction = calculatePlayerAnchorFormulaPoint(
-                    request.player(), request.mapName(), request.mapX(), request.mapY(),
-                    request.npcName(), request.tuneX(), request.tuneY(),
-                    targetScanRegions.get(0), playerLocation, false);
-            NpcClickStrategyResult formulaResult =
-                    clickNpcByPlayerAnchorFormula(prediction, dialogClickVerifier(request.expectedDialogTemplatePath()));
-            recordSmartClickEvidence(request, formulaResult, playerLocation);
-            result = formulaResult.verified();
-            log.info("[npc-purple-debug] result={} status={} message={}",
-                    result, formulaResult.status(), formulaResult.message());
-            return result;
-        } finally {
-            LatencyMetrics.info(log, "npc.click.purpleDebug", latencyStart,
-                    "result=" + result + " target=" + request.npcName() + "@"
-                            + request.mapName() + "(" + request.mapX() + "," + request.mapY() + ")");
-        }
-    }
-
-    /**
      * Click an NPC or task target through the single public smart-click entry.
      *
      * <p>The caller supplies business facts only: target name, logical map coordinate, an optional
@@ -1647,48 +1490,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
     }
 
     /**
-     * Reconstruct the window-relative rectangle of a template match from its center point.
-     *
-     * <p>{@link CoordinateHelper#findImageInRegion(String, int[], double)} returns only the
-     * screen-absolute center. For learning, the ROI policy wants the matched cue rectangle. Reading
-     * the template size here is cheap and keeps the strategy result self-contained.</p>
-     *
-     * @param centerAbs screen-absolute template center returned by the matcher.
-     * @param windowBase screen-absolute game-window origin.
-     * @param templatePath template image path used for the match.
-     * @return window-relative matched rectangle, or null when the template cannot be read.
-     */
-    private OcrWindowRegion templateMatchedRegion(Point centerAbs, WindowBase windowBase, String templatePath) {
-        if (centerAbs == null || windowBase == null || templatePath == null || templatePath.isBlank()) {
-            return null;
-        }
-        try {
-            BufferedImage template = ImageIO.read(Path.of(templatePath).toFile());
-            if (template == null) {
-                return null;
-            }
-            try {
-                int relCenterX = centerAbs.x - windowBase.x();
-                int relCenterY = centerAbs.y - windowBase.y();
-                int halfW = Math.max(1, template.getWidth()) / 2;
-                int halfH = Math.max(1, template.getHeight()) / 2;
-                return new OcrWindowRegion(
-                        relCenterX - halfW,
-                        relCenterY - halfH,
-                        relCenterX - halfW + template.getWidth(),
-                        relCenterY - halfH + template.getHeight())
-                        .clamp(WINDOW_WIDTH, WINDOW_HEIGHT);
-            } finally {
-                template.flush();
-            }
-        } catch (IOException e) {
-            log.warn("NPC template matched-region reconstruction failed: template={} reason={}",
-                    templatePath, e.getMessage(), e);
-            return null;
-        }
-    }
-
-    /**
      * Mutable state shared by one {@link #runNpcClickPipeline(NpcClickRequest, NpcClickVerifier, String)} call.
      *
      * <p>The strategy methods mutate only Ctrl probe origins and the story-prepared flag. Keeping
@@ -1862,48 +1663,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
         }
     
 
-    }
-
-    /**
-     * Debug-only Ctrl-menu probe that bypasses yellow OCR, learned-memory, and formula clicks.
-     *
-     * <p>This method sends real mouse/Ctrl input through the normal exclusive input queue, writes
-     * the same window-scoped {@code npc_menu_*} diagnostic images as production, and verifies the
-     * expected green-option dialog template after a menu candidate click. The supplied points are
-     * screen-absolute coordinates, not window-relative coordinates. It is intentionally not called
-     * from any production task path; use it from local debug mains to isolate whether Ctrl probing
-     * itself is valid for a chosen origin.</p>
-     *
-     * @param targetKeyword NPC or monster name expected in the Ctrl menu.
-     * @param expectedDialogTemplatePath green-option template proving the target dialog opened.
-     * @param screenAbsoluteProbePoints ordered screen-absolute Ctrl origins to test.
-     * @param includeWindowCenterFallback whether to prepend the generic window-center fallback.
-     * @return true when one supplied Ctrl origin opens and verifies the expected dialog.
-     */
-    public boolean debugClickNpcCtrlMenuAtPoints(String targetKeyword,
-                                                 String expectedDialogTemplatePath,
-                                                 List<Point> screenAbsoluteProbePoints,
-                                                 boolean includeWindowCenterFallback) {
-        List<CtrlProbeOrigin> origins = new ArrayList<>();
-        if (screenAbsoluteProbePoints != null) {
-            for (int i = 0; i < screenAbsoluteProbePoints.size(); i++) {
-                Point point = screenAbsoluteProbePoints.get(i);
-                addCtrlProbeOrigin(origins, point, "debug-point#" + (i + 1), CtrlProbeScanProfile.DIRECT);
-            }
-        }
-        log.info("NPC ctrl debug requested: keyword={} includeWindowCenter={} points={}",
-                targetKeyword, includeWindowCenterFallback, screenAbsoluteProbePoints);
-        return clickNpcByCtrlMenuScan(targetKeyword, NPC_TAG_TEMPLATE_PATH,
-                expectedDialogTemplatePath, origins, includeWindowCenterFallback).verified();
-    }
-
-    private OcrWindowRegion normalizeNpcScanRegion(OcrWindowRegion region) {
-        if (region == null) {
-            return null;
-        }
-        OcrWindowRegion normalized = region;
-        normalized = normalized.clamp(WINDOW_WIDTH, WINDOW_HEIGHT);
-        return normalized.isValid() ? normalized : null;
     }
 
     /**
@@ -3326,19 +3085,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
         return relX >= 0 && relX < WINDOW_WIDTH && relY >= 0 && relY < WINDOW_HEIGHT;
     }
 
-    private boolean hasWordContaining(List<OcrWordResult> words, String keyword) {
-        if (words == null || words.isEmpty() || keyword == null || keyword.isBlank()) {
-            return false;
-        }
-        for (OcrWordResult word : words) {
-            if (word != null && word.getText() != null && word.getText().contains(keyword)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-
     private boolean hasNpcMenuMatch(List<OcrWordResult> words, String targetName) {
         if (words == null || words.isEmpty()) {
             return false;
@@ -3355,13 +3101,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
             }
         }
         return false;
-    }
-
-    private boolean canExtractPlayerAnchor(List<OcrWordResult> words,
-                                           PlayerCharacter player,
-                                           int scanStartX,
-                                           int scanStartY) {
-        return extractPlayerAnchorMatchFromWords(words, player, scanStartX, scanStartY) != null;
     }
 
     private PlayerAnchorMatch extractPlayerAnchorMatchFromWords(
@@ -3450,61 +3189,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
     }
 
     /**
-     * Record a vision-memory NPC click sample without making it authoritative ground truth.
-     *
-     * <p>Normal task runs know the predicted click point and whether verification succeeded; they do
-     * not independently measure the true NPC point. The memory entry therefore marks
-     * actualClickMeasured=false so later learning code can filter samples safely.</p>
-     */
-    private void recordNpcClickMemory(String source,
-                                      String targetMapName,
-                                      LocationInfo locInfo,
-                                      String npcName,
-                                      int targetMapX,
-                                      int targetMapY,
-                                      Point windowBase,
-                                      Point playerAnchorAbs,
-                                      Point predictedClickAbs,
-                                      Point actualClickAbs,
-                                      int tuneX,
-                                      int tuneY,
-                                      boolean clicked,
-                                      boolean success,
-                                      String outcome,
-                                      String verification) {
-        try {
-            String sampleMapName = locInfo != null && locInfo.mapName != null && !locInfo.mapName.isBlank()
-                    ? locInfo.mapName
-                    : targetMapName;
-            ocrRoiMemoryService.recordNpcClickAttempt(
-                    source,
-                    sampleMapName,
-                    locInfo == null ? null : locInfo.x,
-                    locInfo == null ? null : locInfo.y,
-                    npcName,
-                    targetMapX,
-                    targetMapY,
-                    windowBase,
-                    playerAnchorAbs,
-                    predictedClickAbs,
-                    actualClickAbs,
-                    tuneX,
-                    tuneY,
-                    "npc-first-shot-v1:playerAnchor+mapDelta20px+tuneY-50",
-                    clicked,
-                    success,
-                    outcome,
-                    verification,
-                    false,
-                    clicked ? "predicted-click-point" : "not-clicked",
-                    success ? "DIALOG_OPTION" : "NONE");
-        } catch (Exception e) {
-            log.warn("[vision-memory] record NPC click attempt failed: source={} npc={} target=({}, {}) reason={}",
-                    source, npcName, targetMapX, targetMapY, e.getMessage(), e);
-        }
-    }
-
-    /**
      * Resolve the current blocking dialog before an NPC click, preferring the window runner's
      * recent no-focus observation over an immediate screenshot pass.
      *
@@ -3568,12 +3252,6 @@ public class NpcClickService implements SmartClickEvidenceConfirmationService {
 
     private boolean shouldStop() {
         return Thread.currentThread().isInterrupted();
-    }
-
-    private boolean captureCleanNameToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        return inputSequences.submitExclusiveAndWait("npcClick:cleanNameCapture:" + elementName, () -> {
-            return captureCleanNameToFileDirect(elementName, savePath, x1, y1, x2, y2, true);
-        });
     }
 
     private boolean captureCleanNameToFileDirect(String elementName, String savePath, int x1, int y1, int x2, int y2) {

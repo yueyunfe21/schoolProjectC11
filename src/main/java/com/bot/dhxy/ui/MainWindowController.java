@@ -16,9 +16,6 @@ import com.bot.dhxy.vision.MapSurveyService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.update.AppVersionService;
-import com.bot.dhxy.update.UpdateCheckResult;
-import com.bot.dhxy.update.UpdateCheckService;
-import com.bot.dhxy.update.UpdateManifest;
 import com.bot.dhxy.window.control.WindowRegistrationBatchBuilder;
 import com.bot.dhxy.window.control.WindowSystemSnapshot;
 import com.bot.dhxy.window.control.WindowTaskCommandDetail;
@@ -26,9 +23,7 @@ import com.bot.dhxy.window.control.WindowTaskCommandResult;
 import com.bot.dhxy.window.control.WindowTaskControlService;
 import com.bot.dhxy.window.control.WindowTaskStartRequest;
 import com.bot.dhxy.window.discovery.GameWindowRegistrationService;
-import com.bot.dhxy.window.diagnostics.WindowCaptureExperimentService;
 import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
-import com.bot.dhxy.window.diagnostics.WindowMessageInputExperimentService;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 import com.bot.dhxy.window.execution.WindowTaskQueue;
 import com.bot.dhxy.window.execution.WindowTaskSnapshot;
@@ -44,7 +39,6 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
@@ -57,7 +51,6 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
-import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
@@ -91,7 +84,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -113,10 +105,8 @@ public class MainWindowController {
     private final WindowTaskControlService windowTaskControlService;
     private final WindowRegistrationBatchBuilder windowRegistrationBatchBuilder;
     private final GameWindowRegistrationService gameWindowRegistrationService;
-    private final WindowCaptureExperimentService windowCaptureExperimentService;
     private final WindowInteractionMetricsService windowInteractionMetricsService;
     private final AutomationMetricsService automationMetricsService;
-    private final WindowMessageInputExperimentService windowMessageInputExperimentService;
     private final LicenseAuthService licenseAuthService;
     private final BotProperties botProperties;
     private final CommonBoxService commonBoxService;
@@ -124,7 +114,6 @@ public class MainWindowController {
     private final LocalOcrSidecarService localOcrSidecarService;
     private final MapSurveyService mapSurveyService;
     private final CoordinateHelper coordinateHelper;
-    private final UpdateCheckService updateCheckService;
     private final AppVersionService appVersionService;
     private final WindowSelectionMemory windowSelectionMemory = new WindowSelectionMemory();
 
@@ -152,14 +141,6 @@ public class MainWindowController {
     private Button presetFiveRingQueueButton;
     private Button presetAutoBattleQueueButton;
     private Button presetFiveRingAutoBattleQueueButton;
-    private Button presetDebugCoordinateQueueButton;
-    private Button setDebugCoordinateTaskButton;
-    private Button windowCaptureExperimentButton;
-    private Button backgroundAltQExperimentButton;
-    private Button backgroundAlt1ExperimentButton;
-    private Button backgroundCenterClickExperimentButton;
-    private Button backgroundCenterRightClickExperimentButton;
-    private Button backgroundChildRightClickExperimentButton;
     private Button interactionMetricsDashboardButton;
     private Button automationMetricsDashboardButton;
     private Button saveMapLabelSampleButton;
@@ -221,8 +202,6 @@ public class MainWindowController {
     private TextField xiuluoRunCountField;
     private ComboBox<Integer> wuhuanRunCountComboBox;
     private TextField fivefoldRunCountField;
-    private TextField tiantingRunCountField;
-    private TextField zhuaguiRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
     private CheckBox taskStartupPreparationEnabledCheckBox;
     private CheckBox xiuluoMaintenanceRunImmediatelyCheckBox;
@@ -235,8 +214,6 @@ public class MainWindowController {
     private ComboBox<Integer> xiuluoRepairEquipmentIntervalMinutesComboBox;
     private Button applySettingsButton;
     private Button clearButton;
-    private Button checkUpdateButton;
-    private Button sidebarUpdateButton;
     private Button taskCountShortcutButton;
     private Label settingsEditLockLabel;
     private Label windowSystemLabel;
@@ -251,8 +228,8 @@ public class MainWindowController {
     private Label taskCountEditorTitleLabel;
     private TextField taskCountEditorField;
     private Label taskCountEditorUnitLabel;
-    private TextField mapCalibratorMapNameField;
-    private Label mapCalibratorHintLabel;
+    private TextField mapSurveyMapNameField;
+    private Label mapSurveyHintLabel;
     private BorderPane rootPane;
     private Parent selectedWindowDetailPanel;
     private VBox selectedWindowDetailBox;
@@ -281,9 +258,6 @@ public class MainWindowController {
         summaries.put(TaskType.XIULUO_V2, "1次");
         summaries.put(TaskType.AUTO_BATTLE, "无限");
         summaries.put(TaskType.SLEEP_COMPUTER, "收尾");
-        summaries.put(TaskType.DEBUG_COORDINATE, "手动");
-        summaries.put(TaskType.DEBUG_MAP_CALIBRATOR, "2点");
-        summaries.put(TaskType.DEBUG_NAVIGATION_STRESS, "5点");
         return summaries;
     }
 
@@ -303,8 +277,6 @@ public class MainWindowController {
 
     private void initControls() {
         clearButton = new Button("清空日志");
-        checkUpdateButton = new Button("检查更新");
-        sidebarUpdateButton = new Button("检查更新");
         logList = new ListView<>();
         windowTable = new TableView<>();
         windowTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
@@ -349,14 +321,6 @@ public class MainWindowController {
         presetFiveRingQueueButton = new Button("预设:五环");
         presetAutoBattleQueueButton = new Button("预设:自动战斗");
         presetFiveRingAutoBattleQueueButton = new Button("预设:五环+自动战斗");
-        presetDebugCoordinateQueueButton = new Button("坐标调试入队");
-        setDebugCoordinateTaskButton = new Button("当前任务设为坐标调试");
-        windowCaptureExperimentButton = new Button("后台截图实验");
-        backgroundAltQExperimentButton = new Button("后台按键 Alt+Q");
-        backgroundAlt1ExperimentButton = new Button("后台按键 Alt+1");
-        backgroundCenterClickExperimentButton = new Button("后台鼠标中心左键");
-        backgroundCenterRightClickExperimentButton = new Button("后台鼠标中心右键");
-        backgroundChildRightClickExperimentButton = new Button("子窗口中心右键");
         interactionMetricsDashboardButton = new Button("统计 Dashboard");
         automationMetricsDashboardButton = new Button("业务 Dashboard");
         saveMapLabelSampleButton = new Button("保存地图名样本");
@@ -447,8 +411,6 @@ public class MainWindowController {
         xiuluoRunCountField = buildTaskRunCountField(botProperties.getXiuluoMaxRuns());
         wuhuanRunCountComboBox = buildWuhuanRunCountComboBox(botProperties.getWuhuanMaxRuns());
         fivefoldRunCountField = buildTaskRunCountField(botProperties.getFivefoldMaxRuns());
-        tiantingRunCountField = buildTaskRunCountField(botProperties.getTiantingMaxRuns());
-        zhuaguiRunCountField = buildTaskRunCountField(botProperties.getZhuaguiMaxRuns());
         syncTaskCountSummariesFromProperties();
         summonSkillCleanEnabledCheckBox = new CheckBox("删除技能");
         summonSkillCleanEnabledCheckBox.setSelected(botProperties.isSummonSkillCleanEnabled());
@@ -485,12 +447,12 @@ public class MainWindowController {
         queueTaskList.setPrefHeight(92);
         queueTaskList.setMinHeight(64);
         queueTaskList.getStyleClass().add("queue-list");
-        mapCalibratorMapNameField = new TextField(botProperties.getDebugMapCalibratorMapName());
-        mapCalibratorMapNameField.setPromptText("地图校准名，例如：瑶池");
-        mapCalibratorMapNameField.setPrefWidth(180);
-        mapCalibratorHintLabel = new Label("地图测绘：同一个地图名会用于小地图名字样本和镜头边界；记录边界时先点按钮，然后3秒内把鼠标移到角色身上/脚下。旧“地图校准”任务仍用于 maps.json 小地图点击变换。");
-        mapCalibratorHintLabel.setWrapText(true);
-        mapCalibratorHintLabel.getStyleClass().add("queue-summary");
+        mapSurveyMapNameField = new TextField(botProperties.getMapSurveyMapName());
+        mapSurveyMapNameField.setPromptText("地图名，例如：瑶池");
+        mapSurveyMapNameField.setPrefWidth(180);
+        mapSurveyHintLabel = new Label("地图测绘：同一个地图名会用于小地图名字样本和镜头边界；记录边界时先点按钮，然后3秒内把鼠标移到角色身上/脚下。");
+        mapSurveyHintLabel.setWrapText(true);
+        mapSurveyHintLabel.getStyleClass().add("queue-summary");
         logList.getStyleClass().add("command-log");
         refreshPendingTaskQueueView();
         windowTable.getSelectionModel().getSelectedItems().addListener((ListChangeListener<WindowTaskSnapshot>) change -> {
@@ -617,13 +579,9 @@ public class MainWindowController {
         int xiuluoRuns = readRunCountField(xiuluoRunCountField);
         int wuhuanRuns = normalizeWuhuanRunCount(wuhuanRunCountComboBox.getValue());
         int fivefoldRuns = readRunCountField(fivefoldRunCountField);
-        int tiantingRuns = readRunCountField(tiantingRunCountField);
-        int zhuaguiRuns = readRunCountField(zhuaguiRunCountField);
         botProperties.setXiuluoMaxRuns(xiuluoRuns);
         botProperties.setWuhuanMaxRuns(wuhuanRuns);
         botProperties.setFivefoldMaxRuns(fivefoldRuns);
-        botProperties.setTiantingMaxRuns(tiantingRuns);
-        botProperties.setZhuaguiMaxRuns(zhuaguiRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
         botProperties.setTaskStartupPreparationEnabled(taskStartupPreparationEnabledCheckBox.isSelected());
         botProperties.setXiuluoMaintenanceRunImmediatelyOnStart(xiuluoMaintenanceRunImmediatelyCheckBox.isSelected());
@@ -660,8 +618,6 @@ public class MainWindowController {
         addWindowLog("设置已应用：修罗=" + botProperties.getXiuluoMaxRuns()
                 + " 五环=" + botProperties.getWuhuanMaxRuns()
                 + " 五倍=" + botProperties.getFivefoldMaxRuns()
-                + " 天庭=" + botProperties.getTiantingMaxRuns()
-                + " 抓鬼=" + botProperties.getZhuaguiMaxRuns()
                 + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
                 + " 修罗启动维护=" + (botProperties.isXiuluoMaintenanceRunImmediatelyOnStart() ? "开" : "关")
                 + " 三技能=" + (botProperties.isSummonSkillCleanEnabled() ? "开" : "关")
@@ -675,43 +631,6 @@ public class MainWindowController {
                 + " 召唤兽血=" + supplyText(botProperties.isPetHpSupplyEnabled(), botProperties.getPetHpSupplyThreshold())
                 + " 召唤兽法=" + supplyText(botProperties.isPetMpSupplyEnabled(), botProperties.getPetMpSupplyThreshold()));
         renderLogList();
-    }
-
-    private boolean syncDebugTaskConfigFromUi(List<TaskType> queue) {
-        if (mapCalibratorMapNameField != null) {
-            botProperties.setDebugMapCalibratorMapName(mapCalibratorMapNameField.getText() == null
-                    ? ""
-                    : mapCalibratorMapNameField.getText().trim());
-        }
-        if (queue == null || !queue.contains(TaskType.DEBUG_MAP_CALIBRATOR)) {
-            return true;
-        }
-
-        TextInputDialog dialog = new TextInputDialog(botProperties.getDebugMapCalibratorMapName());
-        dialog.setTitle("地图校准");
-        dialog.setHeaderText("请输入要写入 maps.json 的地图名");
-        dialog.setContentText("地图名");
-        Optional<String> result = dialog.showAndWait();
-        String mapName = result.map(String::trim).orElse("");
-        if (!hasText(mapName)) {
-            addWindowLog("地图校准未启动：地图名为空");
-            renderLogList();
-            return false;
-        }
-        botProperties.setDebugMapCalibratorMapName(mapName);
-        if (mapCalibratorMapNameField != null) {
-            mapCalibratorMapNameField.setText(mapName);
-        }
-        return true;
-    }
-
-    private void addMapCalibratorUiHintIfNeeded(List<TaskType> queue) {
-        if (queue == null || !queue.contains(TaskType.DEBUG_MAP_CALIBRATOR)) {
-            return;
-        }
-        String mapName = botProperties.getDebugMapCalibratorMapName();
-        addWindowLog("地图校准准备：" + nullToDash(mapName)
-                + "；启动后先等5秒给你打开地图/放到点A，然后点A停3秒，听到提示后移到点B再停3秒。详细OCR日志看 logs/dhxy-console.log");
     }
 
     private String supplyText(boolean enabled, int threshold) {
@@ -812,10 +731,8 @@ public class MainWindowController {
                 }
                 taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(normalized, "次"));
             }
-            case AUTO_BATTLE, DEBUG_COORDINATE, DEBUG_MAP_CALIBRATOR, DEBUG_TEAM_ROLE,
-                    DEBUG_XIULUO_STORY_OBJECTIVE, DEBUG_XIULUO_TASK_PANEL_OBJECTIVE,
-                    DEBUG_XIULUO_MOCK_OBJECTIVE, DEBUG_NAVIGATION_STRESS, UNKNOWN -> {
-                // These badges are labels/durations/debug hints, not max-run task limits.
+            case AUTO_BATTLE, UNKNOWN -> {
+                // These badges are labels/durations, not max-run task limits.
             }
         }
     }
@@ -893,9 +810,6 @@ public class MainWindowController {
 
     private void configureVisualStyles() {
         addStyleClass(clearButton, "secondary-button");
-        addStyleClass(checkUpdateButton, "secondary-button");
-        addStyleClass(sidebarUpdateButton, "secondary-button");
-        addStyleClass(sidebarUpdateButton, "side-update-button");
         addStyleClass(clearWindowSelectionButton, "secondary-button");
         addStyleClass(clearWindowSelectionButton, "toolbar-action-button");
         addStyleClass(registerWindowButton, "primary-button");
@@ -925,8 +839,6 @@ public class MainWindowController {
         addStyleClass(windowManageMenuButton, "secondary-button");
         addStyleClass(runControlMenuButton, "secondary-button");
         addStyleClass(registerTeamButton, "secondary-button");
-        addStyleClass(presetDebugCoordinateQueueButton, "secondary-button");
-        addStyleClass(setDebugCoordinateTaskButton, "secondary-button");
         addStyleClass(saveMapLabelSampleButton, "secondary-button");
         addStyleClass(testMapLabelSampleButton, "secondary-button");
         addStyleClass(recordCameraLeftButton, "secondary-button");
@@ -1014,10 +926,9 @@ public class MainWindowController {
                 buildSideNavButton("说明", "fas-info-circle", group, buildAboutPanel(), content));
         navButtons.getStyleClass().add("side-nav-buttons");
 
-        sidebarUpdateButton.setOnAction(event -> checkForUpdatesFromUi());
         Label versionLabel = new Label("v" + appVersionService.currentVersion());
         versionLabel.getStyleClass().add("side-version-label");
-        VBox sideFooter = new VBox(6, sidebarUpdateButton, versionLabel);
+        VBox sideFooter = new VBox(6, versionLabel);
         sideFooter.getStyleClass().add("side-footer");
         VBox spacer = new VBox();
         VBox.setVgrow(spacer, Priority.ALWAYS);
@@ -1104,9 +1015,6 @@ public class MainWindowController {
             handleMainStartPauseButton();
         });
         startWindowSelectedTaskButton.setOnAction(event -> {
-            if (!syncDebugTaskConfigFromUi(List.of(windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue()))) {
-                return;
-            }
             List<String> windowIds = getSelectedWindowIds();
             warnUnavailableSelectedWindows("启动已选任务");
             runWindowCommandInBackground(() ->
@@ -1250,10 +1158,7 @@ public class MainWindowController {
                 new Label("修罗次数"), xiuluoRunCountField,
                 new Label("五环次数"), wuhuanRunCountComboBox,
                 new Label("五倍次数"), fivefoldRunCountField);
-        FlowPane secondRow = buildControlRow(
-                new Label("天庭次数"), tiantingRunCountField,
-                new Label("抓鬼次数"), zhuaguiRunCountField);
-        return buildSection("任务次数", firstRow, secondRow);
+        return buildSection("任务次数", firstRow);
     }
 
     private Parent buildSettingsActionPanel() {
@@ -1406,24 +1311,6 @@ public class MainWindowController {
     }
 
     private Parent buildDiagnosticsPanel() {
-        presetDebugCoordinateQueueButton.setOnAction(event -> addTaskToQueue(TaskType.DEBUG_COORDINATE));
-        setDebugCoordinateTaskButton.setOnAction(event -> {
-            windowTaskTypeComboBox.setValue(TaskType.DEBUG_COORDINATE);
-            queueTaskTypeComboBox.setValue(TaskType.DEBUG_COORDINATE);
-            addWindowLog("调试：当前任务选择已切到坐标调试");
-            renderLogList();
-        });
-        windowCaptureExperimentButton.setOnAction(event -> runWindowCaptureExperiment());
-        backgroundAltQExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("后台按键 Alt+Q",
-                windowMessageInputExperimentService::postAltQ));
-        backgroundAlt1ExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("后台按键 Alt+1",
-                windowMessageInputExperimentService::postAlt1));
-        backgroundCenterClickExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("后台鼠标中心左键",
-                windowMessageInputExperimentService::clickClientCenter));
-        backgroundCenterRightClickExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("后台鼠标中心右键",
-                windowMessageInputExperimentService::rightClickClientCenter));
-        backgroundChildRightClickExperimentButton.setOnAction(event -> runWindowMessageInputExperiment("子窗口中心右键",
-                windowMessageInputExperimentService::rightClickLargestChildCenter));
         interactionMetricsDashboardButton.setOnAction(event -> openInteractionMetricsDashboard());
         automationMetricsDashboardButton.setOnAction(event -> openAutomationMetricsDashboard());
         saveMapLabelSampleButton.setOnAction(event -> runMapSurveyCommand("保存地图名样本",
@@ -1449,29 +1336,14 @@ public class MainWindowController {
         undoPlayerPointCorrectionButton.setOnAction(event -> runMapSurveyCommand("撤销上次地图记录", false,
                 (snapshot, mapName) -> mapSurveyService.undoLastMapSurveyRecordByCurrentMap(snapshot)));
 
-        FlowPane taskDebugRow = buildControlRow(
-                setDebugCoordinateTaskButton,
-                presetDebugCoordinateQueueButton,
-                taskStartupPreparationEnabledCheckBox,
-                new Label("坐标调试走现有任务/队列启动链路"));
-        FlowPane screenshotDebugRow = buildControlRow(
-                windowCaptureExperimentButton,
-                new Label("对选中窗口保存后台截图样本"));
-        FlowPane inputDebugRow = buildControlRow(
-                backgroundAltQExperimentButton,
-                backgroundAlt1ExperimentButton,
-                backgroundCenterClickExperimentButton,
-                backgroundCenterRightClickExperimentButton,
-                backgroundChildRightClickExperimentButton,
-                new Label("发送后台 WM_* 消息，并保存发送前/后 HWND 截图"));
         FlowPane dashboardRow = buildControlRow(
                 interactionMetricsDashboardButton,
                 automationMetricsDashboardButton,
                 new Label("打开本地输入/业务统计页面"));
         FlowPane mapSurveyNameRow = buildControlRow(
                 new Label("地图名"),
-                mapCalibratorMapNameField,
-                new Label("旧“地图校准”任务和测绘按钮都会读取这里"));
+                mapSurveyMapNameField,
+                new Label("测绘按钮读取这里"));
         FlowPane mapSurveySampleRow = buildControlRow(
                 saveMapLabelSampleButton,
                 testMapLabelSampleButton,
@@ -1492,31 +1364,20 @@ public class MainWindowController {
                 new Label("主日志：logs/dhxy-console.log"),
                 new Label("坐标/窗口诊断：logs/tracker-coordinate.log"));
         VBox wrapper = new VBox(8,
-                buildSection("任务调试", taskDebugRow),
-                buildSection("截图实验", screenshotDebugRow),
-                buildSection("后台输入实验", inputDebugRow),
                 buildSection("统计面板", dashboardRow),
                 buildSection("地图测绘",
                         mapSurveyNameRow,
                         mapSurveySampleRow,
                         mapSurveyBoundaryRow,
                         mapSurveyPlayerPointRow,
-                        mapCalibratorHintLabel),
-                buildSection("日志文件", logFileRow),
-                buildSection("后续入口占位",
-                        new Label("NPC 首点调试、截图/OCR、模板匹配、窗口截图检查等入口后续放在这里。")));
+                        mapSurveyHintLabel),
+                buildSection("日志文件", logFileRow));
         wrapper.setFillWidth(true);
         wrapper.getStyleClass().add("tab-content");
         return wrapper;
     }
 
     private Parent buildAboutPanel() {
-        checkUpdateButton.setOnAction(event -> checkForUpdatesFromUi());
-        HBox updateRow = new HBox(10,
-                new Label("当前版本：" + appVersionService.currentVersion()),
-                checkUpdateButton);
-        updateRow.setAlignment(Pos.CENTER_LEFT);
-
         VBox wrapper = new VBox(8,
                 buildSection("说明",
                         new Label("主控：日常窗口选择、任务启动、任务队列和窗口详情。"),
@@ -1524,71 +1385,10 @@ public class MainWindowController {
                         new Label("验证：后续放验证码和人工验证相关入口。"),
                         new Label("调试：坐标调试、日志路径、截图/OCR 等诊断入口。"),
                         new Label("日志：窗口命令执行摘要和 UI 操作日志。"),
-                        new Label("窗口详情从表格右侧浮出；主页面不再用整页滑动承载所有控件。")),
-                buildSection("软件更新",
-                        updateRow,
-                        new Label("当前只启用 mock 检查框架；不会下载、替换或重启程序。")));
+                        new Label("窗口详情从表格右侧浮出；主页面不再用整页滑动承载所有控件。"),
+                        new Label("当前版本：" + appVersionService.currentVersion())));
         wrapper.getStyleClass().add("tab-content");
         return wrapper;
-    }
-
-    private void checkForUpdatesFromUi() {
-        if (checkUpdateButton != null) {
-            checkUpdateButton.setDisable(true);
-        }
-        if (sidebarUpdateButton != null) {
-            sidebarUpdateButton.setDisable(true);
-        }
-        addWindowLog("更新检查：开始");
-        renderLogList();
-        CompletableFuture.supplyAsync(updateCheckService::checkForUpdates)
-                .whenComplete((result, error) -> javafx.application.Platform.runLater(() -> {
-                    if (checkUpdateButton != null) {
-                        checkUpdateButton.setDisable(false);
-                    }
-                    if (sidebarUpdateButton != null) {
-                        sidebarUpdateButton.setDisable(false);
-                    }
-                    UpdateCheckResult safeResult = error == null
-                            ? result
-                            : UpdateCheckResult.checkFailed(appVersionService.currentVersion(), error.getMessage());
-                    addWindowLog("更新检查：" + safeResult.message());
-                    renderLogList();
-                    showUpdateCheckDialog(safeResult);
-                }));
-    }
-
-    private void showUpdateCheckDialog(UpdateCheckResult result) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("软件更新");
-        alert.setHeaderText(result.message());
-        TextArea details = new TextArea(formatUpdateCheckDetails(result));
-        details.setEditable(false);
-        details.setWrapText(true);
-        details.setPrefRowCount(8);
-        details.setPrefColumnCount(58);
-        alert.getDialogPane().setContent(details);
-        alert.showAndWait();
-    }
-
-    private String formatUpdateCheckDetails(UpdateCheckResult result) {
-        StringBuilder builder = new StringBuilder()
-                .append("当前版本：").append(nullToDash(result.currentVersion()))
-                .append(System.lineSeparator())
-                .append("状态：").append(result.status())
-                .append(System.lineSeparator())
-                .append("说明：").append(nullToDash(result.message()));
-        UpdateManifest manifest = result.manifest();
-        if (manifest != null) {
-            builder.append(System.lineSeparator()).append(System.lineSeparator())
-                    .append("最新版本：").append(nullToDash(manifest.latestVersion())).append(System.lineSeparator())
-                    .append("下载地址：").append(nullToDash(manifest.downloadUrl())).append(System.lineSeparator())
-                    .append("SHA-256：").append(nullToDash(manifest.sha256())).append(System.lineSeparator())
-                    .append("强制更新：").append(manifest.mandatory() ? "是" : "否").append(System.lineSeparator())
-                    .append("发布时间：").append(nullToDash(manifest.publishedAt())).append(System.lineSeparator())
-                    .append("更新说明：").append(nullToDash(manifest.releaseNotes()));
-        }
-        return builder.toString();
     }
 
     private Parent buildSelectedWindowDetailPanel() {
@@ -2190,30 +1990,8 @@ public class MainWindowController {
 
     }
 
-    private void openTaskCountEditor(TaskType taskType) {
-        if (taskType == null || taskType == TaskType.UNKNOWN) {
-            return;
-        }
-        TextInputDialog dialog = new TextInputDialog(taskCountSummaries.getOrDefault(taskType, "按需"));
-        dialog.setTitle("任务参数");
-        dialog.setHeaderText(taskType.getDisplayName() + " 次数/时长");
-        dialog.setContentText("显示为");
-        Optional<String> result = dialog.showAndWait();
-        result.map(String::trim)
-                .filter(value -> !value.isBlank())
-                .ifPresent(value -> {
-                    taskCountSummaries.put(taskType, value);
-                    refreshPendingTaskQueueView();
-                    addWindowLog("任务参数摘要已更新：" + taskType.getDisplayName() + " = " + value);
-                    renderLogList();
-                });
-    }
-
     private String taskMetaText(TaskType taskType) {
         return switch (taskType) {
-            case DEBUG_COORDINATE, DEBUG_MAP_CALIBRATOR, DEBUG_NAVIGATION_STRESS -> "诊断";
-            case DEBUG_TEAM_ROLE -> "识别";
-            case DEBUG_XIULUO_STORY_OBJECTIVE, DEBUG_XIULUO_TASK_PANEL_OBJECTIVE, DEBUG_XIULUO_MOCK_OBJECTIVE -> "修罗";
             case SLEEP_COMPUTER -> "系统";
             default -> "任务";
         };
@@ -2459,25 +2237,6 @@ public class MainWindowController {
         runWindowCommandInBackground(() -> windowTaskControlService.registerWindows(requests));
     }
 
-    private Parent buildTaskQueuePanel() {
-        FlowPane queueInputRow = buildControlRow(
-                new Label("任务队列"), queueTaskTypeComboBox,
-                addCurrentTaskToQueueButton,
-                addQueueTaskButton);
-        FlowPane queueManageRow = buildControlRow(
-                removeQueueTaskButton,
-                moveQueueTaskUpButton,
-                moveQueueTaskDownButton,
-                clearQueueButton,
-                startQueueButton);
-        FlowPane queuePresetRow = buildControlRow(
-                presetCurrentTaskQueueButton,
-                presetFiveRingQueueButton,
-                presetAutoBattleQueueButton,
-                presetFiveRingAutoBattleQueueButton);
-        return buildSection("任务队列", queueSummaryLabel, queueInputRow, queueManageRow, queuePresetRow, queueTaskList);
-    }
-
     private void addSelectedTaskToQueue() {
         addTaskToQueue(queueTaskTypeComboBox.getValue());
     }
@@ -2552,16 +2311,12 @@ public class MainWindowController {
     }
 
     private void startPendingTaskQueue() {
-        if (!syncDebugTaskConfigFromUi(pendingTaskQueue)) {
-            return;
-        }
         if (pendingTaskQueue.isEmpty()) {
             addWindowLog("任务队列为空，无法启动");
             renderLogList();
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
         announceLocalOcrGateForStart();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         List<String> windowIds = getSelectedWindowIds();
@@ -2588,9 +2343,6 @@ public class MainWindowController {
     private void startMainSelectedTasks() {
         List<WindowTaskSnapshot> selectedSnapshots = getSelectedWindowSnapshots();
         boolean hasPausedSelection = hasPausedSelection(selectedSnapshots);
-        if (!syncDebugTaskConfigFromUi(pendingTaskQueue)) {
-            return;
-        }
         TaskType selectedTaskType = windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue();
         log.info("UI startMainSelectedTasks entered: selectedTask={} pendingQueue={} selectedWindows={}",
                 selectedTaskType, pendingTaskQueue, getSelectedWindowIds());
@@ -2600,7 +2352,6 @@ public class MainWindowController {
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
         announceLocalOcrGateForStart();
         List<String> selectedWindowIds = getSelectedWindowIds();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
@@ -2678,16 +2429,12 @@ public class MainWindowController {
     }
 
     private void startWindows(List<String> windowIds, String actionName) {
-        if (!syncDebugTaskConfigFromUi(pendingTaskQueue)) {
-            return;
-        }
         if (pendingTaskQueue.isEmpty()) {
             addWindowLog(actionName + "失败：还没有选择任务");
             renderLogList();
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        addMapCalibratorUiHintIfNeeded(pendingTaskQueue);
         announceLocalOcrGateForStart();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         runWindowCommandInBackground(() -> {
@@ -2765,33 +2512,6 @@ public class MainWindowController {
         queueTaskList.getSelectionModel().select(index);
     }
 
-    private void runWindowCaptureExperiment() {
-        List<WindowTaskSnapshot> selected = getSelectedWindowSnapshots();
-        if (selected.isEmpty()) {
-            addWindowLog("截图实验失败：请先选择至少一个已注册窗口");
-            renderLogList();
-            return;
-        }
-
-        runWindowCommandInBackground(() -> {
-            List<WindowCaptureExperimentService.WindowCaptureExperimentResult> results =
-                    windowCaptureExperimentService.captureSelectedWindows(selected);
-            int successCount = 0;
-            List<WindowTaskCommandDetail> details = new ArrayList<>();
-            for (WindowCaptureExperimentService.WindowCaptureExperimentResult result : results) {
-                if (result.isSuccess()) {
-                    successCount++;
-                    details.add(WindowTaskCommandDetail.success(result.getWindowId(), result.toDetailMessage()));
-                } else {
-                    details.add(WindowTaskCommandDetail.failed(result.getWindowId(), result.toDetailMessage()));
-                }
-            }
-            String message = "后台截图实验完成，输出目录：images/temp/window_capture_experiment";
-            return WindowTaskCommandResult.of(selected.size(), successCount, message,
-                    windowTaskControlService.getSnapshots(), List.of(), details);
-        });
-    }
-
     private void openInteractionMetricsDashboard() {
         try {
             Path dashboard = windowInteractionMetricsService.writeDashboardNow();
@@ -2822,45 +2542,19 @@ public class MainWindowController {
         renderLogList();
     }
 
-    private void runWindowMessageInputExperiment(String actionName, WindowMessageExperimentCommand command) {
-        List<WindowTaskSnapshot> selected = getSelectedWindowSnapshots();
-        if (selected.isEmpty()) {
-            addWindowLog(actionName + "失败：请先选择至少一个已注册窗口");
-            renderLogList();
-            return;
-        }
-
-        runWindowCommandInBackground(() -> {
-            List<WindowMessageInputExperimentService.WindowMessageInputExperimentResult> results = command.execute(selected);
-            int successCount = 0;
-            List<WindowTaskCommandDetail> details = new ArrayList<>();
-            for (WindowMessageInputExperimentService.WindowMessageInputExperimentResult result : results) {
-                if (result.isPosted()) {
-                    successCount++;
-                    details.add(WindowTaskCommandDetail.success(result.getWindowId(), result.toDetailMessage()));
-                } else {
-                    details.add(WindowTaskCommandDetail.failed(result.getWindowId(), result.toDetailMessage()));
-                }
-            }
-            String message = actionName + "完成，输出目录：images/temp/window_input_experiment";
-            return WindowTaskCommandResult.of(selected.size(), successCount, message,
-                    windowTaskControlService.getSnapshots(), List.of(), details);
-        });
-    }
-
     private void runMapSurveyCommand(String actionName, MapSurveyCommand command) {
         runMapSurveyCommand(actionName, true, command);
     }
 
     private void runMapSurveyCommand(String actionName, boolean requireMapName, MapSurveyCommand command) {
-        if (mapCalibratorMapNameField != null) {
-            botProperties.setDebugMapCalibratorMapName(mapCalibratorMapNameField.getText() == null
+        if (mapSurveyMapNameField != null) {
+            botProperties.setMapSurveyMapName(mapSurveyMapNameField.getText() == null
                     ? ""
-                    : mapCalibratorMapNameField.getText().trim());
+                    : mapSurveyMapNameField.getText().trim());
         }
-        String mapName = botProperties.getDebugMapCalibratorMapName();
+        String mapName = botProperties.getMapSurveyMapName();
         if (requireMapName && !hasText(mapName)) {
-            addWindowLog(actionName + "失败：请先填写地图校准名");
+            addWindowLog(actionName + "失败：请先填写地图名");
             renderLogList();
             return;
         }
@@ -2994,9 +2688,6 @@ public class MainWindowController {
                         addCurrentTaskToQueueButton, addQueueTaskButton, removeQueueTaskButton, moveQueueTaskUpButton, moveQueueTaskDownButton,
                         clearQueueButton, startQueueButton, presetCurrentTaskQueueButton, presetFiveRingQueueButton,
                         presetAutoBattleQueueButton, presetFiveRingAutoBattleQueueButton,
-                        presetDebugCoordinateQueueButton, setDebugCoordinateTaskButton, windowCaptureExperimentButton,
-                        backgroundAltQExperimentButton, backgroundCenterClickExperimentButton, backgroundCenterRightClickExperimentButton,
-                        backgroundChildRightClickExperimentButton,
                         saveMapLabelSampleButton, testMapLabelSampleButton,
                         recordCameraLeftButton, recordCameraRightButton, recordCameraTopButton, recordCameraBottomButton,
                         recordCameraCenterButton, testProjectedPlayerPointButton,
@@ -3256,11 +2947,6 @@ public class MainWindowController {
         setButtonDisabled(startCurrentTaskButton, !mainStartEnabled);
         setButtonDisabled(startWindowSelectedTaskButton, !hasSelection);
         setButtonDisabled(startQueueButton, !hasSelection || !hasQueue);
-        setButtonDisabled(windowCaptureExperimentButton, !hasSelection);
-        setButtonDisabled(backgroundAltQExperimentButton, !hasSelection);
-        setButtonDisabled(backgroundCenterClickExperimentButton, !hasSelection);
-        setButtonDisabled(backgroundCenterRightClickExperimentButton, !hasSelection);
-        setButtonDisabled(backgroundChildRightClickExperimentButton, !hasSelection);
         if (pauseSelectedWindowsButton != null) {
             pauseSelectedWindowsButton.setText(showResumeAction ? "继续" : "暂停");
         }
@@ -3314,8 +3000,6 @@ public class MainWindowController {
         setNodeDisabled(xiuluoRunCountField, disabled);
         setNodeDisabled(wuhuanRunCountComboBox, disabled);
         setNodeDisabled(fivefoldRunCountField, disabled);
-        setNodeDisabled(tiantingRunCountField, disabled);
-        setNodeDisabled(zhuaguiRunCountField, disabled);
         setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
         setNodeDisabled(xiuluoMaintenanceRunImmediatelyCheckBox, disabled);
         setNodeDisabled(summonSkillCleanEnabledCheckBox, disabled);
@@ -3475,21 +3159,12 @@ public class MainWindowController {
         return List.of(TaskType.values()).stream()
                 .filter(taskType -> taskType != TaskType.UNKNOWN)
                 .filter(taskType -> taskType != TaskType.XIULUO)
-                .filter(taskType -> taskType != TaskType.DEBUG_TEAM_ROLE)
-                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_STORY_OBJECTIVE)
-                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_TASK_PANEL_OBJECTIVE)
-                .filter(taskType -> taskType != TaskType.DEBUG_XIULUO_MOCK_OBJECTIVE)
                 .toList();
     }
 
     @FunctionalInterface
     private interface WindowCommand {
         WindowTaskCommandResult execute();
-    }
-
-    @FunctionalInterface
-    private interface WindowMessageExperimentCommand {
-        List<WindowMessageInputExperimentService.WindowMessageInputExperimentResult> execute(List<WindowTaskSnapshot> selected);
     }
 
     @FunctionalInterface

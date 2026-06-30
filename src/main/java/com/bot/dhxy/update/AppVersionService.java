@@ -1,19 +1,22 @@
 package com.bot.dhxy.update;
 
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
 public class AppVersionService {
-    private final UpdateProperties properties;
+    private final String currentVersion;
+
+    public AppVersionService(@Value("${bot.app-version:0.1.0-dev}") String currentVersion) {
+        this.currentVersion = currentVersion;
+    }
 
     /**
-     * Returns the application version used by update checks.
+     * Returns the application version displayed in the JavaFX shell.
      *
      * @return configured local app version; this is separate from Maven packaging until the release pipeline is added.
      */
     public String currentVersion() {
-        return properties.getCurrentVersion();
+        return currentVersion;
     }
 }

@@ -738,15 +738,14 @@ public class WindowTaskRunner {
         Future<?> future = combatWatcherExecutor.submit(() -> runCombatWatcherLoop(taskType, executionContext, running));
         log.info("{} window [{}] window observer started for task={} combatGuard={} pathingProbe={}",
                 executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-            shouldRunWindowObserver(taskType), taskType == TaskType.DEBUG_NAVIGATION_STRESS);
+            shouldRunWindowObserver(taskType), false);
         return new CombatWatcherHandle(running, future);
     }
 
     private boolean shouldRunWindowObserver(TaskType taskType) {
         return taskType == TaskType.WUHuan_V2
             || taskType == TaskType.XIULUO_V2
-            || taskType == TaskType.WUBEI
-            || taskType == TaskType.DEBUG_NAVIGATION_STRESS;
+            || taskType == TaskType.WUBEI;
     }
 
     private void runCombatWatcherLoop(TaskType taskType,

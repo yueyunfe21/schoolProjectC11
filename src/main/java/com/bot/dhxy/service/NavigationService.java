@@ -855,52 +855,6 @@ public class NavigationService {
                 request.getSource(), request.getTargetKeyword(), request.getFromMap(), remembered != null);
     }
 
-    // ========================
-    // World-map search helpers
-    // ========================
-
-    private boolean retryWorldMapDestinationClick(String targetMapName) {
-        NavigationResult gateResult = routeDialogGateBeforeWorldMap(
-                targetMapName, "retryWorldMapDestinationClick", "retryWorldMapDestinationClick:before-open");
-        if (gateResult != null) {
-            log.info("retry world-map route blocked by route dialog gate: target={} status={} message={}",
-                    targetMapName, gateResult.getStatus(), gateResult.getMessage());
-            return gateResult.getStatus() == NavigationResultStatus.PATHING_STARTED;
-        }
-        NavigationRuntimeState state = state();
-        if (state.lastAbsoluteLogicalX != DEFAULT_LOGICAL_COORDINATE
-                && state.lastAbsoluteLogicalY != DEFAULT_LOGICAL_COORDINATE) {
-            int clickX = state.lastAbsoluteLogicalX + random.nextInt(7) - 3;
-            int clickY = state.lastAbsoluteLogicalY + random.nextInt(7) - 3;
-            return inputSequences.submitExclusiveAndWait("retryWorldMapDestinationClick", () -> {
-                boolean routePanelOpened = false;
-                try {
-                    if (!openWorldMapRoutePanelDirect()) {
-                        return false;
-                    }
-                    routePanelOpened = true;
-                    inputProvider.clickLeft(clickX, clickY, 150);
-                    if (!TaskSleep.sleep(2000)) {
-                        return false;
-                    }
-                    gameStateUtil.recordMovementIntent("retryWorldMapDestinationClick");
-                    return true;
-                } finally {
-                    if (routePanelOpened && !InputActionScope.isCancelled()) {
-                        closeMapSearchInputAfterRouteClick("retryWorldMapDestinationClick:routeClicked");
-                    }
-                }
-            });
-        }
-        if (targetMapName == null || targetMapName.isBlank()) {
-            return false;
-        }
-        NavigationResult submitResult = submitWorldMapSearchAndClickDestination(
-                null, targetMapName, "retryWorldMapDestinationClick");
-        return submitResult.getStatus() == NavigationResultStatus.PATHING_STARTED
-                || submitResult.success();
-    }
-
     /**
      * Consume a route-transfer option that the window watcher has already prepared.
      *
@@ -1159,15 +1113,6 @@ public class NavigationService {
                 && matchesCurrentPreparedDialogBinding(runtime, action)
                 && matchesActivePreparedRouteIntent(runtime, action)
                 && action.verifiedWithin(nowMs, ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS);
-    }
-
-    private boolean matchesActivePreparedIntent(WindowRuntimeContext runtime, PreparedDialogAction action) {
-        if (runtime == null || action == null || action.getIntentId() == null) {
-            return true;
-        }
-        return runtime.getActivePathingIntent()
-                .map(intent -> Objects.equals(intent.getIntentId(), action.getIntentId()))
-                .orElse(false);
     }
 
     private boolean matchesActivePreparedRouteIntent(WindowRuntimeContext runtime, PreparedDialogAction action) {
@@ -2341,24 +2286,6 @@ public class NavigationService {
         inputProvider.moveMouse(x, y);
         log.info("navigation map search: mouse moved away after x2 close source={} point=({}, {})", source, x, y);
     }
-
-    private boolean openWorldMapRoutePanelDirect() {
-        if (!isWorldMapTitleVisible()) {
-            inputProvider.pressAlt2();
-            if (!TaskSleep.sleep(500)) {
-                return false;
-            }
-        }
-
-        Point xunluPoint = coordinateHelper.findImageAbsoluteCoordinate(XUNLU_TEMPLATE_PATH, THRESHOLD_NORMAL);
-        if (xunluPoint == null) {
-            return false;
-        }
-
-        inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
-        return TaskSleep.sleep(250);
-    }
-
 
     private boolean isWorldMapTitleVisible() {
         return coordinateHelper.findImageAbsoluteCoordinate(WORLD_MAP_TITLE_TEMPLATE_PATH, THRESHOLD_NORMAL) != null;

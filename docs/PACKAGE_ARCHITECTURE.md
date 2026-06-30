@@ -1456,6 +1456,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR137 | 唐德+Codex | Deprecated: runtime rolled back after fresh WUBEI 黄袍/tracker regression | `WubeiTask`, `WubeiRoundContext`, removed CR137 guard tests, 五倍接任务/暗雷重抽/黄袍 tracker 日志 | CR137 的接任务后后台 `T0/T+1.5s` tracker 预解析与暗雷快速撤销 prepath 已按用户要求整张撤回。Fresh runtime `2026-06-28 04:07:28` 证明该路径能读到 `智斗黄袍` 标题和 `火云戈壁` 绿字，但 `yellow=''`，后续在可见 `OPTION` 下反复重点击同一绿字。Rollback 删除 `WubeiRoundContext.trackerParseFuture`、`WubeiTask` accept-time tracker future/snapshot/fast 暗雷 reroll 方法、`WubeiAcceptWindowSnapshot` 以及 CR137 source guard 测试；五倍恢复为接任务后先保留 CR134 post-accept prepath，再等待 tracker refresh 并现场 `READ_TRACKER`。暗雷回到现场读到 `暗雷怪` 后重抽的旧路径。后续如要重新做暗雷快重抽，应新开 CR，先解决黄袍/绿字/interest 证据，不复用本卡实现。 |
 | CR138 | 唐德 | Done：18:37 连续 `[五倍, 修罗x2]` fresh runtime 通过 | `AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, `WindowTaskControlService`, `LeftTopStatusSwitchService`, 本地队伍支援/session model, 连续 `[五倍, 修罗]` 日志/测试 | 已改：`WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 已拆分 raw `liveRole` 与 `assignmentRole`，CR138 session evidence 只写 raw live role，`UNKNOWN + cached LEADER` 不再能成为 live leader evidence。已改：`AutoBattleTask` 对 `requested=xiuluo_v2/wubei/wuhuan_v2` 但 `localSession=null` 的队员恢复旧 team pathing window gate，避免 `17:55` 这类接任务前 standalone 三技能抢输入。Fresh `2026-06-29 18:37:14-18:46:05` 连续 `[五倍, 修罗]` 验收通过：五倍成功、修罗完成 2 轮；手动离队后 `TEAM_RETURN` gate 打开，队员归队点击都有目标窗口 focus 证据；`requested=wubei` 队员在修罗 `FIRST_AID` gate 打开后成功补法，未见旧 `requestedTaskCode` gate 卡死或提前放行。 |
 | CR139 | 唐德 | Review：连续任务切换复用启动准备 source 修复完成 | `DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `WindowRuntimeContext`, `WindowTaskRunner`, 连续任务队列 startup logs/tests | 已新增 `CLEAN_QUEUE_TRANSITION` startup mode：同一 UI 队列里上一个任务 `SUCCESS`、任务类型切换、且 common startup-prep marker 已存在时，后续五倍/修罗跳过全局启动准备和非必要 hot-start/startup resume；standalone/after-combat/失败或 marker 缺失路径仍保留原恢复逻辑。聚焦 guard、compile、test-compile 通过；fresh `[五倍, 修罗]` runtime 待验收。 |
+| CR140 | Codex | Review：发布清理第二批完成；compile/test-compile/source guards 通过 | debug task/debug main/dev tools/mock update/placeholder task cleanup, dead private helper cleanup, `MainWindowController`, `DefaultTaskFactory`, `BotProperties`, `NavigationService`, `NpcClickService`, `BagService`, `PlayerStateService`, `FiveRingTaskV2`, `XiuluoTaskV2`, `OcrRoiMemoryService`, `MiniMapCoordinateReader`, `AutomationMetricsService`, `docs/run-reports/2026-06-29-v1-code-cleanup-audit.md` | 第一版发布清理已执行两批：第一批删除 `src/main/java/com/bot/dhxy/debug` 下 one-off debug mains、可见 debug task、断掉/实验工具、旧 `XiuluoTask.java`/`TrackerTest.java`/`WindowScanner.java`、mock UI apps、mock update checker、未接入抓鬼/天庭占位配置、死掉的 `debug.npc-first-shot` 开关，以及对应 stale tests/docs；第二批删除经全仓确认无调用的私有孤儿 helper/wrapper，包括旧 world-map retry helper、NPC click 旧 ROI/vision-memory wrapper、包裹一次性拖动孤岛、补给 confirm 孤岛、五倍右键单模板 wrapper、小地图旧 digit wrapper、metrics 旧事件/表格 HTML 渲染函数、ROI 旧 click-sample region 分支。保留 `@Deprecated` retained source、`navigateToLingShouVillageViaZhangWen` 张文路线对照、UI source-guard helper，以及正式 OCR/template/click/navigation/team-return/return-item/expected-combat 业务路径。验证：`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、`mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.ui.MainWindowControllerSourceGuardTest" exec:java`、`XiuluoStartupTrackerFirstHotStartWiringTest`、`AfterCombatStartupRecoveryWiringTest` passed。最终私有方法扫描只剩上述刻意保留项。 |
 
 Card CR129: Round-finish metrics/dashboard writes must not block next round
 
@@ -13047,6 +13048,70 @@ Validation plan:
     again, and true standalone 修罗 hot-start/startup recovery must remain available.
   - If the first task's prep failed/was interrupted/started in combat and never marked complete, the
     second task must not blindly skip common startup prep or hot-start/recovery.
+
+Card CR140: 第一版代码瘦身与死代码审计
+
+Status:
+
+- Review. Owner: Codex.
+- First release-cleanup implementation batch is complete; compile/test guards passed.
+- Report: `docs/run-reports/2026-06-29-v1-code-cleanup-audit.md`.
+
+Goal:
+
+- Remove obvious release-tree junk after the first-version 五倍/修罗 feature set became usable:
+  stale debug mains, visible debug tasks, disconnected dev tools, old fully-commented source,
+  mock-only UI/update placeholders, dead config switches, and stale tests/docs.
+- Keep `@Deprecated` retained production source and avoid OCR/template/click/navigation,
+  team-return, return-item, expected-combat, and maintenance fallback business changes.
+
+Implementation batch:
+
+1. Removed debug task surface from production task selection:
+   - Deleted `DebugCoordinateTask`, `DebugMapCalibratorTask`, `DebugNavigationStressTask`,
+     `DebugTeamRoleTask`, and the three debug 修罗 objective tasks.
+   - Removed their `TaskType`, `DefaultTaskFactory`, startup assignment, runner observer, and JavaFX
+     UI wiring.
+2. Removed one-off debug/replay mains and obsolete dev tools:
+   - Deleted `src/main/java/com/bot/dhxy/debug/*`, old `TrackerTest.java`, `WindowScanner.java`,
+     `XiuluoTask.java`, standalone calibration/sniffer/hover tools, and broken `tools/`
+     benchmark/probe runners.
+   - Removed checked-in script `.class` / `.pyc` artifacts and retired `YellowOcrProbe`.
+3. Removed release-visible mock/placeholder UI:
+   - Deleted JavaFX mock apps/styles.
+   - Removed mock update checker/provider/status/version-comparator package surface and update
+     buttons; kept only a tiny `AppVersionService` for the UI version label.
+   - Removed unimplemented 天庭/抓鬼 count settings and the unused `ZhuaguiTask` placeholder.
+4. Removed dead debug helpers:
+   - Deleted debug-only NPC click helpers, 摄妖香 debug capture helper, and team-role debug helper.
+   - Removed stale source guard tests for removed debug paths and updated the remaining UI source
+     guard to block release-removed debug/experiment controls.
+5. Synchronized docs/config:
+   - Removed dead `debug.npc-first-shot` config and updated `AGENTS.md`, `docs/DHXY_CONTEXT.md`,
+     `docs/LOCAL_OCR_EXPERIMENT.md`, and `docs/UI.md` so they no longer point to removed entry
+     points.
+
+Hard boundaries:
+
+- Do not delete `@Deprecated` retained source just because it looks old; those remain until a
+  separate card proves they are no longer part of the safety net.
+- Do not simplify OCR/template/click/navigation, task tracker, team-return, return-item,
+  expected-combat, or maintenance fallback logic from static inspection alone.
+- Any visual matching or click-target change remains subject to testcase replay rules in `AGENTS.md`.
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed.
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.ui.MainWindowControllerSourceGuardTest" exec:java` passed.
+- Post-cleanup scans only find the retired names in historical docs that intentionally mention the
+  cleanup, not in active `src/main/java`, `src/test/java`, `scripts`, or `tools`.
+
+Next cleanup candidates:
+
+- Large-class and wrapper simplification should be split into separate behavior-preserving cards.
+- Any remaining retained legacy comparison path must be closed with fresh evidence or an explicit
+  user decision; do not fold it into CR140.
 
 ## Package Rules
 

@@ -137,11 +137,6 @@
     -fx-alignment: center-left;
 }
 
-.side-update-button {
-    -fx-max-width: infinity;
-    -fx-min-height: 34px;
-}
-
 .side-version-label {
     -fx-text-fill: -dhxy-muted;
     -fx-font-size: 12px;

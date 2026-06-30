@@ -164,7 +164,6 @@ public class XiuluoTaskV2 implements GameTask {
     private static final String DIALOG_UNDER_THREE_BLOCKED = "xiuluo.underThreeBlocked";
     private static final String BUSINESS_ACTION_HEAL_PET = "heal-pet";
     private static final String BUSINESS_ACTION_REPAIR_EQUIPMENT = "repair-equipment";
-    private static final int STORY_OBJECTIVE_ATTEMPTS = 3;
     private static final int MAX_PHASE_RETRY = 1;
     private static final int MAX_RECOVERY_COUNT = 2;
     private static final int MAX_CONSECUTIVE_ROUND_FAILURES = 10;
@@ -2574,15 +2573,6 @@ public class XiuluoTaskV2 implements GameTask {
         return TEAM_RETURN_ROUND_DONE_SOURCE;
     }
 
-    private XiuluoStepOutcome skeletonContinue(TaskExecutionContext context,
-                                               XiuluoRoundContext state,
-                                               XiuluoPhase nextPhase) {
-        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
-        log.info("[xiuluo-v2] skeleton phase: round={} phase={} source={} objective={} -> {}",
-                state.round(), state.phase(), state.source(), state.objective(), nextPhase);
-        return XiuluoStepOutcome.continueTo(state.next(nextPhase, "skeleton:" + state.phase()), "skeleton transition");
-    }
-
     private XiuluoStepOutcome recoverAcceptNavigationFailure(XiuluoRoundContext state) {
         /*
          * The accept NPC route is already the normal navigation path. On failure, only remove
@@ -2638,33 +2628,6 @@ public class XiuluoTaskV2 implements GameTask {
         uiCleanerService.cleanUpAll();
         return retryCurrentOrRecover(state, XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC,
                 "accept dialog option not matched");
-    }
-
-    private XiuluoStepOutcome recoverObjectiveReadFailure(TaskExecutionContext context, XiuluoRoundContext state) {
-        TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
-        /*
-         * Objective read owns the story/task-panel fallback. If both miss, first re-check known
-         * Xiuluo dialogs: an under-five/under-three prompt or reopened accept dialog can legitimately
-         * appear here and should be routed by action key instead of being treated as unknown UI.
-         */
-        Optional<XiuluoStepOutcome> knownDialog = handleKnownXiuluoOptionDialog(
-                context, state, "xiuluo-v2:objective-recovery:" + state.source(), true);
-        if (knownDialog.isPresent()) {
-            return knownDialog.get();
-        }
-        Optional<XiuluoStepOutcome> blockedDialog = handleUnderThreeBlockedDialog(
-                context, state, "xiuluo-v2:objective-recovery-under-three:" + state.source());
-        if (blockedDialog.isPresent()) {
-            return blockedDialog.get();
-        }
-
-        /*
-         * After scoped 修罗 checks miss, only close generic X windows. Do not click random option
-         * rows here because the open dialog may be unrelated business state.
-         */
-        uiCleanerService.closeAllGenericWindows();
-        return retryCurrentOrRecover(state, XiuluoPhase.ACCEPT_TASK_CLICK_NPC,
-                "objective not found");
     }
 
     private XiuluoStepOutcome recoverBackgroundObjectiveReadFailure(TaskExecutionContext context,
@@ -3383,30 +3346,6 @@ public class XiuluoTaskV2 implements GameTask {
             return XiuluoStepOutcome.failed(recoveredState, message + "; recovery limit exceeded");
         }
         return XiuluoStepOutcome.continueTo(recoveredState, message);
-    }
-
-    /**
-     * Read the objective that appears immediately after accepting Xiuluo.
-     *
-     * @param context current task context for stop checks during repeated story screenshots.
-     * @param source diagnostic source added to screenshot/OCR logs.
-     * @return combat target parsed from the current story dialog, or empty when the dialog is not
-     *         visible/recognizable.
-     */
-    private Optional<NpcTarget> tryReadCurrentStoryObjective(TaskExecutionContext context, String source) {
-        for (int i = 1; i <= STORY_OBJECTIVE_ATTEMPTS; i++) {
-            TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
-            String reason = "xiuluo-v2:story-objective:" + source + ":try" + i;
-            DialogResult result = dialogService.handleDialog(DialogHandleRequest.readStoryObjective(reason));
-            Optional<NpcTarget> objective = Optional.ofNullable(result.getObjective())
-                    .map(this::toXiuluoObjective);
-            if (objective.isPresent()) {
-                log.info("[xiuluo-v2] objective parsed from story: target={}", objective.get());
-                return objective;
-            }
-            TaskSleep.sleepOrStop(context, 500L, "Xiuluo V2 task interrupted");
-        }
-        return Optional.empty();
     }
 
     private NpcTarget toXiuluoObjective(ObjectiveTextResult value) {

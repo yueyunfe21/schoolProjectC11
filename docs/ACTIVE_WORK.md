@@ -1,5 +1,36 @@
 # DHXY Active Work
 
+## 2026-06-29 / CR140 发布前代码瘦身第二批
+
+Status: review / second cleanup batch implemented / compile, test-compile, and focused source guards passed.
+
+Scope:
+
+- Continued release-prep cleanup without changing task business decisions.
+- Removed dead private helpers/wrappers after full-repo reference checks:
+  - `NavigationService` old `retryWorldMapDestinationClick(...)` and dead prepared-intent wrapper.
+  - `NpcClickService` unused template-region/scan-region/vision-memory/capture wrappers.
+  - `BagService` orphan first-main-bag positioning method and its constants/cache.
+  - `PlayerStateService` orphan supply-confirm helper.
+  - `FiveRingTaskV2` single-template right-click wrapper now superseded by the multi-template path.
+  - `XiuluoTaskV2` unused skeleton/objective story recovery helpers.
+  - `AutomationMetricsService` old event/recent/counter/latency table HTML render helpers not used by the current task-ledger dashboard.
+  - `OcrRoiMemoryService` legacy click-sample region hint branch and dead compatibility helpers.
+  - `MiniMapCoordinateReader` old direct digit-box recognition wrapper.
+- Kept explicit retained source:
+  - `@Deprecated` `XiuluoTaskV2.resolveStartupTaskPanelHotStart(...)`, because source guards require it as legacy comparison/debug code.
+  - `NavigationService.navigateToLingShouVillageViaZhangWen(...)`, because CR140 cleanup boundary keeps deprecated/retained route comparison code.
+  - `MainWindowController.rememberVisibleWindowTableSelection(...)`, because `MainWindowControllerSourceGuardTest` uses it as the visible-selection policy marker.
+
+Verification:
+
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.ui.MainWindowControllerSourceGuardTest" exec:java`
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.xiuluo.XiuluoStartupTrackerFirstHotStartWiringTest" exec:java`
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.AfterCombatStartupRecoveryWiringTest" exec:java`
+- Final private-method scan reports only the three intentional retained methods above.
+
 ## 2026-06-29 / CR139 连续任务切换复用启动准备
 
 Status: review / source repaired / focused guards, compile, and test-compile passed / fresh runtime pending.

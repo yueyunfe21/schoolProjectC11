@@ -778,23 +778,6 @@ public class AutomationMetricsService {
                 "metricFile=" + eventLogPath);
     }
 
-    private String eventLocator(AutomationMetricEvent event) {
-        return String.join("\n",
-                "DHXY_EVENT_REF v1",
-                "eventId=" + valueOrDefault(event.getEventId(), ""),
-                "timestamp=" + valueOrDefault(event.getTimestamp(), ""),
-                "taskCode=" + valueOrDefault(event.getTaskCode(), ""),
-                "taskName=" + valueOrDefault(event.getTaskName(), ""),
-                "windowId=" + valueOrDefault(event.getWindowId(), ""),
-                "role=" + valueOrDefault(event.getWindowRole(), ""),
-                "phase=" + valueOrDefault(event.getPhase(), ""),
-                "eventType=" + stringify(event.getEventType()),
-                "status=" + stringify(event.getStatus()),
-                "durationMs=" + (event.getElapsedMs() == null ? "" : event.getElapsedMs()),
-                "consoleLog=" + Path.of("logs", "dhxy-console.log").toAbsolutePath().normalize(),
-                "metricFile=" + eventLogPath);
-    }
-
     private String formatDuration(long elapsedMs) {
         if (elapsedMs < 60_000L) {
             return String.format(Locale.ROOT, "%.1fs", elapsedMs / 1000.0);
@@ -1247,77 +1230,6 @@ public class AutomationMetricsService {
                 renderTaskLedger());
     }
 
-    private String renderCounterTable(ConcurrentMap<String, LongAdder> counters, String label) {
-        List<Map.Entry<String, LongAdder>> rows = counters.entrySet().stream()
-                .sorted(Comparator.comparingLong((Map.Entry<String, LongAdder> entry) -> entry.getValue().sum()).reversed())
-                .limit(12)
-                .toList();
-        if (rows.isEmpty()) {
-            return "<div class=\"empty\">No data yet.</div>";
-        }
-        StringBuilder body = new StringBuilder();
-        for (Map.Entry<String, LongAdder> row : rows) {
-            body.append("<tr><td>").append(escape(row.getKey())).append("</td><td>")
-                    .append(row.getValue().sum()).append("</td></tr>");
-        }
-        return "<table><thead><tr><th>" + escape(label) + "</th><th>Count</th></tr></thead><tbody>"
-                + body + "</tbody></table>";
-    }
-
-    private String renderLatencyTable() {
-        if (latencyByEventType.isEmpty()) {
-            return "<div class=\"empty\">No latency data yet.</div>";
-        }
-        StringBuilder body = new StringBuilder();
-        latencyByEventType.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-                    LatencySnapshot snapshot = entry.getValue().snapshot();
-                    body.append("<tr><td>").append(escape(entry.getKey())).append("</td><td>")
-                            .append(snapshot.getCount()).append("</td><td>")
-                            .append(snapshot.getAvgMs()).append("</td><td>")
-                            .append(snapshot.getMaxMs()).append("</td></tr>");
-                });
-        return "<table><thead><tr><th>Event</th><th>Count</th><th>Avg ms</th><th>Max ms</th></tr></thead><tbody>"
-                + body + "</tbody></table>";
-    }
-
-    private String renderRecentRounds() {
-        List<RoundSummary> rounds = recentRoundSnapshot();
-        if (rounds.isEmpty()) {
-            return "<div class=\"empty\">还没有轮次数据。后续任务接入 round metrics 后，这里会按一轮一行展示耗时和结果。</div>";
-        }
-        StringBuilder rows = new StringBuilder();
-        for (RoundSummary round : rounds) {
-            String css = switch (round.getStatus()) {
-                case SUCCESS -> "ok";
-                case WARNING -> "warn";
-                case FAILED, FATAL -> "fail";
-                default -> "";
-            };
-            rows.append("<tr>")
-                    .append("<td>").append(escape(shortTime(round.getStartAt()))).append("</td>")
-                    .append("<td>").append(escape(shortTime(round.getEndAt()))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getWindowId(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getCharacter(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getTaskCode(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getRoundType(), "-"))).append("</td>")
-                    .append("<td class=\"").append(css).append("\">")
-                    .append(escape(valueOrDefault(round.getResultCode(), stringify(round.getStatus()))))
-                    .append("</td>")
-                    .append("<td>").append(round.getElapsedMs() == null ? "-" : formatDuration(round.getElapsedMs())).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getSlowestStage(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(round.getMessage(), "-"))).append("</td>")
-                    .append("<td><button type=\"button\" data-locator=\"")
-                    .append(escapeAttribute(roundLocator(round)))
-                    .append("\" onclick=\"copyRoundLocator(this)\">复制定位</button></td>")
-                    .append("</tr>");
-        }
-        return "<table><thead><tr><th>开始</th><th>结束</th><th>窗口</th><th>角色</th><th>任务</th>"
-                + "<th>轮次类型</th><th>结果</th><th>耗时</th><th>最慢阶段</th><th>摘要</th><th>定位</th>"
-                + "</tr></thead><tbody>" + rows + "</tbody></table>";
-    }
-
     private String renderTaskLedger() {
         List<RoundSummary> rounds = ledgerRounds();
         if (rounds.isEmpty()) {
@@ -1366,33 +1278,6 @@ public class AutomationMetricsService {
                   </table>
                 </div>
                 """.formatted(rows);
-    }
-
-    private String renderRecentEvents() {
-        List<AutomationMetricEvent> events = recentEventSnapshot();
-        if (events.isEmpty()) {
-            return "<div class=\"empty\">No events yet.</div>";
-        }
-        StringBuilder rows = new StringBuilder();
-        for (AutomationMetricEvent event : events) {
-            String css = switch (event.getStatus()) {
-                case SUCCESS -> "ok";
-                case WARNING -> "warn";
-                case FAILED, FATAL -> "fail";
-                default -> "";
-            };
-            rows.append("<tr><td>").append(escape(shortTime(event.getTimestamp()))).append("</td>")
-                    .append("<td>").append(escape(stringify(event.getEventType()))).append("</td>")
-                    .append("<td class=\"").append(css).append("\">").append(escape(stringify(event.getStatus()))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(event.getWindowId(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(event.getTaskCode(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(event.getPhase(), "-"))).append("</td>")
-                    .append("<td>").append(event.getElapsedMs() == null ? "-" : event.getElapsedMs()).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(event.getMessage(), "-"))).append("</td>")
-                    .append("<td>").append(escape(valueOrDefault(event.getCaseId(), "-"))).append("</td></tr>");
-        }
-        return "<table><thead><tr><th>Time</th><th>Event</th><th>Status</th><th>Window</th><th>Task</th><th>Phase</th><th>ms</th><th>Message</th><th>Case</th></tr></thead><tbody>"
-                + rows + "</tbody></table>";
     }
 
     private List<RoundSummary> ledgerRounds() {

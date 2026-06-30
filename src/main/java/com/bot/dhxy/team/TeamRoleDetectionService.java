@@ -136,16 +136,6 @@ public class TeamRoleDetectionService {
         return detectCurrentRole(context, false);
     }
 
-    /**
-     * Detect the current role even when normal role detection is disabled.
-     *
-     * @param context current window execution context; may be null.
-     * @return detected role or UNKNOWN. This path still performs real hover/Alt+T input.
-     */
-    public TeamRoleStatus detectCurrentRoleForDebug(TaskExecutionContext context) {
-        return detectCurrentRole(context, true);
-    }
-
     private TeamRoleStatus detectCurrentRole(TaskExecutionContext context, boolean force) {
         if (!force && !teamTaskProperties.isRoleDetectionEnabled()) {
             if (context != null && context.hasWindow()) {

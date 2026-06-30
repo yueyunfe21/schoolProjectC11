@@ -40,7 +40,7 @@ The final intended system should have:
 
 ### What was recently tested
 
-`debug.npc-first-shot=true` was used to run a one-shot 墨意 NPC first-shot test through the 五环 task.
+The retired one-shot 墨意 NPC first-shot debug path was used to verify the coordinate formula.
 
 Confirmed by user:
 
@@ -53,13 +53,7 @@ After that, formal flow was changed so first-shot move and click are a single qu
 
 ### What should probably be tested next
 
-Set:
-
-```properties
-debug.npc-first-shot=false
-```
-
-Then run normal 五环 again and inspect:
+Run normal 五环 and inspect:
 
 - whether first-shot NPC click now works more consistently;
 - whether two-window input crossing remains fixed;
@@ -87,19 +81,7 @@ bot.window.scoped-temp-path-enabled=true
 
 The scoped temp path switch is currently true for normal multi-window runs. Services should use `WindowScopedTempPath.resolve(...)` for task screenshots and OCR/template intermediates so concurrent windows do not overwrite each other. Standalone tools may still write fixed `images/temp` files when they run outside a window task context.
 
-Temporary debug switch:
-
-```properties
-debug.npc-first-shot=false
-```
-
-Use:
-
-```properties
-debug.npc-first-shot=true
-```
-
-only to run the one-shot 墨意 first-click debug through the 五环 task.
+The old `debug.npc-first-shot` one-shot switch has been retired. Use normal 五环 runtime logs and testcase replay assets for future NPC click checks.
 
 ## 4. Important recent commits
 
@@ -379,15 +361,6 @@ private static final int TUNE_Y = 0;
 private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
 ```
 
-Debug mode:
-
-```java
-@Value("${debug.npc-first-shot:false}")
-private boolean debugNpcFirstShot;
-```
-
-When true, `execute(...)` calls `executeNpcFirstShotDebug(...)` and does not run full 五环.
-
 ### 6.2 NpcClickService
 
 File:
@@ -399,7 +372,6 @@ src/main/java/com/bot/dhxy/service/NpcClickService.java
 Important methods:
 
 - `clickNpcSmart(...)`
-- `debugClickNpcSmartFirstShot(...)`
 - `executeMoveClickAndVerify(...)`
 - `scanMenuAndVerifyDirect(...)`
 
@@ -757,8 +729,8 @@ Good parallel work:
 #### Task completion and sync
 
 - 五环 must keep the ability to detect that the task is finished by checking the task panel.
-- `FiveRingRuntimeState.needTaskSync` is the gate that allows `syncTaskState(...)` to verify whether `wuhuan` still exists in the task list.
-- A recent regression happened when post-combat flow resumed P2/P1 without re-enabling task sync. Fix: after post-combat verification, set `runtimeState.setNeedTaskSync(true)` so completion is checked before further P2/P1.
+- The current 五环 task state must keep a task-sync gate that allows `syncTaskState(...)` to verify whether `wuhuan` still exists in the task list.
+- A recent regression happened when post-combat flow resumed P2/P1 without re-enabling task sync. Keep the current task-sync gate enabled after post-combat verification so completion is checked before further P2/P1.
 - Never let post-combat optimizations bypass task completion detection.
 
 #### Post-combat flow
@@ -1119,32 +1091,12 @@ git checkout dev
 git pull
 ```
 
-Open:
-
-```text
-src/main/resources/application.properties
-```
-
-Make sure for normal 五环:
-
-```properties
-debug.npc-first-shot=false
-```
-
-Then build/run locally and inspect:
+Build/run locally and inspect:
 
 ```text
 logs/dhxy-console.log
 logs/tracker-coordinate.log
 ```
-
-If testing first-shot only:
-
-```properties
-debug.npc-first-shot=true
-```
-
-Then select/start 五环 in UI.
 
 ## 12. HWND Screenshot Direction
 
@@ -1205,7 +1157,7 @@ Tested result:
 
 - The background keyboard result depends on Windows process integrity level.
 - When the game process is elevated/high-integrity and the Java/Codex/PowerShell process is normal medium-integrity, direct `PostMessage` to the game HWND fails with `lastError=5` (`ERROR_ACCESS_DENIED`).
-- This was reproduced both through the no-UI direct `WindowMessageInputExperimentService.postAlt1(...)` path and the formal `InputActionWorker -> BoundWindowKeyboardService` path.
+- This was reproduced through the retired no-UI direct window-message probe and the formal `InputActionWorker -> BoundWindowKeyboardService` path.
 - Running the same no-UI probes elevated, so Java and the game are at matching high integrity, makes `Alt+1` post successfully again. The formal input queue path logs `hwndKeyboard shortcut=Alt+1 success=true`, and all four `WM_SYSKEY*` messages have `lastError=0`.
 - Therefore a high-integrity game client needs the Java app/IDE/probe to run elevated too if we expect background keyboard shortcuts. Otherwise the worker will log the HWND-keyboard failure and fall back to focused real input.
 
@@ -1285,20 +1237,7 @@ Java integration:
 - `TextRecognizer.getAllTextResultsLocalOnly(...)` is available for debug-only local OCR.
 - `TextRecognizer.getAllTextResultsForMatch(...)` should be used when the caller knows what text/pattern it needs. In `hybrid` mode it logs whether local OCR matched and whether Baidu fallback rescued the match.
 - `docs/LOCAL_OCR_EXPERIMENT.md` contains install/start/config notes.
-- `docs/LOCAL_OCR_EXPERIMENT.md` also documents the no-UI background yellow OCR probe:
-  `scripts/YellowOcrProbe.java`. Use that probe to capture the open game window, wash yellow text,
-  run local OCR, and write `images/temp/yellow_probe/<timestamp>/` outputs without starting or
-  clicking the JavaFX debug UI.
-
-Current debug entry:
-
-- Main-page JavaFX button: `本地OCR测名字`
-- Service: `PlayerNameOcrDebugService`
-- Behavior: focus selected game window, wait briefly, capture the bound HWND, crop a larger center region, extract purple/yellow text masks, pack detected text lines into compact enhanced OCR images, run local OCR on those images, then estimate the player-name anchor using the existing Wuhuan-style name-fragment logic.
-- Debug images:
-  - `images/temp/player_name_ocr/<windowId>/latest_purple_line_enhanced.png`
-  - `images/temp/player_name_ocr/<windowId>/latest_yellow_line_enhanced.png`
-- Each debug run clears old PNGs in that window's debug directory, so the folder should only show the current method's latest images.
+- The old no-UI yellow OCR probe and JavaFX player-name OCR debug entry were retired during the CR140 release cleanup. Use the shared text-color OCR service or saved testcase images for future checks.
 
 Current text-color OCR method:
 

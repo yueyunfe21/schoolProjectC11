@@ -1516,5 +1516,16 @@ window.CR_DASHBOARD_DATA = [
     "files": "`DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `WindowRuntimeContext`, `WindowTaskRunner`, 连续任务队列 startup logs/tests",
     "summary": "已新增 `CLEAN_QUEUE_TRANSITION` startup mode：同一 UI 队列里上一个任务 `SUCCESS`、任务类型切换、且 common startup-prep marker 已存在时，后续五倍/修罗跳过全局启动准备和非必要 hot-start/startup resume；standalone/after-combat/失败或 marker 缺失路径仍保留原恢复逻辑。聚焦 guard、compile、test-compile 通过；fresh `[五倍, 修罗]` runtime 待验收。",
     "verification": "需复核"
+  },
+  {
+    "id": "CR140",
+    "number": 140,
+    "owner": "Codex",
+    "status": "Review：发布清理第二批完成；compile/test-compile/source guards 通过",
+    "kind": "review",
+    "domain": "修罗",
+    "files": "debug task/debug main/dev tools/mock update/placeholder task cleanup, dead private helper cleanup, `MainWindowController`, `DefaultTaskFactory`, `BotProperties`, `NavigationService`, `NpcClickService`, `BagService`, `PlayerStateService`, `FiveRingTaskV2`, `XiuluoTaskV2`, `OcrRoiMemoryService`, `MiniMapCoordinateReader`, `AutomationMetricsService`, `docs/run-reports/2026-06-29-v1-code-cleanup-audit.md`",
+    "summary": "第一版发布清理已执行两批：第一批删除 `src/main/java/com/bot/dhxy/debug` 下 one-off debug mains、可见 debug task、断掉/实验工具、旧 `XiuluoTask.java`/`TrackerTest.java`/`WindowScanner.java`、mock UI apps、mock update checker、未接入抓鬼/天庭占位配置、死掉的 `debug.npc-first-shot` 开关，以及对应 stale tests/docs；第二批删除经全仓确认无调用的私有孤儿 helper/wrapper，包括旧 world-map retry helper、NPC click 旧 ROI/vision-memory wrapper、包裹一次性拖动孤岛、补给 confirm 孤岛、五倍右键单模板 wrapper、小地图旧 digit wrapper、metrics 旧事件/表格 HTML 渲染函数、ROI 旧 click-sample region 分支。保留 `@Deprecated` retained source、`navigateToLingShouVillageViaZhangWen` 张文路线对照、UI source-guard helper，以及正式 OCR/template/click/navigation/team-return/return-item/expected-combat 业务路径。验证：`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、`mvn -q \"-Dexec.classpathScope=test\" \"-Dexec.mainClass=com.bot.dhxy.ui.MainWindowControllerSourceGuardTest\" exec:java`、`XiuluoStartupTrackerFirstHotStartWiringTest`、`AfterCombatStartupRecoveryWiringTest` passed。最终私有方法扫描只剩上述刻意保留项。",
+    "verification": "需复核"
   }
 ];

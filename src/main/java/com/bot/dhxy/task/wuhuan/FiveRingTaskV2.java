@@ -1430,14 +1430,6 @@ public class FiveRingTaskV2 implements GameTask {
         return matchedCenter;
     }
 
-    private boolean rightClickTemplateCenter(TaskExecutionContext context,
-                                             String templatePath,
-                                             int[] rect,
-                                             double matchRate,
-                                             String description) {
-        return rightClickAnyTemplateCenter(context, List.of(templatePath), rect, matchRate, description);
-    }
-
     private boolean rightClickAnyTemplateCenter(TaskExecutionContext context,
                                                 List<String> templatePaths,
                                                 int[] rect,

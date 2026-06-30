@@ -18,38 +18,17 @@ public class DefaultTaskFactory implements TaskFactory {
     private final ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider;
     private final ObjectProvider<AutoBattleTask> autoBattleTaskProvider;
     private final ObjectProvider<SleepComputerTask> sleepComputerTaskProvider;
-    private final ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider;
-    private final ObjectProvider<DebugMapCalibratorTask> debugMapCalibratorTaskProvider;
-    private final ObjectProvider<DebugTeamRoleTask> debugTeamRoleTaskProvider;
-    private final ObjectProvider<DebugXiuluoStoryObjectiveTask> debugXiuluoStoryObjectiveTaskProvider;
-    private final ObjectProvider<DebugXiuluoTaskPanelObjectiveTask> debugXiuluoTaskPanelObjectiveTaskProvider;
-    private final ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider;
-    private final ObjectProvider<DebugNavigationStressTask> debugNavigationStressTaskProvider;
 
     public DefaultTaskFactory(ObjectProvider<FiveRingTaskV2> fiveRingTaskV2Provider,
                               ObjectProvider<WubeiTask> wubeiTaskProvider,
                               ObjectProvider<XiuluoTaskV2> xiuluoTaskV2Provider,
                               ObjectProvider<AutoBattleTask> autoBattleTaskProvider,
-                              ObjectProvider<SleepComputerTask> sleepComputerTaskProvider,
-                              ObjectProvider<DebugCoordinateTask> debugCoordinateTaskProvider,
-                              ObjectProvider<DebugMapCalibratorTask> debugMapCalibratorTaskProvider,
-                              ObjectProvider<DebugTeamRoleTask> debugTeamRoleTaskProvider,
-                              ObjectProvider<DebugXiuluoStoryObjectiveTask> debugXiuluoStoryObjectiveTaskProvider,
-                              ObjectProvider<DebugXiuluoTaskPanelObjectiveTask> debugXiuluoTaskPanelObjectiveTaskProvider,
-                              ObjectProvider<DebugXiuluoMockObjectiveTask> debugXiuluoMockObjectiveTaskProvider,
-                              ObjectProvider<DebugNavigationStressTask> debugNavigationStressTaskProvider) {
+                              ObjectProvider<SleepComputerTask> sleepComputerTaskProvider) {
         this.fiveRingTaskV2Provider = fiveRingTaskV2Provider;
         this.wubeiTaskProvider = wubeiTaskProvider;
         this.xiuluoTaskV2Provider = xiuluoTaskV2Provider;
         this.autoBattleTaskProvider = autoBattleTaskProvider;
         this.sleepComputerTaskProvider = sleepComputerTaskProvider;
-        this.debugCoordinateTaskProvider = debugCoordinateTaskProvider;
-        this.debugMapCalibratorTaskProvider = debugMapCalibratorTaskProvider;
-        this.debugTeamRoleTaskProvider = debugTeamRoleTaskProvider;
-        this.debugXiuluoStoryObjectiveTaskProvider = debugXiuluoStoryObjectiveTaskProvider;
-        this.debugXiuluoTaskPanelObjectiveTaskProvider = debugXiuluoTaskPanelObjectiveTaskProvider;
-        this.debugXiuluoMockObjectiveTaskProvider = debugXiuluoMockObjectiveTaskProvider;
-        this.debugNavigationStressTaskProvider = debugNavigationStressTaskProvider;
     }
 
     @Override
@@ -65,13 +44,6 @@ public class DefaultTaskFactory implements TaskFactory {
             case XIULUO_V2 -> xiuluoTaskV2Provider.getObject();
             case AUTO_BATTLE -> autoBattleTaskProvider.getObject();
             case SLEEP_COMPUTER -> sleepComputerTaskProvider.getObject();
-            case DEBUG_COORDINATE -> debugCoordinateTaskProvider.getObject();
-            case DEBUG_MAP_CALIBRATOR -> debugMapCalibratorTaskProvider.getObject();
-            case DEBUG_TEAM_ROLE -> debugTeamRoleTaskProvider.getObject();
-            case DEBUG_XIULUO_STORY_OBJECTIVE -> debugXiuluoStoryObjectiveTaskProvider.getObject();
-            case DEBUG_XIULUO_TASK_PANEL_OBJECTIVE -> debugXiuluoTaskPanelObjectiveTaskProvider.getObject();
-            case DEBUG_XIULUO_MOCK_OBJECTIVE -> debugXiuluoMockObjectiveTaskProvider.getObject();
-            case DEBUG_NAVIGATION_STRESS -> debugNavigationStressTaskProvider.getObject();
             case UNKNOWN -> null;
         };
     }

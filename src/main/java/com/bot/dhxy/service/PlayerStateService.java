@@ -676,65 +676,6 @@ public class PlayerStateService {
         return ensureSheYaoXiangActive(taskContext);
     }
 
-    /**
-     * Capture only the current incense-status probe rectangle and save it for visual inspection.
-     *
-     * <p>This is a debug-only read path. It saves the raw probe, matches the 摄妖香 icon, crops the
-     * matched icon column, and runs the same cyan-hour/green-minute reader used by normal logic. It
-     * does not open the bag or use physical input.</p>
-     *
-     * @param taskContext optional stop token for the debug task.
-     * @param source short diagnostic label written into the output filename and logs.
-     * @return window-scoped PNG path when capture/save succeeds, or {@code null} when capture fails.
-     */
-    public String captureSheYaoXiangStatusDebugImage(TaskExecutionContext taskContext, String source) {
-        checkpoint(taskContext);
-        String safeSource = safeReason(source);
-        int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
-        BufferedImage statusImage = tracker.captureToMemory(
-                "sheyaoxiang-status-debug", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
-        if (statusImage == null) {
-            log.warn("sheyaoxiang debug status capture failed: source={} rect=({}, {})-({}, {})",
-                    safeSource, statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
-            return null;
-        }
-
-        try {
-            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_debug_" + safeSource + "_raw.png");
-            if (!com.bot.dhxy.tools.ImagePreprocessor.saveImage(statusImage, rawPath)) {
-                log.warn("sheyaoxiang debug status save failed: source={} path={} rect=({}, {})-({}, {}) size={}x{}",
-                        safeSource, rawPath, statusRect[0], statusRect[1], statusRect[2], statusRect[3],
-                        statusImage.getWidth(), statusImage.getHeight());
-                return null;
-            }
-            log.info("sheyaoxiang debug status saved: source={} path={} rect=({}, {})-({}, {}) size={}x{}",
-                    safeSource, rawPath, statusRect[0], statusRect[1], statusRect[2], statusRect[3],
-                    statusImage.getWidth(), statusImage.getHeight());
-            double[] match = ImageFinder.find(rawPath, SHEYAOXIANG_STATUS_TEMPLATE, SHEYAOXIANG_STATUS_MATCH_RATE);
-            if (match != null && match.length >= 2) {
-                BufferedImage matchedColumn = cropSheyaoxiangMatchedColumn(statusImage, match, statusRect, "debug:" + safeSource);
-                if (matchedColumn != null) {
-                    try {
-                        String columnPath = windowScopedTempPath.resolve(
-                                "sheyaoxiang_status_debug_" + safeSource + "_matched_column_raw.png");
-                        if (com.bot.dhxy.tools.ImagePreprocessor.saveImage(matchedColumn, columnPath)) {
-                            log.info("sheyaoxiang debug matched column saved: source={} path={}",
-                                    safeSource, columnPath);
-                        }
-                        IncenseRemainingTime remainingTime = readSheyaoxiangRemainingTime(matchedColumn);
-                        log.info("sheyaoxiang debug matched column read result: source={} remaining={}",
-                                safeSource, remainingTime.describe());
-                    } finally {
-                        matchedColumn.flush();
-                    }
-                }
-            }
-            return rawPath;
-        } finally {
-            statusImage.flush();
-        }
-    }
-
     public boolean checkAndHeal(String name, int relX, int relY, boolean expectRed) {
         return checkAndHeal(name, relX, relY, expectRed, 70);
     }
@@ -886,31 +827,6 @@ public class PlayerStateService {
         int relX = calculateX(leftX, rightX, normalizedThreshold);
         if (isSupplyNeededFromSnapshot(bars, name, relX, relY, expectRed, normalizedThreshold)) {
             targets.add(new FirstAidTarget(name, relX, relY, expectRed, normalizedThreshold));
-        }
-    }
-
-    private boolean isSupplyNeededFromSnapshotIfEnabled(BufferedImage bars, String name,
-                                                        int leftX, int rightX, int relY, boolean expectRed,
-                                                        boolean enabled, int threshold) {
-        if (!enabled) {
-            return false;
-        }
-        int normalizedThreshold = normalizeThreshold(threshold);
-        int relX = calculateX(leftX, rightX, normalizedThreshold);
-        if (!isSupplyNeededFromSnapshot(bars, name, relX, relY, expectRed, normalizedThreshold)) {
-            return false;
-        }
-
-        TaskSleep.sleep(HEAL_CONFIRM_DELAY_MS);
-        BufferedImage confirmBars = captureBarsSnapshotNoFocus();
-        if (confirmBars == null) {
-            log.warn("[{}] no-focus precheck confirm failed, skip supply to avoid false click", name);
-            return false;
-        }
-        try {
-            return isSupplyNeededFromSnapshot(confirmBars, name, relX, relY, expectRed, normalizedThreshold);
-        } finally {
-            confirmBars.flush();
         }
     }
 

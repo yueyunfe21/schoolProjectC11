@@ -4,7 +4,7 @@
 
 本文记录当前确认的 DHXY JavaFX 主控页 UI 方向。这里是视觉与交互约定，不改任务业务逻辑。
 
-## Mock
+## Visual Reference
 
 当前主控页 mock：
 
@@ -21,22 +21,7 @@
 
 - `docs/design-audit/02-main-window-complete.png`
 
-当前 JavaFX 本地 mock 预览：
-
-![DHXY JavaFX mock 预览](design-audit/mock-javafx-main-control-preview.png)
-
-本地运行命令：
-
-```bash
-mvn -q org.codehaus.mojo:exec-maven-plugin:3.1.0:java "-Dexec.mainClass=com.bot.dhxy.ui.mock.DhxyMainWindowMockApp"
-```
-
-说明：
-
-- 该 mock 入口是 `src/main/java/com/bot/dhxy/ui/mock/DhxyMainWindowMockApp.java`。
-- 样式文件是 `src/main/resources/styles/dhxy-main-window-mock.css`。
-- 该 mock 不接 Spring、不接窗口注册、不接任务启动、不发送任何输入。
-- 正式 UI 仍然是 `MainWindowController`。确认 mock 后，再迁移布局和样式到正式 UI。
+正式 UI 由 `MainWindowController` 构建。旧 JavaFX mock 入口已在发布前清理中移除，后续 UI 调整直接在正式界面或设计图上推进。
 
 右上角顶栏参考：
 
@@ -117,15 +102,12 @@ mvn -q org.codehaus.mojo:exec-maven-plugin:3.1.0:java "-Dexec.mainClass=com.bot.
 - `五倍`
 - `修罗`
 - `自动战斗`
-- `坐标调试`
-- `地图校准`
-- `导航压力测试`
 
 每个任务卡片显示：
 
 - 任务名
-- 简短分类，例如 `日常`、`任务`、`挂机`、`诊断`
-- 次数/时长 chip，例如 `2轮`、`100次`、`60分`、`手动`、`2点`、`5点`
+- 简短分类，例如 `日常`、`任务`、`挂机`
+- 次数/时长 chip，例如 `2轮`、`100次`、`60分`
 
 选中任务应有明确蓝色边框和顺序角标。
 

@@ -96,13 +96,9 @@ public class BotProperties {
     /**
      * Game-task run count limits surfaced by the JavaFX Settings page.
      * A value <= 0 means "keep running until manually stopped" for task code that supports it.
-     * Some tasks are not wired to these limits yet; the UI still keeps the values here so task
-     * implementations can consume one shared configuration object instead of inventing per-task knobs.
      */
     private int wuhuanMaxRuns = 1;
     private int fivefoldMaxRuns = 1;
-    private int tiantingMaxRuns = 1;
-    private int zhuaguiMaxRuns = 1;
 
     /**
      * 修罗任务第一版配置。后续 UI 会把这些值暴露成可选项。
@@ -113,9 +109,9 @@ public class BotProperties {
     private long xiuluoReturnVerifyPollMs = 1_000L;
 
     /**
-     * UI debug-only map transform calibration target.
+     * UI map-survey target name used by the manual map-template/camera-boundary tools.
      */
-    private String debugMapCalibratorMapName = "";
+    private String mapSurveyMapName = "";
 
     @Data
     public static class OcrConfig {

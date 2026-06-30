@@ -22,7 +22,6 @@ import java.awt.PointerInfo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -49,10 +48,6 @@ public class BagService {
     private static final int BAG_LATE_RENDER_WAIT_MS = 700;
     private static final int BAG_TAB_CLICK_WAIT_MS = 500;
     private static final int MAIN_BAG_TASK_TAB_INDEX = 5;
-    private static final int MAIN_BAG_FIRST_ANCHOR_REL_X = 346;
-    private static final int MAIN_BAG_FIRST_ANCHOR_REL_Y = 440;
-    private static final int MAIN_BAG_FIRST_DRAG_TOLERANCE_PX = 3;
-    private static final int MAIN_BAG_FIRST_DRAG_SETTLE_MS = 600;
     private static final int MAIN_BAG_MOUSE_SAFE_OFFSET_X = 60;
     private static final int GAME_CLIENT_WIDTH = 1024;
     private static final int GAME_CLIENT_HEIGHT = 768;
@@ -68,7 +63,6 @@ public class BagService {
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
     private final Map<String, Point> lastMainBagAnchorCache = new ConcurrentHashMap<>();
-    private final Set<String> mainBagFirstPositionDone = ConcurrentHashMap.newKeySet();
 
     public enum ItemAction { SELECT, USE }
 
@@ -497,56 +491,6 @@ public class BagService {
 
     private String formatPoint(Point point) {
         return point == null ? "unknown" : "(" + point.x + ", " + point.y + ")";
-    }
-
-    private Point positionMainBagOnce(BagLayout layout, BagOpenCheck check, TaskExecutionContext context, String stage) {
-        Point anchor = check.anchor;
-        if (layout != MAIN_BAG || anchor == null) {
-            return anchor;
-        }
-
-        String cacheKey = bagCacheKey(layout);
-        if (mainBagFirstPositionDone.contains(cacheKey)) {
-            return anchor;
-        }
-        if (!MAIN_BAG_ANCHOR_TEMPLATE.equals(check.visibleBy)) {
-            log.info("[bag] skip first main bag positioning because anchor source is not 换装: stage={} source={}",
-                    stage, check.visibleBy);
-            return anchor;
-        }
-
-        int targetX = tracker.getWindowBaseX() + MAIN_BAG_FIRST_ANCHOR_REL_X;
-        int targetY = tracker.getWindowBaseY() + MAIN_BAG_FIRST_ANCHOR_REL_Y;
-        if (Math.abs(anchor.x - targetX) <= MAIN_BAG_FIRST_DRAG_TOLERANCE_PX
-                && Math.abs(anchor.y - targetY) <= MAIN_BAG_FIRST_DRAG_TOLERANCE_PX) {
-            mainBagFirstPositionDone.add(cacheKey);
-            log.info("[bag] main bag already at first-position target: anchor=({}, {}) target=({}, {}) stage={}",
-                    anchor.x, anchor.y, targetX, targetY, stage);
-            return anchor;
-        }
-
-        /*
-         * This runs inside the bag exclusive input section. Use direct input here; submitting
-         * another queued request from inside the worker would deadlock the single input worker.
-         */
-        log.info("[bag] first main bag positioning drag: from=({}, {}) to=({}, {}) stage={}",
-                anchor.x, anchor.y, targetX, targetY, stage);
-        inputProvider.dragAndDrop(anchor.x, anchor.y, targetX, targetY);
-        TaskSleep.sleepOrStop(context, MAIN_BAG_FIRST_DRAG_SETTLE_MS, "Bag drag wait was interrupted");
-
-        BagOpenCheck after = checkBagOpened(layout, context, "after-first-position-drag");
-        if (after.ready()) {
-            mainBagFirstPositionDone.add(cacheKey);
-            Point confirmed = after.anchor;
-            log.info("[bag] first main bag positioning confirmed: anchor=({}, {}) source={}",
-                    confirmed.x, confirmed.y, after.visibleBy);
-            return confirmed;
-        }
-
-        mainBagFirstPositionDone.add(cacheKey);
-        log.warn("[bag] first main bag positioning could not re-confirm anchor; use target geometry once: target=({}, {})",
-                targetX, targetY);
-        return new Point(targetX, targetY);
     }
 
     private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
