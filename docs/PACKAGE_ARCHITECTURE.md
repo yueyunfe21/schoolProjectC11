@@ -1436,8 +1436,8 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR117 | Codex | Done: fresh runtime passed | `SheyaoxiangDigitTemplateReader`, `PlayerStateService`, `images/template/status/sheyaoxiang_digits`, 摄妖香 status logs | Add self-learning digit-template reader for 摄妖香 green remaining-minute text. OCR may read a two-digit image like `47` as only `7`, causing false low-minute refill. Fresh 2026-06-26 runtime logged `sheyaoxiang status matched ... remaining=green-minutes-template=16`, proving the template-reader path drives the remaining-minute decision instead of a partial OCR digit. |
 | CR118 | Codex | Done: user-confirmed fresh runtime passed | `XiuluoTaskV2`, `PlayerStateService`, 修罗 startup / first-aid logs | Run 修罗 startup first-aid before first-round hot-start selection. First 修罗 run calls `performStartupFirstAidCheck(context)` before `ensureStartupIncenseBeforeHotStart(context)` and before `resolveStartupTrackerOrReturnItem(...)`; repeat rounds do not get an extra startup check. User confirmed fresh runtime acceptance on 2026-06-26. |
 | CR119 | Codex | Done: fresh 修罗 runtime passed | `TaskMaintenanceService`, `XiuluoTaskV2`, `WindowReadyEventBus`, 修罗 `WAIT_TRACKER_SHORTCUT_PATHING` logs | Repair 修罗 leader 三技能 due wake while shortcut/pathing waits are parked. Fresh 2026-06-26 runtime round 55 showed the leader firing the before-park due path: `19:59:32.344` `leader maintenance summon skill due`, claim `xiuluo_v2#55`, and `19:59:43.970` cleanup `success=true`; later round 65 also kept member三技能 deferred after CR96 target-map-arrived window close. Slot templates/clicks, tail-boundary cleanup, team-round claim semantics, CR96 target-map-arrived close, and CR116 pre-combat budget were not changed. |
-| CR120 | Kant+Codex+Ramanujan | Review: 五倍早消费源码修复完成；fresh runtime 待验 | `CommonBoxService`, `CommonBoxRole`, `TaskMaintenanceService`, `TaskMaintenanceRequest/Result/Status`, `MainWindowController`, `GameUiSettingsStore`, `BotProperties`, `XiuluoTaskV2`, `WubeiTask`, `AutoCombatService`, `ImageFinder`, `images/template/common/leader_box_marker.png`, common-box replay | Implement the `docs/业务逻辑.md` 通用盒子逻辑 for 修罗 and 五倍. Add independent UI switches `队长要盒子` default on and `队员要盒子` default off; detect the marker in window-relative ROI `(623,590)-(682,618)` using the common template; record per-window pending box hits with 30s TTL instead of clicking immediately; consume pending boxes only at explicit safe hooks, not through generic `TaskMaintenanceRequest/Result/Status`. ROI detection is synchronous at the safe hook and uses in-memory template matching, not common-pool async work or normal-runtime `common_box_roi_*.png` temp files. 队长 detects after verified return-home and consumes after the next task is accepted and movement starts. 队员 detects after combat exit and consumes on its next task turn/input opportunity independent of HP/MP first-aid; if the box consumes first, pending HP/MP first-aid remains pending for the next safe turn. Pending state is window/task-run/role scoped with a process-global monotonic taskRunId, clears on switch-off/expiry/click, rejects stale identity/task-run records, prunes expired entries on detect/consume, and does not intentionally change 修罗/五倍 accept/navigation/combat/return/failure rules. Template caching P3 is fixed with lazy `cachedTemplate`; guard-quality P3 is fixed by shrinking `CommonBoxLogicWiringGuard` to broad architecture tripwires while pending/identity/first-aid boundaries are covered by focused behavior tests. 2026-06-26 runtime blocker fixed: `CommonBoxService` no longer reads mutable `WindowRuntimeContext.getRole()` as business truth; common-box role now comes from `TaskExecutionContext.windowRole`, while runtime context is only used for hwnd/window/identity/task-run anti-cross checks. Fresh 修罗 runtime `2026-06-27 20:32:35.446` proved a leader box hit and pending create, but `20:33:07.489` pruned it as expired before the next-round movement hook at `20:33:11`. Source repair keeps the 30s TTL and adds an earlier highest-priority 修罗 consume hook at `AFTER_ACCEPT_MAINTENANCE_CHECK` before prepath/maintenance; focused guard passed and fresh consume proof is pending. Fresh WUBEI runtime 2026-06-28 00:29 proved the same timing class remains in 五倍: leader pending was created, but heal-pet broadcast plus a 3s handoff ran first and the pending expired before tracker pathing. Ramanujan source repair adds 五倍 `wubei:after-accept-maintenance-check` and `wubei:before-tracker-pathing-maintenance-check` highest-priority consume hooks before maintenance/broadcast/pathing; focused guard, compile, and test-compile passed. Fresh runtime must prove the pending is consumed before any 30s expiry. |
-| CR121 | Codex+Fermat+Descartes | Done: fresh WUBEI bounded combat wait validated | `AutoCombatService`, `BattleRadarService`, `XiuluoTaskV2`, `WubeiTask`, expected-combat return verification logs/tests | 修复 CR113/CR109 快脱战安全纠偏，并把五倍 expected combat 对齐到 `FAST_EXPECTED_EXIT` + 回程先验流程。已保留 avatar-diff 快路径，不加回程前 full-radar 确认；回程验证失败后才用可信战斗状态纠偏，仍在战斗则回到 `WAIT_COMBAT` / `WAIT_BATTLE_FINISH` 并保留 deferred recovery。2026-06-28 旧进程曾暴露 WUBEI `WAIT_BATTLE_FINISH timeoutMs=-1`，Descartes 窄修在 `WubeiTask.parkAfterYieldIfNeeded(...)` 加最终防线：任何 `WAIT_COMBAT_STATE_CHANGE` wait spec 若带 `-1/0` 等非法 timeout，进入 `awaitNewer` 前都会重新用 `autoCombatService.nextCombatWakeDelayMs()` clamp 到 `500..10000ms`，同时保留 `COMBAT_STATE_CHANGED` 立即唤醒。focused guard 覆盖 helper 与生产 park 边界；重启后 fresh WUBEI `01:20:04-01:20:57` 实战 wait 连续显示 `timeoutMs=914/827/920/866/925/3805`，并在 `01:20:17.756` 完成 cached return verification，没有再出现 `timeoutMs=-1`。已可关闭。 |
+| CR120 | Kant+Codex+Ramanujan | Review: NPC 前早消费源码修复完成；fresh runtime 待验 | `CommonBoxService`, `CommonBoxRole`, `WubeiTask`, `XiuluoTaskV2`, `AutoCombatService`, `MainWindowController`, `GameUiSettingsStore`, `BotProperties`, `ImageFinder`, `images/template/common/leader_box_marker.png`, common-box replay/tests | 通用盒子逻辑：队长/队员独立开关、ROI pending、30s TTL、按窗口/角色/任务运行隔离，消费只允许显式 safe hook，不进通用 maintenance 合同。已修复 role truth、同步 ROI、模板缓存、队员 first-aid 不被盒子吞、task-run/identity 保护、修罗/五倍 after-accept 与 prepath/maintenance 早消费。2026-07-01 follow-up：若盒子已 pending，五倍在点 `降魔侍卫` 前、修罗在点 `灵兽村使者` 前先消费；无 pending 时快速 no-op。未改 `CommonBoxService`、ROI/template/TTL/click point、NPC click、dialog、navigation。Focused guards、`test-compile`、`compile` 通过；fresh runtime 仍需证明 `wubei:before-accept-npc-click` / `xiuluo-v2:before-accept-npc-click` 在真实 pending 盒子时先于 NPC 点击。 |
+| CR121 | Codex+Fermat+Descartes | Re-review: WUBEI 回程验证失败需补 correction 证据 | `AutoCombatService`, `BattleRadarService`, `XiuluoTaskV2`, `WubeiTask`, expected-combat return verification logs/tests | 2026-06-30 23:51 fresh WUBEI 反例：`WAIT_BATTLE_FINISH` 后执行 `bag/wubei_return_item.png`，但位置验证仍是 `火云洞(16,38)`，随后 `wubei:RETURN_HOME result=FAILED` 并抓取 `20260630_235125_587_wubei_round_FAILED_hwnd-E570C26.case.json`。这不推翻 bounded wait 修复，但说明 CR121 不能保持 Done；需要复核失败回程后是否明确进入 fast-exit correction，再决定是回 `WAIT_BATTLE_FINISH` 还是安全恢复。 |
 | CR122 | Codex+Aristotle | Review: WUBEI stale-intent repair/guard/compile passed; fresh runtime pending | `NavigationService`, `WindowTaskRunner`, `WindowRuntimeContext`, `XiuluoTaskV2`, `WubeiTask`, CR99/CR110/CR122 tests, 修罗/五倍 navigation logs | Collapse 修罗/五倍 default pathing semantics to two production movement classes: task tracker/shortcut green-link pathing, and mini-map coordinate handoff. Implemented source-level repair: CR99 yellow destination routing now treats the yellow target click only as the way to open the target-map mini-map; after the final target-coordinate click it calls the existing mini-map handoff confirmation before movement intent/logical `PATHING_STARTED` handoff. The coordinate `WindowPathingIntent` is now registered only after `yellow-destination-mini-map-pathing-confirmed`; if movement is not confirmed, the yellow route returns failure/retry instead of parking. Yellow memory and fresh OCR paths both cleanup through queued cleanup on failure/success. Runner stopped-away classification is now only two live buckets, shortcut/tracker and mini-map handoff, both currently `2_200ms`; the old 8s map-route and 30s cross-map-coordinate buckets were removed from the live resolver. 2026-06-27 stale-intent repair adds source-prefix-scoped runtime cleanup and clears `xiuluo-v2:tracker-shortcut` intents on prepared enter-battle consume, `XIULUO_V2` combat entry, verified return-home, and round-start transition. 2026-06-28 WUBEI repair clears `wubei:tracker-green-click` intents at round start, before a new tracker green click registers a fresh intent, after enter-battle dialog consume, on Runner-confirmed WUBEI combat entry, and after verified return-home. Focused WUBEI/Xiuluo CR122 guards and `mvn -q -DskipTests compile` passed. Fresh runtime still needs to prove no stale terminal from a previous round and no 30s `STOPPED_AWAY` after a failed yellow final-coordinate click. |
 | CR123 | Codex | Review: Worker + Java uploader + real R2 smoke passed; runtime opt-in validation pending | `D:/mavenProject/dhxy-case-worker`, Cloudflare Worker, R2, DHXY client case reporter, `logs/cases/*.case.json`, optional dashboard | Remote diagnostic case upload. Worker slice is implemented in sibling project `D:/mavenProject/dhxy-case-worker`: `POST /api/case/upload` validates bearer/header upload token, payload size, required case schema, and license identifier, stores valid structured JSON under `cases/YYYY-MM-DD/<machineHash>/<taskCode>/<caseId>.case.json`, and updates `indexes/YYYY-MM-DD.json` in R2. It accepts the CR124 nested local-case shape (`task.taskCode`, `app.licenseId`, `runtimeSnapshots.environment.machineHash`) while keeping flat-field compatibility. Follow-up slices populated upload identity metadata (CR125), added the default-off Java uploader/retry/status layer (CR126), and validated the real Cloudflare/R2 deployment (CR127). Real public smoke upload to `https://dhxy-case-worker.yueyunfe.workers.dev/api/case/upload` returned `200 CASE_UPLOADED`; remote R2 verification downloaded `indexes/2026-06-27.json` and the case object under `cases/2026-06-27/machine-worker-contract/xiuluo_v2/...case.json`. No R2 credentials were embedded in DHXY Java, and full logs/zips are not uploaded. Remaining acceptance is only an opt-in app-runtime validation with `case.upload.enabled=true`, endpoint, and token supplied outside repo files. |
 | CR124 | Codex | Review: implemented; synthetic + real-log replay passed; upload metadata gap found | `AutomationMetricsService`, `DiagnosticCaseCaptureService`, `logs/cases/YYYY-MM-DD/*.case.json`, `logs/cases-replay/YYYY-MM-DD/*.case.json`, `DiagnosticCaseCaptureServiceTest`, `DiagnosticCaseExistingLogReplayDebug` | Local diagnostic `case.json` generator that feeds CR123 upload later. First version creates a bounded, debug-capable JSON case when a task round/transaction fails, becomes fatal, or is explicitly marked for capture. The payload includes trigger metadata, task/window/failure fields, related metrics/timeline, bounded `dhxy-console.log` excerpt, diagnostic hints, size policy, upload placeholder, and multi-window linked evidence. Multi-window policy is implemented by incident fingerprint: one root case per shared `roundId` / `teamKey`; member windows become lightweight `relatedWindows` entries instead of uploading duplicate full cases. Target size: normal failure `<500KB`, multi-window/visual case `<1.5MB`, hard cap `2MB` by truncating console first. Capture is best-effort and runs from the metrics hook; capture failure logs a warning but does not block or fail tasks. Real-log replay produced `logs/cases-replay/2026-06-27/20260627_111805_596_wuhuan_v2_wuhuan_v2-27-round-2_SUCCESS_hwnd-141770.case.json` from existing metrics + console, size `169841` bytes, with `timelineCount=7`, `metricCount=7`, `consoleLineCount=500`, proving the JSON can reconstruct task/window/phase/pathing context from current logs. CR123 contract audit found this replay case currently lacks `app.licenseId` and `runtimeSnapshots.environment.machineHash`; raw upload is rejected until those fields are populated. If metric time and console time do not overlap, the case marks `console-excerpt-missing-for-trigger-time` instead of attaching unrelated log tail. |
@@ -1447,16 +1447,6923 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR128 | Codex | Review: background-first source repair/guard passed; fresh runtime pending | `DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `LeftTopStatusSwitchService`, `WindowRuntimeContext`, `FiveRingTaskV2`, startup UI logs/tests | Restore startup UI guards to the validated multi-window model: all startup probes that do not require a physical mouse click must run by background HWND screenshot/shortcut and may run concurrently across the selected windows. 五环 still must run the full startup window checks (Alt+1 map options, Alt+U expand/flying option, Alt+5/Alt+6 visibility), but the normal path must be background-first; only a clearly detected wrong option should trigger the foreground correction transaction. For a two-round 五环 queue, this startup check runs once per accepted task queue, not once per round. Left-top status and future map/flying/minimap click-needed checks should first background-probe and store per-window pending actions; when the window later owns a safe real-input turn, it should consume the already-known pending click immediately without recapturing first. Fresh runtime still needs five-window proof. |
 | CR129 | Zeno+Codex | Done: 修罗/五倍轮次结束 dashboard 异步化已验收 | `AutomationMetricsService`, `AutomationMetricsAsyncDashboardWiringTest`, `XiuluoTaskV2.finishRoundMetric`, `WubeiTask.finishRoundMetric`, `FiveRingTaskV2.finishRoundMetric`, automation dashboard logs | 轮次结束 metrics/dashboard 写盘已从业务完成路径异步化：内存事件仍同步记录，dashboard 持久化进入有界后台 writer，手动 `writeDashboardNow()` 保持同步。Focused guards 通过；fresh 修罗 `2026-06-27 22:39:01.570`、`22:44:33.314`、`22:46:17.035` 均显示 `ROUND_DONE`、`round skeleton finished`、下一轮 `initial phase` 同毫秒/近同毫秒，writer 后台稍后 flush。fresh 五倍 80 轮长跑继续证明 writer 不阻塞轮次推进，典型 flush 在 `2026-06-28 17:46:51.989`、`18:46:07.310`、`18:47:17.813` 等后台发生；五倍最终 `19:04:55.624` 完成 80/80。已可关闭。 |
 | CR130 | Kant+Codex worker | Done: 连续修罗轮次不再跑 round-start hot-start | `XiuluoTaskV2`, `XiuluoHotStartResolver`, 修罗 round-start logs/tests | 连续修罗轮次已移除每轮之间的 `hot-start:xiuluo_v2:xiuluo-v2:round-start` 屏幕检查；真实 UI startup / after-combat startup resume 仍保留。Source guard 证明 round loop 不再调用 `hotStartResolver.resolve(...)`。Fresh 修罗 `2026-06-27 22:39:01.570` 后 round 4 直接 `source=normal-start`，后续 round 7/8 同样无 per-round hot-start；`2026-06-28 19:12:42.742 -> 19:19:55.632` 的 rounds 4-7 也都是 `phase=PREPARE_ROUND source=normal-start`，未见 `task hot-start snapshot` / `round-start` inspect。已可关闭。 |
-| CR131 | Kant+Codex worker | Review: 修罗 + 五倍 source guards passed; fresh runtime pending | `TeamReturnService`, `XiuluoTaskV2`, `WubeiTask`, team-return detection, return-home/bag logs/tests | Start team-leave / team-return precheck before opening the bag for return-home, and consume the result after return verification. Fresh 修罗 `19:46:09.652 -> 19:46:18.637` showed return item use/verify first, then `WAIT_TEAM_RETURN` spent about 3.261s deciding `team return wait not needed`; the `20:23:47.825-20:33:16` audit again showed return-verified to `WAIT_TEAM_RETURN/ROUND_DONE` latency. 修罗 now captures a bound-window team-return precheck before `bagService.findAndUseMainBagTaskPageItem(...)`; 五倍 now does the same before `bagService.findAndUseItemFromBack(...)`. Both consume complete same-window/task-run results before live detection, fall back to existing `WAIT_TEAM_RETURN` on signal present/failed/stale/not-ready, and do not change return item search/use, start-map verification, or team-return business truth. Fresh runtime must show precheck capture before bag and precheck consume after return verification for both 修罗 and 五倍 return-home paths. |
+| CR131 | Kant+Codex worker | Review: 归队预检改为回城验证后截图；focused guard passed，fresh runtime pending | `TeamReturnService`, `XiuluoTaskV2`, `WubeiTask`, team-return detection, return-home/bag logs/tests | 根据 2026-06-30 `13:04` 五倍证据修正 CR131：归队预检不再在回城/包裹前截图，改为回城道具使用并验证已回到起点地图后，再截队伍栏 ROI。原因是队长可能先脱战，队员晚 9-12 秒脱战，旧的提前截图会在 `WAIT_TEAM_RETURN` 消费 stale `NO_SIGNAL`，导致队长不等队员归队。修罗/五倍缓存回城和普通包裹回城成功分支都在 `return-home-verified` 后调用 `beginLeaderSignalPrecheck(...)`；`WAIT_TEAM_RETURN` 仍消费同窗口/task-run 结果，并保留 signal/stale/failed/not-ready 的原 fallback。不改变回城道具查找/点击、起点地图验证、归队模板/ROI/click 规则。Focused guard 已更新并通过；fresh runtime 需证明截图发生在 `return item verified` 之后，且队员晚脱战时不会消费旧 `NO_SIGNAL`。 |
 | CR132 | Codex+Erdos | Done: 显形镜槽位缓存 fresh runtime 通过 | `ReturnItemPrescanService`, `WubeiTask`, `WubeiCR132ProbeMirrorSlotReturnCacheWiringTest`, 修罗/五倍回城道具预扫缓存状态，RETURN_HOME 日志/测试 | 回城道具预扫缓存仍按任务/窗口/taskRun/轮次/hwnd/模板隔离，使用后必须验证起始地图，失败回完整包裹查找。Fresh 五倍普通战斗已闭环：`00:15:47.778` 缓存 `(1433,647)`，`00:16:58.341` 使用缓存，`00:17:03.292` 验证回 `宝象国`。白龙马/显形镜 fresh runtime 已闭环：`01:34:05.754` first-probe 绿字后按 `bag/wubei_probe_item.png` 预扫显形镜槽位，`01:34:09.871` 缓存 `(1428,642)`，`01:36:30.582` `WUBEI_PROBE_STORY target=wubei.probeTargetReady` 准备并消费，`01:36:36.578` `WUBEI_ENTER_BATTLE` 消费进战，`01:37:04.732` RETURN_HOME 选择 `bag/wubei_probe_item.png` 缓存，`01:37:08.905` 使用 `(1428,642)`，`01:37:09.920` `cached-return-verified` 回 `宝象国`。普通五倍 combat/黄袍/修罗继续用原回城模板。源码 focused guard 已过。已可关闭。 |
-| CR133 | Codex | Open: 21:34 hot-start tracker shortcut stuck; needs source repair | `WindowTaskRunner`, `WindowReadyEventBus`, `XiuluoTaskV2`, 修罗 hot-start / tracker shortcut / prepared enter-battle logs | 修罗热启动命中左侧任务追踪后，绿字点击、`UNTARGETED_TRACKER` intent、`XIULUO_ENTER_BATTLE` interest 都已经注册；但 `2026-06-27 21:34:32` Runner 识别到 `OPTION` 后只写了 `window.dialog.visible.update`，没有继续发布 `TASK_ATTENTION_REQUIRED` 或 `PREPARED_ACTION_READY/XIULUO_ENTER_BATTLE`，本轮 watcher 也没有 `window observer tick` 收尾日志，任务最终靠 CR116 的 180s pre-combat watchdog 超时进入下一轮。修复方向：保证 active tracker/pathing 且存在 `XIULUO_ENTER_BATTLE` interest 时，可见 `OPTION` 必须迅速走完 attention publish / task-dialog preparation / prepared-action wake，且 watcher 不得因可见 dialog 后续准备链路卡住；补充 INFO/WARN 级失败日志，避免只在 debug 吞掉原因。不要改 tracker 绿字点击、NPC/模板坐标、战斗确认业务或 180s watchdog 上限。 |
-| CR134 | 唐德 | Review: 源码实现+focused guard+compile 通过；fresh runtime 待验 | `WubeiTask`, `WubeiCR134PostAcceptPrepathTargetWiringTest`, 五倍接任务/预走路/医宝宝/修装备日志与测试 | 五倍接任务成功后先计算本轮 `prepathTarget`，再 `Alt+C -> navigateInCurrentMap(prepathTarget)`。源码已接入：默认没有医宝宝时仍点宝象国出口 `(88,157)`；医宝宝 due 时第一段预走路坐标直接替换成医宝宝 NPC 坐标；只有修装备 due 时仍点出口，因为修装备去洛阳，路上再走现有修装备导航；医宝宝和修装备都 due 时固定先医宝宝。实现只改变接任务后的预走路目标选择和日志/guard，不改变 tracker 读取、回城、导航算法、mini-map 点击算法或维护执行本身。 |
+| CR133 | Codex | Open: 修罗可见对话框无 interest 导致 `WAIT_COMBAT` 卡住；需源码修复 | `WindowTaskRunner`, `WindowReadyEventBus`, `XiuluoTaskV2`, 修罗 hot-start / tracker shortcut / prepared enter-battle logs | 修罗热启动命中左侧任务追踪后，绿字点击、`UNTARGETED_TRACKER` intent、`XIULUO_ENTER_BATTLE` interest 都已经注册；但 `2026-06-27 21:34:32` Runner 识别到 `OPTION` 后只写了 `window.dialog.visible.update`，没有继续发布 `TASK_ATTENTION_REQUIRED` 或 `PREPARED_ACTION_READY/XIULUO_ENTER_BATTLE`，任务最终靠 CR116 的 180s pre-combat watchdog 超时进入下一轮。Fresh `2026-06-30 18:38-18:47` 连续运行又出现 round 22 `WAIT_COMBAT` 卡住：Runner 反复识别 `STORY` 并发布 visible attention，但 `interestPresent=false`、`interestOperations=null`、`activeIntentId=null`，prepare 链路以 `reason=no-dialog-interest` / `visible-only` 收尾，任务持续 `waiting for combat state`。修复方向扩展为：不只处理 hot-start `OPTION`，还要处理连续轮次中可见任务对话框但 interest/intent 丢失的恢复或重挂 interest；补充 INFO/WARN 级失败日志。不要改 tracker 绿字点击、NPC/模板坐标、战斗确认业务或 180s watchdog 上限。 |
+| CR134 | 唐德 | Review: 修罗切五倍后 post-accept 预走路失败 | `WubeiTask`, `WubeiCR134PostAcceptPrepathTargetWiringTest`, 五倍接任务/预走路/医宝宝/修装备日志与测试 | 五倍接任务成功后先计算 `prepathTarget` 再 `Alt+C -> navigateInCurrentMap(prepathTarget)`。源码已接入：默认/仅修装备 due 点宝象国出口 `(88,157)`，医宝宝 due 点医宝宝 NPC。Fresh `2026-06-30 22:41:15.834 -> 22:41:23.442` 只证明脚本层修罗第 10 轮已脱战、使用修罗回程道具并验证回 `灵兽村` 后标记 `SUCCESS`；但 `22:41:41.487` 五倍 post-accept tracker 截图 `task_tracker_detail_wubei-post-accept-tracker-1-normal-round-start.png` 仍显示 `修罗任务[常规玩法]`，说明游戏左侧任务态/截图态没有被验证为已清。`22:41:38.766 -> 22:41:39.243` 只证明五倍 `WUBEI_ACCEPT_TASK` 选项被点击，不能证明已成功切到五倍任务。随后五倍第 1 轮 `22:41:39.438 -> 22:42:44.628` 默认出口 `(88,157)` 连续原始点击 + fallback 1-11 均 `NO_PATHING`，最终 `navigate timeout` / `POINT_NOT_REACHED`，再由 `UI cleanup` 强制清 `STORY` 并靠世界地图去 `宝象国` 兜底。CR134 不能关闭，需排查修罗脚本完成判定是否缺少“游戏 tracker 已清/新任务已切换”验证、五倍 accept 后 tracker/story 状态、小地图点击点与 `(88,157)` 在该状态下是否仍有效。 |
 | CR135 | Codex | Review: 5 秒保守窗口源码+guard+compile 通过；fresh runtime 待验 | `WubeiTask`, `scripts/check_wubei_chained_first_aid_window.ps1`, 黄袍连战 dialog/脱战/放权/补给日志与测试 | 五倍黄袍连战中间流程已按定稿接入源码：识别到 `WUBEI_ENTER_BATTLE` prepared dialog 后、判断点击结果前立即关闭五倍维护窗口；黄袍脱战后在 `POST_BATTLE_RECOVER` 先开启 5 秒 first-aid-only 队员补血/补蓝窗口，并让队长在同一窗口内后台做 no-focus 血蓝预检；5 秒结束后 `RETURN_HOME` 只消费已发生的窗口结果，不再此时才打开 first-aid 窗口。若仍是黄袍连战，队长先消费缓存补给计划，再点已准备的 tracker 绿字；若不是黄袍连战，直接走正常回城/下一轮，不额外再等 5 秒。Focused guard 和 `mvn -q -DskipTests compile` 已通过，fresh runtime 需验证 5 秒窗口内没有三技能/盒子，且队长恢复后按缓存快速续战。 |
-| CR136 | Peirce+Codex | Review: 五倍/修罗 source guards + compile/test-compile 通过；NoClassDef follow-up fixed；fresh runtime 待验 | `AutoCombatService`, `BattleRadarService`, `WubeiTask`, `XiuluoTaskV2`, `WubeiCR136FastExitLifecycleWiringTest`, `XiuluoCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试 | 五倍 expected 战斗在 `2026-06-28 01:53` 暴露 stale `combatExitPending` 与同一 correction episode 内多次回程；修罗 fresh runtime `2026-06-29 17:53:29-17:55:04` 暴露同类问题：fast expected exit 误判后 `17:53:33.232` 缓存回程、`17:53:43.314` 完整扫包裹、`17:53:58.723` 第二次完整扫包裹、`17:55:01.545` phase retry 再次扫包裹，可信战斗状态直到 `17:54:56.405` 仍未把单次回程预算截断。已修：expected wait 增加 arm/exit fence；五倍/修罗实际点过一次回程但未验证起始地图后立刻 trusted probe，不再继续 full scan / 第二次 attempt；trusted `IN_COMBAT` 时分别回 `WAIT_BATTLE_FINISH` / `WAIT_COMBAT` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果被纠正后再次触发 fast-exit，就是新的 correction episode 和新的单次回程预算。Follow-up 修复 `2026-06-29 18:17:25` fresh restart 后修罗 `RETURN_HOME` 的 `NoClassDefFoundError XiuluoTaskV2$ReturnItemUseResult$Status`：`ReturnItemUseResult` 不再依赖嵌套 `Status` enum，guard 要求 no nested Status，`target/classes` 不再生成该旧 class。Focused guards、`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` 通过；fresh runtime 仍需验证这些日志点。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。 |
+| CR136 | Peirce+Codex | Review：同毫秒 exit arm 边界源码已修，fresh runtime 待验 | `AutoCombatService`, `BattleRadarService`, `WubeiTask`, `XiuluoTaskV2`, `WubeiCR136FastExitLifecycleWiringTest`, `XiuluoCR136FastExitLifecycleWiringTest`, expected-combat false-positive 日志/测试 | 五倍 expected 战斗在 `2026-06-28 01:53` 暴露 stale `combatExitPending` 与同一 correction episode 内多次回程；修罗 fresh runtime `2026-06-29 17:53:29-17:55:04` 暴露同类问题：fast expected exit 误判后 `17:53:33.232` 缓存回程、`17:53:43.314` 完整扫包裹、`17:53:58.723` 第二次完整扫包裹、`17:55:01.545` phase retry 再次扫包裹，可信战斗状态直到 `17:54:56.405` 仍未把单次回程预算截断。已修：expected wait 增加 arm/exit fence；五倍/修罗实际点过一次回程但未验证起始地图后立刻 trusted probe，不再继续 full scan / 第二次 attempt；trusted `IN_COMBAT` 时分别回 `WAIT_BATTLE_FINISH` / `WAIT_COMBAT` 并刷新当前 in-combat avatar baseline。后续 avatar diff 不禁用、不降级；如果被纠正后再次触发 fast-exit，就是新的 correction episode 和新的单次回程预算。Follow-up 修复 `2026-06-29 18:17:25` fresh restart 后修罗 `RETURN_HOME` 的 `NoClassDefFoundError XiuluoTaskV2$ReturnItemUseResult$Status`：`ReturnItemUseResult` 不再依赖嵌套 `Status` enum，guard 要求 no nested Status，`target/classes` 不再生成该旧 class。Fresh `2026-06-30 18:26:58.751 -> 18:57:02.129` 又发现新失败：false fast-exit 后一次缓存回程未验证，`18:27:03.283` watcher 正确纠回 `IN_COMBAT`，`18:27:09.091` 刷新 trusted in-combat baseline 并回 `WAIT_COMBAT`；但 `18:27:09.562` 真实脱战 signal 发布后，同一毫秒下一次 expected wait arm 记录 `discard stale combat-exit signal ... pendingAtMs=1782858429562 armedAtMs=1782858429562`，把真实 exit 清掉，导致 round 22 后续一直 `WAIT_COMBAT` 空转且不再进入 `RETURN_HOME`。已修：`BattleRadarService.armExpectedCombatExitWait(...)` 的 arm 阶段 stale 边界改为严格 `< now`，保留 `pendingAtMs == armedAtMs` 的 same-millisecond exit；`WubeiCR136FastExitLifecycleWiringTest` 已补 guard 禁止 `<= now` 回归。验证：guard 先红后绿，`test-compile`、CR136 guard、CR141 pause/current-cycle guard、相邻 runner/pathing guard、`mvn -q -DskipTests compile` 均通过。Fresh runtime 仍需证明 round 22 类 false fast-exit 纠回战斗后，真实脱战 signal 不再被 arm 阶段误删，并能进入下一次 `RETURN_HOME`。不得改 avatar ROI/阈值/15s grace/1s cadence、BagService、OCR/template/click/navigation、CR121 bounded wait、CR132/CR134/CR135 业务。 |
 | CR137 | 唐德+Codex | Deprecated: runtime rolled back after fresh WUBEI 黄袍/tracker regression | `WubeiTask`, `WubeiRoundContext`, removed CR137 guard tests, 五倍接任务/暗雷重抽/黄袍 tracker 日志 | CR137 的接任务后后台 `T0/T+1.5s` tracker 预解析与暗雷快速撤销 prepath 已按用户要求整张撤回。Fresh runtime `2026-06-28 04:07:28` 证明该路径能读到 `智斗黄袍` 标题和 `火云戈壁` 绿字，但 `yellow=''`，后续在可见 `OPTION` 下反复重点击同一绿字。Rollback 删除 `WubeiRoundContext.trackerParseFuture`、`WubeiTask` accept-time tracker future/snapshot/fast 暗雷 reroll 方法、`WubeiAcceptWindowSnapshot` 以及 CR137 source guard 测试；五倍恢复为接任务后先保留 CR134 post-accept prepath，再等待 tracker refresh 并现场 `READ_TRACKER`。暗雷回到现场读到 `暗雷怪` 后重抽的旧路径。后续如要重新做暗雷快重抽，应新开 CR，先解决黄袍/绿字/interest 证据，不复用本卡实现。 |
 | CR138 | 唐德 | Done：18:37 连续 `[五倍, 修罗x2]` fresh runtime 通过 | `AutoBattleTask`, `AutoCombatService`, `TaskMaintenanceService`, `TeamReturnService`, `TaskExecutionContext`, `WindowTaskRunner`, `WindowTaskControlService`, `LeftTopStatusSwitchService`, 本地队伍支援/session model, 连续 `[五倍, 修罗]` 日志/测试 | 已改：`WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 已拆分 raw `liveRole` 与 `assignmentRole`，CR138 session evidence 只写 raw live role，`UNKNOWN + cached LEADER` 不再能成为 live leader evidence。已改：`AutoBattleTask` 对 `requested=xiuluo_v2/wubei/wuhuan_v2` 但 `localSession=null` 的队员恢复旧 team pathing window gate，避免 `17:55` 这类接任务前 standalone 三技能抢输入。Fresh `2026-06-29 18:37:14-18:46:05` 连续 `[五倍, 修罗]` 验收通过：五倍成功、修罗完成 2 轮；手动离队后 `TEAM_RETURN` gate 打开，队员归队点击都有目标窗口 focus 证据；`requested=wubei` 队员在修罗 `FIRST_AID` gate 打开后成功补法，未见旧 `requestedTaskCode` gate 卡死或提前放行。 |
-| CR139 | 唐德 | Review：连续任务切换复用启动准备 source 修复完成 | `DefaultWindowTaskStartupInitializer`, `TaskStartupWindowPreparationService`, `WindowRuntimeContext`, `WindowTaskRunner`, 连续任务队列 startup logs/tests | 已新增 `CLEAN_QUEUE_TRANSITION` startup mode：同一 UI 队列里上一个任务 `SUCCESS`、任务类型切换、且 common startup-prep marker 已存在时，后续五倍/修罗跳过全局启动准备和非必要 hot-start/startup resume；standalone/after-combat/失败或 marker 缺失路径仍保留原恢复逻辑。聚焦 guard、compile、test-compile 通过；fresh `[五倍, 修罗]` runtime 待验收。 |
+| CR139 | 唐德 | Review：三正式任务 clean transition 源码修复；fresh runtime 待补 | `DefaultWindowTaskStartupInitializer`, `WindowRuntimeContext`, `WindowTaskRunner`, `WubeiTask`, `XiuluoTaskV2`, `FiveRingTaskV2`, `FiveRingPhaseContext`, 连续任务队列 startup logs/tests | `CLEAN_QUEUE_TRANSITION` 仍只跳过全局启动准备和 hot-start/startup-screen/handover resume；旧的“直接 normal accept/接管旧 tracker”已确认为跨任务污染 bug。规则覆盖 `修罗` / `五倍` / `五环` 任意不同正式任务互切：五倍强制从 `WubeiPhase.ROUTE_TO_MAIN_TASK` 去 `宝象国/降魔侍卫`，修罗强制从 `XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC` 去 `灵兽村/灵兽村使者`，五环保留 `PREPARE`/必要 `BUY_SHOES` 后跳过 `HANDOVER_DETECT` 并进入 `ACCEPT_TASK`，复用 `wuhuan-v2:acceptNpc:navigate` 去 `长安/云游大师`。本次五环 follow-up 已 RED/GREEN focused guard、`test-compile`、`compile`、dashboard 通过。Fresh `2026-06-30 23:37:58 -> 23:38:24` 已证明 `修罗 -> 五倍` 生效；含五环及反向队列仍待 fresh runtime 补证据后再 Done。 |
 | CR140 | Codex | Review：发布清理第二批完成；compile/test-compile/source guards 通过 | debug task/debug main/dev tools/mock update/placeholder task cleanup, dead private helper cleanup, `MainWindowController`, `DefaultTaskFactory`, `BotProperties`, `NavigationService`, `NpcClickService`, `BagService`, `PlayerStateService`, `FiveRingTaskV2`, `XiuluoTaskV2`, `OcrRoiMemoryService`, `MiniMapCoordinateReader`, `AutomationMetricsService`, `docs/run-reports/2026-06-29-v1-code-cleanup-audit.md` | 第一版发布清理已执行两批：第一批删除 `src/main/java/com/bot/dhxy/debug` 下 one-off debug mains、可见 debug task、断掉/实验工具、旧 `XiuluoTask.java`/`TrackerTest.java`/`WindowScanner.java`、mock UI apps、mock update checker、未接入抓鬼/天庭占位配置、死掉的 `debug.npc-first-shot` 开关，以及对应 stale tests/docs；第二批删除经全仓确认无调用的私有孤儿 helper/wrapper，包括旧 world-map retry helper、NPC click 旧 ROI/vision-memory wrapper、包裹一次性拖动孤岛、补给 confirm 孤岛、五倍右键单模板 wrapper、小地图旧 digit wrapper、metrics 旧事件/表格 HTML 渲染函数、ROI 旧 click-sample region 分支。保留 `@Deprecated` retained source、`navigateToLingShouVillageViaZhangWen` 张文路线对照、UI source-guard helper，以及正式 OCR/template/click/navigation/team-return/return-item/expected-combat 业务路径。验证：`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、`mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.ui.MainWindowControllerSourceGuardTest" exec:java`、`XiuluoStartupTrackerFirstHotStartWiringTest`、`AfterCombatStartupRecoveryWiringTest` passed。最终私有方法扫描只剩上述刻意保留项。 |
+| CR141 | 唐德+子智能体 | Review：子审和本地复审通过，待 fresh runtime 验收 | `AutoCombatService`, `BattleRadarService`, `WindowTaskRunner`, `WindowRuntimeContext`, `TaskCheckpoint`, CR141 pause/resume source guard | 第三轮 P1 已修且最终复审无 P1/P2：paused readonly probe 记录 radar 前后 `ActionState`，若本轮从 `IN_COMBAT` 变 `FREE`，调用 `BattleRadarService.markCombatExitObservedDuringPause(...)` 标记 paused-observed current-cycle exit；`BattleRadarService` 的 expected wait allowed policy 同时允许“enter 未消费时 exit”和“paused observer 观察到 exit”两种 current-cycle pending exit，`armExpectedCombatExitWait` 不再把它们当 stale 丢弃，`consumeCombatExitSignalForExpectedWait` 可消费，`clearCombatExitPending` 同时清两个 marker。第二轮队长 pause wake、500ms readonly 短周期、FREE 时不消费 stale enter/不开自动战斗面板仍保留。验证：compile、test-compile、CR141 guard、相邻 runner/combat guards 本地复跑通过；仍需 fresh runtime 验收。 |
+| CR142 | 子智能体 | Review：Runner 坐标到达停稳 guard 完成，fresh runtime 待验 | `WindowTaskRunner`, `WindowPathingArrivalStationaryGuardTest`, `NavigationService` pathing snapshots, 五倍接任务黄字路线日志/截图 | 已改 `WindowTaskRunner.classifyPathingState(...)`：带坐标的 `TARGETED` movement intent 进入 tolerance 后，如果本轮坐标刚变化，或距 `locationChangedAtMs` 未满 `WINDOW_PATHING_ARRIVAL_STATIONARY_MS=600ms`，继续保持 `ACTIVE`；坐标稳定后才发布 `ARRIVED`。无 previous/无新移动的原地 in-range 仍 fast-path，map-only target 不额外等待，`UNTARGETED_TRACKER` 仍不按坐标到达。验证：CR142 RED/GREEN guard、compile、test-compile、`WindowPathingStoppedAwayPolicyTest`、`WindowTaskRunnerCombatStartupDeferWiringTest` 通过；未改 `GameStateUtil.isMovingByPixelDiff()`、OCR/template/click/NPC/黄字路线选择或 `ACCEPT_NPC_DIRECT_CLICK_DISTANCE`。Fresh 五倍黄字路线仍需验收。 |
+| CR143 | 子智能体+唐德 | Review：五倍 pathing terminal 晚到消费补偿已实现，fresh runtime 待验 | `WubeiTask`, `WubeiCR143PathingTerminalLateConsumerWiringTest`, 五倍 `WAIT_PATHING_TERMINAL` | 五倍等待层已补 late-consumer compensation：进入 `awaitNewer` 前读取 current `WindowPathingSnapshot` 与 latest `PATHING_TERMINAL`，只在 window、合法五倍 pathing source、`TaskType.WUBEI`、同 intent、`ARRIVED/STOPPED_AWAY`、新鲜度匹配时直接视为 satisfied；第二轮 P2 已补 heal/repair 维护 NPC source 覆盖，并记录 source/state/sequence/age/matchBasis；不改 Runner 到达判定、OCR/template/click/navigation、显形镜、三技能或绿字顺序。 |
+| CR144 | 唐德+子智能体 | Review：源码实现+双审通过，fresh runtime 待验 | `WindowTaskRunner`, `WindowTaskRunnerStalePreparedRepublishWiringTest`, prepared-dialog ready event logs/tests, 五倍普通/黄袍 enter-battle 卡住日志 | 解决 `2026-06-30 14:33` 队长停住后 Runner 持续看见 `OPTION`、旧 `WUBEI_ENTER_BATTLE` prepared action 已过期且未消费，却因为 `already current` 不再发布 `PREPARED_ACTION_READY` 的卡住问题。已实现：只有 stale prepared、同一明确 dialog type、同一 task interest、pathing snapshot 为 `ARRIVED/STOPPED_AWAY` 且不在 probe 中、cooldown 打开时，Runner 才清旧 prepared 并重新 provider prepare / 发布 ready；移动中 `ACTIVE/UNKNOWN` 不重发，retained 噪声降为 debug。Focused guard、compile/test-compile、CR58/CR66 相邻 guard 通过；fresh runtime 仍需验收。 |
+| CR145 | 唐德+子智能体 | Review：队列/backoff 可恢复，但多窗口 cleaner 删除确认仍不稳定 | `TaskMaintenanceService`, `TaskMaintenanceRequest`, `AutoBattleTask`, `WindowTaskRunner`, `WubeiTask`, `XiuluoTaskV2`, `TaskMaintenanceSummonSkillQueueWiringTest`, `TaskMaintenanceSummonSkillUnknownBackoffTest`, 三技能维护窗口日志 | 已实现并修复 review P1/P2：三技能 due 只入队不立即执行；消费按全局队头 FIFO 和窗口打开前 snapshot；普通 team pathing window 与 local `SUMMON_SKILL` capability 都记录 snapshot；队员可按同一规则消费。生产 `AutoBattleTask` 队员请求按 `requestedTaskCode` 传预算：`xiuluo_v2=2`、其他/`wubei=1`；runner 结束/关闭会清理本窗口 queued item；unknown retry backoff 队头会移到队尾；fresh tail-safe cache 出队先经过预算 claim，避免旧 item 堵队列或绕过五倍预算 1。Fresh 五倍发现队长 due 时因 runner dialog visible 在 `WubeiTask` 入口直接 return，导致队长比队员晚多轮才入队；已改为 `.enqueueSummonSkillOnly(dialogVisibleBeforeMaintenance)`。Fresh 修罗显示队列/backoff/retry/移队尾机制生效：`hwnd-3DC127E` 三次失败后第 4 次恢复成功，`hwnd-6E10566` 失败后下一轮恢复成功；但 `hwnd-E570C26` 队长在 `22:15` 也出现 `delete normal skill failed` 并移队尾。机制可恢复，但 cleaner 删除确认/slot 状态识别在多个窗口不稳定，暂不能直接关闭。验证：生产 wiring/source guard、FIFO/local member/失活队头/backoff head move-tail/tail-safe fresh 出队并占预算 guard、enqueue-only guard、迁移后的 unknown-backoff guard、`compile`、`test-compile` 通过；未改三技能 OCR/template/click/slot、导航、绿链、prepared enter-battle、expected-combat、回城、包裹、显形镜、NPC click。Fresh runtime 需要继续跟踪 cleaner 视觉、删除确认或槽位状态识别。 |
+| CR146 | 唐德+子智能体 | Review：源码实现、本地补修与 guard/compile 通过，fresh runtime 待验 | `WindowTaskRunner`, `WindowReadyEventBus`, `WubeiTask`, `XiuluoTaskV2`, `POST_COMBAT_IDLE_TIMEOUT` logs/tests | 已实现 Runner 侧战后 idle 180s watchdog：`IN_COMBAT -> NONE` 后开始观察，probe/`ACTIVE`/`UNKNOWN` pathing、fresh prepared action、dialog progress、坐标变化、pause 均不计入有效 idle；terminal `STOPPED_AWAY` 带旧 intent 不再因 `hasActiveIntent()` 被误当成移动。超过 `180_000ms` 只发布 `POST_COMBAT_IDLE_TIMEOUT`，source=`runner-post-combat-idle-watchdog`，Runner 不改 task phase、不点击。五倍消费后清 `DialogPreparationRequest`/interest/pathing/ordinary-prebattle/enter-battle/probe/chained/tracker-panel 状态并回 `ROUTE_TO_MAIN_TASK`；修罗消费后清 `DialogPreparationRequest`/interest/tracker-shortcut pathing 状态并回 `ACCEPT_TASK_NAVIGATE_TO_NPC`；两者在 task start 把消费序号基线推进到当前 ready bus sequence，避免误吃上一轮 latest event。验证：CR146 focused guard、CR144/CR142/CR141 相邻 guard、`test-compile`、`compile` 通过。Fresh gate：现场复现战后脱战后原地 180s 触发 event 与 task recovery；正常回城/归队/黄袍续战/移动中不得触发。 |
+| CR147 | 唐德+子智能体 | Review：trusted `IN_COMBAT` 纠偏已验证，non-combat retry 分支仍缺证据 | `XiuluoTaskV2`, 修罗 `RETURN_HOME`, expected-combat return-item logs/tests | 修复修罗 `FAST_EXPECTED_EXIT` 误判后回程道具点击发生在战斗内的状态机缺口：如果 `usedStartMapUnverified` 后 trusted probe 证明仍在战斗，应把这次道具点击按业务无效处理，回 `WAIT_COMBAT`；真正脱战后再次进入 `RETURN_HOME` 时必须像未用过道具一样重新尝试。若真脱战且仍未回到灵兽村，应允许继续下一次 `RETURN_ITEM_VERIFY_ATTEMPTS`，两次都失败后才普通导航 fallback。Fresh `22:13:49 -> 22:14:35` 修罗日志验证了 trusted `IN_COMBAT` 纠偏：第一次快脱战回程未验证后回 `WAIT_COMBAT`，第二次真正脱战后 attempt 2 验证回灵兽村；仍缺 trusted non-combat 下 `retry return item before navigation fallback` 的异常分支证据。不得改 `BattleRadarService` avatar ROI/阈值/15s/1s 快脱战算法，不改 OCR/template/click/navigation/包裹扫描。 |
+| CR148 | 纸质人体+唐德审核 | Review：源码实现和独立复审通过，fresh runtime 待验 | `TaskMaintenanceService`, `WindowTaskControlService`, `AutoCombatService`, local-team session/capability logs/tests | 已在 `TaskMaintenanceService` 侧实现旧 local-team session 完成 tombstone：leader queue finished 后立即让旧 `localTeamSessionKey` 失效，旧队员 context 的 `isLocalSupportMemberSession(...)` / `isLocalSupportMemberCandidate(...)` 返回 false，并清理旧 local capability、epoch、snapshot、claim，以及按 candidate window 清理 `summonSkillQueue` / `summonSkillQueueKeys`。第二轮返工修复 queue set/deque 原子性：`summonSkillQueueKeys` 与 `summonSkillQueue` 在同一个 monitor 内增删，失效清理额外按 `windowKey#` 前缀删除 set-only 幽灵 key。UI 同批启动会把已知 leader window id 写入 session state；tombstone 增加 TTL/容量裁剪。未改 `TaskExecutionContext.localTeamSessionKey` final 字段，未改五倍/修罗/五环业务路径。验证：CR148 focused guard、CR138 相邻 guard、`test-compile`、`compile`、相关 `git diff --check` 通过；独立 reviewer `PASS_WITH_NOTES`，无 P0/P1/P2；fresh gate 仍需现场复现。 |
+| CR149 | 唐德+worker | Review：通用 UI cleanup cancel 目录扫描本地验证通过 | `UICleanerService`, `images/template/cancel`, UI cleanup close-button replay/tests | `cleanUpAll` / `closeAllGenericWindows` 的 generic close 扫描已不再硬编码 `x1/x2/x3`，改为每次按文件名读取 `images/template/cancel` 下所有普通图片模板；新增 source guard 和 repo-local replay/标记图验证。保留世界地图搜索框专用 `closeMapSearchInputByX2Direct(...)` 的 `x2-only` 安全口径；未改 OCR/template 阈值、点击偏移、最多关闭 3 层窗口、`CleanupPass` 截图复用、导航/NPC/战斗/地图关闭逻辑。 |
+| CR150 | 谢帅+worker | Review：人物/宝宝加血加蓝后收尾清 hover 已实现，fresh runtime 待验 | `PlayerStateService`, CR150 source guard, first-aid HP/MP hover cleanup, input queue logs/tests | 已实现 CR150 收窄口径：只在人物加血、人物加蓝、宝宝加血、宝宝加蓝真实补给后收尾 safe move；`healAllDirect()`/cached first-aid 在 input worker 内走 direct safe move，单项补给在同一 input sequence 内完成右键和收尾 move；safe point 按窗口 base + 相对坐标计算并避开右上角 hover 敏感区；`player-state-bars`、`sheyaoxiang-status`、`sheyaoxiang-status-icon-gate-*` 不再默认截图前 pre-move。未改摄妖香/包裹使用道具路径、模板、数字识别阈值、包裹点击、OCR/template/click/navigation 业务顺序。验证：CR150 focused guard、`test-compile`、`compile` 通过；fresh runtime 仍需验收连续 `memory-gate-icon-absent-refill` 是否消失。 |
+| CR151 | 唐德+worker | Review：源码实现+独立复审通过，fresh runtime 待验 | `WindowTaskRunner`, `WindowTaskRunnerCR151NoPathingEnterBattleRepublishWiringTest`, `WindowTaskRunnerStalePreparedRepublishWiringTest`, 五倍黄袍连战 pause/resume 日志 | `2026-07-01 15:39` 五倍黄袍连战在点击绿字进入开打框后被暂停；Runner 于暂停期间准备 `WUBEI_ENTER_BATTLE`，恢复后该 prepared 已过期但仍阻塞新准备。CR151 已在 Runner existing-current 分支增加极窄 no-pathing 原地开打重发：仅 `TaskType.WUBEI` + `WUBEI_ENTER_BATTLE`，要求无 active pathing、当前 pathing snapshot 为空或 `NONE`、fresh `OPTION`、interest 支持同 operation、旧 prepared stale、prepared/visible type 一致、cooldown 打开；`ACTIVE/UNKNOWN/probe`、`ARRIVED/STOPPED_AWAY`、`ROUTE_TRANSFER`、维护/NPC/非开打 operation 不走该分支。未改 OCR/template/click 坐标、导航、NPC、战斗检测、五倍 phase；focused guards 与 `compile` 通过，全量 `test-compile` 当前被并行 dirty test sources 阻塞。 |
+| CR152 | 唐德审核+worker | Review：源码实现，本地验证通过，fresh runtime 待验 | `WubeiTask`, `WubeiCR152WaitBattlePauseResumeWiringTest`, pause/resume WAIT_BATTLE logs | `2026-07-01 15:46 -> 15:58` 队长暂停 12 分钟后恢复，Runner 在 `15:58:57.856` 发布 combat exit，但五倍同毫秒先按 `elapsedMs=739740 > 180000` 判 `WAIT_BATTLE_FINISH` timeout。已修：event-wait pause blocked time 会补偿 `WAIT_BATTLE_FINISH` timer；`tickWaitBattleFinish(...)` 先 checkpoint/补偿，再用 `FAST_EXPECTED_EXIT` 消费 fresh exit，最后才判真实 timeout。Focused guard、CR154 input guard、`test-compile`、`compile` 均已通过；fresh runtime 待验。 |
+| CR153 | 唐德审核+worker | Review：暂停恢复全仓审计报告已写，待唐德确认拆卡 | pause/resume checkpoints, timers, waits, input/polling paths, docs/run-report | 已输出 `docs/run-reports/2026-07-01-cr153-pause-resume-audit.md`。确认 P0 已由 CR152/CR154 覆盖，同时建议新增 CR155 队列失败策略、CR156 pathing/watchdog pause-aware timer、CR157 maintenance/support gate pause-aware wait、CR158 input false caller 回归。未改 Java 业务代码。 |
+| CR154 | 唐德审核+worker | Review：Input queue 暂停后恢复续跑，不再取消输入请求 | `InputActionQueue`, `InputActionRequest`, `InputActionWorker`, `InputActionScope`, direct exclusive callback checkpoints | 已实现并修复多轮 review P1：input request 捕获 `TaskStopToken`，pause 不再算 cancellation；真实 focus 前有二次 pause checkpoint；`InputActionScope.checkpoint()` 作为 direct callback 通用暂停点，`QuestManagerService`/`SummonSkillService`/`PlayerStateService`/`TeamRoleDetectionService`/`NpcClickService`/`NavigationService`/`UICleanerService`/`TaskStartupWindowPreparationService`/`DialogService`/`BagService` direct input 前后已补 checkpoint；stop/identity epoch drift 仍取消。focused guard、source guard main、`mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test`、`test-compile`、`compile` 已过；fresh runtime 仍需验证世界地图输入/维护 direct callback 期间 pause/resume 不再出现 `task-paused:*` dead letter 或暂停中继续输入。 |
+| CR159 | 唐德审核+worker | Review：源码实现+真实 JUnit focused guard/编译通过，fresh runtime 待验 | `XiuluoTaskV2`, CR159 hot-start guard, 修罗 pause-resume fallback 契约 | 已在 `XiuluoTaskV2.resolveTaskHotStart(...)` 实现固定顺序：`战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`。入口不跑 `Alt+1/Alt+5/Alt+6` 或 `TaskStartupWindowPreparationService`；tracker/dialog 屏幕事实优先，只有 tracker miss 且回程失败后才消费当前 live `XiuluoRoundContext` 的 `objective` / `objectiveParseFuture`。唐德审核发现原 guard 为 `Tests run: 0`，已补 JUnit/Surefire 后复跑 CR159/CR160/CR154 focused tests、`compile`、`test-compile` 通过。 |
+| CR160 | 唐德审核+worker | Review：暂停恢复指纹框架已实现；真实 JUnit guard/编译通过，fresh runtime 待验 | pause/resume reconcile, prepared action fingerprint, task hot-start entry points | 已在任务 phase checkpoint / park wait resume 边界接入轻量 fingerprint/reconcile：匹配时只补 `preparedActionAge`、dialog/pathing 等自动化内部等待预算并继续原 phase；不匹配时清理 stale prepared/dialog/pathing/visible-dialog volatile 状态并进入任务类 hot-start。修罗只消费 CR159 `resolveTaskHotStart(..., live XiuluoRoundContext, ...)` 契约，不复制修罗热启动顺序；真实 TTL 不补偿，CR154 input pause/resume guard 已补成真实 JUnit 并通过。 |
+| CR161 | worker+唐德审核 | Review：P2 follow-up 源码实现+本地验证通过，fresh runtime 待验 | `NavigationService`, `NavigationCR161PathingIntentOwnershipGuardTest`, 修罗 `start-exit-prepath` / `navigateToMap` / route-dialog world-map gate logs | 已修 `2026-07-01 22:23` 修罗 round 13 旧 `xiuluo-v2:start-exit-prepath:currentMap` active intent 吞掉正式 `xiuluo-v2:target` / `四圣庄` intent 的问题；P2 follow-up 又补齐 `routeDialogGateBeforeWorldMap(...)` 二级 world-map gate，同目标图也必须 source-compatible 才能作为 same-route pending 返回 `PATHING_STARTED`。未改 OCR/template/click/mini-map 坐标、CR77 fire-and-handoff 点击/输入序列、tracker、NPC/dialog、战斗或回城逻辑。CR161 focused guard、CR77 prepath guard、route-memory ownership guard、`compile` 已过；fresh runtime 待验正式目标 intent 注册与旧 prepath terminal unrelated 链路。 |
+| CR162 | 谢帅+worker | Review：外部 cloud brain 默认 sidecar 已接入，NPC 动作协议补强，fresh runtime 待验 | `docs/HYBRID_CLOUD_WORKFLOW.md`, `scripts/run-cloud-brain-server.ps1`, `scripts/run-cloud-decision-dev-server.ps1`, `scripts/run-dhxy-test-cloud-decision-stub.ps1`, `D:\mavenProject\dhxy-cloud-brain`, cloud services | 云端核心资产迁移总卡。外部 `dhxy-cloud-brain` 已从骨架占位修到可控联调候选，`IMAGE_PREPROCESS` 黄字/白字/HSV count/route packed/text candidate/tooltip metrics 已补强；`NPC_CLICK_SMART` 也已扩展普通 `CLICK`、`CTRL_CLICK`、`PRESS_HOTKEY_THEN_CLICK` 和 raw image 唯一黄名候选识别。DHXY 默认自动 sidecar 指向外部 brain；旧 DHXY test-sidecar 只能显式 debug。验证：DHXY focused guard/compile、外部 `mvn -q test` / `mvn -q -DskipTests package` 通过。剩余风险：`ROUTE_MEMORY` 仍是 JSON prototype，NPC/Dialogue 真实游戏 raw PNG 和 fresh runtime 仍待验；不宣称商业生产发布。 |
+| CR163 | 谢帅+worker | Closed by CR173/CR177G：协议卡已被统一 ImageProcessor 迁移闭环覆盖 | `CloudDecisionServiceId.IMAGE_PREPROCESS`, `ImagePreprocessCloudService`, `CloudDecisionCoordinator` log redaction, cloud image DTOs/dev sidecar/focused guards, `ImagePreprocessor` | CR163 原卡只完成 payload/安全壳，曾明确不能算洗图云端化完成；后续 CR173/CR177A-G 已把生产 wash/count/fingerprint/green-band/text-candidate/route-mask caller 收口到 `ImageProcessorService` -> `IMAGE_PREPROCESS`，并把生产 `ImagePreprocessor` 瘦成 crop/save/path helper。外部 `dhxy-cloud-brain` 2026-07-02 又补齐 `IMAGE_PREPROCESS` 黄字/白字/HSV count/route packed/text candidate/tooltip metrics 的等价算法与测试。保留本行作为历史协议卡，后续问题继续挂 CR173/CR177/CR162，不再把“洗图仍在本地”作为当前状态。 |
+| CR164 | 谢帅+worker | Review：外部 brain 黄字目的地 replay/ROI guard 已通过；fresh runtime 待验 | `NavigationService`, `RouteCloudDecisionService`, external `DecisionEngine`, route candidate/memory, world-map yellow ROI, minimap click | `NavigationCloud` 第一批子卡。外部 cloud brain 现在能用 `ROUTE_CANDIDATE` 的 `imagePayloadBase64`/`roi`/`targetMap` 自行识别世界地图黄色目的地并返回 `WINDOW_RELATIVE` click；实战 `灵兽村` 样本 replay 返回 `click=366,487;algorithm=yellow-destination-image`。ROI 缺失/坏格式/非正尺寸会 fail-closed，且测试证明不会偷用 `localDecision` shadow click。两个独立 reviewer 通过；仍需 fresh 五倍/修罗 runtime 验证。 |
+| CR165 | 谢帅+worker | Review：普通 NPC dialog 点击已切 `NPC_CLICK_SMART`；完整 direct-combat/Ctrl/retry 归 CR169 | `NpcClickService`, `NPC_CLICK_SMART`, `NPC_CLICK_STRATEGY`, external cloud brain sidecar, smart action guards | CR165 只声明普通 `verificationMode=dialog` NPC 点击生产入口已 cloud-owned：云端 `CLOUD_EXECUTED` 且本地验证通过才返回成功；inactive/disabled、云端失败、`NOT_FOUND`、无 action、invalid/越界/低置信全部 no-click/fail closed，不跑旧 disabled branch、黄字/tooltip/formula/Ctrl/learned-memory 或 `Alt+C` retry。`NPC_CLICK_STRATEGY` 旧授权桥只保留 no-click guard，不再有 `LOCAL_PASSTHROUGH` / `ALLOW_LOCAL_STRATEGY` 成功语义。模板 metadata 已修正为只传真实存在路径；缺模板时外部 brain 必须用 raw image + target facts 或 fail closed。direct-combat、Ctrl/menu、retry state machine 的完成状态看 CR169。 |
+| CR166 | 谢帅+worker | Review：单槽 tooltip/slot status 云端识别与双 review 通过，fresh runtime 待验 | `SummonSkillService`, `SummonSkillCloudDecisionService`, dev sidecar, summon-skill queue guards, tooltip replay | `SummonSkillCloud` 第一批子卡。已接 `inspectCurrentHoverTip(...)` 单槽 tooltip/slot status 云端识别：cloud active 时上传 raw tooltip ROI，dev sidecar 会从 `imagePayloadBase64` 洗黄字并匹配 `status_*.png` 模板，返回 `NORMAL_SKILL` / `KEEP_SKILL` / `LOCKED_SLOT` / `EMPTY_SLOT` / `UNKNOWN` 和 `action/reason`；timeout、低置信、invalid schema/status 直接 `UNKNOWN`/fail-closed，不调用本地洗字或 template fallback。CR145 queue 调度、窗口打开/hover、raw 截图、input queue、pause/stop、删除/确认点击点仍留本地；删除动作和确认点击云端化后续拆卡。 |
+| CR167 | 谢帅+worker | Review：Dialog prepared 与 `VERIFY_GREEN_TEMPLATE` 已收口到云端语义；修复旧 sidecar jar 风险，fresh runtime 待验 | `WubeiDialogPreparationProvider`, `DialogService`, `DialogPolicyCloudDecisionService`, 外部 `dhxy-cloud-brain` `DialogOptionRecognizer`, `scripts/run-cloud-brain-server.ps1`, dialog cloud guards | 五倍 accept prepared 已改为单次 composite cloud request；probe story prepared 由 `DIALOG_POLICY` no-click semantic action 决定 matched/miss/absent。2026-07-03 修复修罗 accept NPC tooltip 点击后 dialog verify 被无图 after-local 覆盖的问题：`VERIFY_GREEN_TEMPLATE` 也改为 image-backed `DIALOG_POLICY` request，外部 brain 用旧 option-lower/full-ROI template pipeline 返回 `NO_ACTION/status=FOUND/actionId=<GreenTemplateClickSpec.name>` 与 `candidateBox`。03:55 fresh runtime 失败确认为旧 sidecar jar 未重打包导致，已重打外部 jar、停旧 `18080` sidecar，并让启动脚本自动检测 stale jar 后 package；下一轮必须重启 DHXY/sidecar 验 `cloud-brain-dialog-green-template-visible`。 |
+| CR168 | 谢帅+worker | Ready：BagItemCloud 背包道具定位/使用第二批子卡 | `BagService`, return item/xianxing mirror raw bag ROI, bag slot cloud decision, testcase replay | 第二批 `BagItemCloud` 子卡。目标把背包道具模板匹配、任务页/普通页候选排序、显形镜/回程道具槽位定位迁到云端；本地负责打开背包/任务页、截 raw bag ROI、执行云端返回的窗口相对槽位点击并验证结果。第一刀建议只覆盖“已打开主包任务页里的任务道具定位”，不改补给药/摄妖香/普通包裹批量扫描。 |
+| CR169 | 谢帅+worker | Review：FIFO/Purple 双 reviewer 通过；fresh runtime 待验 | `NpcClickService`, `NpcClickSmartCloudDecisionService`, `NpcClickSmartQueueMessage`, `NpcClickSmartQueueOutcome`, `D:\mavenProject\dhxy-cloud-brain` NPC click queue/session/memory/purple player-anchor | 2026-07-03 queue/FIFO 打回修复：DHXY `NPC_CLICK_START/POLL` 的真实 `CloudDecisionRequest.context` 显式携带 `sessionId/windowId/taskRunId`，三者缺失本地 fail closed；`WAIT` 改为独立 30s wall-clock 等待 + 100ms sleep + `TaskCheckpoint`，不消耗 12 条候选预算。外部 queue `Session` 保存 owner，错 `windowId/taskRunId` poll 不消费消息；终态 outcome owner-aware 清理 session。二轮打回已补行为测试：多 `WAIT` 后继续、no-click `MEMORY` -> `SKIPPED` 继续、普通候选进入 input/verifier、memory click 不提交 input、stop checkpoint 后不再 poll/execute；本地 terminal outcome 除 `VERIFICATION_FAILED`/`SKIPPED` 外会停止当前 FIFO session。最终复审 P2 已修：普通阶段 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 的 `NO_ACTION` 无 click 现在上报 `SKIPPED` 并继续 poll，focused test 证明不提交 input、不触发 `SAFETY_REJECTED` terminal，后续 `YELLOW_NAME` 可执行候选仍能提交并 verify；queue/FIFO no-click P2 修复两个独立 reviewer 均 PASS。Purple 重修已通过：`PLAYER_ANCHOR_FORMULA` 使用旧本地 OpenCV HSV + `Core.inRange(120,50,50)-(160,255,255)` + `Core.bitwise_not` 语义，不再使用 RGB/HSB 或 BLOB fallback；OCR miss fail closed。Focused replay 产出 clean-name/source、old HSV washed、production anchor marked、final click marked 四张图，`click=480,357` 落在 `灵兽村使者` target hit area，`anchor=520,407` / `candidateBox=476,395,88,24` / `matchedPlayerName=乌龟的黑头`。外部测试 `NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest` 全绿，两个独立 reviewer PASS。CR169 仍非 Done，需重启 DHXY 与 external sidecar/JAR 后采集真实 NPC runtime 证据。 |
+| CR170 | 谢帅+worker | Review：objective 纯洗图已接统一门面，fresh runtime 待验 | `ImagePreprocessCloudService`, `CloudDecisionDevServer`, `ObjectiveTextRecognitionService`, `ImageProcessorService`, `ObjectiveTextRecognitionCloudWiringTest` | 已新增 `RETURN_WASHED_IMAGE` 合同：`IMAGE_PREPROCESS` 响应可携带 washed PNG payload/mime/sha/宽高，service-specific gate 校验 `image/png`、base64、sha、尺寸和置信度；`NO_RESULT`/低置信/invalid 不可用。CR177A 后 `ObjectiveTextRecognitionService` 的绿色 objective 洗图通过统一 `ImageProcessorService` 请求 `WASH_GREEN`，有效 washed image 才继续原 `cropToForeground`/地图模板/数字模板流程；cloud disabled/timeout/no-result/invalid 直接 objective miss，不回本地 `ImagePreprocessor`。CR177G 后 dev sidecar 在 `src/test/java` 用测试侧 `DevImagePreprocessor` 模拟云洗图并返回 washed payload。Focused tests 与 `compile` 已通过，fresh runtime 待验日志和真实 objective 匹配。 |
+| CR171 | 谢帅+worker | Review：通用云端图片处理 `ImagePreprocess` helper 与全 wash sidecar 已实现，fresh runtime 待验 | 通用云端图片处理 / `ImagePreprocessWashedImageClient`, `ImagePreprocessCloudService`, `CloudDecisionDevServer`, `ImagePreprocessOperation`, objective wiring tests | 通用 `ImagePreprocess` 底座：已新增 `ImagePreprocessWashedImageClient`，统一 raw PNG 编码、sha、`ImagePreprocessCloudRequest` 构造、washed PNG 解码和 path 落盘；`ObjectiveTextRecognitionService` 仅改用 helper 取得绿色 objective 洗后图，未改模板匹配、坐标 plausibility、阈值、checkpoint、点击或 phase。Dev sidecar 在 `src/test/java` 支持 `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、`WASH_WHITE`、`WASH_DIALOG_OPTION_TEMPLATE` 并返回 washed payload/mime/sha/尺寸；紫字 sidecar 使用隔离 temp 并清理。未迁移 Dialog/NPC/Tracker/GameTextLine/Wubei/Navigation 业务点，cloud active failure/no-result/invalid 仍 fail-closed，只有 `DISABLED` 才允许本地 fallback。 |
+| CR172 | 谢帅+worker | Review：第一批纯洗图 caller 已收口到统一门面，fresh runtime 待验 | `GameTextLineOcrService`, `ObjectiveTextRecognitionService`, `QuestManagerService`, `CoordinateHelper`, `WubeiTask`, `ImageProcessorService`, source guards | CR177A 已把 CR170/CR172 的纯洗图 caller 从 `wash*WithDisabledFallback(...)` 迁到统一 `ImageProcessorService`，并移除这些生产 caller 的本地 `local*WashedImage` helper；cloud disabled/timeout/no-result/invalid 现在按 miss/fail-closed 处理，不回本地 `ImagePreprocessor`。OCR/template/candidate 排序、点击坐标、导航 phase、五倍分流未改；fresh runtime 待验。 |
+| CR173 | 谢帅+worker | Review：统一云端 `ImageProcessor` 门面与生产瘦身已完成，fresh runtime 待验 | `CloudImageProcessor`, `ImageProcessorService`, `ImagePreprocessWashedImageClient`, `TaskTrackerPanelService`, `SummonSkillService`, `AutoCombatPanelService`, `GameTextLineOcrService`, `ImagePreprocessCloudService`, `ImagePreprocessor`, image-process source guards | 统一 `ImageProcessorService` / `CloudImageProcessor` Spring 门面已覆盖洗黄/绿/紫/白、dialog option、像素计数、green band、binary fingerprint、stddev/text-line pattern、自动战斗红数字洗图/计数、世界地图 route packed/mapping 与 destination-row segment 等语义；门面只走 `IMAGE_PREPROCESS` request/response，不调用本地 `ImagePreprocessor` 或 disabled fallback。CR177A/B/C/D/E/F/G 已分别把第一批纯洗图 caller、`TaskTrackerPanelService`、`DialogService`、NPC/队伍/GameText 候选、三技能/自动战斗、`GameTextLineOcrService` route/packed 残留接入门面，并把生产 `ImagePreprocessor` 瘦成 crop/save/path helper。旧核心算法只保留在 `src/test/java` dev sidecar helper 用于本地云模拟。 |
+| CR174 | CR177C worker | Review：`DialogService` 已接统一 `ImageProcessorService`，fresh runtime 待验 | `DialogService`, dialog option wash, thin white/green counts, consume fingerprint, dialog replay | 已把 `DialogService` 内黄/绿/薄白/option-template 洗图、像素计数、stddev、text-line pattern、green band、prepared fingerprint build/distance 改为调用统一 `ImageProcessorService`；云端 disabled/timeout/no-result/invalid 均按 miss/fail-closed，不回本地洗图。未改 option target、fallback 顺序、prepared TTL/consume threshold 或点击坐标。Replay marked 图已产出；Maven focused test 被并行 CR177E 测试编译错误阻塞，`compile` 已通过。 |
+| CR175 | 谢帅 hotfix | Review：dev sidecar required diagnostics 已补齐，fresh runtime 待验 | `NpcClickService`, `TeamRoleDetectionService`, `GameTextLineOcrService`, `ImageProcessorService`, `TEXT_CANDIDATES`, `MEASURE_TEAM_TOOLTIP_TEXT`, `CloudDecisionDevServer` | 2026-07-02 启动失败根因是 `IMAGE_PREPROCESS` dev sidecar 对 `MEASURE_TEAM_TOOLTIP_TEXT` / `TEXT_CANDIDATES` / route 相关 operation 返回 `EXECUTED` 但缺生产 required-output 字段。已补齐 tooltip metrics、文字候选、route packed mapping/washed payload，并新增 contract 测试覆盖；focused suite、CR173 required-output/contract tests、`compile` 已通过。fresh runtime 需重启验证队伍身份不再 `role=UNKNOWN`。 |
+| CR176 | CR177E worker | Review：三技能/自动战斗剩余像素判断已接统一门面，fresh runtime 待验 | `SummonSkillService`, `AutoCombatPanelService`, `ImageProcessorService`, `WASH_AUTO_COMBAT_ROUND_RED_DIGITS`, summon/auto-combat replay | 已把三技能黄字 tooltip 计数/洗图、自动战斗面板绿色 marker 洗图、红数字洗图/计数迁到统一 `ImageProcessorService`；disabled/failure/no-result/invalid 均按 unknown/miss/fail-closed，不回本地 image processor。未改变 CR145 队列调度、三技能冷却、删除/确认点击、hover/open/close、自动战斗开关顺序或战斗状态机。Focused tests、source guard、summon/auto-combat replay 和 `mvn -q -DskipTests compile` 已通过；fresh runtime 待验。 |
+| CR177F | CR177F worker | Review：`GameTextLineOcrService` route/packed 残留已接统一门面，fresh runtime 待验 | `GameTextLineOcrService`, `ImageProcessorService`, `ROUTE_PACKED_LINE_MASK`, `ROUTE_DESTINATION_SEGMENTS`, world-map route replay | 已把 `GameTextLineOcrService` world-map route destination packed yellow segment、green destination-row segment 选择、本地 HSV/bright/black mask、connected component、packed-line 写图、text-like candidate scoring 等残留从生产源码移除；本地只上传 raw/washed 图、调用 `ImageProcessorService`、OCR 云端 packed PNG、用云端 mapping 做坐标反算、解析 route destination/coordinate。Source guard、route replay marked 图、`test-compile`、CR173 合同测试和 `compile` 已通过；fresh runtime 待验 `IMAGE_PREPROCESS` route operations。 |
+| CR177G | CR177G worker | Review：生产 `ImagePreprocessor` 已瘦身，dev sidecar 改用测试 helper | `ImagePreprocessor`, `DevImagePreprocessor`, `CloudDecisionDevServer`, `ImageProcessorCR177GImagePreprocessorCleanupTest` | 已删除 `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 中 OpenCV loader、`org.opencv`、洗图、阈值、mask、green band、fingerprint、stddev、thin-white、connected-component 和 nested stats/band 类型；生产只保留 `cropCopy`、`cropAbsoluteRect`、`rectToString`、`saveDebugImage(BufferedImage,String)`、`saveImage`、`pathToBufferedImage` 与 debug path helper。旧算法迁到 `src/test/java/com/bot/dhxy/cloud/dev/DevImagePreprocessor.java`，`CloudDecisionDevServer` 不再 import/call 生产 `ImagePreprocessor`。CR177G guard、`CloudDecisionDevServerTest` 和 `compile` 已通过。 |
+| CR178 | Peirce worker+Codex | Review：静态技能格改为窗口相对 ROI；五窗口截图校验与 focused tests 通过，待真实删除闭环 | `SummonSkillService`, `status_sealed1.png`, `status_unobtained1.png`, `status_inactive1.png`, summon-skill slot replay/tests | 用户确认本卡不另开新 CR：正式代码已用 `if8.png` 判断 6/8 技能布局，并用三张静态非技能状态模板判断每格 `LOCKED/EMPTY/OCCUPIED`。三张模板都未命中，在截图/模板/ROI/匹配引擎正常时就是有技能格，不是 `UNKNOWN`；`UNKNOWN` 只代表机制失败并 fail closed。2026-07-05 fresh runtime 发现静态扫描把 `(440,508)-(701,797)` 当成屏幕绝对 ROI，导致窗口 base 变化后 slot1 rect 变成负数；已改为按技能格窗口相对中心动态计算相对 ROI，再统一 `base + relativeRoi` 截图。五个当前窗口 `0x110D98/0x300DA/0x120ABA/0x2B011A/0x30DA0` 截图校验均显示 8 个技能格落在相对 ROI 内。只有需要区分普通/高级/终极时才 hover；删除普通技能、终极角、冷却、队列和点击语义保持旧逻辑。Focused tests 与 `compile` 已过，待真实三技能删除闭环验证。 |
+| CR179 | CR179 worker | Review：小地图坐标/地图名识别已迁 `MINIMAP_LOCATION`，fresh runtime 待验 | `MiniMapCoordinateReader`, `MiniMapLocationCloudDecisionService`, `CloudDecisionDevServer`, `DevMiniMapCoordinateReader`, minimap replay/source guards | `MiniMapCoordinateReader` 已瘦成云端 facade：保留 public API，但生产路径只捕获/上传小地图坐标条或 label raw PNG，消费 `MINIMAP_LOCATION` 返回的 `mapName`、`x/y`、`score`、label payload/path；disabled/timeout/no-result/invalid 返回 empty/null/false，不伪造旧坐标。坐标条二值化、glyph 分割、括号/逗号定位、数字模板识别、地图名模板评分/宽度归一等旧算法迁入 `src/test/java` dev sidecar helper，仅供本地云端模拟。未迁移/未触碰 `ImageFinder`、左上角状态模板、导航点击几何、`LocationVisionService` fallback 顺序或 pathing watcher 语义。Focused contract/source/replay tests 已通过；火云洞 `(4,3)` replay marked 图已生成，fresh runtime 待验。 |
+| CR180 | 谢帅 | Review：`WASH_NPC_YELLOW_TARGET` 黄字 profile 记录卡；外部 replay 通过，fresh runtime 待验 | `D:\mavenProject\dhxy-cloud-brain\ImageAlgorithms`, `JiangmoYellowProfileReplayTest`, `YellowWashOldVsCloudBrainComparisonTest`, NPC 黄字洗图 replay | 记录并固定 NPC 黄字洗图 profile 规则：`灵兽村使者` 继续使用 `LINGSHOU_MESSENGER`；`降魔侍卫` 新增按 NPC 名字触发的 `JIANGMO_GUARD` thin profile。旧 broad profile 因 `totalPixels=10270` 噪点过高被否；用户确认采用 `sample-yellow-4` 瘦黄字阈值，不加暗边、不膨胀，白底黑字只保留 `降魔侍卫` 与 `宝象国一品侍卫` 两个名字区域。Replay 输出 `jiangmo-guard-profile-two-name-wash.png`，`outsidePixels=0`，comparison 仍能命中 `matchedText=降魔侍卫`；灵兽村使者 focused replay 未破坏。 |
+| CR181 | 谢帅+worker | Review：本地 `vision_memory` NPC click memory 已迁云并接入 `MEMORY` 队列，待 fresh runtime | `config/vision_memory.json`, `OcrRoiMemoryService`, `NpcClickSmartCloudDecisionService`, `NpcClickService`, external `NpcClickMemoryStore` / FIFO `MEMORY` | 已把旧本地 `vision_memory.json` 中已强验证、稳定、非 stale 的 `policies.clickPolicies` NPC 点击点迁入外部 cloud brain 的 `NpcClickMemoryStore`，并允许 `NPC_CLICK_SMART` FIFO 的 `MEMORY` 消息作为第一候选执行。本地仍只负责截图、边界/ROI 校验、原子点击和 expected dialog/direct-combat verifier；未恢复本地 learned-memory fallback，也不迁 `entries.lastPredictedClick` 或单次 outcome。聚焦测试、编译、两个独立 reviewer 已通过；仍待 fresh runtime 日志验证。 |
+| CR182 | 谢帅+worker | Review：两个 reviewer 已批准，fresh runtime 待验 | `TaskTrackerPanelService`, `TaskTrackerPanelReadResult`, `WubeiTask`, `XiuluoTaskV2`, `TRACKER_PANEL_READER`, external cloud brain tracker reader | `TRACKER_PANEL_READER` 已改为 cloud active 上传完整 tracker panel crop/origin；五环/修罗消费 cloud click，五倍消费 cloud `taskKey/selected click/links/targetName/yellowText/targetMapName`，黄袍 cache 保留 cloud source，旧 ranker 不再驱动 cloud link。DHXY focused/compile、external replay/compile 通过，两个 reviewer 均无 P0/P1/P2 blocker；仍需 fresh runtime。 |
+| CR183 | 谢帅+worker | Review：两个 reviewer 已批准，fresh runtime 待验 | `TeamReturnService`, `application.properties`, `TeamReturnLocalOnlyGuardTest`, runtime/config guards | `TeamReturnService` 成员归队点击、队长 wait、leader precheck consume 已恢复纯本地：只做本地模板匹配、摄妖香检查和 input queue 点击，不再 import/inject/call `TeamReturnPolicyCloudDecisionService`、`RuntimeDecisionShadowService` 或 `CloudDecisionServiceId.TEAM_RETURN_POLICY`；`application.properties` 显式关闭 `team-return-policy` shadow/execute。RED/GREEN focused tests、旧 runtime/config guards、`compile` 和两个 reviewer approval 已通过；fresh runtime 需验证日志无 `cloud.decision serviceId=TEAM_RETURN_POLICY`。 |
+| CR184 | Codex | Review：回城验证后毫秒级清 stale `IN_COMBAT`，guard/compile 通过，fresh runtime 待验 | `AutoCombatService`, `XiuluoTaskV2`, `WubeiTask`, `AutoCombatReturnHomeVerifiedReconcileWiringTest`, 修罗/五倍 fast expected exit 回城日志 | 修罗/五倍在 fast expected exit 后已使用回城道具并验证回到起点地图时，不再等 runner/window watcher 两次 miss 清旧战斗态；任务侧地图验证成功后同步调用 `AutoCombatService.reconcileReturnHomeVerifiedCombatState(...)`，只清 expected-wait/fast-exit/entry-maintenance 内存态和 stale `GameContext.ActionState.IN_COMBAT`，不截图、不 OCR、不睡眠、不发输入，也不重复 `recordCombatExit()` 扣轮数。Focused guard 与 `compile` 通过；fresh runtime 需验证下一步导航不再被旧 `IN_COMBAT` 拦住。 |
+| CR185 | 谢帅+worker | Review：NPC click migrate 通道已移除，双 reviewer 通过，fresh runtime/ROI follow-up 待验 | `config/vision_memory.json`, `OcrRoiMemoryService`, `NpcClickSmartCloudDecisionService`, external cloud brain `VisionMemoryStore` / `NpcClickMemoryStore`, canonical vision memory tests | 最新修正：初始 full `vision_memory.json` 已由 manager 手工复制到 cloud-brain `data/vision_memory.json` 并校验 hash/count 等价，因此 DHXY 不再保留 `NpcClickMemoryMigrationService`、`cloud.npc-click-memory-migration-*` 配置或 NPC click migrate 测试；cloud-brain 不再暴露 `/api/cloud/npc-click-memory/migrate` / `npcClickMemoryMigrationResponse(...)` / `NpcClickMemoryStore.migrate(JsonNode)`。生产 source of truth 是云端 canonical store；`NpcClickService` 仍不读本地 ROI/migrate，runtime outcome 继续写 cloud canonical store 并刷新 derived `MEMORY`。两个独立 reviewer 已确认无 P0/P1/P2。fresh runtime 需验 cloud `MEMORY` 命中/失败降权；另需后续 `Cloud ROI Resolve` 卡避免长期整窗。 |
+| CR186 | 谢帅+worker | Review：outside-enter 释放已实现，双 reviewer 通过，fresh runtime 待验 | `FiveRingTaskV2`, `TaskTransactionRunner`, `FiveRingCR186OutsidePhaseTurnReleaseWiringTest`, 五环 task-turn release logs | 五环 `ACCEPT_TASK` / `BUY_SHOES` 等 outside phase 在 ready-priority 未命中后、slow path 前调用 `forceReleaseTurn(...:outside-enter)` 释放继承 coarse task turn；不碰 physical input queue，不改 OCR/template/click/navigation。Focused guard、compile、test-compile 通过，两个独立 reviewer 无 P0/P1/P2。fresh 验收看 outside-enter release 早于移动确认/等待，且多窗口不再出现五环 current-map 导航后数秒级 inherited `heldMs`。 |
+| CR187 | 谢帅+worker | Review：通用小地图 fire-and-handoff 已实现，双 reviewer 通过，fresh runtime 待验 | `NavigationService`, `NavigationCR187ImmediateMiniMapHandoffWiringTest`, `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`, current-map mini-map navigation logs/tests | 修罗出村 no-confirm 小地图路径已抽成 `isImmediateMiniMapFireAndHandoff(...)`，仅白名单修罗出村、五环接任务 NPC、五环买鞋店三条 source，并约束地图/坐标；命中后复用原 clickPoint/jitter/坐标换算，记录 movement intent、同步关小地图、直接返回 `PATHING_STARTED`，不等 `isMovingByPixelDiff`。Focused guard、compile、test-compile 通过，两个 reviewer 无 P0/P1/P2；未改点击几何/视觉匹配，故无需 testcase replay。fresh 验收看五环 current-map 点击后立即 handoff/pathing-started，修罗出村行为保持。 |
+| CR188 | 谢帅+worker | Review：Runner 唯一 owner 已实现；14:48/15:25 fresh blockers 已热修，待复跑验证 | `WindowTaskRunner`, `FiveRingTaskV2`, `WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest`, `FiveRingPathingCombatRecoveryIntentClearWiringTest`, `FiveRingHotStartTrackerHandoverWiringTest`, 五环 `TASK_TRACKER_PATHING` prepared action | 五环任务线程已不再直接扫/点左侧 tracker；只消费 Runner 准备的 fresh `TASK_TRACKER_PATHING target=wuhuan`。Runner 准备前跳过战斗、active/unknown/probe pathing、fresh/higher-priority prepared；准备后发布前复查 combat/pathing/priority 和 `TaskTrackerPrepareOwner`。已热修两个 fresh blocker：14:48 tracker pathing 战斗恢复未清 active intent；15:25 热启动左侧面板已有任务但 prepared action 过期/晚到，导致误进 `ACCEPT_TASK` 重新导航接任务。Focused guards/compile/test-compile 通过，fresh 仍需复跑确认。 |
+| CR189 | 谢帅+worker | Review：五环 tracker 面板 cache-hit 已实现，双 reviewer 通过，fresh runtime 待验 | `TaskTrackerPanelService`, `WindowRuntimeContext`, `TaskTrackerPanelCacheEntry`, `TaskTrackerPanelCR189CacheWiringTest` | Runner 准备五环 tracker 时先截左侧 panel ROI 并生成保守 fingerprint；同一窗口、同 taskCode、panel origin/size 一致、fingerprint distance <= 1 且 cached window-relative click 仍在 panel 内时，直接生成 `cache-hit` prepared action，避免完整云端 reader。cache 存在 `WindowRuntimeContext`，不存绝对桌面坐标；面板变化/geometry 变化/越界/无 cache 会走完整解析并刷新 cache。Focused guard、compile、test-compile 通过，fresh 验收看 cache-hit 日志和面板变化 miss。 |
+| CR190 | CR190 worker + 双 reviewer | Review：双 reviewer 已通过，fresh runtime 待验 | `FiveRingTaskV2`, `WindowTaskRunner`, `WindowRuntimeContext`, `TrackerPanelReaderCloudDecisionService`, `TaskTrackerPanelService`, CR190 focused tests, 五环完成/今日上限 dialog templates | Runner tracker negative gate 已恢复旧业务顺序：positive `TASK_TRACKER_PATHING` 优先，fresh negative 才允许进入 returned-dialog，plain `dialog-visible:STORY` 只唤醒不 terminal。`AMBIGUOUS/ERROR` fail-closed、post-prepare request gate、高优先级 prepared 阻断均已补；新增对象级 tests 覆盖 STORY wake、runtime consume/wrong/stale/prepared-blocked、post-prepare request gate。两个 reviewer 无 P0/P1/P2；fresh 需验证完成/今日上限 story 不再卡 `RUNNER_PREPARED_NOT_READY`。 |
+| CR191 | CR191 worker + 双 reviewer | Review：双 reviewer 已通过，fresh runtime 待验 | `XiuluoTaskV2`, `XiuluoCR91AcceptSnapshotOverlapWiringTest`, 修罗 no-maintenance `start-exit-prepath` / tracker 绿链 / 盒子 / 摄妖香日志 | 修罗 no-maintenance 接任务后仍先预走、截图、后台解析，但不再在 `TRY_TRACKER_SHORTCUT` 前消费 common box 或 deferred post-combat recovery / 摄妖香；成功点击 tracker 绿链后仍通过 `xiuluo-v2:tracker-shortcut-green-clicked` 消费 common box + deferred recovery。真正 maintenance-due 分支保留早盒子消费，以免 heal/repair 维护耗掉 CR120 pending TTL。不改 OCR/template/点击坐标/导航坐标。Focused guard 已覆盖 review #1 P1；review #1 与 review #2 re-review 均已通过。fresh 验收看 `accept snapshot -> start-exit-prepath -> tracker green clicked -> box/deferred recovery`，不得再出现绿链前盒子/摄妖香。 |
+| CR192 | 谢帅 | Planned：修罗单一云端大脑父卡 | `docs/superpowers/plans/2026-07-05-xiuluo-cloud-single-brain-migration.md`, `XiuluoTaskV2`, `XIULUO_BRAIN` | 修罗云端化总任务：启用后 phase/hot-start/retry/recovery/round done/fail 只能由 `XIULUO_BRAIN` 决定；本地只执行 action、采集 facts、执行 stop/pause/window/input safety。CR193-CR202 为子卡，按 fresh node 分段验收。 |
+| CR193 | worker + 双 reviewer | Planned：协议骨架 | `cloud/xiuluo`, `CloudDecisionServiceId`, `XiuluoBrainCloudDecisionServiceTest` | 新增 `XIULUO_BRAIN` request/response/action 协议和 required-execute 服务骨架；无 local fallback；本地测试只验 parse、identity、TTL、fail-closed，不接生产路径，无 fresh runtime。 |
+| CR194 | worker + 双 reviewer | Planned：dev brain session | `CloudDecisionDevSidecarService`, `cloud/xiuluo`, `XiuluoBrainDevServerTest` | 实现 dev cloud brain session store：`sessionId/stateSeq/phaseToken/actionId` 防旧响应/重放；云端状态推进不能询问本地 `localNextPhase`。只跑 session/状态测试，无 fresh runtime。 |
+| CR195 | worker + 双 reviewer | Planned：客户端云脑 loop 脚手架 | `XiuluoTaskV2`, `application.properties`, `XiuluoBrainLoopWiringTest` | 在 disabled flag 后新增修罗云脑 loop。flag off 保持旧路径；flag on 必须 fail-closed 且不得 local fallback。本卡只搭 loop 骨架和 fake-cloud 测试，无 fresh runtime。 |
+| CR196 | worker + 双 reviewer | Planned：phase report / action 模型与 source guard | `XiuluoPhaseReport`, `XiuluoActionExecutionResult`, `XiuluoSingleBrainSourceGuardTest` | 定义 enabled path 的 report/facts/action-result 模型，禁止 `XiuluoPhaseReport` 携带 `nextPhase`；source guard 禁止 enabled path 使用 `TASK_POLICY`、`TASK_RECOVERY`、`resolveTaskHotStart`、本地 retry/recover。无 fresh runtime。 |
+| CR197 | worker + 双 reviewer | Planned：hot-start / startup 初始 phase 上云 | `XiuluoTaskV2`, `XiuluoBrainHotStartWiringTest`, 修罗启动日志 | `resolveTaskHotStart` 拆为 facts collection + `XIULUO_BRAIN` initial command；本地可探测 combat/tracker/dialog/return item，但不能自跳 phase 或提前使用回程道具。Fresh Node A 验启动/accept smoke。 |
+| CR198 | worker + 双 reviewer | Planned：接任务 / objective / tracker shortcut 上云 | `XiuluoTaskV2`, dev brain policy, `XiuluoBrainAcceptTrackerWiringTest`, 修罗 tracker 绿链日志 | 接任务、接任务 dialog、accept snapshot、objective、maintenance facts、tracker green shortcut 由云端推进；保留 CR191 顺序。Fresh Node B 验到达 tracker green/pathing。 |
+| CR199 | worker + 双 reviewer | Planned：route / target / enter-battle 上云 | `XiuluoTaskV2`, dev brain policy, `XiuluoBrainRouteEnterBattleWiringTest`, route/target/enter-battle 日志 | `WAIT_TRACKER_SHORTCUT_PATHING`、目标导航、目标 NPC 点击、看打/入战由云端决定 fallback/next phase。本地只报告 route/pathing/click/dialog/combat facts。Fresh Node C 验进入战斗。 |
+| CR200 | worker + 双 reviewer | Planned：combat / return / team-return / recovery 上云 | `XiuluoTaskV2`, dev brain policy, `XiuluoBrainCombatReturnRecoveryWiringTest`, 修罗回程/归队/timeout 日志 | `WAIT_COMBAT`、回程、归队、post-combat idle、pre-combat watchdog、loop guard、retry/recovery 全部改为上报 facts 后由 `XIULUO_BRAIN` 决定；`team return` 保持本地 detector/fact。Fresh Node D 验一整轮。 |
+| CR201 | worker + 双 reviewer | Planned：enabled path 禁双脑收口 | `XiuluoTaskV2`, `XiuluoBrainNoDualBrainGuardTest`, 修罗多轮日志 | enabled path 不得引用 `TASK_POLICY`/`TASK_RECOVERY` authority、`resolveTaskHotStart`、本地 restart/recover 或 `LOCAL_PASSTHROUGH`。旧路径只允许 flag off 作为 legacy。Fresh Node E 验 5-10 轮。 |
+| CR202 | 谢帅 + worker/reviewer | Planned：长跑验收与文档收口 | `docs/HYBRID_CLOUD_WORKFLOW.md`, `docs/业务逻辑.md`, `docs/ACTIVE_WORK.md`, long-run logs | 更新业务逻辑/云端化文档，跑完整本地 focused suite、compile/test-compile/dashboard，再做 Fresh Node F 长跑；CR193-CR202 通过后才能关闭 CR192 父卡。 |
+
+Card CR159: 修罗任务类热启动改为完整恢复顺序
+
+Status:
+
+- Review. Owner: 唐德审核+worker。CR159 worker 已实现修罗任务类热启动入口；唐德负责审核，不直接写 Java 业务实现。
+- 2026-07-01 用户定稿：修罗热启动不仅用于完整启动，也应作为暂停恢复后的任务内兜底入口。
+- 业务规则已写入 `docs/业务逻辑.md` 的 `修罗的逻辑 / 任务类热启动 / 暂停恢复` 小节。
+- 2026-07-01 CR159 worker 实现：`XiuluoTaskV2.resolveTaskHotStart(TaskExecutionContext, XiuluoRoundContext, String)`
+  是 CR160 可调用的任务级入口。调用方必须传入当前任务实例的 live `XiuluoRoundContext`，不能新建
+  `XiuluoRoundContext.start(round)` 丢失 saved `objective` / `objectiveParseFuture`。
+
+Required behavior:
+
+1. 修罗任务类热启动的固定顺序为：
+   `战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`。
+2. 如果当前窗口已经在战斗中，直接恢复到修罗战斗等待阶段，例如 `WAIT_COMBAT`。
+3. 如果不在战斗中且当前存在修罗“看打 / 进入战斗” option dialog，优先消费这个 dialog。
+   该 dialog 是 tracker 快捷路线和非快捷 objective 路线共同的入战汇合点。
+4. 如果没有入战 dialog，再读取左侧修罗 tracker；有 `修罗任务` 绿字时走 tracker shortcut。
+5. 如果 tracker miss，再尝试修罗回程道具；能验证回 `灵兽村` 时按修罗战后/归队/下一轮流程继续。
+6. 只有 tracker miss 且回程道具失败/未验证成功时，才使用当前 round context 的 `objective`
+   或 `objectiveParseFuture` 恢复非快捷路线，并进入 `NAVIGATE_TO_TARGET`。
+7. 如果上述事实都不可用，最后才清理必要 UI 并回 `ACCEPT_TASK_NAVIGATE_TO_NPC` 重新接任务。
+
+Boundaries:
+
+- 不包含窗口启动前置检查；不得在本热启动入口运行 `Alt+1`、`Alt+5`、`Alt+6`、地图/飞行开关检查或
+  `TaskStartupWindowPreparationService` 级别动作。
+- 不改修罗 tracker 绿字识别算法、看打模板/OCR、NPC click、导航坐标、回程道具模板或战斗识别算法。
+- 不改变快捷路线和非快捷路线的正常业务顺序；只改变任务类热启动/暂停恢复入口的恢复判定顺序。
+- 不把非快捷 `objective` 提前到 tracker 前面；屏幕事实优先，内存 objective 只作为后置兜底。
+
+Implementation direction:
+
+- 目标文件主要是 `XiuluoTaskV2`，必要时调整 `XiuluoRoundContext` 的状态保留/恢复方法。
+- 现有 `resolveStartupTrackerOrReturnItem(...)` 需要演进为完整修罗任务类热启动 resolver，或新增同级入口并让
+  startup / pause-resume 复用同一套顺序。
+- 暂停恢复时必须使用当前任务实例的 `XiuluoRoundContext`，不能新建 `XiuluoRoundContext.start(round)` 后丢掉
+  `objective` / `objectiveParseFuture`。
+
+Validation plan:
+
+- Focused source/behavior guard 覆盖：
+  - 战斗中优先进入 `WAIT_COMBAT`；
+  - 已有看打 option dialog 时优先消费 dialog，且不先读 tracker；
+  - 没有 dialog、有 tracker 时走 shortcut；
+  - tracker miss 后先试回程道具；
+  - 回程失败后才消费 `objective` / `objectiveParseFuture`；
+  - 所有事实不可用才重新接任务。
+- 至少运行 focused CR159 guard、`mvn -q -DskipTests test-compile`、`mvn -q -DskipTests compile`。
+- Fresh runtime gate：
+  - 修罗正常 tracker 热启动不回退；
+  - 修罗非快捷路线暂停恢复能从 saved objective 继续；
+  - 完整启动热启动不跑窗口前置检查；
+  - 日志能看出每次恢复命中的分支。
+
+Implementation notes:
+
+- `resolveTaskHotStart(...)` 内部固定按 CR159 顺序执行：
+  1. `BattleRadarService.checkAndSyncCombatState()` + `GameContext.ActionState.IN_COMBAT` 命中时返回 `WAIT_COMBAT`；
+  2. 使用既有 `DialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(...))` 和
+     `ENTER_BATTLE_TEMPLATE` 只消费修罗“看打 / 进入战斗” option，命中后进入 pending-confirm `WAIT_COMBAT`；
+  3. 无入战 dialog 才读 `TaskTrackerPanelService.readXiuluoTrackerPanel(...)`，命中绿字后复用原
+     `AFTER_ACCEPT_MAINTENANCE_CHECK -> TRY_TRACKER_SHORTCUT` 快捷路线；
+  4. tracker miss 后才调用原 `tryUseStartupReturnItemOnce(...)`，仍只用任务页回程道具探测并验证回 `灵兽村`；
+  5. 回程失败后才消费 live round context 的 `objective` 或 `objectiveParseFuture`，成功后进入
+     `NAVIGATE_TO_TARGET`；
+  6. 全部 miss 才 `uiCleanerService.cleanUpAll()` 并回 `ACCEPT_TASK_NAVIGATE_TO_NPC`。
+- 未改 tracker 绿字识别、看打模板/OCR、NPC click、导航坐标、回程道具模板或战斗识别算法；只新增顺序入口与 guard。
+
+Validation result:
+
+- RED：`XiuluoCR159TaskHotStartOrderWiringTest` 初次运行失败，报
+  `first-round startup must call the CR159 task-level hot-start entry`。
+- GREEN：CR159 focused source guard 通过；同步通过的相关 guards 包括
+  `XiuluoStartupTrackerFirstHotStartWiringTest`,
+  `XiuluoStartupReturnItemTaskPageOnlyWiringTest`,
+  `AfterCombatStartupRecoveryWiringTest`,
+  `XiuluoStartupIncenseBeforeHotStartWiringTest`,
+  `XiuluoStartupFirstAidWiringTest`,
+  `XiuluoContinuousRoundNoHotStartWiringTest`,
+  `XiuluoCR130CR131WiringTest`。
+- 唐德审核发现 worker 最初的 `mvn -Dtest=... test` 存在 `Tests run: 0` 假绿灯风险；已补
+  `junit-jupiter` / Surefire，并让 CR159 guard 保留 `main` 的同时新增 JUnit `@Test` 入口。
+- 复跑结果：`mvn -q -Dtest="XiuluoCR159TaskHotStartOrderWiringTest,TaskPauseResumeReconcilerCR160Test,TaskPauseResumeCR160WiringTest,InputActionPauseCancellationGuardTest" test`
+  通过；surefire reports 均为 `Tests run: 1, Failures: 0, Errors: 0`。
+- `mvn -q -DskipTests compile` 通过。
+- `mvn -q -DskipTests test-compile` 通过。
+
+Card CR160: 暂停恢复指纹校验与任务热启动兜底
+
+Status:
+
+- Review. Owner: 唐德审核+worker。CR160 worker 已实现暂停恢复指纹校验框架；唐德负责审核，不直接写 Java 业务实现。
+- 2026-07-01 用户定稿：不做“无条件补暂停时间”的复杂方案；恢复时先验证旧画面/旧 prepared 状态是否仍成立，
+  成立才补自动化内部时间并继续，否则直接走任务类热启动。
+- CR159 已暴露 `XiuluoTaskV2.resolveTaskHotStart(TaskExecutionContext, XiuluoRoundContext, String)`；
+  CR160 只消费该入口，并传当前 live `XiuluoRoundContext`，不新建 `XiuluoRoundContext.start(round)`。
+
+Required behavior:
+
+1. 用户恢复暂停后，不直接相信暂停前的 prepared action、dialog、pathing 或 phase 仍有效。
+2. 恢复后先做轻量指纹/事实校验：
+   - 旧 prepared action 对应的 dialog/operation/type/click target 仍然有效；
+   - 旧 pathing snapshot / active intent 与当前屏幕事实仍一致；
+   - 当前战斗状态没有发生与旧 phase 矛盾的变化；
+   - 任务 phase 依赖的关键 UI 没有消失或变成别的 dialog。
+3. 如果校验通过，才补偿自动化内部等待时间，例如 prepared action age、phase watchdog、
+   pathing wait budget、任务自己的 park/wait timeout，然后继续原 phase。
+4. 如果校验失败，不补偿这些自动化等待时间，也不猜用户暂停期间任务走到了哪里。
+   应清理依赖旧画面的 volatile 状态，例如 stale prepared action、旧 dialog preparation request、
+   stale pathing signal、旧 visible-dialog cache，然后进入当前任务的任务类热启动。
+5. 真实游戏时间类 TTL 不能补偿：
+   - 盒子 30 秒 pending TTL；
+   - 摄妖香/14 号箱/其他游戏 buff 实际持续时间；
+   - 任何用户暂停期间游戏世界仍会继续流逝的业务时间。
+
+Task-specific fallback:
+
+- 修罗：走 CR159 的完整任务类热启动。
+- 五倍：沿用现有五倍任务类热启动 / tracker / return-item 恢复入口；如发现缺口另开五倍专卡。
+- 五环：当前用户认为任务类热启动大体可用；只接入相同“指纹失败则走任务热启动”的框架，不扩大五环业务。
+
+Boundaries:
+
+- 不改 OCR/template/click 坐标算法。
+- 不改 `TaskStartupWindowPreparationService`，不把窗口启动前置检查混进暂停恢复。
+- 不延长真实游戏 TTL。
+- 不把所有 pause 都变成 task restart；只有指纹/事实不匹配才走任务热启动。
+- 不破坏 CR154 input queue 暂停续跑语义：正在 input worker 内且请求仍有效的动作应按 CR154 继续。
+
+Implementation direction:
+
+- 优先在任务 phase checkpoint / park wait resume 边界做 reconcile，而不是在 UI resume button 里直接重启任务。
+- 复用已有 prepared action verifier / dialog type / pathing snapshot / combat state 事实，不新增重型 OCR。
+- 需要为每个任务定义“恢复失败后的任务类热启动入口”，避免外层 runner 猜测具体 phase。
+- 日志必须记录：pauseBlockedMs、fingerprintMatched、mismatchReason、compensatedTimers、clearedVolatileState、
+  fallbackTaskHotStart。
+
+Implementation result:
+
+- 新增 `TaskPauseResumeFingerprint` / `TaskPauseResumeReconcileResult` / `TaskPauseResumeDecision`
+  以及 `TaskPauseResumeReconciler`。Reconciler 采集 task/window/`getNativeHandle()`、phase、action state、
+  prepared action、visible dialog、pathing snapshot；匹配则调用 runtime 补偿，失配则调用 runtime 清 volatile。
+- `WindowRuntimeContext.compensateVolatileAutomationTimersAfterPause(...)` 只移动自动化内部时间戳：
+  `preparedActionAge`、`dialogPreparationRequest/status`、`visibleDialogCache`、`dialogInterest`、
+  `pathingWaitBudget`。没有补偿盒子 pending TTL、摄妖香/箱子/buff 等真实游戏时间。
+- `WindowRuntimeContext.clearPauseResumeVolatileState(...)` 在 fingerprint mismatch 时清理 stale
+  prepared action、旧 dialog preparation request/status、dialog interest、visible dialog cache 和 pathing signal。
+- 五倍：`runRoundPhases(...)` 和 `parkAfterYieldIfNeeded(...)` 均先 reconcile；匹配时才补 probe/formal
+  maintenance timer，失配时清本地 tracker/probe/enter-battle/wait-battle volatile 并进入
+  `WubeiPhase.HOT_START_DETECT`。
+- 修罗：`runRoundPhases(...)` 和 `parkAfterYieldIfNeeded(...)` 均先 reconcile；匹配时才补
+  `preCombatStartedAtMs`，失配时调用 CR159 入口
+  `resolveTaskHotStart(context, liveRoundContext, "pause-resume-hot-start:...")`，不改修罗内部 hot-start 顺序。
+- 五环：`runPhases(...)` 接入 phase checkpoint reconcile；匹配时只补 `FiveRingPhaseContext.pathingStartedAtMs`
+  这个内部 pathing wait 预算，失配时回到五环 `PREPARE` 任务类热启动兜底。
+- 本卡未修改 OCR/template/click/movement/navigation 坐标算法，也没有把恢复逻辑放到 UI resume button。
+
+Validation plan:
+
+- Focused guard 覆盖：
+  - 恢复后 fingerprint 未变，自动化内部 timer 被补偿且原 phase 继续；
+  - prepared dialog 消失/变化，不补偿、清 stale prepared 并进入任务热启动；
+  - 战斗状态变化，不补偿、走对应任务热启动或 `WAIT_COMBAT`；
+  - 真实 TTL 不被补偿；
+  - CR154 input queue pause/resume 行为不被回退成 `task-paused:*` cancel。
+- 至少运行 focused CR160 guard、CR154 input pause guard、`mvn -q -DskipTests test-compile`、
+  `mvn -q -DskipTests compile`。
+- Fresh runtime gate：
+  - 暂停前后画面未变的开打 dialog 可继续点击；
+  - 暂停期间用户/游戏导致 dialog 消失或战斗结束时，恢复后不原地卡死，能走任务热启动；
+  - 修罗非快捷 saved objective case 依赖 CR159 验收。
+
+Validation result:
+
+- 唐德审核发现 CR160 focused guards 与 CR154 input guard 原先都是 main-style guard，Surefire 报告为
+  `Tests run: 0`；已补 JUnit `@Test` 入口，保留旧 `main` 兼容方式。
+- GREEN: `mvn -q -Dtest="TaskPauseResumeReconcilerCR160Test,TaskPauseResumeCR160WiringTest" test`；
+  两个 surefire reports 均为 `Tests run: 1, Failures: 0, Errors: 0`。
+- GREEN: `mvn -q -Dtest="InputActionPauseCancellationGuardTest" test`；
+  CR154 input worker 内有效动作续跑语义未回退，surefire report 为 `Tests run: 1, Failures: 0, Errors: 0`。
+- GREEN: `mvn -q -Dtest="XiuluoCR159TaskHotStartOrderWiringTest,TaskPauseResumeReconcilerCR160Test,TaskPauseResumeCR160WiringTest,InputActionPauseCancellationGuardTest" test`。
+- GREEN: `mvn -q -DskipTests compile`。
+- GREEN: `mvn -q -DskipTests test-compile`。
+- Fresh runtime 尚未跑：仍需验证 matched dialog 继续原 phase、mismatch dialog/pathing/combat 进入任务 hot-start、
+  以及修罗非快捷 saved objective fallback。
+
+Card CR161: 修罗出村预走路 intent 不能阻塞正式目标导航
+
+Status:
+
+- Review. Owner: worker+唐德审核。worker 已完成 Java 窄修和本地验证；唐德负责审核和 fresh runtime 验收。
+- 2026-07-01 22:23 fresh runtime evidence：队长 `hwnd-E50C6E / 光牛的滑子° / ID 387545229`
+  修罗 round 13 地址解析成功，但正式目标导航没有真正注册。
+
+Runtime evidence:
+
+1. `22:23:31.513` 后台 objective parse 成功：
+   `NpcTarget(mapName=四圣庄, name=修罗, x=116, y=180)`。
+2. `22:23:35.634` tracker shortcut miss 后消费 saved objective：
+   `shortcut fallback consumed saved objective`，进入 `NAVIGATE_TO_TARGET`。
+3. `22:23:31.169 -> 22:23:32.850` 接任务后出村预走路先注册：
+   `source=xiuluo-v2:start-exit-prepath:currentMap targetMap=灵兽村 target=(11,8)`。
+4. `22:23:36.334 -> 22:23:36.347` 正式导航 `target=四圣庄` 时，
+   `NavigationService` 看到已有 active pathing，记录
+   `skip duplicate pathing intent registration ... reason=watcher-already-active`，
+   并返回 `PATHING_STARTED`，但没有注册新的 `xiuluo-v2:target` / `四圣庄` intent。
+5. `22:23:49.666` Runner 发布的是旧 prepath terminal：
+   `source=xiuluo-v2:start-exit-prepath... target=灵兽村 state=ARRIVED`。
+   修罗任务层正确判定：
+   `skip unrelated navigation watcher snapshot expectedMap=四圣庄 actualTarget=灵兽村`，
+   然后继续等四圣庄 terminal。
+6. 后续没有四圣庄 pathing terminal，`22:26:25.509` 触发
+   `pre-combat watchdog wait budget timeout`，round 13 被放弃。
+
+Root cause:
+
+- CR77/CR91 的出村预走路设计是 speed hint：可以让 Runner 观察 ARRIVED/STOPPED_AWAY，
+  但不能让修罗 park 等它，也不能阻塞正式目标导航。
+- 当前 `xiuluo-v2:start-exit-prepath:currentMap` 走 `navigateInCurrentMap` 的
+  fire-and-handoff 后，仍以普通 active `WindowPathingIntent` 挂在 runtime 上。
+- `NavigationService.navigateToMap(...)` 的 stale-cache / duplicate watcher-active 判断没有区分
+  active intent 的 target/source 是否属于本次正式导航，于是把旧 `灵兽村` prepath 当成
+  新 `四圣庄` 导航已经 active。
+
+Required behavior:
+
+1. 修罗出村 prepath 可以继续使用 CR77 fire-and-handoff，并允许 Runner 观察它。
+2. 当后续正式 `xiuluo-v2:target` 导航要去不同目标地图/NPC 时，旧 `start-exit-prepath` intent
+   不能让 `navigateToMap(...)` 返回“已有 active pathing”而跳过目标 intent 注册。
+3. 如果 active pathing intent 的 target/source 与本次 navigation request 不匹配，
+   `NavigationService` 必须继续执行真正的 map navigation，或在正式目标导航开始前清理/替换这个 speed-hint intent。
+4. 旧 prepath terminal 后续到达时，修罗仍应按现有逻辑把它判为 unrelated；不能把它当作目标导航完成。
+5. 正式目标导航一旦返回 `PATHING_STARTED`，必须存在匹配 `xiuluo-v2:target` / target map 的 intent，
+   让 Runner 能发布目标 terminal 并唤醒任务。
+
+Boundaries:
+
+- 不改修罗 objective OCR/template 解析、tracker 绿字匹配/点击、NPC click、dialog option、战斗检测、回城道具、
+  摄妖香/盒子/三技能维护逻辑。
+- 不改小地图点击坐标、jitter、CR77 fire-and-handoff 的点击点或输入序列；如必须触碰点击点，必须按
+  `AGENTS.md` 做 testcase replay 和标记输出。
+- 不把所有 current-map intent 都禁用；只处理“speed-hint prepath 与正式目标导航 target/source 不匹配”的 ownership 问题。
+- 不回退 CR77 的性能目标：出村 prepath 仍不应重新等待完整 movement proof。
+
+Implementation direction:
+
+- Worker 先对比 `origin/dev` / 当前 HEAD / local diff，确认 CR77/CR91 的现有业务约束。
+- 优先在 `NavigationService.navigateToMap(...)` 的 active pathing / stale-cache guard 做 target/source-aware 判断：
+  只有 active intent 与本次 request 的 target map/source 兼容时，才允许 `watcher-already-active`
+  跳过新 intent 注册。
+- 或者在 `XiuluoTaskV2` 正式 `NAVIGATE_TO_TARGET` 前，仅清理本轮 `xiuluo-v2:start-exit-prepath:*`
+  speed-hint intent，再让目标导航正常注册。选择更窄、更不影响其他任务的方案。
+- 增加 focused guard，至少覆盖：
+  - 已有 `xiuluo-v2:start-exit-prepath:currentMap` active intent，随后 `xiuluo-v2:target` 去
+    `四圣庄`，不得被 duplicate guard 吞掉；
+  - 同目标/同 source 的真正重复 pathing 仍然可以被 duplicate guard 去重；
+  - prepath terminal 到达后仍被修罗判 unrelated，不直接完成目标导航。
+
+Validation plan:
+
+- 运行 worker 新增 focused guard。
+- 至少运行相关相邻 guard：CR77/CR91 修罗 prepath/shortcut guard、CR111/CR142 pathing watcher guard、
+  `mvn -q -DskipTests test-compile`、`mvn -q -DskipTests compile`。
+- Fresh runtime gate：
+  - 复现 no-maintenance 修罗 round：`accept snapshot -> start-exit-prepath -> tracker shortcut 或 objective fallback`
+    后，如果目标是非灵兽村地图，日志必须出现正式 `xiuluo-v2:target` intent 注册；
+  - 若旧 prepath terminal 晚到，日志应显示 unrelated 且不阻塞正式目标 terminal；
+  - 不再出现 `22:23` 这种 `target=四圣庄` 被 `watcher-already-active` 直接吞掉后等到 watchdog 的链路。
+
+Implementation result:
+
+- 选择 `NavigationService.navigateToMap(...)` target/source-aware duplicate guard 方案，而不是在
+  `XiuluoTaskV2` 目标导航前清理 prepath。理由：故障点是通用 watcher-active duplicate 判断；在这里修复能覆盖
+  stale-cache、prepared route dialog、route-dialog/world-map gate 的同类 skip，同时不改变修罗 phase、CR77 点击点、
+  mini-map 坐标、输入序列或 prepath fire-and-handoff 性能路径。
+- 新增 `isActivePathingIntentCompatibleWithRequest(...)`：只有 active intent 的 target map 与本次 request target
+  匹配，且 active source 等于本次 request source 或以 `requestSource + ":"` 派生，才允许认为是同一导航 leg。
+- `xiuluo-v2:start-exit-prepath:currentMap:...` 对 `xiuluo-v2:target` 不兼容；当 recent pathing snapshot 仍为
+  `PATHING_ACTIVE` 但 source/target 不兼容时，`navigateToMap(...)` 记录
+  `active pathing ignored because target/source changed`，继续执行真实目标地图导航，finally 可注册新的
+  `xiuluo-v2:target` intent。
+- 真正同目标/同 source 的 duplicate 仍可走 `reason=watcher-already-active` 去重；`pathingIntentOwnedByNestedRoute`
+  仍保留，避免 CR99/route-memory nested route 被外层 `navigateToMap` 重复注册。
+- 未触碰 OCR/template/click/minimap 坐标、jitter、CR77 fire-and-handoff 点击/输入序列、tracker 解析、NPC/dialog、
+  战斗检测、回城道具或维护逻辑；因此本卡不触发视觉 testcase replay。
+
+Validation result:
+
+- RED：`mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` 先失败于缺少
+  `NavigationService.isPathingSourceCompatibleForDuplicate(...)`，证明 guard 覆盖了待实现的 source ownership。
+- GREEN：
+  - `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` 通过。
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest" exec:java` 通过，CR77 fire-and-handoff guard 未回退。
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationWorldMapRouteMemoryIntentOwnershipTest" exec:java` 通过，nested route ownership 未回退。
+  - `mvn -q -DskipTests test-compile` 通过。
+  - `mvn -q -DskipTests compile` 通过。
+- Fresh runtime gate 保持未完成：需要跑修罗 no-maintenance/非灵兽村目标 round，确认正式日志出现新的
+  `xiuluo-v2:target` / target map intent 注册；旧 prepath terminal 晚到时仍只作为 unrelated 被跳过，并由正式目标
+  terminal 唤醒任务。
+- 唐德复核补充：本地重跑 `NavigationCR161PathingIntentOwnershipGuardTest`、CR77
+  `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`、route-memory
+  `NavigationWorldMapRouteMemoryIntentOwnershipTest` 均通过，`mvn -q -DskipTests compile` 通过。
+  2026-07-02 更新：CR-HC-017 `DialogPolicyCloudDecisionService` 已补齐，focused
+  `DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest` 验证通过；旧的缺类
+  blocker 已失效，不再作为 CR161 的 test-compile 阻塞记录。
+- 独立 review 发现 P2：`routeDialogGateBeforeWorldMap(...)` 后续的
+  `shouldYieldForRouteDialogBeforeWorldMap(...)` / `isFreshSameTargetRoutePending(...)`
+  仍只按 target map 判断 active route pending，不看 source ownership。原始 `四圣庄` vs `灵兽村`
+  mismatch 已被上一版修住，但若旧 `start-exit-prepath:*` active intent 的 target map 恰好与后续
+  `xiuluo-v2:target` 相同，二级 world-map gate 仍可能返回 `PATHING_STARTED` 并跳过正式 intent 注册。
+  需要补成同一套 `isActivePathingIntentCompatibleWithRequest(...)` 兼容规则，并增加 same-map/source-mismatch guard。
+- 2026-07-02 CR161 P2 follow-up worker 实现：
+  - `shouldYieldForRouteDialogBeforeWorldMap(...)` 现在分离 request `source` 与日志 `logSource`，ownership 判断只使用原始 request source，
+    避免把 `:pathing-active-gate` / `:before-world-map` 这种诊断后缀误当成业务 source。
+  - route-dialog world-map gate 的 `freshActiveRoutePending`、visible/attention route-yield 条件改为使用
+    `isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source)`，同目标图但不同 source 会记录
+    `pathing-source-mismatch` / `visible-source-mismatch` / `attention-source-mismatch` 并允许继续真实 world-map route。
+  - `isFreshSameTargetRoutePending(...)` 增加 `requestSource` 参数，`routeDialogGateBeforeWorldMap(...)` 调用时传入原始
+    request `source`；只有 active intent target/source 与本次 request 兼容时，才允许返回 `PATHING_STARTED` 并跳过正式 intent 注册。
+  - 同 source 派生路径仍可 dedupe/yield，例如 `xiuluo-v2:target:...` 对 `xiuluo-v2:target` 仍兼容；不同 source 的
+    `xiuluo-v2:start-exit-prepath:*` 对 `xiuluo-v2:target` 不兼容。
+  - 未触碰 OCR/template/click/minimap 坐标、jitter、CR77 fire-and-handoff 点击/输入序列、tracker、NPC/dialog、
+    战斗、回城或维护逻辑；本 follow-up 不触发视觉 testcase replay。
+- CR161 P2 follow-up validation：
+  - RED：扩展 `NavigationCR161PathingIntentOwnershipGuardTest` 后，
+    `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` 失败于
+    `route-dialog world-map gate must reuse CR161 target/source-aware active intent ownership`。
+  - GREEN：`mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` 通过。
+  - GREEN：`mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest" exec:java` 通过。
+  - GREEN：`mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationWorldMapRouteMemoryIntentOwnershipTest" exec:java` 通过。
+  - GREEN：`mvn -q -DskipTests compile` 通过。
+  - GREEN：`git diff --check -- src/main/java/com/bot/dhxy/service/NavigationService.java src/test/java/com/bot/dhxy/service/NavigationCR161PathingIntentOwnershipGuardTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    通过，仅输出 LF/CRLF conversion warnings，无 whitespace error。
+  - 唐德 P2 复核重跑通过：
+    `NavigationCR161PathingIntentOwnershipGuardTest`、CR77
+    `NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest`、route-memory
+    `NavigationWorldMapRouteMemoryIntentOwnershipTest`、`mvn -q -DskipTests compile`、
+    `mvn -q -DskipTests test-compile`、scoped `git diff --check`。
+  - Fresh runtime gate 不变：仍需跑修罗 no-maintenance/非灵兽村目标 round，确认正式 `xiuluo-v2:target` intent 注册；
+    旧 prepath terminal 晚到时仍应只作为 unrelated 被跳过。
+
+Card CR162: 云端核心资产迁移总卡
+
+Status:
+
+- Review. Owner: 谢帅+worker。谢帅/main agent 只做业务主管和 reviewer，不直接写 Java 业务实现。
+- 本卡是云端核心资产迁移总卡，不是单个 Java patch。第一批 CR163-CR166 已完成本地第一刀接入和复审，仍需 fresh runtime / 真实 replay 验收。
+- 参考盘点报告：`docs/run-reports/2026-07-02-cloud-core-inventory.md`。
+- 2026-07-02 manager/reviewer correction：外部 `D:\mavenProject\dhxy-cloud-brain` 首轮只是 cloud brain 骨架，
+  谢帅本地复核和独立只读 reviewer 均确认存在 P0/P1 占位，已打回 worker。
+- 2026-07-02 follow-up：worker 多轮修复后，外部项目达到“第一版可控联调候选”，但不是发布完成。
+  已确认修复：
+  - `MINIMAP_LOCATION` 不再 `mapNameHint` 透传，改为清洗、连通域、括号 span、逗号、digit template、
+    map-label template 评分；真实火云洞 `(4,3)` testcase 通过。
+  - `SUMMON_SKILL` 不再粗颜色 `DELETE`，改为洗黄后匹配 `status_*` 模板。
+  - `DIALOG_POLICY` template pre-click 按 `greenTemplateSpecs` / `targetKeywordTemplateSpecs` 在 ROI 内匹配目标；
+    非模板 `CLICK_KEYWORD` 现在 fail-closed，不再取第一条绿 band。
+  - `NPC_CLICK_SMART` 按 `targetTemplateSpecs` / `targetGlyphTemplate` / 显式 metadata 定位目标；缺 target/template/metadata
+    时 fail-closed，不再默认点第一条黄字；模板匹配限制在 ROI 内，避免非零 ROI 双偏移和 ROI 外干扰命中。
+  - `TRACKER_LINK_RANKER` / `ROUTE_CANDIDATE` 无云端输入时 fail-closed，不再返回 `click=0,0`；route override、
+    route memory migrate / learn / persisted snapshot 都拒绝窗口外 click。
+  - `IMAGE_PREPROCESS` 的 fingerprint distance / packed-line mapping 不再返回固定假结果；`pixelCount` 只统计白色前景。
+  - `ROUTE_MEMORY` 已有 JSON snapshot prototype，outcome / migrate 后 lookup 可稳定 HIT，并通过重启 store 持久化测试。
+  - `TemplateMatcher.loadTemplates(...)` 已支持 exploded classes、code source jar 和 `jar:` resources；shade jar 已带
+    `Main-Class` 和 `templates/**` 资源。
+  验证：外部 `dhxy-cloud-brain` `mvn test` 结果 `24/0`，`mvn -q -DskipTests package` 通过；`java -jar ...`
+  临时 HTTP smoke 验证 `/api/cloud/decision`、route 正常点击、route 越界拒绝和 route-memory 越界 migrate 拒绝；
+  smoke 后临时服务已停止。独立 reviewer 最终未发现 P0/P1。
+- 2026-07-02 image parity correction：用户指出外部云端 `IMAGE_PREPROCESS` 不能和原本地逻辑不等价。已由
+  worker 只改 `D:\mavenProject\dhxy-cloud-brain`，把 `ImageAlgorithms` 对齐 DHXY dev-sidecar / 旧本地算法：
+  `WASH_YELLOW` / `ROUTE_PACKED_LINE_MASK` 使用黄字阈值、35x1 横线清理和 connected-component 清理；
+  `WASH_WHITE` / `COUNT_THIN_WHITE_PIXELS_HSV` 使用 all-white HSV mask 减 3x3 eroded thick mask；
+  `COUNT_GREEN_PIXELS_HSV` 使用 HSV `50..75 / 150..255 / 180..255`；text candidate、tooltip metrics、
+  route packed diagnostics 按当前 dev-sidecar contract 对齐。外部验证：
+  `mvn -q test` 29/0，`mvn -q -DskipTests package` passed。DHXY 主项目复核：
+  `mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile` passed；独立只读 reviewer 未发现
+  CR173/CR177G/CR179 的 P0/P1 image-boundary blocker。
+- 2026-07-02 sidecar integration correction：DHXY `cloud.dev-sidecar.script-path` 和
+  `CloudDecisionProperties` 默认值已改为 `scripts/run-cloud-brain-server.ps1`，该脚本启动外部
+  `D:\mavenProject\dhxy-cloud-brain` jar；旧 `scripts/run-cloud-decision-dev-server.ps1` 仅兼容转发到
+  外部 launcher；DHXY test-scope `CloudDecisionDevServer` 只能通过
+  `scripts/run-dhxy-test-cloud-decision-stub.ps1 -AllowDhxyTestSidecar` 显式 debug。验证：
+  DHXY `mvn -q -DskipTests compile`、sidecar source guards、`CloudDecisionDevSidecarServiceTest`、
+  外部 `dhxy-cloud-brain mvn -q test`、`mvn -q -DskipTests package`、新脚本 HTTP smoke 均通过。
+- Remaining gates before production release：
+  - `ROUTE_MEMORY` 仍是单进程 JSON prototype，尚未做真正多进程/远端数据库级一致性。
+  - `NPC_CLICK_SMART` / `DIALOG_POLICY` 非模板 OCR 识别仍未实现；当前联调应优先走 template/metadata 合同。
+  - 这是外部 cloud brain 的本地算法容器联调候选，不代表商业云部署、鉴权、限流、观测和灰度发布已经完成。
+
+User decision:
+
+- 当前目标先解决已经明确、价值高、边界清楚的四块：
+  - `ImagePreprocessCloud`：洗字/图像预处理。
+  - `NavigationCloud`：导航候选、坐标转换、route memory/outcome。
+  - `NpcClickSmartCloud`：NPC click smart 全链路策略。
+  - `SummonSkillCloud`：三技能 tooltip/槽位识别和删除策略。
+- 当前继续拆第二批明确高价值能力：
+  - `DialogCloud`；
+  - `BagItemCloud`；
+  - `NpcClickSmartCloud` direct-combat / Ctrl menu / retry state machine 扩展。
+- `TrackerCloud` 深度重做、五倍/修罗 `TaskPlan` / phase brain / face 转换、battle/team/startup prep 等其它核心资产继续作为后续批次。
+
+Core protection rule:
+
+- 默认云端候选：业务策略、视觉识别、文字清洗、模板/指纹、候选排序、坐标转换、fallback 状态机、retry 预算、
+  学习记忆、成功/失败归因。
+- 默认本地保留：窗口绑定、截图、raw image/ROI 裁剪、输入队列、pause/stop、坐标安全校验、结果验证、
+  Runner 观察和本地真实输入执行。
+- 已迁移的核心路径不允许保留生产 fallback。本地 shadow comparator 可以保留一段时间用于比对，但不能在云端
+  不可用、低置信、schema 错误、坐标越界时继续执行旧本地算法。
+- 如果某个旧本地算法暂时无法删除，必须在对应子卡标注为 `transitional-local`，写明原因、保护风险和移除门槛。
+
+First-wave acceptance:
+
+- CR163-CR166 都必须先各自写清 request/response contract、云端职责、本地安全壳职责、失败语义和验证方式。
+- 每个子卡都要有至少一个本地 source/behavior guard，证明生产路径不会绕过云端执行旧本地核心算法。
+- 涉及点击坐标的路径仍遵守 AGENTS testcase replay 规则：如果改变视觉匹配或最终点击点，必须有 testcase 输入、标记输出和命令记录。
+- Fresh runtime 统一验收：用户跑五倍/修罗后，日志必须显示四类 service 的云端 request/response、执行结果、耗时、
+  required-failure 行为，以及本地 shadow comparator 仅用于对比、不用于 fallback。
+
+Out of scope for CR162 first wave:
+
+- 第一批不实现 `DialogCloud`、`TrackerCloud`、`BagItemCloud`、五倍/修罗 phase brain、face/task-plan 总迁移。
+- 不在总卡内修改具体 Java 业务代码；具体实现只允许在 CR163-CR166 子卡下由 worker 完成。
+
+Second-wave split 2026-07-02:
+
+- CR167 `DialogCloud`：把普通 dialog option 的候选识别/排序/选择前移到云端；本地只保留截图、坐标安全壳、input queue 和结果验证。
+- CR168 `BagItemCloud`：把主包任务页道具定位/显形镜/回程道具槽位识别迁到云端；本地只负责打开包、截图、点击和验证。
+- CR169 `NpcClickSmartCloud` 扩展：在 CR165 普通 dialog click 之后，继续迁 direct-combat、Ctrl menu fallback、retry state machine。
+
+Card CR163: ImagePreprocessCloud 洗字/图像预处理云端化
+
+Status:
+
+- Closed / Superseded by CR173+CR177G. Owner: 谢帅+worker。CR163 第一版基础协议和 service 已完成源码复审，
+  历史上只证明图片 payload、日志脱敏、ROI/window 安全壳可用；当时不能算洗图逻辑云端化完成。
+  后续 CR173/CR177A-G 已补齐统一 `ImageProcessorService` 门面、caller 迁移和生产 `ImagePreprocessor`
+  瘦身，当前发布 runtime 不再保留黄/绿/白/紫/选项高亮等核心洗图算法。2026-07-02 外部
+  `dhxy-cloud-brain` 又补齐 `IMAGE_PREPROCESS` 黄字/白字/HSV count/route packed/text candidate/tooltip
+  metrics 的等价算法和测试。本卡作为协议历史保留；后续缺口挂 CR173/CR177/CR162，不再用本卡描述当前状态。
+  用户已确认 `application.properties` 里三技能 cooldown `10800000` 是预期配置，不再作为本卡 blocker。
+
+Problem:
+
+- `ImagePreprocessor`、`ImageFinder`、OCR/template 前处理当前仍是本地可复用资产。
+- 这类能力一旦随客户端发布，别人可以直接拿来洗黄字、绿字、白字、紫字、tooltip 和模板候选，破解价值很高。
+
+Target boundary:
+
+- 本地职责：
+  - 绑定窗口并截图；
+  - 裁剪 raw image/ROI；
+  - 发云端 request；
+  - 校验云端返回的坐标/区域在当前窗口安全范围内；
+  - 执行输入或把结果交给上层云端 service。
+- 云端职责：
+  - 洗图；
+  - 生成文字/模板/fingerprint 候选；
+  - 返回候选文本、候选框、置信度、reason、必要的 debug token。
+
+Implementation direction:
+
+- 先建立通用 image preprocess request/response DTO 和 service id，不急着一次替换全仓调用。
+- 第一批至少要给 CR164-CR166 提供可复用的 raw image/ROI 上传和云端返回结构。
+- 生产路径中，已被子卡迁走的逻辑不能再直接调用本地 `washYellowText` / OCR/template preprocess 作为 fallback。
+
+Validation:
+
+- focused guard：已迁移路径上如果云端 required execute 失败，应返回 no-action / required failure，不调用旧本地 preprocess fallback。
+- 单测覆盖 schema invalid、timeout、low confidence、坐标越界。
+- Fresh runtime 看日志：云端 preprocess 请求有 service/context/elapsed/result，且本地 comparator 不驱动执行。
+
+Implementation note 2026-07-02:
+
+- 已新增 `CloudDecisionServiceId.IMAGE_PREPROCESS`，但没有加入 `CloudDecisionCoordinator` 的通用
+  `EXECUTABLE_SERVICES` allowlist；execute 权限由 `ImagePreprocessCloudService` 的 service-specific
+  `CloudDecisionExecutionGate` 持有。
+- 已新增 `ImagePreprocessOperation`、`ImagePreprocessCloudRequest`、`ImagePreprocessCloudDecision`、
+  `ImagePreprocessCloudService`，支持 `WASH_YELLOW`、`WASH_GREEN`、`WASH_WHITE`、`WASH_PURPLE`、
+  `FINGERPRINT`、`TEXT_CANDIDATES`。底层协议使用现有 `CloudDecisionRequest/Response`：
+  `decision=status=EXECUTED|NO_RESULT;operation=...;reason=...`，候选点/框和 `debugToken` 放在 diagnostics。
+- `ImagePreprocessCloudService` 是 cloud-required/fail-closed：云端 timeout/unavailable/schema invalid、
+  低置信、operation mismatch、ROI/window 候选点/框越界都会返回 `REQUIRED_FAILURE`，不提供可继续本地
+  `ImagePreprocessor` 洗图的结果。
+- 已新增配置 `cloud.services.image-preprocess.shadow-enabled=true`、`execute-enabled=true`、
+  `execute-percent=100`、`fallback=STOP`。
+- Dev sidecar `CloudDecisionDevServer` 已为 `IMAGE_PREPROCESS` 返回 schema-valid 默认响应，便于后续
+  runtime shadow/execute 测试。
+- 验证已通过：
+  `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test`、
+  `mvn -q "-Dtest=CloudDecisionDevServerTest" test`、
+  `mvn -q "-Dtest=CloudRequiredExecuteWaveConfigTest" test`、
+  `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test`、
+  `mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、scoped `git diff --check`。
+- 本实现没有迁移 `NavigationService`、`NpcClickService`、`SummonSkillService` 的生产调用，没有修改
+  OCR/template/click 坐标，没有修改 `ImagePreprocessor` / `ImageFinder` 算法；因此本卡不需要视觉
+  testcase replay。Fresh runtime 仍需等后续业务接入 CR 验证正式日志。
+
+Scope correction 2026-07-02:
+
+- 用户复核确认：CR163 当前实现不能算“洗图云端化完成”。它只完成了 `imagePayloadBase64` /
+  `payloadMimeType` / `imageSha256` 传输、日志脱敏、ROI/window 安全校验和候选坐标规范。
+- 真正洗图算法仍在发布源码路径：
+  - `ImagePreprocessor.washYellowText(...)` / `washYellowTextToBlackAndWhite(...)`;
+  - `washGreenTextToBlackAndWhite(...)`;
+  - `washPurpleTextToBlackAndWhite(...)`;
+  - `washDialogOptionTemplateTextToBlackAndWhite(...)`；
+  这些方法仍位于 `src/main/java`，即使后续 caller 改成云端，只要完整算法还随客户端打包，就仍然暴露核心资产。
+- 生产 caller 也仍有多处直接调用 `ImagePreprocessor` 洗图/像素候选逻辑，例如
+  `DialogService`、`TaskTrackerPanelService`、`NpcClickService`、`SummonSkillService`、
+  `GameTextLineOcrService`、`QuestManagerService`、五倍 tracker 等路径。
+- 后续必须把正式洗图/候选抽取拆成真实云端 service：本地只保留截图、ROI 裁剪、payload 上传、坐标/置信度安全壳；
+  发布 runtime 不应保留可复用的黄/绿/白/紫洗图算法。Dev/test sidecar 可以保留测试实现，但不能作为发布客户端能力。
+
+Superseded closure 2026-07-02:
+
+- CR173/CR177A-G 已完成 CR163 后续迁移方向：
+  - 生产 `ImageProcessorService` / `CloudImageProcessor` 覆盖 wash/count/fingerprint/green-band/text-candidate/
+    route-mask 等 operation；
+  - 生产 caller 通过 `IMAGE_PREPROCESS` request/response 获取 washed image / result values / candidates；
+  - 生产 `ImagePreprocessor` 仅保留 crop/save/path helper；
+  - 旧算法只在 `src/test/java` dev sidecar 或外部 `dhxy-cloud-brain` 中用于云端模拟/部署。
+- 外部 `dhxy-cloud-brain` 当前验证：
+  - `mvn -q test` passed (`29` tests, `0` failures/errors)；
+  - `mvn -q -DskipTests package` passed。
+
+Design refinement 2026-07-02:
+
+- 用户确认后续 ImagePreprocessCloud 不能只有一种消费方式，应按调用形态分成两类：
+  1. `RETURN_WASHED_IMAGE` / 纯匹配模式：
+     - 本地上传 raw image / ROI；
+     - 云端执行黄/绿/白/紫/选项高亮等洗图；
+     - 云端返回洗好的图 payload、sha、尺寸、operation、confidence；
+     - 本地只用这张洗后图做非常薄的模板/像素匹配，不保留洗图阈值、颜色范围、二值化、fingerprint 前处理算法。
+     - 适用场景：调用点本身只是需要一张洗好的 mask 来做简单匹配，且匹配策略本身不是核心业务资产。
+  2. `CLOUD_INTERNAL_PREPROCESS` / 嵌套服务模式：
+     - 本地上传 raw image / ROI 和目标事实；
+     - 云端内部完成洗图、候选抽取、模板/fingerprint/OCR 前处理、排序、fallback/retry 策略；
+     - 云端直接返回业务结果，例如目标候选、窗口相对点击点、动作、状态、reason；
+     - 本地不拿洗图中间产物，也不保留“云端失败后自己洗图再找点”的 fallback。
+     - 适用场景：`NpcClickSmartCloud`、`NavigationCloud`、`SummonSkillCloud`、`DialogCloud` 这类洗图逻辑嵌套在服务决策内部的路径。
+- 验收红线：无论哪种模式，洗图算法本身都不能留在发布 runtime。本地允许保留的只有截图、ROI 裁剪、
+  payload 上传、返回 schema 校验、窗口/ROI/置信度安全壳、以及必要的极薄执行层。
+
+Reviewer repair 2026-07-02:
+
+- Reviewer verdict: FAIL。修复项：
+  - P1：原 request 只有 `rawImagePath` / `debugImageId`，远端云读不到本机磁盘。已在
+    `ImagePreprocessCloudRequest` 增加 `imagePayloadBase64`、`payloadMimeType`、`imageSha256`；
+    `ImagePreprocessCloudService.context(...)` 会把这些生产可传输字段写进 `CloudDecisionRequest.context`。
+    `rawImagePath` / `debugImageId` 仍保留为 debug 引用，但缺少 payload/metadata 时会在本地发云端前返回
+    `REQUIRED_FAILURE`，不会声称正式协议可用。
+  - P2：ROI/window safety 已补齐。`windowWidth/windowHeight` 不再默认 `1024x768`，必须显式传正数；
+    ROI 若存在必须是 window-relative 像素，满足 `x/y >= 0`、`width/height > 0`、
+    `x+width<=windowWidth`、`y+height<=windowHeight`，否则 required failure 且不调用云端。
+  - P2：`NO_RESULT` 语义拆清。`isCloudExecuted()` 只对 `CLOUD_EXECUTED` 返回 true；
+    新增 `wasCloudAccepted()` 表示云端响应被接受，`hasUsableResult()` / `hasCandidates()` 表示有可用候选，
+    避免调用者把 `NO_RESULT` 当成可执行结果。
+  - P3：移除未使用 `gateEvaluated`，并补充 payload、ROI、候选坐标系相关 JavaDoc/字段注释。
+  - Dev sidecar 默认 `IMAGE_PREPROCESS` 请求现在要求 payload/mime/sha/windowSize 字段；测试 server 不解码图片，
+    但 schema 不再依赖本机 path。
+- Repair RED/GREEN:
+  - RED：`mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` 先失败在缺
+    `wasCloudAccepted()` / `hasUsableResult()` / `hasCandidates()` 和缺 `imagePayloadBase64(...)` builder 字段。
+  - GREEN：`mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test`、
+    `mvn -q "-Dtest=CloudDecisionDevServerTest" test` 已通过；其余验证见本轮 handoff/ACTIVE_WORK。
+
+Reviewer recheck blocker repair 2026-07-02:
+
+- P1：`CloudDecisionCoordinator.logDecision(...)` 原先直接输出 `request.getContext()`，会把
+  `imagePayloadBase64` 写入 `logs/dhxy-console.log`。已改为 `logSafeContext(request)`：生产
+  `CloudDecisionRequest` 仍携带 payload 给 HTTP client，但普通 `cloud.decision` 日志只输出
+  `<redacted len=... sha256=...>`。`CloudDecisionCoordinatorTest` 保留普通 context 字段透传断言，并新增
+  payload redaction guard，确认原始 payload 不出现在 log-safe context。
+- P2：`ImagePreprocessCloudDecision` 对外候选坐标语义已固定为 window-relative。若云端 diagnostics
+  `coordinateSpace=ROI_RELATIVE`，`ImagePreprocessCloudService` 会先按 ROI 内坐标做安全校验，再加
+  `request.roi.x/y` 转为 window-relative 后存入 `candidateBoxes` / `candidatePoints`。候选 record 注释已写明
+  对外始终 window-relative。
+- RED/GREEN:
+  - RED：`mvn -q "-Dtest=CloudDecisionCoordinatorTest" test` 先失败在缺 `logSafeContext(...)`；
+    `ImagePreprocessCloudServiceTest` 先要求 ROI-relative 候选转 window-relative。
+  - GREEN：`mvn -q "-Dtest=CloudDecisionCoordinatorTest" test`、
+    `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` 已通过；其余验证见 ACTIVE_WORK / handoff。
+
+Independent re-review 2026-07-02:
+
+- Reviewer verdict on CR163 code path: PASS。复审确认：
+  - `imagePayloadBase64` / `payloadMimeType` / `imageSha256` 会进入正式 HTTP request，可传给云端；
+  - 普通 `cloud.decision` 日志通过 `CloudDecisionCoordinator.logSafeContext(...)` 脱敏 payload，metrics 不输出 context；
+  - 缺 payload/mime/sha、缺显式正数 window size、ROI 越界、候选越界、低置信、timeout/schema invalid 均 fail-closed；
+  - `ROI_RELATIVE` 候选会转换为 window-relative 后暴露给调用者；
+  - `NO_RESULT` 不再让 `isCloudExecuted()` 返回 true；
+  - 生产 `NavigationService` / `NpcClickService` / `SummonSkillService` / `vision` 路径尚未接入本 service，CR163 只提供基础协议服务。
+- Follow-up 2026-07-02：用户确认 `src/main/resources/application.properties` 里
+  `bot.dhxy.summon-skill-ultimate-generate-cooldown-ms=10800000` 是预期配置，用于三技能冷却调整，
+  不再作为 CR163 blocker；后续提交时可按用户确认保留该配置。
+
+Card CR164: NavigationCloud 导航决策云端化
+
+Status:
+
+- Review. Owner: 谢帅+worker。route-result payload/execute guard 本地通过，fresh runtime 待验。
+
+Problem:
+
+- `NavigationService`、`CoordinateHelper`、route candidate、route memory、world-map yellow、minimap 坐标换算仍暴露大量核心资产。
+- 当前 `ROUTE_CANDIDATE` / `ROUTE_MEMORY` 已接云端 execute，但本地仍保留候选构造、识别和部分转换逻辑。
+
+Target boundary:
+
+- 本地职责：
+  - 打开世界地图/小地图；
+  - 输入目的地、滚动；
+  - 截图/裁 ROI；
+  - 执行云端返回的窗口相对点击；
+  - 注册/等待 Runner pathing；
+  - 回报到达、失败、坐标、pathing outcome。
+- 云端职责：
+  - 判断世界地图搜索结果里应点击的黄色候选；
+  - route candidate / route memory 选择；
+  - 计算小地图窗口相对点击点；
+  - 维护云端 route memory；
+  - 处理导航失败归因和下一步 retry/fallback。
+
+Implementation direction:
+
+- 第一版可以保留本地“打开地图、输入、滚动、截图、点击执行”。
+- “点哪个黄色结果”和“点小地图哪里”必须来自云端 response。
+- 反过来执行模式：云端作为 execute，本地旧结果只做 shadow comparator。
+- outcome 记录要回传云端；本地不长期保存完整 route memory 资产。
+
+Validation:
+
+- focused guard：生产点击前必须有 cloud-executed decision 和窗口相对坐标；云端无效时不得使用本地候选点击。
+- 保持 CR77/CR99/CR161 pathing intent、fire-and-handoff、pause/stop、安全输入语义。
+- Fresh runtime：五倍/修罗导航 logs 显示 cloud route request/response、耗时、clicked point、local shadow diff 和 pathing outcome。
+
+Worker update 2026-07-02:
+
+- Slice: 补齐 `ROUTE_CANDIDATE` 云端候选点击成功后的 outcome 归因链。`NavigationService` 的黄字 OCR 成功路径、local failure 后 cloud `CLICKED` 的黄字/legacy helper 成功路径，都会把 `routeDecision.getRouteDecisionId()` 写入 `NavigationRuntimeState.lastWorldMapRouteDecisionId`，随后 `rememberPendingWorldMapRouteResultClick(...)` 会把该 id 放入 pending token。
+- 为什么做这张小切片：当前 route candidate 已经要求 `CLOUD_EXECUTED` 才能点击，但部分成功路径把 `lastWorldMapRouteDecisionId` 清成 `null`。这样 Runner settlement 无法把后续 success/failure 归因到云端候选决策，只能降级为 id-less `LEARN_CANDIDATE` 或丢失失败归因。
+- 边界：未修改黄字洗图/OCR、候选排序、小地图/世界地图坐标转换、点击点算法、fallback 顺序、NPC/dialog/battle/tracker/task-policy/maintenance/input queue。该 slice 只传递云端已返回的 id，不改变鼠标目标，因此不需要 testcase replay。
+- RED 证据：`mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` 先失败，断言为 `cloud-after-local-failure route candidate helpers must receive the cloud routeDecisionId`。
+- GREEN 证据：同一 focused guard 后续通过；route/cloud focused 集合、cloud suite、`compile` 均通过。
+- 验证命令：
+  - `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test`
+  - `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests compile`
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/NavigationService.java src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` 仅有既有 LF/CRLF 警告。
+- Fresh runtime gate：需要重启 DHXY 和本地 dev sidecar；跑五倍/修罗 route path，确认 `ROUTE_CANDIDATE mode=EXECUTE` 成功样本的 pending 日志包含 `routeDecisionId`，Runner 后续 `cloud route-memory outcome report` 能按该 id 回报 success/failure。
+
+Reviewer P2 repair 2026-07-02:
+
+- Reviewer finding: 上一片已经把 `routeDecisionId` 从 `ROUTE_CANDIDATE` 成功点击传到 pending/outcome，但上游契约仍允许 `ROUTE_CANDIDATE status=CLICKED` 没有 `routeDecisionId`。这会让 cloud click 可以执行，却仍然留下空的 outcome 归因链。
+- 修复：`RouteCloudDecisionService.parseCandidate(...)` 现在要求 `CLICKED` 同时具备有效 window-relative `click` 和非空 `routeDecisionId`；缺 id 会变成 `CLOUD_REJECTED_NO_CLICK`，`isCloudExecuted()` 为 false，不返回可执行 cloud click，拒绝原因包含 `routeDecisionId is required when ROUTE_CANDIDATE status=CLICKED`。
+- Dev sidecar：`CloudDecisionDevServer` 的 route candidate override response 现在返回稳定 id：`dev-rd-route-candidate-<traceId>`，测试不再接受无 id 的 clicked response。
+- TDD RED：`mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest" test` 先失败，分别证明 missing-id candidate 仍被当作 `CLOUD_EXECUTED`，以及 dev sidecar 响应缺少 `routeDecisionId`。
+- GREEN：`RouteCloudDecisionServiceTest,CloudDecisionDevServerTest` 通过；`RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest` 通过；`mvn -q -DskipTests compile` 通过；`git diff --check -- <本次改动文件>` 仅有既有 LF/CRLF 警告。
+- 边界：未改黄字识别/排序、小地图坐标换算、点击坐标、fallback 顺序、Navigation 输入/点击执行、NPC/dialog/battle/tracker/task-policy/input queue。
+- 二次 reviewer PASS：missing-id `ROUTE_CANDIDATE CLICKED` 已 fail-closed；`NOT_FOUND/SKIP/FAILED` no-click 合法响应不需要 id；未见对 `ROUTE_MEMORY`、导航点击坐标/排序/fallback、Runner outcome 的负面影响。同步修正 `WorldMapRouteResultPendingMemory.routeDecisionId` JavaDoc，说明 id 可来自 `ROUTE_MEMORY HIT` 或 `ROUTE_CANDIDATE CLICKED`。
+- Fresh runtime gate：重启 DHXY 和 dev sidecar；确认 `ROUTE_CANDIDATE mode=EXECUTE` 的 clicked effective decision 带 `routeDecisionId`，且任何 missing-id clicked 响应 fail-closed，不产生 pending/outcome 空 id 的点击。
+
+Worker update 2026-07-02 route-result payload/execute slice:
+
+- Slice：在既有 `routeDecisionId` 合同上推进“世界地图 route result 黄字候选点击点来自云端 response”的下一小步。生产 route-candidate 点击 helper 现在只接受 `RouteCloudDecision`，直接读取 cloud `WINDOW_RELATIVE` click；local comparator 坐标不再作为 helper 入参，因此不能被同一 helper 当成生产 fallback。
+- Payload：黄字 destination route 和 legacy coordinate OCR route 两条本地成功候选路径，在调用 `RouteCloudDecisionService.decideRouteCandidate(...)` 前会把已截取的 `map_result_scan.png` route-result ROI 读成 PNG bytes，填入 CR163 字段：`imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`、`windowSize=1024,768`、`roi=<window-relative x,y,w,h>`，并保留 `rawImagePath`/`debugImageId` 作诊断。普通 `cloud.decision` 日志继续走 `CloudDecisionCoordinator.logSafeContext(...)`，只记录 payload 长度和 sha，不输出 base64。
+- 执行语义：`ROUTE_CANDIDATE status=CLICKED` 仍必须有 `routeDecisionId`、`diagnostics.coordinateSpace=WINDOW_RELATIVE`、窗口内且 route-result ROI 内的 click；`NavigationService` 仍要求 `routeDecision.isCloudExecuted()` 后才会真实点击。云端无效/不可用/无点击时不使用本地黄字/OCR/candidate 点作为生产 fallback。
+- 边界：未修改黄字洗图/OCR 阈值、候选排序、小地图/世界地图坐标转换、点击点算法、pathing intent、pause/stop、input queue、NPC/dialog/三技能/五倍/修罗业务文件。小地图 transform、地图标定资产、route memory 完整云端 outcome/retry 策略仍未在本 slice 完成。
+- RED 证据：`mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` 先失败两次，分别为 `route click helper must not accept local comparator X as a fallback-capable parameter` 和 `yellow route candidate must package the captured route-result ROI before cloud decision`。
+- GREEN 证据：`mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` 通过；`mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest" test` 通过。
+- 最终本地验证：`mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test` 通过；`mvn -q -DskipTests compile` 通过；scoped `git diff --check` 退出 `0`，仅有既有 LF/CRLF 转换提示。
+- 独立 reviewer PASS：未发现 local comparator 坐标在 cloud invalid/unavailable 时作为生产 fallback 点击；普通 `cloud.decision` 日志通过 `logSafeContext(...)` 脱敏 `imagePayloadBase64`；ROI 由屏幕截图 rect 减 window base 后转成 window-relative，未见明显 screen/window 坐标错用；未见本 slice 改动黄字识别/排序、小地图换算、点击算法、pause/stop/input queue 或五倍/修罗业务。
+- 仍未完成：fresh runtime 未验；小地图最终点击点仍由本地 `CoordinateHelper` 计算；完整 route memory/outcome/retry 云端策略还未闭环；ROI/window size 仍为固定 1024x768/固定 route-result ROI，后续如果窗口尺寸或标定变动，需要继续云端协议收口。
+- Fresh runtime gate：重启 DHXY 和 dev sidecar 后跑五倍/修罗导航，确认 `ROUTE_CANDIDATE mode=EXECUTE` request context 日志包含脱敏后的 `imagePayloadBase64=<redacted len=... sha256=...>`、`roi=...`，clicked effective decision 带 `routeDecisionId` 和 `WINDOW_RELATIVE` click；云端不可用/无效时不得出现本地候选点继续生产点击。
+
+External cloud brain repair 2026-07-04:
+
+- Runtime blocker：实战 `logs/dhxy-console.log` 证明本地黄字 OCR 已识别世界地图路线结果里的
+  `灵兽村`，local shadow 为 `click=366,487;reason=yellow-ocr-click`；但外部 cloud brain
+  `ROUTE_CANDIDATE` 返回 `status=NOT_FOUND;reason=cloud-brain-route-candidate-no-click`，
+  所以 cloud-required 导航正确地拒绝了本地 shadow 点击，导致导航失败。
+- 修复边界：只改外部 `D:\mavenProject\dhxy-cloud-brain`。
+  `DecisionEngine.ROUTE_CANDIDATE` 在没有 override/candidates click 时新增
+  `yellow-destination-mini-map` image path：解码 `imagePayloadBase64`，按 `roi` 使用 ROI 截图
+  或从整窗 payload 裁 ROI，执行 `WASH_YELLOW`，调用 OCR sidecar，按 `targetMap` 做黄字行/簇匹配
+  和右边界/左边界跨行拼接，再返回 `roi.x/y + OCR center` 的 `WINDOW_RELATIVE` click。
+- 安全壳：不读取 `localDecision` / local shadow click 作为 fallback；`roi` 现在是强必填，
+  缺失、坏格式、负坐标、非正宽高、payload/ROI 尺寸不兼容都 fail-closed 为 `NOT_FOUND`。
+- Testcase replay：
+  - input：
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\route-candidate\yellow-destination-lingshou-map-result-scan.png`
+  - replay：
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\RouteCandidateYellowDestinationReplayTest.java`
+  - marked：
+    `D:\mavenProject\dhxy-cloud-brain\target\test-route-candidate\yellow-destination-lingshou-marked.png`
+  - 主样本把 `localDecision` shadow click 改为 `123,456`，仍要求云端返回
+    `status=CLICKED;click=366,487;algorithm=yellow-destination-image`；marked 图使用实际 response click
+    生成，不再硬编码标点。
+- RED/GREEN：
+  - RED：新增 ROI 必填测试前，缺 ROI 会错误返回
+    `status=CLICKED;click=18,111;algorithm=yellow-destination-image`。
+  - GREEN：`mvn -q -Dtest=RouteCandidateYellowDestinationReplayTest test` passed。
+  - Route focused smoke：
+    `mvn -q "-Dtest=CloudBrainSmokeTest#trackerAndRouteCandidateFailClosedWithoutCloudInput,CloudBrainSmokeTest#routeOverrideOutsideWindowDoesNotClick" test`
+    passed。
+  - Compile：`mvn -q -DskipTests compile` in `D:\mavenProject\dhxy-cloud-brain` passed。
+- Review：Chandrasekhar / Epicurus 两个独立 reviewer 复审 PASS；ROI P1 已关闭，无剩余
+  P0/P1/P2。完整 `CloudBrainSmokeTest` 仍有 `NPC_CLICK_SMART` / memory migration 旧断言失败，
+  与本次 `ROUTE_CANDIDATE yellow-destination-mini-map` 修复无关。
+- Fresh runtime gate：重启外部 cloud brain / DHXY 后跑五倍或修罗导航，确认
+  `ROUTE_CANDIDATE mode=yellow-destination-mini-map` 返回 cloud executed click，随后目标小地图打开并
+  点击最终坐标；云端无效或 no-click 时仍不得使用本地 shadow 点击。
+
+Card CR165: NpcClickSmartCloud 全链路 NPC 点击策略云端化
+
+Status:
+
+- Review / fresh runtime pending. Owner: 谢帅+worker。2026-07-02 worker B 已把普通 NPC dialog click
+  覆盖路径改为 `NPC_CLICK_SMART` 云端动作协议；DHXY 本地只做截图、request/response、schema/坐标安全校验和
+  input queue 执行，不在本地实现视觉/点击决策算法。
+
+Worker B implementation 2026-07-02:
+
+- `NpcClickService.clickNpcSmart(...)` 现在先调用 `tryClickNpcSmartViaCloud(...)`：
+  - 云端 `CLOUD_EXECUTED` 且点击后验证通过才返回成功；
+  - 云端 `NOT_FOUND` / `NO_ACTION` / timeout / invalid / 越界 / 低置信都 no-click / fail closed；
+  - `NPC_CLICK_SMART` inactive/disabled 也 no-click / fail closed，不再进入旧 `runNpcClickPipeline(...)`。
+- `NPC_CLICK_SMART` request 上传当前绑定窗口 raw PNG payload、sha256、full-window ROI、窗口尺寸、`npcName`、
+  map/target/template/glyph metadata；本地不抽黄字候选、不算 first-shot、不跑 tooltip/menu/Alt+C 策略。
+- CR165 当时第一刀只接受云端 `WINDOW_RELATIVE CLICK`；CR169 已扩展为 `CLICK` / `CTRL_CLICK` /
+  `PRESS_HOTKEY_THEN_CLICK` / `REQUEST_NEW_SCREENSHOT` / `ABORT` 协议。所有可执行 click 和
+  `candidateBox` 仍必须在窗口与 ROI 内，confidence >= `0.70`，不安全 modifier/hotkey fail closed。
+- `NPC_CLICK_STRATEGY` 已从 production authority 降级/禁用，配置为 `execute-enabled=false`，
+  且已移除 inactive `LOCAL_PASSTHROUGH` 成功语义；无论该旧 bridge active 还是 inactive，
+  `NpcClickStrategyCloudDecisionService` 都只返回 no-click rejection，提示改用 `NPC_CLICK_SMART`。
+- Dev sidecar 只保留协议/错误 stub：`NPC_CLICK_SMART` 返回
+  `NOT_FOUND;reason=dev-sidecar-no-local-npc-click-smart-vision`，不实现本地图像算法，不生成候选框/点击点。
+- 2026-07-02 sidecar 集成修复：UI 自动启动 cloud sidecar 时默认启动外部
+  `D:\mavenProject\dhxy-cloud-brain`，不再启动 DHXY test-sidecar；旧 DHXY stub 只能显式 debug opt-in。
+- 历史说明：下方 2026-07-02 早些时候关于“移除 `NPC_CLICK_SMART`”或“恢复 `NPC_CLICK_STRATEGY` 等价桥”的记录，
+  仅作为当时纠偏历史；当前执行准线以上述 worker B implementation 为准。
+
+Problem:
+
+- 当前 `NPC_CLICK_STRATEGY` 是过渡态：云端只授权或选择本地策略。
+- 真正核心的 ROI 裁剪、黄字/紫字/菜单洗图、目标识别、candidate ranking、first-shot 公式、Ctrl 菜单 fallback、
+  retry 顺序和预算仍在本地。
+
+Target boundary:
+
+- 本地职责：
+  - 截图或按云端要求裁 ROI；
+  - 传 target facts：目标 NPC 名、任务上下文、窗口尺寸、当前地图、上一次 attempt token / outcome；
+  - 执行云端返回的受限动作：`CLICK`、`CTRL_CLICK`、allowlist hotkey、`REQUEST_NEW_SCREENSHOT`、`ABORT`；
+  - 验证 dialog/菜单/移动/失败 outcome，并回传云端。
+- 云端职责：
+  - 自行裁剪/洗图/识别；
+  - 选择候选和点击策略；
+  - 管理 retry 状态机和 retry budget；
+  - 返回窗口相对坐标、动作类型、修饰键、等待/验证规则、attempt token、reason。
+
+Implementation direction:
+
+- 不要再新增“云端授权本地 smart click”的中间层；CR165 的目标是云端返回实际动作。
+- 第一版可以先覆盖任务 NPC 的主路径；Ctrl/menu fallback 可以用状态机形式逐步接入，但卡内必须写最终收口方式。
+- 本地旧 smart-click 只允许作为 shadow comparator，不允许作为 production fallback。
+
+Validation:
+
+- focused guard：`NpcClickService` 生产路径在 CR165 覆盖的 request type 下，没有 cloud-executed action 就不点击。
+- 云端返回 `ABORT` / invalid schema / 越界坐标 / disallowed hotkey 时，本地必须 fail closed。
+- 若改点击点，必须有 testcase replay 和标记图。
+
+Scoping review 2026-07-02:
+
+- 入口：`NpcClickService.clickNpcSmart(...)` / `runNpcClickPipeline(...)` / `authorizeNpcClickStrategy(...)` / `executeMoveClickAndVerify(...)`。
+- 当前 `NpcClickStrategyCloudDecisionService` 只做 `ALLOW_LOCAL_STRATEGY` 授权，不是最终发布形态；CR165 不能继续扩展成“云端授权本地 smart click”。
+- 第一张实现卡建议：新增或拆出 `NpcClickSmartCloud` 动作协议，先覆盖 `verificationMode=dialog` 的普通 NPC `CLICK` 动作，不碰 direct-combat、Ctrl 菜单、`Alt+C` retry。
+- cloud-required：ROI 裁剪策略、黄字/紫字/菜单洗图、目标识别、候选排序、learned-memory 候选、yellow target OCR、player-anchor first-shot 公式、Ctrl fallback、retry 顺序和预算。
+- local-safety-only：窗口截图/raw ROI、窗口绑定、输入队列、pause/stop、坐标越界/快捷键 allowlist、动作后的 dialog/移动/菜单/战斗 outcome 验证。
+- hidden fallback 禁止：cloud active + covered request 时不能回落到 `tryLearnedMemoryStrategy`、tooltip、yellow OCR、formula、Ctrl；cloud fail-closed 后也不能借 `Alt+C` retry 再跑旧本地 pipeline。
+- 因生产 hook 会执行云端返回 click，本卡第一刀需要 `images/test-cases/npc/...` raw testcase 和 marked 输出，标出窗口相对点、最终屏幕点击点、验证区域。
+
+Implementation note 2026-07-02:
+
+- 新增 `CloudDecisionServiceId.NPC_CLICK_SMART`、`NpcClickSmartCloudRequest`、
+  `NpcClickSmartCloudDecision`、`NpcClickSmartCloudDecisionService`。
+- `NPC_CLICK_SMART` 使用 service-specific `CloudDecisionExecutionGate`，没有加入
+  `CloudDecisionCoordinator` 的 generic executable allowlist。配置为
+  `cloud.services.npc-click-smart.shadow-enabled=true`、`execute-enabled=true`、
+  `execute-percent=100`、`fallback=STOP`。
+- Request context 使用 CR163 可传输 payload contract：
+  `imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`、`windowWidth`、
+  `windowHeight`、`roi`、`rawImagePath`、`debugImageId`，普通 `cloud.decision` 日志依赖
+  `CloudDecisionCoordinator.logSafeContext(...)` 脱敏 base64。
+- Response 第一刀只接受普通左键 `CLICK`；CR169 后 response 可接受 `CLICK` / `CTRL_CLICK` /
+  `PRESS_HOTKEY_THEN_CLICK` / `REQUEST_NEW_SCREENSHOT` / `ABORT`。可执行动作必须有 `actionId`、
+  `click=x,y`、diagnostics `coordinateSpace=WINDOW_RELATIVE`，且 click 必须在当前窗口和 request ROI 内；
+  非协议内的 `ctrl=true` / `alt=true`、`ROI_RELATIVE`、低置信、schema invalid、越界坐标都会 fail-closed。
+  transient timeout / HTTP unavailable 不是业务 no-click：`NPC_CLICK_SMART` 作为 cloud-required 唯一路径时必须
+  继续等待/重试云端，直到云端返回可执行/明确 no-action response 或任务 stop/interrupted。
+  `NOT_FOUND` / `ABORT` / `REQUEST_NEW_SCREENSHOT` 是 cloud-owned no-click，不触发本地 fallback。
+- `NpcClickService.clickNpcSmart(...)` 在普通 `dialog` request 上检查
+  `NPC_CLICK_SMART` 是否 active。active covered path 会截取当前窗口 raw PNG，调用 cloud action；
+  只有 `decision.isCloudExecuted()` 才把 `WINDOW_RELATIVE` 点转换为 screen-absolute，并通过既有
+  `executeMoveClickAndVerify("npcClick:smartCloudMoveClick", ...)` 走 input queue 原子 move+click 和
+  既有 dialog verification。cloud no-action/invalid 直接返回 false，不进入旧 pipeline，
+  也不执行 `npcClick:retry:altC-dismount`；transient timeout/HTTP unavailable 会在
+  `NpcClickSmartCloudDecisionService` 内持续等待/重试，不返回给旧 pipeline 处理。
+- Cloud inactive/disabled 时，`clickNpcSmart(...)` 直接 no-click / fail closed；旧本地 smart-click + `Alt+C`
+  retry disabled branch 已删除。
+- Dev sidecar 新增 `NPC_CLICK_SMART` 默认响应：校验 payload/window/ROI 后，从 `imagePayloadBase64`
+  payload 的 request ROI 内提取黄字候选框，并用 `npcName` target facts 做目标名匹配后才返回真实
+  `CLICK` action schema；无目标名匹配候选返回 `NOT_FOUND`，不再 echo `ALLOW_LOCAL_STRATEGY`，
+  也不把 synthetic marker 或 `localShadowClick` 当生产权威。
+- Testcase replay:
+  - Command: `mvn -q -Dtest="NpcClickSmartCloudReplayTest" test`
+  - Input: `images/test-cases/npc/smart-cloud-dialog-raw.png`
+  - Marked output: `images/test-cases/npc/smart-cloud-dialog-marked-click.png`
+  - Marked output 标出 ROI `220,180,560,360`、候选框 `462,342,36,36`、最终
+    `WINDOW_RELATIVE CLICK 480,360`。
+- RED/GREEN:
+  - RED：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest" test`
+    先失败在缺 `NpcClickSmartCloudDecisionService` / `NpcClickSmartCloudRequest` / `NPC_CLICK_SMART`。
+  - GREEN focused：同一命令已通过。
+  - Final focused：
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    通过。
+  - Cloud suite：`mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` 通过。
+  - Compile：`mvn -q -DskipTests compile` 通过。
+  - Scoped `git diff --check` 通过；仅有 LF/CRLF conversion warning。
+  - `node scripts/generate-cr-dashboard-data.js` 已刷新 `docs/cr-dashboard-data.js`。
+- 本刀未修改 `GameStateUtil.isMovingByPixelDiff()`、五倍/修罗 phase、Navigation、Dialog、Bag、
+  SummonSkill、CR145 queue、runner/pathing 语义、旧 yellow/purple/menu OCR 阈值、player-anchor
+  formula、Ctrl 菜单 scan/click 算法。
+- Fresh runtime gate：重启 DHXY 和 dev sidecar，跑普通 NPC `dialog` 点击样本，确认日志出现
+  `cloud.decision serviceId=NPC_CLICK_SMART mode=EXECUTE`，context 中 base64 被 redacted，valid 样本
+  只执行 `npcClick:smartCloudMoveClick`；无效/低置信/超时/NOT_FOUND 样本不得出现旧
+  `npcClick:retry:altC-dismount`、learned-memory、yellow OCR、formula 或 Ctrl fallback 点击。
+
+Review blocker 2026-07-02:
+
+- P1：dev sidecar 的 `NPC_CLICK_SMART` 默认路径只读 `context.localShadowClick` 或 synthetic magenta
+  marker；生产 `NpcClickService.buildNpcClickSmartCloudRequest(...)` 不会设置 `localShadowClickX/Y`，真实游戏截图
+  也没有 marker。结果是 fresh runtime 下普通 NPC dialog click 很可能一直 `NOT_FOUND`，而 covered active path
+  禁止本地 fallback，普通 NPC 点击会卡住。
+- 修复要求：不能把 `localShadowClick` 当生产权威，也不能只靠 marker 让 testcase 过；sidecar 必须从 payload
+  本身和 target facts 产生可执行 cloud click。repair 需要新增无 marker 的黄字 NPC 名字 replay，marked output
+  标出黄色候选框和最终 `WINDOW_RELATIVE` click。
+
+Repair implementation 2026-07-02:
+
+- `CloudDecisionDevServer.npcClickSmartDecisionFor(...)` 已改为从 payload 黄字 NPC 名字提取候选框，并用
+  `npcName` target facts 做目标名匹配；不再把 `context.localShadowClick` 或 synthetic marker 作为
+  `NPC_CLICK_SMART` 默认权威。
+- sidecar 解码 `imagePayloadBase64`，在 request ROI 内扫描黄色文字像素 band，合并成黄色 NPC 名字候选框，
+  再按第一刀黄字 click 规则返回普通左键 `CLICK`、`WINDOW_RELATIVE` click、`candidateBox` diagnostics 和
+  `reason=dev-npc-click-yellow-name-payload`。
+- 生产 `NpcClickService.buildNpcClickSmartCloudRequest(...)` 没有新增本地 click 坐标；本地仍只上传 raw payload、
+  窗口尺寸、ROI 和 target facts。
+- RED：`mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` 先失败，原因是无 marker
+  黄字 payload 返回 `NOT_FOUND`。
+- GREEN：
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` 通过；
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    通过；
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `node scripts/generate-cr-dashboard-data.js` 已刷新 `docs/cr-dashboard-data.js`；
+  - scoped `git diff --check -- ...CR165 touched files...` 通过，仅有 LF/CRLF conversion warning。
+- 新增 replay：
+  - Input: `images/test-cases/npc/smart-cloud-dialog-yellow-name-raw.png`
+  - Marked output: `images/test-cases/npc/smart-cloud-dialog-yellow-name-marked-click.png`
+  - 标记图显示 ROI `220,180,560,360`、黄色候选框 `451,397,58,27`、最终
+    `WINDOW_RELATIVE CLICK 480,360`。
+
+Independent review blocker 2026-07-02:
+
+- Reviewer Leibniz verdict: P1 blocker + P2 replay gap。
+- P1 evidence:
+  - 生产 `NpcClickService.buildNpcClickSmartCloudRequest(...)` 目前上传整窗 ROI `0,0,1024,768`。
+  - `CloudDecisionDevServer.recognizeNpcClickYellowName(...)` 在 ROI 内扫黄字候选后按 score 取最高候选，
+    没有使用 `npcName`、别名或 target facts；`addYellowClusterCandidate(...)` 又按黄字框
+    `centerY - 50` 推导 click。整窗内出现多个黄字时，sidecar 可能选择更大/更居中的非目标黄字。
+  - covered path fail-closed 是正确的，但如果 cloud 误点了别的可弹选项 NPC，generic dialog verify 可能仍
+    把它当成功。
+- Required repair:
+  - Sidecar 必须 target-aware：至少使用 `npcName` / aliases 做 OCR/文本/模板匹配，确认候选属于目标 NPC 后才
+    返回 `CLICK`；否则返回 `NOT_FOUND`。
+  - 不能把生产 ROI 收窄或 `localShadowClick` echo 当作主要修复；云端必须从 payload/target facts 形成自己的决策。
+  - 新增多黄字干扰 replay：目标黄字 + 非目标黄字，证明只点目标；新增 no-target negative replay，证明无目标时
+    `NOT_FOUND`。
+- P2 verification gap:
+  - 当前 replay 仍是合成图，fresh-runtime 前最好补一张真实游戏 raw PNG 到
+    `images/test-cases/npc/...`，marked output 标出 target 黄字框、`WINDOW_RELATIVE` click 和 screen click。
+
+Leibniz P1 repair 2026-07-02:
+
+- `CloudDecisionDevServer.recognizeNpcClickYellowName(...)` 现在要求 target-aware：先抽 ROI 内所有黄字候选，
+  再把每个候选黄字 mask 与由 request `npcName`/alias 渲染出的目标名 mask 做归一化匹配。
+- 只有 `targetScore >= 0.60` 的候选才允许返回 `CLICK`；无目标名匹配候选返回 `NOT_FOUND`。`CLICK`
+  decision 带 `candidateBox` 和 `targetScore`，diagnostics 继续声明 `coordinateSpace=WINDOW_RELATIVE`。
+- 生产 `NpcClickService.buildNpcClickSmartCloudRequest(...)` 未收窄 ROI，未传 `localShadowClick`，仍只上传 raw
+  payload/window/ROI/target facts。
+- RED：`mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` 先失败，no-target
+  negative 中只有非目标 `张闻` 时仍返回 `CLICK`。
+- GREEN：
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` 通过；
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    通过；
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` 通过；
+  - `mvn -q -DskipTests compile` 通过。
+- 新增 replay：
+  - Multi-yellow input: `images/test-cases/npc/smart-cloud-dialog-multi-yellow-raw.png`
+  - Multi-yellow marked output: `images/test-cases/npc/smart-cloud-dialog-multi-yellow-marked-click.png`
+  - No-target input: `images/test-cases/npc/smart-cloud-dialog-no-target-raw.png`
+  - No-target marked output: `images/test-cases/npc/smart-cloud-dialog-no-target-marked.png`
+  - Multi-yellow 标记图显示整窗 ROI `0,0,1024,768` 中同时有目标 `墨意` 和更大/更居中的非目标 `张闻`，
+    最终点击目标 `墨意` 的 `WINDOW_RELATIVE CLICK 260,470`，候选框 `231,507,58,27`。
+  - No-target 标记图显示 request target `墨意` 缺失，非目标 `张闻` 被拒绝，cloud action 为 `NOT_FOUND`。
+
+Independent re-review 2026-07-02:
+
+- Reviewer Descartes verdict: PASS with one P2 verification risk; no P0/P1 blocker.
+- Confirmed:
+  - `NpcClickService.clickNpcSmart(...)` checks `NPC_CLICK_SMART` before old local pipeline for covered ordinary
+    `dialog` requests, and no executable cloud action returns false without yellow OCR/formula/Ctrl/`Alt+C` fallback.
+  - Production request sends raw PNG payload, sha, window size, full-window ROI, `npcName` and target facts; it does
+    not send `localShadowClick` as authority.
+  - `NpcClickSmartCloudDecisionService` requires confidence >= `0.70`, `WINDOW_RELATIVE`, window/ROI bounds, and
+    plain left click.
+  - Dev sidecar extracts yellow candidates from payload, filters by target-aware `npcName` score, returns `CLICK`
+    only for matched target, and returns `NOT_FOUND` when only non-target yellow exists.
+- Reviewer-focused command:
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest" test`
+    passed.
+- P2 remaining:
+  - Current multi-yellow/no-target replay is still Java2D synthetic and uses the same `Font.SANS_SERIF` family as the
+    sidecar's rendered target mask. Before closing CR165, save one real game raw PNG under `images/test-cases/npc/...`
+    and produce a marked output with target yellow box plus final `WINDOW_RELATIVE` click.
+
+Runtime blocker repair 2026-07-02:
+
+- Fresh log evidence:
+  - `2026-07-02 13:37:45.250` showed
+    `cloud.decision serviceId=NPC_CLICK_SMART mode=EXECUTE ... elapsedMs=328 success=false fallback=STOP reason=timeout after 300ms`.
+  - Same tick `NpcClickService` logged `NPC_CLICK_SMART no executable action ... status=REQUIRED_FAILURE` and
+    修罗 fell back to minimap navigation; the nearby `灵兽村使者` was never clicked by the cloud path.
+- User decision:
+  - `NPC_CLICK_SMART` remains cloud-only for covered ordinary dialog NPC clicks.
+  - Timeout / transient cloud unavailable cannot be treated as business failure; even if cloud takes much longer, local must
+    wait or retry cloud rather than fall back to local or abort the click.
+- Repair:
+  - `cloud.timeout-ms` raised from `300` to `60000`; `300ms` is a shadow/metrics budget, not a cloud-required execute
+    business boundary.
+  - `NpcClickSmartCloudDecisionService.decideClick(...)` now treats transient unavailable reasons (`timeout`, HTTP
+    failure, empty response, 429/5xx) as cloud-required wait/retry. It retries every 250ms without an attempt cap and logs
+    the waiting state at most every 5s. Stop/interruption still exits without clicking.
+  - Explicit cloud responses still keep their old safety semantics: valid `CLICK` executes; `NOT_FOUND`/`ABORT` are
+    cloud-owned no-click; invalid schema, low confidence, disallowed modifiers, or out-of-bounds clicks fail closed.
+  - No local yellow/formula/Ctrl/`Alt+C` fallback was added.
+- Verification:
+  - RED observed before fix:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest#junitRunsMainSuite" test` failed with
+    `status expected=CLOUD_EXECUTED actual=REQUIRED_FAILURE` for first-call `timeout after 300ms`.
+  - GREEN:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest#junitRunsMainSuite" test` passed.
+  - GREEN:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed.
+  - GREEN:
+    `mvn -q -DskipTests compile` passed.
+
+Local strategy cleanup 2026-07-02:
+
+- 用户追加红线：`clickNpcSmart` inactive/unavailable/no-action/invalid 都必须 fail closed/no-click，不允许
+  `cloudResult == DISABLED && clickNpcSmartLocalDisabledBranch(...)` 回旧本地 pipeline；生产路径不要
+  `NPC_CLICK_STRATEGY` / 本地策略兜底。
+- 修复：
+  - 删除 `clickNpcSmartLocalDisabledBranch(...)`，`clickNpcSmart(...)` 只在 `NPC_CLICK_SMART`
+    `CLOUD_EXECUTED` 且本地 dialog verification 通过时返回 true；
+  - `NPC_CLICK_SMART` inactive/disabled、云端 no-action、timeout/required failure、invalid、越界、低置信、
+    点击后未验证全部返回 false，不再进入 learned-memory / tooltip / yellow OCR / player-anchor formula /
+    Ctrl menu / `Alt+C` retry；
+  - `NpcClickStrategyCloudDecisionService` active 与 inactive 都不调用云端、不授权本地策略，只返回
+    no-click rejection；
+  - `NpcClickStrategyCloudDecision` envelope 删除本地/云端成功状态，只保留 no-click 状态，避免同包代码
+    重新使用 `LOCAL_PASSTHROUGH`。
+- RED：
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest" test`
+    先失败，证据为 disabled branch 仍存在、inactive `NPC_CLICK_STRATEGY` 仍返回 `LOCAL_PASSTHROUGH`。
+  - `mvn -q -Dtest="NpcClickStrategyCloudDecisionServiceTest" test` 在 envelope 收口前先失败，证据为
+    `LOCAL_PASSTHROUGH` status 仍暴露。
+- GREEN：
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest,NpcClickSmartCloudDecisionServiceTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed。
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed。
+  - `mvn -q -DskipTests compile` passed。
+- Testcase replay：
+  - 本轮未改云端返回点击点、OCR/template matching、ROI 算法或 click geometry，只删除本地 fallback/授权桥；
+    因此没有新增 NPC 点击 marked replay。fresh runtime 仍需外部 brain 可用后验证真实
+    `NPC_CLICK_SMART` action。
+
+Request metadata contract update 2026-07-02:
+
+- 外部 `dhxy-cloud-brain` 已指出仅有
+  `glyphMetadata={npcName,mapName,target,tooltipType,targetRole,targetEvidence}` 不足以在没有本地可点击模板时
+  独立计算点击点；DHXY request 因此补齐云端可消费的模板/glyph 线索，但不在本地生成候选框、score 或点击点。
+- `NpcClickSmartCloudRequest` 新增字段：
+  - `targetTemplateSpecs`: list，当前格式包含
+    `targetName=<npcName>`、`targetTemplatePath=images/template/npc/target/<taskCode>/<npcName>.png`、
+    `npcName@images/template/npc/name/<taskCode>/<npcName>.png`。
+  - `yellowTemplateSpecs`: list，当前格式包含
+    `targetName=<npcName>`、`yellowTemplatePath=images/template/npc/yellow/<taskCode>/<npcName>.png`、
+    `npcNameTemplatePath=images/template/npc/name/<taskCode>/<npcName>.png`。
+  - `targetGlyphTemplate`: string，当前格式为
+    `images/template/npc/glyph/<taskCode>/<npcName>.png`。
+- 兼容旧 parser 的 `templateSpecs` 会同时包含
+  `npcName@...`、`targetTemplatePath=...`、`yellowTemplatePath=...`、`npcNameTemplatePath=...`、
+  `targetGlyphTemplate=...`；`glyphMetadata` 镜像 `templateSpecs`、`targetTemplateSpecs`、
+  `yellowTemplateSpecs`、`targetGlyphTemplate`、`targetTemplatePath`、`yellowTemplatePath`、
+  `npcNameTemplatePath`。
+- `NpcClickSmartCloudDecisionService` 在调用 cloud 前要求至少存在一种 target template/glyph metadata；
+  缺失时直接 `REQUIRED_FAILURE`，不调用 cloud，也不回旧本地策略链。
+- RED：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`
+  先因 request builder 缺 `targetTemplateSpecs(...)` / `yellowTemplateSpecs(...)` / `targetGlyphTemplate(...)`
+  失败。GREEN focused：同一命令已通过。
+- Post-schema verification：
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest,NpcClickSmartCloudDecisionServiceTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed。
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed。
+  - `mvn -q -DskipTests compile` passed。
+  - Scoped source scan found no old `clickNpcSmartLocalDisabledBranch` / disabled-return / `ALLOW_LOCAL_STRATEGY`
+    production response tokens in the NPC click production files.
+
+Card CR166: SummonSkillCloud 三技能识别与处理云端化
+
+Status:
+
+- Review. Owner: 谢帅+worker。单槽 tooltip/slot status 云端识别第一刀已完成；dev sidecar 已能用 payload/template 做真实分类；fresh runtime 待验。
+
+Problem:
+
+- CR145 已把三技能调度改成 queue，但 cleaner 内的 tooltip/slot 状态识别、删除确认、点击策略仍在本地，且 fresh runtime
+  已多次暴露 `delete normal skill failed` / `UNKNOWN` 不稳定。
+- 三技能 tooltip 洗字和槽位状态识别属于核心资产，不能留在发布 runtime。
+
+Target boundary:
+
+- 本地职责：
+  - 维持 CR145 queue 调度；
+  - 打开三技能面板；
+  - hover 技能格；
+  - 截取 tooltip/slot raw image；
+  - 执行云端返回的删除/确认/重试/关闭动作；
+  - 回报成功、失败、unknown、slot after image。
+- 云端职责：
+  - tooltip 洗字；
+  - slot 状态识别；
+  - 判断 `NORMAL_SKILL` / `KEEP_SKILL` / `LOCKED_SLOT` / `EMPTY_SLOT` / `UNKNOWN`；
+  - 决定删除、保留、重试、移队尾、backoff、终止；
+  - 返回窗口相对点击点、动作、置信度和 reason。
+
+Implementation direction:
+
+- 不改变 CR145 queue 调度规则：五倍每轮最多 1 个，修罗每轮最多 2 个，到期本轮只入队、下一窗口消费。
+- 先把 cleaner 视觉判断和动作决策迁到云端；本地保留队列、窗口打开/关闭、hover、截图和输入执行。
+- 生产路径不能在云端失败后继续使用本地 tooltip wash/template fallback 删除技能。
+
+Validation:
+
+- focused guard：CR145 queue 语义不回退；CR166 覆盖的 cleaner path 必须走云端 action。
+- Fresh runtime：三技能 item 处理日志显示 cloud request/response、slot/action/reason、成功出队或失败移队尾。
+- 如果仍出现 `UNKNOWN` 或删除失败，日志必须能区分云端识别失败、本地执行失败、确认 dialog 未出现、slot after verification 失败。
+
+Scoping review 2026-07-02:
+
+- 入口：`TaskMaintenanceService.maybeCleanSummonSkill(...)`、`SummonSkillService.cleanSummonSkillsOnce(...)`、`cleanTailNormalSkillsDirect(...)`、`inspectCurrentHoverTip(...)`、`deleteSkillAtSlotDirect(...)`。
+- 第一张实现卡建议：新增 `SUMMON_SKILL` / `SummonSkillCloud` 单槽 tooltip/slot-status 云端识别 slice，hook 在 `inspectCurrentHoverTip(...)`；cloud active 时上传 raw tooltip ROI，云端返回 slot status/action reason；失败直接 `UNKNOWN`/fail-closed。
+- cloud-required：tooltip 黄字洗图、slot 状态识别、`NORMAL_SKILL` / `KEEP_SKILL` / `LOCKED_SLOT` / `EMPTY_SLOT` / `UNKNOWN` 判断、尾部扫描策略、删除/保留/重试/终止策略、删除和确认点击点。
+- local-safety-only：CR145 queue 调度、窗口打开/拖动/hover、raw tooltip/slot 截图、input queue、pause/stop、窗口边界校验、执行后 outcome 回报和成功出队/失败移队尾。
+- hidden fallback 禁止：cloud active 时不能从 `captureAndWashYellowTipOnce(...)`、`matchYellowTemplateInScan(...)` 回退；旧 `skillCount/nextStart/tailSafe` cache 需要带 cloud policy/version 或转为 shadow，不能无标签复用。
+- 本卡第一刀涉及视觉匹配变化，需要 tooltip raw testcase 和 marked ROI/status 输出；后续如果云端返回删除/确认点击点，还要补 marked click point replay。
+
+Worker update 2026-07-02: 单槽 tooltip/slot status 云端识别第一刀
+
+- 已实现：
+  - 新增 `CloudDecisionServiceId.SUMMON_SKILL`。
+  - 新增 `SummonSkillCloudRequest`、`SummonSkillCloudDecision`、`SummonSkillCloudDecisionService`。
+  - `SummonSkillService.inspectCurrentHoverTip(...)` 在 cloud active 时先走 `SummonSkillCloudDecisionService`：
+    截取 raw tooltip ROI，上传 `imagePayloadBase64`、`payloadMimeType`、`imageSha256`、`windowSize`、`roi`，
+    并把云端 `slotStatus` 映射到现有 `SummonSkillSlotStatus`。
+  - `SUMMON_SKILL` 已配置为 `shadow=true`、`execute=true`、`execute-percent=100`、`fallback=STOP`。
+  - dev sidecar 已支持 `SUMMON_SKILL` schema-valid fail-closed 响应，并能从
+    `imagePayloadBase64` raw tooltip payload 洗黄字、匹配 `status_*.png` 模板后返回可执行状态。
+- Fail-closed 语义：
+  - 低置信、timeout、空响应、schema mismatch、unsupported `slotStatus`、缺 payload/metadata、ROI 越界均返回
+    `UNKNOWN`，且 `CloudDecisionResult.effectiveDecision=null` 的 required STOP 失败不会落回本地状态识别。
+  - cloud active 覆盖路径不调用 `captureAndWashYellowTipOnce(...)`、`ImagePreprocessor.washYellowText(...)` 或
+    `matchYellowTemplateInScan(...)`；source guard 覆盖该顺序。
+- 边界保持：
+  - 未改 CR145 queue 预算/出队/移队尾/unknown backoff 语义。
+  - 未改 `deleteSkillAtSlotDirect(...)` 删除/确认点击算法或点击点。
+  - 未改 五倍/修罗 task flow、Navigation、NPC、Dialog 或三技能删除坐标。
+- Testcase replay：
+  - Command: `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest" test`.
+  - Input: `images/test-cases/summon-skill/single-slot-tooltip-raw.png`.
+  - Output: `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`.
+  - Replay 走真实 dev sidecar HTTP path；marked output 标出 ROI `100,200,237,123`、
+    `slotStatus=NORMAL_SKILL`、`action=DELETE`。
+- 本地验证：
+  - RED:
+    `mvn -q -Dtest="SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,CloudDecisionDevServerTest" test`
+    先因缺少 `SummonSkillCloudRequest` / `SummonSkillCloudDecisionService` 失败。
+  - GREEN:
+    `mvn -q -Dtest="SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,SummonSkillCloudTooltipReplayTest,CloudDecisionDevServerTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest" test`
+    通过。
+  - `mvn -q -DskipTests compile` 通过。
+- Follow-up blocker repair:
+  - 实跑复查发现 `CloudDecisionDevServer.summonSkillDecisionFor(...)` 仍从 `localDecision` 读取
+    `slotStatus`，而生产 `LOCAL_SHADOW_DECISION` 固定是
+    `slotStatus=UNKNOWN;action=RETRY;reason=local-shadow`，导致 dev sidecar fresh runtime 永远返回
+    `UNKNOWN`。
+  - 已修为 sidecar 端 decode `imagePayloadBase64` 到 `images/temp/cloud-dev/summon-skill/...`，
+    执行 `ImagePreprocessor.washYellowText(...)`，再用既有
+    `images/template/zhaohuanshou/status_sealed.png` / `status_unobtained.png` /
+    `status_inactive.png` / `status_normal.png` / `status_high.png` / `status_ultimate.png`
+    模板分类。
+  - 映射：sealed/unobtained -> `LOCKED_SLOT;action=KEEP`；inactive ->
+    `EMPTY_SLOT;action=KEEP`；normal -> `NORMAL_SKILL;action=DELETE`；high/ultimate ->
+    `KEEP_SKILL;action=KEEP`；无法识别或 decode 失败 -> `UNKNOWN;action=RETRY`。
+  - RED:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest" test`
+    先失败，sidecar 返回旧 `dev-local-summon-skill` UNKNOWN，replay 也拿到 `actual=UNKNOWN`。
+  - GREEN:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest" test`
+    通过；`CloudDecisionDevServerTest.summonSkillMapsStatusTemplatesToSlotStatusAndAction`
+    覆盖六个状态模板，replay 日志显示
+    `cloudDecision=slotStatus=NORMAL_SKILL;action=DELETE;reason=dev-summon-skill-template-normal`。
+- Review result 2026-07-02：
+  - Reviewer Poincare verdict: PASS_WITH_NOTES，未发现 P0/P1/P2 行为 blocker；提醒新增
+    `src/main/java/com/bot/dhxy/cloud/task/SummonSkillCloud...`、`src/test/java/com/bot/dhxy/cloud/...`
+    和 `images/test-cases/summon-skill/**` 在提交时必须一起纳入，否则 compile/testcase replay 会断。
+  - Reviewer Socrates final delta verdict: PASS，确认 dev sidecar 已真正读取 `imagePayloadBase64` payload，
+    洗黄字并匹配 `status_*.png`，映射为 normal -> `NORMAL_SKILL/DELETE`，
+    high/ultimate -> `KEEP_SKILL/KEEP`，sealed/unobtained -> `LOCKED_SLOT/KEEP`，
+    inactive -> `EMPTY_SLOT/KEEP`，unknown -> `UNKNOWN/RETRY`。
+  - Socrates 复跑：
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest,SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest" test`
+    通过；`mvn -q -DskipTests compile` 通过。
+  - 谢帅复核同一组 focused tests、`mvn -q -DskipTests compile`、以及 scoped `git diff --check`
+    通过；`git diff --check` 只输出当前仓库已有 LF/CRLF warning，无 whitespace error。
+- Fresh runtime gate：
+  - 重启 DHXY 和 dev sidecar 后跑一次三技能维护，日志必须出现
+    `cloud.decision serviceId=SUMMON_SKILL mode=EXECUTE`。
+  - 普通日志中的 `imagePayloadBase64` 必须保持 `<redacted len=... sha256=...>`。
+  - 云端 valid status 应映射到现有 slot status；云端 timeout/invalid/低置信时应只返回 `UNKNOWN`，不得触发本地
+    washed/template fallback 或新的删除动作。
+- 未完成项：
+  - 删除/保留/重试/终止完整策略、删除按钮点击点、确认按钮点击点、删除后 slot-after 验证仍未云端化，需后续 CR166 子卡继续。
+
+Card CR167: DialogCloud pre-click 选项决策云端化
+
+Status:
+
+- Review / fresh runtime 待验。Owner: 谢帅+worker。2026-07-02 最终只读 reviewer 判 FAIL 的
+  五倍 accept/probe prepared 本地排序与白字 story 语义残留已处理；2026-07-03 修复
+  `VERIFY_GREEN_TEMPLATE` 仍走本地只读 `ImageFinder.find(...)` 且会被无图 after-local cloud 覆盖的缺口。
+  focused Dialog tests、compile 与 external brain focused replay 已通过。真实运行仍需验证 covered Dialog 与
+  green-template verify 全部只由 `DIALOG_POLICY` cloud action/no-action 推进。
+
+Final reviewer FAIL 2026-07-02 (已由下方 repair result / full-cloud implementation 修复):
+
+- `WubeiDialogPreparationProvider.prepare(...)` 对 `WUBEI_ACCEPT_TASK` 仍本地执行
+  `prepareRememberedAcceptOption(...) ? remembered : prepareGreenTemplateOption(...)`。即使 remembered/green
+  的最终点击点来自 cloud，这仍是本地在决定 remembered-vs-green 的生产排序。
+- `WubeiDialogPreparationProvider.prepare(...)` 对 `WUBEI_PROBE_STORY` 仍调用
+  `DialogService.prepareWhiteStoryTemplateOrAbsent(...)`。
+- `DialogService.prepareWhiteStoryTemplateOrAbsent(...)` 内部仍通过 `verifyWhiteStoryTemplate(...)` /
+  `ImageFinder.find(...)` 按 specs 顺序本地决定 white-story prepared 语义；即使 `clickRequired=false`，
+  这仍是本地 story brain。
+- Required repair direction:
+  - 五倍 accept prepared 入口必须发单次 cloud prepared request，remembered hint、green template specs、
+    operation/source/task context/supplied detection raw image 只能作为 context，由外部 brain 决定 remembered
+    还是 green，返回 prepared action 或 no-action。
+  - 五倍 probe story prepared 入口必须发单次 cloud prepared request，white story specs、miss target、
+    absent target、absentAllowed、absent matched text、raw/story detection 只能作为 context，由外部 brain
+    决定 matched/miss/absent prepared result。
+  - `verifyWhiteStoryTemplate(...)` 可作为 pure verify-only 留存，但不得被 production prepared action 语义/
+    排序路径调用。
+
+Final reviewer FAIL repair result 2026-07-02:
+
+- `WubeiDialogPreparationProvider` 的 `WUBEI_ACCEPT_TASK` 不再本地先 remembered 后 green，也不再保留
+  `prepareRememberedAcceptOption(...)`。provider 只读取 remembered choice 作为 request hint，然后调用
+  `DialogService.prepareRememberedOrGreenTemplateOption(...)` 发单次 `DIALOG_POLICY` prepared request；remembered
+  hint、green template specs、operation/source/supplied detection 都只是 context，最终 actionId/click 由外部
+  brain 决定。
+- `DialogService.prepareCloudWhiteStoryTemplateOrAbsent(...)` 不再调用 `verifyWhiteStoryTemplate(...)`、不再运行
+  `ImageFinder.find(...)`，也不再本地合成 `buildWhiteStoryAbsentPreparedAction(...)` /
+  `buildWhiteStoryMissPreparedAction(...)`。它现在构造包含 `whiteTemplateSpecs`、`storyMissTargetKeyword`、
+  `storyAbsentTargetKeyword`、`storyAbsentMatchedText` 和 raw ROI 的 `DIALOG_POLICY` request，只接受云端
+  `action=NO_ACTION;actionId=<allowed story semantic>;candidateBox=...` 后保存 `clickRequired=false`
+  `PreparedDialogAction`。
+- `DialogPolicyCloudDecisionService.decidePreClick(...)` 现在为 no-click story semantic action 校验 actionId
+  allowlist：white template spec name、miss target、absent target。普通 covered click path 仍只接受有效
+  `WINDOW_RELATIVE CLICK`；cloud miss/invalid/timeout/低置信仍 fail closed。
+- 外部 `dhxy-cloud-brain` `DialogOptionRecognizer` 新增 white-story semantic recognizer：非 `STORY` 时可由
+  cloud 返回 absent；`STORY` 时 cloud 在 raw ROI 上执行 `WASH_WHITE` + template matching，返回 matched spec
+  或 miss；模板不可读/缺素材时返回 no-action/fail closed。
+- 2026-07-03 更新：上一条“`verifyGreenTemplateOption(...)` 仍可本地只读验证”的边界已废弃。
+  `VERIFY_GREEN_TEMPLATE` 现在也必须发送 image-backed `DIALOG_POLICY` request，由外部 brain 返回
+  semantic no-click visibility result；本地不再用 `ImageFinder.find(...)` 作为该路径的生产判定。
+  `VERIFY_WHITE_TEMPLATE` 仍只作为白字 story verify-only 边界，后续若进入 covered runtime 也要另拆卡迁移。
+- Source guard 2026-07-02:
+  - `rg -n "prepareRememberedAcceptOption|\? remembered|prepareRememberedChoiceOption\(" src/main/java/com/bot/dhxy/task/wubei/WubeiDialogPreparationProvider.java`
+    returned no matches.
+  - `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+  - `rg -n "prepareWhiteStoryTemplateOrAbsent|ordered white-template candidates|first match wins" src/main/java/com/bot/dhxy/service/DialogService.java src/main/java/com/bot/dhxy/task/wubei/WubeiDialogPreparationProvider.java`
+    returned no matches after the explicit cloud rename.
+  - 2026-07-03 superseded guard: `VERIFY_GREEN_TEMPLATE` no longer belongs to the local verify-only exception.
+    Current source review must check `verifyGreenTemplateOption(...)` builds image-backed `DIALOG_POLICY` request
+    instead of calling `ImageFinder.find(...)`; no `buildWhiteStory*` helpers remain.
+- Verification 2026-07-02:
+  - DHXY `mvn -q -DskipTests compile` passed.
+  - DHXY `mvn -q -Dtest="TaskMaintenanceCloudRequiredFailureTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+  - External `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q -Dtest="AlgorithmFailClosedTest,CloudBrainSmokeTest" test` passed.
+
+P0 reopen evidence 2026-07-02 (已由下方 repair result / full-cloud implementation 修复):
+
+- Source scan:
+  - `DialogService.prepareRouteKeywordOption(...)` 仍可进入本地
+    `prepareOptionKeywordWithOcr(...)` / `GameTextLineOcrService.readDialogOptionWords(...)`，
+    由本地 OCR/alias 计算 route prepared click point。
+  - `prepareRememberedRouteOption(...)` / `prepareRememberedChoiceOption(...)` 仍可通过
+    `buildRememberedPreparedDialogAction(...)` 把 remembered relative point 转成本地 absolute click。
+  - `buildPreparedDialogAction(...)` 仍是本地构造 prepared click 点的通用出口。
+  - `handleStoryDialog(...)` / `fastClickStoryDialogDirect(...)` 即使暂时无生产调用，也是不允许保留的
+    本地 story click 策略源码，后续很容易被重新接回。
+  - 这些都会绕开用户要求的“raw image -> cloud response -> 本地只执行/校验”的边界；不能宣称
+    Dialog 完整云端化。
+- Required repair direction:
+  - `prepareRouteKeywordOption(...)`、`prepareRememberedRouteOption(...)`、
+    `prepareRememberedChoiceOption(...)` 必须构造 `DIALOG_POLICY` pre-click/prepare request，把 raw dialog
+    image、ROI、operation、target keyword/aliases、remembered hint、source/task context 发给外部 brain。
+  - 外部 brain 返回 `action=CLICK;actionId=<operation/keyword/key>;click=<windowRelative>;candidateBox=...`
+    后，本地只做窗口/ROI/actionId 安全校验并保存 `PreparedDialogAction`。
+  - cloud inactive/unavailable/`NO_ACTION`/invalid/低置信/越界时 no-click/fail-closed；不得回退本地
+    green-template/fallback/keyword/business/remembered/give-item/story click 逻辑。
+  - 源码守卫必须证明 `DialogService.java` 中不再存在
+    `prepareOptionKeywordWithOcr`、`readDialogOptionWords(`、`buildPreparedDialogAction(`、
+    `buildRememberedPreparedDialogAction`、`handleStoryDialog(`、`fastClickStoryDialogDirect(`。
+- Repair result:
+  - `DialogService.prepareRouteKeywordOption(...)` 改为构造 covered route keyword request，调用
+    `prepareCloudDialogAction(...)`，由 `dialogPolicyCloudDecisionService.decidePreClick(...)` 返回的 cloud
+    click 生成 `PreparedDialogAction`。
+  - `prepareRememberedRouteOption(...)` / `prepareRememberedChoiceOption(...)` 改为构造
+    `CLICK_REMEMBERED_POINT` request；`rememberedRelativeX/Y` 只进入 cloud context，保存的坐标来自 cloud
+    response。
+  - 已删除 production source 中 `prepareOptionKeywordWithOcr`、`readDialogOptionWords(...)` 调用、
+    `buildPreparedDialogAction(...)`、`buildRememberedPreparedDialogAction(...)`、`handleStoryDialog(...)`、
+    `fastClickStoryDialogDirect(...)`。
+  - `detectMaintenanceBroadcastActionNoFocus(...)` 不再 `ImageFinder.find(...)` 识别
+    `heal-pet`/`repair-equipment`；actionKey 来自 cloud pre-click decision，失败返回 null。
+  - 2026-07-03 更新：`VERIFY_GREEN_TEMPLATE` 不再允许本地 `ImageFinder.find(...)` 做生产可见性验证；
+    它必须走 image-backed `DIALOG_POLICY` semantic no-click。`VERIFY_WHITE_TEMPLATE` 仍是只读白字验证边界，
+    不发送输入、不构造 `PreparedDialogAction`、不作为 covered click/prepared success path。
+- Source guard:
+  - `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+- Verification status:
+  - External `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q -Dtest="AlgorithmFailClosedTest,CloudBrainSmokeTest" test` passed.
+  - Test compile adapter fixed: `TaskMaintenanceCloudRequiredFailureTest.CountingDialogService` now calls the
+    current 11-argument `DialogService` constructor.
+  - `mvn -q -Dtest="TaskMaintenanceCloudRequiredFailureTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickDirectCombatDialogGateWiringTest,NpcClickDirectCombatNameLayerWiringTest,NpcClickLearnedMemoryFastPathWiringTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+- Fresh-runtime gate:
+  - 源码删除、focused guard 与最终 reviewer gate 已通过；关闭前仍需要 fresh runtime。
+  - 完成后真实运行日志必须能看到 route/remembered/green/story prepared dialog click/consume 使用云端
+    `WINDOW_RELATIVE click`，且同一次 covered Dialog 不出现本地 OCR/remembered/story click 决策成功。
+
+Dialog full-cloud implementation 2026-07-02:
+
+- `DialogService.handleDialog(...)` 在 option switch 前调用 `tryHandleCloudPreClickOption(request, detection)`；
+  云端结果存在时直接 `finishRequest(request, result, false)`，因此 pre-click 覆盖路径不会再走 after-local
+  `USE_LOCAL_RESULT` 二次成功裁决。
+- `DialogService.isDialogPreClickCovered(...)` 覆盖所有会点击/交互的 dialog option policy：
+  `CLICK_KEYWORD`（包含 `ROUTE_TRANSFER`）、`CLICK_REMEMBERED_POINT`、`CLICK_BUSINESS_OPTION`、
+  `CLICK_GREEN_TEMPLATE`（包含五环鞋店购买）、`GIVE_ITEM_IF_AVAILABLE`、`FALLBACK_FIRST_OPTION`、
+  `FALLBACK_LAST_OPTION`。`DialogStoryPolicy.CLICK_THROUGH` 只有在本地只读检测确认当前 dialog type 为
+  `STORY` 后才允许进入 pre-click 云端动作，云端 actionId 必须为 `STORY_CLICK_THROUGH`。`IGNORE`、
+  `VERIFY_OPTION`、故事读取/白字验证等纯只读路径不属于 dialog click strategy，可继续本地只读判断。
+  2026-07-03 以后 `VERIFY_GREEN_TEMPLATE` 例外：虽然它不点击，但它会决定 NPC/dialog 成功与否，
+  必须走 image-backed `DIALOG_POLICY` semantic no-click，不再走本地模板匹配。
+- 云端 inactive、disabled/shadow-only、unavailable、`NO_ACTION`、`REQUEST_NEW_SCREENSHOT`、`ABORT`、
+  timeout、invalid、越界、低置信都 no-click / fail closed；covered path 不回退旧本地
+  `handleKeywordOption(...)`、`handleRouteKeywordOptionWithRetry(...)`、`handleRememberedOption(...)`、
+  `handleBusinessOption(...)`、`tryGiveItemFromCurrentOptionDialog(...)`、`handleGreenTemplateOption(...)`、
+  或 `clickGreenOption(...)`。
+- `DialogPolicyCloudDecisionService.decidePreClick(...)` 上传 raw screenshot/ROI/target keyword/item/template specs，
+  只接受云端有效 `WINDOW_RELATIVE CLICK`：click 和 `candidateBox` 必须在窗口与 ROI 内，confidence >= `0.70`，
+  且不能带 `ctrl`/`alt`。
+- pre-click `actionId` 校验按业务 policy 收紧：keyword/route keyword 必须等于 `targetKeyword`，
+  remembered 必须等于 remembered action key，business 只允许 `heal-pet`/`repair-equipment`/按需
+  `repair-equipment-giveup`，give-item 必须等于 `itemToGive`，green-template 必须等于某个
+  `GreenTemplateClickSpec.name`，fallback 必须等于 `FALLBACK_FIRST_OPTION` 或 `FALLBACK_LAST_OPTION`，
+  story click-through 必须等于 `STORY_CLICK_THROUGH` 且 detected dialog type 为 `STORY`。
+- `CLICK_GREEN_TEMPLATE` request context 已补齐外部 brain 需要的等价本地 spec 字段：
+  `greenTemplateSpecCount`、`greenTemplateSpecNames`、`greenTemplateSpec.N.name`、
+  `greenTemplateSpec.N.templatePath`、`greenTemplateSpec.N.minOffsetX`、
+  `greenTemplateSpec.N.maxOffsetX`、`greenTemplateSpec.N.randomRadiusY`；当范围确定时还发送
+  `greenTemplateSpec.N.clickOffsetX` / `greenTemplateSpec.N.clickOffsetY`。`greenTemplateSpecs` 和
+  `targetKeywordTemplateSpecs` 现在使用 JSON object 数组摘要，包含 `name`、`templatePath`、offset/random
+  字段；外部 parser 同时兼容旧 `name@path[minOffsetX=...]` bracket suffix，避免 suffix 被当成路径。
+- `DialogPolicyCloudDecisionService` 额外发送 `detectedDialogType`、`targetKeywordTemplateSpecs`、
+  `targetKeywordAliases`、`rememberedRelativeX` / `rememberedRelativeY`。外部 `dhxy-cloud-brain` `DIALOG_POLICY`
+  已承接 covered action：story click-through、remembered point、business/give-item 模板、green-template JSON spec、
+  fallback first/last green-band、无 template 的 `CLICK_KEYWORD` / `ROUTE_TRANSFER` cloud text recognizer；
+  缺素材、无候选、无有效 ROI 或 keyword shape/alias 未匹配时返回 no-action/fail closed。
+- `UICleanerService.forceCloseDialog()` 已删除 dialog 关闭关键字 OCR + 绝对点击本地 fallback，只能通过
+  `DialogHandleRequest.clickStory(...)` / `fallbackLastOption(...)` 触发 covered cloud pre-click 或 fail closed。
+- 未调用的 `DialogService.handleMaintenanceBroadcastOptionFastPath(...)` / 固定 strip
+  `tryClickMaintenanceBroadcastOption(...)` 本地模板点击残留已删除；`TaskMaintenanceService` 与
+  `SummonSkillService` 的 maintenance broadcast factory 只通过 covered `CLICK_BUSINESS_OPTION` pre-click
+  云端动作或 fail closed。
+- 外部 `DIALOG_POLICY` brain 必须基于这些 context 字段和 raw ROI 返回最终 `WINDOW_RELATIVE click`；
+  DHXY 本地不再计算 green-template offset 或 fallback 点击点作为 production fallback。
+- `CLICK_KEYWORD` / route transfer 在没有 `targetKeywordTemplateSpecs` 时不再是 blocker：DHXY 发送
+  `targetKeyword` 与 `targetKeywordAliases`，external brain 从 raw ROI 抽取绿色/黄色 option text band，
+  使用 cloud-side rendered keyword/alias matcher 选择候选并返回 `actionId=<targetKeyword>` 的窗口相对 click；
+  DHXY 只验证 actionId/click/candidateBox，不执行本地 `handleKeywordOption(...)` 或
+  `handleRouteKeywordOptionWithRetry(...)` 作为 fallback。
+- after-local `DIALOG_POLICY` 仍可作为未覆盖/历史诊断层保留，但 execute success 不再接受 `USE_LOCAL_RESULT`；
+  dev sidecar after-local 默认返回 `REJECT;reason=dev-sidecar-no-after-local-dialog-success`。
+- Dev sidecar pre-click 只保留协议/错误 stub：返回
+  `NO_ACTION;reason=dev-sidecar-no-local-dialog-vision`，不识别绿色选项、不计算 `candidateBox` 或点击点。
+- 2026-07-02 sidecar 集成修复：UI 自动启动 cloud sidecar 时默认启动外部
+  `D:\mavenProject\dhxy-cloud-brain`，不再启动 DHXY test-sidecar；旧 DHXY stub 只能显式 debug opt-in。
+- 历史说明：下方 2026-07-02 早些时候关于“第一刀只覆盖 `CLICK_KEYWORD`”、“生产仍先走本地 option switch”、
+  “after-local `USE_LOCAL_RESULT` 等价”或“cloud disabled 保留本地行为”的记录，仅作为当时纠偏历史；当前执行
+  准线以上述 Dialog full-cloud implementation 为准。
+
+Runtime failure repair 2026-07-03:
+
+- Fresh 修罗启动卡在 accept NPC 后续 dialog：日志显示 `NPC_CLICK_SMART` 已返回并执行
+  `strategy=TOOLTIP_TEMPLATE action=CLICK click=458,301 candidateBox=442,293,32,16`
+  （reason `cloud-brain-npc-tooltip-template-target`），所以 NPC 点击本身已命中。
+- 第一处真实失败发生在点击后 dialog verify：旧本地 verify 已能看到
+  `dialog expected template visible ... xiuluo_accept_xianlaiwu.png`，但随后仍调用无图
+  `DIALOG_POLICY` after-local `decide(request,result)`；外部 brain 返回
+  `cloud-brain-dialog-policy-requires-cloud-input`，本地 execute gate 又把
+  `expected=GREEN_TEMPLATE_VISIBLE actual=NOT_FOUND` 判成失败，覆盖了前面的可见性结果。
+- 第二个缺口：外部 brain 对 `VERIFY_GREEN_TEMPLATE` 复用 click path，匹配模板后返回 `CLICK`；
+  但 verify 语义必须是 no-click visibility result，不能执行点击，也不能要求后续本地再兜底。
+- Repair result:
+  - `DialogService.verifyGreenTemplateOption(...)` 现在构造 image-backed
+    `DialogPolicyPreClickCloudRequest`，调用 `decidePreClick(...)`；只接受
+    `Status.CLOUD_NO_ACTION + Action.NO_ACTION + actionId in GreenTemplateClickSpec.name + candidateBox`
+    的 semantic found 结果。
+  - `DialogService.handleDialog(...)` 对 `VERIFY_GREEN_TEMPLATE` 直接
+    `finishRequest(request, verifyGreenTemplateOption(...), false)`，不会再跑 after-local
+    `DIALOG_POLICY` 无图二次裁决。
+  - `DialogPolicyCloudDecisionService` 对 no-click verify actionId 做 allowlist 校验，并校验
+    `candidateBox` 在 window/ROI 内。
+  - 外部 `dhxy-cloud-brain` `DialogOptionRecognizer` 补齐旧本地 pipeline 等价：支持 full dialog ROI
+    与 option-lower cropped payload；模板匹配使用 OpenCV `TM_CCOEFF_NORMED`；`VERIFY_GREEN_TEMPLATE`
+    返回 `action=NO_ACTION;status=FOUND;actionId=<spec.name>;candidateBox=...;reason=cloud-brain-dialog-green-template-visible`。
+  - 旧的“no-click 测试只要不崩就算 pass”的 acceptance 已删除；现在 replay 要证明
+    `xiuluo_accept_xianlaiwu.png` 能从 option-lower ROI 得到窗口相对 `candidateBox`。
+- Testcase replay:
+  - External input: `D:\mavenProject\dhxy-cloud-brain\src\test\resources\dialog\xiuluo\verify-expected-dialog-option-lower-raw.png`
+    + `D:\mavenProject\dhxy-cloud-brain\src\test\resources\dialog\xiuluo\xiuluo_accept_xianlaiwu.png`。
+  - Marked output:
+    `images/test-cases/dialog/cloud-brain-roi-space/verify_expected_option_lower_marked.png`。
+- Verification:
+  - DHXY: `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test` passed。
+  - DHXY: `mvn -q -DskipTests compile` passed。
+  - External `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q -Dtest=DialogOptionRecognizerRoiPayloadReplayTest test` passed。
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests compile` passed。
+  - 注意：external full suite 之前仍有非本卡 NPC 相关 guard 失败，本卡只声明 Dialog focused replay/compile 通过。
+- Fresh-runtime repair 2026-07-03 03:55:
+  - 最新实跑仍卡 `VERIFY_EXPECTED_DIALOG`，但日志里的 payload 图
+    `dialog_detect_handle-dialog_VERIFY_EXPECTED_DIALOG_raw.png` 实际尺寸是 `529x208`，请求 ROI 是
+    `250,312,529,208`；新源码应把它识别为已裁剪 payload 并搜索 image-local `0,0,529,208`。
+  - 启动脚本 `scripts/run-cloud-brain-server.ps1` 实际运行外部
+    `D:\mavenProject\dhxy-cloud-brain\target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`；当时 jar 时间仍是
+    2026-07-03 01:49，而修复后的 classes 时间是 2026-07-03 02:40。03:54 自动 sidecar 因此跑的是旧 jar，
+    返回旧错误 `cloud-brain-dialog-template-roi-empty`。
+  - 已执行 `mvn -q -DskipTests package` 重新打包外部 brain，新 jar 时间 2026-07-03 03:58:59；已停止
+    占用 `127.0.0.1:18080` 的旧 sidecar `PID 69824`。
+  - `scripts/run-cloud-brain-server.ps1` 已加 stale jar 检测：`pom.xml`、`src` 或 `target\classes`
+    新于 jar 时自动 package，避免以后 fresh runtime 仍加载旧 brain。
+- Fresh-runtime gate:
+  - 必须重启外部 cloud brain sidecar/server 和 DHXY，让新 jar/class 生效。
+  - 真实日志应出现 `cloud-brain-dialog-green-template-visible` 或等价 `VERIFY_GREEN_TEMPLATE`
+    semantic no-click found；同一次 verify 不应再被 after-local `cloud-brain-dialog-policy-requires-cloud-input`
+    覆盖失败。
+
+Problem:
+
+- 当前 `DIALOG_POLICY` 已有 after-local-result gate，但它发生在本地已经识别/排序/点击或构造结果之后。
+- 这不能保护 dialog 选项识别、洗字、候选排序、fallback 顺序和点击点策略；发布 runtime 仍保留可复用本地核心逻辑。
+
+Target boundary:
+
+- 本地职责：
+  - 识别当前是否有可处理 dialog；
+  - 截取 raw dialog/window ROI；
+  - 传 `DialogHandleRequest` 的 operation、option policy、expected keyword/template、任务上下文和窗口尺寸；
+  - 校验云端返回的 `WINDOW_RELATIVE` click 在窗口/ROI 内，并走 input queue 原子点击；
+  - 点击后继续用本地可观测结果验证 dialog 是否关闭、进入战斗或出现目标状态。
+- 云端职责：
+  - 对 raw dialog ROI 自行洗字/模板/候选抽取；
+  - 选择业务选项、候选优先级和 fallback 顺序；
+  - 返回 `CLICK` / `NO_ACTION` / `REQUEST_NEW_SCREENSHOT` / `ABORT`、窗口相对坐标、候选框、reason、confidence。
+
+Implementation direction:
+
+- 当前 CR167 覆盖所有会产生 dialog option 点击/交互的 `DialogOptionPolicy` 与 story click-through；不碰
+  NPC click、Navigation、Bag、三技能或战斗检测。本轮 P0 追加已同步修改外部
+  `D:\mavenProject\dhxy-cloud-brain` 的 `DIALOG_POLICY` recognizer/parser，让它承接 covered dialog action；
+  后续不得再用 DHXY 本地 handler 补足 production click 策略。
+- 现有 after-local-result `DIALOG_POLICY` 仅保留为历史/诊断层；covered pre-click path 必须在本地点击前拿到
+  云端动作，并且 pre-click result 通过 `finishRequest(..., false)` 跳过 after-local `USE_LOCAL_RESULT` gate。
+- Covered request：没有有效云端动作就 fail-closed/no-click，不回退旧 dialog option scan/click；cloud
+  inactive/disabled 也按 covered click policy fail closed。
+- 已实现：
+  - `DialogPolicyPreClickCloudRequest` / `DialogPolicyPreClickCloudDecision` 定义 pre-click action 协议，沿用
+    CR163 payload contract：`imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`、`roi`、
+    `windowWidth/windowHeight`、`rawImagePath`、`debugImageId`。
+  - `DialogPolicyCloudDecisionService.decidePreClick(...)` 使用 DIALOG_POLICY service-specific execute gate，
+    未把 `DIALOG_POLICY` 加入 generic `CloudDecisionCoordinator.EXECUTABLE_SERVICES`。
+  - `DialogService` 在所有 covered option policy 前置云端：`CLICK_KEYWORD` / `ROUTE_TRANSFER`、
+    `CLICK_REMEMBERED_POINT`、`CLICK_BUSINESS_OPTION`、`CLICK_GREEN_TEMPLATE` / 五环鞋店购买、
+    `GIVE_ITEM_IF_AVAILABLE`、`FALLBACK_FIRST_OPTION`、`FALLBACK_LAST_OPTION`，以及检测到 `STORY` 的
+    story click-through。纯只读 verification/inspect policy 不属于 dialog click strategy。
+  - 云端 `CLICK` 必须带 `actionId`、`coordinateSpace=WINDOW_RELATIVE`、窗口/ROI 内 click、窗口/ROI 内
+    `candidateBox`、confidence >= `0.70`，且不能带 `ctrl` / `alt`。timeout、invalid、低置信、越界、
+    非 `WINDOW_RELATIVE`、缺候选框、`NO_ACTION` / `REQUEST_NEW_SCREENSHOT` / `ABORT` 均 fail-closed/no-click，
+    不回旧本地 option scan/click。
+  - pre-click `actionId` 必须匹配当前 policy 的业务键：`targetKeyword`、remembered action key、
+    allowlisted business option、`itemToGive`、`GreenTemplateClickSpec.name()` 或 fallback enum name。
+  - `GreenTemplateClickSpec` offset 合同已写入 request context，字段格式为
+    `greenTemplateSpec.N.name/templatePath/minOffsetX/maxOffsetX/randomRadiusY`，确定性点击补充
+    `greenTemplateSpec.N.clickOffsetX/clickOffsetY`。同时发送 JSON `greenTemplateSpecs` /
+    `targetKeywordTemplateSpecs`，避免旧 bracket suffix 污染模板路径；外部 brain 返回最终
+    `WINDOW_RELATIVE click`，本地不计算 green-template offset/fallback 点击点。
+  - 无 template 的 keyword/route click 发送 `targetKeywordAliases`；外部 brain 内置最小地图 alias 表，
+    同时消费 request alias facts，云端自己做 option band + keyword/alias shape matching，返回最终
+    `WINDOW_RELATIVE click`。
+  - 有效云端点击通过 `InputSequences.moveAndClickLeft(...)` 原子执行；已在 input worker 内时只使用 direct
+    input 并带 `InputActionScope.checkpoint()`。
+  - Dev sidecar `DIALOG_POLICY` pre-click 只保留协议/错误 stub，不做本地绿色候选识别或点击点计算。
+  - 主审 P1 修复：pre-click 返回结果不再调用 after-local `DIALOG_POLICY phase=dialog-policy` 二次裁决。
+    `DialogService.finishRequest(...)` 现在显式带 `runAfterLocalDialogPolicy`；pre-click cloud result 传
+    `false`，所有非 pre-click 旧路径传 `true`，避免已执行云端 `CLICK` 后又被第二次 timeout/invalid
+    覆盖成失败。
+
+Validation:
+
+- 本轮完整覆盖 RED：`mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+  在生产修复前失败，证据是五环鞋店/green-template 仍可在 cloud gate 前走本地点击，且 pre-click service 只支持
+  `CLICK_KEYWORD` actionId。
+- 本轮 GREEN：
+  - `mvn -q -Dtest="DialogPolicyCloudPreClickDecisionServiceTest" test` passed，覆盖
+    `GreenTemplateClickSpec` offset context、deterministic offset 字段、policy actionId 校验、no-action/invalid/越界
+    fail closed。
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test` passed，
+    覆盖 full-click-policy source gate、inactive fail-closed、无旧本地 fallback、专用 DIALOG_POLICY gate、green-template
+    request/context 字段。
+- 本轮 P0 follow-up 验证：
+  - DHXY：`mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed，覆盖 story click-through、UICleaner cleanup、maintenance broadcast factory、fallbackLast、green-template
+    JSON spec、targetKeyword template metadata、remembered relative point、`USE_LOCAL_RESULT` rejection。
+  - 外部 brain：`mvn -q -Dtest="AlgorithmFailClosedTest" test` 与 `mvn -q test` passed，覆盖旧 bracket
+    parser 兼容、give-item/business template action、fallback first/last green-band、remembered point、
+    story click-through、无 template 的 `CLICK_KEYWORD` 与 route alias keyword recognizer。
+  - DHXY：`mvn -q -DskipTests compile` passed。
+  - 宽 cloud suite `DialogCloudPreClickWiringGuardTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest`
+    当前仍被非本卡 NPC guard 卡住：`InteractionShadowWiringTest` 期待
+    `tryClickNpcSmartViaCloud(request, verifier)`，而现源码为三参
+    `tryClickNpcSmartViaCloud(request, verifier, "dialog")`；CR167 Dialog focused 验证已通过，本卡不扩大修改
+    `NpcClickService`/NPC guard。
+- 旧 replay 说明：`DialogPolicyCloudPreClickReplayTest` 已在 cloud brain 外置后删除，因为它依赖 DHXY test-sidecar
+  的本地视觉识别。2026-07-03 后不再用“本轮不新增本地视觉 replay”描述 green-template verify；
+  `VERIFY_GREEN_TEMPLATE` 已由 external brain `DialogOptionRecognizerRoiPayloadReplayTest` 覆盖，并输出
+  `images/test-cases/dialog/cloud-brain-roi-space/verify_expected_option_lower_marked.png`。
+- Fresh runtime 验收点：任何 covered dialog click 样本日志必须出现
+  `cloud.decision serviceId=DIALOG_POLICY mode=EXECUTE hook=dialog-pre-click-option`；成功点击只来自云端
+  `WINDOW_RELATIVE click`；cloud inactive/timeout/invalid/`NO_ACTION`/低置信必须 no-click/fail-closed；同一次
+  pre-click 不应再出现 after-local `phase=dialog-policy` 成功兜底。
+
+Card CR168: BagItemCloud 背包道具定位/使用云端化
+
+Status:
+
+- Ready. Owner: 谢帅+worker。第二批云端核心资产子卡；谢帅只做主管/reviewer，不直接写 Java 业务实现。
+
+Problem:
+
+- `BagService` 目前在本地做背包锚点、任务页、普通页、模板匹配、槽位候选和点击。
+- 回程道具、显形镜、任务页道具定位属于可复用视觉资产；如果留在发布 runtime，破解方可以直接复用模板/格子定位逻辑。
+
+Target boundary:
+
+- 本地职责：
+  - 打开主包/任务页/必要页签；
+  - 截 raw bag ROI 和传窗口尺寸、包裹布局、页签、目标 item facts；
+  - 校验云端返回的 slot/click 是否在包裹 ROI 内；
+  - 执行点击/右键使用，并由任务层验证是否回城、道具消失或任务推进。
+- 云端职责：
+  - 识别背包锚点、格子、页签状态、目标道具模板/候选；
+  - 处理显形镜占位导致的槽位变化、任务页/普通页优先级；
+  - 返回 `USE_SLOT` / `SELECT_SLOT` / `NOT_FOUND` / `REQUEST_PAGE` / `ABORT`、窗口相对坐标、slot index、reason。
+
+Implementation direction:
+
+- 第一刀建议只覆盖“主包任务页已打开时的任务道具定位/使用”，例如回程道具/显形镜后续链路；不改补给药、摄妖香、普通全包扫描。
+- Cloud active + covered request：无有效云端槽位时 fail-closed 或返回 not-found 给调用方，不私自走旧本地模板 fallback。
+- Cloud inactive/disabled：保持现有 `BagService` 行为。
+
+Validation:
+
+- focused guard：covered task-page item path 不调用旧本地 `ImageFinder`/template scan 作为 production fallback。
+- testcase replay：raw bag/task-page testcase + marked output 标出 bag ROI、slot box、最终 click。
+- Fresh runtime：修罗/五倍回程道具或显形镜样本里看到 `BagItemCloud` request/response、base64 脱敏、slot/click/outcome。
+
+CR165 correction / CR169 split 2026-07-02:
+
+- CR165 不再表述为“完整 NPC click smart 全链路完成”。本卡只确认普通
+  `verificationMode=dialog` 生产入口已切到 `NPC_CLICK_SMART` cloud action，并且 cloud inactive /
+  invalid / no-action / timeout / low confidence 不回旧本地 click strategy。
+- reviewer 硬证据确认 `images/template/npc` 实际只有 `npc_tag.png`、
+  `npc_task_tooltip.png`、`npc_wuyi_tooltip.png`、`npc_xiuli_tooltip.png`，不存在
+  `target|yellow|glyph/<task>/<npc>.png` 目录。本轮已把 DHXY request 修正为只在
+  `Files.exists(...)` 为真时才传 `targetTemplatePath` / `yellowTemplatePath` /
+  `npcNameTemplatePath` / `targetGlyphTemplate`；缺模板时仍传 raw image、ROI、target facts，由
+  外部 brain raw-image 算法识别或 fail closed。
+- direct-combat、Ctrl/menu、retry action protocol 和外部 brain 状态机能力转入 CR169 记录；CR165
+  的 fresh runtime gate 仍需要真实游戏 raw PNG / marked output 或运行日志证明普通 NPC dialog cloud click
+  可靠，未完成前不要让用户测试生产路径。
+
+Card CR169: NpcClickSmartCloud FIFO candidate queue
+
+Status:
+
+- Review：`LEARNED_MEMORY` 生产禁用 hotfix focused/source 验证已过；CR169 仍未 Done。Owner: 谢帅+worker。
+  Fresh smoke 只能在重启 DHXY 与外部 sidecar/JAR 后采证，不能作为完整 CR169 验收。2026-07-03 用户最终定稿：本卡不再继续修
+  “云端重写 tooltip/yellow/formula/Ctrl 视觉识别并直接返回最终点位”的半截方案，也不采用早前
+  “云端逐步要求本地执行 `TRY_*` action/outcome”的方案。当前唯一有效实现方向是
+  `NPC_CLICK_START` + 云端 FIFO candidate queue + 本地 FIFO consumer。谢帅只做主管/reviewer，不直接写
+  Java 业务实现。
+- 本地发起 session：普通初始 NPC click 先做必要安全检查，按一次 `Alt+4`，截取一次绑定窗口 base
+  screenshot，然后向云端发送 `NPC_CLICK_START`。request 必须携带 `sessionId`、`npcName`、任务/source、
+  玩家坐标、目标坐标、scan regions、base screenshot、窗口尺寸/坐标空间、验证模式和必要上下文。
+  主链路不允许每个策略都重新截图。
+- 云端生产 queue：外部 `D:\mavenProject\dhxy-cloud-brain` 按旧稳定 pipeline 顺序生产消息：
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。云端每算出一段就 push
+  到 session queue，不等所有策略算完；queue 必须保持 FIFO 顺序。命名可按代码风格微调，但业务顺序
+  不能变。
+- 本地消费 queue：`NpcClickService` 只按 FIFO 消费消息。普通候选返回窗口相对点击点/候选框/策略证据，
+  本地做 allowlist/越界/scan-region 校验后执行原子 move+click，并由本地 verifier 判断 expected
+  dialog/combat 是否成功。`CTRL_CANDIDATES` 阶段由本地按旧 Ctrl hover/menu 匹配动作执行；是否进入该
+  阶段和候选点来自云端 queue。
+- Outcome：verifier 成功后，本地立刻停止消费并进入后续任务/dialog 流程，同时异步报告 success 给云端
+  用于 memory/metrics；失败则继续消费下一条 FIFO message；`END`、timeout、stop/pause/cancel、invalid
+  坐标都按失败/取消上报。
+- Shadow 约束：旧本地 pipeline 必须保留为 shadow/reference/testcase replay 依据，不能物理删除。
+  但生产入口不得把旧 pipeline 当 full fallback 接管执行，也不得由本地自行决定 tooltip/yellow/purple/Ctrl
+  fallback 顺序。
+- Dialog 边界：NPC Click 只负责“这次 NPC 点击是否成功”。点击后的 expected dialog / combat verifier
+  只产生 outcome；post-click dialog option 处理仍归 `DialogService` / 任务业务，不塞进 NPC click brain。
+- Guard / replay gate：focused guard 必须证明生产只消费云端 queue、不跑本地 full fallback、旧 pipeline
+  仍为 shadow/reference、消息顺序 FIFO 且等价旧顺序。testcase replay 必须覆盖 `MEMORY`、`TOOLTIP`、
+  `YELLOW_NAME`、`PURPLE_FORMULA`、`CTRL_CANDIDATES`，并输出 marked 图标明 scan region、候选框、
+  最终 window-relative click 点和策略名。独立 reviewer 复核全部通过前，不允许用户 fresh runtime。
+
+Worker repair 2026-07-03 - async START producer and disabled MEMORY skip:
+
+- Evidence:
+  - 用户实测 `NPC_CLICK_START` 第一轮 `elapsedMs=18033`、第二轮 `elapsedMs=8953`，说明外部 brain 仍在 START 同步跑完整 `recognizeQueueMessages(...)`。
+  - 第一条 disabled/no-click `MEMORY` 消息缺 `windowId/taskRunId`，被 DHXY parser 判 invalid，导致 `TOOLTIP`、`YELLOW_NAME`、`PURPLE_FORMULA`、`CTRL_CANDIDATES` 后续 FIFO 消息没有机会消费。
+- External brain fix:
+  - `DecisionEngine.npcClickSmart(...)` 的 `NPC_CLICK_START` 分支不再同步调用全量 `SmartClickRecognizer.recognizeQueueMessages(...)`。
+  - `NpcClickSmartQueueStore` 改为 session + `BlockingQueue` + daemon background producer；START 只建 session 快返，producer 后台按旧顺序逐条 `push`。
+  - `SmartClickRecognizer` 新增 `produceQueueMessages(...)`；原 `recognizeQueueMessages(...)` 仅收集该 producer 输出，保留测试/引用入口，不改 `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END` 顺序。
+  - START 缺 `sessionId/windowId/taskRunId` 时返回 `status=REQUIRED_FAILURE;reason=cloud-brain-npc-click-start-identity-missing`，不创建会产出空 identity 正式消息的 session。
+  - producer 尚未产出时 `POLL` 可返回 `messageType=WAIT;action=NO_ACTION`；真正 queue message 仍带 `sessionId/windowId/taskRunId`。
+- DHXY fix:
+  - `NpcClickSmartQueueMessage.Type` 新增 `WAIT`；`NpcClickSmartCloudDecisionService.parseMessageType(...)` 识别 `WAIT`。
+  - `NpcClickSmartQueueOutcome` 新增 `SKIPPED`。
+  - `NpcClickService` 对 `WAIT` 只继续 poll；对 disabled/no-click `MEMORY` 记录 `NPC_CLICK_SMART disabled/no-click MEMORY skipped`，上报 `SKIPPED` 后继续 poll；对带 click 的 `MEMORY` / `LEARNED_MEMORY` 仍 `SAFETY_REJECTED` / parser invalid，不执行鼠标。
+- Verification:
+  - RED：external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 先 test-compile 失败，证据是 `NpcClickSmartQueueStore.start(...)` 仍只接受已算完 `List<Result>`。
+  - RED：DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 先失败于缺 `NpcClickSmartQueueOutcome.SKIPPED`。
+  - GREEN：external `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest,NpcClickMemoryStoreTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test` passed。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - GREEN：DHXY `mvn -q -DskipTests compile` passed。
+  - GREEN：external `mvn -q -DskipTests package` passed。
+- Fresh runtime gate:
+  - 必须重启 DHXY 和外部 sidecar/JAR 后再测；旧进程会继续使用同步 START 旧代码。
+  - 日志期望：`NPC_CLICK_START` 快速返回 `SESSION_STARTED`；后续 `NPC_CLICK_POLL` 顺序消费；disabled `MEMORY` 日志显示 skipped/`SKIPPED`，后续 tooltip/yellow/purple/Ctrl 仍继续；所有 queue message 都带 `sessionId/windowId/taskRunId`。
+  - 禁止验收条件：再次出现 START 等到整套识别结束、正式 queue message 空 `windowId/taskRunId`、或 `MEMORY` / `LEARNED_MEMORY` click 被执行。
+
+Worker implementation 2026-07-03:
+
+- DHXY 本地实现：
+  - `NpcClickService` 生产入口已从旧 `decide(...)` 多轮 previous-outcome loop 改为一次
+    `buildNpcClickSmartCloudRequest(..., sessionId)`，随后 `startSession(...)` + `pollNext(...)`
+    FIFO 消费；普通候选只执行窗口相对坐标安全校验、原子 `moveMouse + clickLeft` 和本地 verifier。
+  - `NPC_CLICK_SMART_CLOUD_LOOP_SAFETY_LIMIT`、生产 `REQUEST_NEW_SCREENSHOT` 推进和
+    `CTRL_HOVER_DONE` 续帧模型已从 `NpcClickService` 移除；`END`/invalid/stop/poll-limit 只上报
+    `FINAL_FAILED` / `CANCELLED`，不恢复旧本地 full fallback。
+  - 新增 `NpcClickSmartQueueMessage` / `NpcClickSmartCloudSession` / `NpcClickSmartQueueOutcome`；
+    `NpcClickSmartCloudDecisionService` 暴露 `startSession(...)`、`pollNext(...)`、`reportOutcome(...)`。
+  - stale 防护：本地消费前检查 `sessionId`、`windowId`、`taskRunId`，不匹配时上报
+    `STALE_IGNORED` 并忽略，不执行输入。
+  - `CTRL_CANDIDATES` 当前不会私自发明旧 fallback 顺序；旧 Ctrl/menu pipeline 只保留为
+    shadow/reference 标记，真实 Ctrl 菜单执行仍列 fresh-runtime/replay gate。
+- 外部 brain 实现：
+  - 新增 `NpcClickSmartQueueStore`，`DecisionEngine.npcClickSmart(...)` 在 `queueOperation=NPC_CLICK_START`
+    时创建 session queue，在 `queueOperation=NPC_CLICK_POLL` 时 FIFO 出队。
+  - `SmartClickRecognizer.recognizeQueueMessages(...)` 只负责按旧顺序生产
+    `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END` 消息；
+    旧 `SmartClickRecognizer.recognize(...)` 保留给 legacy replay/test，不作为 start/poll 生产入口。
+- P0 risk handling:
+  - 生产 `NpcClickService` 不再调用 `npcClickSmartCloudDecisionService.decide(...)`，因此旧
+    `CLICK/CTRL_HOVER/REQUEST_NEW_SCREENSHOT/VERIFY_DIALOG` action enum 只剩 legacy compatibility/test
+    口径。
+  - 普通主链路只截一次 base screenshot；queue 失败、`END`、invalid 或 cloud fail 不会触发本地
+    full fallback，也不会由本地选择 tooltip/yellow/purple/Ctrl 顺序。
+  - NPC Click 仍只跑 verifier outcome；post-click dialog option 没有进入 NPC click brain。
+- Verification:
+  - RED：`mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 首次失败于 `sessionId` 缺失。
+  - RED：外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 首次失败，证明仍由
+    `SmartClickRecognizer.recognize(...)` 直接返回 `YELLOW_TARGET_RAW` miss。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test` passed。
+  - GREEN：DHXY `mvn -q -DskipTests test-compile` passed。
+  - GREEN：DHXY `mvn -q -DskipTests compile` passed。
+  - GREEN：外部 focused
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest,CloudBrainSmokeTest" test`
+    passed。
+  - GREEN：外部 `mvn -q -DskipTests package` passed。
+- Testcase / marked outputs:
+  - `TOOLTIP`：`images/test-cases/npc/output/cr169_tooltip_template_standalone_marked.png`。
+  - `YELLOW_NAME`：`images/test-cases/npc/output/cr169_yellow_semantic_standalone_marked.png`。
+  - `PURPLE_FORMULA`：`images/test-cases/npc/output/cr169_purple_anchor_formula_standalone_marked.png`。
+  - FIFO/order：`images/test-cases/npc/output/cr169_order_yellow_before_purple_marked.png`、
+    `images/test-cases/npc/output/cr169_order_yellow_ocr_before_template_metadata_purple_marked.png`。
+  - `MEMORY` protocol replay：`images/test-cases/npc/output/cr169_memory_queue_protocol_marked.png`。
+  - `CTRL_CANDIDATES` protocol replay：
+    `images/test-cases/npc/output/cr169_ctrl_candidates_queue_protocol_marked.png`。
+- Remaining fresh-runtime gates:
+  - `MEMORY` 当前只有协议级 marked 图；需要真实 verified learned-memory 样本证明 queue 中 memory
+    candidate 的 box/click 正确。
+  - `CTRL_CANDIDATES` 当前只有协议级 marked 图；需要真实 Ctrl 菜单 raw 和 marked replay，补齐本地
+    FIFO Ctrl hover/menu executor 后才能宣称 Ctrl 阶段完成。
+  - fresh runtime 前必须重启外部 sidecar/JAR，确认日志出现 `NPC_CLICK_START`、`NPC_CLICK_POLL`、
+    queue message、consume result、verifier outcome 和 `reportOutcome`。
+
+Independent review fail 2026-07-03 - FIFO shell not accepted:
+
+- P0：旧本地 pipeline 未真正保留。当前 `NpcClickService.runNpcClickPipelineShadowReference(...)`
+  只调用 `clickNpcByYellowTargetName()`、`clickNpcByPlayerAnchorFormula()`、`clickNpcByCtrlMenuScan()`
+  三个空 marker/stub，不能作为 shadow/reference/testcase replay 依据。修复要求：恢复真实旧 pipeline
+  逻辑或拆出等价的非生产 reference/replay 工具；生产仍不得 full fallback。
+- P0：`CTRL_CANDIDATES` 不可执行。DHXY `executeNpcClickSmartCtrlCandidates(...)` 收到消息后直接返回
+  `VERIFICATION_FAILED`；外部 `SmartClickRecognizer.recognizeQueueMessages(...)` 生成 Ctrl 消息时仍调用
+  `ctrlHoverAfterFailedNormalClick(...)`，该逻辑依赖 `lastOutcomeStatus=VERIFICATION_FAILED` /
+  `lastAction=CLICK`，而 `NPC_CLICK_START` 阶段没有这些 previous-outcome 状态，通常不会产出真实 probe
+  points。修复要求：云端在 START 阶段按 base screenshot/context 预生成 Ctrl candidates，本地按旧 Ctrl
+  hover/menu 动作执行并 verifier；direct-combat 不能接到未完成 Ctrl 壳子。
+- P1：外部 `DecisionEngine.npcClickSmart(...)` 在没有 `NPC_CLICK_START` / `NPC_CLICK_POLL` 时仍会调用旧
+  `SmartClickRecognizer.recognize(...)` 直接返回点位，且旧 recognizer 还保留 `REQUEST_NEW_SCREENSHOT`
+  语义。修复要求：生产 `NPC_CLICK_SMART` 必须要求 queue protocol；legacy direct recognizer 只能留在
+  测试/replay 明确入口，不允许生产绕回。
+- P1：stale guard 只检查到 `sessionId/windowId/taskRunId`，但 request 构造缺真实 `taskRunId/round`
+  证据，外部 queue message 也未携带 window/task；当前 parse fallback 会把缺失字段回填 request 值。
+  修复要求：queue message 必须带足 session/window/task/round 或本地有等价强校验，缺字段不能静默放行。
+- P1：普通 candidate 只要求 click 在 scan region，candidateBox 仅要求窗口内。修复要求：candidateBox 也要
+  落在 allowed scan region 或明确解释为何该策略没有 box。
+- Gate：CR169 继续 P0 打回，禁止用户 fresh runtime。下一轮 worker 必须先修上述 P0/P1，并补强 guard，
+  不能再用字符串存在性断言或 protocol-only marked 图宣称完成。
+
+Worker repair 2026-07-03 - 二轮 P0/P1:
+
+- P0 shadow/reference：删除生产 `NpcClickService` 里的空 marker/stub，
+  新增 test-scope `NpcClickLegacyPipelineReference`。该 reference 可执行输出旧 pipeline 顺序
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES`，并保留
+  `playerAnchorFormulaClick(...)` 与 `ctrlProbePoints(...)` 供 testcase replay/标注使用。生产入口仍未调用该
+  reference，不存在本地 full fallback 或本地自行决定 fallback 顺序。
+- P0 `CTRL_CANDIDATES`：DHXY 本地 FIFO consumer 不再直接返回失败；收到云端 Ctrl probes 后，按消息顺序
+  逐个做 window-relative/scan-region safety check，提交 `holdCtrl -> moveMouse -> clickLeft -> releaseCtrl`
+  的原子 input queue 序列，并运行本地 verifier。失败继续消费后续 FIFO message，成功上报 `VERIFIED`。
+- P0/P1 外部 brain：`SmartClickRecognizer.recognizeQueueMessages(...)` 在 `NPC_CLICK_START` 阶段直接用
+  base screenshot/ROI 生成 `CTRL_CANDIDATES` probe points，不再调用
+  `ctrlHoverAfterFailedNormalClick(...)`。`DecisionEngine.npcClickSmart(...)` 无 `NPC_CLICK_START` /
+  `NPC_CLICK_POLL` 时返回 `REQUIRED_FAILURE`，不再调用旧 direct `SmartClickRecognizer.recognize(...)`
+  生产点位；旧 recognizer 仅保留给 legacy replay/test 明确入口。
+- P1 stale / identity：queue message 必须显式携带 `sessionId`、`windowId`、`taskRunId`；DHXY parser
+  缺字段直接 `INVALID`，不再从 request 静默回填。START ack 的 `sessionId` 也要求云端回传。
+- P1 evidence box：普通 queue candidate 的 `candidateBox` 必须在窗口内且落入 allowed scan region；
+  不满足时 `INVALID`，不会执行输入。
+- Guard：
+  - `NpcClickSmartCloudWiringGuardTest` 增强为真实 guard：实际调用
+    `NpcClickLegacyPipelineReference`，防止空 reference 假通过；同时覆盖生产不 full fallback、FIFO 顺序、
+    Ctrl 可执行、outcome success/fail/cancel/final fail、stale identity 和 candidateBox scan-region。
+  - 外部 `NpcClickSmartFifoQueueSessionTest` 覆盖 START/POLL、FIFO order、消息 identity 字段、
+    `CTRL_CANDIDATES` START-stage probe 生成、无 queueOperation fail-closed，并加 source guard 防止
+    production direct recognizer 与 previous-outcome Ctrl continuation 回流。
+- Verification:
+  - RED：DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 失败于 candidateBox scan-region/
+    shadow/Ctrl guard。
+  - RED：外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 失败于缺 `windowId/taskRunId`、
+    无 queueOperation direct fallback、Ctrl message 无 `ctrlProbePoints`。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`。
+  - GREEN：DHXY `mvn -q -DskipTests compile`。
+  - GREEN：外部
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`。
+  - GREEN：外部 `mvn -q -DskipTests package`。
+- Marked output / fresh gates：
+  - 本轮外部旧策略 replay 重新输出：
+    `cr169_tooltip_template_standalone_marked.png`、`cr169_yellow_semantic_standalone_marked.png`、
+    `cr169_purple_anchor_formula_standalone_marked.png`、
+    `cr169_order_yellow_before_purple_marked.png`、
+    `cr169_order_yellow_ocr_before_template_metadata_purple_marked.png`。
+  - `MEMORY` 与 `CTRL_CANDIDATES` 仍只有 protocol/reference marked 输出：
+    `cr169_memory_queue_protocol_marked.png`、
+    `cr169_ctrl_candidates_queue_protocol_marked.png`。缺真实 learned-memory positive raw 和真实 Ctrl 菜单
+    raw/marked replay，因此 CR169 仍不能标 Done，也不能宣称 fresh runtime 验收完成。
+
+Third review 2026-07-03 - P0 shell fixed, P1 remains:
+
+- 已通过：生产 `NpcClickService` 未再调用旧 `npcClickSmartCloudDecisionService.decide(...)` full fallback；
+  外部 `DecisionEngine.npcClickSmart(...)` 无 `NPC_CLICK_START/POLL` 时已 fail closed；queue parser 缺
+  `sessionId/windowId/taskRunId` 已 invalid，不再回填 request；`candidateBox` 已要求进入 allowed
+  scan region；旧 pipeline 空 marker 已移出生产 service，test-scope reference 与 guard 强于二轮。
+- P1：`CTRL_CANDIDATES` 仍未等价旧 Ctrl hover/menu fallback。当前本地只是按云端 probe 顺序执行
+  `holdCtrl -> moveMouse -> clickLeft -> releaseCtrl` 并 verifier；外部 START 阶段的 probes 只是 ROI
+  中心、1/3、2/3 三点，不来自旧 NPC candidate box / Ctrl menu scan / 菜单项匹配。修复方向：云端
+  需要按旧策略证据生成 probe origins，本地需要执行旧 Ctrl-hover 触发菜单、扫描/匹配目标菜单项并点击；
+  如果决定暂不做 Ctrl/menu，则必须把它明确拆出新 CR 并从 CR169 验收范围移除。
+- P1：生产 FIFO 仍可能携带旧 `REQUEST_NEW_SCREENSHOT` action。`recognizeQueueMessages(...)` 会包装
+  `clickUniqueYellowTarget(...)` 的结果；黄字多候选首轮仍可能返回 `Result.requestNewScreenshot(...)`。
+  本地不会真的重截图，但会把无 click 消息当 safety reject，说明旧 action/outcome 仍混在生产 queue。
+  修复方向：queue message 必须归一化为 `YELLOW_NAME` no-candidate / candidate / END，不允许出现
+  `action=REQUEST_NEW_SCREENSHOT` 或任何重截图语义；补 guard/replay。
+- P2：`NpcClickLegacyPipelineReference` 已不是空壳，但覆盖面仍薄，只保留顺序、purple formula 和 Ctrl
+  probe 点。CR169 关闭前仍需真实 learned-memory positive raw/marked，以及真实 Ctrl 菜单 raw/marked。
+- Fresh runtime：不建议作为 CR169 验收 fresh runtime；最多只能跑普通 dialog smoke 采证，不能宣称通过。
+
+Worker repair 2026-07-03 - 三轮 P1:
+
+- P1-1 `CTRL_CANDIDATES`：
+  - 外部 `SmartClickRecognizer.recognizeQueueMessages(...)` 不再用 ROI center/1/3/2/3 生成 Ctrl probes。
+    `ctrlCandidatesFromBaseContext(...)` 改为收集旧策略证据：`previousCandidateBoxes`、learned memory、
+    tooltip、yellow、purple delegate 的 `click/candidateBox`；按证据中心点去重后输出
+    `ctrlProbePoints` 和 `probeSources`。无旧策略证据时输出 `CTRL_CANDIDATES` no-action。
+  - DHXY `executeNpcClickSmartCtrlCandidates(...)` 不再执行三点 Ctrl+click。当前执行层按云端 probe 顺序
+    进入 `submitExclusiveAndWait("npcClick:fifoCtrlMenuScan...")`，在 input worker 内直接 `holdCtrl`、
+    移动到 probe offset、截图菜单区域、通过 `ImageProcessorService.WASH_YELLOW` 洗图、
+    `TextRecognizer.getAllTextResultsForMatch(...)` + `OcrTextMatcher` 匹配目标菜单项，点击菜单项后运行
+    本地 verifier。进入 Ctrl 阶段和 probe 顺序仍完全来自云端 FIFO，本地不决定 fallback 顺序。
+- P1-2 FIFO 旧 action 归一化：
+  - 外部 `Result.queueMessage(...)` 新增 `normalizeQueueDelegate(...)`；如果 delegate decision 含
+    `REQUEST_NEW_SCREENSHOT`、`VERIFY_DIALOG`、`action=CTRL_HOVER` 或 `CTRL_HOVER_DONE`，统一改为该阶段
+    `NO_ACTION`，reason 为 `cloud-brain-npc-queue-normalized-legacy-action`，不把旧 action 字符串写进
+    production FIFO。
+  - DHXY `NpcClickSmartCloudDecisionService.parseQueueMessage(...)` 增加双保险：生产 queue decision 若仍含
+    旧 action/outcome，直接 `INVALID`，不会按普通候选消费。
+- Guard：
+  - DHXY `NpcClickSmartCloudWiringGuardTest` 要求 Ctrl 执行层包含 `npcClick:fifoCtrlMenuScan`、
+    `scanCtrlMenuAndVerifyKeywordDirect`、`TextRecognizer` OCR 菜单匹配，并拒绝 `InputAction.holdCtrl()`
+    三点壳；同时要求 parser 覆盖 `REQUEST_NEW_SCREENSHOT` / `VERIFY_DIALOG` / `CTRL_HOVER_DONE`。
+  - 外部 `NpcClickSmartFifoQueueSessionTest` 覆盖 Ctrl probes 来自 evidence、不是裸 ROI 三点，并遍历
+    START/POLL production messages，确认不含 `REQUEST_NEW_SCREENSHOT` / `VERIFY_DIALOG` /
+    `CTRL_HOVER_DONE` / `action=CTRL_HOVER`。
+- Verification：
+  - RED：DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 先失败于缺
+    `npcClick:fifoCtrlMenuScan`。
+  - RED：外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 先失败于 Ctrl probes 仍是
+    `512,384|341,384|683,384`，且缺 `normalizeQueueDelegate`。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`。
+  - GREEN：DHXY `mvn -q -DskipTests compile`。
+  - GREEN：外部
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`。
+  - GREEN：外部 `mvn -q -DskipTests package`。
+- Remaining gates：
+  - CR169 仍不能标 Done。真实 Ctrl 菜单 raw/marked replay 仍缺；本轮只证明 source/focused 行为恢复到
+    “按云端证据进入本地旧菜单执行层”，未证明鲜活游戏菜单 OCR 命中。
+  - `MEMORY` 仍缺真实 learned-memory positive raw/marked replay。
+  - fresh runtime 前需重启 DHXY 与外部 sidecar/JAR，日志需证明 queue 中无旧 action，且 Ctrl 阶段出现
+    `npcClick:fifoCtrlMenuScan`、菜单 OCR matched text、menu item click、verifier outcome。
+
+Fourth review PASS 2026-07-03 - source/focused P1 fixed, not Done:
+
+- 独立 reviewer 第四轮结论：PASS，仅限第三轮 P1 修复的源码/ focused guard 审查；不是 CR169 Done。
+- P0/P1：未发现新的阻塞项。生产未见 full fallback / local fallback order / direct recognize fallback /
+  stale 回填回流；`CTRL_CANDIDATES` 已不再是 Ctrl+click 壳；FIFO 旧 action 已归一化并在 DHXY parser
+  双保险拒绝。
+- P2 / fresh gates：真实 Ctrl 菜单 raw/marked replay 仍缺，需要证明 `npcClick:fifoCtrlMenuScan` 后菜单 OCR
+  命中、菜单项点击点正确、verifier 通过；`MEMORY` 仍缺真实 learned-memory positive raw/marked replay。
+  Parser 仍将 `CTRL_MENU` / `CTRL_MENU_HOVER` 名称映射到 `CTRL_CANDIDATES`，后续 guard 要继续盯住别名边界。
+- Fresh smoke：可以允许用户跑普通 fresh smoke 采证，但不能把它当 CR169 验收结论。普通路径重点看
+  `NPC_CLICK_START`、`NPC_CLICK_POLL`、queue message 无旧 action、candidate/verifier/reportOutcome；
+  若触发 Ctrl，再看 `npcClick:fifoCtrlMenuScan`、菜单 OCR matched text、menu item click、verifier outcome。
+
+Learned-memory production disable hotfix 2026-07-03:
+
+- User decision：先从生产禁用/移除 NPC click `LEARNED_MEMORY` 的使用和学习，不在本轮设计新的学习策略。
+  触发证据是 2026-07-03 15:16 日志出现
+  `NPC_CLICK_SMART action submitted ... npcName=灵兽村使者 actionId=LEARNED_MEMORY ... clickRel=(511, 103) ... reason=cloud-brain-npc-learned-memory`。
+  用户明确指出：后续 verifier 看见 dialog 不能证明该 memory click 与 dialog 有因果绑定，因此不能单次
+  `VERIFIED` + strong dialog metadata 就 promote。
+- Old-local-learning inspection：旧本地可迁移参考在 `OcrRoiMemoryService` 和 `config/vision_memory.json`，
+  不是外部 `NpcClickMemoryStore` 当前的一次性 promote 规则。旧本地 NPC click policy 记录
+  `ClickPolicy` 的 attempt/success/failure、success/failure streak、recent samples、spread、confidence，
+  `MIN_LEARNED_NPC_SUCCESS_SAMPLES = 3`，`MAX_LEARNED_NPC_RECENT_SAMPLES = 12`，
+  `MAX_LEARNED_NPC_POINT_SPREAD_PX = 45`，且 `hasStrongNpcVerification(...)` 要求 actual click measured
+  加 `DIALOG_OPTION` / `DIALOG_TEMPLATE` 强验证。`NpcClickService` 当前只消费
+  `OcrRoiMemoryService.recommendNpcClickRegions(...)`；`confirmPendingSmartClick(...)` 是 CR169 兼容 no-op，
+  不再写本地 NPC click 学习证据。后续如果恢复云端 memory，必须迁移这些旧本地证据/策略语义，禁止自创
+  promote 规则、连续次数规则或 confidence 策略。
+- Implementation boundary：
+  - 外部 `D:\mavenProject\dhxy-cloud-brain`：`SmartClickRecognizer` 的 FIFO `MEMORY` stage 只返回
+    `NO_ACTION` / `cloud-brain-npc-memory-disabled` 诊断，不返回 clickable `MEMORY` /
+    `LEARNED_MEMORY` 候选。
+  - 外部 `NpcClickMemoryStore`：生产 learned-memory flag 关闭；`lookup(...)` 直接 miss，
+    `ingestOutcome(...)` 返回 `learnStatus=disabled`，不写入 memories；旧污染 snapshot 即使存在也不会
+    被加载成可点击 lookup。
+  - DHXY：`NpcClickSmartCloudDecisionService` 对云端漏回的 `MEMORY` / `LEARNED_MEMORY` + `click=`
+    直接解析为 `INVALID`；`NpcClickSmartQueueMessage.isOrdinaryClickCandidate()` 不再包含 `MEMORY`；
+    `NpcClickService` 对漏网 memory click 报 `SAFETY_REJECTED`，不提交鼠标输入。
+- Verification：
+  - RED before fix：external
+    `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test`
+    失败于 single strong `VERIFIED` promote 和 legacy polluted snapshot lookup；DHXY
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest" test` 失败于恶意 `MEMORY` click 被解析为
+    executable `MEMORY`。
+  - GREEN：DHXY
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`。
+  - GREEN：DHXY `mvn -q -DskipTests compile`。
+  - GREEN：external
+    `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`。
+  - GREEN：external `mvn -q -DskipTests package`。
+  - Note：external whole `CloudBrainSmokeTest` 仍有既有旧 direct `NPC_CLICK_SMART` smoke 返回
+    `QUEUE_PROTOCOL required`；本 hotfix 不顺手修旧 direct smoke，避免扩大边界。
+- Manager review 2026-07-03：
+  - 谢帅复核源码确认生产 `MEMORY` stage 不再返回可点击 `LEARNED_MEMORY`；DHXY parser 对
+    `MEMORY` / `LEARNED_MEMORY` + `click=` 直接 `INVALID`，consumer 仍有 `SAFETY_REJECTED` 二道保险。
+  - 谢帅复跑通过：DHXY
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`，
+    DHXY `mvn -q -DskipTests compile`，external
+    `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`，
+    external `mvn -q -DskipTests package`。
+  - 当前 hotfix 只能证明“禁用/拦截 learned-memory 点击”成立；后续若恢复云端 memory，必须先完整迁移
+    `OcrRoiMemoryService` / `vision_memory.json` 的旧本地学习门槛，不能把外部
+    `NpcClickMemoryStore.promoteVerifiedOutcome(...)` 的旧单次 promote 逻辑重新打开。
+- Fresh runtime gate：重启 DHXY 与外部 sidecar/JAR 后确认：
+  - FIFO `MEMORY` poll 是 no-action/disabled 诊断，或被跳过；
+  - 生产日志不再出现 `actionId=LEARNED_MEMORY` 的 `NPC_CLICK_SMART action submitted`；
+  - 不再出现 `reason=cloud-brain-npc-learned-memory` 的鼠标点击；
+  - outcome ingest/report 可见 `learnStatus=disabled`，且不会生成新的 NPC click memory snapshot。
+
+Manager dispatch 2026-07-03 - FIFO producer and purple-equivalence repair:
+
+- User decision：CR169 当前不能再停在“同步算完整 queue 再返回”的假 FIFO。`NPC_CLICK_START` 必须快速建
+  session 并返回；云端 producer 需要按旧稳定顺序边算边 push：
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。本地只 FIFO
+  consume、执行、verify、report outcome。`MEMORY` disabled/no-action 不能因为缺
+  `sessionId/windowId/taskRunId` 把整条链路打断；如果保留该消息，identity 必须完整，且本地应能继续
+  消费下一条有效候选。
+- User decision：紫色 player-anchor / `PURPLE_FORMULA` 必须复刻旧本地 purple/name-fragment/anchor
+  逻辑，不能使用新写的 blob/长条中心/猜测逻辑，也不能靠改模板掩盖。必须用真实截图 testcase 产出
+  marked 图，标出 purple OCR 命中的玩家名/anchor box 和最终公式点击点；该 standalone replay 通过
+  前，CR169 不能进入 fresh runtime。
+- Worker split：
+  - Queue/FIFO worker owns external `dhxy-cloud-brain` queue producer/store/start-poll semantics and DHXY
+    parser/consumer handling of disabled/no-action MEMORY identity；不得改 purple replay 策略。
+  - Purple worker owns cloud-brain purple player-anchor 等价实现、focused replay/test 和 marked output；
+    不得改 FIFO producer/consumer。
+- Review gate：按 `AGENTS.md` 谢帅 manager/reviewer 规则，本轮每个 worker 的代码交付必须至少两个
+  reviewer 批准后才算完成；任一 reviewer 提 P0/P1/P2，则写回本卡并打回 worker 修复，重新跑双
+  reviewer 门禁。高风险 cloud/click/image-processing 改动优先采用两个独立 reviewer 加谢帅复核。
+
+Queue/FIFO review fail 2026-07-03 - worker output not accepted:
+
+- P0：DHXY 真实 `NPC_CLICK_START` request 没把 `windowId/taskRunId` 放进 `context`，外部 brain
+  `DecisionEngine.npcClickSmart(...)` 只从 `context` 读 identity，所以 fresh/runtime 会直接
+  `cloud-brain-npc-click-start-identity-missing`，session/producer 根本起不来。证据：
+  `NpcClickSmartCloudDecisionService.context(...)` 只写 `sessionId`；`HttpCloudDecisionClient` 把
+  `windowId/taskRunId` 写在 root 顶层且不会合并进 `context`；外部
+  `DecisionEngine.java` 和 `SmartClickRecognizer.produceQueueMessages(...)` 均从 `context`
+  读取 `windowId/taskRunId`。修复要求：DHXY `NPC_CLICK_START/POLL` context 必须显式携带
+  `sessionId/windowId/taskRunId`，start 前本地也要校验三者必填；补测试证明真实
+  `CloudDecisionRequest.context` 合同，而不是只测手写 JSON。
+- P1：本地 `WAIT` 继续 poll 但仍计入固定 `NPC_CLICK_SMART_QUEUE_POLL_LIMIT=12`。外部 poll 每次最多
+  250ms，真实 producer 稍慢时可能在 tooltip/yellow/purple/ctrl 推入前被本地误判
+  `NPC click queue poll limit reached`。修复要求：`WAIT` 需要单独 wall-clock 超时/短 sleep/stop-pause
+  checkpoint，不应消耗候选消息预算；测试需要覆盖多次 `WAIT` 后后续候选仍可被消费。
+- P1：外部 queue session 生命周期会泄漏。本地 `VERIFIED` 后会直接进入后续流程，不会继续 poll 到
+  `END`；外部 queue store 当前只在 poll 到 `END` 或 finished+empty 时 remove，outcome endpoint
+  没有清理 session。producer 异常后本地收到 `INVALID` 也会退出，session 仍可能留在 map。修复要求：
+  outcome terminal（`VERIFIED`、`CANCELLED`、`FINAL_FAILED`、`INPUT_SUBMIT_FAILED`、
+  `SAFETY_REJECTED` 等）必须 owner-aware 清理 session，并补 TTL / producer-exception cleanup 测试。
+- P2：外部 `poll(sessionId, windowId, taskRunId, ...)` 不校验 session owner，错误窗口/任务只要知道
+  `sessionId` 就能把 FIFO 消息取走；DHXY 本地 stale guard 只能阻止执行，不能把被取走的消息还给
+  真 owner。修复要求：session 保存 `windowId/taskRunId`，poll 前精确匹配；错 owner poll 不得 consume
+  queue，并补外部行为测试。
+- P2：DHXY poll loop pause 语义不足。当前 `shouldStop()` 只看线程 interrupt/input scope，任务线程里的
+  cloud poll 不一定感知 pause token。修复要求：START 前、每次 POLL 前后、WAIT 后接入项目既有
+  `TaskCheckpoint`/任务 checkpoint，pause/stop 时不要继续消费或执行云端 FIFO。
+- P2：focused tests 仍偏 source guard；外部 `NpcClickSmartFifoQueueSessionTest` 单跑当前会因异步
+  `WAIT` 插入而失败。修复要求：补行为测试覆盖 WAIT 后继续、disabled MEMORY skip 后继续、
+  `MEMORY/LEARNED_MEMORY` click 不提交 input、wrong identity 不 consume、producer exception/outcome
+  terminal cleanup。
+- Gate：queue/FIFO worker 交付打回。修复后仍需两名 reviewer 重新审核通过，才能进入 fresh smoke。
+
+Queue/FIFO repair 2026-07-03 - 二轮打回修复完成，待复审：
+
+- DHXY identity contract:
+  - `NpcClickSmartCloudDecisionService.context(...)` 已把 `sessionId/windowId/taskRunId` 全部写入
+    `CloudDecisionRequest.context`；`cloudRequest(...)` 的 root 字段仍保留，但外部 brain 不依赖 root 回填。
+  - `requestValidationError(...)` 要求 `sessionId/windowId/taskRunId` 三者存在；`startSession(...)` 和
+    `pollNext(...)` 缺 identity 时都 fail closed，不调用 cloud。
+  - `NpcClickSmartCloudSession.accepted()` 也要求三段 identity 都存在，避免半截 session 被消费。
+- DHXY WAIT / pause-stop:
+  - `NpcClickService` 将旧 `NPC_CLICK_SMART_QUEUE_POLL_LIMIT=12` 改成
+    `NPC_CLICK_SMART_QUEUE_CANDIDATE_LIMIT=12`，只统计非 `WAIT` queue 消息。
+  - `WAIT` 使用 `NPC_CLICK_SMART_QUEUE_WAIT_TIMEOUT_MS=30000` wall-clock 和
+    `NPC_CLICK_SMART_QUEUE_WAIT_SLEEP_MS=100` 短 sleep；超时 reason 改为
+    `NPC click queue WAIT timeout reached`，候选耗尽 reason 改为
+    `NPC click queue candidate budget reached`。
+  - START 前、每次 POLL 前后、WAIT sleep 后直接调用 `TaskCheckpoint.throwIfStopRequested(...)`；
+    pause 会在 checkpoint 处等待，stop 会报 `CANCELLED` outcome 后抛出任务 stop 异常。
+- External queue lifecycle / owner:
+  - `NpcClickSmartQueueStore.Session` 保存 `windowId/taskRunId`；owner mismatch poll 返回
+    `messageType=INVALID;reason=cloud-brain-npc-click-session-owner-mismatch`，不从 queue 取消息。
+  - `DecisionEngine.npcClickSmartOutcomeResponse(...)` 在写 memory outcome 后调用 queue store terminal cleanup，
+    响应新增 `queueStatus`。`VERIFIED/CANCELLED/FINAL_FAILED/INPUT_SUBMIT_FAILED/SAFETY_REJECTED`
+    会 owner-aware remove session；非终态 outcome 不清 session。
+  - `NpcClickSmartFifoQueueSessionTest` 的六阶段顺序测试已改为跳过中间 `WAIT` 后验证
+    `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。
+- RED evidence:
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`
+    首次失败于 `context window id expected=hwnd-cr169 actual=null` 与 source guard 缺
+    `context.put("windowId"`。
+  - External `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 首次失败于 wrong owner poll
+    直接消费 `MEMORY`，以及 terminal outcome 响应缺 `queueStatus=completed`。
+- GREEN evidence:
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - External `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickMemoryStoreTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`
+    passed。
+  - External `mvn -q -Dtest="NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`
+    passed。
+  - Dashboard data refreshed with `node scripts/generate-cr-dashboard-data.js`.
+- Remaining gate:
+  - 本轮只是 worker 修复，不是 CR169 Done。需要两个 reviewer 重新复审通过。
+  - fresh runtime 仍 blocked；复审通过后也必须同时重启 DHXY 和 external sidecar/JAR，确认 START 快返、
+    POLL context/queue message identity 不为空、WAIT 不误触发候选预算、终态 outcome 后 session 清理。
+
+Queue/FIFO re-review fail 2026-07-03 - behavior-test gate still open:
+
+- Reviewer #1 复审结论：二轮核心源码修复基本落地，未发现新的 P0/P1；但 DHXY focused tests 仍有
+  P2 测试门禁缺口。`NpcClickSmartCloudWiringGuardTest.testWaitMessagesUseSeparateBudgetAndTaskCheckpoint()`
+  仍是 source-string guard，没有实际驱动 `NpcClickService` 的
+  `START -> WAIT -> MEMORY skip -> candidate` 消费循环。修复要求：补 DHXY 行为 focused test，证明多次
+  `WAIT` 后继续消费、disabled/no-click `MEMORY` 上报 `SKIPPED` 后继续、后续普通候选进入执行/verifier
+  path、`MEMORY/LEARNED_MEMORY` click 不提交 input、stop/pause checkpoint 触发后不继续 poll/execute。
+- 谢帅复跑发现外部单方法测试仍失败：
+  `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation test`
+  在 `NpcClickSmartFifoQueueSessionTest.java:179` 失败，`ctrlDecision` 未取到 `messageType=CTRL_CANDIDATES`。
+  原因是测试固定 poll 5 次，异步 producer 插入 `WAIT` 时可能还没消费到 `CTRL_CANDIDATES`。修复要求：
+  该测试必须按非 `WAIT` 消息消费直到 `CTRL_CANDIDATES`，并单方法稳定 GREEN。
+- Reviewer #2 复审结论：未发现新的 P0/P1，但还有 P2 terminal outcome 竞态。DHXY 本地上报
+  `SAFETY_REJECTED` / `INPUT_SUBMIT_FAILED` 后仍会进入下一轮 `NPC_CLICK_POLL`；外部 queue store 已把
+  这些 outcome 定义为 terminal cleanup，且 DHXY outcome report 是 async fire-and-forget。修复要求：
+  本地除 `VERIFICATION_FAILED` / `SKIPPED` 外的 terminal outcomes 应停止本 session 消费并返回
+  terminal failure/cancel，不能继续 poll；补行为测试证明 terminal local outcome 后不会再 poll。
+
+Queue/FIFO re-review repair 2026-07-03 - P2 behavior gate fixed:
+
+- DHXY behavior coverage:
+  - 新增 `NpcClickSmartFifoBehaviorTest`，用 fake cloud/input/verifier 驱动真实
+    `NpcClickService.tryClickNpcSmartViaCloud(...)` FIFO loop，而不是 source-string guard。
+  - 覆盖 13 次 `WAIT` 后仍继续到 disabled/no-click `MEMORY` 和 `TOOLTIP`，证明 `WAIT` 不消耗 12 条候选预算。
+  - 覆盖 disabled/no-click `MEMORY` 上报 `SKIPPED` 后继续 poll，后续普通候选进入 input submit + verifier path。
+  - 覆盖 `MEMORY` 携带 click 时本地 `SAFETY_REJECTED`，不提交 `fifoCandidate` input，且停止当前 session。
+  - 覆盖 `INPUT_SUBMIT_FAILED` 后停止当前 session，不再 poll 后续 `YELLOW_NAME`/`END`。
+  - 覆盖 `WAIT` 后 `TaskCheckpoint` stop 触发时抛出 stop，不再继续 poll/execute，并上报 `CANCELLED`。
+- DHXY production repair:
+  - `NpcClickService` 的本地 outcome 继续条件收窄为仅 `VERIFICATION_FAILED` 和 `SKIPPED`。
+  - `SAFETY_REJECTED`、`INPUT_SUBMIT_FAILED`、`FINAL_FAILED`、`CANCELLED` 等 terminal local outcome 在上报后直接停止当前 FIFO session，避免 async cleanup 慢/失败时继续消费后续候选。
+- External test repair:
+  - `NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation`
+    已移除固定 5 次 poll，改为按非 `WAIT` 消息消费直到 `CTRL_CANDIDATES`。
+  - 新增 `multipleWaitPollsDoNotHideLaterCtrlCandidatesAndEnd`，用 latch 控制 producer，先稳定产生多次 `WAIT`，
+    再验证 `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END` 仍可完整消费。
+- RED evidence:
+  - 主审复跑 external 单方法在 `NpcClickSmartFifoQueueSessionTest.java:179` 失败，原因是固定 poll 5 次可能只取到中间 `WAIT`，未到 `CTRL_CANDIDATES`。
+  - 新增 DHXY 行为测试后，`mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test` 首次失败：
+    `result status expected=REQUIRED_FAILURE actual=CLOUD_NO_ACTION`，日志显示 `INPUT_SUBMIT_FAILED` 后继续 poll
+    `YELLOW_NAME` 并最终 poll 到 `END`。
+- GREEN evidence:
+  - DHXY `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test` passed。
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test` passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External
+    `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation test` passed。
+  - External `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` passed。
+- Remaining gate:
+  - 本轮只处理 reviewer #1/#2 P2 打回，不改变 purple/player-anchor 或 NPC 视觉算法。
+  - CR169 仍不是 Done；需要 reviewer #1/#2 重新复审通过后，才能进入 fresh runtime。
+  - fresh runtime 必须重启 DHXY 与 external sidecar/JAR，重点确认 START 快返、identity 不为空、`WAIT` 不打候选预算、
+    terminal local outcome 后不会继续消费同一 FIFO session、外部 terminal cleanup 生效。
+
+Superseded history:
+
+- 以下 2026-07-03 之前关于“四策略云端单独 replay / 云端视觉识别等价”的结论只保留为失败证据和
+  背景，不再作为本卡的当前实现方向。后续 worker 不能继续沿着“让 cloud 自己识别 tooltip/yellow/
+  formula/Ctrl 并返回点位”的路线修。
+- 以下 2026-07-03 action/outcome `TRY_*` 方案也作废：它仍会让实现绕进“云端要求本地一步一步执行旧动作”
+  的复杂协议。当前最终方案是一次 `NPC_CLICK_START` 建 session，云端持续向 FIFO queue 生产候选，本地
+  只消费、执行、验证和回报。
+- 2026-07-03 用户复核打回：当前窗口 replay 的 marked 图里“紫色框”只是 cloud raw-yellow
+  候选框，不是旧本地 player-anchor 的紫色人物锚点，也不是可点击结果；`REQUEST_NEW_SCREENSHOT`
+  场景不得把这些框解释成已选目标。该 replay 使用裸 full-window ROI、未展示/应用旧默认 mask、
+  未跑旧黄字 OCR/语义目标匹配、未展示紫色锚点/formula 后续链路，因此不能作为生产等价验收。
+  下一版 CR169 必须产出生产等价 marked 图，至少标明真实 ordered scan region / default mask、
+  tooltip/yellow OCR 命中、必要时 purple anchor、最终 window-relative click 点；缺任一关键段落都
+  继续禁止 fresh runtime。
+
+P0 reviewer fail 2026-07-03 - 单策略云端证明未过:
+
+- 用户新增硬门槛：必须证明每一种策略在云端单独可过，不能只靠综合流程或弱断言。
+- 主管复核实际 marked 图发现 purple standalone 假绿：
+  `images/test-cases/npc/output/cr169_purple_anchor_formula_standalone_marked.png`
+  标注 `click=728,62`，明显不在旧 player-anchor formula 合理目标区域；对应测试只断言
+  `x/y > 0`，不能作为通过证据。
+- 独立 reviewer 复核代码发现顺序 P0：`SmartClickRecognizer.recognize(...)` 在
+  `clickUniqueYellowTarget(...)` 前先执行 `targetTemplateSpecs(...) -> clickTargetTemplate(...)`
+  与 `clickTargetMetadata(...)`；而 `targetTemplateSpecs(...)` 会把 `yellowTemplateSpecs`、
+  `yellowTemplatePath`、`npcNameTemplatePath` 标成 `YELLOW_TARGET_TEMPLATE`，因此真实顺序仍可能是
+  `tooltip/yellow-template/metadata -> yellow semantic OCR -> purple -> Ctrl`，不是旧稳定顺序。
+- 现有矩阵证明不足：
+  - `yellow standalone` / `order guard` 图上黄字点击合理，可暂作为黄字语义路径初步证据；
+  - `tooltip standalone` 主要是 synthetic template-only 图，真实 raw 场景证据不足；
+  - `Ctrl standalone` 主要靠 synthetic dark image + metadata，不是游戏 raw menu positive；
+  - `purple standalone` 当前失败，必须修 OCR span/anchor 选择并断言旧合理点位范围。
+- Worker repair gate：
+  1. 云端必须恢复旧顺序：真正 tooltip 在前，`YELLOW_TARGET_RAW` 语义 OCR 必须先于 yellow template /
+     metadata / purple formula；如果 yellow template/metadata 属于 fallback，必须放回旧本地对应位置。
+  2. purple OCR 不能把包含玩家名的一长串 OCR span 的大框中心当 anchor；必须优先选择最短、局部、
+     贴近玩家名的 word/span，无法语义证明时 fail closed。
+  3. 必须补带 `yellowTemplateSpecs` / `yellowTemplatePath` / metadata 的顺序 regression，证明黄字语义命中
+     不会被 template/metadata 抢先。
+  4. 必须补每种策略的云端单独 positive 与 marked output；缺真实 raw 的项要在本卡标为 fresh-runtime
+     未验，不能写“已过”。
+  5. 修完前禁止用户 fresh runtime 测试 CR169。
+
+P0 repair re-review PASS 2026-07-03:
+
+- Worker 已按上述 P0 修复，谢帅本地复跑并查看 marked 图，独立 reviewer 二次复审无 P0/P1。
+- 云端 `SmartClickRecognizer` 当前真实顺序：
+  expected dialog / verified memory / Ctrl continuation -> 真 tooltip -> `YELLOW_TARGET_RAW`
+  semantic OCR -> `PLAYER_ANCHOR_FORMULA` -> yellow template / metadata fallback -> Ctrl fallback。
+  `yellowTemplateSpecs` / `yellowTemplatePath` / `npcNameTemplatePath` / metadata 不再抢在黄字语义 OCR 前。
+- 新增顺序 regression：
+  `cr169_order_yellow_ocr_before_template_metadata_purple_marked.png`，同一请求同时提供
+  `yellowTemplateSpecs`、metadata 和 purple evidence 时仍返回 `YELLOW_TARGET_RAW`，click=`482,116`。
+- Purple standalone 已从假绿修正：
+  `cr169_purple_anchor_formula_standalone_marked.png` 现在标出 anchor=`520,407`、click=`540,97`；
+  测试断言 anchor/click 范围和局部 anchor box 尺寸，不能再只靠 `x/y>0` 通过。
+- DHXY 侧 `Alt+4` clean-name prep 已收窄：只在普通初始 capture 前执行；direct-combat、`CTRL_HOVER_DONE`
+  以及带 status/action/token 的续帧都会跳过，避免破坏已有 dialog/menu/retry 现场。
+- Verification:
+  - External focused:
+    `mvn -q -Dtest="NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test` passed。
+  - External package: `mvn -q -DskipTests package` passed。
+  - DHXY focused:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY compile: `mvn -q -DskipTests compile` passed。
+- Remaining fresh/runtime gate:
+  - 需要重启 DHXY / external sidecar，确认实际加载新 jar；
+  - 真实修罗或五倍 NPC 样本中确认 `NPC_CLICK_SMART` 日志顺序为 tooltip/yellow/purple/Ctrl；
+  - 确认 OCR sidecar 可用，yellow semantic hit 不被 template/metadata/purple 抢跑；
+  - 真实 Ctrl menu raw replay/现场样本仍要补；当前 Ctrl standalone 主要是 synthetic/metadata positive。
+
+Strict acceptance re-review FAIL 2026-07-03:
+
+- 用户新增硬口径：`TOOLTIP_TEMPLATE`、`YELLOW_TARGET_RAW`、`PLAYER_ANCHOR_FORMULA`、
+  `CTRL_MENU_HOVER/CTRL_MENU_ITEM` 必须逐个有真实 replay 命中证据，不能用一个 current 黄字路径代替全过。
+- 复跑最小命令：
+  `mvn -q "-Dtest=NpcClickSmartCurrentScreenReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`
+  通过，但它只明确证明 `current_window_xiuluo_accept_raw.png` 的 `YELLOW_TARGET_RAW`
+  返回 `CLICK/YELLOW_TARGET_RAW/click=482,116/matchedText=兽村使者`，marked：
+  `images/test-cases/npc/current_window_xiuluo_accept_marked.png`。同一命令里的
+  `TOOLTIP_TEMPLATE` positive 是 synthetic 黑底贴模板图，`PLAYER_ANCHOR_FORMULA` positive 使用
+  legacy washed `images/temp/hwnd-E50C6E/center_scan_player.png`，`CTRL_MENU` 没有 marked 输出。
+- 补跑严格审查命令：
+  `mvn -q "-Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest,AlgorithmFailClosedTest,NpcClickSmartUserWuyiDialogReplayTest" test`
+  失败于 `NpcClickSmartUserWuyiDialogReplayTest.exactUserScreenshotRejectsWuyiTooltipAsTaskTooltipAndWritesCloudDecision`。
+  失败证据：`YELLOW_TARGET_RAW` 在真实 `current_screen_xiuluo_accept_wuyi_dialog_raw.png` 上返回
+  `click=115,28;candidateBox=65,71,101,15;matchedText=灵兽村11382`，marked：
+  `images/test-cases/npc/current_screen_xiuluo_accept_wuyi_dialog_cloud_replay_marked.png`，没有落到
+  `灵兽村使者` 目标区域。
+- `PLAYER_ANCHOR_FORMULA` 当前 raw replay 也不能算过：`NpcClickSmartCurrentScreenPurpleAnchorReplayTest`
+  打印 `PURPLE_OCR_HIT=null`、`PURPLE_BLOB_FALLBACK_ANCHOR=null`、`PURPLE_FORMULA_CLICK=null`，marked：
+  `images/test-cases/npc/current_window_xiuluo_accept_purple_anchor_marked.png`；该测试没有断言失败，
+  因而此前容易假绿。`cr169_purple_anchor_formula_standalone_marked.png` 只证明 legacy washed 输入可过。
+- `TOOLTIP_TEMPLATE` 当前源码里的真实测试 `NpcClickSmartRealTooltipReplayTest` 只是证明巫医 tooltip
+  不会误匹配任务 tooltip，marked：`images/test-cases/npc/super_doctor_wuyi_tooltip_matcher_parity_marked.png`；
+  现有正向 `cr169_tooltip_template_standalone_marked.png` 是 synthetic，不满足最终验收。虽然仓库里已有
+  旧真实 marked `images/test-cases/npc/output/xiuluo_lingshoucun_shizhe_task_tooltip_marked.png` 和
+  `images/test-cases/npc/xiuluo_lingshou_accept_npc_click_cloud_marked.png`，当前测试集没有把它们作为
+  `TOOLTIP_TEMPLATE` 正向 replay 重新断言。
+- `CTRL_MENU_HOVER/CTRL_MENU_ITEM` 现有 positive 仍是 synthetic dark image + metadata 状态机；
+  缺真实 Ctrl 菜单截图、菜单项 OCR/template/metadata 命中、最终点击点 marked 输出。
+- Gate：CR169 不能关闭，也不建议 fresh runtime；下一轮 worker 必须补四类策略各自真实 testcase、
+  强断言和 marked 输出，synthetic 只能作为 guard，不能作为最终验收证据。
+
+P1 helper review gate 2026-07-03:
+
+- 旧本地 `runNpcClickPipeline(...)` 的等价链路不能只靠 cloud raw yellow block 检测替代。云端必须
+  复现或等价承接：
+  - 一次性 name-layer 准备 / blocking dialog 预处理边界；
+  - `OcrRoiMemoryService.recommendNpcClickRegions(...)` 的 ordered regions，以及
+    `OcrWindowScanService.copyWithDefaultMasks(...)` 默认 full-window mask；
+  - tooltip template 只在 ordered regions 内按旧 `ImageFinder.findAll(..., 0.82, 36)` 多候选推进；
+  - 黄字目标必须有旧 `GameTextLineOcrService.findYellowTarget(...)` /
+    `OcrTextMatcher.matchShortName(...)` 等价语义证明，再按匹配 word span 计算点击；
+  - player-anchor formula 只有在云端或 payload 提供明确 purple anchor evidence 时才可用；
+  - Ctrl fallback 必须保留旧 probe-origin / menu OCR/模板语义，不得把普通黄块或 generic tooltip
+    当目标证明。
+- 当前外部 `dhxy-cloud-brain` 缺 OCR 语义能力时，必须在本卡记录为 P0 blocker 并实现 OCR
+  云端接入方案；不得用“多黄块 ambiguous / 请求重截屏”伪装成旧本地等价迁移完成。
+
+CR169 worker repair 2026-07-03 - 黄字 OCR 语义等价:
+
+- 外部 `D:\mavenProject\dhxy-cloud-brain` 已补 OCR 接入与旧黄字语义匹配迁移，不再用 raw-yellow
+  候选框冒充点击结果：
+  - `SmartClickRecognizer` 对默认 full-window `ResolvedNpcClickRegion` 先应用旧
+    `OcrWindowScanService.copyWithDefaultMasks(...)` 等价 mask，再运行黄字候选定位；
+  - raw yellow candidates 只作为候选定位和 marked 图诊断，必须再对候选原图裁剪调用本地 OCR sidecar；
+  - 新增 `LocalOcrClient` 调用 `http://127.0.0.1:18761/ocr/words`；若 OCR 不可用，返回
+    `cloud-brain-npc-raw-yellow-ocr-unavailable` fail-closed，不降级为裸候选点击；
+  - 新增 `CloudOcrTextMatcher` 迁移旧 `OcrTextMatcher` 的短名归一化、LCS/edit-distance 语义评分；
+  - `selectYellowTargetWords` 只保留匹配目标名的 OCR word span，命中后按旧黄字规则点击
+    `centerX, centerY - 50`。
+- 当前窗口 replay 已补成生产等价请求：
+  - 输入：`images/test-cases/npc/current_window_xiuluo_accept_raw.png`；
+  - 输出：`images/test-cases/npc/current_window_xiuluo_accept_marked.png`；
+  - command：`mvn -q -Dtest=NpcClickSmartCurrentScreenReplayTest test`；
+  - result：`action=CLICK;strategy=YELLOW_TARGET_RAW;click=482,116;candidateBox=443,158,79,16;rawCandidateBoxes=594,451,53,28|465,54,340,38|276,148,300,26;matchedText=兽村使者;reason=cloud-brain-npc-raw-yellow-target-ocr`。
+- marked 图图层约定：绿色为 scan ROI，橙色为 default OCR masks，紫红为 raw yellow candidates only，
+  青色为 semantic yellow OCR hit，红叉为 final click point；本样本黄字命中路径未使用 purple
+  player-anchor formula，图中明确标注 `purple anchor: not used in yellow-hit path`。
+- Purple/player-anchor 单独 replay 澄清 2026-07-03：
+  - 已按旧本地 `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)` 的 HSV 口径
+    `H=120..160/S>=50/V>=50`，加 whole-image OCR 与旧 blob fallback 约束，单独 replay
+    `images/test-cases/npc/current_window_xiuluo_accept_raw.png`；
+  - command：`mvn -q -Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest test`；
+  - output：`images/test-cases/npc/current_window_xiuluo_accept_purple_anchor_marked.png`；
+  - result：`PURPLE_OCR_HIT=null`、`PURPLE_BLOB_FALLBACK_ANCHOR=null`、`PURPLE_FORMULA_CLICK=null`。
+    OCR 只读到上方无关候选 `非组...`，当前玩家名 `乌龟的黑头` 在该截图里偏蓝/青且落在多行名字混杂块中；
+    旧 blob fallback 因候选块过大/噪声过重拒绝。注意：这只证明“当前 raw/full-screen replay”不等价于旧本地
+    clean-name 紫色输入，不能证明旧本地 purple player-anchor 逻辑不可用。
+  - 更正复测：同一测试加入旧本地保存的 `images/temp/hwnd-E50C6E/center_scan_player.png`（旧流程生成的
+    purple washed image）后，OCR 明确读到 `乌龟的黑头`，输出
+    `LEGACY_PURPLE_OCR_HIT=PurpleHit[...]`；因此旧本地紫色路径确实能在 clean-name/washed 输入上识别玩家名。
+    之前“旧紫色公式本身也不会产出点击点”的表述已更正为：第一版 replay 没有复现旧本地截图/预处理输入。
+  - 2026-07-03 purple worker repair 已补该 gate：
+    - `SmartClickRecognizer.produceQueueMessages(...)` 的生产 FIFO 顺序保持
+      `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`，未改 queue/FIFO
+      producer 语义。
+    - `PLAYER_ANCHOR_FORMULA` 不再接受 payload `playerAnchorWindowX/Y/evidence` 兜底；anchor 必须来自云端
+      截图证据。
+    - Purple path 先按旧 HSV `H=120..160/S>=50/V>=50` 洗紫并 OCR 玩家名/片段；若用户 raw 图不是
+      Alt+4 clean-name 等价输入，继续用洗色候选 crop 定位同一候选区域，再对原始 crop OCR 玩家名，仍要求
+      `LocationVisionService` 等价的玩家名/片段语义命中后才计算公式点。旧 blob fallback 只保留在 legacy
+      binary washed 输入上；当前 raw 不走最大 blob/长条中心/猜测点。
+    - 用户指定 raw replay：
+      `images/test-cases/npc/current_window_xiuluo_accept_raw.png`，queue `PURPLE_FORMULA` 阶段输出
+      `action=CLICK;strategy=PLAYER_ANCHOR_FORMULA;anchor=505,428;candidateBox=466,419,79,18;click=525,118;matchedPlayerName=乌龟的黑头`。
+    - Marked output：
+      `images/test-cases/npc/output/cr169_purple_player_anchor_current_window_marked.png`，图中青色框/十字为
+      OCR 玩家名 anchor，红十字为最终公式点击点。
+    - RED：新增 production purple queue-stage replay 后，
+      `mvn -q -Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest test` 先失败于
+      `cloud-brain-npc-player-anchor-evidence-missing`。
+    - GREEN：外部 focused
+      `mvn -q -Dtest="NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest" test`
+      通过；同套测试也确认黄字语义仍先于 purple，FIFO 顺序/identity/fail-closed guard 未回退。
+- 仍待 fresh runtime：必须重启 DHXY / 外部 brain 后跑真实修罗接任务；日志应显示本次新 jar/类生效、
+  OCR sidecar 可用、`matchedText=兽村使者` 或等价语义命中、点击不落到超级巫医。fresh 前不得把
+  OCR unavailable 或 raw-candidate ambiguous 视为通过。
+- 谢帅 manager 复核 2026-07-03：已重新查看 marked 图、外部 `SmartClickRecognizer` /
+  `LocalOcrClient` / `CloudOcrTextMatcher` 与 DHXY `NpcClickService` request 构造。当前修复满足本轮
+  用户纠偏：紫红 raw candidates 只作诊断，青色 OCR hit 才是语义命中，红叉 `click=482,116` 不落巫医；
+  默认 full-window fallback 会套旧 default masks。复跑：
+  `mvn -q -Dtest="NpcClickSmartCurrentScreenReplayTest,NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test`
+  通过；外部 `mvn -q -DskipTests package` 通过；DHXY
+  `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` 与
+  `mvn -q -DskipTests compile` 通过。仍不能关闭：缺真实 fresh runtime，且 OCR sidecar 不可用时会
+  fail closed，必须在现场日志中确认 OCR 语义命中。复核时发现 18080 仍有 04:40 旧 `java`
+  sidecar 监听且 health 失败，已停掉该旧进程；下一次 DHXY 启动应自动拉起 10:39 新 jar。
+
+Two-reviewer gate FAIL 2026-07-03:
+
+- Reviewer A P1：当前外部 brain 的 `NPC_CLICK_SMART` queue 顺序是用户本轮拍板的新云端 queue
+  顺序：`MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`，但
+  `origin/dev` 旧本地 `NpcClickService.runNpcClickPipeline(...)` 在 tooltip 后是先 player-anchor formula
+  再 yellow target。因此当前测试/文档不得继续把该顺序描述为“latest pushed old pipeline equivalent”。
+  处理方向：保留用户批准的新 queue 顺序，但重命名/改写相关测试与卡片描述，明确这是 CR169 新云端
+  queue 顺序，不是 pushed baseline 等价迁移。
+- Reviewer A P2：`NpcClickSmartUserWuyiDialogReplayTest` 对巫医误点的 production-like 断言偏弱；
+  必须直接断言 production-like 结果要么 fail-closed / `REQUEST_NEW_SCREENSHOT` / no-click，要么点击必须落在
+  `灵兽村使者` 目标区，不能只禁止 `TOOLTIP_TEMPLATE` + 巫医 dialog 区这一种错误。
+- Reviewer A P2：purple 图源语义仍容易混淆。`current_window_xiuluo_accept_raw.png` 只能作为
+  raw full-screen diagnostic / safety guard，不能当 clean-name positive 验收；真正 purple positive 必须指向
+  clean-name / 旧流程输入，并在测试名、断言和 marked output 文案中写清楚。
+- Reviewer B P1：live FIFO 仍有时序不稳定。谢帅本地三连跑
+  `mvn -q "-Dtest=NpcClickSmartLiveQueueReplayTest" test` 复现第 2 轮失败，实际序列为
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> WAIT -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。
+  `WAIT` 插入阶段链会让本地认为 producer pending，且单次 HTTP poll 最多阻塞 12s；CR169 不能验收。
+- Repair gate：worker 已被打回。必须修到 `NpcClickSmartLiveQueueReplayTest` 连续多轮稳定无 `WAIT`，
+  并跑通：
+  `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,NpcClickSmartLiveQueueReplayTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartUserWuyiDialogReplayTest,AlgorithmFailClosedTest" test`。
+  两个独立 reviewer 都通过前，CR169 禁止 fresh runtime / 禁止关闭。
+
+Two-reviewer re-review PASS 2026-07-03:
+
+- Worker 修复后，外部 `D:\mavenProject\dhxy-cloud-brain` `Session.poll()` 只允许第一条消息前返回 `WAIT`；
+  一旦已交付任意 queue message，后续会等待下一阶段、`END` 或 chain timeout，不再在
+  `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`
+  阶段链中插入 `WAIT`。
+- 谢帅复跑：
+  `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest,NpcClickSmartCloudQueueOrderTest" test` passed；
+  `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,NpcClickSmartLiveQueueReplayTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartUserWuyiDialogReplayTest,AlgorithmFailClosedTest,NpcClickSmartCloudQueueOrderTest" test` passed；
+  `NpcClickSmartLiveQueueReplayTest` 三连跑 passed，三次 live queue 均无中间 `WAIT`；
+  DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test` passed。
+- Reviewer A PASS：测试名/断言不再把当前顺序误称为 pushed old/local baseline；当前验收口径明确为
+  `CR169 user-approved cloud queue order`。旧口径关键词 `old-pipeline` / `origin/dev` / `pushed.*baseline`
+  / `local baseline` / `equivalence` 在外部 brain main/test 中无命中。
+- Reviewer B PASS：FIFO / 中间 `WAIT` blocker 已解决；`END` / terminal outcome cleanup、identity guard、
+  DHXY 消费端 `INVALID` / `END` / no-click / `CTRL_CANDIDATES` 处理语义通过复核。
+- Non-blocking fresh-runtime risk：外部 queue 第一条消息后的 chain timeout 默认 120s，而 DHXY HTTP timeout
+  是 60s；真实 producer 卡死时 Java 侧会先 fail closed，云端请求线程可能继续等到 chain timeout。
+  Fresh runtime 必须看 outcome 上报、session 清理和 sidecar/JAR 版本是否稳定。该风险不阻塞离线 gate，
+  但 CR169 仍不能标 Done。
+
+P0 reopen evidence 2026-07-02 (已由下方 repair completion / final reviewer PASS 修复):
+
+- Source scan still finds local NPC decision policy in `NpcClickService`:
+  - `NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS = 4`；
+  - `clickNpcSmart(...)` 内本地 `for` loop 控制 attempt/retry budget；
+  - verifier failure / `REQUEST_NEW_SCREENSHOT` 后本地决定继续下一轮；
+  - `exitDirectCombatClickModeAfterFailure(...)` 与 fixed safe right-click recovery 仍由本地决定；
+  - `clickRight(...)` / direct-combat exit verification 仍在 NPC click 生产服务内。
+- User publishing boundary:
+  - NPC click 完整云端化不是“旧 pipeline 已删”，而是 retry/recovery/exit budget 也不能留在本地。
+  - 本地只允许截图、构造 `NPC_CLICK_SMART` request、校验云端 response、执行 allowlisted 输入动作、
+    验证结果、停止/日志；策略排序、黄字/紫字/tooltip/Ctrl/menu/formula/retry/recovery/abort 必须在外部 brain。
+- Required repair direction:
+  - 删除或迁走本地 retry budget 和 direct-combat recovery helper；不要把本地策略藏进另一个本地 helper。
+  - direct-combat 的进入动作继续由云端返回 `PRESS_HOTKEY_THEN_CLICK hotkey=ALT_A` 等 allowlisted action；
+    失败退出/重试/重新截图/abort 也必须由云端响应决定，本地不能自行右键退出或固定重试。
+  - 如需要记录 memory/outcome，改成“云端 action verified 后上报 outcome”的窄边界，不保留本地
+    retry/recovery 树。
+  - 源码守卫必须证明 `NpcClickService.java` 不再存在
+    `NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS`、`exitDirectCombatClickModeAfterFailure`、
+    `direct-combat exit`、`clickRight(`。
+- Fresh-runtime gate:
+  - 未完成源码删除与 focused guard 前，不要求用户测试。
+  - 完成后真实修罗/NPC 样本里只能看到 `NPC_CLICK_SMART` request/response/allowlist 输入/verification，
+    不得出现本地 retry budget、direct-combat fixed right-click recovery 或旧 yellow/purple/menu/formula pipeline 点击。
+
+P0 repair completion 2026-07-02:
+
+- `NpcClickService` production source 已删除旧本地 NPC click strategy brain：
+  - `runNpcClickPipeline(...)`、learned-memory/tooltip/yellow/formula/Ctrl strategy 方法；
+  - `NpcClickStrategyResult` / `NpcClickStrategySource` / `recordSmartClickEvidence(...)`；
+  - pending local smart-click evidence / `SmartClickEvidenceConfirmationService` 实现；
+  - yellow OCR / player-anchor formula / Ctrl-probe / tooltip-derived ROI / purple-blob helper；
+  - direct-combat failure exit / 固定安全右键退出已从生产路径删除，失败与是否继续由 cloud action
+    (`REQUEST_NEW_SCREENSHOT` / `ABORT` / 下一次可执行 action) 表达。
+- `confirmPendingSmartClick(...)` 仅保留为任务侧历史调用的 no-op 兼容入口，不再读写 pending evidence 或 vision memory，
+  也不参与 NPC click 成功路径。
+- `NPC_CLICK_SMART` retry loop 已闭环：本地执行 cloud action 后若 verifier 失败，会把
+  `lastOutcomeStatus`、`lastOutcomeReason`、`attemptToken`、上次 action/click/candidateBox 和新 raw screenshot
+  回传 cloud；cloud 决定下一次 `CLICK` / `CTRL_CLICK` / `PRESS_HOTKEY_THEN_CLICK` /
+  `REQUEST_NEW_SCREENSHOT` / `ABORT`。本地不选择下一策略。
+- 外部 `SmartClickRecognizer` 已消费 attempt/outcome/token，具备确定性 retry budget；多候选 first pass 可返回
+  `REQUEST_NEW_SCREENSHOT`，后续仍不明确则 `ABORT`，不会无限循环或把第一个候选当成功。
+
+Problem:
+
+- CR165 只覆盖普通 `verificationMode=dialog` 切片的入口语义；CR169 负责 direct-combat、Ctrl/menu 与
+  retry 状态机的完整云端 ownership。
+- P0 打回前 direct-combat、Ctrl 菜单 fallback、player-anchor formula、失败后的 retry 顺序和预算仍残留在
+  `NpcClickService`；本轮已删除这些本地策略实现，剩余验收风险转为真实 raw/fresh runtime 证明外部 brain 能稳定识别。
+
+Target boundary:
+
+- 本地职责：
+  - 截当前窗口 raw image；
+  - 执行云端返回的 allowlist 动作：`CLICK`、`CTRL_CLICK`、`PRESS_HOTKEY`、`REQUEST_NEW_SCREENSHOT`；
+  - 校验动作坐标/热键安全，走 input queue；
+  - 把 dialog/menu/combat/movement outcome 和新截图回传下一次 request。
+- 云端职责：
+  - 维护 attempt token；
+  - 选择 direct-combat、yellow target、player-anchor formula、Ctrl menu 等下一步策略；
+  - 管理 retry 顺序、retry budget、失败归因和 abort。
+
+Implementation direction:
+
+- 旧本地 smart-click 方法源码不得残留在 `NpcClickService` 生产代码；guard 扫描必须防止复活。
+- Cloud active + covered state-machine request：云端无有效动作时 fail-closed，不回旧本地 fallback。
+- CR165 普通 dialog 点击的 target-aware 逻辑继续有效；CR169 扩 direct-combat/Ctrl/retry，并删除本地策略脑子。
+
+Implementation / review repair 2026-07-02:
+
+- DHXY `NpcClickSmartCloudDecisionService` action 协议已从 plain `CLICK` 扩到：
+  - executable：`CLICK`、`CTRL_CLICK`、`PRESS_HOTKEY_THEN_CLICK`；
+  - no-click：`NOT_FOUND`、`NO_ACTION`、`REQUEST_NEW_SCREENSHOT`、`ABORT`。
+- 本地 allowlist 只允许 `ALT_4`、`ALT_C`、`ALT_A` 这类显式云端返回的快捷键动作；`alt=true`、
+  非 `CTRL_CLICK` 的 `ctrl=true`、`CTRL_DELETE` 等不安全热键全部 fail closed。
+- `NpcClickService.tryDirectCombatTargetClick(...)` 不再在 cloud action 前调用
+  `detectFlyingState(...)`、`InputAction.pressAltC()`、`InputAction.pressAltA()` 或
+  `runNpcClickPipeline(...)`；它只构造 `verificationMode=direct-combat` 的 `NPC_CLICK_SMART` request，
+  执行 cloud 返回 allowlist action，并用 `combatClickVerifier()` 验证是否进战斗。
+- `clickNpcSmart(...)` / direct-combat 的失败、inactive、invalid、no-action 都返回 no-click/fail closed，
+  不回 learned-memory、tooltip template、yellow OCR、player-anchor formula 或 Ctrl menu 本地策略。
+- 外部 `dhxy-cloud-brain` `SmartClickRecognizer` 已补：
+  - 真实 template/metadata 优先；
+  - 无真实模板时用 raw image + ROI 的唯一黄名候选算法；空候选或多个可用候选返回 `NO_ACTION`，不点第一个；
+  - `verificationMode=direct-combat` 返回
+    `action=PRESS_HOTKEY_THEN_CLICK;hotkey=ALT_A;click=...`；
+  - `requestedAction=CTRL_CLICK` 返回 `action=CTRL_CLICK;click=...`。
+- `NpcClickService` 旧本地策略方法和 DTO 已物理删除；focused source guard 同时证明 direct-combat/普通入口
+  只通过 `NPC_CLICK_SMART`，且旧方法名不得复活。
+
+Verification 2026-07-02:
+
+- DHXY:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickDirectCombatDialogGateWiringTest,NpcClickDirectCombatNameLayerWiringTest,NpcClickLearnedMemoryFastPathWiringTest" test` passed；
+  - `mvn -q -DskipTests compile` passed；
+  - user-specified source scan on `NpcClickService.java` for
+    `NpcClickStrategyResult|NpcClickStrategySource|recordSmartClickEvidence|calculatePlayerAnchorFormulaPoint|findPlayerAnchorForDirectCombatExit|Ctrl-probe|yellow target|player-anchor formula|tooltip-derived`
+    returned no matches。
+- 外部 brain:
+  - `mvn -q -Dtest="AlgorithmFailClosedTest,CloudBrainSmokeTest" test` passed。
+- Final reviewer PASS / guard 2026-07-02:
+  - `rg -n "NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS|exitDirectCombatClickModeAfterFailure|direct-combat exit|clickRight\(" src/main/java/com/bot/dhxy/service/NpcClickService.java`
+    returned no matches；
+  - reviewer confirmed production path only builds `NPC_CLICK_SMART` request, validates cloud response, executes
+    allowlisted input, verifies/logs/fail-closes；`REQUEST_NEW_SCREENSHOT` / `ABORT` 等下一步语义由 cloud
+    response 表达。
+- Guard coverage:
+  - direct-combat source slice 不含 `runNpcClickPipeline(`、`detectFlyingState(`、`InputAction.pressAltA()`、
+    `InputAction.pressAltC()`、`authorizeNpcClickStrategy(`；
+  - `clickNpcSmart` / cloud helper 不用旧 pipeline 或 `ALLOW_LOCAL_STRATEGY`；
+  - template/glyph metadata 只传真实存在路径；target facts 仍通过 `targetName=<npcName>` 给 cloud。
+
+2026-07-03 old-pipeline equivalence repair:
+
+- 问题：复核发现外部 cloud brain 仍有几处与旧 pipeline 不等价：`CTRL_HOVER` 会抢在
+  expected-dialog / learned-memory 前面；`tooltipFirst=true` 没有优先 tooltip template；
+  `PLAYER_ANCHOR_FORMULA` 会从 raw 最大紫色块直接算点击；Ctrl 菜单有语义 metadata 的正例没命中。
+- 修复：
+  - `SmartClickRecognizer` 现在先检查 expected dialog，再检查 verified-only `NpcClickMemoryStore`
+    learned memory，然后才进入 retry budget / `CTRL_HOVER` fallback；
+  - `tooltipFirst=true` 时将 `TOOLTIP_TEMPLATE` 排到 yellow target template 前面；
+  - raw yellow 只有候选但没有 target template/metadata 语义证明时不返回 click；
+  - Ctrl menu 只有 metadata/template 明确 target name 且点击在 menu ROI 内时才返回菜单项 click，否则
+    fail closed；
+  - `PLAYER_ANCHOR_FORMULA` 要求显式 `playerAnchorWindowX/Y` + `playerAnchorEvidence`，不再用最大紫色块
+    作为 anchor；
+  - DHXY verified click 后通过 `NpcClickSmartCloudDecisionService.reportVerifiedOutcome(...)` POST 到
+    `/api/cloud/npc-click-smart/outcome`，云端只把 `result=VERIFIED` 的 outcome 提升为 learned memory；
+    HTTP 失败只记录 warn，不改变本次已验证点击结果。
+- Verification:
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q test` passed。
+  - DHXY: `mvn -q -Dtest="CloudDecisionPropertiesTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY: `mvn -q -DskipTests compile` passed。
+- Fresh-runtime gate:
+  - 需重启 DHXY / sidecar 后跑真实修罗或五倍 NPC 样本，日志应看到 `NPC_CLICK_SMART`
+    request/response、allowlisted action、local verifier 通过、`verified outcome submitted` 或 outcome
+    HTTP warn；不得出现旧本地 yellow/purple/menu/formula pipeline 决策或固定 direct-combat recovery。
+
+2026-07-03 full old-pipeline matrix / purple repair:
+
+- 用户验收硬门槛：
+  - 旧稳定普通 NPC 顺序以 `git show 696a12b:src/main/java/com/bot/dhxy/service/NpcClickService.java`
+    为准：普通非 direct-combat 先 name-layer prep / `Alt+4` once，然后 `tooltip template -> yellow semantic OCR -> purple player-anchor formula -> Ctrl menu fallback`。
+  - 每种策略必须有云端单独 positive；组合顺序中 yellow semantic hit 与 valid anchor 同时存在时，必须返回
+    `YELLOW_TARGET_RAW`，不能返回 `PLAYER_ANCHOR_FORMULA`。
+- RED:
+  - External `mvn -q -Dtest=NpcClickSmartOldPipelineEquivalenceTest test` 首次失败 2 个预期项：
+    `purplePlayerAnchorFormulaStandaloneExtractsPlayerNameWithoutPayloadAnchorEvidence` 返回
+    `cloud-brain-npc-player-anchor-evidence-missing`；
+    `combinedPipelineKeepsOldStableOrderYellowBeforePurpleFormula` 返回 `PLAYER_ANCHOR_FORMULA`，证明 formula 抢在 yellow 前。
+  - DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 首次失败，证明本地生产截图前没有旧等价
+    `Alt+4` clean-name capture prep。
+- Implementation:
+  - 外部 `SmartClickRecognizer` 将普通图像策略顺序改为 tooltip/template 与 metadata 后，先 `clickUniqueYellowTarget(...)`，
+    再 `clickPlayerAnchorFormula(...)`，最后 Ctrl fallback；保留 expected dialog / learned memory / Ctrl continuation 兼容语义。
+  - `PLAYER_ANCHOR_FORMULA` 不再要求 DHXY payload 预传 `playerAnchorWindowX/Y/playerAnchorEvidence`：
+    云端先从 clean-name/legacy-equivalent purple image OCR 当前 `playerName`，用 `CloudOcrTextMatcher` 匹配玩家名并以文字框中心作为 anchor，
+    再按旧公式计算点击点。显式 anchor evidence 只作为兼容 fallback。
+  - blob fallback 已收窄：只允许 legacy/binary washed 等价图在 OCR 未命中时兜底；raw/HSV 洗图没有 OCR 玩家名时不把最大紫块当 anchor，
+    旧 fail-closed guard `npcPlayerAnchorFormulaDoesNotUseLargestPurpleBlockWithoutAnchorEvidence` 仍通过。
+  - Ctrl 单独矩阵覆盖 `CTRL_HOVER`、`CTRL_CLICK` 和 `CTRL_MENU_ITEM` metadata-positive continuation；无语义 proof 的裸黄块仍 abort/fail closed。
+  - DHXY `NpcClickService.buildNpcClickSmartCloudRequest(...)` 在普通 dialog capture 前通过 input queue 执行
+    `InputAction.pressAlt4()` + short sleep，复现旧 name-layer clean-name 截图输入；direct-combat 与
+    `CTRL_HOVER_DONE` menu continuation 跳过该 prep，避免破坏云端菜单续帧。DHXY 本地仍只做截图、metadata、allowlist、安全校验和执行云端 response。
+- Replay / verification:
+  - External matrix command：`mvn -q -Dtest=NpcClickSmartOldPipelineEquivalenceTest test` passed。
+  - External focused command：
+    `mvn -q -Dtest="NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test`
+    passed。
+  - External package：`mvn -q -DskipTests package` passed。
+  - DHXY focused：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY compile：`mvn -q -DskipTests compile` passed。
+  - Testcase/marked outputs:
+    `images/test-cases/npc/output/cr169_tooltip_template_standalone_marked.png`,
+    `images/test-cases/npc/output/cr169_yellow_semantic_standalone_marked.png`,
+    `images/test-cases/npc/output/cr169_purple_anchor_formula_standalone_marked.png`,
+    `images/test-cases/npc/output/cr169_order_yellow_before_purple_marked.png`,
+    plus existing `images/test-cases/npc/current_window_xiuluo_accept_marked.png`。
+- Fresh-runtime gate:
+  - 仍需重启 DHXY / external sidecar，确认运行时日志中 `NPC_CLICK_SMART` request 前有 `npcClick:smartCloudCleanNameCapturePrep`
+    或 direct-combat / `CTRL_HOVER_DONE` 的 skip 日志，云端 response 策略顺序为 tooltip/yellow/purple/Ctrl，且真实修罗/五倍 NPC 样本没有旧本地策略决策日志。
+
+2026-07-03 P0 tooltip matcher / ROI parity correction:
+
+- 用户纠偏确认：全窗 ROI 会放大错误，但第一根因是云端 tooltip matcher / 预处理不等价旧本地。
+  本次明确禁止修改 `images/template/npc/*.png`、禁止禁用 tooltip、禁止新增 target proof；唯一目标是把旧本地逻辑搬到云端。
+- 旧本地方法链：
+  - `CoordinateHelper.findImagesInRegion(templatePath, rect, matchRate, minDistancePx)`；
+  - 内部 capture ROI 后调用 `ImageFinder.findAll(roiPath, templatePath, 0.82, 36)`；
+  - `ImageFinder.findAll(...)` 使用 OpenCV `TM_CCOEFF_NORMED` 收集所有过阈值点，按 score 降序，并按中心点距离 `<36px` 去重，返回中心点候选列表。
+- 云端对应实现：
+  - `OpenCvTemplateMatcher.findAll(BufferedImage, BufferedImage, 0.82, 36)` 复刻上述候选收集、score 排序和中心点去重；
+  - `SmartClickRecognizer.clickTooltipTemplate(...)` 对 `scanRegions` 逐区调用该 matcher；
+  - `tooltipType == NONE` 或没有推荐 region 时 tooltip 分支 skip / not found，不扫全窗；
+  - verifier 失败回传 `lastClick` / `lastCandidateBox` 后，下一次请求跳过同一个坏候选，继续下一个候选或后续策略。
+- DHXY request parity：
+  - `NpcClickService.buildNpcClickSmartCloudRequest(...)` 恢复旧入口 `cachedPlayerLocation(request)` ->
+    `resolveNpcScanRegions(request, playerLocation)`；
+  - `NpcClickSmartCloudRequest.ScanRegion` 携带 ordered window rect、screen rect 和 window base；
+  - `NpcClickSmartCloudDecisionService` 在存在 `scanRegions` 时只接受落在任一 region 内的 click / candidateBox。
+- Memory gate：
+  - `NpcClickMemoryStore` 只 promote `targetEvidence=CONFIRMED` 且 `verificationStrength` 为 dialog/raw-dialog template 的 verified outcome；
+  - 弱 verifier 和旧 legacy 污染记录（例如 `灵兽村使者` `511,103` / `495,95,32,16`，无强验证元数据）会被忽略。
+- Replay / verification:
+  - 输入：`images/test-cases/npc/super_doctor_wuyi_tooltip_raw.png`；
+  - 标注输出：`images/test-cases/npc/super_doctor_wuyi_tooltip_matcher_parity_marked.png`；
+  - 外部 brain focused：`mvn -q "-Dtest=NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test` passed；
+  - DHXY focused：`mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed；
+  - 外部 brain full `mvn -q test` 仍有 1 个 dialog replay 失败：
+    `DialogOptionRecognizerRoiPayloadReplayTest.superDoctorDialogDoesNotVerifyXiuluoAcceptXianlaiwuTemplate`
+    把超级巫医 dialog 误判为修罗 accept template `FOUND`。该失败另属 dialog verifier 语义，不在本次
+    tooltip matcher / ROI / memory P0 修改范围，本轮未顺手改 dialog 业务。
+
+Validation:
+
+- focused guard：direct-combat/Ctrl covered path 没有 cloud action 时不执行旧本地 formula/menu fallback。
+- testcase replay：本轮外部 brain 用合成 raw PNG smoke 覆盖唯一黄名、多候选 fail closed、direct-combat
+  hotkey bundle、Ctrl action；CR165 既有 DHXY marked output 仍是合成图。关闭 CR169 前仍需补真实游戏 raw PNG
+  / marked output，标出候选、动作点和快捷键/修饰键。
+- Fresh runtime：修罗普通打怪样本里看到 `verificationMode=direct-combat`、云端 action、allowlist 输入执行、
+  combat/dialog outcome、下一次 request 或 `ABORT`；全程不得出现旧 yellow/purple/menu/formula pipeline 点击。
+
+2026-07-03 FIFO final re-review P2 fail:
+
+- Reviewer #2 PASS：identity context、owner-aware poll、terminal cleanup、START 快返、WAIT 不耗候选预算、
+  `TaskCheckpoint`、terminal outcome 停止 poll 均通过；DHXY
+  `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`
+  和外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 均通过。
+- Reviewer #1 FAIL / P2：普通阶段 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 的 `action=NO_ACTION` 且无 click
+  会被 DHXY parser 构造成普通 queue message；consumer 进入 `executeNpcClickSmartQueueCandidate(...)` 后因
+  `clickRel == null` 返回 `SAFETY_REJECTED`，而 terminal outcome 规则会停止 session 消费，导致后续
+  `YELLOW_NAME/PURPLE_FORMULA/CTRL_CANDIDATES` 没有机会执行。
+- Required repair:
+  - 无 click / `NO_ACTION` 的普通候选必须作为 `SKIPPED` 或等价非终态 outcome 继续 poll；
+  - 补 DHXY 行为测试证明 `TOOLTIP NO_ACTION -> YELLOW/PURPLE/CTRL` 能继续，不提交 input，不触发 terminal cleanup；
+  - 修复后重新跑两个独立 reviewer 门禁，两个 reviewer 都 PASS 前，queue/FIFO worker 不算完成。
+
+2026-07-03 FIFO final P2 repair:
+
+- Worker 修复范围只限 DHXY 本地 FIFO consumer / focused test，未修改 external `dhxy-cloud-brain`，未改
+  purple/player-anchor、tooltip matcher、yellow/purple 视觉算法、NPC strategy 顺序、dialog、navigation 或 image processor。
+- RED：新增
+  `NpcClickSmartFifoBehaviorTest.testOrdinaryNoActionNoClickCandidateSkipsAndContinuesToNextExecutableCandidate`，
+  先跑 `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test` 失败，日志证明 `TOOLTIP clickRel=null` 被当成
+  `SAFETY_REJECTED` terminal，返回 `REQUIRED_FAILURE` 并截断后续候选。
+- Implementation：`NpcClickService` 在普通 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 分支先检查
+  `!message.hasClickPoint()`；无 click 的普通候选上报 `SKIPPED` 并继续 poll。带 click 的普通候选仍走原
+  `executeNpcClickSmartQueueCandidate(...)`，所以 safety shell、input submit、verifier 与 terminal outcome 语义不变。
+- Verification：
+  - GREEN `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test`；
+  - GREEN `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`；
+  - GREEN `mvn -q -DskipTests compile`。
+- Fresh runtime gate：仍需双 reviewer 复审通过并重启 DHXY / sidecar 或 JAR。新期望日志是普通 no-click candidate
+  出现 `NPC_CLICK_SMART ordinary no-click candidate skipped`、上报 `SKIPPED`、不提交 `npcClick:fifoCandidate:*`，
+  同一 session 继续 poll 后续可执行候选；`SAFETY_REJECTED`、`INPUT_SUBMIT_FAILED`、`FINAL_FAILED`、`CANCELLED`
+  仍必须停止 FIFO session。
+
+2026-07-03 double-review gate result / purple manager override, then repair PASS:
+
+- Process gate：`AGENTS.md` 已收紧为每个 worker 代码交付至少需要两个独立 reviewer 批准；谢帅只做最终业务主管审核，不替代两个 reviewer。
+- Purple player-anchor worker：第一轮两个独立 reviewer 曾 PASS，但主管目视复核打回，不能算完成。
+  - Reviewer #1 PASS：确认 `PLAYER_ANCHOR_FORMULA` anchor 来源为截图/OCR/playerName 证据，不依赖 payload anchor；普通策略顺序仍是 tooltip/yellow/purple/Ctrl；真实截图 replay 通过。
+  - Reviewer #2 PASS：确认没有 raw 最大紫块/长条中心猜测；公式仍是窗口相对 `anchor + delta*20 + tune + (0,-50)` 且有 `insideWindow`；真实 marked 图标出 `乌龟的黑头`、`anchor=505,428`、`click=525,118`，hash `A9ED312F46290B4F7BBA0282FAE57F5DD358C86F6F2BF9B71BBAC4D9F9D12019`。
+  - Manager verification：外部
+    `mvn -q -Dtest="NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,AlgorithmFailClosedTest" test`
+    passed，但这只是测试断言通过；随后用户/主管目视发现 marked output
+    `images/test-cases/npc/output/cr169_purple_player_anchor_current_window_marked.png` 的红点 `click=525,118`
+    明显不在目标 NPC `灵兽村使者` 身上。因此 Purple 不得视为通过。
+  - 新证据图：
+    `images/test-cases/npc/output/cr169_current_window_purple_washed_from_test_raw.png`
+    和 `images/test-cases/npc/output/cr169_current_window_purple_washed_candidates_marked.png`
+    只是对当前 raw 全屏图按测试中复刻的 HSV 阈值生成的临时诊断图，不能当作旧本地 pipeline 的权威洗图输出。
+    旧本地 pipeline 的输入必须是 `Alt+4` 后 `captureCleanNameRegionToMemory(...)` 截到的 clean-name region，再走
+    当前分支 `HEAD` 中仍可恢复的 `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)`；
+    真实旧产物示例是
+    `images/temp/hwnd-E50C6E/center_scan_player.png`。当前诊断图只能说明 raw 全屏硬洗会混入大量紫字噪声，
+    不能证明最终公式点击命中 NPC。
+  - Required repair：Purple worker 必须重新做旧本地等价 testcase，验收点改为“紫色策略最终 red click 落在目标 NPC 可点击区域/或 verifier 能证明该点触发目标 NPC”，不能只断言 anchor/insideWindow。
+- Purple repair PASS 2026-07-03：
+  - External changed files: `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\SmartClickRecognizer.java` and `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\NpcClickSmartCurrentScreenPurpleAnchorReplayTest.java`.
+  - Production purple wash now copies old local `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)` semantics: `OpenCvNativeLoader.ensureLoaded()` -> BGR Mat -> `Imgproc.COLOR_BGR2HSV` -> `Core.inRange(hsv, Scalar(120,50,50), Scalar(160,255,255))` -> `Core.bitwise_not` -> gray output.
+  - Production `PLAYER_ANCHOR_FORMULA` no longer uses RGB/HSB purple approximations or BLOB fallback. `extractPurpleBlobAnchor(...)`, `anchorEvidence=BLOB`, `"BLOB"`, and `return legacyBinaryInput` are absent from production `SmartClickRecognizer.java`; OCR miss returns no-action/fail-closed.
+  - Focused replay outputs:
+    - `images/test-cases/npc/output/cr169_purple_clean_name_source_input.png`
+    - `images/test-cases/npc/output/cr169_purple_old_hsv_washed.png`
+    - `images/test-cases/npc/output/cr169_purple_ocr_anchor_marked.png`
+    - `images/test-cases/npc/output/cr169_purple_player_anchor_clean_name_marked.png`
+  - Verified decision: `PRODUCTION_PURPLE_DECISION ... click=480,357; candidateBox=476,395,88,24; anchor=520,407; anchorEvidence=OCR; matchedPlayerName=乌龟的黑头`; final red point is inside the marked `灵兽村使者` target NPC hit area.
+  - GREEN external command: `mvn -q "-Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest" test` (`Purple 7`, `FIFO 11`, `AlgorithmFailClosed 34`, all 0 failures).
+  - Reviewer #1 PASS：marked evidence now uses production local player-name box/anchor and final red point on target NPC; old HSV/bitwise_not semantics confirmed.
+  - Reviewer #2 PASS：production source has no BLOB fallback/dead method, no scope expansion to FIFO/dialog/navigation, and the remaining test-side `BLOB` strings are only negative regression assertions/diagnostic labels.
+- Queue/FIFO final P2 no-click worker：两个独立 reviewer 均 PASS。
+  - Reviewer #1 PASS：确认 ordinary `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 仅在 `!hasClickPoint()` 时上报 `SKIPPED` 并继续，`MEMORY` click 仍是 `SAFETY_REJECTED` terminal。
+  - Reviewer #2 PASS：确认 terminal outcome stop 语义保留，新增行为测试驱动真实 `NpcClickService` loop，不是字符串 guard。
+  - Manager verification：DHXY
+    `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test`、
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`
+    和 `mvn -q -DskipTests compile` passed。
+- Fresh-runtime gate remains:
+  - Purple focused/reviewer gate 已解除，但 CR169 仍不能标 Done。
+  - 下一步必须重启 DHXY 与 external `dhxy-cloud-brain` sidecar/JAR 跑真实修罗/五倍 NPC 样本。
+  - 期望日志：`NPC_CLICK_START` 快速 `SESSION_STARTED`；每条 queue message 有完整 `sessionId/windowId/taskRunId`；普通 no-click candidate 记录
+    `ordinary no-click candidate skipped` 并继续；`SAFETY_REJECTED` / `INPUT_SUBMIT_FAILED` / `FINAL_FAILED` / `CANCELLED`
+    仍停止 session；purple 只在 yellow miss 后出现，且 `anchorEvidence=OCR`。
+
+Card CR170: ImagePreprocessCloud 洗后图返回与纯匹配路径第一刀
+
+Status:
+
+- Review. Owner: 谢帅+worker。CR170 worker 已完成 Java 实现和本地 focused 验证；谢帅只做主管/reviewer，不直接写 Java 业务实现。
+
+Problem:
+
+- 用户确认发布 runtime 不能保留洗图算法；CR163 只完成了传图协议和安全壳，没有把
+  `ImagePreprocessor` 的黄/绿/白/紫洗图逻辑迁出本地。
+- 有些调用点是“纯匹配”：它们只需要一张洗好的二值图继续做薄模板/像素匹配，不需要云端直接返回业务动作。
+  这些路径应支持云端返回洗后图，而不是本地继续调用洗图算法。
+
+Target boundary:
+
+- 本地职责：
+  - 对 raw `BufferedImage` / ROI 编 PNG payload，带 `imagePayloadBase64`、`payloadMimeType=image/png`、
+    `imageSha256`、窗口尺寸、ROI 和 operation 发云端；
+  - 校验云端返回的 washed image payload、mime、sha、尺寸、operation、confidence；
+  - 解码洗后图并只用于薄模板/像素匹配；
+  - cloud disabled、timeout、`NO_RESULT`、invalid 或 covered active failure 都必须 fail-closed，不回旧本地洗图。
+- 云端职责：
+  - 接 raw image/ROI；
+  - 执行 `WASH_GREEN` 等洗图；
+  - 返回洗后 PNG payload、sha、宽高、operation、reason、confidence。
+
+Implementation direction:
+
+- 扩展 `ImagePreprocessCloudDecision` / `ImagePreprocessCloudService` 支持 `RETURN_WASHED_IMAGE`：
+  - 可用结果不再只看 candidate boxes/points，也可看 washed image payload；
+  - 返回的洗后图必须是 `image/png`，sha 必须与 payload 对应，尺寸必须为正；
+  - `NO_RESULT` 与 `REQUIRED_FAILURE` 不能被当成可用洗后图。
+- Dev/test sidecar 可以在 `src/test/java` 内继续使用 `ImagePreprocessor` 模拟云端洗图；这个测试实现不能进入发布 runtime。
+- 第一刀生产 caller 选 `ObjectiveTextRecognitionService`：
+  - 它当前只做绿色 objective 文本洗图后模板匹配，不直接点鼠标；
+  - cloud active 时 `recognize(BufferedImage raw, String source)` 必须通过 `ImagePreprocessCloudService`
+    获得 `WASH_GREEN` 洗后图；
+  - 云端没有可用洗后图时返回 `Optional.empty()`，不调用旧本地 `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)`；
+  - cloud disabled 时也返回 objective miss，不回旧本地洗图；开发期需要云端/sidecar 才能覆盖这条洗图路径。
+
+Validation:
+
+- RED focused guard：
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,ObjectiveTextRecognitionCloudWiringTest,CloudDecisionDevServerTest" test`
+    首跑 test compile 失败，证据是 `ImagePreprocessCloudDecision` 缺少 `hasWashedImage()`、
+    `getWashedImagePayloadBase64()`、`getWashedPayloadMimeType()`、`getWashedImageSha256()`、
+    `getWashedWidth()`、`getWashedHeight()`；这证明 washed PNG 合同尚未实现。
+  - 新增 `ObjectiveTextRecognitionCloudWiringTest` source guard，要求
+    `ObjectiveTextRecognitionService` 注入 `ImagePreprocessCloudService`，cloud helper 请求
+    `ImagePreprocessOperation.WASH_GREEN`，且 active covered helper 内不含
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)`。
+- Implementation：
+  - `ImagePreprocessCloudDecision` 新增 washed PNG payload/mime/sha/width/height 字段；
+    `hasWashedImage()` 只在 `CLOUD_EXECUTED` 且字段完整时为 true，`hasUsableResult()` 接受 candidates
+    或 washed image。
+  - `ImagePreprocessCloudService` 继续使用 `serviceId == CloudDecisionServiceId.IMAGE_PREPROCESS`
+    的 service-specific execute gate，没有把 `IMAGE_PREPROCESS` 加进 generic `EXECUTABLE_SERVICES`。
+    gate 对 `washedImagePayloadBase64`、`washedPayloadMimeType=image/png`、`washedImageSha256`、
+    `washedWidth`、`washedHeight` 做 base64/sha/PNG/尺寸校验；`NO_RESULT` 不暴露 washed image。
+  - `CloudDecisionDevServer` 的 test-scope `IMAGE_PREPROCESS/WASH_GREEN` endpoint 会 decode raw payload，
+    用 test 侧 `ImagePreprocessor.washGreenTextToBlackAndWhite(...)` 生成 washed PNG，并返回 payload/sha/尺寸；
+    缺 payload/mime/sha/windowSize 仍 400。
+  - `ObjectiveTextRecognitionService.recognize(BufferedImage raw, String source)` 经 CR177A follow-up 改为通过
+    `ImageProcessorService` 请求 `WASH_GREEN` clean image；有有效 washed image 后继续原有
+    `cropToForeground`、map template、digit template、coordinate plausibility 和 checkpoint 流程。
+    cloud disabled/timeout/no-result/invalid 均返回 `Optional.empty()`，不再调用
+    `localWashedObjectiveImage(...)` 或本地 `ImagePreprocessor`。
+- GREEN：
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,ObjectiveTextRecognitionCloudWiringTest,CloudDecisionDevServerTest" test`
+    passed。
+  - `mvn -q -DskipTests compile` passed。
+- Manager/review verification 2026-07-02：
+  - 谢帅复核 `ObjectiveTextRecognitionService`、`ImagePreprocessCloudService`、`ImagePreprocessCloudDecision`
+    与 dev sidecar 当前源码，确认本轮没有改 objective 模板阈值、坐标 plausibility、点击语义或 task phase；
+    只替换绿色 objective clean image 来源。
+  - Aquinas 二审未发现 P0/P1/P2 阻塞：`NO_RESULT` 不暴露 washed image；低置信、bad mime、bad base64、
+    sha mismatch、PNG unreadable、尺寸不一致均被 gate 拒绝；cloud active failure 不回本地
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)`，只有 `DISABLED` 进入独立本地 fallback helper。
+  - 谢帅重新跑过 focused tests、`mvn -q -DskipTests compile` 和 CR170 scoped `git diff --check`；
+    `diff --check` exit 0，仅有 LF/CRLF warning。
+- Source guard：
+  - `ObjectiveTextRecognitionService` 必须注入/调用 `ImageProcessorService`；
+  - `ObjectiveTextRecognitionService` 内不能包含 `ImagePreprocessWashedImageClient`、
+    `washWithDisabledFallback(...)`、`localWashedObjectiveImage(...)` 或
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)`。
+- Fresh runtime：
+  - 触发 objective 绿色文本识别时，日志出现 `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE`、
+    `operation=WASH_GREEN`、`imagePayloadBase64=<redacted len=... sha256=...>`；
+  - 云端有效 washed image 后 objective template 匹配继续正常；
+  - 云端 invalid/timeout/no-result 时本轮 objective 识别 miss，不回本地洗图。
+
+Card CR171: ImagePreprocessCloud 通用 washed-image 客户端与全 wash operation sidecar
+
+Status:
+
+- Review. Owner: 谢帅+worker。CR171 worker 已实现通用 helper 与 test-scope sidecar；谢帅/helper reviewer 负责复核，fresh runtime 待验。
+
+Problem:
+
+- CR170 已证明 `IMAGE_PREPROCESS` 可以返回 washed PNG，并把 `ObjectiveTextRecognitionService` 的绿字洗图单点接到云端。
+- 但当前实现仍把 raw image 编码、sha、request 构造、washed PNG 解码写在 objective caller 内，后续 Dialog/NPC/Tracker/GameTextLine 等路径复用会继续复制这段胶水。
+- Dev sidecar 目前主要覆盖 `WASH_GREEN`，还不能稳定模拟黄字、紫字、薄白字、dialog option template 等洗图 operation。
+
+Target boundary:
+
+- 本卡只做通用底座：
+  - 抽出可复用的 cloud washed-image helper/client，统一从 `BufferedImage` 或 path 构造 `ImagePreprocessCloudRequest`；
+  - 统一校验/解码 `ImagePreprocessCloudDecision` 的 washed PNG，并支持写入目标 path；
+  - 让 dev sidecar 的 `IMAGE_PREPROCESS` 覆盖 `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、白字和 dialog option template 洗图 operation；
+  - 如有必要，可把 CR170 的 objective 绿字 caller 改为使用该 helper，减少重复。
+- 本卡明确不做：
+  - 不迁移 Dialog/NPC/Tracker/GameTextLine/Wubei/Navigation 具体业务调用点；
+  - 不改任何点击坐标、模板阈值、OCR fallback、任务 phase、runner 或导航语义；
+  - 不删除 `ImagePreprocessor`，也不假装图片处理已全部云端化完成。
+
+Implementation direction:
+
+- 优先复用现有 `ImagePreprocessCloudService` 的 request/decision/gate，不新开第二套 cloud service id。
+- 若需要新增 operation，优先补在 `ImagePreprocessOperation`，并在 source guard 里说明含义：
+  - `WASH_WHITE` 可作为薄白字洗图；
+  - dialog option template 如现有 enum 不够表达，可新增专用 operation，避免把“绿字+黄高亮”混成普通绿字。
+- 新 helper 的 cloud active 语义必须 fail-closed：
+  - `REQUIRED_FAILURE`、timeout、invalid washed payload、`NO_RESULT` 均不得调用本地 wash fallback；
+  - cloud disabled 才允许保留旧本地 fallback，方便开发和回滚。
+- Dev sidecar 的本地 `ImagePreprocessor` 模拟只能留在 `src/test/java`；发布路径不得新增新的洗图算法副本。
+
+Validation:
+
+- focused tests：
+  - helper 对 `BufferedImage`/path 的 request 构造、sha、PNG 解码、写 path 成功和失败分支；
+  - sidecar 对每个 wash operation 返回 `washedImagePayloadBase64`、`washedPayloadMimeType=image/png`、
+    `washedImageSha256`、`washedWidth`、`washedHeight`；
+  - cloud active failure 不回本地 wash；cloud disabled 才走本地 fallback；
+  - objective 仍能通过现有 CR170 guard，不改模板匹配流程。
+- source guard：
+  - `ImagePreprocessCloudService` 仍使用 service-specific gate；
+  - `CloudDecisionDevServer` 的 wash 模拟只在 `src/test/java`；
+  - 本卡不新增 Dialog/NPC/Tracker 业务调用点迁移。
+- commands:
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest,*ImagePreprocess*Test" test`
+  - `mvn -q -DskipTests compile`
+  - CR171 scoped `git diff --check`
+
+Worker implementation record 2026-07-02:
+
+- 新增 `ImagePreprocessWashedImageClient` Spring service：
+  - `wash(BufferedImage, ImagePreprocessOperation, RequestMetadata)` 统一 raw PNG 编码、base64、SHA-256、
+    `ImagePreprocessCloudRequest` 构造，并复用 `ImagePreprocessCloudService` 的 service-specific gate；
+  - `washToPath(Path, Path, ImagePreprocessOperation, RequestMetadata)` 支持 raw path 输入和 washed PNG 落盘；
+  - `washWithDisabledFallback(...)` 只在 `IMAGE_PREPROCESS` 返回 `DISABLED` 时调用传入本地 fallback；
+    active `REQUIRED_FAILURE`、timeout、invalid/低置信 washed payload、`NO_RESULT` 均 fail-closed，不回本地 wash。
+- `ObjectiveTextRecognitionService` 改用 `ImagePreprocessWashedImageClient` 请求 `WASH_GREEN`，去掉 caller 内手写
+  raw PNG 编码、sha、`ImagePreprocessCloudRequest` 构造和 washed PNG 解码。保留旧
+  `localWashedObjectiveImage(...)`，但只作为 helper 的 cloud-disabled fallback。未改
+  `cropToForeground`、地图模板/数字模板匹配、坐标 plausibility、threshold、checkpoint、点击或任务 phase。
+- `ImagePreprocessOperation` 新增 `WASH_DIALOG_OPTION_TEMPLATE`；现有 `WASH_WHITE` 明确用于薄白字洗图。
+- `CloudDecisionDevServer` 的 `IMAGE_PREPROCESS` test-scope sidecar 现在对
+  `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、`WASH_WHITE`、`WASH_DIALOG_OPTION_TEMPLATE`
+  都用测试侧 `ImagePreprocessor` 模拟云洗图，并返回 `washedImagePayloadBase64`、
+  `washedPayloadMimeType=image/png`、`washedImageSha256`、`washedWidth`、`washedHeight`。
+- Source guard 覆盖：
+  - helper 不包含 `ImagePreprocessor` 本地洗图算法；
+  - 本卡未把 `DialogService`、`NpcClickService`、`TaskTrackerPanelService`、`GameTextLineOcrService`、
+    `WubeiTask`、`NavigationService` 迁到 helper；
+  - `ImagePreprocessCloudService` 仍使用 service-specific gate，未把 `IMAGE_PREPROCESS` 加入
+    `CloudDecisionCoordinator` generic `EXECUTABLE_SERVICES`。
+
+Worker verification 2026-07-02:
+
+- RED：`mvn -q -Dtest="ImagePreprocessWashedImageClientTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest" test`
+  初次运行在 test compile 失败，报 `ImagePreprocessWashedImageClient` 不存在，符合 CR171 helper 缺口。
+- GREEN：
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest" test`
+    passed；
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` passed；
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest,*ImagePreprocess*Test" test`
+    passed；
+  - `mvn -q -DskipTests compile` passed。
+
+Review repair 2026-07-02:
+
+- P1：`CloudDecisionDevServer.washPurpleDevImage(...)` 不再使用按 trace 固定的
+  `image_preprocess_<trace>_purple_raw.png` / `_washed.png`，改为
+  `Files.createTempFile(IMAGE_PREPROCESS_DEV_TEMP_DIR, "image_preprocess_" + traceId + "_purple_raw_", ".png")`
+  和对应 washed temp。raw/washed temp 在 `finally` 清理；主流程抛 `IOException`/`RuntimeException` 时，
+  cleanup 异常只作为 suppressed，不覆盖主异常。
+- P2：`ImagePreprocessWashedImageClientTest` 补强 active invalid washed payload guard：
+  bad sha 返回 `REQUIRED_FAILURE`、无 image，且 `washWithDisabledFallback(...)` 不调用 disabled fallback。
+- P2：`washToPath(...)` 对 washed output path 是目录的写失败显式 fail-closed，返回
+  `REQUIRED_FAILURE`/no image，避免 caller 继续使用旧文件或错误认为已落盘。
+- Dashboard/domain：CR171 row touched-area/summary 已明确为“通用云端图片处理 / `ImagePreprocess`”，避免静态 dashboard
+  误归到五倍业务域。
+- RED：
+  - `mvn -q -Dtest="CloudDecisionDevServerTest" test` 失败于 purple source guard，指出缺少
+    `Files.createTempFile(...)`；
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` 失败于 write path guard，
+    `washToPath(...)` 对目录输出仍返回 `CLOUD_EXECUTED`。
+- GREEN：
+  - `mvn -q -Dtest="CloudDecisionDevServerTest" test` passed；
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` passed。
+- Final verification：
+  - `mvn -q -Dtest="CloudDecisionDevServerTest,ImagePreprocessWashedImageClientTest,ObjectiveTextRecognitionCloudWiringTest" test` passed；
+  - `mvn -q -DskipTests compile` passed；
+  - scoped `git diff --check` passed（仅 Windows LF/CRLF 提示）。
+
+Fresh runtime gate:
+
+- 重启 DHXY 和 dev sidecar 后触发 objective 绿色文本识别；
+- 日志应出现 `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE`、`operation=WASH_GREEN`、
+  `returnMode=RETURN_WASHED_IMAGE`、redacted `imagePayloadBase64=<redacted len=... sha256=...>`；
+- 有效 washed image 后 objective 模板匹配继续正常；invalid/timeout/no-result 应返回本轮 objective miss，不回本地洗图。
+
+Card CR172: 纯 washed-image 调用点迁移第一批
+
+Status:
+
+- Review / CR177A follow-up applied. Owner: 谢帅+worker。CR172 worker 的第一批 caller-to-cloud 过渡接线
+  已由 CR177A 收口到统一 `ImageProcessorService` 门面；这些 production caller 不再使用 disabled 本地 fallback。
+  谢帅只做主管/复核，不直接写 Java 业务实现。
+
+Problem:
+
+- CR171 已提供通用 `ImagePreprocessWashedImageClient`，但发布路径里仍有多处纯洗图调用直接使用
+  `ImagePreprocessor`：
+  - `GameTextLineOcrService`：绿字/黄字 OCR candidate 前处理；
+  - `QuestManagerService`：任务管理绿字 OCR 前处理；
+  - `CoordinateHelper`：坐标/地图文本绿字前处理；
+  - `WubeiTask`：五倍 tracker/task-kind 黄字截图落盘前处理。
+- 这些调用点大多是“raw path -> washed path -> 既有 OCR/template 继续跑”，适合第一批通过
+  `RETURN_WASHED_IMAGE` 迁走，不需要先重写整个业务 service。
+
+Required behavior:
+
+- Cloud active 时必须请求 `IMAGE_PREPROCESS` 对应 operation：
+  - 绿字用 `WASH_GREEN`；
+  - 黄字用 `WASH_YELLOW`。
+- 有效云端 washed PNG 后，继续走原来的 OCR/template/candidate 逻辑。
+- Cloud active 的 timeout、`NO_RESULT`、invalid payload、低置信或写 path 失败必须 fail-closed：
+  不调用旧本地 `ImagePreprocessor` 兜底。
+- 最新发布目标修正：
+  - 不再接受“各 caller 调 helper + disabled 本地 fallback”作为最终方案；
+  - 需要统一 `ImageProcessor`/`ImagePreprocessor` 门面，使所有洗图/图像处理方法都变成云端 request/response；
+  - 本地发布路径不得保留核心洗图算法或继续调用本地 `ImagePreprocessor.wash*`；
+  - 当前 CR172 中 `DISABLED` 本地 fallback 仅是过渡实现/待删 blocker，不是验收目标。
+
+Non-goals:
+
+- 不改 OCR provider、目标字符串、模糊匹配阈值、candidate 排序、click point、导航 phase、五倍任务分流或 tracker 业务判断。
+- 不迁移 `DialogService`、`TaskTrackerPanelService`、`NpcClickService`、`SummonSkillService`、
+  `TeamRoleDetectionService`、`AutoCombatPanelService`；这些分别由 CR173-CR176 覆盖或另派 worker。
+
+Validation:
+
+- Source/focused guards：
+  - 上述文件的 CR172/CR177A 覆盖方法在 production 路径不再直接调用 `ImagePreprocessor.wash*`；
+  - production caller 不得调用 `washToPathWithDisabledFallback(...)` / `washWithDisabledFallback(...)`；
+  - production caller 不得保留 `localGreenWashedImage(...)` / `localYellowWashedImage(...)` /
+    `localWashedObjectiveImage(...)` 本地 fallback helper；
+  - `ImagePreprocessWashedImageClient` 不包含本地洗图算法，也不再暴露 disabled fallback API。
+- 若某个调用点会改变视觉匹配/点击结果，必须使用已有 testcase replay 或保存 raw screenshot 并输出 marked/replay 结果；
+  如果当前无法安全 replay，跳过该调用点并在本卡记录原因，不要硬改。
+- Commands:
+  - CR172 focused tests；
+  - `mvn -q -DskipTests compile`；
+  - scoped `git diff --check`；
+  - `node scripts/generate-cr-dashboard-data.js`。
+
+Worker implementation record 2026-07-02:
+
+- `ImagePreprocessWashedImageClient` 新增 `washToPathWithDisabledFallback(...)`：
+  - 从 raw path 读取 PNG 后复用既有 `washWithDisabledFallback(...)`，不复制 raw PNG/base64/sha/request/decode 逻辑；
+  - 有效 washed image 才写入目标 path；
+  - active `NO_RESULT`、timeout/`REQUIRED_FAILURE`、invalid payload 或无图会删除旧目标 path，避免 caller 误用 stale washed PNG；
+  - 只有 `DISABLED` 才执行传入的本地 fallback。
+- `GameTextLineOcrService`：
+  - `readDialogOptionWords(...)` 的 green/yellow option OCR path 改为 `WASH_GREEN` / `WASH_YELLOW`；
+  - world-map route destination yellow 与 route coordinate green 预处理改为云 helper；
+  - active wash 失败时返回当前识别 miss/guard unavailable，不回旧本地洗图；disabled fallback 保留在独立 local helper。
+- `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)`：
+  - `p2_raw.png -> p2_washed.png` 改为 `WASH_GREEN`；
+  - 模板列表、阈值、匹配坐标、P2 点击点、focus/click 顺序不变；无有效 washed image 直接 P2 miss/UI_ERROR。
+- `CoordinateHelper.findGreenTextInRegion(...)`：
+  - `tem_dialog_cut.png -> tem_dialog_cut_washed.png` 改为 `WASH_GREEN`；
+  - `ImageFinder.find(...)` 的 template/matchRate/坐标换算不变；无有效 washed image 返回 null。
+- `WubeiTask.parseTrackerDestinationHintCapture(...)`：
+  - destination hint `rawPath -> yellowPath` 改为 `WASH_YELLOW`；
+  - OCR、文本拼接、destination hint parse、日志字段和五倍 phase 不变；无有效 washed image 返回 `Optional.empty()`。
+- Explicit skips:
+  - 未触碰 `DialogService`、`NpcClickService`、`TaskTrackerPanelService`、`SummonSkillService`、
+    `TeamRoleDetectionService`、`AutoCombatPanelService`。
+  - `GameTextLineOcrService.findYellowTextCandidateResult(...)`/target yellow candidate 的 in-memory mask extraction 未迁移：
+    它不是单纯 path wash caller，后续应按候选抽取/点击风险单独拆卡并按 testcase replay 验证。
+
+User-direction correction 2026-07-02（CR177A 前的历史记录，已由下方 follow-up 收口）:
+
+- 用户明确最新发布目标：不要继续把 CR172 做成“各 caller 调 helper + disabled fallback”。应设计统一
+  `ImageProcessor`/`ImagePreprocessor` 门面，门面内所有洗图/图像处理方法走云端 request/response，本地发布路径不保留核心洗图逻辑。
+- 当时 CR172 caller/request 残留清单（CR177A 前）：
+  - `GameTextLineOcrService.readDialogOptionWords(...)`：已发 `WASH_GREEN` / `WASH_YELLOW` request，
+    但仍通过 `washToPathWithDisabledFallback(...)` 挂 `localGreenWashedImage(...)` / `localYellowWashedImage(...)`；
+  - `GameTextLineOcrService.preprocessWorldMapRouteDestinationYellow(...)`：已发 `WASH_YELLOW` request，
+    但仍挂 `localYellowWashedImage(...)`；
+  - `GameTextLineOcrService.preprocessWorldMapRouteCoordinateGreen(...)`：已发 `WASH_GREEN` request，
+    但仍挂 `localGreenWashedImage(...)`；
+  - `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)`：已发 `WASH_GREEN` request，
+    但仍挂 `localGreenWashedImage(...)`；
+  - `CoordinateHelper.findGreenTextInRegion(...)`：已发 `WASH_GREEN` request，
+    但仍挂 `localGreenWashedImage(...)`；
+  - `WubeiTask.parseTrackerDestinationHintCapture(...)`：已发 `WASH_YELLOW` request，
+    但仍挂 `localYellowWashedImage(...)`。
+- CR177A 后当前状态：
+  - `ImagePreprocessWashedImageClient.washToPathWithDisabledFallback(...)` 和
+    `washWithDisabledFallback(...)` 已删除；CR172 覆盖的 production caller 不再调用这些 API。
+  - `ObjectiveTextRecognitionService` / CR170 已改为通过 `ImageProcessorService` 获取 `WASH_GREEN`
+    洗后图，disabled/timeout/no-result/invalid 都按 miss/fail-closed 处理。
+  - `ImagePreprocessor` 内黄/绿/白/紫/option-template 等本地核心算法仍存在；CR173 后续迁移/删除
+    不能把 CR177A 第一批 caller 收口误解为全局完成。
+
+CR177A follow-up 2026-07-02:
+
+- `ObjectiveTextRecognitionService`：
+  - `cloudWashedObjectiveImage(...)` 改为调用 `imageProcessorService.washGreenTextToBlackAndWhite(...)`；
+  - 删除 `localWashedObjectiveImage(...)`，cloud disabled/timeout/no-result/invalid 都返回 objective miss；
+  - 未改 `cropToForeground`、地图/数字模板匹配、坐标 plausibility 或 stop checkpoint。
+- `GameTextLineOcrService`：
+  - `readDialogOptionWords(...)` 的 green/yellow option wash、world-map destination yellow wash、
+    world-map coordinate green wash 全部改为 `imageProcessorService.washToPath(...)`；
+  - 删除 `localGreenWashedImage(...)` / `localYellowWashedImage(...)`；
+  - 未改 OCR provider、关键词/alias 判断、路线目的地/坐标解析、candidate 排序或点击点。
+- `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)`：
+  - `p2_raw.png -> p2_washed.png` 改为 `imageProcessorService.washToPath(..., WASH_GREEN, ...)`；
+  - 未改 P2 模板列表、阈值、随机点击点、focus/click 顺序、P1/P2 fallback order。
+- `CoordinateHelper.findGreenTextInRegion(...)`：
+  - ROI green-text wash 改为 `imageProcessorService.washToPath(..., WASH_GREEN, ...)`；
+  - 未改 `ImageFinder.find(...)` 模板匹配或 `resolveMatchedPointInRect(...)` 坐标换算。
+- `WubeiTask.parseTrackerDestinationHintCapture(...)`：
+  - destination hint yellow wash 改为 `imageProcessorService.washToPath(..., WASH_YELLOW, ...)`；
+  - 未改 OCR 文本拼接、hint parse、五倍 phase 或任务分流。
+- `ImagePreprocessWashedImageClient`：
+  - 删除 `washWithDisabledFallback(...)` / `washToPathWithDisabledFallback(...)`，helper 只保留无本地 fallback 的
+    `wash(...)` / `washToPath(...)`。
+- Source guards：
+  - 新增 `ImageProcessorCR177ACallerWiringTest`，要求上述 production caller 注入 `ImageProcessorService`，
+    不使用 disabled fallback API，不保留 `local*WashedImage` helper，不直接调用本地 `ImagePreprocessor.wash*`。
+  - 更新 CR170/CR172/CR173 相关 guard，使测试不再鼓励 disabled local fallback。
+- Verification note：
+  - `rg` source guard 已确认目标 caller 无 `washToPathWithDisabledFallback`、`washWithDisabledFallback`、
+    `ImagePreprocessWashedImageClient`、`ImagePreprocessor.washGreenTextToBlackAndWhite`、
+    `ImagePreprocessor.washYellowText`、`washYellowTextToBlackAndWhite`、`localGreenWashedImage`、
+    `localYellowWashedImage`、`localWashedObjectiveImage`。
+  - `mvn -q -Dtest="ImageProcessorCR177ACallerWiringTest,ObjectiveTextRecognitionCloudWiringTest,ImagePreprocessCR172CallerWiringTest,ImageProcessorServiceCR173ContractTest,ImageProcessorServiceCR173RequiredOutputTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    passed。
+  - `mvn -q -DskipTests compile` passed。
+  - Scoped `git diff --check` passed（仅 LF/CRLF warning）。
+
+Worker RED/GREEN evidence 2026-07-02:
+
+- RED：
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,ImagePreprocessCR172CallerWiringTest" test`
+    首次 testCompile 失败，报 `washToPathWithDisabledFallback(...)` 不存在，符合 CR172 path helper 缺口。
+- GREEN：
+  - 补 helper 与调用点后，同一 focused command passed；
+  - testCompile 期间发现两个既有测试手写构造参数需补 helper 参数：
+    `TeamReturnCloudRequiredFailureTest.ButtonPresentCoordinateHelper`、`GameTextLineOcrServiceBailongmaYellowProfileReplayTest`。
+    这些测试不走洗图路径，只补 `null` 构造参数以适配新增依赖。
+- Final verification：
+  - `node scripts/generate-cr-dashboard-data.js` generated `171 CR rows -> docs\cr-dashboard-data.js`；
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,ImagePreprocessCR172CallerWiringTest" test` passed；
+  - `mvn -q -DskipTests compile` passed；
+  - CR172 scoped `git diff --check` passed（仅 Windows LF/CRLF warning）。
+
+Fresh runtime gate:
+
+- 重启 DHXY 和 dev sidecar 后触发：
+  - dialog option OCR green/yellow；
+  - world-map route result destination/coordinate OCR；
+  - 五环 P2 绿字模板匹配；
+  - 五倍 destination hint 黄字 OCR。
+- 日志应出现 `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE`，对应
+  `operation=WASH_GREEN` / `WASH_YELLOW`、`returnMode=RETURN_WASHED_IMAGE` 和 redacted
+  `imagePayloadBase64=<redacted len=... sha256=...>`。
+- 有效 washed image 后原 OCR/template 结果继续工作；invalid/timeout/no-result 应表现为本轮 miss/UI_ERROR/guard unavailable，
+  不出现旧本地 `ImagePreprocessor.washGreenTextToBlackAndWhite(path, path)` 或 `washYellowText(path, path)` 兜底。
+
+Card CR173: 统一云端 ImageProcessor 门面与发布红线
+
+Status:
+
+- Review. Owner: 谢帅+worker。谢帅只做主管/复核，不直接写 Java 业务实现；统一门面、多批 caller
+  接入与 CR177G 生产 `ImagePreprocessor` 瘦身已完成，fresh runtime 仍需验云端/sidecar operations。
+
+Problem:
+
+- 用户明确最终目标不是“把每个 caller 各自接一点云端”，而是：
+  **`ImageProcessor` / `ImagePreprocessor` 里面所有洗图、计数、候选、fingerprint 前处理方法都必须上云端**。
+- 其他 caller 仍然在本地跑业务流程，但必须配合这个统一 ImageProcessor 门面；
+  caller 不应再直接或间接执行本地颜色阈值、二值化、OpenCV 洗图、候选提取或 fingerprint 算法。
+- 当前 `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 仍包含大量核心算法：
+  `washYellowText`、`washGreenTextToBlackAndWhite`、`washPurpleTextToBlackAndWhite`、
+  `washThinWhiteTextToBlackAndWhite`、`washDialogOptionTemplateTextToBlackAndWhite`、
+  `countYellowPixels`、`countGreenPixelsHSV`、`countThinWhitePixelsHSV`、`findGreenTextBands`、
+  `buildBinaryFingerprint`、`binaryFingerprintDistance`、`detectThinWhiteTextLinePattern` 等。
+  这些不能留在发布 runtime 作为本地实现。
+
+Required behavior:
+
+- 新增或收敛到一个统一 Spring 门面，例如 `CloudImageProcessor` / `ImageProcessorService`：
+  - 对外暴露与当前 image processor 能力对应的方法：洗黄/绿/紫/白/option-template、像素计数、green band、
+    binary fingerprint、stddev/text-line pattern 等；
+  - 门面内部只做 raw image/path 读取、PNG/base64/sha、ROI/window metadata、request/response、schema 校验、
+    washed/result 落盘或转换；
+  - 门面内部不得包含本地颜色阈值、二值化、OpenCV 洗图、候选提取、fingerprint 计算算法。
+- `src/main/java` 发布路径里：
+  - 核心 `ImagePreprocessor.wash*` / `count*` / `findGreenTextBands` / `buildBinaryFingerprint`
+    等算法必须删除、迁到真正云端工程，或仅保留在 `src/test/java` dev sidecar 模拟；
+  - `ImagePreprocessor` 如暂留，只能作为非核心 IO/crop/debug helper，不能提供本地洗图 API。
+- Cloud unavailable / timeout / no-result / invalid schema 在生产 active path 中 fail-closed；
+  不能回旧本地洗图算法。开发期若需要关云端，应该表现为功能不可用/跳过，而不是本地洗图 fallback。
+
+Non-goals:
+
+- 本卡优先确定统一门面和发布红线，不一次性重写所有业务 caller。
+- 不改变 OCR/template/click/navigation/task phase/fallback 语义。
+- 不把 `DialogService` / `NpcClickService` / `TaskTrackerPanelService` 等业务 service 整体上云；
+  上云的是它们依赖的 image processor 算法。
+
+Validation:
+
+- Source guard：
+  - 发布路径不得新增本地洗图算法副本；
+  - 统一门面类不得 import/call `ImagePreprocessor` 核心算法；
+  - `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 中核心算法残留要被显式列为待删 blocker，直到 CR173 cleanup 完成。
+- 后续 caller 迁移批次必须以这个门面为唯一入口，不再分散使用本地 fallback helper。
+
+Worker implementation record 2026-07-02:
+
+- 新增 `ImageProcessorService` 作为统一 Spring image processor facade contract，方法语义覆盖：
+  `washYellowText`、`washGreenTextToBlackAndWhite`、`washPurpleTextToBlackAndWhite`、
+  `washThinWhiteTextToBlackAndWhite`、`washDialogOptionTemplateTextToBlackAndWhite`、
+  `countYellowPixels`、`countGreenPixelsHSV`、`countThinWhitePixelsHSV`、`findGreenTextBands`、
+  `pickGreenTextBand`、`buildBinaryFingerprint`、`binaryFingerprintDistance`、
+  `detectThinWhiteTextLinePattern`、`measureStddev`，并提供 `washToPath(...)` path helper。
+- 新增 `CloudImageProcessor` Spring service 实现该门面。当前骨架复用 `IMAGE_PREPROCESS`
+  request/response；washed-image 方法通过 `ImagePreprocessWashedImageClient.wash(...)` /
+  `washToPath(...)` 取得云端 washed PNG，非 washed 方法发送对应 operation 并只解析云端返回的小型
+  diagnostics/result values。本类不 import/call `ImagePreprocessor`，也不使用
+  `washWithDisabledFallback(...)` / `washToPathWithDisabledFallback(...)`。
+- `ImagePreprocessOperation` 扩展 count/band/fingerprint/stddev/text-line pattern operation：
+  `COUNT_YELLOW_PIXELS`、`COUNT_GREEN_PIXELS_HSV`、`COUNT_THIN_WHITE_PIXELS_HSV`、
+  `FIND_GREEN_TEXT_BANDS`、`PICK_GREEN_TEXT_BAND`、`BUILD_BINARY_FINGERPRINT`、
+  `BINARY_FINGERPRINT_DISTANCE`、`DETECT_THIN_WHITE_TEXT_LINE_PATTERN`、`MEASURE_STDDEV`。
+- CR177F 后 `ImagePreprocessOperation` / `ImageProcessorService` 又补充世界地图 route OCR 所需的
+  `ROUTE_PACKED_LINE_MASK` 与 `ROUTE_DESTINATION_SEGMENTS`。前者要求云端返回 packed PNG 与
+  `packedLineMappings`，本地只做 OCR 和 packed->source 坐标反算；后者要求云端返回 destination-row
+  segment point/candidate，供世界地图绿色路线坐标 guard 使用。
+- `ImagePreprocessCloudRequest` 增加 small `parameters` map，用于 `pickGreenTextBand(first)`、
+  `binaryFingerprintDistance(left/right)` 等非图像 payload 参数；这些参数只进入云端 request，
+  本地不据此执行算法。
+- `ImagePreprocessCloudDecision` / `ImagePreprocessCloudService` 增加 `resultValues`，
+  用于承载云端返回的 `pixelCount`、`binaryFingerprint`、`fingerprintDistance`、`stddev`、
+  `matched`/row stats 等小型结果；washed PNG payload 仍走专用字段，不塞入通用 result values。
+- `ImageProcessorServiceCR173ContractTest` source guard 验证统一门面存在、operation 覆盖核心语义、
+  `CloudImageProcessor` 不使用本地核心算法或 disabled fallback，并确认生产 `ImagePreprocessor`
+  只保留 crop/save/path helper，不再携带核心洗图算法。
+
+Current cleanup status:
+
+- `TaskTrackerPanelService` 已由 CR177B 迁入统一 `ImageProcessorService` 门面；本地仍保留对云端
+  `WASH_GREEN` 二值 mask 的既有 tracker 文字段拆分/点击坐标计算，因为 CR81/CR86 watcher/pathing 与
+  prepared action 坐标语义不能在本卡重写。该逻辑不再调用本地颜色阈值、洗图或 fingerprint 算法，但也不能被解读为
+  tracker 业务策略已整体上云。
+- CR177A 已删除 `ImagePreprocessWashedImageClient` 的 disabled fallback helper/API，并把 CR170/CR172
+  纯洗图 production caller 迁到 `ImageProcessorService`。
+- CR177C 已把 `DialogService` 的 wash/count/fingerprint/candidate/stddev/text-line pattern 调用迁到
+  `ImageProcessorService`。
+- CR177E 已把 `SummonSkillService` 的黄字 tooltip 计数/洗图、`AutoCombatPanelService` 的绿色 marker
+  洗图和红数字洗图/计数迁到 `ImageProcessorService`；无效云端结果按 unknown/miss/fail-closed 处理。
+- CR177G 已把 `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 瘦成非核心 helper，只保留
+  `cropCopy`、`cropAbsoluteRect`、`rectToString`、`saveDebugImage(BufferedImage,String)`、`saveImage`、
+  `pathToBufferedImage` 与 debug path helper；OpenCV loader、洗图/计数/green band/fingerprint/stddev/
+  thin-white/connected-component 与 nested stats/band 类型已迁出生产源码。
+- 旧本地算法只保留在 `src/test/java/com/bot/dhxy/cloud/dev/DevImagePreprocessor.java`，供
+  `CloudDecisionDevServer` 做本地云端模拟；发布 runtime 不再通过 `ImagePreprocessor` 提供这些核心算法。
+
+Verification 2026-07-02:
+
+- RED：`mvn -q -Dtest="ImageProcessorServiceCR173ContractTest" test` 先失败，
+  证据是缺 `src/main/java/com/bot/dhxy/cloud/task/ImageProcessorService.java`。
+- GREEN：补统一门面、operation contract 和 blocker 文档后，同一 focused command passed。
+- Final local verification：
+  - `mvn -q -Dtest="ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test` passed；
+  - `node scripts/generate-cr-dashboard-data.js` generated `171 CR rows -> docs\cr-dashboard-data.js`；
+  - `mvn -q -DskipTests compile` passed；
+  - CR173 scoped `git diff --check` passed（仅 docs LF/CRLF warning）。
+- 本轮没有改 tracker green-link click/matching 坐标算法，也没有改 `TaskTrackerPanelService` 业务逻辑，
+  因此不需要 testcase replay / marked output；后续一旦迁移 tracker green-link matching/click caller，必须按
+  AGENTS 规则补 repo-local testcase replay。
+
+Fresh runtime gate:
+
+- 启动真实 DHXY + 云端/sidecar 后，已迁 caller 应看到
+  `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE` 和对应 operation；
+  active invalid/timeout/no-result 应 fail-closed，不回本地 `ImagePreprocessor`。
+- 当前只是统一门面与第一批/并行 caller 迁移，仍不能用 fresh runtime 声称图片处理已全部云端化；
+  未迁 caller 与 `ImagePreprocessor` 核心算法清理仍按上方 blocker 继续跟进。
+
+P1 review follow-up 2026-07-02:
+
+- 修复问题：`CloudImageProcessor` 原先对 count/band/fingerprint/stddev/text-line pattern 等 operation
+  没有校验必需输出字段。云端返回 `status=EXECUTED` 但缺 `pixelCount` / `binaryFingerprint` /
+  `fingerprintDistance` / `stddev` / text-line stats / candidate boxes 时，门面会暴露
+  `CLOUD_EXECUTED` 加 null/empty 结果，后续 caller 容易误认为有效。
+- 修复实现：
+  - `ImageProcessorResult` 新增 `hasRequiredOutput()`，按 operation 判断必需输出；
+  - `CloudImageProcessor` 每个 public method 都校验必需输出。`CLOUD_EXECUTED` 但缺必需字段会转成
+    `REQUIRED_FAILURE`，清空可用输出并保留原始 cloud `decision`/reason 供诊断；
+  - candidate operation 的空结果语义收紧：`NO_RESULT` 保持 `NO_RESULT`；`EXECUTED` 但无
+    `candidateBoxes` / selected band 转 `REQUIRED_FAILURE`；
+  - `detectThinWhiteTextLinePattern(...)` 要求 `matched`、`qualifyingRows`、
+    `maxWhitePixelsInRow`、`maxClustersInRow`、`maxSpanInRow` 完整且可解析，否则 fail-closed；
+  - `ImagePreprocessCloudService` 的 `returnMode` 改为 operation-aware：
+    wash -> `RETURN_WASHED_IMAGE`，band/text candidates -> `RETURN_CANDIDATES`，
+    count/fingerprint/stddev/text-line pattern -> `RETURN_RESULT_VALUES`。
+- Guard：
+  - 新增 `ImageProcessorServiceCR173RequiredOutputTest`，覆盖 `EXECUTED` 但缺必需字段必须
+    `REQUIRED_FAILURE` / `hasRequiredOutput=false`，candidate `NO_RESULT` 保持 no-result，以及
+    operation-aware `returnMode`。
+- Verification：
+  - RED：`mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest" test` 先 testCompile 失败，
+    因为 `ImageProcessorResult.hasRequiredOutput()` 不存在；
+  - GREEN：补 required-output 校验和 returnMode 后，同一 focused test passed；
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test` passed。
+- `node scripts/generate-cr-dashboard-data.js` after card updates。
+
+CR177B worker update 2026-07-02: `TaskTrackerPanelService` image processor caller migration
+
+- 迁移内容：
+  - `TaskTrackerPanelService` 注入统一 `ImageProcessorService`。
+  - tracker title/detail 黄字 path 洗图改为 `imageProcessorService.washToPath(..., WASH_YELLOW, ...)`；
+    `DISABLED` / timeout / invalid / no-result / missing washed image 都删除/忽略 stale output，并返回原业务 miss。
+  - 五环、五倍、修罗 tracker 绿字扫描先通过 `washGreenTextToBlackAndWhite(...)` 取得云端二值 mask，再通过
+    `findGreenTextBands(...)` / `pickGreenTextBand(...)` 取得云端候选/选中 band；本地只沿用既有文字段拆分和
+    screen-absolute 点击坐标公式。
+  - 黄袍续战 prepared action 与 fast verify 的 `washGreenTextToBlackAndWhite`、
+    `buildBinaryFingerprint`、`binaryFingerprintDistance` 全部改为统一门面；云端缺任一 required output 时按
+    `green-wash-unavailable` / `fingerprint-unavailable` / `fingerprint-distance-unavailable` miss。
+  - `TaskTrackerPanelService` 不再 import/call `ImagePreprocessor`，也不再调用
+    `washYellowText`、`findGreenTextBands`、`pickGreenTextBand`、`washGreenTextToBlackAndWhite`、
+    `buildBinaryFingerprint`、`binaryFingerprintDistance` 或 `isOptionGreen` 的本地实现。
+- 保持不变：
+  - 未改 tracker 绿链点击公式、CR81/CR86 watcher/pathing、prepared action 字段、fallback 顺序或 task phase。
+  - 未触碰 `DialogService`、`NpcClickService`、`GameTextLineOcrService`、`QuestManagerService`、
+    `CoordinateHelper`、`WubeiTask`、`SummonSkillService`、`AutoCombatPanelService`、`TeamRoleDetectionService`。
+- Guard / verification:
+  - RED：`mvn -q -Dtest="TaskTrackerPanelImageProcessorCR177BWiringTest" test` 先失败，原因是
+    `TaskTrackerPanelService` 未 import/注入 `ImageProcessorService`。
+  - Source guard：PowerShell source guard passed，确认 `TaskTrackerPanelService` 使用
+    `ImageProcessorService` 并且没有上述 `ImagePreprocessor` 核心算法直连。
+  - Maven focused tests 当前被并行/无关源码阻塞，未能完成：最终重复执行的
+    `mvn -q -DskipTests compile`、TaskTracker focused tests、CR173/image focused tests 都在 compile 阶段报
+    `AutoCombatPanelService.java` 未处理 `IOException`。早先一次 compile 还暴露过
+    `NpcClickService.java` 缺 `WindowNativeBinding.getHwndHex()`。这两个文件均在 CR177B 禁止触碰范围内。
+- Testcase replay note:
+  - 本卡只把 tracker image processor 中间结果来源改为统一云端门面，没有改变绿链点击坐标算法、
+    click point 选择、watcher/pathing 消费顺序或 fallback phase；因此本轮未新增 marked replay。
+  - Fresh runtime/replay gate：启动真实 DHXY + 云端/sidecar 后，tracker 读取日志应出现
+    `IMAGE_PREPROCESS` 的 `WASH_YELLOW`、`WASH_GREEN`、`FIND_GREEN_TEXT_BANDS`、
+    `PICK_GREEN_TEXT_BAND`、`BUILD_BINARY_FINGERPRINT`、`BINARY_FINGERPRINT_DISTANCE` 请求；
+    云端无效时不得出现本地 `ImagePreprocessor` fallback。
+
+CR177E worker update 2026-07-02: `SummonSkillService` / `AutoCombatPanelService` image processor caller migration
+
+- 迁移内容：
+  - `SummonSkillService.captureAndWashYellowTipOnce(...)` 改为调用
+    `ImageProcessorService.countYellowPixels(...)` / `washYellowText(...)`，保留原截图 ROI、状态模板匹配、
+    hover/open/close、删除/确认点击和 CR145 queue 语义。
+  - `AutoCombatPanelService.findAutoCombatBox(...)` 改为通过
+    `imageProcessorService.washToPath(..., WASH_GREEN, ...)` 生成绿色 marker mask，保留原面板 anchor fallback、
+    template match 和坐标推导。
+  - `AutoCombatPanelService.readRemainingRounds(...)` 改为调用新增
+    `WASH_AUTO_COMBAT_ROUND_RED_DIGITS`，云端必须同时返回 washed PNG 与 `pixelCount`；本地只继续做原 OCR 文本
+    解析和 rounds 更新。
+- 保持不变：
+  - 未改三技能三格 queue 调度、unknown backoff、冷却、删除/确认点击点、hover/open/close、自动战斗
+    Alt+8/open/drag/refresh 顺序或战斗状态机。
+  - 云端 disabled/failure/no-result/invalid 不回本地 image processor，按 unknown/miss/fail-closed 处理。
+- Guard / replay / verification:
+  - `ImageProcessorCR177ECallerWiringTest`、`ImageProcessorCR177ERedDigitOperationTest`、
+    `AutoCombatPanelCR177EImageProcessorReplayTest` passed。
+  - Summon replay：`images/test-cases/summon-skill/single-slot-tooltip-raw.png` ->
+    `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`。
+  - Auto-combat replay：`images/test-cases/auto-combat-panel/cr177e-panel-raw.png` ->
+    `images/test-cases/auto-combat-panel/cr177e-panel-marked.png`，并生成
+    `cr177e-panel-green-washed.png` / `cr177e-round-red-digits-washed.png`。
+  - Focused Maven suites and `mvn -q -DskipTests compile` passed；额外 PowerShell source guard confirmed the two
+    target services no longer contain local `ImagePreprocessor` / green/red pixel helper symbols.
+
+Card CR174: DialogService dialog 图像预处理云端化
+
+Status:
+
+- Review. Owner: CR177C worker。源码实现、本地 source guard、dialog replay、image focused manual runner 和
+  `mvn -q -DskipTests compile` 已通过；fresh runtime 待验。
+
+Problem:
+
+- `DialogService` 仍有黄/绿/薄白/option-template 洗图、fingerprint 生成、像素计数等本地视觉前处理。
+- CR167 只覆盖普通 option pre-click 决策，不能代表 dialog 全部 image preprocess 已迁走。
+
+Required behavior:
+
+- Cloud active 时，dialog option/template/maintenance broadcast/story objective/consume validation 所需洗图与
+  fingerprint 输入必须来自云端。
+- 本地只做截图、ROI、安全校验、prepared action CAS consume、input queue 点击和业务状态更新。
+- 云端 invalid/timeout/no-result fail-closed，不回旧本地洗图。
+
+Non-goals:
+
+- 不改变 dialog option target、任务 prompt 解释、fallback 顺序、点击坐标、prepared action TTL 或 consume threshold。
+
+Validation:
+
+- 必须有 source guard 覆盖 active path 不再直接调用 dialog 洗图方法。
+- 改动 click/option 匹配路径时必须跑 dialog testcase replay，输出 marked result。
+
+Worker implementation record 2026-07-02:
+
+- `DialogService` 新增统一 `ImageProcessorService` 依赖，迁移以下直接本地核心算法调用：
+  - 维护广播/业务 option 的 `WASH_GREEN` / `WASH_YELLOW` path wash；
+  - 绿色 option template 和白色 story template 的 `WASH_DIALOG_OPTION_TEMPLATE` / `WASH_WHITE`；
+  - prepared consume validation 的按 `DialogFingerprintWashMode` 洗图、`BUILD_BINARY_FINGERPRINT`
+    和 `BINARY_FINGERPRINT_DISTANCE`；
+  - dialog 类型判断里的 `COUNT_GREEN_PIXELS_HSV`、`COUNT_THIN_WHITE_PIXELS_HSV`、`MEASURE_STDDEV`
+    和 `DETECT_THIN_WHITE_TEXT_LINE_PATTERN`；
+  - first/last green option 的 `PICK_GREEN_TEXT_BAND`。
+- 本地仍保留截图、裁剪、路径读写、模板匹配、坐标换算、随机安全偏移、prepared action CAS consume 和 input queue 点击。
+  `ImagePreprocessor.saveImage(...)`、`crop*`、`pathToBufferedImage(...)`、`rectToString(...)` 仅作为 IO/几何辅助暂留；
+  不再调用其 wash/count/fingerprint/candidate/stddev/text-line core methods。
+- `CloudDecisionDevServer` 的 test-sidecar 增加 `IMAGE_PREPROCESS` 非 wash operation 结果字段：
+  `pixelCount`、`candidateBoxes`、`binaryFingerprint`、`fingerprintDistance`、`stddev` 和 thin-white text-line stats。
+  这些本地算法只存在于 `src/test/java` dev sidecar，用来模拟云端，不进入 main runtime。
+- 新增 `DialogServiceCR177CImageProcessorWiringTest` source guard，禁止 `DialogService` 生产源码调用：
+  `wash*`、`countGreenPixelsHSV`、`countThinWhitePixelsHSV`、`getImageStandardDeviation`、
+  `detectThinWhiteTextLinePattern`、`buildBinaryFingerprint`、`binaryFingerprintDistance`、
+  `findGreenTextBands`、`pickGreenTextBand`，并要求注入/调用 `ImageProcessorService`。
+- 新增 `DialogImageProcessorCR177CReplayTest`，用 repo-local dialog testcase 跑：
+  `WASH_DIALOG_OPTION_TEMPLATE + ImageFinder` option-template 命中，以及 `PICK_GREEN_TEXT_BAND`
+  first/last band 点击公式。两张 marked 图均落在第二行目标 `领取任务`，未落到第一行干扰项 `我再想想`。
+- 为 `DialogService` 新增构造依赖后，仅适配 `TaskMaintenanceCloudRequiredFailureTest` 的测试子类 `super(...)`
+  参数数量；测试语义不变。
+
+Verification 2026-07-02:
+
+- RED attempt:
+  `mvn -q -Dtest="DialogServiceCR177CImageProcessorWiringTest" test` 先被并行工作区编译问题阻塞；
+  source guard 本身写下时会因为 `DialogService` 缺 `ImageProcessorService` 注入且仍含本地 core 调用而失败。
+- Source guard GREEN:
+  手工 runner `javac/java ... DialogServiceCR177CImageProcessorWiringTest` passed；
+  另用 PowerShell source guard 确认 `DialogService` 不再含上述本地 core 调用。
+- Replay GREEN:
+  手工 runner `java ... com.bot.dhxy.cloud.dev.DialogImageProcessorCR177CReplayTest` passed。
+  - input: `images/test-cases/dialog/cr177c/dialog-image-processor-roi-raw.png`
+  - template marked: `images/test-cases/dialog/cr177c/dialog-image-processor-template-marked.png`
+  - band marked: `images/test-cases/dialog/cr177c/dialog-image-processor-band-marked.png`
+- Image focused manual runner passed:
+  `ImageProcessorServiceCR173RequiredOutputTest`,
+  `ImageProcessorServiceCR173ContractTest`,
+  `ImagePreprocessWashedImageClientTest`,
+  `ImagePreprocessCloudServiceTest`。
+- Constructor-adapter regression passed:
+  手工 runner `TaskMaintenanceCloudRequiredFailureTest` passed。
+- Maven:
+  - `mvn -q -DskipTests compile` passed；
+  - `mvn -q -Dtest="DialogServiceCR177CImageProcessorWiringTest,DialogImageProcessorCR177CReplayTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    is blocked in `testCompile` by unrelated parallel `ImageProcessorCR177ERedDigitOperationTest` checked-exception errors
+    at lines 43 and 60. CR177C did not modify that CR177E test.
+- Scoped `git diff --check` for CR177C files passed with only existing LF/CRLF warnings.
+
+Fresh runtime gate:
+
+- 启动真实 DHXY + 云端/sidecar 后，触发 dialog option/template、维护广播、story/objective 和 prepared consume
+  路径时，应看到 `IMAGE_PREPROCESS` 对应 operation；active invalid/timeout/no-result 必须 miss/fail-closed，
+  不出现本地 `ImagePreprocessor` wash/count/fingerprint/candidate fallback。
+
+Card CR175: NPC/队伍身份紫字与 NPC 黄字前处理云端化
+
+Status:
+
+- Review. Owner: 谢帅 hotfix。`NpcClickService`、`TeamRoleDetectionService` 和
+  `GameTextLineOcrService` NPC 黄字候选 caller 已接统一 `ImageProcessorService`；2026-07-02
+  fresh runtime 暴露的 dev sidecar required-output 缺字段问题已补齐，待 fresh runtime 重启验证。
+
+Problem:
+
+- 原问题：`NpcClickService` 仍有 NPC menu 黄字、玩家紫字 anchor 洗图；`TeamRoleDetectionService`
+  仍有队伍身份紫字前处理；`GameTextLineOcrService` 仍有 NPC 黄字候选与 packed-line mask/scoring。
+- 这些逻辑直接决定 NPC 点击与本地队伍身份判断，属于核心资产。
+
+Required behavior:
+
+- Cloud active 时，黄字/紫字洗图、候选提取与 anchor/fingerprint 前处理必须走统一
+  `ImageProcessorService`，由 `IMAGE_PREPROCESS` 云端合同提供结果。
+- 本地执行云端返回的 window-relative 点击点或身份结果，并做窗口/ROI/置信度校验。
+- 失败/timeout/no-result/disabled 不回本地 yellow/purple/stddev/candidate 图像算法。
+
+Non-goals:
+
+- 不改变 NPC click strategy 顺序、Ctrl probe 预算、direct-combat 策略、队伍身份业务 gate 或 input queue 原子动作规则。
+
+Validation:
+
+- NPC 点击相关视觉变化必须使用 `images/test-cases/npc/...` replay/marked image。
+- 队伍身份路径至少要有 focused/source guard，能复用图片 testcase 时优先 replay。
+
+Fresh runtime blocker 2026-07-02:
+
+- 用户最新启动任务时，5 个窗口注册成功，sidecar 也启动成功；失败集中在
+  `TeamRoleDetectionService` 的 `team-role-tooltip-text`。
+- 日志证据：`cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE taskCode=team-role phase=team-role-tooltip-text`
+  返回 `cloudDecision=status=EXECUTED;operation=MEASURE_TEAM_TOOLTIP_TEXT`、`executed=true`、
+  `success=true`，但随后本地记录
+  `team role tooltip cloud metrics missed ... status=REQUIRED_FAILURE reason=dev-local-image-preprocess; missing required team tooltip text stats`。
+- 截图证据：`images\temp\hwnd-D230DF6\team_role_tooltip_raw_pass1_attempt2.png` 内能看到 tooltip
+  文字和 ID，说明 hover/focus/capture 成功，不是窗口没拿到或截图为空。
+- 代码证据：`CloudImageProcessor.teamTooltipTextStats(...)` 要求云端 diagnostics 返回
+  `whitePixels`、`purplePixels`、`rows`、`columns`、`transitions`、`maxRowPixels`；而
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 的
+  `addImagePreprocessResultDiagnostics(...)` switch 当前只实现到 `MEASURE_STDDEV`，缺
+  `MEASURE_TEAM_TOOLTIP_TEXT` 分支。
+- 后果：tooltip 两次 probe 都因缺 stats 判 miss，status deviation 又提示 grouped，正常启动跳过
+  Alt+T fallback，最终 `TaskTeamAssignmentPolicy` 认为 `UNKNOWN window cannot run leader-only task`
+  并跳过 `XIULUO_V2/WUBEI`。
+- 修复方向：补 dev sidecar/test helper 的 `MEASURE_TEAM_TOOLTIP_TEXT` 统计，返回上述 6 个字段；
+  用最新 raw tooltip PNG 做 focused replay/contract，验证 `TeamRoleDetectionService` 能重新产生
+  `team role tooltip probe: ... white=... purple=... distribution=...`，并在 fresh runtime 中至少识别出一个
+  `LEADER`。
+
+Hotfix resolution 2026-07-02:
+
+- `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java` 新增
+  `imagePreprocessRequiredOperationsReturnRequiredDiagnostics()`，强制 `TEXT_CANDIDATES`、
+  `ROUTE_DESTINATION_SEGMENTS`、`ROUTE_PACKED_LINE_MASK`、`MEASURE_TEAM_TOOLTIP_TEXT`
+  返回生产 `ImageProcessorResult.hasRequiredOutput()` 依赖的非空 diagnostics。
+- `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 已补齐：
+  - `TEXT_CANDIDATES` / `ROUTE_DESTINATION_SEGMENTS`：返回 `candidateBoxes`、`candidatePoints`、
+    `candidateScores`、`candidatePixelCounts`、`candidateComponentCounts`、`candidateDensities`、
+    `candidateLongRowCounts`、`candidateLongColumnCounts`、`candidateReasons`。
+  - `ROUTE_PACKED_LINE_MASK`：返回 route packed washed PNG payload/sha/size 与
+    `packedLineMappings`。
+  - `MEASURE_TEAM_TOOLTIP_TEXT`：返回 `whitePixels`、`purplePixels`、`rows`、`columns`、
+    `transitions`、`maxRowPixels`。
+- 验证已通过：
+  - RED：`mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite" test` 先失败在
+    `TEXT_CANDIDATES candidateBoxes` 为空，证明测试抓到 sidecar required-output 缺口。
+  - GREEN：同一 focused suite 通过。
+  - `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    通过。
+  - `mvn -q -DskipTests compile` 通过。
+- Fresh runtime gate：
+  - 重启 DHXY/sidecar 后，`team-role-tooltip-text` 不应再出现
+    `missing required team tooltip text stats`。
+  - 应看到 `team role tooltip probe: ... white=... purple=... distribution=...`，
+    并至少一个窗口识别为 `LEADER`，不再全部 `role=UNKNOWN`。
+
+Worker implementation record 2026-07-02:
+
+- `NpcClickService`：NPC 菜单黄字 `WASH_YELLOW`、玩家锚点 `WASH_PURPLE`、紫字 player-anchor
+  fallback candidate 已改为调用统一 `ImageProcessorService` / `TEXT_CANDIDATES`。未改 NPC click
+  strategy 顺序、Ctrl probe 预算、direct-combat 语义或 final click point。
+- `TeamRoleDetectionService`：队伍 tooltip 紫字洗图、tooltip 文本像素/分布指标、队伍状态 stddev
+  已改为 `WASH_PURPLE`、`MEASURE_TEAM_TOOLTIP_TEXT`、`MEASURE_STDDEV`；本地
+  `countPurplePixels(...)`、`measureTextDistribution(...)` 和 stddev 直接算法已移出 caller。
+- `GameTextLineOcrService`：CR172 纯 wash caller 继续走门面；`findYellowTextCandidateResult(...)`、
+  `findTextLikeCandidateResultFromWashedImage(...)` 和 `findYellowTarget(...)` 的 NPC 黄字候选
+  visual-candidate 步骤已消费云端 `TEXT_CANDIDATES` payload，本地不再在这些路径里重跑黄字候选
+  scoring。
+- `ImageProcessorService` / `CloudImageProcessor` / `ImagePreprocessCloudService` 已补
+  `TEXT_CANDIDATES` 与 `MEASURE_TEAM_TOOLTIP_TEXT` 合同，缺 candidate/tooltip stats 时 fail-closed。
+
+CR177D follow-up resolved by CR177F:
+
+- CR177D 当时遗留的 `GameTextLineOcrService` route/packed-line 本地图像算法已由 CR177F 迁到统一
+  `ImageProcessorService` 合同：`ROUTE_PACKED_LINE_MASK` 和 `ROUTE_DESTINATION_SEGMENTS`。
+- CR177F source guard 已覆盖旧 blocker token 不得回流，包括
+  `buildBrightPixelMask(...)`、`writePackedLineMask(...)`、`scanPackedLines(...)`、
+  `collectYellowCandidates(...)`、`buildFilteredMask(...)`、`buildBlackPixelMask(...)`、
+  `findTextLikeCandidates(...)`、`scoreWashedTextLine(...)`、`Color.RGBtoHSB`、connected component 和
+  long-run/density scoring helpers。
+
+Replay / verification record 2026-07-02:
+
+- NPC replay：`mvn -q -Dtest="NpcClickCR177DImageProcessorCandidateReplayTest" test` passed。
+  输入 `images/test-cases/npc/cr177d-image-processor/npc-yellow-candidate-raw.png`；
+  标记输出 `images/test-cases/npc/cr177d-image-processor/npc-yellow-candidate-marked-click.png`，
+  红框/红点显示云端 candidate box 与 NPC-name-below click point。
+- Focused image processor contract：
+  `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+  passed。
+- Source/focused：
+  `mvn -q -Dtest="ImageProcessorCR177DCallerMigrationGuardTest" test` passed；
+  `mvn -q -Dtest="ImageProcessorCR177DCallerMigrationGuardTest,NpcClickCR177DImageProcessorCandidateReplayTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+  passed。
+- Compile/dashboard：
+  `mvn -q -DskipTests compile` passed；
+  `node scripts/generate-cr-dashboard-data.js` generated `docs/cr-dashboard-data.js`。
+- Scoped diff/source checks：目标三文件未再命中本地 `ImagePreprocessor` yellow/purple/stddev 调用或
+  NPC/team 本地紫字 pixel classifier；`git diff --check` 仅有既有 LF/CRLF warning。
+
+Card CR177F: GameTextLineOcrService route/packed 残留云端化
+
+Status:
+
+- Review. Owner: CR177F worker。源码实现、source guard、world-map route replay、`test-compile`、
+  CR173 合同测试和 `mvn -q -DskipTests compile` 已通过；fresh runtime 待验。
+
+Problem:
+
+- CR177D 后 `GameTextLineOcrService` 仍保留 world-map route destination / packed-line / text-like OCR
+  相关本地图像算法：bright/black mask、HSV 像素判定、connected component、packed-line PNG 生成、
+  yellow segment split、route green destination-row segment 选择、long-run/density scoring。
+- 这些算法虽然在 OCR caller 内部，但仍属于 `ImageProcessor`/`ImagePreprocessor` 口径下的核心图像处理，
+  发布 runtime 不应保留或在云端失败后 fallback。
+
+Required behavior:
+
+- `GameTextLineOcrService` 生产路径不得包含上述本地算法方法名、`Color.RGBtoHSB`、connected component、
+  packed-line 写图或 text-like scoring。
+- 本地允许保留：
+  - raw/washed PNG 上传与 path IO；
+  - `TextRecognizer` 本地 OCR 调用；
+  - route destination OCR 文本解析、map-name fuzzy/alias 判断；
+  - 云端 packed mapping 的坐标反算；
+  - debug overlay/marked replay 输出。
+- 云端无效、timeout、no-result、缺必需输出时 fail-closed 或返回原业务 miss；不得回本地 mask/segment/scoring。
+
+Implementation 2026-07-02:
+
+- `ImagePreprocessOperation` 新增：
+  - `ROUTE_PACKED_LINE_MASK`：云端返回 packed PNG 与 `packedLineMappings`；
+  - `ROUTE_DESTINATION_SEGMENTS`：云端返回 destination-row green segment candidate point/box。
+- `ImageProcessorService` / `CloudImageProcessor` 新增：
+  - `routePackedLineMask(BufferedImage, RequestMetadata)`；
+  - `routeDestinationSegments(BufferedImage, RequestMetadata)`；
+  - `PackedLineMapping` result DTO；
+  - required-output gate：`ROUTE_PACKED_LINE_MASK` 必须有 image + mapping；
+    `ROUTE_DESTINATION_SEGMENTS` 必须有 candidate point/box，否则 `REQUIRED_FAILURE`。
+- `GameTextLineOcrService`：
+  - route destination whole-image yellow wash/OCR 仍走既有 `WASH_YELLOW` + OCR；
+  - 当 whole-image OCR 不是精确目标时，改为调用 `imageProcessorService.routePackedLineMask(...)`，
+    OCR 云端 packed PNG，并用云端 `PackedLineMapping` 反算到原 route-result 坐标；
+  - route green coordinate destination-row guard 改为调用
+    `imageProcessorService.routeDestinationSegments(...)` 取得云端 point；
+  - 删除生产源码中的本地 bright/black mask、HSV pixel 判断、component grouping、packed-line 写图、
+    route segment split、text-like candidate scoring 和 dead helper/nested types。
+
+Preserved semantics:
+
+- 未改变 route destination expected/actual normalizer、`长安`/`长安城东` 区分、`北俱` alias、
+  `matchShortName` fuzzy 兜底、OCR provider 调用、world-map yellow destination click 语义、
+  green coordinate OCR fallback 顺序、导航 phase 或 input/click 坐标换算。
+- 未编辑 `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 或
+  `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java`；CR177F 没有回滚其他 worker 改动。
+
+Validation 2026-07-02:
+
+- RED：新增 `ImageProcessorCR177FGameTextRouteGuardTest` 后，
+  `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest" test` 先失败：
+  `GameTextLineOcrService production source must not keep local image algorithm token buildBrightPixelMask(`。
+- GREEN：
+  - `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest,GameTextLineOcrCR177FRouteReplayTest" test`
+    passed；
+  - replay input:
+    `images/test-cases/world-map-route/positive/route_result_changan_complete_raw.png`；
+  - marked output:
+    `images/test-cases/world-map-route/cr177f/route_result_changan_cr177f_marked.png`；
+  - replay logs show packed OCR mapped `长安` back to source and cloud route segment point `(48,111)` used
+    as the coordinate click point。
+- Adjacent verification passed:
+  - `mvn -q -DskipTests test-compile`；
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`；
+  - `mvn -q -DskipTests compile`。
+- Final handoff recheck:
+  - `node scripts/generate-cr-dashboard-data.js` generated `docs/cr-dashboard-data.js`；
+  - fresh `mvn -q -DskipTests compile` passed；
+  - one handoff Maven test recheck was briefly blocked by parallel CR177G testCompile churn in
+    `CloudDecisionDevServer.java` / `ImagePreprocessor.GreenTextBand`, but CR177F did not edit those files and the
+    latest workspace now compiles against `DevImagePreprocessor.GreenTextBand`；
+  - fresh `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest,GameTextLineOcrCR177FRouteReplayTest" test`
+    passed；
+  - fresh `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed；
+  - fresh `mvn -q -DskipTests test-compile` passed；
+  - scoped CR177F source guard via `rg` found no forbidden local image-algorithm token in
+    `GameTextLineOcrService`；
+  - scoped `git diff --check` passed with only LF/CRLF normalization warnings。
+
+Fresh runtime gate:
+
+- 启动真实 DHXY + 云端/sidecar 后，world-map route guard 应看到 `IMAGE_PREPROCESS`
+  `ROUTE_PACKED_LINE_MASK` 和 `ROUTE_DESTINATION_SEGMENTS` operations。
+- 云端 disabled/timeout/no-result/invalid 或 packed image/mapping/candidate 缺失时，不得 fallback 到本地
+  mask/segment/scoring；应表现为 route guard miss/fail-closed，再由现有导航错误处理接管。
+
+Card CR177G: 生产 ImagePreprocessor 瘦身与 dev sidecar helper 迁移
+
+Status:
+
+- Review. Owner: CR177G worker。源码实现、source guard、dev sidecar 测试和 `compile` 已通过。
+
+Problem:
+
+- 用户明确要求 `src/main/java` 不能保留任何 `ImageProcessor` / `ImagePreprocessor` 洗图、阈值、mask、
+  fingerprint、stddev、green-band、thin-white、connected-component 核心算法。
+- CR177F 同期可能修改 `GameTextLineOcrService` / cloud contract；本卡必须只处理
+  `ImagePreprocessor` 本体和 test-sidecar 迁移，不覆盖 CR177F 代码。
+
+Required behavior:
+
+- `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 只保留非核心薄工具：
+  `cropCopy`、`cropAbsoluteRect`、`rectToString`、`saveDebugImage(BufferedImage,String)`、
+  `saveImage`、`pathToBufferedImage` 与必要 debug path helper。
+- 移除生产文件中的 `OpenCvNativeLoader`、`org.opencv`、`saveDebugImage(Mat,...)`、所有 wash/count/
+  find/pick/fingerprint/stddev/thin-white/dialog-option/yellow/green/purple/core pixel methods，以及 nested
+  `GreenTextBand` / `TextLinePatternStats`。
+- `CloudDecisionDevServer` 不能 import/call 生产 `ImagePreprocessor` 核心算法；旧算法只允许迁到
+  `src/test/java` helper，用于本地 cloud server 模拟。
+- 不改变业务 click/navigation/dialog 策略，不添加本地 fallback。
+
+Implementation 2026-07-02:
+
+- `ImagePreprocessor` 已瘦身为 crop/save/path helper；生产源码不再 import OpenCV，也不再暴露
+  wash/count/fingerprint/stddev/green-band/thin-white API。
+- 新增 `src/test/java/com/bot/dhxy/cloud/dev/DevImagePreprocessor.java`，把旧算法集中放在 test scope。
+- `CloudDecisionDevServer` 的 summon-skill tooltip 模拟和 `IMAGE_PREPROCESS` dev response 改为调用
+  `DevImagePreprocessor`，不再 import/call `com.bot.dhxy.tools.ImagePreprocessor`。
+- 未编辑 `GameTextLineOcrService`，未改变业务点击、导航、dialog 策略或 fallback 顺序。
+
+Validation 2026-07-02:
+
+- RED：新增 `ImageProcessorCR177GImagePreprocessorCleanupTest` 后，
+  `mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest" test` 先失败于
+  `CloudDecisionDevServer` import 生产 `ImagePreprocessor`。
+- GREEN：
+  - `mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest" test` passed；
+  - `mvn -q -DskipTests compile` passed；
+  - `mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest,CloudDecisionDevServerTest" test` passed。
+- 本卡没有改变视觉 click target、OCR/template 匹配坐标或点击点计算，因此不需要 testcase replay / marked output。
+
+Fresh runtime gate:
+
+- 启动真实 DHXY + cloud/dev sidecar 后，已迁移 caller 应继续看到 `IMAGE_PREPROCESS` operations；生产路径不得因
+  `ImagePreprocessor` 缺少旧算法而回退到本地洗图。
+- 如果后续新 caller 需要旧图像算法，只能走 `ImageProcessorService` / 云端合同，不能重新把算法放回
+  `src/main/java`。
+
+Card CR176: 三技能/自动战斗剩余像素判断云端化
+
+Status:
+
+- Review. Owner: CR177E worker。源码实现、source guard、summon/auto-combat replay、focused tests 和
+  `mvn -q -DskipTests compile` 已通过；fresh runtime 待验。
+
+Problem:
+
+- CR166 只覆盖三技能单槽 tooltip/status 第一刀；`SummonSkillService` 仍可能保留 yellow pixel/template 判断。
+- `AutoCombatPanelService` 仍有绿/红像素或状态图前处理，用于自动战斗面板判断。
+
+Required behavior:
+
+- Cloud active 时，三技能 tooltip/status 剩余本地 yellow/pixel/template 前处理和自动战斗绿/红状态像素判断迁到云端。
+- 本地保留窗口打开/hover、截图、payload、返回校验、队列调度、冷却和点击执行。
+- 云端 disabled/failure/no-result/invalid 不回本地 image preprocess；按原业务语义返回 unknown/miss/fail closed。
+
+Non-goals:
+
+- 不改变 CR145 三技能队列调度、冷却时间、删除/确认点击、自动战斗开关顺序或战斗状态机。
+
+Implementation 2026-07-02:
+
+- `SummonSkillService.captureAndWashYellowTipOnce(...)`：
+  - 移除对 `ImagePreprocessor.countYellowPixels(...)` / `ImagePreprocessor.washYellowText(...)` 的生产调用；
+  - 改为用 `ImageProcessorService.countYellowPixels(...)` / `washYellowText(...)`；
+  - 云端缺 `pixelCount` 或 washed image 时返回 `null`，让原三技能路径按 unknown/fail-closed 处理。
+- `AutoCombatPanelService.findAutoCombatBox(...)`：
+  - 移除本地 `countGreenPixelsHSV(...)` 绿色 mask 生成；
+  - 改为 `imageProcessorService.washToPath(..., WASH_GREEN, ...)` 后继续复用原模板匹配和坐标推导。
+- `AutoCombatPanelService.readRemainingRounds(...)`：
+  - 移除本地 `washRoundRedDigits(...)`、`isAutoCombatRoundRedPixel(...)`、`countBlackPixels(...)`；
+  - 新增统一门面操作 `WASH_AUTO_COMBAT_ROUND_RED_DIGITS`，要求云端同时返回 washed PNG 与 `pixelCount`；
+  - 无有效云端结果时返回 `OptionalInt.empty()`，不回本地红字阈值算法。
+- Dev sidecar 只在 `src/test/java` 模拟云端红数字洗图/计数；`src/main/java` 没有新增本地图像阈值算法。
+
+Preserved semantics:
+
+- 未改变 CR145 三技能三格 queue 调度、unknown backoff、冷却、删除/确认点击点、hover/open/close、
+  `SummonSkillCloudDecisionService` 单槽 status 第一刀或自动战斗 Alt+8/open/drag/refresh 顺序。
+- 自动战斗面板 anchor fallback、green marker 模板匹配、round OCR 解析、cached-round policy 和战斗状态机保持原逻辑。
+
+Validation 2026-07-02:
+
+- Source guard：
+  - `ImageProcessorCR177ECallerWiringTest` passed；
+  - 额外 PowerShell source guard passed：目标文件不再含 `ImagePreprocessor`、`countGreenPixelsHSV`、
+    `washRoundRedDigits`、`isAutoCombatRoundRedPixel`、`countBlackPixels`。
+- Replay：
+  - Summon input `images/test-cases/summon-skill/single-slot-tooltip-raw.png`；
+    output `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`。
+  - Auto-combat input `images/test-cases/auto-combat-panel/cr177e-panel-raw.png`；
+    output `images/test-cases/auto-combat-panel/cr177e-panel-marked.png`；
+    washed intermediates `cr177e-panel-green-washed.png` and `cr177e-round-red-digits-washed.png`。
+- Focused tests:
+  - `mvn -q -Dtest="ImageProcessorCR177ECallerWiringTest,ImageProcessorCR177ERedDigitOperationTest,AutoCombatPanelCR177EImageProcessorReplayTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test` passed。
+  - `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest,SummonSkillCloudWiringGuardTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest,TaskMaintenanceSummonSkillEpochCooldownTest,AutoCombatPanelCR177EImageProcessorReplayTest,ImageProcessorCR177ECallerWiringTest,ImageProcessorCR177ERedDigitOperationTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test` passed。
+  - `mvn -q -DskipTests compile` passed。
+
+Fresh runtime gate:
+
+- 启动真实 DHXY + 云端/sidecar 后，三技能黄字 tooltip 和自动战斗面板路径应出现
+  `IMAGE_PREPROCESS` 的 `COUNT_YELLOW_PIXELS`、`WASH_YELLOW`、`WASH_GREEN`、
+  `WASH_AUTO_COMBAT_ROUND_RED_DIGITS` 请求；云端无效时不得出现本地 image processor fallback。
+
+Validation:
+
+- 三技能路径复用 `images/test-cases/summon-skill/...` replay/guard；
+- 自动战斗面板至少有 focused guard，若变更点击/判断图像必须补 testcase replay。
+
+Card CR178: 三技能技能格静态边界识别与最后有效格倒扫
+
+Status:
+
+- Review. Owner: Peirce worker；谢帅/唐德后续负责审核。worker 已按 `docs/业务逻辑.md` 的
+  `召唤兽三技能维护 / 技能格静态边界识别` 小节接入正式代码，fresh runtime 仍待用户实跑确认。
+- 2026-07-02 用户确认：三技能技能格状态应该先从截图静态判断 locked / empty / occupied；
+  旧的逐格 hover 只用于 occupied 格需要区分普通/高级/终极时。
+- 2026-07-02 坐标校准已归入本卡：当前刷新后 `67555` 窗口绑定为
+  `hwnd-163187E | rect=1497,239,1036x783`，因此本轮用户给的绝对格子框统一按 base `(1497,239)`
+  换算为窗口相对中心点，并已写入 `SummonSkillService`。
+- 2026-07-02 worker 增加了 repo-local 现场实验入口：
+  `src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotExperiment.java`。该入口不改正式
+  `SummonSkillService` 业务流，只用当前前台窗口、`--title` 或 `--base` 截图，按本卡 `if8.png`、
+  `status_sealed1.png` / `status_unobtained1.png` / `status_inactive1.png` 静态规则输出最后可检查格编号；
+  最后一行固定为 `LAST_EFFECTIVE_SLOT=<数字|ERROR>`。
+- 2026-07-02 reviewer follow-up：实验入口已从“中心点临时扩圈裁剪”改为使用完整技能格 box ROI；
+  用户确认 6/8 技能格都是 `52x52` 正方形，因此实验入口统一按已校准中心点 `center +/- 26`
+  反推完整 box。
+- 2026-07-02 live experiment correction：现场 8 格样本中第 8 格为空，但首版实验误判为 occupied。
+  根因是 `status_inactive1.png` 是低纹理/近纯色小模板，`ImageFinder` 的 `TM_CCOEFF_NORMED`
+  对这种模板分数接近 0。实验入口已给 inactive 状态补低纹理颜色距离 fallback；同一张
+  `images/temp/summon_slot_debug/slot8_roi.png` 复核分类为 `EMPTY`。
+- 2026-07-02 用户确认：不新开 CR，本次正式实现继续归入 CR178；旧的 hover/tooltip 边界识别不要再作为
+  最后有效格来源，但删除普通技能、终极角检测、冷却/重试、输入队列点击等操作语义必须保留旧逻辑。
+- 2026-07-02 CR178 worker 实现：`SummonSkillService.cleanTailNormalSkillsDirect(...)` 现在先调用
+  `scanStaticSkillSlots(skillCount)`，一次性截当前窗口，按固定 `52x52` box ROI 和三张静态模板推导
+  `LOCKED/EMPTY/OCCUPIED`，再用倒扫结果决定本轮起始格。`OCCUPIED` 格仍走原 hover tooltip 分类；
+  `EMPTY` 格直接进入原终极角检查；截图、模板、ROI 或匹配机制失败时 fail closed。
+- 2026-07-02 review follow-up：已删除生产旧 helper `getTailCheckStartIndex(...)` /
+  `resolveStartIndex(...)`，并删除旧测试 `SummonSkillStartIndexPolicyTest`，避免旧 hover/cached start
+  边界策略继续作为可复用契约存在。
+- 2026-07-05 fresh runtime blocker 修复：`hwnd-300DA / 67555` 现场日志显示
+  `static slot rect invalid slot=1 rect=200,-95,252,-43 image=261x289`。根因是静态格子扫描把
+  `(440,508)-(701,797)` 当作屏幕绝对 ROI 直接截图，但格子 rect 又按 `base + slotOffset - roiOrigin`
+  计算，窗口 base 从旧测试 `(162,179)` 变成本轮 `(261,75)` 后坐标系混用。修复为按当前 6/8 格
+  窗口相对中心点自动生成相对 ROI，再在截图时统一加当前窗口 base；生产源码不再保留
+  `STATIC_SLOT_SCAN_ABSOLUTE_ROI`。
+- 2026-07-05 五窗口截图校验：当前可见 `DHXYJYMainFrame` 为
+  `0x110D98 base=(256,587)`, `0x300DA base=(261,75)`, `0x120ABA base=(1084,345)`,
+  `0x2B011A base=(1414,84)`, `0x30DA0 base=(1465,582)`。前台截图标注输出在
+  `images/temp/summon_skill_relative_roi_check/*_fg_relative_roi_marked.png`；校验脚本确认
+  `relativeRoi=(277,330)-(538,619)` 对五个窗口分别转换成不同 screen ROI，8 个 `52x52` 技能格
+  全部在 ROI 内。
+- Follow-up verification：`mvn -q -DskipTests compile` 通过；`git diff --check` 通过。指定 focused Maven
+  test 当前被无关 `src/test/java/com/bot/dhxy/cloud/task/MiniMapLocationCloud*` 测试源码缺失类卡在
+  testCompile 阶段，未跑到 CR178 测试；本卡未修改这些 cloud/minimap 测试。
+
+Business decision:
+
+1. 技能格数量：
+   - 打开召唤兽技能面板后，用窗口相对 ROI `(505,508)-(532,555)` 匹配
+     `images/template/zhaohuanshou/if8.png`。
+   - 命中为 8 技能布局；未命中为 6 技能布局。
+   - 不再 hover 额外技能格 tooltip 判断 6 / 8。
+   - 固定格子中心点采用本卡校准数据：
+     - 6 格：`(416,384)`, `(334,430)`, `(335,511)`, `(420,561)`, `(500,511)`, `(500,432)`。
+     - 8 格：`(405,364)`, `(339,407)`, `(311,475)`, `(338,541)`, `(406,584)`, `(475,540)`,
+       `(503,474)`, `(474,406)`。
+   - 这些坐标均为窗口相对坐标，由当前 `67555` base `(1497,239)` 从用户提供的绝对格子框中心换算而来。
+2. 静态状态模板：
+   - `status_sealed1.png` 命中为 `LOCKED_SLOT`；
+   - `status_unobtained1.png` 命中为 `LOCKED_SLOT`；
+   - `status_inactive1.png` 命中为 `EMPTY_SLOT`。
+3. 三张模板都没命中，在截图、模板、窗口坐标和匹配引擎都正常时，表示该格是 occupied skill slot。
+   这不是 `UNKNOWN`；它只是不知道普通/高级/终极，需要后续 hover 或云端识别进一步分类。
+4. `UNKNOWN` 只代表机制失败：截图失败、模板缺失、匹配引擎异常、ROI/base 不合法、面板未打开或图片无法读取。
+   `UNKNOWN` 必须 fail closed，不能刷新长冷却。
+5. 最后可检查格从当前布局最后一个格子倒扫：
+   - `LOCKED_SLOT` 跳过继续往前；
+   - 如果先遇到连续 `EMPTY_SLOT`，返回这段连续空格里最前面的那个空格；
+   - 如果没有尾部空格，第一次遇到 occupied skill slot，就是最后可检查技能格。
+   例如状态为 `OCCUPIED,OCCUPIED,OCCUPIED,EMPTY,EMPTY,EMPTY,LOCKED,LOCKED` 时，返回第 4 格。
+
+Implementation boundaries:
+
+- 使用现有 `SIX_SKILL_SLOT_OFFSETS` / `EIGHT_SKILL_SLOT_OFFSETS` 固定格子坐标，不再临时裁一个不明确的区域。
+- 已完成坐标数据更新：`SIX_SKILL_SLOT_OFFSETS` / `EIGHT_SKILL_SLOT_OFFSETS` 使用上述校准中心点。
+- 静态扫描 ROI 必须是窗口相对坐标。生产代码按格子中心、`52x52` box 和 `8px` padding 动态生成
+  `relativeRoi`，截图前只在最后一步加当前窗口 base；不得重新写入屏幕绝对 ROI。
+- 不改变普通技能删除、终极角检查、保留技能不删、三技能冷却刷新、CR145 队列调度、窗口打开/关闭、
+  删除确认点击点、input queue 或云端状态识别合同。
+- 不把“静态模板未命中”当作 unknown；只有机制失败才 unknown。
+
+Validation plan:
+
+- Focused tests 覆盖：
+  - `if8.png` 命中返回 8，未命中返回 6；
+  - `sealed1` / `unobtained1` / `inactive1` 分别映射 locked / locked / empty；
+  - 三张模板未命中但截图/模板/ROI 正常时返回 occupied；
+  - 机制失败返回 unknown/fail closed；
+  - 8 技能和 6 技能从末尾倒扫，能正确找到最后可检查格；连续空格时返回最前面的空格。
+- Repo-local testcase replay：
+  - 坐标校准 replay 已有：
+    `images/test-cases/summon-skill/20260702_67555_six_slot_baseline_marked.png` 和
+    `images/test-cases/summon-skill/20260702_67555_slot_baseline_marked.png`，标出用户给定格子框和最终中心点。
+  - 后续 fresh runtime 仍需保存/输出真正的静态状态 replay marked 图，标出每个格子的
+    locked/empty/occupied、最后有效格和最终 hover/删除候选。
+- 代码验证至少跑：
+  - focused CR178 guard/replay；
+  - `mvn -q -DskipTests test-compile`；
+  - `mvn -q -DskipTests compile`。
+- Worker 实验入口验证记录：
+  - focused guard `SummonSkillLastEffectiveSlotRulesTest` 覆盖 locked 跳过、连续 empty 返回最前面的空格、
+    unknown fail closed。
+  - production wiring guard `SummonSkillCR178ProductionStaticBoundaryWiringTest` 先 RED，随后验证正式清理流
+    已接入 `status_sealed1.png` / `status_unobtained1.png` / `status_inactive1.png` 静态扫描，并不再用
+    `getTailCheckStartIndex(...)` / `resolveStartIndex(...)` 作为边界来源；review follow-up 后还验证旧 helper
+    在生产源码中已不存在。
+  - reviewer follow-up 后新增 guard 要求 `skillSlotRects(6/8)` 使用完整技能格 box ROI；现场 experiment
+    用这些 rect crop 做三张状态模板匹配，marked 图也画 rect，不再画中心点扩圈。
+  - 第 8 格空格误判复核：`status_inactive1.png` 普通相关系数匹配分数约 `0.00000035`，补低纹理颜色
+    fallback 后同一 slot8 ROI 分类为 `EMPTY`。
+  - `mvn -q -Dtest="SummonSkillCR178ProductionStaticBoundaryWiringTest" test` 通过。
+  - `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest" test` 通过。
+  - `mvn -q -DskipTests compile` 通过。
+  - 2026-07-05 relative ROI repair 后：
+    `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest,SummonSkillCR178ProductionStaticBoundaryWiringTest" test`
+    通过；`mvn -q -DskipTests compile` 通过。
+- Fresh runtime gate：
+  - 真实三技能维护日志应显示 locked/empty 格不再逐格 hover；
+  - occupied 格需要删除判断时才 hover；
+  - `UNKNOWN` 不刷新长冷却，不造成误删。
+
+Card CR179: MiniMapCoordinateReader 小地图坐标/地图名识别云端化
+
+Status:
+
+- Review. Owner: CR179 worker。源码实现、source guard、cloud contract test、dev sidecar replay 已通过；
+  fresh runtime 仍待用户实跑确认。
+- 用户明确要求：主 agent 只做业务主管/审核，worker 实现本卡；只迁移
+  `MiniMapCoordinateReader` 内小地图坐标条识别，不迁移通用 `ImageFinder`，不迁移
+  `LeftTopStatusSwitchService` / 左上角状态模板。
+
+Scope:
+
+- 生产 `MiniMapCoordinateReader` 保留 public API：
+  `readCurrentCoordinate`、`readCurrentTemplateLocation`、`readCurrentMapLabelImage`、
+  `extractCleanMapLabelImageFromCoordinateStrip`、`normalizeMapLabelTemplateImage`、
+  `isMapLabelWidthPlausible`、`recognizeMapLabelFromCoordinateStrip`、`recognizeMapLabelImage`、
+  `invalidateMapLabelTemplateCache`、`readCurrentLocationSnapshot`、
+  `readLocationSnapshotFromCoordinateStrip`。
+- 这些 API 现在只负责：
+  - 捕获当前绑定窗口的小地图坐标条，或接收 caller 传入的 strip/label raw image；
+  - 编码为 PNG payload，发送 `MINIMAP_LOCATION`；
+  - 消费云端返回的 `mapName`、`x/y`、`score`、label payload/path；
+  - 按原 public API 返回 `Optional.empty()`、`null`、`false` 或 snapshot empty。
+- 旧核心算法迁到 `src/test/java/com/bot/dhxy/cloud/dev/DevMiniMapCoordinateReader.java`，
+  仅供 `CloudDecisionDevServer` 本地模拟云端。
+
+Non-scope / red lines:
+
+- 不迁移或改写 `ImageFinder` 的 OpenCV 模板匹配。
+- 不迁移左上角状态模板。
+- 不改 `NavigationService` 小地图点击几何、世界地图黄字流程、NPC/dialog/battle/tracker 业务语义。
+- 不改 `LocationVisionService` 的 fallback 顺序；cloud/template miss 仍由现有 caller 决定是否走其它路径，
+  不能把 OCR 覆盖为云端真值。
+- pathing watcher 仍按 empty/unknown 处理失败；不得伪造旧坐标。
+
+Cloud contract:
+
+- Service id: `MINIMAP_LOCATION`。
+- Request:
+  - `operation`: `READ_COORDINATE`、`READ_LOCATION`、`READ_LOCATION_SNAPSHOT`、
+    `EXTRACT_MAP_LABEL`、`NORMALIZE_MAP_LABEL`、`RECOGNIZE_MAP_LABEL_FROM_STRIP`、
+    `RECOGNIZE_MAP_LABEL_IMAGE`。
+  - `imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`、`roi`、`windowSize`。
+  - `requiresCoordinate` / `requiresMapName` 明确当前 API 的 fail-closed 要求。
+- Response decision:
+  - `status=HIT;mapName=<name>;x=<0..999>;y=<0..999>;score=<double>;reason=<text>`；
+  - 或 `status=NO_RESULT;reason=<text>`。
+- Diagnostics:
+  - 可带 `labelImagePayloadBase64`、`labelPayloadMimeType=image/png`、`labelImageSha256`、
+    `labelWidth`、`labelHeight`、`labelPath`、`debugToken`。
+- Gate:
+  - execute 模式 service-specific gate 校验 `HIT/NO_RESULT`、置信度、必需 `mapName`、必需 `x/y`、
+    坐标合理范围；
+  - missing coordinate 和 out-of-range coordinate 都 fail closed；
+  - timeout/invalid/schema mismatch 不回本地旧算法。
+
+Implementation:
+
+- 新增：
+  - `CloudDecisionServiceId.MINIMAP_LOCATION`；
+  - `MiniMapLocationCloudRequest`；
+  - `MiniMapLocationCloudDecision`；
+  - `MiniMapLocationCloudDecisionService`。
+- `application.properties` 新增：
+  - `cloud.services.minimap-location.shadow-enabled=true`
+  - `cloud.services.minimap-location.execute-enabled=true`
+  - `cloud.services.minimap-location.execute-percent=100`
+  - `cloud.services.minimap-location.fallback=STOP`
+- `CloudDecisionDevServer` 新增 `MINIMAP_LOCATION` dev response，使用 test-scope
+  `DevMiniMapCoordinateReader` 解析 raw strip，并返回 schema-valid hit/no-result 与 label payload。
+
+Validation:
+
+- RED:
+  - `mvn -q -Dtest="MiniMapCoordinateReaderCR179CloudWiringGuardTest,MiniMapLocationCloudDecisionServiceTest,MiniMapLocationCloudReplayTest" test`
+    首次失败于 `MiniMapLocationCloudDecisionService` / request / decision 缺失。
+- GREEN:
+  - `mvn -q -Dtest="MiniMapCoordinateReaderCR179CloudWiringGuardTest,MiniMapLocationCloudDecisionServiceTest,MiniMapLocationCloudReplayTest" test`
+    passed。
+  - Replay input:
+    `images/test-cases/minimap/failure-location/20260616_huoyundong_4_3/tmp_pos.png`
+    (`metadata`: map=`火云洞`, expected around `(4,3)`)。
+  - Replay output:
+    `images/test-cases/minimap/cr179/huoyundong_4_3_minimap-location-cloud-marked.png`。
+  - Contract test 覆盖：
+    valid response maps coordinate/mapName/score；missing coordinate fail-closed；
+    `x=100;y=1172` out-of-range 明确被 gate 拒绝；`x=0;y=0` 在 `0..999` 合理范围内可接受；
+    `NO_RESULT` 返回 empty 语义；
+    timeout 在 STOP execute 下不暴露 local effective decision。
+  - Source guard 覆盖生产 `MiniMapCoordinateReader` 不再含旧核心 token：
+    `cleanCoordinateText`、`segmentGlyphs`、`floodFill`、`GlyphBox`、`BracketSpan`、
+    `DigitTemplate`、`digitTemplateCache`、`TEMPLATE_DIR`、`images/template/coord_digits`、
+    `recognizeCoordinate`、`findBracketSpan`、`findCommaGlyph`、`projectionDigitBoxes`、
+    `recognizeDigitRange`、`recognizePartition`、`recognizeOneGlyphScored`、
+    `TEMPLATE_MATCH_THRESHOLD`、`foregroundSimilarity`、`collectWhitePixels`、
+    `private record MapLabelTemplate`、`new MapLabelTemplate(`、`mapLabelTemplateCache`、
+    `MAP_LABEL_TEMPLATE_DIR`、`MAP_LABEL_MATCH_THRESHOLD`、`findBestMapLabelMatch`、
+    `loadMapLabelTemplates`、`expectedMapLabelWidthRange`、`trimLeakedBracketForKnownMapName`、
+    `stripTrailingCoordinateBracketGlyphs`。
+
+Fresh runtime gate:
+
+- 启动 DHXY + 真实云端或本地 sidecar，运行五环/五倍/修罗中会读取小地图坐标的位置。
+- 期望日志：
+  - `cloud.decision serviceId=MINIMAP_LOCATION mode=EXECUTE ... executed=true`；
+  - valid hit 后 `MiniMapCoordinateReader.readCurrentTemplateLocation()` 返回云端 `mapName/x/y/score`；
+  - timeout、invalid、`NO_RESULT` 或 out-of-range 不出现旧本地模板/坐标 fallback；
+  - 导航/pathing 失败仍是 unknown/empty，不伪造旧坐标。
+
+Card CR180: NPC 黄字洗图 profile 记录 - 灵兽村使者与降魔侍卫
+
+Status:
+
+- Review. Owner: 谢帅记录；外部 `D:\mavenProject\dhxy-cloud-brain` 已完成 `降魔侍卫`
+  thin profile replay 和回归验证。fresh runtime 仍待真实 NPC click 运行确认。
+- 本卡是记录/验收卡：把用户确认的黄字洗图 profile、实验失败原因、最终参数、输出图、
+  replay 命令和边界写入 sprint board，避免后续又把噪点版 broad profile 当成成功方案。
+
+Business decision:
+
+- `WASH_NPC_YELLOW_TARGET` 不是通用黄字洗图，它只服务 `NPC_CLICK_SMART` 的 NPC 世界名黄字目标。
+- profile 按 NPC 名字分流：
+  - `灵兽村使者` 使用现有 `LINGSHOU_MESSENGER` profile。
+  - `降魔侍卫` 使用新增 `JIANGMO_GUARD` profile。
+  - `白龙马` 保持既有 `BAILONGMA` profile。
+  - 其它 NPC 仍走 `DEFAULT`，不能默默套用 `降魔侍卫` 的 ROI/阈值。
+- 用户确认 `降魔侍卫` 采用 `sample-yellow-4` 这版写法：瘦黄字阈值，不加暗边、不膨胀。
+  目标白底黑字图只保留两个黄字文本块：`降魔侍卫` 和 `宝象国一品侍卫`，其它 UI/人物/地面/
+  按钮/tooltip 噪点都应消失。
+
+Rejected experiment:
+
+- 曾尝试 broad `降魔侍卫 -> JIANGMO_GUARD` profile，虽然最终 OCR 能从噪声中捞出
+  `matchedText=降魔侍卫`，但洗图本身不可接受：
+  - `targetPixels=542`
+  - `totalPixels=10270`
+  - 全图出现大量非目标噪点
+- 结论：不能把“最终 OCR 碰巧命中”当作“洗图通过”。该 broad profile 已被撤回。
+
+Accepted profile:
+
+- `降魔侍卫` thin profile 参数：
+  - `hue=35..80`
+  - `r>=80`
+  - `g>=80`
+  - `abs(r-g)<=45`
+  - `r>b+20`
+  - `g>b+20`
+  - `b<=220`
+- 当前 replay 的 allowed name regions：
+  - `降魔侍卫`: `x=220,y=355,w=85,h=33`
+  - `宝象国一品侍卫`: `x=360,y=218,w=162,h=30`
+- 这些区域是本张 replay 的验收边界，用于保证白底图只剩用户确认的两个名字带。
+  后续若要支持更多 `降魔侍卫` 尺寸/窗口/地图站位，必须新增 testcase 后再放宽或改成动态文本行选择；
+  不允许无 replay 直接放宽到全屏 broad color profile。
+
+Implementation record:
+
+- External cloud-brain source:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\ImageAlgorithms.java`
+    - `npcYellowTargetProfile(...)`: `降魔侍卫 -> JIANGMO_GUARD`
+    - `isJiangmoGuardYellowPixel(...)`: 使用用户确认的瘦黄字阈值
+    - `JIANGMO_GUARD_YELLOW_NAME_REGIONS`: replay 中两个名字带区域
+    - `npcYellowTargetMask(...)`: `JIANGMO_GUARD` 在 source/kept 两阶段都清理 allowed regions 外像素
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\JiangmoYellowProfileReplayTest.java`
+    - `jiangmoGuardProfileWashesOnlyTheTwoYellowNameLines()` 断言两个目标 ROI 有像素，且
+      `outsidePixels<=30`。
+  - `YellowWashOldVsCloudBrainComparisonTest#writeJiangmoDefaultAndStrictYellowTargetOutputs`
+    记录 default/strict 差异和 `scanLegacyYellowTarget(...)` 最终命中。
+
+Replay evidence:
+
+- Input:
+  - `images/test-cases/npc-click/jiangmo-guard-yellow-target/hwnd-D7D0DEA/input_center_scan_layer1.png`
+- Accepted output:
+  - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-guard-profile-two-name-wash.png`
+- Focused replay result:
+  - `jiangmoPixels=490`
+  - `baoxiangPixels=140`
+  - `totalPixels=630`
+  - `outsidePixels=0`
+- Comparison result:
+  - `currentStrict=630`
+  - `YELLOW_JIANGMO_STRICT_SCAN=hit=true;matchedText=降魔侍卫;click=259,322;candidateBox=226,361,66,23`
+  - `rawCandidateBoxes=[216,351,76,38, 360,214,53,26]`
+
+Verification:
+
+- External cloud-brain:
+  - `mvn -q "-Dtest=JiangmoYellowProfileReplayTest#jiangmoGuardProfileWashesOnlyTheTwoYellowNameLines,NpcClickSmartCurrentScreenReplayTest,NpcYellowTargetPurpleOriginalReplayTest" test`
+    passed。
+  - `mvn -q "-Dtest=YellowWashOldVsCloudBrainComparisonTest#writeJiangmoDefaultAndStrictYellowTargetOutputs" test`
+    passed。
+  - `mvn -q -DskipTests compile` passed。
+- Regression boundary:
+  - `NpcClickSmartCurrentScreenReplayTest` 仍命中 `灵兽村使者`，说明 `LINGSHOU_MESSENGER`
+    profile 未被本卡破坏。
+  - `NpcYellowTargetPurpleOriginalReplayTest` 对 `灵兽村使者` 仍可 click；对 `生肖使` / `首宸`
+    仍返回 `REQUEST_NEW_SCREENSHOT`，没有被 `降魔侍卫` profile 误导。
+
+Fresh runtime gate:
+
+- 重启 external cloud-brain sidecar/JAR 后，运行五倍接任务到 `降魔侍卫`。
+- 期望日志：
+  - `WASH_NPC_YELLOW_TARGET` / `NPC_CLICK_SMART` 对 target `降魔侍卫` 使用 `JIANGMO_GUARD` 等价输出；
+  - 白底黄字 debug 图只剩 `降魔侍卫` 与 `宝象国一品侍卫` 两个名字带；
+  - `scanLegacyYellowTarget` / smart click 最终命中 `matchedText=降魔侍卫`，点击点仍按黄字上偏移落到模型；
+  - `灵兽村使者` 修罗接任务仍走 `LINGSHOU_MESSENGER`，不受 `JIANGMO_GUARD` ROI 限制影响。
+- 若出现新窗口尺寸、站位、地图遮挡导致 `降魔侍卫` 两个 allowed regions 不覆盖目标字，
+  不得直接放宽阈值；必须新增对应 screenshot replay，再扩展 profile。
+
+Card CR181: 迁移本地 vision-memory NPC click 到云端 `MEMORY` 队列
+
+Status:
+
+- Review. Owner: 谢帅+worker。谢帅只做业务主管/审核，不直接写 Java 业务实现。
+- 本卡来自 2026-07-04 用户要求：把本地 `config/vision_memory.json` 里的 NPC click learned memory
+  移植到云端，这样 `NPC_CLICK_SMART` 点击可以先用已有 memory 数据。
+- Worker 实现、P2 修复、聚焦测试、编译和两个独立 reviewer 复审已完成；仍需 fresh runtime
+  证明实际 `NPC_CLICK_START/POLL` 前完成迁移并优先消费 `MEMORY` click。
+
+Problem:
+
+- 外部 cloud brain 当前 `NpcClickMemoryStore` 的 `LEARNED_MEMORY_ENABLED=false`，构造时不加载
+  `data/npc-click-memory.json`，`lookup(...)` 永远 miss。
+- DHXY 侧 `NpcClickService` 当前即使收到 `MEMORY` click，也会在 consumer guard 里拒绝，不提交鼠标。
+- 本地 `config/vision_memory.json` 里已经有成熟 NPC click policy，例如
+  `npc-click|灵兽村|灵兽村使者|112,93|player:120,83`，包含 `point`、`sampleCount`、
+  `successCount`、`failureStreak`、`spreadPx`、`stale=false`、`lastVerificationStrength=DIALOG_TEMPLATE`、
+  `recentSamples.actualClickMeasured=true` 等强验证证据。
+- 不能直接搬 `entries.lastPredictedClick`。`entries` 只是最近尝试摘要，可能包含未按旧本地
+  `recommendedNpcClickPoint(...)` 规则筛过的点；真正可迁移资产是 `policies.clickPolicies` 中
+  clean/stable 的 `point`。
+
+Required behavior:
+
+1. 云端迁移入口:
+   - 外部 brain 新增 NPC click memory migration 能力，例如
+     `/api/cloud/npc-click-memory/migrate`。
+   - 支持批量导入本地 `ClickPolicy` 行，字段至少包括：
+     `mapName`、`npcName/targetName`、`targetMapX/Y`、`playerMapX/Y`、`click x/y`、
+     `sampleCount`、`successCount`、`failureCount`、`failureStreak`、`spreadPx`、
+     `lastOutcome`、`lastVerificationStrength`、`sourceKey`。
+   - idempotent：重复导入同一 key/point 不应重复污染 memory。
+   - 保存到外部 `data/npc-click-memory.json`，重启 sidecar 后仍能命中。
+2. 迁移筛选必须复刻旧本地语义:
+   - 只迁 `policies.clickPolicies`，不迁 `entries.lastPredictedClick` 作为可点击 memory。
+   - 必须满足：`stale=false`、`point` 在 `1024x768` 窗口内、`sampleCount >= 3`、
+     `spreadPx <= 45`、`failureStreak < 3`、`lastOutcome=VERIFIED`、
+     `lastVerificationStrength` 属于强验证。
+   - 允许 worker 进一步读取 `recentSamples` 验证最近样本 `clicked=true`、`success=true`、
+     `actualClickMeasured=true`。
+3. 云端 lookup key:
+   - `NpcClickMemoryStore.lookup(...)` 必须能按当前 `NPC_CLICK_SMART` request 的
+     `mapName + npcName + target + verificationMode + playerMapX/Y` 命中迁移后的 policy。
+   - 不能只按 `mapName|npcName|target|verificationMode` 粗 key 覆盖不同玩家站位；旧本地
+     `ClickPolicy` 是按 `player:<x,y>` 区分的。
+4. `MEMORY` 队列执行:
+   - FIFO 顺序保持：`MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。
+   - `MEMORY` 命中时返回 `action=CLICK;strategy=LEARNED_MEMORY` 和窗口相对 click/candidateBox。
+   - DHXY 本地必须把合法 `MEMORY` click 作为受限候选执行：同样经过 window/ROI 边界校验、
+     原子 move+click、expected dialog/direct-combat verifier、outcome 上报。
+   - 如果本地 verifier 失败，只上报失败并继续消费后续 queue 候选；不要把 failed memory 变成
+     本地 fallback，也不要直接终止整条 NPC click pipeline，除非 safety/identity/stop 条件失败。
+5. Outcome / learning:
+   - 云端可以接收本地 verified/failed outcome，用于后续降权或学习。
+   - 禁止恢复“单次 `VERIFIED` outcome 立刻 promote 为 memory”的旧云端逻辑；后续新增学习也必须
+     走与旧本地 `ClickPolicy` 等价的样本数、spread、failureStreak 规则。
+
+Boundaries:
+
+- 不改 NPC tooltip/yellow/purple/Ctrl 策略顺序。
+- 不改 `ImageAlgorithms` 洗图 profile、黄字/紫字 OCR、dialog policy、navigation、mini-map、bag。
+- 不恢复本地生产 learned-memory fallback；本地只可作为 shadow/reference/迁移源。
+- 不把外飞点、越界点、单次成功点、`entries.lastPredictedClick` 当作可点击 memory。
+- 不改五倍/修罗/五环 phase 业务顺序。
+
+Validation plan:
+
+- External cloud brain focused tests:
+  - 导入一条 `灵兽村|灵兽村使者|112,93|player:120,83` clean policy 后，
+    `NPC_CLICK_START/POLL` 第一条 `MEMORY` 返回 `CLICK`，点为 `311,189` 或测试 fixture 对应点。
+  - `sampleCount<3`、`stale=true`、`spreadPx>45`、`failureStreak>=3`、越界 click、
+    缺强验证的 policy 均不能迁成 memory hit。
+  - 重启/重新构造 `NpcClickMemoryStore` 后仍能从 `data/npc-click-memory.json` load hit。
+- DHXY focused tests:
+  - `NpcClickSmartCloudDecisionService` / `NpcClickService` 可解析并执行合法 `MEMORY` queue click；
+    不再用 consumer guard 拒绝合法 memory。
+  - `MEMORY` verifier 失败后报告 `VERIFICATION_FAILED` 并继续 poll 后续候选。
+  - `MEMORY` 越界、identity mismatch、ROI 外点击仍 fail closed / safety rejected。
+  - 迁移服务读取 `config/vision_memory.json` 时只上传 clean `ClickPolicy`，并记录
+    scanned/eligible/migrated/skipped/failed。
+- Fresh runtime gate:
+  - 重启 DHXY 与 external sidecar/JAR。
+  - 启动修罗接 `灵兽村使者` 或五倍接 `降魔侍卫` 前后，日志应出现
+    `npc-click-memory migration` 的扫描/导入统计。
+  - 第一次对应 NPC click 的 `NPC_CLICK_POLL` 应先消费 `MEMORY` click；本地提交原子点击，
+    expected dialog/direct-combat verifier 通过后上报 `VERIFIED`。
+  - 若 memory 失败，必须看到继续 poll 后续 `TOOLTIP/YELLOW_NAME/...`，而不是任务直接卡死。
+
+Implementation / review evidence 2026-07-04:
+
+- Worker implementation:
+  - 外部 cloud brain 新增 `/api/cloud/npc-click-memory/migrate`，迁移结果持久化到
+    `data/npc-click-memory.json`；`NpcClickMemoryStore.lookup(...)` 使用
+    `mapName + npcName + target + verificationMode + playerMapX/Y` 精确 key。
+  - DHXY 新增 `NpcClickMemoryMigrationService`，只扫描 `policies.clickPolicies`，不上传
+    `entries.lastPredictedClick`；筛选条件包含 `stale=false`、窗口内、`sampleCount>=3`、
+    `spreadPx<=45`、`failureStreak<3`、`lastOutcome=VERIFIED`、强验证和强 recent sample。
+  - `NpcClickService` 在正式 `NPC_CLICK_START` 前调用
+    `npcClickMemoryMigrationService.migrateDefaultIfNeeded()`；迁移 skip/fail/异常只记录日志，
+    不阻断 NPC 点击。
+  - 合法 `MEMORY` FIFO click 进入 `executeNpcClickSmartQueueCandidate(...)` 共享安全壳；
+    verifier 失败上报 `VERIFICATION_FAILED` 并继续后续 FIFO 候选。
+- Review repair:
+  - Lorentz 首轮发现 P2：迁移 HTTP 被 interrupt 后可能继续进入 `NPC_CLICK_START`。
+  - Repair worker 已在 migration try/catch 后、`startSession(cloudRequest)` 前补
+    `TaskCheckpoint.throwIfStopRequested(...)`，并加源码守卫覆盖该顺序。
+- Verification:
+  - DHXY: `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest,NpcClickSmartCloudWiringGuardTest" test`
+    passed。
+  - DHXY: `mvn -q -DskipTests compile` passed。
+  - External cloud brain: `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test`
+    passed。
+  - External cloud brain: `mvn -q -DskipTests compile` passed。
+- Independent reviewer gate:
+  - Bohr / Descartes: external cloud brain memory store/API/FIFO contract Approved。
+  - Lagrange: DHXY migration trigger / post-migration checkpoint / MEMORY consumer Approved。
+- Remaining gate:
+  - Fresh runtime 未跑；CR181 暂不关 Done。下一轮实测需要看
+    `npc-click-memory migration submitted...`、`NPC_CLICK_START accepted`、首条
+    `NPC_CLICK_POLL type=MEMORY` 和本地 verifier outcome。
+
+Card CR182: 左侧 tracker 面板读图与绿链点击点迁云
+
+Status:
+
+- Review. Owner: 谢帅+worker。两轮 worker repair 后已通过两个独立 reviewer approval gate；谢帅仍只做业务主管/审核，不直接写 Java 业务实现。当前不标 Done，等待 fresh runtime。
+- 本卡来自 2026-07-04 用户确认：左侧 tracker 的黄字/绿链点击点也要上云端；本地只上传 tracker
+  图片，云端返回当前任务需要的最小 payload。
+
+Problem:
+
+- `TaskTrackerPanelService` 现在仍在本地完成 tracker 标题模板、黄字 OCR、绿链分段和点击点计算。
+- 当前 `TASK_CLASSIFIER` 只是拿本地已经读出的 `taskKey/yellowText/greenLinkCount` 做 shadow/修正。
+- 当前 `TRACKER_LINK_RANKER` 也是拿本地已经算好的 `greenLinks` 候选返回 click；它不是从原图计算。
+- 这不符合云端化目标：tracker 的可点击绿链坐标和五倍任务分流应由 cloud brain 从图片中计算。
+
+Required behavior:
+
+1. 新服务边界:
+   - 新增统一云端决策服务，例如 `TRACKER_PANEL_READER`。
+   - 不继续把它拆成 `TASK_CLASSIFIER` + `TRACKER_LINK_RANKER` 两个生产决策；旧两个服务可保留为
+     shadow/兼容日志，但不能再是生产点击来源。
+2. 本地 request:
+   - 本地负责定位/裁剪左侧 tracker panel 或 detail block，并上传 raw PNG：
+     `imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`。
+   - 必须携带坐标语义：`imageMode=TRACKER_PANEL_CROP` 或 `DETAIL_BLOCK_CROP`，
+     `panelOriginWindowX/Y` 或 `detailOriginWindowX/Y`，让云端返回窗口相对坐标。
+   - 必须携带 `taskCode=wuhuan|xiuluo|wubei`、`phase`、`source`。
+   - 五倍显形镜/白龙马需要携带当前选择语义，例如 `requestedLinkIndex` 或
+     `selectionPolicy=FIRST_LINK|PROBE_INDEX|ALL_LINKS_ONLY`；不要让本地重新扫描绿链。
+3. 最小 response payload:
+   - 通用字段：`status=FOUND|NOT_FOUND|AMBIGUOUS|ERROR`、`action=CLICK_TRACKER_LINK|REROLL|NO_ACTION`、
+     `clickWindowRelative=x,y`、`reason`。
+   - 五环 `wuhuan`：只要求返回 `CLICK_TRACKER_LINK clickWindowRelative`。不要求 `title`、黄字全文或
+     其它读数进入主 payload。
+   - 修罗 `xiuluo`：只要求返回 `CLICK_TRACKER_LINK clickWindowRelative`。修罗 shortcut 只消费左侧绿链坐标。
+   - 五倍 `wubei`：必须返回 `taskKey` 用于暗雷/白龙马/黄袍/普通怪分流；必须返回当前可点的
+     `clickWindowRelative`。白龙马/显形镜多绿链时返回必要 `links[index,clickWindowRelative]`，供现有
+     probe 状态机选择。`targetName` 只在现有五倍战斗目标解析确实需要时返回。
+   - `title` 只允许放到 diagnostics，不能作为本地业务判断字段。
+4. 本地生产消费:
+   - `TaskTrackerPanelService` 应把 cloud response 适配成现有 `TaskTrackerPanelReadResult` 或新增等价
+     reader result，供五倍/五环/修罗现有 task flow 最小改动消费。
+   - 生产点击必须使用 cloud 返回的窗口相对点，本地只做窗口 base 转换、边界校验、input queue
+     原子点击、pathing intent/maintenance 等原有副作用。
+   - cloud active/required 时，`NOT_FOUND`/invalid/timeout 不允许 silently fallback 到本地绿链计算。
+   - 旧本地 tracker reader 可保留为 shadow/replay，对比日志不得驱动生产点击。
+5. 业务边界:
+   - 不改五倍/修罗/五环 phase 顺序、pathing watcher、prepared dialog、回程/显形镜/黄袍/暗雷业务规则。
+   - 不改输入队列原子点击规则；本地仍负责实际鼠标点击。
+   - 不改 tracker 面板 anchor 定位/拖回固定位置，除非 worker 先记录冲突并等待审批。
+
+Implementation direction:
+
+- DHXY 侧主要文件：
+  - `CloudDecisionServiceId` 增加 `TRACKER_PANEL_READER`。
+  - 新增 tracker panel cloud request/decision service，沿用 `imagePayloadBase64` / sha / redaction 规则。
+  - `TaskTrackerPanelService` 新增 cloud-owned read path；保留本地 read path 作为 shadow/replay。
+  - `WubeiTask`、`FiveRingTaskV2`、`XiuluoTaskV2` 只做必要适配，不重写业务 phase。
+- 外部 cloud brain：
+  - 在 `DecisionEngine` 增加 `TRACKER_PANEL_READER`。
+  - 把现有 tracker title/template、黄字、绿字分段/坐标算法搬到外部 brain；不得另写不同策略。
+  - 五环/修罗先以“返回单 click”为验收；五倍再覆盖 `taskKey` 和多绿链。
+- 测试/回放：
+  - 必须用 repo-local testcase 图片验证五环、修罗、五倍至少各一张。
+  - 输出 marked 图显示 tracker crop、识别出的绿链框和最终红点。
+  - 五倍必须包含至少一个白龙马/显形镜双绿链 replay，验证 `links[index]`。
+
+Validation plan:
+
+- DHXY focused/source guard:
+  - request 包含图片 payload、sha、origin window coordinate、taskCode/phase/source。
+  - cloud required 时 tracker 生产点击不再使用本地 `greenLinks` 作为 fallback。
+  - 五环/修罗只消费 cloud click；五倍消费 cloud `taskKey` 和必要 links。
+- External cloud brain focused replay:
+  - `wuhuan` tracker panel -> 返回窗口相对 click。
+  - `xiuluo` tracker panel -> 返回窗口相对 click。
+  - `wubei` 普通/黄袍/暗雷/白龙马样本至少覆盖分流和点击；白龙马样本返回多 link。
+- Fresh runtime gate:
+  - 重启 DHXY 与 external sidecar/JAR 后跑五环、修罗、五倍。
+  - 日志应显示 `TRACKER_PANEL_READER` request/response，且点击绿链的坐标来自 cloud response。
+  - 五环/修罗 green tracker shortcut 正常推进；五倍暗雷 reroll、白龙马 probe、黄袍/普通怪 pathing
+    不因为 payload 简化丢失业务信息。
+
+Worker implementation record (2026-07-04):
+
+- DHXY:
+  - `CloudDecisionServiceId` 新增 `TRACKER_PANEL_READER`，`application.properties` 默认
+    `shadow-enabled=true`、`execute-enabled=true`、`execute-percent=100`、`fallback=STOP`。
+  - 新增 `TrackerPanelReaderCloudRequest` / `TrackerPanelReaderCloudDecision` /
+    `TrackerPanelReaderCloudDecisionService`，payload 包含 `taskCode`、`phase`、`source`、
+    `imagePayloadBase64`、`payloadMimeType=image/png`、`imageSha256`、`imageMode`、
+    `imageOriginWindowX/Y`、`requestedLinkIndex`、`selectionPolicy`。
+  - `TaskTrackerPanelService` 在五环、修罗、五倍 detail crop 后优先调用
+    `TRACKER_PANEL_READER`；service disabled 时才保留旧本地 reader；cloud active 下
+    `NOT_FOUND`/invalid/timeout/本地 payload 失败均返回空结果或空点击，不走本地绿链 fallback。
+  - `TaskTrackerPanelReadResult` / `TaskTrackerGreenLink` 增加
+    `TaskTrackerPanelSourceType`，cloud reader 返回的精确窗口相对点转换成 screen-absolute 1x1
+    link，保证下游点击使用 cloud 点而不是重新取本地矩形中心。
+  - `WubeiTask` 对 `CLOUD_TRACKER_PANEL_READER` link 跳过旧 `TRACKER_LINK_RANKER`，直接使用
+    cloud reader 点执行原有 input queue/pathing intent/maintenance 副作用；本地 link 仍保持旧
+    ranker 逻辑。`XiuluoTaskV2` shortcut 对 cloud reader result 同样跳过旧 ranker。
+- External cloud brain:
+  - `DecisionEngine` 新增 `TRACKER_PANEL_READER` dispatch，把 tracker 绿字分段、五环目标名段选择、
+    修罗第一绿链、五倍 title template/taskKey 与多绿链识别搬到云端。
+  - 新增 `TrackerPanelReaderReplayTest`，使用 repo-local tracker testcase 图片并输出 marked 图。
+- Replay / marked output:
+  - Input resources:
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wuhuan-one-green-link.png`、
+    `...\xiuluo-one-green-link.png`、`...\wubei-sancang-one-green-link.png`、
+    `...\wubei-baoxiang-mirror.png`。
+  - Marked outputs:
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wuhuan-one-green-link-marked.png`、
+    `...\xiuluo-one-green-link-marked.png`、
+    `...\wubei-sancang-one-green-link-marked.png`、
+    `...\wubei-baoxiang-mirror-marked.png`。
+- Verification:
+  - RED evidence: DHXY focused contract test first failed because `TrackerPanelReaderCloudRequest` /
+    `TrackerPanelReaderCloudDecisionService` did not exist; external replay first failed because
+    `DecisionEngine` returned `cloud-brain-unknown-service` for `TRACKER_PANEL_READER`。
+  - GREEN DHXY focused/source guard:
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed。
+  - GREEN DHXY compile: `mvn -q -DskipTests compile` passed。
+  - GREEN external replay: `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed。
+  - GREEN external compile: `mvn -q -DskipTests compile` passed。
+- Remaining fresh runtime gate:
+  - 重启 DHXY 与 external cloud brain 后分别跑五环、修罗 shortcut、五倍普通/暗雷/白龙马/黄袍。
+  - 日志必须看到 `TRACKER_PANEL_READER` request/response，`clickWindowRelative` 经窗口 base 转换后
+    成为实际 input queue 点击点；cloud required 下 timeout/NOT_FOUND 不出现本地绿链 fallback。
+
+Review gate result (2026-07-04):
+
+- Reviewer #1（规格验收）结论：With fixes，未批准。Focused tests/compile/replay 通过，但发现
+  五倍 cloud-reader 点击失败可能 NPE、黄袍续战 fast cache 丢失 cloud source 后仍走旧
+  `TRACKER_LINK_RANKER`、五倍暗雷/黄袍 replay 缺口。
+- Reviewer #2（代码质量/回归风险）结论：No，未批准。Focused tests/compile/replay 通过，但确认
+  以下 CR182 边界 blocker：
+  1. `TaskTrackerPanelService.readWubeiTrackerPanel(...)` / `readXiuluoTrackerPanel(...)` 在调用
+     `TRACKER_PANEL_READER` 前仍先用本地 title/template 做 detail crop；本地 title miss 时 cloud 根本
+     拿不到 tracker 图。这与“本地只传 tracker 图、cloud 算 taskKey/click”的最终边界冲突。修复方向：
+     cloud active 时上传 anchor 定位得到的完整 tracker panel crop/origin，让 cloud 自己定位标题/绿链；
+     只有 service disabled 时才走旧本地 title crop。
+  2. `WubeiTask` 黄袍 chained fast cache 把 cloud-reader 绿链包装成默认 `LOCAL` link，后续仍调用旧
+     `TRACKER_LINK_RANKER` 并可能用 ranker 点驱动生产点击。修复方向：透传 cloud source/selected click
+     到 cache，或构造 cached candidate 时保留 `CLOUD_TRACKER_PANEL_READER`，cloud-reader cache 经
+     fingerprint 验证后直接点 cached/cloud 点。
+  3. 五倍 replay 只覆盖三藏与宝象/显形镜，缺 `dianqian_xianyi` 暗雷、`zhidou_huangpao` 黄袍、
+     `kuixing_guiwei` 魁星样本。必须补 testcase、断言 taskKey，并输出 marked PNG。
+  4. 当 cloud response 同时返回 top-level `clickWindowRelative` 与 `diagnostics.links` 时，本地
+     `trackerLinksFromCloudDecision(...)` 只把 links 转为 greenLinks，普通消费方仍可能取
+     `greenLinks[0]`，导致 cloud selected click 被覆盖。修复方向：保留 selected cloud click/index；
+     普通点击消费 selected click，多 link/probe 再消费 links 列表。
+  5. 五倍 cloud-reader link 下 `shadowTrackerLinkSelectionIfLocal(...)` 可返回 null；若点击失败后
+     直接访问 `cloudDecision.isNoClick()`，存在 NPE 风险。修复方向：null-safe 分支并补 guard。
+  6. Minor：`TrackerPanelReaderCloudDecisionService.isActive()` 在 shadow-only 配置下也会进入
+     no-fallback 路径；后续若需要 shadow-only 观测，应区分 execute-required 与 shadow-only。
+- Repair gate:
+  - Worker 修复后必须重跑 DHXY focused tests + compile、external `TrackerPanelReaderReplayTest`
+    + compile。
+  - 修复后必须重新发起两个独立 reviewer approval gate；谢帅终审不替代两个 reviewer。
+  - 两个 reviewer 均批准且无 P0/P1/P2 blocker 前，不得 fresh run 验收，不得把 CR182 置为 Done。
+
+Worker repair result (2026-07-04):
+
+- 修复 blocker 1：`TaskTrackerPanelService` 在 `TRACKER_PANEL_READER` active 时，五环/五倍/修罗先复用现有
+  tracker anchor 定位与拖回逻辑取得完整 tracker panel crop，并以 `imageMode=TRACKER_PANEL_CROP`、panel
+  origin/window 坐标上传 cloud。只有 cloud service disabled 时才进入旧本地 title/detail crop reader。
+- 修复 blocker 2：`PreparedDialogAction` 增加 tracker panel source；五倍黄袍 chained fast cache 从 cloud
+  selected link 构造时保留 `CLOUD_TRACKER_PANEL_READER`。fingerprint 验证通过后，cloud-reader cache 直接点
+  cached/cloud 点，不再调用旧 `TRACKER_LINK_RANKER` 驱动生产点击。
+- 修复 blocker 3/4：`TaskTrackerPanelReadResult` 增加 `selectedGreenLink`；cloud top-level
+  `clickWindowRelative` 保留为 selected click，普通五倍/修罗消费 selected，多 link/probe 仍消费
+  diagnostics `links` 列表。
+- 修复 blocker 5：五倍 cloud-reader link 点击失败后的 no-click 分支改为 null-safe，并补 source guard。
+- 修复 blocker 6（测试缺口）：external `TrackerPanelReaderReplayTest` 增加
+  `wubei.dianqian_xianyi`、`wubei.zhidou_huangpao`、`wubei.kuixing_guiwei` 三个 repo-local testcase，
+  断言 `taskKey` 并输出 marked PNG。
+- Marked replay output:
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-dianqian-dark-thunder-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-zhidou-huangpao-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-kuixing-guiwei-marked.png`
+  - 既有五环/修罗/三藏/宝象 marked replay 也重新生成。
+- Repair verification:
+  - DHXY `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed。
+  - External `mvn -q -DskipTests compile` passed。
+- Status remains Review / repair ready。不得 fresh-run 验收或标 Done，直到两个独立 reviewer 复审批准；
+  fresh runtime gate 仍是重启 DHXY + external brain 后验证 `TRACKER_PANEL_READER` request/response、
+  cloud click 到 input queue 点击点转换，以及 cloud required 下 timeout/NOT_FOUND/invalid 不回退本地绿链。
+
+Second review gate result (2026-07-04):
+
+- Reviewer #1：With fixes，未批准。首轮 NPE、黄袍 cache source、暗雷/黄袍 replay 已关；新增 P2：
+  修罗 accept-time background snapshot 生产路径仍走
+  `readXiuluoTrackerPanelFromSnapshot -> readXiuluoTrackerDetail -> TRACKER_PANEL_READER`
+  且 `imageMode=DETAIL_BLOCK_CROP`，仍依赖本地 title/template 裁 detail。修复方向：snapshot 生产路径
+  也构造 tracker panel crop 并以 `imageMode=TRACKER_PANEL_CROP` 发给 cloud；若保留 detail crop，只能
+  标为 replay/debug 或需用户确认例外。
+- Reviewer #2：With fixes，未批准。首轮主链路/selected click/黄袍 cache/replay 已关；新增 P1：
+  五倍普通任务 cloud payload 丢失现有业务消费字段：
+  - cloud 五倍结果把 `TaskTrackerPanelReadResult.yellowText` 固定为空；
+  - cloud link 把 `TaskTrackerGreenLink.targetMapName` 固定为空；
+  - `WubeiTask` 现有普通链路仍用 `yellowText` 解析 combat target，并用 `targetMapName` 打开 ordinary
+    enter-battle target-map gate。
+  影响：三藏/魁星等普通五倍在 cloud active 下可能拿到 `taskKey` 与绿字 click，但到达后无法 arm
+  enter-battle gate 或无法执行 smart/direct combat target click，最终 pre-battle timeout/reaccept。
+  修复方向：cloud 最小 payload 必须补回“现有五倍确实消费”的字段；至少普通任务返回 `targetName`
+  或可恢复 `yellowText` 的 combat target 字段，并为需要 map gate 的 link 返回 `targetMapName`；
+  DHXY 解析后填入 `TaskTrackerPanelReadResult` / `TaskTrackerGreenLink`，并补三藏/魁星 replay 断言
+  这些字段会驱动 gate/target 逻辑。
+- Minor：五环 `prepareWuhuanPathingLink()` 仍先拿 cloud panel click，随后用旧 title/detail crop 生成
+  fingerprint；主点击不阻塞，但 background prepared action 仍可能因本地 title miss 不缓存。修复方向：
+  cloud click 存在时用 full panel crop/click 邻域生成 fingerprint，或仅在 disabled/local 模式走 title
+  detail crop。
+- Minor：shadow-only 与 execute-required 仍未分离；当前 execute=true/100/STOP 下不作为现时 blocker。
+- Repair gate remains:
+  - 不允许 fresh-run CR182；先退回 worker 修复 P1/P2。
+  - 修复后继续跑 DHXY focused/compile、external replay/compile，再重新走两个独立 reviewer approval gate。
+
+Second worker repair result (2026-07-04):
+
+- P1 五倍普通任务消费字段闭环：
+  - External cloud brain `TRACKER_PANEL_READER` 对 `wubei.sancang_fengmo` / `wubei.kuixing_guiwei`
+    返回现有五倍确实消费的字段：`targetName`、可恢复 combat target 的 `yellowText`，以及首个
+    `diagnostics.links` 的 `targetMapName`。
+  - DHXY `TrackerPanelReaderCloudDecision` / `TrackerPanelReaderCloudDecisionService` 解析
+    `targetName`、`yellowText` 和 link-level `targetMapName`。
+  - `TaskTrackerPanelService.wubeiResultFromCloudDecision(...)` 把 cloud `yellowText`（缺失时用
+    `targetName`）填回 `TaskTrackerPanelReadResult.yellowText`，并把 cloud link 的 `targetMapName`
+    填入 `TaskTrackerGreenLink.targetMapName`；selected cloud click 会复制/匹配同一 link 的业务字段，
+    不改变 `WubeiTask` 原有 combat target / ordinary enter-battle gate 语义。
+- P2 修罗 accept-time snapshot 闭环：
+  - `readXiuluoTrackerPanelFromSnapshot(...)` 在 `TRACKER_PANEL_READER` active 时先从全窗口 snapshot
+    复用 tracker anchor 语义裁出 tracker panel crop，使用 phase
+    `xiuluo-tracker-panel-snapshot` 与 `imageMode=TRACKER_PANEL_CROP` 上传 cloud。
+  - 只有 cloud service disabled 时才进入旧 `readXiuluoTrackerPanelForReplay(...)` / detail crop
+    路径；detail crop 保留为 replay/debug/local-disabled 路径，不再驱动 active production snapshot。
+- Testcase / marked output:
+  - 三藏 replay 现在断言 `taskKey=wubei.sancang_fengmo`、`targetName=魔障`、`yellowText` 包含
+    `魔障`、link 包含 `targetMapName=大唐边境`，marked：
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-sancang-one-green-link-marked.png`。
+  - 魁星 replay 现在断言 `taskKey=wubei.kuixing_guiwei`、`targetName=天降妖星`、`yellowText` 包含
+    `天降妖星`、link 包含 `targetMapName=云梦顶`，marked：
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-kuixing-guiwei-marked.png`。
+  - 既有五环、修罗、宝象、暗雷、黄袍 marked replay 同步重新生成。
+- Verification:
+  - DHXY `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed。
+  - External `mvn -q -DskipTests compile` passed。
+- Remaining gates after this worker repair:
+  - CR182 仍保持 Review，不标 Done。
+  - 两个独立 reviewer 复审已在下方完成；当前只剩 fresh runtime：重启 DHXY + external brain，验证
+    `TRACKER_PANEL_READER` request/response、snapshot path 的 `TRACKER_PANEL_CROP`、五倍普通任务
+    target/gate 字段，以及 cloud required 下 timeout/NOT_FOUND/invalid 不回退本地绿链。
+
+Reviewer approval gate (2026-07-04):
+
+- Reviewer #1（McClintock）批准。复核确认修罗 accept-time snapshot 生产路径现在进入
+  `readXiuluoTrackerPanelFromSnapshot(...)` 的 cloud-active 分支，裁完整 tracker panel crop，并以
+  `phase=xiuluo-tracker-panel-snapshot`、`imageMode=TRACKER_PANEL_CROP` 发给
+  `TRACKER_PANEL_READER`；旧 detail crop 只留在 disabled/replay/debug 路径。无 P0/P1/P2 blocker。
+- Reviewer #2（Harvey）批准。复核确认五倍普通任务字段从 external cloud brain 到 DHXY parser，再到
+  `TaskTrackerPanelReadResult.yellowText` / `TaskTrackerGreenLink.targetMapName` 全链路闭环；
+  selected cloud click 与 diagnostics links 不再互相覆盖。无 P0/P1/P2 blocker。
+- 谢帅复核验证命令：
+  - DHXY `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed。
+  - External `mvn -q -DskipTests compile` passed。
+- Remaining fresh-runtime gate:
+  - 重启 DHXY 与 external cloud brain 后跑五环、修罗 shortcut/snapshot、五倍普通/暗雷/白龙马/黄袍。
+  - 日志必须看到 `TRACKER_PANEL_READER` request/response、cloud `clickWindowRelative` 转成 input
+    queue 实际点击点、修罗 snapshot path 使用 `TRACKER_PANEL_CROP`、五倍普通任务带回 target/gate
+    字段；cloud required 下 timeout/NOT_FOUND/invalid 不得回退本地绿链计算。
+  - Minor follow-up，不阻塞本卡 fresh runtime：五环 `prepareWuhuanPathingLink()` fingerprint 仍可后续改为
+    cloud/full-panel 语义；shadow-only 与 execute-required 分离可后续独立卡处理。
+
+Card CR183: `TEAM_RETURN_POLICY` 撤出云端，归队信号保持纯本地
+
+Status:
+
+- Review. Owner: 谢帅+worker。Worker implementation 与两个独立 reviewer approval gate 已完成；谢帅只做业务主管/审核，不直接写 Java 业务实现。当前不标 Done，等待 fresh runtime。
+- 2026-07-04 用户明确拍板：team return 只做本地。本地截一张普通截图做模板匹配即可，
+  不要上云端，不要发任何 cloud request。
+- 2026-07-04 CR183 worker TDD 实现完成；两个独立 reviewer 均已批准，无 P0/P1/P2 blocker。fresh runtime 待验。
+
+Problem:
+
+- 当前 `TeamReturnService` 在成员点击归队按钮、队长等待归队信号、队长 consume precheck 前，
+  都会经过 `TeamReturnPolicyCloudDecisionService` / `TEAM_RETURN_POLICY`。
+- `TEAM_RETURN_POLICY` 当前在 `application.properties` 中是 `execute-enabled=true` /
+  `execute-percent=100` / `fallback=STOP`。这使一个本该纯本地的图片匹配流程变成 cloud-required gate。
+- 外部 cloud brain 当前对 `TEAM_RETURN_POLICY` 返回 `action=USE_LOCAL_RESULT`。但 Java execute gate
+  只接受 `ALLOW` / `DENY`，于是拒绝本地结果。
+- 更严重的是 `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)` 当前会返回
+  `conclusive=true, signalPresent=true`，导致任务层误打印 `team return precheck saw return signal`，
+  也就是把 cloud gate failure 伪装成真的看见归队信号。
+
+User decision:
+
+- `TEAM_RETURN_POLICY` 不属于云端核心大脑逻辑。
+- 它只依赖本地窗口截图、归队按钮/信号模板、本地 session/capability 状态和本地输入调度。
+- 生产路径必须 pure local：
+  - 不发 `TEAM_RETURN_POLICY` request。
+  - 不由云端 `ALLOW/DENY/USE_LOCAL_RESULT` 决定是否消费本地 precheck。
+  - cloud 不通、返回空、返回 `USE_LOCAL_RESULT`、返回失败，都不能影响 team return 本地逻辑。
+
+Required behavior:
+
+1. `TeamReturnService.clickReturnTeamIfPresent(...)`：
+   - 继续本地查归队按钮模板。
+   - 查到按钮后按现有本地摄妖香检查、input queue 原子点击、diagnostic log 执行。
+   - 不调用 `TEAM_RETURN_POLICY` cloud decision，不因 cloud failure 返回 false。
+2. `TeamReturnService.waitForMembersReturn(...)` / leader wait：
+   - 继续本地查队长侧 return signal 模板。
+   - 不调用 `TEAM_RETURN_POLICY` cloud decision。
+3. `TeamReturnService.consumeLeaderSignalPrecheck(...)`：
+   - 继续消费 `beginLeaderSignalPrecheck(...)` 捕获的本地截图分析结果。
+   - `precheck` 缺失、stale、not-ready、failed 仍按旧本地语义 inconclusive/fallback。
+   - 本地分析 `NO_SIGNAL` 返回 `conclusive=true, signalPresent=false`。
+   - 本地分析 `SIGNAL_PRESENT` 返回 `conclusive=true, signalPresent=true`。
+   - 不允许 cloud-required failure 变成 `signalPresent=true`。
+4. 配置 / cloud brain：
+   - `application.properties` 不应启用 `cloud.services.team-return-policy.*` 生产 execute。
+   - 外部 cloud brain 可删除/保留死代码 dispatch，但 DHXY 生产不得发 `serviceId=TEAM_RETURN_POLICY`。
+   - `TEAM_RETURN_POLICY` 可作为历史 enum/兼容项保留，但不得被 `TeamReturnService` 生产调用。
+
+Implementation constraints:
+
+- 不改归队按钮模板、队长归队信号模板、匹配阈值、ROI、摄妖香顺序、input queue 原子点击、
+  local-team capability gate、队长放权窗口、五倍/修罗 phase 顺序。
+- 不把 team return 改接到 `CAPABILITY_GATE` / `MAINTENANCE_THRESHOLD` 或其它 cloud service。
+- 不把 cloud failure 包装成“看见归队信号”。
+- 遵守 TDD：先写失败测试证明当前 `TeamReturnService` 会调用 `TEAM_RETURN_POLICY` / cloud failure 会伪装 signal，
+  再改生产代码。
+
+Validation:
+
+- Focused tests:
+  - `TeamReturnService` local-only guard：`clickReturnTeamIfPresent(...)`、leader wait、consume precheck
+    不调用 `TeamReturnPolicyCloudDecisionService` / `CloudDecisionCoordinator`。
+  - 原有本地按钮存在时仍会提交 input queue 点击；按钮不存在仍返回 false。
+  - 本地 precheck `NO_SIGNAL` / `SIGNAL_PRESENT` 语义不变。
+  - cloud failure 不得产生 `LeaderSignalPrecheckStatus(conclusive=true, signalPresent=true)`。
+- Source/config guard:
+  - `application.properties` 不再启用 `cloud.services.team-return-policy.execute-enabled=true`。
+  - `TeamReturnService` 不再 import/inject/call `TeamReturnPolicyCloudDecisionService`。
+- Compile: `mvn -q -DskipTests compile`。
+- Fresh runtime:
+  - 重启 DHXY 后跑一次需要 team return precheck 的五倍/修罗流程。
+  - `logs/dhxy-console.log` 不应出现 `cloud.decision serviceId=TEAM_RETURN_POLICY`。
+  - 如果队长本地 precheck 没看到归队信号，日志应走 no-signal/不等待；不能再出现 cloud gate failure 后的
+    `team return precheck saw return signal`。
+
+Implementation result:
+
+- Touched files:
+  - `src/main/java/com/bot/dhxy/service/TeamReturnService.java`
+  - `src/main/resources/application.properties`
+  - `src/test/java/com/bot/dhxy/service/TeamReturnLocalOnlyGuardTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionWorkerDShadowWiringTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowWaveWiringTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/decision/CloudRequiredExecuteWaveConfigTest.java`
+- `TeamReturnService` 已移除 `TeamReturnPolicyCloudDecisionService`、`RuntimeDecisionShadowService`、
+  `CloudDecisionServiceId.TEAM_RETURN_POLICY`、`CloudDecisionServiceId.FAILURE_CLASSIFIER` 的生产调用，
+  删除 `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)`。
+- 成员 `clickReturnTeamIfPresent(...)` 保持本地按钮模板命中后先 `ensureSheYaoXiangActive(...)`，
+  再重新确认按钮并通过 `InputSequences.submitAndWait(...)` 提交原子点击；按钮不存在仍返回 `false`。
+- 队长 `waitForMembersReturnIfNeeded(...)` 与 `consumeLeaderSignalPrecheck(...)` 只消费本地 signal 模板/precheck
+  结果；本地 `NO_SIGNAL` / `SIGNAL_PRESENT` 语义保持不变。
+- `application.properties` 将 `cloud.services.team-return-policy.shadow-enabled=false`、
+  `execute-enabled=false`、`execute-percent=0`，避免生产 execute 被重新打开。
+
+Validation result:
+
+- RED：`mvn -q -Dtest=TeamReturnLocalOnlyGuardTest test` 首次失败；日志出现
+  `cloud.decision serviceId=TEAM_RETURN_POLICY ... reason=client exception: IllegalStateException: team return must stay local-only`，
+  断言失败为 `no-signal status expected=false actual=true`，证明现状会把 cloud failure 伪装成 signal。
+- GREEN：
+  - `mvn -q "-Dtest=TeamReturnLocalOnlyGuardTest,CloudRequiredExecuteWaveConfigTest" test`
+  - `mvn -q -DskipTests test-compile`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionWorkerDShadowWiringTest`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowWaveWiringTest`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.service.TeamReturnPrecheckWiringTest`
+  - `mvn -q -DskipTests compile`
+- Source/config guard：生产 `TeamReturnService.java` 与 `application.properties` 中不再出现
+  `TeamReturnPolicyCloudDecisionService`、`CloudDecisionServiceId.TEAM_RETURN_POLICY`、
+  `LeaderSignalPrecheckStatus.cloudRequiredFailure` 或
+  `cloud.services.team-return-policy.execute-enabled=true`。
+
+Reviewer approval gate (2026-07-04):
+
+- Reviewer #1（规格/业务边界）批准，无 P0/P1/P2 blocker。确认 member return click 只走本地按钮模板、
+  摄妖香检查、重新确认按钮和 input queue 点击；leader wait 只查本地 signal 模板；precheck
+  `missing/stale/not-ready/failed` 仍 inconclusive，`NO_SIGNAL` / `SIGNAL_PRESENT` 语义正确；
+  `application.properties` 关闭 team-return-policy shadow/execute。
+- Reviewer #2（代码质量/回归风险）批准，无 P0/P1/P2 blocker。确认 constructor/字段已清理为本地依赖，
+  文档/card/dashboard 已同步，focused/source/compile 验证通过。
+- Minor follow-up（不阻塞 CR183 fresh runtime）：`TeamReturnPolicyCloudDecisionService` 旧 wrapper 仍作为不可达
+  `@Service` 存在；当前无生产引用、配置关闭，不会发 request。后续可单独删除或标 Deprecated，以降低误接回风险。
+
+Current status:
+
+- Review / fresh runtime pending，不标 Done。
+- 两个 reviewer 均已批准；下一步只需实跑验证无 `TEAM_RETURN_POLICY` request。
+
+Remaining fresh-runtime gate:
+
+- 重启 DHXY 后跑一次需要 team return precheck 的五倍/修罗流程。
+- `logs/dhxy-console.log` 必须无 `cloud.decision serviceId=TEAM_RETURN_POLICY`。
+- 队长本地 precheck 若为 `NO_SIGNAL`，日志应保持 no-signal/不等待；不得再因 cloud failure 打印
+  `team return precheck saw return signal`。
+
+Card CR184: 修罗/五倍回城验证后毫秒级清 stale `IN_COMBAT`
+
+Status:
+
+- Review. Owner: Codex。源码实现、focused guard 和 compile 已通过；fresh runtime 待验。
+- 2026-07-04 用户确认：这个修复要做成毫秒级，修罗和五倍都要修。不能等 runner/window watcher
+  保守的两次 miss 才恢复任务状态。
+
+Problem:
+
+- 修罗/五倍在 `FAST_EXPECTED_EXIT` 下会为了速度先相信任务侧快脱战判断，进入 `RETURN_HOME`，
+  并使用回城道具。
+- window combat watcher 是保守兜底：它可能在同一轮里又看到战斗画面，把共享
+  `GameContext.ActionState` 拉回 `IN_COMBAT`。这个动作只改 action state，不改任务 phase。
+- 如果任务随后已经用 `playerStateService.syncMyPosition()` 验证回到起点地图，
+  这就是更强的业务证据，说明回城已经成功、战斗已经结束。
+- 旧代码缺少“回城地图验证成功后清 stale combat state”的同步 hook，导致下一轮接任务/导航可能被
+  旧 `IN_COMBAT` 拦住，直到 runner 之后的两次 miss 才清。
+
+Runtime evidence:
+
+- `logs/archive/dhxy-console.2026-07-04.0.log` 中 `hwnd-10F1474 / 乌龟的黑头°`：
+  - `19:26:02.920` 修罗 fast expected exit 将任务 phase 从 `WAIT_COMBAT` 推进到 `RETURN_HOME`。
+  - `19:26:03.204` window combat watcher 又保守地 force shared action state to `IN_COMBAT`。
+  - `19:26:08.305` 回城道具右键使用。
+  - `19:26:12.074` 任务线程验证当前位置为 `灵兽村`，说明回城成功。
+  - `19:26:14.047` 下一轮导航仍因 shared action state stale `IN_COMBAT` 被拒绝。
+
+Required behavior:
+
+1. 修罗和五倍在 cached return item verified、normal return item verified 两条成功路径上，都必须同步清理
+   stale `IN_COMBAT`。
+2. 清理必须发生在任务已经验证回到起点地图之后、队长归队 signal precheck/下一步导航之前。
+3. 这个 hook 只能清内存态：
+   - `expectedCombatExitWaitArmed=false`
+   - `fastExpectedExitWatchArmed=false`
+   - `pendingCombatEntryMaintenanceAt=0`
+   - stale `GameContext.ActionState.IN_COMBAT -> FREE`
+   - stale combat-enter signal 不得再重新触发 entry maintenance
+4. 这个 hook 不能做慢操作或业务重判定：
+   - 不截图、不 OCR、不 template match；
+   - 不调用 `checkAndSyncCombatState()`；
+   - 不调用 `syncMyPosition()`；
+   - 不睡眠；
+   - 不发 input、不导航。
+5. 不能重复调用 `recordCombatExit()`，因为正常 fast expected exit 消费时可能已经扣过自动战斗估算轮数；
+   回城验证 hook 只负责清 stale state，不能双扣轮数。
+6. Runner/window watcher 仍然是观察者和保守兜底；本卡不允许 runner 改任务 phase。
+
+Implementation result:
+
+- `AutoCombatService.reconcileReturnHomeVerifiedCombatState(...)` 已新增：
+  - 若当前 action state 不是 `IN_COMBAT`，只关闭相关等待标记并 no-op 返回；
+  - 若当前 action state 是 `IN_COMBAT`，同步设为 `FREE`，并调用
+    `BattleRadarService.discardCombatEnterSignalIfNotInCombat(...)` 清掉 stale enter signal；
+  - 日志输出 `return-home verification reconciled stale combat state`，包含 task/source/map/before/after。
+- `XiuluoTaskV2.useReturnItem(...)` 已在两条 verified branch 调用该 hook：
+  - `xiuluo-v2:cached-return-verified`
+  - `xiuluo-v2:return-home-verified`
+- `WubeiTask.useReturnItem(...)` 已在两条 verified branch 调用该 hook：
+  - `wubei:cached-return-verified`
+  - `wubei:return-home-verified`
+- 新增 `AutoCombatReturnHomeVerifiedReconcileWiringTest`：
+  - guard hook 必须保持 state-only / no slow operation；
+  - guard 修罗和五倍 cached/normal verified return 分支都调用 hook；
+  - guard 禁止 hook 调 `recordCombatExit()` 双扣轮数。
+
+Validation result:
+
+- `mvn -q -Dtest=AutoCombatReturnHomeVerifiedReconcileWiringTest test` passed。
+- `mvn -q -DskipTests compile` passed。
+
+Fresh runtime gate:
+
+- 下次修罗/五倍出现 fast expected exit 后，如果 watcher 又保守拉回 `IN_COMBAT`，
+  回城地图验证成功后应立即出现：
+  `return-home verification reconciled stale combat state`。
+- 随后的接任务/导航不能再因 stale `IN_COMBAT` 被拒绝。
+- 自动战斗估算轮数不能出现因这个 hook 导致的二次 decrement。
+
+Card CR185: 完整 `vision_memory.json` 云端 canonical store 与 NPC click memory 派生索引
+
+Status:
+
+- Review. Owner: 谢帅 manager/reviewer + worker。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 2026-07-05 scope correction：前一版 worker 实现范围错误，只做了 filtered NPC click executable index；
+  没有完成用户原始要求的完整 `config/vision_memory.json` 云端镜像。前一版不能作为 CR185 完成态。
+- 需要重新派 worker repair，并重新通过两个独立 reviewer：spec compliance review 和 code quality review。
+
+Scope correction 2026-07-05:
+
+- 用户原始要求不是“筛选可点击 NPC 记忆”，而是：
+  - 本地 `config/vision_memory.json` 的完整结构必须原封不动保存到云端；
+  - `entries`、`policies.roiPolicies`、`policies.clickPolicies`、`npcClickSamples` 和所有字段都要保留；
+  - 不稳定、失败、stale、样本数不足的历史也属于 vision memory 原始数据，不能因为不能直接点击就丢掉；
+  - cloud 后续新学习也必须写回同一套完整 `vision-memory-v2` schema。
+- 当前错误实现只做了：
+  - 扫 `policies.clickPolicies=616`；
+  - 按 `sampleCount>=3`、强验证、非 stale、窗口内等条件筛出 `eligible=40`；
+  - 只把这 40 条转成 cloud `MEMORY` 可点击索引。
+- 正确边界：
+  1. Cloud canonical vision memory store 是 source of truth：保存整份旧 `vision_memory.json` schema/字段，
+     但生产运行不再从本地文件同步或读取。
+  2. NPC click `MEMORY` 是 derived index：可以从 cloud canonical store 中按安全规则派生，但不能替代或裁剪原始 memory。
+  3. 旧的 filtered 40 条迁移逻辑只能保留为“派生索引构建器”，不能再叫 vision memory migration。
+  4. Repair 前，CR185 不能关 Done，也不能标记 fresh runtime pending。
+
+User decision:
+
+- 用户确认这次要把两个点合成同一张卡一起做：
+  1. 云端必须保存和以前本地 `config/vision_memory.json` 一模一样的完整 `vision-memory-v2`
+     结构；本地有什么字段，云端就保存什么字段，不筛、不丢、不改 schema。
+  2. memory 使用策略不要再等连续三次成功。一次强验证成功也算 `successStreak=1`，下一次可以作为 trial memory
+     优先试用；若这次试用失败，立刻记录失败并降权，下一次不再用，直到后续 fallback 再产生强验证成功。
+- 2026-07-05 用户补充强验收：`2026-07-04 21:15` 那次等了几十秒才由黄字算出来的成功点击点，
+  不能靠手工 backfill 或直接改 JSON 通过。DHXY 必须把这次成功点击编辑成一个 production
+  `NPC_CLICK_SMART` outcome 发给云端；cloud brain 必须通过正式 `ingestOutcome(...)` 路径把这个
+  outcome 转换并写入完整 `vision_memory.json` mirror，落盘后的数据结构必须和旧本地
+  `OcrRoiMemoryService` / `vision-memory-v2` 结构一模一样。
+- 2026-07-05 用户追加 source-of-truth 边界：
+  - Vision Memory 数据全量迁云后，生产 source of truth 是云端 canonical vision memory store。
+  - 本地 `config/vision_memory.json` 可以保留/注释/作为备份或测试 fixture，但正常生产业务不应再读取本地这份数据。
+  - `migrateDefaultIfNeeded()` 不应出现在 NPC click runtime；如果保留导入能力，只能是显式手动/管理工具，
+    不是业务自动触发。
+  - “mirror” 术语只允许表示云端保存的旧 schema full copy，不表示每次从本地同步一份。文档/日志应尽量改成
+    `cloud canonical vision memory store` / `cloud vision memory full store`，避免误导。
+- 2026-07-05 用户最终修正：
+  - 初始 full `vision_memory.json` 已由 manager 手工复制到
+    `D:\mavenProject\dhxy-cloud-brain\data\vision_memory.json`，并校验
+    `entries=459`, `roiPolicies=674`, `clickPolicies=616`, `npcClickSamples=600`,
+    `fileSha256=EA8F3BA1F396DEB3A41073E46D63465E68DE18100D18DE62B2CF5A8F9FA8BAEB`,
+    `canonicalJsonSha256=5af74f8375d4fb03d0212c828049cbc262a56450323618359355d7059eb632e1`,
+    `JSON_EQUIVALENT=true`。
+  - 因此 NPC click HTTP migrate / DHXY migrate service 不再需要；当前生产边界改为：
+    cloud-brain 启动时直接加载 `data/vision_memory.json` 作为 canonical source of truth，
+    DHXY 不再携带或调用 NPC click vision-memory migrate 通道。
+
+Problem:
+
+- CR181 已把旧本地 `vision_memory.json` 中稳定、非 stale 的 `policies.clickPolicies` 迁入 cloud `MEMORY`
+  队列，但它只是静态迁移旧稳定点。
+- 运行时新的 cloud NPC click 成功没有按旧本地 `recordNpcClickAttempt(...)` /
+  `updateNpcClickPolicy(...)` 语义写回 memory。
+- 结果是一次昂贵的黄字成功不会变成下一轮 memory 快路径；下一次同位置仍可能从 `MEMORY miss`
+  掉回慢黄字/其他 fallback。
+
+Runtime evidence:
+
+- `2026-07-04 21:14:43.415` 修罗队长 `hwnd-115514AA` 请求 NPC click，cloud `MEMORY`
+  返回 miss：
+  `strategy=MEMORY; status=NOT_FOUND; reason=cloud-brain-npc-memory-miss`。
+  请求上下文包含 `playerMapX=111, playerMapY=84`，目标 `灵兽村使者 (112,93)`。
+- `2026-07-04 21:15:21.748` 同一轮 cloud `YELLOW_NAME` 才成功：
+  `elapsedMs=37993`, `click=498,215`, `candidateBox=467,257,63,17`,
+  `matchedText=兽村使者`, reason `cloud-brain-npc-raw-yellow-target-ocr`。
+- `2026-07-04 21:15:27.898` 本地上报 `NPC_CLICK_SMART outcome ... outcome=VERIFIED`。
+- 但当前 persisted `data/npc-click-memory.json` 没有 `player:111,84` / `click=498,215` /
+  `candidateBox=467,257,63,17`，说明 runtime success 没有进入可复用 memory。
+
+Required behavior:
+
+1. Cloud brain 必须有完整 `vision-memory-v2` canonical store：
+   - 默认保存路径建议为 `data/vision_memory.json` 或明确配置路径；
+   - 文件根结构必须保持旧 `vision-memory-v2` 兼容：`entries`、`npcClickSamples`、`policies`；
+   - `policies.roiPolicies`、`policies.clickPolicies` 必须完整保存；
+   - 未达到可点击门槛的样本、失败样本、stale 记录、ROI 记忆、历史 sample 都必须保留；
+   - 保存时不能只留 eligible rows，不能用 derived index 覆盖原始 canonical store。
+2. DHXY 不能在正常 NPC click runtime 自动读取/上传本地 `config/vision_memory.json`：
+   - `NpcClickService` 不得调用 `migrateDefaultIfNeeded()`。
+   - `NpcClickService` / production NPC click path 不得用 `OcrRoiMemoryService.recommendNpcClickRegions(...)`
+     从本地 `vision_memory.json` 取 ROI/scan region。
+   - 如果保留 `NpcClickMemoryMigrationService`，它只能作为显式手动/管理/测试导入入口；生产业务不能自动触发。
+   - 正常运行即使本地 `config/vision_memory.json` 被注释/缺失，也应能发起 cloud NPC click FIFO；
+     云端从自己的 canonical store 派生 `MEMORY`。
+3. 初始全量导入只作为 bootstrap/backfill：
+   - 可提供显式工具/接口上传整份 `config/vision_memory.json` 到云端 canonical store；
+   - 上传 payload 应包含完整 JSON 或完整等价 schema；
+   - 日志必须区分 explicit import/backfill 和 runtime NPC click；不能在业务点击里静默 import。
+4. Cloud NPC click `MEMORY` index 必须从 cloud canonical store 派生：
+   - 可继续按安全门槛筛可点击 candidate；
+   - 但筛选结果只能写入派生索引或 cache，不能删除/裁剪完整 canonical store；
+   - 派生索引重建后，应能得到旧 CR181 的 40 条稳定 NPC click candidate。
+5. Runtime 新 outcome 必须写回云端 canonical store 的旧 schema：
+   - 强验证成功、真实 click failure、trial memory 降权都要更新 `data/vision_memory.json`
+     中对应的 `npcClickSamples` 和 `policies.clickPolicies`；
+   - 新写入字段必须兼容旧 `OcrRoiMemoryService` 读写语义；
+  - 派生 NPC click index 要随 cloud canonical store 更新同步刷新。
+   - 强验收样本必须覆盖 `2026-07-04 21:15` 灵兽村使者黄字成功：
+     `playerMap=(111,84)`, target `灵兽村使者 (112,93)`, `click=498,215`,
+     `candidateBox=467,257,63,17`, `matchedText=兽村使者`, reason
+     `cloud-brain-npc-raw-yellow-target-ocr`。测试必须先构造/发送这个 outcome，再断言云端 full mirror
+     的 `npcClickSamples` 和 `policies.clickPolicies` 出现旧式结构记录；不能直接写 mirror 造测试数据。
+6. DHXY 本地 `NPC_CLICK_SMART` outcome payload 必须补齐旧 memory 更新所需字段：
+   - `source`, `mapName`, `playerMapX/playerMapY`, `npcName`, `targetMapX/targetMapY`
+   - window base/size, predicted/actual click absolute and relative coordinate, tune, formula version
+   - clicked/success/outcome/verification/verificationStrength/actualClickSource/candidate box/strategy/session/debug ids as needed.
+7. Cloud `ingestOutcome(...)` 必须 port 旧 `OcrRoiMemoryService.recordNpcClickAttempt(...)` /
+   `updateNpcClickPolicy(...)` 的核心更新规则，而不是只保存 compact outcome。
+8. Lookup eligibility:
+   - `successStreak >= 1` 且最近结果是强验证成功时，可以作为 trial memory 使用；
+   - `sampleCount >= 3` 只提升 stable confidence / 日志等级，不再是最低可用门槛；
+   - 最近失败、`failureStreak > 0` 或 last outcome failure 必须禁用该 candidate；
+   - 后续 fallback 再强验证成功后，才能重新启用。
+9. Memory 尝试失败时，本轮必须继续后续 fallback，不得直接终止 NPC click；失败要写回 cloud canonical store 和派生索引，
+   以便下一轮跳过。
+10. 必须补一个 production-outcome replay fixture，复现 `2026-07-04 21:15` 灵兽村使者成功样本：
+   本地 outcome payload -> cloud `ingestOutcome(...)` -> cloud canonical store old schema -> derived index refresh。
+   验收点是 `player:111,84 -> click=498,215` 由 outcome 转换后持久化，并可被下一次 `MEMORY` 命中。
+11. 必须补 source guard/focused tests：
+   - `NpcClickService` source 不包含 `migrateDefaultIfNeeded()` runtime 调用。
+   - production main source 不调用 `OcrRoiMemoryService.recommendNpcClickRegions(...)` 作为 NPC click runtime ROI 来源。
+   - `NpcClickMemoryMigrationService` 如保留，只能被测试/显式导入入口引用，不得被生产 NPC click path 自动调用。
+   - 本地 `config/vision_memory.json` 缺失时，cloud NPC click FIFO request/outcome 链路仍可工作。
+
+Boundaries:
+
+- 不改黄字 OCR profile、紫字/黄字洗图、OCR fuzzy 规则。
+- 不改 NPC 点击几何公式、点击偏移、tooltip/Ctrl/yellow fallback 顺序。
+- 不改 expected dialog verifier、direct-combat verifier、任务 phase、导航或 input queue 行为。
+- 不恢复本地 learned-memory fallback 作为生产决策；本地负责截图、点击、验证和 outcome 上报，memory 决策在 cloud brain。
+
+Implementation direction:
+
+- 以 `OcrRoiMemoryService` 旧本地 NPC click memory 逻辑为 source of truth。
+- 优先在 cloud brain `NpcClickMemoryStore` 中复刻旧数据结构和更新规则；`DecisionEngine`
+  只负责调用 store 并返回 `MEMORY` queue result。
+- DHXY `NpcClickSmartCloudDecisionService` 只补 payload 字段和 contract 测试；不要把 memory policy
+  搬回本地业务。
+- Superseded 2026-07-05：初始 full file 已手工 bootstrap 到 cloud-brain；
+  不再保留 `NpcClickMemoryMigrationService` 或 `/api/cloud/npc-click-memory/migrate` 作为 NPC click
+  vision-memory 导入通道。Route memory migrate 不属于本卡，保持不变。
+
+Required tests:
+
+- Cloud brain RED/GREEN tests:
+  - Full mirror import/save/reload preserves the complete `config/vision_memory.json` structure:
+    `entries` count, `policies.roiPolicies` count, `policies.clickPolicies` count, `npcClickSamples`
+    count, representative nested fields, and unknown fields must round-trip unchanged.
+  - Importing the current real file shape with `entries=459`, `roiPolicies=674`,
+    `clickPolicies=616`, `npcClickSamples=600` must persist a mirror with the same counts.
+  - Derived NPC click index built from full mirror must produce the same stable candidate count as
+    the old filtered migration path (`eligible=40` on the current fixture), but the mirror file must
+    still contain all 616 click policies and all other memory sections.
+  - `2026-07-04 21:15` yellow-name success sample must be represented as a production
+    `NPC_CLICK_SMART` outcome, posted through cloud `ingestOutcome(...)`, and only then create
+    old-style sample + policy in the full mirror. Assert `player:111,84`, `click=498,215`,
+    `candidateBox=467,257,63,17`, `matchedText=兽村使者`, and the corresponding old
+    `npcClickSamples` / `policies.clickPolicies` structure. Directly editing the mirror or seeding
+    only the derived index is not an acceptable test.
+  - `successStreak=1` / `sampleCount=1` lookup returns `MEMORY` candidate。
+  - failure outcome disables the candidate and is persisted across reload。
+  - later fallback success re-enables the candidate。
+  - migrated old stable policy and new runtime sample can coexist.
+- DHXY RED/GREEN tests:
+  - Full `config/vision_memory.json` mirror upload request includes the entire JSON, not only
+    eligible `clickPolicies` rows.
+  - `NpcClickSmartCloudDecisionService` outcome payload includes player map coordinate and old memory update fields。
+  - cloud `MEMORY` failure still reports outcome and continues queue fallback.
+- Verification commands expected:
+  - In `D:\mavenProject\dhxy-cloud-brain`: focused full mirror/index tests and `mvn -q -DskipTests compile`。
+  - In `D:\mavenProject\DHXY`: focused cloud NPC outcome/payload tests and `mvn -q -DskipTests test-compile`。
+
+Worker implementation result 2026-07-05:
+
+- Cloud brain `NpcClickMemoryStore` 已把 runtime outcome 写回旧式 `vision-memory-v2` schema：
+  `memoryType`、`entries`、`npcClickSamples`、`policies.clickPolicies`、`recentSamples`、streak/count、
+  `spreadPx`、`lastOutcome`、`lastVerificationStrength`、`predictedClickRel`、`actualClickRel`、
+  `formulaVersion`、`actualClickSource`、`tuneX/tuneY` 等字段随强验证/失败 outcome 更新。
+- 一次强验证 `VERIFIED` outcome 会生成 `successStreak=1` / `sampleCount=1` 的 trial memory；
+  lookup 不再把 `sampleCount>=3` 当作 runtime 可用门槛，只把它作为 stable confidence。
+- 最近失败、`failureStreak>0` 或 last failure 会从 cloud lookup index 禁用对应 candidate，并持久化到
+  `policies.clickPolicies`；后续黄字/其他 fallback 再产生强验证成功时，会清 failure streak 并重新启用。
+- 稳定旧 policy 迁移仍保留 CR181 的保守门槛，迁移出的 stable policy 可与 runtime single-sample policy
+  共存在同一份旧式 persisted memory。
+- DHXY `NpcClickSmartCloudDecisionService` 的 queue/verified outcome payload 已补齐旧 memory 更新字段：
+  player map coordinate、target coordinate、window base/size、absolute/relative actual/predicted click、
+  source、formula tune、formula version、actual click source、candidate text/box、verification/outcome 等。
+- 本地没有恢复 learned-memory production fallback；`NpcClickService` 仍只执行 cloud FIFO candidate、验证并上报 outcome。
+  `MEMORY` failure 后继续后续 fallback 的证据来自
+  `NpcClickSmartFifoBehaviorTest#testMemoryClickVerificationFailureContinuesToNextExecutableCandidate`：
+  该用例断言 `MEMORY` 上报 `VERIFICATION_FAILED` 后继续 poll，并让后续 `TOOLTIP` candidate 上报 `VERIFIED`。
+
+Validation result 2026-07-05:
+
+- RED：cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 先失败，证明 compact memory 还没有生成旧式 sample/policy、failure disable、fallback re-enable、migration coexist。
+- RED：DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest" test` 先失败，`testCr185QueueOutcomePostsOldNpcClickMemoryFields` 首个缺失字段为 `source`。
+- GREEN：`D:\mavenProject\dhxy-cloud-brain` 下 `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 通过。
+- GREEN：`D:\mavenProject\dhxy-cloud-brain` 下 `mvn -q -DskipTests compile` 通过。
+- GREEN：`D:\mavenProject\DHXY` 下 `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` 通过。
+- GREEN：`D:\mavenProject\DHXY` 下 `mvn -q -DskipTests test-compile` 通过。
+
+Fresh runtime gate:
+
+- 下一次同/近似 `灵兽村使者` `playerMap=(111,84)` 场景，日志应先出现 cloud `MEMORY` hit，
+  不再先走 30+ 秒黄字。
+- 如果 `MEMORY` 点击失败，必须看到 failure 写回，并且下一轮不再使用同一个失败 candidate，
+  直到后续黄字/其他 fallback 强验证成功重新启用。
+
+Spec review 2026-07-05:
+
+- Reviewer: Goodall。Verdict: `SPEC_REVIEW_BLOCKED`。
+- P2 blocker:
+  - DHXY `NpcClickSmartCloudDecisionService` outcome payload 和 external cloud brain
+    `NpcClickMemoryStore` persisted sample 缺旧 `vision-memory-v2` NPC click sample 的 `tuneX/tuneY`。
+  - 旧本地 `OcrRoiMemoryService.recordNpcClickAttempt(...)` 接收并写入 `tuneX/tuneY`；CR185 要求
+    outcome payload/schema 兼容旧 memory，所以这是必须补的 schema 字段。
+  - Required repair: DHXY outcome 补 `tuneX/tuneY`；cloud sample 写入 `tuneX/tuneY`；
+    两边 focused tests 增加断言。
+- Worker repair 2026-07-05:
+  - DHXY `NpcClickSmartCloudDecisionService.appendOldNpcClickMemoryFields(...)` 已把 `tuneX/tuneY`
+    写入 verified/queue outcome payload，优先使用 `NpcClickSmartCloudRequest` 的 tune，缺失时回退到
+    `NpcClickRequest` target metadata 的 tune。
+  - External cloud brain `NpcClickMemoryStore.outcomeUpdate(...)` 已把 outcome JSON 里的 `tuneX/tuneY`
+    写入 persisted `npcClickSamples`。
+  - Focused RED/GREEN 已补：DHXY payload test 断言 outcome `tuneX=-10/tuneY=2`；
+    cloud memory test 断言 persisted `npcClickSamples[0].tuneX/tuneY`。
+  - GREEN：cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 通过；
+    DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` 通过；
+    cloud brain `mvn -q -DskipTests compile` 通过；
+    DHXY `mvn -q -DskipTests test-compile` 通过。
+- P3 note:
+  - 已补充明确证据：`NpcClickSmartFifoBehaviorTest#testMemoryClickVerificationFailureContinuesToNextExecutableCandidate`
+    覆盖 `MEMORY` candidate 验证失败后上报 `VERIFICATION_FAILED`，继续 poll 下一条候选，并由后续
+    `TOOLTIP` candidate 上报 `VERIFIED`。
+
+Spec re-review 2026-07-05:
+
+- Reviewer: Goodall。Verdict: `SPEC_REVIEW_PASS`。
+- 原 P2 已关闭：DHXY outcome payload 写入 `tuneX/tuneY`，并按 request tune 优先、NPC target metadata
+  fallback；external cloud brain persisted sample 也写入 `tuneX/tuneY`。
+- P3 证据已足够：`NpcClickSmartFifoBehaviorTest#testMemoryClickVerificationFailureContinuesToNextExecutableCandidate`
+  覆盖 `MEMORY` 验证失败后继续 poll 到 `TOOLTIP` 并最终 `VERIFIED`。
+
+Code quality review 2026-07-05:
+
+- Reviewer: Banach。Verdict: `CODE_REVIEW_BLOCKED`。
+- P1 blockers:
+  1. External cloud brain `NpcClickMemoryStore` 在 cached thread pool 下会并发处理 outcome，
+     但 `applyOutcome()` 对共享 `ObjectNode` / `ArrayNode` 做非原子读改写，`save()` 也没有同一锁保护。
+     多窗口同时上报 success/failure 时可能丢 streak、recentSamples、memory index 或 JSON snapshot。
+     Required repair: `migrate/ingestOutcome/applyOutcome/save/load` 用 store 级锁保护写路径；
+     lookup 读取一致 snapshot 或在同锁下访问可变结构。
+  2. Migration policy key 和 runtime outcome policy key 不一致。Migration 用 lookup key
+     `map|npc|target|verification|player`，runtime 用旧式 `npc-click|map|npc|target|player`，
+     同 player 会落两条 policy，duplicate 检测失效，reload 命中顺序不稳定。
+     Required repair: 统一 canonical policy key；兼容/合并已写出的非 canonical key；
+     补 same-player migration + runtime update + reload 测试。
+  3. 所有非强成功 outcome 都被当作 click failure 写入 policy，包括 `SKIPPED`、`CANCELLED`、
+     `FINAL_FAILED`、无 click terminal/no-action。图片不可读、用户 stop、memory miss/no-click
+     不应禁用有效 memory。
+     Required repair: 只有真实执行过 click 的候选失败才降权；`VERIFICATION_FAILED` 可降权，
+     `SKIPPED/CANCELLED/FINAL_FAILED/STALE_IGNORED` 等 no-click 只记录 outcome 或跳过学习；
+     补 terminal/no-click 不禁用测试。
+- P2 follow-ups:
+  - Policy key 维度要和 lookup/`verificationMode` 一致，避免 `direct-combat` 覆盖 `dialog` policy 或旧 hit 残留。
+  - `save()` 失败不能只 `System.err.println` 后仍返回 promoted；需要 structured response 标记持久化失败或 partial。
+  - Tests 需要覆盖 no-click terminal 不禁用、same-player migrated policy 与 runtime sample 合并/更新/reload。
+- P3 note:
+  - `windowBase` 目前从第一 scan region 推导，scanRegions 为空时 abs 坐标缺失；不是 CR185 blocker，
+    但后续可改成 request/window binding 显式 base，scan region 只做 fallback。
+
+Code quality re-review 2026-07-05:
+
+- Reviewer: Banach。Verdict: `CODE_REVIEW_BLOCKED`。
+- 原 P1/P2 大部分已关闭：
+  - `NpcClickMemoryStore` 已加 store-level lock，覆盖 `lookup/migrate/ingestOutcome/load/save`。
+  - Canonical policy key 已统一到 `npc-click|map|npc|target|verificationMode|player:x,y`，
+    并有 same-player merge/reload 测试。
+  - no-click/terminal outcome 不再降权；只有真实 click 且 `actualClickRel` 存在的
+    `VERIFICATION_FAILED` 算 click failure。
+  - `verificationMode` 已隔离进 key/sample primary；`direct-combat` 不覆盖 `dialog`。
+  - `System.err` 已移除，save failure 已转 structured `partial/persist_failed`。
+- Residual P2:
+  - `ingestOutcome(...)` 在持久化前登记 idempotency。如果 `save()` 失败，同一 outcome 重试会被
+    duplicate 分支吃掉，无法重新保存这次强验证样本。
+  - Required repair: `persist_failed` 不得成为永久 duplicate；同一 `decisionId/attemptToken`
+    应允许重试保存，或者失败时回滚 idempotency/内存变更。补 persist failure 后重放同一 outcome
+    可成功落盘的测试。
+- Residual P2 worker repair 2026-07-05:
+  - `NpcClickMemoryStore.ingestOutcome(...)` 在 `SaveResult.failed()` 时会移除本次 idempotency key，
+    并调用 locked load 路径把 `memories` / `entries` / `clickPolicies` / `npcClickSamples`
+    回滚到已持久化 snapshot；snapshot 不存在时清空 CR185 memory 状态。
+  - 新增 focused test
+    `NpcClickMemoryStoreTest#persistFailureDoesNotMakeOutcomePermanentlyDuplicateAndRetryCanSave`：
+    先用文件挡住 store parent 制造 `partial/persist_failed`，再把同一 store path 修成可写，
+    重放同一 `decisionId/attemptToken`，断言第二次不是 `duplicate`，返回 `accepted/saved/promoted`
+    并持久化 `npcClickSamples` 与 canonical policy；成功保存后的第三次重放才返回 `duplicate`。
+  - RED：`mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 先失败 1 项，第二次同 outcome 返回
+    `status=duplicate`。
+  - GREEN：`mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 通过；`mvn -q -DskipTests compile` 通过。
+- Worker repair 2026-07-05:
+  - External cloud brain `NpcClickMemoryStore` 已给 `lookup/migrate/ingestOutcome/load/save` 相关状态路径加
+    `storeLock`，避免 mutable `ObjectNode/ArrayNode`、`memories` index 与 JSON snapshot 并发不一致。
+  - Policy key 已 canonical 化为
+    `npc-click|map|npc|target|verificationMode|player:x,y`；load 会兼容并合并已写出的 lookup-key
+    与 old runtime-key，后续 save 只保留 canonical key。
+  - 只有 `clicked=true` 且存在 `actualClickRel` 的 `VERIFICATION_FAILED` 会更新 failure counters；
+    `SKIPPED/CANCELLED/FINAL_FAILED/STALE_IGNORED`、memory miss/no-click、queue end 等只返回
+    `learnStatus=skipped`，不禁用有效 memory。
+  - `verificationMode` 已进入 policy/lookup/disable key，`direct-combat` failure 不再覆盖 `dialog` hit。
+  - Persistence failure 现在返回 structured partial response：`status=partial`,
+    `persistStatus=failed`, `learnStatus=persist_failed`，并移除 production `System.err`。
+  - RED：`mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 先失败 8 项，覆盖 key/no-click/mode/persist/lock 问题。
+  - GREEN：`mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 通过；`mvn -q -DskipTests compile` 通过。
+
+Code quality final re-review 2026-07-05:
+
+- Reviewer: Banach。Verdict: `CODE_REVIEW_PASS`。
+- 原 residual P2 已关闭：
+  - `saveResult.failed()` 后会 `outcomes.remove(idempotencyKey)`，不会把一次 `persist_failed`
+    永久固化成 duplicate；
+  - 失败后 `loadLocked()` 回滚内存状态；
+  - `loadLocked()` 先清空内存状态，再从 snapshot 重建 `memories` / `entries` /
+    `clickPolicies` / `npcClickSamples`；
+  - `NpcClickMemoryStoreTest#persistFailureDoesNotMakeOutcomePermanentlyDuplicateAndRetryCanSave`
+    覆盖同一 `decisionId/attemptToken` 首次持久化失败后可重放保存，第二次
+    `accepted/saved/promoted`，第三次才 duplicate。
+- 新的 P0/P1/P2：未发现。
+
+Manager verification 2026-07-05:
+
+- DHXY focused：`mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` 通过。
+- DHXY compile gate：`mvn -q -DskipTests test-compile` 通过。
+- External cloud brain focused：`mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 通过。
+- External cloud brain compile gate：`mvn -q -DskipTests compile` 通过。
+
+Strong acceptance worker repair 2026-07-05:
+
+- Worker: CR185 repair worker。
+- 用户追加验收已实现：
+  1. DHXY `NpcClickMemoryMigrationService` 现在把完整 `config/vision_memory.json` 放进
+     upload payload 的 `visionMemory` 字段；本地 eligible scan 只保留为 derived index 诊断统计，
+     不再裁剪上传内容。
+  2. External cloud brain `NpcClickMemoryStore` 新增 full mirror 路径，默认
+     `data/vision_memory.json`；`data/npc-click-memory.json` 只保存 derived
+     `npc-click-memory-derived-v1` index。
+  3. Cloud `migrate(...)` 收到 `visionMemory` wrapper 后保存完整 mirror，保留 root/entry/sample/
+     `roiPolicies`/`clickPolicies` 未知字段，并从 full mirror 重建 derived `MEMORY` index。
+  4. Cloud `ingestOutcome(...)` 的 production `NPC_CLICK_SMART` outcome 更新 full mirror 的旧式
+     `npcClickSamples` 与 `policies.clickPolicies`；`roiPolicies` 与未知字段不会因 outcome 更新被丢弃。
+  5. 历史 full mirror 初次导入仍按旧稳定门槛派生，当前真实 fixture 得到 `40` 个 stable candidate；
+     runtime `lastSource=npc-click-smart` 的强验证 outcome 允许 `sampleCount=1` trial memory。
+- 强验收样本已变成 focused test：
+  - `NpcClickMemoryStoreTest#productionYellowOutcomeWritesFullMirrorAndRefreshesDerivedMemoryTrialHit`
+    构造 `2026-07-04 21:15` 灵兽村使者 `YELLOW_NAME` production outcome：
+    `player=(111,84)`, `target=(112,93)`, `click=498,215`,
+    `candidateBox=467,257,63,17`, `matchedText=兽村使者`,
+    `reason=cloud-brain-npc-raw-yellow-target-ocr`。
+  - 测试只调用正式 `ingestOutcome(...)`，不手写 mirror、不 seed derived index；随后断言
+    `vision_memory.json` full mirror 中出现旧式 `npcClickSamples` 和 canonical
+    `policies.clickPolicies`，并且同上下文 immediate lookup 与 reload 后 lookup 都返回
+    `messageType=MEMORY;click=498,215`。
+- Full mirror fixture test：
+  - `NpcClickMemoryStoreTest#importsCurrentRealVisionMemoryMirrorAndDerivesFortyStableCandidates`
+    读取当前真实 `D:/mavenProject/DHXY/config/vision_memory.json`，断言
+    `entries=459`, `roiPolicies=674`, `clickPolicies=616`, `npcClickSamples=600`，
+    persisted mirror 与原 JSON 等价，derived index `memoryCount=40`。
+- DHXY upload test：
+  - `NpcClickMemoryMigrationServiceTest#uploadsFullVisionMemoryMirrorAndLetsCloudDeriveNpcClickIndex`
+    断言 upload body 包含完整 `visionMemory`，包括 `entries.lastPredictedClick`、`npcClickSamples`、
+    `roiPolicies`、强/弱 `clickPolicies` 和未知字段。
+- RED/GREEN evidence：
+  - RED：cloud brain
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest#productionYellowOutcomeWritesFullMirrorAndRefreshesDerivedMemoryTrialHit" test`
+    先失败，原因是 `vision_memory.json` full mirror 没有落盘。
+  - RED：cloud brain real fixture import 先失败，`derivedStableCandidates=606` 而不是 `40`，
+    证明历史 mirror 误用了 runtime trial 门槛。
+  - RED：DHXY
+    `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest#uploadsFullVisionMemoryMirrorAndLetsCloudDeriveNpcClickIndex" test`
+    先失败，payload 只有 filtered `entries`，没有 `visionMemory`。
+  - GREEN：external cloud brain
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` 通过。
+  - GREEN：external cloud brain `mvn -q -DskipTests compile` 通过。
+  - GREEN：DHXY
+    `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    通过。
+  - GREEN：DHXY `mvn -q -DskipTests test-compile` 通过。
+- 保留上一轮已通过安全修复：
+  - `storeLock` 写路径、canonical policy key、`verificationMode` 隔离、no-click/terminal 不降权、
+    persistence failure retry 不被 duplicate 吃掉，均仍由 `NpcClickMemoryStoreTest` 覆盖。
+
+Strong-acceptance re-review 2026-07-05:
+
+- Reviewer: Lagrange。Verdict: `SPEC_REVIEW_BLOCKED`。
+- P1 blocker:
+  - DHXY 真实 production `NPC_CLICK_SMART` outcome 没有证明会按强验收保留黄字 candidate 自己的
+    `reason=cloud-brain-npc-raw-yellow-target-ocr` 和 `matchedText=兽村使者`。
+  - 证据：`NpcClickService` 当前上报 FIFO outcome 时传入本地 reason
+    `local verifier outcome after FIFO candidate`；`NpcClickSmartCloudDecisionService` 又优先写这个本地
+    reason，可能覆盖 queue message 的 candidate reason。`verificationMatchedTextForOutcome(...)`
+    返回的是 expected dialog template path，不是黄字 OCR text。
+  - Required repair: local verifier reason/template 只能作为本地验证字段保留，不能覆盖 cloud candidate evidence。
+    对 `YELLOW_NAME` FIFO message，outcome 必须带 queue message 的 `reason`、`matchedText`、`candidateBox`
+    和 click/player/target/tune 字段。补生产链路测试：FIFO `YELLOW_NAME` message -> 本地验证
+    `VERIFIED` -> HTTP outcome body，不能手工调用 `reportOutcome(..., "兽村使者")` 绕过生产路径。
+- Reviewer: Beauvoir。Verdict: `CODE_REVIEW_BLOCKED`。
+- P2 blocker:
+  - External cloud brain `NpcClickMemoryStore` 的 idempotency 仍只在内存 `outcomes` map。重启后或 mirror
+    save 成功但 derived save 失败后，同一 `decisionId/attemptToken/result` outcome 可能再次 accepted；
+    `replaceNpcClickSample()` 虽会去掉 duplicate sample，但 `applyOutcome()` 已经递增
+    `attemptCount/successCount/successStreak`，会把 policy counters 写歪。
+  - Required repair: load/reload 时从 persisted `npcClickSamples` / policy metadata 重建 idempotency，
+    或让 `applyOutcome` 对同 primary outcome 幂等。补测试：成功保存后新建 store 重放同 outcome 不递增；
+    mirror save 成功但 derived save failed 后重试也不能重复计数。
+- P2 blocker:
+  - DHXY `NpcClickMemoryMigrationService.parseMigrationResponse(...)` 忽略 remote `status=partial` /
+    `persistStatus=failed`，HTTP 2xx 且无 `error` 就返回 `SUBMITTED`，日志还会说
+    `vision-memory mirror submitted and NPC click index derived`。
+  - Required repair: remote `partial` 或 `persistStatus=failed` 必须返回 failed/partial 状态并进入失败日志，
+    不能被当成 mirror/index 成功。补测试覆盖 cloud import partial response。
+- Manager action:
+  - 已把上述 P1/P2 打回 worker `Fermat` repair。CR185 维持 `Repair blocked`，不得进入
+    fresh runtime gate，直到 worker repair 后 Lagrange + Beauvoir 均 re-review pass。
+
+Review-blocker repair 2026-07-05:
+
+- Worker: CR185 repair worker。
+- Lagrange P1 production evidence blocker 已修：
+  - DHXY `NpcClickSmartQueueMessage` 新增 `matchedText`，`NpcClickSmartCloudDecisionService`
+    从 FIFO queue decision fields/diagnostics 解析并保留 cloud candidate OCR text。
+  - Queue outcome serialization 现在把 `reason` / old-schema `matchedText` 优先写为 queue message
+    的 candidate evidence；本地 verifier 的 reason/template 分别写入 `localVerificationReason`
+    和 `verificationMatchedText`，不再覆盖黄字 candidate evidence。
+  - 新增 production-chain test
+    `NpcClickSmartFifoBehaviorTest#testYellowNameProductionOutcomePreservesCandidateEvidenceThroughVerifiedReport`：
+    从 `NpcClickService.tryClickNpcSmartViaCloud(...)` 进入，FIFO `YELLOW_NAME` message ->
+    本地 verifier `VERIFIED` -> async `reportOutcome(...)` -> HTTP body 捕获；断言
+    `reason=cloud-brain-npc-raw-yellow-target-ocr`、`matchedText=兽村使者`、
+    `candidateBox=467,257,63,17`、click `498,215`、player `111,84`、target `112,93`、
+    `tuneX=-10/tuneY=2`、`taskCode=xiuluo_v2` 均来自 message/request，不再靠手工
+    `reportOutcome(..., "兽村使者")`。
+- Beauvoir P2 idempotency/retry blocker 已修：
+  - External cloud brain `NpcClickMemoryStore` 现在把 `attemptToken` 写入旧式 `npcClickSamples`，
+    load/reload 时从 persisted samples 重建 outcome idempotency key。
+  - Duplicate outcome 不再执行 `applyOutcome(...)`；如果 mirror 已存在，会只重试
+    `writeMirrorAndDerivedLocked()`，用于修复 derived index 保存失败，不递增
+    `attemptCount/successCount/successStreak`。
+  - 新增 tests：
+    `reloadRestoresOutcomeIdempotencyAndDoesNotIncrementPolicyCountersAgain` 覆盖保存后新 store reload
+    重放同 outcome 只返回 duplicate 且 policy counters 不变；
+    `derivedPersistFailureRetryDoesNotDoubleCountOutcomeStoredInFullMirror` 覆盖 mirror 保存成功、
+    derived 保存失败后同 outcome retry 刷新 derived index 但不重复计数。
+- Beauvoir P2 migration partial blocker 已修：
+  - DHXY `NpcClickMemoryMigrationService.parseMigrationResponse(...)` 遇 remote
+    `status=partial` / `status=failed` / `persistStatus=failed` 会返回 `MigrationStatus.FAILED`，
+    保留 remote migrated/skipped/duplicates 统计，并写失败/partial 日志；不再打印
+    `vision-memory mirror submitted and NPC click index derived`。
+  - 新增 `NpcClickMemoryMigrationServiceTest#remotePartialOrPersistFailedResponseIsNotReportedAsSubmitted`。
+- RED evidence：
+  - DHXY specified focused command
+    `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    先失败于 production-chain test：`NpcClickSmartQueueMessageBuilder` 缺 `matchedText(...)`
+    且旧 `MessageSpec` 无 candidate text 字段。
+  - External cloud brain specified focused command
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test`
+    先失败 2 项：reload / derived-fail retry 后同 outcome 返回 `accepted` 而不是
+    `duplicate`。
+- GREEN evidence：
+  - External cloud brain
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` 通过。
+  - External cloud brain `mvn -q -DskipTests compile` 通过。
+  - DHXY
+    `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    通过。
+  - DHXY `mvn -q -DskipTests test-compile` 通过。
+
+Canonical source boundary repair 2026-07-05:
+
+- Worker: CR185 repair worker。
+- 用户追加硬边界已实现：正常生产 NPC click runtime 不再读取本地 `config/vision_memory.json`，也不再在
+  `NPC_CLICK_START` 前自动做本地 full import/backfill。
+- DHXY `NpcClickService`：
+  - 移除 `NpcClickMemoryMigrationService` 注入和 `migrateDefaultIfNeeded()` runtime 调用。
+  - 移除 `OcrRoiMemoryService` 注入和 `recommendNpcClickRegions(...)` 调用。
+  - `buildNpcClickSmartCloudRequest(...)` 使用绑定窗口生成固定安全 full-window scan region
+    `defaultNpcClickScanRegions(...)`，然后发起 cloud FIFO；cloud canonical store/queue response
+    继续拥有 `MEMORY` 派生和候选策略。
+  - `NpcClickSmartFifoBehaviorTest` harness 不再构造 local migration / ROI memory fake，证明发起
+    cloud FIFO 不依赖本地 vision-memory service。
+- DHXY `NpcClickMemoryMigrationService`：
+  - 移除 `DEFAULT_VISION_MEMORY_PATH` 和 `migrateDefaultIfNeeded()`。
+  - 保留 `migrate(Path visionMemoryPath)` 作为显式手动/admin/test backfill；调用方必须显式传入文件，
+    生产业务不会自动触发。
+- Source/behavior guards：
+  - `NpcClickSmartCloudWiringGuardTest#testProductionNpcClickDoesNotReadOrAutoImportLocalVisionMemory`
+    断言 `NpcClickService` 不包含 `migrateDefaultIfNeeded()`、`NpcClickMemoryMigrationService`、
+    `OcrRoiMemoryService` 或 `recommendNpcClickRegions(...)`，并包含 `defaultNpcClickScanRegions`。
+  - `NpcClickSmartCloudWiringGuardTest#testManualVisionMemoryImportServiceIsNotDefaultRuntimeMigration`
+    断言 migration service 不再暴露 runtime default-import helper，也不持有
+    `DEFAULT_VISION_MEMORY_PATH`。
+- RED evidence：
+  - `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` 先失败：
+    `production NPC click runtime must not auto-import local config/vision_memory.json forbidden substring=migrateDefaultIfNeeded()`。
+- GREEN evidence：
+  - `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` 通过。
+  - `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    通过。
+  - `D:\mavenProject\dhxy-cloud-brain`：
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` 通过。
+  - `D:\mavenProject\dhxy-cloud-brain`：`mvn -q -DskipTests compile` 通过。
+  - `D:\mavenProject\DHXY`：`mvn -q -DskipTests test-compile` 通过。
+
+Reviewer result 2026-07-05:
+
+- Lagrange spec review：PASS，无 P0/P1/P2。确认生产 `NpcClickService` 不再注入/调用
+  `NpcClickMemoryMigrationService`、`migrateDefaultIfNeeded()`、`OcrRoiMemoryService`、
+  `recommendNpcClickRegions(...)`；确认 outcome 保留 cloud candidate
+  `reason/matchedText/candidateBox`，本地验证原因单独写 `localVerificationReason`。
+- Beauvoir code/risk review：PASS，无 P0/P1/P2。确认 manual import 只剩显式
+  `migrate(Path)`；确认 cloud brain full mirror + derived index 分离保存，reload 后从
+  persisted `npcClickSamples` 恢复幂等键，`partial` / `persistStatus=failed` 不当作成功。
+- 共同 P3/fresh-runtime 风险：`defaultNpcClickScanRegions(...)` 目前是
+  `0,0,1024,768` full-window。这满足“本地 vision memory 缺失也能启动 FIFO”的 source-of-truth
+  边界，但长期会增加云端 OCR/template 噪点和误点压力。
+
+ROI follow-up decision note:
+
+- 不恢复本地 `OcrRoiMemoryService.recommendNpcClickRegions(...)` 作为生产 source of truth。
+- 用户确认不希望每次 NPC click 前同步请求云端 ROI，因为这会给热路径增加一次网络 RTT；
+  后续更优方案是程序启动后异步从云端 canonical store 拉取一份整理好的 ROI snapshot JSON。
+- 本地运行时先查这份只读 snapshot：命中 `mapName/npcName/target/playerCoord/windowSize`
+  对应 ROI 时，按 snapshot ROI 截图/上传/safety-shell 限制；未命中才 fallback 到 full-window。
+- Snapshot 当前进程内不要求实时更新：本轮新学习到的 ROI 可以先写回云端 canonical store，
+  下次启动重新拉取后生效。若后续要缩短生效延迟，可单独增加低优先级后台 refresh，不能阻塞
+  NPC click 热路径。
+- 本地缓存名义应是 `cloud_roi_snapshot` / `cloud_roi_cache`，携带 cloud memory version/hash/TTL/
+  target key；本地不能自行学习、修改或把它当成新的 source of truth。
+
+Manual bootstrap cleanup 2026-07-05:
+
+- Worker: CR185 repair worker。
+- 本轮按用户最终修正清理 NPC click vision-memory migrate 通道：
+  - DHXY 删除 `NpcClickMemoryMigrationService` 生产服务和对应测试。
+  - DHXY 删除 `CloudDecisionProperties.npcClickMemoryMigrationPath` /
+    `npcClickMemoryMigrationEnabled`，并移除 `application.properties` 中
+    `cloud.npc-click-memory-migration-*` 配置。
+  - DHXY `NpcClickSmartCloudWiringGuardTest` 现在断言 production 不存在 NPC click migrate
+    service/test/config/endpoint；`NpcClickService` 仍不得引用 migration class 或
+    `OcrRoiMemoryService.recommendNpcClickRegions(...)`。
+  - External cloud brain 删除 `/api/cloud/npc-click-memory/migrate` HTTP route、
+    `DecisionEngine.npcClickMemoryMigrationResponse(...)` 和 `NpcClickMemoryStore.migrate(JsonNode)`。
+    `/api/cloud/route-memory/migrate` / `RouteMemoryStore.migrate(...)` 保持不动。
+  - `NpcClickMemoryStoreTest` / `NpcClickSmartFifoQueueSessionTest` 已从 `migrate(...)`
+    seed 改为：测试先写入 configured `visionMemoryPath` full `vision_memory.json`，
+    再 new `NpcClickMemoryStore` / `DecisionEngine`，断言启动加载后可以 lookup / FIFO 命中
+    derived `MEMORY`。
+- RED evidence：
+  - DHXY `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` 先失败：
+    `DHXY production must not keep an NPC click vision-memory migration service`。
+  - External cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` 先失败：
+    `cloud-brain must not expose the removed NPC click migrate HTTP route`。
+- GREEN evidence：
+  - External cloud brain
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` 通过。
+  - External cloud brain `mvn -q -DskipTests compile` 通过。
+  - DHXY
+    `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    通过。
+  - DHXY `mvn -q -DskipTests test-compile` 通过。
+  - DHXY `node scripts/generate-cr-dashboard-data.js` 通过并刷新 `docs/cr-dashboard-data.js`。
+- Independent reviewer gate：
+  - Carson spec reviewer PASS：确认 `config/vision_memory.json` 与 cloud-brain
+    `data/vision_memory.json` 字节/hash/count/JSON 等价；DHXY 不再有 NPC click migrate
+    service/config/endpoint；cloud-brain 不再暴露 NPC click migrate route/method；route-memory
+    migrate 保留；未发现 P0/P1/P2。
+  - Kuhn code-quality/risk reviewer PASS：确认生产 NPC click 不再自动导入本地
+    `vision_memory.json`、不读本地 ROI memory；`NpcClickMemoryStore` 启动加载 canonical
+    store、runtime `ingestOutcome(...)` 写回 full store 并刷新 derived index；未发现 P0/P1/P2。
+
+Remaining gates:
+
+- Fresh runtime 仍需验证：
+  - NPC click start 前不再出现 runtime `vision-memory mirror submitted/import` 日志；
+  - cloud 端 canonical `data/vision_memory.json` 已存在且完整；
+  - 同/近似 `灵兽村使者 player=(111,84)` 场景下一轮先返回 cloud `MEMORY` hit；
+  - 若 `MEMORY` 点击失败，failure 写回 cloud canonical store，下一轮跳过该失败 candidate，直到 fallback 强验证成功重新启用。
+  - 观察 full-window 默认 ROI 的噪点/耗时/误点风险，为后续 `Cloud ROI Resolve` 卡提供 runtime 证据。
+
+Card CR186: 五环 outside phase 入口释放继承 task turn
+
+Status:
+
+- Review. Owner: 谢帅 manager/reviewer + worker。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 2026-07-05 用户确认：五环 current-map 导航点击后不应继续持有 coarse task turn 等移动确认；
+  这是独立于导航 fire-and-handoff 的 task-turn 调度问题，单独派 worker 修。
+- 2026-07-05 CR186 worker 已完成源码实现；谢帅本地复跑 focused guard、compile、test-compile 通过；
+  两个独立 reviewer 均 PASS，无 P0/P1/P2 blocker。保持 Review，等待 fresh runtime 验收。
+
+Runtime evidence:
+
+- 五环 `ACCEPT_TASK` current-map navigation sample:
+  - `12:30:22.262` 实际小地图点击云游大师坐标 `(87,174)`；
+  - `12:30:24.780` `isMovingByPixelDiff` 才确认移动；
+  - `12:30:25.187` 关闭小地图；
+  - `12:30:25.784-12:30:25.785` 注册 pathing intent 并 release；
+  - 同段出现 `task.turn.release heldMs=11037 queuedWaiters=3`，说明其它窗口等了很久。
+- 五环 shoe-shop current-map sample:
+  - `12:27:22.521` 才确认 movement；
+  - `12:27:24.339-12:27:24.342` cleanup/pathing registration/release。
+- 当前 `FiveRingTaskV2` 已把 `WAIT_PATHING`、`BUY_SHOES`、`ACCEPT_TASK`、
+  `HANDLE_DIALOG`、`SYNC_TASK_PANEL` 标为 outside phase，但 `runPhaseWithoutTaskTurn(...)`
+  不会主动释放从上一 phase `CONTINUE_CHAIN` 继承来的 task turn。
+
+Root cause:
+
+- Outside phase 的语义是“慢导航、pathing、tracker OCR 等不应占 coarse task turn”，但当前实现只是在该
+  phase 自身不新 acquire turn。
+- 如果上一 phase 通过 `CONTINUE_CHAIN` 把 task turn 传进来，outside phase 会带着这个旧 turn 执行慢工作；
+  当前 `releaseHeldTurnAfterOutsidePhaseYield(...)` 即使最终释放，也发生在 phase outcome 之后，已经太晚。
+
+Required behavior:
+
+1. 在 `FiveRingTaskV2.runPhaseWithoutTaskTurn(...)` 或等价入口中，先保留现有
+   `checkReadyPriorityBeforeOutsidePhase(...)` 语义。
+2. 只有当 ready-priority 没有立即产生命中结果、即将进入 outside phase 慢路径时，主动释放当前线程持有的
+   inherited task turn，例如 source 形如 `wuhuan-v2:<phase>:outside-enter`。
+3. 该释放只影响 `TaskTransactionRunner` coarse task turn：
+   - 不释放、不中断、不中止 physical `InputActionQueue`；
+   - 不伪造 phase success；
+   - 若当前没有 held turn，必须是 no-op。
+4. 不得把 release 放在 ready-priority 检查之前，避免已经 ready 的 prepared/dialog/terminal 事件反而被让出去。
+5. 不改五环 phase 顺序、fallback 顺序、NPC/dialog/OCR/template/click/navigation 判断，只调整 turn ownership。
+
+Boundaries:
+
+- 不改 `NavigationService` 小地图点击、世界地图路线、黄字/绿链、NPC click、dialog 选择、OCR/template 阈值。
+- 不改 `TaskTransactionRunner` 全局语义，除非 worker 证明必须补一个极窄的公开方法并有 guard。
+- 不把其它任务的 outside phase 一起改进来；本卡先只覆盖五环 V2。
+
+Validation plan:
+
+- Focused source/behavior guard:
+  - outside phase 入口必须在 ready-priority 检查之后调用 release；
+  - `ACCEPT_TASK` / `BUY_SHOES` 等目标 phase 的慢路径不会在 inherited turn 中运行；
+  - ready-priority 命中时不能先 release。
+- Run at minimum:
+  - CR186 focused guard；
+  - `mvn -q -DskipTests compile`；
+  - if test-source state allows, `mvn -q -DskipTests test-compile`。
+- Fresh runtime gate:
+  - 五环 current-map 导航点击后，应看到 `outside-enter` release 日志早于 movement confirmation / pathing wait；
+  - 多窗口队列不应再在五环 current-map 点击后出现数秒级 inherited turn hold；
+  - 五环任务仍能正常导航到接任务 NPC / 买鞋店。
+
+Implementation result 2026-07-05:
+
+- `FiveRingTaskV2.runPhaseWithoutTaskTurn(...)` 在 outside phase slow-path 入口新增
+  `taskTransactionRunner.forceReleaseTurn(transactionName + ":outside-enter")`。
+- 调用位置在 `checkReadyPriorityBeforeOutsidePhase(...)` 返回 null 之后；如果 ready-priority 已命中，
+  不会提前释放，仍直接消费 prepared/dialog/terminal 优先事件。
+- 该调用只释放 `TaskTransactionRunner` coarse task turn；不触碰 `InputActionQueue`、
+  `InputSequences` 或物理输入序列。
+- 原有 `outside-yield` 收尾释放保留，作为 no-op fallback；entry release 已清掉 inherited turn 时不会扩大影响。
+- 新增 `FiveRingCR186OutsidePhaseTurnReleaseWiringTest` source guard，覆盖 ready-priority 顺序、
+  `ACCEPT_TASK` / `BUY_SHOES` outside phase 覆盖、`:outside-enter` 早于 slow path、且不触碰 input queue。
+
+Validation result 2026-07-05:
+
+- Worker RED：CR186 focused guard 先失败于缺少 `:outside-enter` release marker。
+- GREEN：
+  - `mvn -q "-Dtest=FiveRingCR186OutsidePhaseTurnReleaseWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+- 谢帅本地复跑：
+  - `mvn -q "-Dtest=FiveRingCR186OutsidePhaseTurnReleaseWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+
+Independent review 2026-07-05:
+
+- Reviewer A / Bohr：PASS，无 P0/P1/P2。确认 ready-priority 在 outside slow path 前执行，
+  priority hit 不会提前 release；`forceReleaseTurn(...":outside-enter")` 早于 outside start log 和
+  `phaseAction.get()`；`TaskTurnCoordinator.forceRelease(...)` 只释放 coarse task turn，不触碰
+  `InputActionQueue`。
+- Reviewer B / Turing：PASS，无 P0/P1/P2。确认没有把必须连续 foreground 的 move/click 拆开；
+  具体物理动作仍走 `InputSequences` 或重新进入 task/input transaction。
+- 非阻断建议：当前 guard 主要是 source-level 字符串检查，后续若要加强，可补运行时 spy guard。
+
+Card CR187: 通用小地图 fire-and-handoff 接入修罗出村与五环 current-map 路线
+
+Status:
+
+- Review. Owner: 谢帅 manager/reviewer + worker。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 2026-07-05 用户确认：保持修罗出村已有“点小地图后同步关闭并放权”的思路，把它抽成通用路径；
+  五环 current-map 导航复用，不再等待移动确认。
+- 2026-07-05 CR187 worker 已完成源码实现；谢帅本地复跑 focused guard、compile、test-compile 通过；
+  两个独立 reviewer 均 PASS，无 P0/P1/P2 blocker。保持 Review，等待 fresh runtime 验收。
+
+Current behavior:
+
+- `NavigationService` 当前已有修罗专用 branch：
+  `source == "xiuluo-v2:start-exit-prepath:currentMap"` 时走 fire-and-handoff。
+- 该 branch 的核心语义：
+  - `submitMiniMapClick(..., closeAfterClick=false, checkPanelBeforeOpen=false)`；
+  - `gameStateUtil.recordMovementIntent(source)`；
+  - `closeMiniMapAfterFireAndHandoff(source)` 同步关小地图；
+  - 返回 `PATHING_STARTED`，不等待 `isMovingByPixelDiff`。
+- 五环接任务 NPC / 买鞋店 current-map 路线目前仍走普通确认逻辑，会等待 movement diff / cleanup /
+  pathing intent registration 后才交还控制权。
+
+Required behavior:
+
+1. 把 hard-coded `isXiuluoStartExitPrepathFireAndHandoff(...)` 抽成通用判断，例如
+   `isImmediateMiniMapFireAndHandoff(...)`，不要新增 `NavigationRequest` 字段。
+2. 保留现有修罗出村 source 行为不变，且代码上通过新的通用判断进入同一分支。
+3. 新增五环 current-map sources：
+   - `wuhuan-v2:acceptNpc:navigate:currentMap`
+   - `wuhuan-v2:shoe-shop-entry-exact-130-130:currentMap`
+   如果 worker 发现实际 source 名称不同，必须先在 CR 卡记录证据，再只接入对应 current-map source。
+4. 对命中的 source，点击小地图目标后：
+   - 仍使用现有 mini-map coordinate mapping 和现有点击目标；
+   - 记录 movement intent；
+   - 同步关闭小地图；
+   - 直接返回 `NavigationResult.pathingStarted(...)`；
+   - 不再等待 `isMovingByPixelDiff` / movement confirmation。
+5. Runner/pathing watcher 仍负责后续是否真的移动、是否 `STOPPED_AWAY` / `ARRIVED`；若停在原地，任务按现有
+   watcher/ready-event/重试逻辑恢复。
+
+Boundaries:
+
+- 不改小地图坐标换算、点击点 jitter、点击目标、世界地图黄链、route dialog、pathing watcher、pathing intent
+  ownership、OCR/template 阈值。
+- 不改修罗或五环任务 phase 决策；本卡只改变 current-map mini-map click 后是否前台等待 movement confirmation。
+- 不把所有 `currentMap` source 一刀切接入；只接入卡内列出的已讨论 source。
+- 若 worker 改到任何 click coordinate calculation 或 visual matching behavior，必须按 AGENTS 做 testcase
+  replay 并记录 input/output/command。若仅复用既有点击坐标并改变等待/交权时机，需在 CR 卡明确说明未改坐标。
+
+Validation plan:
+
+- Focused source/behavior guard:
+  - 修罗旧 source 仍命中 fire-and-handoff；
+  - 五环 accept NPC / shoe-shop current-map source 命中新通用 fire-and-handoff；
+  - 命中分支不调用 movement confirmation；
+  - 同步 close mini-map 行为保留；
+  - 非白名单 current-map source 仍走普通路径。
+- Run at minimum:
+  - CR187 focused guard；
+  - existing navigation / five-ring shoe-shop policy guard if available；
+  - `mvn -q -DskipTests compile`；
+  - if test-source state allows, `mvn -q -DskipTests test-compile`。
+- Fresh runtime gate:
+  - 五环接任务 NPC / 买鞋店 current-map 点击后，日志应立即进入 handoff/pathing-started，不再等待
+    `isMovingByPixelDiff`；
+  - 修罗出村 prepath fresh 行为保持不变；
+  - 如果小地图点击未造成移动，Runner 后续 `STOPPED_AWAY` / stale pathing 仍能让任务重试。
+
+Card CR188: 五环左侧 tracker 改为 Runner 唯一 owner，禁止任务线程直接扫/点
+
+Status:
+
+- Review. Owner: 谢帅 manager/reviewer + worker。Worker implementation complete; two independent reviewers passed; fresh runtime pending。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 2026-07-05 用户定稿：五环左侧 tracker 绿链识别由 Runner 负责；五环任务线程只消费 Runner 准备好的
+  `TASK_TRACKER_PATHING`，不再自己读左侧面板并直接点击。
+- 本卡负责 owner 和防重复，不负责 tracker 面板 fingerprint/cache 性能复用；缓存复用单独由 CR189 做。
+
+Runtime evidence:
+
+- 最新五环运行中，同一个窗口同一个五环绿链出现两次实际点击：
+  - `12:30:11.153` 五环任务线程进入 `SYNC_TASK_PANEL` 并开始直接读左侧 tracker；
+  - `12:30:13.922` 任务线程云端 `TRACKER_PANEL_READER` 返回 `click=161,257`；
+  - `12:30:14.585` 任务线程通过 `wuhuan-v2:tracker-panel-click:sync` 物理点击 `(982,355)`；
+  - `12:30:15.234` Runner 随后又开始 `window-task-tracker-prepare:wuhuan_v2`；
+  - `12:30:18.001` Runner 发布 `TASK_TRACKER_PATHING target=wuhuan click=(982,355)`；
+  - `12:30:18.809` 五环在 `WAIT_PATHING` 又消费 prepared action，通过
+    `wuhuan-v2:prepared-tracker-panel-click:phase-priority_WAIT_PATHING` 第二次点击同一点。
+- 同类重复点击还出现在 `hwnd-120ABA`、`hwnd-2B011A`、`hwnd-300DA`、`hwnd-30DA0`，证明不是单窗口偶发。
+- Fresh blocker 2026-07-05 `14:48+`:
+  - 五个五环窗口全部站住不动，任务线程每约 `900ms` 继续醒来但都停在 `SYNC_TASK_PANEL`；
+  - 任务侧持续记录 `runner prepared tracker action not ready`；
+  - Runner 侧同一批窗口持续为 `task=WUHuan_V2 branch=active-pathing`、`pathingState=STOPPED_AWAY`、
+    `taskTrackerPrepareMs=-1`、`preparedOperation=null`；
+  - `taskTrackerPrepareMs=-1` 说明卡点在 tracker reader 之前，不是云端五环 title/绿链识别失败。
+- Fresh blocker 2026-07-05 `15:25-15:26`:
+  - 本轮重启属于热启动，左侧 tracker 面板已有五环任务，但 `67555` / `5411` 等窗口没有直接走左侧面板，
+    而是重新导航去长安找云游大师。
+  - `15:25:01.955` `hwnd-2B011A` / 5411：Runner 已发布
+    `TASK_TRACKER_PATHING target=wuhuan`，click `(1562,341)`。
+  - `15:25:02.724` `hwnd-300DA` / 67555：Runner 已发布
+    `TASK_TRACKER_PATHING target=wuhuan`，click `(422,331)`。
+  - 但 `PREPARE` 完成较晚：5411 到 `15:25:30.371`，67555 到 `15:26:13.770` 才进入
+    `HANDOVER_DETECT`；此时 2.5s 新鲜期已过，任务侧记录
+    `no fresh Runner prepared tracker action yet` / `no 五环 task found on left tracker`。
+  - 67555 在 `15:26:14.252` 又收到 Runner cache-hit fresh tracker action，但任务已经进入
+    `ACCEPT_TASK` 内部导航；`15:26:17.218` 继续 `navigate to map: 长安 current=大唐边境`，并把
+    `TASK_TRACKER_PATHING` 当 `ROUTE_TRANSFER target=长安` 消费，产生 operation mismatch。
+
+Root cause:
+
+- 当前五环左侧 tracker 有两个 owner：
+  1. `FiveRingTaskV2.syncTaskPanel(...)` / `tryClickWuhuanTrackerLink(...)` 自己调用
+     `TaskTrackerPanelService.findWuhuanNextGreenClickPoint()` 并点击；
+  2. `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 调用
+     `prepareWuhuanPathingLink(...)`，发布 `TASK_TRACKER_PATHING` prepared action。
+- Runner 准备耗时期间，任务线程可能已经点击并注册 pathing；Runner 发布前没有再次检查 active pathing，
+  因而会把 stale prepared action 发给任务线程，导致重复点击。
+- Fresh blocker root cause:
+  - `FiveRingTaskV2.waitPathing(...)` 正常 `ARRIVED` / `STOPPED_AWAY` terminal 会
+    `clearPathingSignal(...)`；
+  - 但 `combatObservedSincePathing` 恢复分支在战斗结束后直接跳到
+    `state.next(FiveRingPhase.SYNC_TASK_PANEL, "pathing-window-combat-recovered")`；
+  - 这条分支没有清掉五环 prepared tracker click 注册的 active pathing intent，导致 Runner 后续一直认为
+    “还在 active pathing”，不会进入 tracker prepare 分支，五环任务则一直等 Runner prepared action。
+- Hot-start blocker root cause:
+  - `HANDOVER_DETECT` 只消费当前 fresh `TASK_TRACKER_PATHING`，但 Runner 可能在 `PREPARE` 期间很早就发布；
+    `PREPARE` 的包裹/鞋子检查可能耗时十几到几十秒，导致 prepared action 在 handover 前过期。
+  - 过期或暂时缺失时，handover 直接落到 `ACCEPT_TASK`，把“Runner 还没给 fresh action”误判为
+    “左侧没有五环任务”。
+  - `ACCEPT_TASK` 是长 outside phase；phase-boundary 只在进入 phase 前检查一次。若 Runner 在
+    `acceptTask(...)` 内部准备/重发 fresh tracker action，原逻辑不会再消费，仍会继续导航去云游大师。
+
+Required behavior:
+
+1. 五环左侧 tracker 绿链只有 Runner 一个 owner：
+   - Runner 负责截图、云端 tracker reader、五环 title gate、五环专用绿链点击点准备；
+   - 五环任务线程只消费当前窗口 fresh `TASK_TRACKER_PATHING target=wuhuan` prepared action。
+2. Runner 准备前必须跳过这些状态：
+   - 当前 task 不是 `WUHuan_V2`；
+   - 当前窗口处于战斗中；
+   - 当前窗口已有 active pathing intent 或 pathing snapshot 仍 active/unknown；
+   - 已经有 fresh `TASK_TRACKER_PATHING target=wuhuan` prepared action；
+   - route dialog / task dialog / visible attention 等更高优先级 action 已准备或正在处理。
+3. Runner 准备完成后、发布 prepared action 前必须二次确认：
+   - 当前仍无 active pathing；
+   - 当前仍无更高优先级 prepared action；
+   - 当前窗口和任务仍是本次 Runner tick 绑定的 window/task。
+   如果任一条件不满足，丢弃该 tracker prepared action，并记录 concise log。
+4. 五环任务侧 `SYNC_TASK_PANEL` 不再直接调用 live tracker reader 并点击；没有 prepared action 时应 release/park
+   或按现有 outside-phase 重试节奏等待 Runner，不得回退到直接扫左侧 tracker。
+5. 五环消费 prepared action 后必须：
+   - 通过 input queue 原子点击；
+   - 清掉 prepared action；
+   - 注册 active pathing intent；
+   - 进入 `WAIT_PATHING`，等待 Runner 后续 pathing terminal。
+6. 热启动/重启接管必须保护左侧已有任务：
+   - `HANDOVER_DETECT` 遇到 `RUNNER_PREPARED_NOT_READY` 时先有界等待 Runner 重新发布 fresh
+     `TASK_TRACKER_PATHING`，不能立刻当成没任务去接任务；
+   - `ACCEPT_TASK` 真正导航去云游大师前必须再次检查并消费本窗口 fresh
+     `TASK_TRACKER_PATHING target=wuhuan`，防止 late republish 被导航路径忽略。
+
+Boundaries:
+
+- 不改五环接任务、交鞋、买鞋、完成 story、daily-limit、轮数判断等业务逻辑。
+- 不改左侧 tracker 云端识别算法、title gate、点击坐标计算、模板/OCR 阈值；只改 owner 和调度。
+- 不改物理 input queue 原子动作规则。
+- 不把修罗/五倍 tracker 逻辑顺手迁进来。
+
+Validation plan:
+
+- RED/GREEN focused guards:
+  - `FiveRingTaskV2` 不再从 `SYNC_TASK_PANEL` 直接调用 `findWuhuanNextGreenClickPoint()` 或提交
+    `wuhuan-v2:tracker-panel-click:sync`；
+  - `WindowTaskRunner` 在 active pathing 时不调用 `prepareWuhuanPathingLink(...)`；
+  - `WindowTaskRunner` 在 prepare 返回后若 active pathing 已出现，必须丢弃 action，不 publish；
+  - 五环仍能消费 fresh `TASK_TRACKER_PATHING target=wuhuan` 并注册 prepared-source pathing intent。
+- Run at minimum:
+  - CR188 focused guard(s)；
+  - `mvn -q -DskipTests compile`；
+  - if test-source state allows, `mvn -q -DskipTests test-compile`。
+- Fresh runtime gate:
+  - 五环同一 tracker 绿链只出现一次 physical click；
+  - logs 不再出现 `wuhuan-v2:tracker-panel-click:sync` 的任务线程直点；
+  - Runner 准备期间若 pathing 已启动，应出现 stale discard log，而不是 prepared publish；
+  - 任务 stop/finish/切换期间若 tracker prepare 晚返回，应出现 `task-owner-or-runner-stopped` stale discard，
+    不得污染下一轮 prepared action；
+  - 五开同时跑五环时，窗口之间不串 click，不重复点同一窗口绿链。
+
+Implementation result 2026-07-05:
+
+- Worker A 移除五环任务线程直接 tracker 读/点路径：`FiveRingTaskV2.tryClickWuhuanTrackerLink(...)`
+  只消费 `clickPreparedWuhuanTrackerGreen(...)`；没有 fresh Runner prepared action 时返回
+  `RUNNER_PREPARED_NOT_READY`，`SYNC_TASK_PANEL` 只等待/重试，不走 `tracker-not-found` error 计数。
+- `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 仅为 `WUHuan_V2` 准备 tracker action，并在准备前
+  跳过 combat、active pathing intent、`ACTIVE/UNKNOWN/probe` pathing、fresh wuhuan tracker prepared action、
+  higher-priority prepared action。
+- Runner 在 `prepareWuhuanPathingLink(...)` 返回后、`updatePreparedDialogAction(...)` / `publishPreparedActionReady(...)`
+  前再次检查 combat/pathing/priority；同时捕获并复查 `TaskTrackerPrepareOwner`，覆盖 windowId、taskType、
+  taskCode、taskRunId、同一个 `RunningTaskHandle`、`taskIndex`、`stopToken`、runner shutdown、线程 interrupt、
+  executionContext stop。任一不匹配时以 `active-pathing-combat-or-priority` 或
+  `task-owner-or-runner-stopped` 丢弃 stale action。
+- Hotfix 2026-07-05:
+  - `FiveRingTaskV2.waitPathing(...)` 在 `combatObservedSincePathing` 战斗恢复分支返回
+    `SYNC_TASK_PANEL` 前，按 source prefix
+    `wuhuan-v2:prepared-tracker-panel-click:` 调用 `clearPathingSignalIfSourcePrefix(...)`。
+  - 该清理只覆盖五环 prepared tracker panel click 注册的 untargeted tracker pathing intent，不清买鞋、
+    接 NPC、世界地图或其他导航 intent。
+- Hotfix 2026-07-05 second pass:
+  - `FiveRingTaskV2.detectHandover(...)` 对 `RUNNER_PREPARED_NOT_READY` 增加有界短重试
+    `MAX_HANDOVER_TRACKER_PREPARED_WAIT_RETRY=2`；在 Runner 重新发布 fresh tracker 前不会直接落回
+    `ACCEPT_TASK`。
+  - `FiveRingTaskV2.acceptTask(...)` 在 `ACCEPT_TASK` 入口和 `navigationService.navigateToNPC(...)`
+    前调用 accept-specific guard，复用 `consumeCurrentPreparedBeforeNormalPhase(...)` 消费当前窗口 fresh
+    `TASK_TRACKER_PATHING target=wuhuan`。
+  - 不改 tracker title gate、云端识别、cache-hit 坐标、物理点击序列、路线 transfer 或五环接/交/买鞋业务规则。
+
+Validation result 2026-07-05:
+
+- Worker RED/GREEN：
+  - CR188 guard 先失败于任务仍可直读 tracker / 缺少 post-prepare combat gate / 缺少 owner gate；
+  - 修复后 `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest" test` 通过；
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+- 谢帅本地复跑：
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+- Hotfix RED/GREEN:
+  - `mvn -q "-Dtest=FiveRingPathingCombatRecoveryIntentClearWiringTest" test` 先失败：
+    `Missing source marker: clearPathingSignalIfSourcePrefix(`；
+  - 补五环战斗恢复分支 source-prefix clear 后，同一命令通过。
+- Hot-start hotfix RED/GREEN:
+  - `mvn -q "-Dtest=FiveRingHotStartTrackerHandoverWiringTest" test` 先失败：
+    `五环 handover must have a bounded wait for Runner to republish fresh tracker action`；
+  - 补 handover 有界等待和 accept 导航前 fresh tracker guard 后，同一命令通过。
+  - `mvn -q "-Dtest=FiveRingHotStartTrackerHandoverWiringTest,FiveRingPathingCombatRecoveryIntentClearWiringTest,WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` 通过。
+  - `mvn -q -DskipTests compile` 通过；`mvn -q -DskipTests test-compile` 通过。
+- Fresh runtime gate addendum:
+  - 下一轮五环如果 tracker pathing 中进战斗，战斗恢复后应看到 pathing intent 被清理；
+  - Runner 后续应从 `branch=active-pathing taskTrackerPrepareMs=-1` 回到可准备 tracker 的分支；
+  - 不应再出现五个窗口共同卡在 `runner prepared tracker action not ready` 且 `pathingState=STOPPED_AWAY`。
+  - 热启动/重启时若左侧已有五环任务，`HANDOVER_DETECT` 应先等待 Runner fresh
+    `TASK_TRACKER_PATHING` 并消费；不得直接进入 `ACCEPT_TASK` 导航长安/云游大师。
+  - 如果 `ACCEPT_TASK` 内部才收到 fresh tracker action，应看到
+    `prepared 五环 tracker consumed before accept NPC navigation`，随后进入 `WAIT_PATHING`，而不是
+    `navigate to map: 长安`。
+
+Independent review 2026-07-05:
+
+- Reviewer #1 / Popper 初审发现 P2：prepare 慢返回后任务 stop/finish/切换仍可能 publish stale
+  `TASK_TRACKER_PATHING`。Worker 补 `TaskTrackerPrepareOwner` 后复审 PASS，无 P0/P1/P2。
+- Reviewer #2 / Aquinas 初审发现同一 P2，并确认 CR189 方向基本正确。Worker 修复后复审 PASS，无 P0/P1/P2。
+- 非阻断建议：当前 guard 主要是 source-level；后续可补对象级/并发模拟测试覆盖 prepare 期间 stop/finish。
+
+Card CR189: 五环 tracker 面板相同则复用上次绿链点击点，减少云端重算
+
+Status:
+
+- Review. Owner: 谢帅 manager/reviewer + worker。Worker implementation complete; two independent reviewers passed; fresh runtime pending。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 2026-07-05 用户定稿：Runner 常驻观察五环 tracker，但不能每次停下来都重新跑完整云端解析；
+  如果当前左侧 tracker 面板内容和上次成功解析的面板一致，应复用上次绿链窗口相对点击点。
+- 本卡只做 cache/fingerprint 性能优化；Runner 唯一 owner 和任务线程禁直点由 CR188 做。
+
+Required behavior:
+
+1. Runner 准备五环 tracker link 时，在完整云端解析前先截图当前左侧 tracker 面板 ROI。
+2. 对当前面板生成轻量 fingerprint 或相似度签名，并和本窗口上一次成功解析的五环 tracker 面板比较。
+3. 如果满足全部条件，直接复用上次窗口相对点击点生成 `TASK_TRACKER_PATHING target=wuhuan`：
+   - 同一个 window/runtime；
+   - 上次 cache 来自成功的五环 title gate + 五环专用绿链解析；
+   - 当前面板与上次面板相同或相似度达到阈值；
+   - 当前无 active pathing、非战斗、无更高优先级 dialog/route action；
+   - 上次点击点仍落在当前 tracker panel ROI 内。
+4. 如果任一条件不满足，必须走完整云端五环 tracker 解析；解析成功后更新 cache。
+5. 缓存字段应使用窗口相对坐标和面板签名，不存绝对桌面坐标；窗口移动后仍能按当前 base 换算。
+
+Boundaries:
+
+- 不改云端 `TRACKER_PANEL_READER` 的识别算法、title gate、绿链选择策略或 click 计算。
+- 不改 CR188 的 owner 决策：任务线程仍不能直接扫/点 tracker。
+- 不复用跨窗口 cache；不复用跨 task type cache；不在 active pathing/战斗/dialog 优先级存在时复用。
+- 不用字节级完全相等作为唯一判断，避免 hover/轻微噪点导致缓存失效；阈值必须保守。
+
+Validation plan:
+
+- RED/GREEN focused guards:
+  - 同窗口相同 tracker 面板第二次准备应命中 cache，不调用完整 cloud reader；
+  - 面板变化、窗口变化、点击点越界、active pathing、战斗中、有更高优先级 prepared action 时不复用；
+  - cache 命中的 action 仍携带当前窗口绝对 click，且来源日志可区分 `cache-hit`。
+- Run at minimum:
+  - CR189 focused guard(s)；
+  - `mvn -q -DskipTests compile`；
+  - if test-source state allows, `mvn -q -DskipTests test-compile`。
+- Fresh runtime gate:
+  - 五环连续停下但左侧面板未变化时，Runner 日志出现 tracker cache hit；
+  - cloud `TRACKER_PANEL_READER` 请求数下降；
+  - 面板变化进入下一环时必须重新解析，不得点击上一环旧绿链。
+
+Implementation result 2026-07-05:
+
+- Worker B 在 `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 中加入五环 panel cache fast path：
+  先截图当前 tracker panel ROI、生成 16x16 fingerprint，并在完整云端 `TRACKER_PANEL_READER` 前尝试 cache hit。
+- 新增 `TaskTrackerPanelCacheEntry`，缓存字段为 `taskCode`、`panelFingerprint`、`clickWindowRelative`、
+  `panelOriginWindowX/Y`、`panelWidth/Height`、`updatedAtMs`、`source`；不存 absolute desktop click。
+- cache 位于 `WindowRuntimeContext` 的 `AtomicReference<TaskTrackerPanelCacheEntry>`，随 runtime reset 清理；
+  `TaskTrackerPanelService` 不保存全局 static cache。
+- cache hit 条件保守：`taskCode=wuhuan`、当前 panel origin/size 与 cache 一致、fingerprint distance <= 1、
+  cached window-relative click 仍在当前 panel 内；否则记录 miss reason 并走完整解析。
+- 完整解析成功后更新 cache；cache hit action 的 source 带 `cache-hit`，便于 fresh runtime 看日志。
+- 本卡没有改云端五环 title gate、绿链选择策略、点击几何或视觉匹配算法；不需要 testcase replay。
+
+Validation result 2026-07-05:
+
+- Worker RED/GREEN：
+  - CR189 guard 先失败于缺少 runtime cache/model/cache-before-cloud-reader；
+  - 后续修复 `@Test` 入口、panel geometry miss 和 conservative threshold 后通过；
+  - `mvn -q "-Dtest=TaskTrackerPanelCR189CacheWiringTest" test` 通过；
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+- 谢帅本地复跑：
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` 通过；
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过。
+
+Independent review 2026-07-05:
+
+- Reviewer #1 / Popper：CR189 无 P0/P1/P2，确认 cache 是 runtime-scoped，命中前检查 taskCode、panel
+  geometry、fingerprint、click-in-panel，缓存保存 window-relative click。
+- Reviewer #2 / Aquinas：CR189 无 P0/P1/P2，确认未发现跨窗口 cache 或绝对桌面坐标复用。
+- 非阻断建议：当前 CR189 guard 主要是 source-level；后续可补对象级 cache hit/miss 单测。
+
+Card CR190: 恢复五环 Runner tracker 负结果 gate，完成/今日上限 dialog 不再卡住
+
+Status:
+
+- Review. Owner: CR190 worker second-review test repair complete; focused/compile/test-compile passed; fresh runtime pending。
+- 谢帅只负责卡、范围、验收和最终判断，不直接写 Java 业务实现。
+- 本卡来自 2026-07-05 fresh runtime：五环完成/今日上限 story dialog 已可见，但任务线程一直停在
+  `SYNC_TASK_PANEL` 等 positive tracker prepared action，最终只能靠用户停止。
+
+Runtime evidence:
+
+- `15:49:17` 之后，多个窗口反复输出
+  `runner prepared tracker action not ready; wait for Runner prepared action: allowFinished=true taskAccepted=true`。
+- `15:50:41.608` 左右，`hwnd-300DA` / ID `67555` 的 Runner 看到 `type=STORY`，并发布
+  `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY operation=null`。
+- 五环任务线程只 observe 到 ready event，随后继续 `SYNC_TASK_PANEL` 等 fresh
+  `TASK_TRACKER_PATHING target=wuhuan`，没有进入 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`。
+- `15:50:49` 用户手动 stop 后任务停止；这不是业务完成收口。
+
+Baseline:
+
+- Current branch / HEAD before this card: `codex/hybrid-cloud-protection` /
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+- Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+- `origin/dev` 的五环旧业务顺序是：
+  `tryClickWuhuanTrackerLink()` 先调用 `TaskTrackerPanelService.findWuhuanNextGreenClickPoint()` 读左侧五环 tracker；
+  如果返回 `TASK_NOT_FOUND` / `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK` 等负结果，
+  `syncTaskPanel(...)` 才会调用 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 去匹配
+  `wuhuan_task_finished_story` / `wuhuan_task_finished_once_story` / `wuhuan_daily_limit_story` 等模板。
+- CR188/CR189 迁移后，任务线程不再直读 tracker，只消费 Runner positive
+  `TASK_TRACKER_PATHING`。这个迁移丢了“fresh tracker negative”的业务 gate，所以 returned dialog
+  无法被旧顺序触发。
+
+Required behavior:
+
+1. 保留 Runner 唯一 owner：
+   - 五环任务线程仍不得重新直接扫/点左侧 tracker；
+   - positive 绿链点击仍只消费 fresh `TASK_TRACKER_PATHING target=wuhuan` prepared action。
+2. 恢复旧业务负结果：
+   - Runner/云端 tracker reader 的 fresh no-title / no-task / no-green / no-link / no-action 结果，必须能传给
+     `FiveRingTaskV2`；
+   - `FiveRingTaskV2` 应把这些 fresh negative 映射为旧 `TrackerPathingStatus` 等价结果，例如
+     `TASK_NOT_FOUND`、`TASK_FOUND_NO_GREEN`、`TASK_FOUND_NO_LINK`；
+   - 只有拿到这些 fresh negative 后，才允许调用 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`。
+3. 不允许把 visible story 直接当 terminal：
+   - Runner 的 `dialog-visible:STORY` / `TASK_ATTENTION_REQUIRED` 只能唤醒任务；
+   - 它不能绕过 tracker negative gate 直接结束五环或判定今日上限。
+4. 不改变视觉/点击业务：
+   - 不改五环 tracker title gate、绿色链接选择、点击坐标、模板图片、OCR/template 阈值；
+   - 不改接任务/买鞋/交鞋/完成 story/daily-limit 的模板匹配顺序；
+   - 不改 physical input queue、pathing、battle、movement detector。
+
+Implementation direction:
+
+- Worker 优先检查 `WindowTaskRunner` / ready-event model / `WindowRuntimeContext` 是否已有可复用的
+  tracker read result、last no-action reason 或 prepared attempt metadata。
+- 推荐把“fresh tracker read negative”做成窗口绑定、taskCode 绑定、有序列号/时间戳的 runtime 状态或 ready event，
+  避免任务线程读到旧窗口、旧任务或 stale negative。
+- `FiveRingTaskV2.tryClickWuhuanTrackerLink(...)` 在无 fresh positive prepared action 时，应先尝试消费同窗口
+  fresh tracker negative；只有 positive 与 negative 都没有，才继续返回/等待
+  `RUNNER_PREPARED_NOT_READY`。
+- 若 cloud reader disabled/timeout/error/invalid schema，应 fail-closed，不得伪造成
+  `TASK_NOT_FOUND`；只有一次成功的 fresh tracker read 明确证明 no-title/no-task/no-green/no-link，才能触发 returned dialog。
+
+Validation plan:
+
+- RED/GREEN focused guards:
+  - 有 fresh tracker negative 时，`FiveRingTaskV2.syncTaskPanel(...)` 必须进入
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`，不能继续无限 `RUNNER_PREPARED_NOT_READY`；
+  - 只有 visible `STORY`、但没有 tracker negative 时，不得直接 terminal；
+  - stale / wrong-window / wrong-task tracker negative 不得被消费；
+  - cloud timeout/error/invalid 不得映射成 `TASK_NOT_FOUND`。
+- Minimum commands:
+  - CR190 focused guard(s)；
+  - `mvn -q -DskipTests compile`；
+  - if test-source state allows, `mvn -q -DskipTests test-compile`。
+- Fresh runtime gate:
+  - 67555 类似窗口在完成/今日上限 story dialog 出现后，应先看到 fresh tracker negative 日志，
+    再看到 returned dialog 模板命中并进入 terminal/任务结束；
+  - 不应再连续刷 `runner prepared tracker action not ready` 直到用户手动 stop；
+  - 正常有五环绿链时仍点击 Runner prepared green link，不得误走完成/上限 dialog。
+
+Implementation result 2026-07-05:
+
+- 新增 `TaskTrackerPanelNegativeResult` / `TaskTrackerPanelPrepareResult`，让 Runner tracker read 可以返回
+  positive prepared action、明确 fresh negative，或 empty/fail-closed。
+- `WindowRuntimeContext` 新增窗口绑定 tracker negative 状态与 CAS consume：
+  `consumeFreshTaskTrackerPanelNegativeResult(...)` 只允许同 `windowId`、`TaskType.WUHuan_V2`、
+  tracker `taskCode=wuhuan` 且未超过 `TRACKER_NEGATIVE_MAX_AGE_MS` 的结果被五环消费；stale / wrong-window /
+  wrong-task 不会被映射成业务事实。返工后五环使用带 prepared-priority gate 的 consume 重载；若当前存在 fresh
+  非 `TASK_TRACKER_PATHING target=wuhuan` prepared action，negative 保留但不被消费。
+- `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 保留 cache-hit 和 positive
+  `TASK_TRACKER_PATHING` 生成逻辑；仅当云端 tracker reader 返回成功 fresh `CLOUD_NO_ACTION`，且 reason/taskKey
+  明确表示 no-title/no-task/no-green/no-link/no-action 时，才返回 negative。`DISABLED`、`REQUIRED_FAILURE`、
+  timeout、error、invalid、ambiguous、schema/required failure 均返回 empty/fail-closed，不伪造成
+  `TASK_NOT_FOUND`。
+- `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 在 `TaskTrackerPrepareOwner`、combat、active pathing、
+  post-prepare `DialogPreparationRequest`、higher-priority prepared action 的准备后复查通过后，才写入 runtime
+  negative 并发布 `TASK_TRACKER_NEGATIVE_READY` wake hint。positive prepared action 会清掉旧 negative。
+- `FiveRingTaskV2.tryClickWuhuanTrackerLink(...)` 顺序为：先消费 fresh positive
+  `TASK_TRACKER_PATHING target=wuhuan`；没有 positive 时再消费 fresh tracker negative；positive/negative 都没有
+  才返回 `RUNNER_PREPARED_NOT_READY`。negative 映射回旧 `TrackerPathingStatus` 后复用现有
+  `syncTaskPanel(...) -> tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` returned dialog 链。
+- `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY` 仍只是软唤醒；五环 priority gate 不直接调用
+  `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 或 `resolveFiveRingCompletionStoryOutcome(...)`。
+
+Validation result 2026-07-05:
+
+- RED:
+  `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest" test` 先失败于
+  `CR190 needs a durable task-tracker negative result model`。
+- GREEN:
+  `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest" test` 通过。
+- Focused regression suite:
+  `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest,FiveRingHotStartTrackerHandoverWiringTest,FiveRingPathingCombatRecoveryIntentClearWiringTest,WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+  通过。
+- Compile:
+  `mvn -q -DskipTests compile` 通过。
+- Test compile:
+  `mvn -q -DskipTests test-compile` 通过。
+- Fresh runtime gate:
+  - 重启应用后复跑五环；完成/今日上限 story 可见时，应看到
+    `[task-tracker negative] updated` / `TASK_TRACKER_NEGATIVE_READY`，随后五环消费 fresh negative 并进入
+    returned dialog 模板匹配。
+  - 不应再只靠 `dialog-visible:STORY` 直接 terminal；没有 fresh tracker negative 时仍应等待 Runner tracker read。
+  - 正常仍有五环绿链时，应继续只消费 Runner positive `TASK_TRACKER_PATHING target=wuhuan`，不走 returned dialog。
+
+Independent review 2026-07-05:
+
+- Reviewer #1 / Sagan：业务顺序本身 PASS，确认五环没有恢复 `findWuhuanNextGreenClickPoint()` direct 扫/点，
+  `dialog-visible:STORY` 没有直接 terminal；但发现 P2：`FiveRingCR190TrackerNegativeGateWiringTest` 主要是
+  source-string guard，没有对象级模拟 `WindowRuntimeContext` consume、wrong-window、wrong-task、stale negative，
+  也没有真实验证 visible STORY 不能 terminal。
+- Reviewer #2 / Kepler：发现 P1：`TrackerPanelReaderCloudDecisionService` 可能把上游 `STATUS_AMBIGUOUS` /
+  `STATUS_ERROR` 包成 `CLOUD_NO_ACTION`；若 reason 同时含 `no-green-link` 或 taskKey 是 `wuhuan`，
+  `TaskTrackerPanelService` 仍可能映射成 `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK`，违反
+  ambiguous/error fail-closed。
+- Reviewer #2 / Kepler：发现 P2：Runner prepare 返回后的二次 gate 没复查新出现的
+  `DialogPreparationRequest`，云端读 tracker 期间若任务注册 route/dialog request，仍可能写入 stale negative。
+- Reviewer #2 / Kepler：发现 P2：negative 发布后如果后续出现高优先级 prepared action，五环仍可能在
+  `tryClickWuhuanTrackerLink(...)` 消费旧 negative；应在消费 negative 前确认不存在 fresh 非五环 tracker prepared
+  action，或在写入高优先级 prepared/request 时清掉 tracker negative。
+- Verdict: Blocked. Worker 必须返工，补 fail-closed、post-prepare request gate、negative vs prepared priority gate，
+  并增加对象级/行为级 focused tests 后重新跑双 reviewer。
+
+Repair result 2026-07-05:
+
+- P1 已修复：`TrackerPanelReaderCloudDecisionService.parse(...)` 现在在任何
+  `STATUS_AMBIGUOUS` / `STATUS_ERROR` 分支先 `ParseResult.rejected(...)`，由 coordinator 返回
+  `REQUIRED_FAILURE` / `executed=false`；即使 reason 是 `no-green-link` 且 taskKey 是 `wuhuan`，也不会进入
+  `TaskTrackerPanelService.wuhuanNegativeFromCloudDecision(...)` 的 `CLOUD_NO_ACTION` negative 分类。
+- P2 已修复：`WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 在 tracker prepare 返回后复查
+  `windowContext.getDialogPreparationRequest()`；若 prepare 期间新出现 dialog/route request，丢弃 positive/negative，
+  不写 runtime negative，也不发布 `TASK_TRACKER_NEGATIVE_READY`。
+- P2 已修复：`WindowRuntimeContext.consumeFreshTaskTrackerPanelNegativeResult(...)` 新增带 allowed prepared action 的
+  重载。五环消费 negative 前只允许 fresh `TASK_TRACKER_PATHING target=wuhuan` 共存；fresh route/dialog 等非匹配 prepared
+  action 会记录 `prepared-blocked` 并保留 negative，避免旧 negative 抢在高优先级 prepared action 前被消费。
+- P2 已修复：补 `WindowRuntimeContextCR190TrackerNegativeBehaviorTest` 对象级测试，覆盖 same-window/task/taskCode/fresh
+  成功消费、wrong-window/wrong-task/stale 不消费、fresh route prepared action 阻断 negative 消费；扩展
+  `TrackerPanelReaderCloudDecisionServiceTest` 覆盖 `AMBIGUOUS/ERROR + no-green-link + taskKey=wuhuan` fail-closed。
+
+Validation result 2026-07-05 repair:
+
+- RED: `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest" test`
+  先因 `consumeFreshTaskTrackerPanelNegativeResult(...)` 缺少 prepared-priority gate 重载而 test-compile 失败；cloud
+  行为用例在同一补丁中锁定 `AMBIGUOUS/ERROR` 必须为 `REQUIRED_FAILURE`。
+- GREEN / CR190 focused:
+  `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest,TrackerPanelReaderCloudDecisionServiceTest" test`
+  通过。
+- Related CR188/CR189 focused:
+  `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+  通过。
+- Compile: `mvn -q -DskipTests compile` 通过。
+- Test compile: `mvn -q -DskipTests test-compile` 通过。
+- Fresh runtime gate 仍保留：完成/今日上限 story 可见时，必须先看到 successful fresh tracker read 产生
+  `[task-tracker negative] updated` / `TASK_TRACKER_NEGATIVE_READY`，五环再消费 negative 进入 returned dialog 模板链；
+  只有 visible `STORY` 仍不得直接 terminal。
+
+Independent re-review 2026-07-05:
+
+- Reviewer #1 / Sagan：代码业务顺序 PASS，CR188 direct tracker 边界仍保持；但仍有 P2：
+  plain `dialog-visible:STORY` 不能 direct terminal 仍只有 source-string guard，没有对象级/行为级测试。
+- Reviewer #2 / Kepler：上一轮 P1/P2 代码语义基本 PASS，确认 `AMBIGUOUS/ERROR` fail-closed、
+  runtime prepared-priority gate 和 negative consume gate 已修；但仍有 P2：post-prepare
+  `DialogPreparationRequest` gate 只有 source-string guard，缺对象级行为测试证明 prepare 返回后新 request
+  不会写 negative / publish `TASK_TRACKER_NEGATIVE_READY`。
+- Verdict: Blocked on tests only. Worker 不要再扩大业务逻辑；只补上述两个对象级/行为级 focused tests，
+  通过后再回 Review 并重跑双 reviewer。
+
+Second-review test repair result 2026-07-05:
+
+- 仅补测试与必要测试 seam，未扩大五环业务逻辑、模板/OCR/点击/导航/输入队列均未变。
+- 新增 `FiveRingCR190StoryWakeBehaviorTest`：使用真实 `WindowRuntimeContext`、`WindowReadyEventBus` 和
+  `WindowTaskContextHolder` 发布 `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY`，再通过反射调用
+  `FiveRingTaskV2.syncTaskPanel(...)`。断言无 fresh tracker negative 时结果为
+  `SHARED_STATE_TRIGGERED` / `SYNC_TASK_PANEL` retry，message 是 `runner prepared tracker action not ready`，
+  `terminalTask=false`，且 runtime 没有生成 tracker negative；测试里 `dialogService=null`，若进入
+  `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` / completion terminal 链会直接失败。
+- 新增 `WindowTaskRunnerCR190PostPrepareGateBehaviorTest`：通过 package-private
+  `WindowTaskRunner.shouldDiscardTaskTrackerPrepareResultAfterPrepare(...)` seam 模拟 prepare 开始时无 request、
+  prepare 返回后出现新的 `DialogPreparationRequest`。断言 gate 返回 discard，并在模拟 commit 分支中证明
+  `WindowRuntimeContext.updateTaskTrackerPanelNegativeResult(...)` 和 `WindowReadyEventBus.publish(TASK_TRACKER_NEGATIVE_READY)`
+  均不会发生。
+- `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 仅把既有 post-prepare discard 条件提取到上述 seam；
+  条件仍是 stale owner / combat / active intent / active-or-unknown pathing / post request / higher-priority prepared 任一命中即丢弃。
+
+Second-review validation result 2026-07-05:
+
+- RED: `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest" test`
+  先因 `WindowTaskRunner.shouldDiscardTaskTrackerPrepareResultAfterPrepare(...)` 不存在而 test-compile 失败。
+- GREEN / new CR190 behavior:
+  `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest" test`
+  通过。
+- CR190 focused:
+  `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest,FiveRingCR190TrackerNegativeGateWiringTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest,TrackerPanelReaderCloudDecisionServiceTest" test`
+  通过。
+- Related CR188/CR189 focused:
+  `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+  通过。
+- Compile: `mvn -q -DskipTests compile` 通过。
+- Test compile: `mvn -q -DskipTests test-compile` 通过。
+- Dashboard: `node scripts/generate-cr-dashboard-data.js` 通过，生成 196 条 CR rows。
+- Docs diff check:
+  `git diff --check -- docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+  通过，仅有 LF/CRLF warning。
+- Fresh runtime gate 仍保留。
+
+Final independent review 2026-07-05:
+
+- Reviewer #1 / Sagan：APPROVED / PASS，无 P0/P1/P2。确认 `FiveRingCR190StoryWakeBehaviorTest`
+  已用对象级行为证明 plain `dialog-visible:STORY` 无 fresh tracker negative 时不会进入 returned dialog/terminal；
+  业务顺序仍是 positive prepared -> fresh negative -> not-ready，且任务线程未恢复 direct tracker scan/click。
+- Reviewer #2 / Kepler：APPROVED / PASS，无 P0/P1/P2。确认 post-prepare `DialogPreparationRequest`
+  gate 的对象级测试已覆盖不写 negative / 不发布 `TASK_TRACKER_NEGATIVE_READY`；抽出的 package-private seam
+  未改变生产条件，`AMBIGUOUS/ERROR` fail-closed 和 high-priority prepared 阻断仍保持。
+- Manager verdict: CR190 code/test/docs 本地可进入 Review，等待 fresh runtime。不得标 Done/Closed，直到现场验证
+  完成/今日上限 story 出现时先有 fresh tracker negative，再进入 returned dialog 模板链。
+
+Card CR191: 修罗 no-maintenance 预走后绿链前不得消费盒子或 deferred 摄妖香
+
+Status:
+
+- Review. Owner: CR191 worker implementation plus review #1 P1 repair complete; review #1 and
+  review #2 re-approval passed; fresh 修罗 runtime pending。
+- 本卡来自 2026-07-05 用户指出的 fresh runtime 顺序问题：修罗接任务后后台已经识别绿链，但摄妖香 /
+  deferred post-combat recovery 在物理点击绿链前执行，违背 CR91 / CR109 的已定顺序。
+
+Runtime evidence:
+
+- `2026-07-05 16:36:46.918` 左侧 tracker 绿链已由后台识别。
+- `2026-07-05 16:37:06-16:37:11` 摄妖香 / deferred post-combat recovery 执行。
+- `2026-07-05 16:37:12.747` tracker 绿链物理点击才发生。
+- 结果：no-maintenance 快捷路径虽然已经先预走并解析 tracker，但 deferred recovery 挡在绿链点击前，
+  与“接任务后先点出村/预走、截图解析、优先点击左侧 tracker 绿链，然后再做维护/摄妖香/三技能/盒子等”
+  的目标顺序冲突。
+
+Root cause:
+
+- `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` 的 no-maintenance + start-exit-prepath 分支在
+  `attachAcceptObjectiveBackgroundParseAfterStartExitPrepath(prepath)` 后、返回
+  `TRY_TRACKER_SHORTCUT` 前调用：
+  `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+  "xiuluo-v2:start-exit-prepath-after-accept-snapshot")`。
+- `XiuluoTaskV2.tryTrackerShortcutWithPanel(...)` 在绿链点击成功后已经有既有安全点：
+  `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+  "xiuluo-v2:tracker-shortcut-green-clicked")`。
+- 因此早消费点是重复且顺序错误的；绿链后消费点应保留。
+- Review #1 P1 root cause:
+  `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` 入口处仍调用
+  `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:after-accept-maintenance-check")`，
+  这个调用发生在 no-maintenance 判断、`start-exit-prepath`、`TRY_TRACKER_SHORTCUT` 和 tracker
+  绿链点击之前；它同样违反“绿链优先于盒子/摄妖香/维护”的 no-maintenance 快捷路径要求。
+
+Required behavior:
+
+1. no-maintenance / start-exit-prepath 快捷路径保持：
+   - 接任务后 capture accept-time snapshot；
+   - 后台解析 story objective 和 修罗 tracker；
+   - 先执行 `xiuluo-v2:start-exit-prepath` / current-map fire-and-handoff；
+   - 回到 `TRY_TRACKER_SHORTCUT` 后优先点击 tracker 第一条绿链。
+2. 在成功点击 tracker 绿链前，不得消费 common box，也不得消费 deferred post-combat recovery /
+   摄妖香 / HP/MP 后置恢复。
+3. 成功点击 tracker 绿链后，保留既有后置逻辑：
+   - 打开团队 pathing maintenance window；
+   - return-item prescan；
+   - common-box consume；
+   - deferred post-combat recovery / 摄妖香。
+4. 真正 maintenance-due 分支必须谨慎保留必要行为；common box 可以在 maintenance-due 分支维护前保留早消费，
+   避免 heal/repair 维护耗掉 CR120 30s pending TTL。
+5. 不改 OCR/template/点击坐标/导航坐标/NPC click/return item/maintenance due 判定。
+
+Implementation result 2026-07-05:
+
+- `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` 只移除 no-maintenance + start-exit-prepath 分支中
+  `xiuluo-v2:start-exit-prepath-after-accept-snapshot` 的 early deferred recovery consume。
+- `attachAcceptObjectiveBackgroundParseAfterStartExitPrepath(prepath)`、`TRY_TRACKER_SHORTCUT`、
+  tracker 绿链点击、绿链后 `xiuluo-v2:tracker-shortcut-green-clicked` deferred recovery 均保留。
+- Review #1 P1 repair:
+  - `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:after-accept-maintenance-check")`
+    从 `afterAcceptMaintenanceCheck(...)` 入口移动到 no-maintenance 分支之后；
+  - no-maintenance + start-exit-prepath / no-prepath shortcut path 会在该 common-box call 前返回
+    `TRY_TRACKER_SHORTCUT`；
+  - due-maintenance 分支仍在 heal/repair 维护前保留这个 common-box consume，并用注释说明这是为了保留
+    CR120 pending TTL 窗口；
+  - `tryTrackerShortcutWithPanel(...)` 绿链点击成功后仍保留 common box + deferred recovery consume。
+- 更新 `XiuluoCR91AcceptSnapshotOverlapWiringTest`：
+  - RED 时确认当前源码仍含 `xiuluo-v2:start-exit-prepath-after-accept-snapshot` 并失败；
+  - GREEN 时确认 `afterAcceptMaintenanceCheck(...)` 不再含该 early source；
+  - review #1 RED/GREEN 增加 common-box 顺序断言：no-maintenance 判断之前不得出现
+    `consumeCommonBoxDuringNextTaskProgress(...)`；
+  - 同时确认 `tryTrackerShortcutWithPanel(...)` 在物理绿链点击后仍调用
+    `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:tracker-shortcut-green-clicked")`
+    和
+    `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+    "xiuluo-v2:tracker-shortcut-green-clicked")`。
+
+Validation result 2026-07-05:
+
+- RED:
+  `javac -encoding UTF-8 -d target\cr191-red src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-red com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  failed as expected with
+  `Unexpected token present: xiuluo-v2:start-exit-prepath-after-accept-snapshot`。
+- GREEN:
+  `javac -encoding UTF-8 -d target\cr191-green src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-green com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  passed。
+- Final focused guard:
+  `javac -encoding UTF-8 -d target\cr191-final src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-final com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  passed。
+- `mvn -q -DskipTests compile` passed。
+- `mvn -q -DskipTests test-compile` passed。
+- Scoped `git diff --check` passed with only existing LF/CRLF normalization warnings.
+- No visual matching or click-target algorithm changed; no testcase image replay is required for CR191.
+- Review #1 P1 RED:
+  `javac -encoding UTF-8 -d target\cr191-review1-red src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-red com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  failed as expected with
+  `Unexpected token present: consumeCommonBoxDuringNextTaskProgress(`。
+- Review #1 P1 GREEN:
+  `javac -encoding UTF-8 -d target\cr191-review1-green src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-green com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  passed。
+- Review #1 final focused guard:
+  `javac -encoding UTF-8 -d target\cr191-review1-final src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-final com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+  passed。
+- Review #1 repair compile:
+  `mvn -q -DskipTests compile` passed。
+- Review #1 repair test-compile:
+  `mvn -q -DskipTests test-compile` passed。
+- Review #1 repair scoped diff check:
+  `git diff --check -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR91AcceptSnapshotOverlapWiringTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+  passed with only existing LF/CRLF normalization warnings。
+- Independent review gate:
+  - Review #1 re-review: APPROVED after the P1 common-box repair.
+  - Review #2 re-review: APPROVED. Focused guard and `mvn -q -DskipTests compile` passed; reviewer
+    noted current full `test-compile` may be blocked by unrelated CR190 dirty test signature work.
+
+Fresh runtime gate:
+
+- 复跑修罗 no-maintenance round。期望日志顺序：
+  `accept snapshot` / accept-time tracker parse -> `start-exit-prepath` -> tracker green clicked
+  (`xiuluo-v2:tracker-shortcut-green-clicked`) -> common box / deferred post-combat recovery / 摄妖香。
+- 不得再出现 `xiuluo-v2:start-exit-prepath-after-accept-snapshot`、绿链点击前盒子消费，或绿链点击前摄妖香补香。
+- due-maintenance 分支仍按 CR91：先维护，跳过 start-exit-prepath，fresh-read tracker 后点击绿链；该分支可在维护前保留
+  `xiuluo-v2:after-accept-maintenance-check` common-box consume，避免维护耗掉 pending TTL。
+
+Card CR148: 队长完成后旧 local-team session 失效，队员退回无绑定维护语义
+
+Status:
+
+- Review. Owner: 纸质人体实现完成；唐德/谢帅第三视角复审；fresh runtime 待验。
+- 本卡来自 2026-07-01 现场讨论：五个号做五倍，队长完成设置任务后停止，队员仍在自动战斗；
+  随后只重启队长，队员不再按预期补血/补蓝/三技能维护。根因方向不是 task-turn 公平性，
+  而是队员仍带旧 `localTeamSessionKey`，继续等待旧 session 的 local capability gate。
+
+Business decision:
+
+- 采用“旧 session 失效/解绑”方案，不采用“队长重启复用上一次 ID”方案。
+- 队长完成配置轮数、队列结束、runner queue finished 或窗口任务正常结束后，该
+  `localTeamSessionKey` 的业务生命周期结束。
+- 队员如果仍在自动战斗，可以继续跑自动战斗维护，但不能再把旧 ID 当成有效 leader 绑定。
+- 队长后续单独重启是新的生命周期；只有 UI 同批选择/启动的窗口才进入新的 local-team session。
+
+Root cause:
+
+- `TaskExecutionContext.localTeamSessionKey` 是 final 字段，旧队员任务 context 里会长期保存创建时的
+  session key。
+- `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` 当前在
+  `taskMaintenanceService.isLocalSupportMemberSession(context)` 为 true 时，会等待
+  `awaitLocalTeamSupportCapabilityOpen(context, FIRST_AID, 3000)`；旧 session 没有新的 leader
+  打开 capability，就会反复 `pending follower first-aid deferred: gate=local-team ...`。
+- `TaskMaintenanceService` 已有 `completeLocalTeamSessionWindow(...)` / capability open/close 机制，
+  但需要补齐“旧 session 已完成后，带旧 context 的队员不再被视为有效 local support member”的判断。
+
+Required behavior:
+
+1. 旧 session 失效:
+   - leader 窗口正常完成任务/队列时，维护服务必须把该 `localTeamSessionKey` 标记为 invalid/completed。
+   - 失效后清理该 session 的 open capability、capability epoch、local snapshot、queued/claim 状态，
+     避免旧 `FIRST_AID` / `SUMMON_SKILL` / `COMMON_BOX` 继续影响后续运行。
+2. 队员退回无绑定:
+   - `isLocalSupportMemberSession(context)` 遇到失效 session 必须返回 false。
+   - `isLocalSupportMemberCandidate(context)` / pending leader detection 等相关 gate 不能继续卡旧 ID。
+   - 队员继续自动战斗时，按无有效 local-team session 的维护路径处理，不能长期等旧 leader。
+3. 新启动不复用旧 ID:
+   - 不要让单独重启的队长继承上一次 `localTeamSessionKey`。
+   - 新队伍绑定只能来自新的 UI 同批启动/明确重绑流程。
+4. 不改变任务业务:
+   - 不改五倍/修罗/五环接任务、导航、OCR/template、点击、回城、战斗确认、Runner ready event
+     业务顺序。
+   - 不改 `TaskExecutionContext.localTeamSessionKey` final 结构，除非 worker 先写明原因并让 reviewer
+     审核；优先在 `TaskMaintenanceService` 侧做 session lifecycle 判定。
+
+Implementation direction:
+
+- 主要文件：`TaskMaintenanceService`、`AutoCombatService`、`WindowTaskRunner` 完成/取消回调附近。
+- 建议增加 service-side session 状态，例如 `invalid/completed` 标记或从 `localTeamSessions` 移除后
+  保留短期 invalid tombstone，用于让旧 context 判断为无效。
+- `completeLocalTeamSessionWindow(...)` 应在 leader 完成/queue finished 时触发 session invalidation；
+  不要等所有旧 candidate 自己结束后才让队员脱离旧 gate。
+- 队列清理至少覆盖 local capability round key、summon skill queue/claim、maintenance snapshot opened
+  at、pending support capability 状态；实现时以现有数据结构实际命名为准。
+
+Worker implementation record 2026-07-01:
+
+- `TaskMaintenanceService` 增加 `completedLocalTeamSessions` tombstone。`completeLocalTeamSessionWindow(...)`
+  在 live-detected leader window 完成时立即完成该 session，不再等仍在自动战斗的 member 旧 context 自己结束。
+- 完成 session 时移除 `localTeamSessions`，清理该 session 的 open capability、capability epoch、
+  `maintenanceSnapshotOpenedAtByRound` 中 `local-team:<session>#...` snapshot，以及
+  `summonSkillClaimsByTeamRound` 中同前缀 claim，并唤醒 capability waiters。
+- `isLocalSupportMemberSession(...)`、`isLocalSupportMemberCandidate(...)`、
+  `isPendingLocalSupportLeaderDetection(...)`、`isLocalTeamSupportCapabilityOpen(...)` 和 leader/capability
+  写入路径遇到 completed tombstone 时返回 false/忽略，旧 `TaskExecutionContext.localTeamSessionKey`
+  保持 final 原值但不再代表有效 local-team 绑定。
+- `AutoCombatService` 未改代码；`runPendingFollowerFirstAidIfAllowed(...)` 继续只看
+  `TaskMaintenanceService.isLocalSupportMemberSession(context)`。CR148 后旧 session 返回 false，因此 pending
+  first-aid 不会进入旧 `awaitLocalTeamSupportCapabilityOpen(... FIRST_AID ...)` deferred 分支。
+- `WindowTaskRunner` 未改代码；现有 `runner-queue-finished -> completeLocalTeamSessionWindow(...)` 回调仍是触发点。
+  UI 同批启动仍由 `WindowTaskControlService` 使用 `UUID.randomUUID()` 生成新 session id，旧 id tombstone 不被复用。
+- 相邻 guard `TaskMaintenanceCR138LocalSupportCapabilityTest` 已调整为新语义：member 先完成不清 session；
+  leader 完成才失效 session。
+
+Worker verification 2026-07-01:
+
+- RED：`mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java`
+  在实现前失败于
+  `old member context must stop being a valid local support session after leader completion`。
+- GREEN：
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java`
+  通过。
+- 相邻 guard：
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java`
+  通过。
+- `mvn -q -DskipTests test-compile` 通过。
+- `mvn -q -DskipTests compile` 通过。
+
+Independent review 2026-07-01:
+
+- 初审 verdict: 不通过，CR148 仍需返工后再验收。
+- P1: `markLocalTeamSessionCompleted(...)` 只清理 `local-team:<session>#...` snapshot/claim，
+  没有清理 `summonSkillQueue` / `summonSkillQueueKeys`。现有三技能 queue key 是
+  `window#epoch#SUMMON_SKILL`，不含 session；旧 member 如果已入队但未消费，leader 完成后同窗口同
+  epoch 后续 due 可能被 duplicate key 挡住。返工要求：session invalidation 时按 candidate window
+  清理旧三技能 queue/key，或给 queue item 增加 session 归属，并补 focused guard。
+- P2: leader 完成判断只依赖 `state.leaderWindowId`，如果 live role 预检未记录 leader，但 UI submit /
+  runner metadata 已知 leader window，leader queue finished 可能不会 tombstone session，直到所有
+  candidate 都结束。返工要求：保存/使用已知 leader window metadata，并补“未 mark live leader 但
+  leader window 完成也 invalid”的 guard。
+- P2: `completedLocalTeamSessions` tombstone 无 TTL/容量上限，长时间常驻会无界增长。返工要求：
+  增加轻量 cleanup/retention policy，不引入 scheduler。
+- 纸质人体已返工修复上述问题。CR148 状态更新为 Review / repair done，等待唐德复审和 fresh runtime。
+
+Review repair record 2026-07-01:
+
+- P1 fixed: session invalidation now calls `clearSummonSkillQueueForWindow(...)` for
+  `LocalTeamSessionState.candidateWindows` / `completedWindows` / known leader ids. This matches the current
+  `currentWindowKey(context)` convention where queue keys use `windowId#epoch#SUMMON_SKILL`; no guessed mapping was
+  introduced. CR148 guard now covers: member old session enqueues `SUMMON_SKILL`, leader finishes, queue/key are
+  removed, and the same window/epoch can enqueue again instead of being duplicate-blocked.
+- P2 fixed: `registerLocalTeamSessionCandidate(...)` has an overload that records the UI-known
+  `localLeaderWindowId`, and `WindowTaskControlService` passes that metadata during same-queue submit. Leader
+  completion now treats either live-detected `leaderWindowId` or known submit-time leader id as leader completion.
+  CR148 guard covers: no `markLocalTeamLeaderDetected(...)`, member completion first does not invalidate, known
+  leader completion does invalidate.
+- P2 fixed: completed-session tombstones now have lightweight cleanup-on-read/write with
+  `COMPLETED_LOCAL_TEAM_SESSION_TTL_MS` and `COMPLETED_LOCAL_TEAM_SESSION_MAX_TOMBSTONES`; no scheduler was added.
+  CR148 guard covers bounded tombstone count and verifies cleanup does not poison a new active session.
+- Still unchanged: no change to `TaskExecutionContext.localTeamSessionKey`, no change to 五倍/修罗/五环接任务、
+  导航、OCR/template、点击、回城、战斗确认或 Runner ready event 业务顺序.
+
+Repair verification 2026-07-01:
+
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java`
+  passed.
+- `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java`
+  passed.
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -DskipTests compile` passed.
+- `git diff --check -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java src/test/java/com/bot/dhxy/service/TaskMaintenanceCR138LocalSupportCapabilityTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+  exited `0`; only CRLF conversion warnings were printed.
+
+Second review repair record 2026-07-01:
+
+- P1 finding: `enqueueSummonSkillIfAbsent(...)` previously added `summonSkillQueueKeys` outside
+  `summonSkillQueueMonitor`, then added the queue item inside the monitor. A leader/session invalidation could run in
+  the gap, see no queue item, and leave a set-only `window#epoch#SUMMON_SKILL` ghost key that duplicate-blocked the
+  next due check.
+- Fix: `enqueueSummonSkillIfAbsent(...)` now adds both `summonSkillQueueKeys` and `summonSkillQueue` under the same
+  `summonSkillQueueMonitor`; duplicate logging happens after leaving the monitor. `removeSummonSkillQueueItemsForWindow(...)`
+  now removes queue items and also removes any remaining `summonSkillQueueKeys` that start with `windowKey + "#"`.
+- Guard: `CR148LocalTeamSessionInvalidationWiringTest` now injects a set-only key by reflection, completes the leader
+  session, asserts the ghost key is gone, and proves the same window/epoch can queue again.
+- Verification repeated: CR148 focused guard, CR138 guard, `mvn -q -DskipTests test-compile`,
+  `mvn -q -DskipTests compile`, and relevant `git diff --check` all exited `0`; `git diff --check` printed only CRLF
+  conversion warnings.
+
+Independent review second pass 2026-07-01:
+
+- Verdict: not pass; one P1 remains.
+- P1: `enqueueSummonSkillIfAbsent(...)` adds `summonSkillQueueKeys` before entering
+  `summonSkillQueueMonitor` to append the queue item. If leader session invalidation runs between
+  key-add and item-add, `removeSummonSkillQueueItemsForWindow(...)` can miss the not-yet-enqueued item
+  and leave a set-only duplicate key. Later same-window/same-epoch `SUMMON_SKILL` due can be rejected
+  as duplicate even though the old session was invalidated.
+- Required repair: make queue key and queue item add/remove atomic under the same monitor, and make
+  session/window cleanup also remove set-only keys by `windowKey + "#"` prefix. Add a focused guard
+  simulating a key-only stale entry and proving session invalidation clears it before requeue.
+- Worker返工已再次派回 Descartes；CR148 remains Review / repair pending.
+
+Final independent review 2026-07-01:
+
+- Verdict: `PASS_WITH_NOTES`; no P0/P1/P2 remains.
+- Reviewer re-read current code and confirmed the second-pass P1 is fixed:
+  `enqueueSummonSkillIfAbsent(...)` now adds `summonSkillQueueKeys` and `summonSkillQueue` item inside
+  the same `summonSkillQueueMonitor`, while `removeSummonSkillQueueItemsForWindow(...)` removes both
+  queue items and any set-only key with the same `windowKey#` prefix under the same monitor.
+- Guard coverage confirmed: `CR148LocalTeamSessionInvalidationWiringTest` includes key-only stale
+  entry injection, leader completion cleanup, and successful same-window/same-epoch requeue.
+- Reviewer note: after the 2h/256 tombstone retention window, a very old context could theoretically
+  look like a candidate again because `isLocalSupportMemberCandidate(...)` mostly checks the tombstone.
+  This is accepted for CR148's practical symptom window and not raised as P2. If fresh runtime shows
+  ultra-long old contexts reappearing as candidates, open a follow-up to require active session state
+  for candidate status.
+- Main review reran CR148 focused guard, CR138 adjacent guard, `test-compile`, `compile`, dashboard
+  generation, and related `git diff --check`; all passed except expected CRLF conversion warnings.
+
+Validation plan:
+
+- 加 focused source/behavior guard，证明：
+  - `TaskExecutionContext` 仍可带旧 `localTeamSessionKey`；
+  - service 标记该 session invalid/completed 后，
+    `isLocalSupportMemberSession(oldContext)` 返回 false；
+  - first-aid pending path 不再进入 `awaitLocalTeamSupportCapabilityOpen(... FIRST_AID ...)` 的旧 session
+    deferred 分支；
+  - 旧 `SUMMON_SKILL` / capability round key 不再阻塞下一次维护。
+- 至少运行：
+  - focused CR148 guard；
+  - `mvn -q -DskipTests test-compile`；
+  - `mvn -q -DskipTests compile`。
+- Fresh runtime gate：
+  - 五倍或修罗多窗口同批启动，队长完成设置轮数并停止；
+  - 队员保持自动战斗；
+  - 单独重启队长；
+  - 日志不应再长期出现旧 session 的
+    `pending follower first-aid deferred: gate=local-team capability=FIRST_AID session=<old>`；
+  - 队员 due 的补血/补蓝/三技能维护应能进入 task-turn queue 或新的合法 gate。
+
+Card CR149: `cleanUpAll` 通用关闭按钮使用 `images/template/cancel` 全目录模板
+
+Status:
+
+- Review. Owner: 唐德负责卡片/审核，worker 已完成实现；fresh runtime 不强制，本地 replay/guard/compile 通过。
+- 本卡来自 2026-07-01 用户要求：`UI clean` 里关闭窗口的 `x1/x2/x3/...` 模板不应继续硬编码；
+  以后只要往 `images/template/cancel` 目录添加新的取消/关闭按钮图片，`cleanUpAll` 就应自动纳入匹配。
+
+Scope:
+
+- 只改通用 UI cleanup 路径：
+  `cleanUpAll()` -> `closeAllGenericWindows(...)` -> `findGenericCloseButtonPoint(...)`。
+- 保留世界地图搜索框专用 `closeMapSearchInputByX2Direct(...)` 的 `x2-only` 行为；该路径是在 route
+  navigation 的 exclusive callback 内使用，旧注释明确说明它比 generic close 更窄，避免误关无关面板。
+- 不改模板匹配阈值、点击偏移、最多关闭 3 层窗口、`CleanupPass` 截图复用、世界地图 `Alt+1` 关闭、
+  OCR dialog fallback、业务 option 处理、导航/NPC/战斗流程。
+
+Required behavior:
+
+1. `findGenericCloseButtonPoint(...)` 每次扫描时从 `images/template/cancel` 读取所有普通图片文件。
+2. 支持至少 `.png`，可以兼容 `.jpg/.jpeg/.bmp`；按文件名稳定排序，便于日志和 replay 复盘。
+3. 如果目录不存在、为空、或图片不可读，不能抛异常中断任务；应写清楚 no-match / load warning 日志并返回 `null`。
+4. no-match 日志应包含 `screenPath`、`description` 和本轮参与匹配的模板列表/目录信息，延续 CR104 的诊断价值。
+5. 新增/保留 source guard，防止 generic close 重新退回 `x1/x2/x3` 硬编码列表。
+6. 按 AGENTS 视觉匹配规则补 testcase replay：用 repo-local testcase 图片跑一次 generic close 匹配，输出带框/点的标记图，
+   并把输入/输出路径和命令写回 `docs/ACTIVE_WORK.md`。
+
+Review checklist:
+
+- `closeMapSearchInputByX2Direct(...)` 仍只用 `images/template/cancel/x2.png`。
+- `findGenericCloseButtonPoint(...)` 不再出现固定 `String[] {"x1","x2","x3"}` 或等价硬编码列表。
+- 新增 loader 不引入长期缓存导致运行中新增图片必须重启；若 worker 选择缓存，必须说明刷新策略并通过 review。
+- 不触碰 OCR/template/click 坐标算法本身，只扩大 generic close 的模板来源。
+
+Worker implementation record 2026-07-01:
+
+- `UICleanerService.findGenericCloseButtonPoint(...)` 改为每次调用
+  `loadGenericCloseButtonTemplatePaths(Path.of("images/template/cancel"))`，按文件名稳定排序后逐个走原
+  `coordinateHelper.findImageAbsoluteCoordinateByImagePath(..., 0.8)` 匹配。
+- loader 支持 `.png/.jpg/.jpeg/.bmp` 普通可读文件；目录不存在、为空或读取失败时返回空列表并记录日志，
+  不把异常抛到任务主流程。
+- generic no-match 日志保留 `description` 和 `screenPath`，并新增 `templateDirectory` / `templatePaths`
+  方便复盘参与匹配的目录和模板列表。
+- 单个模板匹配异常只记录 warn 并继续后续模板；不会中断 `cleanUpAll` / `closeAllGenericWindows`。
+- `closeMapSearchInputByX2Direct(...)` 未改，仍只匹配 `images/template/cancel/x2.png`，继续作为 route navigation
+  exclusive callback 内的专用窄关闭口径。
+- 未改阈值 `0.8`、点击偏移、最多关闭 3 层、`CleanupPass` 截图复用、OCR/dialog fallback、
+  导航/NPC/战斗/地图关闭逻辑。
+
+Worker verification 2026-07-01:
+
+```powershell
+mvn -q -DskipTests test-compile
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseDirectorySourceGuardTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseReplayTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerGenericCloseNoMatchLogWiringTest" exec:java
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+```
+
+- RED before implementation:
+  - source guard failed at `generic close finder must load templates from images/template/cancel`;
+  - replay guard failed with missing `UICleanerService.loadGenericCloseButtonTemplatePaths(Path)`.
+- GREEN after implementation: all verification commands above exited `0`; dashboard generation wrote
+  `148` CR rows to `docs/cr-dashboard-data.js`.
+- Replay input: `images/test-cases/ui-cleaner/cr149/generic-close-directory-input.png`.
+- Replay output: `images/test-cases/ui-cleaner/cr149/generic-close-directory-marked.png`.
+- Replay result: loader included user-added `x7.png` when present; sorted generic matching first hit
+  compatible `images/template/cancel/x.png`, click point lands inside the marked close button.
+
+Review repair 2026-07-01:
+
+- 复审发现 replay 固定依赖未跟踪 `images/template/cancel/x7.png`，干净环境若未提交该图会失败。
+- 已修：`UICleanerCR149GenericCloseReplayTest` 仍通过
+  `UICleanerService.loadGenericCloseButtonTemplatePaths(Path.of("images/template/cancel"))`
+  读取真实目录；若 `x7.png` 存在则断言 loader 包含它并优先用它生成 testcase，否则回退到排序后的最后一个模板。
+- `UICleanerCR149GenericCloseDirectorySourceGuardTest` 已补 replay source guard，禁止恢复为固定
+  `TEMPLATE_DIR.resolve("x7.png")` 依赖。
+- 本返工未改 `closeMapSearchInputByX2Direct(...)`、阈值 `0.8`、点击偏移、关闭层数或任何业务逻辑。
+- 返工验证：CR149 source guard、replay、no-match guard、`test-compile`、`compile`、dashboard 生成均退出 `0`。
+
+Main review 2026-07-01:
+
+- 唐德复审 `UICleanerService` final diff：generic close 路径已改为每次目录扫描；`x2-only`
+  世界地图搜索框关闭方法仍只匹配 `images/template/cancel/x2.png`。
+- 已打开 replay 标记图
+  `images/test-cases/ui-cleaner/cr149/generic-close-directory-marked.png`，红框/红点落在关闭按钮内。
+- 唐德复跑并通过：
+  `UICleanerCR149GenericCloseDirectorySourceGuardTest`、
+  `UICleanerCR149GenericCloseReplayTest`、
+  `UICleanerGenericCloseNoMatchLogWiringTest`、
+  `mvn -q -DskipTests test-compile`、
+  `mvn -q -DskipTests compile`、
+  `node scripts/generate-cr-dashboard-data.js`。
+- `git diff --check` 只输出既有 LF/CRLF conversion warnings，无 whitespace error。CR149 可保持
+  Review / source verified，后续如要提交需注意把用户新增的 `images/template/cancel/x.png` / `x7.png`
+  与删除旧 Snipaste 图片的选择一起纳入或明确处理。
+
+Card CR150: 人物/宝宝加血加蓝结束后收尾清 hover，停用状态截图前预清 hover
+
+Status:
+
+- Review. Owner: worker 已完成源码实现和本地验证；谢帅/后续 reviewer 复审；fresh runtime 待验。
+- 本卡来自 2026-07-01 用户现场判断：摄妖香误补截图里出现状态悬浮框，说明加血/加蓝后鼠标留在
+  当前游戏窗口内部危险 hover 区域。单纯按全局鼠标坐标判断“鼠标已移到别处”不可靠，因为每个
+  客户端 HWND 会保留自己的 client-relative hover 状态。
+
+Evidence:
+
+- 最新五环日志显示 `ID=67555 / hwnd-C510E58` 在很短时间内多次补摄妖香：
+  - `14:26:22.709` `memory-gate-icon-absent-refill: fresh memory age=7m < 50m`，随后
+    `14:26:28.649` 成功使用摄妖香；
+  - `14:28:21.725` `fresh memory age=1m < 50m`，随后 `14:28:27.912` 成功使用摄妖香；
+  - `14:31:03.000` `fresh memory age=2m < 50m`，随后 `14:31:08.617` 成功使用摄妖香。
+- 失败截图如 `images/temp/hwnd-C510E58/sheyaoxiang_status_icon_gate_status-rect.png` /
+  `images/temp/hwnd-C510E58/sheyaoxiang_status_raw.png` 内可见状态悬浮框，同时仍存在青色小时/绿色分钟
+  像素，说明旧 icon-gate 在 hover 干扰下误判 absent。
+- 当前源码有状态截图前预清 hover 入口：
+  `PlayerStateService.moveMouseAwayBeforePlayerStateSnapshotIfNeeded(...)`，并在
+  `player-state-bars` / `sheyaoxiang-status` / `sheyaoxiang-status-icon-gate-*` 前调用。
+  本卡要求改变责任边界：不在截图前默认 move，而是在产生 hover 风险的动作结束时收尾 move。
+
+Business / implementation decision:
+
+- “谁把鼠标放到危险位置，谁负责收尾移走”。
+- 只改人物加血、人物加蓝、宝宝加血、宝宝加蓝这四类补给动作：这些真实输入动作结束后，必须在
+  当前绑定窗口内收尾 move 一次，把鼠标放到安全相对坐标。
+- 不改摄妖香/包裹使用道具路径；用户确认当前包裹用道具相对稳定，本卡不能把“使用维护道具”纳入范围。
+- 安全点必须按当前窗口 base + 窗口相对坐标计算；不能只看当前全局物理鼠标位置。
+- 安全点必须避开每个窗口右上角静止/悬停敏感区。用户给出的语义是：窗口内右上角一块区域不能放鼠标，
+  否则会留下状态/技能悬浮框影响后续截图。
+- 停用/删除状态截图前默认预清 hover，避免“截图前随机 move 一次 + 用药后又 move 一次”的重复输入。
+- 若保留截图前兜底，只能作为明确异常 fallback，不能成为默认路径；worker 必须在卡片里说明保留原因。
+
+Worker scope:
+
+- 主要文件：`src/main/java/com/bot/dhxy/service/PlayerStateService.java`。
+- 可按需要新增 focused source guard / wiring test，建议命名包含 `CR150`。
+- 允许复用现有 input queue / direct-when-owned 模式，但不得引入 queue-in-queue 死锁。
+- 不要修改摄妖香/包裹使用道具路径，不要修改摄妖香模板 `images/template/status/sheyaoxiang_buff.png`、
+  数字模板、包裹找物品/点击逻辑、
+  OCR/template 阈值、导航、NPC、战斗检测、五环/五倍/修罗业务 phase。
+
+Acceptance checklist:
+
+- `healAllDirect()` / 血法补给真实输入结束后能看到一次当前窗口内 safe-point move。
+- 只覆盖人物/宝宝 HP/MP 四类补给动作；摄妖香使用成功、包裹使用道具、其他维护道具路径不新增收尾 move。
+- `moveMouseAwayBeforePlayerStateSnapshotIfNeeded(...)` 不再作为 `player-state-bars` /
+  `sheyaoxiang-status` / `sheyaoxiang-status-icon-gate-*` 的默认入口；source guard 要防止这些
+  默认预清 hover 调用回归。
+- safe-point 生成使用窗口相对坐标并避开右上角敏感区；不能仅通过“全局鼠标不在 captureRect”来跳过。
+- 同一轮补给不应出现前后两次无意义随机 move。
+- 日志需要足够复盘：source、window id/base、relative safe point、absolute safe point、是否在 input worker
+  direct path 内。
+- 至少运行：
+  - CR150 focused guard；
+  - `mvn -q -DskipTests test-compile`；
+  - `mvn -q -DskipTests compile`。
+- Fresh runtime gate：
+  - 五环/五倍/修罗任一带补给的多窗口运行；
+  - 摄妖香 memory fresh 期间不应再因 hover 悬浮框走连续 `memory-gate-icon-absent-refill`；
+  - 状态截图 debug 图不应再带加血/加蓝区域的悬浮框；
+  - 每次人物/宝宝 HP/MP 补给后日志应有当前窗口的收尾 safe move，且 safe point 不落在右上角敏感区。
+
+Worker implementation record 2026-07-01:
+
+- `PlayerStateService.captureBarsSnapshot()`、`probeIncenseStatus(...)`、
+  `probeIncenseIconPresenceInRect(...)` 已移除默认截图前
+  `moveMouseAwayBeforePlayerStateSnapshotIfNeeded(...)` 调用；本卡未保留截图前兜底 pre-move。
+- `healAllDirect()` 改为累计四类 HP/MP 补给是否真实发生，所有需要补的条目点完后只调用一次
+  `moveMouseAwayAfterFirstAidSupply("playerState:healAllDirect")`；因为该路径在
+  `submitExclusiveAndWait("playerState:healAll", ...)` callback 内执行，收尾 move 使用 direct `InputProvider`，
+  不会嵌套提交 input queue。
+- `performCachedFirstAidPlanDirect(...)` 删除旧的补给前随机 move；cached no-focus 计划执行完真实右键补给后，
+  用 `moveMouseAwayAfterFirstAidSupplyDirect("playerState:healCachedPlan", baseX, baseY)` 在同一 input worker
+  callback 内收尾。
+- 单项 `checkAndHeal(...)` / `healPlayer()` / `healPet()` 路径仍只覆盖人物/宝宝 HP/MP；当它们在 input worker
+  外真实右键补给时，右键、800ms 等待、safe move、hover clear delay 放在同一个 `InputSequences.submitAndWait(...)`
+  action list 内，避免右键和收尾 move 被其他窗口插队。
+- safe point 由 `randomFirstAidHoverSafePoint(baseX, baseY)` 生成：先随机窗口相对 `relX/relY`，排除
+  `relX >= 761 && relY <= 147` 的右上角 hover 敏感区，再转成 `absX=baseX+relX`、`absY=baseY+relY`。
+- 收尾日志统一为 `first-aid hover cleanup safe move`，包含 `source`、`windowId`、`base`、`safeRel`、
+  `safeAbs` 和 `inputPath=direct-input-worker/queued-input-worker`。
+- 新增 `PlayerStateCR150FirstAidHoverCleanupSourceGuardTest`，防止三类状态截图前默认 pre-move 回归，
+  并检查补给后 safe move、queued 单项补给同序列收尾、safe point 相对坐标/右上角避让和日志字段。
+
+Worker verification 2026-07-01:
+
+- RED：`mvn -q -DskipTests test-compile "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.PlayerStateCR150FirstAidHoverCleanupSourceGuardTest" exec:java`
+  先失败于 `CR150: player-state-bars capture must not pre-move the mouse by default`。
+- GREEN：同一 CR150 focused guard 通过。
+- `mvn -q -DskipTests test-compile` 通过。
+- `mvn -q -DskipTests compile` 通过。
+- `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java src/test/java/com/bot/dhxy/service/PlayerStateCR150FirstAidHoverCleanupSourceGuardTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+  退出码 0，仅输出既有 LF/CRLF conversion warnings，无 whitespace error。
+
+Main / independent review 2026-07-01:
+
+- 谢帅本地复审确认：CR150 收尾 move 只挂在人物/宝宝 HP/MP 补给路径上；`ensureSheYaoXiangActive(...)`
+  仍只走原 `itemUser.use("bag/sheyaoxiang_item.png", ...)` 包裹用道具路径，未追加 hover cleanup。
+- 独立 reviewer `Darwin` verdict: `PASS_WITH_NOTES`，无 P0/P1/P2。
+- 复审确认：
+  - `player-state-bars`、`sheyaoxiang-status`、`sheyaoxiang-status-icon-gate-*` 截图前默认 pre-move 已停用；
+  - safe point 使用 `baseX/baseY + relX/relY`，并排除 `relX >= 761 && relY <= 147` 右上角敏感区；
+  - input worker 内走 direct `InputProvider`，非 worker 单项补给把右键和 safe move 放入同一个
+    `submitAndWait(...)` action list，未发现 queue-in-queue 风险；
+  - 新增 `PlayerStateCR150FirstAidHoverCleanupSourceGuardTest` 当前为 untracked，后续提交时必须纳入。
+- 谢帅复跑通过：
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.PlayerStateCR150FirstAidHoverCleanupSourceGuardTest" exec:java`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java src/test/java/com/bot/dhxy/service/PlayerStateCR150FirstAidHoverCleanupSourceGuardTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+- Fresh runtime 仍需验证：真实多窗口补给后应出现同窗口 `first-aid hover cleanup safe move`，`safeRel`
+  不落右上角敏感区；摄妖香 fresh memory 期间不应再因 hover 悬浮框连续触发
+  `memory-gate-icon-absent-refill`。
+
+Card CR151: 无 pathing 原地开打框 stale prepared 重新发布
+
+Status:
+
+- Review. Owner: 唐德建卡并审核；worker 已实现；独立 reviewer `PASS_WITH_NOTES`，无 P1/P2；
+  fresh runtime 待验。
+
+Business source:
+
+- 用户在 `2026-07-01 15:39` 五倍黄袍连战中，在点绿字准备进入战斗时暂停；战斗结束/恢复后，
+  队长窗口没有继续进战，而是在 `ENTER_BATTLE` 等 fresh prepared action，随后等到 phase loop
+  guard 超时并恢复到重新导航。
+- 现场不是“任务 resume 没启动”，而是 Runner 在暂停期间已经准备过一次
+  `WUBEI_ENTER_BATTLE`，恢复时该 prepared action 已远超 `3s` freshness，任务拒绝消费；Runner 又因为
+  existing prepared 仍支持当前 interest，不重新发布新的 prepared。
+
+Fresh log evidence:
+
+- 样本窗口：`hwnd-EA1904`，队长 `乌龟的黑头°（ID：67555）`。
+- `15:39:02.452` 五倍注册 `WUBEI_ENTER_BATTLE` interest：
+  `source=wubei:chained-enter-battle-before-click:chained-combat-fast-2`。
+- `15:39:03.347` phase outcome：
+  `RETURN_HOME -> ENTER_BATTLE message=chained combat fast-path clicked; resolve enter-battle dialog`。
+- `15:39:03.930` 用户暂停所有窗口。
+- `15:39:05.202` Runner 在暂停期间准备出 `WUBEI_ENTER_BATTLE`：
+  `target=wubei.enterBattle click=(347,433) prepared=true`。
+- `15:41:41.306` 用户恢复后，Runner 持续看到 fresh `OPTION`，interest 仍为
+  `WUBEI_ENTER_BATTLE`，但 existing prepared 已 stale：
+  - `15:41:45.462` `existingPreparedAgeMs=160260 existingPreparedVerifiedAgeMs=160260`
+  - `activeIntentId=null activeIntentTarget=null activeIntentSource=null`
+  - `pathingState=null pathingCurrent=null pathingTarget=null`
+  - `wubei visible dialog ignored ... prepared=true reason=explicit-prepared-action-ready`
+- `15:42:49.782` 五倍 `ENTER_BATTLE` phase loop guard exceeded，随后 recovery 到
+  `ROUTE_TO_MAIN_TASK`。
+
+Root cause:
+
+- CR144 已经修了“寻路后停稳”场景：stale prepared + same visible dialog + pathing snapshot
+  `ARRIVED/STOPPED_AWAY` 时允许 Runner 清旧 prepared 并重新 provider prepare。
+- 黄袍 chained-combat 续战路径按设计不注册 pathing intent：
+  `registerPathing = clicked && (label == null || !label.startsWith("chained-combat-"))`。
+  这避免原地即将开战的绿字被当成寻路并放权。
+- 由于没有 active pathing intent，Runner 不会刷新 pathing snapshot；当前实现的
+  `isStationaryForStaleTaskDialogReprepare(...)` 对 `snapshot == null` 返回 false，所以 CR144 的重发条件永远
+  不覆盖本场景。
+
+Required behavior:
+
+1. 不改变黄袍 chained-combat 的“不注册 pathing intent”设计。
+   - 不允许把这条路径注册成 pathing。
+   - 不允许伪造或复用旧 `WindowPathingSnapshot` 来假装 `ARRIVED/STOPPED_AWAY`。
+2. 在 Runner existing-current 分支内增加一个很窄的 no-pathing 原地开打重发条件：
+   - `windowContext.getActivePathingIntent().isEmpty()`；
+   - 当前 tick 不是 `IN_COMBAT`；
+   - 当前 fresh visible dialog 是 `OPTION`；
+   - 当前 task dialog interest 支持 existing prepared 的 operation；
+   - existing prepared 已 stale；
+   - operation 必须在原地开打白名单内，第一版只允许 `DialogOperation.WUBEI_ENTER_BATTLE`；
+   - visible dialog 与 prepared dialog type 明确一致；
+   - cooldown 打开。
+3. 满足条件时清掉旧 prepared，继续走现有 provider prepare / publish ready 流程。
+4. 不满足条件时保持 CR144 原有 pathing-stopped 逻辑和 debug retained 日志。
+
+Implementation guardrails:
+
+- 主要改 `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` 及现有 focused guard。
+- 优先复用 CR144 现有 stale / visible-match / cooldown 变量，不加一层无意义 wrapper。
+- 允许新增一个小的 predicate，但不要引入 wrapper nesting。
+- 不改 `WubeiTask` 绿字注册 pathing 规则。
+- 不改 OCR/template/click point、NPC smart-click、黄字路线、导航路线、三技能、包裹、战斗检测阈值。
+- 不把 `WUBEI_PREPARED_DIALOG_MAX_AGE_MS` 简单调长。
+- 不恢复 CR58 风格 background fingerprint keepalive。
+- No testcase replay required unless implementation changes visual matching or click-coordinate calculation.
+
+Validation plan:
+
+- TDD / source guard:
+  - 先让 `WindowTaskRunnerStalePreparedRepublishWiringTest` 或新增 CR151 guard 失败，证明当前代码仍要求
+    `isStationaryForStaleTaskDialogReprepare(pathingSnapshot, now)`，导致 no-pathing stale
+    `WUBEI_ENTER_BATTLE` 不会重新发布。
+  - 加绿后 guard 必须证明：
+    - no-pathing 分支只允许 `WUBEI_ENTER_BATTLE`；
+    - 不允许 `ROUTE_TRANSFER`、导航、维护 broadcast、NPC/dialog 非开打 operation；
+    - 不允许 active pathing 时走 no-pathing 分支；
+    - 不允许 `IN_COMBAT` 时走 no-pathing 分支；
+    - 仍保留 CR144 的 `ARRIVED/STOPPED_AWAY` pathing-stopped 分支；
+    - 不出现 `validatePreparedDialogAction(...)` background keepalive。
+- Compile:
+  - `mvn -q -DskipTests test-compile`
+  - CR151/CR144 focused guard main
+  - `mvn -q -DskipTests compile`
+- Fresh runtime:
+  - 复现或观察五倍黄袍 chained-combat pause/resume：恢复后若 `OPTION` 仍在、`WUBEI_ENTER_BATTLE`
+    prepared stale，Runner 应重新发布新的 `PREPARED_ACTION_READY`，任务不应再等到 phase loop guard。
+  - 正常移动中的 stale prepared 不得触发 no-pathing 重发。
+
+Worker implementation note 2026-07-01:
+
+- `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` 已在 existing-current stale 分支保留
+  CR144 `ARRIVED/STOPPED_AWAY` pathing-stopped 重发，并新增 no-pathing 原地开打重发条件。
+- 新分支只允许 `TaskType.WUBEI` + `DialogOperation.WUBEI_ENTER_BATTLE`，且要求无 active pathing intent、
+  fresh `OPTION`、interest 支持同 operation、prepared/visible dialog type 一致、old prepared stale、
+  cooldown open；战斗中不进入该 refresh，由 runner observer 的 `IN_COMBAT` 分支位置保证。
+- RED：CR151 source guard 先失败于缺少 no-pathing predicate。
+- Worker 侧 GREEN：CR151 guard、CR144 stale-prepared guard、`mvn -q -DskipTests test-compile`、
+  `mvn -q -DskipTests compile` 通过。
+
+Reviewer P2 repair 2026-07-01:
+
+- 独立 reviewer 指出 no-pathing helper 只检查 `activeIntent` 不够，若 `WindowPathingSnapshot`
+  残留 `ACTIVE` / `UNKNOWN` / probe-in-progress 且 active intent 为空，no-pathing 分支可能误放行。
+- 已把 `pathingSnapshot` 传入
+  `isNoPathingEnterBattleReadyForStaleTaskDialogReprepare(...)`，并采用最保守口径：只允许
+  `snapshot == null` 或 `WindowPathingState.NONE`；显式拒绝 `snapshot.isProbeInProgress()`、
+  `ACTIVE`、`UNKNOWN`，`ARRIVED/STOPPED_AWAY` 仍交由 CR144 pathing-stopped 分支处理。
+- P2 guard 已更新；独立 reviewer 复审 `PASS_WITH_NOTES`，无 P1/P2：
+  no-pathing helper 已显式接收并检查 `WindowPathingSnapshot`，只允许 `snapshot == null`
+  或 `state == NONE`；`ACTIVE`、`UNKNOWN`、probe-in-progress、`ARRIVED/STOPPED_AWAY`
+  均不能走 no-pathing 分支。
+- Main-agent fresh verification 2026-07-01:
+  - `javac -encoding UTF-8 -d target\cr151-guard-classes ...WindowTaskRunnerCR151NoPathingEnterBattleRepublishWiringTest.java ...WindowTaskRunnerStalePreparedRepublishWiringTest.java`
+    passed.
+  - `java -cp target\cr151-guard-classes com.bot.dhxy.window.execution.WindowTaskRunnerCR151NoPathingEnterBattleRepublishWiringTest`
+    passed.
+  - `java -cp target\cr151-guard-classes com.bot.dhxy.window.execution.WindowTaskRunnerStalePreparedRepublishWiringTest`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Fresh `mvn -q -DskipTests test-compile` is currently blocked by unrelated dirty/untracked test sources
+    from parallel CR work, with missing-symbol errors in older guards such as `CR148...`,
+    `InputActionPauseCancellationGuardTest`, `WindowPathingArrivalStationaryGuardTest`, and other
+    non-CR151 files. Treat full `test-compile` as an environment blocker, not a CR151 source failure.
+
+Follow-up note / pause compensation discussion 2026-07-01:
+
+- User correctly pointed out that prepared action freshness should not count paused wall-clock time.
+- Do not mix that broader pause-adjusted freshness model into CR151. CR151 is the recovery path after a
+  prepared action is already stale; a follow-up card should make prepared-action age pause-aware across
+  task dialog/route dialog paths while still requiring a fresh visible dialog/window/hwnd/type match before
+  consuming any old click point after resume.
+
+Card CR152: 五倍 `WAIT_BATTLE_FINISH` 暂停恢复先补偿再消费脱战
+
+Status:
+
+- Ready. Owner: 唐德审核；worker 子智能体负责实现；唐德不直接写 Java 业务实现。
+- Created 2026-07-01 from fresh runtime `15:46 -> 15:59` pause/resume failure.
+
+Business source:
+
+- 用户在五倍队长 `hwnd-EA1904 / ID：67555` 点击进入战斗后暂停。
+- 暂停期间真实游戏战斗继续并结束；用户约 12 分钟后恢复。
+- 按业务预期，恢复后五倍应承认上一场战斗已经结束，进入
+  `POST_BATTLE_RECOVER -> RETURN_HOME`，并使用五倍回城道具回 `宝象国`。
+- 实际上，恢复后五倍没有进入回城道具流程，而是把 `WAIT_BATTLE_FINISH` 判为 timeout，
+  然后走失败恢复、重新导航到接任务 NPC。
+
+Fresh log evidence:
+
+- `2026-07-01 15:46:38.459`：用户暂停，队长任务仍在 `[五倍, 修罗] progress=1/2`。
+- `2026-07-01 15:58:50.603`：恢复，队长继续五倍 `WAIT_BATTLE_FINISH`。
+- `2026-07-01 15:58:57.856`：Runner/BattleRadar 发布战斗结束：
+  `combat finished; restore action state to FREE and emit exit signal`。
+- `2026-07-01 15:58:57.857`：五倍同毫秒进入 `WAIT_BATTLE_FINISH` transaction，但先判：
+  `wait battle timeout: chained=false elapsedMs=739740 timeoutMs=180000`。
+- 结果：`phase=WAIT_BATTLE_FINISH result=FAILED message=wait battle timeout`，没有进入
+  `POST_BATTLE_RECOVER` / `RETURN_HOME`。
+
+Root cause:
+
+- `tickWaitBattleFinish(...)` 当前只补偿该方法入口处 `TaskCheckpoint.throwIfStopRequested(...)`
+  直接返回的 pause blocked time。
+- 本次长暂停发生在前一次 `waitForCombatStateWake(...)`/ready-event park 与任务 turn 持有期间；
+  恢复后 `waitBattleStartedAt` 没有扣除完整暂停墙钟时间。
+- 恢复后虽然 Runner 已经发布 fresh `COMBAT_STATE_CHANGED` / combat-exit signal，但五倍先执行
+  `WAIT_BATTLE_TIMEOUT_MS` 判定，导致未消费 combat-exit recovery。
+
+Required behavior:
+
+1. `WAIT_BATTLE_FINISH` 恢复/醒来后必须先补偿用户暂停/park 阻塞时间，再做业务超时判断。
+2. 补偿后应先给 `autoCombatService.handleCombatTick(... FAST_EXPECTED_EXIT)` 机会消费 fresh
+   combat-exit；若返回 `EXIT_RECOVERED`，必须进入 `POST_BATTLE_RECOVER`。
+3. 只有确认没有 fresh exit 且有效等待时间超过 `WAIT_BATTLE_TIMEOUT_MS`，才允许 timeout。
+4. 用户暂停期间的墙钟时间不能消耗五倍战斗等待超时预算。
+
+Boundaries:
+
+- 不改 `BattleRadarService` combat 视觉检测、avatar diff、阈值、15s grace 或 cadence。
+- 不改五倍回城道具模板、包裹扫描、导航/NPC/黄字/绿字、显形镜、三技能、dialog option。
+- 不改变正常未暂停情况下 `WAIT_BATTLE_FINISH` 的快路径。
+- 不用“调长 timeout”掩盖问题。
+
+Validation plan:
+
+- Focused guard:
+  - 构造/源码 guard 证明 pause blocked time 会补偿到 `waitBattleStartedAt` /
+    `waitBattleNextTrackerRetryAt`，且 timeout 判断在补偿和 fresh exit 消费之后。
+  - 证明 fresh combat-exit 已存在时不会先 timeout。
+- Regression:
+  - 未暂停的普通战斗结束仍进入 `POST_BATTLE_RECOVER`。
+  - 真正超过 `WAIT_BATTLE_TIMEOUT_MS` 且没有 combat-exit 的场景仍会失败。
+- Fresh runtime:
+  - 复现“进入战斗后暂停，暂停期间战斗结束，长时间后恢复”。
+  - 恢复后应看到五倍消费 combat-exit，进入 `POST_BATTLE_RECOVER/RETURN_HOME`，并使用回城道具；
+    不应出现 `wait battle timeout elapsedMs` 包含暂停墙钟时间。
+
+Worker implementation 2026-07-01:
+
+- Added focused source guard
+  `src/test/java/com/bot/dhxy/task/wubei/WubeiCR152WaitBattlePauseResumeWiringTest.java`.
+- RED command used:
+  `mvn -q -DskipTests test-compile; java -cp "target/test-classes;target/classes" com.bot.dhxy.task.wubei.WubeiCR152WaitBattlePauseResumeWiringTest`.
+  It failed as expected with:
+  `CR152 event-wait pause compensation must cover WAIT_BATTLE_FINISH timers`.
+- `WubeiTask` changes:
+  - added `compensateWaitBattleTimersAfterPause(...)`;
+  - `compensateFormalMaintenanceTimers(...)` now compensates `WAIT_BATTLE_FINISH` timer before
+    probe / enter-battle / ordinary pre-battle timers, so pause time spent inside event-wait park is
+    deducted from `waitBattleStartedAt` and `waitBattleNextTrackerRetryAt`;
+  - `tickWaitBattleFinish(...)` now uses the checkpoint's returned pause-blocked time instead of
+    remeasuring wall-clock around the checkpoint;
+  - `tickWaitBattleFinish(...)` now runs
+    `autoCombatService.handleCombatTick(... FAST_EXPECTED_EXIT)` and handles
+    `EXIT_RECOVERED -> POST_BATTLE_RECOVER` before checking `WAIT_BATTLE_TIMEOUT_MS`.
+- Boundaries preserved:
+  - no change to `BattleRadarService` combat detection, avatar diff, thresholds, 15s grace, or
+    cadence;
+  - no change to return-item template/click, bag scan, navigation, NPC, OCR/template, dialog option,
+    显形镜, or 三技能 logic.
+- Focused GREEN:
+  `javac -encoding UTF-8 -cp target/classes -d target/test-classes src/test/java/com/bot/dhxy/task/wubei/WubeiCR152WaitBattlePauseResumeWiringTest.java; java -cp "target/test-classes;target/classes" com.bot.dhxy.task.wubei.WubeiCR152WaitBattlePauseResumeWiringTest`
+  passed.
+- Manager verification after CR154 repair:
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest,WubeiCR152WaitBattlePauseResumeWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Fresh runtime gate remains required: pause while 五倍 is in `WAIT_BATTLE_FINISH`, let battle end
+  during pause, resume after several minutes, and verify logs show combat-exit consumption into
+  `POST_BATTLE_RECOVER/RETURN_HOME` without `wait battle timeout elapsedMs` including pause wall time.
+
+Card CR153: 全仓暂停恢复语义审计与修复清单
+
+Status:
+
+- Ready. Owner: 唐德审核；worker 子智能体负责审计。
+- This card is audit/report first. Do not make behavior edits unless 唐德/user explicitly opens a
+  follow-up implementation card.
+
+Business source:
+
+- 用户指出暂停/恢复问题已经在多个现场反复出现：战斗结束信号丢失、计时未补偿、input queue
+  把 pause 当失败、任务队列因 pause 期间失败继续推进到下一任务等。
+- 不能继续依赖用户每次现场发现；需要系统性检查还有哪些等待/输入/计时/恢复路径没有正确暂停续跑。
+
+Audit scope:
+
+- `runner.stop`: `TaskPauseToken`, `TaskCheckpoint`, `TaskSleep`。
+- `input.action`: `InputActionQueue`, `InputActionRequest`, `InputActionWorker`。
+- `window.execution`: `WindowTaskRunner`, queue progression, paused read-only observer,
+  post-combat idle watchdog, pathing watcher。
+- Task flows: 五倍 `WubeiTask`, 修罗 `XiuluoTaskV2`, 五环 `FiveRingTaskV2`, `AutoBattleTask`。
+- Services with waits/timers/input side effects: `NavigationService`, `AutoCombatService`,
+  `TaskMaintenanceService`, `TeamReturnService`, `UICleanerService`, `PlayerStateService`,
+  `NpcClickService`, `DialogService`。
+
+Required output:
+
+1. A Markdown audit report under `docs/run-reports/` or an appropriate existing report file.
+2. A table of every suspicious pause/resume site with:
+   - file/method;
+   - current behavior;
+   - risk (`P0/P1/P2/P3`);
+   - whether pause should block-and-resume, only stop-check, or be ignored because it is read-only;
+   - recommended CR split.
+3. Cross-reference existing CRs where they already cover the issue: CR141, CR146, CR152, CR154, etc.
+4. No broad behavior edits in this card; if a tiny diagnostic/doc-only change is needed, record it.
+
+Validation plan:
+
+- Source audit should use `rg`/code inspection, not memory.
+- Must include at least:
+  - all `throwIfStopRequested` return values that are ignored near wall-clock timers;
+  - all `System.currentTimeMillis()` / timeout comparisons in task loops;
+  - all `submitAndWait`/`submitExclusiveAndWait` callers that treat `false` as business failure;
+  - all queue failure policies that can continue to the next task after failure.
+- Final review should identify which follow-up cards are urgent and which are documentation/low risk.
+
+Worker audit 2026-07-01:
+
+- Report written: `docs/run-reports/2026-07-01-cr153-pause-resume-audit.md`.
+- Highest priority findings:
+  - P0: `InputActionWorker` / `InputActionRequest` still treat pause as cancel; covered by CR154.
+  - P0: 五倍 `WAIT_BATTLE_FINISH` must compensate pause and consume fresh combat-exit before timeout; covered by CR152.
+  - P0/P1: `WindowTaskQueue` default `CONTINUE_ON_FAILURE` can continue to 修罗 after a pause-induced 五倍 failure; needs follow-up CR155.
+  - P1: pathing/watchdog/maintenance gate waits still use wall-clock deadlines in several places; needs CR156/CR157.
+- Suggested follow-up cards:
+  - CR155: pause-induced failure must not advance the queued task list.
+  - CR156: pathing/watchdog/leader-signal timers should be pause-aware.
+  - CR157: local-team maintenance/support capability waits should be pause-aware and keep first-aid pending safely.
+  - CR158: after CR154, regression-audit Navigation/Dialog/NpcClick/UICleaner `false` propagation.
+- This worker did not modify Java business code and did not close CR153; status moved to Review for 唐德/manager confirmation.
+
+Card CR154: Input queue 暂停后恢复续跑，不再取消输入请求
+
+Status:
+
+- Review. Owner: 唐德审核；worker 子智能体已实现，等待唐德/manager review 和 fresh runtime。
+- Created 2026-07-01 from `15:59:08` navigation pause failure.
+
+Business source:
+
+- 用户在五倍失败恢复导航 `宝象国/降魔侍卫` 期间再次按暂停。
+- 当时 world-map/yellow destination minimap 输入请求已经在 input queue 路径中。
+- 当前 input worker 看到 pause 后直接 cancel input request，NavigationService 收到 `false`，
+  于是判 `MAP_NOT_REACHED`，五倍达到 recovery limit 后 `FAILED`。
+- 因队列默认 `CONTINUE_ON_FAILURE`，五倍失败后继续启动第二个任务修罗。
+
+Fresh log evidence:
+
+- `2026-07-01 15:59:07.719`：队长仍在
+  `submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap` 输入序列中点击。
+- `2026-07-01 15:59:07.974`：用户暂停。
+- `2026-07-01 15:59:08.391`：input worker 取消后续请求：
+  `Input request skipped because submitting task is paused ... stage=before-focus`，
+  dead letter reason=`task-paused:before-focus`。
+- `2026-07-01 15:59:08.391`：NavigationService 记录
+  `result=MAP_NOT_REACHED source=wubei:accept-npc target=宝象国(86,87)`。
+
+Root cause:
+
+- `InputActionWorker.isPauseRequested(...)` 当前把 pause 当 cancel：
+  `request.cancel("task-paused:" + stage)`。
+- `InputActionRequest.isCancelled()` 也把 `isPauseRequested()` 算作 cancelled。
+- 因此 pause 的语义是“取消已入队输入”，而不是用户期望的“暂停输入并在恢复后继续”。
+
+Required behavior:
+
+1. 已经提交到 input queue 的请求遇到 pause 时必须等待 resume，然后继续执行原动作序列。
+2. 暂停期间不得执行任何鼠标/键盘动作，包括 focus、exclusive callback、action list 中间动作。
+3. stop / task cancel / thread interrupt 仍必须能取消等待中的 input request。
+4. player identity epoch 变化仍必须取消请求，避免恢复后打到错号。
+5. `moveMouse + clickLeft` 等原子序列恢复后仍保持同一 request 内顺序，不允许拆开让其它窗口插入。
+6. `submitAndWait(...)` / `submitExclusiveAndWait(...)` 返回 `false` 只代表 stop/cancel/identity drift/真实输入失败，
+   不应因为 pause 本身返回 false。
+
+Implementation direction:
+
+- 目标文件：`InputActionQueue`, `InputActionRequest`, `InputActionWorker`，必要时 `TaskExecutionContext`。
+- `InputActionQueue` 提交请求时除了 `TaskPauseToken`，也捕获 `TaskStopToken`。
+- `InputActionRequest.isCancelled()` 不再把 pause 算作 cancelled。
+- `InputActionWorker` 在 before-focus / before-actions / action loop / before-exclusive-callback 等边界，
+  遇到 pause 时调用类似 `pauseToken.waitIfPaused(stopToken)` 的等待逻辑；恢复后继续检查
+  cancelled / identity epoch / interrupt。
+- 日志应区分：
+  - `input.request paused; waiting`;
+  - `input.request resumed; continuing`;
+  - `input.request cancelled by stop while paused`。
+
+Boundaries:
+
+- 不改具体 OCR/template/click/navigation target selection。
+- 不改 `NavigationService` route candidate 选择，不改 world-map 黄字/绿字逻辑。
+- 不改 input queue 单 worker 串行模型。
+- 不允许暂停期间偷偷 focus 窗口或执行 direct input。
+
+Validation plan:
+
+- Source/behavior guard:
+  - pause before focus -> worker waits, resume 后执行 request，返回 true。
+  - pause between actions -> 已执行动作不回滚，resume 后继续后续动作。
+  - stop while paused -> request 取消/返回 false，并不执行后续动作。
+  - identity epoch changed while paused -> resume 后取消，不执行后续动作。
+  - exclusive callback pause before callback -> resume 后再执行 callback。
+- Compile:
+  - focused CR154 guard；
+  - `mvn -q -DskipTests test-compile`；
+  - `mvn -q -DskipTests compile`。
+- Fresh runtime:
+  - 在世界地图输入/导航/cleanup 中按暂停，等待一段时间后恢复；应继续完成原输入请求，
+    不应出现 `task-paused:*` dead letter，也不应把导航判成 `MAP_NOT_REACHED`。
+
+Worker implementation 2026-07-01:
+
+- `InputActionQueue` now captures both `TaskPauseToken` and `TaskStopToken` from
+  `TaskExecutionContextHolder` and passes both into each queued request.
+- `InputActionQueue.await(...)` now counts only non-paused wait time against the 120s input wait
+  budget; a long user pause no longer makes the submitter time out and cancel a correctly paused
+  worker request.
+- `InputActionRequest` stores `stopToken`; `isCancelled()` no longer treats pause as cancellation.
+- `InputActionWorker` replaced the old `request.cancel("task-paused:" + stage)` path with
+  `waitIfPaused(...)` checkpoints at:
+  - `before-focus`;
+  - `before-transaction-focus`;
+  - `before-actions`;
+  - each action-loop boundary;
+  - `before-exclusive-callback`.
+- Review repair: input transactions now enter `WindowAwareInputCoordinator.callInputTransaction(...)`
+  with automatic pre-focus disabled; the worker performs the pause checkpoint inside the input lock
+  immediately before calling `focusCurrentWindowInActiveTransaction(...)`. This closes the race where
+  pause could arrive after `before-focus` but before the real focus call.
+- Review repair: `InputActionScope.isCancelled()` is now the generic checkpoint for exclusive
+  callbacks that do direct input. If pause is active it waits for resume and returns false; if stop is
+  requested while paused it cancels/throws so the worker completes false. This keeps callback internals
+  from continuing direct input during pause without restoring the old `pause = cancel` behavior.
+- Review P1 follow-up: `isCancelled()` only protects callbacks that already call it, so CR154 now
+  exposes `InputActionScope.checkpoint()` as the explicit direct-input pause checkpoint and keeps
+  `isCancelled()` as a compatibility wrapper. Multi-step exclusive direct-input paths now checkpoint
+  before or between physical input steps in:
+  - `QuestManagerService` 五环任务栏 direct Alt+Q / tab / P1/P2 click / scroll / close paths;
+  - `SummonSkillService` summon panel open, drag, hover/inspect, ultimate-corner click, and delete-skill
+    multi-click paths;
+  - `PlayerStateService` cached first-aid and direct HP/MP right-click supply / hover cleanup paths;
+  - `TeamRoleDetectionService` hover tooltip and Alt+T panel probe paths.
+  Additional direct-input follow-up checkpoints cover:
+  - `NpcClickService` direct click / Ctrl-probe / Alt+4 capture paths through its shared `shouldStop()`
+    guard;
+  - `UICleanerService` generic close / x2-only close direct clicks;
+  - `TaskStartupWindowPreparationService` startup Alt+U/Alt+1 and checkbox repair direct clicks.
+  Latest review repair additionally covers the two high-risk service families called out by local review:
+  - `DialogService` maintenance/business option direct clicks, give-item option click, story fast click,
+    green option click, and Alt+4 hide-name capture path now checkpoint before direct input and after
+    long sleeps before continuing.
+  - `BagService` direct helpers now checkpoint before opening/closing bag with Alt+E, before mouse-away
+    movement, before bag-tab click, before item right/left click, and after waits before continuing.
+    `executeSafeAction(...)` now returns false only when the direct item action is stopped/cancelled,
+    instead of recording a paused/cancelled click as successful.
+  Final P1 review repair covers the remaining map/NPC direct paths:
+  - `NpcClickService` Ctrl menu exclusive callback now checkpoints after Ctrl hover settle and before
+    Ctrl-hover move/menu click, and checkpoints before `releaseCtrl()` while still always releasing Ctrl
+    safely on stop/cancel.
+  - `NavigationService` world-map search, yellow destination mini-map, route-memory/cloud route clicks,
+    mini-map final coordinate clicks, route panel cleanup mouse move, map-result scroll, and focused
+    Alt+1/Alt+2 fallback shortcuts now checkpoint immediately before direct input. Route candidates,
+    map parsing, coordinates, and fallback order were not changed.
+  Source guards in `InputActionPauseCancellationGuardTest` now require these real service paths to
+  keep `InputActionScope.checkpoint()` wiring, so the old multi-step callback pattern cannot silently
+  regress without failing the CR154 guard.
+- Stop while paused still throws through `TaskStopToken`, marks the request failed, and dead-letters it;
+  player identity epoch drift after resume still cancels before any input executes.
+- `InputActionScope.isCancelled()` no longer treats pause as cancellation, so direct-input helpers do not
+  convert a user pause into a business failure signal.
+- Focused guard updated:
+  `src/test/java/com/bot/dhxy/input/action/InputActionPauseCancellationGuardTest.java`.
+  It covers pause before focus, pause between actions, stop while paused, identity drift while paused,
+  and exclusive callback pause-before-entry.
+  Review guards also cover pause arriving just before transaction focus and pause inside an exclusive
+  callback between two direct-input steps.
+
+Worker verification 2026-07-01:
+
+```powershell
+mvn -q dependency:build-classpath '-Dmdep.outputFile=target/cr154-classpath.txt'
+javac -encoding UTF-8 -cp $cp -d target/test-classes src/test/java/com/bot/dhxy/input/action/InputActionPauseCancellationGuardTest.java
+java -cp $cp com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+```
+
+- Focused guard passed and logged resumed continuation for `cr154-before-focus` and
+  `cr154-move-pause-click`.
+- Latest DialogService/BagService source guard passed through
+  `InputActionPauseCancellationGuardTest`.
+- Latest NpcClickService/NavigationService source guard main passed through
+  `java -cp ... com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest`.
+- `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test` passed.
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -DskipTests compile` passed.
+- Review follow-up verification passed:
+  `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test`,
+  `mvn -q -DskipTests test-compile`, and `mvn -q -DskipTests compile`.
+- P1 follow-up verification passed:
+  - Focused main guard with explicit Lombok processor:
+    `javac -encoding UTF-8 -cp $cp -processorpath $lombok -processor 'lombok.launch.AnnotationProcessorHider$AnnotationProcessor' -sourcepath src/main/java -d target/classes ...`
+    then `java -cp $runCp com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest`.
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test`.
+  - `mvn -q -DskipTests test-compile`.
+  - `mvn -q -DskipTests compile`.
+- Fresh runtime gate remains: reproduce pause during world-map/map-search input and verify no
+  `task-paused:*` dead letter, no pause-induced `MAP_NOT_REACHED`, and no direct callback continues
+  focus/mouse/keyboard while pause is active.
 
 Card CR129: Round-finish metrics/dashboard writes must not block next round
 
@@ -1652,7 +8559,7 @@ Closure update 2026-06-29:
 - True startup/hot-start remains outside this closure; CR130 only closes the internal
   continuous-round hot-start removal.
 
-Card CR131: Return-home should precompute team-return need before bag opens
+Card CR131: Return-home should precheck team-return after return verification
 
 Business source:
 
@@ -1671,33 +8578,38 @@ Business source:
 
 Problem statement:
 
-- The leader currently waits until after return item use and return verification before doing the
-  team-return / leave-state decision.
-- In normal successful rounds the answer is often "team return wait not needed", but the task still
-  pays the detection cost after return-home, directly delaying `ROUND_DONE` and the next round.
+- The first CR131 version moved the team-return / leave-state screenshot before return item use to
+  hide detection cost behind bag interaction.
+- Fresh 五倍 `2026-06-30 13:04` showed that timing can be wrong: the leader can fast-exit combat and
+  capture `NO_SIGNAL` while member windows are still in combat. At `13:04:30.355`, `WAIT_TEAM_RETURN`
+  then consumed the stale `13:04:24.664` precheck and skipped waiting; members only exited at
+  `13:04:33.786`, `13:04:35.188`, `13:04:36.599`, and `13:04:36.752`.
+- Therefore the precheck must be tied to the post-return-home screen, not the pre-return/bag screen.
 
 Required behavior:
 
-- Before opening the bag / using the return item, capture the bound leader window's team-state image
-  needed for team-leave/team-return detection.
-- Analyze that screenshot in the background while the main flow continues:
-  - open bag;
+- Use the return item exactly as before:
+  - open bag or use the cached slot;
   - find/use return item;
-  - verify return to start map.
+  - verify return to the task start map.
+- Only after start-map verification succeeds, capture the bound leader window's team-state image
+  needed for team-leave/team-return detection.
+- Analyze that screenshot in the background while the main flow transitions into `WAIT_TEAM_RETURN`.
 - After return verification:
   - if the precheck completed and proves no leave/team-return wait is needed, skip directly to the
     existing next-round path;
   - if it proves leave/team-return is needed, enter the existing `WAIT_TEAM_RETURN` handling;
   - if the precheck failed, is stale, does not match the current window/task/run, or is not complete
     yet, fall back to the existing conservative `WAIT_TEAM_RETURN` logic.
-- This is a precompute optimization only; it must not create a new business truth stronger than the
-  existing team-return detector.
+- This is still only a read-only precheck; it must not create a new business truth stronger than the
+  existing team-return detector, and it must not use a screenshot captured before return-home
+  verification.
 
 Boundaries:
 
 - Do not change return item search/use, bag page logic, return-map verification, or failure recovery.
-- Do not change team-return business rules; only move a read-only screenshot/probe earlier and
-  consume the result later if it is trustworthy.
+- Do not change team-return business rules; only move the read-only screenshot/probe to the verified
+  return-home screen and consume the result if it is trustworthy.
 - Do not let the background analysis send input, focus windows, open/close UI, or use unbound/global
   screenshots.
 - Scope the pending precheck by window, hwnd, task, round/task-run, and timestamp; stale results must
@@ -1705,16 +8617,28 @@ Boundaries:
 
 Validation:
 
-- Add a focused guard proving the precheck is launched before bag interaction and is read-only.
+- Add a focused guard proving the precheck is launched after start-map verification and is read-only.
 - Add behavior coverage for three outcomes:
   - completed no-leave result skips the expensive wait;
   - leave/needs-wait result enters existing `WAIT_TEAM_RETURN`;
   - missing/failed/stale/not-ready result falls back to existing `WAIT_TEAM_RETURN`.
 - Fresh runtime:
-  - logs show `team-return precheck scheduled` before return item bag open;
-  - after `return item verified`, logs show `team-return precheck consumed` and either direct
+  - logs show `return item verified` / `cached return item verified` before
+    `team return precheck captured`;
+  - after `return item verified`, logs show `team return precheck consumed` and either direct
     `ROUND_DONE` or existing fallback;
-  - no cross-window/team-state result reuse.
+  - no cross-window/team-state result reuse;
+  - in a late-member-exit case, the leader must not consume a pre-return stale `NO_SIGNAL`.
+
+2026-06-30 follow-up:
+
+- User-approved behavior change after the `13:04` 五倍 failure: move 修罗/五倍 leader
+  `beginLeaderSignalPrecheck(...)` calls from the beginning of `useReturnItem(...)` to the two
+  verified-success branches (`cached return item verified` and direct `return item verified`).
+- `TeamReturnService` log wording changed from `captured before bag` to `captured`, because the
+  valid capture point is now after return-home verification.
+- `TeamReturnPrecheckWiringTest` now guards the new order and still requires the precheck to be
+  read-only/background analyzed.
 
 2026-06-27 20:23:47.825-20:33:16 audit update:
 
@@ -1932,6 +8856,29 @@ Current root-cause boundary:
   non-logged throwable, or ran different live bytecode; the existing DEBUG-only catch and watcher
   `Future` submission make this class of failure too quiet.
 
+Fresh runtime blocker, `2026-06-30 18:38:02.319 -> 18:47:51.702`:
+
+- The failure is no longer limited to hot-start `OPTION`. In continuous 修罗, round 21 finished at
+  `18:24:51.507`; round 22 then remained in `WAIT_COMBAT` through the latest observed
+  `18:47:51.702`.
+- Runner repeatedly detected a visible `STORY` dialog on leader window `hwnd-E570C26` and published
+  `TASK_ATTENTION_REQUIRED`, but CR133 diagnostics show
+  `interestPresent=false`, `interestOperations=null`, `activeIntentId=null`,
+  `existingPreparedOperation=null`, and `supportsXiuluoEnterBattle=false`.
+- The prepare chain ran as visible-only: `route-dialog prepared=false`,
+  `task-dialog-interest-fallback` skipped with `reason=no-dialog-interest`, then
+  `task attention prepared follow-up ... reason=visible-only`.
+- The task side kept looping:
+  `xiuluo-v2:WAIT_COMBAT ... result=SHARED_STATE_TRIGGERED ... message=waiting for combat state`;
+  no `XIULUO_ENTER_BATTLE` prepared action was consumed, no combat-entry completion appeared, and
+  there was no `Exception`, `NoClassDefFoundError`, `task stopped`, or `all tasks completed`.
+- Repair direction must cover this continuous-round `STORY`/no-interest case too: if
+  `WAIT_COMBAT` observes repeated visible dialog attention without combat and no dialog interest or
+  active intent, the task/runner must either restore or re-arm the appropriate
+  `XIULUO_ENTER_BATTLE` interest, or route to an existing shortcut recovery path. Fresh runtime gate:
+  修罗 must not spin for minutes in `WAIT_COMBAT` while a visible task dialog is repeatedly published
+  with `interestPresent=false`.
+
 Required behavior:
 
 - When 修罗 has an active tracker/pathing wait and a current dialog interest that supports
@@ -2069,6 +9016,58 @@ Validation:
   - Focused guard passed via manual `javac` + `java` execution against `target/classes`.
   - Full `mvn -q -DskipTests test-compile` is blocked by unrelated existing test-source /
     target-cache issues across older guard/debug tests; production compile and CR134 guard pass.
+- Fresh blocker:
+  - 复盘修正：不要把本段解释为“修罗第 10 轮未完成”。完整时间线是
+    `22:41:15.834` 第 10 轮 `WAIT_COMBAT -> RETURN_HOME`，`22:41:16.352`
+    使用缓存修罗回程道具 `bag/xiuluo_return_item.png` 点 `(479,565)`，
+    `22:41:22.318` 验证回 `灵兽村 | X=117 | Y=90`，`22:41:23.440`
+    `round 10 skeleton finished, completed=10`，`22:41:23.442`
+    `task finished: 修罗 -> SUCCESS`，`22:41:24.094` 才 clean queue transition 到五倍。
+    因此切五倍本身符合队列逻辑。
+  - 进一步复盘修正：`22:41:29.134` 五倍在当前位置 `灵兽村(117,90)` 发起
+    `NPC smart click request: npcName=降魔侍卫 map=宝象国 target=(86,87)`；
+    `22:41:30.585` 全屏 `npc_task_tooltip` 匹配到 `(620,239)`，`22:41:30.843`
+    真实点击该点，随后 `dialog_detect_handle-dialog_VERIFY_EXPECTED_DIALOG_raw.png`
+    显示五倍/降魔侍卫对话（`今日已完成次数：118`）。因此这段不是“凭空弹框”，
+    中间确实由五倍接任务链路发起过真实 NPC/任务提示点击。
+  - `22:41:38.766` `WUBEI_ACCEPT_TASK` prepared consume 校验通过，`22:41:39.228`
+    点击 `(578,424)`，`22:41:39.243` 只记录 `GREEN_TEMPLATE_CLICKED`。这只能证明
+    “五倍接任务 option 被点了”，不能证明游戏已成功切到五倍任务；`22:41:39.421`
+    还把前面未验证的 `npc_task_tooltip` 点击以 `verificationStrength=DIALOG_TEMPLATE`
+    记为 success，存在“看到五倍对话/点了五倍选项”被当作“任务切换成功”的证据空洞。
+  - 关键矛盾：`22:41:41.487` 五倍 post-accept tracker 截图
+    `images\temp\hwnd-E570C26\task_tracker_detail_wubei-post-accept-tracker-1-normal-round-start.png`
+    仍显示 `修罗任务[常规玩法]`，而不是五倍任务标题；日志中 `22:41:22` 后没有新的
+    修罗接任务链路。因此现在不能说“身上的修罗任务是五倍后新接的”，更准确是：
+    脚本层已把修罗第 10 轮标记成功，但游戏左侧任务态/截图态没有被验证为已清，
+    五倍随后只做了 accept 点击并未验证任务切换。
+  - `2026-06-30 22:41:39.001 -> 22:42:44.628` 五倍接任务后默认出口预走路
+    `source=wubei:post-accept-prepath:1:default-or-repair-only target=(88,157)` 连续
+    fallback 1-11 都保持 `current=灵兽村 baseline=(117,90)`，每次结果为 `NO_PATHING`；
+    `22:42:43.417` 记录 `navigate timeout`，`22:42:44.628` 记录
+    `navigation.currentMap elapsedMs=64454 result=POINT_NOT_REACHED`。
+  - `22:42:52.250 -> 22:43:01.859` 五倍 `READ_TRACKER` 失败后进入 `UI cleanup`，
+    先 `ui-cleaner:force-close-story` 点击 `STORY`，再匹配 close button 关闭泛 UI。
+    这说明 blocker 应聚焦为“修罗完成判定缺少游戏任务态清除验证 + 五倍接任务后
+    UI/tracker/story 状态与 post-accept prepath 不匹配”，而不是只看修罗道具回程是否完成。
+  - 随后 `22:43:02.664` 五倍进入 `wubei:ROUTE_TO_MAIN_TASK`，从 `灵兽村` 走世界地图去
+    `宝象国`，`22:43:12.060` 黄字目标命中，说明主流程能兜底继续，但 CR134 的默认
+    post-accept prepath 本身未通过 fresh 验证。
+  - 代码根因复核：这不是单纯小地图 `(88,157)` 点击失败。`WindowTaskRunner`
+    在 `22:41:24.094` 把修罗成功后的五倍启动标为 `CLEAN_QUEUE_TRANSITION`；
+    `DefaultWindowTaskStartupInitializer` 仍同步出了当前位置 `灵兽村(117,90)`，但随后复用
+    common startup preparation。`WubeiTask.execute(...)` 在首轮
+    `cleanQueueTransitionStartup` 时直接使用 `WubeiRoundContext.normalStart(round)`，
+    而 `normalStart(...)` 的 phase 是 `ACCEPT_TASK`，不是 `ROUTE_TO_MAIN_TASK`。因此
+    `runRouteToNPC(...)` 里去 `宝象国/降魔侍卫` 的 `navigationService.navigateToNPC(...)`
+    没有先执行，`runAcceptTaskPhase(...)` 又没有在 `npcClickService.clickNpcSmart(...)`
+    前 gate 当前地图必须是 `宝象国` 或已存在 verified `WUBEI_ACCEPT_TASK` 对话。结果就是
+    五倍在 `灵兽村(117,90)` 直接用全屏 `npc_task_tooltip` 点击链路尝试接 `降魔侍卫`。
+    修复方向应先补这个业务 gate：clean transition 切到五倍首轮，除非已在 `宝象国`
+    且接近接任务 NPC，或已有 verified 五倍接任务对话，否则必须进入 `ROUTE_TO_MAIN_TASK`；
+    `ACCEPT_TASK` 点 NPC 前也要有同样防御，避免 generic tooltip 在错误地图上开接任务链。
+  - 下一步建议：不要先改通用导航；先用该段截图/日志复盘 `(88,157)` 在当前小地图状态下的
+    实际点击点与目标区域，同时优先修复 clean transition 绕过五倍接 NPC 导航 gate 的问题。
 - Fresh 五倍 runtime should show:
   - when 医宝宝 is due, the first post-accept mini-map click is the 医宝宝 NPC coordinate;
   - when only 修装备 is due, the first post-accept mini-map click remains `(88,157)`;
@@ -2308,7 +9307,45 @@ Owner / dispatch:
   - Verification: the guard failed red on the nested enum, then passed after repair;
     `mvn -q -DskipTests compile` passed; `target/classes` contains no
     `XiuluoTaskV2$ReturnItemUseResult$Status.class`.
-- Fresh runtime remains required before closing CR136.
+- Fresh runtime failure on `2026-06-30 18:26:58.751 -> 18:57:02.129`:
+  - `18:26:58.751` 修罗 round 22 false fast-exit advanced `WAIT_COMBAT -> RETURN_HOME`.
+  - `18:26:58.838 -> 18:27:03.017` used cached 修罗 return item at `(479,565)`.
+  - `18:27:03.283` watcher correctly forced `IN_COMBAT` and incremented `battleCount=87`.
+  - `18:27:07.704` start map verification failed, then CR136 trusted probe ran before any further
+    return attempt.
+  - `18:27:09.091` trusted `IN_COMBAT` refreshed the fast-exit avatar baseline and returned to
+    `WAIT_COMBAT`.
+  - `18:27:09.562` the real exit was emitted as `COMBAT_STATE_CHANGED sequence=469`, but the next
+    wait arm happened in the same millisecond and logged
+    `discard stale combat-exit signal ... pendingAtMs=1782858429562 armedAtMs=1782858429562`.
+  - After that, 修罗 round 22 stayed in `WAIT_COMBAT` until at least `18:57:02.129`, with no second
+    `RETURN_HOME` attempt. This means the state correction worked, but the real exit signal was
+    discarded by the arm-stage stale boundary.
+- Same-millisecond follow-up repair on `2026-06-30`:
+  - Root cause confirmed: `armExpectedCombatExitWait(...)` used
+    `combatExitPendingAtMs <= now`, while `consumeCombatExitSignalForExpectedWait(...)` only treats
+    `combatExitPendingAtMs < armedAtMs` as stale. With `System.currentTimeMillis()` millisecond
+    precision, a true exit and the next expected-wait arm can land in the same millisecond; equality
+    cannot prove the exit is old.
+  - `BattleRadarService.armExpectedCombatExitWait(...)` now discards only strictly older pending
+    exits (`combatExitPendingAtMs < now`) and preserves same-millisecond exits.
+  - Method comment documents why same-millisecond exit/arm timestamps must be kept.
+  - `WubeiCR136FastExitLifecycleWiringTest` now guards both sides:
+    it requires `state.combatExitPendingAtMs < now` in arm and forbids
+    `state.combatExitPendingAtMs <= now`.
+  - Guard was first run red against the old `<= now` condition, then green after the repair.
+  - Verification passed:
+    `mvn -q -DskipTests test-compile`,
+    `WubeiCR136FastExitLifecycleWiringTest`,
+    `WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest`,
+    `WindowTaskRunnerCombatStartupDeferWiringTest`,
+    `WindowPathingStoppedAwayPolicyTest`,
+    and `mvn -q -DskipTests compile`.
+- Fresh runtime still required:
+  - round 22-style false fast-exit should resume `WAIT_COMBAT` after trusted `IN_COMBAT`, then later
+    consume the real exit even if the exit timestamp equals the next arm timestamp, and proceed to
+    `RETURN_HOME`.
+  - CR136 cannot close before that fresh runtime passes.
 
 Card CR137: 五倍暗雷怪后台识别后快速撤销预走路并重抽
 
@@ -12050,6 +19087,38 @@ Jason + Codex re-review after 17:19 follow-up (2026-06-26):
   `[common-box] expired pending pruned`, ideally before heal-pet/repair broadcast or tracker green
   click.
 
+NPC-before-click follow-up (2026-07-01 / Mill + 唐德 review):
+
+- User observed that even with earlier after-accept / prepath hooks, a ready pending box can still be
+  slow or miss before the next task NPC interaction. Approved plan A: do not add another detection
+  pass; if a pending common-box already exists, consume it immediately before the next accept-NPC
+  smart click. If no pending box exists, the shared consume helper no-ops and the old NPC flow
+  continues.
+- 五倍: `WubeiTask.runAcceptTaskPhase(...)` now calls
+  `consumeCommonBoxAfterTaskAccepted(context, "wubei:before-accept-npc-click")` before building and
+  clicking the `降魔侍卫` accept NPC request.
+- 修罗: `XiuluoTaskV2.navigateToTaskNpc(...)` consumes pending common-box before the nearby direct
+  `灵兽村使者` smart click, and `XiuluoTaskV2.clickTaskNpc(...)` consumes before the normal accept
+  NPC smart click.
+- Boundaries kept: no changes to `CommonBoxService`, ROI `(623,590)-(682,618)`, template, TTL,
+  click point, NPC click algorithm, dialog handling, or navigation algorithm.
+- Focused guard update:
+  - `WubeiCR120CommonBoxEarlyConsumeWiringTest` now requires `wubei:before-accept-npc-click` before
+    `clickNpcSmart(acceptRequest)`.
+  - `XiuluoCR120CommonBoxEarlyConsumeWiringTest` now requires
+    `xiuluo-v2:before-accept-npc-click` before both nearby-direct and normal accept NPC smart-click
+    paths.
+- RED/GREEN and local review:
+  - Both guards failed before source insertion on the missing before-accept-NPC marker.
+  - After the source patch, 唐德 re-ran `mvn -q -DskipTests test-compile`, both focused guards via
+    Maven exec, `mvn -q -DskipTests compile`, and narrow `git diff --check`; only LF/CRLF warnings
+    remained.
+- Fresh runtime gate: with a pending leader box, logs should show
+  `COMMON_BOX_CLICKED ... source=wubei:before-accept-npc-click` or
+  `COMMON_BOX_CLICKED ... source=xiuluo-v2:before-accept-npc-click` before the corresponding accept
+  NPC smart-click. No-pending cases should remain fast no-ops and should not add screenshots or
+  navigation delay.
+
 Card CR121: Fast expected-combat exit must trust return verification before recovery
 
 Business source:
@@ -12061,6 +19130,26 @@ Business source:
   using the return item. If the return item verifies the start map, that is enough evidence that the
   fast exit was correct. If it does not verify the start map, that failed return verification is the
   first trusted evidence that the fast exit may be false.
+
+Fresh re-review evidence 2026-06-30 23:51:
+
+- `23:51:09.682` 五倍 `WAIT_BATTLE_FINISH` returned `READY_TO_CONTINUE`, then进入回程链路。
+- `23:51:18.250 -> 23:51:22.716` 队长执行 `bag/wubei_return_item.png`，当前页命中并右键使用，`task-page item action finished ... success=true`。
+- `23:51:23.935 -> 23:51:23.937` 回程后位置验证仍是 `火云洞 (16,38)`，日志为
+  `[wubei] return item used but start map not verified: source=normal-combat`。
+- `23:51:24.120` watcher 才发布 `COMBAT_STATE_CHANGED oldTick=IN_COMBAT newTick=NONE`。
+- `23:51:25.586 -> 23:51:25.958` `wubei:RETURN_HOME result=FAILED`，并抓取
+  `logs/cases/2026-06-30/20260630_235125_587_wubei_round_FAILED_hwnd-E570C26.case.json`。
+- `23:52:45.133+` 暂停/恢复后，五倍从 `火云洞` 进入 `ROUTE_TO_MAIN_TASK`，重新导航到
+  `宝象国/降魔侍卫`，说明当前实现走了安全恢复/重接路线；但本段没有看到明确的
+  `fast-exit correction` 诊断日志，也没有证据证明失败回程先按本文规则刷新可信战斗状态再分流。
+
+Re-review verdict:
+
+- CR121 不能继续保持 Done。bounded `WAIT_BATTLE_FINISH` timeout 修复仍然有效，但失败回程纠偏需要重新复核。
+- 下一步验收应要求：当 `return item used but start map not verified` 发生时，日志必须明确显示
+  correction path：可信战斗刷新结果、是否仍在 `IN_COMBAT`、若仍在战斗则回到 `WAIT_BATTLE_FINISH`，
+  若可信非战斗才进入当前安全恢复/重接任务路径。
 
 Problem statement:
 
@@ -12938,9 +20027,82 @@ Status:
     fragments. If CR139 is slimmed down later, prefer behavior-oriented guards so the code can stay
     as close as possible to "same queue already prepared -> skip" without locking in extra naming
     or wrapper shape.
-- Fresh runtime gate: run `[五倍, 修罗]` and check for common prep mark, `clean queued task transition
-  startup`, startup initializer skip, and 修罗/五倍 clean-transition hot-start skip logs. Then run a
-  fresh standalone 修罗 start to prove true startup resume still exists.
+- 2026-07-01 CR139 repair after `22:41` runtime pollution:
+  - The earlier CR139 "starts normal accept" behavior is now confirmed as a bug. In the observed
+    `修罗 -> 五倍` handoff, the role was still in `灵兽村` with 修罗 NPC/dialog visible; entering
+    `WubeiRoundContext.normalStart(round)` let `WUBEI_ACCEPT_TASK` click the 修罗 accept option and
+    create an unintended 修罗第 11 轮.
+  - New rule: every clean cross-task transition must force the next task's first accept-NPC
+    navigation phase. Clean transition may skip common startup preparation and true-startup resume,
+    but it must not assume the visible NPC/dialog belongs to the next task.
+  - Source repair: 五倍 clean transition now starts with `WubeiRoundContext.routeToAcceptNpc(round)`
+    at `WubeiPhase.ROUTE_TO_MAIN_TASK`, with log `force accept NPC route`; 修罗 clean transition now
+    starts with `XiuluoRoundContext.routeToAcceptNpc(round)` at
+    `XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC`, with log `force accept NPC navigation`.
+  - Guard repair: `CR139CleanQueueTransitionStartupWiringTest` no longer accepts
+    `WubeiRoundContext.normalStart(round)` / direct fresh-accept wording for clean transition.
+  - Verification: updated guard first failed with
+    `Wubei round context needs an explicit route-to-accept-NPC start`, then passed after the repair;
+    `mvn -q -DskipTests test-compile` and `mvn -q -DskipTests compile` passed.
+  - Independent review: reviewer returned `APPROVE_WITH_NOTES` and found no P0/P1/P2. It confirmed
+    五倍 clean transition cannot consume `WUBEI_ACCEPT_TASK` before `ROUTE_TO_MAIN_TASK`, 修罗 clean
+    transition starts at `ACCEPT_TASK_NAVIGATE_TO_NPC`, and standalone / after-combat startup resume
+    still uses the non-clean branch. Only note is that the worktree is broadly dirty, so CR139 should
+    remain clearly scoped when committing/reviewing.
+  - Main verification rerun: `test-compile`, CR139 focused guard, `compile`, and
+    `node scripts/generate-cr-dashboard-data.js` all passed; dashboard regenerated `146 CR rows`.
+  - Scope held: no OCR/template/click/movement/navigation target selection, NPC click algorithm,
+    dialog option matching, coordinate/template, or input queue changes.
+- 2026-07-01 follow-up after 五环漏接 review:
+  - User clarified that 五环 is also a formal queued task, so CR139 must cover any different-task
+    transition among `修罗` / `五倍` / `五环`, not only the earlier 修罗/五倍 examples.
+  - Source repair: `WindowTaskRunner.isCleanQueueTransitionStartupTask(...)` now includes
+    `TaskType.WUHuan_V2`.
+  - 五环 source repair: clean transition first run still starts at `FiveRingPhase.PREPARE`, preserving
+    UI cleanup, startup first-aid, 摄妖香/shoe scan, quick-buy, and necessary `BUY_SHOES`; after
+    preparation or shoe purchase succeeds, `FiveRingPhaseContext.nextAfterPreparation(...)` skips
+    `HANDOVER_DETECT` and enters `ACCEPT_TASK`, where the existing
+    `wuhuan-v2:acceptNpc:navigate` route goes to `长安/云游大师`.
+  - Guard repair: `CR139CleanQueueTransitionStartupWiringTest` now requires `WUHuan_V2` eligibility,
+    五环 clean predicate usage, clean-transition state carried through `PREPARE/BUY_SHOES`, and guard
+    wording for all three formal tasks.
+  - Verification so far: updated guard first failed with
+    `clean transition eligibility must include 五环 WUHuan_V2`, then passed after source repair.
+  - Final local verification: `mvn -q -DskipTests test-compile`, CR139 focused guard,
+    `mvn -q -DskipTests compile`, and `node scripts/generate-cr-dashboard-data.js` all passed;
+    dashboard regenerated `146 CR rows`.
+  - Independent review / main verification: reviewer found no P0/P1/P2 blocker. It confirmed clean
+    transition eligibility is limited to `WUBEI` / `XIULUO_V2` / `WUHuan_V2`, 五环 clean transition
+    preserves `PREPARE` / necessary `BUY_SHOES`, normal 五环 still reaches `HANDOVER_DETECT`, and
+    the existing `wuhuan-v2:acceptNpc:navigate` accept-NPC route is unchanged. Main agent reran
+    `test-compile`, CR139 focused guard, `compile`, and dashboard generation; all passed.
+  - Scope held: no 五环 OCR/template/click/navigation target, NPC click, dialog option, coordinate,
+    template, or input queue algorithm was changed.
+- Fresh runtime gate: run mixed queues covering all different-task directions among `修罗` / `五倍` /
+  `五环` and check for common prep mark, `clean queued task transition startup`, startup initializer
+  skip, and task-side logs showing the task's own accept-NPC route:
+  `force accept NPC route` for 五倍 -> `宝象国/降魔侍卫`,
+  `force accept NPC navigation` for 修罗 -> `灵兽村/灵兽村使者`, and 五环 clean-transition log
+  `skip handover and force accept NPC navigation` followed by `wuhuan-v2:acceptNpc:navigate` to
+  `长安/云游大师`. Confirm no first clean-transition click consumes the previous task's visible
+  tracker/dialog/NPC. Then run fresh standalone starts to prove true startup/handover recovery still
+  exists where each task needs it.
+- Fresh runtime update 2026-06-30 23:37:58 -> 23:38:24:
+  - `[修罗, 五倍]` direction passed the critical gate. 修罗 `RETURN_HOME` verified `灵兽村`
+    at `23:37:56.888`, then `WAIT_TEAM_RETURN` finished in `2ms` and moved to `ROUND_DONE`
+    at `23:37:58.120`.
+  - `23:37:59.057` logged
+    `clean queued task transition startup: previous=XIULUO_V2 requested=WUBEI mode=CLEAN_QUEUE_TRANSITION`.
+  - `23:38:01.772` live role stayed `LEADER`; `23:38:01.945` started 五倍.
+  - `23:38:02.678` startup initializer logged
+    `startup init skipped: clean queued task transition reused common startup preparation taskCode=wubei`.
+  - 五倍 did not directly click a leftover 修罗 dialog/NPC. It entered `ROUTE_TO_MAIN_TASK`, opened
+    world-map yellow route to `宝象国`, clicked destination mini-map coordinate `(86,87)`, registered
+    `wubei:accept-npc:map` pathing intent at `23:38:24.632`, and yielded with
+    `message=accept NPC pathing started`.
+  - This closes the previously observed `修罗 -> 五倍` pollution scenario for this runtime slice.
+    Keep CR139 in Review until the remaining 修罗/五倍/五环 mixed directions have equivalent fresh
+    evidence, or until the card is explicitly narrowed.
 
 Business source:
 
@@ -12954,13 +20116,18 @@ Business source:
 - User clarification:
   - A normal cross-task transition is not a hot-start/resume scenario.
   - If the previous task was 五倍 and it completed, the next 修罗 task has no 修罗 hot-start state to
-    recover; it should accept a fresh 修罗 task.
+    recover; it must first route to the 修罗 accept NPC before accepting.
   - If the previous task was 修罗 and the next task is 五倍, the same rule applies: do not run a
-    五倍 hot-start/resume path; accept a fresh 五倍 task.
+    五倍 hot-start/resume path, and first route to the 五倍 accept NPC before accepting.
+  - If the next task is 五环, preparation and shoe purchase checks still belong to 五环 startup, but
+    clean transition must not enter `HANDOVER_DETECT` to take over the previous task's tracker; it
+    must route through `ACCEPT_TASK` to `长安/云游大师`.
 - Expected behavior: once the first task in the same UI-submitted queue has successfully completed
   common startup UI preparation, later tasks in that same queue should skip the common startup prep
   and any next-task hot-start/startup-screen resume that only makes sense for true UI startup or
-  resume. The later task should go directly into its normal fresh accept-task flow.
+  resume. The later task should enter its own accept-NPC navigation phase, then accept after the
+  correct task NPC/dialog is reached; 五环 is the exception only in that its task-specific
+  `PREPARE`/`BUY_SHOES` still run before that accept-NPC navigation.
 
 Initial source suspicion from code scan:
 
@@ -13112,6 +20279,1478 @@ Next cleanup candidates:
 - Large-class and wrapper simplification should be split into separate behavior-preserving cards.
 - Any remaining retained legacy comparison path must be closed with fresh evidence or an explicit
   user decision; do not fold it into CR140.
+
+Card CR141: 通用队长暂停只读观察语义
+
+Status:
+
+- Review. Owner: 唐德+子智能体.
+- 2026-06-30 唐德记录问题与业务边界；未改源码。
+- 2026-06-30 子智能体实现通用队长暂停只读观察语义；源码验证通过，fresh runtime 待验收。
+- 2026-06-30 第二轮复审发现两个 P1；子智能体已修复并加严 guard，fresh runtime 仍待验收。
+- 2026-06-30 第三轮复审发现普通 watcher 已消费 enter、任务尚未 arm 时暂停导致 exit 仍会丢失；
+  子智能体已修复并加严 guard，fresh runtime 仍待验收。
+- 2026-06-30 审核助手最终复审无 P1/P2 blocker；唐德本地复跑 compile/test-compile/CR141
+  guard/相邻 watcher guards 通过。保持 Review，等待 fresh runtime 验收。
+
+Business source:
+
+- 用户复现的操作：
+  - 队长正在跑正式队长任务。
+  - 在点击“进入战斗/开打”附近很快按暂停。
+  - 暂停期间真实游戏战斗继续并结束。
+  - 恢复后队长任务完全不动，像卡在某个 phase。
+- 这不是五倍专属问题。五倍只是本次日志样本；同类风险存在于所有“队长任务 phase
+  等待进战斗/脱战，队员跟随挂机”的任务，包括 五倍、修罗、五环 等。
+
+Fresh log evidence:
+
+- 样本窗口：`hwnd-3DC127E`，队长 `乌龟的黑头°（ID：67555）`。
+- `2026-06-30 10:35:15.663`：五倍已经消费并点击 `WUBEI_ENTER_BATTLE` prepared action，
+  phase 从 `RESOLVE_AFTER_PATHING` 进入 `WAIT_BATTLE_FINISH`，message 为
+  `probe target tooltip clicked`。
+- `2026-06-30 10:35:16.557-10:35:18.556`：用户暂停，task 线程和 combat watcher 都到达
+  pause checkpoint。
+- `2026-06-30 10:36:59.558`：恢复后 task 线程继续 `wubei:WAIT_BATTLE_FINISH`。
+- `2026-06-30 10:37:01.148`：`WAIT_BATTLE_FINISH` 因为没有观测到 combat，退回
+  `ENTER_BATTLE`，message 为 `combat not observed yet; return to enter battle resolver`。
+- `2026-06-30 10:37:02+`：任务进入 probe enter-battle 等待，只等
+  `PREPARED_ACTION_READY`；Runner 反复记录 `dialog=NONE`、`pathingState=STOPPED_AWAY`、
+  `preparedOperation=null`，旧 `wubei:tracker-green-click:first-probe` active intent 仍在。
+- 结论：暂停把“进战斗 -> 脱战”的观测窗口盖掉了；恢复后任务只看到战后空场景，但状态机
+  仍停留在“还没确认进战斗，继续等开打框”。
+
+Root cause:
+
+- 当前暂停语义把 task 主流程和 runner/combat watcher 一起阻塞。
+- 如果用户在“点击开打成功之后、任务/runner 记录到 `IN_COMBAT` 之前”暂停，并且暂停期间真实
+  战斗结束，系统没有任何后台观察者记录中间的 `IN_COMBAT -> FREE` 状态变化。
+- 恢复后不能仅凭当前 `FREE` 状态判断发生过战斗，也不能把“点击开打框成功”当作“已经确认进战斗”。
+  进战斗仍必须由战斗检测确认。
+
+Second-review P1 blockers:
+
+- P1-1：暂停 observer 只留下普通 `combatExitPending` 时，恢复后 FAST_EXPECTED_EXIT 首次
+  `armExpectedCombatExitWait(...)` 会因为 `combatExitPendingAtMs <= armTime` 把暂停期间产生的
+  exit 当作 stale 丢掉。五倍 `tickWaitBattleFinish` 和修罗 confirmed tracker wait 都会受影响。
+- P1-2：pause 请求只发布 ready-event，不递增 `WindowRuntimeContext.observerWakeSeq`，睡眠中的
+  watcher 不会立刻醒；paused leader readonly 在 `FREE` 下用 `getDynamicPollingIntervalMs()` 可能
+  变成 10s，短战斗可完整错过。
+
+Third-review P1 blocker:
+
+- 普通 watcher 可能先看到 combat enter，并由
+  `maybeHandleCombatEnter -> consumeCombatEnterSignal()` 消费 enter，但任务线程尚未
+  `handleCombatTick(... FAST_EXPECTED_EXIT)` arm。此时用户暂停，paused observer 再观察到 exit；
+  因为 `combatEnterPending=false`，第二轮 `combatExitAfterUnconsumedEnterPending` 不会标记该 exit，
+  恢复后首次 arm 仍会把 pending exit 当 stale 丢掉。
+
+Required behavior:
+
+1. 暂停语义拆分为“动作暂停”和“队长只读观察”：
+   - 任务主流程暂停，不推进 phase。
+   - 禁止任何物理输入、后台键盘、鼠标、dialog prepared click、NPC click、包裹、导航、维护。
+   - 禁止发布新的可消费 prepared action。
+2. 仅队长窗口在暂停期间保留 runner/combat watcher 的纯只读观察：
+   - 可以刷新 `GameContext.ActionState`。
+   - 可以记录 combat enter/exit pending signal。
+   - 可以写必要的诊断日志。
+   - 不可以调用会补自动战斗面板、维护面板、dialog prepare、task tracker prepare 或输入队列的路径。
+3. 队员窗口暂停保持现有安静停住语义：
+   - 队员不需要在暂停期间继续 runner。
+   - 队员不负责主任务 phase，不需要记录中间战斗状态来恢复主线。
+4. 恢复后由各任务自己的 phase 消费通用战斗状态：
+   - 不在 `WindowTaskRunner` 里替任务推进业务 phase。
+   - 五倍/修罗/五环等任务各自决定 `combat-exit pending` 如何进入战后恢复。
+5. 该能力是通用基础设施，不写成 `WUBEI` 特判。
+
+Implementation guardrails:
+
+- 不改 OCR/template/click/movement/navigation 目标选择。
+- 不把“点击开打框成功”升级成“确认进战斗”；仍以 battle radar / combat state 为准。
+- 不复用当前 `AutoCombatService.handleWindowCombatGuardTick(...)` 作为暂停只读路径，因为它会消费
+  combat enter 并可能调用 `autoCombatPanelService.ensurePanelVisible(...)`，存在暂停时触发自动战斗维护的风险。
+- 需要新增或拆出更窄的只读 combat-state sync 路径，只允许状态更新和 pending signal 记录。
+- 暂停只读分支必须能被日志清楚识别，例如 `paused-leader-readonly-observer`，并明确记录
+  `inputAllowed=false` / `preparedActionAllowed=false`。
+- 如果实现需要改变 visual matching 或点击点，必须按 `AGENTS.md` 做 testcase replay；按当前设计不应涉及这些改动。
+
+Implementation:
+
+- `WindowTaskRunner.runCombatWatcherLoop(...)` 在 watcher tick 顶部识别
+  `executionContext.isPauseRequested() && windowContext.isLeader()`，进入
+  `paused-leader-readonly-observer` 分支。
+- 该分支使用 `TaskCheckpoint.throwIfStopRequested(executionContext.getStopToken(), ...)`
+  做 stop-only checkpoint，不等待 pause token；因此 stop/cancel 仍能立即结束 watcher。
+- 暂停队长分支只调用 `AutoCombatService.probePausedWindowCombatStateReadOnly(...)`，该方法只运行
+  `battleRadarService.checkAndSyncCombatState()`，让 `GameContext.ActionState` 和
+  battle radar enter/exit pending signal 保持最新。
+- 暂停队长分支只写 `paused-leader-readonly-observer` 诊断日志，明确
+  `inputAllowed=false` / `preparedActionAllowed=false`；不调用普通
+  `publishCombatStateChanged(...)`，避免触发已有五倍/修罗 pathing 清理副作用。
+- 队员暂停未进入只读分支，仍沿用 `executionContext.throwIfStopRequested()` 的原有静默暂停语义。
+- 本次未改 `BattleRadarService` 的视觉判断、OCR/template/click/movement/navigation 目标逻辑，也未改
+  `TaskTrackerPanelService`、cloud decision 文件、config memory json 或 `application.properties`。
+- 第二轮 P1-1 修复：`BattleRadarService` 新增 generic
+  `combatExitAfterUnconsumedEnterPending` current-cycle 标记。若 exit 发生时 enter signal 仍未被任务
+  消费，则记录该 battle count、清掉 stale enter signal，并让
+  `armExpectedCombatExitWait(...)` / `consumeCombatExitSignalForExpectedWait(...)` 保留并消费这个
+  current-cycle exit。普通 stale exit 仍按原规则丢弃。
+- 第二轮 P1-1 防护：`AutoCombatService.maybeHandleCombatEnter(...)` 先确认
+  `GameContext.ActionState.IN_COMBAT`，当前已 `FREE` 时只调用
+  `battleRadarService.discardCombatEnterSignalIfNotInCombat(source)`，不会在恢复后打开自动战斗面板。
+- 第二轮 P1-2 修复：`WindowRuntimeContext.wakeObserver(...)` 递增 `observerWakeSeq`；
+  `WindowTaskRunner.pauseCurrentTask()` 仅在 `windowContext.isLeader()` 时调用它，保持队员暂停安静。
+- 第二轮 P1-2 修复：paused leader readonly 分支使用固定短周期
+  `WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS=500ms`，不再使用 `FREE` 状态下可能为 10s 的动态轮询。
+- 第三轮 P1 修复：`AutoCombatService.probePausedWindowCombatStateReadOnly(...)` 记录 radar 前后的
+  `GameContext.ActionState`；如果 before=`IN_COMBAT` 且 after=`FREE`，调用
+  `battleRadarService.markCombatExitObservedDuringPause(source)`。
+- 第三轮 P1 修复：`BattleRadarService` 新增 generic
+  `combatExitObservedDuringPausePending` / battle count marker。`isCurrentExpectedWaitAllowedExit(...)`
+  统一允许“enter 未消费时 exit”和“paused observer 观察到 exit”两类 current-cycle pending exit。
+  `armExpectedCombatExitWait(...)` 与 `consumeCombatExitSignalForExpectedWait(...)` 都使用该统一策略；
+  `clearCombatExitPending(...)` 同时清理两个 marker。
+
+Source verification:
+
+- RED 1：新增 `WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest` 后先失败于缺少
+  paused leader gate。
+- RED 2：加严 guard 后先失败于暂停分支调用普通 `publishCombatStateChanged(...)`。
+- RED 3：第二轮 guard 加严后先失败于 `pause request must wake only leader observers; member pause stays quiet`。
+- RED 4：第三轮 guard 加严后先失败于
+  `paused read-only probe must remember action state before radar refresh`。
+- GREEN：
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowObserverInCombatSkipWiringTest`
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest`
+- Final review:
+  - 审核助手最终复审未发现新的 P1/P2；仅提出 `armExpectedCombatExitWait(...)` 注释需说明
+    CR141 current-cycle 例外，已补注释。
+  - 唐德本地复跑上述 compile/test-compile/CR141 guard/相邻 watcher guards 均通过。
+
+Validation plan:
+
+- Source guard:
+  - 暂停状态下队长 watcher 仍有只读 combat-state sync 分支。
+  - 暂停状态下队长 watcher 不调用 input queue、dialog prepare、task tracker prepare、auto-combat
+    panel ensure、maintenance broadcast。
+  - 暂停状态下队员 watcher 不继续做只读观察。
+  - 只读路径不消费或发布 prepared dialog action。
+- Fresh runtime:
+  - 队长任务点击开打框后立即暂停。
+  - 暂停期间战斗真实进入并结束。
+  - 日志显示队长 `paused-leader-readonly` 分支记录 combat enter/exit 或等效 pending signal。
+  - 恢复后任务消费战斗结束事实并进入战后恢复/回程/下一轮，不再卡在等待新的开打框。
+  - 队员暂停期间没有自动战斗面板补点、维护、三技能、盒子、归队或其它输入。
+- Regression runtime:
+  - 正常不暂停的 五倍/修罗/五环 队长流程不改变。
+  - 普通用户暂停在非战斗阶段时，队长不进行任何动作，只允许安全只读状态刷新。
+  - 停止任务仍应立即停止 watcher，不允许只读观察阻止 stop。
+
+Card CR142: Runner 坐标到达必须等移动停稳
+
+Status:
+
+- Review. Owner: 子智能体.
+- 2026-06-30 唐德记录 fresh 五倍接任务黄字路线误到达问题；未改源码。
+- 2026-06-30 子智能体完成 Runner 到达停稳源码修复与 focused guard；fresh runtime 待验。
+
+Business source:
+
+- 用户复现的操作：
+  - `2026-06-30 10:56:43-10:57:05`，队长 `hwnd-3DC127E` / `ID：67555`
+    启动五倍接任务。
+  - 世界地图搜索 `宝象国` 后，通过黄字目标行打开目标地图小地图，并点击目标逻辑坐标
+    `(86,87)`。
+  - 角色仍在移动中，但任务已经开始执行 NPC smart click。
+  - 当时截图 `images/temp/hwnd-3DC127E/roi_scan_all.png` 能看到角色尚未停稳；
+    标注图为 `images/temp/hwnd-3DC127E/roi_scan_all_marked_click_479_384.png`。
+  - 随后 `npc_task_tooltip.png` 误命中画面里的“任务”小牌子，点击屏幕绝对坐标
+    `(479,384)`，对话验证失败。
+
+Fresh log evidence:
+
+- `2026-06-30 10:56:48.699` 注册黄字目标小地图 pathing intent：
+  - source=`wubei:accept-npc:map:worldMapYellowDestinationMiniMap:...`
+  - target=`宝象国(86,87)`
+  - tolerance=`12`
+- `2026-06-30 10:57:02.965` Runner 发布 terminal：
+  - `state=ARRIVED`
+  - current=`宝象国(87,99)`
+  - target=`宝象国(86,87)`
+  - `observedStationaryMs=0`
+  - `wallStationaryMs=0`
+- `dx=1`、`dy=12`，正好踩到 `tolerance=12` 的边界；当前代码用
+  `abs(delta) <= tolerance`，所以直接发布 `ARRIVED`。
+- `2026-06-30 10:57:02.966` `NavigationService.navigateInCurrentMap(...)` 消费这个
+  `ARRIVED` 快照并返回：
+  - `cached coordinate checked by pathing snapshot ... arrived=true`
+- `2026-06-30 10:57:05.572-10:57:08.893` NPC tooltip 模板误点：
+  - `coordinate.findImagesInRegion ... template=images/template/npc/npc_task_tooltip.png`
+  - `points=[java.awt.Point[x=479,y=384]]`
+  - `NPC task-tooltip template click result ... verified=false`
+
+Root cause:
+
+- `ARRIVED` 是 `WindowTaskRunner` 发布的 terminal fact，下游任务会把它当作可信事实。
+- 当前 `WindowTaskRunner.classifyPathingState(...)` 先判 `hasArrived(...)`，再判
+  `locationChanged`：
+  - 只要坐标进入容错范围，就可能直接返回 `ARRIVED`。
+  - 即使同一帧坐标刚变化、`observedStationaryMs=0`，也不会继续保持 `ACTIVE`。
+- 这把“进入目标容错圈”误当成“人物已经停稳，可以开始截图/OCR/点击 NPC”。
+- 下游 `NavigationService` 只是消费了 Runner 的 terminal；修复不应该放在下游兜底，
+  否则每个消费者都要重复怀疑 `ARRIVED`。
+
+Required behavior:
+
+1. Runner 语义必须收紧：
+   - `ARRIVED` 表示真的到达，不能表示“刚进容错范围但仍在移动”。
+   - 对带坐标的 active movement intent，进入容错范围只能成为候选到达。
+   - 必须确认坐标没有继续变化，并稳定一小段时间后，Runner 才能发布 `ARRIVED`。
+2. 区分“原地已在范围内”和“小地图点击触发移动”：
+   - 回程后、任务恢复后、或没有新移动 intent 的原地范围判断，可以继续 fast-path。
+   - `navigateInCurrentMap`、`worldMapYellowDestinationMiniMap` 等通过小地图/当前地图坐标点击
+     触发的移动，必须等停稳后再 terminal。
+3. `worldMapYellowDestinationMiniMap` 虽然代码上在 `navigateToMap(...)` 里注册 intent，
+   业务语义上仍属于“小地图坐标移动到目标点”，应按 current-map movement 的到达规则处理。
+4. 不要把本问题修成五倍特判：
+   - 修罗、五环、五倍只要消费 Runner 坐标型 pathing terminal，都应受同一 Runner 语义保护。
+
+Implementation guardrails:
+
+- 修复点应优先在 `WindowTaskRunner.classifyPathingState(...)` / 坐标型移动 intent 到达判定，
+  不要只在 `NavigationService.isCurrentCachedCoordinateNear(...)` 做下游兜底。
+- 不改 `GameStateUtil.isMovingByPixelDiff()`；这个问题不是像素移动检测误判，而是 Runner
+  在 `stationaryMs=0` 时过早发布 `ARRIVED`。
+- 不改 OCR/template/click/NPC smart-click/黄字路线选择算法。
+- 不改 `ACCEPT_NPC_DIRECT_CLICK_DISTANCE=12` 的业务含义；容错仍用于到达范围，只是不能单独
+  证明“停稳”。
+- 不改变 untargeted tracker pathing 的 `STOPPED_AWAY` / dialog attention 规则。
+
+Implementation:
+
+- `WindowTaskRunner.classifyPathingState(...)` 保留原 `hasArrived(...)` 容错判断，但对带
+  `targetX/targetY` 的 `TARGETED` 坐标 movement intent 增加停稳门槛：
+  - 如果本轮 mini-map 坐标刚变化，即使已经进入 tolerance，也返回 `ACTIVE`。
+  - 如果坐标未变化但距 `locationChangedAtMs` 还不到
+    `WINDOW_PATHING_ARRIVAL_STATIONARY_MS=600ms`，继续返回 `ACTIVE`。
+  - 坐标稳定窗口达标后才返回 `ARRIVED`，让下游 `NavigationService` / NPC smart click
+    消费到的 terminal fact 代表“到达且停稳”。
+- 无 previous 的 in-range、没有新移动证据的 fast-path、以及 map-only target arrival 保持
+  原行为，避免拖慢回程/原地已在范围内接 NPC 的路径。
+- `UNTARGETED_TRACKER` 仍先跳过坐标 arrival 判断，继续沿原 `ACTIVE` /
+  `STOPPED_AWAY` 语义；没有改 dialog attention、pathing terminal publish、OCR/template/click、
+  NPC smart-click、黄字路线选择、`ACCEPT_NPC_DIRECT_CLICK_DISTANCE` 或
+  `GameStateUtil.isMovingByPixelDiff()`。
+
+Source verification:
+
+- RED：新增 `WindowPathingArrivalStationaryGuardTest` 后，
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingArrivalStationaryGuardTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  失败于 `coordinate that just changed into tolerance must not publish ARRIVED:
+  expected=ACTIVE actual=ARRIVED`。
+- GREEN：
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingArrivalStationaryGuardTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingStoppedAwayPolicyTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+- No testcase replay required: this change does not alter visual matching, OCR/template thresholds,
+  click coordinates, NPC/dialog/bag/navigation target selection, or screenshot matching output.
+
+Review:
+
+- 2026-06-30 independent review subagent result: **Pass**. 修复点在 Runner terminal fact
+  判定，`in-tolerance + locationChanged` 会保持 `ACTIVE`；`previous == null` fast-path 在生产
+  小地图移动路径风险可接受，因为 `markPathingStarted(...)` 会先写入 ACTIVE snapshot；map-only、
+  `UNTARGETED_TRACKER`、`STOPPED_AWAY`、world-map route memory 未发现源码 blocker。
+- 2026-06-30 Codex coordinator review: **Pass for source Review**. 本地复跑
+  `compile`、`test-compile`、CR142 focused guard、`WindowPathingStoppedAwayPolicyTest`、
+  `WindowObserverInCombatSkipWiringTest`、`WindowTaskRunnerCombatStartupDeferWiringTest` 均通过；
+  `git diff --check` 只有既有 LF/CRLF warning。CR142 仍不能标 Done，必须等 fresh 五倍黄字路线
+  runtime 验证 Runner 不再在 `observedStationaryMs=0` 时发布 `ARRIVED`。
+
+Validation plan:
+
+- Source guard:
+  - 构造坐标型 movement intent，上一帧/当前帧坐标变化且已进入 tolerance，Runner 不得返回
+    `ARRIVED`。
+  - 构造同一 intent 坐标在 tolerance 内且 stationary window 达标，Runner 才返回 `ARRIVED`。
+  - 构造原地/无新移动的 in-range 场景，仍允许 fast-path，不拖慢回程后接 NPC。
+  - 验证 `UNTARGETED_TRACKER` 不受该坐标停稳规则影响。
+- Fresh runtime:
+  - 复跑五倍接任务黄字路线到 `宝象国(86,87)`。
+  - 日志不再出现 `observedStationaryMs=0 wallStationaryMs=0 state=ARRIVED`。
+  - `NavigationService.navigateInCurrentMap(...)` 不能在角色仍移动时消费 cached `ARRIVED` 并立刻
+    开始 NPC smart click。
+  - NPC smart click 开始时截图应显示角色已经停稳；不再误点 `479,384` 的任务小牌子。
+  - 回程/原地已在 NPC 附近场景仍能快速进入 NPC 点击，不额外强制小地图点击。
+
+Card CR143: 五倍 pathing terminal 晚到消费补偿
+
+Status:
+
+- Review. Owner: 子智能体.
+- 2026-06-30 唐德记录五倍白龙马/宝象谜情探测点卡住问题；本卡只补消费者晚到补偿，不改 Runner 到达判定。
+- 2026-06-30 子智能体实现完成；Fermat 第二轮 P2 已修，focused guard、compile、test-compile 已通过；fresh runtime 待验。
+- 2026-06-30 Fermat 最终复审通过，未发现新的 P1/P2；保持 Review，等待 fresh runtime 验证。
+
+Business source:
+
+- 用户复现的操作：
+  - `2026-06-30 11:40-11:46`，队长 `hwnd-3DC127E` / `ID：67555` 做五倍 `宝象谜情`。
+  - 左侧 tracker 读到黄字 `宝象述情|显|形镜`，`mirrorProbe=true`，绿字链接 2 个。
+  - 队长点击第一个绿字后进入 tracker pathing；路径中途触发队长三技能维护。
+  - Runner 在维护期间已经发布 `STOPPED_AWAY` terminal，但五倍前台业务没有消费到，后续长期停留在旧 `first-probe` active intent。
+
+Fresh log evidence:
+
+- `2026-06-30 11:40:09`：
+  - `taskKey=wubei.baoxiang_miqing`
+  - `title=宝象谜情`
+  - `yellow=宝象述情|显|形镜`
+  - `mirrorProbe=true`
+  - `greenLinks=2`
+- `2026-06-30 11:40:10.193`：
+  - 点击第一个绿字：source=`wubei:tracker-green-click:first-probe`
+  - click=`(266,270)`
+  - `dialogBefore=STORY`
+  - `dialogAfter=STORY`
+- `2026-06-30 11:40:10-11:40:14`：
+  - 只预扫到 `bag/wubei_probe_item.png`，match=`(445,572)`。
+  - 此时还没有使用显形镜。
+- `2026-06-30 11:40:16.717`：
+  - `TRACKER_PATHING` 返回 `PATHING_STARTED`，next=`RESOLVE_AFTER_PATHING`。
+  - outcome 通过 `waitForPathingWake(...)` 包装，等待类型应为 `WAIT_PATHING_TERMINAL`。
+- `2026-06-30 11:40:16.718-11:40:16.722`：
+  - 队长 opportunistic 三技能维护开始：`maintenance: summon skill due source=wubei:leader-pathing`。
+- `2026-06-30 11:40:48.721`：
+  - Runner 发布 terminal：
+    - `window.ready.publish windowId=hwnd-3DC127E`
+    - `type=PATHING_TERMINAL`
+    - `task=WUBEI`
+    - `source=wubei:tracker-green-click:first-probe`
+    - `state=STOPPED_AWAY`
+    - `sequence=94`
+- `2026-06-30 11:40:50.793-11:40:50.805`：
+  - 三技能维护结束并释放 turn：
+    - `probe timer paused ... blockedMs=34075`
+    - `leader pathing summon maintenance barrier finished ... resumePhase=RESOLVE_AFTER_PATHING`
+    - `task.turn.release reason=wubei:leaderPathingSummonMaintenance ... optionalTryRun=true`
+- 之后没有看到五倍前台消费 `sequence=94` 的 `PATHING_TERMINAL`，Runner 持续报告：
+  - `pathingState=STOPPED_AWAY`
+  - `activeIntentSource=wubei:tracker-green-click:first-probe`
+  - `preparedOperation=null`
+- `11:41` 可见 dialog 是三技能遗忘成功提示：
+  - `images/temp/hwnd-3DC127E/dialog_detect_window-task-attention_wubei_raw.png`
+  - 文本为“您的召唤兽2.影武者！浪成功遗忘技能书”，不是白龙马探测 dialog。
+
+Root cause:
+
+- Runner 已经发布了 terminal 事件，本问题不是 Runner 完全没发信号。
+- `WindowReadyEventBus.awaitNewer(...)` 只消费 `sequence > afterSequence` 的事件。
+- `WubeiTask.parkAfterYieldIfNeeded(...)` 在进入等待前读取 `afterSequence = windowReadyEventBus.currentSequence()`。
+- 如果队长三技能维护让五倍消费者晚于 Runner terminal 才进入等待，`afterSequence` 可能已经等于或晚于该 terminal sequence，旧事件被排除。
+- `WubeiTask.isWaitAlreadySatisfied(...)` 对 `WAIT_PATHING_TERMINAL` 只检查 fresh prepared action，没有补查：
+  - `WindowReadyEventBus.latest(PATHING_TERMINAL)`
+  - 当前 `WindowPathingSnapshot` 是否已经是同一 intent/source 的 terminal state。
+- `WUBEI_WAIT_UNTIL_RUNNER_EVENT_MS=-1`，一旦错过 edge-triggered 事件，等待可能无限期挂住。
+- `WindowTaskRunner.publishPathingTerminalEventIfNeeded(...)` 目前只在 `stateChanged` 且状态为 `ARRIVED/STOPPED_AWAY` 时发布，属于单次边沿事件；本卡不要求改成周期重发。
+
+Required behavior:
+
+1. 五倍 `WAIT_PATHING_TERMINAL` 消费必须 late-consumer safe：
+   - 如果进入等待时，匹配当前 wait 的 terminal 已经由 Runner 发布或已经体现在 runtime snapshot 中，应立即消费并恢复 `RESOLVE_AFTER_PATHING`。
+2. 补偿必须有匹配边界，不能吃到上一轮旧事件：
+   - window 必须一致。
+   - task 必须是 `WUBEI`。
+   - terminal state 必须是 `ARRIVED` 或 `STOPPED_AWAY`。
+   - source/intent 必须匹配当前等待的 pathing source；至少要能覆盖 `wubei:tracker-green-click:first-probe`。
+   - event/snapshot 必须足够新，不能跨任务轮次或跨 active intent。
+3. 消费到 late terminal 时要打结构化日志：
+   - window id、source、state、sequence、ageMs、匹配依据。
+4. 不改这些业务路径：
+   - Runner 坐标到达/停稳判定。
+   - OCR/template/click/navigation/显形镜/三技能业务决策。
+   - tracker 绿字点击顺序。
+   - `STOPPED_AWAY` 后五倍原有“下一个点/重试/fallback”业务语义。
+
+Implementation guardrails:
+
+- 优先在 `WubeiTask.parkAfterYieldIfNeeded(...)` / `captureWaitRuntimeState(...)` / `isWaitAlreadySatisfied(...)` 现有等待流程里补，不要新建多层 wrapper。
+- 可以扩展 `WubeiWaitRuntimeState` 记录 latest terminal/current snapshot 的匹配结果，但避免把 runner negative signal 改成新的业务 truth。
+- 如果需要读 `WindowReadyEventBus.latest(...)`，只用于当前 wait 的 late-arrival compensation。
+- 如果必须引入 TTL 或 source match helper，要在 CR 卡和代码日志里写明依据，并加 focused source guard。
+
+Validation plan:
+
+- Source guard:
+  - 构造 `PATHING_TERMINAL` 已发布、消费者晚到且 `afterSequence` 晚于事件的场景，`WAIT_PATHING_TERMINAL` 应判定 already satisfied。
+  - 构造不同 source/不同 task/过旧 event，不得被消费。
+  - 构造 current `WindowPathingSnapshot` 已是同一 source 的 `STOPPED_AWAY`，即使没有 newer event，也应能唤醒。
+- Compile:
+  - `mvn -q -DskipTests test-compile`
+  - 根据新增 guard 运行 focused test。
+- Fresh runtime:
+  - 复跑五倍探测点途中触发/等待三技能维护。
+  - 如果 Runner 先发布 `PATHING_TERMINAL state=STOPPED_AWAY`，维护结束后的五倍业务必须消费该事实并继续 `RESOLVE_AFTER_PATHING`。
+  - 日志不能再出现超过 60 秒的：
+    - `active-pathing`
+    - `pathingState=STOPPED_AWAY`
+    - `activeIntentSource=wubei:tracker-green-click:first-probe`
+    - `preparedOperation=null`
+
+Implementation update 2026-06-30:
+
+- `WubeiTask.captureWaitRuntimeState(...)` 现在只在 `WAIT_PATHING_TERMINAL` 下读取
+  `WindowReadyEventBus.latest(windowId, PATHING_TERMINAL)`，并与当前 runtime
+  `WindowPathingSnapshot` 一起做 late terminal 匹配。
+- 匹配边界：
+  - 当前 snapshot 必须是 `ARRIVED` 或 `STOPPED_AWAY`；
+  - active intent source 必须通过显式五倍 pathing source 白名单；
+  - snapshot 更新时间和 latest event age 必须在
+    `WUBEI_MAINTENANCE_PATHING_HARD_TIMEOUT_MS` 内，避免跨旧轮次；
+  - 若 latest event 存在，必须是同 window、`TaskType.WUBEI`、`PATHING_TERMINAL`、
+    `ARRIVED/STOPPED_AWAY`、同 intent id，且 event intent source 与当前 active source 一致。
+- 消费 late terminal 时新增结构化日志
+  `[wubei wait] late pathing terminal satisfied`，包含 window id、source、state、sequence、
+  ageMs、matchBasis、afterSequence。
+- 未改 Runner pathing 分类/发布策略，未改 OCR/template/click/navigation、显形镜、三技能、
+  绿字点击顺序，`STOPPED_AWAY` 后续仍回到五倍原有 `RESOLVE_AFTER_PATHING` 业务处理。
+- Verification:
+  - RED：新增 guard 后先运行
+    `javac -encoding UTF-8 -d target/test-classes src/test/java/com/bot/dhxy/task/wubei/WubeiCR143PathingTerminalLateConsumerWiringTest.java; java -cp target/test-classes com.bot.dhxy.task.wubei.WubeiCR143PathingTerminalLateConsumerWiringTest`
+    失败，缺少 late terminal 匹配入口。
+  - GREEN：同一 focused guard 通过，最终复跑仍通过。
+  - `mvn -q -DskipTests compile` 最终复跑通过。
+  - `mvn -q -DskipTests test-compile` 最终复跑通过。
+
+Second review repair 2026-06-30:
+
+- Fermat 第二轮发现 P2：首版补偿只允许
+  `activeIntent.source.startsWith(TRACKER_GREEN_PATHING_SOURCE_PREFIX)`，会漏掉同样由
+  `waitForPathingWake(...)` 等待的维护 NPC pathing，例如 `wubei:heal-pet-npc` 和
+  `wubei:repair-equipment-npc`。
+- 已修：
+  - `matchFreshPathingTerminal(...)` 改为调用显式 source policy
+    `isWubeiPathingTerminalSource(...)`，不再 tracker-green-only。
+  - 合法 source 白名单覆盖 tracker 绿字 pathing、post-accept prepath、dark-thunder reroll prepath、
+    `wubei:heal-pet-npc`、`wubei:repair-equipment-npc`。
+  - latest event 除同 window、`TaskType.WUBEI`、terminal state、同 intent id、新鲜度外，还要求
+    `eventIntent.source == activeIntent.source`，防止同 WUBEI 但不同 pathing source 的旧事件被消费。
+- 加严 focused guard：要求 source policy 覆盖 tracker-green 与 heal/repair 维护 pathing，且源码不能继续
+  对 active source 做 tracker-green-only 判定。
+- Verification:
+  - RED：加严 guard 后旧实现失败：
+    `late terminal compensation must accept all legal 五倍 pathing sources, not only tracker green`。
+  - GREEN：focused guard passed。
+  - `mvn -q -DskipTests compile` passed。
+  - `mvn -q -DskipTests test-compile` passed。
+
+Final review:
+
+- Fermat 最终复审未发现新的 P1/P2：
+  - late compensation 只作用于 `WAIT_PATHING_TERMINAL`；
+  - 仍要求当前 `WindowPathingSnapshot` 是 terminal，符合 ready event 只是 wake hint、消费者重读
+    runtime snapshot 的边界；
+  - latest event 要求 same window、`TaskType.WUBEI`、same intent id、same source、terminal state、
+    fresh age；
+  - snapshot-only fallback 要求 source 白名单、fresh `updatedAt`，且 snapshot 更新时间不早于
+    intent 创建时间；
+  - source 白名单覆盖当前五倍合法 `waitForPathingWake(...)` 来源，`wubei:accept-npc` 仍走
+    `WAIT_ACCEPT_NPC_ROUTE`，不混进本补偿；
+  - 未看到 OCR/template/click/navigation、显形镜、三技能、Runner 判定或绿字点击顺序变更。
+
+Card CR144: Runner 停稳后 stale prepared 重新发布
+
+Status:
+
+- Review. Owner: 唐德+子智能体.
+- 2026-06-30 唐德发布任务卡并委派子智能体实现；独立 review 子智能体发现
+  stationary gate / guard / log noise 问题后，唐德完成窄修。源码实现、focused guards、
+  compile/test-compile 均已通过；fresh runtime 待验收。
+
+Business source:
+
+- 用户指出 `2026-06-30 14:34` 附近的卡住不能只靠任务线程兜底：
+  Runner 明明持续看见同一个可处理 dialog，窗口也已经站在原地不动，但旧 prepared action
+  没有被消费后，Runner 没有重新发布 ready 事件。
+- 用户补充关键前提：必须先确认窗口已经没有移动。移动中曾经出现过的旧 `OPTION` 不能因为
+  prepared action 过期就触发重发，否则会把正常移动过程误判成卡住。
+
+Fresh log evidence:
+
+- 样本窗口：`hwnd-E570C26` / hwnd `240585766`，队长 `乌龟的黑头°（ID：67555）`，
+  五倍 round 13，任务 `三藏封魔`，目标地图 `波月洞`。
+- `2026-06-30 14:32:56.468`：tracker 绿字点击完成，注册
+  `WindowPathingIntent source=wubei:tracker-green-click:combat`。
+- `2026-06-30 14:33:14.205-14:33:14.206`：
+  - 五倍 ordinary enter-battle target-map gate armed；
+  - `TRACKER_PATHING` 返回 `PATHING_STARTED`，next=`RESOLVE_AFTER_PATHING`；
+  - 随即队长 opportunistic 三技能维护开始。
+- `2026-06-30 14:33:31.243`：Runner 在维护期间已经识别到 `OPTION`，prepare 出
+  `WUBEI_ENTER_BATTLE`，点击点 `(330,401)`，并发布
+  `PREPARED_ACTION_READY sequence=63`。
+- `2026-06-30 14:33:37.280-14:33:37.282`：三技能维护失败后释放 turn，
+  五倍恢复 `RESOLVE_AFTER_PATHING`。
+- `2026-06-30 14:33:37.677+`：Runner 仍然持续看到同一个 `OPTION`，日志里
+  `existingPreparedAgeMs` 从约 `6434ms` 持续增长，但
+  `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` 走
+  `task dialog prepared action already current; skip background validation`，没有重新发布
+  `PREPARED_ACTION_READY`。
+- 五倍 task 侧没有继续输出 `wubei wait park finished` / phase 进展，表现为站着不动。
+
+Root cause:
+
+- `WubeiTask` 对普通 enter-battle prepared action 的 freshness 只有
+  `WUBEI_PREPARED_DIALOG_MAX_AGE_MS=3000ms`。
+- 维护占用了约 23 秒，任务恢复时原 prepared action 已经过期，不能被消费。
+- `WindowRuntimeContext.consumePreparedDialogAction(..., maxVerifiedAgeMs)` 虽然能在消费时清理
+  stale action，但当前路径在预检查阶段就认为 stale，不一定会调用到 consume 清理。
+- Runner 看到同一个 prepared action 仍支持当前 interest 时，直接返回 existing，不重新验证、
+  不清 stale、也不重新发布 ready event。
+- 这和 CR143 不同：CR143 是 `PATHING_TERMINAL` edge event 晚到消费补偿；CR144 是可见
+  dialog / prepared action 的 stale-ready 重新发布问题。
+
+Required behavior:
+
+1. Runner 只有在“窗口已经停住”后，才允许对 stale prepared action 进行重新发布判断。
+   - 移动中不允许因为 prepared action 过期而重发。
+   - 停住证据应优先使用现有 `WindowPathingSnapshot` / coordinate stationary 信息，不改
+     `GameStateUtil.isMovingByPixelDiff()`。
+2. 当满足以下条件时，Runner 应清掉旧 prepared action，重新跑 task dialog provider，并重新发布
+   `PREPARED_ACTION_READY`：
+   - 当前存在 active task dialog interest；
+   - 当前可见 dialog 仍然与该 interest 的业务类型匹配，例如普通五倍开打需要 `OPTION`；
+   - existing prepared action 支持当前 interest；
+   - existing prepared action 的 `lastVerifiedAtMs` 已超过任务可接受 freshness；
+   - 当前 pathing/runtime 证明窗口已经停稳；
+   - 同 window/operation/source 不在重发冷却期内。
+3. 重新发布必须有节流：
+   - 防止回到 CR58 以前那种 ready 后每个 watcher tick 都 fingerprint keepalive / validation 的模式。
+   - 建议冷却约 `1000ms`，具体值由实现卡解释。
+4. 日志必须能复盘：
+   - stale prepared 被保留、被清理、被重新发布时记录 window id、task、operation、target、
+     preparedAgeMs、verifiedAgeMs、visibleDialog、pathingState、stationaryMs、interestSource、
+     activeIntentSource、cooldown 结果。
+
+Implementation guardrails:
+
+- 优先在 `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` 的
+  existing-current 分支内补，不要把五倍业务 phase 搬进 Runner。
+- 不要改 OCR/template/click point、NPC smart-click、黄字路线、导航路线、三技能、包裹、战斗检测阈值。
+- 不要改变 `PreparedDialogReadyNoKeepaliveWiringTest` 所保护的原则：ready 后不做无条件后台
+  fingerprint keepalive；本卡只能在“停稳 + stale + 可见 + 冷却”条件下重新 prepare。
+- 不要把 `WUBEI_PREPARED_DIALOG_MAX_AGE_MS` 简单改长来掩盖问题。
+- 如果实现需要新增状态字段，优先把冷却状态放在 `WindowTaskRunner` 本地，不扩大
+  `WindowRuntimeContext` API，除非实现证明必须跨 tick 共享。
+- No testcase replay required unless implementation changes visual matching or click-coordinate
+  calculation. 按当前设计不应触碰这些路径。
+
+Validation plan:
+
+- Source guard:
+  - 证明 `refreshTaskDialogInterestPreparationSignal(...)` 在 existing-current 分支不会无条件
+    return stale prepared。
+  - 证明 stale republish 必须检查 stationary / pathing stopped 条件。
+  - 证明存在 cooldown，且没有调用 `validatePreparedDialogAction(...)` 之类的 background
+    fingerprint keepalive。
+  - 证明移动中不会触发 stale prepared reprepare。
+- Compile:
+  - `mvn -q -DskipTests test-compile`
+  - focused guard main
+  - `mvn -q -DskipTests compile`
+- Fresh runtime:
+  - 复跑五倍普通/黄袍 enter-battle 场景，最好复现队长 pathing 后穿插三技能维护。
+  - 如果维护期间 first `PREPARED_ACTION_READY` 过期，窗口停住且 `OPTION` 仍可见后，Runner 必须
+    重新发布新的 `PREPARED_ACTION_READY`。
+  - 日志不能再长期停在：
+    - `existingPreparedAgeMs` 持续增长；
+    - `task dialog prepared action already current; skip background validation`；
+    - task 侧没有 `wubei wait park finished` / phase 进展。
+  - 移动中的 stale prepared 不得触发重发。
+
+Implementation notes:
+
+- `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` 在 existing-current 分支新增
+  stale prepared recovery：
+  - 只有 existing prepared 已 stale、当前 visible dialog 与 prepared action 的明确
+    `DialogType` 一致、prepared action 仍支持当前 task interest、窗口 pathing snapshot 为
+    `ARRIVED` / `STOPPED_AWAY` 且不在 probe 中、并且 1 秒冷却打开时，才清掉旧 prepared 并
+    重新执行 provider prepare / 发布 `PREPARED_ACTION_READY`。
+  - 移动中 `ACTIVE`、未知 `UNKNOWN`、仅坐标短时间不变、`probeInProgress` 均不会触发重发。
+  - `DialogType.NONE` / null 不再作为 wildcard；没有明确 dialog type 的 prepared action 不走
+    本卡重发路径。
+- stale 但 gate 不满足时的 retained 日志降为 debug，避免 watcher 100ms tick 下刷屏；真正清理
+  并重发仍保留 info 级结构化日志，便于 fresh runtime 复盘。
+- 新增 `WindowTaskRunnerStalePreparedRepublishWiringTest` source guard，覆盖：
+  - stale branch 必须清旧 prepared 并继续 provider prepare；
+  - stationary helper 不接受 `ACTIVE` / 坐标不变作为停稳；
+  - visible dialog match 需要明确 non-`NONE` type；
+  - 不引入 CR58 风格 background fingerprint keepalive。
+
+Review notes:
+
+- 第一轮独立 review 发现并要求修复：
+  - P1：stationary helper 过宽，不能用 `ACTIVE` + 坐标未变或 `UNKNOWN` 推断停稳；
+  - P2：source guard 未覆盖 moving-negative；
+  - P2：stale retained info 日志可能 100ms 刷屏；
+  - P3：visible matcher 不能把 null / `NONE` 当 wildcard。
+- 唐德已按 review 窄修。第二轮独立 review 结论：`PASS`，无 P1/P2/P3 blocker。
+
+Verification:
+
+- Passed:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerStalePreparedRepublishWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.PreparedDialogReadyNoKeepaliveWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WubeiPlainTaskAttentionNoWakeWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingStoppedAwayPolicyTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+- Fresh runtime pending:
+  - 五倍普通/黄袍 enter-battle 若再次出现维护占用导致 first ready 过期，应看到
+    stale prepared stationary reprepare 后新的 `PREPARED_ACTION_READY`。
+  - 移动中或 probe 中不能出现 stale reprepare。
+
+Card CR145: 三技能维护队列与延后一轮消费
+
+Status:
+
+- Review: independent final review PASS; focused guards and compile/test-compile passed. Owner: 唐德+子智能体.
+  Fresh runtime pending.
+- 2026-06-30 唐德根据用户定稿创建任务卡；实现交给子智能体，另派独立子智能体 review。
+- 2026-06-30 worker 已完成源码实现、CR145 focused guard、compile、test-compile；等待 fresh runtime 验收。
+- 2026-06-30 独立 review 未通过：首版实现会按当前窗口跳过全局队头，且队员
+  `requiredLocalSupportCapability=SUMMON_SKILL` item 只能入队不能消费；必须修完后重新 review。
+- 2026-06-30 review repair 已完成：全局 FIFO 队头消费、本地队员 `SUMMON_SKILL`
+  capability snapshot 消费、unknown-backoff 测试迁移；等待 fresh runtime 验收。
+- 2026-06-30 第三轮 review repair 已完成：fresh tail-safe cache 命中时，已取得的队头 item
+  作为完成出队并刷新 cooldown，避免旧 item 留在 FIFO 头部阻塞后续窗口；等待 fresh runtime 验收。
+- 2026-06-30 最终 review P2 已修：fresh tail-safe 出队现在先经过本轮预算 claim，
+  防止五倍同一窗口里 A `NOT_DUE` 出队后 B 又继续 clean；等待 fresh runtime 验收。
+- 2026-06-30 独立 final review PASS：未发现新的 P1/P2；剩余风险仅为 fresh runtime 验收。
+- 2026-06-30 fresh 五倍队长入队缺口已修：runner dialog visible 时不再完全跳过队长三技能
+  due/enqueue，只做 `enqueue-only` pass，等待下一无 dialog 维护窗口消费。
+- 2026-06-30 fresh 修罗巡检新增：队列/backoff/retry/移队尾机制本身有证据生效，但
+  `hwnd-3DC127E` 在 `21:48:28 -> 21:48:43` 第一次清理失败后移队尾，`21:53:49 -> 21:54:08`
+  backoff 到期后二次重试仍失败，删除后仍读到 `slot 8 status after delete NORMAL_SKILL`，
+  最终 `clean finished success=false` 且 `moved to tail after failure attempts=2`。CR145 暂不能关闭；
+  后续需观察第三次是否成功，或另开三技能 cleaner 删除确认/槽位状态识别 follow-up。
+- 2026-06-30 fresh 修罗第三次重试仍失败：`21:59:48.200` `hwnd-3DC127E` 第三次领取
+  `SUMMON_SKILL#28` 并开始清理，`21:59:57.456` slot 5 判为 `UNKNOWN`，`22:00:04.184`
+  `clean finished success=false`，记录 `unknown failure backoff`，并
+  `moved to tail after failure attempts=3`。队列/backoff/移队尾已生效，但该窗口 cleaner 连续
+  三次无法完成，CR145 不能关闭；建议单独修三技能 cleaner 的删除确认/slot 状态识别/tooltip 视觉分支。
+- 2026-06-30 fresh 修罗第四次重试恢复成功：`22:05:43.313` `hwnd-3DC127E` 再次领取
+  `SUMMON_SKILL#31`，本次识别 8-slot layout，`22:05:52.042` slot 8 为 `NORMAL_SKILL`，
+  `22:05:54.462` 删除确认，`22:05:55.340` slot 8 复查为 `EMPTY_SLOT`，`22:05:56.170`
+  `exclusive pass finished completed=true success=true elapsedMs=12857`。这证明 backoff/移队尾
+  能最终恢复，但前三次连续失败仍暴露 cleaner 删除确认/slot 状态识别不稳定；CR145 保持
+  Review，不直接关闭。
+- 2026-06-30 fresh 修罗新增恢复样本：`hwnd-6E10566` 在 `22:08:13.779` 领取
+  `SUMMON_SKILL#32` 后，`22:08:26.475` 因 `delete normal skill failed` 失败并
+  `moved to tail after failure attempts=1`；下一轮 `22:09:40.342` 领取 `SUMMON_SKILL#33`，
+  `22:10:06.093` 清理成功，且 `ultimateClicked=true ultimateSucceeded=true`。这进一步证明
+  FIFO/backoff/预算恢复链路可用，但 cleaner 删除确认失败不是单个窗口孤例，仍需保持 Review。
+- 2026-06-30 fresh 修罗新增队长失败样本：`22:14:52.516` 队长 `hwnd-E570C26` 在第 36 轮
+  绿字后领取 `SUMMON_SKILL`，`22:15:08.656` `clean finished success=false`，
+  `message=delete normal skill failed`，并 `moved to tail after failure attempts=1`。失败保护仍生效，
+  但 cleaner 删除确认/slot 状态识别已在队长和多个队员窗口出现，CR145 继续 Review。
+
+Business source:
+
+- 用户指出当前三技能机制是“时间到了就现场执行”，五倍尤其容易在即将打怪、绿链寻路、
+  expected-combat、dialog 准备阶段突然弹三技能窗口，污染截图/点击/状态判断。
+- 用户定稿：三技能到期的这一轮只入队，不处理；下一轮维护窗口打开时处理队列。
+- 用户补充：队长和队员都可能进入队列；入队前必须按窗口/账号/维护类型去重，
+  已在队列里的同类 item 不能重复加入。
+
+Required behavior:
+
+1. 三技能 due detection:
+   - 到期时只尝试入维护队列，不立即执行三技能清理。
+   - 去重 key 必须至少包含 window/account identity 与 maintenance type，例如
+     `windowKey + roleId/accountId + SUMMON_SKILL`。
+   - 若同 key 已在队列中，什么都不做；不要刷新 `dueAt` / `enqueuedAt`，避免永远延后。
+2. 维护窗口 snapshot:
+   - 每次队伍维护窗口打开时记录 `windowOpenAt`，并冻结本次可处理列表。
+   - 本次只允许处理 `enqueuedAt < windowOpenAt` 的 queue item。
+   - 窗口打开后才到期并入队的 item，必须留到下一轮。
+3. 每轮消费预算:
+   - 五倍每个安全维护窗口最多尝试 1 个 `SUMMON_SKILL` item。
+   - 修罗每个安全维护窗口最多尝试 2 个 `SUMMON_SKILL` item。
+   - FIFO 顺序；失败 item 移到队尾，不能卡住后面的窗口/账号。
+4. 成功/失败语义:
+   - 成功：item 出队，并以成功出队/完成时间更新该窗口/账号的三技能冷却时间。
+   - 可重试失败、窗口不安全、识别失败、被打断：不更新时间，item 移到队尾。
+   - 暂时不要做“不可恢复失败自动移除”；最多记录 attempt/failure reason，仍留队列。
+5. 维护窗口关闭:
+   - 开启时机保持现有队伍维护窗口模型。
+   - 关闭条件需要收紧：如果窗口打开时 snapshot 没有可处理三技能，或者本轮三技能预算已消费完，
+     不应为了等待后续 10 秒内新到期 item 而继续保持三技能窗口。
+   - 修罗原先“到达任务地址才关闭”的三技能窗口条件需要复查；本卡目标是让三技能消费按
+     snapshot/budget 收束，而不是靠到达地图点后才自然关闭。
+6. 优先级边界:
+   - 盒子、归队、基础补血/补蓝、摄妖香等既有高优先级业务不得被三技能队列降级或抢占。
+   - 本卡只改变三技能执行调度，不改三技能窗口内的具体点击算法。
+
+Implementation guardrails:
+
+- 优先在 `TaskMaintenanceService` 内建立队列、snapshot eligibility、消费预算和出队/移队尾语义。
+- `WubeiTask` / `XiuluoTaskV2` 只传入任务预算或任务类型差异；不要复制队列实现。
+- 不要改 `SummonSkillService` 的视觉匹配、点击顺序、技能槽算法、ultimate corner 逻辑。
+- 不要改 OCR/template/click/navigation、回城、显形镜、绿链、prepared enter-battle、expected-combat。
+- 不要把三技能 due 发现时间写成 cooldown 成功时间；只有成功处理后才更新冷却基准。
+- 不要让 queue 无界增长；同 window/account/type 在未完成前最多一条。
+
+Validation plan:
+
+- Source/unit guard:
+  - due 时只入队，不调用 `SummonSkillService.cleanSummonSkillsOnce(...)`。
+  - 同 window/account/type 重复 due 不新增第二条。
+  - 窗口打开后新入队 item 不在当前 snapshot 被消费。
+  - 五倍预算为 1，修罗预算为 2。
+  - 成功出队并更新时间；失败移队尾且不更新时间。
+  - snapshot 空时不保持三技能窗口等待后续到期。
+- Compile:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - focused guard/main test.
+- Fresh runtime:
+  - 五倍即将打怪/进入 prepared enter-battle 附近不应再现场启动三技能。
+  - 日志应显示 due -> enqueue，本轮不 clean；下一轮维护窗口 snapshot 处理 1 个。
+  - 修罗维护窗口最多处理 2 个旧队列 item。
+  - 失败 item 应移到队尾并在后续窗口重试，不更新时间，不刷屏重复入队。
+
+Implementation update 2026-06-30:
+
+- `TaskMaintenanceService` 增加私有 `SUMMON_SKILL` 维护队列和 `windowOpenedAt` snapshot：
+  - due 检测先调用 `enqueueSummonSkillIfAbsent(...)`，key 为
+    `windowKey + playerIdentityEpoch + SUMMON_SKILL`；
+  - 同 key 已在队列时只记录 duplicate ignored，不新增 item，也不刷新 `enqueuedAt`；
+  - `openTeamPathingMaintenanceWindow(...)` 记录本轮维护窗口打开时间；
+  - `maybeCleanSummonSkill(...)` 只消费当前窗口 `enqueuedAt < windowOpenedAt` 的旧 item；
+  - 成功出队并沿用既有成功路径更新 `lastSummonSkillCleanAtByWindow` / 三技能窗口状态；
+  - 失败、识别失败、被打断等非成功结果移到队尾，记录 attempt/failure reason，不更新时间；
+  - 玩家 identity epoch 漂移时清理该窗口旧队列 item，避免旧账号 item 长期占位。
+- `WubeiTask` 保持 `.maxSummonSkillCleanersPerTeamRound(1)`；`XiuluoTaskV2` 在
+  `runLeaderPathingSummonSkillMaintenance(...)` 显式传
+  `.maxSummonSkillCleanersPerTeamRound(2)`。
+- 未改 `SummonSkillService` 的 OCR/template/click/slot/ultimate corner 算法，也未改导航、
+  绿链、prepared enter-battle、expected-combat、回城、包裹、显形镜、NPC click。
+
+Verification 2026-06-30:
+
+- RED：
+  - `mvn -q -DskipTests test-compile` 通过；
+  - `mvn -q -e "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    在实现前失败，证据为
+    `same-window due status expected=SUMMON_SKILL_DEFERRED actual=SUMMON_SKILL_CLEANED`。
+- GREEN：
+  - `mvn -q -DskipTests compile` 通过；
+  - `mvn -q -DskipTests test-compile` 通过；
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    通过。
+- Fresh runtime 验收点：
+  - 五倍：本轮 due 只出现 `summon skill queued` / `queued for later snapshot`，不出现同轮
+    `start summon skill clean`；下一轮维护窗口最多消费 1 个旧 item。
+  - 修罗：每个维护窗口最多消费 2 个旧 item；窗口打开后新 due item 必须留到下一轮。
+  - 失败/识别失败/中断：应出现 `summon skill queue item moved to tail after failure`，后续窗口重试；
+    不刷新 cooldown，不重复入队刷屏。
+  - snapshot 为空或预算耗尽时，不应为了等待后续到期三技能而保持三技能窗口。
+
+Review blocker 2026-06-30:
+
+- P1: 首版 `maybeCleanSummonSkill(...) -> peekEligibleSummonSkillItem(queueKey, windowOpenedAt)`
+  按当前窗口 `queueKey` 扫描全队列，可能在队列 `[A旧, B旧]` 时让 B 先消费 B，绕过队头 A。
+  这破坏了用户定稿的“同一个 Q / FIFO”。修复方向：消费必须以全局队头和窗口打开 snapshot 的
+  有序列表为准，当前窗口不能搜索并跳过队头；失败移队尾后才允许后面的 item 前进。
+- P1: 队员 `AutoBattleTask` 会以 `requiredLocalSupportCapability=SUMMON_SKILL` 入队，但首版
+  `resolveSummonSkillWindowOpenedAt(...)` 对 local capability 直接返回 `null`，导致队员 item
+  只能入队、不能消费。修复方向：本地队员也必须在 `SUMMON_SKILL` capability 打开时按同一
+  FIFO/snapshot/budget 规则消费自己的队头 item。
+- P2: `TaskMaintenanceSummonSkillQueueWiringTest` 还缺双窗口 FIFO 和 local support member 语义；
+  `TaskMaintenanceSummonSkillUnknownBackoffTest` 仍按旧“due 立即执行”合同断言，需要迁移到
+  CR145 队列合同。
+
+Review repair 2026-06-30:
+
+- P1 FIFO：`TaskMaintenanceService` 改为只看全局队头 `peekFirst()`；若队头不是当前
+  `queueKey` 或 `enqueuedAt >= windowOpenedAt`，当前窗口只能 defer，不能扫描队列绕过队头。
+  失败/不安全/识别失败/中断仍移到队尾，移尾后后续 item 才能前进。
+- P1 local support：普通 team pathing window 与本地 `SUMMON_SKILL` capability 都记录
+  snapshot open time；队员 `requiredLocalSupportCapability=SUMMON_SKILL` item 可在 capability
+  打开后的下一轮按同一 FIFO/snapshot/budget 规则消费。
+- P2 tests：`TaskMaintenanceSummonSkillQueueWiringTest` 增加双窗口 FIFO guard 和 local support
+  member consumption guard；`TaskMaintenanceSummonSkillUnknownBackoffTest` 已迁移为“先 due 入队，
+  后续窗口消费/unknown backoff”的 CR145 队列合同。
+- RED 证据：加严 guard 在旧实现下失败，
+  `B must not skip queued A at FIFO head expected=SUMMON_SKILL_DEFERRED actual=SUMMON_SKILL_CLEANED`。
+- GREEN 证据：
+  `mvn -q -DskipTests test-compile` 通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过。
+
+Second review blocker 2026-06-30:
+
+- P1: 测试 helper 已给 local member 请求传 `maxSummonSkillCleanersPerTeamRound(2)`，但生产
+  `AutoBattleTask` 的队员三技能请求未按任务传预算，仍会走默认 1；修罗“每轮处理 2 个”没有覆盖
+  生产队员路径。修复方向：`AutoBattleTask` 按 `requestedTaskCode` / local leader task 给
+  `SUMMON_SKILL` 请求传预算，`xiuluo_v2` 为 2，`wubei` 为 1，并补生产 wiring guard。
+- P2: 严格 FIFO 后，若队头窗口已停止/注销/不再运行，当前只有 identity drift 会清队列，队头
+  可能永久阻塞后续 item。修复方向：在窗口任务结束/取消/注销或 local session 完结时清理该窗口
+  queue item，或补有日志的 stale/inactive head policy。
+- P2: unknown retry backoff 中的失败 item 再次成为队头时会直接 `SUMMON_SKILL_DEFERRED`，不再
+  移尾，默认 5 分钟可能挡住后续窗口。修复方向：队头处于 retry backoff / unsafe deferred 时
+  记录原因并移到队尾，保持“失败不挡后面窗口/账号”。
+
+Second review repair 2026-06-30:
+
+- P1 production AutoBattle budget：`AutoBattleTask.maybeRunIdleMaintenance(...)` 的生产
+  `SUMMON_SKILL` request 现在调用
+  `.maxSummonSkillCleanersPerTeamRound(summonSkillBudgetForRequestedTask(context.getRequestedTaskCode()))`；
+  `xiuluo_v2` 预算为 2，其它/`wubei` 为 1。`TaskMaintenanceSummonSkillQueueWiringTest`
+  增加 source/语义 guard，避免只在测试 helper 手写预算。
+- P2 inactive head：`TaskMaintenanceService.clearSummonSkillQueueForWindow(...)` 提供带日志的
+  lifecycle 清理入口；`WindowTaskRunner.shutdownNow()` 和 queue finished finally 会清理本窗口
+  queued item。guard 覆盖 A 失活清理后 B 可继续按 FIFO 消费。
+- P2 backoff head：当队头 item 是窗口打开前已入队且该窗口处于 unknown retry backoff 时，
+  `TaskMaintenanceService` 记录 `summon skill queue head moved to tail by retry backoff` 并移到队尾；
+  不刷新 cooldown，不调用三技能清理，不破坏普通 FIFO。guard 覆盖 A backoff 独占队头、B 旧 item
+  下一窗口前进。
+- RED 证据：
+  `mvn -q -DskipTests test-compile` 在加失活队头 guard 后旧实现失败，
+  `找不到符号 clearSummonSkillQueueForWindow(...)`；收紧 backoff guard 后旧语义失败，
+  `B should advance after A backoff head moves to tail expected=SUMMON_SKILL_CLEANED actual=SUMMON_SKILL_DEFERRED`。
+- GREEN 证据：
+  `mvn -q -DskipTests compile` 通过；
+  `mvn -q -DskipTests test-compile` 通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `node scripts/generate-cr-dashboard-data.js` 通过并刷新 `docs/cr-dashboard-data.js`。
+
+Third review repair 2026-06-30:
+
+- Bug：`TaskMaintenanceService.maybeCleanSummonSkill(...)` 已通过
+  `peekEligibleSummonSkillHead(...)` 取到队头 item 后，如果
+  `isSummonSkillTailSafeCacheFresh(windowState, now)` 命中，旧逻辑会更新
+  `lastSummonSkillCleanAtByWindow` 并返回 `SUMMON_SKILL_NOT_DUE`，但没有从
+  `summonSkillQueue` 移除该 item；该旧 item 可能长期停在 FIFO 头部，阻塞后续窗口。
+- 修复：fresh tail-safe cache 命中时调用 `removeSummonSkillQueueItem(queueItem)`，将本项按
+  “完成/无需执行”语义出队；不移到队尾、不增加失败次数，并保留“只有出队/完成才刷新
+  cooldown”的原则。
+- Guard：`TaskMaintenanceSummonSkillQueueWiringTest` 增加
+  `tailSafeFreshHeadDequeuesAndDoesNotBlockLaterWindow`：A 先成功清理并形成 fresh
+  tail-safe cache，A 再次 due 与 B 同时已入队；A 下一维护窗口返回
+  `SUMMON_SKILL_NOT_DUE` 后必须出队，B 后续窗口可继续 `SUMMON_SKILL_CLEANED`。
+- RED 证据：旧实现下新增 guard 失败，
+  `B should advance after A tail-safe cached head dequeues expected=SUMMON_SKILL_CLEANED actual=SUMMON_SKILL_DEFERRED`。
+- GREEN 证据：
+  `mvn -q -DskipTests compile` 通过；
+  `mvn -q -DskipTests test-compile` 通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `node scripts/generate-cr-dashboard-data.js` 通过并刷新 `docs/cr-dashboard-data.js`。
+
+Final review repair 2026-06-30:
+
+- Reviewer P2：fresh tail-safe cache 命中虽然已经会出队，但旧位置在本轮
+  claim/budget gate 之前；这会让五倍在同一维护窗口内先消费 A 的 `SUMMON_SKILL_NOT_DUE`
+  出队，再让 B 继续 claim 并执行 clean，绕过“五倍每轮只处理 1 个旧 item”的预算。
+- 修复：`TaskMaintenanceService.maybeCleanSummonSkill(...)` 将 fresh tail-safe cache
+  出队分支移到 team-round claim/budget gate 之后；该分支仍不调用 `SummonSkillService`、
+  不移尾、不增加失败次数，但会按“已完成出队”占用本轮预算并刷新 cooldown。
+- Guard：`TaskMaintenanceSummonSkillQueueWiringTest.tailSafeFreshHeadDequeuesAndDoesNotBlockLaterWindow`
+  增加同轮预算断言：A tail-safe 出队后，B 在同一个五倍 `teamRound` 内必须得到
+  `SUMMON_SKILL_ROUND_ALREADY_CLAIMED`，后续新窗口才可 `SUMMON_SKILL_CLEANED`。
+- GREEN 证据：
+  `mvn -q -DskipTests compile` 通过；
+  `mvn -q -DskipTests test-compile` 通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过；
+  `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  通过。
+- 独立 final review：PASS，未发现新的 P1/P2；剩余仅需 fresh runtime 观察真实窗口节奏、
+  日志时序、任务队列生命周期清理是否与测试模型一致。
+
+Fresh runtime follow-up repair 2026-06-30:
+
+- 现象：五倍 fresh 日志显示队长 `hwnd-E570C26` 与队员启动时间接近，`16:29:01.217`
+  三技能还剩 `295486ms`，理论 due 约 `16:33:56`；但 round 13/15/18 的队长 pathing
+  maintenance 在看见 runner dialog 后直接 return，分别有 `type=OPTION` / `type=STORY`
+  证据。结果是四个队员已在 `#SUMMON_SKILL#9-#12` 入队/清理，队长直到 round 19
+  `16:42:10.725` 才真正记录 `summon skill due` / `queued`。
+- 修复：`WubeiTask.maybeRunLeaderPathingSummonMaintenance(...)` 不再因为 visible dialog 完全跳过
+  队长三技能检查；它传 `.enqueueSummonSkillOnly(dialogVisibleBeforeMaintenance)`。
+  `TaskMaintenanceService` 在 due 后先入队，若 `enqueueSummonSkillOnly=true`，只返回
+  `SUMMON_SKILL_DEFERRED`，不消费旧队头、不打开/执行三技能窗口。
+- Guard：`TaskMaintenanceSummonSkillQueueWiringTest.enqueueOnlyDueCheckDoesNotConsumeCurrentOrOldSnapshot`
+  覆盖当前 due 只入队、旧队头在 enqueue-only pass 中也不能被消费、后续普通窗口才消费；
+  source guard 覆盖五倍生产 wiring 包含 `.enqueueSummonSkillOnly(dialogVisibleBeforeMaintenance)`。
+- 验证：`mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、
+  `TaskMaintenanceSummonSkillQueueWiringTest` focused main 均通过。
+- Fresh gate：后续五倍队长 due 且 dialog visible 时，应看到
+  `leader pathing summon maintenance limited to enqueue-only` 与 `summon skill due/queued`，
+  但同 pass 不出现 `start summon skill clean`；下一无 dialog 维护窗口按五倍预算 1 消费旧 item。
+
+Card CR146: Runner-side post-combat idle watchdog for 五倍/修罗
+
+Status:
+
+- In Progress: 唐德认领；worker 子智能体负责实现，唐德本地审核和验证。No OCR/template/click/navigation
+  changes allowed.
+- 2026-06-30 用户指出现有 180s watchdog 只覆盖入战前；战斗结束后如果任务原地发呆超过 3 分钟，
+  也必须纠正回“重新接任务”的起点。
+- 用户定稿：这个 watchdog 必须接在 `WindowTaskRunner` 侧，而不是只放在五倍/修罗 task phase
+  里面。理由是 Runner 能即时观察脱战，也能持续判断坐标/位置是否变化。
+- 2026-06-30 认领留言：已记录 baseline；当前本地 `WindowTaskRunner`、`WubeiTask`、
+  `XiuluoTaskV2` 相对推送基线已有其它 CR 的脏改，CR146 必须窄修并保留现有业务差异。worker
+  只实现 Runner soft event、任务消费恢复、日志与 focused source/guard；唐德负责复审。
+- 2026-06-30 worker 实现完成，进入 Review / fresh runtime pending。源码验证通过：
+  `mvn -q -DskipTests test-compile`、
+  `mvn -q -DskipTests "-Dexec.classpathScope=test"
+  "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerPostCombatIdleWatchdogWiringTest"
+  org.codehaus.mojo:exec-maven-plugin:3.1.0:java`、
+  `mvn -q -DskipTests compile`。未改 `BattleRadarService` combat 判断算法，未改
+  OCR/template/click/navigation/回程道具/三技能队列。
+
+Business source:
+
+- 当前 CR136 现场暴露了一个典型缺口：修罗 false fast-exit 纠正后，真实脱战 signal 被同毫秒
+  arm 阶段误丢，任务后续长期卡在 `WAIT_COMBAT`，没有再次进入 `RETURN_HOME`。
+- 即使 CR136 修掉，仍需要一个更外层的战后 idle 兜底：只要已经脱战、没有有效移动/业务推进、
+  并且原地发呆超过 `180_000ms`，任务不能无限等，要重新回到接任务流程。
+
+Required behavior:
+
+1. Runner-side observation:
+   - `WindowTaskRunner` 在战斗状态从 `IN_COMBAT` 变为 `NONE` 时记录
+     `lastCombatExitAtMs` / `postCombatIdleStartedAtMs`。
+   - 同时记录窗口 id、当前任务类型、最近坐标/位置签名、pathing snapshot、prepared action /
+     active intent 状态。
+   - 后续 Runner tick 持续判断：当前仍不在战斗、没有 active pathing、没有 fresh prepared action、
+     没有 active task dialog/route transfer 正在推进，且坐标/像素/位置签名长期未变化。
+2. Timeout policy:
+   - 超过 `180_000ms` 才触发。
+   - 用户 pause / stop / explicit control hold 的时间不应计入有效 idle 时间。
+   - 正常回程、归队、黄袍续战、五倍/修罗当前正在 pathing、prepared action ready、dialog
+     正在等待消费、或坐标持续变化时不能触发。
+3. Event boundary:
+   - Runner 只发布一个新的 ready event，例如 `POST_COMBAT_IDLE_TIMEOUT`。
+   - Event 必须携带：task type、window id、elapsedMs、lastCombatExitAtMs、stationary evidence、
+     activeIntent/prepared/pathing summary、source=`runner-post-combat-idle-watchdog`。
+   - Runner 不直接修改五倍/修罗业务 phase，也不直接点回程/接任务。
+4. Task-side recovery:
+   - 五倍 task 消费 event 后，清 task-owned runtime 状态，并回到接任务流程，例如
+     `ROUTE_TO_MAIN_TASK` / `ACCEPT_TASK`。
+   - 修罗 task 消费 event 后，清 task-owned runtime 状态，并回到接任务流程，例如
+     `PREPARE_ROUND` / `ACCEPT_TASK_NAVIGATE_TO_NPC`。
+   - 清理范围应包含 task-owned prepared dialog、pathing signal、return-home pending 状态、队伍等待缓存
+     等；不要清其他窗口或其他任务的状态。
+5. Logging:
+   - Runner 发 event 时必须 WARN 记录：task、window、lastCombatExitAtMs、elapsedMs、position
+     changed/stationary evidence、pathing/prepared/intent 摘要。
+   - Task 消费 event 时必须 WARN 记录：原 phase、round、清理范围、restart phase。
+
+Boundaries:
+
+- 不改 `BattleRadarService` 的 combat 判断算法、avatar ROI/阈值/15s grace/1s cadence。
+- 不改 OCR/template/click/navigation、NPC click、绿链/黄字、回程道具、显形镜、三技能队列。
+- 不替代 CR136：CR136 的同毫秒 exit signal race 仍要单独修；CR146 是战后 idle 兜底。
+- 不替代现有 pre-combat watchdog：入战前 180s 与战后 idle 180s 是两个独立计时器。
+
+Validation plan:
+
+- Source/guard:
+  - Runner 在 `IN_COMBAT -> NONE` 后开始 post-combat idle timer。
+  - 同一窗口无 active pathing/prepared/intent 且位置未变超过 180s 时发布
+    `POST_COMBAT_IDLE_TIMEOUT`。
+  - 坐标/像素变化、active pathing、fresh prepared action、用户 pause 时间都不能误触发。
+  - 五倍/修罗 task 都能消费该 event，并返回各自接任务入口。
+- Fresh runtime:
+  - 现场或调试构造一次战后脱战后卡原地，180s 后应看到 Runner WARN event，然后任务 WARN
+    recovery，最终重新走接任务。
+  - 正常五倍回城/归队、修罗回城/归队、黄袍连战续战、移动中不应出现
+    `POST_COMBAT_IDLE_TIMEOUT`。
+
+Implementation update 2026-06-30:
+
+- `WindowReadyEventType` 新增 `POST_COMBAT_IDLE_TIMEOUT`；`WindowReadyEvent` 增加
+  `lastCombatExitAtMs`、`elapsedMs`、`summary`，只携带 compact evidence，不引入大对象。
+- `WindowTaskRunner` 在 combat watcher loop 内新增 runner-local `PostCombatIdleTracker`：
+  仅针对 `TaskType.WUBEI` / `TaskType.XIULUO_V2`，从 `IN_COMBAT -> 非 IN_COMBAT` 开始计时；
+  `WindowPathingState.ACTIVE/UNKNOWN`、probe in progress、fresh prepared action、
+  active dialog preparation/visible dialog、坐标签名变化会重置有效 idle；pause tick 记录
+  `pausedAccumulatedMs`，同一 idle 窗口只发布一次 event。
+- 五倍在 ready-priority phase boundary 先消费 `POST_COMBAT_IDLE_TIMEOUT`，按 WARN 记录
+  original phase / round / clear scope / restart phase，清 task-owned runtime 后回
+  `ROUTE_TO_MAIN_TASK`。
+- 修罗在 phase loop boundary 消费 `POST_COMBAT_IDLE_TIMEOUT`，按 WARN 记录 original phase /
+  round / clear scope / restart phase，清 task-owned runtime 后回
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`，不增加普通 phase failure 计数。
+- 唐德本地复审补修：
+  - `WindowPathingSnapshot.hasActiveIntent()` 对 terminal `STOPPED_AWAY` 且保留 intent 的快照也会返回
+    true；CR146 active-pathing 判断已改为只认 probe in progress / `ACTIVE` / `UNKNOWN`，避免
+    停在原地的战后窗口被无限重置计时。
+  - 五倍/修罗消费 timeout 时改为清 `DialogPreparationRequest`，由 runtime 同步清 prepared action 和
+    preparation status，再清 task-owned interest/pathing 状态。
+  - 五倍/修罗在 task start 时把 `lastPostCombatIdleTimeoutConsumedSeq` 初始化为当前
+    `windowReadyEventBus.currentSequence()`，避免 `latest(POST_COMBAT_IDLE_TIMEOUT)` 的旧事件跨任务运行
+    被新 task 对象误消费。
+- Focused guard：`WindowTaskRunnerPostCombatIdleWatchdogWiringTest` 覆盖 event type/evidence、
+  Runner 只发 soft event、active pathing/prepared/dialog/pause suppression、`STOPPED_AWAY` 不误挡、
+  五倍/修罗消费回入口、dialog-preparation request cleanup、task-start stale event baseline。
+- 唐德复跑验证：CR146 focused guard、`WindowTaskRunnerStalePreparedRepublishWiringTest`、
+  `WindowPathingArrivalStationaryGuardTest`、`WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest`、
+  `mvn -q -DskipTests test-compile`、`mvn -q -DskipTests compile` 均通过。
+- Post-update check 2026-06-30：用户提醒 CR146 可能已更新后，唐德复看 CR146 row/card、
+  ACTIVE_WORK、CR146 touch-path grep 与窄 `git diff --check`。未发现新增 P1/P2/source blocker；
+  `diff --check` 只有既有 LF/CRLF 提示。当前仍只缺 fresh runtime gate。
+- Fresh runtime 仍未执行；验收时重点 grep：
+  `runner-post-combat-idle-watchdog`、`[post-combat-idle-watchdog] timeout published by runner`、
+  `[wubei post-combat-idle] timeout consumed by task`、
+  `[xiuluo-v2 post-combat-idle] timeout consumed by task`。
+
+Card CR147: 修罗快脱战误点道具后的回程重试状态机
+
+Status:
+
+- Ready: 唐德认领为 reviewer/manager；worker 子智能体负责实现，独立 review 子智能体负责审查，
+  唐德最终审核。不得由 reviewer 直接改 Java 业务代码。
+- 2026-06-30 用户确认现场根因方向：队长先被 `FAST_EXPECTED_EXIT` 误判脱战并提前点击回程道具，
+  后续 trusted probe 又证明仍在战斗，于是任务回到 `WAIT_COMBAT`。这个“战斗内误点道具”在业务上应视为
+  没有成功使用过回程道具；真正脱战后再次进入 `RETURN_HOME` 时，必须重新按正常流程使用道具。
+- 2026-06-30 fresh 修罗部分验收通过：`22:13:49.216` 第一次 `FAST_EXPECTED_EXIT` 后
+  `use return item and verify start map: attempt=1/2`，`22:13:59.616` 回程未验证，
+  `22:13:59.826` trusted probe 仍是 `IN_COMBAT`，任务刷新 baseline 并回 `WAIT_COMBAT`；
+  `22:14:27.325` 第二次 `FAST_EXPECTED_EXIT` 后继续回程，`22:14:32.020` attempt 2，
+  `22:14:35.271` 验证回到 `灵兽村`。这证明 trusted `IN_COMBAT` 纠偏分支有效；仍缺
+  trusted non-combat 下 `retry return item before navigation fallback` 的 fresh 证据，CR147 保持 Review。
+
+Business source:
+
+- Fresh 修罗日志 `2026-06-30 19:29`：
+  - `19:29:37.658` `fast expected combat exit detected by avatar diff`
+  - `19:29:37.659` 修罗 `WAIT_COMBAT -> RETURN_HOME`
+  - `19:29:41.821` `BagService` 点击 cached return item
+  - `19:29:43.731` battle radar 再次检测到 combat screen，状态被纠正回 `IN_COMBAT`
+  - `19:29:52.951` return item used 但未验证回到灵兽村，运行 trusted combat probe
+  - `19:29:53.665` 这时真正脱战，trusted state 已不是 `IN_COMBAT`
+  - `19:30:01.801` 当前代码直接记录
+    `return item was used but start map was not verified and trusted combat state is not active; navigate back by normal path`
+    并进入普通导航。
+- 用户期望：误判期间点过道具不等于业务上完成回程；如果之后才真正脱战，修罗应重新使用回程道具，
+  而不是因为前面误点过一次就普通导航回去。
+
+Root cause:
+
+- `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` 当前把两类事实混在一起：
+  1. 物理上点击过回程道具；
+  2. 业务上已经完成回程，即当前位置验证为 `灵兽村`。
+- 当前代码在 `ReturnItemUseResult.usedStartMapUnverified()` 后只做一次 trusted combat probe：
+  - 若 probe 仍是 `IN_COMBAT`，返回 `STILL_IN_COMBAT`，回 `WAIT_COMBAT`；
+  - 若 probe 已不是 `IN_COMBAT`，立刻返回 `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`。
+- 因此，早脱战误点道具被纠正回 `WAIT_COMBAT` 后，真正脱战那一刻如果位置仍未回到灵兽村，
+  当前状态机没有“这次误点不算业务成功，继续第二次道具尝试”的分支，而是直接普通导航 fallback。
+
+Required behavior:
+
+1. 战斗内误点道具无效化：
+   - `usedStartMapUnverified` 后 trusted probe 如果返回 `IN_COMBAT`，继续返回 `STILL_IN_COMBAT`。
+   - 这次 return item click 只作为误触点击处理，不应消耗后续真正脱战后的回程尝试语义。
+   - 保留现有 `refreshFastExpectedExitBaselineAfterTrustedInCombat(...)` 纠偏行为。
+2. 真脱战后未回起点允许重试：
+   - `usedStartMapUnverified` 后 trusted probe 如果不是 `IN_COMBAT`，且 `attempt < RETURN_ITEM_VERIFY_ATTEMPTS`，
+     应清理必要 UI 后 `continue` 到下一次 attempt。
+   - 只有所有 attempts 都未验证回到 `灵兽村` 后，才返回 `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`
+     或现有失败 fallback。
+3. 已验证回到起点仍保持原行为：
+   - `verifiedStartMap()` 立即返回 `VERIFIED`，触发 common-box / team-return precheck 等现有 verified path。
+4. 没找到/没点到道具仍保持原行为：
+   - `notUsed()` 继续走原来的 retry loop 和最终 `FAILED` / `recoverReturnHomeFailure(...)`。
+
+Boundaries:
+
+- 不改 `BattleRadarService` 的 `FAST_EXPECTED_EXIT` avatar ROI、阈值、15s grace、1s cadence、
+  full-radar fallback 或 combat enter/exit 检测算法。
+- 不改 OCR/template/click/navigation、NPC click、任务面板、黄字/绿链、包裹扫描策略、回程道具模板位置学习。
+- 不改五倍 `WubeiTask`，除非 reviewer 发现必须同步且先在 CR 卡记录并回报。
+- 不改 CR141 pause observer、CR146 post-combat idle watchdog 的 event 语义。
+
+Implementation direction:
+
+- 目标方法：`XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)`。
+- 最小代码形状：
+  - 在 `result.usedStartMapUnverified()` 分支中，trusted probe 非 `IN_COMBAT` 时，不要立即返回
+    `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`；
+  - 如果还有剩余 attempt，先 `uiCleanerService.cleanUpAll()`，然后 `continue`；
+  - 最后一次仍失败时再返回 `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`。
+- 日志建议：
+  - 在重试分支记录 WARN/INFO，包含 `source`、`attempt`、`maxAttempts`、`trustedState`、`location`，
+    说明“return item used but start map unverified after trusted non-combat; retry return item before navigation fallback”。
+
+Validation plan:
+
+- Add a focused source/behavior guard for `XiuluoTaskV2` showing:
+  - `usedStartMapUnverified + trustedState=IN_COMBAT` 仍返回 `STILL_IN_COMBAT` / 回 `WAIT_COMBAT`；
+  - `usedStartMapUnverified + trustedState!=IN_COMBAT` 在第一次 attempt 不直接 fallback，而是继续第二次 attempt；
+  - 第二次 verified 时返回 `VERIFIED`；
+  - 两次都 used-unverified 且 trusted non-combat 时才走 `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT` /
+    普通导航 fallback。
+- Run at minimum:
+  - focused CR147 guard；
+  - `mvn -q -DskipTests test-compile`；
+  - if time permits, `mvn -q -DskipTests compile`。
+- Fresh runtime gate:
+  - 复现一次修罗 false `FAST_EXPECTED_EXIT` 后 trusted `IN_COMBAT` 纠偏；
+  - 真正脱战后应看到第二次 `use return item and verify start map: source=known-combat attempt=...`
+    或新的 CR147 retry log；
+  - 不应直接出现 `return item was used but start map was not verified ... navigate back by normal path`
+    除非所有回程 attempts 都失败。
+
+Worker implementation record 2026-06-30:
+
+- Implemented in `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` only: after
+  `usedStartMapUnverified()` and trusted state is not `IN_COMBAT`, the method now cleans UI and
+  continues to the next return-item attempt when `attempt < RETURN_ITEM_VERIFY_ATTEMPTS`; only the
+  exhausted final attempt returns `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`.
+- Existing trusted `IN_COMBAT` correction is unchanged: it still returns `STILL_IN_COMBAT` so the
+  phase machine goes back to `WAIT_COMBAT`, treating the combat-time item click as business-invalid.
+- Added focused guard
+  `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR147ReturnItemRetryStateMachineWiringTest.java`.
+- Verification passed:
+  `javac -encoding UTF-8 -d target/cr147-guard src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR147ReturnItemRetryStateMachineWiringTest.java; java -cp target/cr147-guard com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest`,
+  `mvn -q -DskipTests test-compile`, and `mvn -q -DskipTests compile`.
+
+Independent review 2026-06-30:
+
+- Reviewer sub-agent verdict: `PASS_WITH_NOTES`; no P0/P1/P2 blocker and no repair requested.
+- Review finding: CR147 scoped behavior matches the card. `usedStartMapUnverified()` still probes trusted combat
+  state first; trusted `IN_COMBAT` still returns `STILL_IN_COMBAT`; trusted non-combat now retries remaining
+  return-item attempts before `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`.
+- Review note: the focused guard is source-level, not a full mock behavior test, so fresh runtime remains the final
+  acceptance gate.
+- Manager verification rerun passed:
+  `javac -encoding UTF-8 -d target\cr147-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR147ReturnItemRetryStateMachineWiringTest.java; java -cp target\cr147-guard com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest`,
+  `mvn -q -DskipTests test-compile`, and `mvn -q -DskipTests compile`.
+
+Card CR192: 修罗 `XIULUO_BRAIN` 单一云端大脑迁移父卡
+
+Status:
+
+- Planned. Owner: 谢帅 manager / business supervisor.
+- 计划文档：`docs/superpowers/plans/2026-07-05-xiuluo-cloud-single-brain-migration.md`。
+- 本卡是 CR193-CR202 的父卡。CR192 不直接实现 Java 业务逻辑，只定义边界、顺序、测试门和
+  fresh runtime 节点。
+
+Business decision:
+
+- 修罗启用云端脑以后，phase、hot-start、retry、recovery、round done/fail 只能由
+  `XIULUO_BRAIN` 决定。
+- 本地只执行云端 action、采集 facts、执行 stop/pause/window/input safety。
+- `TASK_POLICY` after local outcome 不能作为修罗单一云端大脑的实现口径。
+- 云端不可用、响应非法、token 过期、session/window/taskRun mismatch 时必须 fail closed 或安全停止，
+  不允许 fallback 到旧本地修罗 phase brain。
+- `TeamReturnService` / team return 模板检测保持 local-only detector/fact，不重新接入
+  `TEAM_RETURN_POLICY`。
+
+Project test nodes:
+
+1. CR193-CR196：只做协议、dev brain、loop scaffold、source guard。本地测试通过前不 fresh。
+2. CR197 Fresh Node A：修罗启动 / hot-start / accept smoke。
+3. CR198 Fresh Node B：接任务、accept snapshot、tracker green/pathing。
+4. CR199 Fresh Node C：目标导航、目标点击、入战。
+5. CR200 Fresh Node D：一整轮修罗，包括战斗结束、回程、归队/round done。
+6. CR201 Fresh Node E：5-10 轮修罗，证明没有双脑和本地 fallback。
+7. CR202 Fresh Node F：长跑验收和文档收口。
+
+Break rule:
+
+- 任一 fresh node 失败，立即停止后续迁移。
+- 失败证据写回 CR192 和对应子卡；新开 repair card 或重开子卡。
+- repair 必须先跑本地 focused tests，再重复同一个 fresh node。
+- 后续卡不得暗改前面 fresh 已验收的合同；若必须改，先重开前卡并重跑该 fresh node。
+
+Review gate:
+
+- 每个实现子卡由 worker 实现，至少两个独立 reviewer 审核。
+- Reviewer #1 重点查单一大脑：是否有隐藏 local phase/recovery fallback。
+- Reviewer #2 重点查 local safety：stop/pause/window/input/坐标/TTL/session 是否完整。
+- 谢帅只做 manager/final business review，不亲自写 Java 业务实现。
+
+Card CR193: `XIULUO_BRAIN` 协议与 required-execute 服务骨架
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 新增 `XIULUO_BRAIN` service id、request/response/action enum、required-execute decision service。
+- 该服务不能有 `LOCAL_PASSTHROUGH` 或“keep local outcome”语义。
+- 不接入 `XiuluoTaskV2` 生产路径。
+
+Local test gate:
+
+- `XiuluoBrainCloudDecisionServiceTest` 覆盖 valid response、missing `sessionId`、missing `reason`、
+  invalid `XiuluoPhase`、TTL expired、wrong `windowId/taskRunId`、cloud inactive/timeout fail-closed。
+- `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test`
+- `mvn -q -DskipTests compile`
+
+Fresh runtime:
+
+- 无。CR193 不改变生产行为。
+
+Card CR194: dev cloud brain session engine
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 在 dev sidecar / cloud brain server 中实现修罗 brain session store。
+- `sessionId/stateSeq/phaseToken/actionId` 必须防旧响应、防重放、防跨窗口/跨 taskRun。
+- dev cloud 可以先实现 happy-path policy，但必须是 cloud-side state，不得从本地接收
+  `localNextPhase`。
+
+Local test gate:
+
+- `XiuluoBrainDevServerTest` 覆盖 start session、step advance、old stateSeq rejected、wrong identity
+  rejected、phaseToken mismatch rejected、action outcome once-only。
+- `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+- `mvn -q -DskipTests compile`
+
+Fresh runtime:
+
+- 无。CR194 不改变生产行为。
+
+Card CR195: 客户端云脑 loop 脚手架
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 在 `XiuluoTaskV2` 增加 disabled flag 后的 cloud-brain enabled path。
+- flag off 时旧修罗路径保持不变。
+- flag on 时必须 fail closed；不得 fallback 到旧本地 phase brain。
+- 只搭 loop 骨架和 fake-cloud 测试，不迁移具体 phase。
+
+Local test gate:
+
+- `XiuluoBrainLoopWiringTest` 覆盖 fake cloud 返回 phase/action 时本地按 cloud command 走，
+  而不是消费 local outcome next。
+- `mvn -q -Dtest="XiuluoBrainLoopWiringTest" test`
+- `mvn -q -DskipTests test-compile`
+- `mvn -q -DskipTests compile`
+
+Fresh runtime:
+
+- 无。flag 默认 off。
+
+Card CR196: 修罗 phase report / action result 模型与 source guard
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 新增 enabled path 的 `XiuluoPhaseReport` / `XiuluoActionExecutionResult` 模型。
+- report 只能包含 facts、execution result、waitSpec/error/safety/evidence，不允许包含 `nextPhase`。
+- source guard 禁止 enabled path 引用本地 phase/recovery authority。
+
+Local test gate:
+
+- `XiuluoSingleBrainSourceGuardTest` 禁止 enabled path 调用：
+  `applyTaskPolicyCloudDecision`、`TaskPolicyCloudDecisionService.decide`、
+  `TaskRecoveryCloudDecisionService.decide`、`retryCurrentOrRecover`、
+  `restartRoundAfterPhaseFailure`、`restartRoundAfterLoopGuard`、`resolveTaskHotStart`。
+- guard 禁止 enabled path 出现 `localDecision=...next=...` 作为生产决策日志。
+- 直接 `javac/java` source guard、`mvn -q -DskipTests compile`。
+
+Fresh runtime:
+
+- 无。flag 默认 off。
+
+Card CR197: 修罗 hot-start / startup initial phase 由云端决定
+
+Status:
+
+- Planned.
+
+Scope:
+
+- `resolveTaskHotStart` 在 enabled path 下拆为 `collectHotStartFacts` + `XIULUO_BRAIN start`。
+- 本地可以探测 combat、dialog、tracker、current map、return item availability。
+- 本地不能自跳 `WAIT_COMBAT` / `AFTER_ACCEPT_MAINTENANCE_CHECK` / `WAIT_TEAM_RETURN` /
+  `ACCEPT_TASK_NAVIGATE_TO_NPC`。
+- 本地不能在 startup/hot-start 未收到 cloud action 前使用回程道具。
+
+Local test gate:
+
+- `XiuluoBrainHotStartWiringTest` 覆盖 combat/tracker/return item facts 只上报、不自跳 phase；
+  cloud initial phase 精确生效；invalid response fail-closed。
+- `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest" test`
+- `mvn -q -DskipTests compile`
+
+Fresh Node A:
+
+- 用户重启 DHXY 和 dev sidecar，启用 `xiuluo-brain`，跑一次修罗启动/accept smoke。
+- 日志必须出现 `xiuluo.brain.start`、facts、cloud initial command。
+- 不得出现 enabled path 的 `resolveTaskHotStart` 本地 phase jump。
+- 不得在 cloud action 前 startup return item click。
+
+Card CR198: 修罗接任务 / objective / tracker shortcut 由云端推进
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 迁移 `PREPARE_ROUND`、`ACCEPT_TASK_NAVIGATE_TO_NPC`、`ACCEPT_TASK_CLICK_NPC`、
+  `ACCEPT_TASK_DIALOG`、`READ_OBJECTIVE`、`AFTER_ACCEPT_MAINTENANCE_CHECK`、
+  `TRY_TRACKER_SHORTCUT`。
+- 本地 executor 只报告 NPC click、dialog status、accept snapshot、objective parse、tracker panel、
+  maintenance due facts。
+- 保留 CR191 顺序：no-maintenance 分支必须是
+  `accept snapshot -> start-exit-prepath -> tracker green clicked -> common box/deferred recovery`。
+
+Local test gate:
+
+- `XiuluoBrainAcceptTrackerWiringTest` fake-cloud 覆盖完整 accept/tracker phase sequence。
+- `XiuluoSingleBrainSourceGuardTest` 继续通过。
+- `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+- `mvn -q -DskipTests test-compile`
+- `mvn -q -DskipTests compile`
+
+Fresh Node B:
+
+- 跑修罗直到至少一次 tracker green link 点击/开始 pathing。
+- 每次 phase 转移都必须有 `XIULUO_BRAIN` response。
+- 不允许 `TASK_POLICY keep local outcome` / local nextPhase authority。
+- CR191 顺序必须继续成立。
+
+Card CR199: 修罗 route / target / enter-battle 由云端推进
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 迁移 `WAIT_TRACKER_SHORTCUT_PATHING`、`NAVIGATE_TO_TARGET`、`CLICK_TARGET_NPC`、
+  `CONFIRM_ENTER_BATTLE`、`WAIT_COMBAT` 的入战前部分。
+- 本地只执行 route、target click、dialog click、combat probe，并报告 facts。
+- enabled path 不允许 `navigationOutcome`、`fallbackFromShortcut`、target navigation/click failure
+  recovery 决定业务 next phase。
+
+Local test gate:
+
+- `XiuluoBrainRouteEnterBattleWiringTest` 覆盖 cloud-driven route/target/enter-battle。
+- 如果本卡改变任何视觉匹配或点击坐标，必须按 AGENTS replay rule 产出 testcase 和 marked output；
+  若只改变 phase authority，可不新增 replay。
+- `mvn -q -Dtest="XiuluoBrainRouteEnterBattleWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+- `mvn -q -DskipTests compile`
+
+Fresh Node C:
+
+- 跑修罗直到进入战斗。
+- `WAIT_COMBAT` 只能由 `XIULUO_BRAIN` command 到达。
+- 路线/目标点击/看打日志要能对应 cloud action 和 local report。
+
+Card CR200: 修罗 combat / return / team-return / recovery 由云端推进
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 迁移 `WAIT_COMBAT` 脱战后、`RETURN_HOME`、`NAVIGATE_BACK_TO_START`、`WAIT_TEAM_READY`、
+  `WAIT_TEAM_RETURN`、`ROUND_DONE`。
+- `consumePostCombatIdleTimeoutBeforePhase`、`checkPreCombatWatchdogTimeout`、loop guard、
+  `retryCurrentOrRecover`、`recoverOrFail`、phase failure restart 都只能上报 facts，不能本地 reaccept。
+- `team return` 保持 local-only detector/fact；不得发 `TEAM_RETURN_POLICY` request。
+
+Local test gate:
+
+- `XiuluoBrainCombatReturnRecoveryWiringTest` 覆盖 combat exit fact、return item verified fact、
+  team return fact、post-combat idle timeout fact、pre-combat watchdog fact、loop guard fact、cloud invalid
+  fail-closed。
+- `mvn -q -Dtest="XiuluoBrainCombatReturnRecoveryWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+- `mvn -q -DskipTests test-compile`
+- `mvn -q -DskipTests compile`
+
+Fresh Node D:
+
+- 跑一整轮修罗。
+- `WAIT_COMBAT`、`RETURN_HOME`、`WAIT_TEAM_RETURN`、`ROUND_DONE` 都必须由
+  `XIULUO_BRAIN` 选择。
+- 回程道具 verified path 正常；team return 无 cloud request；watchdog/idle timeout 不本地 reaccept。
+
+Card CR201: enabled path 禁双脑收口
+
+Status:
+
+- Planned.
+
+Scope:
+
+- enabled path 不得引用 `TASK_POLICY` / `TASK_RECOVERY` authority、`resolveTaskHotStart`、本地 restart/recover、
+  或 `LOCAL_PASSTHROUGH`。
+- 旧本地修罗 path 只允许在 flag off 时作为 legacy rollback；flag on 时不准 reachable。
+
+Local test gate:
+
+- `XiuluoBrainNoDualBrainGuardTest` 和 `XiuluoSingleBrainSourceGuardTest` 覆盖 no-dual-brain。
+- `mvn -q -Dtest="XiuluoBrainNoDualBrainGuardTest,XiuluoSingleBrainSourceGuardTest" test`
+- `mvn -q -DskipTests compile`
+
+Fresh Node E:
+
+- 跑 5-10 轮修罗。
+- 日志必须没有 `TASK_POLICY/TASK_RECOVERY` 修罗权威路径、没有 local fallback、没有
+  `keep local outcome`。
+- 若有一处双脑迹象，CR201 Blocked。
+
+Card CR202: 长跑验收与文档收口
+
+Status:
+
+- Planned.
+
+Scope:
+
+- 更新 `docs/HYBRID_CLOUD_WORKFLOW.md`、`docs/业务逻辑.md`、`docs/ACTIVE_WORK.md`、
+  CR card 和 dashboard。
+- 记录最终 authority model：`XIULUO_BRAIN` owns business brain；local owns execution/facts/safety；
+  team return stays local-only fact。
+
+Local test gate:
+
+- `mvn -q -Dtest="XiuluoBrain*Test,*Xiuluo*Brain*Test" test`
+- `mvn -q -DskipTests test-compile`
+- `mvn -q -DskipTests compile`
+- `node scripts/generate-cr-dashboard-data.js`
+
+Fresh Node F:
+
+- 长跑修罗；必要时再跑 mixed 五倍/修罗。
+- 通过后 CR193-CR202 可逐步 Done，最后 CR192 关闭。
 
 ## Package Rules
 

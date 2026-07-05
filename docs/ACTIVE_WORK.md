@@ -1,5 +1,11062 @@
 # DHXY Active Work
 
+### 2026-07-05 CR190 manager final review
+
+- Status: Review / fresh runtime pending. 不标 Done/Closed。
+- Worker result:
+  - 恢复 Runner-owned tracker negative gate：五环无 positive `TASK_TRACKER_PATHING target=wuhuan` 时，
+    只消费同窗口/同任务/fresh tracker negative，并映射旧 `TASK_NOT_FOUND` /
+    `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK`。
+  - plain `dialog-visible:STORY` 只唤醒，不直接 terminal。
+  - `AMBIGUOUS/ERROR` cloud result fail-closed；post-prepare `DialogPreparationRequest` gate 已补；
+    fresh 高优先级 prepared action 会阻断旧 negative 消费。
+- Added behavior tests:
+  - `FiveRingCR190StoryWakeBehaviorTest`：证明只有 STORY wake、无 tracker negative 时，五环只等待 Runner tracker read。
+  - `WindowTaskRunnerCR190PostPrepareGateBehaviorTest`：证明 prepare 后新 request 会阻断 negative write / ready publish。
+  - `WindowRuntimeContextCR190TrackerNegativeBehaviorTest`：覆盖 same/wrong/stale negative 与 prepared-blocked。
+  - `TrackerPanelReaderCloudDecisionServiceTest`：覆盖 `AMBIGUOUS/ERROR + no-green-link + taskKey=wuhuan` fail-closed。
+- Review gate:
+  - Reviewer #1 / Sagan final review: APPROVED, no P0/P1/P2。
+  - Reviewer #2 / Kepler final review: APPROVED, no P0/P1/P2。
+- Manager verification:
+  - `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest,FiveRingCR190TrackerNegativeGateWiringTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest,TrackerPanelReaderCloudDecisionServiceTest" test` passed。
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` passed。
+  - `mvn -q -DskipTests compile` passed。
+  - `mvn -q -DskipTests test-compile` passed。
+- Fresh runtime gate:
+  - 完成/今日上限 story 出现时，必须先看到 `[task-tracker negative] updated` /
+    `TASK_TRACKER_NEGATIVE_READY`，然后才进入 returned dialog 模板链。
+  - 只有 `dialog-visible:STORY` 不得直接 terminal。
+  - 正常有五环绿链时仍应消费 Runner positive `TASK_TRACKER_PATHING target=wuhuan`。
+
+### 2026-07-05 CR192-CR202 planning - 修罗 `XIULUO_BRAIN` 单一云端大脑迁移
+
+- Role: 谢帅 manager / business supervisor。本轮只做计划和 CR 拆卡，不直接写 Java 业务实现。
+- User-approved direction: 修罗第一版云端化必须是单一业务大脑；启用后 phase、hot-start、retry、
+  recovery、round done/fail 只能由 `XIULUO_BRAIN` 决定。本地只执行 action、采集 facts、执行
+  stop/pause/window/input safety；云端不可用或非法响应必须 fail closed，不允许 fallback 到旧修罗本地
+  phase brain。
+- Planning inputs: Averroes 方案 A 强调云端权威状态机和 `sessionId/stateSeq/phaseToken/actionId`；
+  Dirac 方案 B 点名现有本地脑入口：`resolveTaskHotStart`、`retryCurrentOrRecover`、watchdog、
+  loop guard、`XiuluoStepOutcome.nextState` 等。
+- Documentation result: added
+  `docs/superpowers/plans/2026-07-05-xiuluo-cloud-single-brain-migration.md` and CR192-CR202
+  rows/cards in `docs/PACKAGE_ARCHITECTURE.md`。每张子卡都有 local test gate 和对应 fresh runtime node。
+- Current branch/status at planning time: branch `codex/hybrid-cloud-protection`；workspace already heavily
+  dirty before this planning pass。此 pass 只改 docs/dashboard planning artifacts，不是 Java 行为实现。
+- Dashboard: `node scripts/generate-cr-dashboard-data.js` passed, generated 196 CR rows in
+  `docs/cr-dashboard-data.js`。
+
+### 2026-07-05 CR191 manager final review - 修罗绿链前维护顺序
+
+- Role: 谢帅 manager / final coordinator。本轮不直接写 Java 业务实现；worker 负责修复，两个独立
+  reviewer 负责审核。
+- Worker result:
+  - `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` 的 no-maintenance 快捷路径不再在
+    `TRY_TRACKER_SHORTCUT` / tracker 绿链物理点击前消费 common box 或 deferred post-combat
+    recovery / 摄妖香。
+  - `tryTrackerShortcutWithPanel(...)` 的 `xiuluo-v2:tracker-shortcut-green-clicked` 后置点仍保留
+    common box + deferred recovery。
+  - 真正 maintenance-due 分支仍在 heal/repair 维护前保留 CR120 common-box TTL 消费。
+- Review gate:
+  - Review #1 初审给 P1：common box 仍在绿链前消费。已打回 worker 修复。
+  - Review #1 re-review: APPROVED。
+  - Review #2 re-review: APPROVED。
+- Manager verification:
+  - `node scripts/generate-cr-dashboard-data.js` passed, generated `docs/cr-dashboard-data.js`。
+  - `javac -encoding UTF-8 -d target\cr191-manager-final src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-manager-final com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    passed。
+  - `mvn -q -DskipTests compile` passed。
+  - `mvn -q -DskipTests test-compile` passed。
+- Fresh runtime gate:
+  - 下一次修罗 no-maintenance round 日志必须是：
+    `accept snapshot -> start-exit-prepath -> tracker green clicked -> common box/deferred recovery`。
+  - 绿链物理点击前不得再出现 `xiuluo-v2:start-exit-prepath-after-accept-snapshot`、common box 消费或
+    摄妖香 / deferred recovery。
+
+### 2026-07-05 CR190 second review - test-only blockers remain
+
+- Status: Blocked on tests only. 代码语义复审基本通过，但不能 close。
+- Reviewer #1 / Sagan:
+  - P2 remains: plain `dialog-visible:STORY` 不能 direct terminal 仍只有 source-string guard；
+    需要对象级/行为级测试证明 STORY 只唤醒，不会绕过 tracker negative gate。
+- Reviewer #2 / Kepler:
+  - P1/P2 code blockers from first review are fixed.
+  - P2 remains: Runner post-prepare `DialogPreparationRequest` gate 只有 source-string guard；
+    需要对象级/行为级测试证明 prepare 返回后新 request 不会写 negative / publish
+    `TASK_TRACKER_NEGATIVE_READY`。
+- Manager action:
+  - CR190 table 已改回 Blocked。
+  - Worker 只需补两个 behavior tests；不要扩大业务代码改动。
+
+### 2026-07-05 CR190 independent review blockers
+
+- Review status: Blocked. Worker 初版不能进入 fresh runtime。
+- Reviewer #1 / Sagan:
+  - P2: `FiveRingCR190TrackerNegativeGateWiringTest` 主要是 source-string guard，不能算行为级覆盖。
+    需要补对象级/行为级测试，至少覆盖 runtime consume、wrong-window、wrong-task、stale negative，
+    以及 plain visible STORY 不能直接 terminal。
+- Reviewer #2 / Kepler:
+  - P1: 上游 `STATUS_AMBIGUOUS` / `STATUS_ERROR` 仍可能被包装成 `CLOUD_NO_ACTION`，再因 reason
+    `no-green-link` 或 `taskKey=wuhuan` 被映射成 tracker negative；必须 fail-closed。
+  - P2: Runner post-prepare gate 漏新出现的 `DialogPreparationRequest`；prepare 期间如果任务注册
+    route/dialog request，不得继续写入 negative。
+  - P2: negative 发布后若出现高优先级 prepared action，五环仍可能消费旧 negative；消费前必须检查
+    当前没有 fresh 非五环 tracker prepared action，或在写入高优先级 prepared/request 时清掉 negative。
+- Manager action:
+  - 已把 CR190 table 状态改为 Blocked，并把 finding 写入 CR190 card。
+  - 已要求原 worker 返工；修完后必须重新跑 focused tests、compile、test-compile、dashboard，并重新走双 review。
+
+### 2026-07-05 CR191 worker baseline - 修罗绿链前 deferred recovery 顺序修复
+
+- Role: CR191 worker，窄修修罗接任务后 no-maintenance / start-exit-prepath 快捷路径里 deferred
+  post-combat recovery 早于 tracker 绿链点击的问题。
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass,
+    including existing edits in `XiuluoTaskV2.java`, `XiuluoRoundContext.java`, docs,
+    config/memory files, services, window runtime/runner files, and many test files. This worker
+    must not reset, checkout, clean, or revert unrelated paths.
+- Relevant business baseline/evidence:
+  - `docs/业务逻辑.md` 修罗 V2 快捷路线 requires accept option success -> capture accept-time
+    snapshot -> no-maintenance starts `灵兽村` exit prepath -> consume accept-time tracker parse
+    -> click first 修罗 tracker green link. Due-maintenance is the branch that runs maintenance
+    first and then fresh-reads tracker.
+  - `docs/PACKAGE_ARCHITECTURE.md` CR91 requires the same no-maintenance order:
+    `accept snapshot` -> `xiuluo-v2:start-exit-prepath` -> tracker green click / CR86 park.
+  - `docs/PACKAGE_ARCHITECTURE.md` CR109 rework says deferred HP/MP / 摄妖香 recovery should be
+    consumed after next task accept or after shortcut/accept navigation is already progressing,
+    and specifically not immediately after return-home.
+  - Current source evidence:
+    `rg -n "consumeDeferredPostCombatRecoveryDuringNextTaskProgress|tracker-shortcut-green-clicked|start-exit-prepath-after-accept-snapshot" src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+    shows `afterAcceptMaintenanceCheck(...)` calls
+    `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+    "xiuluo-v2:start-exit-prepath-after-accept-snapshot")` before returning
+    `TRY_TRACKER_SHORTCUT`, while `tryTrackerShortcut(...)` already consumes deferred recovery
+    after successful tracker green click with source `xiuluo-v2:tracker-shortcut-green-clicked`.
+  - Current local diff evidence:
+    `git diff -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java | rg -n
+    "after-accept-no-maintenance-start-exit-prepath|start-exit-prepath-after-accept-snapshot|tracker-shortcut-green-clicked" -C 5`
+    shows the problematic deferred recovery call was introduced in the local CR91/CR109 overlap
+    area, not in the pushed baseline.
+- Implementation constraint:
+  - Remove only the early deferred recovery consume from the no-maintenance start-exit-prepath
+    branch. Keep prepath, accept snapshot/background parse, tracker parsing, green-link click,
+    and post-green-click deferred recovery intact. Do not change OCR/template/click coordinates,
+    navigation coordinates, NPC click, return item, or maintenance due policy.
+- Implementation result:
+  - Updated `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java` only in
+    `afterAcceptMaintenanceCheck(...)`: the no-maintenance start-exit-prepath branch now returns
+    `attachAcceptObjectiveBackgroundParseAfterStartExitPrepath(prepath)` directly and no longer
+    calls `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(...)` before
+    `TRY_TRACKER_SHORTCUT`.
+  - Left `tryTrackerShortcutWithPanel(...)` unchanged for the successful green-click safe point:
+    `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+    "xiuluo-v2:tracker-shortcut-green-clicked")` remains after physical tracker green click.
+  - Updated `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR91AcceptSnapshotOverlapWiringTest.java`
+    so the source guard rejects `xiuluo-v2:start-exit-prepath-after-accept-snapshot` in
+    `afterAcceptMaintenanceCheck(...)` and confirms green-click post-consume remains.
+  - Added CR191 row/card to `docs/PACKAGE_ARCHITECTURE.md`; regenerated
+    `docs/cr-dashboard-data.js`.
+- Verification:
+  - RED:
+    `javac -encoding UTF-8 -d target\cr191-red src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-red com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    failed as expected with
+    `Unexpected token present: xiuluo-v2:start-exit-prepath-after-accept-snapshot`.
+  - GREEN:
+    `javac -encoding UTF-8 -d target\cr191-green src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-green com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    passed.
+  - Final focused guard:
+    `javac -encoding UTF-8 -d target\cr191-final src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-final com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `git diff --check -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR91AcceptSnapshotOverlapWiringTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    passed with only existing LF/CRLF normalization warnings.
+- Fresh runtime gate:
+  - Re-run 修罗 no-maintenance round. Expected order:
+    accept snapshot / accept-time tracker parse -> `start-exit-prepath` -> tracker green clicked
+    (`xiuluo-v2:tracker-shortcut-green-clicked`) -> deferred post-combat recovery / 摄妖香.
+  - Logs must not show `xiuluo-v2:start-exit-prepath-after-accept-snapshot` or any 摄妖香 refill before
+    the first tracker green physical click in this branch.
+  - Due-maintenance branch remains unchanged: maintenance first, no start-exit-prepath, fresh tracker
+    read/click after maintenance.
+
+### 2026-07-05 CR191 review #1 P1 repair baseline
+
+- Role: CR191 worker repair。Review #1 found P1: common-box still consumes before tracker green in
+  `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)`.
+- Baseline before repair edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` remains heavily dirty before this repair; do not revert or clean
+    unrelated paths.
+- Review evidence verified in source:
+  - `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` currently calls
+    `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:after-accept-maintenance-check")`
+    before the no-maintenance test
+    `if (!isHealPetMaintenanceDue() && !isRepairEquipmentMaintenanceDue())`.
+  - That call happens before `startLeavingStartMapIfPresent(...)`, `TRY_TRACKER_SHORTCUT`, and the
+    physical tracker green click, so it violates the CR191 no-maintenance shortcut order.
+- Repair plan:
+  - Strengthen `XiuluoCR91AcceptSnapshotOverlapWiringTest` first so it fails if common-box consume
+    appears before the no-maintenance branch can return to `TRY_TRACKER_SHORTCUT`.
+  - Move the `xiuluo-v2:after-accept-maintenance-check` common-box consume below the no-maintenance
+    shortcut branch, so it is only retained for true maintenance-due flow before heal/repair
+    maintenance.
+  - Keep `tryTrackerShortcutWithPanel(...)` post-green-click common-box and deferred recovery calls.
+- Implementation result:
+  - `XiuluoCR91AcceptSnapshotOverlapWiringTest` now checks that the source before
+    `if (!isHealPetMaintenanceDue() && !isRepairEquipmentMaintenanceDue())` does not contain
+    `consumeCommonBoxDuringNextTaskProgress(`.
+  - The same guard also confirms `tryTrackerShortcutWithPanel(...)` keeps both
+    `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:tracker-shortcut-green-clicked")`
+    and
+    `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(context,
+    "xiuluo-v2:tracker-shortcut-green-clicked")` after the physical green-click call.
+  - `XiuluoTaskV2.afterAcceptMaintenanceCheck(...)` now returns from the no-maintenance shortcut
+    branch before any `xiuluo-v2:after-accept-maintenance-check` common-box consume.
+  - The common-box consume remains in the true maintenance-due path before heal/repair maintenance,
+    with a CR191 comment explaining that this preserves CR120's pending TTL window while avoiding
+    no-maintenance green-link delay.
+  - Updated CR191 row/card in `docs/PACKAGE_ARCHITECTURE.md`; regenerated
+    `docs/cr-dashboard-data.js`.
+- Verification:
+  - Review #1 RED:
+    `javac -encoding UTF-8 -d target\cr191-review1-red src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-red com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    failed as expected with
+    `Unexpected token present: consumeCommonBoxDuringNextTaskProgress(`.
+  - Review #1 GREEN:
+    `javac -encoding UTF-8 -d target\cr191-review1-green src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-green com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    passed.
+  - Review #1 final focused guard:
+    `javac -encoding UTF-8 -d target\cr191-review1-final src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR91AcceptSnapshotOverlapWiringTest.java; java -cp target\cr191-review1-final com.bot.dhxy.task.xiuluo.XiuluoCR91AcceptSnapshotOverlapWiringTest`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `git diff --check -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR91AcceptSnapshotOverlapWiringTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    passed with only existing LF/CRLF normalization warnings.
+- Remaining gate:
+  - CR191 still needs two reviewer approvals after this P1 repair and a fresh runtime slice proving
+    no-maintenance order is `accept snapshot -> start-exit-prepath -> tracker green clicked -> common
+    box/deferred recovery`.
+
+### 2026-07-05 CR190 worker implementation baseline
+
+- Role: CR190 worker，负责实现“Runner tracker 负结果 gate”并保持 CR188 Runner 唯一 owner。
+- Baseline before worker code edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass, including
+    existing edits in `FiveRingTaskV2.java`, `WindowTaskRunner.java`, `WindowRuntimeContext.java`,
+    `WindowReadyEvent*.java`, `TaskTrackerPanelService.java`, docs, and many unrelated files. This worker
+    must not revert, checkout, reset, clean, or touch unrelated paths.
+- Relevant pushed baseline evidence:
+  - `git show origin/dev:src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java | rg -n "syncTaskPanel|tryClickWuhuanTrackerLink|tryHandleAcceptReturnedDialogAfterTrackerMiss|findWuhuanNextGreenClickPoint|TASK_NOT_FOUND" -C 4`
+    shows the old business path: `tryClickWuhuanTrackerLink(...)` first consumed any prepared action, then
+    called `taskTrackerPanelService.findWuhuanNextGreenClickPoint()`; if that returned null, it mapped the
+    result to `TrackerPathingStatus.TASK_NOT_FOUND`. `syncTaskPanel(...)` then called
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` for `TASK_NOT_FOUND` and for
+    `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK` before tracker-miss retry/fail handling.
+  - Current local diff evidence:
+    `git diff -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java | rg -n "tryClickWuhuanTrackerLink|RUNNER_PREPARED_NOT_READY|findWuhuanNextGreenClickPoint|TASK_NOT_FOUND" -C 5`
+    shows CR188 removed the direct `findWuhuanNextGreenClickPoint()` / direct click path and now returns
+    `RUNNER_PREPARED_NOT_READY` when no fresh positive `TASK_TRACKER_PATHING target=wuhuan` exists.
+  - Current `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` calls
+    `taskTrackerPanelService.prepareWuhuanPathingLink(...)` and publishes only positive
+    `PreparedDialogAction`; no fresh tracker negative is persisted to runtime yet.
+- CR190 implementation constraint:
+  - Restore only the old negative gate semantics by carrying a fresh same-window/same-task tracker negative
+    from Runner to `FiveRingTaskV2`; do not restore task-thread direct tracker scan/click and do not treat plain
+    `dialog-visible:STORY` as terminal.
+- Implementation result:
+  - Added `TaskTrackerPanelNegativeResult` and `TaskTrackerPanelPrepareResult`.
+  - `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` now returns positive prepared action, explicit fresh
+    negative, or empty/fail-closed. It only maps successful cloud `CLOUD_NO_ACTION` with explicit
+    no-title/no-task/no-green/no-link/no-action semantics; disabled/timeout/error/invalid/ambiguous/schema remain
+    fail-closed and do not become `TASK_NOT_FOUND`.
+  - `WindowRuntimeContext` now stores and atomically consumes window/task-bound tracker negatives; consume requires
+    `TaskType.WUHuan_V2`, tracker `taskCode=wuhuan`, same `windowId`, and freshness.
+  - `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` writes negative only after the same post-prepare
+    owner/pathing/combat/priority gates used for positive prepared action, then publishes
+    `TASK_TRACKER_NEGATIVE_READY`; positive prepared action clears older negative.
+  - `FiveRingTaskV2.tryClickWuhuanTrackerLink(...)` now tries positive prepared action first, then fresh runtime
+    tracker negative, then `RUNNER_PREPARED_NOT_READY`. Fresh negative maps to old
+    `TASK_NOT_FOUND` / `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK`, so existing
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` remains the only returned-dialog entry.
+- Verification:
+  - RED: `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest" test` failed as expected with
+    `CR190 needs a durable task-tracker negative result model`.
+  - GREEN: `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest" test` passed.
+  - Focused regression:
+    `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest,FiveRingHotStartTrackerHandoverWiringTest,FiveRingPathingCombatRecoveryIntentClearWiringTest,WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Fresh runtime gate:
+  - Re-run 五环 after app restart. A completion/daily-limit story should first pair with a fresh tracker negative
+    (`[task-tracker negative] updated` / `TASK_TRACKER_NEGATIVE_READY`), then enter returned dialog handling.
+  - Plain `dialog-visible:STORY` alone must not finish/limit the task.
+  - Normal positive `TASK_TRACKER_PATHING target=wuhuan` must still win and click the Runner-prepared green link.
+
+### 2026-07-05 CR190 五环 tracker 负结果 gate 修复派工
+
+- Role: 谢帅 manager/reviewer。本轮创建 CR190、派 worker 实现；谢帅不直接写 Java 业务实现。
+- User decision:
+  - 按旧业务顺序修复：五环完成/今日上限 dialog 不能因为 Runner 迁移而丢失收口；
+  - 不允许“看到 STORY 就直接完成”，必须先有 fresh tracker negative，证明左侧没有可点的五环任务/绿链；
+  - 保持 CR188 的 Runner 唯一 owner，五环任务线程不恢复直接扫/点 tracker。
+- Baseline before worker implementation:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass; workers must not revert,
+    checkout, reset, clean, or touch unrelated files.
+- Runtime evidence:
+  - `15:49:17` 后五环多个窗口反复输出
+    `runner prepared tracker action not ready; wait for Runner prepared action: allowFinished=true taskAccepted=true`。
+  - `15:50:41.608` 左右，`hwnd-300DA` / ID `67555` 的 Runner 看到 `type=STORY`，并发布
+    `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY operation=null`。
+  - 五环任务线程只被唤醒，但因为没有 fresh positive `TASK_TRACKER_PATHING`，也没有 fresh tracker negative，
+    没有进入 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`，最终只能靠用户 stop。
+- Baseline business logic from latest push:
+  - `origin/dev` 的 `FiveRingTaskV2.tryClickWuhuanTrackerLink()` 先读左侧五环 tracker；
+  - 如果旧 direct read 返回 `TASK_NOT_FOUND` / `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK` 等负结果，
+    `syncTaskPanel(...)` 才调用 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 处理完成/今日上限 story；
+  - CR190 必须恢复这个负结果 gate，而不是新增 STORY 直通终止规则。
+- Created card:
+  - CR190: 恢复五环 Runner tracker 负结果 gate，完成/今日上限 dialog 不再卡住。
+- Worker constraints:
+  - 不改五环 tracker title gate、绿色链接选择、点击坐标、模板图片、OCR/template 阈值；
+  - 不改接任务/买鞋/交鞋/完成 story/daily-limit 的模板匹配顺序；
+  - 不改 physical input queue、pathing、battle、movement detector；
+  - cloud timeout/error/invalid 不能伪造成 `TASK_NOT_FOUND`，只能成功 fresh tracker read 的 no-title/no-task/no-green/no-link
+    才能触发 returned dialog。
+
+### 2026-07-05 五环热启动左侧任务面板被跳过修复
+
+- User symptom:
+  - 本轮重新启动属于热启动，左侧 tracker 面板已有五环任务，但 `67555` / `5411` 等窗口没有直接点左侧任务绿链，反而重新导航去长安找云游大师接任务。
+- Baseline before code edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest local commit: `696a12b chore: remove obsolete debug tooling`。
+  - `git status --short` already showed a heavily dirty workspace before this pass; this fix must not revert, checkout, reset, clean, or touch unrelated files.
+  - Relevant dirty files inspected before edit: `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`,
+    `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingPhaseContext.java`, `docs/ACTIVE_WORK.md`,
+    `docs/PACKAGE_ARCHITECTURE.md`。
+- Runtime evidence:
+  - `15:25:01.955` `hwnd-2B011A` / 5411: Runner published `TASK_TRACKER_PATHING target=wuhuan`, click `(1562,341)`。
+  - `15:25:02.724` `hwnd-300DA` / 67555: Runner published `TASK_TRACKER_PATHING target=wuhuan`, click `(422,331)`。
+  - `PREPARE` finished much later: 5411 at `15:25:30.371`, 67555 at `15:26:13.770`。
+  - Because `PREPARED_TRACKER_ACTION_MAX_AGE_MS=2500`, `HANDOVER_DETECT` saw no fresh Runner prepared tracker action and logged `no 五环 task found on left tracker; initial setup is required`。
+  - 67555 then entered `ACCEPT_TASK`; at `15:26:17.218` it ran `navigate to map: 长安 current=大唐边境` even though Runner had republished a fresh `TASK_TRACKER_PATHING` at `15:26:14.252`。
+- Planned minimal repair:
+  - Keep Runner as the only 五环 tracker reader/click owner.
+  - If `HANDOVER_DETECT` has no usable current prepared action, wait briefly for a fresh current-window `PREPARED_ACTION_READY` instead of immediately falling back to `ACCEPT_TASK`。
+  - At `ACCEPT_TASK` entry, consume current-window fresh `TASK_TRACKER_PATHING target=wuhuan` before accept-NPC navigation, so late Runner republish cannot be ignored by the navigation path.
+  - Do not change tracker visual recognition, title gate, click geometry, route transfer logic, movement detector, or 五环 business completion rules.
+- RED/GREEN:
+  - Added `FiveRingHotStartTrackerHandoverWiringTest` first.
+  - RED command:
+    `mvn -q "-Dtest=FiveRingHotStartTrackerHandoverWiringTest" test` failed as expected with
+    `五环 handover must have a bounded wait for Runner to republish fresh tracker action`.
+- Implementation:
+  - `FiveRingTaskV2.detectHandover(...)` now treats `RUNNER_PREPARED_NOT_READY` as a bounded handover retry
+    (`MAX_HANDOVER_TRACKER_PREPARED_WAIT_RETRY=2`) before falling back to accept setup.
+  - `FiveRingTaskV2.acceptTask(...)` now checks current-window fresh `TASK_TRACKER_PATHING target=wuhuan` at
+    `accept-entry-before-navigation` and immediately before `navigationService.navigateToNPC(...)` at
+    `accept-before-npc-navigation`.
+  - The accept guard reuses `consumeCurrentPreparedBeforeNormalPhase(...)`, so the actual click/clear/pathing-intent
+    behavior stays identical to the existing Runner prepared tracker consumption path.
+- Verification:
+  - `mvn -q "-Dtest=FiveRingHotStartTrackerHandoverWiringTest" test` passed.
+  - `mvn -q "-Dtest=FiveRingHotStartTrackerHandoverWiringTest,FiveRingPathingCombatRecoveryIntentClearWiringTest,WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Fresh runtime gate:
+  - 热启动/重启时左侧已有五环任务，应先看到 `HANDOVER_DETECT` 等到/消费 fresh
+    `TASK_TRACKER_PATHING target=wuhuan`，不应直接 `navigate to map: 长安`。
+  - 如果 Runner 在 `ACCEPT_TASK` 内部才补发 fresh tracker action，应看到
+    `prepared 五环 tracker consumed before accept NPC navigation`，随后进入 `WAIT_PATHING`。
+
+### 2026-07-05 五环战斗恢复后 tracker Runner 卡死热修
+
+- User symptom:
+  - 从 `14:48` 开始五个号全部站住不动；任务线程反复 park/醒来，但没人再点左侧 tracker。
+- Baseline before business-code edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Upstream: 当前分支无 upstream。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` already showed a heavily dirty workspace before this pass; this fix must not
+    revert, checkout, reset, clean, or touch unrelated files.
+- Runtime evidence:
+  - `logs/dhxy-console.log` after `14:48` shows all affected windows repeatedly logging
+    `runner prepared tracker action not ready` from `FiveRingTaskV2` `SYNC_TASK_PANEL`。
+  - Runner ticks for the same windows show `task=WUHuan_V2 branch=active-pathing`,
+    `pathingState=STOPPED_AWAY`, `taskTrackerPrepareMs=-1`, and `preparedOperation=null`。
+  - `taskTrackerPrepareMs=-1` proves the cloud tracker reader was not called; the blocker is before tracker
+    recognition, not a template/OCR/cloud miss.
+  - The bad transition is `pathing-window-combat-active` -> `pathing-window-combat-recovered` ->
+    `SYNC_TASK_PANEL`: this branch skipped the normal `ARRIVED` / `STOPPED_AWAY` pathing-signal cleanup.
+- RED test:
+  - Added `FiveRingPathingCombatRecoveryIntentClearWiringTest` first.
+  - `mvn -q "-Dtest=FiveRingPathingCombatRecoveryIntentClearWiringTest" test` failed as expected with
+    `Missing source marker: clearPathingSignalIfSourcePrefix(`.
+- Planned minimal repair:
+  - In `FiveRingTaskV2.waitPathing(...)`, before the `combatObservedSincePathing` recovery branch returns to
+    `SYNC_TASK_PANEL`, clear only the active 五环 prepared tracker panel click pathing intent by source prefix
+    `wuhuan-v2:prepared-tracker-panel-click:`。
+  - Do not change tracker visual recognition, click geometry, cloud reader, Runner prepare policy, movement
+    detector, task phase semantics, or physical input sequence.
+- Implementation:
+  - `FiveRingTaskV2` now defines `PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX` and reuses it when registering
+    prepared tracker pathing intents.
+  - `FiveRingTaskV2.waitPathing(...)` now calls
+    `runtime.clearPathingSignalIfSourcePrefix(PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX,
+    "five-ring combat-recovered tracker pathing consumed")` before returning
+    `pathing-window-combat-recovered -> SYNC_TASK_PANEL`。
+  - This intentionally clears only the 五环 prepared tracker click intent; it does not clear shoe-shop,
+    accept-NPC, world-map, or unrelated navigation intents.
+- Verification so far:
+  - `mvn -q "-Dtest=FiveRingPathingCombatRecoveryIntentClearWiringTest" test` passed after the fix.
+  - `node scripts/generate-cr-dashboard-data.js` passed and regenerated `docs\cr-dashboard-data.js`.
+
+### 2026-07-05 CR188/CR189 五环 tracker Runner owner 与面板缓存派工
+
+- Role: 谢帅 manager/reviewer。本轮创建 CR 卡、拆任务、派 worker；谢帅不直接写 Java 业务实现。
+- User decision:
+  - 五环左侧 tracker 绿链识别最终采用 Runner owner：Runner 常驻观察五环 tracker，五环任务只消费
+    `TASK_TRACKER_PATHING` prepared action。
+  - 不引入复杂 `interest/requestId/token` 体系；Runner 只按当前窗口状态判断是否该扫。
+  - Runner 有 active pathing / 战斗 / fresh prepared action / 更高优先级 dialog 或 route action 时不扫左侧
+    tracker。
+  - Runner 准备完成发布前必须二次确认仍无 active pathing，防止 stale prepared action 重复点。
+  - 停下后如果左侧 tracker 面板和上次成功解析面板一致，优先复用上次窗口相对绿链点击点，不重新跑完整云端
+    tracker reader。
+- Baseline before worker implementation:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short` already shows a heavily dirty workspace before this pass; workers must not revert,
+    checkout, reset, clean, or touch unrelated files.
+- Runtime evidence:
+  - `12:30:14.585` 五环任务线程通过 `wuhuan-v2:tracker-panel-click:sync` 物理点击同一 tracker 绿链；
+  - `12:30:18.809` Runner 晚到 prepared action 又通过
+    `wuhuan-v2:prepared-tracker-panel-click:phase-priority_WAIT_PATHING` 第二次点击同一点；
+  - 同类重复点击也在 `hwnd-120ABA`、`hwnd-2B011A`、`hwnd-300DA`、`hwnd-30DA0` 出现。
+- Created cards:
+  - CR188: 五环左侧 tracker 改为 Runner 唯一 owner，禁止任务线程直接扫/点。
+  - CR189: 五环 tracker 面板相同则复用上次绿链点击点，减少云端重算。
+- Worker split:
+  - Worker A owns CR188: `WindowTaskRunner` / `FiveRingTaskV2` owner boundary and stale publish guard。
+  - Worker B owns CR189: `TaskTrackerPanelService` and runtime/local tracker cache/fingerprint fast path。
+- Manager constraints:
+  - 不改五环业务 phase 语义、接任务/交鞋/买鞋/完成 story/daily-limit/轮数判断。
+  - 不改 tracker 云端识别算法、title gate、点击坐标计算、模板/OCR 阈值。
+  - 不改物理 input queue 原子动作。
+  - 若 worker 改到视觉匹配或点击几何，必须按 AGENTS 做 testcase replay；本次预期只改 owner/cache，不改几何。
+- Worker implementation results:
+  - CR188 / Worker A:
+    `FiveRingTaskV2` no longer direct-reads or direct-clicks the left 五环 tracker from `SYNC_TASK_PANEL`;
+    it only consumes fresh Runner `TASK_TRACKER_PATHING target=wuhuan`. Missing prepared action now returns
+    `RUNNER_PREPARED_NOT_READY` and waits/retries without `tracker-not-found` error count.
+  - CR188 / Worker A:
+    `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` now skips tracker prepare during combat,
+    active/unknown/probe pathing, fresh tracker prepared action, or higher-priority prepared action. After cloud/panel
+    prepare returns, it rechecks combat/pathing/priority and `TaskTrackerPrepareOwner`; stale late returns log
+    `active-pathing-combat-or-priority` or `task-owner-or-runner-stopped` and do not publish.
+  - CR189 / Worker B:
+    `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` now checks a window-scoped tracker panel cache before
+    full cloud `TRACKER_PANEL_READER`; cache hit uses window-relative click and source suffix `cache-hit`.
+  - CR189 / Worker B:
+    `WindowRuntimeContext` owns `TaskTrackerPanelCacheEntry`; cache hit requires `taskCode=wuhuan`, same panel
+    origin/size, fingerprint distance <= 1, and cached click still inside the current panel. Cache stores no absolute
+    desktop click.
+- Review gate:
+  - Reviewer #1 / Popper and reviewer #2 / Aquinas both initially found the same CR188 P2: slow prepare could publish
+    after task stop/finish/switch. Worker A added `TaskTrackerPrepareOwner`; both reviewers then approved with no
+    P0/P1/P2.
+  - Both reviewers found no CR189 blocker. Remaining suggestion is only non-blocking: source-level guards could later
+    be strengthened with object-level/concurrency tests.
+- Verification:
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Current status:
+  - CR188 moved to Review / fresh runtime pending.
+  - CR189 moved to Review / fresh runtime pending.
+  - No testcase replay required for this pass because implementation did not change tracker visual recognition,
+    title gate, green-link selection, click geometry, OCR/template thresholds, or physical input sequence shape.
+
+### 2026-07-05 CR186/CR187 五环导航放权与小地图 fire-and-handoff 派工
+
+- Role: 谢帅 manager/reviewer。本轮只创建 CR 卡、记录范围、派 worker；谢帅不直接写 Java 业务实现。
+- User decision:
+  - 五环 current-map 导航点击后不应继续持有 coarse task turn 等移动确认；点完小地图目标并同步关小地图后应尽快放权。
+  - 现有修罗出村 prepath 已有 fire-and-handoff 语义，但实现是修罗 source 特判；需要抽成通用路径，让五环 current-map 路线复用。
+  - 另一个独立问题是 `FiveRingTaskV2` outside phase 可能继承上一 phase 的 task turn，虽然 phase 标为 outside，但仍会把后续慢导航/确认包在同一个 turn 里；需要在 outside phase 慢路径入口主动释放继承 turn。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Upstream: 当前分支无 upstream；latest pushed baseline locally visible:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass; do not revert,
+    checkout, reset, clean, or touch unrelated files.
+  - Relevant local diff before CR186/CR187 card creation already includes existing dirty edits in
+    `FiveRingTaskV2.java` and `NavigationService.java`; worker must preserve current business deltas and patch only
+    the CR-owned scheduling/handoff points.
+- Investigation evidence from latest discussion:
+  - 五环 `ACCEPT_TASK` current-map navigation sample: actual mini-map click at `12:30:22.262`,
+    movement confirmation at `12:30:24.780`, mini-map close at `12:30:25.187`, pathing intent/register and
+    release around `12:30:25.784-12:30:25.785`; observed `task.turn.release heldMs=11037 queuedWaiters=3`。
+  - 五环 shoe-shop current-map sample: movement confirmed at `12:27:22.521`, cleanup/pathing registration/release
+    around `12:27:24.339-12:27:24.342`。
+  - Current `FiveRingTaskV2` marks `WAIT_PATHING` / `BUY_SHOES` / `ACCEPT_TASK` /
+    `HANDLE_DIALOG` / `SYNC_TASK_PANEL` as outside phases, but `runPhaseWithoutTaskTurn(...)` does not acquire a
+    new turn and also does not immediately release an inherited `CONTINUE_CHAIN` turn before executing slow work.
+  - Current `NavigationService` has a hard-coded 修罗 source branch for
+    `xiuluo-v2:start-exit-prepath:currentMap`; 五环 current-map routes do not share that no-confirm
+    fire-and-handoff path yet.
+- Created cards:
+  - CR186: 五环 outside phase 入口释放继承 task turn。
+  - CR187: 通用小地图 fire-and-handoff，接入修罗出村与五环 current-map 导航。
+- Manager constraints for workers:
+  - Do not change OCR/template matching, click target geometry, minimap coordinate mapping, NPC/dialog logic,
+    task phase decisions, fallback order, or movement detector thresholds.
+  - If a worker changes any click coordinate calculation or visual matching behavior, follow AGENTS testcase replay
+    rule and write testcase input/output/command back to CR card and this file.
+  - After any source change, workers should return a ready-to-paste “已改/验证/剩余 fresh gate” record;
+    谢帅/manager will write it back to the CR card and regenerate dashboard to avoid parallel doc conflicts.
+- Worker implementation results:
+  - CR186 / Volta:
+    `FiveRingTaskV2.runPhaseWithoutTaskTurn(...)` now force-releases inherited coarse task turn with
+    `transactionName + ":outside-enter"` after ready-priority returns null and before outside slow-path work.
+    Added `FiveRingCR186OutsidePhaseTurnReleaseWiringTest`.
+  - CR187 / Einstein:
+    `NavigationService` now uses generic `isImmediateMiniMapFireAndHandoff(...)` for the existing 修罗
+    start-exit source plus 五环 accept NPC and shoe-shop current-map sources, constrained by map/coordinate.
+    Added `NavigationCR187ImmediateMiniMapHandoffWiringTest` and updated the 修罗 guard.
+- Verification:
+  - Worker RED/GREEN evidence recorded in CR186 / CR187 cards.
+  - 谢帅本地复跑:
+    `mvn -q "-Dtest=FiveRingCR186OutsidePhaseTurnReleaseWiringTest" test` passed.
+    `mvn -q "-Dtest=NavigationCR187ImmediateMiniMapHandoffWiringTest" test` passed.
+    `mvn -q -DskipTests compile` passed.
+    `mvn -q -DskipTests test-compile` passed.
+  - Reviewer A / Bohr and reviewer B / Turing both reviewed CR186 + CR187 and reported PASS with no P0/P1/P2.
+- Current status:
+  - CR186 moved to Review / fresh runtime pending.
+  - CR187 moved to Review / fresh runtime pending.
+  - `docs/PACKAGE_ARCHITECTURE.md` and dashboard were updated by manager after worker/reviewer results.
+
+### 2026-07-05 summon skill page-open gate hotfix
+
+- User symptom:
+  - 三技能点击“技能”入口后，后续 `if8` / 静态格子扫描有时仍然截到属性页，导致非技能页被误判为
+    `OCCUPIED`，关键 debug 图还会被后续同名文件覆盖。
+- Implementation:
+  - `SummonSkillService` keeps the post skill-entry wait at `1_000ms` before any 6/8-slot or static slot
+    screenshot.
+  - After the wait, it rechecks the existing `ZHS_shuxing` attribute anchor. If that anchor is still
+    visible, it waits another `800ms` and captures/checks once more. Only when the second check still
+    sees the attribute anchor is the skill tab treated as not opened and the cleanup fails closed before
+    slot-count or occupied-slot scanning.
+  - The initial `Alt+O` attribute-anchor lookup also gets one `800ms` retry before failing, so a single
+    slow/cached screenshot does not abort the maintenance pass.
+  - 三技能关键 debug 图改为唯一文件名：`summon_skill_if8_layout_roi_*`,
+    `summon_skill_static_slots_raw_*`, `slot_tip_cloud_raw_*`, and yellow raw/washed tooltip files no
+    longer overwrite the previous run.
+  - Static slot occupancy scan no longer uses a screen-absolute ROI. It now derives a window-relative
+    ROI from the current 6/8 slot centers, `52x52` boxes, and `8px` padding, then captures
+    `windowBase + relativeRoi`. Slot boxes and screenshot origin now share the same coordinate system.
+- Replay / verification:
+  - Command:
+    `jshell --class-path target/classes;<target/classpath.txt>`, then `ImageFinder.find(...)` with
+    `images/template/zhaohuanshou/ZHS_shuxing.png` at threshold `0.85`.
+  - Skill-page input:
+    `images/test-cases/summon-skill/20260702_67555_six_slot_baseline_raw.png` -> `null`.
+  - Wrong attribute-page input:
+    `images/temp/hwnd-7281248/summon_skill_static_slots_raw.png` -> `[255.5, 427.5, 0.9999999403953552]`.
+  - Marked replay output:
+    `images/test-cases/summon-skill/20260705_attribute_anchor_gate_wrong_attr_page_marked.png`.
+  - Static slot absolute ROI marked replay:
+    input `images/temp/hwnd-7281248/summon_skill_static_slots_raw.png`, base from log `(162,179)`,
+    output `images/test-cases/summon-skill/20260705_static_slot_absolute_roi_marked.png`.
+  - Fresh runtime blocker:
+    `hwnd-300DA / 67555` failed with `static slot rect invalid slot=1 rect=200,-95,252,-43 image=261x289`;
+    root cause was the old absolute ROI mixed with `base + slotOffset` rect math.
+  - Relative ROI fix verification:
+    current five `DHXYJYMainFrame` windows were foreground-captured and marked under
+    `images/temp/summon_skill_relative_roi_check/*_fg_relative_roi_marked.png`.
+    Bases checked: `0x110D98=(256,587)`, `0x300DA=(261,75)`, `0x120ABA=(1084,345)`,
+    `0x2B011A=(1414,84)`, `0x30DA0=(1465,582)`. All eight `52x52` skill-slot rects fit inside
+    `relativeRoi=(277,330)-(538,619)` for every window.
+  - Focused verification after fix:
+    `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest,SummonSkillCR178ProductionStaticBoundaryWiringTest" test`
+    passed; `mvn -q -DskipTests compile` passed.
+  - Compile: `mvn -q -DskipTests compile` passed.
+
+### 2026-07-05 CR185 manual bootstrap cleanup: remove NPC click migrate channel
+
+- User correction:
+  - 初始 full vision memory 已由 manager 手动复制到 external cloud brain：
+    `D:\mavenProject\dhxy-cloud-brain\data\vision_memory.json`。
+  - 已验证 src/dst counts/hash 等价：
+    `entries=459`, `roiPolicies=674`, `clickPolicies=616`, `npcClickSamples=600`,
+    `fileSha256=EA8F3BA1F396DEB3A41073E46D63465E68DE18100D18DE62B2CF5A8F9FA8BAEB`,
+    `canonicalJsonSha256=5af74f8375d4fb03d0212c828049cbc262a56450323618359355d7059eb632e1`,
+    `JSON_EQUIVALENT=true`。
+  - 因此不再需要 NPC click HTTP migrate / DHXY migrate service；cloud canonical store 应直接从
+    `data/vision_memory.json` 启动加载并继续支持 runtime outcome 学习。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass; this worker
+    will not revert, checkout, reset, clean, or touch unrelated files.
+  - External cloud brain `D:\mavenProject\dhxy-cloud-brain` is not a git repository here; baseline is
+    current source inspection plus focused RED/GREEN tests.
+- Planned RED tests:
+  - DHXY `NpcClickSmartCloudWiringGuardTest` must fail while production still contains
+    `NpcClickMemoryMigrationService`, `cloud.npc-click-memory-migration-*`, or
+    `/api/cloud/npc-click-memory/migrate` config/endpoint strings.
+  - External cloud brain `NpcClickMemoryStoreTest` must fail while `/api/cloud/npc-click-memory/migrate`,
+    `DecisionEngine.npcClickMemoryMigrationResponse(...)`, `CloudBrainServer` route, or
+    `NpcClickMemoryStore.migrate(JsonNode)` still exist.
+  - Cloud behavior tests will seed only configured `visionMemoryPath` files before store/engine startup;
+    they must not call migrate API or `migrate(...)`.
+- RED evidence:
+  - `D:\mavenProject\DHXY`:
+    `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` first failed with
+    `DHXY production must not keep an NPC click vision-memory migration service`.
+  - `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` first failed with
+    `cloud-brain must not expose the removed NPC click migrate HTTP route`.
+- Implementation result:
+  - DHXY removed `src/main/java/com/bot/dhxy/cloud/task/NpcClickMemoryMigrationService.java`
+    and `src/test/java/com/bot/dhxy/cloud/task/NpcClickMemoryMigrationServiceTest.java`.
+  - DHXY removed `npcClickMemoryMigrationPath` / `npcClickMemoryMigrationEnabled` from
+    `CloudDecisionProperties` and removed `cloud.npc-click-memory-migration-*` from
+    `application.properties`.
+  - DHXY `NpcClickSmartCloudWiringGuardTest` now guards that production has no NPC click migrate
+    service/test/config/endpoint and that `NpcClickService` still has no local
+    `OcrRoiMemoryService.recommendNpcClickRegions(...)` or migration reference.
+  - External cloud brain removed `/api/cloud/npc-click-memory/migrate`,
+    `DecisionEngine.npcClickMemoryMigrationResponse(...)`, and `NpcClickMemoryStore.migrate(JsonNode)`.
+    Route memory migrate remains untouched.
+  - External cloud brain tests now seed by writing full canonical `vision_memory.json` to configured
+    `visionMemoryPath` before constructing `NpcClickMemoryStore` / `DecisionEngine`; no NPC click
+    migrate API or `migrate(...)` call is used for MEMORY seed.
+- GREEN verification:
+  - `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` passed.
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests compile` passed.
+  - `D:\mavenProject\DHXY`:
+    `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    passed.
+  - `D:\mavenProject\DHXY`: `mvn -q -DskipTests test-compile` passed.
+  - `D:\mavenProject\DHXY`: `node scripts/generate-cr-dashboard-data.js` passed and regenerated
+    `docs\cr-dashboard-data.js`.
+- Independent reviewer gate:
+  - Carson spec reviewer PASS; no P0/P1/P2. Confirmed DHXY/cloud-brain file equivalence, removed NPC
+    click migrate service/config/endpoint, preserved route-memory migrate, and cloud startup/load +
+    runtime outcome writeback paths.
+  - Kuhn code-quality/risk reviewer PASS; no P0/P1/P2. Confirmed no hidden production local
+    `vision_memory.json` auto-import or local ROI dependency, and `NpcClickMemoryStore` still loads
+    canonical store then writes full store + derived index.
+- Remaining fresh-runtime gates:
+  - cloud-brain production startup should load existing `data\vision_memory.json` directly.
+  - NPC click start logs should not show `npc-click-memory/migrate`, `vision-memory mirror submitted/import`,
+    or DHXY-side migrate service activity.
+  - Same/near `灵兽村使者 player=(111,84)` should return cloud `MEMORY` from canonical store; true click
+    failure should still update canonical store and derived index so the failed candidate is skipped next time.
+
+### 2026-07-05 CR185 canonical cloud vision memory boundary repair
+
+- User hard boundary update:
+  - Vision Memory 已全量迁云后，生产 source of truth 是 cloud canonical vision memory store。
+  - 本地 `config/vision_memory.json` 只能作为备份、测试 fixture 或显式手动一次性导入来源；正常生产 NPC click / tracker / OCR 决策路径不能再读本地这份数据。
+  - `NpcClickService` runtime 不应自动调用 `migrateDefaultIfNeeded()`，也不应通过 `OcrRoiMemoryService.recommendNpcClickRegions(...)` 读取本地 ROI/region 记忆。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short` already shows many unrelated modified/deleted/untracked files; this pass will not revert, checkout, reset, clean, or touch unrelated worktree changes.
+  - Current conflict points confirmed: `NpcClickService` imports/injects `NpcClickMemoryMigrationService` and calls `migrateDefaultIfNeeded()` before `NPC_CLICK_START`; it also imports/injects `OcrRoiMemoryService` and `resolveNpcScanRegions(...)` calls `recommendNpcClickRegions(...)`.
+- Planned RED tests:
+  - Update `NpcClickSmartCloudWiringGuardTest` so production source must not contain the runtime default migration call/import/field and must not call local `OcrRoiMemoryService.recommendNpcClickRegions(...)`.
+  - Behavior/source guard: production NPC click request building must use a fixed safe default scan region and not require a local vision-memory service or file before cloud FIFO start.
+  - Keep previous CR185 focused tests intact: outcome -> cloud canonical store -> old schema sample/policy -> derived MEMORY remains required.
+- RED evidence:
+  - `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` failed first with
+    `production NPC click runtime must not auto-import local config/vision_memory.json forbidden substring=migrateDefaultIfNeeded()`.
+- Implementation result:
+  - `NpcClickService` no longer imports/injects `NpcClickMemoryMigrationService` and no longer calls
+    `migrateDefaultIfNeeded()` before `NPC_CLICK_START`.
+  - `NpcClickService` no longer imports/injects `OcrRoiMemoryService` and no longer calls
+    `recommendNpcClickRegions(...)`; request building now uses `defaultNpcClickScanRegions(...)`,
+    a bound-window full-window safe envelope, while cloud canonical memory remains responsible for
+    `MEMORY` derivation and candidate strategy.
+  - `NpcClickMemoryMigrationService` no longer has `DEFAULT_VISION_MEMORY_PATH` or
+    `migrateDefaultIfNeeded()`; it only keeps explicit `migrate(Path visionMemoryPath)` for manual
+    admin/test backfill.
+  - `NpcClickSmartFifoBehaviorTest` harness now constructs `NpcClickService` without local migration
+    or local ROI memory fake.
+- GREEN verification:
+  - `D:\mavenProject\DHXY`: `mvn -q "-Dtest=NpcClickSmartCloudWiringGuardTest" test` passed.
+  - `D:\mavenProject\DHXY`: `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` passed.
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` passed.
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests compile` passed.
+  - `D:\mavenProject\DHXY`: `mvn -q -DskipTests test-compile` passed.
+  - CR185 card updated with cloud canonical source terminology and runtime no-local-vision-memory gate; dashboard regenerated.
+- Independent reviewer result:
+  - Lagrange spec review PASS，无 P0/P1/P2。确认生产 `NpcClickService` 已断开
+    `NpcClickMemoryMigrationService` / `migrateDefaultIfNeeded()` / `OcrRoiMemoryService` /
+    `recommendNpcClickRegions(...)`；确认 queue outcome 保留 cloud candidate
+    `reason/matchedText/candidateBox`，本地 verifier 原因单独写 `localVerificationReason`。
+  - Beauvoir code/risk review PASS，无 P0/P1/P2。确认 explicit `migrate(Path)` 只作
+    manual/admin/test backfill；确认 cloud full mirror + derived index 分离保存，reload
+    idempotency 与 `partial` / `persistStatus=failed` 行为已有测试覆盖。
+- ROI follow-up risk:
+  - 两个 reviewer 都将 `defaultNpcClickScanRegions(...)` 的 full-window
+    `0,0,1024,768` 记为 P3/fresh-runtime 风险：它满足“本地 vision memory 缺失也能发起 cloud
+    FIFO”，但长期会增加云端 OCR/template 噪点和误点压力。
+  - 用户确认不希望每次 NPC click 前同步请求云端 ROI，因为会给热路径增加网络 RTT。后续单独开
+    `Cloud ROI Snapshot`：程序启动后异步从云端 canonical store 拉取一份整理好的 ROI JSON。
+  - 本地运行时先查只读 snapshot；命中 `mapName/npcName/target/playerCoord/windowSize` 的 ROI
+    就按 ROI 截图/上传/safety-shell 限制，未命中才 fallback 到 full-window。
+  - Snapshot 当前进程内不要求实时更新；本轮新学习写回云端 canonical store 后，下次启动拉取时生效。
+    如需更快生效，只能做低优先级后台 refresh，不能阻塞 NPC click 热路径。
+  - 本地缓存只能是 `cloud_roi_snapshot` / `cloud_roi_cache`，带 cloud memory version/hash/TTL/
+    target key；本地不能自行学习、修改或把它当成新的 source of truth。
+- Remaining fresh-runtime gates:
+  - NPC click start 前不再出现 runtime `vision-memory mirror submitted/import` 日志。
+  - Cloud 端 canonical `data/vision_memory.json` 已存在且完整。
+  - 同/近似 `灵兽村使者 player=(111,84)` 场景下一轮先返回 cloud `MEMORY` hit。
+  - 若 `MEMORY` 点击失败，failure 写回 cloud canonical store，下一轮跳过该失败 candidate。
+  - 观察 full-window 默认 ROI 的噪点/耗时/误点，为后续 `Cloud ROI Resolve` 提供 runtime 证据。
+
+### 2026-07-05 CR185 review repair: outcome evidence + idempotency blockers
+
+- Role: DHXY CR185 repair worker。本轮是修复上一轮 worker scope / review blocker，不是新 CR；谢帅/manager 不直接写 Java 业务代码，本实现由 worker 承接。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short` already shows many unrelated modified/deleted/untracked files before this repair; this pass will not revert, checkout, reset, clean, or otherwise touch unrelated worktree changes.
+  - External cloud brain lives at `D:\mavenProject\dhxy-cloud-brain` and is not a git repository in this workspace, so its baseline evidence is current file inspection plus focused tests.
+- Review blockers being repaired:
+  - Lagrange P1: DHXY production FIFO outcome currently overwrites cloud candidate evidence with local verifier reason/template. Strong acceptance requires `YELLOW_NAME` candidate evidence (`reason=cloud-brain-npc-raw-yellow-target-ocr`, `matchedText=兽村使者`, `candidateBox=467,257,63,17`, click `498,215`, player `111,84`, target `112,93`) to flow from FIFO message through local `VERIFIED` report body.
+  - Beauvoir P2: cloud `NpcClickMemoryStore` idempotency is memory-only; reload or mirror-save-success / derived-save-fail retry can replay the same outcome and increment policy counters again.
+  - Beauvoir P2: DHXY `NpcClickMemoryMigrationService` treats remote `status=partial` / `persistStatus=failed` as `SUBMITTED`.
+- Planned RED tests:
+  - DHXY `NpcClickSmartFifoBehaviorTest`: production FIFO `YELLOW_NAME` message -> local verifier `VERIFIED` -> captured outcome args/body evidence, without hand-calling `reportOutcome(..., "兽村使者")`.
+  - DHXY `NpcClickMemoryMigrationServiceTest`: 2xx response with `status=partial` / `persistStatus=failed` must return `FAILED`.
+  - Cloud `NpcClickMemoryStoreTest`: same persisted outcome after reload must be duplicate/idempotent and counters unchanged; mirror save success plus derived save failure retry must not double-increment counters.
+- Implementation result:
+  - DHXY queue message now carries cloud candidate `matchedText`; queue outcome body keeps cloud candidate `reason/matchedText/candidateBox` as production evidence and stores local verifier reason/template separately as `localVerificationReason` / `verificationMatchedText`.
+  - DHXY mirror import response parsing now treats remote `partial` / `persistStatus=failed` as `FAILED`, with failure/partial log wording.
+  - External cloud brain outcome samples now persist `attemptToken`; `NpcClickMemoryStore` rebuilds idempotency from persisted `npcClickSamples` and duplicate retry only refreshes mirror/derived persistence without reapplying counters.
+- RED evidence:
+  - DHXY focused command first failed because production-chain test required `NpcClickSmartQueueMessageBuilder.matchedText(...)`, proving queue message had no OCR matched-text evidence.
+  - External cloud brain focused command first failed 2 tests: reload and derived-save-fail retry returned `accepted` instead of `duplicate`.
+- GREEN verification:
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` passed.
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests compile` passed.
+  - `D:\mavenProject\DHXY`: `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` passed.
+  - `D:\mavenProject\DHXY`: `mvn -q -DskipTests test-compile` passed.
+  - CR185 card updated; dashboard regenerated after card update.
+- New user source-of-truth boundary added after this worker result:
+  - Production source of truth must be cloud canonical vision memory store, not local
+    `config/vision_memory.json`.
+  - The local file may remain as backup/test fixture/explicit one-time import input, but normal
+    NPC click runtime must not read it or auto-upload it.
+  - Current conflicts found by manager scan: `NpcClickService` still calls
+    `npcClickMemoryMigrationService.migrateDefaultIfNeeded()` before NPC click start, and still uses
+    `OcrRoiMemoryService.recommendNpcClickRegions(...)` to derive production NPC scan regions from
+    local `vision_memory.json`.
+  - Worker `Fermat` was interrupted with a new repair request: remove/disable those production reads,
+    keep only explicit/manual import if needed, add source guards that production source no longer
+    references `migrateDefaultIfNeeded()` or local ROI recommendation, and rerun CR185 focused tests.
+
+### 2026-07-05 云端五环 tracker reader 必须等价本地 title-gated 逻辑
+
+- User request: 云端五环 tracker reader 必须和本地五环逻辑一模一样；本地只多做截图上传，云端收到图后必须先识别五环 title/block，再在五环 block 内按五环专用绿色链接规则返回点击点。不能继续用 `taskCode=wuhuan` 后整 panel 找第一个绿字的逻辑。
+- Root cause confirmed:
+  - DHXY 本地旧逻辑是 `五环 title -> 五环 detail block -> block 内绿字 -> 五环专用 pathing-name segment`。
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java` 旧云端逻辑只在 `taskCode=wuhuan` 时调用 `wuhuanTrackerLinks(...)`，不验证五环 title；找不到五环目标段时还 fallback 到修罗式第一绿链。
+  - 旧测试甚至断言 `wuhuan must not require taskKey`，这允许云端返回 `taskKey=null` 的 click。
+- RED first:
+  - 新增云端 AB replay：
+    - 正例：`D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wuhuan-one-green-link.png` 必须返回 click，并带 `taskKey=wuhuan.tracker` 与 `wuhuanTitleScore`。
+    - 反例：同样以 `taskCode=wuhuan` 读取 `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wubei-sancang-one-green-link.png`，必须 `NO_ACTION`。
+  - RED 命令：
+    `mvn -q "-Dtest=TrackerPanelReaderReplayTest#wuhuanTrackerPanelReturnsWindowRelativeClickAndMarkedReplay+wuhuanTrackerPanelRejectsWubeiTaskBlockEvenWhenGreenLinkExists" test`
+  - RED 结果：反例失败为 `expected: <NO_ACTION> but was: <click=101,233>`；正例失败为 `expected: <wuhuan.tracker> but was: <>`。
+- Implementation:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+    现在对 `taskCode=wuhuan` 先用 `images/template/wuhuan/panel_title.png` 做 title gate，阈值 `0.82`，匹配成功后裁 `175x65` 五环 detail block。
+  - 云端 diagnostics 现在写入 `taskKey=wuhuan.tracker`、`wuhuanTitleScore`、`wuhuanTitleBox`、`wuhuanDetailCrop`。
+  - 五环绿链选择去掉旧的修罗 fallback，改为复刻本地专用规则：优先解析“坐标数字后、进度 `[n/5]` 前”的目标名段；解析不到时按本地 `findWuhuanPathingNameSegment` 的分段规则选择，找不到则 `NO_ACTION`。
+- Verification:
+  - AB replay GREEN：
+    `mvn -q "-Dtest=TrackerPanelReaderReplayTest#wuhuanTrackerPanelReturnsWindowRelativeClickAndMarkedReplay+wuhuanTrackerPanelRejectsWubeiTaskBlockEvenWhenGreenLinkExists" test`
+  - Full tracker-panel replay GREEN：
+    `mvn -q "-Dtest=TrackerPanelReaderReplayTest" test`
+  - Marked output:
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wuhuan-one-green-link-marked.png`，红框/红点落在五环左侧绿色链接上。
+  - DHXY Java business code was not changed in this entry.
+
+### 2026-07-04 修罗 tracker 误命中非修罗绿链 + 输入队列 `InputActionWorker$1` 缺类
+
+- User request: “两个都修”，即修罗启动 tracker 误把非修罗任务绿色链接当成修罗、以及即使识别到绿链也没有真实点击的问题。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short` already shows many unrelated local modified/deleted/untracked files; this pass will not revert unrelated worktree changes.
+  - Cloud brain source lives at `D:\mavenProject\dhxy-cloud-brain`; that directory is not a separate git repository in this workspace, so baseline evidence for it is current file inspection rather than `git status`.
+- Runtime evidence:
+  - `20:39:52.435` `TRACKER_PANEL_READER taskCode=xiuluo imageMode=TRACKER_PANEL_CROP ... cloudDecision=click=38,257`。
+  - The saved image `images\temp\hwnd-7D1442\task_tracker_detail_xiuluo-v2_startup-screen-resume.png` is not 修罗; it shows `【引导】千载枯荣[社树之心]` and green link `石磨`。
+  - `20:39:52.436` 修罗热启动 accepted that false green link and entered `AFTER_ACCEPT_MAINTENANCE_CHECK`, then started leaving 灵兽村 without accepting a real 修罗 task。
+  - `20:39:54.895` input request `xiuluo-v2:trackerShortcutGreen:1` went to dead letter with `java.lang.NoClassDefFoundError: com/bot/dhxy/input/action/InputActionWorker$1`; no physical `clickLeft` log followed.
+- Current code evidence:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java` only title-gates 修罗 when `imageMode=XIULUO_ACCEPT_SNAPSHOT`; normal `TRACKER_PANEL_CROP` directly scans green links.
+  - `src/main/java/com/bot/dhxy/input/action/InputActionWorker.java` has enum switches in `execute(...)`, `toAltShortcut(...)`, and `pressAltShortcutWithRealInput(...)`, which generate the synthetic `InputActionWorker$1` class that failed at runtime.
+- Plan:
+  - Add replay test proving 修罗 `TRACKER_PANEL_CROP` must reject a non-修罗 task panel even if it has a green link.
+  - Restore 修罗 title gate for cloud `TRACKER_PANEL_CROP`; keep explicit detail-crop replay mode separate if needed.
+  - Add input worker source/behavior guard proving this class no longer uses enum switch dispatch.
+  - Replace `InputActionWorker` enum switches with direct `InputActionType` comparisons so no synthetic switch-map class is needed for real click execution.
+- Implementation result:
+  - Added cloud replay resource `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\xiuluo-guide-task-false-positive.png` from the runtime false-positive screenshot.
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java` now title-gates 修罗 `TRACKER_PANEL_CROP` the same way as accept snapshot: it must match `xiuluo_tracker_title.png` before green-link scanning.
+  - Explicit `DETAIL_BLOCK_CROP` remains available for detail-only replay, so tests can still exercise the old green-link segment reader without treating arbitrary live panels as 修罗。
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\TrackerPanelReaderReplayTest.java` now covers the false-positive guide panel and keeps 修罗 detail-only replay explicit.
+  - `src/main/java/com/bot/dhxy/input/action/InputActionWorker.java` no longer uses enum switch dispatch in `execute(...)`, `toAltShortcut(...)`, or real Alt fallback, so the worker no longer needs synthetic `InputActionWorker$1` at runtime.
+  - Added `InputActionWorkerNoSyntheticSwitchMapGuardTest` to guard the worker source against reintroducing enum switch-map dispatch.
+- Verification:
+  - Red first: cloud false-positive replay failed as expected with `expected NO_ACTION but was click=38,257`.
+  - Red first: a temporary worker guard failed as expected on `Unexpected token present: switch (action.getType())`; the permanent guard now lives in `InputActionWorkerNoSyntheticSwitchMapGuardTest`.
+  - `mvn -q "-Dtest=TrackerPanelReaderReplayTest" test` passed in `D:\mavenProject\dhxy-cloud-brain`.
+  - `mvn -q "-Dtest=TrackerPanelReaderReplayTest#xiuluoTrackerPanelCropRejectsNonXiuluoTitleEvenWhenGreenLinkExists" test` passed.
+  - `mvn -q "-Dtest=TrackerPanelReaderReplayTest#xiuluoAcceptSnapshotUsesXiuluoTrackerLogicAndReturnsWindowRelativeClick" test` passed.
+  - `mvn -q -DskipTests compile` passed in `D:\mavenProject\dhxy-cloud-brain`.
+  - `mvn -q clean -DskipTests compile` passed in `D:\mavenProject\DHXY`; after clean compile, `target\classes\com\bot\dhxy\input\action` contains only `InputActionWorker.class`, and `javap` shows no `InputActionWorker$1` reference.
+  - `mvn -q "-Dtest=InputActionWorkerNoSyntheticSwitchMapGuardTest" test` passed.
+  - Note: `InputActionPauseCancellationGuardTest` still fails on an unrelated existing `NpcClickService` source-shape guard after the worker `$1` assertion is fixed; this pass did not change NPC Ctrl-menu checkpoint behavior.
+- Replay output:
+  - Positive marked 修罗 output: `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\xiuluo-accept-snapshot-marked.png`。
+  - False-positive guide panel intentionally produces no click/marked point; it is now rejected with `NO_ACTION` before green-link click selection.
+
+### 2026-07-04 修罗/五倍回城验证后毫秒级清 stale `IN_COMBAT`
+
+- User request: 修罗和五倍在 fast expected exit 后已经用回城道具并验证回到起点地图时，
+  不要再等 runner/window watcher 两次 miss 才把旧 `IN_COMBAT` 清掉；这里要做成毫秒级的同步修正。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b`。
+  - Latest pushed baseline visible locally:
+    `origin/dev=e543d02` (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` already shows many unrelated local modified/deleted/untracked files;
+    this pass will not revert or clean unrelated worktree changes.
+  - Relevant local evidence: current `XiuluoTaskV2.useReturnItem(...)` and
+    `WubeiTask.useReturnItem(...)` both call `playerStateService.syncMyPosition()` after return item use
+    and trust the task start map before continuing, but neither tells `AutoCombatService` to reconcile
+    stale combat action state after that stronger return-home proof.
+  - Relevant local evidence: `AutoCombatService.consumeExitAndRecover(...)` already clears
+    `pendingCombatEntryMaintenanceAt`, `fastExpectedExitWatchArmed`, `expectedCombatExitWaitArmed`,
+    records combat exit, and sets `GameContext.ActionState.FREE` after a consumed exit signal; there is
+    no equivalent task-owned hook for the case where return-home verification proves the exit first.
+- Runtime evidence from `logs/archive/dhxy-console.2026-07-04.0.log`:
+  - `19:26:02.920` 修罗 fast expected exit moved task phase `WAIT_COMBAT -> RETURN_HOME`。
+  - `19:26:03.204` window combat watcher conservatively forced shared action state back to `IN_COMBAT`。
+  - `19:26:08.305` return item click was sent.
+  - `19:26:12.074` task thread verified position map `灵兽村`, proving return-home succeeded.
+  - `19:26:14.047` next navigation was aborted because shared action state was still stale `IN_COMBAT`.
+- Plan:
+  - Add one lightweight `AutoCombatService` method that only reconciles stale `IN_COMBAT` after a task has
+    already verified return-home by map.
+  - Call it from both cached and normal verified return-item branches in 修罗 and 五倍.
+  - Add a source guard proving the hook exists in both tasks and the service method stays lightweight
+    without screenshot/OCR/template/navigation sleeps.
+- Implementation result:
+  - Added `AutoCombatService.reconcileReturnHomeVerifiedCombatState(...)` as a synchronous state-only
+    hook. It clears `expectedCombatExitWaitArmed`, `fastExpectedExitWatchArmed`,
+    `pendingCombatEntryMaintenanceAt`, sets stale `GameContext.ActionState.IN_COMBAT` to `FREE`, and
+    discards stale combat-enter signal after the state flip.
+  - The hook deliberately does not call `recordCombatExit()`, because normal fast-exit consumption may
+    already have decremented auto-combat estimated rounds; return-home verification must not double-count.
+  - `XiuluoTaskV2.useReturnItem(...)` now calls the hook in both cached-return verified and normal
+    return-item verified branches before leader return-signal precheck.
+  - `WubeiTask.useReturnItem(...)` now calls the same hook in both cached-return verified and normal
+    return-item verified branches before leader return-signal precheck.
+  - Added `AutoCombatReturnHomeVerifiedReconcileWiringTest` to guard that the hook stays lightweight and
+    both tasks keep the verified-return branches wired.
+- Verification:
+  - `mvn -q -Dtest=AutoCombatReturnHomeVerifiedReconcileWiringTest test` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Remaining fresh-runtime gate:
+  - 下次修罗/五倍如果出现 fast expected exit 后 runner 又保守拉回 `IN_COMBAT`，回城地图验证成功后
+    应立即打印 `return-home verification reconciled stale combat state`，下一步导航不应再被 stale
+    `IN_COMBAT` 拦住。
+
+### 2026-07-04 修罗 accept snapshot tracker 解析改回修罗标题路径
+
+- User request: 启动后第一轮修罗接任务后，accept snapshot 的 tracker 解析失败；用户确认要把这段
+  从五倍 `wubei_tracker_anchor` 预裁剪改成修罗自己的识别路径。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` already shows many unrelated local modified/deleted/untracked files;
+    this pass will not revert or clean unrelated worktree changes.
+  - Local evidence: current `TaskTrackerPanelService.readXiuluoTrackerPanelFromSnapshot(...)` checks
+    `trackerPanelReaderCloudDecisionService.isActive()` and then calls
+    `resolveTrackerPanelRectFromSnapshot(...)`, which uses
+    `images/template/task/wubei_tracker_anchor.png` at threshold `0.82`.
+  - Pushed/stable evidence: `c37723e` `readXiuluoTrackerPanelFromSnapshot(...)` returned
+    `readXiuluoTrackerPanelForReplay(windowSnapshotPath, absoluteLeft, absoluteTop, source, null)`,
+    i.e. 修罗 snapshot replay/title path instead of the 五倍 anchor gate.
+- Runtime evidence from `logs/archive/dhxy-console.2026-07-04.0.log` first task:
+  - `19:23:03.384` saved
+    `images\temp\hwnd-10F1474\xiuluo_accept_snapshot_xiuluo-v2-accept-objective-1-known-dialog-accept-task-memory.png`。
+  - `19:23:03.678` logged `snapshot tracker anchor miss` and
+    `reason=missing tracker panel crop from snapshot` before any `TRACKER_PANEL_READER` request.
+- Corrected user requirement:
+  - DHXY 本地不能改成“本地用修罗标题/绿链裁 detail 后再上传”；本地仍然只负责截图和传图。
+  - 不是新增 `WINDOW_SNAPSHOT`/全图通用方案；本次只沿用修罗原来的 accept snapshot 输入语义，
+    用专门的 `imageMode=XIULUO_ACCEPT_SNAPSHOT` 标记。
+  - `TRACKER_PANEL_READER` 云端必须按 `taskCode=xiuluo` 在这张修罗接任务截图里跑旧修罗
+    tracker/title/green 逻辑。
+- Plan:
+  - Add a DHXY guard test proving 修罗 accept snapshot cloud request uploads the original
+    `windowSnapshotPath` and does not require `wubei_tracker_anchor` pre-crop.
+  - Add a cloud-brain replay test proving `TRACKER_PANEL_READER` can parse the 修罗 accept snapshot
+    with `imageMode=XIULUO_ACCEPT_SNAPSHOT`.
+  - Minimal code change: DHXY `readXiuluoTrackerPanelFromSnapshot(...)` sends the saved
+    `windowSnapshotPath` to cloud with its captured base; cloud brain crops/reads 修罗 tracker from
+    that same input image.
+  - Verification: focused DHXY/cloud tests and compile. Runtime still needs next live run because
+    the failed first snapshot was overwritten.
+- Implementation result:
+  - DHXY `TaskTrackerPanelService.readXiuluoTrackerPanelFromSnapshot(...)` no longer calls
+    `resolveTrackerPanelRectFromSnapshot(...)` when cloud reader is active. It sends
+    `windowSnapshotPath.toString()` with `imageMode=XIULUO_ACCEPT_SNAPSHOT`.
+  - `XIULUO_ACCEPT_SNAPSHOT` 的 `imageOriginWindow` 固定为 `(0,0)`，不再用当前窗口 base
+    反推，避免后台解析时窗口 base 变化污染原截图坐标语义；其他 `TRACKER_PANEL_CROP` 路径仍按
+    裁图 screen absolute origin 转 window-relative origin。
+  - Cloud brain `DecisionEngine` handles `taskCode=xiuluo` + `XIULUO_ACCEPT_SNAPSHOT` by locating
+    the `修罗任务` title template in cloud, cropping the old 175x40 tracker detail block, scanning
+    the green link there, and returning a window-relative click.
+  - Added cloud-brain replay asset:
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\xiuluo-accept-snapshot.png`
+    from the available 19:24 retry snapshot, plus `xiuluo_tracker_title.png`.
+  - Marked output:
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\xiuluo-accept-snapshot-marked.png`;
+    red click/box lands on the left 修罗 tracker green link.
+- Verification:
+  - RED first:
+    `mvn -q -Dtest=TrackerPanelReaderCloudSourceGuardTest#xiuluoAcceptSnapshotCloudReaderUploadsOriginalSnapshotInsteadOfWubeiAnchorPrecrop test`
+    failed before the DHXY change because `XIULUO_ACCEPT_SNAPSHOT` was absent.
+  - RED first:
+    `mvn -q -Dtest=TrackerPanelReaderReplayTest#xiuluoAcceptSnapshotUsesXiuluoTrackerLogicAndReturnsWindowRelativeClick test`
+    failed before the cloud-brain change because `taskKey` was empty / no 修罗 accept-snapshot path.
+  - GREEN:
+    `mvn -q -Dtest=TrackerPanelReaderCloudSourceGuardTest#xiuluoAcceptSnapshotCloudReaderUploadsOriginalSnapshotInsteadOfWubeiAnchorPrecrop test`;
+    `mvn -q -Dtest=TrackerPanelReaderReplayTest#xiuluoAcceptSnapshotUsesXiuluoTrackerLogicAndReturnsWindowRelativeClick test`;
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`;
+    cloud-brain `mvn -q -Dtest=TrackerPanelReaderReplayTest test`;
+    DHXY `mvn -q -DskipTests compile`;
+    cloud-brain `mvn -q -DskipTests compile`.
+- Remaining fresh-runtime gate:
+  - 下次启动修罗第一轮接任务后，日志应出现
+    `TRACKER_PANEL_READER ... imageMode=XIULUO_ACCEPT_SNAPSHOT`，不应再出现
+    `snapshot tracker anchor miss` / `missing tracker panel crop from snapshot` 阻止云端判断。
+
+### 2026-07-04 CR183 `TEAM_RETURN_POLICY` 撤出云端，归队信号纯本地
+
+- Role: 谢帅 / business supervisor。用户已明确：team return 只做本地普通截图模板匹配，不上云端，
+  不发任何 request。谢帅不直接写 Java 业务实现，派 worker TDD 修复，并要求两个 reviewer approval。
+- Worker implementation baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` shows many unrelated modified/deleted/untracked files before this
+    worker, including existing local changes in `TeamReturnService.java`, `application.properties`,
+    docs, cloud runtime tests, task/service files, templates, and untracked cloud/test files. This
+    worker will not reset, checkout, revert, clean, or otherwise touch unrelated worktree changes.
+  - Pushed evidence:
+    `git show --stat --oneline origin/dev -- TeamReturnService.java application.properties TeamReturnPrecheckWiringTest.java TeamReturnCloudRequiredFailureTest.java RuntimeDecisionWorkerDShadowWiringTest.java CloudRequiredExecuteWaveConfigTest.java`
+    shows no pushed changes for those paths at `origin/dev`; the team-return cloud gate is a local
+    migration delta on this branch.
+  - Local diff evidence before edit:
+    `git diff -- TeamReturnService.java application.properties TeamReturnPrecheckWiringTest.java TeamReturnCloudRequiredFailureTest.java RuntimeDecisionWorkerDShadowWiringTest.java CloudRequiredExecuteWaveConfigTest.java`
+    shows current local `TeamReturnService` imports/injects `RuntimeDecisionShadowService` and
+    `TeamReturnPolicyCloudDecisionService`, calls `TEAM_RETURN_POLICY` in member click, leader wait,
+    and leader precheck consume, adds `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)`, and
+    `application.properties` enables `cloud.services.team-return-policy.execute-enabled=true`.
+- Runtime/root-cause evidence:
+  - `TeamReturnService` 当前在成员归队按钮点击、队长等待归队信号、leader precheck consume 前调用
+    `TeamReturnPolicyCloudDecisionService`。
+  - `application.properties` 当前启用
+    `cloud.services.team-return-policy.execute-enabled=true`、`execute-percent=100`、`fallback=STOP`。
+  - 外部 cloud brain `DecisionEngine` 对 `TEAM_RETURN_POLICY` 返回
+    `action=USE_LOCAL_RESULT;reason=cloud-brain-team-return-policy`。
+  - Java execute gate 只接受 `ALLOW` / `DENY`，所以 `USE_LOCAL_RESULT` 被拒绝；随后
+    `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)` 又把 failure 包装成
+    `conclusive=true, signalPresent=true`，误导任务层打印 `team return precheck saw return signal`。
+- User decision:
+  - `TEAM_RETURN_POLICY` 不属于云端核心逻辑，只依赖本地截图、归队按钮/信号模板、本地 session/capability
+    和本地输入调度。
+  - 生产路径必须 pure local：不发 `TEAM_RETURN_POLICY` request；cloud 不通/空返回/`USE_LOCAL_RESULT`/失败
+    都不能影响 team return 本地逻辑。
+- CR card:
+  - `docs/PACKAGE_ARCHITECTURE.md` 已新增 CR183 row/card。
+- Worker implementation requirements:
+  - `TeamReturnService.clickReturnTeamIfPresent(...)`、leader wait、`consumeLeaderSignalPrecheck(...)`
+    不再调用 `TeamReturnPolicyCloudDecisionService` / `TEAM_RETURN_POLICY`。
+  - 保持本地按钮模板、leader signal 模板、ROI、阈值、摄妖香顺序、input queue 原子点击、
+    local-team capability gate、队长放权窗口、五倍/修罗 phase 顺序不变。
+  - `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)` 不能再作为 signal-present 生产语义；
+    若删除不可行，至少保证 team return local-only 后生产不可达，并用 guard 防回归。
+  - `application.properties` 关闭/删除 `cloud.services.team-return-policy.*` execute 配置；生产日志不应再出现
+    `serviceId=TEAM_RETURN_POLICY`。
+- Required verification:
+  - 先 RED 后 GREEN：focused test 证明 team return local-only，不调用 cloud gate；按钮存在仍点击，按钮不存在仍 false；
+    precheck `NO_SIGNAL` / `SIGNAL_PRESENT` 语义不变；cloud failure 不再能伪装 signal。
+  - Source/config guard：`TeamReturnService` 不 import/inject/call `TeamReturnPolicyCloudDecisionService`；
+    `application.properties` 不启用 `team-return-policy.execute-enabled=true`。
+  - `mvn -q -DskipTests compile`。
+  - Fresh runtime 后看 `logs/dhxy-console.log`：无 `cloud.decision serviceId=TEAM_RETURN_POLICY`；
+    本地 no-signal 不等待，不再因 cloud failure 打印 `team return precheck saw return signal`。
+- Worker implementation result:
+  - Touched files:
+    `src/main/java/com/bot/dhxy/service/TeamReturnService.java`,
+    `src/main/resources/application.properties`,
+    `src/test/java/com/bot/dhxy/service/TeamReturnLocalOnlyGuardTest.java`,
+    `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionWorkerDShadowWiringTest.java`,
+    `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowWaveWiringTest.java`,
+    `src/test/java/com/bot/dhxy/cloud/decision/CloudRequiredExecuteWaveConfigTest.java`,
+    `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`, `docs/cr-dashboard-data.js`。
+  - `TeamReturnService` 已移除 `TeamReturnPolicyCloudDecisionService`、
+    `RuntimeDecisionShadowService`、`CloudDecisionServiceId.TEAM_RETURN_POLICY`、
+    `CloudDecisionServiceId.FAILURE_CLASSIFIER` 的生产调用，并删除
+    `LeaderSignalPrecheckStatus.cloudRequiredFailure(...)`。
+  - 成员归队点击、leader wait、leader precheck consume 全部保留本地模板/截图结果语义；
+    按钮命中后仍先检查摄妖香，再重新确认按钮并通过 input queue 提交点击。
+  - `application.properties` 显式关闭
+    `cloud.services.team-return-policy.shadow-enabled=false`,
+    `execute-enabled=false`, `execute-percent=0`。
+  - RED：`mvn -q -Dtest=TeamReturnLocalOnlyGuardTest test` 首次失败；日志出现
+    `cloud.decision serviceId=TEAM_RETURN_POLICY ... reason=client exception: IllegalStateException: team return must stay local-only`，
+    断言失败为 `no-signal status expected=false actual=true`，证明 cloud failure 会伪装 signal。
+  - GREEN:
+    `mvn -q "-Dtest=TeamReturnLocalOnlyGuardTest,CloudRequiredExecuteWaveConfigTest" test`;
+    `mvn -q -DskipTests test-compile`;
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionWorkerDShadowWiringTest`;
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowWaveWiringTest`;
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.service.TeamReturnPrecheckWiringTest`;
+    `mvn -q -DskipTests compile`。
+  - Source/config guard：生产 `TeamReturnService.java` 与 `application.properties` 不再命中
+    `TeamReturnPolicyCloudDecisionService`、`CloudDecisionServiceId.TEAM_RETURN_POLICY`、
+    `LeaderSignalPrecheckStatus.cloudRequiredFailure` 或
+    `cloud.services.team-return-policy.execute-enabled=true`。
+- Reviewer approval gate (2026-07-04):
+  - Reviewer #1（规格/业务边界）批准，无 P0/P1/P2 blocker。确认 member return click 只走本地按钮模板、
+    摄妖香检查、重新确认按钮和 input queue 点击；leader wait 只查本地 signal 模板；precheck
+    `missing/stale/not-ready/failed` 仍 inconclusive，`NO_SIGNAL` / `SIGNAL_PRESENT` 语义正确。
+  - Reviewer #2（代码质量/回归风险）批准，无 P0/P1/P2 blocker。确认 constructor/字段已清理为本地依赖，
+    配置关闭 team-return-policy shadow/execute，文档/card/dashboard 已同步。
+  - 谢帅复核验证：
+    `mvn -q "-Dtest=TeamReturnLocalOnlyGuardTest,CloudRequiredExecuteWaveConfigTest" test` passed；
+    `mvn -q -DskipTests test-compile` passed；
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionWorkerDShadowWiringTest` passed；
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowWaveWiringTest` passed；
+    `java -cp "target/classes;target/test-classes" com.bot.dhxy.service.TeamReturnPrecheckWiringTest` passed；
+    `mvn -q -DskipTests compile` passed。
+  - Minor follow-up, not blocking fresh runtime：`TeamReturnPolicyCloudDecisionService` 旧 wrapper 仍作为不可达
+    `@Service` 存在；当前无生产引用、配置关闭，不会发 request。后续可单独删除或标 Deprecated。
+  - Current status: Review / fresh runtime pending。Do not mark CR183 Done；下一步只需实跑验证日志无
+    `cloud.decision serviceId=TEAM_RETURN_POLICY`。
+  - Remaining fresh-runtime gate：重启 DHXY 后跑五倍/修罗 team return precheck 路径；
+    `logs/dhxy-console.log` 不应出现 `cloud.decision serviceId=TEAM_RETURN_POLICY`；
+    本地 `NO_SIGNAL` 不能再打印 `team return precheck saw return signal`。
+
+### 2026-07-04 CR182 左侧 tracker panel reader 云端化派工
+
+- Role: 谢帅 / business supervisor。按用户确认的最小 payload 方案推进；谢帅不直接写 Java
+  业务实现，后续由 worker 实现并经过两个独立 reviewer。
+- User-approved payload boundary:
+  - 本地只负责定位/裁剪左侧 tracker 图、上传 `imagePayloadBase64` / `payloadMimeType=image/png` /
+    `imageSha256` 和图像 origin/window 坐标语义。
+  - 云端 `TRACKER_PANEL_READER` 从图里计算当前任务需要的最小结果。
+  - 五环 `wuhuan` / 修罗 `xiuluo`：生产 payload 只需要
+    `action=CLICK_TRACKER_LINK` + `clickWindowRelative=x,y`；`title` 不进业务主字段。
+  - 五倍 `wubei`：额外返回 `taskKey` 做暗雷/白龙马/黄袍/普通怪分流；显形镜/白龙马多绿链时返回
+    必要 `links[index,clickWindowRelative]`；`targetName` 仅在现有五倍战斗目标逻辑确实需要时返回。
+  - `title` 最多放 diagnostics，不作为本地业务判断字段。
+- Current code evidence before worker:
+  - `TaskTrackerPanelService` 仍在本地做 tracker title template、yellow OCR、green link segmentation、
+    click point calculation。
+  - `TaskClassifierCloudShadowService` 只把本地 `TaskTrackerPanelReadResult` 的 `taskKey/yellowText/linkCount`
+    发给云端 shadow。
+  - `TrackerLinkRankerCloudShadowService` 只把本地已算好的 `greenLinks` 候选交给云端返回 click；
+    不是从 tracker 图片计算。
+  - 五倍消费 `taskKey/yellowText/greenLinks`，修罗/五环主要消费绿链点击点。
+- CR card:
+  - `docs/PACKAGE_ARCHITECTURE.md` 已新增 CR182 table row 和详细 card。
+- Worker boundaries:
+  - 不改五倍/修罗/五环 phase 顺序、pathing watcher、prepared dialog、回程/显形镜/黄袍/暗雷业务规则。
+  - 不改输入队列原子点击规则；本地仍负责实际点击。
+  - 不改 tracker anchor 定位/拖回固定位置，除非先记录冲突并等待审批。
+  - 生产 cloud required 时，`NOT_FOUND`/invalid/timeout 不得 silently fallback 到本地绿链点击。
+- Required verification:
+  - DHXY focused/source guard：request payload/origin/taskCode/phase/source，cloud required 不用本地
+    `greenLinks` fallback，五环/修罗/五倍消费字段符合 CR182。
+  - External cloud brain replay：五环、修罗、五倍至少各一张 tracker 图，输出 marked 图；五倍必须覆盖
+    白龙马/显形镜双绿链样本。
+  - Fresh runtime gate：重启 DHXY + external sidecar/JAR 后看 `TRACKER_PANEL_READER` request/response，
+    绿链点击坐标来自 cloud response。
+- Worker implementation baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline visible locally:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` shows many unrelated modified/deleted/untracked files before this
+    worker, including existing local changes in `TaskTrackerPanelService`, `WubeiTask`,
+    `FiveRingTaskV2`, and `XiuluoTaskV2`; this worker will not reset, checkout, revert, or clean them.
+  - Pushed evidence:
+    `git show --stat --oneline origin/dev -- TaskTrackerPanelService.java TaskTrackerPanelReadResult.java CloudDecisionServiceId.java WubeiTask.java FiveRingTaskV2.java XiuluoTaskV2.java`
+    shows pushed changes only in `FiveRingTaskV2.java` and `XiuluoTaskV2.java`; current cloud/tracker
+    migration files are local worktree increments.
+  - Local diff evidence before edit:
+    `git diff --stat -- TaskTrackerPanelService.java TaskTrackerPanelReadResult.java CloudDecisionServiceId.java WubeiTask.java FiveRingTaskV2.java XiuluoTaskV2.java`
+    shows existing local deltas in `TaskTrackerPanelService.java`, `WubeiTask.java`,
+    `FiveRingTaskV2.java`, and `XiuluoTaskV2.java` before CR182 implementation.
+  - External brain baseline:
+    `D:\mavenProject\dhxy-cloud-brain` is not a git repository; `DecisionEngine` currently dispatches
+    `TASK_CLASSIFIER`, `TRACKER_LINK_RANKER`, `ROUTE_CANDIDATE`, `IMAGE_PREPROCESS`,
+    `MINIMAP_LOCATION`, `DIALOG_POLICY`, and `NPC_CLICK_SMART`, but not `TRACKER_PANEL_READER`.
+- Worker implementation result:
+  - DHXY added `TRACKER_PANEL_READER` to `CloudDecisionServiceId` and
+    `src/main/resources/application.properties` with execute+STOP defaults.
+  - DHXY added `TrackerPanelReaderCloudRequest`, `TrackerPanelReaderCloudDecision`, and
+    `TrackerPanelReaderCloudDecisionService`. Request payload carries `taskCode`, `phase`, `source`,
+    `imagePayloadBase64`, `payloadMimeType=image/png`, `imageSha256`, `imageMode`,
+    `imageOriginWindowX/Y`, `requestedLinkIndex`, and `selectionPolicy`.
+  - `TaskTrackerPanelService` now sends 五环/修罗/五倍 detail crop PNGs to
+    `TRACKER_PANEL_READER` when the service is active. Service disabled keeps the old local reader;
+    active cloud `NOT_FOUND`/invalid/timeout/local payload failure returns no production click/result
+    and does not fall back to local green-link scanning.
+  - `TaskTrackerPanelReadResult` and `TaskTrackerGreenLink` now carry
+    `TaskTrackerPanelSourceType`. Cloud reader clicks are converted from window-relative to
+    screen-absolute 1x1 links so downstream code uses the exact cloud click point.
+  - `WubeiTask` skips old `TRACKER_LINK_RANKER` for cloud-reader links and keeps existing input queue,
+    pathing intent, maintenance, probe, and chained-combat side effects. `XiuluoTaskV2` shortcut also
+    skips old ranker for cloud-reader results. No 五倍/修罗/五环 phase order or tracker anchor logic was
+    intentionally changed.
+- External brain implementation:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+    now dispatches `TRACKER_PANEL_READER` and computes tracker green-link clicks from uploaded PNGs.
+  - It covers 五环 target-name segment selection, 修罗 first green link, 五倍 title template/taskKey,
+    and 五倍 multi-link output for 宝象谜情/显形镜 style tracker blocks.
+  - Replay resources live under
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\`.
+- CR182 testcase / marked output:
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wuhuan-one-green-link-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\xiuluo-one-green-link-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-sancang-one-green-link-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-baoxiang-mirror-marked.png`
+- Verification:
+  - DHXY RED: initial focused test failed before request/decision/service existed; external replay
+    initially returned `cloud-brain-unknown-service` for `TRACKER_PANEL_READER`.
+  - DHXY GREEN:
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed.
+  - DHXY compile: `mvn -q -DskipTests compile` passed.
+  - External GREEN: `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed.
+  - External compile: `mvn -q -DskipTests compile` passed.
+- Remaining fresh runtime gate:
+  - Restart DHXY and external cloud brain, then run 五环、修罗 shortcut、五倍普通/暗雷/白龙马/黄袍.
+  - Required log evidence: `TRACKER_PANEL_READER` request/response, cloud
+    `clickWindowRelative` converted to the actual input queue click point, and no local green-link
+    fallback on cloud required `NOT_FOUND`/timeout/invalid.
+- Review gate result (2026-07-04):
+  - Reviewer #1 verdict: With fixes，未批准。Reviewer #2 verdict: No，未批准。
+  - Current CR182 cannot fresh-run yet. It must be returned to worker for repair first.
+  - Required fixes:
+    1. Cloud active 时 `TaskTrackerPanelService` 不能先靠本地 title/template 命中才能调用 cloud；
+       应上传 anchor 定位得到的 tracker panel crop/origin，让 cloud 自己定位标题/绿链。service
+       disabled 时才走旧本地 title crop。
+    2. 黄袍 chained fast cache 必须保留 cloud-reader source/selected click；不能把 cloud link 变回
+       `LOCAL` 后再让旧 `TRACKER_LINK_RANKER` 驱动生产点击。
+    3. 五倍补暗雷 `dianqian_xianyi`、黄袍 `zhidou_huangpao`、魁星 `kuixing_guiwei` replay testcase，
+       断言 taskKey，并输出 marked PNG。
+    4. Cloud response 的 selected `clickWindowRelative` 不能被 `links[0]` 覆盖；普通点击消费 selected
+       click，多 link/probe 再消费 links。
+    5. 五倍 cloud-reader link 点击失败后的 `cloudDecision` null 分支必须防 NPE，并补 guard。
+    6. 后续可选 polish：区分 shadow-only 与 execute-required，避免 shadow-only 被当成 no-fallback
+       production active。
+  - Repair verification after worker fix:
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`;
+    `mvn -q -DskipTests compile`;
+    external `mvn -q -Dtest=TrackerPanelReaderReplayTest test`;
+    external `mvn -q -DskipTests compile`。
+  - After repair, rerun two independent reviewer approvals. 谢帅终审不替代两个 reviewer approvals。
+
+- Worker repair result (2026-07-04):
+  - 修 blocker 1：cloud active 时五环/五倍/修罗先复用现有 tracker anchor 定位/拖回/capture，上传完整
+    `TRACKER_PANEL_CROP` 与 panel origin；只有 service disabled 才走旧本地 title/detail crop。
+  - 修 blocker 2：`PreparedDialogAction` 保留 tracker panel source；黄袍 chained fast cache 对
+    `CLOUD_TRACKER_PANEL_READER` link 经 fingerprint 验证后直接点 cached/cloud 点，不再回旧
+    `TRACKER_LINK_RANKER`。
+  - 修 blocker 3/4：`TaskTrackerPanelReadResult.selectedGreenLink` 保存 top-level cloud selected click；
+    普通五倍/修罗消费 selected click，多 link/probe 才消费 diagnostics `links`。
+  - 修 blocker 5：五倍 cloud-reader link 点击失败后的 `cloudDecision` no-click 判断改为 null-safe，并补
+    `TrackerPanelReaderCloudSourceGuardTest`。
+  - 修 blocker 6：external replay 补 `wubei.dianqian_xianyi` 暗雷、
+    `wubei.zhidou_huangpao` 黄袍、`wubei.kuixing_guiwei` 魁星 testcase，均断言 `taskKey` 并输出 marked PNG。
+- Repair touched files:
+  - DHXY:
+    `src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`,
+    `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`,
+    `src/main/java/com/bot/dhxy/model/tasktracker/TaskTrackerPanelReadResult.java`,
+    `src/main/java/com/bot/dhxy/model/dialog/PreparedDialogAction.java`,
+    `src/test/java/com/bot/dhxy/service/TrackerPanelReaderCloudSourceGuardTest.java`。
+  - External:
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\TrackerPanelReaderReplayTest.java`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wubei-dianqian-dark-thunder.png`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wubei-zhidou-huangpao.png`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\tracker-panel\wubei-kuixing-guiwei.png`。
+- Repair marked output:
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-dianqian-dark-thunder-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-zhidou-huangpao-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-kuixing-guiwei-marked.png`
+  - Re-generated existing marked replay:
+    `wuhuan-one-green-link-marked.png`, `xiuluo-one-green-link-marked.png`,
+    `wubei-sancang-one-green-link-marked.png`, `wubei-baoxiang-mirror-marked.png` under the same
+    `target\test-tracker-panel-reader` directory。
+- Repair verification:
+  - DHXY `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed。
+  - External `mvn -q -DskipTests compile` passed。
+  - `node scripts/generate-cr-dashboard-data.js` passed，生成 `176 CR rows -> docs\cr-dashboard-data.js`。
+- Current status after worker repair: Review / repair ready。不要标 Done；下一步必须重新走两个独立 reviewer
+  approval gate，随后才可 fresh runtime。Fresh runtime gate 仍是重启 DHXY + external brain 后看
+  `TRACKER_PANEL_READER` request/response、cloud click 到 input queue 点击点转换、cloud required 下
+  timeout/NOT_FOUND/invalid 不回退本地绿链。
+
+- Second review gate result (2026-07-04):
+  - Reviewer #1 verdict: With fixes。首轮 blocker 基本关闭，但修罗 accept-time background snapshot
+    生产路径仍走 detail crop / `imageMode=DETAIL_BLOCK_CROP`，仍依赖本地 title/template 裁 detail。
+    Required repair：snapshot 生产路径也上传完整 tracker panel crop/origin，并以
+    `imageMode=TRACKER_PANEL_CROP` 交给 `TRACKER_PANEL_READER`；detail crop 只能留作 replay/debug
+    或经用户确认例外。
+  - Reviewer #2 verdict: With fixes，P1。五倍普通任务 cloud payload 丢失现有业务消费字段：
+    `yellowText` 为空、cloud link `targetMapName` 为空，但 `WubeiTask` 普通链路仍用
+    `yellowText` 解析 combat target，并用 `targetMapName` 打开 ordinary enter-battle target-map gate。
+    Required repair：cloud 最小 payload 补回现有五倍确实消费的字段，至少普通任务返回
+    `targetName` 或可恢复 `yellowText` 的 combat target 字段，并为需要 map gate 的 link 返回
+    `targetMapName`；DHXY 解析填入 `TaskTrackerPanelReadResult` / `TaskTrackerGreenLink`，并补三藏/魁星
+    replay 断言这些字段会驱动 gate/target 逻辑。
+  - Minor still noted：五环 `prepareWuhuanPathingLink()` fingerprint 仍受旧 title/detail crop 影响；
+    shadow-only 与 execute-required 未分离。
+  - Current status: CR182 still blocked; do not fresh-run. Send worker back, then rerun focused tests,
+    external replay/compile, and two independent reviewer approvals.
+
+- Second worker repair result (2026-07-04):
+  - P1 closed in code/test: external `TRACKER_PANEL_READER` now returns 五倍普通任务字段 consumed by
+    existing Wubei code. 三藏 returns `targetName=魔障`, recoverable `yellowText`, and link
+    `targetMapName=大唐边境`; 魁星 returns `targetName=天降妖星`, recoverable `yellowText`, and link
+    `targetMapName=云梦顶`.
+  - DHXY parses those fields in `TrackerPanelReaderCloudDecisionService` and maps them into
+    `TaskTrackerPanelReadResult.yellowText` / `TaskTrackerGreenLink.targetMapName` in
+    `TaskTrackerPanelService` without changing `WubeiTask` business semantics.
+  - P2 closed in code/test guard: `readXiuluoTrackerPanelFromSnapshot(...)` now cloud-first crops a
+    tracker panel from the accept-time full-window snapshot using the tracker anchor, then sends
+    `phase=xiuluo-tracker-panel-snapshot` and `imageMode=TRACKER_PANEL_CROP` to
+    `TRACKER_PANEL_READER`. Old detail crop remains only after service disabled / replay path.
+  - Minor left as follow-up: 五环 `prepareWuhuanPathingLink()` fingerprint still depends on old
+    title/detail crop; not expanded in this P1/P2 repair.
+- Second repair touched files:
+  - DHXY:
+    `src/main/java/com/bot/dhxy/cloud/task/TrackerPanelReaderCloudDecision.java`,
+    `src/main/java/com/bot/dhxy/cloud/task/TrackerPanelReaderCloudDecisionService.java`,
+    `src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`,
+    `src/test/java/com/bot/dhxy/cloud/task/TrackerPanelReaderCloudDecisionServiceTest.java`,
+    `src/test/java/com/bot/dhxy/service/TrackerPanelReaderCloudSourceGuardTest.java`。
+  - External:
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\TrackerPanelReaderReplayTest.java`。
+- Second repair marked output:
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-sancang-one-green-link-marked.png`
+  - `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\wubei-kuixing-guiwei-marked.png`
+  - Regenerated with the same replay run:
+    `wuhuan-one-green-link-marked.png`, `xiuluo-one-green-link-marked.png`,
+    `wubei-baoxiang-mirror-marked.png`, `wubei-dianqian-dark-thunder-marked.png`,
+    `wubei-zhidou-huangpao-marked.png` under
+    `D:\mavenProject\dhxy-cloud-brain\target\test-tracker-panel-reader\`.
+- Second repair verification:
+  - External RED before fix: `mvn -q -Dtest=TrackerPanelReaderReplayTest test` failed because
+    三藏/魁星 `diagnostics.targetName` was empty.
+  - DHXY RED before fix:
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    failed at test compile because cloud decision/link did not yet expose `targetName/yellowText/targetMapName`.
+  - External GREEN: `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed.
+  - DHXY GREEN:
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed.
+  - DHXY compile: `mvn -q -DskipTests compile` passed.
+  - External compile: `mvn -q -DskipTests compile` passed.
+  - Dashboard sync after CR card update: `node scripts/generate-cr-dashboard-data.js` passed.
+- Reviewer approval gate after second repair (2026-07-04):
+  - Reviewer #1（McClintock）批准。确认修罗 accept-time snapshot cloud-active path 已用完整 tracker panel
+    crop，发送 `phase=xiuluo-tracker-panel-snapshot` 与 `imageMode=TRACKER_PANEL_CROP`；旧 detail crop
+    只留 disabled/replay/debug 路径。无 P0/P1/P2 blocker。
+  - Reviewer #2（Harvey）批准。确认五倍 `targetName/yellowText/targetMapName` 从 external cloud brain
+    到 DHXY parser、`TaskTrackerPanelReadResult.yellowText`、`TaskTrackerGreenLink.targetMapName` 的
+    业务链路闭环；selected cloud click 与 diagnostics links 不再互相覆盖。无 P0/P1/P2 blocker。
+  - 谢帅复核验证命令：
+    `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,TrackerPanelReaderCloudSourceGuardTest" test`
+    passed；`mvn -q -DskipTests compile` passed；external
+    `mvn -q -Dtest=TrackerPanelReaderReplayTest test` passed；external
+    `mvn -q -DskipTests compile` passed。
+- Current status after reviewer approvals: Review / fresh runtime pending。Do not mark CR182 Done；下一步可
+  fresh runtime：重启 DHXY + external brain，看 `TRACKER_PANEL_READER` request/response、修罗 snapshot
+  `TRACKER_PANEL_CROP`、五倍普通任务 target/gate 字段、cloud click 到 input queue 点击点转换，以及
+  cloud required timeout/NOT_FOUND/invalid 不回退本地绿链。
+- Minor follow-up, not blocking current fresh runtime：五环 `prepareWuhuanPathingLink()` fingerprint 仍受旧
+  title/detail crop 影响；shadow-only 与 execute-required 分离可后续独立卡处理。
+
+### 2026-07-04 CR164 外部 cloud brain `ROUTE_CANDIDATE` 黄字目的地修复
+
+- Scope: 修复实战日志中 `ROUTE_CANDIDATE mode=yellow-destination-mini-map` 云端返回
+  `status=NOT_FOUND;reason=cloud-brain-route-candidate-no-click`，导致本地已识别
+  `灵兽村` 黄字路线却不能点击的问题。
+- Runtime evidence:
+  - `logs/dhxy-console.log` 中本地黄字 OCR 已识别 `target=灵兽村`，local shadow 为
+    `click=366,487;reason=yellow-ocr-click`。
+  - 同一请求的云端 `ROUTE_CANDIDATE` 返回 `NOT_FOUND`，所以 `NavigationService` 按
+    cloud-required 语义跳过本地候选点击。
+- External cloud brain implementation:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+    的 `ROUTE_CANDIDATE` 在 override/candidates 都没有 click 时，新增
+    `yellow-destination-mini-map` image path。
+  - 该 path 只使用云端请求里的 `imagePayloadBase64`、`roi`、`targetMap`：解码 payload，
+    对 ROI 图或整窗 ROI 裁剪图执行 `WASH_YELLOW`，调用 OCR sidecar，按目标地图名和
+    黄字跨行拼接规则识别目的地，再用 `roi.x/y + OCR center` 返回 `WINDOW_RELATIVE` click。
+  - 禁止偷用 `localDecision` / local shadow click；测试里 shadow click 已改成 `123,456`，
+    仍要求云端返回 `366,487`。
+  - ROI 现在为必填强校验：缺失、坏格式、负坐标、非正宽高、payload/ROI 尺寸不兼容都
+    fail closed 为 `NOT_FOUND`，避免把 ROI 内坐标误当窗口坐标。
+- Testcase / marked output:
+  - Input:
+    `D:\mavenProject\dhxy-cloud-brain\src\test\resources\route-candidate\yellow-destination-lingshou-map-result-scan.png`
+  - Replay:
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\RouteCandidateYellowDestinationReplayTest.java`
+  - Marked:
+    `D:\mavenProject\dhxy-cloud-brain\target\test-route-candidate\yellow-destination-lingshou-marked.png`
+- Verification:
+  - RED: 新增 ROI 必填测试前，缺 ROI 仍返回
+    `status=CLICKED;click=18,111;algorithm=yellow-destination-image`。
+  - GREEN:
+    `mvn -q -Dtest=RouteCandidateYellowDestinationReplayTest test` passed。
+  - Route focused smoke:
+    `mvn -q "-Dtest=CloudBrainSmokeTest#trackerAndRouteCandidateFailClosedWithoutCloudInput,CloudBrainSmokeTest#routeOverrideOutsideWindowDoesNotClick" test`
+    passed。
+  - Compile: `mvn -q -DskipTests compile` in `D:\mavenProject\dhxy-cloud-brain` passed。
+- Independent review:
+  - Chandrasekhar / Epicurus 两轮复审均 PASS；ROI P1 已关闭，无剩余 P0/P1/P2。
+  - 宽跑 `CloudBrainSmokeTest` 仍有 `NPC_CLICK_SMART` / memory migration 旧断言失败，和本次
+    `ROUTE_CANDIDATE` 黄字目的地修复无关。
+- Fresh runtime gate:
+  - 需要重启外部 cloud brain / DHXY 后重新跑五倍或修罗导航。
+  - 期望日志：`ROUTE_CANDIDATE mode=yellow-destination-mini-map` 返回
+    `status=CLICKED;algorithm=yellow-destination-image;click=366,487` 或对应窗口相对点，
+    `NavigationService` 后续打开目标小地图并点击最终坐标；云端无效时仍不得使用本地 shadow 点击。
+
+### 2026-07-04 CR181 本地 vision-memory NPC click 迁云收口结果
+
+- Scope: CR181 将本地 `config/vision_memory.json` 的 NPC click learned memory 迁到外部
+  cloud brain，并让 `NPC_CLICK_SMART` FIFO 的 `MEMORY` 消息能作为第一候选执行。
+- Implementation summary:
+  - External cloud brain:
+    - 新增 `/api/cloud/npc-click-memory/migrate`，导入稳定 `policies.clickPolicies` 到
+      `NpcClickMemoryStore`。
+    - Store key 使用 `mapName + npcName + target + verificationMode + playerMapX/Y`，避免粗 key
+      污染。
+    - Memory 持久化到 `data/npc-click-memory.json`，重启 store 后可重新 load。
+  - DHXY:
+    - 新增 `NpcClickMemoryMigrationService`，只上传 clean/stable click policies，不上传
+      `entries.lastPredictedClick`。
+    - `NpcClickService` 在正式 `NPC_CLICK_START` 前调用
+      `npcClickMemoryMigrationService.migrateDefaultIfNeeded()`；skip/fail/异常只记录日志，不阻断
+      NPC click。
+    - 合法 `MEMORY` click 进入 `executeNpcClickSmartQueueCandidate(...)` 共享 safety shell 和
+      verifier；失败继续 poll 后续 FIFO 候选。
+    - Lorentz P2 已修：migration 之后、`startSession(cloudRequest)` 前补
+      `TaskCheckpoint.throwIfStopRequested(...)`，避免 HTTP interrupt 后继续 start。
+- Verification run by main agent:
+  - DHXY focused: `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest,NpcClickSmartCloudWiringGuardTest" test`
+    passed。
+  - DHXY compile: `mvn -q -DskipTests compile` passed。
+  - External cloud brain focused: `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test`
+    passed。
+  - External cloud brain compile: `mvn -q -DskipTests compile` passed。
+- Independent review:
+  - Bohr / Descartes approved external cloud brain migration store/API/FIFO contract。
+  - Lagrange approved DHXY migration trigger, post-migration checkpoint, and MEMORY consumer after P2 repair。
+- CR status:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR181 updated to Review, not Done。
+  - Remaining fresh runtime gate: restart DHXY + sidecar/JAR and verify logs show
+    `npc-click-memory migration submitted...` before `NPC_CLICK_START`, then first relevant
+    `NPC_CLICK_POLL type=MEMORY`, atomic click, verifier outcome / fallback-to-next-candidate if memory fails。
+
+### 2026-07-04 CR181 Lorentz P2 memory migration stop checkpoint repair baseline
+
+- Role: CR181 repair worker；只修 reviewer Lorentz P2：`NpcClickMemoryMigrationService.migrate(...)`
+  在 HTTP 迁移期间收到 stop 后可能 interrupt 并返回失败，`NpcClickService` 不应继续直接进入
+  `NPC_CLICK_START`。
+- Baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch: `codex/hybrid-cloud-protection`；当前分支没有 upstream。
+  - Latest pushed business baseline used locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short` 显示工作区已有大量 modified/untracked/deleted 文件；本 worker 不 revert、
+    不清理、不覆盖其他 worker dirty changes。
+  - Relevant pushed evidence:
+    `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java`
+    只显示 pushed `NpcClickService.java` 旧小改动；当前 `NpcClickSmartCloudWiringGuardTest.java`
+    是本地 CR169/CR181 worktree 文件。
+  - Relevant local finding before edit:
+    `NpcClickService` 在 `buildNpcClickSmartCloudRequest(...)` 后已有
+    `TaskCheckpoint.throwIfStopRequested(..., "NPC_CLICK_SMART stopped before NPC_CLICK_START")`，
+    随后执行 `npcClickMemoryMigrationService.migrateDefaultIfNeeded()`；`catch (Exception e)` 后第一个
+    业务调用是 `npcClickSmartCloudDecisionService.startSession(cloudRequest)`，中间缺少 Lorentz 要求的
+    post-migration checkpoint。
+- Planned scoped repair:
+  - 先更新 `NpcClickSmartCloudWiringGuardTest` 源码守卫，要求 migration call 与
+    `startSession(cloudRequest)` 之间存在 `TaskCheckpoint.throwIfStopRequested(...)` 且文本说明
+    after memory migration / before `NPC_CLICK_START`。
+  - 再只在 `NpcClickService` migration try/catch 后、`startSession(cloudRequest)` 前补一次
+    `TaskCheckpoint.throwIfStopRequested(...)`；不改 external cloud brain、不改 NPC click strategy。
+- Repair result:
+  - `NpcClickService` 已补 post-migration checkpoint：
+    `NPC_CLICK_SMART stopped after memory migration before NPC_CLICK_START`。
+  - `NpcClickSmartCloudWiringGuardTest` 已要求 `migrateDefaultIfNeeded()` 和
+    `startSession(cloudRequest)` 之间存在该 checkpoint。
+  - Worker Herschel reported TDD red/green:
+    `NpcClickSmartCloudWiringGuardTest` 先因缺 checkpoint 失败，补修后通过。
+  - Main-agent verification after repair:
+    DHXY focused test / DHXY compile / external cloud brain focused test / external compile 全部 passed。
+
+### 2026-07-04 CR181 本地 vision-memory NPC click 迁云 baseline
+
+- Role: 谢帅 / business supervisor。按用户要求迁移本地 `config/vision_memory.json` 的 NPC click
+  learned memory 到外部 cloud brain；谢帅不直接写 Java 业务实现，后续由 worker 实现并经过两个
+  独立 reviewer。
+- DHXY baseline before worker:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch: `codex/hybrid-cloud-protection`；HEAD `696a12b chore: remove obsolete debug tooling`。
+  - `git status --short --branch`: 工作区已有大量 modified/untracked/deleted 文件；本轮不得回滚、
+    清理或覆盖其他 worker 改动。
+  - Latest pushed business baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`；
+    当前 CR169/CR177/CR180 云端迁移均为本地工作树增量。
+- External brain baseline before worker:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`；不是 git repository。
+  - `NpcClickMemoryStore` 当前 `LEARNED_MEMORY_ENABLED=false`，构造时不 load、
+    `lookup(...)` 返回 null、`ingestOutcome(...)` 对 verified outcome 返回 `learnStatus=disabled`。
+  - `SmartClickRecognizer.produceQueueMessages(...)` 会先 push `MEMORY`，但当前 memory 只能是 disabled/no-action。
+  - `NpcClickService` 当前对 `MEMORY` click 有 consumer guard，会拒绝合法 memory click，不提交输入。
+- Local memory evidence:
+  - `config/vision_memory.json` 当前约 `4.9MB`，`memoryType=vision-memory-v2`。
+  - 可迁移资产应来自 `policies.clickPolicies`，例如
+    `npc-click|灵兽村|灵兽村使者|112,93|player:120,83`：
+    `point=(311,189)`、`sampleCount=5`、`successCount=259`、`failureStreak=0`、
+    `spreadPx=0`、`stale=false`、`lastOutcome=VERIFIED`、`lastVerificationStrength=DIALOG_TEMPLATE`。
+  - 不得直接使用 `entries.lastPredictedClick` 作为 cloud memory hit；它不是旧本地
+    `recommendedNpcClickPoint(...)` 的保守筛选结果。
+- Implementation boundary for worker:
+  - 新增/扩展 cloud `NpcClickMemoryStore` 迁移能力，按旧本地 `ClickPolicy` 稳定规则导入。
+  - DHXY 增加迁移调用/日志，并允许合法 `MEMORY` FIFO click 走同一安全壳和 verifier。
+  - 禁止恢复本地 learned-memory production fallback；禁止单次 cloud outcome 直接 promote。
+- CR181 worker baseline before edit:
+  - DHXY current branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`；latest pushed business baseline:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 确认工作区已有大量 modified/untracked/deleted 文件；本 worker
+    不回滚、不清理、不覆盖其他 worker dirty changes。
+  - Relevant pushed evidence:
+    `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java src/main/java/com/bot/dhxy/model/ocr/LearnedNpcClickPoint.java src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudRequest.java src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionProperties.java src/main/resources/application.properties`
+    only shows old `NpcClickService.java` changes (`75` lines); current cloud task service/request and
+    most CR169/CR181 cloud code are local migration worktree files.
+  - Relevant local diff evidence before edit:
+    `git diff --stat -- src/main/java/com/bot/dhxy/service/NpcClickService.java ...` shows existing
+    local `NpcClickService.java` CR169 cloud/FIFO migration delta (`929 insertions`, `3061 deletions`)
+    before this worker. This worker will patch only CR181 memory migration / `MEMORY` queue semantics.
+  - Old local filter baseline: `OcrRoiMemoryService.recommendedNpcClickPointFromPolicy(...)` uses
+    `policies.clickPolicies` + `isUsableClickPolicy(...)`; strong sample evidence comes from
+    `clicked=true`, `success=true`, `actualClickMeasured=true`, and `verificationStrength` in
+    `DIALOG_OPTION|DIALOG_TEMPLATE` via `hasStrongNpcVerification(...)`。`entries.lastPredictedClick`
+    is not the clickable baseline.
+  - `config/vision_memory.json` scan before edit: `totalClickPolicies=616`，按 CR181 规则
+    (`stale=false`、1024x768 内、`sampleCount>=3`、`spreadPx<=45`、`failureStreak<3`、
+    `lastOutcome=VERIFIED`、强 `lastVerificationStrength`、`recentSamples` 强验证) 约
+    `eligibleByCR181=40`；示例仍是
+    `npc-click|灵兽村|灵兽村使者|112,93|player:120,83 -> 311,189`。
+  - DHXY file hashes before edit:
+    `NpcClickService.java` SHA256 `EE151345B9E31AA1CC5F591BBF83A827BCB448E370E09D1947586AD083067904`；
+    `NpcClickSmartCloudDecisionService.java` `F87D376B3CC47970120A84B34F9F243C82373B0CA3555A7862A0183327A73BD5`；
+    `NpcClickSmartCloudRequest.java` `6A560D5FA4C85BF27FB23033D2911556BAC9DEC018FB129CF66A30768E69E2BB`；
+    `CloudDecisionProperties.java` `FCD35C572C4F2065985869844396D34DAB63158EEC179456AE34FE7CEA9C4386`；
+    `OcrRoiMemoryService.java` `07D2A6F374D91D087B1955A8480C7E1C9AC354E0186E631087D1F1196D947EEA`。
+  - External brain is not a git repository. File hashes before edit:
+    `NpcClickMemoryStore.java` SHA256 `BA5C1EBC4E78C00D2D1B32F62C769B3F69A62CDAFF390C63E0C179EA4F321E65`；
+    `SmartClickRecognizer.java` `96AE4FB9A7A965A61B53CF5EDC86035ACE7BFC9F434B7119C252C4A908B5FD7A`；
+    `DecisionEngine.java` `744B9555DD423CC2DCBEA809A9C2B5954CE38FD9A2702D8FAB75D5335BD22488`；
+    `CloudBrainServer.java` `986E3728F6FB4E8BC28DDCD1597EEB34057096432BAFEF87E04EAA13F0C3E3C9`。
+- CR181 DHXY 收口 worker baseline before edit:
+  - Current branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`；latest pushed business baseline:
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 仍显示大量并行 dirty/untracked/deleted 文件；本 worker 只处理
+    `NpcClickMemoryMigrationService`、`NpcClickService` migration trigger、focused tests 和 CR181 docs/dashboard，
+    不回滚、不清理其他 worker 改动。
+  - Relevant pushed evidence:
+    `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionProperties.java src/main/java/com/bot/dhxy/cloud/task src/test/java/com/bot/dhxy/cloud/task/NpcClickMemoryMigrationServiceTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartFifoBehaviorTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java`
+    only shows old pushed `NpcClickService.java` changes (`75` lines); CR181 cloud task files/tests are local worktree additions.
+  - Relevant local diff evidence before edit:
+    `git diff --stat -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionProperties.java src/main/java/com/bot/dhxy/cloud/task src/test/java/com/bot/dhxy/cloud/task/NpcClickMemoryMigrationServiceTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartFifoBehaviorTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    shows existing local CR169/CR181/docs deltas, especially `NpcClickService.java` large CR169 cloud/FIFO migration delta before this worker.
+  - RED: `mvn -q -Dtest=NpcClickMemoryMigrationServiceTest test` failed before production code with missing
+    `com.bot.dhxy.cloud.task.NpcClickMemoryMigrationService`; this confirms the current DHXY gap is the absent main class.
+  - Current `NpcClickService` finding before edit: explicit `MEMORY` branch already routes click-bearing `MEMORY` messages into
+    `executeNpcClickSmartQueueCandidate(...)`; disabled/no-click `MEMORY` reports `SKIPPED`; `VERIFICATION_FAILED` continues polling
+    later FIFO candidates.
+
+### 2026-07-04 CR169/CR177 NPC_CLICK_SMART purple prepared-ROI repair baseline
+
+- Role: CR169/CR177 NPC_CLICK_SMART purple 修复 worker；目标是让云端 `PURPLE_FORMULA` 复刻旧本地 NPC click purple player-anchor pipeline。禁止新增本地生产 fallback，禁止用 `ImageAlgorithms.WASH_PURPLE` RGB predicate 作为生产 player-anchor OCR 输入。
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch: `codex/hybrid-cloud-protection`；HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch`: 工作区已有大量 modified/untracked/deleted 文件；本轮不回滚、不清理其他 worker 改动。
+  - Relevant pushed evidence: `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudRequest.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java` 只显示 `origin/dev` 上旧 `NpcClickService.java` 的小改动；当前 cloud task DTO/service/test 属于本地 CR169/CR177 迁移工作树。
+  - Relevant local diff evidence: `git diff --stat -- ...` 显示 `NpcClickService.java` 与 CR 文档已有大规模 CR169/CR177 dirty 变更。本轮只协作当前树，尽量不改 DHXY 生产业务逻辑。
+- Current code finding before edit:
+  - DHXY `NpcClickService.buildNpcClickSmartCloudRequest(...)` 已在普通 dialog 模式截图前调用 `prepareNpcClickSmartCloudCaptureScene(...)` 执行 `Alt+4`，随后上传整张 1024x768 raw PNG，并传 `roi`/`scanRegions`。
+  - External `SmartClickRecognizer.clickPlayerAnchorFormula(...)` 调用 `findPurplePlayerAnchor(context, raw)`；当前 `extractPurplePlayerAnchorFromImage(...)` 只对整张 raw 或 full-window default mask 图做旧 HSV wash，没有按 `scanRegions` 裁剪成旧 `prepareNpcOcrScanImage(...)` 语义。
+  - 旧本地权威链路仍以历史 `git show f6d750f:...` 为准：`captureCleanNameRegionToMemory(...)` -> `prepareNpcOcrScanImage(...)` -> `center_scan_layer1.png` -> `washPurpleTextToBlackAndWhite(...)` 的 OpenCV HSV `inRange(120,50,50)-(160,255,255)` + `bitwise_not` -> OCR 玩家名 -> 公式点击。
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`；不是 git repository。
+  - File hashes:
+    - `SmartClickRecognizer.java` SHA256 `942CABE3AC1AD37BE1D2ACDAF0202622CFAFFE4134D8D69FD7F62640BB75DDD4`。
+    - `NpcClickSmartCurrentScreenPurpleAnchorReplayTest.java` SHA256 `4AA6CF034060E5BA67B0CEC158D7746370E7E3F110B57B8CFDFC8D903805FD43`。
+    - `NpcClickSmartLiveQueueReplayTest.java` SHA256 `1C37A40BF4A72CD4FBEC919131C27FE837BBCC47373B58FC8E42B298C9B15F50`。
+    - `NpcClickSmartFifoQueueSessionTest.java` SHA256 `DF5F99CE134DF1645DDD483ABEC06771B487721BDC1847501758BDBAD80F9B9A`。
+- Initial repair hypothesis:
+  - 协议字段足够，优先修外部 `SmartClickRecognizer`：`PURPLE_FORMULA` 应按 `scanRegions` 逐个取 prepared source；非 default region 裁剪 raw 并带 window offset，default full-window region 使用现有 `copyWithDefaultMasks(raw)`；再走旧 HSV/bitwise_not 和 OCR。没有 scanRegions 或 OCR miss 时 fail closed，不能退到 RGB/HSB/blob/整图猜测。
+
+### 2026-07-03 CR169 FIFO / queue order two-reviewer re-review PASS
+
+- Status update 2026-07-03: CR169 offline FIFO / queue-order gate passed after worker repair and two independent reviewers.
+  - External brain `Session.poll()` no longer emits a middle `WAIT` after any FIFO message has been delivered; first-message-before-producer-ready `WAIT` remains allowed.
+  - Verified live queue order: `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`; 3x `NpcClickSmartLiveQueueReplayTest` repeated with no middle `WAIT`.
+  - Manager verification:
+    - `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest,NpcClickSmartCloudQueueOrderTest" test`
+    - `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,NpcClickSmartLiveQueueReplayTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartUserWuyiDialogReplayTest,AlgorithmFailClosedTest,NpcClickSmartCloudQueueOrderTest" test`
+    - `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`
+  - Reviewer A PASS: old-pipeline/baseline wording cleaned; current tests now explicitly call the order `CR169 user-approved cloud queue order`.
+  - Reviewer B PASS: FIFO no-middle-WAIT semantics, identity guard, END/terminal cleanup, and DHXY consumer handling passed review.
+  - Non-blocking fresh-runtime risk: cloud chain timeout after first message is 120s while DHXY HTTP timeout is 60s. If producer hard-stalls, DHXY will fail closed first; fresh runtime must confirm outcome/session cleanup and loaded sidecar/JAR version.
+  - CR169 remains `Review`, not `Done`: next gate is real DHXY + external sidecar/JAR restart and fresh NPC runtime evidence.
+
+### 2026-07-03 CR169 purple player-anchor clean-name/target-hit repair baseline
+
+- Status update 2026-07-03: Purple blocker repaired and re-reviewed.
+  - External changes stayed limited to `D:\mavenProject\dhxy-cloud-brain` `SmartClickRecognizer.java` and `NpcClickSmartCurrentScreenPurpleAnchorReplayTest.java`.
+  - Production purple wash now uses the old local OpenCV path: `COLOR_BGR2HSV` -> `Core.inRange(Scalar(120,50,50), Scalar(160,255,255))` -> `Core.bitwise_not`; no RGB/HSB purple fallback is used by production `PLAYER_ANCHOR_FORMULA`.
+  - Production purple OCR miss now fail-closes (`return null` / no action). The stale `extractPurpleBlobAnchor(...)` / `anchorEvidence=BLOB` fallback was removed from production source; remaining `BLOB` strings in the focused test are only negative regression assertions/diagnostic labels.
+  - Replay output:
+    - `images/test-cases/npc/output/cr169_purple_clean_name_source_input.png`
+    - `images/test-cases/npc/output/cr169_purple_old_hsv_washed.png`
+    - `images/test-cases/npc/output/cr169_purple_ocr_anchor_marked.png`
+    - `images/test-cases/npc/output/cr169_purple_player_anchor_clean_name_marked.png`
+  - Verified output: `PRODUCTION_PURPLE_DECISION ... click=480,357; candidateBox=476,395,88,24; anchor=520,407; anchorEvidence=OCR; matchedPlayerName=乌龟的黑头`; final red point is inside the marked `灵兽村使者` target NPC hit area.
+  - GREEN: `mvn -q "-Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest" test` in `D:\mavenProject\dhxy-cloud-brain` (`Purple 7`, `FIFO 11`, `AlgorithmFailClosed 34`, all 0 failures).
+  - Reviewer #1 PASS: marked evidence now shows production local player-name box/anchor and final red point on target NPC; old HSV/bitwise_not semantics confirmed.
+  - Reviewer #2 PASS: production source has no `extractPurpleBlobAnchor`, `anchorEvidence=BLOB`, `"BLOB"`, or `return legacyBinaryInput` execution fallback; scope did not expand to FIFO/dialog/navigation.
+  - Fresh runtime: CR169 no longer blocked by purple testcase, but still requires a DHXY + external sidecar/JAR restart and real NPC runtime evidence before being marked Done.
+- Role: CR169 purple player-anchor 修复 worker；只改外部 `D:\mavenProject\dhxy-cloud-brain` 的 `PLAYER_ANCHOR_FORMULA` 等价与 focused replay/标注图，并更新 CR169 文档。不得改 DHXY FIFO、dialog、navigation、production `ImagePreprocessor` 或本地生产 fallback。
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch: `codex/hybrid-cloud-protection`；HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed business baseline: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch`: 工作区已有大量并行 dirty/untracked/deleted 文件；本轮不得 revert/清理他人改动。
+  - Relevant pushed/local evidence:
+    - CR169 卡当前状态是 `Review：FIFO 双 reviewer 通过；Purple 主管打回`。
+    - 主管打回证据：`images/test-cases/npc/output/cr169_purple_player_anchor_current_window_marked.png` hash `A9ED312F46290B4F7BBA0282FAE57F5DD358C86F6F2BF9B71BBAC4D9F9D12019`，红点 `click=525,118` 明显不在 `灵兽村使者` 身上。
+    - `git show HEAD:src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 的旧 purple wash 是 OpenCV HSV：`lower=(120,50,50)`, `upper=(160,255,255)`, `Core.inRange`, `Core.bitwise_not`。
+    - 旧 pipeline 权威输入不是 raw 全屏硬洗；必须使用 `Alt+4` 后 clean-name/base capture，再按旧 HSV 洗紫。现有可用旧产物：`images/temp/hwnd-E50C6E/center_scan_layer1.png` hash `D1815FC86BEBB4D32F894625FB10AF1EC96AE54BCD85E1677B67C82504E5A98E` 和 `images/temp/hwnd-E50C6E/center_scan_player.png` hash `70F3BEF762FE648313A56FF829D2B5F564153686E02C26D16214858A966B611C`。
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`；不是 git repository，无 branch/HEAD/upstream。
+  - File hashes before edit:
+    - `src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java` SHA256 `44F967AB28B8DD9D19B3A16672B8A49376067BD8CB99CA9C321BEF23CEFAD5AC`。
+    - `src/test/java/com/yueyunfe/dhxy/cloudbrain/NpcClickSmartCurrentScreenPurpleAnchorReplayTest.java` SHA256 `713A8D5B0E293FF64A7A3B62B45CA1EA400C5C76027C02A551D46C597EABCA37`。
+    - `src/test/java/com/yueyunfe/dhxy/cloudbrain/NpcClickSmartOldPipelineEquivalenceTest.java` SHA256 `EDB4AA1E865E115C6DE5004A0584135C160F1F3FBA1730DB7FC92AF960CE8D84`。
+  - Current source evidence: `SmartClickRecognizer.clickPlayerAnchorFormula(...)` 公式为 `anchor + delta*20 + tune + (0,-50)`；`findPurplePlayerAnchor(...)` 已从截图 OCR 找 anchor；`washOldLocalPurpleHsv(...)` 存在，但 `extractPurplePlayerAnchorFromImage(...)` 仍会在非 legacy input 上使用 `washPlayerNameBluePurpleToOldPolarity(...)` RGB 兜底。
+  - Current fake-green evidence: `NpcClickSmartCurrentScreenPurpleAnchorReplayTest.productionPurpleFormulaQueueStageFindsPlayerAnchorFromCurrentRaw()` 断言 `click=525,118` 附近，所以测试会把错误红点当通过。
+- Repair plan:
+  - RED：先把 replay 改成 clean-name/source input + old HSV washed + NPC hit verifier；当前代码/旧测试应失败于 red click 不命中目标 NPC。
+  - GREEN：云端 purple 只按旧 HSV/bitwise_not 口径处理 clean-name purple 输入；不要用 `ImageAlgorithms.WASH_PURPLE` 当前 RGB predicate 或 `washPlayerNameBluePurpleToOldPolarity(...)` 替代旧方法。
+  - 输出到 `images/test-cases/npc/output/`：clean-name/source input、purple washed、OCR/anchor 标注、最终 click marked；marked 红点必须在 `灵兽村使者` 可点击区域或由 verifier 证明会触发目标 NPC。
+
+### 2026-07-03 CR169 queue/FIFO final P2 no-click candidate repair baseline
+
+- Status: queue/FIFO no-click P2 worker 已通过两个独立 reviewer；purple player-anchor worker 虽曾有两个 reviewer PASS，但主管目视 marked 图后打回。CR169 仍非 Done，Purple 必须重新修旧本地等价和点击命中 testcase，不能进入 fresh runtime 验收。
+- Role: CR169 queue/FIFO P2 修复 worker；只修 reviewer #1 final re-review P2：普通阶段 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 等 `action=NO_ACTION` 且无 click 的 queue message 不能触发 `SAFETY_REJECTED` terminal，必须作为 `SKIPPED` 或等价非终态继续 poll 后续候选。
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`; HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - Latest pushed business baseline: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `git status --short --branch`: 工作树已有大量并行 dirty/untracked/deleted 文件；本轮不得 revert/清理他人改动。
+  - Relevant local diff evidence before edit: `git diff --stat -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/test/java/com/bot/dhxy/service/NpcClickSmartFifoBehaviorTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` showed existing large CR169/doc changes (`NpcClickService.java` dirty, focused FIFO behavior test still untracked). This worker will adapt the current tree and only add the no-click ordinary-candidate skip delta.
+- Scope guard:
+  - Do not modify external `D:\mavenProject\dhxy-cloud-brain`.
+  - Do not touch purple/player-anchor, tooltip matcher, yellow/purple vision algorithms, NPC strategy order, dialog, navigation, or image processor.
+  - Do not add local fallback and do not let terminal outcomes (`SAFETY_REJECTED`, `INPUT_SUBMIT_FAILED`, `FINAL_FAILED`, `CANCELLED`) continue polling. Only explicitly unexecutable ordinary no-click messages may skip and continue.
+- RED evidence:
+  - Added `NpcClickSmartFifoBehaviorTest.testOrdinaryNoActionNoClickCandidateSkipsAndContinuesToNextExecutableCandidate`.
+  - `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test` failed before production fix with `result status expected=CLOUD_EXECUTED actual=REQUIRED_FAILURE`; logs showed `TOOLTIP clickRel=(null, null)` returned `SAFETY_REJECTED` and stopped FIFO session consumption.
+- Implementation:
+  - DHXY `NpcClickService`: in the FIFO consumer, ordinary candidates (`TOOLTIP/YELLOW_NAME/PURPLE_FORMULA`) with no `windowRelativeClickPoint` now report `SKIPPED` and continue polling.
+  - The existing executable ordinary-candidate path still calls `executeNpcClickSmartQueueCandidate(...)`, so safety shell, input submission, verifier, and terminal outcomes are unchanged for real click candidates.
+  - `MEMORY` click remains locally rejected, and terminal local outcomes other than `SKIPPED` / `VERIFICATION_FAILED` still stop the current FIFO session.
+  - DHXY `NpcClickSmartFifoBehaviorTest`: new behavior test drives `TOOLTIP action=NO_ACTION/click=null -> YELLOW_NAME click` through the real `NpcClickService` loop, asserts no input for the no-click message, no `SAFETY_REJECTED`, `TOOLTIP -> SKIPPED`, and later `YELLOW_NAME -> VERIFIED`.
+- GREEN verification:
+  - GREEN: `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test`.
+  - GREEN: `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`.
+  - GREEN: `mvn -q -DskipTests compile`.
+- Independent reviewer gate:
+  - Queue reviewer #1 PASS: no-click ordinary candidate only skips when `!hasClickPoint()`; `MEMORY` click and terminal outcomes remain terminal.
+  - Queue reviewer #2 PASS: behavior test drives real `NpcClickService` FIFO loop and preserves terminal outcome stop semantics.
+  - Purple reviewer #1/#2 曾 PASS，但主管复核后覆盖该结论：marked output 的红点 `click=525,118` 不在目标 NPC `灵兽村使者` 身上，所以 Purple 不算完成。
+  - 旧 reviewer 看到的 hash
+    `A9ED312F46290B4F7BBA0282FAE57F5DD358C86F6F2BF9B71BBAC4D9F9D12019`
+    只能证明该 marked 图存在，不能证明最终点击点正确。
+  - Manager source/test note:
+    `mvn -q -Dtest="NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,AlgorithmFailClosedTest" test`
+    in `D:\mavenProject\dhxy-cloud-brain` passed, but测试断言缺少“红点命中 NPC/verification success”验收，属于假绿。
+  - 旧本地 purple 的权威输入不是当前 raw 全屏图，而是 `Alt+4` 后 `captureCleanNameRegionToMemory(...)`
+    截到的 clean-name region，再由当前分支 `HEAD` 中仍可恢复的
+    `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)` 洗图；旧产物示例：
+    `images/temp/hwnd-E50C6E/center_scan_player.png`。
+- Fresh runtime gate:
+  - Queue reviewer approvals are complete；Purple reviewer approvals 已被主管打回覆盖。runtime 验收仍 blocked。
+  - Expected fresh logs: a no-click ordinary `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` queue message logs `NPC_CLICK_SMART ordinary no-click candidate skipped`, reports `SKIPPED`, does not submit `npcClick:fifoCandidate:*`, and the same session polls the later executable candidate.
+  - Terminal evidence must remain: `SAFETY_REJECTED`, `INPUT_SUBMIT_FAILED`, `FINAL_FAILED`, and `CANCELLED` still stop the FIFO session and do not consume later candidates.
+  - Purple repair gate: marked testcase 必须显示旧 clean-name 输入/旧洗图产物、玩家名 anchor、最终 red click，并证明 red click 落在目标 NPC 可点击区域或 verifier 成功；只显示 anchor/insideWindow 不够。
+
+### 2026-07-03 CR169 queue/FIFO 二轮打回修复基线
+
+- Role: CR169 queue/FIFO 修复 worker；只修 reviewer #1/#2 抓到的 queue identity、WAIT budget、session 生命周期、owner poll 和 DHXY pause/stop checkpoint，不碰 purple/player-anchor 策略，不改 NPC 视觉算法。
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`; HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - Upstream: 当前分支无 upstream；latest pushed baseline for business guard: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `git status --short --branch`: 工作树已有大量并行 dirty/untracked/deleted 文件；本轮不得 revert/清理他人改动。
+  - Relevant pushed evidence: `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java` only shows old pushed `NpcClickService.java` changes; current cloud task service/tests are local CR169 migration files.
+  - Relevant local diff evidence: `git diff --stat -- ...` shows `NpcClickService.java` already has large CR169 cloud/FIFO migration (`884 insertions`, `3066 deletions`) before this repair. This worker will adapt the current tree and only add queue/FIFO deltas.
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`; not a git repository.
+  - Relevant source evidence: `NpcClickSmartQueueStore.start(...)` creates a session without storing owner identity in `Session`; `poll(...)` can consume messages for any caller with the same `sessionId`; sessions are removed only after polling `END` or finished+empty. `DecisionEngine.npcClickSmart(...)` reads `sessionId/windowId/taskRunId` only from `context`. `CloudBrainServer` routes `/api/cloud/npc-click-smart/outcome` to `DecisionEngine.npcClickSmartOutcomeResponse(...)`, which currently stores memory outcome but does not own queue cleanup.
+  - Current focused reproduction: `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` exits 0 in this workspace, but it does not yet cover wrong-owner poll preservation, terminal outcome cleanup, or WAIT interleaving in the six-stage order test.
+- Reviewer fail items to repair:
+  - P0/P1 identity contract: DHXY `CloudDecisionRequest.context` must contain `sessionId/windowId/taskRunId` for START and POLL; local request validation must fail closed before cloud when any of the three is missing; queue messages missing any identity remain invalid with no backfill.
+  - P1 WAIT budget: DHXY must separate ordinary candidate message budget from `WAIT` wall-clock wait budget; repeated `WAIT` must not trigger `NPC click queue poll limit reached` before later candidate messages arrive.
+  - P1 lifecycle cleanup: external queue sessions must be removable by owner-aware terminal completion/cancel, including `VERIFIED`, `CANCELLED`, `FINAL_FAILED`, `INPUT_SUBMIT_FAILED`, and `SAFETY_REJECTED`.
+  - P2 owner poll: external session stores `windowId/taskRunId`; wrong owner poll must not consume queue messages, and the correct owner must still receive them.
+  - P2 checkpoint: DHXY poll loop must checkpoint before START, before/after each POLL, and after `WAIT` sleeps so pause/stop does not keep consuming/executing while paused.
+- Planned verification:
+  - RED/GREEN DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`.
+  - GREEN DHXY `mvn -q -DskipTests compile`.
+  - GREEN external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test`.
+  - Additional external focused queue tests if modified by this repair.
+- Implementation:
+  - DHXY `NpcClickSmartCloudDecisionService`: `context(...)` now includes `sessionId/windowId/taskRunId`; request validation requires all three before START/POLL cloud calls; missing identity returns fail-closed/invalid locally.
+  - DHXY `NpcClickSmartCloudSession.accepted()` now requires all three identity fields.
+  - DHXY `NpcClickService`: replaced fixed poll-loop limit with `NPC_CLICK_SMART_QUEUE_CANDIDATE_LIMIT`, `NPC_CLICK_SMART_QUEUE_WAIT_TIMEOUT_MS`, and `NPC_CLICK_SMART_QUEUE_WAIT_SLEEP_MS`; `WAIT` no longer consumes candidate budget; START/POLL/WAIT path uses direct `TaskCheckpoint`.
+  - DHXY `NpcClickService`: terminal local outcomes now stop the current FIFO session after outcome report. Only `VERIFICATION_FAILED` and `SKIPPED` continue polling; `SAFETY_REJECTED`, `INPUT_SUBMIT_FAILED`, `FINAL_FAILED`, `CANCELLED` and other terminal outcomes do not consume later candidates.
+  - DHXY `NpcClickSmartFifoBehaviorTest`: new behavior-focused harness drives the real `NpcClickService` FIFO loop with fake cloud/input/verifier. It covers 13 `WAIT` messages before `MEMORY`/`TOOLTIP`, disabled no-click `MEMORY` -> `SKIPPED` -> continue, ordinary candidate execution/verifier, memory click no input + terminal stop, input submit failure terminal stop, and stop checkpoint after `WAIT`.
+  - External `NpcClickSmartQueueStore`: `Session` stores `windowId/taskRunId`; wrong owner poll returns invalid without consuming; terminal outcomes can owner-aware complete the session.
+  - External `DecisionEngine.npcClickSmartOutcomeResponse(...)`: appends `queueStatus` after terminal queue cleanup while preserving memory outcome behavior.
+  - External `NpcClickSmartFifoQueueSessionTest`: six-stage FIFO assertion skips `WAIT`; added wrong-owner preservation and terminal-outcome cleanup behavior tests; the Ctrl candidate single-method test now polls by non-`WAIT` messages until `CTRL_CANDIDATES` instead of fixed 5 poll attempts; added deterministic multi-`WAIT` -> `CTRL_CANDIDATES` -> `END` store test.
+- RED evidence:
+  - DHXY focused test first failed at `context window id expected=hwnd-cr169 actual=null` and missing source guard `context.put("windowId"`.
+  - External focused test first failed because wrong-owner poll consumed `MEMORY`, and terminal outcome returned no `queueStatus=completed`.
+  - Reviewer main fail: external
+    `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation test`
+    failed at `NpcClickSmartFifoQueueSessionTest.java:179` because fixed 5 poll attempts could land on async `WAIT` before `CTRL_CANDIDATES`.
+  - Reviewer #1 fail: DHXY behavior gate was still mostly source-string guard; no focused test drove
+    `START -> WAIT -> MEMORY skip -> ordinary candidate` through the real `NpcClickService` FIFO loop.
+  - Reviewer #2 fail reproduced locally: after adding `NpcClickSmartFifoBehaviorTest`,
+    `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test` failed before production fix with
+    `result status expected=REQUIRED_FAILURE actual=CLOUD_NO_ACTION`, showing `INPUT_SUBMIT_FAILED`
+    continued polling into later `YELLOW_NAME/END`.
+- GREEN evidence so far:
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`.
+  - External `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test`.
+- Final verification:
+  - GREEN DHXY `mvn -q -Dtest=NpcClickSmartFifoBehaviorTest test`.
+  - GREEN DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`.
+  - GREEN DHXY `mvn -q -DskipTests compile`.
+  - GREEN external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation test`.
+  - GREEN external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test`.
+  - GREEN external
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickMemoryStoreTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`.
+  - GREEN external `mvn -q -Dtest="NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`.
+  - GREEN `node scripts/generate-cr-dashboard-data.js` generated `173 CR rows -> docs\cr-dashboard-data.js`.
+  - Extra non-gate note: external `CloudBrainSmokeTest` still has the previously documented old direct
+    `NPC_CLICK_SMART` expectations and fails with `cloud-brain-npc-click-queue-protocol-required`; this
+    is outside the queue/FIFO repair boundary and was not changed in this worker pass.
+- Fresh runtime gate:
+  - Still blocked until two reviewer approvals. After approval, restart DHXY and external sidecar/JAR before testing.
+  - Expected fresh logs: START request context includes `sessionId/windowId/taskRunId`; START returns `SESSION_STARTED` quickly; repeated `WAIT` does not hit candidate budget; no-click `MEMORY` is skipped; terminal outcome returns/records queue cleanup.
+  - New expected local behavior: terminal local outcomes (`SAFETY_REJECTED`, `INPUT_SUBMIT_FAILED`, `FINAL_FAILED`, `CANCELLED`) stop consuming the current FIFO session; only `VERIFICATION_FAILED` and `SKIPPED` may continue to later candidates.
+
+### 2026-07-03 CR169 purple player-anchor worker baseline
+
+- Role: CR169 implementation worker for `PLAYER_ANCHOR_FORMULA` / purple player-name anchor only. Scope excludes NPC_CLICK queue/FIFO producer changes and DHXY Java business entry changes.
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`; HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`; latest pushed baseline used for DHXY docs/card context `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `git status --short --branch`: large existing dirty/untracked/deleted workspace across docs, Java, images, config, and tests. This worker must not revert or clean unrelated changes.
+  - Relevant DHXY reference evidence read before edit: old local purple path in `NpcClickService` captures a clean-name region, applies `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)`, OCRs player-name words, calls `LocationVisionService.extractPlayerAnchorMatch(...)`, falls back to compact purple blob only after OCR misses, and computes `playerAnchor + mapDelta20px + tune + (0,-50)`.
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`.
+  - Not a git repository, so no branch/HEAD/upstream is available.
+  - Planned touched files: `src/main/java/com/yueyunfe/dhxy/cloudbrain/SmartClickRecognizer.java`, focused purple replay tests under `src/test/java/com/yueyunfe/dhxy/cloudbrain/`, marked output under `D:\mavenProject\DHXY\images\test-cases\npc\output\`.
+  - Current source evidence: `produceQueueMessages(...)` already emits FIFO order `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`; `clickPlayerAnchorFormula(...)` calls `findPurplePlayerAnchor(...)`; `findPurplePlayerAnchor(...)` tries image extraction but still falls back to payload `playerAnchorWindowX/Y/evidence`; `extractPurplePlayerAnchorFromImage(...)` OCRs one whole washed image, so noisy raw screenshots can miss the player name.
+  - Current replay evidence: `mvn -q -Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest test` passes only because raw purple has no assertion; output for `images/test-cases/npc/current_window_xiuluo_accept_raw.png` is `PURPLE_OCR_HIT=null`, `PURPLE_BLOB_FALLBACK_ANCHOR=null`, `PURPLE_FORMULA_CLICK=null`, marked image `images/test-cases/npc/current_window_xiuluo_accept_purple_anchor_marked.png`.
+- Repair intent:
+  - Add a failing purple standalone replay that requires the user raw screenshot to produce a real `PLAYER_ANCHOR_FORMULA` click from OCR/player-name anchor evidence, without payload anchor evidence.
+  - Restore old-local semantics in cloud brain: crop/clean/wash purple evidence from the screenshot, OCR the player name or valid name fragment, reject long/noisy spans, and compute the existing player-anchor formula. Do not use a new largest-blob/long-strip-center/guess path.
+  - Preserve FIFO order and do not touch NPC_CLICK queue/FIFO producer code.
+- Implementation:
+  - External `SmartClickRecognizer` keeps production queue order unchanged: `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`.
+  - `findPurplePlayerAnchor(...)` no longer accepts payload `playerAnchorWindowX/Y/evidence`; `PLAYER_ANCHOR_FORMULA` must prove anchor from screenshot/OCR evidence.
+  - Purple path still tries old HSV purple wash first. When the user raw screenshot is not Alt+4 clean-name equivalent and the binary crop OCR misses, it uses the washed-color candidate box to crop the original screenshot and OCR the same candidate region. A click is produced only when OCR matches the current player name or valid fragment; raw/current images do not use largest-blob/long-strip center fallback.
+  - Existing formula math is unchanged: `anchor + mapDelta20px + tune + (0,-50)`.
+- RED/GREEN:
+  - RED: after adding `productionPurpleFormulaQueueStageFindsPlayerAnchorFromCurrentRaw`, `mvn -q -Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest test` failed with `action=NO_ACTION ... reason=cloud-brain-npc-player-anchor-evidence-missing`.
+  - GREEN: `mvn -q -Dtest="NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest" test` passed.
+- Replay evidence:
+  - Input: `images/test-cases/npc/current_window_xiuluo_accept_raw.png`.
+  - Queue stage: `PURPLE_FORMULA`.
+  - Decision: `action=CLICK;strategy=PLAYER_ANCHOR_FORMULA;anchor=505,428;candidateBox=466,419,79,18;click=525,118;matchedPlayerName=乌龟的黑头`.
+  - Marked output: `images/test-cases/npc/output/cr169_purple_player_anchor_current_window_marked.png`.
+- Fresh runtime gate:
+  - Restart DHXY and external `dhxy-cloud-brain` sidecar/JAR so runtime loads this worker's class changes.
+  - Verify normal NPC logs still consume FIFO in order and yellow semantic remains before purple.
+  - If yellow misses and purple runs, logs/decision should show `PLAYER_ANCHOR_FORMULA` with OCR `anchorEvidence=OCR`, not payload anchor evidence.
+  - Real Ctrl menu raw/marked gate remains outside this purple worker.
+
+### 2026-07-03 CR169 worker baseline - NPC_CLICK_START async FIFO repair
+
+- Role: CR169 worker. User evidence at 2026-07-03 16:19: external `NPC_CLICK_START` still waits for full queue recognition before returning (`start elapsedMs=18033` then `8953`), and first `MEMORY` disabled/no-click message had empty `windowId`/`taskRunId`, causing DHXY parser invalidation before later FIFO stages could be consumed.
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`; HEAD `696a12b chore: remove obsolete debug tooling`.
+  - `git status --short`: large existing dirty/untracked/deleted workspace across Java/docs/images/config; this pass must not revert or clean unrelated changes.
+  - Relevant touched-path evidence: `NpcClickSmartCloudDecisionService.parseQueueMessage(...)` rejects missing `sessionId/windowId/taskRunId`; `NpcClickSmartQueueMessage.isOrdinaryClickCandidate()` excludes `MEMORY`; `NpcClickService` reports no-click `MEMORY` as `VERIFICATION_FAILED` while continuing the poll loop, and polluted `MEMORY` click as `SAFETY_REJECTED`.
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`.
+  - Not a git repository, so no branch/HEAD/upstream is available.
+  - Relevant touched-path evidence: `DecisionEngine.npcClickSmart(...)` currently calls `SmartClickRecognizer.recognizeQueueMessages(context, traceId, npcClickMemoryStore)` synchronously inside the `NPC_CLICK_START` branch; `NpcClickSmartQueueStore.start(...)` stores an already-computed `List<Result>` in an `ArrayDeque`; queue message identity is copied from `context.sessionId/windowId/taskRunId`.
+- Repair intent:
+  - Make `NPC_CLICK_START` fail closed when `sessionId/windowId/taskRunId` is missing.
+  - Make external START return after session creation and run the old queue order in a background producer: `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`.
+  - Keep disabled `MEMORY` as a diagnostic no-action message with identity; DHXY local consumer should report a skip/no-action outcome and continue polling.
+  - Keep `MEMORY` / `LEARNED_MEMORY` click fail-closed and non-executable.
+- Planned focused tests before implementation:
+  - external async queue/store observable START-fast test plus DecisionEngine source/behavior guard for no synchronous full `recognizeQueueMessages(...)` in START;
+  - external FIFO order/identity and disabled `MEMORY` no-click tests;
+  - DHXY parser/consumer guard that no-click `MEMORY` is skipped/continued while malicious `MEMORY` click remains invalid/safety rejected.
+- Implementation result:
+  - External `NpcClickSmartQueueStore` now stores sessions as a `BlockingQueue` plus daemon background producer. `start(...)` returns `SESSION_STARTED` after session creation; producer pushes queue messages later.
+  - External `SmartClickRecognizer.produceQueueMessages(...)` pushes each old-stage message as soon as that stage finishes, preserving order `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`; `recognizeQueueMessages(...)` remains as a collecting wrapper for tests/reference.
+  - External `DecisionEngine.npcClickSmart(...)` START branch now fails closed if `sessionId/windowId/taskRunId` is missing (`cloud-brain-npc-click-start-identity-missing`) and no longer calls full `recognizeQueueMessages(...)` synchronously.
+  - External queue poll can return `WAIT` while producer is pending instead of treating an empty queue as END.
+  - DHXY `NpcClickSmartQueueMessage.Type` now includes `WAIT`; parser recognizes it.
+  - DHXY `NpcClickSmartQueueOutcome` now includes `SKIPPED`; `NpcClickService` treats `WAIT` as continue-poll and disabled/no-click `MEMORY` as skipped/no-action while continuing FIFO consumption. Malicious `MEMORY` / `LEARNED_MEMORY` click remains parser invalid or consumer `SAFETY_REJECTED`.
+- RED evidence:
+  - External `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` first failed at test compile because `NpcClickSmartQueueStore.start(...)` only accepted an already-computed `List<Result>`.
+  - DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` first failed because `NpcClickSmartQueueOutcome.SKIPPED` did not exist.
+- Verification:
+  - GREEN external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test`.
+  - GREEN DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test`.
+  - GREEN DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`.
+  - GREEN external `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest,NpcClickMemoryStoreTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`.
+  - GREEN DHXY `mvn -q -DskipTests compile`.
+  - GREEN external `mvn -q -DskipTests package`.
+- Fresh runtime gate:
+  - Restart DHXY and the external cloud-brain sidecar/JAR before testing; otherwise the old synchronous START path may still be running.
+  - Expected logs: `NPC_CLICK_START` fast returns `SESSION_STARTED`; later `NPC_CLICK_POLL` consumes queue messages in order with non-empty `sessionId/windowId/taskRunId`; disabled/no-click `MEMORY` is reported as `SKIPPED` and later stages continue.
+  - Failure signals: START still waits for full recognizer latency, any official queue message has empty `windowId/taskRunId`, or `MEMORY` / `LEARNED_MEMORY` click reaches mouse input.
+
+### 2026-07-03 CR169 manager review - learned-memory disable hotfix
+
+- 谢帅复核结论：生产路径当前不再允许 `LEARNED_MEMORY` 点击。外部 brain `MEMORY` stage 只返回 disabled no-action；DHXY parser 对 `MEMORY` / `LEARNED_MEMORY` + `click=` 判 `INVALID`；consumer guard 对漏网 memory click 报 `SAFETY_REJECTED` 且不提交鼠标输入。
+- 谢帅本地验证通过：
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`
+  - DHXY `mvn -q -DskipTests compile`
+  - external `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`
+  - external `mvn -q -DskipTests package`
+- Fresh gate：必须重启 DHXY 与外部 sidecar/JAR 后再测；日志应不再出现 `actionId=LEARNED_MEMORY` / `reason=cloud-brain-npc-learned-memory` 的真实鼠标提交，outcome ingest 应返回 `learnStatus=disabled`。
+- 后续规则：云端 learned-memory 不能重新打开外部 `NpcClickMemoryStore.promoteVerifiedOutcome(...)` 的旧单次 promote 逻辑；必须按旧本地 `OcrRoiMemoryService` / `vision_memory.json` 的样本数、强验证、spread/streak 语义迁移。
+
+### 2026-07-03 CR169 worker hotfix baseline - disable NPC learned-memory production
+
+- Role: CR169 worker. User decision at 2026-07-03 15:16 evidence review: disable/remove NPC click learned-memory use and learning from production first. Reason: a later verifier seeing dialog cannot prove the `LEARNED_MEMORY` click caused that dialog.
+- DHXY baseline before edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`; no upstream configured.
+  - HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` / `696a12b chore: remove obsolete debug tooling`.
+  - `git status --short`: large existing dirty/untracked/deleted workspace across Java/docs/images/config; this pass will not revert or clean unrelated changes.
+  - Relevant source evidence: `NpcClickSmartCloudDecisionService.parseMessageType(...)` currently maps `MEMORY` and `LEARNED_MEMORY` to queue type `MEMORY`; `NpcClickSmartQueueMessage.isOrdinaryClickCandidate()` currently includes `MEMORY`; `NpcClickService` executes ordinary queue candidates via `executeNpcClickSmartQueueCandidate(...)`.
+- External brain baseline before edit:
+  - Workdir: `D:\mavenProject\dhxy-cloud-brain`.
+  - Not a git repository, so no branch/HEAD/upstream is available.
+  - Relevant source evidence: `NpcClickMemoryStore.ingestOutcome(...)` calls `promoteVerifiedOutcome(...)` for one non-duplicate `VERIFIED` outcome; `SmartClickRecognizer.clickLearnedMemory(...)` can return `action=CLICK;strategy=LEARNED_MEMORY`; `recognizeQueueMessages(...)` enqueues that delegate as `messageType=MEMORY`.
+- User-required scope:
+  - Do not change tooltip/yellow/purple/Ctrl order.
+  - Do not invent a new click algorithm.
+  - Do not change dialog business.
+  - Add focused tests: single strong `VERIFIED` no promote; polluted legacy snapshot no lookup; DHXY parser/consumer rejects `MEMORY`/`LEARNED_MEMORY` clicks.
+- Old local learning inspection required by user correction:
+  - `OcrRoiMemoryService` owns the old persisted `config/vision_memory.json` path. NPC click policy there is not a one-shot verifier rule: it tracks `ClickPolicy` attempts/success/failure streaks, recent samples, spread and confidence, uses `MIN_LEARNED_NPC_SUCCESS_SAMPLES = 3`, `MAX_LEARNED_NPC_RECENT_SAMPLES = 12`, `MAX_LEARNED_NPC_POINT_SPREAD_PX = 45`, and requires measured actual-click evidence plus `DIALOG_OPTION` / `DIALOG_TEMPLATE` in `hasStrongNpcVerification(...)`.
+  - `NpcClickService` currently consumes `OcrRoiMemoryService.recommendNpcClickRegions(...)`; `confirmPendingSmartClick(...)` is a CR169 compatibility no-op and does not write local NPC click learning evidence.
+  - Future cloud NPC memory must migrate the old `OcrRoiMemoryService` / `vision_memory.json` policy and evidence semantics. Do not invent a new cloud promote rule, consecutive-count rule, or confidence strategy in `NpcClickMemoryStore`.
+- Implementation:
+  - External `NpcClickMemoryStore`: production learned-memory flag disabled; `lookup(...)` returns null, `ingestOutcome(...)` returns `learnStatus=disabled`, and old snapshot load cannot produce clickable memory.
+  - External `SmartClickRecognizer`: FIFO `MEMORY` stage is diagnostic no-action (`cloud-brain-npc-memory-disabled`), never `action=CLICK` / `strategy=LEARNED_MEMORY`.
+  - DHXY `NpcClickSmartCloudDecisionService`: `MEMORY` / `LEARNED_MEMORY` queue messages carrying `click=` are parsed as `INVALID` with reason `learned-memory click is disabled in production NPC click FIFO queue`.
+  - DHXY `NpcClickSmartQueueMessage` / `NpcClickService`: `MEMORY` is no longer an ordinary click candidate; if a polluted memory click bypasses parser, consumer guard reports `SAFETY_REJECTED` and does not submit mouse input.
+- Verification:
+  - RED before fix: external `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` failed because strong `VERIFIED` promoted and legacy snapshot lookup returned a `MemoryHit`; DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest" test` failed because malicious `MEMORY` click parsed as executable `MEMORY`.
+  - GREEN: DHXY `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test`.
+  - GREEN: DHXY `mvn -q -DskipTests compile`.
+  - GREEN: external `mvn -q -Dtest="NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest#npcLearnedMemoryDisabledDoesNotPreemptCtrlFallbackAfterClickFailure" test`.
+  - GREEN: external `mvn -q -DskipTests package`.
+  - Note: external whole `CloudBrainSmokeTest` still has existing old-direct `NPC_CLICK_SMART` tests returning `QUEUE_PROTOCOL required`; not repaired in this hotfix because it is outside the learned-memory disable boundary.
+- Fresh runtime gate:
+  - Restart DHXY and the external brain sidecar/JAR, then verify logs show `MEMORY` queue messages are no-action/disabled diagnostics only, no `NPC_CLICK_SMART action submitted ... actionId=LEARNED_MEMORY`, no `reason=cloud-brain-npc-learned-memory`, and outcome ingest logs/report bodies return `learnStatus=disabled`.
+
+### 2026-07-03 CR169 fourth review PASS - source/focused only
+
+- Status：第四轮 reviewer PASS（限第三轮 P1 修复源码/focused guard），不是 CR169 Done。
+- 谢帅本地验证已过：
+  - DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`
+  - DHXY `mvn -q -DskipTests compile`
+  - external `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`
+  - external `mvn -q -DskipTests package`
+- Review outcome：未发现新的 P0/P1。生产未见 full fallback / local fallback order / direct recognize fallback /
+  stale 回填回流；`CTRL_CANDIDATES` 已改为云端旧策略证据 -> 本地 Ctrl hover/menu scan/OCR/menu click/verifier；
+  production FIFO 旧 `REQUEST_NEW_SCREENSHOT` / `VERIFY_DIALOG` / `CTRL_HOVER(_DONE)` 已归一化并有 parser 双保险。
+- 仍缺：真实 Ctrl 菜单 raw/marked replay；真实 learned-memory positive raw/marked replay。可以跑普通 fresh
+  smoke 采证，但不能宣称 CR169 验收完成。
+
+### 2026-07-03 CR169 三轮 review P1 修复 - Ctrl menu 等价与 FIFO 归一化
+
+- Role：CR169 实现 worker；谢帅继续只做 reviewer。本轮只修第三轮 review 两个 P1，不标 Done。
+- Fix:
+  - DHXY `executeNpcClickSmartCtrlCandidates(...)` 改为本地 Ctrl hover/menu 扫描执行层：按云端 probe
+    顺序进入 `submitExclusiveAndWait("npcClick:fifoCtrlMenuScan...")`，直接 `holdCtrl`、移动到 probe
+    offset，截图菜单区域，经 `ImageProcessorService.WASH_YELLOW` 洗图，再用 `TextRecognizer`
+    + `OcrTextMatcher` 匹配目标菜单项，点击菜单项后运行本地 verifier。该层不决定 fallback 顺序。
+  - 外部 `SmartClickRecognizer.recognizeQueueMessages(...)` 的 Ctrl probes 改为来自旧策略证据：
+    `previousCandidateBoxes`、learned/tooltip/yellow/purple delegate 的 `click/candidateBox`；
+    没证据时输出 `CTRL_CANDIDATES` no-action，不再用裸 ROI center/1/3/2/3 三点。
+  - 外部 `Result.queueMessage(...)` 增加 `normalizeQueueDelegate(...)`，把旧 direct action
+    `REQUEST_NEW_SCREENSHOT`、`VERIFY_DIALOG`、`CTRL_HOVER` / `CTRL_HOVER_DONE` 归一化为该阶段
+    `NO_ACTION`，不把旧 action 字符串写进 production FIFO。
+  - DHXY queue parser 增加双保险：如果 production queue decision 仍含上述旧 action/outcome，直接
+    `INVALID`，不会作为普通候选消费。
+- Guard:
+  - DHXY `NpcClickSmartCloudWiringGuardTest` 防止 Ctrl+click 壳回流，要求 `fifoCtrlMenuScan`、
+    `scanCtrlMenuAndVerifyKeywordDirect`、`TextRecognizer` 菜单 OCR 和旧 action parser reject。
+  - 外部 `NpcClickSmartFifoQueueSessionTest` 覆盖 Ctrl probes 必须来自 evidence、不能是裸 ROI 三点，
+    并覆盖 START/POLL production messages 不含 `REQUEST_NEW_SCREENSHOT` / `VERIFY_DIALOG` /
+    `CTRL_HOVER_DONE` / `action=CTRL_HOVER`。
+- Verification:
+  - RED：DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 先失败于缺
+    `npcClick:fifoCtrlMenuScan`。
+  - RED：外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 先失败于 Ctrl probes 仍是
+    `512,384|341,384|683,384`，且缺 `normalizeQueueDelegate`。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`。
+  - GREEN：DHXY `mvn -q -DskipTests compile`。
+  - GREEN：外部
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`。
+  - GREEN：外部 `mvn -q -DskipTests package`。
+- Remaining gates：
+  - 仍禁止 fresh runtime 作为验收结论：真实 Ctrl 菜单 raw/marked replay 还没有补；本轮验证的是
+    source/focused/protocol 行为和旧策略 marked replay，不是鲜活窗口的 Ctrl 菜单命中。
+  - `MEMORY` 仍缺真实 learned-memory positive raw/marked replay。
+  - fresh runtime 前需重启 DHXY 和外部 sidecar/JAR，确认 queue 消息没有旧 action，且 Ctrl 阶段日志出现
+    `npcClick:fifoCtrlMenuScan`、菜单 OCR matched text、verifier outcome。
+
+### 2026-07-03 CR169 third review - P0 shell fixed, P1 remains
+
+- Status：Review FAIL / 禁止作为 CR169 fresh-runtime 验收。谢帅已本地复跑：
+  `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`、
+  `mvn -q -DskipTests compile`、外部
+  `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`、
+  外部 `mvn -q -DskipTests package`，均通过。
+- 已修掉的二轮 P0/P1：生产不再调用旧 full fallback；外部无 queue protocol 已 fail closed；
+  queue identity 缺字段已 invalid；candidateBox 已进入 scan-region 校验；旧 pipeline 空 marker 已移出
+  production service，新增 test-scope reference。
+- P1 blocker：`CTRL_CANDIDATES` 仍不是旧 Ctrl hover/menu 等价。当前本地只是按云端 probe 执行
+  `holdCtrl -> moveMouse -> clickLeft -> releaseCtrl`；外部 START 阶段 probe 是 ROI 中心/1/3/2/3 三点，
+  不来自旧 NPC candidate box / Ctrl menu scan / 菜单项匹配。下一轮 worker 必须改成旧菜单 fallback
+  等价，或明确把 Ctrl/menu 拆成新 CR 并从 CR169 验收移除。
+- P1 blocker：生产 FIFO 仍可能携带旧 `REQUEST_NEW_SCREENSHOT` action。`recognizeQueueMessages(...)`
+  包装 `clickUniqueYellowTarget(...)` 时，黄字多候选首轮仍可能返回 `Result.requestNewScreenshot(...)`；
+  本地不会重截图，但会把无 click 消息当 safety reject。下一轮必须归一化 queue message，不允许
+  `action=REQUEST_NEW_SCREENSHOT` 或任何重截图语义进入生产 FIFO，并补 guard/replay。
+- P2 / remaining gates：`NpcClickLegacyPipelineReference` 覆盖面偏薄；真实 learned-memory positive
+  raw/marked 与真实 Ctrl 菜单 raw/marked 仍缺。
+
+### 2026-07-03 CR169 二轮打回 worker 修复基线
+
+- Role：CR169 实现 worker；谢帅继续只做 reviewer，不直接写 Java。本轮只修二轮 review 打回的
+  P0/P1：真实 shadow/reference、`CTRL_CANDIDATES` 可执行、外部 direct production fail-closed、
+  stale/session 强校验和 candidateBox scan-region 校验。
+- Baseline：
+  - DHXY branch：`codex/hybrid-cloud-protection`。
+  - DHXY status：当前工作区已有大量并行 dirty/untracked/deleted changes；本轮不 revert/清理他人改动，
+    只增量触碰 CR169 必需文件。
+  - 当前 CR169 证据：`NpcClickService.runNpcClickPipelineShadowReference(...)` 与
+    `clickNpcByYellowTargetName()` / `clickNpcByPlayerAnchorFormula()` /
+    `clickNpcByCtrlMenuScan()` 仍是空 marker/stub；`executeNpcClickSmartCtrlCandidates(...)`
+    收到 `CTRL_CANDIDATES` 后直接返回失败。
+  - 当前云端差异证据：`NpcClickSmartCloudDecisionService` 的 queue message parse 仍会把缺失的
+    `sessionId/windowId/taskRunId` 回填为 request 值；外部 brain 路径
+    `D:\mavenProject\dhxy-cloud-brain` 当前不是 git 仓库，无法记录 branch/HEAD，只能用文件和测试结果
+    固定本轮改动。
+- TDD guard 计划：先增强 DHXY/source guard 和外部 focused tests，使上述 fake-green 点红起来；再实现最小
+  FIFO 闭环，最后更新 CR169 卡、dashboard 和本节结果。
+- Worker result：
+  - DHXY 删除生产 `NpcClickService` 空 shadow marker/stub，新增
+    `src/test/java/com/bot/dhxy/service/NpcClickLegacyPipelineReference.java` 作为非生产 reference/replay；
+    guard 实际调用该 reference，确认旧顺序、player-anchor formula 和 Ctrl probe 数据非空。
+  - DHXY `CTRL_CANDIDATES` 本地 consumer 已可执行：按云端 probe 顺序做 safety check，提交
+    `holdCtrl -> moveMouse -> clickLeft -> releaseCtrl` 原子 input queue 序列并运行 verifier；不接管旧
+    fallback 顺序。
+  - DHXY queue parser 改为缺 `sessionId/windowId/taskRunId` 直接 `INVALID`，不从 request 回填；
+    普通 candidate 的 `candidateBox` 必须在窗口内且落入 allowed scan region。
+  - 外部 brain `DecisionEngine.npcClickSmart(...)` 无 `NPC_CLICK_START` / `NPC_CLICK_POLL` 时 fail-closed；
+    `SmartClickRecognizer.recognizeQueueMessages(...)` 在 START 阶段生成 Ctrl probes，不再调用
+    previous-outcome continuation `ctrlHoverAfterFailedNormalClick(...)`。
+- Verification：
+  - RED：DHXY `mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 先失败，命中 candidateBox
+    scan-region/shadow/Ctrl guard。
+  - RED：外部 `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 先失败，命中缺
+    `windowId/taskRunId`、direct fallback、Ctrl 无 probe。
+  - GREEN：DHXY `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`。
+  - GREEN：DHXY `mvn -q -DskipTests compile`。
+  - GREEN：外部
+    `mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest" test`。
+  - GREEN：外部 `mvn -q -DskipTests package`。
+- Remaining fresh-runtime gates：
+  - `MEMORY` 仍缺真实 learned-memory positive raw/marked replay。
+  - `CTRL_CANDIDATES` 仍缺真实 Ctrl 菜单 raw/marked replay；本轮只验证了 START-stage probes、DHXY
+    input executor 和 protocol/reference marked output。
+  - fresh runtime 前需重启 DHXY 与外部 sidecar/JAR，检查日志出现 `NPC_CLICK_START`、`NPC_CLICK_POLL`、
+    queue message identity、local verifier outcome 和 `reportOutcome`。
+
+### 2026-07-03 CR169 二轮 review 打回 - FIFO 壳子未验收
+
+- Status：P0 / 禁止 fresh runtime。独立 reviewer 与主管复核一致：当前实现只有 `NPC_CLICK_START` /
+  `NPC_CLICK_POLL` FIFO 最小壳子，不能算完成用户定稿的 NPC Click 云端 FIFO candidate queue。
+- P0 blocker 1：旧本地 pipeline 没有真实保留。`NpcClickService.runNpcClickPipelineShadowReference(...)`
+  只剩空 marker/stub，不能作为 shadow/reference/testcase replay；这违反 CR169 业务规则“旧 pipeline
+  必须保留为 shadow/reference，不能物理删除”。修复方向：恢复真实旧 pipeline 逻辑或拆出等价非生产
+  reference/replay 工具；生产入口仍不得 full fallback。
+- P0 blocker 2：`CTRL_CANDIDATES` 不可执行。DHXY 本地消费端目前直接返回失败；外部 brain 又复用
+  `ctrlHoverAfterFailedNormalClick(...)` 的 previous-outcome continuation，`NPC_CLICK_START` 阶段没有
+  `lastOutcomeStatus=VERIFICATION_FAILED` / `lastAction=CLICK`，因此通常产不出真实 Ctrl probe points。
+  修复方向：云端在 START 阶段按 base screenshot/context 预生成 Ctrl candidates，本地用旧 Ctrl
+  hover/menu 动作执行并 verifier，direct-combat 不能接未完成壳子。
+- P1 follow-ups：封死外部 `DecisionEngine.npcClickSmart(...)` 无 queueOperation 时的旧 direct
+  `recognize(...)` 生产入口；加强 stale guard 的 `taskRunId/round` 证据；candidateBox 也要进入 allowed
+  scan region 校验；guard 不能只靠字符串存在性或 protocol-only marked 图。
+- Next worker handoff：让 CR169 worker 修 P0/P1，并更新 CR169 卡/ACTIVE_WORK/dashboard。谢帅继续只做
+  主管/reviewer，不直接改 Java 业务实现。
+
+### 2026-07-03 CR169 P0 最终定稿 - FIFO candidate queue
+
+- Role：谢帅 / business supervisor。本轮用户已拍板 `NPC_CLICK_SMART` 最终模型：一次
+  `NPC_CLICK_START` 建 session，云端作为 FIFO producer 按旧 pipeline 顺序 push candidate，本地作为
+  FIFO consumer 执行点击/Ctrl 本地动作和 verifier。谢帅只更新 Markdown/CR/验收标准并派 worker；
+  不直接写 Java 业务实现。
+- Final business design：
+  - 本地普通初始 NPC click：安全检查 -> `Alt+4` -> 截一次 base screenshot -> 发
+    `NPC_CLICK_START(sessionId, npcName, source/task, player/target coords, scanRegions, base image,
+    window geometry, verificationMode, context)`。
+  - 云端 queue 顺序固定：`MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`。
+    云端每算出一类就 push 到 session FIFO queue；不等所有策略完成，也不在第二轮才开始算后续策略。
+  - 本地只按 FIFO 消费；普通 candidate 执行窗口相对 move+click + verifier，`CTRL_CANDIDATES` 用旧本地
+    Ctrl hover/menu 匹配动作执行。成功即停止消费并异步 report success；失败继续消费；`END`/timeout/
+    stop/cancel/invalid 上报失败或取消。
+  - 旧本地 pipeline 必须保留为 shadow/reference/testcase replay，禁止物理删除；但生产不得 full fallback，
+    也不得本地自行决定 fallback 顺序。
+  - NPC Click 不拥有 post-click dialog option 业务；expected dialog/combat 只作为本地 verifier outcome。
+- Superseded local notes：
+  - 之前 `action/outcome TRY_TOOLTIP/TRY_YELLOW_NAME/...` 方向已作废。
+  - 之前“云端 raw image 重写 tooltip/yellow/purple/Ctrl 识别并直接返最终点位”的方向也作废。
+  - 之前 worker 曾删除/改动 `NpcClickSmartCloudWiringGuardTest.java` 的风险必须在新实现中纠正：guard
+    应改为 queue/ordering/shadow 口径，而不是断言旧 pipeline 物理消失。
+- Documentation updated：
+  - `docs/业务逻辑.md` 已新增“NPC Click 云端 FIFO 候选队列逻辑”。
+  - `docs/PACKAGE_ARCHITECTURE.md` CR169 row/card 已改为 FIFO candidate queue 最终方案。
+- Worker handoff requirements：
+  - 开工前读 `AGENTS.md`、`docs/DHXY_CONTEXT.md`、`docs/业务逻辑.md` 的 NPC Click 章节、CR169 卡、
+    `docs/HYBRID_CLOUD_WORKFLOW.md` 和当前 `git status`。
+  - 必须先记录 baseline：branch、HEAD、`origin/dev` / 当前 HEAD 中旧 `NpcClickService` pipeline 证据、
+    当前 CR169 cloud 差异和外部 `D:\mavenProject\dhxy-cloud-brain` 状态。
+  - 实现必须走 TDD/focused guards：queue session、FIFO ordering、no production full fallback、local
+    shadow/reference retained、success/fail/cancel outcome report、stale session ignored。
+  - 视觉/点击变更必须按 AGENTS testcase replay 输出 marked 图；至少覆盖 `MEMORY`、`TOOLTIP`、
+    `YELLOW_NAME`、`PURPLE_FORMULA`、`CTRL_CANDIDATES`。
+  - 完成后更新 CR169 卡、`docs/ACTIVE_WORK.md`、dashboard；独立 reviewer 复核通过前禁止 fresh runtime。
+- Worker baseline before FIFO implementation：
+  - DHXY workdir：`D:\mavenProject\DHXY`。
+  - Current branch：`codex/hybrid-cloud-protection`；本轮按用户要求在当前 workspace 直接实现，未切分支。
+  - Current HEAD：`696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline available locally：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch`：当前已有大量并行 dirty changes，包括 Java、docs、images、cloud/test 新增和若干删除；本轮只增量触碰 CR169 必需文件，不 revert/清理他人改动。
+  - 旧本地 `NpcClickService` pipeline 证据：`git show 696a12b:src/main/java/com/bot/dhxy/service/NpcClickService.java` 显示 `clickNpcSmart(...)` 注释与实现仍保留旧稳定顺序：
+    `learned memory -> tooltip template -> yellow-name OCR -> player-anchor formula -> Ctrl menu fallback`；`executeMoveClickAndVerify(...)` 保持原子 `moveMouse + sleep + clickLeft + sleep`。
+  - 当前 CR169 cloud 差异证据：`git diff --stat -- src/main/java/com/bot/dhxy/service/NpcClickService.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+    显示 `NpcClickService.java` 与 CR 文档已有大规模本地迁移差异；当前 `src/main/java/com/bot/dhxy/cloud/...` 多数为未跟踪新增，不能视为 pushed baseline。
+  - 外部 brain workdir：`D:\mavenProject\dhxy-cloud-brain` 当前不是 git repository，无法记录 branch/commit/upstream。
+  - External pre-edit SHA256：
+    - `SmartClickRecognizer.java`：`EE2FA3479A92DCD0858F93A3BCEA912B4E01157C98CCECD5C719B2716E7D3B8B`
+    - `NpcClickSmartOldPipelineEquivalenceTest.java`：`EDB4AA1E865E115C6DE5004A0584135C160F1F3FBA1730DB7FC92AF960CE8D84`
+- Worker implementation result：
+  - DHXY：新增 `NpcClickSmartCloudSession`、`NpcClickSmartQueueMessage`、`NpcClickSmartQueueOutcome`；
+    `NpcClickSmartCloudRequest` 增加 `sessionId`；`NpcClickSmartCloudDecisionService` 增加
+    `startSession(...)`、`pollNext(...)`、`reportOutcome(...)`。
+  - DHXY：`NpcClickService` 生产入口改为一次 base screenshot 后 `NPC_CLICK_START`，再按
+    `NPC_CLICK_POLL` FIFO 消费；普通 candidate 做 window-relative/scan-region 校验、原子
+    move+click、本地 verifier，并异步上报 outcome。
+  - DHXY：生产 `NpcClickService` 不再调用 `npcClickSmartCloudDecisionService.decide(...)`，旧
+    `REQUEST_NEW_SCREENSHOT` / `CTRL_HOVER_DONE` previous-outcome loop 已移除；`END`/invalid/stop/poll-limit
+    fail closed，不跑旧本地 full fallback。
+  - DHXY：stale queue message 防护已补，消费前校验 `sessionId`、`windowId`、`taskRunId`；
+    mismatch 上报 `STALE_IGNORED` 后忽略。
+  - 外部 brain：新增 `NpcClickSmartQueueStore`；`DecisionEngine.npcClickSmart(...)` 的
+    `queueOperation=NPC_CLICK_START` / `NPC_CLICK_POLL` 走 session queue；旧
+    `SmartClickRecognizer.recognize(...)` 仅保留 legacy replay/test，新增
+    `recognizeQueueMessages(...)` 按 `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`
+    生成消息。
+  - Focused RED/GREEN：
+    - RED DHXY：`mvn -q -Dtest=NpcClickSmartCloudWiringGuardTest test` 首次失败于 `sessionId` 缺失。
+    - RED external：`mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 首次失败，证明仍直接
+      `recognize(...)` 返回最终策略 miss。
+    - GREEN DHXY：`mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test` passed。
+    - GREEN DHXY：`mvn -q -DskipTests test-compile` passed。
+    - GREEN DHXY：`mvn -q -DskipTests compile` passed。
+    - GREEN external：`mvn -q -Dtest="NpcClickSmartFifoQueueSessionTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartRealTooltipReplayTest,CloudBrainSmokeTest" test` passed。
+    - GREEN external：`mvn -q -DskipTests package` passed。
+  - Testcase / marked outputs：
+    - `TOOLTIP`：`images/test-cases/npc/output/cr169_tooltip_template_standalone_marked.png`。
+    - `YELLOW_NAME`：`images/test-cases/npc/output/cr169_yellow_semantic_standalone_marked.png`。
+    - `PURPLE_FORMULA`：`images/test-cases/npc/output/cr169_purple_anchor_formula_standalone_marked.png`。
+    - FIFO/order：`images/test-cases/npc/output/cr169_order_yellow_before_purple_marked.png`、
+      `images/test-cases/npc/output/cr169_order_yellow_ocr_before_template_metadata_purple_marked.png`。
+    - `MEMORY` protocol replay：`images/test-cases/npc/output/cr169_memory_queue_protocol_marked.png`。
+    - `CTRL_CANDIDATES` protocol replay：
+      `images/test-cases/npc/output/cr169_ctrl_candidates_queue_protocol_marked.png`。
+  - Remaining fresh-runtime gates：
+    - `MEMORY` 和 `CTRL_CANDIDATES` 目前只有协议级 marked 图，缺真实游戏 raw positive；
+      必须补真实 learned-memory / Ctrl 菜单 raw replay 后才能宣称这两类视觉/菜单执行完全验收。
+    - `CTRL_CANDIDATES` 本地 FIFO Ctrl hover/menu executor 当前仍是 legacy-reference only，不会私自
+      fallback；需要下一轮用真实 Ctrl 菜单 testcase 恢复旧本地动作执行。
+    - fresh runtime 前需重启 DHXY / external sidecar/JAR，日志应出现 `NPC_CLICK_START`、`NPC_CLICK_POLL`、
+      queue message、consume result、verifier outcome 和 `reportOutcome`。
+
+### 2026-07-03 CR169 P0 方向纠偏 - action/outcome 协议 worker
+
+- Role：CR169 实现 worker。本轮按用户明确纠正执行：`NPC_CLICK_SMART` 云端只编排下一步本地 action，本地执行旧 pipeline 的单步策略并回传 outcome；不继续让外部 `SmartClickRecognizer` 重写 tooltip/yellow/formula/Ctrl 视觉识别并直接决定 NPC 点位。
+- Scope：
+  - DHXY：`NpcClickService`、`NpcClickSmartCloudDecision/Request/DecisionService`、`NpcClickSmartCloudWiringGuardTest`、CR169 文档/dashboard。
+  - 外部 brain：`D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\SmartClickRecognizer.java` 及 focused state-machine tests。
+  - 不改导航/五倍/修罗主流程，不处理无关 image processor / mini-map / dialog CR，不 revert 其他人的 dirty worktree。
+- Baseline before edit：
+  - DHXY workdir：`D:\mavenProject\DHXY`。
+  - Current branch：`codex/hybrid-cloud-protection`，本地分支无 upstream；未切换分支，因为用户直接指定当前 worker 任务。
+  - Current HEAD：`696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+  - Latest pushed baseline available locally：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch`：当前工作区已有大量 modified/deleted/untracked 文件；本轮只增量触碰 CR169 明确相关文件，不清理、不回滚。
+  - Relevant pushed baseline evidence：`git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java ...` 只显示 `origin/dev` 的旧 `NpcClickService.java` 差异统计；当前 CR169 cloud model/service/test 多数是本地迁移新增，不存在于 pushed baseline。
+  - Relevant current diff evidence：`git diff --stat -- ... NpcClickService.java docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js docs/ACTIVE_WORK.md` 显示既有大规模本地 CR 差异；本轮不重置这些差异。
+  - 外部 brain workdir：`D:\mavenProject\dhxy-cloud-brain`，当前不是 git repository，无法记录 branch/commit/upstream。
+  - External pre-edit SHA256：
+    - `SmartClickRecognizer.java`：`EE2FA3479A92DCD0858F93A3BCEA912B4E01157C98CCECD5C719B2716E7D3B8B`
+    - `AlgorithmFailClosedTest.java`：`084F8ECC1F724988A5F2CB336F6D1087778F6DE0BECD86A255C760932263B556`
+- Baseline business evidence：
+  - 当前 `NpcClickService.tryClickNpcSmartViaCloud(...)` 已有 cloud loop/outcome 字段，但 `executeNpcClickSmartCloudAction(...)` 仍执行云端返回的 window-relative click 点。
+  - 当前 `NpcClickSmartCloudDecision.Action` 仍是 `CLICK/CTRL_HOVER/CTRL_CLICK/PRESS_HOTKEY_THEN_CLICK/...`，不能表达 `TRY_TOOLTIP` / `TRY_YELLOW_NAME` / `TRY_FORMULA_CLICK` / `TRY_CTRL_MENU_ITEM` 等本地旧策略 action。
+  - 当前外部 `SmartClickRecognizer.recognize(...)` 生产路径仍调用 `clickTargetTemplate(...)`、`clickUniqueYellowTarget(...)`、`clickPlayerAnchorFormula(...)`、`ctrlMenuItemAfterHover(...)` 等云端视觉识别/点位选择；该方向按用户本轮 P0 纠正作废。
+- TDD plan：
+  - 先改/新增 DHXY guard：禁止本地自行 fallback，但要求本地 action executor 支持云端指定的旧策略 action。
+  - 先改/新增外部 brain state-machine test：initial/failure/outcome 只返回 action 顺序，不返回视觉点击点。
+  - 先跑 RED，再实现最小闭环；最后跑 focused DHXY compile/test、外部 focused tests，并更新 CR169 卡和 dashboard。
+
+### 2026-07-03 CR169 四策略真实 replay 修复继续执行
+
+- Scope:
+  - 继续 CR169，目标是外部 `D:\mavenProject\dhxy-cloud-brain` 的 `NPC_CLICK_SMART`
+    四策略 replay：`TOOLTIP_TEMPLATE`、`YELLOW_TARGET_RAW`、`PLAYER_ANCHOR_FORMULA`、
+    `CTRL_MENU_HOVER/CTRL_MENU_ITEM`。
+  - DHXY 主仓本轮预期只更新 CR169 文档、dashboard、marked testcase 输出；不恢复本地 fallback，
+    不改 NPC 模板，不硬编码单个文件名/坐标进生产逻辑，不回滚他人 dirty worktree。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - Current branch: `codex/hybrid-cloud-protection`；该本地分支无 upstream。
+  - Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline available locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch`: 大量既有 modified/deleted/untracked 文件；本轮只追加 CR169
+    必需改动，不 revert 非本人改动。
+  - Relevant pushed baseline evidence: `git show --stat --oneline origin/dev --
+    src/main/java/com/bot/dhxy/service/NpcClickService.java
+    src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java
+    docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md` 显示 `origin/dev` 只含旧
+    `NpcClickService.java` 与 `docs/ACTIVE_WORK.md` 差异统计；当前 cloud decision 相关路径多数是本地迁移新增。
+  - Relevant current diff evidence: `git diff -- ... NpcClickService.java
+    NpcClickSmartCloudDecisionService.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md
+    docs/cr-dashboard-data.js` 显示这些文件已有大量并行 CR 本地差异；本轮不把这些差异重置为 baseline。
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain`，当前不是 git repository，无法记录
+    branch/commit/upstream。
+  - External pre-edit SHA256:
+    - `SmartClickRecognizer.java`:
+      `EE2FA3479A92DCD0858F93A3BCEA912B4E01157C98CCECD5C719B2716E7D3B8B`
+    - `NpcClickSmartOldPipelineEquivalenceTest.java`:
+      `EDB4AA1E865E115C6DE5004A0584135C160F1F3FBA1730DB7FC92AF960CE8D84`
+    - `NpcClickSmartRealTooltipReplayTest.java`:
+      `6B0F5AF9A265B82CC8312A137978879C75B95447AB7E6D4316EFD37C68C5A968`
+    - `NpcClickSmartCurrentScreenPurpleAnchorReplayTest.java`:
+      `570BB4E18455519A44825707438FA13D3281BFECBB3FFB51EB517686B324CAA2`
+    - `NpcClickSmartUserWuyiDialogReplayTest.java`:
+      `92A17020ADAB903984EECA3552FE4C5996536D936D9096654F2EF24A6B92A294`
+- Current replay evidence before edit:
+  - `YELLOW_TARGET_RAW` 正向已在 `images/test-cases/npc/current_window_xiuluo_accept_raw.png`
+    返回 `click=482,116`。
+  - `TOOLTIP_TEMPLATE` 当前 positive 仍主要来自 synthetic old-pipeline 测试；真实巫医 tooltip 测试只是
+    “generic task tooltip 不应误命中巫医 tooltip”的负向/等价测试，不是任务 tooltip 正向验收。
+  - `PLAYER_ANCHOR_FORMULA` 在 current raw 上仍输出 `PURPLE_FORMULA_CLICK=null`；legacy washed 能读到
+    `乌龟的黑头`，但该输入不是最终正向证据。
+  - `CTRL_MENU_HOVER/CTRL_MENU_ITEM` 当前 old-pipeline positive 仍是 dark synthetic + metadata continuation，
+    缺真实 Ctrl 菜单截图。
+  - Fresh RED command: external `mvn -q -Dtest="NpcClickSmartRealTooltipReplayTest,
+    NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartUserWuyiDialogReplayTest" test`
+    failed only on `NpcClickSmartUserWuyiDialogReplayTest.exactUserScreenshotRejectsWuyiTooltipAsTaskTooltipAndWritesCloudDecision`:
+    yellow-only still clicks `115,28` on `current_screen_xiuluo_accept_wuyi_dialog_raw.png`。
+    该图是“巫医 dialog 已打开”的错误范围/负样本，不能扩大成本轮四策略正向验收对象；后续应改为 fail-closed/不误点防护。
+- Work plan:
+  - 先补 `TOOLTIP_TEMPLATE` 真实正向 replay：优先复用
+    `images/test-cases/npc/raw/xiuluo_lingshoucun_shizhe_task_tooltip_raw.png`，输出 marked 图。
+  - 再补 `PLAYER_ANCHOR_FORMULA`：优先让云端在真实/半真实 raw 中自行提取紫名 anchor；若当前 raw
+    不含等价 clean-name 状态，生成明确标注为半真实的 repo-local testcase，不宣称最终验收。
+  - 最后补 Ctrl 菜单：优先找现有真实 Ctrl 菜单 raw；没有则生成最接近真实的半真实 testcase，
+    并在 CR169 卡中明确 fresh runtime 仍需真实 Ctrl 菜单截图补验。
+
+### 2026-07-03 CR169 P0 repair - 顺序与 purple 假绿修复
+
+- Scope：只改外部 `D:\mavenProject\dhxy-cloud-brain` 的 `SmartClickRecognizer` / CR169 focused test，
+  以及 DHXY `NpcClickService` 的截图前输入等价边界和源码 guard；未恢复 DHXY 本地 tooltip/yellow/purple/Ctrl
+  策略决策，未改模板，未清理并行 dirty worktree。
+- RED：
+  - `mvn -q -Dtest=NpcClickSmartOldPipelineEquivalenceTest test` 先失败于两项：
+    `combinedPipelineKeepsYellowSemanticBeforeYellowTemplateMetadataAndPurple` 返回
+    `YELLOW_TARGET_TEMPLATE`，证明 yellow template/metadata 抢在 semantic OCR 前；
+    `purplePlayerAnchorFormulaStandaloneExtractsPlayerNameWithoutPayloadAnchorEvidence` 返回
+    `anchor=708,372` / `click=728,62`，是假绿。
+- Fix：
+  - `SmartClickRecognizer.recognize(...)` 顺序调整为 expected dialog / learned memory / Ctrl continuation
+    -> 真 tooltip template -> `YELLOW_TARGET_RAW` semantic OCR -> `PLAYER_ANCHOR_FORMULA`
+    -> yellow template / metadata fallback -> Ctrl fallback。新增带 `yellowTemplateSpecs`、`yellowTemplatePath`
+    metadata 和 purple evidence 的回归，证明 yellow OCR 命中时仍返回 `YELLOW_TARGET_RAW`。
+  - `extractPurpleAnchorFromOcr(...)` 改为旧本地等价的 word-local anchor：优先单个 OCR word 的 whole-name/core
+    命中，必要时才用 fragment 字符宽补偿；不再拼 6-word span 后取大框中心。`center_scan_player.png`
+    中实际使用 `OcrWord[text=乌龟的黑头,left=476,top=395,width=88,height=24,x=520,y=407]`，
+    formula click 为 `540,97`，marked 图标出 anchor 和 click。
+  - DHXY `prepareNpcClickSmartCloudCaptureScene(...)` 收窄为普通初始 capture 才按一次 `Alt+4`；
+    direct-combat 以及任意非空 previous outcome/status/action/token 的续帧都跳过，避免破坏 dialog/menu/retry
+    现场。本地仍只负责截图准备、payload、allowlist/safety 和执行云端 response。
+- GREEN：
+  - 外部 focused：`mvn -q -Dtest="NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test` passed。
+  - 外部 package：`mvn -q -DskipTests package` passed。
+  - DHXY focused：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY compile：`mvn -q -DskipTests compile` passed。
+- Marked outputs：
+  - `images/test-cases/npc/output/cr169_purple_anchor_formula_standalone_marked.png`：anchor=`520,407`，click=`540,97`。
+  - `images/test-cases/npc/output/cr169_order_yellow_ocr_before_template_metadata_purple_marked.png`：yellow OCR 在 template/metadata/purple 同时存在时胜出。
+  - 保留矩阵输出：`cr169_tooltip_template_standalone_marked.png`、`cr169_yellow_semantic_standalone_marked.png`、
+    `cr169_order_yellow_before_purple_marked.png`。
+- Remaining gate：tooltip 和 Ctrl standalone 仍主要是 mechanistic/synthetic positive；真实 Ctrl menu raw replay
+  和完整 fresh runtime 还没验。需要重启 DHXY / external sidecar 后跑真实修罗或五倍 NPC 样本，确认新 jar 生效、
+  OCR sidecar 可用、云端顺序无 template/metadata/purple 抢跑，且本地不出现旧策略决策日志。
+
+### 2026-07-03 CR169 two-reviewer gate fail - NPC_CLICK_SMART FIFO / strategy evidence
+
+- Manager self-verification:
+  - `mvn -q "-Dtest=NpcClickSmartCurrentScreenReplayTest,NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartOldPipelineEquivalenceTest,NpcClickSmartFifoQueueSessionTest,NpcClickSmartLiveQueueReplayTest,NpcClickSmartRealTooltipReplayTest,NpcClickSmartUserWuyiDialogReplayTest,AlgorithmFailClosedTest" test`
+    passed once in `D:\mavenProject\dhxy-cloud-brain`, but this was not accepted as sufficient because the live FIFO test is timing-sensitive.
+  - Repeated command:
+    `for ($i=1; $i -le 3; $i++) { mvn -q "-Dtest=NpcClickSmartLiveQueueReplayTest" test }`
+    failed on run 2. Observed sequence:
+    `MEMORY -> TOOLTIP -> YELLOW_NAME -> WAIT -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`.
+- Reviewer A result:
+  - P1: Current cloud queue order `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END`
+    is the user-approved new CR169 queue order, but it is not the `origin/dev` old local order. Tests/docs must stop calling it
+    latest pushed old-pipeline equivalence.
+  - P2: Wuyi replay production-like assertion is too weak; it must require fail-closed / no-click / target-area click, not merely
+    forbid one tooltip/dialog combination.
+  - P2: `current_window_xiuluo_accept_raw.png` is diagnostic for raw full-screen purple, not clean-name positive evidence.
+- Reviewer B result:
+  - P1: `NpcClickSmartLiveQueueReplayTest` can emit intermediate `WAIT`, and `NpcClickSmartQueueStore.Session.poll()`
+    can block up to 12s; CR169 remains not accepted.
+  - P2: Async terminal outcome cleanup is best-effort and can leave cloud sessions if HTTP outcome submission fails.
+- Worker re-dispatched:
+  - Fix FIFO so normal strategy chain never exposes intermediate `WAIT`.
+  - Tighten Wuyi/purple tests and rewrite misleading old-equivalence wording while preserving the user-approved queue order.
+  - Required verification before review:
+    `mvn -q "-Dtest=NpcClickSmartFifoQueueSessionTest,NpcClickSmartLiveQueueReplayTest,NpcClickSmartCurrentScreenReplayTest,NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartUserWuyiDialogReplayTest,AlgorithmFailClosedTest" test`
+    plus repeated `NpcClickSmartLiveQueueReplayTest`.
+  - No fresh runtime until two independent reviewers pass.
+
+### 2026-07-03 CR169 worker - NPC_CLICK_SMART 黄字 OCR 语义等价修复基线
+
+- Worker role: CR169 worker；目标是修复外部 `dhxy-cloud-brain` 的 `NPC_CLICK_SMART` 与旧本地 NPC 点击 pipeline 不等价，重点补齐黄字 OCR 语义消歧；不发明新策略、不改模板、不用裸全窗黄字候选替代旧逻辑。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`；branch `codex/hybrid-cloud-protection`；HEAD `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`；工作区已有大量未提交/未跟踪文件，本轮不 revert、不清理。
+  - 外部 brain workdir: `D:\mavenProject\dhxy-cloud-brain`；不是 git repository。
+  - Pre-edit `SmartClickRecognizer.java` SHA256: `E79C6E0E8B7C9AD82E04E43CD75F6040F420B12F18B1E8EA8A940D279C7F7860`。
+  - Current CR169 row/card evidence: `docs/PACKAGE_ARCHITECTURE.md` 当前 CR169 状态为 `P0：NPC_CLICK_SMART tooltip ROI 已修，但黄字语义消歧未云端等价，禁止 fresh`；当前窗口 replay 输入 `images/test-cases/npc/current_window_xiuluo_accept_raw.png` 仍返回 `REQUEST_NEW_SCREENSHOT` / `YELLOW_TARGET_RAW` ambiguous。
+  - Old local business baseline read via `git show HEAD~5:src/main/java/com/bot/dhxy/service/NpcClickService.java`:
+    - `runNpcClickPipeline(...)`: `cachedPlayerLocation(request)` -> `resolveNpcScanRegions(request, playerLocation)` -> 一次 `Alt+4` hide names；普通修罗接任务顺序为 learned memory、tooltip、yellow target OCR、player-anchor formula、Ctrl menu。
+    - `clickNpcByTaskTooltipTemplate(...)`: `tooltipType == NONE` 或无推荐 region 直接 skip；不扫裸全窗；按 ordered `ResolvedNpcClickRegion` + `ImageFinder.findAll(..., 0.82, 36)` 多候选推进。
+    - `clickNpcByYellowTargetName(...)`: 对推荐/默认 region 截图后先经 `prepareNpcOcrScanImage(...)`；默认 full-window region 必须等价 `OcrWindowScanService.copyWithDefaultMasks(...)` 后再做黄字 OCR/候选。
+    - `GameTextLineOcrService.findYellowTarget(...)`: 对黄字候选行 OCR，用 `OcrTextMatcher.matchShortName(...)` + `isStrongTargetMatch(...)` 选择语义目标，而不是把多个黄块直接当 ambiguous；`selectYellowTargetWords(...)` 只保留匹配目标名的连续 word span；黄字命中后点击目标文字中心的 `y - 50`。
+    - `findYellowTextFallbackCandidates(...)`: 仅在 OCR 未命中时收集形状候选作为 Ctrl probe origins，不直接左键点击裸候选。
+- Root cause hypothesis:
+  - 当前 `SmartClickRecognizer.clickUniqueYellowTarget(...)` 只对 washed yellow 做 `findTextCandidates(...)`，多个候选直接返回 `REQUEST_NEW_SCREENSHOT` / ambiguous；没有旧本地默认 full-window mask、候选行 OCR、`OcrTextMatcher` 语义匹配、`selectYellowTargetWords`、黄字 `y - 50` 点击规则。
+  - 这解释了 `current_window_xiuluo_accept_raw.png` 上顶部按钮/聊天/巫医牌子/多处 UI 黄字被一起当候选，未能选择 `灵兽村使者`。
+- User/helper review gate:
+  - `current_window_xiuluo_accept_marked.png` 里的紫色框只是当前 cloud raw-yellow 候选，不是旧本地
+    player-anchor 的紫色人物锚点，也不是最终点击点；`REQUEST_NEW_SCREENSHOT` 场景不应被解释为“已选目标”。
+  - 该 replay 使用裸 full-window ROI，没有证明生产 `OcrRoiMemoryService` ordered regions、默认 mask、
+    黄字 OCR/语义目标匹配、purple anchor/formula 或 Ctrl fallback 等价，因此不能作为 CR169 验收。
+  - Worker 必须补生产等价 replay：marked 图需同时标明 scan region / mask、tooltip/yellow OCR 命中、
+    必要时 purple anchor、最终 window-relative click 点；如果外部 brain 当前缺 OCR 能力，要作为 P0
+    blocker 写入 CR169，而不是继续用 raw-yellow candidate 代替旧本地 pipeline。
+- TDD target:
+  - 先修改外部 brain 的 `NpcClickSmartCurrentScreenReplayTest`，要求生产等价请求在当前截图上返回 `CLICK` / `YELLOW_TARGET_RAW`，candidate/click 不落到超级巫医区域，click 指向 `灵兽村使者` 相关黄字目标（旧本地语义：黄字中心 `y - 50`）。
+- Implementation:
+  - 外部 `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\SmartClickRecognizer.java` 已把 raw-yellow 分支改为旧语义等价路径：默认 full-window region 先套旧 `OcrWindowScanService.copyWithDefaultMasks(...)` 等价 mask；raw yellow candidates 只作定位/诊断；对候选原图裁剪走 OCR；通过目标名 OCR 语义命中后按黄字中心 `y - 50` 返回 click。
+  - 新增外部 `CloudOcrTextMatcher.java`，迁移旧 `OcrTextMatcher` 的目标名归一化、短名 LCS/edit-distance 匹配评分。
+  - 新增外部 `LocalOcrClient.java`，调用本机 OCR sidecar `http://127.0.0.1:18761/ocr/words`；OCR 不可用时返回 `cloud-brain-npc-raw-yellow-ocr-unavailable` fail-closed，不降级为裸黄字候选点击。
+  - `NpcClickSmartCurrentScreenReplayTest` 现在构造生产等价 request，并把 marked 图明确区分：绿色 scan ROI、橙色 default masks、紫红 raw candidates only、青色 yellow OCR semantic hit、红色 final click；本样本黄字命中路径未使用 purple player anchor，图中明确标注。
+- Replay result:
+  - Input: `images/test-cases/npc/current_window_xiuluo_accept_raw.png`。
+  - Marked output: `images/test-cases/npc/current_window_xiuluo_accept_marked.png`。
+  - Decision: `action=CLICK;strategy=YELLOW_TARGET_RAW;click=482,116;candidateBox=443,158,79,16;rawCandidateBoxes=594,451,53,28|465,54,340,38|276,148,300,26;matchedText=兽村使者;reason=cloud-brain-npc-raw-yellow-target-ocr`。
+  - 结论：当前 replay 不再指向超级巫医，也不再把 raw-yellow 候选框冒充可点击结果。
+- Verification:
+  - 外部 cloud-brain replay：`mvn -q -Dtest=NpcClickSmartCurrentScreenReplayTest test` passed。
+  - 外部 cloud-brain focused：`mvn -q -Dtest="NpcClickSmartCurrentScreenReplayTest,NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test` passed。
+  - 外部 cloud-brain package：`mvn -q -DskipTests package` passed。
+  - DHXY focused：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY compile：`mvn -q -DskipTests compile` passed。
+- Manager review 2026-07-03:
+  - 已重新查看 `current_window_xiuluo_accept_marked.png`：绿色 scan ROI、橙色 default masks、紫红 raw candidates、
+    青色 OCR semantic hit、红叉 final click 含义清楚；本次不再把紫红候选框当成可点击结果。
+  - 已复核外部 `SmartClickRecognizer`：默认 full-window region 会套等价 default masks；黄字候选会裁剪后调用
+    `LocalOcrClient`；`CloudOcrTextMatcher` 与旧 `OcrTextMatcher` 的 normalize/LCS/edit-distance 规则一致；
+    OCR unavailable 返回 fail-closed，不退裸黄字候选。
+  - 已复核 DHXY `NpcClickService` / `NpcClickSmartCloudDecisionService`：真实请求会发送 raw PNG payload、
+    ordered `scanRegions` 和 primary `roi`；本地只做 allowlist / scan-region / window-relative 校验、执行 input
+    和 verified outcome 回传。
+  - 本机 `http://127.0.0.1:18761/health` 当前 OK，且 UI 启动链路存在 `ensureLocalOcrReadyForTaskStart()`；
+    fresh runtime 仍需重启 DHXY / cloud brain 后看日志里的 `matchedText` 与点击点。
+  - 复核时发现 `127.0.0.1:18080` 仍由 04:40 启动的旧 `java` 进程监听，早于 10:39 新打包 jar，且
+    health 请求失败；已停止该旧进程，当前 18080 无监听，下一次 DHXY 启动应按脚本拉起新 jar。
+- Fresh-runtime gate:
+  - 本轮不再是“缺 OCR 能力”的 P0 blocker；最小 OCR 接入已完成，但运行环境必须保证本地 OCR sidecar 可用。
+  - 仍需重启 DHXY / 外部 cloud-brain 后跑真实修罗接任务；日志应看到新黄字 OCR 语义命中 `灵兽村使者` 或等价目标名，且点击点不落到超级巫医。OCR unavailable / raw candidate ambiguous 仍按 fail-closed 处理，不能算验收通过。
+
+### 2026-07-03 CR169 P0 NPC_CLICK_SMART tooltip ROI 等价修复本轮基线
+
+- Scope:
+  - DHXY 只增量触碰 `NpcClickService` 的 `buildNpcClickSmartCloudRequest(...)`、`NpcClickSmartCloudRequest` / `NpcClickSmartCloudDecisionService` 的请求上下文字段与 focused tests。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 只增量触碰 `SmartClickRecognizer` / `NpcClickMemoryStore` 及 focused tests。
+  - 不恢复 DHXY 旧本地 pipeline，不新增 target proof / 禁用 tooltip / 新业务策略，不 revert 其他人的脏改动。
+- Current baseline before edit:
+  - DHXY branch: `codex/hybrid-cloud-protection`（工作区已在该脏分支；本轮不切换、不清理）。
+  - DHXY local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline checked: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示当前工作区已有大量 Java/docs/config/image/test 未提交/未跟踪改动；本轮只做 P0 增量修复。
+  - Relevant DHXY diff evidence before edit: `git diff --stat -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudRequest.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java ...` 显示既有 `NpcClickService.java` 云端化大改；当前请求模型文件在 HEAD 上未作为 pushed baseline 存在。
+  - Old local baseline read via `git show HEAD:src/main/java/com/bot/dhxy/service/NpcClickService.java`:
+    - `runNpcClickPipeline(...)` lines 794-800: 先 `cachedPlayerLocation(request)`，再 `resolveNpcScanRegions(request, playerLocation)`。
+    - `clickNpcByTaskTooltipTemplate(...)` lines 1151-1168: `tooltipType == NONE` 或无推荐 region 直接 skip，不扫全窗。
+    - `clickNpcByTaskTooltipTemplate(...)` lines 1170-1246: 按 ordered `ResolvedNpcClickRegion` 逐区扫描 `tooltipTemplatePath(request)`，阈值 `NPC_TASK_TOOLTIP_MATCH_RATE=0.82`、去重距离 `NPC_TASK_TOOLTIP_DEDUP_DISTANCE_PX=36`，同区多候选逐个点击验证，验证失败继续下一个候选。
+    - `tooltipTemplatePath(...)` lines 1263-1268: request 未指定时用 generic `images/template/npc/npc_task_tooltip.png`。
+    - `recordSmartClickEvidence(...)` lines 1301-1363: learned click sample 必须通过 verified/runner expected-dialog confirmation 才可成为可复用 evidence。
+  - Runtime evidence rechecked:
+    - `logs/dhxy-console.log` 显示 `NPC_CLICK_SMART` context 多次带 `roi=0,0,1024,768`。
+    - `2026-07-03 08:49:26.968`：污染 memory 已命中 `strategy=LEARNED_MEMORY;click=511,103;candidateBox=495,95,32,16`。
+  - External `D:\mavenProject\dhxy-cloud-brain` is not a git repo. Pre-edit SHA256:
+    - `SmartClickRecognizer.java`: `0B9E1EC6F724695F1CBD7BA12FD181A1F08F31533A3C4D8363BC18C71D4E2E3B`
+    - `NpcClickMemoryStore.java`: `A23D180C202D2B00CBA9D9654F96DBEB0C55E5472600DCF44D1B476727B6FF30`
+- Repair hypothesis:
+  - 用户二次纠偏后确认：full-window ROI 会放大错误，但第一 P0 根因是 cloud-brain tooltip matcher / 预处理不等价旧本地。
+  - 旧本地不是 `findBest(0.85)` 单点命中，而是 `CoordinateHelper.findImagesInRegion(...)` capture ROI 后调用 `ImageFinder.findAll(roiPath, templatePath, 0.82, 36)`，收集所有过阈值候选、按 score 降序、按中心点 36px 去重。
+  - DHXY request 同时必须恢复旧 local ordered scan regions；cloud tooltip 只能在这些 recommended regions 内跑旧等价 matcher，不能全窗扫，不能改模板/禁 tooltip/加 target proof。
+- Implementation / 2026-07-03 P0 repair:
+  - `NpcClickService.buildNpcClickSmartCloudRequest(...)` 恢复旧本地入口的 `cachedPlayerLocation(request)` -> `resolveNpcScanRegions(request, playerLocation)`，把旧 pipeline 的 ordered `ResolvedNpcClickRegion` 随 `NPC_CLICK_SMART` request 一起发给云端；`roi` 只作为 primary region / 无 region fallback，不再代表 tooltip 可全窗扫。
+  - `NpcClickSmartCloudRequest` 新增 `scanRegions`；`NpcClickSmartCloudDecisionService` 在有 `scanRegions` 时只接受落在任一 scan region 内的 `click` / `candidateBox`，避免云端返回旧全窗 `(511,103)` 这类区域外点。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 的 `SmartClickRecognizer` tooltip path 按旧本地语义消费 ordered scan regions：逐 region 调 `OpenCvTemplateMatcher.findAll(..., 0.82, 36)`，按分数排序/中心距离去重，多候选逐个推进；验证失败后下一次请求会跳过同一个 `candidateBox`。本轮未改任何 tooltip 模板，也没有新增 target proof / 禁用 tooltip / 新业务策略。
+  - 外部 `OpenCvTemplateMatcher.findAll(...)` 是旧 `ImageFinder.findAll(...)` 的云端等价实现；真实巫医 replay 证明 `npc_task_tooltip.png` 不命中巫医 tooltip ROI，而 `npc_wuyi_tooltip.png` 命中同一 ROI。
+- Verification:
+  - DHXY focused：`mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed。
+  - DHXY compile：`mvn -q -DskipTests compile` passed。
+  - 外部 cloud-brain focused：`mvn -q -Dtest="NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,NpcClickMemoryStoreTest,CloudBrainSmokeTest" test` passed。
+  - 外部 cloud-brain package：`mvn -q -DskipTests package` passed。
+  - 外部 cloud-brain full `mvn -q test` 当前仍有 1 个 dialog replay 失败：`DialogOptionRecognizerRoiPayloadReplayTest.superDoctorDialogDoesNotVerifyXiuluoAcceptXianlaiwuTemplate` 把超级巫医 dialog 误判为修罗 accept template `FOUND`。该失败不在本次 tooltip matcher / ROI / memory P0 明确修改范围内，本轮未改 dialog verifier 业务。
+  - 真实 replay 证据：`images/test-cases/npc/super_doctor_wuyi_tooltip_raw.png` -> `images/test-cases/npc/super_doctor_wuyi_tooltip_matcher_parity_marked.png`；replay 证明 `npc_task_tooltip.png` 不命中巫医 tooltip 区域，`npc_wuyi_tooltip.png` 仍命中巫医 tooltip。
+- Fresh runtime gate:
+  - 需要重启 DHXY / sidecar 后再测；否则仍可能跑旧外部 jar。
+  - 下一轮修罗接任务必须看到 `NPC_CLICK_SMART` context 带 `scanRegionCount>0` / `scanRegions=...`，且 `TOOLTIP_TEMPLATE` 的 `candidateBox` 必须落在这些 region 内；禁止再出现 `灵兽村使者` 返回 `click=511,103 candidateBox=495,95,32,16` 并打开 `超级巫医` dialog。
+- Current-screen replay / 2026-07-03:
+  - 旧 clipboard 图不再作为验收依据；已用 Windows 当前窗口捕获 `大话西游2经典版 ... 乌龟的黑头°`，full capture 保存为 `images/test-cases/npc/current_window_xiuluo_accept_raw_full.jpg`，裁成生产 1024x768 输入 `images/test-cases/npc/current_window_xiuluo_accept_raw.png`，离线 replay 输出 `images/test-cases/npc/current_window_xiuluo_accept_marked.png`。
+  - `NpcClickSmartCurrentScreenReplayTest` 结果：`NPC_ONLY_DECISION=action=REQUEST_NEW_SCREENSHOT;strategy=YELLOW_TARGET_RAW;reason=cloud-brain-npc-raw-yellow-target-ambiguous`；带修罗 expected dialog 的 production-like context 也是同样结果，candidateBox 包含顶部按钮/聊天/巫医牌子/多处 UI 黄字。
+  - 结论：当前云端不会给出 `灵兽村使者` 点击点，不能 fresh runtime。缺口不是模板，而是旧本地黄字 OCR 语义匹配/候选消歧没有完整迁到云端；下一步必须让云端按旧本地黄字 OCR pipeline 对候选做目标名匹配，而不是泛黄块 ambiguous。
+
+### 2026-07-03 CR169 P0 generic tooltip / weak verifier 防脏修复基线
+
+- Scope:
+  - 外部 `D:\mavenProject\dhxy-cloud-brain`：`SmartClickRecognizer` / `DialogOptionRecognizer` / `NpcClickMemoryStore` 以及 focused tests。
+  - DHXY 本地只允许最小触碰 `NpcClickSmartCloudDecisionService` / `NpcClickService` / `DialogService` 的验证强度与 outcome 字段；不恢复旧本地 NPC brain，不回滚他人改动。
+- Current baseline before edit:
+  - DHXY branch: `codex/hybrid-cloud-protection`。
+  - DHXY local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline checked: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示当前工作区已有大量 Java/docs/config/image/test 未提交/未跟踪改动；本轮不 revert、不清理，只增量修 CR169 P0。
+  - Relevant DHXY diff evidence before edit: `git diff --stat -- src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java src/main/java/com/bot/dhxy/service/DialogService.java src/main/java/com/bot/dhxy/service/NpcClickService.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js data/npc-click-memory.json` 显示既有 `DialogService.java` / `NpcClickService.java` 云端化大改和 docs/dashboard 改动；当前 `data/npc-click-memory.json` 是未跟踪污染文件。
+  - Latest pushed business baseline evidence: `git show --stat --oneline origin/dev -- ...NpcClickSmartCloudDecisionService.java ...DialogService.java ...NpcClickService.java ...NpcClickSmartCloudDecisionServiceTest.java ...NpcClickSmartCloudWiringGuardTest.java` 只显示 `origin/dev` 上旧 `DialogService.java` / `NpcClickService.java` 小改，当前 cloud/task 新文件不在 pushed baseline。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 不是 git repository。Pre-edit SHA256:
+    - `SmartClickRecognizer.java`: `0B9E1EC6F724695F1CBD7BA12FD181A1F08F31533A3C4D8363BC18C71D4E2E3B`
+    - `DialogOptionRecognizer.java`: `691BE9F06EC0C3F3D9ABC5F53C68A51DDE7836CA016FD512606A43A4CD16A615`
+    - `NpcClickMemoryStore.java`: `2216CFBF745D3FC734A9D06EC6FE640254DDD1CF786529260388313A5002338F`
+    - `NpcClickSmartRealTooltipReplayTest.java`: `D74109529D0603CE72750328DAC60B85C985AEC472B9EDE59EEADCA8D959A032`
+    - `DialogOptionRecognizerRoiPayloadReplayTest.java`: `85F3E9376276CFBCBB061936E6135B8BCDDE327CE106B0A57B972D0A4AF0AAB6`
+- Runtime evidence:
+  - `logs/dhxy-console.log` `2026-07-03 04:40:34.219`：`NPC_CLICK_SMART` 对 `灵兽村使者` 返回 `action=CLICK;strategy=TOOLTIP_TEMPLATE;click=511,103;candidateBox=495,95,32,16;reason=cloud-brain-npc-tooltip-template-target`。
+  - `2026-07-03 04:40:37.070`：`DIALOG_POLICY VERIFY_EXPECTED_DIALOG` 返回 `status=FOUND;actionId=expectedDialog;candidateBox=267,418,42,18;reason=cloud-brain-dialog-green-template-visible`，随后 `NpcClickService` 记录 `verified=true` 并提交 verified outcome。
+  - `data/npc-click-memory.json` 当前包含污染记录 `灵兽村|灵兽村使者|112,93|DIALOG -> click=(511,103), candidateBox=495,95,32,16`。
+- Repair direction:
+  - `TOOLTIP_TEMPLATE` 不能把 generic `images/template/npc/npc_task_tooltip.png` 当目标专属模板；缺目标专属模板或目标语义证据时 fail closed / request screenshot，不点击任意 generic tooltip。
+  - `VERIFY_EXPECTED_DIALOG` 不能只凭泛绿字或错误 dialog 上的模板相似块验证修罗 accept；expected template 必须是强模板语义，无法明确时 fail closed。
+  - learned memory promote 必须要求明确目标 NPC + 强 verified outcome；弱验证或 generic tooltip action 不提升。现有污染 JSON 需要清除或由 store 自动忽略。
+
+### 2026-07-03 CR167 fresh runtime 失败复盘 - stale sidecar jar
+
+- Latest fresh runtime evidence:
+  - `logs/dhxy-console.log` 2026-07-03 03:55 附近，`NPC_CLICK_SMART` 已看到并点击 `灵兽村使者` tooltip 目标，后续进入 `VERIFY_EXPECTED_DIALOG`。
+  - `DIALOG_POLICY` pre-click 已发送 image-backed request，`rawImagePath=images\temp\hwnd-31A9C\dialog_detect_handle-dialog_VERIFY_EXPECTED_DIALOG_raw.png`，`roi=250,312,529,208`，payload 图实际尺寸为 `529x208`。
+  - live cloud decision 仍返回 `reason=cloud-brain-dialog-template-roi-empty`，说明云端按窗口相对 ROI 对已裁剪 payload 二次裁剪。
+- Root cause:
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 源码/classes 已有 cropped payload ROI 修复（classes 时间 2026-07-03 02:40），但启动脚本实际运行 `target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`。
+  - 该 jar 当时仍是 2026-07-03 01:49，DHXY 03:54 自动启动的 sidecar 是旧 jar，所以 live runtime 没有吃到修复。
+- Repair:
+  - 已运行 `mvn -q -DskipTests package` 重新打包外部 `dhxy-cloud-brain`，新 jar 时间为 2026-07-03 03:58:59。
+  - 已停止占用 `127.0.0.1:18080` 的旧 sidecar `PID 69824`；端口现在未监听，下一次 DHXY 启动会加载新 jar。
+  - `scripts/run-cloud-brain-server.ps1` 已增加 stale jar 检测：`pom.xml`、`src` 或 `target\classes` 新于 jar 时自动 `mvn -q -DskipTests package`，避免以后“测试新 classes、实跑旧 jar”。
+- Fresh runtime next gate:
+  - 重启 DHXY/sidecar 后再跑修罗 accept NPC；期望 `DIALOG_POLICY` 不再出现 `cloud-brain-dialog-template-roi-empty`，而是 `cloud-brain-dialog-green-template-visible` / `status=FOUND`。
+  - 若仍失败，下一轮优先查 cloud-brain 当前 jar 行为与 payload/ROI 语义，不再先改 DHXY 业务流程。
+
+### 2026-07-03 CR167 `VERIFY_GREEN_TEMPLATE` 云端旧 pipeline 补齐
+
+- Root cause: 最新修罗 accept NPC 日志里 `NPC_CLICK_SMART` 已执行
+  `strategy=TOOLTIP_TEMPLATE action=CLICK click=458,301`，后续失败不是 NPC 没点到，而是
+  dialog verify 仍先走本地可见性判断，再被无图 after-local `DIALOG_POLICY` 覆盖成失败。
+- Worker repair boundary:
+  - DHXY `DialogService.verifyGreenTemplateOption(...)` 改为 image-backed `DIALOG_POLICY` pre-click request；
+    只接受 `NO_ACTION/status=FOUND/actionId=<GreenTemplateClickSpec.name>/candidateBox` 的 semantic no-click。
+  - DHXY `handleDialog(...)` 对 `VERIFY_GREEN_TEMPLATE` 直接 `finishRequest(..., false)`，不再跑 after-local
+    no-image dialog policy。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` `DialogOptionRecognizer` 补齐 option-lower/full-ROI 模板匹配，
+    `VERIFY_GREEN_TEMPLATE` 返回 `cloud-brain-dialog-green-template-visible`，不返回 click。
+- Testcase replay:
+  - Input: `D:\mavenProject\dhxy-cloud-brain\src\test\resources\dialog\xiuluo\verify-expected-dialog-option-lower-raw.png`
+    + `D:\mavenProject\dhxy-cloud-brain\src\test\resources\dialog\xiuluo\xiuluo_accept_xianlaiwu.png`。
+  - Marked output: `images/test-cases/dialog/cloud-brain-roi-space/verify_expected_option_lower_marked.png`。
+- Verification:
+  - DHXY `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test` passed。
+  - DHXY `mvn -q -DskipTests compile` passed。
+  - External `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q -Dtest=DialogOptionRecognizerRoiPayloadReplayTest test` passed。
+  - External `D:\mavenProject\dhxy-cloud-brain` `mvn -q -DskipTests compile` passed。
+- Fresh runtime required: restart cloud-brain sidecar/server and DHXY. Expected log should include
+  `cloud-brain-dialog-green-template-visible` or equivalent `VERIFY_GREEN_TEMPLATE` semantic found, and should not
+  show the same verify being overwritten by `cloud-brain-dialog-policy-requires-cloud-input`.
+
+### 2026-07-03 NPC_CLICK_SMART verified outcome 本地回传闭环
+
+- Worker scope: 只补 DHXY 本地 verified outcome POST 闭环；不改外部 `D:\mavenProject\dhxy-cloud-brain`，不恢复本地 NPC 旧 pipeline，不回滚当前工作区已有云端化改动。
+- Baseline before edit:
+  - DHXY branch: `codex/hybrid-cloud-protection`。
+  - DHXY local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline checked: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示当前工作区已有大量 Java、docs、config、image、test 未提交/未跟踪改动；本轮只增量触碰 `NPC_CLICK_SMART` outcome 回传相关文件。
+  - Relevant diff evidence before edit: `git diff --stat -- src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionProperties.java src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java` 显示当前只有 `NpcClickService.java` 相对 HEAD 已有云端化大改，`3735` 行级 diff；`CloudDecisionProperties` 已有 `npcClickSmartOutcomePath`。
+  - Latest pushed business baseline evidence: `git show --stat --oneline origin/dev -- ...NpcClickService.java ...NpcClickSmartCloudDecisionService.java ...CloudDecisionProperties.java ...NpcClickSmartCloudDecisionServiceTest.java ...NpcClickSmartCloudWiringGuardTest.java` 显示 `origin/dev` 只有旧 `NpcClickService.java` 变更，没有当前 `cloud/task/NpcClickSmartCloudDecisionService.java`。
+- RED verification:
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest" test` failed before implementation because `NpcClickSmartCloudDecisionService` lacks `reportVerifiedOutcome(...)` and a constructor accepting `CloudDecisionProperties`.
+
+### 2026-07-03 NPC_CLICK_SMART learned-memory 云端持久化补齐
+
+- Worker scope: 直接实现 NPC_CLICK_SMART 云端旧 smart click pipeline 的 learned-memory / evidence writeback 缺口；不恢复 DHXY 本地旧策略 fallback，不回滚其他线程脏改动。
+- Baseline before edit:
+  - DHXY branch: `codex/hybrid-cloud-protection`。
+  - DHXY local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline checked: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示当前工作区已有大量 Java、docs、config、image、test 未提交/未跟踪改动；本轮只增量触碰 NPC_CLICK_SMART 本地/云端相关文件。
+  - Relevant DHXY diff evidence before edit: `src/main/java/com/bot/dhxy/service/NpcClickService.java` 相对当前 HEAD 已有云端化大改，`git diff --stat` 显示该文件 `3735 ++++----------------`，`src/test/java/com/bot/dhxy/service/NpcClickLearnedMemoryFastPathWiringTest.java` 已有 CR169 guard 更新。
+  - Latest pushed business baseline evidence: `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java` 显示 `origin/dev` 只有旧 `NpcClickService.java` 变更，没有当前 `cloud/task/NpcClickSmartCloudDecisionService.java`。
+  - External cloud brain is not a git repository. Pre-edit file SHA256:
+    - `SmartClickRecognizer.java`: `6B767E7EED1A6CE0836AB3361AF7CB2C819EC81A62B214FA16FC795E189A198B`
+    - `DecisionEngine.java`: `5006B597D804B115FAB13404123819F5F930FD0B6AA4990CF3E79940A464C590`
+    - `CloudBrainServer.java`: `4A9A3A419F5CD5304F8C3CA610C8F766166FE0CD4562D2356437E9D35E6CD335`
+- TDD target:
+  - Add failing cloud-brain test: verified NPC outcome POST persists learned memory and later same `mapName/npcName/target/verificationMode` request returns a learned-memory click before image strategies.
+  - Add failing DHXY test: after verified cloud action, local service posts NPC outcome to cloud endpoint with decision/action/click/candidate/map target facts.
+
+### 2026-07-03 NPC_CLICK_SMART 云端旧 pipeline 策略链补齐
+
+- Worker scope: 只实现代码；主 agent/reviewer 负责业务判断。本轮只碰 NPC_CLICK_SMART 相关本地云端请求循环、请求 context、外部 cloud brain 状态机和对应测试；不 revert 脏工作区里的他人改动。
+- Baseline before edit:
+  - DHXY branch: `codex/hybrid-cloud-protection`。
+  - DHXY local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  - Latest pushed baseline checked: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`；当前分支没有 upstream。
+  - `git status --short --branch` 显示工作区已有大量 Java、docs、config、test 和 image 未提交/未跟踪改动；本轮不清理、不回滚。
+  - Touched-path diff evidence before edit: `src/main/java/com/bot/dhxy/service/NpcClickService.java` 已有 CR169 云端化大改，diff stat 为 `540 insertions(+), 3125 deletions(-)`；旧本地 `runNpcClickPipeline(...)` 生产调用已被移除，但当前 `tryClickNpcSmartViaCloud(...)` 仍是一次云端请求后 fail closed。
+  - Old pipeline reference: `git show 6698793:src/main/java/com/bot/dhxy/service/NpcClickService.java` 中顺序为 `WUBEI` tooltip -> dialog short-circuit -> learned-memory -> dialog short-circuit -> non-`WUBEI` tooltip -> player-anchor formula -> yellow target -> dialog short-circuit -> Ctrl menu。
+- Implementation boundary:
+  - DHXY 本地不得恢复 `runNpcClickPipeline(...)` / `tryNormalTooltipStrategy(...)` / `tryLearnedMemoryStrategy(...)` / `tryPlayerAnchorFormulaStrategy(...)` / `tryYellowTargetStrategy(...)` / `tryCtrlMenuStrategy(...)`。
+  - DHXY 本地只负责截图、发送 `NPC_CLICK_SMART` request、执行云端 allowlist action、验证，把 `lastOutcome` / `lastAction` / `lastClick` / `lastCandidateBox` / `attemptToken` 回传给云端继续决策。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 不是 git 仓库；本轮用文件级测试和 Maven 验证记录结果。
+- Implementation / 2026-07-03 repair:
+  - DHXY `tryClickNpcSmartViaCloud(...)` 是 cloud-owned state-machine loop：每轮重截屏，携带 `attemptIndex`、`attemptToken`、`lastOutcomeStatus`、`lastAction`、`lastClick`、`lastCandidateBox`；`REQUEST_NEW_SCREENSHOT` / `CTRL_HOVER_DONE` 继续问云端，`ABORT` / `NOT_FOUND` fail closed。
+  - DHXY request context 已发送 `playerName`、`playerMapName`、`playerMapX/Y`、`tuneX/Y`、`sourceTask`、`targetRole`、`targetEvidence`、`tooltipFirst`、`closeStoryBeforeDirectSceneClick`，并标注 `target` 是地图逻辑坐标、cloud click 是 `WINDOW_RELATIVE` 像素。
+  - 外部 cloud brain `SmartClickRecognizer` 修正为旧 pipeline 安全顺序：已打开的 expected dialog 先返回 `VERIFY_DIALOG`；verified-only learned memory 在 Ctrl fallback 前命中；普通 `CLICK` 验证失败后才返回 `CTRL_HOVER`。
+  - `tooltipFirst=true` 时，`TOOLTIP_TEMPLATE` 明确排在 yellow target template 前面；template miss 允许 fall through，但 raw yellow 没有语义证明时只能 `NO_ACTION`/`REQUEST_NEW_SCREENSHOT`/`ABORT`，不能盲点唯一黄字。
+  - `PLAYER_ANCHOR_FORMULA` 不再从 raw 最大紫色块直接算点击；必须有 `playerAnchorWindowX/Y` + `playerAnchorEvidence` 这类显式 anchor evidence，否则 fail closed，并保留 `anchor-evidence-missing` 诊断。
+  - Ctrl menu 改成两段云端状态机：普通 `CLICK` 验证失败后返回 `CTRL_HOVER`；DHXY 只按住 Ctrl 并 hover 后回传 `CTRL_HOVER_DONE`；下一轮 cloud brain 只有在 metadata/template 明确命中 target name 且位于 menu ROI 内时才返回 `strategy=CTRL_MENU_ITEM` 的点击，否则 fail closed。
+  - `NpcClickMemoryStore` 已在外部 brain 持久化 verified outcome；DHXY 本地 verifier 通过后 POST `/api/cloud/npc-click-smart/outcome`，HTTP 失败只记日志，不影响本次已验证点击。
+  - Direct-combat 仍由 cloud brain 返回 `PRESS_HOTKEY_THEN_CLICK;hotkey=ALT_A`。
+- Still cloud-side TODO / fresh-runtime gate:
+  - learned-memory 已有云端持久化闭环，但真实游戏 fresh runtime 仍需证明 verified outcome 能写入并在后续同 `mapName/npcName/target/verificationMode` 命中。
+  - player-anchor formula 当前只接受显式 anchor evidence；如果后续要重新启用玩家名 OCR/紫名定位，必须继续在云端实现并保留语义证明，不能回退到 DHXY 本地算法。
+  - Ctrl menu item matching 已支持 metadata/template 命中 target 后点击；真实 OCR 文本级匹配 NPC 名、NPC tag 仍需后续增强。
+  - dialog-open short-circuit 仍由本地 verifier/covered dialog service 观测承接；NPC 点击策略选择不回本地。
+- Verification:
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q '-Dtest=CloudBrainSmokeTest,AlgorithmFailClosedTest' test` passed。
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q test` passed。
+  - DHXY: `mvn -q '-Dtest=NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest' test` passed。
+  - DHXY: `mvn -q '-Dtest=NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickDirectCombatDialogGateWiringTest,NpcClickDirectCombatNameLayerWiringTest,NpcClickLearnedMemoryFastPathWiringTest' test` passed。
+  - DHXY: `mvn -q -DskipTests compile` passed。
+
+### 2026-07-03 NPC_CLICK_SMART 云端 tooltip 模板匹配等价修复
+
+- Context: 最新修罗启动在 `ACCEPT_TASK_CLICK_NPC` 卡住，日志显示 `NPC_CLICK_SMART` 已上传
+  `npc_click_smart_cloud_raw.png`，但云端返回
+  `strategy=YELLOW_TARGET_TEMPLATE status=NOT_FOUND reason=cloud-brain-npc-target-template-not-found`。
+- Root cause: 外部 `D:\mavenProject\dhxy-cloud-brain` 的 NPC 模板匹配没有照本地
+  `ImageFinder.find(...)` 的 OpenCV `TM_CCOEFF_NORMED` 语义；旧云端前景像素 matcher 把
+  `images/template/npc/npc_task_tooltip.png` 的 RGB 背景整块当成前景，并且 tooltip 彩色模板还被拿去
+  对 washed 黄字图匹配，导致同图本地可匹配、云端不可匹配。
+- Fix:
+  - 外部 cloud brain 新增 `OpenCvNativeLoader` / `OpenCvTemplateMatcher`，NPC smart 模板匹配改用
+    OpenCV `matchTemplate(TM_CCOEFF_NORMED)`。
+  - `SmartClickRecognizer` 中 `TOOLTIP_TEMPLATE` 使用 raw screenshot ROI 匹配；黄字模板仍使用
+    `WASH_YELLOW` 后的 ROI。
+  - `TemplateSpecParser` 不再把 `targetName=...` / `npcName=...` / `keyword=...` 当作模板路径。
+  - 保留原 `TemplateMatcher` 给 Dialog/三技能等现有云端算法使用，避免扩大行为面。
+- Testcase replay:
+  - Input: `images/test-cases/npc/xiuluo_lingshou_accept_npc_click_raw.png`
+  - Output marked image:
+    `images/test-cases/npc/xiuluo_lingshou_accept_npc_click_cloud_marked.png`
+  - Command: external `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q -Dtest="NpcClickSmartRealTooltipReplayTest,AlgorithmFailClosedTest,CloudBrainSmokeTest,TemplateMatcherResourceTest" test`
+  - Result: passed. Real failed screenshot now returns executable `CLICK` with `strategy=TOOLTIP_TEMPLATE`.
+- Verification:
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q test` passed.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests package` passed.
+- Fresh runtime required: restart DHXY so the sidecar loads the rebuilt cloud brain jar, then re-run 修罗 accept NPC.
+  Expected log: `NPC_CLICK_SMART accepted=true action=CLICK strategy=TOOLTIP_TEMPLATE`, followed by dialog open/accept.
+
+### 2026-07-02 CR167/CR169 final reviewer PASS: Dialog/NPC cloud brain source gates clean
+
+- Status: source/focused/reviewer acceptance passed; CR167 and CR169 remain Review / fresh runtime pending, not Done.
+- Final reviewer `019f2553-c05e-7480-9a34-9054fa211be3` second pass verdict: PASS.
+- Source guards:
+  - `rg -n "prepareRememberedAcceptOption|\? remembered|prepareWhiteStoryTemplateOrAbsent|prepareWhiteStoryTemplate\(" src/main/java/com/bot/dhxy/task/wubei/WubeiDialogPreparationProvider.java src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+  - `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+  - `rg -n "NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS|exitDirectCombatClickModeAfterFailure|direct-combat exit|clickRight\(" src/main/java/com/bot/dhxy/service/NpcClickService.java`
+    returned no matches.
+- Dialog acceptance:
+  - `WUBEI_ACCEPT_TASK` now sends one `prepareRememberedOrGreenTemplateOption(...)` cloud prepared request; remembered
+    memory is only request context/hint, and cloud decides remembered/green/no-action.
+  - `WUBEI_PROBE_STORY` now calls `prepareCloudWhiteStoryTemplateOrAbsent(...)`; white story specs, miss/absent
+    keywords, and absent matched text are request context, and cloud decides matched/miss/absent semantic action.
+  - `ImageFinder.find(...)` remains only in `VERIFY_GREEN_TEMPLATE` / `VERIFY_WHITE_TEMPLATE` read-only verification,
+    not in covered click/prepare success paths.
+- NPC acceptance:
+  - `NpcClickService` has no local retry budget, no direct-combat right-click recovery, and no yellow/tooltip/formula/Ctrl
+    local pipeline.
+  - Production NPC click only builds `NPC_CLICK_SMART`, validates cloud response, executes allowlisted input,
+    verifies/logs/fail-closes.
+- Verification:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -Dtest="TaskMaintenanceCloudRequiredFailureTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickDirectCombatDialogGateWiringTest,NpcClickDirectCombatNameLayerWiringTest,NpcClickLearnedMemoryFastPathWiringTest" test` passed.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q test` passed.
+- Fresh runtime still required before closing:
+  - Real 五倍/修罗 run should show covered Dialog/NPC decisions advancing only through cloud action/no-action or
+    fail-closed; no local prepared/click/retry strategy logs should appear.
+
+### 2026-07-02 CR167 final reviewer fail: Wubei accept/probe prepared still local-ranked
+
+- Status: P0 reopened / no user testing. Final read-only reviewer `019f2553-c05e-7480-9a34-9054fa211be3`
+  judged CR167 FAIL after focused tests passed.
+- Residual local brain:
+  - `WubeiDialogPreparationProvider` still decides `WUBEI_ACCEPT_TASK` ordering locally:
+    try remembered accept first, then green template. The click point comes from cloud, but the production strategy
+    ordering is still local.
+  - `WubeiDialogPreparationProvider` still routes `WUBEI_PROBE_STORY` through
+    `DialogService.prepareWhiteStoryTemplateOrAbsent(...)`.
+  - `DialogService.prepareWhiteStoryTemplateOrAbsent(...)` still calls `verifyWhiteStoryTemplate(...)` /
+    `ImageFinder.find(...)` to decide white-story prepared semantic result and template order locally.
+- Dispatch:
+  - Dialog worker `019f2516-936c-7792-94b6-33ef4564759c` was interrupted again. New target:五倍 accept/probe
+    prepared must be one cloud prepared request each; remembered hints, green specs, white story specs,
+    absentAllowed/miss/absent facts are request context only. External `DIALOG_POLICY` must decide the prepared result.
+- Required source guards before runtime test:
+  - `WubeiDialogPreparationProvider` must no longer contain local remembered-vs-green branching such as
+    `prepareRememberedAcceptOption(...) ? remembered : prepareGreenTemplateOption(...)`.
+  - `prepareWhiteStoryTemplateOrAbsent(...)` must not call `verifyWhiteStoryTemplate(...)` / `ImageFinder.find(...)`
+    to construct production prepared actions.
+- Do not ask the user to test until this reviewer FAIL is repaired, guards pass, DHXY compile/focused tests pass,
+  external brain tests pass, and a fresh reviewer pass returns PASS.
+
+### 2026-07-02 CR167 Dialog prepared route/remembered P0 cleanup
+
+- Status: Dialog source cleanup for this P0 is implemented; CR167 remains Review / no user testing until fresh
+  runtime acceptance. The test-constructor blocker is fixed and focused Maven verification now passes.
+- DHXY changes:
+  - `DialogService.prepareRouteKeywordOption(...)` now builds `DialogHandleRequest.handleRouteKeywordOption(...)`
+    and persists a `PreparedDialogAction` only from `DIALOG_POLICY` `decidePreClick(...)` cloud response.
+  - `prepareRememberedRouteOption(...)` / `prepareRememberedChoiceOption(...)` now send remembered relative point
+    only as cloud context/hint; the saved prepared action coordinate comes from cloud `WINDOW_RELATIVE click`.
+  - `prepareGreenTemplateOption(...)` remains cloud-owned from the previous repair.
+  - Deleted production local prepared click strategy residue from `DialogService`: `prepareOptionKeywordWithOcr`,
+    `readDialogOptionWords(...)` call path, `buildPreparedDialogAction(...)`,
+    `buildRememberedPreparedDialogAction(...)`, `handleStoryDialog(...)`, and
+    `fastClickStoryDialogDirect(...)`.
+  - Maintenance broadcast no-focus prefilter no longer uses local `ImageFinder.find(...)` to identify
+    `heal-pet` / `repair-equipment`; action key comes from validated `DIALOG_POLICY` pre-click decision.
+  - Remaining `ImageFinder.find(...)` in `DialogService` is limited to `VERIFY_GREEN_TEMPLATE` /
+    `VERIFY_WHITE_TEMPLATE` read-only visibility checks; guards assert they do not click or build prepared actions.
+- Source guard:
+  - `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+- Verification:
+  - External `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q -Dtest="AlgorithmFailClosedTest,CloudBrainSmokeTest" test` passed.
+  - Test compile adapter fixed: `TaskMaintenanceCloudRequiredFailureTest.CountingDialogService` now calls the
+    current 11-argument `DialogService` constructor.
+  - `mvn -q -Dtest="TaskMaintenanceCloudRequiredFailureTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest,NpcClickDirectCombatDialogGateWiringTest,NpcClickDirectCombatNameLayerWiringTest,NpcClickLearnedMemoryFastPathWiringTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+
+### 2026-07-02 CR167/CR169 P0 reopen: Dialog/NPC still not complete cloud brain
+
+- User hard boundary restated: do not ask for runtime testing until Dialog and NPC click are fully cloud brain.
+  No production success may rely on local Dialog/NPC click strategy, local prepared click strategy, local retry/recovery
+  policy, or `ALLOW_LOCAL_STRATEGY` / `USE_LOCAL_RESULT` / `LOCAL_PASSTHROUGH`.
+- Main-agent source review evidence:
+  - Dialog still has click-producing local prepared paths:
+    `prepareRouteKeywordOption(...)` -> `prepareOptionKeywordWithOcr(...)` /
+    `GameTextLineOcrService.readDialogOptionWords(...)` calculates route prepared click points locally;
+    `prepareRememberedRouteOption(...)` / `prepareRememberedChoiceOption(...)` still convert remembered relative
+    points into absolute clicks locally; `buildPreparedDialogAction(...)` /
+    `buildRememberedPreparedDialogAction(...)` remain local prepared-click constructors; `handleStoryDialog(...)` /
+    `fastClickStoryDialogDirect(...)` remain local story-click algorithm residue.
+  - NPC old large yellow/tooltip/formula/Ctrl strategy source has mostly been deleted, but `NpcClickService` still has
+    local retry/recovery policy: `NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS`, a local attempt loop, local continue decisions
+    after verifier failure / `REQUEST_NEW_SCREENSHOT`, and `exitDirectCombatClickModeAfterFailure(...)` fixed
+    right-click recovery.
+- CR updates:
+  - CR167 row/card changed to `P0 打回：Dialog route/remembered/story prepared 仍有本地策略残留，禁止测试`.
+  - CR169 row/card changed to `P0 打回：NPC retry/direct-combat recovery 仍由本地决策，禁止测试`.
+- Dispatch:
+  - NPC worker `019f2516-3aec-71c1-b158-43b68407b458` was interrupted again with the narrow P0 cleanup scope:
+    remove/migrate local retry budget and direct-combat recovery; cloud brain must decide retry/new-screenshot/abort.
+  - Dialog worker `019f2516-936c-7792-94b6-33ef4564759c` was interrupted again with the narrow P0 cleanup scope:
+    migrate route/remembered/story prepared click generation to cloud response and delete local prepared-click helpers.
+- Source guards required before any runtime test:
+  - Dialog:
+    `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    must return no production matches.
+  - NPC:
+    `rg -n "NPC_CLICK_SMART_MAX_LOCAL_ATTEMPTS|exitDirectCombatClickModeAfterFailure|direct-combat exit|clickRight\(" src/main/java/com/bot/dhxy/service/NpcClickService.java`
+    must return no matches.
+- Fresh runtime:
+  - Do not ask the user to test until these source guards, focused DHXY tests, compile, and external cloud-brain tests pass.
+
+### 2026-07-02 CR169 NPC click full cloud brain P0 repair
+
+- Scope: `NpcClickService`、`NPC_CLICK_SMART` action 协议、外部
+  `D:\mavenProject\dhxy-cloud-brain` `SmartClickRecognizer`、CR165/CR169 文档。未改 Dialog，未 revert
+  并行脏工作区改动。
+- DHXY implementation:
+  - `clickNpcSmart(...)` 仍只接受 `NPC_CLICK_SMART` cloud-executed + 本地验证成功；inactive/invalid/no-action/
+    failure/low confidence 均 fail closed，不回旧 local strategy。
+  - `tryDirectCombatTargetClick(...)` 已断开旧 `runNpcClickPipeline(...)`，不再在 cloud action 前按
+    `Alt+A` / `Alt+C` 或跑 `detectFlyingState(...)` / local target strategy；direct-combat 只发送
+    `verificationMode=direct-combat` 的 `NPC_CLICK_SMART` request，执行 cloud 返回的 allowlist action，
+    再用 `combatClickVerifier()` 验证。
+  - `NpcClickSmartCloudDecisionService` 扩展 action：`CLICK`、`CTRL_CLICK`、
+    `PRESS_HOTKEY_THEN_CLICK`、`REQUEST_NEW_SCREENSHOT`、`ABORT`；不安全 modifier / hotkey fail closed。
+  - `NpcClickService` allowlist 只执行 `ALT_4`、`ALT_C`、`ALT_A`、普通点击、`CTRL_CLICK`，并保持 input queue
+    原子动作和窗口/ROI 安全校验。
+  - template metadata 修正：只在 `Files.exists(...)` 为真时传 `targetTemplatePath` /
+    `yellowTemplatePath` / `npcNameTemplatePath` / `targetGlyphTemplate`；不存在的
+    `images/template/npc/target|yellow|glyph/...` 不再作为有效 metadata。仍传 raw image、ROI、target facts 给
+    cloud。
+- External brain implementation:
+  - `SmartClickRecognizer` 不再只有 plain `CLICK` 模板路径；template/metadata 优先，无真实模板时用 raw
+    image + ROI 的唯一黄名候选算法。
+  - 空候选或多个可用黄名候选返回 `NO_ACTION`，不会把第一个候选当成功。
+  - `verificationMode=direct-combat` 返回 `PRESS_HOTKEY_THEN_CLICK;hotkey=ALT_A;click=...`；
+    `requestedAction=CTRL_CLICK` 返回 `CTRL_CLICK`。
+- Remaining source residue:
+  - `NpcClickService.runNpcClickPipeline(...)` 和旧 learned-memory/tooltip/yellow/formula/Ctrl 方法源码仍存在，
+    但生产入口 `clickNpcSmart(...)` / `tryDirectCombatTargetClick(...)` 已由 source guard 证明不可达。
+    CR169 card 已把残留列为后续 cleanup 删除项。
+- Verification:
+  - DHXY `mvn -q clean compile -DskipTests` passed。
+  - DHXY focused 手工测试（常规 surefire 仍被并行 dirty Dialog test source 阻塞）：
+    `NpcClickSmartCloudWiringGuardTest passed`；
+    `NpcClickSmartCloudDecisionServiceTest passed`。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain`: `mvn -q test` passed；`mvn -q package -DskipTests` passed。
+  - `node scripts/generate-cr-dashboard-data.js` passed，已刷新 `docs/cr-dashboard-data.js`。
+  - 常规 surefire targeted attempt
+    `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,NpcClickSmartCloudDecisionServiceTest" test`
+    blocked by unrelated dirty Dialog test compile:
+    `DialogMaintenanceFallbackPolicyTest` still references missing
+    `DialogService.shouldRunMaintenanceBusinessOptionFallback(DialogType)`.
+  - Final scans:
+    `runNpcClickPipeline(` in production appears only as the old method definition/Javadocs, not as a production call;
+    NPC smart production files contain no `ALLOW_LOCAL_STRATEGY` / `LOCAL_PASSTHROUGH` / `USE_LOCAL_RESULT`;
+    `NpcClickService` contains no unconditional `metadata.put("targetTemplatePath"...` /
+    `yellowTemplatePath` / `npcNameTemplatePath` and no hard-coded nonexistent
+    `targetTemplatePath=images/template/npc/target|yellow|glyph/...` metadata.
+- Visual/replay boundary:
+  - 本轮改变了外部 cloud raw-image NPC target 识别与 action 协议；外部 smoke 使用合成 raw PNG 覆盖唯一黄名、
+    多候选 fail closed、direct-combat hotkey bundle、Ctrl action。CR165 既有 DHXY marked output 仍是合成图。
+  - 真实游戏 raw PNG / marked output 与 fresh runtime 仍是关闭 CR169 前的验收项；在此之前不要让用户测试生产
+    NPC click。
+
+### 2026-07-02 Dialog full cloud brain P0 follow-up
+
+- Worker role: DHXY 云端化 P0 修复 worker；范围限定 Dialog 完整 cloud brain。已按要求先读
+  `AGENTS.md`、`docs/DHXY_CONTEXT.md`、`docs/HYBRID_CLOUD_WORKFLOW.md`、CR162/CR167 相关卡和本文件最新云端化记录。
+- Baseline before this follow-up:
+  - branch `codex/hybrid-cloud-protection`，local HEAD
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`；
+  - latest fetched `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`；
+  - DHXY 工作树很脏，包含大量并行 cloud/image/NPC/task/doc 改动；外部
+    `D:\mavenProject\dhxy-cloud-brain` 不是 git repo。本轮未 revert 他人改动。
+- Review/P0 evidence addressed:
+  - `DialogService.handleDialog(...)` 的 story `CLICK_THROUGH` 不再直接调用本地 `handleStoryDialog()`；
+    只有本地只读检测到 `DialogType.STORY` 后才构造 `DIALOG_POLICY` pre-click request，云端 actionId 必须为
+    `STORY_CLICK_THROUGH`，否则 no-click/fail closed。
+  - covered option click policies 继续在 option switch 前走 `tryHandleCloudPreClickOption(...)`；cloud
+    inactive/disabled/unavailable/invalid/低置信/`NO_ACTION`/`REQUEST_NEW_SCREENSHOT`/`ABORT` 后不会落入
+    `handleKeywordOption(...)`、route retry、remembered、business、give-item、green-template 或 fallback
+    本地 click handler。
+  - `UICleanerService.forceCloseDialog()` 删除 dialog 关闭关键字 OCR + 绝对点击 fallback；cleanup 只能通过
+    `DialogHandleRequest.clickStory(...)` / `fallbackLastOption(...)` 进入 cloud pre-click 或 fail closed。
+  - `DialogPolicyCloudDecisionService` pre-click context 新增 `detectedDialogType`、
+    `targetKeywordTemplateSpecs`、`rememberedRelativeX`、`rememberedRelativeY`；green specs 改为 JSON object
+    array，不再生成 `name@path[minOffsetX=...]` 污染路径。
+  - 外部 `dhxy-cloud-brain` `DialogOptionRecognizer` / `TemplateSpecParser` 承接 covered action：
+    story click-through、remembered point、business/give-item template specs、fallback first/last green-band、
+    green-template JSON spec；旧 bracket suffix parser 已修正为先剥 suffix 再解析 path。缺模板/素材/ROI/候选仍
+    fail closed。
+- Guard/tests added or tightened:
+  - DHXY `DialogCloudPreClickWiringGuardTest` 覆盖 story click-through、UICleaner cleanup、
+    TaskMaintenance/SummonSkill maintenance broadcast factories、fallbackLast、green-template JSON spec、
+    targetKeyword template metadata、remembered relative point 和 `USE_LOCAL_RESULT` 不作为 production success。
+  - DHXY `DialogPolicyCloudPreClickDecisionServiceTest` 覆盖 observed `STORY` actionId 校验、business/give/fallback/
+    remembered/green-template pre-click context 和 invalid action fail closed。
+  - 外部 `AlgorithmFailClosedTest` 覆盖 bracket parser、give-item/business template action、fallback first/last
+    green-band、remembered point、story click-through。
+- Verification:
+  - RED observed: DHXY focused test 先因 `DialogPolicyPreClickCloudRequest.detectedDialogType` 不存在失败；
+    external focused story test 先因 `DialogOptionRecognizer` 未产出 story click-through click 失败。
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed。
+  - External `D:\mavenProject\dhxy-cloud-brain`：
+    `mvn -q -Dtest="AlgorithmFailClosedTest" test` passed；`mvn -q test` passed。
+  - DHXY：`mvn -q -DskipTests compile` passed。
+  - Wider DHXY cloud suite attempt:
+    `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest" test`
+    failed only in non-CR167 NPC guard `InteractionShadowWiringTest`: it expects
+    `tryClickNpcSmartViaCloud(request, verifier)` while current `NpcClickService` uses
+    `tryClickNpcSmartViaCloud(request, verifier, "dialog")`. 本轮不扩大修改 NPC。
+- Visual/replay boundary:
+  - DHXY 本地没有新增 dialog 点击几何算法；生产点击点只接受外部 cloud 返回并由本地安全壳校验。
+  - 外部 brain 的 fallback/模板/remembered/story 行为用合成 image payload 单元测试覆盖；本轮未生成新的
+    repo-local marked screenshot，fresh runtime 前仍不建议用户测试。
+- Remaining source residue:
+  - `DialogService` 中旧本地 click handler 方法源码仍有残留，但 covered production 入口已由 guard 证明在 cloud
+    pre-click success/no-action/failure 后不会进入这些 handler；后续删除残留方法可另开 cleanup 项。
+
+#### 2026-07-02 follow-up: keyword / route no-template cloud recognizer
+
+- P0 gap closed in external brain:
+  - `D:\mavenProject\dhxy-cloud-brain` `DialogOptionRecognizer` now handles `CLICK_KEYWORD` /
+    `ROUTE_TRANSFER` without `targetKeywordTemplateSpecs`.
+  - It extracts green/yellow option text bands from the raw ROI, builds cloud-side rendered keyword/alias masks,
+    matches `targetKeyword` / `targetKeywordAliases`, and returns `action=CLICK;actionId=<targetKeyword>`;
+    no DHXY local OCR/template click handler is used for success.
+  - External brain includes the same minimum map alias facts for route transfer and also consumes DHXY
+    `targetKeywordAliases` from request context.
+- DHXY request context:
+  - `DialogPolicyCloudDecisionService.preClickContext(...)` now sends `targetKeywordAliases` from
+    `TeleportConfig.MAP_ALIASES` plus the original `targetKeyword`.
+  - `DialogCloudPreClickWiringGuardTest` asserts aliases are sent to cloud and that maintenance fixed-strip local
+    fast path / local click helper are absent.
+- Extra verification after this follow-up:
+  - External RED first failed with `reason=cloud-brain-dialog-keyword-matcher-missing` for no-template keyword/route.
+  - External `mvn -q -Dtest="AlgorithmFailClosedTest#clickKeywordWithoutTemplateUsesCloudTextRecognizer+routeKeywordWithoutTemplateUsesCloudAliasRecognizer" test`
+    passed after implementation.
+  - External `mvn -q -Dtest="AlgorithmFailClosedTest" test` passed.
+  - DHXY `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+  - DHXY `mvn -q -DskipTests compile` passed.
+- Status:
+  - CR167 remains Review, not Done: source/focused/external tests are green, but fresh runtime with real game font/options
+    still must prove keyword/route cloud recognizer works before user testing.
+
+### 2026-07-02 CR169 NPC click full cloud brain worker baseline
+
+- Worker role: DHXY 云端化 P0 修复 worker；范围限定 NPC click 完整 cloud brain，
+  本地 `NpcClickService` / `NPC_CLICK_SMART` action 协议 / 外部
+  `D:\mavenProject\dhxy-cloud-brain` / CR162/CR165/CR169 文档与 focused guard。
+- 用户硬性要求：
+  - NPC click 没有完整云端化前不要让用户测试；
+  - 生产路径不允许继续使用本地 NPC click strategy/fallback；
+  - 不允许 `ALLOW_LOCAL_STRATEGY` / `LOCAL_PASSTHROUGH` / `USE_LOCAL_RESULT` 作为 NPC click 成功路径；
+  - 本地只能截图、构造 request、执行 cloud 返回的受限输入动作、做安全校验/验证/stop/pause；
+  - direct-combat / Ctrl-menu / retry 所需动作必须扩展 `NPC_CLICK_SMART` 协议和外部 brain，
+    不能因为当前 CR165 gate 只支持 plain `CLICK` 就回退旧 `runNpcClickPipeline(...)`。
+- Current branch before edit: `codex/hybrid-cloud-protection`，当前工作树很脏，包含大量并行 Java/doc/test/config
+  改动；本 worker 不 revert 他人改动。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- Relevant baseline/current evidence before edits:
+  - `origin/dev` 对 `NpcClickService.java` 的最近 pushed path change 是 `e543d02`，该 baseline 没有当前 cloud
+    `NPC_CLICK_SMART` / `NPC_CLICK_STRATEGY` migration 层；这些是当前云端化分支本地改动。
+  - 当前 `clickNpcSmart(...)` 已改为只接受 `tryClickNpcSmartViaCloud(request, verifier)` 返回
+    `CLOUD_EXECUTED`，不再直接调用 `runNpcClickPipeline(...)`。
+  - 当前 `tryDirectCombatTargetClick(...)` 在 `Alt+A` 进入 direct-combat mode 后仍调用
+    `runNpcClickPipeline(request, combatClickVerifier(), "direct-combat")`，因此生产 direct-combat 仍可达
+    learned-memory / tooltip / yellow OCR / player-anchor formula / Ctrl-menu 本地策略链，违反本轮要求。
+  - 当前 `NpcClickSmartCloudDecisionService.parse(...)` 只接受 `Action.CLICK`，并明确拒绝
+    `ctrl=true` / `alt=true`，这只是 CR165 普通切片，不能支撑 CR169 direct-combat / Ctrl-menu / retry
+    状态机动作协议。
+  - 当前外部 `dhxy-cloud-brain` `SmartClickRecognizer` 只返回 `action=CLICK` 或 `NO_ACTION`，README 仍提示
+    `NPC_CLICK_SMART` 依赖模板/metadata；本轮需要补 direct-combat / modifier action 协议，不把第一个候选当成功。
+- Planned RED guards:
+  - `NpcClickSmartCloudWiringGuardTest` must fail while `tryDirectCombatTargetClick(...)` contains
+    `runNpcClickPipeline(...)`, and must require direct-combat to call `tryClickNpcSmartViaCloud(..., "direct-combat", combatClickVerifier())`.
+  - `NpcClickSmartCloudDecisionServiceTest` must fail until `NPC_CLICK_SMART` accepts cloud-owned allowlisted
+    actions such as `CTRL_CLICK` and `PRESS_HOTKEY_THEN_CLICK`, rejects disallowed hotkeys/modifiers, and keeps
+    `REQUEST_NEW_SCREENSHOT` / `ABORT` as no-click decisions.
+  - Source guard must prove no NPC click production success path accepts `ALLOW_LOCAL_STRATEGY` /
+    `LOCAL_PASSTHROUGH` / `USE_LOCAL_RESULT`.
+
+
+### 2026-07-02 Dialog full cloud brain worker baseline
+
+- Worker role: DHXY 云端化 Dialog worker；只改 DHXY 本地 Dialog 云端 request/response、gate、测试与文档，不改
+  `NpcClickService`，不改外部 `D:\mavenProject\dhxy-cloud-brain`。
+- 用户明确约束：
+  - Dialog 必须完整 cloud brain 覆盖后再交付；
+  - 生产路径不允许 `USE_LOCAL_RESULT` after-local 成功兜底；
+  - 云端 inactive/unavailable/no-action/invalid 时必须 fail closed / no-click；
+  - 本地只保留截图、request payload、response 坐标/动作安全校验、物理输入执行和结果封装，不能本地决定点哪个选项。
+- Current branch before edit: `codex/hybrid-cloud-protection`，该分支没有 upstream。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` after `git fetch origin dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` before edit is broadly dirty with unrelated Java/task/UI/cloud/doc/config/test changes.
+  This worker must not revert unrelated user/agent work.
+- Relevant baseline/current evidence before edits:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud/**` Dialog cloud decision services; those are local cloud-branch migration code.
+  - Current `DialogService.handleDialog(...)` calls `tryHandleCloudPreClickOption(request, detection)` before the main option switch, but still handles
+    `WUHUAN_SHOE_SHOP_BUY_OPTION`, `CLICK_GREEN_TEMPLATE`, and `CLICK_REMEMBERED_POINT && !verifyDialogType` before that cloud gate.
+  - Current `DialogService.isDialogPreClickCovered(...)` returns true only for `DialogOptionPolicy.CLICK_KEYWORD` and explicitly excludes
+    `ROUTE_TRANSFER`, `GIVE_ITEM_IF_AVAILABLE`, `WUHUAN_SHOE_SHOP_BUY_OPTION`, and `CLEANUP`.
+  - Current uncovered local click/interaction paths remain in the option switch and early branches:
+    `handleRouteKeywordOptionWithRetry(...)`, `handleRememberedOption(...)`, `handleBusinessOption(...)`,
+    `tryGiveItemFromCurrentOptionDialog(...)`, `handleGreenTemplateOption(...)`, `clickGreenOption(...)` fallback first/last,
+    and `handleWuhuanShoeShopBuyOption(...)` template/OCR fallback.
+  - Current `DialogCloudPreClickWiringGuardTest` intentionally asserts the old first slice:
+    `return policy == DialogOptionPolicy.CLICK_KEYWORD;` and rejects green-template/fallback coverage; this must become RED for the full-cloud requirement.
+- Planned RED guards:
+  - Source guard must require all click/interact option policies to enter `tryHandleCloudPreClickOption(...)` before local click code:
+    `CLICK_KEYWORD`, route transfer, `CLICK_GREEN_TEMPLATE`, remembered point, business option, give-item, Wuhuan shoe-shop buy option,
+    cleanup/fallback first/last.
+  - Source guard must prove cloud inactive/unavailable/no-action/invalid returns no-click failure and does not call old local OCR/template/remembered/business/give-item/fallback handlers for covered paths.
+  - Decision-service tests must prove after-local `USE_LOCAL_RESULT` remains rejected and pre-click supports the covered action ids without local-result success semantics.
+  - Pure read-only paths such as `IGNORE`, `VERIFY_OPTION`, `VERIFY_GREEN_TEMPLATE`, story read/verify, and maintenance broadcast lightweight prefilter remain local read-only and are not dialog click strategy.
+- RED observed:
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    failed before production edits because Wuhuan/green-template handling still reached local click code before the cloud gate,
+    and `DialogPolicyCloudDecisionService` only validated `CLICK_KEYWORD` action ids.
+- Implementation:
+  - `DialogService.handleDialog(...)` no longer runs the early local Wuhuan shoe-shop, green-template, or remembered-point
+    click branch before `DIALOG_POLICY` pre-click.
+  - `isDialogPreClickCovered(...)` now covers all dialog option policies that can click or trigger dialog interaction:
+    `CLICK_KEYWORD` including `ROUTE_TRANSFER`, `CLICK_REMEMBERED_POINT`, `CLICK_BUSINESS_OPTION`,
+    `CLICK_GREEN_TEMPLATE`, `GIVE_ITEM_IF_AVAILABLE`, `FALLBACK_FIRST_OPTION`, and `FALLBACK_LAST_OPTION`.
+  - Covered paths fail closed/no-click when `DIALOG_POLICY` is inactive, disabled/shadow-only, unavailable, invalid,
+    low-confidence, no-action, or out-of-bounds; they do not fall through to
+    `handleKeywordOption(...)`, `handleRouteKeywordOptionWithRetry(...)`, `handleRememberedOption(...)`,
+    `handleBusinessOption(...)`, `tryGiveItemFromCurrentOptionDialog(...)`, `handleGreenTemplateOption(...)`,
+    or `clickGreenOption(...)`.
+  - `DialogPolicyCloudDecisionService` pre-click actionId validation now covers keyword/route keyword, remembered,
+    business, give-item, green-template spec name, and fallback first/last action ids. Read-only policies remain rejected
+    for pre-click `CLICK`.
+  - `CLICK_GREEN_TEMPLATE` request context now exports full `GreenTemplateClickSpec` click semantics for the external
+    brain: `greenTemplateSpecCount`, `greenTemplateSpecNames`, and index fields
+    `greenTemplateSpec.N.name`, `.templatePath`, `.minOffsetX`, `.maxOffsetX`, `.randomRadiusY`. Deterministic ranges
+    also include `.clickOffsetX` / `.clickOffsetY`. The legacy `greenTemplateSpecs` summary now includes
+    `[minOffsetX=...,maxOffsetX=...,randomRadiusY=...]` and is no longer just `name@path`.
+  - Local responsibility is still limited to screenshot/payload creation, schema/actionId/coordinate safety validation,
+    input queue execution, give-item physical follow-up after cloud-selected dialog option, and `DialogResult` wrapping.
+- Verification:
+  - Narrow RED command above failed before production edits as expected.
+  - `mvn -q -Dtest="DialogPolicyCloudPreClickDecisionServiceTest" test` passed after adding full green-template context fields.
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test` passed after
+    full coverage and source guards were updated.
+  - `node scripts/generate-cr-dashboard-data.js` passed after CR167 Markdown updates and regenerated
+    `docs/cr-dashboard-data.js`.
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+- Visual testcase note:
+  - This pass does not change local visual matching or click-target geometry; covered production dialog clicks now require
+    the external `DIALOG_POLICY` response to provide the final `WINDOW_RELATIVE click`. The relevant verification is schema/
+    source guard plus focused cloud decision tests, not a new local template replay.
+
+### 2026-07-02 NPC click local strategy cleanup worker baseline
+
+- Worker role: DHXY 云端化 worker，范围限定 `NpcClickService`、`NpcClickStrategyCloudDecisionService`、相关
+  tests/docs；不修改 `DialogService`，不修改外部 `dhxy-cloud-brain`。
+- 用户明确要求：
+  - NPC click 必须完整 cloud brain；
+  - 生产 `clickNpcSmart` 不允许 `NPC_CLICK_SMART` inactive/unavailable/no-action/invalid 后回旧本地 pipeline；
+  - 生产路径不要 `NPC_CLICK_STRATEGY` / `ALLOW_LOCAL_STRATEGY` / 本地点击策略兜底；
+  - 本地只保留截图、request payload、response 坐标安全校验、物理输入执行、结果 verification。
+- 用户补充要求：外部 `dhxy-cloud-brain` parser/recognizer 已完成，但 DHXY `NPC_CLICK_SMART` request 不能只给
+  `glyphMetadata={npcName,mapName,target,tooltipType,targetRole,targetEvidence}`；DHXY 必须补
+  `targetTemplateSpecs` / `yellowTemplateSpecs` / `targetGlyphTemplate` 或等价 template/glyph metadata，让外部 brain
+  能独立返回 `WINDOW_RELATIVE CLICK`，本地不能回旧策略计算点击。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` before edit is broadly dirty with many unrelated Java/task/UI/cloud/doc changes.
+  This worker must not revert unrelated user/agent changes.
+- Relevant pushed/current evidence before edits:
+  - `origin/dev` has no `NPC_CLICK_SMART` / `NPC_CLICK_STRATEGY` cloud migration layer under
+    `src/main/java/com/bot/dhxy/cloud/**`; those are cloud-branch additions.
+  - Current `NpcClickService.clickNpcSmart(...)` calls `tryClickNpcSmartViaCloud(...)`, but then returns
+    `cloudResult == NpcClickSmartCloudDecision.Status.DISABLED && clickNpcSmartLocalDisabledBranch(...)`;
+    that disabled branch calls `runNpcClickPipeline(..., "dialog")`, may press `Alt+C`, then retries
+    `runNpcClickPipeline(..., "dialog-after-alt-c")`.
+  - Current `runNpcClickPipeline(...)` still reaches learned-memory, tooltip, yellow OCR, player-anchor formula,
+    and Ctrl-menu strategies through `authorizeNpcClickStrategy(...)`.
+  - Current `NpcClickStrategyCloudDecisionService.authorizeStrategy(...)` returns
+    `NpcClickStrategyCloudDecision.localOnly(...)` when `NPC_CLICK_STRATEGY` is inactive; current
+    `NpcClickStrategyCloudDecision.isAuthorized()` treats `LOCAL_PASSTHROUGH` as success.
+  - Current `NpcClickSmartCloudWiringGuardTest` still asserts the disabled branch may use old local pipeline;
+    current `NpcClickStrategyCloudDecisionServiceTest` still asserts inactive `NPC_CLICK_STRATEGY` authorizes local
+    strategy without calling the cloud client.
+- Planned RED guards:
+  - `clickNpcSmart(...)` must return success only for `NPC_CLICK_SMART` cloud-executed/verified action; `DISABLED`,
+    `CLOUD_NO_ACTION`, `REQUIRED_FAILURE`, invalid, timeout, and unavailable all return no-click/fail-closed.
+  - `clickNpcSmart(...)` must not call `clickNpcSmartLocalDisabledBranch(...)`, `runNpcClickPipeline(...)`,
+    `InputAction.pressAltC()`, or `authorizeNpcClickStrategy(...)`.
+  - `NPC_CLICK_STRATEGY` inactive and active modes must both return no-click / not authorized; no production success path
+    may accept `ALLOW_LOCAL_STRATEGY` or `LOCAL_PASSTHROUGH`.
+- RED observed:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest" test`
+    failed before production edits: `clickNpcSmart(...)` still exposed the disabled local branch, and inactive
+    `NPC_CLICK_STRATEGY` still returned `LOCAL_PASSTHROUGH`.
+  - `mvn -q -Dtest="NpcClickStrategyCloudDecisionServiceTest" test` failed before envelope cleanup because
+    `NpcClickStrategyCloudDecision.Status` still exposed `LOCAL_PASSTHROUGH`.
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` failed before request
+    schema edits because `NpcClickSmartCloudRequest` builder did not expose
+    `targetTemplateSpecs(...)` / `yellowTemplateSpecs(...)` / `targetGlyphTemplate(...)`.
+- Implementation result:
+  - `NpcClickService.clickNpcSmart(...)` now returns true only when `tryClickNpcSmartViaCloud(...)` returns
+    `CLOUD_EXECUTED`; all other statuses log and return false.
+  - Deleted `clickNpcSmartLocalDisabledBranch(...)`, so inactive/disabled cloud can no longer run
+    `runNpcClickPipeline(...)`, `Alt+C` retry, learned-memory, tooltip, yellow OCR, player-anchor formula, or
+    Ctrl-menu fallback from the production smart-click entry.
+  - `NpcClickStrategyCloudDecisionService.authorizeStrategy(...)` now always returns no-click rejection without calling
+    the cloud client and without inactive local passthrough.
+  - `NpcClickStrategyCloudDecision` now exposes only `CLOUD_REJECTED_NO_CLICK`; local/cloud success factories were
+    removed.
+  - `NpcClickService.buildNpcClickSmartCloudRequest(...)` now sends `targetTemplateSpecs`, `yellowTemplateSpecs`, and
+    `targetGlyphTemplate`; `templateSpecs` and `glyphMetadata` mirror
+    `npcName@...`, `targetTemplatePath=...`, `yellowTemplatePath=...`, `npcNameTemplatePath=...`, and
+    `targetGlyphTemplate=...`. These are declarative request fields only; no local `candidateBox`, score/confidence,
+    or click is computed.
+  - `NpcClickSmartCloudDecisionService` now rejects incomplete `NPC_CLICK_SMART` requests before cloud call when no
+    target template/glyph metadata is present.
+- Focused GREEN:
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed after the
+    request schema update.
+  - `mvn -q -Dtest="NpcClickStrategyCloudDecisionServiceTest" test` passed.
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest" test`
+    passed.
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,InteractionShadowWiringTest,NpcClickStrategyCloudDecisionServiceTest,NpcClickSmartCloudDecisionServiceTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Post-schema final verification reran the same focused suite, `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`,
+    and `mvn -q -DskipTests compile`; all passed.
+  - `node scripts/generate-cr-dashboard-data.js` generated `173 CR rows -> docs\cr-dashboard-data.js`.
+- Token/source scan:
+  - Production scan found no `clickNpcSmartLocalDisabledBranch`, no disabled-branch return, no old dialog
+    `runNpcClickPipeline(...)` call from `clickNpcSmart`, and no `action=ALLOW_LOCAL_STRATEGY` production response.
+  - Post-schema scoped scan found no old `clickNpcSmartLocalDisabledBranch`, disabled-return,
+    `LOCAL_PASSTHROUGH`, or `ALLOW_LOCAL_STRATEGY` tokens in the NPC click production files touched here.
+- Testcase / runtime gate:
+  - No NPC click testcase replay was added because this pass removed fallback/authorization wiring only and did not
+    change cloud-returned click geometry, OCR/template matching, ROI selection, or click coordinates. Fresh runtime
+    still requires a real external `NPC_CLICK_SMART` response and should show no local fallback on cloud inactive/no-action.
+
+### 2026-07-02 cloud brain sidecar integration worker baseline
+
+- Worker role: DHXY 云端化集成 worker；范围优先限定脚本、配置、测试和文档，不改 NPC/Dialog Java 业务逻辑。
+- 用户明确约束：
+  - NPC click 和 Dialog 必须完整外部 cloud brain 后才测试；
+  - 生产路径不允许 `USE_LOCAL_RESULT` / `ALLOW_LOCAL_STRATEGY` 本地策略兜底；
+  - 本地点击“启动/开始”时自动 sidecar 不能再启动 DHXY 自己的
+    `com.bot.dhxy.cloud.dev.CloudDecisionDevServer` test-sidecar/stub，必须默认启动外部
+    `D:\mavenProject\dhxy-cloud-brain`。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` before edit is broadly dirty with many unrelated Java/task/UI/cloud/doc changes.
+  This worker must not revert unrelated user/agent changes.
+- Relevant baseline/current evidence before edits:
+  - `origin/dev` has no cloud decision sidecar startup config/script for this branch path; current cloud sidecar wiring
+    is a local cloud-branch addition.
+  - Current `src/main/resources/application.properties` sets
+    `cloud.dev-sidecar.script-path=scripts/run-cloud-decision-dev-server.ps1` while
+    `npc-click-smart` and `dialog-policy` are both `execute-enabled=true`, `execute-percent=100`, `fallback=STOP`。
+  - Current `scripts/run-cloud-decision-dev-server.ps1` runs DHXY `mvn -q -DskipTests test-compile` and then starts
+    `-Dexec.mainClass=com.bot.dhxy.cloud.dev.CloudDecisionDevServer` from DHXY test classpath.
+  - Current `src/main/java/com/bot/dhxy/ui/CloudDecisionDevSidecarService.java` only starts the configured script and
+    probes `cloud.base-url + cloud.endpoint-path`; the production bug is therefore the configured/default script
+    target, not NPC/Dialog business decision code.
+  - External `D:\mavenProject\dhxy-cloud-brain` exists and has `pom.xml`, shaded jar config with main class
+    `com.yueyunfe.dhxy.cloudbrain.CloudBrainApplication`, README startup docs, and current `target` output.
+- Planned RED guard:
+  - Add a source/config guard proving the production auto-start script path points at an external cloud-brain script,
+    that the default production script references `D:\mavenProject\dhxy-cloud-brain`, and that production scripts do
+    not launch `com.bot.dhxy.cloud.dev.CloudDecisionDevServer`.
+  - Keep a separate explicit debug/test script for DHXY `CloudDecisionDevServer`, requiring an obvious opt-in switch.
+- RED observed:
+  - `CloudBrainSidecarScriptGuardTest` failed before production edits with:
+    `application.properties must default the UI auto sidecar to the external cloud brain script`.
+- Implementation result:
+  - Added `scripts/run-cloud-brain-server.ps1`; it defaults `BrainProjectPath` to
+    `D:\mavenProject\dhxy-cloud-brain`, builds the external jar only if missing or `-Rebuild` is passed, then starts
+    `java -jar target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar --port=<Port> --token=<Token>`.
+  - Changed `src/main/resources/application.properties`,
+    `CloudDecisionProperties.DevSidecar.scriptPath`, and the fallback path in
+    `CloudDecisionDevSidecarService` to `scripts/run-cloud-brain-server.ps1`.
+  - Changed `scripts/run-cloud-decision-dev-server.ps1` into a compatibility wrapper that forwards to
+    `run-cloud-brain-server.ps1`; it no longer starts DHXY `CloudDecisionDevServer`.
+  - Added `scripts/run-dhxy-test-cloud-decision-stub.ps1`; it can launch DHXY
+    `com.bot.dhxy.cloud.dev.CloudDecisionDevServer` only with explicit `-AllowDhxyTestSidecar`.
+  - Updated UI/log wording so cloud sidecar failure says cloud-required services remain fail-closed / `STOP` instead
+    of “继续本地 fallback”.
+  - Updated `docs/HYBRID_CLOUD_WORKFLOW.md`, CR162/CR165/CR167 rows/cards in
+    `docs/PACKAGE_ARCHITECTURE.md`, and regenerated the CR dashboard data.
+- Verification:
+  - `javac -encoding UTF-8 -d target\test-classes src\test\java\com\bot\dhxy\ui\CloudBrainSidecarScriptGuardTest.java; java -cp target\test-classes com.bot.dhxy.ui.CloudBrainSidecarScriptGuardTest`
+    passed.
+  - `javac -encoding UTF-8 -d target\test-classes src\test\java\com\bot\dhxy\ui\MainWindowControllerCloudSidecarGateSourceGuardTest.java; java -cp target\test-classes com.bot.dhxy.ui.MainWindowControllerCloudSidecarGateSourceGuardTest`
+    passed.
+  - `CloudDecisionDevSidecarServiceTest` passed when compiled/run with a focused classpath; logs resolved the
+    configured script to `D:\mavenProject\DHXY\scripts\run-cloud-brain-server.ps1`.
+  - DHXY `mvn -q -DskipTests compile` passed.
+  - DHXY `mvn -q -DskipTests test-compile` is currently blocked by unrelated dirty tests referencing
+    `TaskMaintenanceService` in `CR148LocalTeamSessionInvalidationWiringTest`,
+    `TaskMaintenanceSummonSkillIntervalLeadTimeTest`, `TaskMaintenanceSummonSkillQueueWiringTest`,
+    `AutoCombatCR138FirstAidOnlyCommonBoxGuardTest`, and `TaskMaintenanceCloudRequiredFailureTest`.
+  - External `D:\mavenProject\dhxy-cloud-brain` first `mvn -q test` attempt reported one transient
+    `AlgorithmFailClosedTest` NPE; reflection reproduced the same JSON template spec as a valid `CLICK 132,226`, and
+    a clean rerun of `mvn -q test` passed.
+  - External `D:\mavenProject\dhxy-cloud-brain> mvn -q -DskipTests package` passed.
+  - Script smoke: starting `scripts/run-cloud-brain-server.ps1` on port `18183` returned
+    `SCRIPT_SMOKE_OK serviceId=TASK_CLASSIFIER decision=READY policyVersion=cloud-brain-local-v1` with diagnostics
+    `server=dhxy-cloud-brain`; the temporary process tree was stopped.
+  - Explicit debug guard: `scripts/run-dhxy-test-cloud-decision-stub.ps1` without `-AllowDhxyTestSidecar` exited `1`
+    with the expected test-sidecar warning and did not start the DHXY stub.
+
+### 2026-07-02 CR165/CR167 worker B baseline - 本地生产 wiring 改为云端动作
+
+- Worker role: DHXY 云端化实现 worker B，范围只限 `D:\mavenProject\DHXY`；不修改外部
+  `D:\mavenProject\dhxy-cloud-brain`。
+- 用户明确约束：
+  - NPC click 和 dialog 没有完整云端 brain 前不能测；
+  - 本地生产路径不能再把 `USE_LOCAL_RESULT` / `ALLOW_LOCAL_STRATEGY` 当成功 execute；
+  - dev sidecar / DHXY test-sidecar 不能用本地图像算法假装云端 brain，只能做协议/错误 stub；
+  - `NPC_CLICK_STRATEGY` 旧授权本地策略桥不能继续作为普通 NPC dialog click 覆盖路径。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts, including unrelated task/UI/window/cloud
+  changes. This worker must not revert unrelated user/agent changes.
+- Relevant pushed/current evidence before edits:
+  - `origin/dev` has no CR165/CR167 cloud decision service files under `src/main/java/com/bot/dhxy/cloud/**` or
+    `src/test/java/com/bot/dhxy/cloud/**`; these are local migration-layer additions on the cloud branch.
+  - Current `NpcClickService.clickNpcSmart(...)` still enters `runNpcClickPipeline(request, verifier, "dialog")`,
+    then may press `Alt+C` and retry `runNpcClickPipeline(..., "dialog-after-alt-c")`; strategy calls are only gated
+    by `NpcClickStrategyCloudDecisionService.authorizeStrategy(...)`, whose accepted action is
+    `ALLOW_LOCAL_STRATEGY`.
+  - Current `DialogService.handleDialog(...)` contains staged `tryHandleCloudPreClickOption(...)`, but the main option
+    switch does not call it; ordinary `CLICK_KEYWORD` still calls `handleKeywordOption(...)` first and then
+    `finishRequest(..., true)` runs after-local `DialogPolicyCloudDecisionService.decide(...)`, which accepts
+    `USE_LOCAL_RESULT`.
+  - Current `application.properties` configures `npc-click-strategy` and `dialog-policy` as execute 100 / STOP, but
+    does not configure `npc-click-smart`.
+  - Current `CloudDecisionDevServer` still returns
+    `action=USE_LOCAL_RESULT;operation=...;reason=dev-local-dialog-policy` for after-local `DIALOG_POLICY`, returns
+    `action=ALLOW_LOCAL_STRATEGY...` for `NPC_CLICK_STRATEGY`, and returns dialog pre-click `NO_ACTION` stub for
+    missing local vision.
+- Planned RED guards:
+  - `NpcClickService` covered ordinary dialog `clickNpcSmart(...)` must call a dedicated `NPC_CLICK_SMART` cloud action
+    path first and must not fall back to `runNpcClickPipeline(...)`, `Alt+C`, learned-memory, tooltip, yellow OCR,
+    formula, or Ctrl-menu local strategies when cloud returns no executable action.
+  - `DialogService` covered `CLICK_KEYWORD` pre-click path must call `tryHandleCloudPreClickOption(request, detection)`
+    before `handleKeywordOption(...)`, fail closed on cloud no-action/failure, and skip after-local `USE_LOCAL_RESULT`.
+  - `CloudRequiredExecuteWaveConfigTest` must require `npc-click-smart` execute 100 / STOP and must not treat
+    `npc-click-strategy` as a production authority service for covered ordinary dialog clicks.
+  - Dev sidecar guard must allow only protocol/error stub responses for `NPC_CLICK_SMART` / dialog pre-click, without
+    candidate extraction or click calculation.
+- RED observed:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,DialogCloudPreClickWiringGuardTest,CloudRequiredExecuteWaveConfigTest" test`
+    failed as expected before production edits: missing `NPC_CLICK_SMART` service/config, `DialogService` did not call
+    pre-click before local option switch, and the NPC guard still saw the old local pipeline as the covered path.
+- Implementation result:
+  - Added `CloudDecisionServiceId.NPC_CLICK_SMART` plus `NpcClickSmartCloudRequest`,
+    `NpcClickSmartCloudDecision`, and `NpcClickSmartCloudDecisionService` as protocol/gate/schema/coordinate-safety
+    classes only.
+  - `NpcClickService.clickNpcSmart(...)` now calls `tryClickNpcSmartViaCloud(...)` first for ordinary dialog NPC click.
+    Cloud `CLICK` is executed only after `WINDOW_RELATIVE` click/candidateBox window+ROI validation and existing dialog
+    verifier success. Cloud `NOT_FOUND` / `NO_ACTION` / timeout / invalid / out-of-bounds returns no-click/fail-closed.
+    The old local `runNpcClickPipeline(...)` branch is reachable only when `NPC_CLICK_SMART` is explicitly disabled.
+  - `DIALOG_POLICY` covered `CLICK_KEYWORD` path now calls `tryHandleCloudPreClickOption(request, detection)` before
+    local option click. A cloud pre-click result returns through `finishRequest(..., false)`, so it does not run
+    after-local `USE_LOCAL_RESULT`.
+  - `DialogPolicyCloudDecisionService` no longer accepts `USE_LOCAL_RESULT` as execute success; unsupported
+    after-local success is rejected.
+  - `application.properties` now configures `npc-click-smart` as execute 100 / STOP and disables
+    `npc-click-strategy` as production authority (`execute-enabled=false`, `execute-percent=0`, `fallback=STOP`).
+  - `CloudDecisionDevServer` no longer uses `USE_LOCAL_RESULT` for after-local dialog success. It returns protocol-only
+    stubs for unimplemented local vision: `NPC_CLICK_SMART` -> `NOT_FOUND;reason=dev-sidecar-no-local-npc-click-smart-vision`,
+    `DIALOG_POLICY` pre-click -> `NO_ACTION;reason=dev-sidecar-no-local-dialog-vision`.
+  - `NpcClickStrategyCloudDecisionService` is no longer an active production authorization bridge. With
+    `npc-click-strategy` inactive it only allows the legacy disabled branch to run locally; if the old bridge is
+    accidentally configured active, it rejects/no-clicks and tells the caller to use `NPC_CLICK_SMART`.
+  - Dev sidecar `NPC_CLICK_STRATEGY` stub was also changed from `ALLOW_LOCAL_STRATEGY` to
+    `REJECT;reason=dev-sidecar-npc-click-strategy-disabled-use-npc-click-smart`, so local test-sidecar cannot
+    pretend to authorize the old production bridge.
+  - Added/updated guards and focused unit tests covering NPC smart cloud action, dialog pre-click action, config execute
+    wave, and dev sidecar no-local-vision behavior.
+- Focused GREEN:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,DialogCloudPreClickWiringGuardTest,CloudRequiredExecuteWaveConfigTest,NpcClickSmartCloudDecisionServiceTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - After disabling the old strategy bridge, reran:
+    `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,DialogCloudPreClickWiringGuardTest,CloudRequiredExecuteWaveConfigTest,NpcClickSmartCloudDecisionServiceTest,NpcClickStrategyCloudDecisionServiceTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - After changing the dev sidecar legacy strategy stub to reject, reran:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,NpcClickStrategyCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,CloudRequiredExecuteWaveConfigTest" test`
+    passed.
+  - Final focused suite:
+    `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,DialogCloudPreClickWiringGuardTest,CloudRequiredExecuteWaveConfigTest,NpcClickSmartCloudDecisionServiceTest,NpcClickStrategyCloudDecisionServiceTest,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,CloudDecisionDevServerTest,InteractionShadowWiringTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - Final token scan for `case "USE_LOCAL_RESULT"`, `action=USE_LOCAL_RESULT`, `action=ALLOW_LOCAL_STRATEGY`,
+    and `accepted=true.*ALLOW_LOCAL_STRATEGY` found only negative test fixtures; no production source or dev sidecar
+    success response remains.
+- Testcase / runtime gate:
+  - No live NPC/dialog click replay was run in this pass because the user explicitly required no NPC click/dialog testing
+    before a complete external cloud brain is available. This worker only verified protocol, fail-closed behavior,
+    coordinate safety, and production wiring guards.
+- CR persistence:
+  - Updated CR165/CR167 table rows and card status in `docs/PACKAGE_ARCHITECTURE.md`.
+  - `node scripts/generate-cr-dashboard-data.js` passed and refreshed `docs/cr-dashboard-data.js`.
+  - `mvn -q -DskipTests compile` passed.
+
+### 2026-07-02 CR162/CR173 image cloud parity closure
+
+- User correction: 没做完不要汇报。当前只记录已复核闭环，不作为半截交付。
+- Manager/main-agent rule: 谢帅只做主管/reviewer；外部 cloud-brain Java 实现由 worker 完成。
+- External worker `019f24c7-b4f9-7d62-a83f-61b499a7b802` repaired `D:\mavenProject\dhxy-cloud-brain`
+  only:
+  - `src/main/java/com/yueyunfe/dhxy/cloudbrain/ImageAlgorithms.java`
+  - `src/test/java/com/yueyunfe/dhxy/cloudbrain/ImageAlgorithmsParityTest.java`
+- External cloud `IMAGE_PREPROCESS` parity now matches the DHXY test-sidecar / old local image-processing boundary
+  for the current migrated operations:
+  - `WASH_YELLOW` / `ROUTE_PACKED_LINE_MASK`: yellow threshold, 35x1 horizontal-line removal, connected-component
+    cleanup;
+  - `WASH_WHITE` / `COUNT_THIN_WHITE_PIXELS_HSV`: all-white HSV mask minus 3x3 eroded thick mask;
+  - `COUNT_GREEN_PIXELS_HSV`: HSV `50..75 / 150..255 / 180..255`;
+  - `TEXT_CANDIDATES`, tooltip white/purple metrics, route packed mapping diagnostics now follow the dev-sidecar
+    contract instead of the earlier simplified placeholder.
+- Independent read-only reviewer `019f24c5-bb2e-77d3-b42c-8182a467cc80` checked DHXY production source:
+  - No P0/P1 found for CR173/CR177G/CR179 image boundary.
+  - `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` is crop/save/path only.
+  - Production wash/count/fingerprint/green-band/text-candidate/route-mask callers go through
+    `ImageProcessorService` / `CloudImageProcessor` -> `IMAGE_PREPROCESS`.
+  - `MiniMapCoordinateReader` production path goes through `MINIMAP_LOCATION`.
+  - Local `ImageFinder`, left-top status templates, bag/common-box/static-status templates remain intentionally local
+    for now; 摄妖香数字 and small task-glow checks are P2 future scope if the protection boundary is broadened.
+- Manager verification:
+  - `D:\mavenProject\dhxy-cloud-brain> mvn -q test` passed (`29` tests, `0` failures/errors).
+  - `D:\mavenProject\dhxy-cloud-brain> mvn -q -DskipTests package` passed.
+  - `D:\mavenProject\DHXY> mvn -q -DskipTests compile` passed.
+  - `D:\mavenProject\DHXY> mvn -q -DskipTests test-compile` passed.
+  - Earlier targeted DHXY image/minimap/cloud suite passed, including CR173/CR177A-G/CR179 guards and marked replay
+    outputs.
+- Current status:
+  - ImageProcessor/洗图核心与小地图坐标识别这两块可以按“生产本地不保留核心算法，云端 request/response 执行”
+    继续联调。
+  - Fresh runtime 仍需用户重启后验证真实日志里的 `IMAGE_PREPROCESS` / `MINIMAP_LOCATION` execute
+    operations；如失败，应按 operation/debugToken 定点修 cloud-brain，而不是恢复本地 fallback。
+
+### 2026-07-02 CR162 external cloud brain audit - controlled integration candidate
+
+- User correction: 不要再让用户测试半截云端化；必须先把外部 cloud brain 的核心算法写完并通过复核。
+- Manager rule re-affirmed: 谢帅/main agent 只做主管和 reviewer，不直接写 Java 业务实现；外部 cloud brain
+  实现由 worker 负责，另派只读 reviewer 独立审查。
+- External project path: `D:\mavenProject\dhxy-cloud-brain`。这是云端算法容器；DHXY 本地项目只应保留截图、
+  request/response、schema/坐标安全校验和输入执行。
+- First worker delivery status:
+  - Built HTTP skeleton and service dispatcher, but not accepted as complete.
+  - Local baseline commands passed before stricter reviewer tests: `mvn -q test` and `mvn -q -DskipTests package`
+    in `D:\mavenProject\dhxy-cloud-brain`.
+- Independent reviewer result:
+  - Current stricter test run reported `10` tests with `4` failures.
+  - P0 `MINIMAP_LOCATION`: current `MiniMapRecognizer` mainly crops label and parses `mapNameHint`; it does not
+    migrate `DevMiniMapCoordinateReader` digit/template recognition.
+  - P0 `NPC_CLICK_SMART`: current `SmartClickRecognizer` clicks the first generic text candidate; it does not
+    implement target-aware yellow/purple/menu/NPC strategy.
+  - P0 `DIALOG_POLICY` pre-click: current recognizer selects the first green band instead of matching
+    `targetKeyword` / `greenTemplateSpecs`.
+  - P0 `SUMMON_SKILL`: current recognizer uses coarse pixel colors instead of washed-yellow status template matching.
+  - P0/P1 route/link/image gaps: `TRACKER_LINK_RANKER` / `ROUTE_CANDIDATE` still mostly pass through local clicks,
+    and `IMAGE_PREPROCESS` has placeholder outputs such as fixed fingerprint distance / identity packed mapping.
+- Action taken:
+  - Worker `019f2423-8c91-74b3-b6f1-f1d38daad1f6` was sent back with explicit P0/P1 repair instructions.
+  - Reviewer `019f242f-b45e-77b1-a2e2-1f93389528d3` confirmed the current cloud brain must not be marked done.
+- Follow-up result:
+  - Worker second pass changed external `dhxy-cloud-brain` only and added/updated `DecisionEngine`,
+    `MiniMapRecognizer`, `TemplateMatcher`, `SmartClickRecognizer`, `RouteMemoryStore`, smoke tests, README,
+    and `src/main/resources/templates/**`.
+  - Confirmed by manager local checks: `mvn test` passed, `mvn -q -DskipTests package` passed, and a direct
+    `java -cp ... CloudBrainApplication` HTTP smoke on port `18181` returned a valid `TASK_CLASSIFIER` response;
+    temporary smoke services were stopped.
+  - Independent reviewer second pass: no new P0; accepted as external cloud brain first-version live-integration
+    candidate, not production release.
+- Final manager/reviewer closure on this pass:
+  - Additional workers fixed the remaining联调 blockers in external `dhxy-cloud-brain` only:
+    - shade jar has `Main-Class` and packaged `templates/**`; `TemplateMatcher` supports exploded classes, code-source
+      jar and `jar:` resources.
+    - `ROUTE_MEMORY` writes JSON snapshots atomically, reloads persisted/migrated hits, and rejects out-of-window
+      route click for override / migrate / learn / persisted snapshot.
+    - `NPC_CLICK_SMART` no longer clicks first yellow text; it requires target template/glyph/metadata and matches
+      templates inside the ROI only.
+    - `DIALOG_POLICY CLICK_KEYWORD` no longer clicks first green band without a template/OCR matcher; template
+      pre-click matches inside the ROI only.
+    - `IMAGE_PREPROCESS` `pixelCount` now counts white foreground only.
+  - Fresh verification from manager:
+    - `D:\mavenProject\dhxy-cloud-brain> mvn test` => `24` tests, `0` failures/errors.
+    - `D:\mavenProject\dhxy-cloud-brain> mvn -q -DskipTests package` => exit `0`.
+    - `java -jar target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar --port=18182 --token=local-dev-token` smoke passed
+      `/api/cloud/decision`, normal route click, out-of-window route rejection, and route-memory migrate rejection.
+    - `jar tf` confirms `META-INF/MANIFEST.MF`, `CloudBrainApplication.class`, `templates/coord_digits/**`,
+      `templates/map_label/**`, and `templates/zhaohuanshou/**` are packaged.
+  - Independent reviewer final pass found no P0/P1 after the repairs; CR162 can be treated as controlled
+    integration candidate, not production-complete release.
+- Current gate:
+  - It is now reasonable to start controlled联调 from the jar or dev server, first covering `MINIMAP_LOCATION`,
+    `SUMMON_SKILL`, dialog template pre-click, NPC template/metadata click, route fail-closed, route memory prototype,
+    and image preprocess operations.
+  - Do not claim production equivalence yet. Remaining known risks: `ROUTE_MEMORY` is still a single-process JSON
+    prototype; `NPC_CLICK_SMART` / `DIALOG_POLICY` non-template OCR recognition is still not implemented; commercial
+    deployment/auth/rate-limit/observability are not part of this local cloud-brain pass.
+
+### 2026-07-02 CR165/CR167 worker baseline - remove local smart/pre-click vision implementations
+
+- Worker role: DHXY implementation worker,接手修正前序 manager 误改。用户明确要求：
+  `NPC_CLICK_SMART` 和 `DIALOG_POLICY` pre-click 的核心视觉/点击决策算法不能留在本地 DHXY
+  项目内，包括 `src/test/java` dev sidecar/replay。本地只负责截图、构造 request、发送云端、
+  接收 response/schema、坐标校验和执行点击；真正视觉算法必须在外部云服务项目/部署中实现。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short` is broadly dirty before this worker starts, including many unrelated task/UI/window/cloud
+  changes. This worker must not revert unrelated user/agent changes.
+- Relevant baseline/current evidence before edits:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud/**` / `src/test/java/com/bot/dhxy/cloud/**`
+    CR165/CR167 cloud service files; those are local migration-layer additions.
+  - Current `CloudDecisionServiceId` still contains `NPC_CLICK_SMART`。
+  - Current `application.properties` still contains `cloud.services.npc-click-smart.*` required-execute config。
+  - Current `CloudRequiredExecuteWaveConfigTest.WAVE_SERVICES` still lists `npc-click-smart`。
+  - Current `CloudDecisionDevServer` still contains local `npcClickSmartDecisionFor(...)`,
+    `recognizeNpcClickTarget(...)`, yellow-name/tooltip candidate helpers, and dialog green option candidate
+    helpers/records, even though `dialogPolicyPreClickDecisionFor(...)` currently returns
+    `NO_ACTION;reason=dev-sidecar-no-local-dialog-vision`。
+  - Current `DialogPolicyCloudDecisionService` / `DialogPolicyPreClickCloudRequest` /
+    `DialogPolicyPreClickCloudDecision` are protocol/gate/schema classes; they should remain unless they contain
+    local image-recognition logic.
+- Planned focused RED:
+  - Add/adjust source guards so `NPC_CLICK_SMART` service id, service/DTO classes, config, execute-wave list,
+    dev-sidecar smart handler, and smart replay tests are absent.
+  - Add/adjust dev-sidecar guard so `DIALOG_POLICY` pre-click can only return `NO_ACTION` with
+    `dev-sidecar-no-local-dialog-vision` and no local click/candidateBox calculation.
+- RED observed:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest#junitRunsMainSuite" test`
+    failed in test compile because the half-edited `CloudDecisionDevServer` still referenced removed
+    `NPC_CLICK_SMART` / font/mask constants and local vision helpers. This confirmed the branch had stale local
+    smart/pre-click visual implementation fragments rather than a clean no-local-vision boundary.
+- Implementation result:
+  - Removed `CloudDecisionServiceId.NPC_CLICK_SMART` and `cloud.services.npc-click-smart.*` config.
+  - Deleted `NpcClickSmartCloudDecisionService`, `NpcClickSmartCloudRequest`, `NpcClickSmartCloudDecision`,
+    `NpcClickSmartCloudDecisionServiceTest`, and `NpcClickSmartCloudReplayTest`.
+  - Removed `NPC_CLICK_SMART` handling and smart-click yellow/tooltip candidate algorithms from
+    `CloudDecisionDevServer`.
+  - Removed dialog pre-click green-option candidate extraction / rendered text mask scoring / `DialogOptionCandidate`
+    from `CloudDecisionDevServer`; pre-click now only returns
+    `NO_ACTION;reason=dev-sidecar-no-local-dialog-vision` after request-field validation.
+  - Deleted `DialogPolicyCloudPreClickReplayTest` because it depended on local dev-sidecar visual recognition and
+    marked click output.
+  - Kept `DialogPolicyCloudDecisionService` and `DialogPolicyPreClickCloud*` protocol/gate/schema/coordinate
+    validation classes; no local image-recognition algorithm was found in that production protocol layer.
+- Focused GREEN:
+  - `mvn -q -Dtest="NpcClickSmartCloudWiringGuardTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest#junitRunsMainSuite,DialogPolicyCloudDecisionServiceTest,DialogPolicyCloudPreClickDecisionServiceTest,DialogCloudPreClickWiringGuardTest" test`
+    passed after cleanup.
+- CR persistence:
+  - Updated CR165/CR167 table rows and cards in `docs/PACKAGE_ARCHITECTURE.md` to state that DHXY local no longer
+    keeps these server-side visual implementations; true algorithms must live in the external cloud service/deployment.
+  - `node scripts/generate-cr-dashboard-data.js` passed and refreshed `docs/cr-dashboard-data.js`.
+
+### 2026-07-02 Cloud execute equivalence audit - restore non-equivalent direct hooks
+
+- User correction: every cloud `EXECUTE` path must be behavior-equivalent to the current local path, otherwise live
+  testing is meaningless. This applies to all cloud-migrated services, not only the latest NPC click failure.
+- Read-only helper audit classified current services:
+  - Production consumes cloud results: `TASK_CLASSIFIER`, `TRACKER_LINK_RANKER`, `TASK_POLICY`, `TASK_RECOVERY`,
+    `ROUTE_MEMORY`, `ROUTE_CANDIDATE`, `IMAGE_PREPROCESS`, `MINIMAP_LOCATION`, `SUMMON_SKILL`,
+    `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`, `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY`.
+  - Runtime shadow/log only: `FEATURE_FLAG`, `FAILURE_CLASSIFIER`, `POLICY_VERSION`.
+  - Config/service exists but production no longer consumes it after this correction: `NPC_CLICK_SMART`.
+- Root issue 1 / CR165:
+  - Direct `NPC_CLICK_SMART` was not equivalent to the old `clickNpcSmart(...)` pipeline. It only covered a single
+    raw screenshot -> ordinary cloud click, while production still needs learned-memory, task-tooltip, yellow OCR,
+    player-anchor, Ctrl menu, `Alt+C` retry, direct-combat differences, and verifier sequencing.
+  - Production `NpcClickService.clickNpcSmart(...)` now uses the full old `runNpcClickPipeline(...)` again and does
+    not inject/call `NpcClickSmartCloudDecisionService` or `executeNpcClickSmartCloudAction(...)`.
+  - `NPC_CLICK_STRATEGY` remains the safe bridge because it only authorizes existing local strategies; it does not
+    invent a new partial click path.
+- Root issue 2 / CR167:
+  - `DIALOG_POLICY` pre-click ran before the local option switch. A cloud miss/timeout/invalid result would block
+    the old `CLICK_KEYWORD` handler, so the path was not equivalent.
+  - Production `DialogService.handleDialog(...)` no longer calls `tryHandleCloudPreClickOption(...)` before the
+    option switch. After-local `DIALOG_POLICY` remains for local result policy/diagnostics.
+- Remaining P1 audit notes:
+  - `IMAGE_PREPROCESS` is the production vision boundary and now carries most washed/metric operations. Dev sidecar
+    has required-output guards, but `ROUTE_PACKED_LINE_MASK` currently maps the full washed image as one segment; if
+    short route-name packed-segment behavior becomes important, it needs its own replay repair before claiming full
+    equivalence.
+  - `ROUTE_MEMORY` / `ROUTE_CANDIDATE` are currently safe only when they echo/authorize the local selected click or
+    use migrated cloud memory with outcome reporting. They should not be described as an independent cloud route brain
+    until the cloud owns the memory store and learning loop end to end.
+- Verification in this pass:
+  - `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest,NpcClickSmartCloudWiringGuardTest" test` passed.
+- CR persistence:
+  - Updated CR165 and CR167 table rows/cards in `docs/PACKAGE_ARCHITECTURE.md` to say the partial direct hooks are
+    staged/future only and production has been restored to equivalent local behavior.
+
+### 2026-07-02 CR165 hotfix result - NPC_CLICK_SMART cloud-required timeout must wait/retry
+
+- Root cause from fresh log `2026-07-02 13:37:45.250`:
+  `NPC_CLICK_SMART mode=EXECUTE ... elapsedMs=328 success=false fallback=STOP reason=timeout after 300ms`。
+  Because CR165 covered path is cloud-only, `NpcClickService.clickNpcSmart(...)` returned false and did not run the old
+  local yellow/formula/Ctrl/`Alt+C` pipeline, so the nearby `灵兽村使者` was not clicked.
+- Final rule confirmed by user:
+  - `NPC_CLICK_SMART` remains the only production path for covered ordinary NPC dialog clicks.
+  - No local fallback is allowed.
+  - HTTP timeout / transient cloud unavailable is not a business failure. The caller must keep waiting / retrying cloud
+    until cloud returns an executable/no-action response or the task is interrupted/stopped.
+- Source changes:
+  - `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java`
+    now retries transient unavailable results (`timeout`, HTTP failure, empty response, 429/5xx) without an attempt cap,
+    sleeps interruptibly for 250ms between attempts, and logs the waiting state at most every 5s.
+  - `src/main/resources/application.properties` now uses `cloud.timeout-ms=60000`; `300ms` is no longer accepted as a
+    cloud-required execute business boundary.
+  - `src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java`
+    covers first-call `CloudDecisionClientException("timeout after 300ms")` followed by a second cloud `CLICK`, proving the
+    final decision is `CLOUD_EXECUTED` and no local fallback is involved.
+- Verification:
+  - RED observed: `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest#junitRunsMainSuite" test` failed with
+    `status expected=CLOUD_EXECUTED actual=REQUIRED_FAILURE`.
+  - GREEN: `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest#junitRunsMainSuite" test` passed.
+  - GREEN: `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest" test` passed.
+  - GREEN: `mvn -q -DskipTests compile` passed.
+
+### 2026-07-02 CR165 worker baseline - NPC_CLICK_SMART timeout retry / long cloud execute wait
+
+- Worker role: CR165 fix worker。用户最新要求：`NPC_CLICK_SMART` 必须是云端唯一生产路径，不能 fallback
+  本地；但 transient cloud unavailable，尤其 `CloudDecisionClientException("timeout after 300ms")`，不能把
+  普通 NPC 点击业务直接判成 `REQUIRED_FAILURE` 让 `NpcClickService` 放弃。
+- Added requirement in this pass:
+  - `cloud.timeout-ms=300` 本身不适合作为 cloud-required execute 的业务断点。300ms 只适合 shadow/指标级探测，
+    不适合需要上传 raw PNG、等待云端识别并返回可执行动作的 `EXECUTE + STOP` 路径。
+  - 本次优先把全局默认 cloud HTTP timeout 提高到更合理的长等待，例如 `60000ms`，同时
+    `NPC_CLICK_SMART` 对 timeout 后仍做 cloud-required retry；不引入 per-service timeout，除非后续单独开卡。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+  `git fetch origin dev` completed; Git printed the existing unreachable-loose-object auto-gc warning.
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant existing state:
+  - `src/main/java/com/bot/dhxy/cloud/**` and `src/test/java/com/bot/dhxy/cloud/**` are local cloud-migration work
+    not present in `origin/dev`。
+  - `src/main/resources/application.properties` already has local cloud-required config block with
+    `cloud.timeout-ms=300`。
+  - `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js` are already modified by prior
+    CR/cloud workers. This worker must only append/update CR165 notes and regenerate dashboard data if the CR card
+    changes.
+- Relevant pushed/current evidence before edits:
+  - `git ls-tree -r --name-only origin/dev src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud`
+    returns no CR165 cloud files; these services/tests are local migration layer on top of pushed baseline.
+  - `git show origin/dev:src/main/resources/application.properties` has no cloud decision config block.
+  - Current `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java` calls
+    `coordinator.shadow(...)` once and, when `cloudResult.isExecuted()` is false in execute/STOP mode, logs
+    `cloud.execute serviceId=NPC_CLICK_SMART accepted=false ...` then returns `REQUIRED_FAILURE` via
+    `requiredFailure(cloudResult, cloudResult.getReason())`。
+  - Current `src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java`
+    `testTimeoutFailsClosedWithoutLocalEffectiveDecision()` expects a thrown timeout to become
+    `REQUIRED_FAILURE` with no effective decision. That is now the RED behavior to replace for transient timeout.
+  - Current `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionProperties.java` defaults
+    `timeoutMs = 300L`，and `src/test/java/com/bot/dhxy/cloud/decision/CloudDecisionPropertiesTest.java`
+    asserts `300L`。
+- Planned focused RED:
+  - Change/add `NpcClickSmartCloudDecisionServiceTest` so the first
+    `CloudDecisionClientException("timeout after 300ms")` is retried and the second cloud `CLICK` result returns
+    `CLOUD_EXECUTED`; assert the cloud client was called twice and the final click is the second response.
+  - Add/update config guard asserting `cloud.timeout-ms=60000` in `application.properties` and default
+    `CloudDecisionProperties.timeoutMs == 60000L`。
+- Implementation boundary:
+  - Do not run old local smart-click, yellow OCR, player-anchor formula, Ctrl menu, or `Alt+C` retry after timeout.
+  - Only `NPC_CLICK_SMART` gets retry semantics in this pass; unrelated cloud-required services keep their current
+    fail-closed behavior unless separately tasked.
+  - Keep stop/interruption able to exit retry wait. Do not add local wrappers around `TaskCheckpoint`; use direct
+    interrupt-aware sleep / interrupt check inside this small cloud decision service loop.
+  - No visual/click target algorithm changes, so testcase replay / marked output is not required for this fix.
+
+### 2026-07-02 Fresh runtime blocker - CR175 队伍身份 tooltip metrics 云端缺字段（已修复待实跑）
+
+- User report: 启动任务后无法识别队长，怀疑洗字/图片处理出错。
+- Log range inspected: latest run around `2026-07-02 13:15:20` to `13:16:21` in
+  `logs/dhxy-console.log`.
+- Evidence:
+  - 5 个窗口注册成功，sidecar gate 成功：
+    `cloud decision dev endpoint ready ... startedBySidecar=true`。
+  - `team-role-tooltip-text` 多次调用
+    `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE ... operation=MEASURE_TEAM_TOOLTIP_TEXT`
+    returned `cloudDecision=status=EXECUTED` / `executed=true` / `success=true`。
+  - Immediately after each call, `TeamRoleDetectionService` logged
+    `team role tooltip cloud metrics missed ... status=REQUIRED_FAILURE reason=dev-local-image-preprocess; missing required team tooltip text stats`。
+  - Raw tooltip screenshot exists and contains visible tooltip text/ID:
+    `images\temp\hwnd-D230DF6\team_role_tooltip_raw_pass1_attempt2.png`。
+  - `MEASURE_STDDEV` cloud diagnostics returns `stddev`, so the sidecar path is reachable; the missing piece is
+    specifically `MEASURE_TEAM_TOOLTIP_TEXT` diagnostics.
+- Root cause:
+  - `CloudImageProcessor.teamTooltipTextStats(...)` requires diagnostics keys
+    `whitePixels`、`purplePixels`、`rows`、`columns`、`transitions`、`maxRowPixels`。
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+    `addImagePreprocessResultDiagnostics(...)` does not implement a `MEASURE_TEAM_TOOLTIP_TEXT` branch, so dev
+    sidecar returns schema-valid execution without the required metrics.
+- Runtime impact:
+  - Tooltip probe misses twice, status-deviation says grouped, normal startup skips Alt+T fallback, all windows stay
+    `role=UNKNOWN`, then `TaskTeamAssignmentPolicy` skips leader-only `XIULUO_V2/WUBEI`。
+- CR persistence:
+  - Updated CR175 row/card with this blocker and repair direction.
+- Repair direction:
+  - Add dev-side `MEASURE_TEAM_TOOLTIP_TEXT` metrics implementation and focused replay using the saved tooltip PNG.
+  - Expected fresh-runtime log after fix: `team role tooltip probe: ... white=... purple=... distribution=...`, followed
+    by at least one window resolving to `LEADER` instead of all `UNKNOWN`。
+- Hotfix result:
+  - `CloudDecisionDevServer` 已补齐 `MEASURE_TEAM_TOOLTIP_TEXT` 的
+    `whitePixels/purplePixels/rows/columns/transitions/maxRowPixels`。
+  - 同时补齐同类 required-output 缺口：`TEXT_CANDIDATES`、`ROUTE_DESTINATION_SEGMENTS`
+    的文字候选 diagnostics，以及 `ROUTE_PACKED_LINE_MASK` 的 washed payload 与
+    `packedLineMappings`。
+  - Added `CloudDecisionDevServerTest.imagePreprocessRequiredOperationsReturnRequiredDiagnostics()`。
+- Verification:
+  - RED confirmed:
+    `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite" test`
+    first failed on blank `TEXT_CANDIDATES candidateBoxes`。
+  - GREEN:
+    `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite" test` passed。
+  - Broader guard:
+    `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed。
+  - Compile:
+    `mvn -q -DskipTests compile` passed。
+- Fresh runtime gate:
+  - Need user restart DHXY/sidecar; expected no more
+    `missing required team tooltip text stats` and at least one resolved `LEADER`。
+
+### 2026-07-02 CR179 worker baseline - MiniMapCoordinateReader 小地图坐标/地图名云端化
+
+- Worker role: CR179 implementation worker。目标是把
+  `src/main/java/com/bot/dhxy/vision/MiniMapCoordinateReader.java` 中小地图坐标条识别迁到
+  `MINIMAP_LOCATION` 云端服务：生产路径只截图/上传 coordinate strip / label raw，消费云端
+  `mapName`、`coordinate`、`score`、debug label payload/path 等结果；不得保留坐标条二值化、
+  glyph 分割、括号/逗号定位、数字模板识别、地图名 label 裁剪/模板评分/宽度归一等核心算法。
+- Explicit scope:
+  - 不迁移 `ImageFinder` 通用 OpenCV 模板匹配。
+  - 不迁移 `LeftTopStatusSwitchService` / 左上角状态模板。
+  - 旧 MiniMap 算法只允许进 `src/test/java` dev sidecar/helper，用于 `CloudDecisionDevServer`
+    模拟云端。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts, including many CR/cloud/UI/window/task
+  files and untracked cloud/test files. This worker must only touch CR179 MiniMap/cloud/test/docs/dashboard paths
+  and must not reset/revert unrelated changes.
+- Relevant current-source evidence before edits:
+  - `MiniMapCoordinateReader` currently imports `Color`, `Graphics2D`, `Point`, `Files`, `Path`, `Stream`,
+    keeps `mapLabelTemplateCache` / `digitTemplateCache`, and contains production local core tokens:
+    `Color.RGBtoHSB`, `segmentGlyphs`, `findBracketSpan`, `findCommaGlyph`, `recognizeOneGlyphScored`,
+    `loadDigitTemplates`, `loadMapLabelTemplates`, `GlyphBox`, `WhitePixelSet`, `DigitTemplate`,
+    `MapLabelTemplate`, `normalizeMapLabelCanvas`, `foregroundSimilarity`, and `cleanCoordinateText`.
+  - `readCurrentTemplateLocation()` currently captures one coordinate strip, locally recognizes coordinate,
+    locally crops/normalizes label, locally scores map-label templates, and only then returns
+    `TemplateLocationInfo`。
+  - `readCurrentLocationSnapshot()` / `readLocationSnapshotFromCoordinateStrip(...)` currently call the same
+    local coordinate recognizer; `readCurrentMapLabelImage()` and label normalization/matching APIs currently
+    use local cleaned-label extraction.
+- Relevant pushed baseline evidence:
+  `origin/dev` predates the current cloud migration layer but already contains `MiniMapCoordinateReader` as the
+  business baseline for current coordinate/map-label behavior. CR179 may move the algorithm boundary and
+  fail-closed semantics, but must not change navigation/NPC/dialog/click phase semantics or click geometry.
+- Planned RED guards/tests:
+  - source guard: production `MiniMapCoordinateReader` must contain `CloudDecisionServiceId.MINIMAP_LOCATION`
+    and must not contain old core tokens such as `Color.RGBtoHSB`, `segmentGlyphs`, `findBracketSpan`,
+    `findCommaGlyph`, `recognizeOneGlyphScored`, `loadDigitTemplates`, `loadMapLabelTemplates`, `GlyphBox`,
+    `WhitePixelSet`, `DigitTemplate`, `MapLabelTemplate`。
+  - cloud contract: valid `MINIMAP_LOCATION` execute response maps to coordinate/mapName/score; invalid or
+    missing coordinate fails closed.
+  - dev sidecar/replay: use repo-local `images/test-cases/minimap/raw/tmp_pos.png` or existing minimap samples,
+    run the test-sidecar algorithm, and write a marked CR179 output with raw result text/box/point for inspection.
+- Implementation result:
+  - `MiniMapCoordinateReader` 已改成 `MINIMAP_LOCATION` 云端 facade；生产路径只捕获/上传小地图坐标条或
+    label raw PNG，并消费云端返回的 mapName/x/y/score/label diagnostics。
+  - 旧坐标条二值化、glyph 分割、括号/逗号定位、数字模板识别、地图名模板评分/宽度归一算法迁到
+    `src/test/java/com/bot/dhxy/cloud/dev/DevMiniMapCoordinateReader.java`，仅供
+    `CloudDecisionDevServer` dev sidecar。
+  - 新增 `MiniMapLocationCloudRequest`、`MiniMapLocationCloudDecision`、
+    `MiniMapLocationCloudDecisionService`，并在 `CloudDecisionServiceId`/`application.properties` 注册
+    `MINIMAP_LOCATION` execute STOP 策略。
+- Verification / replay:
+  - RED: focused test 首次失败于缺少 `MiniMapLocationCloudDecisionService` / request / decision 类。
+  - GREEN: `mvn -q -Dtest="MiniMapCoordinateReaderCR179CloudWiringGuardTest,MiniMapLocationCloudDecisionServiceTest,MiniMapLocationCloudReplayTest" test`
+    exited `0`。
+  - Contract evidence: `x=100;y=1172` 被 gate 拒绝，reason 包含
+    `coordinate outside reasonable bounds: x=100 y=1172`；`x=0;y=0` 在 `0..999` 合理范围内被接受。
+  - Source guard: production `MiniMapCoordinateReader` 未命中旧核心 token；guard 只用
+    `private record MapLabelTemplate` / `new MapLabelTemplate(` 检查旧私有模型，避免误伤兼容模型
+    `MapLabelTemplateMatch`。
+  - Replay input:
+    `images/test-cases/minimap/failure-location/20260616_huoyundong_4_3/tmp_pos.png`。
+  - Replay output:
+    `images/test-cases/minimap/cr179/huoyundong_4_3_minimap-location-cloud-marked.png`。
+  - Replay cloud result:
+    `status=HIT;mapName=火云洞;score=1.0000;x=4;y=3;reason=dev-minimap-location`。
+- Fresh runtime gate:
+  - 重启 DHXY 与真实云端或本地 sidecar 后，观察
+    `cloud.decision serviceId=MINIMAP_LOCATION mode=EXECUTE ... executed=true`。
+  - valid hit 应返回云端 `mapName/x/y/score`；timeout/invalid/NO_RESULT/out-of-range 必须 empty/null/false，
+    不回落到生产旧模板算法。
+
+### 2026-07-02 CR177G worker baseline - ImagePreprocessor 生产瘦身与 dev sidecar 迁移
+
+- Worker role: CR177G implementation worker。目标是把
+  `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` 瘦身为非核心 IO/crop/debug helper，
+  生产 `src/main/java` 不再保留 `ImageProcessor`/`ImagePreprocessor` 洗图、阈值、mask、
+  fingerprint、stddev、green-band、thin-white、connected-component 等核心算法；旧算法只允许迁到
+  `src/test/java` 的 dev sidecar/helper，用于本地 cloud server 模拟。
+- Explicit coordination constraint: CR177F worker 可能正在修改
+  `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java` / cloud contract。本 worker 不触碰
+  `GameTextLineOcrService`，不回滚或覆盖并行 worker 改动。
+- Current branch before edit: `codex/hybrid-cloud-protection`。
+- Current local HEAD before edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts, with many CR/cloud/UI/window/task
+  files already modified or untracked. This worker must only touch the requested CR177G files and docs/dashboard,
+  and must not revert/checkout/reset unrelated changes.
+- Relevant current-source evidence before edits:
+  - `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` imports `OpenCvNativeLoader` and `org.opencv`,
+    has a static OpenCV loader, and still contains production local methods such as `washPurpleTextToBlackAndWhite`,
+    `washGreenTextToBlackAndWhite`, `washYellowText`, `countYellowPixels`, `findGreenTextBands`,
+    `buildBinaryFingerprint`, `binaryFingerprintDistance`, `detectThinWhiteTextLinePattern`,
+    `getImageStandardDeviation`, `connectedComponentsWithStats`, `Color.RGBtoHSB`, and nested
+    `GreenTextBand` / `TextLinePatternStats`.
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` imports
+    `com.bot.dhxy.tools.ImagePreprocessor` and calls those production local core algorithms for summon-skill
+    tooltip simulation and `IMAGE_PREPROCESS` dev responses.
+  - `git diff -- src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+    is empty before CR177G edits, so these two files have no local uncommitted diff at this baseline point.
+- Relevant pushed baseline evidence:
+  `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+  shows only `ImagePreprocessor.java` changed in pushed baseline history for these paths; current cloud dev sidecar is
+  local CR cloud migration work and must be edited in place without discarding it.
+- Planned RED guard:
+  add `ImageProcessorCR177GImagePreprocessorCleanupTest` proving production `ImagePreprocessor.java` contains only
+  thin helpers and no forbidden OpenCV/wash/count/fingerprint/stddev/green-band/thin-white/connected-component tokens,
+  and proving `CloudDecisionDevServer` no longer imports production `ImagePreprocessor`.
+- RED/GREEN implementation:
+  - RED：`mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest" test` 先失败于
+    `CloudDecisionDevServer` import 生产 `ImagePreprocessor`。
+  - Production `ImagePreprocessor` 已瘦身为 `cropCopy`、`cropAbsoluteRect`、`rectToString`、
+    `saveDebugImage(BufferedImage,String)`、`saveImage`、`pathToBufferedImage` 与 debug path helper；
+    移除了 OpenCV loader/import、`saveDebugImage(Mat,...)`、wash/count/find/pick/fingerprint/stddev/
+    thin-white/dialog-option/yellow/green/purple/core pixel methods，以及 nested
+    `GreenTextBand` / `TextLinePatternStats`。
+  - 新增 `src/test/java/com/bot/dhxy/cloud/dev/DevImagePreprocessor.java`，把旧算法放入 test/dev helper。
+  - `CloudDecisionDevServer` 改为调用 `DevImagePreprocessor`，不再 import/call
+    `com.bot.dhxy.tools.ImagePreprocessor`。
+  - 未编辑 `GameTextLineOcrService`，未改业务 click/navigation/dialog 策略，未添加本地 fallback。
+- Verification:
+  - `mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest" test` passed。
+  - `mvn -q -DskipTests compile` passed。
+  - `mvn -q -Dtest="ImageProcessorCR177GImagePreprocessorCleanupTest,CloudDecisionDevServerTest" test` passed。
+  - 本卡不改变视觉匹配/click 坐标算法，不需要 testcase replay / marked output。
+- Manager review follow-up:
+  - `ImageProcessorServiceCR173ContractTest` 已从旧的“剩余 `ImagePreprocessor` blocker 必须写入文档”
+    口径改为验证统一门面覆盖当前全部 operation，并验证生产 `ImagePreprocessor` 已只剩 thin helper；
+    这避免 CR177G 后继续被历史 blocker 文案误导。
+
+### 2026-07-02 CR177F worker baseline - GameTextLineOcrService route/packed ImageProcessor 迁移
+
+- Worker role: CR177F implementation worker。目标是把
+  `GameTextLineOcrService` 中 world-map route destination / packed-line / text-like OCR
+  仍残留的本地洗图、像素、候选、packed-line、HSV、connected component、long-run/density scoring
+  迁到统一 `ImageProcessorService` / `CloudImageProcessor` 合同；caller 仍可在本地做 OCR、结果解析、
+  坐标映射和 debug overlay，但生产 release runtime 不允许本地图像算法 fallback。
+- Current branch: `codex/hybrid-cloud-protection`，当前分支无 upstream；不切换分支，不
+  revert/checkout/reset 其他 worker 的改动。
+- Current local HEAD before this CR177F production edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline fetched before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+  `git fetch origin dev` completed; it printed the existing unreachable-loose-object auto-gc warning.
+- `git status --short --branch` is broadly dirty before this worker starts, including CR177A/B/C/D/E
+  cloud caller changes, docs/dashboard changes, many task/window/UI files, and untracked
+  `src/main/java/com/bot/dhxy/cloud/`, `src/test/java/com/bot/dhxy/cloud/`,
+  `images/test-cases/dialog/`, `images/test-cases/npc/`, `images/test-cases/summon-skill/`。
+  CR177F must only merge incrementally into its scoped files and must not revert unrelated work.
+- Planned touch scope:
+  `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessOperation.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImageProcessorService.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/CloudImageProcessor.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudService.java`,
+  test-sidecar/replay/guard files under `src/test/java/com/bot/dhxy/cloud/...`,
+  world-map route replay outputs under `images/test-cases/world-map-route/...`,
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`, and `docs/cr-dashboard-data.js`。
+- Relevant pushed baseline evidence:
+  `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+  shows `origin/dev` already had route-related edits in this file, but the local CR177 migration layer is much
+  newer and already injects `ImageProcessorService` for wash/candidate paths.
+- Relevant current-source evidence before production edits:
+  `rg` in current `GameTextLineOcrService` still finds local core route/packed/image algorithms:
+  `buildBrightPixelMask(...)`, `buildBlackPixelMask(...)`, `writePackedLineMask(...)`,
+  `scanPackedLines(...)`, `findRouteDestinationFromPackedYellowSegments(...)`,
+  `findTextLikeCandidates(...)`, `scoreWashedTextLine(...)`, `collectYellowCandidates(...)`,
+  `buildFilteredMask(...)`, `includeNearbyYellowShadow(...)`, `Color.RGBtoHSB`,
+  connected-component helpers, and long-run/density scoring helpers.
+- Current local diff evidence:
+  `git diff -- src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java` already contains CR177A/CR177D
+  migrations relative to `origin/dev`: pure wash callers now use `ImageProcessorService`, NPC yellow candidates use
+  cloud `TEXT_CANDIDATES`, and route destination/coordinate still use local packed/mask helpers. CR177F must preserve
+  OCR text parsing, fuzzy map-name rules, destination row semantics, click point coordinate system, and fallback order
+  where cloud returns valid equivalents.
+- RED guard:
+  Added `ImageProcessorCR177FGameTextRouteGuardTest`. First run
+  `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest" test` failed as expected with
+  `GameTextLineOcrService production source must not keep local image algorithm token buildBrightPixelMask(`.
+- Implementation:
+  - `ImagePreprocessOperation` / `ImageProcessorService` / `CloudImageProcessor` /
+    `ImagePreprocessCloudService` now include `ROUTE_PACKED_LINE_MASK` and `ROUTE_DESTINATION_SEGMENTS`.
+    `ROUTE_PACKED_LINE_MASK` requires a cloud washed/packed PNG plus `packedLineMappings`;
+    `ROUTE_DESTINATION_SEGMENTS` requires cloud candidate point/box output. Missing required output becomes
+    `REQUIRED_FAILURE` rather than local fallback.
+  - `GameTextLineOcrService.findLastWorldMapRouteDestination(...)` now calls
+    `imageProcessorService.routePackedLineMask(...)` for packed route yellow segment OCR. Local OCR still reads the
+    cloud packed PNG, but packed->source coordinate mapping comes from cloud `PackedLineMapping`.
+  - `GameTextLineOcrService.findRouteCoordinateByDestinationRow(...)` now calls
+    `imageProcessorService.routeDestinationSegments(...)` and consumes the cloud candidate point instead of building a
+    local bright mask / destination-row segment selection.
+  - Removed production-local route/packed image algorithms from `GameTextLineOcrService`: bright/black mask builders,
+    `Color.RGBtoHSB` pixel classifiers, connected component helpers, packed-line image writer, yellow candidate
+    collector, text-like candidate scoring, long-run/density helpers, dead nested helper types, and related dead code.
+  - Did not edit `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` or
+    `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java`.
+- Preserved behavior:
+  - Kept OCR provider calls, route destination text parsing, `matchShortName` fuzzy/alias rules, yellow destination row
+    semantics, coordinate result model, green coordinate OCR fallback, navigation phase/fallback order, and physical
+    click coordinate system unchanged.
+- Replay:
+  - Added `GameTextLineOcrCR177FRouteReplayTest`.
+  - Input: `images/test-cases/world-map-route/positive/route_result_changan_complete_raw.png`.
+  - Marked output: `images/test-cases/world-map-route/cr177f/route_result_changan_cr177f_marked.png`.
+  - Command: `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest,GameTextLineOcrCR177FRouteReplayTest" test`.
+  - Result: passed; replay logs show packed OCR mapped `长安` back to source, and cloud route segment point `(48,111)`
+    used as final route coordinate click point.
+- Verification:
+  - `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest,GameTextLineOcrCR177FRouteReplayTest" test` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Final handoff recheck:
+  - `node scripts/generate-cr-dashboard-data.js` generated `docs/cr-dashboard-data.js`.
+  - Fresh `mvn -q -DskipTests compile` passed.
+  - During handoff, one Maven test recheck was briefly blocked by the parallel CR177G
+    `ImagePreprocessor` cleanup path while `CloudDecisionDevServer.java` still referenced removed
+    `ImagePreprocessor.GreenTextBand`. CR177F did not edit `CloudDecisionDevServer.java` or
+    `ImagePreprocessor.java`; after the parallel file moved to `DevImagePreprocessor.GreenTextBand`, fresh rechecks
+    passed.
+  - Fresh `mvn -q -Dtest="ImageProcessorCR177FGameTextRouteGuardTest,GameTextLineOcrCR177FRouteReplayTest" test`
+    passed.
+  - Fresh `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed.
+  - Fresh `mvn -q -DskipTests test-compile` passed.
+  - Scoped source guard via `rg` found no forbidden CR177F local image-algorithm tokens in
+    `GameTextLineOcrService`.
+  - Scoped `git diff --check` for CR177F files passed with only existing LF/CRLF normalization warnings.
+- Fresh runtime gate:
+  run DHXY with cloud/sidecar and verify world-map route guard emits `IMAGE_PREPROCESS`
+  `ROUTE_PACKED_LINE_MASK` / `ROUTE_DESTINATION_SEGMENTS`; disabled/timeout/no-result/invalid or missing
+  packed image/mapping/candidate must fail closed without local mask/segment/scoring fallback.
+
+### 2026-07-02 CR177C worker baseline - DialogService ImageProcessor 门面迁移
+
+- Worker role: CR177C implementation worker。目标是把 `DialogService` 内直接调用
+  `ImagePreprocessor` 的黄/绿/薄白/option-template 洗图、像素计数、green band、
+  binary fingerprint/stddev/text-line pattern 路径迁到统一 `ImageProcessorService` /
+  `CloudImageProcessor` 门面；caller 仍在本地，云端无有效结果时不得回本地洗图。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline fetched before edit: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+  `git fetch origin dev` completed; it printed the existing unreachable-loose-object auto-gc warning but did not
+  change worktree files.
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant touched paths already dirty or
+  untracked before this pass include `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`,
+  `docs/cr-dashboard-data.js`, `src/main/java/com/bot/dhxy/service/DialogService.java`,
+  untracked `src/main/java/com/bot/dhxy/cloud/`, untracked `src/test/java/com/bot/dhxy/cloud/`, and
+  untracked `images/test-cases/dialog/`. This worker must not revert/checkout/reset unrelated changes.
+- Planned touch scope:
+  `src/main/java/com/bot/dhxy/service/DialogService.java`,
+  existing `src/main/java/com/bot/dhxy/cloud/task/ImageProcessorService.java` / `CloudImageProcessor.java` only if
+  the facade lacks needed semantics, test-sidecar files under `src/test/java/com/bot/dhxy/cloud/dev/` if replay needs
+  cloud-side operation output, focused/source guard tests, `docs/PACKAGE_ARCHITECTURE.md`,
+  `docs/ACTIVE_WORK.md`, `docs/cr-dashboard-data.js`, and dialog replay outputs under
+  `images/test-cases/dialog/...`.
+- Explicit non-touch scope per user:
+  `TaskTrackerPanelService`, `NpcClickService`, `GameTextLineOcrService`, `QuestManagerService`,
+  `CoordinateHelper`, `WubeiTask`, `SummonSkillService`, `AutoCombatPanelService`,
+  `TeamRoleDetectionService`。
+- Relevant pushed baseline evidence:
+  `git show origin/dev:src/main/java/com/bot/dhxy/service/DialogService.java | rg
+  "ImagePreprocessor\\.(wash|count|findGreenTextBands|pickGreenTextBand|buildBinaryFingerprint|binaryFingerprintDistance|detectThinWhiteTextLinePattern|getImageStandardDeviation)"`
+  shows the pushed business baseline still directly called local core image algorithms for green/white/template
+  washing, green/thin-white pixel counts, stddev, prepared fingerprint build/distance, and green text bands.
+- Relevant current local evidence before implementation:
+  `rg` in current `DialogService` still shows direct local core calls at active production paths:
+  `washGreenTextToBlackAndWhite`, `washYellowText`, `washDialogOptionTemplateTextToBlackAndWhite`,
+  `washThinWhiteTextToBlackAndWhite`, `countGreenPixelsHSV`, `countThinWhitePixelsHSV`,
+  `getImageStandardDeviation`, `detectThinWhiteTextLinePattern`, `buildBinaryFingerprint`,
+  `binaryFingerprintDistance`, `findGreenTextBands`, and `pickGreenTextBand`.
+- Current local diff evidence:
+  `git diff -- src/main/java/com/bot/dhxy/service/DialogService.java` already includes CR167 pre-click cloud additions
+  relative to `origin/dev`; this worker must preserve that business behavior and only replace dialog image-processor
+  preprocessing with the unified facade. Do not change option target, fallback order, prepared action TTL,
+  consume threshold, or click coordinate computation.
+- Planned RED guard:
+  add a CR177C source guard proving `DialogService` injects/calls `ImageProcessorService` and no longer calls the
+  listed local core `ImagePreprocessor` wash/count/candidate/fingerprint/stddev/text-line methods in production source.
+- Replay requirement:
+  because option/template matching and first/last green-option click paths are touched by the migration, run or add a
+  repo-local dialog replay under `images/test-cases/dialog/...` and produce a marked output showing the matched
+  option/band and final click point.
+- Implementation:
+  - `DialogService` now injects `ImageProcessorService` and no longer directly calls local core
+    `ImagePreprocessor` wash/count/stddev/text-line/fingerprint/green-band methods.
+  - Migrated dialog maintenance/business option wash, expected green/white template wash, prepared consume validation
+    wash + fingerprint build/distance, dialog type count/stddev/text-line probes, and first/last green option band
+    selection to the unified facade.
+  - Kept screenshot capture, crop/path IO, `ImageFinder` template matching, coordinate conversion, safe randomization,
+    input queue/direct-in-worker behavior, option target, fallback order, prepared TTL, consume threshold, and click
+    point formulas unchanged. For cloud green-band boxes, click center uses `x + (width - 1) / 2` to preserve the old
+    `(minX + maxX) / 2` formula.
+  - `CloudDecisionDevServer` test-sidecar now returns non-wash `IMAGE_PREPROCESS` result diagnostics for count,
+    green bands, fingerprint, stddev, and thin-white row stats. These algorithms remain only in `src/test/java`
+    sidecar simulation, not in main runtime.
+- RED/GREEN and replay:
+  - RED attempt: `mvn -q -Dtest="DialogServiceCR177CImageProcessorWiringTest" test` was initially blocked by existing
+    worktree compile issues before reaching the new guard; the guard itself was written to fail against the pre-edit
+    `DialogService` because it lacked `ImageProcessorService` injection and still contained local core calls.
+  - GREEN source guard:
+    manual `javac/java ... DialogServiceCR177CImageProcessorWiringTest` passed, and a PowerShell source guard also
+    confirmed no forbidden local core calls remain in `DialogService`.
+  - Replay command:
+    manual `java ... com.bot.dhxy.cloud.dev.DialogImageProcessorCR177CReplayTest` passed.
+  - Replay input/output:
+    `images/test-cases/dialog/cr177c/dialog-image-processor-roi-raw.png`,
+    `images/test-cases/dialog/cr177c/dialog-image-processor-template-marked.png`,
+    `images/test-cases/dialog/cr177c/dialog-image-processor-band-marked.png`.
+    Both marked outputs place the red click point on the second-row target `领取任务`, not the first-row distractor
+    `我再想想`.
+- Verification:
+  - Manual image focused runner passed:
+    `ImageProcessorServiceCR173RequiredOutputTest`,
+    `ImageProcessorServiceCR173ContractTest`,
+    `ImagePreprocessWashedImageClientTest`,
+    `ImagePreprocessCloudServiceTest`.
+  - Manual constructor-adapter regression passed:
+    `TaskMaintenanceCloudRequiredFailureTest`.
+  - `mvn -q -DskipTests compile` passed.
+  - Maven focused `test` is currently blocked in `testCompile` by unrelated parallel
+    `src/test/java/com/bot/dhxy/cloud/task/ImageProcessorCR177ERedDigitOperationTest.java` checked-exception errors
+    at lines 43 and 60. CR177C did not modify that file.
+  - CR177C scoped `git diff --check` passed with only existing LF/CRLF warnings.
+- Fresh runtime gate:
+  run DHXY with cloud/sidecar and verify dialog paths emit `IMAGE_PREPROCESS` operations for wash/count/stddev/
+  text-line/fingerprint/band work; active invalid/timeout/no-result must fail closed without local `ImagePreprocessor`
+  fallback.
+
+### 2026-07-02 CR177B worker baseline - TaskTrackerPanelService ImageProcessor 门面迁移
+
+- Worker role: CR177B implementation worker。目标是把 `TaskTrackerPanelService` 内直接调用
+  `ImagePreprocessor` 的洗黄/洗绿、green band、binary fingerprint/fingerprint distance 路径迁到统一
+  `ImageProcessorService` / `CloudImageProcessor` 门面；caller 仍在本地，云端无有效结果时不得回本地洗图。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline checked locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts; many CR/cloud/UI/window/task files are
+  already modified or untracked. This worker must not revert/checkout/reset other changes. Planned touch scope:
+  `src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`, CR177B source/focused tests, CR173/CR177B
+  documentation/dashboard, and only tiny `ImageProcessorService`/cloud-contract support if compile/tests require it.
+- Relevant pushed baseline evidence:
+  - `origin/dev:TaskTrackerPanelService` imports `ImagePreprocessor` and directly calls
+    `washYellowText(...)`, `findGreenTextBands(...)`, `pickGreenTextBand(...)`,
+    `washGreenTextToBlackAndWhite(...)`, `buildBinaryFingerprint(...)`, `binaryFingerprintDistance(...)`,
+    plus local `isOptionGreen(...)` and `cropCopy(...)` helpers in tracker green-link paths.
+  - Current local `TaskTrackerPanelService` already contains unrelated TASK_CLASSIFIER cloud shadow/execute
+    title-template correction. CR177B must preserve that local classifier behavior and only replace image processor
+    calls under it.
+  - `ImageProcessorService` / `CloudImageProcessor` already exist from CR173 and expose cloud operations for
+    yellow/green washing, green band selection, binary fingerprint build/distance, and required-output validation.
+- Planned RED guard:
+  - Add a CR177B source guard proving `TaskTrackerPanelService` injects and calls `ImageProcessorService`, and no
+    longer imports/calls direct local core `ImagePreprocessor` algorithms such as `washYellowText`,
+    `washGreenTextToBlackAndWhite`, `findGreenTextBands`, `pickGreenTextBand`, `buildBinaryFingerprint`, or
+    `binaryFingerprintDistance`.
+  - Allow crop/save/read thin helpers only if needed; any remaining `isOptionGreen`/local green segmentation that is
+    too broad for this slice must be recorded as a blocker rather than claimed complete.
+- Non-goals:
+  - Do not change tracker green-link click coordinate formulas, CR81/CR86 watcher/pathing, prepared action fields,
+    fallback order, or phase semantics.
+  - Do not edit `DialogService`, `NpcClickService`, `GameTextLineOcrService`, `QuestManagerService`,
+    `CoordinateHelper`, `WubeiTask`, `SummonSkillService`, `AutoCombatPanelService`, or
+    `TeamRoleDetectionService`.
+- RED/GREEN evidence:
+  - RED: `mvn -q -Dtest="TaskTrackerPanelImageProcessorCR177BWiringTest" test` failed because
+    `TaskTrackerPanelService` did not import/inject `ImageProcessorService` and still used local
+    `ImagePreprocessor` calls.
+  - GREEN source guard: PowerShell source guard passed with
+    `TaskTrackerPanel ImageProcessor CR177B source guard passed`, confirming `TaskTrackerPanelService`
+    calls `imageProcessorService.washToPath(...)`, `washGreenTextToBlackAndWhite(...)`,
+    `findGreenTextBands(...)`, `pickGreenTextBand(...)`, `buildBinaryFingerprint(...)`, and
+    `binaryFingerprintDistance(...)`, and no longer imports/calls the direct local `ImagePreprocessor`
+    algorithms listed in the guard.
+- Implementation:
+  - `TaskTrackerPanelService` now injects `ImageProcessorService`.
+  - 黄字 title/detail/replay preprocessing uses `WASH_YELLOW` through the unified facade. Missing/disabled/invalid
+    cloud output returns the same tracker miss path and deletes/ignores stale washed output instead of falling back.
+  - 五环/五倍/修罗 green-link scans use cloud `WASH_GREEN` for the binary mask and cloud
+    `FIND_GREEN_TEXT_BANDS` / `PICK_GREEN_TEXT_BAND` for band candidates/selection; existing local tracker
+    link splitting and screen-absolute click coordinate math are preserved.
+  - 黄袍续战 prepared action and fast verify now use cloud `WASH_GREEN`, `BUILD_BINARY_FINGERPRINT`, and
+    `BINARY_FINGERPRINT_DISTANCE`; any missing required output becomes an ordinary fast miss/empty prepared action.
+  - `ImageProcessorService.hasRequiredOutput()` got a default fail-closed branch so future enum additions do not
+    accidentally compile into an unhandled success path.
+  - Updated the one manual `TaskTrackerPanelService` test constructor that exercises classifier private logic only.
+- Remaining / not claimed:
+  - `TaskTrackerPanelService` still performs CR81/CR86-specific tracker text segmentation over the cloud-returned
+    binary mask. This is not local color washing/fingerprint logic, but tracker business segmentation is not claimed
+    as cloud-owned in this slice.
+  - Other callers (`DialogService`, `NpcClickService`, `SummonSkillService`, `AutoCombatPanelService`,
+    `TeamRoleDetectionService`, etc.) still require their own migration cards.
+- Verification blockers:
+  - Final repeated Maven commands are currently blocked by unrelated/prohibited `AutoCombatPanelService.java` checked
+    `IOException` compile errors at lines 397/399:
+    `mvn -q -DskipTests compile`,
+    `mvn -q -Dtest="TaskTrackerPanelImageProcessorCR177BWiringTest,TaskClassifierCloudShadowServiceTest,TaskTrackerExpandedAnchorGeometryTest,WubeiTrackerTaskKindTemplateWiringTest" test`,
+    and `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`.
+  - An earlier compile attempt also surfaced unrelated/prohibited `NpcClickService.java` compile error:
+    missing `WindowNativeBinding.getHwndHex()`.
+  - `mvn -q -Dtest="TaskTrackerPanelImageProcessorCR177BWiringTest" test` cannot be used as final green evidence
+    in this dirty workspace because Maven compiles unrelated broken main/test files before running the selected test.
+- Testcase replay note:
+  - This worker did not change tracker green-link click coordinate formulas, selected click point math, CR81/CR86
+    watcher/pathing consumption, prepared action semantics, or fallback phase order. It only changes the source of
+    equivalent yellow/green/fingerprint intermediate results to the cloud facade, so no marked replay was added in
+    this pass.
+
+### 2026-07-02 CR177A worker baseline - CR170/172 纯洗图 caller 收口到统一 ImageProcessorService
+
+- Worker role: CR177A implementation worker。目标是把 CR170/CR172 已接云但仍带 disabled 本地 fallback 的纯洗图 caller
+  迁到统一 `ImageProcessorService` / `CloudImageProcessor` 门面；生产路径不再调用
+  `washWithDisabledFallback(...)` / `washToPathWithDisabledFallback(...)`，也不再保留
+  `localGreenWashedImage(...)` / `localYellowWashedImage(...)` / `localWashedObjectiveImage(...)`
+  这类本地洗图 helper。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before this worker starts:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline fetched for this worker: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts, including many unrelated CR/local files.
+  This worker must not revert/checkout/reset other changes and will only touch the requested caller/cloud/test/docs/dashboard scope.
+- Relevant pushed-baseline evidence:
+  - `git show --stat --oneline origin/dev --` the requested business caller set shows pushed baseline only has
+    `ObjectiveTextRecognitionService.java` and `GameTextLineOcrService.java` changes in this set; cloud facade/helper files
+    are local CR170-CR173 migration layers on this branch.
+  - Current local diffs in `QuestManagerService`, `WubeiTask`, `GameTextLineOcrService`, and related files contain many
+    unrelated pause/input/cloud framework changes. CR177A must preserve those and only replace washed image source/fallback wiring.
+- Relevant current-source evidence before edits:
+  - `ObjectiveTextRecognitionService` still calls `imagePreprocessWashedImageClient.washWithDisabledFallback(...)`
+    and keeps `localWashedObjectiveImage(...) -> ImagePreprocessor.washGreenTextToBlackAndWhite(raw)`.
+  - `GameTextLineOcrService` still calls `washToPathWithDisabledFallback(...)` for dialog green/yellow and world-map
+    destination/coordinate preprocessing, and keeps `localGreenWashedImage(...)` /
+    `localYellowWashedImage(...)`.
+  - `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)` still calls `washToPathWithDisabledFallback(...)`
+    and keeps `localGreenWashedImage(...)`.
+  - `CoordinateHelper.findGreenTextInRegion(...)` still calls `washToPathWithDisabledFallback(...)`
+    and keeps `localGreenWashedImage(...)`.
+  - `WubeiTask.parseTrackerDestinationHintCapture(...)` still calls `washToPathWithDisabledFallback(...)`
+    and keeps `localYellowWashedImage(...)`.
+  - `CloudImageProcessor` / `ImageProcessorService` already exist from CR173 and provide no-local-fallback
+    `washGreenTextToBlackAndWhite(...)`, `washYellowText(...)`, and `washToPath(...)`.
+- Non-goals / safety:
+  - Do not edit `TaskTrackerPanelService`, `DialogService`, `NpcClickService`, `TeamRoleDetectionService`,
+    `SummonSkillService`, or `AutoCombatPanelService`.
+  - Do not change OCR/template/candidate ordering, click coordinates, navigation phase, 五环 P1/P2 sequence,
+    or 五倍 task branching. A missing/disabled/timeout/invalid cloud wash should simply be a miss/fail-closed.
+  - No visual matching/click-target algorithm is changed in this pass; if a later patch changes click target calculation,
+    it must add testcase replay/marked output.
+- Planned RED guard:
+  - Add a CR177A source guard proving the requested production caller files use `ImageProcessorService`, do not call
+    disabled fallback helpers, and do not contain local washed-image helper methods or direct
+    `ImagePreprocessor.wash*` fallback calls.
+- RED evidence:
+  - Added `ImageProcessorCR177ACallerWiringTest`.
+  - First run of `mvn -q -Dtest="ImageProcessorCR177ACallerWiringTest" test` failed because
+    `ObjectiveTextRecognitionService` still injected `ImagePreprocessWashedImageClient` instead of
+    `ImageProcessorService`.
+- Implementation:
+  - `ObjectiveTextRecognitionService` now uses
+    `imageProcessorService.washGreenTextToBlackAndWhite(...)` and no longer has
+    `localWashedObjectiveImage(...)`.
+  - `GameTextLineOcrService` now uses `imageProcessorService.washToPath(...)` for dialog option green/yellow,
+    world-map route destination yellow, and world-map route coordinate green preprocessing. Removed
+    `localGreenWashedImage(...)` / `localYellowWashedImage(...)`.
+  - `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)` now uses
+    `imageProcessorService.washToPath(..., WASH_GREEN, ...)`; P2 template matching/click logic is unchanged.
+  - `CoordinateHelper.findGreenTextInRegion(...)` now uses
+    `imageProcessorService.washToPath(..., WASH_GREEN, ...)`; template matching and coordinate conversion are unchanged.
+  - `WubeiTask.parseTrackerDestinationHintCapture(...)` now uses
+    `imageProcessorService.washToPath(..., WASH_YELLOW, ...)`; OCR text parsing and 五倍 phase flow are unchanged.
+  - `ImagePreprocessWashedImageClient` no longer exposes `washWithDisabledFallback(...)` or
+    `washToPathWithDisabledFallback(...)`; it only provides no-local-fallback `wash(...)` / `washToPath(...)`.
+  - Updated CR170/CR172/CR173 source guards so tests enforce the unified facade/no-fallback direction.
+- Source guard evidence:
+  - `rg` over the requested production caller files found no `washToPathWithDisabledFallback`,
+    `washWithDisabledFallback`, `ImagePreprocessWashedImageClient`, `ImagePreprocessor`,
+    `ImagePreprocessor.washGreenTextToBlackAndWhite`, `ImagePreprocessor.washYellowText`,
+    `washYellowTextToBlackAndWhite`, `localGreenWashedImage`, `localYellowWashedImage`, or
+    `localWashedObjectiveImage`.
+  - `rg` confirmed the requested production caller files inject `ImageProcessorService` and call
+    `imageProcessorService.washGreenTextToBlackAndWhite(...)` or `imageProcessorService.washToPath(...)`.
+- Verification:
+  - Initial focused Maven reruns were briefly blocked by concurrent test/source churn outside CR177A. Without touching
+    forbidden production files, this pass only made two test-only compile repairs:
+    `ImageProcessorCR177ERedDigitOperationTest` now wraps checked diagnostics exceptions, and
+    `TaskMaintenanceCloudRequiredFailureTest` has the updated `DialogService` constructor arity.
+  - `mvn -q -Dtest="ImageProcessorCR177ACallerWiringTest,ObjectiveTextRecognitionCloudWiringTest,ImagePreprocessCR172CallerWiringTest,ImageProcessorServiceCR173ContractTest,ImageProcessorServiceCR173RequiredOutputTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Scoped `git diff --check` passed; output contained only expected LF/CRLF warnings.
+- Testcase replay note:
+  - No OCR/template/candidate sorting/click-coordinate/navigation phase behavior was changed in this pass; only the
+    washed-image provider was changed to a fail-closed cloud facade. No marked visual replay is required for CR177A.
+
+### 2026-07-02 CR177E worker baseline - SummonSkill/AutoCombat image processor 门面迁移
+
+- Worker role: CR177E implementation worker。目标是把 `SummonSkillService` /
+  `AutoCombatPanelService` 里剩余 tooltip/status/green/red/yellow pixel image processor
+  调用迁到统一 `ImageProcessorService`；caller 仍保留截图、IO、OCR/template 匹配、input queue
+  和原有状态机，不把业务流程整体上云。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before this CR177E edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts. This worker must not
+  revert/checkout/reset unrelated changes. Write scope is limited to:
+  `src/main/java/com/bot/dhxy/service/SummonSkillService.java`,
+  `src/main/java/com/bot/dhxy/service/AutoCombatPanelService.java`,
+  necessary `ImageProcessorService` / `CloudImageProcessor` / image-preprocess DTO/dev-sidecar support,
+  focused/source tests, and CR docs/dashboard.
+- Relevant pushed/local baseline evidence before edits:
+  - `origin/dev` `SummonSkillService` used local extra-slot tooltip probing plus
+    `ImagePreprocessor.countYellowPixels(rawImage)` and `ImagePreprocessor.washYellowText(rawPath, washedPath)`
+    inside `captureAndWashYellowTipOnce(...)`.
+  - Current local CR166 already added `SummonSkillCloudDecisionService` for
+    `inspectCurrentHoverTip(...)`, but `captureAndWashYellowTipOnce(...)` still directly calls
+    local `countYellowPixels` / `washYellowText`, and logging still uses `ImagePreprocessor.rectToString(...)`.
+  - `origin/dev` / current `AutoCombatPanelService` still reads screenshots through `ImagePreprocessor.pathToBufferedImage(...)`,
+    generates `debug_hsv_mask_green.png` via `ImagePreprocessor.countGreenPixelsHSV(...)`, and locally implements
+    red round-number preprocessing through `washRoundRedDigits(...)`, `isAutoCombatRoundRedPixel(...)`, and
+    `countBlackPixels(...)`.
+  - Current `ImageProcessorService` / `CloudImageProcessor` from CR173 covers yellow/green/white/purple/dialog wash,
+    yellow/green/thin-white pixel count, bands, fingerprint, stddev, and text-line pattern, but it does not yet cover
+    auto-combat red digit washing/count semantics.
+- Planned RED guards:
+  - Source guard requiring the two target services to stop calling local core `ImagePreprocessor` algorithms and to use
+    `ImageProcessorService` for yellow/green/red image processing.
+  - Focused guard for cloud fail-closed semantics: disabled/failure/no-result/invalid must return unknown/miss/fail closed,
+    not call local image processor fallback.
+- Non-goals:
+  - Do not change CR145 summon-skill queue scheduling, cooldown/backoff, delete/confirm click coordinates, hover/open/close
+    order, auto-combat Alt+8/open/drag/refresh ordering, or battle state machine.
+  - Do not edit `TaskTrackerPanelService`, `DialogService`, `NpcClickService`, `TeamRoleDetectionService`,
+    `GameTextLineOcrService`, `QuestManagerService`, `CoordinateHelper`, or `WubeiTask` in this pass.
+
+### 2026-07-02 CR177E worker implementation - SummonSkill/AutoCombat image processor 门面迁移
+
+- Implementation:
+  - `SummonSkillService.captureAndWashYellowTipOnce(...)` no longer calls local
+    `ImagePreprocessor.countYellowPixels(...)` or `ImagePreprocessor.washYellowText(...)`; it captures the same
+    tooltip ROI, reads the PNG, calls `ImageProcessorService.countYellowPixels(...)` /
+    `washYellowText(...)`, writes the cloud-washed debug PNG, and returns `null` on disabled/failure/no-result/invalid.
+  - `AutoCombatPanelService.findAutoCombatBox(...)` no longer builds `debug_hsv_mask_green.png` with local
+    `countGreenPixelsHSV(...)`; it calls `imageProcessorService.washToPath(..., WASH_GREEN, ...)` and keeps the
+    existing template match/anchor math.
+  - `AutoCombatPanelService.readRemainingRounds(...)` no longer contains local
+    `washRoundRedDigits(...)`, `isAutoCombatRoundRedPixel(...)`, or `countBlackPixels(...)`; it calls the new
+    `ImageProcessorService.washAutoCombatRoundRedDigits(...)` operation and only then runs the existing OCR/round
+    parsing.
+  - `ImagePreprocessOperation` / `ImageProcessorService` / `CloudImageProcessor` /
+    `ImagePreprocessCloudService` now include `WASH_AUTO_COMBAT_ROUND_RED_DIGITS`; required output is a washed
+    PNG plus `pixelCount`. Missing either field becomes `REQUIRED_FAILURE`.
+  - The red-digit threshold/wash implementation exists only in `src/test/java` dev sidecar to simulate cloud behavior
+    for focused replay; no new color-threshold image processor logic was added to `src/main/java`.
+- Preserved business behavior:
+  - CR145 三技能 queue 调度、unknown backoff、冷却、窗口打开/hover/close、删除/确认点击点 and single-slot
+    `SummonSkillCloudDecisionService` status path were not changed.
+  - Auto-combat panel anchor fallback, green-marker template match, Alt+8/open/drag/refresh ordering, cached-round
+    policy, and battle state machine were not changed.
+  - Cloud disabled/failure/no-result/invalid now follows the requested fail-closed semantics:
+    summon tooltip scan returns `null`/unknown, panel green marker returns miss, round OCR returns unknown; there is no
+    local image processor fallback in these paths.
+- Source guard:
+  - `ImageProcessorCR177ECallerWiringTest` passed.
+  - Extra PowerShell source guard passed:
+    `CR177E source guard passed for SummonSkillService and AutoCombatPanelService`.
+  - Target services no longer contain `ImagePreprocessor`, `countGreenPixelsHSV`, `washRoundRedDigits`,
+    `isAutoCombatRoundRedPixel`, or `countBlackPixels`.
+- Replay / testcase evidence:
+  - Summon replay command:
+    `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest,..." test` included `SummonSkillCloudTooltipReplayTest`.
+    Input: `images/test-cases/summon-skill/single-slot-tooltip-raw.png`.
+    Marked output: `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`.
+  - Auto-combat replay command:
+    `mvn -q -Dtest="AutoCombatPanelCR177EImageProcessorReplayTest,..." test`.
+    Input: `images/test-cases/auto-combat-panel/cr177e-panel-raw.png`.
+    Marked output: `images/test-cases/auto-combat-panel/cr177e-panel-marked.png`.
+    Intermediate cloud-washed images:
+    `images/test-cases/auto-combat-panel/cr177e-panel-green-washed.png` and
+    `images/test-cases/auto-combat-panel/cr177e-round-red-digits-washed.png`.
+- Verification:
+  - `mvn -q -Dtest="ImageProcessorCR177ECallerWiringTest,ImageProcessorCR177ERedDigitOperationTest,AutoCombatPanelCR177EImageProcessorReplayTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    passed.
+  - `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest,SummonSkillCloudWiringGuardTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest,TaskMaintenanceSummonSkillEpochCooldownTest,AutoCombatPanelCR177EImageProcessorReplayTest,ImageProcessorCR177ECallerWiringTest,ImageProcessorCR177ERedDigitOperationTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+- Remaining blocker outside this worker scope:
+  - `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` still contains the historical local core algorithms and
+    other forbidden-scope callers such as `NpcClickService` / `TeamRoleDetectionService` are covered by later CRs.
+    CR177E target files themselves no longer use those algorithms.
+
+### 2026-07-02 ImageProcessor 云端化口径修正
+
+- 用户明确纠正：目标不是把 `DialogService` / `NpcClickService` / `TaskTrackerPanelService`
+  这些 caller “上云”，也不是各 caller 零散接一个洗图 helper。
+- 正确目标：
+  - `ImageProcessor` / `ImagePreprocessor` 里的所有洗图、计数、候选、fingerprint 前处理方法全部上云端；
+  - 本地统一保留一个 `CloudImageProcessor` / `ImageProcessorService` 门面，其他 caller 配合调用这个门面；
+  - 门面内部只做 request/response、payload/ROI/schema 校验、path/BufferedImage 读写；
+  - 本地发布路径不能有任何颜色阈值、二值化、OpenCV 洗图、候选提取、fingerprint 计算等洗图逻辑；
+  - 旧算法只能放在真正云端工程，或 `src/test/java` dev sidecar 里模拟云端，不能作为 main runtime fallback。
+- 已中断并重定向：
+  - CR172 worker：停止继续做“caller + disabled fallback”的过渡口径；
+  - CR173 worker：停止 tracker 专卡方向，改做统一云端 ImageProcessor 门面/发布红线。
+- `docs/PACKAGE_ARCHITECTURE.md` 已把 CR173 row/card 改为“统一云端 ImageProcessor 门面与发布红线”。
+- 下一步：
+  - worker 设计/实现统一 `CloudImageProcessor` 门面与 source guard；
+  - explorer 输出 `ImagePreprocessor` 核心算法残留清单；
+  - 再按统一门面分批迁 caller，最终删除/迁出 `src/main/java` 中所有洗图算法。
+
+### 2026-07-02 CR177D worker baseline - NPC/队伍/GameText 剩余 ImageProcessor 算法迁移
+
+- Worker role: DHXY CR177D worker。用户目标是迁
+  `NpcClickService` / `TeamRoleDetectionService` / `GameTextLineOcrService`
+  中剩余 image processor 洗图、计数、候选、fingerprint/stddev 类算法到统一
+  `ImageProcessorService`；caller 仍本地，不改变 NPC click strategy 顺序、Ctrl probe
+  预算、direct-combat 语义、队伍身份 gate、OCR target/fuzzy 规则或点击坐标。
+- Current branch: `codex/hybrid-cloud-protection`，当前分支无 upstream；不切换、不
+  revert/checkout/reset 其他人的本地改动。
+- Current local HEAD before this CR177D edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts，包含许多并行 CR
+  和本地运行产物。本 worker 只改用户允许范围：
+  `NpcClickService`、`TeamRoleDetectionService`、`GameTextLineOcrService`，
+  必要的 `ImageProcessorService` / `CloudImageProcessor` / `ImagePreprocess*` contract
+  和 dev sidecar/focused tests，以及 CR 文档/dashboard。
+- Relevant baseline evidence before production edits:
+  - `git show --stat --oneline origin/dev -- ...` shows pushed baseline touched
+    `NpcClickService`、`TeamRoleDetectionService`、`GameTextLineOcrService` only; local cloud
+    facade files are CR173+ local work layered on this branch.
+  - Current local `git diff --stat --` for the three target files is already dirty:
+    `NpcClickService.java` `279 + / 46 -`,
+    `TeamRoleDetectionService.java` `26 + / 1 -`,
+    `GameTextLineOcrService.java` `202 + / 46 -`; preserve these local business changes while
+    migrating only image-processor ownership.
+  - Source scan before edit:
+    `NpcClickService` still directly calls `ImagePreprocessor.washYellowText(...)`,
+    `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)`, and keeps a local purple blob
+    fallback that scans dark pixels from the washed PNG.
+  - `TeamRoleDetectionService` still calls
+    `ImagePreprocessor.washPurpleTextToBlackAndWhite(...)`,
+    `ImagePreprocessor.getImageStandardDeviation(...)`, and contains local
+    `countPurplePixels(...)` / `measureTextDistribution(...)` pixel classifiers.
+  - `GameTextLineOcrService` still has CR172 disabled-fallback pure wash helpers plus internal
+    yellow/purple mask building, shadow expansion, candidate grouping/scoring, black/bright
+    washed masks, and packed-segment image generation. This pass will migrate the target/NPC
+    candidate path to `ImageProcessorService` where contract support exists, and any remaining
+    route/packed segment image algorithms must be recorded as blockers rather than called done.
+- Planned RED guard:
+  - Add CR177D source guard that fails while the three target files directly call local
+    `ImagePreprocessor` core algorithms or keep explicit local purple/yellow pixel classifiers
+    for NPC/team paths.
+  - Add focused ImageProcessor contract/sidecar support for `TEXT_CANDIDATES` result payload if
+    needed by `GameTextLineOcrService`, without copying the local candidate algorithm into
+    `src/main/java`.
+- Implementation:
+  - `NpcClickService` now uses `ImageProcessorService` for NPC menu `WASH_YELLOW`, player-anchor
+    `WASH_PURPLE`, and purple player-anchor fallback `TEXT_CANDIDATES`; screenshot capture, target
+    scan order, Ctrl probe budget, direct-combat semantics, and final click coordinates were not
+    intentionally changed.
+  - `TeamRoleDetectionService` now uses `ImageProcessorService` for team-tooltip `WASH_PURPLE`,
+    `MEASURE_TEAM_TOOLTIP_TEXT`, and grouped-status `MEASURE_STDDEV`; local purple/white pixel
+    counting and stddev logic were removed from this caller.
+  - `GameTextLineOcrService` pure wash and NPC yellow candidate paths now call the unified facade:
+    `scanPurpleLines(...)` / `scanYellowLines(...)` use cloud wash output, and
+    `findYellowTextCandidateResult(...)`, `findTextLikeCandidateResultFromWashedImage(...)`, and
+    the target yellow visual-candidate step consume `TEXT_CANDIDATES` payload instead of local
+    yellow candidate scoring for those paths.
+  - `ImagePreprocessOperation` / `ImageProcessorService` / `CloudImageProcessor` /
+    `ImagePreprocessCloudService` now expose `TEXT_CANDIDATES` and `MEASURE_TEAM_TOOLTIP_TEXT`
+    through the shared `IMAGE_PREPROCESS` contract. Required output validation fails closed when
+    the cloud response lacks candidate boxes or team-tooltip metrics.
+- CR177D remaining GameTextLineOcrService blockers:
+  - `GameTextLineOcrService` still contains route/packed-line local image algorithms:
+    `buildBrightPixelMask(...)`, `writePackedLineMask(...)`, `scanPackedLines(...)`,
+    `collectYellowCandidates(...)`, `buildFilteredMask(...)`, `buildBlackPixelMask(...)`,
+    `findTextLikeCandidates(...)`, and `scoreWashedTextLine(...)`.
+  - The remaining production use is mainly world-map route destination/coordinate packed-segment
+    OCR fallback and related debug-mask generation. This pass did not migrate those because it
+    needs a separate cloud contract for packed OCR segments/route-line payloads; do not claim
+    `GameTextLineOcrService` is fully image-processor-free until that contract exists.
+- Replay / testcase evidence:
+  - Command: `mvn -q -Dtest="NpcClickCR177DImageProcessorCandidateReplayTest" test`.
+  - Input: `images/test-cases/npc/cr177d-image-processor/npc-yellow-candidate-raw.png`.
+  - Cloud-washed debug output:
+    `images/test-cases/npc/cr177d-image-processor/npc-yellow-candidate-cloud-washed.png`.
+  - Marked output:
+    `images/test-cases/npc/cr177d-image-processor/npc-yellow-candidate-marked-click.png`.
+    Visual check: red box marks the cloud-returned `墨意` candidate and the red point is the
+    cloud-returned NPC-name-below click coordinate.
+- Verification:
+  - `mvn -q -Dtest="NpcClickCR177DImageProcessorCandidateReplayTest" test` passed.
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed before this doc update.
+  - `mvn -q -Dtest="ImageProcessorCR177DCallerMigrationGuardTest" test` passed after documenting
+    `GameTextLineOcrService` blockers.
+  - `mvn -q -Dtest="ImageProcessorCR177DCallerMigrationGuardTest,NpcClickCR177DImageProcessorCandidateReplayTest,ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `node scripts/generate-cr-dashboard-data.js` generated `docs/cr-dashboard-data.js`.
+  - Scoped source guard grep found no forbidden local `ImagePreprocessor` wash/stddev or NPC/team purple
+    pixel-classifier calls in the three target services.
+  - Scoped `git diff --check` passed with only existing LF/CRLF warnings for touched files.
+
+### 2026-07-02 CR173 implementation worker baseline - 统一 CloudImageProcessor 门面骨架
+
+- Worker role: CR173 implementation worker。用户最新口径是暂停 tracker 专卡方向，改做统一
+  `CloudImageProcessor` / `ImageProcessorService` 门面与发布红线；本轮只做 contract/骨架/source guard，
+  不大规模迁 `TaskTrackerPanelService` 或其他 caller。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before this CR173 edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this worker starts, including many unrelated CR/local files.
+  This worker must not revert/checkout/reset other changes. Planned touch scope:
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessOperation.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudDecision.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudService.java`,
+  new `ImageProcessorService` / `CloudImageProcessor` contract files,
+  CR173 focused/source guard tests, `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`,
+  and `docs/cr-dashboard-data.js`.
+- Relevant baseline evidence before edits:
+  - `rg "ImageProcessorService|CloudImageProcessor|interface .*ImageProcessor"` found only docs references;
+    no production Spring facade exists yet.
+  - `ImagePreprocessOperation` currently contains only
+    `WASH_YELLOW`, `WASH_GREEN`, `WASH_WHITE`, `WASH_PURPLE`,
+    `WASH_DIALOG_OPTION_TEMPLATE`, `FINGERPRINT`, `TEXT_CANDIDATES`; it does not cover count,
+    green-band selection, binary-fingerprint distance, stddev, or thin-white text-line pattern semantics.
+  - `ImagePreprocessWashedImageClient` exists but is still a washed-image helper with disabled fallback APIs,
+    not the final unified image processor facade.
+  - `rg "ImagePreprocessor\\.(wash|count|findGreenTextBands|pickGreenTextBand|buildBinaryFingerprint|binaryFingerprintDistance|detectThinWhiteTextLinePattern)" src/main/java`
+    shows remaining main-runtime direct callers in `DialogService`, `TaskTrackerPanelService`,
+    `NpcClickService`, `SummonSkillService`, `TeamRoleDetectionService`, `AutoCombatPanelService`,
+    `ObjectiveTextRecognitionService`, `GameTextLineOcrService`, `QuestManagerService`, `CoordinateHelper`,
+    and `WubeiTask`.
+  - `ImagePreprocessor.java` still contains core algorithms including wash green/yellow/purple/thin-white/dialog-option,
+    `countYellowPixels`, `countGreenPixelsHSV`, `countThinWhitePixelsHSV`, `findGreenTextBands`,
+    `buildBinaryFingerprint`, `binaryFingerprintDistance`, and `detectThinWhiteTextLinePattern`.
+  - `docs/PACKAGE_ARCHITECTURE.md` table row/card already reflect the new CR173 direction, but this worker still needs
+    to append implementation/verification results and regenerate dashboard data after doc updates.
+- Non-goals for this worker:
+  - Do not change tracker green-link click coordinates, OCR/template thresholds, task phase, fallback order,
+    CR81/CR86 watcher/pathing semantics, or prepared action semantics.
+  - Do not edit `DialogService`, `NpcClickService`, `SummonSkillService`, `AutoCombatPanelService`,
+    `TeamRoleDetectionService`, or `TaskTrackerPanelService` business logic in this skeleton pass.
+  - Do not delete `ImagePreprocessor` methods in this pass unless callers are migrated; record them as CR173 blockers.
+- Planned RED guard:
+  - Add CR173 source guard proving the new facade exists, exposes the required image-processor operation families,
+    and does not import/call `ImagePreprocessor` or other local wash/count/fingerprint algorithms.
+  - The same guard will inventory remaining `ImagePreprocessor` core algorithm methods/callers as explicit blockers,
+    not pretend the full cleanup is complete.
+- RED/GREEN evidence:
+  - RED: `mvn -q -Dtest="ImageProcessorServiceCR173ContractTest" test` failed because
+    `src/main/java/com/bot/dhxy/cloud/task/ImageProcessorService.java` did not exist.
+  - GREEN: same focused command passed after adding the unified facade/operation contract and CR173 blocker docs.
+- Implementation:
+  - Added `ImageProcessorService` as the unified facade contract covering wash yellow/green/purple/thin-white/dialog-option,
+    count yellow/green/thin-white, green bands, binary fingerprint build/distance, thin-white text-line pattern,
+    stddev, and a no-local-fallback `washToPath(...)` helper.
+  - Added `CloudImageProcessor` Spring service. It delegates washed-image operations to
+    `ImagePreprocessWashedImageClient.wash(...)` / `washToPath(...)` and delegates non-washed operations to
+    `IMAGE_PREPROCESS` via operation-specific request/response diagnostics. It does not import/call
+    `ImagePreprocessor`, OpenCV, color threshold code, or disabled fallback helper methods.
+  - Extended `ImagePreprocessOperation` with count/band/fingerprint/stddev/text-line pattern operations.
+  - Added `ImagePreprocessCloudRequest.parameters` for small non-pixel arguments such as
+    `pickGreenTextBand(first)` and `binaryFingerprintDistance(left/right)`.
+  - Added `ImagePreprocessCloudDecision.resultValues`; `ImagePreprocessCloudService` fills it from safe diagnostics
+    while excluding washed payload and candidate coordinate fields.
+- Explicit blockers still open:
+  - No broad caller migration was done in this skeleton pass.
+  - `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java` still contains core algorithms and must be deleted,
+    migrated to real cloud, or moved to test/dev sidecar after callers switch to the facade.
+  - Remaining direct main-runtime `ImagePreprocessor` callers include `DialogService`, `TaskTrackerPanelService`,
+    `NpcClickService`, `SummonSkillService`, `TeamRoleDetectionService`, `AutoCombatPanelService`,
+    `ObjectiveTextRecognitionService`, `GameTextLineOcrService`, `QuestManagerService`, `CoordinateHelper`,
+    and `WubeiTask`.
+  - CR171/CR172 disabled fallback helper APIs still exist and need later cleanup; production caller migration
+    should use `CloudImageProcessor` without local fallback.
+- Final local verification:
+  - `mvn -q -Dtest="ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    passed.
+  - `node scripts/generate-cr-dashboard-data.js` generated `171 CR rows -> docs\cr-dashboard-data.js`.
+  - `mvn -q -DskipTests compile` passed.
+  - CR173 scoped `git diff --check` passed with only docs LF/CRLF warnings.
+- Testcase replay note:
+  - This worker did not change tracker green-link matching/click coordinates or `TaskTrackerPanelService`
+    business logic; it only added facade/contract skeleton. Therefore no repo-local marked replay is required
+    for this pass. Later caller migration touching tracker matching/click must add replay/marked output.
+- Fresh runtime gate:
+  - Not run in this pass. After caller migration, real runtime should show `IMAGE_PREPROCESS` execute logs for
+    the corresponding operations, and active invalid/timeout/no-result must fail closed without local fallback.
+
+P1 review follow-up 2026-07-02:
+
+- User review found a P1 design hole: `CloudImageProcessor` returned `CLOUD_EXECUTED` with null/empty outputs
+  when cloud returned `status=EXECUTED` but omitted operation-required fields for count/band/fingerprint/stddev/
+  text-line pattern operations.
+- RED:
+  - Added `ImageProcessorServiceCR173RequiredOutputTest`.
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest" test` failed in testCompile because
+    `ImageProcessorResult.hasRequiredOutput()` did not exist.
+- Fix:
+  - `ImageProcessorResult.hasRequiredOutput()` now checks operation-specific required outputs.
+  - `CloudImageProcessor` now turns `CLOUD_EXECUTED` with missing required outputs into
+    `REQUIRED_FAILURE`, clears usable output fields, and keeps the original cloud decision/reason for diagnosis.
+  - `findGreenTextBands` / `pickGreenTextBand` accept explicit cloud `NO_RESULT`, but `EXECUTED` without
+    required candidate boxes/selected band is `REQUIRED_FAILURE`.
+  - `detectThinWhiteTextLinePattern` requires complete parseable `matched`, `qualifyingRows`,
+    `maxWhitePixelsInRow`, `maxClustersInRow`, and `maxSpanInRow` fields.
+  - `ImagePreprocessCloudService` now sends operation-aware `returnMode`:
+    wash -> `RETURN_WASHED_IMAGE`, candidate operations -> `RETURN_CANDIDATES`,
+    count/fingerprint/stddev/text-line pattern -> `RETURN_RESULT_VALUES`.
+- GREEN:
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest" test` passed.
+  - `mvn -q -Dtest="ImageProcessorServiceCR173RequiredOutputTest,ImageProcessorServiceCR173ContractTest,ImagePreprocessWashedImageClientTest,ImagePreprocessCloudServiceTest" test`
+    passed.
+
+### 2026-07-02 CR172 worker baseline: release-path pure washed-image callers
+
+- Direction update 2026-07-02:
+  - 用户最新口径：不要继续把 CR172 做成“各 caller 调 helper + disabled fallback”。最终发布目标是统一
+    `ImageProcessor`/`ImagePreprocessor` 门面，门面内所有洗图/图像处理方法上云端 request/response；
+    本地发布路径不应保留核心洗图算法或继续调用本地 `ImagePreprocessor.wash*`。
+  - 本轮暂停 CR172 caller 级 fallback 修正；不新增无 fallback helper，不继续扩大 Java 实现。
+  - 已清理刚才临时写下但未实现的 RED 测试断言，避免留下引用不存在 API 的 broken test。
+  - CR172 文档状态已改为“过渡实现/需统一 `ImageProcessor` 门面重整”，不再声称第一批最终合格。
+  - 当前清单：
+    `GameTextLineOcrService` dialog/world-map、`QuestManagerService` P2、`CoordinateHelper.findGreenTextInRegion(...)`、
+    `WubeiTask.parseTrackerDestinationHintCapture(...)` 已能发 `IMAGE_PREPROCESS` request，但仍使用
+    `washToPathWithDisabledFallback(...)` 挂本地 disabled fallback。
+  - 已知 blocker：
+    `ImagePreprocessWashedImageClient.washToPathWithDisabledFallback(...)` / `washWithDisabledFallback(...)` 仍存在；
+    `ObjectiveTextRecognitionService` / CR170 仍保留 `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)` disabled fallback；
+    `ImagePreprocessor` 内本地洗图算法仍存在，待 CR173-CR176/CR177 或统一门面方案处理。
+- Worker role: CR172 implementation worker。目标是继续把发布路径里“纯 washed-image path/BufferedImage caller”
+  的本地 `ImagePreprocessor` 洗图调用迁到 CR171 的 `ImagePreprocessWashedImageClient`，不迁移会直接改变点击/导航策略的调用点。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Current local HEAD before CR172 edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Upstream: 当前分支无 upstream。Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short` is broadly dirty before this worker starts，已有大量 CR/并行 worker 本地改动。本 worker 只触碰：
+  `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`,
+  `src/main/java/com/bot/dhxy/service/QuestManagerService.java`,
+  `src/main/java/com/bot/dhxy/tools/CoordinateHelper.java`,
+  `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`,
+  CR172 focused/source guard tests, `ImagePreprocessWashedImageClient` 的 path fallback helper（如确需避免重复 path 胶水）,
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`, `docs/cr-dashboard-data.js`。
+- Relevant baseline evidence before edits:
+  - `rg` shows target files still have direct release-path wash calls:
+    `GameTextLineOcrService` 直接调用 `washGreenTextToBlackAndWhite(rawPath, greenPath)`,
+    `washYellowText(rawPath, yellowPath)`, route destination yellow preprocessing, route coordinate green preprocessing；
+    `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)` 直接生成 `p2_washed.png`；
+    `CoordinateHelper.findGreenTextInRegion(...)` 直接生成 `tem_dialog_cut_washed.png`；
+    `WubeiTask.parseTrackerDestinationHintCapture(...)` 直接生成 destination hint yellow path。
+  - `git show --stat --oneline origin/dev -- ...` shows pushed baseline has only
+    `GameTextLineOcrService.java` in this selected set; cloud helper/service code is local CR163-CR171 migration work layered on this branch.
+  - Current local diffs already include unrelated pause/input/cloud framework changes in `QuestManagerService` and `WubeiTask`; CR172 must preserve those and only replace washed image source.
+  - CR171 card states `ImagePreprocessWashedImageClient` is the reusable helper and active cloud failure/no-result/invalid must fail closed; only `DISABLED` may enter local fallback.
+- Planned RED tests:
+  - Add/extend helper test so path washing with disabled fallback writes a washed PNG, while active `NO_RESULT`/failure does not call fallback and removes/does not use stale output.
+  - Add CR172 source guard ensuring the migrated methods call `ImagePreprocessWashedImageClient`/cloud helper and no longer directly call
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(...)` / `washYellowText(...)`; isolated disabled fallback helpers may keep the old local wash.
+- Non-goals:
+  - Do not touch `DialogService`, `NpcClickService`, `TaskTrackerPanelService`, `SummonSkillService`,
+    `TeamRoleDetectionService`, or `AutoCombatPanelService` in this pass.
+  - Do not change OCR/template thresholds, matching algorithms, coordinate conversion, click points, task phase, fallback order, or navigation/click business sequence.
+- RED/GREEN evidence:
+  - RED:
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,ImagePreprocessCR172CallerWiringTest" test`
+    failed in testCompile because `ImagePreprocessWashedImageClient.washToPathWithDisabledFallback(...)` did not exist.
+  - GREEN:
+    same focused command passed after adding the helper and migrating CR172 callers.
+  - During testCompile, two existing tests with manual constructors needed only dependency-shape updates:
+    `TeamReturnCloudRequiredFailureTest.ButtonPresentCoordinateHelper` now calls `super(null, null, null)`;
+    `GameTextLineOcrServiceBailongmaYellowProfileReplayTest` now constructs `new GameTextLineOcrService(null, null)`.
+    These tests do not exercise the new wash helper path.
+- Implementation:
+  - `ImagePreprocessWashedImageClient.washToPathWithDisabledFallback(...)` reads raw path, delegates to existing
+    cloud/fallback helper, writes only a valid washed image, and deletes stale washed output on active miss/failure.
+  - `GameTextLineOcrService` dialog option green/yellow path wash and world-map route destination/coordinate preprocessing now use
+    `WASH_GREEN` / `WASH_YELLOW`; active cloud failure returns current miss/guard unavailable, disabled fallback stays isolated.
+  - `QuestManagerService.triggerWuHuanNativePathingP2Direct(...)` now gets `p2_washed.png` via `WASH_GREEN`; P2 templates,
+    thresholds, random click point, focus/click sequence, and return values are unchanged except wash failure becomes P2 miss.
+  - `CoordinateHelper.findGreenTextInRegion(...)` now gets `tem_dialog_cut_washed.png` via `WASH_GREEN`; template matching and absolute coordinate conversion are unchanged.
+  - `WubeiTask.parseTrackerDestinationHintCapture(...)` now gets destination hint `yellowPath` via `WASH_YELLOW`; OCR/parse/phase behavior stays unchanged except wash failure returns `Optional.empty()`.
+  - Skipped: `GameTextLineOcrService.findYellowTextCandidateResult(...)` / target yellow in-memory candidate extraction is not a pure path wash caller and should be handled by a later candidate/replay card if needed.
+- Verification so far:
+  - `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,ImagePreprocessCR172CallerWiringTest" test` passed.
+  - `node scripts/generate-cr-dashboard-data.js` generated `171 CR rows -> docs\cr-dashboard-data.js`.
+  - `mvn -q -DskipTests compile` passed.
+  - CR172 scoped `git diff --check` passed（仅 Windows LF/CRLF warning）.
+
+### 2026-07-02 CR171 ImagePreprocessCloud reusable washed-image client intake
+
+- 用户要求继续把图片处理云端化往下做，不能停在 CR170 objective 单点。
+- 新建 CR171：`ImagePreprocessCloud 通用 washed-image 客户端与全 wash operation sidecar`。
+- Worker baseline 2026-07-02:
+  - Worker role: CR171 implementation worker；只做通用 washed-image helper/client 与 test-scope sidecar wash operation，
+    不迁移 Dialog/NPC/Tracker/GameTextLine/Wubei/Navigation 业务调用点。
+  - Current branch: `codex/hybrid-cloud-protection`。
+  - Current local HEAD before CR171 edit:
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+  - Latest pushed baseline available locally: `origin/dev` =
+    `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+  - `git status --short --branch` is broadly dirty before this worker starts. This worker will only touch CR171 scope:
+    `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessOperation.java`,
+    `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudService.java`,
+    new reusable washed-image helper/client under `src/main/java/com/bot/dhxy/cloud/task/`,
+    `src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java`,
+    `src/test/java/com/bot/dhxy/cloud/task/*ImagePreprocess*Test.java`,
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`,
+    `src/test/java/com/bot/dhxy/vision/ObjectiveTextRecognitionCloudWiringTest.java`, and this intake record.
+  - Relevant baseline evidence:
+    - `git show --stat --oneline origin/dev -- ...` shows pushed `origin/dev` only has
+      `ObjectiveTextRecognitionService.java` in this touched business path; `src/main/java/com/bot/dhxy/cloud/...`
+      and test-scope dev sidecar are local hybrid-cloud migration layers from CR163-CR170.
+    - Current local CR170 `ObjectiveTextRecognitionService` has hand-written raw PNG encoding, SHA-256,
+      `ImagePreprocessCloudRequest` construction, and washed PNG decode in the objective caller. CR171 will move that
+      glue into a reusable helper without changing objective template matching, coordinate plausibility, thresholds,
+      checkpoints, clicking, or phase semantics.
+    - Current local `ImagePreprocessCloudService` already owns service-specific `IMAGE_PREPROCESS` execute gate and
+      validates returned washed PNG payload metadata. CR171 must not add `IMAGE_PREPROCESS` to
+      `CloudDecisionCoordinator` generic `EXECUTABLE_SERVICES`.
+    - Current local `CloudDecisionDevServer` returns washed PNG payload only for `WASH_GREEN`; CR171 will expand the
+      test-scope sidecar to `WASH_YELLOW`, `WASH_PURPLE`, `WASH_WHITE`, and dialog option template wash operation.
+- Scope:
+  - 抽出可复用 cloud washed-image helper/client，统一 raw PNG 编码、sha、`ImagePreprocessCloudRequest` 构造、
+    `ImagePreprocessCloudDecision` washed PNG 解码/落盘；
+  - dev sidecar 覆盖 `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、白字、dialog option template 等洗图 operation；
+  - 可把 CR170 objective 绿字路径改用 helper，减少重复胶水。
+- Non-goals:
+  - 本卡不迁移 Dialog/NPC/Tracker/GameTextLine/Wubei/Navigation 的业务调用点；
+  - 不改点击坐标、模板阈值、OCR fallback、任务 phase、runner 或导航语义；
+  - 不删除 `ImagePreprocessor`，不声称图片处理已全部云端化完成。
+- Verification gate:
+  - focused helper/sidecar tests;
+  - CR170 objective guard 仍通过;
+  - `mvn -q -DskipTests compile`;
+  - scoped `git diff --check`;
+  - `node scripts/generate-cr-dashboard-data.js` after CR card update.
+- Worker implementation:
+  - 新增 `ImagePreprocessWashedImageClient`，统一 raw PNG 编码、base64、SHA-256、
+    `ImagePreprocessCloudRequest` 构造、washed PNG 解码和 path 落盘；
+  - helper 复用 `ImagePreprocessCloudService` 的 `IMAGE_PREPROCESS` service-specific gate，未把
+    `IMAGE_PREPROCESS` 加入 `CloudDecisionCoordinator` generic `EXECUTABLE_SERVICES`；
+  - helper 的 `washWithDisabledFallback(...)` 只在 cloud `DISABLED` 时调用本地 fallback；
+    active `NO_RESULT`、timeout/`REQUIRED_FAILURE`、invalid/低置信 washed payload 都返回无图/fail-closed；
+  - `ObjectiveTextRecognitionService` 改用 helper 请求 `WASH_GREEN`，只替换 clean image 来源；
+    未改 objective 模板匹配、坐标 plausibility、threshold、checkpoint、点击或任务 phase；
+  - `ImagePreprocessOperation` 新增 `WASH_DIALOG_OPTION_TEMPLATE`；
+  - `CloudDecisionDevServer` test-scope sidecar 对 `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、
+    `WASH_WHITE`、`WASH_DIALOG_OPTION_TEMPLATE` 均用测试侧 `ImagePreprocessor` 模拟云洗图并返回
+    washed payload/mime/sha/尺寸。
+- RED/GREEN evidence:
+  - RED:
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest" test`
+    初次运行在 test compile 失败，报 `ImagePreprocessWashedImageClient` 不存在。
+  - GREEN:
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest" test`
+    passed；
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` passed；
+    `mvn -q -Dtest="ImagePreprocessCloudServiceTest,CloudDecisionDevServerTest,ObjectiveTextRecognitionCloudWiringTest,*ImagePreprocess*Test" test`
+    passed；
+    `mvn -q -DskipTests compile` passed；
+    `node scripts/generate-cr-dashboard-data.js` generated `166 CR rows -> docs\cr-dashboard-data.js`。
+- Fresh runtime gate:
+  - 尚未现场重启 DHXY/dev sidecar 做真实 objective 绿字运行；
+  - 需要验证日志出现 `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE`、`operation=WASH_GREEN`、
+    `returnMode=RETURN_WASHED_IMAGE` 和 redacted `imagePayloadBase64=<redacted len=... sha256=...>`；
+  - invalid/timeout/no-result 应返回 objective miss，不回本地洗图。
+- Review repair 2026-07-02:
+  - P1 purple sidecar temp isolation/cleanup：
+    `CloudDecisionDevServer.washPurpleDevImage(...)` 改用 `Files.createTempFile(...)` 为 raw/washed PNG 创建
+    per-request temp 文件，不再用 trace 固定 path；`finally` 调 `Files.deleteIfExists(...)` 清理 raw/washed。
+    主流程异常时 cleanup 异常只作为 suppressed，不覆盖主异常。
+  - P2 helper fail-closed guard：
+    `ImagePreprocessWashedImageClientTest` 新增 bad sha active invalid washed payload 覆盖，
+    `washWithDisabledFallback(...)` 返回 `REQUIRED_FAILURE`/no image 且不调用 disabled fallback。
+  - P2 write path failure guard：
+    `washToPath(...)` 对输出 path 是目录的写失败显式返回 `REQUIRED_FAILURE`/no image，不让 caller 继续使用旧文件。
+  - Dashboard/domain：
+    `docs/PACKAGE_ARCHITECTURE.md` CR171 row 的 touched-area/summary 改为“通用云端图片处理 / `ImagePreprocess`”，
+    避免 dashboard 误归到五倍域。
+  - RED:
+    `mvn -q -Dtest="CloudDecisionDevServerTest" test` 失败于 purple source guard；
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` 失败于 write path guard。
+  - GREEN:
+    `mvn -q -Dtest="CloudDecisionDevServerTest" test` passed；
+    `mvn -q -Dtest="ImagePreprocessWashedImageClientTest" test` passed。
+  - Final verification:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,ImagePreprocessWashedImageClientTest,ObjectiveTextRecognitionCloudWiringTest" test` passed；
+    `mvn -q -DskipTests compile` passed；
+    scoped `git diff --check` passed（仅 Windows LF/CRLF 提示）。
+
+### 2026-07-02 CR170 worker implementation baseline
+
+- Worker role: CR170 `ImagePreprocessCloud RETURN_WASHED_IMAGE 第一刀` implementation worker; direct Java implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: no upstream configured for current branch. Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this worker starts. This worker will only touch CR170 scope:
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudDecision.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudService.java`,
+  `src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java`,
+  `src/test/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudServiceTest.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`,
+  new CR170 focused guard test, `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and
+  `docs/cr-dashboard-data.js`.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/vision/ObjectiveTextRecognitionService.java ...`
+    shows pushed `origin/dev` only has `ObjectiveTextRecognitionService.java` in this touched set; the cloud task/dev sidecar
+    tree is local hybrid-cloud migration work layered on this branch.
+  - Current local `ObjectiveTextRecognitionService.recognize(BufferedImage raw, String source)` directly calls
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)` before existing `cropToForeground` / map template /
+    digit template flow.
+  - Current local `ImagePreprocessCloudDecision.hasUsableResult()` only accepts candidate boxes/points; it cannot
+    represent or validate returned washed PNG payload.
+  - Current local `CloudDecisionDevServer` validates `IMAGE_PREPROCESS` payload metadata but returns only
+    `status=EXECUTED;operation=...` plus empty candidate diagnostics, not washed image payload/sha/size.
+- Planned TDD:
+  - RED `ImagePreprocessCloudServiceTest`: washed PNG payload success plus sha mismatch, invalid base64, wrong mime,
+    missing size, low confidence, and no-result unusable cases.
+  - RED `ObjectiveTextRecognitionCloudWiringTest`: cloud-active ObjectiveTextRecognition must inject/use
+    `ImagePreprocessCloudService`, must not call local green wash in active covered failure, and disabled fallback may
+    retain the old local wash.
+  - RED `CloudDecisionDevServerTest`: `IMAGE_PREPROCESS` `WASH_GREEN` returns washed PNG payload with matching sha and
+    dimensions.
+- RED evidence:
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,ObjectiveTextRecognitionCloudWiringTest,CloudDecisionDevServerTest" test`
+    failed in test compile because `ImagePreprocessCloudDecision` did not yet expose `hasWashedImage()` or washed
+    payload/mime/sha/width/height getters. This is the expected missing CR170 contract.
+- Implementation:
+  - `ImagePreprocessCloudDecision` now carries washed PNG payload metadata:
+    `washedImagePayloadBase64`, `washedPayloadMimeType`, `washedImageSha256`, `washedWidth`, `washedHeight`.
+    `hasWashedImage()` requires `CLOUD_EXECUTED`, `image/png`, nonblank payload/sha, and positive size; `hasUsableResult()`
+    accepts either candidates or a valid washed image.
+  - `ImagePreprocessCloudService` still uses an `IMAGE_PREPROCESS` service-specific execute gate and does not widen
+    generic `CloudDecisionCoordinator.EXECUTABLE_SERVICES`. The gate validates returned washed image diagnostics:
+    base64 decodes, SHA-256 matches decoded bytes, mime is `image/png`, decoded PNG is readable, and decoded dimensions
+    match positive `washedWidth`/`washedHeight`. `NO_RESULT`, low confidence, timeout/schema invalid, and invalid washed
+    metadata are not usable.
+  - `CloudDecisionDevServer` test-scope `IMAGE_PREPROCESS/WASH_GREEN` now decodes `imagePayloadBase64`, uses test-side
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(...)` to simulate cloud washing, and returns washed payload/sha/size.
+    The existing missing payload/mime/sha/windowSize rejection remains.
+  - `ObjectiveTextRecognitionService` now requests `ImagePreprocessOperation.WASH_GREEN` through
+    `ImagePreprocessCloudService` before the existing objective template flow. A valid washed PNG continues into the
+    unchanged `cropToForeground` / map-template / digit-template / coordinate plausibility logic. Cloud active invalid,
+    timeout, no-result, or missing washed image returns `Optional.empty()` and does not call local green wash. When the
+    service is `DISABLED`, `localWashedObjectiveImage(...)` keeps the old local
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)` fallback.
+- GREEN verification:
+  - `mvn -q -Dtest="ImagePreprocessCloudServiceTest,ObjectiveTextRecognitionCloudWiringTest,CloudDecisionDevServerTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+- Manager/reviewer verification:
+  - 谢帅重新复核 CR170 当前源码，确认 `ObjectiveTextRecognitionService` 只替换 clean image 来源，
+    未改 objective 模板匹配、坐标 plausibility、threshold、checkpoint 或点击语义。
+  - Aquinas 二审未发现 P0/P1/P2 blocker：`NO_RESULT` 不暴露 washed image；低置信、bad mime、bad base64、
+    sha mismatch、PNG unreadable、尺寸不一致均 fail-closed；cloud active invalid/timeout/no-result 不回本地
+    green wash，只有 `DISABLED` 走独立本地 fallback helper。
+  - 谢帅 fresh rerun：
+    `mvn -q -Dtest="ImagePreprocessCloudServiceTest,ObjectiveTextRecognitionCloudWiringTest,CloudDecisionDevServerTest" test`;
+    `mvn -q -DskipTests compile`;
+    CR170 scoped `git diff --check`。三项均通过；`diff --check` 只有 LF/CRLF warning。
+- Fresh runtime gate:
+  - Restart DHXY and the dev sidecar, then trigger objective green-text recognition.
+  - Logs should show `cloud.decision serviceId=IMAGE_PREPROCESS mode=EXECUTE`, `operation=WASH_GREEN`,
+    `returnMode=RETURN_WASHED_IMAGE`, and redacted `imagePayloadBase64=<redacted len=... sha256=...>`.
+  - Valid washed-image response should let objective template matching proceed normally; invalid/timeout/no-result
+    should log objective green wash miss and return recognition miss without local wash fallback.
+
+### 2026-07-02 CR170 ImagePreprocessCloud RETURN_WASHED_IMAGE intake
+
+- 用户要求继续把图片处理云端化先做完；前置结论是 CR163 只有传图协议，不满足“洗图逻辑不能在本地”的发布红线。
+- 新建 CR170：`ImagePreprocessCloud 洗后图返回与纯匹配路径第一刀`。
+- 本轮选最小真实生产路径：`ObjectiveTextRecognitionService` 的绿色 objective 文本识别。
+  - 原逻辑：`recognize(BufferedImage raw, String source)` 直接调用
+    `ImagePreprocessor.washGreenTextToBlackAndWhite(raw)` 得到二值图，再做本地模板匹配。
+  - 目标逻辑：cloud active 时先通过 `ImagePreprocessCloudService` 发 raw PNG payload，获得云端 `WASH_GREEN`
+    洗后图；本地只解码/校验洗后图并继续薄模板匹配。
+  - 云端 invalid/timeout/no-result 时返回 miss，不回旧本地洗图；cloud disabled 时保留旧本地行为。
+- 写入 `docs/PACKAGE_ARCHITECTURE.md` CR170 row/card，待同步 dashboard 后派 worker 实现。
+
+### 2026-07-02 CR163 scope correction - ImagePreprocessor still local
+
+- 用户复核指出：CR163 不能算“洗图逻辑云端化完成”。当前实现只完成
+  `imagePayloadBase64` / `payloadMimeType` / `imageSha256` 传图协议、日志脱敏、ROI/window 安全校验和
+  候选坐标规范。
+- 实际洗图算法仍在发布源码路径 `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java`：
+  `washYellowText(...)`、`washGreenTextToBlackAndWhite(...)`、`washPurpleTextToBlackAndWhite(...)`、
+  `washDialogOptionTemplateTextToBlackAndWhite(...)` 等方法仍会进入客户端包。
+- 多个生产 caller 仍直接调用本地洗图/像素候选逻辑，包括 `DialogService`、`TaskTrackerPanelService`、
+  `NpcClickService`、`SummonSkillService`、`GameTextLineOcrService`、`QuestManagerService` 和五倍 tracker
+  相关路径。
+- 结论：CR163 当前只能作为 image payload / cloud safety shell 基础设施。后续必须继续拆卡，把正式黄/绿/白/紫
+  洗图、模板/fingerprint 前处理、候选抽取迁到真实云端；本地发布 runtime 只保留截图、ROI 裁剪、payload
+  上传、坐标/置信度安全壳和输入执行。
+- 用户补充并确认两个后续 contract 模式：
+  - `RETURN_WASHED_IMAGE`：本地传 raw image/ROI，云端返回洗好的图 payload；本地只用洗后图做非常薄的纯匹配，
+    不保留颜色阈值、洗图、二值化、fingerprint 前处理算法。
+  - `CLOUD_INTERNAL_PREPROCESS`：像 NPC click / Navigation / 三技能 / Dialog 这类嵌套服务，云端内部完成洗图、
+    候选抽取、匹配、排序、fallback/retry 策略，直接返回业务结果或窗口相对点击点；本地不拿中间洗图，也不能
+    在云失败后回退到旧本地洗图逻辑。
+  - 两种模式共同红线：洗图算法不能留在发布 runtime。本地只保留截图、ROI 裁剪、payload 上传、返回 schema
+    校验、窗口/ROI/置信度安全壳和极薄执行层。
+- 已更新 `docs/PACKAGE_ARCHITECTURE.md` CR163 row/card，并需要同步 dashboard。
+
+### 2026-07-02 CR167 DialogCloud pre-click worker baseline
+
+- Worker role: CR167 `DialogCloud pre-click` first-slice implementation worker; direct implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant paths for this slice are:
+  `src/main/java/com/bot/dhxy/service/DialogService.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecision*.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `src/test/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionServiceTest.java`,
+  new focused DialogCloud pre-click tests, `images/test-cases/dialog/**`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/DialogService.java`
+    shows pushed baseline `e543d02` only has pre-cloud DialogService work; the `src/main/java/com/bot/dhxy/cloud`
+    tree is local cloud migration work layered on this branch.
+  - Current local `DialogService.finishRequest(...)` already calls
+    `DialogPolicyCloudDecisionService.decide(request, result)` after local dialog result construction. That
+    CR-HC-017 hook is after-local-result and cannot prevent a local option click that already happened.
+  - Current local option-click branches still run local keyword/template/business/fallback scan/click before
+    `finishRequest(...)`. CR167 must add a pre-click cloud action path for covered ordinary option dialogs, and
+    cloud active + covered invalid/timeout/no-action must fail closed without old local candidate scan/click.
+  - `CloudDecisionCoordinator.EXECUTABLE_SERVICES` remains narrow (`TASK_CLASSIFIER` only); CR167 must keep using
+    a DIALOG_POLICY-specific execute gate and must not widen the generic allowlist.
+- Planned TDD:
+  - RED guard：covered pre-click path 在 cloud `NO_ACTION` / timeout / invalid 时不点击，也不进入旧本地 option
+    keyword/template/fallback 候选点击。
+  - RED valid click：云端返回 `WINDOW_RELATIVE` click、`actionId`、`candidateBox` 后，`DialogService` 执行
+    cloud pre-click path。
+  - RED safety：坐标越界、ROI 外、非 `WINDOW_RELATIVE`、低置信、`ctrl` / `alt`、unsupported action 都 fail-closed。
+  - Replay：生成 repo-local raw dialog testcase 和 marked image，标出 ROI、候选框、最终点击点。
+- RED evidence:
+  - `mvn -q -Dtest="DialogPolicyCloudPreClickDecisionServiceTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickReplayTest" test`
+    先因 `DialogPolicyPreClickCloudDecision` / `DialogPolicyPreClickCloudRequest` 不存在而 test compile 失败。
+- Implementation:
+  - Added `DialogPolicyPreClickCloudRequest` and `DialogPolicyPreClickCloudDecision` for the first-slice pre-click
+    action protocol. Payload follows the CR163 contract: `imagePayloadBase64`, `payloadMimeType=image/png`,
+    `imageSha256`, `windowWidth/windowHeight`, `roi`, `rawImagePath`, and `debugImageId`.
+  - Extended `DialogPolicyCloudDecisionService` with `decidePreClick(...)` and a DIALOG_POLICY-specific execute gate.
+    It does not add `DIALOG_POLICY` to `CloudDecisionCoordinator.EXECUTABLE_SERVICES`.
+  - The pre-click gate accepts only plain-left `CLICK` with `actionId`, diagnostics
+    `coordinateSpace=WINDOW_RELATIVE`, confidence >= `0.70`, and a click plus `candidateBox` inside both the
+    window and dialog ROI. Timeout/empty response, `NO_ACTION`, `REQUEST_NEW_SCREENSHOT`, `ABORT`, low confidence,
+    `ctrl=true`, `alt=true`, non-window-relative coordinates, out-of-window, out-of-ROI, or missing candidate box
+    return no executable action and fail closed for covered production paths.
+  - `DialogService` now checks the cloud pre-click path before local ordinary option scans/clicks only for
+    `CLICK_KEYWORD`. Cloud inactive / disabled returns to the existing local `DialogService` flow unchanged.
+    Covered active failures return `FAILED` without invoking old local option scan/click.
+  - Excluded first-slice boundaries in `DialogService`: `initialClick`, `ROUTE_TRANSFER`, `GIVE_ITEM_IF_AVAILABLE`,
+    `WUHUAN_SHOE_SHOP_BUY_OPTION`, `CLEANUP`, `CLICK_GREEN_TEMPLATE`, `FALLBACK_FIRST_OPTION`,
+    `FALLBACK_LAST_OPTION`, business option, remembered prepared option, NPC click, Navigation, Bag, combat
+    detection, and SummonSkill.
+  - Cloud-executed clicks convert `WINDOW_RELATIVE` to screen-absolute using the current tracker base and run through
+    `InputSequences.moveAndClickLeft(...)` as an atomic input queue action. If already inside the input worker, direct
+    input is used only inside the serialized section with `InputActionScope.checkpoint()` guards.
+  - Dev sidecar `CloudDecisionDevServer` now recognizes DIALOG_POLICY `dialog-pre-click-option` payloads, detects a
+    green option candidate from the raw image/ROI, and returns `CLICK` with `candidateBox` or a cloud-owned
+    `NO_ACTION`.
+  - `.gitignore` now allows `images/test-cases/dialog/**` so the CR167 replay evidence can be tracked.
+- CR167 review P1 repair:
+  - 主审发现 pre-click 云端点击成功后仍走两参 `finishRequest(...)`，导致同一次 dialog 已执行云端
+    `CLICK` 后，还会再次触发 after-local `DIALOG_POLICY phase=dialog-policy`；第二次云端 timeout/invalid
+    可能把已点击结果覆盖成 `FAILED`。
+  - RED guard：
+    `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest" test` 先失败，断言缺少带
+    `runAfterLocalDialogPolicy` 的 `finishRequest`，说明 pre-click 结果还不能跳过 after-local gate。
+  - 修复：`DialogService.finishRequest(...)` 改为显式三参
+    `finishRequest(request, result, runAfterLocalDialogPolicy)`；所有旧非 pre-click 路径传 `true`，两个
+    pre-click cloud result 返回点传 `false`。这样 pre-click `CLICK` / fail-closed result 都不会再触发
+    after-local `dialogPolicyCloudDecisionService.decide(request, result)`，非 pre-click 旧 after-local gate
+    保持不变。
+  - Guard 更新：`DialogCloudPreClickWiringGuardTest` 证明 pre-click success 返回走
+    `finishRequest(..., false)`；`InteractionShadowWiringTest` 证明非 pre-click finish 仍保留
+    after-local `DIALOG_POLICY` gate。
+- CR167 independent-review P1 repair:
+  - 独立 reviewer 验证：pre-click cloud 已能点击，但 `DialogResult.actionKey` 直接使用云端
+    `actionId=dev-dialog-option-*`，破坏五倍/修罗后续对 `OPTION_ACCEPT_TASK` / `OPTION_ENTER_BATTLE`
+    等业务 key 的精确比较；dev sidecar 也按 `.min(y)` 永远选第一行，未按目标选项选择。
+  - RED guard/replay：
+    `mvn -q -Dtest="DialogPolicyCloudPreClickDecisionServiceTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickReplayTest" test`
+    先失败，证据包括 `actionId=dev-dialog-option-*` 未被拒、缺少 `cloudPreClickActionKey(...)` 业务映射、
+    replay 在第一行干扰项上返回 debug actionId。
+  - 修复：
+    `DialogPolicyCloudDecisionService.decidePreClick(...)` 现在校验 `CLICK_KEYWORD` 的 cloud `actionId`
+    必须等于 `request.getTargetKeyword()`；`CLICK_GREEN_TEMPLATE` 的 gate 也校验 actionId 必须等于某个
+    `GreenTemplateClickSpec.name()`，但 `DialogService` 第一刀不 production-cover green-template，避免 dev
+    sidecar 无法做 template-specific 选择时错误执行。
+  - `DialogService.executeDialogCloudPreClick(...)` 现在通过 `cloudPreClickActionKey(...)` 写
+    `DialogResult.actionKey`；`CLICK_KEYWORD` 固定保留 `request.getTargetKeyword()`，不会把云端 debug id
+    暴露给任务流。
+  - Dev sidecar `DIALOG_POLICY` pre-click 只覆盖 `CLICK_KEYWORD`：使用 `targetKeyword` 对绿色候选文字
+    mask 打分，选择目标候选并返回 `actionId=<targetKeyword>`；非 keyword policy 返回 no-action。
+  - Replay testcase 改为第一行干扰项 `我再想想`、第二行目标 `领取任务`，marked output 证明云端点击第二行目标。
+- Verification:
+  - P1 focused guard:
+    `mvn -q -Dtest="DialogCloudPreClickWiringGuardTest" test` passed.
+  - GREEN focused:
+    `mvn -q -Dtest="DialogPolicyCloudPreClickDecisionServiceTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickReplayTest" test`
+    passed.
+  - Existing required focused:
+    `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest" test` passed.
+  - Cloud package:
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+  - Compile:
+    `mvn -q -DskipTests compile` passed.
+- Testcase replay:
+  - Input: `images/test-cases/dialog/pre-click-option-raw.png`.
+  - Output: `images/test-cases/dialog/pre-click-option-marked-click.png`.
+  - Command: `mvn -q -Dtest="DialogPolicyCloudPreClickReplayTest" test`.
+  - Marked output shows red dialog ROI, cyan candidate box, and red final click point from the cloud response.
+  - Current marked output target is the second green row (`领取任务`); first row (`我再想想`) is a decoy.
+- Fresh runtime gate:
+  - Restart DHXY and dev sidecar, run one ordinary option dialog with DIALOG_POLICY execute mode covered.
+  - Logs must show `cloud.decision serviceId=DIALOG_POLICY mode=EXECUTE` with `hook=dialog-pre-click-option`.
+  - Ordinary logs must keep `imagePayloadBase64` redacted by the existing cloud logging path.
+  - Valid production click must come from cloud `WINDOW_RELATIVE` response; timeout/invalid/no-action/low-confidence
+    must no-click/fail closed and must not enter old local option scan/click.
+  - Cloud `CLICK` actionId and final `DialogResult.actionKey` must equal the request `targetKeyword` for covered
+    `CLICK_KEYWORD`; dev/debug action ids must be rejected.
+- Final review pass:
+  - 谢帅复核 `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`、`mvn -q -DskipTests compile`、
+    scoped `git diff --check` 均通过；diff check 仅有当前仓库 LF/CRLF warning。
+  - 独立 reviewer 复审确认 P1 已解决：business `actionKey` 保留 `targetKeyword`，cloud `actionId`
+    必须匹配 `targetKeyword`，dev sidecar 按 `targetKeyword` 选第二行目标，生产覆盖仍只限
+    `CLICK_KEYWORD`，pre-click 成功不会触发 after-local `phase=dialog-policy` 二次裁决。
+  - 剩余项降为 P2/fresh-runtime：真实游戏普通 dialog 需要采到
+    `cloud.decision serviceId=DIALOG_POLICY mode=EXECUTE hook=dialog-pre-click-option`，并确认有效
+    `CLICK` 与最终 `DialogResult.actionKey` 都等于请求 `targetKeyword`。
+
+### 2026-07-02 CR162 second-wave cloud split
+
+- User confirmed CR163 cooldown config `bot.dhxy.summon-skill-ultimate-generate-cooldown-ms=10800000` is expected
+  for 地府/三技能 timing and is not a blocker.
+- CR162 total-card status updated: first wave CR163-CR166 is locally connected/reviewed, with fresh runtime and real
+  replay gates still pending.
+- Created second-wave cards:
+  - CR167 `DialogCloud pre-click`：move ordinary dialog option candidate recognition/ranking/click selection before
+    local click; local keeps screenshot/input/result verification only.
+  - CR168 `BagItemCloud`：move main-bag task-page item/return-item/xianxing mirror slot recognition to cloud.
+  - CR169 `NpcClickSmartCloud` extension：move direct-combat/Ctrl menu/retry state machine beyond CR165's ordinary
+    dialog click slice.
+- Next implementation owner: worker on CR167 first, because existing `DIALOG_POLICY` infrastructure gives the smallest
+  incremental path while still removing a local pre-click core decision.
+
+### 2026-07-02 CR165 NpcClickSmartCloud ordinary dialog CLICK first slice
+
+- Worker role: CR165 `NpcClickSmartCloud` first-slice implementation worker; direct implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Upstream: `NO_UPSTREAM`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant paths for this slice are:
+  `src/main/java/com/bot/dhxy/service/NpcClickService.java`,
+  `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionServiceId.java`,
+  new `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloud...` files,
+  focused cloud/service tests, `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `src/main/resources/application.properties`, `.gitignore`, `images/test-cases/npc/**`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java`
+    shows pushed baseline `e543d02` has only pre-current-cloud `NpcClickService` changes; the `src/main/java/com/bot/dhxy/cloud`
+    tree is local migration work layered on this branch.
+  - Current local `NpcClickService` already injects `NpcClickStrategyCloudDecisionService` and gates the old
+    local strategies through `NPC_CLICK_STRATEGY`, but that gate only authorizes local strategies and is explicitly
+    transitional.
+  - Current `clickNpcSmart(...)` still runs the old dialog pipeline first and then `Alt+C` retry; CR165 covered active
+    path must not fall through to learned memory, tooltip, yellow OCR, player-anchor formula, Ctrl menu, or `Alt+C`
+    retry when no valid cloud-executed action exists.
+  - Current `.gitignore` already allows `images/test-cases/summon-skill/**`; CR165 will need a similarly narrow
+    allow rule for `images/test-cases/npc/**` testcase replay evidence.
+- Selected CR165 first slice:
+  - Add a new `NPC_CLICK_SMART` cloud service id and action protocol, separate from `NPC_CLICK_STRATEGY`.
+  - Cover only ordinary NPC `verificationMode=dialog` `CLICK` action. Exclude direct-combat, Ctrl-menu fallback,
+    `Alt+C` retry, battle target clicking, and task phase/pathing semantics.
+  - Request context must use CR163 payload fields: `imagePayloadBase64`, `payloadMimeType=image/png`,
+    `imageSha256`, `windowWidth/windowHeight`, `roi`, `rawImagePath`, and `debugImageId`.
+  - Cloud active + covered request: execute only a valid cloud `CLICK` with `WINDOW_RELATIVE` click point that passes
+    window and ROI/safety validation; invalid/timeout/low-confidence/not-found/abort must no-click/fail closed and
+    must not run old local smart-click fallback.
+  - Cloud inactive/disabled: keep existing local `clickNpcSmart(...)` behavior unchanged.
+- Planned TDD:
+  - RED cloud service tests for valid `CLICK`, low confidence, invalid coordinate space, ROI/out-of-window click,
+    timeout/no response, payload contract, and inactive local passthrough.
+  - RED source/behavior guard that `NpcClickService` checks `NPC_CLICK_SMART` before old dialog pipeline and does not
+    press `Alt+C` retry for cloud-covered required failure.
+  - RED replay test that uses a repo-local `images/test-cases/npc/...` raw PNG and writes a marked output showing
+    ROI/candidate/final click point.
+- Implementation:
+  - Added `CloudDecisionServiceId.NPC_CLICK_SMART`, `NpcClickSmartCloudRequest`,
+    `NpcClickSmartCloudDecision`, and `NpcClickSmartCloudDecisionService`.
+  - `NpcClickSmartCloudDecisionService` is cloud-required/fail-closed and uses a service-specific execute gate.
+    It accepts only first-slice plain-left `CLICK` actions with `actionId`, `click=x,y`, diagnostics
+    `coordinateSpace=WINDOW_RELATIVE`, confidence >= `0.70`, and a click inside both the window and request ROI.
+    `ctrl=true`, `alt=true`, invalid schema, timeout, low confidence, `ROI_RELATIVE`, out-of-window, and out-of-ROI
+    responses expose no executable action.
+  - `NOT_FOUND`, `ABORT`, and `REQUEST_NEW_SCREENSHOT` are accepted cloud-owned no-click actions. They do not invoke
+    old local fallback.
+  - `NpcClickService.clickNpcSmart(...)` now checks `NPC_CLICK_SMART` before the old local dialog pipeline for covered
+    ordinary NPC requests: `verificationMode=dialog` and `targetRole != COMBAT_TARGET`. When active, it captures the
+    current bound window raw PNG, sends CR163 payload fields (`imagePayloadBase64`, `payloadMimeType=image/png`,
+    `imageSha256`, `windowWidth/windowHeight`, `roi`, `rawImagePath`, `debugImageId`), then executes only a
+    cloud-executed `WINDOW_RELATIVE` click through `executeMoveClickAndVerify("npcClick:smartCloudMoveClick", ...)`.
+    Cloud no-action/failure returns false without old smart-click pipeline or `Alt+C` retry.
+  - Cloud inactive/disabled path keeps the existing local `clickNpcSmart(...)` behavior unchanged.
+  - Dev sidecar now supports `NPC_CLICK_SMART`: it validates payload/window/ROI, extracts yellow NPC-name candidates
+    from the `imagePayloadBase64` payload inside the request ROI, and only returns a real `CLICK` when the candidate
+    matches request `npcName`/aliases. `localShadowClick` and synthetic marker pixels are not production authority.
+    If no target-name candidate is found, it returns `NOT_FOUND`.
+  - `.gitignore` now narrowly allows `images/test-cases/npc/**`.
+- Verification so far:
+  - RED first:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest" test`
+    failed during test compile because `NpcClickSmartCloudDecisionService` / `NpcClickSmartCloudRequest` did not
+    exist.
+  - GREEN focused:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest" test`
+    exited `0`.
+  - Final fresh verification:
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - Final focused verification:
+    `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    exited `0`.
+  - Compile:
+    `mvn -q -DskipTests compile` exited `0`.
+  - Scoped diff check:
+    `git diff --check -- ...CR165 touched files...` exited `0`; PowerShell/Git emitted only LF/CRLF conversion
+    warnings for existing Markdown/properties/source files.
+  - CR dashboard sync:
+    `node scripts/generate-cr-dashboard-data.js` was run after the CR165 card update and generated
+    `docs/cr-dashboard-data.js`.
+  - Replay/testcase evidence:
+    - Command: `mvn -q -Dtest="NpcClickSmartCloudReplayTest" test`.
+    - Input raw NPC testcase: `images/test-cases/npc/smart-cloud-dialog-raw.png`.
+    - Marked output: `images/test-cases/npc/smart-cloud-dialog-marked-click.png`.
+    - Marked output shows ROI `220,180,560,360`, candidate box `462,342,36,36`, and final
+      `WINDOW_RELATIVE CLICK 480,360`.
+- Boundary confirmation:
+  - This slice does not modify `GameStateUtil.isMovingByPixelDiff()`, 五倍/修罗 phase, Navigation, Dialog, Bag,
+    SummonSkill, CR145 queue, runner/pathing semantics, old yellow/purple/menu OCR thresholds, player-anchor formula,
+    or Ctrl menu scan/click algorithms.
+- Fresh-runtime gate:
+  - Restart DHXY and the dev sidecar.
+  - Run an ordinary NPC `verificationMode=dialog` click path and confirm `cloud.decision serviceId=NPC_CLICK_SMART
+    mode=EXECUTE` logs show redacted `imagePayloadBase64=<redacted len=... sha256=...>`.
+  - Valid cloud `CLICK` samples should execute only `npcClick:smartCloudMoveClick`; invalid/low-confidence/timeout/
+    `NOT_FOUND` samples must not run `npcClick:retry:altC-dismount`, learned-memory, tooltip, yellow OCR, formula, or
+    Ctrl fallback.
+
+CR165 P1 review repair 2026-07-02:
+
+- Review blocker:
+  - `CloudDecisionDevServer.npcClickSmartDecisionFor(...)` first read `context.localShadowClick`, then fell back to a
+    synthetic magenta marker in the testcase payload.
+  - Production `NpcClickService.buildNpcClickSmartCloudRequest(...)` does not set `localShadowClickX/Y`, and real game
+    screenshots do not contain the magenta marker.
+  - Therefore fresh runtime would likely return `NOT_FOUND` for ordinary `NPC_CLICK_SMART` dialog clicks, while the
+    covered active path forbids local fallback; ordinary NPC click could stall.
+- Repair direction:
+  - Do not add `localShadowClick` to production requests and do not make it cloud authority.
+  - Keep `localShadowClick` only as optional comparator/test override if present, but make the dev sidecar able to
+    derive a click from the payload itself.
+  - Add a no-marker, near-real yellow NPC-name replay under `images/test-cases/npc/...`, then implement sidecar
+    yellow-name candidate extraction from payload pixels and return a `WINDOW_RELATIVE` click action with a candidate
+    box.
+- Repair implementation:
+  - `CloudDecisionDevServer.npcClickSmartDecisionFor(...)` now derives `NPC_CLICK_SMART` actions from the payload
+    yellow-name path and no longer treats `context.localShadowClick` or synthetic marker pixels as executable
+    authority.
+  - The sidecar decodes `imagePayloadBase64`, scans the request ROI for yellow NPC-name-like pixel bands, groups the
+    text into a candidate box, and derives a plain `CLICK` from the yellow box center with the first-slice yellow-name
+    click offset. The response includes `candidateBox` diagnostics and `reason=dev-npc-click-yellow-name-payload`.
+  - Production `NpcClickService.buildNpcClickSmartCloudRequest(...)` was not changed to send local click coordinates.
+- RED evidence:
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` failed with
+    `NPC_CLICK_SMART` returning `NOT_FOUND` for no-marker yellow-name payloads.
+- GREEN / verification:
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` exited `0`.
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `node scripts/generate-cr-dashboard-data.js` exited `0` and regenerated `docs/cr-dashboard-data.js`.
+  - Scoped `git diff --check -- ...CR165 touched files...` exited `0`; Git emitted only LF/CRLF conversion warnings.
+- Replay/testcase evidence:
+  - New no-marker yellow NPC name input:
+    `images/test-cases/npc/smart-cloud-dialog-yellow-name-raw.png`.
+  - New marked output:
+    `images/test-cases/npc/smart-cloud-dialog-yellow-name-marked-click.png`.
+  - Marked output shows ROI `220,180,560,360`, yellow candidate box `451,397,58,27`, and final
+    `WINDOW_RELATIVE CLICK 480,360`.
+
+CR165 independent review blocker 2026-07-02:
+
+- Reviewer Leibniz verdict: P1 blocker + P2 replay gap.
+- P1:
+  - Production `NpcClickService.buildNpcClickSmartCloudRequest(...)` sends full-window ROI `0,0,1024,768`.
+  - `CloudDecisionDevServer.recognizeNpcClickYellowName(...)` scans yellow candidates in ROI and selects the max score
+    candidate without using `npcName` or target facts. With multiple yellow labels, the sidecar may click a non-target
+    NPC/name that is larger or more centered.
+  - Covered path correctly fail-closes and does not run old local fallback, but a wrong executable cloud click could
+    still pass generic option-dialog verification for callers without a specific expected dialog template.
+- Required repair:
+  - Make the dev sidecar target-aware before returning `CLICK`: match candidates to `npcName`/aliases via OCR/text or
+    an equivalent target-aware mechanism inside the sidecar/cloud path.
+  - Add multi-yellow interference replay proving target wins over non-target; add no-target negative replay proving
+    `NOT_FOUND`.
+  - Do not solve this by sending `localShadowClick` from production or echoing local smart-click output.
+- P2:
+  - Existing replay is synthetic. Fresh-runtime should later save a real game raw PNG under `images/test-cases/npc/...`
+    and mark target box plus final click.
+- Repair implementation:
+  - `CloudDecisionDevServer.recognizeNpcClickYellowName(...)` is now target-aware. It extracts every yellow candidate
+    from the full request ROI, renders request `npcName`/aliases to a normalized yellow mask, scores each candidate mask
+    against the target mask, and only accepts `targetScore >= 0.60`.
+  - `NPC_CLICK_SMART` returns `CLICK` with `candidateBox` and `targetScore` only for matched target candidates; if the
+    ROI contains yellow labels but none match the target name, the cloud action is `NOT_FOUND`.
+  - Production request construction was not changed to pass `localShadowClick`, and the production ROI was not narrowed
+    back to old local smart-click logic.
+- RED evidence:
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` first failed because the no-target
+    replay still returned `CLICK` on non-target `张闻`.
+- GREEN / verification:
+  - `mvn -q -Dtest="NpcClickSmartCloudReplayTest,CloudDecisionDevServerTest" test` exited `0`.
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest,CloudRequiredExecuteWaveConfigTest,InteractionShadowWiringTest" test`
+    exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `node scripts/generate-cr-dashboard-data.js` exited `0` and regenerated `docs/cr-dashboard-data.js`.
+  - Scoped `git diff --check -- ...CR165 touched files...` exited `0`; Git emitted only LF/CRLF conversion warnings.
+- Replay/testcase evidence:
+  - Multi-yellow input: `images/test-cases/npc/smart-cloud-dialog-multi-yellow-raw.png`.
+  - Multi-yellow marked output: `images/test-cases/npc/smart-cloud-dialog-multi-yellow-marked-click.png`.
+  - No-target input: `images/test-cases/npc/smart-cloud-dialog-no-target-raw.png`.
+  - No-target marked output: `images/test-cases/npc/smart-cloud-dialog-no-target-marked.png`.
+  - Multi-yellow marked output uses full-window ROI `0,0,1024,768`, includes target `墨意` and a larger/centered
+    non-target `张闻`, and marks final target click `WINDOW_RELATIVE CLICK 260,470`.
+  - No-target marked output shows only non-target `张闻`; request target `墨意` returns `NOT_FOUND` with no click.
+
+CR165 independent re-review 2026-07-02:
+
+- Reviewer Descartes verdict: PASS with one P2 verification risk; no P0/P1 blocker.
+- Confirmed:
+  - Covered ordinary `dialog` path enters `NPC_CLICK_SMART` before the old local pipeline and fails closed without
+    yellow OCR/formula/Ctrl/`Alt+C` fallback when cloud has no executable action.
+  - Production request sends raw PNG payload, sha, window size, full-window ROI, `npcName` and target facts; it does
+    not pass `localShadowClick` as authority.
+  - `NpcClickSmartCloudDecisionService` accepts only confidence >= `0.70`, `WINDOW_RELATIVE`, window/ROI-bounded,
+    plain-left `CLICK`.
+  - Dev sidecar filters yellow candidates by target-aware `npcName` score; multi-yellow clicks target `墨意`, and
+    no-target rejects non-target `张闻` with `NOT_FOUND`.
+- Reviewer-focused command passed:
+  - `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudReplayTest,NpcClickSmartCloudWiringGuardTest,CloudDecisionDevServerTest" test`.
+- Remaining P2:
+  - Current replay is synthetic and shares `Font.SANS_SERIF` with the sidecar-rendered target mask. Before closing
+    CR165, capture one real game raw PNG under `images/test-cases/npc/...` and write a marked output with target yellow
+    box plus final `WINDOW_RELATIVE` click.
+
+### 2026-07-02 CR164 NavigationCloud route-result payload/execute slice
+
+- Worker role: CR164 `NavigationCloud` 下一刀实现 worker；direct implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Upstream: `NO_UPSTREAM`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short` is broadly dirty before this worker starts. Relevant paths for this slice are:
+  `src/main/java/com/bot/dhxy/service/NavigationService.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecision.java`,
+  `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecisionService.java`,
+  `src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java`,
+  `src/test/java/com/bot/dhxy/cloud/task/RouteCloudDecisionServiceTest.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java`
+    shows latest pushed business baseline `e543d02` has only pre-cloud `NavigationService` changes; CR164 cloud route
+    files/tests are local migration work layered on this branch.
+  - Current `NavigationService.executeCloudRouteCandidateClick(...)` already requires
+    `routeDecision.isCloudExecuted()` and reads `routeDecision.getCloudWindowRelativeClickPoint()`.
+  - Current local-success yellow/legacy route-candidate paths already call
+    `RouteCloudDecisionService.decideRouteCandidate(...)` before input, but the shared
+    `effectiveRouteClick(routeDecision, localRelativeX, localRelativeY)` signature still accepts local comparator
+    coordinates, making the guard weaker than the desired cloud-only execute shape.
+  - Current `decideRouteCandidateClick(...)` request context includes route maps, mode, candidate source, local
+    `localWouldClick`, target coordinate/name, and request source, but does not attach the captured world-map
+    route-result ROI payload under the CR163 `imagePayloadBase64` / `payloadMimeType` / `imageSha256` / `roi`
+    contract.
+  - `CloudDecisionCoordinator.logSafeContext(...)` already redacts ordinary `cloud.decision` logs for
+    `imagePayloadBase64` by logging payload length plus `imageSha256`, so reusing that field name preserves the
+    no-base64-log rule.
+- Selected CR164 slice:
+  - Keep production route-candidate click authority cloud-only: callers must pass through
+    `RouteCloudDecisionService.decideRouteCandidate(...)`, require `decision.isCloudExecuted()`, and click only the
+    cloud `WINDOW_RELATIVE` point.
+  - Attach the captured world-map route-result ROI PNG to the `ROUTE_CANDIDATE` request context using the CR163 raw
+    image payload contract. The local yellow/OCR/candidate point remains `localDecision` / comparator context only.
+  - Keep dev sidecar response semantics as-is unless a missing guard appears: `--route-click` may echo a click, but
+    response must keep `routeDecisionId` and `diagnostics.coordinateSpace=WINDOW_RELATIVE`.
+  - Do not modify yellow recognition thresholds, candidate sorting, minimap coordinate conversion, click geometry,
+    pathing intent, pause/stop, input queue, NPC/dialog/三技能/五倍/修罗 business files.
+- Planned TDD:
+  - RED source guard in `NavigationRuntimeDecisionShadowWiringTest`: route-candidate production click helper must not
+    accept/pass local comparator coordinates as a fallback source.
+  - RED source guard in `NavigationRuntimeDecisionShadowWiringTest`: route-candidate cloud request context must include
+    CR163 image payload fields and route-result ROI context before `decideRouteCandidate(...)`.
+- Implementation:
+  - `NavigationService.effectiveRouteClick(...)` now accepts only `RouteCloudDecision` and reads
+    `routeDecision.getCloudWindowRelativeClickPoint()` directly. Local comparator coordinates are no longer passed
+    into the production click helper.
+  - `NavigationService.clickYellowDestinationAndTargetMiniMap(...)` and
+    `clickDestinationFromWorldMapSearchResults(...)` now package the captured `map_result_scan.png` route-result ROI
+    before `decideRouteCandidateClick(...)`.
+  - `decideRouteCandidateClick(...)` adds CR163 payload fields to the `ROUTE_CANDIDATE` request context when the ROI
+    image is available: `imagePayloadBase64`, `payloadMimeType=image/png`, `imageSha256`, `rawImagePath`,
+    `debugImageId`, `windowSize=1024,768`, and window-relative `roi`.
+  - Payload packing failure is logged as `navigation route candidate payload skipped...` and only omits image context;
+    it does not create a local production fallback. The existing `decision.isCloudExecuted()` guard remains required
+    before any route-candidate click.
+  - No yellow recognition threshold, candidate sorting, minimap/world-map coordinate conversion, click point
+    algorithm, fallback order, pathing intent, pause/stop, input queue, NPC/dialog/三技能/五倍/修罗 business file was
+    changed. No testcase replay is required because click math and visual matching algorithms were not changed.
+- Verification so far:
+  - RED first:
+    `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` failed with
+    `route click helper must not accept local comparator X as a fallback-capable parameter`.
+  - RED after first GREEN:
+    `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` failed with
+    `yellow route candidate must package the captured route-result ROI before cloud decision`.
+  - GREEN focused:
+    `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` exited `0`.
+  - GREEN route focused:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest" test`
+    exited `0`.
+  - GREEN CR164 route focused:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test`
+    exited `0`.
+  - GREEN compile:
+    `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java docs/ACTIVE_WORK.md
+    docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` exited `0` with only existing LF/CRLF conversion warnings.
+- Fresh-runtime gate:
+  - Restart DHXY and the local dev sidecar.
+  - Run 五倍/修罗 route paths and confirm `ROUTE_CANDIDATE mode=EXECUTE` request logs include redacted
+    `imagePayloadBase64=<redacted len=... sha256=...>` and `roi=...`; successful clicked decisions must include
+    `routeDecisionId` plus `diagnostics.coordinateSpace=WINDOW_RELATIVE`; invalid/unavailable cloud responses must
+    no-click/fail closed instead of using local yellow/OCR/candidate click points.
+- Independent reviewer PASS:
+  - No local comparator production fallback found after cloud invalid/unavailable.
+  - Ordinary `cloud.decision` logs redact `imagePayloadBase64` through `CloudDecisionCoordinator.logSafeContext(...)`.
+  - Route-result ROI is built by subtracting the window base from the captured screen rect, producing
+    window-relative ROI; no obvious screen/window coordinate mixup found.
+  - No evidence this slice changed yellow recognition/sorting, mini-map conversion, click math, pathing intent,
+    pause/stop/input queue, NPC/dialog/三技能/五倍/修罗 business flow.
+  - Remaining CR164 work: fresh runtime, cloud-owned mini-map transform, complete route memory/outcome/retry strategy,
+    and future dynamic ROI/window-size contract.
+
+### 2026-07-02 CR164 reviewer P2 route-candidate id contract repair
+
+- Worker role: CR164 `NavigationCloud` worker; direct P2 repair, no commit.
+- Reviewer P2: previous slice correctly preserved `routeDecisionId` once present, but the upstream
+  `ROUTE_CANDIDATE CLICKED` contract still allowed a clicked cloud response without `routeDecisionId`.
+  That can still create an executable click with an empty pending/outcome attribution chain.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Upstream: `NO_UPSTREAM`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` remains broadly dirty before this worker starts. Relevant paths for this repair are:
+  `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecisionService.java`,
+  `src/test/java/com/bot/dhxy/cloud/task/RouteCloudDecisionServiceTest.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `RouteCloudDecisionService.parseCandidate(...)` currently requires `click` for
+    `ROUTE_CANDIDATE status=CLICKED`, but does not require `routeDecisionId`.
+  - `CloudDecisionDevServer.routeDecisionFor(...)` currently returns a `routeDecisionId` for
+    `ROUTE_MEMORY` override clicks, but the `ROUTE_CANDIDATE` override branch returns only
+    `mode=...;candidateSource=...;status=CLICKED;click=...;reason=dev-route-click-override`.
+  - Existing `RouteCloudDecisionServiceTest.testRouteCandidateValidCloudExecuteUsesCloudClickAndRetainsLocalShadow()`
+    still uses a clicked candidate response without id and expects `CLOUD_EXECUTED`.
+  - Existing `CloudDecisionDevServerTest.routeCandidateOverrideReturnsCloudClickDifferentFromLocal()` still expects
+    a clicked candidate response without id.
+- Repair scope:
+  - Require nonblank `routeDecisionId` when `ROUTE_CANDIDATE status=CLICKED`.
+  - Make dev sidecar route-candidate clicked override emit a stable deterministic id.
+  - Update focused tests and docs only. Do not modify yellow recognition/sorting, minimap coordinate conversion,
+    click coordinates, fallback order, NPC/dialog/battle/tracker/task-policy/input queue, or Navigation click flow.
+- Planned TDD:
+  - RED first in `RouteCloudDecisionServiceTest`: clicked candidate with valid click but missing id is
+    `CLOUD_REJECTED_NO_CLICK`, not `CLOUD_EXECUTED`, and reject reason contains `routeDecisionId`.
+  - RED first in `CloudDecisionDevServerTest`: route candidate override response must include
+    `routeDecisionId=dev-rd-route-candidate-...`.
+- Implementation:
+  - `RouteCloudDecisionService.parseCandidate(...)` now requires nonblank `routeDecisionId` whenever
+    `ROUTE_CANDIDATE status=CLICKED` has a valid click. Missing id becomes
+    `CLOUD_REJECTED_NO_CLICK`; it does not expose an executable cloud click.
+  - `CloudDecisionDevServer.routeDecisionFor(...)` now emits stable route-candidate ids in override mode:
+    `dev-rd-route-candidate-<traceId>`.
+  - Updated route-candidate clicked tests to include id in valid cloud-execute samples and to keep a dedicated
+    missing-id rejection guard.
+  - No Navigation click flow, yellow recognition/sorting, minimap coordinate conversion, click coordinates,
+    fallback order, NPC/dialog/battle/tracker/task-policy/input queue code was changed.
+- Verification:
+  - RED first:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest" test` failed with:
+    `status expected=CLOUD_REJECTED_NO_CLICK actual=CLOUD_EXECUTED` for missing-id candidate, and the
+    dev sidecar response lacking `routeDecisionId`.
+  - GREEN focused:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest" test` exited `0`.
+  - GREEN route/cloud required set:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test`
+    exited `0`.
+  - GREEN compile:
+    `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check -- src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecisionService.java
+    src/test/java/com/bot/dhxy/cloud/task/RouteCloudDecisionServiceTest.java
+    src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java
+    src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java docs/ACTIVE_WORK.md
+    docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` exited `0` with only existing LF/CRLF conversion warnings.
+- Fresh-runtime gate:
+  - Restart DHXY and the local dev sidecar.
+  - Route-candidate clicked samples should now log an effective cloud decision containing
+    `routeDecisionId=...`; missing-id `CLICKED` responses should be rejected/no-click with reason
+    `routeDecisionId is required when ROUTE_CANDIDATE status=CLICKED`.
+- Main/reviewer follow-up:
+  - Independent reviewer PASS: missing-id `ROUTE_CANDIDATE CLICKED` now fails closed; `NOT_FOUND` / `SKIP` /
+    `FAILED` no-click responses remain legal without id; no negative impact found on `ROUTE_MEMORY`,
+    Navigation click coordinates/sorting/fallback, or Runner outcome.
+  - Updated `WorldMapRouteResultPendingMemory.routeDecisionId` JavaDoc to reflect that pending ids may come from
+    either cloud `ROUTE_MEMORY HIT` or cloud `ROUTE_CANDIDATE CLICKED`.
+
+### 2026-07-02 CR165/CR166 first-slice scoping review
+
+- Review role: cloud migration read-only reviewer; no Java changes.
+- CR165 first slice:
+  - Existing `NPC_CLICK_STRATEGY` only authorizes local strategy and is not the final release shape.
+  - First implementation should introduce a real `NpcClickSmartCloud` action protocol and cover only
+    `verificationMode=dialog` ordinary NPC `CLICK`; direct-combat, Ctrl menu fallback, and `Alt+C` retry should be
+    split later.
+  - Hidden local fallback to learned memory, tooltip, yellow OCR, formula, or Ctrl is forbidden for the covered path.
+  - Because a production cloud click is executed, testcase replay/marked output under `images/test-cases/npc/...`
+    is required.
+- CR166 first slice:
+  - First implementation should add `SUMMON_SKILL` / `SummonSkillCloud` single-slot tooltip/slot-status recognition,
+    hooking `SummonSkillService.inspectCurrentHoverTip(...)`.
+  - Cloud-active path should upload raw tooltip ROI and return slot status/action reason; failure is
+    `UNKNOWN`/fail-closed, with no local `washYellowText` / template fallback.
+  - Keep CR145 queue, window open/hover, input queue, pause/stop, and outcome reporting local.
+  - Visual recognition changes require tooltip raw testcase and marked ROI/status output; delete/confirm click points
+    require separate replay when that slice is implemented.
+
+### 2026-07-02 CR166 SummonSkillCloud first-slice worker baseline
+
+- Worker role: CR166 `SummonSkillCloud` first-slice implementation worker; direct implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Upstream: `NO_UPSTREAM`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant paths for this slice are:
+  `src/main/java/com/bot/dhxy/service/SummonSkillService.java`,
+  `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionServiceId.java`,
+  new `src/main/java/com/bot/dhxy/cloud/task/SummonSkillCloud...` files,
+  focused cloud/service tests, `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/service/SummonSkillService.java
+    src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java
+    src/test/java/com/bot/dhxy/service/TaskMaintenanceSummonSkillQueueWiringTest.java
+    src/test/java/com/bot/dhxy/service/TaskMaintenanceSummonSkillUnknownBackoffTest.java
+    src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud` shows large local migration
+    work layered above pushed `origin/dev`; cloud framework files are local to this branch.
+  - Current `SummonSkillService.inspectCurrentHoverTip(...)` still calls
+    `captureAndWashYellowTipOnce("slot_tip", ...)`, then local yellow pixel threshold and
+    `matchYellowTemplateInScan(...)` for `LOCKED_SLOT` / `EMPTY_SLOT` / `NORMAL_SKILL` / `KEEP_SKILL`.
+  - Current local diff for `SummonSkillService` already contains CR145/CR154-era queue, locked-boundary,
+    tail-cache, and `InputActionScope.checkpoint()` changes. CR166 must preserve those and only replace the
+    covered single-slot status recognition authority when cloud is active.
+- Slice design:
+  - Add `SUMMON_SKILL` cloud service id and a small `SummonSkillCloudDecisionService`.
+  - Hook only `inspectCurrentHoverTip(...)`: capture/upload raw tooltip ROI using CR163 fields
+    `imagePayloadBase64`, `payloadMimeType`, `imageSha256`, `windowSize`, and `roi`.
+  - When `SUMMON_SKILL` cloud execute/STOP is active, accepted high-confidence cloud status maps to existing
+    `SummonSkillSlotStatus`; timeout, invalid schema, mismatched service, unsupported status, or low confidence
+    returns `UNKNOWN` and must not call local yellow washing/template fallback.
+  - When cloud is inactive for this service, keep the existing local path unchanged for now.
+  - This slice does not change `deleteSkillAtSlotDirect(...)`, delete/confirm click points, CR145 queue budget,
+    enqueue/dequeue/move-tail/backoff semantics, 五倍/修罗 task flow, Navigation/NPC/Dialog, or three-skill
+    deletion coordinates.
+- Worker update 2026-07-02:
+  - Added `CloudDecisionServiceId.SUMMON_SKILL`, `SummonSkillCloudRequest`,
+    `SummonSkillCloudDecision`, and `SummonSkillCloudDecisionService`.
+  - `SummonSkillService.inspectCurrentHoverTip(...)` now checks `SUMMON_SKILL` cloud activity before
+    `captureAndWashYellowTipOnce("slot_tip", ...)`; the cloud-covered path captures the raw tooltip ROI,
+    uploads `imagePayloadBase64` / `payloadMimeType` / `imageSha256` / `windowSize` / `roi`, and returns the
+    accepted cloud slot status. Cloud timeout, low confidence, invalid status/schema, missing payload, or invalid
+    ROI returns `UNKNOWN` / fail-closed and does not call local `washYellowText` or template fallback.
+  - Cloud inactive path keeps the existing local yellow wash/template classification unchanged.
+  - Dev sidecar default response supports `SUMMON_SKILL` schema-valid fail-closed responses.
+  - RED evidence:
+    `mvn -q -Dtest="SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,CloudDecisionDevServerTest" test`
+    first failed at test compile because `SummonSkillCloudRequest` / `SummonSkillCloudDecisionService` did not exist.
+  - GREEN evidence:
+    `mvn -q -Dtest="SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest" test`
+    exited `0`.
+  - Replay/testcase evidence:
+    - Command: `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest" test`.
+    - Input raw tooltip testcase:
+      `images/test-cases/summon-skill/single-slot-tooltip-raw.png`.
+    - Marked output:
+      `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`.
+    - Marked output shows ROI `100,200,237,123`, cloud `slotStatus=NORMAL_SKILL`, and `action=DELETE`.
+  - Combined local verification:
+    `mvn -q -Dtest="SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,SummonSkillCloudTooltipReplayTest,CloudDecisionDevServerTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest" test`
+    exited `0`.
+  - Compile:
+    `mvn -q -DskipTests compile` exited `0`.
+  - Fresh-runtime gate:
+    restart DHXY and dev sidecar, run one summon-skill maintenance pass, and confirm
+    `cloud.decision serviceId=SUMMON_SKILL mode=EXECUTE` logs show redacted
+    `imagePayloadBase64=<redacted len=... sha256=...>`, valid cloud status/action/reason, and failures return
+    `UNKNOWN` without local washed/template fallback or delete-click escalation.
+
+- Follow-up blocker repair 2026-07-02:
+  - Root cause: `CloudDecisionDevServer.summonSkillDecisionFor(...)` still read `slotStatus` from
+    `localDecision`, while production `SummonSkillCloudDecisionService` sends the fixed local shadow
+    `slotStatus=UNKNOWN;action=RETRY;reason=local-shadow`; a fresh dev sidecar run would therefore always return
+    `UNKNOWN` and keep the three-skill cleaner fail-closed.
+  - Repair: test-scope dev sidecar now decodes `context.imagePayloadBase64` into
+    `images/temp/cloud-dev/summon-skill/...`, runs `ImagePreprocessor.washYellowText(...)` inside the sidecar
+    process, and matches existing `images/template/zhaohuanshou/status_*.png` templates with the old threshold.
+    Mapping is `sealed|unobtained -> LOCKED_SLOT/KEEP`,
+    `inactive -> EMPTY_SLOT/KEEP`, `normal -> NORMAL_SKILL/DELETE`,
+    `high|ultimate -> KEEP_SKILL/KEEP`, and no match/decode failure -> `UNKNOWN/RETRY`.
+  - RED:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest" test`
+    failed with sidecar response
+    `slotStatus=UNKNOWN;action=RETRY;reason=dev-local-summon-skill` and replay `actual=UNKNOWN`.
+  - GREEN:
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest" test`
+    passed after real payload/template recognition; replay log showed
+    `cloudDecision=slotStatus=NORMAL_SKILL;action=DELETE;reason=dev-summon-skill-template-normal`.
+  - Additional sidecar coverage:
+    `CloudDecisionDevServerTest.summonSkillMapsStatusTemplatesToSlotStatusAndAction` covers all six committed
+    status templates and proves the sidecar no longer echoes the `UNKNOWN` local shadow decision.
+  - Replay/testcase evidence remains:
+    command `mvn -q -Dtest="SummonSkillCloudTooltipReplayTest" test`, input
+    `images/test-cases/summon-skill/single-slot-tooltip-raw.png`, marked output
+    `images/test-cases/summon-skill/single-slot-tooltip-marked-normal-skill.png`.
+
+- Final review close-out 2026-07-02:
+  - Reviewer Poincare: PASS_WITH_NOTES；未发现 P0/P1/P2 blocker，提醒新增 cloud task/test files 和
+    `images/test-cases/summon-skill/**` 提交时必须一起纳入。
+  - Reviewer Socrates: PASS；确认 dev sidecar 不再 echo local `UNKNOWN`，而是读取
+    `imagePayloadBase64` payload、洗黄字并匹配 `status_*.png`，normal/high/ultimate/sealed/unobtained/inactive
+    的 mapping 符合 CR166。
+  - 谢帅复核：
+    `mvn -q -Dtest="CloudDecisionDevServerTest,SummonSkillCloudTooltipReplayTest,SummonSkillCloudDecisionServiceTest,SummonSkillCloudWiringGuardTest,TaskMaintenanceSummonSkillQueueWiringTest,TaskMaintenanceSummonSkillUnknownBackoffTest" test`
+    exited `0`；`mvn -q -DskipTests compile` exited `0`。
+  - Scoped `git diff --check` for CR166 touched files produced only existing LF/CRLF warnings and no whitespace error.
+  - Remaining gate: fresh runtime must show `cloud.decision serviceId=SUMMON_SKILL mode=EXECUTE`,
+    redacted `imagePayloadBase64=<redacted len=... sha256=...>`, at least one normal skill
+    `slotStatus=NORMAL_SKILL;action=DELETE`, and no local washed/template fallback in the active covered path.
+
+### 2026-07-02 CR164 NavigationCloud route-candidate outcome slice
+
+- Worker role: CR164 `NavigationCloud` worker; direct implementation, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Upstream: `NO_UPSTREAM`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant paths for this slice are:
+  `src/main/java/com/bot/dhxy/service/NavigationService.java`,
+  `src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java`,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js`.
+  This worker must not reset, checkout, revert, or overwrite unrelated local/parallel work.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java ...` shows only pushed
+    `NavigationService` / `WindowTaskRunner` changes; the cloud route files and focused cloud tests are local
+    migration work layered on this branch.
+  - Current `NavigationService` already requires `CLOUD_EXECUTED` before executing route candidate clicks.
+  - Current route candidate success paths do not consistently preserve the cloud `routeDecisionId` into
+    `NavigationRuntimeState.lastWorldMapRouteDecisionId`: yellow OCR success and cloud-after-local-failure
+    helpers set it to `null`, while one legacy OCR path already copies `routeDecision.getRouteDecisionId()`.
+  - Runner settlement can report cloud success/failure with a route id, or downgrade id-less non-memory success to
+    `LEARN_CANDIDATE`. Losing a cloud candidate id weakens CR164 failure attribution even though cloud chose the click.
+- Selected CR164 slice:
+  - Carry an existing `ROUTE_CANDIDATE` cloud `routeDecisionId` from successful cloud-executed candidate clicks into
+    the pending world-map route token.
+  - Do not change yellow OCR, route-result candidate sorting, minimap/world-map coordinate conversion, click geometry,
+    fallback order, NPC/dialog/battle/tracker/task-policy/maintenance code, or input queue behavior.
+  - No testcase replay is required because this slice does not change any visual matching or click target algorithm;
+    it only preserves an existing cloud decision id for outcome reporting.
+- Planned TDD:
+  - RED focused source guard in `NavigationRuntimeDecisionShadowWiringTest` requiring route-candidate success helpers
+    to assign `state.lastWorldMapRouteDecisionId = routeDecision.getRouteDecisionId()`.
+  - GREEN with a narrow `NavigationService` assignment-only change.
+- Implementation:
+  - `NavigationService.executeCloudLegacyRouteCandidateClick(...)` and
+    `executeCloudYellowDestinationRouteCandidateClick(...)` now receive the cloud `routeDecisionId` from
+    `executeCloudRouteCandidateClick(...)` and store it in `state.lastWorldMapRouteDecisionId` after a successful
+    cloud-executed candidate click.
+  - `NavigationService.clickYellowDestinationAndTargetMiniMap(...)` now stores
+    `routeDecision.getRouteDecisionId()` after a successful yellow OCR route-candidate click instead of clearing the
+    pending id.
+  - This preserves the existing cloud click and local safety/confirmation flow; it does not change OCR/template,
+    candidate sorting, minimap coordinate conversion, click coordinates, fallback order, or input sequence behavior.
+- Verification:
+  - RED first:
+    `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` failed with
+    `cloud-after-local-failure route candidate helpers must receive the cloud routeDecisionId`.
+  - GREEN focused:
+    `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` exited `0`.
+  - GREEN route/cloud focused:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test`
+    exited `0`.
+  - GREEN cloud suite:
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - GREEN compile:
+    `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java docs/ACTIVE_WORK.md
+    docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` exited `0` with only existing LF/CRLF conversion warnings.
+- Fresh-runtime gate:
+  - Restart DHXY and the local dev sidecar before validation.
+  - Run 五倍/修罗 route paths and check that `ROUTE_CANDIDATE mode=EXECUTE` successful samples produce
+    `[world-map-route-memory] pending created ... routeDecisionId=...`, followed by Runner
+    `cloud route-memory outcome report ... routeDecisionId=...`.
+
+### 2026-07-02 CR162-CR166 cloud core migration cards
+
+- 本轮只做 CR 立项和边界记录，不改 Java 业务代码。
+- 已按用户确认的近期目标新增：
+  - CR162：云端核心资产迁移总卡；
+  - CR163：`ImagePreprocessCloud` 洗字/图像预处理；
+  - CR164：`NavigationCloud` 导航决策；
+  - CR165：`NpcClickSmartCloud` 全链路 NPC 点击策略；
+  - CR166：`SummonSkillCloud` 三技能识别与处理。
+- 第一批只覆盖上面四个明确 service；`DialogCloud`、`TrackerCloud`、`BagItemCloud`、五倍/修罗
+  phase brain / face / task-plan 迁移留到第一批实测通过后再讨论。
+- 立卡依据：`docs/run-reports/2026-07-02-cloud-core-inventory.md` 和
+  `docs/HYBRID_CLOUD_WORKFLOW.md` section `26. Cloud Asset / Vision Boundary Decisions` /
+  `27. CR162-CR166 First Cloud Core Migration Wave`。
+- 因更新 CR row/card，已触发 dashboard 同步要求；本轮需要运行
+  `node scripts/generate-cr-dashboard-data.js`。
+
+### 2026-07-02 cloud vision / washing boundary decision
+
+- 用户明确：`ImagePreprocessor` 级别的洗字/图像预处理是核心资产，发布 runtime 不能留在本地。
+  黄字、绿字、白字、紫字等 washed image 处理，以及依赖 washed image 的模板匹配/指纹/候选抽取，
+  都应迁到云端。本地只负责截图、裁剪、上传 raw image/ROI、窗口相对坐标安全校验和真实输入。
+- 三技能后续 CR 边界：本地打开面板、hover、截图；云端洗 tooltip、识别槽位状态、决定删除/保留/重试、
+  返回动作和窗口相对坐标。生产路径不能继续调用本地 `washYellowText` 或本地三技能状态模板匹配作为 fallback。
+- Navigation 后续 CR 边界：本地可以打开地图、输入、滚动、执行点击和等待 pathing；云端必须决定世界地图黄色
+  候选点击、小地图点击点、route candidate/memory/地图转换策略。生产路径不能保留可用的黄字洗图、
+  候选排序或地图转换资产 fallback。
+- NPC click smart 后续 CR 边界：本地只传当前窗口 raw image/ROI、target facts 和上一次尝试结果；
+  云端负责 ROI 裁剪、洗图、黄字/紫字/菜单识别、目标候选、首点公式、Ctrl 菜单 fallback、retry 状态机，
+  并返回普通点击/`Ctrl`+点击/快捷键+点击/重新截图/终止等受限动作。本地只执行动作、验证结果并把失败反馈给云端，
+  不保留旧 smart-click 识别和 fallback 状态机作为生产 fallback。
+- 已补流程纠偏：后续任何云端化 CR 立项前，谢帅/main agent 必须先主动做核心资产盘点，把涉及的
+  视觉识别、洗字、模板/指纹、候选排序、坐标转换、fallback 状态机、学习记忆、失败归因分成
+  `cloud-required / local-safety-only / transitional-local`，不再等用户逐项指出。
+- 详细记录已写入 `docs/HYBRID_CLOUD_WORKFLOW.md` section `26. Cloud Asset / Vision Boundary Decisions`。
+
+### CR-HC-018 cloud-required execute wave manager baseline
+
+- 当前角色：谢帅 manager/reviewer。用户已明确调整云端化策略：不要再一项一项 shadow/灰度让用户反复重启测试；
+  改为把已决定云端化的 runtime decision 一次性切成 cloud-required execute，本地原结果只作为 shadow comparator。
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current local HEAD before CR-HC-018 dispatch: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Worktree is broadly dirty with many unrelated local/parallel changes. Workers must not reset, checkout, revert,
+  or rewrite unrelated files.
+- CR-HC-018 plan is recorded in `docs/HYBRID_CLOUD_WORKFLOW.md` section
+  `25. CR-HC-018 Cloud-Required Execute Wave`.
+- Wave services:
+  - `TASK_CLASSIFIER`, `TASK_POLICY`, `TASK_RECOVERY`;
+  - `TRACKER_LINK_RANKER`, `ROUTE_CANDIDATE`, `ROUTE_MEMORY`;
+  - `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`;
+  - `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY`;
+  - `FAILURE_CLASSIFIER`, `FEATURE_FLAG`, `POLICY_VERSION`.
+- New contract:
+  - cloud execute is the authority for wave services;
+  - local decision remains logged as comparator only;
+  - cloud unavailable/invalid/rejected must produce explicit no-action/failure/no-click, not hidden local fallback;
+  - physical input/screenshot/OCR/template/Runner remains local and must stay behind service-specific gates.
+- Worker split:
+  - Foundation: common cloud-required semantics, config profile, dev sidecar coverage, source guards.
+  - Task-flow: `TASK_CLASSIFIER`, `TASK_POLICY`, `TASK_RECOVERY`.
+  - Navigation: `ROUTE_CANDIDATE`, `ROUTE_MEMORY`, route-memory outcome/learn/migration, navigation `POLICY_VERSION`.
+  - Interaction: `TRACKER_LINK_RANKER`, `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`.
+  - Team/maintenance/diagnostics: `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY`,
+    `FAILURE_CLASSIFIER`, `FEATURE_FLAG`.
+  - Helper review: whole-wave audit for hidden local fallback, unsafe generic execute, input/click geometry changes,
+    and config coverage.
+- Main verification target after workers:
+  - focused worker tests;
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`;
+  - `mvn -q -DskipTests compile`;
+  - `git diff --check`;
+  - dashboard sync only if `docs/PACKAGE_ARCHITECTURE.md` is touched.
+
+#### CR-HC-018 global review helper pass
+
+- Review result: FAIL / P1. Most wave config and service-specific STOP gates look correct, but 五倍黄袍续战
+  still has tracker-green click paths that can execute local clicks without `TRACKER_LINK_RANKER` authority.
+- P1 evidence:
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java:4602-4608`
+    `continueChainedCombatFromTracker(...)` reads `panel.getGreenLinks().get(0)` and calls
+    `clickTaskTrackerGreen(context, segment, "chained-combat-" + combatCount, 1)` with no
+    `TrackerLinkRankerCloudDecision`.
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java:3057-3062` the overload forwards
+    `cloudDecision=null`; `clickTaskTrackerGreen(...)` then falls back to randomized local point and queues
+    `InputAction.clickLeft(...)`.
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java:4403-4446` and `:4616-4642` the cached chained
+    tracker fast path verifies a `PreparedDialogAction` derived from tracker-panel green link evidence and then
+    queues `InputAction.clickLeft(...)` directly, with no cloud gate in between.
+- Repair direction: before either chained tracker green click path queues input, call
+  `TrackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` (or a dedicated fast-action
+  equivalent) and require `isCloudExecuted()`; cloud no-click/required failure must skip the click and expose
+  a task-visible failure/no-click. If this changes the cached click point semantics, add testcase replay for the
+  tracker green-link/cached-action point.
+- No P0 found. `CloudDecisionCoordinator.EXECUTABLE_SERVICES` remains narrow (`TASK_CLASSIFIER` only);
+  `ROUTE_CANDIDATE`, `ROUTE_MEMORY`, `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`,
+  `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, and `TEAM_RETURN_POLICY` use service-specific gates.
+- Verification run by review helper:
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -Dtest="CloudRequiredExecuteWaveConfigTest,CloudDecisionCoordinatorTest,TrackerLinkRankerCloudShadowServiceTest,RouteCloudDecisionServiceTest,NpcClickStrategyCloudDecisionServiceTest,DialogPolicyCloudDecisionServiceTest,CapabilityGateCloudDecisionServiceTest,TaskMaintenanceCloudRequiredFailureTest,TeamReturnCloudRequiredFailureTest" test` exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `git diff --check -- <cloud/config/reviewed task-flow files>` exited `0` with LF/CRLF conversion warnings only.
+
+#### CR-HC-018 P1 wubei chained tracker worker baseline before edits
+
+- Worker role: CR-HC-018 P1 修复 worker；只处理五倍黄袍续战 tracker 绿字绕过
+  `TRACKER_LINK_RANKER` authority 的问题，不改其它业务逻辑、OCR/template/ROI/click geometry。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts, including unrelated local/parallel changes in many Java,
+  config, docs, and image paths. This worker must not reset, checkout, revert, or rewrite unrelated files.
+- Relevant current-code evidence before edits:
+  - `WubeiTask.clickTaskTrackerGreen(context, segment, label, attempt)` still forwards
+    `cloudDecision=null`, so callers can bypass the existing `TRACKER_LINK_RANKER` gate.
+  - `continueChainedCombatFromTracker(...)` directly selects `panel.getGreenLinks().get(0)` and calls the
+    null-overload `clickTaskTrackerGreen(context, segment, "chained-combat-" + combatCount, 1)`.
+  - `clickCachedChainedTrackerGreen(...)` registers chained dialog interest and directly queues
+    `InputAction.moveMouse/clickLeft` against `PreparedDialogAction.absoluteX/Y`, with no
+    `shadowTrackerLinkSelection(...)` call.
+  - Existing non-chained tracker paths already call
+    `trackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` and pass a
+    `TrackerLinkRankerCloudDecision` into `clickTaskTrackerGreen(...)`.
+- Planned RED/GREEN:
+  - RED source guard in `TrackerLinkRankerCloudShadowWiringTest` proving the two chained paths are currently
+    missing `shadowTrackerLinkSelection(...)`, and the null overload remains a bypass.
+  - GREEN with narrow `WubeiTask` edits only: require cloud decision for tracker green clicks, send cached
+    `PreparedDialogAction` as a temporary `TaskTrackerGreenLink` candidate/comparator, require
+    `cloudDecision.isCloudExecuted()` plus resolvable cloud window-relative click before any input queue click,
+    and clear chained dialog interest on cloud no-click/failure.
+  - No testcase replay planned because this pass must not change click geometry/template/OCR/ROI algorithms;
+    if click point calculation changes beyond using existing cloud-authority coordinates, mark replay required.
+- Implementation:
+  - `WubeiTask.clickTaskTrackerGreen(...)` no longer has the null `cloudDecision` overload. A tracker-green
+    click now requires `TrackerLinkRankerCloudDecision.isCloudExecuted()` and a resolvable cloud
+    window-relative point via the existing `resolveTrackerCloudAbsolutePoint(...)`; null, local passthrough,
+    no-click, required failure, invalid, timeout, and unavailable cloud all return false before input.
+  - `continueChainedCombatFromTracker(...)` now sends the full post-combat chained tracker green candidate to
+    `trackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` with phase
+    `wubei-chained-combat-tracker`, then passes the returned decision into `clickTaskTrackerGreen(...)`.
+  - `clickCachedChainedTrackerGreen(...)` now builds a one-point temporary `TaskTrackerGreenLink` candidate
+    from the cached `PreparedDialogAction` absolute click, carries the validation rect in logs/comparator
+    context, calls `shadowTrackerLinkSelection(...)` with phase `wubei-chained-combat-fast`, clears chained
+    dialog interest and returns false when cloud does not execute or the cloud point cannot be resolved, and
+    only queues input at the cloud-authoritative absolute point.
+  - No OCR/template/ROI matching algorithm or click geometry formula was changed. The only authority change is
+    that 五倍 tracker green click execution now uses the existing cloud window-relative click gate.
+- Verification:
+  - RED: after updating `TrackerLinkRankerCloudShadowWiringTest`, `mvn -q -DskipTests test-compile; java -cp "target/test-classes;target/classes" com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest`
+    failed as expected with `expected=5 actual=3`.
+  - GREEN: `mvn -q -DskipTests test-compile` exited `0`.
+  - GREEN: `java -cp "target/test-classes;target/classes" com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest`
+    exited `0`.
+  - GREEN: `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,InteractionShadowWiringTest" test`
+    exited `0`.
+  - GREEN: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+  - Testcase replay status: not required; this pass did not change visual matching, OCR/template/ROI, or local
+    click-point geometry algorithms.
+
+#### CR-HC-018 main verification after P1 repair
+
+- Main review after the focused P1 worker confirmed the cached 黄袍续战 `PreparedDialogAction` is still
+  passed as a screen-absolute `TaskTrackerGreenLink`; `TrackerLinkRankerCloudShadowService` subtracts
+  `windowBase` before sending `selectedWindowClick`, so the cloud response remains window-relative.
+- Source scan confirmed `application.properties` has every CR-HC-018 wave service configured as
+  `shadow-enabled=true`, `execute-enabled=true`, `execute-percent=100`, and `fallback=STOP`, with
+  `cloud.default-fallback=STOP` and `cloud.dev-sidecar.auto-start-enabled=true`.
+- Verification passed in main thread:
+  - `mvn -q -DskipTests test-compile`
+  - `java -cp "target/test-classes;target/classes" com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest`
+  - `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,InteractionShadowWiringTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -Dtest="MainWindowControllerCloudSidecarGateSourceGuardTest,CloudDecisionDevSidecarServiceTest,TaskMaintenanceCR138LocalSupportCapabilityTest,AutoCombatCR138FirstAidOnlyCommonBoxGuardTest,CR148LocalTeamSessionInvalidationWiringTest,TeamReturnPrecheckWiringTest,WubeiCR136FastExitLifecycleWiringTest,XiuluoCR147ReturnItemRetryStateMachineWiringTest,WindowTaskRunnerPostCombatIdleWatchdogWiringTest" test`
+  - Scoped `git diff --check` only printed LF/CRLF conversion warnings.
+- Fresh runtime remains pending: restart DHXY so Spring loads the CR-HC-018 config and sidecar wiring, then run
+  combined 五倍/修罗. Expected logs are `cloud.decision ... mode=EXECUTE`, service-specific `executed=true`
+  for accepted cloud responses, and explicit `required failure` / no-click / no-action when cloud is invalid
+  or unavailable.
+
+#### CR-HC-018 Interaction worker baseline before edits
+
+- Worker role: CR-HC-018 Interaction implementation worker；只处理
+  `TRACKER_LINK_RANKER`、`NPC_CLICK_STRATEGY`、`DIALOG_POLICY` 的 cloud-required execute 行为，
+  不碰 `NavigationService`、`TaskMaintenanceService`、`TeamReturnService`、route memory、
+  OCR/template/click geometry math。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts. Relevant dirty files already present in this pass:
+  - `src/main/java/com/bot/dhxy/service/DialogService.java`
+  - `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  Worker must not reset, checkout, revert, or rewrite unrelated local/parallel changes.
+- Relevant baseline evidence:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud` or
+    `src/test/java/com/bot/dhxy/cloud` tree; current cloud framework is local migration work and must stay
+    behind service-specific gates.
+  - Current branch config already has `cloud.default-fallback=STOP`, and
+    `tracker-link-ranker`, `npc-click-strategy`, `dialog-policy` are all
+    `shadow-enabled=true`, `execute-enabled=true`, `execute-percent=100`, `fallback=STOP`.
+  - Current `TrackerLinkRankerCloudShadowService` already has a dedicated
+    window-relative click gate and returns `CLOUD_REJECTED_NO_CLICK` for invalid/timeout/schema mismatch
+    cases; this worker must ensure required execute failure uses `isRequiredExecuteFailure()` and does not
+    become local passthrough.
+  - Current 五倍/修罗 tracker-link consumers already skip local clicks for `cloudDecision.isNoClick()`;
+    五倍 also has chained/cached green-link paths that must not bypass the cloud authority.
+  - Current `NpcClickService` reports `NPC_CLICK_STRATEGY` through fire-and-forget
+    `RuntimeDecisionShadowService.shadow(...)` after a local `NpcClickStrategyResult`; it does not yet gate
+    whether the next local strategy/input may run.
+  - Current `DialogService.finishRequest(...)` calls `DialogPolicyCloudDecisionService.decide(...)` after
+    the local `DialogResult` is already built. Therefore this pass can make STOP required failure return an
+    effective failed/no-click result, but must not claim it prevents a click already performed earlier in
+    `handleDialog`.
+  - Current `DialogPolicyCloudDecisionService` still maps invalid/timeout/unavailable execute outcomes to
+    `CLOUD_REJECTED_LOCAL` with the original local clicked result as effective; CR-HC-018 requires an
+    effective failed/no-click result instead when `CloudDecisionResult.isRequiredExecuteFailure()` is true.
+- Planned RED/GREEN:
+  - RED tracker test proving required execute failure returns no local link/no-click.
+  - RED NPC tests proving required failure/invalid/timeout stops the local strategy gate and the
+    `NpcClickService` source no longer depends on fire-and-forget shadow-only behavior.
+  - RED dialog test proving required failure returns a failed/no-click `DialogResult`, not the clicked local result.
+  - GREEN with narrow cloud task service/gate edits, `NpcClickService` strategy-gate integration,
+    `DialogPolicy` required-failure mapping, dev sidecar default if needed, and docs notes only.
+  - No testcase replay is planned because this pass must not change actual click coordinates, ROI, template
+    matching, OCR matching, or strategy order; if any such change becomes necessary, stop and mark replay required.
+- Implementation:
+  - `TrackerLinkRankerCloudShadowService.keepsLocalPassthrough(...)` now checks
+    `CloudDecisionResult.isRequiredExecuteFailure()` first, so execute-required/STOP failures are always
+    `CLOUD_REJECTED_NO_CLICK` and never local link passthrough.
+  - Added `NpcClickStrategyCloudDecision` and `NpcClickStrategyCloudDecisionService` as a narrow
+    `NPC_CLICK_STRATEGY` execute gate. The gate only accepts `ALLOW_LOCAL_STRATEGY` or
+    `SELECT_CANDIDATE;candidateId=local-strategy` for the current local strategy name; it rejects raw
+    coordinate fields, ROI fields, unsupported actions, mismatched strategy/verification, low confidence,
+    timeout, schema mismatch, and unavailable cloud as no-click under STOP.
+  - `NpcClickService` now injects `NpcClickStrategyCloudDecisionService` and calls
+    `authorizeNpcClickStrategy(...)` before each local strategy/input path:
+    learned memory, tooltip template, yellow-target OCR, player-anchor formula, formula-immediate Ctrl probe,
+    and final Ctrl menu. It no longer reports `NPC_CLICK_STRATEGY` through fire-and-forget
+    `RuntimeDecisionShadowService`.
+  - `DialogPolicyCloudDecisionService` now maps `isRequiredExecuteFailure()` to
+    `DialogPolicyCloudDecision.Status.CLOUD_REJECTED_NO_CLICK` with an effective
+    `DialogResultStatus.FAILED` / `clicked=false` result. The original local clicked result remains on
+    `localResult` only for comparator/logging. This hook is still after the local dialog handler builds the
+    result, so it does not claim to prevent clicks already performed before `finishRequest(...)`.
+  - Dev sidecar now returns schema-valid default `NPC_CLICK_STRATEGY` decisions:
+    `action=ALLOW_LOCAL_STRATEGY;strategy=<local/context strategy>;candidateId=local-strategy`.
+- Verification:
+  - RED: focused interaction command first failed at test compile because
+    `NpcClickStrategyCloudDecisionService` did not exist.
+  - GREEN focused: `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,DialogPolicyCloudDecisionServiceTest,NpcClickStrategyCloudDecisionServiceTest,InteractionShadowWiringTest,CloudDecisionDevServerTest" test`
+    exited `0`.
+  - GREEN compile: `mvn -q -DskipTests compile` exited `0`.
+  - Full cloud suite: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` failed only in
+    `TaskRecoveryCloudDecisionServiceTest.testMismatchedRecoveryActionReturnsNoRecovery`, expecting reject
+    reason text `action must match local recovery candidate` while actual was
+    `execute gate rejected: action is not allowed: restart-round`. This is outside Interaction worker scope
+    and was not modified here.
+  - GREEN cloud suite excluding that known non-Interaction failure:
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test,!TaskRecoveryCloudDecisionServiceTest" test` exited `0`.
+  - GREEN scoped whitespace/source checks:
+    `git diff --check -- <interaction touched files>` exited `0` with only LF/CRLF conversion warnings;
+    local source guards confirmed no `RuntimeDecisionShadowService` remains in `NpcClickService`, required
+    failure checks exist in tracker/dialog, and all NPC strategy paths call `authorizeNpcClickStrategy(...)`.
+  - Testcase replay status: not required for this worker pass because no click coordinates, ROI/template
+    matching, OCR matching, or click geometry math changed.
+
+#### CR-HC-018 Foundation worker baseline before edits
+
+- Worker role: CR-HC-018 Foundation worker；只实现 cloud-required execute wave 公共基础，
+  不改五倍/修罗/NPC/导航/对话/维护/回队等业务流程文件。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts, including many unrelated local/parallel changes.
+  Worker must not reset, checkout, revert, or overwrite unrelated files.
+- Owned write scope for this pass:
+  - `src/main/java/com/bot/dhxy/cloud/decision/*`
+  - `src/main/resources/application.properties` cloud lines only
+  - `src/test/java/com/bot/dhxy/cloud/**/*`
+  - `src/test/java/com/bot/dhxy/ui/*` sidecar tests only if needed
+  - `docs/ACTIVE_WORK.md` / `docs/HYBRID_CLOUD_WORKFLOW.md` implementation notes only
+- Relevant baseline evidence:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud` or `src/test/java/com/bot/dhxy/cloud` tree;
+    the current cloud framework is local migration work and must remain behind service-specific gates.
+  - Current `CloudDecisionCoordinator` has a generic `EXECUTABLE_SERVICES` allowlist containing only
+    `CloudDecisionServiceId.TASK_CLASSIFIER`, plus a service-specific `CloudDecisionExecutionGate` hook.
+  - Current failure paths in `CloudDecisionCoordinator.unavailable(...)` still set `effectiveDecision`
+    to the local decision even when fallback is `STOP`; CR-HC-018 requires a visible required-failure state
+    so dedicated services cannot treat cloud-required failure as local fallback.
+  - Current `application.properties` cloud block has `cloud.default-fallback=LOCAL`; several wave services are
+    still `execute-enabled=false`, `execute-percent=0`, or `fallback=LOCAL`.
+  - Current dev sidecar has rich defaults for `TASK_POLICY`, `DIALOG_POLICY`, `TRACKER_LINK_RANKER`,
+    `ROUTE_CANDIDATE`, and `ROUTE_MEMORY`; other wave services depend on generic echo behavior and need
+    schema-valid coverage for branch tests.
+- Planned RED/GREEN:
+  - RED focused tests for `CloudDecisionResult.isRequiredExecuteFailure()` and STOP fallback semantics:
+    cloud unavailable/empty/schema mismatch/gate reject / generic not-executable must be visible as required
+    failure and must not expose the local decision as `effectiveDecision`.
+  - RED config/source guards proving all CR-HC-018 wave services are configured
+    `shadow=true`, `execute=true`, `execute-percent=100`, `fallback=STOP`, and that the coordinator generic
+    executable allowlist is not widened to all wave services.
+  - RED dev sidecar test proving every wave service can return a schema-valid default response.
+  - GREEN with narrow cloud-decision/config/test edits only; no screenshot/OCR/template/input/navigation
+    business behavior changes.
+- Implementation:
+  - Added `CloudDecisionResult.isRequiredExecuteFailure()` as the common readable required-failure signal.
+    It is true only when `mode=EXECUTE`, `fallbackMode=STOP`, and `executed=false`.
+  - Updated `CloudDecisionCoordinator` so required execute failures keep `localDecision` for comparator/logging
+    but set `effectiveDecision=null`; this covers cloud unavailable/client exception, empty response, schema
+    mismatch, execute-gate rejection, percent miss, and generic not-executable services under `STOP`.
+  - Kept `CloudDecisionCoordinator.EXECUTABLE_SERVICES` narrow (`TASK_CLASSIFIER` only) and kept
+    service-specific `CloudDecisionExecutionGate` as the safe path for `DIALOG_POLICY`, route decisions,
+    tracker/NPC/team/maintenance/domain workers, etc.
+  - Set the CR-HC-018 branch wave config in `application.properties`: global `cloud.default-fallback=STOP`;
+    all wave services have `shadow-enabled=true`, `execute-enabled=true`, `execute-percent=100`, and
+    `fallback=STOP`.
+  - Added/updated cloud source guards:
+    `CloudDecisionCoordinatorTest`, `CloudRequiredExecuteWaveConfigTest`,
+    `CloudDecisionDevServerTest`, `InteractionShadowWiringTest`, and
+    `NavigationRuntimeDecisionShadowWiringTest`.
+  - Dev sidecar coverage now proves every wave service can return a schema-valid default response for branch
+    tests; existing rich service defaults for task policy, dialog policy, tracker link ranker, route candidate,
+    and route memory remain intact.
+  - No 五倍/修罗/五环 task flow, screenshot, OCR, template, input, navigation, NPC/dialog, maintenance,
+    team-return, or click-coordinate business code was changed by this worker.
+- Verification:
+  - RED: `mvn -q -Dtest="CloudDecisionCoordinatorTest,CloudRequiredExecuteWaveConfigTest,CloudDecisionDevServerTest#junitRunsMainSuite" test`
+    failed at test compile because `CloudDecisionResult.isRequiredExecuteFailure()` did not exist.
+  - GREEN focused: same command exited `0`.
+  - First cloud-package run exposed old CR-HC-011 rollback-safe config guards in
+    `InteractionShadowWiringTest` and `NavigationRuntimeDecisionShadowWiringTest`; those test expectations
+    were updated to CR-HC-018 execute-required/STOP config.
+  - GREEN: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+
+#### CR-HC-018 Team/Maintenance worker baseline before edits
+
+- Worker role: CR-HC-018 Team/Maintenance implementation worker；只处理
+  `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY` 的 cloud-required execute 行为，
+  `FEATURE_FLAG` / `FAILURE_CLASSIFIER` 仅保留 diagnostic-only 记录。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts. Relevant dirty/local paths before edits:
+  - `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`
+  - `src/main/java/com/bot/dhxy/service/TeamReturnService.java`
+  - `src/test/java/com/bot/dhxy/service/TaskMaintenanceCR138LocalSupportCapabilityTest.java`
+  - untracked `src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java`
+  Worker must not reset, checkout, revert, or rewrite unrelated files.
+- Owned write scope for this pass:
+  - `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`
+  - `src/main/java/com/bot/dhxy/service/TeamReturnService.java`
+  - new `src/main/java/com/bot/dhxy/cloud/task/*CapabilityGateCloudDecision*`
+  - new `src/main/java/com/bot/dhxy/cloud/task/*MaintenanceThresholdCloudDecision*`
+  - new `src/main/java/com/bot/dhxy/cloud/task/*TeamReturnPolicyCloudDecision*`
+  - focused cloud tests and existing CR138/TeamReturn/TaskMaintenance tests as needed
+  - `docs/ACTIVE_WORK.md` / `docs/HYBRID_CLOUD_WORKFLOW.md` implementation notes only.
+- Relevant baseline evidence:
+  - `origin/dev` has no cloud package and no Worker-D cloud hooks in these services.
+  - `origin/dev:TaskMaintenanceService` already had `runOpportunisticMaintenance(...)`,
+    `handleMaintenanceBroadcast(...)`, and `maybeCleanSummonSkill(...)` with local statuses only;
+    `origin/dev:TaskMaintenanceStatus` did not include any cloud-required failure value.
+  - Current local `TaskMaintenanceService` already contains shadow-only
+    `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, `FAILURE_CLASSIFIER`, and `FEATURE_FLAG` reporting,
+    plus CR138/CR148 local-team/session guards. Those local guards must remain authoritative and
+    cloud may only narrow them.
+  - `origin/dev:TeamReturnService` directly clicked the member return button through
+    `inputSequences.submitAndWait(...)` and returned true/false from local template checks; current local
+    `TeamReturnService` adds shadow-only `TEAM_RETURN_POLICY` / `FAILURE_CLASSIFIER` reporting and leader
+    precheck support.
+  - Current `RuntimeDecisionWorkerDShadowWiringTest` still asserts Worker-D services are shadow-only and
+    do not read `CloudDecisionResult`; CR-HC-018 requires updating that guard to service-specific execute
+    gates while keeping `FEATURE_FLAG` / `FAILURE_CLASSIFIER` diagnostic-only.
+- Planned RED/GREEN:
+  - RED `CapabilityGateCloudDecisionServiceTest`: local false + cloud allow stays denied; local true + cloud
+    allow permits; required unavailable/invalid denies.
+  - RED maintenance test: required `MAINTENANCE_THRESHOLD` failure returns explicit cloud-required failure and
+    does not call downstream maintenance action.
+  - RED team-return test: required `TEAM_RETURN_POLICY` failure denies member click/no input and fails leader
+    wait/precheck instead of returning success/continue.
+  - GREEN with narrow service-specific cloud gates; no Wubei/Xiuluo/navigation/NPC/dialog/input queue/OCR/template
+    or click-geometry edits.
+- Implementation:
+  - Added dedicated `CAPABILITY_GATE`, `MAINTENANCE_THRESHOLD`, and `TEAM_RETURN_POLICY` cloud decision wrappers
+    under `src/main/java/com/bot/dhxy/cloud/task`. They call `CloudDecisionCoordinator.shadow(...)` with a
+    service-specific execute gate and use `CloudDecisionResult.isRequiredExecuteFailure()` to convert
+    STOP/execute failures into deny/no-action/failure decisions instead of local fallback.
+  - `CAPABILITY_GATE`: `TaskMaintenanceService.awaitLocalTeamSupportCapabilityOpen(...)` now applies
+    `effective allow = localAllowed && cloudAllow`. Local stale/closed/completed/session-disabled CR138/CR148
+    denials stay local denials and cannot be revived by cloud `ALLOW`; cloud unavailable/invalid/required failure
+    denies the capability.
+  - `MAINTENANCE_THRESHOLD`: `TaskMaintenanceService.runOpportunisticMaintenance(...)` now checks the cloud
+    threshold before downstream maintenance actions. Cloud `ALLOW` can permit the already-local enabled action;
+    `SKIP` / `NO_ACTION` return no-action; required failure returns explicit
+    `TaskMaintenanceStatus.CLOUD_REQUIRED_FAILURE` and does not call dialog/summon maintenance actions.
+  - `TEAM_RETURN_POLICY`: `TeamReturnService` gates member return-button clicking before `ensureSheYaoXiangActive`
+    and before `inputSequences.submitAndWait(...)`. Required failure/deny returns false with no click. Leader
+    wait required failure returns false, and leader precheck required failure returns a conclusive
+    `cloud-required-failure` status instead of inconclusive local continuation.
+  - `FEATURE_FLAG` and `FAILURE_CLASSIFIER` remain diagnostic-only business call sites. The source guard checks
+    that `TaskMaintenanceService` / `TeamReturnService` do not inject behavior-controlling feature/failure
+    decision services.
+  - Added `TaskMaintenanceStatus.CLOUD_REQUIRED_FAILURE`. This is the only model-file scope expansion in this
+    worker; it is needed so maintenance required failure is visible to callers/logs instead of being hidden as
+    local `NO_ACTION`.
+  - Existing CR138/CR148 and common-box/first-aid invariants were preserved: stale/closed/completed local sessions
+    cannot be revived by cloud, FIRST_AID does not imply COMMON_BOX/TEAM_RETURN, and common-box priority tests
+    still pass.
+  - No WubeiTask, XiuluoTaskV2, NavigationService, NpcClickService, DialogService, input queue internals,
+    OCR/template/click geometry, or physical click-coordinate logic was changed.
+- Verification:
+  - RED: `mvn -q -Dtest="CapabilityGateCloudDecisionServiceTest,TaskMaintenanceCloudRequiredFailureTest,TeamReturnCloudRequiredFailureTest" test`
+    first failed because the three dedicated cloud decision services did not exist.
+  - GREEN focused:
+    `mvn -q -Dtest="CapabilityGateCloudDecisionServiceTest,TaskMaintenanceCloudRequiredFailureTest,TeamReturnCloudRequiredFailureTest" test`
+    exited `0`.
+  - GREEN source guards:
+    `java -cp 'target/test-classes;target/classes' com.bot.dhxy.cloud.runtime.RuntimeDecisionWorkerDShadowWiringTest`
+    and
+    `java -cp 'target/test-classes;target/classes' com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowWaveWiringTest`
+    both exited `0`.
+  - GREEN CR138/CR148 guard set:
+    `mvn -q -Dtest="TaskMaintenanceCR138LocalSupportCapabilityTest,AutoCombatCR138FirstAidOnlyCommonBoxGuardTest,CR148LocalTeamSessionInvalidationWiringTest" test`
+    exited `0`.
+  - GREEN cloud suite: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - GREEN compile: `mvn -q -DskipTests compile` exited `0`.
+
+#### CR-HC-018 Navigation worker baseline before edits
+
+- Worker role: CR-HC-018 Navigation implementation worker；只收紧 `ROUTE_MEMORY`、`ROUTE_CANDIDATE`
+  的 cloud-required execute 消费语义，以及导航 `POLICY_VERSION` 诊断说明。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts. Relevant existing dirty/untracked files for this pass are:
+  - `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecision.java`
+  - `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecisionService.java`
+  - `src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/task/RouteCloudDecisionServiceTest.java`
+  - optional owned route candidate/memory parts of `CloudDecisionDevServerTest`
+  - optional owned outcome guard in `WindowTaskRunnerRouteMemoryOutcomeWiringTest`
+  - `docs/ACTIVE_WORK.md` / `docs/HYBRID_CLOUD_WORKFLOW.md` implementation notes
+  Worker must not reset, checkout, revert, or overwrite unrelated local/parallel changes.
+- Relevant baseline evidence:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud` or `src/test/java/com/bot/dhxy/cloud` tree.
+  - `origin/dev:NavigationService` has no `RouteCloudDecision`, `ROUTE_CANDIDATE`, `ROUTE_MEMORY`, or
+    `effectiveRouteClick(...)`; the current route cloud gates are local migration work on this branch.
+  - Current local `RouteCloudDecision.effectiveWindowRelativeClickPoint()` returns the local click for
+    non-cloud-executed decisions. Under CR-HC-018 this is unsafe unless the caller has already proven
+    `CLOUD_EXECUTED`.
+  - Current local `NavigationService.clickDestinationFromWorldMapSearchResults(...)` and yellow route candidate
+    path only stop on `routeDecision.isNoClick()`. A `LOCAL_PASSTHROUGH` decision can still execute the local
+    OCR/黄字 route click when execute is required.
+  - Current local memory fast paths already require `routeDecision.isCloudExecuted()` before clicking, but the
+    rejection branch attempts legacy migration for every no-click/reject reason; CR-HC-018 only allows local
+    clean memory as comparator/migration facts, not as direct click authority.
+  - Current local `RouteCloudDecisionService` accepts `ROUTE_MEMORY` `MISS`/`DISABLED`/`ERROR` and
+    `ROUTE_CANDIDATE` `NOT_FOUND`/`SKIP`/`FAILED` as cloud-executed null-click decisions, but the envelope status
+    does not clearly distinguish accepted cloud no-click from required execute failure/unavailable.
+  - `CloudDecisionResult.isRequiredExecuteFailure()` is available from the Foundation worker and should be used by
+    route service/tests to prove STOP does not expose local passthrough.
+- Planned RED/GREEN:
+  - RED focused tests in `RouteCloudDecisionServiceTest` for required `STOP`: unavailable/schema/gate reject must be
+    no-click with `isRequiredExecuteFailure()` and must not return `LOCAL_PASSTHROUGH`; `ROUTE_MEMORY` `MISS` must be
+    distinguishable from unavailable as an accepted cloud no-click.
+  - RED source/behavior guard in `NavigationRuntimeDecisionShadowWiringTest` proving local OCR/黄字 route candidate
+    success no longer clicks unless the route decision is `CLOUD_EXECUTED`.
+  - GREEN with narrow route decision/navigation edits only: keep OCR/template/click geometry/math unchanged, route
+    only through existing cloud gates, and log `POLICY_VERSION` as diagnostic-only.
+  - No testcase replay is planned because this worker must not change click math, ROI, or coordinate conversion.
+- Implementation:
+  - Added `RouteCloudDecision.Status.CLOUD_NO_CLICK` and `isCloudNoClick()` so accepted cloud no-click decisions
+    (`ROUTE_MEMORY` `MISS`/`DISABLED`/`ERROR`, `ROUTE_CANDIDATE` `NOT_FOUND`/`SKIP`/`FAILED`) are distinguishable
+    from required execute failure / gate rejection.
+  - `RouteCloudDecision.effectiveWindowRelativeClickPoint()` no longer falls back to the local comparator click.
+    Only `CLOUD_EXECUTED` exposes an effective click.
+  - `RouteCloudDecisionService` now returns `CLOUD_NO_CLICK` when cloud execute accepted a null-click decision, and
+    keeps `CLOUD_REJECTED_NO_CLICK` for unavailable/schema/gate reject/invalid HIT required failures.
+  - `NavigationService` yellow and legacy route-candidate local success paths now require
+    `routeDecision.isCloudExecuted()` before any OCR/黄字 click is executed. `LOCAL_PASSTHROUGH`,
+    `CLOUD_NO_CLICK`, rejected, invalid, unavailable, and null decisions all become no-click/failure.
+  - `NavigationService` memory fast paths may still submit legacy clean memory as migration facts when a rejected
+    HIT is missing `routeDecisionId`, but the migration result is not assigned back as current-click authority.
+    The current navigation continues to cloud-required route candidate/failure instead of clicking local memory.
+  - Navigation `POLICY_VERSION` shadow now logs/sends `diagnosticOnly=true` and a note that it does not control
+    navigation behavior.
+  - No Wubei/修罗/NPC/dialog/maintenance/team-return code, OCR/template algorithms, click geometry, ROI, or coordinate
+    conversion was changed.
+- Verification:
+  - RED: `mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest" test` failed at
+    test compile because `RouteCloudDecision.Status.CLOUD_NO_CLICK` and `isCloudNoClick()` did not exist.
+  - RED: manual focused `NavigationRuntimeDecisionShadowWiringTest` failed on the source guard proving migration
+    must not assign `routeDecision = migratedDecision;` for current-click authority.
+  - GREEN focused workaround for dirty worktree testCompile:
+    `javac -encoding UTF-8 -cp "target/classes;<test-cp>" -d target/cr-hc-018-test-classes ...` for
+    `CloudDecisionDevServer`, `RouteCloudDecisionServiceTest`, and `NavigationRuntimeDecisionShadowWiringTest`
+    exited `0`; running both test main suites exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` is blocked by unrelated/parallel missing classes:
+    `CapabilityGateCloudDecisionService`, `TaskRecoveryCloudDecisionService`,
+    `TeamReturnPolicyCloudDecisionService`, and `MaintenanceThresholdCloudDecisionService`.
+  - No testcase replay was required because this pass did not change click math, ROI, or coordinate conversion.
+
+#### CR-HC-018 Task-flow worker baseline before edits
+
+- Worker role: CR-HC-018 Task-flow implementation worker；只实现 `TASK_CLASSIFIER` / `TASK_POLICY` /
+  `TASK_RECOVERY` 的 cloud-required execute 行为，不改 Foundation、导航、NPC、对话、维护、回队、
+  输入、OCR、模板或点击几何。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts. Relevant already-dirty files in this worker scope include
+  `TaskTrackerPanelService.java`, `WubeiTask.java`, `XiuluoTaskV2.java`, `docs/ACTIVE_WORK.md`, and untracked
+  `src/main/java/com/bot/dhxy/cloud/**` / `src/test/java/com/bot/dhxy/cloud/**`. Worker must not reset,
+  checkout, revert, or overwrite unrelated local/parallel changes.
+- Relevant baseline evidence:
+  - `origin/dev` has no `src/main/java/com/bot/dhxy/cloud` or `src/test/java/com/bot/dhxy/cloud` tree.
+  - `origin/dev:TaskTrackerPanelService` returns local `TaskTrackerPanelReadResult.empty()` / local found results;
+    current local migration has `applyTaskClassifierDecision(...)`, but it returns the local found result when
+    cloud is not executed or when the cloud key is unsupported.
+  - `origin/dev:WubeiTask.recoverRoundAfterFailure(...)` recovers locally to `ROUTE_TO_MAIN_TASK` until the
+    recovery limit. Current local migration only shadows `TASK_RECOVERY`; it does not require cloud acceptance
+    before local recovery.
+  - `origin/dev:XiuluoTaskV2.retryCurrentOrRecover(...)` / `recoverOrFail(...)` retry or recover locally.
+    Current local migration only shadows `TASK_RECOVERY`; it does not require cloud acceptance before retry/recover.
+  - Current local `TaskPolicyCloudDecisionService` logs `TASK_POLICY execute rejected; keep local outcome` and
+    `TaskPolicyCloudDecision.CLOUD_REJECTED_LOCAL` still carries local effective result/yield/next. CR-HC-018
+    requires required failure or gate rejection to become a visible terminal task failure, not local recovery.
+- Planned RED/GREEN:
+  - RED focused tests for `TASK_CLASSIFIER`: required execute failure / unsupported key must return not-found,
+    while accepted supported cloud key may replace the local title key.
+  - RED focused tests for `TASK_POLICY`: required execute failure and STOP-mode gate rejection must not keep local
+    result/yield/next as the effective outcome.
+  - RED focused tests for `TASK_RECOVERY`: cloud unavailable/required failure must return no-recovery / terminal
+    failure, not local `ROUTE_TO_MAIN_TASK`, retry-current, restart, or recover fallback.
+  - GREEN with narrow task-flow cloud decision/test edits only; no screenshot/OCR/template/input/navigation/NPC/dialog
+    click-coordinate behavior changes.
+- Implementation:
+  - `TaskTrackerPanelService.applyTaskClassifierDecision(...)` now treats
+    `CloudDecisionResult.isRequiredExecuteFailure()` as cloud-required not-found and also rejects unsupported
+    executed task keys as not-found. Accepted supported keys may replace the local task title while preserving
+    the local OCR/template evidence paths and coordinates.
+  - `TaskPolicyCloudDecision` now has `CLOUD_REQUIRED_FAILURE`. `TaskPolicyCloudDecisionService` returns that
+    terminal policy result for required execute failure or STOP-mode gate rejection, with effective
+    `TaskTransactionResult.RETRYABLE_ERROR`, `TaskYieldPolicy.MUST_YIELD`, and terminal task phase `FAILED`.
+    Local `STOPPED`/pause safety remains local passthrough.
+  - Added `TaskRecoveryCloudDecision` / `TaskRecoveryCloudDecisionService` as the narrow `TASK_RECOVERY`
+    execute gate. It may only authorize the local candidate action/next phase; cloud unavailable, schema
+    mismatch, required failure, unsupported action, mismatched action, or arbitrary next phase returns no recovery.
+  - `WubeiTask` and `XiuluoTaskV2` now require `TASK_RECOVERY` cloud acceptance before local retry/restart/recover
+    wrappers run. Required failure returns a terminal failed task state/outcome instead of local
+    `ROUTE_TO_MAIN_TASK`, retry-current, restart, or recover fallback.
+  - Dev sidecar now returns strict schema-valid `TASK_RECOVERY` responses:
+    `action=<local action>;next=<local next>;reason=dev-local-task-recovery`.
+  - No `NavigationService`, `NpcClickService`, `DialogService`, `TaskMaintenanceService`, `TeamReturnService`,
+    input, OCR, template, or click-geometry code was changed by this worker.
+- Verification:
+  - RED: initial focused command
+    `mvn -q -Dtest="TaskClassifierCloudShadowServiceTest,TaskPolicyCloudDecisionServiceTest,TaskRecoveryCloudDecisionServiceTest,CloudDecisionDevServerTest#junitRunsMainSuite" test`
+    failed at test compile while `TaskRecoveryCloudDecisionService` did not yet exist; the same run also saw
+    unrelated dirty-worktree missing cloud service classes from parallel CR-HC-018 workers.
+  - GREEN focused main suites: `TaskClassifierCloudShadowServiceTest`,
+    `TaskPolicyCloudDecisionServiceTest`, `TaskRecoveryCloudDecisionServiceTest`, and
+    `CloudDecisionDevServerTest` all exited `0` when run from compiled focused test classes.
+  - GREEN source guards: `TaskPolicyExecuteWiringTest`, `TaskStrategyCloudShadowWiringTest`, and
+    `TaskClassifierCloudExecuteWiringTest` exited `0`.
+  - GREEN full cloud package: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - GREEN compile: `mvn -q -DskipTests compile` exited `0`.
+  - GREEN scoped whitespace checks: `git diff --check -- <task-flow touched tracked files>` exited `0`
+    with only LF/CRLF conversion warnings, and a read-only trailing-whitespace scan over scoped untracked cloud/doc
+    files found no trailing whitespace.
+  - Testcase replay status: not required for this worker pass because no visual matching, OCR/template matching,
+    route/NPC/dialog click target, or click-coordinate geometry changed.
+
+### CR161 P2 follow-up route-dialog world-map gate baseline
+
+- Worker role: CR161 P2 follow-up worker；只修独立 review 指出的
+  `routeDialogGateBeforeWorldMap(...)` 二级 world-map gate source ownership 漏判，不扩展到视觉/点击/战斗/维护路径。
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before CR161 P2 edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed baseline available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts. Relevant existing dirty files for this pass are:
+  - `src/main/java/com/bot/dhxy/service/NavigationService.java`
+  - untracked `src/test/java/com/bot/dhxy/service/NavigationCR161PathingIntentOwnershipGuardTest.java`
+  - CR docs/dashboard files if the card/validation record is updated.
+  Worker must not reset, checkout, revert, or rewrite unrelated local/parallel changes.
+- Relevant baseline evidence:
+  - First CR161 implementation already changed `navigateToMap(...)` stale-cache duplicate decisions to use
+    `isActivePathingIntentCompatibleWithRequest(intent, targetMapName, source)`.
+  - `isActivePathingIntentCompatibleWithRequest(...)` requires same target map and source compatibility through
+    `isPathingSourceCompatibleForDuplicate(...)`, where active source must equal request source or start with
+    `requestSource + ":"`.
+  - Independent review P2 remains valid because `shouldYieldForRouteDialogBeforeWorldMap(...)` still derives
+    `sameTargetIntent` only from target map, and `isFreshSameTargetRoutePending(...)` still accepts only
+    `(runtime, targetMapName, now, requireActiveState)`. A same-map active
+    `xiuluo-v2:start-exit-prepath:*` intent can therefore be treated as the same route pending for a later
+    `xiuluo-v2:target` request.
+  - `routeDialogGateBeforeWorldMap(...)` currently calls
+    `shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source + ":" + reason)` and then
+    `isFreshSameTargetRoutePending(runtime, targetMapName, System.currentTimeMillis(), true)`, so the final
+    `PATHING_STARTED` decision does not yet pass the original request source into the same ownership policy.
+  - `origin/dev:NavigationService` does not include the CR161 helper/test and has the older target-only
+    watcher-active behavior; current dirty local code is the migration baseline for this follow-up, but business
+    behavior must remain limited to source-aware duplicate ownership.
+- Planned RED/GREEN:
+  - RED first by extending `NavigationCR161PathingIntentOwnershipGuardTest` so it fails until the route-dialog
+    world-map gate passes request source into `isFreshSameTargetRoutePending(...)` and uses
+    `isActivePathingIntentCompatibleWithRequest(...)` for same-target pending/yield decisions.
+  - GREEN with a narrow `NavigationService` edit only: reuse the existing CR161 compatibility rule for
+    `shouldYieldForRouteDialogBeforeWorldMap(...)` and `isFreshSameTargetRoutePending(...)`.
+- Implementation:
+  - Extended `NavigationCR161PathingIntentOwnershipGuardTest` to cover the P2 gap:
+    `shouldYieldForRouteDialogBeforeWorldMap(...)` must use source-aware ownership, and
+    `routeDialogGateBeforeWorldMap(...)` must pass request source into `isFreshSameTargetRoutePending(...)`.
+  - `NavigationService.shouldYieldForRouteDialogBeforeWorldMap(...)` now accepts original request `source`
+    separately from diagnostic `logSource`. Ownership checks use the original source only.
+  - `freshActiveRoutePending`, visible dialog route-yield, and task-attention route-yield now require
+    `isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source)`.
+  - `isFreshSameTargetRoutePending(...)` now accepts `requestSource` and rejects same-target active intents
+    owned by a different source, including `xiuluo-v2:start-exit-prepath:*` vs `xiuluo-v2:target`.
+  - No OCR/template/click/minimap coordinate, jitter, CR77 fire-and-handoff input sequence, tracker, NPC/dialog,
+    battle, return-item, or maintenance code was changed.
+- Verification:
+  - RED: `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` failed on
+    `route-dialog world-map gate must reuse CR161 target/source-aware active intent ownership`.
+  - GREEN: `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` exited `0`.
+  - GREEN: `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest" exec:java` exited `0`.
+  - GREEN: `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationWorldMapRouteMemoryIntentOwnershipTest" exec:java` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+  - Dashboard sync: `node scripts/generate-cr-dashboard-data.js` exited `0` and regenerated `docs/cr-dashboard-data.js`.
+  - GREEN: `git diff --check -- src/main/java/com/bot/dhxy/service/NavigationService.java src/test/java/com/bot/dhxy/service/NavigationCR161PathingIntentOwnershipGuardTest.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    exited `0` with only LF/CRLF conversion warnings and no whitespace error.
+  - 唐德 P2 复核重跑：CR161 focused guard、CR77 fire-and-handoff guard、route-memory ownership guard、
+    `mvn -q -DskipTests compile`、`mvn -q -DskipTests test-compile`、scoped `git diff --check` 均通过。
+  - Fresh runtime gate remains: run 修罗 no-maintenance/非灵兽村目标 round and confirm formal
+    `xiuluo-v2:target` / target map intent registration; any old prepath terminal should remain unrelated.
+
+### CR-HC-017 DialogPolicy execute candidate gate manager baseline
+
+- 当前角色：谢帅 manager/reviewer。按用户要求继续推进云端化，不等待 CR-HC-016 单独 fresh runtime；本卡只定义边界并派 worker 做 Java 实现，谢帅不直接写 Java 业务代码。
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current local HEAD before CR-HC-017 card/worker dispatch: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree before CR-HC-017 is broadly dirty with many unrelated local/parallel changes. Worker must not reset,
+  checkout, revert, or rewrite unrelated files. Relevant expected files are primarily:
+  - `src/main/java/com/bot/dhxy/service/DialogService.java`
+  - narrow cloud task/decision classes under `src/main/java/com/bot/dhxy/cloud/...`
+  - focused cloud/runtime tests under `src/test/java/com/bot/dhxy/cloud/...`
+  - optional local dev sidecar test endpoint only if needed for deterministic dialog-policy execute tests.
+- Relevant current source evidence:
+  - `DialogService.finishRequest(...)` already calls `shadowDialogPolicy(request, result)` after the local
+    `DialogResult` is built and before returning it.
+  - `RuntimeDecisionShadowService` is intentionally fire-and-forget and does not return a cloud decision, so worker
+    must not globally turn every shadow hook into executable behavior.
+  - `CloudDecisionCoordinator` default executable service allowlist currently includes only `TASK_CLASSIFIER`; if
+    `DIALOG_POLICY` becomes executable it needs a service-specific gate or explicit narrowly tested allowlist change.
+  - `docs/HYBRID_CLOUD_WORKFLOW.md` CR-HC-011 recorded `DIALOG_POLICY` shadow-only behavior through
+    `InteractionShadowWiringTest`.
+- Planned CR-HC-017 direction:
+  - Promote `DIALOG_POLICY` from shadow-only to a narrow execute candidate gate.
+  - Cloud may select only from locally built / locally safe dialog actions or return `USE_LOCAL_RESULT` / `REJECT`.
+  - Cloud must not return naked click coordinates, must not directly control input, and must not change dialog
+    OCR/template/click-coordinate algorithms.
+  - Invalid/timeout/unavailable cloud response must keep the original local `DialogResult`.
+  - Default config stays rollback-safe with execute disabled unless explicitly enabled.
+- Required worker verification:
+  - RED first focused tests.
+  - `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests compile`
+  - `git diff --check`
+- Fresh-runtime gate after implementation:
+  - Restart DHXY and the dev sidecar.
+  - Run 五倍 + 修罗 dialog-heavy paths.
+  - Confirm `DIALOG_POLICY` logs show execute/shadow samples with `elapsedMs`, `executed`, accepted/reject reason,
+    and fallback behavior; no dialog option/click behavior should change unless cloud returned a valid local candidate.
+
+#### CR-HC-017 worker baseline before Java/test edits
+
+- Worker role: CR-HC-017 DialogPolicy Cloud Execute Candidate Gate Java implementation worker; direct code/test repair, no commit.
+- Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree is broadly dirty before this worker starts, including unrelated task/input/navigation/UI/config/test changes.
+  Worker must not reset, checkout, revert, or overwrite unrelated files.
+- Relevant baseline evidence:
+  - Current local `DialogService.finishRequest(...)` confirms pending smart-click proof, calls
+    `shadowDialogPolicy(request, result)`, logs, and returns the same local `DialogResult`.
+  - Current local `shadowDialogPolicy(...)` uses `RuntimeDecisionShadowService.shadow(...)` with
+    `CloudDecisionServiceId.DIALOG_POLICY`, context fields from `DialogHandleRequest`, local result
+    `status/type/actionKey/clicked`, and click fields for diagnostics only.
+  - `origin/dev:DialogService.finishRequest(...)` only logs and returns the local `DialogResult`; the cloud
+    runtime decision classes are not present under `origin/dev`.
+  - `CloudDecisionCoordinator` has service-specific `CloudDecisionExecutionGate` support, but its generic
+    `EXECUTABLE_SERVICES` allowlist still contains only `TASK_CLASSIFIER`. CR-HC-017 should use a
+    DIALOG_POLICY-specific narrow gate rather than adding DIALOG_POLICY to that generic allowlist.
+  - `application.properties` already keeps rollback-safe defaults:
+    `cloud.services.dialog-policy.shadow-enabled=true`,
+    `cloud.services.dialog-policy.execute-enabled=false`,
+    `cloud.services.dialog-policy.execute-percent=0`, and
+    `cloud.services.dialog-policy.fallback=LOCAL`.
+- Planned RED tests:
+  - Add focused `DialogPolicyCloudDecisionServiceTest` for `USE_LOCAL_RESULT`, `SELECT_CANDIDATE`,
+    invalid candidate fallback, timeout/disabled fallback, default execute-disabled behavior, and ignoring any
+    cloud-supplied raw coordinate fields.
+  - Update `InteractionShadowWiringTest` so the default remains execute-disabled while `DialogService` may call a
+    dedicated DIALOG_POLICY execute gate.
+
+Implementation:
+
+- Added `src/main/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecision.java` and
+  `src/main/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionService.java`.
+- `DialogPolicyCloudDecisionService` is DIALOG_POLICY-only and uses a dedicated `CloudDecisionExecutionGate`.
+  It does not import/use `InputProvider`, `InputSequences`, `CoordinateHelper`, `ImageFinder`, OCR, template classes,
+  and does not call click/move/submit methods.
+- `DialogService.finishRequest(...)` now keeps the local `DialogResult` first, calls
+  `dialogPolicyCloudDecisionService.decide(request, result)`, and logs/returns the effective result. This worker did
+  not reorder `handleDialog(...)` branches and did not edit OCR/template/click/fallback methods.
+- First execute version exposes one local safe candidate: `candidateId=local-result`. Cloud may return
+  `USE_LOCAL_RESULT`, `SELECT_CANDIDATE;candidateId=local-result`, or `REJECT`; every accepted effective result is
+  still the locally built `DialogResult`.
+- Fallback-to-local is covered for invalid candidate, unknown action, raw coordinate fields (`click`,
+  `relativeClick`, `absoluteClick`, `coordinateSpace`, etc.), operation/option-policy/action-key/status/type mismatch,
+  low confidence, timeout/client failure, empty/schema mismatch, disabled/default execute, and explicit `REJECT`.
+- `RuntimeDecisionShadowService` remains a fire-and-forget `void shadow(...)` helper; no global shadow service was
+  converted into execute consumption.
+- `CloudDecisionCoordinator.EXECUTABLE_SERVICES` remains only `TASK_CLASSIFIER`; DIALOG_POLICY execute is through the
+  dedicated service gate.
+- `application.properties` remains rollback-safe for both `dialog-policy` and `npc-click-strategy`
+  (`execute-enabled=false`, `execute-percent=0`).
+- Dev sidecar default DIALOG_POLICY response now returns a safe
+  `action=USE_LOCAL_RESULT;operation=<operation>;reason=dev-local-dialog-policy` decision after the user explicitly
+  enables dialog-policy execute.
+
+Verification:
+
+- RED first:
+  - `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest" test` failed at test compile
+    because `DialogPolicyCloudDecisionService` did not exist.
+  - `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite" test` failed because the dev sidecar still echoed
+    local DIALOG_POLICY decision text.
+- GREEN:
+  - `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest" test` exited `0`.
+  - `mvn -q -Dtest="CloudDecisionDevServerTest#junitRunsMainSuite" test` exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check` exited `0`; output contained only existing LF/CRLF warnings and no whitespace errors.
+- Static helper-reviewer checks:
+  - No forbidden input/coordinate/OCR/template imports or click/move/submit calls in
+    `DialogPolicyCloudDecisionService`.
+  - `RuntimeDecisionShadowService` still exposes `public void shadow(...)` and delegates without returning
+    `CloudDecisionResult`.
+  - `CloudDecisionCoordinator` generic allowlist still contains only `CloudDecisionServiceId.TASK_CLASSIFIER`.
+
+Fresh-runtime gate remains pending:
+
+- Restart DHXY and the dev sidecar.
+- Leave defaults closed unless explicitly testing execute.
+- For the execute test, temporarily set `cloud.services.dialog-policy.execute-enabled=true` and
+  `cloud.services.dialog-policy.execute-percent=100`, run 五倍 + 修罗 dialog-heavy paths, and confirm logs show
+  `cloud.decision serviceId=DIALOG_POLICY mode=EXECUTE ... executed=true ...`, `dialog cloud policy accepted ...`,
+  and fallback logs `cloud.execute serviceId=DIALOG_POLICY accepted=false rejectReason=...` without changing invalid or
+  timeout dialog behavior.
+
+### CR161 修罗 start-exit prepath intent 阻塞目标导航 worker 派工
+
+- 当前角色：唐德审核 / manager。按用户要求新发 CR161，并派 worker 做 Java 窄修；唐德不直接写 Java 业务实现。
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before CR161 card/worker dispatch: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed baseline available locally: `origin/dev` = `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Worktree before CR161 is broadly dirty with many unrelated local/parallel changes; worker must not reset, checkout, revert,
+  or rewrite unrelated files. Relevant expected files are primarily `NavigationService`, possibly `XiuluoTaskV2`,
+  a focused test under `src/test/java/...`, plus CR161 docs.
+- Baseline evidence:
+  - `git blame` shows 修罗出村预走路 current-map source and CR77 fire-and-handoff branch landed in local history at
+    `c155ef3 Checkpoint local work before CR138`, layered on top of older 修罗 prepath behavior.
+  - Parent code used `navigateToNPC(... source=xiuluo-v2:start-exit-prepath)` as an optional speed hint and immediately
+    continued formal `NAVIGATE_TO_TARGET`.
+  - Current code uses `navigateInCurrentMap(... source=xiuluo-v2:start-exit-prepath:currentMap)`, which enters
+    `NavigationService.isXiuluoStartExitPrepathFireAndHandoff(...)`; after `PATHING_STARTED`, it registers a normal
+    active `WindowPathingIntent` for `targetMap=灵兽村 target=(11,8)`.
+- Runtime failure evidence from `logs/dhxy-console.log`:
+  - `2026-07-01 22:23:31.513` 修罗 round 13 objective parsed successfully:
+    `NpcTarget(mapName=四圣庄, name=修罗, x=116, y=180)`.
+  - `22:23:32.850` old prepath intent registered:
+    `source=xiuluo-v2:start-exit-prepath:currentMap targetMap=灵兽村 target=(11,8)`.
+  - `22:23:36.334 -> 22:23:36.347` formal `navigateToMap(四圣庄)` saw active pathing and skipped target intent with
+    `reason=watcher-already-active`.
+  - `22:23:49.666` Runner published terminal for the old 灵兽村 prepath; 修罗 correctly logged it as unrelated to
+    expected `四圣庄`, then waited until `22:26:25.509` pre-combat watchdog timeout.
+- CR161 card added to `docs/PACKAGE_ARCHITECTURE.md` with In Progress status and detailed acceptance criteria.
+- Worker repair scope:
+  - Keep CR77 fire-and-handoff performance behavior.
+  - Fix ownership/duplicate guard so `xiuluo-v2:start-exit-prepath:*` speed-hint intent cannot block a later
+    `xiuluo-v2:target` formal navigation to another map.
+  - Do not modify OCR/template/click/minimap coordinates, tracker parsing, NPC/dialog, combat, return item, or maintenance logic.
+  - Add focused guard proving mismatched active prepath does not swallow target navigation; run focused guard plus compile/test-compile.
+- CR161 worker baseline check before Java edits:
+  - Current branch from `git status --short --branch`: `codex/hybrid-cloud-protection`; current HEAD
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`; latest local pushed baseline `origin/dev`
+    `e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - Worktree is broadly dirty before this worker starts. Relevant existing local diffs include substantial unrelated
+    cloud/pause/maintenance changes in `NavigationService`, `XiuluoTaskV2`, and `WindowRuntimeContext`; this worker
+    must not reset/revert those edits and will add only a CR161 guard plus the narrow duplicate-intent policy.
+  - `origin/dev:NavigationService.navigateToMap(...)` already had the same high-level pattern: when recent watcher
+    pathing is considered active it sets `pathingIntentAlreadyActive=true`, returns `PATHING_STARTED`, and the finally
+    block logs `reason=watcher-already-active` instead of registering a new `navigateToMap` intent.
+  - Current local `NavigationService.navigateToMap(...)` has newer route-dialog/nested-route ownership logic, but the
+    stale-cache `PATHING_ACTIVE` branch still reaches `pathingIntentAlreadyActive = true` without a source-compatible
+    ownership check; that is the CR161 path where a `xiuluo-v2:start-exit-prepath:currentMap` intent can swallow a
+    later `xiuluo-v2:target` request.
+- CR161 worker implementation:
+  - Added target/source-aware duplicate ownership in `NavigationService.navigateToMap(...)`.
+  - New policy: an active pathing intent is duplicate-compatible only when its target map matches the request target
+    and its source equals the request source or starts with `requestSource + ":"`.
+  - A stale active prepath such as
+    `xiuluo-v2:start-exit-prepath:currentMap:navigateInCurrentMap:current-map mini-map click fire-and-handoff`
+    is not compatible with `xiuluo-v2:target`; the stale-cache branch logs
+    `active pathing ignored because target/source changed` and continues into real target-map navigation so the
+    formal target intent can be registered.
+  - True same-source duplicates still skip with `reason=watcher-already-active`, and nested route ownership
+    `pathingIntentOwnedByNestedRoute` remains intact.
+  - No changes were made to `XiuluoTaskV2`, OCR/template/click/minimap coordinates, jitter, CR77 fire-and-handoff
+    click/input sequence, tracker, NPC/dialog, combat, return item, or maintenance logic. No visual testcase replay
+    was required because no matching/click-point code changed.
+- CR161 worker validation:
+  - RED: `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` failed before implementation because
+    `NavigationService.isPathingSourceCompatibleForDuplicate(...)` did not exist.
+  - GREEN: `mvn -q -Dtest="NavigationCR161PathingIntentOwnershipGuardTest" test` exited `0`.
+  - GREEN: `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationXiuluoStartExitPrepathFireAndHandoffWiringTest" exec:java` exited `0`.
+  - GREEN: `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.NavigationWorldMapRouteMemoryIntentOwnershipTest" exec:java` exited `0`.
+  - GREEN: `mvn -q -DskipTests test-compile` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+  - 唐德复核重跑：CR161 focused guard、CR77 fire-and-handoff guard、route-memory ownership guard、`mvn -q -DskipTests compile`
+    均通过。
+  - 2026-07-02 更新：CR-HC-017 `DialogPolicyCloudDecisionService` 已补齐，focused
+    `DialogPolicyCloudDecisionServiceTest,InteractionShadowWiringTest` 验证通过；旧的缺类 blocker
+    已失效，不再作为 CR161 的 test-compile 阻塞记录。
+  - Fresh runtime gate remains: run 修罗 no-maintenance/非灵兽村目标 round and confirm formal
+    `xiuluo-v2:target` / target map intent registration; if the old prepath terminal arrives late, it should remain
+    unrelated and must not block the formal target terminal.
+
+### CR-HC-016 dev sidecar route-memory learn-loop worker baseline
+
+- Worker role: CR-HC-016 dev/cloud route-memory `LEARN_CANDIDATE -> HIT` implementation worker; direct code repair, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Current local HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant paths for this worker are local
+  cloud/dev sidecar files under `src/test/java/com/bot/dhxy/cloud/`, plus docs
+  `docs/ACTIVE_WORK.md` and untracked `docs/HYBRID_CLOUD_WORKFLOW.md`. This worker must not revert/reset/checkout
+  unrelated local or parallel-agent changes.
+- Relevant baseline evidence before edits:
+  - `CloudDecisionDevServer.routeMemoryOutcomeResponse(...)` accepts idempotent outcomes and stores them only in
+    `routeMemoryOutcomes`; it does not promote `LEARN_CANDIDATE` into a route-memory lookup table.
+  - `CloudDecisionDevServer.decisionFor(...)` only returns a `ROUTE_MEMORY lookup=HIT` when `--route-click` /
+    `routeClickOverride` is supplied. With no override, route-memory lookup echoes the local decision, so repeated
+    `ROUTE_MEMORY lookup=MISS` stays `MISS` even after a learn-candidate outcome.
+  - `SUCCESS` / `FAILURE` outcome ingest still requires nonblank `routeDecisionId`; this safety rule must remain.
+- Planned RED/GREEN repair:
+  - RED first in `CloudDecisionDevServerTest`: use real HTTP against the dev server, submit a valid
+    `LEARN_CANDIDATE` with `fromMap + targetMap + routeMode + click`, then verify the next same-key
+    `ROUTE_MEMORY` lookup returns `HIT` with stable `routeDecisionId` and click.
+  - Implement the smallest dev-sidecar in-memory learned route table keyed by
+    `fromMap + targetMap + routeMode`; do not change OCR/template/click coordinate algorithms, NPC/dialog/battle/team/input,
+    task phases, or navigation fallback order.
+
+Implementation:
+
+- Added a dev-sidecar in-memory learned route table in
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`.
+- `LEARN_CANDIDATE` outcome ingest now promotes the first valid candidate for
+  `fromMap + targetMap + routeMode` into a stable dev route-memory entry with deterministic
+  `routeDecisionId`, stored window-relative click, and `reason=dev-route-memory-learned`.
+- Later `ROUTE_MEMORY` lookup for the same key, when no `--route-click` override is configured,
+  returns `lookup=HIT;routeMode=...;routeDecisionId=...;click=x,y;reason=dev-route-memory-learned`.
+- Outcome idempotency remains `putIfAbsent`; repeated same outcome is duplicate, and later learn
+  candidates for an already learned key do not replace the first click/id. `SUCCESS` / `FAILURE`
+  still require nonblank `routeDecisionId`.
+- Invalid learn candidates with missing `fromMap` / `targetMap` / `routeMode` / click, or click
+  outside the 1024x768 game window, are accepted as outcome records but `learnStatus=ignored` and do
+  not create a future `ROUTE_MEMORY HIT`.
+- No OCR/template/click coordinate algorithms, NPC/dialog/battle/team/input, navigation fallback
+  order, or task phase semantics were changed.
+
+Verification:
+
+- RED first:
+  - `mvn -q -Dtest="CloudDecisionDevServerTest" test` failed as expected because after
+    `LEARN_CANDIDATE`, the next same-key `ROUTE_MEMORY` lookup still returned
+    `lookup=MISS;routeMode=YELLOW_DESTINATION_MINI_MAP;reason=local-miss`.
+- GREEN:
+  - `mvn -q -Dtest="CloudDecisionDevServerTest" test` exited `0`.
+  - `mvn -q -Dtest="CloudDecisionDevServerTest,RouteCloudDecisionServiceTest" test` exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check` exited `0`; output contained only existing LF/CRLF conversion warnings and no
+    whitespace errors.
+- Fresh-runtime gate:
+  - Restart DHXY and the dev sidecar so the new sidecar process has the learned-route table logic.
+  - For one `fromMap + targetMap + routeMode`, let non-memory `ROUTE_CANDIDATE mode=EXECUTE`
+    succeed and Runner submit `cloud.route-memory.outcome ... result=LEARN_CANDIDATE`.
+  - Run the same route again in the same sidecar process; the next lookup should log
+    `ROUTE_MEMORY lookup=HIT routeDecisionId=... click=... reason=dev-route-memory-learned`.
+
+### CR-HC-016 legacy route memory repair worker baseline
+
+- Worker role: CR-HC-016 legacy route memory migration repair worker; direct code repair, no commit.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Current local HEAD before this repair:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short --branch` is broadly dirty before this repair. Relevant paths are already dirty/untracked:
+  `docs/ACTIVE_WORK.md`, untracked `docs/HYBRID_CLOUD_WORKFLOW.md`,
+  `src/main/java/com/bot/dhxy/service/NavigationService.java`, and local cloud tests under
+  `src/test/java/com/bot/dhxy/cloud/`. This worker must not revert/reset/checkout unrelated changes.
+- Relevant baseline evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java
+    docs/ACTIVE_WORK.md docs/HYBRID_CLOUD_WORKFLOW.md` reports pushed baseline changes only for
+    `docs/ACTIVE_WORK.md` and `NavigationService.java`; the cloud workflow doc and cloud tests are local migration work.
+  - `clickRememberedWorldMapRouteResult(...)` and
+    `clickRememberedYellowDestinationAndTargetMiniMap(...)` currently call `effectiveRouteClick(routeDecision, ...)`
+    after handling only `routeDecision.isNoClick()`, so `LOCAL_PASSTHROUGH` / `localOnly` can still execute local
+    clean memory.
+  - `recordYellowMemoryFastPathFailure(...)` currently builds the pending/outcome click from
+    `entry.getRelativeX()/getRelativeY()` even though the actual click may have used `effectiveRelativeClick`.
+- Planned RED/GREEN repair:
+  - Add focused source guard first requiring memory fast path execution to require
+    `routeDecision.isCloudExecuted()`.
+  - Add focused source guard first requiring yellow memory early failure recording to receive and use the
+    effective relative click.
+  - Keep the patch scoped to CR-HC-016 route-memory authority/outcome wiring; do not change OCR/template/click
+    algorithms, minimap/world-map conversion, input queue, NPC/dialog/battle/team, or task phase semantics.
+
+Repair implementation:
+
+- `NavigationService.clickRememberedWorldMapRouteResult(...)` and
+  `clickRememberedYellowDestinationAndTargetMiniMap(...)` now require the final route-memory decision to be
+  `CLOUD_EXECUTED` before calculating/executing the memory fast-path click. `LOCAL_PASSTHROUGH`, `localOnly`,
+  shadow-only, inactive coordinator, or `null` now fall through to the existing non-memory route
+  candidate/OCR/search path instead of clicking the local clean memory row as product authority.
+- The existing missing-`routeDecisionId` migration path remains narrowly tied to `CLOUD_REJECTED_NO_CLICK`
+  with a `routeDecisionId` reject reason; `parseMemory(...)` remains strict and was not relaxed.
+- Yellow memory early failure recording now receives `effectiveRelativeClick` and stores that actual executed
+  window-relative click in `WorldMapRouteResultPendingMemory` / cloud `FAILURE` outcome instead of rebuilding
+  pending/outcome from the legacy entry coordinates.
+- Added focused source guards in
+  `src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java` for both rules.
+
+Repair verification:
+
+- RED first:
+  - `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` failed on
+    `legacy green memory fast path must fall through unless ROUTE_MEMORY produced a cloud-executed decision`.
+- GREEN:
+  - `mvn -q -Dtest="NavigationRuntimeDecisionShadowWiringTest" test` exited `0`.
+  - `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check` exited `0`; output contained only existing LF/CRLF conversion warnings.
+- Fresh-runtime gate:
+  - Restart DHXY and the dev sidecar.
+  - In cloud disabled / ROUTE_MEMORY shadow-only / service inactive cases, confirm legacy green/yellow memory logs show
+    `fast path skipped because cloud route memory was not executed`, followed by non-memory route candidate/OCR/search
+    rather than a local clean memory click.
+  - For cloud HIT with cloud click different from the local entry click, force an early yellow memory failure and confirm
+    `cloud.route-memory.outcome submitted` uses the cloud/effective click coordinates.
+
+### CR-HC-016 legacy clean route-memory migration worker baseline
+
+- Worker role: CR-HC-016 legacy clean route-memory migration implementation worker.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison available locally: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before this worker edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant existing dirty/local
+  paths include `docs/ACTIVE_WORK.md`, untracked `docs/HYBRID_CLOUD_WORKFLOW.md`, local cloud framework
+  files under `src/main/java/com/bot/dhxy/cloud/` and `src/test/java/com/bot/dhxy/cloud/`,
+  `src/main/java/com/bot/dhxy/service/NavigationService.java`, `config/world_map_route_result_memory.json`,
+  and many unrelated task/service/test changes. This worker must not reset, checkout, revert, or overwrite
+  unrelated work.
+- Relevant baseline evidence before edits:
+  - `RouteCloudDecisionService.parseMemory(...)` correctly rejects `ROUTE_MEMORY lookup=HIT` without
+    `routeDecisionId`; this safety rule must remain.
+  - `NavigationService.clickRememberedYellowDestinationAndTargetMiniMap(...)` currently uses a local
+    clean `WorldMapRouteResultMemoryEntry`, calls `shadowRouteMemory(...)` with `lookup=HIT`, and if the
+    execute gate rejects the returned decision because `routeDecisionId` is missing, it falls through to
+    non-memory route search. It does not yet try to migrate/register that legacy clean entry with cloud.
+  - `CloudDecisionDevServer` currently lives in `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+    in this local branch. It can return a route-memory HIT with `routeDecisionId` when `--route-click` is forced,
+    and supports `/api/cloud/route-memory/outcome`; it does not yet expose a legacy route-memory migration endpoint.
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java`
+    reports only the pushed navigation baseline (`68` changed lines in that file), while the current local
+    branch already contains CR-HC cloud migration code layered on top.
+- Planned TDD/verification:
+  - RED first: focused tests for legacy clean memory migration success producing a cloud `routeDecisionId`
+    and migration failure/no-id falling through without executing local memory authority.
+  - Keep the fix scoped to route-memory migration/registration and local dev sidecar simulation. Do not change
+    OCR/template/click coordinate algorithms, world-map/minimap conversion, tracker/NPC/dialog/battle/team/input,
+    pause/resume, task-policy, or route-candidate ranking behavior.
+
+Implementation:
+
+- Added `RouteMemoryMigrationRequest` and `RouteMemoryMigrationResult` under
+  `src/main/java/com/bot/dhxy/cloud/task/`.
+- Added `cloud.route-memory-migration-path` backing property via
+  `CloudDecisionProperties.routeMemoryMigrationPath`, defaulting to `/api/cloud/route-memory/migrate`.
+- Added `RouteCloudDecisionService.migrateLegacyRouteMemory(...)`, which posts local legacy clean facts to
+  cloud/dev sidecar and validates the returned executable HIT through the same route-memory parser. The existing
+  `ROUTE_MEMORY lookup=HIT` requirement for nonblank `routeDecisionId` remains unchanged.
+- `NavigationService` now catches the specific missing-`routeDecisionId` no-click rejection for local clean
+  legacy/yellow memory entries, submits migration, and only continues the memory fast path when migration returns
+  a cloud-issued `routeDecisionId` and valid window-relative click. Migration failure/cloud unavailable/no id keeps
+  the old safe fallthrough to non-memory route candidate/OCR/search.
+- `CloudDecisionDevServer` test/dev endpoint now supports `/api/cloud/route-memory/migrate` and returns a
+  deterministic dev `routeDecisionId` for local migration replay.
+- No OCR/template/click coordinate algorithms, world-map/minimap conversion, tracker/NPC/dialog/battle/team/input,
+  pause/resume, task-policy, or route-candidate ranking logic was intentionally changed.
+
+Verification:
+
+- RED first:
+  - `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest" test`
+    failed at test-compile on missing `RouteMemoryMigrationRequest`, `RouteMemoryMigrationResult`, and
+    `migrateLegacyRouteMemory(...)`.
+- GREEN focused:
+  - `mvn -q -Dtest="RouteCloudDecisionServiceTest,CloudDecisionDevServerTest,NavigationRuntimeDecisionShadowWiringTest" test`
+    exited `0`.
+- Wider verification:
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check` exited `0`; output contained only existing LF/CRLF conversion warnings.
+- Fresh-runtime gate:
+  - Restart DHXY and the dev sidecar.
+  - Re-run the legacy clean row scenario such as `灵兽村 -> 洛阳城`.
+  - Check `logs/dhxy-console.log` for `routeDecisionId is required when ROUTE_MEMORY lookup=HIT`, followed by
+    `legacy route memory migration submitted`, then either `legacy route memory migration succeeded ... routeDecisionId=...`
+    and yellow memory fast path continuation, or `legacy route memory migration failed` plus non-memory route-candidate/OCR fallback.
+
+### CR-HC-015 worker A baseline
+
+- Worker role: CR-HC-015 TaskPolicy Metrics Semantic Agreement implementation worker.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before CR-HC-015 edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant cloud framework
+  paths under `src/main/java/com/bot/dhxy/cloud/` and `src/test/java/com/bot/dhxy/cloud/` are local
+  untracked CR-HC work on top of `origin/dev`; this worker must not revert/reset/checkout unrelated
+  files or restore cloud code to the pushed branch.
+- Relevant pre-edit evidence:
+  - `CloudDecisionCoordinator.shadow(...)` currently computes agreement with raw
+    `Objects.equals(localDecision, response.getDecision())`.
+  - `CloudDecisionMetricsService.record(...)` currently trusts `CloudDecisionResult.isAgreement()`
+    for agree/disagree counts and does not have a service-specific comparator.
+  - `docs/HYBRID_CLOUD_WORKFLOW.md` CR-HC-015 requires TASK_POLICY agreement to compare only
+    `result`, `yield`, and `next`, ignoring local `phase` and cloud `reason`.
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/cloud/decision/...`
+    reports no pushed baseline for these cloud framework files; the current local cloud code is the
+    active migration baseline.
+- Planned TDD/verification:
+  - Add focused failing tests first for TASK_POLICY semantic agreement, TASK_POLICY semantic
+    disagreement on `result/yield/next`, and non-TASK_POLICY raw string agreement preservation.
+  - Keep the fix inside cloud decision agreement/metrics semantics only; do not touch 五倍/修罗 phase
+    execution, `TaskTransactionRunner`, task-policy execute gate, sidecar contract, route/link/NPC/dialog
+    behavior, OCR/template/click/navigation logic, or runtime task flow.
+
+Implementation:
+
+- Added a `TASK_POLICY`-specific agreement comparator in
+  `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionCoordinator.java`.
+- The comparator parses `key=value;...` decision strings and compares only behavior fields
+  `result`, `yield`, and `next`; it ignores local `phase` and cloud `reason`.
+- Non-`TASK_POLICY` services still use raw `Objects.equals(localDecision, cloudDecision)` agreement.
+- Added focused coverage in
+  `src/test/java/com/bot/dhxy/cloud/decision/CloudDecisionCoordinatorTest.java` for:
+  - local `phase=A;result=X;yield=Y;next=Z` vs cloud `result=X;yield=Y;next=Z;reason=...` agree;
+  - `result`, `yield`, or `next` mismatch disagree;
+  - non-`TASK_POLICY` raw agreement behavior unchanged.
+- Added a JUnit/Surefire wrapper to
+  `src/test/java/com/bot/dhxy/cloud/decision/CloudDecisionMetricsServiceTest.java` so its existing
+  main-style metrics assertions execute under Maven when the full test tree is buildable.
+- No 五倍/修罗 phase execution, `TaskTransactionRunner`, task-policy execute gate, sidecar contract,
+  route/link/NPC/dialog, OCR/template/click/navigation, or task runtime flow was changed.
+
+Verification:
+
+- RED first:
+  - `mvn -q -Dtest="CloudDecisionCoordinatorTest" test` failed as expected on
+    `TASK_POLICY semantic agreement expected=true actual=false`.
+- GREEN / isolated:
+  - `mvn -q -Dtest="CloudDecisionCoordinatorTest" test`: passed after implementation.
+  - `javac/java` isolated run for `CloudDecisionCoordinatorTest`: passed.
+  - `javac/java` isolated run for `CloudDecisionMetricsServiceTest`: passed.
+  - `javac/java` isolated run for `TaskPolicyCloudDecisionServiceTest`: passed.
+- Full Maven:
+  - `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest,TaskPolicyCloudDecisionServiceTest" test`:
+    passed after transient parallel CR-HC-016 constructor churn settled.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`: passed.
+  - `mvn -q -DskipTests compile`: passed.
+- Fresh-runtime gate remains: after CR-HC-016 compile blockers are resolved and DHXY is restarted with
+  the sidecar, TASK_POLICY samples that mirror local `result/yield/next` should report semantic
+  `agree=true` / positive `agreeRate` even though local includes `phase` and cloud includes `reason`.
+
+## 2026-07-01 / CR-HC-015 & CR-HC-016 云端化并行派工
+
+- Manager/reviewer: 谢帅。按用户要求使用老模式：主线程只负责卡片、范围、分派、审核和验证，不直接写 Java 业务实现。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Upstream: `NO_UPSTREAM`。
+- Local HEAD before dispatch: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- Working tree is already broadly dirty from CR138/CR139/CR154/cloud work and runtime config/memory files. Workers must not revert, reset, checkout, or overwrite unrelated edits.
+- New cloud cards recorded in `docs/HYBRID_CLOUD_WORKFLOW.md`:
+  - `CR-HC-015 TaskPolicy Metrics Semantic Agreement`
+  - `CR-HC-016 RouteMemory Cloud Authority / Outcome Ingest`
+- Worker A: Hume (`019f200d-bca9-72b2-85ee-27807c8062e4`) owns CR-HC-015.
+  - Scope: fix `TASK_POLICY` metrics agreement so it compares semantic fields `result/yield/next` instead of raw local/cloud decision strings.
+  - Must not change 五倍/修罗 phase execution, `TaskTransactionRunner`, task-policy execute gate, sidecar contract, route/link/NPC/dialog behavior.
+  - Expected verification: focused metrics/task-policy tests, cloud suite if feasible, compile.
+- Worker B: Euclid (`019f200e-2336-7d90-9de7-993cf932113f`) owns CR-HC-016.
+  - Scope: first version of cloud-authoritative route memory and outcome ingest. Cloud owns durable route memory; local Runner observes and reports outcome; cloud miss/error falls through to existing non-memory route search/candidate path.
+  - Must stop counting `world-map-route-memory-pending` as a failed `ROUTE_MEMORY` execute lookup.
+  - Must not change tracker link ranker, task classifier, task policy, NPC/dialog/battle/return/team maintenance/三技能/input queue/pause-resume/OCR-template thresholds/minimap-world-map coordinate conversion.
+  - Expected verification: route cloud tests, dev sidecar tests, cloud suite if feasible, compile.
+- Review plan:
+  - Main thread will inspect both diffs, run focused verification, and update CR-HC-015/016 sections with review findings.
+  - Because CR-HC-016 changes route asset ownership, main thread should dispatch a separate helper reviewer after Worker B returns.
+
+Review update:
+
+- CR-HC-015 main review: current patch is metrics-only. It adds a `TASK_POLICY` semantic comparator for
+  `result/yield/next` and does not change 五倍/修罗 phase execution, route/link/NPC/dialog behavior, or
+  cloud task-policy execute consumption. Fresh runtime still needs a restart-sidecar sample to confirm
+  `agreeRate` is no longer artificially zero.
+- CR-HC-016 helper review returned one blocking issue and two follow-up boundaries:
+  - P1: `ROUTE_MEMORY lookup=HIT` must require `routeDecisionId`; otherwise the client can execute a
+    cloud click but Runner cannot report success/failure outcome to cloud.
+  - P1: early cloud memory HIT failures before Runner settlement, such as mini-map not opening or
+    handoff not confirmed, must report cloud `FAILURE` outcome with the route decision id.
+  - P2: local persistent route memory may remain as debug/migration compatibility only; with cloud
+    execute available, product click authority must be cloud HIT, and cloud no-click must fall through
+    to non-memory route candidate/OCR/search.
+  - P3: outcome idempotency should be atomic or recorded as a follow-up.
+- Euclid (`019f200e-2336-7d90-9de7-993cf932113f`) was interrupted and sent a repair request for the CR-HC-016 blockers.
+- Euclid repair returned and main-thread verification passed:
+  - `ROUTE_MEMORY lookup=HIT` now requires `routeDecisionId`; missing id is rejected/no-click and
+    cannot execute a cloud memory click.
+  - Yellow route-memory early failures now keep local failure recording and additionally report cloud
+    `FAILURE` outcome with the route decision id.
+  - Outcome idempotency is add-before-send with rollback on disabled transport / serialization / HTTP
+    / timeout / interruption / IO failure.
+  - Main verification passed:
+    `mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test`;
+    `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest,TaskPolicyCloudDecisionServiceTest" test`;
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`;
+    `mvn -q -DskipTests compile`.
+  - `git diff --check` exited `0` with only existing LF/CRLF warnings.
+  - Fresh runtime still needs DHXY + sidecar restart and log check for:
+    `cloud.decision serviceId=ROUTE_MEMORY mode=EXECUTE`,
+    `cloud.route-memory.outcome submitted`,
+    `[world-map-route-memory] yellow fast path cloud outcome`, and no failed
+    `ROUTE_MEMORY` execute metric for `world-map-route-memory-pending`.
+
+### CR-HC-016 worker B baseline
+
+- Worker role: CR-HC-016 RouteMemory Cloud Authority / Outcome Ingest implementation worker.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before CR-HC-016 edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this worker starts. Relevant dirty/local areas include
+  `docs/ACTIVE_WORK.md`, `docs/HYBRID_CLOUD_WORKFLOW.md` (untracked cloud workflow doc), cloud framework under
+  `src/main/java/com/bot/dhxy/cloud/`, `NavigationService`, `WindowTaskRunner`, runtime config/memory JSON, and many
+  unrelated CR138/CR139/CR154/CR159/CR160 task/service/test files. This worker must not revert/reset/checkout or
+  overwrite unrelated changes.
+- Relevant pushed/local evidence before edits:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java` reports latest pushed changes only in those two
+    route/runner files (`98` inserted/changed lines total), while the local branch already has much larger migration
+    diffs on top.
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java
+    src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java ...` shows `NavigationService` and
+    `WindowTaskRunner` are already heavily migrated locally; CR-HC-016 will layer only route-memory lookup/pending/outcome
+    changes on the current local baseline.
+  - Current cloud route files exist locally under `src/main/java/com/bot/dhxy/cloud/task/RouteCloudDecision*.java`; cloud
+    focused tests already exist under `src/test/java/com/bot/dhxy/cloud/`.
+- Planned TDD/verification:
+  - Add focused failing tests first for cloud HIT carrying `routeDecisionId`, MISS/ERROR no-click fallback,
+    pending lifecycle not counted as `ROUTE_MEMORY` execute failure, runner success/failure outcome ingest, and duplicate
+    outcome idempotency.
+  - Do not change OCR/template thresholds, minimap/world-map coordinate conversion, route candidate ranking/click
+    algorithms, NPC/dialog/battle/team/input/pause paths.
+
+Implementation result:
+
+- Added route-memory cloud outcome contract:
+  `RouteMemoryOutcomeReport`, `RouteMemoryOutcomeIngestResult`, and
+  `RouteCloudDecisionService.reportRouteMemoryOutcome(...)`.
+- `RouteCloudDecision` now carries cloud `routeDecisionId`; `ROUTE_MEMORY lookup=ERROR` is accepted
+  as no-click fallthrough like `MISS` / `DISABLED`.
+- `WorldMapRouteResultPendingMemory` now stores only the short-lived cloud `routeDecisionId` token
+  with the existing route click facts. Pending creation no longer calls `shadowRouteMemory(...)` or
+  uses the `world-map-route-memory-pending` phase, so it cannot be counted as a failed
+  `ROUTE_MEMORY` execute lookup.
+- `NavigationService` preserves existing click/OCR/navigation algorithms. Cloud HIT route-memory
+  clicks copy `routeDecisionId` into pending; local/non-memory route clicks clear it.
+- `WindowTaskRunner` reports watcher-settled route outcomes after local memory success/failure
+  recording. Cloud success/failure outcome requires a `routeDecisionId`; successful local non-memory
+  clicks are reported only as `LEARN_CANDIDATE`.
+- Local dev sidecar returns `routeDecisionId` for route-memory HIT and stores idempotent outcome
+  ingest in memory at `/api/cloud/route-memory/outcome`.
+
+Verification so far:
+
+```powershell
+mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test
+mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- RED before implementation: failed on missing `getRouteDecisionId()`, missing outcome models,
+  missing dev-server outcome endpoint/count, and the new service constructor.
+- GREEN after implementation: all four commands exited `0`.
+
+Repair baseline / helper-review blocker pass:
+
+- Trigger: CR-HC-016 helper review + main-thread review found blockers in the first worker result.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison after previous fetch remains `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before repair edits remains
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is still broadly dirty from parallel CR/cloud work plus the first
+  CR-HC-016 implementation. This repair must not revert/reset/checkout unrelated files.
+- Relevant pre-repair evidence:
+  - `RouteCloudDecisionService.parseMemory(...)` accepts `lookup=HIT` when a click is present, but
+    does not require `routeDecisionId`.
+  - `NavigationService.recordYellowMemoryFastPathFailure(...)` builds local pending failure without
+    carrying cloud `routeDecisionId`, so yellow-memory early failures such as
+    `mini-map-panel-not-visible` and `handoff-not-confirmed:*` do not report cloud outcome.
+  - `RouteCloudDecisionService.reportRouteMemoryOutcome(...)` checks duplicate before send and marks
+    submitted only after success; helper requested atomic add-before-send with rollback-on-failure or
+    follow-up documentation.
+- Repair scope:
+  - Require cloud `routeDecisionId` for `ROUTE_MEMORY lookup=HIT`.
+  - Carry/report cloud route-memory failure for yellow fast-path early failure without changing local
+    failure recording or visual/click/navigation algorithms.
+  - Ensure cloud execute HIT is the only memory authority when cloud is active; cloud no-click/MISS/ERROR
+    must fall through to non-memory route/candidate, not local clean-memory click.
+  - Tighten client-side outcome idempotency if small enough.
+
+Repair implementation result:
+
+- `RouteCloudDecisionService.parseMemory(...)` now rejects `ROUTE_MEMORY lookup=HIT` when
+  `routeDecisionId` is missing, even if `click` is present. The rejected decision is
+  `CLOUD_REJECTED_NO_CLICK` / `executed=false` with reason containing `routeDecisionId`.
+- `RouteCloudDecisionService.reportRouteMemoryOutcome(...)` now reserves the idempotency key before
+  sending and rolls it back on disabled transport, serialization failure, non-2xx HTTP response,
+  timeout, interruption, or IO failure.
+- `NavigationService.recordYellowMemoryFastPathFailure(...)` now receives the cloud
+  `routeDecisionId`, preserves it in the local pending failure token, keeps the existing local
+  memory failure record, and immediately reports a cloud `FAILURE` outcome for early yellow-memory
+  failures such as `mini-map-panel-not-visible` and `handoff-not-confirmed:*`.
+- Added focused guards for missing `routeDecisionId` rejection, cloud memory authority/no-click
+  fallthrough, and yellow-memory early failure outcome reporting.
+- No visual matching, route click coordinate math, OCR/template thresholds, minimap/world-map
+  coordinate conversion, tracker link ranker, task classifier, task policy, NPC/dialog/battle/team,
+  input queue, or pause-resume logic was intentionally changed in this repair.
+
+Repair verification:
+
+```powershell
+mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest,WindowTaskRunnerRouteMemoryOutcomeWiringTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All three commands exited `0`.
+- Fresh-runtime log keywords to check after restart/sidecar:
+  `routeDecisionId is required when ROUTE_MEMORY lookup=HIT`,
+  `[world-map-route-memory] yellow fast path cloud outcome`,
+  `cloud.route-memory.outcome submitted`,
+  `cloud.decision serviceId=ROUTE_MEMORY mode=EXECUTE`,
+  and absence of `world-map-route-memory-pending` as a `ROUTE_MEMORY` execute failure.
+
+## 2026-07-01 / CR159-CR160 并行 worker 派工
+
+- Manager/reviewer: 唐德/谢帅。按用户要求同时派两个 worker；主线程只负责范围、文档、审核和验证，不直接写 Java 业务实现。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Local HEAD before dispatch: `696a12b chore: remove obsolete debug tooling`。
+- Working tree is already broadly dirty from CR138/CR139/CR154/cloud and many runtime/task changes. Workers must not revert, reset, checkout, or overwrite unrelated edits.
+- CR159 worker scope:
+  - Owns 修罗任务类热启动入口 and order in `XiuluoTaskV2` / `XiuluoRoundContext`.
+  - Must expose/reuse a task-level hot-start entry that CR160 can call.
+  - Must keep the fixed order: `战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`.
+- CR160 worker scope:
+  - Owns generic pause-resume reconcile / fingerprint framework and timer compensation policy.
+  - May depend on the CR159 hot-start entry contract, but must not reimplement or reorder 修罗 hot-start internals.
+  - Must not compensate real game TTL such as box/incense/buff durations, and must not break CR154 input queue pause-resume semantics.
+- Review gate:
+  - 唐德 will inspect worker diffs, run focused guards plus `test-compile` / `compile` as feasible, update CR159/CR160 cards with review notes, and regenerate `docs/cr-dashboard-data.js`.
+
+Review / integration closeout:
+
+- CR159 and CR160 are compatible for parallel work: CR159 owns the 修罗 task-level hot-start order and exposes
+  `XiuluoTaskV2.resolveTaskHotStart(TaskExecutionContext, XiuluoRoundContext, String)`; CR160 only calls that
+  entry with the live `XiuluoRoundContext` when pause-resume reconcile needs a 修罗 task hot-start fallback.
+- 唐德审核发现 initial worker verification had a real quality gap: several guards were main-style tests, so
+  `mvn -Dtest=... test` could report success with `Tests run: 0`.
+- Workers fixed the verification wrapper only:
+  - `XiuluoCR159TaskHotStartOrderWiringTest`
+  - `TaskPauseResumeCR160WiringTest`
+  - `TaskPauseResumeReconcilerCR160Test`
+  - `InputActionPauseCancellationGuardTest`
+  now all keep their old `main` entry and also expose a JUnit `@Test` path through Surefire.
+- Added `junit-jupiter` and Surefire `3.2.5` to `pom.xml` so focused guards are actually executed by Maven.
+- Final local verification:
+  - `mvn -q -Dtest="XiuluoCR159TaskHotStartOrderWiringTest,TaskPauseResumeReconcilerCR160Test,TaskPauseResumeCR160WiringTest,InputActionPauseCancellationGuardTest" test`: GREEN; each surefire report shows `Tests run: 1, Failures: 0, Errors: 0`.
+  - `mvn -q -DskipTests compile`: GREEN.
+  - `mvn -q -DskipTests test-compile`: GREEN.
+  - `git diff --check -- ...CR159/CR160 touched paths...`: GREEN except expected CRLF warnings.
+- Source review notes:
+  - CR159 fixed order is present and the entry itself does not call `Alt+1/Alt+5/Alt+6`,
+    `TaskStartupWindowPreparationService`, or legacy `tryReadObjectiveFromTaskPanel(...)`.
+  - CR160 match branch compensates only automation-owned volatile timestamps; mismatch branch clears stale
+    prepared/dialog/pathing/visible-dialog runtime state and falls back to task hot-start.
+  - No OCR/template/click/movement/navigation coordinate algorithms were intentionally changed in this CR159/CR160 pass.
+- Fresh runtime gates still required:
+  - 修罗 tracker hot-start should continue through shortcut without regression.
+  - 修罗 non-shortcut saved-objective pause-resume should resume `NAVIGATE_TO_TARGET` instead of reaccepting too early.
+  - Pause/resume with unchanged prepared dialog should continue original phase; dialog/pathing/combat mismatch should clear volatile state and enter task hot-start.
+
+### CR160 implementation worker baseline
+
+- Worker role: CR160 implementation worker。范围只做暂停恢复 fingerprint/reconcile 框架、自动化内部 timer 补偿策略、任务级 hot-start fallback 调用点；不改 OCR/template/click/movement/navigation 坐标算法。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Upstream: current branch has `NO_UPSTREAM`。Latest pushed comparison after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`)。
+- Current local HEAD before CR160 edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)。
+- `git status --short --branch` is broadly dirty before CR160 starts. Existing dirty files include `AGENTS.md`, config/memory JSON, CR board/dashboard docs, CR154 input queue files, `WindowTaskRunner`, `WindowRuntimeContext`, 五倍/五环/修罗 tasks, services, cloud framework files, and many focused tests. CR160 must not reset/revert/checkout unrelated changes.
+- Relevant pre-edit local evidence for touched files:
+  - `WindowRuntimeContext` already owns volatile runtime facts: `preparedDialogAction`, `dialogPreparationRequest/status`, `visibleDialogSnapshot`, and `pathingSnapshot`; it has clear methods for prepared/dialog/pathing but no CR160 pause-resume fingerprint or volatile timer compensation method.
+  - `WubeiTask.runRoundPhases(...)` currently calls `TaskCheckpoint.throwIfStopRequested(...)` then unconditionally runs pause timer compensation via existing timer helpers; `parkAfterYieldIfNeeded(...)` is `void`, so it cannot currently replace the next phase with a task hot-start fallback after fingerprint mismatch.
+  - `XiuluoTaskV2.runRoundPhases(...)` and `parkAfterYieldIfNeeded(...)` currently compensate `preCombatStartedAtMs` directly whenever `pauseBlockedMs > 0`, before any prepared/dialog/pathing/combat fingerprint check.
+  - `FiveRingTaskV2.runPhases(...)` has phase checkpoints and `yieldAfterMustYield(...)`, but no CR160 reconcile step; `FiveRingPhaseContext.pathingStartedAtMs` is an automation wait timer that needs compensation only when fingerprint still matches.
+  - `XiuluoHotStartResolver` exists locally as the task-level hot-start contract; CR160 will only call/define a narrow pause-resume resolver contract and will not encode CR159's 修罗 business order inside CR160.
+- Latest pushed baseline evidence:
+  - `git show --stat --oneline origin/dev -- ...` reports `e543d02 Stabilize task navigation and window readiness` touching only `FiveRingTaskV2.java` and `XiuluoTaskV2.java` among the planned Java paths; `WindowRuntimeContext`, `WubeiTask`, and the CR160 pause model/service files have no pushed CR160 implementation.
+- Planned TDD/verification:
+  - Add a focused CR160 guard first for matching fingerprint compensation, prepared/dialog/pathing/combat mismatch fallback, volatile-state cleanup, and no real-game TTL compensation.
+  - Update/source-guard 五倍/修罗/五环 wiring so timer compensation is gated by `fingerprintMatched`, mismatch logs include `pauseBlockedMs`/`mismatchReason`/`compensatedTimers`/`clearedVolatileState`/`fallbackTaskHotStart`, and CR154 input pause guard remains valid.
+
+Implementation:
+
+- Added CR160 model/service:
+  `src/main/java/com/bot/dhxy/model/pause/TaskPauseResumeDecision.java`,
+  `TaskPauseResumeFingerprint.java`, `TaskPauseResumeReconcileResult.java`, and
+  `src/main/java/com/bot/dhxy/task/pause/TaskPauseResumeReconciler.java`.
+- Fixed the CR159-reported compile blocker by using the real `WindowNativeBinding.getNativeHandle()`
+  API instead of nonexistent `getHwnd()`.
+- Added real `WindowRuntimeContext` methods:
+  `compensateVolatileAutomationTimersAfterPause(...)` and
+  `clearPauseResumeVolatileState(...)`. They only shift automation-owned volatile timestamps
+  (`preparedActionAge`, dialog prep/cache/interest, pathing wait budget) and do not adjust box,
+  incense, buff, or other real game TTL.
+- Wired 五倍 phase checkpoint and park wait resume boundary through `TaskPauseResumeReconciler`.
+  Fingerprint match continues original phase and compensates existing probe/formal timers; mismatch
+  clears local volatile tracker/probe/enter-battle/wait-battle state and falls back to
+  `WubeiPhase.HOT_START_DETECT`.
+- Wired 修罗 phase checkpoint and park wait resume boundary through `TaskPauseResumeReconciler`.
+  Fingerprint match compensates `preCombatStartedAtMs`; mismatch calls CR159
+  `resolveTaskHotStart(context, live XiuluoRoundContext, source)` and does not create
+  `XiuluoRoundContext.start(round)`.
+- Wired 五环 phase checkpoint through `TaskPauseResumeReconciler`. Fingerprint match only shifts
+  `FiveRingPhaseContext.pathingStartedAtMs`; mismatch returns to 五环 `PREPARE` hot-start fallback.
+- Did not modify OCR/template/click/movement/navigation coordinate algorithms.
+
+Verification:
+
+- GREEN: `mvn -q -Dtest="TaskPauseResumeReconcilerCR160Test,TaskPauseResumeCR160WiringTest" test`.
+- GREEN: `mvn -q -Dtest="InputActionPauseCancellationGuardTest" test`.
+- GREEN: `mvn -q -DskipTests compile`.
+- BLOCKED by unrelated dirty test helper: `mvn -q -DskipTests test-compile` fails in
+  `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java:194-196` because
+  `field(String, String)` is missing. This is outside CR160 pause-resume paths.
+- Remaining fresh-runtime gate:
+  matched dialog/pathing state should continue original phase; dialog/pathing/combat mismatch should
+  clear volatile state and enter task hot-start; 修罗 non-shortcut saved-objective fallback still
+  depends on CR159 fresh runtime verification.
+
+### CR159 implementation worker baseline
+
+- Worker role: CR159 implementation worker for 修罗任务类热启动入口。
+- Current branch: `codex/hybrid-cloud-protection`。
+- Latest pushed comparison after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`)。
+- Current local HEAD before CR159 code edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`)。
+- `git status --short --branch` is already broadly dirty before this worker starts, including
+  `AGENTS.md`, docs/dashboard data, config/memory files, CR154 input queue files, many task/service
+  files, cloud sidecar files, and existing Xiuluo/Wubei/window focused tests. This worker must not
+  revert/reset/checkout or overwrite unrelated dirty changes.
+- Relevant pushed/local evidence before edits:
+  - `git diff --stat -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java
+    src/main/java/com/bot/dhxy/task/xiuluo/XiuluoRoundContext.java` shows current local dirty
+    Xiuluo work of `271` lines in `XiuluoTaskV2` and `7` lines in `XiuluoRoundContext`; these local
+    CR139/cloud/post-combat-idle changes are the active migration baseline and must be preserved.
+  - `git diff --stat origin/dev -- ...XiuluoTaskV2.java ...XiuluoRoundContext.java` shows the
+    current local Xiuluo path differs from pushed baseline by `2458` lines in `XiuluoTaskV2` and
+    `245` lines in `XiuluoRoundContext`; CR159 must be a narrow additive edit on top of this local
+    baseline, not a restore of `origin/dev`.
+  - Current `XiuluoTaskV2.execute(...)` first-round startup calls
+    `resolveStartupTrackerOrReturnItem(context, XiuluoRoundContext.start(round), source)` after
+    startup first-aid/incense unless the clean queue transition forces
+    `XiuluoRoundContext.routeToAcceptNpc(round)`.
+  - Current `resolveStartupTrackerOrReturnItem(...)` only reads 修罗 tracker first, then tries the
+    startup return item, then `uiCleanerService.cleanUpAll()` and
+    `ACCEPT_TASK_NAVIGATE_TO_NPC`; it does not yet check in-combat first, does not consume an
+    existing 修罗 entry dialog before tracker, and does not fall back to saved `objective` /
+    `objectiveParseFuture`.
+  - `XiuluoHotStartResolver` exists as a Spring bean but is currently only an unused field in
+    `XiuluoTaskV2`; its current resolver classifies generic combat/dialog/story state and should not
+    be treated as the full CR159 task-level entry until the fixed order is implemented.
+- Planned touched files:
+  `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`,
+  possibly `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoRoundContext.java`,
+  a focused CR159 guard under `src/test/java/com/bot/dhxy/task/xiuluo/`, plus CR159 docs/status
+  updates.
+
+Implementation:
+
+- Added the CR159 task-level hot-start contract:
+  `XiuluoTaskV2.resolveTaskHotStart(TaskExecutionContext, XiuluoRoundContext, String)`.
+- `execute(...)` first-round startup now calls `resolveTaskHotStart(...)` instead of the old
+  `resolveStartupTrackerOrReturnItem(...)` name. Clean queued task transitions still bypass
+  startup-screen resume and go straight to `XiuluoRoundContext.routeToAcceptNpc(round)`.
+- Fixed order implemented inside `resolveTaskHotStart(...)`:
+  `战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`.
+- Dialog branch uses the existing 修罗 enter-battle green template path through
+  `DialogService.handleDialog(DialogHandleRequest.handleGreenTemplateOption(...))`; it does not
+  alter template/OCR/click coordinate logic. A consumed dialog returns pending-confirm
+  `WAIT_COMBAT` and initializes auto combat as the existing confirm phase does.
+- Tracker branch preserves the existing shortcut path by returning
+  `AFTER_ACCEPT_MAINTENANCE_CHECK` with completed tracker/objective futures.
+- Return-item branch preserves the existing one-shot task-page probe
+  `tryUseStartupReturnItemOnce(...)`.
+- Saved-objective branch is intentionally after tracker and return item. It first uses
+  `roundContext.objective()`, then consumes `roundContext.objectiveParseFuture()` through the
+  existing `waitForBackgroundObjectiveResult(...)`, and only then enters `NAVIGATE_TO_TARGET`.
+- No changes were made to OCR/template/click/movement/navigation coordinate algorithms, tracker
+  green recognition, return-item template, NPC click logic, or combat detection algorithm.
+
+CR160 contract:
+
+- CR160 should call
+  `XiuluoTaskV2.resolveTaskHotStart(TaskExecutionContext, XiuluoRoundContext, String)` when its
+  pause-resume fingerprint/reconcile decides 修罗 needs task-specific fallback.
+- The caller must pass the live/current `XiuluoRoundContext`; creating
+  `XiuluoRoundContext.start(round)` for resume would discard `objective` / `objectiveParseFuture`
+  and violates CR159.
+- The entry itself does not run `TaskStartupWindowPreparationService`, `Alt+1`, `Alt+5`, or
+  `Alt+6`. Existing first-round startup first-aid/incense guards remain outside this entry and were
+  left unchanged because they are covered by existing CR118 guards.
+
+Verification:
+
+```powershell
+$out='target\cr159-guard-red'; New-Item -ItemType Directory -Force $out | Out-Null; javac -encoding UTF-8 -d $out 'src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR159TaskHotStartOrderWiringTest.java'; java -cp $out com.bot.dhxy.task.xiuluo.XiuluoCR159TaskHotStartOrderWiringTest
+```
+
+- RED result before implementation: failed with
+  `first-round startup must call the CR159 task-level hot-start entry`.
+
+```powershell
+$out='target\cr159-guard-suite'; New-Item -ItemType Directory -Force $out | Out-Null; javac -encoding UTF-8 -d $out 'src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR159TaskHotStartOrderWiringTest.java'; java -cp $out com.bot.dhxy.task.xiuluo.XiuluoCR159TaskHotStartOrderWiringTest
+```
+
+- GREEN result after implementation: `XiuluoCR159TaskHotStartOrderWiringTest passed`.
+- Additional source guards run with the same `javac/java` pattern and exit code `0`:
+  `XiuluoStartupTrackerFirstHotStartWiringTest`,
+  `XiuluoStartupReturnItemTaskPageOnlyWiringTest`,
+  `AfterCombatStartupRecoveryWiringTest`,
+  `XiuluoStartupIncenseBeforeHotStartWiringTest`,
+  `XiuluoStartupFirstAidWiringTest`,
+  `XiuluoContinuousRoundNoHotStartWiringTest`,
+  `XiuluoCR130CR131WiringTest`.
+- `mvn -q -DskipTests compile`: first run after the CR159 code edit passed; final handoff rerun was
+  blocked by parallel CR160 dirty main source:
+  `src/main/java/com/bot/dhxy/task/pause/TaskPauseResumeReconciler.java` references current-missing
+  `WindowNativeBinding.getHwnd()`,
+  `WindowRuntimeContext.compensateVolatileAutomationTimersAfterPause(...)`, and
+  `WindowRuntimeContext.clearPauseResumeVolatileState(...)`.
+- `mvn -q -DskipTests test-compile`: not conclusive for CR159 while CR160 is mid-edit. Earlier run
+  was blocked by parallel CR160 dirty test source:
+  `src/test/java/com/bot/dhxy/task/pause/TaskPauseResumeReconcilerCR160Test.java` imports missing
+  `com.bot.dhxy.model.pause` package.
+
+## 2026-07-01 / CR-HC-014 TaskPolicy Execute worker baseline
+
+- Worker role: CR-HC-014 implementation worker.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before CR-HC-014 edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this worker starts, including unrelated
+  docs/config/images, input queue CR154 files, many task/service files, cloud framework files, and
+  focused tests. This worker must not revert/checkout/reset unrelated changes.
+- Relevant pre-edit local evidence:
+  - `WubeiTask.runRoundPhases(...)` computes `WubeiStepOutcome outcome` locally first, logs it,
+    calls `shadowTaskPolicyDecision(currentState, outcome, transaction)`, then consumes the same
+    local `outcome` for STOPPED/FAILED/PATHING/SHARED_STATE/yield/next-state branching.
+  - `XiuluoTaskV2.runRound(...)` computes local `XiuluoStepOutcome outcome`, applies
+    `compensateMaintenanceHandoffDelay(outcome)`, records trace/logs, calls
+    `shadowTaskPolicyDecision(currentContext, outcome, transaction)`, then consumes the same local
+    `outcome`.
+  - `RuntimeDecisionShadowService` is still fire-and-forget and returns no `CloudDecisionResult`,
+    so CR-HC-014 needs a task-policy-specific execute service/envelope rather than consuming the
+    old shadow helper.
+  - `application.properties` currently has `task-policy.shadow-enabled=true`,
+    `task-policy.execute-enabled=false`, `task-policy.execute-percent=0`, and
+    `task-recovery.execute-enabled=false`; CR-HC-014 may flip only `task-policy` execute to
+    true/100 and must leave `task-recovery` execute disabled.
+- Planned TDD:
+  - Add `TaskPolicyCloudDecisionServiceTest` first for valid 五倍/修罗 execute acceptance, wrong
+    phase-domain rejection, malformed rejection, cloud STOPPED rejection, local STOPPED local-only,
+    and execute-disabled passthrough.
+  - Add/update `TaskPolicyExecuteWiringTest` source guard for 五倍/修罗 using the new execute service
+    near existing phase outcome consumption while keeping `TASK_RECOVERY` execute disabled.
+
+Implementation result:
+
+- Added task-policy execute envelope/service:
+  `src/main/java/com/bot/dhxy/cloud/task/TaskPolicyCloudDecision.java` and
+  `src/main/java/com/bot/dhxy/cloud/task/TaskPolicyCloudDecisionService.java`.
+- `TaskPolicyCloudDecisionService` uses the existing `CloudDecisionCoordinator` with a dedicated
+  TASK_POLICY execute gate instead of widening the generic coordinator executable allowlist.
+- Cloud contract accepted:
+  `result=<TaskTransactionResult>;yield=<TaskYieldPolicy>;next=<task phase enum>;reason=<text>`.
+- Accepted cloud policy replaces only `result`, `yield`, and `next`; 五倍/修罗 keep the existing
+  `nextState` context/source fields, message, and waitSpec when rebuilding the task-specific
+  `WubeiStepOutcome` / `XiuluoStepOutcome`.
+- Rejection/fallback cases covered:
+  malformed/missing schema, wrong phase enum domain, cloud `STOPPED`, local/runner `STOPPED`, and
+  execute-disabled shadow passthrough.
+- `WubeiTask` and `XiuluoTaskV2` now compute and log/trace the local outcome first, then call
+  `applyTaskPolicyCloudDecision(...)` before consuming STOPPED/FAILED/PATHING/SHARED_STATE/yield/next.
+- `application.properties` changed only:
+  `cloud.services.task-policy.execute-enabled=true` and
+  `cloud.services.task-policy.execute-percent=100`; `task-recovery` execute remains false/0.
+- Updated cloud source guards so CR-HC-011 shadow-only checks no longer treat TASK_POLICY as
+  shadow-only after CR-HC-014.
+
+Verification:
+
+```powershell
+mvn -q -Dtest="TaskPolicyCloudDecisionServiceTest,TaskPolicyExecuteWiringTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All three commands exited `0`.
+- RED first failed as expected because `TaskPolicyCloudDecisionService` did not exist.
+- Fresh runtime gate remains: restart DHXY with the local cloud sidecar active, run 五倍 and 修罗,
+  and inspect `logs/dhxy-console.log` for `TASK_POLICY mode=EXECUTE` samples. Accepted samples
+  should show `executed=true`; rejected samples should keep the local outcome and include the reason.
+
+Review repair (2026-07-01):
+
+- P1 fixed: 五倍/修罗 now apply `TASK_POLICY` execute inside the `taskTransactionRunner.run(...)`
+  callback, after the local outcome is computed and logged/traced as the local oracle, before
+  `phaseOutcome.set(outcome)` and before returning `outcome.transactionResult()`.
+- This means `TaskTransactionRunner` / `TaskTurnCoordinator.leave(...)` now sees the effective
+  cloud/local transaction result instead of the pre-cloud local result.
+- The outer phase loops now consume the effective outcome from `AtomicReference`; they no longer
+  re-apply cloud policy after `taskTransactionRunner.run(...)` returns.
+- STOPPED protection remains: because runner outcome does not exist before callback return,
+  the task passes the local transaction result as `runnerResult`; local/runner STOPPED still rejects
+  cloud replacement, and cloud `result=STOPPED` still rejects.
+- P2 fixed: `TaskPolicyCloudDecisionService` now requires non-blank `reason` for accepted
+  `TASK_POLICY` execute. A sidecar echo of local `phase=...;result=...;yield=...;next=...` without
+  `reason` is rejected and keeps local.
+- `CloudDecisionDevServer` now handles `TASK_POLICY` explicitly by transforming the local
+  `result/yield/next` into
+  `result=...;yield=...;next=...;reason=dev-local-task-policy`, so local dev execute samples remain
+  strict and meaningful. Tracker-link and route behavior were not changed.
+- Focused tests updated:
+  - `TaskPolicyExecuteWiringTest` fails if cloud application happens after the transaction callback
+    return instead of before `phaseOutcome.set(outcome)` / `return outcome.transactionResult()`.
+  - `TaskPolicyCloudDecisionServiceTest` covers missing `reason` rejection.
+  - `CloudDecisionDevServerTest` covers strict `TASK_POLICY` dev response generation.
+- Verification was temporarily blocked by two unrelated/untracked CR160 compile issues:
+  `TaskPauseResumeReconciler` used `WindowNativeBinding.getHwnd()` instead of the existing
+  `getNativeHandle()`, and `TaskPauseResumeReconcilerCR160Test` used
+  `WindowRuntimeContext.registerPathingIntent(...)` instead of `markPathingStarted(...)`. These were
+  minimally repaired only to unblock Maven verification; no CR-HC-014 behavior depends on them.
+
+Repair verification:
+
+```powershell
+mvn -q -Dtest="TaskPolicyCloudDecisionServiceTest,TaskPolicyExecuteWiringTest" test
+mvn -q -Dtest="CloudDecisionDevServerTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All four commands exited `0`.
+
+Second manager review repair (2026-07-01):
+
+- P1.2 fixed: the first repair made the transaction callback return the effective result, but
+  `TaskTransactionRunner` still built `TaskTransactionOutcome` with the caller's fixed
+  `TaskYieldPolicy.CONTINUE_CHAIN`. A cloud decision like
+  `result=READY_TO_CONTINUE;yield=MUST_YIELD;next=...;reason=cloud` could therefore keep the task
+  turn even though the effective cloud policy required yield.
+- Added a real dynamic transaction boundary in `TaskTransactionRunner.runDynamic(...)` with
+  `TaskTransactionRunner.TaskTransactionDecision(result, yieldPolicy)`. The runner now constructs
+  `TaskTransactionOutcome` with both the effective result and effective yield before
+  `TaskTurnCoordinator.leave(outcome)` runs.
+- `WubeiTask` and `XiuluoTaskV2` phase loops now use `runDynamic(...)`. Each callback still computes
+  and logs/traces the local oracle first, applies `TASK_POLICY` execute inside the callback, stores
+  the effective outcome in `AtomicReference`, and returns
+  `TaskTransactionDecision.of(outcome.transactionResult(), outcome.yieldPolicy())`.
+- Local STOPPED protection and P2 strict `reason` schema/dev-server behavior remain unchanged.
+- Added focused guard coverage:
+  - `TaskTransactionRunnerDynamicDecisionTest` verifies `READY_TO_CONTINUE + MUST_YIELD` becomes the
+    runner outcome's effective `yieldPolicy`.
+  - `TaskPolicyExecuteWiringTest` now fails if 五倍/修罗 only return `outcome.transactionResult()`
+    without feeding `outcome.yieldPolicy()` into the transaction runner.
+- RED evidence: the updated source guard first failed with
+  `TaskTransactionRunner must expose a real dynamic result+yield transaction API`.
+
+Second repair verification:
+
+```powershell
+mvn -q -Dtest="TaskPolicyCloudDecisionServiceTest,TaskPolicyExecuteWiringTest" test
+mvn -q -Dtest="CloudDecisionDevServerTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All four commands exited `0`.
+- Manager thread re-ran the same four commands after worker handoff; all exited `0`.
+- Helper reviewer re-reviewed the final code and returned `PASS`.
+- CR-HC-014 code review status: no remaining P1/P2 blocker found.
+- Fresh runtime gate: after the next DHXY restart, inspect `logs/dhxy-console.log` for
+  `TASK_POLICY mode=EXECUTE` samples on both 五倍 and 修罗. Accepted samples must show strict
+  `result=...;yield=...;next=...;reason=...` effective decisions.
+
+## 2026-07-01 / CR-HC-014 TaskPolicy Execute manager pass
+
+- User approved another small cloud execute card while fresh runtime is waiting on a later restart.
+- Selected small surface: `TASK_POLICY` execute.
+- Reason: existing 五倍/修罗 `TASK_POLICY` shadow hooks already run after local phase outcome is
+  computed; this can be upgraded to cloud execute without touching OCR/template/click/navigation
+  coordinates.
+- Product decision: cloud `TASK_POLICY` may become the authoritative phase outcome, while the local
+  old outcome remains the shadow/oracle result for same-context debugging.
+- Strict scope:
+  - execute only enum-like `result/yield/next` phase outcome fields;
+  - do not touch `TASK_RECOVERY`, route, tracker link, NPC, dialog, maintenance, team return, battle,
+    return item, runner, input queue, OCR/template, or coordinate conversion behavior;
+  - local `STOPPED` cannot be overridden and cloud cannot force `STOPPED`.
+- Card location: `docs/HYBRID_CLOUD_WORKFLOW.md`, section `CR-HC-014 TaskPolicy Execute`.
+- Manager role: 谢帅/main agent writes the card, dispatches worker/helper review, verifies results,
+  and does not write Java business implementation.
+- Current branch/worktree note: branch is `codex/hybrid-cloud-protection`; worktree is already dirty
+  from CR-HC-013/CR154/other parallel CR work. CR-HC-014 worker must not revert unrelated changes.
+
+## 2026-07-01 / CR159-CR160 修罗热启动与暂停恢复拆卡
+
+- User decision: split the pause-resume discussion into two implementation cards.
+- CR159: 修罗任务类热启动正式采用完整顺序：
+  `战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`。
+- CR160: 暂停恢复不做无条件时间补偿；恢复后先做旧 prepared/dialog/pathing/phase 指纹校验。
+  指纹仍成立时只补偿自动化内部等待预算并继续原 phase；指纹不成立时不补时间，清理 stale
+  volatile 状态并进入对应任务类热启动。真实游戏 TTL（盒子、摄妖香/箱子持续时间等）不得补偿。
+- Documentation updated:
+  - `docs/业务逻辑.md` 新增 `修罗的逻辑 / 任务类热启动 / 暂停恢复` 小节。
+  - `docs/PACKAGE_ARCHITECTURE.md` sprint board 新增 CR159、CR160 两行，并补详细卡。
+- No Java code changed in this pass.
+- Dashboard sync required after this entry: run `node scripts/generate-cr-dashboard-data.js`.
+
+## 2026-07-01 / CR-HC-013 RouteMemory / RouteCandidate Execute worker baseline
+
+- Worker role: CR-HC-013 implementation worker.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Latest pushed comparison baseline after `git fetch origin`: `origin/dev` =
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local HEAD before CR-HC-013 worker edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short` is already broadly dirty from parallel work, including AGENTS/docs/config,
+  `NavigationService`, input queue CR154 files, cloud skeleton files, task services, tests, and
+  image/template changes. This worker must not revert unrelated edits.
+- Relevant pre-edit local evidence:
+  - `NavigationService` already has CR-HC-011 shadow-only route hooks:
+    `shadowRouteCandidate(...)` reports `ROUTE_CANDIDATE` after local route action is known, and
+    `shadowRouteMemory(...)` reports `ROUTE_MEMORY` lookup/use/failure/pending events through
+    `RuntimeDecisionShadowService`.
+  - `git diff -- src/main/java/com/bot/dhxy/service/NavigationService.java` shows these local
+    route-shadow hooks are not in `origin/dev`; they are the migration baseline for this CR and
+    should be preserved as local shadow/oracle behavior, not reverted.
+  - `src/main/resources/application.properties` currently has
+    `cloud.services.route-candidate.execute-enabled=false`,
+    `cloud.services.route-candidate.execute-percent=0`,
+    `cloud.services.route-memory.execute-enabled=false`, and
+    `cloud.services.route-memory.execute-percent=0`; CR-HC-013 must flip only these two route
+    services to execute-enabled/100 while leaving NPC/dialog/battle/return/team/input settings
+    outside scope.
+- Planned focused tests before production edits:
+  `RouteCloudDecisionServiceTest` for valid cloud execute, invalid schema/coordinate rejection,
+  execute-disabled local behavior, and retained local shadow/oracle result; plus an updated
+  navigation/config source guard replacing the old shadow-only route assertions.
+
+Implementation:
+
+- Added route-specific execute envelope/service:
+  `RouteCloudDecision` and `RouteCloudDecisionService`.
+- `RouteCloudDecisionService` calls the existing `CloudDecisionCoordinator` with a route-specific
+  execute gate for only `ROUTE_MEMORY` and `ROUTE_CANDIDATE`.
+- Accepted cloud clicks require `diagnostics.coordinateSpace=WINDOW_RELATIVE`, parseable
+  `click=<windowX>,<windowY>`, and a point inside the 1024x768 window. Invalid schema/coordinate is
+  returned as explicit no-click/rejection with `executed=false`; it is not reported as cloud success.
+- `NavigationService` keeps old route calculations as local shadow/oracle text and now asks the
+  route service before the real route-result click is submitted:
+  - legacy route-result memory hit;
+  - legacy route-result memory local miss with cloud `lookup=HIT`;
+  - yellow route-result memory hit;
+  - yellow route-result memory local miss with cloud `lookup=HIT`;
+  - yellow destination OCR route candidate;
+  - legacy coordinate OCR route candidate.
+- Successful cloud execute replaces the old local window-relative row/link click. Local mini-map
+  final-coordinate handling and pathing confirmation stay in local code.
+- Route candidate success no longer sends a second post-click cloud sample; failure/no-click
+  statuses still report after the local scan result is known.
+- `application.properties` now enables only:
+  `cloud.services.route-memory.execute-enabled=true`,
+  `cloud.services.route-memory.execute-percent=100`,
+  `cloud.services.route-candidate.execute-enabled=true`, and
+  `cloud.services.route-candidate.execute-percent=100`.
+- Local dev sidecar now adds `diagnostics.coordinateSpace=WINDOW_RELATIVE` for route responses that
+  contain `click=`.
+
+Verification:
+
+```powershell
+mvn -q clean -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- Focused route tests passed after RED first failed on missing `RouteCloudDecisionService`.
+- Cloud test group passed.
+- Compile passed.
+- Fresh runtime gate remains: restart DHXY with the local cloud sidecar, then run 五倍/修罗 route
+  paths and confirm `logs/dhxy-console.log` shows `ROUTE_MEMORY` / `ROUTE_CANDIDATE`
+  `mode=EXECUTE`, `executed=true/false`, cloud effective decision, and local shadow/oracle decision.
+
+Review repair (2026-07-01):
+
+- P1-1 fixed: `NavigationService.performWorldMapSearchAndClickDestination(...)` now keeps the
+  `RouteCloudDecision` returned by the failed local route-candidate shadow call. If cloud returned
+  `status=CLICKED;click=x,y`, the failure path consumes the cloud click before retry/close:
+  legacy-green uses the existing queued route-result click cleanup, and yellow-destination uses the
+  existing yellow-row -> destination mini-map -> pathing confirmation sequence.
+- P1-2 fixed: `RouteCloudDecisionService` now rejects cloud clicks outside the route-result ROI
+  `(348,376)-(671,514)`, after the existing `WINDOW_RELATIVE` and 1024x768 window checks.
+- P2 fixed: `CloudDecisionDevServer` supports route-specific `--route-click x,y` / test override for
+  `ROUTE_MEMORY` and `ROUTE_CANDIDATE`, returning a cloud click different from the local shadow
+  click with `diagnostics.coordinateSpace=WINDOW_RELATIVE`.
+- Focused tests added/updated:
+  `NavigationRuntimeDecisionShadowWiringTest`,
+  `RouteCloudDecisionServiceTest`, and
+  `CloudDecisionDevServerTest`.
+- Verification:
+
+```powershell
+mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- Result: route focused passed; first full cloud-suite run hit a transient
+  `TrackerLinkRankerCloudShadowServiceTest$CapturingClient` class-load failure even though the class
+  was present under `target/test-classes`; single test rerun passed, full cloud suite rerun passed,
+  and compile passed.
+
+## 2026-07-01 / CR-HC-013 RouteMemory / RouteCandidate Execute manager pass
+
+- User decision: route decision should move beyond shadow. `ROUTE_MEMORY` and `ROUTE_CANDIDATE`
+  should execute from cloud response directly; live failures are acceptable because they expose route
+  cloud contract/logic bugs faster than prolonged shadow comparison.
+- Follow-up clarification: cloud route result is the authoritative execute decision; the existing
+  local route decision should still be computed only as a shadow/oracle result for same-context
+  debugging (`cloud executed` vs `local would have done`).
+- Manager role: 谢帅/main agent writes card, dispatches worker/reviewer, reviews results, and does
+  not directly write Java business implementation.
+- Card location: `docs/HYBRID_CLOUD_WORKFLOW.md`, section `CR-HC-013 RouteMemory / RouteCandidate Execute`.
+- Current branch/worktree note: working tree is already dirty from parallel CR151/CR152/CR154/cloud
+  work. CR-HC-013 workers must not revert unrelated edits and must keep scope limited to route cloud
+  execute plumbing plus focused tests/config/docs.
+- Final design clarification from user: use route cloud result as execute and keep the local old route
+  result as shadow/oracle. If a live route click is wrong, compare the cloud route click with the
+  local shadow click to identify the fault.
+- Helper review result: PASS. No remaining P1/P2 after:
+  - consuming cloud `status=CLICKED` even when local route-candidate scan failed;
+  - rejecting cloud route clicks outside the route-result ROI `(348,376)-(671,514)`;
+  - adding dev sidecar `--route-click x,y` override so tests can prove cloud and local clicks differ.
+- Manager verification:
+
+```powershell
+mvn -q -Dtest="RouteCloudDecisionServiceTest,NavigationRuntimeDecisionShadowWiringTest,CloudDecisionDevServerTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- Result: focused route tests passed, full cloud package tests passed, compile passed.
+- Fresh runtime gate: user must restart DHXY so Spring loads the new route execute service/config,
+  then run 五倍/修罗 route paths and inspect `ROUTE_MEMORY` / `ROUTE_CANDIDATE` execute logs.
+
+## 2026-07-01 / CR154 Input queue pause-resume continuation worker
+
+- Worker role: CR154 implementation worker.
+- Local time: 2026-07-01T16:26:00.0044640-04:00.
+- Branch: `codex/hybrid-cloud-protection`.
+- Local HEAD before CR154 edits: `696a12b`.
+- Pushed baseline: `origin/dev` = `e543d02`.
+- Current worktree before CR154 edits: dirty with existing AGENTS/docs/config/Java/test/image/cloud changes from parallel work. I will not revert unrelated changes.
+- CR154 scope accepted from `docs/PACKAGE_ARCHITECTURE.md`: input queue pause must block and resume the same queued request instead of cancelling with `task-paused:*`.
+- Runtime evidence: `2026-07-01 15:59:07.974` pause during world-map navigation input; `15:59:08.391` worker cancelled `navigation:routePanelCleanup / submitWorldMapSearchAndClickDestination` at `task-paused:before-focus`, causing `MAP_NOT_REACHED`, Wubei failure, and queue advance to Xiuluo.
+- Exclusive files for this worker: `InputActionQueue.java`, `InputActionRequest.java`, `InputActionWorker.java`, `InputActionScope.java` only if needed, and focused input-action tests. Do not touch Wubei/Xiuluo/FiveRing/Navigation target selection/OCR/click logic.
+- Baseline diff for CR154-owned files before edit: `git diff -- src/main/java/com/bot/dhxy/input/action/InputActionQueue.java src/main/java/com/bot/dhxy/input/action/InputActionRequest.java src/main/java/com/bot/dhxy/input/action/InputActionWorker.java src/main/java/com/bot/dhxy/input/action/InputActionScope.java src/test/java/com/bot/dhxy/input/action/InputActionPauseCancellationGuardTest.java` was empty.
+
+Implementation:
+
+- `InputActionQueue` captures `TaskPauseToken` and `TaskStopToken` together from the submitting
+  `TaskExecutionContext`.
+- `InputActionQueue.await(...)` no longer lets user pause consume the 120s input wait budget, so a
+  multi-minute pause cannot make the submitter cancel a paused-but-valid worker request.
+- `InputActionRequest` stores `stopToken`, keeps compatibility constructors, and `isCancelled()`
+  no longer treats pause as cancellation.
+- `InputActionWorker` replaces the old `task-paused:*` cancel path with `waitIfPaused(...)` at
+  `before-focus`, `before-transaction-focus`, `before-actions`, each action boundary, and
+  `before-exclusive-callback`.
+- Review repair: `InputActionWorker` now disables coordinator automatic pre-focus and performs the
+  focus manually inside the input transaction only after a fresh pause checkpoint, so a pause between
+  the initial checkpoint and real focus cannot focus the game window during pause.
+- Review repair: `InputActionScope.isCancelled()` is now a generic exclusive-callback pause
+  checkpoint. It waits on pause and continues after resume; stop while paused still cancels/throws.
+- Focused guard updated in `InputActionPauseCancellationGuardTest`: pause before focus, pause between
+  actions, stop while paused, identity drift while paused, exclusive callback pause-before-entry,
+  pause just before transaction focus, pause inside exclusive callback before the next direct step,
+  and stop while paused inside exclusive callback.
+
+Verification:
+
+```powershell
+mvn -q dependency:build-classpath '-Dmdep.outputFile=target/cr154-classpath.txt'
+javac -encoding UTF-8 -cp $cp -d target/test-classes src/test/java/com/bot/dhxy/input/action/InputActionPauseCancellationGuardTest.java
+java -cp $cp com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+```
+
+- Focused guard passed.
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -DskipTests compile` passed.
+- Review follow-up verification:
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Fresh runtime gate: pause during world-map/map-search input should wait and continue, with no
+  `task-paused:*` dead letter and no pause-induced `MAP_NOT_REACHED`.
+
+## 2026-07-01 / CR152 WAIT_BATTLE_FINISH pause-resume compensation worker
+
+Status: Worker implementation in progress.
+
+Worker baseline:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before CR152 worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- No upstream is configured for this local branch.
+- Latest pushed comparison after `git fetch origin`:
+  - `origin/dev`: `e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`).
+  - `origin/codex/migrate-runner-dialog`: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short` is broadly dirty before this pass, including many unrelated Java/docs/config/image
+  paths. This worker must not revert or normalize unrelated changes.
+- Relevant pre-edit local source evidence:
+  - `tickWaitBattleFinish(...)` already has an entry checkpoint compensation block, but it computes
+    `checkpointBlockedMs` only around that method's own `TaskCheckpoint.throwIfStopRequested(...)`.
+  - `parkAfterYieldIfNeeded(...)` captures pause blocked time after event wait and calls
+    `compensateFormalMaintenanceTimers(...)`.
+  - `compensateFormalMaintenanceTimers(...)` currently compensates probe, enter-battle, and ordinary
+    pre-battle timers, but does not compensate `waitBattleStartedAt` /
+    `waitBattleNextTrackerRetryAt`.
+  - In `tickWaitBattleFinish(...)`, the `WAIT_BATTLE_TIMEOUT_MS` check still appears before
+    `autoCombatService.handleCombatTick(... FAST_EXPECTED_EXIT)`, so a fresh exit can be skipped by
+    timeout after long pause.
+- `origin/dev` and `origin/codex/migrate-runner-dialog` both have the same CR152-relevant ordering:
+  local checkpoint compensation exists, timeout is checked before combat tick, and event-wait pause
+  compensation does not cover `WAIT_BATTLE_FINISH`.
+
+Worker implementation:
+
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/task/wubei/WubeiCR152WaitBattlePauseResumeWiringTest.java`.
+- RED:
+
+```powershell
+mvn -q -DskipTests test-compile
+java -cp "target/test-classes;target/classes" com.bot.dhxy.task.wubei.WubeiCR152WaitBattlePauseResumeWiringTest
+```
+
+  Failed with
+  `CR152 event-wait pause compensation must cover WAIT_BATTLE_FINISH timers`.
+- Updated `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java` only:
+  - added `compensateWaitBattleTimersAfterPause(...)`;
+  - `compensateFormalMaintenanceTimers(...)` now compensates `waitBattleStartedAt` and
+    `waitBattleNextTrackerRetryAt` before probe / enter-battle / ordinary pre-battle timers;
+  - `tickWaitBattleFinish(...)` now uses the pause duration returned from
+    `TaskCheckpoint.throwIfStopRequested(...)`;
+  - `tickWaitBattleFinish(...)` now gives
+    `autoCombatService.handleCombatTick(... FAST_EXPECTED_EXIT)` a chance to consume
+    `EXIT_RECOVERED` before `WAIT_BATTLE_TIMEOUT_MS` can fail the phase.
+- No changes were made to input queue, `NavigationService`, `BattleRadarService`, return-item
+  templates/clicks, OCR/template matching, NPC click, dialog option, 显形镜, or 三技能 paths.
+
+Worker verification:
+
+- Focused guard GREEN:
+
+```powershell
+javac -encoding UTF-8 -cp target/classes -d target/test-classes src/test/java/com/bot/dhxy/task/wubei/WubeiCR152WaitBattlePauseResumeWiringTest.java
+java -cp "target/test-classes;target/classes" com.bot.dhxy.task.wubei.WubeiCR152WaitBattlePauseResumeWiringTest
+```
+
+  Passed.
+- `mvn -q -DskipTests test-compile` is blocked by current parallel CR154 work:
+  `InputActionPauseCancellationGuardTest` references missing
+  `WindowRuntimeContext.incrementPlayerIdentityEpoch()`.
+- `mvn -q -DskipTests compile` is blocked by current parallel CR154 work:
+  `InputActionRequest.java` has a constructor call that no longer matches the edited constructor
+  signature.
+- Fresh runtime gate: after CR154 compile blockers are resolved and the app is restarted, reproduce
+  the 15:46-style case. Expected logs: pause-blocked time is deducted, fresh combat exit is consumed,
+  五倍 enters `POST_BATTLE_RECOVER/RETURN_HOME`, and no `wait battle timeout elapsedMs` includes the
+  pause wall-clock duration.
+
+## 2026-07-01 / CR151 无 pathing 原地开打框 stale prepared 重新发布
+
+Status: Source implemented / manager reviewed / independent reviewer PASS_WITH_NOTES / fresh runtime pending.
+
+Owner:
+
+- Manager/reviewer: 唐德/main agent.
+- Implementation worker: Pasteur plus parallel worker notification completed CR151 source changes.
+- Independent reviewer: Socrates re-review `PASS_WITH_NOTES`, no P1/P2 after P2 repair.
+
+User decision:
+
+- 五倍黄袍 chained-combat 续战路径仍然不要注册 pathing intent；这个设计是为了避免原地即将进入战斗的
+  绿字点击被当成寻路并放权。
+- 不伪造、不复用旧 `WindowPathingSnapshot`。
+- 只在 no-pathing 原地开打类场景里补 stale prepared reprepare。
+- 第一版白名单只放 `DialogOperation.WUBEI_ENTER_BATTLE`。
+
+Problem evidence:
+
+- `2026-07-01 15:39` 五倍黄袍连战 pause/resume：
+  - `15:39:03.347` 五倍进入 `ENTER_BATTLE`，message 为
+    `chained combat fast-path clicked; resolve enter-battle dialog`；
+  - `15:39:03.930` 用户暂停；
+  - `15:39:05.202` Runner 在暂停期间准备出 `WUBEI_ENTER_BATTLE`；
+  - `15:41:45.462` 恢复后 Runner 仍看到 fresh `OPTION`，但
+    `existingPreparedAgeMs=160260`，`activeIntentId=null`，`pathingState=null`；
+  - Runner 因 existing prepared 仍存在而输出
+    `wubei visible dialog ignored ... prepared=true reason=explicit-prepared-action-ready`；
+  - `15:42:49.782` `ENTER_BATTLE` phase loop guard exceeded。
+
+Baseline / latest pushed comparison:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before CR151 card/worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed baseline after `git fetch origin`:
+  - `origin/dev`:
+    `e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`).
+  - `origin/codex/migrate-runner-dialog`:
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short --branch` is broadly dirty before this pass, with many unrelated Java/docs/config/image
+  changes. CR151 must not revert or normalize unrelated work.
+- Relevant current local code already includes CR144:
+  - `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` computes stale /
+    visible-match / cooldown, then calls
+    `isStationaryForStaleTaskDialogReprepare(pathingSnapshot, now)`;
+  - `isStationaryForStaleTaskDialogReprepare(...)` returns false for `snapshot == null`, rejects
+    probe-in-progress, and accepts only `ARRIVED` / `STOPPED_AWAY`;
+  - `WindowTaskRunnerStalePreparedRepublishWiringTest` currently requires the stationary helper and
+    pathing stopped branch, but does not cover the no-pathing chained-combat `WUBEI_ENTER_BATTLE`
+    pause/resume case.
+- `origin/dev:WindowTaskRunner.java` has no CR144 stale prepared reprepare logic; CR151 must layer on
+  top of local CR144/CR141/CR146 Runner work, not revert it.
+
+Implementation boundary:
+
+- Touch expected:
+  - `src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`
+  - `src/test/java/com/bot/dhxy/window/execution/WindowTaskRunnerStalePreparedRepublishWiringTest.java`
+    or a new focused `CR151` source guard.
+  - CR151 docs/dashboard after implementation.
+- Do not touch:
+  - `WubeiTask` pathing registration rule for `chained-combat-*`;
+  - OCR/template/click point, NPC click, navigation, map search, movement detection, BattleRadar thresholds,
+    bag/return item, summon skill, team maintenance.
+- No testcase replay expected unless worker changes visual matching or click-coordinate calculation.
+
+Acceptance:
+
+- Source guard first fails on current CR144-only behavior, then passes after implementation.
+- No-pathing reprepare is allowed only when all are true:
+  fresh `OPTION`, no active pathing intent, not in combat, stale prepared, current interest supports same operation,
+  operation whitelist contains `WUBEI_ENTER_BATTLE`, visible/prepared dialog types match, cooldown open.
+- Active pathing continues using CR144 pathing-stopped branch; moving/`ACTIVE`/`UNKNOWN`/probe-in-progress still
+  cannot reprepare.
+- `ROUTE_TRANSFER`, maintenance broadcast, NPC/dialog non-enter-battle operations cannot use the no-pathing branch.
+- Focused guards and `mvn -q -DskipTests compile` pass.
+- Fresh `mvn -q -DskipTests test-compile` is currently blocked by unrelated dirty/untracked tests from
+  parallel CR work, not by CR151 source.
+- Update CR151 card with implementation notes, verification, reviewer notes, and regenerate `docs/cr-dashboard-data.js`.
+
+Implementation / review result:
+
+- `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` keeps the CR144 pathing-stopped stale
+  reprepare path and adds CR151 no-pathing stale reprepare only for `TaskType.WUBEI` +
+  `DialogOperation.WUBEI_ENTER_BATTLE`.
+- CR151 no-pathing gate requires stale prepared action, fresh visible `OPTION`, interest support for the
+  same operation, prepared/visible dialog type match, cooldown open, no active pathing intent, and a current
+  pathing snapshot that is either absent or `WindowPathingState.NONE`.
+- Reviewer P2 was valid and repaired: no-pathing no longer accepts `ACTIVE`, `UNKNOWN`, probe-in-progress,
+  `ARRIVED`, or `STOPPED_AWAY` snapshots. `ARRIVED` / `STOPPED_AWAY` remain CR144-only.
+- No `WubeiTask` pathing registration change; no OCR/template/click/navigation/NPC/movement/BattleRadar
+  change; no freshness/cooldown constant change; no background keepalive.
+
+Fresh verification by main agent 2026-07-01:
+
+```powershell
+javac -encoding UTF-8 -d target\cr151-guard-classes `
+  src\test\java\com\bot\dhxy\window\execution\WindowTaskRunnerCR151NoPathingEnterBattleRepublishWiringTest.java `
+  src\test\java\com\bot\dhxy\window\execution\WindowTaskRunnerStalePreparedRepublishWiringTest.java
+java -cp target\cr151-guard-classes com.bot.dhxy.window.execution.WindowTaskRunnerCR151NoPathingEnterBattleRepublishWiringTest
+java -cp target\cr151-guard-classes com.bot.dhxy.window.execution.WindowTaskRunnerStalePreparedRepublishWiringTest
+mvn -q -DskipTests compile
+```
+
+- Result: both guards passed and compile passed.
+- `mvn -q -DskipTests test-compile` currently fails because unrelated parallel dirty test sources reference
+  missing/moved classes (`GameContext`, `WindowRuntimeContext`, `WindowPathingIntentType`, etc.) in files
+  outside CR151 scope, including CR148/input-queue/pathing guard tests. Do not report full test-compile as
+  green for this pass.
+
+Follow-up discussed 2026-07-01:
+
+- Prepared action freshness should become pause-adjusted in a separate card: paused wall-clock time should
+  not by itself make a prepared action stale, but consuming an old prepared click after resume must still
+  require fresh visible dialog/window/hwnd/type match.
+
+## 2026-07-01 / CR-HC-012 TrackerLinkRanker window-relative execute
+
+Status: Source implemented / manager review passed / focused local verification passed / fresh runtime pending.
+
+Owner:
+
+- Manager/reviewer: 谢帅/main agent.
+- Worker: current Codex pass.
+- Helper reviewer: Ampere/Plato worker-review loop completed for the final coordinate-contract pass.
+
+User decision:
+
+- `TRACKER_LINK_RANKER` shadow 已经验证过，第一版真实执行不要继续做本地业务比对。
+- 绿链点击第一版要直接交给云端：云端返回窗口相对点击点，本地按这个点通过 input queue 点击。
+- 本地只保留通用安全壳：请求/schema/trace/ttl、坐标空间、窗口/ROI 边界、pause/stop。
+- 不再要求云端返回本地 candidate index，不再要求 `candidateFingerprint`，也不要求 cloud point
+  落在本地识别出的候选绿链框里。
+- Execute 测试时，如果云端失败/坐标非法，不要静默回退本地点绿链；要明确失败/不点击/按
+  `fallback=STOP` 或等价 no-click 结果处理，这样实测才能证明云端是否真的接管。
+
+Card:
+
+- Detailed scope has been written to `docs/HYBRID_CLOUD_WORKFLOW.md` section
+  `CR-HC-012 TrackerLinkRanker Window-Relative Execute`.
+
+Implementation boundary:
+
+- Main agent does not write Java business implementation.
+- Worker owns code and focused tests.
+- Helper reviewer independently checks no local-business compare remains in execute path, no hidden local fallback
+  during execute testing, and no unrelated NPC/dialog/navigation/return-item/team-maintenance behavior changes.
+
+Expected verification:
+
+```powershell
+mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+Manager verification 2026-07-01:
+
+- Reviewed the final CR-HC-012 contract after worker implementation:
+  - runtime config now has `cloud.services.tracker-link-ranker.execute-enabled=true` and
+    `cloud.services.tracker-link-ranker.execute-percent=100`;
+  - dev sidecar returns `decision=click=<selectedWindowClick>` with
+    `diagnostics.action=CLICK_TRACKER_LINK` and `diagnostics.coordinateSpace=WINDOW_RELATIVE`;
+  - 五倍/修罗 pass `selectedWindowClick` derived from `GameClientTracker` logical
+    `windowBaseX/windowBaseY`;
+  - cloud returned `WINDOW_RELATIVE` points are converted back with `tracker.getWindowBaseX/Y()`;
+  - execute rejection/no-click does not silently click the old local green link.
+- Re-ran:
+
+```powershell
+mvn -q -Dtest="CloudDecisionDevServerTest,TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest,RuntimeDecisionShadowWaveWiringTest" test
+mvn -q -DskipTests compile
+```
+
+- Both commands passed. Test logs include
+  `TRACKER_LINK_RANKER mode=EXECUTE ... cloudDecision=click=42,555 effectiveDecision=click=42,555 executed=true`.
+
+Fresh runtime gate:
+
+- Restart DHXY after implementation.
+- Run 修罗 and 五倍 with local cloud dev sidecar active.
+- Logs must show `TRACKER_LINK_RANKER mode=EXECUTE executed=true` and an effective
+  `click=<windowX>,<windowY>` in `WINDOW_RELATIVE` coordinate space.
+- Any cloud failure must be visible in logs and must not be hidden by automatic local green-link click in
+  this execute test.
+
+Worker baseline 2026-07-01:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before this worker edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison checked after `git fetch origin`:
+  - `origin/dev`:
+    `e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`).
+  - `origin/codex/migrate-runner-dialog`:
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short --branch` is broadly dirty before this pass. Relevant files already dirty or
+  untracked before CR-HC-012 implementation:
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - `src/main/resources/application.properties`
+  - `src/main/java/com/bot/dhxy/cloud/` and `src/test/java/com/bot/dhxy/cloud/` are untracked
+    relative to HEAD/origin-dev.
+- `origin/dev` baseline evidence:
+  - `git show origin/dev:src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java | rg "TrackerLinkRanker|shadowTrackerLinkSelection"`
+    has no cloud hook; the old pushed 五倍 path simply calls `clickTaskTrackerGreen(...)`.
+  - `git show origin/dev:src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java | rg "clickTaskTrackerGreen|InputAction"`
+    shows the local green-link click uses one input queue sequence with
+    `InputAction.moveMouse(...)`, `InputAction.sleep(120)`, and
+    `InputAction.clickLeft(...)`.
+  - `git show origin/dev:src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java | rg "TrackerLinkRanker|shadowTrackerLinkSelection|tracker green|moveAndClick"`
+    has no tracker-link-ranker cloud hook evidence in the pushed baseline.
+  - `git ls-tree -r --name-only origin/dev src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud docs/HYBRID_CLOUD_WORKFLOW.md`
+    returns no paths; the cloud framework is local branch work, not `origin/dev` business baseline.
+- Current local CR-HC-009 evidence before implementation:
+  - `TrackerLinkRankerCloudShadowService` builds a `candidateFingerprint`, requires the response
+    diagnostic `candidateFingerprint`, parses only `index=N`, and maps the accepted result back to
+    a local `TaskTrackerGreenLink`.
+  - `TrackerLinkRankerCloudDecision` says effective link fields always point to local
+    `TaskTrackerGreenLink` candidates.
+  - `WubeiTask` has three `shadowTrackerLinkSelection(...)` calls and then still calls
+    `clickTaskTrackerGreen(...)` on the local segment.
+  - `XiuluoTaskV2` has one `shadowTrackerLinkSelection(...)` call and then still calls
+    `inputSequences.moveAndClickLeft(...)` on the local point.
+- CR-HC-012 implementation must replace that local-candidate execute gate with cloud
+  `decision=click=<windowX>,<windowY>` plus
+  `diagnostics.action=CLICK_TRACKER_LINK` and
+  `diagnostics.coordinateSpace=WINDOW_RELATIVE`. It must not require `index=N`,
+  `candidateFingerprint`, or local candidate containment, and execute-mode failure must be a visible
+  no-click/rejected result rather than an automatic local green-link click.
+
+Second worker baseline 2026-07-01:
+
+- Current branch before this worker's edits: `codex/hybrid-cloud-protection`.
+- Current HEAD before this worker's edits:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git fetch origin` completed before editing. Git reported no new packable remote objects and a
+  local unreachable-loose-object auto-gc warning; no worktree files were changed by fetch.
+- `git status --short --branch` remains broadly dirty before this pass. Relevant CR-HC-012 paths
+  already dirty/untracked before this worker's code edits:
+  - `docs/ACTIVE_WORK.md`
+  - `docs/HYBRID_CLOUD_WORKFLOW.md`
+  - `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - `src/main/resources/application.properties`
+  - untracked `src/main/java/com/bot/dhxy/cloud/`
+  - untracked `src/test/java/com/bot/dhxy/cloud/`
+- Latest pushed business baseline rechecked:
+  - `origin/dev` remains
+    `e543d024bf900853944b36d27d0f736005d9eeb9`
+    (`e543d02 Stabilize task navigation and window readiness`).
+  - `origin/dev:WubeiTask.java` has no tracker-link-ranker cloud hook and keeps the old local
+    `clickTaskTrackerGreen(...)` path with one atomic input queue sequence:
+    `InputAction.moveMouse(...)`, `InputAction.sleep(120)`, `InputAction.clickLeft(...)`.
+  - `origin/dev:XiuluoTaskV2.java` has no tracker-link-ranker cloud hook evidence.
+- Current local semi-implementation evidence before this worker's edits:
+  - `TrackerLinkRankerCloudShadowService` already parses cloud `decision=click=<windowX>,<windowY>`
+    and rejects missing `diagnostics.action=CLICK_TRACKER_LINK`,
+    missing `diagnostics.coordinateSpace=WINDOW_RELATIVE`, out-of-window/ROI coordinates, and old
+    `index=N` decisions.
+  - `TrackerLinkRankerCloudDecision` already has local passthrough, cloud executed, and no-click
+    states.
+  - `WubeiTask` already passes the returned `TrackerLinkRankerCloudDecision` into the three
+    requested tracker green-link click paths, and `XiuluoTaskV2` already branches on the returned
+    envelope near `trackerShortcut`.
+  - The current local cloud-point conversion in both `WubeiTask` and `XiuluoTaskV2` still calls
+    `tracker.locateWindow()` when tracker base is missing. This violates CR-HC-012's requirement to
+    use the current `WindowRuntimeContext.nativeBinding` for execute conversion and reject/no-click
+    when the current binding is unavailable instead of falling back to old global/title lookup.
+- Pre-edit focused command:
+  `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test`
+  passed, so this worker will add a failing source guard for the forbidden `tracker.locateWindow()`
+  fallback before changing production code.
+
+Second worker implementation 2026-07-01:
+
+- Added a RED source guard in
+  `src/test/java/com/bot/dhxy/cloud/task/TrackerLinkRankerCloudShadowWiringTest.java` requiring
+  五倍/修罗 cloud click conversion to use current `WindowRuntimeContext.nativeBinding` and forbidding
+  `tracker.locateWindow()` / tracker-base fallback in `resolveTrackerCloudAbsolutePoint(...)`.
+- RED command:
+
+```powershell
+mvn -q -Dtest="TrackerLinkRankerCloudShadowWiringTest" test
+```
+
+  Failed as expected with
+  `WubeiTask cloud execute conversion must not fall back to tracker/global window lookup`.
+- Updated `WubeiTask.resolveTrackerCloudAbsolutePoint(...)` and
+  `XiuluoTaskV2.resolveTrackerCloudAbsolutePoint(...)` to convert cloud window-relative clicks only
+  through the current runtime native binding geometry:
+  `new Point(binding.getX() + cloudPoint.x, binding.getY() + cloudPoint.y)`.
+- Removed the execute conversion's `tracker.locateWindow()` / `tracker.getWindowBaseX/Y()` fallback.
+  If current runtime binding/geometry is unavailable, both task paths return no-click and skip the
+  old local green-link click for that execute attempt.
+- Added service tests for wrong `diagnostics.action` and invalid `click=` format so invalid
+  action/coordinate-space/format are all explicitly covered as no-click.
+- Existing rollback config in `application.properties` was not changed:
+  `cloud.services.tracker-link-ranker.execute-enabled=false`,
+  `cloud.services.tracker-link-ranker.execute-percent=0`,
+  `cloud.services.tracker-link-ranker.fallback=LOCAL`.
+- No NPC/dialog/navigation/return-item/team-maintenance code was intentionally edited in this pass.
+
+Second worker local verification 2026-07-01:
+
+```powershell
+mvn -q -Dtest="TrackerLinkRankerCloudShadowWiringTest" test
+mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest" test
+mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All GREEN/final commands exited `0`.
+- Final source check:
+  `rg -n -C 3 "resolveTrackerCloudAbsolutePoint|tracker\\.locateWindow\\(\\)|tracker\\.getWindowBaseX\\(\\) \\+ cloudPoint|binding\\.getX\\(\\) \\+ cloudPoint" src\\main\\java\\com\\bot\\dhxy\\task\\wubei\\WubeiTask.java src\\main\\java\\com\\bot\\dhxy\\task\\xiuluo\\XiuluoTaskV2.java`
+  shows the two helpers now return `binding.getX() + cloudPoint.x` /
+  `binding.getY() + cloudPoint.y` and no longer show `tracker.locateWindow()` in those helpers.
+
+## 2026-07-01 / RuntimeDecisionShadowService shadow context pollution
+
+Status: Source implemented / local verification passed / fresh runtime pending.
+
+Owner:
+
+- Worker: current Codex pass.
+- Reviewer: main agent review pending.
+
+Problem evidence:
+
+- User fresh runtime saw `cloud.decision` samples with `taskCode=wubei` / `requestedTaskCode=wubei`
+  but runtime shadow context still included `selectedTaskType=XIULUO_V2`.
+- Actual task behavior was not affected because cloud decisions stayed shadow-only and request
+  `taskCode` was correct, but cloud training/execute request context must not carry a stale window
+  selected/default task as the current task.
+
+Implementation boundary:
+
+- Touch only `RuntimeDecisionShadowService`, focused cloud context tests, and this cloud workflow
+  documentation/active-work note.
+- Do not modify 五倍/修罗 business flow, click, navigation, OCR/template behavior, input queue,
+  Runner readiness, or cloud execute policy.
+- Keep cloud runtime shadow fire-and-forget; do not consume `CloudDecisionResult`,
+  `effectiveDecision`, or cloud output in business paths.
+
+Baseline before implementation:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before this edit:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison checked: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this pass. Relevant touched cloud paths are
+  not present in `origin/dev`; `git show origin/dev:src/main/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowService.java`
+  and the matching test path both fail with "path exists on disk, but not in 'origin/dev'".
+- Current local source evidence before implementation:
+  - `RuntimeDecisionShadowService.enrichRuntimeContext(...)` writes
+    `selectedTaskType=runtime.getSelectedTaskType().name()`.
+  - `RuntimeDecisionShadowService.shadow(...)` already receives the normalized request `taskCode`
+    and copies caller context values such as `requestedTaskCode`, but it does not use them to define
+    the active task context field.
+  - `RuntimeDecisionShadowServiceTest` currently verifies basic request fields only and does not
+    cover stale `WindowRuntimeContext.selectedTaskType` pollution.
+
+Planned verification:
+
+```powershell
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+Implementation 2026-07-01:
+
+- Added focused regression coverage in
+  `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowServiceTest.java`.
+  The test binds a `WindowRuntimeContext` whose window/default `selectedTaskType` is
+  `XIULUO_V2`, sends a current runtime shadow request with `taskCode=wubei` and
+  `requestedTaskCode=wubei`, and asserts:
+  - request `taskCode` remains `wubei`;
+  - context `selectedTaskType=WUBEI`;
+  - context `activeTaskCode=wubei`;
+  - context `activeTaskType=WUBEI`;
+  - context `requestedTaskCode=wubei`;
+  - context `windowSelectedTaskType=XIULUO_V2`.
+- The focused guard also covers the reverse case: a window/default `WUBEI` selection with current
+  request `taskCode=xiuluo_v2` must report `selectedTaskType=XIULUO_V2`,
+  `activeTaskType=XIULUO_V2`, `activeTaskCode=xiuluo_v2`, and
+  `windowSelectedTaskType=WUBEI`.
+- `RuntimeDecisionShadowService` now derives active task context from the current shadow request
+  `taskCode` instead of `WindowRuntimeContext.getSelectedTaskType()`.
+- The old window UI/default selection is preserved only as diagnostic
+  `windowSelectedTaskType`.
+- `selectedTaskType` is retained for cloud payload compatibility, but now means current request task
+  type. `activeTaskCode` / `activeTaskType` are also written explicitly to avoid ambiguity.
+- No 五倍/修罗 business flow, click, navigation, OCR/template, input queue, Runner readiness, or
+  cloud execute behavior was changed.
+
+RED/GREEN 2026-07-01:
+
+- RED:
+
+```powershell
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest" test
+```
+
+  Failed with `selectedTaskType expected=WUBEI actual=XIULUO_V2`, reproducing the pollution.
+
+- Focused GREEN:
+
+```powershell
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest" test
+```
+
+  Passed. The focused log sample shows `taskCode=wubei`, `selectedTaskType=WUBEI`,
+  `activeTaskCode=wubei`, `requestedTaskCode=wubei`, and
+  `windowSelectedTaskType=XIULUO_V2`.
+
+Final local verification 2026-07-01:
+
+```powershell
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest" test
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest,RuntimeDecisionShadowWaveWiringTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+git diff --check -- src/main/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowService.java src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowServiceTest.java docs/HYBRID_CLOUD_WORKFLOW.md docs/ACTIVE_WORK.md
+```
+
+- All Maven commands exited `0`.
+- `git diff --check` printed only the existing `docs/ACTIVE_WORK.md` LF/CRLF conversion warning and
+  no whitespace errors.
+- `docs/PACKAGE_ARCHITECTURE.md` CR table was not changed in this pass, so dashboard regeneration was
+  not required.
+
+Fresh runtime observation point:
+
+- After restarting the Java app, run 五倍 after a 修罗 selection/run on the same window.
+- Check `logs/dhxy-console.log` for `cloud.decision` samples where `taskCode=wubei`.
+- Acceptance: those samples must not show `selectedTaskType=XIULUO_V2`. They should show
+  `selectedTaskType=WUBEI` / `activeTaskCode=wubei`; if the stale window default is still useful for
+  diagnosis, it should appear only as `windowSelectedTaskType=XIULUO_V2`.
+
+## 2026-07-01 / CR149 cleanUpAll cancel 全目录模板
+
+Status: Source implemented / main review passed / local replay and compile passed.
+
+Owner:
+
+- Worker: 待分派。
+- Reviewer: 唐德/谢帅第三视角复审。
+
+User decision:
+
+- 只改 `cleanUpAll` / generic close 路径，让它读取 `images/template/cancel` 下所有取消/关闭按钮模板。
+- 保留 `closeMapSearchInputByX2Direct(...)` 的 `x2-only` 专用安全逻辑，不扩大这个 route navigation 关闭口径。
+
+Baseline before implementation:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before CR149 edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this pass. Relevant current cancel template state:
+  `images/template/cancel/Snipaste_2026-06-21_00-09-48.png` and
+  `images/template/cancel/Snipaste_2026-06-21_23-02-19.png` are deleted locally;
+  `images/template/cancel/x.png` and `images/template/cancel/x7.png` are untracked.
+- Current `images/template/cancel` files observed before implementation:
+  `x.png`, `x1.png`, `x2.png`, `x3.png`, `x4.png`, `x5.png`, `x6.png`, `x7.png`.
+- Existing code evidence:
+  - `UICleanerService.findGenericCloseButtonPoint(...)` hardcodes only
+    `x1.png`, `x2.png`, `x3.png`.
+  - `UICleanerService.closeMapSearchInputByX2Direct(...)` intentionally hardcodes
+    `x2.png`; this CR must not change that method.
+
+Required verification:
+
+```powershell
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+```
+
+- Add/run a focused CR149 source guard.
+- Add/run a replay or equivalent repo-local testcase that marks the generic close match/click point,
+  then record the input/output image paths here.
+
+Worker baseline 2026-07-01:
+
+- Worker role: CR149 implementation worker; not acting as 谢帅/reviewer.
+- Current branch before this worker edit: `codex/hybrid-cloud-protection`.
+- Current HEAD before this worker edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed business baseline checked for this touched path: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this pass. This worker will not revert,
+  restore, format, or clean unrelated local changes. Relevant image state remains:
+  deleted old `Snipaste_...` cancel templates are left deleted; untracked `x.png` and `x7.png`
+  are treated as user-provided current templates and are not cleaned up.
+- Relevant source evidence before implementation:
+  - `UICleanerService.findGenericCloseButtonPoint(...)` contains a local `String[]`
+    with `images/template/cancel/x1.png`, `x2.png`, and `x3.png`.
+  - `UICleanerService.closeMapSearchInputByX2Direct(...)` still calls only
+    `images/template/cancel/x2.png`; CR149 must preserve that dedicated safety path.
+  - Existing `UICleanerGenericCloseNoMatchLogWiringTest` only guards the old no-match
+    diagnostics and still mentions `x1/x2/x3`, so it must be updated for the directory-list log.
+
+Worker implementation 2026-07-01:
+
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/service/UICleanerCR149GenericCloseDirectorySourceGuardTest.java`.
+  It requires generic close to call `loadGenericCloseButtonTemplatePaths(...)`, forbids
+  hardcoded `x1/x2/x3` paths inside `findGenericCloseButtonPoint(...)`, and confirms
+  `closeMapSearchInputByX2Direct(...)` remains pinned to `images/template/cancel/x2.png`.
+- Added replay guard:
+  `src/test/java/com/bot/dhxy/service/UICleanerCR149GenericCloseReplayTest.java`.
+  It loads the cancel directory through the same loader, chooses a stable replay template from that
+  loaded list, runs the generic close template loop at threshold `0.8`, and writes a marked output
+  image with the matched box/click point. If user-added `x7.png` exists locally, the replay asserts
+  that the loader includes it, but it no longer requires `x7.png` to exist in a clean checkout.
+- `UICleanerService.findGenericCloseButtonPoint(...)` now reloads ordinary image files from
+  `images/template/cancel` on every scan, sorted by file name. Supported extensions:
+  `.png`, `.jpg`, `.jpeg`, `.bmp`.
+- Directory missing/empty/read failure returns no templates and logs directory context instead of
+  throwing into the task flow. Per-template match exceptions are logged and skipped.
+- Generic no-match logs now keep `description` and `screenPath`, and add `templateDirectory`
+  plus `templatePaths`.
+- `closeMapSearchInputByX2Direct(...)` was not changed and still uses only `x2.png`.
+
+Worker RED/GREEN and replay 2026-07-01:
+
+- RED:
+  - `UICleanerCR149GenericCloseDirectorySourceGuardTest` failed with
+    `generic close finder must load templates from images/template/cancel`.
+  - `UICleanerCR149GenericCloseReplayTest` failed with
+    `NoSuchMethodException: UICleanerService.loadGenericCloseButtonTemplatePaths(Path)`.
+- GREEN focused guards:
+
+```powershell
+mvn -q -DskipTests test-compile
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseDirectorySourceGuardTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseReplayTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerGenericCloseNoMatchLogWiringTest" exec:java
+```
+
+- All focused GREEN commands above exited `0`.
+- Replay input: `images/test-cases/ui-cleaner/cr149/generic-close-directory-input.png`.
+- Replay output: `images/test-cases/ui-cleaner/cr149/generic-close-directory-marked.png`.
+- Replay result: directory loader included `x7.png`; the first sorted matching template was
+  `images/template/cancel/x.png`, with click point `(163,48)` on the marked close button.
+
+Review repair 2026-07-01:
+
+- Review finding fixed: replay no longer hard-depends on untracked `images/template/cancel/x7.png`.
+- `UICleanerCR149GenericCloseReplayTest` still calls
+  `UICleanerService.loadGenericCloseButtonTemplatePaths(Path.of("images/template/cancel"))`, then
+  picks `x7.png` if present, otherwise uses the last sorted loaded template. If `x7.png` exists,
+  it asserts the loader included it.
+- `UICleanerCR149GenericCloseDirectorySourceGuardTest` now also guards the replay itself: no fixed
+  `TEMPLATE_DIR.resolve("x7.png")` replay dependency, and a `selectReplayTemplate(...)` choice point
+  must remain.
+
+Final worker verification 2026-07-01:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseDirectorySourceGuardTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseReplayTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerGenericCloseNoMatchLogWiringTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+```
+
+- All final worker verification commands exited `0`.
+- `node scripts/generate-cr-dashboard-data.js` generated `148` CR rows into
+  `docs/cr-dashboard-data.js`.
+
+Review repair verification 2026-07-01:
+
+```powershell
+mvn -q -DskipTests test-compile
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseDirectorySourceGuardTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseReplayTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerGenericCloseNoMatchLogWiringTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+```
+
+- Commands above exited `0`.
+- `node scripts/generate-cr-dashboard-data.js` generated `148` CR rows into
+  `docs/cr-dashboard-data.js`.
+- Current local replay picked `images/template/cancel/x7.png` because it exists locally and verified it
+  was in the loader output; in a clean checkout without `x7.png`, replay falls back to another loaded
+  template instead of failing on a missing file.
+- Current replay input/output:
+  `images/test-cases/ui-cleaner/cr149/generic-close-directory-input.png`,
+  `images/test-cases/ui-cleaner/cr149/generic-close-directory-marked.png`.
+
+Main review 2026-07-01:
+
+- Reviewed final `UICleanerService` diff: generic close reloads templates from
+  `images/template/cancel`; `closeMapSearchInputByX2Direct(...)` remains pinned to
+  `images/template/cancel/x2.png`.
+- Opened `images/test-cases/ui-cleaner/cr149/generic-close-directory-marked.png`; red box and click
+  point are on the close button.
+- Reran and passed:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseDirectorySourceGuardTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerCR149GenericCloseReplayTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.UICleanerGenericCloseNoMatchLogWiringTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+git diff --check -- src/main/java/com/bot/dhxy/service/UICleanerService.java src/test/java/com/bot/dhxy/service/UICleanerCR149GenericCloseDirectorySourceGuardTest.java src/test/java/com/bot/dhxy/service/UICleanerCR149GenericCloseReplayTest.java src/test/java/com/bot/dhxy/service/UICleanerGenericCloseNoMatchLogWiringTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js
+```
+
+- `git diff --check` printed only LF/CRLF conversion warnings, no whitespace errors.
+- Follow-up note for commit time: `images/template/cancel/x.png` and `x7.png` are currently
+  untracked user-added templates, while two old `Snipaste_...` cancel templates are deleted locally.
+  CR149 source is compatible either way, but the image asset decision should be intentional when staging.
+
+## 2026-07-01 / CR148 local-team session 完成后解绑
+
+Status: Source implemented / independent review passed / local verification passed / fresh runtime pending.
+
+Owner:
+
+- Worker: 纸质人体。
+- Reviewer: 唐德/谢帅第三视角复审。
+
+User decision:
+
+- 采用“队长完成后旧 `localTeamSessionKey` 失效，队员退回无绑定维护语义”。
+- 不采用“队长重启复用上一次 ID”。
+
+Problem evidence / observed symptom:
+
+- 五个号同批做五倍，队长完成设置轮数后停止，队员仍在自动战斗。
+- 用户随后单独重启队长，观察到队员不再按预期补血/补蓝/三技能维护。
+- 当前判断：这不是 task-turn 公平性问题，而是旧 local-team session/capability gate 仍影响队员。
+
+Implementation boundary:
+
+- 不要硬改 `TaskExecutionContext.localTeamSessionKey`；该字段是 final。
+- 优先在 `TaskMaintenanceService` 侧维护 session lifecycle：leader/queue 完成后把旧 session 标记
+  invalid/completed，让旧 context 的 `isLocalSupportMemberSession(...)` 返回 false。
+- 队员带旧 context 继续自动战斗时，应退回“无有效 local-team session”的维护路径，不再等待旧 leader
+  的 `FIRST_AID` / `SUMMON_SKILL` / `COMMON_BOX` capability。
+- 不改五倍/修罗/五环接任务、导航、OCR/template、点击、回城、战斗确认或 Runner ready event 业务顺序。
+
+Required verification:
+
+```powershell
+# focused CR148 guard, exact class name owned by worker
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+```
+
+Fresh runtime gate:
+
+- 多窗口同批启动五倍或修罗，队长完成设置轮数并停止，队员保持自动战斗。
+- 单独重启队长后，队员 due 的补血/补蓝/三技能不能继续被旧 session 的
+  `pending follower first-aid deferred: gate=local-team capability=FIRST_AID session=<old>` 长期卡住。
+- 若需要重新绑定队员，必须通过新的 UI 同批启动/明确重绑流程产生新 session。
+
+Worker baseline before implementation 2026-07-01:
+
+- Worker role: CR148 实现 worker（纸质人体），不担任谢帅/reviewer。
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before CR148 edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed business baseline used for comparison: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- `git status --short --branch` is broadly dirty before this pass. Relevant CR148 files are already
+  modified locally: `TaskMaintenanceService.java`, `AutoCombatService.java`, and
+  `WindowTaskRunner.java`. This worker must not revert, format, or normalize unrelated changes.
+- Relevant pushed-code diff evidence before editing:
+  `git diff --stat origin/dev -- TaskMaintenanceService.java AutoCombatService.java WindowTaskRunner.java`
+  shows `3842` insertions / `285` deletions across the three files. The large pre-existing migration
+  diff is treated as local baseline; CR148 will make a narrow lifecycle/gate cleanup increment only.
+- Code-path evidence before editing:
+  - `TaskMaintenanceService.completeLocalTeamSessionWindow(...)` currently removes a session only when
+    all candidates are finished; it does not immediately tombstone a completed leader lifecycle.
+  - `TaskMaintenanceService.isLocalSupportMemberSession(...)` currently treats any context with
+    `isLocalSupportMember()` and nonblank `localTeamSessionKey` as active even after leader completion.
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` enters
+    `awaitLocalTeamSupportCapabilityOpen(... FIRST_AID ...)` whenever
+    `isLocalSupportMemberSession(context)` is true, so stale contexts can keep hitting the old gate.
+- Scope guard for this pass:
+  - Do not edit `TaskExecutionContext.localTeamSessionKey` final structure.
+  - Do not change 五倍/修罗/五环接任务、导航、OCR/template、点击、回城、战斗确认、
+    Runner ready event 业务顺序.
+
+Worker implementation 2026-07-01:
+
+- Added focused guard:
+  `src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java`.
+- `TaskMaintenanceService` now records completed local-team sessions in a service-side tombstone map.
+  When `completeLocalTeamSessionWindow(...)` sees the live-detected leader window finish, it invalidates
+  the session immediately instead of waiting for all member auto-battle contexts to end.
+- Invalidating a session removes the active session state and clears local capability state:
+  open capabilities, capability epochs, `maintenanceSnapshotOpenedAtByRound` keys with
+  `local-team:<session>#...`, and matching `summonSkillClaimsByTeamRound` claim keys.
+- Local support checks now treat tombstoned sessions as inactive:
+  `isLocalSupportMemberSession(...)`, `isLocalSupportMemberCandidate(...)`,
+  `isPendingLocalSupportLeaderDetection(...)`, and `isLocalTeamSupportCapabilityOpen(...)` return false
+  for old contexts that still carry the final `localTeamSessionKey`.
+- `AutoCombatService` did not need a business-order change. Its existing first-aid pending branch now
+  falls through because `isLocalSupportMemberSession(context)` returns false for the invalid old session,
+  so it no longer waits on old `awaitLocalTeamSupportCapabilityOpen(... FIRST_AID ...)`.
+- `WindowTaskRunner` did not need a code change; its existing `runner-queue-finished` callback remains
+  the completion trigger. New UI same-queue launches already use `UUID.randomUUID()` in
+  `WindowTaskControlService`, and old ids are not revived by the service.
+- Adjusted adjacent `TaskMaintenanceCR138LocalSupportCapabilityTest` so CR138 still covers
+  "member finishes first does not clear session", while CR148 covers "leader finishes invalidates session".
+
+Worker verification 2026-07-01:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+```
+
+- RED before implementation: CR148 guard failed at
+  `old member context must stop being a valid local support session after leader completion`.
+- GREEN after implementation: all verification commands above exited `0`.
+- Dashboard sync exited `0` and regenerated `docs/cr-dashboard-data.js`.
+- No code changes were made to 五倍/修罗/五环接任务、导航、OCR/template、点击、回城、战斗确认,
+  Runner ready event, or `TaskExecutionContext.localTeamSessionKey`.
+
+Independent review repair 2026-07-01:
+
+- Finding P1 fixed: old session invalidation now clears `summonSkillQueue` / `summonSkillQueueKeys`
+  by the session's candidate window ids via existing `clearSummonSkillQueueForWindow(...)`. This matches
+  the current queue key convention `windowId#epoch#SUMMON_SKILL`; no guessed mapping was introduced.
+- Finding P2 fixed: `TaskMaintenanceService.registerLocalTeamSessionCandidate(...)` has an overload for
+  submit-time known leader window id, and `WindowTaskControlService` passes `localLeaderWindowId` during
+  same-queue submit. `completeLocalTeamSessionWindow(...)` treats either live-detected leader id or
+  known submit-time leader id as the leader completion trigger.
+- Finding P2 fixed: completed local-team tombstones now have cleanup-on-read/write using
+  `COMPLETED_LOCAL_TEAM_SESSION_TTL_MS` and `COMPLETED_LOCAL_TEAM_SESSION_MAX_TOMBSTONES`; no scheduler
+  was added.
+- CR148 guard now additionally covers:
+  - member old session enqueues `SUMMON_SKILL`, leader completes, queue/key are cleared, and same
+    window/epoch can queue again;
+  - no `markLocalTeamLeaderDetected(...)`, member completes first does not invalidate, known leader
+    completes and invalidates;
+  - tombstone count remains bounded and a new active session is not poisoned by cleanup.
+
+Repair verification 2026-07-01:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+git diff --check -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java src/test/java/com/bot/dhxy/service/TaskMaintenanceCR138LocalSupportCapabilityTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js
+node scripts/generate-cr-dashboard-data.js
+```
+
+- All commands exited `0`.
+- `git diff --check` printed only CRLF conversion warnings, no whitespace errors.
+- Dashboard sync regenerated `docs/cr-dashboard-data.js`.
+- Still unchanged: no edits to `TaskExecutionContext.localTeamSessionKey` final field, and no edits to
+  五倍/修罗/五环接任务、导航、OCR/template、点击、回城、战斗确认 or Runner ready event business order.
+
+Second review P1 repair 2026-07-01:
+
+- Finding: `enqueueSummonSkillIfAbsent(...)` added `summonSkillQueueKeys` before entering
+  `summonSkillQueueMonitor`, so leader invalidation could interleave after set insert but before queue item insert.
+  `removeSummonSkillQueueItemsForWindow(...)` only removed keys for visible queue items, leaving a set-only ghost key.
+- Fix:
+  - `summonSkillQueueKeys.add(queueKey)` and `summonSkillQueue.addLast(...)` now happen under the same
+    `summonSkillQueueMonitor`.
+  - `removeSummonSkillQueueItemsForWindow(...)` still removes matching queue items, and additionally removes residual
+    `summonSkillQueueKeys` with prefix `windowKey + "#"`.
+- Guard:
+  - `CR148LocalTeamSessionInvalidationWiringTest` now injects a set-only `window#epoch#SUMMON_SKILL` key,
+    completes the leader/session, asserts the key is gone, and verifies the same window/epoch can enqueue again.
+
+Second repair verification 2026-07-01:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+git diff --check -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java src/test/java/com/bot/dhxy/service/TaskMaintenanceCR138LocalSupportCapabilityTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js
+```
+
+- All commands exited `0`; `git diff --check` printed only CRLF conversion warnings.
+
+Final independent review / main verification 2026-07-01:
+
+- Independent reviewer returned `PASS_WITH_NOTES`; no P0/P1/P2 blocker remains.
+- Reviewer confirmed the prior queue P1 is fixed: `SUMMON_SKILL` queue key and queue item are now added
+  atomically under `summonSkillQueueMonitor`, and invalidation removes both visible queue items and residual
+  set-only keys by `windowKey + "#"`.
+- Reviewer note: the 2h / 256 tombstone retention is acceptable for CR148's symptom window. If a very old
+  member context reappears after tombstone pruning in fresh runtime, open a follow-up card to make candidate
+  status depend on active session state instead of tombstone presence alone.
+- Main verification reran:
+
+```powershell
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.CR148LocalTeamSessionInvalidationWiringTest" exec:java
+mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceCR138LocalSupportCapabilityTest" exec:java
+mvn -q -DskipTests test-compile
+mvn -q -DskipTests compile
+node scripts/generate-cr-dashboard-data.js
+git diff --check -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java src/test/java/com/bot/dhxy/service/CR148LocalTeamSessionInvalidationWiringTest.java src/test/java/com/bot/dhxy/service/TaskMaintenanceCR138LocalSupportCapabilityTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js
+```
+
+- All commands exited `0`; `git diff --check` printed only CRLF conversion warnings.
+- Remaining gate is fresh runtime: same-queue leader finishes configured task count, old member contexts must
+  stop waiting on the old local-team capability gates, and a separately restarted leader must use a new binding
+  instead of reviving the old session id.
+
+## 2026-07-01 / CR-HC-011 Runtime Decision Shadow Wave
+
+Status: Source implemented / local verification passed / main review passed / fresh runtime pending.
+
+Manager rule:
+
+- 谢帅/main agent 只担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 本卡实现必须由 worker 子智能体完成；另派 helper 子智能体做独立审查/风险清单。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+User decision:
+
+- 不再一条小 service 一条小 service 慢慢测。
+- 已经决定值得上云的运行时决策点，这一波尽量全部接入 Shadow。
+- 下一次用户 live test 应该能一次性看到所有新 shadow 面是否正常，而不是测完一半再测另一半。
+
+Baseline before CR-HC-011:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`,
+  `docs/HYBRID_CLOUD_WORKFLOW.md`, and this active-work section.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current `git status --short --branch` is broadly dirty before this pass. Workers must not revert,
+  format, or normalize unrelated task/service/config/doc changes.
+- Existing cloud IDs already include the full service list in
+  `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionServiceId.java`.
+- Existing fresh runtime has passed:
+  - `TASK_CLASSIFIER` execute for 五倍/修罗;
+  - `TRACKER_LINK_RANKER` shadow with `14/14` success/agreement and p95 `17ms`;
+  - local dev endpoint sidecar startup/reuse from UI start gate.
+
+Scope:
+
+- Add Shadow-only diagnostics for:
+  `TASK_POLICY`, `TASK_RECOVERY`, `ROUTE_CANDIDATE`, `ROUTE_MEMORY`,
+  `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`, `CAPABILITY_GATE`,
+  `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY`, `FAILURE_CLASSIFIER`,
+  `FEATURE_FLAG`, and `POLICY_VERSION`.
+- Keep `TASK_CLASSIFIER` and `TRACKER_LINK_RANKER` as already-owned existing hooks; do not rewrite them
+  unless a worker needs a shared helper and main review accepts it.
+- Defer full asset services: `MAP_TRANSFORM_ASSET`, `SIGNED_ASSET_BUNDLE`, `LEARNED_MEMORY`.
+
+Safety boundary:
+
+- New services are Shadow only:
+  - `shadow-enabled=true`;
+  - `execute-enabled=false`;
+  - `execute-percent=0`;
+  - `fallback=LOCAL`.
+- No newly connected cloud result may change task phase, click point, candidate order, navigation,
+  dialog selection, team capability, maintenance order, return item usage, Runner state, OCR/template
+  matching, or input queue behavior.
+- Local decision remains the only executed decision. Cloud is only comparison + metrics.
+
+Worker split:
+
+- Worker A: `TASK_POLICY` / `TASK_RECOVERY`.
+- Worker B: `ROUTE_CANDIDATE` / `ROUTE_MEMORY` / lightweight `POLICY_VERSION`.
+- Worker C: `NPC_CLICK_STRATEGY` / `DIALOG_POLICY`.
+- Worker D: `CAPABILITY_GATE` / `MAINTENANCE_THRESHOLD` / `TEAM_RETURN_POLICY` /
+  `FAILURE_CLASSIFIER` / `FEATURE_FLAG`.
+- Helper reviewer: check no behavior consumption, no execute defaults, no route/click/dialog/team
+  semantic drift, no excessive wrapper growth.
+
+Verification expectations:
+
+```powershell
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+Fresh runtime gate:
+
+- User must restart DHXY after source integration.
+- Live logs should show CR-HC-011 service ids with `mode=SHADOW`, `executed=false`, and no task
+  behavior change.
+
+Worker baseline before implementation 2026-07-01:
+
+- Worker role: CR-HC-011 Runtime Decision Shadow Wave 业务实现 worker；不担任谢帅/reviewer。
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD before this worker edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed business baseline used for comparison: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- `git branch -r --contains HEAD` shows `origin/codex/migrate-runner-dialog`; current cloud skeleton
+  and `docs/HYBRID_CLOUD_WORKFLOW.md` are not present in `origin/dev`.
+- `git status --short --branch` is broadly dirty before this pass. Relevant touched business files
+  are already modified locally: `WubeiTask.java`, `XiuluoTaskV2.java`, `NavigationService.java`,
+  `NpcClickService.java`, `DialogService.java`, `TaskMaintenanceService.java`,
+  `TeamReturnService.java`, and `application.properties`.
+- `git diff --stat origin/dev -- <touched business files>` shows large pre-existing migration diffs
+  (`9048` insertions / `1749` deletions across 8 files). This worker will not restore, format, or
+  normalize those unrelated local differences.
+- Relevant pushed-code evidence:
+  - `git ls-tree -r --name-only origin/dev src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no files, so the cloud decision skeleton is current-branch work rather than pushed
+    baseline code.
+  - Existing coordinator execute allowlist before this edit contains only `TASK_CLASSIFIER`.
+  - Existing runtime config before this edit has `TASK_CLASSIFIER` execute enabled and
+    `TRACKER_LINK_RANKER` shadow enabled with execute disabled; this worker must not loosen
+    `TRACKER_LINK_RANKER`.
+- Scope guard for this pass:
+  - Only add post-local-decision shadow reporting and config/tests/docs for CR-HC-011.
+  - Do not alter 五倍/修罗 task phase semantics, navigation candidate order, click coordinates,
+    dialog option selection, team capability authority, maintenance ordering, return-item behavior,
+    Runner state, OCR/template matching, or input queue behavior.
+
+Worker scope adjustment 2026-07-01:
+
+- User narrowed this worker to CR-HC-011 shared foundation only.
+- Business hook wiring is explicitly stopped for this worker. This pass must not edit
+  `WubeiTask.java`, `XiuluoTaskV2.java`, `NavigationService.java`, `NpcClickService.java`,
+  `DialogService.java`, `TaskMaintenanceService.java`, `TeamReturnService.java`, or
+  `WindowTaskRunner.java`.
+- Before the scope adjustment, this worker had only added tests and this baseline note; no business
+  hook implementation was added.
+
+Shared foundation implementation 2026-07-01:
+
+- Added `src/main/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowService.java`.
+  - Method `shadow(...)` is `void` and fire-and-forget.
+  - It checks `coordinator.isActive(serviceId)`, builds `CloudDecisionRequest`, enriches context
+    from current `WindowTaskContextHolder.rawCurrent()`, and calls
+    `CloudDecisionCoordinator.shadow(request, localDecision)`.
+  - It does not return or inspect `CloudDecisionResult` / `effectiveDecision`.
+- Added focused tests:
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowServiceTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowWaveWiringTest.java`
+- Updated `src/main/resources/application.properties` with shadow-only defaults for all new
+  CR-HC-011 services:
+  `TASK_POLICY`, `TASK_RECOVERY`, `ROUTE_CANDIDATE`, `ROUTE_MEMORY`,
+  `NPC_CLICK_STRATEGY`, `DIALOG_POLICY`, `CAPABILITY_GATE`,
+  `MAINTENANCE_THRESHOLD`, `TEAM_RETURN_POLICY`, `FAILURE_CLASSIFIER`,
+  `FEATURE_FLAG`, `POLICY_VERSION`.
+  Each is `shadow-enabled=true`, `execute-enabled=false`, `execute-percent=0`, `fallback=LOCAL`.
+- Confirmed `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` already echoes any
+  request `serviceId` and `localDecision`; no local dev endpoint code change was needed.
+- Focused RED/GREEN:
+  - RED: `mvn -q -Dtest="RuntimeDecisionShadowServiceTest,RuntimeDecisionShadowWaveWiringTest" test`
+    failed before implementation because `RuntimeDecisionShadowService` was missing.
+  - GREEN: the same command exited `0` after adding the helper/config.
+
+Shared-foundation verification before handoff:
+
+```powershell
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+Latest result on 2026-07-01: shared foundation implementation is present, but current full-worktree
+verification is blocked by other in-progress business hook edits outside this worker's narrowed
+scope.
+
+- `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` currently fails on business hook source guards
+  that expect `WubeiTask`, `NpcClickService`, `DialogService`, and `TaskMaintenanceService` to import
+  `RuntimeDecisionShadowService`.
+- `mvn -q -DskipTests compile` currently fails because out-of-scope business hook files contain
+  partial helper references:
+  `TaskMaintenanceService.safe(...)`, `TaskMaintenanceService.taskCode(...)`, and
+  `XiuluoTaskV2.shadowTaskPolicyDecision(...)`.
+- This shared-foundation worker did not edit those business hook files after the user narrowed the
+  scope. The failing files are owned by the follow-up CR-HC-011 hook workers/main coordination.
+- Earlier in this pass, before those concurrent business-hook edits landed, the focused command
+  `mvn -q -Dtest="RuntimeDecisionShadowServiceTest,RuntimeDecisionShadowWaveWiringTest" test`
+  exited `0`.
+
+Worker D Team/Maintenance/Diagnostics Shadow baseline 2026-07-01:
+
+- Worker role: CR-HC-011 Worker D / Team-Maintenance-Diagnostics Shadow；只负责
+  `CAPABILITY_GATE`、`MAINTENANCE_THRESHOLD`、`TEAM_RETURN_POLICY`、`FAILURE_CLASSIFIER`、
+  `FEATURE_FLAG`。
+- Current branch before Worker D code edit: `codex/hybrid-cloud-protection`; current HEAD:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed business baseline used for comparison: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`。
+- `git status --short --branch` is broadly dirty before this Worker D pass. Relevant files
+  `TaskMaintenanceService.java`, `TeamReturnService.java`, cloud runtime files, tests,
+  `application.properties`, and CR docs already contain pre-existing current-worktree changes.
+  Worker D will not revert, format, or normalize unrelated dirty work.
+- Relevant baseline evidence before editing:
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/service/TeamReturnService.java src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud src/main/resources/application.properties docs/ACTIVE_WORK.md docs/HYBRID_CLOUD_WORKFLOW.md`
+    shows large pre-existing CR migration diffs.
+  - `RuntimeDecisionShadowService` already exists as a void/fire-and-forget helper and does not
+    expose `CloudDecisionResult` to business callers.
+  - `application.properties` already has CR-HC-011 defaults with `shadow-enabled=true`,
+    `execute-enabled=false`, `execute-percent=0`, and `fallback=LOCAL`.
+  - `CloudDecisionCoordinator` execute allowlist still contains only `TASK_CLASSIFIER`; Worker D
+    must not loosen `TRACKER_LINK_RANKER`.
+- Worker D hook plan:
+  - Add only post-local-result shadow calls in `TaskMaintenanceService` and `TeamReturnService`.
+  - Keep CR138 local session/capability state authoritative; shadow calls must not grant, consume,
+    close, or wait for capability and must not read `effectiveDecision` / `isExecuted`.
+  - Add focused source guards proving Team/Maintenance services do not consume cloud effective
+    decisions, new services remain execute-disabled, and `TRACKER_LINK_RANKER` execute is not widened.
+  - Do not touch `WubeiTask`, `XiuluoTaskV2`, `NavigationService`, `NpcClickService`,
+    `DialogService`, `WindowTaskRunner`, or input queue.
+
+Worker D implementation 2026-07-01:
+
+- Added Worker D shadow-only hooks:
+  - `TaskMaintenanceService` now reports `FEATURE_FLAG`, `CAPABILITY_GATE`,
+    `MAINTENANCE_THRESHOLD`, and maintenance-side `FAILURE_CLASSIFIER`.
+  - `TeamReturnService` now reports `TEAM_RETURN_POLICY` and team-return-side
+    `FAILURE_CLASSIFIER`.
+- Hook points:
+  - `FEATURE_FLAG`: after local task-start maintenance cooldown/feature handling decides whether
+    summon-skill cleanup starts immediately or begins on cooldown.
+  - `CAPABILITY_GATE`: after `awaitLocalTeamSupportCapabilityOpen(...)` has locally determined
+    already-open, timeout-disabled, timeout, interrupted, or opened-before-timeout outcomes.
+  - `MAINTENANCE_THRESHOLD`: after `runOpportunisticMaintenance(...)` has produced the local
+    `TaskMaintenanceResult`.
+  - `TEAM_RETURN_POLICY`: after local member return-button click decisions, leader wait decisions,
+    and leader-signal precheck consumption decisions.
+  - `FAILURE_CLASSIFIER`: only after local failure-like outcomes are already known, such as
+    maintenance broadcast failure/interruption/retry-later, return button disappearing, leader wait
+    timeout, or team-return precheck failure.
+- Shadow-only safety:
+  - Both services call `RuntimeDecisionShadowService.shadow(...)` through local diagnostics helpers
+    that catch runtime shadow exceptions and return the original local result.
+  - Static source check found no `CloudDecisionResult`, `getEffectiveDecision`, or `.isExecuted(`
+    in `TaskMaintenanceService.java` / `TeamReturnService.java`.
+  - Static source check found `CloudDecisionCoordinator` execute allowlist still only contains
+    `TASK_CLASSIFIER`; `TRACKER_LINK_RANKER` was not loosened.
+- Added focused guard:
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionWorkerDShadowWiringTest.java`.
+  - RED confirmed before implementation:
+    `mvn -q -Dtest="RuntimeDecisionWorkerDShadowWiringTest" test` failed because
+    `TaskMaintenanceService` did not import `RuntimeDecisionShadowService`.
+- Verification after implementation:
+  - `mvn -q -Dtest="RuntimeDecisionWorkerDShadowWiringTest" test` exited `0`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `git diff --check -- <Worker D touched files>` exited `0` with only existing CRLF
+    normalization warnings.
+  - Static `rg` check found no `CloudDecisionResult`, `getEffectiveDecision`, or `.isExecuted(`
+    in `TaskMaintenanceService.java` / `TeamReturnService.java`.
+  - `CloudDecisionCoordinator` execute allowlist still contains only `TASK_CLASSIFIER`; Worker D did
+    not loosen `TRACKER_LINK_RANKER`.
+
+Worker B Navigation Shadow baseline 2026-07-01:
+
+- Worker role: CR-HC-011 Worker B / Navigation Shadow；只负责 `ROUTE_CANDIDATE`、
+  `ROUTE_MEMORY`，以及必要的轻量 `POLICY_VERSION` echo。
+- Current branch before Worker B code edit: `codex/hybrid-cloud-protection`; current HEAD:
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`)。
+- Latest pushed business baseline used for comparison: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`)。
+- `git status --short --branch` is broadly dirty before this Worker B pass. Relevant navigation files
+  `src/main/java/com/bot/dhxy/service/NavigationService.java` and
+  `src/main/java/com/bot/dhxy/service/WorldMapRouteResultMemoryService.java` are clean versus current
+  `HEAD` before Worker B edits; `src/main/resources/application.properties` is already modified by
+  earlier cloud work. `src/main/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowService.java`
+  exists as current-worktree cloud skeleton and is not present in `origin/dev`.
+- Relevant pushed-code evidence:
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/service/NavigationService.java src/main/java/com/bot/dhxy/service/WorldMapRouteResultMemoryService.java src/main/resources/application.properties`
+    reports `3 files changed, 1811 insertions(+), 708 deletions(-)`.
+  - `git diff --name-status origin/dev -- ...` reports `NavigationService.java` modified,
+    `WorldMapRouteResultMemoryService.java` added, and `application.properties` modified.
+  - `git ls-tree -r --name-only origin/dev src/main/java/com/bot/dhxy/cloud/runtime src/test/java/com/bot/dhxy/cloud/runtime docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no files, so the runtime cloud helper/tests/docs are current-branch work rather than
+    pushed baseline code.
+  - `rg "RouteMemory|route memory|world_map_route" src/main/java` shows route memory ownership in
+    `NavigationService.java`, `WorldMapRouteResultMemoryService.java`, and watcher settlement paths
+    in `WindowTaskRunner.java`; Worker B will not edit `WindowTaskRunner.java`.
+- Scope guard for Worker B:
+  - Add only post-local-decision shadow reporting for route candidate and route memory diagnostics.
+  - Do not consume `CloudDecisionResult`, `effectiveDecision`, cloud route candidates, map transform
+    assets, route memory clean/dirty recommendations, or policy-version results.
+  - Do not change route selection, map point coordinates, coordinate conversion, pathing intent,
+    memory clean/dirty counters, fallback order, OCR/template matching, click algorithms, Runner, or
+    input queue behavior.
+
+Worker B Navigation Shadow implementation 2026-07-01:
+
+- `NavigationService` now constructor-injects the shared `RuntimeDecisionShadowService` and uses only
+  its `void shadow(...)` fire-and-forget API.
+- `ROUTE_CANDIDATE` hook points:
+  - `performWorldMapSearchAndClickDestination(...)` after the local world-map route action result is
+    known and logged.
+  - The legacy route-memory fast path reports before returning success, after the local remembered
+    click path has already succeeded.
+  - Context includes route mode, candidate source (`yellow-memory`, `yellow-ocr`, `legacy-memory`,
+    `legacy-ocr`), attempt, target map, canonical target map, target coordinate, and whether local
+    code clicked.
+- `ROUTE_MEMORY` hook points:
+  - legacy route-result memory lookup miss / clean-hit use / input failure;
+  - yellow destination route memory lookup miss / clean-hit use / coordinate-missing skip /
+    input failure;
+  - yellow memory failure recording after the local failure pending entry is recorded;
+  - pending world-map route-result memory creation after the local pending record is built and stored
+    on the current `WindowRuntimeContext`.
+- Lightweight `POLICY_VERSION` echo:
+  - `NavigationService` sends `POLICY_VERSION` only as `policyVersion=navigation-shadow-v1` from the
+    route-candidate reporting path.
+  - It does not fetch, download, cache, or apply `MAP_TRANSFORM_ASSET`, templates, map assets, or
+    learned memory.
+- Safety result:
+  - `NavigationService` does not import/read `CloudDecisionResult`, does not call
+    `getEffectiveDecision()`, does not branch on `isExecuted()`, and does not assign/return cloud
+    shadow output.
+  - Local route status, route mode, click point, coordinate conversion, pathing intent registration,
+    route-memory clean/dirty counters, fallback order, OCR/template matching, Runner, and input queue
+    behavior remain local-authoritative.
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/cloud/runtime/NavigationRuntimeDecisionShadowWiringTest.java`.
+
+Worker B focused verification:
+
+- RED: after adding the source guard but before implementation, manual guard execution failed with
+  `NavigationService must import CloudDecisionServiceId`.
+- GREEN:
+
+```powershell
+mvn -q clean test-compile
+java -cp target\test-classes com.bot.dhxy.cloud.runtime.NavigationRuntimeDecisionShadowWiringTest
+```
+
+- Result: `NavigationRuntimeDecisionShadowWiringTest passed`.
+
+Worker B required verification:
+
+```powershell
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- Latest result after clearing the parallel-Maven `target` race: both commands exited `0`.
+
+Worker C Interaction Shadow baseline 2026-07-01:
+
+- Worker role: CR-HC-011 Worker C / Interaction Shadow；只负责 `NPC_CLICK_STRATEGY` 与
+  `DIALOG_POLICY`。
+- Current branch before Worker C code edit: `codex/hybrid-cloud-protection`; current HEAD:
+  `696a12b chore: remove obsolete debug tooling`.
+- No upstream is configured for the current branch. Latest pushed business baseline used for
+  comparison remains `origin/dev` at `e543d02 Stabilize task navigation and window readiness`.
+- Relevant `git status --short --branch` evidence: worktree is broadly dirty before this worker pass;
+  the two allowed business files are already modified locally:
+  `src/main/java/com/bot/dhxy/service/NpcClickService.java` and
+  `src/main/java/com/bot/dhxy/service/DialogService.java`.
+- Relevant baseline diff evidence:
+  `git diff --shortstat origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/service/DialogService.java`
+  reports `2 files changed, 1896 insertions(+), 454 deletions(-)`. This is pre-existing
+  migration/local business-path drift; Worker C must add only shadow reporting after local results
+  are determined and must not restore or normalize those differences.
+- `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/service/DialogService.java`
+  shows pushed baseline commit `e543d02` touched both files (`NpcClickService.java` and
+  `DialogService.java`), so Worker C treats pushed logic as the reference while preserving current
+  local migration edits.
+- Worker C source guard target: `NpcClickService` / `DialogService` must not consume
+  `CloudDecisionResult.getEffectiveDecision()` or `isExecuted()` for business flow, and
+  `NPC_CLICK_STRATEGY` / `DIALOG_POLICY` execute remains disabled.
+
+Worker C Interaction Shadow implementation 2026-07-01:
+
+- `NpcClickService` now constructor-injects `RuntimeDecisionShadowService` and reports
+  `CloudDecisionServiceId.NPC_CLICK_STRATEGY` from `recordSmartClickEvidence(...)`.
+  - Hook point: after a local `NpcClickStrategyResult` exists and before vision-memory-only skip
+    gates such as `attempted=false`, missing target coordinate, or missing player location.
+  - Local decision string records only the local strategy result:
+    `strategy/status/matched/clicked/verified`.
+  - Context includes local NPC/map/target facts, role/evidence, scan/match rectangles, click points,
+    player coordinate, and strategy message.
+  - The hook does not change click point, strategy order, retry budget, tooltip/yellow OCR/formula/
+    Ctrl-menu fallback order, learned-memory writes, or verification semantics.
+- `DialogService` now constructor-injects `RuntimeDecisionShadowService` and reports
+  `CloudDecisionServiceId.DIALOG_POLICY` from `finishRequest(...)`.
+  - Hook point: after the local `DialogResult` is determined and before returning that same result.
+  - Local decision string records only the local dialog operation/policy/result:
+    `operation/optionPolicy/fallbackPolicy/status/type/actionKey/clicked`.
+  - Context includes source task, story/option/fallback policy, target keyword/item, result kind/type,
+    action key, matched text, clicked flag, and local click coordinates when present.
+  - The hook does not change dialog option selection, fallback order, remembered/prepared option
+    consumption, item-give behavior, or any click/OCR/template matching algorithm.
+- Added source guard:
+  `src/test/java/com/bot/dhxy/cloud/runtime/InteractionShadowWiringTest.java`.
+  - Guards both interaction services import/inject `RuntimeDecisionShadowService`.
+  - Guards exactly one `runtimeDecisionShadowService.shadow(...)` call in each service.
+  - Guards neither service contains `CloudDecisionResult`, `getEffectiveDecision`, or `.isExecuted(`.
+  - Guards `NPC_CLICK_STRATEGY` and `DIALOG_POLICY` remain shadow-only in config and absent from the
+    generic coordinator execute allowlist.
+
+Worker C verification 2026-07-01:
+
+- RED: after adding only `InteractionShadowWiringTest`, running
+  `mvn -q -DskipTests test-compile; java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.runtime.InteractionShadowWiringTest`
+  failed with `NpcClickService must import RuntimeDecisionShadowService`.
+- GREEN/source guard: after implementation,
+  `java src/test/java/com/bot/dhxy/cloud/runtime/InteractionShadowWiringTest.java` exited `0` with
+  `InteractionShadowWiringTest passed`.
+- Static safety grep:
+  `rg -n "CloudDecisionResult|getEffectiveDecision|\.isExecuted\(|effectiveDecision|isExecuted" src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/service/DialogService.java`
+  returned no matches.
+- Required verification:
+  - First `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` attempt failed from stale
+    `target/classes` / test-compile classpath fallout after earlier partial work.
+  - `mvn -q -DskipTests compile` then exited `0`.
+  - Re-running `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` exited `0`.
+  - Final fresh `mvn -q -DskipTests compile` exited `0`.
+  - After moving the NPC shadow call before the `attempted()` learning gate so `SKIPPED` local
+    strategy results are also reported, `InteractionShadowWiringTest`, the cloud Maven test command,
+    and compile were rerun and all exited `0`.
+
+Worker A scoped baseline before implementation 2026-07-01:
+
+- Worker role: CR-HC-011 Worker A / Task Strategy Shadow; owns only `TASK_POLICY` and
+  `TASK_RECOVERY`, and is not acting as 谢帅/reviewer.
+- Current branch/HEAD/pushed baseline are the same as the CR-HC-011 worker baseline above:
+  `codex/hybrid-cloud-protection` at `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`, compared against
+  pushed `origin/dev` `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- `git status --short --branch` remains broadly dirty before Worker A. Worker A will touch only
+  task-strategy shadow hook code/tests/docs and will not revert or normalize unrelated local changes.
+- Worker A-specific diff evidence:
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+    shows pre-existing large migration diffs versus pushed `dev` (`4458` insertions / `562`
+    deletions across the two task files).
+  - `git diff --stat HEAD -- src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+    shows the two task files were already locally dirty before Worker A (`197` lines in
+    `WubeiTask.java`, `74` lines in `XiuluoTaskV2.java`).
+  - `src/test/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowServiceTest.java` and
+    `RuntimeDecisionShadowWaveWiringTest.java` already exist, but
+    `src/main/java/com/bot/dhxy/cloud/runtime/RuntimeDecisionShadowService.java` is missing before
+    Worker A; Worker A may add the minimal shared helper needed for compile and task-strategy hooks.
+- Worker A hard boundary:
+  - Report shadow only after the local phase/branch/recovery decision has already been computed.
+  - Do not consume `effectiveDecision`, and do not change actual phase, retry, reaccept, return,
+    stop, pathing, click, dialog, bag, battle, Runner, OCR/template, or input queue behavior.
+
+Worker A implementation result 2026-07-01:
+
+- Added Worker A task-strategy shadow hooks:
+  - `WubeiTask.java` imports/injects `RuntimeDecisionShadowService`.
+  - `XiuluoTaskV2.java` imports/injects `RuntimeDecisionShadowService`.
+  - `TASK_POLICY` reports phase outcomes only after local `WubeiStepOutcome` /
+    `XiuluoStepOutcome` has already been produced and logged.
+  - `TASK_RECOVERY` reports already-selected local recovery decisions:
+    五倍 `recoverRoundAfterFailure(...)`; 修罗 retry/recover/fail outcomes and same-round restart
+    decisions.
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/cloud/task/TaskStrategyCloudShadowWiringTest.java`.
+- Shadow-only safety:
+  - Task files call only the void fire-and-forget `runtimeDecisionShadowService.shadow(...)` API.
+  - No task file imports `CloudDecisionResult`, calls `getEffectiveDecision`, or branches on cloud
+    output for Worker A.
+  - Shadow/reporting exceptions are caught and logged; local task behavior remains authoritative.
+- RED/GREEN:
+  - RED: `mvn -q -Dtest="TaskStrategyCloudShadowWiringTest" test` failed because `WubeiTask` did
+    not import `RuntimeDecisionShadowService`.
+  - GREEN source guard command:
+
+```powershell
+New-Item -ItemType Directory -Force target\source-guard | Out-Null
+javac -d target\source-guard src\test\java\com\bot\dhxy\cloud\task\TaskStrategyCloudShadowWiringTest.java
+java -cp target\source-guard com.bot.dhxy.cloud.task.TaskStrategyCloudShadowWiringTest
+```
+
+  - Result: `TaskStrategyCloudShadowWiringTest passed`.
+- Maven verification:
+  - Focused guard passed: `mvn -q -Dtest="TaskStrategyCloudShadowWiringTest" test`.
+  - Required cloud suite passed: `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`.
+  - Required compile passed: `mvn -q -DskipTests compile`.
+  - Worker A did not touch `NavigationService`, `TeamReturnService`, `NpcClickService`,
+    `DialogService`, `TaskMaintenanceService`, Runner, input queue, OCR/template, navigation, click,
+    dialog, bag, battle, or team-return behavior.
+
+Main review 2026-07-01:
+
+- 谢帅/main agent did not write Java business implementation for CR-HC-011; implementation was split
+  across assigned worker agents and reviewed after integration.
+- Main reran the focused CR-HC-011 guard set:
+
+```powershell
+mvn -q -Dtest="RuntimeDecisionShadowServiceTest,RuntimeDecisionShadowWaveWiringTest,TaskStrategyCloudShadowWiringTest,InteractionShadowWiringTest,NavigationRuntimeDecisionShadowWiringTest,RuntimeDecisionWorkerDShadowWiringTest" test
+```
+
+  Result: exited `0`.
+- Main reran the full cloud suite and compile:
+
+```powershell
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+  Result: both exited `0`.
+- Static safety grep:
+  - all new CR-HC-011 services are runtime `execute-enabled=false`, `execute-percent=0`,
+    `fallback=LOCAL`;
+  - coordinator generic execute allowlist still contains only `TASK_CLASSIFIER`;
+  - only existing `TaskTrackerPanelService` / `TASK_CLASSIFIER` code consumes
+    `CloudDecisionResult` / `effectiveDecision` / `isExecuted()`;
+  - no new CR-HC-011 hook consumes cloud output or changes click/navigation/dialog/team/maintenance
+    behavior;
+  - cloud asset services remain deferred, with no download/replacement path added.
+- `git diff --check` on the touched CR-HC-011 files reported only LF/CRLF working-copy warnings and
+  no whitespace errors.
+- Fresh runtime gate remains pending: user must restart DHXY and run 五倍/修罗 so logs can confirm
+  the new service ids with `mode=SHADOW`, `executed=false`, and local behavior unchanged.
+
+## 2026-07-01 / CR-HC-010 Local Cloud Dev Endpoint Sidecar Gate
+
+Status: Source implemented / local verification passed / helper/main review passed / fresh runtime passed.
+
+Manager rule:
+
+- 谢帅/main agent 只担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 本卡实现必须由 worker 子智能体完成；另派 helper 子智能体做独立审查/风险清单。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+User decision:
+
+- Endpoint server should start when the user clicks the UI task start button / start switch.
+- It should not start merely because the DHXY JavaFX client window opens.
+
+Runtime state before this CR:
+
+- The previously manual local dev endpoint process on `127.0.0.1:18080` was stopped.
+- Verification command:
+
+```powershell
+Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 18080 -State Listen -ErrorAction SilentlyContinue
+```
+
+- Result: no listener.
+
+Baseline before implementation:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`,
+  `docs/HYBRID_CLOUD_WORKFLOW.md`, and this CR-HC-010 section.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this pass, including cloud CR work,
+  runtime memory/config files, task/service files, tests, and docs. Worker must not revert,
+  format, or normalize unrelated changes.
+- Existing task-start precedent:
+  - `MainWindowController.startPendingTaskQueue()`,
+    `startMainSelectedTasks()`, and `startWindows(...)` already call
+    `announceLocalOcrGateForStart()` and `ensureLocalOcrReadyForTaskStart()` before
+    `windowTaskControlService.start(...)`.
+  - `LocalOcrSidecarService` checks `/health`, starts a local sidecar process when needed,
+    waits for readiness, and returns a `StartupResult`.
+- Existing cloud dev endpoint precedent:
+  - `scripts/run-cloud-decision-dev-server.ps1` starts the test-scope
+    `com.bot.dhxy.cloud.dev.CloudDecisionDevServer` through Maven exec.
+  - Current local cloud config points to `http://127.0.0.1:18080` with token
+    `local-dev-token`.
+
+Worker baseline before implementation 2026-07-01:
+
+- Worker role: CR-HC-010 business implementation only; not acting as 谢帅/reviewer.
+- Current branch: `codex/hybrid-cloud-protection`; no upstream is configured for this branch.
+- Latest pushed baseline used for comparison: `origin/dev`
+  `e543d024bf900853944b36d27d0f736005d9eeb9`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- Current HEAD before this worker edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` remains broadly dirty before this worker pass; worker must not
+  revert or normalize unrelated task/service/config/doc changes.
+- Local working-tree evidence before this worker edit:
+  - `git diff -- src/main/java/com/bot/dhxy/ui/MainWindowController.java`
+    and `git diff -- src/main/java/com/bot/dhxy/ui/LocalOcrSidecarService.java`
+    produced no file-local diff.
+  - `git diff -- src/main/resources/application.properties` already contains prior cloud config
+    additions for `cloud.base-url=http://127.0.0.1:18080`,
+    `cloud.endpoint-path=/api/cloud/decision`, and `cloud.token=local-dev-token`, plus unrelated
+    task/config changes owned by earlier work. This worker will not change 五倍/修罗 task behavior.
+  - `scripts/run-cloud-decision-dev-server.ps1` and `src/test/java/com/bot/dhxy/cloud/...` are
+    present only in the current cloud worktree; `git ls-tree origin/dev` contains only the existing
+    UI/OCR/properties files among the CR-HC-010 touch candidates.
+- Baseline decision for this card: add a UI-start sidecar readiness gate that logs WARN and lets
+  existing local fallback continue if the local dev endpoint cannot be started; do not block task
+  startup and do not change `TASK_CLASSIFIER` / `TRACKER_LINK_RANKER` execute policy.
+
+Scope:
+
+- Add a local/dev cloud endpoint sidecar gate at the UI task-start boundary.
+- If endpoint is already healthy, do not start another process.
+- If the sidecar starts the process, track ownership and shut down only that owned process on app
+  shutdown.
+- If endpoint was started externally, do not kill it.
+- Write logs to a clear file such as `logs/cloud-decision-dev-sidecar.log`.
+
+Explicitly forbidden:
+
+- Do not change 五倍/修罗 task phase, tracker classification, green-link ranking, click point,
+  navigation, dialog, bag, battle, return item, team maintenance, Runner, OCR/template, or input queue
+  behavior.
+- Do not make `TRACKER_LINK_RANKER` more executable or change `TASK_CLASSIFIER` execution policy.
+- Do not move production cloud/service authority into this local dev sidecar card.
+- Do not start the endpoint merely on JavaFX main-window open.
+
+Worker verification expectations:
+
+- Focused tests or wiring guards should prove:
+  - start gate calls cloud sidecar before `windowTaskControlService.start(...)`;
+  - healthy existing endpoint skips process start;
+  - repeated start clicks do not spawn duplicate server processes;
+  - app shutdown stops only an owned process.
+- Required commands at minimum:
+
+```powershell
+mvn -q -DskipTests compile
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+```
+
+Fresh runtime gate:
+
+- With port `18080` stopped, user clicks task start.
+- Logs should show local cloud endpoint sidecar startup and readiness before task control begins.
+- Live 五倍/修罗 should again produce `cloud.decision` and `cloud.metrics` samples.
+
+Worker implementation result 2026-07-01:
+
+- Added `src/main/java/com/bot/dhxy/ui/CloudDecisionDevSidecarService.java`.
+- Added `cloud.dev-sidecar.*` config fields to `CloudDecisionProperties` and defaults in
+  `src/main/resources/application.properties`.
+- Wired cloud dev sidecar readiness after the existing OCR gate and before
+  `windowTaskControlService.start(...)` in `MainWindowController` for:
+  - pending task queue start;
+  - main start button task start;
+  - selected-window context start;
+  - visible legacy "启动已选任务" button, because it is also a UI task-start button.
+- Behavior choice: cloud dev endpoint startup failure logs WARN, writes a UI log line, and continues
+  with existing local fallback. OCR readiness remains blocking as before.
+- Ownership rule: if the endpoint is already available, no process is started and shutdown kills
+  nothing; only the process started by `CloudDecisionDevSidecarService` is destroyed at app shutdown.
+- Safety note: no 五倍/修罗 task phase, tracker classifier/ranker semantics, green-link order/click
+  point, navigation, dialog, bag, battle, return item, team maintenance, Runner, OCR/template, or
+  input queue behavior changed. `TRACKER_LINK_RANKER` remains non-executing by default.
+
+Worker local verification 2026-07-01:
+
+```powershell
+mvn -q -Dtest="CloudDecisionDevSidecarServiceTest,MainWindowControllerCloudSidecarGateSourceGuardTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+Result: all exited 0. Focused surefire report shows `CloudDecisionDevSidecarServiceTest`
+3/3 passed and `MainWindowControllerCloudSidecarGateSourceGuardTest` 1/1 passed.
+
+Worker repair note 2026-07-01:
+
+- Main review found that shutting down only the owned `powershell` wrapper can leave Maven / Java
+  dev-server child processes alive on Windows.
+- Narrow repair: `CloudDecisionDevSidecarService.shutdown()` now inspects
+  `process.toHandle().descendants()`, sends normal termination to descendants first, then the root
+  wrapper process, waits briefly, and forcibly terminates any still-alive descendants/root.
+- Scope remains owned-process-tree only. If the endpoint was already running externally, no process
+  handle is owned and shutdown still kills nothing.
+- Added focused source guard coverage in `CloudDecisionDevSidecarServiceTest` to require
+  `process.toHandle().descendants()` and force shutdown logic in the shutdown path.
+
+Helper/main review 2026-07-01:
+
+- Independent helper review identified the main CR-HC-010 risks before implementation:
+  - no `/health` on the test-scope dev server, so readiness must not blindly use `GET /health`;
+  - main code must not import `src/test/java` dev server classes;
+  - owned process shutdown must account for PowerShell -> Maven -> Java child processes;
+  - startup gate must run before `windowTaskControlService.start(...)` and avoid duplicate processes.
+- Main review confirmed the implementation uses authenticated POST readiness and does not import the
+  test-scope dev server from main code.
+- Main review rejected the first shutdown pass because it only destroyed the PowerShell wrapper. The
+  worker repaired this with owned process-tree shutdown.
+- Main verification reran:
+
+```powershell
+mvn -q -Dtest="CloudDecisionDevSidecarServiceTest,MainWindowControllerCloudSidecarGateSourceGuardTest" test
+mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test
+mvn -q -DskipTests compile
+```
+
+- All three commands exited 0. Focused sidecar tests now cover 4 sidecar cases plus 1 UI source guard.
+- Main review found no P0/P1/P2 blocker after the process-tree repair.
+- Fresh runtime passed:
+  - `2026-07-01 10:44:05.390` UI task-start gate found the local cloud decision endpoint unavailable
+    and started the configured sidecar script.
+  - `2026-07-01 10:44:12.030` endpoint ready with `startedBySidecar=true`.
+  - `2026-07-01 10:44:12.031` `UI task start cloud sidecar gate passed`.
+  - Window task queues started only after that gate passed at `10:44:12.085/086`.
+  - Later starts at `11:01:51.613` and `11:25:55.070` logged endpoint already available with
+    `startedProcess=false`, proving duplicate starts were avoided.
+  - The same run produced live `TASK_CLASSIFIER` and `TRACKER_LINK_RANKER` cloud samples.
+
+## 2026-07-01 / CR-HC-009 TrackerLinkRanker candidate-index execute gate
+
+Status: Source implemented / local verification passed / helper review passed / fresh runtime passed.
+
+Manager rule:
+
+- 谢帅/main agent 只担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 本卡实现必须由 worker 子智能体完成；另派 helper 子智能体只做独立审查/风险清单。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+Runtime baseline:
+
+- CR-HC-008 fresh runtime passed after user restart:
+  - 修罗 and 五倍 both produced paired `cloud.decision` + `cloud.metrics`.
+  - `TASK_CLASSIFIER` execute samples showed `executed=true` and agreement.
+  - `TRACKER_LINK_RANKER` shadow samples showed `executed=false` and agreement.
+  - One controlled timeout sample was recorded by metrics without changing local fallback behavior.
+
+Scope:
+
+- Add the first safe execute skeleton for `TRACKER_LINK_RANKER`.
+- Cloud may only select an existing local candidate by candidate index.
+- Local code must still own actual click coordinates, pathing intent, retry, phase, dialog, Runner, and
+  input queue.
+- Default runtime config must keep `TRACKER_LINK_RANKER` non-executing (`execute-enabled=false` or
+  `execute-percent=0`).
+
+Explicitly forbidden:
+
+- Do not let cloud return or execute naked screen coordinates.
+- Do not change 五倍/修罗 click behavior by default.
+- Do not let cloud control minimap navigation, route transfer, NPC click, dialog, bag, battle, return
+  item, team maintenance, or task phase.
+
+Worker verification expectations:
+
+- Focused tests must prove:
+  - default runtime remains `TRACKER_LINK_RANKER executed=false`;
+  - valid candidate-index execute can map only to an existing local candidate in test-only config;
+  - invalid index / timeout / schema mismatch falls back to local and `executed=false`;
+  - `TASK_CLASSIFIER` execute behavior remains intact.
+- Required commands:
+  - `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests compile`
+
+Independent review helper findings 2026-07-01:
+
+- P0 risk: do not simply add `TRACKER_LINK_RANKER` to the generic
+  `CloudDecisionCoordinator.EXECUTABLE_SERVICES` allowlist. Generic coordinator execute can mark
+  `executed=true` before tracker-link-specific candidate index validation; `executed=true` is valid
+  only after the ranker layer maps the cloud response back to the current local candidate list.
+- P0 risk: cloud `click/rect` must never be executable. If cloud returns
+  `index=1;click=999,888;rect=...`, local code must reject or ignore the coordinates and use only a
+  validated index mapped to the current local candidate.
+- P1 blocker: candidate index validation also needs a local candidate fingerprint/session/policy gate.
+  Trace id alone does not prove the candidate list is still the same. Test-only execute should require
+  a matching fingerprint; missing/mismatched fingerprint must fallback local with `executed=false`.
+- P1 risk if task files are touched: 五倍 probe state (`currentProbeIndex`, labels, attempts) and 修罗
+  green-link selection must remain aligned with the selected local candidate. Default runtime must not
+  change existing click order or candidate choice.
+- Main review focus after worker repair: default runtime remains
+  `TRACKER_LINK_RANKER mode=SHADOW executed=false`; valid test-only execute maps only to local
+  candidates; invalid index/timeout/schema/fingerprint mismatch never logs `executed=true`.
+
+Worker baseline before implementation edit:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, CR-HC-009 section in
+  `docs/HYBRID_CLOUD_WORKFLOW.md`, and this CR-HC-009 top section in `docs/ACTIVE_WORK.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed branch containing HEAD: `origin/codex/migrate-runner-dialog` at `696a12b`.
+- `git status --short --branch` is already broadly dirty before this worker pass, including
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`,
+  `src/main/resources/application.properties`, multiple task/service files, and untracked
+  `src/main/java/com/bot/dhxy/cloud/**`, `src/test/java/com/bot/dhxy/cloud/**`, and
+  `docs/HYBRID_CLOUD_WORKFLOW.md`. This worker must not revert or normalize unrelated dirty work.
+- Relevant pushed-code evidence:
+  - `git ls-tree -r --name-only HEAD src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud`
+    returned no files, so the cloud decision/ranker skeleton is local untracked work from the current
+    cloud CR series rather than pushed baseline code.
+  - `src/main/resources/application.properties` has local `cloud.*` additions. The relevant current
+    tracker-link-ranker runtime defaults are already safe:
+    `cloud.services.tracker-link-ranker.execute-enabled=false` and
+    `cloud.services.tracker-link-ranker.execute-percent=0`.
+  - `WubeiTask.java` and `XiuluoTaskV2.java` already contain local tracker-link-ranker shadow hooks
+    plus unrelated CR work; this worker will not edit those task business files.
+- Relevant pre-edit local source evidence for the intended touch area:
+  - `CloudDecisionCoordinator.EXECUTABLE_SERVICES` currently allows only `TASK_CLASSIFIER`.
+  - `TrackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` currently returns `void`,
+    reports `localDecision` as `index/click/rect`, and does not expose a mapped candidate result to
+    callers.
+  - `CloudDecisionCoordinatorTest.testTrackerLinkRankerExecuteConfigStillKeepsLocalDecision()`
+    currently asserts that even execute-enabled `TRACKER_LINK_RANKER` stays non-executable.
+  - Existing `TASK_CLASSIFIER` execute tests must remain green and must not be weakened.
+- Scope guard for this worker pass:
+  - edit only cloud decision/ranker classes, focused cloud tests, and CR-HC-009 documentation;
+  - do not change OCR/template/click coordinate calculation, minimap navigation, route transfer, NPC
+    click, dialog, bag, battle, return-item, team maintenance, task phase, Runner, or input queue
+    behavior;
+  - accepted `TRACKER_LINK_RANKER` execute may only return an existing local candidate by index, and
+    invalid index / timeout / schema mismatch must keep local fallback with `executed=false`.
+
+Worker implementation 2026-07-01:
+
+- Added `CloudDecisionExecutionGate` as the service-specific execute boundary used after the common
+  cloud availability/schema/percent checks.
+  - The existing two-argument `CloudDecisionCoordinator.shadow(...)` still uses the default
+    coordinator gate, whose execute allowlist remains `TASK_CLASSIFIER` only.
+  - `TRACKER_LINK_RANKER` execute is available only when the ranker shadow service calls the new
+    gate-aware coordinator overload.
+- Added `TrackerLinkRankerCloudDecision` as the safe ranker result envelope.
+  - `localSelectedLink` and `effectiveSelectedLink` are always local `TaskTrackerGreenLink`
+    candidates.
+  - Cloud output never supplies executable coordinates; it can only select `index=N`.
+- Updated `TrackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` to return the safe
+  envelope while preserving fire-and-forget compatibility for existing 五倍/修罗 callers.
+  - Default runtime still ignores the return value, so current task click behavior remains unchanged.
+  - In execute-enabled tests, the service accepts only a strict `index=<non-negative integer>`
+    response that resolves inside the same local candidate list.
+  - `index=9`, `index=1;click=...`, timeout, and trace/schema mismatch all keep the local selected
+    candidate and return/record `executed=false`.
+- Updated focused cloud tests:
+  - `TrackerLinkRankerCloudShadowServiceTest` covers valid candidate-index execute, invalid index,
+    coordinate-bearing response rejection, timeout fallback, and schema mismatch fallback.
+  - `CloudRealShadowServicesIntegrationTest` test recording coordinator now records the new
+    gate-aware overload as well as the original overload.
+- No 五倍/修罗 task business click, navigation, OCR/template, dialog, bag, battle, return-item, team
+  maintenance, Runner, or input queue code was edited in this worker pass.
+
+Worker verification 2026-07-01:
+
+- RED:
+  - `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest" test` failed before implementation with
+    missing `TrackerLinkRankerCloudDecision`, proving the new tests exercised absent CR-HC-009 code.
+- GREEN / required commands:
+  - `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test`
+    passed. Logs showed direct coordinator `TRACKER_LINK_RANKER` still non-executable by default,
+    while service-gated test execute accepted only `index=1`.
+  - Initial `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` found a test harness miss:
+    `CloudRealShadowServicesIntegrationTest.RecordingCoordinator` only recorded the old two-argument
+    `shadow(...)`, so gate-aware ranker calls left `lastResult=null`.
+  - After the test harness repair, `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+
+Fresh runtime gate:
+
+- User should restart/run the app before live acceptance so Spring reloads the new cloud classes.
+- With default config, 五倍/修罗 should still log `TRACKER_LINK_RANKER mode=SHADOW executed=false`.
+- Optional test-only execute config may log `executed=true` only when the dev endpoint returns a valid
+  existing candidate index such as `index=1`; the click point must still be the selected local
+  candidate's already-computed click point.
+- Invalid index, timeout, or schema mismatch should log fallback and keep local task behavior.
+
+Worker repair 2026-07-01 / Wegener P1 fingerprint gate:
+
+- Review finding:
+  - CR-HC-009 docs required a candidate fingerprint/session/policyVersion gate, but the first worker
+    pass only validated `traceId`, `index=N`, and the current local candidate list.
+  - Missing or mismatched candidate context could still execute if the response returned a valid
+    candidate index.
+- Repair:
+  - `TrackerLinkRankerCloudShadowService` now writes a stable `candidateFingerprint` into the request
+    context.
+  - The fingerprint is SHA-256 hex over the local ranker basis:
+    `candidateCount`, local candidate sequence, `selectedIndex`, and selected local decision.
+  - Execute gate requires `CloudDecisionResponse.diagnostics["candidateFingerprint"]` to match the
+    request fingerprint before parsing/accepting `index=N`.
+  - Missing fingerprint and fingerprint mismatch reject execute, fallback to the local candidate, and
+    record clear reasons: `candidate fingerprint missing` / `candidate fingerprint mismatch`.
+  - Existing two-argument coordinator behavior and `TASK_CLASSIFIER` execute path remain unchanged.
+- RED / GREEN:
+  - RED `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest" test` failed before repair with
+    missing request `candidateFingerprint` and execute still accepting missing/mismatched fingerprints.
+  - GREEN focused ranker test passed after repair. Logs showed valid `index=1` with matching
+    fingerprint executed, while missing/mismatch fell back with `executed=false`.
+- Scope:
+  - No 五倍/修罗 click/pathing/default behavior, OCR/template, dialog, bag, battle, return item, team
+    maintenance, Runner, or input queue code changed.
+
+Main verification / helper review 2026-07-01:
+
+- Main agent reran:
+  - `mvn -q -Dtest="TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests compile`
+- All three commands passed.
+- Focused test logs showed:
+  - generic `CloudDecisionCoordinator` still keeps `TRACKER_LINK_RANKER` non-executable outside the
+    service-specific gate;
+  - valid matching-fingerprint `index=1` can execute in test-only config and maps back to a local
+    candidate;
+  - missing fingerprint, fingerprint mismatch, coordinate-bearing decision, invalid index, timeout,
+    and schema mismatch all fallback to local with `executed=false`.
+- Main grep confirmed 五倍/修罗 callers still ignore `TrackerLinkRankerCloudDecision` and continue to
+  click the original local `segment` / `point`.
+- Helper reviewer Heisenberg found no P0/P1/P2 blocker. It independently confirmed:
+  - `CloudDecisionCoordinator.EXECUTABLE_SERVICES` still contains only `TASK_CLASSIFIER`;
+  - `TRACKER_LINK_RANKER` execute is only reachable through `TrackerLinkRankerCloudShadowService`'s
+    gate-aware coordinator overload;
+  - cloud output cannot supply executable click/rect coordinates;
+  - `candidateFingerprint` is required and must match;
+  - default config remains `execute-enabled=false` / `execute-percent=0`;
+  - window/input/NPC/navigation/bag/battle paths do not consume ranker cloud results.
+
+Fresh runtime gate:
+
+- User must restart the DHXY Java app before live acceptance so Spring reloads the new cloud classes.
+- With default config, live 五倍/修罗 must continue to show
+  `TRACKER_LINK_RANKER mode=SHADOW executed=false`.
+- Optional later execute validation may only accept a dev endpoint response with strict `index=N` and
+  matching `diagnostics.candidateFingerprint`; the real click must still be the local candidate point.
+
+Heartbeat runtime check 2026-07-01 00:20 local:
+
+- `logs/dhxy-console.log` has no new `cloud.decision` / `cloud.metrics` samples after the prior
+  validation window.
+- Latest business log ends at `2026-07-01 00:11:44.928`, where the JavaFX main window closed and
+  requested stop for all window task queues.
+- Local dev endpoint is still listening on `127.0.0.1:18080` with PID `64608`.
+- Current `application.properties` points at that endpoint with `cloud.enabled=true`,
+  `cloud.real-transport-enabled=true`, `cloud.token=local-dev-token`,
+  `task-classifier execute=100`, and `tracker-link-ranker shadow=true / execute=false`.
+- At that time, CR-HC-009 remained blocked only on restarting/running the DHXY Java app to produce fresh
+  五倍/修罗 `TRACKER_LINK_RANKER mode=SHADOW executed=false` runtime logs.
+
+Fresh runtime acceptance 2026-07-01 11:31 local:
+
+- User reran the app and produced fresh 修罗 + 五倍 samples after `2026-07-01 10:44`.
+- `TRACKER_LINK_RANKER` runtime matched the CR-HC-009 default gate:
+  - `14/14` cloud decisions succeeded;
+  - `14/14` agreed with local;
+  - `14/14` stayed `mode=SHADOW`;
+  - `14/14` stayed `executed=false`.
+- Coverage included 修罗 `xiuluo-tracker-shortcut`, 五倍 `wubei-combat-tracker-pathing`,
+  五倍 `wubei-probe-tracker-pathing`, and 五倍 `wubei-combat-terminal-repath`.
+- No `TRACKER_LINK_RANKER success=false`, `agree=false`, timeout, or cloud failure lines were found.
+- Same runtime kept `TASK_CLASSIFIER` healthy: `15/15` success/agreement with `executed=true`, so
+  CR-HC-009 did not regress the existing classifier execute path.
+- `TRACKER_LINK_RANKER` cloud request/response latency:
+  - samples: `14`;
+  - values: `4,5,6,12,17,12,3,6,2,8,6,3,3,7ms`;
+  - average `6.71ms`, p50 `6ms`, p90 `12ms`, p95 `17ms`, p99 `17ms`, max `17ms`.
+- Gap: current runtime logs do not include a separate local link-ranker elapsed time. The logged
+  `elapsedMs` is only the cloud client round trip / response handling inside
+  `CloudDecisionCoordinator`; local candidate selection is already done before the shadow request.
+  This run verifies result agreement and cloud latency, but not a complete local-vs-cloud latency
+  comparison.
+
+## 2026-07-01 / CR139 follow-up WUHuan_V2 clean transition 漏接修复
+
+Status: Source repaired / focused guard GREEN / compile and dashboard passed / fresh runtime pending.
+
+Scope:
+
+- 修复 CR139 clean queued cross-task transition 对 `TaskType.WUHuan_V2` 的漏接。
+- 规则覆盖 `修罗` / `五倍` / `五环` 三个正式队列任务任意不同任务类型互切。
+- clean transition 到五环时必须保留 `PREPARE` 和必要 `BUY_SHOES`，但准备完成后不得进入
+  `HANDOVER_DETECT` 接管旧左侧 tracker/dialog，必须进入 `ACCEPT_TASK` 并复用现有
+  `wuhuan-v2:acceptNpc:navigate` 去 `长安/云游大师`。
+
+Baseline before edits:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, top of `docs/ACTIVE_WORK.md`, and CR139
+  row/card in `docs/PACKAGE_ARCHITECTURE.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b chore: remove obsolete debug tooling`.
+- Latest pushed branch containing HEAD: `origin/codex/migrate-runner-dialog` at `696a12b`.
+- `git status --short --branch` before this pass is broadly dirty, including docs/config/services/tasks/tests.
+  This worker must not revert, format, or normalize unrelated changes.
+- Relevant pre-edit source evidence:
+  - `WindowTaskRunner.isCleanQueueTransitionStartupTask(...)` currently returns only
+    `TaskType.WUBEI || TaskType.XIULUO_V2`.
+  - `FiveRingTaskV2.execute(...)` currently starts each run with `FiveRingPhaseContext.start(round)`
+    and does not read `context.isCleanQueueTransitionStartup()`.
+  - `FiveRingPhaseContext.start(round)` starts at `FiveRingPhase.PREPARE`.
+  - `FiveRingTaskV2.prepare(...)` and successful `buyShoes(...)` both continue to
+    `FiveRingPhase.HANDOVER_DETECT`, so a clean transition to 五环 can still try to consume old
+    left-tracker/dialog state before routing to 云游大师.
+- Relevant local diff evidence before this repair:
+  - `WindowTaskRunner.java` already contains unrelated local CR142/CR144/CR146/CR145 changes; this pass
+    will only adjust the clean-transition eligibility helper.
+  - `CR139CleanQueueTransitionStartupWiringTest.java` already contains the earlier 修罗/五倍 CR139 guard
+    changes; this pass will extend the guard for 五环 and update wording to three formal tasks.
+  - `FiveRingTaskV2.java` and `FiveRingPhaseContext.java` have no current local diff in this worktree.
+
+Planned RED/GREEN:
+
+- RED first: extend `CR139CleanQueueTransitionStartupWiringTest` so current source fails on missing
+  `TaskType.WUHuan_V2`, missing 五环 clean predicate usage, and missing clean-transition skip from
+  `PREPARE/BUY_SHOES` to `ACCEPT_TASK`.
+- GREEN: minimal source repair only:
+  `WindowTaskRunner.isCleanQueueTransitionStartupTask(...)` includes `TaskType.WUHuan_V2`;
+  五环 phase context carries a clean-transition first-run flag through `PREPARE`/`BUY_SHOES`;
+  prepare/buy success routes clean transition to `ACCEPT_TASK`, where existing
+  `ACCEPT_NPC_NAV_SOURCE = "wuhuan-v2:acceptNpc:navigate"` navigation remains unchanged.
+- Scope exclusion: no OCR/template/click/movement/navigation target selection, NPC click algorithm,
+  dialog option matching, coordinate/template/input-queue changes.
+
+Implementation:
+
+- `WindowTaskRunner.isCleanQueueTransitionStartupTask(...)` now includes `TaskType.WUHuan_V2`, so clean
+  queued cross-task startup eligibility covers `修罗` / `五倍` / `五环` formal task switches.
+- `FiveRingTaskV2.execute(...)` reads `context.isCleanQueueTransitionStartup()` on the first 五环 run.
+  In that branch it logs that clean transition keeps preparation/buy-shoes checks but skips handover
+  and forces accept-NPC navigation.
+- `FiveRingPhaseContext.cleanTransitionStart(round)` still starts at `FiveRingPhase.PREPARE`, preserving
+  五环 UI cleanup, startup first-aid, 摄妖香/shoe scan, quick-buy, and `BUY_SHOES` fallback.
+- `FiveRingPhaseContext.nextAfterPreparation(...)` sends clean-transition preparation success to
+  `FiveRingPhase.ACCEPT_TASK`; normal 五环 startup still goes to `FiveRingPhase.HANDOVER_DETECT`.
+- `FiveRingTaskV2.prepare(...)` and successful `buyShoes(...)` now call `nextAfterPreparation(...)`.
+  Existing `ACCEPT_TASK` navigation source remains `wuhuan-v2:acceptNpc:navigate` for `长安/云游大师`.
+
+Verification so far:
+
+- RED focused guard after test update and before source change:
+  - `mvn -q -DskipTests test-compile` compiled the updated guard.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    failed as expected with
+    `clean transition eligibility must include 五环 WUHuan_V2`.
+- GREEN focused guard after source repair:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed with `CR139CleanQueueTransitionStartupWiringTest passed`.
+- Scope held so far: no OCR/template/click/movement/navigation target selection, NPC click algorithm,
+  dialog option matching, coordinates, templates, or input queue code changed.
+
+Final local verification:
+
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  passed with `CR139CleanQueueTransitionStartupWiringTest passed`.
+- `mvn -q -DskipTests compile` passed.
+- `node scripts/generate-cr-dashboard-data.js` passed and regenerated `docs/cr-dashboard-data.js`
+  with `146 CR rows`.
+- Independent review / main verification:
+  - Independent reviewer returned approve-with-notes and found no P0/P1/P2 blocker. It confirmed
+    `isCleanQueueTransitionStartupTask(...)` now covers only `WUBEI` / `XIULUO_V2` / `WUHuan_V2`,
+    not `AUTO_BATTLE` or `SLEEP_COMPUTER`.
+  - Reviewer confirmed 五环 clean transition still starts at `PREPARE`, preserves `PREPARE` /
+    necessary `BUY_SHOES`, and only after preparation routes to `ACCEPT_TASK`; normal 五环 startup
+    still routes to `HANDOVER_DETECT`.
+  - Reviewer confirmed the existing 五环 `ACCEPT_TASK` path still uses
+    `wuhuan-v2:acceptNpc:navigate` and no OCR/template/click/navigation algorithm was changed.
+  - Main agent re-read the focused diff and reran `test-compile`, CR139 focused guard, `compile`,
+    and `node scripts/generate-cr-dashboard-data.js`; all four commands passed.
+
+Fresh runtime gate:
+
+- Run mixed queues covering `修罗` / `五倍` / `五环` different-task transitions. For clean transition
+  into 五环, confirm logs show the clean-transition 五环 branch, then `PREPARE`/necessary `BUY_SHOES`,
+  then `ACCEPT_TASK` with `wuhuan-v2:acceptNpc:navigate` to `长安/云游大师`, with no
+  `HANDOVER_DETECT` attempt to consume the previous task's tracker/dialog before acceptance.
+
+## 2026-07-01 / CR139 repair clean queue transition must route to accept NPC
+
+Status: source repaired / focused guard GREEN / compile and test-compile passed / fresh runtime pending.
+
+Repair target:
+
+- Runtime evidence from `2026-06-30 22:41` showed `修罗 -> 五倍` clean queued transition entered
+  `WubeiRoundContext.normalStart(round)` and `WUBEI_ACCEPT_TASK` while the role was still in
+  `灵兽村` with 修罗 NPC/dialog visible. The prepared accept click selected the 修罗 accept option and
+  polluted the queue with 修罗第 11 轮 before 五倍 continued.
+- Business rule from user: every task switch must force the next task's first navigation phase.
+  `修罗 -> 五倍` must route to `宝象国/降魔侍卫`; `五倍 -> 修罗` must route to `灵兽村/灵兽村使者`.
+  Clean transition may skip global startup prep and startup-screen/hot-start resume, but must not
+  jump directly into accept/dialog click.
+
+Baseline before edits:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, top of `docs/ACTIVE_WORK.md`, CR139
+  records in `docs/ACTIVE_WORK.md`, and CR139 row/card in `docs/PACKAGE_ARCHITECTURE.md`.
+- Current branch: `codex/hybrid-cloud-protection` (no upstream configured; worktree already dirty).
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed branch containing HEAD: `origin/codex/migrate-runner-dialog` =
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short` before this pass is broadly dirty, including `docs/ACTIVE_WORK.md`,
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`, `WubeiTask.java`,
+  `XiuluoTaskV2.java`, cloud/shadow work, maintenance/task runner work, and multiple tests.
+  This repair must not revert, format, or normalize unrelated changes.
+- Relevant pre-edit source evidence:
+  - `CR139CleanQueueTransitionStartupWiringTest` still requires
+    `WubeiRoundContext.normalStart(round)` for clean transition, which is now known wrong.
+  - `WubeiTask.execute(...)` logs
+    `skip hot-start because clean queued task transition; accept a fresh task` and uses
+    `WubeiRoundContext.normalStart(round)` for first clean transition.
+  - `WubeiRoundContext.normalStart(...)` starts at `WubeiPhase.ACCEPT_TASK`.
+  - `XiuluoTaskV2.execute(...)` logs
+    `skip startup-screen resume because clean queued task transition; accept a fresh task` and uses
+    `XiuluoRoundContext.start(round)`.
+  - `XiuluoRoundContext.start(...)` starts at `XiuluoPhase.PREPARE_ROUND`, then normal prepare can
+    advance toward accept without guaranteeing a fresh route boundary first.
+- Relevant local diff evidence before this repair: `WubeiTask.java` and `XiuluoTaskV2.java` already
+  contain unrelated local work for cloud shadow logging, CR120 common-box hooks, CR143/CR146/CR147
+  runtime recovery, and maintenance queue changes. This pass will only adjust clean-transition
+  startup phase selection/log text plus the CR139 source guard.
+
+Planned RED/GREEN:
+
+- RED first: update `CR139CleanQueueTransitionStartupWiringTest` to require clean transition routing
+  to accept NPC (`WubeiPhase.ROUTE_TO_MAIN_TASK` / `XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC`) and to
+  reject misleading `accept a fresh task` clean-transition logs.
+- GREEN: make the smallest source change in 五倍/修罗 startup selection, adding clear route-to-accept
+  factories only if they improve readability without wrapper nesting.
+- Scope exclusion: no OCR/template/click/movement/navigation target selection, NPC click algorithm,
+  dialog option matching, coordinate/template/input-queue changes.
+
+Implementation:
+
+- `CR139CleanQueueTransitionStartupWiringTest` now rejects the old clean-transition
+  `WubeiRoundContext.normalStart(round)` / direct fresh-accept wording and requires explicit
+  route-to-accept-NPC starts.
+- `WubeiRoundContext.routeToAcceptNpc(round)` starts at `WubeiPhase.ROUTE_TO_MAIN_TASK` with source
+  `clean-transition-route-to-accept-npc`.
+- `WubeiTask.execute(...)` uses that route start only for first-round
+  `context.isCleanQueueTransitionStartup()` and logs `force accept NPC route`.
+- `XiuluoRoundContext.routeToAcceptNpc(round)` starts at
+  `XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC` with source
+  `clean-transition-force-accept-npc-navigation`.
+- `XiuluoTaskV2.execute(...)` uses that route start only for first-round
+  `context.isCleanQueueTransitionStartup()` and logs `force accept NPC navigation`. Startup
+  first-aid/摄妖香 checks still run before this branch; true after-combat/startup-screen resume
+  remains in the non-clean branch.
+
+Verification:
+
+- RED focused guard after test update and before source change:
+  - Command:
+    `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - Expected failure:
+    `Wubei round context needs an explicit route-to-accept-NPC start`.
+- GREEN / compile:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed with `CR139CleanQueueTransitionStartupWiringTest passed`.
+  - `mvn -q -DskipTests compile` passed.
+- Dashboard sync:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR139 row/card updated to record that old direct normal accept
+    was the bug and the new acceptance point is forced accept-NPC navigation.
+  - `node scripts/generate-cr-dashboard-data.js` passed and regenerated `docs/cr-dashboard-data.js`.
+- Scope held: no OCR/template/click/movement/navigation target selection, NPC click algorithm,
+  dialog option matching, coordinates, templates, or input queue code changed.
+- Independent review / main verification:
+  - Independent reviewer returned `APPROVE_WITH_NOTES` with no P0/P1/P2 findings. It confirmed
+    `修罗 -> 五倍` starts at `WubeiPhase.ROUTE_TO_MAIN_TASK`, `五倍 -> 修罗` starts at
+    `XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC`, and standalone / after-combat non-clean startup
+    branches remain intact.
+  - Reviewer note: current worktree is broadly dirty and `WubeiTask.java` / `XiuluoTaskV2.java`
+    include unrelated CR120/CR143/CR146/cloud/maintenance edits; keep CR139 scope clear when
+    committing or reviewing.
+  - Main agent reran:
+    - `mvn -q -DskipTests test-compile`
+    - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.CR139CleanQueueTransitionStartupWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    - `mvn -q -DskipTests compile`
+    - `node scripts/generate-cr-dashboard-data.js`
+  - All four commands passed; dashboard regenerated `146 CR rows`.
+
+Fresh runtime gate:
+
+- Run `[修罗, 五倍]`: after 修罗 `SUCCESS`, confirm `CLEAN_QUEUE_TRANSITION` logs, then 五倍 logs
+  `force accept NPC route` and routes to `宝象国/降魔侍卫` before any `WUBEI_ACCEPT_TASK` click.
+- Run `[五倍, 修罗]`: after 五倍 `SUCCESS`, confirm 修罗 logs `force accept NPC navigation` and routes
+  to `灵兽村/灵兽村使者` before any 修罗 accept click.
+- Confirm no first clean-transition accept click can consume the previous task's visible dialog/NPC,
+  and standalone/after-combat startup resume still uses the existing non-clean branch.
+
+## 2026-07-01 / CR120 follow-up 接任务 NPC 点击前消费 pending common-box
+
+Status: Source verified / focused guards and compile passed / fresh runtime pending.
+
+Baseline before edits:
+
+- Required intake read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/ACTIVE_WORK.md` top and CR120 records,
+  plus CR120 row/card in `docs/PACKAGE_ARCHITECTURE.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed branch containing HEAD: `origin/codex/migrate-runner-dialog` =
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short --branch` is already broadly dirty before this pass, including docs/config/services/tasks/tests.
+  This follow-up must not revert, format, or normalize unrelated files.
+- Relevant pre-edit diff evidence for touched production paths:
+  `WubeiTask.java` and `XiuluoTaskV2.java` already contain local CR changes, including cloud shadow wiring,
+  CR146 post-combat idle recovery, CR143/CR122 pathing/runtime cleanup, maintenance queue adjustments, and
+  return-home precheck relocation. CR120 follow-up must only add pending common-box consume calls before accept-NPC
+  `clickNpcSmart(...)` and must not change NPC click, dialog, navigation, template, ROI, TTL, or click-point logic.
+- Relevant existing CR120 evidence: current CR120 row/card says 修罗 and 五倍 already have earlier after-accept /
+  before-tracker consume hooks, but fresh runtime still needs pending consume before expiry. User-approved plan A for
+  this pass is to consume an already-pending common-box immediately before the next accept NPC click; if no pending box
+  exists, the shared helper should no-op quickly.
+
+Implementation / verification:
+
+- RED guard after test update:
+  - `WubeiCR120CommonBoxEarlyConsumeWiringTest` failed with missing
+    `consumeCommonBoxAfterTaskAccepted(context, "wubei:before-accept-npc-click")`.
+  - `XiuluoCR120CommonBoxEarlyConsumeWiringTest` failed with missing
+    `consumeCommonBoxDuringNextTaskProgress(context, "xiuluo-v2:before-accept-npc-click")`.
+- Source change:
+  - `WubeiTask.runAcceptTaskPhase(...)` now consumes pending common-box before building/clicking
+    the accept NPC request.
+  - `XiuluoTaskV2.navigateToTaskNpc(...)` now consumes pending common-box before the nearby direct
+    accept NPC smart click.
+  - `XiuluoTaskV2.clickTaskNpc(...)` now consumes pending common-box before the normal accept NPC
+    smart click.
+- No OCR/template/click-target/navigation/CommonBoxService/ROI/TTL logic was changed.
+- Verification passed:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.wubei.WubeiCR120CommonBoxEarlyConsumeWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.xiuluo.XiuluoCR120CommonBoxEarlyConsumeWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests compile`
+- 唐德复核:
+  - Confirmed the only CR120 follow-up source behavior added is pending common-box consume before
+    accept-NPC smart-click in 五倍 and 修罗.
+  - No `CommonBoxService`, ROI/template/TTL/click point, NPC click algorithm, dialog handling, or
+    navigation algorithm changes were introduced by this follow-up.
+  - Re-ran the same focused guards, `test-compile`, `compile`, and narrow `git diff --check`;
+    `diff --check` only reported existing LF/CRLF warnings.
+- Fresh runtime still needed:
+  - 五倍 pending box should log `COMMON_BOX_CLICKED ... source=wubei:before-accept-npc-click`
+    before `降魔侍卫` smart click when a box is already pending.
+  - 修罗 pending box should log `COMMON_BOX_CLICKED ... source=xiuluo-v2:before-accept-npc-click`
+    before `灵兽村使者` smart click for both nearby-direct and normal click phases.
+  - No-pending paths should continue as fast no-ops with no new screenshots or navigation changes.
+
+## 2026-06-30 / CR-HC-005 + CR-HC-006 云端 dev endpoint 与 TaskClassifier execute gate
+
+Status: Source implemented / independent review PASS / local verification PASS / fresh runtime execute gate pending.
+
+Manager rule:
+
+- 用户确认谢帅/main agent 在云端化 CR 中担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 本轮实现由 worker 子智能体完成；独立 review/helper 子智能体只审查、不改文件。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+Scope:
+
+- CR-HC-005: 本地 dev cloud decision endpoint，用真实 HTTP request/response 测试
+  `HttpCloudDecisionClient`。
+- CR-HC-006: 让 `TASK_CLASSIFIER` 的 `execute-enabled` / `execute-percent` 成为真实 gate。
+- `TRACKER_LINK_RANKER` 必须保持 shadow-only；禁止云端控制点击、导航、pathing intent、retry、
+  phase、dialog、bag、NPC、battle、Runner 或 input queue。
+
+CR-HC-005 worker result:
+
+- Added `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`.
+- Added `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`.
+- Added `scripts/run-cloud-decision-dev-server.ps1`.
+- Dev server serves `POST /api/cloud/decision`, requires `Authorization: Bearer <token>`, defaults to
+  `local-dev-token`, echoes request `localDecision`, and supports `--forced-decision`.
+- Bad token returns `401`; malformed JSON returns `400`; wrong path returns `404`; non-POST returns
+  `405`.
+
+CR-HC-006 worker result:
+
+- Updated `CloudDecisionCoordinator` so execute mode uses a deterministic
+  `traceId|serviceId|taskCode|phase` percent gate.
+- Updated `TaskClassifierCloudShadowService` to return `CloudDecisionResult` while preserving
+  ignored-return compatibility.
+- Updated `TaskTrackerPanelService` to consume only `TASK_CLASSIFIER` executed results and only replace
+  `titleTemplate` on an already-found local tracker result.
+- 五倍 cloud key mapping is limited to existing local title templates/task keys; 修罗 mapping is limited
+  to `xiuluo.tracker`; unknown keys log reject and return local result.
+
+Review repair:
+
+- Independent reviewer found P2: coordinator initially allowed any service to produce `executed=true`
+  if misconfigured with execute mode.
+- Worker repaired with an execute allowlist: only `TASK_CLASSIFIER` may produce `executed=true` and
+  cloud `effectiveDecision`.
+- `TRACKER_LINK_RANKER` now remains coordinator-level shadow-only even if
+  `execute-enabled=true` and `execute-percent=100`; it keeps local effective decision and logs
+  `execute not allowed for service; service not executable; keeping local decision`.
+- Independent re-review passed with no remaining P0/P1/P2.
+
+Main-agent safety check:
+
+- `rg "getEffectiveDecision\\(|isExecuted\\(|CloudDecisionResult|effectiveDecision"` across
+  `service/task/window/input` found consumption only in `TaskTrackerPanelService`.
+- Cloud effective decision is not consumed by 五倍/修罗 task phase, click, navigation, retry, dialog,
+  bag, NPC, battle, Runner, or input queue paths.
+- `TRACKER_LINK_RANKER` remains fire-and-forget shadow-only for 五倍/修罗 tracker green-link candidates.
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed.
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+- `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.dev.CloudDecisionDevServerTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+- `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.decision.CloudHttpDecisionClientTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+- `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.CloudRealShadowServicesIntegrationTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+
+Runtime config prepared:
+
+- `src/main/resources/application.properties` is set for local dev endpoint testing:
+  - `cloud.real-transport-enabled=true`
+  - `cloud.token=local-dev-token`
+  - `cloud.services.task-classifier.execute-enabled=true`
+  - `cloud.services.task-classifier.execute-percent=100`
+  - `cloud.services.tracker-link-ranker.execute-enabled=false`
+- With the default dev endpoint echoing `localDecision`, this exercises the execute path without
+  changing task behavior.
+- Local dev endpoint was started in the background on `127.0.0.1:18080` with process owner PID
+  `64608`; stdout/stderr logs:
+  - `logs/cloud-decision-dev-server.log`
+  - `logs/cloud-decision-dev-server.err.log`
+- Manual POST probe returned:
+  `decision=wubei.baoxiang_miqing`, `policyVersion=dev-local-v1`, `diagnostics.server=dev-local`.
+
+Key evidence:
+
+- Cloud package tests produced `TASK_CLASSIFIER mode=EXECUTE ... executed=true` when percent gate hit.
+- The same run produced misconfigured `TRACKER_LINK_RANKER mode=EXECUTE ... effectiveDecision=<local>
+  ... executed=false reason=execute not allowed for service`.
+- Real-shadow integration still produced 五倍 `TASK_CLASSIFIER`, 五倍 `TRACKER_LINK_RANKER`, and 修罗
+  `TRACKER_LINK_RANKER` samples with `success=true`, non-zero `elapsedMs`, local effective decisions,
+  and `executed=false`.
+
+Fresh runtime gate:
+
+- Start local dev endpoint with:
+  `powershell -ExecutionPolicy Bypass -File scripts/run-cloud-decision-dev-server.ps1 -Port 18080`.
+- Enable controlled `TASK_CLASSIFIER` execute percentage and run 五倍/修罗.
+- Verify live logs show `executed=true` only for percent-hit `TASK_CLASSIFIER` samples.
+- Verify `TRACKER_LINK_RANKER` remains `executed=false`, endpoint stop/error falls back to `LOCAL`, and
+  task behavior continues normally.
+
+Fresh runtime evidence 2026-06-30:
+
+- Local dev endpoint was running on `127.0.0.1:18080`, PID `64608`.
+- Latest live 修罗 run started at `2026-06-30 21:01:32.637` and reached at least round 11.
+- Live logs showed `TASK_CLASSIFIER mode=EXECUTE ... executed=true ... success=true` with local/cloud
+  agreement and HTTP elapsed times around `4-15ms`.
+- Live logs showed `TRACKER_LINK_RANKER mode=SHADOW ... executed=false ... success=true` with
+  local/cloud agreement and HTTP elapsed times around `3-7ms`.
+- No `Exception` / `ERROR` was observed in that latest 修罗 segment.
+
+## 2026-06-30 / CR-HC-007 TrackerLinkRanker 增强 shadow 运行评估
+
+Status: Source implemented / local verification passed / fresh runtime pending.
+
+Manager rule:
+
+- 谢帅/main agent 只担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 如需日志/metrics-only 增强，由 worker 子智能体完成；另派 helper 子智能体只做独立审查/风险清单。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+Baseline before CR-HC-007:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD remains `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short --branch` is broadly dirty before this pass, including docs/config memory files,
+  cloud package, task/services/tests, and runtime configuration. CR-HC-007 must not revert, format, or
+  normalize unrelated changes.
+- Current CR-HC-006 baseline intentionally keeps `TRACKER_LINK_RANKER` coordinator-level shadow-only.
+  用户最新确认这一阶段先不执行云端 link-ranker 结果，而是让本地和云端同时跑同一份 tracker
+  数据，用云端响应做延迟/一致率验证。
+
+Scope:
+
+- Keep `TRACKER_LINK_RANKER` as shadow-only: `executed=false`, `effectiveDecision=<local decision>`.
+- Local 五倍/修罗 tracker link selection, click point, pathing intent, retry, phase, dialog, bag,
+  NPC, battle, and input action must remain local.
+- Cloud receives the same local tracker/link candidate context and returns a decision only for
+  comparison.
+- Logs must let us answer: cloud returned what, latency was how much, did it agree with local, and did
+  local behavior stay untouched.
+
+Expected worker touch areas:
+
+- Prefer no production task behavior changes.
+- If current logs lack fields, worker may do logging/metrics-only enhancement in
+  `TrackerLinkRankerCloudShadowService` / focused tests.
+- Do not make `WubeiTask` or `XiuluoTaskV2` consume cloud link-ranker results.
+- Focused tests under `src/test/java/com/bot/dhxy/cloud/...` should guard shadow-only behavior.
+
+Required verification:
+
+- Compile and test-compile.
+- Focused cloud tests proving:
+  - `TRACKER_LINK_RANKER` remains `executed=false` even if misconfigured;
+  - shadow request/log context includes enough candidate/index/click/phase trace data;
+  - 五倍 and 修罗 task code do not consume cloud link-ranker result;
+  - `TASK_CLASSIFIER` execute behavior remains intact.
+
+Runtime acceptance pending:
+
+- With local dev endpoint echoing local decision, run 五倍/修罗 and verify
+  `TRACKER_LINK_RANKER mode=SHADOW executed=false success=true` samples show cloud/local agreement and
+  non-zero HTTP elapsed time.
+- Stop endpoint or force invalid decision and verify logs show `success=false` / fallback diagnostics
+  while local green-link clicks continue unchanged.
+
+Worker result 2026-07-01:
+
+- Re-read required context and followed the user redirection: CR-HC-007 is enhanced shadow/runtime
+  evaluation only, not link-ranker execute.
+- Confirmed current task wiring is already fire-and-forget:
+  - 五倍 reports the three existing tracker-link phases after local candidate selection and before
+    the existing local click path.
+  - 修罗 reports `xiuluo-tracker-shortcut` after local click-point resolution and before the same
+    local input sequence.
+  - Neither task imports or reads `CloudDecisionResult`, `effectiveDecision`, or cloud
+    `TRACKER_LINK_RANKER` output.
+- Added metrics-only log enhancement in `CloudDecisionCoordinator`: unified `cloud.decision` logs now
+  include request `context={...}`. For `TRACKER_LINK_RANKER`, that context carries
+  `candidateCount`, `selectedIndex`, `selectedClick`, `selectedRect`, target-map hints, and
+  serialized local candidates.
+- No local click, pathing, phase, retry, navigation, dialog, bag, NPC, battle, OCR/template, Runner, or
+  input behavior was changed.
+- RED/GREEN:
+  - RED: `mvn -q -Dtest=CloudDecisionCoordinatorTest test` failed because the coordinator log template
+    did not include request context.
+  - GREEN: after adding `context={}` to the log, `CloudDecisionCoordinatorTest` passed.
+- Verification passed:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -Dtest="CloudDecisionCoordinatorTest,TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudRealShadowServicesIntegrationTest" test`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+- Key evidence from focused logs:
+  - `TRACKER_LINK_RANKER mode=SHADOW ... context={candidateCount=2, selectedIndex=0,
+    selectedClick=120,320, selectedRect=100,310,140,330, ... candidates=...} ...
+    effectiveDecision=index=0;... executed=false`.
+  - Misconfigured `TRACKER_LINK_RANKER mode=EXECUTE` still kept local `effectiveDecision` and
+    `executed=false` with reason `execute not allowed for service`.
+
+## 2026-07-01 / CR-HC-008 CloudDecision runtime metrics summary
+
+Status: Worker implemented / local verification passed / fresh runtime passed.
+
+Fresh-runtime repair pass 2026-07-01:
+
+- Worker role: CR-HC-008 修复 worker，只处理 metrics wiring；不碰五倍/修罗业务逻辑。
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/HYBRID_CLOUD_WORKFLOW.md`
+  CR-HC-008, and this CR-HC-008 active-work section.
+- Current branch before edits: `codex/hybrid-cloud-protection`.
+- Current HEAD before edits: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed branch containing HEAD from local refs: `origin/codex/migrate-runner-dialog`.
+- `git status --short` is already broadly dirty before this repair pass, including unrelated docs,
+  config, task/service, runner/window files, and untracked cloud package files. This pass must not
+  revert, format, or normalize those changes.
+- Runtime evidence from `logs/dhxy-console.log`:
+  - `2026-06-30 22:31:42.260` has `cloud.decision serviceId=TASK_CLASSIFIER ... executed=true`.
+  - `2026-06-30 22:34:48.605` has `cloud.decision serviceId=TRACKER_LINK_RANKER ... executed=false`.
+  - The same latest segment has no `cloud.metrics` lines, despite fresh restart/build evidence from
+    the user.
+- Relevant pre-edit source evidence:
+  - `CloudDecisionMetricsService` exists and is annotated `@Service`.
+  - `CloudDecisionCoordinator` currently stores `private CloudDecisionMetricsService metricsService`
+    and relies on `@Autowired(required = false) void setMetricsService(...)`.
+  - `recordMetrics(result)` silently returns when `metricsService == null`, so a Spring wiring miss
+    produces exactly the observed symptom: raw `cloud.decision` logs without `cloud.metrics`.
+  - Existing `CloudDecisionCoordinatorTest` injects metrics manually through the setter; it does not
+    prevent a production path where the coordinator is constructed without metrics.
+- Repair direction:
+  - Make `CloudDecisionMetricsService` a required constructor/final dependency of
+    `CloudDecisionCoordinator`.
+  - Keep metrics `record(...)` failures caught in the coordinator so diagnostics cannot affect task
+    execution.
+  - Add/adjust a focused wiring/constructor guard so production-style coordinator construction cannot
+    omit metrics anymore.
+- Repair implementation:
+  - `CloudDecisionCoordinator` now takes `CloudDecisionMetricsService` in its constructor and stores it
+    as `private final CloudDecisionMetricsService metricsService`.
+  - Removed optional `@Autowired(required = false) setMetricsService(...)` and the
+    `metricsService == null` silent skip branch.
+  - `recordMetrics(result)` still catches `RuntimeException` from metrics recording, logs
+    `cloud.metrics record failed`, and returns the original `CloudDecisionResult` unchanged.
+  - Updated coordinator, HTTP/cloud task, integration, and Spring wiring tests to construct/register
+    the required metrics dependency.
+- RED/GREEN:
+  - RED: `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test` failed on
+    `testCoordinatorRequiresMetricsConstructorDependency`, proving the previous source still allowed
+    optional setter/null-skip metrics wiring.
+  - GREEN: the same focused command passed after constructor injection.
+- Verification passed in this repair pass:
+  - `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test`
+  - `mvn -q -Dtest="CloudDecisionSkeletonWiringTest" test`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+- Regression evidence:
+  - Cloud-suite logs still show `TASK_CLASSIFIER mode=EXECUTE ... executed=true` for allowed execute
+    samples.
+  - Misconfigured/non-executable `TRACKER_LINK_RANKER` samples still keep local
+    `effectiveDecision` and `executed=false`.
+- Fresh-runtime gate passed after user restart:
+  - 修罗 `TASK_CLASSIFIER`: `2026-06-30 23:32:34.641` logged `cloud.decision` and paired
+    `cloud.metrics`, `mode=EXECUTE`, `executed=true`, `success=true`, agreement.
+  - 修罗 `TRACKER_LINK_RANKER`: `2026-06-30 23:32:36.484/486` logged `cloud.decision` and paired
+    `cloud.metrics`, `mode=SHADOW`, `executed=false`, `success=true`, agreement.
+  - 五倍 `TASK_CLASSIFIER`: `2026-06-30 23:39:23.488/490` logged `cloud.decision` and paired
+    `cloud.metrics`, `mode=EXECUTE`, `executed=true`, `success=true`, agreement.
+  - 五倍 `TRACKER_LINK_RANKER`: `2026-06-30 23:39:27.185` logged `cloud.decision` and paired
+    `cloud.metrics`, `mode=SHADOW`, `executed=false`, `success=true`, agreement.
+  - Controlled timeout sample: `2026-06-30 23:42:44.025` logged
+    `TASK_CLASSIFIER ... success=false reason=timeout after 300ms`, and the paired metrics summary
+    captured the failure without changing local fallback behavior.
+  - No live `cloud.metrics record failed` line was found in the checked segment.
+
+Manager rule:
+
+- 谢帅/main agent 只担任业务主管/reviewer，不直接写 Java 业务实现代码。
+- 本卡实现由 worker 子智能体完成；另派 helper 子智能体只做独立审查/风险清单。
+- 主 agent 负责分派、审查、运行验证、写回 `docs/HYBRID_CLOUD_WORKFLOW.md` 和本记录。
+
+Baseline before CR-HC-008:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/HYBRID_CLOUD_WORKFLOW.md`
+  CR-HC-008, and this `docs/ACTIVE_WORK.md` record.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD remains `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git status --short` is broadly dirty before this pass, including docs/config memory files,
+  cloud package, task/services/tests, and runtime configuration. CR-HC-008 must not revert, format,
+  or normalize unrelated changes.
+- Relevant local cloud baseline:
+  - CR-HC-006 allows execute only for `TASK_CLASSIFIER`.
+  - `TRACKER_LINK_RANKER` is still coordinator-level shadow-only.
+  - CR-HC-007 added `context={...}` to the unified `cloud.decision` log, but does not aggregate
+    success/agreement/latency over time.
+
+Worker baseline 2026-07-01 before CR-HC-008 edits:
+
+- Worker role: CR-HC-008 implementation worker, diagnostics-only scope.
+- Confirmed current branch: `codex/hybrid-cloud-protection`.
+- Confirmed current HEAD: `696a12b0ffb8` (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed branch containing HEAD from local refs: `origin/codex/migrate-runner-dialog`.
+- Current working tree was already broadly dirty before this worker pass. Relevant pre-existing state:
+  `docs/HYBRID_CLOUD_WORKFLOW.md`, `src/main/java/com/bot/dhxy/cloud/`, and
+  `src/test/java/com/bot/dhxy/cloud/` are untracked/local cloud work from earlier CRs; many unrelated
+  task/service/config/doc files are modified. This worker must not revert, format, or normalize them.
+- Relevant pre-edit touched-path evidence:
+  - `CloudDecisionCoordinator` currently logs one raw `cloud.decision ... context={...}` line per
+    result and has no metrics collector call.
+  - `CloudDecisionCoordinator` execute allowlist contains only `TASK_CLASSIFIER`.
+  - `TRACKER_LINK_RANKER` execute misconfiguration test already expects `executed=false` and local
+    `effectiveDecision`.
+  - No `CloudDecisionMetricsService` or `CloudDecisionMetricsServiceTest` exists yet.
+
+Scope:
+
+- Add local runtime metrics for `CloudDecisionResult` samples so logs can show success rate,
+  agreement rate, executed count, fallback/local count, and latency percentiles without manual grep.
+- Group metrics at minimum by `serviceId`, `mode`, `taskCode`, and `phase`.
+- Emit concise periodic summary logs with a stable prefix such as `cloud.metrics`.
+- Metrics must be diagnostics-only and non-blocking.
+
+Expected worker touch areas:
+
+- `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionCoordinator.java`
+- A new small metrics collector under `src/main/java/com/bot/dhxy/cloud/decision/`
+- Focused tests under `src/test/java/com/bot/dhxy/cloud/decision/`
+- Docs may be updated only for CR-HC-008 implementation/verification notes.
+
+Explicitly forbidden:
+
+- No changes to 五倍/修罗 click, navigation, retry, phase, dialog, bag, NPC, battle, Runner, OCR,
+  template, or input-queue behavior.
+- Do not make `TRACKER_LINK_RANKER` executable.
+- Do not add external backend/UI/dashboard in this card.
+- Do not let metrics exceptions propagate into task execution.
+
+Required verification:
+
+- `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test`
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- Existing cloud focused tests must still prove `TASK_CLASSIFIER` execute behavior and
+  `TRACKER_LINK_RANKER executed=false`.
+
+Runtime acceptance pending:
+
+- Fresh runtime logs should include raw `cloud.decision` lines and periodic `cloud.metrics` summary
+  lines during 五倍/修罗.
+- Metrics lines should show non-zero samples for `TASK_CLASSIFIER` and `TRACKER_LINK_RANKER` after
+  enough runtime calls.
+- `TASK_CLASSIFIER` execute behavior remains unchanged; `TRACKER_LINK_RANKER` remains
+  `executed=false`.
+
+Worker implementation / verification 2026-07-01:
+
+- Added `src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionMetricsService.java`.
+  - Collects `CloudDecisionResult` samples by `serviceId + mode + taskCode + phase`.
+  - Tracks total, cloud success/failure, agreement/disagreement, executed count, fallback/local count,
+    bounded recent elapsed samples, `p50Ms`, `p95Ms`, `p99Ms`, and last cloud failure reason.
+  - Emits `cloud.metrics ...` summaries for the first few samples per key and then every interval, so
+    logs are stable but not too noisy.
+- Updated `CloudDecisionCoordinator` only in the diagnostics path:
+  - after each `logDecision(result)`, it calls metrics recording;
+  - the call is guarded by `try/catch`, logs warn/debug on metrics failure, and returns the original
+    `CloudDecisionResult` unchanged.
+- Added `CloudDecisionMetricsServiceTest` and extended `CloudDecisionCoordinatorTest`.
+- RED:
+  - `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test` failed before
+    production implementation with missing `CloudDecisionMetricsService`.
+- GREEN / verification passed:
+  - `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+- Focused cloud-suite evidence:
+  - misconfigured `TRACKER_LINK_RANKER mode=EXECUTE` still logs local `effectiveDecision` and
+    `executed=false`;
+  - `TASK_CLASSIFIER mode=EXECUTE` still logs `executed=true` when the existing execute gate allows it.
+- No 五倍/修罗 click, navigation, retry, phase, dialog, bag, NPC, battle, Runner, OCR/template, or
+  input-queue behavior was changed.
+- Fresh runtime gate remains:
+  - restart app with this build;
+  - run 五倍/修罗 long enough for cloud samples;
+  - verify live `logs/dhxy-console.log` contains raw `cloud.decision` and periodic `cloud.metrics`
+    summary lines for `TASK_CLASSIFIER` and `TRACKER_LINK_RANKER`.
+
+Independent review checklist 2026-07-01:
+
+- Metrics may only observe completed `CloudDecisionResult`; it must not influence `effectiveDecision`,
+  `executed`, request/response data, task state, input, or cloud client calls.
+- `CloudDecisionCoordinator.EXECUTABLE_SERVICES` must still include only `TASK_CLASSIFIER`.
+- Worker diff should stay inside coordinator / a small metrics collector / focused cloud-decision tests /
+  this CR-HC-008 documentation. Any task, Runner, input, OCR/template, navigation, bag, battle, NPC,
+  or `application.properties` change is a red flag for this card.
+- Required behavior guards:
+  - `TASK_CLASSIFIER` execute mode still works.
+  - Misconfigured `TRACKER_LINK_RANKER execute-enabled=true` still keeps local decision and
+    `executed=false`.
+  - 五倍/修罗 task code still does not consume `CloudDecisionResult` or link-ranker cloud output.
+- Metrics-specific review points:
+  - thread-safe singleton collector;
+  - bounded memory / no unbounded sample retention;
+  - no huge `context` or candidate payload in summary logs;
+  - exceptions swallowed outside task execution;
+  - key uses `serviceId + mode + taskCode + phase`, not trace/window/context;
+  - percentile output is monotonic and test-covered.
+
+Worker implementation result 2026-07-01:
+
+- Added `CloudDecisionMetricsService`, a local bounded in-memory collector grouped by
+  `serviceId + mode + taskCode + phase`.
+- `CloudDecisionCoordinator` now calls metrics after each completed `CloudDecisionResult` is built
+  and logged. Metrics failures are caught and logged as `cloud.metrics record failed`; the original
+  decision result is still returned unchanged.
+- Metrics track total, cloud success/failure, agreement/disagreement, executed count, local fallback
+  count, recent-window `p50/p95/p99`, elapsed sample count, and last failure reason.
+- Summary logs use stable prefix `cloud.metrics` and are throttled: first three samples per key and
+  every twentieth sample afterward.
+- No 五倍/修罗 task, Runner, input, OCR/template, navigation, NPC, battle, or application runtime
+  configuration behavior was changed.
+
+Main review / verification 2026-07-01:
+
+- Independent helper review found no P0/P1/P2 blocker.
+- Main review confirmed:
+  - `EXECUTABLE_SERVICES` still contains only `TASK_CLASSIFIER`.
+  - Misconfigured `TRACKER_LINK_RANKER execute-enabled=true` still keeps local `effectiveDecision`
+    and `executed=false`.
+  - `CloudDecisionResult` consumption outside cloud package remains the existing
+    `TaskTrackerPanelService` `TASK_CLASSIFIER` path; 五倍/修罗 task code still does not consume
+    link-ranker cloud output.
+  - Metrics collector is thread-safe per bucket, bounded to recent elapsed samples, and logs no
+    large `context` / candidate payload.
+- Verification passed:
+  - `mvn -q -Dtest="CloudDecisionMetricsServiceTest,CloudDecisionCoordinatorTest" test`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+- Fresh runtime requires restarting the DHXY Java app; the already-running process will not emit
+  `cloud.metrics` because it loaded the previous classes.
+
+## 2026-06-30 / CR146 Runner 战后 idle 180s watchdog
+
+Status: In Progress / implementation delegated to worker subagent / 唐德 coordinates and reviews.
+
+Baseline before CR146 edits:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/PACKAGE_ARCHITECTURE.md`, and this
+  `docs/ACTIVE_WORK.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest pushed comparison points checked:
+  - `origin/dev`: `e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `origin/codex/migrate-runner-dialog`: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Worktree is already dirty from prior CR/runtime/cloud work; do not revert unrelated changes.
+  `git status --short --branch` shows existing modifications in docs, config memory files,
+  `BattleRadarService`, `WindowTaskRunner`, `WubeiTask`, `XiuluoTaskV2`, maintenance/team-return
+  services, and several tests.
+- Relevant pushed-baseline diff stat before CR146 against `origin/codex/migrate-runner-dialog`:
+  `WindowTaskRunner.java`, `WubeiTask.java`, and `XiuluoTaskV2.java` already have local changes
+  (`309 insertions(+), 20 deletions(-)` across those three files). CR146 edits must be narrow and
+  preserve those existing local business changes.
+
+- 用户确认现有入战前 180s watchdog 不够；五倍/修罗脱战后如果原地发呆超过 3 分钟，也必须纠回
+  接任务起点。
+- 用户定稿该 watchdog 必须接在 `WindowTaskRunner` 侧：Runner 能即时观察 `IN_COMBAT -> NONE`
+  脱战，也能持续判断坐标/位置/像素是否还在变化。
+- 已在 `docs/PACKAGE_ARCHITECTURE.md` 新增 CR146 表格行和正文卡片；本轮已认领为
+  `In Progress`。
+- 设计边界：Runner 只发布 `POST_COMBAT_IDLE_TIMEOUT` 事件，不直接改 task phase；五倍/修罗 task
+  消费事件后清 task-owned runtime 状态并回接任务流程。
+- 本轮实现方式：worker 子智能体负责 CR146 窄实现和 focused guards；唐德负责读取 worker diff、
+  本地复审、必要补修、运行验证，并在 CR146 卡片留言说明“已改/待验”。
+- 不改 Java/OCR/template/click/navigation 的 OCR/template/click/navigation 业务逻辑；CR146 只允许
+  Runner soft event、任务消费恢复、日志和 source/guard 测试。
+
+Worker subagent baseline recheck before code edits:
+
+- Re-read required context: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, CR146 row/card in
+  `docs/PACKAGE_ARCHITECTURE.md`, and this CR146 active-work record.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed branch containing HEAD: `origin/codex/migrate-runner-dialog` =
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Pre-edit `git status --short --branch` still shows broad prior dirty work in config/docs/services/tasks/tests;
+  CR146 worker will not revert or normalize unrelated changes.
+- Pre-edit relevant diff stat against `origin/codex/migrate-runner-dialog` for the CR146 touch path:
+  `WindowTaskRunner.java`, `WubeiTask.java`, and `XiuluoTaskV2.java` already contain local prior-CR changes
+  (`309 insertions(+), 20 deletions(-)`); `WindowReadyEvent.java` and `WindowReadyEventType.java` have no
+  pre-existing local diff in that comparison.
+- Relevant pre-edit evidence seen in diff: runner already has CR141/CR144 observer/prepared-action changes,
+  五倍 already has CR143 late pathing terminal and CR145 enqueue-only maintenance changes, and 修罗 has small
+  prior local adjustments. CR146 edits must layer on top without changing those business decisions.
+
+Worker implementation result:
+
+- Added `WindowReadyEventType.POST_COMBAT_IDLE_TIMEOUT`.
+- Extended `WindowReadyEvent` with compact watchdog evidence:
+  `lastCombatExitAtMs`, `elapsedMs`, and `summary`.
+- `WindowTaskRunner` now keeps a runner-local `PostCombatIdleTracker` inside the combat watcher loop.
+  It starts on `IN_COMBAT -> non-IN_COMBAT`, suppresses or resets effective idle while active pathing,
+  fresh prepared action, active dialog progress, coordinate signature changes, or pause is present, and
+  publishes only the soft ready event with source `runner-post-combat-idle-watchdog` after `180_000ms`.
+- `WubeiTask` consumes `POST_COMBAT_IDLE_TIMEOUT` at the ready-priority boundary, clears task-owned
+  prepared/dialog/pathing/ordinary-prebattle/enter-battle/probe/chained/tracker-panel runtime state, logs WARN,
+  and returns to `ROUTE_TO_MAIN_TASK`.
+- `XiuluoTaskV2` consumes `POST_COMBAT_IDLE_TIMEOUT` at the phase loop boundary, clears task-owned
+  prepared/dialog/tracker-shortcut pathing runtime state, logs WARN, and returns to
+  `ACCEPT_TASK_NAVIGATE_TO_NPC` without incrementing ordinary phase failure count.
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/window/execution/WindowTaskRunnerPostCombatIdleWatchdogWiringTest.java`.
+- No OCR/template/click/navigation/BattleRadarService combat algorithm changes were made for CR146.
+
+Worker verification:
+
+- RED guard before implementation:
+  `mvn -DskipTests "-Dexec.classpathScope=test"
+  "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerPostCombatIdleWatchdogWiringTest"
+  org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  failed with `WindowReadyEventType must include POST_COMBAT_IDLE_TIMEOUT`.
+- `mvn -q -DskipTests test-compile` passed.
+- CR146 focused guard passed:
+  `mvn -q -DskipTests "-Dexec.classpathScope=test"
+  "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerPostCombatIdleWatchdogWiringTest"
+  org.codehaus.mojo:exec-maven-plugin:3.1.0:java`.
+- `mvn -q -DskipTests compile` passed.
+
+唐德 local review repair:
+
+- Found and fixed a CR146 blocker in Runner active-pathing suppression:
+  `WindowPathingSnapshot.hasActiveIntent()` is true for terminal `STOPPED_AWAY` snapshots with a retained
+  intent. The post-combat idle watchdog must not treat that as movement progress, otherwise a stopped
+  post-combat window can be reset forever. `PostCombatIdleTracker.isActivePathing(...)` now only treats
+  probe-in-progress, `ACTIVE`, and `UNKNOWN` as active pathing.
+- Found and fixed a task cleanup gap: the first worker patch cleared only prepared action and interest.
+  五倍/修罗 now clear `DialogPreparationRequest`, which also clears prepared action and preparation
+  status, before clearing task-owned interest/pathing state.
+- Found and fixed a stale-event consumption gap: `WindowReadyEventBus.latest(...)` retains the latest
+  event by window/type. 五倍/修罗 now set `lastPostCombatIdleTimeoutConsumedSeq` to
+  `windowReadyEventBus.currentSequence()` at task start, so a previous task run's latest
+  `POST_COMBAT_IDLE_TIMEOUT` cannot be consumed by a newly started task instance.
+- Strengthened `WindowTaskRunnerPostCombatIdleWatchdogWiringTest` to guard all three local-review fixes.
+
+唐德 verification:
+
+- `mvn -q -DskipTests test-compile` passed.
+- `mvn -q -DskipTests "-Dexec.classpathScope=test"
+  "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerPostCombatIdleWatchdogWiringTest"
+  org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+- Adjacent guards passed:
+  - `WindowTaskRunnerStalePreparedRepublishWiringTest`
+  - `WindowPathingArrivalStationaryGuardTest`
+  - `WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest`
+- `mvn -q -DskipTests compile` passed.
+- Fresh runtime gate remains pending: construct or observe post-combat non-combat idle for 180s and verify
+  Runner WARN event + 五倍/修罗 WARN recovery, while normal return-home/team-return/chained-combat movement
+  produces no `POST_COMBAT_IDLE_TIMEOUT`.
+
+Post-update check:
+
+- 2026-06-30 用户提醒 CR146 可能已更新后，唐德复看 CR146 row/card、ACTIVE_WORK、CR146 touch-path
+  grep 与窄 `git diff --check`。未发现新增 P1/P2/source blocker；`diff --check` 只有既有 LF/CRLF
+  提示。
+- Confirmed markers still present: `runner-post-combat-idle-watchdog`,
+  `lastPostCombatIdleTimeoutConsumedSeq = windowReadyEventBus.currentSequence()`,
+  五倍/修罗 consumer 使用 `runtime.clearDialogPreparationRequest(...)`，CR146 guard 禁止
+  post-combat active-pathing 判断依赖 `hasActiveIntent()`。
+- 当前唯一未关闭项仍是 fresh runtime gate：现场构造/观察战后脱战原地 180s timeout 与 task recovery。
+
+## 2026-06-30 / CR136 修罗 same-millisecond combat-exit signal race
+
+Status: source fixed / focused guard and compile passed / fresh runtime pending.
+
+Evidence:
+
+- Runtime `2026-06-30 18:26:58.751 -> 18:57:02.129` showed 修罗 round 22 false fast-exit entered
+  `RETURN_HOME`, used the cached return item once, then watcher correctly forced `IN_COMBAT`.
+- `18:27:09.091` trusted `IN_COMBAT` refreshed the fast-exit avatar baseline and resumed
+  `WAIT_COMBAT`.
+- `18:27:09.562` real combat exit was emitted as `COMBAT_STATE_CHANGED sequence=469`, but the next
+  wait arm logged `discard stale combat-exit signal ... pendingAtMs=1782858429562
+  armedAtMs=1782858429562`.
+- After that, round 22 stayed in `WAIT_COMBAT` through the latest visible `18:57:02.129` log and did
+  not enter `RETURN_HOME` again.
+
+Repair:
+
+- `BattleRadarService.armExpectedCombatExitWait(...)` now preserves same-millisecond current-cycle
+  pending exit signals. The stale arm-stage boundary changed from `combatExitPendingAtMs <= now` to
+  strict `combatExitPendingAtMs < now`, matching the consume-side rule that only strictly older
+  signals are stale.
+- The method comment now documents why same-millisecond exit/arm timestamps must be kept:
+  `System.currentTimeMillis()` cannot reliably order events inside the same millisecond.
+- `WubeiCR136FastExitLifecycleWiringTest` now guards this race by requiring
+  `state.combatExitPendingAtMs < now` in the arm method and forbidding
+  `state.combatExitPendingAtMs <= now`.
+- The guard was run red before the source fix:
+  `Arming an expected wait must keep same-millisecond exit signals; only strictly older signals are stale`.
+- After the fix, focused verification passed:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.wubei.WubeiCR136FastExitLifecycleWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingStoppedAwayPolicyTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests compile`
+
+Fresh runtime pending:
+
+- Need verify a round 22-style false fast-exit correction resumes `WAIT_COMBAT`, later real exit is
+  not discarded when `pendingAtMs == armedAtMs`, and the task proceeds to `RETURN_HOME`.
+- Do not change avatar ROI/threshold/grace/cadence, BagService, OCR/template/click/navigation, or
+  return-item templates for this fix.
+
+## 2026-06-30 / CR145 三技能维护队列与延后一轮消费
+
+Status: implementation and independent review PASS / fresh runtime pending.
+
+Owner:
+
+- Coordinator: 唐德.
+- Implementation: subagent worker.
+- Review: subagent reviewer + 唐德 final local review.
+
+Scope:
+
+- Change summon-skill maintenance scheduling from "due -> execute immediately" to "due -> enqueue;
+  consume old queue snapshot in the next safe maintenance window".
+- Wubei consumes at most 1 summon-skill queue item per window; Xiuluo consumes at most 2.
+- Queue item uniqueness is per window/account/type; duplicate due checks do not refresh `enqueuedAt`
+  or add another item.
+- Success dequeues and refreshes summon-skill cooldown; retryable failure moves the item to queue tail
+  without refreshing cooldown.
+- Maintenance window close behavior must not keep a summon-skill window open waiting for items that
+  become due after the current window opened.
+
+Baseline before CR145 edits:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/PACKAGE_ARCHITECTURE.md`, and
+  this `docs/ACTIVE_WORK.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- 2026-06-30 worker recheck:
+  - `git fetch origin` completed.
+  - Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+    (`696a12b chore: remove obsolete debug tooling`).
+  - Latest local `origin/dev`: `e543d02` (`e543d02 Stabilize task navigation and window readiness`).
+  - Latest pushed branch containing this local HEAD: `origin/codex/migrate-runner-dialog` =
+    `696a12b` (`696a12b chore: remove obsolete debug tooling`).
+- Pre-edit `git status --short` already showed unrelated dirty work in config JSON files,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`,
+  multiple service/task/window files, cloud docs/code/tests, `lib/`, and CR141-CR144 tests. CR145
+  must preserve unrelated work and only touch summon-skill maintenance scheduling plus focused tests/docs.
+- Relevant pre-edit evidence:
+  - `git diff origin/codex/migrate-runner-dialog -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceRequest.java src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceResult.java src/main/java/com/bot/dhxy/model/maintenance/TaskMaintenanceStatus.java`
+    was empty before CR145 source edits.
+  - `git diff origin/codex/migrate-runner-dialog -- src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+    already contained unrelated CR143/CR131/cloud-shadow edits; CR145 must not revert them.
+- Relevant source paths:
+  - `TaskMaintenanceService.maybeCleanSummonSkill(...)` currently checks interval and directly calls
+    `SummonSkillService.cleanSummonSkillsOnce(...)`.
+  - `WubeiTask.maybeRunLeaderPathingSummonMaintenance(...)` currently requests
+    `maxSummonSkillCleanersPerTeamRound(1)`.
+  - `XiuluoTaskV2.runLeaderPathingSummonSkillMaintenance(...)` currently requests generic
+    one-per-team-round behavior.
+
+Approved design:
+
+- Add a maintenance queue for `SUMMON_SKILL`; due detection enqueues and returns a deferred/queued
+  status instead of cleaning in the same turn.
+- Opened maintenance windows consume only queue items whose `enqueuedAt` is earlier than the
+  window-open snapshot time.
+- Items added while the window is already open wait until the next window, even if budget remains.
+- Wubei budget: 1; Xiuluo budget: 2.
+- Success removes the item and updates the cooldown timestamp; failure moves the item to the queue
+  tail and keeps cooldown unchanged.
+- No visual matching, click coordinate, navigation, expected-combat, return-home, bag, green-link,
+  prepared-action, or SummonSkillService slot algorithm changes.
+
+Verification required:
+
+- Focused source/unit guard for queue dedupe, snapshot eligibility, task budgets, success cooldown,
+  failure tail move, and no same-window immediate execution.
+- `mvn -q -DskipTests compile`
+- `mvn -q -DskipTests test-compile`
+- Fresh runtime: 五倍 due logs enqueue in current round, next maintenance window handles only one
+  old item; 修罗 handles at most two old items; no 三技能 window appears right before prepared
+  enter-battle because of same-round due.
+
+Implementation 2026-06-30:
+
+- `TaskMaintenanceService` now owns a private `SUMMON_SKILL` maintenance queue:
+  - due checks enqueue `windowKey + playerIdentityEpoch + SUMMON_SKILL` if absent and return
+    `SUMMON_SKILL_DEFERRED`;
+  - duplicate due checks do not append another item and do not refresh `enqueuedAt`;
+  - `openTeamPathingMaintenanceWindow(...)` records `windowOpenedAt`, and consumption only selects
+    current-window items with `enqueuedAt < windowOpenedAt`;
+  - success removes the item and refreshes cooldown through the existing success path;
+  - retryable failure moves the same item to the queue tail, records attempt/failure reason, and
+    does not refresh `lastSummonSkillCleanAtByWindow`;
+  - player identity drift clears old queued items for that window along with the old cooldown/cache.
+- `XiuluoTaskV2.runLeaderPathingSummonSkillMaintenance(...)` now passes
+  `.maxSummonSkillCleanersPerTeamRound(2)`. `WubeiTask` already passes `1`.
+- `SummonSkillService`, OCR/template/click/slot logic, navigation, green-link, prepared
+  enter-battle, expected-combat, return-home, bag, incense, NPC click, and visual matching paths were
+  not changed.
+
+Verification 2026-06-30:
+
+- RED:
+  - `mvn -q -DskipTests test-compile` passed after adding
+    `TaskMaintenanceSummonSkillQueueWiringTest`.
+  - `mvn -q -e "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    failed before implementation with
+    `same-window due status expected=SUMMON_SKILL_DEFERRED actual=SUMMON_SKILL_CLEANED`.
+- GREEN:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+
+Fresh runtime gates:
+
+- 五倍：同轮三技能 due 日志应为 `summon skill queued` / `queued for later snapshot`，且本轮不出现
+  `start summon skill clean`；下一轮维护窗口最多处理 1 个旧 item。
+- 修罗：维护窗口最多处理 2 个旧 item；窗口打开后新入队 item 必须留到下一轮。
+- 失败/不安全/识别失败/中断：应看到 `summon skill queue item moved to tail after failure`，
+  后续窗口重试；不应刷新三技能 cooldown，也不应重复入队刷屏。
+- snapshot 为空或预算耗尽后，不应为了等待 10 秒内新到期三技能而保持维护窗口。
+
+Review repair 2026-06-30:
+
+- Reviewer P1/P2 findings:
+  - FIFO bug：上一版 `peekEligibleSummonSkillItem(queueKey, windowOpenedAt)` 会按当前窗口 key
+    扫描队列，导致 B 可绕过队头 A。
+  - Local support bug：`requiredLocalSupportCapability=SUMMON_SKILL` 的队员 item 能入队，但
+    local capability 没有 snapshot open time，导致队员无法消费。
+  - Test gap：缺少双窗口 FIFO guard、local support member 消费 guard，旧
+    `TaskMaintenanceSummonSkillUnknownBackoffTest` 仍按 due 立即执行语义写。
+- 修复：
+  - `TaskMaintenanceService` 将 snapshot time map 泛化为 `maintenanceSnapshotOpenedAtByRound`，
+    同时记录普通 team pathing window 与 local `SUMMON_SKILL` capability 的打开时间。
+  - 队列消费改为 `peekEligibleSummonSkillHead(...)`，只允许全局队头 item 在
+    `enqueuedAt < windowOpenedAt` 且 queue key 属于当前窗口时消费；当前窗口不再搜索/绕过队头。
+  - Local support member request 在 `SUMMON_SKILL` capability 打开时使用
+    `local-team:<session>#SUMMON_SKILL#<epoch>` snapshot，按同一 FIFO/budget/失败尾移规则消费。
+  - `TaskMaintenanceSummonSkillQueueWiringTest` 新增双窗口 FIFO guard：A 先 due、B 后 due，
+    B 先运行不能 clean；A clean 后 B 才能 clean。新增 local support member guard。
+  - `TaskMaintenanceSummonSkillUnknownBackoffTest` 已迁移到 CR145 合同：due 先入队，下一维护窗口
+    才执行 unknown failure/backoff/layout invalidation。
+- RED:
+  - 加严 CR145 guard 后，旧实现失败：
+    `B must not skip queued A at FIFO head expected=SUMMON_SKILL_DEFERRED actual=SUMMON_SKILL_CLEANED`。
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `node scripts/generate-cr-dashboard-data.js` passed, regenerated `docs/cr-dashboard-data.js`.
+
+Second review repair 2026-06-30:
+
+- Reviewer P1/P2 findings:
+  - AutoBattle production member request did not pass task-specific summon budget; helper used 2 but
+    production defaulted to 1.
+  - Strict FIFO could be blocked forever by a stopped/unregistered head window.
+  - Unknown retry backoff item could become head and defer for 5 minutes, blocking later windows.
+- 修复：
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` now passes
+    `.maxSummonSkillCleanersPerTeamRound(summonSkillBudgetForRequestedTask(context.getRequestedTaskCode()))`;
+    `xiuluo_v2=2`, default/`wubei=1`.
+  - `TaskMaintenanceService.clearSummonSkillQueueForWindow(...)` clears queued summon items for an
+    inactive window with a log, and `WindowTaskRunner` calls it on shutdown and queue-finished cleanup.
+  - `TaskMaintenanceService` moves an old queue head to tail when that head window is still in
+    unknown retry backoff, so later old items can proceed without refreshing cooldown.
+  - Guards added/strengthened for production AutoBattle wiring, inactive-head cleanup, and backoff
+    head move-to-tail.
+- RED:
+  - `mvn -q -DskipTests test-compile` failed on old implementation after adding inactive-head guard:
+    missing `clearSummonSkillQueueForWindow(...)`.
+  - Tightened backoff guard failed before the final policy/timing was correct:
+    `B should advance after A backoff head moves to tail expected=SUMMON_SKILL_CLEANED actual=SUMMON_SKILL_DEFERRED`.
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `node scripts/generate-cr-dashboard-data.js` passed, regenerated `docs/cr-dashboard-data.js`.
+
+Third review repair 2026-06-30:
+
+- Reviewer finding:
+  - After `maybeCleanSummonSkill(...)` acquired the FIFO head with
+    `peekEligibleSummonSkillHead(...)`, a fresh tail-safe cache returned
+    `SUMMON_SKILL_NOT_DUE` and refreshed `lastSummonSkillCleanAtByWindow`, but left the acquired
+    queue item in `summonSkillQueue`. That stale head could block later windows even though the item
+    had effectively completed.
+- 修复：
+  - `TaskMaintenanceService` now removes the acquired queue item in the fresh tail-safe cache branch
+    before updating last-clean/cooldown and returning `SUMMON_SKILL_NOT_DUE`.
+  - The branch is treated as completed/dequeued, not as retry failure: no tail move, no failure count
+    refresh, and no `SummonSkillService` call.
+  - `TaskMaintenanceSummonSkillQueueWiringTest` adds
+    `tailSafeFreshHeadDequeuesAndDoesNotBlockLaterWindow`: A builds a fresh tail-safe cache, A and B
+    enqueue later, A consumes the cached head as `NOT_DUE`, and B must then clean in a later window.
+- RED:
+  - New guard failed on the old implementation:
+    `B should advance after A tail-safe cached head dequeues expected=SUMMON_SKILL_CLEANED actual=SUMMON_SKILL_DEFERRED`.
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `node scripts/generate-cr-dashboard-data.js` passed, regenerated `docs/cr-dashboard-data.js`.
+
+Final review repair 2026-06-30:
+
+- Reviewer P2 finding:
+  - Fresh tail-safe cache dequeue was fixed to remove the FIFO head, but it happened before the
+    team-round budget claim. That meant 五倍 could consume A as `SUMMON_SKILL_NOT_DUE` and still let B
+    clean in the same budget-1 window.
+- 修复：
+  - `TaskMaintenanceService.maybeCleanSummonSkill(...)` now runs the team-round claim/budget gate
+    before the fresh tail-safe cache dequeue branch, so cached dequeue still consumes the current
+    round's summon-skill budget.
+  - `TaskMaintenanceSummonSkillQueueWiringTest.tailSafeFreshHeadDequeuesAndDoesNotBlockLaterWindow`
+    now asserts that B gets `SUMMON_SKILL_ROUND_ALREADY_CLAIMED` in the same 五倍 window after A
+    tail-safe dequeues, and only cleans in a later round.
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillUnknownBackoffTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+- Independent final review:
+  - PASS. Reviewer found no remaining P1/P2 after the tail-safe budget repair.
+  - Remaining risk is fresh runtime only: real 五倍/修罗 logs must confirm due->enqueue, old-item
+    budget consumption, member consumption, failure/backoff tail move, and runner cleanup behavior.
+
+Fresh runtime follow-up repair 2026-06-30:
+
+- Finding:
+  - Fresh 五倍日志显示队长 `hwnd-E570C26` 的三技能 cooldown 与队员接近，`16:29:01.217`
+    还剩 `295486ms`，理论 due 约在 `16:33:56`。
+  - 但 round 13/15/18 的队长 pathing 维护入口在看见 runner dialog 后直接 return：
+    `16:33:32.771` `type=OPTION`，`16:36:35.769` / `16:40:36.179` `type=STORY`。
+  - 因此队长没有进入 `TaskMaintenanceService.maybeCleanSummonSkill(...)` 做 due/enqueue，
+    直到 round 19 `16:42:10.725` 才出现 `summon skill due` / `queued`。四个队员则已在
+    `#SUMMON_SKILL#9-#12` 按队列完成清理。
+- 修复：
+  - `WubeiTask.maybeRunLeaderPathingSummonMaintenance(...)` 不再因为 dialog visible 完全跳过队长
+    三技能 due 检查；它改为传
+    `.enqueueSummonSkillOnly(dialogVisibleBeforeMaintenance)`。
+  - `TaskMaintenanceService.maybeCleanSummonSkill(...)` 在 due 后先入队；若
+    `enqueueSummonSkillOnly=true`，只返回 `SUMMON_SKILL_DEFERRED`，不消费旧队头、不打开/执行
+    三技能清理窗口，避免与当前 dialog 点击冲突。
+  - 日志从 `skipped: runner dialog visible` 改成
+    `leader pathing summon maintenance limited to enqueue-only: runner dialog visible`，方便 fresh
+    runtime 区分“只入队 pass”和“真正执行 pass”。
+- Guard:
+  - `TaskMaintenanceSummonSkillQueueWiringTest.enqueueOnlyDueCheckDoesNotConsumeCurrentOrOldSnapshot`
+    覆盖：enqueue-only 当前 due 只入队不 clean；enqueue-only 遇到旧队头也不能消费；后续普通窗口
+    才可消费旧 item。
+  - source guard 覆盖五倍生产 wiring 必须包含
+    `.enqueueSummonSkillOnly(dialogVisibleBeforeMaintenance)`。
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TaskMaintenanceSummonSkillQueueWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+- Fresh runtime gate:
+  - 五倍队长如果在 due 时看到 visible dialog，应同时出现 `limited to enqueue-only` 和
+    `maintenance: summon skill due/queued`，但不能出现同 pass 的 `start summon skill clean`。
+  - 后续无 dialog 的维护窗口再按五倍预算 1 消费旧队头。
+
+Independent review 2026-06-30:
+
+- P1: 首版实现按当前窗口 `queueKey` 扫描队列，会让 B 窗口跳过队头 A 消费自己的 item，
+  破坏“同一个 Q / FIFO”。必须改为全局队头 / 窗口打开 snapshot 的有序消费，当前窗口不能
+  搜索并绕过队头。
+- P1: 队员 `requiredLocalSupportCapability=SUMMON_SKILL` 路径会入队，但
+  `resolveSummonSkillWindowOpenedAt(...)` 对 local capability 返回 `null`，所以队员 item
+  可能永久留队。必须让本地队员在 SUMMON_SKILL capability 打开时也能按同一 FIFO/snapshot/budget
+  规则消费自己的队头 item。
+- P2: CR145 guard 需要补双窗口 FIFO 和 local support member 消费语义；旧
+  `TaskMaintenanceSummonSkillUnknownBackoffTest` 仍按 due 立即执行断言，需要迁移到队列合同。
+
+Repair direction dispatched:
+
+- Fix `TaskMaintenanceService` queue consumption policy, then rerun compile/test-compile,
+  CR145 focused guard, and migrated unknown-backoff guard.
+- Update CR145 card/ACTIVE_WORK/dashboard after repair.
+
+## 2026-06-30 / CR144 Runner 停稳后 stale prepared 重新发布
+
+Status: source fixed / implementation and review passed / fresh runtime pending.
+
+Owner:
+
+- Coordinator: 唐德.
+- Implementation: subagent worker.
+- Review: subagent reviewer + 唐德 final local review.
+
+Scope:
+
+- Fix Runner-side prepared-action readiness recovery when a window is already stationary, the same
+  target dialog remains visible, and the existing prepared action is stale/unconsumed.
+- Do not change OCR/template/click point, movement detection algorithm, navigation target selection,
+  NPC smart-click, 三技能, bag, or combat detection thresholds.
+- Do not restore CR58-style background fingerprint keepalive. Reprepare is allowed only under
+  stationary + stale + visible + same-interest + cooldown conditions.
+
+Baseline before CR144 edits:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/PACKAGE_ARCHITECTURE.md`, and
+  this `docs/ACTIVE_WORK.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- `git fetch origin` completed. Latest local `origin/dev`: `e543d02`
+  (`e543d02 Stabilize task navigation and window readiness`).
+- Latest pushed branch containing this local HEAD: `origin/codex/migrate-runner-dialog` =
+  `696a12b` (`696a12b chore: remove obsolete debug tooling`).
+- Pre-edit `git status --short --branch` already showed unrelated dirty work in config JSON files,
+  `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`,
+  `AutoCombatService`, `BattleRadarService`, `NpcClickService`, `TaskTrackerPanelService`,
+  `TeamReturnService`, `WubeiTask`, `XiuluoTaskV2`, `GameTextLineOcrService`,
+  `WindowTaskRunner`, `WindowRuntimeContext`, `application.properties`, plus untracked cloud docs/code,
+  `lib/`, CR143/CR141/CR142/白龙马 test files. CR144 must preserve all unrelated work.
+- Relevant baseline evidence:
+  - `git show --stat --oneline HEAD -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java src/test/java/com/bot/dhxy/window/execution docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    showed baseline commit `696a12b chore: remove obsolete debug tooling`.
+  - `git diff origin/codex/migrate-runner-dialog -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java src/test/java/com/bot/dhxy/window/execution`
+    already contained unrelated CR141 paused-observer and CR142 coordinate-arrival changes. CR144
+    implementation must build on those changes without reverting them.
+
+Problem evidence:
+
+- `2026-06-30 14:33` 五倍普通/黄袍 enter-battle path:
+  - Runner published `PREPARED_ACTION_READY sequence=63` for `WUBEI_ENTER_BATTLE` while the leader
+    was busy in opportunistic 三技能 maintenance.
+  - After maintenance released the turn, the prepared action was older than
+    `WUBEI_PREPARED_DIALOG_MAX_AGE_MS=3000ms`.
+  - Runner kept seeing visible `OPTION`, but `refreshTaskDialogInterestPreparationSignal(...)`
+    returned existing prepared action from the `already current` branch and did not republish.
+  - Task side did not progress; window stood still with `existingPreparedAgeMs` increasing.
+
+Approved design:
+
+- Runner owns this recovery, not 五倍 task business phase code.
+- Reprepare only when the window is stationary. Moving windows must not republish stale prepared
+  actions merely because age exceeded the freshness window.
+- Required gate: current task dialog interest + matching visible dialog + existing prepared supports
+  current interest + stale verified age + stationary pathing/runtime evidence + per-window/operation
+  cooldown.
+- Add structured logs and focused guards; then run compile/test-compile and local review.
+
+Implementation:
+
+- Published CR144 in `docs/PACKAGE_ARCHITECTURE.md` and regenerated the CR dashboard snapshot.
+- Implementation was delegated to subagent worker, then locally revised after review.
+- `WindowTaskRunner.refreshTaskDialogInterestPreparationSignal(...)` now handles the stale
+  existing-current path by clearing and re-preparing only when all gates hold:
+  - existing prepared action is stale for the current task interest;
+  - visible dialog has the same explicit non-`NONE` `DialogType`;
+  - pathing snapshot is terminal stationary (`ARRIVED` / `STOPPED_AWAY`) and not probing;
+  - same-window cooldown is open.
+- Moving/unknown states and coordinate-still guesses are deliberately not treated as stationary.
+- Stale retained logs that do not trigger reprepare were lowered to debug to avoid watcher tick
+  noise.
+- Added `src/test/java/com/bot/dhxy/window/execution/WindowTaskRunnerStalePreparedRepublishWiringTest.java`
+  source guard.
+
+Review:
+
+- Independent reviewer found P1/P2/P3 issues in the first worker patch:
+  - stationary gate accepted moving/unknown evidence too broadly;
+  - moving-negative was not guarded;
+  - retained stale log could spam at watcher frequency;
+  - null / `NONE` dialog type behaved like wildcard.
+- 唐德 repaired all four points. Second independent review reported PASS with no P1/P2/P3
+  blocker.
+
+Verification:
+
+- Passed:
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerStalePreparedRepublishWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.PreparedDialogReadyNoKeepaliveWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WubeiPlainTaskAttentionNoWakeWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingStoppedAwayPolicyTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+- Fresh runtime still needs to confirm stale prepared reprepare fires only after stationary and does
+  not fire during movement/probe.
+
+## 2026-06-30 / 五倍白龙马黄字 OCR 专属 profile
+
+Status: source fixed / replay, test-compile, and compile passed.
+
+Scope:
+
+- Add a target-name-specific yellow OCR profile for 五倍 `白龙马`.
+- Keep the default `YELLOW_NPC_TARGET` strict threshold unchanged for all non-白龙马 targets.
+- Apply the same selected profile to primary yellow candidates and shadow/fallback candidates.
+- Do not change `NpcClickService` click order, Alt+A, Ctrl-menu, movement, navigation, or generic
+  `TextColorMode.YELLOW_LOOSE` / `ImagePreprocessor.washYellowText` behavior. The only
+  `NpcClickService` change allowed in this pass is passing `npcName` into the yellow fallback
+  OCR profile selector.
+
+Baseline before edits:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, and top of this `docs/ACTIVE_WORK.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Latest local `origin/dev`: `e543d02` (`e543d02 Stabilize task navigation and window readiness`).
+- Pre-edit `git status --short --branch` already showed unrelated dirty work in config JSON files,
+  `docs/ACTIVE_WORK.md`, sprint/dashboard docs, runner/window/service/task files,
+  `application.properties`, plus untracked cloud docs/code/tests and `lib/`. This pass must preserve
+  that work and only add the requested 白龙马 yellow OCR profile/testcase changes.
+- Relevant touched-path evidence:
+  - `git diff -- src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java` was empty before
+    this pass.
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java`
+    showed latest pushed baseline `e543d02 Stabilize task navigation and window readiness` with the
+    existing strict yellow-target code in this file.
+
+Implementation:
+
+- `GameTextLineOcrService` now selects `YellowTargetProfile` from
+  `OcrTextMatcher.normalizeName(expectedTarget)`.
+- `YellowTargetProfile.DEFAULT` keeps the existing strict `isNpcTargetYellowTextPixel(...)` logic.
+- `YellowTargetProfile.BAILONGMA` applies only to normalized target `白龙马`; it uses the sampled
+  NPC-name yellow range equivalent to `isNpcNameYellowSamplePixel(...)` while still excluding
+  stall/vendor gold through `isStallVendorGoldPixel(...)`.
+- `findYellowTarget(...)` passes the same selected profile to both primary `yellow-target-npc` and
+  shadow `yellow-target-npc-shadow` candidate extraction.
+- `findYellowTextCandidateResult(...)` has a target-aware overload so shape-only fallback candidates
+  can use the same profile. `NpcClickService.findYellowTextFallbackCandidates(...)` now passes
+  `npcName` into that overload; click order, click coordinates, Alt+A, Ctrl-menu, movement, and
+  navigation logic were not changed.
+- Generic `scanYellowLines(...)`, `TextColorMode.YELLOW_LOOSE`, and
+  `ImagePreprocessor.washYellowText(...)` were not changed.
+
+Replay testcase:
+
+- Input copied from runtime temp:
+  `images/test-cases/npc-click/wubei-bailongma-direct-combat-20260630.png`.
+- Marked replay output:
+  `images/test-cases/npc-click/wubei-bailongma-yellow-profile-replay.png`.
+- Note: `images/test-cases/` is repo-local but gitignored by the existing `.gitignore`.
+- Replay crop: `x=812,y=730,w=64,h=30`.
+- Replay result: default profile kept `0` pixels in the 白龙马 crop; 白龙马 profile kept `173`
+  pixels and marked center `(841,744)`.
+
+Verification:
+
+- RED:
+  - `mvn -q -DskipTests test-compile` passed after adding the replay main.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.vision.GameTextLineOcrServiceBailongmaYellowProfileReplayTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    failed before source fix with missing
+    `com.bot.dhxy.vision.GameTextLineOcrService$YellowTargetProfile`.
+- GREEN:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.vision.GameTextLineOcrServiceBailongmaYellowProfileReplayTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed and generated the marked replay image.
+  - `mvn -q -DskipTests compile` passed.
+
+## 2026-06-30 / CR131 归队预检改为回城验证后截图
+
+Status: source fixed / focused guard and compile passed; fresh runtime pending.
+
+Scope:
+
+- Move 修罗/五倍 leader team-return precheck from before return item/bag use to after return-home
+  start-map verification.
+- Do not change return item lookup/use, bag page logic, start-map verification, team-return
+  template/ROI/click, or `WAIT_TEAM_RETURN` fallback semantics.
+
+Evidence:
+
+- 五倍 `2026-06-30 13:04` showed the old timing was stale:
+  - `13:04:24.664` leader captured team-return precheck while members were still in combat.
+  - `13:04:30.355` `WAIT_TEAM_RETURN` consumed that stale `NO_SIGNAL` and skipped waiting.
+  - Members only exited combat at `13:04:33.786`, `13:04:35.188`, `13:04:36.599`, and
+    `13:04:36.752`.
+
+Implementation:
+
+- `WubeiTask.useReturnItem(...)` now calls `beginLeaderSignalPrecheck(...)` only after
+  `cached return item verified` or direct `return item verified`.
+- `XiuluoTaskV2.useReturnItem(...)` uses the same verified-success timing.
+- `TeamReturnService` log wording changed from `team return precheck captured before bag` to
+  `team return precheck captured`.
+- `TeamReturnPrecheckWiringTest` now guards that the precheck occurs after start-map verification
+  and remains read-only/background analyzed.
+- `docs/PACKAGE_ARCHITECTURE.md` CR131 row/card and `docs/cr-dashboard-data.js` were updated.
+
+Verification:
+
+- RED before source fix:
+  `TeamReturnPrecheckWiringTest` failed with
+  `XiuluoTaskV2.java must launch precheck after start-map verification`.
+- GREEN:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.TeamReturnPrecheckWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `node scripts/generate-cr-dashboard-data.js` passed and regenerated `docs/cr-dashboard-data.js`.
+
+Fresh runtime acceptance:
+
+- In 修罗/五倍 return-home logs, `return item verified` / `cached return item verified` must appear
+  before `team return precheck captured`.
+- In a late-member-exit case, leader must not consume a stale pre-return `NO_SIGNAL` and skip
+  `WAIT_TEAM_RETURN`.
+
+## 2026-06-30 / CR-HC-003 TrackerLinkRanker 五倍/修罗 Shadow Hook
+
+Status: implementing / Task 2-4 only; Task 1 shadow service already exists.
+
+Scope:
+
+- Wire existing `TrackerLinkRankerCloudShadowService` into 五倍/修罗 tracker green-link click paths.
+- Shadow only: local selected link remains the only executed decision; cloud result is ignored.
+- Do not change tracker green-link scanning, selected index, candidate list, click coordinate,
+  pathing intent, OCR/template matching, NPC/Dialog/Battle/Bag, or `TaskTrackerPanelService`.
+
+Baseline before Task 2/3/4 edits:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, and
+  `docs/superpowers/plans/2026-06-30-tracker-link-ranker-cloud-shadow.md`.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b` (`696a12b chore: remove obsolete debug tooling`).
+- Latest fetched `origin/dev`: `e543d02` (`e543d02 Stabilize task navigation and window readiness`).
+- Pre-edit `git status --short` already showed unrelated dirty work in config JSON files,
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`, runner/window/service files,
+  `TaskTrackerPanelService.java`, `WubeiTask.java`, `application.properties`, plus untracked cloud
+  docs/code/tests and `lib/`. This pass must preserve that work and only add the requested
+  tracker-link-ranker shadow hook.
+- Relevant pre-edit evidence:
+  - `TrackerLinkRankerCloudShadowService` and `TrackerLinkRankerCloudShadowServiceTest` already
+    exist under `src/main/java/com/bot/dhxy/cloud/task` and `src/test/java/com/bot/dhxy/cloud/task`.
+  - `WubeiTask.triggerCombatTrackerPathing(...)` selects
+    `panel.getGreenLinks().get(0)` and then calls `clickTaskTrackerGreen(...)` in the existing retry
+    loop.
+  - `WubeiTask.startProbeTrackerPathing(...)` selects
+    `currentProbeSegments.get(nextIndex)` and then calls `clickTaskTrackerGreen(...)`.
+  - `WubeiTask` enter-battle retry clicks `currentTrackerPanel.getGreenLinks().get(0)` before
+    waiting for pathing wake.
+  - `XiuluoTaskV2.tryTrackerShortcutWithPanel(...)` resolves `Point point = clickPoint.get()` and
+    then calls `inputSequences.moveAndClickLeft(...)`.
+
+Implementation:
+
+- `WubeiTask` now injects `TrackerLinkRankerCloudShadowService`.
+- `triggerCombatTrackerPathing(...)` reports
+  `phase=wubei-combat-tracker-pathing` after selecting `panel.getGreenLinks().get(0)` and before
+  the existing click retry loop.
+- `startProbeTrackerPathing(...)` reports `phase=wubei-probe-tracker-pathing` after selecting
+  `currentProbeSegments.get(nextIndex)` and before `clickTaskTrackerGreen(...)`.
+- The enter-battle retry branch reports `phase=wubei-enter-battle-retry` after selecting
+  `currentTrackerPanel.getGreenLinks().get(0)` and before `clickTaskTrackerGreen(...)`.
+- `XiuluoTaskV2` now injects `TrackerLinkRankerCloudShadowService`.
+- `tryTrackerShortcutWithPanel(...)` reports `phase=xiuluo-tracker-shortcut` after resolving
+  `Point point = clickPoint.get()` and before `inputSequences.moveAndClickLeft(...)`; candidates are
+  `panel.getGreenLinks()`, selected index is `0`.
+- `application.properties` enables tracker-link-ranker shadow verification and keeps execution off:
+  `shadow-enabled=true`, `execute-enabled=false`, `execute-percent=0`, `fallback=LOCAL`.
+- Added `TrackerLinkRankerCloudShadowWiringTest` to guard hook presence, execute-disabled config,
+  and absence of `CloudDecisionResult` / `getEffectiveDecision` / `effectiveDecision` consumption in
+  `WubeiTask` and `XiuluoTaskV2`.
+- Added CR-HC-003 to `docs/HYBRID_CLOUD_WORKFLOW.md`.
+- No testcase replay required: this pass does not change visual matching, OCR/template thresholds,
+  selected click coordinates, selected green-link order, NPC/Dialog/Battle/Bag behavior, or pathing
+  intent registration.
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed.
+- `mvn -q "-Dtest=CloudDecisionPropertiesTest,CloudDecisionCoordinatorTest,CloudDecisionSkeletonWiringTest,TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest" test`
+  passed; output included `TRACKER_LINK_RANKER mode=SHADOW ... executed=false`.
+- `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest`
+  passed with `TrackerLinkRankerCloudShadowWiringTest passed`.
+
+## 2026-06-30 / CR142 Runner 坐标到达必须等移动停稳
+
+Status: Review / source implemented and focused guards passed; fresh runtime pending.
+
+Owner:
+
+- CR142 business implementation subagent.
+
+Baseline before source edits:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: none configured for `codex/hybrid-cloud-protection`.
+- `git fetch origin` completed before recording this baseline. The latest pushed branch containing
+  current `HEAD` is `origin/codex/migrate-runner-dialog` at `696a12b`; `origin/dev` is currently
+  `e543d02 Stabilize task navigation and window readiness`.
+- Pre-edit `git status --short --branch` already had unrelated local/cloud/CR141 work:
+  `M config/dialog_choice_memory.json`, `M config/vision_memory.json`,
+  `M config/world_map_route_result_memory.json`, `M docs/ACTIVE_WORK.md`,
+  `M docs/PACKAGE_ARCHITECTURE.md`, `M docs/cr-dashboard-data.js`,
+  `M src/main/java/com/bot/dhxy/runner/stop/TaskCheckpoint.java`,
+  `M src/main/java/com/bot/dhxy/service/AutoCombatService.java`,
+  `M src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`,
+  `M src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java`,
+  `M src/main/resources/application.properties`, plus untracked cloud docs/code, `lib/`, and
+  `src/test/java/com/bot/dhxy/window/execution/WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest.java`.
+- Relevant pushed baseline evidence:
+  - `git show --stat --oneline origin/codex/migrate-runner-dialog -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/test/java/com/bot/dhxy/window/execution docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    showed baseline commit `696a12b chore: remove obsolete debug tooling`.
+  - `git diff origin/codex/migrate-runner-dialog -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/test/java/com/bot/dhxy/window/execution docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    showed pre-existing local CR141/dashboard changes and the CR142 Ready card, including the
+    CR141 `paused-leader-readonly-observer` block in `WindowTaskRunner.java`. CR142 implementation
+    must preserve that existing local work and only add the coordinate-arrival guard.
+- Relevant current source evidence before CR142 edits:
+  - `WindowTaskRunner.classifyPathingState(...)` currently checks
+    `intent.getType() != WindowPathingIntentType.UNTARGETED_TRACKER && hasArrived(...)` before
+    checking `locationChanged`.
+  - `hasArrived(...)` only compares `abs(current-target) <= tolerance`, so a coordinate that just
+    changed into the tolerance box can publish `ARRIVED` with `observedStationaryMs=0`.
+
+Scope:
+
+- Fix only Runner coordinate movement terminal semantics and focused source/unit guards.
+- Do not change `GameStateUtil.isMovingByPixelDiff()`, OCR/template/click/NPC/黄字 route choice,
+  `ACCEPT_NPC_DIRECT_CLICK_DISTANCE`, or `UNTARGETED_TRACKER` behavior.
+- No visual/click target code is in scope, so testcase replay is not required for this source
+  change unless implementation unexpectedly touches visual matching or click-coordinate output.
+
+Implementation:
+
+- `WindowTaskRunner.classifyPathingState(...)` now treats coordinate arrival as a candidate until
+  the role has stopped changing mini-map coordinates for a short window.
+- For `TARGETED` intents with `targetX/targetY`, entering tolerance while `locationChanged=true`
+  returns `ACTIVE`, not `ARRIVED`.
+- If coordinates are in tolerance but `now - locationChangedAtMs < 600ms`, the runner also keeps
+  `ACTIVE`.
+- Once the coordinate is in tolerance and the stationary window is satisfied, the runner publishes
+  `ARRIVED`.
+- Existing fast paths are preserved: no previous/no-new-movement in-range still arrives, map-only
+  targets are not delayed, and `UNTARGETED_TRACKER` remains outside coordinate-arrival logic.
+- No changes were made to `GameStateUtil.isMovingByPixelDiff()`, OCR/template/click/NPC smart-click,
+  黄字 route selection, `ACCEPT_NPC_DIRECT_CLICK_DISTANCE`, or `NavigationService`.
+
+Verification:
+
+- RED:
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingArrivalStationaryGuardTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    failed before the source fix with
+    `coordinate that just changed into tolerance must not publish ARRIVED: expected=ACTIVE actual=ARRIVED`.
+- GREEN:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingArrivalStationaryGuardTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowPathingStoppedAwayPolicyTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowObserverInCombatSkipWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java` passed.
+  - `git diff --check -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/test/java/com/bot/dhxy/window/execution/WindowPathingArrivalStationaryGuardTest.java docs/ACTIVE_WORK.md` passed with only existing LF/CRLF warnings.
+- Adjacent non-CR142 note:
+  - `WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest` currently fails on its own CR141
+    stale enter-signal assertion:
+    `normal combat tick must not consume a stale enter signal after paused observer already saw exit`.
+    CR142 did not edit `AutoCombatService` / `BattleRadarService`; this failure is not caused by
+    the coordinate arrival guard and should stay with CR141 follow-up.
+- No testcase replay required: CR142 did not change visual matching, OCR/template thresholds,
+  click coordinates, NPC/dialog/bag/navigation target selection, or screenshot matching output.
+
+Fresh runtime acceptance still needed:
+
+- Re-run the 五倍 accept-task yellow-route case to `宝象国(86,87)`.
+- Confirm the runner no longer logs `state=ARRIVED` with `observedStationaryMs=0` /
+  `wallStationaryMs=0` for the coordinate movement intent.
+- Confirm `NavigationService.navigateInCurrentMap(...)` does not consume cached `ARRIVED` and start
+  NPC smart click while the role is visibly still moving.
+- Confirm NPC smart click begins after the role is stationary and no longer mis-clicks
+  `npc_task_tooltip` at `(479,384)`.
+
+## 2026-06-30 / CR141 通用队长暂停只读观察语义实施
+
+Status: Review / subagent review and local source verification passed; fresh runtime pending.
+
+Owner:
+
+- Implementer subagent: source repair and focused tests.
+- Review assistant subagent: independent CR141 review after implementation.
+- Codex: integration, final review, validation, and sprint card/dashboard sync.
+
+Baseline before source edits:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Pre-edit `git status --short` already had unrelated local/cloud work:
+  `M config/dialog_choice_memory.json`, `M config/vision_memory.json`,
+  `M config/world_map_route_result_memory.json`, `M docs/ACTIVE_WORK.md`,
+  `M docs/PACKAGE_ARCHITECTURE.md`, `M docs/cr-dashboard-data.js`,
+  `M src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`,
+  `M src/main/resources/application.properties`, untracked `docs/HYBRID_CLOUD_WORKFLOW.md`,
+  cloud plan docs, `lib/`, and `src/main/java/com/bot/dhxy/cloud/` /
+  `src/test/java/com/bot/dhxy/cloud/`.
+- CR141 source repair must avoid those unrelated cloud/task-classifier files.
+- 2026-06-30 CR141 implementer pre-edit touched-path evidence:
+  - `git show --stat --oneline HEAD -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/main/java/com/bot/dhxy/service/AutoCombatService.java src/main/java/com/bot/dhxy/service/BattleRadarService.java src/test/java/com/bot/dhxy/window/execution` showed only the baseline commit
+    `696a12b chore: remove obsolete debug tooling`, with a small `WindowTaskRunner.java`
+    cleanup (`2 insertions(+), 3 deletions(-)`).
+  - `git diff -- src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java src/main/java/com/bot/dhxy/service/AutoCombatService.java src/main/java/com/bot/dhxy/service/BattleRadarService.java src/test/java/com/bot/dhxy/window/execution`
+    was empty before CR141 edits.
+
+Scope:
+
+- Implement the CR141 generic pause semantics:
+  leader pause keeps only a read-only combat-state observer, while task phase progress and all
+  input/dialog prepare/maintenance remain paused; member pause remains quiet.
+- Do not change OCR/template/click/movement/navigation target logic.
+- Do not turn a successful enter-battle click into confirmed combat; battle state remains the
+  source of truth.
+
+Implementation:
+
+- `WindowTaskRunner.runCombatWatcherLoop(...)` now checks
+  `executionContext.isPauseRequested() && windowContext.isLeader()` before the normal pause
+  checkpoint.
+- Paused leader windows enter `paused-leader-readonly-observer`; the branch runs a stop-only
+  `TaskCheckpoint` check, calls `AutoCombatService.probePausedWindowCombatStateReadOnly(...)`, logs
+  `inputAllowed=false` and `preparedActionAllowed=false`, then sleeps on the normal observer wake
+  cadence.
+- The paused leader branch does not call `publishCombatStateChanged(...)`, because that existing
+  publisher has 五倍/修罗 pathing cleanup side effects. Battle enter/exit evidence is instead left
+  in `BattleRadarService` pending signals for task phases to consume after resume.
+- `AutoCombatService.probePausedWindowCombatStateReadOnly(...)` only calls
+  `battleRadarService.checkAndSyncCombatState()` and logs diagnostics. It does not call
+  `maybeHandleCombatEnter(...)`, consume exit signals, touch `AutoCombatPanelService`, input queue,
+  maintenance, dialog prepare, task tracker prepare, NPC, bag, or navigation code.
+- `TaskCheckpoint.throwIfStopRequested(TaskStopToken, String)` is the new stop-only checkpoint for
+  read-only observers that must not block on a pause token.
+- Second-review P1-1 repair:
+  - `BattleRadarService` now records `combatExitAfterUnconsumedEnterPending` when exit occurs while
+    the combat-enter signal is still unconsumed.
+  - That current-cycle marker lets `armExpectedCombatExitWait(...)` keep the paused full combat-cycle
+    exit instead of discarding it as stale, and lets `consumeCombatExitSignalForExpectedWait(...)`
+    consume it after resume.
+  - The same exit clears the stale enter signal, and `AutoCombatService.maybeHandleCombatEnter(...)`
+    refuses to consume/open enter maintenance unless `GameContext.ActionState` is still `IN_COMBAT`.
+- Second-review P1-2 repair:
+  - `WindowRuntimeContext.wakeObserver(...)` increments `observerWakeSeq` without publishing any
+    business ready event.
+  - `WindowTaskRunner.pauseCurrentTask()` calls it only for leader windows, so members remain quiet.
+  - Paused leader readonly observation uses fixed `WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS=500ms`
+    instead of `getDynamicPollingIntervalMs()`; `FREE` state can no longer stretch the pause observer
+    to 10s.
+- Third-review P1 repair:
+  - `AutoCombatService.probePausedWindowCombatStateReadOnly(...)` now records action state before and
+    after `battleRadarService.checkAndSyncCombatState()`.
+  - When paused readonly observation sees `IN_COMBAT -> FREE`, it calls
+    `battleRadarService.markCombatExitObservedDuringPause(source)`.
+  - `BattleRadarService` now records `combatExitObservedDuringPausePending` with the pending battle
+    count. This covers the case where the normal watcher already consumed enter before the task armed
+    `FAST_EXPECTED_EXIT`.
+  - `armExpectedCombatExitWait(...)` and `consumeCombatExitSignalForExpectedWait(...)` use
+    `isCurrentExpectedWaitAllowedExit(...)`, which allows either unconsumed-enter exits or
+    paused-observed exits for the current battle cycle.
+  - `clearCombatExitPending(...)` clears both current-cycle markers.
+
+Verification:
+
+- RED: `WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest` first failed with
+  `paused read-only observer must be gated to paused leader windows`.
+- RED after guard tightening: the same test failed with
+  `paused leader branch must not call the normal combat event publisher because it has task-specific side effects`.
+- RED after second-review guard tightening: the same test failed with
+  `pause request must wake only leader observers; member pause stays quiet`.
+- RED after third-review guard tightening: the same test failed with
+  `paused read-only probe must remember action state before radar refresh`.
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowTaskRunnerPausedLeaderReadOnlyObserverWiringTest` passed.
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowObserverInCombatSkipWiringTest` passed.
+  - `java -cp "target/classes;target/test-classes" com.bot.dhxy.window.execution.WindowTaskRunnerCombatStartupDeferWiringTest` passed.
+- No testcase replay required: CR141 did not change visual matching, OCR/template thresholds,
+  click coordinates, movement detection, NPC/dialog/bag/navigation target logic, or screenshot
+  matching output.
+- Final review:
+  - Review assistant subagent completed the final pass with no P1/P2 blocker.
+  - Codex/唐德 locally reran compile, test-compile, CR141 guard, and adjacent watcher/combat guards;
+    all passed.
+  - The only review P3 was an outdated `armExpectedCombatExitWait(...)` comment; it now documents
+    the CR141 current-cycle exception.
+
+Fresh runtime acceptance still needed:
+
+- Start a leader task, click/consume the enter-battle dialog/action, then pause immediately.
+- Let real combat enter and finish during pause.
+- Confirm `logs/dhxy-console.log` shows `paused-leader-readonly-observer` with
+  `inputAllowed=false` and `preparedActionAllowed=false`, plus battle radar enter/exit evidence.
+- Resume and confirm the task-owned phase consumes the generic combat state / exit signal and moves
+  into post-combat recovery or the next round, without the runner advancing task-specific phase.
+
+## 2026-06-30 / CR141 通用队长暂停只读观察语义建卡
+
+Status: card created / no source change.
+
+Scope:
+
+- Record the pause/resume bug reproduced around `2026-06-30 10:35-10:37`.
+- Create sprint board row and detailed card for a generic leader paused read-only observer.
+- This is not a 五倍-specific card; 五倍 is only the observed sample.
+
+Summary:
+
+- Root cause: pausing freezes both task phase execution and the runner/combat watcher. If the leader
+  pauses immediately after clicking an enter-battle dialog and the real combat finishes during the
+  pause, no component records the intermediate `IN_COMBAT -> FREE` transition. On resume, the task
+  can still believe it is waiting for enter-battle evidence and get stuck.
+- Required direction recorded in CR141: while paused, leader windows may keep a pure read-only
+  combat-state observer; all input, dialog prepare/click, maintenance, navigation, and task phase
+  progress remain paused. Member windows keep the existing quiet pause behavior.
+
+Files updated:
+
+- `docs/PACKAGE_ARCHITECTURE.md`
+- `docs/ACTIVE_WORK.md`
+
+Validation:
+
+- Documentation-only card creation. No Java source changed and no testcase replay required.
+- `node scripts/generate-cr-dashboard-data.js` should be run after this entry so
+  `docs/cr-dashboard-data.js` includes CR141.
+
+## 2026-06-30 / CR-HC-002 TaskClassifier 修罗 Shadow Hook Extension
+
+Status: implemented / compile, focused tests, and source guards passed.
+
+Scope:
+
+- Extend the existing `TASK_CLASSIFIER` shadow-only hook from 五倍 tracker title reads to 修罗
+  tracker shortcut reads.
+- Do not consume cloud output, do not change 修罗 shortcut click/pathing/battle/recovery behavior,
+  and do not alter title templates, green-link scans, OCR wash, or navigation coordinates.
+
+Implementation:
+
+- `TaskClassifierCloudShadowService` now supports `shadowXiuluoTrackerResult(...)`, using
+  `taskCode=xiuluo`, trace prefix `xiuluo-task-classifier:`, and the same
+  `tracker-title-classification` phase.
+- `TaskTrackerPanelService` now reports 修罗 local tracker results to shadow at live crop miss,
+  snapshot/replay invalid input, replay title miss, detail unreadable, no-link, detail success,
+  and IO-failure return points. The returned
+  `TaskTrackerPanelReadResult` is still the local result.
+- `TaskClassifierCloudShadowServiceTest` covers 修罗 request fields.
+- `XiuluoTaskClassifierCloudShadowWiringTest` guards that 修罗 tracker reads call the shadow hook
+  without consuming `CloudDecisionResult` / `effectiveDecision`.
+- `docs/HYBRID_CLOUD_WORKFLOW.md` and the TaskClassifier plan now describe 五倍/修罗 coverage.
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed.
+- `mvn -q "-Dtest=CloudDecisionPropertiesTest,CloudDecisionCoordinatorTest,CloudDecisionSkeletonWiringTest,TaskClassifierCloudShadowServiceTest,WubeiTaskClassifierCloudShadowWiringTest,XiuluoTaskClassifierCloudShadowWiringTest" test` passed after fixing the 修罗 source guard count from 6 to the actual 7 reported return points.
+- `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.task.WubeiTaskClassifierCloudShadowWiringTest` passed.
+- `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.task.XiuluoTaskClassifierCloudShadowWiringTest` passed.
+- No testcase replay required: this pass does not change click targets, template thresholds, OCR
+  wash, navigation coordinates, NPC/dialog/battle/bag behavior, or visual matching output.
+
+## 2026-06-30 / CR-HC-002 TaskClassifier 五倍 Shadow Hook Task 3-4
+
+Status: implemented / compile and requested focused tests passed.
+
+Scope:
+
+- Allowed files: `TaskClassifierCloudShadowService.java` null-safe only,
+  `TaskTrackerPanelService.java` shadow hook only, new
+  `WubeiTaskClassifierCloudShadowWiringTest.java`, `application.properties`,
+  `docs/HYBRID_CLOUD_WORKFLOW.md`, and this file.
+- Do not modify WubeiTask, Xiuluo, Navigation, NPC, Dialog, Battle, Bag, or other business files.
+- Shadow result must never become 五倍 effective decision; local `TaskTrackerPanelReadResult` remains the only returned value.
+
+Baseline before editing:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b` (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: none configured for `codex/hybrid-cloud-protection`; latest pushed baseline used by this work remains local `HEAD=696a12b` as recorded by the cloud workflow docs.
+- Pre-edit `git status --short` showed existing local/untracked cloud work:
+  `M docs/ACTIVE_WORK.md`, `M src/main/resources/application.properties`,
+  `?? docs/HYBRID_CLOUD_WORKFLOW.md`, `?? src/main/java/com/bot/dhxy/cloud/`,
+  `?? src/test/java/com/bot/dhxy/cloud/`, plus unrelated local `lib/` and plan/survey docs.
+- Relevant baseline evidence:
+  - `TaskTrackerPanelService` 五倍 title template order in `HEAD` is:
+    `wubei.dianqian_xianyi`, `wubei.sancang_fengmo`, `wubei.baoxiang_miqing`,
+    `wubei.zhidou_huangpao`, `wubei.kuixing_guiwei`.
+  - `readWubeiTrackerPanel`, `readWubeiTrackerPanelFromSnapshot`, and
+    `readWubeiTrackerDetail` currently return local `TaskTrackerPanelReadResult.empty()` or the
+    locally built success result directly, with no cloud hook and no cloud result consumption.
+  - `TaskClassifierCloudShadowService.context(...)` currently counts green links through
+    `result.getGreenLinks().size()`, which is not null-safe if a caller/test constructs a null list.
+
+Implementation:
+
+- `TaskTrackerPanelService` now constructor-injects `TaskClassifierCloudShadowService`.
+- 五倍 tracker read hook points now call
+  `taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result)` before returning the
+  same local `TaskTrackerPanelReadResult`:
+  live crop miss, snapshot invalid, snapshot title miss, detail read success, detail image
+  unreadable, and detail image `IOException`.
+- The hook is report-only. `TaskTrackerPanelService` does not import or read
+  `CloudDecisionResult`, `effectiveDecision`, or `CloudDecisionCoordinator`.
+- `TaskClassifierCloudShadowService` green-link count is null-safe and treats a null green-link list
+  as count `0`.
+- `application.properties` now includes disabled-by-default task-classifier service flags.
+- `WubeiTaskClassifierCloudShadowWiringTest` guards hook presence, absence of cloud-result
+  consumption, and unchanged 五倍 title-template order.
+- `docs/HYBRID_CLOUD_WORKFLOW.md` now records CR-HC-002 hook point, local baseline, request fields,
+  shadow log, rollback switch, and runtime log verification keyword.
+
+Verification:
+
+- `mvn -q -DskipTests compile` passed.
+- `mvn -q "-Dtest=CloudDecisionPropertiesTest,CloudDecisionCoordinatorTest,CloudDecisionSkeletonWiringTest,TaskClassifierCloudShadowServiceTest,WubeiTaskClassifierCloudShadowWiringTest" test` passed.
+- `java -cp "target/classes;target/test-classes" com.bot.dhxy.cloud.task.WubeiTaskClassifierCloudShadowWiringTest` passed, confirming the source guard main path directly.
+- No testcase replay required: this pass did not change click targets, template thresholds, OCR wash,
+  navigation coordinates, NPC/dialog/battle/bag behavior, or visual matching output.
+
+## 2026-06-30 / CR-HC-001 cloud decision skeleton review fix
+
+Status: repaired / requested compile and cloud-decision tests passed.
+
+Scope:
+
+- Allowed files only: `src/main/java/com/bot/dhxy/cloud/decision/*`,
+  `src/test/java/com/bot/dhxy/cloud/decision/*`, `docs/HYBRID_CLOUD_WORKFLOW.md`,
+  and this `docs/ACTIVE_WORK.md` entry.
+- Do not touch 五倍/修罗/Navigation/Npc/Dialog/Battle/Bag/Task business-flow files.
+- Do not edit the existing dirty `src/main/resources/application.properties` in this review pass.
+
+Baseline before editing:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: no upstream configured for `codex/hybrid-cloud-protection`; latest pushed baseline
+  observed locally remains `origin/codex/migrate-runner-dialog` =
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Pre-edit relevant `git status --short --branch -- ...`:
+  - `## codex/hybrid-cloud-protection`
+  - ` M docs/ACTIVE_WORK.md`
+  - `?? docs/HYBRID_CLOUD_WORKFLOW.md`
+  - `?? src/main/java/com/bot/dhxy/cloud/decision/`
+  - `?? src/test/java/com/bot/dhxy/cloud/decision/`
+- Relevant pushed baseline evidence:
+  - `git ls-tree -r --name-only HEAD src/main/java/com/bot/dhxy/cloud/decision src/test/java/com/bot/dhxy/cloud/decision docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no files.
+  - `git show --name-status --oneline HEAD -- src/main/java/com/bot/dhxy/cloud/decision src/test/java/com/bot/dhxy/cloud/decision docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no touched files for these paths.
+
+Review findings to fix:
+
+- P2: `CloudDecisionCoordinator.shadow(...)` must treat missing `serviceId` as a safe disabled
+  cloud result, skip the client, and return `effectiveDecision=localDecision`, `executed=false`,
+  `cloudAvailable=false`, with a clear `missing service id` reason.
+- P2: when service `executeEnabled=true`, CR-HC-001 is still skeleton-only. It may report
+  `mode=EXECUTE`, but it must keep `effectiveDecision=localDecision`, `executed=false`, and log
+  `effectiveDecision` plus `executed` so runtime logs cannot be mistaken for cloud execution.
+- Minor: `docs/HYBRID_CLOUD_WORKFLOW.md` config examples must match the current
+  `CloudDecisionProperties.services` map binding shape.
+
+Implementation:
+
+- `CloudDecisionCoordinator.shadow(...)` now checks `request.getServiceId() == null` before
+  `properties.service(...)`. A missing service id returns a disabled safe result, does not call the
+  client, keeps `effectiveDecision=localDecision`, `executed=false`, `cloudAvailable=false`, and
+  records reason `missing service id`.
+- Successful shadow/execute-configured skeleton comparisons now use reason
+  `skeleton stage keeps local decision; cloud decision not executed`.
+- `cloud.decision` logs now include `effectiveDecision` and `executed` next to local/cloud decisions
+  so `mode=EXECUTE` cannot be mistaken for actual cloud execution in CR-HC-001.
+- `CloudDecisionCoordinatorTest` covers missing service id, execute-configured skeleton behavior,
+  and the logging field guard.
+- `CloudDecisionPropertiesTest` now verifies the current map-binding format:
+  `cloud.services.task-classifier.*`.
+- `docs/HYBRID_CLOUD_WORKFLOW.md` now documents `cloud.services.<service-id>.*` as the current
+  skeleton config format and clarifies that execute-configured skeleton results still do not execute
+  cloud decisions.
+
+Verification:
+
+- RED: `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test` failed before the coordinator fix with:
+  missing log `effectiveDecision`, execute-configured reason missing skeleton wording, and
+  `NullPointerException` from `CloudDecisionProperties.service(null)`.
+- GREEN focused:
+  - `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test`
+  - `mvn -q "-Dtest=CloudDecisionPropertiesTest" test`
+- Requested final verification:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q "-Dtest=CloudDecisionPropertiesTest,CloudDecisionCoordinatorTest,CloudDecisionSkeletonWiringTest" test`
+- No visual/click/navigation matching code changed, so testcase replay is not applicable.
+
+## 2026-06-30 / Cloud Decision Framework Task 2 Client And Coordinator
+
+Status: implemented / specified coordinator test passed after Task 1 files landed.
+
+Scope:
+
+- Implement only the client/coordinator skeleton files under `com.bot.dhxy.cloud.decision`.
+- Do not touch 五倍/修罗/导航/NPC/Dialog business code or connect any business hook.
+- Task 1 domain model/config files are expected to be produced by another worker; this pass will
+  reference the planned Task 1 types but will not create or rewrite them.
+
+Baseline before editing:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Latest pushed baseline observed locally: `origin/codex/migrate-runner-dialog` =
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- `git status --short` before Task 2 edits showed existing untracked cloud workflow docs/plan and
+  `lib/`: `docs/HYBRID_CLOUD_WORKFLOW.md`,
+  `docs/hybrid-cloud-protection-survey.html`,
+  `docs/superpowers/plans/2026-06-30-cloud-decision-framework-skeleton.md`, and `lib/`.
+- Relevant baseline evidence for Task 2 touched paths:
+  `git ls-tree -r --name-only HEAD src/main/java/com/bot/dhxy/cloud/decision src/test/java/com/bot/dhxy/cloud/decision`
+  returned no files, and `rg --files src/main/java/com/bot/dhxy/cloud/decision src/test/java/com/bot/dhxy/cloud/decision`
+  found no existing local files. No pushed business logic exists in these new paths.
+
+Implementation:
+
+- Added `CloudDecisionClient` interface.
+- Added `MockCloudDecisionClient` Spring component with same `serviceId` / `traceId`, request-local
+  policy/decision defaults, `confidence=1.0`, `ttlMs=1000`, and `diagnostics.client=mock`.
+- Added `CloudDecisionCoordinator` Spring service. `shadow(...)` keeps
+  `effectiveDecision=localDecision` and `executed=false` for disabled, shadow, execute-configured,
+  empty-response, and exception paths.
+- Added `CloudDecisionCoordinatorTest` source-level test covering global disabled, service disabled,
+  mock shadow agreement, and client exception fallback.
+
+Verification:
+
+- RED before Task 2 production files:
+  `mvn -q -Dtest=CloudDecisionCoordinatorTest test` failed at test compile because
+  `CloudDecisionRequest` was missing.
+- After Task 2 files:
+  `mvn -q -Dtest=CloudDecisionCoordinatorTest test` failed at compile because Task 1 production
+  types are not present yet: `CloudDecisionProperties`, `CloudDecisionRequest`,
+  `CloudDecisionResponse`, `CloudDecisionResult`, `CloudDecisionMode`, and `CloudFallbackMode`.
+- Observed concurrent Task 1 work after this pass started:
+  `src/test/java/com/bot/dhxy/cloud/decision/CloudDecisionPropertiesTest.java` and a Task 1
+  baseline entry in this file appeared in the working tree. They were not edited by this Task 2 pass.
+- After the Task 1 production files appeared in the working tree, the requested command
+  `mvn -q -Dtest=CloudDecisionCoordinatorTest test` passed.
+
 ## 2026-06-29 / CR140 发布前代码瘦身第二批
 
 Status: review / second cleanup batch implemented / compile, test-compile, and focused source guards passed.
@@ -53997,3 +65054,2325 @@ Dashboard sync:
 
 Next log range:
 - Continue from `2026-06-28 04:15:28.920`.
+
+## 2026-06-30 / Cloud Decision Framework Task 1 baseline
+
+Status: implemented / focused properties test passed.
+
+Required context read:
+
+- `AGENTS.md`
+- `docs/DHXY_CONTEXT.md`
+- `docs/HYBRID_CLOUD_WORKFLOW.md`
+- `docs/superpowers/plans/2026-06-30-cloud-decision-framework-skeleton.md` Task 1
+
+Baseline before editing:
+
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: no upstream configured for this local branch; `docs/HYBRID_CLOUD_WORKFLOW.md` also records `696a12b` as the cloud workflow baseline.
+- Pre-edit `git status --short --branch`:
+  - `## codex/hybrid-cloud-protection`
+  - `?? docs/HYBRID_CLOUD_WORKFLOW.md`
+  - `?? docs/hybrid-cloud-protection-survey.html`
+  - `?? docs/superpowers/plans/2026-06-30-cloud-decision-framework-skeleton.md`
+  - `?? lib/`
+- Relevant touched-path baseline:
+  - `src/main/java/com/bot/dhxy/cloud/decision/...` does not exist in `HEAD`.
+  - `src/test/java/com/bot/dhxy/cloud/decision/...` does not exist in `HEAD`.
+  - `src/main/resources/application.properties` has no pre-edit local diff.
+  - `docs/ACTIVE_WORK.md` exists at blob `4e1effae8455cfa779b2f4f7067adf7fbb7858f1`.
+
+Task 1 scope guard:
+
+- Add only cloud decision model/properties files, disabled-by-default cloud config, and the focused properties test.
+- Do not add an HTTP client, coordinator, mock client, or any 五倍/修罗/导航/NPC/Dialog business hook in this task.
+
+Implementation:
+
+- Added Task 1 domain enums: `CloudDecisionServiceId`, `CloudDecisionMode`, `CloudFallbackMode`.
+- Added immutable Lombok models: `CloudDecisionRequest`, `CloudDecisionResponse`, `CloudDecisionResult`.
+- Added `CloudDecisionProperties` with `cloud.enabled=false`, `timeoutMs=300`, `defaultFallback=LOCAL`,
+  and per-service `shadowEnabled=false`, `executeEnabled=false`, `executePercent=0`, `fallback=LOCAL`.
+- Added disabled-by-default cloud config to `src/main/resources/application.properties`.
+- Added `CloudDecisionPropertiesTest`.
+
+Verification:
+
+- RED: `mvn -q -Dtest=CloudDecisionPropertiesTest test` failed before production Task 1 types existed.
+  The compile failure surfaced missing `CloudDecisionRequest` / `CloudDecisionResponse` required by
+  existing untracked Task 2 client code.
+- GREEN: `mvn -q -Dtest=CloudDecisionPropertiesTest test` passed after Task 1 files were added.
+- Surefire report: `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0` for
+  `com.bot.dhxy.cloud.decision.CloudDecisionPropertiesTest`.
+
+Out-of-scope workspace note:
+
+- During this pass, untracked Task 2 files were present/appeared under `com.bot.dhxy.cloud.decision`
+  (`CloudDecisionClient`, `MockCloudDecisionClient`, `CloudDecisionCoordinator`,
+  `CloudDecisionCoordinatorTest`). Task 1 did not edit those files and did not add any business hook.
+
+## 2026-06-30 / CR143 五倍 pathing terminal 晚到消费补偿 baseline
+
+Status: implementing in dirty shared worktree; scope limited to CR143.
+
+Required context read:
+
+- `AGENTS.md`
+- `docs/DHXY_CONTEXT.md`
+- `docs/PACKAGE_ARCHITECTURE.md` CR143 card
+
+Baseline before editing:
+
+- Current branch: `codex/hybrid-cloud-protection` (not `dev`; no upstream configured).
+- Latest pushed baseline used for business comparison: `origin/dev` at
+  `e543d024bf900853944b36d27d0f736005d9eeb9` (`e543d02 Stabilize task navigation and window readiness`).
+- Current local branch has no upstream, so `git rev-parse @{u}` failed with
+  `fatal: no upstream configured for branch 'codex/hybrid-cloud-protection'`.
+- Pre-edit `git status --short` showed existing unrelated dirty files, including:
+  `config/*.json`, `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`,
+  `docs/cr-dashboard-data.js`, `TaskCheckpoint.java`, `AutoCombatService.java`,
+  `BattleRadarService.java`, `TaskTrackerPanelService.java`, `WindowTaskRunner.java`,
+  `WindowRuntimeContext.java`, `application.properties`, plus untracked cloud docs/code/tests,
+  `lib/`, and runner/source-guard tests. These were present before CR143 edits and must not be
+  reverted by this pass.
+- Relevant touched-path evidence:
+  - `git diff -- src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java
+    src/main/java/com/bot/dhxy/window/runtime/WindowReadyEventBus.java
+    src/main/java/com/bot/dhxy/window/model/WindowPathingSnapshot.java` was empty before this pass.
+  - `git diff origin/dev -- src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java` is large because
+    local CR121-CR142 五倍 framework work already diverges from pushed `origin/dev`. For CR143, the
+    relevant local pre-edit behavior is: `parkAfterYieldIfNeeded(...)` captures
+    `afterSequence = windowReadyEventBus.currentSequence()` before wait; `captureWaitRuntimeState(...)`
+    reads `WindowPathingSnapshot` and prepared action; `isWaitAlreadySatisfied(...)` treats
+    `WAIT_PATHING_TERMINAL` the same as prepared-dialog waits and only checks
+    `hasFreshPreparedAction(prepared)`.
+  - `WindowReadyEventBus.latest(windowId, WindowReadyEventType.PATHING_TERMINAL)` exists locally but
+    was not used by `WubeiTask.captureWaitRuntimeState(...)` before CR143.
+
+CR143 scope guard:
+
+- Only add late-consumer compensation for 五倍 `WAIT_PATHING_TERMINAL`.
+- Do not change Runner pathing classification/publication, OCR/template/click/navigation, 显形镜,
+  三技能, or tracker green-link click order.
+- Matching must require current window, task `WUBEI`, terminal state `ARRIVED`/`STOPPED_AWAY`,
+  current tracker source/intent match, and fresh event/snapshot age.
+
+Implementation:
+
+- Added focused source guard:
+  `src/test/java/com/bot/dhxy/task/wubei/WubeiCR143PathingTerminalLateConsumerWiringTest.java`.
+- Updated `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java` only in the wait-runtime capture
+  path:
+  - `captureWaitRuntimeState(...)` now inspects `latest(PATHING_TERMINAL)` only for
+    `WAIT_PATHING_TERMINAL`.
+  - `matchFreshPathingTerminal(...)` accepts a late terminal only when the current snapshot is
+    terminal, source starts with `wubei:tracker-green-click`, the event is same window/task
+    `WUBEI`/same intent id/terminal state, and age is within
+    `WUBEI_MAINTENANCE_PATHING_HARD_TIMEOUT_MS`.
+  - Current snapshot terminal can satisfy the wait even without a newer event, as long as the same
+    tracker-green source and freshness checks pass.
+  - Added structured `[wubei wait] late pathing terminal satisfied` log fields:
+    `windowId`, `source`, `state`, `sequence`, `ageMs`, `matchBasis`, `afterSequence`.
+- Updated `docs/PACKAGE_ARCHITECTURE.md` CR143 row/card to `Review` and regenerated
+  `docs/cr-dashboard-data.js`.
+
+Verification:
+
+- RED:
+  `javac -encoding UTF-8 -d target/test-classes src/test/java/com/bot/dhxy/task/wubei/WubeiCR143PathingTerminalLateConsumerWiringTest.java; java -cp target/test-classes com.bot.dhxy.task.wubei.WubeiCR143PathingTerminalLateConsumerWiringTest`
+  failed before the production change with missing marker
+  `private boolean isFreshMatchingPathingTerminal(`.
+- GREEN:
+  same focused guard passed after implementation.
+- Compile:
+  `mvn -q -DskipTests test-compile` passed.
+- Final verification rerun:
+  - Focused guard passed again.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Dashboard:
+  `node scripts/generate-cr-dashboard-data.js` passed and generated 142 CR rows.
+
+Fresh runtime待验:
+
+- 复跑五倍宝象谜情/白龙马类探测点，最好覆盖 pathing 中途队长三技能维护。
+- 若 Runner 已发布 `PATHING_TERMINAL state=STOPPED_AWAY/ARRIVED`，维护结束后应出现
+  `[wubei wait] late pathing terminal satisfied ... matchBasis=latest-event:intent-id` 或
+  `matchBasis=current-snapshot:source`，随后继续 `RESOLVE_AFTER_PATHING`。
+- 不应再长期停在 `activeIntentSource=wubei:tracker-green-click:first-probe`、
+  `pathingState=STOPPED_AWAY`、`preparedOperation=null`。
+
+Second review repair:
+
+- Fermat 第二轮指出 P2：首版 CR143 只允许
+  `activeIntent.source.startsWith(TRACKER_GREEN_PATHING_SOURCE_PREFIX)`，覆盖了样本
+  `wubei:tracker-green-click:first-probe`，但漏掉同样通过 `waitForPathingWake(...)` 停车等待的
+  `wubei:heal-pet-npc` / `wubei:repair-equipment-npc` 维护 NPC pathing。
+- 修复：
+  - `WubeiTask.matchFreshPathingTerminal(...)` 不再硬编码 active source 为 tracker-green。
+  - 新增 `isWubeiPathingTerminalSource(...)`，显式白名单覆盖：
+    `TRACKER_GREEN_PATHING_SOURCE_PREFIX`、`POST_ACCEPT_PREPATH_SOURCE_PREFIX`、
+    `DARK_THUNDER_REROLL_PREPATH_SOURCE_PREFIX`、`wubei:heal-pet-npc`、
+    `wubei:repair-equipment-npc`。
+  - latest event 仍必须同 window、`TaskType.WUBEI`、terminal state、同 intent id，并新增
+    `Objects.equals(eventIntent.getSource(), activeIntent.getSource())`，避免同 WUBEI 但不同 source
+    的旧事件被吃掉。
+  - current snapshot fallback 仍只认当前 active intent 的合法五倍 pathing source 和新鲜度。
+- RED:
+  - 加严 `WubeiCR143PathingTerminalLateConsumerWiringTest` 后，旧实现失败：
+    `late terminal compensation must accept all legal 五倍 pathing sources, not only tracker green`。
+- GREEN / verification:
+  - Focused guard passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+
+## 2026-06-30 / CR-HC-004 Real Cloud Transport + 双服务真实 Shadow
+
+Status: card created / worker dispatched / main agent owns review.
+
+Context:
+
+- User approved the next hybrid-cloud step after shadow evidence showed:
+  - `TASK_CLASSIFIER` has 五倍/修罗 shadow samples with no `agree=false`.
+  - `TRACKER_LINK_RANKER` has 修罗 green-link shadow samples with no `agree=false`.
+  - Current samples are still skeleton/local fallback only: `executed=false`, `fallback=LOCAL`,
+    `elapsedMs=0`, so they prove wiring and consistency, not real HTTP cloud latency/failure behavior.
+
+Card:
+
+- Added `CR-HC-004 Real Cloud Transport + 双服务真实 Shadow` to
+  `docs/HYBRID_CLOUD_WORKFLOW.md`.
+- Scope is intentionally shadow-only:
+  - implement real HTTP/cloud transport;
+  - keep `TASK_CLASSIFIER` and `TRACKER_LINK_RANKER` business behavior local;
+  - keep `execute-enabled=false`, `execute-percent=0`, `executed=false`;
+  - log real elapsed time, timeout/error/fallback reason, local/cloud/effective decisions, and agree.
+
+Delegation:
+
+- Worker agent `Noether` (`019f1ad9-b2e8-71c1-9dd9-10c3f8f1922e`) owns the business implementation.
+- Per user instruction, 谢帅/main agent is manager + reviewer only for CR-HC-004:
+  - do not personally write Java business implementation code;
+  - create worker sub-agent(s) for implementation;
+  - create a separate review/helper sub-agent for code/risk review;
+  - directly maintain cards, acceptance criteria, review notes, and verification records.
+- Main agent owns review against CR-HC-004 acceptance:
+  - no cloud result may influence tracker classification, green-link click choice, click point, pathing
+    intent, retry, dialog, bag, NPC, navigation, battle, or task phase;
+  - no startup failure when endpoint/token are absent;
+  - HTTP timeout/error/malformed response must fallback `LOCAL`;
+  - focused tests must cover success, timeout/failure, malformed response, and both service hooks.
+
+Dashboard:
+
+- No ordinary sprint CR table row was changed in `docs/PACKAGE_ARCHITECTURE.md`; dashboard regeneration
+  is not required for this docs-only cloud workflow card unless a PACKAGE_ARCHITECTURE CR row/status is
+  later updated.
+
+Worker implementation baseline 2026-06-30:
+
+- Required context read: `AGENTS.md`, `docs/DHXY_CONTEXT.md`, `docs/HYBRID_CLOUD_WORKFLOW.md`,
+  especially CR-HC-001/002/003/004.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Upstream: no upstream configured for `codex/hybrid-cloud-protection`; `git rev-parse "@{u}"`
+  fails with `fatal: no upstream configured for branch 'codex/hybrid-cloud-protection'`.
+- Latest pushed baseline observed in existing active-work records remains
+  `origin/codex/migrate-runner-dialog` = `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Pre-edit relevant path status:
+  - `M docs/ACTIVE_WORK.md`
+  - `M src/main/resources/application.properties`
+  - `?? docs/HYBRID_CLOUD_WORKFLOW.md`
+  - `?? src/main/java/com/bot/dhxy/cloud/`
+  - `?? src/test/java/com/bot/dhxy/cloud/`
+- `src/main/resources/application.properties` already had unrelated local edits before this worker
+  pass. In particular `bot.dhxy.summon-skill-ultimate-generate-cooldown-ms=14400000 -> 10800000`
+  is pre-existing dirty work from another CR and is not owned, claimed, or changed by CR-HC-004.
+- Relevant pushed-baseline evidence:
+  - `git ls-tree -r --name-only HEAD src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no files.
+  - `git show --name-status --oneline HEAD -- src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud docs/HYBRID_CLOUD_WORKFLOW.md`
+    returned no touched files.
+- Scope guard for this worker pass:
+  - edit only cloud decision transport/config, cloud tests, focused documentation/active-work;
+  - do not modify OCR/template/click/navigation/task branch/input/Runner business logic;
+  - cloud result must remain shadow-only with `effectiveDecision=localDecision` and `executed=false`.
+
+Worker implementation 2026-06-30:
+
+- Added `HttpCloudDecisionClient` under `com.bot.dhxy.cloud.decision`.
+  - Sends JSON `POST` requests to `cloud.base-url + cloud.endpoint-path`.
+  - Uses `Authorization: Bearer <cloud.token>`; token stays config-only and is not hardcoded.
+  - Does not send HTTP when `cloud.real-transport-enabled=false`, endpoint is blank, or token is blank.
+  - Converts timeout, HTTP non-2xx, JSON parse failure, empty response, and transport-disabled states
+    into `CloudDecisionClientException` so coordinator can fallback locally.
+- Added cloud transport config fields:
+  - `cloud.real-transport-enabled=false`
+  - `cloud.endpoint-path=/api/cloud/decision`
+  - `cloud.token=`
+- Updated `CloudDecisionCoordinator`:
+  - keeps `effectiveDecision=localDecision` and `executed=false` for all success/failure paths;
+  - validates response `serviceId`, `traceId`, and `decision`; mismatch becomes `schema mismatch`;
+  - floors client-call elapsed time to at least `1ms`, so real HTTP samples are not all `elapsedMs=0`;
+  - logs `success={}` plus `serviceId`, `taskCode`, `phase`, `traceId`, `elapsedMs`,
+    `localDecision`, `cloudDecision`, `effectiveDecision`, `agree`, `executed`, `fallback`, and
+    `reason`.
+- Added focused tests:
+  - `CloudHttpDecisionClientTest`: disabled transport, missing token, HTTP success, timeout, HTTP
+    error, malformed JSON, empty response, and schema mismatch.
+  - `CloudRealShadowServicesIntegrationTest`: real-shadow `TASK_CLASSIFIER` and
+    `TRACKER_LINK_RANKER` with cloud disagreement still keep local effective decision and
+    `executed=false`.
+- Updated CR-HC-004 card in `docs/HYBRID_CLOUD_WORKFLOW.md` with implementation notes and runtime
+  acceptance points.
+- No OCR/template/click/navigation/phase/input/Runner business logic was edited.
+
+Verification 2026-06-30:
+
+- RED:
+  - `mvn -q -DskipTests test-compile` failed before production implementation with missing
+    `HttpCloudDecisionClient`, proving the new tests were exercising absent CR-HC-004 code.
+- GREEN:
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q "-Dtest=CloudDecisionPropertiesTest,CloudDecisionCoordinatorTest,CloudHttpDecisionClientTest,TaskClassifierCloudShadowServiceTest,TrackerLinkRankerCloudShadowServiceTest" test`
+    passed. The output included `success=true/false`, `fallback=LOCAL`, timeout/http/json/empty/schema
+    mismatch reasons, and `executed=false`.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.decision.CloudHttpDecisionClientTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed with `CloudHttpDecisionClientTest passed`.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.CloudRealShadowServicesIntegrationTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed with `CloudRealShadowServicesIntegrationTest passed`.
+
+Fresh runtime pending:
+
+- Configure a real test endpoint and token:
+  - `cloud.real-transport-enabled=true`
+  - `cloud.base-url=<test endpoint>`
+  - `cloud.endpoint-path=<decision path>`
+  - `cloud.token=<runtime secret>`
+- Run 五倍 and 修罗 shadow samples.
+- Check:
+  - `Select-String -Path logs/dhxy-console.log -Pattern "cloud.decision serviceId=TASK_CLASSIFIER"`
+  - `Select-String -Path logs/dhxy-console.log -Pattern "cloud.decision serviceId=TRACKER_LINK_RANKER"`
+- Acceptance in logs:
+  - reachable endpoint samples show `success=true`, non-zero `elapsedMs`, and `executed=false`;
+  - timeout/error/malformed samples show `success=false`, `fallback=LOCAL`, and clear `reason`;
+  - `effectiveDecision` stays equal to the local tracker classification / local green-link click;
+  - no `executed=true` samples.
+
+Review repair 2026-06-30:
+
+- P1 verification blocker:
+  - Review run reported `CloudHttpDecisionClientTest` empty-response case sometimes returned
+    `timeout after 500ms` instead of `empty response`.
+  - Root cause: the test helper used `sendResponseHeaders(status, 0)` for `body=""`; JDK
+    `HttpServer` can treat this as a chunked no-length response whose completion timing is not a
+    stable empty-body simulation.
+  - Repair: empty-response guard now uses `respondNoBody(...)` with
+    `sendResponseHeaders(status, -1)`, while the timeout guard still uses a delayed response and
+    keeps timeout coverage separate.
+  - Additional harness hardening after rerun: normal HTTP samples now use a `2000ms` test timeout so
+    Maven/JDK `HttpServer` startup/load does not turn success into timeout; the dedicated timeout
+    case still overrides timeout to `50ms`.
+- P2 scope clarification:
+  - `bot.dhxy.summon-skill-ultimate-generate-cooldown-ms=10800000` in
+    `src/main/resources/application.properties` is unrelated pre-existing dirty work.
+  - CR-HC-004 only owns the `cloud.*` config additions/changes in that file.
+
+Additional review repair 2026-06-30:
+
+- P1 finding:
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` failed in
+    `TrackerLinkRankerCloudShadowWiringTest`.
+  - Root cause: CR-HC-003/004 had `TrackerLinkRankerCloudShadowService` wired in 修罗, but 五倍
+    `WubeiTask` did not import/inject it and did not report the three requested green-link decisions.
+- Repair:
+  - `WubeiTask` now constructor-injects `TrackerLinkRankerCloudShadowService`.
+  - Added shadow-only reports after local link selection and before real click for:
+    - `startProbeTrackerPathing(...)` phase `wubei-probe-tracker-pathing`;
+    - `triggerCombatTrackerPathing(...)` phase `wubei-combat-tracker-pathing`;
+    - enter-battle retry phase `wubei-enter-battle-retry`.
+  - The calls are fire-and-forget `shadowTrackerLinkSelection(...)`; `WubeiTask` does not import or
+    read `CloudDecisionResult`, does not read `effectiveDecision`, and still passes the same local
+    link/click point into `clickTaskTrackerGreen(...)`.
+  - Added a 五倍 `TRACKER_LINK_RANKER` real-shadow sample to
+    `CloudRealShadowServicesIntegrationTest`, so the integration guard now covers
+    `TASK_CLASSIFIER` 五倍, `TRACKER_LINK_RANKER` 五倍, and `TRACKER_LINK_RANKER` 修罗.
+- Verification:
+  - RED reproduced:
+    `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` failed with
+    `WubeiTask must import TrackerLinkRankerCloudShadowService`.
+  - GREEN:
+    - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+      passed with `TrackerLinkRankerCloudShadowWiringTest passed`.
+    - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+    - `mvn -q -DskipTests compile` passed.
+    - `mvn -q -DskipTests test-compile` passed.
+    - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.decision.CloudHttpDecisionClientTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+      passed with `CloudHttpDecisionClientTest passed`; empty response logs `reason=empty response`
+      and timeout case still logs `timeout after 50ms`.
+    - After refreshing test classes, `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.CloudRealShadowServicesIntegrationTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+      passed and logged 五倍 `TASK_CLASSIFIER`, 五倍 `TRACKER_LINK_RANKER`, and 修罗
+      `TRACKER_LINK_RANKER`, all with `executed=false`.
+
+Third review repair 2026-06-30:
+
+- P1 finding:
+  - `CloudRealShadowServicesIntegrationTest` main guard could time out on the first local HTTP
+    request with `timeout after 500ms`, then NPE when reading `result.getResponse().getDecision()`.
+- Repair:
+  - Raised only this integration guard's test timeout from `500ms` to `2000ms`; real timeout/fallback
+    coverage remains in `CloudHttpDecisionClientTest` via its dedicated `50ms` timeout case.
+  - Added `assertCloudAvailableWithResponse(...)` so every real-shadow sample asserts
+    `cloudAvailable=true` and non-null response before reading cloud decision. If local HTTP is
+    unavailable, the guard now fails with reason/elapsedMs instead of NPE.
+  - No production code or task business logic changed for this repair.
+- Verification:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.CloudRealShadowServicesIntegrationTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed. Logs showed 五倍 `TASK_CLASSIFIER`, 五倍 `TRACKER_LINK_RANKER`, and 修罗
+    `TRACKER_LINK_RANKER` with `success=true`, local `effectiveDecision`, and `executed=false`.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.decision.CloudHttpDecisionClientTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+    passed; timeout fallback still logs `timeout after 50ms`.
+  - `mvn -q -DskipTests compile` passed.
+
+Final local review 2026-06-30:
+
+- Independent reviewer `Kuhn` reported no remaining P0/P1/P2 after the three repairs.
+- Main-agent review found no `CloudDecisionResult`, `getEffectiveDecision`, `effectiveDecision`, or
+  `cloudDecision` reads in `service/task/window/input` business paths.
+- 五倍 `TRACKER_LINK_RANKER` reports are fire-and-forget only:
+  - `wubei-probe-tracker-pathing` reports after local `nextIndex` chooses the segment and before the
+    existing `clickTaskTrackerGreen(...)`;
+  - `wubei-combat-tracker-pathing` reports after local `panel.getGreenLinks().get(0)` selection and
+    before the existing retry/click loop;
+  - `wubei-enter-battle-retry` reports after local retry segment selection and before the same local
+    click path.
+- 修罗 tracker shortcut remains local: shadow report runs after local click point resolution and before
+  the same `inputSequences.moveAndClickLeft(...)`.
+- Main-agent fresh verification passed:
+  - `mvn -q -DskipTests compile`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.decision.CloudHttpDecisionClientTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+  - `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.cloud.task.CloudRealShadowServicesIntegrationTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`
+- Local/code acceptance: passed.
+- Fresh runtime with a real external endpoint/token is still pending. Expected live evidence:
+  reachable endpoint samples for 五倍 and 修罗 with non-zero HTTP `elapsedMs`, `success=true`,
+  `executed=false`, and timeout/error samples with `success=false`, `fallback=LOCAL`, while local
+  tracker classification and local green-link clicks continue to execute.
+
+## 2026-06-30 / CR-HC-005 + CR-HC-006 云端化下一阶段
+
+Status: cards created / implementation delegated / main agent owns review only.
+
+User decision:
+
+- Do not spend another round on disabled/local shadow. Prior shadow evidence is enough.
+- Move directly to the next useful steps:
+  - CR-HC-005: local dev cloud-decision endpoint for real HTTP request/response testing.
+  - CR-HC-006: real execute framework for `TASK_CLASSIFIER` only, with `TRACKER_LINK_RANKER`
+    remaining shadow-only.
+
+Manager rule:
+
+- 谢帅/main agent remains manager + reviewer only.
+- Main agent may edit Markdown/cards/plans and run verification.
+- Java business implementation must be delegated to worker sub-agents.
+- A separate review/helper agent must review cloud execution safety before handoff.
+
+Cards / plan:
+
+- Added `CR-HC-005 Local Dev Cloud Decision Endpoint` to `docs/HYBRID_CLOUD_WORKFLOW.md`.
+- Added `CR-HC-006 TaskClassifier Execute Framework` to `docs/HYBRID_CLOUD_WORKFLOW.md`.
+- Added implementation plan:
+  `docs/superpowers/plans/2026-06-30-cloud-endpoint-and-execute-framework.md`.
+
+Worker split:
+
+- CR-HC-005 worker owns only:
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`
+  - `scripts/run-cloud-decision-dev-server.ps1`
+  - focused docs/active-work notes
+- CR-HC-006 worker owns only:
+  - `CloudDecisionCoordinator`
+  - `CloudDecisionProperties` if needed
+  - `TaskClassifierCloudShadowService`
+  - `TaskTrackerPanelService`
+  - focused cloud/service tests and docs
+- Workers must not modify OCR/template/click/navigation/Runner/input queue, 五倍/修罗 click behavior,
+  or `TRACKER_LINK_RANKER` execution.
+
+Review gates:
+
+- `TASK_CLASSIFIER` may execute cloud result only when execute enabled, percent gate hits, response is
+  valid, and decision maps to a known local task key/title template.
+- `TRACKER_LINK_RANKER` must remain shadow-only.
+- No cloud decision may control click coordinate, pathing intent, retry, dialog, bag, NPC, navigation,
+  battle, or task phase in CR-HC-006.
+- If endpoint is absent, token missing, timeout, HTTP error, JSON parse error, empty response, schema
+  mismatch, or invalid task key occurs, fallback must be `LOCAL`.
+
+## CR147 修罗快脱战误点道具后的回程重试状态机 - manager baseline
+
+Created 2026-06-30:
+
+- Manager/reviewer: 唐德。Implementation must be delegated to a worker sub-agent; 唐德 should not
+  directly edit Java business code for this CR.
+- Current branch: `codex/hybrid-cloud-protection`.
+- Current HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- User-selected comparison baseline for this discussion:
+  `c37723e659974ef15c2c0da7c242599f47d5c019`
+  (`c37723e Checkpoint CR136 CR138 CR139 follow-ups`).
+- Pre-card working tree is already dirty across many CRs. Relevant dirty files include
+  `src/main/java/com/bot/dhxy/service/BattleRadarService.java`,
+  `src/main/java/com/bot/dhxy/service/AutoCombatService.java`,
+  `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`,
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`, and
+  `src/main/resources/application.properties`.
+- Investigation evidence:
+  - `c37723e` and current local both already contain the `ReturnHomeResult` branch where
+    `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT` goes to `NAVIGATE_BACK_TO_START`.
+  - Current local does not change the `FAST_EXPECTED_EXIT` avatar ROI/threshold/grace/cadence versus
+    `c37723e`.
+  - Current local does change `BattleRadarService` combat-exit pending retention for CR141, but CR147
+    scope is not to alter that detector path.
+- CR147 card was added to `docs/PACKAGE_ARCHITECTURE.md` with a narrow target:
+  `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` should treat combat-time return-item clicks as
+  business-invalid after trusted `IN_COMBAT`, and should retry remaining return-item attempts after
+  trusted non-combat before normal navigation fallback.
+- Required worker scope:
+  - edit only `XiuluoTaskV2` and focused tests/guards needed for CR147;
+  - do not change `BattleRadarService` fast-exit constants or detection algorithm;
+  - do not change OCR/template/click/navigation/bag scanning/五倍 logic unless review finds a hard
+    blocker and records it in the CR card first.
+
+Worker implementation pass 2026-06-30:
+
+- Worker role: CR147 implementation worker.
+- Current branch before production edit: `codex/hybrid-cloud-protection`.
+- Current HEAD before production edit: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`
+  (`696a12b chore: remove obsolete debug tooling`).
+- Upstream status: current branch has no configured upstream.
+- Relevant pushed/baseline evidence: user-selected baseline remains
+  `c37723e659974ef15c2c0da7c242599f47d5c019`; both baseline and current local have
+  `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` returning
+  `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT` immediately after `usedStartMapUnverified()` when trusted
+  state is not `IN_COMBAT`.
+- Relevant pre-edit local diff in `XiuluoTaskV2.java`: unrelated dirty work already exists for
+  cloud shadow tracker-link ranking, CR146 post-combat idle timeout consumption, delayed
+  `pendingTeamReturnPrecheck`, and summon-skill cleaner count. CR147 does not revert or alter those
+  paths.
+- Focused red guard added:
+  `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR147ReturnItemRetryStateMachineWiringTest.java`.
+- Red command/result:
+  `javac -encoding UTF-8 -d target/cr147-guard src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR147ReturnItemRetryStateMachineWiringTest.java; java -cp target/cr147-guard com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest`
+  failed with `Missing source marker: attempt < RETURN_ITEM_VERIFY_ATTEMPTS`, confirming the current
+  branch lacks the CR147 retry/continue guard.
+- Implementation:
+  - `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` now keeps trusted `IN_COMBAT` as
+    `STILL_IN_COMBAT`.
+  - For `usedStartMapUnverified()` plus trusted non-combat, attempts before
+    `RETURN_ITEM_VERIFY_ATTEMPTS` now call `uiCleanerService.cleanUpAll()`, log
+    `retry return item before navigation fallback` with source/attempt/max/trustedState/location,
+    and `continue` to the next return-item attempt.
+  - The final exhausted attempt still returns `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`.
+- Verification after implementation:
+  - Focused guard passed:
+    `javac -encoding UTF-8 -d target/cr147-guard src/test/java/com/bot/dhxy/task/xiuluo/XiuluoCR147ReturnItemRetryStateMachineWiringTest.java; java -cp target/cr147-guard com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest`.
+  - Focused guard also passed through Maven exec:
+    `mvn -q -DskipTests "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest" org.codehaus.mojo:exec-maven-plugin:3.1.0:java`.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- CR card/dashboard sync:
+  - Added worker implementation record under Card CR147 in `docs/PACKAGE_ARCHITECTURE.md`.
+  - Ran `node scripts/generate-cr-dashboard-data.js`; it generated `146 CR rows ->
+  docs\cr-dashboard-data.js`.
+
+Manager/reviewer pass 2026-06-30:
+
+- Independent reviewer sub-agent verdict: `PASS_WITH_NOTES`; no P0/P1/P2 blocker and no repair requested.
+- Review confirmed CR147 scoped behavior:
+  - trusted `IN_COMBAT` after `usedStartMapUnverified()` still returns `STILL_IN_COMBAT`;
+  - trusted non-combat before final attempt now cleans UI and retries return item before navigation fallback;
+  - final exhausted attempt still returns `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`.
+- Manager reran verification:
+  - `javac -encoding UTF-8 -d target\cr147-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoCR147ReturnItemRetryStateMachineWiringTest.java; java -cp target\cr147-guard com.bot.dhxy.task.xiuluo.XiuluoCR147ReturnItemRetryStateMachineWiringTest` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Fresh runtime gate remains required: after false `FAST_EXPECTED_EXIT` + trusted `IN_COMBAT` correction, the next
+  true combat exit should retry return item instead of directly navigating back.
+
+## CR-HC-012 tracker-link-ranker execute worker baseline
+
+Created 2026-07-01:
+
+- Worker role: CR-HC-012 implementation worker.
+- Current branch before edit: `codex/hybrid-cloud-protection`.
+- Current branch has no configured upstream.
+- Latest pushed comparison baseline used for this worker pass: `origin/dev`
+  = `e543d024bf900853944b36d27d0f736005d9eeb9`.
+- Pre-edit `git status`: dirty worktree with many unrelated existing changes, including
+  `src/main/resources/application.properties`, `docs/PACKAGE_ARCHITECTURE.md`,
+  `docs/cr-dashboard-data.js`, many Java business files, and untracked cloud/test files.
+- Relevant baseline evidence:
+  - `origin/dev` does not contain the current cloud decision dev-server test path
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`.
+  - `origin/dev:src/main/resources/application.properties` has no `cloud.services.*`
+    tracker-link-ranker configuration block; that block is current branch work.
+  - Current local `CloudDecisionDevServer` default behavior still echoes request
+    `localDecision`; current local `application.properties` has
+    `cloud.services.tracker-link-ranker.execute-enabled=false` and
+    `execute-percent=0`.
+- User-approved CR-HC-012 business口径:
+  `TRACKER_LINK_RANKER` execute 第一版不做本地候选比对/本地点击兜底；
+  dev sidecar should return `decision=click=<windowX>,<windowY>` from
+  `request.context.selectedClick`; local task code should only convert the
+  window-relative point to screen-absolute and click. Invalid cloud response must surface
+  as no-click/fail in execute tests rather than quietly falling back to local green-link
+  click.
+- Worker write scope:
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`
+  - `src/main/resources/application.properties`
+  - directly related cloud test guards only.
+- Explicit non-scope: do not edit `WubeiTask`, `XiuluoTaskV2`, OCR/template/click/navigation
+  business flow, or input queue code in this worker pass.
+
+Final CR-HC-012 implementation note 2026-07-01:
+
+- User corrected the coordinate contract during implementation:
+  `TaskTrackerGreenLink.centerPoint()/minX/minY` are logical screen-absolute coordinates, not
+  window-relative. `WinApiMouseController` applies DPI scale later, so cloud `WINDOW_RELATIVE`
+  points must be produced/consumed against `GameClientTracker` logical window base, not native
+  physical `WindowNativeBinding.getX/Y()`.
+- Implemented final contract:
+  - `TrackerLinkRankerCloudShadowService.shadowTrackerLinkSelection(...)` now takes
+    `windowBaseX/windowBaseY` explicit logical base parameters.
+  - Request context keeps legacy diagnostics `selectedClick` and `candidates` as screen-absolute.
+  - Request context adds `windowBase=<baseX>,<baseY>` and
+    `selectedWindowClick=<selectedAbsX-baseX>,<selectedAbsY-baseY>`; invalid negative base leaves
+    those fields blank.
+  - Dev sidecar now reads `context.selectedWindowClick` for `TRACKER_LINK_RANKER` and returns
+    `decision=click=<selectedWindowClick>` with diagnostics
+    `action=CLICK_TRACKER_LINK`, `coordinateSpace=WINDOW_RELATIVE`, `server=dev-local`, and
+    `forced=<true|false>`. It does not read `selectedClick` for execute decision.
+  - Forced decision mode still overrides the decision and keeps the same tracker-click diagnostics.
+  - Runtime config changed to
+    `cloud.services.tracker-link-ranker.execute-enabled=true` and
+    `cloud.services.tracker-link-ranker.execute-percent=100`.
+  - `CloudDecisionCoordinator` generic `EXECUTABLE_SERVICES` remains unchanged; `TRACKER_LINK_RANKER`
+    still executes only through the dedicated `TrackerLinkRankerCloudShadowService` execution gate.
+  - `WubeiTask` and `XiuluoTaskV2` refresh `GameClientTracker` and pass
+    `tracker.getWindowBaseX/Y()` into the cloud request; their cloud resolver also uses
+    `tracker.refreshWindowState()` plus `tracker.getWindowBaseX/Y()` to convert returned
+    window-relative points back to logical screen-absolute before input.
+- Tests/guards updated:
+  - `CloudDecisionDevServerTest` covers selectedWindowClick response, forced tracker diagnostics,
+    missing selectedWindowClick failure, and execute=true/100 config.
+  - `TrackerLinkRankerCloudShadowServiceTest` covers absolute `selectedClick`, `windowBase`, and
+    derived `selectedWindowClick`.
+  - `TrackerLinkRankerCloudShadowWiringTest` now requires tracker logical-base conversion and
+    still guards no-click suppression plus input-queue click usage.
+  - `RuntimeDecisionShadowWaveWiringTest` now expects execute=true/100 while still guarding that
+    `TRACKER_LINK_RANKER` is not in the coordinator generic execute allowlist.
+- Verification:
+  - Red check before implementation failed as expected because
+    `shadowTrackerLinkSelection(...)` did not yet accept `windowBaseX/windowBaseY`.
+  - `mvn -q -Dtest="CloudDecisionDevServerTest,TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+
+Reviewer follow-up 2026-07-01:
+
+- Tightened the task-side base handoff so `WubeiTask` and `XiuluoTaskV2` do not ignore
+  `tracker.refreshWindowState()` failures before building the `TRACKER_LINK_RANKER` request.
+- The three Wubei calls and one Xiuluo call now pass
+  `trackerBaseReady ? tracker.getWindowBaseX() : -1` and
+  `trackerBaseReady ? tracker.getWindowBaseY() : -1`; a failed refresh therefore leaves
+  `selectedWindowClick` blank instead of using stale base coordinates.
+- `TrackerLinkRankerCloudShadowWiringTest` now guards this exact pattern.
+- Verification:
+  - `mvn -q -Dtest="CloudDecisionDevServerTest,TrackerLinkRankerCloudShadowServiceTest,TrackerLinkRankerCloudShadowWiringTest,CloudDecisionCoordinatorTest,RuntimeDecisionShadowWaveWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+
+Stale source guard cleanup 2026-07-01:
+
+- Updated `TrackerLinkRankerCloudShadowWiringTest` only so its default config guard matches CR-HC-018:
+  `tracker-link-ranker` requires `shadow-enabled=true`, `execute-enabled=true`, `execute-percent=100`,
+  and `fallback=STOP`. Removed the stale CR-HC-012/`LOCAL` assertion text.
+- No business Java files were changed in this cleanup pass.
+- Verification:
+  - `mvn -q -DskipTests test-compile` passed.
+  - `java -cp "target/test-classes;target/classes" com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowWiringTest`
+    passed.
+  - `mvn -q -Dtest="com.bot.dhxy.cloud.**.*Test" test` passed.
+
+## CR150 first-aid hover cleanup - manager baseline
+
+Created 2026-07-01:
+
+- Worker role: CR150 implementation worker.
+- Current branch before edit: `codex/hybrid-cloud-protection`.
+- Current local HEAD before card: `696a12b`.
+- Latest pushed comparison baseline: `origin/dev` = `e543d02`.
+- Pre-card `git status`: dirty shared worktree with many unrelated existing Java/docs/config/image changes. CR150 manager
+  edits are limited to `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`, and generated
+  `docs/cr-dashboard-data.js`; worker must not revert unrelated files.
+- User-approved scope:
+  - Only handle person HP, person MP, pet HP, and pet MP supply actions.
+  - After those supply actions finish, move the mouse once inside the current bound game window to a safe relative point.
+  - Safe point must avoid each window's right-top static/hover-sensitive region.
+  - Stop using the old default "move mouse before state screenshot" path for `player-state-bars` /
+    `sheyaoxiang-status` / `sheyaoxiang-status-icon-gate-*`, so the same supply round does not move once before
+    screenshot and again after supply.
+  - Do not touch sheyaoxiang/package item-use path, item templates, bag scan/click logic, OCR/template thresholds,
+    navigation, NPC, combat, 五环/五倍/修罗 phase logic.
+- Evidence to preserve in review:
+  - `ID=67555 / hwnd-C510E58` repeated `memory-gate-icon-absent-refill` at about `14:26`, `14:28`, and `14:31`.
+  - Failure screenshots under `images/temp/hwnd-C510E58/` showed hover tooltip while cyan/green status digits were
+    still visible.
+  - Current source references before worker implementation:
+    `PlayerStateService.moveMouseAwayBeforePlayerStateSnapshotIfNeeded(...)` is called for `player-state-bars`,
+    `sheyaoxiang-status`, and `sheyaoxiang-status-icon-gate-*`.
+- Worker expected write scope:
+  - `src/main/java/com/bot/dhxy/service/PlayerStateService.java`;
+  - focused CR150 source/wiring tests if needed.
+- Required verification:
+  - CR150 focused guard;
+  - `mvn -q -DskipTests test-compile`;
+  - `mvn -q -DskipTests compile`;
+  - update CR150 card with worker record and dashboard after implementation.
+
+Worker baseline 2026-07-01:
+
+- Worker role: CR150 implementation worker.
+- Current branch before worker edit: `codex/hybrid-cloud-protection`.
+- Current local HEAD before worker edit: `696a12b`.
+- Latest pushed comparison baseline: `origin/dev` = `e543d02`.
+- Worker pre-edit `git status --short`: dirty shared worktree with many unrelated existing Java/docs/config/image changes;
+  `src/main/java/com/bot/dhxy/service/PlayerStateService.java` had no uncommitted worktree diff before this worker edit.
+- Relevant baseline evidence:
+  - `git diff -- src/main/java/com/bot/dhxy/service/PlayerStateService.java` returned empty.
+  - `git diff origin/dev -- src/main/java/com/bot/dhxy/service/PlayerStateService.java` shows existing branch-side player-state changes,
+    including no-focus first-aid plan, 摄妖香 memory/icon gate, and default calls to
+    `moveMouseAwayBeforePlayerStateSnapshotIfNeeded(...)` before `player-state-bars`,
+    `sheyaoxiang-status`, and `sheyaoxiang-status-icon-gate-*` captures.
+- Implementation boundary remains CR150 only:人物/宝宝 HP/MP 真实补给结束后的 hover 收尾 move；不改摄妖香/包裹用道具、
+  OCR/template 阈值、包裹扫描/点击、导航、NPC、战斗或任务 phase 业务语义。
+
+Worker implementation 2026-07-01:
+
+- Modified `src/main/java/com/bot/dhxy/service/PlayerStateService.java` only for CR150 behavior:
+  - Removed default pre-capture hover move from `captureBarsSnapshot()`, `probeIncenseStatus(...)`, and
+    `probeIncenseIconPresenceInRect(...)`.
+  - Removed the old pre-click random move from `performCachedFirstAidPlanDirect(...)`.
+  - Added first-aid-only tail cleanup after real HP/MP supply:
+    `healAllDirect()` aggregates the four configured person/pet HP/MP checks and does one tail safe move after actual supply;
+    cached first-aid plan does a direct tail move after actual target clicks;
+    single `checkAndHeal(...)` paths keep right-click and tail move inside one queued action list when outside the input worker.
+  - Safe point is generated from current window base plus random window-relative coordinates, excluding the right-top sensitive
+    region `relX >= 761 && relY <= 147`.
+  - Cleanup logs include `source`, `windowId`, `base`, `safeRel`, `safeAbs`, and `inputPath`.
+- Added `src/test/java/com/bot/dhxy/service/PlayerStateCR150FirstAidHoverCleanupSourceGuardTest.java`.
+  - RED result before implementation: guard failed on `CR150: player-state-bars capture must not pre-move the mouse by default`.
+  - GREEN result after implementation: guard passed.
+- Verification completed:
+  - `mvn -q -DskipTests test-compile "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.PlayerStateCR150FirstAidHoverCleanupSourceGuardTest" exec:java` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java src/test/java/com/bot/dhxy/service/PlayerStateCR150FirstAidHoverCleanupSourceGuardTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+    exited 0 with only LF/CRLF conversion warnings and no whitespace error.
+- Fresh runtime gate remains:
+  - Run 五环/五倍/修罗 with real HP/MP first-aid in multi-window mode.
+  - Confirm each real person/pet HP/MP supply is followed by `first-aid hover cleanup safe move` for the same window.
+  - Confirm `safeRel` is outside the right-top sensitive region.
+  - Confirm 摄妖香 fresh memory window no longer repeatedly enters `memory-gate-icon-absent-refill` due to hover tooltip.
+
+Manager / independent review 2026-07-01:
+
+- Main review inspected `PlayerStateService` and confirmed CR150 stayed narrow:
+  - HP/MP supply paths get tail safe move;
+  - `ensureSheYaoXiangActive(...)` still uses the original `itemUser.use("bag/sheyaoxiang_item.png", ...)`
+    bag item path and does not get CR150 hover cleanup;
+  - `player-state-bars`, `sheyaoxiang-status`, and `sheyaoxiang-status-icon-gate-*` captures no longer do
+    default pre-move.
+- Independent reviewer `Darwin` returned `PASS_WITH_NOTES`; no P0/P1/P2 blocker.
+- Manager reran:
+  - `mvn -q "-Dexec.classpathScope=test" "-Dexec.mainClass=com.bot.dhxy.service.PlayerStateCR150FirstAidHoverCleanupSourceGuardTest" exec:java`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java src/test/java/com/bot/dhxy/service/PlayerStateCR150FirstAidHoverCleanupSourceGuardTest.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+- All commands passed; diff-check only had LF/CRLF warnings.
+- Fresh runtime remains required: true HP/MP supply should log same-window `first-aid hover cleanup safe move`;
+  `safeRel` must avoid the right-top sensitive region; repeated fresh-memory `memory-gate-icon-absent-refill`
+  caused by hover tooltip should disappear.
+
+## CR152-CR154 pause/resume task split - manager baseline
+
+Created 2026-07-01:
+
+- Manager/reviewer: 唐德. Per AGENTS manager rule, 唐德只建卡、派 worker、复审，不直接写 Java 业务实现。
+- Current branch before card: `codex/hybrid-cloud-protection`.
+- Current local HEAD before card: `696a12b`.
+- Latest pushed comparison baseline: `origin/dev` = `e543d02`.
+- Pre-card `git status`: dirty shared worktree with many unrelated existing Java/docs/config/image/test changes. This manager pass edits only
+  `docs/PACKAGE_ARCHITECTURE.md`, `docs/ACTIVE_WORK.md`, and generated `docs/cr-dashboard-data.js`.
+- User-approved split:
+  - CR152: 修复五倍 `WAIT_BATTLE_FINISH` 暂停恢复顺序：先补偿 pause/park 时间，再消费 fresh combat-exit，最后判断真实 timeout。
+  - CR153: 全仓暂停恢复语义审计，找出其它 pause 后不续跑/计时不补偿/false 被当失败/队列误推进风险，输出修复清单。
+  - CR154: 修复 input queue 暂停语义：已入队 input 遇到 pause 等待 resume 并继续原动作序列，不再 cancel。
+- Runtime evidence:
+  - CR152: `2026-07-01 15:46:38.459` 暂停，`15:58:57.856` runner 发布 combat exit，
+    `15:58:57.857` 五倍先判 `wait battle timeout elapsedMs=739740 timeoutMs=180000`，跳过回城道具流程。
+  - CR154: `2026-07-01 15:59:07.974` 暂停，`15:59:08.391` input worker 记录
+    `task-paused:before-focus`，NavigationService 返回 `MAP_NOT_REACHED`。
+  - Queue consequence: `15:59:09.428` 五倍 `FAILED` 后，因队列 `[五倍, 修罗]` 默认
+    `CONTINUE_ON_FAILURE`，`15:59:30.827` 启动修罗。
+- Worker ownership:
+  - CR152 worker owns `WubeiTask` / relevant combat-exit ordering guard only; do not edit input queue.
+  - CR153 worker owns audit/report only; do not edit business code unless explicitly re-approved.
+  - CR154 worker owns input queue pause-resume implementation only; do not edit 五倍/修罗/五环 phase business.
+- Required manager follow-up:
+  - Spawn three separate worker subagents after card/dashboard sync.
+  - Review each worker output independently.
+  - CR152 and CR154 need focused guards plus `test-compile`/`compile`; CR153 needs a Markdown audit report and follow-up CR recommendations.
+
+## CR153 pause/resume audit worker record
+
+Worker pass 2026-07-01:
+
+- Role: CR153 audit worker.
+- Branch: `codex/hybrid-cloud-protection`.
+- Local HEAD: `696a12b`.
+- Latest pushed comparison baseline: `origin/dev` = `e543d02`.
+- Pre-existing worktree was dirty before this worker pass; this pass intentionally did not revert or edit Java business code.
+- Files intentionally edited by this worker:
+  - `docs/run-reports/2026-07-01-cr153-pause-resume-audit.md`
+  - `docs/PACKAGE_ARCHITECTURE.md`
+  - `docs/ACTIVE_WORK.md`
+  - `docs/cr-dashboard-data.js` after dashboard regeneration
+- Audit commands used:
+  - `rg` over `TaskCheckpoint`, `TaskSleep`, `TaskPauseToken`, `System.currentTimeMillis`, `timeout`, `submitAndWait`, `submitExclusiveAndWait`, `WindowTaskQueue`, and `WindowTaskFailurePolicy`.
+  - Source inspection of `InputActionRequest`, `InputActionWorker`, `TaskPauseToken`, `TaskCheckpoint`, `TaskSleep`, `WubeiTask`, `XiuluoTaskV2`, `FiveRingTaskV2`, `WindowTaskRunner`, `NavigationService`, `TaskMaintenanceService`, `AutoCombatService`, `NpcClickService`, and related services.
+- Report result:
+  - `docs/run-reports/2026-07-01-cr153-pause-resume-audit.md` lists suspicious sites with P0/P1/P2/P3 risk, correct pause semantics, and suggested follow-up CR.
+  - Confirmed CR152 and CR154 cover the two live P0s.
+  - Recommended new follow-ups: CR155 queue failure policy, CR156 pathing/watchdog pause-aware timer, CR157 maintenance/support gate pause-aware wait, CR158 input false caller regression after CR154.
+- Verification:
+  - No Java code changed; no compile run required for CR153.
+  - Dashboard regeneration required after CR153 row/status update.
+
+## CR154 review P1 follow-up worker record
+
+Worker pass 2026-07-01:
+
+- Role: CR154 implementation worker continuing review feedback.
+- Branch: `codex/hybrid-cloud-protection`.
+- Local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Upstream for current branch: none configured; latest pushed business baseline for manager split remains `origin/dev`
+  = `e543d02` from the CR152-CR154 baseline above.
+- Pre-edit worktree was dirty with many unrelated/parallel changes. This pass did not revert unrelated files and did
+  not touch `WubeiTask` / 五倍 phase business, navigation target selection, OCR/template/click coordinates, 显形镜,
+  回城, or template logic.
+- Review P1 being fixed:
+  - `InputActionScope.isCancelled()` pause-wait only protects exclusive callbacks that actively call it.
+  - Several multi-step direct callbacks could continue physical input during pause, including 五环任务栏点击,
+    删技能三连点击, first-aid right-click supply, and team hover/panel probes.
+- Implementation:
+  - `InputActionScope` now exposes explicit `checkpoint()`; `isCancelled()` delegates to `!checkpoint()` for
+    compatibility. Pause waits/resumes; stop/cancel/interrupt still exits.
+  - Added direct-input checkpoints before or between physical steps in:
+    `QuestManagerService`, `SummonSkillService`, `PlayerStateService`, `TeamRoleDetectionService`,
+    `NpcClickService`, `UICleanerService`, and `TaskStartupWindowPreparationService`.
+  - Added `InputActionPauseCancellationGuardTest` source guards requiring those service paths to keep checkpoint
+    wiring, plus behavioral coverage for exclusive callback pause inside a direct callback and stop while paused.
+- Verification:
+  - Focused main guard passed:
+    explicit Lombok processor `javac ... InputActionPauseCancellationGuardTest.java` plus
+    `java -cp $runCp com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest`.
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Fresh runtime gate remains:
+  - Pause during world-map/map-search input and during a multi-step direct maintenance/probe callback.
+  - Resume should continue the same input request without `task-paused:*` dead letter or pause-induced
+    `MAP_NOT_REACHED`.
+  - Logs should not show focus/mouse/keyboard/direct callback progress while pause is active.
+
+Latest Dialog/Bag P1 follow-up 2026-07-01:
+
+- Review feedback:
+  - `DialogService` still had direct/exclusive click paths without explicit `InputActionScope.checkpoint()`,
+    including give-item option, story fast click, green option click, and direct business/maintenance clicks.
+  - `BagService` relied heavily on `TaskSleep.sleepOrStop(context)`, but several exclusive calls pass a null
+    `TaskExecutionContext`; those paths still need the input request pause token through `InputActionScope`.
+- Implementation:
+  - `DialogService` now checkpoints before direct `inputProvider.clickLeft(...)` / `pressAlt4()` calls that run
+    inside the input worker, and checkpoints again after long sleeps before continuing to the next direct step.
+    Matching, template thresholds, OCR, option selection, and click coordinates were not changed.
+  - `BagService` now checkpoints before Alt+E open/close, before mouse-away move, before bag tab clicks, before
+    item right/left click, and after sleeps before continuing. `executeSafeAction(...)` returns a boolean so a
+    stopped/cancelled direct item click is not recorded as success; bag-page order, templates, coordinates, and
+    `knownBagIndex` behavior were not changed.
+  - `InputActionPauseCancellationGuardTest` now has source guards for the `DialogService` and `BagService`
+    checkpoint wiring.
+- Verification:
+  - Focused source/behavior guard passed via explicit Lombok `javac` + `java -cp ... InputActionPauseCancellationGuardTest`.
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+
+Final Npc/Navigation P1 follow-up 2026-07-01:
+
+- Review feedback:
+  - `NpcClickService` Ctrl menu exclusive callback still had a gap from `holdCtrl()` through hover settle
+    into `moveMouse(...)`, plus the Ctrl release block needed explicit pause-aware handling.
+  - `NavigationService` map direct input paths had several checks after input instead of immediately before
+    input, including world-map route panel clicks, yellow destination mini-map final clicks, route-memory/cloud
+    route clicks, map-result scroll focus, and Alt+1/Alt+2 fallback shortcuts.
+- Implementation:
+  - `NpcClickService` now checkpoints after Ctrl hover settle before moving the mouse, after hover wait before
+    menu scanning, before moving/clicking the Ctrl menu result, and before `releaseCtrl()`. The `finally` block
+    still releases Ctrl even when stop/cancel happens, but pause will wait before the release direct input.
+  - `NavigationService` now checkpoints immediately before direct map clicks, focused keyboard shortcut fallback,
+    route cleanup mouse move, map-result scroll focus/scroll, world-map search typing/Enter, and mini-map final
+    coordinate clicks. No route candidate, map parsing, click coordinate, memory, or fallback-order logic changed.
+  - `InputActionPauseCancellationGuardTest` source guard now checks the Ctrl flow and Navigation map direct
+    snippets locally instead of relying on broad file-order assertions.
+- Verification:
+  - RED source guard main failed before implementation on missing Ctrl `sleep(80) -> checkpoint -> moveMouse`
+    wiring.
+  - `mvn -q "-Dtest=InputActionPauseCancellationGuardTest" test` passed.
+  - `java -cp ... com.bot.dhxy.input.action.InputActionPauseCancellationGuardTest` passed and printed
+    `InputActionPauseCancellationGuardTest passed`.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+
+CR163 ImagePreprocessCloud worker baseline 2026-07-02:
+
+- Branch: `codex/hybrid-cloud-protection`.
+- Local HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+- Current branch has no upstream configured. Latest pushed comparison baseline used for this pass:
+  `origin/dev` = `e543d02`.
+- Pre-edit `git status --short` showed a very dirty worktree with many unrelated/parallel changes, including the
+  untracked `src/main/java/com/bot/dhxy/cloud/**` and `src/test/java/com/bot/dhxy/cloud/**` framework files that
+  CR163 must adapt to. No reset/checkout/revert is allowed or planned.
+- Baseline evidence before editing:
+  - `git ls-tree -r --name-only origin/dev src/main/java/com/bot/dhxy/cloud src/test/java/com/bot/dhxy/cloud`
+    returned no files, so the current cloud framework is a local/parallel branch addition rather than pushed
+    `origin/dev` business baseline.
+  - `git diff -- src/main/resources/application.properties` showed the existing local hybrid cloud block already
+    added after `origin/dev`, plus an unrelated summon cooldown edit. This CR163 pass will only add
+    `cloud.services.image-preprocess.*` lines and will not touch the cooldown or task business settings.
+  - Existing local framework inspected for compatibility: `CloudDecisionCoordinator`,
+    `CloudDecisionExecutionGate`, `CloudDecisionRequest`, `CloudDecisionResponse`,
+    `TrackerLinkRankerCloudShadowService`, `NpcClickStrategyCloudDecisionService`, `RouteCloudDecisionService`,
+    `CloudDecisionDevServer`, `CloudDecisionDevServerTest`, and `CloudRequiredExecuteWaveConfigTest`.
+- CR163 scope guard:
+  - Implement only `ImagePreprocessCloud` request/response/service id/config/dev sidecar/focused tests/source guard.
+  - Do not migrate `NavigationService`, `NpcClickService`, `SummonSkillService`, OCR/template production callers,
+    `ImagePreprocessor`, `ImageFinder`, or any click-coordinate / visual matching algorithm.
+  - No visual testcase replay is required unless this pass changes a production click point or matching algorithm;
+    this pass must not do that.
+
+CR163 ImagePreprocessCloud worker result 2026-07-02:
+
+- Implementation:
+  - Added `CloudDecisionServiceId.IMAGE_PREPROCESS` without adding it to the generic
+    `CloudDecisionCoordinator.EXECUTABLE_SERVICES` allowlist.
+  - Added `ImagePreprocessOperation`, `ImagePreprocessCloudRequest`, `ImagePreprocessCloudDecision`, and
+    `ImagePreprocessCloudService`.
+  - The CR163 protocol uses current `CloudDecisionRequest/Response` mapping:
+    `decision=status=EXECUTED|NO_RESULT;operation=...;reason=...`; `candidateBoxes`,
+    `candidatePoints`, `coordinateSpace`, and `debugToken` are diagnostics.
+  - `ImagePreprocessCloudService` uses a service-specific `CloudDecisionExecutionGate` and returns
+    `REQUIRED_FAILURE` for timeout/unavailable/schema invalid/low confidence/operation mismatch/ROI or window
+    candidate boundary violations. It does not return any local-preprocess fallback result.
+  - Added `cloud.services.image-preprocess.shadow-enabled=true`, `execute-enabled=true`,
+    `execute-percent=100`, and `fallback=STOP` to `application.properties`.
+  - Updated test/dev sidecar `CloudDecisionDevServer` so `IMAGE_PREPROCESS` returns a schema-valid default
+    cloud-executed response.
+  - Updated `docs/PACKAGE_ARCHITECTURE.md` CR163 row/card and regenerated `docs/cr-dashboard-data.js` with
+    `node scripts/generate-cr-dashboard-data.js`.
+- RED evidence:
+  - `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` failed first with missing
+    `ImagePreprocessCloudRequest` / `ImagePreprocessCloudService`.
+- GREEN / verification:
+  - `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` passed.
+  - `mvn -q "-Dtest=CloudDecisionDevServerTest" test` passed.
+  - `mvn -q "-Dtest=CloudRequiredExecuteWaveConfigTest" test` passed.
+  - `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - Scoped `git diff --check` passed for the CR163 touched files; PowerShell emitted only existing LF/CRLF
+    conversion warnings for Markdown/properties files.
+- Scope guard:
+  - Did not migrate or modify `NavigationService`, `NpcClickService`, `SummonSkillService`, production
+    OCR/template callers, `ImagePreprocessor`, `ImageFinder`, or any click-coordinate / visual matching algorithm.
+  - No visual testcase replay was needed because no production click point or matching algorithm changed.
+
+CR163 independent re-review result 2026-07-02:
+
+- Reviewer verdict on CR163 code path: PASS.
+  - HTTP request still carries `imagePayloadBase64` / `payloadMimeType` / `imageSha256` for remote cloud.
+  - `cloud.decision` logging uses `CloudDecisionCoordinator.logSafeContext(...)` and redacts the raw payload; metrics
+    do not output context.
+  - Payload/window/ROI/candidate safety and low-confidence/timeout/schema fail-closed behavior passed focused review.
+  - ROI-relative candidates are converted to window-relative before being exposed by `ImagePreprocessCloudDecision`.
+  - `NO_RESULT` is accepted but is not reported by `isCloudExecuted()`.
+  - No production Navigation/NPC/SummonSkill/vision caller has been migrated by CR163.
+- Follow-up:
+  - User confirmed `src/main/resources/application.properties`
+    `bot.dhxy.summon-skill-ultimate-generate-cooldown-ms=10800000` is the intended summon-skill cooldown
+    configuration. It is no longer a CR163 blocker.
+
+CR163 reviewer FAIL repair 2026-07-02:
+
+- Reviewer verdict:
+  - P1: request used only `rawImagePath` / `debugImageId`; remote cloud cannot read local disk paths.
+  - P2: ROI/window safety was incomplete, and `windowWidth/windowHeight` silently defaulted to `1024x768`.
+  - P2: `NO_RESULT` returned true from `isCloudExecuted()`, which could mislead callers.
+  - P3: unused `gateEvaluated` remained and payload/ROI/candidate coordinate comments were too thin.
+- Repair implementation:
+  - `ImagePreprocessCloudRequest` now has production transport fields:
+    `imagePayloadBase64`, `payloadMimeType`, and `imageSha256`. `rawImagePath` / `debugImageId` remain debug
+    references only.
+  - `ImagePreprocessCloudService` validates before cloud call:
+    missing payload/mime/sha -> `REQUIRED_FAILURE`; missing or non-positive window size -> `REQUIRED_FAILURE`;
+    ROI must be window-relative and inside the explicit window bounds.
+  - `CloudDecisionRequest.context` now includes `imagePayloadBase64`, `payloadMimeType`, and `imageSha256`.
+  - `ImagePreprocessCloudDecision.isCloudExecuted()` is now true only for `CLOUD_EXECUTED`; new
+    `wasCloudAccepted()`, `hasUsableResult()`, and `hasCandidates()` distinguish accepted no-result from usable
+    candidates.
+  - Removed unused `gateEvaluated` and added comments/Javadocs for payload, ROI coordinate space, explicit window
+    size, and returned candidate coordinate spaces.
+  - `CloudDecisionDevServer` now requires `imagePayloadBase64` / `payloadMimeType` / `imageSha256` / `windowSize`
+    for default `IMAGE_PREPROCESS` responses; it does not decode payload, but no longer treats local path as the
+    production image input.
+  - `ImagePreprocessCloudServiceTest` covers payload context, missing payload, invalid/missing window size,
+    ROI outside window, low confidence, schema invalid, no-result API semantics, and candidate coordinate bounds.
+  - `CloudDecisionDevServerTest` covers schema-valid payload request and missing-payload rejection.
+- Repair RED evidence:
+  - `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` failed first with missing
+    `wasCloudAccepted()` / `hasUsableResult()` / `hasCandidates()` and missing
+    `imagePayloadBase64(...)` builder methods.
+- Repair GREEN / verification:
+  - `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` passed.
+  - `mvn -q "-Dtest=CloudDecisionDevServerTest" test` passed.
+  - `mvn -q "-Dtest=CloudRequiredExecuteWaveConfigTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - Scoped `git diff --check` passed for the CR163 touched files; PowerShell emitted only LF/CRLF conversion
+    warnings for Markdown/properties/dashboard files.
+  - `rg -n "ImagePreprocessCloud|IMAGE_PREPROCESS|image-preprocess" src/main/java/com/bot/dhxy/service
+    src/main/java/com/bot/dhxy/task src/main/java/com/bot/dhxy/vision` returned no production business caller hits,
+    confirming this repair did not migrate Navigation/NPC/SummonSkill/vision call paths.
+- Scope guard:
+  - Did not touch summon-skill cooldown or any unrelated `application.properties` setting.
+  - Did not migrate or modify `NavigationService`, `NpcClickService`, `SummonSkillService`, production
+    OCR/template callers, `ImagePreprocessor`, `ImageFinder`, or any click-coordinate / visual matching algorithm.
+
+CR163 reviewer recheck blocker repair 2026-07-02:
+
+- Reviewer recheck blockers:
+  - P1: `ImagePreprocessCloudService.context(...)` put `imagePayloadBase64` into `CloudDecisionRequest.context`,
+    and `CloudDecisionCoordinator.logDecision(...)` logged raw `request.getContext()`, which would leak full base64
+    into `logs/dhxy-console.log`.
+  - P2: `ImagePreprocessCloudDecision` stored candidates without preserving/converting coordinate space, so future
+    callers could misread ROI-relative points/boxes as window-relative.
+- Repair implementation:
+  - `CloudDecisionCoordinator.logDecision(...)` now logs `logSafeContext(request)` instead of raw context.
+    `logSafeContext(...)` preserves ordinary fields but redacts `imagePayloadBase64` as
+    `<redacted len=... sha256=...>`, using `imageSha256` when present. The production request object still carries
+    the original payload for the cloud HTTP client.
+  - `CloudDecisionCoordinatorTest` now has a source guard requiring `logSafeContext(request)` and a behavior guard
+    proving normal context fields remain while raw payload text is absent from the log-safe map.
+  - `ImagePreprocessCloudService` now exposes candidates as window-relative pixels only. When cloud diagnostics use
+    `ROI_RELATIVE`, the service validates candidates inside the ROI and then adds `request.roi.x/y` before storing
+    `candidateBoxes` / `candidatePoints` in `ImagePreprocessCloudDecision`.
+  - `ImagePreprocessCloudDecision.CandidateBox` and `CandidatePoint` comments now state that callers receive
+    window-relative pixels.
+- RED evidence:
+  - `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test` failed first because `logSafeContext(...)` did not exist.
+  - `ImagePreprocessCloudServiceTest` was updated to expect ROI-relative `10,20` / `25,35` under ROI `(100,200,...)`
+    to surface as window-relative `(110,220)` / `(125,235)`.
+- GREEN / verification:
+  - `mvn -q "-Dtest=CloudDecisionCoordinatorTest" test` passed.
+  - `mvn -q "-Dtest=ImagePreprocessCloudServiceTest" test` passed.
+  - `mvn -q "-Dtest=CloudDecisionDevServerTest" test` passed.
+  - `mvn -q "-Dtest=CloudRequiredExecuteWaveConfigTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - Scoped `git diff --check` passed for the CR163 touched files; PowerShell emitted only LF/CRLF conversion
+    warnings for Markdown/properties/dashboard files.
+  - `rg -n "ImagePreprocessCloud|IMAGE_PREPROCESS|image-preprocess" src/main/java/com/bot/dhxy/service
+    src/main/java/com/bot/dhxy/task src/main/java/com/bot/dhxy/vision` returned no production business caller hits.
+  - `rg -n "request\\.getContext\\(\\)|logSafeContext|imagePayloadBase64" src/main/java/com/bot/dhxy/cloud
+    src/test/java/com/bot/dhxy/cloud` confirms production `HttpCloudDecisionClient` still reads raw context for HTTP
+    transport while `CloudDecisionCoordinator.logDecision(...)` uses `logSafeContext(request)`.
+- Scope guard:
+  - Did not modify Navigation/NPC/SummonSkill business calls, production OCR/template callers, click coordinates,
+    `ImagePreprocessor`, or `ImageFinder`.
+
+Summon-skill slot calibration note 2026-07-02:
+
+- User-provided absolute screen rectangles for the current 8-slot summon-skill baseline grid.
+- Current refreshed runtime scan evidence from `logs/dhxy-console.log` at `2026-07-02 10:21:01`:
+  `hwnd-163187E | 乌龟的黑头°（ID：67555） | rect=1497,239,1036x783`.
+- Treat current 67555 window base as `(1497,239)` for these measurements.
+- Window-relative rectangles after subtracting base `(1497,239)`:
+
+| Slot | Absolute rectangle | Window-relative rectangle | Window-relative center |
+| --- | --- | --- | --- |
+| 1 | `(1876,577)-(1929,629)` | `(379,338)-(432,390)` | `(405,364)` |
+| 2 | `(1810,620)-(1863,673)` | `(313,381)-(366,434)` | `(339,407)` |
+| 3 | `(1781,687)-(1836,741)` | `(284,448)-(339,502)` | `(311,475)` |
+| 4 | `(1808,754)-(1862,807)` | `(311,515)-(365,568)` | `(338,541)` |
+| 5 | `(1876,796)-(1930,850)` | `(379,557)-(433,611)` | `(406,584)` |
+| 6 | `(1945,753)-(1999,806)` | `(448,514)-(502,567)` | `(475,540)` |
+| 7 | `(1974,687)-(2027,739)` | `(477,448)-(530,500)` | `(503,474)` |
+| 8 | `(1945,620)-(1997,671)` | `(448,381)-(500,432)` | `(474,406)` |
+
+- This is a record-only calibration note. No summon-skill detection/click logic has been changed yet.
+- Follow-up implementation in `src/main/java/com/bot/dhxy/service/SummonSkillService.java`:
+  `EIGHT_SKILL_SLOT_OFFSETS` was updated to the measured window-relative slot centers:
+  `(405,364)`, `(339,407)`, `(311,475)`, `(338,541)`, `(406,584)`, `(475,540)`,
+  `(503,474)`, `(474,406)`.
+- Visual replay/marking:
+  - Raw screenshot: `images/test-cases/summon-skill/20260702_67555_slot_baseline_raw.png`.
+  - Marked output: `images/test-cases/summon-skill/20260702_67555_slot_baseline_marked.png`.
+  - Marking command: drew the user-provided absolute slot rectangles and red center dots on the current desktop
+    capture.
+- Verification note:
+  - `mvn -q "-Dtest=SummonSkillIf8LayoutDetectionTest" test` did not reach the test because current local
+    `SummonSkillService.java` has pre-existing compile errors: missing `rectToString(int[])` at the IF8 layout
+    logging/capture paths. This coordinate-data edit did not introduce those calls.
+- Six-slot follow-up:
+  - User-provided six-slot absolute rectangles were also converted with the same current 67555 base `(1497,239)`.
+  - `SIX_SKILL_SLOT_OFFSETS` was updated to measured window-relative centers:
+    `(416,384)`, `(334,430)`, `(335,511)`, `(420,561)`, `(500,511)`, `(500,432)`.
+  - Raw screenshot: `images/test-cases/summon-skill/20260702_67555_six_slot_baseline_raw.png`.
+  - Marked output: `images/test-cases/summon-skill/20260702_67555_six_slot_baseline_marked.png`.
+
+## 2026-07-02 / CR178 三技能静态技能格边界规则发卡
+
+Status: documentation/card creation only. No Java business code changed in this pass.
+
+- Added `CR178` to `docs/PACKAGE_ARCHITECTURE.md` for summon-skill static slot boundary recognition and
+  last-valid-slot reverse scan.
+- Recorded the approved business rule in `docs/业务逻辑.md`:
+  - `if8.png` in window-relative ROI `(505,508)-(532,555)` decides 8-slot vs 6-slot layout.
+  - Per-slot static templates `status_sealed1.png`, `status_unobtained1.png`, and `status_inactive1.png`
+    identify locked/locked/empty states.
+  - If those three templates do not match and the screenshot/template/ROI/matcher path is healthy, the slot is
+    occupied, not `UNKNOWN`.
+  - `UNKNOWN` is reserved for mechanism failure and must fail closed.
+  - Last valid skill slot should be inferred by scanning backward from the last layout slot, then hover only
+    occupied slots that need normal/high/ultimate classification.
+- Dashboard must be regenerated after this CR row/card update.
+
+## 2026-07-02 / CR178 worker 现场最后有效技能格实验入口
+
+Status: implementing a narrow repo-local test/experiment only. Formal summon-skill business flow, OCR/template/click/navigation logic, and `SummonSkillService` production behavior are not to be changed in this pass.
+
+- Current branch/status baseline before edits:
+  - `git status --short --branch`: `## codex/hybrid-cloud-protection` with many pre-existing modified/untracked files.
+  - No upstream is configured for the current branch (`git rev-parse --abbrev-ref --symbolic-full-name @{u}` returned `NO_UPSTREAM`).
+  - Current `HEAD`: `696a12b chore: remove obsolete debug tooling`.
+  - `origin/dev`: `e543d02`.
+- Relevant pushed/local evidence:
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/service/SummonSkillService.java src/test/java/com/bot/dhxy/service/SummonSkillIf8RegionMatchExperiment.java src/test/java/com/bot/dhxy/service/SummonSkillIf8LayoutDetectionTest.java` returned no touched-file entry for the latest `origin/dev` commit.
+  - `git diff -- src/main/java/com/bot/dhxy/service/SummonSkillService.java ...` shows pre-existing local CR178/other work in `SummonSkillService`: calibrated `SIX_SKILL_SLOT_OFFSETS` / `EIGHT_SKILL_SLOT_OFFSETS`, IF8 ROI detection, cloud/image-processor wiring, and interrupt checkpoints. This worker will not edit that production file.
+  - Existing test-side style reference: `src/test/java/com/bot/dhxy/service/SummonSkillIf8RegionMatchExperiment.java` is a manual `main` Robot/template-match experiment.
+- Planned touched files for this pass:
+  - New test-side pure rules/helper under `src/test/java/com/bot/dhxy/service/`.
+  - New `SummonSkillLastEffectiveSlotExperiment.java` under `src/test/java/com/bot/dhxy/service/`.
+  - New focused guard test under `src/test/java/com/bot/dhxy/service/`.
+- Verification target:
+  - RED/GREEN focused guard for reverse-scan semantics.
+  - `mvn -q "-Dtest=SummonSkillLastEffectiveSlotRulesTest" test`.
+  - `mvn -q -DskipTests test-compile` or record any unrelated dirty-worktree compile blocker.
+- Implementation result:
+  - Added `src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotRules.java`, a test-side CR178 helper
+    that reads existing `SummonSkillService` slot offsets by reflection and implements reverse-scan:
+    `LOCKED` skips, trailing contiguous `EMPTY` returns the first empty slot in that run,
+    `OCCUPIED` returns one-based slot, `UNKNOWN`/null fail closed as `-1`.
+  - Added `src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotRulesTest.java`, focused guard for
+    locked skip, contiguous empty boundary, and unknown fail-closed behavior.
+  - Added `src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotExperiment.java`, a manual main-style
+    experiment. It captures the foreground window by default, or accepts `--title=<title/id fragment>` /
+    `--base=x,y`; saves raw/marked images to `images/temp/`; and prints final line
+    `LAST_EFFECTIVE_SLOT=<number|ERROR>`.
+  - Updated CR178 card in `docs/PACKAGE_ARCHITECTURE.md` and regenerated `docs/cr-dashboard-data.js`.
+- Verification result:
+  - RED Maven attempt was blocked before reaching the new test by unrelated dirty-worktree main compile errors in
+    `src/main/java/com/bot/dhxy/cloud/task/ImagePreprocessCloudService.java` and
+    `src/main/java/com/bot/dhxy/cloud/task/CloudImageProcessor.java`.
+  - Final Maven focused and test-compile attempts were also blocked before tests by unrelated
+    `src/main/java/com/bot/dhxy/vision/GameTextLineOcrService.java` compile errors:
+    packed-line type mismatch, missing `routeDestinationSegmentMetadata(...)`, and missing
+    `ImagePreprocessCloudDecision` import/package reference.
+  - Narrow `javac` verification passed for:
+    `SummonSkillLastEffectiveSlotRules.java`, `SummonSkillLastEffectiveSlotRulesTest.java`,
+    `SummonSkillLastEffectiveSlotExperiment.java`, plus the experiment's direct `ImageFinder`/OpenCV loader
+    dependencies.
+  - `git diff --check` for the scoped new files/docs passed with only the existing LF/CRLF warning on
+    `docs/ACTIVE_WORK.md`.
+
+## 2026-07-02 / CR178 正式实现派工与审核边界
+
+Status: 谢帅/唐德作为 reviewer/manager，不直接写 Java 业务实现；已派 worker `Peirce` 负责正式代码。
+
+- 当前分支/status 基线：
+  - `git status --short --branch`: `## codex/hybrid-cloud-protection`，工作区已有大量无关修改和未跟踪文件。
+  - 当前 `HEAD`: `696a12b`。
+  - `origin/dev`: `e543d02`。
+- 用户确认：不新开 CR，正式实现继续归入 `CR178`。
+- 本轮 CR178 卡片/业务规则修正：
+  - 旧 hover/tooltip 边界识别不再作为最后有效格来源；
+  - 旧操作语义保留：普通技能删除、终极角检测、冷却/重试、输入队列点击、删除确认、CR145 队列调度不因本卡改变；
+  - 三张静态模板都未命中且截图/模板/ROI/匹配引擎正常时，格子视为 `OCCUPIED`，不是 `UNKNOWN`；
+  - `UNKNOWN` 只表示机制失败，必须 fail closed；
+  - 最后有效格从末尾倒扫，跳过 `LOCKED`；若先遇到尾部连续 `EMPTY`，返回这段连续空格里最前面的空格，例如 `O,O,O,E,E,E,L,L` 返回第 4 格；若没有尾部空格而先遇到 `OCCUPIED`，返回该 occupied 格。
+- Worker `Peirce` 任务范围：
+  - 正式接入 `SummonSkillService` 静态 52x52 box ROI 状态识别；
+  - 增加/调整 focused tests；
+  - 不修改 `docs/业务逻辑.md` 之外的业务规则，不碰非召唤兽技能路径；
+  - 完成后由 reviewer 审核 diff、测试结果和 replay/guard 证据。
+
+Reviewer correction 2026-07-02:
+
+- User rejected the initial experiment's temporary `center +/- 31` slot crop because the test must inspect the
+  complete skill box ROI.
+- Updated the test-side rules to define full slot rectangles:
+  - 6-slot and 8-slot rects both use the current calibrated centers and the user-confirmed `52x52` square box.
+- `SummonSkillLastEffectiveSlotExperiment` now crops each `slotRect` directly and draws those rectangles on the
+  marked output; `SLOT_SCAN_HALF_SIZE` / `cropAround(...)` / oval marked regions were removed.
+- Verification after correction:
+  - `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest" test` passed.
+  - `git diff --check -- src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotExperiment.java src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotRules.java src/test/java/com/bot/dhxy/service/SummonSkillLastEffectiveSlotRulesTest.java` passed.
+
+Square ROI correction 2026-07-02:
+
+- User clarified that all summon-skill boxes, including 6-slot and 8-slot layouts, are `52x52` squares.
+- Updated both 6-slot and 8-slot test-side ROIs to exact `center +/- 26` square boxes.
+
+Inactive-slot low-texture correction 2026-07-02:
+
+- Live experiment initially reported an 8-slot panel as all `OCCUPIED`, but the user confirmed slot 8 was empty.
+- Diagnostic evidence:
+  - Saved ROI: `images/temp/summon_slot_debug/slot8_roi.png`.
+  - `status_inactive1.png` is a near-flat low-texture template; `ImageFinder`/`TM_CCOEFF_NORMED` scored it at
+    approximately `0.00000035` against the empty slot ROI, so normal template correlation is not suitable for this
+    specific inactive template.
+- Updated `SummonSkillLastEffectiveSlotExperiment` only: inactive detection still tries template matching first, then
+  uses a low-texture average color-distance fallback for `status_inactive1.png`.
+- Verification:
+  - Reflection debug against the saved `slot8_roi.png` now returns `SLOT8_CLASSIFIED_AS=EMPTY`.
+
+Actionable empty-run correction 2026-07-02:
+
+- User clarified that when the tail has consecutive empty slots, those slots are valid capacity, but the cleaner should
+  start checking from the first empty slot in that contiguous run. Example:
+  `OCCUPIED,OCCUPIED,OCCUPIED,EMPTY,EMPTY,EMPTY,LOCKED,LOCKED` should return slot 4, not slot 3 and not slot 6.
+- Updated `lastEffectiveSlot(...)` test-side rule accordingly.
+
+## 2026-07-02 / CR178 worker 正式实现 baseline
+
+Status: implementing CR178 production wiring only. Scope is limited to `SummonSkillService` static slot-boundary
+recognition, focused tests, and CR docs/dashboard if the CR row/card wording changes.
+
+- Current branch/status baseline before production edit:
+  - `git status --short --branch`: `## codex/hybrid-cloud-protection` with many pre-existing modified/untracked files.
+    Do not revert or normalize unrelated changes.
+  - Current `HEAD`: `696a12b`.
+  - Latest pushed baseline available locally: `origin/dev` = `e543d02`.
+- Relevant local evidence before production edit:
+  - Current `SummonSkillService` already has CR178/other local work for `IF8_LAYOUT_TEMPLATE_PATH`,
+    calibrated 6/8 slot centers, and cloud tooltip wiring.
+  - Current `cleanTailNormalSkillsDirect(...)` still derives the tail boundary from
+    `getTailCheckStartIndex(skillCount)` / `resolveStartIndex(...)`, then hover-inspects slots through
+    `inspectSkillSlot(...)`.
+  - CR178 formal rule requires replacing that boundary source with one screenshot-based static scan using
+    `status_sealed1.png`, `status_unobtained1.png`, and `status_inactive1.png`. Existing delete,
+    ultimate-corner, cooldown/retry, input queue, and hover classification semantics must remain unchanged.
+- RED evidence:
+  - Added `SummonSkillCR178ProductionStaticBoundaryWiringTest`.
+  - `mvn -q -Dtest="SummonSkillCR178ProductionStaticBoundaryWiringTest" test` failed as expected because
+    production code did not yet wire `status_sealed1.png` / static slot scanning.
+- Implementation result:
+  - `SummonSkillService.cleanTailNormalSkillsDirect(...)` now calls `scanStaticSkillSlots(skillCount)` before
+    hover classification.
+  - Static scan captures the current bound window once, crops each calibrated `52x52` skill-slot box, classifies
+    `status_sealed1.png` / `status_unobtained1.png` as locked, `status_inactive1.png` as empty, and treats a healthy
+    three-template miss as occupied.
+  - `UNKNOWN` is reserved for screenshot/template/ROI/matcher mechanism failure and returns a failed cleanup result,
+    so the maintenance layer will not refresh cooldown on an unsafe scan.
+  - The cleanup loop still uses old hover tooltip classification for occupied slots, old normal-skill deletion,
+    ultimate-corner check, delete confirmation, cooldown/retry, and input queue click semantics.
+- Verification:
+  - GREEN: `mvn -q -Dtest="SummonSkillCR178ProductionStaticBoundaryWiringTest" test` passed.
+  - GREEN: `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest" test` passed.
+  - GREEN: `mvn -q -DskipTests compile` passed.
+
+CR178 review follow-up 2026-07-02:
+
+- Reviewer requested removal of dead old boundary policy so it cannot be reused later.
+- RED: strengthened `SummonSkillCR178ProductionStaticBoundaryWiringTest`; it failed while
+  `getTailCheckStartIndex(...)` / `resolveStartIndex(...)` still existed in production source.
+- Implementation:
+  - Removed `getTailCheckStartIndex(...)` and `resolveStartIndex(...)` from `SummonSkillService`.
+  - Deleted `SummonSkillStartIndexPolicyTest.java`, which tested the deprecated cached/default start policy.
+  - No changes were made to normal-skill deletion, ultimate-corner handling, cooldown/retry, queue/click behavior,
+    or cloud hover classification semantics.
+- Verification:
+  - `rg -n "getTailCheckStartIndex|resolveStartIndex|SummonSkillStartIndexPolicyTest"
+    src/main/java/com/bot/dhxy/service/SummonSkillService.java src/test/java/com/bot/dhxy/service`
+    now only finds the CR178 production guard text, not production helpers or the deleted old policy test.
+  - `mvn -q -DskipTests compile` passed.
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/SummonSkillService.java src/test/java/com/bot/dhxy/service
+    docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/业务逻辑.md docs/cr-dashboard-data.js` passed with only
+    existing LF/CRLF warnings.
+  - `mvn -q -Dtest="SummonSkillLastEffectiveSlotRulesTest,SummonSkillCR178ProductionStaticBoundaryWiringTest" test`
+    is currently blocked during Maven `testCompile` by unrelated dirty-worktree tests
+    `src/test/java/com/bot/dhxy/cloud/task/MiniMapLocationCloudReplayTest.java` and
+    `MiniMapLocationCloudDecisionServiceTest.java` referencing missing `MiniMapLocationCloud*` classes. This CR178
+    follow-up did not touch those files.
+
+## 2026-07-02 / 三技能维护间隔提前量
+
+Status: 用户确认按固定提前 90 秒实现；这是维护调度阈值，不修改 `SummonSkillService` 技能识别/删除逻辑。
+
+- Current branch/status baseline before edits:
+  - `git status --short --branch`: `## codex/hybrid-cloud-protection` with many pre-existing modified/untracked files.
+  - Current `HEAD`: `696a12b`.
+  - Latest pushed baseline available locally: `origin/dev` = `e543d02`.
+- User decision:
+  - UI/config 保存的三技能间隔仍表示玩家设置值，例如 20 分钟。
+  - 后端实际 due 判断需要提前 90 秒，抵消“到下一轮/下一次维护窗口才执行”的自然延迟。
+  - 只影响 `summonSkillCleanIntervalMs` 的三技能维护 due/not-due 判断；不影响巫医、修装备、摄妖香、包裹道具、技能格识别、删除/终极角点击等逻辑。
+- Planned verification:
+  - 添加 focused behavior guard：20 分钟配置下，距离上次成功 18分31秒时应触发三技能清理；18分29秒仍应 not due。
+- RED/GREEN:
+  - RED: `TaskMaintenanceSummonSkillIntervalLeadTimeTest` 在生产代码仍按完整 20 分钟判断时失败：
+    18分31秒 case 返回 `SUMMON_SKILL_NOT_DUE`。
+  - Implementation: `TaskMaintenanceService` 增加三技能专用固定提前量 `90_000ms`，只用于
+    `summonSkillCleanIntervalMs` 的 due/not-due 判断；日志同时输出 `intervalMs`、`effectiveIntervalMs`
+    和 `leadTimeMs`。
+  - GREEN: 手工 focused guard 通过；日志显示 `intervalMs=1200000 effectiveIntervalMs=1110000 leadTimeMs=90000`，
+    18分31秒 case 清理，18分29秒 case 仍 `SUMMON_SKILL_NOT_DUE`。
+
+## 2026-07-02 / Alt+1 小地图设置面板截图延迟
+
+Status: 用户确认先做最小试验，把前台 `Alt+1` 打开小地图设置面板后的等待从 `400ms` 调到 `600ms`。
+
+- Baseline before edit:
+  - `git status --short`: dirty worktree with many pre-existing modified/untracked files; do not revert unrelated changes.
+  - Touched file already had local changes in `TaskStartupWindowPreparationService`, so this pass only changes the direct
+    `ensureMapTrackingOptionDirect()` wait after `inputProvider.pressAlt1()`.
+- Runtime evidence:
+  - 2026-07-02 `18:01:27.877` pressed `Alt+1`.
+  - 2026-07-02 `18:01:28.931` three startup option templates all missed.
+  - Captured `images/temp/hwnd-100E128A/map_startup_options_scan.png` did not contain the Alt+1 option panel, so the
+    miss is likely panel open/render latency rather than cloud, template, or Alt+U flying-state logic.
+- Implementation:
+  - `TaskStartupWindowPreparationService.ensureMapTrackingOptionDirect()` changed the post-`Alt+1` wait from `400ms`
+    to `600ms`.
+  - No changes to templates, click offsets, Alt+U flying-state detection, or background probe waits.
+
+## 2026-07-02 / CR167 Dialog final reviewer FAIL 收口
+
+Status: final reviewer FAIL 已处理到 source guard + focused tests 通过；fresh runtime 仍待验。
+
+- Scope:
+  - 只碰 Dialog cloud 相关生产/测试/文档与外部 `dhxy-cloud-brain` `DIALOG_POLICY` recognizer。
+  - 不改 NPC。
+- Implementation:
+  - `WubeiDialogPreparationProvider` 的 `WUBEI_ACCEPT_TASK` 不再本地 `remembered ? green` 排序；
+    provider 只把 remembered hint 和 green specs 放进单次 `prepareRememberedOrGreenTemplateOption(...)`
+    cloud prepared request。
+  - `DialogService.prepareCloudWhiteStoryTemplateOrAbsent(...)` 不再调用 `verifyWhiteStoryTemplate(...)` /
+    `ImageFinder.find(...)`，也不再本地合成 absent/miss prepared semantic；white story matched/miss/absent
+    只能来自 `DIALOG_POLICY` `NO_ACTION;actionId=...;candidateBox=...` 云端语义。
+  - `DialogPolicyCloudDecisionService` 为 no-click story semantic action 增加 actionId allowlist，并把
+    `whiteTemplateSpecs` / story miss/absent metadata 发送到 external brain。
+  - 外部 `dhxy-cloud-brain` `DialogOptionRecognizer` 增加 white-story semantic recognizer；模板缺失/不可读时
+    no-action/fail closed。
+- Source guards:
+  - `rg -n "prepareRememberedAcceptOption|\? remembered|prepareRememberedChoiceOption\(" src/main/java/com/bot/dhxy/task/wubei/WubeiDialogPreparationProvider.java`
+    returned no matches.
+  - `rg -n "prepareOptionKeywordWithOcr|readDialogOptionWords\(|buildPreparedDialogAction\(|buildRememberedPreparedDialogAction|handleStoryDialog\(|fastClickStoryDialogDirect\(" src/main/java/com/bot/dhxy/service/DialogService.java`
+    returned no matches.
+  - `ImageFinder.find(...)` in `DialogService` remains only in `VERIFY_GREEN_TEMPLATE` / `VERIFY_WHITE_TEMPLATE`
+    read-only methods; guard proves those methods do not send input or build `PreparedDialogAction`.
+- Verification:
+  - DHXY `mvn -q -DskipTests compile` passed.
+  - DHXY `mvn -q -Dtest="TaskMaintenanceCloudRequiredFailureTest,DialogCloudPreClickWiringGuardTest,DialogPolicyCloudPreClickDecisionServiceTest" test`
+    passed.
+  - External `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q -Dtest="AlgorithmFailClosedTest,CloudBrainSmokeTest" test` passed.
+
+## 2026-07-03 / cloud-brain DIALOG_POLICY ROI payload 坐标修复
+
+Status: worker 正在修复外部 `D:\mavenProject\dhxy-cloud-brain`，目标仅限云端 `DialogOptionRecognizer`
+坐标空间；不恢复 DHXY 本地 Dialog/NPC 点击策略，不改任务业务流程。
+
+- Baseline:
+  - DHXY branch: `codex/hybrid-cloud-protection`, `HEAD=696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - DHXY `git status --short --branch`: 大量既有 modified/untracked 文件；本次 worker 不回滚任何现有改动。
+  - `D:\mavenProject\dhxy-cloud-brain` 当前不是 git repository，无法记录 branch/commit/diff baseline。
+  - Touched cloud-brain production file before production edit:
+    `src/main/java/com/yueyunfe/dhxy/cloudbrain/DialogOptionRecognizer.java`。
+- Runtime evidence:
+  - `logs/dhxy-console.log` 2026-07-03 `02:03:22` / `02:04:14` 附近：
+    `NPC_CLICK_SMART` 云端 `TOOLTIP_TEMPLATE` 点击 `灵兽村使者` 后，runner 已看到 dialog `OPTION`。
+  - 后续 `DIALOG_POLICY` pre-click 请求 `rawImagePath=images\temp\hwnd-21A74\dialog_detect_handle-dialog-known-option-cloud_CLICK_GREEN_TEMPLATE_raw.png`，
+    `roi=250,312,529,208`，`payloadCoordinateSpace=ROI_OR_WINDOW_RELATIVE_RAW`，
+    cloud decision 返回 `reason=cloud-brain-dialog-template-roi-empty`。
+  - 该 raw 图实际是约 `529x208` 的已裁剪 dialog ROI 图，外部 brain 又按窗口相对 ROI
+    `250,312,529,208` 对裁剪图二次裁剪，导致 search ROI 为空。
+- RED replay:
+  - 已把真实图复制为 cloud-brain 测试资源：
+    `src/test/resources/dialog/xiuluo/known-option-roi-raw.png`。
+  - 已把模板复制为 cloud-brain 测试资源：
+    `src/test/resources/dialog/xiuluo/xiuluo_accept_xianlaiwu.png`。
+  - 新增 focused replay:
+    `src/test/java/com/yueyunfe/dhxy/cloudbrain/DialogOptionRecognizerRoiPayloadReplayTest.java`。
+  - RED command: `mvn -q -Dtest=DialogOptionRecognizerRoiPayloadReplayTest test`。
+  - RED result: failed as expected with
+    `action=NO_ACTION;...;reason=cloud-brain-dialog-template-roi-empty` before production code changes.
+- Planned fix:
+  - In `DialogOptionRecognizer`, when payload image dimensions match the request ROI dimensions while ROI has non-zero
+    window-relative origin, template search should use image-local `0,0,width,height`.
+  - Returned `click` and `candidateBox` must remain `WINDOW_RELATIVE` by adding back `roi.x/roi.y`.
+  - Full-window payload behavior must remain unchanged and is covered by existing template tests.
+
+Update 2026-07-03 02:35:
+
+- External `dhxy-cloud-brain` implementation:
+  - `DialogOptionRecognizer` now builds one `PayloadRoi` coordinate model and routes
+    `recognizeGreenTemplate` / `fallbackGreenBand` / `keywordClick` /
+    `recognizeWhiteStorySemantic` / `storyClickThrough` / `rememberedClick` through it.
+  - Full-window payloads keep old behavior: search the request ROI in the full image and return WINDOW_RELATIVE
+    coordinates directly.
+  - Cropped payloads where payload width equals dialog ROI width and payload height is <= dialog ROI height search
+    payload-local `0,0,width,height`; full dialog ROI crops add back `roi.x,roi.y`, while option-lower crops add
+    back `roi.x, roi.y + roi.height - payload.height`.
+  - Template matching now uses OpenCV `TM_CCOEFF_NORMED`, matching DHXY `ImageFinder.find(...)` behavior.
+- Replay assets:
+  - `src/test/resources/dialog/xiuluo/xiuluo_accept_dialog_roi_raw.png` proves full cropped dialog ROI returns
+    `CLICK xiuluo.acceptTask`.
+  - `src/test/resources/dialog/xiuluo/verify-expected-dialog-option-lower-raw.png` proves the old local
+    option-lower pipeline can be executed by cloud pre-click even when the request ROI is still the full dialog ROI.
+  - `src/test/resources/dialog/xiuluo/visible-expected-dialog-washed-green.png` preserves the saved local
+    `GREEN_TEMPLATE_VISIBLE` evidence.
+  - `known-option-roi-raw.png` remains as the runtime failing pre-click payload evidence, but there is no longer a
+    passing no-click assertion for it.
+- Marked outputs:
+  - `images/test-cases/dialog/cloud-brain-roi-space/xiuluo_accept_cropped_roi_marked.png`
+  - `images/test-cases/dialog/cloud-brain-roi-space/verify_expected_option_lower_marked.png`
+- Verification:
+  - External cloud-brain `mvn -q -Dtest=DialogOptionRecognizerRoiPayloadReplayTest test` passed.
+  - External cloud-brain `mvn -q test` ran and failed only on 5 existing NPC tests expecting an older raw-yellow
+    fail-closed reason while actual decisions return
+    `strategy=PLAYER_ANCHOR_FORMULA;reason=cloud-brain-npc-player-anchor-evidence-missing`:
+    `AlgorithmFailClosedTest.npcOldPipelineOrderTemplateMissFallsThroughToRawYellow`,
+    `AlgorithmFailClosedTest.npcWithoutTemplateOrMetadataDoesNotClickFirstYellowCandidate`,
+    `AlgorithmFailClosedTest.npcMetadataOutsideDeclaredWindowDoesNotClick`,
+    `CloudBrainSmokeTest.npcClickSmartRawYellowUniqueTargetWithoutSemanticProofDoesNotClick`,
+    `CloudBrainSmokeTest.npcClickSmartRawYellowAmbiguousTargetFailsClosed`.
+- Remaining DHXY-side integration risk:
+  - `DialogService.tryHandleCloudPreClickOption(...)` (`DialogService.java:224`) builds pre-click from the supplied
+    `DialogDetection`.
+  - `DialogService.buildDialogPreClickCloudRequest(...)` (`DialogService.java:297`) serializes
+    `pngBytes(detection.image())` (`DialogService.java:319`) as the cloud payload.
+  - If runtime continues sending
+    `dialog_detect_handle-dialog-known-option-cloud_CLICK_GREEN_TEMPLATE_raw.png` after the visible option frame has
+    already changed, cloud-brain cannot reconstruct the earlier `VERIFY_EXPECTED_DIALOG_option_lower_raw.png` frame
+    from that later image. A DHXY worker should verify whether pre-click should reuse the just-verified option-lower
+    detection/payload instead of recapturing a later full dialog ROI frame.
+
+## 2026-07-03 / Dialog VERIFY_GREEN_TEMPLATE 云端语义 worker
+
+Status: worker 开始处理 DHXY 主项目 `DialogService` / `DialogPolicyCloudDecisionService` 的 verify 迁移；不修改
+`D:\mavenProject\dhxy-cloud-brain`，不回滚现有工作树改动。
+
+- Baseline before edit:
+  - Current branch: `codex/hybrid-cloud-protection`，本地分支没有 upstream。
+  - Latest pushed baseline used for touched DHXY path: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short`: 工作树已有大量 modified/untracked/deleted 文件；本 worker 只在现有差异上追加 Dialog
+    verify 云端语义迁移，不 revert 任何非本人改动。
+  - Touched path evidence:
+    - `src/main/java/com/bot/dhxy/service/DialogService.java` 相对 `origin/dev` 已有本地云端化改动；
+      当前 `verifyGreenTemplateOption` 仍是本轮重点核对对象。
+    - `src/main/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionService.java`、相关 cloud/service guard tests
+      是本地云端框架新增/未跟踪路径，需基于当前工作树实现。
+- Required behavior:
+  - `VERIFY_GREEN_TEMPLATE` 必须发送 dialog ROI image request 给 `DIALOG_POLICY`，接受
+    `CLOUD_NO_ACTION + NO_ACTION + actionId=<GreenTemplateClickSpec.name> + status=FOUND` 的语义 no-click 结果。
+  - `actionId` 必须被 `request.getGreenTemplateSpecs()` allowlist 校验。
+  - 生产 verify 不再执行本地 `cloudWashToPath + ImageFinder.find`，也不能再被无图
+    `dialogPolicyCloudDecisionService.decide(request,result)` 后置覆盖为失败。
+
+## 2026-07-03 / CR169 purple player-anchor 单独 replay
+
+Status: investigation-only；未改 DHXY 生产逻辑，新增/复用外部 `dhxy-cloud-brain` replay 测试，结论已写回
+CR169 卡。
+
+- 用户问题：
+  - 为什么 marked 图里黄色候选命中，而紫色写未命中；
+  - 紫色是否排在黄色后面；
+  - 要按旧本地逻辑单独测紫色 player-anchor formula。
+- Source finding:
+  - 当前 external `SmartClickRecognizer` 实际是 `PLAYER_ANCHOR_FORMULA` 先于 `YELLOW_TARGET_RAW`；
+    但公式要求 context 提供 `playerAnchorWindowX/Y/evidence`，DHXY `NpcClickService` 只传
+    `playerName/playerMapName/playerMapX/playerMapY/tuneX/tuneY`，所以当前样本先返回
+    `cloud-brain-npc-player-anchor-evidence-missing`，再由黄字 OCR 语义路径命中。
+  - 旧本地普通 NPC click 顺序不是这样：旧 `runNpcClickPipeline` 是 tooltip/黄字语义 OCR 在前，
+    `tryPlayerAnchorFormulaStrategy(...)` 在黄字后作为 fallback；公式路径自己做旧 HSV 紫字 wash、
+    OCR 当前玩家名和 blob fallback。
+- Replay:
+  - 输入：`images/test-cases/npc/current_window_xiuluo_accept_raw.png`。
+  - 输出：`images/test-cases/npc/current_window_xiuluo_accept_purple_anchor_marked.png`。
+  - command：`mvn -q -Dtest=NpcClickSmartCurrentScreenPurpleAnchorReplayTest test` in
+    `D:\mavenProject\dhxy-cloud-brain`。
+  - result：
+    `PURPLE_OCR_HIT=null`、`PURPLE_BLOB_FALLBACK_ANCHOR=null`、`PURPLE_FORMULA_CLICK=null`；
+    OCR 只读到上方无关候选 `非组...`，`乌龟的黑头` 在截图里偏蓝/青且与多行名字混成大候选块，
+    old blob fallback 因候选块过大/噪声过重拒绝。
+  - Correction replay:
+    同一测试又读取旧本地保存的 `images/temp/hwnd-E50C6E/center_scan_player.png`（旧流程生成的
+    purple washed image），OCR 输出包含 `OcrWord[text=乌龟的黑头, ... score=0.97504]`，并产生
+    `LEGACY_PURPLE_OCR_HIT=PurpleHit[...]`。因此旧本地 purple player-anchor 逻辑在 clean-name/washed
+    输入上能识别玩家名；第一版 replay 的失败是因为拿当前 raw/full-screen 图替代旧 clean-name 输入，测试输入不等价。
+- Conclusion:
+  - 不应再说“旧紫色公式本身不产出点击点”；正确结论是：当前 cloud raw request 没有复现旧本地
+    `Alt+4`/clean-name/washed purple 输入，因此 purple evidence 缺失。
+  - CR169 仍有 follow-up repair gate：cloud `NPC_CLICK_SMART` 必须恢复旧本地顺序与旧语义，
+    即黄字语义 OCR 先、purple player-anchor formula 后，并且公式应在云端从 raw screenshot 自行提取
+    anchor，而不是依赖 DHXY 本地预传 anchor evidence。
+
+## 2026-07-03 / CR169 FIFO producer + purple 等价修复派工
+
+Status: worker dispatched / manager review pending / fresh runtime blocked.
+
+- Process rule update:
+  - `AGENTS.md` 已补充谢帅 manager/reviewer 规则：每个 worker-delivered CR/code change 至少需要两个
+    reviewer 批准后才算完成；任一 reviewer 提 P0/P1/P2 必须写回 CR 卡、打回 worker、重新过双
+    reviewer 门禁。
+- Queue/FIFO worker scope:
+  - 修正 `NPC_CLICK_START` 同步算完整 queue 才返回的问题。
+  - 目标语义：START 快速建 session；云端 producer 按
+    `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES -> END` 边算边 push；
+    DHXY 本地只 FIFO consume、执行、verify、report outcome。
+  - `MEMORY` disabled/no-action 不能因缺 `sessionId/windowId/taskRunId` 直接打断整个 NPC click；消息
+    identity 必须完整，或本地必须明确跳过并继续消费下一条。
+- Purple worker scope:
+  - 修正 cloud `PURPLE_FORMULA` / player-anchor formula 必须复刻旧本地 purple/name-fragment/anchor
+    逻辑，禁止新写 blob/长条中心/猜测逻辑，禁止靠改模板掩盖。
+  - 必须用真实截图 testcase 证明 purple standalone replay PASS，并输出 marked 图，标出玩家名/anchor
+    box 和最终公式点击点。
+- Current gate:
+  - 两个 worker 均未完成；任何 fresh runtime 仍 blocked。
+  - worker 完成后必须安排至少两个 reviewer 审核，并把 reviewer 结论写回 CR169 卡。
+
+Queue/FIFO worker review result:
+
+- Reviewer #1 FAIL，谢帅主审复核成立。
+- P0：DHXY `NpcClickSmartCloudDecisionService.context(...)` 只写 `sessionId`，没有写
+  `windowId/taskRunId`；`HttpCloudDecisionClient` 虽然把 `windowId/taskRunId` 写在 root 顶层，但不会合并
+  到 `context`；外部 `DecisionEngine` / `SmartClickRecognizer.produceQueueMessages(...)` 从 `context`
+  读 identity，因此真实 `NPC_CLICK_START` 会 fail closed 为
+  `cloud-brain-npc-click-start-identity-missing`。
+- P1：`WAIT` 目前继续 poll 但消耗固定 12 次 poll 上限；producer 稍慢时会在后续候选到达前误失败。
+- Reviewer #2 继续 FAIL：
+  - P1：queue session 在本地 `VERIFIED`、`INVALID`、`FINAL_FAILED` 等终态后可能泄漏，outcome endpoint
+    没有 owner-aware cleanup。
+  - P2：外部 poll 不校验 session owner，错误 `windowId/taskRunId` 可 drain 真 owner 的 FIFO 消息。
+  - P2：poll loop pause 语义不足，需要在 START/POLL/WAIT 处接任务 checkpoint。
+  - P2：外部 `NpcClickSmartFifoQueueSessionTest` 单跑当前失败；测试需要适配异步 WAIT 并补行为覆盖。
+- Action：queue/FIFO worker 输出打回；修复后重新跑两 reviewer 门禁。
+
+Queue/FIFO worker second repair / re-review:
+
+- Curie 二轮修复已覆盖 identity context、WAIT 独立 wall-clock、owner-aware poll、terminal cleanup、
+  START/POLL/WAIT `TaskCheckpoint`，并更新相关 tests/docs/dashboard。
+- Reviewer #1 复审仍 FAIL：核心源码无新增 P0/P1，但 DHXY focused test 仍缺行为级覆盖；
+  `NpcClickSmartCloudWiringGuardTest.testWaitMessagesUseSeparateBudgetAndTaskCheckpoint()` 只是 source-string
+  guard，没有实际驱动 `NpcClickService` 消费循环。
+- 谢帅复跑 external 单方法失败：
+  `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest#npcClickStartProducesCtrlCandidatesWithoutPreviousOutcomeContinuation test`
+  在 `NpcClickSmartFifoQueueSessionTest.java:179` 失败，固定 poll 5 次没有取到 `CTRL_CANDIDATES`。
+  该测试必须按非 `WAIT` 消息消费直到 Ctrl 阶段，并单方法稳定 GREEN。
+- Reviewer #2 复审仍 FAIL：
+  - P2：DHXY 对 `SAFETY_REJECTED` / `INPUT_SUBMIT_FAILED` 等 terminal local outcome 上报后仍继续下一轮
+    `NPC_CLICK_POLL`；外部 queue store 已把这些 outcome 当 terminal cleanup，且 DHXY report 是 async，
+    因此可能继续消耗后续候选/重复终态。
+  - 修复要求：除 `VERIFICATION_FAILED` / `SKIPPED` 外的 terminal outcomes 应停止本 session 消费并返回
+    terminal failure/cancel；补行为测试证明 terminal outcome 后不再 poll。
+- Action：Curie 已收到二次打回：补 DHXY 行为 focused test 和外部 Ctrl 单方法稳定性后，重新过两 reviewer 门禁。
+
+Queue/FIFO worker final re-review:
+
+- Reviewer #2 PASS：DHXY
+  `mvn -q -Dtest="NpcClickSmartCloudDecisionServiceTest,NpcClickSmartCloudWiringGuardTest,NpcClickSmartFifoBehaviorTest" test`
+  和 external `mvn -q -Dtest=NpcClickSmartFifoQueueSessionTest test` 通过；identity、owner-aware poll、
+  WAIT budget、terminal cleanup、terminal outcome stop、checkpoint 均无新增 P0/P1/P2。
+- Reviewer #1 FAIL / P2，谢帅复核成立：
+  - 外部 brain 会把普通阶段 no-action 入队，例如 `TOOLTIP` 无模板时 `queueNoAction(...)` 仍继续 push
+    后续 `YELLOW_NAME/PURPLE_FORMULA/CTRL_CANDIDATES`；
+  - DHXY parser 对普通 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 无 click 会构造普通 queue message；
+  - DHXY consumer 随后因 `clickRel == null` 返回 `SAFETY_REJECTED`，而 terminal outcome 规则会停止 session，
+    导致后续候选被截断。
+- Repair direction:
+  - 普通阶段 `NO_ACTION` / no-click candidate 应当按 `SKIPPED` 或等价非终态处理并继续 poll；
+  - 补 `NpcClickSmartFifoBehaviorTest` 行为用例：`TOOLTIP NO_ACTION -> YELLOW/PURPLE/CTRL` 继续，不提交 input，
+    不触发 terminal cleanup。
+- Action：queue/FIFO worker 再次打回；修复完成后重新跑两个独立 reviewer。当前 queue/FIFO 仍不能算完成。
+
+## 2026-07-04 / CloudBrain 灵兽村使者黄字降噪实验
+
+Status: replay verified；DHXY 主仓未改生产 Java，外部 `D:\mavenProject\dhxy-cloud-brain`
+更新黄字 mask 后处理和实验 replay。
+
+- User question:
+  - 黄字洗图不能只靠颜色，应该测试“看起来像字”的结构过滤，尽量削掉 tooltip/底部 UI/生肖/守城噪点。
+- Baseline finding:
+  - `SmartClickRecognizer` 已有 `findLegacyTextLikeCandidates(...)` / `scoreWashedTextLine(...)`
+    候选框评分，但主要是在候选层排序；黄字 mask 后处理仍可能把 UI 噪点带回。
+  - `ImageAlgorithms.npcYellowTargetMask(...)` 对 `LINGSHOU_MESSENGER` 先做 UI ignore，
+    但后续 `dilate(...)` / `includeNearbyNpcYellowDarkOutline(...)` 没有重新清 ignore 区。
+  - replay 原图 `images/test-cases/npc/current_live_npc_click_input.png` 实际尺寸是 `1036x783`；
+    旧底部 ignore 区按 1024x768 写死，只覆盖到 `y=768`，导致底部候选
+    `747,764,103,15` 残留。
+- External code touched:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\ImageAlgorithms.java`
+    - `LINGSHOU_MESSENGER_YELLOW_IGNORE_REGIONS` 底部两块 UI 区向下/向右放宽；
+    - `dilate(...)` 后、`includeNearbyNpcYellowDarkOutline(...)` 后重新清一次 ignored regions。
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\LingshouYellowWashExperimentTest.java`
+    - 新增 `compareYellowStructureFilters()`，比较 8 组结构过滤策略，并输出 full/marked/ocr 图和 OCR/噪点统计。
+- Best experiment result:
+  - Strategy `04-tight-text-density`（07/08 同分）只保留候选 `523,203,85,31`；
+  - OCR 精确：`灵兽村使者`；
+  - stats：`total=853`、`target=848`、`tooltip=0`、`shengxiao=0`、`shouchen=0`；
+  - output:
+    - `images/test-cases/npc/yellow-wash-experiments/lingshou-only/structure-filters/04-tight-text-density-full.png`
+    - `images/test-cases/npc/yellow-wash-experiments/lingshou-only/structure-filters/04-tight-text-density-marked.png`
+    - `images/test-cases/npc/yellow-wash-experiments/lingshou-only/structure-filters/04-tight-text-density-ocr.png`
+- Verification:
+  - `mvn -q "-Dtest=LingshouYellowWashExperimentTest#compareYellowStructureFilters,NpcClickSmartCurrentScreenReplayTest,NpcYellowTargetPurpleOriginalReplayTest" test`
+    passed in `D:\mavenProject\dhxy-cloud-brain`。
+  - `NpcClickSmartCurrentScreenReplayTest` 仍命中：
+    `action=CLICK; strategy=YELLOW_TARGET_RAW; click=481,118; matchedText=灵兽村使者`。
+  - `NpcYellowTargetPurpleOriginalReplayTest` 仍命中灵兽村使者，并对 `生肖使` / `首宸`
+    返回 `REQUEST_NEW_SCREENSHOT`，未误点。
+  - `mvn -q -DskipTests compile` passed in `D:\mavenProject\dhxy-cloud-brain`。
+- Decision:
+  - 当前只把“后处理后重新清 UI ignore 区”和底部 UI 区放宽迁入生产 mask；
+    结构过滤 04/07/08 暂留为实验结论，后续如果要正式迁入，需要再用更多 NPC/截图 replay，
+    避免把别的黄字 NPC 候选误删。
+
+## 2026-07-04 / CloudBrain 降魔侍卫黄字 two-name clean wash
+
+Status: thin-wash profile integrated；外部 `D:\mavenProject\dhxy-cloud-brain` 的
+`降魔侍卫 -> JIANGMO_GUARD` profile 已按用户确认的“瘦黄字阈值”重新接入。
+用户重新明确验收标准：白底黑字洗图最终只能看见两个黄字名字：
+`降魔侍卫` 和 `宝象国一品侍卫`（用户口述“宝相/宝象”以截图实际文字为准），
+其他 UI/地面/人物/按钮噪点都不能保留。
+
+- User decision:
+  - `降魔侍卫` 先单独开 test，专门把匹配做成功；成功后再考虑和 `灵兽村使者` 的结构过滤整合。
+  - 顺手测 `白龙马` 是否也能走同一套结构过滤。
+  - 2026-07-04 follow-up：不能用“最终 OCR 捞出来”当洗图通过；黄字洗图本身必须足够干净，
+    输出只剩两个目标黄字文本块。
+  - 用户确认 `sample-yellow-4` 这版白底图可接受：瘦黄字阈值，不加暗边、不膨胀。
+- Red test:
+  - 新增并启用 `JiangmoYellowProfileReplayTest#jiangmoGuardProfileWashesOnlyTheTwoYellowNameLines()`。
+  - 红灯结果：`jiangmoPixels=0`、`baoxiangPixels=0`，证明当前 default/strict profile
+    根本没有洗到 `降魔侍卫` / `宝象国一品侍卫` 两个目标字。
+- Source finding:
+  - 当前 default profile 只抓 `hue=55..64.5` 且 `abs(r-g)<=8`；
+  - `降魔侍卫` 这张图目标字采样主色偏暗金/棕黄，常见如 `rgb=125,105,72`，
+    hue 约 `25.6..64.1`，所以 default profile 太窄。
+- External code touched:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\ImageAlgorithms.java`
+    - 曾短暂新增 `降魔侍卫 -> JIANGMO_GUARD` broad profile，但洗图总像素
+      `totalPixels=10270`、目标像素仅 `targetPixels=542`，噪点过高；
+    - broad profile 已撤回；
+    - 重新新增 `降魔侍卫 -> JIANGMO_GUARD` thin profile：
+      `hue=35..80`、`r/g>=80`、`abs(r-g)<=45`、`r/g>b+20`、`b<=220`；
+    - `JIANGMO_GUARD_YELLOW_NAME_REGIONS` 先按 replay 图保留两个名字带区域：
+      `降魔侍卫` 和 `宝象国一品侍卫`，其他区域清空。
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\JiangmoYellowProfileReplayTest.java`
+    - 重新启用 replay；
+    - `jiangmoGuardProfileWashesOnlyTheTwoYellowNameLines()` 断言：
+      `降魔侍卫` ROI 有像素、`宝象国一品侍卫` ROI 有像素、两个名字区域外 `outsidePixels<=30`。
+    - `jiangmoYellowTargetPipelineFindsTarget()` 才是验收 replay：要求最终 OCR
+      `matchedText=降魔侍卫`，最终 `candidateBox` 必须压中目标 ROI，并输出只含最终候选/点击点的 marked 图。
+  - `YellowWashOldVsCloudBrainComparisonTest#writeJiangmoDefaultAndStrictYellowTargetOutputs()`
+    - 更新旧断言：default 仍应等价旧 default；`降魔侍卫` strict 现在必须 hit dedicated profile，
+      不再要求 strict 等于 default。
+- Rejected broad-profile evidence:
+  - `JiangmoYellowProfileReplayTest` 曾经输出：
+    - `targetPixels=542`；
+    - `totalPixels=10270`；
+    - `hit=true matchedText=降魔侍卫 click=258,323 candidateBox=226,363,65,20`。
+  - 该结果只能说明 OCR 在强噪声中碰巧捞到目标，不能说明洗图可用，因此撤回。
+- Accepted thin-profile evidence:
+  - `JiangmoYellowProfileReplayTest#jiangmoGuardProfileWashesOnlyTheTwoYellowNameLines` passed：
+    - `jiangmoPixels=490`
+    - `baoxiangPixels=140`
+    - `totalPixels=630`
+    - `outsidePixels=0`
+    - output:
+      `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-guard-profile-two-name-wash.png`
+  - `YellowWashOldVsCloudBrainComparisonTest#writeJiangmoDefaultAndStrictYellowTargetOutputs` passed：
+    - `currentStrict=630`
+    - `YELLOW_JIANGMO_STRICT_SCAN=hit=true;matchedText=降魔侍卫;click=259,322;candidateBox=226,361,66,23`
+    - `rawCandidateBoxes=[216,351,76,38, 360,214,53,26]`
+  - `LingshouYellowWashExperimentTest#compareBailongmaYellowStructureFilters` passed：
+    - `白龙马` 能被当前 profile + 结构过滤保留并 OCR 为 `白龙马`，但仍带上方额外候选，
+      暂不能证明完全共用同一组结构参数。
+  - `LingshouYellowWashExperimentTest#compareJiangmoYellowStructureFilters` passed as diagnostic：
+    - 当前通用结构过滤会优先保留 `宝象国一品侍卫` 等高分候选，`target=0`；
+      因此 `降魔侍卫` 现在先依赖 dedicated profile + OCR target match，不直接套 `灵兽村使者` 的 04 结构过滤。
+  - `NpcClickSmartCurrentScreenReplayTest`、`NpcYellowTargetPurpleOriginalReplayTest` passed，未破坏灵兽村使者 replay。
+  - `mvn -q -DskipTests compile` passed in `D:\mavenProject\dhxy-cloud-brain`。
+- Output images:
+  - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-profile-full.png`
+  - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-profile-noisy-components-marked.png`
+    （debug/noise image，不是验收图）
+  - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-final-hit-marked.png`
+    （旧 final-hit 图；已不能作为洗图验收）
+  - new two-name clean-wash experiments:
+    - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/two-name-target/jiangmo-two-yellow-names-roi-correct-a.png`
+    - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/two-name-target/jiangmo-two-yellow-names-roi-correct-c.png`
+    - `images/test-cases/npc/yellow-wash-experiments/jiangmo-guard/profile-replay/jiangmo-guard-profile-two-name-wash.png`
+  - `images/test-cases/npc/yellow-wash-experiments/bailongma/structure-filters/04-tight-text-density-marked.png`
+
+## 2026-07-04 / CloudBrain 云游大师五环黄字 profile 迁入
+
+Status: investigation green for crop OCR；准备按用户确认做最小 production mapping。
+
+- Baseline:
+  - DHXY cwd: `D:\mavenProject\DHXY`
+  - DHXY branch: `codex/hybrid-cloud-protection`
+  - DHXY HEAD: `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` (`696a12b chore: remove obsolete debug tooling`)
+  - `D:\mavenProject\dhxy-cloud-brain` 当前不是 git repo；本轮 cloud-brain 改动只能以文件路径和 replay 输出记录。
+  - DHXY worktree 已有大量既有改动，本轮不回滚、不整理，只追加本节观察记录。
+- User decision:
+  - 当前还没有 migrate `云游大师`；先把 `云游大师` 这个 NPC name 写进黄字 profile。
+  - 先用已验证能读出 `云游大师` 的白龙马黄字洗法；在 profile 注解里写清楚这是五环 NPC 的临时迁入/后续可补专门 profile。
+- Replay input:
+  - `images/test-cases/npc/wuhuan-yunyou-live/yunyou-live-raw-20260704-022140.png`
+  - 游戏窗口截图尺寸 `1036x783`，目标 NPC 名字 `云游大师` 位于候选框约 `294,451,68,23`。
+- Red evidence before production mapping:
+  - `YunyouDashiLiveStrategyReplayTest` 打印队列结果显示：
+    - `YELLOW_NAME` -> `cloud-brain-npc-raw-yellow-target-missing`
+    - `MEMORY/TOOLTIP/PURPLE_FORMULA/CTRL_CANDIDATES` 均未产生 click。
+  - 四种现有 profile 试跑：
+    - `云游大师` default: `pixels=28`，无候选；
+    - `白龙马` profile: 候选包含 `294,451,68,23`，裁剪 OCR `云游大师 score=0.98878`；
+    - `灵兽村使者` profile: 噪点较多，裁剪 OCR 空；
+    - `降魔侍卫` profile: 固定 ROI 不适用，`pixels=0`。
+- Files to touch:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\ImageAlgorithms.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\YunyouDashiLiveStrategyReplayTest.java`
+- Final change:
+  - `ImageAlgorithms.npcYellowTargetProfile(...)` now maps `云游大师 -> BAILONGMA` yellow profile.
+  - Profile comment documents `云游大师` as a 五环 NPC and notes this is a replay-backed temporary migration to the 白龙马 yellow wash; future samples may justify a dedicated profile.
+- Final green evidence:
+  - `mvn -q "-Dtest=YunyouDashiLiveStrategyReplayTest" test` passed in `D:\mavenProject\dhxy-cloud-brain`.
+  - `YUNYOU_DASHI_PIPELINE hit=true matchedText=云游大师 click=328,413 candidateBox=293,451,71,24`
+  - queue replay:
+    - `YELLOW_NAME` -> `action=CLICK ... click=328,413 ... matchedText=云游大师`
+    - `CTRL_CANDIDATES` -> uses `probeSources=YELLOW_TARGET_RAW` and same point `328,413`
+  - crop OCR:
+    - `云游大师` profile crop OCR -> `OcrWord[text=云游大师 ... score=0.98878]`
+  - `mvn -q -DskipTests compile` passed in `D:\mavenProject\dhxy-cloud-brain`.
+- Replay output images:
+  - `images/test-cases/npc/wuhuan-yunyou-live/yunyou-dashi-final-hit-marked.png`
+  - `images/test-cases/npc/wuhuan-yunyou-live/yunyou-yellow-profile-yunyou-dashi.png`
+  - `images/test-cases/npc/wuhuan-yunyou-live/yunyou-yellow-profile-yunyou-dashi-name-crop.png`
+
+## 2026-07-04 / CloudBrain 五环 NPC 黄字 batch profile 迁入
+
+Status: production pipeline replay green for accepted names；未通过的名字已留在注释待后续单独处理。
+
+- User provided five CloudBrain test screenshots under:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\test`
+- Time-order targets requested:
+  - case1: `一品侍卫`
+  - case2: `阿三` and the visible guard name was replayed as `渔村侍卫`
+  - case3: `李靖`
+  - case4: `钟馗`
+  - case5: `李道宗` and `超级巫医`
+- Diagnostic result:
+  - production path initially failed for all batch targets.
+  - forced 白龙马 yellow wash/crop OCR was usable for `一品侍卫`, `渔村侍卫`, `李靖`, `李道宗`.
+  - `阿三` only washed/OCRed as `阿`.
+  - `钟馗` OCR was unstable (`钟值/钟道`-like).
+  - `超级巫医` crop OCR returned `超级必医`; not migrated yet.
+  - `李靖` crop OCR was readable, but the formal production `scanLegacyYellowTarget` still did not return a hit, so it was not migrated.
+- Final production mapping:
+  - `ImageAlgorithms.npcYellowTargetProfile(...)` now maps `一品侍卫`, `阿三`, `渔村侍卫`, `李靖`, `钟馗`, `李道宗`, `超级巫医` to the `BAILONGMA` yellow profile.
+  - Existing `云游大师 -> BAILONGMA` remains.
+  - `SmartClickRecognizer` has a scoped 五环 partial-match fallback for accepted weak OCR cases:
+    - `阿三` may match OCR text `阿`;
+    - `钟馗` may match OCR text containing `钟`.
+    - `李靖` uses the same fallback path but requires full OCR text `李靖`; direct crop OCR was `李靖 score=0.95054`.
+- Verification:
+  - `mvn -q "-Dtest=WuhuanNpcBatchYellowStrategyReplayTest#migratedWuhuanYellowProfilesHitTheirReplayTargets" test`
+  - `mvn -q "-Dtest=YunyouDashiLiveStrategyReplayTest#yunyouDashiYellowTargetPipelineFindsTarget" test`
+  - `mvn -q -DskipTests compile`
+- Green production replay outputs:
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case1-一品侍卫-production-marked.png`
+    - `hit=true matchedText=品侍工 click=676,276 candidateBox=656,315,40,22`
+    - OCR text is imperfect, but candidate box overlaps the expected `一品侍卫` name ROI and click is above the name.
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case2-渔村侍卫-production-marked.png`
+    - `hit=true matchedText=渔村侍卫 click=205,227 candidateBox=169,264,73,27`
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case2-阿三-production-marked.png`
+    - `hit=true matchedText=阿 click=398,307 candidateBox=386,347,24,20`
+    - User explicitly accepted the weak `阿三 -> 阿` OCR case.
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case3-李靖-production-marked.png`
+    - `hit=true matchedText=李靖 click=364,334 candidateBox=346,373,37,23`
+    - Direct crop OCR from `case3-lijing-bailongma-crop.png` returned `李靖 score=0.95054`; user confirmed the washed crop is acceptable.
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case4-钟馗-production-marked.png`
+    - `hit=true matchedText=钟道 click=602,250 candidateBox=586,291,33,19`
+    - User explicitly accepted the weak `钟馗` OCR case.
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case5-李道宗-production-marked.png`
+    - `hit=true matchedText=李道宗 click=621,255 candidateBox=595,294,53,22`
+  - `images/test-cases/npc/wuhuan-yellow-batch/accepted-case5-超级巫医-production-marked.png`
+    - `hit=true matchedText=超级巫医 click=699,294 candidateBox=666,334,66,20`
+## 2026-07-04 / CloudBrain ROUTE_CANDIDATE 灵兽村黄字路线紧急修复
+
+Status: in progress.
+
+- Scope:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+  - new/updated CloudBrain route-candidate replay test and copied testcase resource.
+- Baseline:
+  - DHXY cwd `D:\mavenProject\DHXY`, branch `codex/hybrid-cloud-protection`.
+  - DHXY `git status --short --branch` shows a large dirty worktree from ongoing hybrid-cloud work; do not revert unrelated changes.
+  - `D:\mavenProject\dhxy-cloud-brain` is not a git repository (`git status` returns `fatal: not a git repository`), so no pushed-code diff baseline is available there.
+  - Existing cloud logic inspected before editing: `DecisionEngine.routeCandidate()` only returns a click from `routeClickOverride` or `candidates/routeCandidates`; it does not inspect `imagePayloadBase64`, `roi`, or `targetMap`.
+  - Existing DHXY caller inspected before editing: `NavigationService.clickYellowDestinationAndTargetMiniMap(...)` computes local shadow click from `GameTextLineOcrService.verifyWorldMapRouteDestination(...)`, passes `imagePayloadBase64`/`roi` via `RouteResultImagePayload`, and requires an executed cloud `ROUTE_CANDIDATE` click before physical input.
+- Failure target:
+  - Replay `D:\mavenProject\DHXY\images\temp\hwnd-124B01CE\map_result_scan.png`.
+  - Request context: `routeMode=yellow-destination-mini-map`, `targetMap=灵兽村`, `targetX=112`, `targetY=93`, `targetName=灵兽村使者`, `roi=348,376,323,138`, `windowSize=1024,768`, `imagePayloadBase64=<case PNG>`.
+  - Expected cloud result: `status=CLICKED`, window-relative click near local shadow `366,487`, without using `routeClickOverride` or local shadow click as the production result.
+- Red evidence:
+  - `mvn -q "-Dtest=RouteCandidateYellowDestinationReplayTest" test` initially failed with `status=NOT_FOUND;reason=cloud-brain-route-candidate-no-click`.
+- Final change:
+  - `DecisionEngine.routeCandidate()` now keeps existing `routeClickOverride` and `candidates/routeCandidates` behavior, but when those produce no click and `routeMode=yellow-destination-mini-map`, it decodes `imagePayloadBase64`, runs `WASH_YELLOW`, calls the OCR sidecar, applies the replayed route destination row/cluster/wrap rule, confirms `targetMap`, and returns `CLICKED click=roi.x+centerX,roi.y+centerY`.
+  - The production click is not read from `localDecision`, `localWouldClick`, or `routeClickOverride`.
+- Final green evidence:
+  - `mvn -q "-Dtest=RouteCandidateYellowDestinationReplayTest" test` passed.
+  - `mvn -q "-Dtest=CloudBrainSmokeTest#trackerAndRouteCandidateFailClosedWithoutCloudInput" test` passed.
+  - `mvn -q "-Dtest=RouteMemoryStorePersistenceTest,ImageAlgorithmsParityTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Broader `mvn -q "-Dtest=CloudBrainSmokeTest,RouteMemoryStorePersistenceTest,ImageAlgorithmsParityTest" test` was not clean because `CloudBrainSmokeTest` has unrelated stale `NPC_CLICK_SMART` queue-protocol expectations; route-specific smoke passed separately.
+- Replay assets:
+  - Input copied to `D:\mavenProject\dhxy-cloud-brain\src\test\resources\route-candidate\yellow-destination-lingshou-map-result-scan.png`.
+- Marked output generated by the replay test: `D:\mavenProject\dhxy-cloud-brain\target\test-route-candidate\yellow-destination-lingshou-marked.png`.
+
+## 2026-07-05 / CR185 cloud NPC click memory 旧语义复刻卡
+
+Status: manager card setup；谢帅负责审核，不直接写 Java 业务实现；实现交给 worker 子智能体。
+
+- Baseline:
+  - DHXY cwd: `D:\mavenProject\DHXY`.
+  - Branch: `codex/hybrid-cloud-protection`.
+  - HEAD: `696a12b chore: remove obsolete debug tooling`.
+  - Upstream: current branch has no upstream; pushed reference used for project baseline is `origin/dev` at `e543d02`.
+  - `git status --short` shows a large dirty worktree from ongoing hybrid-cloud work; do not revert unrelated user/agent changes.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository, so no pushed baseline is available there.
+- Runtime evidence for the new card:
+  - `2026-07-04 21:14:43.415` 修罗 leader `hwnd-115514AA` cloud NPC `MEMORY` step missed: `strategy=MEMORY; status=NOT_FOUND; reason=cloud-brain-npc-memory-miss`; request context had `playerMapX=111, playerMapY=84`, target `灵兽村使者 (112,93)`.
+  - `2026-07-04 21:15:21.748` cloud `YELLOW_NAME` succeeded only after a long path: `elapsedMs=37993`, `click=498,215`, `candidateBox=467,257,63,17`, `matchedText=兽村使者`, reason `cloud-brain-npc-raw-yellow-target-ocr`.
+  - `2026-07-04 21:15:27.898` local submitted `NPC_CLICK_SMART outcome ... outcome=VERIFIED`, but current persisted `data/npc-click-memory.json` has no `player:111,84` / `click=498,215` / `candidateBox=467,257,63,17`; last write time still predates the successful runtime.
+- Root cause recorded for worker:
+  - CR181 only migrated old stable policy rows into cloud `MEMORY`; it did not make runtime `VERIFIED` outcomes write back using the old `vision-memory-v2` NPC click sample/policy schema.
+  - DHXY outcome payload currently lacks some old memory key/update fields such as player map coordinate.
+  - Cloud `NpcClickMemoryStore.ingestOutcome(...)` records only a compact outcome/migration marker and does not persist old-style `npcClickSamples` / `policies.clickPolicies`.
+- Decision:
+  - Create CR185 as one combined card: cloud memory must reproduce old local `OcrRoiMemoryService` NPC click memory semantics and the eligibility policy must allow one strong verified success to be used next time as a trial memory.
+  - `sampleCount >= 3` remains a stable-confidence signal, not the minimum eligibility gate.
+  - Latest failure disables that memory candidate until a fallback produces another strong success.
+
+## 2026-07-05 / CR185 worker implementation baseline
+
+Status: worker started, no production edits yet.
+
+- Worker scope:
+  - Cloud brain: `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\NpcClickMemoryStore.java`, focused NPC click memory tests, and only adjacent queue/decision code if required.
+  - DHXY: `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java`, `src/main/java/com/bot/dhxy/service/NpcClickService.java`, focused outcome/payload tests, and CR185 documentation.
+  - Reference only unless a compatibility edit is required: `src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java`, `src/main/java/com/bot/dhxy/cloud/task/NpcClickMemoryMigrationService.java`.
+- Baseline before worker edits:
+  - DHXY cwd: `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b`.
+  - Pushed project baseline used for comparison: `origin/dev=e543d02` (`Stabilize task navigation and window readiness`).
+  - `git status --short --branch` is already heavily dirty; this worker will not revert, checkout, reset, clean, or reorganize unrelated local changes.
+  - Touched-path status before worker: `NpcClickService.java`, `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and `docs/cr-dashboard-data.js` already modified; `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java`, `NpcClickSmartCloudRequest.java`, `NpcClickSmartQueueMessage.java`, `NpcClickMemoryMigrationService.java`, `src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java`, and `src/test/java/com/bot/dhxy/service/NpcClickSmartFifoBehaviorTest.java` are untracked local migration files.
+  - `git ls-tree origin/dev` has no DHXY cloud-task NPC smart files, so those files have no pushed baseline in `origin/dev`; current local files are the CR165/CR169/CR181 migration baseline.
+  - `git diff --stat origin/dev -- src/main/java/com/bot/dhxy/service/NpcClickService.java src/main/java/com/bot/dhxy/vision/OcrRoiMemoryService.java` shows large pre-existing local migration deltas (`NpcClickService.java` and `OcrRoiMemoryService.java`); worker edits must stay narrow and preserve cloud-owned FIFO order.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository (`fatal: not a git repository`), so baseline is current file inspection only.
+- Old local source-of-truth inspected:
+  - `OcrRoiMemoryService.recordNpcClickAttempt(...)` writes `memoryType=vision-memory-v2`, `entries`, `npcClickSamples`, and `policies.clickPolicies`.
+  - Strong NPC click success requires `clicked && success && actualClickMeasured` and `verificationStrength` of `DIALOG_OPTION` or `DIALOG_TEMPLATE`; success appends `recentSamples`, increments `successStreak`, clears `failureStreak`, and refreshes policy `point/spreadPx/sampleCount`.
+  - Failure increments `failureCount/failureStreak`, clears `successStreak`, records `lastOutcome`, and can make the policy stale.
+  - Old lookup uses policy key `npc-click|<map>|<npc>|<target>|player:<x>,<y>`.
+- Current cloud/DHXY evidence before worker edits:
+  - `NpcClickMemoryStore.ingestOutcome(...)` currently stores compact idempotent outcomes only; for `VERIFIED` it returns `learnStatus=migration_required` and does not create old-style sample/policy memory.
+  - `NpcClickMemoryStore.migrationValidationError(...)` currently treats `sampleCount < 3` as a migration eligibility gate; CR185 keeps that for old stable migration but runtime trial memory must allow `sampleCount=1` after strong verified success.
+  - `NpcClickSmartCloudDecisionService.serializeQueueOutcome(...)` currently posts `sessionId/decisionId/messageType/strategy/mapName/npcName/target/verificationMode/click/candidateBox/result/...`, but not the full old memory fields such as `playerMapX/playerMapY`, target split coordinates, window/base/size, source, actual/predicted click rel, formula version, and actual click source.
+  - `NpcClickService` current FIFO loop already continues after `MEMORY` `VERIFICATION_FAILED`/`SKIPPED` and reports queue outcome; CR185 tests should preserve that guard.
+- RED plan:
+  - Add cloud brain tests proving a single strong `VERIFIED` outcome creates persisted old-style `npcClickSamples` + `policies.clickPolicies`, hits lookup with `sampleCount=1/successStreak=1`, failure disables across reload, later fallback success re-enables, and migrated stable policy coexists with runtime sample.
+  - Add DHXY tests proving queue outcome payload carries old memory update fields, and `MEMORY` failure still reports outcome and continues to fallback.
+- RED evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` failed as expected with 4 assertion failures and 0 errors:
+    - `learnStatus` was still `migration_required` instead of `promoted`.
+    - failure outcome did not persist a disabled old-style policy file.
+    - later fallback success did not re-enable runtime trial memory.
+    - migrated stable policy and runtime sample did not coexist for `player:120,83` and `player:111,84`.
+  - DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest" test` failed as expected in
+    `testCr185QueueOutcomePostsOldNpcClickMemoryFields`: posted queue outcome body had empty/missing
+    `source` as the first missing CR185 old-memory field.
+- Implementation result:
+  - Cloud brain `NpcClickMemoryStore` now persists runtime NPC click outcomes using old-style
+    `vision-memory-v2` fields: `entries`, `npcClickSamples`, `policies.clickPolicies`, streak/count
+    fields, `spreadPx`, `lastOutcome`, `lastVerificationStrength`, `recentSamples`,
+    `predictedClickRel`, `actualClickRel`, `formulaVersion`, and `actualClickSource`.
+  - A single strong `VERIFIED` outcome creates a trial memory candidate with `sampleCount=1` and
+    `successStreak=1`; `sampleCount>=3` remains a stable-confidence signal for migrated/learned policy,
+    not a minimum runtime eligibility gate.
+  - Failure outcomes increment `failureCount/failureStreak`, clear `successStreak`, persist the disabled
+    policy state, and remove that lookup key from the in-memory hit index across reload.
+  - A later fallback strong success for the same key clears the failure streak and re-enables the candidate.
+  - Migrated old stable policies and runtime one-success policies can coexist in the same persisted file.
+  - DHXY `NpcClickSmartCloudDecisionService` now adds the old memory update fields to verified/queue
+    outcomes: player map coordinate, target coordinate, window base/size, absolute/relative click
+    coordinates, source, formula version, actual click source, candidate text/box, and verification facts.
+  - `NpcClickService` FIFO behavior remains cloud-owned: local still executes/verifies/reports, and the
+    existing queue guard keeps fallback running after a failed `MEMORY` candidate.
+- GREEN evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` passed.
+
+## 2026-07-05 / CR185 Banach residual P2 idempotency repair baseline
+
+Status: worker repair started, no production edits yet.
+
+- Reviewer finding:
+  - Banach re-review closed the original P1/P2 items in principle, but found a residual P2 in
+    external cloud brain `NpcClickMemoryStore.ingestOutcome(...)`.
+  - Current code registers `outcomes.putIfAbsent(...)` before persistence. If `applyOutcome()` mutates
+    in-memory state but `save()` fails, the first response is `partial/persist_failed`, yet retrying the
+    same `decisionId/attemptToken` returns `duplicate` and skips learning/re-save. After process restart,
+    the strong verified runtime sample can be lost permanently.
+- Baseline before this repair:
+  - DHXY cwd: `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b`.
+  - Pushed project baseline used for comparison: `origin/dev=e543d02`.
+  - `git status --short` remains heavily dirty; this pass will not revert, checkout, reset, clean,
+    or reorganize unrelated local changes.
+  - Scope stays limited to external cloud brain `NpcClickMemoryStore`, its focused test, and CR185
+    docs/dashboard. No DHXY Java production/test path is planned.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository, so baseline is
+    current file inspection only.
+- Current code evidence:
+  - `NpcClickMemoryStore.ingestOutcome(...)` builds the idempotency key and immediately calls
+    `outcomes.putIfAbsent(idempotencyKey, request.deepCopy())` before `outcomeUpdate(...)`,
+    `applyOutcome(...)`, and `save()`.
+  - `persistFailureReturnsPartialAndDoesNotClaimPromoted` covers the first failed response, but does not
+    assert that the same outcome can be retried after the persist target becomes writable.
+- RED target:
+  - Add a focused test that first forces `persist_failed`, then fixes/repoints the same store to a writable
+    path and replays the exact same `decisionId/attemptToken`. The retry must not be consumed as
+    `duplicate`; it must persist the sample/policy and return accepted/promoted semantics.
+- RED evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` failed as expected with 1 failure in
+    `persistFailureDoesNotMakeOutcomePermanentlyDuplicateAndRetryCanSave`: after the first
+    `partial/persist_failed`, replaying the same outcome returned `{"status":"duplicate","duplicate":true,...}`
+    instead of retrying persistence.
+- Implementation result:
+  - `NpcClickMemoryStore.ingestOutcome(...)` now removes the current idempotency key when `SaveResult.failed()`
+    and reloads CR185 memory state from the persisted snapshot under the same store lock.
+  - The reload path was split into locked helpers; it clears `memories`, `entries`, `clickPolicies`, and
+    `npcClickSamples` before reading disk, so a failed save does not leave unpersisted runtime samples in
+    the in-memory lookup/index state. If no snapshot exists, the CR185 memory state is empty and the same
+    outcome can be replayed cleanly after the path becomes writable.
+  - Added
+    `NpcClickMemoryStoreTest#persistFailureDoesNotMakeOutcomePermanentlyDuplicateAndRetryCanSave`, which
+    verifies first `partial/persist_failed`, second same-outcome retry `accepted/saved/promoted` with
+    persisted `npcClickSamples` and canonical policy, then third retry `duplicate` after successful save.
+- GREEN evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` passed.
+  - Cloud brain `mvn -q -DskipTests compile` passed.
+  - Cloud brain `mvn -q -DskipTests compile` passed.
+  - Cloud brain `mvn -q -DskipTests compile` passed.
+  - DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` passed.
+  - DHXY `mvn -q -DskipTests test-compile` passed.
+- Documentation:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR185 row/card updated to `Review` with worker result and remaining
+    two-reviewer/fresh-runtime gates.
+
+## 2026-07-05 / CR185 P2 tuneX/tuneY repair baseline
+
+Status: worker repair started, no production edits yet.
+
+- Reviewer finding:
+  - SPEC_REVIEW_BLOCKED P2: DHXY `NpcClickSmartCloudDecisionService` and external cloud brain
+    `NpcClickMemoryStore` do not carry old memory schema `tuneX/tuneY` through outcome payload and
+    persisted `npcClickSamples`.
+  - Old local `OcrRoiMemoryService.recordNpcClickAttempt(...)` accepted and wrote `tuneX/tuneY`, and
+    CR185 requires old memory update fields including tune.
+- Baseline before this repair:
+  - DHXY cwd: `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b`.
+  - Pushed project baseline used for comparison: `origin/dev=e543d02`.
+  - `git status --short --branch` is still heavily dirty; this repair will not revert, checkout, reset,
+    clean, or reorganize unrelated local changes.
+  - `src/main/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionService.java`,
+    `src/test/java/com/bot/dhxy/cloud/task/NpcClickSmartCloudDecisionServiceTest.java`, and
+    `src/test/java/com/bot/dhxy/service/NpcClickSmartFifoBehaviorTest.java` are untracked migration
+    files relative to `origin/dev`; `origin/dev` has no pushed version for those cloud-task files.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository, so baseline is
+    current file inspection only.
+- Current code evidence:
+  - DHXY `NpcClickSmartCloudRequest` already has `tuneX/tuneY`, and request context sends them using
+    request values with NPC target fallback.
+  - DHXY `appendOldNpcClickMemoryFields(...)` currently writes player/target/window/click/formula/source
+    outcome fields, but not `tuneX/tuneY`.
+  - Cloud brain `NpcClickMemoryStore.outcomeUpdate(...)` currently writes click/window/player/sample
+    fields, but not `tuneX/tuneY` into `npcClickSamples`.
+- RED target:
+  - DHXY focused payload test should fail until outcome body contains `tuneX=-10` and `tuneY=2`.
+  - Cloud brain focused memory test should fail until persisted `npcClickSamples[0]` contains
+    `tuneX=-10` and `tuneY=2`.
+- RED evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` failed as expected in
+    `verifiedOutcomeCreatesOldStyleTrialSamplePolicyAndLookupHit`: persisted sample had no tune value
+    (`tuneX` read as default `0` in the assertion) while expected `-10`.
+  - DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest" test` failed as expected in
+    `testCr185QueueOutcomePostsOldNpcClickMemoryFields`: outcome body had no tune value (`tuneX`
+    read as default `0`) while expected `-10`.
+- Implementation result:
+  - DHXY `NpcClickSmartCloudDecisionService.appendOldNpcClickMemoryFields(...)` now writes
+    `tuneX/tuneY` into verified and queue outcome payloads, selecting request tune first and
+    falling back to `NpcClickRequest` target tune.
+  - External cloud brain `NpcClickMemoryStore.outcomeUpdate(...)` now writes outcome `tuneX/tuneY`
+    into persisted `npcClickSamples`.
+  - Cloud brain CR185 verified outcome fixture now includes `tuneX=-10/tuneY=2`, matching the DHXY
+    outcome contract.
+  - P3 evidence clarified: `MEMORY failure 继续 queue fallback` is covered by
+    `NpcClickSmartFifoBehaviorTest#testMemoryClickVerificationFailureContinuesToNextExecutableCandidate`,
+    which asserts a `MEMORY` candidate reports `VERIFICATION_FAILED`, then polling continues and the
+    following `TOOLTIP` candidate reports `VERIFIED`.
+- GREEN evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` passed.
+  - DHXY `mvn -q "-Dtest=NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test` passed.
+  - Cloud brain `mvn -q -DskipTests compile` passed.
+  - DHXY `mvn -q -DskipTests test-compile` passed.
+- Documentation:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR185 card updated with P2 repair result and P3 fallback evidence
+    method name; `docs/cr-dashboard-data.js` regenerated after CR card/table update.
+
+## 2026-07-05 / CR185 code review Banach P1/P2 repair baseline
+
+Status: worker repair started, no production edits yet.
+
+- Reviewer finding:
+  - CODE_REVIEW_BLOCKED by Banach.
+  - P1: external cloud brain `NpcClickMemoryStore` write/read paths need store-level locking because
+    `CloudBrainServer` uses a cached thread pool and can process concurrent outcome/migration calls.
+  - P1: migration/runtime policy keys must canonicalize to one key including old `npc-click` prefix,
+    target facts, `verificationMode`, and player coordinate; load must merge already-written lookup-key
+    and old runtime-key variants.
+  - P1: no-click or terminal outcomes must not disable a good memory; only real executed click failures
+    such as `clicked=true` with `actualClickRel` and `VERIFICATION_FAILED` may update failure counters.
+  - P2: `verificationMode` must be part of policy/lookup/disable key consistently.
+  - P2: persistence failure must not be hidden behind `System.err.println` while returning `promoted`.
+- Baseline before this repair:
+  - DHXY cwd: `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `696a12b`.
+  - Pushed project baseline used for comparison: `origin/dev=e543d02`.
+  - `git status --short --branch` is still heavily dirty; this repair will not revert, checkout, reset,
+    clean, or reorganize unrelated local changes.
+  - This pass is scoped to external cloud brain
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\NpcClickMemoryStore.java`,
+    its focused test, and CR185 docs/dashboard. No DHXY Java production path is planned.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository, so baseline is
+    current file inspection only.
+- Current code evidence:
+  - `migrate(...)`, `ingestOutcome(...)`, `load()`, `save()`, `applyOutcome(...)` mutate `ObjectNode`,
+    `ArrayNode`, `memories`, `entries`, `clickPolicies`, and `npcClickSamples` without one store-level lock.
+  - Current runtime policy key is `npc-click|map|npc|target|player:x,y`, while lookup index key is
+    `map|npc|target|VERIFICATION|player:x,y`; persisted old-style policy paths therefore can split.
+  - `applyOutcome(...)` treats every non-strong-success accepted outcome as a policy failure, including
+    no-click/terminal statuses.
+  - `save()` catches all exceptions, prints to `System.err`, and lets `ingestOutcome(...)` still report
+    `learnStatus=promoted` after an in-memory strong success.
+- RED target:
+  - Focused tests should fail until canonical policy keys merge migration/runtime/reload under
+    `npc-click|map|npc|target|verification|player:x,y`.
+  - Focused tests should fail until no-click terminal outcomes leave a usable memory enabled.
+  - Focused tests should fail until `dialog` and `direct-combat` policies do not disable each other.
+  - Focused tests should fail until persistence failure returns structured partial/failure status and
+    the store source no longer uses production `System.err`.
+  - A source guard will require an explicit store-level lock around state mutation/snapshot paths.
+- RED evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` failed as expected with 8 failures:
+    no-click `SKIPPED` was reported as `learnStatus=recorded`; save failure still returned
+    `status=accepted` / `learnStatus=promoted`; same-player migration+runtime produced two policies;
+    old assertions for canonical key missed; `direct-combat` failure overwrote the `dialog` policy;
+    source guard found no `storeLock` and found production `System.err`.
+- Implementation result:
+  - `NpcClickMemoryStore` now uses a store-level `storeLock` around lookup and all migration/outcome/load/save
+    mutable-state paths. The JSON snapshot is built and persisted while holding the same store lock.
+  - Canonical policy key is now `npc-click|map|npc|target|verificationMode|player:x,y`. Load canonicalizes
+    and merges already persisted lookup-key and old runtime-key variants; later save writes only canonical keys.
+  - Runtime outcome policy updates now distinguish strong success from true executed click failure. Only
+    `clicked=true` plus `actualClickRel` plus `VERIFICATION_FAILED` increments failure counters; no-click and
+    terminal statuses return `learnStatus=skipped` and keep existing memory usable.
+  - `verificationMode` is part of policy, lookup, and disable keys, so `direct-combat` failure no longer disables
+    a `dialog` memory hit.
+  - `save()` now returns a structured `SaveResult`; persistence failure returns `status=partial`,
+    `persistStatus=failed`, `learnStatus=persist_failed`, and production `System.err` output was removed.
+- GREEN evidence:
+  - Cloud brain `mvn -q "-Dtest=NpcClickMemoryStoreTest" test` passed.
+
+## 2026-07-05 / CR185 scope correction full vision-memory mirror
+
+Status: repair required; previous worker implementation was scoped incorrectly.
+
+- User correction:
+  - The intended CR185 requirement was to preserve the entire local `config/vision_memory.json`
+    on the cloud side with the same `vision-memory-v2` structure.
+  - The previous CR185 worker implementation only built a filtered NPC click executable index:
+    it scanned `policies.clickPolicies=616`, selected `eligible=40`, and did not copy
+    `entries`, `policies.roiPolicies`, all `policies.clickPolicies`, or all `npcClickSamples`.
+  - This is not an acceptable completion of CR185.
+- Current local source counts:
+  - `config/vision_memory.json`: `entries=459`, `policies.roiPolicies=674`,
+    `policies.clickPolicies=616`, `npcClickSamples=600`.
+  - Current legacy/old cloud-derived `data/npc-click-memory.json`: `memories=40`, no full mirror
+    `entries/policies/npcClickSamples`.
+  - `D:\mavenProject\dhxy-cloud-brain\data\npc-click-memory.json` currently missing in the external
+    cloud brain cwd; only route memory exists there.
+- Correct repair scope:
+  1. Cloud brain must save a full `vision_memory.json` mirror, preserving the original schema and all
+     fields/sections.
+  2. DHXY must upload the full local `config/vision_memory.json`; it must not upload only eligible
+     click policy rows when the operation is called vision-memory migration/mirror.
+  3. NPC click `MEMORY` must be a derived index built from the full mirror. The derived index may
+     still apply safety gates, but it cannot replace or truncate the original mirror.
+  4. Runtime outcome learning must update the full mirror in old `OcrRoiMemoryService` schema and
+     refresh the derived index.
+- Additional user acceptance requirement:
+  - The slow yellow-name success sample from `2026-07-04 21:15` must be handled through the real
+    outcome pipeline, not by hand-editing JSON or seeding a derived index.
+  - Required sample facts: target `灵兽村使者 (112,93)`, player map `(111,84)`, cloud
+    `YELLOW_NAME` success at `2026-07-04 21:15:21.748`, `click=498,215`,
+    `candidateBox=467,257,63,17`, `matchedText=兽村使者`, reason
+    `cloud-brain-npc-raw-yellow-target-ocr`, local outcome `VERIFIED` at
+    `2026-07-04 21:15:27.898`.
+  - DHXY must encode those facts as a production `NPC_CLICK_SMART` outcome and cloud brain must
+    convert that outcome into the exact old `vision_memory.json` / `OcrRoiMemoryService`
+    `npcClickSamples` + `policies.clickPolicies` structure inside the cloud full mirror.
+  - A passing test must prove the full mirror receives the old-structure sample/policy and the
+    derived NPC click index can then return a trial `MEMORY` hit for the same player/NPC context.
+- Documentation:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR185 table row/card changed to `Repair blocked`.
+  - CR185 card title changed to complete `vision_memory.json` cloud mirror plus NPC click derived index.
+- 2026-07-05 strong-acceptance re-review:
+  - Lagrange `SPEC_REVIEW_BLOCKED`: current tests prove cloud can ingest a hand-built perfect
+    outcome, but DHXY production FIFO outcome still may overwrite cloud yellow candidate evidence.
+    Repair must preserve queue `YELLOW_NAME` `reason=cloud-brain-npc-raw-yellow-target-ocr` and
+    `matchedText=兽村使者` in the real production outcome body, with a production-path test.
+  - Beauvoir `CODE_REVIEW_BLOCKED`: cloud outcome idempotency is not reload-safe and remote
+    `partial/persist_failed` mirror import is treated as submitted by DHXY. Repair must make replay
+    of the same persisted outcome idempotent across reload/partial retry and make DHXY fail/partial
+    on remote persist failure.
+  - These blockers were sent back to worker `Fermat`; CR185 must remain repair blocked until
+    re-review passes.
+
+## 2026-07-05 / CR185 repair worker strong-acceptance restart
+
+Status: in progress; worker is repairing previous scope mistake, not opening a new CR.
+
+- User-added strong acceptance:
+  1. DHXY must turn the real 2026-07-04 21:15 `YELLOW_NAME` success into a production
+     `NPC_CLICK_SMART` outcome.
+  2. That outcome must be sent to cloud brain.
+  3. Cloud brain formal `ingestOutcome(...)` must convert that outcome into old local
+     `vision_memory.json` / `OcrRoiMemoryService`-compatible full mirror data.
+  4. The persisted full mirror must contain old-style `npcClickSamples` and matching
+     `policies.clickPolicies`.
+  5. The derived NPC click `MEMORY` index must rebuild from that full mirror so the next same
+     context can return trial memory.
+- Strong acceptance sample facts:
+  - target `灵兽村使者 (112,93)`;
+  - player map `(111,84)`;
+  - cloud `YELLOW_NAME` success at `2026-07-04 21:15:21.748`;
+  - click `498,215`;
+  - candidateBox `467,257,63,17`;
+  - matchedText `兽村使者`;
+  - reason `cloud-brain-npc-raw-yellow-target-ocr`;
+  - local outcome `VERIFIED` at `2026-07-04 21:15:27.898`.
+- Baseline before Java edits:
+  - DHXY cwd `D:\mavenProject\DHXY`, branch `codex/hybrid-cloud-protection`, HEAD
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - `origin/dev` latest pushed commit visible locally:
+    `e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `origin/codex/hybrid-cloud-protection` was not present in `git ls-remote`; latest pushed
+    commit for the current local branch is unknown.
+  - `git status --short` is very dirty, including many unrelated modified/deleted/untracked files.
+    Do not revert/reset/checkout/clean anything.
+  - `git diff --stat -- docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    already shows large pre-existing doc/dashboard changes from prior CR work.
+  - `src/main/java/com/bot/dhxy/cloud/...` and many `src/test/java/com/bot/dhxy/cloud/...`
+    files are untracked relative to `origin/dev`; there is no pushed DHXY cloud baseline for those
+    files in this worktree.
+  - External cloud brain cwd `D:\mavenProject\dhxy-cloud-brain` is not a git repository
+    (`git status` fails with `fatal: not a git repository`), so no pushed commit baseline exists
+    there. Relevant current files are local filesystem source under `src/main/java` and tests under
+    `src/test/java`.
+- Planned focused RED tests:
+  - Cloud brain: construct/send the strong-acceptance `NPC_CLICK_SMART` outcome through
+    `NpcClickMemoryStore.ingestOutcome(...)`; assert `data/vision_memory.json` full mirror has old
+    `npcClickSamples` + `policies.clickPolicies`, and `lookup(...)` returns `MEMORY` trial hit.
+  - Cloud brain: full mirror import/save/reload preserves complete `vision_memory.json` structure,
+    unknown fields, and real counts `entries=459`, `roiPolicies=674`, `clickPolicies=616`,
+    `npcClickSamples=600`; derived stable count remains `40`.
+  - DHXY: full mirror upload request contains the entire `config/vision_memory.json`, not only
+    eligible rows, and preserves representative unknown/nested fields/counts.
+
+Completion update:
+
+- External cloud brain implementation:
+  - `NpcClickMemoryStore` now has separate full mirror and derived index paths:
+    `data/vision_memory.json` for source-of-truth full mirror and `data/npc-click-memory.json`
+    for derived `npc-click-memory-derived-v1`.
+  - `migrate(...)` accepts a `visionMemory` wrapper, saves the mirror without dropping unknown
+    root/entry/sample/ROI/policy fields, and rebuilds derived `MEMORY` candidates from
+    `policies.clickPolicies`.
+  - `ingestOutcome(...)` updates the full mirror old schema (`npcClickSamples`,
+    `policies.clickPolicies`, `entries`) and refreshes derived memory.
+  - Historical full mirror import uses old stable gate (`sampleCount>=3`) and returns the expected
+    `40` stable candidates on the current real fixture; runtime `lastSource=npc-click-smart`
+    strong success still allows `sampleCount=1` trial memory.
+- DHXY implementation:
+  - `NpcClickMemoryMigrationService` uploads full `visionMemory`; eligible click-policy scan is
+    diagnostics only.
+  - `NpcClickService` startup logs now say `vision-memory mirror submitted` / derived NPC index,
+    not old ambiguous `memory migration`.
+- RED evidence:
+  - Cloud brain strong-acceptance test first failed because `vision_memory.json` was not created.
+  - Cloud brain real fixture import first failed with `derivedStableCandidates=606` instead of `40`.
+  - DHXY upload test first failed because the POST body only had filtered `entries` and no
+    `visionMemory`.
+- GREEN evidence:
+  - `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q "-Dtest=NpcClickMemoryStoreTest,NpcClickSmartFifoQueueSessionTest" test` passed.
+  - `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests compile` passed.
+  - `D:\mavenProject\DHXY`:
+    `mvn -q "-Dtest=NpcClickMemoryMigrationServiceTest,NpcClickSmartCloudDecisionServiceTest,NpcClickSmartFifoBehaviorTest" test`
+    passed.
+  - `D:\mavenProject\DHXY`: `mvn -q -DskipTests test-compile` passed.
+- Documentation:
+  - CR185 table row moved from `Repair blocked` to `Review`.
+  - CR185 card records strong-acceptance repair result, RED/GREEN commands, retained safety fixes,
+    and remaining reviewer/fresh-runtime gates.
+
+## 2026-07-05 / CR190 reviewer blocker repair
+
+Status: worker repair complete; CR190 moved back to Review, fresh runtime pending.
+
+- Baseline before repair:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `git status --short` remains heavily dirty with unrelated modified/deleted/untracked files; this repair did
+    not revert, checkout, reset, clean, or reorganize unrelated work.
+- Reviewer blockers repaired:
+  - P1: `TrackerPanelReaderCloudDecisionService.parse(...)` now rejects `STATUS_AMBIGUOUS` / `STATUS_ERROR`
+    before any `ACTION_NO_ACTION` mapping. `AMBIGUOUS/ERROR + reason=no-green-link + taskKey=wuhuan` now returns
+    `REQUIRED_FAILURE` / `executed=false`, so `TaskTrackerPanelService` cannot classify it as a tracker negative.
+  - P2: `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` now re-checks
+    `windowContext.getDialogPreparationRequest()` after cloud/local tracker prepare returns; a new dialog/route
+    request discards both positive and negative prepare results before runtime write or
+    `TASK_TRACKER_NEGATIVE_READY` publish.
+  - P2: `WindowRuntimeContext.consumeFreshTaskTrackerPanelNegativeResult(...)` has a prepared-priority gated
+    overload. `FiveRingTaskV2.tryClickWuhuanTrackerLink(...)` uses it with allowed
+    `TASK_TRACKER_PATHING target=wuhuan`; fresh route/dialog prepared actions cause `prepared-blocked` and leave
+    the negative unconsumed.
+  - P2: Added object-level tests for same/wrong/stale negative consumption and high-priority prepared blocking;
+    retained the CR190 source guard and strengthened it for cloud fail-closed and post-prepare request gate.
+- RED evidence:
+  - `mvn -q "-Dtest=TrackerPanelReaderCloudDecisionServiceTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest" test`
+    failed at test-compile because the runtime consume overload with prepared-priority gate did not exist yet.
+- GREEN evidence:
+  - `mvn -q "-Dtest=FiveRingCR190TrackerNegativeGateWiringTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest,TrackerPanelReaderCloudDecisionServiceTest" test`
+    passed.
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+- Documentation:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR190 row/card updated from Blocked to Review and records each reviewer
+    blocker as fixed, without deleting the original review findings.
+  - `docs/cr-dashboard-data.js` regenerated after the CR190 table/status change.
+
+## 2026-07-05 / CR190 second-review test repair
+
+Status: tests-only repair complete; CR190 moved back to Review, fresh runtime pending.
+
+- Scope:
+  - User requested only tests / necessary test support after second re-review left two P2 coverage gaps.
+  - No changes to 五环 tracker title gate, green-link selection/click coordinates, templates, OCR thresholds,
+    physical input queue, pathing, battle, or movement detector.
+- Baseline before this repair:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+  - Latest pushed baseline visible locally: `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`.
+  - `git status --short` remains heavily dirty; this pass did not revert/reset/checkout/clean unrelated work.
+- RED evidence:
+  - `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest" test`
+    first failed at test-compile because `WindowTaskRunner.shouldDiscardTaskTrackerPrepareResultAfterPrepare(...)`
+    did not exist.
+- Implementation / test support:
+  - Added `FiveRingCR190StoryWakeBehaviorTest`: publishes only
+    `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY`, binds a real `WindowRuntimeContext`, then invokes
+    `FiveRingTaskV2.syncTaskPanel(...)` by reflection. With no fresh tracker negative, the outcome is
+    `SHARED_STATE_TRIGGERED`, next phase remains `SYNC_TASK_PANEL`, message says Runner prepared tracker action is not ready,
+    `terminalTask=false`, and no tracker negative is created.
+  - Added `WindowTaskRunnerCR190PostPrepareGateBehaviorTest`: simulates prepare-return-time
+    `DialogPreparationRequest` and asserts the post-prepare gate discards before any runtime negative write or
+    `TASK_TRACKER_NEGATIVE_READY` publish.
+  - Added only a package-private seam `WindowTaskRunner.shouldDiscardTaskTrackerPrepareResultAfterPrepare(...)`;
+    production `refreshTaskTrackerPreparationSignal(...)` now calls this extracted condition, with no business-order change.
+- GREEN evidence:
+  - `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest" test`
+    passed.
+  - `mvn -q "-Dtest=FiveRingCR190StoryWakeBehaviorTest,WindowTaskRunnerCR190PostPrepareGateBehaviorTest,FiveRingCR190TrackerNegativeGateWiringTest,WindowRuntimeContextCR190TrackerNegativeBehaviorTest,TrackerPanelReaderCloudDecisionServiceTest" test`
+    passed.
+  - `mvn -q "-Dtest=WindowTaskRunnerCR188WuhuanTrackerOwnerGuardTest,TaskTrackerPanelCR189CacheWiringTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `git diff --check -- docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+    passed with only LF/CRLF warnings.
+- Documentation:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR190 row moved from Blocked to Review and the CR card records
+    `Second-review test repair result 2026-07-05`.
+  - `docs/cr-dashboard-data.js` regenerated after the CR190 status/table update.
