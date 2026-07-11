@@ -2658,28 +2658,6 @@ public class XiuluoTaskV2 implements GameTask {
                 source + "-saved-objective-future");
     }
 
-    @Deprecated
-    private XiuluoRoundContext resolveStartupTaskPanelHotStart(TaskExecutionContext context,
-                                                               XiuluoRoundContext roundContext) {
-        /*
-         * Deprecated startup path: this opens/reads the old Alt+Q task panel. Startup now uses
-         * the tracker-first hot-start path instead, then return item, then normal accept flow.
-         * Keep this method only as retained legacy code for comparison/debugging; do not wire it
-         * back into normal 修罗 startup without a new behavior card.
-         */
-        Optional<NpcTarget> startupObjective = tryReadObjectiveFromTaskPanel(context, "hot-start:task-panel");
-        if (startupObjective.isEmpty()) {
-            log.info("[xiuluo-v2] startup task-panel hot-start missed; continue normal accept flow");
-            return roundContext;
-        }
-        startupIncensePending = true;
-        log.info("[xiuluo-v2] startup task-panel hot-start hit: objective={}", startupObjective.get());
-        return roundContext.withObjective(
-                XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK,
-                startupObjective.get(),
-                "hot-start:task-panel-objective");
-    }
-
     private boolean shouldStartNextRound(int maxRuns, int completedRuns) {
         return isUnlimitedRuns(maxRuns) || completedRuns < maxRuns;
     }

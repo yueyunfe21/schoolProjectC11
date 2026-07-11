@@ -27,7 +27,6 @@ import com.bot.dhxy.model.tasktracker.TaskTrackerPanelSourceType;
 import com.bot.dhxy.model.tasktracker.TaskTrackerTitleTemplate;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.vision.OcrWindowScanService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;

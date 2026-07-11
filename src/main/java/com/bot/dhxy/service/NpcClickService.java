@@ -8,7 +8,6 @@ import com.bot.dhxy.cloud.task.NpcClickSmartQueueMessage;
 import com.bot.dhxy.cloud.task.NpcClickSmartQueueOutcome;
 import com.bot.dhxy.cloud.task.ImageProcessorService;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.model.npc.NpcTargetEvidence;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
@@ -90,7 +89,6 @@ public class NpcClickService {
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
     private final GameClientTracker tracker;
-    private final TextRecognizer textRecognizer;
     private final GameStateUtil gameStateUtil;
     private final BattleRadarService battleRadarService;
     private final DialogService dialogService;
