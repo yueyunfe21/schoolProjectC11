@@ -159,6 +159,25 @@ $runtimeClasspath = "$classesPath;$dependencyClasspath"
 $launchUtc = (Get-Date).ToUniversalTime().ToString("o")
 
 # ---------------------------------------------------------------------------
+# CR257 review P1-1: the NPC click memory canonical is the cloud-brain-owned file below (CR181/
+# CR185 lineage; the DHXY-side config/vision_memory.json copy is deleted by C1). Pin it explicitly
+# via sysprop so the store never depends on the java process working directory, and refuse to
+# start with a silently missing canonical unless the operator explicitly allows an empty memory.
+# This preflight runs BEFORE the OCR sidecar lifecycle (review P2): a missing-memory abort must
+# not leave a freshly launched/registered sidecar behind.
+# ---------------------------------------------------------------------------
+$visionMemoryPath = Join-Path $BrainProjectPath "data\vision_memory.json"
+if (Test-Path -LiteralPath $visionMemoryPath -PathType Leaf) {
+    $visionMemoryItem = Get-Item -LiteralPath $visionMemoryPath
+    $visionMemorySha256 = (Get-FileHash -LiteralPath $visionMemoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath bytes=$($visionMemoryItem.Length) sha256=$visionMemorySha256 lastWriteUtc=$($visionMemoryItem.LastWriteTimeUtc.ToString('o'))"
+} elseif ($AllowEmptyVisionMemory) {
+    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath MISSING — starting with empty memory (explicit -AllowEmptyVisionMemory)"
+} else {
+    throw "vision-memory-missing: canonical NPC click memory not found at $visionMemoryPath; provision it (copy from the live cloud-brain data dir) or pass -AllowEmptyVisionMemory to start with an empty store"
+}
+
+# ---------------------------------------------------------------------------
 # CR257 A.1-A.4: cloud-brain owns its OCR sidecar lifecycle.
 #   A.1 identity-bearing health gates every accept: protocolVersion + sidecarBuild (parsed from
 #       the owned sidecar script, so accept binds to the exact artifact this launcher starts) +
@@ -189,6 +208,25 @@ if ($null -eq $ocrBuildMatch) {
 }
 $ocrExpectedBuild = $ocrBuildMatch.Matches[0].Groups[1].Value
 
+# Review P1-2 (round 2): the expected model fingerprint is derived from the SAME python runtime
+# this launcher would start the sidecar with — never taken from a running sidecar's self-report.
+if (Get-Command "py" -ErrorAction SilentlyContinue) {
+    $ocrPythonLauncher = "py"
+    $ocrPythonBaseArgs = @("-3")
+} elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
+    $ocrPythonLauncher = "python"
+    $ocrPythonBaseArgs = @()
+} else {
+    throw "ocr-sidecar-launch-failed: neither 'py' nor 'python' is available for the OCR sidecar"
+}
+$ocrFingerprintCode = "import rapidocr; print('rapidocr-' + getattr(rapidocr, '__version__', 'unknown'))"
+$ocrExpectedModel = (& $ocrPythonLauncher @($ocrPythonBaseArgs + @("-c", $ocrFingerprintCode)) 2>$null | Select-Object -First 1)
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ocrExpectedModel)) {
+    throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint (rapidocr not importable via $ocrPythonLauncher); install it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr\requirements.txt"
+}
+$ocrExpectedModel = $ocrExpectedModel.Trim()
+Write-Host "CR257 OCR expected identity: protocol=$ocrExpectedProtocol build=$ocrExpectedBuild model=$ocrExpectedModel port=$OcrPort"
+
 function Get-OcrHealth {
     try {
         return Invoke-RestMethod -Uri "$ocrEndpoint/health" -Method Get -TimeoutSec 3
@@ -199,10 +237,12 @@ function Get-OcrHealth {
 
 function Test-OcrIdentityMatch {
     param($Health)
-    # A.1 (review P1-2): full identity — protocol, exact expected build, loopback host, exact port.
+    # A.1 (review P1-2): full identity — protocol, exact expected build, expected model
+    # fingerprint (derived locally, never trusted from the sidecar), loopback host, exact port.
     return ($null -ne $Health) -and ($Health.ok -eq $true) `
         -and ($Health.protocolVersion -eq $ocrExpectedProtocol) `
         -and ([string]$Health.sidecarBuild -eq $ocrExpectedBuild) `
+        -and ([string]$Health.modelFingerprint -eq $ocrExpectedModel) `
         -and (@("127.0.0.1", "localhost", "::1") -contains [string]$Health.bindHost) `
         -and ([int]$Health.bindPort -eq $OcrPort)
 }
@@ -277,17 +317,8 @@ function Start-OcrSidecar {
         New-Item -ItemType Directory -Force -Path $ocrLogDir | Out-Null
     }
     $ocrLog = Join-Path $ocrLogDir "ocr-sidecar.log"
-    $launcher = $null
-    $launcherArgs = $null
-    if (Get-Command "py" -ErrorAction SilentlyContinue) {
-        $launcher = "py"
-        $launcherArgs = @("-3", $ocrServerScript, "--host", "127.0.0.1", "--port", "$OcrPort")
-    } elseif (Get-Command "python" -ErrorAction SilentlyContinue) {
-        $launcher = "python"
-        $launcherArgs = @($ocrServerScript, "--host", "127.0.0.1", "--port", "$OcrPort")
-    } else {
-        throw "ocr-sidecar-launch-failed: neither 'py' nor 'python' is available to start the OCR sidecar"
-    }
+    $launcher = $ocrPythonLauncher
+    $launcherArgs = @($ocrPythonBaseArgs + @($ocrServerScript, "--host", "127.0.0.1", "--port", "$OcrPort"))
     $command = "$launcher $($launcherArgs -join ' ')"
     $process = Start-Process -FilePath $launcher -ArgumentList $launcherArgs `
         -RedirectStandardOutput $ocrLog -RedirectStandardError "$ocrLog.err" `
@@ -323,7 +354,7 @@ if ($null -ne $ocrHealth) {
     if (-not (Test-OcrIdentityMatch -Health $ocrHealth)) {
         # A.3: occupied but identity mismatch (old script, wrong build, wrong port claim, unknown
         # service) — fail closed; never take over, overwrite, silently reuse, or stop it.
-        throw "ocr-sidecar-conflict: port $OcrPort is serving a non-matching health (protocolVersion='$($ocrHealth.protocolVersion)' build='$($ocrHealth.sidecarBuild)' bindHost='$($ocrHealth.bindHost)' bindPort='$($ocrHealth.bindPort)' expectedProtocol='$ocrExpectedProtocol' expectedBuild='$ocrExpectedBuild' expectedPort='$OcrPort'); refusing to start"
+        throw "ocr-sidecar-conflict: port $OcrPort is serving a non-matching health (protocolVersion='$($ocrHealth.protocolVersion)' build='$($ocrHealth.sidecarBuild)' model='$($ocrHealth.modelFingerprint)' bindHost='$($ocrHealth.bindHost)' bindPort='$($ocrHealth.bindPort)' expectedProtocol='$ocrExpectedProtocol' expectedBuild='$ocrExpectedBuild' expectedModel='$ocrExpectedModel' expectedPort='$OcrPort'); refusing to start"
     }
     $ocrRegistry = Get-OcrRegistry
     if (Test-OcrStopEligible -Registry $ocrRegistry -Health $ocrHealth) {
@@ -349,28 +380,12 @@ if ($null -ne $ocrHealth) {
     Start-OcrSidecar
 }
 
-# ---------------------------------------------------------------------------
-# CR257 review P1-1: the NPC click memory canonical is the cloud-brain-owned file below (CR181/
-# CR185 lineage; the DHXY-side config/vision_memory.json copy is deleted by C1). Pin it explicitly
-# via sysprop so the store never depends on the java process working directory, and refuse to
-# start with a silently missing canonical unless the operator explicitly allows an empty memory.
-# ---------------------------------------------------------------------------
-$visionMemoryPath = Join-Path $BrainProjectPath "data\vision_memory.json"
-if (Test-Path -LiteralPath $visionMemoryPath -PathType Leaf) {
-    $visionMemoryItem = Get-Item -LiteralPath $visionMemoryPath
-    $visionMemorySha256 = (Get-FileHash -LiteralPath $visionMemoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath bytes=$($visionMemoryItem.Length) sha256=$visionMemorySha256 lastWriteUtc=$($visionMemoryItem.LastWriteTimeUtc.ToString('o'))"
-} elseif ($AllowEmptyVisionMemory) {
-    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath MISSING — starting with empty memory (explicit -AllowEmptyVisionMemory)"
-} else {
-    throw "vision-memory-missing: canonical NPC click memory not found at $visionMemoryPath; provision it (copy from the live cloud-brain data dir) or pass -AllowEmptyVisionMemory to start with an empty store"
-}
-
 Write-Host "Starting external DHXY cloud brain from fresh classpath on port $Port"
 Write-Host "devArtifactMode=classpath launchUtc=$launchUtc projectPath=$BrainProjectPath classesPath=$classesPath classpathFile=$classpathFile sourceMaxUtc=$(Format-Utc $state.SourceMaxUtc) classesMaxUtc=$(Format-Utc $state.ClassesMaxUtc) classpathUtc=$(Format-Utc $state.ClasspathUtc) classpathSha256=$($state.ClasspathSha256)"
 & java `
     "-Ddhxy.cloud.brain.localOcrEndpoint=$ocrEndpoint" `
     "-Ddhxy.cloud.brain.localOcrTimeoutMs=10000" `
+    "-Ddhxy.cloud.brain.localOcrExpectedModelFingerprint=$ocrExpectedModel" `
     "-Ddhxy.cloud.brain.visionMemoryPath=$visionMemoryPath" `
     "-Ddhxy.cloudbrain.devArtifactMode=classpath" `
     "-Ddhxy.cloudbrain.launchUtc=$launchUtc" `
