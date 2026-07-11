@@ -56,9 +56,9 @@ public class LocationVisionService {
      *
      * <p>CR246 (CR208-16): the cloud {@code MINIMAP_LOCATION READ_LOCATION} call owns the whole
      * fallback chain now (label/coordinate templates first, cloud OCR second). The retired local
-     * sidecar and Baidu OCR stages are kept below as {@code @Deprecated} rollback implementations
-     * only and must not re-enter the production path. Bound-window mode uses no-focus capture,
-     * while legacy no-context callers may still focus before Robot capture.</p>
+     * sidecar and Baidu OCR stages were deleted entirely by CR257 (C1/C2/C3); a cloud miss is a
+     * miss. Bound-window mode uses no-focus capture, while legacy no-context callers may still
+     * focus before Robot capture.</p>
      *
      * @return recognized location, or {@code null} when capture/recognition fails. If the current
      *         task has requested stop, this method throws {@link TaskStopRequestedException}.

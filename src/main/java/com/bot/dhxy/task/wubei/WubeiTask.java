@@ -15,7 +15,6 @@ import com.bot.dhxy.cloud.task.TrackerLinkRankerCloudShadowService;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.metrics.AutomationMetricsService;
@@ -35,7 +34,6 @@ import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.model.pause.TaskPauseResumeFingerprint;
@@ -235,8 +233,6 @@ public class WubeiTask implements GameTask {
     private static final long CHAINED_ENTER_BATTLE_PHASE_RETRY_SLEEP_MS = 600L;
     private static final long WAIT_BATTLE_TIMEOUT_MS = 180_000L;
     private static final long PAUSE_TIMER_COMPENSATION_THRESHOLD_MS = 1_000L;
-    private static final Pattern TRACKER_DEST_HINT_PATTERN =
-            Pattern.compile("前往(.+?)[(（]\\s*(\\d+)\\s*[,，]\\s*(\\d+)\\s*[)）]");
     private static final Pattern TRACKER_COMBAT_TARGET_PATTERN =
             Pattern.compile("([^|丨:：\\s]+)$");
     private static final NpcTarget ACCEPT_NPC = NpcTarget.builder()
@@ -296,7 +292,6 @@ public class WubeiTask implements GameTask {
     private final GameStateUtil gameStateUtil;
     private final GameClientTracker tracker;
     private final WindowScopedTempPath windowScopedTempPath;
-    private final TextRecognizer textRecognizer;
     private final InputSequences inputSequences;
     private final TaskTransactionRunner taskTransactionRunner;
     private final TaskTurnCoordinator taskTurnCoordinator;
@@ -3632,7 +3627,13 @@ public class WubeiTask implements GameTask {
         if (objectiveTextReaderCloudDecisionService.isWubeiDestHintActive()) {
             return parseTrackerDestinationHintCaptureViaCloud(capture);
         }
-        return parseTrackerDestinationHintCaptureLocallyLegacy(capture);
+        /*
+         * CR257 C2 (D2 approved): the pre-CR208-10 local recognition chain is deleted. An
+         * inactive cloud reader is now a per-sample miss, never a local OCR run.
+         */
+        log.info("[wubei] destination hint skipped: label={} sample={} reason=cloud-reader-inactive",
+                capture.label(), capture.sample());
+        return Optional.empty();
     }
 
     private Optional<TrackerDestinationHint> parseTrackerDestinationHintCaptureViaCloud(
@@ -3669,91 +3670,6 @@ public class WubeiTask implements GameTask {
                 capture.delayMs(), capture.refreshMs(), capture.captureMs(),
                 hint.mapName(), hint.x(), hint.y(), capture.rawPath());
         return Optional.of(hint);
-    }
-
-    /**
-     * Pre-CR208-10 local recognition chain (cloud IMAGE_PREPROCESS wash + local sidecar OCR + local
-     * regex parse). Kept only as an offline dev/rollback path when WUBEI_DEST_HINT_READER is
-     * inactive; production runs the cloud reader above.
-     */
-    @Deprecated(since = "CR208-10")
-    private Optional<TrackerDestinationHint> parseTrackerDestinationHintCaptureLocallyLegacy(
-            TrackerDestinationHintCapture capture) {
-        long parseStartedAt = System.currentTimeMillis();
-        /*
-         * 每张截图落盘后立刻启动解析；截图调度仍按固定时间点推进，避免第一张 OCR 慢时
-         * 错过第二、第三张短生命周期浮框。
-         */
-        ImageProcessorResult washResult =
-                imageProcessorService.washToPath(
-                        Path.of(capture.rawPath()),
-                        Path.of(capture.yellowPath()),
-                        ImagePreprocessOperation.WASH_YELLOW,
-                        RequestMetadata.builder()
-                                .rawImagePath(capture.rawPath())
-                                .debugImageId("wubei:destination-hint:" + capture.label())
-                                .source("wubei:destination-hint")
-                                .taskCode(TASK_CODE)
-                                .phase("destination-hint-yellow-wash")
-                                .build());
-        long afterWashAt = System.currentTimeMillis();
-        if (!washResult.hasImage()) {
-            log.info("[wubei] destination hint wash missed: label={} sample={} region={} status={} reason={} raw={} yellow={}",
-                    capture.label(), capture.sample(), capture.region().toShortText(),
-                    washResult.status(), washResult.reason(), capture.rawPath(), capture.yellowPath());
-            return Optional.empty();
-        }
-        List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(capture.yellowPath());
-        long afterOcrAt = System.currentTimeMillis();
-        String text = words.stream().map(OcrWordResult::getText).collect(Collectors.joining(""));
-        Optional<TrackerDestinationHint> parsed = parseTrackerDestinationHint(text);
-        long afterParseAt = System.currentTimeMillis();
-        if (parsed.isPresent()) {
-            TrackerDestinationHint hint = parsed.get();
-            log.info("[wubei] destination hint parsed: label={} sample={} region={} captureElapsedMs={} parseElapsedMs={} delayMs={} refreshMs={} captureMs={} washMs={} ocrMs={} parseMs={} map={} coord=({}, {}) text='{}' raw={} yellow={}",
-                    capture.label(), capture.sample(), capture.region().toShortText(),
-                    capture.captureElapsedMs(), afterParseAt - capture.startedAt(),
-                    capture.delayMs(), capture.refreshMs(), capture.captureMs(),
-                    afterWashAt - parseStartedAt, afterOcrAt - afterWashAt,
-                    afterParseAt - afterOcrAt, hint.mapName(), hint.x(), hint.y(),
-                    hint.rawText(), capture.rawPath(), capture.yellowPath());
-            return parsed;
-        }
-        log.info("[wubei] destination hint not parsed: label={} sample={} region={} captureElapsedMs={} parseElapsedMs={} delayMs={} refreshMs={} captureMs={} washMs={} ocrMs={} parseMs={} text='{}' raw={} yellow={}",
-                capture.label(), capture.sample(), capture.region().toShortText(),
-                capture.captureElapsedMs(), afterParseAt - capture.startedAt(),
-                capture.delayMs(), capture.refreshMs(), capture.captureMs(),
-                afterWashAt - parseStartedAt, afterOcrAt - afterWashAt,
-                afterParseAt - afterOcrAt, text, capture.rawPath(), capture.yellowPath());
-        return Optional.empty();
-    }
-
-    private Optional<TrackerDestinationHint> parseTrackerDestinationHint(String text) {
-        if (text == null || text.isBlank()) {
-            return Optional.empty();
-        }
-        String normalized = text.replaceAll("\\s+", "");
-        Matcher matcher = TRACKER_DEST_HINT_PATTERN.matcher(normalized);
-        if (!matcher.find()) {
-            return Optional.empty();
-        }
-        try {
-            String rawMapName = matcher.group(1).trim();
-            int x = Integer.parseInt(matcher.group(2));
-            int y = Integer.parseInt(matcher.group(3));
-            if (rawMapName.isEmpty()) {
-                return Optional.empty();
-            }
-            String mapName = mapNameCanonicalizer.canonicalize(
-                    rawMapName, "wubei:tracker-destination-hint-parse");
-            if (mapName.isEmpty()) {
-                return Optional.empty();
-            }
-            return Optional.of(new TrackerDestinationHint(mapName, x, y, text));
-        } catch (NumberFormatException e) {
-            log.warn("[wubei] destination hint coordinate parse failed: text='{}'", text, e);
-            return Optional.empty();
-        }
     }
 
     private DialogResult waitForPreparedProbeStory(TaskExecutionContext context, String label) {

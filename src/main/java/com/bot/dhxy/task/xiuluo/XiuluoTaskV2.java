@@ -20,7 +20,6 @@ import com.bot.dhxy.cloud.xiuluo.XiuluoBrainStepRequest;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.metrics.AutomationMetricsService;
@@ -49,7 +48,6 @@ import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.model.npc.DirectCombatClickResult;
 import com.bot.dhxy.model.ocr.LocationInfo;
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.pause.TaskPauseResumeFingerprint;
 import com.bot.dhxy.model.pause.TaskPauseResumeReconcileResult;
 import com.bot.dhxy.model.quest.QuestDetailCapture;
@@ -277,8 +275,6 @@ public class XiuluoTaskV2 implements GameTask {
             "same target route already submitted; watcher will confirm pathing";
     private static final String NAV_MSG_SAME_TARGET_ROUTE_PENDING_BEFORE_WORLD_MAP =
             "same target route already submitted before world-map search; watcher will confirm pathing";
-    private static final Pattern TASK_PANEL_OBJECTIVE_PATTERN =
-            Pattern.compile("前往\\s*([^\\(（\\s:：，,。]+?)\\s*[\\(（]\\s*(\\d{1,4})\\s*[,，]\\s*(\\d{1,4})\\s*[\\)）]?");
     private static final Path XIULUO_FAILURE_CASE_DIR = Path.of("images", "failure-cases", "xiuluo");
     private static final Path XIULUO_FAILURE_CASE_REPORT =
             Path.of("docs", "run-reports", "xiuluo-failure-cases.md");
@@ -338,7 +334,6 @@ public class XiuluoTaskV2 implements GameTask {
     private final QuestManagerService questManagerService;
     private final ObjectiveTextRecognitionService objectiveTextRecognitionService;
     private final com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService;
-    private final TextRecognizer textRecognizer;
     private final AutoCombatService autoCombatService;
     private final BattleRadarService battleRadarService;
     private final BagService bagService;
@@ -6258,99 +6253,18 @@ public class XiuluoTaskV2 implements GameTask {
                 return cloud.map(this::toXiuluoObjective)
                         .filter(target -> isObjectivePlausible(target, source + ":cloud"));
             }
-            return parseTaskPanelObjectiveByOcr(capture.imagePath(), source);
+            /*
+             * CR257 C2 (D2 approved): the pre-CR247 local OCR parse is deleted. An inactive cloud
+             * reader or missing image is now a miss, never a local OCR run.
+             */
+            log.info("[xiuluo-v2] task-panel objective skipped: source={} reason=cloud-reader-inactive",
+                    source);
+            return Optional.empty();
         } finally {
             if (image != null) {
                 image.flush();
             }
         }
-    }
-
-    /**
-     * Legacy local OCR parse of the quest-detail panel. CR247 moved production recognition to the
-     * cloud {@code QUEST_DETAIL_READER}; this remains only for disabled/offline dev mode and rollback.
-     */
-    @Deprecated(since = "CR247", forRemoval = false)
-    private Optional<NpcTarget> parseTaskPanelObjectiveByOcr(String imagePath, String source) {
-        if (imagePath == null || imagePath.isBlank()) {
-            log.info("[xiuluo-v2] task-panel OCR skipped: source={} reason=image-path-blank", source);
-            return Optional.empty();
-        }
-        List<OcrWordResult> words = textRecognizer.getAllTextResultsForMatch(
-                imagePath,
-                source + ":quest-detail-ocr",
-                this::matchesTaskPanelObjectiveText);
-        String text = joinOcrText(words);
-        log.info("[xiuluo-v2] task-panel OCR text: source={} path={} text='{}'",
-                source, imagePath, text);
-        Optional<ObjectiveTextResult> parsed = parseTaskPanelObjectiveText(text, source + ":ocr");
-        return parsed.map(this::toXiuluoObjective)
-                .filter(target -> isObjectivePlausible(target, source + ":ocr"));
-    }
-
-    private boolean matchesTaskPanelObjectiveText(List<OcrWordResult> words) {
-        return parseTaskPanelObjectiveText(joinOcrText(words), "task-panel-ocr-match").isPresent();
-    }
-
-    private Optional<ObjectiveTextResult> parseTaskPanelObjectiveText(String text, String source) {
-        String normalized = normalizeTaskPanelObjectiveText(text);
-        Matcher matcher = TASK_PANEL_OBJECTIVE_PATTERN.matcher(normalized);
-        if (!matcher.find()) {
-            log.info("[xiuluo-v2] task-panel OCR objective miss: source={} text='{}'",
-                    source, normalized);
-            return Optional.empty();
-        }
-        String mapName = cleanupTaskPanelMapName(matcher.group(1));
-        int x = Integer.parseInt(matcher.group(2));
-        int y = Integer.parseInt(matcher.group(3));
-        ObjectiveTextResult result = ObjectiveTextResult.builder()
-                .mapSlug(mapName)
-                .mapName(mapName)
-                .x(x)
-                .y(y)
-                .mapScore(1.0)
-                .source(source)
-                .build();
-        log.info("[xiuluo-v2] task-panel OCR objective parsed: source={} value={}",
-                source, result);
-        return Optional.of(result);
-    }
-
-    private String normalizeTaskPanelObjectiveText(String text) {
-        if (text == null) {
-            return "";
-        }
-        return text.replace(" ", "")
-                .replace("\n", "")
-                .replace("\r", "")
-                .replace("[", "(")
-                .replace("]", ")")
-                .replace("，", ",");
-    }
-
-    private String cleanupTaskPanelMapName(String mapName) {
-        if (mapName == null) {
-            return "";
-        }
-        return mapName.replace("任务目的", "")
-                .replace("目的", "")
-                .replace("前往", "")
-                .replace("：", "")
-                .replace(":", "")
-                .trim();
-    }
-
-    private String joinOcrText(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return "";
-        }
-        StringBuilder fullText = new StringBuilder();
-        for (OcrWordResult word : words) {
-            if (word != null && word.getText() != null) {
-                fullText.append(word.getText());
-            }
-        }
-        return fullText.toString();
     }
 
     private boolean isObjectivePlausible(NpcTarget target, String source) {
