@@ -71,7 +71,7 @@ public class BotProperties {
     private long summonSkillCleanIntervalMs = 20 * 60 * 1000L;
     private long summonSkillUnknownFailureRetryAfterMs = 5 * 60 * 1000L;
     private boolean summonSkillCleanRunImmediatelyOnStart = false;
-    private long summonSkillUltimateGenerateCooldownMs = 4 * 60 * 60 * 1000L;
+    private long summonSkillUltimateGenerateCooldownMs = 3 * 60 * 60 * 1000L;
     private long xiuluoHealPetMaintenanceIntervalMs = 30 * 60 * 1000L;
     private long xiuluoRepairEquipmentMaintenanceIntervalMs = 55 * 60 * 1000L;
     private boolean xiuluoMaintenanceRunImmediatelyOnStart = false;

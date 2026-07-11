@@ -6,7 +6,10 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.service.PlayerStateService;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -74,6 +77,8 @@ public class TaskStartupWindowPreparationService {
     private final BotProperties botProperties;
     private final BoundWindowKeyboardService boundWindowKeyboardService;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final UICleanerService uiCleanerService;
+    private final PlayerStateService playerStateService;
 
     /**
      * Ensure the mini-map tracking checkbox is enabled.
@@ -150,9 +155,21 @@ public class TaskStartupWindowPreparationService {
         }
         boolean visibilityReady = ensureStartupVisibilityOverlays();
         boolean ready = mapReady && expandReady && visibilityReady;
+        if (ready) {
+            probeStartupForegroundPrepareFastPaths();
+        }
         log.info("task startup background-first preparation finished: mapReady={} expandReady={} visibilityReady={} ready={}",
                 mapReady, expandReady, visibilityReady, ready);
         return ready;
+    }
+
+    private void probeStartupForegroundPrepareFastPaths() {
+        String taskCode = "wuhuan_v2";
+        String source = "task-startup:wuhuan-background";
+        boolean uiClean = uiCleanerService.probeStartupCleanNoInput(source);
+        windowTaskContextHolder.rawCurrent()
+                .ifPresent(context -> context.markTaskQueueStartupUiCleanupProbe(taskCode, uiClean, source));
+        playerStateService.prepareStartupFirstAidNoFocus(null, source);
     }
 
     private boolean repairStartupMapOptionsForeground() {
@@ -395,8 +412,11 @@ public class TaskStartupWindowPreparationService {
      * uses direct input provider calls.</p>
      */
     private boolean ensureExpandOptionUncheckedDirect() {
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.pressAltU();
-        if (!TaskSleep.sleep(600)) {
+        if (!TaskSleep.sleep(600) || !InputActionScope.checkpoint()) {
             return false;
         }
 
@@ -430,10 +450,15 @@ public class TaskStartupWindowPreparationService {
             Point click = new Point(checked.x, checked.y);
             log.info("task startup expand option: disabling checked option click=({}, {}) matched=({}, {}) offsetX=-35",
                     click.x, click.y, checked.x, checked.y);
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.clickLeft(click.x, click.y, 150);
-            return TaskSleep.sleep(500);
+            return TaskSleep.sleep(500) && InputActionScope.checkpoint();
         } finally {
-            inputProvider.pressAltU();
+            if (InputActionScope.checkpoint()) {
+                inputProvider.pressAltU();
+            }
         }
     }
 
@@ -514,8 +539,11 @@ public class TaskStartupWindowPreparationService {
      * submitting nested queue requests.</p>
      */
     private boolean ensureMapTrackingOptionDirect() {
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.pressAlt1();
-        if (!TaskSleep.sleep(400)) {
+        if (!TaskSleep.sleep(600) || !InputActionScope.checkpoint()) {
             return false;
         }
 
@@ -525,7 +553,9 @@ public class TaskStartupWindowPreparationService {
         if (!tracker.captureToFile("map startup options", startupOptionsScanPath, rect[0], rect[1], rect[2], rect[3])) {
             log.warn("ensureMapTrackingOption failed to capture startup option region: rect=({}, {})-({}, {})",
                     rect[0], rect[1], rect[2], rect[3]);
-            inputProvider.pressAlt1();
+            if (InputActionScope.checkpoint()) {
+                inputProvider.pressAlt1();
+            }
             warnIfMapPanelStillOpenAfterAlt1Close();
             return false;
         }
@@ -556,7 +586,9 @@ public class TaskStartupWindowPreparationService {
 
         log.info("ensureMapTrackingOption startup option check finished: tracking={} autoCloseMap={} openFly={} pressing Alt+1 to close map",
                 trackingReady, autoCloseReady, openFlyReady);
-        inputProvider.pressAlt1();
+        if (InputActionScope.checkpoint()) {
+            inputProvider.pressAlt1();
+        }
         warnIfMapPanelStillOpenAfterAlt1Close();
         return trackingReady && autoCloseReady && openFlyReady;
     }
@@ -601,8 +633,11 @@ public class TaskStartupWindowPreparationService {
         int clickY = uncheckedRes.y;
         log.info("ensureMapTrackingOption enabling startup option: option={} click=({}, {}) matched=({}, {})",
                 optionName, clickX, clickY, uncheckedRes.x, uncheckedRes.y);
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.clickLeft(clickX, clickY, 150);
-        return TaskSleep.sleep(500);
+        return TaskSleep.sleep(500) && InputActionScope.checkpoint();
     }
 
     /**

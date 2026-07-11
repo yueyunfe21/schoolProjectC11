@@ -51,16 +51,20 @@ public class WubeiDialogPreparationProvider implements WindowDialogPreparationPr
             return Optional.empty();
         }
         if (operation == DialogOperation.WUBEI_ACCEPT_TASK) {
-            Optional<PreparedDialogAction> remembered = prepareRememberedAcceptOption(
-                    source + ":acceptMemory", suppliedDetection);
-            return remembered.isPresent()
-                    ? remembered
-                    : dialogService.prepareGreenTemplateOption(
+            MemoryService.DialogChoiceEntry memoryHint = memoryService.findStableTaskDialogChoice(
+                            WubeiDialogCatalog.TASK_CODE,
+                            "acceptTask",
+                            WubeiDialogCatalog.ACCEPT_NPC_NAME)
+                    .orElse(null);
+            return dialogService.prepareRememberedOrGreenTemplateOption(
                     source + ":acceptTask",
                     DialogOperation.WUBEI_ACCEPT_TASK,
+                    WubeiDialogCatalog.OPTION_ACCEPT_TASK,
+                    memoryHint == null ? null : memoryHint.getRelativeX(),
+                    memoryHint == null ? null : memoryHint.getRelativeY(),
+                    memoryHint == null ? null : memoryHint.getOptionText(),
                     WubeiDialogCatalog.acceptTaskSpecs(),
                     true,
-                    null,
                     suppliedDetection);
         }
         if (operation == DialogOperation.WUBEI_ENTER_BATTLE) {
@@ -74,7 +78,7 @@ public class WubeiDialogPreparationProvider implements WindowDialogPreparationPr
         }
         if (operation == DialogOperation.WUBEI_PROBE_STORY) {
             boolean absentAllowed = interest != null && interest.isAbsentAllowed(System.currentTimeMillis());
-            return dialogService.prepareWhiteStoryTemplateOrAbsent(
+            return dialogService.prepareCloudWhiteStoryTemplateOrAbsent(
                     source + ":probeStory",
                     DialogOperation.WUBEI_PROBE_STORY,
                     WubeiDialogCatalog.probeStorySpecs(),
@@ -84,27 +88,5 @@ public class WubeiDialogPreparationProvider implements WindowDialogPreparationPr
                     suppliedDetection);
         }
         return Optional.empty();
-    }
-
-    private Optional<PreparedDialogAction> prepareRememberedAcceptOption(String source,
-                                                                         DialogDetection suppliedDetection) {
-        Optional<MemoryService.DialogChoiceEntry> remembered =
-                memoryService.findStableTaskDialogChoice(
-                        WubeiDialogCatalog.TASK_CODE,
-                        "acceptTask",
-                        WubeiDialogCatalog.ACCEPT_NPC_NAME);
-        if (remembered.isEmpty()) {
-            return Optional.empty();
-        }
-        MemoryService.DialogChoiceEntry entry = remembered.get();
-        return dialogService.prepareRememberedChoiceOption(
-                source,
-                DialogOperation.WUBEI_ACCEPT_TASK,
-                WubeiDialogCatalog.OPTION_ACCEPT_TASK,
-                entry.getRelativeX(),
-                entry.getRelativeY(),
-                entry.getOptionText(),
-                false,
-                suppliedDetection);
     }
 }

@@ -10,13 +10,16 @@ import com.bot.dhxy.window.execution.WindowTaskSnapshot;
 import com.bot.dhxy.window.execution.WindowTaskSubmitResult;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -131,8 +134,9 @@ public class WindowTaskControlService {
                 ? "local-team-" + UUID.randomUUID()
                 : null;
         if (localTeamSessionCandidate) {
+            Map<String, String> playerIdsByWindow = resolvePlayerIdsByWindow(ids);
             taskMaintenanceService.registerLocalTeamSessionCandidate(
-                    localTeamSessionKey, ids, "ui-start-same-queue");
+                    localTeamSessionKey, ids, "ui-start-same-queue", localLeaderWindowId, playerIdsByWindow);
         }
         WindowTaskSubmitResult leaderSubmitResult = null;
         boolean localTeamSessionActive = false;
@@ -191,6 +195,23 @@ public class WindowTaskControlService {
         }
 
         return buildResult(ids.size(), successCount, "独立窗口批量启动完成", Collections.emptyList(), details);
+    }
+
+    private Map<String, String> resolvePlayerIdsByWindow(List<String> windowIds) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String id : windowIds) {
+            WindowTaskSnapshot snapshot = taskManager.getSnapshot(id).orElse(null);
+            String playerId = snapshot == null ? null : normalizeText(snapshot.getPlayerId());
+            if (playerId == null && snapshot != null && snapshot.getNativeBinding() != null) {
+                playerId = WindowTitleIdentityParser.parse(snapshot.getNativeBinding().getTitle())
+                        .map(identity -> normalizeText(identity.playerId()))
+                        .orElse(null);
+            }
+            if (playerId != null) {
+                result.put(id, playerId);
+            }
+        }
+        return result;
     }
 
     public WindowTaskCommandResult startSelectedTasks(Collection<String> windowIds) {
@@ -403,6 +424,14 @@ public class WindowTaskControlService {
                 .filter(id -> !id.isEmpty())
                 .distinct()
                 .toList();
+    }
+
+    private static String normalizeText(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private String getTaskDisplayName(TaskType taskType) {

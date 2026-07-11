@@ -1,6 +1,5 @@
 package com.bot.dhxy.core;
 
-import com.bot.dhxy.tools.ImagePreprocessor;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -135,51 +134,6 @@ public class ImageFinder {
     }
 
     /**
-     * 计算两张图片路径的相似度（0.0 ~ 1.0）。
-     */
-    public static double calculateSimilarity(String path1, String path2) {
-        Mat img1 = Imgcodecs.imread(path1);
-        Mat img2 = Imgcodecs.imread(path2);
-        if (img1.empty() || img2.empty()) {
-            return 0.0;
-        }
-
-        Imgproc.resize(img2, img2, img1.size());
-        Mat result = new Mat();
-        Imgproc.matchTemplate(img1, img2, result, Imgproc.TM_CCOEFF_NORMED);
-        Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
-
-        double val = mmr.maxVal;
-        img1.release();
-        img2.release();
-        result.release();
-        return val;
-    }
-
-    /**
-     * 计算两张内存图的相似度（OpenCV 模板相关性）。
-     */
-    public static double calculateSimilarity(BufferedImage img1, BufferedImage img2) {
-        if (img1 == null || img2 == null) {
-            return 0.0;
-        }
-
-        Mat mat1 = bufferedImageToMat(img1);
-        Mat mat2 = bufferedImageToMat(img2);
-        Imgproc.resize(mat2, mat2, mat1.size());
-
-        Mat result = new Mat();
-        Imgproc.matchTemplate(mat1, mat2, result, Imgproc.TM_CCOEFF_NORMED);
-        Core.MinMaxLocResult mmr = Core.minMaxLoc(result);
-
-        double val = mmr.maxVal;
-        mat1.release();
-        mat2.release();
-        result.release();
-        return val;
-    }
-
-    /**
      * 计算像素差异率：0.0 完全一致，1.0 完全不同。
      */
     private static double getDiffRatio(BufferedImage img1, BufferedImage img2) {
@@ -222,69 +176,6 @@ public class ImageFinder {
 
     public static boolean isMatch(BufferedImage target, BufferedImage template, double tolerance) {
         return getDiffRatio(target, template) <= tolerance;
-    }
-
-    /**
-     * 纯像素滑窗模板匹配：在 source 中查找 template。
-     */
-    public static boolean findTemplateInImage(BufferedImage source, BufferedImage template, double tolerance) {
-        if (source == null || template == null) {
-            return false;
-        }
-
-        int sWidth = source.getWidth();
-        int sHeight = source.getHeight();
-        int tWidth = template.getWidth();
-        int tHeight = template.getHeight();
-        if (tWidth > sWidth || tHeight > sHeight) {
-            return false;
-        }
-
-        int colorTolerance = 15;
-        int maxAllowedDiffs = (int) (tWidth * tHeight * tolerance);
-
-        // Pure Java sliding-window fallback. It is slower than OpenCV but useful in code
-        // paths that already have BufferedImages and only need a yes/no exact-ish match.
-        for (int y = 0; y <= sHeight - tHeight; y++) {
-            for (int x = 0; x <= sWidth - tWidth; x++) {
-                int diffCount = 0;
-                boolean matched = true;
-
-                for (int ty = 0; ty < tHeight; ty++) {
-                    for (int tx = 0; tx < tWidth; tx++) {
-                        int rgbS = source.getRGB(x + tx, y + ty);
-                        int rgbT = template.getRGB(tx, ty);
-
-                        int r1 = (rgbS >> 16) & 0xFF;
-                        int g1 = (rgbS >> 8) & 0xFF;
-                        int b1 = rgbS & 0xFF;
-                        int r2 = (rgbT >> 16) & 0xFF;
-                        int g2 = (rgbT >> 8) & 0xFF;
-                        int b2 = rgbT & 0xFF;
-
-                        if (Math.abs(r1 - r2) > colorTolerance
-                                || Math.abs(g1 - g2) > colorTolerance
-                                || Math.abs(b1 - b2) > colorTolerance) {
-                            diffCount++;
-                            // Stop checking this candidate as soon as it cannot satisfy
-                            // the requested tolerance. This keeps mismatches cheap.
-                            if (diffCount > maxAllowedDiffs) {
-                                matched = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (!matched) {
-                        break;
-                    }
-                }
-
-                if (matched) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private static Mat bufferedImageToMat(BufferedImage bi) {

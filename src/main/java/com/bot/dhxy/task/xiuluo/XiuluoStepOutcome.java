@@ -9,6 +9,9 @@ import lombok.experimental.Accessors;
 import com.bot.dhxy.task.transaction.TaskTransactionResult;
 import com.bot.dhxy.task.transaction.TaskYieldPolicy;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Result of executing exactly one Xiuluo phase.
  *
@@ -17,6 +20,8 @@ import com.bot.dhxy.task.transaction.TaskYieldPolicy;
  * @param yieldPolicy whether the task should keep the business turn or yield after this step.
  * @param message short diagnostic message for logs.
  * @param waitSpec optional scheduling-only wait policy used after this outcome releases the turn.
+ * @param facts optional structured facts for the cloud brain action-outcome report (CR230). Cloud
+ *              decisions must key on these instead of matching human log messages. Never null.
  */
 @Value
 @Builder
@@ -28,6 +33,24 @@ public class XiuluoStepOutcome {
     TaskYieldPolicy yieldPolicy;
     String message;
     XiuluoWaitSpec waitSpec;
+    @Builder.Default
+    Map<String, String> facts = Map.of();
+
+    public XiuluoStepOutcome(XiuluoRoundContext nextState,
+                             TaskTransactionResult transactionResult,
+                             TaskYieldPolicy yieldPolicy,
+                             String message,
+                             XiuluoWaitSpec waitSpec) {
+        this(nextState, transactionResult, yieldPolicy, message, waitSpec, Map.of());
+    }
+
+    /** Returns a copy of this outcome with one structured cloud fact added. */
+    public XiuluoStepOutcome withFact(String key, String value) {
+        Map<String, String> merged = new LinkedHashMap<>(facts == null ? Map.of() : facts);
+        merged.put(key, value);
+        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec,
+                Map.copyOf(merged));
+    }
 
     public static XiuluoStepOutcome continueTo(XiuluoRoundContext nextState, String message) {
         return new XiuluoStepOutcome(
@@ -75,11 +98,11 @@ public class XiuluoStepOutcome {
     }
 
     public XiuluoStepOutcome withWaitSpec(XiuluoWaitSpec waitSpec) {
-        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec);
+        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec, facts);
     }
 
     public XiuluoStepOutcome withNextState(XiuluoRoundContext nextState) {
-        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec);
+        return new XiuluoStepOutcome(nextState, transactionResult, yieldPolicy, message, waitSpec, facts);
     }
 
 }

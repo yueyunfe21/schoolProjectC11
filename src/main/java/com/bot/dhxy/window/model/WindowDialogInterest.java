@@ -31,6 +31,20 @@ public class WindowDialogInterest {
     long expiresAtMs;
     @Builder.Default
     long absentAllowedAtMs = 0L;
+    /**
+     * CR232: probe-only interest runs ONLY the provider's small-ROI local template matching. The
+     * watcher must not run generic dialog detection (attention publish / full dialog capture) for
+     * it while pathing is active. Cleared (re-registered false) once the pathing terminal upgrades
+     * the interest to the full parallel local+cloud chain.
+     */
+    @Builder.Default
+    boolean localTemplateProbeOnly = false;
+    /**
+     * CR232: watcher-side preparation for this interest may only start at/after this timestamp
+     * (accept-success + 25s for 修罗 enter-battle). Zero means no delay gate.
+     */
+    @Builder.Default
+    long probeStartAtMs = 0L;
 
     public boolean isExpired(long nowMs) {
         return expiresAtMs > 0L && nowMs > expiresAtMs;
@@ -45,5 +59,9 @@ public class WindowDialogInterest {
 
     public boolean isAbsentAllowed(long nowMs) {
         return absentAllowedAtMs > 0L && nowMs >= absentAllowedAtMs;
+    }
+
+    public boolean isProbeStartReached(long nowMs) {
+        return probeStartAtMs <= 0L || nowMs >= probeStartAtMs;
     }
 }

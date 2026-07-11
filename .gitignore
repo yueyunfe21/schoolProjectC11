@@ -41,9 +41,19 @@ docs/run-reports/
 images/*
 !images/template/
 !images/template/**
+!images/calibrate/
+!images/calibrate/npc_menu_clean_sample.png
 
 # Local/generated image evidence outside template.
 images/test-cases/
+!images/test-cases/
+images/test-cases/*
+!images/test-cases/summon-skill/
+!images/test-cases/summon-skill/**
+!images/test-cases/npc/
+!images/test-cases/npc/**
+!images/test-cases/dialog/
+!images/test-cases/dialog/**
 images/temp/
 images/failure-cases/
 images/img.png

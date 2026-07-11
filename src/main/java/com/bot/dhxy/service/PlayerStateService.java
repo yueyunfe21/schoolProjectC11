@@ -9,43 +9,41 @@ import lombok.experimental.Accessors;
 
 
 import com.bot.dhxy.model.ocr.LocationInfo;
-import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.cloud.task.SheyaoxiangStatusCloudDecision;
+import com.bot.dhxy.cloud.task.SheyaoxiangStatusCloudDecisionService;
+import com.bot.dhxy.cloud.task.SheyaoxiangStatusCloudRequest;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.vision.LocationVisionService;
-import com.bot.dhxy.vision.SheyaoxiangDigitTemplateReader;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.awt.MouseInfo;
-import java.awt.Point;
-import java.awt.PointerInfo;
 import java.awt.image.BufferedImage;
-import java.io.File;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalLong;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 
 /**
@@ -71,15 +69,18 @@ public class PlayerStateService {
     private final BagService bagService;
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final BotProperties config;
-    private final TextRecognizer textRecognizer;
     private final WindowScopedTempPath windowScopedTempPath;
-    private final SheyaoxiangDigitTemplateReader sheyaoxiangDigitTemplateReader = new SheyaoxiangDigitTemplateReader();
+    private final SheyaoxiangStatusCloudDecisionService sheyaoxiangStatusCloudDecisionService;
 
     private final Map<String, PlayerRuntimeState> runtimeStates = new ConcurrentHashMap<>();
     private static final long INCENSE_DURATION_MS = 59 * 60 * 1000L;
     private static final long INCENSE_REFRESH_REMAINING_MS = 20 * 60 * 1000L;
-    private static final long INCENSE_MEMORY_TRUST_MS = 50 * 60 * 1000L;
-    private static final long ONE_HOUR_MS = 60 * 60 * 1000L;
+    /**
+     * CR231: safety margin before the cloud refresh threshold. The post-use quiet window ends this
+     * much earlier than (duration - refresh threshold) so the first resumed cloud check still sees
+     * a positive remaining budget instead of racing the 20-minute boundary.
+     */
+    private static final long INCENSE_QUIET_MARGIN_MS = 2 * 60 * 1000L;
 
     private static final int MAX_CHECKS_BETWEEN_BATTLES = 1;
 
@@ -99,29 +100,20 @@ public class PlayerStateService {
     private static final int BAR_SAMPLE_RADIUS_X = 2;
     private static final int BAR_SAMPLE_RADIUS_Y = 1;
     private static final int HIGHER_HEALTH_PROBE_OFFSET = 10;
+    private static final int NEAR_THRESHOLD_HEALTH_MARGIN_PERCENT = 3;
     private static final int HEAL_CONFIRM_DELAY_MS = 350;
     /*
-     * Player-state snapshots read the status bars and 摄妖香 area. Move the cursor to a random
-     * in-window point before capture, but never into the user-confirmed top-right forbidden area:
-     * absolute (2076,180) was measured on base=(1315,33), so its window-relative left-bottom corner
-     * is approximately (761,147). The forbidden rectangle is relX>=761 && relY<=147.
+     * First-aid HP/MP clicks can leave a client-relative hover tooltip in the game window. CR150
+     * clears that hover at the end of the real supply input, and deliberately avoids the
+     * user-confirmed top-right forbidden area: absolute (2076,180) was measured on base=(1315,33),
+     * so its window-relative left-bottom corner is approximately (761,147). The forbidden rectangle
+     * is relX>=761 && relY<=147.
      */
     private static final int GAME_CLIENT_WIDTH = 1024;
     private static final int GAME_CLIENT_HEIGHT = 768;
     private static final int SAFE_MOUSE_FORBIDDEN_LEFT_REL_X = 761;
     private static final int SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y = 147;
     private static final int SAFE_MOUSE_HOVER_CLEAR_DELAY_MS = 300;
-    private static final int PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING = 12;
-
-    /*
-     * 摄妖香剩余时间文本颜色。游戏中 RGB=(0,255,255) 的青色数字表示剩余小时；
-     * 如果没有青色小时，再读取绿色数字并按剩余分钟处理。
-     */
-    private static final int SHEYAOXIANG_AT_LEAST_ONE_HOUR_RGB = 0x00FFFF;
-    private static final String SHEYAOXIANG_STATUS_TEMPLATE = "images/template/status/sheyaoxiang_buff.png";
-    private static final double SHEYAOXIANG_STATUS_MATCH_RATE = 0.85;
-    private static final int SHEYAOXIANG_DIGIT_OCR_SCALE = 6;
-    private static final Pattern SHEYAOXIANG_REMAINING_HOUR_PATTERN = Pattern.compile("\\d{1,2}");
 
     /*
      * 摄妖香状态图标检测框。这个区域是窗口相对坐标，当前按用户实测的
@@ -132,9 +124,6 @@ public class PlayerStateService {
     private static final int STATUS_PANEL_Y = 123;
     private static final int STATUS_PANEL_W = 123;
     private static final int STATUS_PANEL_H = 34;
-    private static final int INCENSE_CACHED_ICON_PROBE_WIDTH = 48;
-    private static final int INCENSE_CACHED_ICON_PROBE_LEFT_PADDING = 6;
-
     /**
      * Refresh the current character identity from the bound window title and/or OCR fallback.
      *
@@ -219,8 +208,73 @@ public class PlayerStateService {
         PlayerRuntimeState state = state();
         state.checksDoneThisRound = 0;
         state.lastCombatExitTime = 0;
-        log.info("🩺 启动急救检查：重置本窗口急救计数，准备检查人物/宝宝血法");
-        performFirstAidCheck(true, taskContext);
+        log.info("🩺 启动急救检查：重置本窗口急救计数，准备 no-focus 预检人物/宝宝血法");
+        FirstAidNoFocusProbeResult result =
+                probeAndConsumeHealthyFirstAidNoFocus(taskContext, "startup");
+        if (result == FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                || result == FirstAidNoFocusProbeResult.UNKNOWN) {
+            if (!performCachedFirstAidPlanNow(taskContext)) {
+                log.warn("startup first-aid skipped: cached plan unavailable after no-focus precheck result={}",
+                        result);
+            }
+        }
+    }
+
+    /**
+     * Precompute the startup HP/MP decision while the window is still off-turn.
+     *
+     * <p>The probe is read-only and no-focus. A healthy result lets the later focused PREPARE skip
+     * the same scan; a low/unknown result keeps the existing cached first-aid plan for the focused
+     * turn to consume. This does not click or change bag state.</p>
+     *
+     * @param taskContext optional stop token for the current task.
+     * @param source diagnostic source for logs.
+     */
+    public void prepareStartupFirstAidNoFocus(TaskExecutionContext taskContext, String source) {
+        checkpoint(taskContext);
+        PlayerRuntimeState state = state();
+        state.checksDoneThisRound = 0;
+        state.lastCombatExitTime = 0;
+        FirstAidNoFocusProbeResult result =
+                probeAndConsumeHealthyFirstAidNoFocus(taskContext, safeReason(source));
+        state.startupFirstAidPrecheckResult = result;
+        state.startupFirstAidPrecheckAtMs = System.currentTimeMillis();
+        log.info("startup first-aid background precheck stored: source={} result={} pendingPlan={}",
+                safeReason(source), result, state.pendingNoFocusFirstAidPlan != null);
+    }
+
+    /**
+     * Consume a fresh startup first-aid precheck or fall back to the original foreground startup check.
+     *
+     * @param taskContext optional stop token for the current task.
+     * @param maxAgeMs maximum age for trusting a read-only startup precheck.
+     */
+    public void performStartupFirstAidCheckFromPrecheckOrRun(TaskExecutionContext taskContext, long maxAgeMs) {
+        checkpoint(taskContext);
+        PlayerRuntimeState state = state();
+        FirstAidNoFocusProbeResult result = state.startupFirstAidPrecheckResult;
+        long ageMs = state.startupFirstAidPrecheckAtMs <= 0L
+                ? -1L
+                : Math.max(0L, System.currentTimeMillis() - state.startupFirstAidPrecheckAtMs);
+        boolean fresh = result != null && (maxAgeMs <= 0L || ageMs <= maxAgeMs);
+        state.startupFirstAidPrecheckResult = null;
+        state.startupFirstAidPrecheckAtMs = 0L;
+        if (!fresh) {
+            log.info("startup first-aid precheck unavailable/stale: result={} ageMs={} maxAgeMs={}; run foreground check",
+                    result, ageMs, maxAgeMs);
+            performStartupFirstAidCheck(taskContext);
+            return;
+        }
+        if (result == FirstAidNoFocusProbeResult.HEALTHY
+                || result == FirstAidNoFocusProbeResult.ALREADY_DONE) {
+            log.info("startup first-aid skipped by fresh no-focus precheck: result={} ageMs={}", result, ageMs);
+            return;
+        }
+        if (!performCachedFirstAidPlanNow(taskContext)) {
+            log.warn("startup first-aid precheck requires supply but cached plan unavailable: result={} ageMs={}; run foreground check",
+                    result, ageMs);
+            performStartupFirstAidCheck(taskContext);
+        }
     }
 
     /**
@@ -228,8 +282,8 @@ public class PlayerStateService {
      *
      * <p>Follower windows call this immediately after a combat-exit signal. The probe uses a
      * no-focus HWND screenshot only. A healthy result is enough to avoid joining the task-turn
-     * queue; a low or unknown result still lets the caller defer real recovery until it can safely
-     * own physical input.</p>
+     * queue; a low or unknown result leaves a cached exact or conservative plan for the caller to
+     * execute later. Pending callers must consume that plan instead of probing again.</p>
      *
      * @param taskContext optional task stop token; null is allowed for legacy callers.
      * @param source short diagnostic label for logs.
@@ -254,7 +308,8 @@ public class PlayerStateService {
      * @param taskContext optional task stop token; null is allowed for legacy callers.
      * @return SUPPLY_NEEDED only when a visible enabled bar is below threshold; HEALTHY when the
      * no-focus screenshot is readable and all enabled bars pass; UNKNOWN when the safe screenshot
-     * cannot be read.
+     * cannot be read. UNKNOWN with a known window base caches a conservative plan that supplements
+     * all enabled HP/MP targets.
      */
     public FirstAidNoFocusProbeResult probeFirstAidSupplyNoFocus(TaskExecutionContext taskContext) {
         checkpoint(taskContext);
@@ -264,22 +319,38 @@ public class PlayerStateService {
                     state.checksDoneThisRound, MAX_CHECKS_BETWEEN_BATTLES);
             return FirstAidNoFocusProbeResult.ALREADY_DONE;
         }
-        if (tracker.getWindowBaseX() == -1) {
-            log.warn("first-aid no-focus precheck skipped: window base unavailable");
+        int planBaseX = tracker.getWindowBaseX();
+        int planBaseY = tracker.getWindowBaseY();
+        if (planBaseX == -1 || planBaseY == -1) {
+            log.warn("first-aid no-focus precheck skipped: window base unavailable base=({}, {})",
+                    planBaseX, planBaseY);
             state.pendingNoFocusFirstAidPlan = null;
             return FirstAidNoFocusProbeResult.UNKNOWN;
         }
 
         BufferedImage bars = captureBarsSnapshotNoFocus();
+        GameClientTracker.CaptureAudit captureAudit = tracker.getLastCaptureAudit();
         if (bars == null) {
-            log.warn("first-aid no-focus precheck failed: bars snapshot unavailable");
-            state.pendingNoFocusFirstAidPlan = null;
+            log.warn("first-aid no-focus precheck failed: bars snapshot unavailable windowId={} player={} base=({}, {}) roiRel=({}, {}) {}x{} capture={}",
+                    currentWindowId(), currentPlayerForLog(), planBaseX, planBaseY,
+                    BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H,
+                    captureAudit.toLogText());
+            cacheConservativeFirstAidPlan(state, planBaseX, planBaseY, "bars-snapshot-unavailable");
             return FirstAidNoFocusProbeResult.UNKNOWN;
         }
-        int planBaseX = tracker.getWindowBaseX();
-        int planBaseY = tracker.getWindowBaseY();
         try {
-            List<FirstAidTarget> targets = findSupplyTargetsFromSnapshot(bars);
+            FirstAidProbeSummary summary = inspectSupplyTargetsFromSnapshot(bars, planBaseX, planBaseY, captureAudit);
+            if (summary.unknown()) {
+                cacheConservativeFirstAidPlan(state, planBaseX, planBaseY, summary.reason());
+                log.warn("first-aid no-focus precheck result: decision=UNKNOWN needed=true reason={} targets={} windowId={} player={} planBase=({}, {}) roiRel=({}, {}) {}x{} capture={} bars={}",
+                        summary.reason(), describeFirstAidTargets(state.pendingNoFocusFirstAidPlan == null
+                                ? List.of() : state.pendingNoFocusFirstAidPlan.targets()),
+                        currentWindowId(), currentPlayerForLog(), planBaseX, planBaseY,
+                        BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H,
+                        captureAudit.toLogText(), summary.describe());
+                return FirstAidNoFocusProbeResult.UNKNOWN;
+            }
+            List<FirstAidTarget> targets = summary.targets();
             if (!targets.isEmpty()) {
                 /*
                  * This is the 医宝宝-style precompute path: watcher/no-focus work decides exactly
@@ -290,12 +361,23 @@ public class PlayerStateService {
             } else {
                 state.pendingNoFocusFirstAidPlan = null;
             }
-            log.info("first-aid no-focus precheck result: needed={} targets={} planBase=({}, {})",
-                    !targets.isEmpty(), describeFirstAidTargets(targets), planBaseX, planBaseY);
+            log.info("first-aid no-focus precheck result: decision={} needed={} reason={} targets={} windowId={} player={} planBase=({}, {}) roiRel=({}, {}) {}x{} capture={} bars={}",
+                    targets.isEmpty() ? "HEALTHY" : "SUPPLY_NEEDED", !targets.isEmpty(), summary.reason(),
+                    describeFirstAidTargets(targets), currentWindowId(), currentPlayerForLog(), planBaseX, planBaseY,
+                    BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H,
+                    captureAudit.toLogText(), summary.describe());
             return targets.isEmpty() ? FirstAidNoFocusProbeResult.HEALTHY : FirstAidNoFocusProbeResult.SUPPLY_NEEDED;
         } finally {
             bars.flush();
         }
+    }
+
+    /**
+     * @return true when the current window has a precomputed first-aid plan waiting for real input.
+     */
+    public boolean hasPendingNoFocusFirstAidPlanForCurrentWindow() {
+        FirstAidPlan plan = state().pendingNoFocusFirstAidPlan;
+        return plan != null && !plan.targets().isEmpty();
     }
 
     /**
@@ -360,16 +442,23 @@ public class PlayerStateService {
                     refreshed, baseX, baseY, refreshedBaseX, refreshedBaseY);
         }
 
-        Point safePoint = randomMouseAwayPoint(baseX, baseY);
-        inputProvider.moveMouse(safePoint.x, safePoint.y);
-        TaskSleep.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS);
+        boolean supplied = false;
         for (FirstAidTarget target : plan.targets()) {
             int absX = baseX + target.relX();
             int absY = baseY + target.relY();
             log.warn("🚨 后台预计算命中 [{}]，按当前窗口补给：base=({}, {}) rel=({}, {}) abs=({}, {}) threshold={}%",
                     target.name(), baseX, baseY, target.relX(), target.relY(), absX, absY, target.threshold());
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.clickRight(absX, absY, 100);
-            TaskSleep.sleep(800);
+            if (!TaskSleep.sleep(800) || !InputActionScope.checkpoint()) {
+                return false;
+            }
+            supplied = true;
+        }
+        if (supplied) {
+            moveMouseAwayAfterFirstAidSupplyDirect("playerState:healCachedPlan", baseX, baseY);
         }
         return !Thread.currentThread().isInterrupted();
     }
@@ -456,17 +545,21 @@ public class PlayerStateService {
             return true;
         }
 
+        boolean supplied = false;
         try {
-            checkAndHealFromSnapshotIfEnabled(bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+            supplied |= checkAndHealFromSnapshotIfEnabled(bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
                     BAR_HP_Y, true, config.isPlayerHpSupplyEnabled(), config.getPlayerHpSupplyThreshold());
-            checkAndHealFromSnapshotIfEnabled(bars, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+            supplied |= checkAndHealFromSnapshotIfEnabled(bars, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
                     BAR_MP_Y, false, config.isPlayerMpSupplyEnabled(), config.getPlayerMpSupplyThreshold());
-            checkAndHealFromSnapshotIfEnabled(bars, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+            supplied |= checkAndHealFromSnapshotIfEnabled(bars, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
                     BAR_HP_Y, true, config.isPetHpSupplyEnabled(), config.getPetHpSupplyThreshold());
-            checkAndHealFromSnapshotIfEnabled(bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+            supplied |= checkAndHealFromSnapshotIfEnabled(bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
                     BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold());
         } finally {
             bars.flush();
+        }
+        if (supplied) {
+            moveMouseAwayAfterFirstAidSupply("playerState:healAllDirect");
         }
         return !Thread.currentThread().isInterrupted();
     }
@@ -516,7 +609,8 @@ public class PlayerStateService {
     public boolean ensureSheYaoXiangActive(TaskExecutionContext taskContext) {
         return ensureSheYaoXiangActive(taskContext,
                 (targetItemTemplate, context) -> bagService.findAndUseItem(
-                        BagService.MAIN_BAG, targetItemTemplate, null, context));
+                        BagService.MAIN_BAG, targetItemTemplate, null, context),
+                false);
     }
 
     /**
@@ -528,120 +622,62 @@ public class PlayerStateService {
      */
     public boolean ensureSheYaoXiangActiveInOpenMainBag(BagService.MainBagSession mainBag,
                                                         TaskExecutionContext taskContext) {
-        return ensureSheYaoXiangActive(taskContext, (targetItemTemplate, context) -> mainBag.useItem(targetItemTemplate, null));
+        return ensureSheYaoXiangActive(taskContext,
+                (targetItemTemplate, context) -> mainBag.useItem(targetItemTemplate, null),
+                true);
     }
 
-    private boolean ensureSheYaoXiangActive(TaskExecutionContext taskContext, IncenseItemUser itemUser) {
+    private boolean ensureSheYaoXiangActive(TaskExecutionContext taskContext,
+                                            IncenseItemUser itemUser,
+                                            boolean openMainBagSession) {
         long latencyStart = LatencyMetrics.start();
         try {
             checkpoint(taskContext);
             PlayerRuntimeState state = state();
             long now = System.currentTimeMillis();
-            int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
-            IncenseStatusProbe statusProbe = null;
-            if (state.lastIncenseUsedTime > 0 && now - state.lastIncenseUsedTime < INCENSE_MEMORY_TRUST_MS) {
-                long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-                long trustMinutes = INCENSE_MEMORY_TRUST_MS / 60000;
-                IncenseIconProbe iconProbe = probeIncenseIconPresence(state, statusRect);
-                if (iconProbe.presence() == IncenseIconPresence.PRESENT) {
-                    java.awt.Point iconPoint = iconProbe.iconPoint();
-                    rememberIncenseIconPoint(state, statusRect, iconPoint);
-                    state.nextIncenseRetryTime = 0;
-                    log.info("🕯️ memory-gate-icon-present: 摄妖香由本程序补充后仅过去 {} 分钟，未超过 {} 分钟内存信任窗口；状态栏图标仍在，跳过包裹检查。point=({}, {})",
-                            elapsedMinutes, trustMinutes, iconPoint.x, iconPoint.y);
-                    return false;
-                }
-                if (iconProbe.presence() == IncenseIconPresence.UNKNOWN) {
-                    log.warn("⚠️ memory-gate-icon-unknown-full-probe: fresh memory age={}m < {}m, reason={}，改走完整状态探测。",
-                            elapsedMinutes, trustMinutes, iconProbe.reason());
-                    statusProbe = probeIncenseStatus(statusRect);
-                    if (statusProbe.iconPoint() != null) {
-                        rememberIncenseIconPoint(state, statusRect, statusProbe.iconPoint());
-                        state.nextIncenseRetryTime = 0;
-                        if (statusProbe.remainingMs().isPresent()) {
-                            state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(now, statusProbe.remainingMs().getAsLong());
-                        }
-                        log.info("🕯️ memory-gate-icon-unknown-full-probe-present: 完整探测证明摄妖香图标仍在，跳过包裹检查。point=({}, {}) remaining={}",
-                                statusProbe.iconPoint().x, statusProbe.iconPoint().y, statusProbe.remainingText());
-                        return false;
-                    }
-                    log.warn("⚠️ memory-gate-icon-unknown-full-probe-unproven: 完整探测仍不能证明摄妖香存在，准备补香。");
-                } else {
-                    log.warn("⚠️ memory-gate-icon-absent-refill: fresh memory age={}m < {}m, 但状态栏摄妖香图标不存在，准备补香。",
-                            elapsedMinutes, trustMinutes);
-                    statusProbe = IncenseStatusProbe.notFound();
-                }
-            }
-
-            if (state.lastIncenseUsedTime > 0) {
-                long elapsedMinutes = Math.max(0, (now - state.lastIncenseUsedTime) / 60000);
-                log.info("🕯️ 摄妖香由本程序补充后已过去 {} 分钟，进入状态栏/补香校验流程。", elapsedMinutes);
-            } else {
-                log.info("🕯️ 摄妖香没有本程序补充时间记录，开始执行安全校验...");
-            }
-
-            if (now < state.nextIncenseRetryTime) {
-                long remainingSeconds = Math.max(1, (state.nextIncenseRetryTime - now + 999) / 1000);
-                log.warn("⚠️ 摄妖香上次补充失败，仍在重试冷却中，剩余 {} 秒，跳过包裹检查。", remainingSeconds);
-                return false;
-            }
-
-            if (statusProbe == null) {
-                statusProbe = probeIncenseStatus(statusRect);
-            }
-            java.awt.Point buffIcon = statusProbe.iconPoint();
-
             /*
-             * Template match means the incense buff exists. Cyan text is an hour count; green text is
-             * a minute count. If neither color yields a readable number, refill conservatively so the
-             * in-memory watch gets rebuilt from a known use time.
+             * CR231 quiet period: incense presence/remaining/refresh is still decided by the cloud,
+             * but a trusted lastIncenseUsedTime (written only after a successful local use, or
+             * back-computed from a trusted cloud remainingMs) proves the refresh threshold cannot
+             * be due yet. During that window skip the whole chain — no TICK, no status capture, no
+             * upload, no bag. lastIncenseUsedTime==0 (unknown/never/identity drift reset) never
+             * enters the quiet period, so failure and unknown states keep the full cloud check.
              */
-            if (buffIcon != null && statusProbe.remainingMs().isPresent()) {
-                long remainingMs = statusProbe.remainingMs().getAsLong();
-                rememberIncenseIconPoint(state, statusRect, buffIcon);
-                state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(now, remainingMs);
-                state.nextIncenseRetryTime = 0;
-                if (remainingMs > INCENSE_REFRESH_REMAINING_MS) {
-                    log.info("sheyaoxiang status matched with {}; remainingMinutes={} > refreshLineMinutes={}; skip refill. point=({}, {})",
-                            statusProbe.remainingText(), Math.max(0, remainingMs / 60000),
-                            INCENSE_REFRESH_REMAINING_MS / 60000, buffIcon.x, buffIcon.y);
-                    return false;
+            long quietWindowMs = INCENSE_DURATION_MS - INCENSE_REFRESH_REMAINING_MS - INCENSE_QUIET_MARGIN_MS;
+            long sinceLastUseMs = now - state.lastIncenseUsedTime;
+            if (state.lastIncenseUsedTime > 0 && sinceLastUseMs >= 0 && sinceLastUseMs < quietWindowMs) {
+                log.info("sheyaoxiang quiet period; skip cloud check: windowId={} sinceLastUseMs={} quietWindowMs={} quietRemainingMs={} estimatedIncenseRemainingMs={}",
+                        currentWindowId(), sinceLastUseMs, quietWindowMs, quietWindowMs - sinceLastUseMs,
+                        Math.max(0L, INCENSE_DURATION_MS - sinceLastUseMs));
+                return false;
+            }
+            int[] statusRect = coordinateHelper.getScaledRect(STATUS_PANEL_X, STATUS_PANEL_Y, STATUS_PANEL_W, STATUS_PANEL_H);
+            SheyaoxiangStatusCloudDecision decision = sheyaoxiangStatusCloudDecisionService.decide(
+                    buildSheyaoxiangCloudRequest(state, taskContext, statusRect, openMainBagSession,
+                            SheyaoxiangStatusCloudRequest.Hook.TICK, null, null, null));
+            if (decision.shouldCaptureStatus()) {
+                decision = captureSheyaoxiangStatusAndAskCloud(state, taskContext, statusRect,
+                        openMainBagSession, decision);
+            }
+
+            applySheyaoxiangCloudFacts(state, statusRect, decision);
+            if (!decision.shouldUseIncense()) {
+                if (decision.failClosed()) {
+                    log.warn("sheyaoxiang cloud fail-closed: windowId={} action={} reason={} decisionId={}",
+                            currentWindowId(), decision.getAction(), decision.getReason(), decision.getDecisionId());
+                } else {
+                    log.info("sheyaoxiang cloud no-use: windowId={} action={} present={} remainingMs={} source={} reason={} decisionId={}",
+                            currentWindowId(), decision.getAction(), decision.getPresent(), decision.getRemainingMs(),
+                            decision.getRemainingSource(), decision.getReason(), decision.getDecisionId());
                 }
-                log.info("sheyaoxiang status matched with {}; remainingMinutes={} <= refreshLineMinutes={}; refill now. point=({}, {})",
-                        statusProbe.remainingText(), Math.max(0, remainingMs / 60000),
-                        INCENSE_REFRESH_REMAINING_MS / 60000, buffIcon.x, buffIcon.y);
-            }
-            if (buffIcon != null && statusProbe.remainingText().startsWith("green-digits-learning")) {
-                rememberIncenseIconPoint(state, statusRect, buffIcon);
-                log.info("sheyaoxiang status matched but minute digits are still learning; skip refill to avoid partial OCR refill. remaining={} point=({}, {})",
-                        statusProbe.remainingText(), buffIcon.x, buffIcon.y);
                 return false;
             }
 
-            if (state.lastIncenseUsedTime > 0 && buffIcon == null) {
-                log.warn("⚠️ 摄妖香状态图标未发现，准备打开包裹补充...");
-            } else if (state.lastIncenseUsedTime > 0) {
-                log.info("🕯️ 摄妖香状态仍在，但已经进入主动补香窗口，准备打开包裹补充。");
-            } else if (buffIcon != null) {
-                log.info("✅ 发现摄妖香状态图标还在，但没有本程序补香时间记录，主动补一根以重建计时基准。point=({}, {})",
-                        buffIcon.x, buffIcon.y);
-            } else {
-                log.warn("⚠️ 未发现摄妖香状态，准备打开包裹补充...");
-            }
-            boolean used = itemUser.use("bag/sheyaoxiang_item.png", taskContext);
-            checkpoint(taskContext);
-
-            if (used) {
-                log.info("✅ 成功使用摄妖香，怀表已重置为 1 小时。等待吃香动画...");
-                state.lastIncenseUsedTime = System.currentTimeMillis();
-                state.nextIncenseRetryTime = 0;
-                TaskSleep.sleep(1000);
-                return true;
-            } else {
-                log.error("❌ 包裹内未找到摄妖香，请及时购买补充。1 分钟后才会再试。 ");
-                state.nextIncenseRetryTime = System.currentTimeMillis() + 60000;
-                return false;
-            }
+            log.warn("sheyaoxiang cloud requested USE_INCENSE: windowId={} present={} remainingMs={} source={} reason={} decisionId={}",
+                    currentWindowId(), decision.getPresent(), decision.getRemainingMs(), decision.getRemainingSource(),
+                    decision.getReason(), decision.getDecisionId());
+            return executeCloudRequestedIncenseUse(taskContext, itemUser, state, statusRect,
+                    openMainBagSession, decision);
         } finally {
             LatencyMetrics.info(log, "player.sheyaoxiang.ensure", latencyStart,
                     "context=" + (taskContext == null ? "-" : taskContext.getTaskCode()));
@@ -691,12 +727,11 @@ public class PlayerStateService {
 
         int rgb = pixelImg.getRGB(0, 0);
         pixelImg.flush();
-        return healIfUnhealthy(name, absX, absY, rgb, expectRed, normalizedThreshold);
+        return healIfUnhealthy(name, absX, absY, rgb, expectRed, normalizedThreshold, true);
     }
 
     private BufferedImage captureBarsSnapshot() {
         int[] rect = coordinateHelper.getScaledRect(BARS_SCAN_LEFT_X, BARS_SCAN_TOP_Y, BARS_SCAN_W, BARS_SCAN_H);
-        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("player-state-bars", rect);
         return tracker.captureToMemory("player-state-bars", rect[0], rect[1], rect[2], rect[3]);
     }
 
@@ -705,56 +740,52 @@ public class PlayerStateService {
         return tracker.captureToMemory("player-state-bars-precheck", rect[0], rect[1], rect[2], rect[3]);
     }
 
-    private void moveMouseAwayBeforePlayerStateSnapshotIfNeeded(String source, int[] captureRect) {
-        Point mouse = currentLogicalMousePoint();
-        if (!mouseOverCaptureRect(mouse, captureRect)) {
-            log.debug("player-state snapshot mouse clear: source={} mouse={} rect={}",
-                    source, formatPoint(mouse), formatRect(captureRect));
+    private void moveMouseAwayAfterFirstAidSupply(String source) {
+        int baseX = tracker.getWindowBaseX();
+        int baseY = tracker.getWindowBaseY();
+        if (baseX == -1 || baseY == -1) {
+            log.warn("first-aid hover cleanup skipped: source={} windowId={} base unavailable base=({}, {})",
+                    safeReason(source), currentWindowId(), baseX, baseY);
             return;
         }
         if (isInputWorkerThread()) {
-            moveMouseAwayBeforePlayerStateSnapshotDirect(source, mouse, captureRect);
-        } else {
-            moveMouseAwayBeforePlayerStateSnapshot(source, mouse, captureRect);
-        }
-    }
-
-    private boolean mouseOverCaptureRect(Point mouse, int[] captureRect) {
-        if (mouse == null || captureRect == null || captureRect.length < 4) {
-            return false;
-        }
-        int left = Math.min(captureRect[0], captureRect[2]) - PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
-        int right = Math.max(captureRect[0], captureRect[2]) + PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
-        int top = Math.min(captureRect[1], captureRect[3]) - PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
-        int bottom = Math.max(captureRect[1], captureRect[3]) + PLAYER_STATE_MOUSE_OBSTRUCTION_PADDING;
-        return mouse.x >= left && mouse.x <= right && mouse.y >= top && mouse.y <= bottom;
-    }
-
-    private void moveMouseAwayBeforePlayerStateSnapshot(String source, Point mouse, int[] captureRect) {
-        if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
+            moveMouseAwayAfterFirstAidSupplyDirect(source, baseX, baseY);
             return;
         }
-        Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
-        log.info("player-state snapshot mouse overlaps capture; move away before snapshot: source={} mouse={} rect={} target={}",
-                source, formatPoint(mouse), formatRect(captureRect), formatPoint(safePoint));
-        inputSequences.submitAndWait("playerState:moveMouseAwayBeforeSnapshot", List.of(
-                InputAction.moveMouse(safePoint.x, safePoint.y),
+        SafeMousePoint safePoint = randomFirstAidHoverSafePoint(baseX, baseY);
+        logFirstAidHoverCleanupMove(source, baseX, baseY, safePoint, "queued-input-worker");
+        inputSequences.submitAndWait("playerState:firstAidHoverCleanup:" + safeReason(source), List.of(
+                InputAction.moveMouse(safePoint.absX(), safePoint.absY()),
                 InputAction.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS)
         ));
     }
 
-    private void moveMouseAwayBeforePlayerStateSnapshotDirect(String source, Point mouse, int[] captureRect) {
-        if (tracker.getWindowBaseX() == -1 || tracker.getWindowBaseY() == -1) {
+    private void moveMouseAwayAfterFirstAidSupplyDirect(String source, int baseX, int baseY) {
+        if (baseX == -1 || baseY == -1) {
+            log.warn("first-aid hover cleanup skipped: source={} windowId={} base unavailable base=({}, {})",
+                    safeReason(source), currentWindowId(), baseX, baseY);
             return;
         }
-        Point safePoint = randomMouseAwayPoint(tracker.getWindowBaseX(), tracker.getWindowBaseY());
-        log.info("player-state snapshot mouse overlaps capture; move away directly before snapshot: source={} mouse={} rect={} target={}",
-                source, formatPoint(mouse), formatRect(captureRect), formatPoint(safePoint));
-        inputProvider.moveMouse(safePoint.x, safePoint.y);
+        SafeMousePoint safePoint = randomFirstAidHoverSafePoint(baseX, baseY);
+        logFirstAidHoverCleanupMove(source, baseX, baseY, safePoint, "direct-input-worker");
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
+        inputProvider.moveMouse(safePoint.absX(), safePoint.absY());
         TaskSleep.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS);
     }
 
-    private Point randomMouseAwayPoint(int baseX, int baseY) {
+    private void logFirstAidHoverCleanupMove(String source,
+                                             int baseX,
+                                             int baseY,
+                                             SafeMousePoint safePoint,
+                                             String inputPath) {
+        log.info("first-aid hover cleanup safe move: source={} windowId={} base=({}, {}) safeRel=({}, {}) safeAbs=({}, {}) inputPath={}",
+                safeReason(source), currentWindowId(), baseX, baseY, safePoint.relX(), safePoint.relY(),
+                safePoint.absX(), safePoint.absY(), inputPath);
+    }
+
+    private SafeMousePoint randomFirstAidHoverSafePoint(int baseX, int baseY) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         int relX;
         int relY;
@@ -762,28 +793,7 @@ public class PlayerStateService {
             relX = random.nextInt(GAME_CLIENT_WIDTH);
             relY = random.nextInt(GAME_CLIENT_HEIGHT);
         } while (relX >= SAFE_MOUSE_FORBIDDEN_LEFT_REL_X && relY <= SAFE_MOUSE_FORBIDDEN_BOTTOM_REL_Y);
-        return new Point(baseX + relX, baseY + relY);
-    }
-
-    private Point currentLogicalMousePoint() {
-        PointerInfo pointerInfo = MouseInfo.getPointerInfo();
-        if (pointerInfo == null) {
-            return null;
-        }
-        double scale = coordinateHelper.getScaleRatio();
-        Point physical = pointerInfo.getLocation();
-        return new Point((int) Math.round(physical.x / scale), (int) Math.round(physical.y / scale));
-    }
-
-    private String formatPoint(Point point) {
-        return point == null ? "unknown" : "(" + point.x + ", " + point.y + ")";
-    }
-
-    private String formatRect(int[] rect) {
-        if (rect == null || rect.length < 4) {
-            return "unknown";
-        }
-        return "(" + rect[0] + ", " + rect[1] + ")-(" + rect[2] + ", " + rect[3] + ")";
+        return new SafeMousePoint(relX, relY, baseX + relX, baseY + relY);
     }
 
     private boolean checkAndHealFromSnapshotIfEnabled(BufferedImage bars, String name,
@@ -811,6 +821,95 @@ public class PlayerStateService {
         return candidates;
     }
 
+    private FirstAidProbeSummary inspectSupplyTargetsFromSnapshot(BufferedImage bars,
+                                                                  int baseX,
+                                                                  int baseY,
+                                                                  GameClientTracker.CaptureAudit captureAudit) {
+        List<FirstAidTarget> targets = new ArrayList<>();
+        List<FirstAidBarProbe> probes = new ArrayList<>();
+        probes.add(probeFirstAidBar(bars, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPlayerHpSupplyEnabled(), config.getPlayerHpSupplyThreshold()));
+        probes.add(probeFirstAidBar(bars, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPlayerMpSupplyEnabled(), config.getPlayerMpSupplyThreshold()));
+        probes.add(probeFirstAidBar(bars, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPetHpSupplyEnabled(), config.getPetHpSupplyThreshold()));
+        probes.add(probeFirstAidBar(bars, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold()));
+
+        boolean enabledSeen = false;
+        boolean readableSeen = false;
+        for (FirstAidBarProbe probe : probes) {
+            log.info("first-aid no-focus bar probe: windowId={} player={} base=({}, {}) target={} enabled={} decision={} reason={} threshold={} observedPercent={} healthyColumns={}/{} thresholdSample={}/{} higherSample={}/{} sampleRel=({}, {}) higherRel=({}, {}) rgb={} roiRel=({}, {})-({}, {}) capture={}",
+                    currentWindowId(), currentPlayerForLog(), baseX, baseY, probe.name(), probe.enabled(),
+                    probe.decision(), probe.reason(), probe.threshold(), probe.observedPercent(),
+                    probe.healthyColumns(), probe.totalColumns(), probe.thresholdHealthyCount(), probe.sampleAreaPixels(),
+                    probe.higherHealthyCount(), probe.sampleAreaPixels(), probe.relX(), probe.relY(),
+                    probe.higherRelX(), probe.relY(), probe.rgbText(),
+                    probe.leftX(), probe.relY() - BAR_SAMPLE_RADIUS_Y,
+                    probe.rightX(), probe.relY() + BAR_SAMPLE_RADIUS_Y, captureAudit.toLogText());
+            if (!probe.enabled()) {
+                continue;
+            }
+            enabledSeen = true;
+            if (probe.readable()) {
+                readableSeen = true;
+            }
+            if (probe.supplyNeeded()) {
+                targets.add(new FirstAidTarget(probe.name(), probe.relX(), probe.relY(),
+                        probe.expectRed(), probe.threshold()));
+            }
+        }
+        if (!enabledSeen) {
+            return new FirstAidProbeSummary(List.of(), probes, false, "all-targets-disabled");
+        }
+        if (!readableSeen) {
+            return new FirstAidProbeSummary(List.of(), probes, true, "no-enabled-bar-readable");
+        }
+        String reason = targets.isEmpty() ? "all-enabled-bars-at-or-above-threshold" : "enabled-bar-below-threshold";
+        return new FirstAidProbeSummary(targets, probes, false, reason);
+    }
+
+    private void cacheConservativeFirstAidPlan(PlayerRuntimeState state, int baseX, int baseY, String reason) {
+        List<FirstAidTarget> targets = buildConservativeFirstAidTargets();
+        if (targets.isEmpty()) {
+            state.pendingNoFocusFirstAidPlan = null;
+            log.warn("first-aid no-focus UNKNOWN has no enabled conservative targets: reason={}", reason);
+            return;
+        }
+        state.pendingNoFocusFirstAidPlan = new FirstAidPlan(targets, System.currentTimeMillis(), baseX, baseY);
+        log.warn("first-aid no-focus UNKNOWN cached conservative plan: reason={} targets={} planBase=({}, {})",
+                reason, describeFirstAidTargets(targets), baseX, baseY);
+    }
+
+    private List<FirstAidTarget> buildConservativeFirstAidTargets() {
+        List<FirstAidTarget> targets = new ArrayList<>();
+        addConservativeFirstAidTarget(targets, "人物血量", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPlayerHpSupplyEnabled(), config.getPlayerHpSupplyThreshold());
+        addConservativeFirstAidTarget(targets, "人物法力", CHAR_BAR_LEFT_X, CHAR_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPlayerMpSupplyEnabled(), config.getPlayerMpSupplyThreshold());
+        addConservativeFirstAidTarget(targets, "宝宝血量", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_HP_Y, true, config.isPetHpSupplyEnabled(), config.getPetHpSupplyThreshold());
+        addConservativeFirstAidTarget(targets, "宝宝法力", PET_BAR_LEFT_X, PET_BAR_RIGHT_X,
+                BAR_MP_Y, false, config.isPetMpSupplyEnabled(), config.getPetMpSupplyThreshold());
+        return targets;
+    }
+
+    private void addConservativeFirstAidTarget(List<FirstAidTarget> targets,
+                                               String name,
+                                               int leftX,
+                                               int rightX,
+                                               int relY,
+                                               boolean expectRed,
+                                               boolean enabled,
+                                               int threshold) {
+        if (!enabled) {
+            return;
+        }
+        int normalizedThreshold = normalizeThreshold(threshold);
+        targets.add(new FirstAidTarget(name, calculateX(leftX, rightX, normalizedThreshold),
+                relY, expectRed, normalizedThreshold));
+    }
+
     private void addSupplyTargetIfNeeded(List<FirstAidTarget> targets,
                                          BufferedImage bars,
                                          String name,
@@ -828,6 +927,128 @@ public class PlayerStateService {
         if (isSupplyNeededFromSnapshot(bars, name, relX, relY, expectRed, normalizedThreshold)) {
             targets.add(new FirstAidTarget(name, relX, relY, expectRed, normalizedThreshold));
         }
+    }
+
+    private FirstAidBarProbe probeFirstAidBar(BufferedImage bars,
+                                              String name,
+                                              int leftX,
+                                              int rightX,
+                                              int relY,
+                                              boolean expectRed,
+                                              boolean enabled,
+                                              int threshold) {
+        int normalizedThreshold = normalizeThreshold(threshold);
+        int relX = calculateX(leftX, rightX, normalizedThreshold);
+        int higherThreshold = Math.min(95, normalizedThreshold + HIGHER_HEALTH_PROBE_OFFSET);
+        int higherRelX = calculateX(leftX, rightX, higherThreshold);
+        int totalColumns = Math.max(1, rightX - leftX + 1);
+        int sampleAreaPixels = (BAR_SAMPLE_RADIUS_X * 2 + 1) * (BAR_SAMPLE_RADIUS_Y * 2 + 1);
+        if (!enabled) {
+            return new FirstAidBarProbe(name, false, expectRed, normalizedThreshold, leftX, rightX, relY,
+                    relX, higherRelX, 0, totalColumns, 0, 0, sampleAreaPixels,
+                    "SKIPPED", "disabled", 0, 0, 0);
+        }
+        if (bars == null) {
+            return new FirstAidBarProbe(name, true, expectRed, normalizedThreshold, leftX, rightX, relY,
+                    relX, higherRelX, 0, totalColumns, 0, 0, sampleAreaPixels,
+                    "UNKNOWN", "snapshot-null", 0, 0, 0);
+        }
+
+        int localY = relY - BARS_SCAN_TOP_Y;
+        int localLeftX = leftX - BARS_SCAN_LEFT_X;
+        int localRightX = rightX - BARS_SCAN_LEFT_X;
+        if (localY < 0 || localY >= bars.getHeight()
+                || localRightX < 0 || localLeftX >= bars.getWidth()) {
+            return new FirstAidBarProbe(name, true, expectRed, normalizedThreshold, leftX, rightX, relY,
+                    relX, higherRelX, 0, totalColumns, 0, 0, sampleAreaPixels,
+                    "UNKNOWN", "bar-roi-out-of-bounds", 0, 0, 0);
+        }
+
+        int healthyColumns = countHealthyColumns(bars, leftX, rightX, relY, expectRed);
+        int observedPercent = Math.round(healthyColumns * 100.0f / totalColumns);
+        int thresholdHealthyCount = countHealthySamples(bars, relX, relY, expectRed);
+        int higherHealthyCount = countHealthySamples(bars, higherRelX, relY, expectRed);
+        int[] rgb = sampleRgb(bars, relX, relY);
+        boolean thresholdHealthy = thresholdHealthyCount >= 2;
+        boolean higherHealthy = higherHealthyCount >= 2;
+        /*
+         * Single-pixel threshold probes are vulnerable to bar borders and hover artifacts. Treat the
+         * bar as healthy only when the full strip reaches the configured percentage, or when the
+         * strip is within a tiny margin of the threshold and the threshold sample itself agrees.
+         * When a point sample says "healthy" but the full strip is far below the threshold, the
+         * sample contradicts the bar-level evidence and must not suppress first-aid.
+         */
+        if (observedPercent >= normalizedThreshold) {
+            return new FirstAidBarProbe(name, true, expectRed, normalizedThreshold, leftX, rightX, relY,
+                    relX, higherRelX, healthyColumns, totalColumns, thresholdHealthyCount, higherHealthyCount,
+                    sampleAreaPixels, "HEALTHY", "filled-ratio-at-threshold", rgb[0], rgb[1], rgb[2]);
+        }
+        if (thresholdHealthy
+                && observedPercent >= normalizedThreshold - NEAR_THRESHOLD_HEALTH_MARGIN_PERCENT) {
+            return new FirstAidBarProbe(name, true, expectRed, normalizedThreshold, leftX, rightX, relY,
+                    relX, higherRelX, healthyColumns, totalColumns, thresholdHealthyCount, higherHealthyCount,
+                    sampleAreaPixels, "HEALTHY", "near-threshold-strip-and-sample", rgb[0], rgb[1], rgb[2]);
+        }
+        String reason = (thresholdHealthy || higherHealthy)
+                ? "inconsistent-sample-strip"
+                : observedPercent == 0
+                ? "no-matching-bar-color"
+                : "filled-ratio-below-threshold";
+        return new FirstAidBarProbe(name, true, expectRed, normalizedThreshold, leftX, rightX, relY,
+                relX, higherRelX, healthyColumns, totalColumns, thresholdHealthyCount, higherHealthyCount,
+                sampleAreaPixels, "SUPPLY_NEEDED", reason, rgb[0], rgb[1], rgb[2]);
+    }
+
+    private int countHealthyColumns(BufferedImage bars, int leftX, int rightX, int relY, boolean expectRed) {
+        int healthyColumns = 0;
+        for (int relX = leftX; relX <= rightX; relX++) {
+            boolean healthyColumn = false;
+            int centerX = relX - BARS_SCAN_LEFT_X;
+            int centerY = relY - BARS_SCAN_TOP_Y;
+            for (int dy = -BAR_SAMPLE_RADIUS_Y; dy <= BAR_SAMPLE_RADIUS_Y; dy++) {
+                int y = centerY + dy;
+                if (centerX < 0 || y < 0 || centerX >= bars.getWidth() || y >= bars.getHeight()) {
+                    continue;
+                }
+                if (isHealthyColor(bars.getRGB(centerX, y), expectRed)) {
+                    healthyColumn = true;
+                    break;
+                }
+            }
+            if (healthyColumn) {
+                healthyColumns++;
+            }
+        }
+        return healthyColumns;
+    }
+
+    private int countHealthySamples(BufferedImage bars, int relX, int relY, boolean expectRed) {
+        int centerX = relX - BARS_SCAN_LEFT_X;
+        int centerY = relY - BARS_SCAN_TOP_Y;
+        int healthyCount = 0;
+        for (int dx = -BAR_SAMPLE_RADIUS_X; dx <= BAR_SAMPLE_RADIUS_X; dx++) {
+            for (int dy = -BAR_SAMPLE_RADIUS_Y; dy <= BAR_SAMPLE_RADIUS_Y; dy++) {
+                int x = centerX + dx;
+                int y = centerY + dy;
+                if (x < 0 || y < 0 || x >= bars.getWidth() || y >= bars.getHeight()) {
+                    continue;
+                }
+                if (isHealthyColor(bars.getRGB(x, y), expectRed)) {
+                    healthyCount++;
+                }
+            }
+        }
+        return healthyCount;
+    }
+
+    private int[] sampleRgb(BufferedImage bars, int relX, int relY) {
+        int localX = relX - BARS_SCAN_LEFT_X;
+        int localY = relY - BARS_SCAN_TOP_Y;
+        if (localX < 0 || localY < 0 || localX >= bars.getWidth() || localY >= bars.getHeight()) {
+            return new int[]{-1, -1, -1};
+        }
+        int rgb = bars.getRGB(localX, localY);
+        return new int[]{(rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF};
     }
 
     private boolean isSupplyNeededFromSnapshot(BufferedImage bars, String name, int relX, int relY,
@@ -912,7 +1133,7 @@ public class PlayerStateService {
             int confirmLocalX = relX - BARS_SCAN_LEFT_X;
             int confirmLocalY = relY - BARS_SCAN_TOP_Y;
             int confirmRgb = confirmBars.getRGB(confirmLocalX, confirmLocalY);
-            return healIfUnhealthy(name, absX, absY, confirmRgb, expectRed, normalizedThreshold);
+            return healIfUnhealthy(name, absX, absY, confirmRgb, expectRed, normalizedThreshold, false);
         } finally {
             confirmBars.flush();
         }
@@ -948,7 +1169,13 @@ public class PlayerStateService {
         return (b > 150) && (g > 120) && (b > r + 80);
     }
 
-    private boolean healIfUnhealthy(String name, int absX, int absY, int rgb, boolean expectRed, int threshold) {
+    private boolean healIfUnhealthy(String name,
+                                    int absX,
+                                    int absY,
+                                    int rgb,
+                                    boolean expectRed,
+                                    int threshold,
+                                    boolean moveMouseAwayAfterClick) {
         int normalizedThreshold = normalizeThreshold(threshold);
         int r = (rgb >> 16) & 0xFF;
         int g = (rgb >> 8) & 0xFF;
@@ -960,13 +1187,42 @@ public class PlayerStateService {
             log.warn("🚨 警报！[{}] 未达 {}% 警戒线，执行原位右键补充！rgb=({}, {}, {})",
                     name, normalizedThreshold, r, g, b);
             if (isInputWorkerThread()) {
+                if (!InputActionScope.checkpoint()) {
+                    return false;
+                }
                 inputProvider.clickRight(absX, absY, 100);
-                TaskSleep.sleep(800);
+                if (!TaskSleep.sleep(800) || !InputActionScope.checkpoint()) {
+                    return false;
+                }
+                if (moveMouseAwayAfterClick) {
+                    moveMouseAwayAfterFirstAidSupply("playerState:heal:" + name);
+                }
             } else {
-                inputSequences.submitAndWait("playerState:heal:" + name, List.of(
-                        InputAction.clickRight(absX, absY, 100),
-                        InputAction.sleep(800)
-                ));
+                if (moveMouseAwayAfterClick
+                        && tracker.getWindowBaseX() != -1
+                        && tracker.getWindowBaseY() != -1) {
+                    int baseX = tracker.getWindowBaseX();
+                    int baseY = tracker.getWindowBaseY();
+                    SafeMousePoint safePoint = randomFirstAidHoverSafePoint(baseX, baseY);
+                    logFirstAidHoverCleanupMove("playerState:heal:" + name,
+                            baseX, baseY, safePoint, "queued-input-worker");
+                    inputSequences.submitAndWait("playerState:heal:" + name, List.of(
+                            InputAction.clickRight(absX, absY, 100),
+                            InputAction.sleep(800),
+                            InputAction.moveMouse(safePoint.absX(), safePoint.absY()),
+                            InputAction.sleep(SAFE_MOUSE_HOVER_CLEAR_DELAY_MS)
+                    ));
+                } else {
+                    if (moveMouseAwayAfterClick) {
+                        log.warn("first-aid hover cleanup skipped: source={} windowId={} base unavailable base=({}, {})",
+                                "playerState:heal:" + name, currentWindowId(),
+                                tracker.getWindowBaseX(), tracker.getWindowBaseY());
+                    }
+                    inputSequences.submitAndWait("playerState:heal:" + name, List.of(
+                            InputAction.clickRight(absX, absY, 100),
+                            InputAction.sleep(800)
+                    ));
+                }
             }
             return true;
         }
@@ -986,313 +1242,209 @@ public class PlayerStateService {
     }
 
     /**
-     * Capture the incense status crop once, match the buff template, and optionally read its
-     * cyan remaining-hour number.
-     *
-     * <p>The rectangle is screen-absolute and normally comes from {@link #STATUS_PANEL_X} etc.
-     * This method has no input side effects: it only captures the current bound window, writes
-     * window-scoped diagnostic images, performs template matching, and calls the local OCR sidecar
-     * on a washed digit image. Empty OCR means "buff may exist, but remaining time is below one
-     * visible hour" for our business logic.</p>
-     *
-     * @param statusRect screen-absolute crop rectangle as {@code [x1,y1,x2,y2]}.
-     * @return icon point plus optional remaining hours. Null icon means the buff template was not
-     * matched; empty hours means the icon matched but no cyan hour number was readable.
+     * Cloud-owned 摄妖香 tick. Local code may capture/upload the status ROI and execute an explicit
+     * `USE_INCENSE`, but it must not infer buff presence, remaining time, or refill policy locally.
      */
-    private IncenseStatusProbe probeIncenseStatus(int[] statusRect) {
-        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("sheyaoxiang-status", statusRect);
+    private SheyaoxiangStatusCloudDecision captureSheyaoxiangStatusAndAskCloud(
+            PlayerRuntimeState state,
+            TaskExecutionContext taskContext,
+            int[] statusRect,
+            boolean openMainBagSession,
+            SheyaoxiangStatusCloudDecision captureDecision) {
+        checkpoint(taskContext);
         BufferedImage statusImage = tracker.captureToMemory(
-                "sheyaoxiang-status", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
+                "sheyaoxiang-status-cloud", statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
         if (statusImage == null) {
-            log.warn("sheyaoxiang status capture failed: rect=({}, {})-({}, {})",
-                    statusRect[0], statusRect[1], statusRect[2], statusRect[3]);
-            return IncenseStatusProbe.notFound();
+            log.warn("sheyaoxiang cloud status capture failed: windowId={} rect=({}, {})-({}, {}) decisionId={}",
+                    currentWindowId(), statusRect[0], statusRect[1], statusRect[2], statusRect[3],
+                    captureDecision == null ? null : captureDecision.getDecisionId());
+            return SheyaoxiangStatusCloudDecision.builder()
+                    .status(SheyaoxiangStatusCloudDecision.Status.REQUIRED_FAILURE)
+                    .action(SheyaoxiangStatusCloudDecision.Action.FAIL_CLOSED)
+                    .reason("status capture failed")
+                    .build();
         }
-
         try {
-            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_raw.png");
-            writeImage(statusImage, rawPath, "sheyaoxiang raw status");
-
-            /*
-             * Stage 1: keep the existing icon-template decision as the gate. OCR is deliberately
-             * not used to decide whether the buff exists because the tiny number alone can be
-             * missing when less than one hour remains.
-             */
-            double[] match = ImageFinder.find(rawPath, SHEYAOXIANG_STATUS_TEMPLATE, SHEYAOXIANG_STATUS_MATCH_RATE);
-            if (match == null || match.length < 2) {
-                log.info("sheyaoxiang status template not matched: path={} template={}",
-                        rawPath, SHEYAOXIANG_STATUS_TEMPLATE);
-                return IncenseStatusProbe.notFound();
-            }
-            java.awt.Point iconPoint = new java.awt.Point(
-                    statusRect[0] + (int) Math.round(match[0]),
-                    statusRect[1] + (int) Math.round(match[1]));
-
-            /*
-             * Stage 2 reads only the vertical strip under the matched icon. Cyan digits are hours;
-             * if no cyan number exists, green digits are treated as minutes.
-             */
-            BufferedImage matchedColumn = cropSheyaoxiangMatchedColumn(statusImage, match, statusRect, "probe");
-            IncenseRemainingTime remainingTime;
-            if (matchedColumn != null) {
-                try {
-                    String columnPath = windowScopedTempPath.resolve("sheyaoxiang_status_matched_column_raw.png");
-                    writeImage(matchedColumn, columnPath, "sheyaoxiang matched column raw");
-                    remainingTime = readSheyaoxiangRemainingTime(matchedColumn);
-                } finally {
-                    matchedColumn.flush();
-                }
-            } else {
-                remainingTime = readSheyaoxiangRemainingTime(statusImage);
-            }
-            log.info("sheyaoxiang status matched: point=({}, {}) remaining={}",
-                    iconPoint.x, iconPoint.y, remainingTime.describe());
-            return new IncenseStatusProbe(iconPoint, remainingTime.remainingMs(), remainingTime.describe());
-        } finally {
-            statusImage.flush();
-        }
-    }
-
-    private IncenseIconProbe probeIncenseIconPresence(PlayerRuntimeState state, int[] statusRect) {
-        if (state.incenseIconOffsetX >= 0 && state.incenseIconOffsetY >= 0) {
-            int[] cachedRect = cachedIncenseIconProbeRect(state, statusRect);
-            IncenseIconProbe cachedProbe = probeIncenseIconPresenceInRect(statusRect, cachedRect, "cached-point");
-            if (cachedProbe.presence() != IncenseIconPresence.ABSENT) {
-                return cachedProbe;
-            }
-            log.info("sheyaoxiang cached icon probe missed; fallback to full status rect. cachedOffset=({}, {}) cachedRect=({}, {})-({}, {})",
-                    state.incenseIconOffsetX, state.incenseIconOffsetY,
-                    cachedRect[0], cachedRect[1], cachedRect[2], cachedRect[3]);
-        }
-        return probeIncenseIconPresenceInRect(statusRect, statusRect, "status-rect");
-    }
-
-    private int[] cachedIncenseIconProbeRect(PlayerRuntimeState state, int[] statusRect) {
-        int panelLeft = statusRect[0];
-        int panelTop = statusRect[1];
-        int panelRight = statusRect[2];
-        int panelBottom = statusRect[3];
-        int panelWidth = Math.max(1, panelRight - panelLeft);
-        int probeWidth = Math.min(panelWidth, INCENSE_CACHED_ICON_PROBE_WIDTH);
-        int cachedAbsX = panelLeft + state.incenseIconOffsetX;
-        int left = cachedAbsX - INCENSE_CACHED_ICON_PROBE_LEFT_PADDING;
-        left = Math.max(panelLeft, Math.min(left, panelRight - probeWidth));
-        return new int[]{left, panelTop, left + probeWidth, panelBottom};
-    }
-
-    private IncenseIconProbe probeIncenseIconPresenceInRect(int[] statusRect, int[] probeRect, String mode) {
-        moveMouseAwayBeforePlayerStateSnapshotIfNeeded("sheyaoxiang-status-icon-gate-" + mode, probeRect);
-        BufferedImage statusImage = tracker.captureToMemory(
-                "sheyaoxiang-status-icon-gate-" + mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3]);
-        if (statusImage == null) {
-            log.warn("sheyaoxiang memory-gate icon capture failed: mode={} rect=({}, {})-({}, {})",
-                    mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3]);
-            return IncenseIconProbe.unknown("capture-failed");
-        }
-
-        try {
-            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_icon_gate_" + mode + ".png");
-            writeImage(statusImage, rawPath, "sheyaoxiang memory-gate icon");
-            double[] match = ImageFinder.find(rawPath, SHEYAOXIANG_STATUS_TEMPLATE, SHEYAOXIANG_STATUS_MATCH_RATE);
-            if (match == null || match.length < 2) {
-                log.info("sheyaoxiang memory-gate icon template absent: mode={} path={} template={}",
-                        mode, rawPath, SHEYAOXIANG_STATUS_TEMPLATE);
-                return IncenseIconProbe.absent("template-miss");
-            }
-            java.awt.Point iconPoint = new java.awt.Point(
-                    probeRect[0] + (int) Math.round(match[0]),
-                    probeRect[1] + (int) Math.round(match[1]));
-            log.info("sheyaoxiang memory-gate icon present: mode={} point=({}, {}) offset=({}, {}) score={}",
-                    mode, iconPoint.x, iconPoint.y, iconPoint.x - statusRect[0], iconPoint.y - statusRect[1],
-                    match.length >= 3 ? match[2] : -1);
-            return IncenseIconProbe.present(iconPoint);
+            String rawPath = windowScopedTempPath.resolve("sheyaoxiang_status_cloud_raw.png");
+            writeImage(statusImage, rawPath, "sheyaoxiang cloud raw status");
+            TransferableImage payload = transferablePng(statusImage);
+            return sheyaoxiangStatusCloudDecisionService.decide(
+                    buildSheyaoxiangCloudRequest(state, taskContext, statusRect, openMainBagSession,
+                            SheyaoxiangStatusCloudRequest.Hook.STATUS_IMAGE, payload, rawPath,
+                            captureDecision == null ? null : captureDecision.getDecisionId()));
         } catch (RuntimeException e) {
-            log.warn("sheyaoxiang memory-gate icon probe failed: mode={} rect=({}, {})-({}, {}) reason={}",
-                    mode, probeRect[0], probeRect[1], probeRect[2], probeRect[3], e.getMessage(), e);
-            return IncenseIconProbe.unknown("exception");
+            log.warn("sheyaoxiang cloud status upload failed closed: windowId={} reason={}",
+                    currentWindowId(), e.getMessage(), e);
+            return SheyaoxiangStatusCloudDecision.builder()
+                    .status(SheyaoxiangStatusCloudDecision.Status.REQUIRED_FAILURE)
+                    .action(SheyaoxiangStatusCloudDecision.Action.FAIL_CLOSED)
+                    .reason("status upload failed: " + e.getClass().getSimpleName())
+                    .build();
         } finally {
             statusImage.flush();
         }
     }
 
-    private void rememberIncenseIconPoint(PlayerRuntimeState state, int[] statusRect, java.awt.Point iconPoint) {
-        state.incenseIconOffsetX = Math.max(0, iconPoint.x - statusRect[0]);
-        state.incenseIconOffsetY = Math.max(0, iconPoint.y - statusRect[1]);
-    }
-
-    private BufferedImage cropSheyaoxiangMatchedColumn(BufferedImage statusImage,
-                                                       double[] match,
-                                                       int[] statusRect,
-                                                       String source) {
-        BufferedImage template = null;
+    private boolean executeCloudRequestedIncenseUse(TaskExecutionContext taskContext,
+                                                    IncenseItemUser itemUser,
+                                                    PlayerRuntimeState state,
+                                                    int[] statusRect,
+                                                    boolean openMainBagSession,
+                                                    SheyaoxiangStatusCloudDecision decision) {
         try {
-            template = ImageIO.read(new File(SHEYAOXIANG_STATUS_TEMPLATE));
-            if (template == null) {
-                log.warn("sheyaoxiang matched column crop skipped: source={} template not readable path={}",
-                        source, SHEYAOXIANG_STATUS_TEMPLATE);
-                return null;
+            boolean used = itemUser.use("bag/sheyaoxiang_item.png", taskContext);
+            checkpoint(taskContext);
+            if (used) {
+                log.info("✅ 云端显式要求补香且使用成功。decisionId={} 等待吃香动画...", decision.getDecisionId());
+                state.lastIncenseUsedTime = System.currentTimeMillis();
+                state.nextIncenseRetryTime = 0;
+                reportSheyaoxiangOutcome(state, taskContext, statusRect, decision,
+                        openMainBagSession, SheyaoxiangStatusCloudRequest.Outcome.USED, "used");
+                TaskSleep.sleep(1000);
+                return true;
             }
-
-            int left = Math.max(0, (int) Math.round(match[0] - template.getWidth() / 2.0));
-            int right = Math.min(statusImage.getWidth(), left + template.getWidth());
-            if (right <= left) {
-                log.warn("sheyaoxiang matched column crop skipped: source={} localLeft={} localRight={} imageSize={}x{}",
-                        source, left, right, statusImage.getWidth(), statusImage.getHeight());
-                return null;
-            }
-
-            int absLeft = statusRect[0] + left;
-            int absRight = statusRect[0] + right;
-            log.info("sheyaoxiang matched column crop: source={} localX=({}, {}) absX=({}, {}) height={} templateSize={}x{}",
-                    source, left, right, absLeft, absRight, statusImage.getHeight(),
-                    template.getWidth(), template.getHeight());
-            return com.bot.dhxy.tools.ImagePreprocessor.cropCopy(
-                    statusImage, left, 0, right - left, statusImage.getHeight());
-        } catch (IOException e) {
-            log.warn("sheyaoxiang matched column crop failed: source={} reason={}", source, e.getMessage(), e);
-            return null;
-        } finally {
-            if (template != null) {
-                template.flush();
-            }
+            log.error("❌ 云端显式要求补香，但包裹内未找到摄妖香。decisionId={}", decision.getDecisionId());
+            reportSheyaoxiangOutcome(state, taskContext, statusRect, decision,
+                    openMainBagSession, SheyaoxiangStatusCloudRequest.Outcome.ITEM_NOT_FOUND, "item-not-found");
+            return false;
+        } catch (TaskStopRequestedException e) {
+            reportSheyaoxiangOutcome(state, taskContext, statusRect, decision,
+                    openMainBagSession, SheyaoxiangStatusCloudRequest.Outcome.STOPPED, e.getMessage());
+            throw e;
+        } catch (RuntimeException e) {
+            reportSheyaoxiangOutcome(state, taskContext, statusRect, decision,
+                    openMainBagSession, SheyaoxiangStatusCloudRequest.Outcome.FAILED, e.getClass().getSimpleName());
+            throw e;
         }
     }
 
-    /**
-     * Wash the incense status crop into a black-on-white digit image and OCR it locally.
-     *
-     * @param statusImage captured incense status crop. Ownership stays with the caller.
-     * @return remaining time. Cyan digits are hours; green digits are minutes.
-     */
-    private IncenseRemainingTime readSheyaoxiangRemainingTime(BufferedImage statusImage) {
-        BufferedImage washed = new BufferedImage(
-                statusImage.getWidth() * SHEYAOXIANG_DIGIT_OCR_SCALE,
-                statusImage.getHeight() * SHEYAOXIANG_DIGIT_OCR_SCALE,
-                BufferedImage.TYPE_INT_RGB);
+    private void reportSheyaoxiangOutcome(PlayerRuntimeState state,
+                                          TaskExecutionContext taskContext,
+                                          int[] statusRect,
+                                          SheyaoxiangStatusCloudDecision decision,
+                                          boolean openMainBagSession,
+                                          SheyaoxiangStatusCloudRequest.Outcome outcome,
+                                          String reason) {
         try {
-            for (int y = 0; y < statusImage.getHeight(); y++) {
-                for (int x = 0; x < statusImage.getWidth(); x++) {
-                    int rgb = statusImage.getRGB(x, y) & 0xFFFFFF;
-                    int outputRgb = isSheyaoxiangCyanDigitPixel(rgb) ? 0x000000 : 0xFFFFFF;
-                    for (int dy = 0; dy < SHEYAOXIANG_DIGIT_OCR_SCALE; dy++) {
-                        for (int dx = 0; dx < SHEYAOXIANG_DIGIT_OCR_SCALE; dx++) {
-                            washed.setRGB(
-                                    x * SHEYAOXIANG_DIGIT_OCR_SCALE + dx,
-                                    y * SHEYAOXIANG_DIGIT_OCR_SCALE + dy,
-                                    outputRgb);
-                        }
-                    }
-                }
-            }
-
-            String washedPath = windowScopedTempPath.resolve("sheyaoxiang_status_cyan_digits.png");
-            writeImage(washed, washedPath, "sheyaoxiang cyan digit OCR");
-            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
-            String text = words.stream()
-                    .map(OcrWordResult::getText)
-                    .filter(value -> value != null && !value.isBlank())
-                    .reduce("", String::concat);
-            Matcher matcher = SHEYAOXIANG_REMAINING_HOUR_PATTERN.matcher(text == null ? "" : text);
-            if (!matcher.find()) {
-                log.info("sheyaoxiang cyan digit OCR returned no hour digits: path={} text='{}'",
-                        washedPath, text);
-                return readSheyaoxiangRemainingMinutesGreen(statusImage);
-            }
-            int hours = Integer.parseInt(matcher.group());
-            if (hours <= 0) {
-                log.info("sheyaoxiang cyan digit OCR ignored non-positive hour value: text='{}'", text);
-                return readSheyaoxiangRemainingMinutesGreen(statusImage);
-            }
-            long remainingMs = hours * ONE_HOUR_MS;
-            log.info("sheyaoxiang cyan digit OCR matched remainingHours={} remainingMinutes={} path={} text='{}'",
-                    hours, remainingMs / 60000, washedPath, text);
-            return IncenseRemainingTime.found(remainingMs, "cyan-hours=" + hours);
-        } finally {
-            washed.flush();
+            sheyaoxiangStatusCloudDecisionService.decide(
+                    buildSheyaoxiangCloudRequest(state, taskContext, statusRect, openMainBagSession,
+                            SheyaoxiangStatusCloudRequest.Hook.OUTCOME, null, null,
+                            decision == null ? null : decision.getDecisionId())
+                            .toBuilder()
+                            .outcome(outcome)
+                            .reason(reason)
+                            .build());
+        } catch (RuntimeException e) {
+            log.warn("sheyaoxiang outcome report failed: windowId={} outcome={} decisionId={} reason={}",
+                    currentWindowId(), outcome, decision == null ? null : decision.getDecisionId(),
+                    e.getMessage(), e);
         }
     }
 
-    private IncenseRemainingTime readSheyaoxiangRemainingMinutesGreen(BufferedImage statusImage) {
-        BufferedImage washed = new BufferedImage(
-                statusImage.getWidth() * SHEYAOXIANG_DIGIT_OCR_SCALE,
-                statusImage.getHeight() * SHEYAOXIANG_DIGIT_OCR_SCALE,
-                BufferedImage.TYPE_INT_RGB);
-        try {
-            for (int y = 0; y < statusImage.getHeight(); y++) {
-                for (int x = 0; x < statusImage.getWidth(); x++) {
-                    int rgb = statusImage.getRGB(x, y) & 0xFFFFFF;
-                    int outputRgb = isSheyaoxiangGreenDigitPixel(rgb) ? 0x000000 : 0xFFFFFF;
-                    for (int dy = 0; dy < SHEYAOXIANG_DIGIT_OCR_SCALE; dy++) {
-                        for (int dx = 0; dx < SHEYAOXIANG_DIGIT_OCR_SCALE; dx++) {
-                            washed.setRGB(
-                                    x * SHEYAOXIANG_DIGIT_OCR_SCALE + dx,
-                                    y * SHEYAOXIANG_DIGIT_OCR_SCALE + dy,
-                                    outputRgb);
-                        }
-                    }
-                }
-            }
-
-            String washedPath = windowScopedTempPath.resolve("sheyaoxiang_status_green_digits.png");
-            writeImage(washed, washedPath, "sheyaoxiang green digit OCR");
-            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
-            String text = words.stream()
-                    .map(OcrWordResult::getText)
-                    .filter(value -> value != null && !value.isBlank())
-                    .reduce("", String::concat);
-            SheyaoxiangDigitTemplateReader.Result templateResult =
-                    sheyaoxiangDigitTemplateReader.recognizeAndLearn(washed, words, washedPath);
-            if (!templateResult.learnedSymbols().isEmpty()) {
-                log.info("sheyaoxiang green digit template learned symbols={} digitCount={} path={} ocrText='{}'",
-                        templateResult.learnedSymbols(), templateResult.digitCount(), washedPath, text);
-            }
-            if (templateResult.reliable() && templateResult.text() != null && !templateResult.text().isBlank()) {
-                int minutes = Integer.parseInt(templateResult.text());
-                if (minutes > 0) {
-                    long remainingMs = minutes * 60000L;
-                    log.info("sheyaoxiang green digit template matched remainingMinutes={} path={} text='{}' ocrText='{}'",
-                            minutes, washedPath, templateResult.text(), text);
-                    return IncenseRemainingTime.found(remainingMs, "green-minutes-template=" + minutes);
-                }
-            }
-            String digitsOnly = text == null ? "" : text.replaceAll("\\D+", "");
-            if (templateResult.digitCount() > 1 && digitsOnly.length() < templateResult.digitCount()) {
-                log.info("sheyaoxiang green digit OCR partial while templates are learning: digitCount={} path={} text='{}'",
-                        templateResult.digitCount(), washedPath, text);
-                return IncenseRemainingTime.empty("green-digits-learning=" + templateResult.digitCount());
-            }
-            Matcher matcher = SHEYAOXIANG_REMAINING_HOUR_PATTERN.matcher(text == null ? "" : text);
-            if (!matcher.find()) {
-                log.info("sheyaoxiang green digit OCR returned no minute digits: path={} text='{}'",
-                        washedPath, text);
-                return IncenseRemainingTime.empty();
-            }
-            int minutes = Integer.parseInt(matcher.group());
-            if (minutes <= 0) {
-                log.info("sheyaoxiang green digit OCR ignored non-positive minute value: text='{}'", text);
-                return IncenseRemainingTime.empty();
-            }
-            long remainingMs = minutes * 60000L;
-            log.info("sheyaoxiang green digit OCR matched remainingMinutes={} path={} text='{}'",
-                    minutes, washedPath, text);
-            return IncenseRemainingTime.found(remainingMs, "green-minutes=" + minutes);
-        } finally {
-            washed.flush();
+    private void applySheyaoxiangCloudFacts(PlayerRuntimeState state,
+                                            int[] statusRect,
+                                            SheyaoxiangStatusCloudDecision decision) {
+        if (decision == null) {
+            return;
         }
+        if (decision.getIconBox() != null) {
+            state.incenseIconOffsetX = Math.max(0, decision.getIconBox().getX());
+            state.incenseIconOffsetY = Math.max(0, decision.getIconBox().getY());
+        }
+        if (decision.getRemainingMs() != null && decision.getRemainingMs() > 0L) {
+            state.lastIncenseUsedTime = incenseLastUsedTimeForRemainingMs(System.currentTimeMillis(),
+                    decision.getRemainingMs());
+        }
+        if (decision.getAction() == SheyaoxiangStatusCloudDecision.Action.USE_INCENSE
+                || decision.getAction() == SheyaoxiangStatusCloudDecision.Action.NO_ACTION) {
+            state.nextIncenseRetryTime = 0;
+        }
+        log.info("sheyaoxiang cloud decision applied: windowId={} action={} present={} remainingMs={} source={} iconOffset=({}, {}) statusRect=({}, {})-({}, {}) reason={} decisionId={}",
+                currentWindowId(), decision.getAction(), decision.getPresent(), decision.getRemainingMs(),
+                decision.getRemainingSource(), state.incenseIconOffsetX, state.incenseIconOffsetY,
+                statusRect[0], statusRect[1], statusRect[2], statusRect[3],
+                decision.getReason(), decision.getDecisionId());
     }
 
-    private boolean isSheyaoxiangCyanDigitPixel(int rgb) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        return r <= 120 && g >= 130 && b >= 130 && Math.abs(g - b) <= 80;
+    private SheyaoxiangStatusCloudRequest buildSheyaoxiangCloudRequest(
+            PlayerRuntimeState state,
+            TaskExecutionContext taskContext,
+            int[] statusRect,
+            boolean openMainBagSession,
+            SheyaoxiangStatusCloudRequest.Hook hook,
+            TransferableImage payload,
+            String rawImagePath,
+            String decisionId) {
+        return SheyaoxiangStatusCloudRequest.builder()
+                .hook(hook)
+                .imagePayloadBase64(payload == null ? null : payload.base64())
+                .payloadMimeType(payload == null ? null : "image/png")
+                .imageSha256(payload == null ? null : payload.sha256())
+                .rawImagePath(rawImagePath)
+                .windowRelativeRoi(SheyaoxiangStatusCloudRequest.Roi.builder()
+                        .x(STATUS_PANEL_X)
+                        .y(STATUS_PANEL_Y)
+                        .width(STATUS_PANEL_W)
+                        .height(STATUS_PANEL_H)
+                        .build())
+                .screenAbsoluteRoi(SheyaoxiangStatusCloudRequest.Roi.builder()
+                        .x(statusRect[0])
+                        .y(statusRect[1])
+                        .width(Math.max(1, statusRect[2] - statusRect[0]))
+                        .height(Math.max(1, statusRect[3] - statusRect[1]))
+                        .build())
+                .windowWidth(windowWidth(taskContext))
+                .windowHeight(windowHeight(taskContext))
+                .nowMs(System.currentTimeMillis())
+                .lastIncenseUsedTimeMs(state.lastIncenseUsedTime)
+                .nextIncenseRetryTimeMs(state.nextIncenseRetryTime)
+                .incenseIconOffsetX(state.incenseIconOffsetX)
+                .incenseIconOffsetY(state.incenseIconOffsetY)
+                .openMainBagSession(openMainBagSession)
+                .taskCode(taskContext == null ? null : taskContext.getTaskCode())
+                .source("player-state")
+                .phase("sheyaoxiang-status")
+                .windowId(taskContext == null ? currentWindowId() : taskContext.getWindowId())
+                .taskRunId(taskRunId(taskContext))
+                .hwnd(hwnd(taskContext))
+                .decisionId(decisionId)
+                .build();
     }
 
-    private boolean isSheyaoxiangGreenDigitPixel(int rgb) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        return g >= 120 && r <= 120 && b <= 120 && g >= r + 50 && g >= b + 50;
+    private int windowWidth(TaskExecutionContext taskContext) {
+        if (taskContext != null && taskContext.getNativeWindowWidth() > 0) {
+            return taskContext.getNativeWindowWidth();
+        }
+        return windowTaskContextHolder.rawCurrent()
+                .map(window -> window.getNativeBinding().getWidth())
+                .filter(width -> width > 0)
+                .orElse(GAME_CLIENT_WIDTH);
+    }
+
+    private int windowHeight(TaskExecutionContext taskContext) {
+        if (taskContext != null && taskContext.getNativeWindowHeight() > 0) {
+            return taskContext.getNativeWindowHeight();
+        }
+        return windowTaskContextHolder.rawCurrent()
+                .map(window -> window.getNativeBinding().getHeight())
+                .filter(height -> height > 0)
+                .orElse(GAME_CLIENT_HEIGHT);
+    }
+
+    private String taskRunId(TaskExecutionContext taskContext) {
+        return taskContext == null || taskContext.getTaskRunId() <= 0L
+                ? ""
+                : Long.toString(taskContext.getTaskRunId());
+    }
+
+    private String hwnd(TaskExecutionContext taskContext) {
+        if (taskContext != null && taskContext.getNativeWindowHandle() != null
+                && !taskContext.getNativeWindowHandle().isBlank()) {
+            return taskContext.getNativeWindowHandle();
+        }
+        return windowTaskContextHolder.rawCurrent()
+                .map(window -> window.getNativeBinding().getNativeHandle())
+                .orElse("");
     }
 
     private long incenseLastUsedTimeForRemainingMs(long now, long remainingMs) {
@@ -1301,9 +1453,34 @@ public class PlayerStateService {
         return now - (INCENSE_DURATION_MS - boundedRemainingMs);
     }
 
+    private TransferableImage transferablePng(BufferedImage image) {
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", output);
+            byte[] bytes = output.toByteArray();
+            return new TransferableImage(Base64.getEncoder().encodeToString(bytes), sha256Hex(bytes));
+        } catch (IOException e) {
+            throw new IllegalStateException("encode png failed", e);
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashed = digest.digest(bytes);
+            StringBuilder result = new StringBuilder(hashed.length * 2);
+            for (byte value : hashed) {
+                result.append(String.format("%02x", value));
+            }
+            return result.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
     private void writeImage(BufferedImage image, String path, String label) {
         try {
-            ImageIO.write(image, "png", new File(path));
+            ImageIO.write(image, "png", new java.io.File(path));
         } catch (IOException e) {
             log.warn("write {} image failed: path={} reason={}", label, path, e.getMessage(), e);
         }
@@ -1360,6 +1537,22 @@ public class PlayerStateService {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
     }
 
+    private String currentWindowId() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(windowContext -> windowContext.getWindowId())
+                .orElse("default");
+    }
+
+    private String currentPlayerForLog() {
+        PlayerCharacter me = context.getMe();
+        if (me == null) {
+            return "-";
+        }
+        String name = me.getName() == null || me.getName().isBlank() ? "-" : me.getName();
+        String id = me.getId() == null || me.getId().isBlank() ? "-" : me.getId();
+        return name + "/" + id;
+    }
+
     @FunctionalInterface
     private interface IncenseItemUser {
         boolean use(String targetItemTemplate, TaskExecutionContext context);
@@ -1373,90 +1566,6 @@ public class PlayerStateService {
         return value == null || value.isBlank() ? "-" : value;
     }
 
-    private enum IncenseIconPresence {
-        PRESENT,
-        ABSENT,
-        UNKNOWN
-    }
-
-    @Value
-    @AllArgsConstructor(access = AccessLevel.PRIVATE)
-    @Accessors(fluent = true)
-    private static class IncenseIconProbe {
-
-        IncenseIconPresence presence;
-
-        java.awt.Point iconPoint;
-
-        String reason;
-
-        private static IncenseIconProbe present(java.awt.Point iconPoint) {
-            return new IncenseIconProbe(IncenseIconPresence.PRESENT, iconPoint, "template-hit");
-        }
-
-        private static IncenseIconProbe absent(String reason) {
-            return new IncenseIconProbe(IncenseIconPresence.ABSENT, null, reason);
-        }
-
-        private static IncenseIconProbe unknown(String reason) {
-            return new IncenseIconProbe(IncenseIconPresence.UNKNOWN, null, reason);
-        }
-    }
-
-    /**
-     * Result of a single incense-status screenshot probe.
-     *
-     * @param iconPoint screen-absolute point where the incense status template matched; null when
-     *                  the buff icon was not found.
-     * @param remainingMs OCR-read remaining time in milliseconds. Empty means either no icon
-     *                    matched or neither cyan-hour nor green-minute digits were readable.
-     * @param remainingText human-readable diagnostic source such as {@code cyan-hours=1}.
-     */
-    @Value
-
-    @Builder
-
-    @AllArgsConstructor(access = AccessLevel.PUBLIC)
-
-    @Accessors(fluent = true)
-
-    private static class IncenseStatusProbe {
-
-        java.awt.Point iconPoint;
-
-        OptionalLong remainingMs;
-
-        String remainingText;
-
-        private static IncenseStatusProbe notFound() {
-            return new IncenseStatusProbe(null, OptionalLong.empty(), "none");
-        }
-    
-
-    }
-
-    @Value
-    @AllArgsConstructor(access = AccessLevel.PRIVATE)
-    @Accessors(fluent = true)
-    private static class IncenseRemainingTime {
-
-        OptionalLong remainingMs;
-
-        String describe;
-
-        private static IncenseRemainingTime found(long remainingMs, String describe) {
-            return new IncenseRemainingTime(OptionalLong.of(remainingMs), describe);
-        }
-
-        private static IncenseRemainingTime empty() {
-            return new IncenseRemainingTime(OptionalLong.empty(), "none");
-        }
-
-        private static IncenseRemainingTime empty(String describe) {
-            return new IncenseRemainingTime(OptionalLong.empty(), describe);
-        }
-    }
-
     private static class PlayerRuntimeState {
         private long playerIdentityEpoch;
         private long lastIncenseUsedTime = 0;
@@ -1466,12 +1575,89 @@ public class PlayerStateService {
         private int checksDoneThisRound = 0;
         private long lastCombatExitTime = 0;
         private FirstAidPlan pendingNoFocusFirstAidPlan;
+        private FirstAidNoFocusProbeResult startupFirstAidPrecheckResult;
+        private long startupFirstAidPrecheckAtMs = 0;
     }
 
     private record FirstAidPlan(List<FirstAidTarget> targets, long createdAtMs, int baseX, int baseY) {
     }
 
     private record FirstAidTarget(String name, int relX, int relY, boolean expectRed, int threshold) {
+    }
+
+    private record FirstAidProbeSummary(List<FirstAidTarget> targets,
+                                        List<FirstAidBarProbe> probes,
+                                        boolean unknown,
+                                        String reason) {
+
+        private String describe() {
+            List<String> parts = new ArrayList<>();
+            for (FirstAidBarProbe probe : probes) {
+                parts.add(probe.describe());
+            }
+            return parts.toString();
+        }
+    }
+
+    private record FirstAidBarProbe(String name,
+                                    boolean enabled,
+                                    boolean expectRed,
+                                    int threshold,
+                                    int leftX,
+                                    int rightX,
+                                    int relY,
+                                    int relX,
+                                    int higherRelX,
+                                    int healthyColumns,
+                                    int totalColumns,
+                                    int thresholdHealthyCount,
+                                    int higherHealthyCount,
+                                    int sampleAreaPixels,
+                                    String decision,
+                                    String reason,
+                                    int r,
+                                    int g,
+                                    int b) {
+
+        private boolean readable() {
+            return enabled && ("HEALTHY".equals(decision) || "SUPPLY_NEEDED".equals(decision));
+        }
+
+        private boolean supplyNeeded() {
+            return enabled && "SUPPLY_NEEDED".equals(decision);
+        }
+
+        private int observedPercent() {
+            if (totalColumns <= 0) {
+                return 0;
+            }
+            return Math.round(healthyColumns * 100.0f / totalColumns);
+        }
+
+        private String rgbText() {
+            return "(" + r + "," + g + "," + b + ")";
+        }
+
+        private String describe() {
+            return name + "{enabled=" + enabled
+                    + ",decision=" + decision
+                    + ",reason=" + reason
+                    + ",threshold=" + threshold
+                    + ",observedPercent=" + observedPercent()
+                    + ",healthyColumns=" + healthyColumns + "/" + totalColumns
+                    + ",thresholdSample=" + thresholdHealthyCount + "/" + sampleAreaPixels
+                    + ",higherSample=" + higherHealthyCount + "/" + sampleAreaPixels
+                    + ",sampleRel=(" + relX + "," + relY + ")"
+                    + ",higherRel=(" + higherRelX + "," + relY + ")"
+                    + ",rgb=" + rgbText()
+                    + "}";
+        }
+    }
+
+    private record SafeMousePoint(int relX, int relY, int absX, int absY) {
+    }
+
+    private record TransferableImage(String base64, String sha256) {
     }
 
     public enum FirstAidNoFocusProbeResult {

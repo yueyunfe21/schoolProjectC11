@@ -1,5 +1,7 @@
 package com.bot.dhxy.input.action;
 
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+
 import java.util.function.Supplier;
 
 /**
@@ -38,11 +40,42 @@ public final class InputActionScope {
     }
 
     /**
-     * @return true when the current input request has been cancelled or the worker is interrupted.
+     * Cooperative checkpoint for exclusive direct-input callbacks.
+     *
+     * <p>If the current request is paused, this method blocks until resume and returns true. Stop,
+     * cancellation, or worker interruption returns false or throws the normal stop exception so the
+     * owning callback can exit without converting user pause into a business failure.</p>
+     *
+     * @return true when the callback may continue sending direct input.
+     */
+    public static boolean checkpoint() {
+        InputActionRequest request = CURRENT.get();
+        if (Thread.currentThread().isInterrupted()) {
+            return false;
+        }
+        if (request == null) {
+            return true;
+        }
+        if (request.isCancelled()) {
+            return false;
+        }
+        if (request.isPauseRequested()) {
+            try {
+                request.getPauseToken().waitIfPaused(request.getStopToken());
+            } catch (TaskStopRequestedException e) {
+                request.cancel("task-stop:" + e.getMessage());
+                throw e;
+            }
+        }
+        return !Thread.currentThread().isInterrupted() && !request.isCancelled();
+    }
+
+    /**
+     * Backward-compatible cancellation-style view used by older callbacks.
+     *
+     * @return true only when the current request should stop; pause waits and then returns false.
      */
     public static boolean isCancelled() {
-        InputActionRequest request = CURRENT.get();
-        return Thread.currentThread().isInterrupted()
-                || (request != null && (request.isCancelled() || request.isPauseRequested()));
+        return !checkpoint();
     }
 }

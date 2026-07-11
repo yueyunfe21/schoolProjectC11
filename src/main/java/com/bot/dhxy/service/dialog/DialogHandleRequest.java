@@ -33,23 +33,24 @@ public class DialogHandleRequest {
     Integer knownBagIndex;
     Integer rememberedRelativeX;
     Integer rememberedRelativeY;
+    String rememberedOptionText;
     List<GreenTemplateClickSpec> greenTemplateSpecs;
     List<WhiteTemplateSpec> whiteTemplateSpecs;
+    String storyMissTargetKeyword;
+    String storyAbsentTargetKeyword;
+    String storyAbsentMatchedText;
 
     @Builder.Default
     boolean allowFallbackOptionClick = false;
-
-    @Builder.Default
-    boolean includeCleanupBusinessOptions = true;
-
-    @Builder.Default
-    boolean allowFullMaintenanceBroadcastFallback = true;
 
     @Builder.Default
     boolean verifyDialogType = true;
 
     @Builder.Default
     boolean hidePlayerNamesBeforeCapture = false;
+
+    @Builder.Default
+    boolean verifyRawTemplate = false;
 
     public static DialogHandleRequest inspect(String sourceTask) {
         return DialogHandleRequest.builder()
@@ -149,23 +150,6 @@ public class DialogHandleRequest {
                 .build();
     }
 
-    public static DialogHandleRequest handleMaintenanceBroadcastOption(String sourceTask) {
-        return handleMaintenanceBroadcastOption(sourceTask, true);
-    }
-
-    public static DialogHandleRequest handleMaintenanceBroadcastOption(String sourceTask,
-                                                                       boolean allowFullMaintenanceBroadcastFallback) {
-        return DialogHandleRequest.builder()
-                .sourceTask(sourceTask)
-                .operation(DialogOperation.CLICK_BUSINESS_OPTION)
-                .storyPolicy(DialogStoryPolicy.IGNORE)
-                .optionPolicy(DialogOptionPolicy.CLICK_BUSINESS_OPTION)
-                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
-                .allowFallbackOptionClick(false)
-                .includeCleanupBusinessOptions(false)
-                .allowFullMaintenanceBroadcastFallback(allowFullMaintenanceBroadcastFallback)
-                .build();
-    }
 
     public static DialogHandleRequest acceptTask(String sourceTask, Point initialClick) {
         return DialogHandleRequest.builder()
@@ -249,6 +233,25 @@ public class DialogHandleRequest {
                 .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
                 .greenTemplateSpecs(specs)
                 .verifyDialogType(true)
+                .build();
+    }
+
+    public static DialogHandleRequest verifyExpectedRawOptionDialog(String sourceTask, String expectedRawTemplatePath) {
+        DialogOptionPolicy optionPolicy = expectedRawTemplatePath == null || expectedRawTemplatePath.isBlank()
+                ? DialogOptionPolicy.VERIFY_OPTION
+                : DialogOptionPolicy.VERIFY_GREEN_TEMPLATE;
+        List<GreenTemplateClickSpec> specs = expectedRawTemplatePath == null || expectedRawTemplatePath.isBlank()
+                ? null
+                : List.of(new GreenTemplateClickSpec("expectedDialogRaw", expectedRawTemplatePath, 0, 0, 0));
+        return DialogHandleRequest.builder()
+                .sourceTask(sourceTask)
+                .operation(DialogOperation.VERIFY_EXPECTED_DIALOG)
+                .storyPolicy(DialogStoryPolicy.IGNORE)
+                .optionPolicy(optionPolicy)
+                .fallbackPolicy(DialogFallbackPolicy.RETURN_UNRESOLVED)
+                .greenTemplateSpecs(specs)
+                .verifyDialogType(true)
+                .verifyRawTemplate(true)
                 .build();
     }
 

@@ -41,6 +41,10 @@ import java.util.concurrent.CompletableFuture;
  * @param shortcutTrackerDetailPath latest cropped 修罗 tracker detail image used by shortcut mode.
  * @param shortcutTrackerClickX latest screen-absolute tracker green click X in shortcut mode.
  * @param shortcutTrackerClickY latest screen-absolute tracker green click Y in shortcut mode.
+ * @param shortcutTrackerClickWindowRelativeX latest tracker green click X relative to the game
+ *                                            window. It is retained for the same-round terminal retry.
+ * @param shortcutTrackerClickWindowRelativeY latest tracker green click Y relative to the game
+ *                                            window. It is retained for the same-round terminal retry.
  * @param firstTrackerGreenClickAtMs first successful shortcut tracker green click time; this starts
  *                                   the shortcut pre-combat watchdog and must not be reset by re-clicks.
  * @param shortcutTrackerRetryCount retry count for tracker re-read/re-click inside shortcut mode.
@@ -75,6 +79,8 @@ public class XiuluoRoundContext {
     String shortcutTrackerDetailPath;
     Integer shortcutTrackerClickX;
     Integer shortcutTrackerClickY;
+    Integer shortcutTrackerClickWindowRelativeX;
+    Integer shortcutTrackerClickWindowRelativeY;
     long firstTrackerGreenClickAtMs;
     int shortcutTrackerRetryCount;
     String shortcutPathingIntentId;
@@ -85,21 +91,28 @@ public class XiuluoRoundContext {
     public static XiuluoRoundContext start(int round) {
         return new XiuluoRoundContext(XiuluoPhase.PREPARE_ROUND, null, null, null, System.currentTimeMillis(), round,
                 "normal-start", false, false, false, XiuluoRouteMode.OBJECTIVE_NAVIGATION,
-                XiuluoCombatSource.NONE, null, null, null, 0L, 0, null, 0, 0, 0);
+                XiuluoCombatSource.NONE, null, null, null, null, null, 0L, 0, null, 0, 0, 0);
+    }
+
+    public static XiuluoRoundContext routeToAcceptNpc(int round) {
+        return new XiuluoRoundContext(XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC, null, null, null,
+                System.currentTimeMillis(), round, "clean-transition-force-accept-npc-navigation",
+                false, false, false, XiuluoRouteMode.OBJECTIVE_NAVIGATION, XiuluoCombatSource.NONE,
+                null, null, null, null, null, 0L, 0, null, 0, 0, 0);
     }
 
     public XiuluoRoundContext next(XiuluoPhase nextPhase, String nextSource) {
         return new XiuluoRoundContext(nextPhase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
     public XiuluoRoundContext withObjective(XiuluoPhase nextPhase, NpcTarget nextObjective, String nextSource) {
         return new XiuluoRoundContext(nextPhase, nextObjective, null, null, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -109,7 +122,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(nextPhase, objective, nextObjectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -121,14 +134,14 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(nextPhase, objective, nextObjectiveParseFuture,
                 nextShortcutTrackerParseFuture, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
     public XiuluoRoundContext clearShortcutTrackerParseFuture(XiuluoPhase nextPhase, String nextSource) {
         return new XiuluoRoundContext(nextPhase, objective, objectiveParseFuture, null, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -136,7 +149,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(nextPhase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, true, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -152,7 +165,7 @@ public class XiuluoRoundContext {
                 nextSource, false, startExitPrepathStarted,
                 nextCombatSource != null && nextCombatSource != XiuluoCombatSource.NONE,
                 routeMode, nextCombatSource == null ? XiuluoCombatSource.NONE : nextCombatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -172,7 +185,7 @@ public class XiuluoRoundContext {
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, false,
                 routeMode, nextCombatSource == null ? XiuluoCombatSource.NONE : nextCombatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -181,6 +194,7 @@ public class XiuluoRoundContext {
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, false,
                 routeMode, combatSource, shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY,
+                shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY,
                 firstTrackerGreenClickAtMs, shortcutTrackerRetryCount, shortcutPathingIntentId,
                 0, enterBattleConfirmRetryCount + 1, recoveryCount);
     }
@@ -189,7 +203,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(phase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, true, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, phaseRetryCount, enterBattleConfirmRetryCount,
                 recoveryCount);
     }
@@ -198,7 +212,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(phase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, phaseRetryCount, enterBattleConfirmRetryCount,
                 recoveryCount);
     }
@@ -207,7 +221,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(phase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo, routeMode, combatSource,
-                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, firstTrackerGreenClickAtMs,
+                shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY, shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY, firstTrackerGreenClickAtMs,
                 shortcutTrackerRetryCount, shortcutPathingIntentId, phaseRetryCount + 1,
                 enterBattleConfirmRetryCount, recoveryCount);
     }
@@ -216,19 +230,20 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(nextPhase, objective, null, null, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo,
                 XiuluoRouteMode.OBJECTIVE_NAVIGATION, XiuluoCombatSource.NONE,
-                null, null, null, 0L, 0, null, 0, 0, recoveryCount + 1);
+                null, null, null, null, null, 0L, 0, null, 0, 0, recoveryCount + 1);
     }
 
     public XiuluoRoundContext recoverToWithObjective(XiuluoPhase nextPhase, NpcTarget nextObjective, String nextSource) {
         return new XiuluoRoundContext(nextPhase, nextObjective, null, null, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo,
                 XiuluoRouteMode.OBJECTIVE_NAVIGATION, XiuluoCombatSource.NONE,
-                null, null, null, 0L, 0, null, 0, 0, recoveryCount + 1);
+                null, null, null, null, null, 0L, 0, null, 0, 0, recoveryCount + 1);
     }
 
     public XiuluoRoundContext withShortcutTrackerClick(XiuluoPhase nextPhase,
                                                        String detailPath,
                                                        Point clickPoint,
+                                                       Point windowRelativeClickPoint,
                                                        String pathingIntentId,
                                                        String nextSource) {
         long firstClickAt = firstTrackerGreenClickAtMs > 0L
@@ -244,16 +259,21 @@ public class XiuluoRoundContext {
                 detailPath,
                 clickPoint == null ? null : clickPoint.x,
                 clickPoint == null ? null : clickPoint.y,
+                windowRelativeClickPoint == null ? null : windowRelativeClickPoint.x,
+                windowRelativeClickPoint == null ? null : windowRelativeClickPoint.y,
                 firstClickAt, shortcutTrackerRetryCount, pathingIntentId, 0,
                 enterBattleConfirmRetryCount, recoveryCount);
     }
 
-    public XiuluoRoundContext incrementShortcutTrackerRetry(XiuluoPhase nextPhase, String nextSource) {
+    public XiuluoRoundContext incrementShortcutTrackerRetry(XiuluoPhase nextPhase,
+                                                             String nextPathingIntentId,
+                                                             String nextSource) {
         return new XiuluoRoundContext(nextPhase, objective, objectiveParseFuture, shortcutTrackerParseFuture,
                 preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, enteredBattleByXiuluo,
                 routeMode, combatSource, shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY,
-                firstTrackerGreenClickAtMs, shortcutTrackerRetryCount + 1, shortcutPathingIntentId,
+                shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY,
+                firstTrackerGreenClickAtMs, shortcutTrackerRetryCount + 1, nextPathingIntentId,
                 0, enterBattleConfirmRetryCount, recoveryCount);
     }
 
@@ -261,7 +281,7 @@ public class XiuluoRoundContext {
         return new XiuluoRoundContext(nextPhase, objective, objectiveParseFuture, null, preCombatStartedAtMs, round,
                 nextSource, false, startExitPrepathStarted, false,
                 XiuluoRouteMode.OBJECTIVE_NAVIGATION, XiuluoCombatSource.NONE,
-                null, null, null, 0L, 0, null, 0, 0, recoveryCount);
+                null, null, null, null, null, 0L, 0, null, 0, 0, recoveryCount);
     }
 
     /**
@@ -283,6 +303,7 @@ public class XiuluoRoundContext {
                 nextSource == null || nextSource.isBlank() ? source : nextSource,
                 waitingPathing, startExitPrepathStarted, enteredBattleByXiuluo,
                 routeMode, combatSource, shortcutTrackerDetailPath, shortcutTrackerClickX, shortcutTrackerClickY,
+                shortcutTrackerClickWindowRelativeX, shortcutTrackerClickWindowRelativeY,
                 firstTrackerGreenClickAtMs, shortcutTrackerRetryCount, shortcutPathingIntentId,
                 phaseRetryCount, enterBattleConfirmRetryCount, recoveryCount);
     }

@@ -1,5 +1,9 @@
 package com.bot.dhxy.tools;
 
+import com.bot.dhxy.cloud.task.ImagePreprocessOperation;
+import com.bot.dhxy.cloud.task.ImageProcessorService;
+import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
+import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,6 +25,7 @@ import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +43,7 @@ public class CoordinateHelper {
 
     private final GameClientTracker tracker;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final ImageProcessorService imageProcessorService;
     private final Random random = new Random();
 
     private static final String MAP_CONFIG_PATH = "config/maps.json";
@@ -50,9 +56,12 @@ public class CoordinateHelper {
     private Map<String, MapTransform> mapTransforms = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public CoordinateHelper(@Lazy GameClientTracker tracker, WindowScopedTempPath windowScopedTempPath) {
+    public CoordinateHelper(@Lazy GameClientTracker tracker,
+                            WindowScopedTempPath windowScopedTempPath,
+                            ImageProcessorService imageProcessorService) {
         this.tracker = tracker;
         this.windowScopedTempPath = windowScopedTempPath;
+        this.imageProcessorService = imageProcessorService;
     }
 
     private double systemScaleRatio = 1.0;
@@ -631,7 +640,22 @@ public class CoordinateHelper {
             return null;
         }
         String washedScanPath = windowScopedTempPath.resolve("tem_dialog_cut_washed.png");
-        ImagePreprocessor.washGreenTextToBlackAndWhite(rawScanPath, washedScanPath);
+        ImageProcessorResult washResult =
+                imageProcessorService.washToPath(
+                        Path.of(rawScanPath),
+                        Path.of(washedScanPath),
+                        ImagePreprocessOperation.WASH_GREEN,
+                        RequestMetadata.builder()
+                                .rawImagePath(rawScanPath)
+                                .debugImageId("coordinate-helper:green-text-region")
+                                .source("coordinate-helper")
+                                .phase("green-text-region-wash")
+                                .build());
+        if (!washResult.hasImage()) {
+            log.info("Green text wash missed [{}]: status={} reason={}",
+                    templatePath, washResult.status(), washResult.reason());
+            return null;
+        }
 
         double[] result = ImageFinder.find(washedScanPath, templatePath, matchRate);
         if (result != null && result.length >= 2) {

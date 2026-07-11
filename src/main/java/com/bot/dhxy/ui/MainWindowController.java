@@ -112,6 +112,7 @@ public class MainWindowController {
     private final CommonBoxService commonBoxService;
     private final GameUiSettingsStore gameUiSettingsStore;
     private final LocalOcrSidecarService localOcrSidecarService;
+    private final CloudDecisionDevSidecarService cloudDecisionDevSidecarService;
     private final MapSurveyService mapSurveyService;
     private final CoordinateHelper coordinateHelper;
     private final AppVersionService appVersionService;
@@ -1017,8 +1018,22 @@ public class MainWindowController {
         startWindowSelectedTaskButton.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
             warnUnavailableSelectedWindows("启动已选任务");
-            runWindowCommandInBackground(() ->
-                    windowTaskControlService.start(WindowTaskStartRequest.selectedTask(windowIds)));
+            runWindowCommandInBackground(() -> {
+                WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
+                if (ocrGate != null) {
+                    return ocrGate;
+                }
+                List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
+                if (acceptingWindowIds.isEmpty()) {
+                    return WindowTaskCommandResult.empty("选中的窗口当前不可接任务，未启动任务",
+                            windowTaskControlService.getSnapshots());
+                }
+                WindowTaskCommandResult cloudGate = ensureCloudDecisionDevReadyForTaskStart();
+                if (cloudGate != null) {
+                    return cloudGate;
+                }
+                return windowTaskControlService.start(WindowTaskStartRequest.selectedTask(acceptingWindowIds));
+            });
         });
         pauseSelectedWindowsButton.setOnAction(event -> togglePauseResumeSelectedWindows());
         resumeSelectedWindowsButton.setOnAction(event -> {
@@ -2326,7 +2341,16 @@ public class MainWindowController {
             if (ocrGate != null) {
                 return ocrGate;
             }
-            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue));
+            List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
+            if (acceptingWindowIds.isEmpty()) {
+                return WindowTaskCommandResult.empty("选中的窗口当前不可接任务，未启动队列",
+                        windowTaskControlService.getSnapshots());
+            }
+            WindowTaskCommandResult cloudGate = ensureCloudDecisionDevReadyForTaskStart();
+            if (cloudGate != null) {
+                return cloudGate;
+            }
+            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(acceptingWindowIds, queue));
         });
     }
 
@@ -2408,6 +2432,10 @@ public class MainWindowController {
                         : "已自动刷新窗口，但选中的窗口已失效或当前不可接任务，未启动旧绑定";
                 return WindowTaskCommandResult.empty(message, latestSnapshots.isEmpty() ? scanResult.getSnapshots() : latestSnapshots);
             }
+            WindowTaskCommandResult cloudGate = ensureCloudDecisionDevReadyForTaskStart();
+            if (cloudGate != null) {
+                return cloudGate;
+            }
             log.info("Start selected task flow: submit start queue={} targets={}", queue.toLogText(), targetWindowIds);
             return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(targetWindowIds, queue));
         });
@@ -2442,12 +2470,21 @@ public class MainWindowController {
             if (ocrGate != null) {
                 return ocrGate;
             }
-            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(windowIds, queue));
+            List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
+            if (acceptingWindowIds.isEmpty()) {
+                return WindowTaskCommandResult.empty(actionName + "失败：窗口当前不可接任务",
+                        windowTaskControlService.getSnapshots());
+            }
+            WindowTaskCommandResult cloudGate = ensureCloudDecisionDevReadyForTaskStart();
+            if (cloudGate != null) {
+                return cloudGate;
+            }
+            return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(acceptingWindowIds, queue));
         });
     }
 
     private void announceLocalOcrGateForStart() {
-        addWindowLog("本地OCR：启动前确认中；未就绪不会控制游戏窗口");
+        addWindowLog("本地OCR/Cloud决策：启动前确认中；OCR未就绪不会控制游戏窗口，Cloud失败会按必需服务 fail-closed/STOP");
         renderLogList();
     }
 
@@ -2460,6 +2497,27 @@ public class MainWindowController {
         log.warn("UI task start OCR gate blocked: {}", result.message());
         return WindowTaskCommandResult.empty(result.message() + "，未启动任务",
                 windowTaskControlService.getSnapshots());
+    }
+
+    private WindowTaskCommandResult ensureCloudDecisionDevReadyForTaskStart() {
+        CloudDecisionDevSidecarService.StartupResult result =
+                cloudDecisionDevSidecarService.ensureReadyForTaskStart();
+        if (result.skipped()) {
+            log.debug("UI task start cloud sidecar gate skipped: {}", result.message());
+            return null;
+        }
+        if (result.available()) {
+            log.info("UI task start cloud sidecar gate passed: {} startedProcess={}",
+                    result.message(), result.startedProcess());
+            return null;
+        }
+        String message = result.message() + "，未启动任务";
+        log.warn("UI task start cloud sidecar gate blocked: {}", result.message());
+        javafx.application.Platform.runLater(() -> {
+            addWindowLog("Cloud决策端点：" + message);
+            renderLogList();
+        });
+        return WindowTaskCommandResult.empty(message, windowTaskControlService.getSnapshots());
     }
 
     private void togglePauseResumeSelectedWindows() {
@@ -2648,6 +2706,19 @@ public class MainWindowController {
                     + String.join(", ", unavailableWindowIds));
             renderLogList();
         }
+    }
+
+    private List<String> filterAcceptingWindowIds(List<String> windowIds) {
+        if (windowIds == null || windowIds.isEmpty()) {
+            return List.of();
+        }
+        return windowTaskControlService.getSnapshots().stream()
+                .filter(WindowTaskSnapshot::isAcceptingTaskQueue)
+                .map(WindowTaskSnapshot::getWindowId)
+                .filter(id -> id != null && !id.isBlank())
+                .filter(windowIds::contains)
+                .distinct()
+                .toList();
     }
 
     private void runWindowCommandInBackground(WindowCommand command) {

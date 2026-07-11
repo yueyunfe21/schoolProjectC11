@@ -15,6 +15,9 @@ import com.bot.dhxy.model.MapCoordinate;
  * @param coordinate recognized in-game coordinate.
  * @param mapLabelScore template similarity score for the map label.
  * @param mapLabelPath optional debug image path for the cleaned map label; null on normal in-memory fast paths.
+ * @param ocrFallback CR246: true when the cloud produced this result through its OCR fallback
+ *                    instead of a template hit; consumers apply the old OCR discipline
+ *                    (canonicalization + coordinate plausibility) to such results.
  */
 @Value
 @Builder
@@ -25,4 +28,5 @@ public class TemplateLocationInfo {
     MapCoordinate coordinate;
     double mapLabelScore;
     String mapLabelPath;
+    boolean ocrFallback;
 }

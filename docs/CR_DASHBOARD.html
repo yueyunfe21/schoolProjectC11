@@ -366,6 +366,7 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
     }
 
     .detail-head {
@@ -386,6 +387,7 @@
 
     .detail-title strong {
       font-size: 22px;
+      font-weight: 800;
       letter-spacing: 0;
     }
 
@@ -407,38 +409,47 @@
     }
 
     .detail-body {
-      padding: 14px;
+      padding: 16px;
       overflow: auto;
       max-height: 705px;
     }
 
     .field {
-      margin-bottom: 16px;
+      margin-bottom: 18px;
     }
 
     .field label {
       display: block;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 900;
-      margin-bottom: 7px;
+      color: #42526b;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 8px;
     }
 
     .field p {
       margin: 0;
-      line-height: 1.65;
+      color: #172033;
+      font-size: 14px;
+      line-height: 1.78;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .field del {
+      color: #64748b;
+      text-decoration-thickness: 2px;
     }
 
     .code-text {
       font-family: Consolas, "Cascadia Mono", monospace;
       font-size: 12px;
-      color: #334155;
-      background: var(--soft);
+      color: #253247;
+      background: #f8fafc;
       border: 1px solid var(--line);
       border-radius: 7px;
-      padding: 9px;
+      padding: 10px 11px;
       overflow-wrap: anywhere;
-      line-height: 1.55;
+      line-height: 1.65;
     }
 
     .source-text {
@@ -700,6 +711,7 @@
       CR5: "删除过期 generic fresh helper，只保留明确 prepared/pathing helper。",
       CR6: "prepared-dialog 等待期间禁止机会维护，避免等待被维护逻辑打断。",
       CR7: "统计连续 timeout wake，并在 Runner 不回复 prepared-dialog wait 时打明确诊断。",
+      CR208: "本地 OCR 全量迁云端父卡，当前进行中，不能关闭。\n\n已完成代码迁移：\n1. [x] ~~`TeamRoleDetectionService` tooltip 队长 ID OCR。~~ CR212；fresh 仍待验。\n2. [x] ~~`NpcClickService` Ctrl 菜单项 OCR。~~ CR209。\n7/8. [x] ~~`PlayerStateService` 摄妖香小时/分钟 OCR 与模板学习。~~ CR213；59/53 专项 fresh 待验。\n11. [x] 世界地图黄色目的地：本地只上传截图，云端路线记忆优先、miss 后黄字识别并返回点击点；fresh 待验。\n补充：[x] 五环完成 story 白模板已改云端判定。\n\n明确不迁：\n12. [x] legacy 世界地图绿色路线坐标链已从当前分支删除；完整历史保留在 `696a12b`，无最终坐标请求明确失败。\n13. [x] 未引用的旧 dialog option 通用 OCR API；实际 dialog 已走任务专用模板/云端 `DIALOG_POLICY`。\n14. [x] 未引用的旧黄/紫名字通用 OCR API；`NPC_CLICK_SMART` 已有独立云端链路。\n15. 当前不单列；只有未来重启通用文字候选链时，才随云端 word boxes 处理。\n\n仍未完成：\n3/4. 五倍 tracker 黄字详情、绿色地图链接：云端优先，但 cloud miss 仍落本地 OCR，属于半迁移。\n5/6. `QuestManagerService` 任务详情与 NPC/地图/坐标。\n9. `XiuluoTaskV2` 修罗任务栏目标。\n10. `WubeiTask` 目的地黄字提示。\n16. `LocationVisionService` 本地/Baidu fallback。\n\n边界：`MiniMapCoordinateReader` 已走 `MINIMAP_LOCATION`；`ObjectiveTextRecognitionService` 与 `GameTextLineOcrService` 仍属半云端，不能计入完成。",
       CR8: "旧 no-park 发现已被 fresh-run 证据替代，不作为实现卡。",
       CR9: "旧 ready-event satisfied-check 后续已关闭，operation-null 边界由 CR18 负责。",
       CR10: "旧 null-target tracker terminal 方案废弃，terminal/attention 拆分由 CR20 负责。",
@@ -1037,7 +1049,7 @@
         <div class="detail-body">
           <div class="field">
             <label>具体要做什么</label>
-            <p>${escapeHtml(requirement)}</p>
+            <p>${formatDetailText(requirement)}</p>
           </div>
           <div class="field">
             <label>当前状态</label>
@@ -1053,7 +1065,7 @@
           </div>
           <div class="field">
             <label>技术原文</label>
-            <div class="code-text source-text">${escapeHtml(cleanSourceText(item.summary))}</div>
+            <div class="code-text source-text">${formatDetailText(cleanSourceText(item.summary))}</div>
           </div>
           <div class="field">
             <label>手动备注</label>
@@ -1221,10 +1233,17 @@
 
     function cleanSourceText(text) {
       return String(text || "")
+        .replace(/<br\s*\/?>/gi, "\n")
         .replace(/\*\*/g, "")
         .replace(/`/g, "")
-        .replace(/\s+/g, " ")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n\s+/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
         .trim();
+    }
+
+    function formatDetailText(text) {
+      return escapeHtml(text).replace(/~~([^~]+)~~/g, "<del>$1</del>");
     }
 
     function exportOverrides() {

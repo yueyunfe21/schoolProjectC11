@@ -6,12 +6,14 @@ import lombok.Builder;
 import lombok.Value;
 import lombok.experimental.Accessors;
 
+import com.bot.dhxy.cloud.task.ImageProcessorService;
+import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
+import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.tools.ImagePreprocessor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -48,13 +50,19 @@ public class ObjectiveTextRecognitionService {
 
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final CoordinateHelper coordinateHelper;
+    private final ImageProcessorService imageProcessorService;
+    private final com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService;
 
     private volatile TemplateBundle templateBundle;
 
     public ObjectiveTextRecognitionService(TaskExecutionContextHolder taskExecutionContextHolder,
-                                           CoordinateHelper coordinateHelper) {
+                                           CoordinateHelper coordinateHelper,
+                                           ImageProcessorService imageProcessorService,
+                                           com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService) {
         this.taskExecutionContextHolder = taskExecutionContextHolder;
         this.coordinateHelper = coordinateHelper;
+        this.imageProcessorService = imageProcessorService;
+        this.objectiveTextReaderCloudDecisionService = objectiveTextReaderCloudDecisionService;
     }
 
     /**
@@ -102,6 +110,34 @@ public class ObjectiveTextRecognitionService {
 
         checkpoint("start objective recognition");
         long startedAt = System.currentTimeMillis();
+        if (objectiveTextReaderCloudDecisionService.isActive()) {
+            /*
+             * CR208-9: cloud owns the whole recognition — the panel image goes up, cloud runs green
+             * washing, map/digit template matching and the map-bounds plausibility guard, and
+             * answers FOUND or NO_RESULT. The local template pipeline below stays only as the
+             * disabled/offline dev fallback and is no longer the production path.
+             */
+            Optional<ObjectiveTextResult> cloud = objectiveTextReaderCloudDecisionService.read(
+                    raw, currentTaskCode(), source);
+            log.info("[objective-recognition] cloud reader result: source={} hit={} value={} elapsedMs={}",
+                    source, cloud.isPresent(), cloud.orElse(null), System.currentTimeMillis() - startedAt);
+            return cloud;
+        }
+        return recognizeLocallyLegacy(raw, source, startedAt);
+    }
+
+    private String currentTaskCode() {
+        return taskExecutionContextHolder.current()
+                .map(context -> context.getTaskCode())
+                .orElse("navigation");
+    }
+
+    /**
+     * Legacy local template pipeline. CR208-9 moved production recognition to the cloud
+     * {@code OBJECTIVE_TEXT_READER}; this remains only for disabled/offline dev mode and rollback.
+     */
+    @Deprecated(since = "CR208-9", forRemoval = false)
+    private Optional<ObjectiveTextResult> recognizeLocallyLegacy(BufferedImage raw, String source, long startedAt) {
         TemplateBundle templates = loadTemplates();
         checkpoint("objective templates loaded");
         if (templates.mapNames().isEmpty() || templates.digits().isEmpty()) {
@@ -110,8 +146,13 @@ public class ObjectiveTextRecognitionService {
             return Optional.empty();
         }
 
-        // Normalize green objective text into a binary image before running local template matching.
-        BufferedImage clean = ImagePreprocessor.washGreenTextToBlackAndWhite(raw);
+        // Cloud active owns green-text washing; local washing remains only for disabled/offline dev mode.
+        BufferedImage clean = cloudWashedObjectiveImage(raw, source);
+        if (clean == null) {
+            log.info("[objective-recognition] no usable clean objective image: source={} elapsedMs={}",
+                    source, System.currentTimeMillis() - startedAt);
+            return Optional.empty();
+        }
         try {
             ForegroundCrop foreground = cropToForeground(clean, 4);
             BufferedImage searchImage = foreground.image();
@@ -183,6 +224,22 @@ public class ObjectiveTextRecognitionService {
         } finally {
             clean.flush();
         }
+    }
+
+    private BufferedImage cloudWashedObjectiveImage(BufferedImage raw, String source) {
+        ImageProcessorResult result = imageProcessorService.washGreenTextToBlackAndWhite(
+                raw,
+                RequestMetadata.builder()
+                        .debugImageId(source)
+                        .source(source)
+                        .phase("objective-wash-green")
+                        .build());
+        if (!result.hasImage()) {
+            log.info("[objective-recognition] cloud green wash miss: source={} status={} reason={}",
+                    source, result.status(), result.reason());
+            return null;
+        }
+        return result.image();
     }
 
     private Optional<String> selectPlausibleCoordinate(String mapName, String rawCoordinate, String source) {

@@ -4,6 +4,7 @@ import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.model.maintenance.TeamSupportCapability;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
+import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.task.transaction.TaskTurnCoordinator;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -29,7 +30,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AutoCombatService {
     private static final long COMBAT_ENTRY_MAINTENANCE_DELAY_MS = 4_000L;
     private static final long COMBAT_UI_CLEAN_INTERVAL_MS = 40_000L;
-    private static final long FOLLOWER_FIRST_AID_GATE_WAIT_MS = 3_000L;
     private static final long REFRESH_DUE_PANEL_VERIFY_GUARD_MS = 30_000L;
     private static final long REFRESH_DUE_DEFERRED_LOG_INTERVAL_MS = 10_000L;
     private static final long URGENT_ROUNDS_PANEL_VERIFY_RETRY_MS = 30_000L;
@@ -88,7 +88,105 @@ public class AutoCombatService {
         state.pendingFollowerFirstAidSource = null;
         state.fastExpectedExitWatchArmed = false;
         state.expectedCombatExitWaitArmed = false;
-        state.verifyActualRoundsAfterEntryMaintenance = false;
+        // CR252 round 4: a fresh task run starts with a clean member coverage history — a window
+        // launched independently this run keeps normal bootstrap semantics even if a previous run
+        // on the same window was once covered by a local leader.
+        state.memberCoveredByLeader = false;
+        state.memberReadOnlySelfObserve = false;
+        state.lastLeaderCombatPhaseEpochId = 0L;
+        // CR252: a fresh enter-battle action (or task/watcher start) means any earlier round's team
+        // combat phase owned by this window is stale; members fall back to self radar until the new
+        // round's entry is confirmed. No-op for member windows (phases are keyed by leader).
+        windowTaskContextHolder.rawCurrent().ifPresent(runtime ->
+                taskMaintenanceService.invalidateTeamCombatPhaseForLeader(runtime.getWindowId(),
+                        "auto-combat-initialize"));
+    }
+
+    /**
+     * CR252: a real, successful physical enter-battle action (修罗 看打 click, 五倍 enter-battle
+     * dialog / direct-combat success) temporarily authorizes this window's battle-template
+     * detection until the round's exit is confirmed. Recognition-only results, interest
+     * registration, and navigation clicks must never call this.
+     */
+    public void authorizeCombatDetectionAfterEnterBattleAction(String source) {
+        AutoCombatRuntimeState state = state();
+        state.combatDetectionAuthorized = true;
+        state.combatDetectionAuthorizedAtMs = System.currentTimeMillis();
+        state.combatDetectionAuthoritySource = source;
+        log.info("combat detection authorized after enter-battle action: source={}", source);
+    }
+
+    /**
+     * CR252: end the temporary detection authorization; the next round must re-authorize via a new
+     * confirmed enter-battle action.
+     */
+    public void revokeCombatDetectionAuthority(String reason) {
+        AutoCombatRuntimeState state = state();
+        if (!state.combatDetectionAuthorized) {
+            return;
+        }
+        state.combatDetectionAuthorized = false;
+        state.combatDetectionAuthoritySource = null;
+        log.info("combat detection authority revoked: reason={}", reason);
+    }
+
+    /**
+     * CR252: 修罗/五倍 task-owner windows may run the battle-template radar only inside an
+     * authorized combat window, or while the window is already IN_COMBAT (hot start, incidental
+     * state carried over, and correction chains must keep tracking the exit). Every other window
+     * (五环, unbound members, standalone) keeps its radar unchanged.
+     */
+    private boolean mayRunBattleRadar(TaskExecutionContext context) {
+        if (!requiresEnterBattleAuthorization(context)) {
+            return true;
+        }
+        if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            return true;
+        }
+        return state().combatDetectionAuthorized;
+    }
+
+    private static boolean requiresEnterBattleAuthorization(TaskExecutionContext context) {
+        String taskCode = context == null ? null : context.getTaskCode();
+        return "xiuluo_v2".equalsIgnoreCase(taskCode) || "wubei".equalsIgnoreCase(taskCode);
+    }
+
+    /**
+     * CR252: the bound local leader's live combat phase, consulted only by member auto-battle
+     * windows. Absent for every other window kind so their radar path stays untouched.
+     */
+    private TaskMaintenanceService.MemberTeamCombatPhaseView memberLeaderCombatPhase(TaskExecutionContext context) {
+        if (context == null || !"auto_battle".equalsIgnoreCase(context.getTaskCode())) {
+            return TaskMaintenanceService.MemberTeamCombatPhaseView.absent();
+        }
+        return taskMaintenanceService.memberTeamCombatPhase(context);
+    }
+
+    /**
+     * CR252 review P1 round 4: whether this member tick must degrade to the pure-read radar path.
+     * True for a currently paused bound leader, and for ANY coverage loss (leader stop,
+     * runner/session completion, group/binding loss) on a member that was covered at some point in
+     * this run — pause, stop, and binding invalidation share one read-only degrade semantic. A
+     * window that was never covered this run keeps normal standalone bootstrap semantics.
+     */
+    private static boolean isMemberReadOnlyDegrade(TaskMaintenanceService.MemberTeamCombatPhaseView leaderPhase,
+                                                   AutoCombatRuntimeState state) {
+        if (leaderPhase.leaderPaused()) {
+            return true;
+        }
+        boolean everCovered = state.memberReadOnlySelfObserve
+                || state.memberCoveredByLeader
+                || state.lastLeaderCombatPhaseEpochId > 0L;
+        if (!everCovered) {
+            return false;
+        }
+        // Covered again (leader live) but read-only is sticky until the next entry broadcast;
+        // a covered member that never degraded keeps the quiet-wait branch instead.
+        if (leaderPhase.covered()) {
+            return state.memberReadOnlySelfObserve;
+        }
+        // Coverage fully lost (stop / session completed / binding gone) after being covered.
+        return true;
     }
 
     /**
@@ -135,18 +233,64 @@ public class AutoCombatService {
             battleRadarService.armExpectedCombatExitWait(source);
             state.expectedCombatExitWaitArmed = true;
         }
-        boolean fastExpectedExitWait = fastExpectedExitPolicy
-                && gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
-        if (fastExpectedExitWait) {
-            state.fastExpectedExitWatchArmed = true;
-        }
-        boolean fullRadarDue = true;
-        if (fastExpectedExitWait) {
-            boolean fastExitDetected = battleRadarService.checkFastExpectedCombatExitByAvatarDiff(source);
-            fullRadarDue = !fastExitDetected && battleRadarService.shouldRunFullRadarForFastExpectedExitFallback();
-        }
-        if (fullRadarDue) {
+        TaskMaintenanceService.MemberTeamCombatPhaseView leaderPhase = memberLeaderCombatPhase(context);
+        if (leaderPhase.present()) {
+            // CR252: a member bound to a local leader consumes the leader-confirmed team combat
+            // phase instead of its own battle-template radar. The verdict reuses the radar's
+            // enter/exit transitions, so panel bootstrap, exit consumption, and recovery are
+            // unchanged. Candidate leader quick-exits never reach here (not broadcast).
+            state.memberCoveredByLeader = true;
+            // A new leader-confirmed entry broadcast is the ONLY thing that ends the
+            // pause-degraded read-only mode (CR252 review P1 round 3).
+            state.memberReadOnlySelfObserve = false;
+            state.lastLeaderCombatPhaseEpochId = leaderPhase.epochId();
+            battleRadarService.applyExternalCombatStateVerdict(leaderPhase.inCombat(),
+                    source + ":leader-combat-phase:epoch-" + leaderPhase.epochId());
+        } else if (isMemberReadOnlyDegrade(leaderPhase, state)) {
+            // CR252 review P1 rounds 3+4: EVERY coverage-loss event — leader pause, leader stop,
+            // runner/session completion, group/binding loss — degrades a previously bound member
+            // to a PURE READ of its own combat state: scan and sync, but never consume the enter
+            // signal, schedule entry maintenance, run exit recovery, or send any auto-combat
+            // panel input (Alt+8). Only the next real entry broadcast (new epoch) — or a fresh
+            // task run that starts independent — restores normal handling.
+            if (state.memberCoveredByLeader || state.lastLeaderCombatPhaseEpochId > 0L) {
+                log.info("{} member leader-paused-fallback: leader coverage gone (paused={} covered={}); self battle radar is read-only until the next entry broadcast epoch={} source={}",
+                        context == null ? "[window=unknown]" : context.getLogPrefix(),
+                        leaderPhase.leaderPaused(), leaderPhase.covered(),
+                        state.lastLeaderCombatPhaseEpochId, source);
+                state.memberCoveredByLeader = false;
+                state.lastLeaderCombatPhaseEpochId = 0L;
+            }
+            state.memberReadOnlySelfObserve = true;
             battleRadarService.checkAndSyncCombatState();
+            return gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT
+                    ? TickResult.IN_COMBAT
+                    : TickResult.NONE;
+        } else if (leaderPhase.covered()
+                && gameContext.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            // CR252 review P1: bound to a live local leader with no entry broadcast yet — the
+            // leader is navigating/moving/waiting tracker. Wait quietly; no template radar. A
+            // member already IN_COMBAT skips this branch so its own exit stays trackable.
+            state.memberCoveredByLeader = true;
+        } else {
+            // Reached only by windows that were never covered this run (genuinely independent /
+            // external leader / unknown binding -> normal bootstrap semantics) and by covered
+            // members already IN_COMBAT from their own incidental battle.
+            if (mayRunBattleRadar(context)) {
+                boolean fastExpectedExitWait = fastExpectedExitPolicy
+                        && gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
+                if (fastExpectedExitWait) {
+                    state.fastExpectedExitWatchArmed = true;
+                }
+                boolean fullRadarDue = true;
+                if (fastExpectedExitWait) {
+                    boolean fastExitDetected = battleRadarService.checkFastExpectedCombatExitByAvatarDiff(source);
+                    fullRadarDue = !fastExitDetected && battleRadarService.shouldRunFullRadarForFastExpectedExitFallback();
+                }
+                if (fullRadarDue) {
+                    battleRadarService.checkAndSyncCombatState();
+                }
+            }
         }
         maybeHandleCombatEnter(source);
         battleRadarService.discardStaleCombatExitSignalIfInCombat(source);
@@ -156,6 +300,12 @@ public class AutoCombatService {
                 return TickResult.EXIT_RECOVERED;
             }
             runPendingFollowerFirstAidIfAllowed(context, source);
+            /*
+             * CR242 reopen: consuming the combat-exit signal IS the shared exit-recovered result.
+             * Task owners (修罗/五倍 leaders) never run member common-box/first-aid, so demoting
+             * this to NONE strands them in WAIT_COMBAT forever. The member same-round return
+             * self-check lives in AutoBattleTask's own post-exit branch instead.
+             */
             return TickResult.EXIT_RECOVERED;
         }
 
@@ -197,6 +347,12 @@ public class AutoCombatService {
      */
     public TickResult handleWindowCombatGuardTick(TaskExecutionContext context, String source) {
         context.throwIfStopRequested();
+        if (!mayRunBattleRadar(context)) {
+            // CR252: without a confirmed enter-battle authorization the watcher must not touch the
+            // battle-template chain (navigation, movement, tracker waits, dialogs, maintenance and
+            // return trips all pass through here). Cheap non-template probes stay with the caller.
+            return TickResult.NONE;
+        }
         battleRadarService.checkAndSyncCombatState();
         maybeHandleCombatEnter(source);
 
@@ -224,6 +380,45 @@ public class AutoCombatService {
         battleRadarService.checkAndSyncCombatState();
 
         if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            return TickResult.IN_COMBAT;
+        }
+        return TickResult.NONE;
+    }
+
+    /**
+     * Refresh combat state for a paused leader observer without sending input or consuming signals.
+     *
+     * <p>This CR141 path is narrower than both normal combat ticks and window guard ticks. It only
+     * lets {@link BattleRadarService} update {@link GameContext.ActionState} and leave combat
+     * enter/exit signals pending for the task to consume after resume. The method checks stop
+     * without consulting the pause token so a stop request still terminates the watcher promptly
+     * while user pause remains active.</p>
+     *
+     * @param context current task execution context; supplies the stop token and diagnostics.
+     * @param source short log/source label for the radar refresh path.
+     * @return IN_COMBAT while combat is visible; NONE otherwise.
+     */
+    public TickResult probePausedWindowCombatStateReadOnly(TaskExecutionContext context, String source) {
+        TaskCheckpoint.throwIfStopRequested(context == null ? null : context.getStopToken(),
+                "paused leader read-only combat probe interrupted");
+        GameContext.ActionState beforeState = gameContext.getCurrentActionState();
+        if (!mayRunBattleRadar(context)) {
+            // CR252: a paused leader outside an authorized combat window has nothing to observe via
+            // battle templates; stay read-only and cheap.
+            return beforeState == GameContext.ActionState.IN_COMBAT
+                    ? TickResult.IN_COMBAT
+                    : TickResult.NONE;
+        }
+        battleRadarService.checkAndSyncCombatState();
+        GameContext.ActionState actionState = gameContext.getCurrentActionState();
+        if (beforeState == GameContext.ActionState.IN_COMBAT
+                && actionState == GameContext.ActionState.FREE) {
+            battleRadarService.markCombatExitObservedDuringPause(source);
+        }
+        log.info("{} paused-leader-readonly-observer combat sync: source={} actionState={} inputAllowed=false preparedActionAllowed=false",
+                context == null ? "[window=unknown]" : context.getLogPrefix(), source, actionState);
+
+        if (actionState == GameContext.ActionState.IN_COMBAT) {
             return TickResult.IN_COMBAT;
         }
         return TickResult.NONE;
@@ -328,7 +523,82 @@ public class AutoCombatService {
         return state().pendingLeaderPostCombatRecovery;
     }
 
+    /**
+     * CR243: 修罗 rounds route post-combat first-aid through the team-scoped queue instead of the
+     * legacy per-window pending flag / capability polling. Other tasks keep the legacy path.
+     */
+    private boolean isXiuluoPostCombatFirstAidQueueMode(TaskExecutionContext context) {
+        if (context == null) {
+            return false;
+        }
+        return "xiuluo_v2".equalsIgnoreCase(context.getRequestedTaskCode())
+                || "xiuluo_v2".equalsIgnoreCase(context.getTaskCode());
+    }
+
+    private TaskMaintenanceService.PostCombatFirstAidReport toPostCombatFirstAidReport(
+            PlayerStateService.FirstAidNoFocusProbeResult probeResult) {
+        if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED) {
+            return TaskMaintenanceService.PostCombatFirstAidReport.SUPPLY_NEEDED;
+        }
+        if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
+            return TaskMaintenanceService.PostCombatFirstAidReport.UNKNOWN;
+        }
+        return TaskMaintenanceService.PostCombatFirstAidReport.HEALTHY;
+    }
+
+    /**
+     * CR243: run the leader's own queued first-aid attempt when its item is at the FIFO head.
+     * The user-approved order puts that item first immediately after the green-link click; the
+     * leader then parks while member items continue in the background. The leader already holds
+     * the task turn, so no coordinator re-entry happens here. One attempt, unconditional dequeue.
+     *
+     * @return true when a head attempt was executed (success or not); false when the leader is not
+     *         the head or the window is back in combat.
+     */
+    public boolean consumeQueuedLeaderPostCombatFirstAidIfHead(TaskExecutionContext context, String source) {
+        if (!taskMaintenanceService.isPostCombatFirstAidHeadWindow(context)) {
+            return false;
+        }
+        if (gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            return false;
+        }
+        if (!playerStateService.hasPendingNoFocusFirstAidPlanForCurrentWindow()) {
+            // CR243 review P2: no cached plan is a NO_PLAN_TERMINAL dequeue, not a supply attempt.
+            taskMaintenanceService.completePostCombatFirstAidAttempt(context, false,
+                    source + ":NO_PLAN_TERMINAL");
+            log.warn("{} queued leader post-combat first-aid dequeued without supply: reason=NO_PLAN_TERMINAL task={} role={}",
+                    source, safeTaskCode(context), safeRole(context));
+            return true;
+        }
+        boolean success = playerStateService.performCachedFirstAidPlanNow(context);
+        taskMaintenanceService.completePostCombatFirstAidAttempt(context, success,
+                success ? source + ":leader-cached-plan-executed"
+                        : source + ":leader-cached-plan-attempt-failed");
+        return true;
+    }
+
+    /**
+     * CR243 review P1-3: report-only split of the deferred leader recovery. Called at the green
+     * click BEFORE the first-aid queue opens so the leader can be consumed first. The no-focus
+     * probe takes no input; the caller then performs the leader's own queued attempt before it
+     * parks for pathing events.
+     */
+    public void reportQueuedLeaderPostCombatFirstAidIfPending(TaskExecutionContext context, String source) {
+        AutoCombatRuntimeState state = state();
+        if (!state.pendingLeaderPostCombatRecovery || !isXiuluoPostCombatFirstAidQueueMode(context)) {
+            return;
+        }
+        PlayerStateService.FirstAidNoFocusProbeResult probeResult =
+                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":queued-leader-report");
+        taskMaintenanceService.reportPostCombatFirstAid(context,
+                toPostCombatFirstAidReport(probeResult), true, source + ":queued-leader-report");
+    }
+
     private void maybeHandleCombatEnter(String source) {
+        if (gameContext.getCurrentActionState() != GameContext.ActionState.IN_COMBAT) {
+            battleRadarService.discardCombatEnterSignalIfNotInCombat(source);
+            return;
+        }
         if (!battleRadarService.consumeCombatEnterSignal()) {
             return;
         }
@@ -353,7 +623,6 @@ public class AutoCombatService {
         if (!consumedExit) {
             return false;
         }
-
         AutoCombatRuntimeState state = state();
         state.expectedCombatExitWaitArmed = false;
         state.pendingCombatEntryMaintenanceAt = 0L;
@@ -362,8 +631,10 @@ public class AutoCombatService {
 
         log.info("{} auto-combat exit detected: recoveryPolicy={} task={} requested={} role={}",
                 source, safePolicy, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
-        commonBoxService.detectMemberBoxAfterCombatExit(
-                context, safeRequestedTaskCode(context), source + ":combat-exit");
+        if ("MEMBER".equalsIgnoreCase(safeRole(context))) {
+            commonBoxService.detectMemberBoxAfterCombatExit(
+                    context, safeRequestedTaskCode(context), source + ":combat-exit");
+        }
         if (safePolicy.deferLeaderRecovery) {
             state.pendingFollowerFirstAid = false;
             state.pendingFollowerFirstAidSource = null;
@@ -379,12 +650,30 @@ public class AutoCombatService {
         if (shouldDeferFollowerFirstAid(context)) {
             PlayerStateService.FirstAidNoFocusProbeResult probeResult =
                     playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
-            if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
-                    || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
-                state.pendingFollowerFirstAid = true;
-                state.pendingFollowerFirstAidSource = source;
-                log.info("{} post-combat first-aid queued: follower-support window will wait in task-turn queue task={} requested={} role={} precheck={}",
-                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
+            boolean needsSupply = probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                    || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN;
+            if (isXiuluoPostCombatFirstAidQueueMode(context)) {
+                /*
+                 * CR243: every exited window must report exactly one of HEALTHY/SUPPLY_NEEDED/
+                 * UNKNOWN; UNKNOWN enqueues conservatively even without a cached plan (the single
+                 * attempt resolves it). No supply input happens here.
+                 */
+                taskMaintenanceService.reportPostCombatFirstAid(context,
+                        toPostCombatFirstAidReport(probeResult), false, source + ":post-combat");
+                state.pendingFollowerFirstAid = needsSupply;
+                state.pendingFollowerFirstAidSource = needsSupply ? source : null;
+            } else if (needsSupply) {
+                if (playerStateService.hasPendingNoFocusFirstAidPlanForCurrentWindow()) {
+                    state.pendingFollowerFirstAid = true;
+                    state.pendingFollowerFirstAidSource = source;
+                    log.info("{} post-combat first-aid queued: follower-support window will wait in task-turn queue task={} requested={} role={} precheck={}",
+                            source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
+                } else {
+                    state.pendingFollowerFirstAid = false;
+                    state.pendingFollowerFirstAidSource = null;
+                    log.warn("{} post-combat first-aid not queued: no cached plan after precheck task={} requested={} role={} precheck={}",
+                            source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), probeResult);
+                }
             } else {
                 state.pendingFollowerFirstAid = false;
                 state.pendingFollowerFirstAidSource = null;
@@ -394,13 +683,16 @@ public class AutoCombatService {
         } else {
             PlayerStateService.FirstAidNoFocusProbeResult probeResult =
                     playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
-            if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+            if (isXiuluoPostCombatFirstAidQueueMode(context)) {
+                // CR243: the leader reports too; its supply item is consumed immediately after
+                // the later tracker green click, before the member FIFO drains in background.
+                taskMaintenanceService.reportPostCombatFirstAid(context,
+                        toPostCombatFirstAidReport(probeResult), true, source + ":post-combat-leader");
+            } else if ((probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                    || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN)
                     && !playerStateService.performCachedFirstAidPlanNow(context)) {
-                log.warn("{} post-combat first-aid skipped: no-focus plan unavailable task={} role={}",
-                        source, safeTaskCode(context), safeRole(context));
-            } else if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
-                log.warn("{} post-combat first-aid skipped: no-focus probe unknown task={} role={}",
-                        source, safeTaskCode(context), safeRole(context));
+                log.warn("{} post-combat first-aid skipped: cached plan unavailable task={} role={} precheck={}",
+                        source, safeTaskCode(context), safeRole(context), probeResult);
             }
         }
         context.throwIfStopRequested();
@@ -422,6 +714,50 @@ public class AutoCombatService {
     public boolean refreshFastExpectedExitBaselineAfterTrustedInCombat(String source) {
         state().fastExpectedExitWatchArmed = true;
         return battleRadarService.refreshFastExpectedCombatExitAvatarBaseline(source);
+    }
+
+    /**
+     * Reconcile a stale combat action state after the owning task has already verified return-home.
+     *
+     * <p>This hook is intentionally tiny and synchronous. 修罗/五倍 may use the return item immediately
+     * after a fast expected combat exit, while the conservative window watcher can still carry an old
+     * {@link GameContext.ActionState#IN_COMBAT} for another radar miss cycle. Once the task has
+     * verified the expected start map, that map proof is stronger than the stale watcher state; this
+     * method clears only the in-memory combat wait flags and does not capture screenshots, OCR, click,
+     * navigate, sleep, or decrement auto-combat round estimates again.</p>
+     *
+     * @param context current task context for log prefix; may be null only from defensive callers.
+     * @param taskCode task that verified the return-home map, such as {@code xiuluo_v2} or
+     *                 {@code wubei}.
+     * @param verifiedMapName map name already verified by the task-owned position sync.
+     * @param source short diagnostic source describing the return-home branch.
+     * @return true when a stale {@code IN_COMBAT} action state was cleared.
+     */
+    public boolean reconcileReturnHomeVerifiedCombatState(TaskExecutionContext context,
+                                                          String taskCode,
+                                                          String verifiedMapName,
+                                                          String source) {
+        AutoCombatRuntimeState state = state();
+        GameContext.ActionState before = gameContext.getCurrentActionState();
+        // CR252: a verified return home is the correction chain's confirmation that this round's
+        // battle truly ended. Broadcast the team exit (bound members apply FREE through their
+        // normal exit machinery) and end this window's detection authorization; the next round must
+        // re-authorize via a new confirmed enter-battle action.
+        taskMaintenanceService.confirmTeamCombatPhaseExitedForLeader(context, source + ":return-home-verified");
+        revokeCombatDetectionAuthority(source + ":return-home-verified");
+        state.expectedCombatExitWaitArmed = false;
+        state.fastExpectedExitWatchArmed = false;
+        state.pendingCombatEntryMaintenanceAt = 0L;
+        if (before != GameContext.ActionState.IN_COMBAT) {
+            return false;
+        }
+
+        gameContext.setCurrentActionState(GameContext.ActionState.FREE);
+        battleRadarService.discardCombatEnterSignalIfNotInCombat(source + ":return-home-verified");
+        log.info("{} return-home verification reconciled stale combat state: task={} source={} verifiedMap={} before={} after={}",
+                context == null ? "[window=unknown]" : context.getLogPrefix(),
+                taskCode, source, verifiedMapName, before, GameContext.ActionState.FREE);
+        return true;
     }
 
     /**
@@ -457,15 +793,23 @@ public class AutoCombatService {
         log.info("{} deferred post-combat recovery consuming after fast expected exit: originalSource={} task={} requested={} role={}",
                 source, originalSource, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
 
-        PlayerStateService.FirstAidNoFocusProbeResult probeResult =
-                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":deferred-post-combat");
-        if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
-                && !playerStateService.performCachedFirstAidPlanNow(context)) {
-            log.warn("{} deferred post-combat first-aid skipped: no-focus plan unavailable originalSource={} task={} role={}",
+        if (isXiuluoPostCombatFirstAidQueueMode(context)) {
+            /*
+             * CR243 review P1-3: in queue mode the leader's first-aid was already reported and
+             * drained through the team FIFO before this method runs (post-drain call site). Only
+             * the non-queue remainder (摄妖香) executes here; no probe, no supply input for HP/MP.
+             */
+            log.info("{} deferred post-combat recovery queue-mode remainder: first-aid handled by CR243 FIFO, running 摄妖香 only originalSource={} task={} role={}",
                     source, originalSource, safeTaskCode(context), safeRole(context));
-        } else if (probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
-            log.warn("{} deferred post-combat first-aid skipped: no-focus probe unknown originalSource={} task={} role={}",
-                    source, originalSource, safeTaskCode(context), safeRole(context));
+        } else {
+            PlayerStateService.FirstAidNoFocusProbeResult probeResult =
+                    playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":deferred-post-combat");
+            if ((probeResult == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                    || probeResult == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN)
+                    && !playerStateService.performCachedFirstAidPlanNow(context)) {
+                log.warn("{} deferred post-combat first-aid skipped: cached plan unavailable originalSource={} task={} role={} precheck={}",
+                        source, originalSource, safeTaskCode(context), safeRole(context), probeResult);
+            }
         }
         context.throwIfStopRequested();
         playerStateService.ensureSheYaoXiangActiveForLeaderTask(source + ":deferred-post-combat", context);
@@ -478,22 +822,6 @@ public class AutoCombatService {
         }
         String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
         if (!commonBoxService.hasPendingBoxForCurrentWindow(context, requestedTaskCode)) {
-            return false;
-        }
-        if (taskMaintenanceService != null
-                && taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
-            log.info("{} pending member common-box deferred: pending local leader detection session={} task={} requested={} role={}",
-                    source, context.getLocalTeamSessionKey(),
-                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
-            return false;
-        }
-        if (taskMaintenanceService != null
-                && taskMaintenanceService.isLocalSupportMemberSession(context)
-                && !taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
-                context, TeamSupportCapability.COMMON_BOX)) {
-            log.info("{} pending member common-box deferred: gate=local-team capability=COMMON_BOX closed session={} leaderWindow={} task={} requested={} role={}",
-                    source, context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
-                    safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context));
             return false;
         }
         String transactionName = source + ":pending-member-common-box";
@@ -529,11 +857,55 @@ public class AutoCombatService {
                 ? source
                 : state.pendingFollowerFirstAidSource;
         String requestedTaskCode = context == null ? null : context.getRequestedTaskCode();
+        if (isXiuluoPostCombatFirstAidQueueMode(context)) {
+            /*
+             * CR243: the team FIFO replaces the capability polling for 修罗. Consumption is legal
+             * only when the queue is open (leader green link -> PATHING_STARTED) AND this window
+             * owns the head. One real attempt, unconditional dequeue, no retry.
+             */
+            if (!taskMaintenanceService.hasPostCombatFirstAidQueueItem(context)) {
+                state.pendingFollowerFirstAid = false;
+                state.pendingFollowerFirstAidSource = null;
+                log.info("{} pending follower first-aid cleared: queue item gone (drained or window cleanup) task={} requested={} role={} originalSource={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                return false;
+            }
+            if (!taskMaintenanceService.isPostCombatFirstAidHeadWindow(context)) {
+                log.info("{} pending follower first-aid deferred: post-combat queue closed or not head task={} requested={} role={} originalSource={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                return false;
+            }
+            String queueTransactionName = source + ":post-combat-first-aid-head";
+            log.info("{} pending follower first-aid queue head entering task turn: task={} requested={} role={} originalSource={}",
+                    source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+            taskTurnCoordinator.enter(queueTransactionName);
+            try {
+                if (!playerStateService.hasPendingNoFocusFirstAidPlanForCurrentWindow()) {
+                    // CR243 review P2: no cached plan is a NO_PLAN_TERMINAL dequeue, not a supply
+                    // attempt. The item leaves the FIFO so the team is not blocked; the log states
+                    // truthfully that no supply input happened.
+                    taskMaintenanceService.completePostCombatFirstAidAttempt(context, false,
+                            pendingSource + ":NO_PLAN_TERMINAL");
+                    log.warn("{} pending follower first-aid dequeued without supply: reason=NO_PLAN_TERMINAL task={} requested={} role={} originalSource={}",
+                            source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                    state.pendingFollowerFirstAid = false;
+                    state.pendingFollowerFirstAidSource = null;
+                    return false;
+                }
+                boolean success = playerStateService.performCachedFirstAidPlanNow(context);
+                taskMaintenanceService.completePostCombatFirstAidAttempt(context, success,
+                        success ? pendingSource + ":cached-plan-executed"
+                                : pendingSource + ":cached-plan-attempt-failed");
+                state.pendingFollowerFirstAid = false;
+                state.pendingFollowerFirstAidSource = null;
+                return success;
+            } finally {
+                taskTurnCoordinator.forceRelease(queueTransactionName);
+            }
+        }
         if (taskMaintenanceService.isLocalSupportMemberSession(context)) {
-            boolean localGateOpen = taskMaintenanceService.awaitLocalTeamSupportCapabilityOpen(
-                    context, TeamSupportCapability.FIRST_AID, FOLLOWER_FIRST_AID_GATE_WAIT_MS);
-            if (!localGateOpen) {
-                log.info("{} pending follower first-aid deferred: gate=local-team capability=FIRST_AID session={} leaderWindow={} task={} requested={} role={} originalSource={}",
+            if (!taskMaintenanceService.isLocalTeamSupportCapabilityOpen(context, TeamSupportCapability.FIRST_AID)) {
+                log.info("{} pending follower first-aid deferred immediately: gate=local-team capability=FIRST_AID session={} leaderWindow={} task={} requested={} role={} originalSource={}",
                         source, context.getLocalTeamSessionKey(), context.getLocalLeaderWindowId(),
                         safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
                 return false;
@@ -550,9 +922,8 @@ public class AutoCombatService {
                 && !taskMaintenanceService.isLocalSupportMemberCandidate(context)
                 && context.isLocalLeaderPresent()
                 && ("wubei".equalsIgnoreCase(requestedTaskCode) || "xiuluo_v2".equalsIgnoreCase(requestedTaskCode))
-                && !taskMaintenanceService.awaitTeamFirstAidMaintenanceWindowOpen(
-                context, requestedTaskCode, FOLLOWER_FIRST_AID_GATE_WAIT_MS)) {
-            log.info("{} pending follower first-aid deferred: team first-aid gate closed task={} requested={} role={} originalSource={}",
+                && !taskMaintenanceService.isTeamFirstAidMaintenanceWindowOpen(context, requestedTaskCode)) {
+            log.info("{} pending follower first-aid deferred immediately: team first-aid gate closed task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
             return false;
         }
@@ -570,15 +941,11 @@ public class AutoCombatService {
             log.info("{} pending follower first-aid acquired task turn: task={} requested={} role={} originalSource={}",
                     source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
             if (!playerStateService.performCachedFirstAidPlanNow(context)) {
-                PlayerStateService.FirstAidNoFocusProbeResult retryProbe =
-                        playerStateService.probeFirstAidSupplyNoFocus(context);
-                if (retryProbe == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED) {
-                    playerStateService.performCachedFirstAidPlanNow(context);
-                } else if (retryProbe == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN) {
-                    log.warn("{} pending follower first-aid still unknown after gate opened; keep pending for next safe window",
-                            source);
-                    return false;
-                }
+                state.pendingFollowerFirstAid = false;
+                state.pendingFollowerFirstAidSource = null;
+                log.warn("{} pending follower first-aid cleared: cached plan unavailable after gate opened task={} requested={} role={} originalSource={}",
+                        source, safeTaskCode(context), safeRequestedTaskCode(context), safeRole(context), pendingSource);
+                return false;
             }
             state.pendingFollowerFirstAid = false;
             state.pendingFollowerFirstAidSource = null;
@@ -643,18 +1010,16 @@ public class AutoCombatService {
 
         // First maintenance after entering combat is delayed so battle UI has time to settle.
         if (state.pendingCombatEntryMaintenanceAt > 0 && now >= state.pendingCombatEntryMaintenanceAt) {
-            log.info("{} auto-combat entry maintenance: clean generic windows and verify panel",
+            log.info("{} auto-combat entry maintenance: clean combat UI and verify panel",
                     context.getLogPrefix());
-            uiCleanerService.closeAllGenericWindows();
+            cleanCombatUiForRole(context, "entry-maintenance");
             if (refreshReason == AutoCombatPanelService.RoundsRefreshReason.REFRESH_DUE
                     && refreshDueDecision != null
                     && !refreshDueDecision.deferred()) {
                 log.info("{} auto-combat entry maintenance: merge panel verify into refresh-due check reason={} windowId={}",
                         context.getLogPrefix(), refreshReason, windowId);
-                state.verifyActualRoundsAfterEntryMaintenance = false;
             } else {
                 autoCombatPanelService.verifyAndAlignPanel(AutoCombatPanelService.PanelVerifyMode.ENTRY_MAINTENANCE);
-                state.verifyActualRoundsAfterEntryMaintenance = true;
             }
             state.pendingCombatEntryMaintenanceAt = 0L;
             state.lastCombatUiCleanAt = System.currentTimeMillis();
@@ -662,9 +1027,9 @@ public class AutoCombatService {
 
         // Long combats get occasional generic cleanup, but this must stay sparse to avoid noise.
         if (state.lastCombatUiCleanAt == 0L || now - state.lastCombatUiCleanAt >= COMBAT_UI_CLEAN_INTERVAL_MS) {
-            log.info("{} auto-combat maintenance: clean generic windows source={}",
+            log.info("{} auto-combat maintenance: clean combat UI source={}",
                     context.getLogPrefix(), source);
-            uiCleanerService.closeAllGenericWindows();
+            cleanCombatUiForRole(context, source);
             if (taskMaintenanceService.isLocalSupportMemberSession(context)) {
                 if (taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
                         context, TeamSupportCapability.LEFT_TOP_STATUS)) {
@@ -690,15 +1055,6 @@ public class AutoCombatService {
         }
 
         if (refreshReason == null) {
-            if (state.verifyActualRoundsAfterEntryMaintenance) {
-                long beforeActualRoundReadRefreshAt = gameContext.getLastAutoCombatRefreshAt();
-                boolean refreshed = autoCombatPanelService.verifyAndAlignPanel(
-                        AutoCombatPanelService.PanelVerifyMode.VERIFY_AND_REFRESH);
-                state.verifyActualRoundsAfterEntryMaintenance = false;
-                if (refreshed || gameContext.getLastAutoCombatRefreshAt() != beforeActualRoundReadRefreshAt) {
-                    state.lastAutoBattleRefreshAt = System.currentTimeMillis();
-                }
-            }
             return;
         }
 
@@ -725,10 +1081,19 @@ public class AutoCombatService {
         long beforeActualRoundReadRefreshAt = gameContext.getLastAutoCombatRefreshAt();
         boolean refreshed = autoCombatPanelService.verifyAndAlignPanel(
                 AutoCombatPanelService.PanelVerifyMode.VERIFY_AND_REFRESH);
-        state.verifyActualRoundsAfterEntryMaintenance = false;
         if (refreshed || gameContext.getLastAutoCombatRefreshAt() != beforeActualRoundReadRefreshAt) {
             state.lastAutoBattleRefreshAt = System.currentTimeMillis();
         }
+    }
+
+    private void cleanCombatUiForRole(TaskExecutionContext context, String source) {
+        if ("LEADER".equals(context.getWindowRole())) {
+            log.info("{} auto-combat maintenance: leader full UI cleanup source={}",
+                    context.getLogPrefix(), source);
+            uiCleanerService.cleanUpAll();
+            return;
+        }
+        uiCleanerService.closeAllGenericWindows();
     }
 
     private void logRefreshDueDeferred(TaskExecutionContext context,
@@ -795,13 +1160,26 @@ public class AutoCombatService {
         private long lastRefreshDuePanelVerifyAttemptAt = 0L;
         private long lastRefreshDuePanelVerifyDeferredLogAt = 0L;
         private long lastUrgentRoundsPanelVerifyAttemptAt = 0L;
-        private boolean verifyActualRoundsAfterEntryMaintenance = false;
         private boolean pendingFollowerFirstAid = false;
         private String pendingFollowerFirstAidSource;
         private boolean pendingLeaderPostCombatRecovery = false;
         private String pendingLeaderPostCombatRecoverySource;
         private boolean fastExpectedExitWatchArmed = false;
         private boolean expectedCombatExitWaitArmed = false;
+        // CR252: temporary battle-template detection authorization for 修罗/五倍 task owners.
+        private volatile boolean combatDetectionAuthorized = false;
+        private volatile long combatDetectionAuthorizedAtMs = 0L;
+        private volatile String combatDetectionAuthoritySource;
+        // CR252: last leader combat-phase epoch this member consumed; used only to log the
+        // one-time fallback to self radar when the broadcast disappears.
+        private long lastLeaderCombatPhaseEpochId = 0L;
+        // CR252 review P1: true while this member is covered by a live local leader (with or
+        // without an entry broadcast); drives the one-time leader-paused-fallback log.
+        private boolean memberCoveredByLeader = false;
+        // CR252 review P1 round 3: sticky read-only self-observe mode after a leader-pause
+        // fallback. Stays true through leader resume until the next real entry broadcast; while
+        // true the member never consumes enter signals or drives auto-combat panel input.
+        private boolean memberReadOnlySelfObserve = false;
     }
 
     public record RefreshDuePanelVerifyDecision(boolean deferred, long retryAfterMs, long lastTeamRefreshAgeMs) {

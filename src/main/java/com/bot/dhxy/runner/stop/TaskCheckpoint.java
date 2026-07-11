@@ -33,6 +33,23 @@ public final class TaskCheckpoint {
     }
 
     /**
+     * Checks only the explicit stop token and current thread interruption flag.
+     *
+     * <p>Use this for read-only observer paths that are intentionally allowed to keep running while
+     * the owning task is paused. It must not consult the pause token, otherwise a user pause would
+     * hide combat enter/exit evidence that the task needs after resume.</p>
+     *
+     * @param stopToken task stop token; nullable for legacy/debug paths outside a runner.
+     * @param interruptedMessage exception message used when the thread has already been interrupted.
+     */
+    public static void throwIfStopRequested(TaskStopToken stopToken, String interruptedMessage) {
+        if (stopToken != null) {
+            stopToken.throwIfStopRequested();
+        }
+        throwIfInterrupted(interruptedMessage);
+    }
+
+    /**
      * Checks the task context stored for the current window task thread and the interruption flag.
      *
      * @param holder holder that may contain the current task context.

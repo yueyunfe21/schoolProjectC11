@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -263,8 +264,21 @@ public class CommonBoxService {
                     source, taskKey, role, actualRole, window.getWindowId());
             return;
         }
-        windowTaskContextHolder.runWith(window,
-                () -> detectAndRecord(context, window, taskKey, taskRunKey, role, source));
+        /*
+         * CR235 (problem 4): restore the async detection boundary that the CR120 cleanup removed.
+         * The tiny-ROI capture + template match must not block the post-return / post-combat
+         * critical path; only the cheap role/window/taskRun validations above stay synchronous.
+         * ROI, template, TTL, validations and consumption timing are unchanged.
+         */
+        CompletableFuture.runAsync(() -> {
+            try {
+                windowTaskContextHolder.runWith(window,
+                        () -> detectAndRecord(context, window, taskKey, taskRunKey, role, source));
+            } catch (RuntimeException e) {
+                log.warn("[common-box] async detection failed: source={} task={} role={} windowId={} error={}",
+                        source, taskKey, role, window.getWindowId(), e.getMessage(), e);
+            }
+        });
     }
 
     private void detectAndRecord(TaskExecutionContext context,

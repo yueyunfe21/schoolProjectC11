@@ -1,5 +1,10 @@
 package com.bot.dhxy.service;
 
+import com.bot.dhxy.cloud.decision.CloudDecisionServiceId;
+import com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowService;
+import com.bot.dhxy.cloud.task.ImagePreprocessCloudRequest;
+import com.bot.dhxy.cloud.task.RouteCloudDecision;
+import com.bot.dhxy.cloud.task.RouteCloudDecisionService;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
@@ -7,6 +12,7 @@ import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.MapCoordinate;
@@ -21,9 +27,8 @@ import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
 import com.bot.dhxy.model.navigation.PendingTransferChoiceMemory;
 import com.bot.dhxy.model.navigation.TemplateLocationInfo;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultMemoryEntry;
+import com.bot.dhxy.model.navigation.PendingRouteOutcome;
 import com.bot.dhxy.model.navigation.WorldMapRouteResultMode;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultPendingMemory;
 import com.bot.dhxy.model.npc.NpcMovementType;
 import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcTarget;
@@ -36,7 +41,6 @@ import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.LatencyMetrics;
-import com.bot.dhxy.vision.GameTextLineOcrService;
 import com.bot.dhxy.vision.MiniMapCoordinateReader;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
@@ -50,18 +54,18 @@ import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -114,11 +118,13 @@ public class NavigationService {
     private static final long MAP_RESULT_SCROLL_INTERVAL_MS = 80L;
     private static final long MAP_RESULT_SCROLL_SETTLE_MS = 200L;
     private static final long WORLD_MAP_SEARCH_TYPE_SETTLE_MS = 200L;
+    private static final int GAME_WINDOW_WIDTH = 1024;
+    private static final int GAME_WINDOW_HEIGHT = 768;
+    private static final String ROUTE_RESULT_PAYLOAD_MIME_TYPE = "image/png";
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_X = 120;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MAX_X = 900;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_Y = 130;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MAX_Y = 620;
-    private static final Path ROUTE_FAILURE_CASE_DIR = Path.of("images", "failure-cases", "world-map-route");
     private static final DateTimeFormatter FAILURE_CASE_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
     private static final long RECENT_PATHING_SNAPSHOT_MAX_AGE_MS = 1500L;
@@ -164,7 +170,6 @@ public class NavigationService {
     private final GameClientTracker tracker;
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
-    private final GameTextLineOcrService gameTextLineOcrService;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final GameStateUtil gameStateUtil;
     private final CoordinateHelper coordinateHelper;
@@ -181,9 +186,8 @@ public class NavigationService {
     private final WindowReadyEventBus windowReadyEventBus;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
-
-    @Value("${bot.navigation.world-map-route.legacy-green-link-enabled:false}")
-    private boolean legacyWorldMapGreenLinkEnabled;
+    private final RuntimeDecisionShadowService runtimeDecisionShadowService;
+    private final RouteCloudDecisionService routeCloudDecisionService;
 
     private final Map<String, NavigationRuntimeState> runtimeStates = new ConcurrentHashMap<>();
 
@@ -257,7 +261,7 @@ public class NavigationService {
      * @return structured navigation result. ARRIVED means the game reaches the target map or already
      *         appears to be there.
      */
-    private NavigationResult navigateToMap(NavigationRequest request) {
+    public NavigationResult navigateToMap(NavigationRequest request) {
         if (request == null) {
             log.warn("navigateToMap skipped: request is null");
             return NavigationResult.failed("request is null");
@@ -293,7 +297,7 @@ public class NavigationService {
                 if (routeDialog != null) {
                     if (routeDialog.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
                         pathingIntentAlreadyActive = runtime.getActivePathingIntent()
-                                .map(intent -> gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName))
+                                .map(intent -> isActivePathingIntentCompatibleWithRequest(intent, targetMapName, source))
                                 .orElse(false);
                         result = NavigationResult.pathingStarted("route dialog clicked before pathing guard; observer will confirm pathing");
                         return result;
@@ -321,11 +325,16 @@ public class NavigationService {
                         && runtime.getActivePathingIntent()
                         .map(intent -> gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName))
                         .orElse(false);
-                if (runtime != null && !currentAlreadyTarget && sameTargetIntent) {
+                WindowPathingIntent activeIntent = runtime == null
+                        ? null
+                        : runtime.getActivePathingIntent().orElse(null);
+                boolean compatibleActiveIntent =
+                        isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source);
+                if (runtime != null && !currentAlreadyTarget && compatibleActiveIntent) {
                     if (shouldYieldForRouteDialogBeforeWorldMap(
-                            runtime, targetMapName, source + ":pathing-active-gate")) {
+                            runtime, targetMapName, source, source + ":pathing-active-gate")) {
                         boolean freshSameTargetRoutePending = isFreshSameTargetRoutePending(
-                                runtime, targetMapName, System.currentTimeMillis(), true);
+                                runtime, targetMapName, source, System.currentTimeMillis(), true);
                         if (freshSameTargetRoutePending) {
                             pathingIntentAlreadyActive = true;
                         }
@@ -341,6 +350,7 @@ public class NavigationService {
                             sameTargetIntent);
                 }
                 if (runtime != null
+                        && compatibleActiveIntent
                         && ((status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName))
                         || (action != null && action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)))) {
                     /*
@@ -350,11 +360,25 @@ public class NavigationService {
                      */
                     runtime.clearDialogPreparationRequest("target route already pathing by watcher snapshot");
                 }
-                log.info("navigate to map stale-cache guard: target={} current={} pathingActive=true",
-                        targetMapName, me.getCurrentMapName());
-                pathingIntentAlreadyActive = true;
-                result = NavigationResult.pathingStarted("recent window pathing still active; observer will confirm map");
-                return result;
+                if (compatibleActiveIntent) {
+                    log.info("navigate to map stale-cache guard: target={} current={} pathingActive=true",
+                            targetMapName, me.getCurrentMapName());
+                    pathingIntentAlreadyActive = true;
+                    result = NavigationResult.pathingStarted("recent window pathing still active; observer will confirm map");
+                    return result;
+                }
+                log.info("navigate to map active pathing ignored because target/source changed: source={} target={} activeIntentSource={} activeIntentTarget={} current={}",
+                        source, targetMapName,
+                        activeIntent == null ? null : activeIntent.getSource(),
+                        activeIntent == null ? null : activeIntent.getTargetMapName(),
+                        me.getCurrentMapName());
+                arrivedAfterFreshCheck = gameStateUtil.confirmCurrentMapFresh(
+                        targetMapName, 0L, "navigateToMap:staleCacheGuard:mismatched-active-intent");
+            } else if (hasFreshCurrentLocationForMapGuard(request)) {
+                arrivedAfterFreshCheck = gameStateUtil.isSameMapName(request.getFreshCurrentMapName(), targetMapName);
+                log.info("[map-confirm] reused caller fresh location reason=navigateToMap:staleCacheGuard target={} current={} coord=({}, {}) arrived={}",
+                        targetMapName, request.getFreshCurrentMapName(),
+                        request.getFreshCurrentX(), request.getFreshCurrentY(), arrivedAfterFreshCheck);
             } else {
                 arrivedAfterFreshCheck = gameStateUtil.confirmCurrentMapFresh(
                         targetMapName, 0L, "navigateToMap:staleCacheGuard");
@@ -404,7 +428,7 @@ public class NavigationService {
             if (gateResult != null) {
                 if (gateResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
                     pathingIntentAlreadyActive = runtime != null && runtime.getActivePathingIntent()
-                            .map(intent -> gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName))
+                            .map(intent -> isActivePathingIntentCompatibleWithRequest(intent, targetMapName, source))
                             .orElse(false);
                 }
                 result = gateResult;
@@ -428,10 +452,11 @@ public class NavigationService {
                         targetMapName, source);
                 /*
                  * submitWorldMapSearchAndClickDestination owns the route-result pathing intent.
-                 * CR99's yellow-link route registers the final coordinate intent there; the legacy
-                 * green-link route registers the old map-only intent and pending route-result
-                 * memory there. Do not let the outer finally replace either with a second
-                 * same-leg navigateToMap intent.
+                 * The only remaining route is CR99's yellow-link path, which registers the final
+                 * coordinate intent there. The old green-link route is deleted: requests without
+                 * final coordinates are rejected before submission and never register a map-only
+                 * legacy intent. Do not let the outer finally replace the current-leg intent with
+                 * a second same-leg navigateToMap intent.
                  */
                 pathingIntentOwnedByNestedRoute = true;
                 result = submitResult;
@@ -583,11 +608,11 @@ public class NavigationService {
                 }
 
                 boolean checkPanelBeforeOpen = failedMiniMapClicks > 0;
-                boolean startExitFireAndHandoff = isXiuluoStartExitPrepathFireAndHandoff(request);
+                boolean immediateMiniMapFireAndHandoff = isImmediateMiniMapFireAndHandoff(request);
                 MiniMapPathingAttemptResult attemptResult;
-                if (startExitFireAndHandoff) {
+                if (immediateMiniMapFireAndHandoff) {
                     attemptResult = clickMiniMapPointForFireAndHandoff(
-                            clickPoint, "navigateInCurrentMap:start-exit-prepath-fire-and-handoff", mapName);
+                            clickPoint, "navigateInCurrentMap:immediate-mini-map-fire-and-handoff", mapName);
                 } else {
                     attemptResult = clickMiniMapPointForHandoff(
                             clickPoint, "navigateInCurrentMap:click", mapName, checkPanelBeforeOpen);
@@ -601,7 +626,7 @@ public class NavigationService {
                             clickPoint.pixelPoint().x, clickPoint.pixelPoint().y,
                             clickPoint.jitterX(), clickPoint.jitterY(),
                             clickPoint.reason());
-                    String pathingMessage = startExitFireAndHandoff
+                    String pathingMessage = immediateMiniMapFireAndHandoff
                             ? "current-map mini-map click fire-and-handoff"
                             : "current-map mini-map click started pathing";
                     pathingIntentRegistered = registerWindowPathingIntent(
@@ -647,10 +672,10 @@ public class NavigationService {
                     result = NavigationResult.pathingStarted(pathingMessage);
                     return result;
                 }
-                if (startExitFireAndHandoff) {
-                    log.warn("start-exit-prepath fire-and-handoff click failed; skip alternate mini-map retries: target=({}, {}) result={}",
+                if (immediateMiniMapFireAndHandoff) {
+                    log.warn("immediate mini-map fire-and-handoff click failed; skip alternate mini-map retries: target=({}, {}) result={}",
                             targetX, targetY, attemptResult);
-                    result = NavigationResult.pointNotReached("start-exit-prepath fire-and-handoff click failed");
+                    result = NavigationResult.pointNotReached("immediate mini-map fire-and-handoff click failed");
                     return result;
                 }
                 if (attemptResult == MiniMapPathingAttemptResult.NO_PATHING) {
@@ -690,295 +715,6 @@ public class NavigationService {
                     "result=" + result.getStatus() + " source=" + request.getSource()
                             + " target=(" + targetX + "," + targetY + ")");
         }
-    }
-
-    // =========================
-    // Special map-entry routes
-    // =========================
-
-    /**
-     * Deprecated CR106 retained source for entering Ling Shou Village through Zhang Wen.
-     *
-     * <p>Runtime navigation must now use the CR99 direct yellow-destination route for `灵兽村`.
-     * This method remains only as retained comparison/debugging source for the old
-     * `长安 -> 张闻 -> 灵兽村` chain and must not be called from production navigation.</p>
-     */
-    @Deprecated
-    private NavigationResult navigateToLingShouVillageViaZhangWen(NavigationRequest request) {
-        PlayerCharacter me = context.getMe();
-        log.info("navigate to Ling Shou Village through Zhang Wen: current={}", me.getCurrentMapName());
-        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-
-        /*
-         * This special route is still step-wise navigation. If going to Chang'an or approaching
-         * Zhang Wen starts movement, return PATHING_STARTED so the task phase can yield like any
-         * other navigation leg. The next task turn will re-enter this method and continue from the
-         * current map/state instead of hiding a long route chain inside NavigationService.
-         */
-        NavigationResult changAnResult = navigateToMap(request.toBuilder()
-                .targetMapName(MAP_CHANG_AN)
-                .source(request.getSource() + ":viaChangAn")
-                .build());
-        if (changAnResult.getStatus() == NavigationResultStatus.PATHING_STARTED
-                || changAnResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
-            return changAnResult;
-        }
-        if (!changAnResult.success()) {
-            log.warn("Ling Shou Village route failed before Zhang Wen: unable to reach Chang'an");
-            return changAnResult;
-        }
-        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-
-        NavigationResult zhangWenApproachResult = navigateInCurrentMap(request.toBuilder()
-                .targetMapName(MAP_CHANG_AN)
-                .targetX(ZHANG_WEN_APPROACH_X)
-                .targetY(ZHANG_WEN_APPROACH_Y)
-                .keepTurnOnCurrentMapPathing(true)
-                .source(request.getSource() + ":zhangWenApproach")
-                .build());
-        if (zhangWenApproachResult.getStatus() == NavigationResultStatus.PATHING_STARTED
-                || zhangWenApproachResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
-            return zhangWenApproachResult;
-        }
-        if (!zhangWenApproachResult.success()) {
-            log.warn("Ling Shou Village route failed: unable to approach Zhang Wen target=({}, {})",
-                    ZHANG_WEN_APPROACH_X, ZHANG_WEN_APPROACH_Y);
-            return zhangWenApproachResult;
-        }
-        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-
-        RouteDialogClickResult existingRouteDialog = clickRouteDialogOption(
-                "navigation:ling-shou-village:before-zhang-wen-click",
-                MAP_LING_SHOU_VILLAGE,
-                false,
-                true);
-        NavigationResult existingRouteResult = resolveLingShouVillageRouteDialogResult(
-                existingRouteDialog, "before Zhang Wen click");
-        if (existingRouteResult != null) {
-            return existingRouteResult;
-        }
-
-        requestLingShouVillageRouteDialogPreparation(request.getSource());
-        if (isFreshLingShouVillageRouteOptionVisible()) {
-            log.info("Ling Shou Village route option already visible after preparation request; skip Zhang Wen re-click");
-            return NavigationResult.dialogPreparing("Ling Shou Village route dialog visible; watcher will prepare option");
-        }
-
-        boolean npcClicked = npcClickService.clickNpcSmart(ZHANG_WEN_NPC.toClickRequest(me));
-        if (!npcClicked) {
-            log.warn("Ling Shou Village route Zhang Wen click not verified, checking dialog anyway");
-        }
-        TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-
-        RouteDialogClickResult routeDialog = clickRouteDialogOption(
-                "navigation:ling-shou-village", MAP_LING_SHOU_VILLAGE, false, true);
-        NavigationResult routeDialogResult = resolveLingShouVillageRouteDialogResult(
-                routeDialog, "after Zhang Wen click");
-        if (routeDialogResult != null) {
-            return routeDialogResult;
-        }
-        DialogResultStatus dialogResult = routeDialog.result();
-        log.warn("Ling Shou Village route transfer option not handled: result={}", dialogResult);
-        return NavigationResult.mapNotReached("Ling Shou Village transfer option not handled");
-    }
-
-    private NavigationResult resolveLingShouVillageRouteDialogResult(RouteDialogClickResult routeDialog,
-                                                                     String source) {
-        DialogResultStatus dialogResult = routeDialog.result();
-        if (dialogResult == DialogResultStatus.DIALOG_PREPARING) {
-            return NavigationResult.dialogPreparing("Ling Shou Village route dialog preparing");
-        }
-        if (dialogResult == DialogResultStatus.NO_DIALOG
-                && gameStateUtil.isSameMapName(routeDialog.fromMap(), MAP_LING_SHOU_VILLAGE)) {
-            return NavigationResult.arrived("Ling Shou Village already current after route dialog check");
-        }
-        if (dialogResult == DialogResultStatus.NO_DIALOG) {
-            return null;
-        }
-        if (dialogResult != DialogResultStatus.OPTION_KEYWORD_CLICKED) {
-            log.warn("Ling Shou Village route transfer option not handled: source={} result={}", source, dialogResult);
-            return NavigationResult.mapNotReached("Ling Shou Village transfer option not handled");
-        }
-
-        boolean arrived = gameStateUtil.confirmCurrentMapFresh(
-                MAP_LING_SHOU_VILLAGE,
-                LING_SHOU_ROUTE_CONFIRM_TIMEOUT_MS,
-                "navigateToLingShouVillage");
-        if (arrived) {
-            closeMapSearchInputAfterRouteDialog("navigation:ling-shou-village");
-        }
-        log.info("Ling Shou Village route confirm result={}", arrived);
-        return arrived
-                ? NavigationResult.arrived("Ling Shou Village reached through Zhang Wen")
-                : NavigationResult.mapNotReached("Ling Shou Village route confirm failed");
-    }
-
-    private boolean isFreshLingShouVillageRouteOptionVisible() {
-        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-        if (runtime == null) {
-            return false;
-        }
-        WindowDialogSnapshot snapshot = runtime.getVisibleDialogSnapshot().orElse(null);
-        if (snapshot == null || snapshot.getType() != DialogType.OPTION || snapshot.getDetectedAtMs() <= 0L) {
-            return false;
-        }
-        long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getDetectedAtMs());
-        boolean fresh = ageMs <= ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS;
-        log.info("Ling Shou Village route option visible check: visibleType={} source={} ageMs={} fresh={}",
-                snapshot.getType(), snapshot.getSource(), ageMs, fresh);
-        return fresh;
-    }
-
-    private void requestLingShouVillageRouteDialogPreparation(String source) {
-        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-        if (runtime == null) {
-            return;
-        }
-        String fromMap = MAP_CHANG_AN;
-        MemoryService.DialogChoiceEntry remembered = memoryService
-                .findUsableRouteDialogChoice(fromMap, MAP_LING_SHOU_VILLAGE)
-                .orElse(null);
-        long now = System.currentTimeMillis();
-        DialogPreparationRequest request = DialogPreparationRequest.builder()
-                .operation(DialogOperation.ROUTE_TRANSFER)
-                .targetKeyword(MAP_LING_SHOU_VILLAGE)
-                .source(source + ":zhangWenTransfer")
-                .fromMap(fromMap)
-                .rememberedRelativeX(remembered == null ? null : remembered.getRelativeX())
-                .rememberedRelativeY(remembered == null ? null : remembered.getRelativeY())
-                .rememberedOptionText(remembered == null ? null : remembered.getOptionText())
-                .createdAtMs(now)
-                .expiresAtMs(now + ROUTE_DIALOG_PREPARING_YIELD_MAX_MS)
-                .build();
-        runtime.updateDialogPreparationRequest(request);
-        log.info("Ling Shou Village route dialog preparation requested: source={} target={} fromMap={} remembered={}",
-                request.getSource(), request.getTargetKeyword(), request.getFromMap(), remembered != null);
-    }
-
-    /**
-     * Consume a route-transfer option that the window watcher has already prepared.
-     *
-     * <p>Navigation no longer OCRs or template-matches route options. The only clickable source here
-     * is a `ROUTE_TRANSFER` {@link PreparedDialogAction} written by the runner. If the runner has
-     * fresh visible/preparing/prepared state but has not produced a click action yet, this method
-     * yields instead of reopening the world map. If no fresh runtime state exists, it reports
-     * `NO_DIALOG` and lets the caller decide whether to retry navigation.</p>
-     *
-     * @param source short diagnostic source.
-     * @param targetMapName destination map expected after this transfer dialog.
-     * @param allowFallbackOptionClick legacy parameter kept to avoid broad caller churn; ignored.
-     * @param allowBackgroundPreparation legacy parameter kept to avoid broad caller churn; ignored.
-     * @return route dialog click result with enough context to update transfer memory after arrival
-     * confirmation.
-     */
-    private RouteDialogClickResult clickRouteDialogOption(String source,
-                                                          String targetMapName,
-                                                          boolean allowFallbackOptionClick,
-                                                          boolean allowBackgroundPreparation) {
-        //确定我在哪（fromMap）： 脚本首先会去查看最新的“寻路快照（Snapshot）”或者直接读取当前内存里的角色地图信息，
-        // 搞清楚自己现在在哪张地图上。  已经到了就撤： 如果发现 targetMapName（目标地图）和 fromMap（当前地图）完全一样，
-        // 它会立刻清空相关的准备任务，直接返回 NO_DIALOG 状态，意思是：“我都已经在这里了，还点什么传送框，收工！”。
-        String fromMap = null;
-        Integer fromX = null;
-        Integer fromY = null;
-        WindowPathingSnapshot snapshot = windowTaskContextHolder.rawCurrent()
-                .map(WindowRuntimeContext::getPathingSnapshot)
-                .orElse(null);
-        if (snapshot != null && snapshot.getCurrentMapName() != null && !snapshot.getCurrentMapName().isBlank()) {
-            long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
-            if (ageMs <= RECENT_PATHING_SNAPSHOT_MAX_AGE_MS) {
-                fromMap = snapshot.getCurrentMapName();
-                fromX = snapshot.getCurrentX();
-                fromY = snapshot.getCurrentY();
-                log.info("route dialog probe uses recent pathing snapshot: source={} target={} current={}({}, {}) state={} ageMs={}",
-                        source, targetMapName, fromMap, fromX, fromY, snapshot.getState(), ageMs);
-            }
-        }
-        if (fromMap == null) {
-            LocationInfo before = playerStateService.syncMyPosition();
-            fromMap = before != null && before.mapName != null && !before.mapName.isBlank()
-                    ? before.mapName
-                    : context.getMe().getCurrentMapName();
-            fromX = before == null ? null : before.x;
-            fromY = before == null ? null : before.y;
-        }
-
-        /*
-         * A fresh pathing snapshot or sync can prove that a previously started route has already
-         * reached the target map. In that case there is no route option left to click; probing a
-         * stale dialog area can waste several seconds and may click unrelated route text.
-         */
-        if (targetMapName != null && targetMapName.equals(fromMap)) {
-            log.info("route dialog probe skipped: already on target map source={} target={} coord=({}, {})",
-                    source, targetMapName, fromX, fromY);
-            windowTaskContextHolder.rawCurrent()
-                    .ifPresent(runtime -> runtime.clearDialogPreparationRequest("already on route target map"));
-            return new RouteDialogClickResult(
-                    DialogResultStatus.NO_DIALOG,
-                    false,
-                    fromMap,
-                    fromX,
-                    fromY,
-                    targetMapName,
-                    null,
-                    null,
-                    null);
-        }
-        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-        if (runtime != null && targetMapName != null && !targetMapName.isBlank()) {
-            long now = System.currentTimeMillis();
-            RouteDialogClickResult consumedResult = consumePreparedRouteDialogAction(
-                    runtime,
-                    targetMapName,
-                    source,
-                    "clickRouteDialogOption:prepared-from-runner",
-                    fromMap,
-                    fromX,
-                    fromY,
-                    ":prepared");
-            if (consumedResult != null) {
-                return consumedResult;
-            }
-            PreparedDialogAction preparedAction = runtime.getPreparedDialogAction();
-            if (preparedAction == null) {
-                log.info("route dialog prepared action unavailable; navigation will not run OCR fallback: source={} target={} allowFallbackOptionClick={} allowBackgroundPreparation={}",
-                        source, targetMapName, allowFallbackOptionClick, allowBackgroundPreparation);
-            } else {
-                log.info("route dialog prepared action not usable; navigation will not run OCR fallback: source={} target={} preparedTarget={} sameBinding={} verifiedAgeMs={} maxAgeMs={}",
-                        source, targetMapName, preparedAction.getTargetKeyword(),
-                        matchesCurrentPreparedDialogBinding(runtime, preparedAction),
-                        preparedAction.getLastVerifiedAtMs() <= 0
-                                ? null
-                                : Math.max(0L, now - preparedAction.getLastVerifiedAtMs()),
-                        ROUTE_PREPARED_DIALOG_CLICK_MAX_AGE_MS);
-            }
-        }
-
-        if (shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source + ":route-dialog-runner-gate")) {
-            return new RouteDialogClickResult(
-                    DialogResultStatus.DIALOG_PREPARING,
-                    false,
-                    fromMap,
-                    fromX,
-                    fromY,
-                    targetMapName,
-                    null,
-                    null,
-                    null);
-        }
-
-        log.info("route dialog no runner-prepared action and no fresh route state: source={} from={} coord=({}, {}) target={}",
-                source, fromMap, fromX, fromY, targetMapName);
-        return new RouteDialogClickResult(
-                DialogResultStatus.NO_DIALOG,
-                false,
-                fromMap,
-                fromX,
-                fromY,
-                targetMapName,
-                null,
-                null,
-                null);
     }
 
     private boolean matchesCurrentPreparedDialogBinding(WindowRuntimeContext runtime, PreparedDialogAction action) {
@@ -1128,7 +864,8 @@ public class NavigationService {
 
     private boolean shouldYieldForRouteDialogBeforeWorldMap(WindowRuntimeContext runtime,
                                                             String targetMapName,
-                                                            String source) {
+                                                            String source,
+                                                            String logSource) {
         if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
             return false;
         }
@@ -1141,23 +878,20 @@ public class NavigationService {
         WindowPathingIntent activeIntent = runtime.getActivePathingIntent().orElse(null);
         boolean sameTargetIntent = activeIntent != null
                 && gameStateUtil.isSameMapName(activeIntent.getTargetMapName(), targetMapName);
+        boolean compatibleActiveIntent =
+                isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source);
         WindowPathingSnapshot pathingSnapshot = runtime.getPathingSnapshot();
         WindowPathingState pathingState = pathingSnapshot == null ? null : pathingSnapshot.getState();
         Long pathingSnapshotAgeMs = pathingSnapshot == null || pathingSnapshot.getUpdatedAtMs() <= 0
                 ? null
                 : Math.max(0L, now - pathingSnapshot.getUpdatedAtMs());
-        boolean freshActiveRoutePending = sameTargetIntent
+        boolean freshActiveRoutePending = compatibleActiveIntent
                 && isFreshRoutePendingForWorldMapGate(pathingSnapshot, activeIntent, now);
-        boolean visibleRouteOption = visibleSnapshot != null
-                && visibleSnapshot.getType() == DialogType.OPTION
-                && visibleAgeMs != null
-                && visibleAgeMs <= ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS
-                && sameTargetIntent;
         boolean freshVisibleDialog = visibleSnapshot != null
                 && visibleSnapshot.getType() != DialogType.NONE
                 && visibleAgeMs != null
                 && visibleAgeMs <= ROUTE_DIALOG_VISIBLE_GATE_MAX_AGE_MS
-                && sameTargetIntent;
+                && compatibleActiveIntent;
 
         DialogPreparationStatus status = runtime.getDialogPreparationStatus();
         boolean matchingStatus = status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName);
@@ -1179,7 +913,7 @@ public class NavigationService {
         boolean freshTaskAttention = taskAttentionEvent != null
                 && taskAttentionAgeMs != null
                 && taskAttentionAgeMs <= ROUTE_DIALOG_ATTENTION_GATE_MAX_AGE_MS
-                && sameTargetIntent;
+                && compatibleActiveIntent;
         boolean gate = freshVisibleDialog
                 || freshRequested
                 || freshPreparing
@@ -1207,6 +941,8 @@ public class NavigationService {
                 ? "visible-stale"
                 : !sameTargetIntent
                 ? "visible-target-mismatch"
+                : !compatibleActiveIntent
+                ? "visible-source-mismatch"
                 : visibleSnapshot.getType() == DialogType.OPTION
                 ? "fresh-visible-option"
                 : visibleSnapshot.getType() == DialogType.STORY
@@ -1218,11 +954,15 @@ public class NavigationService {
                 ? "attention-stale"
                 : !sameTargetIntent
                 ? "attention-target-mismatch"
+                : !compatibleActiveIntent
+                ? "attention-source-mismatch"
                 : "fresh-attention";
         String pathingReason = pathingSnapshot == null
                 ? "absent"
                 : !sameTargetIntent
                 ? "pathing-target-mismatch"
+                : !compatibleActiveIntent
+                ? "pathing-source-mismatch"
                 : pathingState == WindowPathingState.NONE
                 ? "pathing-none"
                 : pathingState == WindowPathingState.ARRIVED
@@ -1267,10 +1007,10 @@ public class NavigationService {
                 : freshActiveRoutePending
                 ? "same-target-active-intent-yield"
                 : "allow-world-map-retry";
-        log.info("route dialog world-map gate: result={} reason={} source={} windowId={} title={} hwnd={} target={} activeIntentId={} activeIntentTarget={} activeIntentSource={} intentAgeMs={} pathingReason={} pathingState={} snapshotAgeMs={} visibleReason={} visibleType={} visibleAgeMs={} visibleSource={} statusReason={} statusPhase={} statusTarget={} requestAgeMs={} preparingAgeMs={} preparedReason={} preparedIntentId={} preparedTarget={} preparedSource={} preparedAgeMs={} preparedVerifiedAgeMs={} preparedUsable={} attentionReason={} attentionAgeMs={} attentionSource={} sameTargetIntent={}",
+        log.info("route dialog world-map gate: result={} reason={} source={} windowId={} title={} hwnd={} target={} activeIntentId={} activeIntentTarget={} activeIntentSource={} intentAgeMs={} pathingReason={} pathingState={} snapshotAgeMs={} visibleReason={} visibleType={} visibleAgeMs={} visibleSource={} statusReason={} statusPhase={} statusTarget={} requestAgeMs={} preparingAgeMs={} preparedReason={} preparedIntentId={} preparedTarget={} preparedSource={} preparedAgeMs={} preparedVerifiedAgeMs={} preparedUsable={} attentionReason={} attentionAgeMs={} attentionSource={} sameTargetIntent={} compatibleActiveIntent={}",
                 gate,
                 gate ? gateReason : "allow-world-map-retry:" + visibleReason + "/" + statusReason + "/" + preparedReason + "/" + attentionReason + "/" + pathingReason,
-                source,
+                logSource,
                 runtime.getWindowId(),
                 runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getTitle(),
                 runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle(),
@@ -1301,7 +1041,8 @@ public class NavigationService {
                 attentionReason,
                 taskAttentionAgeMs,
                 taskAttentionEvent == null ? null : taskAttentionEvent.getSource(),
-                sameTargetIntent);
+                sameTargetIntent,
+                compatibleActiveIntent);
         return gate;
     }
 
@@ -1326,8 +1067,8 @@ public class NavigationService {
                 return NavigationResult.mapNotReached("route dialog prepared action click failed before world-map search");
             }
         }
-        if (shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source + ":" + reason)) {
-            if (isFreshSameTargetRoutePending(runtime, targetMapName, System.currentTimeMillis(), true)) {
+        if (shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source, source + ":" + reason)) {
+            if (isFreshSameTargetRoutePending(runtime, targetMapName, source, System.currentTimeMillis(), true)) {
                 return NavigationResult.pathingStarted("same target route already submitted before world-map search; watcher will confirm pathing");
             }
             return NavigationResult.dialogPreparing("route dialog visible/preparing or route intent pending before world-map search");
@@ -1336,15 +1077,16 @@ public class NavigationService {
     }
 
     private boolean isFreshSameTargetRoutePending(WindowRuntimeContext runtime,
-                                                  String targetMapName,
-                                                  long now,
-                                                  boolean requireActiveState) {
+                                                   String targetMapName,
+                                                   String requestSource,
+                                                   long now,
+                                                   boolean requireActiveState) {
         if (runtime == null || targetMapName == null || targetMapName.isBlank()) {
             return false;
         }
         WindowPathingSnapshot snapshot = runtime.getPathingSnapshot();
         WindowPathingIntent intent = runtime.getActivePathingIntent().orElse(null);
-        if (intent == null || !gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName)) {
+        if (!isActivePathingIntentCompatibleWithRequest(intent, targetMapName, requestSource)) {
             return false;
         }
         if (requireActiveState && (snapshot == null || snapshot.getState() != WindowPathingState.ACTIVE)) {
@@ -1436,10 +1178,12 @@ public class NavigationService {
                                                              NavigationRequest request) {
         long totalStartMs = System.currentTimeMillis();
         state().clearWorldMapRouteResultClick();
-        boolean useYellowDestinationMiniMap = request != null
-                && request.getTargetX() != null
-                && request.getTargetY() != null
-                && !legacyWorldMapGreenLinkEnabled;
+        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
+            log.warn("navigation world-map route rejected: final mini-map coordinate is required after legacy green route removal target={} request={}",
+                    targetMapName, request);
+            return false;
+        }
+        String routeMode = "yellow-destination-mini-map";
         for (int attempt = 1; attempt <= 2; attempt++) {
             final int currentAttempt = attempt;
             final String currentTargetMapName = targetMapName;
@@ -1455,50 +1199,19 @@ public class NavigationService {
             }
 
             long scanStartMs = System.currentTimeMillis();
-            WorldMapDestinationClickResult status;
-            if (useYellowDestinationMiniMap) {
-                WorldMapDestinationClickResult memoryStatus = clickRememberedYellowDestinationAndTargetMiniMap(
-                        fromMapName, canonicalTargetMapName, targetMapName,
-                        "submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap:memory",
-                        request);
-                if (memoryStatus == WorldMapDestinationClickResult.CLICKED) {
-                    log.info("navigation map search split: stage=yellow-memory-click target={} attempt={}/{} totalMs={}",
-                            currentTargetMapName, attempt, 2, System.currentTimeMillis() - totalStartMs);
-                    status = WorldMapDestinationClickResult.CLICKED;
-                } else if (memoryStatus == WorldMapDestinationClickResult.NOT_FOUND) {
-                    status = clickYellowDestinationAndTargetMiniMap(
-                            "submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap",
-                            targetMapName,
-                            request);
-                } else {
-                    status = memoryStatus;
-                }
-            } else {
-                /*
-                 * Screenshot/OCR can take close to a second and does not need to monopolize the physical
-                 * input worker. Releasing the queue here lets a freshly prepared route dialog click run
-                 * instead of waiting behind the whole world-map OCR path. This memory/green-link branch is
-                 * legacy-only for CR99; the new default yellow-link route does not write route-result
-                 * memory through this branch because CR110 keeps yellow-row memory in a separate route mode.
-                 */
-                if (clickRememberedWorldMapRouteResult(fromMapName, canonicalTargetMapName,
-                        "submitWorldMapSearchAndClickDestination:memory:lastLink")) {
-                    log.info("navigation map search split: stage=legacy-memory-click target={} attempt={}/{} totalMs={}",
-                            currentTargetMapName, attempt, 2, System.currentTimeMillis() - totalStartMs);
-                    return true;
-                }
-                status = clickDestinationFromWorldMapSearchResults(
-                        "submitWorldMapSearchAndClickDestination:legacyGreenLink", false, targetMapName);
-            }
+            WorldMapDestinationClickResult status = clickYellowDestinationAndTargetMiniMap(
+                    "submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap",
+                    targetMapName,
+                    request);
             long scanElapsedMs = System.currentTimeMillis() - scanStartMs;
             log.info("navigation map search split: stage={} target={} attempt={}/{} status={} elapsedMs={} totalMs={}",
-                    useYellowDestinationMiniMap ? "yellow-destination-mini-map" : "legacy-green-link",
+                    routeMode,
                     currentTargetMapName, currentAttempt, 2, status, scanElapsedMs,
                     System.currentTimeMillis() - totalStartMs);
             boolean routeClicked = status == WorldMapDestinationClickResult.CLICKED;
             log.info("navigation map search: route action result={} status={} attempt={}/{} mode={}",
                     routeClicked, status, attempt, 2,
-                    useYellowDestinationMiniMap ? "yellow-destination-mini-map" : "legacy-green-link");
+                    routeMode);
             if (routeClicked) {
                 return true;
             }
@@ -1515,6 +1228,110 @@ public class NavigationService {
         return false;
     }
 
+    private WorldMapDestinationClickResult executeCloudRouteCandidateClick(String description,
+                                                                           RouteCloudDecision routeDecision,
+                                                                           String routeMode,
+                                                                           String candidateSource,
+                                                                           String expectedDestinationName,
+                                                                           NavigationRequest request) {
+        if (routeDecision == null || !routeDecision.isCloudExecuted()) {
+            return WorldMapDestinationClickResult.NOT_FOUND;
+        }
+        Point cloudRelativeClick = routeDecision.getCloudWindowRelativeClickPoint();
+        if (cloudRelativeClick == null) {
+            return WorldMapDestinationClickResult.NOT_FOUND;
+        }
+
+        int cloudClickX = tracker.getWindowBaseX() + cloudRelativeClick.x;
+        int cloudClickY = tracker.getWindowBaseY() + cloudRelativeClick.y;
+        log.info("navigation route candidate cloud execute: target={} mode={} candidateSource={} "
+                        + "cloudRelative=({}, {}) cloudAbs=({}, {}) localShadowDecision={}",
+                expectedDestinationName, routeMode, candidateSource,
+                cloudRelativeClick.x, cloudRelativeClick.y, cloudClickX, cloudClickY,
+                routeDecision.getLocalShadowDecision());
+        if ("yellow-destination-mini-map".equals(routeMode)) {
+            return executeCloudYellowDestinationRouteCandidateClick(
+                    description, expectedDestinationName, request, cloudRelativeClick, cloudClickX, cloudClickY,
+                    routeDecision.getRouteDecisionId());
+        }
+        log.warn("navigation route candidate cloud execute skipped: unsupported routeMode={} target={} localShadowDecision={}",
+                routeMode, expectedDestinationName, routeDecision.getLocalShadowDecision());
+        return WorldMapDestinationClickResult.NOT_FOUND;
+    }
+
+    private WorldMapDestinationClickResult executeCloudYellowDestinationRouteCandidateClick(
+            String description,
+            String expectedDestinationName,
+            NavigationRequest request,
+            Point cloudRelativeClick,
+            int cloudClickX,
+            int cloudClickY,
+            String routeDecisionId) {
+        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
+            log.warn("navigation cloud yellow route skipped: final coordinate missing request={} target={}",
+                    request, expectedDestinationName);
+            return WorldMapDestinationClickResult.NOT_FOUND;
+        }
+        CoordinateHelper.MiniMapClickPoint miniMapClickPoint = coordinateHelper.resolveMiniMapClickPoint(
+                expectedDestinationName,
+                request.getTargetX(),
+                request.getTargetY(),
+                0,
+                request.isRandomizeMiniMapClickPoint());
+        if (miniMapClickPoint == null) {
+            log.warn("navigation cloud yellow route skipped: mini-map coordinate mapping missing target={} final=({}, {})",
+                    expectedDestinationName, request.getTargetX(), request.getTargetY());
+            return WorldMapDestinationClickResult.NOT_FOUND;
+        }
+
+        /*
+         * Cloud candidate click owns the yellow-destination decision and keeps the established
+         * destination mini-map handoff:
+         * once the final destination mini-map point is clicked, register movement and run the
+         * task-scoped route UI cleanup policy below.
+         */
+        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
+            if (InputActionScope.isCancelled()) {
+                log.info("navigation cloud yellow route click skipped because input request was cancelled: target={}",
+                        expectedDestinationName);
+                return false;
+            }
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
+            inputProvider.clickLeft(cloudClickX, cloudClickY, 150);
+            if (!TaskSleep.sleep(MINI_MAP_OPEN_SETTLE_MS) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            if (InputActionScope.isCancelled() || !InputActionScope.checkpoint()) {
+                return false;
+            }
+            inputProvider.clickLeft(miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y, 200);
+            if (!TaskSleep.sleep(MINI_MAP_CLICK_SETTLE_MS)) {
+                return false;
+            }
+            return true;
+        });
+        if (!submitted) {
+            return WorldMapDestinationClickResult.NOT_FOUND;
+        }
+        gameStateUtil.recordMovementIntent(description);
+        cleanupYellowDestinationRouteAfterFireAndHandoff(request, description + ":cloud-yellow-route");
+        log.info("navigation cloud yellow route: final mini-map coordinate fire-and-handoff target={} logical=({}, {}) pixel=({}, {})",
+                expectedDestinationName,
+                miniMapClickPoint.logicalX(), miniMapClickPoint.logicalY(),
+                miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y);
+        NavigationRuntimeState state = state();
+        state.lastAbsoluteLogicalX = cloudClickX;
+        state.lastAbsoluteLogicalY = cloudClickY;
+        state.lastWorldMapRouteRelativeX = cloudRelativeClick.x;
+        state.lastWorldMapRouteRelativeY = cloudRelativeClick.y;
+        state.lastWorldMapRouteMatchedText = expectedDestinationName;
+        state.lastWorldMapRouteUsedMemory = false;
+        state.lastWorldMapRouteDecisionId = routeDecisionId;
+        return WorldMapDestinationClickResult.CLICKED;
+    }
+
     private boolean prepareWorldMapSearchResultsDirect(String targetMapName, int attempt) {
         log.info("navigation map search start: target={} attempt={}/{}", targetMapName, attempt, 2);
         if (InputActionScope.isCancelled()) {
@@ -1523,6 +1340,9 @@ public class NavigationService {
         }
         if (!isWorldMapTitleVisible()) {
             log.info("navigation map search: world map not open, press Alt+2");
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.pressAlt2();
             if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
                 return false;
@@ -1553,6 +1373,9 @@ public class NavigationService {
         }
         if (!useOpenRoutePanel && xunluPoint == null && !isWorldMapTitleVisible()) {
             log.info("navigation map search: world map closed before attempt, press Alt+2 target={}", targetMapName);
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.pressAlt2();
             if (!TaskSleep.sleep(500) || InputActionScope.isCancelled()) {
                 return false;
@@ -1569,13 +1392,25 @@ public class NavigationService {
             int searchButtonY = tracker.getWindowBaseY() + MAP_ROUTE_SEARCH_BUTTON_Y;
             log.info("navigation map search: type target through open route panel target={} input=({}, {}) search=({}, {}) attempt={}/{}",
                     targetMapName, targetInputX, targetInputY, searchButtonX, searchButtonY, attempt, 2);
+            if (InputActionScope.isCancelled() || !InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.clickLeft(targetInputX, targetInputY, 80);
             if (InputActionScope.isCancelled()) {
                 return false;
             }
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.pressCtrlA();
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.typeTextUnicode(targetMapName);
             if (!TaskSleep.sleep(200) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            if (!InputActionScope.checkpoint()) {
                 return false;
             }
             inputProvider.clickLeft(searchButtonX, searchButtonY, 120);
@@ -1590,6 +1425,9 @@ public class NavigationService {
             }
             log.info("navigation map search: click xunlu button=({}, {}) attempt={}/{}",
                     xunluPoint.x, xunluPoint.y, attempt, 2);
+            if (InputActionScope.isCancelled() || !InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.clickLeft(xunluPoint.x, xunluPoint.y, 120);
             if (!TaskSleep.sleep(250) || InputActionScope.isCancelled()) {
                 return false;
@@ -1599,8 +1437,14 @@ public class NavigationService {
                 return false;
             }
             log.info("navigation map search: type target map={} attempt={}/{}", targetMapName, attempt, 2);
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.typeTextUnicode(targetMapName);
             if (!TaskSleep.sleep(WORLD_MAP_SEARCH_TYPE_SETTLE_MS) || InputActionScope.isCancelled()) {
+                return false;
+            }
+            if (!InputActionScope.checkpoint()) {
                 return false;
             }
             inputProvider.pressEnter();
@@ -1626,195 +1470,17 @@ public class NavigationService {
         if (!clicked) {
             return NavigationResult.mapNotReached("world-map route submit failed");
         }
-        boolean yellowDestinationMiniMap = request != null
-                && request.getTargetX() != null
-                && request.getTargetY() != null
-                && !legacyWorldMapGreenLinkEnabled;
-        if (yellowDestinationMiniMap) {
-            registerWindowPathingIntent(request, "worldMapYellowDestinationMiniMap",
-                    source + ":yellow-destination-mini-map-pathing-confirmed", true);
-            rememberPendingWorldMapRouteResultClick(fromMapName, canonicalTargetMapName, source,
-                    WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP);
-            return NavigationResult.pathingStarted("world-map yellow destination mini-map pathing confirmed");
-        }
-        registerWindowPathingIntent(request, "worldMapRouteClick",
-                source + ":legacy-map-route-clicked", false);
-        rememberPendingWorldMapRouteResultClick(fromMapName, canonicalTargetMapName, source,
-                WorldMapRouteResultMode.LEGACY_GREEN_LINK);
-        return NavigationResult.pathingStarted("world-map legacy route clicked");
+        registerWindowPathingIntent(request, "worldMapYellowDestinationMiniMap",
+                source + ":yellow-destination-mini-map-pathing-confirmed", true);
+        rememberPendingRouteOutcome(fromMapName, canonicalTargetMapName, source,
+                WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP);
+        return NavigationResult.pathingStarted("world-map yellow destination mini-map pathing confirmed");
     }
 
-    /**
-     * Deprecated retained source for the old green route-result click memory.
-     *
-     * <p>Default 修罗/五倍 navigation must use CR99 yellow destination + mini-map handoff. This
-     * method remains only behind the explicit legacy switch / map-only route fallback.</p>
-     */
-    @Deprecated
-    private boolean clickRememberedWorldMapRouteResult(String fromMapName,
-                                                       String targetMapName,
-                                                       String description) {
-        Optional<WorldMapRouteResultMemoryEntry> remembered =
-                memoryService.findCleanWorldMapRouteResult(
-                        fromMapName, targetMapName, WorldMapRouteResultMode.LEGACY_GREEN_LINK);
-        if (remembered.isEmpty()) {
-            return false;
-        }
-        WorldMapRouteResultMemoryEntry entry = remembered.get();
-        int clickX = tracker.getWindowBaseX() + entry.getRelativeX();
-        int clickY = tracker.getWindowBaseY() + entry.getRelativeY();
-        log.info("[world-map-route-memory] fast path used: routeMode={} fromMap={} targetMap={} rel=({}, {}) abs=({}, {}) clean={} successCount={} failureCount={} consecutiveSuccessCount={} source={}",
-                WorldMapRouteResultMode.LEGACY_GREEN_LINK,
-                entry.getFromMap(), entry.getTargetMap(), entry.getRelativeX(), entry.getRelativeY(),
-                clickX, clickY, entry.isClean(), entry.getSuccessCount(), entry.getFailureCount(),
-                entry.getConsecutiveSuccessCount(), entry.getSource());
-        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
-            if (InputActionScope.isCancelled()) {
-                log.info("[world-map-route-memory] fast path skipped because input request was cancelled: fromMap={} targetMap={}",
-                        entry.getFromMap(), entry.getTargetMap());
-                return false;
-            }
-            inputProvider.clickLeft(clickX, clickY, 150);
-            gameStateUtil.recordMovementIntent(description);
-            closeMapSearchInputAfterRouteClick(description + ":routeClicked");
-            return true;
-        });
-        if (!submitted) {
-            log.warn("[world-map-route-memory] fast path input failed, fallback to OCR: fromMap={} targetMap={} rel=({}, {})",
-                    entry.getFromMap(), entry.getTargetMap(), entry.getRelativeX(), entry.getRelativeY());
-            return false;
-        }
-        NavigationRuntimeState state = state();
-        state.lastAbsoluteLogicalX = clickX;
-        state.lastAbsoluteLogicalY = clickY;
-        state.lastWorldMapRouteRelativeX = entry.getRelativeX();
-        state.lastWorldMapRouteRelativeY = entry.getRelativeY();
-        state.lastWorldMapRouteMatchedText = entry.getMatchedText();
-        state.lastWorldMapRouteUsedMemory = true;
-        return true;
-    }
-
-    private WorldMapDestinationClickResult clickRememberedYellowDestinationAndTargetMiniMap(String fromMapName,
-                                                                                           String memoryTargetMapName,
-                                                                                           String expectedDestinationName,
-                                                                                           String description,
-                                                                                           NavigationRequest request) {
-        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        Optional<WorldMapRouteResultMemoryEntry> remembered = memoryService.findCleanWorldMapRouteResult(
-                fromMapName, memoryTargetMapName, WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP);
-        if (remembered.isEmpty()) {
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        WorldMapRouteResultMemoryEntry entry = remembered.get();
-        CoordinateHelper.MiniMapClickPoint miniMapClickPoint = coordinateHelper.resolveMiniMapClickPoint(
-                expectedDestinationName,
-                request.getTargetX(),
-                request.getTargetY(),
-                0,
-                request.isRandomizeMiniMapClickPoint());
-        if (miniMapClickPoint == null) {
-            log.warn("[world-map-route-memory] yellow fast path skipped: mini-map coordinate missing fromMap={} targetMap={} final=({}, {})",
-                    fromMapName, memoryTargetMapName, request.getTargetX(), request.getTargetY());
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        int yellowClickX = tracker.getWindowBaseX() + entry.getRelativeX();
-        int yellowClickY = tracker.getWindowBaseY() + entry.getRelativeY();
-        log.info("[world-map-route-memory] yellow fast path used: routeMode={} fromMap={} targetMap={} rel=({}, {}) abs=({}, {}) clean={} successCount={} failureCount={} consecutiveSuccessCount={} source={}",
-                WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP,
-                entry.getFromMap(), entry.getTargetMap(), entry.getRelativeX(), entry.getRelativeY(),
-                yellowClickX, yellowClickY, entry.isClean(), entry.getSuccessCount(), entry.getFailureCount(),
-                entry.getConsecutiveSuccessCount(), entry.getSource());
-        // CR122: the remembered yellow row only opens the destination mini-map; final movement is a mini-map handoff.
-        TemplateLocationInfo[] baselineLocation = new TemplateLocationInfo[1];
-        MapCoordinate[] baselineCoordinate = new MapCoordinate[1];
-        boolean[] yellowClickAttempted = new boolean[1];
-        String[] failureReason = new String[1];
-        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
-            if (InputActionScope.isCancelled()) {
-                log.info("[world-map-route-memory] yellow fast path skipped because input request was cancelled: fromMap={} targetMap={}",
-                        entry.getFromMap(), entry.getTargetMap());
-                return false;
-            }
-            inputProvider.clickLeft(yellowClickX, yellowClickY, 150);
-            yellowClickAttempted[0] = true;
-            if (!TaskSleep.sleep(MINI_MAP_OPEN_SETTLE_MS) || InputActionScope.isCancelled()) {
-                failureReason[0] = "mini-map-open-settle-failed";
-                return false;
-            }
-            if (!isMiniMapPanelVisible(description + ":after-yellow-memory-click", true)) {
-                log.warn("[world-map-route-memory] yellow fast path fallback: destination mini-map not visible target={} yellowAbs=({}, {})",
-                        expectedDestinationName, yellowClickX, yellowClickY);
-                failureReason[0] = "mini-map-panel-not-visible";
-                return false;
-            }
-            baselineLocation[0] = miniMapCoordinateReader.readCurrentTemplateLocation().orElse(null);
-            baselineCoordinate[0] = baselineLocation[0] == null
-                    ? currentKnownCoordinate()
-                    : baselineLocation[0].coordinate();
-            inputProvider.clickLeft(miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y, 200);
-            if (!TaskSleep.sleep(MINI_MAP_CLICK_SETTLE_MS)) {
-                failureReason[0] = "mini-map-click-settle-failed";
-                return false;
-            }
-            return true;
-        });
-        if (!submitted) {
-            log.warn("[world-map-route-memory] yellow fast path input failed, fallback to OCR: fromMap={} targetMap={} rel=({}, {})",
-                    entry.getFromMap(), entry.getTargetMap(), entry.getRelativeX(), entry.getRelativeY());
-            if (yellowClickAttempted[0]) {
-                recordYellowMemoryFastPathFailure(entry,
-                        failureReason[0] == null ? "input-failed-after-yellow-click" : failureReason[0],
-                        description);
-                cleanupYellowDestinationRouteQueued(description + ":memoryFailureCleanup");
-                return WorldMapDestinationClickResult.WRONG_DESTINATION;
-            }
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        MiniMapPathingAttemptResult confirmResult = confirmMiniMapPathingStartedForHandoff(
-                description, baselineCoordinate[0], expectedDestinationName, baselineLocation[0]);
-        if (confirmResult != MiniMapPathingAttemptResult.PATHING_STARTED) {
-            log.warn("[world-map-route-memory] yellow fast path did not start mini-map handoff pathing: fromMap={} targetMap={} rel=({}, {}) result={}",
-                    entry.getFromMap(), entry.getTargetMap(), entry.getRelativeX(), entry.getRelativeY(), confirmResult);
-            recordYellowMemoryFastPathFailure(entry, "handoff-not-confirmed:" + confirmResult, description);
-            cleanupYellowDestinationRouteQueued(description + ":memoryFailureCleanup");
-            return WorldMapDestinationClickResult.WRONG_DESTINATION;
-        }
-        gameStateUtil.recordMovementIntent(description);
-        cleanupYellowDestinationRouteQueued(description + ":routeClicked");
-        NavigationRuntimeState state = state();
-        state.lastAbsoluteLogicalX = yellowClickX;
-        state.lastAbsoluteLogicalY = yellowClickY;
-        state.lastWorldMapRouteRelativeX = entry.getRelativeX();
-        state.lastWorldMapRouteRelativeY = entry.getRelativeY();
-        state.lastWorldMapRouteMatchedText = entry.getMatchedText();
-        state.lastWorldMapRouteUsedMemory = true;
-        return WorldMapDestinationClickResult.CLICKED;
-    }
-
-    private void recordYellowMemoryFastPathFailure(WorldMapRouteResultMemoryEntry entry, String reason, String source) {
-        if (entry == null) {
-            return;
-        }
-        memoryService.recordWorldMapRouteResultFailure(WorldMapRouteResultPendingMemory.builder()
-                .fromMap(entry.getFromMap())
-                .targetMap(entry.getTargetMap())
-                .routeMode(WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP)
-                .relativeX(entry.getRelativeX())
-                .relativeY(entry.getRelativeY())
-                .matchedText(entry.getMatchedText())
-                .source(source + ":" + reason)
-                .usedMemory(true)
-                .intentId(null)
-                .createdAtMs(System.currentTimeMillis())
-                .build());
-    }
-
-    private void rememberPendingWorldMapRouteResultClick(String fromMapName,
-                                                         String targetMapName,
-                                                         String source,
-                                                         WorldMapRouteResultMode routeMode) {
+    private void rememberPendingRouteOutcome(String fromMapName,
+                                             String targetMapName,
+                                             String source,
+                                             WorldMapRouteResultMode routeMode) {
         NavigationRuntimeState state = state();
         if (state.lastWorldMapRouteRelativeX == null || state.lastWorldMapRouteRelativeY == null) {
             return;
@@ -1830,11 +1496,11 @@ public class NavigationService {
         String from = normalizeNullable(fromMapName);
         String target = normalizeNullable(targetMapName);
         if (from == null || target == null) {
-            log.info("[world-map-route-memory] pending skipped: reason=blank-map fromMap={} targetMap={} intentId={} source={}",
+            log.info("[route-outcome] pending skipped: reason=blank-map fromMap={} targetMap={} intentId={} source={}",
                     from, target, intent.getIntentId(), source);
             return;
         }
-        WorldMapRouteResultPendingMemory pending = WorldMapRouteResultPendingMemory.builder()
+        PendingRouteOutcome pending = PendingRouteOutcome.builder()
                 .fromMap(from)
                 .targetMap(target)
                 .routeMode(routeMode)
@@ -1843,18 +1509,21 @@ public class NavigationService {
                 .matchedText(state.lastWorldMapRouteMatchedText)
                 .source(source)
                 .usedMemory(state.lastWorldMapRouteUsedMemory)
+                .routeDecisionId(state.lastWorldMapRouteDecisionId)
                 .intentId(intent.getIntentId())
                 .createdAtMs(System.currentTimeMillis())
                 .build();
-        WorldMapRouteResultPendingMemory previous = runtime.consumePendingWorldMapRouteResultMemory();
+        PendingRouteOutcome previous = runtime.getPendingRouteOutcome();
         if (previous != null && !Objects.equals(previous.getIntentId(), pending.getIntentId())) {
-            memoryService.recordWorldMapRouteResultAbandoned(previous, "second-navigation");
+            log.info("[route-outcome] supersede live pending outcome through runner owner: previousIntentId={} nextIntentId={} previousTarget={} nextTarget={}",
+                    previous.getIntentId(), pending.getIntentId(), previous.getTargetMap(), pending.getTargetMap());
         }
-        runtime.updatePendingWorldMapRouteResultMemory(pending);
-        log.info("[world-map-route-memory] pending created: routeMode={} fromMap={} targetMap={} rel=({}, {}) matchedText={} usedMemory={} intentId={} source={}",
+        runtime.requestPendingRouteOutcomeReplacement(pending, "second-navigation");
+        log.info("[route-outcome] pending created: routeMode={} fromMap={} targetMap={} rel=({}, {}) matchedText={} usedMemory={} routeDecisionId={} intentId={} source={}",
                 pending.getRouteMode(), pending.getFromMap(), pending.getTargetMap(),
                 pending.getRelativeX(), pending.getRelativeY(),
-                pending.getMatchedText(), pending.isUsedMemory(), pending.getIntentId(), pending.getSource());
+                pending.getMatchedText(), pending.isUsedMemory(), pending.getRouteDecisionId(),
+                pending.getIntentId(), pending.getSource());
     }
 
     private void closeWorldMapAfterXunluDirect(String targetMapName, int attempt) {
@@ -1863,6 +1532,9 @@ public class NavigationService {
          * backing map immediately after the route panel is opened; waiting until the route link click
          * is racy because the game may auto-close the map first and a late Alt+2 would reopen it.
          */
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
         inputProvider.pressAlt2();
         TaskSleep.sleep(250);
         log.info("navigation map search: close world map immediately after xunlu click target={} attempt={}/{}",
@@ -1893,112 +1565,50 @@ public class NavigationService {
             log.info("navigation yellow route cancelled after result capture: target={}", expectedDestinationName);
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
-        GameTextLineOcrService.WorldMapRouteDestinationResult destinationResult =
-                gameTextLineOcrService.verifyWorldMapRouteDestination(mapResultImagePath, expectedDestinationName);
-        if (InputActionScope.isCancelled()) {
-            log.info("navigation yellow route cancelled after destination OCR: target={}", expectedDestinationName);
+        RouteResultImagePayload routeResultPayload = routeResultImagePayload(mapResultImagePath, mapRect);
+        if (routeResultPayload == null) {
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
-        if (!destinationResult.allowClick()) {
-            log.warn("navigation yellow route: destination mismatch before yellow click, will retype target expected={} actual={} yellow={}",
-                    expectedDestinationName, destinationResult.rawActual(), destinationResult.yellowImagePath());
-            archiveMapRouteFailure("yellow-destination-mismatch", mapResultImagePath, expectedDestinationName,
-                    destinationResult, null);
-            return WorldMapDestinationClickResult.WRONG_DESTINATION;
-        }
-        if (destinationResult.destinationCenterX() == null || destinationResult.destinationCenterY() == null) {
-            log.warn("navigation yellow route: destination matched but no yellow click point target={} actual={} yellow={}",
-                    expectedDestinationName, destinationResult.rawActual(), destinationResult.yellowImagePath());
-            archiveMapRouteFailure("yellow-destination-point-missing", mapResultImagePath, expectedDestinationName,
-                    destinationResult, null);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-
-        int yellowClickX = mapRect[0] + destinationResult.destinationCenterX();
-        int yellowClickY = mapRect[1] + destinationResult.destinationCenterY();
-        CoordinateHelper.MiniMapClickPoint miniMapClickPoint = coordinateHelper.resolveMiniMapClickPoint(
+        String requestSource = requestSource(request);
+        RouteCloudDecision routeDecision = decideRouteCandidateClick(
+                requestSource,
+                "world-map-route-result",
+                canonicalCurrentMapForWorldMapRouteMemory(requestSource),
                 expectedDestinationName,
-                request.getTargetX(),
-                request.getTargetY(),
+                canonicalMapName(expectedDestinationName, "world-map-route-candidate:target:" + requestSource),
+                "yellow-destination-mini-map",
+                "cloud-primary-route-result",
+                WorldMapDestinationClickResult.NOT_FOUND,
                 0,
-                request.isRandomizeMiniMapClickPoint());
-        if (miniMapClickPoint == null) {
-            log.warn("navigation yellow route: mini-map coordinate mapping missing target={} final=({}, {})",
-                    expectedDestinationName, request.getTargetX(), request.getTargetY());
-            archiveMapRouteFailure("yellow-mini-map-coordinate-missing", mapResultImagePath, expectedDestinationName,
-                    destinationResult, null);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-
-        log.info("navigation yellow route: target row matched expected={} actual={} yellowRelative=({}, {}) yellowAbs=({}, {}) miniMapLogical=({}, {}) miniMapPixel=({}, {}) reason={}",
-                expectedDestinationName, destinationResult.rawActual(),
-                destinationResult.destinationCenterX(), destinationResult.destinationCenterY(),
-                yellowClickX, yellowClickY,
-                miniMapClickPoint.logicalX(), miniMapClickPoint.logicalY(),
-                miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y,
-                miniMapClickPoint.reason());
-        // CR122: the yellow row opens the destination mini-map; final movement must be proven like current-map handoff.
-        TemplateLocationInfo[] baselineLocation = new TemplateLocationInfo[1];
-        MapCoordinate[] baselineCoordinate = new MapCoordinate[1];
-        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
-            if (InputActionScope.isCancelled()) {
-                log.info("navigation yellow route queued click skipped because input request was cancelled: target={}",
-                        expectedDestinationName);
-                return false;
-            }
-            inputProvider.clickLeft(yellowClickX, yellowClickY, 150);
-            if (!TaskSleep.sleep(MINI_MAP_OPEN_SETTLE_MS) || InputActionScope.isCancelled()) {
-                return false;
-            }
-            if (!isMiniMapPanelVisible(description + ":after-yellow-click", true)) {
-                log.warn("navigation yellow route: destination mini-map panel not visible after yellow click target={} yellowAbs=({}, {})",
-                        expectedDestinationName, yellowClickX, yellowClickY);
-                return false;
-            }
-            /*
-             * CR99: the yellow route result already opened the destination map panel. Pressing Alt+1
-             * here would reopen/toggle the current-map panel, so this path requires the visible panel
-             * and clicks the final coordinate directly.
-             */
-            baselineLocation[0] = miniMapCoordinateReader.readCurrentTemplateLocation().orElse(null);
-            baselineCoordinate[0] = baselineLocation[0] == null
-                    ? currentKnownCoordinate()
-                    : baselineLocation[0].coordinate();
-            inputProvider.clickLeft(miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y, 200);
-            if (!TaskSleep.sleep(MINI_MAP_CLICK_SETTLE_MS)) {
-                return false;
-            }
-            return true;
-        });
-        if (!submitted) {
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        MiniMapPathingAttemptResult confirmResult = confirmMiniMapPathingStartedForHandoff(
-                description, baselineCoordinate[0], expectedDestinationName, baselineLocation[0]);
-        if (confirmResult != MiniMapPathingAttemptResult.PATHING_STARTED) {
-            log.warn("navigation yellow route: final destination mini-map coordinate did not start pathing target={} logical=({}, {}) pixel=({}, {}) result={}",
+                null,
+                null,
+                "cloud-primary-route-result",
+                routeResultPayload,
+                request);
+        WorldMapDestinationClickResult status = executeCloudRouteCandidateClick(
+                description, routeDecision, "yellow-destination-mini-map", "cloud-primary-route-result",
+                expectedDestinationName, request);
+        if (status != WorldMapDestinationClickResult.CLICKED) {
+            log.warn("navigation cloud-primary yellow route did not click: target={} status={} decisionStatus={} localShadowDecision={} reason={}",
                     expectedDestinationName,
-                    miniMapClickPoint.logicalX(), miniMapClickPoint.logicalY(),
-                    miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y,
-                    confirmResult);
-            return WorldMapDestinationClickResult.NOT_FOUND;
+                    status,
+                    routeDecision == null ? null : routeDecision.getStatus(),
+                    routeDecision == null ? null : routeDecision.getLocalShadowDecision(),
+                    routeDecision == null ? "missing route decision" : routeDecision.getRejectReason());
+            return status;
         }
-        gameStateUtil.recordMovementIntent(description);
-        log.info("navigation yellow route: final destination mini-map coordinate clicked target={} logical=({}, {}) pixel=({}, {})",
-                expectedDestinationName,
-                miniMapClickPoint.logicalX(), miniMapClickPoint.logicalY(),
-                miniMapClickPoint.pixelPoint().x, miniMapClickPoint.pixelPoint().y);
-        cleanupYellowDestinationRouteQueued(description + ":routeClicked");
-        NavigationRuntimeState state = state();
-        state.lastAbsoluteLogicalX = yellowClickX;
-        state.lastAbsoluteLogicalY = yellowClickY;
-        state.lastWorldMapRouteRelativeX = yellowClickX - tracker.getWindowBaseX();
-        state.lastWorldMapRouteRelativeY = yellowClickY - tracker.getWindowBaseY();
-        state.lastWorldMapRouteMatchedText = normalizeNullable(destinationResult.rawActual()) == null
-                ? expectedDestinationName
-                : destinationResult.rawActual();
-        state.lastWorldMapRouteUsedMemory = false;
         return WorldMapDestinationClickResult.CLICKED;
+    }
+
+    private boolean hasFreshCurrentLocationForMapGuard(NavigationRequest request) {
+        if (request == null || request.getFreshCurrentMapName() == null || request.getFreshCurrentMapName().isBlank()) {
+            return false;
+        }
+        if (request.isFreshCurrentLocationPhaseBound()) {
+            return true;
+        }
+        long capturedAtMs = request.getFreshCurrentLocationAtMs();
+        return capturedAtMs > 0L && System.currentTimeMillis() - capturedAtMs <= 3000L;
     }
 
     private void cleanupYellowDestinationRouteQueued(String source) {
@@ -2009,6 +1619,18 @@ public class NavigationService {
                     return true;
                 });
         log.info("navigation yellow route cleanup submitted: source={} submitted={}", source, submitted);
+    }
+
+    private void cleanupYellowDestinationRouteAfterFireAndHandoff(NavigationRequest request, String source) {
+        if (shouldDeferYellowDestinationRoutePanelCleanup(request)) {
+            submitMiniMapCloseAfterFireAndHandoff(source);
+            return;
+        }
+        cleanupYellowDestinationRouteQueued(source);
+    }
+
+    private boolean shouldDeferYellowDestinationRoutePanelCleanup(NavigationRequest request) {
+        return "wuhuan_v2".equals(navigationTaskCode(request, null));
     }
 
     private void cleanupYellowDestinationRouteAfterCoordinateClickDirect(String source) {
@@ -2032,204 +1654,13 @@ public class NavigationService {
         }
         closeMapSearchInputAfterRouteClick(source + ":closeRoutePanel");
         if (isWorldMapTitleVisible()) {
+            if (!InputActionScope.checkpoint()) {
+                return;
+            }
             inputProvider.pressAlt2();
             TaskSleep.sleep(250);
             log.info("navigation yellow route cleanup: closed remaining world map source={}", source);
         }
-    }
-
-    /**
-     * Legacy green route-result path. CR99's default route clicks the verified yellow destination
-     * link and then the already-open destination mini-map coordinate; this method remains only for
-     * the explicit legacy switch or map-only requests that do not provide a final coordinate.
-     */
-    @Deprecated
-    private WorldMapDestinationClickResult clickDestinationFromWorldMapSearchResults(String description,
-                                                                                    boolean directInput,
-                                                                                    String expectedDestinationName) {
-        int[] mapRect = coordinateHelper.getScaledRect(
-                config.getAnchor_windowTo_map_search_X(), config.getAnchor_windowTo_map_search_Y(),
-                MAP_SEARCH_RECT_WIDTH, MAP_SEARCH_RECT_HEIGHT);
-
-        String mapResultImagePath = windowScopedTempPath.resolve("map_result_scan.png");
-        log.info("navigation map search: scan result image={} rect=({}, {})-({}, {})",
-                mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3]);
-        if (!tracker.captureToFile("map result", mapResultImagePath, mapRect[0], mapRect[1], mapRect[2], mapRect[3])) {
-            log.warn("navigation map search: map result capture failed");
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        if (InputActionScope.isCancelled()) {
-            log.info("navigation map search cancelled after result capture: target={}", expectedDestinationName);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        GameTextLineOcrService.WorldMapRouteDestinationResult destinationResult =
-                gameTextLineOcrService.verifyWorldMapRouteDestination(mapResultImagePath, expectedDestinationName);
-        if (InputActionScope.isCancelled()) {
-            log.info("navigation map search cancelled after destination OCR: target={}", expectedDestinationName);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        if (!destinationResult.allowClick()) {
-            log.warn("navigation map search: destination mismatch before route click, will retype target expected={} actual={} yellow={}",
-                    expectedDestinationName, destinationResult.rawActual(), destinationResult.yellowImagePath());
-            archiveMapRouteFailure("destination-mismatch", mapResultImagePath, expectedDestinationName,
-                    destinationResult, null);
-            return WorldMapDestinationClickResult.WRONG_DESTINATION;
-        }
-
-        GameTextLineOcrService.WorldMapRouteCoordinateResult coordinateResult =
-                gameTextLineOcrService.findLastWorldMapRouteCoordinate(mapResultImagePath, destinationResult);
-        if (InputActionScope.isCancelled()) {
-            log.info("navigation map search cancelled after coordinate OCR: target={}", expectedDestinationName);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-        Point relativeCenter = coordinateResult.relativeCenter();
-        String routeOcrImagePath = coordinateResult.ocrImagePath();
-        if (relativeCenter == null) {
-            log.warn("navigation route scan found no coordinate link");
-            archiveMapRouteFailure("coordinate-not-found", mapResultImagePath, expectedDestinationName,
-                    destinationResult, coordinateResult);
-            return WorldMapDestinationClickResult.NOT_FOUND;
-        }
-
-        NavigationRuntimeState state = state();
-        state.lastAbsoluteLogicalX = mapRect[0] + relativeCenter.x;
-        state.lastAbsoluteLogicalY = mapRect[1] + relativeCenter.y;
-        state.lastWorldMapRouteRelativeX = state.lastAbsoluteLogicalX - tracker.getWindowBaseX();
-        state.lastWorldMapRouteRelativeY = state.lastAbsoluteLogicalY - tracker.getWindowBaseY();
-        state.lastWorldMapRouteMatchedText = expectedDestinationName;
-        state.lastWorldMapRouteUsedMemory = false;
-        log.info("navigation route coordinate click: base=({}, {}) mapRect=({}, {})-({}, {}) "
-                        + "image={} relative=({}, {}) absolute=({}, {})",
-                tracker.getWindowBaseX(), tracker.getWindowBaseY(),
-                mapRect[0], mapRect[1], mapRect[2], mapRect[3], routeOcrImagePath,
-                relativeCenter.x, relativeCenter.y, state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY);
-
-        if (directInput) {
-            if (InputActionScope.isCancelled()) {
-                log.info("navigation map search direct route click skipped because input request was cancelled: target={}",
-                        expectedDestinationName);
-                return WorldMapDestinationClickResult.NOT_FOUND;
-            }
-            inputProvider.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150);
-            gameStateUtil.recordMovementIntent(description);
-            closeMapSearchInputAfterRouteClick(description + ":routeClicked");
-            return WorldMapDestinationClickResult.CLICKED;
-        }
-        boolean submitted = inputSequences.submitExclusiveAndWait(description, () -> {
-            if (InputActionScope.isCancelled()) {
-                log.info("navigation map search queued route click skipped because input request was cancelled: target={}",
-                        expectedDestinationName);
-                return false;
-            }
-            inputProvider.clickLeft(state.lastAbsoluteLogicalX, state.lastAbsoluteLogicalY, 150);
-            gameStateUtil.recordMovementIntent(description);
-            closeMapSearchInputAfterRouteClick(description + ":routeClicked");
-            return true;
-        });
-        return submitted ? WorldMapDestinationClickResult.CLICKED : WorldMapDestinationClickResult.NOT_FOUND;
-    }
-
-    /**
-     * Archive route-result screenshots that blocked world-map navigation.
-     *
-     * <p>The live window-scoped temp image is overwritten on the next navigation attempt, so failed
-     * OCR/template cases need to be copied immediately. These files are local regression samples:
-     * future route-destination algorithms should be run against this folder before asking the user
-     * to test in-game again.</p>
-     *
-     * @param reason compact failure type, for example {@code destination-mismatch}.
-     * @param rawImagePath raw route-result screenshot path, image-local to the result panel.
-     * @param expectedDestinationName map name that the route search was trying to click.
-     * @param destination destination OCR guard result, or null when it was not reached.
-     * @param coordinate coordinate OCR result, or null when it was not reached.
-     */
-    private void archiveMapRouteFailure(String reason,
-                                        String rawImagePath,
-                                        String expectedDestinationName,
-                                        GameTextLineOcrService.WorldMapRouteDestinationResult destination,
-                                        GameTextLineOcrService.WorldMapRouteCoordinateResult coordinate) {
-        try {
-            String time = LocalDateTime.now().format(FAILURE_CASE_TIME_FORMAT);
-            String expected = safeFailureFileName(expectedDestinationName == null ? "unknown" : expectedDestinationName);
-            String safeReason = safeFailureFileName(reason == null ? "unknown" : reason);
-            Path caseDir = ROUTE_FAILURE_CASE_DIR.resolve(time + "_" + expected + "_" + safeReason).normalize();
-            Files.createDirectories(caseDir);
-
-            List<String> copied = new ArrayList<>();
-            copyFailureImage(rawImagePath, caseDir.resolve("raw.png"), copied);
-            if (destination != null) {
-                copyFailureImage(destination.yellowImagePath(), caseDir.resolve("yellow.png"), copied);
-            }
-            if (coordinate != null) {
-                copyFailureImage(coordinate.ocrImagePath(), caseDir.resolve("coordinate_ocr.png"), copied);
-            }
-            Files.writeString(caseDir.resolve("metadata.txt"), routeFailureMetadata(
-                    reason, rawImagePath, expectedDestinationName, destination, coordinate, copied),
-                    StandardCharsets.UTF_8);
-            log.warn("navigation route failure archived: reason={} expected={} dir={} copied={}",
-                    reason, expectedDestinationName, caseDir, copied);
-        } catch (Exception e) {
-            log.warn("navigation route failure archive failed: reason={} raw={} expected={} error={}",
-                    reason, rawImagePath, expectedDestinationName, e.getMessage(), e);
-        }
-    }
-
-    private void copyFailureImage(String sourcePath, Path targetPath, List<String> copied) throws Exception {
-        if (sourcePath == null || sourcePath.isBlank()) {
-            return;
-        }
-        Path source = Path.of(sourcePath);
-        if (!Files.exists(source)) {
-            return;
-        }
-        Files.copy(source, targetPath, StandardCopyOption.REPLACE_EXISTING);
-        copied.add(targetPath.getFileName().toString());
-    }
-
-    private String routeFailureMetadata(String reason,
-                                        String rawImagePath,
-                                        String expectedDestinationName,
-                                        GameTextLineOcrService.WorldMapRouteDestinationResult destination,
-                                        GameTextLineOcrService.WorldMapRouteCoordinateResult coordinate,
-                                        List<String> copied) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("reason=").append(reason).append('\n');
-        builder.append("expectedDestination=").append(expectedDestinationName).append('\n');
-        builder.append("rawImagePath=").append(rawImagePath).append('\n');
-        builder.append("windowBase=(").append(tracker.getWindowBaseX()).append(',')
-                .append(tracker.getWindowBaseY()).append(")\n");
-        windowTaskContextHolder.rawCurrent().ifPresent(context -> builder
-                .append("windowId=").append(context.getWindowId()).append('\n')
-                .append("windowTitle=").append(context.getNativeBinding().getTitle()).append('\n'));
-        if (destination != null) {
-            builder.append("destination.checked=").append(destination.checked()).append('\n');
-            builder.append("destination.matched=").append(destination.matched()).append('\n');
-            builder.append("destination.allowClick=").append(destination.allowClick()).append('\n');
-            builder.append("destination.expected=").append(destination.expected()).append('\n');
-            builder.append("destination.actual=").append(destination.actual()).append('\n');
-            builder.append("destination.rawActual=").append(destination.rawActual()).append('\n');
-            builder.append("destination.center=(").append(destination.destinationCenterX()).append(',')
-                    .append(destination.destinationCenterY()).append(")\n");
-            builder.append("destination.yellowImagePath=").append(destination.yellowImagePath()).append('\n');
-            builder.append("destination.elapsedMs=").append(destination.elapsedMs()).append('\n');
-            builder.append("destination.message=").append(destination.message()).append('\n');
-        }
-        if (coordinate != null) {
-            builder.append("coordinate.found=").append(coordinate.found()).append('\n');
-            builder.append("coordinate.relativeCenter=").append(coordinate.relativeCenter()).append('\n');
-            builder.append("coordinate.ocrImagePath=").append(coordinate.ocrImagePath()).append('\n');
-            builder.append("coordinate.elapsedMs=").append(coordinate.elapsedMs()).append('\n');
-            builder.append("coordinate.message=").append(coordinate.message()).append('\n');
-        }
-        builder.append("copied=").append(copied).append('\n');
-        return builder.toString();
-    }
-
-    private String safeFailureFileName(String value) {
-        if (value == null || value.isBlank()) {
-            return "unknown";
-        }
-        return value.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
     }
 
     /**
@@ -2283,6 +1714,9 @@ public class NavigationService {
         int y = tracker.getWindowBaseY() + random.nextInt(
                 ROUTE_CLOSE_RANDOM_MOUSE_MAX_Y - ROUTE_CLOSE_RANDOM_MOUSE_MIN_Y + 1)
                 + ROUTE_CLOSE_RANDOM_MOUSE_MIN_Y;
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
         inputProvider.moveMouse(x, y);
         log.info("navigation map search: mouse moved away after x2 close source={} point=({}, {})", source, x, y);
     }
@@ -2348,11 +1782,17 @@ public class NavigationService {
             log.info("navigation map search scroll skipped because input request was cancelled: source={}", source);
             return false;
         }
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.clickLeft(targetX, targetY, 50);
         for (int i = 1; i <= MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS; i++) {
             if (InputActionScope.isCancelled()) {
                 log.info("navigation map search scroll cancelled: source={} attempt={}/{}",
                         source, i, MAP_RESULT_SCROLL_TO_BOTTOM_ATTEMPTS);
+                return false;
+            }
+            if (!InputActionScope.checkpoint()) {
                 return false;
             }
             inputProvider.scrollDown(MAP_RESULT_SCROLL_DOWN_UNITS);
@@ -2404,6 +1844,9 @@ public class NavigationService {
                         description, checkPanelBeforeOpen);
             }
 
+            if (InputActionScope.isCancelled() || !InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.clickLeft(pixelPoint.x, pixelPoint.y, 200);
             if (!TaskSleep.sleep(MINI_MAP_CLICK_SETTLE_MS)) {
                 return false;
@@ -2478,18 +1921,37 @@ public class NavigationService {
             log.info("mini-map HWND Alt+1 not attempted, fallback to focused input: source={} reason={}",
                     source, attempt.reason());
         }
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.pressAlt1();
         return true;
     }
 
-    private boolean isXiuluoStartExitPrepathFireAndHandoff(NavigationRequest request) {
-        return request != null
-                && "xiuluo-v2:start-exit-prepath:currentMap".equals(request.getSource())
-                && gameStateUtil.isSameMapName(request.getTargetMapName(), MAP_LING_SHOU_VILLAGE)
-                && request.getTargetX() != null
-                && request.getTargetY() != null
-                && request.getTargetX() == 11
-                && request.getTargetY() == 8;
+    private boolean isImmediateMiniMapFireAndHandoff(NavigationRequest request) {
+        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
+            return false;
+        }
+        /*
+         * Only the discussed current-map routes may skip foreground movement proof. The mini-map
+         * coordinate conversion and click point are still produced by the existing click resolver.
+         */
+        if ("xiuluo-v2:start-exit-prepath:currentMap".equals(request.getSource())) {
+            return gameStateUtil.isSameMapName(request.getTargetMapName(), MAP_LING_SHOU_VILLAGE)
+                    && request.getTargetX() == 11
+                    && request.getTargetY() == 8;
+        }
+        if ("wuhuan-v2:acceptNpc:navigate:currentMap".equals(request.getSource())) {
+            return gameStateUtil.isSameMapName(request.getTargetMapName(), MAP_CHANG_AN)
+                    && request.getTargetX() == 87
+                    && request.getTargetY() == 174;
+        }
+        if ("wuhuan-v2:shoe-shop-entry-exact-130-130:currentMap".equals(request.getSource())) {
+            return gameStateUtil.isSameMapName(request.getTargetMapName(), MAP_CHANG_AN)
+                    && request.getTargetX() == 130
+                    && request.getTargetY() == 130;
+        }
+        return false;
     }
 
     private MiniMapPathingAttemptResult clickMiniMapPointForFireAndHandoff(CoordinateHelper.MiniMapClickPoint clickPoint,
@@ -2502,32 +1964,37 @@ public class NavigationService {
                 + ":logical=(" + clickPoint.logicalX() + "," + clickPoint.logicalY() + ")"
                 + ":pixel=(" + clickPoint.pixelPoint().x + "," + clickPoint.pixelPoint().y + ")"
                 + ":jitter=(" + clickPoint.jitterX() + "," + clickPoint.jitterY() + ")";
-        log.info("start-exit-prepath fire-and-handoff mini-map click: source={} expectedMap={} pixel=({}, {})",
+        log.info("immediate mini-map fire-and-handoff click: source={} expectedMap={} pixel=({}, {})",
                 source, expectedMapName, clickPoint.pixelPoint().x, clickPoint.pixelPoint().y);
         boolean submitted = submitMiniMapClick(clickPoint.pixelPoint(), source, false, false);
         if (!submitted) {
-            log.warn("start-exit-prepath fire-and-handoff mini-map click input failed: source={} pixel=({}, {})",
+            log.warn("immediate mini-map fire-and-handoff click input failed: source={} pixel=({}, {})",
                     source, clickPoint.pixelPoint().x, clickPoint.pixelPoint().y);
             closeMiniMapAfterFireAndHandoff(source + ":after-failed-click");
             return MiniMapPathingAttemptResult.INCONCLUSIVE;
         }
         gameStateUtil.recordMovementIntent(source);
         closeMiniMapAfterFireAndHandoff(source);
-        log.info("start-exit-prepath fire-and-handoff completed before movement proof: source={} expectedMap={}",
+        log.info("immediate mini-map fire-and-handoff completed before movement proof: source={} expectedMap={}",
                 source, expectedMapName);
         return MiniMapPathingAttemptResult.PATHING_STARTED;
     }
 
     private void closeMiniMapAfterFireAndHandoff(String source) {
-        boolean closeSubmitted = inputSequences.submitExclusiveAndWait(source + ":close-mini-map-fire-and-handoff", () -> {
-            /*
-             * CR77 start-exit prepath is only a speed hint. Close Alt+1 cheaply after the click and
-             * let the formal target navigation recover if this hint did not actually start moving.
-             */
-            return pressAlt1ForMiniMap(source + ":close-fire-and-handoff")
-                    && TaskSleep.sleep(300);
-        });
-        log.info("start-exit-prepath fire-and-handoff mini-map close submitted: source={} submitted={}",
+        submitMiniMapCloseAfterFireAndHandoff(source);
+    }
+
+    private void submitMiniMapCloseAfterFireAndHandoff(String source) {
+        /*
+         * Fire-and-handoff navigation has already clicked the final mini-map coordinate. Alt+1 is a
+         * cheap cleanup action and is safe to enqueue without making the current task wait. This path
+         * is reserved for tasks, currently 五环, that intentionally keep the route panel for their
+         * own later cleanup instead of closing the input panel in generic navigation.
+         */
+        boolean closeSubmitted = inputSequences.submit(
+                source + ":close-mini-map-fire-and-handoff",
+                java.util.List.of(InputAction.pressAlt1(), InputAction.sleep(300)));
+        log.info("mini-map close queued after fire-and-handoff: source={} submitted={}",
                 source, closeSubmitted);
     }
 
@@ -2756,6 +2223,267 @@ public class NavigationService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private RouteCloudDecision shadowRouteCandidate(String source,
+                                                    String phase,
+                                                    String fromMapName,
+                                                    String targetMapName,
+                                                    String canonicalTargetMapName,
+                                                    String routeMode,
+                                                    String candidateSource,
+                                                    WorldMapDestinationClickResult status,
+                                                    int attempt,
+                                                    boolean routeClicked,
+                                                    NavigationRequest request) {
+        String taskCode = navigationTaskCode(request, source);
+        NavigationRuntimeState state = state();
+        String click = routeClicked
+                && state.lastWorldMapRouteRelativeX != null
+                && state.lastWorldMapRouteRelativeY != null
+                ? state.lastWorldMapRouteRelativeX + "," + state.lastWorldMapRouteRelativeY
+                : "";
+        String localDecision = "mode=" + safeShadowValue(routeMode)
+                + ";candidateSource=" + safeShadowValue(candidateSource)
+                + ";status=" + enumName(status)
+                + ";click=" + click
+                + ";routeClicked=" + routeClicked
+                + ";attempt=" + attempt
+                + ";reason=local-shadow";
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put("fromMap", safeShadowValue(fromMapName));
+        context.put("targetMap", safeShadowValue(targetMapName));
+        context.put("canonicalTargetMap", safeShadowValue(canonicalTargetMapName));
+        context.put("routeMode", safeShadowValue(routeMode));
+        context.put("candidateSource", safeShadowValue(candidateSource));
+        context.put("status", enumName(status));
+        context.put("routeClicked", Boolean.toString(routeClicked));
+        context.put("attempt", Integer.toString(attempt));
+        context.put("localWouldClick", click);
+        if (request != null) {
+            context.put("targetX", safeShadowValue(request.getTargetX()));
+            context.put("targetY", safeShadowValue(request.getTargetY()));
+            context.put("targetName", safeShadowValue(request.getTargetName()));
+            context.put("requestSource", safeShadowValue(request.getSource()));
+        }
+        RouteCloudDecision decision = routeCloudDecisionService.decideRouteCandidate(
+                taskCode,
+                source,
+                phase,
+                localDecision,
+                context);
+        shadowPolicyVersion(source, taskCode, "navigation-route-candidate", routeMode);
+        return decision;
+    }
+
+    private RouteCloudDecision decideRouteCandidateClick(String source,
+                                                         String phase,
+                                                         String fromMapName,
+                                                         String targetMapName,
+                                                         String canonicalTargetMapName,
+                                                         String routeMode,
+                                                         String candidateSource,
+                                                         WorldMapDestinationClickResult status,
+                                                         int attempt,
+                                                         Integer relativeX,
+                                                         Integer relativeY,
+                                                         String reason,
+                                                         RouteResultImagePayload routeResultPayload,
+                                                         NavigationRequest request) {
+        String taskCode = navigationTaskCode(request, source);
+        String click = relativeX == null || relativeY == null ? "" : relativeX + "," + relativeY;
+        String localDecision = "mode=" + safeShadowValue(routeMode)
+                + ";candidateSource=" + safeShadowValue(candidateSource)
+                + ";status=" + enumName(status)
+                + ";click=" + click
+                + ";routeClicked=" + (status == WorldMapDestinationClickResult.CLICKED)
+                + ";attempt=" + attempt
+                + ";reason=" + safeShadowValue(reason);
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put("fromMap", safeShadowValue(fromMapName));
+        context.put("targetMap", safeShadowValue(targetMapName));
+        context.put("canonicalTargetMap", safeShadowValue(canonicalTargetMapName));
+        context.put("routeMode", safeShadowValue(routeMode));
+        context.put("candidateSource", safeShadowValue(candidateSource));
+        context.put("status", enumName(status));
+        context.put("routeClicked", Boolean.toString(status == WorldMapDestinationClickResult.CLICKED));
+        context.put("attempt", Integer.toString(attempt));
+        context.put("localWouldClick", click);
+        context.put("reason", safeShadowValue(reason));
+        if (routeResultPayload != null) {
+            context.put("imagePayloadBase64", routeResultPayload.imagePayloadBase64());
+            context.put("payloadMimeType", routeResultPayload.payloadMimeType());
+            context.put("imageSha256", routeResultPayload.imageSha256());
+            context.put("rawImagePath", routeResultPayload.rawImagePath());
+            context.put("debugImageId", routeResultPayload.debugImageId());
+            context.put("windowSize", routeResultPayload.windowSize());
+            context.put("roi", routeResultPayload.roi());
+        }
+        if (request != null) {
+            context.put("targetX", safeShadowValue(request.getTargetX()));
+            context.put("targetY", safeShadowValue(request.getTargetY()));
+            context.put("targetName", safeShadowValue(request.getTargetName()));
+            context.put("requestSource", safeShadowValue(request.getSource()));
+        }
+        RouteCloudDecision decision = routeCloudDecisionService.decideRouteCandidate(
+                taskCode,
+                source,
+                phase,
+                localDecision,
+                context);
+        shadowPolicyVersion(source, taskCode, "navigation-route-candidate", routeMode);
+        return decision;
+    }
+
+    private RouteResultImagePayload routeResultImagePayload(String mapResultImagePath, int[] mapRect) {
+        if (mapResultImagePath == null || mapResultImagePath.isBlank() || mapRect == null || mapRect.length < 4) {
+            return null;
+        }
+        ImagePreprocessCloudRequest.Roi roi = ImagePreprocessCloudRequest.Roi.builder()
+                .x(mapRect[0] - tracker.getWindowBaseX())
+                .y(mapRect[1] - tracker.getWindowBaseY())
+                .width(mapRect[2] - mapRect[0])
+                .height(mapRect[3] - mapRect[1])
+                .build();
+        String roiText = roiText(roi);
+        String rejectReason = routeResultRoiRejectReason(roi);
+        if (rejectReason != null) {
+            log.warn("navigation route candidate payload skipped: image={} roi={} reason={}",
+                    mapResultImagePath, roiText, rejectReason);
+            return null;
+        }
+        try {
+            byte[] imageBytes = Files.readAllBytes(Path.of(mapResultImagePath));
+            if (imageBytes.length == 0) {
+                log.warn("navigation route candidate payload skipped: image={} roi={} reason=empty-image",
+                        mapResultImagePath, roiText);
+                return null;
+            }
+            return new RouteResultImagePayload(
+                    Base64.getEncoder().encodeToString(imageBytes),
+                    ROUTE_RESULT_PAYLOAD_MIME_TYPE,
+                    sha256Hex(imageBytes),
+                    mapResultImagePath,
+                    "world-map-route-result",
+                    GAME_WINDOW_WIDTH + "," + GAME_WINDOW_HEIGHT,
+                    roiText);
+        } catch (Exception e) {
+            log.warn("navigation route candidate payload skipped: image={} roi={} error={}",
+                    mapResultImagePath, roiText, e.getMessage());
+            log.debug("navigation route candidate payload failure stack", e);
+            return null;
+        }
+    }
+
+    private static String routeResultRoiRejectReason(ImagePreprocessCloudRequest.Roi roi) {
+        if (roi == null) {
+            return "missing-roi";
+        }
+        if (roi.getX() < 0 || roi.getY() < 0 || roi.getWidth() <= 0 || roi.getHeight() <= 0) {
+            return "invalid-window-relative-roi";
+        }
+        long maxX = (long) roi.getX() + roi.getWidth();
+        long maxY = (long) roi.getY() + roi.getHeight();
+        if (maxX > GAME_WINDOW_WIDTH || maxY > GAME_WINDOW_HEIGHT) {
+            return "roi-outside-window";
+        }
+        return null;
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return HexFormat.of().formatHex(digest.digest(bytes));
+    }
+
+    private static String roiText(ImagePreprocessCloudRequest.Roi roi) {
+        if (roi == null) {
+            return "";
+        }
+        return roi.getX() + "," + roi.getY() + "," + roi.getWidth() + "," + roi.getHeight();
+    }
+
+    private Point effectiveRouteClick(RouteCloudDecision routeDecision) {
+        Point effective = routeDecision == null ? null : routeDecision.getCloudWindowRelativeClickPoint();
+        if (effective == null) {
+            throw new IllegalStateException("route cloud decision did not provide an executable click");
+        }
+        return effective;
+    }
+
+    private void shadowPolicyVersion(String source, String taskCode, String phase, String routeMode) {
+        String policyVersion = "navigation-shadow-v1";
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put("policyVersion", policyVersion);
+        context.put("routeMode", safeShadowValue(routeMode));
+        context.put("owner", "NavigationService");
+        context.put("diagnosticOnly", "true");
+        context.put("diagnosticNote", "POLICY_VERSION does not control navigation");
+        log.info("navigation policy-version diagnostic-only: source={} taskCode={} phase={} routeMode={} policyVersion={} note=does not control navigation",
+                source, taskCode, phase, routeMode, policyVersion);
+        runtimeDecisionShadowService.shadow(
+                CloudDecisionServiceId.POLICY_VERSION,
+                taskCode,
+                phase,
+                source,
+                "policyVersion=" + policyVersion,
+                context);
+    }
+
+    private String requestSource(NavigationRequest request) {
+        return request == null ? "navigation" : request.getSource();
+    }
+
+    private boolean isActivePathingIntentCompatibleWithRequest(WindowPathingIntent intent,
+                                                               String targetMapName,
+                                                               String requestSource) {
+        return intent != null
+                && gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName)
+                && isPathingSourceCompatibleForDuplicate(intent.getSource(), requestSource);
+    }
+
+    static boolean isPathingSourceCompatibleForDuplicate(String activeSource, String requestSource) {
+        String active = normalizeSourceForDuplicate(activeSource);
+        String request = normalizeSourceForDuplicate(requestSource);
+        return active != null
+                && request != null
+                && (active.equals(request) || active.startsWith(request + ":"));
+    }
+
+    private static String normalizeSourceForDuplicate(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String navigationTaskCode(NavigationRequest request, String source) {
+        String value = normalizeNullable(source);
+        if (value == null && request != null) {
+            value = normalizeNullable(request.getSource());
+        }
+        if (value == null) {
+            return "navigation";
+        }
+        String lower = value.toLowerCase();
+        if (lower.startsWith("wubei")) {
+            return "wubei";
+        }
+        if (lower.startsWith("xiuluo")) {
+            return "xiuluo_v2";
+        }
+        if (lower.startsWith("wuhuan")) {
+            return "wuhuan_v2";
+        }
+        return "navigation";
+    }
+
+    private String enumName(Enum<?> value) {
+        return value == null ? "" : value.name();
+    }
+
+    private String safeShadowValue(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
     private boolean isCoordinateChanged(MapCoordinate baseline, MapCoordinate current) {
         return baseline != null
                 && current != null
@@ -2836,13 +2564,25 @@ public class NavigationService {
         private Integer lastWorldMapRouteRelativeY;
         private String lastWorldMapRouteMatchedText;
         private boolean lastWorldMapRouteUsedMemory;
+        private String lastWorldMapRouteDecisionId;
 
         private void clearWorldMapRouteResultClick() {
             lastWorldMapRouteRelativeX = null;
             lastWorldMapRouteRelativeY = null;
             lastWorldMapRouteMatchedText = null;
             lastWorldMapRouteUsedMemory = false;
+            lastWorldMapRouteDecisionId = null;
         }
+    }
+
+    private record RouteResultImagePayload(
+            String imagePayloadBase64,
+            String payloadMimeType,
+            String imageSha256,
+            String rawImagePath,
+            String debugImageId,
+            String windowSize,
+            String roi) {
     }
 
     private record RouteDialogClickResult(

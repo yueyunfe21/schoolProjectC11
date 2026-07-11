@@ -74,42 +74,6 @@ public class TextRecognizer {
         client.setSocketTimeoutInMillis(60000);
     }
 
-    /**
-     * Read all OCR text from an image file using the configured provider route.
-     *
-     * @param imagePath filesystem path to an existing image; null is not expected and provider
-     *                  failures are converted to an empty string.
-     * @return concatenated OCR text, or an empty string when OCR is unavailable or no words are
-     * found. The method may call the local OCR HTTP service or Baidu OCR depending on
-     * {@code bot.dhxy.ocr.provider}.
-     */
-    public String readText(String imagePath) {
-        OcrProvider provider = provider();
-        if (provider == OcrProvider.LOCAL) {
-            return tryLocalReadText(imagePath).orElse("");
-        }
-        if (provider == OcrProvider.HYBRID) {
-            Optional<String> local = tryLocalReadText(imagePath);
-            if (local.isPresent() && !local.get().isBlank()) {
-                log.info("[ocr-hybrid] readText selected=local path={} localLen={} local='{}'",
-                        imagePath, local.get().length(), abbreviate(local.get()));
-                return local.get();
-            }
-            String baidu = readTextBaidu(imagePath);
-            log.info("[ocr-hybrid] readText selected=baidu reason=local-empty path={} baiduLen={} baidu='{}'",
-                    imagePath, baidu.length(), abbreviate(baidu));
-            return baidu;
-        }
-
-        String baidu = readTextBaidu(imagePath);
-        if (provider == OcrProvider.COMPARE) {
-            Optional<String> local = tryLocalReadText(imagePath);
-            log.info("[ocr-compare] readText path={} baiduLen={} localLen={} localAvailable={} baidu='{}' local='{}'",
-                    imagePath, baidu.length(), local.map(String::length).orElse(-1), local.isPresent(),
-                    abbreviate(baidu), abbreviate(local.orElse("")));
-        }
-        return baidu;
-    }
 
     /**
      * Return every OCR text block detected in an image file.
@@ -218,59 +182,6 @@ public class TextRecognizer {
         return selectedWords;
     }
 
-    /**
-     * Return the effective OCR provider name from configuration.
-     *
-     * @return normalized provider string used by logs and routing, defaulting to {@code baidu}
-     * when configuration is missing.
-     */
-    public String currentProviderName() {
-        return providerName();
-    }
-
-    /**
-     * Parse current location text such as "长安 [14, 229]".
-     */
-    /**
-     * Parse the current map and logical map coordinate from a screenshot.
-     *
-     * @param imagePath filesystem path to an existing crop that contains the in-game location text,
-     *                  typically the top-left map label area.
-     * @return parsed map name plus logical map X/Y coordinates, or null when OCR text does not
-     * contain a standard {@code [x, y]} pattern. The method may use local OCR first and Baidu as
-     * fallback in hybrid mode.
-     */
-    public LocationInfo parseLocation(String imagePath) {
-        if (provider() == OcrProvider.HYBRID) {
-            Optional<String> local = tryLocalReadText(imagePath);
-            String localText = local.orElse("");
-            LocationInfo localLocation = parseLocationText(localText);
-            if (local.isPresent() && localLocation != null) {
-                log.info("[ocr-hybrid-match] purpose=parse-location path={} selected=local localMatched=true "
-                                + "baiduMatched=false local='{}' location={}",
-                        imagePath, abbreviate(localText), localLocation);
-                return localLocation;
-            }
-
-            String baiduText = readTextBaidu(imagePath);
-            LocationInfo baiduLocation = parseLocationText(baiduText);
-            log.info("[ocr-hybrid-match] purpose=parse-location path={} selected={} localAvailable={} "
-                            + "localMatched={} baiduMatched={} local='{}' baidu='{}' location={}",
-                    imagePath,
-                    baiduLocation != null ? "baidu" : (localText.isBlank() ? "baidu-unmatched" : "local-unmatched"),
-                    local.isPresent(), localLocation != null, baiduLocation != null,
-                    abbreviate(localText), abbreviate(baiduText),
-                    baiduLocation != null ? baiduLocation : localLocation);
-            return baiduLocation != null ? baiduLocation : localLocation;
-        }
-
-        String rawText = readText(imagePath);
-        LocationInfo location = parseLocationText(rawText);
-        if (location == null && rawText != null && !rawText.isEmpty()) {
-            log.warn("[ocr] location text did not match standard coordinate format: {}", rawText);
-        }
-        return location;
-    }
 
     /**
      * Parse current map/coordinate using only the local OCR sidecar.
@@ -339,82 +250,6 @@ public class TextRecognizer {
         return null;
     }
 
-    /**
-     * Find the final clickable route coordinate in a map-route result screenshot.
-     *
-     * @param imagePath filesystem path to an existing image containing route text or coordinate
-     *                  links.
-     * @return image-local center point of the last coordinate-like OCR block, or null when no
-     * clickable coordinate is found. Callers must translate this point before clicking a game
-     * window.
-     */
-    public Point findLastCoordinateLink(String imagePath) {
-        if (provider() == OcrProvider.HYBRID) {
-            Optional<List<OcrWordResult>> localOptional = tryLocalAllTextResults(imagePath);
-            List<OcrWordResult> localWords = localOptional.orElseGet(ArrayList::new);
-            Point localPoint = findLastCoordinateLinkInWords(localWords);
-            if (localOptional.isPresent() && localPoint != null) {
-                log.info("[ocr-hybrid-match] purpose=last-coordinate-link path={} selected=local localMatched=true "
-                                + "baiduMatched=false point=({}, {}) localText='{}'",
-                        imagePath, localPoint.x, localPoint.y, abbreviate(joinText(localWords)));
-                return localPoint;
-            }
-
-            List<OcrWordResult> baiduWords = getAllTextResultsBaidu(imagePath);
-            Point baiduPoint = findLastCoordinateLinkInWords(baiduWords);
-            Point selected = baiduPoint != null ? baiduPoint : localPoint;
-            log.info("[ocr-hybrid-match] purpose=last-coordinate-link path={} selected={} localAvailable={} "
-                            + "localCount={} localMatched={} baiduCount={} baiduMatched={} point={} localText='{}' baiduText='{}'",
-                    imagePath,
-                    baiduPoint != null ? "baidu" : (localWords.isEmpty() ? "baidu-unmatched" : "local-unmatched"),
-                    localOptional.isPresent(), localWords.size(), localPoint != null,
-                    baiduWords.size(), baiduPoint != null, pointText(selected),
-                    abbreviate(joinText(localWords)), abbreviate(joinText(baiduWords)));
-            return selected;
-        }
-
-        List<OcrWordResult> words = getAllTextResults(imagePath);
-        return findLastCoordinateLinkInWords(words);
-    }
-
-    /**
-     * Locate the last coordinate-looking OCR fragment in image-local word boxes.
-     *
-     * @param words OCR words whose bounding boxes are relative to the image passed to the provider.
-     * @return image-local click point for the final coordinate token, or null when no token matches.
-     */
-    private Point findLastCoordinateLinkInWords(List<OcrWordResult> words) {
-        int lastX = -1;
-        int lastY = -1;
-
-        for (OcrWordResult word : words) {
-            if (word == null || word.getText() == null) {
-                continue;
-            }
-            Matcher matcher = COORDINATE_LINK_PATTERN.matcher(word.getText());
-            while (matcher.find()) {
-                int textLength = Math.max(word.getText().length(), 1);
-                int blockLeft = word.getLeft();
-                int blockWidth = Math.max(word.getWidth(), 1);
-                int matchLeft = blockLeft + (int) Math.round(blockWidth * (matcher.start() / (double) textLength));
-                int matchRight = blockLeft + (int) Math.round(blockWidth * (matcher.end() / (double) textLength));
-                lastX = (matchLeft + matchRight) / 2;
-                lastX = Math.max(blockLeft, Math.min(blockLeft + blockWidth, lastX));
-                lastY = word.getY();
-
-                log.info("OCR coordinate match: words=[{}] match=[{}] block=({}, {}, {}, {}) range=({}, {}) point=({}, {})",
-                        word.getText(), matcher.group(), word.getLeft(), word.getTop(), word.getWidth(), word.getHeight(),
-                        matchLeft, matchRight, lastX, lastY);
-            }
-        }
-
-        if (lastX != -1) {
-            log.info("OCR coordinate final click point: {}, {}", lastX, lastY);
-            return new Point(lastX, lastY);
-        }
-        return null;
-    }
-
     private boolean safeMatches(Predicate<List<OcrWordResult>> matcher, List<OcrWordResult> words) {
         if (matcher == null) {
             return words != null && !words.isEmpty();
@@ -431,9 +266,6 @@ public class TextRecognizer {
         return purpose == null || purpose.isBlank() ? "-" : purpose.trim();
     }
 
-    private String pointText(Point point) {
-        return point == null ? "-" : point.x + "," + point.y;
-    }
 
     private String readTextBaidu(String imagePath) {
         try {

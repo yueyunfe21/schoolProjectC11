@@ -3,6 +3,7 @@ package com.bot.dhxy.input.action;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskPauseToken;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -65,8 +67,37 @@ public class InputActionQueue {
         if (!refreshAndValidateNativeBinding(context, description)) {
             return false;
         }
-        TaskPauseToken pauseToken = capturePauseToken();
-        return await(new InputActionRequest(context, description, actions, pauseToken));
+        CapturedTaskTokens taskTokens = captureTaskTokens();
+        return await(new InputActionRequest(context, description, actions,
+                taskTokens.pauseToken(), taskTokens.stopToken()));
+    }
+
+    /**
+     * Submit a finite list of physical input actions without blocking the task thread.
+     *
+     * <p>The request still captures the current window binding and task pause/stop tokens exactly
+     * like {@link #submitAndWait(String, List)}. Use this only for cheap cleanup that must stay
+     * window-bound but should not hold the foreground task turn, such as closing a mini-map after a
+     * fire-and-handoff navigation click.</p>
+     *
+     * @param description diagnostic label for logs/dead-letter records.
+     * @param actions ordered actions with screen-absolute coordinates where applicable.
+     * @return true when the request was accepted into the input queue.
+     */
+    public boolean submit(String description, List<InputAction> actions) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            log.warn("Input action rejected because no window context exists: {}", description);
+            return false;
+        }
+        WindowRuntimeContext context = current.get();
+        if (!refreshAndValidateNativeBinding(context, description)) {
+            return false;
+        }
+        CapturedTaskTokens taskTokens = captureTaskTokens();
+        queue.offer(new InputActionRequest(context, description, actions,
+                taskTokens.pauseToken(), taskTokens.stopToken()));
+        return true;
     }
 
     /**
@@ -88,14 +119,15 @@ public class InputActionQueue {
         if (!refreshAndValidateNativeBinding(context, description)) {
             return false;
         }
-        TaskPauseToken pauseToken = capturePauseToken();
-        return await(new InputActionRequest(context, description, callback, pauseToken));
+        CapturedTaskTokens taskTokens = captureTaskTokens();
+        return await(new InputActionRequest(context, description, callback,
+                taskTokens.pauseToken(), taskTokens.stopToken()));
     }
 
-    private TaskPauseToken capturePauseToken() {
+    private CapturedTaskTokens captureTaskTokens() {
         return taskExecutionContextHolder.current()
-                .map(TaskExecutionContext::getPauseToken)
-                .orElse(null);
+                .map(context -> new CapturedTaskTokens(context.getPauseToken(), context.getStopToken()))
+                .orElseGet(() -> new CapturedTaskTokens(null, null));
     }
 
     private boolean refreshAndValidateNativeBinding(WindowRuntimeContext context, String description) {
@@ -128,8 +160,30 @@ public class InputActionQueue {
 
     private boolean await(InputActionRequest request) {
         queue.offer(request);
+        long remainingWaitMs = TimeUnit.SECONDS.toMillis(120);
+        long lastCheckMs = System.currentTimeMillis();
         try {
-            return request.getResult().get(120, TimeUnit.SECONDS);
+            while (true) {
+                long pollMs = Math.max(1L, Math.min(1000L, remainingWaitMs));
+                try {
+                    return request.getResult().get(pollMs, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    long now = System.currentTimeMillis();
+                    if (request.isPauseRequested()) {
+                        lastCheckMs = now;
+                        continue;
+                    }
+                    remainingWaitMs -= Math.max(1L, now - lastCheckMs);
+                    lastCheckMs = now;
+                    if (remainingWaitMs <= 0L) {
+                        request.cancel("wait timed out");
+                        boolean removed = queue.remove(request);
+                        log.warn("Input action wait timed out: windowId={} description={} removedFromQueue={}",
+                                request.getWindowId(), request.getDescription(), removed);
+                        return false;
+                    }
+                }
+            }
         } catch (InterruptedException e) {
             request.cancel("waiter interrupted");
             boolean removed = queue.remove(request);
@@ -155,5 +209,8 @@ public class InputActionQueue {
      */
     public int size() {
         return queue.size();
+    }
+
+    private record CapturedTaskTokens(TaskPauseToken pauseToken, TaskStopToken stopToken) {
     }
 }

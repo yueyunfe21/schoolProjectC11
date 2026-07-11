@@ -39,6 +39,17 @@ public class InputSequences {
     }
 
     /**
+     * Submit an ordered physical input sequence without waiting for completion.
+     *
+     * @param description diagnostic label for logs.
+     * @param actions ordered actions with screen-absolute coordinates where applicable.
+     * @return true when the request was accepted into the serialized input queue.
+     */
+    public boolean submit(String description, List<InputAction> actions) {
+        return inputActionQueue.submit(description, actions);
+    }
+
+    /**
      * Run a callback inside exclusive input-worker ownership.
      *
      * @param description diagnostic label for logs.

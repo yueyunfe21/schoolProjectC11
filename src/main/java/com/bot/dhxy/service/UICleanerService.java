@@ -1,14 +1,13 @@
 package com.bot.dhxy.service;
 
 
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.service.dialog.DialogHandleRequest;
@@ -25,18 +24,22 @@ import javax.imageio.ImageIO;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.util.Arrays;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
+import java.util.stream.Stream;
 
 /**
  * Handles non-task UI interruptions for the currently bound game window.
  *
  * <p>This service is intentionally conservative: it may close world-map/generic windows and click
- * known leave/cancel style options, but business maintenance dialogs such as heal-pet or repair
- * equipment are delegated to {@link DialogService}. Mouse clicks are serialized through
- * {@link InputSequences}; methods ending in {@code Direct} are only used while already inside an
- * exclusive input section.</p>
+ * known leave/cancel style options. Mouse clicks are serialized through {@link InputSequences};
+ * methods ending in {@code Direct} are only used while already inside an exclusive input section.</p>
  */
 @Slf4j
 @Component
@@ -46,13 +49,13 @@ public class UICleanerService {
     private static final int MAP_POPUP_RECT_Y_OFFSET = 595;
     private static final int MAP_POPUP_RECT_WIDTH = 406;
     private static final int MAP_POPUP_RECT_HEIGHT = 137;
+    private static final Path GENERIC_CLOSE_TEMPLATE_DIR = Path.of("images/template/cancel");
 
 
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final TextRecognizer ocr;
     private final GameStateUtil gameStateUtil;
     private final DialogService dialogService;
     private final WindowScopedTempPath windowScopedTempPath;
@@ -87,8 +90,29 @@ public class UICleanerService {
 
         log.info(cleanedAny ? "UI cleanup finished" : "UI already clean");
     }
-    private boolean isWorldMapOpened() {
-        return isWorldMapOpened(CleanupPass.start());
+
+    /**
+     * Probe whether startup cleanup would be a no-op without clicking or sending hotkeys.
+     *
+     * <p>五环多窗口启动会在后台先做这次截图/对话框探测。只有这里确认没有地图窗口、
+     * 没有业务对话框、也没有通用关闭按钮时，前台 PREPARE 才能跳过重扫；任何未知或
+     * 可疑状态都保留给原来的 {@link #cleanUpAll()} 前台兜底处理。</p>
+     *
+     * @param source diagnostic source for logs.
+     * @return true only when cleanup is clearly unnecessary.
+     */
+    public boolean probeStartupCleanNoInput(String source) {
+        CleanupPass cleanupPass = CleanupPass.start();
+        boolean worldMapOpen = isWorldMapOpened(cleanupPass);
+        DialogResultStatus dialogStatus = dialogService
+                .handleDialog(DialogHandleRequest.inspect(safeSource(source) + ":dialog"))
+                .getStatus();
+        Point closePoint = findGenericCloseButtonPoint(safeSource(source) + ":generic-close-probe", cleanupPass);
+        boolean clean = !worldMapOpen && dialogStatus == DialogResultStatus.NO_DIALOG && closePoint == null;
+        log.info("UI startup cleanup precheck: source={} clean={} worldMapOpen={} dialogStatus={} genericClosePoint={}",
+                safeSource(source), clean, worldMapOpen, dialogStatus,
+                closePoint == null ? "none" : closePoint.x + "," + closePoint.y);
+        return clean;
     }
 
     private boolean isWorldMapOpened(CleanupPass cleanupPass) {
@@ -183,7 +207,9 @@ public class UICleanerService {
      * was nothing actionable or cleanup was interrupted.
      */
     public boolean cleanLightweightInterruptions(String sourceTask) {
-        DialogResultStatus dialogResult = dialogService.handleDialog(DialogHandleRequest.handleBusinessOption(sourceTask)).getStatus();
+        DialogResultStatus dialogResult = dialogService
+                .handleDialog(DialogHandleRequest.handleBusinessOption(sourceTask))
+                .getStatus();
         if (dialogResult == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
             log.info("UI lightweight cleanup handled business dialog: source={}", sourceTask);
             return true;
@@ -202,10 +228,6 @@ public class UICleanerService {
             return true;
         }
         return false;
-    }
-
-    private boolean clickCloseButtonOnce(String description) {
-        return clickCloseButtonOnce(description, CleanupPass.start());
     }
 
     private boolean clickCloseButtonOnce(String description, CleanupPass cleanupPass) {
@@ -244,13 +266,11 @@ public class UICleanerService {
         int clickX = closeBtnPoint.x + 4 + random.nextInt(5);
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
         log.info("UI cleanup x2-only close matched: description={} click=({}, {})", description, clickX, clickY);
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.clickLeft(clickX, clickY, 80);
-        TaskSleep.sleep(250);
-        return !Thread.currentThread().isInterrupted();
-    }
-
-    private Point findGenericCloseButtonPoint(String description) {
-        return findGenericCloseButtonPoint(description, CleanupPass.start());
+        return TaskSleep.sleep(250) && InputActionScope.checkpoint();
     }
 
     private Point findGenericCloseButtonPoint(String description, CleanupPass cleanupPass) {
@@ -263,7 +283,8 @@ public class UICleanerService {
         String[] closeButtonTemplates = {
                 "images/template/cancel/x1.png",
                 "images/template/cancel/x2.png",
-                "images/template/cancel/x3.png"
+                "images/template/cancel/x3.png",
+                "images/template/cancel/npc_busy_cancel.png"
         };
         for (String templatePath : closeButtonTemplates) {
             closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
@@ -273,7 +294,7 @@ public class UICleanerService {
         }
 
         if (closeBtnPoint == null) {
-            log.info("UI cleanup close button not found: description={} screenPath={} templates=x1,x2,x3",
+            log.info("UI cleanup close button not found: description={} screenPath={} templates=x1,x2,x3,npc_busy_cancel",
                     description, screenPath);
             return null;
         }
@@ -285,9 +306,15 @@ public class UICleanerService {
         int clickY = closeBtnPoint.y + 4 + random.nextInt(5);
         log.info("UI cleanup close button matched: description={} click=({}, {})", description, clickX, clickY);
 
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         inputProvider.clickLeft(clickX, clickY, 80);
-        TaskSleep.sleep(250);
-        return !Thread.currentThread().isInterrupted();
+        return TaskSleep.sleep(250) && InputActionScope.checkpoint();
+    }
+
+    private String safeSource(String source) {
+        return source == null || source.isBlank() ? "unknown" : source.trim();
     }
 
     private static class CleanupPass {
@@ -339,53 +366,9 @@ public class UICleanerService {
             return true;
         }
 
-        int[] dialogRect = coordinateHelper.getScaledRect(250, 312, 529, 208);
-        String imgPath = windowScopedTempPath.resolve("dialog_close_scan.png");
-        tracker.captureToFile("ui-cleaner-dialog-close-scan", imgPath,
-                dialogRect[0], dialogRect[1], dialogRect[2], dialogRect[3]);
-
-        List<OcrWordResult> allWords = ocr.getAllTextResultsForMatch(
-                imgPath, "ui-cleaner-close-dialog", this::containsCloseDialogKeyword);
-        if (allWords != null && !allWords.isEmpty()) {
-            List<String> closeKeywords = Arrays.asList(
-                    "取消", "离开", "看一看", "哪儿也", "以后再说", "原来你",
-                    "看看", "我还有事", "不", "算了", "暂时", "路过", "再会", "我还是"
-            );
-            for (String keyword : closeKeywords) {
-                for (OcrWordResult word : allWords) {
-                    if (word.getText().contains(keyword)) {
-                        clickAbsolutePoint(dialogRect[0] + word.getX(), dialogRect[1] + word.getY(), "uiCleanup:dialogCloseKeyword");
-                        TaskSleep.sleep(350);
-                        return true;
-                    }
-                }
-            }
-        }
-
         DialogResultStatus fallbackResult = dialogService.handleDialog(DialogHandleRequest.fallbackLastOption("ui-cleaner")).getStatus();
         log.info("UI cleanup dialog fallback last option result={}", fallbackResult);
         return fallbackResult == DialogResultStatus.FALLBACK_CLICKED;
-    }
-
-    private boolean containsCloseDialogKeyword(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return false;
-        }
-        List<String> closeKeywords = Arrays.asList(
-                "取消", "离开", "看一看", "哪儿也不", "以后再说", "原来如此",
-                "看看", "我还有事", "不了", "算了", "暂时", "路过", "再会"
-        );
-        for (OcrWordResult word : words) {
-            if (word == null || word.getText() == null) {
-                continue;
-            }
-            for (String keyword : closeKeywords) {
-                if (word.getText().contains(keyword)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private boolean canFastClickStoryDialog() {

@@ -39,6 +39,11 @@ public class WubeiRoundContext {
         return new WubeiRoundContext(WubeiPhase.ACCEPT_TASK, round, "normal-round-start", 0, 0, false, false);
     }
 
+    public static WubeiRoundContext routeToAcceptNpc(int round) {
+        return new WubeiRoundContext(WubeiPhase.ROUTE_TO_MAIN_TASK, round,
+                "clean-transition-route-to-accept-npc", 0, 0, false, false);
+    }
+
     public WubeiRoundContext next(WubeiPhase nextPhase, String nextSource) {
         return new WubeiRoundContext(nextPhase, round, nextSource, 0, recoveryCount, false, false);
     }

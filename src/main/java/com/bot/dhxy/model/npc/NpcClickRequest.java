@@ -26,9 +26,14 @@ import java.util.List;
  * @param tuneX screen-pixel X correction for formula clicks.
  * @param tuneY screen-pixel Y correction for formula clicks.
  * @param expectedDialogTemplatePath green-option template used to verify success.
+ * @param expectedDialogRawTemplatePath raw option template used to verify success without green
+ *                                      washing; blank means use the green-washed verifier.
  * @param expectedDialogTemplatePaths optional green-option templates; success means any one is
  *                                    visible. When empty, {@code expectedDialogTemplatePath} is
  *                                    used for backward compatibility.
+ * @param deferDialogVerificationToTask true when the task phase owns the post-NPC dialog handling
+ *                                      itself. The NPC click pipeline then only submits the NPC
+ *                                      click and skips expected-dialog verification.
  * @param roamingTarget true when the logical coordinate may come from a task refresh instead of a
  *                      static NPC table. This flag is retained for future roaming-specific strategy
  *                      selection; it does not currently skip coordinate-formula clicking.
@@ -50,9 +55,16 @@ import java.util.List;
  *                   that differ between entering battle and opening ordinary NPC dialogs.
  * @param sourceTask task that produced this request, for example 五环/五倍/修罗. This is diagnostic
  *                   and allows task-scoped strategy tuning without guessing from NPC names.
+ * @param consumeStoryDialogVisibleEvents CR255: true only for the 修罗 accept-phase smart click.
+ *                                        At the FIFO queue's natural boundary the pipeline then
+ *                                        reads (in-memory, zero I/O) fresh STORY_DIALOG_VISIBLE
+ *                                        events for this window/task, fast-clicks the known small
+ *                                        story dialog once per event sequence, and restarts the
+ *                                        smart session. The default keeps every other smart click
+ *                                        free of any story-event behavior.
  */
 @Value
-@Builder
+@Builder(toBuilder = true)
 @AllArgsConstructor(access = AccessLevel.PUBLIC)
 @Accessors(fluent = true)
 public class NpcClickRequest {
@@ -64,8 +76,11 @@ public class NpcClickRequest {
     int tuneX;
     int tuneY;
     String expectedDialogTemplatePath;
+    String expectedDialogRawTemplatePath;
     @Builder.Default
     List<String> expectedDialogTemplatePaths = List.of();
+    @Builder.Default
+    boolean deferDialogVerificationToTask = false;
     boolean roamingTarget;
     @Builder.Default
     NpcTooltipType tooltipType = NpcTooltipType.TASK;
@@ -80,6 +95,8 @@ public class NpcClickRequest {
     NpcRole targetRole = NpcRole.INTERACTION_TARGET;
     @Builder.Default
     TaskType sourceTask = TaskType.UNKNOWN;
+    @Builder.Default
+    boolean consumeStoryDialogVisibleEvents = false;
 
     /**
      * Build a fixed-coordinate target request. OCR regions are resolved later by vision memory.

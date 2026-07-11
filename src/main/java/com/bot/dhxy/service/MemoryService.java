@@ -1,8 +1,5 @@
 package com.bot.dhxy.service;
 
-import com.bot.dhxy.model.navigation.WorldMapRouteResultMemoryEntry;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultMode;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultPendingMemory;
 import lombok.Value;
 import org.springframework.stereotype.Service;
 
@@ -20,12 +17,8 @@ import java.util.Optional;
 public class MemoryService {
 
     private final DialogChoiceMemoryService dialogChoiceMemoryService;
-    private final WorldMapRouteResultMemoryService worldMapRouteResultMemoryService;
-
-    public MemoryService(DialogChoiceMemoryService dialogChoiceMemoryService,
-                         WorldMapRouteResultMemoryService worldMapRouteResultMemoryService) {
+    public MemoryService(DialogChoiceMemoryService dialogChoiceMemoryService) {
         this.dialogChoiceMemoryService = dialogChoiceMemoryService;
-        this.worldMapRouteResultMemoryService = worldMapRouteResultMemoryService;
     }
 
     /**
@@ -83,38 +76,6 @@ public class MemoryService {
 
     public void recordRouteDialogChoiceFailure(String fromMap, String targetMap, String source) {
         dialogChoiceMemoryService.recordRouteFailure(fromMap, targetMap, source);
-    }
-
-    public Optional<WorldMapRouteResultMemoryEntry> findCleanWorldMapRouteResult(String fromMap, String targetMap) {
-        return worldMapRouteResultMemoryService.findClean(fromMap, targetMap);
-    }
-
-    public Optional<WorldMapRouteResultMemoryEntry> findCleanWorldMapRouteResult(String fromMap,
-                                                                                String targetMap,
-                                                                                WorldMapRouteResultMode routeMode) {
-        return worldMapRouteResultMemoryService.findClean(fromMap, targetMap, routeMode);
-    }
-
-    public Optional<WorldMapRouteResultMemoryEntry> findWorldMapRouteResultEntry(String fromMap, String targetMap) {
-        return worldMapRouteResultMemoryService.findEntry(fromMap, targetMap);
-    }
-
-    public Optional<WorldMapRouteResultMemoryEntry> findWorldMapRouteResultEntry(String fromMap,
-                                                                                String targetMap,
-                                                                                WorldMapRouteResultMode routeMode) {
-        return worldMapRouteResultMemoryService.findEntry(fromMap, targetMap, routeMode);
-    }
-
-    public void recordWorldMapRouteResultSuccess(WorldMapRouteResultPendingMemory pending) {
-        worldMapRouteResultMemoryService.recordSuccess(pending);
-    }
-
-    public void recordWorldMapRouteResultFailure(WorldMapRouteResultPendingMemory pending) {
-        worldMapRouteResultMemoryService.recordFailure(pending);
-    }
-
-    public void recordWorldMapRouteResultAbandoned(WorldMapRouteResultPendingMemory pending, String reason) {
-        worldMapRouteResultMemoryService.recordAbandoned(pending, reason);
     }
 
     @Value

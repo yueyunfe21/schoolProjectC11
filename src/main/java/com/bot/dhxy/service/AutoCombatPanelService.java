@@ -3,48 +3,30 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.metrics.AutomationMetricsService;
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.tools.ImagePreprocessor;
-import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
-import java.awt.image.BufferedImage;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AutoCombatPanelService {
-    private static final String QUXIAO_ZIDONG_PATH = "images/template/battle/quxiao_zidong_green.png";
-    private static final String ZIDONG_GREEN_PATH = "images/template/battle/zidong_green.png";
-    private static final String AUTO_PANEL_FALLBACK_ANCHOR_PATH = "images/template/battle/auto_panel_fallback_anchor.png";
+    private static final String AUTO_REMAINING_TEMPLATE_PATH = "images/template/battle/auto_remaining.png";
 
     private static final int TARGET_PANEL_X_OFFSET = 489;
     private static final int TARGET_PANEL_Y_OFFSET = 726;
-    private static final int AUTO_PANEL_WIDTH = 1751 - 1555;
-    private static final int AUTO_PANEL_HEIGHT = 940 - 828;
-    private static final int AUTO_PANEL_ROUNDS_SCAN_HEIGHT = AUTO_PANEL_HEIGHT / 2;
-    private static final int ROUND_SCAN_TOP_OFFSET_FROM_GREEN_MARKER = -96;
-    private static final int ROUND_SCAN_HEIGHT_FROM_GREEN_MARKER = 30;
-    private static final int FALLBACK_ANCHOR_TO_GREEN_MARKER_X = 30;
-    private static final int FALLBACK_ANCHOR_TO_GREEN_MARKER_Y = 30;
-    private static final int ROUND_DIGIT_OCR_SCALE = 4;
+    private static final int AUTO_REMAINING_TO_PANEL_CENTER_X = 43;
+    private static final int AUTO_REMAINING_TO_PANEL_CENTER_Y = 28;
     private static final int DEFAULT_ESTIMATED_ROUNDS = 25;
     private static final int LOW_ROUNDS_REFRESH_THRESHOLD = 10;
     private static final int ESTIMATED_ROUNDS_PER_COMBAT = 3;
@@ -52,14 +34,11 @@ public class AutoCombatPanelService {
     private static final long AUTO_PANEL_MISSING_ATTENTION_MS = 10 * 60 * 1000L;
     private static final long AUTO_PANEL_MISSING_ATTENTION_REPEAT_MS = 60 * 1000L;
     private static final long REFRESH_DUE_TEAM_BURST_GUARD_MS = 30_000L;
-    private static final Pattern AUTO_PANEL_ROUND_DIGITS = Pattern.compile("\\d{1,2}");
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
     private final InputSequences inputSequences;
-    private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
-    private final TextRecognizer textRecognizer;
     private final AutomationMetricsService automationMetricsService;
     private final GameContext gameContext;
     private final BotProperties botProperties;
@@ -176,18 +155,12 @@ public class AutoCombatPanelService {
         long lastRefreshAt = gameContext.getLastAutoCombatRefreshAt();
         long now = System.currentTimeMillis();
         long refreshIntervalMs = Math.max(0L, botProperties.getAutoBattleRefreshIntervalMs());
-        OptionalInt visibleRounds = readRemainingRounds(panelMatch, source);
-        if (visibleRounds.isPresent()) {
-            gameContext.setAutoCombatEstimatedRounds(visibleRounds.getAsInt());
-            estimatedRounds = visibleRounds.getAsInt();
-        }
         RoundsRefreshReason refreshReason = resolveRoundsRefreshReason(
                 estimatedRounds, lastRefreshAt, refreshIntervalMs, now);
 
         if (refreshReason == null) {
-            log.info("auto-combat panel rounds estimate healthy after visible/cache check: source={} estimate={} visible={} threshold={} lastRefreshAgoMs={} intervalMs={}",
+            log.info("auto-combat panel rounds estimate healthy by cached counter: source={} estimate={} threshold={} lastRefreshAgoMs={} intervalMs={}",
                     source, estimatedRounds, LOW_ROUNDS_REFRESH_THRESHOLD,
-                    visibleRounds.isPresent() ? visibleRounds.getAsInt() : -1,
                     lastRefreshAt <= 0L ? -1L : now - lastRefreshAt, refreshIntervalMs);
             return false;
         }
@@ -273,186 +246,20 @@ public class AutoCombatPanelService {
         log.info("auto-combat panel screenshot audit: captured={} rawPath={} audit={}",
                 captured, rawPath, captureAudit.toLogText());
 
-        BufferedImage rawImage = ImagePreprocessor.pathToBufferedImage(rawPath);
-        if (rawImage == null) {
-            log.error("auto-combat panel scan failed: cannot read screenshot path={} audit={}",
-                    rawPath, captureAudit.toLogText());
+        Point autoRemainingPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(
+                AUTO_REMAINING_TEMPLATE_PATH, rawPath, 0.80);
+        if (autoRemainingPoint == null) {
+            log.warn("auto-combat panel auto-remaining template not matched: template={} raw={} audit={}",
+                    AUTO_REMAINING_TEMPLATE_PATH, rawPath, captureAudit.toLogText());
             return null;
         }
-
-        Point fallbackPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(
-                AUTO_PANEL_FALLBACK_ANCHOR_PATH, rawPath, 0.80);
-        if (fallbackPoint != null) {
-            Point inferredGreenMarker = new Point(
-                    fallbackPoint.x + FALLBACK_ANCHOR_TO_GREEN_MARKER_X,
-                    fallbackPoint.y + FALLBACK_ANCHOR_TO_GREEN_MARKER_Y);
-            log.info("auto-combat panel anchor matched: point=({}, {}) inferredGreenMarker=({}, {}) audit={}",
-                    fallbackPoint.x, fallbackPoint.y, inferredGreenMarker.x, inferredGreenMarker.y,
-                    captureAudit.toLogText());
-            int greenTemplateWidth = readImageWidth(QUXIAO_ZIDONG_PATH);
-            rawImage.flush();
-            return new AutoCombatPanelMatch(
-                    fallbackPoint,
-                    inferredGreenMarker,
-                    greenTemplateWidth,
-                    "panel-anchor");
-        }
-        log.warn("auto-combat panel anchor not matched: template={} audit={}",
-                AUTO_PANEL_FALLBACK_ANCHOR_PATH, captureAudit.toLogText());
-
-        String washedGreenPath = windowScopedTempPath.resolve("debug_hsv_mask_green.png");
-        ImagePreprocessor.countGreenPixelsHSV(rawImage, washedGreenPath);
-        rawImage.flush();
-        Point greenPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(ZIDONG_GREEN_PATH, washedGreenPath, 0.80);
-        if (greenPoint == null) {
-            log.warn("auto-combat panel green auto marker not matched: path={} template={} audit={}",
-                    washedGreenPath, ZIDONG_GREEN_PATH, captureAudit.toLogText());
-            return null;
-        }
-        Point inferredPanelAnchor = new Point(
-                greenPoint.x - FALLBACK_ANCHOR_TO_GREEN_MARKER_X,
-                greenPoint.y - FALLBACK_ANCHOR_TO_GREEN_MARKER_Y);
-        log.info("auto-combat panel green auto marker matched: point=({}, {}) inferredPanelAnchor=({}, {}) audit={}",
-                greenPoint.x, greenPoint.y, inferredPanelAnchor.x, inferredPanelAnchor.y,
+        Point panelCenter = new Point(
+                autoRemainingPoint.x + AUTO_REMAINING_TO_PANEL_CENTER_X,
+                autoRemainingPoint.y + AUTO_REMAINING_TO_PANEL_CENTER_Y);
+        log.info("auto-combat panel auto-remaining template matched: point=({}, {}) inferredPanelCenter=({}, {}) audit={}",
+                autoRemainingPoint.x, autoRemainingPoint.y, panelCenter.x, panelCenter.y,
                 captureAudit.toLogText());
-        int greenTemplateWidth = readImageWidth(QUXIAO_ZIDONG_PATH);
-        return new AutoCombatPanelMatch(inferredPanelAnchor, greenPoint, greenTemplateWidth, "green-auto");
-    }
-
-    private OptionalInt readRemainingRounds(AutoCombatPanelMatch panelMatch, String source) {
-        if (panelMatch == null || panelMatch.panelCenter == null) {
-            return OptionalInt.empty();
-        }
-        Point panelCenter = panelMatch.panelCenter;
-        int left;
-        int top;
-        int right;
-        int bottom;
-        if (panelMatch.greenMarker != null && panelMatch.greenTemplateWidth > 0) {
-            left = panelMatch.greenMarker.x;
-            top = panelMatch.greenMarker.y + ROUND_SCAN_TOP_OFFSET_FROM_GREEN_MARKER;
-            right = left + Math.max(1, panelMatch.greenTemplateWidth / 2);
-            bottom = top + ROUND_SCAN_HEIGHT_FROM_GREEN_MARKER;
-        } else {
-            left = panelCenter.x - AUTO_PANEL_WIDTH / 2;
-            top = panelCenter.y - AUTO_PANEL_HEIGHT / 2;
-            right = left + AUTO_PANEL_WIDTH;
-            bottom = top + AUTO_PANEL_ROUNDS_SCAN_HEIGHT;
-        }
-        log.info("auto-combat panel rounds capture plan: source={} method={} center=({}, {}) marker=({}, {}) rect=({}, {})-({}, {})",
-                source, panelMatch.detectionSource, panelCenter.x, panelCenter.y,
-                panelMatch.greenMarker == null ? -1 : panelMatch.greenMarker.x,
-                panelMatch.greenMarker == null ? -1 : panelMatch.greenMarker.y,
-                left, top, right, bottom);
-        BufferedImage raw = tracker.captureToMemory(
-                "auto-combat-panel-rounds-" + source,
-                left, top, right, bottom);
-        if (raw == null) {
-            log.warn("auto-combat panel rounds capture failed: source={} rect=({}, {})-({}, {}) center=({}, {})",
-                    source, left, top, right, bottom, panelCenter.x, panelCenter.y);
-            return OptionalInt.empty();
-        }
-        BufferedImage washed = null;
-        String rawPath = windowScopedTempPath.resolve("auto_combat_panel_rounds_" + source + "_raw.png");
-        String washedPath = windowScopedTempPath.resolve("auto_combat_panel_rounds_" + source + "_red_digits.png");
-        try {
-            washed = washRoundRedDigits(raw);
-            int redDigitPixels = countBlackPixels(washed);
-            ImagePreprocessor.saveImage(washed, washedPath);
-            List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(washedPath);
-            String text = words.stream()
-                    .map(OcrWordResult::getText)
-                    .filter(value -> value != null && !value.isBlank())
-                    .reduce("", String::concat);
-            Matcher matcher = AUTO_PANEL_ROUND_DIGITS.matcher(text == null ? "" : text);
-            if (!matcher.find()) {
-                ImagePreprocessor.saveImage(raw, rawPath);
-                log.info("auto-combat panel rounds OCR returned no digits: source={} method={} redPixels={} rawPath={} washedPath={} text='{}'",
-                        source, panelMatch.detectionSource, redDigitPixels, rawPath, washedPath, text);
-                return OptionalInt.empty();
-            }
-            int rounds = Integer.parseInt(matcher.group());
-            deleteQuietly(washedPath);
-            log.info("auto-combat panel rounds OCR result: source={} method={} rounds={} redPixels={} text='{}' rect=({}, {})-({}, {})",
-                    source, panelMatch.detectionSource, rounds, redDigitPixels, text, left, top, right, bottom);
-            return OptionalInt.of(rounds);
-        } catch (Exception e) {
-            ImagePreprocessor.saveImage(raw, rawPath);
-            if (washed != null) {
-                ImagePreprocessor.saveImage(washed, washedPath);
-            }
-            log.warn("auto-combat panel rounds OCR failed: source={} method={} rawPath={} washedPath={} error={}",
-                    source, panelMatch.detectionSource, rawPath, washedPath, e.toString());
-            return OptionalInt.empty();
-        } finally {
-            raw.flush();
-            if (washed != null) {
-                washed.flush();
-            }
-        }
-    }
-
-    private int countBlackPixels(BufferedImage image) {
-        if (image == null) {
-            return 0;
-        }
-        int count = 0;
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                if ((image.getRGB(x, y) & 0x00FFFFFF) == 0) {
-                    count++;
-                }
-            }
-        }
-        return count;
-    }
-
-    private void deleteQuietly(String imagePath) {
-        try {
-            Files.deleteIfExists(Path.of(imagePath));
-        } catch (Exception ignored) {
-            // Best-effort cleanup for success-path debug images only.
-        }
-    }
-
-    private int readImageWidth(String imagePath) {
-        BufferedImage image = ImagePreprocessor.pathToBufferedImage(imagePath);
-        if (image == null) {
-            return 0;
-        }
-        try {
-            return image.getWidth();
-        } finally {
-            image.flush();
-        }
-    }
-
-    private BufferedImage washRoundRedDigits(BufferedImage source) {
-        BufferedImage washed = new BufferedImage(
-                source.getWidth() * ROUND_DIGIT_OCR_SCALE,
-                source.getHeight() * ROUND_DIGIT_OCR_SCALE,
-                BufferedImage.TYPE_INT_RGB);
-        for (int y = 0; y < source.getHeight(); y++) {
-            for (int x = 0; x < source.getWidth(); x++) {
-                int outputRgb = isAutoCombatRoundRedPixel(source.getRGB(x, y)) ? 0x000000 : 0xFFFFFF;
-                for (int dy = 0; dy < ROUND_DIGIT_OCR_SCALE; dy++) {
-                    for (int dx = 0; dx < ROUND_DIGIT_OCR_SCALE; dx++) {
-                        washed.setRGB(
-                                x * ROUND_DIGIT_OCR_SCALE + dx,
-                                y * ROUND_DIGIT_OCR_SCALE + dy,
-                                outputRgb);
-                    }
-                }
-            }
-        }
-        return washed;
-    }
-
-    private boolean isAutoCombatRoundRedPixel(int rgb) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        return r >= 130 && g <= 120 && b <= 120 && r - Math.max(g, b) >= 35;
+        return new AutoCombatPanelMatch(panelCenter, null, 0, "auto-remaining");
     }
 
     private AutoCombatPanelRuntimeState state() {

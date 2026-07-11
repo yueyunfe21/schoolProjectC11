@@ -25,6 +25,9 @@ public class WindowReadyEvent {
     WindowPathingState pathingState;
     WindowPathingIntent pathingIntent;
     WindowPathingSnapshot pathingSnapshot;
+    long lastCombatExitAtMs;
+    long elapsedMs;
+    String summary;
     @Builder.Default
     long createdAtMs = System.currentTimeMillis();
     long sequence;

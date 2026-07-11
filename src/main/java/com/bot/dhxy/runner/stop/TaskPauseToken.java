@@ -16,10 +16,15 @@ public class TaskPauseToken {
     private final Object monitor = new Object();
     private volatile boolean pauseRequested;
     private volatile LocalDateTime requestedAt;
+    private volatile long requestedAtMs;
     private volatile String reason;
 
     public void requestPause(String reason) {
         synchronized (monitor) {
+            long now = System.currentTimeMillis();
+            if (!pauseRequested) {
+                requestedAtMs = now;
+            }
             pauseRequested = true;
             requestedAt = LocalDateTime.now();
             this.reason = normalize(reason);
@@ -57,7 +62,9 @@ public class TaskPauseToken {
             return 0L;
         }
         log.info("task pause checkpoint reached: reason={}", reason);
-        long blockedStartMs = System.currentTimeMillis();
+        long now = System.currentTimeMillis();
+        long requestedMs = requestedAtMs;
+        long blockedStartMs = requestedMs > 0L && requestedMs <= now ? requestedMs : now;
         synchronized (monitor) {
             while (pauseRequested) {
                 if (stopToken != null) {

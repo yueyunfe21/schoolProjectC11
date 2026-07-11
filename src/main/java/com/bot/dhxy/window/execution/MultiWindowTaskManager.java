@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.execution;
 
+import com.bot.dhxy.cloud.task.RouteCloudDecisionService;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
@@ -66,6 +67,7 @@ public class MultiWindowTaskManager {
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
+    private final RouteCloudDecisionService routeCloudDecisionService;
     private final TaskMaintenanceService taskMaintenanceService;
     private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
@@ -91,6 +93,7 @@ public class MultiWindowTaskManager {
      * @param taskTrackerPanelService left task-tracker panel reader used by runner watchers.
      * @param mapNameCanonicalizer canonicalizer used by runner watchers for map-name comparisons.
      * @param memoryService single persisted-memory facade for route dialog and world-map memories.
+     * @param routeCloudDecisionService route-memory cloud outcome reporter.
      * @param taskMaintenanceService local team support/session capability registry.
      * @param dialogPreparationProviders task-owned dialog preparation providers consumed by watchers.
      * @param windowReadyEventBus soft wake bus used by runner watchers after terminal observations.
@@ -109,10 +112,11 @@ public class MultiWindowTaskManager {
                                   AutoCombatService autoCombatService,
                                   MiniMapCoordinateReader miniMapCoordinateReader,
                                   DialogService dialogService,
-                                  TaskTrackerPanelService taskTrackerPanelService,
-                                  MapNameCanonicalizer mapNameCanonicalizer,
-                                  MemoryService memoryService,
-                                  TaskMaintenanceService taskMaintenanceService,
+                                   TaskTrackerPanelService taskTrackerPanelService,
+                                   MapNameCanonicalizer mapNameCanonicalizer,
+                                   MemoryService memoryService,
+                                   RouteCloudDecisionService routeCloudDecisionService,
+                                   TaskMaintenanceService taskMaintenanceService,
                                   List<WindowDialogPreparationProvider> dialogPreparationProviders,
                                   WindowReadyEventBus windowReadyEventBus) {
         this.taskFactory = taskFactory;
@@ -132,6 +136,7 @@ public class MultiWindowTaskManager {
         this.taskTrackerPanelService = taskTrackerPanelService;
         this.mapNameCanonicalizer = mapNameCanonicalizer;
         this.memoryService = memoryService;
+        this.routeCloudDecisionService = routeCloudDecisionService;
         this.taskMaintenanceService = taskMaintenanceService;
         this.dialogPreparationProviders = dialogPreparationProviders == null
                 ? List.of()
@@ -162,7 +167,7 @@ public class MultiWindowTaskManager {
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                     automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                    taskTrackerPanelService, mapNameCanonicalizer, memoryService, taskMaintenanceService,
+                    taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
                     dialogPreparationProviders, windowReadyEventBus);
         });
     }
@@ -189,7 +194,7 @@ public class MultiWindowTaskManager {
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
                         automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                        taskTrackerPanelService, mapNameCanonicalizer, memoryService, taskMaintenanceService,
+                        taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
                         dialogPreparationProviders, windowReadyEventBus));
     }
 

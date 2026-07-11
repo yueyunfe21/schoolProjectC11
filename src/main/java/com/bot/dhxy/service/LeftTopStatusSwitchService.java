@@ -33,8 +33,10 @@ public class LeftTopStatusSwitchService {
 
     public static final int LEFT_TOP_STATUS_RECT_X_OFFSET = 8;
     public static final int LEFT_TOP_STATUS_RECT_Y_OFFSET = 147;
-    public static final int LEFT_TOP_STATUS_RECT_WIDTH = 11;
-    public static final int LEFT_TOP_STATUS_RECT_HEIGHT = 19;
+    // Keep the verified top-left anchor. The current client can render the same switch lower,
+    // so preserve enough lower/right margin for the unchanged templates to fit completely.
+    public static final int LEFT_TOP_STATUS_RECT_WIDTH = 16;
+    public static final int LEFT_TOP_STATUS_RECT_HEIGHT = 29;
     public static final String LEFT_TOP_OPEN_TEMPLATE = "images/template/status/left_top_open.png";
     public static final String LEFT_TOP_CLOSED_TEMPLATE = "images/template/status/left_top_closed.png";
 

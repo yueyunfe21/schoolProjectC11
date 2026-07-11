@@ -75,10 +75,11 @@ public class LocationVisionService {
     /**
      * Scans the current bound game window for the player's map name and coordinate.
      *
-     * <p>The fallback order is mini-map template, local OCR, then Baidu OCR. Bound-window mode uses
-     * no-focus capture, while legacy no-context callers may still focus before Robot capture. Stop
-     * checkpoints are placed before expensive fallback stages so UI stop can cut off the remaining
-     * OCR chain promptly.</p>
+     * <p>CR246 (CR208-16): the cloud {@code MINIMAP_LOCATION READ_LOCATION} call owns the whole
+     * fallback chain now (label/coordinate templates first, cloud OCR second). The retired local
+     * sidecar and Baidu OCR stages are kept below as {@code @Deprecated} rollback implementations
+     * only and must not re-enter the production path. Bound-window mode uses no-focus capture,
+     * while legacy no-context callers may still focus before Robot capture.</p>
      *
      * @return recognized location, or {@code null} when capture/recognition fails. If the current
      *         task has requested stop, this method throws {@link TaskStopRequestedException}.
@@ -88,123 +89,32 @@ public class LocationVisionService {
         long latencyStart = LatencyMetrics.start();
         String provider = "NONE";
         LocationInfo selected = null;
-        long templateElapsedMs = -1L;
-        long captureElapsedMs = -1L;
-        long localOcrElapsedMs = -1L;
-        long localPlausibilityElapsedMs = -1L;
-        long localLearnElapsedMs = -1L;
-        long baiduOcrElapsedMs = -1L;
-        long baiduPlausibilityElapsedMs = -1L;
-        long baiduLearnElapsedMs = -1L;
-        String path = windowScopedTempPath.resolve("tmp_pos.png");
         try {
             checkpoint("start location scan");
             if (windowTaskContextHolder.rawCurrent().isPresent()) {
-                log.info("[location] scan current no-focus: path={}", path);
+                log.info("[location] scan current no-focus");
             } else {
-                log.info("[location] scan current legacy focused fallback: path={}", path);
+                log.info("[location] scan current legacy focused fallback");
                 if (!tracker.bringWindowToFront()) {
                     log.warn("[location] failed to bring window to front before coordinate scan");
                     return null;
                 }
             }
 
-            /*
-             * Stage 1: use the fast mini-map template reader first. This keeps normal position sync off
-             * the OCR/network path when the local map label and coordinate templates are confident.
-             */
-            long templateStartedAt = System.currentTimeMillis();
-            LocationInfo templateLocation = scanByMiniMapTemplate(startedAt);
-            templateElapsedMs = System.currentTimeMillis() - templateStartedAt;
-            checkpoint("after minimap template location scan");
-            if (templateLocation != null) {
-                provider = "MINIMAP_TEMPLATE";
-                selected = templateLocation;
-                return templateLocation;
+            LocationInfo cloudLocation = scanByMiniMapTemplate(startedAt);
+            checkpoint("after minimap cloud location scan");
+            if (cloudLocation != null) {
+                provider = "MINIMAP_CLOUD";
+                selected = cloudLocation;
+                return cloudLocation;
             }
-
-            /*
-             * Stage 2: capture the coordinate strip and try local OCR. Check stop before and after the
-             * capture because HWND/Robot capture can still take noticeable time on a busy desktop.
-             */
-            checkpoint("before coordinate strip capture");
-            long captureStartedAt = System.currentTimeMillis();
-            boolean captured = captureCurrentLocationStrip(path);
-            captureElapsedMs = System.currentTimeMillis() - captureStartedAt;
-            if (captured) {
-                checkpoint("after coordinate strip capture");
-                long localStartedAt = System.currentTimeMillis();
-                checkpoint("before local location OCR");
-                LocationInfo local = ocr.parseLocationLocalOnly(path);
-                checkpoint("after local location OCR");
-                localOcrElapsedMs = System.currentTimeMillis() - localStartedAt;
-                local = canonicalizeOcrLocation(local, "location:local-ocr");
-                if (local != null) {
-                    long plausibilityStartedAt = System.currentTimeMillis();
-                    if (!isPlausibleLocation(local, path, "LOCAL_OCR")) {
-                        local = null;
-                    }
-                    localPlausibilityElapsedMs = System.currentTimeMillis() - plausibilityStartedAt;
-                }
-                if (local != null) {
-                    provider = "LOCAL_OCR";
-                    selected = local;
-                    long learnStartedAt = System.currentTimeMillis();
-                    learnMissingMapLabelTemplate(local.mapName, path, true);
-                    localLearnElapsedMs = System.currentTimeMillis() - learnStartedAt;
-                    log.info("[location] selected provider=LOCAL_OCR elapsedMs={} localElapsedMs={} location={}",
-                            System.currentTimeMillis() - startedAt,
-                            System.currentTimeMillis() - localStartedAt,
-                            local);
-                    return local;
-                }
-
-                /*
-                 * Stage 3: Baidu OCR is the slowest fallback and can refresh tokens over the network.
-                 * Do not enter it after a stop request; that was the source of the slow stop observed in
-                 * the latest Xiuluo run.
-                 */
-                long baiduStartedAt = System.currentTimeMillis();
-                checkpoint("before baidu location OCR");
-                LocationInfo baidu = ocr.parseLocationBaiduOnly(path);
-                checkpoint("after baidu location OCR");
-                baiduOcrElapsedMs = System.currentTimeMillis() - baiduStartedAt;
-                baidu = canonicalizeOcrLocation(baidu, "location:baidu-ocr");
-                if (baidu != null) {
-                    long plausibilityStartedAt = System.currentTimeMillis();
-                    if (!isPlausibleLocation(baidu, path, "BAIDU_OCR")) {
-                        baidu = null;
-                    }
-                    baiduPlausibilityElapsedMs = System.currentTimeMillis() - plausibilityStartedAt;
-                }
-                provider = baidu == null ? "NONE" : "BAIDU_OCR";
-                selected = baidu;
-                if (baidu != null) {
-                    long learnStartedAt = System.currentTimeMillis();
-                    learnMissingMapLabelTemplate(baidu.mapName, path, true);
-                    baiduLearnElapsedMs = System.currentTimeMillis() - learnStartedAt;
-                }
-                log.info("[location] selected provider={} elapsedMs={} baiduElapsedMs={} location={}",
-                        provider,
-                        System.currentTimeMillis() - startedAt,
-                        System.currentTimeMillis() - baiduStartedAt,
-                        baidu);
-                return baidu;
-            }
-            log.warn("[location] coordinate strip capture failed: path={}", path);
+            log.info("[location] cloud location miss; no local OCR fallback (CR246): elapsedMs={}",
+                    System.currentTimeMillis() - startedAt);
             return null;
         } finally {
-            log.info("[latency] event=location.scanCurrent.breakdown provider={} result={} templateMs={} captureMs={} localOcrMs={} localPlausibilityMs={} localLearnMs={} baiduOcrMs={} baiduPlausibilityMs={} baiduLearnMs={} totalMs={}",
+            log.info("[latency] event=location.scanCurrent.breakdown provider={} result={} totalMs={}",
                     provider,
                     selected == null ? "NONE" : selected.toString(),
-                    templateElapsedMs,
-                    captureElapsedMs,
-                    localOcrElapsedMs,
-                    localPlausibilityElapsedMs,
-                    localLearnElapsedMs,
-                    baiduOcrElapsedMs,
-                    baiduPlausibilityElapsedMs,
-                    baiduLearnElapsedMs,
                     System.currentTimeMillis() - startedAt);
             LatencyMetrics.info(log, "location.scanCurrent", latencyStart,
                     "provider=" + provider + " result=" + (selected == null ? "NONE" : selected.toString()));
@@ -350,38 +260,30 @@ public class LocationVisionService {
             return miniMapCoordinateReader.readCurrentTemplateLocation()
                     .map(location -> {
                         checkpoint("convert minimap template result");
-                        /*
-                         * Dungeon floor labels share a long common prefix, for example "大雁塔一层"
-                         * and "大雁塔三层". The template result is the authoritative position result;
-                         * OCR is only allowed to learn missing label templates here. OCR is not stable
-                         * enough to override a matched map-label template during normal navigation.
-                         */
-                        if (isDungeonFloorMap(location.mapName())
-                                && location.mapLabelScore() < FLOOR_TEMPLATE_TRUST_SCORE) {
-                            verifyFloorTemplateWithOcr(location, startedAt);
-                        } else if (isDungeonFloorMap(location.mapName())) {
-                            /*
-                             * Exact floor-label template hits are trusted. The OCR verifier exists
-                             * for nearest-neighbor floor mistakes, but running it after a 1.000
-                             * label hit adds several seconds to every arrival check near combat
-                             * targets.
-                             */
-                            log.info("[location] floor template OCR verify skipped: map={} score={} reason=confident-template label={}",
-                                    location.mapName(),
-                                    String.format("%.3f", location.mapLabelScore()),
-                                    location.mapLabelPath());
-                        }
                         MapCoordinate coordinate = location.coordinate();
                         LocationInfo info = new LocationInfo(
                                 location.mapName(),
                                 coordinate.getX(),
                                 coordinate.getY()
                         );
-                        log.info("[location] selected provider=MINIMAP_TEMPLATE elapsedMs={} templateElapsedMs={} "
+                        if (location.ocrFallback()) {
+                            /*
+                             * CR246: cloud OCR fallback results keep the retired local-OCR
+                             * discipline — canonical map name plus the local coordinate-transform
+                             * plausibility gate. Rejected values archive a metadata-only failure
+                             * sample (the strip image lives cloud-side now).
+                             */
+                            info = canonicalizeOcrLocation(info, "location:cloud-ocr-fallback");
+                            if (!isPlausibleLocation(info, null, "CLOUD_OCR")) {
+                                return null;
+                            }
+                        }
+                        log.info("[location] selected provider={} elapsedMs={} templateElapsedMs={} "
                                         + "map={} coord=({}, {}) score={} label={}",
+                                location.ocrFallback() ? "CLOUD_OCR" : "MINIMAP_TEMPLATE",
                                 System.currentTimeMillis() - startedAt,
                                 System.currentTimeMillis() - templateStartedAt,
-                                location.mapName(), coordinate.getX(), coordinate.getY(),
+                                info.mapName, info.x, info.y,
                                 String.format("%.3f", location.mapLabelScore()),
                                 location.mapLabelPath());
                         return info;
@@ -410,6 +312,7 @@ public class LocationVisionService {
      *                         label image path and logical coordinate.
      * @param scanStartedAt timestamp of the outer location scan, used for consistent elapsed logs.
      */
+    @Deprecated(since = "CR246")
     private void verifyFloorTemplateWithOcr(TemplateLocationInfo templateLocation,
                                             long scanStartedAt) {
         String path = windowScopedTempPath.resolve("tmp_pos_floor_verify.png");
@@ -464,6 +367,7 @@ public class LocationVisionService {
      * @param sourceIsCoordinateStrip true when {@code sourceImagePath} is the full mini-map
      *                                coordinate strip and the map label still needs cropping.
      */
+    @Deprecated(since = "CR246")
     private void learnMissingMapLabelTemplate(String mapName, String sourceImagePath, boolean sourceIsCoordinateStrip) {
         if (mapName == null || mapName.isBlank() || sourceImagePath == null || sourceImagePath.isBlank()) {
             return;

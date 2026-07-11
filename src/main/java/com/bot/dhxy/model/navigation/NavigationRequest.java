@@ -74,6 +74,40 @@ public class NavigationRequest {
     @Builder.Default
     String source = "navigateToNPC";
 
+    /**
+     * Fresh map name already scanned by the caller immediately before this navigation request.
+     *
+     * <p>This is optional. It lets navigation skip a duplicate no-focus minimap/OCR scan when the
+     * caller has just read the same window position for a nearby-NPC decision.</p>
+     */
+    String freshCurrentMapName;
+
+    /**
+     * Fresh logical X coordinate paired with {@link #freshCurrentMapName}; null when unavailable.
+     */
+    Integer freshCurrentX;
+
+    /**
+     * Fresh logical Y coordinate paired with {@link #freshCurrentMapName}; null when unavailable.
+     */
+    Integer freshCurrentY;
+
+    /**
+     * Epoch time in milliseconds when the caller captured the fresh current location.
+     */
+    @Builder.Default
+    long freshCurrentLocationAtMs = 0L;
+
+    /**
+     * Treat the supplied fresh location as a task-owned snapshot instead of a short observation cache.
+     *
+     * <p>五倍和修罗的回城后接任务链会设置它。回程道具已经验证回到起始城后，导航必须一直
+     * 复用这份任务事实，直到新的接任务 option 实际点击成功；云端 bookkeeping、重试或排队
+     * 不能把它当作几秒后就失效的观察缓存。</p>
+     */
+    @Builder.Default
+    boolean freshCurrentLocationPhaseBound = false;
+
     public static NavigationRequest target(String targetMapName, int targetX, int targetY, String targetName) {
         return NavigationRequest.builder()
                 .targetMapName(targetMapName)

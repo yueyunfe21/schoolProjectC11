@@ -1,6 +1,7 @@
 package com.bot.dhxy.input.action;
 
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
@@ -88,7 +89,7 @@ public class InputActionWorker {
         long latencyStart = LatencyMetrics.start();
         boolean completed = false;
         try {
-            if (isPauseRequested(request, "before-focus")) {
+            if (!waitIfPaused(request, "before-focus")) {
                 request.getResult().complete(false);
                 deadLetter.record(request, null);
                 return;
@@ -107,16 +108,24 @@ public class InputActionWorker {
             boolean preferBackgroundKeyboard = canUseBackgroundKeyboard(request);
             boolean focusBeforeInput = request.hasExclusiveCallback() || !preferBackgroundKeyboard;
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
-                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), focusBeforeInput, () ->
-                            InputActionScope.callWith(request, () -> {
-                        if (isPauseRequested(request, "before-actions")
+                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), false, () -> {
+                        if (focusBeforeInput) {
+                            if (!waitIfPaused(request, "before-transaction-focus")
+                                    || request.isCancelled()
+                                    || !isPlayerIdentityEpochCurrent(request, "before-transaction-focus")) {
+                                return false;
+                            }
+                            inputCoordinator.focusCurrentWindowInActiveTransaction("queued:" + request.getDescription());
+                        }
+                        return InputActionScope.callWith(request, () -> {
+                        if (!waitIfPaused(request, "before-actions")
                                 || request.isCancelled()
                                 || !isPlayerIdentityEpochCurrent(request, "before-actions")) {
                             return false;
                         }
 
                         if (request.hasExclusiveCallback()) {
-                            if (isPauseRequested(request, "before-exclusive-callback")
+                            if (!waitIfPaused(request, "before-exclusive-callback")
                                     || !isPlayerIdentityEpochCurrent(request, "before-exclusive-callback")) {
                                 return false;
                             }
@@ -125,7 +134,7 @@ public class InputActionWorker {
                         int actionIndex = 0;
                         for (InputAction action : request.getActions()) {
                             actionIndex++;
-                            if (isPauseRequested(request, "action-" + actionIndex)
+                            if (!waitIfPaused(request, "action-" + actionIndex)
                                     || request.isCancelled()
                                     || Thread.currentThread().isInterrupted()
                                     || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)) {
@@ -134,18 +143,23 @@ public class InputActionWorker {
                             log.info("[INPUT_TRACE] queued-action request={} windowId={} actionIndex={}/{} action={}",
                                     request.getDescription(), request.getWindowId(), actionIndex,
                                     request.getActions().size(), action);
-                            if (!execute(action, preferBackgroundKeyboard)) {
+                            if (!execute(request, action, preferBackgroundKeyboard, "action-" + actionIndex)) {
                                 return false;
                             }
                         }
                         return true;
-                    }))
+                    });
+                    })
             );
             completed = Boolean.TRUE.equals(ok);
             request.getResult().complete(completed);
             if (!completed) {
                 deadLetter.record(request, null);
             }
+        } catch (TaskStopRequestedException e) {
+            request.cancel("task-stop:" + e.getMessage());
+            deadLetter.record(request, e);
+            request.getResult().complete(false);
         } catch (Throwable e) {
             deadLetter.record(request, e);
             request.getResult().complete(false);
@@ -161,38 +175,54 @@ public class InputActionWorker {
     /**
      * Execute one action. Coordinates in the action are already screen-absolute.
      */
-    private boolean execute(InputAction action, boolean preferBackgroundKeyboard) {
-        switch (action.getType()) {
-            case CLICK_LEFT -> inputProvider.clickLeft(action.getX(), action.getY(), action.getDelayMs());
-            case CLICK_RIGHT -> inputProvider.clickRight(action.getX(), action.getY(), action.getDelayMs());
-            case DOUBLE_RIGHT_CLICK -> inputProvider.doubleRightClick(action.getX(), action.getY(), action.getDelayMs(), action.getIntervalMs());
-            case MOVE_MOUSE -> inputProvider.moveMouse(action.getX(), action.getY());
-            case DRAG_AND_DROP -> inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
-            case HOLD_CTRL -> inputProvider.holdCtrl();
-            case RELEASE_CTRL -> inputProvider.releaseCtrl();
-            case PRESS_CTRL_U -> inputProvider.pressCtrlU();
-            case TYPE_TEXT_UNICODE -> inputProvider.typeTextUnicode(action.getText());
-            case PASTE_TEXT -> inputProvider.pasteText(action.getText());
-            case PRESS_ENTER -> inputProvider.pressEnter();
-            case PRESS_ALT_1, PRESS_ALT_2, PRESS_ALT_4, PRESS_ALT_6, PRESS_ALT_8,
-                    PRESS_ALT_T, PRESS_ALT_O, PRESS_ALT_E, PRESS_ALT_Q, PRESS_ALT_A, PRESS_ALT_C, PRESS_ALT_U -> {
-                return pressAltShortcut(action.getType(), preferBackgroundKeyboard);
-            }
-            case SCROLL_DOWN -> inputProvider.scrollDown(action.getClicks());
-            case SCROLL_UP -> inputProvider.scrollUp(action.getClicks());
-            case SLEEP -> TaskSleep.sleep(action.getDelayMs());
+    private boolean execute(InputActionRequest request, InputAction action, boolean preferBackgroundKeyboard, String stage) {
+        InputActionType type = action.getType();
+        if (type == InputActionType.CLICK_LEFT) {
+            inputProvider.clickLeft(action.getX(), action.getY(), action.getDelayMs());
+        } else if (type == InputActionType.CLICK_RIGHT) {
+            inputProvider.clickRight(action.getX(), action.getY(), action.getDelayMs());
+        } else if (type == InputActionType.DOUBLE_RIGHT_CLICK) {
+            inputProvider.doubleRightClick(action.getX(), action.getY(), action.getDelayMs(), action.getIntervalMs());
+        } else if (type == InputActionType.MOVE_MOUSE) {
+            inputProvider.moveMouse(action.getX(), action.getY());
+        } else if (type == InputActionType.DRAG_AND_DROP) {
+            inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
+        } else if (type == InputActionType.HOLD_CTRL) {
+            inputProvider.holdCtrl();
+        } else if (type == InputActionType.RELEASE_CTRL) {
+            inputProvider.releaseCtrl();
+        } else if (type == InputActionType.PRESS_CTRL_U) {
+            inputProvider.pressCtrlU();
+        } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
+            inputProvider.typeTextUnicode(action.getText());
+        } else if (type == InputActionType.PASTE_TEXT) {
+            inputProvider.pasteText(action.getText());
+        } else if (type == InputActionType.PRESS_ENTER) {
+            inputProvider.pressEnter();
+        } else if (isAltShortcutAction(type)) {
+            return pressAltShortcut(request, type, preferBackgroundKeyboard, stage);
+        } else if (type == InputActionType.SCROLL_DOWN) {
+            inputProvider.scrollDown(action.getClicks());
+        } else if (type == InputActionType.SCROLL_UP) {
+            inputProvider.scrollUp(action.getClicks());
+        } else if (type == InputActionType.SLEEP) {
+            TaskSleep.sleep(action.getDelayMs());
+        } else {
+            throw new IllegalArgumentException("Unsupported input action: " + type);
         }
         return !Thread.currentThread().isInterrupted();
     }
 
-    private boolean isPauseRequested(InputActionRequest request, String stage) {
+    private boolean waitIfPaused(InputActionRequest request, String stage) {
         if (!request.isPauseRequested()) {
-            return false;
+            return true;
         }
-        log.warn("Input request skipped because submitting task is paused: windowId={} description={} stage={}",
+        log.info("Input request paused; waiting before continuing: windowId={} description={} stage={}",
                 request.getWindowId(), request.getDescription(), stage);
-        request.cancel("task-paused:" + stage);
-        return true;
+        long blockedMs = request.getPauseToken().waitIfPaused(request.getStopToken());
+        log.info("Input request resumed; continuing same sequence: windowId={} description={} stage={} blockedMs={}",
+                request.getWindowId(), request.getDescription(), stage, blockedMs);
+        return !request.isCancelled() && !Thread.currentThread().isInterrupted();
     }
 
     private boolean isPlayerIdentityEpochCurrent(InputActionRequest request, String stage) {
@@ -212,7 +242,10 @@ public class InputActionWorker {
     /**
      * Press an Alt shortcut, preferring background hwnd delivery when the sequence is keyboard-only.
      */
-    private boolean pressAltShortcut(InputActionType type, boolean preferBackgroundKeyboard) {
+    private boolean pressAltShortcut(InputActionRequest request,
+                                     InputActionType type,
+                                     boolean preferBackgroundKeyboard,
+                                     String stage) {
         BoundWindowKeyboardService.AltShortcut shortcut = toAltShortcut(type);
         if (preferBackgroundKeyboard) {
             BoundWindowKeyboardService.ShortcutAttempt attempt = boundWindowKeyboardService.pressShortcut(shortcut);
@@ -230,6 +263,9 @@ public class InputActionWorker {
             } else {
                 log.debug("HWND {} not attempted, falling back to focused real input: reason={}",
                         shortcutDisplayName(shortcut, type), attempt.reason());
+            }
+            if (!waitIfPaused(request, stage + "-before-focused-fallback")) {
+                return false;
             }
             inputCoordinator.focusCurrentWindowInActiveTransaction("fallback:" + shortcutDisplayName(shortcut, type));
         }
@@ -257,18 +293,34 @@ public class InputActionWorker {
     }
 
     private BoundWindowKeyboardService.AltShortcut toAltShortcut(InputActionType type) {
-        return switch (type) {
-            case PRESS_ALT_1 -> BoundWindowKeyboardService.AltShortcut.ALT_1;
-            case PRESS_ALT_2 -> BoundWindowKeyboardService.AltShortcut.ALT_2;
-            case PRESS_ALT_4 -> BoundWindowKeyboardService.AltShortcut.ALT_4;
-            case PRESS_ALT_6 -> BoundWindowKeyboardService.AltShortcut.ALT_6;
-            case PRESS_ALT_8 -> BoundWindowKeyboardService.AltShortcut.ALT_8;
-            case PRESS_ALT_T -> BoundWindowKeyboardService.AltShortcut.ALT_T;
-            case PRESS_ALT_O -> BoundWindowKeyboardService.AltShortcut.ALT_O;
-            case PRESS_ALT_E -> BoundWindowKeyboardService.AltShortcut.ALT_E;
-            case PRESS_ALT_Q -> BoundWindowKeyboardService.AltShortcut.ALT_Q;
-            default -> null;
-        };
+        if (type == InputActionType.PRESS_ALT_1) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_1;
+        }
+        if (type == InputActionType.PRESS_ALT_2) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_2;
+        }
+        if (type == InputActionType.PRESS_ALT_4) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_4;
+        }
+        if (type == InputActionType.PRESS_ALT_6) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_6;
+        }
+        if (type == InputActionType.PRESS_ALT_8) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_8;
+        }
+        if (type == InputActionType.PRESS_ALT_T) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_T;
+        }
+        if (type == InputActionType.PRESS_ALT_O) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_O;
+        }
+        if (type == InputActionType.PRESS_ALT_E) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_E;
+        }
+        if (type == InputActionType.PRESS_ALT_Q) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_Q;
+        }
+        return null;
     }
 
     private String shortcutDisplayName(BoundWindowKeyboardService.AltShortcut shortcut, InputActionType fallbackType) {
@@ -276,20 +328,47 @@ public class InputActionWorker {
     }
 
     private void pressAltShortcutWithRealInput(InputActionType type) {
-        switch (type) {
-            case PRESS_ALT_1 -> inputProvider.pressAlt1();
-            case PRESS_ALT_2 -> inputProvider.pressAlt2();
-            case PRESS_ALT_4 -> inputProvider.pressAlt4();
-            case PRESS_ALT_6 -> inputProvider.pressAlt6();
-            case PRESS_ALT_8 -> inputProvider.pressAlt8();
-            case PRESS_ALT_T -> inputProvider.pressAltT();
-            case PRESS_ALT_O -> inputProvider.pressAltO();
-            case PRESS_ALT_E -> inputProvider.pressAltE();
-            case PRESS_ALT_Q -> inputProvider.pressAltQ();
-            case PRESS_ALT_A -> inputProvider.pressAltA();
-            case PRESS_ALT_C -> inputProvider.pressAltC();
-            case PRESS_ALT_U -> inputProvider.pressAltU();
-            default -> throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
+        if (type == InputActionType.PRESS_ALT_1) {
+            inputProvider.pressAlt1();
+        } else if (type == InputActionType.PRESS_ALT_2) {
+            inputProvider.pressAlt2();
+        } else if (type == InputActionType.PRESS_ALT_4) {
+            inputProvider.pressAlt4();
+        } else if (type == InputActionType.PRESS_ALT_6) {
+            inputProvider.pressAlt6();
+        } else if (type == InputActionType.PRESS_ALT_8) {
+            inputProvider.pressAlt8();
+        } else if (type == InputActionType.PRESS_ALT_T) {
+            inputProvider.pressAltT();
+        } else if (type == InputActionType.PRESS_ALT_O) {
+            inputProvider.pressAltO();
+        } else if (type == InputActionType.PRESS_ALT_E) {
+            inputProvider.pressAltE();
+        } else if (type == InputActionType.PRESS_ALT_Q) {
+            inputProvider.pressAltQ();
+        } else if (type == InputActionType.PRESS_ALT_A) {
+            inputProvider.pressAltA();
+        } else if (type == InputActionType.PRESS_ALT_C) {
+            inputProvider.pressAltC();
+        } else if (type == InputActionType.PRESS_ALT_U) {
+            inputProvider.pressAltU();
+        } else {
+            throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
         }
+    }
+
+    private boolean isAltShortcutAction(InputActionType type) {
+        return type == InputActionType.PRESS_ALT_1
+                || type == InputActionType.PRESS_ALT_2
+                || type == InputActionType.PRESS_ALT_4
+                || type == InputActionType.PRESS_ALT_6
+                || type == InputActionType.PRESS_ALT_8
+                || type == InputActionType.PRESS_ALT_T
+                || type == InputActionType.PRESS_ALT_O
+                || type == InputActionType.PRESS_ALT_E
+                || type == InputActionType.PRESS_ALT_Q
+                || type == InputActionType.PRESS_ALT_A
+                || type == InputActionType.PRESS_ALT_C
+                || type == InputActionType.PRESS_ALT_U;
     }
 }

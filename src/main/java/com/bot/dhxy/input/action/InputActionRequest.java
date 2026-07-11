@@ -1,6 +1,7 @@
 package com.bot.dhxy.input.action;
 
 import com.bot.dhxy.runner.stop.TaskPauseToken;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 
@@ -24,6 +25,7 @@ public class InputActionRequest {
     private final WindowNativeBinding nativeBinding;
     private final long playerIdentityEpoch;
     private final TaskPauseToken pauseToken;
+    private final TaskStopToken stopToken;
     private final String description;
     private final List<InputAction> actions;
     private final Supplier<Boolean> exclusiveCallback;
@@ -56,7 +58,24 @@ public class InputActionRequest {
                               String description,
                               List<InputAction> actions,
                               TaskPauseToken pauseToken) {
-        this(windowContext, description, actions, null, pauseToken);
+        this(windowContext, description, actions, pauseToken, null);
+    }
+
+    /**
+     * Create a normal action-list request with the submitting task's pause/stop tokens.
+     *
+     * @param windowContext submitting window context; should have a native binding.
+     * @param description diagnostic label.
+     * @param actions ordered physical actions. The list is copied and null becomes empty.
+     * @param pauseToken pause token captured on the submitting task thread; nullable for debug paths.
+     * @param stopToken stop token captured on the submitting task thread; nullable for debug paths.
+     */
+    public InputActionRequest(WindowRuntimeContext windowContext,
+                              String description,
+                              List<InputAction> actions,
+                              TaskPauseToken pauseToken,
+                              TaskStopToken stopToken) {
+        this(windowContext, description, actions, null, pauseToken, stopToken);
     }
 
     /**
@@ -69,7 +88,7 @@ public class InputActionRequest {
     public InputActionRequest(WindowRuntimeContext windowContext,
                               String description,
                               Supplier<Boolean> exclusiveCallback) {
-        this(windowContext, description, List.of(), exclusiveCallback, null);
+        this(windowContext, description, List.of(), exclusiveCallback, null, null);
     }
 
     /**
@@ -84,19 +103,38 @@ public class InputActionRequest {
                               String description,
                               Supplier<Boolean> exclusiveCallback,
                               TaskPauseToken pauseToken) {
-        this(windowContext, description, List.of(), exclusiveCallback, pauseToken);
+        this(windowContext, description, exclusiveCallback, pauseToken, null);
+    }
+
+    /**
+     * Create an exclusive callback request with the submitting task's pause/stop tokens.
+     *
+     * @param windowContext submitting window context; should have a native binding.
+     * @param description diagnostic label.
+     * @param exclusiveCallback callback executed on the input worker thread.
+     * @param pauseToken pause token captured on the submitting task thread; nullable for debug paths.
+     * @param stopToken stop token captured on the submitting task thread; nullable for debug paths.
+     */
+    public InputActionRequest(WindowRuntimeContext windowContext,
+                              String description,
+                              Supplier<Boolean> exclusiveCallback,
+                              TaskPauseToken pauseToken,
+                              TaskStopToken stopToken) {
+        this(windowContext, description, List.of(), exclusiveCallback, pauseToken, stopToken);
     }
 
     private InputActionRequest(WindowRuntimeContext windowContext,
                                String description,
                                List<InputAction> actions,
                                Supplier<Boolean> exclusiveCallback,
-                               TaskPauseToken pauseToken) {
+                               TaskPauseToken pauseToken,
+                               TaskStopToken stopToken) {
         this.windowContext = windowContext;
         this.windowId = windowContext == null ? null : windowContext.getWindowId();
         this.nativeBinding = windowContext == null ? null : windowContext.getNativeBinding();
         this.playerIdentityEpoch = windowContext == null ? -1L : windowContext.getPlayerIdentityEpoch();
         this.pauseToken = pauseToken;
+        this.stopToken = stopToken;
         this.description = description == null ? "" : description;
         this.actions = actions == null ? List.of() : List.copyOf(actions);
         this.exclusiveCallback = exclusiveCallback;
@@ -116,6 +154,9 @@ public class InputActionRequest {
 
     /** @return task pause token captured at queue time, or null outside a managed task. */
     public TaskPauseToken getPauseToken() { return pauseToken; }
+
+    /** @return task stop token captured at queue time, or null outside a managed task. */
+    public TaskStopToken getStopToken() { return stopToken; }
 
     /**
      * @return true when the request still belongs to the same player identity epoch.
@@ -164,6 +205,6 @@ public class InputActionRequest {
      * @return true when the request was cancelled or its completion future was cancelled.
      */
     public boolean isCancelled() {
-        return cancelled.get() || result.isCancelled() || isPauseRequested();
+        return cancelled.get() || result.isCancelled();
     }
 }

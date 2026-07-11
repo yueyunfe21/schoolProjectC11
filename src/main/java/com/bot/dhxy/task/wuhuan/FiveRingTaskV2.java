@@ -26,6 +26,12 @@ import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.model.ocr.OcrWordResult;
+import com.bot.dhxy.model.pause.TaskPauseResumeFingerprint;
+import com.bot.dhxy.model.pause.TaskPauseResumeReconcileResult;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelCacheEntry;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelNegativeResult;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelPrepareResult;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelReadResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.exception.TaskFatalException;
 import com.bot.dhxy.runner.policy.TaskRetryPolicy;
@@ -44,6 +50,7 @@ import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.task.pause.TaskPauseResumeReconciler;
 import com.bot.dhxy.task.startup.TaskStartupCheckResult;
 import com.bot.dhxy.task.startup.TaskStartupCheckService;
 import com.bot.dhxy.task.transaction.TaskTransactionOutcome;
@@ -53,7 +60,6 @@ import com.bot.dhxy.task.transaction.TaskYieldPolicy;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.GameStateUtil.FlyingState;
-import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
@@ -84,6 +90,8 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -105,6 +113,8 @@ public class FiveRingTaskV2 implements GameTask {
     private static final String TASK_NAME = "五环";
     private static final String TARGET_MAP_NAME = "长安";
     private static final String TARGET_NPC_NAME = "云游大师";
+    private static final long STARTUP_UI_CLEAN_PRECHECK_MAX_AGE_MS = 60_000L;
+    private static final long STARTUP_FIRST_AID_PRECHECK_MAX_AGE_MS = 60_000L;
     private static final int NPC_COOR_X = 87;
     private static final int NPC_COOR_Y = 174;
     private static final String ACCEPT_OPTION_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_accept_first_option.png";
@@ -114,6 +124,7 @@ public class FiveRingTaskV2 implements GameTask {
     private static final String FINISHED_ONCE_STORY_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_task_finished_once_story.png";
     private static final String DAILY_LIMIT_STORY_TEMPLATE = "images/template/dialog/wuhuan/wuhuan_daily_limit_story.png";
     private static final String KEY_ITEM_NAME = "wuhuan/shoe.png";
+    private static final String GIVE_ITEM_MAP_NAME = "大雁塔二层";
     private static final String QUICK_SHOE_ANCHOR_TEMPLATE = "images/template/wuhuan/wuhuan_quick_shoe_anchor.png";
     private static final String QUICK_SHOE_FAST_ITEM_TEMPLATE = "images/template/fastItem/wuhuan_quick_shoe_shop_item.png";
     private static final String QUICK_SHOE_FAST_ITEM_ALT_TEMPLATE = "images/template/fastItem/wuhuan_quick_shoe_shop_item8.png";
@@ -130,6 +141,8 @@ public class FiveRingTaskV2 implements GameTask {
     private static final int SHOE_SHOP_RETURN_FALLBACK_NPC_X = 324;
     private static final int SHOE_SHOP_RETURN_FALLBACK_NPC_Y = 109;
     private static final String SHOE_SHOP_OWNER_NAME = "服装店老板";
+    private static final String PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX = "wuhuan-v2:prepared-tracker-panel-click:";
+    private static final String TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX = "wuhuan-v2:tracker-green-click:";
     private static final int SHOE_SHOP_ENTRY_X = 130;
     private static final int SHOE_SHOP_ENTRY_Y = 130;
     private static final int SHOE_SHOP_OWNER_X = 13;
@@ -183,12 +196,15 @@ public class FiveRingTaskV2 implements GameTask {
     private static final long OBSERVER_SNAPSHOT_MAX_AGE_MS = 3_000L;
     private static final long PREPARED_ROUTE_DIALOG_CLICK_MAX_AGE_MS = 10_000L;
     private static final long PREPARED_TRACKER_ACTION_MAX_AGE_MS = 2_500L;
+    private static final long TRACKER_NEGATIVE_MAX_AGE_MS = PREPARED_TRACKER_ACTION_MAX_AGE_MS;
+    private static final long ACCEPT_SETUP_POSITION_PREWARM_MAX_AGE_MS = 20_000L;
     private static final long READY_EVENT_PRIORITY_MAX_AGE_MS = 3_000L;
     private static final long READY_EVENT_PENDING_WARN_MS = 3_000L;
     private static final long READY_EVENT_SETTLE_WAIT_MS = 80L;
     private static final long READY_EVENT_PRIORITY_YIELD_DELAY_MS = 180L;
     private static final long PATHING_INTENT_CREATED_AT_GRACE_MS = 1_000L;
     private static final long TASK_TURN_HANDOFF_DELAY_MS = 900L;
+    private static final double WUHUAN_TRACKER_COMBAT_ROI_SAME_TOLERANCE = 0.08;
     private static final int GAME_CLIENT_WIDTH = 1024;
     private static final int GAME_CLIENT_HEIGHT = 768;
 
@@ -213,6 +229,8 @@ public class FiveRingTaskV2 implements GameTask {
     private final TextRecognizer textRecognizer;
     private final InputSequences inputSequences;
     private final AutomationMetricsService automationMetricsService;
+    private final TaskPauseResumeReconciler taskPauseResumeReconciler;
+    private volatile CompletableFuture<AcceptSetupPositionPrewarm> acceptSetupPositionPrewarm;
 
     @Override
     public String getTaskCode() {
@@ -263,7 +281,13 @@ public class FiveRingTaskV2 implements GameTask {
             while (shouldStartNextRun(maxRuns, completedRuns)) {
                 TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
                 int round = completedRuns + 1;
-                FiveRingPhaseContext phaseContext = FiveRingPhaseContext.start(round);
+                boolean cleanQueueTransitionStartup = completedRuns == 0 && context.isCleanQueueTransitionStartup();
+                if (cleanQueueTransitionStartup) {
+                    log.info("[five-ring-v2] clean queued task transition: keep prepare/buy-shoes checks, skip handover and force accept NPC navigation");
+                }
+                FiveRingPhaseContext phaseContext = cleanQueueTransitionStartup
+                        ? FiveRingPhaseContext.cleanTransitionStart(round)
+                        : FiveRingPhaseContext.start(round);
                 log.info("[five-ring-v2] run {} initial phase: phase={} source={}",
                         round, phaseContext.phase(), phaseContext.source());
 
@@ -366,7 +390,32 @@ public class FiveRingTaskV2 implements GameTask {
         int phaseLoopGuard = 0;
 
         while (!phaseContext.phase().isTerminal()) {
-            TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
+            TaskPauseResumeFingerprint pauseFingerprint = taskPauseResumeReconciler.capture(
+                    context, TaskType.WUHuan_V2, phaseContext.phase().name(), "phase-loop");
+            long pauseBlockedMs = TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
+            TaskPauseResumeReconcileResult pauseReconcile = taskPauseResumeReconciler.reconcileAfterPause(
+                    pauseFingerprint, context, pauseBlockedMs);
+            if (pauseReconcile.isFallbackTaskHotStart()) {
+                FiveRingPhaseContext hotStart = phaseContext.pauseResumeHotStart(
+                        "pause-resume-hot-start:phase-loop");
+                log.warn("[five-ring-v2 pause-resume] fallback task hot-start: round={} phase={} next={} pauseBlockedMs={} fingerprintMatched={} mismatchReason={} compensatedTimers={} clearedVolatileState={} fallbackTaskHotStart={}",
+                        phaseContext.round(), phaseContext.phase(), hotStart.phase(),
+                        pauseReconcile.getPauseBlockedMs(), pauseReconcile.isFingerprintMatched(),
+                        pauseReconcile.getMismatchReason(), pauseReconcile.getCompensatedTimers(),
+                        pauseReconcile.getClearedVolatileState(), pauseReconcile.isFallbackTaskHotStart());
+                phaseContext = hotStart;
+                phaseLoopGuard = 0;
+                continue;
+            }
+            if (pauseReconcile.isFingerprintMatched() && pauseReconcile.getPauseBlockedMs() > 0L) {
+                phaseContext = phaseContext.pauseInternalAutomationTimers(
+                        pauseReconcile.getPauseBlockedMs(), "pause-resume:phase-loop");
+                log.info("[five-ring-v2 pause-resume] continue original phase: round={} phase={} pauseBlockedMs={} fingerprintMatched={} mismatchReason={} compensatedTimers={} clearedVolatileState={} fallbackTaskHotStart={}",
+                        phaseContext.round(), phaseContext.phase(), pauseReconcile.getPauseBlockedMs(),
+                        pauseReconcile.isFingerprintMatched(), pauseReconcile.getMismatchReason(),
+                        pauseReconcile.getCompensatedTimers(), pauseReconcile.getClearedVolatileState(),
+                        pauseReconcile.isFallbackTaskHotStart());
+            }
 
             FiveRingPhaseContext currentContext = phaseContext;
             AtomicReference<FiveRingStepOutcome> phaseOutcome = new AtomicReference<>();
@@ -385,6 +434,7 @@ public class FiveRingTaskV2 implements GameTask {
                     || currentContext.phase() == FiveRingPhase.SYNC_TASK_PANEL;
             FiveRingStepOutcome priorityOutcome = checkReadyPriorityBeforeOutsidePhase(
                     context, currentContext, outsideTaskTurnPhase);
+            boolean releaseTurnOnOutsideEnter = shouldReleaseTurnOnOutsidePhaseEnter(currentContext);
             if (priorityOutcome != null) {
                 phaseOutcome.set(priorityOutcome);
                 transaction = new TaskTransactionOutcome(
@@ -396,22 +446,27 @@ public class FiveRingTaskV2 implements GameTask {
             } else if (currentContext.phase() == FiveRingPhase.BUY_SHOES) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "buyShoes",
+                        releaseTurnOnOutsideEnter,
                         () -> buyShoes(context, currentContext));
             } else if (currentContext.phase() == FiveRingPhase.WAIT_PATHING) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "pathWait",
+                        releaseTurnOnOutsideEnter,
                         () -> waitPathing(context, currentContext));
             } else if (currentContext.phase() == FiveRingPhase.ACCEPT_TASK) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "accept",
+                        releaseTurnOnOutsideEnter,
                         () -> acceptTask(context, currentContext));
             } else if (currentContext.phase() == FiveRingPhase.HANDLE_DIALOG) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "handleDialog",
+                        releaseTurnOnOutsideEnter,
                         () -> handleDialog(context, currentContext));
             } else if (currentContext.phase() == FiveRingPhase.SYNC_TASK_PANEL) {
                 transaction = runPhaseWithoutTaskTurn(
                         currentContext, phaseOutcome, transactionName, "trackerSync",
+                        releaseTurnOnOutsideEnter,
                         () -> syncTaskPanel(context, currentContext, true));
             } else {
                 transaction = taskTransactionRunner.run(
@@ -495,6 +550,32 @@ public class FiveRingTaskV2 implements GameTask {
                 || outcome.yieldPolicy() != TaskYieldPolicy.CONTINUE_CHAIN;
     }
 
+    private boolean shouldReleaseTurnOnOutsidePhaseEnter(FiveRingPhaseContext state) {
+        if (state == null) {
+            return true;
+        }
+        if (state.waitingAcceptNpcPathing()
+                || state.pathingIntentExpected()
+                || state.pathingStartedAtMs() > 0L) {
+            return true;
+        }
+        String source = state.source() == null ? "" : state.source();
+        /*
+         * Startup preparation is still a short, input-sensitive chain. Keep its inherited coarse
+         * turn until the first concrete navigation click has either started pathing or yielded a
+         * retryable/shared result; later watcher/OCR waits keep the CR186 outside-enter release.
+         */
+        if (state.phase() == FiveRingPhase.BUY_SHOES) {
+            return !source.startsWith("prepare-shoe-shop");
+        }
+        if (state.phase() == FiveRingPhase.ACCEPT_TASK) {
+            return !("prepare-done".equals(source)
+                    || "handover-setup-required".equals(source)
+                    || "handover-tracker-unavailable-setup-required".equals(source));
+        }
+        return true;
+    }
+
     private FiveRingStepOutcome checkReadyPriorityBeforeOutsidePhase(TaskExecutionContext context,
                                                                      FiveRingPhaseContext state,
                                                                      boolean outsideTaskTurnPhase) {
@@ -519,9 +600,29 @@ public class FiveRingTaskV2 implements GameTask {
                 .latest(runtime.getWindowId(), WindowReadyEventType.TASK_ATTENTION_REQUIRED)
                 .map(WindowReadyEvent::getSequence)
                 .orElse(0L);
+        currentLatestSequence = Math.max(currentLatestSequence, windowReadyEventBus
+                .latest(runtime.getWindowId(), WindowReadyEventType.TASK_TRACKER_NEGATIVE_READY)
+                .map(WindowReadyEvent::getSequence)
+                .orElse(0L));
+        currentLatestSequence = Math.max(currentLatestSequence, windowReadyEventBus
+                .latest(runtime.getWindowId(), WindowReadyEventType.PREPARED_ACTION_READY)
+                .map(WindowReadyEvent::getSequence)
+                .orElse(0L));
+        EnumSet<WindowReadyEventType> currentWakeTypes = EnumSet.of(
+                WindowReadyEventType.TASK_ATTENTION_REQUIRED,
+                WindowReadyEventType.TASK_TRACKER_NEGATIVE_READY,
+                WindowReadyEventType.PREPARED_ACTION_READY);
+        if (state.waitingAcceptNpcPathing() || state.pathingIntentExpected()) {
+            /*
+             * The window's own pathing terminal (ARRIVED/STOPPED_AWAY) must wake this boundary wait
+             * directly; otherwise a stopped character sits through the settle timeout and only the
+             * other-window priority logic ever sees the terminal event.
+             */
+            currentWakeTypes.add(WindowReadyEventType.PATHING_TERMINAL);
+        }
         Optional<WindowReadyEvent> currentWake = windowReadyEventBus.awaitNewer(
                 runtime.getWindowId(),
-                EnumSet.of(WindowReadyEventType.TASK_ATTENTION_REQUIRED),
+                currentWakeTypes,
                 currentLatestSequence,
                 READY_EVENT_SETTLE_WAIT_MS);
         if (currentWake.isPresent()) {
@@ -530,6 +631,11 @@ public class FiveRingTaskV2 implements GameTask {
                     "phase-boundary-wait:" + state.phase(), state.phase(), runtime.getWindowId(),
                     event.getHwnd(), event.getSource(), event.getOperation(), event.getTargetKeyword(),
                     event.getSequence(), readyAgeMs(event));
+            if (event.getType() == WindowReadyEventType.PATHING_TERMINAL) {
+                // Own pathing terminal: fall through into the phase so the pathing-wait branch
+                // consumes the snapshot; there is no prepared action to click for this event.
+                return null;
+            }
             currentPrepared = consumeCurrentPreparedBeforeNormalPhase(
                     context, state, runtime, event, "phase-boundary-wait:" + state.phase());
             if (currentPrepared != null) {
@@ -598,8 +704,10 @@ public class FiveRingTaskV2 implements GameTask {
                     readyAgeMs(relatedReadyEvent), action.getOperation(), action.getTargetKeyword(),
                     action.getSource(), Math.max(0L, now - action.getPreparedAtMs()),
                     Math.max(0L, now - action.getLastVerifiedAtMs()), action.getAbsoluteX(), action.getAbsoluteY());
+            FiveRingPhaseContext trackerState = mergeWuhuanTrackerRegionsFromRuntimeCache(
+                    state, runtime, "priority-prepared-tracker-link:" + checkpoint);
             return FiveRingStepOutcome.pathingStarted(
-                    state.withTaskAccepted("priority-prepared-tracker-link")
+                    trackerState.withTaskAccepted("priority-prepared-tracker-link")
                             .next(FiveRingPhase.WAIT_PATHING, "priority-prepared-tracker-pathing-started")
                             .withNewWatcherPathingStarted(
                                     "priority-prepared-tracker-pathing-started",
@@ -690,10 +798,24 @@ public class FiveRingTaskV2 implements GameTask {
                                                            AtomicReference<FiveRingStepOutcome> phaseOutcome,
                                                            String transactionName,
                                                            String latencyName,
+                                                           boolean releaseTurnOnEnter,
                                                            Supplier<FiveRingStepOutcome> phaseAction) {
         long startedAt = System.currentTimeMillis();
         TaskTransactionResult result = TaskTransactionResult.FAILED;
         boolean completed = false;
+        /*
+         * CR186: ready-priority has already had first chance in the caller. If this thread inherited
+         * a CONTINUE_CHAIN turn from the previous phase, release only that coarse task turn before
+         * entering navigation/OCR/pathing slow work; physical input still stays serialized by
+         * InputSequences inside the called services. forceReleaseTurn is a no-op when no turn is held.
+         */
+        if (releaseTurnOnEnter) {
+            taskTransactionRunner.forceReleaseTurn(transactionName + ":outside-enter");
+        } else {
+            log.info("[five-ring-v2 latency] {}OutsideTurnKeepInherited round={} phase={} source={} accepted={} ageMs={}",
+                    latencyName, state.round(), state.phase(), state.source(), state.taskAccepted(),
+                    pathingAgeMs(state));
+        }
         log.info("[five-ring-v2 latency] {}OutsideTurnStart round={} phase={} source={} accepted={} ageMs={}",
                 latencyName, state.round(), state.phase(), state.source(), state.taskAccepted(), pathingAgeMs(state));
         try {
@@ -758,11 +880,23 @@ public class FiveRingTaskV2 implements GameTask {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         log.info("[five-ring-v2 prepare-1] clean startup chrome before supply checks");
         gameContext.setBotStatus(GameContext.BotStatus.RUNNING);
-        uiCleanerService.cleanUpAll();
+        boolean startupUiCleanPrechecked = windowTaskContextHolder.rawCurrent()
+                .map(runtime -> runtime.consumeFreshTaskQueueStartupUiCleanupClean(
+                        TASK_CODE, STARTUP_UI_CLEAN_PRECHECK_MAX_AGE_MS))
+                .orElse(false);
+        if (startupUiCleanPrechecked) {
+            log.info("[five-ring-v2 prepare-1] skip foreground UI cleanup: fresh background precheck clean");
+        } else {
+            uiCleanerService.cleanUpAll();
+        }
+        startAcceptSetupPositionPrewarm(startupUiCleanPrechecked
+                ? "prepare-after-startup-ui-clean-precheck"
+                : "prepare-after-cleanup");
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
         log.info("[five-ring-v2 prepare-2] startup first-aid check before bag supply scan");
-        playerStateService.performStartupFirstAidCheck(context);
+        playerStateService.performStartupFirstAidCheckFromPrecheckOrRun(
+                context, STARTUP_FIRST_AID_PRECHECK_MAX_AGE_MS);
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
         int requiredShoeCount = requiredShoeCountForRun(state);
@@ -786,16 +920,18 @@ public class FiveRingTaskV2 implements GameTask {
                                 .next(FiveRingPhase.BUY_SHOES, "prepare-shoe-shop-required"),
                         "shoe count insufficient; buy through shop-owner flow");
             }
-            FiveRingSupplyCheck verifiedCheck = checkFiveRingSuppliesInOneBagSession(context, requiredShoeCount);
+            int postBuyVerifyRequiredShoeCount = 1;
+            FiveRingSupplyCheck verifiedCheck = checkFiveRingSuppliesInOneBagSession(context,
+                    postBuyVerifyRequiredShoeCount);
             shoeBagIndex = verifiedCheck == null ? null : verifiedCheck.shoeBagIndex();
             int verifiedShoeCount = verifiedCheck == null ? 0 : verifiedCheck.shoeCount();
             log.info("[five-ring-v2 prepare] quick-buy shoe result={} verifiedCount={} required={} firstPage={}",
-                    boughtShoes, verifiedShoeCount, requiredShoeCount,
+                    boughtShoes, verifiedShoeCount, postBuyVerifyRequiredShoeCount,
                     shoeBagIndex == null ? "none" : shoeBagIndex + 1);
-            int verifiedMissingShoeCount = Math.max(0, requiredShoeCount - verifiedShoeCount);
+            int verifiedMissingShoeCount = Math.max(0, postBuyVerifyRequiredShoeCount - verifiedShoeCount);
             if (verifiedMissingShoeCount > 0) {
                 log.warn("[five-ring-v2 prepare] quick-buy completed but verified shoes are still insufficient: verified={} required={} missing={}; fall back to shop-owner buy flow",
-                        verifiedShoeCount, requiredShoeCount, verifiedMissingShoeCount);
+                        verifiedShoeCount, postBuyVerifyRequiredShoeCount, verifiedMissingShoeCount);
                 return FiveRingStepOutcome.continueTo(state.withShoePurchaseCount(verifiedMissingShoeCount,
                                 "prepare-shoe-shop-after-quick-buy-insufficient")
                                 .next(FiveRingPhase.BUY_SHOES, "prepare-shoe-shop-after-quick-buy-insufficient"),
@@ -805,7 +941,7 @@ public class FiveRingTaskV2 implements GameTask {
 
         return FiveRingStepOutcome.continueTo(
                 state.withShoeBagIndex(shoeBagIndex, "prepare-done")
-                        .next(FiveRingPhase.HANDOVER_DETECT, "prepare-done"),
+                        .nextAfterPreparation("prepare-done"),
                 "prepare finished");
     }
 
@@ -839,14 +975,14 @@ public class FiveRingTaskV2 implements GameTask {
                     shoeBagIndex == null ? "none" : shoeBagIndex + 1);
             return FiveRingStepOutcome.continueTo(
                     state.withShoeBagIndex(shoeBagIndex, "shoe-shop-bought")
-                            .next(FiveRingPhase.HANDOVER_DETECT, "shoe-shop-bought"),
+                            .nextAfterPreparation("shoe-shop-bought"),
                     "shoe-shop buy finished");
         }
 
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
-        if (isUsablePathingSnapshot(state, snapshot)) {
+        if (isUsablePathingSnapshot(state, snapshot, runtime)) {
             WindowPathingState observed = snapshot.getState();
             long snapshotAgeMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
             if (observed == WindowPathingState.ACTIVE
@@ -1497,21 +1633,17 @@ public class FiveRingTaskV2 implements GameTask {
                     trackerAttempt.state.withTaskAccepted("handover-tracker-task-found"),
                     "handover tracker pathing started");
         }
-        if (trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_GREEN
-                || trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_LINK) {
-            log.info("[five-ring-v2 handover] tracker has 五环 but no usable green pathing link yet; status={}",
+        if (trackerAttempt.status == TrackerPathingStatus.RUNNER_PREPARED_NOT_READY) {
+            log.info("[five-ring-v2 handover] runner prepared tracker action not ready; use tracker title gate before initial setup");
+        }
+        WuhuanTrackerTitleGate titleGate = readWuhuanTrackerTitleGate(
+                trackerAttempt.state, "handover:" + trackerAttempt.status);
+        if (titleGate.titleVisible()) {
+            log.info("[five-ring-v2 handover] 五环 title is visible during handover; sync tracker instead of accepting again: status={}",
                     trackerAttempt.status);
             return FiveRingStepOutcome.continueTo(
-                    trackerAttempt.state.withTaskAccepted("handover-tracker-task-found")
-                            .next(FiveRingPhase.SYNC_TASK_PANEL, "handover-tracker-no-usable-link"),
-                    "handover tracker needs sync");
-        }
-        if (trackerAttempt.status == TrackerPathingStatus.CLICK_FAILED) {
-            log.warn("[five-ring-v2 handover] tracker has 五环 but green click failed; resync tracker");
-            return FiveRingStepOutcome.continueTo(
-                    trackerAttempt.state.withTaskAccepted("handover-tracker-click-failed")
-                            .next(FiveRingPhase.SYNC_TASK_PANEL, "handover-tracker-click-failed"),
-                    "handover tracker click failed");
+                    titleGate.state().next(FiveRingPhase.SYNC_TASK_PANEL, "handover-wuhuan-title-visible"),
+                    "handover tracker title visible; sync tracker");
         }
         if (trackerAttempt.status == TrackerPathingStatus.TRACKER_UNAVAILABLE) {
             log.warn("[five-ring-v2 handover] left tracker is not readable before task acceptance; fall back to accept task instead of failing startup");
@@ -1531,6 +1663,11 @@ public class FiveRingTaskV2 implements GameTask {
             return pendingAcceptNavigation;
         }
         FiveRingPhaseContext activeState = state.clearAcceptNpcPathingWait("accept-navigation-ready");
+        FiveRingStepOutcome preparedTrackerAtEntry = consumeCurrentPreparedTrackerDuringAccept(
+                context, activeState, "accept-entry-before-navigation");
+        if (preparedTrackerAtEntry != null) {
+            return preparedTrackerAtEntry;
+        }
         if (activeState.taskAccepted()) {
             log.warn("[five-ring-v2 accept] task is already accepted in this round; skip accept NPC and resync task panel: source={}",
                     activeState.source());
@@ -1542,9 +1679,10 @@ public class FiveRingTaskV2 implements GameTask {
         while (retry < MAX_ACCEPT_RETRY) {
             TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
-            boolean nearAcceptNpc = isNearAcceptNpc();
+            LocationInfo acceptNavigationPosition = acceptSetupPositionFromPrewarmOrSync("accept-loop");
+            boolean nearAcceptNpc = isNearAcceptNpc(acceptNavigationPosition);
             FiveRingStepOutcome currentScreenAccept = tryAcceptInitialTaskFromCurrentScreen(
-                    context, activeState, "setup:current-screen");
+                    context, activeState, "setup:current-screen", nearAcceptNpc);
             if (currentScreenAccept != null) {
                 return currentScreenAccept;
             }
@@ -1561,13 +1699,12 @@ public class FiveRingTaskV2 implements GameTask {
                     log.info("[five-ring-v2 setup] existing dialog while not near accept NPC; delegate to navigation: type={}",
                             setupDialogType);
                 }
-                if (tryClickNearbyAcceptNpc(context)) {
+                if (tryClickNearbyAcceptNpc(context, nearAcceptNpc)) {
                     AcceptDialogPathingResult acceptResult = acceptInitialDialogAndTriggerPathing(
                             context, "nearbyAcceptNpcPathing");
                     if (acceptResult == AcceptDialogPathingResult.TASK_ACCEPTED_NEEDS_SYNC) {
                         return FiveRingStepOutcome.continueTo(
-                                activeState.withTaskAccepted("nearby-accept-clicked")
-                                        .next(FiveRingPhase.SYNC_TASK_PANEL, "nearby-accept-pathing-unconfirmed"),
+                                activeState.next(FiveRingPhase.SYNC_TASK_PANEL, "nearby-accept-pathing-unconfirmed"),
                                 "nearby accept clicked; read tracker next");
                     }
                     if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
@@ -1580,12 +1717,21 @@ public class FiveRingTaskV2 implements GameTask {
                     TaskSleep.sleepOrStop(context, 1000, "Five-ring V2 task interrupted");
                     continue;
                 }
+                FiveRingStepOutcome preparedTrackerBeforeNavigation = consumeCurrentPreparedTrackerDuringAccept(
+                        context, activeState, "accept-before-npc-navigation");
+                if (preparedTrackerBeforeNavigation != null) {
+                    return preparedTrackerBeforeNavigation;
+                }
                 NavigationResult navigationResult = navigationService.navigateToNPC(NavigationRequest.builder()
                         .targetMapName(TARGET_MAP_NAME)
                         .targetX(NPC_COOR_X)
                         .targetY(NPC_COOR_Y)
                         .targetName(TARGET_NPC_NAME)
                         .source(ACCEPT_NPC_NAV_SOURCE)
+                        .freshCurrentMapName(acceptNavigationPosition == null ? null : acceptNavigationPosition.mapName)
+                        .freshCurrentX(acceptNavigationPosition == null ? null : acceptNavigationPosition.x)
+                        .freshCurrentY(acceptNavigationPosition == null ? null : acceptNavigationPosition.y)
+                        .freshCurrentLocationAtMs(acceptNavigationPosition == null ? 0L : System.currentTimeMillis())
                         .build());
                 NavigationResultStatus navigationStatus = navigationResult.getStatus();
                 log.info("[five-ring-v2 accept] accept NPC navigation result: npc={} status={} message={}",
@@ -1658,8 +1804,7 @@ public class FiveRingTaskV2 implements GameTask {
             if (acceptResult == AcceptDialogPathingResult.TASK_ACCEPTED_NEEDS_SYNC) {
                 log.info("[five-ring-v2] initial task accepted; switch to left tracker");
                 return FiveRingStepOutcome.continueTo(
-                        activeState.withTaskAccepted("initial-accept-clicked")
-                                .next(FiveRingPhase.SYNC_TASK_PANEL, "initial-accept-pathing-unconfirmed"),
+                        activeState.next(FiveRingPhase.SYNC_TASK_PANEL, "initial-accept-pathing-unconfirmed"),
                         "initial task accepted; read tracker instead of accepting again");
             }
             if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
@@ -1678,6 +1823,22 @@ public class FiveRingTaskV2 implements GameTask {
         return FiveRingStepOutcome.failed(activeState, "initial task setup failed after retries");
     }
 
+    private FiveRingStepOutcome consumeCurrentPreparedTrackerDuringAccept(TaskExecutionContext context,
+                                                                          FiveRingPhaseContext state,
+                                                                          String checkpoint) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            return null;
+        }
+        FiveRingStepOutcome preparedTracker = consumeCurrentPreparedBeforeNormalPhase(
+                context, state, runtime, null, checkpoint);
+        if (preparedTracker != null) {
+            log.info("[five-ring-v2 accept] prepared 五环 tracker consumed before accept NPC navigation: checkpoint={} source={}",
+                    checkpoint, state.source());
+        }
+        return preparedTracker;
+    }
+
     private FiveRingStepOutcome continueIfAcceptNpcNavigationStillPathing(TaskExecutionContext context,
                                                                           FiveRingPhaseContext state) {
         if (!state.waitingAcceptNpcPathing()) {
@@ -1688,7 +1849,7 @@ public class FiveRingTaskV2 implements GameTask {
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
         long pathingAgeMs = pathingAgeMs(state);
-        if (isUsablePathingSnapshot(state, snapshot)) {
+        if (isUsablePathingSnapshot(state, snapshot, runtime)) {
             WindowPathingState observed = snapshot.getState();
             long ageMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
             if (observed == WindowPathingState.ARRIVED
@@ -1767,10 +1928,10 @@ public class FiveRingTaskV2 implements GameTask {
                 && isExpectedPathingTarget(state.pathingIntentSource(), activeIntent);
     }
 
-    private boolean tryClickNearbyAcceptNpc(TaskExecutionContext context) {
+    private boolean tryClickNearbyAcceptNpc(TaskExecutionContext context, boolean nearAcceptNpc) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
         NpcTarget acceptNpc = fiveRingAcceptNpc();
-        if (!isNearAcceptNpc()) {
+        if (!nearAcceptNpc) {
             return false;
         }
         PlayerCharacter me = gameContext.getMe();
@@ -1805,7 +1966,65 @@ public class FiveRingTaskV2 implements GameTask {
         uiCleanerService.closeAllGenericWindows();
     }
 
-    private boolean isNearAcceptNpc() {
+    private void startAcceptSetupPositionPrewarm(String source) {
+        CompletableFuture<AcceptSetupPositionPrewarm> existing = acceptSetupPositionPrewarm;
+        if (existing != null && !existing.isDone()) {
+            log.info("[five-ring-v2 accept] setup position prewarm already running: source={}", source);
+            return;
+        }
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            log.info("[five-ring-v2 accept] setup position prewarm skipped because window context is unavailable: source={}",
+                    source);
+            return;
+        }
+        acceptSetupPositionPrewarm = CompletableFuture.supplyAsync(() -> {
+            try {
+                LocationInfo location = windowTaskContextHolder.callWith(runtime, this::syncAcceptNpcSetupPosition);
+                return new AcceptSetupPositionPrewarm(location, System.currentTimeMillis(), source);
+            } catch (RuntimeException e) {
+                throw new CompletionException(e);
+            }
+        });
+        acceptSetupPositionPrewarm.whenComplete((result, error) -> {
+            if (error != null) {
+                log.warn("[five-ring-v2 accept] setup position prewarm failed: source={} reason={}",
+                        source, error.getMessage());
+                return;
+            }
+            LocationInfo location = result == null ? null : result.location();
+            log.info("[five-ring-v2 accept] setup position prewarm finished: source={} current={}({}, {})",
+                    source,
+                    location == null ? null : location.mapName,
+                    location == null ? null : location.x,
+                    location == null ? null : location.y);
+        });
+    }
+
+    private LocationInfo acceptSetupPositionFromPrewarmOrSync(String source) {
+        CompletableFuture<AcceptSetupPositionPrewarm> prewarm = acceptSetupPositionPrewarm;
+        if (prewarm != null && prewarm.isDone() && !prewarm.isCompletedExceptionally() && !prewarm.isCancelled()) {
+            AcceptSetupPositionPrewarm result = prewarm.getNow(null);
+            acceptSetupPositionPrewarm = null;
+            if (result != null && result.location() != null) {
+                long ageMs = Math.max(0L, System.currentTimeMillis() - result.capturedAtMs());
+                if (ageMs <= ACCEPT_SETUP_POSITION_PREWARM_MAX_AGE_MS) {
+                    LocationInfo location = result.location();
+                    log.info("[five-ring-v2 accept] use prewarmed setup position: source={} prewarmSource={} ageMs={} current={}({}, {})",
+                            source, result.source(), ageMs, location.mapName, location.x, location.y);
+                    return location;
+                }
+                log.info("[five-ring-v2 accept] discard stale setup position prewarm: source={} prewarmSource={} ageMs={} maxAgeMs={}",
+                        source, result.source(), ageMs, ACCEPT_SETUP_POSITION_PREWARM_MAX_AGE_MS);
+            }
+        } else if (prewarm != null && !prewarm.isDone()) {
+            log.info("[five-ring-v2 accept] setup position prewarm not finished; fall back to synchronous read: source={}",
+                    source);
+        }
+        return syncAcceptNpcSetupPosition();
+    }
+
+    private LocationInfo syncAcceptNpcSetupPosition() {
         NpcTarget acceptNpc = fiveRingAcceptNpc();
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
@@ -1820,15 +2039,22 @@ public class FiveRingTaskV2 implements GameTask {
             log.info("[five-ring-v2 accept] near accept NPC checked by runner snapshot: current={}({}, {}) target={}({}, {}) near={}",
                     snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
                     acceptNpc.getMapName(), acceptNpc.getX(), acceptNpc.getY(), nearByRunner);
-            return nearByRunner;
+            return new LocationInfo(snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY());
         }
         /*
-         * The result controls whether we can skip map navigation and click the task NPC directly. If
-         * the runner has no fresh pathing snapshot, fall back to the older no-focus sync so hot-start
-         * and startup-without-pathing still have a reliable position.
+         * This single fresh scan is used for both the near-NPC direct-click decision and the following
+         * map-navigation stale-cache guard. Do not let accept setup pay for two back-to-back minimap
+         * reads when the first one already proved the current map.
          */
-        LocationInfo current = playerStateService.syncMyPosition();
-        return current != null && gameStateUtil.isNearCoordinate(current.mapName, current.x, current.y,
+        return playerStateService.syncMyPosition();
+    }
+
+    private boolean isNearAcceptNpc(LocationInfo current) {
+        NpcTarget acceptNpc = fiveRingAcceptNpc();
+        if (current == null) {
+            return false;
+        }
+        return gameStateUtil.isNearCoordinate(current.mapName, current.x, current.y,
                 acceptNpc.getMapName(), acceptNpc.getX(), acceptNpc.getY(), TASK_NPC_DIRECT_CLICK_DISTANCE);
     }
 
@@ -1842,8 +2068,26 @@ public class FiveRingTaskV2 implements GameTask {
          * this window free again.
          */
         if (isWindowCombatActive()) {
+            if (!state.combatObservedSincePathing()) {
+                windowTaskContextHolder.rawCurrent().ifPresent(runtime ->
+                        clearConsumedWuhuanTrackerPathingIntent(runtime, state, "combat-entry"));
+            }
+            FiveRingPhaseContext combatState = state.withCombatObservedSincePathing(
+                    "pathing-window-combat-active");
+            if (combatState.wuhuanTrackerCombatBaselineImage() == null) {
+                combatState = captureWuhuanTrackerCombatBaseline(
+                        combatState, "wuhuan-v2:combat-entry-tracker-roi-baseline");
+                return FiveRingStepOutcome.sharedState(
+                        combatState,
+                        "window combat state active during pathing wait; tracker ROI baseline captured or unavailable");
+            }
+            FiveRingStepOutcome trackerRoiExit = tryResolvePostCombatFromWuhuanTrackerRoiCandidate(
+                    context, combatState);
+            if (trackerRoiExit != null) {
+                return trackerRoiExit;
+            }
             return FiveRingStepOutcome.sharedState(
-                    state.withCombatObservedSincePathing("pathing-window-combat-active"),
+                    combatState,
                     "window combat state active during pathing wait");
         }
         if (state.combatObservedSincePathing()) {
@@ -1861,6 +2105,15 @@ public class FiveRingTaskV2 implements GameTask {
                  */
                 log.warn("[five-ring-v2] combat was observed during pathing but post-combat recovery had no exit signal; continue tracker sync");
             }
+            WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+            if (runtime != null) {
+                /*
+                 * Combat consumed the tracker click handoff. If the old tracker pathing intent stays
+                 * active, Runner remains in active-pathing and will never prepare the next tracker
+                 * link, so clear only 五环 tracker-click intents before syncing the panel again.
+                 */
+                clearConsumedWuhuanTrackerPathingIntent(runtime, state, "combat-recovered");
+            }
             return FiveRingStepOutcome.continueTo(
                     state.next(FiveRingPhase.SYNC_TASK_PANEL, "pathing-window-combat-recovered"),
                     "window combat ended; post-combat recovery done; sync task panel");
@@ -1869,7 +2122,7 @@ public class FiveRingTaskV2 implements GameTask {
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
         long pathingAgeMs = pathingAgeMs(state);
-        if (isUsablePathingSnapshot(state, snapshot)) {
+        if (isUsablePathingSnapshot(state, snapshot, runtime)) {
             WindowPathingState observed = snapshot.getState();
             long snapshotAgeMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
             log.info("[five-ring-v2 pathing] watcher snapshot: source={} state={} current={}({}, {}) message={} ageMs={} probeInProgress={}",
@@ -1890,6 +2143,16 @@ public class FiveRingTaskV2 implements GameTask {
                     log.info("[five-ring-v2 pathing] pathing terminal clear delayed because prepared route dialog is ready: state={} target={} actionIntentId={} activeIntentId={} verifiedAgeMs={}",
                             observed, preparedRoute.getTargetKeyword(), preparedRoute.getIntentId(),
                             activeIntent == null ? null : activeIntent.getIntentId(), verifiedAgeMs);
+                } else if (isStoppedAwayWuhuanTrackerPathing(snapshot)
+                        && !isGiveItemMap(snapshot.getCurrentMapName())) {
+                    boolean cleared = clearStoppedAwayTrackerIntent(runtime,
+                            "stopped-away outside give-item map; tracker sync first");
+                    log.info("[five-ring-v2 pathing] stopped-away tracker intent outside give-item map; skip handle dialog and sync tracker: current={}({}, {}) giveMap={} cleared={}",
+                            snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                            GIVE_ITEM_MAP_NAME, cleared);
+                    return FiveRingStepOutcome.continueTo(
+                            state.next(FiveRingPhase.SYNC_TASK_PANEL, "pathing-stopped-away-outside-give-map"),
+                            "pathing stopped away outside give-item map; sync task panel");
                 } else {
                     runtime.clearPathingSignal("five-ring consumed watcher stopped-away");
                 }
@@ -1959,6 +2222,382 @@ public class FiveRingTaskV2 implements GameTask {
                 "pathing still waiting for watcher");
     }
 
+    private void clearConsumedWuhuanTrackerPathingIntent(WindowRuntimeContext runtime,
+                                                         FiveRingPhaseContext state,
+                                                         String reason) {
+        WindowPathingSnapshot snapshot = runtime.getPathingSnapshot();
+        WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
+        String activeSource = intent == null ? null : intent.getSource();
+        WindowPathingState activeState = snapshot == null ? null : snapshot.getState();
+        boolean preparedCleared = runtime.clearPathingSignalIfSourcePrefix(
+                PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX,
+                "five-ring " + reason + " consumed prepared tracker pathing");
+        boolean greenCleared = runtime.clearPathingSignalIfSourcePrefix(
+                TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX,
+                "five-ring " + reason + " consumed tracker green pathing");
+        log.info("[five-ring-v2 combat-exit] clears consumed 五环 tracker pathing intent: reason={} windowId={} phase={} source={} activePathingState={} activeSource={} preparedCleared={} greenCleared={} allowedPrefixes=[{}, {}]",
+                reason, runtime.getWindowId(), state.phase(), state.source(), activeState, activeSource,
+                preparedCleared, greenCleared,
+                PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX, TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX);
+    }
+
+    private FiveRingPhaseContext captureWuhuanTrackerCombatBaseline(FiveRingPhaseContext state,
+                                                                    String reason) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        OcrWindowRegion roi = validWuhuanTrackerBlockRegion(state, reason);
+        if (roi == null) {
+            log.info("[five-ring-v2 combat-exit] tracker ROI baseline skipped: windowId={} reason={} roi=missing-or-invalid source={} phase={}",
+                    runtime == null ? null : runtime.getWindowId(), reason, state.source(), state.phase());
+            return state;
+        }
+        int[] captureRect = wuhuanTrackerRoiAbsoluteCaptureRect(runtime, roi, reason);
+        if (captureRect == null) {
+            return state;
+        }
+        BufferedImage image = tracker.captureToMemory(
+                reason, captureRect[0], captureRect[1], captureRect[2], captureRect[3]);
+        if (image == null) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI baseline capture failed: windowId={} reason={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) source={} phase={}",
+                    runtime == null ? null : runtime.getWindowId(), reason, roi.toShortText(),
+                    captureRect[0], captureRect[1], captureRect[2], captureRect[3], state.source(), state.phase());
+            return state;
+        }
+        long capturedAtMs = System.currentTimeMillis();
+        log.info("[five-ring-v2 combat-exit] tracker ROI baseline captured: windowId={} reason={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) size={}x{} source={} phase={}",
+                runtime == null ? null : runtime.getWindowId(), reason, roi.toShortText(),
+                captureRect[0], captureRect[1], captureRect[2], captureRect[3],
+                image.getWidth(), image.getHeight(), state.source(), state.phase());
+        return state.withWuhuanTrackerCombatBaseline(image, capturedAtMs, reason);
+    }
+
+    private FiveRingStepOutcome tryResolvePostCombatFromWuhuanTrackerRoiCandidate(TaskExecutionContext context,
+                                                                                  FiveRingPhaseContext state) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        OcrWindowRegion roi = validWuhuanTrackerBlockRegion(state, "post-combat-roi-compare");
+        BufferedImage baseline = state.wuhuanTrackerCombatBaselineImage();
+        if (runtime == null || roi == null || baseline == null) {
+            return null;
+        }
+
+        int[] captureRect = wuhuanTrackerRoiAbsoluteCaptureRect(
+                runtime, roi, "wuhuan-v2:combat-current-tracker-roi");
+        if (captureRect == null) {
+            return null;
+        }
+        BufferedImage current = tracker.captureToMemory(
+                "wuhuan-v2:combat-current-tracker-roi",
+                captureRect[0], captureRect[1], captureRect[2], captureRect[3]);
+        if (current == null) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI current capture failed: windowId={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) baselineAgeMs={} source={}",
+                    runtime.getWindowId(), roi.toShortText(),
+                    captureRect[0], captureRect[1], captureRect[2], captureRect[3],
+                    baselineAgeMs(state), state.source());
+            return null;
+        }
+
+        boolean changed = !ImageFinder.isMatch(baseline, current, WUHUAN_TRACKER_COMBAT_ROI_SAME_TOLERANCE);
+        log.info("[five-ring-v2 combat-exit] tracker ROI compare while IN_COMBAT: windowId={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) changedCandidate={} tolerance={} baselineAgeMs={} source={}",
+                runtime.getWindowId(), roi.toShortText(),
+                captureRect[0], captureRect[1], captureRect[2], captureRect[3], changed,
+                WUHUAN_TRACKER_COMBAT_ROI_SAME_TOLERANCE, baselineAgeMs(state), state.source());
+        if (!changed) {
+            current.flush();
+            return null;
+        }
+
+        FiveRingStepOutcome positiveEvidenceOutcome = tryResolvePostCombatPositiveEvidence(
+                context, state, runtime);
+        if (positiveEvidenceOutcome != null) {
+            current.flush();
+            return positiveEvidenceOutcome;
+        }
+
+        AutoCombatService.TickResult trustedStatus = autoCombatService.probeWindowCombatStateReadOnly(
+                context, "wuhuan-v2:tracker-roi-candidate-no-positive");
+        log.info("[five-ring-v2 combat-exit] tracker ROI candidate has no positive evidence; trusted battle status={} windowId={} roi={} source={}",
+                trustedStatus, runtime.getWindowId(), roi.toShortText(), state.source());
+        if (trustedStatus == AutoCombatService.TickResult.IN_COMBAT) {
+            FiveRingPhaseContext refreshed = state.withWuhuanTrackerCombatBaseline(
+                    current, System.currentTimeMillis(), "post-combat-roi-false-positive-refresh-baseline");
+            log.info("[five-ring-v2 combat-exit] tracker ROI candidate rejected by trusted IN_COMBAT; refresh baseline and keep waiting: windowId={} roi={} source={}",
+                    runtime.getWindowId(), roi.toShortText(), state.source());
+            return FiveRingStepOutcome.sharedState(
+                    refreshed,
+                    "tracker ROI changed but trusted battle state is still IN_COMBAT; baseline refreshed");
+        }
+
+        current.flush();
+        releaseWindowCombatStateAfterWuhuanEvidence(context,
+                "trusted-battle-state-not-in-combat",
+                "wuhuan-v2:tracker-roi-candidate-trusted-free");
+        return FiveRingStepOutcome.continueTo(
+                state.clearWuhuanTrackerCombatBaseline("post-combat-roi-trusted-free")
+                        .next(FiveRingPhase.SYNC_TASK_PANEL, "post-combat-roi-trusted-free-sync"),
+                "tracker ROI changed and trusted battle state is free; sync tracker");
+    }
+
+    private int[] wuhuanTrackerRoiAbsoluteCaptureRect(WindowRuntimeContext runtime,
+                                                       OcrWindowRegion windowRelativeRoi,
+                                                       String reason) {
+        if (runtime == null) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI capture skipped: reason={} windowRelativeRoi={} windowId=null",
+                    reason, windowRelativeRoi == null ? null : windowRelativeRoi.toShortText());
+            return null;
+        }
+        if (windowRelativeRoi == null) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI capture skipped: reason={} windowId={} roi=null",
+                    reason, runtime.getWindowId());
+            return null;
+        }
+        tracker.refreshWindowState();
+        int baseX = tracker.getWindowBaseX();
+        int baseY = tracker.getWindowBaseY();
+        String hwnd = runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle();
+        if (baseX < 0 || baseY < 0) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI capture skipped: reason={} windowId={} hwnd={} windowRelativeRoi={} base=({}, {})",
+                    reason, runtime.getWindowId(), hwnd, windowRelativeRoi.toShortText(), baseX, baseY);
+            return null;
+        }
+
+        int x1 = baseX + windowRelativeRoi.x1();
+        int y1 = baseY + windowRelativeRoi.y1();
+        int x2 = baseX + windowRelativeRoi.x2();
+        int y2 = baseY + windowRelativeRoi.y2();
+        if (x2 <= x1 || y2 <= y1) {
+            log.warn("[five-ring-v2 combat-exit] tracker ROI capture skipped: reason={} windowId={} hwnd={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) base=({}, {})",
+                    reason, runtime.getWindowId(), hwnd, windowRelativeRoi.toShortText(), x1, y1, x2, y2, baseX, baseY);
+            return null;
+        }
+
+        log.info("[five-ring-v2 combat-exit] tracker ROI capture rect resolved: reason={} windowId={} hwnd={} windowRelativeRoi={} absoluteRect=({}, {})-({}, {}) base=({}, {})",
+                reason, runtime.getWindowId(), hwnd, windowRelativeRoi.toShortText(), x1, y1, x2, y2, baseX, baseY);
+        return new int[]{x1, y1, x2, y2};
+    }
+
+    private FiveRingStepOutcome tryResolvePostCombatPositiveEvidence(TaskExecutionContext context,
+                                                                     FiveRingPhaseContext state,
+                                                                     WindowRuntimeContext runtime) {
+        PreparedDialogAction preparedTracker = freshPreparedWuhuanTrackerGreenAction(runtime);
+        FiveRingPhaseContext evidenceState = mergeWuhuanTrackerRegionsFromRuntimeCache(
+                state, runtime, "post-combat-roi-existing-prepared");
+        if (preparedTracker == null) {
+            TaskTrackerPanelPrepareResult freshPrepare = taskTrackerPanelService.prepareWuhuanPathingLink(
+                    "wuhuan-v2:post-combat-roi-positive-tracker-prepare", false);
+            evidenceState = mergeWuhuanTrackerRegionsFromPrepareResult(
+                    evidenceState, freshPrepare, "post-combat-roi-fresh-prepare");
+            if (freshPrepare != null && freshPrepare.hasAction()) {
+                PreparedDialogAction action = freshPrepare.getPreparedAction().toBuilder()
+                        .windowId(runtime.getWindowId())
+                        .hwnd(runtime.getNativeBinding().getNativeHandle())
+                        .source("wuhuan-v2:post-combat-roi-positive-tracker-prepare:"
+                                + freshPrepare.getPreparedAction().getSource())
+                        .build();
+                runtime.clearTaskTrackerPanelNegativeResult("post-combat ROI fresh positive tracker action prepared");
+                runtime.updatePreparedDialogAction(action);
+                preparedTracker = action;
+                log.info("[five-ring-v2 combat-exit] fresh tracker-link prepared after ROI candidate: windowId={} source={} click=({}, {}) trackerPanelRegion={} wuhuanBlockRegion={}",
+                        runtime.getWindowId(), action.getSource(), action.getAbsoluteX(), action.getAbsoluteY(),
+                        freshPrepare.getTrackerPanelRegion() == null ? null : freshPrepare.getTrackerPanelRegion().toShortText(),
+                        freshPrepare.getWuhuanTrackerBlockRegion() == null ? null : freshPrepare.getWuhuanTrackerBlockRegion().toShortText());
+            } else if (freshPrepare != null && freshPrepare.hasNegative()) {
+                TaskTrackerPanelNegativeResult negative = freshPrepare.getNegativeResult();
+                log.info("[five-ring-v2 combat-exit] fresh tracker prepare after ROI candidate produced negative; not positive evidence: windowId={} status={} reason={} trackerPanelRegion={} wuhuanBlockRegion={}",
+                        runtime.getWindowId(), negative.getStatus(), negative.getReason(),
+                        negative.getTrackerPanelRegion() == null ? null : negative.getTrackerPanelRegion().toShortText(),
+                        negative.getWuhuanTrackerBlockRegion() == null ? null : negative.getWuhuanTrackerBlockRegion().toShortText());
+            } else {
+                log.info("[five-ring-v2 combat-exit] fresh tracker prepare after ROI candidate produced no action; not positive evidence: windowId={} source={}",
+                        runtime.getWindowId(), state.source());
+            }
+        }
+        if (preparedTracker != null) {
+            log.info("[five-ring-v2 combat-exit] positive evidence after tracker ROI candidate: type=tracker-link windowId={} preparedSource={} matched={} click=({}, {}) verifiedAgeMs={}",
+                    runtime.getWindowId(), preparedTracker.getSource(), preparedTracker.getMatchedText(),
+                    preparedTracker.getAbsoluteX(), preparedTracker.getAbsoluteY(),
+                    Math.max(0L, System.currentTimeMillis() - preparedTracker.getLastVerifiedAtMs()));
+            releaseWindowCombatStateAfterWuhuanEvidence(context,
+                    "tracker-link",
+                    "wuhuan-v2:tracker-roi-positive-tracker-link");
+            TrackerPathingAttempt trackerAttempt = tryClickWuhuanTrackerLink(
+                    context,
+                    evidenceState.clearWuhuanTrackerCombatBaseline("post-combat-roi-positive-tracker-link"),
+                    "post-combat-roi-positive-tracker-link",
+                    true);
+            if (trackerAttempt.status == TrackerPathingStatus.PATHING_STARTED) {
+                return FiveRingStepOutcome.pathingStarted(
+                        trackerAttempt.state.withTaskAccepted("post-combat-roi-tracker-link-clicked")
+                                .resetUiErrorCount("post-combat-roi-tracker-link-success"),
+                        "post-combat tracker ROI positive evidence clicked tracker green link");
+            }
+            log.warn("[five-ring-v2 combat-exit] prepared tracker positive evidence vanished or click failed after release: status={} windowId={} source={}",
+                    trackerAttempt.status, runtime.getWindowId(), state.source());
+            return FiveRingStepOutcome.continueTo(
+                    trackerAttempt.state.next(FiveRingPhase.SYNC_TASK_PANEL,
+                            "post-combat-roi-tracker-evidence-click-not-started"),
+                    "post-combat tracker evidence did not start pathing; sync tracker");
+        }
+
+        FiveRingPhaseContext noBaselineState = evidenceState.clearWuhuanTrackerCombatBaseline(
+                "post-combat-roi-check-completion-dialog");
+        FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
+                noBaselineState,
+                "wuhuan-v2:tracker-roi-positive-completion",
+                "after tracker ROI candidate");
+        if (completionStory != null) {
+            log.info("[five-ring-v2 combat-exit] positive evidence after tracker ROI candidate: type=completion-dialog windowId={} source={}",
+                    runtime.getWindowId(), state.source());
+            releaseWindowCombatStateAfterWuhuanEvidence(context,
+                    "completion-dialog",
+                    "wuhuan-v2:tracker-roi-positive-completion");
+            return completionStory;
+        }
+
+        log.info("[five-ring-v2 combat-exit] positive evidence after tracker ROI candidate: type=none windowId={} source={}",
+                runtime.getWindowId(), state.source());
+        return null;
+    }
+
+    private PreparedDialogAction freshPreparedWuhuanTrackerGreenAction(WindowRuntimeContext runtime) {
+        if (runtime == null) {
+            return null;
+        }
+        PreparedDialogAction action = runtime.getPreparedDialogAction();
+        if (action == null || !action.matches(DialogOperation.TASK_TRACKER_PATHING, "wuhuan")) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        if (!action.verifiedWithin(now, PREPARED_TRACKER_ACTION_MAX_AGE_MS)) {
+            log.info("[five-ring-v2 combat-exit] prepared tracker action is not fresh enough for positive evidence: windowId={} source={} verifiedAgeMs={} maxAgeMs={} operation={} target={}",
+                    runtime.getWindowId(), action.getSource(),
+                    Math.max(0L, now - action.getLastVerifiedAtMs()), PREPARED_TRACKER_ACTION_MAX_AGE_MS,
+                    action.getOperation(), action.getTargetKeyword());
+            return null;
+        }
+        return action;
+    }
+
+    private FiveRingPhaseContext mergeWuhuanTrackerRegionsFromPrepareResult(FiveRingPhaseContext state,
+                                                                            TaskTrackerPanelPrepareResult result,
+                                                                            String source) {
+        if (result == null) {
+            return state;
+        }
+        return mergeWuhuanTrackerRegions(
+                state,
+                result.getTrackerPanelRegion(),
+                result.getWuhuanTrackerBlockRegion(),
+                source);
+    }
+
+    private FiveRingPhaseContext mergeWuhuanTrackerRegionsFromNegative(FiveRingPhaseContext state,
+                                                                       TaskTrackerPanelNegativeResult negative,
+                                                                       String source) {
+        if (negative == null) {
+            return state;
+        }
+        return mergeWuhuanTrackerRegions(
+                state,
+                negative.getTrackerPanelRegion(),
+                negative.getWuhuanTrackerBlockRegion(),
+                source);
+    }
+
+    private FiveRingPhaseContext mergeWuhuanTrackerRegionsFromRuntimeCache(FiveRingPhaseContext state,
+                                                                           WindowRuntimeContext runtime,
+                                                                           String source) {
+        TaskTrackerPanelCacheEntry cache = runtime == null ? null : runtime.getTaskTrackerPanelCache();
+        if (cache == null || !"wuhuan".equals(cache.getTaskCode())) {
+            log.info("[five-ring-v2 tracker] no 五环 tracker ROI cache to merge: source={} windowId={} reason={}",
+                    source, runtime == null ? null : runtime.getWindowId(),
+                    cache == null ? "no-cache" : "task-code-mismatch:" + cache.getTaskCode());
+            return state;
+        }
+        return mergeWuhuanTrackerRegions(
+                state,
+                cache.getTrackerPanelRegion(),
+                cache.getWuhuanTrackerBlockRegion(),
+                source + ":cache:" + cache.getSource());
+    }
+
+    private FiveRingPhaseContext mergeWuhuanTrackerRegions(FiveRingPhaseContext state,
+                                                           OcrWindowRegion trackerPanelRegion,
+                                                           OcrWindowRegion wuhuanTrackerBlockRegion,
+                                                           String source) {
+        if (state == null || wuhuanTrackerBlockRegion == null) {
+            log.info("[five-ring-v2 tracker] skip 五环 tracker ROI merge: source={} reason={} trackerPanelRegion={} wuhuanBlockRegion={}",
+                    source, state == null ? "state-null" : "wuhuan-block-missing",
+                    trackerPanelRegion == null ? null : trackerPanelRegion.toShortText(),
+                    wuhuanTrackerBlockRegion == null ? null : wuhuanTrackerBlockRegion.toShortText());
+            return state;
+        }
+        OcrWindowRegion block = wuhuanTrackerBlockRegion.clamp(GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT);
+        if (!block.isValid()) {
+            log.warn("[five-ring-v2 tracker] skip invalid 五环 tracker ROI merge: source={} raw={} clamped={}",
+                    source, wuhuanTrackerBlockRegion.toShortText(), block.toShortText());
+            return state;
+        }
+        OcrWindowRegion panel = trackerPanelRegion == null
+                ? state.trackerPanelRegion()
+                : trackerPanelRegion.clamp(GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT);
+        if (panel != null && !panel.isValid()) {
+            panel = state.trackerPanelRegion();
+        }
+        if (block.equals(state.wuhuanTrackerBlockRegion())
+                && (panel == null ? state.trackerPanelRegion() == null : panel.equals(state.trackerPanelRegion()))) {
+            return state;
+        }
+        log.info("[five-ring-v2 tracker] merge 五环 tracker ROI into phase state: source={} trackerPanelRegion={} wuhuanBlockRegion={} previousBlock={}",
+                source,
+                panel == null ? null : panel.toShortText(),
+                block.toShortText(),
+                state.wuhuanTrackerBlockRegion() == null ? null : state.wuhuanTrackerBlockRegion().toShortText());
+        return state.withTrackerRegions(panel, block, source);
+    }
+
+    private void releaseWindowCombatStateAfterWuhuanEvidence(TaskExecutionContext context,
+                                                            String evidenceType,
+                                                            String source) {
+        GameContext.ActionState before = gameContext.getCurrentActionState();
+        if (before == GameContext.ActionState.IN_COMBAT) {
+            gameContext.setCurrentActionState(GameContext.ActionState.FREE);
+            // Match the normal AutoCombatService combat-exit path before running post-combat first-aid.
+            playerStateService.resetCheckCounter();
+        }
+        log.info("{} [five-ring-v2 combat-exit] release/correct combat state after tracker ROI verification: evidenceType={} source={} before={} after={}",
+                context == null ? "[window=unknown]" : context.getLogPrefix(),
+                evidenceType, source, before, gameContext.getCurrentActionState());
+        PlayerStateService.FirstAidNoFocusProbeResult firstAidProbe =
+                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":post-combat");
+        if ((firstAidProbe == PlayerStateService.FirstAidNoFocusProbeResult.SUPPLY_NEEDED
+                || firstAidProbe == PlayerStateService.FirstAidNoFocusProbeResult.UNKNOWN)
+                && !playerStateService.performCachedFirstAidPlanNow(context)) {
+            log.warn("{} [five-ring-v2 combat-exit] no-focus first-aid skipped: cached plan unavailable evidenceType={} source={} precheck={}",
+                    context == null ? "[window=unknown]" : context.getLogPrefix(),
+                    evidenceType, source, firstAidProbe);
+        }
+        playerStateService.ensureSheYaoXiangActiveForLeaderTask(source + ":post-combat", context);
+    }
+
+    private OcrWindowRegion validWuhuanTrackerBlockRegion(FiveRingPhaseContext state, String reason) {
+        if (state == null || state.wuhuanTrackerBlockRegion() == null) {
+            return null;
+        }
+        OcrWindowRegion roi = state.wuhuanTrackerBlockRegion().clamp(GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT);
+        if (!roi.isValid()) {
+            log.warn("[five-ring-v2 combat-exit] invalid cached 五环 tracker ROI: reason={} raw={} clamped={}",
+                    reason, state.wuhuanTrackerBlockRegion().toShortText(), roi.toShortText());
+            return null;
+        }
+        return roi;
+    }
+
+    private long baselineAgeMs(FiveRingPhaseContext state) {
+        if (state == null || state.wuhuanTrackerCombatBaselineCapturedAtMs() <= 0L) {
+            return -1L;
+        }
+        return Math.max(0L, System.currentTimeMillis() - state.wuhuanTrackerCombatBaselineCapturedAtMs());
+    }
+
     private long pathingAgeMs(FiveRingPhaseContext state) {
         if (state == null || state.pathingStartedAtMs() <= 0L) {
             return Long.MAX_VALUE;
@@ -1966,7 +2605,9 @@ public class FiveRingTaskV2 implements GameTask {
         return Math.max(0L, System.currentTimeMillis() - state.pathingStartedAtMs());
     }
 
-    private boolean isUsablePathingSnapshot(FiveRingPhaseContext state, WindowPathingSnapshot snapshot) {
+    private boolean isUsablePathingSnapshot(FiveRingPhaseContext state,
+                                            WindowPathingSnapshot snapshot,
+                                            WindowRuntimeContext runtime) {
         if (state == null || !state.pathingIntentExpected() || snapshot == null || snapshot.getIntent() == null) {
             return false;
         }
@@ -1977,8 +2618,15 @@ public class FiveRingTaskV2 implements GameTask {
         if (!isExpectedPathingTarget(state.pathingIntentSource(), intent)) {
             return false;
         }
+        /*
+         * The created-at grace guard only rejects snapshots from a PREVIOUS navigation of the same
+         * source. When NavigationService reused the already-active intent, the phase re-stamped
+         * pathingStartedAtMs but the intent createdAt stayed old; that snapshot still describes the
+         * current navigation and its terminal (ARRIVED/STOPPED_AWAY) must stay consumable.
+         */
         if (state.pathingStartedAtMs() > 0L
-                && intent.getCreatedAtMs() + PATHING_INTENT_CREATED_AT_GRACE_MS < state.pathingStartedAtMs()) {
+                && intent.getCreatedAtMs() + PATHING_INTENT_CREATED_AT_GRACE_MS < state.pathingStartedAtMs()
+                && !isCurrentActivePathingIntent(runtime, intent)) {
             return false;
         }
         WindowPathingState observed = snapshot.getState();
@@ -1994,6 +2642,14 @@ public class FiveRingTaskV2 implements GameTask {
         return snapshot.isProbeInProgress() || snapshotAgeMs <= OBSERVER_SNAPSHOT_MAX_AGE_MS;
     }
 
+    private boolean isCurrentActivePathingIntent(WindowRuntimeContext runtime, WindowPathingIntent intent) {
+        if (runtime == null || intent == null || intent.getIntentId() == null) {
+            return false;
+        }
+        WindowPathingIntent active = runtime.getActivePathingIntent().orElse(null);
+        return active != null && intent.getIntentId().equals(active.getIntentId());
+    }
+
     private boolean isExpectedPathingSource(String expectedPrefix, String actualSource) {
         if (expectedPrefix == null || expectedPrefix.isBlank()
                 || actualSource == null || actualSource.isBlank()) {
@@ -2006,8 +2662,8 @@ public class FiveRingTaskV2 implements GameTask {
         if (intent == null || expectedSource == null) {
             return false;
         }
-        if (expectedSource.startsWith("wuhuan-v2:tracker-green-click:")
-                || expectedSource.startsWith("wuhuan-v2:prepared-tracker-panel-click:")) {
+        if (expectedSource.startsWith(TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX)
+                || expectedSource.startsWith(PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX)) {
             return intent.getType() == WindowPathingIntentType.UNTARGETED_TRACKER
                     && intent.getTargetMapName() == null
                     && intent.getTargetX() == null
@@ -2058,10 +2714,13 @@ public class FiveRingTaskV2 implements GameTask {
     private FiveRingStepOutcome handleDialog(TaskExecutionContext context, FiveRingPhaseContext state) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
 
-        FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
-                state, "wuhuan-v2:handle-dialog-finished-story", "after battle");
-        if (completionStory != null) {
-            return completionStory;
+        boolean giveItemMap = isGiveItemMap(currentObservedMapName());
+        if (!giveItemMap) {
+            FiveRingStepOutcome completionStory = resolveFiveRingCompletionStoryOutcome(
+                    state, "wuhuan-v2:handle-dialog-finished-story", "after battle");
+            if (completionStory != null) {
+                return completionStory;
+            }
         }
 
         DialogResultStatus giveResult = tryGiveItemAndTriggerPathingIfPossible(context, state);
@@ -2072,15 +2731,12 @@ public class FiveRingTaskV2 implements GameTask {
                     "gave shoe; read tracker for next green link");
         }
         if (giveResult == DialogResultStatus.STORY_IGNORED) {
-            FiveRingStepOutcome storyIgnoredCompletion = resolveFiveRingCompletionStoryOutcome(
-                    state, "wuhuan-v2:handle-dialog-story-ignored-completion", "after ignored story");
-            if (storyIgnoredCompletion != null) {
-                return storyIgnoredCompletion;
-            }
-            if (isFiveRingDailyLimitStoryVisible("wuhuan-v2:handle-dialog-story-ignored-completion")) {
-                return FiveRingStepOutcome.finishedTerminal(
-                        state,
-                        "five-ring daily-limit story visible after ignored story");
+            if (!giveItemMap) {
+                FiveRingStepOutcome storyIgnoredCompletion = resolveFiveRingCompletionStoryOutcome(
+                        state, "wuhuan-v2:handle-dialog-story-ignored-completion", "after ignored story");
+                if (storyIgnoredCompletion != null) {
+                    return storyIgnoredCompletion;
+                }
             }
             /*
              * Story text can appear during the transition into combat. The window observer owns the
@@ -2135,6 +2791,10 @@ public class FiveRingTaskV2 implements GameTask {
                     state.withCombatObservedSincePathing("window-combat-active-before-tracker-sync"),
                     "window combat state active; skip task panel sync");
         }
+        FiveRingStepOutcome stoppedAwayRecovery = resolveStoppedAwayTrackerIntentBeforeSync(context, state);
+        if (stoppedAwayRecovery != null) {
+            return stoppedAwayRecovery;
+        }
         TrackerPathingAttempt trackerAttempt = tryClickWuhuanTrackerLink(context, state, "sync", true);
         if (trackerAttempt.status == TrackerPathingStatus.PATHING_STARTED) {
             log.info("[five-ring-v2 tracker] 五环 tracker green link clicked");
@@ -2143,17 +2803,43 @@ public class FiveRingTaskV2 implements GameTask {
                             .resetUiErrorCount("sync-success"),
                     "tracker green link clicked");
         }
-        if (trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_GREEN
-                || trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_LINK) {
+        WuhuanTrackerTitleGate titleGate = readWuhuanTrackerTitleGate(
+                trackerAttempt.state, "sync:" + trackerAttempt.status);
+        FiveRingPhaseContext titleState = titleGate.state();
+        if (trackerAttempt.status == TrackerPathingStatus.RUNNER_PREPARED_NOT_READY) {
+            /*
+             * Runner not-ready is only a scheduling fact. The business fact is the left 五环 title:
+             * title visible means the task still exists and we wait for/click the tracker; title
+             * missing means the tracker is gone and the returned-dialog fallback may run.
+             */
+            if (!titleGate.titleVisible() && allowFinished) {
+                FiveRingStepOutcome acceptReturnedDialog = tryHandleAcceptReturnedDialogAfterTrackerMiss(
+                        titleState, "runner-prepared-not-ready-title-miss");
+                if (acceptReturnedDialog != null) {
+                    log.info("[five-ring-v2 tracker] runner prepared tracker action not ready but returned dialog handled: "
+                                    + "source={} next={} message={}",
+                            state.source(), acceptReturnedDialog.nextState().phase(), acceptReturnedDialog.message());
+                    return acceptReturnedDialog;
+                }
+            } else {
+                log.info("[five-ring-v2 tracker] skip returned-dialog fallback because 五环 title is still visible "
+                                + "or fallback is disabled: source={} allowFinished={} titleVisible={} taskAccepted={}",
+                        state.source(), allowFinished, titleGate.titleVisible(), titleState.taskAccepted());
+            }
+            log.info("[five-ring-v2 tracker] runner prepared tracker action not ready; wait for Runner prepared action: "
+                            + "allowFinished={} titleVisible={} taskAccepted={}",
+                    allowFinished, titleGate.titleVisible(), titleState.taskAccepted());
+            return FiveRingStepOutcome.sharedState(
+                    titleState.retrySamePhase("runner-prepared-tracker-action-not-ready"),
+                    "runner prepared tracker action not ready; retry");
+        }
+        if (titleGate.titleVisible()
+                && (trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_GREEN
+                || trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_LINK)) {
             String reason = trackerAttempt.status == TrackerPathingStatus.TASK_FOUND_NO_GREEN
                     ? "tracker-no-green"
                     : "tracker-no-coordinate-link";
-            FiveRingStepOutcome acceptReturnedDialog = tryHandleAcceptReturnedDialogAfterTrackerMiss(
-                    state, reason);
-            if (acceptReturnedDialog != null) {
-                return acceptReturnedDialog;
-            }
-            FiveRingPhaseContext errorState = trackerAttempt.state.increaseUiErrorCount(reason);
+            FiveRingPhaseContext errorState = titleState.increaseUiErrorCount(reason);
             log.warn("[five-ring-v2 tracker] 五环 tracker block found but no usable green pathing link: status={} errorCount={}",
                     trackerAttempt.status, errorState.uiErrorCount());
             if (errorState.uiErrorCount() >= MAX_UI_ERROR_BEFORE_CLEANUP) {
@@ -2170,22 +2856,28 @@ public class FiveRingTaskV2 implements GameTask {
                     "tracker has 五环 but no usable green pathing link; retry");
         }
         if (trackerAttempt.status == TrackerPathingStatus.CLICK_FAILED) {
-            FiveRingPhaseContext errorState = trackerAttempt.state.increaseUiErrorCount("tracker-click-failed");
+            FiveRingPhaseContext errorState = titleState.increaseUiErrorCount("tracker-click-failed");
             log.warn("[five-ring-v2 tracker] 五环 tracker green click failed: errorCount={}",
                     errorState.uiErrorCount());
             return FiveRingStepOutcome.sharedState(
                     errorState.next(FiveRingPhase.SYNC_TASK_PANEL, "tracker-click-failed-retry"),
                     "tracker green click failed; retry");
         }
-        FiveRingStepOutcome acceptReturnedDialog = tryHandleAcceptReturnedDialogAfterTrackerMiss(
-                state, "tracker-not-found");
-        if (acceptReturnedDialog != null) {
-            return acceptReturnedDialog;
+        if (allowFinished && !titleGate.titleVisible()) {
+            FiveRingStepOutcome acceptReturnedDialog = tryHandleAcceptReturnedDialogAfterTrackerMiss(
+                    titleState, "tracker-title-miss");
+            if (acceptReturnedDialog != null) {
+                return acceptReturnedDialog;
+            }
+        } else {
+            log.info("[five-ring-v2 tracker] skip returned-dialog fallback after tracker miss because 五环 title is visible "
+                            + "or fallback is disabled: allowFinished={} titleVisible={} taskAccepted={} source={}",
+                    allowFinished, titleGate.titleVisible(), titleState.taskAccepted(), state.source());
         }
-        FiveRingPhaseContext errorState = trackerAttempt.state.increaseUiErrorCount("tracker-not-found");
+        FiveRingPhaseContext errorState = titleState.increaseUiErrorCount("tracker-not-found");
         log.warn("[five-ring-v2 tracker] 五环 tracker block not found; retry left tracker without opening legacy task panel: "
                         + "allowFinished={} taskAccepted={} errorCount={}",
-                allowFinished, state.taskAccepted(), errorState.uiErrorCount());
+                allowFinished, titleState.taskAccepted(), errorState.uiErrorCount());
         if (errorState.uiErrorCount() >= MAX_TRACKER_NOT_FOUND_BEFORE_FAIL) {
             /*
              * 五环 V2 treats the left task tracker as the source of truth after startup/accept.
@@ -2194,7 +2886,7 @@ public class FiveRingTaskV2 implements GameTask {
              */
             log.error("[five-ring-v2 tracker] tracker missing after {} attempts; fail instead of returning to accept task: "
                             + "phase={} source={} taskAccepted={} allowFinished={}",
-                    errorState.uiErrorCount(), state.phase(), state.source(), state.taskAccepted(), allowFinished);
+                    errorState.uiErrorCount(), state.phase(), state.source(), titleState.taskAccepted(), allowFinished);
             return FiveRingStepOutcome.failed(
                     errorState,
                     "五环左侧任务追踪找不到，已超过重试上限；请检查任务追踪面板是否被遮挡或任务是否丢失");
@@ -2212,6 +2904,138 @@ public class FiveRingTaskV2 implements GameTask {
         return FiveRingStepOutcome.sharedState(
                 errorState.next(FiveRingPhase.SYNC_TASK_PANEL, "tracker-retry-later"),
                 "tracker task not found; retry");
+    }
+
+    private WuhuanTrackerTitleGate readWuhuanTrackerTitleGate(FiveRingPhaseContext state, String reason) {
+        TaskTrackerPanelReadResult titleRead = taskTrackerPanelService.readWuhuanTrackerTitle(
+                "wuhuan-v2:title-gate:" + safeFileToken(reason), true);
+        if (titleRead.isFound()) {
+            log.info("[five-ring-v2 tracker] 五环 title gate hit: reason={} title={} taskAccepted={}",
+                    reason,
+                    titleRead.getTitleTemplate() == null ? null : titleRead.getTitleTemplate().getDisplayName(),
+                    state != null && state.taskAccepted());
+            FiveRingPhaseContext acceptedState = state == null
+                    ? state
+                    : state.withTaskAccepted("wuhuan-title-visible:" + reason);
+            return new WuhuanTrackerTitleGate(true, acceptedState);
+        }
+        log.info("[five-ring-v2 tracker] 五环 title gate miss: reason={} taskAccepted={}",
+                reason, state != null && state.taskAccepted());
+        FiveRingPhaseContext missingState = state == null
+                ? state
+                : state.clearWuhuanTrackerBlockRegion("wuhuan-title-miss:" + reason);
+        return new WuhuanTrackerTitleGate(false, missingState);
+    }
+
+    private FiveRingStepOutcome resolveStoppedAwayTrackerIntentBeforeSync(TaskExecutionContext context,
+                                                                          FiveRingPhaseContext state) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
+        if (!isStoppedAwayWuhuanTrackerPathing(snapshot)) {
+            return null;
+        }
+        WindowPathingIntent intent = snapshot.getIntent();
+        long intentAgeMs = Math.max(0L, System.currentTimeMillis() - intent.getCreatedAtMs());
+        long snapshotAgeMs = Math.max(0L, System.currentTimeMillis() - snapshot.getUpdatedAtMs());
+        log.info("[five-ring-v2 tracker] stopped-away tracker intent before sync: windowId={} intentId={} source={} pathingState={} current={}({}, {}) intentAgeMs={} snapshotAgeMs={} reason=check-business-dialog-before-clear",
+                runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                intentAgeMs, snapshotAgeMs);
+
+        if (!isGiveItemMap(snapshot.getCurrentMapName())) {
+            boolean cleared = clearStoppedAwayTrackerIntent(runtime,
+                    "stopped-away before sync outside give-item map; tracker sync first");
+            log.info("[five-ring-v2 tracker] stopped-away tracker intent outside give-item map before sync; skip business dialog and continue tracker prepare: windowId={} intentId={} source={} current={}({}, {}) giveMap={} cleared={}",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(),
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
+                    GIVE_ITEM_MAP_NAME, cleared);
+            return null;
+        }
+
+        DialogResultStatus giveResult = tryGiveItemAndTriggerPathingIfPossible(context, state);
+        TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
+        if (giveResult == DialogResultStatus.GIVE_ITEM_DONE) {
+            boolean cleared = clearStoppedAwayTrackerIntent(runtime, "give-item-done before tracker sync");
+            log.info("[five-ring-v2 tracker] stopped-away tracker intent business handled by give-item: windowId={} intentId={} source={} pathingState={} giveResult={} cleared={} reason=clear-after-give",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                    giveResult, cleared);
+            return FiveRingStepOutcome.continueTo(
+                    state.next(FiveRingPhase.SYNC_TASK_PANEL, "stopped-away-give-item-done-read-tracker"),
+                    "gave shoe after stopped-away tracker intent; read tracker");
+        }
+
+        if (giveResult == DialogResultStatus.GIVE_OPTION_NOT_FOUND) {
+            log.warn("[five-ring-v2 tracker] stopped-away tracker intent sees option dialog without give entry; run original cleanup before tracker retry: windowId={} intentId={} source={} pathingState={} giveResult={} reason=cleanup-before-clear",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(), giveResult);
+            cleanupRetryableDialog("wuhuan-v2:stopped-away-giveOptionNotFound");
+            boolean cleared = clearStoppedAwayTrackerIntent(runtime,
+                    "give option not found cleanup done; allow runner tracker prepare");
+            log.warn("[five-ring-v2 tracker] stopped-away tracker intent retry after give-option cleanup: windowId={} intentId={} source={} pathingState={} giveResult={} cleared={} reason=give-option-not-found-retry-clear",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                    giveResult, cleared);
+            return FiveRingStepOutcome.sharedState(
+                    state.next(FiveRingPhase.SYNC_TASK_PANEL, "stopped-away-give-option-not-found"),
+                    "give option not found after stopped-away tracker intent; cleanup done and tracker intent cleared");
+        }
+        if (giveResult == DialogResultStatus.INTERRUPTED) {
+            log.info("[five-ring-v2 tracker] stopped-away tracker intent give-item interrupted; keep intent and stop: windowId={} intentId={} source={} pathingState={} giveResult={}",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(), giveResult);
+            return FiveRingStepOutcome.stopped(state, "give item interrupted after stopped-away tracker intent");
+        }
+        if (giveResult != DialogResultStatus.NO_DIALOG && giveResult != DialogResultStatus.STORY_IGNORED) {
+            FiveRingPhaseContext errorState = state.increaseUiErrorCount("stopped-away-give-item-failed");
+            log.warn("[five-ring-v2 tracker] stopped-away tracker intent preserves give-item failure semantics: windowId={} intentId={} source={} pathingState={} giveResult={} errorCount={} max={}",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                    giveResult, errorState.uiErrorCount(), MAX_GIVE_ITEM_FAILURE_BEFORE_FAIL);
+            if (errorState.uiErrorCount() >= MAX_GIVE_ITEM_FAILURE_BEFORE_FAIL) {
+                return FiveRingStepOutcome.failed(
+                        errorState,
+                        "give item failed too many times after stopped-away tracker intent; stop five-ring round");
+            }
+            boolean cleared = clearStoppedAwayTrackerIntent(runtime,
+                    "retryable give item failure below fail limit; allow runner tracker prepare");
+            log.warn("[five-ring-v2 tracker] stopped-away tracker intent retry after give-item failure: windowId={} intentId={} source={} pathingState={} giveResult={} errorCount={} max={} cleared={} reason=retryable-give-item-failure-clear",
+                    runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                    giveResult, errorState.uiErrorCount(), MAX_GIVE_ITEM_FAILURE_BEFORE_FAIL, cleared);
+            return FiveRingStepOutcome.sharedState(
+                    errorState.next(FiveRingPhase.SYNC_TASK_PANEL, "stopped-away-give-item-failed"),
+                    "give item failed after stopped-away tracker intent; tracker intent cleared before resync");
+        }
+
+        boolean cleared = clearStoppedAwayTrackerIntent(runtime,
+                "no give dialog before tracker sync; allow runner tracker prepare");
+        log.info("[five-ring-v2 tracker] stopped-away tracker intent recovery decision: windowId={} intentId={} source={} pathingState={} giveResult={} cleared={} reason=no-business-dialog-allow-runner-tracker-prepare",
+                runtime.getWindowId(), intent.getIntentId(), intent.getSource(), snapshot.getState(),
+                giveResult, cleared);
+        if (cleared) {
+            return FiveRingStepOutcome.sharedState(
+                    state.retrySamePhase("stopped-away-tracker-intent-cleared"),
+                    "stopped-away tracker intent cleared; wait for Runner tracker prepare");
+        }
+        return null;
+    }
+
+    private boolean isStoppedAwayWuhuanTrackerPathing(WindowPathingSnapshot snapshot) {
+        if (snapshot == null || snapshot.getState() != WindowPathingState.STOPPED_AWAY
+                || snapshot.getIntent() == null) {
+            return false;
+        }
+        WindowPathingIntent intent = snapshot.getIntent();
+        return intent.getType() == WindowPathingIntentType.UNTARGETED_TRACKER
+                && isWuhuanTrackerPathingSource(intent.getSource());
+    }
+
+    private boolean isWuhuanTrackerPathingSource(String source) {
+        return source != null
+                && (source.startsWith(PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX)
+                || source.startsWith(TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX));
+    }
+
+    private boolean clearStoppedAwayTrackerIntent(WindowRuntimeContext runtime, String reason) {
+        return runtime != null && runtime.clearPathingSignalIfSourcePrefixesAndState(
+                List.of(PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX, TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX),
+                WindowPathingState.STOPPED_AWAY,
+                "five-ring stopped-away tracker intent: " + reason);
     }
 
     private FiveRingStepOutcome tryHandleAcceptReturnedDialogAfterTrackerMiss(FiveRingPhaseContext state,
@@ -2242,8 +3066,16 @@ public class FiveRingTaskV2 implements GameTask {
     private FiveRingStepOutcome tryAcceptInitialTaskFromCurrentScreen(TaskExecutionContext context,
                                                                       FiveRingPhaseContext state,
                                                                       String reason) {
+        return tryAcceptInitialTaskFromCurrentScreen(context, state, reason,
+                isNearAcceptNpc(syncAcceptNpcSetupPosition()));
+    }
+
+    private FiveRingStepOutcome tryAcceptInitialTaskFromCurrentScreen(TaskExecutionContext context,
+                                                                      FiveRingPhaseContext state,
+                                                                      String reason,
+                                                                      boolean nearAcceptNpc) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
-        if (!isNearAcceptNpc()) {
+        if (!nearAcceptNpc) {
             log.info("[five-ring-v2 accept] current option dialog is not checked as accept dialog before near NPC: reason={}",
                     reason);
             return null;
@@ -2280,8 +3112,7 @@ public class FiveRingTaskV2 implements GameTask {
         if (acceptResult == AcceptDialogPathingResult.TASK_ACCEPTED_NEEDS_SYNC) {
             log.info("[five-ring-v2 accept] current screen accept clicked; read tracker next");
             return FiveRingStepOutcome.continueTo(
-                    state.withTaskAccepted("current-screen-accept-clicked")
-                            .next(FiveRingPhase.SYNC_TASK_PANEL, "current-screen-accept-pathing-unconfirmed"),
+                    state.next(FiveRingPhase.SYNC_TASK_PANEL, "current-screen-accept-pathing-unconfirmed"),
                     "current-screen accept clicked; read tracker instead of accepting again");
         }
         if (acceptResult == AcceptDialogPathingResult.TASK_ALREADY_FINISHED) {
@@ -2300,8 +3131,7 @@ public class FiveRingTaskV2 implements GameTask {
                         alreadyTaskResult.getAbsoluteX(), alreadyTaskResult.getAbsoluteY());
                 cleanupRetryableDialog("wuhuan-v2:current-screen-already-has-task");
                 return FiveRingStepOutcome.sharedState(
-                        state.withTaskAccepted("current-screen-already-has-task")
-                                .next(FiveRingPhase.SYNC_TASK_PANEL, "current-screen-already-has-task"),
+                        state.next(FiveRingPhase.SYNC_TASK_PANEL, "current-screen-already-has-task"),
                         "already-has-task dialog visible; read tracker");
             }
             log.info("[five-ring-v2 accept] current option is neither accept nor already-has-task; clean unexpected option dialog: reason={}",
@@ -2355,8 +3185,9 @@ public class FiveRingTaskV2 implements GameTask {
             return AcceptDialogPathingResult.TASK_ALREADY_FINISHED;
         }
         /*
-         * Once the 五环 accept option was clicked, the character already owns a task. Do not loop
-         * back into ACCEPT_TASK and click 云游大师 again; hand control to the left tracker reader.
+         * Clicking the 五环 accept option only hands control to tracker sync. The round is not
+         * confirmed until the left 五环 tracker title is visible. Runner not-ready / no-green /
+         * no-link statuses are scheduling/click facts, not task-existence facts.
          */
         return acceptVerified.get()
                 ? AcceptDialogPathingResult.TASK_ACCEPTED_NEEDS_SYNC
@@ -2388,12 +3219,32 @@ public class FiveRingTaskV2 implements GameTask {
 
     private DialogResultStatus tryGiveItemAndTriggerPathingIfPossible(TaskExecutionContext context,
                                                                       FiveRingPhaseContext state) {
+        String currentMap = currentObservedMapName();
+        if (!isGiveItemMap(currentMap)) {
+            log.info("[five-ring-v2] skip give-item dialog handling outside give-item map: currentMap={} giveMap={} phase={} source={}",
+                    currentMap, GIVE_ITEM_MAP_NAME, state.phase(), state.source());
+            return DialogResultStatus.NO_DIALOG;
+        }
         DialogResultStatus result = dialogService.handleDialog(DialogHandleRequest.giveItemIfAvailable(
                 "wuhuan-v2:give-item", KEY_ITEM_NAME, state.shoeBagIndex())).getStatus();
         if (result == DialogResultStatus.GIVE_ITEM_DONE) {
             log.info("[five-ring-v2] give item done; next phase will read left tracker instead of P2/P1");
         }
         return result;
+    }
+
+    private String currentObservedMapName() {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowPathingSnapshot snapshot = runtime == null ? null : runtime.getPathingSnapshot();
+        if (snapshot != null && snapshot.getCurrentMapName() != null && !snapshot.getCurrentMapName().isBlank()) {
+            return snapshot.getCurrentMapName();
+        }
+        PlayerCharacter me = gameContext.getMe();
+        return me == null ? null : me.getCurrentMapName();
+    }
+
+    private boolean isGiveItemMap(String mapName) {
+        return GIVE_ITEM_MAP_NAME.equals(mapName);
     }
 
     private FiveRingStepOutcome resolveFiveRingCompletionStoryOutcome(FiveRingPhaseContext state,
@@ -2470,43 +3321,49 @@ public class FiveRingTaskV2 implements GameTask {
                                                             String source,
                                                             boolean allowAnchorSearch) {
         TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         if (clickPreparedWuhuanTrackerGreen(context, source)) {
+            FiveRingPhaseContext trackerState = mergeWuhuanTrackerRegionsFromRuntimeCache(
+                    state, runtime, "prepared-tracker-link-clicked:" + source);
             return new TrackerPathingAttempt(
                     TrackerPathingStatus.PATHING_STARTED,
-                    state.withTaskAccepted("prepared-tracker-link-clicked")
+                    trackerState.withTaskAccepted("prepared-tracker-link-clicked")
                             .next(FiveRingPhase.WAIT_PATHING, "prepared-tracker-pathing-started")
                             .withNewWatcherPathingStarted(
                                     "prepared-tracker-pathing-started",
                                     trackerPathingIntentSource(source, true)));
         }
-
-        Point click = taskTrackerPanelService.findWuhuanNextGreenClickPoint();
-        if (click == null) {
-            log.warn("[five-ring-v2 tracker] 五环 tracker panel did not resolve next green click point: source={} allowAnchorSearch={}",
-                    source, allowAnchorSearch);
-            return new TrackerPathingAttempt(TrackerPathingStatus.TASK_NOT_FOUND, state);
+        if (runtime != null) {
+            TaskTrackerPanelNegativeResult negative = runtime.consumeFreshTaskTrackerPanelNegativeResult(
+                    TaskType.WUHuan_V2, "wuhuan", TRACKER_NEGATIVE_MAX_AGE_MS,
+                    "wuhuan-v2:tracker-negative:" + source,
+                    DialogOperation.TASK_TRACKER_PATHING, "wuhuan",
+                    PREPARED_TRACKER_ACTION_MAX_AGE_MS);
+            if (negative != null) {
+                TrackerPathingStatus status = mapTrackerNegativeStatus(negative);
+                FiveRingPhaseContext trackerState = mergeWuhuanTrackerRegionsFromNegative(
+                        state, negative, "runner-tracker-negative:" + source);
+                log.info("[five-ring-v2 tracker] consume fresh Runner tracker negative: source={} status={} mappedStatus={} reason={} sequence={} trackerPanelRegion={} wuhuanBlockRegion={}",
+                        source, negative.getStatus(), status, negative.getReason(), negative.getSequence(),
+                        negative.getTrackerPanelRegion() == null ? null : negative.getTrackerPanelRegion().toShortText(),
+                        negative.getWuhuanTrackerBlockRegion() == null ? null : negative.getWuhuanTrackerBlockRegion().toShortText());
+                return new TrackerPathingAttempt(status, trackerState);
+            }
         }
+        log.info("[five-ring-v2 tracker] no fresh Runner prepared tracker action yet; source={} allowAnchorSearch={}",
+                source, allowAnchorSearch);
+        return new TrackerPathingAttempt(TrackerPathingStatus.RUNNER_PREPARED_NOT_READY, state);
+    }
 
-        TaskCheckpoint.throwIfStopRequested(context, "Five-ring V2 task interrupted");
-        log.info("[five-ring-v2 tracker] click tracker panel green link: source={} click=({}, {})",
-                source, click.x, click.y);
-        boolean clicked = inputSequences.submitAndWait("wuhuan-v2:tracker-panel-click:" + safeFileToken(source), List.of(
-                InputAction.moveMouse(click.x, click.y),
-                InputAction.sleep(120),
-                InputAction.clickLeft(click.x, click.y, 300)
-        ));
-        if (clicked) {
-            String intentSource = trackerPathingIntentSource(source, false);
-            gameStateUtil.recordMovementIntent(intentSource);
-            registerTrackerPathingIntent(intentSource);
-            return new TrackerPathingAttempt(
-                    TrackerPathingStatus.PATHING_STARTED,
-                    state.next(FiveRingPhase.WAIT_PATHING, "tracker-pathing-started")
-                            .withNewWatcherPathingStarted(
-                                    "tracker-pathing-started",
-                                    intentSource));
+    private TrackerPathingStatus mapTrackerNegativeStatus(TaskTrackerPanelNegativeResult negative) {
+        if (negative == null || negative.getStatus() == null) {
+            return TrackerPathingStatus.RUNNER_PREPARED_NOT_READY;
         }
-        return new TrackerPathingAttempt(TrackerPathingStatus.CLICK_FAILED, state);
+        return switch (negative.getStatus()) {
+            case TASK_FOUND_NO_GREEN -> TrackerPathingStatus.TASK_FOUND_NO_GREEN;
+            case TASK_FOUND_NO_LINK -> TrackerPathingStatus.TASK_FOUND_NO_LINK;
+            case TASK_NOT_FOUND -> TrackerPathingStatus.TASK_NOT_FOUND;
+        };
     }
 
     private boolean clickPreparedWuhuanTrackerGreen(TaskExecutionContext context, String source) {
@@ -2547,7 +3404,7 @@ public class FiveRingTaskV2 implements GameTask {
     }
 
     private String trackerPathingIntentSource(String source, boolean prepared) {
-        return (prepared ? "wuhuan-v2:prepared-tracker-panel-click:" : "wuhuan-v2:tracker-green-click:")
+        return (prepared ? PREPARED_TRACKER_PANEL_PATHING_SOURCE_PREFIX : TRACKER_GREEN_CLICK_PATHING_SOURCE_PREFIX)
                 + safeFileToken(source);
     }
 
@@ -2652,13 +3509,20 @@ public class FiveRingTaskV2 implements GameTask {
                 .build();
     }
 
+    private record AcceptSetupPositionPrewarm(LocationInfo location, long capturedAtMs, String source) {
+    }
+
     private enum TrackerPathingStatus {
         PATHING_STARTED,
+        RUNNER_PREPARED_NOT_READY,
         TASK_FOUND_NO_GREEN,
         TASK_FOUND_NO_LINK,
         TASK_NOT_FOUND,
         TRACKER_UNAVAILABLE,
         CLICK_FAILED
+    }
+
+    private record WuhuanTrackerTitleGate(boolean titleVisible, FiveRingPhaseContext state) {
     }
 
     private static final class TrackerPathingAttempt {

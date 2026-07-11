@@ -12,14 +12,21 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.TeamTaskProperties;
+import com.bot.dhxy.cloud.task.ImageProcessorService;
+import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
+import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
+import com.bot.dhxy.cloud.task.ImageProcessorService.TeamTooltipTextStats;
+import com.bot.dhxy.cloud.task.TeamRoleTooltipCloudDecision;
+import com.bot.dhxy.cloud.task.TeamRoleTooltipCloudDecisionService;
+import com.bot.dhxy.cloud.task.TeamRoleTooltipCloudRequest;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.tools.ImagePreprocessor;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
@@ -30,15 +37,23 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -70,6 +85,7 @@ public class TeamRoleDetectionService {
     private static final int TOOLTIP_OCR_FULL_RETRY_LIMIT = 2;
     private static final int TEAM_TOOLTIP_RETRY_DELAY_MS = 1000;
     private static final int MIN_TOOLTIP_ID_DIGITS = 4;
+    private static final int BATCH_TOOLTIP_DECISION_CACHE_MAX_ENTRIES = 512;
     private static final Pattern WINDOW_TITLE_ID_PATTERN = Pattern.compile("ID\\D{0,4}(\\d+)");
     private static final Pattern DIGIT_SEQUENCE_PATTERN = Pattern.compile("\\d+");
 
@@ -84,6 +100,10 @@ public class TeamRoleDetectionService {
     private final WindowFocusService windowFocusService;
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final ImageProcessorService imageProcessorService;
+    private final TeamRoleTooltipCloudDecisionService teamRoleTooltipCloudDecisionService;
+    private final Map<String, CompletableFuture<TeamRoleTooltipCloudDecision>> batchTooltipDecisionByHash =
+            new ConcurrentHashMap<>();
 
     /**
      * Create the team-role detector.
@@ -100,6 +120,11 @@ public class TeamRoleDetectionService {
      * @param windowTaskContextHolder current window binding lookup.
      * @param windowFocusService best-effort foreground helper for probe phases that require mouse input.
      * @param windowScopedTempPath per-window debug image path resolver.
+     * @param bindingRefreshService live HWND/title refresh helper used before reading current title.
+     * @param imageProcessorService unified cloud image-processor facade for tooltip text metrics,
+     *                              purple washing, and status-strip stddev.
+     * @param teamRoleTooltipCloudDecisionService cloud business-vision endpoint for classifying the
+     *                                            hovered team tooltip by leader ID.
      */
     public TeamRoleDetectionService(TeamTaskProperties teamTaskProperties,
                                     BotProperties botProperties,
@@ -111,7 +136,9 @@ public class TeamRoleDetectionService {
                                     WindowTaskContextHolder windowTaskContextHolder,
                                     WindowFocusService windowFocusService,
                                     WindowScopedTempPath windowScopedTempPath,
-                                    WindowNativeBindingRefreshService bindingRefreshService) {
+                                    WindowNativeBindingRefreshService bindingRefreshService,
+                                    ImageProcessorService imageProcessorService,
+                                    TeamRoleTooltipCloudDecisionService teamRoleTooltipCloudDecisionService) {
         this.teamTaskProperties = teamTaskProperties;
         this.botProperties = botProperties;
         this.tracker = tracker;
@@ -123,6 +150,8 @@ public class TeamRoleDetectionService {
         this.windowFocusService = windowFocusService;
         this.windowScopedTempPath = windowScopedTempPath;
         this.bindingRefreshService = bindingRefreshService;
+        this.imageProcessorService = imageProcessorService;
+        this.teamRoleTooltipCloudDecisionService = teamRoleTooltipCloudDecisionService;
     }
 
     /**
@@ -133,20 +162,28 @@ public class TeamRoleDetectionService {
      * or panel matching failed after retries.
      */
     public TeamRoleStatus detectCurrentRole(TaskExecutionContext context) {
-        return detectCurrentRole(context, false);
+        return detectCurrentRoleWithEvidence(context).role();
     }
 
     private TeamRoleStatus detectCurrentRole(TaskExecutionContext context, boolean force) {
+        return detectCurrentRoleWithEvidence(context, force).role();
+    }
+
+    public TeamRoleDetectionResult detectCurrentRoleWithEvidence(TaskExecutionContext context) {
+        return detectCurrentRoleWithEvidence(context, false);
+    }
+
+    private TeamRoleDetectionResult detectCurrentRoleWithEvidence(TaskExecutionContext context, boolean force) {
         if (!force && !teamTaskProperties.isRoleDetectionEnabled()) {
             if (context != null && context.hasWindow()) {
                 log.debug("team role detection disabled: {}", context.getLogPrefix());
             }
-            return TeamRoleStatus.UNKNOWN;
+            return TeamRoleDetectionResult.unknown();
         }
 
         if (!hasConfiguredHoverProbe()) {
             log.warn("team role detection missing hover/tooltip config, return UNKNOWN");
-            return TeamRoleStatus.UNKNOWN;
+            return TeamRoleDetectionResult.unknown();
         }
 
         /*
@@ -158,7 +195,7 @@ public class TeamRoleDetectionService {
         for (int pass = 1; pass <= TOOLTIP_OCR_FULL_RETRY_LIMIT; pass++) {
             RoleDetectionPassResult passResult = detectCurrentRolePass(context, pass, force);
             if (!passResult.retryWholeFlow()) {
-                return passResult.role();
+                return new TeamRoleDetectionResult(passResult.role(), passResult.tooltipGroupEvidence());
             }
             if (pass < TOOLTIP_OCR_FULL_RETRY_LIMIT) {
                 log.warn("team role detection retrying full flow: pass={}/{} reason={}",
@@ -168,7 +205,7 @@ public class TeamRoleDetectionService {
             throw new IllegalStateException("Team role detection failed after tooltip OCR and panel fallback: "
                     + passResult.reason());
         }
-        return TeamRoleStatus.UNKNOWN;
+        return TeamRoleDetectionResult.unknown();
     }
 
     /**
@@ -187,9 +224,10 @@ public class TeamRoleDetectionService {
     private RoleDetectionPassResult detectCurrentRolePass(TaskExecutionContext context, int pass, boolean allowPanelProbe) {
         Optional<TeamTooltipProbe> tooltip = hoverAndCaptureTeamTooltipWithRetries(pass);
         if (tooltip.isPresent()) {
-            Optional<TeamRoleStatus> roleFromTooltipId = detectGroupedRoleFromTooltipLeaderId(context, tooltip.get());
+            Optional<TooltipRoleResult> roleFromTooltipId = detectGroupedRoleFromTooltipLeaderId(context, tooltip.get());
             if (roleFromTooltipId.isPresent()) {
-                return RoleDetectionPassResult.done(roleFromTooltipId.get(), "tooltip-id");
+                TooltipRoleResult result = roleFromTooltipId.get();
+                return RoleDetectionPassResult.done(result.role(), result.tooltipGroupEvidence(), "tooltip-id");
             }
 
             if (!allowPanelProbe) {
@@ -386,9 +424,18 @@ public class TeamRoleDetectionService {
                 teamTaskProperties.getTeamHoverRandomRadiusY());
         TeamTooltipProbe[] result = {TeamTooltipProbe.missed(null, null)};
         boolean completed = inputSequences.submitExclusiveAndWait("teamRole:hoverAndCaptureTooltip:pass" + pass + ":attempt" + attempt, () -> {
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             focusCurrentWindowForProbe("hover");
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.moveMouse(hoverPoint.x, hoverPoint.y);
-            TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamHoverDelayMs()));
+            if (!TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamHoverDelayMs()))
+                    || !InputActionScope.checkpoint()) {
+                return false;
+            }
             BufferedImage image = tracker.captureToMemory("team-role-tooltip",
                     tooltipRect[0], tooltipRect[1], tooltipRect[2], tooltipRect[3]);
             if (image == null) {
@@ -400,21 +447,9 @@ public class TeamRoleDetectionService {
                 String purplePath = windowScopedTempPath.resolve("team_role_tooltip_purple_pass" + pass
                         + "_attempt" + attempt + ".png");
                 saveBufferedImage(image, rawPath);
-                int white = countWhitePixels(image);
-                int purple = countPurplePixels(image);
-                TextDistribution distribution = measureTextDistribution(image);
-                boolean detected = white >= teamTaskProperties.getTeamTooltipWhitePixelThreshold()
-                        && purple >= teamTaskProperties.getTeamTooltipPurplePixelThreshold()
-                        && isTextLikeDistribution(distribution, image.getWidth());
-                result[0] = new TeamTooltipProbe(detected, rawPath, purplePath, white, purple, distribution);
-                log.info("team role tooltip probe: pass={} attempt={} hover=({}, {}) raw={} white={} purple={} distribution={} thresholds=({}, {}, rows>={}, cols>={}, transitions>={}, maxRowCoverage<={}%)",
-                        pass, attempt, hoverPoint.x, hoverPoint.y, rawPath, white, purple, distribution,
-                        teamTaskProperties.getTeamTooltipWhitePixelThreshold(),
-                        teamTaskProperties.getTeamTooltipPurplePixelThreshold(),
-                        teamTaskProperties.getTeamTooltipTextMinRows(),
-                        teamTaskProperties.getTeamTooltipTextMinColumns(),
-                        teamTaskProperties.getTeamTooltipTextMinTransitions(),
-                        teamTaskProperties.getTeamTooltipTextMaxRowCoveragePercent());
+                result[0] = TeamTooltipProbe.missed(rawPath, purplePath);
+                log.info("team role tooltip probe captured: pass={} attempt={} hover=({}, {}) raw={}",
+                        pass, attempt, hoverPoint.x, hoverPoint.y, rawPath);
                 return true;
             } finally {
                 image.flush();
@@ -426,9 +461,62 @@ public class TeamRoleDetectionService {
         }
         TeamTooltipProbe probe = result[0];
         if (probe.rawPath() != null && probe.purplePath() != null) {
-            ImagePreprocessor.washPurpleTextToBlackAndWhite(probe.rawPath(), probe.purplePath());
+            probe = inspectTeamTooltipProbe(pass, attempt, hoverPoint, probe);
         }
         return probe;
+    }
+
+    private TeamTooltipProbe inspectTeamTooltipProbe(int pass,
+                                                     int attempt,
+                                                     java.awt.Point hoverPoint,
+                                                     TeamTooltipProbe probe) {
+        try {
+            BufferedImage image = ImageIO.read(Path.of(probe.rawPath()).toFile());
+            if (image == null) {
+                log.warn("team role tooltip probe inspect skipped: raw unreadable path={}", probe.rawPath());
+                return probe;
+            }
+            try {
+                RequestMetadata metadata = imageProcessorMetadata(
+                        probe.rawPath(),
+                        "team-role-tooltip-text",
+                        "team-tooltip-pass" + pass + "-attempt" + attempt);
+                ImageProcessorResult statsResult = imageProcessorService.measureTeamTooltipText(image, metadata);
+                TeamTooltipTextStats stats = statsResult.teamTooltipTextStats();
+                if (stats == null) {
+                    log.info("team role tooltip cloud metrics missed: pass={} attempt={} raw={} status={} reason={}",
+                            pass, attempt, probe.rawPath(), statsResult.status(), statsResult.reason());
+                    return probe;
+                }
+                TextDistribution distribution = new TextDistribution(
+                        stats.rows(), stats.columns(), stats.transitions(), stats.maxRowPixels());
+                boolean detected = stats.whitePixels() >= teamTaskProperties.getTeamTooltipWhitePixelThreshold()
+                        && isTextLikeDistribution(distribution, image.getWidth());
+                TeamTooltipProbe inspected = new TeamTooltipProbe(
+                        detected,
+                        probe.rawPath(),
+                        probe.purplePath(),
+                        stats.whitePixels(),
+                        stats.purplePixels(),
+                        distribution);
+                log.info("team role tooltip probe: pass={} attempt={} hover=({}, {}) raw={} white={} purple={} distribution={} thresholds=(white>={}, rows>={}, cols>={}, transitions>={}, maxRowCoverage<={}%)",
+                        pass, attempt, hoverPoint.x, hoverPoint.y, probe.rawPath(), stats.whitePixels(),
+                        stats.purplePixels(), distribution,
+                        teamTaskProperties.getTeamTooltipWhitePixelThreshold(),
+                        teamTaskProperties.getTeamTooltipTextMinRows(),
+                        teamTaskProperties.getTeamTooltipTextMinColumns(),
+                        teamTaskProperties.getTeamTooltipTextMinTransitions(),
+                        teamTaskProperties.getTeamTooltipTextMaxRowCoveragePercent());
+
+                return inspected;
+            } finally {
+                image.flush();
+            }
+        } catch (IOException e) {
+            log.warn("team role tooltip probe inspect failed: raw={} reason={}",
+                    probe.rawPath(), e.getMessage(), e);
+            return probe;
+        }
     }
 
     /**
@@ -436,39 +524,380 @@ public class TeamRoleDetectionService {
      *
      * <p>Live testing showed that the team hover tooltip is the leader card. That means the numeric
      * ID in the tooltip is enough to decide the bound window's role: equal to the current window
-     * title ID means LEADER, different means MEMBER. Local OCR is used directly and no Baidu
-     * fallback is attempted here; OCR failure simply falls back to the older Alt+T panel probe.</p>
+     * title ID means LEADER, different means MEMBER. The normal path now sends a high-contrast mask
+     * of the tooltip image to the cloud business-vision service. The old local OCR selector is kept
+     * as deprecated code only and is not used by the production cloud path.</p>
      *
      * @param context current task context, used to resolve the bound window title first.
      * @param probe detected tooltip probe containing the saved raw screenshot path.
      * @return LEADER/MEMBER when both IDs are available, otherwise empty so the caller can use the
      *         panel fallback.
      */
-    private Optional<TeamRoleStatus> detectGroupedRoleFromTooltipLeaderId(TaskExecutionContext context,
-                                                                          TeamTooltipProbe probe) {
+    private Optional<TooltipRoleResult> detectGroupedRoleFromTooltipLeaderId(TaskExecutionContext context,
+                                                                             TeamTooltipProbe probe) {
         Optional<String> currentPlayerId = resolveCurrentPlayerId(context);
         if (currentPlayerId.isEmpty()) {
             log.warn("team role tooltip ID skipped: current player ID unavailable");
             return Optional.empty();
         }
 
-        Optional<String> leaderId = extractLeaderIdFromTooltipOcr(probe);
-        if (leaderId.isEmpty()) {
-            log.warn("team role tooltip ID OCR missed: currentPlayerId={} raw={}",
-                    currentPlayerId.get(), probe.rawPath());
+        if (teamRoleTooltipCloudDecisionService.isActive()) {
+            TeamRoleDetectionResult roleFromCloud = detectGroupedRoleFromCloudTooltip(context, probe, currentPlayerId.get());
+            if (!roleFromCloud.role().isUnknown()) {
+                return Optional.of(new TooltipRoleResult(roleFromCloud.role(), roleFromCloud.tooltipGroupEvidence()));
+            }
+            log.warn("team role cloud tooltip did not return a usable role; skip local OCR while cloud service is active: currentPlayerId={} raw={}",
+                    currentPlayerId.get(), probe == null ? null : probe.rawPath());
             return Optional.empty();
         }
 
-        TeamRoleStatus role = leaderId.get().equals(currentPlayerId.get())
+        log.warn("team role cloud tooltip disabled; deprecated local tooltip OCR is not used: currentPlayerId={} raw={}",
+                currentPlayerId.get(), probe == null ? null : probe.rawPath());
+        return Optional.empty();
+    }
+
+    private TeamRoleDetectionResult detectGroupedRoleFromCloudTooltip(TaskExecutionContext context,
+                                                                      TeamTooltipProbe probe,
+                                                                      String currentPlayerId) {
+        TeamRoleTooltipCloudRequest request = buildCloudTooltipRequest(context, probe, currentPlayerId);
+        String tooltipGroupSignature = tooltipTextSignature(probe);
+        if (tooltipGroupSignature == null) {
+            tooltipGroupSignature = tooltipMaskSignature(probe == null ? null : probe.rawPath());
+        }
+        if (tooltipGroupSignature == null && request != null) {
+            tooltipGroupSignature = normalize(request.getImageSha256());
+        }
+        return detectGroupedRoleFromCloudTooltipRequest(context, request, tooltipGroupSignature);
+    }
+
+    TeamRoleDetectionResult detectGroupedRoleFromCloudTooltipRequest(TaskExecutionContext context,
+                                                                     TeamRoleTooltipCloudRequest request) {
+        return detectGroupedRoleFromCloudTooltipRequest(
+                context,
+                request,
+                request == null ? null : normalize(request.getImageSha256()));
+    }
+
+    private TeamRoleDetectionResult detectGroupedRoleFromCloudTooltipRequest(TaskExecutionContext context,
+                                                                            TeamRoleTooltipCloudRequest request,
+                                                                            String tooltipGroupSignature) {
+        if (request == null) {
+            return TeamRoleDetectionResult.unknown();
+        }
+        String groupHash = normalize(tooltipGroupSignature);
+        if (groupHash == null) {
+            groupHash = normalize(request.getImageSha256());
+        }
+        TeamRoleTooltipCloudDecision decision = detectCloudTooltipDecision(context, request, groupHash);
+        if (!decision.isFound()) {
+            log.warn("team role cloud tooltip missed: status={} role={} currentPlayerId={} raw={} reason={} debugToken={}",
+                    decision.getStatus(), decision.getRole(), request.getCurrentPlayerId(),
+                    request.getRawImagePath(), decision.getReason(), decision.getDebugToken());
+            return TeamRoleDetectionResult.unknown();
+        }
+
+        String leaderClientId = normalize(decision.getLeaderClientId());
+        String currentPlayerId = normalize(request.getCurrentPlayerId());
+        if (leaderClientId == null || currentPlayerId == null) {
+            log.warn("team role cloud tooltip returned incomplete IDs: leaderClientId={} currentPlayerId={} raw={} reason={}",
+                    decision.getLeaderClientId(), request.getCurrentPlayerId(),
+                    request.getRawImagePath(), decision.getReason());
+            return TeamRoleDetectionResult.unknown();
+        }
+        TeamRoleStatus role = leaderClientId.equals(currentPlayerId)
                 ? TeamRoleStatus.LEADER
                 : TeamRoleStatus.MEMBER;
-        log.info("team role detection: tooltip leader id={} currentPlayerId={} role={} raw={}",
-                leaderId.get(), currentPlayerId.get(), role, probe.rawPath());
-        return Optional.of(role);
+        TeamTooltipGroupEvidence evidence = new TeamTooltipGroupEvidence(
+                groupHash,
+                leaderClientId,
+                currentPlayerId,
+                normalize(request.getWindowId()),
+                normalize(request.getRawImagePath()),
+                decision.getReason(),
+                decision.getDebugToken());
+        log.info("team role detection: cloud tooltip derived role from leader id: groupHash={} leaderClientId={} currentPlayerId={} role={} raw={} reason={} debugToken={}",
+                evidence.groupHash(), leaderClientId, currentPlayerId, role,
+                request.getRawImagePath(), decision.getReason(), decision.getDebugToken());
+        return new TeamRoleDetectionResult(role, evidence);
+    }
+
+    private TeamRoleTooltipCloudDecision detectCloudTooltipDecision(TaskExecutionContext context,
+                                                                    TeamRoleTooltipCloudRequest request,
+                                                                    String tooltipGroupSignature) {
+        return detectCloudTooltipDecision(context, request, tooltipGroupSignature, true);
+    }
+
+    private TeamRoleTooltipCloudDecision detectCloudTooltipDecision(TaskExecutionContext context,
+                                                                    TeamRoleTooltipCloudRequest request,
+                                                                    String tooltipGroupSignature,
+                                                                    boolean retryAfterNoResult) {
+        String groupHash = normalize(tooltipGroupSignature);
+        String cacheKey = batchTooltipDecisionCacheKey(context, groupHash);
+        if (cacheKey == null) {
+            return teamRoleTooltipCloudDecisionService.detect(request);
+        }
+        pruneBatchTooltipDecisionCacheIfNeeded();
+        CompletableFuture<TeamRoleTooltipCloudDecision> created = new CompletableFuture<>();
+        CompletableFuture<TeamRoleTooltipCloudDecision> existing =
+                batchTooltipDecisionByHash.putIfAbsent(cacheKey, created);
+        if (existing == null) {
+            try {
+                TeamRoleTooltipCloudDecision decision = teamRoleTooltipCloudDecisionService.detect(request);
+                created.complete(decision);
+                if (!decision.isFound()) {
+                    batchTooltipDecisionByHash.remove(cacheKey, created);
+                }
+                log.info("team role cloud tooltip hash group representative executed: session={} groupHash={} payloadImageSha256={} windowId={} currentPlayerId={} status={} leaderClientId={}",
+                        context.getLocalTeamSessionKey(), groupHash, request.getImageSha256(),
+                        request.getWindowId(), request.getCurrentPlayerId(),
+                        decision.getStatus(), decision.getLeaderClientId());
+                return decision;
+            } catch (RuntimeException e) {
+                created.completeExceptionally(e);
+                batchTooltipDecisionByHash.remove(cacheKey, created);
+                throw e;
+            }
+        }
+        try {
+            TeamRoleTooltipCloudDecision decision = existing.join();
+            if (!decision.isFound() && retryAfterNoResult) {
+                batchTooltipDecisionByHash.remove(cacheKey, existing);
+                log.info("team role cloud tooltip hash group no-result not reused; retry as representative: session={} groupHash={} payloadImageSha256={} windowId={} currentPlayerId={} status={}",
+                        context.getLocalTeamSessionKey(), groupHash, request.getImageSha256(),
+                        request.getWindowId(), request.getCurrentPlayerId(), decision.getStatus());
+                return detectCloudTooltipDecision(context, request, groupHash, false);
+            }
+            log.info("team role cloud tooltip hash group reused representative: session={} groupHash={} payloadImageSha256={} windowId={} currentPlayerId={} status={} leaderClientId={}",
+                    context.getLocalTeamSessionKey(), groupHash, request.getImageSha256(),
+                    request.getWindowId(), request.getCurrentPlayerId(),
+                    decision.getStatus(), decision.getLeaderClientId());
+            return decision;
+        } catch (CompletionException e) {
+            if (e.getCause() instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw e;
+        }
+    }
+
+    private String batchTooltipDecisionCacheKey(TaskExecutionContext context,
+                                                String tooltipGroupSignature) {
+        if (context == null || !context.hasLocalTeamSession()
+                || tooltipGroupSignature == null || tooltipGroupSignature.isBlank()) {
+            return null;
+        }
+        return context.getLocalTeamSessionKey().trim() + "::" + tooltipGroupSignature.trim();
+    }
+
+    private void pruneBatchTooltipDecisionCacheIfNeeded() {
+        if (batchTooltipDecisionByHash.size() <= BATCH_TOOLTIP_DECISION_CACHE_MAX_ENTRIES) {
+            return;
+        }
+        batchTooltipDecisionByHash.keySet().removeIf(key -> batchTooltipDecisionByHash.size()
+                > BATCH_TOOLTIP_DECISION_CACHE_MAX_ENTRIES / 2);
+    }
+
+    private TeamRoleTooltipCloudRequest buildCloudTooltipRequest(TaskExecutionContext context,
+                                                                 TeamTooltipProbe probe,
+                                                                 String currentPlayerId) {
+        if (probe == null || probe.rawPath() == null || probe.rawPath().isBlank()) {
+            return null;
+        }
+        byte[] imageBytes;
+        BufferedImage rawImage;
+        try {
+            imageBytes = Files.readAllBytes(Path.of(probe.rawPath()));
+            rawImage = ImageIO.read(Path.of(probe.rawPath()).toFile());
+        } catch (IOException e) {
+            log.warn("team role cloud tooltip payload read failed: raw={} reason={}",
+                    probe.rawPath(), e.getMessage(), e);
+            return null;
+        }
+        if (imageBytes.length == 0 || rawImage == null) {
+            log.warn("team role cloud tooltip payload empty: raw={}", probe.rawPath());
+            return null;
+        }
+        byte[] maskBytes;
+        try {
+            maskBytes = encodeTooltipMaskPng(rawImage);
+        } catch (IOException e) {
+            log.warn("team role cloud tooltip mask payload encode failed: raw={} reason={}",
+                    probe.rawPath(), e.getMessage(), e);
+            return null;
+        } finally {
+            rawImage.flush();
+        }
+        if (maskBytes.length == 0) {
+            log.warn("team role cloud tooltip mask payload empty: raw={}", probe.rawPath());
+            return null;
+        }
+
+        WindowNativeBinding binding = windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getNativeBinding)
+                .orElse(null);
+        int windowWidth = context != null && context.getNativeWindowWidth() > 0
+                ? context.getNativeWindowWidth()
+                : binding != null ? binding.getWidth() : 0;
+        int windowHeight = context != null && context.getNativeWindowHeight() > 0
+                ? context.getNativeWindowHeight()
+                : binding != null ? binding.getHeight() : 0;
+        return TeamRoleTooltipCloudRequest.builder()
+                .imagePayloadBase64(Base64.getEncoder().encodeToString(maskBytes))
+                .payloadMimeType("image/png")
+                .imageSha256(sha256Hex(maskBytes))
+                .rawImagePath(probe.rawPath())
+                .debugImageId("team-role-tooltip-mask:" + currentPlayerId)
+                .roi(TeamRoleTooltipCloudRequest.Roi.builder()
+                        .x(teamTaskProperties.getTeamTooltipRectX())
+                        .y(teamTaskProperties.getTeamTooltipRectY())
+                        .width(teamTaskProperties.getTeamTooltipRectW())
+                        .height(teamTaskProperties.getTeamTooltipRectH())
+                        .build())
+                .windowWidth(windowWidth)
+                .windowHeight(windowHeight)
+                .currentPlayerId(currentPlayerId)
+                .taskCode(context == null ? "startup" : context.getTaskCode())
+                .source("team-role-detection")
+                .phase("tooltip-id")
+                .windowId(context == null ? null : context.getWindowId())
+                .taskRunId(context == null ? null : Long.toString(context.getTaskRunId()))
+                .policyVersion("team-role-tooltip-cloud-v1")
+                .hwnd(binding == null ? context == null ? null : context.getNativeWindowHandle() : binding.getNativeHandle())
+                .build();
+    }
+
+    private byte[] encodeTooltipMaskPng(BufferedImage rawImage) throws IOException {
+        BufferedImage mask = new BufferedImage(rawImage.getWidth(), rawImage.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
+        try {
+            for (int y = 0; y < rawImage.getHeight(); y++) {
+                for (int x = 0; x < rawImage.getWidth(); x++) {
+                    mask.setRGB(x, y, isTooltipSignaturePixel(rawImage.getRGB(x, y)) ? 0xFFFFFF : 0x000000);
+                }
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            if (!ImageIO.write(mask, "png", output)) {
+                return new byte[0];
+            }
+            return output.toByteArray();
+        } finally {
+            mask.flush();
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            return hex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            return "";
+        }
+    }
+
+    private String tooltipTextSignature(TeamTooltipProbe probe) {
+        if (probe == null || !probe.detected() || probe.distribution() == null) {
+            return null;
+        }
+        TextDistribution distribution = probe.distribution();
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateDigestInt(digest, 1);
+            updateDigestInt(digest, probe.whitePixels());
+            updateDigestInt(digest, probe.purplePixels());
+            updateDigestInt(digest, distribution.rows());
+            updateDigestInt(digest, distribution.columns());
+            updateDigestInt(digest, distribution.transitions());
+            updateDigestInt(digest, distribution.maxRowPixels());
+            String signature = "tooltip-text-" + hex(digest.digest());
+            log.debug("team role tooltip text signature prepared: groupHash={} raw={} white={} purple={} distribution={}",
+                    signature, probe.rawPath(), probe.whitePixels(), probe.purplePixels(), distribution);
+            return signature;
+        } catch (NoSuchAlgorithmException e) {
+            return null;
+        }
+    }
+
+    private String tooltipMaskSignature(String rawPath) {
+        String normalizedPath = normalize(rawPath);
+        if (normalizedPath == null) {
+            return null;
+        }
+        try {
+            BufferedImage image = ImageIO.read(Path.of(normalizedPath).toFile());
+            if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
+                return null;
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateDigestInt(digest, image.getWidth());
+            updateDigestInt(digest, image.getHeight());
+            int maskPixels = 0;
+            int packed = 0;
+            int packedBits = 0;
+            for (int y = 0; y < image.getHeight(); y++) {
+                for (int x = 0; x < image.getWidth(); x++) {
+                    boolean mask = isTooltipSignaturePixel(image.getRGB(x, y));
+                    if (mask) {
+                        maskPixels++;
+                    }
+                    packed = (packed << 1) | (mask ? 1 : 0);
+                    packedBits++;
+                    if (packedBits == 8) {
+                        digest.update((byte) packed);
+                        packed = 0;
+                        packedBits = 0;
+                    }
+                }
+            }
+            if (packedBits > 0) {
+                digest.update((byte) (packed << (8 - packedBits)));
+            }
+            updateDigestInt(digest, maskPixels);
+            String signature = "mask-" + hex(digest.digest());
+            log.debug("team role tooltip mask signature prepared: groupHash={} raw={} width={} height={} maskPixels={}",
+                    signature, normalizedPath, image.getWidth(), image.getHeight(), maskPixels);
+            return signature;
+        } catch (IOException | RuntimeException | NoSuchAlgorithmException e) {
+            log.warn("team role tooltip mask signature failed; fallback to raw hash: raw={} reason={}",
+                    normalizedPath, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private static boolean isTooltipSignaturePixel(int rgb) {
+        int r = (rgb >> 16) & 0xff;
+        int g = (rgb >> 8) & 0xff;
+        int b = rgb & 0xff;
+        boolean whiteText = r >= 155 && g >= 155 && b >= 155;
+        boolean greenText = g >= 105 && g - r >= 18 && g - b >= 18;
+        boolean purpleText = r >= 95 && b >= 105 && r - g >= 18 && b - g >= 18;
+        boolean yellowText = r >= 125 && g >= 95 && b <= 125 && r - b >= 25 && g - b >= 15;
+        return whiteText || greenText || purpleText || yellowText;
+    }
+
+    private static void updateDigestInt(MessageDigest digest, int value) {
+        digest.update((byte) (value >>> 24));
+        digest.update((byte) (value >>> 16));
+        digest.update((byte) (value >>> 8));
+        digest.update((byte) value);
+    }
+
+    private static String hex(byte[] digest) {
+        StringBuilder builder = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            builder.append(String.format("%02x", value & 0xff));
+        }
+        return builder.toString();
+    }
+
+    private static String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**
-     * Read the numeric leader ID from a saved tooltip image.
+     * Rollback-only local OCR path for reading the numeric leader ID from a saved tooltip image.
      *
      * <p>The full tooltip crop is OCR'd because the runtime cost is dominated by RapidOCR startup
      * and inference overhead rather than the small difference between the full tooltip and a narrow
@@ -479,6 +908,7 @@ public class TeamRoleDetectionService {
      * @return selected leader ID, or empty when local OCR is unavailable or no reliable ID candidate
      *         is found.
      */
+    @Deprecated
     private Optional<String> extractLeaderIdFromTooltipOcr(TeamTooltipProbe probe) {
         if (probe == null || probe.rawPath() == null || probe.rawPath().isBlank()) {
             return Optional.empty();
@@ -545,6 +975,23 @@ public class TeamRoleDetectionService {
         return extractPlayerIdFromTitle(tracker.getFullWindowTitle());
     }
 
+    private RequestMetadata imageProcessorMetadata(String rawPath, String phase, String debugLabel) {
+        RequestMetadata.RequestMetadataBuilder builder = RequestMetadata.builder()
+                .rawImagePath(rawPath)
+                .debugImageId("team-role:" + (debugLabel == null || debugLabel.isBlank() ? phase : debugLabel))
+                .source("team-role-detection")
+                .taskCode("team-role")
+                .phase(phase);
+        windowTaskContextHolder.rawCurrent().ifPresent(context -> {
+            builder.windowId(context.getWindowId());
+            WindowNativeBinding binding = context.getNativeBinding();
+            if (binding != null) {
+                builder.hwnd(binding.getNativeHandle());
+            }
+        });
+        return builder.build();
+    }
+
     private Optional<String> extractPlayerIdFromTitle(String title) {
         if (title == null || title.isBlank()) {
             return Optional.empty();
@@ -556,6 +1003,7 @@ public class TeamRoleDetectionService {
         return Optional.of(matcher.group(1));
     }
 
+    @Deprecated
     private OptionalIntBox findLevelRowTop(List<OcrWordResult> words) {
         return words.stream()
                 .filter(word -> word.getText() != null && word.getText().contains("级"))
@@ -567,6 +1015,7 @@ public class TeamRoleDetectionService {
                 .orElseGet(OptionalIntBox::empty);
     }
 
+    @Deprecated
     private boolean isBelowLevelRow(TooltipIdCandidate candidate, OptionalIntBox levelTop) {
         return !levelTop.present() || candidate.top() > levelTop.value();
     }
@@ -648,9 +1097,17 @@ public class TeamRoleDetectionService {
 
         try {
             String debugPath = windowScopedTempPath.resolve("team_role_status_deviation_gray.png");
-            double stddev = ImagePreprocessor.getImageStandardDeviation(image, debugPath);
+            ImageProcessorResult result = imageProcessorService.measureStddev(
+                    image,
+                    imageProcessorMetadata(debugPath, "team-role-status-stddev", "status-deviation"));
+            if (result.stddev() == null) {
+                log.info("team role status deviation fallback unavailable: status={} reason={} rect=({}, {})-({}, {})",
+                        result.status(), result.reason(), rect[0], rect[1], rect[2], rect[3]);
+                return false;
+            }
+            double stddev = result.stddev();
             boolean grouped = stddev > TEAM_STATUS_GROUPED_STDDEV_THRESHOLD;
-            log.info("team role status deviation fallback: stddev={} threshold={} grouped={} rect=({}, {})-({}, {}) gray={}",
+            log.info("team role status deviation fallback: stddev={} threshold={} grouped={} rect=({}, {})-({}, {}) debug={}",
                     String.format("%.3f", stddev),
                     TEAM_STATUS_GROUPED_STDDEV_THRESHOLD,
                     grouped,
@@ -691,9 +1148,18 @@ public class TeamRoleDetectionService {
     private TeamRoleStatus detectGroupedRoleFromPanelOnce(int attempt) {
         TeamRoleStatus[] detected = {TeamRoleStatus.UNKNOWN};
         boolean probed = inputSequences.submitExclusiveAndWait("teamRole:panelProbe:attempt" + attempt, () -> {
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             focusCurrentWindowForProbe("panel");
+            if (!InputActionScope.checkpoint()) {
+                return false;
+            }
             inputProvider.pressAltT();
-            TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamPanelOpenDelayMs()));
+            if (!TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamPanelOpenDelayMs()))
+                    || !InputActionScope.checkpoint()) {
+                return false;
+            }
             try {
                 if (detectTransferLeaderButton()) {
                     detected[0] = TeamRoleStatus.LEADER;
@@ -774,6 +1240,9 @@ public class TeamRoleDetectionService {
         if (!teamTaskProperties.isCloseTeamPanelAfterRoleDetection()) {
             return;
         }
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
         inputProvider.pressAltT();
         TaskSleep.sleep(Math.max(0, teamTaskProperties.getTeamPanelCloseDelayMs()));
     }
@@ -808,72 +1277,6 @@ public class TeamRoleDetectionService {
                 && !teamTaskProperties.getTeamPanelMemberMarkerTemplate().isBlank();
     }
 
-    private int countWhitePixels(BufferedImage image) {
-        int count = 0;
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                int rgb = image.getRGB(x, y);
-                if (isTooltipWhite(rgb)) {
-                    count++;
-                }
-            }
-        }
-        return count;
-    }
-
-    private int countPurplePixels(BufferedImage image) {
-        int count = 0;
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                int rgb = image.getRGB(x, y);
-                if (isTooltipPurple(rgb)) {
-                    count++;
-                }
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Measure whether white/purple tooltip pixels look like text rather than a broad background patch.
-     *
-     * @param image tooltip crop captured after hover.
-     * @return row/column/transition metrics used by {@link #isTextLikeDistribution(TextDistribution, int)}.
-     */
-    private TextDistribution measureTextDistribution(BufferedImage image) {
-        int rows = 0;
-        int[] columnCounts = new int[image.getWidth()];
-        int transitions = 0;
-        int maxRowPixels = 0;
-        for (int y = 0; y < image.getHeight(); y++) {
-            int rowPixels = 0;
-            boolean previousTextPixel = false;
-            for (int x = 0; x < image.getWidth(); x++) {
-                boolean textPixel = isTooltipTextPixel(image.getRGB(x, y));
-                if (textPixel) {
-                    rowPixels++;
-                    columnCounts[x]++;
-                }
-                if (textPixel && !previousTextPixel) {
-                    transitions++;
-                }
-                previousTextPixel = textPixel;
-            }
-            if (rowPixels >= 2) {
-                rows++;
-            }
-            maxRowPixels = Math.max(maxRowPixels, rowPixels);
-        }
-
-        int columns = 0;
-        for (int columnCount : columnCounts) {
-            if (columnCount >= 1) {
-                columns++;
-            }
-        }
-        return new TextDistribution(rows, columns, transitions, maxRowPixels);
-    }
-
     private boolean isTextLikeDistribution(TextDistribution distribution, int width) {
         if (distribution.rows < teamTaskProperties.getTeamTooltipTextMinRows()) {
             return false;
@@ -888,32 +1291,35 @@ public class TeamRoleDetectionService {
         return distribution.maxRowPixels <= maxAllowedRowPixels;
     }
 
-    private boolean isTooltipTextPixel(int rgb) {
-        return isTooltipWhite(rgb) || isTooltipPurple(rgb);
-    }
-
-    private boolean isTooltipWhite(int rgb) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        return r >= 210 && g >= 210 && b >= 210;
-    }
-
-    private boolean isTooltipPurple(int rgb) {
-        int r = (rgb >> 16) & 0xFF;
-        int g = (rgb >> 8) & 0xFF;
-        int b = rgb & 0xFF;
-        return r >= 120 && b >= 140 && g <= 120 && b > g + 40;
-    }
-
     /**
      * Result of one complete role-detection pass.
      *
      * @param role terminal role for the caller when {@code retryWholeFlow} is false.
+     * @param tooltipGroupEvidence cloud tooltip hash/leader evidence for local-team session updates.
      * @param retryWholeFlow true only for the tooltip-present path where OCR and panel fallback both
      *                       failed and the whole hover-to-panel sequence should be retried once.
      * @param reason short diagnostic reason logged before retrying or throwing.
      */
+    public record TeamRoleDetectionResult(TeamRoleStatus role,
+                                          TeamTooltipGroupEvidence tooltipGroupEvidence) {
+        private static TeamRoleDetectionResult unknown() {
+            return new TeamRoleDetectionResult(TeamRoleStatus.UNKNOWN, null);
+        }
+    }
+
+    public record TeamTooltipGroupEvidence(String groupHash,
+                                           String leaderPlayerId,
+                                           String currentPlayerId,
+                                           String windowId,
+                                           String rawImagePath,
+                                           String reason,
+                                           String debugToken) {
+    }
+
+    private record TooltipRoleResult(TeamRoleStatus role,
+                                     TeamTooltipGroupEvidence tooltipGroupEvidence) {
+    }
+
     @Value
 
     @Builder
@@ -926,16 +1332,25 @@ public class TeamRoleDetectionService {
 
         TeamRoleStatus role;
 
+        TeamTooltipGroupEvidence tooltipGroupEvidence;
+
         boolean retryWholeFlow;
 
         String reason;
 
         private static RoleDetectionPassResult done(TeamRoleStatus role, String reason) {
-            return new RoleDetectionPassResult(role == null ? TeamRoleStatus.UNKNOWN : role, false, reason);
+            return done(role, null, reason);
+        }
+
+        private static RoleDetectionPassResult done(TeamRoleStatus role,
+                                                    TeamTooltipGroupEvidence evidence,
+                                                    String reason) {
+            return new RoleDetectionPassResult(
+                    role == null ? TeamRoleStatus.UNKNOWN : role, evidence, false, reason);
         }
 
         private static RoleDetectionPassResult retry(String reason) {
-            return new RoleDetectionPassResult(TeamRoleStatus.UNKNOWN, true, reason);
+            return new RoleDetectionPassResult(TeamRoleStatus.UNKNOWN, null, true, reason);
         }
     
 

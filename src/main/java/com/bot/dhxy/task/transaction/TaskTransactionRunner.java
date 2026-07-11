@@ -70,6 +70,51 @@ public class TaskTransactionRunner {
     }
 
     /**
+     * Run a transaction whose callback decides both the transaction result and effective yield policy.
+     *
+     * <p>This is used by cloud task-policy execute after the local oracle has been computed. Task-turn
+     * ownership depends on both result and yield, so the callback must return the final pair before
+     * {@link TaskTurnCoordinator#leave(TaskTransactionOutcome)} sees the outcome.</p>
+     *
+     * @param name diagnostic transaction name.
+     * @param expectedResult result that the caller considers successful.
+     * @param fallbackYieldPolicy fallback yield policy when the callback returns null or STOP is caught.
+     * @param action business action that returns the effective result/yield decision.
+     * @return transaction outcome carrying the effective result and effective yield policy.
+     */
+    public TaskTransactionOutcome runDynamic(String name,
+                                             TaskTransactionResult expectedResult,
+                                             TaskYieldPolicy fallbackYieldPolicy,
+                                             Supplier<TaskTransactionDecision> action) {
+        long latencyStart = LatencyMetrics.start();
+        TaskYieldPolicy safeFallbackYieldPolicy = fallbackYieldPolicy == null
+                ? TaskYieldPolicy.CONTINUE_CHAIN
+                : fallbackYieldPolicy;
+        taskTurnCoordinator.enter(name);
+        log.info("task transaction started: name={} expected={} yieldPolicy={} exclusive=false dynamic=true",
+                name, expectedResult, safeFallbackYieldPolicy);
+        TaskTransactionOutcome outcome = null;
+        try {
+            TaskTransactionDecision decision = safeRunDecision(name, action, safeFallbackYieldPolicy);
+            outcome = new TaskTransactionOutcome(name, expectedResult, decision.yieldPolicy(),
+                    decision.result(), true);
+            log.info("task transaction finished: name={} expected={} result={} yieldPolicy={} completed=true dynamic=true",
+                    name, expectedResult, decision.result(), decision.yieldPolicy());
+            return outcome;
+        } finally {
+            long elapsedMs = LatencyMetrics.elapsedMs(latencyStart);
+            LatencyMetrics.info(log, "task.transaction", latencyStart,
+                    "name=" + name + " result=" + (outcome == null ? "EXCEPTION" : outcome.result())
+                            + " completed=" + (outcome != null && outcome.completed())
+                            + " exclusive=false dynamic=true");
+            automationMetricsService.recordTransaction(taskExecutionContextHolder.current().orElse(null),
+                    name, expectedResult, outcome == null ? safeFallbackYieldPolicy : outcome.yieldPolicy(),
+                    outcome, elapsedMs, false);
+            taskTurnCoordinator.leave(outcome);
+        }
+    }
+
+    /**
      * Run a transaction while holding both the task turn and the serialized input worker.
      *
      * @param name diagnostic transaction name and input-queue description.
@@ -148,6 +193,30 @@ public class TaskTransactionRunner {
         }
     }
 
+    private TaskTransactionDecision safeRunDecision(String name,
+                                                    Supplier<TaskTransactionDecision> action,
+                                                    TaskYieldPolicy fallbackYieldPolicy) {
+        try {
+            TaskTransactionDecision decision = action.get();
+            return decision == null
+                    ? TaskTransactionDecision.of(TaskTransactionResult.FAILED, fallbackYieldPolicy)
+                    : decision;
+        } catch (TaskStopRequestedException e) {
+            log.info("task transaction stopped: name={}", name);
+            return TaskTransactionDecision.of(TaskTransactionResult.STOPPED, fallbackYieldPolicy);
+        } catch (RuntimeException e) {
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("task transaction stopped: name={}", name);
+                return TaskTransactionDecision.of(TaskTransactionResult.STOPPED, fallbackYieldPolicy);
+            }
+            log.error("task transaction exception: name={}", name, e);
+            throw e;
+        } catch (Error e) {
+            log.error("task transaction fatal error: name={}", name, e);
+            throw e;
+        }
+    }
+
     private TaskTransactionResult interruptedResult() {
         return Thread.currentThread().isInterrupted()
                 ? TaskTransactionResult.STOPPED
@@ -156,5 +225,16 @@ public class TaskTransactionRunner {
 
     private boolean isInputWorkerThread() {
         return Thread.currentThread().getName().contains("dhxy-input-action-worker");
+    }
+
+    public record TaskTransactionDecision(TaskTransactionResult result, TaskYieldPolicy yieldPolicy) {
+        public TaskTransactionDecision {
+            result = result == null ? TaskTransactionResult.FAILED : result;
+            yieldPolicy = yieldPolicy == null ? TaskYieldPolicy.CONTINUE_CHAIN : yieldPolicy;
+        }
+
+        public static TaskTransactionDecision of(TaskTransactionResult result, TaskYieldPolicy yieldPolicy) {
+            return new TaskTransactionDecision(result, yieldPolicy);
+        }
     }
 }

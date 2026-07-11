@@ -141,6 +141,17 @@ public class AutoBattleTask extends BaseTaskTemplate {
         while (gameContext.getBotStatus() == GameContext.BotStatus.RUNNING) {
             context.throwIfStopRequested();
             AutoCombatService.TickResult combatResult = handleAutoCombatTick(context);
+            /*
+             * CR242 reopen: the member same-round return self-check after our own combat exit is
+             * handled here, in this task's own branch. The shared EXIT_RECOVERED result must stay
+             * intact for 修罗/五倍 task owners.
+             */
+            if (combatResult == AutoCombatService.TickResult.EXIT_RECOVERED
+                    && gameContext.getCurrentActionState() == GameContext.ActionState.FREE) {
+                maybeRunIdleMaintenance(context);
+                sleepSafely(context, getPollingIntervalMs(context));
+                continue;
+            }
             if (combatResult != AutoCombatService.TickResult.NONE) {
                 sleepSafely(context, getPollingIntervalMs(context));
                 continue;
@@ -183,7 +194,16 @@ public class AutoBattleTask extends BaseTaskTemplate {
      */
     private void maybeRunIdleMaintenance(TaskExecutionContext context) {
         context.throwIfStopRequested();
-        if (tryRunLocalTeamReturnRelease(context)) {
+        if (tryRunLocalTeamReturnSelfCheck(context)) {
+            return;
+        }
+        /*
+         * CR245: the leader-opened maintenance broadcast queue is its own authorization. A queued
+         * member at the head runs exactly one confirm attempt and dequeues regardless of the result;
+         * this path does not touch the idle quiet-member suppression below.
+         */
+        if (taskMaintenanceService.consumeMaintenanceBroadcastQueueTurnIfHead(
+                context, "auto-battle:maintenance-broadcast-queue")) {
             return;
         }
         if (taskMaintenanceService.isPendingLocalSupportLeaderDetection(context)) {
@@ -192,15 +212,23 @@ public class AutoBattleTask extends BaseTaskTemplate {
                     context.getRequestedTaskCode(), context.getWindowRole());
             return;
         }
-        if (!taskMaintenanceService.isLocalSupportMemberSession(context)
+        boolean localLeaderPaused = taskMaintenanceService.isLocalTeamLeaderPausedForMember(context);
+        boolean localSupportSession = !localLeaderPaused
+                && taskMaintenanceService.isLocalSupportMemberSession(context);
+        if (!localSupportSession
+                && !localLeaderPaused
                 && teamReturnService.clickReturnTeamIfPresent(context, "auto-battle")) {
             return;
         }
         boolean followerSupportMode = isFollowerSupportMode(context);
-        boolean localSupportSession = taskMaintenanceService.isLocalSupportMemberSession(context);
         boolean requestedTeamTask = leftTopStatusSwitchService.isSupportedTaskCode(context.getRequestedTaskCode());
         boolean requireLocalSupportGate = localSupportSession && followerSupportMode;
-        boolean requireLegacyTeamPathingGate = followerSupportMode && !localSupportSession && requestedTeamTask;
+        boolean requireLegacyTeamPathingGate = followerSupportMode
+                && !localSupportSession
+                && requestedTeamTask
+                && !localLeaderPaused;
+        boolean handleIdleMaintenanceBroadcast =
+                !taskMaintenanceService.shouldSuppressIdleMaintenanceBroadcast(context);
         if (requireLocalSupportGate
                 && taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
                 context, TeamSupportCapability.LEFT_TOP_STATUS)) {
@@ -210,16 +238,16 @@ public class AutoBattleTask extends BaseTaskTemplate {
         TaskMaintenanceResult result = taskMaintenanceService.runOpportunisticMaintenance(context,
                 TaskMaintenanceRequest.builder()
                         .sourceTask("auto-battle")
-                        .handleMaintenanceBroadcast(true)
-                        .allowFullMaintenanceBroadcastFallback(false)
+                        .handleMaintenanceBroadcast(handleIdleMaintenanceBroadcast)
                         /*
                          * Local follower-support members share the current UI-started leader session,
                          * not their original requested task label. This prevents a member that started
                          * as requested=wubei from waiting on wubei#80 after the leader has moved on to
                          * xiuluo_v2 in the same queue.
                          */
-                        .cleanSummonSkill(true)
+                        .cleanSummonSkill(!localLeaderPaused)
                         .oneSummonSkillPerTeamRound(requireLocalSupportGate || requireLegacyTeamPathingGate)
+                        .maxSummonSkillCleanersPerTeamRound(summonSkillBudgetForRequestedTask(context.getRequestedTaskCode()))
                         .teamMaintenanceKey(requireLegacyTeamPathingGate
                                 ? context.getRequestedTaskCode()
                                 : null)
@@ -234,19 +262,45 @@ public class AutoBattleTask extends BaseTaskTemplate {
         }
     }
 
-    private boolean tryRunLocalTeamReturnRelease(TaskExecutionContext context) {
-        if (!taskMaintenanceService.isLocalSupportMemberSession(context)) {
+    private static int summonSkillBudgetForRequestedTask(String requestedTaskCode) {
+        String normalized = requestedTaskCode == null ? "" : requestedTaskCode.trim().toLowerCase();
+        return "xiuluo_v2".equals(normalized) ? 2 : 1;
+    }
+
+    /**
+     * CR244 member self-check: the member owns its own return fact. When the return marker is
+     * visible it adds its window id to the session pending-return set and runs the existing return
+     * click chain; only a confirmed marker disappearance removes the entry. The leader no longer
+     * opens a TEAM_RETURN capability window for this — the check runs on every applicable idle tick.
+     */
+    private boolean tryRunLocalTeamReturnSelfCheck(TaskExecutionContext context) {
+        TaskMaintenanceService.TeamReturnCoordination coordination =
+                taskMaintenanceService.resolveTeamReturnCoordination(context);
+        if (!coordination.applicable()) {
+            // Attribution lost while still in the set must not park the leader forever.
+            taskMaintenanceService.clearPendingTeamReturnWindow(context,
+                    "auto-battle:team-return-not-applicable");
             return false;
         }
-        if (!taskMaintenanceService.awaitLocalTeamSupportCapabilityOpen(
-                context, TeamSupportCapability.TEAM_RETURN, 0L)) {
+        TeamReturnService.MemberReturnMarkerProbe probe =
+                teamReturnService.probeMemberReturnMarker("auto-battle:self-check");
+        if (probe == TeamReturnService.MemberReturnMarkerProbe.UNKNOWN) {
+            // Capture/analysis failure is not evidence of anything. The pending-return set must
+            // stay exactly as it is; the next idle tick re-probes.
             return false;
         }
+        if (probe == TeamReturnService.MemberReturnMarkerProbe.ABSENT) {
+            // A CONFIRMED marker disappearance is the only member-side remove condition. Click
+            // failures and a still-visible marker keep the entry for the next tick.
+            taskMaintenanceService.clearPendingTeamReturnWindow(context,
+                    "auto-battle:return-marker-gone");
+            return false;
+        }
+        taskMaintenanceService.markPendingTeamReturnWindow(context,
+                "auto-battle:return-marker-present");
 
         String requestedTaskCode = context.getRequestedTaskCode();
-        boolean consumedBox = taskMaintenanceService.isLocalTeamSupportCapabilityOpen(
-                context, TeamSupportCapability.COMMON_BOX)
-                && commonBoxService.consumePendingBoxIfAllowed(
+        boolean consumedBox = commonBoxService.consumePendingBoxIfAllowed(
                 context, requestedTaskCode, "auto-battle:team-return-release");
         if (consumedBox) {
             log.info("{} auto-battle local return release consumed common-box before return-team: requested={} role={}",
@@ -267,10 +321,11 @@ public class AutoBattleTask extends BaseTaskTemplate {
             return false;
         }
         boolean member = "MEMBER".equalsIgnoreCase(context.getWindowRole());
+        boolean localSupportSession = taskMaintenanceService.isLocalSupportMemberSession(context);
         String requestedTaskCode = context.getRequestedTaskCode();
         boolean reassignedFromLeaderTask = requestedTaskCode != null
                 && !requestedTaskCode.equalsIgnoreCase(getTaskCode());
-        return member && reassignedFromLeaderTask;
+        return member && (localSupportSession || reassignedFromLeaderTask);
     }
 
     /**
@@ -280,10 +335,15 @@ public class AutoBattleTask extends BaseTaskTemplate {
      * @return three-second idle interval while free, otherwise the dynamic combat radar interval.
      */
     private long getPollingIntervalMs(TaskExecutionContext context) {
-        if (autoCombatService.hasPendingFollowerFirstAidForCurrentWindow()) {
-            return PENDING_FIRST_AID_POLL_INTERVAL_MS;
-        }
         if (gameContext.getCurrentActionState() == GameContext.ActionState.FREE) {
+            if (autoCombatService.hasPendingFollowerFirstAidForCurrentWindow()) {
+                return PENDING_FIRST_AID_POLL_INTERVAL_MS;
+            }
+            // CR245: a member queued in an open maintenance broadcast queue must reach its head
+            // turn well inside the leader's 5s insurance cap; the 3s free patrol interval cannot.
+            if (taskMaintenanceService.isInOpenMaintenanceBroadcastQueue(context)) {
+                return PENDING_FIRST_AID_POLL_INTERVAL_MS;
+            }
             return FREE_PATROL_INTERVAL_MS;
         }
         return autoCombatService.getDynamicPollingIntervalMs();

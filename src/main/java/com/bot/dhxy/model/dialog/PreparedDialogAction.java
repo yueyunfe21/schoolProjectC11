@@ -1,6 +1,7 @@
 package com.bot.dhxy.model.dialog;
 
 import com.bot.dhxy.service.dialog.DialogOperation;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelSourceType;
 import lombok.Builder;
 import lombok.Value;
 
@@ -36,6 +37,7 @@ import lombok.Value;
  * @param lastVerifiedAtMs epoch millis when watcher last confirmed the fingerprint still matched.
  * @param source source task/log label.
  * @param debugImagePath optional window-scoped image path used to prepare the action.
+ * @param trackerPanelSourceType reader source for cached task-tracker clicks; local for normal dialogs.
  */
 @Value
 @Builder(toBuilder = true)
@@ -63,6 +65,8 @@ public class PreparedDialogAction {
     long lastVerifiedAtMs;
     String source;
     String debugImagePath;
+    @Builder.Default
+    TaskTrackerPanelSourceType trackerPanelSourceType = TaskTrackerPanelSourceType.LOCAL;
 
     public boolean matches(DialogOperation expectedOperation, String expectedKeyword) {
         if (operation != expectedOperation) {

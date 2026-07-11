@@ -1,5 +1,6965 @@
 # DHXY Active Work
 
+## 2026-07-11 / CR256 P2 返修 + Approved，实现者 heartbeat 按规则 15 停止
+
+- reviewer 首轮 P2：direct helper 未显式限制为本地 `local-kanda` 硬证据 action（合同 2 授权边界）。
+  已修：`DialogService` 新增公开 `isXiuluoEnterBattleLocalKandaAction(...)`（复用既有私有判定：
+  op + actionKey + matchedText 含本地看打模板）；`maybeDirectConsumePreparedEnterBattleAfterWake`
+  在通用 consumer 前 peek 校验，非 local-kanda 形状一律返回 null 走原 phase 路径。
+- 返修后编译：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package` exit 0。
+- reviewer 复核后将卡片改为 **Approved**（fresh 独立运行验收、不阻塞 review）。表行 Approved 已同步；
+  dashboard 已重生成（248 行）；实现者 heartbeat 满足规则 15 停止条件，已删除，停止原因写入卡片。
+- fresh 验收保留：`local-kanda PREPARED_ACTION_READY` -> 无云端往返 -> `wait-wake-direct-consume`
+  点击 -> outcome 上报 -> 云端 `EXECUTE_PHASE(WAIT_COMBAT)`；发布到 click 中位耗时应远低于 531ms。
+
+## 2026-07-11 / CR256 reviewer Approved：P2 local-kanda 来源门已闭合
+
+- P2 返修已复核：direct helper 现在只接受 `DialogService.isXiuluoEnterBattleLocalKandaAction(...)` 的
+  `kanda2` local-template prepared action；cloud typed job/其他 prepared source 返回 `null`，保持旧 phase
+  消费路径。模板活体复验、attempt/binding、一次消费与 input queue 仍复用原逻辑。
+- reviewer 已重跑 DHXY `mvn -q -DskipTests compile` 成功；CR256 **Approved**。fresh 为独立运行验收：验证
+  `local-kanda ready -> direct consume -> click -> outcome -> WAIT_COMBAT` 的顺序/耗时，以及非 local-kanda
+  source 不直连不重复点击；不阻塞 review。heartbeat 已满足停止条件。
+
+## 2026-07-11 / CR256 review P2：直连来源必须锁定 local-kanda
+
+- reviewer 已复核两个直连接入点、云端 `WAIT_COMBAT` phase 推进和 task turn/input queue 所有权；DHXY
+  `mvn -q -DskipTests compile` 本轮通过。cloud-brain 的 `-DskipTests` 按 enforcer 规则被拒绝，不是源代码
+  编译错误；实现者已有 `mvn -q package` 成功记录待后续复核。
+- P2：direct helper 目前只验证 phase/attempt/operation，没有显式验证 action 为本地 `local-kanda` 硬证据。
+  当前 provider 恰好只有该来源，但未来同 attempt 的其他 prepared action 会被误纳入直连。返修须复用
+  `DialogService` 既有 local-template 判定；非 local-kanda 一律落回旧消费路径。CR256 不得 fresh，待返修复审。
+
+## 2026-07-11 / CR256 实施：绿链 park 唤醒直连消费，删点击前云脑往返
+
+- 按卡内已确认目标与设计门禁实施（用户"完成CR256"即实现授权；门禁 1/2 产物已写卡）：
+  - 时序核清：绿链只有两个 park 唤醒点——TRY_TRACKER_SHORTCUT 命令内首次 inline park 与
+    CR253 的 WAIT_FOR_EVENT park。两处原本都在点击前多花一轮 `action-outcome`+`step`
+    （round 3 证据 531ms 中位）。往返不删除，只是该轮上报直接携带"已点击"outcome。
+  - `XiuluoTaskV2` 新增 `maybeDirectConsumePreparedEnterBattleAfterWake`：非终态 + 同 phase +
+    `shortcutPathingIntentId!=null`（排除 hot-start 弱身份）才复用既有
+    `consumePreparedXiuluoEnterBattle(..., "wait-wake-direct-consume")`——同一套安全校验
+    （binding/attempt/一次消费/模板活体复验）+ 同一次 InputSequences 原子点击；接入 shell yield 块
+    （仅 realParkCompleted 后）与 `waitForXiuluoBrainEvent`（仅绿链 phase）。miss 返回 null 走原
+    路径零差异。
+  - outcome contract 全复用现有编码：点击成功 shared+WAIT_COMBAT（TRACKER_CONFIRM pending）、
+    物理失败 preparedEnterBattleFailed→云端既有 RESTART_ROUND；不会被误判 cloud fallback
+    （fallback 仍只由 TRACKER_GREEN_RETRY job 触发）。
+  - 云端唯一改动：`DecisionEngine.trackerShortcutNext` 增 `sharedStateNext(..., "WAIT_COMBAT")`
+    接受分支（inline park 直连的点击 outcome 以 TRY phase 上报时推进 WAIT_COMBAT），对齐
+    `trackerShortcutPathingNext` 既有分支。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package`（含测试）exit 0。
+- 卡片 Planned→Implemented + 设计门禁产物与实施记录；表行同步；dashboard 已重生成（248 行）。
+  heartbeat 已建，等 reviewer（含门禁 4 的时序/基线 1-6 条逐项核对）。
+- fresh 验收：`local-kanda PREPARED_ACTION_READY` ->（无云端往返）-> `wait-wake-direct-consume`
+  点击 -> outcome 上报 -> 云端 `EXECUTE_PHASE(WAIT_COMBAT)`；发布到 click 中位耗时应显著低于
+  531ms；job 唤醒/旧 attempt miss 场景走原路径且无重复点击。
+
+## 2026-07-11 / CR256 已建卡：修罗看打 prepared action 直连消费
+
+- 基线：`docs/业务逻辑.md`“修罗与五倍普通怪共用：入战识别、云端 fallback 与失败上限”第 1-6 条；当前分支
+  `codex/hybrid-cloud-protection`，HEAD `dc4394f4ff3a93ed23a030857d72064843edd314`，工作区已有并行改动，
+  本卡仅建卡、未改 Java。
+- 证据：最近 17/17 的修罗开打均由本地 `local-kanda` 模板 prepared action 消费。ready 发布到 task wake 约 9ms，
+  但到物理 click 的中位数约 531ms；当前通用 loop 在 click 前还上报 prior outcome 并请求云脑 `step`，与
+  prepared action 已明确“点看打”的执行命令重复。
+- 用户确认目标：本地只作 action 身份/新鲜性/坐标安全校验并点击；点击 outcome 上报给云端后由云端决定下一 phase。
+  禁止点击前以 `step` 再询问下一 phase。尚未开始实施，先等 CR256 时序/outcome contract 设计。
+
+## 2026-07-11 / CR255 首轮 review Approved，实现者 heartbeat 按规则 15 停止
+
+- reviewer 首轮结论：**Approved**——复核确认本卡未改变接任务成功定义、NPC smart 候选顺序、导航、
+  dialog option 验证、云端 fallback 或 cleanup/retry 次数；`STORY_DIALOG_VISIBLE` 仅 Runner 的
+  STORY 分支发布、OPTION 不发布、Runner 零输入；全仓唯一 opt-in 为 `ACCEPT_TASK_CLICK_NPC`，默认
+  请求完全短路；FIFO 边界消费、未提交不推进 sequence、restart 上限 3 次回既有恢复链均通过；
+  未见无界循环或输入越权。
+- fresh 为独立运行验收（正常无 Story 零新增动作、Story 事件一次 fast click 后重开 session、
+  OPTION 不误触发），reviewer 明确不阻塞本次源码审核通过。
+- 卡片 Status 已记 Approved + heartbeat 停止原因；表行 Approved（reviewer 已同步）；dashboard 已
+  重生成（247 行）。实现者 heartbeat 满足规则 15 停止条件，已删除。
+
+## 2026-07-11 / CR255 实施：STORY_DIALOG_VISIBLE 强类型事件 + 修罗接任务 FIFO 边界消费
+
+- 按卡内六条已确认设计实施完成（用户"完成CR255"即实现授权）：
+  - `WindowReadyEventType` 新增 `STORY_DIALOG_VISIBLE`；Runner 在 attention 路径 snapshot 更新后、
+    仅确认 `STORY` 时发布（windowId/hwnd/taskType/source/detectedAtMs + bus sequence），复用既有
+    2.5s attention recency 限流；`OPTION` 不发布、validated option 仍只走 `PREPARED_ACTION_READY`；
+    Runner 零输入、`TASK_ATTENTION_REQUIRED` 零改动。
+  - `NpcClickRequest` 增 `consumeStoryDialogVisibleEvents`（默认 false，`toBuilder` 开启）；全仓唯一
+    opt-in = `XiuluoTaskV2.clickTaskNpc`（ACCEPT_TASK_CLICK_NPC）。就近点击/CLICK_TARGET_NPC/战斗/
+    五倍/五环调用方零变化。
+  - `NpcClickService` 注入 `WindowReadyEventBus`；`tryClickNpcSmartViaCloud` 重构为外层 story-restart
+    循环 + 内层 session（原逻辑原样搬移）。FIFO `pollNext` 前的自然边界做一次纯内存新鲜事件读
+    （anchor 入口捕获一次 + lastConsumed 单次消费 + taskType/windowId 匹配）；命中 -> 旧 session 报
+    `CANCELLED` -> `fastClickKnownSmallStoryDialog("npc-click-smart:story-blocker:<task>")`（统一
+    input queue、task turn 线程）-> 提交成功才记 sequence 并以新 sessionId 重启；未提交不标已处理回
+    既有失败链。无新增截图/OCR/云请求/sleep/polling/retry。
+  - 实现侧唯一防线：restart 上限 3 次（fail-closed 回既有恢复链，防不可关闭 dialog 无界循环；
+    正常路径不读）。已写入卡片实施记录供 reviewer 裁定。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；零云端改动。卡片 Planned→Implemented + 实施记录；
+  表行同步；dashboard 已重生成（247 行）。heartbeat（每 5 分钟读卡）已建立，等外部 reviewer 结论。
+- fresh 验收待跑：正常接任务无新增 Story fast-click/检测；Runner 确认 Story 时依序
+  `STORY_DIALOG_VISIBLE` -> 一次 fast story click -> 新 smart session；OPTION 只见
+  `PREPARED_ACTION_READY`；输入全部来自 task turn input queue。
+
+## 2026-07-11 / CR255 已建卡：Runner 明确 Story 阻挡通知，不拖慢正常 NPC smart
+
+- 基线记录：当前分支 `codex/hybrid-cloud-protection`，HEAD `dc4394f4ff3a93ed23a030857d72064843edd314`；
+  工作区已有大量用户/并行施工改动，CR255 目前仅写卡，未改 Java。
+- 最新日志证据：修罗第 17 轮 `NPC_CLICK_SMART` 在 `21:58:49.239-21:59:54.213` 结束；Runner 于
+  `21:59:58-22:00:57` 多次检测 `STORY`，但 generic `TASK_ATTENTION_REQUIRED` 不能安全驱动输入，直到
+  `22:00:59.408` 才因 accept dialog failure 获得 `RUN_CLEANUP`。
+- 用户确认的设计已写入 CR255：仅 `STORY_DIALOG_VISIBLE` 可通知接任务输入路径；`OPTION` 只走有坐标的
+  `PREPARED_ACTION_READY`；正常 `NPC_CLICK_SMART` 不增加截图/OCR/云端/等待。尚未开始实现。
+
+## 2026-07-11 / CR253 三轮复审 Approved，实现者 heartbeat 按规则 15 停止
+
+- reviewer 三轮结论：**通过 / Approved**——审查范围为 CR253 当前源码、`docs/业务逻辑.md` 281-339 行与
+  CR230/CR232/CR243 边界，未发现 P0/P1/P2 或待返修项；P1-2 修复时序（afterSequence 先取 -> 发布
+  `TRACKER_GREEN_RETRY` job -> 发布 `PREPARED_ACTION_READY` -> 带旧序号 park -> 新 command cycle 消费）
+  确认正确，P1-1/P1-3 复核保持通过。
+- reviewer 明确 fresh 长跑为独立运行验收、不阻塞本结论：后续真实修罗运行需记录 click-failed 复按发生在
+  prepared-ready wake 之后、stale attempt/round 迟到 prepared 全部丢弃日志，以及卡内第 6 条其余验收点。
+- 卡片状态改 Approved（源码 review）；表行/dashboard 已同步。实现者 heartbeat（每 5 分钟读卡）满足
+  规则 15 停止条件（明确 Approved + 无未解决项 + fresh 不阻塞），已删除，停止原因写入卡片 Status。
+  CR230/CR232/CR243 三张卡不受影响，均不关闭。
+
+## 2026-07-11 / CR253 二轮复审 P1-2 已返修（P1-1/P1-3 复审通过，待三轮复审）
+
+- 二轮 reviewer 结论：P1-1（kanda attempt 戳）、P1-3（60s 退避移除）通过；P1-2 退回——click-failed
+  fallback 创建 job 后未发 `PREPARED_ACTION_READY`、以无 waitSpec 同 phase 内联重进直接消费，
+  违反"发布 prepared -> wake -> consumer -> 再 park"边界。
+- 已修：`awaitCloudFallbackAfterClickFailure` 的 CLOUD_NO_ACTION 分支现为
+  发布 `TRACKER_GREEN_RETRY` job -> **显式发布 `PREPARED_ACTION_READY`** -> 返回正常无限 park；
+  `waitForTrackerShortcutWake` 新增显式 `afterSequence` 重载，该值在 ready 事件发布前捕获，
+  park 恰被这次 wake 在新 command cycle 唤醒，由 `consumeTrackerGreenRetryJob` 统一原子复按。
+  内联重进路径删除；`repressSavedGreenOnCloudFallback` 仍只有一个 consumer 入口。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package` exit 0。
+- 卡片已写"二轮 P1-2 返修记录"+ 补充 fresh 验收点（复按日志必须在 prepared-ready wake 与
+  WAIT_FOR_EVENT park 完成之后）；表行同步；dashboard 已重生成。heartbeat 继续等三轮复审。
+
+## 2026-07-10 / CR232 源码 review Approved，heartbeat 按规则 15 停止
+
+- 卡内出现最终结论"Review 结论通知：Approved（源码 review）"：无 P1/P2/P3 open finding，
+  reviewer heartbeat 声明完成关闭，fresh runtime 待验保留为独立运行验收 gate、不要求 heartbeat
+  持续运行。
+- 实现侧 heartbeat 已停止并删除，停止原因已写回 CR232 卡（"Heartbeat 停止记录"）。
+- 本轮 heartbeat 周期共四次返修全部通过源码复审：click-failed 握手、终态 snapshot NPE、
+  未执行复按不放弃不计数、点击成功不清 green-chain schedule/dialogInterest。
+- 后续：fresh runtime 日志复核时按卡内各 Fresh gate 小节验收（点击未入战不清 interest/schedule、
+  CLOUD_FALLBACK 实际复按、click-failed 握手链路、三次上限、IN_COMBAT 统一清理）。
+
+## 2026-07-10 / CR253 首轮复审 3 项 P1 已返修（待复审）
+
+- reviewer 首轮结论（不通过 / Blocked，3×P1）已按卡内方向全部返修：
+  - **P1-1**：本地 kanda prepared 统一 attempt 身份——Runner 发布时在绿链 schedule 打开期把
+    `attemptId`（UUID pathing intentId，蕴含 taskRunId/round）盖进 `PreparedDialogAction.intentId`；
+    绿链 phase 消费新增 `requiredAttemptId`，戳不匹配（含无戳）丢弃零输入；
+    `update/clearXiuluoGreenChainSchedule` 新增 `discardStaleXiuluoEnterBattlePrepared`，schedule
+    替换/关闭同步作废旧戳 prepared。WAIT_COMBAT 重注册路径（schedule 关闭、无戳）语义不变。
+  - **P1-2**：`awaitCloudFallbackAfterClickFailure` 的 CLOUD_NO_ACTION 分支不再直接复按：校验
+    schedule/attempt 一致后发布 `TRACKER_GREEN_RETRY` job，返回无 waitSpec 同 phase outcome，
+    下次 phase 进入由 `consumeTrackerGreenRetryJob` 统一原子复按；
+    `repressSavedGreenOnCloudFallback` 只剩该 consumer 一个入口。
+  - **P1-3**：删除 `XIULUO_SUMMON_JOB_REPUBLISH_BACKOFF_MS`/`lastXiuluoSummonJobPublishedAtMs`；
+    发布判定无状态化（schedule + 无 pending job + 只读 due 探针），探针补充尊重既有
+    `summonSkillUnknownRetryAfterByWindow` 业务退避；新 attempt 清 job 后下一 tick 即可重发。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package` exit 0。
+- 卡片已写"首轮 P1 返修记录"，状态改 Review P1（首轮）已修；表行同步；dashboard 已重生成。
+  heartbeat 继续读卡等复审；fresh gate 未开放。
+
+## 2026-07-10 / CR232 跟进复审 P1 修复：本地 prepared 点击成功不清 dialogInterest（源码复审已通过）
+
+- 跟进复审退回 P1：`consumePreparedXiuluoEnterBattle` 点击成功后仍清 dialogInterest，而 Runner 的
+  kanda2 probe 依赖 interest 支持 `XIULUO_ENTER_BATTLE`——"点击成功未入战"时 probe 提前停止。
+- 修复：删除该 `clearDialogInterest` 调用；interest 与 green-chain schedule 同边界
+  （confirmed `IN_COMBAT` 的 `clearXiuluoDialogStateOnCombatEntry` L1321-1322 / stop / failure /
+  新 attempt）。迟到 prepared 由既有 combat-entry one-shot guard 丢弃。已核验 combat-entry 边界
+  确实清 XIULUO_V2 interest，不会泄漏。
+- 编译：DHXY `mvn -q -DskipTests compile` 通过（云端零改动）。
+- 复审方已将 CR232 表行更新为"Heartbeat 源码复审通过；fresh 待验"。卡片保持 fresh pending，
+  heartbeat 继续监控直至 fresh gate 由运行日志满足并在卡内出现最终通过结论。
+
+## 2026-07-10 / CR232 Heartbeat 源码复审 P1 修复：点击成功不清 green-chain schedule
+
+- Heartbeat 源码复审退回 P1：CR253 调度下，云端坐标点击成功（`clickCloudEnterBattlePoint`）与
+  本地 prepared 看打点击成功（prepared consumed 路径）都立即 `clearXiuluoGreenChainSchedule`，
+  而 Runner 已把停稳静态仲裁 + typed jobs gate 到该 schedule——点击未入战时后台被提前关掉，
+  违反 CR232"本地持续 probe 直到真实 IN_COMBAT"与业务逻辑第 6 条。
+- 修复：删除两处点击成功即 clear 的调用（含旧 CR253 注释），补"点击成功≠进战"注释；
+  schedule 清理入口收敛为四类既有终止边界（confirmed IN_COMBAT / watchdog-failure /
+  fallbackFromShortcut 放弃 / 复按成功原子换新 attempt）。interest/pathing intent 清理等
+  用户既定语义不动。
+- 编译：DHXY `mvn -q -DskipTests compile` 通过（云端零改动）。
+- 卡片写入修复实施记录；表行/dashboard 同步；heartbeat 继续监控。
+
+## 2026-07-10 / CR253 实施：修罗绿链统一 prepared-action 调度（无限 park + typed prepared job）
+
+- 按已批准业务合同实施完成（六条合同、五个实施切分全部落地）：
+  - **typed prepared job：**新增 `com.bot.dhxy.model.job`（`PreparedActionJobType`：XIULUO_ENTER_BATTLE /
+    TRACKER_GREEN_RETRY / SUMMON_SKILL_CLEANUP；`PreparedActionJob`；`XiuluoGreenChainSchedule`）。
+    `SUMMON_SKILL_CLEANUP` 不进 DialogOperation。`WindowRuntimeContext` 持有 schedule + per-type job map，
+    发布/消费各自校验 `windowId/hwnd + taskRunId + round + attemptId + type`（双重作废门），
+    不匹配打 stale-discarded 日志丢弃、零输入。
+  - **terminal 下沉后台：**`WindowTaskRunner` 在 pathing watcher 的 terminal 发布点后挂
+    `maybeSubmitXiuluoGreenStopStaticArbitration`（仅 tracker-shortcut intent + schedule attempt 匹配；
+    stale-attempt terminal 后台丢弃，覆盖 round 87 类）；`dialogPreparationExecutor` 上跑
+    `decideXiuluoEnterBattleStopStatic`：CLOUD_EXECUTED→发布 XIULUO_ENTER_BATTLE job、
+    CLOUD_NO_ACTION→发布 TRACKER_GREEN_RETRY job、其余零发布。terminal 不再唤醒前台。
+  - **前台改纯消费者：**`waitTrackerShortcutPathing` 依序消费本地 kanda prepared →云端看打 job
+    （物理失败仍走 CR232 click-failed 握手）→绿链复按 job（统一 input queue、仅实际执行计数、
+    新 attempt 换 schedule）→三技能 job；无可消费即重新 park。wait 集收窄为
+    `{PREPARED_ACTION_READY, COMBAT_STATE_CHANGED}`，timeout -1，180s pre-combat watchdog 兜底。
+  - **三技能迁移：**watcher tick 内 `maybePublishXiuluoSummonSkillCleanupJob`（队长 + schedule 打开 +
+    `TaskMaintenanceService.isSummonSkillCleanDueForCurrentWindow` 只读 due + 60s 退避）发布 job；
+    consumer 复用 `runLeaderPathingSummonSkillMaintenance` 后继续 park。before-park 钩子收窄为仅
+    `WAIT_TARGET_PATHING_TERMINAL`（非 shortcut 导航保留）。
+  - **park 协议：**shell WAIT_FOR_EVENT 白名单与同 phase armed 上报门各加
+    `WAIT_TRACKER_SHORTCUT_PATHING`；云端 `DecisionEngine.trackerShortcutParkNext`（对齐 CR245 模式）：
+    armed 同 phase PATHING_STARTED→WAIT_FOR_EVENT，park 完成→重执行消费。绿链等待不再烧
+    local yield guard（子类 A/B 协议死因在该 phase 关闭）。
+- 与 CR232 第四次复审修复（未执行复按不放弃不计数）同日合并：未执行复按保持当前 attempt 的 schedule
+  打开，后台仲裁可再次确认 fallback（Runner 端不做 per-attempt 仲裁去重，仅 stateChanged + schedule 门）。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package`（含测试）exit 0。
+  DHXY `test-compile` 有与本卡无关的既有失败，未处理。`XiuluoLeaderPathingSummonBeforeParkWiringTest`
+  已按 CR253 合同更新。
+- 文档：CR253 卡状态 Ready→Implemented + 实施记录；dashboard CR253 行已同步。CR230/CR232/CR243 均不关闭。
+- fresh 验收待跑：绿链后无 relevant prepared 时只有后台观察/云端请求日志、无前台重跑/`local yield guard`/
+  物理重按；四种来源各自 typed prepared；看打点击后立即 `WAIT_COMBAT`；云端 fallback 实际复按三次才走
+  CR232 放弃链；旧 attempt/round/窗口 action 均有丢弃日志且零输入。
+
+## 2026-07-10 / CR232 第四次复审 P1 修复：未执行的复按保持当前 attempt 等待，不放弃不计数
+
+- 第四次复审退回 P1：云端明确 fallback 后，`repressSavedGreenOnCloudFallback` 在
+  `moveAndClickLeft` 返回 false（复按未实际执行）时直接 `fallbackFromShortcut` 放弃整轮，
+  绕过"只有实际执行的 fallback 才计一次、累计三次才放弃"。
+- 修复：`!clicked` 分支改为 `waitForTrackerShortcutWake` 保持当前 attempt park；不计数、不清/不换
+  green-chain schedule（CR253 模型下 schedule 只在复按实际执行后换新），后台仲裁可对同一 attempt
+  再次确认 CLOUD_FALLBACK 投递新 `TRACKER_GREEN_RETRY` job；放弃路径仅剩方法顶部三次上限检查。
+- 编译：DHXY `mvn -q -DskipTests compile` 通过（云端零改动）。
+- 卡片已写第四次复审 P1 修复实施记录 + fresh gate；表行/dashboard 同步；heartbeat 继续监控卡片。
+
+## 2026-07-10 / CR120：修罗队长误走成员 combat-exit 盒子 hook 修复
+
+- 基线：当前分支 `codex/hybrid-cloud-protection`，最新提交 `dc4394f`；工作区已有大量用户/并行施工改动，
+  只触碰 `AutoCombatService` 的 common-box 调用边界与 CR120 文档。
+- 已核对并按用户本轮明确批准更新 `docs/业务逻辑.md`：队长仅在 verified return-home 后检测、下一轮点
+  接任务 NPC 前消费；队员仍仅在 combat-exit 后检测。standalone 队员在可用输入机会尽快消费，本地跟队队员
+  等队长释放 task turn、队员实际拿到 task turn 后消费，不能抢输入。
+- 运行证据：`hwnd-9831824` 明确为 `LEADER`，但 `AutoCombatService` 无条件调用
+  `detectMemberBoxAfterCombatExit(...)`，成员开关默认关闭时在 role-toggle gate 直接返回；
+  `CommonBoxService.roleFor(...)` 尚未执行。修复只让该成员 hook 在真实 `MEMBER` 上调用，避免队长被
+  错误记为成员检测跳过；队长仍由既有 `xiuluo-v2:return-home-verified` leader hook 检测。
+- 编译：`mvn -q -DskipTests compile` 通过。未运行本地测试（当前 no-local-test 默认规则）；fresh 验收只看
+  修罗 leader combat-exit 不再出现 member-toggle skip，以及既有 return-home leader detection 事实。
+
+## 2026-07-10 / CR232 第三次复审 P1 修复：终态 snapshot 整链传递，cloud-confirmed fallback 不再 NPE
+
+- 第三次复审退回 P1：click-failed 握手在云端确认后，`awaitCloudFallbackAfterClickFailure` 从已
+  `clearPathingSignal` 的 runtime 重取 snapshot（null）传给 `repressSavedGreenOnCloudFallback`，
+  后者三处日志无空判断读 `snapshot.getState()/getMessage()`，目标链路会 NPE。
+- 修复：`clickCloudEnterBattlePoint`/`awaitCloudFallbackAfterClickFailure` 新增 snapshot 参数，
+  终态 snapshot 从 `arbitrateEnterBattleByCloudStopStatic` 原样传递整条链；删除
+  `runtime.getPathingSnapshot()` 重取；复按方法内 snapshot 读取全部 null-safe（纯诊断，无业务
+  语义变化）。
+- 编译：DHXY `mvn -q -DskipTests compile` 通过（云端零改动）。
+- 流程（规则 15）：双独立 reviewer（契约合规 + 对抗性）已启动复核本修复；CR232 卡已写入修复
+  实施记录与 fresh gate（cloud-confirmed fallback 日志后必须实际复按且计数仅递增一次、无 NPE）；
+  表行/dashboard 已同步；heartbeat 重建监控卡片结论。
+
+## 2026-07-10 / CR232 第二次复审 P1 修复：云坐标点击失败 → click-failed 握手 → 云端确认才复按
+
+- 剩余 P1（`clickCloudEnterBattlePoint` 物理点击失败直接复按）已按要求顺序修复：
+  云端坐标点击失败 → 前台回报当前 attemptId 的 click-failed outcome → 云端明确返回
+  CLOUD_FALLBACK → 前台才复按绿链。链路：
+  - `XiuluoTaskV2`：`!clicked` 改走新 `awaitCloudFallbackAfterClickFailure(...)`；仅
+    `CLOUD_NO_ACTION` 触发 `repressSavedGreenOnCloudFallback`，其余（新坐标/DISABLED/
+    REQUIRED_FAILURE/截图或服务不可用）一律继续等本地 probe，不复按不计数。
+  - `DialogService.decideXiuluoEnterBattleStopStatic` 新增 `(request, priorClickOutcome,
+    priorClickAttemptId)` 重载；`DialogPolicyPreClickCloudRequest` 新增两字段并进
+    `preClickContext`。
+  - 云端 `DecisionEngine.dialogPolicy` 识别 `priorClickOutcome=CLICK_FAILED` 短路回
+    `action=NO_ACTION`（reason `cloud-brain-enter-battle-click-failed-fallback`），即云端
+    确认失败并明确下发 fallback。
+- 编译：DHXY `mvn -q -DskipTests compile` 通过；dhxy-cloud-brain `mvn -q package`（含测试）通过。
+- 文档：CR232 卡追加"第二次复审 P1 修复实施记录 + fresh gate 链路"；表行同步；dashboard 已重生成。
+- 卡片保持 fresh pending，等复审日志出现同 attemptId 的
+  `click failed -> outcome reported -> CLOUD_FALLBACK -> saved green re-press` 链路。
+
+## 2026-07-10 / CR253：修罗绿链统一 prepared-action 调度父卡已建立
+
+- 用户定稿：绿链后队长无限 park；`PATHING_TERMINAL` 仅后台截停稳图并提交云端，不唤醒前台。
+  修罗绿链前台只消费当前 `round + attemptId` 的 typed prepared：看打、云端明确 fallback 的绿链复按、
+  以及三技能完整维护 job；进战点击后立即改由 `WAIT_COMBAT` 接管。
+- 原因：当前三技能不是 phase/prepare，而是 `waitTrackerShortcutPathing(...)` 被重跑时顺手调用的
+  opportunistic maintenance。若直接改为无限 park，会让队长三技能永久饿死，必须在本卡迁为后台 due ->
+  prepared job -> 所属 consumer。
+- 关联：CR230 负责 shell 不把合法等待自转八次；CR232 保留 attemptId、云端 fallback 与三次有效上限；
+  CR243 保留队长先补给、队员后台血蓝 Q。三张卡均不关闭。
+- 本轮撤回了一个错误的临时方向：不得把 `PATHING_TERMINAL` 接入绿链前台 `WAIT_FOR_EVENT`。双侧撤回后
+  compile 已通过；未改 CR232 业务逻辑。
+
+## 2026-07-10 / CR232 补充定稿实施：云端拥有看打 fallback 决策权 + attemptId 隔离 + 3 次上限
+
+- 按用户批准的五条补充定稿实施（DHXY compile exit 0，fresh 待验；云端零改动，施工清单第 8 条成立）：
+  - attemptId=每次绿链点击的 pathing intentId；终态入口校验 snapshot intentId 与当前
+    `shortcutPathingIntentId` 一致，旧尝试迟到 terminal 打 `stale-attempt terminal discarded`
+    后丢弃，不仲裁不复按。
+  - 终态一次同步静态仲裁 `tryEnterBattleParallelFallback(attemptId)`（source 带
+    `attempt-<id>`）；未命中即该尝试的云端 fallback 结论 → 新
+    `repressSavedGreenOnCloudFallback`（原 retrySavedShortcutGreenAfterTerminal 重构）复按。
+  - 有效计数=实际执行的复按（复用 `shortcutTrackerRetryCount`，旧响应/未送达/物理失败不消耗），
+    `MAX_CLOUD_ENTER_BATTLE_FALLBACKS=3`；超限 `fallbackFromShortcut("cloud-fallback-limit-reached")`
+    走既有本轮放弃/恢复路径。本地 kanda2 probe 全程不停（复按后原锚点重注册）。
+  - 该修复同时终结失败 case 子类 B（round 48/50/87 的 retry=8 空转烧尽 shell guard）：上限 3 次后
+    在 shell 8 圈预算内正常转入恢复链，不再产出 cloud-brain-failure。子类 A（急救队列 drain）的
+    shell event-park 协议修复仍待批准实施。
+
+## 2026-07-10 / 修罗失败 case 集中复盘：CR243 队长先补给 + tracker wait 协议缺口
+
+- 逐 case 读原始切片/events 后分类（全部 `WAIT_TRACKER_SHORTCUT_PATHING` / `local yield guard exceeded`）：
+  - **子类 A（急救队列 drain 轮询）：round 33、55。** 上一轮战后 CR243 first-aid 队列未排空，
+    `yieldWhilePostCombatFirstAidQueueDraining` 每 1s 产出同 phase `PATHING_STARTED/MUST_YIELD`
+    waitSpec（wakeTypes 无队列事件，只能 1s timeout 轮询）。round 33 实锤：成员 443075411 报
+    `SUPPLY_NEEDED(人物法力)` 后，队列 `13:11:24.551` 才由队长 open；且该成员 `13:11:25.615` 抢跑
+    summon-skill clean（AltO/点击/云 slot 识别占用自己线程与 input worker ~7s+），head 消费被自身
+    维护拖死。
+  - **子类 B（saved-green terminal retry 空转）：round 48、50、87。** 到图 `ARRIVED targetMapArrival=true`
+    后看打仲裁（本地 kanda prepared + 云端）双 miss → CR232 复按同一保存绿链（relative 63/61,257）→
+    寻路立即 ARRIVED → 再 miss → 再复按，~3.4s/圈；三个 case 均精确 retry=8 后死亡。
+  - **共同协议死因（P1）**：shell `while (localYieldGuard++ < 8)`（XiuluoTaskV2:945）内，同 phase
+    waitSpec 放行白名单（:997）只有 WAIT_COMBAT/WAIT_TEAM_RETURN/维护队列 park，**不含
+    WAIT_TRACKER_SHORTCUT_PATHING**——该 phase 的合法等待被 inline 消化，8 圈必死；两个子类只是
+    烧圈速度不同（1s vs 3.4s）。
+- **修复方案（P1，协议，两子类共同）**：shell 白名单加 armed `WAIT_TRACKER_SHORTCUT_PATHING`
+  （waitSpec!=null 且 localNext 同 phase → report）；云端 `trackerShortcutPathingNext` 增加
+  `outcomeResult=PATHING_STARTED + localNext=WAIT_TRACKER_SHORTCUT_PATHING + eventWaitArmed=true`
+  → `WAIT_FOR_EVENT`（复用 CR207 armed gate），并对 `commandActionType=WAIT_FOR_EVENT` 完成
+  outcome 回 `execute(同 phase)`（对齐 CR245 maintenanceQueueParkNext 模式）。每次真实 park 重置
+  shell immediate-loop 计数，guard 不再截断合法等待；watchdog(180s) 恢复为兜底。
+- **已实施（P2，子类 A 业务，用户批准方案一）**：队长点绿链后先执行自己的 queued first-aid 与既有
+  deferred leader remainder，再永久事件 park；删除 `yieldWhilePostCombatFirstAidQueueDraining` 与 1 秒
+  `POST_COMBAT_FIRST_AID_QUEUE_DRAIN_POLL_MS`。队员 Q 在后台 FIFO 消费，队长不再等待/检查 COMPLETE。
+  队长项目改为 FIFO 首位；Q 在最后一项出队或最后个 HEALTHY report 抵达时自行按 participant snapshot
+  关闭。DHXY `mvn -q -DskipTests compile` exit 0。
+- **修复方案（P2，子类 B 业务）**：复按同绿链后 pathing 无位移立即 ARRIVED 连续 2-3 次 → 停止复按，
+  走既有 fallbackFromShortcut/CONFIRM_ENTER_BATTLE 恢复链；case 归档在 retry≥3 时附窗口截图，
+  以归因"到图后看打为何不出"（NPC 未在点/绿链坐标漂移/需 NPC 点击）。
+- **修复方案（P3，failure 卫生，round 87 证据）**：failure-restart 归档前清理旧 intent 的
+  prepared/interest/pathing intent，防迟到 `PREPARED_ACTION_READY` 落入下一轮或 generic ui-cleaner。
+- 验收：P1 修后连续多轮不得再出现该类别 case；子类 A 场景日志应出现一次
+  `WAIT_FOR_EVENT` park 且排空后即恢复；子类 B 在复按 2-3 次后应看到 fallback 链而非
+  cloud-brain-failure。
+
+## 2026-07-10 / CR230 fresh 失败归档巡检
+
+- 新 case：`images/failure-cases/xiuluo/20260710_131133_247_round-33_WAIT_TRACKER_SHORTCUT_PATHING_cloud-brain-failure_hwnd-9831824`。
+  轮次 33 已完整保存原始 console/tracker 切片和 events；失败原因是
+  `cloud brain local yield guard exceeded phase=WAIT_TRACKER_SHORTCUT_PATHING`。
+- 失败发生在绿链已点、targeted intent（凤巢五层）已注册后约 10 秒，尚未进入真正 event park；
+  属于云脑 shell 对同 phase local yield 的放行缺口，不是模板/NPC/OCR 失败。
+- CR230 的归档后重开、不停整任务已取得 fresh 正证据：case 已自动回
+  `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC`，后续已继续至 round 39；但
+  `WAIT_TRACKER_SHORTCUT_PATHING` 的 cloud-shell guard 仍是 P1，CR230 不关闭。
+- 后续长跑已在 round 48、50、55 再次生成相同类别 case；round 48、50 在该 wait phase command 后约
+  `27-29s` 触发 guard，round 55 在约 `12.46s` 后重现，再自动换新 cloud session 继续。恢复机制持续有效，
+  但该 P1 已确定为可重复协议缺口。
+- round 66、71 连续出现同 phase 成功 event-park 正证据：分别等待 `66.343s`、`46.385s` 后以
+  `PATHING_TERMINAL` 正常唤醒、未报 guard；但两轮样本仍不足以关闭 CR230，且终态仍复按绿链。
+- round 76 在“大唐边境”终态约十秒内又将保存绿链实际复按至 `retry=5`；CR232 的 prepared 消费正向
+  仍不能覆盖重复复按问题，继续 fresh pending。
+- round 78 在“大雁塔三层”又实际复按至 `retry=7`，证实该循环跨地图持续且没有有效上限；CR232 保持 P1。
+- round 87 新增第五个 `WAIT_TRACKER_SHORTCUT_PATHING` guard case。failure 约 `397ms` 后旧 intent 才发布
+  `XIULUO_ENTER_BATTLE` prepared，已错过消费窗口并与 generic `ui-cleaner` cleanup 交叉；CR230 继续 P1。
+
+## 2026-07-10 / CR120 common-box fresh 运行阻断
+
+- `14:32:20.408` 的修罗队长窗口 `hwnd-9831824` 在 `xiuluo-v2:combat-exit` hook 被
+  `CommonBoxService` 读成 `role=MEMBER`，因成员开关而直接跳过检测；同一窗口 `14:32:27.563`
+  在 `return-home-verified` 又读成 `LEADER`，才做检测但已经 miss。
+- 这不是 capability 未开，也没有 pending/click 证据；问题是战斗退出的短时盒子检测被角色错位跳过。
+  CR120 保持 fresh pending，待修复角色绑定后用真实盒子画面验收。
+
+## 2026-07-10 / worker 3：当前修罗运行验收
+
+- 日志范围：`logs/dhxy-console.log` 至 `12:16:15`，当前窗口 `hwnd-9831824`、`taskRunId=15`。
+- CR199 通过：`12:15:53.265` 云端接受 `WAIT_TRACKER_SHORTCUT_PATHING`，`12:16:07.447` 绿链
+  入战链已消费并上报 `WAIT_COMBAT`，`12:16:07.501` 云端接受 `WAIT_COMBAT`；未再出现旧
+  `outcome cannot advance` / fail-closed，已在 CR 卡与看板表标 Done。
+- CR200/CR207 仅部分正向：round 4 已 `RETURN_HOME -> WAIT_TEAM_RETURN -> ROUND_DONE`，且
+  `eventWaitArmed=false` 未触发 `WAIT_FOR_EVENT requires pending wait spec`；仍缺各自完整 fresh gate。
+- 其余修罗 Review/Implemented/fresh pending 卡未取得专门证据，不关闭；细项与待验点已写入 CR192 父卡。
+
+## 2026-07-10 / CR232：修罗绿链终态不再重读面板（用户批准业务差异，fresh 待验）
+
+- 已核对修罗 pre-cloud 业务基线 `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`：旧终态会重读
+  tracker；本次由用户明确批准改为更短的固定链路。
+- 首次点击 tracker 绿链时，`XiuluoRoundContext` 同时保存屏幕绝对点与**窗口相对点**。`ARRIVED` 或
+  `STOPPED_AWAY` 后先消费已到的本地 kanda prepared；未命中则运行既有完整本地/云端看打链路；双路都 miss
+  才按当前 `WindowRuntimeContext.nativeBinding` 的 base 加回该相对点复按同一绿链。
+- 禁止 terminal fallback 再读 tracker/OCR/重新选链接；复按会注册新 pathing intent，并保留新 intentId 到 round
+  state，避免 prepared 校验仍关联旧 intent。
+- DHXY `mvn -q -DskipTests compile` exit 0。fresh 验收：终态日志应先有 `pathing terminal; run local/cloud`
+  和看打仲裁；若双 miss，只能出现 `terminal saved-green retry clicked`，不能出现 tracker re-read。
+
+## 2026-07-10 / CR230：修罗失败不再直接停任务的定稿方向（待实施）
+
+- 当前 `RESTART_ROUND` 只覆盖云端主动下发的重开与部分 loop guard；云端 decision 不接受、outcome ack
+  失败、command shell rejected 等仍走 `failClosedXiuluoBrainLoop(...)`，直接把整任务置为 `FAILED`。
+- 用户定稿：所有可恢复的本地/云端失败都先保存“本轮接任务到失败”的完整 trace，再清理并回
+  `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC` 重新接任务，同一 round 编号继续跑；连续失败只积累诊断，
+  不触发云端 `FAIL_TASK` 停脚本。
+- 归档必须至少包含 phase、local outcome、cloud request/response 摘要、action/session/stateSeq、失败原因和
+  已有截图引用，并写入结构化失败类别与初步归因，作为后续集中分析/统一修复的 case 结论。现有云端重开仅
+  `recordXiuluoFailureCase(..., null, ...)`，不足以满足该要求，需复用/统一到
+  `XiuluoRoundTrace` 的完整归档。
+- 例外：用户手动 stop、窗口/HWND 或身份绑定失效、任务真实结束必须停止；暂停只 park，不算失败。未改代码，
+  这些不是可恢复业务失败。
+- **已实施：**DHXY cloud loop 的 decision/ack/shell/terminal failure 统一 archive + cleanup + fresh session；
+  本地 phase loop 的 recovery deny/连续失败也不再抛 fatal。每个 case 落在
+  `images/failure-cases/xiuluo/<case>/`，并将原始 console/tracker 时间切片、初步结论和修改建议追加到
+  `docs/run-reports/xiuluo-failure-cases.md`。云端连续失败 breaker 保留计数但不再下发 `FAIL_TASK`。
+- 编译：DHXY `mvn -q -DskipTests compile` exit 0；cloud-brain `mvn -q -DskipTests=false compile` exit 0。
+  fresh 长跑待验：每次失败必须归档并从 `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC` 重接，不得整任务 ERROR。
+
+## 2026-07-10 / CR145 P1：启动后首次身份同步清掉三技能冷却
+
+- 本次队长 `hwnd-9831824` 于 `11:22:00.469` 启动修罗时已记录
+  `maintenance init: summon skill cooldown starts now`；`runImmediatelyOnStart=false`，UI 的
+  20 分钟也正确下发为 `intervalMs=1200000`。
+- `11:22:08.498` 首次 identity epoch 从默认 `0` 绑定到 `10` 时，
+  `summonSkillState(...)` 将其误作 identity drift，删除了刚写入的
+  `lastSummonSkillCleanAtByWindow`。随后 due gate 读到 `lastCleanAt=null`，立即入队；
+  `11:24:41` 才在可消费的维护窗口实际启动清理。
+- 正常 20 分钟配置会因既定 90 秒提前量在约 18.5 分钟 due；本次“几分钟就触发”与提前量无关，
+  是首次身份绑定误清冷却。
+- 已实施：`TaskMaintenanceService.summonSkillState(...)` 对首次 `0 -> 实际 epoch` 保留
+  `lastSummonSkillCleanAtByWindow`，但继续清视觉缓存、retry 和旧 queue；只有非零旧 epoch 的真实身份切换
+  才清 cooldown。`mvn -q -DskipTests compile` exit 0。下一次启动验 `preserve summon skill cooldown` 日志，
+  且约 18.5 分钟前不得 due/clean。
+
+## 2026-07-10 / CR178：终极角生成技能后的删除复查遗漏已修
+
+- 漏口不是回退：主普通删除已用 `inspectPostDeleteSlot(...)`，但终极角生成 `NORMAL_SKILL` 后的删除
+  分支仍旧调用 `inspectSkillSlot(...)`，导致删除确认后重 hover。
+- 已将该唯一 `afterGeneratedDelete` 复查替换为既有 `inspectPostDeleteSlot(slotAbsPoint, index)`；因此 cloud
+  active 时会截完整 `52x52` slot ROI 上传 `SUMMON_SKILL`，不移动鼠标。终极角生成前为了判定生成技能类型的
+  hover、删除点击/确认、冷却和 CR145 队列均未改。
+- `mvn -q -DskipTests compile` 已通过。fresh 验收看终极角生成普通技能并删除后日志：必须有
+  `post-delete slot`，且删除确认后没有 `skill slot hover`。
+
+## 2026-07-10 / CR252 实施：战斗模板检测仅在确认入战动作后临时授权
+
+- **Review P1 已修（第四轮）：** 第三轮只覆盖 paused leader；stop/session 完结/group/binding 失效
+  仍被当 standalone 清粘滞并恢复 `maybeHandleCombatEnter`/`Alt+8`。修复：只读分支条件重构为
+  `isMemberReadOnlyDegrade`——`leaderPaused` 或"本轮 run 内曾被覆盖且覆盖已失效（ABSENT）"或
+  "covered+粘滞"一律纯读 early-return；删除"绑定彻底失效→恢复 bootstrap"错误分支；曾被覆盖成员
+  只有下一次真实入战广播或新 task run（`initializeForCurrentWindow` 重置覆盖历史）两条出路；
+  从未被覆盖的独立窗口 bootstrap 语义不变。compile exit 0，待复审 + fresh。
+- **Review P1 已修（第三轮）：** 暂停降级后成员 self-radar 原会无条件 `maybeHandleCombatEnter` →
+  见战斗即消费 enter signal → `ensurePanelVisible`（模板 miss 按 `Alt+8`），违反暂停降级只读边界。
+  修复：`MemberTeamCombatPhaseView` 增 `leaderPaused`；成员流新增纯读分支 early return——只
+  `checkAndSyncCombatState()` 后按 ActionState 返回，enter 消费、entry maintenance、panel/Alt+8、
+  exit recovery、pending common-box/first-aid 全部隔离在 return 之后。read-only 粘滞
+  （`memberReadOnlySelfObserve`）跨队长恢复直到下一次真实入战广播（新 epoch）；仅绑定彻底失效
+  （非暂停）才恢复独立窗口 bootstrap。compile exit 0，待复审 + fresh。
+- **Review P1 已修（第二轮）：** 首轮漏掉已绑定成员在队长进战广播**前**的禁扫——`auto_battle` 不受
+  `mayRunBattleRadar` 门控，无广播时落回 `checkAndSyncCombatState()`。修复：
+  `MemberTeamCombatPhaseView` 增加 `covered`（绑定本地控、未暂停队长即 covered，与广播是否存在
+  无关）；covered 无广播且自身非 IN_COMBAT → 安静等待不扫模板；仅未绑定/外部队长/绑定失效/队长
+  暂停或停止（含 session 完结）才回自身 radar（一次 `member leader-paused-fallback` 日志，切换
+  无输入）；自身已 IN_COMBAT 例外允许 radar 追踪自己的退出。`auto_battle` 未全局关闭，独立窗口
+  不受影响。DHXY compile exit 0，待复审 + fresh。
+- 按卡片已定业务边界实施完成（DHXY `mvn -q -DskipTests compile` exit 0；待 review + fresh）：
+  - `AutoCombatService`：新增 per-window 授权（`authorize/revokeCombatDetectionAuthority`）；
+    `mayRunBattleRadar` 只对 `xiuluo_v2`/`wubei` 生效，授权中或已 IN_COMBAT（hot-start/纠正链豁免）
+    才允许模板 radar；`handleCombatTick`/`handleWindowCombatGuardTick`/
+    `probePausedWindowCombatStateReadOnly` 全部过门。watcher 启动 revoke 旧授权。
+  - `TaskMaintenanceService`：新 `TeamCombatPhaseState`（按真实 tooltip group 隔离，带 epoch）+
+    open/confirmExited/invalidate/memberQuery；队长暂停立即 invalidate，session 完结清理，
+    `initializeForCurrentWindow` 清 stale phase。
+  - `BattleRadarService.applyExternalCombatStateVerdict`：已绑定成员用队长广播替代自身模板扫描，
+    复用既有 enter/exit 信号迁移（Alt+8 引导、退出恢复、归队自检零改动）；广播消失打
+    `member leader-paused-fallback` 后回自身 radar，切换不产生输入。
+  - 修罗六个真实看打点击成功点授权；`waitCombat` 入战确认（非 INCIDENTAL）广播"已进战"；
+    回城验证成功（`reconcileReturnHomeVerifiedCombatState`，修罗/五倍共用）与修罗
+    trusted-not-in-combat 两处确认终态脱战并 revoke。
+  - 五倍授权点逐条：prepared enter-battle actionKey 确认、`tryClickKnownEnterBattleDialog`
+    （含黄袍续战最终 dialog、白龙马/探测 smart 路径）、`tryDirectCombatFromTrackerHint`
+    `combatEntered()`；interest 注册与 tracker 绿字点击明确不授权。
+  - 详单见 CR252 卡片 "Implementation record (2026-07-10)"；dashboard 已重生成。
+- 顺手修复：并行改动的 `XiuluoBrainCloudDecisionService.resolveCreatedAt` 缺
+  `java.time.Instant` import 导致全量编译失败，已补 import（该方法非本卡改动）。
+
+## 2026-07-10 修罗接任务后出村 prepath 性能回归（调查中，未改代码）
+
+- 已用昨晚 `2026-07-09 20:06` round 46 运行作基线，确认 phase 顺序没有变化：两版都是
+  `ACCEPT_TASK_DIALOG -> 云脑 action-outcome/step -> AFTER_ACCEPT_MAINTENANCE_CHECK -> 出村`。
+  先前“当前把 prepath 错误后移到下一 phase”的判断已撤回，不据此改代码。
+- 昨晚 physical accept click `20:06:18.338` -> `Alt+1 20:06:20.110` 为 1.772s；当前
+  `10:02:36.525` -> `10:02:41.282` 为 4.757s，慢 2.985s。
+- 当前新增耗时主要落在：accept 模板 +439ms、accept 后 phase outcome +776ms、cloud action outcome
+  +230ms、current-map 点位解析 +270ms、mini-map request 到 input worker focus +927ms。最后一段前
+  无另一条已记录的 input action，暂只能标为 input queue/global lock 无日志等待，需先归因。
+- 不改 Java，等待用户确认后才针对相对昨晚新增的等待点处理；对应 CR191 已纠正记录。
+
+## 2026-07-10 / CR242 P1：队员归队优化误伤队长修罗战斗退出
+
+- 队长 `67555` 在 `10:04:48.492` 已由 `FAST_EXPECTED_EXIT` 检出并消费脱战，日志明确 action state
+  已恢复 `FREE`；但没有返回 `EXIT_RECOVERED`，导致 `XiuluoTaskV2.WAIT_COMBAT` 从 `10:04:48` 至用户
+  `10:05:49` pause 前持续输出 `waiting for combat state`，未进入 `RETURN_HOME`。
+- 直接引入点是 CR242 对共享 `AutoCombatService.handleCombatTick(...)` 的改动：已消费 exit 后只有
+  common-box 或**队员** first-aid 真执行才返回 `EXIT_RECOVERED`，否则 `NONE`。这本来只为
+  `AutoBattleTask` 让出同轮归队自检，却同时改变了 leader `XiuluoTaskV2` / 五倍的
+  `FAST_EXPECTED_EXIT` 合约。
+- 修复必须恢复共享“已消费 exit 一律给 task owner `EXIT_RECOVERED`”语义；CR242 的队员优化移到
+  `AutoBattleTask` 自己的 exit 后 idle/return 检查，不得继续借 `NONE` 让修罗或五倍失去战斗退出。
+  当前 CR242 reopen，需 worker 修复、双 reviewer 与 fresh leader 修罗战斗退出验证。
+- **已修（2026-07-10，compile exit 0，待双 reviewer + fresh）：**
+  - `AutoCombatService.handleCombatTick`：`consumeExitAndRecover(...)==true` 分支恢复 baseline——
+    common-box 命中直接 `EXIT_RECOVERED`；否则尝试 follower first-aid 后**无条件**
+    `EXIT_RECOVERED`。CR242 首版的 immediate-defer（删 3 秒阻塞）保留，仅回滚返回值降级。
+  - `AutoBattleTask` 主循环新增自己的分支：`EXIT_RECOVERED && FREE` 时同轮执行
+    `maybeRunIdleMaintenance`（首项即归队自检）再 sleep——CR242 的队员同轮自检目标由此承接。
+  - 其余消费方核对：修罗 WAIT_COMBAT / 五倍两处期待的正是 `EXIT_RECOVERED`；五环与
+    `XiuluoTaskV2:3513` 行为等同 CR242 前。详见 CR242 卡片 "Reopen repair" 段；dashboard 已补
+    CR242 行并重生成。
+
+## 2026-07-10 / CR207 fresh P1：67555 快速脱战后的无 wait-spec park 命令
+
+- 最新队长 `67555` / `hwnd-52D0C38` 不是被用户停止，也不是导航/黄色链接故障。`09:44:55.202`
+  `BattleRadarService` 已确认快速脱战并恢复 `FREE`；`WAIT_COMBAT` 随后只上报无 `waitSpec` 的
+  `SHARED_STATE_TRIGGERED/MUST_YIELD`，语义是让下一次本地 phase 继续确认战斗退出。
+- 云端因旧 `combatObserved=true` / `localOutcomeNextPhase=WAIT_COMBAT` 仍下发 `WAIT_FOR_EVENT`；本地
+  `XiuluoBrainRoundState` 没有 pending wait spec，`09:44:55.219` 正确 fail-closed：
+  `WAIT_FOR_EVENT requires pending wait spec`，`09:44:55.832` 队长修罗 `FAILED`。
+- 这是 CR207 旧 message-based no-park 修复在结构化 outcome 上的复发。修复契约必须新增/传递当前 outcome
+  的 `eventWaitArmed`，只能由 `outcome.waitSpec()!=null` 导出；云端只有该值为 true 才能发
+  `WAIT_FOR_EVENT`。false 必须回 `EXECUTE_PHASE WAIT_COMBAT`，不可由历史 `combatObserved` 或 message 文本猜测。
+  不改业务脱战、回程、导航或点击语义。需 worker 修复、双 reviewer 和 fresh 复验。
+- **已修（2026-07-10，双侧构建通过，待双 reviewer + fresh）：**
+  - 本地 `xiuluoBrainOutcomeFacts` 每次上报追加 `eventWaitArmed`（由 `outcome.waitSpec()!=null`
+    导出，置于 executor facts 合并之后，不可被遗留 fact 覆盖）。
+  - 云端 `waitCombatNext` 的 shared 战斗分支加 armed 门：true → `WAIT_FOR_EVENT`，false/缺失 →
+    `EXECUTE_PHASE WAIT_COMBAT`。与既有 `maintenanceQueueWaitSpecArmed`/`teamReturnWaitSpecArmed`
+    同一模式。未恢复 message 判断、未动业务语义。
+  - external `mvn -q package` exit 0；DHXY `mvn -q -DskipTests compile` exit 0。详见 CR207 卡片实施记录。
+
+## 2026-07-10 / CR241 编译阻塞修复：`TrackerPanelLink.height()` 补齐，Cloud Brain 恢复可编译
+
+- 阻塞现场（2026-07-10 09:06）：UI 注册 5/5 窗口后，sidecar 脚本发现 external `target/classes`
+  过期自动 compile，`DecisionEngine.java:3500` 的 `wubeiGreenLinkMapNameByOcr(...)`（CR248 引入）
+  调用 `link.height()`，但 `TrackerPanelLink` record 只定义了 `width()`，compile exit 1，
+  进程 ready 前退出，主控 fail-closed 记录“未启动任务”。
+- 修复：external `dhxy-cloud-brain` `DecisionEngine.TrackerPanelLink` 新增与 `width()` 对称的
+  `height() = maxY - minY + 1`；`wubeiGreenLinkMapNameByOcr` 的裁剪边界计算不动。
+- 验证：external `mvn -q -DskipTests=false compile` exit 0；`mvn -q package`（含测试）exit 0。
+  按 no-local-test mode 未新增测试。CR241 卡片状态改为 Implemented，dashboard 已重生成。
+- Fresh gate（沿用卡片）：下一次选修罗启动，若旧 sidecar artifact stale，应出现
+  `cloud decision endpoint artifact is stale; restart and wait before task start` →
+  `cloud decision endpoint ready` / `UI task start cloud sidecar gate passed` 并派发任务；
+  不得再出现 compile 失败或“未启动任务”。
+
+## 2026-07-10 / CR248 三次 review P1 修复：统一 live/snapshot 的标题判定者与 ROI
+
+- 上游 P1（已修，cloud `mvn -q test` exit 0，DHXY `mvn -q compile` exit 0；fresh 仍待验）：
+  - **现象**：`readWubeiTrackerPanel`（live）先调 `readWubeiTrackerPanelFromCloudPanel`，把**整个
+    tracker 面板**以 `TRACKER_PANEL_CROP` 上传；云端再自己 `matchWubeiTaskKey(raw)` 做 raw 标题
+    模板匹配，并对整面板洗黄字/洗绿字/分段/OCR。而 snapshot 入口走的是"本地标题匹配 → detail
+    crop → 云端"。同一业务两个标题判定者、两种 ROI，且与基线（本地定类、云端只处理 detail 块）
+    不符，也违背"raw 模板匹配留本地"的既定边界。
+  - **修复**：live 入口改为与 snapshot 同一条流水线（`cropTaskDetailInTrackerPanel` 本地定类 +
+    裁块），`readWubeiTrackerPanelFromCloudPanel` 无调用方后标 @Deprecated；
+    `TrackerPanelReaderCloudRequest` 新增 `taskKey` 字段，`readTrackerPanelImageFromCloud(crop,…)`
+    从 `crop.titleTemplate().getTaskKey()` 取值并写入 context；云端 `wubei`+`DETAIL_BLOCK_CROP`
+    分支**直接采用客户端 taskKey、不再重跑标题匹配**，缺失即
+    `wubei detail mode requires client taskKey`；`matchWubeiTaskKey` 仅保留给非 detail 旧路径。
+  - 修罗未受影响：其 `DETAIL_BLOCK_CROP` 分支用常量 `XIULUO_TASK_KEY_TRACKER`。
+- 至此 CR248 三轮 review 的 P1 全部闭环：①绿链专有规则（暗雷不读/宝象只读第 0 段/其余逐段）；
+  ②选区与分段同构（首个绿字区域 + 五倍专用分段，不重排）；③单一标题判定者与单一 ROI。
+- 卡片 fresh gate 已补"两条入口同构"检查项。
+
+## 2026-07-10 / CR250-CR251 二次卡片复核
+
+- 首轮四条 P1 的修订已核实采纳：云端不再拥有 intent/park；防破解已收窄为本地不存资产；多窗口
+  window/request/frame/TTL 绑定与固定 1024x768 client-relative 点位、candidateId、6 处 transform 消费表均已写入。
+- 二次复核仍为 P1，卡片暂不得开工：
+  - CR250 必须冻结本地远端动作安全门（phase action allowlist、client/ROI bounds、key 白名单、只经
+    `InputSequences`）和仅内存 `(windowId,navigationRequestId,actionId)` 一次执行 ledger；否则云端 response
+    超时重放可重复物理点击。
+  - CR251 必须补 `decisionId`/单次 token、candidate outcome enum 和 input/response observation freshness
+    规则；旧观察或重放 candidate 一律 `STALE_REJECTED`、重新观察，不能产生下一候选或再次点按。
+
+## 2026-07-10 / CR248 二次 review P1-A/P1-B 修复（先决条件：选区与分段必须同构）
+
+- 二次复审指出我上一轮修复仍有两处破坏基线，均已修（cloud `mvn -q test` exit 0，
+  DHXY `mvn -q compile` exit 0；fresh 仍待验）：
+  - **P1-A：三藏封魔/魁星归位被错误限制为只处理第 0 条。** 基线里除殿前献艺、宝象谜情外的任务
+    都是**逐段解析地图名**；这两个普通战斗任务只在 `targetName` 上走稳定查表。我上一轮用"首段
+    地图常量"替换了逐段解析，语义不等价。已删除 `wubeiTableTargetMapName`，恢复逐段 OCR。
+  - **P1-B：云端的"第 0 条"不等于基线的第 0 条。** 基线 `pickGreenTextBand(bands, true)` 只取
+    **最上方一个**绿字区域再走五倍专用分段；云端原本枚举**所有**绿字区域并按 (minY,minX) 重排，
+    候选数量与顺序都可能变，宝象谜情"只读第 0 段"因此不可靠。已改为取 `bands.get(0)` +
+    `splitTrackerGreenSegments`，且不重排。
+- 等价性核对：云端 `splitTrackerGreenSegments` 与基线 `splitWubeiTrackerGreenLinkSegments` 逐行
+  等价（gap=8、delimiter 判定、glyph 循环）；两侧 band 收集均按 y 递增 append 且无 sort，故
+  `bands.get(0)` 指同一区域。
+- 最终规则（对同一组段执行）：殿前献艺全部跳过；宝象谜情只解析第 0 段；三藏封魔/魁星归位/
+  智斗黄袍逐段解析。稳定查表**只**提供 `targetName`（魔障/天降妖星），不碰段地图名。
+- 卡片 fresh gate 已同步改写（原"三藏/魁星仅 link 0 带表值"是错误验收标准）。
+
+## 2026-07-10 / CR248 P1 修复：恢复五倍绿链的任务专有规则（我的实现错误）
+
+- **错误**：CR248 首版把 `enrichWubeiTrackerLinks` 写成"扫到几条链就逐条 OCR 读地图名"，
+  自以为比原来的硬编码表"更完整"，实际上**擅自改变了五倍的专有判断条件**。用户复审与并发
+  reviewer 的 P1 结论一致。
+- **五倍五种任务分两类**（用户定稿，已写入卡片）：
+  - 普通战斗任务（目标与首段去向固定，走云端稳定查表，不 OCR）：三藏封魔→魔障/大唐边境、
+    魁星归位→天降妖星/云梦顶；表值只贴 link 0（与基线一致）。
+  - 专有流程任务（不得套用"读地图名后导航"）：殿前献艺（暗雷）一条绿链都不读；宝象谜情
+    （白龙马/显形镜探测）只读第 1 条候选链；智斗黄袍（连战）按基线默认分支逐条读。
+- **修复**：逐项搬运基线 `shouldParseWubeiTargetMap(darkThunder, mirrorProbe, linkIndex)` 到云端
+  （新增 `WUBEI_TASK_KEY_DIANQIAN_XIANYI`/`WUBEI_TASK_KEY_BAOXIANG_MIQING` 常量，taskKey 字符串
+  与本地完全一致），并加 `wubeiTableTargetMapName` 保留两种普通任务的稳定表值；
+  `WubeiProductionFields.targetMapName` 恒空并注明改由逐链规则决定。
+- 黄字详情（条目 3）方向不变：仍为云端 `WASH_YELLOW + LocalOcrClient` 真 OCR（这一项不是业务常量）。
+- 客户端 `probeObjective`（宝象谜情且多链）推导未动。本地 OCR 仍为 @Deprecated 离线 rollback。
+- 验证：cloud-brain `mvn -q test` exit 0；DHXY `mvn -q compile` exit 0。CR248 卡片已补
+  "五倍任务分类与专有规则" + "Review 纠正记录"，fresh gate 改为按任务规则核对（不再是"每条链都有
+  targetMapName"）。
+
+## 2026-07-10 / CR249 完成：五环 tracker 洗绿字识别上云（最小切口，未动时序）
+
+- 用户指示"直接做 249"。实施后双侧 compile/test exit 0，fresh 待验。
+- 关键判断：**只换识别引擎，不动时序**。改动只落在 `findWuhuanTrackerGreenClickPoint`（洗绿字后的
+  绿链分段 + pathing link 选择），其两个调用点 `findWuhuanNextGreenClickPoint` /
+  `prepareWuhuanPathingLink` 的返回值语义不变（screen-absolute Point / prepared action），因此
+  `WindowTaskRunner` 的 prepared-action 预备与 `FiveRingTaskV2` 的两处 title gate 时序零改动
+  ——正是 CR249 拆卡想规避的风险面。
+- external：`trackerPanelReader` 新增 `wuhuan` + `DETAIL_BLOCK_CROP` 分支（照修罗写法）；云端
+  `selectWuhuanPathingSegments` 早已等价移植本地 1/2/3+ 段选择规则，未动算法与阈值。
+- DHXY：`findWuhuanTrackerGreenClickPoint` 云端优先、cloud miss = miss（与修罗/五倍一致）；
+  `findWuhuanTrackerGreenClickPointLocallyLegacy` / `scanWuhuanTrackerGreenLinks` /
+  `findWuhuanPathingNameSegment` 全部 @Deprecated(since="CR249") 仅离线。
+- 按边界原则**未动**：`readWuhuanTrackerTitle` 的 raw 标题模板匹配、面板拖动重定位、
+  prepared 指纹缓存与 `buildTaskTrackerPreparedAction`。
+- 遗留（另行处理，不在本卡）：删除已 @Deprecated 的离线实现、拖动决策上云——建议 CR248/CR249
+  fresh 验收稳定后再做。
+
+## 2026-07-10 / CR248 完成 + CR249 建卡（Ready）：tracker 识别迁云
+
+- **用户定稿的长期边界原则**（写入 CR248/CR249，后续识别类子卡一律遵守）：
+  - 需要"洗字"（`WASH_GREEN`/`WASH_YELLOW`）之后再匹配或 OCR 的识别 → 上云；
+  - 不洗字的 raw 模板匹配（标题定位、面板锚点）→ **保留本地**，当初就是为了快，过云要先洗字反而更慢；
+  - 本地最终只承担：截图、raw 模板定位、真实点击、拖动等输入动作、prepared 缓存、input 序列化。
+- CR248（Implemented，双侧 compile/test exit 0，fresh 待验）：五倍 tracker 参考修罗收口。
+  - **病根澄清**：不是"云端读不到才回落本地"，而是云端 `wubeiProductionFields` 是硬编码查表，
+    只覆盖 5 个五倍任务里的 2 个，其余返回空 → 客户端必然回落本地 OCR；`enrichWubeiTrackerLinks`
+    还只给第 0 条绿链贴表值。
+  - external：删硬编码表，黄字详情改 `WASH_YELLOW + LocalOcrClient` 真 OCR；绿链地图名改**逐链**
+    云端 OCR + `MiniMapRecognizer.canonicalizeMapName`（新增包级视图）label 字典规范化。
+  - DHXY：cloud miss = miss（与修罗一致）；本地 `readWubeiTrackerDetailLocallyLegacy` /
+    `scanWubeiTrackerGreenLinks` / `recognizeWubeiGreenMapText` 全 @Deprecated(since="CR248") 仅离线。
+  - 未动：raw 标题/锚点模板匹配、绿链像素几何、chained fast-action 缓存、TASK_CLASSIFIER 纠偏。
+  - CR208 父卡条目 3/4 已划线。
+- CR249（Ready，用户拍板与 CR248 分开交付）：五环 tracker 洗绿字识别上云 + `TaskTrackerPanelService`
+  薄壳化。五环链当前云端调用数 0、全本地且带面板拖动重定位，消费方涉及 `FiveRingTaskV2`(3) 与
+  `WindowTaskRunner`(1) 的 prepared-action 预备时序；不与识别迁云混做（CR232/CR239 已证明混合改动
+  回归代价高）。建议先 fresh 验收 CR248 再动 Runner 侧。
+
+## 2026-07-10 / CR247 建卡并完成：修罗任务目标识别整链上云（CR208 条目 9 + 5/6 同卡）
+
+- 用户指示：item 9 与 5/6 并入同一张新卡（CR247），卡内含 item 9 的问题与已实施记录、5/6 的
+  盘点结论与实施；建卡后直接开工完成。
+- 盘点修正（5/6）：`readCurrentQuestDetailTextForTask` / `fetchCurrentQuestInfo` 生产零调用，
+  按 13/14 前例不迁移；真实活链 = 修罗恢复路径的 Alt+Q 面板 OCR（`parseTaskPanelObjectiveByOcr`，
+  5 处消费）。`QuestManagerService` 七成为输入编排，留本地。
+- 实施（双侧 compile/test exit 0，fresh 待验；详见 Card CR247）：
+  - external 新增 `QuestDetailTextRecognizer`（LocalOcr 真 OCR + "前往 地图(x,y)"正则/清洗移植 +
+    复用 maps 边界校验）+ `QUEST_DETAIL_READER` case；与模板链机制独立（防共模数字 bug）。
+  - DHXY：`QUEST_DETAIL_READER` serviceId/properties；客户端服务泛化双服务复用
+    （`readQuestDetail`）；`XiuluoTaskV2.parseTaskPanelObjective` 云端优先，本地 OCR 链
+    @Deprecated(since="CR247") 仅离线/rollback。
+  - CR208 父卡条目 5/6 已划线（注明零调用不迁移 + 活链归 CR247），条目 9 记录并入 CR247。
+
+## 2026-07-10 / CR208 item 9 修罗 objective story 识别整体上云
+
+- 用户定稿语义：读右侧面板内容 = 本地传图 → 云端返回带内容的结果；识别机制（洗图+地图名/数字
+  模板匹配+合理性校验）整体上云；数据学习不再写本地，云端为属主（`saveNewMapConfig` 生产零调用，
+  本地学习本就休眠；未来标定走 outcome 上云）。CoordinateHelper 本体留本地（执行壳数学，27 处消费）。
+- 实施（双侧 compile/test exit 0，fresh 待验；详见 CR208 卡片 "item 9 实施记录"）：
+  - external：objective 模板资产（20 地图名+manifest、218 数字）+ `config/maps.json` 快照迁入
+    resources；`ObjectiveTextRecognizer` 补 maps 边界合理性校验 + 头位数字修复
+    （`cloud-brain-objective-coordinate-implausible`）。
+  - DHXY：`OBJECTIVE_TEXT_READER` serviceId + properties（execute 100%，fallback=STOP）；新增
+    `ObjectiveTextReaderCloudDecisionService`（传图→FOUND/NO_RESULT→ObjectiveTextResult）；
+    `ObjectiveTextRecognitionService.recognize` 薄壳化，本地整链改名 `recognizeLocallyLegacy`
+    （@Deprecated，仅离线/rollback）。消费方（XiuluoTaskV2 等）零改动，miss/恢复语义不变。
+
+## 2026-07-10 / CR208 本地 OCR 全量迁云端父卡盘点
+
+- 当前实施：已派 worker 清理第 12 项 `@Deprecated` 世界地图绿色路线坐标链。对照基线为
+  `origin/codex/migrate-runner-dialog` / `696a12b`（该 pushed 版本已完整保留旧方法，未来需要时可从 Git
+  恢复），当前工作区只允许删 `NavigationService` 与 `GameTextLineOcrService` 中经引用核实只服务该 legacy
+  分支的代码；不得改默认 `yellow-destination-mini-map` 新导航。
+- Review 记录：初审发现 worker 同时改动 item 11 cloud-primary；随后用户明确批准该 item 11 方向，故不再
+  回退。item 12 最终双 reviewer 已通过：旧绿色路线/坐标 OCR、`LEGACY_GREEN_LINK`、无 mode facade/null 回退、
+  无 mode JSON 记录、缺 mode 自动补黄和所有专用 guard 均已删除；compile 通过。注意后续提交需纳入当前未跟踪的
+  `src/main/java/com/bot/dhxy/cloud/`，否则相关引用会缺类。
+- **2026-07-10 用户新决定（覆盖上一条中"恢复 item 11"的要求）**：item 11 正式按 cloud-primary 语义实施——
+  本地仅截世界地图搜索结果图并发云端；云端先查路线记忆，miss 后识别黄色目的地，直接返回"该点哪里"或
+  "无结果"；本地不再 OCR 文字。**任何 worker 不得再恢复 item 11 的本地 OCR 链**；item 12 的"只删 legacy"
+  边界不变。
+- item 11 实施（2026-07-10，用户直接指示；双侧编译/测试通过，fresh 待验）：
+  - external `DecisionEngine.routeCandidate`：yellow 模式 memory-first（`RouteMemoryStore.lookup`
+    显式归一化 `YELLOW_DESTINATION_MINI_MAP`）→ miss 走原黄字图像识别；`algorithm=route-memory` /
+    `yellow-destination-image` 区分来源。
+  - `NavigationService`：`clickYellowDestinationAndTargetMiniMap` 删除本地 OCR 前置门，
+    截图 + 单次 `ROUTE_CANDIDATE`（candidateSource=`cloud-image`）→ 云端点击 + 既有小地图
+    fire-and-handoff；外层删除独立记忆快路径与失败后 context-only 二次云调用；attempt 1 云端
+    NOT_FOUND 重输入重试一次。`GameTextLineOcrService` 与旧记忆快路径方法体暂留 rollback 参考。
+  - 详见 CR208 卡片 "item 11 实施记录"。
+- **item 11 fresh runtime P1（2026-07-10，67555 队长）：** `09:19:35.906` 输入 `灵兽村`、
+  `09:19:36.347` Enter、`09:19:37.593` 截结果 ROI 后，`09:19:38.222` cloud `ROUTE_CANDIDATE`
+  已返回 `mode=yellow-destination-mini-map; status=CLICKED; click=366,487; algorithm=route-memory`
+  和 `routeDecisionId`。`366,487` 为窗口相对坐标，换算物理点击位置正确；不是坐标/黄色行识别失败。
+  本地 `RouteCloudDecisionService.parse(...)` 却只读 `routeMode` 并严格要求
+  `YELLOW_DESTINATION_MINI_MAP`，把 cloud 的 `mode=...` 回包拒为 `routeMode is required`，因而没有
+  提交黄色结果行物理 click，导航以 `MAP_NOT_REACHED` 收尾。根因是刚迁 cloud-primary 的 item 11 跨端
+  response contract 不一致。待修方向：两端输出/消费同一 canonical `routeMode`；client 在部署过渡期仅兼容
+  已知 legacy `mode` 拼写并 normalize，未知/缺失仍 fail-closed；绝不恢复 local OCR/local click fallback。
+  修复 owner：CR208 item 11 worker；fresh 验收：同一类日志必须出现 execute gate accepted 和一次黄色行
+  `InputSequences` click，再进入既有小地图最终坐标流程。
+  **已修（2026-07-10，双侧构建通过，fresh 待验）：**
+  - cloud `DecisionEngine.routeCandidate` 三个回包点 key 由 `mode=` 改为 canonical `routeMode=`，新增
+    `canonicalRouteMode(...)` 把 yellow-destination 变体归一化为 `YELLOW_DESTINATION_MINI_MAP`，
+    未知 mode 原样透传（本地照旧拒绝）。
+  - client `RouteCloudDecisionService.parse` 过渡期兼容：`routeMode` 优先、缺失回退旧 `mode`，值
+    trim + `-`→`_` + 大写后仍须等于 `YELLOW_DESTINATION_MINI_MAP`；缺失/未知保持 fail-closed 原拒绝
+    消息。未动本地 OCR、黄色行点击或小地图输入。
+  - `HYBRID_CLOUD_WORKFLOW.md` ROUTE_CANDIDATE contract 已同步；CR208 卡片补实施记录。
+  - 验证：external `mvn -q package` exit 0；DHXY `mvn -q -DskipTests compile` exit 0。需重启 sidecar
+    后 fresh 复验 execute gate accepted + 黄色行 click。
+  - 本轮复核：`DecisionEngine` 三个路线出口均已改输出 `routeMode`；本地仅在 canonical 字段缺失时才
+    兼容旧 `mode`，未知值仍 fail-closed。本轮重新执行 DHXY `mvn -q -DskipTests compile` 与 cloud-brain
+    `mvn -q compile`，均通过；不以 compile 代替 fresh 运行验收。
+- **CR208-12a 最终最终 review（原批准撤回，Review）：** 已确认世界地图结果只截 ROI 后请求云端
+  `ROUTE_CANDIDATE`；本地不再做黄字 OCR/`verifyWorldMapRouteDestination(...)`/local-first click，且云端必须
+  返回 `routeDecisionId` + 窗口相对 click 才会执行。`ARRIVED`/`STOPPED_AWAY` 先结算后发 terminal；
+  replacement/reset/stop/finally/shutdown 统一只报一次 `ABANDONED`。本地 JSON/store/fast path 已删除，
+  `PendingRouteOutcome` 仅为窗口内瞬态回报关联。未跑测试；Java compile 已由 worker 通过。提交时须纳入未跟踪
+  `src/main/java/com/bot/dhxy/cloud/` 与 `src/main/java/com/bot/dhxy/model/navigation/PendingRouteOutcome.java`。
+- **最终 reviewer B P1：** 现有 `PendingRouteOutcome` 虽然只在内存、且终态先结算再唤醒，但它在
+  `WindowTaskRunner` 发送 outcome HTTP 前已被消费；`RouteCloudDecisionService` 对 timeout/I/O/非 2xx
+  只返回失败、移除幂等 key，不会把 report 放回任何待投递队列。因此一次临时网络失败就会让云端永久缺少
+  `SUCCESS`/`FAILURE`/`ABANDONED`。CR208-12a 暂不能批准；返修必须增加仅内存、幂等、受控退避的 outcome
+  重投递队列，成功后才最终确认消费，且不得恢复任何本地路线记忆或本地选点。
+
+- 结论：父卡不能关闭。已按代码事实划掉第 1 项 `TeamRoleDetectionService` tooltip 队长 ID OCR：
+  active 云端路径走 `TEAM_ROLE_TOOLTIP`，本地 `extractLeaderIdFromTooltipOcr(...)` 是未调用的
+  `@Deprecated` rollback 代码；CR212 fresh runtime 仍待验证代表图复用和第三行 ID。
+- 既有已完成项维持：2（CR209）、7/8（CR213，59/53 专项 fresh 待验）及补充项 17（五环完成
+  story 白模板云端判定）。划线仅表示实现已落地，不把 fresh gate 一并关闭。
+- 3/4 仍是半迁移：五倍 tracker 先试云端 reader，但 cloud 无结果时 `TaskTrackerPanelService` 仍会本地
+  OCR 黄字详情和绿链地图名，不能划掉。
+- 未迁移的实际生产 OCR：5/6 `QuestManagerService`、9 `XiuluoTaskV2`、10 `WubeiTask`。
+- 12 已明确不迁且当前分支已删并通过双 reviewer：完整实现仅保留在
+  `origin/codex/migrate-runner-dialog` / `696a12b`；无最终坐标请求明确失败，不再支持 legacy switch/map-only
+  绿色路线或任何无 mode memory 回退。
+- 13/14 已明确不迁：旧 dialog option 与黄/紫名字通用 OCR API 当前无生产调用；实际 dialog/NPC Smart
+  已走任务专用模板或独立云端链路。
+- 15 `OcrRoiMemoryService` 不独立识字；未来如重启通用文字候选链，才随对应云端 word boxes 迁移，当前不单列待办。
+
+## 2026-07-10 / CR208 世界地图路线记忆本地持久化删除
+
+- 用户定稿：世界地图路线结果的跨运行记忆只允许存在云端；本地不留 JSON、store、local fast-path 或学习/结算。
+- 现场核实：`config/world_map_route_result_memory.json` 当前有 `51` 条黄色路线记录（`4` 条 clean），不是空文件；
+  它已受 Git 跟踪，历史可恢复，不另行备份。当前本地仍由 `NavigationService` lookup，
+  `WindowTaskRunner`/`WubeiTask` 等写回 `MemoryService -> WorldMapRouteResultMemoryService`，因此不能只删除文件。
+- 保留的唯一客户端状态是单次导航的 transient outcome 关联（cloud `routeDecisionId`、intent、点位、地图），
+  用于 Runner 将 terminal 成功/失败回报既有 `/api/cloud/route-memory/outcome`；它不落盘、不参与本地选点，
+  实施时应去除 `memory` 命名以免继续误用。
+- 首轮 reviewer P1（返修中）：`NavigationService` 覆盖 pending outcome 与修罗/五环/runtime reset 清理时存在
+  直接丢弃 transient outcome 的路径，未上报 `ABANDONED`。必须统一为“先云端 outcome report，再 clear”，
+  不能只在五倍补偿；当前不得批准。
+- 第二位 reviewer 另发现终态竞态：Runner 先发布 `PATHING_TERMINAL`、后结算，任务前台可能抢先把已经到达的
+  路线报为 `ABANDONED`。返修统一到 Runner：先结算 outcome，再发布 terminal；任务/identity reset 不得私自
+  报告或清掉当前 intent。
+- 第二轮 reviewer P1（返修中）：Runner shutdown/窗口移除时必须先把 live pending outcome 上报
+  `ABANDONED`，再停 watcher/executor；否则云端会漏掉该路线终态。
+- 最终 reviewer P1（返修中）：本地 store 虽已删，`NavigationService` 仍有本地黄字先点、失败后才问云端的
+  主路径。必须收成云端 `ROUTE_CANDIDATE` 唯一决策（云端记忆命中或云端黄字识别），本地仅执行云端坐标。
+- **最终通过：** P1 已全部修复、worker `mvn -q -DskipTests compile` 通过、两名独立 reviewer 批准。
+  当前本地只截 ROI、执行云端 `ROUTE_CANDIDATE` 返回的 `routeDecisionId + WINDOW_RELATIVE` 点击、并上报 outcome；
+  不再持久化/读取/学习路线，也不做 local-first 黄字选点。HTTP outcome 失败只进入当前进程的幂等退避重投队列，
+  成功或 duplicate 即移除，进程退出不落盘。fresh runtime 待验证云端命中/黄字识别和 outcome report 日志。
+
+## 2026-07-09 / CR244 修罗归队状态改为队员自检 Set，队长双 gate 等待
+
+- 状态：源码复审通过，fresh runtime 待验；禁止标 Done。
+- P1 已修：成员探测现为 `PRESENT / ABSENT / UNKNOWN`；截图失败保留 Set，不再错误唤醒队长。
+- P2 已修：`XiuluoTaskV2.prepareRound(...)` 已删除 Set 读取/`WAIT_TEAM_RETURN` 分支；仅保留回城后
+  Gate A 与 option 原子点击前 Gate B。第三次源码复审未发现新的 P0/P1/P2。
+- 队员独立检查自己的归队标记，出现则把自己的 `windowId` 加入 local-team session 的
+  pending-return Set，自己的标记消失后再自行移除；队长不发信号、不扫队员。
+- 队长有两道毫秒级纯读取 gate：回城到灵兽村后一次；NPC smart 已点开 dialog、接任务 option
+  已匹配成功但尚未提交 option 点击输入时再一次。两次都只看 Set，不等所有成员完成自检。
+- 只有 Set 非空才 park；成员 add/remove 递增 session version 并发布 `TEAM_RETURN_STATE_CHANGED`
+  唤醒 leader。以 version 作 after 值避免读/park 间漏事件；timeout 只作低频丢事件保险。
+- 已确认当前冲突：`XiuluoTaskV2.navigateBackToStart(...)` 与 `navigateToTaskNpc(...)` 对
+  `NavigationRequest` 传了 `keepTurnOnCurrentMapPathing(true)`；对应 `NavigationService` 会在同一
+  task turn 内最多约 10 秒同步轮询，队长死亡后导航回城时会阻塞其它窗口。实施时必须改为
+  `PATHING_STARTED -> 当前 intent 的 PATHING_TERMINAL event park -> 唤醒后继续`，不是 900ms handoff。
+- 不混入：血蓝队列（CR243）、三技能、盒子、摄妖香、修装备、dialog 或接任务 option 判断。
+
+## 2026-07-09 / CR243 修罗绿链放权后的战后血蓝维护队列
+
+- 状态：Review passed（2026-07-09 final re-review；`mvn -q -DskipTests compile` exit 0；用户 fresh runtime 待验）。
+- Follow-up repair（复审剩余 P1）：`participantSnapshot` 在首条本轮 report 时固定（confirmed group
+  members + leader + 首报窗口；组瞬时缺失保守退化为首报窗口并 WARN）；COMPLETE 只读
+  snapshot − departedWindows，不再读取 live tooltip group / live session；迟到 attach 成员报备照收
+  但不进 barrier。详见卡片 "Follow-up repair 2026-07-09"。
+- Repair 摘要（对照 review 四条，详见 CR243 卡片 Repair 记录）：
+  - P1-1：scope/participants 改为 tooltip group 真实同队快照（`sessionKey#group:<hash>`，队长窗口
+    经组快照兜底解析，歧义/未确认 → window-scoped，绝不回退启动 session）。
+  - P1-2：30s 宽限整体删除；barrier 严格"全员报备 && FIFO 空"，仅显式生命周期退出
+    （session-completed / runner shutdown / queue-finished → departedWindows）收缩参与者。
+  - P1-3：绿链后顺序 = 队长报备（无输入探测）→ 开闸 → drain COMPLETE → 才轮到盒子/摄妖香；
+    queue 模式 deferred recovery 只剩摄妖香且移到 drain 之后。
+  - P2：两个消费点无 cached plan 时 `NO_PLAN_TERMINAL` 出队 + WARN，不伪装为已执行补给。
+  - 返工自查：open 的 create-if-absent 会在第 1 轮建空 round 死锁——回退 skip-empty，
+    drain gate 每次 re-open 封"报备晚于 open"竞态。
+- Review P1/P2：
+  - P1：实现以 `localTeamSessionKey` / `candidateWindows` 作为 queue scope/participants，会把同一次
+    启动但不在同一游戏队伍的窗口混进一条 FIFO；必须改为既有 tooltip group 的真实同队快照。
+  - P1：`POST_COMBAT_FIRST_AID_REPORT_GRACE_MS=30s` 后会剔除未报备成员并 COMPLETE，违反“全员报备且
+    队列空”硬 gate；不得因超时移除存活 participant。
+  - P1：绿链后 common box / 摄妖香在 `openPostCombatFirstAidQueue(...)` 前仍可能输入，未保证血蓝
+    FIFO 的第一优先级。
+  - P2：UNKNOWN 无 cached plan 时直接出队，需要明确安全的 `NO_PLAN_TERMINAL` 语义和日志，不能称为
+    已执行补给。
+- Follow-up review（当前磁盘版本）：上述真实 group scope、取消 30 秒剔除、绿链后 FIFO 第一优先级以及
+  `NO_PLAN_TERMINAL` 已被并行修正；但仍有 P1：`PostCombatFirstAidQueueState` 未固定本轮 participant
+  snapshot，COMPLETE 每次从可变 `tooltipGroupsByHash` 重算成员，组缓存变化时可丢失未报备成员或中途加入
+  新成员。修复前不得 fresh 验收。
+- Final re-review：participant snapshot 已补并已核对首报备冻结、COMPLETE 仅读取 snapshot −
+  `departedWindows`；此前 P1/P2 已关闭。本次 `mvn -q -DskipTests compile` exit 0，等待用户 fresh runtime。
+- 实施摘要（详见 CR243 卡片实施记录）：
+  - `TaskMaintenanceService`：独立 post-combat first-aid FIFO（按 local team session 隔离，无
+    session 用 window 独立队列）；三态报备 + 队长项恒最后 + 一次尝试无条件出队 +
+    `isPostCombatFirstAidQueueCompleteAndClose`（全员报备 && 空才 COMPLETE，COMPLETE 关闭本轮）；
+    会话完成 / runner shutdown / queue-finished 清理。
+  - `AutoCombatService`：xiuluo_v2 队列模式下脱战两分支与 deferred 队长恢复只报备不补给；
+    member 消费改"有项+队首+开闸"；新增队长队首消费方法；wubei 等旧路径未动。
+  - `XiuluoTaskV2`：绿链 PATHING_STARTED 开闸（deferred 队长报备之后）；
+    `waitTrackerShortcutPathing` 在 combat tick 后、prepared/terminal 前加 drain 门（1s 短轮询让权）。
+  - 诚实标注：本轮从未进战斗的存活窗口无脱战报备，开闸 30s 宽限后 WARN 剔除，防 watchdog 循环死锁；
+    宽限内仍严格阻塞。
+- 原始记录（保留）：Ready，仅完成业务逻辑整理与建卡；用户明确要求当轮不写 Java。
+- 用户确认的时序：脱战后每个窗口先无焦点检查血蓝，确有需要者按检查完成顺序进入各自队伍的
+  战后血蓝 FIFO；队长仍必须先点击绿色链接、提交导航并放 task turn，之后才消费该 FIFO。
+  队列清空后队长才能继续路径终态、目标点击或开打。
+- 已定细节：每个同队窗口脱战预检必须报备 `HEALTHY` / `SUPPLY_NEEDED` / `UNKNOWN`；未知绝不能静默
+  跳过，必须保守入队。队员按 FIFO 补给，队长如需补给固定最后。一次真实补给尝试无论成功、失败、
+  没药或无法确认结果均立即出队，不重试、不阻塞整队；原因保留日志。
+- CR243 已补历史根因：旧链只有 task-turn 队列；后续补了维护 gate 以防队员过早抢输入，却没有把修罗
+  医宝宝/绿链之间的战后补给改成按队伍收集与消费，造成“3 秒阻塞”或“各窗口轮询 defer”两种非队列行为。
+  实施必须以 `所有参与窗口已报备 && 队列为空` 作为 COMPLETE，不能仅凭某一刻队列暂时为空让队长继续。
+- 与 CR242 的边界：CR242 只删除“FIRST_AID 未开时同步等 3 秒”的错误阻塞，保证队员仍可及时归队
+  自检；CR243 不恢复该等待，而是将 pending 补给升级为独立的、按队伍隔离的战后维护队列。
+- 不混入：三技能、盒子、归队、摄妖香、修理装备；三技能继续使用自己的队列与业务窗口。
+- 施工候选文件：`TaskMaintenanceService.java`（独立队列和会话清理）、`AutoCombatService.java`
+  （脱战预检入队与队首消费）、`XiuluoTaskV2.java`（绿链 `PATHING_STARTED` 后开窗，队列未空则继续让权）。
+- 基线说明：用户指定 `696a12b` 为修罗对照基线；当前工作区已有大规模并行 dirty 改动。本卡实施时只可
+  在上述三条业务链增量改动，不得回退 CR242 或其它并行改动。按 no-local-test mode，未来验收使用
+  compile + 用户 fresh runtime 日志，不创建/运行本地自动化测试。
+
+## 2026-07-09 / CR242 修罗队员脱战后归队检查被急救 gate 阻塞
+
+- 基线：分支 `codex/hybrid-cloud-protection`，用户指定 pushed baseline
+  `origin/codex/migrate-runner-dialog` / `696a12b`；本轮开始前工作区已存在大规模并行 dirty 改动，
+  本卡只触碰 `AutoCombatService.java` 与 CR 文档，不回退其它改动。
+- 现场：`20:16:05.292` 成员 `hwnd-1A31360 / ID:316365558` 已脱战并已把人物血量 4% 记为
+  pending first-aid；但 `FIRST_AID` capability 未开时，代码两次各阻塞等待 3 秒，至
+  `20:16:12.483` 才第一次检查到自己的归队按钮。随后归队链路按既有规则先完整补摄妖香，
+  `20:16:12.483-20:16:19.471` 再耗时 6.988 秒。
+- 用户已明确批准的修改边界：删除 pending first-aid 在 gate 未开时的 3 秒等待；未实际完成
+  common-box/first-aid 时，不得把脱战恢复回报为 `EXIT_RECOVERED` 而跳过同轮 idle 自检。
+  队员仍自行检查自己的归队按钮；本卡不改变归队模板、归队点击、色药箱、实际加血权限或队长业务决策。
+- 实施：
+  - `AutoCombatService` 删除 `FOLLOWER_FIRST_AID_GATE_WAIT_MS` 与两条 `await(..., 3000)`；
+    `FIRST_AID` 未开仅记录 immediate defer，保留 pending plan，不申请 task turn。
+  - 战后 recovery 分支仅在 common-box 或 first-aid 实际返回 handled 时才返回 `EXIT_RECOVERED`；
+    两者都未处理则返回 `NONE`，让同轮 `AutoBattleTask.maybeRunIdleMaintenance()` 立即执行队员自检。
+  - `TaskMaintenanceService` 删除两套只为上述路径服务的 blocking await API；归队和 first-aid
+    改为直接 state query，不再存在“capability 未开时等待未来打开”的控制流。
+- 编译：`mvn -q -DskipTests compile` exit `0`。按 no-local-test mode 未运行本地测试。
+
+## 2026-07-09 / 修罗回城后接任务导航复用回城验证位置（对齐 CR238 五环位置复用，待建卡）
+
+- fresh 证据（用户拆解 `16:21` 样本，远回城点 `(132,92)`，NPC `(112,93)`，dx=20 超直接点击阈值 11）：
+  - 导航全程 `11.179s`，其中 `2.685s` 是 `navigateToMap:staleCacheGuard` 重复地图确认——回城验证
+    `16:21:21.677` 刚用 `syncMyPosition()` 读到可信位置，修罗进导航时没有带入 `NavigationRequest`；
+  - 其余 `7.16s` 是真实走路等待（小地图导航到 NPC、容差 5 判到达），属基线本有逻辑，不动。
+- 实现（`XiuluoTaskV2`，NavigationService 零改动，复用 CR238 的 `freshCurrent*` 通道 + 3s 信任窗口）：
+  - 新增 `lastStartMapVerifiedLocation/AtMs` + `recordStartMapVerifiedLocation(...)`，在四个
+    "已验证在灵兽村" 的产出点落位：cached return 验证、普通 return item 验证、CR220 gate
+    already-on-start-map 放行、startup return 验证。
+  - `navigateToAcceptNpc` 构建 `NavigationRequest` 时带入
+    `freshCurrentMapName/X/Y/freshCurrentLocationAtMs`（真实 sync 时间戳，不伪造 now）。
+  - 超 3s（如 CR220 后先等 `WAIT_TEAM_RETURN`）fresh 门自动拒绝 → 回落原地图确认，无回归；
+    仍然小地图导航、仍然等真正走到位，只删这一次重复位置识别。
+- 验证：`mvn -q compile` exited `0`。fresh gate：回城后接任务导航应出现
+  `[map-confirm] reused caller fresh location reason=navigateToMap:staleCacheGuard`，
+  `stage=map-confirm elapsedMs` 从 ~2.7s 降到毫秒级。
+- 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR241 follow-up：启动时旧 Cloud Brain 已响应但 artifact 过期，主控应等待自愈
+
+- 现场失败：`18:23:08` UI 已成功扫描/注册五个窗口并准备启动 `XIULUO_V2`，但未派发任何 runner task，
+  UI 保持空闲。端口 `18080` 的 Cloud Brain `PID 18592` 正常响应、协议正确，却报告
+  `devArtifactFresh=false`：磁盘 source/classes 为 `21:27`，进程 launch identity 仍为 `19:52/19:53`。
+- 根因：`CloudDecisionDevSidecarService.ensureReadyForTaskStart()` 对所有 `responded && !ready` 直接
+  `StartupResult.unavailable`；只有 endpoint 不响应时才可能走下方 restart/start/wait 路径。并且当前
+  `cloud.dev-sidecar.restart-on-task-start=false`，不能依赖每次启动强制重启。
+- 已定修复边界：仅当 `xiuluoResetProtocol`、`devArtifactMode=classpath` 都正确且唯一失败为
+  `devArtifactFresh=false` 时，主控自动停止旧 18080 sidecar、启动脚本（脚本自行按 source/classes
+  决定是否 compile）并在同一次 UI start 中等待 readiness；协议/mode/token/HTTP 等真不兼容继续
+  fail-closed，不盲目重启。
+
+## 2026-07-09 / CR226-D 自动战斗面板改用“自动还剩”原图模板
+
+- 基线：分支 `codex/hybrid-cloud-protection`，HEAD `dc4394f`；`origin/dev` 的同一路径仍是旧
+  anchor + `取消自动/自动` 绿色洗图链。当前工作区已存在大量并行改动，`AutoCombatPanelService.java`
+  在本轮前也是 dirty；本次只改该类、增加一个 battle 模板图片，并更新 CR226 文档/dashboard，不回退其它改动。
+- 现场实验：Cloud Brain 新模板 `Snipaste_2026-07-09_17-29-04.png`（“自动还剩”）对五个
+  `latest_vision.png` 原图的最佳匹配为 `0.9995..0.9998`，命中坐标均正确；旧
+  `auto_panel_fallback_anchor` 最高仅 `0.2920..0.7467`，绿色 `zidong_green` 只有一个窗口达到
+  `1.0000`，其余约 `0.2622..0.3313`。
+- 已定边界：正式面板存在判断只使用新的“自动还剩”原图模板、阈值 `0.80`；命中即表示面板已开，
+  不命中才走原有 `Alt+8` 补开与补开后复查。旧 `取消自动/自动` 模板和旧 panel anchor 图片都保留在仓库，
+  但 anchor、绿色洗图及两张绿色模板全部退出正式判断链。
+  本轮不改变 `Alt+8` 成功后回合数何时重置的确认语义。
+- 实施与验证：`AutoCombatPanelService.findAutoCombatBox()` 现只匹配
+  `images/template/battle/auto_remaining.png`，命中点以已验证偏移 `(+43,+28)` 推导面板拖拽中心；miss
+  后的复查也走同一模板。`mvn -q -DskipTests compile` 已通过；按 no-local-test 模式未运行本地测试。
+  fresh runtime 应看到 `auto-combat panel auto-remaining template matched`，不再出现该路径的
+  `panel anchor matched`、`green marker wash` 或 `green auto marker matched`。
+
+## 2026-07-09 / 修罗云脑基线回归：加血广播已处理的 shared-state 交接被拒（fail-closed）
+
+- fresh 证据（用户定位）：
+  - `17:14:40.681` 本地正确点击 `heal-all-repair`，`maintenance broadcast handled`；
+  - 本地上报 `EXECUTED + SHARED_STATE_TRIGGERED + MUST_YIELD +
+    localOutcomeNextPhase=BEFORE_ROUTE_MAINTENANCE_CHECK`（基线 `696a12b` `XiuluoTaskV2` L2725 的
+    原语义：广播接手 → 让权 → 下一轮进出发前维护）；
+  - `17:14:43.696` 云端 `ACCEPTED_OUTCOME`（上报与状态更新都正常）；
+  - 下一次 step：`afterAcceptMaintenanceNext()` 只认 ready→TRY_TRACKER_SHORTCUT 和
+    isReady→BEFORE_ROUTE_MAINTENANCE_CHECK，落到 `none()` →
+    `outcome cannot advance transactionResult=SHARED_STATE_TRIGGERED ...` → failClosed 整场结束。
+- 定性：基线合法转移漏迁（不是本地加血/让权逻辑的问题），与今晚 `acceptClickNext`
+  缺 `ACCEPT_TASK_NAVIGATE_TO_NPC` 回跳、`trackerShortcutNext` 缺 `NAVIGATE_TO_TARGET` ready
+  直航同族——`DecisionEngine` 状态机分支覆盖不全导致把正常结果 fail-closed。
+- 实现（external `dhxy-cloud-brain` `DecisionEngine.afterAcceptMaintenanceNext`）：
+  - 补 `sharedStateNext(outcomeFacts, "BEFORE_ROUTE_MAINTENANCE_CHECK")` 分支（与
+    `prepareRoundNext` 的 `WAIT_TEAM_RETURN` shared-state 迁移同一 helper/写法），命中下发
+    `execute(BEFORE_ROUTE_MAINTENANCE_CHECK)`。不改本地。
+- 验证：`dhxy-cloud-brain` `mvn -q test` exited `0`；重启 sidecar/主程序后生效，fresh 待验。
+
+## 2026-07-09 / CR178 删除普通技能后静态单格云端复查
+
+- 基线：分支 `codex/hybrid-cloud-protection`，上游提交 `dc4394f`；当前工作区存在大量并行/用户改动，本次只触碰 `SummonSkillService`、`SummonSkillCloudDecisionService`、外部 `dhxy-cloud-brain` 的 `DecisionEngine` / `SummonSkillRecognizer` 及 CR178 文档。
+- 原问题：普通技能删除确认完成后仍调用 `inspectSkillSlot(...)`，重新移动鼠标、等待 `700ms`、截图 hover tooltip 后才判断该格是否为空。
+- 实施：cloud active 时改截当前完整 `52x52` 技能格 raw ROI，发送 `SUMMON_SKILL phase=summon-skill-post-delete-slot`；云端只用 `status_inactive1` / `status_sealed1` / `status_unobtained1` 静态模板判断 `EMPTY_SLOT` / `LOCKED_SLOT`。三模板均不命中按 CR178 已定规则返回 `KEEP_SKILL`，只有截图、payload、模板加载或云端执行异常返回 `UNKNOWN` 并保守停止。cloud disabled 时保留旧 hover 路径。
+- 未改：首次技能类型 hover、终级角生成/点击、删除确认、冷却、队列与后续 `EMPTY/LOCKED/KEEP` 业务分支。
+- 编译：`D:\mavenProject\dhxy-cloud-brain` 执行 `mvn -q -DskipTests=false compile` 通过；主工程执行 `mvn -q -DskipTests compile` 通过。未运行本地测试，遵循 no-local-test 模式。
+- fresh runtime 验收：删除普通技能后日志应出现 `summon skill cloud: post-delete slot=`，不应出现紧随同一删除的 `skill slot hover`；云端原因应为 `cloud-brain-summon-static-slot-empty`、`...-locked` 或 `...-occupied`。
+
+## 2026-07-09 / CR232 修罗看打 prepared action terminal 竞态 fresh 失败
+
+- 证据：队长 `hwnd-3C116F4 / ID:67555` 在 `16:45:47.887` 已由本地 kanda2 生成
+  `XIULUO_ENTER_BATTLE click=(410,421)`、发布 `PREPARED_ACTION_READY sequence=79`；前台此前被
+  `PATHING_TERMINAL sequence=77` 唤醒时首查 prepared 为 absent，随即 terminal fallback 重读 tracker 并再点绿链。
+  新 wait 以 `afterSequence=79` 挂起，既有 prepared event 被越过；直到 `16:47:54` pre-combat watchdog
+  超时才由云端 `RESTART_ROUND`。
+- 修复边界（用户批准："任一事件到达都重新仲裁；只有仍然没有 prepared 才允许重读绿链/建新 intent"）：
+  仅在 `waitTrackerShortcutPathing(...)` 的 terminal fallback、重读 tracker 前
+  再消费一次现有 prepared；命中复用现有 `consumePreparedXiuluoEnterBattle(...)` 的点击/清理/WAIT_COMBAT 路径。
+  不改 matcher、云端策略、看打坐标或 one-shot guard。
+- 实施（2026-07-09，`XiuluoTaskV2`，`mvn -q compile` exit 0）：
+  - 孤儿化机制核实：prepared 长期无人消费的直接原因是重试点击注册新 intent 后，
+    `preparedActionMismatchReason` 按 `intentId` 拒收旧 intent 标签的 prepared
+    （`isClearedRouteIntentRecoveryAllowed` 仅豁免 ROUTE_TRANSFER）；`clearPathingSignal`
+    不清激活 intent，故新 intent 注册前的消费点都能过校验。
+  - 闸一：terminal 分支（ARRIVED 非目标图 / STOPPED_AWAY）在 clearPathingSignal/重读之前
+    `consumePreparedXiuluoEnterBattle(..., "shortcut-pathing-terminal-rearbitration")`。
+  - 闸二：`tryTrackerShortcutWithPanel` 在 `firstTrackerGreenClickAtMs > 0` 时，绿链点击与新
+    intent 注册之前 `consumePreparedXiuluoEnterBattle(..., "shortcut-retry-preclick-rearbitration")`
+    ——kanda 命中(47.887) 落在 terminal(47.1) 与二次点击(51.8) 之间，仅闸一仍可能漏，最后一道闸
+    保证"没有 prepared 才允许建新 intent"的不变量在建 intent 时刻成立。
+  - afterSequence 越过随之无害：三个消费点读 runtime prepared 注册表而非 event bus。
+  - CR232 卡片已补 "P1 修复实施记录" + fresh gate；dashboard 已重生成。
+
+## 2026-07-09 / CR241 Cloud Brain sidecar 实验截图 freshness 排除
+
+- Baseline：branch `codex/hybrid-cloud-protection`，HEAD `dc4394f`；工作区已有大量其他任务的未提交变更，
+  本次只改 `scripts/run-cloud-brain-server.ps1` 与 CR 文档/dashboard，不回退任何既有改动。
+- 运行证据：`15:41:53` UI 已选择 `XIULUO_V2`、5/5 窗口注册完成；`15:42:00` sidecar 因
+  `src/main/java/.../cloudbrain/test/Snipaste_2026-07-09_15-28-25.png` 被 freshness 扫描误算为运行源码，
+  自动 compile 后仍报 stale，任务未启动。
+- 修复边界：只排除该实验截图目录；真实 Java 与 resources 仍参与 sidecar freshness gate。
+- Follow-up：外层 PowerShell 修复后，`15:51` 新进程已监听但内层 `DecisionEngine` readiness 仍用旧扫描范围，
+  返回 `devArtifactFresh=false` 并让 UI 拒绝派发。已同步内层排除规则，external `mvn -q package` 通过；
+  当前 `18080 / PID 18592` readiness 已返回 `devArtifactFresh=true`。
+
+## 2026-07-09 / CR239 五环 ACCEPT_TASK 自身 PATHING_TERMINAL 不被消费修复
+
+- fresh 证据（用户复核 `hwnd-733156A / ID:316365558`）：
+  - `15:08:04.310` runner 已发布 `window.ready.publish type=PATHING_TERMINAL state=STOPPED_AWAY sequence=180`，
+    但窗口长时间不动，反复打印 `accept NPC navigation active intent still in flight`。
+- 双根因（用户定位，代码核实）：
+  - ① `checkReadyPriorityBeforeOutsidePhase` 边界等待 `wakeTypes=[TASK_ATTENTION_REQUIRED,
+    PREPARED_ACTION_READY, TASK_TRACKER_NEGATIVE_READY]` 不含 `PATHING_TERMINAL`，自己的
+    `STOPPED_AWAY` 只被"让权给其他窗口"逻辑看到。
+  - ② NavigationService 复用旧 active intent 时，`waitForAcceptNpcPathing` 无条件盖新
+    `pathingStartedAtMs`，`isUsablePathingSnapshot` 的 `createdAt + 1000ms < pathingStartedAtMs`
+    校验把同一导航的 terminal snapshot 判为不可用。
+- 实现（`FiveRingTaskV2`）：
+  - ① `waitingAcceptNpcPathing || pathingIntentExpected` 时边界等待 wake 集合加
+    `PATHING_TERMINAL`；terminal 唤醒直接 return null 进 phase 消费 snapshot，不走 prepared
+    消费/告警，也不先让权。
+  - ② `isUsablePathingSnapshot(state, snapshot, runtime)`：createdAt grace 校验仅拦"已不是当前
+    激活 intent"的陈旧 snapshot；snapshot.intent 与 runtime 激活 intent 同 `intentId`（= 有意复用）
+    时放行。三个调用点（shoe-shop 入口 / accept / WAIT_PATHING）统一生效；intent 已被替换/清除的
+    真陈旧 snapshot 仍被拦。
+- 验证：
+  - `mvn -q compile` exited `0`。
+  - 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR238 五环接任务导航提速：位置复用 + 黄字小地图 fire-and-handoff
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314` / `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - latest pushed baseline 参考：`origin/dev` 当前为 `e543d02 Stabilize task navigation and window readiness`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰
+    `NavigationRequest`、`NavigationService`、`FiveRingTaskV2`、`TaskStartupWindowPreparationService`、
+    `UICleanerService`、`PlayerStateService`、`WindowRuntimeContext`、CR 文档/dashboard 和本记录。
+- fresh 证据：
+  - `2026-07-09 13:49:03.437` 鞋检查完成后，`13:49:09.971` 才进入
+    `navigation map search start`。
+  - 中间 `FiveRingTaskV2.isNearAcceptNpc()` 先同步位置；随后
+    `NavigationService.navigateToMap()` 的 `stale-cache guard` 又同步一次位置。
+  - `13:50:17.403` 黄字目的地小地图点击已经确认 `PATHING_STARTED`，但直到
+    `13:50:19.938` 才 release turn；这 2.5s 在同步关小地图、关路线面板、移开鼠标。
+  - `13:49:12.930 -> 13:49:56.007` 另有用户 pause/resume，不能算业务等待。
+  - `2026-07-09 14:24` 继续查到 task turn handoff 本身是即时的：
+    `67555` 在 `14:24:02.494` release，`451753529` 在 `14:24:02.495` 获得 handoff。
+  - 真正慢点是 `451753529` 在已经完成后台 startup preparation 后，前台 `PREPARE` 仍重跑：
+    `UI cleanup started`、dialog inspect/close 扫描、startup first-aid no-focus 预检；
+    到 `14:24:07.660` 才首次 `pressAltE` 打开包裹，约 5 秒被前台检测吃掉。
+- 实现：
+  - `NavigationRequest` 新增可选 fresh current location 字段。
+  - 五环 accept setup 只做一次当前位置同步；这份位置同时用于 near-NPC 判断和后续
+    `navigateToMap` stale-cache guard。
+  - 黄字目的地路线三条路径（cloud candidate、route memory、OCR candidate）点击最终小地图坐标后
+    立即记录 movement intent 并返回 `PATHING_STARTED`，不再等待移动确认、不再同步关闭路线面板。
+  - 黄字/小地图 fire-and-handoff 后仍排一个轻量 `Alt+1` 关闭小地图，但改为只入队不等待，
+    不占当前窗口 task turn；路线面板 x2 继续交给 Runner prepared action。
+  - 五环 `PREPARE` 清 UI 后异步预热 accept setup 当前位置，`ACCEPT_TASK` 只复用 20 秒内已完成的
+    预热结果，未完成或过旧就回到原同步读取。
+  - 五环后台 startup preparation 在 Alt+1/Alt+U/Alt+5/Alt+6 后追加两类 no-input 预检：
+    UI-clean probe（无地图/无 dialog/无通用关闭按钮）和 startup first-aid no-focus probe。
+  - `WindowRuntimeContext` 保存队列级 UI-clean 预检结果；`PlayerStateService` 保存 startup first-aid 预检结果或原 cached first-aid plan。
+  - 前台 `FiveRingTaskV2.PREPARE` 只消费 60 秒内的新鲜预检：clean 则跳过 `cleanUpAll()`；
+    healthy/already-done 则跳过 startup first-aid 重扫；需要补给/未知则执行原 cached plan；
+    预检缺失或过期全部回到原前台逻辑。
+  - 不改黄字 OCR/云端候选/route memory 坐标算法；legacy green-link cleanup 保持原逻辑。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR236 规则6 补齐：云端 NPC 点位记忆 deferred 降权闭环
+
+- 接手基线：
+  - 用户复核指出规则6 未完成：NPC 点位记忆（LEARNED_MEMORY）降权当时被诚实标注为不可达。
+  - 用户拍板：记忆是云端资产，降权在 `dhxy-cloud-brain` 内闭环，DHXY 客户端零改动。
+- 实现（全部在 external `dhxy-cloud-brain`）：
+  - `NpcClickMemoryStore`：新增 `registerDeferredPending` / `confirmDeferredPending` /
+    `failDeferredPending`。`VERIFIED + verificationStrength=TASK_PHASE_DEFERRED` 的 queue outcome
+    按 windowId 挂 pending（TTL 180s，新点击覆盖）；disproof 时把 pending 原样回放成
+    `VERIFICATION_FAILED` outcome（decisionId 加 `-deferred-verification-failed` 后缀保幂等），
+    命中当初服务该点击的同一 policy 桶 → failureStreak+1 → memory hit 立即停用。
+  - `DecisionEngine`：`npcClickSmartOutcomeResponse` 注册 pending 并在响应加
+    `deferredPendingStatus`；`dialogPolicy` pre-click 分支按 `sourceTask` 含
+    `accept-cloud-fallback` + windowId 精确定位，found → confirm、not-found → fail，settle 状态
+    写入 decision diagnostics（`cr236DeferredNpcMemory`）供客户端日志核对。
+  - 时序依据：接任务云端 fallback 在 `accept-npc-clicked` 时即预调度截图，dialog 真开会被拍到
+    （found → confirm）；12:41 假成功案例云端确实收到请求并返回 not-found（→ 降权）。本地未检测到
+    dialog 而没调云端的轮次，pending 靠 TTL 过期，不误降权。
+- 验证：
+  - `dhxy-cloud-brain` `mvn -q test` exited `0`。
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`；CR236 状态与"已知偏差"标注已更新。
+  - 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR229 五环 handover not-ready 首个导航前不放权补洞
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314` / `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰
+    `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`、CR229 文档/dashboard 和本记录。
+- fresh 证据：
+  - `2026-07-09 13:31:57.906` `wuhuan-v2:PREPARE` 完成并 `task turn kept`。
+  - `13:31:57.907` 进入 `HANDOVER_DETECT`，`source=handover` 返回
+    `RUNNER_PREPARED_NOT_READY`。
+  - `13:31:57.907` `HANDOVER_DETECT result=SHARED_STATE_TRIGGERED` 后立即
+    `task.turn.release`，下一个窗口开始 `wuhuan-v2:PREPARE`；当前窗口还没发起云游大师首个导航。
+- 根因：
+  - CR229 只保护了 `BUY_SHOES prepare-shoe-shop*` 和 `ACCEPT_TASK prepare-done /
+    handover-setup-required / handover-tracker-unavailable-setup-required`。
+  - 普通启动 `PREPARE -> HANDOVER_DETECT` 的 `RUNNER_PREPARED_NOT_READY` 分支先 shared-yield
+    等 Runner，绕开了 CR229 的首个导航保护。
+- 实现：
+  - `FiveRingTaskV2.detectHandover(...)` 遇到 `RUNNER_PREPARED_NOT_READY` 不再先
+    `sharedState(...retrySamePhase...)` 放权重试，而是继续进入已有 tracker title gate。
+  - 左侧有五环 title 时仍走 `SYNC_TASK_PANEL` 接管；无 title 时走
+    `handover-setup-required -> ACCEPT_TASK`，复用 CR229 已有的 `ACCEPT_TASK` 首个导航前不放权保护。
+  - 删除不再使用的 `MAX_HANDOVER_TRACKER_PREPARED_WAIT_RETRY` 常量。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR237 队长暂停时队员放开补给和维护广播
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314` / `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰
+    `TaskMaintenanceService`、`WindowTaskRunner`、`AutoBattleTask`、CR 文档/dashboard 和本记录。
+- 现状确认：
+  - CR212 旧规则写明“队长暂停/恢复不改变 broadcast 规则”。
+  - 代码上 `shouldSuppressIdleMaintenanceBroadcast(...)` 只看同队本地队长是否受控，不看队长 pause；
+    `AutoCombatService` 的队员 pending first-aid 在 local support session 里继续等
+    `FIRST_AID` capability。
+  - `WindowTaskRunner.pauseCurrentTask()` 只改 pause token/window status，没有通知
+    `TaskMaintenanceService` 改 local-team session。
+- 用户拍板：
+  - 队长暂停时只放开队员加血、医宝宝、修装备。
+  - 队长暂停时三技能不开。
+- 实现：
+  - `TaskMaintenanceService` 新增 local-team leader paused 状态，暂停时清 idle broadcast suppress cache；
+    paused leader 不再作为队员 local capability gate，队员 broadcast suppress 返回 false。
+  - `WindowTaskRunner` 在队长 pause/resume 时调用 `markLocalTeamLeaderPaused(...)`。
+  - `AutoBattleTask` 在 paused leader 模式下关闭 `cleanSummonSkill`、不走 legacy summon/pathing gate，
+    并避免顺手放开 standalone 归队。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test mode，不创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR236 修罗接任务禁用双记忆假成功链路建卡
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 本轮只创建/更新 CR 文档与 dashboard，不改 Java 行为。
+- 日志证据：
+  - `logs/archive/dhxy-console.2026-07-09.0.log` 中 `12:41:54.047` 修罗队长
+    `NPC_CLICK_SMART` 消费 `LEARNED_MEMORY` 点 `灵兽村使者`。
+  - `12:41:55.981` 本地记录 `defers post-click dialog verification to task phase`。
+  - `12:41:57.008` `ACCEPT_TASK_DIALOG` 又用 `accept option memory` 点接任务选项。
+  - `12:41:57.313` 主线程直接进入 `accept option clicked; start exit prepath`。
+  - 同轮云端模板 fallback 返回 `cloud-brain-dialog-green-template-not-found`，后续 accept-time tracker
+    解析 `found=false links=0`。
+- 用户拍板方案：
+  - `NPC_CLICK_SMART` 第一段可以继续使用 NPC memory。
+  - `ACCEPT_TASK_DIALOG` 禁止再用 `accept option memory` 快捷路。
+  - 接任务选项必须先走本地 `xiuluo_accept_xianlaiwu2.png` 模板硬证据；miss 后交给云端 dialog fallback。
+  - 本地模板或云端成功才确认 pending NPC memory 并出村；云端失败时必须把 pending NPC memory
+    记失败/降权，然后回重新接任务路径。
+- 记录：
+  - 已创建 CR236：`修罗接任务禁用双记忆假成功链路`。
+  - 本轮未改 Java，未运行 compile；按 no-local-test mode，未创建/运行 automated tests、source guards、replay。
+
+## 2026-07-09 / CR233 绿字 pathing 回程道具预扫前先处理摄妖香
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314` / `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - `git status --short` 已有大量 unrelated dirty files；本轮只计划触碰
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`、
+    `src/main/java/com/bot/dhxy/task/wubei/WubeiTask.java`、CR 文档/dashboard 和本记录。
+- 代码证据：
+  - 修罗 `XiuluoTaskV2` 绿字 shortcut 点击后当前顺序是：
+    `returnItemPrescanService.afterTrackerGreen(...)` -> `consumeCommonBoxDuringNextTaskProgress(...)`
+    -> `consumeDeferredPostCombatRecoveryDuringNextTaskProgress(...)`。
+  - 五倍 `WubeiTask.triggerCombatTrackerPathing(...)` 注册 pathing 后当前顺序是：
+    `returnItemPrescanService.afterTrackerGreen...(...)` -> `consumeCommonBoxAfterTaskAccepted(...)`
+    -> `autoCombatService.consumePendingLeaderPostCombatRecoveryIfAllowed(...)`。
+- 问题确认：
+  - 如果本轮决定在移动途中预扫回程道具，但随后又使用摄妖香，摄妖香流程可能切包裹页签，
+    已缓存的回程道具页签上下文可能被改掉，导致真正回程第一次使用缓存点失败。
+- 改动计划：
+  - 只调整摄妖香顺序：先单独检查/使用摄妖香，再做 `ReturnItemPrescanService` 回程道具预扫。
+  - 不改 `common box`、战斗恢复、回程道具识别、摄妖香判断逻辑或预扫策略随机选择。
+- 实现：
+  - `XiuluoTaskV2`：`tracker-shortcut-green-clicked` 后先调用
+    `playerStateService.ensureSheYaoXiangActiveForLeaderTask(...:before-return-prescan, context)`，
+    再执行 `returnItemPrescanService.afterTrackerGreen(...)`；`common box` 和 deferred post-combat recovery
+    保持在预扫之后的原顺序。
+  - `WubeiTask`：`tracker-green-click` 注册 pathing 并打开队伍维护窗口后，先调用
+    `playerStateService.ensureSheYaoXiangActiveForLeaderTask(...:before-return-prescan, context)`，
+    再执行回程道具或显形镜 slot 预扫；`common box` 和 pending leader post-combat recovery 保持原顺序。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test mode，未创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-09 / CR231 队长战后摄妖香检查安静期建卡
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 工作区已有大量 unrelated dirty files；本轮只记录 CR231 文档和 dashboard，不改 Java。
+- 问题确认：
+  - 队长战后恢复会进入 `PlayerStateService.ensureSheYaoXiangActiveForLeaderTask(...:post-combat)`。
+  - 当前链路由本地向云端 `SHEYAOXIANG_STATUS` 发 `TICK`，云端再要求 `CAPTURE_STATUS`，
+    导致战后频繁截图左上角摄妖香状态栏并上传云端。
+  - 本地已经有 `lastIncenseUsedTime`，且本地知道摄妖香使用成功；成功用香后至少约 60 分钟有效，
+    补香阈值为 20 分钟，因此成功用香后的前约 40 分钟不应每场战斗后都问云端。
+- 记录：
+  - 已创建 CR231：`队长战后摄妖香检查应利用本地用香时间安静期`。
+  - 卡片只记录问题、代码入口、当前行为、目标行为和 fresh gate；未写具体实现方案。
+- 验证：
+  - 本轮未改 Java，未运行 compile。
+  - 按 no-local-test mode，未创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-08 / CR207+CR228 修罗云脑 step 映射与 stop cancel 修复
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰修罗云脑/stop-cancel 相关 Java、
+    CR 文档/dashboard 和本记录。
+- 代码确认：
+  - external cloud `DecisionEngine.acceptClickNext(...)` 已有
+    `AFTER_ACCEPT_MAINTENANCE_CHECK` 分支，但 `step` rejected 后 DHXY gate 会先按普通 command
+    解析 `phase`，导致原始 `outcome cannot advance...` 被二次污染成
+    `phase must parse to XiuluoPhase:`。
+  - `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` 在 `shellResult.reportOutcome()` 后立即构造并发送
+    `actionOutcome(...)`，中间缺少 stop checkpoint。
+  - `NpcClickService.buildNpcClickSmartCloudRequest(...)` 的 `Alt+4` 预处理失败会返回 `null`，
+    上层统一包装为 `REQUIRED_FAILURE`，stop 场景没有清晰分流。
+- 计划：
+  - cloud rejected response 保留原始 `status/reason`，DHXY 不再把 rejected 空 phase 当 command 解析。
+  - `ACCEPT_TASK_CLICK_NPC -> AFTER_ACCEPT_MAINTENANCE_CHECK` 增加更直接的本地 next phase 兜底。
+  - `actionOutcome(...)` 前增加 stop checkpoint，stop 后不再发业务 outcome。
+  - NPC smart cloud request build 在 stop/cancel 后抛出 stop，而不是返回普通 build failed。
+- 实现：
+  - external `dhxy-cloud-brain` `DecisionEngine.acceptClickNext(...)` 对
+    `AFTER_ACCEPT_MAINTENANCE_CHECK` 增加 `EXECUTED + CONTINUE_CHAIN` 窄兜底。
+  - DHXY `XiuluoBrainCloudDecisionService.parseDecision(...)` 先识别 `status=REJECTED/RESET_REQUIRED`，
+    保留云端原始 reason，不再二次污染成 `phase must parse`。
+  - `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` 在 `actionOutcome(...)` 前后都检查 stop；
+    stop 后直接 `TaskRunResult.STOPPED`。
+  - `NpcClickService` 对 cloud request build / `Alt+4` 预处理阶段的 stop 做分流，
+    不再包装成普通 `REQUIRED_FAILURE`。
+- 验证：
+  - DHXY `mvn -q -DskipTests compile` exited `0`。
+  - external `D:\mavenProject\dhxy-cloud-brain` `mvn -q compile` exited `0`。
+  - external startup classpath gate
+    `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime" "-Dmdep.outputFile=D:\mavenProject\dhxy-cloud-brain\target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"`
+    exited `0`。
+  - `mvn -q -DskipTests compile` 在 external cloud-brain 被 enforcer 拒绝，因为该项目禁止
+    `skipTests=true`；这不是代码编译失败，已改用 `mvn -q compile`。
+  - 按 no-local-test mode，未运行 local tests/replays/source guards。
+
+## 2026-07-08 / 修罗 stop-pause-failClosed 全面 review
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮 review 只更新 CR 文档/dashboard，不改 Java。
+- Review 视角：
+  - 子智能体 1：stop/pause/input queue 语义。
+  - 子智能体 2：修罗云脑 `action-outcome -> step` 协议与 phase 映射。
+  - 子智能体 3：`logs/dhxy-console.log` 今日修罗失败模式统计。
+- 总结：
+  - 17:20 stop-all 异常属于 CR228：本地 transaction 已 `STOPPED`，但云脑外层继续
+    `action-outcome`，stop 期间 HTTP interrupt 后污染成 `FAILED`。
+  - 17:42 最新 `FAILED` 不是 stop；它属于 CR207：`ACCEPT_TASK_CLICK_NPC` outcome 已
+    `ACCEPTED_OUTCOME`，下一次 `step` 被云端 `REJECTED` 且返回空 phase，DHXY 二次解析成
+    `phase must parse` 后 `failClosed`。
+  - 17:20 `DIALOG_OPEN_UNVERIFIED` 属于 CR227 fresh 风险：该形态必须先进
+    `ACCEPT_TASK_DIALOG` 固定 ROI 模板快路径，不能按普通 NPC click 失败直接交给云端。
+- 记录：
+  - CR207 已补充 17:42 `action-outcome ACK -> step rejected/empty phase` 的 P1 blocker。
+  - CR227 已补充 `DIALOG_OPEN_UNVERIFIED` 需要进入固定 ROI accept option 快路径的 fresh gate。
+  - CR228 已补充剩余 stop/cancel follow-up：`Alt+4` 预处理取消、`actionOutcome` 前 checkpoint、
+    `TaskTransactionRunner.runExclusive()` cancel reason、`reportQueueOutcomeAsync()` stop 策略。
+- 验证：
+  - 本轮未改 Java，未运行 local tests/replays/source guards。
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`，生成 `221` 条 CR 数据。
+
+## 2026-07-08 / CR229 五环前置检查后首个导航先点击再放权
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰
+    `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`、CR229 文档/dashboard 和本记录。
+- 问题确认：
+  - 五窗口启动五环时，用户观察到第一个号完成前置检查后没有马上走下一步小地图导航，而是让 2/3/4/5 号依次做前置检查。
+  - 代码根因在 `FiveRingTaskV2.runPhaseWithoutTaskTurn(...)`：`BUY_SHOES` / `ACCEPT_TASK` 属于 outside phase，一进入就 `forceReleaseTurn(...:outside-enter)`。
+  - 这会把 `PREPARE` 通过 `CONTINUE_CHAIN` 继承下来的 task turn 提前释放，导致首个买鞋/云游大师导航点击尚未发生，其他窗口已经插队。
+- 实现：
+  - `runPhaseWithoutTaskTurn(...)` 增加 `releaseTurnOnEnter` 参数。
+  - `shouldReleaseTurnOnOutsidePhaseEnter(...)` 保留默认释放，只对首个启动导航入口延迟释放：
+    `prepare-shoe-shop*` 的 `BUY_SHOES`，以及 `prepare-done` / `handover-setup-required` /
+    `handover-tracker-unavailable-setup-required` 的 `ACCEPT_TASK`。
+  - 如果 state 已经有 `waitingAcceptNpcPathing` / `pathingIntentExpected` / `pathingStartedAtMs`，
+    仍按旧逻辑进入 outside phase 即释放，避免慢 watcher/OCR/pathing 等待重新长时间占用 task turn。
+  - 导航点击返回 `PATHING_STARTED` / shared retry / terminal yield 后，继续走原有
+    `releaseHeldTurnAfterOutsidePhaseYield(...)` 释放继承 task turn。
+- Fresh gate：
+  - 五窗口五环启动时，每个窗口前置检查完成后应先点击买鞋入口或云游大师导航，让角色开始移动，再轮到下一个窗口业务。
+  - 日志应出现 `OutsideTurnKeepInherited` 只覆盖首个导航入口；后续 `WAIT_PATHING`、
+    `SYNC_TASK_PANEL`、`HANDLE_DIALOG` 仍应出现 `outside-enter` 释放。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`，生成 221 条 CR dashboard 数据。
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test mode，未创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-08 / CR228 修罗云脑 stop 不再被 action-outcome 污染成 FAILED
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - `git status --short` 已有大量 unrelated dirty files；本轮只触碰
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`、
+    `src/main/java/com/bot/dhxy/service/NpcClickService.java`、CR 文档/dashboard 和本记录。
+- 17:20 stop 异常确认：
+  - stop-all 后队员自动战斗正常 `STOPPED`。
+  - 队长在 `ACCEPT_TASK_CLICK_NPC` / `npcClick:fifoCandidate:MEMORY:灵兽村使者`
+    输入序列中被打断。
+  - 事务层已有 `STOPPED`，但云脑外层仍继续 action-outcome，stop 期间 HTTP interrupt 后进入
+    `failClosed`，最终 UI 显示修罗 `FAILED`。
+- 17:42 最新异常区分：
+  - `17:42:43.711` 不是同一个 stop 问题；当时没有 stop。
+  - 该次是接任务 option actionOutcome `ACCEPTED_OUTCOME` 后，下一次 `step` 被云端 gate 拒绝：
+    `phase must parse to XiuluoPhase:`，属于云端 step/reset phase 空值问题，另行处理。
+- 实现：
+  - `XiuluoTaskV2.XiuluoBrainShellResult` 增加 `terminalStopped(...)`，`reportOutcome=false`。
+  - 云脑 phase shell 发现 transaction/outcome 为 `STOPPED` 时直接返回 `TaskRunResult.STOPPED`，
+    不再上报 `XIULUO_BRAIN action-outcome`。
+  - `NpcClickService` FIFO candidate 输入队列 `submitAndWait(...)` 返回 false 时，stop 场景返回
+    `CANCELLED`，非 stop 场景才返回 `INPUT_SUBMIT_FAILED`。
+- Fresh gate：
+  - stop-all 打断修罗队长 NPC click / dialog / tracker 输入序列时，应看到队长
+    `修罗 -> STOPPED`，不再被 action-outcome/failClosed 转成 `FAILED`。
+  - 仍需单独处理 17:42 的云端 `phase must parse to XiuluoPhase:`。
+- 验证：
+  - `mvn -q -DskipTests compile` exited `0`。
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - 按 no-local-test mode，未创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+## 2026-07-08 / CR226-B 队员 idle broadcast suppress 缓存与日志降噪
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - 工作区已有大量 unrelated dirty files；本轮只触碰 `TaskMaintenanceService`、
+    `AutoBattleTask`、CR226 文档/dashboard 和本记录。
+- 问题确认：
+  - `logs/dhxy-console.log` 中队员窗口会每几秒成组出现
+    `maintenance local-team capability denied by local gate`、
+    `maintenance idle broadcast scan suppressed`、
+    `auto-battle idle maintenance broadcast scan suppressed`、
+    `maintenance: summon skill not due`。
+  - 这不是每次重新截图识别队伍；真正 tooltip/group 识别发生在 runner role preflight。
+    idle path 重复的是从 `localTeamSessions` 里 resolve
+    “当前窗口是不是本地队长组里的队员，因此是否 suppress idle broadcast scan”。
+- 实现：
+  - `TaskMaintenanceService.shouldSuppressIdleMaintenanceBroadcast(...)` 增加 per-session/window suppress cache。
+  - cache 绑定 `windowId + groupHash + leaderWindowId + leaderPlayerId`，TTL `30s`。
+  - session completed、groupHash 变化、leaderWindow 变化、当前窗口变 leader 时失效或清理。
+  - suppress info 日志限频 `60s`；TTL 内重复命中不再每轮 info。
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` 不再为同一个 suppress 再打一条
+    `auto-battle idle maintenance broadcast scan suppressed`，由 `TaskMaintenanceService` 统一记录。
+  - 追加最小方案 C：不改 logback、不加 `AsyncAppender`、不动 `FEATURE_FLAG` shadow 机制；
+    只对业务源头的 no-action info 做限频。
+  - `maintenance local-team capability denied by local gate` 同一 session/window/capability/reason 限频 `60s`。
+  - `maintenance: summon skill deferred` 的 `no-active-team-round`、
+    `local-capability-closed`、`team-pathing-window-closed` 同一上下文限频 `60s`。
+- 边界：
+  - 不缓存或跳过真实 capability：`TEAM_RETURN`、`SUMMON_SKILL`、`LEFT_TOP_STATUS` 仍走现有检查。
+  - 不改变队长/队员识别算法、任务切换、召唤兽技能清理、补给或回程业务。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - DHXY `mvn -q -DskipTests compile` exited `0`。
+- Fresh gate：
+  - 队员窗口重复 suppress 日志应从每几秒四窗口成组，降为同一 window/session/group 至多约 60 秒一条。
+  - `capability denied` 和 `summon skill deferred, no action` 不应继续每几秒成组刷屏。
+  - 队长 stop / session complete 后队员不应继续使用旧 suppress；日志应能看到 session completed 后旧缓存不再命中。
+  - 真正 `SUMMON_SKILL` / `TEAM_RETURN` / `LEFT_TOP_STATUS` capability 打开时，队员仍能执行。
+
+## 2026-07-08 / CR227 修罗接任务 option 本地快路径 + 旧云端 prepare-only fallback
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`。
+  - `git status --short` 已有大量 unrelated dirty files；本轮只触碰
+    `src/main/java/com/bot/dhxy/service/DialogService.java`、
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`、
+    `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md` 和 dashboard 数据。
+- 用户确认的改动：
+  - 修罗接任务链路保留 NPC 点击不变。
+  - NPC 点击后复用旧 `DIALOG_POLICY` dialog ROI / `greenTemplateSpec` 链路做后台 prepare-only；
+    该后台链路只准备坐标，不发送鼠标。
+  - 接任务 option 先按稳定记忆点做本地固定 ROI 机械点击；没有记忆/记忆越界/输入失败后，
+    再在固定窗口相对 ROI 上直接本地匹配新模板
+    `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu2.png`，命中后直接点击。
+  - 本地没有命中时，等待并消费 NPC 点击后已经在后台准备的旧云端 prepared action；如果旧链路
+    3 分钟 TTL 内仍没有结果，清掉本轮 future 并回到 `ACCEPT_TASK_CLICK_NPC` 重新点 NPC。
+- 实现：
+  - `XiuluoTaskV2.ACCEPT_OPTION_TEMPLATE` 改为 `xiuluo_accept_xianlaiwu2.png`。
+  - `ACCEPT_TASK_DIALOG` 的修罗接任务 accept 快路径现在顺序为：
+    `tryRememberedAcceptTaskOption(...)` -> `tryLocalAcceptTaskTemplateOption(...)`。
+  - `tryRememberedAcceptTaskOption(...)` 不再调用 `DialogService` / 云端，只把稳定记忆点
+    `(relativeX,relativeY)` 加到固定 ROI 左上角后直接点击；记忆缺失、越界或输入失败才 fallback。
+  - `tryLocalAcceptTaskTemplateOption(...)`：窗口相对 ROI `(250,312,529,208)` 截图，
+    `ImageFinder.find(...)` 本地匹配，命中后按模板 anchor + 48px 点击。
+  - `clickTaskNpc(...)` 成功后调用 `scheduleAcceptDialogCloudFallback(...)`，通过现有
+    `DialogService.prepareGreenTemplateOption(...)` 走旧 `DIALOG_POLICY` pre-click request：
+    同一个 dialog ROI、同一个 `xiuluo_accept_xianlaiwu2.png` template spec、`actionId=xiuluo.acceptTask`。
+    该 future 只返回 `PreparedDialogAction`，不会点击。
+  - `ACCEPT_TASK_DIALOG` 如果本地记忆和本地模板都 miss，就等待该 task-owned future，最多
+    `180000ms`；准备完成后再经过 `validatePreparedDialogActionForConsume(...)` 校验并点击。
+    这不是 Runner 发布的 `PREPARED_ACTION_READY`，而是修罗接任务 phase 自己提前发起的旧云端
+    fallback 计算。若本地快路径成功，立即清掉 future，云端晚到结果不会被消费；若 TTL 到期仍无结果，
+    清掉 future 并回到 `ACCEPT_TASK_CLICK_NPC` 重新点 NPC。
+  - `xiuluoKnownOptionSpecs()` 移除接任务旧 accept spec，避免本地新模板 miss 后继续用旧图走云端。
+  - 删掉误加的 `DialogService.handleLocalGreenTemplateOption(...)` /
+    `handleLocalRememberedOption(...)`，避免修罗接任务快路径又绕回通用 dialog 线。
+  - 本地模板命中后继续调用 `recordAcceptTaskOptionSuccess(...)` 写回相对坐标记忆；后续优先走该
+    本地记忆机械点击。
+  - external `dhxy-cloud-brain` 的 `ACCEPT_TASK_CLICK_NPC` outcome 接续已允许
+    `AFTER_ACCEPT_MAINTENANCE_CHECK`，避免本地快点成功后被云端拒绝。
+- 2026-07-08 17:20 fresh 复盘：
+  - `17:20:24.067` 队长 `hwnd-4AF0C5E` 已点击 `灵兽村使者`。
+  - `17:20:27.107` NPC click verifier 只返回 `OPTION_VISIBLE` /
+    `DIALOG_OPEN_UNVERIFIED`，随后旧代码在 `XiuluoBrainLoop` 开启时直接把
+    `ACCEPT_TASK_CLICK_NPC` 失败上报云脑 cleanup/retry，导致当前已弹出的修罗接任务
+    option 没有进入本地 `xiuluo_accept_xianlaiwu2.png` 匹配链路。
+- 2026-07-08 补丁：
+  - `recoverAcceptNpcClickFailure(...)` 不再在云脑模式下先返回 failed。
+  - NPC click verifier 失败但当前窗口可能已有 option dialog 时，先把 state 切到
+    `ACCEPT_TASK_DIALOG` 并调用 `handleKnownXiuluoOptionDialog(...)`。
+  - 命中本地记忆点或 `xiuluo_accept_xianlaiwu2.png` 本地模板后，正常推进下一 phase；后台旧云端
+    prepare 结果会被清掉，不参与点击。
+  - 本地记忆和模板都未命中时，`ACCEPT_TASK_DIALOG` 不再继续调用通用本地 dialog 猜测；先消费
+    NPC 点击后后台准备的旧云端 prepared action，仍无 action 时再由当前 phase/recovery outcome
+    交给云端决定，例如重新点 NPC 或返回其它坐标动作。
+  - 云脑模式下，`ACCEPT_TASK_CLICK_NPC` verifier unverified 后的本地模板 miss 也不再继续
+    本地 under-three/inspect/cleanup；直接把 phase 推进到 `ACCEPT_TASK_DIALOG`，由下一步本地快
+    匹配 / 云端兜底来判断。
+- 2026-07-08 旧云端 fallback 等待策略补丁：
+  - 删除旧的 `900ms` 短等；用户确认本地记忆和本地模板全 miss 后，此时没有 Runner 帮忙准备
+    action，只能等待本任务自己已经发起的旧云端 dialog fallback 结果。
+  - `waitForAcceptCloudFallback(...)` 每 `200ms` 响应一次 stop checkpoint，最多等待
+    `180000ms`。
+  - future 返回 prepared action 后仍必须校验 window、operation、actionKey、fingerprint 后才点击。
+  - future 明确失败/empty 时，保留现有 outcome/retry 语义；TTL 到期时不 fail closed，而是清掉
+    future 并回到 `ACCEPT_TASK_CLICK_NPC`，让下一轮重新点 NPC / 重新截图。
+- 2026-07-08 18:13 fresh 复盘与补丁：
+  - `18:13:47.642` NPC smart 已点到 `灵兽村使者`，但 `18:13:50.730` 又进入
+    `npc-click:expected-dialog:*` 的 `DIALOG_POLICY VERIFY_EXPECTED_DIALOG`。
+  - 该 verify-only 动作只确认 `OPTION_DIALOG_VISIBLE`，不会点击接任务选项；随后又重复一轮
+    NPC smart，直到 `18:13:56.051` 才进入本地 `accept option memory click`。
+  - 根因是 `ACCEPT_NPC` 仍把 `ACCEPT_OPTION_TEMPLATE` 作为 NPC smart expected-dialog verifier
+    传入，导致 NPC 点击阶段先走旧云端可见性验证，再进入修罗自己的本地快路径。
+  - 新补丁给 `NpcClickRequest` / `NpcTarget` 增加 `deferDialogVerificationToTask`，并仅在
+    修罗 `ACCEPT_NPC` 打开：NPC smart 只提交 NPC 点击，点击后的接任务 dialog 验证/点击交给
+    `ACCEPT_TASK_DIALOG` 的本地记忆 -> 本地模板 -> 云端 prepared fallback 链路。
+  - 后续方向记录：这不是修罗独有的长期模型。用户倾向于让 `NPC_CLICK_SMART` 逐步收敛为“点目标”
+    的输入执行入口，不再默认承担 post-click dialog verify；各任务先走自己的本地记忆/模板快路径，
+    失败后再把截图/上下文交给云端业务判断。当前补丁先只打开修罗接任务，避免一次性改动五倍、
+    战斗目标和其它 NPC 路径。
+- Verification:
+  - DHXY `mvn -q -DskipTests compile` exited `0`。
+  - external `D:\mavenProject\dhxy-cloud-brain` `mvn -q compile` exited `0`。
+  - 2026-07-08 18:13 补丁后，`node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - 2026-07-08 18:13 补丁后，DHXY `mvn -q -DskipTests compile` exited `0`。
+  - 2026-07-08 旧云端 fallback TTL 补丁后，`node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - 2026-07-08 旧云端 fallback TTL 补丁后，DHXY `mvn -q -DskipTests compile` exited `0`。
+  - 2026-07-08 旧云端 fallback TTL 补丁后，external `D:\mavenProject\dhxy-cloud-brain`
+    `mvn -q compile` exited `0`。
+  - 按 no-local-test mode，未创建/运行 automated tests、source guards、replay 或 marked outputs。
+- Fresh runtime gate:
+  - 下一轮修罗接任务本地记忆命中时，应看到
+    `[xiuluo-v2] accept option memory click`。
+  - 记忆缺失/失败后模板命中时，应看到
+    `[xiuluo-v2] accept option local template click`。
+  - NPC click 成功或 `DIALOG_OPEN_UNVERIFIED` 恢复路径后，应看到
+    `[xiuluo-v2] accept cloud fallback prepare scheduled` / `completed`；本地快路径成功时不应再看到
+    `[xiuluo-v2] accept option cloud prepared click`。
+  - 只有本地记忆和本地模板都 miss 时，才允许看到
+    `[xiuluo-v2] accept option cloud prepared click`，并且 actionKey 必须是 `xiuluo.acceptTask`。
+  - 如果 NPC click verifier 先出现 `OPTION_VISIBLE` / `DIALOG_OPEN_UNVERIFIED`，也应先进入
+    固定 ROI 本地 accept option 匹配。
+  - 修罗接任务 NPC 点击阶段不应再出现
+    `npc-click:expected-dialog:*VERIFY_EXPECTED_DIALOG` / `DIALOG_POLICY` 的 verify-only 日志；
+    应在 NPC smart 点击后直接进入 `ACCEPT_TASK_DIALOG` 本地快路径。
+  - 本地 miss 后，不应走 `DialogService.handleDialog(...)` 的通用业务 option 猜测；云端旧链路只能作为
+    prepare-only/fallback 坐标来源，不能和本地快路径同时点击。
+  - 如果旧云端 fallback 3 分钟仍没有完成，应看到
+    `[xiuluo-v2] accept cloud fallback timed out`，随后 phase 回到 `ACCEPT_TASK_CLICK_NPC`，不能卡在
+    `ACCEPT_TASK_DIALOG` 死等。
+  - 接任务 option 不应再用旧 `xiuluo_accept_xianlaiwu.png`，也不应通过
+    `DialogService.handleDialog(...)` 本地消费 accept 选项。
+
+## 2026-07-08 / CR226-A 修罗看打本地小 ROI 模板替代云端扫描
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - HEAD / upstream：`dc4394f` / `origin/codex/hybrid-cloud-protection@dc4394f`。
+  - `git status --short` 显示工作区已有大量 unrelated dirty files；本轮只触碰
+    `DialogService`、CR226 文档/dashboard 和本记录，不 revert unrelated changes。
+- 用户确认的改动：
+  - “看打”按钮使用用户新加模板 `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda2.png`。
+  - 用户给出的采样框是屏幕绝对 ROI `(416,474)-(457,495)`；当时 67555 窗口
+    Tracker base 为 `(152,98)`，所以代码保存窗口相对 ROI `(264,376)-(305,397)`。
+  - 命中后直接左键点击进入战斗；不再把“看打”按钮截图传给云端做 pre-click 决策/洗字。
+  - 参考队员维护窗口的固定 ROI 模板匹配方式，保持小改。
+- 计划边界：
+  - 只替代修罗 `xiuluo.enterBattle` / `XIULUO_ENTER_BATTLE` 的“看打”准备与点击路径。
+  - 不改五倍/五环其它绿字模板，不改 NPC 点击、tracker、导航、云脑 phase 业务决策。
+  - 按 no-local-test 模式不新增/运行 replay 或自动测试；Java 改动后必须 compile。
+- 实现：
+  - `DialogService.handleDialog(...)` 在 dialog 分类截图前先识别修罗“看打”请求，直接在窗口相对
+    ROI `(264,376)-(305,397)` 内匹配 `xiuluo_enter_battle_kanda2.png`；命中后用输入队列点击。
+  - `DialogService.prepareGreenTemplateOption(...)` 对 `XIULUO_ENTER_BATTLE` 走同一套本地 ROI 模板准备，
+    不再构建云端 pre-click request。
+  - prepared action 消费前用同一 ROI 再本地匹配一次并刷新点击点，避免重新引入云端 fingerprint。
+- Verification:
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`，生成 218 条 CR rows。
+  - DHXY `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test 模式，未新增/运行 automated tests、source guards、replay 或 marked testcase outputs。
+- Fresh runtime gate:
+  - 修罗进战斗前应看到 `dialog xiuluo enter-battle local template action` 或
+    `dialog prepare xiuluo enter-battle local template action`。
+  - “看打”路径不应再出现 `dialog prepare green template cloud action`，也不应再为这一步成组触发云端
+    `IMAGE_PREPROCESS` 洗字/pre-click。
+
+### 2026-07-08 / CR212 tooltip 去背景签名去重 + 云端逐行识别实验
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`origin/codex/hybrid-cloud-protection` 同 commit)。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本轮只触碰
+    CR212 队伍 tooltip 去重相关代码、CR212 文档/dashboard，以及用户明确要求的外部云端实验。
+    不 reset/checkout/clean/revert unrelated changes。
+- 现有 CR212 代码基线：
+  - `TeamRoleDetectionService.batchTooltipDecisionCacheKey(...)` 当前用
+    `localTeamSessionKey + imageSha256` 做代表图缓存。
+  - `buildCloudTooltipRequest(...)` 的 `imageSha256` 来自原始 tooltip PNG bytes。
+  - 当前 CR212 卡片仍写的是 strict `imageSha256`：完全相同 hash 才复用，不做 fuzzy/perceptual。
+- Runtime evidence：
+  - 最新五开启动日志显示 5 个 `TEAM_ROLE_TOOLTIP` 都走了
+    `team role cloud tooltip hash group representative executed`，没有同组
+    `reused representative`。
+  - 原始 tooltip 图视觉近似，但 raw/pixel hash 不同；用户已确认 mask 后图像清晰且可作为去重方向。
+  - 13:29 fresh runtime 继续暴露 exact mask hash 问题：5 张 tooltip 文字内容相同，但背景/聊天字噪点
+    不同，导致 5 个窗口仍全部成为 representative；后两个窗口 `TEAM_ROLE_TOOLTIP` 因排队/OCR 超时
+    返回 `ocr-unavailable-request_timed_out`。同一批日志里 5 张图的文字分布指标完全一致：
+    `white=532 purple=287 rows=45 columns=100 transitions=455 maxRowPixels=50`。
+- 用户确认规则：
+  - 先解决本地重复传五张：本地对 tooltip 图做 mask signature，并用该 signature 做同组代表图缓存。
+  - 用户追加确认：云端正式 payload 改成 mask 图，不再上传原始 tooltip 图给
+    `TEAM_ROLE_TOOLTIP`。
+  - 云端正式解析也改成逐行 OCR：诊断输出第 1/2/3/4 行文本，当前只取第 3 行的数字作为
+    `leaderClientId`。
+- 实现：
+  - `TeamRoleDetectionService` 本地代表图缓存不再优先使用整张 mask 逐像素 hash；改为优先用
+    tooltip 文字分布签名：`whitePixels + purplePixels + rows + columns + transitions + maxRowPixels`。
+    这样背景噪点不参与同组判断，只有文字指标不可用时才退回 high-contrast mask signature。
+  - `TeamRoleDetectionService.isTooltipSignaturePixel(...)` 收窄为 tooltip 常见白/绿/紫/黄文字色，
+    避免把亮背景和普通底图噪点继续打进正式 mask payload / fallback signature。
+  - `TeamRoleTooltipCloudRequest.imagePayloadBase64` / `imageSha256` 已改为 tooltip mask PNG；
+    `rawImagePath` 仅保留原始截图路径用于诊断。
+  - 本地代表图日志字段同步改为 `payloadImageSha256`，避免继续把正式 mask payload 误读成
+    raw tooltip 图。
+  - 同组代表请求若返回 `NO_RESULT` / timeout，不再长期缓存失败结果；后续同组窗口可重新请求。
+  - `TaskMaintenanceService` 注释同步为 local tooltip group signature，避免后续误读为 raw hash。
+  - external `dhxy-cloud-brain` 正式 `TEAM_ROLE_TOOLTIP` 改用 mask 图逐行 OCR；
+    `line1-line4` 写入 diagnostics，`leaderIdSource=line3`，旧的全图数字候选排序方法保留并标
+    `@Deprecated`，生产不再调用。
+  - external `TooltipMaskLineExperiment` main 保留为手动实验工具，不接入 gateway。
+- 云端实验结果：
+  - 对 5 张 high-contrast mask 图运行逐行 OCR，均输出：
+    line1=`乌龟的黑头`，line2=`飞升195级男人`，line3=`67555`，line4=`轻风云间`。
+- 本轮图片实测：
+  - 输入图：
+    `images/temp/hwnd-3090D0E/team_role_tooltip_raw_pass1_attempt1.png`,
+    `images/temp/hwnd-3FA1540/team_role_tooltip_raw_pass1_attempt1.png`,
+    `images/temp/hwnd-2FD0E70/team_role_tooltip_raw_pass1_attempt1.png`,
+    `images/temp/hwnd-6A09C8/team_role_tooltip_raw_pass1_attempt1.png`,
+    `images/temp/hwnd-36D09C4/team_role_tooltip_raw_pass1_attempt1.png`。
+  - 按当前 `isTooltipSignaturePixel(...)` 去背景 mask 规则复算，五张均为
+    `MaskPixels=1251`，`MaskSha=0d32d6b4c4d6a01ffebb9049a8c415bec40828a36766fc4006aa0550d2d8f9b8`。
+  - 按 runtime 返回的文字分布指标复算，五张均为
+    `TextSignature=tooltip-text-35c327faaf78a88c3d0f28f4b6b2d8651f0d44e5108cdab11b6558a91df49e21`。
+  - 对照图输出到
+    `images/temp/cr212_tooltip_mask_check/raw_and_current_mask_sheet.png`，仅作本轮人工图片检查。
+- Verification：
+  - 本轮去背景签名小修后，DHXY `mvn -q -DskipTests compile` exited `0`。
+  - external `D:\mavenProject\dhxy-cloud-brain` `mvn -q compile` exited `0`。
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`，生成 217 条 CR dashboard rows。
+  - `git diff --check -- docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js src/main/java/com/bot/dhxy/team/TeamRoleDetectionService.java src/main/java/com/bot/dhxy/cloud/task/TeamRoleTooltipCloudRequest.java src/main/java/com/bot/dhxy/cloud/task/TeamRoleTooltipCloudDecisionService.java`
+    exited `0`，仅有 CRLF warning。
+  - 按 no-local-test 模式，未运行 automated tests、source guards、replay 或 marked testcase outputs。
+
+### 2026-07-08 / CR220 hot-start 回程道具重复开包窄修
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`origin/codex/hybrid-cloud-protection` 同 commit)。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本轮只触碰
+    `XiuluoTaskV2`、`XiuluoBrainRoundState`、CR220 文档和 dashboard，不 revert unrelated changes。
+- Runtime evidence：
+  - `10:51:59.068` CR220 gate 第一次已在包裹第 6 页匹配 `bag/xiuluo_return_item.png`。
+  - `10:51:59.069` 已右键点击回程道具，`10:52:00.737` 包裹动作返回 `success=true`。
+  - `10:52:01.947` 地图验证仍为 `长安 (186,90)`，未回 `灵兽村`。
+  - 云脑 cleanup 后回到 `ACCEPT_TASK_NAVIGATE_TO_NPC`，`10:52:07.859` 触发第二次包裹扫描。
+- 用户确认规则：
+  - 只针对热启动/CR220 接任务前回程 gate。
+  - 已成功点击过一次回程道具但未验证回 `灵兽村` 时，本次热启动视为回程尝试失败/道具失效。
+  - 后续同一云脑 round 回到 `ACCEPT_TASK_NAVIGATE_TO_NPC` 时，不允许再次打开包裹查同一道具。
+- 实现：
+  - `XiuluoBrainRoundState` 增加 `startupReturnItemTriedAndUnverified` 本轮状态。
+  - `guardCloudAcceptNavigationWithStartupReturn(...)` 在 `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT`
+    分支标记该状态。
+  - 后续同 round 再进 CR220 gate 时直接记录
+    `hot-start-return-item-already-tried-unverified` facts 并放行接任务导航，不再调用
+    `useReturnItemAndVerifyStartMap(...)`。
+- Scope：
+  - 不改普通战后 `RETURN_HOME`，不改 `BagService` / `ReturnItemPrescanService`，不改模板匹配、
+    点击坐标、导航、OCR/dialog/tracker 业务逻辑。
+- Verification：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`。
+  - DHXY `mvn -q -DskipTests compile` exited `0`。
+  - 按 no-local-test 模式，未运行 automated tests、source guards、replay 或 testcase image 验证。
+
+### 2026-07-08 / CR207 live blocker：暂停恢复后 `WAIT_COMBAT` unknown-combat 恢复被外部云脑拒绝
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`origin/codex/hybrid-cloud-protection` 同 commit)。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本轮只允许触碰
+    CR207/CR200 相关文档和 external
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`。
+    不 reset/checkout/clean/revert unrelated dirty files。
+  - external `D:\mavenProject\dhxy-cloud-brain` 不是 git 仓库；以当前文件内容为本轮基线。
+- 旧本地业务基线：
+  - `docs/业务逻辑.md` 的“任务类热启动 / 暂停恢复”规定恢复顺序为：
+    `战斗中 > 看打/进入战斗 dialog > 修罗 tracker 绿字 > 修罗回程道具 > 非快捷 objective 记忆 > 重新接任务`。
+  - `XiuluoTaskV2.attemptVerifiedReturnAfterUnknownCombat(...)` 的旧本地逻辑在
+    `unknown-combat` 脱战后，若回程道具未能 verified、可信状态也不是 still-in-combat、任务栏 objective
+    也读不到，会清 `pendingTeamReturnPrecheck` 并
+    `recoverTo(XiuluoPhase.ACCEPT_TASK_NAVIGATE_TO_NPC, "unknown-combat-return-unverified")`，
+    日志为 `unknown combat exit; return unverified, restart accept chain`。
+- Live failure evidence：
+  - `10:53:49` 用户暂停；`10:56:29` resume 后日志显示 `TaskPauseToken: task pause checkpoint resumed`，
+    pause token 本身已恢复。
+  - `10:57:01` 本地 `WAIT_COMBAT` 上报：
+    `localOutcomeSource=unknown-combat-return-unverified`、
+    `localOutcomeNextPhase=ACCEPT_TASK_NAVIGATE_TO_NPC`、
+    `outcomeMessage=unknown combat exit; return unverified, restart accept chain`。
+  - external 云脑随后拒绝：
+    `WAIT_COMBAT fact belongs to CR200 boundary; unsupported in CR199`，DHXY 因 cloud-required
+    拿不到合法 phase 而 `xiuluo.brain.loop.failClosed`。
+- 修复方向：
+  - 不恢复本地第二大脑；仍由云端决定下一 phase。
+  - external `DecisionEngine.waitCombatNext(...)` 必须把上述旧本地 recover fact 映射为合法云端命令
+    `EXECUTE_PHASE ACCEPT_TASK_NAVIGATE_TO_NPC`，而不是落入旧 CR199/CR200 boundary reject。
+  - 不改 OCR/NPC/dialog/navigation/click/return item/auto combat/team return 业务逻辑。
+- 实现与验证：
+  - external `DecisionEngine.waitCombatNext(...)` 已在 CR199/CR200 boundary reject 前识别
+    `localOutcomeNextPhase=ACCEPT_TASK_NAVIGATE_TO_NPC` 且来源/消息包含
+    `unknown-combat-return-unverified`，并返回 `execute("ACCEPT_TASK_NAVIGATE_TO_NPC")`。
+  - `13:01:17` fresh 又暴露同卡第二个 `WAIT_COMBAT` parity 漏洞：本地上报
+    `SHARED_STATE_TRIGGERED/MUST_YIELD localNext=WAIT_COMBAT message=waiting for combat state`，
+    该分支没有 `pendingWaitSpec`；external 云脑却返回 `WAIT_FOR_EVENT WAIT_COMBAT`，本地 shell
+    正确拒绝 `WAIT_FOR_EVENT requires pending wait spec` 并 fail closed。
+  - external `DecisionEngine.waitCombatNext(...)` 已补 no-park shared-state 分支：当
+    `message/outcomeMessage` 包含 `waiting for combat state` 时返回
+    `execute("WAIT_COMBAT")`，不再发 `WAIT_FOR_EVENT`。真实 `combat still running` 等 event-wait
+    场景仍保持 `WAIT_FOR_EVENT`。
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`，dashboard 已同步。
+  - external `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime"
+    "-Dmdep.outputFile=target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"` exited `0`。
+  - 按 no-local-test 模式，未运行 automated tests、source guards、replay 或 marked outputs。
+
+### 2026-07-08 / CR207 live blocker：暂停恢复后 `WAIT_TRACKER_SHORTCUT_PATHING` watchdog 空 phase
+
+- Runtime evidence：
+  - `14:17:02.578` 用户触发全局 pause；成员窗口很快到 `TaskPauseToken` checkpoint，但队长
+    `hwnd-3FA1540` 在 `WAIT_TRACKER_SHORTCUT_PATHING` 里直到 `14:19:24.013` 才到 checkpoint。
+  - `14:23:01.968` resume 后 CR160 补偿 `pauseBlockedMs=217955`，但该轮 tracker shortcut
+    pre-combat timer 仍达到 `elapsedMs=180010`，日志报
+    `pre-combat watchdog wait budget timeout`。
+  - 本地 action-outcome 上报形状为 `phase=WAIT_TRACKER_SHORTCUT_PATHING`、
+    `outcome=FAILED`、`transactionResult=FAILED`、`yieldPolicy=MUST_YIELD`、
+    `localOutcomeNextPhase=FAILED`，message 包含 `xiuluo pre-combat watchdog wait budget timeout`。
+  - external 云脑随后在 step 阶段返回 `status=REJECTED reason=outcome cannot advance...`，
+    DHXY 因空 phase 被 gate 拒绝：`execute gate rejected: phase must parse to XiuluoPhase:`，
+    最终 `xiuluo.brain.loop.failClosed`。
+- Root cause：
+  - 旧本地 CR80 语义规定 pre-combat watchdog timeout 记录失败后走
+    `restartRoundAfterPhaseFailure(...)` / same-round reaccept，而外部云脑
+    `trackerShortcutPathingNext(...)` 只处理 `EXECUTED/SHARED_STATE_TRIGGERED`，对
+    watchdog `FAILED/MUST_YIELD` 返回空 phase。
+  - 另有 CR92/CR160 级别的 pause-wake/计时补偿问题：队长 pause checkpoint 比用户 pause
+    请求晚约 141 秒，这段仍计入 180s watchdog。该问题需后续独立修，不能再让它导致云脑空
+    phase 异常结束。
+- 实现：
+  - external `DecisionEngine.trackerShortcutPathingNext(...)` 新增
+    `isPreCombatWatchdogTimeout(...)` 分支：当 `WAIT_TRACKER_SHORTCUT_PATHING` 的
+    `FAILED/MUST_YIELD` outcome message/source 命中 `pre-combat watchdog` 时，云端直接返回
+    `EXECUTE_PHASE ACCEPT_TASK_NAVIGATE_TO_NPC`，恢复旧本地 same-round reaccept 语义。
+  - `TaskPauseToken.waitIfPaused(...)` 的 blockedMs 起点从“任务到达 pause checkpoint 的时刻”
+    改为“用户请求 pause 的时刻”；重复 pause request 不刷新起点。这样 CR160/CR83 补偿能覆盖
+    14:17:02 pause request 到 14:19:24 队长 checkpoint 之间的等待时间，恢复旧本地暂停不计业务
+    watchdog 的语义。
+  - 不改 DHXY 主项目 NPC/dialog/navigation/OCR/template/click 逻辑。
+- Verification：
+  - 待运行 DHXY compile、external compile 和 dashboard sync；按 no-local-test 模式不运行 automated tests。
+  - Fresh runtime 需验证：暂停恢复后若同类 watchdog 再触发，任务应回到接任务链路，不再
+    `phase must parse` / `failClosed`；正常 pause/resume 的 `pauseBlockedMs` 应从 pause request
+    开始覆盖，而不是从 checkpoint 开始。
+
+### 2026-07-08 / 修罗 fresh runtime log audit：01:43-02:37 连续运行观察
+
+- 审计范围：
+  - `logs/archive/dhxy-console.2026-07-08.0.log`：最新启动 `01:43:25` 到 `02:19:57`。
+  - `logs/dhxy-console.log`：`02:19:58` 到 `02:37:51`。
+  - `logs/cloud-decision-dev-sidecar.log`：sidecar readiness / artifact fresh 证据。
+- 轮次结论：日志可见队长修罗云脑 round 1-25；round 1-24 均 `COMPLETE_ROUND`，round 25 已进入
+  tracker shortcut/prescan 后被 `Ctrl+Shift+F11` 全局暂停。未见程序崩溃、任务异常停止或 fail-closed。
+- 严格异常扫描：未见 `ERROR`、`Exception`、`failClosed`、`CLOUD_REQUIRED_FAILURE`、
+  `sessionId not found`、`status=REJECTED`、`task aborted`、`task failed`；末尾只有用户热键暂停。
+- CR evidence：
+  - CR206：启动进入 `XIULUO_BRAIN phase=start` 前已有 no-focus 血蓝预检与
+    `SHEYAOXIANG_STATUS CAPTURE_STATUS -> USE_INCENSE -> USED`，可关候选。
+  - CR207：主链路 fresh 正向，1-24 轮完成；长战斗/特殊 fallback 仍建议专项观察。
+  - CR213：摄妖香云端链路正向；59/53 分钟专项仍缺证据。
+  - CR220：普通战后 `RETURN_HOME -> WAIT_TEAM_RETURN -> ROUND_DONE` 正向；非起点启动回程 gate 仍缺证据。
+  - CR221：五窗口 local-team session/role/gate 稳定；5411 late attach 专项仍缺证据。
+  - CR222：no-focus first-aid 输出 `HEALTHY` / `SUPPLY_NEEDED` 并执行 cached first-aid，可关候选。
+  - CR223：`actionOutcome` 带 `sidecarPid=41488` / `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`，
+    无 session/action-outcome reject，可关候选。
+  - CR224：最新 sidecar PID `41488` readiness 通过，
+    `devArtifact=mode=classpath,fresh=true`，可关候选。
+- Performance goal check：本轮有新性能证据。`XIULUO_BRAIN` 约 `count=3905 avg=14.04ms p95=50ms max=832ms`；
+  `TRACKER_PANEL_READER count=25 avg=19.32ms p95=52ms`；`TASK_CLASSIFIER count=25 avg=84.8ms p95=363ms`；
+  `NPC_CLICK_SMART count=52 avg=83.75ms p95=347ms`。较慢但未阻断的链路：
+  `MINIMAP_LOCATION p95=1184ms max=3153ms`、`SUMMON_SKILL p95=2080ms max=2323ms`、
+  `ROUTE_CANDIDATE count=2 avg=5014ms max=10027ms`、`TEAM_ROLE_TOOLTIP p95=4620ms`。
+- 子智能体分段审计：Descartes 覆盖 `01:43-01:58`，Copernicus 覆盖 `01:58-02:19`，
+  Harvey 覆盖 `02:19-02:37`；三段均未发现 P0/P1/P2 阻断。Helmholtz 因模型容量失败，已由 Copernicus 替代。
+- 下一轮继续点：如果用户继续跑，优先从 `02:37:51` 后继续；若 UI 显示已跑 30 次而日志只见 round 1-25，
+  需要核对后续 log rollover 或 UI/窗口计数来源。
+
+### 2026-07-08 / CR224 worker：external cloud-brain fresh artifact/sidecar 交付
+
+- Worker 角色：CR224 worker，直接实现 external artifact/sidecar 交付修复；不作为谢帅 manager/reviewer。
+- Fresh runtime blocker 2026-07-08 01:24：
+  - 启动时没有旧 listener；DHXY 启动了新的 classpath sidecar PID `37792`。
+  - 但新 sidecar 立刻被 readiness gate 拒绝：
+    `launchArtifactId=3157c1c85933fe3c647bd6cd1702db1ad3dfc4cb1d7fbae7fc07e703786dccf7`，
+    `currentArtifactId=a5d8118fe5403138203427c74888f202be5e6fe180ad580ac6f4796f15b19b28`，
+    `reason=current artifact id differs from running process launch identity`。
+  - 根因：脚本 `New-CloudBrainArtifactId` 和 external Java `DecisionEngine.artifactId(...)` 是两套实现；
+    fresh 新 JVM 也会被自己误判 stale。
+  - 临时处理：已停止错误监听进程 PID `37792`。
+  - 返修：删除 PowerShell `New-CloudBrainArtifactId` 和 `-Ddhxy.cloudbrain.launchArtifactId`；脚本只传
+    原始 launch facts：`launchUtc`、`launchSourceMaxUtc`、`launchClassesMaxUtc`、
+    `launchClasspathUtc`、`launchClasspathSha256`。
+  - 返修：external Java 成为 freshness 单一判断方；只比较当前磁盘 source/classes/classpath 是否晚于
+    launch facts，以及当前 `dependency-classpath.txt` SHA256 是否不同。删除
+    `currentArtifactId != launchArtifactId` hard gate。
+  - 返工验证：external `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime"
+    "-Dmdep.outputFile=target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"` exited `0`；DHXY
+    `mvn -q -DskipTests compile` exited `0`。
+- Reviewer B 返工 2026-07-08：
+  - P1 blocker：当前 `devArtifactFresh` 只证明磁盘 `src/main` / `target/classes` /
+    `dependency-classpath.txt` fresh，不能证明正在监听的 JVM 是用这份 fresh classes 启动。旧 classpath
+    sidecar 已启动后，如果 external source 改动并 compile，旧 JVM 可能读取新磁盘时间戳并误报 fresh。
+  - 补充风险：如果要 kill/restart，现有端口清理只识别旧 jar 名，不能识别 classpath 启动的
+    `CloudBrainApplication`。
+  - 返工边界：只修 artifact identity/readiness/端口清理；不改任务业务逻辑；不跑 tests；不使用
+    skip/enforcer 绕过。
+  - 首版修复（已被 01:24 fresh runtime 打回）：脚本启动 classpath sidecar 时注入 `launchArtifactId`、`launchUtc`、`launchSourceMaxUtc`、
+    `launchClassesMaxUtc`、`launchClasspathUtc`、`launchClasspathSha256`；`launchArtifactId` 基于
+    source/classes/classpath epoch ms 和 classpath SHA256。
+  - 首版修复（已被 01:24 fresh runtime 打回）：external `DecisionEngine` readiness 会将当前磁盘 artifact 与运行进程 launch identity 比较；
+    磁盘 source/classes/classpath 晚于 launch identity、classpath hash 变化、或 current artifact id 与
+    launch artifact id 不一致时，返回 `devArtifactFresh=false`。
+  - 首版修复（已被 01:24 fresh runtime 打回）：`CloudDecisionDevSidecarService` artifact 摘要新增
+    `launchArtifactId/currentArtifactId/launchUtc/launch*Utc`，并继续拒绝 `devArtifactFresh=false`。
+  - 修复：端口清理现在除旧 jar 外，还能识别同时包含
+    `com.yueyunfe.dhxy.cloudbrain.CloudBrainApplication`、
+    `-Ddhxy.cloudbrain.devArtifactMode=classpath` 和当前 `--port=` 的 classpath sidecar；其它 Java 进程
+    只 `SKIPPED`，避免误杀。
+  - 返工验证：external `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime"
+    "-Dmdep.outputFile=target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"` exited `0`；DHXY
+    `mvn -q -DskipTests compile` exited `0`；PowerShell syntax check exited `0`。
+  - 二轮双审：Dewey / Pauli 曾 APPROVED，但 2026-07-08 01:24 fresh runtime 发现跨语言 artifact id
+    不一致导致新 JVM 自判 stale，本轮已返修，需重新双审。
+  - Fresh runtime repair review：Zeno / Gibbs 二轮只读复审均 APPROVED。确认
+    `launchArtifactId/currentArtifactId` hard gate 已删除；脚本只传 raw launch facts；旧 JVM + 新
+    source/classes/classpath 仍会 `devArtifactFresh=false`；脚本未见 `mvn package`、`java -jar` 或
+    skip/enforcer/surefire 参数；未改修罗/五环/NPC/dialog/tracker/navigation/OCR/template matching
+    业务决策。
+  - 当前状态：CR224 代码侧 blocker 已解除，进入 fresh runtime 待验。下一轮启动应看到
+    `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`、`devArtifactMode=classpath`、
+    `devArtifactFresh=true` 和 raw launch facts；若失败，优先查
+    `logs/cloud-decision-dev-sidecar.log` / `logs/dhxy-console.log` 的 readiness 摘要。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - `git status --short` 显示工作区已有大量 unrelated dirty files；本 worker 只触碰 CR224 允许范围：
+    DHXY `scripts/run-cloud-brain-server.ps1`、`CloudDecisionDevSidecarService.java`、CR224 文档/dashboard，
+    以及 external `D:\mavenProject\dhxy-cloud-brain` 的 readiness/artifact 诊断相关文件。
+  - `scripts/run-cloud-brain-server.ps1` 当前为未跟踪文件，内容仍在 jar 缺失或 stale 时执行
+    `mvn -q package`，然后 `java -jar target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`。
+  - `CloudDecisionDevSidecarService.java` 当前为未跟踪 cloud sidecar gate 文件，已要求
+    `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`，但尚未验证 dev artifact 是否来自当前
+    external `target/classes` / resources。
+  - external `D:\mavenProject\dhxy-cloud-brain` 不是 git 仓库；`pom.xml` 当前 enforcer/antrun 禁止
+    `-DskipTests`、`-Dmaven.test.skip`、`-Denforcer.skip`、`-Dmaven.test.skip.exec`、`-Dsurefire.skip`。
+- 实现边界：
+  - 不改修罗/五环/NPC click/dialog/tracker/navigation/OCR/template matching 业务决策。
+  - 不创建、恢复、运行或引用 automated tests、source guards、replay、marked outputs。
+  - external 侧只允许不跑 tests 的 compile/classpath artifact 准备；DHXY Java 如有改动必须跑
+    `mvn -q -DskipTests compile`。
+- 实现结果：
+  - `scripts/run-cloud-brain-server.ps1` 已从 jar/package 路径改为 deterministic classpath dev sidecar：
+    只检查/准备 `target\classes` 和 `target\dependency-classpath.txt`，不再运行 `mvn package`，不使用
+    external pom 禁止的 skip/enforcer 参数。
+  - 脚本在 `pom.xml` / `src\main` 新于 `target\classes`，或 `pom.xml` 新于 dependency classpath 时，
+    执行 `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime"
+    "-Dmdep.outputFile=target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"`；准备后仍 stale 则拒绝启动。
+  - sidecar 用 `java -cp target\classes;<dependency classpath>` 启动
+    `com.yueyunfe.dhxy.cloudbrain.CloudBrainApplication`，并输出/注入 `devArtifactMode=classpath`、
+    project/classes/classpath 路径、`sourceMaxUtc`、`classesMaxUtc`、`classpathUtc`。
+  - external `DecisionEngine` readiness 诊断新增 `devArtifactFresh`、source/classes/classpath UTC 时间戳和原因；
+    readiness 请求会现场复核 `pom.xml` / `src\main` 是否新于当前 classes/classpath。
+  - `CloudDecisionDevSidecarService` 现在要求 readiness 同时满足
+    `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`、`devArtifactMode=classpath`、
+    `devArtifactFresh=true`，否则 task-start gate 返回 unavailable，不静默复用旧 jar/旧进程。
+- 验证：
+  - external `D:\mavenProject\dhxy-cloud-brain`:
+    `mvn -q compile dependency:build-classpath "-Dmdep.includeScope=runtime"
+    "-Dmdep.outputFile=target\dependency-classpath.txt" "-Dmdep.pathSeparator=;"` exited `0`。
+  - DHXY main project: `mvn -q -DskipTests compile` exited `0`。
+  - PowerShell syntax check for `scripts/run-cloud-brain-server.ps1` exited `0`。
+  - 未运行 automated tests、source guards、replay、marked outputs。
+- Fresh runtime 验收点：
+  - `logs/cloud-decision-dev-sidecar.log` / `logs/dhxy-console.log` 应出现
+    `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`、`devArtifactMode=classpath`、
+    `devArtifactFresh=true`、`launchUtc`、`sourceMaxUtc`、`classesMaxUtc`、`classpathUtc`、
+    `classpathSha256`、`launchClasspathSha256`。
+  - 若 external source/resource 更新后 classes/classpath 未刷新，应看到 gate 拒绝复用或脚本重新准备，
+    不应继续旧 jar/旧 classes。
+
+### 2026-07-08 / 谢帅 manager：CR224 external cloud-brain fresh artifact/sidecar 交付
+
+- 角色：谢帅 manager/reviewer；不直接写 Java 业务实现。
+- 背景：
+  - CR220 / CR223 已二轮双审通过，但共同剩余 blocker 是 external `D:\mavenProject\dhxy-cloud-brain`
+    package/fresh jar 交付。
+  - `scripts/run-cloud-brain-server.ps1` 当前 jar 缺失或 stale 时执行 `mvn -q package`。
+  - external `pom.xml` enforcer/antrun 禁止 `-DskipTests`、`-Dmaven.test.skip`、`-Denforcer.skip`、
+    `-Dmaven.test.skip.exec`、`-Dsurefire.skip`。
+  - 当前 AGENTS no-local-test 模式禁止创建/恢复/运行/引用本地 automated tests 作为验收证据。
+- CR224 目标：
+  - 建立不跑本地测试、也不复用旧 jar 的 deterministic dev artifact/sidecar 启动路径。
+  - sidecar 启动/复用必须能证明当前进程包含 CR220/CR223 需要的 readiness/protocol，例如
+    `xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`。
+  - 不触碰修罗/五环/NPC/dialog/tracker/navigation/OCR/template matching 业务决策。
+- 计划：
+  - 派一个 worker 处理 external artifact/sidecar 交付。
+  - worker 完成后派两个独立 reviewer 审核；任一 P0/P1/P2 blocker 都必须返工。
+- 首轮 review：
+  - Reviewer A 批准。
+  - Reviewer B 打回 P1：首版只证明磁盘 classes/classpath fresh，没有证明当前监听 JVM 就是用这份
+    fresh classes 启动；旧 classpath sidecar 在 source 重新 compile 后仍可能被 readiness 误判
+    `devArtifactFresh=true` 并被 DHXY 复用。已要求 worker 返工：把运行中进程的 artifact identity
+    纳入 readiness，并在必要时让端口清理识别 classpath sidecar。
+
+### 2026-07-08 / CR223 worker：修罗云脑 session/action-outcome 中途丢失修复接手
+
+- 角色：CR223 worker，直接实现；不作为谢帅 manager/reviewer。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`origin/codex/hybrid-cloud-protection` 同 commit)。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本轮只允许触碰
+    CR223 相关的 `XiuluoTaskV2` action-outcome/report 层、`XiuluoBrainCloudDecisionService`、
+    cloud sidecar 启动策略、external `D:\mavenProject\dhxy-cloud-brain` session engine，以及
+    `docs/PACKAGE_ARCHITECTURE.md`、`docs/ACTIVE_WORK.md`、`docs/cr-dashboard-data.js`。
+    不 reset/checkout/clean/revert unrelated dirty files。
+  - 目标本地文件 baseline 证据：
+    `git diff --stat HEAD -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java ...`
+    显示 `XiuluoTaskV2.java` 已有 1407 行级本地迁移 diff；`src/main/java/com/bot/dhxy/cloud/xiuluo/*`
+    当前为本地 cloud worktree 文件，`XiuluoBrainCloudDecisionService` 已实现 start/step/action-outcome
+    required gate，action-outcome 只接受 `ACCEPTED` / `DUPLICATE_REPLAY`。
+  - external `D:\mavenProject\dhxy-cloud-brain` 不是 git 仓库；以当前文件时间/内容为 baseline。
+    关键文件为 `DecisionEngine.java`、`CloudBrainServer.java`、`xiuluo/XiuluoBrainService.java`、`pom.xml`。
+- 证据：
+  - case：`logs/cases/2026-07-07/20260707_234513_528_xiuluo_v2_xiuluo_v2-11-round-1_FAILED_hwnd-4B31774.case.json`
+    和 `20260707_234514_269_xiuluo_v2_round_FAILED_hwnd-4B31774.case.json`。
+  - runtime：`23:45:13.527` action-outcome context 含
+    `sessionId=cloud-xiuluo-session-1 taskRunId=11 phaseToken=cloud-phase-cloud-xiuluo-session-1-2-3 actionId=cloud-action-cloud-xiuluo-session-1-2-4`；
+    cloud 返回 `status=REJECTED; reason=sessionId not found`，Java 转
+    `CLOUD_REQUIRED_FAILURE` 并 `xiuluo.brain.loop.failClosed round=1`。
+  - sidecar 证据：`application.properties` 当前 `cloud.dev-sidecar.restart-on-task-start=true`；
+    `logs/cloud-decision-dev-sidecar.log` 在 `2026-07-07T23:44:13.574582` 记录
+    `force restart before task start`，时间落在队长 `cloud-xiuluo-session-1` 正在运行期间。
+- 根因假设：
+  - external `DecisionEngine` 的 `xiuluoBrainSessions` 是内存 `ConcurrentHashMap`，正常
+    action-outcome 不会丢 session；后启动/重启其他窗口任务触发 UI task-start gate 强制重启
+    cloud-brain，清空队长云脑 session，队长下一次 outcome 被旧协议当作硬失败。
+- 修复方向：
+  - 不把 required gate 降级为本地 fallback，不吞云端错误。
+  - sidecar task-start gate 不得在已有健康 endpoint 时无条件重启；旧 jar 替换只能发生在明确启动/重建边界，
+    不得清空运行中云脑 session。
+  - external `XIULUO_BRAIN` 对可恢复 session miss 返回明确 `RESET_REQUIRED`，带齐
+    `sessionId/taskRunId/phaseToken/actionId` 和 sidecar pid/version/reason。
+  - Java action-outcome 只对 `RESET_REQUIRED` 进入 resync：重新 start 云脑 session 并由云端发下一条 command；
+    普通 `REJECTED` 仍 fail-closed。
+- 实现结果：
+  - `CloudDecisionDevSidecarService.ensureReadyForTaskStart(...)` 改为优先复用健康 endpoint；
+    `cloud.dev-sidecar.restart-on-task-start` 默认值和配置均改为 `false`，避免后启动窗口清空运行中的
+    external 云脑 session。
+  - external `DecisionEngine` 在 `XIULUO_BRAIN_ACTION_OUTCOME` session miss 时返回
+    `RESET_REQUIRED`，带 `sessionId/taskRunId/phaseToken/actionId/sidecarPid/sidecarVersion/reason`；
+    `step` session miss 仍是普通 `REJECTED`。
+  - `XiuluoBrainCloudDecisionService` 只把 reason 为 `sessionId not found` 的 `RESET_REQUIRED`
+    当作可恢复 reset；其他 `REJECTED` 或异常 status 继续 fail-closed。
+  - `XiuluoTaskV2` 收到 reset 后记录本次 outcome，以 `localOutcomeNextPhase` 重新 start 云脑 session，
+    带旧 session/action token 和 reset facts；resync facts 明确关闭 hot-start tracker facts，避免改动
+    CR220/CR221/CR222 语义。
+- 验证：
+  - external `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -DskipTests=false compile` exited `0`。
+    `mvn -q -DskipTests compile` 会被该项目 enforcer 拒绝，因为 `skipTests=true` 不允许。
+  - external package blocker：`mvn -q -DskipTests=false '-Dmaven.test.skip=true' package` 被 enforcer
+    拒绝，因为 `maven.test.skip` 也必须为 `false`；按 no-local-test 当前政策不能改为运行 package
+    阶段的 automated tests。需要用户明确允许一次 package 测试，或调整该项目 enforcer/启动打包策略后，
+    才能生成 fresh jar。
+  - DHXY main project: `mvn -q -DskipTests compile` exited `0`。
+  - `node scripts/generate-cr-dashboard-data.js` 已运行并同步 dashboard。
+  - 未创建、恢复、运行或引用 automated tests / source guards / replay / marked outputs。
+- Fresh runtime 验收点：
+  - 多窗口后启动不应再看到健康 sidecar 被 `force restart before task start` 清 session。
+  - 如旧 session 仍丢失，应看到 `RESET_REQUIRED`、sidecar pid/version、随后
+    `xiuluo.brain.session.reset resync start` 和新云脑 start；不得再出现该场景的
+    `CLOUD_REQUIRED_FAILURE` / `xiuluo.brain.loop.failClosed`。
+- Reviewer B 返工 2026-07-08：
+  - P1 已修：external `DecisionEngine` 全局 diagnostics 增加
+    `sidecarPid/sidecarVersion/xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`；
+    `CloudDecisionDevSidecarService` readiness 必须看到该协议标记才复用健康 endpoint 或判 ready。
+    旧 jar/旧进程健康监听但缺协议时，task-start gate 返回 unavailable 并输出实际 pid/version/protocol。
+  - P2 已修：`XIULUO_BRAIN actionOutcome` 摘要日志直接带
+    `sidecarPid/sidecarVersion/xiuluoResetProtocol`，从 effective decision 和 response diagnostics 提取。
+  - 返工验证：external `mvn -q -DskipTests=false compile` exited `0`；DHXY
+    `mvn -q -DskipTests compile` exited `0`；dashboard generator 已重新运行。
+  - external package/fresh jar 仍受 no-local-test/enforcer 冲突阻塞，不能宣称 fresh jar 已就绪。
+
+### 2026-07-08 / CR220 worker：修罗云脑启动接任务前回程恢复
+
+- Worker 角色：CR220 worker，直接实现修罗启动/热启动回程恢复，不担任谢帅/reviewer。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314` (`dc4394f docs: plan xiuluo cloud single brain migration`)
+  - 最新 pushed 业务参考：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本 worker 只允许触碰 CR220 相关修罗启动/文档/dashboard，不 `reset` / `checkout --` / `clean` / revert 无关改动。
+- 相关 baseline 证据：
+  - `git show --stat --oneline origin/dev -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java src/main/java/com/bot/dhxy/service/ReturnItemPrescanService.java src/main/java/com/bot/dhxy/service/BagService.java` 显示 `origin/dev` 仅有 `XiuluoTaskV2.java` 历史业务差异统计 `152 insertions / 145 deletions`，`ReturnItemPrescanService` 在当前迁移前并非 pushed baseline 业务路径。
+  - `git diff --stat origin/dev -- XiuluoTaskV2.java XiuluoRoundContext.java ReturnItemPrescanService.java BagService.java` 显示当前本地修罗/回程迁移差异很大：`XiuluoTaskV2.java` 约 `3494` 行级新增、`XiuluoRoundContext.java` 约 `245` 行级差异、`ReturnItemPrescanService.java` 为本地新增迁移、`BagService.java` 有回程预扫/使用迁移。
+  - `git diff --stat HEAD -- XiuluoTaskV2.java XiuluoRoundContext.java ReturnItemPrescanService.java BagService.java` 显示开工前这些文件已 dirty：`XiuluoTaskV2.java` 约 `1407` 行级差异，`BagService.java` / `ReturnItemPrescanService.java` / `XiuluoRoundContext.java` 也已有本地差异；本 worker 在这些既有差异上做最小补丁，不恢复、不格式化无关内容。
+- 根因定位：
+  - 非云脑路径 `resolveTaskHotStart(...)` 已按 tracker -> return item -> saved objective -> accept flow 顺序恢复。
+  - 云脑路径 `runRoundWithXiuluoBrain(...)` 只收集 hot-start facts，然后按云端 `ACCEPT_TASK_NAVIGATE_TO_NPC` 命令直接执行本地 phase；因此 runtime 中 `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC` 会绕过本地启动回程恢复，导致 `navigate to map: 灵兽村 current=凤巢五层`。
+- 实现方向：
+  - 在云脑执行 `ACCEPT_TASK_NAVIGATE_TO_NPC` 前加本地 startup/hot-start return gate：当前位置非 `灵兽村` 或未知时先尝试既有回程道具验证；验证成功转 `WAIT_TEAM_RETURN`，道具明确不可用才带 reason 放行接任务导航；点击过但未验证回 `灵兽村` 时向云脑上报失败，不继续跨地图导航。
+  - 不改 NPC click、dialog、tracker、导航算法、模板阈值、input queue、CR223 action-outcome/session ACK/sidecar lifecycle。
+- 实现结果：
+  - `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` 在云脑 `ACCEPT_TASK_NAVIGATE_TO_NPC` 执行本地 phase 前调用 `guardCloudAcceptNavigationWithStartupReturn(...)`。
+  - 已确认在 `灵兽村` 时放行；非 `灵兽村` / 位置未知时先走既有 `useReturnItemAndVerifyStartMap(...)`。
+  - Reviewer A/B 返修后，回程验证成功转 `WAIT_TEAM_RETURN` 但 source 使用 `TEAM_RETURN_BEFORE_ACCEPT_SOURCE`，队伍就绪后回到 `ACCEPT_TASK_NAVIGATE_TO_NPC`，不走普通战后 `ROUND_DONE`。
+  - `XiuluoBrainShellResult` 增加 `extraOutcomeFacts`，CR220 gate action-outcome context 上报 `returnGate=CR220_ACCEPT_NAVIGATION`、`returnHomeResult`、`returnTemplate`、before/after map/x/y、next phase/source 和 reason；`UNAVAILABLE` 放行导航也会带这些 facts。
+  - external `D:\mavenProject\dhxy-cloud-brain` 的 `DecisionEngine.acceptNavigateNext(...)` 接受 `CR220_ACCEPT_NAVIGATION + VERIFIED + WAIT_TEAM_RETURN` 并下发 `WAIT_TEAM_RETURN`，避免 ACK 后 mapping reject / failClosed。
+  - 日志新增 `[xiuluo-v2 CR220] cloud accept-navigation return gate ...`，包含当前地图/坐标、回程模板、返回结果、next phase/source 和 reason。
+- 验证：
+  - `node scripts/generate-cr-dashboard-data.js` exited `0`
+  - `mvn -q -DskipTests compile` exited `0`
+  - external `D:\mavenProject\dhxy-cloud-brain` `mvn -q compile` exited `0`
+  - external package：`mvn -q package` 超时；`mvn -q -DskipTests package` 被 external enforcer 拒绝 `skipTests=true`。为遵守 no-local-test，本轮未运行普通 package 测试阶段。
+  - 未新增、恢复、运行或引用 automated tests、source guards、replay、marked outputs。
+- Fresh runtime 验收点：
+  - 队长在 `凤巢五层` / 任务地图 / 非 `灵兽村` 地图启动时，应先看到 CR220 return gate 日志和回程验证日志；验证成功后再进入 `WAIT_TEAM_RETURN` / 接任务流程。
+  - 回程成功的 action-outcome context 应包含 `returnGate=CR220_ACCEPT_NAVIGATION` / `returnHomeResult=VERIFIED` / `returnGateNextPhase=WAIT_TEAM_RETURN` / `returnGateNextSource=team-return-wait:before-accept`；external brain 下一条 command 应为 `WAIT_TEAM_RETURN`，归队完成后回 `ACCEPT_TASK_NAVIGATE_TO_NPC`。
+  - 不应再把 `navigate to map: 灵兽村 current=凤巢五层` 当作无说明的正常启动路径；若确实无回程道具，必须看到 `returnResult=UNAVAILABLE`、`returnHomeResult=UNAVAILABLE` 和明确 reason。
+
+### 2026-07-08 / CR222 worker：队员启动 no-focus 急救空血漏判修复
+
+- 用户要求：作为 CR222 worker 修复队员启动急救 no-focus 空血漏判，并补足 runtime 诊断日志；不触碰 CR221 local-team session 归属、CR220/CR223 修罗云脑，也不引入前台旧 `healAll`。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本 worker 只计划触碰 `PlayerStateService` 和 CR222 文档/dashboard，不 reset/checkout/clean/revert unrelated dirty files。
+  - 相关文件 baseline 证据：`git diff --stat origin/dev -- PlayerStateService.java AutoCombatService.java AutoBattleTask.java` 显示当前本地在三处已有 `1342 insertions / 391 deletions` 的迁移差异；其中 `PlayerStateService` 已有 no-focus cached first-aid plan、`AutoBattleTask` 启动时调用 `performStartupFirstAidCheck(context)`、`AutoCombatService` 战后消费 `probeAndConsumeHealthyFirstAidNoFocus(...)`。CR222 不回滚这些本地迁移，只修复 no-focus 条形图 false negative 和诊断不足。
+- 初步根因定位：
+  - 2026-07-07 23:44 5411 证据为 `启动急救检查` 后 `first-aid no-focus precheck result: needed=false targets=[] planBase=(101,147)`，随后健康跳过。
+  - 当前 `probeFirstAidSupplyNoFocus(...)` 使用窗口 base 成功并抓取 `player-state-bars-precheck`，但每个目标只看阈值点/更高阈值点的 5x3 健康色采样；没有先证明整条 HP/MP 条可读，也没有记录每条 bar 的采样分数、阈值、ROI、截图 provider。
+  - 因此可复盘的 false-negative 候选收敛为条形图判定策略/诊断不足：空血时阈值点附近的边框/残留健康色可能让单点采样误判健康；ROI/base/session gate/plan 消费在现有日志中没有直接失败证据。
+- 实现结果：
+  - `PlayerStateService.probeFirstAidSupplyNoFocus(...)` 改为在 no-focus 截图上汇总四条 HP/MP bar 的整条 healthy-column 比例、阈值点采样、更高阈值点采样和 RGB 证据；空条/低条会生成 cached first-aid plan，不再因单点残留健康色直接判健康。
+  - 截图不可用或 enabled bar 均不可读时返回 `UNKNOWN` 并缓存 conservative plan 覆盖所有启用 HP/MP 目标，避免未知被当健康。
+  - 新增 `first-aid no-focus bar probe` 与总结果日志，包含 windowId/player、base、ROI、capture audit/provider、bar 分数/阈值、decision reason；健康/需补给/未知都能从 runtime 日志复盘。
+  - 未改 `AutoBattleTask`、`AutoCombatService`、CR221 session、CR220/CR223 修罗云脑，也未引入前台旧 `healAll`。
+- 验证：
+  - `mvn -q -DskipTests compile` exited `0`。
+  - `git diff --check -- src/main/java/com/bot/dhxy/service/PlayerStateService.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md` exited `0`，仅有 LF/CRLF 提示。
+  - 未创建、恢复、运行或引用 automated tests / source guards / replay / marked outputs。
+- 返工记录（Reviewer A P1，2026-07-08）：
+  - Reviewer A 阻塞点：`probeFirstAidBar(...)` 仍允许 `observedPercent < threshold` 时用单点采样 + `15%~25%` strip 支撑判 `HEALTHY`，例如 threshold≈`70` / observed=`25` 可能跳过补给。
+  - 修复：删除 `minimumSupportPercent` 宽松健康分支；健康只允许 `observedPercent >= threshold`，或 `observedPercent >= threshold - 3` 且阈值点采样命中。采样命中但整条比例不足时 reason=`inconsistent-sample-strip`，返回 `SUPPLY_NEEDED` 并生成 cached plan。
+  - 返工后 `mvn -q -DskipTests compile` exited `0`；仍未创建/运行 tests、source guards、replay、marked outputs。
+
+### 2026-07-08 / CR221 worker：后启动队员挂入 existing local-team session
+
+- Worker 角色：CR221 business implementation，不是谢帅 manager/reviewer。
+- 当前分支：`codex/hybrid-cloud-protection`
+- 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  (`origin/codex/hybrid-cloud-protection` 同 commit)
+- 最新 pushed 业务参考：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+- `git status --short --branch` 显示工作区已有大量 unrelated dirty files；目标链路文件
+  `WindowTaskControlService.java`、`WindowTaskRunner.java`、`TaskMaintenanceService.java`、
+  `AutoBattleTask.java`、`TeamRoleDetectionService.java`、`WindowRuntimeContext.java`、
+  `TaskMaintenanceRequest.java` 均已 dirty。本 worker 不 reset/checkout/clean/revert 任何 unrelated
+  文件或前序 CR 改动。
+- baseline 证据：
+  - `git diff --stat HEAD -- <CR221 touched files>` 显示目标链路当前已有
+    `2643 insertions / 278 deletions` 的本地改动。
+  - `git diff --stat origin/dev -- <CR221 touched files>` 显示这些文件相对 pushed `dev` 已有
+    `6435 insertions / 498 deletions` 的迁移差异。
+  - 当前 `WindowTaskControlService.startSameQueue(...)` 只在同批多窗口启动时创建
+    `local-team-*` session 并向 runner 传入 `localLeaderPresent=true`。
+  - 当前 `WindowTaskRunner.submit(...)` 只在 `localLeaderPresent && sessionKey != null` 时设置
+    `activeLocalTeamSessionKey`，单独后启动队员会以空 session 进入 `TEAM_ROLE_TOOLTIP` preflight。
+  - 当前 `TaskMaintenanceService.recordLocalTeamTooltipGroup(...)` 要求 `context.hasLocalTeamSession()`，
+    所以 2026-07-07 23:44 的后启动 5411 队员即使识别出
+    `role=MEMBER; leaderClientId=67555; currentPlayerId=443075411`，也无法把证据写回 existing
+    local-team session，后续维护上下文仍会是 `localSupportMember=false localLeaderPresent=false
+    localTeamSession=`。
+- 实现边界：
+  - 只补后启动/重启队员按 `leaderClientId` 挂入 active existing local-team session 的本地 session
+    归属链路，或明确告警/拒绝。
+  - 不把 `requestedTaskCode` 重新作为业务 gate；它只保留启动来源/审计语义。
+  - 不改 Xiuluo cloud brain startup/session ACK（CR220/CR223），不改补血检测算法（CR222）。
+- 实现结果：
+  - `TaskMaintenanceService.attachExistingLocalTeamSessionForMember(...)` 新增按
+    `leaderClientId/leaderPlayerId` 唯一匹配 active local-team session 的入口；匹配成功会把后启动
+    `windowId/currentPlayerId/groupHash` 加入该 session、恢复 completed window 标记、记录 tooltip group、
+    标记 local leader controlled，并唤醒等待本地支援 capability 的队员。
+  - `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 在 `TEAM_ROLE_TOOLTIP` 识别到 `MEMBER` 且当前
+    runner 没有 session 时调用 attach；唯一匹配成功后写入 `activeLocalTeamSessionKey`、
+    `activeLocalLeaderWindowId`、`activeLocalLeaderPresent=true`，并重建 preflight context，使后续
+    `TaskExecutionContext` 带 `localSupportMember=true` 和 session id。
+  - attach 发现多个匹配 session 时抛出明确异常拒绝启动；没有 active session 或没有匹配本地队长时输出醒目
+    WARN，允许作为 standalone auto-battle 继续，保留“没有本地队长时普通挂机可运行”的边界。
+  - `AutoBattleTask.isFollowerSupportMode(...)` 现在把 `taskMaintenanceService.isLocalSupportMemberSession(context)`
+    作为支援模式依据之一，不再只靠 `requestedTaskCode != auto_battle` 这个审计字段。
+- 验证：
+  - `mvn -q -DskipTests compile` exited `0`。
+  - 未新增、恢复、运行或引用 automated tests / source guards / replay / marked outputs。
+- fresh runtime 验收点：
+  - 队长/队伍任务运行中，单独启动 5411 等队员窗口时，应看到
+    `maintenance local-team late member attached` 和
+    `late member attached to existing local-team session`。
+  - 后续维护上下文应显示 `localSupportMember=true`、`localLeaderPresent=true`、非空
+    `localTeamSession`、匹配的 `leaderPlayerId/leaderWindow`。
+  - 若没有匹配本地队长，应看到 `maintenance local-team late member not attached` WARN，而不是静默空
+    session；若多个 session 匹配同一 leader ID，应拒绝启动并报 ambiguous。
+- Reviewer B blocker 返修：
+  - P1：late attach 已禁止使用 session 级 `state.leaderPlayerId -> state.leaderWindowId` 回退，只认
+    `playerWindowIds.get(leaderPlayerId)` 或已本地受控且 leader 字段一致的 tooltip group。
+  - P2：late attach 写入前后和 `completeLocalTeamSessionWindow(...)` 都围绕同一个 session state 锁复核
+    `localTeamSessions.get(sessionKey) == state` 与 completed/tombstone；已移除/完成时返回
+    `SESSION_COMPLETED_OR_REMOVED`，不返回 `ATTACHED`。
+  - `mvn -q -DskipTests compile` exited `0`；仍未创建/运行 automated tests、source guards、replay 或 marked outputs。
+
+### 2026-07-08 / 谢帅 manager：CR220-CR223 修罗启动/队员/session/急救异常拆卡派工
+
+- 用户要求：建四个 CR，并按“worker 实现、谢帅审核”的流程推进。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f docs: plan xiuluo cloud single brain migration`
+  - `origin/dev`：`e543d024bf900853944b36d27d0f736005d9eeb9`
+  - `git status --short` 显示工作区已有大量 unrelated dirty files；本轮 manager 只编辑
+    `docs/PACKAGE_ARCHITECTURE.md`、`docs/ACTIVE_WORK.md`、`docs/cr-dashboard-data.js`，不 reset/checkout/clean/revert
+    任何业务文件。
+- 已建卡：
+  - CR220：修罗在任务地图/非接任务地图启动时，应先走回程道具或等价热启动恢复，再去灵兽村接任务；证据为
+    2026-07-07 23:42 从 `凤巢五层 (65,4)` 直接进入 `ACCEPT_TASK_NAVIGATE_TO_NPC` 并跨地图导航。
+  - CR221：后启动/重启的队员识别到本地队长后，必须挂入 existing local-team session 或明确拒绝；证据为
+    2026-07-07 23:44 5411 tooltip 已识别 `MEMBER`，但维护上下文仍是 `localSupportMember=false` / 空 session。
+  - CR222：队员启动 no-focus 急救漏判空血；证据为 2026-07-07 23:44 5411 输出
+    `first-aid no-focus precheck result: needed=false targets=[]` 后跳过补给。
+  - CR223：修罗云脑 action-outcome 中途 `sessionId not found` 导致 failClosed；证据为 2026-07-07 23:45
+    `status=REJECTED; reason=sessionId not found` -> `CLOUD_REQUIRED_FAILURE` -> `xiuluo.brain.loop.failClosed`。
+- 流程约束：
+  - 谢帅不直接写 Java 业务实现；worker 负责实现。
+  - 每张 CR 交付后必须有两个独立 reviewer 通过，谢帅再做最终业务判断。
+  - no-local-test 模式继续生效：不新增/恢复/运行/引用 automated tests、source guards、replay、marked outputs；Java
+    改动至少需要 `mvn -q -DskipTests compile` 成功，验收靠真实 runtime 日志/截图。
+
+### 2026-07-07 / 五环 tracker 绿链选择回退老专用逻辑
+
+- 用户指出：五环 tracker 绿色链接本来不是通用 `FIRST_LINK`，必须使用五环老的专用绿链选择逻辑。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 upstream/HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - `git blame` 显示 `TaskTrackerPanelService` 中五环 `FIRST_LINK` cloud reader 行为为当前工作区 `Not Committed Yet`，不是远端 pushed baseline。
+  - 对比 `origin/codex/hybrid-cloud-protection` / `origin/codex/migrate-runner-dialog`：五环老逻辑走 `findWuhuanTrackerGreenClickPoint(...) -> findWuhuanPathingNameSegment(...)`，没有五环 cloud `FIRST_LINK`。
+- 修复方向：只移除五环路径上的 cloud `FIRST_LINK` 抢先选择；保留 cache、ROI、prepared action 包装，但点击点必须由老的五环专用 `findWuhuanPathingNameSegment(...)` 算出。
+- 用户追加要求：必须加 guard，防止五环 tracker 绿链再次被接回通用 `FIRST_LINK`。
+- Guard：新增 `WuhuanTrackerDedicatedLinkSourceGuard`，只做源码结构检查：
+  - 五环入口不得调用 `readTrackerPanelImageFromCloud(...)`；
+  - 五环入口不得出现 `FIRST_LINK` / `TASK_AWARE_FIRST_LINK`；
+  - 五环入口必须调用 `findWuhuanTrackerGreenClickPoint(...)`；
+  - 五环专用 selector 必须继续调用 `findWuhuanPathingNameSegment(scan)`。
+
+### 2026-07-07 / CR208 hotfix：五环完成 story 白模板改为发原图给云端判定
+
+- 运行问题：五环完成后，日志里本地能命中 `wuhuan_task_finished_story.png`，但随后
+  `DIALOG_POLICY` 返回 `NO_ACTION;status=NOT_FOUND;reason=cloud-brain-dialog-policy-requires-cloud-input`，
+  导致 `VERIFY_WHITE_TEMPLATE` 变成 `FAILED`，五环停在 `SYNC_TASK_PANEL`，UI 继续显示运行中。
+- 根因：这条链路之前仍是“本地白模板匹配 + 云端摘要 gate”，没有把原始 dialog 图交给云端判定；云端无法用自己的
+  resources 模板确认完成 story。
+- 修复：
+  - `DialogService` 的 `VERIFY_WHITE_TEMPLATE` 分支改为构造 `dialog-white-template` cloud request，发送原始 dialog ROI 图；
+  - `DialogPolicyCloudDecisionService.decideWhiteTemplate(...)` 只接受云端 `FOUND` / `NOT_FOUND` 结构化结果，不做本地 fallback；
+  - external `dhxy-cloud-brain` 的 `DecisionEngine.dialogPolicy(...)` 增加 `VERIFY_WHITE_TEMPLATE` 分支，云端使用自己的 resources
+    白色 story 模板判定。
+- 验证：
+  - `mvn -q -DskipTests compile` 退出 `0`；
+  - `D:\mavenProject\dhxy-cloud-brain` 执行 `mvn -q package` 退出 `0`；
+  - 未新增/运行 DHXY 本地 automated tests、source guards、replay、marked outputs。
+- fresh runtime 验收点：五环完成 story 出现时应看到 `dialog white template visible by cloud`，不再出现
+  `expected=WHITE_TEMPLATE_VISIBLE actual=NOT_FOUND` 后卡在 `SYNC_TASK_PANEL`。
+
+### 2026-07-07 / 五环 tracker title gate 小修：完成兜底只认 `panel_title`
+
+- 用户确认：五环是否还有任务只看左侧五环 tracker 黄色 title，`images/template/wuhuan/panel_title_yellow.png`
+  匹配到就是有任务，匹配不到就是没有任务；不要再把
+  `RUNNER_PREPARED_NOT_READY`、`TASK_FOUND_NO_GREEN`、`TASK_FOUND_NO_LINK`、`taskAccepted`
+  等技术状态当作任务是否存在的业务判断。
+- 对照五倍现状：
+  - `TaskTrackerPanelService.readWubeiTrackerPanel(...)` 返回 `TaskTrackerPanelReadResult`；
+  - 五倍推进只认 `result.isFound()` / `result.getTitleTemplate().getTaskKey()`；
+  - 五倍 title 源图使用原始 tracker panel，不先洗黄；五环本轮按同样模式补一个只读 title gate。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD / upstream：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本次只触碰
+    `TaskTrackerPanelService.java`、`FiveRingTaskV2.java`、`FiveRingPhaseContext.java` 和本记录，
+    不 reset/checkout/clean/revert 其他改动。
+- 代码方向：
+  - 新增/复用五环 title-only read：只用 `panel_title_yellow.png` 产出 `found=true/false`；
+  - `FiveRingTaskV2.syncTaskPanel(...)` 的 returned-dialog fallback 只在 fresh title read
+    `found=false` 时允许；
+  - runner prepared / negative 状态仍可用于点击、等待、重试，但不再决定“有没有五环任务”。
+- 实现结果：
+  - `TaskTrackerPanelService.readWuhuanTrackerTitle(...)` 按五倍 `read...Panel().isFound()` 模式只读
+    五环黄色 `panel_title_yellow`，并已修正为和五倍一样对原始 tracker panel 做模板匹配，不生成/依赖
+    `task_tracker_title_yellow_*`；
+  - `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 的 Runner prepared-action 包装重新使用旧洗图
+    title 模板 `images/template/wuhuan/panel_title.png` 做任务块裁剪和绿字 fingerprint；黄字
+    `panel_title_yellow.png` 只用于“左侧是否还有五环任务”的业务 title gate；
+  - `FiveRingTaskV2.syncTaskPanel(...)` / `detectHandover(...)` 都改为 title hit 才认为有五环任务，
+    title miss 才允许 returned-dialog fallback 或回接任务线；
+  - `RUNNER_PREPARED_NOT_READY`、no-green/no-link、negative 不再设置 `taskAccepted`，也不再作为任务存在判断。
+- 验证：
+  - 现有真实中间图探针：原始 tracker panel 与 `panel_title_yellow.png` 直接匹配分数 `0.9937`，
+    高于阈值 `0.82`；洗黄图命中分数 `0.9999` 仅作为对照，不作为正式路径；
+  - `mvn -q -DskipTests compile` 退出 `0`；
+  - 未新增/运行 automated tests、replay、source guard、marked outputs。
+- 用户继续确认：五环到 `大雁塔二层` 的给鞋分支不需要先查完成 story；该分支第一步必须是
+  `tryGiveItemAndTriggerPathingIfPossible(...)`。给鞋成功后仍回 `SYNC_TASK_PANEL` 读左侧 title；
+  如果左侧 tracker 消失，`title miss + allowFinished=true` 仍会走
+  `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 判断完成 story。也就是说只删“给鞋前完成
+  story 检查”，不删“给鞋后 tracker 消失时的完成判断”。
+
+### 2026-07-07 / CR219 follow-up：五环 ROI 快脱战补齐 no-focus 血蓝补给
+
+- 用户确认：五环 tracker ROI 快脱战方向有效，战斗结束后的推进比旧路径快；但快路径必须和普通
+  战后补给等价，不能漏掉人物/宝宝 HP/MP 补给。
+- 代码改动范围：
+  - `FiveRingTaskV2`：五环 tracker ROI 正证据释放 `IN_COMBAT` 后，调用
+    `probeAndConsumeHealthyFirstAidNoFocus(...)` 生成/消费本地 no-focus 血蓝 plan；
+    `SUPPLY_NEEDED` / `UNKNOWN` 时执行 `performCachedFirstAidPlanNow(...)`，随后队长执行
+    `ensureSheYaoXiangActiveForLeaderTask(...)`。
+  - 五环没有 common box 语义，本 follow-up 不接 common box；也不走前台旧 `healAll`。摄妖香需要保留。
+- 验收日志点：出现 `[five-ring-v2 combat-exit] positive evidence...` 后，应紧跟
+  no-focus precheck / cached first-aid / 摄妖香检查相关日志；之后才继续 tracker 绿链或完成流程。
+- Hotfix baseline（2026-07-07 21:55 5411 未补血蓝）：
+  - 当前分支：`codex/hybrid-cloud-protection`；HEAD/upstream：
+    `dc4394f4ff3a93ed23a030857d72064843edd314`；业务参考 baseline：
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本次只补
+    `FiveRingTaskV2.releaseWindowCombatStateAfterWuhuanEvidence(...)` 的战后急救计数重置，并同步
+    CR219 文档/dashboard，不 reset/checkout/clean/revert 其他改动。
+  - 日志证据：`21:55:51.861` 5411 / `hwnd-2DD15BA` 命中 ROI 正证据并释放
+    `IN_COMBAT -> FREE`，随后立即输出
+    `first-aid no-focus precheck skipped: checks already done 1/1`，所以没有截图血蓝条、
+    没有生成/执行 cached first-aid plan，直接继续摄妖香和 tracker 绿链。
+  - 代码对照：普通 `AutoCombatService.consumeExitAndRecover(...)` 在战后补给前调用
+    `playerStateService.resetCheckCounter()`；五环 ROI 快脱战路径缺少这一步，导致上一次健康预检消耗的
+    `checksDoneThisRound=1/1` 会挡住真正战后的补给。
+  - 实现：`FiveRingTaskV2.releaseWindowCombatStateAfterWuhuanEvidence(...)` 仅在 `before == IN_COMBAT`
+    并由该方法释放战斗状态时调用 `playerStateService.resetCheckCounter()`，再进入 no-focus 血蓝预检、
+    cached first-aid plan 和摄妖香检查；不改变 already-free / trusted 非战斗兜底路径。
+  - 验证：`node scripts/generate-cr-dashboard-data.js`、`mvn -q -DskipTests compile`、
+    `git diff --check -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java docs/ACTIVE_WORK.md docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js`
+    均退出 `0`；未新增/运行 automated tests、source guards、replay、marked outputs。
+
+### 2026-07-07 / CR219 manager kickoff：五环战斗后 tracker ROI 快脱战候选
+
+- 用户明确要求“按照流程走”，本轮按谢帅 manager/reviewer 流程：
+  - 谢帅只负责卡片、范围、派工、review gate 和最终判断；
+  - worker 负责 Java 实现；
+  - 两个独立 reviewer 负责业务语义和代码/并发边界审核。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 旧业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - 工作区已有 CR190/CR214/CR217/CR218 等未提交修改；不得 revert/reset/clean unrelated dirty files。
+- 已创建：
+  - brief：`docs/superpowers/plans/2026-07-07-cr219-wuhuan-combat-exit-tracker-roi.md`
+  - CR row / card：`docs/PACKAGE_ARCHITECTURE.md` CR219
+- 用户确认的业务模型：
+  - 五环不是头像/队伍任务，快脱战候选只能用五环 tracker task block 的 ROI。
+  - 战斗前只保留 ROI 坐标；战斗中截图作为基线。
+  - ROI 变化只能是候选，不得直接改 `GameContext.ActionState` 为 `FREE`。
+  - 只有五环绿色 tracker 链接可消费，或五环完成类 dialog 可识别，才是释放战斗状态的正证据。
+  - `no tracker` / `negative` / `no-link` 不能作为脱战证据。
+  - 战斗后 fast-exit 路径不处理给鞋；给鞋仍只属于 `STOPPED_AWAY + 大雁塔二层`。
+- 当前代码证据：
+  - `FiveRingTaskV2.waitPathing(...)` 看到 `isWindowCombatActive()` 时只记录
+    `combatObservedSincePathing` 并等待。
+  - `combatObservedSincePathing` 后仍走 `autoCombatService.handleCombatTick(...)`，即旧战斗恢复/雷达链路。
+  - `syncTaskPanel(...)` 入口有 `isWindowCombatActive()` gate，fast-exit 候选必须先用正证据释放状态。
+- Worker 接手记录（2026-07-07）：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 最新 pushed 业务参考：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - `git status --short` 显示当前工作区已有大量未提交改动，且目标文件
+    `FiveRingTaskV2.java` / `FiveRingPhaseContext.java` 已是 dirty；本 worker 不
+    `reset` / `checkout --` / `clean` / revert unrelated dirty files。
+  - 对 `origin/dev` 的目标文件 baseline diff 规模：`FiveRingTaskV2.java`
+    `999 insertions / 173 deletions`，`FiveRingPhaseContext.java`
+    `76 insertions / 29 deletions`；当前本地已包含 CR218 的 tracker source prefix、
+    `wuhuanTrackerBlockRegion`、Runner prepared tracker action / negative 逻辑和
+    `STOPPED_AWAY + 大雁塔二层` 给鞋边界。
+  - CR219 worker 只在现有 CR218 边界上补战斗中 tracker ROI baseline、候选脱战正证据验证、
+    旧五环 tracker intent 清理与日志；不改 OCR/template、tracker reader 顺序、绿色链接坐标、
+    导航/input queue、云端协议、`GameStateUtil.isMovingByPixelDiff()` 或修罗/五倍路径。
+- Worker 实现记录（2026-07-07）：
+  - `FiveRingPhaseContext` 增加战斗中五环 tracker ROI baseline 图和捕获时间；baseline 只在实际
+    `IN_COMBAT` 后从 `wuhuanTrackerBlockRegion` 截图，不在战斗前截。
+  - `FiveRingTaskV2.waitPathing(...)` 在 `IN_COMBAT` 窄口内清理旧五环 tracker intent，允许 source
+    prefix 仅限 `wuhuan-v2:prepared-tracker-panel-click:` 和 `wuhuan-v2:tracker-green-click:`。
+  - ROI 变化只记为候选；候选后先找 fresh prepared 五环 tracker 绿链或五环完成 story/dialog
+    正证据。只有正证据或可信 battle probe 非战斗时才释放 `IN_COMBAT`。
+  - 正证据为 `none` 且 read-only battle probe 仍为 `IN_COMBAT` 时，刷新战斗中 baseline 并继续等待；
+    不把 no-tracker / negative / no-link 当脱战证据。
+  - 战斗后 fast-exit 分支不调用给鞋；给鞋仍只在 `STOPPED_AWAY + 大雁塔二层` 路径处理。
+  - 允许验证已跑：`git diff --check -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java src/main/java/com/bot/dhxy/task/wuhuan/FiveRingPhaseContext.java docs/ACTIVE_WORK.md`
+    exited `0`；`mvn -q -DskipTests compile` exited `0`。
+  - no-local-test 已遵守：未新增、恢复、运行或引用 automated tests / source guards / replay /
+    testcase images / marked outputs。
+- Reviewer gate（2026-07-07）：
+  - Reviewer A / business semantics：`CHANGES_REQUESTED`，P1 为
+    `wuhuanTrackerBlockRegion` 没有生产写入路径；`captureWuhuanTrackerCombatBaseline(...)`
+    会一直 `roi=missing-or-invalid`，CR219 快脱战候选不可达。
+  - Reviewer B / state-concurrency：`APPROVED`，无 P0/P1/P2；P3 仅提示
+    `probeWindowCombatStateReadOnly(...)` 命名与内部同步状态行为不完全一致，不阻塞 CR219。
+  - 额外 review concern：ROI candidate 后 tracker-link 正证据目前只读已有 prepared action；
+    Runner 在 `IN_COMBAT` 下通常不会新准备 tracker action。返修需补上“ROI 写入 phase state”和
+    “候选后 fresh 五环 tracker 绿链正证据准备/消费边界”，或用代码/日志说明该路径只能作为备用。
+- 返修方向：
+  - task tracker reader / Runner 已识别的五环 task block ROI 必须进入 `FiveRingPhaseContext`。
+  - ROI 来源仍只能是五环 tracker title / task block，不得换成头像/队伍区域。
+  - 不改绿色链接坐标、title gate、OCR/template 阈值、云端协议、导航/input queue。
+  - 不新增/运行 automated tests、source guard、replay、marked outputs；允许 compile 和
+    `git diff --check`。
+- CR219 返修 worker 接手记录（2026-07-07）：
+  - 当前分支：`codex/hybrid-cloud-protection`；最新 pushed/upstream commit：
+    `origin/codex/hybrid-cloud-protection=dc4394f4ff3a93ed23a030857d72064843edd314`；
+    业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本次返修只继续触碰
+    CR219 允许的 task tracker result/cache、`TaskTrackerPanelService`、`WindowTaskRunner`、
+    `FiveRingTaskV2`、`FiveRingPhaseContext` 和必要 CR 文档/dashboard。
+  - 接手前目标文件对当前 upstream 的 dirty 证据：`TaskTrackerPanelService.java`
+    `1384 insertions / 315 deletions` 所在 diff、`WindowTaskRunner.java` `790` 行级 diff、
+    `FiveRingTaskV2.java` `650` 行级 diff、`FiveRingPhaseContext.java` `130` 行级 diff；
+    `TaskTrackerPanelPrepareResult.java`、`TaskTrackerPanelNegativeResult.java`、
+    `TaskTrackerPanelCacheEntry.java` 当前为未跟踪新文件。
+  - 对 `origin/dev` 的业务路径差异很大，说明当前本地已叠加 CR214/CR218/CR219 首版等迁移；
+    本返修不保留/扩大业务语义差异，只补 reviewer 指出的生产 ROI 写入路径和 ROI candidate 后 fresh
+    五环 tracker 绿链正证据准备/消费边界。
+- CR219 返修实现记录（2026-07-07）：
+  - P1：`TaskTrackerPanelService.cropTaskDetailInTrackerPanel(...)` 已把五环 title/task block 对应的
+    detail crop 转成窗口相对 `OcrWindowRegion`；`TaskTrackerPanelPrepareResult`、
+    `TaskTrackerPanelNegativeResult`、`TaskTrackerPanelCacheEntry` 均携带
+    `trackerPanelRegion` / `wuhuanTrackerBlockRegion`。
+  - P1：Runner/task 消费 prepared action、explicit negative、cache hit 后，`FiveRingTaskV2`
+    会把五环 task block ROI merge 进 `FiveRingPhaseContext` 再进入 `WAIT_PATHING`；战斗中
+    baseline 捕获不再只依赖无生产写入的空 state。
+  - P2：ROI candidate 后若 runtime 没有 fresh prepared tracker action，`FiveRingTaskV2`
+    会调用 `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 做一次只读/准备型五环 tracker link prepare；
+    只有 fresh action 才绑定 runtime 并走既有 `clickPreparedWuhuanTrackerGreen(...)` 点击路径。
+  - P2：fresh prepare 返回 negative/no-link/no-action 时只记录 `not positive evidence`，不释放
+    `IN_COMBAT`，继续 trusted battle probe；negative/no-link/no tracker 仍不是脱战证据。
+  - 边界：未改绿色链接坐标算法、title gate、OCR/template 阈值、云端协议、导航/input queue、
+    `GameStateUtil.isMovingByPixelDiff()`、修罗/五倍业务；给鞋仍只在 `STOPPED_AWAY + 大雁塔二层` 路径处理。
+  - 验证：`node scripts/generate-cr-dashboard-data.js` exited `0`；`mvn -q -DskipTests compile`
+    exited `0`；`git diff --check -- <touched files>` exited `0`。未创建、恢复、运行或引用
+    automated tests / source guards / replay / testcase images / marked outputs。
+- CR219 第二轮 reviewer gate（2026-07-07）：
+  - Reviewer A / business semantics：`APPROVED`，确认 ROI 生产链路和 ROI candidate 后 fresh
+    五环 tracker prepare 的方向已关闭首轮 P1/P2。
+  - Reviewer B / state-cache-window binding：`CHANGES_REQUESTED`。
+    - P1：`FiveRingTaskV2.captureWuhuanTrackerCombatBaseline(...)` /
+      `tryResolvePostCombatFromWuhuanTrackerRoiCandidate(...)` 直接把窗口相对
+      `wuhuanTrackerBlockRegion` 传给 `tracker.captureToMemory(...)`；该 API 当前按屏幕绝对坐标
+      截图，HWND path 还会再减 window base，多窗口下会截错五环 task block。
+    - P2：post-combat ROI candidate 后调用 `prepareWuhuanPathingLink(...)` 可能经过
+      `dragTrackerPanelIfNeeded(...)` 并发送真实拖拽输入；该 fresh prepare 必须是只读/禁止整理面板，
+      真正输入只能发生在后续消费 prepared tracker action 的点击路径。
+  - 第二次返修方向：
+    - 修 P1：战斗中 baseline/current 截图必须按当前 bound window 把 window-relative ROI 转成正确
+      absolute rect，或提供明确的 window-relative capture API；日志同时打印 window-relative ROI、
+      absolute rect、windowId/hwnd。
+  - 修 P2：`wuhuan-v2:post-combat-roi-positive-tracker-prepare` 必须禁用 `dragTrackerPanelIfNeeded(...)`
+      /真实输入；面板不安全时 fail closed 为 no positive evidence，继续 trusted battle probe。
+- CR219 第二次返修 worker 接手记录（2026-07-07）：
+  - 当前分支：`codex/hybrid-cloud-protection`；当前 HEAD/upstream：
+    `dc4394f4ff3a93ed23a030857d72064843edd314`；业务参考 baseline：
+    `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty files；本次只处理 reviewer B
+    的两个 blocker，不 reset/checkout/clean/revert 其他 CR 改动。
+  - 代码证据：`FiveRingTaskV2.captureWuhuanTrackerCombatBaseline(...)` 和
+    `tryResolvePostCombatFromWuhuanTrackerRoiCandidate(...)` 当前直接把窗口相对
+    `wuhuanTrackerBlockRegion` 传给按屏幕绝对坐标解释的 `tracker.captureToMemory(...)`；
+    `TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 当前会经 `resolveTrackerPanelRect(...)`
+    进入 `dragTrackerPanelIfNeeded(...)`，存在 post-combat fresh prepare 发真实拖拽输入的风险。
+  - 本次返修范围：只在五环侧把 tracker ROI 转成当前绑定窗口的 absolute capture rect 并补日志；
+    只给 `prepareWuhuanPathingLink(...)` 增加 read-only/禁止整理面板模式，正常 Runner 准备 tracker
+    link 仍沿用原可整理面板行为。
+- CR219 第二次返修实现记录（2026-07-07）：
+  - P1：`FiveRingTaskV2.captureWuhuanTrackerCombatBaseline(...)` /
+    `tryResolvePostCombatFromWuhuanTrackerRoiCandidate(...)` 先通过当前 bound tracker base 把
+    window-relative `wuhuanTrackerBlockRegion` 转为 screen-absolute capture rect，再调用现有
+    `tracker.captureToMemory(...)`；未新增全局 capture API，避免改变其他调用坐标语义。
+  - P1：新增日志 `tracker ROI capture rect resolved`、`tracker ROI baseline captured`、
+    `tracker ROI compare while IN_COMBAT`，打印 `windowRelativeRoi`、`absoluteRect`、
+    `windowId`、`hwnd`、`base`。
+  - P2：`TaskTrackerPanelService.prepareWuhuanPathingLink(...)` 增加
+    `allowPanelReposition` 参数；`WindowTaskRunner` 正常准备传 `true`，保持既有可整理面板行为；
+    五环 post-combat ROI candidate fresh prepare 传 `false`。
+  - P2：只读 prepare 下若 tracker 面板锚点超出安全区，`resolveTrackerPanelRect(...)` 记录
+    `tracker panel anchor outside safe area but prepare is read-only` 并返回 empty/no evidence，不进入
+    `dragTrackerPanelIfNeeded(...)` / `inputSequences.submitAndWait(...)`。
+  - 边界保持：未改绿色链接坐标算法、title gate、OCR/template 阈值、云端协议、导航、input queue、
+    `GameStateUtil.isMovingByPixelDiff()`、修罗/五倍业务；negative/no-link/no tracker 仍不是正证据；
+    给鞋仍只属于 `STOPPED_AWAY + 大雁塔二层`。
+  - 验证：`mvn -q -DskipTests compile` exited `0`；`git diff --check -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java src/main/java/com/bot/dhxy/window/execution/WindowTaskRunner.java docs/ACTIVE_WORK.md`
+    exited `0`。未创建、恢复、运行或引用 automated tests / source guards / replay / testcase images /
+    marked outputs。
+- CR219 第二次返修 reviewer gate（2026-07-07）：
+  - Reviewer A / business semantics：`APPROVED`，无 P0/P1/P2；确认 window-relative
+    `wuhuanTrackerBlockRegion` 已按 bound window base 转 absolute rect 后截图，post-combat
+    fresh prepare 传 `allowPanelReposition=false`。
+  - Reviewer B / state-coordinate-input safety：`APPROVED`，无 P0/P1/P2；确认 HWND path/Robot fallback
+    坐标语义正确、无 double-add/double-subtract，且 post-combat prepare 不会隐藏发送 drag/move/click。
+  - Fresh runtime 待验：
+    `tracker ROI capture rect resolved` 的 `absoluteRect = base + windowRelativeRoi`；
+    post-combat read-only prepare 超安全区时只 fail closed，不出现
+    `task-tracker:drag-panel:wuhuan-v2:post-combat-roi-positive-tracker-prepare`；
+    negative/no-action/no-link 后不得释放 `IN_COMBAT`。
+
+### 2026-07-07 / CR218 manager kickoff：五环 tracker title / 接任务确认状态收敛
+
+- 用户明确要求“按照流程走”，本轮按谢帅 manager/reviewer 流程：
+  - 谢帅只负责卡片、范围、派工、review gate 和最终判断；
+  - worker 负责 Java 实现；
+  - 两个独立 reviewer 负责业务语义和代码/并发边界审核。
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 旧业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - 工作区已有 CR190/CR214/CR217 等未提交修改；不得 revert/reset/clean unrelated dirty files。
+- 已创建：
+  - brief：`docs/superpowers/plans/2026-07-07-cr218-wuhuan-tracker-title-state.md`
+  - CR row / card：`docs/PACKAGE_ARCHITECTURE.md` CR218
+  - dashboard 已刷新：`node scripts/generate-cr-dashboard-data.js`
+- Worker：
+  - Turing / `019f3edb-04fd-7943-9932-f6074df9431d`
+  - 写范围：`FiveRingTaskV2.java`，必要时追加 CR218 文档记录。
+  - 禁止改 Runner、tracker reader、云端协议、OCR/template、点击坐标、导航、input queue。
+- 用户确认的业务模型：
+  - 接任务阶段：点接任务后，左侧出现五环 tracker title / 五环任务块才算接任务成功。
+  - 接任务未确认成功时，无五环 title 不能当完成处理。
+  - 已确认接任务成功后的后续环节，无五环 title / 五环任务块才走既有
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`。
+  - 区别不是 `taskAccepted` 本身、不是先看见 `STORY`、也不是 no-green/no-link。
+- 流程结果：
+  - Worker 已实现：点击接任务 option 后只进入 `SYNC_TASK_PANEL`，不直接确认 `taskAccepted`；
+    最新小修后 `taskAccepted` 只代表本轮已由左侧五环 title / 任务块确认。
+  - `RUNNER_PREPARED_NOT_READY` / tracker miss 后必须 fresh 读取五环 title；只有 title miss 且
+    `allowFinished=true`，才走既有 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`。
+  - `TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK` 只是点击/重试状态，不作为五环任务存在确认。
+  - Reviewer A：APPROVED；P3 注释旧语义已由 worker 修复并复核通过。
+  - Reviewer B：APPROVED；确认 fresh `TASK_TRACKER_PATHING` 仍优先消费，未改 Runner/tracker reader/云端协议/OCR/template/坐标/导航/input queue。
+  - Worker 已运行 `mvn -q -DskipTests compile`，退出 `0`；本轮未运行/创建 tests、replay、source guard、marked outputs。
+  - Fresh runtime 待验：第一轮完成后不再卡 `runner prepared tracker action not ready`，应进入第二轮或正确完成收口。
+
+### 2026-07-07 / CR190 follow-up：RUNNER_PREPARED_NOT_READY 按无五环 tracker title 走既有 dialog 机制
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 旧业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - 工作区已有 CR214/CR190 相关本地改动和大量既有 dirty 文件；本 follow-up 只继续触碰
+    `FiveRingTaskV2.java`、`docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、
+    `docs/cr-dashboard-data.js`。
+- Fresh 证据：
+  - `17:36:30.828` Runner 发布 `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY`。
+  - `17:36:31.131` / `17:36:42.099` 等任务侧进入 `SYNC_TASK_PANEL`，状态为
+    `taskAccepted=true` 且 `allowFinished=true`。
+  - 任务侧明确打印
+    `skip returned-dialog fallback because task is already accepted; wait for Runner tracker action`，
+    随后继续 `runner prepared tracker action not ready; retry`。
+- 根因：
+  - CR190 小修方向正确，但 CR214 为避免“刚接任务成功后扫 returned-dialog 导致 prepared action stale”
+    加了 `state.taskAccepted()==true` 时完全跳过 returned-dialog fallback 的 gate。
+  - 第一轮任务完成时 `taskAccepted=true` 是正常状态；完成/今日上限 returned dialog 正是在已接任务后出现。
+  - 旧 `origin/dev` tracker miss 路径不会因为 `taskAccepted=true` 跳过完成 story 检查。
+- 修复：
+  - 判断边界改回业务事实：区别不是 `taskAccepted` 或有没有先看到 `STORY`，而是左侧 tracker
+    是否还能识别到五环 title / 五环任务块。
+  - 如果 Runner 识别到五环 tracker title 并准备出可点击绿链，`tryClickWuhuanTrackerLink(...)`
+    会先消费 fresh `TASK_TRACKER_PATHING`，不会进入 `RUNNER_PREPARED_NOT_READY`。
+  - 如果左侧没有五环 title / 五环任务块，本 tick 就没有五环 tracker 目标可走，应该按既有
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 机制先处理 dialog，再决定是否继续等 Runner。
+  - 仍保留 `allowFinished` 边界：不允许完成收口的路径不走 returned-dialog 处理。
+
+### 2026-07-07 / CR214 fresh 复审：接任务成功后禁用 returned-dialog fallback
+
+- Fresh 证据：
+  - `17:08:02.090` 五环点击接任务 option；`17:08:03.971` 接任务流程结束并进入
+    `SYNC_TASK_PANEL`，状态已是 `accepted=true`。
+  - `17:08:05.404` Runner 已发布 `PREPARED_ACTION_READY`：
+    `operation=TASK_TRACKER_PATHING target=wuhuan click=(353, 391)`。
+  - 任务线程没有及时消费该 prepared action，而是继续跑
+    `wuhuan-v2:tracker-miss-accept-returned-already-has-task` /
+    `wuhuan-v2:tracker-miss-finished-story` 的 dialog 白模板检查；prepared action 随后多次
+    stale 清理，直到 `17:08:17.023` 才真正点击左侧绿色链接。
+- 用户确认业务边界：
+  - 一旦五环已经确认接任务成功，后续 `SYNC_TASK_PANEL` 应只等/消费左侧 tracker prepared action；
+    不应再走“读任意 dialog / 已有任务 dialog / 完成 story”的 returned-dialog fallback。
+- 代码改动：
+  - `FiveRingTaskV2.checkReadyPriorityBeforeOutsidePhase(...)` 的等待类型加入
+    `PREPARED_ACTION_READY`，让 Runner 准备好的五环左链能直接叫醒任务线程。
+  - `FiveRingTaskV2.syncTaskPanel(...)` 的 `RUNNER_PREPARED_NOT_READY` 分支：当
+    `state.taskAccepted()==true` 时跳过 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)`，
+    只等待 Runner tracker action；未确认接任务成功时保留旧 returned-dialog fallback。
+- 验证：
+  - `mvn -q -DskipTests compile` 退出 `0`。
+  - `git diff --check -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java` 退出 `0`。
+  - 未运行 DHXY 本地 automated tests / replay / source guard / marked outputs。
+- Fresh runtime 重点：
+  - 接任务成功后若 Runner 发布 `PREPARED_ACTION_READY operation=TASK_TRACKER_PATHING target=wuhuan`，
+    任务线程应在下一次 phase boundary 直接消费并点击左链；
+  - 不应再看到 `taskAccepted=true` 之后连续执行
+    `tracker-miss-accept-returned-already-has-task` / `tracker-miss-finished-story`。
+
+### 2026-07-07 / CR214 用户确认：五环 STOPPED_AWAY 只在大雁塔二层处理给鞋 dialog
+
+- 用户确认新业务边界：
+  - `wuhuan_daily_limit_story.png` 只能在接 NPC / 接任务线判断；中途 `STOPPED_AWAY`、`HANDLE_DIALOG`
+    或 tracker stopped-away sync 不得查每日上限模板。
+  - 五环 tracker `STOPPED_AWAY` 后先看当前地图；只有当前地图为 `大雁塔二层` 才进入给鞋
+    `HANDLE_DIALOG`，其他地图直接回 tracker 线。
+- 代码改动：
+  - `FiveRingTaskV2.WAIT_PATHING` 的五环 tracker `STOPPED_AWAY` 分支：非 `大雁塔二层` 时用 CR214
+    窄口清旧 stopped-away tracker intent，然后转 `SYNC_TASK_PANEL`。
+  - `resolveStoppedAwayTrackerIntentBeforeSync(...)`：非 `大雁塔二层` 时不查完成/每日上限/给鞋 dialog，
+    只清旧五环 stopped-away intent 并让 Runner 重新准备左侧 tracker。
+  - `tryGiveItemAndTriggerPathingIfPossible(...)`：统一加 `大雁塔二层` map gate；其他地图直接返回
+    `NO_DIALOG`。
+  - 中途每日上限检查已移除；`isFiveRingDailyLimitStoryVisible(...)` 当前只剩接任务线调用：
+    `current-screen-accept-story` 和 `accept-dialog-daily-limit-story`。
+- 清 intent 说明：
+  - 老路径 `STOPPED_AWAY -> HANDLE_DIALOG` 之前本来会 `clearPathingSignal(...)`。
+  - 现在非大雁塔二层绕过 `HANDLE_DIALOG`，所以必须补等价窄口清理；否则 Runner 会因旧
+    `activeIntentPresent=true` 跳过五环 tracker prepare。
+- 验证：
+  - `git diff --check -- src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java` 退出 `0`。
+  - `mvn -q -DskipTests compile` 退出 `0`。
+  - 未运行 DHXY 本地 automated tests / replay / source guard / marked outputs。
+- Fresh runtime 重点：
+  - 非 `大雁塔二层` 的五环 `STOPPED_AWAY` 不应再进入 6-7 秒给鞋/每日上限 dialog 扫描；
+  - 应看到 `stopped-away tracker intent outside give-item map ... cleared=true`，随后 Runner 产出
+    `task tracker panel prepared` 或 `task tracker negative ready published`；
+  - `大雁塔二层` 给鞋 case 仍可进入 `HANDLE_DIALOG` 并保持给鞋失败/选项缺失重触发语义。
+
+### 2026-07-07 / CR190 fresh runtime 小修：RUNNER_PREPARED_NOT_READY 先恢复 returned-dialog 旧兜底
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`
+  - 当前 HEAD：`dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 本分支远端可见 HEAD：`origin/codex/hybrid-cloud-protection=dc4394f4ff3a93ed23a030857d72064843edd314`
+  - 旧业务参考 baseline：`origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`
+  - 工作区已有大量未提交修改；本轮只触碰 `FiveRingTaskV2.java`、`docs/ACTIVE_WORK.md`、
+    `docs/PACKAGE_ARCHITECTURE.md` 和 dashboard snapshot，不回滚其他文件。
+- Fresh 证据：
+  - `2026-07-07 14:51:25.436` 战斗退出确认，`14:51:25.990` Runner 已看到并发布
+    `TASK_ATTENTION_REQUIRED source=dialog-visible:STORY`。
+  - `14:51:26.021` 五环进入 `WAIT_PATHING -> SYNC_TASK_PANEL`。
+  - `14:51:26.101` 起任务侧反复输出
+    `runner prepared tracker action not ready; wait for Runner prepared action`，同时 Runner 侧多次
+    `tracker anchor not found`，说明左侧 tracker 已消失但 completion/story dialog 已可见。
+- 对比结论：
+  - `origin/dev` 旧五环流程在 tracker 直读返回 `TASK_NOT_FOUND` / `TASK_FOUND_NO_GREEN` /
+    `TASK_FOUND_NO_LINK` 后，会调用 `tryHandleAcceptReturnedDialogAfterTrackerMiss(...)` 处理完成/今日上限 dialog。
+  - 当前 Runner prepared 迁移后，`RUNNER_PREPARED_NOT_READY` 分支先直接 retry，绕过了这个旧业务兜底。
+- 小修：
+  - `FiveRingTaskV2.syncTaskPanel(...)` 在 `RUNNER_PREPARED_NOT_READY` 分支先调用
+    `tryHandleAcceptReturnedDialogAfterTrackerMiss(..., "runner-prepared-not-ready")`。
+  - 如果 returned dialog 被处理，直接返回该 outcome；否则保持原有 retry 等 Runner prepared action 行为。
+- Fresh 验收点：
+  - 五环战斗结束后，如果左侧 tracker 消失且完成/今日上限 story dialog 可见，不应再连续刷
+    `runner prepared tracker action not ready` 到用户手动 stop。
+  - 预期出现
+    `runner prepared tracker action not ready but returned dialog handled`，随后按完成/今日上限逻辑收口或进入下一轮。
+
+### 2026-07-07 / CR213 fresh runtime 回归修复：摄妖香 53 分钟不再误判 08 分钟
+
+- Fresh 证据：
+  - `17:34:17` `hwnd-61588` 的 `SHEYAOXIANG_STATUS` 云端结果为
+    `GREEN_MINUTES_TEMPLATE text=08 remainingMs=480000`，本地随后按云端 `USE_INCENSE`
+    补香。
+  - 复算生产裁剪列 `cropX=102..122` 后，实际两个绿色连通块对应的是 runtime 字体里的 `5` 和 `3`；
+    旧基础模板最高分却分别偏向 `0:0.6842` 和 `8:0.8649`，所以误拼成 `08`。
+- 修复：
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 新增 fixture
+    `src/test/resources/images/test-cases/status/sheyaoxiang_runtime_fragment_false_08_roi.png`，
+    固化这张 runtime 原图。
+  - 新增
+    `IncenseStatusCloudBrainContractTest.runtimeGreenDigitsReadAsFiftyThreeMinutes`：
+    该图必须返回 `GREEN_MINUTES_TEMPLATE text=53 remainingMs=3180000`，不得补香。
+  - 新增 runtime 字体模板变体
+    `5_runtime_53_fragment.png`、`3_runtime_53_fragment.png`；`DigitTemplate.symbol` 改为取模板文件名首位数字，
+    支持同一数字多个模板变体，同时继续要求 `0-9` 完整模板集。
+  - `IncenseStatusRecognizer.GREEN_DIGIT_THRESHOLD` 从 `0.55` 提高到 `0.80`；这不是 OCR 修复，
+    是模板数字识别收紧并补齐真实 runtime 字体变体。图标存在但分钟读不稳时继续云端保守 `NO_ACTION`，
+    不恢复 DHXY 本地 fallback。
+- 验证：
+  - RED focused：新用例先失败，旧结果为
+    `action=NO_ACTION;remainingSource=UNKNOWN;greenReason=digit-template-miss`。
+  - GREEN focused：`mvn -q -Dtest=IncenseStatusCloudBrainContractTest#runtimeGreenDigitsReadAsFiftyThreeMinutes test`
+    退出 `0`。
+  - GREEN contract：`mvn -q -Dtest=IncenseStatusCloudBrainContractTest test` 退出 `0`。
+  - GREEN cloud-brain package：`mvn -q package` 退出 `0`。
+
+### 2026-07-07 / CR213 fresh runtime 回归修复：摄妖香 59 分钟不再误判 5 小时
+
+- Fresh 证据：`14:51:26` `SHEYAOXIANG_STATUS` 云端链路已生效，但真实 ROI
+  `images\temp\hwnd-3010886\sheyaoxiang_status_cloud_raw.png` 中摄妖香下方绿色 `59` 被旧云端结果误判为
+  `CYAN_HOURS text=5 remainingMs=18000000`。
+- 根因：CR213 返修时把 digit scan band 扩到状态 ROI 右侧；实际游戏布局是图标下方数字，X 方向必须只裁当前摄妖香图标列。
+- 修复：外部 `D:\mavenProject\dhxy-cloud-brain` 的 `IncenseStatusRecognizer.cropIconStatusBand(...)`
+  改成只裁 `iconBox.x - 2` 到 `iconBox.x + iconBox.width + 6`，Y 保留到底；保持先 cyan 后 green，
+  但 cyan score threshold 提高到 `0.80`，避免噪声 accepted。
+- 新增 cloud-brain 真实 runtime ROI contract：
+  `src/test/resources/images/test-cases/status/sheyaoxiang_runtime_59min_roi.png`；
+  `IncenseStatusCloudBrainContractTest.runtimeStatusRoiReadsOnlyMatchedIncenseColumn` 断言返回
+  `GREEN_MINUTES_TEMPLATE text=59 remainingMs=3540000`。
+- 验证：
+  - RED：新增真实 ROI 用例先失败，旧结果为 `CYAN_HOURS text=5`。
+  - GREEN focused：`mvn -q -Dtest=IncenseStatusCloudBrainContractTest#runtimeStatusRoiReadsOnlyMatchedIncenseColumn test` 退出 `0`。
+  - GREEN contract：`mvn -q -Dtest=IncenseStatusCloudBrainContractTest test` 退出 `0`。
+  - GREEN cloud-brain：`mvn test` 退出 `0`，`Tests run: 19, Failures: 0, Errors: 0, Skipped: 0`。
+  - GREEN cloud-brain package：`mvn package` 退出 `0`，未跳测试，`Tests run: 19, Failures: 0, Errors: 0, Skipped: 0`。
+  - DHXY compile：`mvn -q -DskipTests compile` 退出 `0`；未运行 DHXY 本地 tests/replay/source guards。
+- 下一轮 runtime：重启/启动任务时 sidecar 会用新 jar；重点看 `SHEYAOXIANG_STATUS` 对同类 ROI 返回
+  `GREEN_MINUTES_TEMPLATE`，不再出现 `CYAN_HOURS text=5/55`。
+
+### 2026-07-07 / CR214 用户复审 repair 双 reviewer 通过
+
+- Reviewer A / business recovery path：APPROVED，无 P0/P1/P2/P3 blocker。
+- Reviewer B / runtime-concurrency：APPROVED，无 P0/P1/P2/P3 blocker。
+- 当前 CR214 状态：`Review passed / user re-review repair approved by two reviewers / compile passed / fresh runtime pending`。
+- fresh runtime 重点看：
+  - `GIVE_OPTION_NOT_FOUND` 后出现
+    `stopped-away tracker intent retry after give-option cleanup ... cleared=true`，下一轮 Runner 重新 prepare tracker；
+  - 可重试给鞋失败后出现
+    `stopped-away tracker intent retry after give-item failure ... cleared=true`，且未达失败上限时回 `SYNC_TASK_PANEL`；
+  - `INTERRUPTED`、失败上限、完成/今日上限不出现为了重试而清 intent。
+
+### 2026-07-07 / CR214 用户复审 blocker：可重试给鞋失败要恢复 tracker 重触发
+
+- 本轮 repair worker 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`；upstream 同为
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty/deleted/untracked 文件；本轮只触碰
+    `FiveRingTaskV2.java`、CR214 文档和 dashboard，不 revert/reset/clean。
+  - `git show --stat --oneline '@{u}' -- FiveRingTaskV2.java docs/PACKAGE_ARCHITECTURE.md docs/ACTIVE_WORK.md docs/cr-dashboard-data.js`
+    显示 upstream 基线提交为 `dc4394f docs: plan xiuluo cloud single brain migration`，相关 pushed 统计只涉及
+    文档/dashboard；`FiveRingTaskV2.java` 的 CR214 逻辑是当前本地 repair 基线。
+  - 编辑前代码证据：`resolveStoppedAwayTrackerIntentBeforeSync(...)` 中
+    `GIVE_OPTION_NOT_FOUND` 执行 `cleanupRetryableDialog(...)` 后直接返回
+    `SYNC_TASK_PANEL`，`GIVE_ITEM_FAILED` / `FAILED` / 其他失败类在未达
+    `MAX_GIVE_ITEM_FAILURE_BEFORE_FAIL` 时也直接返回 `SYNC_TASK_PANEL`，两处返回前均未清旧五环
+    `STOPPED_AWAY` tracker intent。
+- 用户复审结论：
+  - 如果给鞋失败或 `GIVE_OPTION_NOT_FOUND` 已经确认存在 dialog，不能只保留旧
+    `STOPPED_AWAY` tracker intent 后回 `SYNC_TASK_PANEL`。
+  - 原 `WAIT_PATHING -> HANDLE_DIALOG` 路径会先消费/清掉 pathing signal，因此失败后回 tracker sync
+    可以重新读并点击左侧 tracker，重新触发 dialog。
+  - CR214 前置分支若不清旧 intent，会让 Runner 继续认为存在 active pathing，从而不再读取 tracker。
+- 重新修复方向：
+  - `GIVE_OPTION_NOT_FOUND`：先执行原 cleanup + sharedState，再清旧五环 tracker intent，允许下一轮重读 tracker。
+  - `GIVE_ITEM_FAILED` / `FAILED` / 其他可重试失败类：保留 `uiErrorCount` 和 fail 上限；未达上限时清旧
+    五环 tracker intent 再回 `SYNC_TASK_PANEL`。
+  - `INTERRUPTED`、达到失败上限、完成/今日上限仍走终态，不为重试清 intent。
+- 本轮 repair 结果：
+  - `FiveRingTaskV2.resolveStoppedAwayTrackerIntentBeforeSync(...)` 中
+    `GIVE_OPTION_NOT_FOUND` 仍先执行 `cleanupRetryableDialog(...)`，cleanup 后调用现有
+    `clearStoppedAwayTrackerIntent(...)` 窄口清旧五环 tracker intent，再回 `SYNC_TASK_PANEL`。
+  - `GIVE_ITEM_FAILED` / `FAILED` / 其他失败类仍保留 `uiErrorCount` 和
+    `MAX_GIVE_ITEM_FAILURE_BEFORE_FAIL`；未达上限时清旧五环 tracker intent 后回
+    `SYNC_TASK_PANEL`，达到上限时不清 intent、直接 fail。
+  - `INTERRUPTED`、完成 dialog、今日上限 dialog 不为重试清 intent；清理仍限定
+    `STOPPED_AWAY + UNTARGETED_TRACKER + wuhuan-v2:prepared-tracker-panel-click:` /
+    `wuhuan-v2:tracker-green-click:`。
+  - 新日志包含 `cleared`、`giveResult`、`reason`：
+    `reason=give-option-not-found-retry-clear` 和
+    `reason=retryable-give-item-failure-clear`。
+  - 预检 `mvn -q -DskipTests compile` 退出 `0`；未新增/运行 tests、replay、source guard 或 marked output。
+
+### 2026-07-07 / CR214 双审通过：五环 STOPPED_AWAY 清旧 tracker intent
+
+- Worker repair 后复审结果：
+  - Reviewer A：APPROVED，确认给鞋失败/中断/选项缺失语义已恢复，不会落入清旧 intent 分支。
+  - Reviewer B：APPROVED，确认 source/state CAS、多窗口 runtime 绑定和 Runner 重读 tracker 机会未被 repair 破坏。
+- 当前 CR214 状态：`Review passed / 双 reviewer approved / compile passed / fresh runtime pending`。
+- fresh runtime 重点看：
+  - 卡住窗口不再长期刷 `runner prepared tracker action not ready`；
+  - 旧五环 tracker intent 若为 `STOPPED_AWAY` 且无给鞋/完成/今日上限 dialog，应看到
+    `stopped-away tracker intent recovery decision ... cleared=true`；
+  - 清理后 Runner 应产出 `task tracker panel prepared` 或 `task tracker negative ready published`；
+  - 给鞋失败/中断/选项缺失不能触发清旧 intent。
+
+### 2026-07-07 / CR214 reviewer A P2 repair：stopped-away 前置分支保留给鞋失败语义
+
+- Repair 接手：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`；upstream 同为
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - 只修 CR214 touched path：`FiveRingTaskV2.java` 与 CR 文档 / dashboard；不改修罗、五倍、route-transfer、
+    OCR/template/click/navigation/input queue。
+  - 当前 no-local-test 模式继续有效：不新增/运行 tests、replay、source guard；可运行
+    `mvn -q -DskipTests compile`。
+- Reviewer A P2：
+  - `resolveStoppedAwayTrackerIntentBeforeSync(...)` 只对 `GIVE_ITEM_DONE` 保留给鞋业务语义；
+    `GIVE_ITEM_FAILED` / `FAILED` / `INTERRUPTED` / `GIVE_OPTION_NOT_FOUND` 会落到清旧 intent 分支。
+  - 这偏离原 `handleDialog(...)` 的给鞋失败、中断、找不到给鞋选项处理语义。
+- Repair 结果：
+  - `GIVE_OPTION_NOT_FOUND`：不清旧 intent，执行 `cleanupRetryableDialog(...)`，返回原 cleanup + sharedState。
+  - `INTERRUPTED`：不清旧 intent，直接返回 stopped。
+  - `GIVE_ITEM_FAILED` / `FAILED` / 其他失败类状态：不清旧 intent，走原 `give-item-failed`
+    `uiErrorCount` 计数和 fail 上限。
+  - 只有 `NO_DIALOG`、非完成/非上限的 `STORY_IGNORED` 继续清旧五环 tracker intent。
+- Repair 验证：`mvn -q -DskipTests compile` 退出 `0`；未运行 tests/replay/source guard。
+
+### 2026-07-07 / CR213 双审通过：摄妖香云端模板与有效 ROI 验证补强
+
+- Repair 范围：
+  - 只修 CR213 外部 `D:\mavenProject\dhxy-cloud-brain` 摄妖香云端识别与测试证据；
+    DHXY 主项目只跑 compile，不新增/运行本地 tests/guards/replay/testcase image。
+  - CR208 第 7/8 项已在双 reviewer 通过后回填父卡并划掉。
+- P2 repair：
+  - 新增 `src/main/resources/images/template/status/sheyaoxiang_digits/3.png`，补齐 `0-9`
+    digit template 集。
+  - `IncenseStatusRecognizer` 在 digit best-match 前强制校验模板集必须完整包含 `0-9`；
+    未来若缺任一模板，直接拒绝读数并走 icon-present/remaining-unknown 的保守 `NO_ACTION`，
+    不再让缺模板时把 `3` best-match 成别的数字。
+  - 摄妖香 buff 图标匹配从 OpenCV `TM_CCOEFF_NORMED` 改为项目已有前景像素
+    `TemplateMatcher.findBest(...)`，原因是 tiny alpha/black-background 图标在合成有效 ROI
+    上 OpenCV 分数仅约 `0.285`，不足以作为有效 ROI contract；改动仅限云端摄妖香 buff 检测。
+  - 云端 digit scan band 从“icon 宽度竖条”扩为“从 icon 左边到状态 ROI 右边”，用于读取图标右侧的
+    青色小时/绿色分钟；不改 DHXY 传入状态栏 ROI。
+  - `blackMask(...)` 与测试绘制逻辑忽略透明像素，避免透明背景模板被当作黑色笔画。
+- 验证补强：
+  - `IncenseStatusCloudBrainContractTest` 从 4 个用例扩到 9 个用例，覆盖：
+    `TICK -> CAPTURE_STATUS`、retry cooldown、invalid image fail closed、valid icon absent、
+    valid icon present + cyan hour、valid icon present + green 19min `USE_INCENSE`、
+    green 21min `NO_ACTION`、digit `3` dedicated template、`OUTCOME` no-action 记录。
+  - RED：新增 focused 测试先失败，暴露 `3.png` 缺失、有效 ROI icon absent、后续 digit crop/模板缩放问题。
+  - GREEN focused：`mvn -q -Dtest=IncenseStatusCloudBrainContractTest test` 退出 `0`。
+  - GREEN cloud-brain：`mvn test` 退出 `0`，`Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`。
+  - GREEN cloud-brain package：`mvn package` 退出 `0`，未跳测试，`Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`；
+    shade 阶段仅有既有 dependency overlap warning。
+  - DHXY compile：`mvn compile` 退出 `0`；未运行 DHXY 本地 tests。
+- Review / manager 判断：
+  - Reviewer A 初审与返修后复审均通过：DHXY 本地只 tick `SHEYAOXIANG_STATUS`，`CAPTURE_STATUS` 才截图，
+    `USE_INCENSE` 才用香；open-main-bag 仍复用 `mainBag.useItem(...)`；fail closed 与本地无 fallback 边界成立。
+  - Reviewer B 复审通过：`3.png` 已存在，完整 `0-9` template gate 生效；valid ROI / 图标存在缺失 / cyan hour /
+    green minute / 20min 阈值测试覆盖到位，协议仍兼容 DHXY 解析。
+  - Manager verification：`D:\mavenProject\DHXY` 跑 `mvn -q -DskipTests compile` 退出 `0`；`D:\mavenProject\dhxy-cloud-brain`
+    跑 `mvn -q package` 退出 `0`，再跑 `mvn test` 明确 `Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`。
+  - CR213 当前状态：双审通过，fresh runtime 待验。后续运行需看 `SHEYAOXIANG_STATUS` 云端决策日志、
+    `USE_INCENSE` outcome 回报、云端不可用 fail closed。
+
+### 2026-07-07 / CR214 worker baseline：五环 STOPPED_AWAY 清旧 intent 实现前记录
+
+- Worker 身份：CR214 implementation worker，本轮直接实现，仍需后续双 reviewer。
+- 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`。
+- Upstream：`origin/codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`。
+- `git status --short` 显示工作区已有大量 unrelated dirty / deleted / untracked 文件；CR214 worker
+  只允许触碰 `WindowTaskRunner.java`、`WindowRuntimeContext.java`、`FiveRingTaskV2.java` 和必要 CR 文档，
+  不执行 revert/reset/clean。
+- 允许路径本地 diff 基线：
+  - `FiveRingTaskV2.java` 已有本地五环 Runner prepared tracker/negative、pause-resume、clean queue transition
+    等改动；CR214 不回退这些本地业务差异，只在当前代码上做 STOPPED_AWAY stale intent 清理。
+  - `WindowRuntimeContext.java` 已有本地 prepared tracker cache/negative、pause-resume volatile timer 等改动；
+    CR214 可在该 runtime 状态边界新增窄口清理能力。
+  - `WindowTaskRunner.java` 已有本地 tracker prepare/active-pathing 相关改动；CR214 应在 Runner 与五环
+    terminal 处理交界做最小改动。
+- Pushed baseline 证据：`git show --stat --oneline '@{u}' -- <CR214 allowed Java paths>` 无输出，
+  表示 upstream 当前提交未单独显示这些路径的最新提交摘要；本轮以当前 HEAD/upstream
+  `dc4394f4ff3a93ed23a030857d72064843edd314` 和 CR214 卡片业务约束为基线。
+- no-local-test 模式继续有效：不新增/恢复/运行/引用 DHXY automated tests、source guards、replay 或 marked outputs；
+  可按需仅运行 `mvn -q -DskipTests compile`。
+- Worker 实现结果：
+  - `WindowRuntimeContext` 新增按 source prefix + `WindowPathingState` 的 CAS 清理方法，只清当前仍匹配的
+    terminal pathing signal，并记录 `windowId`、`intentId`、`source`、`matchedPrefix`、`state`、`reason`。
+  - `FiveRingTaskV2.syncTaskPanel(...)` 入口只处理五环 tracker source 的 `STOPPED_AWAY`
+    `UNTARGETED_TRACKER` intent：先按原五环完成/今日上限模板和给鞋逻辑处理；没有业务结果才清旧 intent，
+    让 Runner 下一轮重新读左侧 tracker。
+  - 未触碰修罗/五倍 route-transfer、OCR/template/click 坐标、mini-map/world-map navigation 算法、
+    input queue/task turn 大框架。
+- Worker 验证：`mvn -q -DskipTests compile` 退出 `0`；未运行 DHXY tests/replay/source guards。
+
+### 2026-07-07 / CR214 manager kickoff：五环 STOPPED_AWAY 后清旧 tracker pathing intent
+
+- 流程模式：
+  - 用户明确说“走流程”，本轮按谢帅 manager/reviewer 流程执行。
+  - 谢帅只建卡、定范围、派 worker、拉双 reviewer 和做最终判断；Java 业务实现交给 worker。
+  - 当前全项目 `no-local-test` 模式有效：DHXY 不新增、不运行、不引用本地 automated test / replay / marked output 作为验收证据；验收靠代码 review 和后续 fresh runtime log/screenshot。
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short` 显示工作区已有大量 unrelated dirty / deleted / untracked 文件；
+    本轮只允许 CR214 worker 触碰五环 tracker/pathing terminal 清理相关路径和 CR 文档，不 revert/reset/clean。
+  - 相关本地代码已包含五环 Runner prepared tracker 模式：
+    `FiveRingTaskV2.tryClickWuhuanTrackerLink(...)` 只消费 Runner prepared
+    `TASK_TRACKER_PATHING` 或 fresh negative；拿不到则返回
+    `RUNNER_PREPARED_NOT_READY`。
+  - `WindowTaskRunner.refreshTaskTrackerPreparationSignal(...)` 当前会因为
+    `windowContext.getActivePathingIntent().isPresent()` 跳过 tracker prepare。
+  - `WindowTaskRunner` active-pathing 分支里 `taskTrackerPrepareMs=-1`，说明有 active
+    pathing intent 时不会读取五环左侧 tracker。
+- 运行证据：
+  - 2026-07-07 `12:47:25-12:47:29` 左右，`67555`、`443075411`、`387545229`、
+    `316365558` 都循环：
+    `SYNC_TASK_PANEL -> runner prepared tracker action not ready -> yield 900ms`。
+  - 同期 Runner tick 显示：
+    `branch=active-pathing`、`taskTrackerPrepareMs=-1`、`pathingState=STOPPED_AWAY`、
+    `activeIntentAgeMs=数百秒`、`preparedOperation=null`。
+  - 尾号 `3529` 不同：它已经消费 `TASK_TRACKER_PATHING` prepared action 并进入
+    `WAIT_PATHING`，所以仍在动。
+- 用户确认的业务边界：
+  - 五环 tracker/pathing `STOPPED_AWAY` 后不是通用 route-transfer 场景。
+  - 只需要处理给鞋 dialog，以及完成/今日上限 dialog。
+  - 如果这两类都不是，旧 active pathing intent 应清掉，不能继续阻止 Runner 读取左侧
+    tracker 并发布 prepared/negative。
+  - 不能把修罗/五倍 route、OCR/template/click/navigation 顺手改掉。
+- CR214 卡片：
+  - 已在 `docs/PACKAGE_ARCHITECTURE.md` 新建 CR214 表格行和详细卡。
+  - 下一步刷新 dashboard，派 worker 实现，再拉两个独立 reviewer。
+
+### 2026-07-07 / CR213 planned：摄妖香检查与剩余时间决策迁云端
+
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - worker 复核：upstream 为 `origin/codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`；`git show --stat --oneline @{u} -- <CR213 touched paths>`
+    只显示 pushed 文档基线更新，`src/main/java/com/bot/dhxy/cloud/**` 是当前本地云端迁移框架新增路径。
+  - `git status --short` 显示工作区已有大量 unrelated dirty/deleted/untracked 文件；本轮只允许 CR213 worker
+    触碰摄妖香与对应 cloud-brain 路径，不 revert/reset/clean。
+  - `PlayerStateService` 当前摄妖香生产路径仍在本地执行：`ImageFinder.find(...)` 匹配
+    `images/template/status/sheyaoxiang_buff.png`，`TextRecognizer.getAllTextResultsLocalOnly(...)`
+    读青色小时/绿色分钟，`SheyaoxiangDigitTemplateReader.recognizeAndLearn(...)` 学习/识别绿色分钟。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 不是 git 仓库；当前资源已有
+    `src/main/resources/images/template/status/sheyaoxiang_buff.png` 和
+    `src/main/resources/images/template/status/sheyaoxiang_digits/*.png`，可作为云端资源读取基线。
+- 用户决策：
+  - 采用 CR213 方案 B：摄妖香检查策略和剩余时间识别都归云端。
+  - 本地不允许保留 OCR fallback / 模板学习 fallback / “读不到就自己补香”的业务脑。
+  - 本地只在安全点 tick 云端、按云端命令截图、传图、执行 `USE_INCENSE`、回报 outcome。
+- Worker 实现结果：
+  - DHXY 新增 `SHEYAOXIANG_STATUS` cloud service id、配置、request/result/adapter；`PlayerStateService`
+    摄妖香路径改为 `TICK` 云端、按云端 `CAPTURE_STATUS` 截状态栏 ROI、仅按显式
+    `USE_INCENSE` 用香并回报 outcome。
+  - `ensureSheYaoXiangActiveInOpenMainBag(...)` 继续复用传入的 `MainBagSession`：
+    云端返回 `USE_INCENSE` 时执行 `mainBag.useItem(...)`，不重新开包。
+  - 摄妖香生产路径不再调用本地 `TextRecognizer.getAllTextResultsLocalOnly(...)`、
+    `SheyaoxiangDigitTemplateReader` 或本地 `ImageFinder.find(...)` 作为业务 fallback；
+    云端失败/timeout/schema invalid/缺字段时本地 fail closed。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 新增 `SHEYAOXIANG_STATUS` 分支与
+    `IncenseStatusRecognizer`，从 cloud-brain resources 读取 buff/digit templates 完成图标和剩余时间识别。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 新增 `IncenseStatusCloudBrainContractTest`，覆盖
+    `TICK -> CAPTURE_STATUS`、retry cooldown、无效截图 fail closed、`OUTCOME` no-action 记录。
+- Worker 验证：
+  - DHXY 仅做必要 compile：`mvn compile` 退出 `0`，不运行/新增/引用 DHXY 本地测试。
+  - 静态复查：`rg "TextRecognizer|SheyaoxiangDigitTemplateReader|ImageFinder|getAllTextResultsLocalOnly|probeIncense|readSheyaoxiang|SHEYAOXIANG_STATUS_TEMPLATE|SHEYAOXIANG_DIGIT|Pattern|Matcher|OptionalLong" <CR213 touched DHXY paths>` 无命中。
+  - cloud-brain：`mvn test` 退出 `0`，`Tests run: 13, Failures: 0, Errors: 0, Skipped: 0`。
+  - cloud-brain：`mvn package` 退出 `0`，未跳测试，`Tests run: 13, Failures: 0, Errors: 0, Skipped: 0`。
+  - concern：cloud-brain resources 缺 `sheyaoxiang_digits/3.png`；当前策略对包含 3 的剩余时间保守不补香，不回退本地 OCR/模板学习。
+- 已写入 `docs/PACKAGE_ARCHITECTURE.md`：
+  - CR213 sprint row；
+  - CR213 detailed card；
+  - CR208 子卡 7/8 归属和父卡划线规则。
+- 待执行流程：
+  - 两个独立 reviewer 审；
+  - 若通过，回 CR208 把第 7、8 项划掉并刷新 dashboard。
+
+### 2026-07-07 / 全项目 no-local-test 模式
+
+- 用户已明确要求当前阶段不做任何本地 test：不写、不跑、不恢复、不引用 automated test / guard / replay / testcase image 作为验收依据。
+- 已删除本地测试资产：
+  - `src/test`
+  - `images/test-cases`
+  - 外部 sidecar 项目 `D:\mavenProject\dhxy-cloud-brain\src\test`
+- 后续验证方式改为：
+  - 代码 review；
+  - runtime log / screenshot / case JSON 审查；
+  - 用户 fresh runtime 实测证据。
+- 任何 agent 不得再因为“本地 test 通过”要求用户验收；如需用户重启/实测，必须基于代码 review 已完成和运行证据缺口，而不是基于 test 结果。
+
+### 2026-07-07 / CR212 manager closure：双 reviewer 通过，fresh runtime 待验
+
+- 流程状态：
+  - Worker `Laplace` 已完成 CR212 实现与两轮 repair。
+  - Reviewer A `Singer` 最终 APPROVED，并实际重跑 CR212 focused tests、compile、test-compile，均退出 `0`。
+  - Reviewer B `Euler` 最终 APPROVED，明确上一轮 P2 已关闭；最终复审未改代码。
+- 已关闭的 review blocker：
+  - P1/P2：idle broadcast suppression 不能 session-global；已改为按当前
+    `windowId -> groupHash -> LocalTeamTooltipGroup` 判断。
+  - P2：`isLocalSupportMemberSession(...)` 不能 session-global；已共用
+    `resolveLocalControlledLeaderGroup(context, allowSessionFallbackWithoutGroup)`，已有 group evidence
+    时只认当前 group，本地队长组为 local support，外部队长组不是 local support。
+- Manager 判断：
+  - CR212 source gate 接受；不改 tooltip hover 坐标、截图 ROI、截图时机、
+    OCR/template/click/navigation/input 业务逻辑。
+  - 仍不能标 Done；fresh runtime 必须验证同 hash 只发一次 `TEAM_ROLE_TOOLTIP`、本地队长组 member
+    空闲 maintenance scan suppressed、队长主动维护 broadcast/capability 仍能响应、外部队长/leader absent/session completed
+    恢复旧扫描。
+- 最终本地验证：
+  - `mvn -q -DskipTests compile` 退出 `0`。
+  - `mvn -q -DskipTests test-compile` 退出 `0`。
+  - `mvn -q "-Dtest=com.bot.dhxy.team.TeamRoleCR212TooltipHashGroupingTest,com.bot.dhxy.service.TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest,com.bot.dhxy.service.AutoBattleCR212IdleBroadcastGateWiringTest" test`
+    退出 `0`。
+
+### 2026-07-07 / CR212 reviewer repair：tooltip group 级 idle broadcast suppression
+
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - 工作区仍有大量 unrelated dirty/deleted/untracked 文件；本轮只修 CR212 touched paths，
+    不 revert/reset/clean。
+  - 顶部 no-local-test 模式是早前全项目记录；本轮用户明确要求补 CR212 focused tests
+    并运行 focused/compile/test-compile，因此按最新显式指令执行。
+  - 当前 CR212 代码证据：`TaskMaintenanceService.recordLocalTeamTooltipGroup(...)` 已记录
+    `tooltipGroupsByHash`，但 `leaderPlayerId`、`localLeaderControlled`、
+    `externalLeader`、`leaderWindowId` 仍是 session 全局；`shouldSuppressIdleMaintenanceBroadcast(...)`
+    只看 session 全局 `localLeaderControlled + leaderWindowId`，没有按当前窗口所属
+    `groupHash` 判断。
+- Reviewer blocker：
+  - 同一 `localTeamSessionKey` 内可能存在多个 tooltip hash group；A 组本地队长、B 组外部队长时，
+    session 全局 suppress 会误伤 B 组 member，或写入顺序反过来让 A 组不 suppress。
+- Repair 要求：
+  - suppression 必须先定位当前 window/player 所属 tooltip group，再按该 group 的
+    `leaderPlayerId -> leaderWindowId` 映射、`leaderWindowId != currentWindowId`、session 未完成
+    判断。
+  - `LocalTeamTooltipGroup` 内记录 `leaderPlayerId`、`leaderWindowId`、
+    `localLeaderControlled`、`externalLeader`；新增 `windowId -> groupHash` 或等价映射。
+  - 补 focused tests 覆盖同 session 两个 hash group 的两种写入顺序，以及不同 session 同 hash 不复用。
+- Worker repair 结果：
+  - `TaskMaintenanceService` 新增 `windowTooltipGroupHash`，`recordLocalTeamTooltipGroup(...)`
+    将当前 `windowId` 绑定到 strict `groupHash`。
+  - `LocalTeamTooltipGroup` 现在记录 `leaderPlayerId`、`leaderWindowId`、
+    `localLeaderControlled`、`externalLeader`；session 全局字段只保留诊断/兼容，不再作为
+    idle broadcast suppression 的唯一依据。
+  - `shouldSuppressIdleMaintenanceBroadcast(...)` 先按当前 `windowId` 找所属 group，再判断该
+    group 是否本地队长受控、leaderWindowId 非当前窗口且 session 未完成。外部 leader group
+    member 不会继承同 session 内其他 group 的 suppress。
+- RED / GREEN：
+  - RED：
+    `mvn -q "-Dtest=com.bot.dhxy.team.TeamRoleCR212TooltipHashGroupingTest,com.bot.dhxy.service.TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest,com.bot.dhxy.service.AutoBattleCR212IdleBroadcastGateWiringTest" test`
+    先失败于 mixed group 场景：
+    `external leader group member must stay unsuppressed after local group writes later`。
+  - GREEN focused：
+    同一命令退出 `0`；覆盖 local-first/external-second、external-first/local-second 两种写入顺序，以及不同 session 同 hash 不复用。
+  - GREEN compile / test-compile：
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+
+### 2026-07-07 / CR212 Reviewer B P2 repair：local support member 也必须 group-aware
+
+- Reviewer B 复审结果：
+  - 原 P1 已关闭。
+  - 新 P2：`TaskMaintenanceService.isLocalSupportMemberSession(...)` 仍只看 session 级
+    `hasDetectedLocalLeader(context)`；同一 `localTeamSessionKey` 内如果 A hash group 有本地
+    leader、B hash group 是 external leader，B group member 虽然不会 suppress idle broadcast，
+    但仍会被当成本地 support member，影响 `AutoBattleTask` standalone return-team、
+    `SUMMON_SKILL` capability gate，以及 `AutoCombatService` 的 COMMON_BOX/FIRST_AID 等 gate。
+- RED：
+  - 在 `TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest` mixed session 两个写入顺序里新增断言：
+    local group member `isLocalSupportMemberSession == true`，external group member
+    `isLocalSupportMemberSession == false`，且 external group member 继续不 suppress。
+  - `mvn -q "-Dtest=com.bot.dhxy.team.TeamRoleCR212TooltipHashGroupingTest,com.bot.dhxy.service.TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest,com.bot.dhxy.service.AutoBattleCR212IdleBroadcastGateWiringTest" test`
+    先失败于：
+    `external leader group member must not inherit unrelated local support membership`。
+- Repair：
+  - 新增 `resolveLocalControlledLeaderGroup(context, allowSessionFallbackWithoutGroup)`，
+    `isLocalSupportMemberSession(...)` 和 `shouldSuppressIdleMaintenanceBroadcast(...)` 共用同一
+    group-aware 判断。
+  - 当前窗口已有 `windowId -> groupHash` evidence 时，只按该 group 判断：
+    `localLeaderControlled=true && leaderWindowId != null` 才算本地 support member；
+    `externalLeader=true` 或 `leaderWindowId=null` 返回 false。
+  - 当前窗口还没有 group evidence 的 pending 阶段保留旧 session-level fallback，避免成员在启动探测期间永久卡住。
+- GREEN：
+  - 同一 CR212 focused 命令退出 `0`。
+
+### 2026-07-07 / CR212 implementation worker：tooltip hash 分组与本地队长受控 member idle gate
+
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short` 显示工作区已有大量 unrelated dirty/untracked 文件；本轮不
+    revert/reset/clean，只在 CR212 允许路径上叠加最小改动。
+  - `git show --stat --oneline @{u} -- <CR212 touched paths>` 当前无输出，说明 pushed
+    baseline 对本轮拟触碰路径没有比 HEAD 更新的独立改动。
+  - `git diff -- <CR212 touched paths>` 显示这些路径已有本地迁移差异，尤其
+    `TaskMaintenanceService` 已包含 local-team session、capability gate、
+    completed-session tombstone、maintenance broadcast ROI matcher、summon-skill FIFO 等本地
+    改动；`WindowTaskControlService` 已在 same-queue 多窗口启动中创建
+    `localTeamSessionKey`；`WindowTaskRunner` 已在 live role preflight 后调用
+    `taskMaintenanceService.markLocalTeamWindowRoleDetected(...)`，并在 runner queue finally
+    调用 `completeLocalTeamSessionWindow(...)`；`TeamRoleDetectionService` 已通过
+    `TEAM_ROLE_TOOLTIP` 云端请求发送 raw tooltip payload，且 request 已包含
+    `imageSha256`。
+- 本轮实现边界：
+  - 不改 tooltip hover 坐标、截图 ROI、截图时机、OCR/template/click/navigation/input 业务逻辑。
+  - 第一版只做 strict `imageSha256` 分组，不做 fuzzy/perceptual、本地 OCR 或洗图。
+  - 在现有 `TeamRoleDetectionService`、`WindowTaskControlService`、
+    `WindowTaskRunner`、`TaskMaintenanceService`、`AutoBattleTask` 链路内补齐接口和 gate。
+- Worker 实现结果：
+  - `TeamRoleDetectionService` 新增带 evidence 的 `detectCurrentRoleWithEvidence(...)`，
+    并在 local-team session 内按 `localTeamSessionKey + imageSha256` 缓存
+    `TEAM_ROLE_TOOLTIP` 代表图结果；同 hash 后续窗口复用代表 decision，再用
+    `leaderClientId == currentPlayerId` 本地派生 `LEADER` / `MEMBER`。
+  - `WindowTaskControlService.startSameQueue(...)` 在注册 local-team candidate 时，把已有
+    snapshot/native title 可解析到的 `windowId -> playerId` 传给
+    `TaskMaintenanceService`；没有可用 playerId 时保持保守旧语义。
+  - `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 在 role preflight 后，把 tooltip
+    `groupHash`、`leaderPlayerId`、`currentPlayerId` evidence 写入现有 local-team session。
+  - `TaskMaintenanceService` 扩展 session state：记录 `windowPlayerIds`、
+    `playerWindowIds`、strict tooltip group、`leaderPlayerId`、
+    `localLeaderControlled/externalLeader`，并提供
+    `shouldSuppressIdleMaintenanceBroadcast(context)`。本地受控 leader 才 suppress；外部
+    leader / leader absent / completed session 不 suppress。
+  - `AutoBattleTask.maybeRunIdleMaintenance(...)` 只用该 gate 控制
+    `TaskMaintenanceRequest.handleMaintenanceBroadcast(...)`；`TEAM_RETURN`、
+    `FIRST_AID`、`SUMMON_SKILL`、`COMMON_BOX`、`LEFT_TOP_STATUS` capability 链路不关闭。
+- RED / GREEN：
+  - RED：
+    `mvn -q "-Dtest=com.bot.dhxy.team.TeamRoleCR212TooltipHashGroupingTest,com.bot.dhxy.service.TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest,com.bot.dhxy.service.AutoBattleCR212IdleBroadcastGateWiringTest" test`
+    先失败于 test-compile，新 CR212 API/gate 尚不存在。
+  - GREEN focused：
+    `mvn -q "-Dtest=com.bot.dhxy.team.TeamRoleCR212TooltipHashGroupingTest,com.bot.dhxy.service.TaskMaintenanceCR212LocalTeamIdleBroadcastGateTest,com.bot.dhxy.service.AutoBattleCR212IdleBroadcastGateWiringTest" test`
+    退出 `0`。
+  - GREEN compile / test-compile：
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+- Fresh runtime gate：
+  - 同队五开启动日志应看到同一 `groupHash` 一次 representative execute，其他窗口 reused；
+    组内 role 由 `leaderClientId + currentPlayerId` 派生。
+  - 本地队长受控时，队员 idle auto-battle 不再周期刷 unexpected maintenance broadcast
+    scan；队长主动打开维护 capability 后队员仍应响应。
+  - 外部队长、leader absent、leader stop/error/session completed 后恢复旧扫描。
+
+### 2026-07-07 / CR212 manager kickoff：tooltip hash 分组与本地队长受控时队员降频
+
+- 接手基线：
+  - 当前分支：`codex/hybrid-cloud-protection`。
+  - `git status --short --branch` 显示工作区已有大量 unrelated dirty / untracked 文件；本轮先只更新 CR212 文档和 dashboard，然后派 worker 实现，不 revert、不 reset、不清理他人改动。
+  - 现有代码证据：
+    - `TeamRoleDetectionService` 当前每个窗口独立 hover/capture tooltip，并在 cloud active 时通过 `TEAM_ROLE_TOOLTIP` 发送 tooltip raw 图；请求里已有 `imageSha256` 字段。
+    - `WindowTaskControlService` / `MultiWindowTaskManager` / `WindowTaskRunner` 当前已有 `localTeamSessionKey`、`localLeaderWindowId`、`localLeaderPresent` 传递链。
+    - `TaskMaintenanceService` 当前已有 local-team session / capability gate；`AutoBattleTask.maybeRunIdleMaintenance(...)` 当前仍构造 `TaskMaintenanceRequest.handleMaintenanceBroadcast(true)`。
+- CR212 目标：
+  - 启动批次内对 tooltip raw 图做保守 hash 分组，同 hash 组只发一张代表图到云端 `TEAM_ROLE_TOOLTIP`。
+  - 云端返回 `leaderClientId` 后，本地用账号 ID 派生组内 leader/member，并记录按账号 ID 为主的本地同队关系。
+  - 同队队长在本地且程序受控时，队员关闭空闲 unexpected maintenance 扫描；队长放权后的 maintenance broadcast 图片匹配仍必须保留。
+  - 队长暂停/恢复不改变该 broadcast 规则；队长 stop/error/session completed/local leader absent/external leader 才恢复队员空闲扫描。
+- 流程：
+  - 已在 `docs/PACKAGE_ARCHITECTURE.md` 新建 `CR212` 表格行和详细卡。
+  - 下一步：刷新 `docs/cr-dashboard-data.js`，派 worker 实现，再拉两个独立 reviewer 审核。
+
+### 2026-07-07 / CR207 worker repair：Mencius round-3 watchdog outcome P2
+
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short -- <本次允许路径>` 显示：
+    `XiuluoTaskV2.java`、`docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、
+    `docs/cr-dashboard-data.js` 已是本地 modified；
+    `XiuluoBrainCR207BatchAWiringTest.java`、`XiuluoBrainRoundStateBehaviorTest.java`、
+    `XiuluoBrainLoopWiringTest.java` 为本地 untracked CR207/cloud-migration 测试文件。
+  - `git show --stat --oneline '@{u}' -- <本次允许路径>` 只显示 pushed baseline 的
+    `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js`
+    文档变更；当前 Java/测试业务路径以本地 CR207 worker/reviewer 记录为迁移基线，不能 revert/reset。
+  - 当前代码证据：
+    `waitForXiuluoBrainEvent(...)` 在 `yieldAfterMustYield(...)` 返回
+    `XiuluoEventParkResult` 且 `realParkCompleted=true` 后，无条件构造
+    `READY_TO_CONTINUE / CONTINUE_CHAIN / cloud requested WAIT_COMBAT event wait finished`；
+    `parkAfterYieldIfNeeded(...)` 在真实 event wait 后若 watchdog budget 耗尽，会返回
+    `XiuluoEventParkResult.parked(preCombatWatchdogTimeoutOutcome(...))`。
+- 本次目标：
+  - 只修本地 `WAIT_FOR_EVENT` shell outcome 保留语义。
+  - 普通 park/wake 完成仍包装为 `READY_TO_CONTINUE`。
+  - `FAILED` / `STOPPED` transaction 或 next phase `FAILED` / `STOPPED` 的 parked outcome
+    必须保留或 fail closed，不能改写成普通 wait finished。
+  - 保持 zero-timeout/no-runtime/empty-wake-types no-real-park 修复不回归；不改 OCR/NPC/dialog/
+    navigation/click/return-item/auto-combat/external sidecar。
+- Worker 修复结果：
+  - `XiuluoTaskV2.waitForXiuluoBrainEvent(...)` 不再用 `executionStateFor(...)`
+    重建一个 cloud phase state 来执行 pending event wait；改为使用 `XiuluoBrainRoundState.current()`
+    中与 pending `XiuluoWaitSpec` 同源的本地 state，避免真实 wait 的本地失败/停止 outcome 被丢失。
+  - `yieldAfterMustYield(...)` 返回 `realParkCompleted=true` 后，若 parked outcome 的
+    `transactionResult` 是 `FAILED` / `STOPPED`，或 next phase 是 `FAILED` / `STOPPED`，
+    shell 直接保留原 parked outcome 上报，不再包装成
+    `READY_TO_CONTINUE / CONTINUE_CHAIN / cloud requested WAIT_COMBAT event wait finished`。
+  - 普通 successful park/wake 仍按原语义包装为 `READY_TO_CONTINUE`；no-runtime、empty wake
+    types、zero-timeout 仍是 no-real-park reject，其中 zero-timeout 仍是 invalid wait spec，
+    不是 watchdog。
+- RED / GREEN：
+  - RED：
+    `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    先失败，新测试报：
+    `watchdog failure must not look like ordinary wait completion: cloud WAIT_FOR_EVENT completed: WAIT_COMBAT`。
+  - GREEN focused suite：
+    `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    退出 `0`。
+  - GREEN cloud/focused suite：
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    退出 `0`。
+  - GREEN compile / test-compile：
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+  - Dashboard：
+    `node scripts/generate-cr-dashboard-data.js` 退出 `0`，生成
+    `docs/cr-dashboard-data.js`。
+- Review gate：
+  - Reviewer A `Russell`：APPROVED，无 P0/P1/P2/P3 blocker；确认真实 park 后 watchdog
+    failure 保留 `FAILED`/terminal outcome，普通 wake 仍是 `READY_TO_CONTINUE`，并运行 CR207
+    focused cloud/修罗 suite 退出 `0`。
+  - Reviewer B `Ramanujan`：APPROVED，无 P0/P1/P2 blocker；仅记录非阻塞 P3 命名风险
+    `acceptedRealEventWait(...)` 也承载 failed parked outcome，但当前上报不会误报成功；
+    focused suite 与 `compile` 均退出 `0`。
+  - 双 reviewer gate 已满足；CR207 仍未 claim fresh runtime。
+- fresh runtime gate：
+  - 本轮完成本地 worker 修复、focused gate、双 reviewer gate；未 claim fresh runtime。
+  - 下一轮真实修罗长战斗/长 pre-combat wait 中，如果 event wait 后 watchdog budget 耗尽，
+    上报云脑的 outcome 必须保留
+    `xiuluo pre-combat watchdog wait budget timeout...` / `FAILED`，不能显示为普通
+    `cloud requested WAIT_COMBAT event wait finished`。
+  - 普通 `WAIT_FOR_EVENT WAIT_COMBAT` wake 仍应继续上报 `READY_TO_CONTINUE`；
+    zero-timeout/no-runtime/empty wake types 仍应 fail closed 为 no-real-park。
+
+### 2026-07-07 / CR207 worker repair：长战斗合法 WAIT_FOR_EVENT loop guard P1
+
+- 接手基线：
+  - 当前分支 / HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - 本次只允许触碰：
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`、
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRoundState.java`、
+    `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainCR207BatchAWiringTest.java`、
+    `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRoundStateBehaviorTest.java`、
+    `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainLoopWiringTest.java`，
+    以及 CR207 文档 / dashboard；不 revert、不 reset、不清理他人 dirty work。
+  - `git status --short --branch -- <touched paths>` 证据：
+    `XiuluoTaskV2.java` 已是本地 modified；
+    `XiuluoBrainRoundState.java`、`XiuluoBrainLoopWiringTest.java`、
+    `XiuluoBrainRoundStateBehaviorTest.java` 目前是本地 untracked cloud-migration 文件；
+    `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js`
+    已有他人文档改动。
+  - `git show --stat --oneline @{u} -- <CR207 touched paths>` / 现有顶部 CR207 记录共同表明：
+    pushed baseline 对本次 Java touched paths 没有更晚的独立业务版本可回退；当前可信业务基线是
+    已经落地的 CR207 WAIT_COMBAT 修复约束，即：
+    `WAIT_COMBAT + IN_COMBAT` 必须保留 `enteredBattleByXiuluo` 并走
+    `WAIT_COMBAT_STATE_CHANGE` / `COMBAT_STATE_CHANGED` event wait，不能恢复本地第二大脑。
+  - 当前源代码直接证据：
+    `runRoundWithXiuluoBrain()` 仍是 `int loopGuard = 0; while (loopGuard++ < 16)`；
+    `WAIT_FOR_EVENT WAIT_COMBAT` 已经通过 `waitForXiuluoBrainEvent(...) -> yieldAfterMustYield(...)`
+    做真实 park；因此现状会把“即时空转”与“真 park 后 maintenance/timeout 唤醒”混算进同一个 16 次 guard。
+- 本次返工目标：
+  - 不调大 `16`，而是把“连续 immediate cloud/local churn”与“真实 event parking/maintenance cycle”
+    分离。
+  - 合法 `WAIT_FOR_EVENT` 完成真实 park 后必须重置或不累计 immediate-loop guard；
+    没有真实 park 的 immediate `WAIT_COMBAT` 热循环仍必须 fail closed。
+  - 不改 NPC / OCR / dialog / navigation / click / return item / auto combat 算法。
+- Worker 修复结果：
+  - `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` 不再使用外层
+    `while (loopGuard++ < 16)` 粗暴累计所有云脑命令；改为在每次非终止命令后只统计
+    immediate churn。
+  - `XiuluoBrainRoundState` 新增 immediate-loop guard 状态：
+    `noteImmediateLoopAndCheckExceeded(16)` 只给没有真实 park 的 command cycle 计数；
+    `noteRealEventWaitCompleted()` 在 `WAIT_FOR_EVENT` 完成真实 `yieldAfterMustYield(...)`
+    后清零。
+  - 结果是一个合法长战斗 maintenance 周期
+    `EXECUTE_PHASE WAIT_COMBAT -> WAIT_FOR_EVENT WAIT_COMBAT -> wake -> step`
+    不再累计成 2 次外层误杀；但如果云脑再次退化成没有真实 park 的 immediate
+    `WAIT_COMBAT` churn，仍会在第 16 次 fail closed。
+- RED / GREEN：
+  - RED：
+    `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    初次失败，报 `XiuluoBrainRoundState` 缺少
+    `noteImmediateLoopAndCheckExceeded(...)` / `noteRealEventWaitCompleted()`；证明新 guard 尚未实现。
+  - GREEN focused suite：
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    退出 `0`。
+  - GREEN compile / test-compile：
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+- 本次未动 external：
+  - 未修改 `D:\mavenProject\dhxy-cloud-brain\...DecisionEngine.java` 或外部测试。
+  - 不需要重启 external sidecar；本次 P1 完全在 DHXY 本地 shell / state / focused tests 内收口。
+- fresh runtime gate：
+  - 真实长战斗中，即使出现多次 `WAIT_FOR_EVENT WAIT_COMBAT` maintenance/timeout wake，也不应再看到
+    `xiuluo.brain.loop.failClosed ... reason=cloud brain loop guard exceeded`。
+  - 若云脑未来再次回退成没有真实 park 的 immediate `WAIT_COMBAT` churn，仍应保留原 fail-closed 行为。
+- Independent review update 2026-07-07:
+  - Reviewer A `019f3ae2-468f-7a82-a2bd-7ab1d10b3e07` approved the first guard refactor.
+  - Reviewer B `019f3ae2-e502-7ee0-9392-1acf07598461` returned CHANGES_REQUESTED with P1:
+    resetting the immediate-loop guard by `command.getActionType() == WAIT_FOR_EVENT` is not
+    sufficient. `waitForXiuluoBrainEvent()` can accept a pending wait spec but the underlying
+    `yieldAfterMustYield(...)` / `parkAfterYieldIfNeeded(...)` may return without a real park
+    (`runtime == null`, empty wake types, zero timeout). Such no-real-park waits must not reset the
+    guard; they must fail closed or keep counting as immediate churn. Reviewer B also requested a
+    stronger loop-driving behavior test, not only helper/source-string tests.
+- Reviewer B P1 follow-up repair 2026-07-07:
+  - `yieldAfterMustYield(...)` / `parkAfterYieldIfNeeded(...)` now return
+    `XiuluoEventParkResult(outcome, realParkCompleted)` instead of treating every
+    `WAIT_FOR_EVENT` command as a real wait. The only `realParkCompleted=true` paths are after the
+    local shell reaches the actual `WindowReadyEventBus.awaitNewer...` wait and finishes that park.
+  - `runtime == null`, empty wake types, zero timeout, missing wait spec, and maintenance outcomes
+    before the wait all return `realParkCompleted=false`.
+  - `waitForXiuluoBrainEvent(...)` now rejects a cloud `WAIT_FOR_EVENT WAIT_COMBAT` if the
+    underlying path did not perform a real park; `XiuluoBrainShellResult` carries
+    `realEventWaitCompleted`, and `runRoundWithXiuluoBrain(...)` resets the immediate guard only
+    through `cloudRoundState.noteCommandCycleAndCheckExceeded(shellResult.realEventWaitCompleted(),
+    16)`.
+  - Behavior tests were strengthened:
+    `XiuluoBrainCR207BatchAWiringTest` now invokes the real command shell and proves no-runtime,
+    empty-wake-types, and zero-timeout `WAIT_FOR_EVENT` commands are rejected instead of resetting
+    the guard; `XiuluoBrainRoundStateBehaviorTest` keeps the >16 legal real-park cycle and no-park
+    churn fail-closed coverage; `XiuluoBrainLoopWiringTest` guards that action type alone no longer
+    resets.
+  - RED for Reviewer B P1: after adding the invalid-park behavior tests, the zero-timeout case still
+    accepted the `WAIT_FOR_EVENT` command, proving action-type reset was unsafe.
+  - GREEN after repair:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    exited `0`;
+    `mvn -q -DskipTests compile` exited `0`;
+    `mvn -q -DskipTests test-compile` exited `0`.
+  - No external `dhxy-cloud-brain` file was changed in this follow-up; no sidecar restart is
+    required for this local shell repair. CR207 remains review/fresh gated, not Done.
+- Reviewer A P2 follow-up repair 2026-07-07:
+  - Reviewer A 二轮指出 zero-timeout invalid wait spec 虽然已经 reject/no-real-park，但误用了
+    `preCombatWatchdogTimeoutOutcome(...)`，导致日志出现
+    `pre-combat watchdog wait budget timeout`。这会把无效 wait spec 误诊为 pre-combat watchdog
+    预算耗尽。
+  - 本次只修该 P2：`parkAfterYieldIfNeeded(...)` 在 `waitSpec.getTimeoutMs() == 0L` 时先于
+    `boundedPreCombatWaitTimeoutMs(...)` 直接返回 plain no-real-park outcome，日志为
+    `invalid zero-timeout wait spec`；真正 watchdog 预算耗尽仍保留原
+    `preCombatWatchdogTimeoutOutcome(...)` 语义。
+  - `waitForXiuluoBrainEvent(...)` 的 reject reason 改为带出 no-park outcome message，所以
+    zero-timeout `WAIT_FOR_EVENT WAIT_COMBAT` 会明确 reject 为
+    `invalid no-real-park wait spec: zero timeout ...`，不会 reset immediate guard。
+  - RED：
+    `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    先失败，原因是 reject reason 不含 `zero timeout`，且日志仍有
+    `pre-combat watchdog wait budget timeout`。
+  - GREEN：
+    `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest" test`
+    退出 `0`；
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+  - 未改 OCR/NPC/dialog/navigation/click/return item/auto combat；未改 external sidecar。CR207 仍是
+    review/fresh gated，不能 claim fresh runtime。
+- Independent review update 2026-07-07:
+  - Reviewer B `019f3b02-6088-79b2-a27d-c40eaaaf5f84` APPROVED：zero-timeout/no-real-park P2
+    已修到位，focused suite 退出 `0`。
+  - Reviewer A `019f3b02-08d7-70f0-bccf-d14e41009458` CHANGES_REQUESTED / P2：真实 event
+    park 后如果 `parkAfterYieldIfNeeded(...)` 返回
+    `preCombatWatchdogTimeoutOutcome(...)`，`waitForXiuluoBrainEvent(...)` 仍会把该
+    `FAILED / MUST_YIELD / xiuluo pre-combat watchdog wait budget timeout...` outcome
+    统一包装成 `READY_TO_CONTINUE / CONTINUE_CHAIN / cloud requested WAIT_COMBAT event wait
+    finished`。这会让日志看见 watchdog，但上报给云脑的 outcome/facts 像普通 wait 完成。
+  - 修复方向：`waitForXiuluoBrainEvent(...)` 只在普通 park/wake 完成时包装为
+    `READY_TO_CONTINUE`；如果 `parked.outcome().transactionResult()` 为 `FAILED` /
+    `STOPPED`，或 next phase 已是 `FAILED` / `STOPPED`，必须保留原 outcome 或显式
+    fail-closed，不能改写成成功 wait。补行为测试覆盖真实 watchdog failure 不被包装成
+    `READY_TO_CONTINUE`。CR207 仍 blocked，不能 fresh。
+
+### 2026-07-07 / CR207 worker repair：WAIT_COMBAT 云脑热循环
+
+- 接手基线：
+  - DHXY 当前分支/HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` 显示工作区已有大量无关 modified/deleted/untracked 文件；本次只
+    触碰 CR207 指定的 修罗云脑 WAIT_COMBAT 协议/本地 shell/测试/文档，不 revert、不 reset、不清理
+    他人改动。
+  - `git show --stat --oneline @{u} -- <CR207 touched paths>` 只显示
+    `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js` 文档变更；
+    当前 `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRoundState.java`、
+    `src/main/java/com/bot/dhxy/cloud/xiuluo/*`、`src/test/java/com/bot/dhxy/cloud/xiuluo/*` 多为本地
+    云脑迁移新增/dirty 路径，不能用本地当前行为当业务基线。
+  - `git diff -- src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java ...` 证据：本地
+    `XiuluoTaskV2` 已有 cloud-brain shell；`WAIT_COMBAT` 命令执行会在
+    `phaseOutcome result=SHARED_STATE_TRIGGERED yield=MUST_YIELD localNext=WAIT_COMBAT` 后先上报云脑，
+    旧路径 `yieldAfterMustYield(...)` 只在 action outcome 之后才可能 park。
+  - 外部 `D:\mavenProject\dhxy-cloud-brain` 目前不是 git 仓库（`git status` 报
+    `fatal: not a git repository`），只能记录文件级修改和 Maven 验证，无法记录 pushed commit。
+- fresh 失败证据：
+  - `logs/dhxy-console.log` `2026-07-06 23:47:00.973`：
+    `xiuluo.brain.loop.failClosed ... reason=cloud brain loop guard exceeded`。
+  - `stateSeq=7..17` 连续 `WAIT_COMBAT result=SHARED_STATE_TRIGGERED yield=MUST_YIELD
+    localNext=WAIT_COMBAT message=combat entry detected; report to XIULUO_BRAIN`。
+  - 外部云脑每次都返回 `EXECUTE_PHASE WAIT_COMBAT`，没有表达旧本地
+    `WAIT_COMBAT_STATE_CHANGE` / `COMBAT_STATE_CHANGED` event wait。
+  - action outcome facts 中 `enteredBattleByXiuluo=false`，说明首次确认 `IN_COMBAT` 后本轮入战状态
+    没有被保留，后续真实脱战无法可靠进 `RETURN_HOME`。
+- 修复要求：
+  - 不改 NPC/OCR/dialog/navigation/return item/auto combat 算法。
+  - `WAIT_COMBAT + IN_COMBAT` 必须释放 task turn 并等待 `COMBAT_STATE_CHANGED`，不能热循环立即再执行
+    同一 phase。
+  - 云脑仍负责 phase 决策；等待外部事件可用 `XiuluoBrainActionType.WAIT_FOR_EVENT` 或等价小改法表达。
+  - 首次确认 `IN_COMBAT` 后必须保留 `enteredBattleByXiuluo=true` / combat source，真实脱战后才能进入
+    `RETURN_HOME`。
+
+- Worker 修复结果：
+  - DHXY `XiuluoTaskV2.waitCombat(...)` 的 `IN_COMBAT` 分支现在保留已入战状态和原
+    `XiuluoWaitSpec`，云脑 enabled 路径也走旧本地 `WAIT_COMBAT_STATE_CHANGE` /
+    `COMBAT_STATE_CHANGED` event-wait 语义，不再返回 bare
+    `state.next(WAIT_COMBAT, "combat-entry-detected-cloud-fact")`。
+  - `XiuluoBrainRoundState` 记录并消费 pending waitSpec；带 waitSpec 的
+    `SHARED_STATE_TRIGGERED/MUST_YIELD` 不再被视为必须先上报、跳过本地 park 的事实。
+  - `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` 已支持
+    `XiuluoBrainActionType.WAIT_FOR_EVENT`，仅允许当前 `WAIT_COMBAT` 事件等待；执行后向云脑上报
+    `READY_TO_CONTINUE/CONTINUE_CHAIN`，再由云脑决定是否重新 `EXECUTE_PHASE WAIT_COMBAT` 读取真实状态。
+  - DHXY dev sidecar 和外部 `DecisionEngine` 对 post-entry
+    `WAIT_COMBAT + IN_COMBAT / SHARED_STATE_TRIGGERED / MUST_YIELD` 返回
+    `WAIT_FOR_EVENT WAIT_COMBAT`，不再 immediate `EXECUTE_PHASE WAIT_COMBAT`。
+  - 未修改 NPC/OCR/dialog/navigation/return item/auto combat 算法。
+- RED/GREEN：
+  - RED：外部 `mvn -q -Dtest=XiuluoBrainProtocolTest test` 先失败，期望
+    `WAIT_FOR_EVENT` 实际 `EXECUTE_PHASE WAIT_COMBAT`；DHXY focused suite 也先失败于缺少
+    local shell wait handling、waitSpec 保留和 stale source guard。
+  - GREEN DHXY focused：
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRoundStateBehaviorTest,com.bot.dhxy.task.xiuluo.XiuluoBrainLoopWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainHotStartWiringTest" test`
+    退出 `0`。
+  - GREEN DHXY compile/test-compile：
+    `mvn -q -DskipTests compile` 退出 `0`；
+    `mvn -q -DskipTests test-compile` 退出 `0`。
+  - GREEN external focused：
+    `D:\mavenProject\dhxy-cloud-brain` 下 `mvn -q -Dtest=XiuluoBrainProtocolTest test` 退出 `0`。
+  - External package：默认 `mvn -q package` 超过本地 184s 命令超时并遗留 Maven/Surefire 验证进程；
+    worker 已停止这些本次验证残留进程。随后在 focused protocol 已通过的前提下运行
+    `mvn -q -DskipTests package`，退出 `0` 并重建 jar。
+- Sidecar：
+  - 旧外部 cloud brain sidecar PID `40952` 已停止。
+  - 新 sidecar PID `26192` 正在运行
+    `D:\mavenProject\dhxy-cloud-brain\target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`
+    `--port=18080 --token=local-dev-token`，`127.0.0.1:18080` 正在监听。
+  - live HTTP probe：`start WAIT_COMBAT` -> 上报
+    `IN_COMBAT/SHARED_STATE_TRIGGERED/MUST_YIELD` -> `step` 返回
+    `action=WAIT_FOR_EVENT phase=WAIT_COMBAT`，不是 immediate `EXECUTE_PHASE WAIT_COMBAT`。
+- Fresh runtime 验收点：
+  - 进入战斗后应出现 `WAIT_FOR_EVENT WAIT_COMBAT` / 旧
+    `WAIT_COMBAT_STATE_CHANGE` park，并等待 `COMBAT_STATE_CHANGED`。
+  - 战斗真实结束后下一次 `WAIT_COMBAT` 应基于保留的 `enteredBattleByXiuluo=true` 进入
+    `RETURN_HOME`。
+  - 不应再看到连续同一个 `WAIT_COMBAT` immediate `EXECUTE_PHASE` 热循环，也不应再触发
+    `xiuluo.brain.loop.failClosed reason=cloud brain loop guard exceeded`。
+- Independent review update 2026-07-07:
+  - Reviewer A `019f3ac9-350a-7c63-b1d4-b6a3d1ba7bc8` approved the immediate `WAIT_COMBAT`
+    hot-loop repair with no P0/P1/P2.
+  - Reviewer B `019f3ac9-d439-7e52-9b1a-39b526c17b8a` found a P1 blocker: the current
+    `runRoundWithXiuluoBrain()` outer `loopGuard++ < 16` still counts legitimate
+    `WAIT_FOR_EVENT WAIT_COMBAT` parking/maintenance cycles. A normal long battle can therefore
+    still fail closed after about eight wake cycles even though each cycle performs real event
+    waiting. CR207 is Blocked again; do not ask for fresh runtime until a worker separates the
+    consecutive-immediate hot-loop guard from real event-wait cycles and adds focused tests for
+    `>16` legitimate waits plus the original immediate-loop failure.
+
+### 2026-07-07 / CR207 fixture gate 返工：DIALOG_POLICY 入战看打模板真入口
+
+- 接手基线：
+  - 当前分支/HEAD：`codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - upstream：`origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` 显示工作区已有大量无关 dirty / untracked 迁移改动；本次只允许
+    触碰 `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`、
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 和 CR207 文档/仪表盘，不
+    revert、不清理、不覆盖他人改动。
+  - `git diff -- src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java
+    src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java docs/ACTIVE_WORK.md
+    docs/PACKAGE_ARCHITECTURE.md` 证据：CR207 测试文件为本地 cloud/dev 迁移半成品；当前
+    `XiuluoBrainDevServerTest` 已引用
+    `images/template/xiuluo/enter_battle_dialog.png` 和
+    `images/template/dialog/xiuluo/xiuluo_enter_battle_kanda.png`，但仍保留整窗坐标
+    `284,387` / `265,378,39,18` 断言；`CloudDecisionDevServer` 的
+    `dialogPolicyGreenTemplateDecisionFor(...)` 先用
+    `dialogPolicyFixtureReplayMatch(...)` 对这两个 fixture 硬编码返回整窗坐标，再把 raw 图
+    直接与看打模板匹配。
+  - RED/缺陷证据：本次接手时运行
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test` 退出 `0`，但属于
+    假绿：`DIALOG_POLICY` 入战 fixture 命中
+    `reason=dev-dialog-pre-click-green-template-fixture-replay` 的 hardcode，并没有证明真实
+    `dialog-pre-click-option -> CLICK_GREEN_TEMPLATE -> 看打模板 -> CLICK` 路径能在洗图后命中。
+- 返工根因：
+  - `enter_battle_dialog.png` 是 `524x142` 裁剪 dialog ROI；测试不应断言整窗坐标。
+  - dev sidecar 的 `DIALOG_POLICY` pre-click green-template path 应与 dialog option template
+    业务路径等价：先做 `WASH_DIALOG_OPTION_TEMPLATE` 洗图，再用
+    `xiuluo_enter_battle_kanda.png` 模板匹配，而不是 raw-to-template 直匹配或 fixture hardcode。
+- 本次修复范围：
+  - 只改测试/support 文档，不改 `src/main` Java 业务实现。
+  - 收敛 `XiuluoBrainDevServerTest` 的真实 HTTP `DIALOG_POLICY` gate，断言
+    `action=CLICK`、`actionId=XiuluoDialogCatalog.OPTION_ENTER_BATTLE`、`candidateBox` 非空、
+    `click` 非空且落在 `candidateBox` 内，并使用 ROI-relative 坐标。
+  - `CloudDecisionDevServer` 复用/抽出已有 `WASH_DIALOG_OPTION_TEMPLATE` 洗图逻辑，删除入战
+    fixture hardcode 依赖。
+
+- 返工结果：
+  - `CloudDecisionDevServer.dialogPolicyGreenTemplateDecisionFor(...)` 已删除
+    `dialogPolicyFixtureReplayMatch(...)` 入战硬编码路径。
+  - `dialogPolicyGreenTemplateMatch(...)` 现在对 request raw payload 复用
+    `washDevImage(request, "WASH_DIALOG_OPTION_TEMPLATE", raw)`，即
+    `DevImagePreprocessor.washDialogOptionTemplateTextToBlackAndWhite(...)`，再用
+    `ImageFinder.find(washed, template, 0.80d)` 匹配看打模板。
+  - `XiuluoBrainDevServerTest.testCr207FixtureDrivenVisualNodesUseStageCorrectKandaEnterBattleDialog()`
+    保留真实 HTTP `DIALOG_POLICY` gate，断言 `action=CLICK`、
+    `actionId=XiuluoDialogCatalog.OPTION_ENTER_BATTLE`、`candidateBox` 非空、`click` 非空、
+    reason 为普通 `dev-dialog-pre-click-green-template` 且不包含 `fixture-replay`，并验证
+    `candidateBox` 在 `524x142` dialog ROI 内、click 落在 box 内。
+  - RED 证据：删除 hardcode 后，旧整窗断言失败为
+    `expected=265,378,39,18 actual=13,29,39,18`，证明真实匹配返回 ROI-relative 坐标。
+  - GREEN 证据：
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test` 退出 `0`。
+  - Testcase replay / marked output：
+    input `images/template/xiuluo/enter_battle_dialog.png`，output
+    `images/test-cases/dialog/xiuluo-enter-battle/output/enter_battle_dialog_kanda_policy_marked.png`。
+    标注内容为 `DIALOG_POLICY` 真入口洗图模板匹配得到的 ROI-relative
+    `candidateBox=13,29,39,18` 和 click `(33,38)`；红框/红点应落在“看打”选项上。
+    生成命令：PowerShell `System.Drawing` 打开 input 后绘制红框/红点并保存 marked PNG。
+  - 本次未改 `src/main` Java 业务实现，未使用洞内站位/target_near/野外取消图作为入战节点。
+- Manager / independent review 2026-07-07:
+  - 谢帅复核 diff、marked output，并重跑
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test`；退出 `0`。
+  - Reviewer A Aristotle `019f3a9a-0b6b-7de3-9ab7-4cf111632556`: APPROVED，无 P0/P1/P2。
+    重点确认真实 HTTP `DIALOG_POLICY` payload -> `WASH_DIALOG_OPTION_TEMPLATE` -> `ImageFinder`
+    -> `action=CLICK` 链路、未用洞内站位/野外取消图冒充入战节点、坐标断言改为 `524x142`
+    ROI 内校验、无 `src/main` 业务实现变更。
+  - Reviewer B Cicero `019f3a9a-4d4b-7251-8ea0-29c82ed21daa`: APPROVED，无 P0/P1/P2。
+    重点从假绿风险复核：测试通过真实 HTTP request，不是测试 helper 绕过；`actionId`、
+    `candidateBox`、`click` 断言足够；Java 测试范围未保留旧整窗坐标期望。
+  - 当前结论：CR207 入战 `DIALOG_POLICY` fixture gate 本地双审通过；仍不是 fresh runtime
+    通过，CR207 不能关，下一步仍需真实修罗 fresh runtime。
+
+### 2026-07-06 / CR207 fresh runtime blocker: accept navigation direct-click shortcut
+
+- User-required integration gate 2026-07-07:
+  - 用户要求 fresh runtime 前必须补“完整修罗闭环” integration test，不能只测单个
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_DIALOG` mapping。
+  - Gate scope:
+    simulate one full 修罗 round from cloud brain start through accept NPC, accept dialog,
+    post-accept maintenance handoff, tracker/objective route, enter-battle confirm, wait-combat,
+    return-home/team-return, and round completion.
+  - The integration must use existing testcase/case images where the local phase relies on vision
+    input, at minimum covering tracker/dialog/key visual nodes instead of only asserting state
+    strings. If a phase is protocol-only in the test, the test name/report must say so explicitly.
+  - Add both protocol/dev-server closed-loop coverage and the closest feasible DHXY-side loop
+    coverage so this class of `actionOutcome accepted -> step rejected -> xiuluo.brain.loop.failClosed`
+    bug is caught locally before the user is asked to run fresh.
+  - Do not ask the user for another 修罗 fresh run until this integration gate is green and reviewed
+    by two independent reviewers.
+
+- Worker baseline 2026-07-07 / full-loop integration gate:
+  - DHXY repo branch/HEAD before this worker edit:
+    `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git fetch origin` completed; upstream for this branch is
+    `origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short --branch` is heavily dirty with unrelated DHXY/cloud-migration changes,
+    including local/untracked `src/test/java/com/bot/dhxy/cloud/` and several
+    `src/test/java/com/bot/dhxy/task/xiuluo/*XiuluoBrain*Test.java` files. Do not reset, checkout,
+    revert, clean, or overwrite unrelated work.
+  - `git ls-files -- src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java
+    src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java
+    src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainCR207BatchAWiringTest.java
+    src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainAcceptTrackerWiringTest.java
+    src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRouteEnterBattleWiringTest.java
+    src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainCloudDecisionServiceTest.java`
+    returned no tracked paths; latest pushed baseline for these CR207 cloud/dev test sources is
+    therefore unavailable from git and the current local files are migration work-in-progress.
+  - `git show --stat --oneline @{u} -- <CR207 touched paths>` showed only docs/dashboard entries
+    (`docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`) in the
+    pushed commit, not the current local CR207 Java test sources.
+  - External `D:\mavenProject\dhxy-cloud-brain` still has no `.git` metadata in this workspace:
+    `git status`, `git branch --show-current`, and `git rev-parse HEAD` returned
+    `fatal: not a git repository`; external baseline is limited to visible source inspection.
+  - Required fixture candidates verified present before coding:
+    tracker panel synthetic raw/marked images, xiuluo hot-start story positive/false raw images,
+    wild-monster cancel raw image, the `20260706_221652_959...case.json`, and
+    `images/failure-cases/xiuluo` ACCEPT_TASK / NAVIGATE_TO_TARGET / WAIT_TRACKER failure images.
+  - Scope for this worker:
+    add full closed-loop integration/protocol gates and fixture-driven coverage only. Do not change
+    OCR/template/click/navigation/NPC/dialog/image algorithms, do not restore local fallback, and do
+    not swallow cloud failures.
+
+- Worker result 2026-07-07 / full-loop integration gate:
+  - DHXY tests added:
+    `XiuluoBrainDevServerTest.testCr207FullRoundLoopDirectAcceptObjectiveRouteTeamReturnCompletes()`,
+    `XiuluoBrainDevServerTest.testCr207FixtureDrivenVisualNodesEnterDevSidecar()`, and
+    `XiuluoBrainCloudDecisionServiceTest.testCr207DevServerServiceFullRoundLoopCompletesWithoutEmptyPhase()`.
+  - External protocol test added:
+    `XiuluoBrainProtocolTest.xiuluoBrainCr207FullRoundDirectAcceptObjectiveFallbackCompletesRound()`.
+  - Covered protocol chain:
+    cloud brain `start -> PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_DIALOG ->
+    AFTER_ACCEPT_MAINTENANCE_CHECK -> TRY_TRACKER_SHORTCUT -> NAVIGATE_TO_TARGET ->
+    CLICK_TARGET_NPC -> CONFIRM_ENTER_BATTLE -> WAIT_COMBAT -> RETURN_HOME -> WAIT_TEAM_RETURN ->
+    ROUND_DONE`.
+  - Fixture boundary:
+    `testCr207FixtureDrivenVisualNodesEnterDevSidecar()` sends existing tracker/dialog images into
+    the DHXY dev `IMAGE_PREPROCESS` sidecar and asserts green text bands/pixel counts, washed dialog
+    output, stddev, failure-case directory coverage, and the 2026-07-06 fail-closed case evidence.
+    Runtime click/OCR/navigation algorithms are not invoked or changed; protocol-only phases are
+    simulated by action outcome facts.
+  - Fixtures used:
+    `images/test-cases/task-tracker/xiuluo-task-panel/raw/xiuluo_tracker_panel_synthetic_raw.png`,
+    `images/test-cases/task-tracker/xiuluo-task-panel/output/xiuluo_tracker_panel_synthetic_marked.png`,
+    `images/test-cases/dialog/xiuluo-hotstart-story/raw/positive_story_raw.png`,
+    `images/test-cases/dialog/xiuluo-hotstart-story/raw/false_story_labels_raw.png`,
+    `images/test-cases/dialog/xiuluo-wild-monster-cancel/raw/wild_monster_cancel_option_raw.png`,
+    `logs/cases/2026-07-06/20260706_221652_959_xiuluo_v2_xiuluo_v2-14-round-1_FAILED_hwnd-471654.case.json`,
+    and `images/failure-cases/xiuluo` ACCEPT_TASK / NAVIGATE_TO_TARGET / WAIT_TRACKER directories.
+  - RED observed:
+    external `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `1` after the new full-loop test
+    was written because the new test helper emitted invalid JSON for extra context
+    (`Unexpected character ('}' ... expecting double-quote to start field name)`). This exposed a
+    test-fixture construction bug, not a production protocol gap.
+  - GREEN observed:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest" test`
+    exited `0`.
+    `mvn -q -DskipTests compile` exited `0`.
+    `mvn -q -DskipTests test-compile` exited `0`.
+    External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+  - No OCR/template/click/navigation/NPC/dialog/image algorithms were changed, and no local fallback
+    was restored.
+  - Remaining gate:
+    this is worker local integration status only. CR207 still needs independent reviewer approval
+    and a separate fresh runtime; do not claim 修罗 fresh runtime has passed.
+
+- Worker baseline 2026-07-07:
+  - DHXY repo branch/HEAD before this worker edit:
+    `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short` is heavily dirty with unrelated DHXY/cloud-migration changes; do not
+    reset, checkout, revert, clean, or overwrite unrelated work.
+  - External `D:\mavenProject\dhxy-cloud-brain` has no `.git` metadata in this workspace:
+    `git status`, `git branch --show-current`, and `git rev-parse HEAD` all returned
+    `fatal: not a git repository`.
+  - Visible protocol baseline before repair:
+    external `DecisionEngine.acceptNavigateNext(...)` and DHXY dev
+    `CloudDecisionDevServer.acceptNavigateNext(...)` only accept
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_CLICK_NPC` through `readyNext(...)`; both already
+    allow `ACCEPT_TASK_CLICK_NPC -> ACCEPT_TASK_DIALOG` in `acceptClickNext(...)`.
+  - Scope for this worker:
+    only add the direct-click shortcut mapping/tests/docs for
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_DIALOG`; no OCR/template/click/navigation/NPC/dialog
+    algorithm changes.
+
+- Latest fresh runtime evidence:
+  `logs/dhxy-console.log` `2026-07-06 22:16:52.889-22:16:52.959`.
+- Failure:
+  修罗云脑在 `ACCEPT_TASK_NAVIGATE_TO_NPC` 执行成功后 fail-closed：
+  cloud step returned `status=REJECTED ... reason=outcome cannot advance transactionResult=READY_TO_CONTINUE outcome=EXECUTED yieldPolicy=CONTINUE_CHAIN`,
+  then local execute gate rejected the empty/invalid command with
+  `phase must parse to XiuluoPhase:`, causing `xiuluo.brain.loop.failClosed` and task `FAILED`.
+- Root cause:
+  `XiuluoTaskV2.navigateToTaskNpc(...)` has an existing validated shortcut: when the leader is
+  already near `灵兽村使者`, the phase tries `npcClickService.clickNpcSmart(...)` directly and may
+  legitimately return `localOutcomeNextPhase=ACCEPT_TASK_DIALOG`.
+  CR207 external/dev cloud brain currently treats `ACCEPT_TASK_NAVIGATE_TO_NPC` as only allowed to
+  advance to `ACCEPT_TASK_CLICK_NPC`, so it rejects the legitimate nearby direct-click outcome.
+- Required repair:
+  In both DHXY dev sidecar and external `D:\mavenProject\dhxy-cloud-brain` protocol logic, accept
+  `ACCEPT_TASK_NAVIGATE_TO_NPC + READY_TO_CONTINUE/CONTINUE_CHAIN + localOutcomeNextPhase=ACCEPT_TASK_DIALOG`
+  as `EXECUTE_PHASE ACCEPT_TASK_DIALOG`, while preserving the existing navigation-to-click path
+  `localOutcomeNextPhase=ACCEPT_TASK_CLICK_NPC`.
+- Required tests:
+  add focused regression coverage proving the nearby direct-click outcome advances to
+  `ACCEPT_TASK_DIALOG` in the external `XiuluoBrainProtocolTest` and DHXY
+  `XiuluoBrainDevServerTest`; run the CR207 focused DHXY suite, external protocol test, compile,
+  and test-compile before fresh runtime is requested again.
+- Scope guard:
+  no OCR/template/click/navigation algorithm changes; this is only the cloud state-transition
+  whitelist for an already-existing local shortcut.
+
+- Worker result 2026-07-07:
+  - External `D:\mavenProject\dhxy-cloud-brain`:
+    `DecisionEngine.acceptNavigateNext(...)` now also accepts
+    `ACCEPT_TASK_NAVIGATE_TO_NPC + EXECUTED/READY_TO_CONTINUE/CONTINUE_CHAIN
+    + localOutcomeNextPhase=ACCEPT_TASK_DIALOG` and returns
+    `EXECUTE_PHASE ACCEPT_TASK_DIALOG`.
+  - DHXY dev sidecar:
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` has the same
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_DIALOG` mapping for local dev protocol parity.
+  - Tests added:
+    external `XiuluoBrainProtocolTest.cr207AcceptNavigationNearbyDirectClickAdvancesToDialog()`
+    and DHXY
+    `XiuluoBrainDevServerTest.testCr207AcceptNavigationNearbyDirectClickAdvancesToDialog()`.
+  - RED observed before implementation:
+    external `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `1` with
+    `reason=outcome cannot advance transactionResult=READY_TO_CONTINUE outcome=EXECUTED yieldPolicy=CONTINUE_CHAIN`;
+    DHXY `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test` exited `1`
+    with `action for ACCEPT_TASK_NAVIGATE_TO_NPC expected=EXECUTE_PHASE actual=`.
+  - GREEN observed:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest" test`
+    exited `0`.
+    `mvn -q -DskipTests compile` exited `0`.
+    `mvn -q -DskipTests test-compile` exited `0`.
+    External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+  - No OCR/template/click/navigation/NPC/dialog/image algorithms were changed.
+  - Remaining gate:
+    worker local gate is green, but CR207 still needs the required independent review/fresh-runtime
+    process before any completion claim for the 修罗 run.
+
+### 2026-07-06 / CR211 xiuluo v1 typed start endpoint planning
+
+- Role: 谢帅 manager/reviewer. Per AGENTS rule, manager does not write Java business implementation for CR211.
+- Branch/HEAD before CR211 planning edits: `codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- Current worktree is heavily dirty with unrelated DHXY/cloud-migration changes. Do not reset,
+  checkout, revert, clean, or overwrite unrelated work.
+- User decision:
+  after CR210 Gateway explanation, implement one new-style endpoint first so the structure is visible.
+- CR/card:
+  - Added CR211 row and card in `docs/PACKAGE_ARCHITECTURE.md`.
+  - Added plan file:
+    `docs/superpowers/plans/2026-07-06-xiuluo-brain-v1-start-endpoint.md`.
+- CR211 first implementation scope:
+  - External `D:\mavenProject\dhxy-cloud-brain` only, plus DHXY docs/dashboard status updates.
+  - Add `POST /api/v1/xiuluo/brain/start`.
+  - Add typed endpoint/service/request/response shape:
+    `XiuluoBrainStartEndpoint -> XiuluoBrainService.start(...)`.
+  - Preserve legacy `/api/cloud/decision + serviceId=XIULUO_BRAIN` behavior.
+  - Do not switch DHXY local runtime callers.
+  - Do not migrate 修罗 `step` or `action-outcome`.
+  - Do not change OCR/template/click/navigation/NPC/dialog/tracker/image algorithms.
+- Required worker tests:
+  - `mvn -q -Dtest=XiuluoBrainV1StartEndpointTest test`
+  - `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test`
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+  - `mvn -q -DskipTests compile`
+- Review gate:
+  worker output requires two independent reviewer approvals before CR211 can be considered complete.
+- Worker dispatched:
+  Peirce `019f3a3d-5b6d-76b2-ab29-f8b2368b4628` owns CR211 Task 1. Peirce may edit external
+  `dhxy-cloud-brain` v1 xiuluo start endpoint/service/model/test files and DHXY docs/dashboard
+  status only.
+
+Worker baseline 2026-07-06 / Peirce CR211 Task 1:
+
+- DHXY repo branch/HEAD while recording baseline: `codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`; `git status --short --branch` is heavily dirty with
+  unrelated DHXY/cloud migration changes already present. Do not reset, checkout, revert, clean, or
+  overwrite unrelated work.
+- External `D:\mavenProject\dhxy-cloud-brain` has no `.git` metadata in this workspace:
+  `git status --short --branch`, `git rev-parse HEAD`, `git rev-parse @{u}`, and upstream lookup all
+  returned `fatal: not a git repository`. Latest pushed external baseline is therefore unavailable
+  from this directory.
+- Visible external baseline before CR211 edits:
+  `CloudBrainServer.java` registers only the four CR210 legacy routes:
+  `/api/cloud/decision`, `/api/cloud/route-memory/outcome`,
+  `/api/cloud/route-memory/migrate`, and `/api/cloud/npc-click-smart/outcome`.
+  `rg "XiuluoBrainStartEndpoint|XiuluoBrainService|/api/v1/xiuluo/brain/start" src` returned no
+  matches; the CR211 endpoint/service/test files do not exist yet.
+- Legacy start baseline evidence:
+  `DecisionEngine.xiuluoBrainStart(...)` requires `windowId` and `taskRunId`, creates
+  `cloud-xiuluo-session-*`, sets `stateSeq=1`, creates phase/action tokens with
+  `xiuluoBrainToken(...)`, chooses `TRY_TRACKER_SHORTCUT` only when visible tracker hot-start facts
+  are present, otherwise normalizes blank `initialPhase` to `PREPARE_ROUND`, and emits
+  `reason=xiuluo.brain.start`. CR211 must preserve these start semantics without calling
+  `/api/cloud/decision`, `DecisionEngine.decisionResponse(...)`, or the `serviceId` switch.
+
+Worker result 2026-07-06 / Peirce CR211 Task 1:
+
+- External files changed:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\CloudBrainServer.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\api\xiuluo\XiuluoBrainStartEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\xiuluo\XiuluoBrainService.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\xiuluo\XiuluoBrainStartRequest.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\xiuluo\XiuluoBrainCommandResponse.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\xiuluo\XiuluoBrainSession.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\XiuluoBrainV1StartEndpointTest.java`
+- Implementation:
+  - Added Gateway route `POST /api/v1/xiuluo/brain/start`.
+  - Added typed endpoint/service/request/response shape:
+    `XiuluoBrainStartEndpoint -> XiuluoBrainService.start(...)`.
+  - Response JSON fields:
+    `status/windowId/taskRunId/sessionId/stateSeq/phaseToken/acceptedPhaseToken/phase/action/actionType/actionId/ttlMs/createdAtEpochMs/reason`.
+  - Missing `windowId` or `taskRunId` returns HTTP `200` with `status=REJECTED` typed JSON.
+  - v1 service temporarily owns its own v1 session store because only start is migrated in this CR.
+  - No DHXY local runtime caller was switched; legacy `/api/cloud/decision + serviceId=XIULUO_BRAIN`
+    remains unchanged. Do not mix v1 start with legacy step/action-outcome.
+- TDD / verification:
+  - RED before implementation:
+    `mvn -q -Dtest=XiuluoBrainV1StartEndpointTest test` exited `1` because the new path returned
+    `404 not_found`.
+  - `mvn -q -Dtest=XiuluoBrainV1StartEndpointTest test` exited `0`.
+  - `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test` exited `0`.
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Documentation:
+  - Updated CR211 row/card in `docs/PACKAGE_ARCHITECTURE.md` to
+    `Review：worker Task 1 已交付，待双 reviewer`.
+  - Ran `node scripts/generate-cr-dashboard-data.js` from `D:\mavenProject\DHXY`; it exited `0` and
+    generated 205 CR rows into `docs\cr-dashboard-data.js`.
+- Manager recheck / independent review 2026-07-07:
+  - 谢帅 rechecked the v1 files and confirmed the new v1 package has no `DecisionEngine`,
+    `decisionResponse`, `serviceId`, or `/api/cloud/decision` reference.
+  - 谢帅 searched DHXY `src/main/java`, `src/test/java`, and `scripts`; there is no
+    `/api/v1/xiuluo/brain/start` local caller.
+  - 谢帅 reran external `mvn -q -Dtest=XiuluoBrainV1StartEndpointTest test`,
+    `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test`,
+    `mvn -q -Dtest=XiuluoBrainProtocolTest test`, and `mvn -q -DskipTests compile`; all exited `0`.
+  - Reviewer A Bernoulli `019f3a48-a45c-72d2-b9c9-e0e3f868807c`: APPROVED, no P0/P1/P2.
+    Checked typed API contract, missing-field rejection, default phase, tracker hot-start phase,
+    and focused Maven tests.
+  - Reviewer B Fermat `019f3a49-0fae-7433-8496-30155f9fd803`: APPROVED, no P0/P1/P2.
+    Checked no legacy `DecisionEngine`/`serviceId` path, old endpoint compatibility, no DHXY
+    local caller switch, and focused Maven tests.
+  - CR211 final status: Done as a server-only typed endpoint pilot. No game fresh runtime required
+    until a later CR switches DHXY local 修罗 start to `/api/v1/xiuluo/brain/start`.
+
+### 2026-07-06 / CR210 cloud-brain API Gateway modular-monolith planning
+
+- Role: 谢帅 manager/reviewer. Per AGENTS rule, manager does not write Java business implementation for CR210.
+- Branch/HEAD before CR210 planning edits: `codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- Current worktree is heavily dirty with many unrelated DHXY/cloud-migration changes. Do not reset,
+  checkout, revert, clean, or overwrite unrelated work.
+- User decision:
+  - Adopt API Gateway + logical microservice + same-JVM modular monolith as the first cloud-brain server structure.
+  - DHXY local client should talk to the cloud API Gateway; the Gateway routes to internal endpoint/service adapters.
+  - Internal services should use direct Java calls in the first version, not HTTP between services.
+- CR/card:
+  - Added CR210 row and card in `docs/PACKAGE_ARCHITECTURE.md`.
+  - Added plan file:
+    `docs/superpowers/plans/2026-07-06-cloud-brain-api-gateway-modular-monolith.md`.
+  - Updated `docs/HYBRID_CLOUD_WORKFLOW.md` with the Gateway/logical-service architecture.
+- CR210 first implementation scope:
+  - External `D:\mavenProject\dhxy-cloud-brain` only, plus DHXY docs/dashboard updates.
+  - Introduce Gateway/router/endpoint-adapter structure around existing endpoints.
+  - Preserve old endpoints and `DecisionEngine` behavior:
+    `/api/cloud/decision`, `/api/cloud/route-memory/outcome`,
+    `/api/cloud/route-memory/migrate`, `/api/cloud/npc-click-smart/outcome`.
+  - Do not change OCR/template/click/navigation/route-memory/NPC click/修罗 phase/retry/fallback behavior.
+- Required worker tests:
+  - `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test`
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+  - `mvn -q -DskipTests compile`
+- Review gate:
+  worker output requires two independent reviewer approvals before CR210 can be considered complete.
+- Worker dispatched:
+  Curie `019f39eb-754d-7ae2-ab19-a78dc4e62a6d` owns CR210 Task 1. Curie may edit external
+  `dhxy-cloud-brain` Gateway/router/adapter/test files and DHXY docs/dashboard status only.
+
+Worker baseline 2026-07-06 / Curie CR210 Task 1:
+
+- DHXY repo branch/HEAD while recording baseline: `codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`; `git status --short --branch` is heavily dirty with
+  unrelated DHXY/cloud migration changes already present. Do not reset, checkout, revert, clean, or
+  overwrite unrelated work.
+- External `D:\mavenProject\dhxy-cloud-brain` has no `.git` metadata in this workspace:
+  `git status --short --branch`, `git rev-parse HEAD`, `git rev-parse @{u}`, and upstream lookup all
+  returned `fatal: not a git repository`. Latest pushed external baseline is therefore unavailable
+  from this directory.
+- Visible external baseline before edits:
+  `CloudBrainServer.java` owns path constants for `/api/cloud/decision`,
+  `/api/cloud/route-memory/outcome`, `/api/cloud/route-memory/migrate`, and
+  `/api/cloud/npc-click-smart/outcome`; it performs known-path, POST, bearer-token, JSON-object
+  validation inline, then dispatches directly to `DecisionEngine.decisionResponse(...)`,
+  `routeMemoryOutcomeResponse(...)`, `routeMemoryMigrationResponse(...)`, and
+  `npcClickSmartOutcomeResponse(...)`.
+- `DecisionEngine.java` baseline evidence: those four methods exist and are package-private; the
+  large `decide(...)` serviceId switch remains inside `DecisionEngine` and must not be split or
+  semantically changed in CR210.
+
+Worker result 2026-07-06 / Curie CR210 Task 1:
+
+- External files changed:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\CloudBrainServer.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\gateway\CloudApiEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\gateway\CloudApiRoute.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\gateway\CloudApiResponseWriter.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\gateway\CloudApiGateway.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\api\LegacyDecisionEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\api\RouteMemoryOutcomeEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\api\RouteMemoryMigrationEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\api\NpcClickSmartOutcomeEndpoint.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\CloudApiGatewayCompatibilityTest.java`
+- Implementation:
+  - `CloudBrainServer` now creates `DecisionEngine`, registers four explicit legacy
+    `CloudApiRoute` entries, and installs `CloudApiGateway` with `createContext("/", gateway::handle)`.
+  - `CloudApiGateway` owns legacy HTTP concerns: unknown path 404, non-POST 405 + `Allow: POST`,
+    exact bearer-token auth 401, bad/non-object JSON 400, and route dispatch.
+  - Four endpoint adapters are thin wrappers around the existing `DecisionEngine` methods. They do
+    not parse `serviceId`, inspect decisions, or rewrite JSON responses.
+  - `DecisionEngine` class and the four endpoint methods were made public only so the new `api`
+    subpackage can call them; method bodies and the large business switch were not changed.
+- TDD / verification:
+  - RED before adding the compatibility test:
+    `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test` exited `1` with no matching test.
+  - `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test` exited `0`.
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Documentation:
+  - Updated CR210 row/card in `docs/PACKAGE_ARCHITECTURE.md` to `Review：worker Task 1 已交付，待双 reviewer`.
+  - Ran `node scripts/generate-cr-dashboard-data.js` from `D:\mavenProject\DHXY`; it exited `0` and
+    generated 204 CR rows into `docs\cr-dashboard-data.js`.
+- Manager recheck:
+  reran external `mvn -q -Dtest=CloudApiGatewayCompatibilityTest test`,
+  `mvn -q -Dtest=XiuluoBrainProtocolTest test`, and `mvn -q -DskipTests compile`; all exited `0`.
+- Independent reviewers:
+  - Aquinas `019f39f6-1753-7182-9707-af31df9ad96d`: APPROVED. No P0/P1/P2. P3 only: optionally add
+    explicit missing-Authorization 401 test later.
+  - Beauvoir `019f39f6-6b3f-7711-a550-5d37b3a38dae`: APPROVED. No P0/P1/P2. P3 only:
+    `DecisionEngine` public exposure can be narrowed later through a root-package factory/interface.
+- Current CR210 status:
+  Review / Gateway skeleton passed the required two independent reviewer approvals. No game fresh
+  runtime is required because old endpoint paths are preserved and no DHXY runtime caller was changed.
+
+### 2026-07-06 / CR209 NPC Ctrl 菜单 OCR 改 raw 模板匹配
+
+- Branch/HEAD before this direct edit: `codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- Latest pushed baseline for touched path:
+  `git show HEAD:src/main/java/com/bot/dhxy/service/NpcClickService.java` still had
+  `scanCtrlMenuAndVerifyKeywordDirect(...)` washing `npc_menu_scan.png` with yellow preprocessing and
+  then calling `TextRecognizer.getAllTextResultsForMatch(...)` to OCR Ctrl menu text.
+- User decision:
+  for CR208 item 2, do not OCR the Ctrl menu. Use the user-captured raw `(NPC)` image directly as a
+  template in the same Ctrl menu raw scan region.
+- Files changed:
+  - `.gitignore`
+  - `src/main/java/com/bot/dhxy/service/NpcClickService.java`
+  - `images/calibrate/npc_menu_clean_sample.png`
+  - `images/test-cases/npc/ctrl-menu/npc_menu_scan_raw.png`
+  - `images/test-cases/npc/ctrl-menu/npc_menu_scan_npc_tag_marked.png`
+  - `src/test/java/com/bot/dhxy/service/NpcClickCtrlMenuTemplateReplayTest.java`
+  - `src/test/java/com/bot/dhxy/service/NpcClickSmartCloudWiringGuardTest.java`
+  - `docs/PACKAGE_ARCHITECTURE.md`
+- Implementation:
+  - Saved the user screenshot at `images/calibrate/npc_menu_clean_sample.png`, matching the old
+    npc-menu calibration resource location.
+  - `scanCtrlMenuAndVerifyKeywordDirect(...)` now saves only raw `npc_menu_scan.png`, runs
+    `ImageFinder.find(rawPath, CTRL_MENU_NPC_TAG_TEMPLATE_PATH, 0.80)`, clicks the matched template
+    center, and keeps the existing `CTRL_CANDIDATES` verifier.
+  - Removed the Ctrl-menu `WASH_YELLOW` / `npc_menu_clean.png` / menu OCR path from this method.
+- Replay evidence:
+  - Input: `images/test-cases/npc/ctrl-menu/npc_menu_scan_raw.png`
+  - Template: `images/calibrate/npc_menu_clean_sample.png`
+  - Marked output: `images/test-cases/npc/ctrl-menu/npc_menu_scan_npc_tag_marked.png`
+  - The marked output places the red box/cross on the `(NPC)` label.
+- Verification:
+  - `mvn -q "-Dtest=NpcClickCtrlMenuTemplateReplayTest,NpcClickSmartCloudWiringGuardTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Fresh gate:
+  runtime must show `NPC_CLICK_SMART Ctrl menu template clicked` and a passing verifier. If live raw
+  scans do not match this template, save the raw scan and add a replay case before changing the
+  threshold.
+
+### 2026-07-06 / CR207 post-return P1 repair double-review approved
+
+- Role: 谢帅 manager/reviewer。No Java business implementation by manager.
+- Manager rerun after worker P1 repair:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+- Independent reviewer Euler `019f39be-149a-77d0-876a-e9d8ae0c6bad`: **APPROVED**.
+  It confirmed `RETURN_HOME`, `useReturnItemAndVerifyStartMap(...)`,
+  `recoverReturnHomeFailure(...)`, and `NAVIGATE_BACK_TO_START` now report cloud-visible failure
+  before local cleanup/retry/fallback; still-in-combat remains an observation correction to
+  `WAIT_COMBAT`, not a local fallback decision.
+- Independent reviewer Wegener `019f39be-648b-7201-add1-05bc3514773e`: **APPROVED**.
+  It confirmed focused suite, `test-compile`, and external protocol gates are green; no
+  OCR/template/click/navigation algorithm changes were found in the P1 repair.
+- Status:
+  CR207 post-return P1 repair has passed the two-independent-reviewer gate. It is fresh-ready, not
+  Done. Fresh runtime must prove `RETURN_HOME` failed/unverified samples first produce
+  `XIULUO_BRAIN` actionOutcome/facts, then cloud chooses `RUN_CLEANUP`,
+  `NAVIGATE_BACK_TO_START`, `WAIT_COMBAT`, or another explicit phase. There must be no local
+  `cleanUpAll()`, local retry, or local fallback phase before the cloud outcome handoff.
+
+### 2026-07-06 / CR207 batch A worker post-return local recovery repair
+
+- Role: CR207 batch A implementation worker repair. Scope is Euclid P1 plus the same CR207 boundary
+  across the current `isXiuluoBrainExecutablePreCombatPhase(...)` allow-list. 谢帅 remains
+  manager/reviewer and does not write Java business implementation.
+- Branch/upstream/HEAD before repair edits:
+  `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- `git status --short --branch` remains heavily dirty with unrelated modified/deleted/untracked
+  files. Do not `reset`, `checkout`, `revert`, `clean`, or overwrite unrelated work.
+- P1 scope:
+  - `RETURN_HOME` and `NAVIGATE_BACK_TO_START` are CR207 batch A cloud-shell executable phases.
+  - In `XIULUO_BRAIN` execute mode their failure branches must yield fact-shaped
+    `FAILED/MUST_YIELD` outcomes before local cleanup/retry/recovery or local fallback phase
+    selection.
+  - Cleanup/retry must then come only from a later cloud `RUN_CLEANUP` or explicit phase command.
+- Initial CR207 boundary scan:
+  - Existing guarded phases: accept navigation/click/dialog, background objective read,
+    `NAVIGATE_TO_TARGET`, `CLICK_TARGET_NPC`, `CONFIRM_ENTER_BATTLE`, and the no-entry
+    `WAIT_COMBAT` failure path already return failure to `XIULUO_BRAIN` before old local recovery.
+  - Same-boundary misses to repair now: `RETURN_HOME` return-item unavailable/unverified retry or
+    fallback, and `NAVIGATE_BACK_TO_START` navigation failure.
+  - Non-failure shared-state flows intentionally not changed: `PREPARE_ROUND` startup cleanup,
+    maintenance hook cleanup, under-three `WAIT_TEAM_READY`, `WAIT_TEAM_RETURN`, pathing handoffs,
+    and trusted still-in-combat correction. These are readiness/observation/wait transitions rather
+    than failed retry/fallback recovery decisions.
+- Tests to add before implementation:
+  - Behavior test for `recoverReturnHomeFailure(...)` reporting failure before local cleanup/retry
+    when `XIULUO_BRAIN` execute mode is enabled.
+  - Source/ordering guard for `returnHome(...)`, `useReturnItemAndVerifyStartMap(...)`, and
+    `navigateBackToStart(...)` so old cleanup/retry/fallback cannot run before the cloud failure
+    boundary.
+- RED observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    exited `1` before implementation. Expected failure:
+    `recoverReturnHomeFailure(...)` attempted `uiCleanerService.cleanUpAll()` in cloud execute mode
+    before returning a fact-shaped XIULUO_BRAIN failure outcome.
+  - After adding RETURN_HOME facts coverage, the same command exited `1` because the actionOutcome
+    facts did not include `returnHomeResult`, so existing dev/external cloud mapping could not
+    distinguish trusted-non-combat/unavailable return failures.
+- Worker repair:
+  - `returnHome(...)` now fail-yields to `XIULUO_BRAIN` before cleanup or local
+    `NAVIGATE_BACK_TO_START` fallback when return item verification fails after trusted
+    non-combat.
+  - `useReturnItemAndVerifyStartMap(...)` now returns `FAILED_AFTER_TRUSTED_NOT_IN_COMBAT` or
+    `FAILED` in cloud execute mode instead of local cleanup + retry/continue.
+  - `recoverReturnHomeFailure(...)` and `navigateBackToStart(...)` now report fact-shaped failure
+    before legacy cleanup/retry/recover. Legacy non-cloud behavior remains unchanged.
+  - `xiuluoBrainOutcomeFacts(...)` emits `returnHomeResult` for RETURN_HOME failure facts so the
+    existing dev/external mapping can drive `NAVIGATE_BACK_TO_START`.
+- Same-boundary scan result after repair:
+  accept/read/target-click/target-navigation/enter-battle/no-entry-wait failures are cloud-first;
+  `PREPARE_ROUND`, maintenance hooks, under-three/team-return waits, pathing handoffs, and
+  still-in-combat correction are not failed cleanup/retry/fallback decisions and were not changed.
+- GREEN observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    exited `0`.
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`; external project was not changed.
+- No OCR/template/click/navigation algorithms were changed.
+- Remaining gate:
+  worker P1 repair local gate and two independent reviewer approvals are green. CR207 batch A now
+  needs fresh runtime before completion.
+
+### 2026-07-06 / CR207 repaired pass 4 blocked by post-return local recovery
+
+- Role: 谢帅 manager/reviewer。No Java business implementation by manager.
+- Manager independent verification before review:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+- Independent reviewer Nietzsche `019f39a7-b9e3-7560-af7e-39677406a2b0`: **APPROVED**.
+  It confirmed parser/shell terminal `EXECUTE_PHASE` fail-closed behavior, action/phase
+  consistency, stale guard repair, behavior tests, and external protocol `COMPLETE_ROUND + ROUND_DONE`
+  boundary.
+- Independent reviewer Euclid `019f39a7-5d55-7833-afa7-f516359ec62b`: **BLOCKED / P1**.
+  CR207 batch A now lets cloud execute `RETURN_HOME` and `NAVIGATE_BACK_TO_START`, but their failure
+  paths still contain old local recovery before cloud sees the original outcome.
+- P1 evidence:
+  - `XiuluoTaskV2.navigateBackToStart(...)` runs `uiCleanerService.cleanUpAll()` and then
+    `retryCurrentOrRecover(...)` after navigation failure. In `XIULUO_BRAIN` mode this must be a
+    fact-shaped failed outcome first, followed only by a later cloud `RUN_CLEANUP` or phase command.
+  - `XiuluoTaskV2.useReturnItemAndVerifyStartMap(...)` retries return item locally after
+    unverified return while trusted combat is no longer active, and `returnHome(...)` runs
+    `cleanUpAll()` before moving to `NAVIGATE_BACK_TO_START`. These paths still make local a
+    fallback decision maker.
+- Required worker repair:
+  1. Under `XIULUO_BRAIN` enabled mode, `RETURN_HOME` and `NAVIGATE_BACK_TO_START` failure branches
+     must report `FAILED/MUST_YIELD` fact-shaped outcomes before local cleanup/retry/recovery.
+  2. Cleanup/retry after those facts must be driven by cloud `RUN_CLEANUP` or explicit next-phase
+     commands.
+  3. Add focused behavior/source-guard coverage for these two post-return batch A phases.
+- Fresh runtime remains blocked until worker repair, focused tests, external protocol test if
+  touched, and two fresh independent reviewers approve.
+
+### 2026-07-06 / CR207 batch A worker terminal EXECUTE_PHASE repair
+
+- Role: CR207 batch A implementation worker repair. Scope is reviewer C/D blockers only; 谢帅 remains
+  manager/reviewer and does not write Java business code.
+- Branch/upstream/HEAD before repair edits:
+  `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- `git status --short --branch` remains heavily dirty with unrelated modified/deleted/untracked
+  files. Do not `reset`, `checkout`, `revert`, `clean`, or overwrite unrelated work.
+- Review blockers to repair:
+  - P1 Reviewer C: parser and shell still allow `EXECUTE_PHASE` with terminal
+    `ROUND_DONE` / `FAILED` / `STOPPED`; shell still contains ordinary execute-flow terminal
+    handling for `cloudPhaseState.phase()==ROUND_DONE/STOPPED`.
+  - P2 Reviewer D: `XiuluoBrainAcceptTrackerWiringTest` still carries the old CR198/CR199 guard
+    that forbids `RETURN_HOME` in the cloud shell executable allow-list, conflicting with CR207
+    batch A.
+- RED observed before edits:
+  `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest" test` exited `1`
+  with `CR198/CR199 pre-combat gate must not pull CR200 RETURN_HOME`.
+- Constraints:
+  do not change OCR/template/click/navigation algorithms; do not change unrelated code; if tests
+  expose a broader production bug beyond action/phase safety, stop and report before expanding
+  scope.
+- Worker repair:
+  - `XiuluoBrainCloudDecisionService.parseDecision(...)` now fail-closes
+    `EXECUTE_PHASE + ROUND_DONE/FAILED/STOPPED`, requires `STOP_TASK + STOPPED`, requires
+    `FAIL_TASK + FAILED`, keeps `COMPLETE_ROUND + ROUND_DONE`, and requires `RUN_CLEANUP` /
+    `EXECUTE_PHASE` targets to be non-terminal executable phases.
+  - `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` applies the same action/phase consistency
+    before any phase execution or cleanup, and no longer treats terminal phases as successful
+    ordinary `EXECUTE_PHASE` flow after phase application.
+  - `XiuluoBrainAcceptTrackerWiringTest` now allows CR207 batch A `RETURN_HOME` while continuing to
+    reject `ROUND_DONE` / `FAILED` / `STOPPED` as ordinary executable phases.
+  - `XiuluoBrainCR207BatchAWiringTest` now behavior-tests shell rejection for
+    `EXECUTE_PHASE + ROUND_DONE/FAILED/STOPPED` and terminal action mismatches.
+- RED observed after adding terminal tests:
+  `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest" test`
+  exited `1` with expected failures: parser accepted `STOP_TASK + FAILED`, source guards still found
+  ordinary `ROUND_DONE` / `STOPPED` terminal shell flow.
+- GREEN observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+- External protocol files were inspected and not changed; existing CR207 protocol tests produce
+  round completion as `COMPLETE_ROUND + ROUND_DONE`, not ordinary `EXECUTE_PHASE + terminal`.
+- No OCR/template/click/navigation algorithms were changed.
+- Remaining gate:
+  worker repair local gate is green, but CR207 batch A still needs fresh independent reviewer
+  approvals before any 修罗 fresh runtime.
+
+### 2026-07-06 / CR207 repaired pass 3 double-review blocked
+
+- Role: 谢帅 manager/reviewer。No Java business implementation by manager.
+- Independent reviewer C `019f399a-63c6-7400-8395-74b03cdd4b61` result: **BLOCKED / P1**.
+  Parser/shell still allow `action=EXECUTE_PHASE` with terminal phases. `ROUND_DONE` should only be
+  accepted through `COMPLETE_ROUND + phase=ROUND_DONE`; `STOPPED` through `STOP_TASK`; `FAILED`
+  through `FAIL_TASK`.
+- Reviewer C evidence:
+  `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` still has terminal acceptance for
+  `cloudPhaseState.phase() == XiuluoPhase.ROUND_DONE` / `STOPPED` after phase application, and
+  `XiuluoBrainCloudDecisionService.parseDecision(...)` only rejects `COMPLETE_ROUND` mismatches and
+  terminal `RUN_CLEANUP`, not `EXECUTE_PHASE + ROUND_DONE/FAILED/STOPPED`.
+- Independent reviewer D `019f399a-b348-7912-9836-d0b7d8947992` result: **BLOCKED / P2**.
+  `XiuluoBrainAcceptTrackerWiringTest.trackerPathingWaitCommandExecutesExistingWaitPhase(...)` still
+  contains the old CR198/CR199 source guard forbidding `RETURN_HOME` in the cloud shell executable
+  allow-list, conflicting with CR207 batch A.
+- Manager reproduced reviewer D blocker:
+  `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainAcceptTrackerWiringTest" test` exited `1`
+  with `CR198/CR199 pre-combat gate must not pull CR200 RETURN_HOME`.
+- Manager source inspection confirmed reviewer C blocker:
+  current shell/parser have no `EXECUTE_PHASE + phase.isTerminal()` fail-closed guard; current
+  `XiuluoBrainCR207BatchAWiringTest` still has old wording expecting `ROUND_DONE` terminal success in
+  the shell.
+- Required worker repair:
+  1. Add parser and shell fail-closed behavior for `EXECUTE_PHASE + ROUND_DONE/FAILED/STOPPED`.
+  2. Prefer explicit terminal action consistency: `COMPLETE_ROUND` only with `ROUND_DONE`,
+     `STOP_TASK` only with `STOPPED`, and `FAIL_TASK` only with `FAILED`, unless the CR card is
+     updated with a stricter reason not to.
+  3. Update `XiuluoBrainCR207BatchAWiringTest` to behavior-test terminal `EXECUTE_PHASE` rejection
+     instead of expecting terminal success through ordinary executable flow.
+  4. Update `XiuluoBrainAcceptTrackerWiringTest` stale boundary to allow CR207 batch A phases while
+     still rejecting terminal ordinary executable phases.
+- Fresh runtime remains blocked until worker repair, focused tests, external protocol test, and two
+  fresh independent reviewers all pass.
+
+### 2026-07-06 / CR207 batch A worker stale-guard repair
+
+- Role: CR207 batch A implementation worker repair. Scope is test/documentation only; no Java business
+  logic changes. Do not claim CR207 complete; fresh independent reviewers and fresh runtime remain
+  required.
+- RED observed:
+  `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test` exited `1`
+  with `CR199 must not allow RETURN_HOME; that is CR200`, proving the old CR199/CR200 source guard
+  was stale against CR207 batch A.
+- Repair:
+  `XiuluoBrainRouteEnterBattleWiringTest.cr200PhasesRemainOutsideThisGate(...)` was replaced with
+  `cr207BatchAPhasesAreExecutableButTerminalPhasesStayOutsideGate(...)`. The guard now requires
+  `RETURN_HOME`, `NAVIGATE_BACK_TO_START`, `WAIT_TEAM_READY`, and `WAIT_TEAM_RETURN` in the cloud
+  shell executable allow-list, while continuing to reject `ROUND_DONE`, `FAILED`, and `STOPPED` as
+  ordinary executable phases. Existing no-local-next-phase / unsupported-phase fail-closed guards
+  were preserved.
+- GREEN observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test` exited `0`.
+  - `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+- No OCR/template/click/navigation algorithms were changed.
+- Remaining gate:
+  worker stale-guard repair is green, but CR207 batch A still needs fresh independent reviewer
+  approvals before any 修罗 fresh runtime.
+
+### 2026-07-06 / CR207 batch A repaired review pass 2 blocked by stale guard
+
+- Role: 谢帅 manager/reviewer。No Java business implementation by manager.
+- Manager independent verification after worker repair:
+  - `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+- Independent reviewer A `019f3991-828a-75c2-b6aa-9ea115bf3992` result: **APPROVED**.
+  No P0/P1/P2 found. A confirmed the four accept/read recovery helpers return
+  `FAILED/MUST_YIELD -> FAILED` before local cleanup/retry in `XIULUO_BRAIN` mode, and confirmed
+  `COMPLETE_ROUND` / `RUN_CLEANUP` fail-closed behavior.
+- Independent reviewer B `019f3991-dce9-7520-8915-9b1a06de9c1d` result: **BLOCKED / P2**.
+  `XiuluoBrainRouteEnterBattleWiringTest.cr200PhasesRemainOutsideThisGate(...)` still carries the
+  old CR199/CR200 source-guard boundary and asserts `RETURN_HOME`, `NAVIGATE_BACK_TO_START`, and
+  `WAIT_TEAM_RETURN` must not be in the cloud shell executable allow-list. CR207 batch A now
+  intentionally allows those phases, so this stale guard fails.
+- Manager reproduced the blocker:
+  `mvn -q "-Dtest=com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test` exited `1`
+  with `CR199 must not allow RETURN_HOME; that is CR200`.
+- Repair direction:
+  send worker back to update the stale CR199/CR200 boundary test to the CR207 boundary. The repaired
+  test should allow CR207 batch A phases while still rejecting `ROUND_DONE` / `FAILED` / `STOPPED`
+  as normal executable phases, and preserve the no-local-next-phase-selection guard.
+- Fresh runtime remains blocked until this stale guard is fixed, focused tests are rerun, and two
+  fresh independent reviewer approvals pass.
+
+### 2026-07-06 / CR207 batch A worker repair after double-review block
+
+- Role: CR207 batch A implementation worker repair, not manager/reviewer. Scope is only the
+  reviewer-blocked batch A repair. Do not claim CR207 complete; two fresh independent reviewers are
+  still required before any fresh runtime.
+- Process: applying receiving-code-review + TDD. Repair targets are P1-A local helper cleanup/retry
+  before cloud outcome, P1-B action/phase consistency fail-closed, and P2 real unknown cleanup
+  executor behavior coverage.
+- Branch/upstream/HEAD before repair tests/edits:
+  `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`.
+- `git status --short --branch` remains heavily dirty with many unrelated modified/deleted/untracked
+  Java, docs, config, images, scripts, and test files. Do not `reset`, `checkout`, `revert`,
+  `clean`, or overwrite unrelated work.
+- Relevant DHXY baseline:
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java` has upstream blob
+    `a010a0f5b267b02e0b202c2addf4a8bcc2c9600f`; current local file already contains CR197-CR207
+    cloud migration differences and is the immediate repair base.
+  - Current CR207 cloud/protocol files under `src/main/java/com/bot/dhxy/cloud/xiuluo` and
+    `src/test/java/com/bot/dhxy/cloud/...` are local migration files in this workspace; use the CR207
+    card plus current local content as the protocol baseline.
+- External `D:\mavenProject\dhxy-cloud-brain` is not a git repository here. Repair-start SHA256:
+  `DecisionEngine.java=99FB8B7FF03F7402B87603AACB2DBA7DDBCB2193B8A08401198A3913FDD606B7`;
+  `XiuluoBrainProtocolTest.java=D95ED24A332757F3F2A67C6CF233150D5CC9E3AA776890EED444B582ECE39689`.
+- Constraints repeated for this repair: do not change OCR/template/click/navigation algorithms; in
+  `XIULUO_BRAIN` enabled mode, local must report recoverable phase failures first and wait for cloud
+  `RUN_CLEANUP` or explicit phase commands.
+- Worker repair implementation:
+  - `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` now fail-closes
+    `COMPLETE_ROUND` unless `phase=ROUND_DONE`, and rejects `RUN_CLEANUP` when the target phase is
+    terminal or not cloud-shell executable before any local cleanup runs.
+  - `recoverAcceptNavigationFailure(...)`, `recoverAcceptNpcClickFailure(...)`,
+    `recoverAcceptDialogFailure(...)`, and `recoverBackgroundObjectiveReadFailure(...)` now return
+    `FAILED/MUST_YIELD` fact-shaped outcomes first when `XIULUO_BRAIN` is enabled; legacy non-cloud
+    cleanup/retry/recover remains unchanged.
+  - Parser tests now reject `COMPLETE_ROUND + ACCEPT_TASK_CLICK_NPC` and
+    `RUN_CLEANUP + ROUND_DONE/FAILED/STOPPED`; executor behavior tests reject those bad shell
+    commands and prove unknown cleanup type fails closed without relying only on source strings.
+  - Dev sidecar test now feeds a real `XiuluoStepOutcome.failed(...)` accept-navigation failure shape
+    into `actionOutcome -> step` and verifies cloud returns `RUN_CLEANUP/GENERIC_UI`.
+- RED observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    exited `1`: `RUN_CLEANUP;phase=ROUND_DONE` was accepted as a cloud command, and
+    `recoverAcceptNavigationFailure(...)` threw NPE at `uiCleanerService.cleanUpAll()` because the
+    cloud-enabled helper still entered local cleanup before reporting a cloud outcome.
+- GREEN observed:
+  - `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test`
+    exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+- Worker repair status: local gate is green, but CR207 remains review/fresh paused until two fresh
+  independent reviewers approve the repaired batch. No OCR/template/click/navigation algorithms were
+  changed.
+
+### 2026-07-06 / CR207 batch A double-review blocked
+
+- Role: 谢帅 manager/reviewer。No Java business implementation by manager.
+- Manager local verification before review:
+  - `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainCloudDecisionServiceTest,com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainCR207BatchAWiringTest" test` exited `0`.
+  - External `D:\mavenProject\dhxy-cloud-brain`: `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `mvn -q -DskipTests test-compile` exited `0`.
+- Independent reviewer A `019f397b-ff3a-73d3-934f-bd63ce379488` result: **BLOCKED / P1**.
+  Real phase failures still run old local cleanup/retry helpers before cloud sees the original
+  failure. Evidence called out `recoverAcceptNavigationFailure(...)`,
+  `recoverAcceptNpcClickFailure(...)`, `recoverAcceptDialogFailure(...)`, and
+  `recoverBackgroundObjectiveReadFailure(...)`. This violates CR207: cleanup/retry must be cloud
+  commands such as `RUN_CLEANUP`, and local must not choose retry/recover first.
+- Reviewer A repair requirement:
+  make cloud-enabled phase failures produce fact-shaped outcomes before cleanup/retry, then let
+  dev/external cloud return `RUN_CLEANUP` or an explicit next phase. Add tests using the real
+  post-helper outcome shapes, plus a real unknown-cleanup executor/parser fail-closed test.
+- Independent reviewer B `019f397c-65f9-78a3-ac19-5c89c3e604a8` result: **BLOCKED / P1**.
+  `COMPLETE_ROUND` is accepted before action/phase consistency checks, so
+  `action=COMPLETE_ROUND;phase=ACCEPT_TASK_CLICK_NPC` could mark a round successful. Also
+  `RUN_CLEANUP;phase=ROUND_DONE` could cleanup then reach terminal success.
+- Reviewer B repair requirement:
+  enforce action/phase allow-list in parser or shell: `COMPLETE_ROUND` only with `ROUND_DONE`;
+  `RUN_CLEANUP` only targets non-terminal executable retry/fallback phases; reject `ROUND_DONE`,
+  `FAILED`, and `STOPPED` for cleanup target. Add negative tests.
+- Fresh runtime is paused. Worker must repair both P1s, then CR207 needs two fresh independent
+  reviewer approvals before the user is asked to run 修罗 fresh.
+
+### 2026-07-06 / CR207 batch A worker baseline - fallback parity implementation
+
+- Role: CR207 batch A implementation worker, not reviewer. Scope is local protocol/executor/tests
+  plus external `dhxy-cloud-brain` protocol parity; do not claim CR207 complete.
+- Branch/upstream/HEAD before Java/test edits:
+  `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection` /
+  `dc4394f4ff3a93ed23a030857d72064843edd314`; upstream resolves to the same commit.
+- `git status --short --branch` before edits is heavily dirty with unrelated modified/deleted/
+  untracked Java, docs, config, images, scripts, and test files. Do not `reset`, `checkout`,
+  `revert`, `clean`, or overwrite unrelated work.
+- Latest-pushed baseline evidence for touched DHXY paths:
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java` exists in upstream as blob
+    `a010a0f5b267b02e0b202c2addf4a8bcc2c9600f`; current local file already contains CR197-CR206
+    cloud-brain migration differences and is the immediate local migration base for CR207.
+  - `src/main/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainActionType.java`,
+    `XiuluoBrainResponse.java`, `XiuluoBrainCloudDecisionService.java`,
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`, and
+    `XiuluoBrainCloudDecisionServiceTest.java` all fail `git show @{u}:...` with
+    "exists on disk, but not in `@{u}`"; treat current local cloud files plus CR207 card as the
+    protocol baseline.
+- External `D:\mavenProject\dhxy-cloud-brain` is not a git repository. Pre-edit SHA256:
+  `DecisionEngine.java=234A094DB2DE5314D18C81BE32CF0D527F9CBE0783ED5030D1E4CCA275E33A31`,
+  `XiuluoBrainProtocolTest.java=4C9A2F8CA575D93C5363E22B8F8306E99CBC5E178B1DC25DB20982D3C96A1221`.
+- CR207 batch A implementation boundary:
+  add `RUN_CLEANUP` protocol/executor support, retry/budget/action facts, cloud/dev sidecar and
+  external batch-A mappings, executable cloud shell phases
+  `RETURN_HOME` / `NAVIGATE_BACK_TO_START` / `WAIT_TEAM_READY` / `WAIT_TEAM_RETURN`, and terminal
+  `ROUND_DONE -> COMPLETE_ROUND`. Do not change OCR/template/click/navigation algorithms.
+- Worker implementation result:
+  - RED DHXY focused command failed with missing `RUN_CLEANUP` enum/response fields.
+  - RED external `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed with `outcome cannot advance`
+    for CR207 fallback cases.
+  - GREEN DHXY focused command exited `0`.
+  - GREEN external `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - GREEN DHXY compile `mvn -q -DskipTests compile` exited `0`.
+  - No OCR/template/click/navigation algorithms changed.
+  - Worker does not claim CR207 complete; next gate is two independent reviewers plus fresh runtime.
+
+### 2026-07-06 / CR207 xiuluo cloud fallback parity blocker
+
+- Role: 谢帅 manager/reviewer。用户明确指出 CR197-CR200 进入 fresh 前漏掉完整旧本地
+  fallback/recovery parity；当前不再继续 fresh 碰缺口。
+- Process update:
+  - 已重读 `AGENTS.md`。第 13 条要求：不是每个小改都默认走重流程；只有用户明确说“走流程”
+    才完整 CR+worker+双 reviewer。这里是修罗云脑大迁移漏项，且用户明确要求至少两个子智能体
+    加谢帅一起过，所以本卡采用三方只读审核。
+  - 不默认加 source guard；后续只有必要的协议/集成测试和用户明确要求时才加 source guard。
+- Current decision:
+  - CR201/CR202 fresh 暂停。先补 CR207 fallback parity matrix。
+  - 本地只负责执行云端 action、观测失败、收集 facts、上报 outcome；云端必须决定 fallback/next phase。
+  - Retry 属于 fallback parity，不得漏掉。旧本地 retry budget、重试顺序、重置条件、耗尽后路径都必须
+    写进矩阵，迁到云端或明确标成 fail-closed。
+  - 2026-07-06 用户补充：不能让 worker 自己设计 retry/fallback 线路。CR207 已补充硬性通讯协议：
+    云端下达 `RETRY_PHASE` / `RUN_CLEANUP` / `RETRY_AFTER_CLEANUP` / `RETRY_ALTERNATE_ACTION` /
+    `WAIT_FOR_SIGNAL` / `NEXT_PHASE` / `RESTART_ROUND` / `FAIL_CLOSED` 等命令；本地只执行
+    `UICleanerService`、导航、点击、等待/截图等动作并回报 outcome/facts，不得根据旧 helper
+    自己跳 phase。清理也是云端命令、本地执行，例如旧逻辑的 `cleanUpAll()` 必须表示成
+    `RUN_CLEANUP(... then=RETRY_PHASE(...))`，而不是本地清完后自己决定下一步。
+  - Retry protocol 也已定：每次 retry 要带 `phaseToken/stateSeq/actionId/attemptId/retryKey`；
+    云端维护 retry 预算、顺序、重置条件和耗尽路径；同一个 outcome 重发必须幂等，不能多消耗一次 retry。
+- Helper agents dispatched:
+  - `019f3948-b175-78c1-9dd3-0487af744121` / `Erdos`：从 `XiuluoTaskV2` 本地 fallback/recovery
+    往云端矩阵梳理。
+  - `019f3948-e921-7f20-8b54-2bcccd2c1e20` / `Carver`：从 external `DecisionEngine` 与 DHXY
+    dev sidecar 当前 `XIULUO_BRAIN` 映射往旧本地缺口反查。
+- Helper synthesis:
+  - 两个审核都确认：CR197-CR200 主要迁了 happy path 和少数 fresh 暴露的窄修复；完整 fallback/retry
+    没有迁完。
+  - 必补桶：启动/hot-start、接任务 not-near/under-three/dialog/objective miss、tracker no-green
+    fallback、目标导航/点击野怪取消/看打/OCR/direct-combat/刷新目标、`WAIT_COMBAT` post-entry/unknown
+    combat、`RETURN_HOME`/`NAVIGATE_BACK_TO_START`/`WAIT_TEAM_RETURN`/`ROUND_DONE`、watchdog/post-combat
+    idle/loop guard，以及 outcome facts 中缺失的 retry/cleanup/return/team-return 事实。
+- Deliverable:
+  - Phase-by-phase matrix:
+    `current phase` / `local outcome+facts` / `old local fallback meaning` /
+    `old retry budget/order/reset/exhaustion` / `cloud next phase/action` /
+    `fail-closed boundary` / `required test`.
+- CR207 batch A execution:
+  - 2026-07-06 已把 batch A 写入 CR207 卡，目标是 fresh round 前先补旧本地 fallback/retry 的第一批闭环：
+    接任务重试、tracker shortcut fallback、目标导航/点击恢复、`WAIT_COMBAT` post-entry、`RETURN_HOME`、
+    `NAVIGATE_BACK_TO_START`、`WAIT_TEAM_READY`、`WAIT_TEAM_RETURN`、`ROUND_DONE`。
+  - 已派 worker `019f3968-3317-7ce0-91b1-a952080acc8a` / `Lagrange` 实现。要求 TDD：先 RED，
+    再 GREEN；不得改 OCR/template/click/navigation 算法；不得自己设计新 retry/fallback 线路。
+  - Worker 必须实现 `RUN_CLEANUP` 云端命令，本地只执行 `GENERIC_UI` 或 `GENERIC_WINDOWS` 清理，
+    再执行云端指定 phase；未知 cleanupType fail-closed。
+  - Fresh 前 gate：DHXY dev sidecar 映射测试、external `dhxy-cloud-brain` 协议测试、
+    DHXY parser/executor 测试、cloud shell executable phase 测试都要过；之后再派两个独立 reviewer。
+- Fresh gate:
+  - 不再让用户用 live run 发现缺 fallback；必须先有 reviewed matrix 和第一批本地协议/集成测试。
+
+### 2026-07-06 / CR200 Fresh D blocker - `WAIT_COMBAT FAILED` lacks cloud recovery
+
+- Role: 谢帅 manager/reviewer。只做调查、卡片、派工与复核；不直接写 Java 业务实现。
+- Baseline evidence:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - `git status --short --branch` remains heavily dirty with unrelated local files; do not revert,
+    reset, checkout, clean, or overwrite unrelated work.
+- Fresh runtime evidence:
+  - `2026-07-06 16:18:51.250` 修罗云脑已通过 CR200 incidental handoff：
+    `WAIT_TRACKER_SHORTCUT_PATHING result=SHARED_STATE_TRIGGERED yield=MUST_YIELD localNext=WAIT_COMBAT`。
+  - `16:18:52.161` 外部 `XIULUO_BRAIN step` 返回 `phase=WAIT_COMBAT`，本地执行该 phase。
+  - `16:18:52.533` 本地 `WAIT_COMBAT` 产出
+    `result=FAILED yield=MUST_YIELD localNext=FAILED message=combat entry not detected after battle confirm`。
+  - `16:18:53.815` 外部云脑拒绝下一步：
+    `outcome cannot advance transactionResult=FAILED outcome=FAILED yieldPolicy=MUST_YIELD`；
+    DHXY gate 记录 `phase must parse to XiuluoPhase:`。
+  - `16:18:53.816` `xiuluo.brain.loop.failClosed`，`16:18:54.282` 任务结束 `修罗 -> FAILED`。
+- Root cause:
+  - `XiuluoTaskV2.waitCombat(...)` 的旧本地恢复逻辑仍存在：看打/准备点击后未入战时，可重挂
+    `XIULUO_ENTER_BATTLE` 或走 shortcut fallback。
+  - 云脑 enabled 分支在 `isEnterBattleConfirmPending(state)` 时先返回
+    `XiuluoStepOutcome.failed(...)`，但 `XIULUO_BRAIN` 没有把这个可恢复失败映射回旧业务恢复动作。
+- Repair direction:
+  - CR200 worker must migrate the old `WAIT_COMBAT` entry-confirm recovery semantics into
+    DHXY dev brain and external `D:\mavenProject\dhxy-cloud-brain` protocol.
+  - Do not add local fallback brain; keep cloud single-brain. Real unrecoverable cloud/protocol
+    errors still fail-closed.
+  - Required tests: focused DHXY dev/external protocol tests for
+    `WAIT_COMBAT + FAILED/MUST_YIELD + combat entry not detected after battle confirm` proving
+    recovery/ retry command, not rejected/failClosed.
+- CR200 Fresh D repair worker baseline before Java/test edits:
+  - Role: CR200 repair worker under 谢帅 manager; only Java/tests/protocol/doc repair, no reviewer
+    completion claim.
+  - DHXY branch/upstream/HEAD: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short --branch` is heavily dirty before this pass, including unrelated Java,
+    docs, config, image, and untracked cloud/test files; do not `reset`, `checkout`, `revert`,
+    `clean`, or overwrite unrelated work.
+  - `git ls-files --stage` has an upstream row only for
+    `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+    (`a010a0f5b267b02e0b202c2addf4a8bcc2c9600f`). The DHXY dev brain/test files
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`, and
+    `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRouteEnterBattleWiringTest.java` are local
+    migration files and do not exist in `@{u}`.
+  - `git show @{u}:...CloudDecisionDevServer.java`,
+    `...XiuluoBrainDevServerTest.java`, and
+    `...XiuluoBrainRouteEnterBattleWiringTest.java` all fail with "exists on disk, but not in
+    `@{u}`"; use current local CR197-CR200 files plus the CR200 card as the immediate protocol
+    baseline.
+  - External brain `D:\mavenProject\dhxy-cloud-brain` is not a git repo in this checkout. Local
+    pre-edit SHA256:
+    `DecisionEngine.java=C31421819D40807B6E836F69D277E3111663BD029A69EDB73709CD6AD9490AF2`,
+    `XiuluoBrainProtocolTest.java=08085B4E78020EBE68D5CBB5ED95000E59B8F3408705744D87912F469C29AE4A`.
+  - Source investigation: current `waitCombat(...)` legacy path maps pending
+    `TRACKER_CONFIRM` no-combat to `consumePreparedXiuluoEnterBattle`, short same-phase wait,
+    `CONFIRM_ENTER_BATTLE` retry when an objective exists, or shortcut `XIULUO_ENTER_BATTLE`
+    interest re-registration plus `waitForTrackerShortcutWake`; Fresh D facts were
+    `routeMode=TRACKER_SHORTCUT`, `combatSource=TRACKER_CONFIRM`, no objective facts, and
+    `localOutcomeNextPhase=FAILED`.
+- CR200 Fresh D repair worker implementation:
+  - DHXY dev `CloudDecisionDevServer.waitCombatPreEntryNext(...)` now recognizes only the precise
+    recoverable shape:
+    `phase=WAIT_COMBAT`, `outcome=FAILED`, `transactionResult=FAILED`,
+    `yieldPolicy=MUST_YIELD`, `localOutcomeNextPhase=FAILED`, message/outcomeMessage containing
+    `combat entry not detected after battle confirm`, and either objective facts or
+    `routeMode=TRACKER_SHORTCUT + combatSource=TRACKER_CONFIRM + enteredBattleByXiuluo=false`.
+  - External `D:\mavenProject\dhxy-cloud-brain\...\DecisionEngine.java` received the same policy.
+  - The recovery command is the existing cloud-commandable `CONFIRM_ENTER_BATTLE` phase. This keeps
+    single-brain ownership because the local task does not silently choose a fallback phase; it only
+    executes the next phase commanded by `XIULUO_BRAIN`.
+  - Ordinary `FAILED`, `STOPPED`, `RETRYABLE_ERROR`, post-entry combat facts, return-home facts, and
+    unknown `WAIT_COMBAT` boundaries remain rejected/fail-closed.
+  - Touched DHXY files:
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`,
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`.
+  - Touched external files:
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`,
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\XiuluoBrainProtocolTest.java`.
+  - No OCR/template/click/navigation coordinate code and no `XiuluoTaskV2` production logic were
+    changed in this repair pass.
+- CR200 Fresh D repair worker RED / GREEN:
+  - RED external: `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed before implementation with
+    `stateSeq expected=2 actual=1` in
+    `xiuluoBrainRecoversWaitCombatEntryConfirmFailureToConfirmRetry`.
+  - RED DHXY: first focused RED command was blocked before the new assertion by unrelated dirty
+    compile state (`TaskMaintenanceService.java` missing `MaintenanceBroadcastRoiSnapshot`); no
+    unrelated file was modified to fix that.
+  - GREEN external focused: `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - GREEN external package: `mvn -q -DskipTests package` exited `0`.
+  - GREEN DHXY focused:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test`
+    exited `0`.
+  - GREEN DHXY compile/test-compile:
+    `mvn -q -DskipTests compile` exited `0`;
+    `mvn -q -DskipTests test-compile` exited `0`.
+- CR200 Fresh D restart/fresh gate:
+  - External brain restart is done: old 18080 listener PID `3236` was stopped; rebuilt external jar
+    started at `2026-07-06 16:46:50` as PID `30384`.
+  - Restart logs:
+    `D:\mavenProject\DHXY\logs\cloud-brain-manual-restart-20260706.out.log`,
+    `D:\mavenProject\DHXY\logs\cloud-brain-manual-restart-20260706.err.log`.
+  - Live endpoint probe passed against `http://127.0.0.1:18080/api/cloud/decision`:
+    - `START`: `phase=WAIT_COMBAT;action=EXECUTE_PHASE;stateSeq=1`.
+    - `OUTCOME`: `status=ACCEPTED;phase=WAIT_COMBAT;transactionResult=FAILED;localOutcomeNextPhase=FAILED`.
+    - `STEP`: `phase=CONFIRM_ENTER_BATTLE;action=EXECUTE_PHASE;stateSeq=2`.
+  - Relaunch/restart DHXY desktop program before fresh runtime; otherwise the client JVM may still
+    have the old CR206 `XiuluoTaskV2` code that skips startup maintenance.
+  - Next no-entry confirm sample should log `XIULUO_BRAIN step` returning
+    `phase=CONFIRM_ENTER_BATTLE action=EXECUTE_PHASE` with valid identity fields, not
+    `xiuluo.brain.loop.failClosed`.
+  - Independent review / manager gate 2026-07-06:
+    - Reviewer A approved with no P0/P1/P2; confirmed the exact no-entry confirm failure now maps to
+      `CONFIRM_ENTER_BATTLE`, while ordinary failure, stop, post-entry combat, return-home, and
+      round-done facts remain rejected/fail-closed.
+    - Reviewer B approved with no P0/P1/P2; confirmed DHXY dev brain and external brain are
+      semantically consistent and identity/session/stateSeq/phaseToken/actionId gates remain intact.
+    - Manager rerun passed:
+      `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainStartupMaintenanceWiringTest" test`,
+      DHXY `mvn -q -DskipTests compile`, external `mvn -q -Dtest=XiuluoBrainProtocolTest test`, and
+      external `mvn -q -DskipTests package`.
+    - Status: CR200 may enter Fresh D after process restart, but remains Review until live logs prove
+      `WAIT_COMBAT` no-entry confirm recovery returns `CONFIRM_ENTER_BATTLE` without
+      `xiuluo.brain.loop.failClosed`.
+
+### 2026-07-06 / CR206 startup maintenance bypass in xiuluo cloud brain
+
+- Role: 谢帅 manager/reviewer。新建 CR206；派 worker 修，不直接写 Java 业务实现。
+- Fresh runtime evidence:
+  - `16:17:57.915` 修罗启动后只执行 `DefaultWindowTaskStartupInitializer` 通用 startup。
+  - `16:18:09.193` `startup init: mark queue common startup preparation done taskCode=xiuluo_v2 ready=true`。
+  - `16:18:09.193` `maintenance init: summon skill cooldown starts now source=xiuluo_v2`。
+  - `16:18:09.198` `[xiuluo-v2] skeleton started: maxRuns=100 maintenanceRunImmediatelyOnStart=false`。
+  - 这一轮没有 `performStartupFirstAidCheck`、没有
+    `[xiuluo-v2] startup incense check before hot-start`、没有启动摄妖香检查日志。
+- Source evidence:
+  - `XiuluoTaskV2.execute(...)` 行 377-400：云脑 enabled 先调用
+    `runRoundWithXiuluoBrain(...)`，成功/失败后直接 `continue` 或 `return`。
+  - 行 412-414 的旧启动维护
+    `playerStateService.performStartupFirstAidCheck(context)` 和
+    `ensureStartupIncenseBeforeHotStart(context)` 只在 legacy 分支可达。
+- Repair direction:
+  - 第一轮修罗启动时，云脑/legacy 都必须在任何 hot-start tracker shortcut、任务回程预扫、
+    接任务或导航前执行启动血蓝与摄妖香检查。
+  - `cleanQueueTransitionStartup` 只能跳过屏幕 resume/hot-start，不能跳过启动维护。
+  - Add focused wiring test proving cloud enabled path calls startup first-aid/incense before
+    `runRoundWithXiuluoBrain(...)`.
+
+### 2026-07-06 / CR206 worker baseline - xiuluo cloud startup maintenance
+
+- Role: CR206 worker。负责 Java/test 修复，不作为谢帅 manager；不运行 `reset` / `checkout` /
+  `revert` / `clean`，不碰无关 dirty 文件。
+- Baseline before Java/test edits:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - HEAD and latest pushed commit: `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` is heavily dirty before this worker pass, including docs,
+    `XiuluoTaskV2.java`, existing 修罗 startup guard tests, CR205 work, config/images, and many
+    unrelated Java/test files. This pass will only touch CR206-scoped files.
+  - Latest pushed `XiuluoTaskV2.execute(...)` business baseline still has first-round startup
+    maintenance before the old hot-start selection:
+    `performStartupFirstAidCheck(context)` then `ensureStartupIncenseBeforeHotStart(context)`,
+    followed by `resolveStartupTrackerOrReturnItem(...)`.
+  - Current local cloud-migration diff adds `isXiuluoBrainLoopEnabled()` at
+    `XiuluoTaskV2.execute(...)` lines `377-400`, calling `runRoundWithXiuluoBrain(context, round)`
+    and `continue` / `return` before the old lines `412-414` startup first-aid/incense block.
+  - Existing startup source guards only check the legacy hot-start block; they do not yet prove the
+    cloud enabled branch runs startup maintenance before `runRoundWithXiuluoBrain(...)`.
+- TDD plan:
+  - Add focused CR206 source guard that fails while `runRoundWithXiuluoBrain(...)` is reachable
+    before `performStartupFirstAidCheck(context)` / `ensureStartupIncenseBeforeHotStart(context)`.
+  - Minimal implementation should move the first-round startup maintenance gate before the cloud
+    branch, preserving `cleanQueueTransitionStartup` as only a screen resume/hot-start skip.
+  - Do not change 五倍、NPC、OCR、template、导航、战斗 or general maintenance business logic.
+- RED:
+  - `mvn -q -Dtest=XiuluoBrainStartupMaintenanceWiringTest test` failed as expected:
+    `CR206: XIULUO_BRAIN enabled path must not enter before startup maintenance`.
+- Implementation:
+  - `XiuluoTaskV2.execute(...)` now runs the first-round startup gate immediately after
+    `clearTrackerShortcutPathingIntent(...)`: `performStartupFirstAidCheck(context)` then
+    `ensureStartupIncenseBeforeHotStart(context)`, before `isXiuluoBrainLoopEnabled()`.
+  - Removed the duplicate legacy-only startup gate from below the cloud branch, so both cloud and
+    legacy paths share the same first-round maintenance ordering.
+  - `cleanQueueTransitionStartup` still only selects `routeToAcceptNpc(round)` instead of the
+    screen resume/hot-start branch; it no longer has any opportunity to skip startup maintenance.
+  - Added `XiuluoBrainStartupMaintenanceWiringTest` and adjusted the older startup-incense guard
+    source window to account for CR206 moving incense before the cloud gate.
+- Verification:
+  - GREEN: `mvn -q -Dtest=XiuluoBrainStartupMaintenanceWiringTest test` exited `0`.
+  - GREEN source guards via already compiled test mains:
+    `XiuluoBrainStartupMaintenanceWiringTest`, `XiuluoStartupFirstAidWiringTest`,
+    `XiuluoStartupIncenseBeforeHotStartWiringTest`, `XiuluoBrainHotStartWiringTest`,
+    `XiuluoBrainLoopWiringTest`, `XiuluoCR159TaskHotStartOrderWiringTest`.
+  - `mvn -q '-Dtest=XiuluoBrainStartupMaintenanceWiringTest,XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoCR159TaskHotStartOrderWiringTest' test`
+    was blocked before test execution by unrelated dirty compile error:
+    `TaskMaintenanceService.java:[855,5] 缺少返回语句`.
+  - `mvn -q -DskipTests test-compile` blocked on the same unrelated dirty compile error:
+    `TaskMaintenanceService.java:[855,5] 缺少返回语句`.
+  - `mvn -q -DskipTests compile` blocked on the same unrelated dirty compile error:
+    `TaskMaintenanceService.java:[857,49] 缺少返回语句`.
+  - A later current-state rerun of `mvn -q -Dtest=XiuluoBrainStartupMaintenanceWiringTest test`
+    was also blocked before test execution by unrelated dirty `TaskMaintenanceService` compile error:
+    `TaskMaintenanceService.java:[909,70] 找不到符号 safeMaintenanceInputLabel(java.lang.String)`.
+- Independent review / manager gate 2026-07-06:
+  - Reviewer A approved with no P0/P1/P2; confirmed first-aid/incense now run before
+    `isXiuluoBrainLoopEnabled()` / `runRoundWithXiuluoBrain(...)`, no legacy duplicate gate, and
+    source guards cover the ordering.
+  - Reviewer B approved with no P0/P1/P2; confirmed `completedRuns > 0` avoids duplicate startup
+    maintenance, `cleanQueueTransitionStartup` cannot bypass startup maintenance, and old
+    hot-start/return-item/tracker shortcut order stays behind the shared startup gate.
+  - Manager rerun after the unrelated dirty compile repair:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest,com.bot.dhxy.task.xiuluo.XiuluoBrainStartupMaintenanceWiringTest" test`
+    exited `0`, and `mvn -q -DskipTests compile` exited `0`.
+- Fresh runtime gate:
+  - Next 修罗 cloud-brain startup must show `performStartupFirstAidCheck`/startup first-aid evidence
+    and `[xiuluo-v2] startup incense check before hot-start` before `xiuluo.brain.loop.start` /
+    `xiuluo.brain.start`.
+
+### 2026-07-06 CR205 user rejection - no new service
+
+- Role: 谢帅 manager/reviewer。用户打回 CR205 第二版结构：不要新增
+  `MaintenanceBroadcastRoiService`，维护广播 ROI matcher 必须复用现有 service。
+- Current decision:
+  - 删除/撤掉新 service 类，不保留独立 `MaintenanceBroadcastRoiService`。
+  - 第三版仍要保留 CR205 业务目标：窗口相对 `(260,381)->(378,413)` 小 ROI raw 模板匹配，
+    heal before repair，no-match no-op，命中点击模板中心。
+  - queued 路径仍要走输入队列；三技能 exclusive callback 内仍只能 direct input，不能嵌套
+    `InputSequences`。
+  - `TaskMaintenanceService`、三技能清理、修罗 accept 兜底、`UICleanerService` 入口仍不得通过
+    `DialogHandleRequest.handleMaintenanceBroadcastOption(...)` / `DialogService` /
+    `DIALOG_POLICY` 点击 heal/repair 维护广播。
+  - Worker 第三版必须先选择一个现有 service 承载共享逻辑，并避免
+    `TaskMaintenanceService` <-> `SummonSkillService` 循环依赖。
+- Docs/dashboard:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR205 row/detail card 已从 second-pass Review 改回 Blocked。
+  - Next step: resume CR205 worker for third-pass repair, then rerun focused tests, compile, dashboard,
+    and two independent reviews.
+
+### 2026-07-06 CR205 worker third pass baseline - reuse existing service
+
+- Role: CR205 worker v3。只撤掉第二版新增 service，并把维护广播 ROI raw matcher 收回既有 service；
+  不改 NPC/template/navigation/OCR/任务 phase 业务逻辑，不运行 `reset` / `checkout` / `revert` /
+  `clean`。
+- Baseline before Java/test edits:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - HEAD: `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` shows the worktree was already heavily dirty, including docs,
+    many Java/test files, and the CR205 second-pass untracked
+    `src/main/java/com/bot/dhxy/service/MaintenanceBroadcastRoiService.java`. This worker will not
+    touch unrelated dirty files.
+  - Current second-pass source evidence checked with `rg`: `TaskMaintenanceService`,
+    `SummonSkillService`, `XiuluoTaskV2`, `UICleanerService`, `DialogCloudPreClickWiringGuardTest`,
+    `DialogMaintenanceLightweightFallbackPolicyWiringTest`, and
+    `TaskMaintenanceCR205MaintenanceBroadcastRoiTest` all still reference the new
+    `MaintenanceBroadcastRoiService`.
+- Existing-service ownership decision:
+  - Chosen owner: `UICleanerService`.
+  - Reason not `TaskMaintenanceService`: `TaskMaintenanceService` already depends on
+    `SummonSkillService` for summon-skill cleanup. If `SummonSkillService` also called
+    `TaskMaintenanceService` for the direct/exclusive CR205 ROI click, Spring wiring would form a
+    `TaskMaintenanceService -> SummonSkillService -> TaskMaintenanceService` cycle.
+  - `UICleanerService` is an existing UI-interruption service, already owns both queued
+    `InputSequences` and direct `InputProvider` boundaries, and is already injected into
+    `SummonSkillService` and `XiuluoTaskV2`. It can host the shared queued/direct ROI matcher
+    without adding a new service or creating a cycle.
+- Implementation:
+  - Deleted `src/main/java/com/bot/dhxy/service/MaintenanceBroadcastRoiService.java`.
+  - Moved the CR205 ROI constants, raw-template matching, result records, logging, queued click, and
+    direct click entries into existing `UICleanerService`.
+  - `TaskMaintenanceService.handleMaintenanceBroadcast(...)` now calls
+    `uiCleanerService.clickMaintenanceBroadcastIfPresentQueued(...)`.
+  - `SummonSkillService.handleBusinessDialogDuringSkillClean(...)` now calls
+    `uiCleanerService.clickMaintenanceBroadcastIfPresentDirect(...)`; no nested input queue is used
+    inside the exclusive summon-skill callback.
+  - `XiuluoTaskV2.acceptTaskDialog(...)` now calls
+    `uiCleanerService.clickMaintenanceBroadcastIfPresentQueued(...)` before non-maintenance dialog
+    cleanup.
+  - `UICleanerService.cleanLightweightInterruptions(...)` calls its own queued ROI entry before
+    `DialogHandleRequest.handleNonMaintenanceBusinessOption(...)`.
+- TDD / verification:
+  - RED: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` failed before the
+    third-pass implementation because the new service file still existed and the known entrances
+    still referenced it.
+  - GREEN: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` exited `0`.
+  - GREEN: `mvn -q -Dtest=DialogCloudPreClickWiringGuardTest test` exited `0`.
+  - GREEN: `mvn -q -Dtest=DialogPolicyCloudDecisionServiceTest test` exited `0`.
+  - GREEN: `mvn -q -DskipTests test-compile` exited `0`.
+  - GREEN: `java -cp "target/classes;target/test-classes"
+    com.bot.dhxy.service.DialogMaintenanceLightweightFallbackPolicyWiringTest` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+- Replay input/output unchanged and regenerated by the focused test:
+  - Inputs:
+    `images/temp/maintenance_roi_live/heal_tight_roi_crop.png`,
+    `images/temp/maintenance_roi_live/repair_tight_roi_crop.png`.
+  - Outputs:
+    `images/temp/maintenance_roi_live/heal_tight_roi_crop_cr205_marked.png`,
+    `images/temp/maintenance_roi_live/repair_tight_roi_crop_cr205_marked.png`.
+
+### 2026-07-06 CR205 worker second pass - reviewer B blockers
+
+- Role: CR205 worker v2。只修复维护广播从旧 dialog/business option 链路迁到本地 ROI raw
+  matcher 的遗漏入口；不改 OCR/template/NPC/navigation/任务 phase 业务逻辑，不运行
+  `reset` / `checkout` / `revert` / `clean`。
+- Baseline before Java/test edits:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - HEAD: `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` shows the worktree was already heavily dirty before this pass,
+    including docs/dashboard, `SummonSkillService.java`, `TaskMaintenanceService.java`,
+    `UICleanerService.java`, `XiuluoTaskV2.java`, many other Java/test files, and untracked CR205
+    template/replay assets. This pass must preserve unrelated local changes.
+  - Latest pushed/current path evidence checked with source reads and `rg`:
+    `SummonSkillService.handleBusinessDialogDuringSkillClean(...)` still called
+    `DialogHandleRequest.handleMaintenanceBroadcastOption("summon-skill:" + stage)`;
+    `XiuluoTaskV2.acceptTaskDialog(...)` still delegated unmatched accept dialogs to
+    `DialogHandleRequest.handleBusinessOption(...)` and treated `heal-pet` /
+    `repair-equipment` as maintenance handoff; `UICleanerService.cleanLightweightInterruptions(...)`
+    still delegated directly to `DialogHandleRequest.handleBusinessOption(sourceTask)`;
+    `DialogCloudPreClickWiringGuardTest` still asserted the stale old maintenance option wiring.
+- Reviewer B blockers to address:
+  - CR205 ROI raw matcher must be shared, not copied, and must offer both queued and direct/exclusive
+    click entries.
+  - Summon-skill cleanup runs inside an exclusive input callback, so it must not enqueue another
+    `InputSequences` action; direct path must use `InputProvider` inside the existing input boundary.
+  - 修罗 accept fallback and lightweight UI cleanup must try the CR205 ROI matcher before any
+    remaining non-maintenance dialog cleanup, and production maintenance broadcast handling must no
+    longer depend on `DialogService` / `DIALOG_POLICY` / green-white washing.
+- Implementation:
+  - Added `MaintenanceBroadcastRoiService` as the single CR205 matcher/click owner. It captures only
+    window-relative ROI `(260,381)->(378,413)`, matches raw `maintenance_heal_all_repair_raw.png`
+    before `maintenance_repair_confirm_raw.png` at threshold `0.85`, logs source/window/base/ROI/
+    template/action/score/click, and returns no-op/not-found on no match.
+  - Queued path `clickIfPresentQueued(...)` clicks through `InputSequences.moveAndClickLeft(...)`;
+    direct path `clickIfPresentDirect(...)` uses `InputProvider` plus `InputActionScope.checkpoint()`
+    for code already inside an exclusive input callback.
+  - `TaskMaintenanceService.handleMaintenanceBroadcast(...)` now delegates to the shared queued ROI
+    service and no longer owns duplicate ROI/template code.
+  - `SummonSkillService.handleBusinessDialogDuringSkillClean(...)` now uses the direct ROI path, so
+    the three-skill exclusive input callback does not submit nested input queue work.
+  - `XiuluoTaskV2.acceptTaskDialog(...)` now tries queued ROI maintenance before unmatched accept
+    cleanup; a hit keeps the prior maintenance-broadcast yield/retry semantics, while later dialog
+    cleanup uses `DialogHandleRequest.handleNonMaintenanceBusinessOption(...)`.
+  - `UICleanerService.cleanLightweightInterruptions(...)` now tries queued ROI maintenance first and
+    only then delegates to non-maintenance business cleanup.
+  - Added `DialogHandleRequest.handleNonMaintenanceBusinessOption(...)` and tightened
+    `DialogPolicyCloudDecisionService` business-option template/action gating so this cleanup request
+    cannot choose `heal-pet` / `repair-equipment` maintenance actions.
+  - Updated stale CR205 guards: `DialogCloudPreClickWiringGuardTest` and
+    `DialogMaintenanceLightweightFallbackPolicyWiringTest`.
+- TDD / verification:
+  - RED: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` failed before the
+    second-pass implementation because `MaintenanceBroadcastRoiService` was missing and the known
+    side entrances still used old wiring.
+  - GREEN: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` exited `0`.
+  - GREEN: `mvn -q -Dtest=DialogCloudPreClickWiringGuardTest test` exited `0`.
+  - GREEN: `mvn -q -Dtest=DialogPolicyCloudDecisionServiceTest test` exited `0`.
+  - GREEN: `mvn -q -DskipTests test-compile` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+  - GREEN: `java -cp "target/classes;target/test-classes"
+    com.bot.dhxy.service.DialogMaintenanceLightweightFallbackPolicyWiringTest` exited `0`.
+- Replay input/output:
+  - Inputs:
+    `images/temp/maintenance_roi_live/heal_tight_roi_crop.png`,
+    `images/temp/maintenance_roi_live/repair_tight_roi_crop.png`.
+  - Outputs:
+    `images/temp/maintenance_roi_live/heal_tight_roi_crop_cr205_marked.png`,
+    `images/temp/maintenance_roi_live/repair_tight_roi_crop_cr205_marked.png`.
+  - Replay assertion: heal crop matches only heal raw template; repair crop matches only repair raw
+    template; cross-template scores stay below `0.85`.
+- Fresh runtime gate:
+  - Next real run should show maintenance broadcasts clicked through CR205 ROI logs with source,
+    window id/title/base, ROI abs/rel, actionKey, score, and click point.
+  - `TaskMaintenanceService` / summon-skill / 修罗 accept / UI lightweight cleanup should not emit
+    `maintenance broadcast scan failed` or route heal/repair maintenance through `DIALOG_POLICY`.
+
+### 2026-07-06 CR200 worker baseline - tracker shortcut incidental combat handoff
+
+- Role: CR200 worker。只修复 `XIULUO_BRAIN` dev/external brain 对
+  `WAIT_TRACKER_SHORTCUT_PATHING -> SHARED_STATE_TRIGGERED/MUST_YIELD -> WAIT_COMBAT` 的协议边界；
+  不改 OCR/template/click/navigation 坐标，不碰 common-box 业务。
+- Baseline before Java/test edits:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - HEAD: `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` shows the worktree was already heavily dirty before this worker,
+    including docs/dashboard, many Java files, untracked `src/main/java/com/bot/dhxy/cloud/**`,
+    untracked `src/test/java/com/bot/dhxy/cloud/**`, and untracked 修罗 focused tests. This worker
+    must not run `reset`, `checkout`, `clean`, or revert unrelated files.
+  - `git ls-files --stage -- src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java
+    src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java ...` returned no rows;
+    both DHXY dev brain files are local untracked migration files, not pushed baseline files.
+  - `git show @{u}:src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` and
+    `git show @{u}:src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java` both fail
+    with "exists on disk, but not in `@{u}`"; use the current local CR197-CR199 files plus the CR200
+    card as the immediate contract baseline.
+  - `git diff -- src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRouteEnterBattleWiringTest.java`
+    is empty before this worker; no Java client gate edit is planned unless tests prove it rejects
+    the legal cloud response.
+  - External brain path: `D:\mavenProject\dhxy-cloud-brain` is not a git repository in this checkout.
+    Baseline is local file hash/time only:
+    - `DecisionEngine.java` SHA256
+      `0B10B4C3698DFA0AF36270C529CD4CEDE0ED39D74699A379B246385B4A4DB65F`.
+    - `XiuluoBrainProtocolTest.java` SHA256
+      `69C58872FF7F1C1F4175142D39899DEE59EB431C3C1599C14B994D79B7D2F9B5`.
+- Root-cause line confirmed before edits:
+  - DHXY dev `CloudDecisionDevServer.xiuluoBrainWhitelistedNextPhase(...)` currently has
+    `case "WAIT_TRACKER_SHORTCUT_PATHING" -> readyNext(outcomeFacts, "NAVIGATE_TO_TARGET");`.
+  - External `DecisionEngine.nextXiuluoBrainPhase(...)` has the same branch.
+  - Therefore the legacy `READY_TO_CONTINUE/CONTINUE_CHAIN -> NAVIGATE_TO_TARGET` path is accepted,
+    but live incidental combat `SHARED_STATE_TRIGGERED/MUST_YIELD -> WAIT_COMBAT` is rejected at the
+    next-step white-list.
+- Implementation:
+  - DHXY dev `CloudDecisionDevServer` now routes `WAIT_TRACKER_SHORTCUT_PATHING` through a scoped
+    `trackerShortcutPathingNext(...)` policy instead of a single `readyNext(...)`.
+  - Preserved legacy happy path:
+    `READY_TO_CONTINUE + CONTINUE_CHAIN + localOutcomeNextPhase=NAVIGATE_TO_TARGET ->
+    NAVIGATE_TO_TARGET`.
+  - Added CR200 incidental-combat path:
+    `EXECUTED + SHARED_STATE_TRIGGERED + MUST_YIELD` returns `WAIT_COMBAT` only when
+    `localOutcomeNextPhase=WAIT_COMBAT`, or when `combatSource=INCIDENTAL` and there is no conflicting
+    non-`WAIT_COMBAT` local next.
+  - `RETURN_HOME`, `ROUND_DONE`, and other non-`WAIT_COMBAT` local next values remain rejected from
+    this boundary; no local fallback was added.
+  - External `D:\mavenProject\dhxy-cloud-brain\...\DecisionEngine.java` received the same scoped
+    policy and tests.
+  - No OCR/template/click/navigation/common-box code was touched. No Java client gate change was
+    needed; `XiuluoBrainRouteEnterBattleWiringTest` stayed green.
+- TDD / verification:
+  - RED DHXY: `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest" test` failed before
+    implementation with `stateSeq expected=2 actual=1`, proving the new incidental-combat step was
+    still rejected.
+  - RED external: `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed before implementation on the
+    two new incidental-combat tests.
+  - GREEN DHXY focused:
+    `mvn -q "-Dtest=com.bot.dhxy.cloud.xiuluo.XiuluoBrainDevServerTest,com.bot.dhxy.task.xiuluo.XiuluoBrainRouteEnterBattleWiringTest" test`
+    exited `0`.
+  - GREEN external focused: `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`.
+  - GREEN DHXY compile: `mvn -q -DskipTests compile` exited `0`.
+  - GREEN external package: `mvn -q -DskipTests package` exited `0`; the external brain jar was rebuilt.
+  - Dashboard sync: `node scripts/generate-cr-dashboard-data.js` exited `0` and generated
+    `199 CR rows`.
+- Fresh / restart gate:
+  - User must restart the external brain process (and relaunch DHXY/dev sidecar if it is already
+    running) before retesting; otherwise the old in-memory process will still reject this boundary.
+  - Fresh expected evidence: after hot-start tracker green click, an incidental combat outcome from
+    `WAIT_TRACKER_SHORTCUT_PATHING` should be accepted by action-outcome and the next `XIULUO_BRAIN`
+    step should return `phase=WAIT_COMBAT action=EXECUTE_PHASE` with nonblank
+    `sessionId/stateSeq/phaseToken/actionId/windowId/taskRunId`, not `REJECTED` or empty phase.
+- Independent review / manager gate:
+  - Reviewer #1 and reviewer #2 both APPROVED the CR200 incidental handoff repair, with no P0/P1/P2.
+  - 谢帅 manager verdict: CR200 may enter Fresh Node D after external brain/dev sidecar restart, but
+    remains Review until live logs prove the `SHARED_STATE_TRIGGERED/MUST_YIELD -> WAIT_COMBAT`
+    step is accepted under `XIULUO_BRAIN`.
+
+### 2026-07-06 CR205 worker baseline - implementation pass
+
+- Role: CR205 worker。只实现维护广播本地 ROI raw 模板匹配；不改 NPC/dialog/navigation/OCR/任务 phase。
+- Baseline before Java/test edits:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD: `dc4394f`。
+  - `git status --short` shows this worktree was already heavily dirty, including existing edits in
+    `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`, `DialogService.java`,
+    docs/dashboard, many tests/config files, and untracked CR/template/test assets. This worker did
+    not run `reset`, `checkout`, `clean`, or `revert`.
+  - Latest pushed business baseline checked with
+    `git show @{u}:src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`; pushed baseline
+    still routes maintenance broadcast through
+    `dialogService.handleDialog(DialogHandleRequest.handleMaintenanceBroadcastOption(...))` and logs
+    `maintenance broadcast scan failed` on `DialogResultStatus.FAILED`.
+  - Current local pre-edit diff checked with
+    `git diff -- src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`; local file already
+    contains CR cloud/runtime-shadow, local-team session, summon-skill FIFO/backoff, and
+    maintenance-threshold changes. CR205 will layer only the maintenance broadcast matcher on top.
+- Implementation:
+  - `TaskMaintenanceService.handleMaintenanceBroadcast(...)` now uses a local raw template matcher
+    instead of `DialogService.handleDialog(...)` /
+    `DialogHandleRequest.handleMaintenanceBroadcastOption(...)` / `DIALOG_POLICY`.
+  - Fixed ROI: window-relative `(260,381)->(378,413)`, size `118x32`.
+  - Matching order: `maintenance_heal_all_repair_raw.png` first, then
+    `maintenance_repair_confirm_raw.png`; threshold `0.85`.
+  - Matched click point is the template center converted to screen-absolute coordinates and submitted
+    through `InputSequences.moveAndClickLeft(...)` as one queued move+click sequence.
+  - No match is a no-op/not-found result; CR205 path does not emit
+    `maintenance broadcast scan failed` / `BROADCAST_FAILED`.
+  - Kept the existing 8-argument constructor for focused tests and added a Spring 10-argument
+    constructor for `GameClientTracker` / `InputSequences`, so unrelated direct-construction tests
+    are not forced to change.
+- TDD / verification:
+  - RED: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` failed before the fix
+    on `CR205 maintenance broadcast must not call DialogService.handleDialog`.
+  - GREEN: `mvn -q -Dtest=TaskMaintenanceCR205MaintenanceBroadcastRoiTest test` exited `0`.
+  - GREEN: `mvn -q -DskipTests test-compile` exited `0`.
+  - GREEN: `mvn -q -DskipTests compile` exited `0`.
+- Replay input/output:
+  - Input crops:
+    - `images/temp/maintenance_roi_live/heal_tight_roi_crop.png`
+    - `images/temp/maintenance_roi_live/repair_tight_roi_crop.png`
+  - Templates:
+    - `images/template/dialog/maintenance/maintenance_heal_all_repair_raw.png`
+    - `images/template/dialog/maintenance/maintenance_repair_confirm_raw.png`
+  - Marked outputs created by
+    `TaskMaintenanceCR205MaintenanceBroadcastRoiTest.liveTightRoiCropsMatchOnlyTheirOwnRawTemplates`:
+    - `images/temp/maintenance_roi_live/heal_tight_roi_crop_cr205_marked.png`
+    - `images/temp/maintenance_roi_live/repair_tight_roi_crop_cr205_marked.png`
+  - The same test asserts heal crop only passes heal template, repair crop only passes repair template,
+    and both cross-template checks are below threshold.
+
+### 2026-07-06 CR199/CR200 live blocker - tracker shortcut incidental combat
+
+- Role: 谢帅 manager / reviewer。只记录 runtime 证据、派 worker，不直接写 Java 业务实现。
+- Baseline before this CR evidence update:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD and upstream: `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Relevant touched docs already dirty before this note: `docs/ACTIVE_WORK.md`,
+    `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js`。
+  - Relevant business files already dirty before this note: `XiuluoTaskV2.java`; no local Java edit
+    is made by 谢帅 in this pass.
+- Latest runtime evidence from `logs/dhxy-console.log`:
+  - `13:49:16.485` hot-start tracker facts now worked: `TRACKER_PANEL_READER` / cloud reader found
+    the left tracker and returned a green-link click.
+  - `13:49:18.838` after the tracker green click, 修罗 opened the team pathing maintenance window with
+    source `xiuluo-v2:tracker-shortcut-green-clicked`.
+  - `13:49:18.840` return-item prescan selected `IN_COMBAT_RANDOM`; this confirms the green-click hook
+    ran before the later combat event.
+  - `13:49:41.401` `WAIT_TRACKER_SHORTCUT_PATHING` detected incidental combat and produced
+    `result=SHARED_STATE_TRIGGERED yield=MUST_YIELD localNext=WAIT_COMBAT`.
+  - `13:49:43.684` external `XIULUO_BRAIN` rejected the next step:
+    `outcome cannot advance transactionResult=SHARED_STATE_TRIGGERED outcome=EXECUTED
+    yieldPolicy=MUST_YIELD`; Java fail-closed and task finished `修罗 -> FAILED`.
+- Common-box observation:
+  - The same run has no `[common-box]` log after startup. Source inspection shows
+    `consumePendingBoxIfAllowed(...)` returns silently when no pending exists, so the log can only prove
+    no pending was consumed, not why no pending existed.
+  - This run failed before `return-home-verified`, so no leader box detection/pending creation occurred
+    in this latest round. CR120/CR191 fresh still need a real pending-box sample to prove startup/next
+    task consumption.
+- Repair direction:
+  - CR199 Fresh Node C is failed at the CR199/CR200 boundary.
+  - CR200 must accept/report the `WAIT_TRACKER_SHORTCUT_PATHING -> SHARED_STATE_TRIGGERED/MUST_YIELD
+    -> WAIT_COMBAT` handoff and return a legal `WAIT_COMBAT` command instead of rejecting with an empty
+    phase.
+  - Add/extend tests so external/dev brain cover this exact action-outcome + next-step pair.
+
+### 2026-07-06 CR205 维护广播本地 ROI 模板匹配 - 卡片创建并派 worker
+
+- Role: 谢帅 manager/reviewer。用户确认方案后创建 CR205 并派 worker；谢帅不直接写 Java
+  业务实现。
+- Baseline before CR205 card / worker dispatch:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`。
+  - HEAD: `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Worktree already heavily dirty before this CR205 pass; do not `reset`, `checkout`, `clean`,
+    `revert`, or overwrite unrelated user/worker changes.
+- User-confirmed target behavior:
+  - 维护广播不再作为 dialog 处理。
+  - 自动挂机空闲维护按原固定间隔，在小 ROI 内本地 raw 模板匹配。
+  - 队长主动发起 maintenance 时，也走同一条本地 ROI 模板匹配路径。
+  - 不走 `DialogService.handleDialog(...)`、`DialogHandleRequest.handleMaintenanceBroadcastOption(...)`、
+    `DialogService.detectMaintenanceBroadcastActionNoFocus(...)`、`DIALOG_POLICY`、洗绿字/洗白字。
+- Template / ROI evidence gathered before implementation:
+  - Renamed user-added templates:
+    - `images/template/dialog/maintenance/maintenance_repair_confirm_raw.png`
+    - `images/template/dialog/maintenance/maintenance_heal_all_repair_raw.png`
+  - Current live window used for measurement: `hwnd-1ED0E40`, client base `(1291,221)`,
+    size `1036x783`.
+  - Repair template full-window match: relative template box `(266,393)->(327,410)`, score `1.0`.
+  - Heal template full-window match: relative template box `(266,385)->(372,401)`, score `1.0`.
+  - Final tight common ROI:
+    - window-relative `(260,381)->(378,413)`, size `118x32`;
+    - current absolute `(1551,602)->(1669,634)` for the measured window.
+  - Marked full-window outputs:
+    - `images/temp/maintenance_roi_live/repair_match_tight_roi_marked.png`
+    - `images/temp/maintenance_roi_live/heal_match_tight_roi_marked.png`
+  - Crop-only replay verified the ROI itself:
+    - `images/temp/maintenance_roi_live/repair_tight_roi_crop.png` vs
+      `maintenance_repair_confirm_raw.png`: center `(36.5,20.5)`, score `1.0`, pass `0.85`.
+    - `images/temp/maintenance_roi_live/heal_tight_roi_crop.png` vs
+      `maintenance_heal_all_repair_raw.png`: center `(59.0,12.0)`, score `0.999999642`,
+      pass `0.85`.
+    - Cross scores stayed below threshold: repair crop vs heal `0.082`; heal crop vs repair
+      `0.381`.
+  - Marked crop outputs:
+    - `images/temp/maintenance_roi_live/repair_tight_roi_crop_match_marked_x5.png`
+    - `images/temp/maintenance_roi_live/heal_tight_roi_crop_match_marked_x5.png`
+- CR205 card / dashboard:
+  - Added Sprint row and detailed card to `docs/PACKAGE_ARCHITECTURE.md`.
+  - Worker must update `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, and regenerate
+    `docs/cr-dashboard-data.js` after source changes.
+- Worker dispatch:
+  - Scope: implement CR205 in `TaskMaintenanceService` / narrow maintenance helper and focused tests.
+  - Do not change OCR/template/dialog/NPC/navigation/task phase algorithms outside the maintenance
+    broadcast path.
+  - Required local verification: CR205 replay/guard, `mvn -q -DskipTests test-compile`,
+    `mvn -q -DskipTests compile`.
+
+### 2026-07-06 CR198 hot-start final review passed - fresh ready after sidecar restart
+
+- Role: 谢帅 manager / reviewer。已复核用户最新热启动日志和 CR198 hot-start P1 返修状态；本段只记录结论与 fresh gate，不改 Java 业务代码。
+- Latest runtime evidence from `logs/dhxy-console.log`:
+  - `12:55:31.347` `XIULUO_BRAIN start` context still showed
+    `trackerFound=not_collected_no_input_safe_source`,
+    `trackerGreenLinkCount=0`, and
+    `trackerFactSource=not_collected_no_input_safe_source`.
+  - Cloud therefore returned `PREPARE_ROUND`, then `ACCEPT_TASK_NAVIGATE_TO_NPC`; this run did not
+    reach `TRY_TRACKER_SHORTCUT`.
+  - This proves the user-visible symptom was not "green link clicked wrong"; the start facts never
+    carried the existing left tracker link.
+- CR198 repair / review state:
+  - Worker repaired both P1 blockers: hot-start facts no longer call `syncMyPosition()` and use
+    HWND-only tracker snapshot facts; DHXY dev sidecar and external brain return
+    `TRY_TRACKER_SHORTCUT` when `trackerFound=true && trackerGreenLinkCount>0` with a real
+    `trackerFactSource`.
+  - Independent reviewer #1 `Cicero` APPROVED.
+  - Independent reviewer #2 `Plato` APPROVED.
+  - Manager verification already recorded in CR198: focused DHXY tests, standalone guard, DHXY
+    compile, external protocol test, and external package all exited `0`.
+- Fresh environment:
+  - Stale external brain process PID `36280`, created `2026-07-06 00:01:33`, has been stopped.
+  - Rebuilt external jar timestamp is `2026-07-06 13:39:13`.
+  - New external brain process PID `33896` is listening on `127.0.0.1:18080`.
+  - Next hot-start test can use the restarted sidecar/external brain, but the DHXY desktop program
+    itself must also be restarted/relaunched so `XiuluoTaskV2` uses the repaired client-side hot-start
+    facts collector.
+- Fresh expected evidence:
+  - Before any `ACCEPT_TASK_NAVIGATE_TO_NPC`, `XIULUO_BRAIN start` context must show
+    `trackerFound=true`, `trackerGreenLinkCount>0`, `trackerFactSource=hwnd_snapshot:*`, and cloud
+    first command `TRY_TRACKER_SHORTCUT`.
+  - If HWND snapshot is unavailable, logs must show explicit `trackerFactReason`, not a silent
+    CR197 placeholder.
+
+### 2026-07-06 CR198 hot-start dual-review P1 - worker 返修完成待双审
+
+- Role: CR198 hot-start worker。谢帅 manager/reviewer 不写 Java 业务实现；本 worker 只修 P1-A/P1-B 并等待两名 reviewer 复审。
+- Baseline before this repair:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD and upstream: `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`)。
+  - Worktree was heavily dirty before edits; no `reset` / `checkout` / `revert` / `clean` was used.
+- Reviewer #1 P1 / no-input boundary:
+  - `collectXiuluoBrainHotStartFacts(...)` 在 `XIULUO_BRAIN start` 前仍调用
+    `playerStateService.syncMyPosition()`。
+  - 调用链可进入 `LocationVisionService.captureCurrentLocationStrip(...)` ->
+    `GameClientTracker.captureToFile(...)`，在 HWND capture 失败时可能继续走 focus/Robot fallback。
+  - Repair: enabled hot-start facts 不得调用 `syncMyPosition()`；位置事实只能用缓存
+    `gameContext.getMe()` 或严格 HWND-only reader，不可用则写
+    `currentLocationFactReason=no_input_reader_unavailable`。
+  - Test: `XiuluoBrainHotStartWiringTest` 必须禁止 hot-start facts collector 内出现
+    `syncMyPosition(`。
+- Reviewer #2 P1 / cloud start ignores tracker facts:
+  - DHXY dev `CloudDecisionDevServer.xiuluoBrainStartDecisionFor(...)` 和 external
+    `dhxy-cloud-brain DecisionEngine.xiuluoBrainStart(...)` 仍只按 `initialPhase`，默认
+    `PREPARE_ROUND`。
+  - 即使 start context 已有 `trackerFound=true`、`trackerGreenLinkCount>0`，仍会进入
+    `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC`，原热启动问题会复现。
+  - Repair: start context 有真实 tracker link 时，dev sidecar 和 external brain 首命令必须是
+    `TRY_TRACKER_SHORTCUT`；not-collected/false/0 才允许默认接任务路径。
+  - Test: 补协议/contract 测试证明 tracker-facts start request 返回 `TRY_TRACKER_SHORTCUT`。
+- Worker repair:
+  - P1-A: `XiuluoTaskV2.collectXiuluoBrainHotStartFacts(...)` 已移除
+    `playerStateService.syncMyPosition()`；位置事实只读 `gameContext.getMe()` 缓存。缓存存在时写
+    `currentLocationFactReason=cached_game_context`，无缓存时写
+    `currentLocationFactReason=no_input_reader_unavailable`。没有引入普通
+    `GameClientTracker.captureToFile/captureToMemory`、focus、Robot、input queue、tracker drag 或
+    return item use。
+  - P1-A guard: `XiuluoBrainHotStartWiringTest` 已禁止 hot-start facts collector 内出现
+    `syncMyPosition(`，并继续禁止普通 capture/focus/input/drag/live tracker path；允许
+    screenshot-only `readXiuluoTrackerPanelFromSnapshot(...)`。
+  - P1-B: DHXY dev `CloudDecisionDevServer` 与 external
+    `D:\mavenProject\dhxy-cloud-brain` `DecisionEngine` 已在 start context
+    `trackerFound=true && trackerGreenLinkCount>0` 且
+    `trackerFactSource!=not_collected_no_input_safe_source` 时首命令返回
+    `TRY_TRACKER_SHORTCUT`；`not_collected`、`false`、`0` 仍走默认 `PREPARE_ROUND`。
+- RED / GREEN:
+  - RED: 修复前新增的 tracker-facts start contract 在 DHXY dev sidecar 和 external brain 中均返回
+    `PREPARE_ROUND`，证明 P1-B 存在；hot-start guard 对 `syncMyPosition(` 的禁止会挡住 P1-A。
+  - GREEN: `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest" test`
+    exited `0`。
+  - GREEN: `javac -encoding UTF-8 -d target\test-classes src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`
+    exited `0`; `java -cp target\test-classes com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`
+    exited `0` and printed `XiuluoSingleBrainSourceGuardTest passed`。
+  - GREEN: DHXY `mvn -q -DskipTests compile` exited `0`。
+  - GREEN: external `mvn -q -Dtest=XiuluoBrainProtocolTest test` exited `0`。
+  - GREEN: external `mvn -q -DskipTests package` exited `0`，external brain jar 已重建。
+- Fresh gate:
+  - 两名 reviewer 复审和谢帅 manager 验收通过前，不要求用户 fresh run。
+  - 通过后必须先重启 DHXY sidecar / external brain 进程，确保使用新 jar，再热启动已有左侧修罗
+    tracker link。
+  - 期望在任何 `ACCEPT_TASK_NAVIGATE_TO_NPC` 前看到 `XIULUO_BRAIN start` context 带真实
+    `trackerFound=true`、`trackerGreenLinkCount>0`、`trackerFactSource=hwnd_snapshot:*`，云端首命令
+    为 `TRY_TRACKER_SHORTCUT`；若 HWND snapshot 不可用，必须看到明确
+    `trackerFactReason` / `currentLocationFactReason`，不能静默占位。
+- Action:
+  - 已写回 CR198 card/table；准备交两名 independent reviewer 复审。
+
+### 2026-07-06 CR198 hot-start tracker facts worker - HWND-only snapshot repair
+
+- Role: CR198 返修 worker。当前主 agent 为谢帅 manager/reviewer，本 worker 只负责实现、测试和文档记录。
+- Scope:
+  - 只改 `XiuluoTaskV2`、必要的 `TaskTrackerPanelService` snapshot helper、CR198 focused tests，以及 CR198/ACTIVE_WORK/dashboard 文档。
+  - 不改 tracker 识别算法、绿链点击坐标算法、云端算法、NPC/dialog/navigation。
+  - Hot-start facts 必须严格无输入；不得调用普通 `GameClientTracker.captureToFile(...)` / `captureToMemory(...)`，因为 HWND 失败后可能走 Robot/focus fallback。
+- Baseline before Java edits:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD and upstream: `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` is heavily dirty before this worker pass; do not `reset`,
+    `checkout`, `clean`, `revert`, or overwrite unrelated changes.
+  - Current local pre-edit evidence:
+    `collectXiuluoBrainHotStartFacts(...)` writes
+    `trackerFound=not_collected_no_input_safe_source`,
+    `trackerGreenLinkCount=0`, and
+    `trackerFactSource=not_collected_no_input_safe_source` unconditionally.
+  - Current local safe reader evidence:
+    `TaskTrackerPanelService.readXiuluoTrackerPanelFromSnapshot(Path, int, int, String)` already reuses
+    the existing 修罗 tracker snapshot/replay reader without sending input.
+  - Current capture risk evidence:
+    `GameClientTracker.captureToFile(...)` / `captureToMemory(...)` first try HWND capture but then call
+    `focusCurrentWindowForScreenCaptureWithoutLock(...)` and Robot fallback, so they are forbidden for
+    this hot-start no-input facts path.
+- TDD plan:
+  - First strengthen `XiuluoBrainHotStartWiringTest` so it fails while hot-start facts still use the
+    CR197 placeholder and/or ordinary tracker/capture/focus/input paths.
+  - Then inject/use `BoundWindowCaptureService` directly from `XiuluoTaskV2`, capture the current
+    `WindowRuntimeContext.nativeBinding` full-window snapshot HWND-only into a window-scoped temp PNG,
+    and feed that PNG into `readXiuluoTrackerPanelFromSnapshot(...)`.
+  - If binding/HWND capture/snapshot reader is unavailable, keep the CR197 placeholder but add a
+    concrete `trackerFactReason`.
+- RED:
+  - `mvn -q -Dtest=XiuluoBrainHotStartWiringTest test` failed before production repair with:
+    `CR198 hot-start tracker facts must use direct HWND-only capture, not ordinary tracker capture`.
+- Implementation:
+  - `XiuluoTaskV2.collectXiuluoBrainHotStartFacts(...)` now reads the current
+    `WindowRuntimeContext.nativeBinding` and calls `BoundWindowCaptureService.captureWindow(...)`
+    directly.
+  - On HWND snapshot success, it writes a window-scoped
+    `xiuluo_hot_start_tracker_snapshot_*.png`, calls
+    `TaskTrackerPanelService.readXiuluoTrackerPanelFromSnapshot(...)`, and reports real startup facts:
+    `trackerFound`, `trackerGreenLinkCount`, `trackerFactSource`, `trackerFactReason`,
+    `trackerSnapshotPath`, `trackerDetailPath`, `trackerYellowText`, `trackerSourceType`, and selected
+    click/map facts when a green link exists.
+  - On missing binding/geometry/HWND capture/exception, it keeps
+    `not_collected_no_input_safe_source` but now records a concrete `trackerFactReason`.
+  - The hot-start path still does not call `readXiuluoTrackerPanel(...)`,
+    `GameClientTracker.captureToMemory(...)`, `GameClientTracker.captureToFile(...)`,
+    tracker panel resolve/drag, or input queue calls.
+  - No tracker recognition algorithm, click coordinate algorithm, NPC/dialog/navigation/cloud
+    decision logic, or visual output selection was changed; this is wiring from an HWND-only snapshot
+    into the existing snapshot reader, so no testcase replay is required for this worker pass.
+- Test guard update:
+  - `XiuluoBrainHotStartWiringTest` now allows the screenshot-only
+    `readXiuluoTrackerPanelFromSnapshot(...)` helper but still forbids dangerous live/drag/input and
+    ordinary capture/focus/Robot fallback tokens inside the hot-start facts collector.
+  - The same guard was aligned with the current local CR stack method name
+    `isXiuluoBrainExecutablePreCombatPhase(...)`.
+- GREEN so far:
+  - `mvn -q -Dtest=XiuluoBrainHotStartWiringTest test` exited `0`.
+  - `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+    exited `0`; note `XiuluoSingleBrainSourceGuardTest` is a main-style source guard and needs a
+    separate `javac/java` run for direct output.
+- Final worker verification:
+  - `javac -encoding UTF-8 -d target\test-classes src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`
+    exited `0`.
+  - `java -cp target\test-classes com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`
+    exited `0` and printed `XiuluoSingleBrainSourceGuardTest passed`.
+  - `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+    exited `0` and printed the two JUnit-backed guard pass lines.
+  - `mvn -q -DskipTests compile` exited `0`.
+  - `node scripts/generate-cr-dashboard-data.js` exited `0` and regenerated
+    `docs/cr-dashboard-data.js` with `Generated 198 CR rows`.
+- Fresh runtime gate after reviewers:
+  - Hot-start 修罗 with an existing left tracker green link.
+  - Before any `ACCEPT_TASK_NAVIGATE_TO_NPC`, logs should show `XIULUO_BRAIN start` context with
+    `trackerFound=true`, `trackerGreenLinkCount>0`, `trackerFactSource=hwnd_snapshot:*`,
+    `trackerSnapshotPath`, and `trackerDetailPath`.
+  - If HWND snapshot is unavailable, logs must show
+    `trackerFactSource=not_collected_no_input_safe_source` plus a concrete `trackerFactReason`, not a
+    silent CR197 placeholder.
+
+### 2026-07-06 12:55 CR198 hot-start tracker facts blocker - 左侧链接未采集
+
+- Role: 谢帅 manager / reviewer。根据用户最新热启动反馈审计 `logs/dhxy-console.log`；本段只记录证据和派工方向。
+- Latest runtime:
+  - Java PID `38300` started at `12:54:52`，窗口 `hwnd-1ED0E40` / `乌龟的黑头°（ID：67555）`。
+  - Sidecar gate reported endpoint ready with `startedProcess=false`，当前 `18080` 进程 PID `36280` 自
+    `2026-07-06 00:01:33` 起运行；若 external jar 更新过，fresh 前仍需确认 sidecar 已重启。
+- Evidence:
+  - `12:55:31.329` `xiuluo.brain.loop.start xiuluo.brain.start round=1 windowId=hwnd-1ED0E40 taskRunId=5 source=cr197-hot-start`。
+  - `12:55:31.347` `XIULUO_BRAIN start` context 明确包含
+    `trackerFound=not_collected_no_input_safe_source`、`trackerGreenLinkCount=0`、
+    `trackerFactSource=not_collected_no_input_safe_source`。
+  - Cloud 因此返回 `PREPARE_ROUND`；随后 step 返回 `ACCEPT_TASK_NAVIGATE_TO_NPC`，程序开始走接任务 NPC 导航。
+  - `images/temp/hwnd-1ED0E40` 这轮只有 startup/route/dialog/minimap 图，没有
+    `xiuluo_accept_snapshot` 或 tracker-panel crop，说明左侧 tracker 图根本没被采集。
+- Root cause:
+  - 这不是 tracker 识别失败，也不是 12:21 的 external `PATHING_STARTED` handoff 问题。
+  - `XiuluoTaskV2.collectXiuluoBrainHotStartFacts(...)` 仍保留 CR197 no-input repair 的硬编码占位：
+    start 前不调用 tracker reader，直接把 tracker facts 写成 not-collected。
+  - CR197 时这是安全边界；CR198 进入 tracker shortcut 迁移后，这个占位会让热启动已有左侧链接的场景误走接任务。
+- Repair direction:
+  - 返修 CR198 hot-start tracker facts/首步只读 tracker 入口。
+  - 不得恢复可能拖动 tracker 的 `TaskTrackerPanelService.readXiuluoTrackerPanel(...)` 常规 live path。
+  - 允许方案：使用严格无输入的 HWND/current screenshot 或已有 snapshot 裁 tracker，再交给 cloud tracker reader；或让 cloud start 首命令进入只读 tracker-read phase，再由 actionOutcome/step 决定 shortcut vs accept。
+  - Fresh gate：热启动已有左侧修罗 tracker 链接时，必须在任何 `ACCEPT_TASK_NAVIGATE_TO_NPC` 前看到 tracker facts 或 cloud-owned read-tracker command，并最终进入 `TRY_TRACKER_SHORTCUT`/绿链点击。
+- Action:
+  - 已更新 `docs/PACKAGE_ARCHITECTURE.md` CR198 row/card。
+  - 准备派 CR198 worker 做最小返修；完成后仍需两名独立 reviewer 通过。
+
+### 2026-07-06 CR198 external handoff repair review - 二审 P2 打回
+
+- Role: 谢帅 manager / reviewer。只复核外部 `dhxy-cloud-brain` worker 修复和日志证据，不改 Java 业务实现。
+- Latest runtime evidence remains the `2026-07-06 12:21:56` fresh failure:
+  - `TRY_TRACKER_SHORTCUT` 已上报 `PATHING_STARTED/MUST_YIELD/localNext=WAIT_TRACKER_SHORTCUT_PATHING`。
+  - 外部 `XIULUO_BRAIN step` 仍按旧规则拒绝 `PATHING_STARTED`，导致 DHXY fail-closed。
+- Worker `Schrodinger` partial repair:
+  - External `DecisionEngine` now uses phase-specific `readyNext/pathingNext/sharedStateNext` instead of the old global `outcomeCanAdvance(...)` block.
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - Manager also ran `mvn -q -DskipTests package` in `D:\mavenProject\dhxy-cloud-brain`; exit `0`.
+- Review gate:
+  - Reviewer #1 `Avicenna`: APPROVED; fresh handoff root cause is fixed, P0/P1/P2 none.
+  - Reviewer #2 `Dalton`: REQUEST_CHANGES P2; external brain lacks DHXY dev-server's explicit
+    `WAIT_COMBAT` CR200 boundary/reason and lacks full CR199 route/target/enter-battle protocol tests.
+- Action:
+  - Updated CR198/CR199 rows and CR198 card in `docs/PACKAGE_ARCHITECTURE.md`.
+  - Sent worker back to external `dhxy-cloud-brain` to add `WAIT_COMBAT` boundary and tests.
+- Fresh gate:
+  - Do not ask user to rerun yet. Fresh Node C can run only after worker repair plus two independent reviewer approvals.
+
+Update 2026-07-06 12:43 - P2 repaired and two-reviewer gate passed:
+
+- Worker `Schrodinger` repaired external `D:\mavenProject\dhxy-cloud-brain`:
+  - Added external `WAIT_COMBAT -> waitCombatPreEntryNext(...)`.
+  - Added explicit CR200 boundary reject reason:
+    `WAIT_COMBAT fact belongs to CR200 boundary; unsupported in CR199`.
+  - Added external protocol tests for full CR199 path and boundary rejects.
+- Manager verification:
+  - `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed with `Tests run: 16, Failures: 0, Errors: 0`.
+  - `mvn -q -DskipTests package` passed.
+  - Rebuilt jar: `D:\mavenProject\dhxy-cloud-brain\target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`,
+    timestamp `2026-07-06 12:43:53`.
+- Independent reviewers after P2 repair:
+  - `Arendt`: APPROVED, fresh rerun allowed.
+  - `Boole`: APPROVED, fresh rerun allowed.
+- Next required user/runtime action:
+  - Restart external brain / sidecar so the rebuilt jar is running, then run Fresh Node C 修罗.
+  - Expected log gate: CR198 handoff no longer rejects `PATHING_STARTED`; CR199 reaches
+    `NAVIGATE_TO_TARGET`, `CLICK_TARGET_NPC`, `CONFIRM_ENTER_BATTLE`, and pre-entry `WAIT_COMBAT`.
+
+### 2026-07-06 12:21:56 CR198/CR199 fresh failure - 外部 brain 拒绝 tracker handoff
+
+- Role: 谢帅 manager / reviewer。Fresh Node C log audit；不改 Java 业务代码。
+- Runtime evidence:
+  - `12:21:11.454` leader `hwnd-4080C58` reported
+    `TRY_TRACKER_SHORTCUT result=PATHING_STARTED yield=MUST_YIELD
+    localNext=WAIT_TRACKER_SHORTCUT_PATHING`.
+  - `12:21:56.587` pathing wait woke on `PATHING_TERMINAL`.
+  - `12:21:56.590` `XIULUO_BRAIN actionOutcome` accepted the handoff facts:
+    `transactionResult=PATHING_STARTED`, `localOutcomeNextPhase=WAIT_TRACKER_SHORTCUT_PATHING`.
+  - `12:21:56.593` external `XIULUO_BRAIN step` returned
+    `status=REJECTED; reason=outcome cannot advance transactionResult=PATHING_STARTED
+    outcome=EXECUTED yieldPolicy=MUST_YIELD`, then DHXY fail-closed with
+    `execute gate rejected: phase must parse to XiuluoPhase:` and `task finished: 修罗 -> FAILED`.
+- Root cause:
+  - DHXY dev-server already allows
+    `TRY_TRACKER_SHORTCUT + PATHING_STARTED + MUST_YIELD -> WAIT_TRACKER_SHORTCUT_PATHING`.
+  - External `D:\mavenProject\dhxy-cloud-brain\DecisionEngine.outcomeCanAdvance(...)` still blocks
+    all `PATHING_STARTED` / `MUST_YIELD`, and its protocol test still expects that outcome not to
+    advance.
+- Action:
+  - Updated CR198/CR199 rows and CR198 card in `docs/PACKAGE_ARCHITECTURE.md`.
+  - Dispatched worker `Schrodinger` to modify only external `dhxy-cloud-brain`
+    `DecisionEngine.java` / `XiuluoBrainProtocolTest.java` and run external focused tests.
+- Next gate:
+  - After worker repair, two independent reviewers must approve before another fresh run.
+  - CR199 Fresh Node C did not reach route/target; do not start CR200 yet.
+
+### 2026-07-06 CR199 manager review gate - 双 reviewer 通过，停在 Fresh Node C
+
+- Role: 谢帅 manager / reviewer。未改 Java 业务实现，只复核 worker diff、测试证据和两名独立 reviewer 结论。
+- Scope confirmed:
+  - CR199 只覆盖 `WAIT_TRACKER_SHORTCUT_PATHING` 后的 route / target click /
+    `CONFIRM_ENTER_BATTLE` / 入战前 `WAIT_COMBAT` facts。
+  - CR200 的 combat-running、post-combat、回程、归队、round done、recovery 仍未迁移，不得用
+    CR199 验收替代。
+- Local verification evidence:
+  - `mvn -q -Dtest="XiuluoBrainRouteEnterBattleWiringTest,XiuluoBrainDevServerTest,XiuluoBrainAcceptTrackerWiringTest,CloudDecisionDevServerTest,RouteCloudDecisionServiceTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Independent reviewer gate:
+  - Reviewer #1 `Bacon`: APPROVED. Confirmed `WAIT_COMBAT + IN_COMBAT` now reports
+    `combat-entry-detected-cloud-fact` before local in-combat prescan/park, and dev sidecar rejects
+    CR200 boundary facts in CR199.
+  - Reviewer #2 `Russell`: APPROVED. Confirmed `WAIT_COMBAT + SHARED_STATE_TRIGGERED + MUST_YIELD`
+    reports to `XIULUO_BRAIN` before local yield, `RETRYABLE_ERROR` is distinct, and no new
+    P0/P1/P2 blocker was found.
+- Documentation update:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR199 card updated with review approvals and Fresh Node C gate.
+  - `docs/HYBRID_CLOUD_WORKFLOW.md` local-test matrix updated so CR199 route candidate / route-target
+    contract is no longer listed as a fresh-run-before-local-test gap.
+- Next stop:
+  - Fresh Node C is now required before continuing to CR200: run 修罗 until entering battle and
+    verify logs show `XIULUO_BRAIN` command/actionOutcome/step authority across route, target click,
+    `CONFIRM_ENTER_BATTLE`, and pre-entry `WAIT_COMBAT`.
+
+### 2026-07-06 CR199 implementation worker - fresh 前 route/target/enter-battle 本地 gate
+
+- Role: CR199 implementation worker；当前主 agent 为谢帅 manager/reviewer，本 worker 只做实现、测试和
+  文档记录，严格不要求用户 fresh run。
+- Scope:
+  - 迁移/接线 `NAVIGATE_TO_TARGET`、`CLICK_TARGET_NPC`、`CONFIRM_ENTER_BATTLE`、
+    `WAIT_COMBAT` 的入战前等待/确认本地 shell contract。
+  - `WAIT_TRACKER_SHORTCUT_PATHING` 只沿用 CR198 已完成的 tracker shortcut wait/park 边界。
+  - `RETURN_HOME`、`NAVIGATE_BACK_TO_START`、`WAIT_TEAM_RETURN`、`ROUND_DONE`、脱战后
+    recovery/team return 属于 CR200，本轮不得纳入 allow-list。
+  - 不改视觉/OCR/template/click 坐标算法；若触碰坐标输出，必须先停下补 testcase replay。
+- Baseline before CR199 implementation edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD and upstream:
+    `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` remains heavily dirty before this worker pass; do not `reset`,
+    `checkout`, `clean`, revert, or overwrite unrelated changes.
+  - Latest pushed `XiuluoTaskV2.java` is still the legacy local 修罗 V2 path: it has the normal
+    phase handlers for `NAVIGATE_TO_TARGET` / `CLICK_TARGET_NPC` / `CONFIRM_ENTER_BATTLE` /
+    `WAIT_COMBAT`, but no `executeXiuluoBrainCommandShell(...)` / `XIULUO_BRAIN` shell in the
+    pushed baseline. Current local CR stack owns the cloud-brain shell.
+  - Current local pre-edit shell evidence:
+    `isXiuluoBrainCr198ExecutablePhase(...)` allows only CR198 phases plus
+    `WAIT_TRACKER_SHORTCUT_PATHING`; `NAVIGATE_TO_TARGET`、`CLICK_TARGET_NPC`、
+    `CONFIRM_ENTER_BATTLE`、`WAIT_COMBAT` still fall through
+    `unsupported cloud executable phase; no local fallback phase=...`.
+  - `git ls-tree -r "@{u}" -- src/test/java/com/bot/dhxy/cloud ...` returned no rows for the local
+    CR-stack cloud tests/dev sidecar, including `XiuluoBrainDevServerTest.java`,
+    `CloudDecisionDevServer.java`, `RouteCloudDecisionServiceTest.java`, and the new
+    `XiuluoBrainRouteEnterBattleWiringTest.java`; pushed baseline has no versions of those test
+    files. `docs/HYBRID_CLOUD_WORKFLOW.md` is also local CR-stack context.
+- TDD plan:
+  - First add `XiuluoBrainRouteEnterBattleWiringTest` and extend dev-server/route candidate contract
+    tests so current code fails RED on missing CR199 shell allow-list/dev-step behavior.
+  - Then make the smallest production/dev-test接线: allow only CR199 pre-combat phases through
+    existing `runPhase(...)` handlers and let dev `XIULUO_BRAIN` step advance only from accepted
+    action-outcome facts.
+  - Keep existing guards for `STOP_TASK` / local `STOPPED` / real `STOPPED` terminal and ordinary
+    unsupported phases fail-closed.
+- RED evidence captured before production/dev-server fixes:
+  - `mvn -q -Dtest=XiuluoBrainRouteEnterBattleWiringTest test` failed first on
+    `CR199 must allow NAVIGATE_TO_TARGET cloud command`.
+  - `mvn -q -Dtest=XiuluoBrainDevServerTest test` failed first with route step still missing
+    `NAVIGATE_TO_TARGET`.
+  - `mvn -q -Dtest=CloudDecisionDevServerTest test` failed first because an image-payload
+    `ROUTE_CANDIDATE` click outside the provided route-result ROI returned `200` instead of `400`.
+  - After the P1 review update, the source guard failed first on local `FAILED` terminal behavior and
+    then on handler-level local recovery, including `NAVIGATE_TO_TARGET` missing objective before
+    local `READ_OBJECTIVE` recovery.
+- Implementation completed in this worker pass:
+  - `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` now allows only the CR198/CR199
+    pre-combat executable phases and still fails closed for unsupported phases. `STOP_TASK`, local
+    `STOPPED`, and real `STOPPED` remain terminal.
+  - Local `FAILED` outcomes are no longer converted directly into task terminal failure in the
+    enabled `XIULUO_BRAIN` shell. They are reported as action-outcome facts, then the next phase or
+    fail-closed decision must come from the following `XIULUO_BRAIN step`.
+  - Enabled path failure boundaries inside `navigateToTarget(...)`, `clickTargetNpc(...)`,
+    `confirmEnterBattle(...)`, and pre-entry `waitCombat(...)` now return failure facts before old
+    local recovery/fallback branches. Flag-off legacy local path is left intact.
+  - `CloudDecisionDevServer.nextXiuluoBrainPhase(...)` no longer echoes arbitrary
+    `localOutcomeNextPhase`; it advances only from explicit phase/outcome/transaction/yield/localNext
+    white-listed facts through `WAIT_TRACKER_SHORTCUT_PATHING -> NAVIGATE_TO_TARGET ->
+    CLICK_TARGET_NPC -> CONFIRM_ENTER_BATTLE -> WAIT_COMBAT`.
+  - Added image-payload route candidate dev-server replay guard: cloud route click must be
+    `WINDOW_RELATIVE`, inside `1024x768`, and inside the supplied route-result ROI.
+- Modified files owned by this worker pass:
+  - `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`
+  - `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainRouteEnterBattleWiringTest.java`
+  - `src/test/java/com/bot/dhxy/task/xiuluo/XiuluoBrainAcceptTrackerWiringTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java`
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServerTest.java`
+- GREEN so far:
+  - `mvn -q -Dtest="XiuluoBrainRouteEnterBattleWiringTest,XiuluoBrainDevServerTest,XiuluoBrainAcceptTrackerWiringTest,CloudDecisionDevServerTest,RouteCloudDecisionServiceTest" test`
+    exited `0`.
+- Reviewer #1/#2 P1/P2 repair after initial review rejection:
+  - Fixed `WAIT_COMBAT` enabled path so `IN_COMBAT` / combat-entry-detected produces a
+    `SHARED_STATE_TRIGGERED` actionOutcome fact immediately. It no longer runs
+    `returnItemPrescanService.whileInCombat(...)`, `waitForCombatStateWake(...)`, or same-phase
+    local combat wait/park inside CR199.
+  - Added `XiuluoBrainRoundState.mustReportBeforeLocalYield(...)` so shell reports
+    `WAIT_COMBAT + SHARED_STATE_TRIGGERED + MUST_YIELD + next=WAIT_COMBAT` to `XIULUO_BRAIN`
+    before `yieldAfterMustYield(...)`; this prevents the shell from swallowing long combat waits.
+  - `CloudDecisionDevServer` now rejects `WAIT_COMBAT` post-entry/CR200 boundary facts with
+    `WAIT_COMBAT fact belongs to CR200 boundary; unsupported in CR199`; ordinary wrong-next still
+    rejects with `outcome cannot advance`.
+  - `XiuluoBrainShellResult.outcomeStatus()` now reports `RETRYABLE_ERROR` distinctly instead of
+    mapping it to `FAILED`.
+  - Added/updated tests:
+    `XiuluoBrainRoundStateBehaviorTest`,
+    `XiuluoBrainRouteEnterBattleWiringTest`,
+    `XiuluoBrainDevServerTest`.
+- Final GREEN after reviewer repair:
+  - `mvn -q -Dtest="XiuluoBrainRouteEnterBattleWiringTest,XiuluoBrainDevServerTest,XiuluoBrainAcceptTrackerWiringTest,CloudDecisionDevServerTest,RouteCloudDecisionServiceTest" test`
+    exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Remaining fresh gate after local work:
+  - Fresh Node C remains the real-window timing/sidecar gate only: run 修罗 until entering battle and
+    confirm logs show `XIULUO_BRAIN` actionOutcome/step authority across route, target click,
+    `CONFIRM_ENTER_BATTLE`, and pre-entry `WAIT_COMBAT`. This worker does not request or run fresh.
+
+### 2026-07-06 云端化测试补齐 worker - 本地 integration/contract 测试矩阵
+
+- Role: DHXY 云端化测试补齐 worker。范围只做本地测试与文档矩阵补齐；不改生产 Java 业务逻辑，
+  不改 OCR/template/click/navigation/input 坐标算法，不 revert 任何既有脏改动。
+- 用户硬约束：
+  - 不能让 fresh runtime 去发现每个环节返回什么。
+  - 每个云端小步必须先有本地 integration/contract test，用 testcase image / fake window facts /
+    dev server request 断言 response、queue message、坐标范围、phase/result/yield。
+  - fresh runtime 只做真实游戏窗口/焦点/时序最终验收。
+- Baseline before test/doc edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`。
+  - HEAD and upstream: `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` is heavily dirty before this worker pass; do not `reset`,
+    `checkout`, `clean`, revert, or overwrite unrelated changes.
+  - Upstream evidence: `git ls-tree -r "@{u}" -- src/test/java/com/bot/dhxy/cloud/...` returned no
+    rows for the cloud test files touched in this pass, including
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java` and
+    `src/test/java/com/bot/dhxy/cloud/task/RouteCloudDecisionServiceTest.java`; these belong to the
+    current local CR stack and have no pushed baseline version.
+  - Upstream contains `docs/ACTIVE_WORK.md` and `docs/PACKAGE_ARCHITECTURE.md`, but not
+    `docs/HYBRID_CLOUD_WORKFLOW.md` in the pushed tree; current workflow doc is local CR-stack
+    context.
+- Current narrowed scope per user 2026-07-06:
+  - Do not try to fill every cloud test in one worker pass.
+  - Deliver a documented local test matrix plus one most critical integration gap.
+  - Keep remaining image/route/NPC/dialog/tracker gaps explicit as fresh-run blockers until local
+    fixtures and contract tests exist.
+- Completed local-only integration guard:
+  - `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`
+    `testStepAdvancesTrackerShortcutPathingOutcomeToWaitPhase` covers the tracker shortcut pathing
+    handoff contract.
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` has the matching dev-sidecar
+    narrow path: only `TRY_TRACKER_SHORTCUT` + `PATHING_STARTED` + `MUST_YIELD` +
+    `WAIT_TRACKER_SHORTCUT_PATHING` may advance; the existing generic `PATHING_STARTED` negative
+    test still fails closed.
+  - Request fixture: `XIULUO_BRAIN` start at `TRY_TRACKER_SHORTCUT`, then action-outcome
+    `outcome=EXECUTED`, `transactionResult=PATHING_STARTED`, `yieldPolicy=MUST_YIELD`, and
+    `localOutcomeNextPhase=WAIT_TRACKER_SHORTCUT_PATHING`.
+  - Expected response: action outcome is `ACCEPTED`; the next step returns
+    `phase=WAIT_TRACKER_SHORTCUT_PATHING`, `stateSeq=2`, preserves `acceptedPhaseToken`, uses
+    `action=EXECUTE_PHASE`, and must not become `ROUND_DONE` or skip to `WAIT_COMBAT`.
+- Matrix documentation target:
+  - Done: fresh-run-before-local-test matrix is in `docs/HYBRID_CLOUD_WORKFLOW.md`
+    section `28. Fresh-run 前本地测试矩阵`.
+  - Done: CR192 now points future fresh gates back to that matrix in
+    `docs/PACKAGE_ARCHITECTURE.md`.
+  - Done: refreshed `docs/cr-dashboard-data.js` with
+    `node scripts/generate-cr-dashboard-data.js` (`Generated 197 CR rows`).
+- Verification in this narrowed pass:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest" test` exited `0`.
+  - `mvn -q -DskipTests compile` exited `0`.
+- Explicit remaining gaps before fresh runtime:
+  - `NPC_CLICK_SMART` / FIFO still needs a testcase-image/dev-server or fake-window local test that
+    asserts executable click coordinates stay inside the window/ROI and queue identity/order is not
+    crossed.
+  - `ROUTE_CANDIDATE` still needs the image-payload dev-server replay using
+    `images/test-cases/world-map-route/...` and ROI click assertions before CR199 fresh.
+  - `TRACKER_PANEL_READER` still needs current tracker crop replay coverage for reader/link response
+    contract, not just source/wiring guards.
+  - `MINI_MAP_LOCATION` currently proves logical map coordinate output; if it starts returning click
+    points, add a click ROI test before fresh.
+  - `SUMMON_SKILL` currently proves tooltip/status contract; if cloud returns delete/confirm click
+    coordinates, add UI ROI and input-queue contract tests before fresh.
+
+### 2026-07-06 CR198/CR199 worker - 修罗 tracker shortcut handoff must not stop task
+
+- Role: CR worker for cloud 修罗. Scope is the DHXY local Java/test/doc repair only; do not touch
+  tracker click geometry, OCR/template matching, yellow/NPC/dialog business decisions, or unrelated
+  dirty files.
+- Baseline before implementation edit:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`.
+  - HEAD and upstream: `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`).
+  - `git status --short --branch` is heavily dirty before this worker pass; do not `reset`,
+    `checkout`, `clean`, revert, or overwrite unrelated changes.
+  - Latest pushed baseline for `XiuluoTaskV2.java` has the legacy local loop behavior:
+    `PATHING_STARTED` calls `yieldAfterMustYield(context, outcome)`, assigns
+    `roundContext = outcome.nextState()`, and continues the phase loop. It does not map tracker
+    shortcut pathing handoff to `TaskRunResult.STOPPED`.
+  - Current local evidence before edit: `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` maps
+    `isTrackerShortcutPathingHandoff(outcome)` to
+    `terminalAfterOutcome(TaskRunResult.STOPPED, "tracker shortcut pathing handoff to CR199", ...)`
+    and also maps `cloudPhaseState.phase() == WAIT_TRACKER_SHORTCUT_PATHING` to
+    `terminal(TaskRunResult.STOPPED, ...)`.
+  - Runtime evidence from `logs/dhxy-console.log`: at `2026-07-06 10:29:11.559` the leader clicked
+    tracker green and reported `phase=TRY_TRACKER_SHORTCUT result=PATHING_STARTED yield=MUST_YIELD
+    localNext=WAIT_TRACKER_SHORTCUT_PATHING`; at `10:29:11.564` `XIULUO_BRAIN actionOutcome`
+    accepted that outcome; at `10:29:11.575` `WindowTaskRunner` saw
+    `task finished: 修罗 -> STOPPED`.
+- Planned TDD guard:
+  - Tighten `XiuluoBrainAcceptTrackerWiringTest.cr198StopsAtTrackerPathingHandoff(...)` so it fails
+    when tracker shortcut handoff maps to `TaskRunResult.STOPPED`.
+  - The guard must forbid both current STOPPED paths while preserving the CR199 boundary wording:
+    no `terminalAfterOutcome(TaskRunResult.STOPPED, "tracker shortcut pathing handoff...")`, and no
+    `cloudPhaseState.phase() == WAIT_TRACKER_SHORTCUT_PATHING` branch returning
+    `terminal(TaskRunResult.STOPPED, ...)`.
+- Minimal delivery result after user checkpoint:
+  - Focused RED: `mvn -q -Dtest=XiuluoBrainAcceptTrackerWiringTest test` failed before the fix with
+    `tracker shortcut PATHING_STARTED/MUST_YIELD handoff must not be terminalAfterOutcome(STOPPED)`.
+  - Repair scope: `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` no longer maps tracker shortcut
+    `PATHING_STARTED` / `WAIT_TRACKER_SHORTCUT_PATHING` handoff to `TaskRunResult.STOPPED`; the
+    handoff is reported as an accepted non-terminal outcome for the next cloud step/CR199 boundary.
+  - Focused GREEN: `mvn -q -Dtest=XiuluoBrainAcceptTrackerWiringTest test` exited `0`.
+  - Source guard: `rg` over `XiuluoTaskV2.java` found no banned
+    `terminalAfterOutcome(TaskRunResult.STOPPED, "tracker shortcut pathing handoff...")`,
+    `cloudPhaseState.phase() == WAIT_TRACKER_SHORTCUT_PATHING`, or tracker-handoff
+    `terminal(TaskRunResult.STOPPED, ...)` mappings.
+  - Per the latest user instruction, this narrowed pass did not continue the broader
+    `XiuluoBrainDevServerTest` / cloud sidecar contract work and did not update CR dashboard data.
+  - Fresh-runtime check still required: after the tracker green click, logs should show
+    `PATHING_STARTED yield=MUST_YIELD localNext=WAIT_TRACKER_SHORTCUT_PATHING` without
+    `WindowTaskRunner task finished: 修罗 -> STOPPED`; follow-up CR199 must verify the actual wait /
+    continue behavior from that boundary.
+- Reviewer #1 P1 repair after first handoff fix:
+  - Finding: the first repair only changed tracker handoff from `STOPPED` to accepted. The next cloud
+    command can be `WAIT_TRACKER_SHORTCUT_PATHING`; because `executeXiuluoBrainCommandShell(...)`
+    did not allow that phase, it would fall through to
+    `unsupported cloud executable phase; no local fallback phase=WAIT_TRACKER_SHORTCUT_PATHING`,
+    fail closed, and still end the runner as `FAILED`.
+  - RED: `mvn -q -Dtest=XiuluoBrainAcceptTrackerWiringTest test` failed with
+    `cloud command WAIT_TRACKER_SHORTCUT_PATHING must be executable after tracker pathing handoff`.
+  - Repair scope: added only `WAIT_TRACKER_SHORTCUT_PATHING` to the cloud shell executable phase
+    allow-list. It reuses the existing `runPhase(...)` dispatch and
+    `waitTrackerShortcutPathing(...)` / `waitForTrackerShortcutWake(...)` wait spec; no tracker
+    click/OCR/template/NPC/dialog/route phase logic changed, and `NAVIGATE_TO_TARGET` remains outside
+    this repair.
+  - Negative guards retained: explicit `STOP_TASK`, local transaction/outcome `STOPPED`, and real
+    phase `STOPPED` remain terminal `TaskRunResult.STOPPED`; ordinary unsupported phases still
+    fail closed.
+  - GREEN focused suite:
+    `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoBrainDevServerTest,XiuluoBrainLoopWiringTest,XiuluoBrainRoundStateBehaviorTest" test`
+    exited `0`.
+  - Compile: `mvn -q -DskipTests compile` exited `0`.
+  - Final independent re-review 2026-07-06:
+    - Reviewer #1 APPROVED: confirmed `WAIT_TRACKER_SHORTCUT_PATHING` is executable, enters
+      `runPhase(...)`, and reuses `waitTrackerShortcutPathing(...)` /
+      `waitForTrackerShortcutWake(...)`; no P0/P1/P2.
+    - Reviewer #2 APPROVED: confirmed CR198 did not pull in `NAVIGATE_TO_TARGET`,
+      `CLICK_TARGET_NPC`, `CONFIRM_ENTER_BATTLE`, or `WAIT_COMBAT`, and did not weaken
+      `STOP_TASK`, local/real `STOPPED`, or ordinary unsupported-phase fail-closed.
+    - Manager rerun:
+      `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoBrainDevServerTest,XiuluoBrainLoopWiringTest,XiuluoBrainRoundStateBehaviorTest" test`
+      exited `0`.
+    - Reviewer #2 also reran `mvn -q -DskipTests compile` and the standalone
+      `XiuluoSingleBrainSourceGuardTest` with exit `0`.
+  - Status: local contract/reviewer gate passed for the CR198 tracker handoff repair. Fresh runtime
+    is only for real-window timing validation at the `WAIT_TRACKER_SHORTCUT_PATHING` command
+    boundary; CR199 route/target/enter-battle local contracts remain separate and not covered here.
+
+### 2026-07-06 CR203 opened - DIALOG_POLICY after-local no-action must not fail maintenance
+
+- Role: 谢帅 manager / reviewer. User told the manager not to stop unless a fresh runtime test is
+  needed; continue by opening the blocker card and dispatching worker/reviewers.
+- Baseline before CR203:
+  - Workdir: `D:\mavenProject\DHXY`.
+  - Branch/upstream: `codex/hybrid-cloud-protection` / `origin/codex/hybrid-cloud-protection`.
+  - Latest local commit: `dc4394f docs: plan xiuluo cloud single brain migration`.
+  - `git status --short --branch` is heavily dirty before this card; worker must not reset, clean,
+    checkout, or revert unrelated changes.
+- CR203 worker baseline before implementation edit:
+  - Branch/upstream verified: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short --branch` remains heavily dirty before this worker pass.
+  - Latest pushed tree contains `src/main/java/com/bot/dhxy/service/TaskMaintenanceService.java`,
+    but the CR203 primary cloud files are local/untracked CR-stack files at this point:
+    `src/main/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionService.java`,
+    `src/test/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionServiceTest.java`, and
+    `src/test/java/com/bot/dhxy/service/DialogCloudPreClickWiringGuardTest.java`.
+  - Relevant pre-edit evidence: current `DialogPolicyCloudDecisionService.decide(...)` turns any
+    `EXECUTE + STOP + !executed` after-local `DIALOG_POLICY` rejection into
+    `cloudRejectedNoClick(... requiredFailureResult(... FAILED ...))`. Current execute gate also
+    rejects `action=NO_ACTION;status=NOT_FOUND;reason=cloud-brain-dialog-policy-requires-cloud-input`
+    as an unsupported/mismatched cloud output, so a local no-click `NO_DIALOG` / `STORY_IGNORED`
+    result can become task-visible `FAILED`.
+  - Scope decision: this worker will touch only `DialogPolicyCloudDecisionService.java`,
+    `DialogPolicyCloudDecisionServiceTest.java`, and this baseline note unless a focused maintenance
+    guard becomes necessary. No OCR/template/click/navigation/input coordinate path will be edited.
+- Fresh runtime evidence:
+  - CR198 front half passed and handed off to CR199.
+  - After tracker green click, auto-battle maintenance probes repeatedly produced local safe
+    no-action results (`NO_DIALOG` / `STORY_IGNORED`, `clicked=false`), but after-local
+    `DIALOG_POLICY` cloud returned `NOT_FOUND` / `cloud-brain-dialog-policy-requires-cloud-input`.
+  - Current gate rejected that as status mismatch and converted the effective result to
+    `FAILED`, causing `maintenance broadcast scan failed: source=auto-battle` loops.
+- CR203 created in `docs/PACKAGE_ARCHITECTURE.md`.
+- Required repair direction:
+  - Preserve covered image-backed dialog pre-click cloud-required behavior.
+  - Keep `USE_LOCAL_RESULT` rejected as execute success.
+  - Add a narrow safe no-action passthrough for after-local local results such as `NO_DIALOG` and
+    `STORY_IGNORED` when cloud only says no-action/not-found due to missing after-local input.
+  - Do not change OCR/template/image preprocessing/click coordinates/input behavior.
+- Next action: dispatch implementation worker plus two independent reviewers per AGENTS.md manager
+  rule.
+- Final local gate:
+  - Worker implementation preserved covered pre-click fail-closed behavior and added only the
+    after-local safe no-action passthrough for `NO_DIALOG` / `STORY_IGNORED` with cloud
+    `NO_ACTION;status=NOT_FOUND;reason=*requires-cloud-input*`.
+  - Initial reviewer #1 `Wegener` PASSed the business boundary.
+  - Initial reviewer #2 `Volta` found one missing test: `EXECUTE + STOP + schema mismatch + safe
+    no-action local result` must still fail closed.
+  - Repair worker `Sartre` added
+    `testExecuteStopSchemaMismatchStillFailsClosedForSafeNoActionLocalResult`; production logic did
+    not need changes.
+  - Final reviewer #1 `Maxwell` PASSed business boundary; final reviewer #2 `Poincare` PASSed test
+    coverage.
+  - Local verification passed:
+    `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,DialogCloudPreClickWiringGuardTest" test`
+    and `mvn -q -DskipTests compile`.
+  - Status: local/reviewer gate passed; fresh runtime still required. Next user test should verify
+    `NO_DIALOG` / `STORY_IGNORED` maintenance probes no longer become
+    `maintenance broadcast scan failed: source=auto-battle`.
+- CR203 repair worker baseline before reviewer #2 test-only edit:
+  - Role: CR203 repair worker. Scope is test-only unless the new focused test proves a real
+    production fail-open.
+  - Branch/upstream verified: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection`, both at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`dc4394f docs: plan xiuluo cloud single brain migration`).
+  - Scoped status before edit:
+    `docs/ACTIVE_WORK.md` modified; `DialogPolicyCloudDecisionService.java`,
+    `DialogPolicyCloudDecisionServiceTest.java`, and `DialogCloudPreClickWiringGuardTest.java`
+    are untracked CR-stack files relative to upstream.
+  - Upstream evidence: `git ls-tree -r "@{u}" -- ...DialogPolicyCloudDecisionService*.java ...DialogCloudPreClickWiringGuardTest.java`
+    returned no rows, and `git show "@{u}:src/test/java/com/bot/dhxy/cloud/task/DialogPolicyCloudDecisionServiceTest.java"`
+    failed with `path ... exists on disk, but not in '@{u}'`.
+  - Current local coverage evidence before this repair: existing tests cover
+    `executeStopProperties()` safe no-action passthrough for
+    `NO_ACTION;status=NOT_FOUND;reason=cloud-brain-dialog-policy-requires-cloud-input`, and plain
+    execute schema mismatch fallback, but not the reviewer #2 combination
+    `EXECUTE + STOP + schema mismatch + safe no-action local result`.
+  - Planned edit: add one focused `DialogPolicyCloudDecisionServiceTest` method proving schema
+    mismatch still fails closed under STOP and cannot be routed through the CR203 safe no-action
+    passthrough.
+  - Repair result: added
+    `testExecuteStopSchemaMismatchStillFailsClosedForSafeNoActionLocalResult` only in
+    `DialogPolicyCloudDecisionServiceTest`. The test uses `executeStopProperties()`, a wrong
+    `traceId`, and `noDialogLocalResult()`; it asserts `CLOUD_REJECTED_NO_CLICK`, effective
+    `FAILED`, `isCloudExecuted=false`, comparator local result preserved, and reject reason
+    containing `schema mismatch`.
+  - Production result: the new test passed against current `DialogPolicyCloudDecisionService`, so no
+    production logic change was made.
+  - Verification: `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest" test`,
+    `mvn -q -Dtest="DialogPolicyCloudDecisionServiceTest,DialogCloudPreClickWiringGuardTest" test`,
+    and `mvn -q -DskipTests compile` all exited `0`.
+
+### 2026-07-06 CR198 Fresh Node B passed; next blocker is dialog/auto-battle
+
+- Role: 谢帅 manager / reviewer runtime audit. User ran a fresh 修罗 pass and asked whether the
+  front half is compliant / accepted.
+- Result: CR198 is accepted. Evidence from `logs/dhxy-console.log`:
+  - `00:08:57.854` `XIULUO_BRAIN start` returned `PREPARE_ROUND`.
+  - `00:09:07.245` actionOutcome accepted for `PREPARE_ROUND`, then `step` returned
+    `ACCEPT_TASK_NAVIGATE_TO_NPC`.
+  - `00:09:33.763` `NPC_CLICK_SMART` returned a cloud memory click for `灵兽村使者`; `00:09:36.738`
+    expected accept dialog template was visible; `00:09:37.336` accept option was clicked.
+  - `00:09:39.366` actionOutcome accepted `AFTER_ACCEPT_MAINTENANCE_CHECK`, preserving the CR191
+    accept snapshot / start-exit-prepath / tracker shortcut order.
+  - In the later five-window run, `00:13:48.708` `TRACKER_PANEL_READER` returned a tracker green
+    link click, `00:13:55.080` logged `tracker green clicked`, and `00:13:55.114` actionOutcome
+    recorded `tracker shortcut pathing handoff to CR199`.
+- Important separation:
+  - The earlier single-window attempt at `00:09:42` was stopped by the user while waiting for the
+    objective/tracker fallback and ended with `interrupted during http request`; do not count it as a
+    CR198 business regression.
+  - The current post-CR198 blocker is outside CR198: auto-battle maintenance repeatedly sees
+    `DIALOG_POLICY` reject `STORY_IGNORED` as `NOT_FOUND`
+    (`cloud-brain-dialog-policy-requires-cloud-input`), then logs `maintenance broadcast scan failed`.
+- CR card updated in `docs/PACKAGE_ARCHITECTURE.md`; dashboard regeneration required after this
+  note.
+
+### 2026-07-06 CR198 live sidecar probe - ready for user Fresh Node B
+
+- Role: 谢帅 manager / reviewer runtime prep.
+- 旧 `18080` listener was PID `8884`, started before the repaired jar was loaded. A fresh start attempt
+  failed with `Address already in use`, so the user-facing `step -> STOPPED` behavior was still coming
+  from the stale sidecar process.
+- Stopped old PID `8884` and started repaired external cloud brain PID `36280` from
+  `D:\mavenProject\dhxy-cloud-brain\target\dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`.
+- Live probe against `http://127.0.0.1:18080/api/cloud/decision`:
+  - `start` returned `PREPARE_ROUND`.
+  - `action-outcome` for `PREPARE_ROUND` returned `ACCEPTED`.
+  - `step` returned `ACCEPT_TASK_NAVIGATE_TO_NPC`, not `STOPPED`.
+  - Full probe sequence reached
+    `PREPARE_ROUND -> ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_CLICK_NPC -> ACCEPT_TASK_DIALOG -> AFTER_ACCEPT_MAINTENANCE_CHECK -> TRY_TRACKER_SHORTCUT -> WAIT_TRACKER_SHORTCUT_PATHING`.
+  - Negative probe with `outcome=STOPPED` / `transactionResult=STOPPED` returned `REJECTED` with
+    `reason=outcome cannot advance...`, proving the repaired brain no longer happy-advances failed
+    or stopped outcomes.
+- Fresh Node B can now be run by the user. It is still a runtime gate, not Done: the fresh log must
+  prove real tracker green click/pathing or explicit CR199 handoff.
+
+### 2026-07-06 CR198 repair review - APPROVED, ready for Fresh Node B
+
+- Role: 谢帅 manager / reviewer。CR198 worker repair completed and passed the required two
+  independent reviewer re-review gate.
+- Reviewer #1 / Raman: APPROVED. Confirmed state continuity, cloud phase authority, outcome-driven
+  step, `PREPARE_ROUND` default, pathing/yield gating, CR191 ordering, and no new visual/click output
+  change in this repair.
+- Reviewer #2 / Herschel: APPROVED. Confirmed the same; no P0/P1/P2 remained.
+- 谢帅 verification:
+  - DHXY `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoBrainRoundStateBehaviorTest,XiuluoBrainLoopWiringTest,XiuluoBrainHotStartWiringTest,XiuluoBrainCloudDecisionServiceTest,XiuluoBrainDevServerTest" test`
+    passed.
+  - External `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - DHXY `mvn -q -DskipTests test-compile` passed.
+  - External `mvn -q -DskipTests package` passed.
+  - DHXY `mvn -q -DskipTests compile` passed.
+- Fresh Node B is now the next meaningful runtime gate, but the real 18080 external sidecar/JAR must
+  be rebuilt/restarted before testing. Expected fresh evidence: `XIULUO_BRAIN` actionOutcome/step
+  chain reaches tracker green click/pathing or an explicit CR199 handoff; a startup-only
+  `step -> STOPPED` remains only a CR197 safety smoke and is not CR198 progress.
+
+### 2026-07-06 CR198 worker repair - state continuity and outcome-driven cloud step
+
+- Role: CR198 implementation worker repair。两位 independent reviewers 均 CHANGES_REQUESTED；
+  本轮只做代码返修与本地验证，不要求用户 Fresh Node B。
+- Baseline before repair:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - DHXY branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`
+    (`docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` shows a heavily dirty worktree before this repair; this worker
+    must not `reset` / `checkout` / `clean` / `revert` and must not overwrite unrelated dirty work.
+  - Relevant DHXY pre-repair evidence:
+    `XiuluoTaskV2.executeXiuluoBrainCommandShell(...)` still builds
+    `XiuluoRoundContext.start(round).next(command.getPhase(), ...)` for each cloud command, which
+    can drop accept objective/tracker futures and prepath/pathing state.
+  - Relevant external/dev brain pre-repair evidence:
+    external `DecisionEngine.xiuluoBrainStep(...)` and DHXY dev
+    `CloudDecisionDevServer.xiuluoBrainStepDecisionFor(...)` require an accepted outcome, but then
+    still advance with fixed `nextXiuluoBrainPhase(session.phase())` instead of using
+    `transactionResult/outcome/localOutcomeNextPhase` facts.
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain` is not a git repo. Pre-repair
+    SHA256:
+    `DecisionEngine.java` =
+    `4A868D3E2A2F0358D0B2218F5D6A8E444768048E6A1CD7AE2CCF7AB14D33D704`,
+    `XiuluoBrainProtocolTest.java` =
+    `3C9E501B10598AF2559700EF655E884844F79B58503ED55752C1F405B3B23553`。
+- Repair TDD target:
+  - Add behavior-level coverage for local round-state continuity across cloud commands.
+  - Add protocol coverage proving step rejects missing action-outcome and does not happy-advance on
+    failed/stopped/retryable/yield/pathing outcomes.
+  - Add coverage that outcome `localOutcomeNextPhase` drives CR198 next phase inside allow-list and
+    preserves CR191 accept snapshot / prepath / tracker shortcut ordering.
+- Repair implementation result:
+  - DHXY 新增 `XiuluoBrainRoundState` 作为 enabled `XIULUO_BRAIN` 单轮本地状态载体；
+    `executeXiuluoBrainCommandShell(...)` 不再对每条云端 command 使用
+    `XiuluoRoundContext.start(round).next(...)` 重建状态，而是把云端 phase overlay 到当前
+    local state，并在 action-outcome ack 后记录本地 outcome state/futures。
+  - 本地 executor 仍只执行云端明确 command 的 CR198 phase；`localOutcomeNextPhase` 只作为 fact
+    上报。后续 phase transition authority 仍来自下一次 `XIULUO_BRAIN step` response。
+  - 本地 shell 对 `STOPPED` / `FAILED` 直接 terminal；对 `PATHING_STARTED` /
+    `SHARED_STATE_TRIGGERED` / `MUST_YIELD` 先走既有 yield/park 语义。tracker shortcut 到
+    `WAIT_TRACKER_SHORTCUT_PATHING` 时按 CR199 handoff 停止，不伪装一轮成功。
+  - 外部 `dhxy-cloud-brain` 与 DHXY dev sidecar 的 `step` 改为读取当前 actionOutcome facts：
+    missing outcome、`FAILED`、`STOPPED`、`RETRYABLE_ERROR`、`PATHING_STARTED`、
+    `SHARED_STATE_TRIGGERED`、`MUST_YIELD`/`RETRY_LATER` 都 fail-closed；CR198 allow-list 内的
+    `localOutcomeNextPhase` 被尊重。默认 start phase 修正为 `PREPARE_ROUND`。
+  - `ACCEPT_TASK_DIALOG` 后由 actionOutcome fact 推进到
+    `AFTER_ACCEPT_MAINTENANCE_CHECK`，保留 CR191 的 accept snapshot / start-exit-prepath /
+    tracker shortcut 顺序；不再固定跳 `READ_OBJECTIVE`。
+  - 本轮返修未修改 tracker green click / cloud ranker 的点击决策、视觉/OCR/template 或点击坐标；
+    未新增 replay。当前工作树里 reviewer 看到的 tracker ranker 代码属于返修前已有 dirty work，
+    不作为本轮 CR198 repair 的点击输出变更。
+- RED / GREEN:
+  - RED DHXY `mvn -q -Dtest=XiuluoBrainRoundStateBehaviorTest test` initially failed to compile
+    because `XiuluoBrainRoundState` did not exist.
+  - RED external `mvn -q -Dtest=XiuluoBrainProtocolTest test` initially failed because start did
+    not return `PREPARE_ROUND`, `ACCEPT_TASK_DIALOG` fixed-advanced to `READ_OBJECTIVE`, and failed /
+    stopped / retryable / pathing outcomes still happy-advanced.
+  - GREEN external `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - GREEN external `mvn -q -DskipTests package` passed.
+  - GREEN DHXY `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoBrainRoundStateBehaviorTest" test`
+    passed.
+  - GREEN DHXY `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+    effectively ran the JUnit guard; `XiuluoSingleBrainSourceGuardTest` is main-style and was run
+    separately with `javac -encoding UTF-8 -d target\test-classes ...` +
+    `java -cp target\test-classes com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`, passed.
+  - GREEN DHXY `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainCloudDecisionServiceTest,XiuluoBrainDevServerTest" test`
+    passed.
+  - GREEN DHXY `mvn -q -Dtest=XiuluoBrainLoopWiringTest test` passed after updating the old CR195
+    config/source guard to the current CR198 enabled configuration and fact-vs-authority rule.
+  - GREEN DHXY `mvn -q -DskipTests test-compile` passed.
+  - GREEN DHXY `mvn -q -DskipTests compile` passed.
+- Remaining gate:
+  - CR198 worker repair is ready for the required two independent reviewer re-reviews. Do not ask
+    the user for Fresh Node B yet.
+
+### 2026-07-06 CR198 independent review - CHANGES_REQUESTED, no fresh run
+
+- Role: 谢帅 manager / reviewer。CR198 worker pass was reviewed by two independent reviewers and is
+  not approved. Do not ask the user to run Fresh Node B on this version.
+- Reviewer #1 / Raman: CHANGES_REQUESTED.
+  - P1: enabled cloud shell rebuilds `XiuluoRoundContext` for every command with
+    `XiuluoRoundContext.start(round).next(...)`, losing `objectiveParseFuture`,
+    `shortcutTrackerParseFuture`, `startExitPrepathStarted`, `waitingPathing`, objective, and other
+    state.
+  - P1: external brain and DHXY dev sidecar still hard-code happy-path phase order. This currently
+    advances `ACCEPT_TASK_DIALOG -> READ_OBJECTIVE`, but the local happy path schedules snapshot /
+    prepath / tracker futures through `AFTER_ACCEPT_MAINTENANCE_CHECK`.
+  - P1: pathing/yield/shared-state outcomes are not handled before the next cloud step.
+  - P2: failed/stopped/retryable outcome facts can still be followed by a happy-path cloud step.
+  - P2: CR198 tests are mostly source guards and did not catch these runtime blockers.
+- Reviewer #2 / Herschel: CHANGES_REQUESTED.
+  - Confirmed state continuity loss from per-command `XiuluoRoundContext.start(round)` rebuild.
+  - Confirmed fixed sequence ignores outcome/facts, including not-near-NPC and pathing outcomes.
+  - P2: CR198 scope includes `PREPARE_ROUND`, but default start still begins at
+    `ACCEPT_TASK_NAVIGATE_TO_NPC`.
+  - P2: tests preserve the state-rebuild behavior instead of proving runtime continuity.
+- Manager evaluation:
+  - The feedback is technically consistent with current source and log-risk. CR198 must be sent back
+    to the worker.
+  - User clarified the acceptance line again: a cloud `STOPPED` response is only a safety/boundary
+    result and is not a meaningful CR198 business test. CR198 cannot ask for or pass Fresh Node B
+    until the cloud brain drives executable accept/objective/tracker phases and local state survives
+    across those commands.
+  - Required repair: preserve a local round state/facts carrier across cloud commands while keeping
+    phase authority in cloud; use outcome facts to choose the next cloud phase; handle
+    `PATHING_STARTED` / `MUST_YIELD` / `SHARED_STATE_TRIGGERED`; keep CR191 ordering; strengthen
+    behavior tests.
+
+### 2026-07-06 CR198 worker pass - accept/objective/tracker cloud-owned implementation
+
+- Role: CR198 implementation worker。Scope 按谢帅派工实现 `XIULUO_BRAIN` enabled path 的
+  `PREPARE_ROUND` / `ACCEPT_TASK_NAVIGATE_TO_NPC` / `ACCEPT_TASK_CLICK_NPC` /
+  `ACCEPT_TASK_DIALOG` / `READ_OBJECTIVE` / `AFTER_ACCEPT_MAINTENANCE_CHECK` /
+  `TRY_TRACKER_SHORTCUT`；不展开 CR199+ route/target/combat/return。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - DHXY branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at `dc4394f`
+    (`docs: plan xiuluo cloud single brain migration`)。
+  - `git status --short --branch` shows a heavily dirty worktree before this worker pass; this
+    worker must not `reset` / `checkout` / `clean` / `revert` and will only make scoped CR198 edits.
+  - Relevant pre-edit DHXY evidence:
+    `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` calls `start(...)`, executes a shell, then calls
+    `step(...)` directly; `XiuluoBrainCloudDecisionService` currently exposes only `start(...)` and
+    `step(...)`; no DHXY `actionOutcome(...)` request/API exists yet.
+  - Current CR197 fresh result at top of this file shows real runtime `start ->
+    ACCEPT_TASK_NAVIGATE_TO_NPC`, then immediate `step -> STOPPED`, so CR197 safe smoke is consumed
+    and CR198 must provide real accept/objective/tracker execution.
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain`；`Test-Path .git` is `False`, so
+    there is no branch/upstream baseline. Pre-edit SHA256:
+    `DecisionEngine.java` =
+    `4F078E81CF74D5D9BC2F6C48F47B6E6FDF792DA6065BA4EC8A5926E6EEBC5521`,
+    `XiuluoBrainProtocolTest.java` =
+    `7F2D1C495DADA5B8172A5F2CE516FBD26049F355E8EB28CC41258ABF3B10765B`。
+- Intended TDD:
+  - Add focused RED coverage proving enabled loop must execute CR198 phases, report local outcome
+    facts through `XIULUO_BRAIN action-outcome`, then request the next command from cloud; local
+    `outcome.nextState().phase()` may be reported as fact but must not become transition authority.
+  - Add external protocol RED coverage for `start -> action-outcome -> step` advancing through the
+    CR198 accept/objective/tracker sequence and for `step` rejecting when the current action outcome
+    was not accepted.
+- Implementation result:
+  - DHXY 新增 structured `XIULUO_BRAIN action-outcome` API/request/decision model：
+    `XiuluoBrainActionOutcomeRequest`、`XiuluoBrainActionOutcomeDecision`、
+    `XiuluoBrainCloudDecisionService.actionOutcome(...)`。
+  - `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` 改为 cloud command 执行后先上报
+    action-outcome，再调用 `step(...)` 获取下一条云端 command；本地不把
+    `XiuluoStepOutcome.nextState().phase()` 写回 `roundContext`。
+  - CR198 本地执行 allow-list 仅包含 `PREPARE_ROUND` /
+    `ACCEPT_TASK_NAVIGATE_TO_NPC` / `ACCEPT_TASK_CLICK_NPC` / `ACCEPT_TASK_DIALOG` /
+    `READ_OBJECTIVE` / `AFTER_ACCEPT_MAINTENANCE_CHECK` / `TRY_TRACKER_SHORTCUT`。
+    `WAIT_TRACKER_SHORTCUT_PATHING` 只作为 CR199 handoff terminal。
+  - 外部 `dhxy-cloud-brain` 与 DHXY dev sidecar 都要求 step 前当前 action outcome 已被接受；
+    action-outcome 记录并回显 `outcome/phase/transactionResult/message/localOutcomeNextPhase`。
+  - 未改 OCR/template/点击坐标/导航坐标；无需新增视觉 replay marked output。
+- RED / GREEN:
+  - RED external `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed before implementation because
+    `step` 未要求 accepted outcome，action-outcome 也未记录 `phase/message` facts。
+  - RED DHXY `mvn -q -Dtest=XiuluoBrainAcceptTrackerWiringTest test` failed before implementation:
+    DHXY client lacked structured `actionOutcome(...)` API/request model。
+  - GREEN external `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed。
+  - GREEN external `mvn -q -DskipTests package` passed。
+  - GREEN DHXY `mvn -q -Dtest="XiuluoBrainAcceptTrackerWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+    passed；`XiuluoSingleBrainSourceGuardTest` 另按源码说明用 `javac/java` main passed。
+  - GREEN DHXY `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainCloudDecisionServiceTest,XiuluoBrainDevServerTest" test`
+    passed。
+  - GREEN DHXY `mvn -q -DskipTests test-compile` passed。
+  - GREEN DHXY `mvn -q -DskipTests compile` passed。
+  - Note: `mvn -q -Dtest=XiuluoBrainLoopWiringTest test` still fails at pre-existing CR195 default
+    config guard because dirty `application.properties` currently has
+    `cloud.services.xiuluo-brain.execute-enabled=true`；CR198 已同步该 test 中的
+    `outcome.nextState().phase()` fact/report vs authority 区分。
+- Remaining Fresh Node B gate:
+  - 谢帅和两个 reviewer 复审后，重启/重建 18080 external sidecar/JAR，再 fresh 修罗。
+  - 期望日志：CR198 phase 每步都有 accepted `xiuluo-brain-action-outcome`，随后
+    `XIULUO_BRAIN step` 决定下一 phase；不能再是 CR197 startup 后第一步 `STOPPED`。
+  - Fresh 至少观察到 tracker green link click / pathing handoff 或
+    `WAIT_TRACKER_SHORTCUT_PATHING` 的 CR199 handoff，且 CR191 顺序保持不变。
+
+### 2026-07-05 CR197 fresh runtime result - safe smoke consumed but real run still blocked
+
+- Latest user fresh runtime evidence:
+  - `22:58:53.033` `XIULUO_BRAIN start` succeeded and returned
+    `phase=ACCEPT_TASK_NAVIGATE_TO_NPC`, `sessionId=cloud-xiuluo-session-6`,
+    `stateSeq=1`, `actionId=cloud-action-cloud-xiuluo-session-6-1-18`.
+  - `22:58:53.037` the follow-up `XIULUO_BRAIN step` succeeded and returned
+    `phase=STOPPED`, `stateSeq=2`, `actionId=cloud-action-cloud-xiuluo-session-6-2-20`.
+  - `22:58:53.038` runner logged `task finished: 修罗 -> STOPPED`.
+- Root cause / current judgment:
+  - This is not a Java exception and not a server connection failure.
+  - CR197 did exactly its safe boundary smoke: start was accepted, then step stopped before any
+    CR198 concrete accept/tracker phase.
+  - That means CR197 is a protocol/safety smoke only. It is not a useful "修罗 can run" fresh gate,
+    and the user should not be asked to rerun CR197 expecting real progress.
+- Next required work:
+  - CR198 is now active and must connect the enabled `XIULUO_BRAIN` path through
+    `PREPARE_ROUND` / `ACCEPT_TASK_NAVIGATE_TO_NPC` / `ACCEPT_TASK_CLICK_NPC` /
+    `ACCEPT_TASK_DIALOG` / `READ_OBJECTIVE` / `AFTER_ACCEPT_MAINTENANCE_CHECK` /
+    `TRY_TRACKER_SHORTCUT`.
+  - Fresh Node B acceptance is the next user runtime point: 修罗 must reach at least tracker green
+    link click / pathing, with phase transitions selected by `XIULUO_BRAIN`, and no local
+    next-phase authority.
+
+### 2026-07-06 CR197 manager verification - dual review approved and 18080 live probe passed
+
+- CR197 status: Review / Fresh Node A ready to rerun. Do not mark Done until fresh runtime confirms
+  DHXY consumes the safe smoke result.
+- Two independent reviewers approved the repair:
+  - Reviewer #1 confirmed `STOPPED` maps to `TaskRunResult.STOPPED`, so it cannot increment
+    `completedRuns++` or fake a real 修罗 round.
+  - Reviewer #2 confirmed external `dhxy-cloud-brain` and DHXY dev sidecar both require correct
+    `lastActionId` on `xiuluo-brain-step`, and both now stop CR197 at
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> STOPPED`.
+- Manager verification:
+  - External `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - External `mvn -q -DskipTests package` passed.
+  - DHXY `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - DHXY `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoSingleBrainSourceGuardTest" test` passed.
+  - DHXY `mvn -q -DskipTests compile` passed.
+  - Actual 18080 external sidecar/JAR was restarted: old process started at
+    `2026-07-05 21:50:24`; new process started at `2026-07-05 22:44:55`.
+  - Live probe against `http://127.0.0.1:18080/api/cloud/decision` passed:
+    `start -> ACCEPT_TASK_NAVIGATE_TO_NPC`; `step` with returned `actionId` as `lastActionId`
+    returned `STOPPED`, not `ROUND_DONE` and not `ACCEPT_TASK_CLICK_NPC`.
+- Fresh Node A expectation:
+  - User can rerun one 修罗 startup smoke with `xiuluo-brain` enabled.
+  - Expected outcome is a safe `STOPPED` smoke, not a real round; logs must not show legacy
+    hot-start fallback, startup return-item click before cloud command, or CR198 phase execution.
+
+### 2026-07-06 CR197 reviewer repair - STOPPED boundary and dev lastActionId gate
+
+- Role: CR197 repair worker。合并处理 reviewer #1/#2 CHANGES_REQUESTED。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - DHXY branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at `dc4394f`。
+  - DHXY touched paths already dirty from previous CR197 worker pass:
+    `docs/ACTIVE_WORK.md`, `docs/PACKAGE_ARCHITECTURE.md`, `docs/cr-dashboard-data.js` modified；
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` and
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java` untracked in git.
+  - External brain is not a git repo. Current external hashes before this repair:
+    - `DecisionEngine.java` SHA256
+      `B4E9955830CF68E5AF2C8594DB2B20A6015D6D947802AC486477DCF15D6E110D`。
+    - `XiuluoBrainProtocolTest.java` SHA256
+      `BBDAD194A3E3161CA326E3EC28AD1E761308514D2FA4C46E6C7313C5A7E6D59D`。
+- Reviewer blockers:
+  - P2 / reviewer #1: `ROUND_DONE` is unsafe for CR197 smoke boundary because
+    `executeXiuluoBrainCommandShell(...)` treats it as success and increments real completed runs.
+    Boundary must use non-success terminal semantics. Chosen minimal repair: phase `STOPPED` with
+    existing `EXECUTE_PHASE`, because DHXY shell maps `XiuluoPhase.STOPPED` to
+    `TaskRunResult.STOPPED`.
+  - P1/P2 / reviewer #2: DHXY dev sidecar lacks the external brain's `lastActionId` step gate.
+    `xiuluoBrainRejectReasonForStep(...)` must require nonblank `lastActionId` and equality with
+    current session `actionId()`；`xiuluoBrainRejectReasonForOutcome(...)` must not require
+    `lastActionId`, and should continue to validate request `actionId == session.actionId()` plus
+    nonblank `outcome`.
+- Intended repair:
+  - Update external and DHXY dev sidecar boundary tests from `ROUND_DONE` to `STOPPED`, asserting not
+    `ROUND_DONE` and not `ACCEPT_TASK_CLICK_NPC`.
+  - Add DHXY `XiuluoBrainDevServerTest` HTTP-path tests for missing/wrong `lastActionId` fail-closed.
+  - Then update external and DHXY dev sidecar phase sequence, and split DHXY dev-sidecar session-state
+    validation from step-only `lastActionId` validation.
+- Implementation result:
+  - External `DecisionEngine.nextXiuluoBrainPhase(...)` now maps
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> STOPPED`, not `ROUND_DONE` and not
+    `ACCEPT_TASK_CLICK_NPC`.
+  - DHXY dev sidecar `CloudDecisionDevServer.nextXiuluoBrainPhase(...)` is synced to
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> STOPPED`.
+  - DHXY dev sidecar step gate now requires `lastActionId` to be nonblank and equal to the current
+    session `actionId()`；`xiuluoBrainRejectReasonForOutcome(...)` still validates request
+    `actionId == session.actionId()` plus nonblank `outcome`, without requiring `lastActionId`.
+  - `XiuluoBrainDevServerTest` now covers default start step -> `STOPPED` over the real HTTP path,
+    plus missing/wrong `lastActionId` fail-closed.
+  - `XiuluoBrainCloudDecisionServiceTest.testDevServerStartThenStepAcceptedWithRotatedNextToken`
+    now sends the real start response `actionId` as the step `lastActionId`, matching the stricter
+    dev-sidecar protocol.
+- RED / GREEN:
+  - RED external after updating the boundary test first:
+    `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed with
+    `expected: <STOPPED> but was: <ROUND_DONE>`.
+  - RED DHXY after adding the missing/wrong `lastActionId` tests first:
+    `mvn -q -Dtest=XiuluoBrainDevServerTest test` failed because old dev sidecar accepted a step
+    without `lastActionId` instead of returning `REJECTED`.
+  - GREEN DHXY sidecar/service:
+    `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - GREEN external protocol:
+    `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - GREEN external package:
+    `mvn -q -DskipTests package` passed.
+  - GREEN DHXY CR197/CR196 guards:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoSingleBrainSourceGuardTest" test` passed.
+  - GREEN DHXY compile:
+    `mvn -q -DskipTests compile` passed.
+- Remaining Fresh Node A gate:
+  - Fresh 前必须重启/重建实际运行的 `127.0.0.1:18080` external sidecar/JAR；旧进程仍可能返回
+    stale `ROUND_DONE` 或更旧的 `ACCEPT_TASK_CLICK_NPC`。
+  - Fresh 期望：`XIULUO_BRAIN start` 返回合法 startup command，随后正确 `lastActionId` 的
+    `step` 返回 `STOPPED`，DHXY shell 映射为 `TaskRunResult.STOPPED`，不会计作真实
+    `completedRuns++`，也不会进入 CR198 的 `ACCEPT_TASK_CLICK_NPC`。
+
+### 2026-07-06 CR197 repair worker - clamp CR197 sidecar step boundary
+
+- Role: CR197 repair worker。Scope 只修 CR197 Fresh Node A 的 cloud brain sidecar phase boundary；
+  不实现 CR198 接任务点击/旧本地 phase executor，不 fallback 到 legacy `resolveTaskHotStart` /
+  `runRoundPhases` / local nextPhase，不放松 `sessionId/stateSeq/phaseToken/actionId/lastActionId`
+  gates。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - DHXY branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at `dc4394f`
+    (`docs: plan xiuluo cloud single brain migration`)。
+  - DHXY `git status --short --branch`: 工作树在本 worker 前已 heavily dirty；本 worker 禁止
+    `reset/checkout/clean/revert`，只触碰 CR197 sidecar/test/docs/dashboard 相关文件。
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 和
+    `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java` 当前不在
+    `git ls-files` 输出中，属于本地未跟踪 dev-sidecar/test 文件；无 `HEAD` baseline 可 `git show`。
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain`；`Test-Path .git` 为 `False`，
+    不是 git repo，无 branch/upstream/pushed commit 可比较。
+  - External pre-edit hashes:
+    - `DecisionEngine.java` SHA256
+      `B78036929E202BF87AAE0F173EC20E5214A5842AEC068B31F0C96A88D2A33A3C`。
+    - `XiuluoBrainProtocolTest.java` SHA256
+      `DD1A4B22275BC5A8EBEDF3EB48362ED64C6ABCD5379ABF6D0C9103439A024B94`。
+- Relevant pre-edit evidence:
+  - External `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+    `nextXiuluoBrainPhase(...)` 当前有
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_CLICK_NPC`。
+  - DHXY dev sidecar
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` 当前也有同类
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ACCEPT_TASK_CLICK_NPC`。
+  - `lastActionId` gate 已存在于 external `xiuluoBrainRejectReasonForStep(...)`，本次不得放松。
+- Intended repair:
+  - 先补 focused RED tests：external `XiuluoBrainProtocolTest` 与 DHXY
+    `XiuluoBrainDevServerTest` 覆盖 default/start phase 的第一步 step 不返回
+    `ACCEPT_TASK_CLICK_NPC`，而返回 CR197 允许的 terminal/boundary command。
+  - 再把 external 和 DHXY dev sidecar 的 `ACCEPT_TASK_NAVIGATE_TO_NPC` 下一步收在 CR197 边界，
+    预期采用 terminal `ROUND_DONE`，避免 Fresh Node A 进入 CR198 未迁移具体 phase。
+- Implementation result:
+  - Superseded by the reviewer repair above: `ROUND_DONE` was the first boundary attempt and is no
+    longer the accepted CR197 smoke收口。
+  - External `DecisionEngine.nextXiuluoBrainPhase(...)` 现在把
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ROUND_DONE`，并保留 `ACCEPT_TASK_CLICK_NPC` 及后续 CR198+
+    phase sequence 不接到 CR197 默认 startup step。
+  - DHXY test dev server `CloudDecisionDevServer.nextXiuluoBrainPhase(...)` 同步改为
+    `ACCEPT_TASK_NAVIGATE_TO_NPC -> ROUND_DONE`。
+  - External `XiuluoBrainProtocolTest` 新增
+    `xiuluoBrainDefaultStartStepStopsAtCr197Boundary()`，覆盖 default start 后 step 返回
+    `ROUND_DONE` 且不是 `ACCEPT_TASK_CLICK_NPC`；missing/wrong `lastActionId` fail-closed 测试保留。
+  - DHXY `XiuluoBrainDevServerTest` 新增
+    `testDefaultStartStepStopsAtCr197Boundary()`，确保内置 dev sidecar 不再允许 CR197 越界。
+- Verification:
+  - RED external: `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed as expected:
+    `expected: <ROUND_DONE> but was: <ACCEPT_TASK_CLICK_NPC>`。
+  - RED DHXY dev sidecar: `mvn -q -Dtest=XiuluoBrainDevServerTest test` failed as expected:
+    `CR197 boundary phase expected=ROUND_DONE actual=ACCEPT_TASK_CLICK_NPC`。
+  - GREEN external: `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed。
+  - GREEN DHXY dev sidecar: `mvn -q -Dtest=XiuluoBrainDevServerTest test` passed。
+  - External package: `mvn -q -DskipTests package` passed。
+  - DHXY compile: `mvn -q -DskipTests compile` passed。
+  - DHXY affected focused gate without the known dirty-config guard:
+    `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest,XiuluoBrainHotStartWiringTest,XiuluoSingleBrainSourceGuardTest" test`
+    passed。
+  - Requested DHXY four-test gate:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainCloudDecisionServiceTest" test`
+    was run but did not fully pass because `XiuluoBrainLoopWiringTest` fails on the pre-existing dirty
+    runtime config: `CR195 default must keep XIULUO_BRAIN execution disabled` while current
+    `src/main/resources/application.properties` has `cloud.services.xiuluo-brain.execute-enabled=true`。
+    This worker did not revert that unrelated fresh-runtime configuration.
+- Remaining Fresh Node A gate:
+  - Superseded by the reviewer repair above: Fresh Node A must now expect `STOPPED`, not
+    `ROUND_DONE`, for the CR197 smoke boundary.
+
+### 2026-07-06 CR197 Fresh Node A failed - CR197/CR198 boundary over-advanced
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Latest user fresh runtime evidence (`logs/dhxy-console.log`, leader `hwnd-16B0C44`, taskRunId `15`):
+  - `2026-07-05 22:14:51.753` `XIULUO_BRAIN start` succeeded:
+    `sessionId=cloud-xiuluo-session-3`, `stateSeq=1`,
+    `phase=ACCEPT_TASK_NAVIGATE_TO_NPC`, `actionId=cloud-action-cloud-xiuluo-session-3-1-8`。
+  - `2026-07-05 22:14:51.772` `XIULUO_BRAIN step` with the correct `lastActionId` succeeded and
+    advanced to `stateSeq=2`, `acceptedPhaseToken=cloud-phase-cloud-xiuluo-session-3-1-7`,
+    `phase=ACCEPT_TASK_CLICK_NPC`。
+  - Same timestamp: DHXY `XiuluoTaskV2` fail-closed with
+    `unsupported cloud initial phase; no local fallback phase=ACCEPT_TASK_CLICK_NPC` and the window
+    finished `修罗 -> FAILED` at `22:14:52.474`。
+- Current diagnosis:
+  - Previous `sessionId is required` is fixed.
+  - External `lastActionId` gate is working.
+  - New blocker is a CR boundary mismatch: external `dhxy-cloud-brain.nextXiuluoBrainPhase(...)`
+    already steps from CR197 startup phase `ACCEPT_TASK_NAVIGATE_TO_NPC` into CR198 concrete phase
+    `ACCEPT_TASK_CLICK_NPC`, while CR197 shell intentionally supports only startup/hot-start initial
+    phases and terminal commands.
+- Required repair:
+  - Re-align CR197 Fresh Node A so it validates startup facts and accepted initial cloud command
+    without entering CR198 concrete accept/click phases.
+  - Do not fallback to legacy local `resolveTaskHotStart` / `runRoundPhases`.
+  - Do not loosen `sessionId/stateSeq/phaseToken/actionId/lastActionId` gates.
+  - Dispatch a worker for the repair, then run two independent reviewer approvals before marking
+    CR197 back to fresh-ready.
+- Docs:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR197 row/card updated to In Progress with this evidence.
+  - Dashboard must be regenerated after this update.
+
+### 2026-07-06 CR197 external brain P1 repair approved - Fresh Node A pending
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Worker repair:
+  - External `DecisionEngine.xiuluoBrainRejectReasonForStep(...)` now requires nonblank
+    `lastActionId` and equality with the current session `actionId()`.
+  - Missing/wrong `lastActionId` returns `status=REJECTED` with a clear reason and does not
+    passthrough `cloud-required`.
+  - `action-outcome` still validates request `actionId == session.actionId()` and `outcome`; it does
+    not require `lastActionId`.
+- Manager verification:
+  - External `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - External `mvn -q -DskipTests package` passed.
+  - DHXY `mvn -q -Dtest=XiuluoBrainCloudDecisionServiceTest test` passed.
+  - DHXY `mvn -q -DskipTests compile` passed.
+  - Current 18080 was rebuilt/restarted; live probe passed:
+    `start` returned legal `sessionId/stateSeq/phaseToken/actionId`,
+    `step` with correct `lastActionId` advanced to `stateSeq=2`,
+    and wrong `lastActionId` returned `status=REJECTED`.
+- Independent reviewer re-review:
+  - Reviewer #1 / Lorentz: APPROVED. Verified step `lastActionId` gate, missing/wrong fail-closed,
+    positive step rotation, DHXY caller sends previous `command.getActionId()`, and outcome semantics
+    remain intact. Focused tests passed.
+  - Reviewer #2 / Goodall: APPROVED. Verified external identity model, strict DHXY gate, DHXY caller
+    `lastActionId`, focused tests, and dashboard/docs. Caveat: external `dhxy-cloud-brain` has no Git
+    baseline; fresh must use the restarted current sidecar/JAR.
+- Current gate:
+  - CR197 is Review / Fresh Node A pending, not Done.
+  - User may rerun 修罗 startup/accept smoke now. Acceptance points:
+    `xiuluo.brain.start`, legal `XIULUO_BRAIN start` cloud command, no `sessionId is required`,
+    no legacy hot-start phase jump, no return-item click before cloud action, no tracker drag/input
+    before cloud action.
+
+### 2026-07-06 CR197 external brain P1 repair worker - step `lastActionId` gate
+
+- Role: CR197 外部 `dhxy-cloud-brain` P1 repair worker。只改外部
+  `D:\mavenProject\dhxy-cloud-brain` 的 `DecisionEngine.java` /
+  `XiuluoBrainProtocolTest.java`，以及 DHXY CR197 文档/dashboard。不得改 DHXY 客户端
+  `XiuluoBrainCloudDecisionService` safety gate 或修罗业务实现。
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`。
+  - DHXY branch/upstream: `codex/hybrid-cloud-protection` /
+    `origin/codex/hybrid-cloud-protection` at `dc4394f`。
+  - DHXY `git status --short --branch`: 当前工作树已有大量 unrelated dirty changes；本 worker
+    只允许追加 CR197 文档和刷新 `docs/cr-dashboard-data.js`，不得 reset/checkout/clean/revert。
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain`；`git status` 报
+    `fatal: not a git repository`，无本地 branch/upstream/pushed commit 可比较。
+  - External baseline file hashes:
+    - `DecisionEngine.java` SHA256
+      `A68A51806B16FA1BD1F352F6C3BBB68544136870742AC525BCE4F0EABAC9BC10`。
+    - `XiuluoBrainProtocolTest.java` SHA256
+      `E9BAB93C31F8D04C29B94F31B55A9933475B154938F7FC72D3E9BC9502027043`。
+- Relevant pre-edit evidence:
+  - Reviewer #1 / Hilbert P1: `xiuluoBrainRejectReasonForStep(...)` 当前只校验
+    `windowId/taskRunId/stateSeq/phaseToken`；`lastActionId` 仅在 step reject 响应中回显，
+    没有参与校验。
+  - `xiuluoBrainRejectReasonForOutcome(...)` 当前复用 step 身份校验后，才单独校验
+    `actionId == session.actionId()`；本次不得放松 outcome 语义。
+  - `XiuluoBrainProtocolTest.xiuluoBrainStepValidatesIdentityAndRotatesState()` 调用
+    `stepRequest(...)` 时只传 `sessionId/stateSeq/phaseToken`，未传 start 返回的
+    `actionId` 作为 `lastActionId`，也没有 missing/wrong `lastActionId` fail-closed 覆盖。
+- Intended repair:
+  - 先补 focused RED tests：正向 step 带 `lastActionId=start.actionId`；missing/wrong
+    `lastActionId` 返回 `status=REJECTED`，明确 reason，且不透传 `cloud-required`。
+  - 再在外部 `DecisionEngine.xiuluoBrainRejectReasonForStep(...)` 中要求
+    `lastActionId` 非空且等于当前 session `actionId()`。
+- Implementation result:
+  - `XiuluoBrainProtocolTest.xiuluoBrainStepValidatesIdentityAndRotatesState()` 正向请求现在带
+    start 返回的 `actionId` 作为 `lastActionId`。
+  - 新增 missing/wrong `lastActionId` focused tests，均断言 `status=REJECTED`、明确 reason，
+    且不含 `cloud-required` passthrough。
+  - `DecisionEngine.xiuluoBrainRejectReasonForStep(...)` 现在读取并校验 `lastActionId` 非空且
+    等于当前 session `actionId()`。
+  - 为保持 `action-outcome` 语义，公共的 `windowId/taskRunId/stateSeq/phaseToken` 校验被抽为
+    step/outcome 共用；outcome 仍校验请求 `actionId` 和 `outcome`，不要求 `lastActionId`。
+- Verification:
+  - RED: external `mvn -q -Dtest=XiuluoBrainProtocolTest test` failed with 2 failures:
+    missing/wrong `lastActionId` expected `REJECTED` but actual `status` was null because step still
+    advanced.
+  - GREEN: external `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed.
+  - External package: `mvn -q -DskipTests package` passed.
+  - DHXY parser/gate: `mvn -q -Dtest=XiuluoBrainCloudDecisionServiceTest test` passed.
+  - Dashboard regenerated with `node scripts\generate-cr-dashboard-data.js`.
+- Current gate:
+  - CR197 is Review / waits for two independent reviewers. Fresh Node A remains blocked until reviewer
+    gate plus 谢帅 final judgment.
+
+### 2026-07-05 CR197 external brain reviewer P1 - step `lastActionId` missing
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Runtime/root-cause recap:
+  - Fresh Node A failed because the running external sidecar returned `decision=cloud-required` for
+    `XIULUO_BRAIN start`; DHXY correctly rejected it with `execute gate rejected: sessionId is required`.
+  - After rebuilding/restarting external `dhxy-cloud-brain`, manager probe against
+    `http://127.0.0.1:18080/api/cloud/decision` returned a legal startup command with
+    `sessionId=cloud-xiuluo-session-1`, `stateSeq=1`, nonblank `phaseToken`, nonblank `actionId`,
+    and `reason=xiuluo.brain.start`.
+- Manager verification already passed after external repair:
+  - External `mvn -q -Dtest=XiuluoBrainProtocolTest test`.
+  - External `mvn -q -DskipTests package`.
+  - DHXY `mvn -q -Dtest=XiuluoBrainCloudDecisionServiceTest test`.
+  - DHXY `mvn -q -DskipTests compile`.
+- Independent reviewer #1 / Hilbert: CHANGES_REQUESTED.
+  - P1: external `DecisionEngine.xiuluoBrainStep(...)` does not verify the consumed
+    `lastActionId`.
+  - Evidence: `xiuluoBrainRejectReasonForStep(...)` validates only
+    `windowId/taskRunId/stateSeq/phaseToken`; `outcome` validates `actionId`, but `step` does not.
+  - Required repair: add nonblank/equality validation for `lastActionId == session.actionId()` in
+    external `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`.
+    Add focused tests for missing/wrong `lastActionId` fail-closed and no `cloud-required` passthrough.
+- Independent reviewer #2 / Turing: APPROVED.
+  - Confirmed external `XIULUO_BRAIN` dispatch, legal start fields, rejected unknown/missing identity,
+    and strict DHXY `XiuluoBrainCloudDecisionService` gate.
+  - Verification passed: external `mvn -q -Dtest=XiuluoBrainProtocolTest test`; DHXY
+    `mvn -q -Dtest=XiuluoBrainCloudDecisionServiceTest test`.
+  - P3 only: current `application.properties` intentionally has
+    `cloud.services.xiuluo-brain.execute-enabled=true` for fresh runtime, so default-disabled gate is
+    not suitable to mix into this runtime check.
+- Current gate:
+  - CR197 is back to In Progress / P1 repair required.
+  - Fresh Node A is blocked. Do not ask the user to run fresh until repair, two independent reviewer
+    approvals, and 谢帅 final judgment are complete.
+
+### 2026-07-05 CR197 repair worker - external XIULUO_BRAIN protocol
+
+- Role: CR197 repair worker. Scope is only the external `D:\mavenProject\dhxy-cloud-brain`
+  `XIULUO_BRAIN` start/step/action-outcome protocol plus CR197 documentation. Do not change DHXY
+  client `XiuluoBrainCloudDecisionService` safety gates and do not migrate 修罗 accept/route/combat/
+  return/recovery business actions.
+- Baseline before edit:
+  - DHXY workdir: `D:\mavenProject\DHXY`.
+  - DHXY branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314` (`dc4394f docs: plan xiuluo cloud single brain migration`).
+  - DHXY upstream visible locally: `origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short --branch` is intentionally heavily dirty before this repair, including many
+    unrelated Java/config/test/template/doc changes. This worker must not reset, checkout, clean, or
+    revert unrelated paths.
+  - External brain workdir: `D:\mavenProject\dhxy-cloud-brain`; `Test-Path .git` returned `False`, so
+    there is no local git branch/upstream/pushed commit to compare. Treat the current external files
+    as dirty shared state and touch only focused protocol/test files.
+- Relevant pre-edit evidence:
+  - Fresh Node A log evidence already preserved above: `21:14:09` `XIULUO_BRAIN mode=EXECUTE`
+    returned `cloudDecision=cloud-required`, then DHXY fail-closed with
+    `execute gate rejected: sessionId is required`.
+  - DHXY test-sidecar reference:
+    `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` has
+    `xiuluoBrainDecisionFor(...)`, `xiuluoBrainStartDecisionFor(...)`,
+    `xiuluoBrainStepDecisionFor(...)`, and `xiuluoBrainActionOutcomeDecisionFor(...)`.
+  - External `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`
+    `decide(...)` switch has no `case "XIULUO_BRAIN"` and currently falls through to default local
+    decision passthrough, so `localDecision=cloud-required` becomes an invalid client response.
+- Implementation result:
+  - Added external `XIULUO_BRAIN` service handling in
+    `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\yueyunfe\dhxy\cloudbrain\DecisionEngine.java`.
+  - `hook=xiuluo-brain-start` now validates `windowId/taskRunId`, creates an in-memory session, and
+    returns a legal startup command with `windowId`, `taskRunId`, nonblank `sessionId`,
+    `stateSeq=1`, nonblank `phaseToken`, explicit blank `acceptedPhaseToken=`,
+    startup `phase=ACCEPT_TASK_NAVIGATE_TO_NPC` when no `initialPhase` is supplied,
+    `action=EXECUTE_PHASE`, `actionType=EXECUTE_PHASE`, nonblank `actionId`, positive `ttlMs`,
+    `createdAtEpochMs`, and `reason=xiuluo.brain.start`.
+  - `hook=xiuluo-brain-step` now requires an existing session and exact
+    `windowId/taskRunId/stateSeq/phaseToken`; accepted steps rotate `stateSeq`, `phaseToken`, and
+    `actionId`, and echo the consumed token as `acceptedPhaseToken`.
+  - `hook=xiuluo-brain-action-outcome` now validates identity/current `actionId`, accepts/replays the
+    outcome idempotently, and returns `status=ACCEPTED` or `status=DUPLICATE_REPLAY`.
+  - Unknown hook or missing identity now returns `status=REJECTED` with a clear reason instead of
+    passing through `cloud-required`.
+  - Added external focused test:
+    `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\yueyunfe\dhxy\cloudbrain\XiuluoBrainProtocolTest.java`.
+  - Repair follow-up also supports `phase=start` when the request has no `context.hook`, mapping it to
+    the same `xiuluo-brain-start` path.
+- Verification:
+  - RED: `mvn -q -Dtest=XiuluoBrainProtocolTest test` in
+    `D:\mavenProject\dhxy-cloud-brain` failed with 4 failures because the response decision was
+    still exactly `cloud-required`.
+  - Additional RED: after the first GREEN, the new `phase=start` no-hook testcase failed because no
+    nonblank `sessionId` was returned.
+  - GREEN: `mvn -q -Dtest=XiuluoBrainProtocolTest test` passed after the external brain repair.
+  - External package: `mvn -q -DskipTests package` in `D:\mavenProject\dhxy-cloud-brain` passed.
+  - DHXY parser/gate focused test:
+    `mvn -q -Dtest=XiuluoBrainCloudDecisionServiceTest test` passed.
+  - DHXY compile: `mvn -q -DskipTests compile` passed.
+  - DHXY requested five-test gate:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+    did not pass in the current dirty main worktree. Failure is
+    `XiuluoBrainLoopWiringTest`: `CR195 default must keep XIULUO_BRAIN execution disabled`.
+    Current pre-existing `src/main/resources/application.properties` has
+    `cloud.services.xiuluo-brain.execute-enabled=true`; this worker did not change or revert that
+    unrelated config.
+  - Dashboard regenerated with `node scripts/generate-cr-dashboard-data.js`.
+- Fresh retry gate:
+  - Do not request user fresh runtime from this worker. Next step is two independent reviewers plus
+    谢帅 final judgment, then 谢帅 can decide when to rerun Fresh Node A with the repaired external
+    `dhxy-cloud-brain`.
+
+### 2026-07-05 CR197 Fresh Node A failed - external XIULUO_BRAIN protocol missing
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Runtime evidence:
+  - `21:14:09.099` `xiuluo.brain.loop.start xiuluo.brain.start round=1 windowId=hwnd-16B0C44 taskRunId=32 source=cr197-hot-start`.
+  - `21:14:09.102` `cloud.decision serviceId=XIULUO_BRAIN mode=EXECUTE ... trackerFactSource=not_collected_no_input_safe_source ...`.
+  - `21:14:09.102` cloud result failed: `executed=false success=false reason=execute gate rejected: sessionId is required`.
+  - `XIULUO_BRAIN decision ... status=CLOUD_REQUIRED_FAILURE ... sessionId=null stateSeq=0 phaseToken=null`.
+  - `xiuluo.brain.loop.failClosed ... reason=execute gate rejected: sessionId is required`.
+- Root cause:
+  - DHXY client side triggered CR197 and facts were present.
+  - External `D:\mavenProject\dhxy-cloud-brain` `DecisionEngine.decide(...)` has no `XIULUO_BRAIN`
+    service case, so the default returned local `cloud-required` instead of a real brain command.
+  - The client correctly rejected the response because `sessionId/stateSeq/phaseToken` were missing.
+- Current decision:
+  - CR197 is back to In Progress / P1 repair required.
+  - Do not loosen DHXY client safety checks.
+  - Dispatch worker to implement minimal external `XIULUO_BRAIN` start/step protocol equivalent to
+    DHXY test-sidecar, then rerun focused tests/package and two independent reviewers.
+
+### 2026-07-05 三技能第 8 格空格 replay hotfix
+
+- Scope: `SummonSkillService` 静态技能格空格识别；不改 hover、云端判定、删除技能点击、窗口关闭逻辑。
+- Evidence:
+  - Runtime raw ROI:
+    `images/temp/hwnd-300DA/summon_skill_static_slots_raw_1783288700578_26429399463000.png`。
+  - Stable replay input:
+    `images/test-cases/summon-skill/20260705_67555_eight_slot_static_roi_raw.png`。
+  - Marked visual output:
+    `images/test-cases/summon-skill/20260705_67555_eight_slot8_inactive_best_marked.png`。
+- RED:
+  - `mvn -q -Dtest=SummonSkillStaticSlotInactiveReplayTest test`
+    failed as expected: slot 8 expected `EMPTY` but production returned `OCCUPIED`.
+- GREEN:
+  - `SummonSkillService` now uses sliding low-texture color-distance matching for
+    `status_inactive1.png` inside each 52x52 static slot, matching the earlier experiment path.
+  - Replay test also asserts slots 1-7 stay `OCCUPIED` while slot 8 becomes `EMPTY`.
+  - `mvn -q -Dtest=SummonSkillStaticSlotInactiveReplayTest test` passed.
+  - `mvn -q "-Dtest=SummonSkillStaticSlotInactiveReplayTest,SummonSkillCR178ProductionStaticBoundaryWiringTest,SummonSkillLastEffectiveSlotRulesTest" test`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+
+### 2026-07-05 CR197 dual-review approved - Fresh Node A pending
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- CR197 worker P1 repair already passed manager local verification:
+  - `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Independent reviewer re-review:
+  - Reviewer #1 / Newton: APPROVED. Confirmed no `readXiuluoTrackerPanel(...)` / tracker drag / input /
+    click / open UI / return item path in enabled hot-start facts collector; confirmed guard coverage.
+  - Reviewer #2 / Mencius: APPROVED. Confirmed no physical input and accepted
+    `not_collected_no_input_safe_source` tracker placeholders for CR197; P3 only on `syncMyPosition()`
+    cache/capture side effects.
+- Current gate:
+  - CR197 is Review / Fresh Node A pending, not Done.
+  - Next user runtime should only verify startup/hot-start facts, `XIULUO_BRAIN start` cloud initial
+    command, no legacy hot-start phase jump, no return-item click before cloud action, and no tracker
+    drag/input before cloud action.
+
+### 2026-07-05 CR197 P1 repair manager verification - re-review pending
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- P1 repair result:
+  - `collectXiuluoBrainHotStartFacts(...)` no longer calls `taskTrackerPanelService.readXiuluoTrackerPanel(...)`.
+  - Startup tracker facts now report `trackerFound=not_collected_no_input_safe_source`,
+    `trackerGreenLinkCount=0`, and `trackerFactSource=not_collected_no_input_safe_source`; CR198 owns
+    tracker/accept migration.
+  - `XiuluoBrainHotStartWiringTest` now guards the facts collector against
+    `taskTrackerPanelService`, `readXiuluoTrackerPanel`, `resolveTrackerPanelRect`,
+    `dragTrackerPanelIfNeeded`, `inputSequences.submitAndWait`, and `InputAction.dragAndDrop`.
+- Manager local verification after repair:
+  - `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Current gate:
+  - CR197 is Review / fresh runtime pending.
+  - Two independent reviewer re-approvals are required before 谢帅 asks the user for Fresh Node A.
+  - Do not request DHXY restart or runtime testing yet.
+
+### 2026-07-05 CR197 reviewer gate - P1 repair required
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Worker result before review:
+  - Hegel completed CR197 initial implementation and reported Review / fresh runtime pending.
+  - Manager local verification also passed:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`;
+    `mvn -q -DskipTests compile`.
+- Reviewer #1 / Newton: CHANGES_REQUESTED.
+  - P1: `collectXiuluoBrainHotStartFacts(...)` calls
+    `taskTrackerPanelService.readXiuluoTrackerPanel(...)`.
+  - Verified call chain:
+    `readXiuluoTrackerPanel(...) -> cropTaskDetailInTrackerPanel(...) -> findTitlePoint(...) ->
+    resolveTrackerPanelRect(...) -> dragTrackerPanelIfNeeded(...) -> inputSequences.submitAndWait(...)`.
+  - This means the enabled startup facts collector can drag the tracker panel and send physical input before
+    `XIULUO_BRAIN start`, violating the CR197 strict read-only boundary.
+  - P2: current guard tests only catch direct tokens in `XiuluoTaskV2`, not indirect callees that can send input.
+- Reviewer #2 / Mencius: APPROVED with P3 notes.
+  - No P0/P1/P2 from code-quality review.
+  - P3: `syncMyPosition()` / screenshot/OCR may still update cache or produce focus/capture side effects; this
+    remains a Fresh Node A log point after the P1 is repaired.
+- Manager decision:
+  - CR197 is back to In Progress / P1 repair required.
+  - Fresh Node A is blocked. Do not ask the user to restart or test.
+  - Send worker back to make hot-start facts collector strictly no-input. Tracker facts must come only from a
+    no-input safe source or be explicitly reported as not collected for this CR. Add guard coverage for indirect
+    input-capable paths.
+
+### 2026-07-05 CR197 worker baseline - hot-start / startup initial phase cloud-owned
+
+- Role: CR197 worker。只改 enabled `xiuluo-brain` path 的 startup/hot-start initial phase wiring；
+  flag-off legacy `resolveTaskHotStart(...)` 保持现有行为。
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection`。
+  - `git status --short --branch` is intentionally heavily dirty before this worker pass, including
+    existing local changes in `XiuluoTaskV2.java`, docs/dashboard, cloud framework files, many
+    services/tests, deleted template/test files, and untracked `src/main/java/com/bot/dhxy/cloud/...`
+    plus CR195/CR196 tests/models. This worker must not reset, checkout, clean, or revert unrelated
+    paths.
+- Relevant baseline/evidence:
+  - Latest pushed baseline `dc4394f` has no CR195/CR196 cloud-brain production wiring; current local
+    `XiuluoTaskV2.java` diff already adds `isXiuluoBrainLoopEnabled()`,
+    `runRoundWithXiuluoBrain(...)`, `executeXiuluoBrainCommandShell(...)`,
+    `failClosedXiuluoBrainLoop(...)`, and `xiuluoBrainLoopFacts(...)`.
+  - Current enabled path forks before legacy `resolveTaskHotStart(...)` and sends
+    `XiuluoBrainStartRequest.initialPhase(XiuluoPhase.PREPARE_ROUND)` with only CR195 scaffold facts.
+  - Current enabled shell accepts only placeholder `PREPARE_ROUND` and terminal phases, while all
+    other concrete business phases fail closed. CR197 may wire cloud-owned initial phase but must not
+    migrate accept/route/combat/return/recovery execution.
+  - Current `XiuluoBrainLoopWiringTest` and `XiuluoSingleBrainSourceGuardTest` are source guards;
+    CR197 will add `XiuluoBrainHotStartWiringTest` before changing production code.
+- Fresh runtime:
+  - Not requested by worker. CR197 may end in Review / fresh runtime pending only after local gate;
+    谢帅 requests Fresh Node A only after two independent reviewers approve.
+- Implementation result:
+  - `XiuluoTaskV2.runRoundWithXiuluoBrain(...)` now collects
+    `collectXiuluoBrainHotStartFacts(context, round, "start")` before calling
+    `xiuluoBrainCloudDecisionService.start(...)`.
+  - Enabled start request now sends `initialPhase(null)` so cloud command is the only startup initial
+    phase source; old flag-off `resolveTaskHotStart(...)` remains in the legacy branch.
+  - New facts collector reports combat/action state, current map/coordinate, tracker found/green-link
+    count/yellow text/detail path, and return-item availability. It does not call legacy hot-start
+    helpers or return-item use/click paths.
+  - `ReturnItemPrescanService.hasCached(...)` is a read-only availability API for the existing
+    per-window/per-round return-item cache.
+  - `executeXiuluoBrainCommandShell(...)` accepts cloud-owned startup initial phases
+    `PREPARE_ROUND`, `WAIT_COMBAT`, `AFTER_ACCEPT_MAINTENANCE_CHECK`, `WAIT_TEAM_RETURN`, and
+    `ACCEPT_TASK_NAVIGATE_TO_NPC` as cloud commands, but does not execute their concrete business
+    phase logic in CR197. Non-startup phases still fail closed until CR198-CR200 migrate them.
+- RED/GREEN:
+  - RED: `mvn -q -Dtest="XiuluoBrainHotStartWiringTest" test` failed because the enabled path did
+    not call `collectXiuluoBrainHotStartFacts(...)` before `XIULUO_BRAIN start`.
+  - GREEN:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+    passed.
+  - CR196 direct guard compile/run passed:
+    `javac -encoding UTF-8 -d target\cr196-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`;
+    `java -cp target\cr196-guard com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`.
+  - `mvn -q -DskipTests compile` passed.
+- Documentation/dashboard:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR197 table/card updated to Review / fresh runtime pending with
+    worker result, tests, risks, and fresh gate.
+  - Dashboard data regeneration is required after the CR card/table update.
+- Review repair 2026-07-05:
+  - Reviewer #1 / Newton found P1: enabled hot-start facts collector called
+    `taskTrackerPanelService.readXiuluoTrackerPanel(...)`, whose indirect chain may drag the task
+    tracker panel through `inputSequences.submitAndWait(... InputAction.dragAndDrop ...)`.
+  - RED repair test: `XiuluoBrainHotStartWiringTest` was strengthened to forbid
+    `taskTrackerPanelService`, `readXiuluoTrackerPanel`, `resolveTrackerPanelRect`,
+    `dragTrackerPanelIfNeeded`, `inputSequences.submitAndWait`, and `InputAction.dragAndDrop` inside
+    `collectXiuluoBrainHotStartFacts(...)`; it failed on existing `readXiuluoTrackerPanel`.
+  - Fix: `collectXiuluoBrainHotStartFacts(...)` no longer reads tracker panel at startup. It reports
+    `trackerFound=not_collected_no_input_safe_source`, `trackerGreenLinkCount=0`, and
+    `trackerFactSource=not_collected_no_input_safe_source`; CR198 owns tracker/accept migration.
+  - `XiuluoBrainHotStartWiringTest` passed after the repair.
+  - Full repair verification passed:
+    `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`;
+    `mvn -q -DskipTests compile`;
+    `javac -encoding UTF-8 -d target\cr196-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`;
+    `java -cp target\cr196-guard com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`.
+  - Dashboard data regenerated with `node scripts\generate-cr-dashboard-data.js`.
+
+### 2026-07-05 CR197 manager kickoff - hot-start / startup initial phase cloud-owned
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现，只负责边界、派 worker、
+  双 independent reviewers gate 和最终判断。
+- Current branch / pushed baseline:
+  - Branch: `codex/hybrid-cloud-protection`。
+  - Latest pushed HEAD before CR197 worker dispatch: `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Worktree remains intentionally dirty. Do not reset, checkout, clean, or revert unrelated files.
+- CR197 scope:
+  - enabled `xiuluo-brain` path 下，startup/hot-start 只做 facts collection，然后由
+    `XIULUO_BRAIN start` 返回 initial phase/action。
+  - 本地可以被动观察 combat、dialog、tracker/current map、return item availability。
+  - 本地不得自跳 `WAIT_COMBAT`、`AFTER_ACCEPT_MAINTENANCE_CHECK`、`WAIT_TEAM_RETURN`、
+    `ACCEPT_TASK_NAVIGATE_TO_NPC`，也不得在 cloud action 前点击回程道具。
+  - flag off legacy `resolveTaskHotStart(...)` 必须保持原行为。
+  - 不迁移 accept、route、combat、return、recovery 具体 phase；这些留给 CR198-CR200。
+- Required local gate:
+  - `mvn -q -Dtest="XiuluoBrainHotStartWiringTest,XiuluoBrainLoopWiringTest,XiuluoSingleBrainSourceGuardTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+  - `mvn -q -DskipTests compile`
+- Fresh runtime:
+  - CR197 是第一个 fresh-facing 节点，但暂不请求用户实测。
+  - 只有 worker 完成、本地 gate 通过、两个 independent reviewers 都批准后，谢帅才通知用户重启
+    DHXY/dev sidecar 并跑一次修罗启动/accept smoke。
+
+### 2026-07-05 CR196 final review gate - Done
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Result:
+  - CR196 worker implementation passed two independent reviewer reviews.
+  - Reviewer #1 / Einstein: approved model semantics; no P0/P1/P2.
+  - Reviewer #2 / Archimedes: approved source guard/docs/dashboard/boundary; no P0/P1/P2.
+- Verification evidence from reviewers:
+  - `javac -encoding UTF-8 -d target\cr196-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java` passed.
+  - `java -cp target\cr196-guard com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Notes:
+  - `facts` / `message` are generic containers. Future CR197+ workers must not put `nextPhase`,
+    `plannedPhase`, `phaseDecision`, or equivalent local successor-phase decisions inside them.
+  - If CR197+ renames enabled-path methods, update `XiuluoSingleBrainSourceGuardTest` extraction list
+    in the same CR.
+- Manager final judgment:
+  - CR196 is Done; no fresh runtime needed because it only adds models and source guards.
+  - Next step is CR197 hot-start / startup initial phase cloud-owned. CR197 is the first fresh-facing
+    node, but user fresh runtime is only requested after local worker tests and two reviewers pass.
+
+### 2026-07-05 CR196 manager kickoff - phase report/action model and source guard
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现，只负责边界、派 worker、
+  双 reviewer gate 和最终判断。
+- Current branch / pushed baseline:
+  - Branch: `codex/hybrid-cloud-protection`。
+  - Latest pushed HEAD before CR196 worker dispatch: `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Worktree remains intentionally dirty. Do not reset, checkout, clean, or revert unrelated files.
+- CR196 scope:
+  - Add enabled-path `XiuluoPhaseReport` / `XiuluoActionExecutionResult` models.
+  - Add `XiuluoSingleBrainSourceGuardTest`.
+  - This CR does not migrate hot-start, accept, route, combat, return, recovery, NPC/dialog/tracker,
+    or fresh runtime behavior.
+- Worker constraints:
+  - `XiuluoPhaseReport` must contain facts/execution result/wait/error/safety/evidence only.
+  - `XiuluoPhaseReport` must not contain `nextPhase`, `nextState`, `targetPhase`, or any local
+    business-phase decision field.
+  - enabled cloud-brain path must not call `applyTaskPolicyCloudDecision`,
+    `TaskPolicyCloudDecisionService.decide`, `TaskRecoveryCloudDecisionService.decide`,
+    `retryCurrentOrRecover`, `restartRoundAfterPhaseFailure`, `restartRoundAfterLoopGuard`,
+    or `resolveTaskHotStart`.
+  - Do not ask user for fresh runtime before CR197.
+- Required tests:
+  - `javac -encoding UTF-8 -d target\cr196-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`
+  - `java -cp target\cr196-guard com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`
+  - `mvn -q -DskipTests compile`
+- Review gate:
+  - After worker completion, two independent reviewers must approve before CR196 can be considered complete.
+
+### 2026-07-05 CR196 worker baseline - phase report/action model and source guard
+
+- Role: CR196 worker。只建 enabled path 的 report/action-result 模型与 source guard；不迁移
+  hot-start、accept、route、target、combat、return、team-return、recovery 具体逻辑。
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection` at
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` is heavily dirty before this worker pass, including existing
+    local changes in `XiuluoTaskV2.java`, docs/dashboard, cloud framework files, and many unrelated
+    services/tests. This worker must not reset, checkout, clean, or revert unrelated paths.
+- Relevant baseline/evidence:
+  - CR195 enabled path currently forks in `execute(...)` before local `resolveTaskHotStart(...)` and
+    enters `runRoundWithXiuluoBrain(...)`.
+  - Enabled scaffold currently contains `runRoundWithXiuluoBrain(...)`,
+    `executeXiuluoBrainCommandShell(...)`, `failClosedXiuluoBrainLoop(...)`, and
+    `xiuluoBrainLoopFacts(...)`.
+  - Old local path still contains `applyTaskPolicyCloudDecision(...)`, `TASK_RECOVERY`, local retry,
+    restart, and hot-start helpers; CR196 source guard must scope checks to the enabled cloud-brain
+    path instead of flag-off legacy code.
+  - `XiuluoPhaseReport.java`, `XiuluoActionExecutionResult.java`, and
+    `XiuluoSingleBrainSourceGuardTest.java` are not tracked before this worker pass.
+- Fresh runtime:
+  - None requested for CR196; worker will not ask for fresh runtime.
+- Implementation result:
+  - Added `XiuluoPhaseReport` as a Lombok `@Value` + `@Builder(toBuilder = true)` facts-only
+    model with fields for `phase`, `status`, `facts`, `actionResult`, `waitSpec`, error/safety
+    reasons, elapsed time, and evidence paths.
+  - Added `XiuluoActionExecutionResult` as a Lombok `@Value` + `@Builder(toBuilder = true)` model
+    for local action execution facts: action id, `XiuluoBrainActionType` action type, status,
+    message, error/safety reasons, elapsed time, facts, and evidence paths.
+  - Added direct `javac/java` runnable `XiuluoSingleBrainSourceGuardTest`.
+  - Did not modify `XiuluoTaskV2`; no hot-start, accept, route, target, combat, return,
+    team-return, recovery, NPC/dialog/tracker/navigation/image processor, 五倍, or 五环 behavior
+    changed in this worker pass.
+- Source guard coverage:
+  - Extracts `runRoundWithXiuluoBrain(...)`, `executeXiuluoBrainCommandShell(...)`,
+    `failClosedXiuluoBrainLoop(...)`, `xiuluoBrainLoopFacts(...)`, plus future report/action-result
+    builder methods if added.
+  - Forbids enabled path use of `applyTaskPolicyCloudDecision`,
+    `TaskPolicyCloudDecisionService.decide`, `taskPolicyCloudDecisionService`,
+    `TaskRecoveryCloudDecisionService.decide`, `taskRecoveryCloudDecisionService`,
+    `retryCurrentOrRecover`, `restartRoundAfterPhaseFailure`, `restartRoundAfterLoopGuard`,
+    and `resolveTaskHotStart`.
+  - Forbids enabled path `localDecision` + `next=` same-line log/string pattern.
+  - Checks `XiuluoPhaseReport.java` and `XiuluoActionExecutionResult.java` do not contain
+    `nextPhase`, `nextState`, `targetPhase`, or `localNextPhase`.
+- RED/GREEN:
+  - RED: direct Java guard failed before models existed with
+    `Required source file missing: src\main\java\com\bot\dhxy\task\xiuluo\XiuluoPhaseReport.java`.
+  - GREEN: guard passed after adding the two models.
+- Verification:
+  - `javac -encoding UTF-8 -d target\cr196-guard src\test\java\com\bot\dhxy\task\xiuluo\XiuluoSingleBrainSourceGuardTest.java`
+    passed.
+  - `java -cp target\cr196-guard com.bot.dhxy.task.xiuluo.XiuluoSingleBrainSourceGuardTest`
+    passed.
+  - `mvn -q -DskipTests compile` passed.
+- Review gate:
+  - Worker pass is ready for two independent reviewers. CR196 is Review, not Done.
+
+### 2026-07-05 CR195 final review gate - Done
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Result:
+  - CR195 worker implementation passed two independent reviewer reviews.
+  - Reviewer #1 / Meitner: approved single-brain enabled path; no P0/P1/P2.
+  - Reviewer #2 / Epicurus: approved config/tests/docs/dashboard/no broad refactor; no P0/P1/P2.
+- Verification evidence from reviewers:
+  - `mvn -q -Dtest="XiuluoBrainLoopWiringTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Notes:
+  - `XiuluoBrainLoopWiringTest` is a focused source guard, not a full mock behavior integration test.
+    This is accepted for CR195 because the card only builds disabled-by-default scaffold and CR193/CR194
+    cover required-execute/session fail-closed. Later fresh-facing CRs must add stronger behavior tests
+    for the migrated phases they own.
+- Manager final judgment:
+  - CR195 is Done; no fresh runtime needed because `xiuluo-brain` remains default off and concrete
+    phases are not migrated in this card.
+  - Next step is CR196 phase report / action result model and single-brain source guards.
+
+### 2026-07-05 CR195 manager kickoff - client cloud-brain loop scaffold
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现，只负责边界、派 worker、
+  双 reviewer gate 和最终判断。
+- Current branch / pushed baseline:
+  - Branch: `codex/hybrid-cloud-protection`。
+  - Latest pushed HEAD before CR195 worker dispatch: `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Worktree remains intentionally dirty with earlier cloud and task changes. Do not reset, checkout,
+    clean, or revert unrelated files.
+- CR195 scope:
+  - Add a disabled config flag for 修罗 `XIULUO_BRAIN` loop scaffold.
+  - `flag off` keeps the existing Xiuluo path unchanged.
+  - `flag on` starts a separate fail-closed cloud-brain loop skeleton and executes only accepted
+    `XIULUO_BRAIN` commands.
+  - This CR does not migrate hot-start, accept, route, combat, return, recovery, NPC/dialog/tracker
+    behavior, or fresh runtime behavior.
+- Worker constraints:
+  - Allowed ownership: `src/main/java/com/bot/dhxy/task/xiuluo/XiuluoTaskV2.java`,
+    `src/main/resources/application.properties`, CR195 focused tests, and minimal supporting
+    cloud-loop model/plumbing if needed.
+  - Do not use `TASK_POLICY` / `TASK_RECOVERY` as enabled-path business authority.
+  - Do not add local fallback when cloud is unavailable/invalid/rejected.
+  - Do not ask user for fresh runtime before CR197.
+- Required tests:
+  - `mvn -q -Dtest="XiuluoBrainLoopWiringTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+  - `mvn -q -DskipTests test-compile`
+  - `mvn -q -DskipTests compile`
+- Review gate:
+  - After worker completion, two independent reviewers must approve before CR195 can be considered complete.
+
+### 2026-07-05 CR195 worker baseline - client cloud-brain loop scaffold
+
+- Role: CR195 worker。只搭 disabled-by-default 的客户端 `XIULUO_BRAIN` loop 脚手架；
+  不迁移 hot-start、accept、route、target、combat、return、team-return、recovery 具体逻辑。
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection` at same
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` is heavily dirty before this worker pass, including existing
+    local changes in `XiuluoTaskV2.java`, `application.properties`, docs/dashboard, many unrelated
+    services/tests, and untracked cloud framework/test files. This worker must not reset, checkout,
+    clean, or revert unrelated paths.
+- Relevant baseline/evidence:
+  - `docs/PACKAGE_ARCHITECTURE.md` / Task 4 require CR195 to add a disabled flag, keep flag-off
+    `XiuluoTaskV2` old path unchanged, and add a separate fail-closed `XIULUO_BRAIN` loop skeleton.
+  - Current `XiuluoTaskV2.execute(...)` still enters the existing local hot-start and
+    `runRoundPhases(...)` path; `runRoundPhases(...)` applies `TASK_POLICY` after each local
+    `XiuluoStepOutcome` and recovery helpers may call `TASK_RECOVERY`. CR195 enabled path must not
+    call those as business authority.
+  - Current `application.properties` has many `cloud.services.*` entries, but no
+    `cloud.services.xiuluo-brain.*` default flag yet.
+  - `git diff -- XiuluoTaskV2.java application.properties docs/ACTIVE_WORK.md
+    docs/PACKAGE_ARCHITECTURE.md docs/cr-dashboard-data.js` already shows pre-existing local
+    changes before this worker; edits below are additive and scoped to CR195.
+- Implementation intent:
+  - Add `cloud.services.xiuluo-brain.execute-enabled=false` and `fallback=STOP` as the existing
+    fail-closed enum equivalent for requested `FAIL_CLOSED`.
+  - Inject `XiuluoBrainCloudDecisionService` / `CloudDecisionProperties` and branch only when
+    `XIULUO_BRAIN` execute flag is true.
+  - Enabled branch uses `start(...)`, consumes only accepted `EXECUTE_PHASE` / terminal cloud
+    commands, logs `xiuluo.brain.loop.start`, `xiuluo.brain.loop.command`,
+    `xiuluo.brain.loop.failClosed`, and never falls back to `runRoundPhases(...)`.
+- Fresh runtime:
+  - None requested for CR195; worker will not ask for fresh runtime.
+- Implementation result:
+  - Added default-off config for `cloud.services.xiuluo-brain` in `application.properties`.
+    The fallback value is `STOP`, the existing fail-closed enum equivalent; no new `FAIL_CLOSED`
+    enum was introduced.
+  - Injected `CloudDecisionProperties` and `XiuluoBrainCloudDecisionService` into `XiuluoTaskV2`.
+  - Added `isXiuluoBrainLoopEnabled()` gate before local startup/hot-start phase selection.
+    When false, the existing `resolveTaskHotStart(...) -> runRoundPhases(...)` path remains
+    reachable and unchanged by this gate.
+  - Added independent `runRoundWithXiuluoBrain(...)` scaffold for enabled mode:
+    `start(...)` creates a session, accepted commands are logged and routed into a minimal shell,
+    `PREPARE_ROUND` can be consumed as a no-op placeholder, terminal cloud commands end the round,
+    and unsupported concrete phases fail closed for later CR197-CR200 migration.
+  - Rejected/unavailable/invalid cloud decisions, missing identity, and loop guard overflow log
+    `xiuluo.brain.loop.failClosed` and return `TaskRunResult.FAILED`; the enabled path does not
+    call `runRoundPhases(...)`, local hot-start, `TASK_POLICY`, or `TASK_RECOVERY`.
+  - Added `XiuluoBrainLoopWiringTest` focused guard for default-off config, flag gate,
+    start/step wiring, cloud phase consumption, and no local `XiuluoStepOutcome.next` authority.
+- RED/GREEN:
+  - RED: `mvn -q -Dtest="XiuluoBrainLoopWiringTest" test` failed before implementation with
+    `CR195 default must keep XIULUO_BRAIN execution disabled`.
+  - GREEN: `mvn -q -Dtest="XiuluoBrainLoopWiringTest" test` passed after implementation.
+- Verification:
+  - `mvn -q -Dtest="XiuluoBrainLoopWiringTest,XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+    passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Review gate:
+  - Worker pass is ready for two independent reviewers. CR195 is Review, not Done.
+
+### 2026-07-05 CR194 final review gate - Done
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Result:
+  - CR194 P1 repair completed and passed two independent reviewer re-review.
+  - Reviewer #1 / Carver: approved token/session contract; no P0/P1/P2.
+  - Reviewer #2 / Kant: approved boundary/test/no-production-path/docs; no P0/P1/P2.
+- Verification evidence from both reviewers:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Production source guard returned no hits:
+    `rg -n "XIULUO_BRAIN|xiuluo-brain|XiuluoBrain" src/main/java/com/bot/dhxy/task src/main/java/com/bot/dhxy/service src/main/java/com/bot/dhxy/window src/main/java/com/bot/dhxy/ui src/main/resources/application.properties`.
+- Manager final judgment:
+  - CR194 is Done; no fresh runtime needed because it only changes dev/test-sidecar protocol/session engine.
+  - Next step is CR195 client cloud-brain loop scaffold. Do not ask the user for field testing before CR197.
+
+### 2026-07-05 CR194 reviewer gate - P1返修中
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现。
+- Reviewer results:
+  - Reviewer #1 / Boyle: BLOCKED P1.
+  - Reviewer #2 / McClintock: approved boundary/test scope, with one non-blocking log-field polish note.
+- Blocker:
+  - CR194 dev server step currently advances session and returns a new `phaseToken/actionId`.
+  - CR193 `XiuluoBrainCloudDecisionService.step()` currently validates response `phaseToken` against the
+    request/expected `phaseToken`.
+  - This means CR195 client loop would fail-closed on the first valid CR194 step with
+    `phaseToken mismatch`.
+- Required repair for worker:
+  - Unify the step token contract before CR195.
+  - Add a focused service + dev-server integration test proving start -> step advance works through
+    `XiuluoBrainCloudDecisionService` without token mismatch.
+  - Keep CR194 dev/test-sidecar only; do not connect production `XiuluoTaskV2` or any task/service/window/UI path.
+- Manager verification before返修:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Source guard for `XIULUO_BRAIN|xiuluo-brain|XiuluoBrain` under production task/service/window/ui/properties
+    returned no hits.
+- Docs:
+  - CR194 row/card updated with P1 blocker and required repair direction.
+
+### 2026-07-05 CR194 worker repair baseline - step token contract
+
+- Role: CR194 repair worker。只返修 `XIULUO_BRAIN` step token contract 与 focused tests；
+  不接入 `XiuluoTaskV2` 或任何生产 task/service/window/UI 路径。
+- Baseline before repair edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection` at same
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` is already heavily dirty before this repair pass; do not reset,
+    checkout, clean, or revert unrelated files.
+- Relevant evidence:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR194 Reviewer gate 2026-07-05 records Boyle P1:
+    dev server step returns a new `phaseToken/actionId`, while
+    `XiuluoBrainCloudDecisionService.parse(...)` currently requires response `phaseToken` to equal
+    the request/expected `phaseToken`.
+  - `CloudDecisionDevServer.xiuluoBrainStepDecisionFor(...)` advances the session and returns
+    `xiuluoBrainCommand(session, "xiuluo.brain.step.response")` with the newly rotated token.
+  - `XiuluoBrainCloudDecisionService.parse(...)` currently rejects any step response whose
+    `command.getPhaseToken()` differs from `expected.phaseToken()`.
+- Repair choice:
+  - Use contract A: response `phaseToken` is the next-state token returned to local code; add an
+    explicit `acceptedPhaseToken` decision field for the old/current token consumed by this step.
+  - CR193 stale gate remains strict: step still requires `stateSeq` to advance, session/window/task
+    to match, and `acceptedPhaseToken` to equal the request `phaseToken`.
+- RED verification:
+  - Added service + dev-sidecar start -> step integration test first.
+  - `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` failed before repair:
+    `step status expected=ACCEPTED_CLOUD_COMMAND actual=LOCAL_SAFETY_DENIED`, with log evidence
+    `phaseToken mismatch expected=<start token> actual=<next token>`.
+- Implementation result:
+  - `XiuluoBrainResponse` now has additive `acceptedPhaseToken`.
+  - `XiuluoBrainCloudDecisionService` keeps response `phaseToken` as the next-state token and
+    validates step freshness with `acceptedPhaseToken == request.phaseToken`.
+  - `serialize(...)` preserves `acceptedPhaseToken`, so the execute gate reparse keeps the accepted
+    token proof in the local response.
+  - `CloudDecisionDevServer` captures the pre-advance token before rotating session state and emits
+    it as `acceptedPhaseToken` on step responses.
+  - `XiuluoBrainCloudDecisionServiceTest` now covers service + dev server start -> step, proving
+    the rotated next `phaseToken/actionId` is accepted and visible locally.
+  - `XiuluoBrainDevServerTest` now asserts valid step returns `acceptedPhaseToken` equal to the
+    consumed request token.
+- Verification:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Source guard returned no production-path hits:
+    `rg -n "XIULUO_BRAIN|xiuluo-brain|XiuluoBrain" src/main/java/com/bot/dhxy/task src/main/java/com/bot/dhxy/service src/main/java/com/bot/dhxy/window src/main/java/com/bot/dhxy/ui src/main/resources/application.properties`.
+- Production path:
+  - Still no `XiuluoTaskV2` / task/service/window/UI / properties connection and no NPC/dialog/
+    tracker/navigation/image/team-return behavior change.
+- Review gate:
+  - P1 repair is ready for two-reviewer re-review; CR194 remains Review until that gate passes.
+
+### 2026-07-05 CR194 manager kickoff - dev `XIULUO_BRAIN` session engine
+
+- Role: 谢帅 manager / business supervisor。主 agent 不写 Java 业务实现，只负责卡、边界、派 worker、
+  双 reviewer gate 和最终判断。
+- Current branch / pushed baseline:
+  - Branch: `codex/hybrid-cloud-protection`。
+  - Latest pushed HEAD before CR194 worker dispatch: `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Worktree is intentionally dirty with earlier cloud and task changes. Do not reset, checkout, clean, or revert
+    unrelated files.
+- CR194 scope:
+  - Implement dev/test-sidecar `XIULUO_BRAIN` session store.
+  - Own `sessionId/stateSeq/phaseToken/actionId`; reject stale/replayed/cross-window/cross-task actions.
+  - The dev brain may start with a happy-path 修罗 policy, but it must advance from cloud-side session state.
+  - Do not ask local code for `localNextPhase`; do not add local fallback.
+  - Do not connect production `XiuluoTaskV2` or task/service/window/UI execution path in this card.
+- Expected write scope for worker:
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` or a small collaborator under
+    `src/test/java/com/bot/dhxy/cloud/dev/` if needed.
+  - `src/main/java/com/bot/dhxy/cloud/xiuluo/` only when the existing protocol needs a small additive field/helper
+    for CR194.
+  - `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java`.
+  - CR194 docs/dashboard updates.
+- Required local test gate:
+  - `XiuluoBrainDevServerTest` must cover start session, valid step advance, old/equal `stateSeq` reject,
+    wrong `windowId/taskRunId` reject, `phaseToken` mismatch reject, and action outcome once-only.
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test`
+  - `mvn -q -DskipTests compile`
+- Review gate:
+  - After worker completion, two independent reviewers must approve before CR194 can be considered complete.
+- Fresh runtime:
+  - None for CR194. It does not change production behavior.
+
+### 2026-07-05 CR194 worker baseline - dev `XIULUO_BRAIN` session engine
+
+- Role: CR194 worker。只实现 dev/test-sidecar `XIULUO_BRAIN` session store 和 focused tests；
+  不接入 `XiuluoTaskV2` 或任何生产 task/service/window/UI 路径。
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection` at same
+    `dc4394f4ff3a93ed23a030857d72064843edd314`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass,
+    including unrelated source/config/test/docs changes plus untracked cloud framework files under
+    `src/main/java/com/bot/dhxy/cloud/` and `src/test/java/com/bot/dhxy/cloud/`。This worker must
+    not reset, checkout, clean, or revert unrelated paths.
+- Relevant baseline/evidence:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR194 requires a dev `XIULUO_BRAIN` session store that owns
+    `sessionId/stateSeq/phaseToken/actionId`, rejects stale/replay/cross-window/cross-task actions,
+    and does not ask local code for `localNextPhase`。
+  - `docs/superpowers/plans/2026-07-05-xiuluo-cloud-single-brain-migration.md` Task 3 requires tests
+    for start session, valid step advance, old/equal `stateSeq`, wrong identity, `phaseToken`
+    mismatch, and action outcome once-only.
+  - `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` is currently untracked
+    relative to the pushed baseline; existing local code has dev stubs for `TASK_POLICY`,
+    `TASK_RECOVERY`, `DIALOG_POLICY`, `NPC_CLICK_*`, route/image/minimap/summon services, but no
+    `XIULUO_BRAIN` session state in `decisionFor(...)`.
+  - `src/main/java/com/bot/dhxy/cloud/xiuluo/` is currently local/untracked relative to the pushed
+    baseline from CR193; CR194 reuses the CR193 protocol fields without broad framework edits.
+- Implementation constraints:
+  - Only modify CR194 allowed paths: dev server/test-sidecar code, additive `cloud/xiuluo` helpers
+    if needed, `XiuluoBrainDevServerTest`, and CR docs/dashboard.
+  - Do not modify/connect `XiuluoTaskV2`, NPC click, dialog, tracker, navigation, image processor,
+    team return, wubei/wuhuan behavior, or production UI/runtime wiring.
+  - Action outcome replay choice for this worker: accept each `actionId` outcome once; duplicate
+    outcome reports return an explicit duplicate/replayed status and do not advance session state.
+- RED verification:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest" test` failed before implementation because
+    `CloudDecisionDevServer` returned the generic `localDecision` echo for `XIULUO_BRAIN`; the new
+    test expected a session-owned rejection/status/identity decision and found blank `status`.
+- Implementation result:
+  - Updated `src/test/java/com/bot/dhxy/cloud/dev/CloudDecisionDevServer.java` only in the
+    test-sidecar path:
+    - added `XIULUO_BRAIN` handling for `xiuluo-brain-start`, `xiuluo-brain-step`, and
+      `xiuluo-brain-action-outcome`;
+    - start creates a server-owned `sessionId`, `stateSeq=1`, nonblank `phaseToken/actionId/reason`,
+      and positive `ttlMs`;
+    - step validates `windowId/taskRunId/sessionId/stateSeq/phaseToken`, advances cloud-side
+      `stateSeq`, and rotates `phaseToken/actionId` from the session store;
+    - stale/replayed state, wrong identity, and token mismatch return `status=REJECTED`;
+    - action outcome is accepted once per `actionId`; replay returns `status=DUPLICATE_REPLAY`
+      without advancing session state.
+  - Added `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainDevServerTest.java` covering the
+    CR194 session/start/step/replay/identity/token/outcome contract.
+  - No production `cloud/xiuluo` protocol field change was needed in CR194.
+  - Did not modify `XiuluoTaskV2` or any 修罗 business flow/NPC/dialog/tracker/route/image/UI path.
+- Verification:
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest" test` passed.
+  - `mvn -q -Dtest="XiuluoBrainDevServerTest,XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+- Review gate:
+  - Worker implementation is ready for two independent reviewers; CR194 should stay Review until
+    that gate passes.
+- Fresh runtime:
+  - None for CR194. It is dev/test-sidecar only and does not change production behavior.
+
+### 2026-07-05 CR193 worker baseline - `XIULUO_BRAIN` 协议骨架
+
+- Role: CR193 worker。只实现 `XIULUO_BRAIN` service id、request/response/action enum、
+  required-execute decision service 和 focused tests；不接入 `XiuluoTaskV2` 生产路径。
+- Manager review update:
+  - Reviewer #1 returned BLOCKED / P1.
+  - Blocker has been written to CR193 card: protocol lacks `phaseToken`, and accepted command loses
+    `ttlMs` after gate serialization/parsing.
+  - Reviewer #2 also returned BLOCKED / P1: `step()` must fail closed when local
+    `sessionId/stateSeq/phaseToken` are missing instead of relying on callers to pass valid stale-guard
+    inputs.
+  - Worker repaired the first P1 set, but re-review still returned:
+    - Reviewer #1 P1: missing/zero TTL can still be accepted when both envelope and decision lack
+      a positive `ttlMs`.
+    - Reviewer #2 P2: step stale-gate tests do not cover local blank `windowId/taskRunId`,
+      cloud `sessionId` mismatch, or stale/equal `stateSeq`; inactive log drops local context.
+  - Worker repaired the second P1/P2 set.
+  - Third-round independent review gate passed:
+    - Dewey APPROVED, no P0/P1/P2/P3.
+    - Noether APPROVED, no P0/P1/P2/P3.
+  - CR193 is Done at local-test scope. No fresh runtime is required because it does not connect to
+    `XiuluoTaskV2` or any production task/service/window/UI path.
+- Baseline before source/test edit:
+  - Workdir: `D:\mavenProject\DHXY`。
+  - Branch/HEAD: `codex/hybrid-cloud-protection` /
+    `dc4394f docs: plan xiuluo cloud single brain migration`。
+  - Upstream visible locally: `origin/codex/hybrid-cloud-protection` at same `dc4394f`。
+  - `git status --short --branch` already shows a heavily dirty workspace before this pass,
+    including many unrelated source/config/test/docs changes plus untracked `src/main/java/com/bot/dhxy/cloud/`
+    and `src/test/java/com/bot/dhxy/cloud/`. This worker must not reset, checkout, clean, or revert
+    unrelated paths.
+- Relevant baseline/evidence:
+  - `docs/PACKAGE_ARCHITECTURE.md` CR193 requires `XIULUO_BRAIN` protocol/service skeleton,
+    no `LOCAL_PASSTHROUGH`, no "keep local outcome", and no production `XiuluoTaskV2` wiring.
+  - `docs/superpowers/plans/2026-07-05-xiuluo-cloud-single-brain-migration.md` Task 2 requires
+    tests for valid response, missing `sessionId`, missing `reason`, invalid `XiuluoPhase`, expired TTL,
+    wrong `windowId/taskRunId`, inactive coordinator, and timeout fail-closed.
+  - `git show origin/codex/hybrid-cloud-protection:src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionServiceId.java`
+    fails because the current cloud framework files are local/untracked relative to that upstream
+    baseline; this pass reuses the existing local cloud test/service pattern without broad framework edits.
+  - `git diff -- src/main/java/com/bot/dhxy/cloud/decision/CloudDecisionServiceId.java` is empty before
+    CR193 edits.
+- Implementation constraints:
+  - Keep CR193 fail-closed / required-execute only: allowed envelope statuses are
+    `ACCEPTED_CLOUD_COMMAND`, `LOCAL_SAFETY_DENIED`, and `CLOUD_REQUIRED_FAILURE`.
+  - Do not introduce `LOCAL_PASSTHROUGH`, `LOCAL`, or "keep local outcome" semantics for
+    `XIULUO_BRAIN`.
+  - Do not change 修罗 business flow, NPC click, dialog, tracker, route, image processor, UI, or
+    `TASK_POLICY` behavior.
+- RED verification:
+  - `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` failed before implementation with
+    missing CR193 classes such as `XiuluoBrainStartRequest`, `XiuluoBrainCloudDecisionService`,
+    and `XiuluoBrainActionType`.
+  - Reviewer P1 repair RED: the same focused test failed to compile after adding guard tests because
+    `XiuluoBrainResponse` had no `phaseToken` getter and `XiuluoBrainStepRequest` had no
+    `phaseToken(...)` builder field.
+  - Re-review repair RED: `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` failed because
+    envelope `ttlMs=0` plus decision without `ttlMs` was still accepted as
+    `ACCEPTED_CLOUD_COMMAND`.
+- Implementation result:
+  - Added `CloudDecisionServiceId.XIULUO_BRAIN`.
+  - Added `src/main/java/com/bot/dhxy/cloud/xiuluo/` protocol classes:
+    `XiuluoBrainStartRequest`, `XiuluoBrainStepRequest`, `XiuluoBrainResponse`,
+    `XiuluoBrainActionType`, `XiuluoBrainDecision`, and `XiuluoBrainCloudDecisionService`.
+  - Added `src/test/java/com/bot/dhxy/cloud/xiuluo/XiuluoBrainCloudDecisionServiceTest.java`.
+  - Repaired reviewer #1/#2 P1:
+    - `XiuluoBrainResponse` now carries required cloud `phaseToken`.
+    - `XiuluoBrainStepRequest` now carries expected local `phaseToken`.
+    - `step()` fails closed before cloud call when local `windowId/taskRunId/sessionId/phaseToken`
+      are blank or `stateSeq <= 0`.
+    - step response parsing rejects cloud `sessionId` / `phaseToken` mismatch and requires cloud
+      `stateSeq` to advance beyond expected stateSeq.
+    - accepted effective-decision serialization now preserves `phaseToken`, positive `ttlMs`, and
+      `createdAtEpochMs`; reparse no longer resets TTL to `0`.
+    - `XIULUO_BRAIN` logs now include `phaseToken`.
+  - Focused tests now cover valid `phaseToken/ttlMs`, missing cloud `phaseToken`, missing step
+    `sessionId`, zero step `stateSeq`, missing step `phaseToken`, and mismatched step `phaseToken`.
+  - Repaired re-review P1/P2:
+    - `parseDecision(...)` now rejects any final effective `ttlMs <= 0`.
+    - Decision-field TTL expiry uses decision `createdAtEpochMs`; envelope TTL expiry uses envelope
+      `createdAt`, so the final parsed TTL / createdAt pair owns expiration.
+    - Focused tests cover missing effective TTL, decision `ttlMs=0`, and decision TTL expired.
+    - Focused tests cover step blank `windowId`, blank `taskRunId`, cloud `sessionId` mismatch,
+      equal `stateSeq`, stale `stateSeq`, and step inactive no-cloud.
+    - Inactive fail-closed now passes `expected` into `logDecision(...)`, preserving
+      `windowId/taskRunId/sessionId/stateSeq/phaseToken` in inactive logs.
+  - Updated CR193 row/card in `docs/PACKAGE_ARCHITECTURE.md`; regenerated
+    `docs/cr-dashboard-data.js`.
+  - Did not modify `XiuluoTaskV2` or any 修罗 business flow/NPC/dialog/tracker/route/image/UI path.
+- Verification:
+  - `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - After reviewer P1 repair, `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - After reviewer P1 repair, `mvn -q -DskipTests compile` passed.
+  - After re-review repair, `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` passed.
+  - After re-review repair, `mvn -q -DskipTests compile` passed.
+  - Manager fresh verification after two approvals:
+    - `mvn -q -Dtest="XiuluoBrainCloudDecisionServiceTest" test` passed.
+    - `mvn -q -DskipTests compile` passed.
+    - scoped source guard found no `XIULUO_BRAIN` production path calls in
+      `task/service/window/ui/application.properties`.
+    - `git diff --check -- ...CR193 paths...` produced CRLF warnings only, no whitespace error.
+
 ### 2026-07-05 CR190 manager final review
 
 - Status: Review / fresh runtime pending. 不标 Done/Closed。
@@ -67376,3 +74336,544 @@ Status: tests-only repair complete; CR190 moved back to Review, fresh runtime pe
   - `docs/PACKAGE_ARCHITECTURE.md` CR190 row moved from Blocked to Review and the CR card records
     `Second-review test repair result 2026-07-05`.
   - `docs/cr-dashboard-data.js` regenerated after the CR190 status/table update.
+
+## 2026-07-06 / CR204 worker baseline
+
+Status: in progress; scope is only first-aid pending/plan/polling behavior.
+
+- Baseline before CR204 edits:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD: `codex/hybrid-cloud-protection` / `dc4394f`.
+  - Latest pushed commit visible locally for current upstream `@{u}`:
+    `dc4394f docs: plan xiuluo cloud single brain migration`.
+  - `git status --short --branch` is heavily dirty with many unrelated modified/deleted/untracked
+    files. This pass must not revert/reset/checkout/clean unrelated work.
+- CR204 card baseline:
+  - CR204 is Ready and requires startup/hot-start and post-combat no-focus HP/MP precheck to produce
+    a concrete plan immediately: `HEALTHY` empty plan, `SUPPLY_NEEDED` exact plan, `UNKNOWN`
+    conservative plan.
+  - `pendingFollowerFirstAid` may mean only "plan exists and waits for a safe input window";
+    pending execution must not call `probeFirstAidSupplyNoFocus(...)` again.
+  - `500ms` polling is allowed only for `FREE && pending plan`, not while `IN_COMBAT`.
+- Relevant pushed/current-code evidence before edits:
+  - `AutoCombatService.consumeExitAndRecover(...)` currently queues pending follower first-aid for
+    both `SUPPLY_NEEDED` and `UNKNOWN`.
+  - `AutoCombatService.runPendingFollowerFirstAidIfAllowed(...)` currently calls
+    `playerStateService.performCachedFirstAidPlanNow(...)`, then if it returns false calls
+    `playerStateService.probeFirstAidSupplyNoFocus(context)` again. This is the CR204
+    `UNKNOWN -> pending -> retry probe` loop.
+  - `AutoBattleTask.getPollingIntervalMs(...)` currently checks
+    `autoCombatService.hasPendingFollowerFirstAidForCurrentWindow()` before checking
+    `GameContext.ActionState.FREE`, so pending first-aid can force `500ms` even during combat.
+  - `PlayerStateService.probeFirstAidSupplyNoFocus(...)` currently clears
+    `pendingNoFocusFirstAidPlan` and returns `UNKNOWN` when window base or no-focus bars screenshot
+    is unavailable; there is no conservative first-aid plan for UNKNOWN yet.
+- Existing local diffs in touched files, to preserve:
+  - `AutoCombatService.java` already has unrelated local changes for paused leader read-only combat
+    probe, return-home stale combat reconciliation, and role-aware combat UI cleanup.
+  - `PlayerStateService.java` already has unrelated local CR150 hover-cleanup changes around
+    first-aid input and no-focus snapshot capture.
+  - `AutoBattleTask.java` already has unrelated local summon-skill cleaner budget wiring.
+- Planned RED tests:
+  - Add CR204 focused source/behavior guard(s) proving no pending-stage retry probe, UNKNOWN creates
+    a conservative plan, HEALTHY clears plan/pending behavior, `IN_COMBAT` pending polling is not
+    `500ms`, and startup still invokes the first-aid check before patrol initialization.
+
+Completion update:
+
+- Implementation:
+  - `PlayerStateService.performStartupFirstAidCheck(...)` now uses the no-focus first-aid precheck
+    and executes the resulting cached plan instead of bypassing the plan path through
+    `performFirstAidCheck(true, ...)`.
+  - `PlayerStateService.probeFirstAidSupplyNoFocus(...)` caches an UNKNOWN conservative plan when
+    the window base is known but the bars screenshot is unreadable. The conservative plan covers all
+    enabled person/pet HP/MP targets using the configured thresholds.
+  - `AutoCombatService` now sets `pendingFollowerFirstAid` only when a cached plan exists, removes
+    the pending-stage `probeFirstAidSupplyNoFocus(...)` retry, and clears pending if a stale no-plan
+    pending state is encountered.
+  - `AutoBattleTask.getPollingIntervalMs(...)` now returns 500ms only for `FREE &&
+    pendingFollowerFirstAid`; `IN_COMBAT` uses dynamic combat polling.
+- RED evidence:
+  - CR204 focused main test first failed on pending-stage retry:
+    `pending stage must not call no-focus first-aid probe again: expected=0 actual=1`.
+  - After the retry fix, the same test failed on polling:
+    `pending first-aid must not force 500ms while the window is still IN_COMBAT: expected=1234 actual=500`.
+- GREEN / verification:
+  - `java -cp "target\classes;target\test-classes;<maven-test-classpath>" com.bot.dhxy.service.AutoCombatCR204FirstAidPlanBehaviorTest` passed after covering HEALTHY, SUPPLY_NEEDED, UNKNOWN, IN_COMBAT pending polling, and startup no-focus plan wiring.
+  - `mvn -q -Dtest=AutoCombatCR204FirstAidPlanBehaviorTest test` returned 0, but the main-style
+    guard did not emit a surefire report; the actual behavior execution evidence is the direct
+    `java ... AutoCombatCR204FirstAidPlanBehaviorTest` command above.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - Related guards passed: `PlayerStateCR150FirstAidHoverCleanupSourceGuardTest`,
+    `AutoCombatCR138FirstAidGateWiringTest`, `AutoCombatMemberCommonBoxBehaviorTest`.
+- Fresh runtime gate remains:
+  - In the next multi-window 修罗/五倍/挂机 run, HP/MP precheck logs should appear only at startup/hot-start
+    and combat exit.
+  - HEALTHY should not create pending first-aid or 500ms fast wakeups.
+  - UNKNOWN may execute conservative supply, but must not produce repeated
+    `probeFirstAidSupplyNoFocus(...)` loops.
+  - `IN_COMBAT` must not switch to 500ms because first-aid is pending.
+
+## 2026-07-06 / auto-combat red round OCR removal
+
+Status: complete; scope was only auto-combat panel red round digit reading.
+
+- Baseline before edits:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD/upstream: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314` /
+    `origin/codex/hybrid-cloud-protection=dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short` is heavily dirty with many unrelated local and untracked files; this pass
+    must preserve existing local work and only touch the auto-combat red-round path plus its focused
+    source guard.
+- Runtime investigation result:
+  - Complete archived combat samples show in-combat panel work is not the main CPU pressure source,
+    but the red round OCR is unnecessary because the task already resets the internal estimate to
+    `25` after `Alt+8` and decrements it on combat exit.
+  - User explicitly approved removing the red visible-round read and trusting the internal estimate.
+- Current-code evidence before edits:
+  - `AutoCombatPanelService.refreshAutoCombatRoundsIfNeeded(...)` calls
+    `readRemainingRounds(panelMatch, source)` before trusting a healthy cached estimate.
+  - `AutoCombatPanelService.readRemainingRounds(...)` captures the red digit ROI, runs
+    `washAutoCombatRoundRedDigits(...)`, writes `auto-combat-panel-round-red-digits`, and OCRs digits.
+  - `AutoCombatService.maybeRunCombatMaintenance(...)` arms
+    `state.verifyActualRoundsAfterEntryMaintenance = true` after entry maintenance and then forces
+    `VERIFY_AND_REFRESH` even when the cached estimate is otherwise healthy.
+- Intended change:
+  - Keep combat entry panel verification and sparse cleanup.
+  - Remove the forced post-entry actual red-round read.
+  - Make `VERIFY_AND_REFRESH` decide refresh solely from the cached/internal estimate and configured
+    refresh interval; no red ROI capture/OCR.
+- RED evidence:
+  - After updating `AutoCombatRefreshDuePanelVerifyGateTest` to the new requirement, direct main-style
+    execution failed before production edits with:
+    `entry maintenance must not arm one actual red round read unexpected:
+    state.verifyActualRoundsAfterEntryMaintenance = true`.
+- Implementation:
+  - `AutoCombatService.maybeRunCombatMaintenance(...)` no longer arms a post-entry actual round read,
+    and the healthy-cache branch now returns immediately instead of forcing `VERIFY_AND_REFRESH`.
+  - `AutoCombatPanelService.refreshAutoCombatRoundsIfNeeded(...)` no longer calls
+    `readRemainingRounds(...)`; it resolves `UNKNOWN` / `LOW_ROUNDS` / `REFRESH_DUE` only from the
+    cached internal estimate and configured interval.
+  - Removed the auto-combat red digit ROI/OCR helper from `AutoCombatPanelService`, including
+    `washAutoCombatRoundRedDigits(...)` and the `auto-combat-panel-round-red-digits` phase usage.
+- GREEN / verification:
+  - `java -cp "target\classes;target\test-classes;<maven-test-classpath>"
+    com.bot.dhxy.service.AutoCombatRefreshDuePanelVerifyGateTest` passed.
+  - `mvn -q -DskipTests test-compile` passed.
+  - `mvn -q -DskipTests compile` passed.
+  - `mvn -q "-Dtest=AutoCombatRefreshDuePanelVerifyGateTest" test` passed.
+
+## 2026-07-06 / CR209 Ctrl 菜单 fresh live probe
+
+Status: fresh live probe failed; replay still passed.
+
+- Probe command:
+  - `mvn -q "-Dtest=NpcClickCtrlMenuLiveTemplateProbeTest" "-Ddhxy.live.ctrlMenuProbe=true" test`
+- Fresh live evidence:
+  - Raw screenshot:
+    `D:\mavenProject\DHXY\images\test-cases\npc\ctrl-menu\fresh_live_npc_menu_scan_raw.png`
+  - Marked screenshot:
+    `D:\mavenProject\DHXY\images\test-cases\npc\ctrl-menu\fresh_live_npc_menu_scan_npc_tag_marked.png`
+  - Result: `score=0.240679681`, threshold `0.80`, mouse `(1761,538)`, scan rect
+    `(1611,418)-(1911,658)`.
+- Interpretation:
+  - The captured fresh raw image does not contain the Ctrl menu / `(NPC)` tag. The low score is
+    therefore not evidence that the `(NPC)` template algorithm failed on a visible menu; it means the
+    live probe did not capture the expected Ctrl-menu-open state.
+  - The best match shown in the marked output is a low-score false match on ordinary game pixels.
+- Follow-up gate:
+  - Re-run the live probe only after confirming Ctrl actually opens the NPC context menu in the
+    captured ROI, or switch the probe to the exact production input path if Robot Ctrl is not enough
+    for the client focus/input state.
+
+## 2026-07-06 / CR207 WAIT_COMBAT cloud-brain fresh blocker
+
+Status: active repair assigned.
+
+- Latest fresh failure:
+  - `2026-07-06 23:47:00.973` 修罗云脑 round 1 failed with
+    `xiuluo.brain.loop.failClosed ... reason=cloud brain loop guard exceeded`.
+  - Repeated evidence: from `stateSeq=7` to `stateSeq=17`, local `WAIT_COMBAT` returned
+    `SHARED_STATE_TRIGGERED/MUST_YIELD`, `localNext=WAIT_COMBAT`,
+    `message=combat entry detected; report to XIULUO_BRAIN`; external brain kept returning
+    `EXECUTE_PHASE WAIT_COMBAT`.
+  - Cases:
+    `logs/cases/2026-07-06/20260706_234700_973_xiuluo_v2_xiuluo_v2-3-round-1_FAILED_hwnd-471654.case.json`
+    and
+    `logs/cases/2026-07-06/20260706_234701_189_xiuluo_v2_round_FAILED_hwnd-471654.case.json`.
+- Root cause summary:
+  - Cloud-brain shell reports the `WAIT_COMBAT` shared-state fact before the old local
+    `yieldAfterMustYield(...)` / `WAIT_COMBAT_STATE_CHANGE` parking path can run.
+  - Cloud-enabled `waitCombat(...)` returns a bare `state.next(WAIT_COMBAT, ...)`, so
+    `enteredBattleByXiuluo` stays false after the first confirmed `IN_COMBAT`.
+  - `XiuluoBrainActionType.WAIT_FOR_EVENT` exists but is not wired in the local shell, leaving the
+    external brain to express waiting as another immediate `EXECUTE_PHASE WAIT_COMBAT`.
+- Manager action:
+  - CR207 card updated to Blocked and dashboard regenerated with
+    `node scripts/generate-cr-dashboard-data.js`.
+  - Worker Rawls `019f3ab4-2b37-7371-8b8e-4310a5990c12` assigned the repair.
+  - Required gate after worker delivery: two independent reviewer approvals, DHXY focused tests,
+    external cloud-brain focused tests/package, sidecar restart, then fresh runtime only after local
+    gate passes.
+
+## 2026-07-07 / CR215 GIVE_BAG 无 anchor base 刷新
+
+Status: implemented; compile passed; fresh runtime pending. Scope is only `BagService` no-anchor bag geometry.
+
+- Baseline before edits:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD/upstream: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314` /
+    `origin/codex/hybrid-cloud-protection=dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short` is heavily dirty with many unrelated local and untracked files; this pass
+    must preserve existing local work.
+  - `src/main/java/com/bot/dhxy/service/BagService.java` already has unrelated local checkpoint /
+    `executeSafeAction(...)` boolean-return changes. This pass will not revert or broaden them.
+- Runtime evidence:
+  - `2026-07-07 12:39:01.662` `5411` (`hwnd-84179A`, hwnd `8656794`) clicked the cloud dialog
+    pre-click at `(1099,986)` with `foregroundHwnd=8656794 sameAsTarget=true` before and after.
+  - `2026-07-07 12:39:02.866` `BagService` started
+    `bag:itemAction:SELECT:wuhuan/shoe.png`, but page-tab clicks landed at `(732,385)` /
+    `(732,315)` / `(732,350)` / `(732,420)` / `(732,455)`.
+  - Correct `5411` base was `(712,556)`. The bad tab coordinate matches stale base `(51,23)` plus
+    `GIVE_BAG` offsets, e.g. `(51,23)+(681,292+2*35)=(732,385)`.
+  - Capture later warned `base=(712,556)` but scan rect was derived from the stale base, proving the
+    capture path refreshed tracker state after the bag geometry had already been computed.
+- Latest-pushed logic comparison:
+  - `GIVE_BAG` has no anchor template in both old and current logic, so it derives geometry from
+    `tracker.getWindowBaseX/Y()`.
+  - Older local dialog path ran a local green-text/OCR capture before giving the item; that capture
+    refreshed the input-worker thread's tracker state as a side effect.
+  - Current cloud pre-click path bypasses that local capture and enters `BagService` with stale
+    input-worker thread-local tracker base.
+- Intended minimal fix:
+  - In `BagService.getBaseAnchor(...)`, only when `layout.anchorTemplate == null`, call
+    `tracker.refreshWindowState()` before reading the base.
+  - If refresh fails, return `null` so the item action aborts instead of clicking with a stale
+    cross-window base.
+  - Do not change give-shoe phase order, item search order, cloud dialog decision, or physical input
+    queue behavior.
+- Implementation:
+  - `BagService.getBaseAnchor(...)` now refreshes tracker window state before reading `GIVE_BAG`
+    no-anchor base.
+  - Refresh failure logs a warning and returns `null`; callers already abort the bag/item action on
+    `null` base.
+  - Refresh success logs `layout` and the refreshed base for fresh-runtime verification.
+- Verification:
+  - `mvn -q -DskipTests compile` exited `0`.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+
+## 2026-07-07 / CR216 third immediate repair: 启动按钮被强制 rebuild 和重复 cloud restart 卡死
+
+Status: repaired; compile passed; fresh runtime pending.
+
+- Runtime evidence:
+  - `14:32:10` UI main start entered with `selectedWindows=[]`, but cloud sidecar gate ran before
+    refresh/register had determined whether there were any accepting target windows.
+  - `14:32:11-14:33:04` sidecar launch used `rebuild=true`, so the UI worker blocked for
+    `elapsedMs=54148` before it could submit tasks.
+  - A later queued/second start command restarted cloud brain while the first submitted task was
+    already using cloud-required services, causing `IMAGE_PREPROCESS` / `MINIMAP_LOCATION`
+    `ConnectException` from `14:34:22` onward.
+  - Follow-up worker elapsed times reached `141754ms` / `200402ms`, which is startup gate / Maven
+    package wait time, not 五环/修罗 business wait time.
+- Repair:
+  - `cloud.dev-sidecar.rebuild-on-start=false` in `application.properties`.
+  - `CloudDecisionProperties.DevSidecar.rebuildOnStart` default is now `false`.
+  - `MainWindowController.startMainSelectedTasks()` now runs the cloud sidecar gate only after
+    refresh/register has produced non-empty `targetWindowIds`.
+  - Selected-window start, queue start, and `startWindows(...)` filter to
+    `WindowTaskSnapshot.isAcceptingTaskQueue()` before cloud gate; already-running/non-accepting
+    windows return immediately and do not restart `18080`.
+  - The script still keeps its stale-jar check, so external cloud-brain code changes still trigger
+    package when needed; this removes only the unconditional `-Rebuild` per click.
+- Verification:
+  - `mvn -q -DskipTests compile` exited `0`.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+- Fresh runtime expectation:
+  - Normal task start should show cloud sidecar launch with `rebuild=false`, then submit quickly once
+    the new jar is ready.
+  - Repeated start clicks or already-running selected windows should not kill/restart the active
+    cloud brain and should not cause new `ConnectException` bursts.
+
+## 2026-07-07 / CR216 每次任务启动强制刷新 cloud brain server
+
+Status: implemented; compile passed; fresh runtime pending. Scope is local cloud-brain sidecar startup only.
+
+- Baseline before edits:
+  - DHXY cwd `D:\mavenProject\DHXY`.
+  - Branch/HEAD/upstream: `codex/hybrid-cloud-protection` /
+    `dc4394f4ff3a93ed23a030857d72064843edd314` /
+    `origin/codex/hybrid-cloud-protection=dc4394f4ff3a93ed23a030857d72064843edd314`.
+  - `git status --short` is heavily dirty with many unrelated local and untracked files; this pass
+    must preserve existing local work.
+  - `src/main/java/com/bot/dhxy/ui/CloudDecisionDevSidecarService.java` is currently an untracked
+    local cloud-migration file; this pass edits it in place and does not claim it came from upstream.
+- Current behavior:
+  - `ensureReadyForTaskStart()` probes `http://127.0.0.1:18080/api/cloud/decision`.
+  - If the endpoint is ready, it returns immediately and never runs `scripts/run-cloud-brain-server.ps1`.
+  - The script already knows how to rebuild stale jar, but that logic is skipped whenever an old
+    server is still alive.
+- User decision:
+  - Runtime startup may be slower.
+  - Correctness requirement is stronger: every task launch should use a freshly restarted external
+    cloud brain package, not an unknown old 18080 process.
+- Intended minimal fix:
+  - Add dev-sidecar config switches for task-start restart and rebuild.
+  - Default both on in current `application.properties`.
+  - For local endpoints only, task start stops the owned process and any precise external
+    `dhxy-cloud-brain-0.1.0-SNAPSHOT.jar --port=<port>` Java process before launching.
+  - Launch script receives `-Rebuild` so Maven packages the cloud brain jar before the new server
+    starts.
+  - Do not kill arbitrary Java processes; match only the external cloud-brain jar and target port.
+- Implementation:
+  - `CloudDecisionProperties.DevSidecar` now has `restartOnTaskStart` and `rebuildOnStart`.
+  - `application.properties` enables both by default:
+    `cloud.dev-sidecar.restart-on-task-start=true` and
+    `cloud.dev-sidecar.rebuild-on-start=true`.
+  - `CloudDecisionDevSidecarService.ensureReadyForTaskStart()` now forces local sidecar restart
+    before readiness reuse when restart is enabled.
+  - It stops the owned process and any process whose command line contains both
+    `dhxy-cloud-brain-0.1.0-SNAPSHOT.jar` and `--port=<port>`.
+  - If the endpoint is still ready after cleanup in forced-restart mode, startup fails instead of
+    reusing an unknown old process.
+  - `startOwnedProcess(...)` appends `-Rebuild` when `rebuildOnStart=true`.
+- Verification:
+  - `mvn -q -DskipTests compile` exited `0`.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+
+## 2026-07-07 / CR216 follow-up: 18080 旧 cloud brain 未被 Java ProcessHandle 清掉
+
+Status: revised; compile passed; fresh runtime pending.
+
+- Runtime evidence:
+  - `14:03:54` task startup logged `force restart before task start`, then
+    `force restart found no external cloud brain process`, then
+    `endpoint still occupied after forced restart cleanup`.
+  - WMI/port inspection showed `18080` was still owned by `PID 44828`, created at
+    `2026/7/7 11:52:43`, command line:
+    `dhxy-cloud-brain-0.1.0-SNAPSHOT.jar --port=18080 --token=local-dev-token`.
+  - So the previous CR216 implementation did not actually kill the old external brain; it only
+    proved Java `ProcessHandle.info().commandLine()` was not reliable enough for this cleanup.
+- Repair:
+  - `CloudDecisionDevSidecarService.stopExternalCloudBrainForPort(...)` now uses Windows
+    `Get-NetTCPConnection` + `Get-CimInstance Win32_Process` to find the port owner and verify the
+    cloud-brain jar command line before calling `Stop-Process -Force`.
+  - `MainWindowController.ensureCloudDecisionDevReadyForTaskStart()` now returns a blocking
+    `WindowTaskCommandResult` on sidecar failure; callers no longer continue into task start when
+    cloud brain restart/rebuild failed.
+  - `CloudDecisionDevSidecarService.shutdown()` also attempts configured local cloud-brain port
+    cleanup on application shutdown when local auto sidecar + restart-on-task-start is enabled.
+- Manual runtime cleanup:
+  - Stale `PID 44828` was stopped after confirming its command line.
+  - `18080 no listener` was confirmed afterward.
+- Verification:
+  - `mvn -q -DskipTests compile` exited `0`.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+
+## 2026-07-07 / CR216 immediate repair: 启动 gate 被新 sidecar plumbing 挡住
+
+Status: repaired; compile passed; external sidecar manually started; DHXY desktop relaunch required.
+
+- Runtime evidence:
+  - `14:18:05`、`14:18:19`、`14:18:33` task startup all stopped before task launch.
+  - OCR gate passed, then cloud sidecar forced restart began.
+  - Cleanup failed with a PowerShell parser error around `$cmd.Contains(--port=$port)`.
+  - Sidecar then tried `scripts/run-cloud-brain-server.ps1 -Rebuild`, but external cloud-brain Maven
+    enforcer rejected `mvn -q -DskipTests package`:
+    `Property "skipTests" evaluates to "true"`.
+  - Therefore the sidecar process exited before readiness and `MainWindowController` correctly
+    blocked task start with `未启动任务`.
+- Repair:
+  - `CloudDecisionDevSidecarService` now creates `$portArg = '--port=' + $port` inside the inline
+    PowerShell and calls `$cmd.Contains($portArg)`, avoiding `-Command` quote stripping around
+    `--port`.
+  - `scripts/run-cloud-brain-server.ps1` now uses `mvn -q package` for rebuild so it satisfies the
+    external cloud-brain enforcer.
+- Verification / runtime prep:
+  - DHXY `mvn -q -DskipTests compile` exited `0`.
+  - A real script launch was run after the repair; it started cloud brain `PID 27360` on `18080`,
+    created at `2026/7/7 14:21:20`.
+  - Since the current DHXY desktop process loaded the broken Java sidecar code before this repair,
+    DHXY desktop must be relaunched before another task start can use the fixed cleanup logic.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+
+## 2026-07-07 / CR216 second immediate repair: Get-CimInstance filter quote stripping
+
+Status: repaired; compile passed; stale listener stopped; DHXY desktop relaunch required.
+
+- Runtime evidence:
+  - After relaunch, `14:25:47` / `14:25:53` task startup still blocked before task launch.
+  - The previous `--port` parser error was gone, but the cleanup now failed at:
+    `Get-CimInstance : ... PositionalParameterNotFound`.
+  - Logged script text showed the same quote-stripping pattern:
+    `Get-CimInstance Win32_Process -Filter ProcessId = $pidValue`.
+  - Result: cleanup could not verify/kill the `18080` owner, endpoint stayed occupied, and the UI
+    correctly blocked with `本地 Cloud 决策端点仍被未知进程占用`.
+- Repair:
+  - Replaced `Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue"` with an unquoted-safe
+    pipeline:
+    `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq [int]$pidValue } | Select-Object -First 1`.
+- Verification / runtime prep:
+  - DHXY `mvn -q -DskipTests compile` exited `0`.
+  - A direct diagnostic invocation of the repaired lookup returned `MATCH 27360` for the current
+    cloud-brain listener.
+  - Stale listener `PID 27360` was stopped after command-line verification; `18080 no listener` was
+    confirmed afterward.
+  - DHXY desktop must be relaunched again before task start can use this no-`-Filter` cleanup code.
+  - No DHXY local automated tests/replay/source guards were run, per current no-local-test mode.
+
+## 2026-07-07 / CR217 五环买鞋后只复查当前轮一双鞋
+
+Status: implemented / compile passed / fresh runtime pending.
+
+## 2026-07-09 / CR99 黄链输入框收尾修罗回归
+
+- Baseline:
+  - Branch: `codex/hybrid-cloud-protection`, HEAD `dc4394f`.
+  - Current worktree already has many unrelated dirty files; this pass only touches
+    `NavigationService` plus CR/active-work documentation.
+  - Fresh log evidence: `2026-07-09 15:58:04.372` 修罗 `xiuluo-v2:acceptNpc:map`
+    used `YELLOW_DESTINATION_MINI_MAP` memory fast path to `灵兽村`; `15:58:06.091`
+    only queued `close-mini-map-fire-and-handoff` / `Alt+1`; no
+    `navigation map search: route panel x2 close after route click` appeared.
+- Planned narrow change:
+  - Keep 五环 yellow-route fire-and-handoff special case: only close destination mini-map and let 五环
+    own its later route-panel cleanup.
+  - Restore non-五环 yellow-route cleanup after final destination mini-map coordinate click by using the
+    existing queued cleanup that closes mini-map, route panel `x2`, and visible world-map shell.
+  - Do not add a new prepared-action type, and do not change yellow row matching, mini-map coordinates,
+    route memory, movement intent, OCR/template thresholds, or watcher semantics.
+
+- User request:
+  - 五环启动前仍按剩余轮数检查/购买鞋，例如设置两轮时可以先买两双。
+  - 但买完鞋后的 double check 只需要证明当前轮至少有一双鞋即可开始任务。
+  - 下一轮进入 `PREPARE` 时现有代码会自然再查鞋，所以第一轮买完后继续要求复查两双是多余动作。
+- Baseline:
+  - Branch: `codex/hybrid-cloud-protection`.
+  - HEAD / upstream: `dc4394f` / `origin/codex/hybrid-cloud-protection@dc4394f`.
+  - Current worktree already has many unrelated dirty files; this pass only touches
+    `FiveRingTaskV2` and CR documentation/dashboard.
+  - Current code in `FiveRingTaskV2.prepare(...)` uses `requiredShoeCount` both for startup supply
+    scan and quick-buy post-buy verification:
+    `checkFiveRingSuppliesInOneBagSession(context, requiredShoeCount)`.
+- Planned narrow change:
+  - Keep startup `requiredShoeCountForRun(state)` and `missingShoeCount` purchase count unchanged.
+  - After `quickBuyShoe(...)` succeeds, use post-buy verification target `1` instead of
+    `requiredShoeCount`.
+  - If even one shoe is not found after buy, fall back to existing shoe-shop flow with missing count
+    based on the post-buy target.
+  - Do not change bag template matching, buy clicks, shoe-shop coordinates, per-round prepare, OCR,
+    navigation, or input queue behavior.
+- Implemented:
+  - `FiveRingTaskV2.prepare(...)` now uses `postBuyVerifyRequiredShoeCount = 1` only after
+    `quickBuyShoe(...)` succeeds.
+  - Startup supply scan and purchase quantity still use `requiredShoeCount`.
+  - `docs/PACKAGE_ARCHITECTURE.md` CR217 row/card added and `docs/cr-dashboard-data.js`
+    regenerated.
+- Verification:
+  - `node scripts/generate-cr-dashboard-data.js` generated 209 CR rows.
+  - `mvn -q -DskipTests compile` exited `0`.
+
+## 2026-07-08 / CR225 云端黄字路线记忆同构迁移与自动学习
+
+Status: implemented; compile pending at record time.
+
+- Baseline:
+  - DHXY branch: codex/hybrid-cloud-protection, HEAD `dc4394f`.
+  - Current worktree already contains many unrelated dirty files; this pass only touches CR docs/dashboard and external cloud-brain route memory files.
+  - external `D:\mavenProject\dhxy-cloud-brain` is not a git repository, so baseline was recorded by file inspection.
+- Runtime evidence:
+  - `10:52:20.505` `ROUTE_MEMORY` request had `fromMap=长安`, `targetMap=灵兽村`, `routeMode=YELLOW_DESTINATION_MINI_MAP`.
+  - Local shadow was `lookup=HIT;used=true;click=366,487`, but cloud returned `lookup=MISS`, because cloud `data/route-memory.json` only had two simplified `memories` rows.
+  - Local old memory file had `YELLOW_DESTINATION_MINI_MAP|长安->灵兽村` clean=true at `config/world_map_route_result_memory.json`.
+- Planned narrow change:
+  - Copy local route memory data to cloud-brain and make cloud-brain use the same `entries` schema.
+  - Make cloud-brain promote valid `SUCCESS` outcome into route memory so future cloud lookup can hit.
+  - Do not change DHXY navigation business flow, NPC click, dialog, tracker, input queue, OCR/template logic.
+- Implemented:
+  - Copied `config/world_map_route_result_memory.json` to `D:\mavenProject\dhxy-cloud-brain\data\route-memory.json`.
+  - Updated external `RouteMemoryStore` to load/save same `entries` schema and to learn on `SUCCESS`.
+- Verification:
+  - `node scripts/generate-cr-dashboard-data.js` generated 217 CR rows.
+  - `mvn -q -DskipTests compile` in DHXY exited 0.
+  - external cloud-brain `mvn -q package` exited 0.
+  - Confirmed cloud route memory now contains `YELLOW_DESTINATION_MINI_MAP|长安->灵兽村` with `relativeX=366`, `relativeY=487`, `clean=true`.
+- Fresh runtime gate:
+  - Next `长安 -> 灵兽村` yellow route should show cloud `ROUTE_MEMORY` `lookup=HIT` / effective HIT instead of cloud MISS.
+  - A new successful route candidate should update `D:\mavenProject\dhxy-cloud-brain\data\route-memory.json` in the same `entries` schema.
+
+## 2026-07-08 / CR225 sidecar 工作目录 follow-up
+
+- Baseline:
+  - DHXY branch: `codex/hybrid-cloud-protection`, HEAD `dc4394f`.
+  - Current worktree already has many unrelated dirty files; this pass only touches cloud sidecar startup wiring plus CR documentation/dashboard.
+- Fresh runtime evidence:
+  - `12:57:52.208` `长安 -> 灵兽村` local route memory was `lookup=HIT;used=true;click=366,487`.
+  - `12:57:52.215` cloud `ROUTE_MEMORY` returned `lookup=MISS;reason=cloud-brain-route-memory-miss`, so effective decision skipped the fast path.
+  - `logs/cloud-decision-dev-sidecar.log` shows the sidecar was fresh classpath, not stale jar.
+  - The actual runtime store path was wrong: sidecar cwd was `D:\mavenProject\DHXY`, so relative `data/route-memory.json` resolved to `D:\mavenProject\DHXY\data\route-memory.json` instead of `D:\mavenProject\dhxy-cloud-brain\data\route-memory.json`.
+- Planned narrow change:
+  - Launch the external cloud-brain process with cwd set to its own project directory.
+  - Pass the same project path explicitly to `scripts/run-cloud-brain-server.ps1`.
+  - Do not change navigation, OCR, route click, or route memory business rules.
+- Implemented:
+  - Added `cloud.dev-sidecar.brain-project-path=D:/mavenProject/dhxy-cloud-brain`.
+  - `CloudDecisionDevSidecarService` now passes `-BrainProjectPath` to the startup script and starts the owned cloud-brain process with cwd set to that external project path.
+  - The PowerShell `-File` path is resolved to absolute path before cwd is switched.
+- Verification:
+  - DHXY `mvn -q -DskipTests compile` exited 0.
+# 2026-07-09 - 终级技能生成后 hover 等待加 1 秒
+
+- 基线：分支 `codex/hybrid-cloud-protection`，上游最新提交 `dc4394f`；修改前 `git status` 已存在大量用户/并行工作区改动，仅触碰 `SummonSkillService` 的终级角点击后等待常量。
+- 决定：`SummonSkillService.maybeClickUltimateCorner(...)` 点击终级角后，等待从 `1,500ms` 调整为 `2,500ms`，再调用原有 `inspectSkillSlot(...)` hover 检查生成结果。普通技能 hover、删除确认、冷却和技能格判断不变。
+- 运行验收：真实三技能触发时检查日志中终级角点击后，重新 hover/读取生成格前至少间隔约 `2.5s`，避免动画尚未稳定时误读。
+
+## 2026-07-10 / CR230、CR235、CR244 回城快照与修罗短路径回归修复
+
+- Baseline：当前分支 `codex/hybrid-cloud-protection`，HEAD `dc4394f`；修罗业务基线按用户已确认的
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。工作区已有大量并行/用户修改，本次只触碰
+  `NavigationRequest`、`NavigationService`、`XiuluoTaskV2`、`WubeiTask`、修罗云脑 DTO/parser、
+  外部 `dhxy-cloud-brain` 的修罗命令序列化，以及对应 CR/业务规则文档。
+- Fresh evidence：`2026-07-10 10:34` 修罗回程验证后超过 3 秒才进接 NPC 导航，重新读地图并把
+  `navigation.toMap` 拉至约 5 秒；正常同图短路径又被改成等待 `PATHING_TERMINAL`；已接收云端 step
+  在约 1.65 秒后的第二次 TTL 解析中误报过期，任务 failClosed。
+- Implemented：
+  - 回程道具验证成功后，五倍/修罗均保存 `起始地图 + 坐标` 为 task-owned snapshot；导航请求标记
+    `freshCurrentLocationPhaseBound` 后不受 3 秒 freshness 限制，只有新的接任务 option 实际点击成功才清。
+  - 修罗 `ACCEPT_TASK_NAVIGATE_TO_NPC` 恢复基线 `keepTurnOnCurrentMapPathing(true)`；仅 CR244 的
+    队长死亡回城保留 park，正常接任务短路径不再等待 terminal。
+  - 修罗 command 删除 `ttlMs/createdAtEpochMs` 与客户端二次 TTL 解析；首次 HTTP 接收 gate 的
+    identity/schema 校验仍保留。
+- Verification：DHXY `mvn -q -DskipTests compile` exit 0；external `dhxy-cloud-brain` `mvn -q compile`
+  exit 0。按 no-local-test mode 未创建或运行本地 automated tests/replay/source guard。
+- Fresh gate：回程到远坐标后应直接复用日志中的 verified snapshot，不能出现 `fresh location expired`/
+  第二次地图确认；正常接 NPC 同图小地图移动后不得再等 `PATHING_TERMINAL`；接任务 step 后即使处理
+  超过旧 1 秒也不得出现 `ttl expired` / `CLOUD_REQUIRED_FAILURE`。
+
+## 2026-07-11 / CR254 修罗移动 pathing probe 耗时诊断
+
+- Baseline：当前分支 `codex/hybrid-cloud-protection`，HEAD `dc4394f4ff3a93ed23a030857d72064843edd314`；
+  修罗业务基线为 `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。当前工作区已有大量并行/用户改动，
+  本卡只触碰 `MiniMapCoordinateReader`、CR 文档和 dashboard。
+- Runtime evidence：同一 task run 的前四轮修罗绿链外出阶段共出现 13 次超过 `1,500ms` 的
+  `pathing watcher slow probe`；第 1 轮最高 `7,470ms`，第 3 轮最高 `6,474ms`。所有慢 tick 的
+  `pathingMs` 等于总耗时，说明卡在 `refreshPathingSignal -> readCurrentTemplateLocation`；其中
+  20:44:40 的云端 `MINIMAP_LOCATION` 仅 `200ms`，剩余耗时尚未拆分。
+- Baseline comparison：`WindowTaskRunner` 在当前与基线均以 `2,000ms` 最小间隔同步调用
+  `MiniMapCoordinateReader.readCurrentTemplateLocation()`；本卡不推断或改变原有路径判定。
+- Approved scope：仅增加 `HWND capture`、PNG 编码、云端 decision 与总耗时的结构化 latency 日志，
+  不发送输入、不改状态/间隔/重试/park 语义。下一轮用日志定位慢段后再单独提出性能修复方案。
+
+## 2026-07-11 / CR107 左上角状态开关 ROI 下边界校准
+
+- Baseline：当前分支 `codex/hybrid-cloud-protection`，HEAD `dc4394f4ff3a93ed23a030857d72064843edd314`；
+  工作区已有大量并行/用户改动，本次只触碰 `LeftTopStatusSwitchService` 与 CR107 文档/dashboard。
+- Evidence：旧高分样本 `2026-07-07 22:12:25` 使用同一旧 ROI `(8,147,11,19)`，打开模板在 ROI
+  内 `(2,2)` 命中，分数 `1.0`。当前队长窗口扩大搜索后，旧打开模板仍以 `1.0` 命中窗口相对
+  `(10,154)`，但固定旧 ROI 仅覆盖至 `y=165`，截断模板底部约 4px，原 ROI 分数降为
+  `0.4164736271`。这不是模板/阈值/点击逻辑回归。
+- Approved change：保持左上角 `(8,147)` 不变，将扫描尺寸由 `11x19` 扩至 `16x29`（右侧 +5px、
+  下侧 +10px）；模板、`0.90` 阈值、匹配中心点击、任务/放权逻辑均不变。

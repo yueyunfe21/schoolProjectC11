@@ -36,6 +36,28 @@ Important behavior constraints:
    - If a patch would change task phase semantics, prompt interpretation, OCR/template/click/navigation order, fallback order, or when a probe/NPC/dialog is considered resolved, stop and write the conflict in Markdown; do not keep the local behavior as part of migration unless the user explicitly opens a new behavior-change story.
    - Do not convert runner/ready-event negative signals into new business truth unless the latest pushed business logic already did that.
 
+2A. Business-logic baseline gate (mandatory for 五倍 / 修罗).
+   - Before investigating, reviewing, or editing any 五倍/修罗 task behavior, every agent must first read
+     `docs/业务逻辑.md` and locate the applicable baseline section/table. It is the user-approved business
+     contract, not optional background reading.
+   - The confirmed pre-cloud local baseline is the default behavioral authority (currently 修罗 uses
+     `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` where the business-logic document says so). Migration
+     work must reproduce that baseline unless a user-approved CR explicitly authorizes a behavior change.
+   - If a CR does not explicitly say it changes business behavior, it may only move implementation ownership
+     (local/cloud), scheduling, diagnostics, or plumbing. It must preserve decision conditions, phase order,
+     keep-turn/park boundaries, retry and fallback order, verification count, and expiry semantics.
+   - In particular, an agent must not add or reintroduce a TTL, extra verification/read, park/yield, retry,
+     cleanup, fail-closed rule, or new cloud gate merely because it appears safer. Such a change requires a
+     separate CR whose behavior change is explicitly approved by the user.
+   - A CR authorizes its stated outcome, not an agent to choose an unapproved business-semantic route to that
+     outcome. If the implementation plan has any option that would change the baseline decision, condition,
+     phase transition, priority, fallback, timing/expiry, or input/verification order, stop before coding.
+     Write the concrete options, affected baseline rule, expected runtime consequence, and recommendation in
+     the CR card and ask the user to decide. Do not infer approval from a general request such as “完成 CR” or
+     “修好这个问题”. Resume only after the user explicitly selects/approves the behavior change.
+   - Before handoff, the CR card must state which `docs/业务逻辑.md` rule/baseline rows were checked and list
+     every intentional behavioral difference. If there are none, write `无已批准业务差异；按基线等价迁移`.
+
 3. Do not delete useful comments unless necessary.
    - Previous work accidentally removed some of the user's comments. Avoid repeating this.
 
@@ -46,37 +68,91 @@ Important behavior constraints:
 
 6. Use Chinese in conversation with the user unless they switch language.
 
-7. Visual matching or click-target changes must be verified through testcase replay.
-   - This applies to minimap matching/clicking, world-map search/result clicking, task tracker green-text clicking, NPC/template matching, dialog option matching, and any code that changes where the mouse will click based on screenshot/OCR/template output.
-   - Do not rely only on verbal reasoning, one live observation, or log text. Use or create a repo-local testcase image under an appropriate `images/test-cases/...` folder, run the matching/click algorithm against that testcase, and produce a marked output image showing the detected target and final click point.
-   - The marked output must make the important points visible: for example destination OCR anchor, matched text/template box, and actual click coordinate. The user should be able to inspect the image and confirm the red point/box is correct.
-   - If no testcase exists for the scenario being fixed, save the raw screenshot first, then add/reuse a small replay/debug tool rather than testing only against the live game window.
-   - After the change, record the testcase input, output image path, and command/tool used in `docs/ACTIVE_WORK.md`.
+7. No-local-test mode is active by default.
+   - As of 2026-07-10, do not create, restore, run, or cite local automated tests, source guards, replay tests, testcase images, or generated marked testcase outputs unless the user explicitly asks for that specific test or test family.
+   - Do not ask the user to run fresh runtime because a local test passed. Default validation remains code review, log/screenshot inspection, and user-run runtime evidence.
+   - If a task normally would require a testcase replay, record the runtime screenshot/log evidence that should be reviewed instead.
+   - **Explicit-test exception:** when the user explicitly requests a named test, image/replay test, integration test, source guard, or a retained test suite, create/use only that requested scope and keep it in the repository unless the user later asks to remove it. Before starting the affected application/server or handing the build to the user, the responsible agent must run that explicitly requested test successfully against the current code. It may not bypass that required test with `-DskipTests`, an enforcer skip, a stale jar, or an IDE-only build.
+   - Existing misleading cloud/NPC/dialog/brain tests remain removed by default; do not reintroduce them unless the user explicitly requests them.
 
-8. Investigation-first rule for user questions.
+8. Java compile gate is mandatory.
+   - This is separate from local tests. No-local-test mode does not allow handing off uncompiled Java.
+   - After any change to Java source, Maven model/config, generated classes, Lombok model/request/result classes, or cloud/client integration code, the agent who made the change must run the relevant compile/package command and confirm it succeeds before telling the user the build is ready to run.
+   - For DHXY main-project Java changes, run `mvn -q -DskipTests compile` from the repository root unless the task explicitly requires a stronger package command. If an explicit-test exception under rule 7 applies, also run the requested test command without test-skipping before startup/handoff; compile success alone is not sufficient.
+   - For `dhxy-cloud-brain` Java changes, compile/package that project as required by its startup path before asking the user to run a fresh runtime.
+   - If both DHXY and cloud-brain are touched, both sides must be compiled successfully.
+   - If compilation fails, do not ask the user to test. Report the compile failure as the current blocker and fix it first.
+   - Do not rely on source files, IDE incremental state, stale jars, or previous runs as evidence. The handoff must be based on updated runtime classes/jars being generated successfully.
+
+9. Investigation-first rule for user questions.
    - When the user asks why something happened, asks whether a behavior is correct, asks where/how to change something, or asks for a discussion/plan, do not immediately edit code.
    - First inspect the relevant logs, screenshots, call path, state transitions, and existing implementation. Then explain the likely root cause and a concrete modification plan.
    - Only start code changes after the user clearly approves the proposed plan, for example by saying "可以", "按这个改", "继续做", or an equivalent explicit approval.
    - This rule does not block tiny documentation-only updates requested directly by the user, but it does apply to behavior, navigation, OCR/template matching, runner/watcher, task flow, and input changes.
 
-9. CR log-audit rule.
+10. CR log-audit rule.
    - Before auditing runtime logs or writing a run report, read the current sprint/CR board and identify every CR whose status is not clearly Done/Deprecated/Closed.
    - The audit must check each open/review CR against the relevant log evidence, not just the newest visible symptom.
    - If an open/review CR fails in the logs, record the evidence in the CR/report and immediately dispatch a sub-agent to fix that failing CR unless the user explicitly says not to modify code.
    - Do not leave a failed CR as only a chat summary. The repair owner, expected files, and fresh-runtime verification point must be recorded in Markdown.
 
-10. CR dashboard sync rule.
+11. CR dashboard sync rule.
    - When an agent claims, creates, updates, reopens, closes, or changes the status/owner/summary of any CR in `docs/PACKAGE_ARCHITECTURE.md`, it must refresh the static dashboard data before handing off.
    - Before running the dashboard generator, make the CR table row user-facing fields readable in Chinese. The dashboard reads the CR table directly, so `Status`, touched-area text, and especially the summary/description must be a concise Chinese translation/summary of the card, not raw English planning text. Keep technical identifiers, enum names, file names, and log keywords in backticks when useful.
    - Run `node scripts/generate-cr-dashboard-data.js` from the repository root after the Markdown CR table/card update.
    - Include the resulting `docs/cr-dashboard-data.js` change together with the Markdown change, so `docs/CR_DASHBOARD.html` reflects the latest CR status after a browser refresh.
    - If the script cannot run, record that as a blocker in `docs/ACTIVE_WORK.md` and tell the user that the dashboard snapshot is stale.
 
-11. CR card persistence rule.
+12. CR card persistence rule.
    - Any sprint/CR task discussion that produces a decision, review opinion, blocker, repair direction, verification result, fresh-runtime acceptance point, or "do not run yet" warning must be written back into the corresponding CR card in `docs/PACKAGE_ARCHITECTURE.md` before handoff.
    - Do not leave CR review conclusions only in chat, a sub-agent reply, terminal output, or `docs/ACTIVE_WORK.md`. `docs/ACTIVE_WORK.md` may summarize the active pass, but the CR card is the durable source of truth for that task.
    - If a review finds a P0/P1/P2 issue, record the severity, evidence, affected files/methods, required repair direction, and verification/fresh-runtime gate inside the CR card.
    - If the CR table row status/owner/summary changes as a result, follow the CR dashboard sync rule and regenerate `docs/cr-dashboard-data.js`.
+
+13. 谢帅 manager/reviewer operating rule.
+   - This rule applies only when the current Codex agent is explicitly acting as `谢帅` / business-supervisor for a CR or cloud task.
+   - In that mode, 谢帅 must not personally write Java business implementation code. 谢帅 owns scope, cards, acceptance criteria, delegation, review, and final judgment.
+   - 谢帅 creates one or more worker sub-agents to implement the business/code changes. The number of worker agents and task split are 谢帅's responsibility.
+   - Every worker-delivered CR/code change must receive at least two independent reviewer approvals before it can be considered complete. In 谢帅-managed CR/cloud work, those two approvals must come from two separate review/helper sub-agents unless the user explicitly approves a different review gate. 谢帅's own review is the final business-supervisor judgment and does not replace the two independent reviewer approvals.
+   - If either reviewer finds a P0/P1/P2 blocker, the worker's task is not complete. Record the blocker in the CR card, send the worker back for repair, and rerun the two-reviewer approval gate after the fix.
+   - 谢帅 should create separate review/helper sub-agents for code review or risk review whenever implementation is non-trivial; do not rely on a single reviewer for CR completion.
+   - Worker agents must receive clear file/module ownership, business constraints, no-revert instructions, required tests, and documentation/update expectations.
+   - 谢帅 may still edit Markdown/process documentation, CR cards, plans, and review notes directly, and may run/read tests/logs for verification.
+   - 谢帅's final handoff must summarize worker output, independent review findings, verification status, and any remaining fresh-runtime gates.
+
+14. User process trigger rule.
+   - When the user explicitly says “走流程” / “按流程走” / an equivalent process-trigger phrase, use the full CR workflow:
+     create or update the CR card, dispatch a worker, obtain two independent reviewer approvals, then give the manager/reviewer judgment.
+   - When the user says “你去做吧” / “去做一下” / “继续做” without saying “走流程”, the current Codex agent should do the work directly; do not dispatch worker sub-agents by default.
+   - Even for direct-agent work, create/update the relevant CR card unless the user explicitly says this does not need a card.
+   - Do not add source-guard tests by default. Add a source guard only when the user explicitly says to guard against a behavior returning, forbids a specific call/path, or asks for a source guard.
+   - Small deletions, small condition changes, and small log/frequency changes do not need new tests by default. Visual/OCR/click-coordinate changes still need screenshot replay and marked output verification.
+
+15. “完成 CR编号”持续审查 heartbeat 规则。
+   - 当用户明确说“完成 CR230”“完成 CR-230”或同等表述时，视为要求该 CR 走到可交付结论，不能只完成首版代码后停止。
+   - 负责该 CR 的 agent 必须先完成卡片批准范围内的实现、必要编译门禁和 CR 卡更新；随后创建一个仅监控该 CR 的 heartbeat / schedule，默认每 5 分钟检查一次。当前仓库没有可靠的“Markdown 卡片被编辑即通知另一个 agent”的事件订阅机制，因此不得假设会收到即时通知；以该 heartbeat 的定时读卡为准。
+   - **默认角色边界：**“完成 CR编号”只授权当前 agent 做实现、编译、写卡和等待外部 review 反馈；它不得自行把自己当 reviewer，也不得自行创建 reviewer/sub-agent 来给自己审批。它只能持续读取卡内由外部 reviewer 写入的反馈，并据此返修。
+   - 只有用户明确追加“开 reviewer / 开 worker 做 review / 走流程 / 双 reviewer”，或当前 agent 被用户明确指定为 `谢帅` 业务主管并适用第 13 条时，当前 agent 才可以派 reviewer。即使获准派 reviewer，实现者本人也不能计入 reviewer approval。
+   - heartbeat 每轮必须读取对应 CR 卡的最新正文、review 结论、状态和 blocker；不能只看聊天历史或旧日志。
+   - 如果卡内出现新的 reviewer 意见、P0/P1/P2、要求返修、状态回退，或明确的未通过结论，agent 必须：
+     1. 记录新意见与影响；
+     2. 按既有 CR 流程修复代码/文档；
+     3. 重新完成适用的编译门禁和双 reviewer gate；
+     4. 将新的审查结论写回同一张 CR 卡；
+     5. 继续保留 heartbeat，等待下一轮卡片结论。
+   - heartbeat 只能在该 CR 卡内出现明确的“通过 / Approved / Done”最终结论，且没有未解决 P0/P1/P2 或返修要求时自动停止并删除自身。**fresh runtime 是 CR 的独立运行验收记录，不是该 heartbeat 的存续或关闭条件。**不能因为代码首次提交、一次 compile 成功、用户暂时没有回复、或 agent 自己认为“差不多”而停止。
+   - 若用户明确要求暂停、停止该 heartbeat，或把 CR 改为 Deprecated/Closed，则按用户/卡片结论停止并删除；停止原因必须写回 CR 卡。
+   - **Reviewer 写卡责任：**承担 CR review 的 agent 在审查结束时必须把结论写回对应 CR 卡，且结论必须明确二选一：
+     - 有 P0/P1/P2、源码/编译证据不足或要求返修：写明“不通过 / Blocked / Review required”、严重级别、证据、修复方向和下一次验收点；
+     - 确认没有 P0/P1/P2、无待返修项：写明“通过 / Approved”，并注明审查范围、依据和时间。**fresh runtime 是否待验不影响此处 reviewer 结论，也不阻止 heartbeat 关闭。**
+     只在聊天回复“看起来没问题”、只改表格状态、或不写明确通过字样，均不构成关闭 heartbeat 的信号。负责实现的 agent 只能依据卡内这条明确结论停止监控。
+
+16. “review CR编号”持续跟进 heartbeat 规则。
+   - 当用户明确说“review CR230”“审核 CR-230”或同等表述时，被指派的 reviewer 不能只做一次静态 review 后退出；必须为该 CR 创建自己的 reviewer heartbeat，默认每 5 分钟读一次对应 CR 卡。
+   - 每轮 reviewer 必须检查卡片是否出现 worker 新提交、返修说明、新 diff/编译证据、其它 reviewer 意见或状态变更；一旦有新材料，就按当前材料重新 review，而不是沿用旧结论。fresh runtime 记录可作为补充信息，但不是 reviewer heartbeat 的关闭前提。
+   - reviewer 发现 P0/P1/P2、缺证据或返修要求时，必须立即把“不通过 / Blocked / Review required”、证据、影响、修复方向和复验点写回 CR 卡；reviewer heartbeat 继续保留，等待返修后再次审核。
+   - reviewer 只有在自己完成最新一轮复审，并已在 CR 卡明确写入“通过 / Approved”、审查范围、依据和时间后，才可以停止并删除自己的 reviewer heartbeat。若该 CR 的总流程仍需要另一名独立 reviewer，则本 reviewer 的通过不代表另一名 reviewer 可以停止或代表卡已完成。
+   - 同一 CR 的实施 agent heartbeat 与 reviewer heartbeat 是两个独立但互相衔接的责任：实施 agent 看到所有 required reviewer 已在卡内写入 `通过 / Approved`、且没有待返修项后即可关闭；reviewer 在自己最新一轮复审确认无问题并写入 `通过 / Approved` 后即可关闭。两者都**不等待 fresh runtime**；fresh 是独立运行验收记录。用户明确暂停/停止 review，或卡被 Deprecated/Closed 时，reviewer 才可按原因写卡并停止。
 
 ## Code documentation rule
 

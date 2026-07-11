@@ -176,6 +176,20 @@ public class ReturnItemPrescanService {
         return used;
     }
 
+    /**
+     * Reports whether a learned return-item point is currently available without clicking it.
+     *
+     * @param context current task context used only for the scoped cache key; no input is sent.
+     * @param taskCode task namespace such as {@code xiuluo_v2} or {@code wubei}.
+     * @param round one-based task round number.
+     * @param template item template path relative to {@code images/template/}.
+     * @return true when the per-window/per-round prescan cache has a click point ready.
+     */
+    public boolean hasCached(TaskExecutionContext context, String taskCode, int round, String template) {
+        PrescanState state = states.get(keyFor(context, taskCode, round, template));
+        return state != null && state.cachePoint != null;
+    }
+
     public void invalidate(TaskExecutionContext context, String taskCode, int round, String template, String reason) {
         PrescanState state = states.get(keyFor(context, taskCode, round, template));
         if (state == null) {

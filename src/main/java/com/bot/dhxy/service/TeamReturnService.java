@@ -92,6 +92,68 @@ public class TeamReturnService {
     }
 
     /**
+     * CR244 member marker probe result. {@code ABSENT} is only reported after a successful capture
+     * and analysis confirmed the template is not on screen; capture or analysis failures are
+     * {@code UNKNOWN} so the caller keeps its pending-return fact unchanged.
+     */
+    public enum MemberReturnMarkerProbe {
+        PRESENT,
+        ABSENT,
+        UNKNOWN
+    }
+
+    /**
+     * Screenshot-only visibility probe for the member-side return button.
+     *
+     * <p>CR244 members use this to maintain their own pending-return fact: the button appearing
+     * means "I still need to return", and only a CONFIRMED disappearance ({@code ABSENT}) may
+     * remove the member from the session pending-return set. A failed capture must never look like
+     * a disappeared marker, so this probe captures to memory itself instead of going through
+     * {@code findImageInRegion}, which collapses capture failure and template miss into one null.
+     * This method never sends input.</p>
+     *
+     * @param source caller label for diagnostics.
+     * @return tri-state probe result; {@code UNKNOWN} on capture/analysis failure.
+     */
+    public MemberReturnMarkerProbe probeMemberReturnMarker(String source) {
+        int[] rect = coordinateHelper.getScaledRect(
+                botProperties.getReturnTeamAreaX(),
+                botProperties.getReturnTeamAreaY(),
+                botProperties.getReturnTeamAreaW(),
+                botProperties.getReturnTeamAreaH()
+        );
+        BufferedImage snapshot = tracker.captureToMemory(
+                "team-return-member-probe:" + safeSource(source), rect[0], rect[1], rect[2], rect[3]);
+        if (snapshot == null) {
+            log.warn("team return member probe capture failed; treat as UNKNOWN: source={} rect=({}, {})-({}, {})",
+                    source, rect[0], rect[1], rect[2], rect[3]);
+            return MemberReturnMarkerProbe.UNKNOWN;
+        }
+        BufferedImage template = null;
+        try {
+            template = ImageIO.read(Path.of(MEMBER_RETURN_BUTTON_PATH).toFile());
+            if (template == null) {
+                log.warn("team return member probe template unavailable; treat as UNKNOWN: source={} template={}",
+                        source, MEMBER_RETURN_BUTTON_PATH);
+                return MemberReturnMarkerProbe.UNKNOWN;
+            }
+            double[] match = ImageFinder.find(snapshot, template, botProperties.getReturnTeamMatchRate());
+            return match != null && match.length >= 2
+                    ? MemberReturnMarkerProbe.PRESENT
+                    : MemberReturnMarkerProbe.ABSENT;
+        } catch (Exception e) {
+            log.warn("team return member probe analysis failed; treat as UNKNOWN: source={} template={} reason={}",
+                    source, MEMBER_RETURN_BUTTON_PATH, e.getMessage(), e);
+            return MemberReturnMarkerProbe.UNKNOWN;
+        } finally {
+            snapshot.flush();
+            if (template != null) {
+                template.flush();
+            }
+        }
+    }
+
+    /**
      * Leader-side wait when a return-team signal is visible after returning to town.
      *
      * @param context current leader execution context. Stop requests are honored during polling.
@@ -155,14 +217,14 @@ public class TeamReturnService {
                 rect[0], rect[1], rect[2], rect[3]);
         LeaderSignalScope scope = LeaderSignalScope.from(context, safeSource, System.currentTimeMillis());
         if (snapshot == null) {
-            log.warn("{} team return precheck capture failed before bag: source={} rect=({}, {})-({}, {})",
+            log.warn("{} team return precheck capture failed: source={} rect=({}, {})-({}, {})",
                     logPrefix(context), safeSource, rect[0], rect[1], rect[2], rect[3]);
             return LeaderSignalPrecheck.completed(scope, LeaderSignalPrecheckResult.failed("capture-failed"));
         }
 
         CompletableFuture<LeaderSignalPrecheckResult> future = CompletableFuture.supplyAsync(() ->
                 analyzeLeaderSignalSnapshot(snapshot, rect, safeSource));
-        log.info("{} team return precheck captured before bag: source={} size={}x{} rect=({}, {})-({}, {})",
+        log.info("{} team return precheck captured: source={} size={}x{} rect=({}, {})-({}, {})",
                 logPrefix(context), safeSource, snapshot.getWidth(), snapshot.getHeight(),
                 rect[0], rect[1], rect[2], rect[3]);
         return new LeaderSignalPrecheck(scope, future);

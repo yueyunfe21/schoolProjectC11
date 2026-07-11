@@ -204,9 +204,12 @@ public class BattleRadarService {
      * Arm the current task-owned expected-combat wait.
      *
      * <p>五倍/修罗 can enter a new expected battle while the previous combat's one-shot exit signal
-     * is still pending. The arm timestamp is the boundary: FAST_EXPECTED_EXIT may only consume exit
-     * signals produced after this point. Arming does not touch the avatar baseline, because trusted
-     * in-combat correction may have just refreshed it.</p>
+     * is still pending. The arm timestamp is the normal boundary: FAST_EXPECTED_EXIT may consume exit
+     * signals produced after this point. CR141 keeps one exception for a current battle cycle that was
+     * fully observed while the leader task was paused, because that exit can be produced before the
+     * task thread gets a chance to arm the expected wait. Same-millisecond exit and arm timestamps
+     * are kept because `currentTimeMillis()` cannot order them reliably. Arming does not touch the
+     * avatar baseline, because trusted in-combat correction may have just refreshed it.</p>
      *
      * @param source diagnostic task/source label.
      */
@@ -215,12 +218,14 @@ public class BattleRadarService {
         long now = System.currentTimeMillis();
         state.expectedCombatExitWaitArmedAtMs = now;
         if (state.combatExitPending
-                && (state.combatExitPendingAtMs <= 0L || state.combatExitPendingAtMs <= now)) {
+                && !isCurrentExpectedWaitAllowedExit(state)
+                && (state.combatExitPendingAtMs <= 0L || state.combatExitPendingAtMs < now)) {
             log.warn("[battle-radar] discard stale combat-exit signal when expected wait arms: source={} battleCount={} pendingAtMs={} armedAtMs={}",
                     source, state.battleCount, state.combatExitPendingAtMs, now);
-            state.combatExitPending = false;
-            state.combatExitPendingAtMs = 0L;
-            state.combatExitPendingBattleCount = 0;
+            clearCombatExitPending(state);
+        } else if (state.combatExitPending && isCurrentExpectedWaitAllowedExit(state)) {
+            log.info("[battle-radar] keep current-cycle combat-exit signal when expected wait arms: source={} battleCount={} pendingAtMs={} armedAtMs={}",
+                    source, state.battleCount, state.combatExitPendingAtMs, now);
         }
     }
 
@@ -335,6 +340,20 @@ public class BattleRadarService {
         }
     }
 
+    /**
+     * CR252: apply a combat verdict produced by an external authority (the local leader's confirmed
+     * team combat phase broadcast) instead of the template radar. Bound members substitute this for
+     * their own battle-template scans; it reuses the exact enter/exit signal transitions so the
+     * Alt+8 bootstrap, exit consumption, and post-combat recovery behave as if the radar had seen
+     * the same state. Idempotent per tick: no transition means no signal and no input.
+     */
+    public void applyExternalCombatStateVerdict(boolean inCombat, String source) {
+        boolean changed = updateCombatState(inCombat);
+        if (changed) {
+            log.info("[battle-radar] external combat verdict applied: inCombat={} source={}", inCombat, source);
+        }
+    }
+
     private boolean updateCombatState(boolean isCurrentlyInCombat) {
         GameContext.ActionState rememberedState = context.getCurrentActionState();
 
@@ -349,6 +368,13 @@ public class BattleRadarService {
             log.info("[battle-radar] combat finished; restore action state to FREE and emit exit signal");
             context.setCurrentActionState(GameContext.ActionState.FREE);
             BattleRuntimeState state = state();
+            state.combatExitAfterUnconsumedEnterPending = state.combatEnterPending;
+            state.combatExitAfterUnconsumedEnterBattleCount = state.combatEnterPending ? state.battleCount : 0;
+            if (state.combatEnterPending) {
+                log.info("[battle-radar] combat exit recorded before enter signal was consumed: battleCount={}",
+                        state.battleCount);
+            }
+            state.combatEnterPending = false;
             state.combatExitPending = true;
             state.combatExitPendingAtMs = System.currentTimeMillis();
             state.combatExitPendingBattleCount = state.battleCount;
@@ -368,9 +394,7 @@ public class BattleRadarService {
         if (state.combatExitPending) {
             log.warn("[battle-radar] discard stale combat-exit signal on combat enter: battleCount={}",
                     state.battleCount);
-            state.combatExitPending = false;
-            state.combatExitPendingAtMs = 0L;
-            state.combatExitPendingBattleCount = 0;
+            clearCombatExitPending(state);
         }
         state.combatEnterPending = true;
         log.info("battle radar detected combat enter: battleCount={}", state.battleCount);
@@ -408,9 +432,7 @@ public class BattleRadarService {
         if (!state.combatExitPending) {
             return false;
         }
-        state.combatExitPending = false;
-        state.combatExitPendingAtMs = 0L;
-        state.combatExitPendingBattleCount = 0;
+        clearCombatExitPending(state);
         return true;
     }
 
@@ -426,18 +448,15 @@ public class BattleRadarService {
             return false;
         }
         if (state.expectedCombatExitWaitArmedAtMs <= 0L
-                || state.combatExitPendingAtMs < state.expectedCombatExitWaitArmedAtMs) {
+                || (!isCurrentExpectedWaitAllowedExit(state)
+                && state.combatExitPendingAtMs < state.expectedCombatExitWaitArmedAtMs)) {
             log.warn("[battle-radar] discard stale expected combat-exit signal: source={} battleCount={} pendingBattleCount={} pendingAtMs={} armedAtMs={}",
                     source, state.battleCount, state.combatExitPendingBattleCount,
                     state.combatExitPendingAtMs, state.expectedCombatExitWaitArmedAtMs);
-            state.combatExitPending = false;
-            state.combatExitPendingAtMs = 0L;
-            state.combatExitPendingBattleCount = 0;
+            clearCombatExitPending(state);
             return false;
         }
-        state.combatExitPending = false;
-        state.combatExitPendingAtMs = 0L;
-        state.combatExitPendingBattleCount = 0;
+        clearCombatExitPending(state);
         return true;
     }
 
@@ -455,12 +474,57 @@ public class BattleRadarService {
         if (!state.combatExitPending) {
             return false;
         }
-        state.combatExitPending = false;
-        state.combatExitPendingAtMs = 0L;
-        state.combatExitPendingBattleCount = 0;
+        clearCombatExitPending(state);
         log.warn("[battle-radar] discard stale combat-exit signal while still IN_COMBAT: source={} battleCount={}",
                 source, state.battleCount);
         return true;
+    }
+
+    /**
+     * Drop an enter signal that survived until the window is already known to be outside combat.
+     *
+     * <p>This protects paused leader read-only observation: if the observer saw both enter and exit
+     * while the task was paused, the resumed normal tick must not consume the old enter and open the
+     * auto-combat panel after the battle is already over.</p>
+     *
+     * @param source diagnostic caller label.
+     * @return true when a stale enter signal was cleared.
+     */
+    public boolean discardCombatEnterSignalIfNotInCombat(String source) {
+        if (context.getCurrentActionState() == GameContext.ActionState.IN_COMBAT) {
+            return false;
+        }
+        BattleRuntimeState state = state();
+        if (!state.combatEnterPending) {
+            return false;
+        }
+        state.combatEnterPending = false;
+        log.warn("[battle-radar] discard stale combat-enter signal while not in combat: source={} battleCount={} actionState={}",
+                source, state.battleCount, context.getCurrentActionState());
+        return true;
+    }
+
+    /**
+     * Mark the current pending combat exit as observed by the paused leader read-only observer.
+     *
+     * <p>This is distinct from the unconsumed-enter case: the normal watcher may already have
+     * consumed the enter signal before the task arms an expected-exit wait. If a user pauses in that
+     * window and the read-only observer sees the exit transition, the next expected wait must treat
+     * that pending exit as the current battle cycle instead of stale pre-arm evidence.</p>
+     *
+     * @param source diagnostic caller label from the paused observer.
+     */
+    public void markCombatExitObservedDuringPause(String source) {
+        BattleRuntimeState state = state();
+        if (!state.combatExitPending || state.combatExitPendingBattleCount <= 0) {
+            log.warn("[battle-radar] paused-observed combat exit marker skipped: source={} pending={} pendingBattleCount={} battleCount={}",
+                    source, state.combatExitPending, state.combatExitPendingBattleCount, state.battleCount);
+            return;
+        }
+        state.combatExitObservedDuringPausePending = true;
+        state.combatExitObservedDuringPauseBattleCount = state.combatExitPendingBattleCount;
+        log.info("[battle-radar] paused observer marked current-cycle combat exit: source={} battleCount={} pendingAtMs={}",
+                source, state.combatExitObservedDuringPauseBattleCount, state.combatExitPendingAtMs);
     }
 
     /**
@@ -490,6 +554,34 @@ public class BattleRadarService {
         return runtimeStates.computeIfAbsent(key, ignored -> new BattleRuntimeState());
     }
 
+    private boolean isCurrentUnconsumedEnterExit(BattleRuntimeState state) {
+        return state.combatExitAfterUnconsumedEnterPending
+                && state.combatExitPending
+                && state.combatExitPendingBattleCount > 0
+                && state.combatExitPendingBattleCount == state.combatExitAfterUnconsumedEnterBattleCount;
+    }
+
+    private boolean isCurrentPausedObservedExit(BattleRuntimeState state) {
+        return state.combatExitObservedDuringPausePending
+                && state.combatExitPending
+                && state.combatExitPendingBattleCount > 0
+                && state.combatExitPendingBattleCount == state.combatExitObservedDuringPauseBattleCount;
+    }
+
+    private boolean isCurrentExpectedWaitAllowedExit(BattleRuntimeState state) {
+        return isCurrentUnconsumedEnterExit(state) || isCurrentPausedObservedExit(state);
+    }
+
+    private void clearCombatExitPending(BattleRuntimeState state) {
+        state.combatExitPending = false;
+        state.combatExitPendingAtMs = 0L;
+        state.combatExitPendingBattleCount = 0;
+        state.combatExitAfterUnconsumedEnterPending = false;
+        state.combatExitAfterUnconsumedEnterBattleCount = 0;
+        state.combatExitObservedDuringPausePending = false;
+        state.combatExitObservedDuringPauseBattleCount = 0;
+    }
+
     private static class BattleRuntimeState {
         private int battleCount = 0;
         private int combatExitMisses = 0;
@@ -502,5 +594,9 @@ public class BattleRadarService {
         private boolean combatExitPending = false;
         private long combatExitPendingAtMs = 0L;
         private int combatExitPendingBattleCount = 0;
+        private boolean combatExitAfterUnconsumedEnterPending = false;
+        private int combatExitAfterUnconsumedEnterBattleCount = 0;
+        private boolean combatExitObservedDuringPausePending = false;
+        private int combatExitObservedDuringPauseBattleCount = 0;
     }
 }

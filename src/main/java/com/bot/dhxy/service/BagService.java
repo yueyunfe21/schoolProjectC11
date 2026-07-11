@@ -4,6 +4,7 @@ import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.bag.ReturnItemCachePoint;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
@@ -361,8 +362,14 @@ public class BagService {
 
         log.info("[bag] main bag not open, press Alt+E");
         moveMouseAwayFromCachedMainBagAnchor(layout, context, "before-alt-e-first", true);
+        if (!InputActionScope.checkpoint()) {
+            return null;
+        }
         inputProvider.pressAltE();
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
+        if (!InputActionScope.checkpoint()) {
+            return null;
+        }
 
         check = checkBagOpened(layout, context, "after-alt-e-first");
         if (check.ready()) {
@@ -381,6 +388,9 @@ public class BagService {
         if (!check.panelVisible) {
             log.warn("[bag] Alt+E did not confirm anchor immediately, retry after short wait: template={}", layout.anchorTemplate);
             TaskSleep.sleepOrStop(context, BAG_LATE_RENDER_WAIT_MS, "Bag operation wait was interrupted");
+            if (!InputActionScope.checkpoint()) {
+                return null;
+            }
             check = checkBagOpened(layout, context, "after-alt-e-late-render");
             if (check.ready()) {
                 Point p = check.anchor;
@@ -399,8 +409,14 @@ public class BagService {
 
         log.warn("[bag] Alt+E first attempt still has no bag UI indicators, sending one retry");
         moveMouseAwayFromCachedMainBagAnchor(layout, context, "before-alt-e-second", true);
+        if (!InputActionScope.checkpoint()) {
+            return null;
+        }
         inputProvider.pressAltE();
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
+        if (!InputActionScope.checkpoint()) {
+            return null;
+        }
         check = checkBagOpened(layout, context, "after-alt-e-second");
         if (check.ready()) {
             Point p = check.anchor;
@@ -468,8 +484,12 @@ public class BagService {
         int targetY = randomBetween(minY, maxY);
         log.info("[bag] move mouse away from main bag anchor: stage={} forceMove={} anchor=({}, {}) mouse={} target=({}, {}) safeMinX={}",
                 stage, forceMove, anchor.x, anchor.y, formatPoint(mouse), targetX, targetY, safeMinX);
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
         inputProvider.moveMouse(targetX, targetY);
         TaskSleep.sleepOrStop(context, 120, "Bag mouse move wait was interrupted");
+        InputActionScope.checkpoint();
     }
 
     private Point currentLogicalMousePoint() {
@@ -496,8 +516,12 @@ public class BagService {
     private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
         if (layout.autoManageUI) {
             log.info("[bag] close main bag by Alt+E");
+            if (!InputActionScope.checkpoint()) {
+                return;
+            }
             inputProvider.pressAltE();
             TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
+            InputActionScope.checkpoint();
         }
     }
 
@@ -540,8 +564,7 @@ public class BagService {
                 Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, knownBagIndex, context);
                 if (pt != null) {
                     rememberItemPage(layout, targetItemTemplate, knownBagIndex);
-                    executeSafeAction(pt, action, context);
-                    success = true;
+                    success = executeSafeAction(pt, action, context);
                 }
             }
 
@@ -553,8 +576,7 @@ public class BagService {
                     Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context);
                     if (pt != null) {
                         rememberItemPage(layout, targetItemTemplate, i);
-                        executeSafeAction(pt, action, context);
-                        success = true;
+                        success = executeSafeAction(pt, action, context);
                         break;
                     }
                 }
@@ -580,15 +602,13 @@ public class BagService {
         try {
             Point currentPageItem = searchItemInCurrentPageOnly(MAIN_BAG, baseAnchor, targetItemTemplate, context);
             if (currentPageItem != null) {
-                executeSafeAction(currentPageItem, action, context);
-                success = true;
+                success = executeSafeAction(currentPageItem, action, context);
             }
             if (!success) {
                 Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate,
                         MAIN_BAG_TASK_TAB_INDEX, context);
                 if (pt != null) {
-                    executeSafeAction(pt, action, context);
-                    success = true;
+                    success = executeSafeAction(pt, action, context);
                 }
             }
         } finally {
@@ -669,8 +689,7 @@ public class BagService {
         }
 
         try {
-            executeSafeAction(new Point(cachedPoint.getClickX(), cachedPoint.getClickY()), ItemAction.USE, context);
-            return true;
+            return executeSafeAction(new Point(cachedPoint.getClickX(), cachedPoint.getClickY()), ItemAction.USE, context);
         } finally {
             closeBagIfNeeded(MAIN_BAG, context);
         }
@@ -760,8 +779,7 @@ public class BagService {
             Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate, knownBagIndex, context);
             if (pt != null) {
                 rememberItemPage(MAIN_BAG, targetItemTemplate, knownBagIndex);
-                executeSafeAction(pt, action, context);
-                success = true;
+                success = executeSafeAction(pt, action, context);
             }
         }
 
@@ -774,8 +792,7 @@ public class BagService {
                 Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate, i, context);
                 if (pt != null) {
                     rememberItemPage(MAIN_BAG, targetItemTemplate, i);
-                    executeSafeAction(pt, action, context);
-                    success = true;
+                    success = executeSafeAction(pt, action, context);
                     break;
                 }
             }
@@ -820,8 +837,7 @@ public class BagService {
              */
             Point currentPageItem = searchItemInCurrentPageOnly(layout, baseAnchor, targetItemTemplate, context);
             if (currentPageItem != null) {
-                executeSafeAction(currentPageItem, action, context);
-                success = true;
+                success = executeSafeAction(currentPageItem, action, context);
             }
 
             for (int i = safeMaxBagIndex; i >= 0; i--) {
@@ -832,8 +848,7 @@ public class BagService {
                 Point pt = searchItemInTabOnly(layout, baseAnchor, targetItemTemplate, i, context);
                 if (pt != null) {
                     rememberItemPage(layout, targetItemTemplate, i);
-                    executeSafeAction(pt, action, context);
-                    success = true;
+                    success = executeSafeAction(pt, action, context);
                     break;
                 }
             }
@@ -848,8 +863,14 @@ public class BagService {
     private Point getBaseAnchor(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
         if (layout.anchorTemplate == null) {
+            if (!tracker.refreshWindowState()) {
+                log.warn("[bag] no-anchor layout base refresh failed, abort item action to avoid stale base: layout={}",
+                        layoutName(layout));
+                return null;
+            }
             Point base = new Point(tracker.getWindowBaseX(), tracker.getWindowBaseY());
-            log.debug("[bag] no anchor template, use window base: ({}, {})", base.x, base.y);
+            log.info("[bag] no-anchor layout uses refreshed window base: layout={} base=({}, {})",
+                    layoutName(layout), base.x, base.y);
             return base;
         }
         Point anchor = coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, 0.8);
@@ -1022,9 +1043,13 @@ public class BagService {
         int tx = baseAnchor.x + (int) Math.round(layout.tabOffsetX / scale);
         int ty = baseAnchor.y + (int) Math.round((layout.tabOffsetY + tabIndex * layout.tabStepY) / scale);
         log.info("[bag] click page {} tab: ({}, {})", tabIndex + 1, tx, ty);
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
         inputProvider.clickLeft(tx, ty, 100);
         rememberVisiblePage(layout, tabIndex);
         TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
+        InputActionScope.checkpoint();
     }
 
     private int[] pageScanOrder(Integer preferredPageIndex, Integer skipPageIndex) {
@@ -1098,17 +1123,24 @@ public class BagService {
         return display.toString();
     }
 
-    private void executeSafeAction(Point raw, ItemAction action, TaskExecutionContext context) {
+    private boolean executeSafeAction(Point raw, ItemAction action, TaskExecutionContext context) {
         throwIfStopRequested(context);
         Point p = coordinateHelper.getRandomizedPoint(raw, 10, 10);
         log.info("[bag] execute item click: action={} raw=({}, {}) click=({}, {})",
                 action, raw.x, raw.y, p.x, p.y);
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
         if (action == ItemAction.USE) {
             inputProvider.clickRight(p.x, p.y, 100);
         } else {
             inputProvider.clickLeft(p.x, p.y, 100);
         }
         TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
+        if (!InputActionScope.checkpoint()) {
+            return false;
+        }
+        return true;
     }
 
     private void throwIfStopRequested(TaskExecutionContext context) {

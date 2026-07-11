@@ -16,9 +16,12 @@ import java.util.List;
  * @param detailAbsoluteTop screen-absolute Y coordinate of the task block image top edge.
  * @param yellowText OCR text read from yellow title/content in the cropped task block.
  * @param greenLinks clickable green text segments in screen-absolute pixels.
+ * @param selectedGreenLink cloud-selected production click candidate in screen-absolute pixels;
+ *                          null when the reader did not provide a separate selected click.
  * @param greenBandWidth width of the selected green text band, in pixels.
  * @param probeObjective true when the green links look like a two-link objective; this is a shape
  *                       hint only, because 暗雷 multi-map text can also split into two links.
+ * @param sourceType reader that produced the effective result.
  */
 @Value
 @Builder
@@ -33,9 +36,12 @@ public class TaskTrackerPanelReadResult {
 
     @Builder.Default
     List<TaskTrackerGreenLink> greenLinks = List.of();
+    TaskTrackerGreenLink selectedGreenLink;
 
     int greenBandWidth;
     boolean probeObjective;
+    @Builder.Default
+    TaskTrackerPanelSourceType sourceType = TaskTrackerPanelSourceType.LOCAL;
 
     public static TaskTrackerPanelReadResult empty() {
         return TaskTrackerPanelReadResult.builder()
@@ -44,6 +50,7 @@ public class TaskTrackerPanelReadResult {
                 .greenLinks(List.of())
                 .greenBandWidth(0)
                 .probeObjective(false)
+                .sourceType(TaskTrackerPanelSourceType.LOCAL)
                 .build();
     }
 }

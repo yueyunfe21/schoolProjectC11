@@ -1,5 +1,10 @@
 package com.bot.dhxy.window.execution;
 
+import com.bot.dhxy.cloud.task.DialogPolicyPreClickCloudDecision;
+import com.bot.dhxy.cloud.task.RouteCloudDecisionService;
+import com.bot.dhxy.cloud.task.RouteMemoryOutcomeReport;
+import com.bot.dhxy.cloud.task.RouteMemoryOutcomeIngestResult;
+import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.model.MapCoordinate;
@@ -11,9 +16,14 @@ import com.bot.dhxy.model.dialog.DialogPreparationRequest;
 import com.bot.dhxy.model.dialog.DialogPreparationStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.job.PreparedActionJob;
+import com.bot.dhxy.model.job.PreparedActionJobType;
+import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.model.navigation.PendingTransferChoiceMemory;
 import com.bot.dhxy.model.navigation.TemplateLocationInfo;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultPendingMemory;
+import com.bot.dhxy.model.navigation.PendingRouteOutcome;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelNegativeResult;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelPrepareResult;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.context.TaskStartupMode;
@@ -29,9 +39,11 @@ import com.bot.dhxy.service.MemoryService;
 import com.bot.dhxy.service.TaskMaintenanceService;
 import com.bot.dhxy.service.TaskTrackerPanelService;
 import com.bot.dhxy.service.dialog.DialogOperation;
+import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.task.GameTask;
 import com.bot.dhxy.task.TaskFactory;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.task.xiuluo.XiuluoDialogCatalog;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
 import com.bot.dhxy.team.TeamRoleDetectionService;
 import com.bot.dhxy.team.TeamRoleStatus;
@@ -60,6 +72,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -89,6 +102,7 @@ public class WindowTaskRunner {
     private static final long WINDOW_COMBAT_GUARD_IDLE_INTERVAL_MS = 6_000L;
     private static final long WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS = 1_000L;
     private static final long WINDOW_PATHING_PROBE_MIN_INTERVAL_MS = 2_000L;
+    private static final long WINDOW_PATHING_ARRIVAL_STATIONARY_MS = 600L;
     private static final long WINDOW_PATHING_SHORTCUT_STOPPED_AWAY_MS = 2_200L;
     private static final long WINDOW_PATHING_MINI_MAP_HANDOFF_STOPPED_AWAY_MS = 2_200L;
     private static final long WINDOW_PATHING_SLOW_PROBE_LOG_MS = 1_500L;
@@ -100,8 +114,16 @@ public class WindowTaskRunner {
     private static final long WINDOW_DIALOG_PREPARE_DEFAULT_INTERVAL_MS = 500L;
     private static final long WINDOW_DIALOG_ATTENTION_RECENT_MS = 2_500L;
     private static final long WINDOW_DIALOG_VISIBLE_MAX_AGE_MS = 3_000L;
+    private static final long WINDOW_TASK_DIALOG_PREPARED_STALE_MS = WINDOW_DIALOG_VISIBLE_MAX_AGE_MS;
+    private static final long WINDOW_TASK_DIALOG_STALE_REPUBLISH_COOLDOWN_MS = 1_000L;
+    private static final long PREPARED_TRACKER_ACTION_MAX_AGE_MS = 2_500L;
     private static final long WINDOW_OBSERVER_WAKE_CHECK_INTERVAL_MS = 100L;
+    private static final long WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS = 500L;
+    private static final long WINDOW_POST_COMBAT_IDLE_TIMEOUT_MS = 180_000L;
     private static final long WUBEI_ORDINARY_PRE_BATTLE_TIMEOUT_MS = 300_000L;
+    private static final long ROUTE_OUTCOME_RETRY_BASE_DELAY_MS = 1_000L;
+    private static final long ROUTE_OUTCOME_RETRY_MAX_DELAY_MS = 30_000L;
+    private static final String XIULUO_TRACKER_SHORTCUT_SOURCE_PREFIX = "xiuluo-v2:tracker-shortcut";
 
     private final WindowRuntimeContext windowContext;
     private final TaskFactory taskFactory;
@@ -118,12 +140,17 @@ public class WindowTaskRunner {
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
+    private final RouteCloudDecisionService routeCloudDecisionService;
     private final TaskMaintenanceService taskMaintenanceService;
     private final List<WindowDialogPreparationProvider> dialogPreparationProviders;
     private final WindowReadyEventBus windowReadyEventBus;
     private final ExecutorService executor;
     private final ExecutorService combatWatcherExecutor;
     private final ExecutorService dialogPreparationExecutor;
+    private final AtomicLong lastTaskDialogStaleRepublishAtMs = new AtomicLong();
+    // Delivery only: never used for route selection and deliberately never persisted.
+    private final ConcurrentHashMap<String, PendingRouteOutcomeDelivery> pendingRouteOutcomeDeliveries =
+            new ConcurrentHashMap<>();
     private volatile RunningTaskHandle currentTask;
     private volatile boolean shutdown;
     private volatile String activeLocalTeamSessionKey;
@@ -150,6 +177,7 @@ public class WindowTaskRunner {
      * @param mapNameCanonicalizer canonicalizer used when comparing tracker target maps with
      *                             mini-map OCR/current-map readings.
      * @param memoryService unified memory facade used by watcher-settled dialog and route memories.
+     * @param routeCloudDecisionService route-memory cloud outcome reporter used after watcher settlement.
      * @param taskMaintenanceService local team support/session capability registry.
      * @param dialogPreparationProviders task-owned providers used for explicitly registered
      *                                   business dialogs.
@@ -167,10 +195,11 @@ public class WindowTaskRunner {
                             AutoCombatService autoCombatService,
                             MiniMapCoordinateReader miniMapCoordinateReader,
                             DialogService dialogService,
-                            TaskTrackerPanelService taskTrackerPanelService,
-                            MapNameCanonicalizer mapNameCanonicalizer,
-                            MemoryService memoryService,
-                            TaskMaintenanceService taskMaintenanceService,
+                             TaskTrackerPanelService taskTrackerPanelService,
+                             MapNameCanonicalizer mapNameCanonicalizer,
+                             MemoryService memoryService,
+                             RouteCloudDecisionService routeCloudDecisionService,
+                             TaskMaintenanceService taskMaintenanceService,
                             List<WindowDialogPreparationProvider> dialogPreparationProviders,
                             WindowReadyEventBus windowReadyEventBus) {
         this.windowContext = Objects.requireNonNull(windowContext, "windowContext must not be null");
@@ -188,6 +217,7 @@ public class WindowTaskRunner {
         this.taskTrackerPanelService = Objects.requireNonNull(taskTrackerPanelService, "taskTrackerPanelService must not be null");
         this.mapNameCanonicalizer = Objects.requireNonNull(mapNameCanonicalizer, "mapNameCanonicalizer must not be null");
         this.memoryService = Objects.requireNonNull(memoryService, "memoryService must not be null");
+        this.routeCloudDecisionService = Objects.requireNonNull(routeCloudDecisionService, "routeCloudDecisionService must not be null");
         this.taskMaintenanceService = Objects.requireNonNull(taskMaintenanceService, "taskMaintenanceService must not be null");
         this.dialogPreparationProviders = dialogPreparationProviders == null
                 ? List.of()
@@ -324,6 +354,7 @@ public class WindowTaskRunner {
         windowContext.markStopping("stop requested");
         windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("stop requested"));
         windowReadyEventBus.wakeForTaskStop(windowContext.getWindowId(), "stop requested");
+        settleRouteOutcomesBeforeWatcherStop("stop-current-task");
         taskHandle.forceCancel("stop requested");
         return true;
     }
@@ -340,6 +371,11 @@ public class WindowTaskRunner {
         }
         taskHandle.requestPause("pause requested");
         windowReadyEventBus.wakeForTaskPause(windowContext.getWindowId(), "pause requested");
+        if (windowContext.isLeader()) {
+            windowContext.wakeObserver("pause requested");
+            taskMaintenanceService.markLocalTeamLeaderPaused(
+                    windowContext.getWindowId(), true, "window-task-runner:pause");
+        }
         windowContext.markPauseRequested("pause requested");
         log.info("window [{}] task pause requested: queue={} progress={}",
                 windowContext.getWindowId(), taskHandle.getTaskQueueDisplayText(), taskHandle.getTaskProgressText());
@@ -357,6 +393,10 @@ public class WindowTaskRunner {
             return false;
         }
         taskHandle.resume();
+        if (windowContext.isLeader()) {
+            taskMaintenanceService.markLocalTeamLeaderPaused(
+                    windowContext.getWindowId(), false, "window-task-runner:resume");
+        }
         windowContext.markResumed("resume requested");
         log.info("window [{}] task resume requested: queue={} progress={}",
                 windowContext.getWindowId(), taskHandle.getTaskQueueDisplayText(), taskHandle.getTaskProgressText());
@@ -429,6 +469,9 @@ public class WindowTaskRunner {
      */
     public void shutdownNow() {
         shutdown = true;
+        settleRouteOutcomesBeforeWatcherStop("runner-shutdown");
+        taskMaintenanceService.clearSummonSkillQueueForWindow(windowContext.getWindowId(), "runner-shutdown");
+        taskMaintenanceService.clearPostCombatFirstAidForWindow(windowContext.getWindowId(), "runner-shutdown");
         RunningTaskHandle taskHandle = currentTask;
         if (taskHandle != null) {
             windowContext.getGameContext().runWithState(windowContext.getGameState(), () -> taskHandle.requestStop("runner closed"));
@@ -437,6 +480,34 @@ public class WindowTaskRunner {
         combatWatcherExecutor.shutdownNow();
         dialogPreparationExecutor.shutdownNow();
         executor.shutdownNow();
+    }
+
+    /**
+     * Runner-owned watcher-stop boundary for route outcomes. Consume each live or queued record
+     * before a task or runner stops its watcher, so no cloud decision is left without a terminal
+     * report. Atomic consume prevents a concurrent watcher settlement from double-reporting.
+     */
+    private void settleRouteOutcomesBeforeWatcherStop(String reason) {
+        PendingRouteOutcome live = windowContext.consumePendingRouteOutcome();
+        if (live != null) {
+            reportRouteOutcome(live, null, RouteMemoryOutcomeReport.Result.ABANDONED, reason);
+        }
+        WindowRuntimeContext.PendingRouteOutcomeAbandonment abandonment;
+        while ((abandonment = windowContext.pollPendingRouteOutcomeAbandonment()) != null) {
+            reportRouteOutcome(abandonment.outcome(), null, RouteMemoryOutcomeReport.Result.ABANDONED,
+                    normalizeNullable(abandonment.reason()) == null ? reason : abandonment.reason());
+        }
+        WindowRuntimeContext.PendingRouteOutcomeReplacement replacement;
+        while ((replacement = windowContext.pollPendingRouteOutcomeReplacement()) != null) {
+            reportRouteOutcome(replacement.outcome(), null, RouteMemoryOutcomeReport.Result.ABANDONED,
+                    reason + ":before-replacement");
+        }
+        retryPendingRouteOutcomeDeliveries(true, reason);
+        if (shutdown && !pendingRouteOutcomeDeliveries.isEmpty()) {
+            log.warn("window [{}] route outcome delivery queue has {} unsent in-memory record(s) at shutdown; "
+                            + "they will not survive process exit",
+                    windowContext.getWindowId(), pendingRouteOutcomeDeliveries.size());
+        }
     }
 
     /**
@@ -452,6 +523,8 @@ public class WindowTaskRunner {
                     () -> windowContext.getGameContext().runWithState(windowContext.getGameState(),
                             () -> runQueueWithBoundGameState(queue, stopToken, pauseToken)));
         } finally {
+            taskMaintenanceService.clearSummonSkillQueueForWindow(windowContext.getWindowId(), "runner-queue-finished");
+            taskMaintenanceService.clearPostCombatFirstAidForWindow(windowContext.getWindowId(), "runner-queue-finished");
             if (activeLocalTeamSessionKey != null) {
                 taskMaintenanceService.completeLocalTeamSessionWindow(
                         activeLocalTeamSessionKey,
@@ -614,7 +687,9 @@ public class WindowTaskRunner {
     }
 
     private boolean isCleanQueueTransitionStartupTask(TaskType taskType) {
-        return taskType == TaskType.WUBEI || taskType == TaskType.XIULUO_V2;
+        return taskType == TaskType.WUBEI
+                || taskType == TaskType.XIULUO_V2
+                || taskType == TaskType.WUHuan_V2;
     }
 
     /**
@@ -680,6 +755,7 @@ public class WindowTaskRunner {
                 try {
                     return task.execute(executionContext);
                 } finally {
+                    settleRouteOutcomesBeforeWatcherStop("task-watcher-stopped:" + taskType.getCode());
                     combatWatcher.stop();
                 }
             });
@@ -758,9 +834,55 @@ public class WindowTaskRunner {
                                 boolean combatGuardEnabled = shouldRunWindowObserver(taskType);
                                 if (combatGuardEnabled) {
                                     autoCombatService.initializeForCurrentWindow();
+                                    // CR252: a new task run never inherits the previous run's
+                                    // enter-battle detection authorization.
+                                    autoCombatService.revokeCombatDetectionAuthority(
+                                            "watcher-start:" + taskType.getCode());
                                 }
+                                // CR253: a new task run never inherits the previous run's
+                                // green-chain schedule or typed prepared jobs.
+                                windowContext.clearXiuluoGreenChainSchedule(
+                                        "watcher-start:" + taskType.getCode());
                                 AutoCombatService.TickResult lastCombatTick = AutoCombatService.TickResult.NONE;
+                                PostCombatIdleTracker postCombatIdleTracker = new PostCombatIdleTracker();
                                 while (running.get() && !Thread.currentThread().isInterrupted()) {
+                                    retryPendingRouteOutcomeDeliveries(false, "watcher-tick");
+                                    if (executionContext.isPauseRequested() && windowContext.isLeader()) {
+                                        TaskCheckpoint.throwIfStopRequested(executionContext.getStopToken(),
+                                                "combat watcher interrupted during paused leader read-only observation");
+                                        long tickStartedAt = System.currentTimeMillis();
+                                        postCombatIdleTracker.onPauseTick(tickStartedAt);
+                                        long observerWakeSeq = windowContext.getObserverWakeSeq();
+                                        long combatStartedAt = System.currentTimeMillis();
+                                        AutoCombatService.TickResult tick = combatGuardEnabled
+                                                ? autoCombatService.probePausedWindowCombatStateReadOnly(
+                                                        executionContext,
+                                                        "window-combat-watch:paused-leader-readonly:" + taskType.getCode())
+                                                : AutoCombatService.TickResult.NONE;
+                                        long combatElapsedMs = Math.max(0L, System.currentTimeMillis() - combatStartedAt);
+                                        if (combatGuardEnabled && tick != lastCombatTick) {
+                                            log.info("[latency] event=paused-leader-readonly.combat.state.changed windowId={} hwnd={} task={} source={} oldTick={} newTick={} elapsedMs={} inputAllowed=false preparedActionAllowed=false",
+                                                    windowContext.getWindowId(),
+                                                    windowContext.getNativeBinding() == null
+                                                            ? null
+                                                            : windowContext.getNativeBinding().getNativeHandle(),
+                                                    taskType, executionContext.getLogPrefix(), lastCombatTick, tick, combatElapsedMs);
+                                            lastCombatTick = tick;
+                                        }
+                                        String observerBranch = "paused-leader-readonly-observer";
+                                        long intervalMs = WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS;
+                                        log.info("{} window [{}] paused-leader-readonly-observer tick: task={} tick={} inputAllowed=false preparedActionAllowed=false intervalMs={}",
+                                                executionContext.getLogPrefix(), windowContext.getWindowId(),
+                                                taskType, tick, intervalMs);
+                                        logSlowObserverTick(taskType, executionContext, observerBranch,
+                                                null, null, null, combatElapsedMs, -1L, -1L,
+                                                -1L, -1L, -1L, -1L, -1L, -1L,
+                                                Math.max(0L, System.currentTimeMillis() - tickStartedAt), intervalMs);
+                                        if (!sleepObserver(intervalMs, observerWakeSeq)) {
+                                            break;
+                                        }
+                                        continue;
+                                    }
                                     executionContext.throwIfStopRequested();
                                     long tickStartedAt = System.currentTimeMillis();
                                     long observerWakeSeq = windowContext.getObserverWakeSeq();
@@ -770,6 +892,7 @@ public class WindowTaskRunner {
                                                     executionContext, "window-combat-watch:" + taskType.getCode())
                                             : AutoCombatService.TickResult.NONE;
                                     long combatElapsedMs = Math.max(0L, System.currentTimeMillis() - combatStartedAt);
+                                    postCombatIdleTracker.onCombatTick(lastCombatTick, tick, System.currentTimeMillis());
                                     if (combatGuardEnabled && tick != lastCombatTick) {
                                         publishCombatStateChanged(taskType, executionContext, lastCombatTick, tick, combatElapsedMs);
                                         lastCombatTick = tick;
@@ -778,6 +901,9 @@ public class WindowTaskRunner {
                                     Optional<WindowPathingIntent> activePathingIntentSnapshot =
                                             windowContext.getActivePathingIntent();
                                     boolean pathingIntentActive = activePathingIntentSnapshot.isPresent();
+                                    settleQueuedRouteOutcomeReplacements(executionContext);
+                                    settleQueuedRouteOutcomeAbandonments(executionContext);
+                                    settleOrphanedRouteOutcome(activePathingIntentSnapshot.orElse(null), executionContext);
                                     PreparedDialogAction preparedDialogAction = null;
                                     WindowPathingSnapshot pathingSnapshot = null;
                                     TickDialogProbe tickDialogProbe = null;
@@ -808,7 +934,21 @@ public class WindowTaskRunner {
                                         tickDialogProbe = new TickDialogProbe(taskType, executionContext);
                                         if (pathingIntentActive) {
                                         boolean taskDialogInterestActive = hasTaskDialogInterest(taskType);
-                                        if (taskDialogInterestActive) {
+                                        boolean probeOnlyInterest = taskDialogInterestActive
+                                                && isProbeOnlyTaskDialogInterest(taskType);
+                                        if (probeOnlyInterest) {
+                                            /*
+                                             * CR232: probe-only interest (修罗 shortcut enter-battle). During active
+                                             * pathing the watcher must NOT run generic dialog detection; only the
+                                             * provider's local small-ROI template probe may run, and it is delay-gated
+                                             * by probeStartAtMs inside the preparation signal.
+                                             */
+                                            observerBranch = "active-pathing-local-probe-only";
+                                            long taskDialogPrepareStartedAt = System.currentTimeMillis();
+                                            preparedDialogAction = refreshTaskDialogInterestPreparationSignal(
+                                                    taskType, executionContext, tickDialogProbe);
+                                            taskDialogPrepareElapsedMs = Math.max(0L, System.currentTimeMillis() - taskDialogPrepareStartedAt);
+                                        } else if (taskDialogInterestActive) {
                                             /*
                                              * Some released pathing flows intentionally wait for a task dialog while
                                              * standing still, e.g. 五倍 uses 显形镜 and waits for WUBEI_PROBE_STORY.
@@ -885,14 +1025,48 @@ public class WindowTaskRunner {
                                         }
                                     }
                                     if (preparedDialogAction == null) {
-                                        long[] attentionTimings = new long[] {-1L, -1L, -1L, -1L};
-                                        preparedDialogAction = publishTaskAttentionIfDialogVisible(
-                                                taskType, executionContext, attentionTimings, tickDialogProbe);
-                                        attentionDetectElapsedMs = attentionTimings[0];
-                                        attentionPublishElapsedMs = attentionTimings[1];
-                                        attentionRoutePrepareElapsedMs = attentionTimings[2];
-                                        attentionTotalElapsedMs = attentionTimings[3];
+                                        /*
+                                         * CR232: while a pathing intent is still being walked the watcher must not
+                                         * fall back to generic dialog attention (full-screen dialog detection).
+                                         * Route dialog preparation and the delay-gated local template probe above
+                                         * are the only allowed lookups during movement; generic attention resumes
+                                         * after ARRIVED/STOPPED_AWAY or once the intent is cleared.
+                                         */
+                                        WindowPathingSnapshot attentionGateSnapshot = pathingSnapshot != null
+                                                ? pathingSnapshot
+                                                : windowContext.getPathingSnapshot();
+                                        boolean pathingStillMoving = pathingIntentActive
+                                                && (attentionGateSnapshot == null
+                                                        || isActiveOrUnknownPathing(attentionGateSnapshot));
+                                        if (pathingStillMoving) {
+                                            log.info("{} window [{}] CR232 attention checkpoint: stage=skip reason=active-pathing windowId={} hwnd={} task={} branch={} pathingState={}",
+                                                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                                                    windowContext.getWindowId(),
+                                                    windowContext.getNativeBinding().getNativeHandle(),
+                                                    taskType, observerBranch,
+                                                    attentionGateSnapshot == null ? null : attentionGateSnapshot.getState());
+                                        } else {
+                                            long[] attentionTimings = new long[] {-1L, -1L, -1L, -1L};
+                                            preparedDialogAction = publishTaskAttentionIfDialogVisible(
+                                                    taskType, executionContext, attentionTimings, tickDialogProbe);
+                                            attentionDetectElapsedMs = attentionTimings[0];
+                                            attentionPublishElapsedMs = attentionTimings[1];
+                                            attentionRoutePrepareElapsedMs = attentionTimings[2];
+                                            attentionTotalElapsedMs = attentionTimings[3];
+                                        }
                                     }
+                                    maybePublishXiuluoSummonSkillCleanupJob(taskType, executionContext);
+                                    publishPostCombatIdleTimeoutIfNeeded(
+                                            taskType,
+                                            executionContext,
+                                            postCombatIdleTracker,
+                                            pathingSnapshot == null ? windowContext.getPathingSnapshot() : pathingSnapshot,
+                                            preparedDialogAction == null
+                                                    ? windowContext.getPreparedDialogAction()
+                                                    : preparedDialogAction,
+                                            windowContext.getDialogPreparationStatus(),
+                                            windowContext.getVisibleDialogSnapshot(WINDOW_DIALOG_VISIBLE_MAX_AGE_MS)
+                                                    .orElse(null));
                                     long intervalMs = WINDOW_COMBAT_GUARD_IDLE_INTERVAL_MS;
                                     if (pathingSnapshot != null && pathingSnapshot.hasActiveIntent()) {
                                         intervalMs = Math.min(intervalMs, WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS);
@@ -1067,6 +1241,11 @@ public class WindowTaskRunner {
                 && newTick == AutoCombatService.TickResult.IN_COMBAT) {
             clearWubeiDialogStateOnCombatEntry(oldTick, newTick, hwnd);
         }
+        if (taskType == TaskType.XIULUO_V2
+                && oldTick != AutoCombatService.TickResult.IN_COMBAT
+                && newTick == AutoCombatService.TickResult.IN_COMBAT) {
+            clearXiuluoDialogStateOnCombatEntry(oldTick, newTick, hwnd);
+        }
         clearWubeiTrackerGreenPathingOnCombatEntry(taskType, oldTick, newTick, hwnd);
         clearXiuluoTrackerShortcutPathingOnCombatEntry(taskType, oldTick, newTick, hwnd);
         log.info("[latency] event=window.combat.state.changed windowId={} hwnd={} task={} source={} oldTick={} newTick={} elapsedMs={}",
@@ -1107,6 +1286,46 @@ public class WindowTaskRunner {
             log.info("[latency] event=xiuluo.tracker-shortcut.pathing-cleared windowId={} hwnd={} reason=combat-entered oldTick={} newTick={}",
                     windowContext.getWindowId(), hwnd, oldTick, newTick);
         }
+    }
+
+    /**
+     * CR232: clear 修罗 dialog preparation state at the combat-entry boundary. Once combat is
+     * confirmed, any 修罗 enter-battle interest / request / prepared action is stale — the "看打"
+     * click already worked (or combat came from elsewhere). Without this cleanup, a late watcher
+     * re-preparation could publish PREPARED_ACTION_READY during combat and cause a stale re-click
+     * after exit. This is the systemic half of the one-shot consumption rule.
+     *
+     * @param oldTick previous combat watcher tick.
+     * @param newTick new combat watcher tick, expected to be {@code IN_COMBAT}.
+     * @param hwnd native window handle used only for structured diagnostics.
+     */
+    private void clearXiuluoDialogStateOnCombatEntry(AutoCombatService.TickResult oldTick,
+                                                     AutoCombatService.TickResult newTick,
+                                                     String hwnd) {
+        // CR253 contract: confirmed combat entry discards the green-chain schedule and every
+        // pending typed prepared job of the finished attempt.
+        windowContext.clearXiuluoGreenChainSchedule("xiuluo combat entered");
+        WindowDialogInterest interest = windowContext.getDialogInterest().orElse(null);
+        DialogPreparationRequest request = windowContext.getDialogPreparationRequest();
+        PreparedDialogAction preparedAction = windowContext.getPreparedDialogAction();
+        boolean clearInterest = interest != null && interest.getTaskType() == TaskType.XIULUO_V2;
+        boolean clearPrepared = preparedAction != null
+                && preparedAction.getOperation() == DialogOperation.XIULUO_ENTER_BATTLE;
+        if (!clearInterest && !clearPrepared) {
+            return;
+        }
+        if (clearInterest) {
+            windowContext.clearDialogInterest("xiuluo combat entered");
+        }
+        if (clearPrepared) {
+            windowContext.clearPreparedDialogAction("xiuluo combat entered");
+        }
+        log.info("[latency] event=xiuluo.combat-entry.dialog-cleanup windowId={} hwnd={} oldTick={} newTick={} clearedInterest={} interestOperations={} clearedPrepared={} preparedOperation={} preparedSource={} requestPresent={}",
+                windowContext.getWindowId(), hwnd, oldTick, newTick,
+                clearInterest, interest == null ? null : interest.getOperations(),
+                clearPrepared, preparedAction == null ? null : preparedAction.getOperation(),
+                preparedAction == null ? null : normalizeMessage(preparedAction.getSource()),
+                request != null);
     }
 
     /**
@@ -1199,39 +1418,257 @@ public class WindowTaskRunner {
                 executionContext == null ? null : executionContext.getLogPrefix());
     }
 
+    /**
+     * Publish CR146's post-combat idle soft event after the runner has observed the window sitting
+     * still after combat exit.
+     *
+     * <p>The runner deliberately publishes only a ready event. It does not click, navigate, or
+     * mutate 五倍/修罗 phase state; task code must consume this hint at a normal phase boundary and
+     * decide how to restart its own runtime.</p>
+     *
+     * @param taskType task currently running in this window.
+     * @param executionContext task context used only for structured diagnostics.
+     * @param tracker runner-local idle tracker that owns elapsed/pause accounting.
+     * @param pathingSnapshot latest window pathing/location snapshot, nullable.
+     * @param preparedAction latest prepared dialog action, nullable.
+     * @param dialogStatus latest dialog-preparation status, nullable.
+     * @param visibleDialog latest visible dialog snapshot, nullable.
+     */
+    private void publishPostCombatIdleTimeoutIfNeeded(TaskType taskType,
+                                                      TaskExecutionContext executionContext,
+                                                      PostCombatIdleTracker tracker,
+                                                      WindowPathingSnapshot pathingSnapshot,
+                                                      PreparedDialogAction preparedAction,
+                                                      DialogPreparationStatus dialogStatus,
+                                                      WindowDialogSnapshot visibleDialog) {
+        if ((taskType != TaskType.WUBEI && taskType != TaskType.XIULUO_V2) || tracker == null) {
+            return;
+        }
+        PostCombatIdleDecision decision = tracker.evaluate(
+                System.currentTimeMillis(),
+                WINDOW_POST_COMBAT_IDLE_TIMEOUT_MS,
+                pathingSnapshot,
+                preparedAction,
+                dialogStatus,
+                visibleDialog);
+        if (!decision.publish()) {
+            return;
+        }
+        WindowNativeBinding binding = windowContext.getNativeBinding();
+        String hwnd = binding == null ? null : binding.getNativeHandle();
+        windowReadyEventBus.publish(WindowReadyEvent.builder()
+                .windowId(windowContext.getWindowId())
+                .hwnd(hwnd)
+                .type(WindowReadyEventType.POST_COMBAT_IDLE_TIMEOUT)
+                .taskType(taskType)
+                .source("runner-post-combat-idle-watchdog")
+                .pathingState(pathingSnapshot == null ? null : pathingSnapshot.getState())
+                .pathingIntent(pathingSnapshot == null ? null : pathingSnapshot.getIntent())
+                .pathingSnapshot(pathingSnapshot)
+                .lastCombatExitAtMs(decision.lastCombatExitAtMs())
+                .elapsedMs(decision.elapsedMs())
+                .summary(decision.summary())
+                .createdAtMs(System.currentTimeMillis())
+                .build());
+        log.warn("[post-combat-idle-watchdog] timeout published by runner: windowId={} hwnd={} task={} source=runner-post-combat-idle-watchdog lastCombatExitAtMs={} elapsedMs={} timeoutMs={} summary={} context={}",
+                windowContext.getWindowId(), hwnd, taskType,
+                decision.lastCombatExitAtMs(), decision.elapsedMs(), WINDOW_POST_COMBAT_IDLE_TIMEOUT_MS,
+                decision.summary(), executionContext == null ? null : executionContext.getLogPrefix());
+    }
+
     private PreparedDialogAction refreshTaskTrackerPreparationSignal(TaskType taskType,
                                                                      TaskExecutionContext executionContext) {
         if (taskType != TaskType.WUHuan_V2 || windowContext.getDialogPreparationRequest() != null) {
             return null;
         }
+        long now = System.currentTimeMillis();
+        WindowPathingSnapshot pathingSnapshot = windowContext.getPathingSnapshot();
+        if (isWindowCombatActiveForTrackerPrepare()
+                || windowContext.getActivePathingIntent().isPresent()
+                || isActiveOrUnknownPathing(pathingSnapshot)) {
+            log.debug("{} window [{}] skip task tracker prepare: task={} reason=active-pathing-or-combat pathingState={} probeInProgress={} activeIntentPresent={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                    pathingSnapshot != null && pathingSnapshot.isProbeInProgress(),
+                    windowContext.getActivePathingIntent().isPresent());
+            return null;
+        }
         PreparedDialogAction existing = windowContext.getPreparedDialogAction();
         if (existing != null) {
+            if (hasHigherPriorityPreparedAction(existing)) {
+                log.debug("{} window [{}] skip task tracker prepare: task={} reason=higher-priority-prepared operation={} target={} source={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        existing.getOperation(), existing.getTargetKeyword(), existing.getSource());
+                return null;
+            }
             if (!existing.matches(DialogOperation.TASK_TRACKER_PATHING, "wuhuan")) {
                 return null;
             }
-            log.debug("{} window [{}] task tracker prepared action already current; skip background validation: task={} operation={} target={} source={}",
-                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                    existing.getOperation(), existing.getTargetKeyword(), existing.getSource());
-            return existing;
+            if (!existing.verifiedWithin(now, PREPARED_TRACKER_ACTION_MAX_AGE_MS)) {
+                windowContext.clearPreparedDialogAction("stale wuhuan tracker prepared before runner refresh");
+            } else {
+                log.debug("{} window [{}] task tracker prepared action already current; skip background validation: task={} operation={} target={} source={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                        existing.getOperation(), existing.getTargetKeyword(), existing.getSource());
+                return existing;
+            }
         }
 
         long startedAt = System.currentTimeMillis();
-        return taskTrackerPanelService.prepareWuhuanPathingLink("window-task-tracker-prepare:" + taskType.getCode())
-                .map(action -> {
-                    PreparedDialogAction boundAction = action.toBuilder()
-                            .windowId(windowContext.getWindowId())
-                            .hwnd(windowContext.getNativeBinding().getNativeHandle())
-                            .build();
-                    windowContext.updatePreparedDialogAction(boundAction);
-                    publishPreparedActionReady(taskType, boundAction, executionContext,
-                            "task-tracker-prepared");
-                    log.info("{} window [{}] task tracker panel prepared: task={} operation={} click=({}, {}) elapsedMs={}",
-                            executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                            boundAction.getOperation(), boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
-                            Math.max(0L, System.currentTimeMillis() - startedAt));
-                    return boundAction;
-                })
-                .orElse(null);
+        TaskTrackerPrepareOwner prepareOwner = captureTaskTrackerPrepareOwner(taskType, executionContext);
+        if (!isTaskTrackerPrepareOwnerCurrent(prepareOwner, taskType, executionContext)) {
+            log.debug("{} window [{}] skip task tracker prepare: task={} reason=task-owner-or-runner-stopped",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType);
+            return null;
+        }
+        TaskTrackerPanelPrepareResult prepareResult = taskTrackerPanelService.prepareWuhuanPathingLink(
+                "window-task-tracker-prepare:" + taskType.getCode(), true);
+        if (prepareResult == null || (!prepareResult.hasAction() && !prepareResult.hasNegative())) {
+            return null;
+        }
+        WindowPathingSnapshot afterPrepareSnapshot = windowContext.getPathingSnapshot();
+        DialogPreparationRequest afterPrepareRequest = windowContext.getDialogPreparationRequest();
+        PreparedDialogAction afterPrepareExisting = windowContext.getPreparedDialogAction();
+        boolean staleOwner = !isTaskTrackerPrepareOwnerCurrent(prepareOwner, taskType, executionContext);
+        boolean combatActive = isWindowCombatActiveForTrackerPrepare();
+        boolean activeIntentPresent = windowContext.getActivePathingIntent().isPresent();
+        boolean activeOrUnknownPathing = isActiveOrUnknownPathing(afterPrepareSnapshot);
+        if (shouldDiscardTaskTrackerPrepareResultAfterPrepare(
+                staleOwner,
+                combatActive,
+                activeIntentPresent,
+                activeOrUnknownPathing,
+                afterPrepareRequest,
+                afterPrepareExisting)) {
+            String staleReason = staleOwner
+                    ? "task-owner-or-runner-stopped"
+                    : afterPrepareRequest != null
+                    ? "dialog-preparation-request-present"
+                    : "active-pathing-combat-or-priority";
+            log.info("{} window [{}] task tracker panel prepared action discarded as stale: task={} reason={} pathingState={} probeInProgress={} activeIntentPresent={} dialogPreparationRequestPresent={} preparedOperation={} preparedTarget={} elapsedMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    staleReason,
+                    afterPrepareSnapshot == null ? null : afterPrepareSnapshot.getState(),
+                    afterPrepareSnapshot != null && afterPrepareSnapshot.isProbeInProgress(),
+                    activeIntentPresent,
+                    afterPrepareRequest != null,
+                    afterPrepareExisting == null ? null : afterPrepareExisting.getOperation(),
+                    afterPrepareExisting == null ? null : afterPrepareExisting.getTargetKeyword(),
+                    Math.max(0L, System.currentTimeMillis() - startedAt));
+            return null;
+        }
+        PreparedDialogAction action = prepareResult.getPreparedAction();
+        if (action != null) {
+            PreparedDialogAction boundAction = action.toBuilder()
+                    .windowId(windowContext.getWindowId())
+                    .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                    .build();
+            windowContext.clearTaskTrackerPanelNegativeResult("positive wuhuan tracker action prepared");
+            windowContext.updatePreparedDialogAction(boundAction);
+            publishPreparedActionReady(taskType, boundAction, executionContext,
+                    "task-tracker-prepared");
+            log.info("{} window [{}] task tracker panel prepared: task={} operation={} click=({}, {}) trackerPanelRegion={} wuhuanBlockRegion={} elapsedMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    boundAction.getOperation(), boundAction.getAbsoluteX(), boundAction.getAbsoluteY(),
+                    prepareResult.getTrackerPanelRegion() == null ? null : prepareResult.getTrackerPanelRegion().toShortText(),
+                    prepareResult.getWuhuanTrackerBlockRegion() == null ? null : prepareResult.getWuhuanTrackerBlockRegion().toShortText(),
+                    Math.max(0L, System.currentTimeMillis() - startedAt));
+            return boundAction;
+        }
+        TaskTrackerPanelNegativeResult negative = prepareResult.getNegativeResult();
+        if (negative != null) {
+            TaskTrackerPanelNegativeResult boundNegative = negative.toBuilder()
+                    .windowId(windowContext.getWindowId())
+                    .taskType(taskType)
+                    .taskCode("wuhuan")
+                    .observedAtMs(System.currentTimeMillis())
+                    .build();
+            windowContext.updateTaskTrackerPanelNegativeResult(boundNegative);
+            publishTaskTrackerNegativeReady(taskType, boundNegative, executionContext,
+                    "task-tracker-negative");
+            log.info("{} window [{}] task tracker panel negative prepared: task={} status={} reason={} trackerPanelRegion={} wuhuanBlockRegion={} elapsedMs={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                    boundNegative.getStatus(), boundNegative.getReason(),
+                    boundNegative.getTrackerPanelRegion() == null ? null : boundNegative.getTrackerPanelRegion().toShortText(),
+                    boundNegative.getWuhuanTrackerBlockRegion() == null ? null : boundNegative.getWuhuanTrackerBlockRegion().toShortText(),
+                    Math.max(0L, System.currentTimeMillis() - startedAt));
+        }
+        return null;
+    }
+
+    static boolean shouldDiscardTaskTrackerPrepareResultAfterPrepare(boolean staleOwner,
+                                                                     boolean combatActive,
+                                                                     boolean activePathingIntentPresent,
+                                                                     boolean activeOrUnknownPathing,
+                                                                     DialogPreparationRequest afterPrepareRequest,
+                                                                     PreparedDialogAction afterPrepareExisting) {
+        return staleOwner
+                || combatActive
+                || activePathingIntentPresent
+                || activeOrUnknownPathing
+                || afterPrepareRequest != null
+                || hasHigherPriorityPreparedAction(afterPrepareExisting);
+    }
+
+    private TaskTrackerPrepareOwner captureTaskTrackerPrepareOwner(TaskType taskType,
+                                                                   TaskExecutionContext executionContext) {
+        RunningTaskHandle taskHandle = currentTask;
+        return new TaskTrackerPrepareOwner(
+                windowContext.getWindowId(),
+                taskType,
+                executionContext == null ? null : executionContext.getTaskCode(),
+                executionContext == null ? 0L : executionContext.getTaskRunId(),
+                taskHandle,
+                taskHandle == null ? -1 : taskHandle.getTaskIndex());
+    }
+
+    private boolean isTaskTrackerPrepareOwnerCurrent(TaskTrackerPrepareOwner owner,
+                                                     TaskType taskType,
+                                                     TaskExecutionContext executionContext) {
+        if (owner == null || shutdown || Thread.currentThread().isInterrupted()
+                || executionContext == null || executionContext.isStopRequested()) {
+            return false;
+        }
+        if (!Objects.equals(owner.windowId(), windowContext.getWindowId())
+                || owner.taskType() != taskType
+                || !Objects.equals(owner.taskCode(), executionContext.getTaskCode())
+                || owner.taskRunId() != executionContext.getTaskRunId()) {
+            return false;
+        }
+        RunningTaskHandle taskHandle = currentTask;
+        if (taskHandle == null || taskHandle != owner.taskHandle() || !taskHandle.isRunning()) {
+            return false;
+        }
+        return taskHandle.getTaskType() == taskType
+                && taskHandle.getTaskIndex() == owner.taskIndex()
+                && taskHandle.getStopToken() == executionContext.getStopToken();
+    }
+
+    private record TaskTrackerPrepareOwner(String windowId,
+                                           TaskType taskType,
+                                           String taskCode,
+                                           long taskRunId,
+                                           RunningTaskHandle taskHandle,
+                                           int taskIndex) {
+    }
+
+    private boolean isWindowCombatActiveForTrackerPrepare() {
+        return windowContext.getGameState().getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
+    }
+
+    private boolean isActiveOrUnknownPathing(WindowPathingSnapshot snapshot) {
+        if (snapshot == null) {
+            return false;
+        }
+        if (snapshot.isProbeInProgress()) {
+            return true;
+        }
+        WindowPathingState state = snapshot.getState();
+        return state == WindowPathingState.ACTIVE || state == WindowPathingState.UNKNOWN;
+    }
+
+    private static boolean hasHigherPriorityPreparedAction(PreparedDialogAction action) {
+        return action != null && action.getOperation() != DialogOperation.TASK_TRACKER_PATHING;
     }
 
     private boolean hasTaskDialogInterest(TaskType taskType) {
@@ -1243,6 +1680,14 @@ public class WindowTaskRunner {
         return interest.getTaskType() == taskType
                 && interest.getOperations() != null
                 && !interest.getOperations().isEmpty();
+    }
+
+    /** CR232: true when the current interest only allows the local small-ROI template probe. */
+    private boolean isProbeOnlyTaskDialogInterest(TaskType taskType) {
+        WindowDialogInterest interest = windowContext.getDialogInterest().orElse(null);
+        return interest != null
+                && interest.getTaskType() == taskType
+                && interest.isLocalTemplateProbeOnly();
     }
 
     private PreparedDialogAction refreshTaskDialogInterestPreparationSignal(TaskType taskType,
@@ -1281,13 +1726,25 @@ public class WindowTaskRunner {
         }
         boolean traceCr133 = taskType == TaskType.XIULUO_V2
                 && interest.supports(taskType, DialogOperation.XIULUO_ENTER_BATTLE);
+        // CR232: delay gate — the probe may only start at/after probeStartAtMs (accept + 25s).
+        if (!interest.isProbeStartReached(System.currentTimeMillis())) {
+            if (traceCr133) {
+                log.info("{} window [{}] CR232 task dialog prepare checkpoint: stage=skip reason=probe-start-not-reached windowId={} hwnd={} task={} probeStartAtMs={} interestSource={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(),
+                        windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                        taskType, interest.getProbeStartAtMs(), normalizeMessage(interest.getSource()));
+            }
+            return null;
+        }
         Optional<WindowDialogSnapshot> visibleDialogOpt = windowContext.getVisibleDialogSnapshot(
                 WINDOW_DIALOG_VISIBLE_MAX_AGE_MS);
         boolean hasVisibleDialog = visibleDialogOpt.isPresent()
                 && visibleDialogOpt.get().getType() != DialogType.NONE;
         boolean hasProviderOwnedAbsentSignal = interest.getOperations().stream()
                 .anyMatch(this::canPrepareTaskDialogWithoutVisibleSnapshot);
-        if (!hasVisibleDialog && !hasProviderOwnedAbsentSignal) {
+        // CR232: probe-only interest captures its own small ROI and never has a generic dialog
+        // snapshot (generic detection is skipped during active pathing), so it bypasses this gate.
+        if (!hasVisibleDialog && !hasProviderOwnedAbsentSignal && !interest.isLocalTemplateProbeOnly()) {
             if (traceCr133) {
                 log.info("{} window [{}] CR133 task dialog prepare checkpoint: stage=skip reason=no-visible-dialog-snapshot windowId={} hwnd={} task={} interestOperations={} interestSource={}",
                         executionContext.getLogPrefix(), windowContext.getWindowId(),
@@ -1325,18 +1782,103 @@ public class WindowTaskRunner {
             }
             PreparedDialogAction current = windowContext.getPreparedDialogAction();
             if (current != null && interest.supports(taskType, current.getOperation())) {
-                log.debug("{} window [{}] task dialog prepared action already current; skip background validation: task={} operation={} target={} source={}",
-                        executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
-                        current.getOperation(), current.getTargetKeyword(), current.getSource());
-                if (traceCr133) {
-                    log.info("{} window [{}] CR133 task dialog prepare checkpoint: stage=existing-current windowId={} hwnd={} task={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={}",
+                long now = System.currentTimeMillis();
+                long preparedAgeMs = ageMs(now, current.getPreparedAtMs());
+                long verifiedAgeMs = ageMs(now, current.getLastVerifiedAtMs());
+                WindowDialogSnapshot visibleDialog = visibleDialogOpt.orElse(null);
+                WindowPathingSnapshot pathingSnapshot = windowContext.getPathingSnapshot();
+                WindowPathingIntent activeIntent = windowContext.getActivePathingIntent().orElse(null);
+                long stationaryMs = pathingSnapshot == null
+                        ? -1L
+                        : ageMs(now, pathingSnapshot.getLocationChangedAtMs());
+                boolean stale = verifiedAgeMs < 0L || verifiedAgeMs > WINDOW_TASK_DIALOG_PREPARED_STALE_MS;
+                boolean visibleMatch = visibleDialogMatchesPreparedTaskInterest(
+                        taskType, interest, current, visibleDialogOpt);
+                boolean pathingStoppedStationary = isStationaryForStaleTaskDialogReprepare(pathingSnapshot, now);
+                long lastRepublishAtMs = lastTaskDialogStaleRepublishAtMs.get();
+                long cooldownAgeMs = ageMs(now, lastRepublishAtMs);
+                boolean cooldownOpen = cooldownAgeMs < 0L
+                        || cooldownAgeMs >= WINDOW_TASK_DIALOG_STALE_REPUBLISH_COOLDOWN_MS;
+                boolean noPathingEnterBattleReady = isNoPathingEnterBattleReadyForStaleTaskDialogReprepare(
+                        taskType, interest, current, visibleDialog, activeIntent, pathingSnapshot,
+                        stale, visibleMatch, cooldownOpen);
+                long cooldownRemainingMs = cooldownOpen
+                        ? 0L
+                        : Math.max(0L, WINDOW_TASK_DIALOG_STALE_REPUBLISH_COOLDOWN_MS - cooldownAgeMs);
+                if (stale && visibleMatch
+                        && (pathingStoppedStationary || noPathingEnterBattleReady)
+                        && cooldownOpen) {
+                    /*
+                     * CR144: a task turn can be blocked by maintenance long enough for the cached
+                     * click to exceed task freshness. Re-run provider preparation only after the
+                     * same dialog is still visible and pathing evidence says the window is stopped;
+                     * this is not a background fingerprint keepalive.
+                     */
+                    lastTaskDialogStaleRepublishAtMs.set(now);
+                    String reprepareReason = pathingStoppedStationary
+                            ? "stale task dialog prepared action stationary reprepare"
+                            : "stale task dialog prepared action no-pathing enter-battle reprepare";
+                    windowContext.clearPreparedDialogAction(reprepareReason);
+                    log.info("{} window [{}] stale task dialog prepared action reprepare: reason={} windowId={} hwnd={} task={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={} staleMs={} visibleType={} visibleAgeMs={} pathingState={} pathingStoppedStationary={} noPathingEnterBattleReady={} stationaryMs={} cooldownAgeMs={} cooldownRemainingMs={} interestSource={} activeIntentSource={}",
                             executionContext.getLogPrefix(), windowContext.getWindowId(),
+                            reprepareReason,
                             windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
-                            taskType, current.getOperation(), current.getTargetKeyword(), normalizeMessage(current.getSource()),
-                            ageMs(System.currentTimeMillis(), current.getPreparedAtMs()),
-                            ageMs(System.currentTimeMillis(), current.getLastVerifiedAtMs()));
+                            taskType, current.getOperation(), current.getTargetKeyword(),
+                            normalizeMessage(current.getSource()), preparedAgeMs, verifiedAgeMs,
+                            WINDOW_TASK_DIALOG_PREPARED_STALE_MS,
+                            visibleDialog == null ? null : visibleDialog.getType(),
+                            visibleDialog == null ? -1L : ageMs(now, visibleDialog.getDetectedAtMs()),
+                            pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                            pathingStoppedStationary, noPathingEnterBattleReady,
+                            stationaryMs, cooldownAgeMs, cooldownRemainingMs,
+                            normalizeMessage(interest.getSource()),
+                            activeIntent == null ? null : normalizeMessage(activeIntent.getSource()));
+                } else {
+                    String skipReason = !stale
+                            ? "reason=not-stale"
+                            : !visibleMatch
+                            ? "reason=visible-mismatch"
+                            : !cooldownOpen
+                            ? "reason=cooldown"
+                            : !(pathingStoppedStationary || noPathingEnterBattleReady)
+                            ? "reason=moving-or-no-pathing-not-ready"
+                            : "reason=cooldown";
+                    if (stale) {
+                        log.debug("{} window [{}] stale task dialog prepared action retained: {} windowId={} hwnd={} task={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={} staleMs={} visibleType={} visibleAgeMs={} pathingState={} pathingStoppedStationary={} noPathingEnterBattleReady={} stationaryMs={} cooldownAgeMs={} cooldownRemainingMs={} interestSource={} activeIntentSource={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), skipReason,
+                                windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                                taskType, current.getOperation(), current.getTargetKeyword(),
+                                normalizeMessage(current.getSource()), preparedAgeMs, verifiedAgeMs,
+                                WINDOW_TASK_DIALOG_PREPARED_STALE_MS,
+                                visibleDialog == null ? null : visibleDialog.getType(),
+                                visibleDialog == null ? -1L : ageMs(now, visibleDialog.getDetectedAtMs()),
+                                pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                                pathingStoppedStationary, noPathingEnterBattleReady,
+                                stationaryMs, cooldownAgeMs, cooldownRemainingMs,
+                                normalizeMessage(interest.getSource()),
+                                activeIntent == null ? null : normalizeMessage(activeIntent.getSource()));
+                    } else {
+                        log.debug("{} window [{}] task dialog prepared action already current; skip background validation: {} task={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={} visibleType={} pathingState={} pathingStoppedStationary={} noPathingEnterBattleReady={} cooldownRemainingMs={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(), skipReason,
+                                taskType, current.getOperation(), current.getTargetKeyword(),
+                                normalizeMessage(current.getSource()), preparedAgeMs, verifiedAgeMs,
+                                visibleDialog == null ? null : visibleDialog.getType(),
+                                pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                                pathingStoppedStationary, noPathingEnterBattleReady, cooldownRemainingMs);
+                    }
+                    if (traceCr133) {
+                        log.info("{} window [{}] CR133 task dialog prepare checkpoint: stage=existing-current windowId={} hwnd={} task={} operation={} target={} source={} preparedAgeMs={} verifiedAgeMs={} skipReason={} visibleType={} pathingState={} pathingStoppedStationary={} noPathingEnterBattleReady={} stationaryMs={} cooldownRemainingMs={}",
+                                executionContext.getLogPrefix(), windowContext.getWindowId(),
+                                windowContext.getWindowId(), windowContext.getNativeBinding().getNativeHandle(),
+                                taskType, current.getOperation(), current.getTargetKeyword(),
+                                normalizeMessage(current.getSource()), preparedAgeMs, verifiedAgeMs, skipReason,
+                                visibleDialog == null ? null : visibleDialog.getType(),
+                                pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                                pathingStoppedStationary, noPathingEnterBattleReady,
+                                stationaryMs, cooldownRemainingMs);
+                    }
+                    return current;
                 }
-                return current;
             }
         }
 
@@ -1388,6 +1930,24 @@ public class WindowTaskRunner {
                         .windowId(windowContext.getWindowId())
                         .hwnd(windowContext.getNativeBinding().getNativeHandle())
                         .build();
+                /*
+                 * CR253 review P1: the local kanda hit must carry the SAME attempt identity as the
+                 * typed prepared jobs. While the green-chain schedule is open, stamp the current
+                 * attemptId (the green click's pathing intent id, globally unique) so publish,
+                 * consume, and schedule replacement all validate one rule. Outside the green chain
+                 * (e.g. the WAIT_COMBAT re-registration retry) no schedule is open and the action
+                 * stays unstamped with its existing semantics.
+                 */
+                if (taskType == TaskType.XIULUO_V2
+                        && boundAction.getOperation() == DialogOperation.XIULUO_ENTER_BATTLE) {
+                    XiuluoGreenChainSchedule greenChainSchedule =
+                            windowContext.getXiuluoGreenChainSchedule().orElse(null);
+                    if (greenChainSchedule != null) {
+                        boundAction = boundAction.toBuilder()
+                                .intentId(greenChainSchedule.getAttemptId())
+                                .build();
+                    }
+                }
                 windowContext.updatePreparedDialogAction(boundAction);
                 publishPreparedActionReady(taskType, boundAction, executionContext,
                         "task-dialog-interest-prepared");
@@ -1430,6 +1990,85 @@ public class WindowTaskRunner {
                 .isPresent();
     }
 
+    private boolean isStationaryForStaleTaskDialogReprepare(WindowPathingSnapshot snapshot, long nowMs) {
+        if (snapshot == null) {
+            return false;
+        }
+        if (snapshot.isProbeInProgress()) {
+            return false;
+        }
+        WindowPathingState state = snapshot.getState();
+        return state == WindowPathingState.ARRIVED || state == WindowPathingState.STOPPED_AWAY;
+    }
+
+    private boolean isNoPathingEnterBattleReadyForStaleTaskDialogReprepare(TaskType taskType,
+                                                                           WindowDialogInterest interest,
+                                                                           PreparedDialogAction action,
+                                                                           WindowDialogSnapshot visibleDialog,
+                                                                           WindowPathingIntent activeIntent,
+                                                                           WindowPathingSnapshot pathingSnapshot,
+                                                                           boolean stale,
+                                                                           boolean visibleMatch,
+                                                                           boolean cooldownOpen) {
+        if (!stale || !visibleMatch || !cooldownOpen) {
+            return false;
+        }
+        if (activeIntent != null) {
+            return false;
+        }
+        if (pathingSnapshot != null) {
+            if (pathingSnapshot.isProbeInProgress()) {
+                return false;
+            }
+            WindowPathingState state = pathingSnapshot.getState();
+            if (state == WindowPathingState.ACTIVE || state == WindowPathingState.UNKNOWN) {
+                return false;
+            }
+            if (state != WindowPathingState.NONE) {
+                return false;
+            }
+        }
+        if (taskType != TaskType.WUBEI) {
+            return false;
+        }
+        if (action == null || action.getOperation() != DialogOperation.WUBEI_ENTER_BATTLE) {
+            return false;
+        }
+        if (visibleDialog == null || visibleDialog.getType() != DialogType.OPTION) {
+            return false;
+        }
+        if (action.getDialogType() != DialogType.OPTION || action.getDialogType() != visibleDialog.getType()) {
+            return false;
+        }
+        return interest != null && interest.supports(taskType, action.getOperation());
+    }
+
+    private boolean visibleDialogMatchesPreparedTaskInterest(TaskType taskType,
+                                                             WindowDialogInterest interest,
+                                                             PreparedDialogAction action,
+                                                             Optional<WindowDialogSnapshot> visibleDialogOpt) {
+        if (interest == null || action == null || !interest.supports(taskType, action.getOperation())) {
+            return false;
+        }
+        if (visibleDialogOpt.isEmpty()) {
+            return false;
+        }
+        WindowDialogSnapshot visible = visibleDialogOpt.get();
+        if (!Objects.equals(visible.getWindowId(), windowContext.getWindowId())) {
+            return false;
+        }
+        Long currentHwnd = WindowHandleParser.parseHandle(windowContext.getNativeBinding().getNativeHandle());
+        if (visible.getHwnd() != null && currentHwnd != null && !Objects.equals(visible.getHwnd(), currentHwnd)) {
+            return false;
+        }
+        DialogType visibleType = visible.getType();
+        if (visibleType == null || visibleType == DialogType.NONE) {
+            return false;
+        }
+        DialogType preparedType = action.getDialogType();
+        return preparedType != null && preparedType != DialogType.NONE && preparedType == visibleType;
+    }
+
     private boolean canPrepareTaskDialogWithoutVisibleSnapshot(DialogOperation operation) {
         return operation == DialogOperation.WUBEI_PROBE_STORY;
     }
@@ -1463,6 +2102,32 @@ public class WindowTaskRunner {
                     .source(probeSource)
                     .detectedAtMs(detectedAtMs)
                     .build(), "runner-attention-probe");
+            /*
+             * CR255: a confirmed STORY is additionally published as the strongly-typed
+             * STORY_DIALOG_VISIBLE fact. TASK_ATTENTION_REQUIRED stays too broad to drive input;
+             * this event has exactly one meaning ("this window is covered by a confirmed story
+             * dialog") and one consumer contract (one fast story click per sequence, executed by
+             * the input-owning task boundary — never by this observer). OPTION deliberately does
+             * NOT publish it: an unknown option must not be blind-clicked or disguised as a story
+             * blocker; validated options keep flowing through PREPARED_ACTION_READY only. Reuses
+             * the existing attention recency limit so a persisting story republishes (new
+             * sequence) at the same bounded cadence.
+             */
+            if (visibleType == DialogType.STORY) {
+                Optional<WindowReadyEvent> recentStory = windowReadyEventBus.latest(
+                        windowContext.getWindowId(), WindowReadyEventType.STORY_DIALOG_VISIBLE);
+                if (recentStory.isEmpty()
+                        || now - recentStory.get().getCreatedAtMs() >= WINDOW_DIALOG_ATTENTION_RECENT_MS) {
+                    windowReadyEventBus.publish(WindowReadyEvent.builder()
+                            .windowId(windowContext.getWindowId())
+                            .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                            .type(WindowReadyEventType.STORY_DIALOG_VISIBLE)
+                            .taskType(taskType)
+                            .source(probeSource + ":story-confirmed")
+                            .createdAtMs(detectedAtMs)
+                            .build());
+                }
+            }
             Optional<WindowDialogInterest> interestOpt = windowContext.getDialogInterest();
             WindowDialogInterest interest = interestOpt.orElse(null);
             WindowPathingIntent activeIntentAtVisible = windowContext.getActivePathingIntent().orElse(null);
@@ -2020,6 +2685,29 @@ public class WindowTaskRunner {
                 requestAgeMs, intentAgeMs, normalizeMessage(matchedText), absoluteX, absoluteY, elapsedMs);
     }
 
+    private void publishTaskTrackerNegativeReady(TaskType taskType,
+                                                 TaskTrackerPanelNegativeResult negative,
+                                                 TaskExecutionContext executionContext,
+                                                 String reason) {
+        if (negative == null || negative.getStatus() == null) {
+            return;
+        }
+        windowReadyEventBus.publish(WindowReadyEvent.builder()
+                .windowId(windowContext.getWindowId())
+                .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                .type(WindowReadyEventType.TASK_TRACKER_NEGATIVE_READY)
+                .taskType(taskType)
+                .source(reason + ":" + negative.getSource())
+                .operation(DialogOperation.TASK_TRACKER_PATHING)
+                .targetKeyword(negative.getTaskCode())
+                .summary(negative.getStatus() + ":" + negative.getReason())
+                .createdAtMs(System.currentTimeMillis())
+                .build());
+        log.info("{} window [{}] task tracker negative ready published: task={} status={} taskCode={} source={} reason={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
+                negative.getStatus(), negative.getTaskCode(), negative.getSource(), reason);
+    }
+
     private void publishPreparedActionReady(TaskType taskType,
                                             PreparedDialogAction action,
                                             TaskExecutionContext executionContext,
@@ -2205,9 +2893,10 @@ public class WindowTaskRunner {
         }
         logUntargetedDialogAttentionEvidence(taskType, executionContext, intent, locationChanged,
                 stateChanged, probeMs, dialogBlock);
-        publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
         settlePendingTransferChoiceMemory(intent, snapshot, state, executionContext);
-        settlePendingWorldMapRouteResultMemory(intent, snapshot, state, executionContext);
+        settlePendingRouteOutcome(intent, snapshot, state, executionContext);
+        publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
+        maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
         return snapshot;
     }
 
@@ -2287,6 +2976,204 @@ public class WindowTaskRunner {
                 .build());
     }
 
+    /**
+     * CR253 background terminal pipeline: a 修罗 green-chain stop (ARRIVED/STOPPED_AWAY) no longer
+     * wakes the foreground. This watcher-side hook captures the moment, then submits the stop-static
+     * cloud arbitration on the preparation executor. Its only outputs are typed prepared jobs
+     * ({@code XIULUO_ENTER_BATTLE} on a cloud 看打 hit, {@code TRACKER_GREEN_RETRY} on the cloud's
+     * explicit fallback); every other verdict keeps the foreground parked on the local probe.
+     *
+     * @param taskType task currently observed by this runner.
+     * @param executionContext bound execution context for identity stamping and logs.
+     * @param intent pathing intent that produced the terminal observation.
+     * @param state terminal pathing state.
+     * @param stateChanged whether this observation changed the pathing state (same trigger as the
+     *                     PATHING_TERMINAL soft wake).
+     */
+    private void maybeSubmitXiuluoGreenStopStaticArbitration(TaskType taskType,
+                                                             TaskExecutionContext executionContext,
+                                                             WindowPathingIntent intent,
+                                                             WindowPathingState state,
+                                                             boolean stateChanged) {
+        if (taskType != TaskType.XIULUO_V2
+                || !stateChanged
+                || (state != WindowPathingState.ARRIVED && state != WindowPathingState.STOPPED_AWAY)
+                || intent == null
+                || intent.getIntentId() == null
+                || intent.getSource() == null
+                || !intent.getSource().startsWith(XIULUO_TRACKER_SHORTCUT_SOURCE_PREFIX)) {
+            return;
+        }
+        XiuluoGreenChainSchedule schedule = windowContext.getXiuluoGreenChainSchedule().orElse(null);
+        if (schedule == null) {
+            log.info("{} window [{}] xiuluo stop-static arbitration skipped: reason=no-green-chain-schedule intentId={} state={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), intent.getIntentId(), state);
+            return;
+        }
+        if (!intent.getIntentId().equals(schedule.getAttemptId())) {
+            // Round-87 class: a late terminal from a previous attempt must not trigger arbitration.
+            log.info("{} window [{}] xiuluo stale-attempt terminal discarded by background pipeline: snapshotAttempt={} currentAttempt={} state={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    intent.getIntentId(), schedule.getAttemptId(), state);
+            return;
+        }
+        /*
+         * No per-attempt dedupe here on purpose: the stateChanged gate already limits submissions
+         * to real terminal transitions, and CR232's fourth review requires that an un-executed
+         * re-press can be cloud-confirmed AGAIN for the same still-open attempt. Each arbitration
+         * publishes at most one pending job per type, so repeats cannot double-click.
+         */
+        String attemptId = schedule.getAttemptId();
+        log.info("{} window [{}] xiuluo pathing terminal; submit stop static for background cloud enter-battle arbitration: state={} attempt={} round={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(), state, attemptId, schedule.getRound());
+        dialogPreparationExecutor.submit(() ->
+                contextHolder.callWith(windowContext, () ->
+                        taskExecutionContextHolder.callWith(executionContext, () -> {
+                            runXiuluoGreenStopStaticArbitration(taskType, executionContext, schedule, state);
+                            return null;
+                        })));
+    }
+
+    /**
+     * Run one stop-static cloud arbitration for the current green-chain attempt and publish the
+     * resulting typed prepared job. Both the pre-call and pre-publish identity checks are the
+     * background half of the CR253 double invalidation gate.
+     */
+    private void runXiuluoGreenStopStaticArbitration(TaskType taskType,
+                                                     TaskExecutionContext executionContext,
+                                                     XiuluoGreenChainSchedule schedule,
+                                                     WindowPathingState state) {
+        XiuluoGreenChainSchedule current = windowContext.getXiuluoGreenChainSchedule().orElse(null);
+        if (current == null || !current.getAttemptId().equals(schedule.getAttemptId())
+                || current.getTaskRunId() != schedule.getTaskRunId()
+                || current.getRound() != schedule.getRound()) {
+            log.info("{} window [{}] xiuluo stop-static arbitration aborted before capture: reason=schedule-changed submitted=[{}] current=[{}]",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(), schedule.identityText(),
+                    current == null ? null : current.identityText());
+            return;
+        }
+        DialogPolicyPreClickCloudDecision decision;
+        try {
+            decision = dialogService.decideXiuluoEnterBattleStopStatic(
+                    DialogHandleRequest.handleGreenTemplateOption(
+                            "xiuluo-v2:kanda-static:" + schedule.getRound() + ":attempt-" + schedule.getAttemptId(),
+                            XiuluoDialogCatalog.enterBattleSpecs(),
+                            true));
+        } catch (RuntimeException e) {
+            log.warn("{} window [{}] xiuluo stop-static arbitration failed; foreground stays parked on local probe: attempt={} round={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    schedule.getAttemptId(), schedule.getRound(), e);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (decision != null && decision.isCloudExecuted()
+                && decision.getWindowRelativeClickPoint() != null) {
+            PreparedActionJob job = PreparedActionJob.builder()
+                    .type(PreparedActionJobType.XIULUO_ENTER_BATTLE)
+                    .windowId(schedule.getWindowId())
+                    .hwnd(schedule.getHwnd())
+                    .taskRunId(schedule.getTaskRunId())
+                    .round(schedule.getRound())
+                    .attemptId(schedule.getAttemptId())
+                    .windowRelativeX(decision.getWindowRelativeClickPoint().x)
+                    .windowRelativeY(decision.getWindowRelativeClickPoint().y)
+                    .matchedText(decision.getMatchedText())
+                    .reason(decision.getReason())
+                    .source("xiuluo-v2:background-stop-static:cloud-kanda:" + state)
+                    .preparedAtMs(now)
+                    .build();
+            if (windowContext.publishPreparedActionJob(job, "background-stop-static-cloud-hit")) {
+                publishPreparedActionJobReady(taskType, job, "background-stop-static-cloud-hit");
+            }
+            return;
+        }
+        if (decision != null && decision.getStatus() == DialogPolicyPreClickCloudDecision.Status.CLOUD_NO_ACTION) {
+            PreparedActionJob job = PreparedActionJob.builder()
+                    .type(PreparedActionJobType.TRACKER_GREEN_RETRY)
+                    .windowId(schedule.getWindowId())
+                    .hwnd(schedule.getHwnd())
+                    .taskRunId(schedule.getTaskRunId())
+                    .round(schedule.getRound())
+                    .attemptId(schedule.getAttemptId())
+                    .reason(decision.getReason())
+                    .source("xiuluo-v2:background-stop-static:cloud-fallback:" + state)
+                    .preparedAtMs(now)
+                    .build();
+            if (windowContext.publishPreparedActionJob(job, "background-stop-static-cloud-fallback")) {
+                publishPreparedActionJobReady(taskType, job, "background-stop-static-cloud-fallback");
+            }
+            return;
+        }
+        // Capture failure, cloud disabled/unavailable/required-failure, or no decision: publish
+        // nothing. The local kanda probe keeps running and the pre-combat watchdog stays the net.
+        log.info("{} window [{}] xiuluo stop-static arbitration produced no prepared work; keep parked: attempt={} round={} status={} reason={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(),
+                schedule.getAttemptId(), schedule.getRound(),
+                decision == null ? "CAPTURE_OR_SERVICE_UNAVAILABLE" : decision.getStatus(),
+                decision == null ? null : decision.getReason());
+    }
+
+    /**
+     * CR253 background summon-skill due publisher: while the 修罗 leader is parked on the green
+     * chain, the watcher — not the foreground phase — detects the three-skill due state and turns
+     * it into a typed {@code SUMMON_SKILL_CLEANUP} job. The consumer runs the complete maintenance
+     * flow on the task thread and parks again; without this the infinite park would starve the
+     * leader's summon-skill cadence.
+     */
+    private void maybePublishXiuluoSummonSkillCleanupJob(TaskType taskType,
+                                                         TaskExecutionContext executionContext) {
+        if (taskType != TaskType.XIULUO_V2
+                || executionContext == null
+                || "MEMBER".equalsIgnoreCase(executionContext.getWindowRole())) {
+            return;
+        }
+        XiuluoGreenChainSchedule schedule = windowContext.getXiuluoGreenChainSchedule().orElse(null);
+        if (schedule == null
+                || windowContext.peekPreparedActionJob(PreparedActionJobType.SUMMON_SKILL_CLEANUP) != null) {
+            return;
+        }
+        /*
+         * CR253 review P1: no arbitrary republish backoff — whether to publish is decided ONLY by
+         * "the current attempt has no pending job yet" plus the summon subsystem's own cooldown and
+         * unknown-failure retry timing (both inside the read-only due probe). A new attempt that
+         * discarded the previous job therefore republishes on the next tick instead of starving the
+         * already-due leader maintenance.
+         */
+        if (!taskMaintenanceService.isSummonSkillCleanDueForCurrentWindow(executionContext)) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        PreparedActionJob job = PreparedActionJob.builder()
+                .type(PreparedActionJobType.SUMMON_SKILL_CLEANUP)
+                .windowId(schedule.getWindowId())
+                .hwnd(schedule.getHwnd())
+                .taskRunId(schedule.getTaskRunId())
+                .round(schedule.getRound())
+                .attemptId(schedule.getAttemptId())
+                .reason("summon-skill-due")
+                .source("xiuluo-v2:background-summon-due")
+                .preparedAtMs(now)
+                .build();
+        if (windowContext.publishPreparedActionJob(job, "background-summon-skill-due")) {
+            publishPreparedActionJobReady(taskType, job, "background-summon-skill-due");
+        }
+    }
+
+    /**
+     * Soft wake for a freshly published typed prepared job. Like every other ready event this is a
+     * hint only: the parked consumer re-validates the job identity before any input.
+     */
+    private void publishPreparedActionJobReady(TaskType taskType, PreparedActionJob job, String reason) {
+        windowReadyEventBus.publish(WindowReadyEvent.builder()
+                .windowId(windowContext.getWindowId())
+                .hwnd(windowContext.getNativeBinding().getNativeHandle())
+                .type(WindowReadyEventType.PREPARED_ACTION_READY)
+                .taskType(taskType)
+                .source(reason + ":" + job.getType() + ":" + job.getSource())
+                .createdAtMs(System.currentTimeMillis())
+                .build());
+    }
+
     private void settlePendingTransferChoiceMemory(WindowPathingIntent intent,
                                                    WindowPathingSnapshot snapshot,
                                                    WindowPathingState state,
@@ -2339,21 +3226,21 @@ public class WindowTaskRunner {
         }
     }
 
-    private void settlePendingWorldMapRouteResultMemory(WindowPathingIntent intent,
-                                                        WindowPathingSnapshot snapshot,
-                                                        WindowPathingState state,
-                                                        TaskExecutionContext executionContext) {
-        WorldMapRouteResultPendingMemory pending = windowContext.getPendingWorldMapRouteResultMemory();
+    private void settlePendingRouteOutcome(WindowPathingIntent intent,
+                                            WindowPathingSnapshot snapshot,
+                                            WindowPathingState state,
+                                            TaskExecutionContext executionContext) {
+        PendingRouteOutcome pending = windowContext.getPendingRouteOutcome();
         if (pending == null || pending.getTargetMap() == null || pending.getRelativeX() == null
                 || pending.getRelativeY() == null) {
             return;
         }
         String intentId = intent == null ? null : intent.getIntentId();
         if (pending.getIntentId() != null && !Objects.equals(pending.getIntentId(), intentId)) {
-            WorldMapRouteResultPendingMemory consumed = windowContext.consumePendingWorldMapRouteResultMemory();
+            PendingRouteOutcome consumed = windowContext.consumePendingRouteOutcome();
             if (consumed != null) {
-                memoryService.recordWorldMapRouteResultAbandoned(consumed, "intent-replaced");
-                log.info("{} window [{}] abandon pending world-map route memory: routeMode={} source={} pendingIntentId={} currentIntentId={} target={}",
+                reportRouteOutcome(consumed, snapshot, RouteMemoryOutcomeReport.Result.ABANDONED, "intent-replaced");
+                log.info("{} window [{}] abandon pending route outcome: routeMode={} source={} pendingIntentId={} currentIntentId={} target={}",
                         executionContext.getLogPrefix(), windowContext.getWindowId(), consumed.getRouteMode(),
                         consumed.getSource(), consumed.getIntentId(), intentId, consumed.getTargetMap());
             }
@@ -2362,36 +3249,227 @@ public class WindowTaskRunner {
         String canonicalIntentTarget = intent == null ? null : mapNameCanonicalizer.canonicalize(
                 intent.getTargetMapName(), "world-map-route-memory:settlement-intent");
         if (intent == null || !Objects.equals(pending.getTargetMap(), normalizeNullable(canonicalIntentTarget))) {
-            WorldMapRouteResultPendingMemory consumed = windowContext.consumePendingWorldMapRouteResultMemory();
+            PendingRouteOutcome consumed = windowContext.consumePendingRouteOutcome();
             if (consumed != null) {
-                memoryService.recordWorldMapRouteResultAbandoned(consumed, "target-replaced");
-                log.info("{} window [{}] abandon pending world-map route memory: routeMode={} source={} pendingTarget={} intentTarget={}",
+                reportRouteOutcome(consumed, snapshot, RouteMemoryOutcomeReport.Result.ABANDONED, "target-replaced");
+                log.info("{} window [{}] abandon pending route outcome: routeMode={} source={} pendingTarget={} intentTarget={}",
                         executionContext.getLogPrefix(), windowContext.getWindowId(), consumed.getRouteMode(), consumed.getSource(),
                         consumed.getTargetMap(), intent == null ? null : intent.getTargetMapName());
             }
             return;
         }
         if (state == WindowPathingState.ARRIVED) {
-            WorldMapRouteResultPendingMemory consumed = windowContext.consumePendingWorldMapRouteResultMemory();
+            PendingRouteOutcome consumed = windowContext.consumePendingRouteOutcome();
             if (consumed == null) {
                 return;
             }
-            memoryService.recordWorldMapRouteResultSuccess(consumed);
-            log.info("{} window [{}] confirm pending world-map route memory: routeMode={} source={} target={} current={}({}, {}) ageMs={}",
+            reportRouteOutcome(consumed, snapshot, RouteMemoryOutcomeReport.Result.SUCCESS,
+                    "watcher-arrived");
+            log.info("{} window [{}] confirm pending route outcome: routeMode={} source={} target={} current={}({}, {}) ageMs={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), consumed.getRouteMode(), consumed.getSource(),
                     consumed.getTargetMap(), snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
                     Math.max(0L, System.currentTimeMillis() - consumed.getCreatedAtMs()));
         } else if (state == WindowPathingState.STOPPED_AWAY) {
-            WorldMapRouteResultPendingMemory consumed = windowContext.consumePendingWorldMapRouteResultMemory();
+            PendingRouteOutcome consumed = windowContext.consumePendingRouteOutcome();
             if (consumed == null) {
                 return;
             }
-            memoryService.recordWorldMapRouteResultFailure(consumed);
-            log.warn("{} window [{}] reject pending world-map route memory: routeMode={} source={} target={} current={}({}, {}) ageMs={}",
+            reportRouteOutcome(consumed, snapshot, RouteMemoryOutcomeReport.Result.FAILURE,
+                    "watcher-stopped-away");
+            log.warn("{} window [{}] reject pending route outcome: routeMode={} source={} target={} current={}({}, {}) ageMs={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), consumed.getRouteMode(), consumed.getSource(),
                     consumed.getTargetMap(), snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
                     Math.max(0L, System.currentTimeMillis() - consumed.getCreatedAtMs()));
         }
+    }
+
+    /**
+     * Runner-only settlement for local lifecycle boundaries that superseded a cloud route decision.
+     * Runtime contexts queue these records but never issue HTTP themselves.
+     */
+    private void settleQueuedRouteOutcomeAbandonments(TaskExecutionContext executionContext) {
+        WindowRuntimeContext.PendingRouteOutcomeAbandonment abandonment;
+        while ((abandonment = windowContext.pollPendingRouteOutcomeAbandonment()) != null) {
+            PendingRouteOutcome pending = abandonment.outcome();
+            reportRouteOutcome(pending, null, RouteMemoryOutcomeReport.Result.ABANDONED,
+                    normalizeNullable(abandonment.reason()) == null ? "runtime-abandoned" : abandonment.reason());
+            log.info("{} window [{}] settle queued route outcome abandonment: intentId={} target={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    pending == null ? null : pending.getIntentId(), pending == null ? null : pending.getTargetMap(),
+                    abandonment.reason());
+        }
+    }
+
+    /**
+     * Runner-only replacement boundary. The prior cloud decision is reported as ABANDONED before
+     * the next route outcome occupies the live runtime slot.
+     */
+    private void settleQueuedRouteOutcomeReplacements(TaskExecutionContext executionContext) {
+        WindowRuntimeContext.PendingRouteOutcomeReplacement replacement;
+        while ((replacement = windowContext.pollPendingRouteOutcomeReplacement()) != null) {
+            PendingRouteOutcome previous = windowContext.getPendingRouteOutcome();
+            if (previous != null) {
+                reportRouteOutcome(previous, null, RouteMemoryOutcomeReport.Result.ABANDONED,
+                        normalizeNullable(replacement.reason()) == null
+                                ? "route-outcome-replaced"
+                                : replacement.reason());
+                windowContext.consumePendingRouteOutcome();
+                log.info("{} window [{}] settle route outcome replacement: previousIntentId={} previousTarget={} reason={}",
+                        executionContext.getLogPrefix(), windowContext.getWindowId(),
+                        previous.getIntentId(), previous.getTargetMap(), replacement.reason());
+            }
+            windowContext.updatePendingRouteOutcome(replacement.outcome());
+            log.info("{} window [{}] install replacement route outcome: intentId={} target={} reason={}",
+                    executionContext.getLogPrefix(), windowContext.getWindowId(),
+                    replacement.outcome().getIntentId(), replacement.outcome().getTargetMap(), replacement.reason());
+        }
+    }
+
+    /**
+     * A task may clear its pathing signal after consuming a terminal state. If it cleared before
+     * the watcher could own settlement, the runner turns that unmatched live outcome into ABANDONED.
+     */
+    private void settleOrphanedRouteOutcome(WindowPathingIntent activeIntent,
+                                             TaskExecutionContext executionContext) {
+        PendingRouteOutcome pending = windowContext.getPendingRouteOutcome();
+        if (pending == null || activeIntent != null) {
+            return;
+        }
+        PendingRouteOutcome consumed = windowContext.consumePendingRouteOutcome();
+        if (consumed == null) {
+            return;
+        }
+        reportRouteOutcome(consumed, null, RouteMemoryOutcomeReport.Result.ABANDONED,
+                "pathing-cleared-before-runner-settlement");
+        log.info("{} window [{}] settle orphaned route outcome as abandoned: intentId={} target={}",
+                executionContext.getLogPrefix(), windowContext.getWindowId(),
+                consumed.getIntentId(), consumed.getTargetMap());
+    }
+
+    private void reportRouteOutcome(PendingRouteOutcome pending,
+                                    WindowPathingSnapshot snapshot,
+                                    RouteMemoryOutcomeReport.Result result,
+                                    String reason) {
+        if (pending == null || result == null) {
+            return;
+        }
+        RouteMemoryOutcomeReport.Result effectiveResult = result;
+        if (!hasText(pending.getRouteDecisionId())) {
+            if (result == RouteMemoryOutcomeReport.Result.SUCCESS && !pending.isUsedMemory()) {
+                effectiveResult = RouteMemoryOutcomeReport.Result.LEARN_CANDIDATE;
+            } else {
+                return;
+            }
+        }
+        RouteMemoryOutcomeReport report = RouteMemoryOutcomeReport.builder()
+                .routeDecisionId(pending.getRouteDecisionId())
+                .intentId(pending.getIntentId())
+                .fromMap(pending.getFromMap())
+                .targetMap(pending.getTargetMap())
+                .routeMode(pending.getRouteMode() == null ? null : pending.getRouteMode().name())
+                .clickX(pending.getRelativeX())
+                .clickY(pending.getRelativeY())
+                .observedMap(snapshot == null ? null : snapshot.getCurrentMapName())
+                .observedX(snapshot == null ? null : snapshot.getCurrentX())
+                .observedY(snapshot == null ? null : snapshot.getCurrentY())
+                .result(effectiveResult)
+                .elapsedMs(Math.max(0L, System.currentTimeMillis() - pending.getCreatedAtMs()))
+                .reason(reason)
+                .source(pending.getSource())
+                .build();
+        submitRouteOutcomeReport(report, "settlement");
+    }
+
+    /**
+     * Submit one terminal route outcome. Transport failures remain only in this runner's memory so
+     * a watcher tick can retry them without rebuilding the deleted local route-memory store.
+     */
+    private void submitRouteOutcomeReport(RouteMemoryOutcomeReport report, String source) {
+        submitRouteOutcomeReport(report, source, 0);
+    }
+
+    private void submitRouteOutcomeReport(RouteMemoryOutcomeReport report, String source, int priorAttempts) {
+        if (report == null) {
+            return;
+        }
+        String fallbackKey = routeOutcomeIdempotencyKey(report);
+        RouteMemoryOutcomeIngestResult ingest;
+        try {
+            ingest = routeCloudDecisionService.reportRouteMemoryOutcome(report);
+        } catch (RuntimeException e) {
+            enqueueRouteOutcomeDelivery(fallbackKey, report, priorAttempts,
+                    "client exception: " + e.getClass().getSimpleName());
+            log.warn("cloud route-memory outcome delivery failed: windowId={} key={} source={} reason={}",
+                    windowContext.getWindowId(), fallbackKey, source, e.toString());
+            return;
+        }
+        String key = ingest == null || !hasText(ingest.getIdempotencyKey())
+                ? fallbackKey
+                : ingest.getIdempotencyKey();
+        RouteMemoryOutcomeIngestResult.Status status = ingest == null ? null : ingest.getStatus();
+        if (status == RouteMemoryOutcomeIngestResult.Status.SUBMITTED
+                || status == RouteMemoryOutcomeIngestResult.Status.DUPLICATE_SKIPPED) {
+            pendingRouteOutcomeDeliveries.remove(key);
+        } else if (status == RouteMemoryOutcomeIngestResult.Status.FAILED || status == null) {
+            enqueueRouteOutcomeDelivery(key, report, priorAttempts,
+                    ingest == null ? "missing ingest result" : ingest.getReason());
+        } else {
+            // SKIPPED covers missing decision/configuration and must never become an infinite retry.
+            pendingRouteOutcomeDeliveries.remove(key);
+        }
+        log.info("cloud route-memory outcome report: windowId={} routeDecisionId={} intentId={} fromMap={} targetMap={} routeMode={} result={} ingestStatus={} reason={} source={}",
+                windowContext.getWindowId(), report.getRouteDecisionId(), report.getIntentId(), report.getFromMap(),
+                report.getTargetMap(), report.getRouteMode(), report.getResult(), status,
+                ingest == null ? "missing ingest result" : ingest.getReason(), source);
+    }
+
+    private void enqueueRouteOutcomeDelivery(String key,
+                                             RouteMemoryOutcomeReport report,
+                                             int priorAttempts,
+                                             String reason) {
+        long now = System.currentTimeMillis();
+        pendingRouteOutcomeDeliveries.compute(key, (ignored, existing) -> {
+            int attempts = Math.max(priorAttempts + 1, existing == null ? 1 : existing.attempts() + 1);
+            return new PendingRouteOutcomeDelivery(report, attempts,
+                    now + routeOutcomeRetryDelayMs(attempts), reason);
+        });
+        PendingRouteOutcomeDelivery queued = pendingRouteOutcomeDeliveries.get(key);
+        log.warn("cloud route-memory outcome queued for in-memory retry: windowId={} key={} attempts={} nextRetryMs={} reason={}",
+                windowContext.getWindowId(), key, queued == null ? null : queued.attempts(),
+                queued == null ? null : queued.nextRetryAtMs(), reason);
+    }
+
+    private void retryPendingRouteOutcomeDeliveries(boolean force, String source) {
+        long now = System.currentTimeMillis();
+        pendingRouteOutcomeDeliveries.forEach((key, delivery) -> {
+            if (!force && delivery.nextRetryAtMs() > now) {
+                return;
+            }
+            if (pendingRouteOutcomeDeliveries.remove(key, delivery)) {
+                submitRouteOutcomeReport(delivery.report(), source + ":retry-" + delivery.attempts(), delivery.attempts());
+            }
+        });
+    }
+
+    private long routeOutcomeRetryDelayMs(int attempts) {
+        long delayMs = ROUTE_OUTCOME_RETRY_BASE_DELAY_MS;
+        for (int attempt = 1; attempt < attempts && delayMs < ROUTE_OUTCOME_RETRY_MAX_DELAY_MS; attempt++) {
+            delayMs = Math.min(ROUTE_OUTCOME_RETRY_MAX_DELAY_MS, delayMs * 2L);
+        }
+        return delayMs;
+    }
+
+    private String routeOutcomeIdempotencyKey(RouteMemoryOutcomeReport report) {
+        return routeOutcomeIdempotencyPart(report.getRouteDecisionId())
+                + "|" + routeOutcomeIdempotencyPart(report.getIntentId())
+                + "|" + routeOutcomeIdempotencyPart(report.getFromMap())
+                + "|" + routeOutcomeIdempotencyPart(report.getTargetMap())
+                + "|" + routeOutcomeIdempotencyPart(report.getRouteMode())
+                + "|" + routeOutcomeIdempotencyPart(report.getResult() == null ? null : report.getResult().name());
+    }
+
+    private String routeOutcomeIdempotencyPart(String value) {
+        return value == null ? "" : value;
     }
 
     private WindowPathingSnapshot updateUnknownPathing(TaskType taskType,
@@ -2436,8 +3514,9 @@ public class WindowTaskRunner {
                 .build();
         windowContext.updatePathingSnapshot(snapshot);
         boolean stateChanged = previous == null || state != previous.getState();
+        settlePendingRouteOutcome(intent, snapshot, state, executionContext);
         publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
-        settlePendingWorldMapRouteResultMemory(intent, snapshot, state, executionContext);
+        maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
         long probeMs = Math.max(0L, now - startedAt);
         if (state == WindowPathingState.STOPPED_AWAY || probeMs >= WINDOW_PATHING_SLOW_PROBE_LOG_MS) {
             log.info("{} window [{}] pathing watcher unknown probe: task={} state={} source={} reason={} probeMs={} dialogBlocking={} dialogAttentionOnly={} dialogReason={} dialogType={} dialogPhase={} dialogOperation={} dialogTarget={}",
@@ -2463,6 +3542,25 @@ public class WindowTaskRunner {
         MapCoordinate coordinate = location.coordinate();
         if (intent.getType() != WindowPathingIntentType.UNTARGETED_TRACKER
                 && hasArrived(intent, location.mapName(), coordinate)) {
+            /*
+             * CR142: a coordinate movement intent enters the tolerance box before the character
+             * fully stops. Only publish ARRIVED immediately when there is no observed movement for
+             * this intent; otherwise require a short stationary window so downstream NPC/dialog
+             * clicks do not start while the role is still sliding into place.
+             */
+            if (intent.getTargetX() != null
+                    && intent.getTargetY() != null
+                    && previous != null
+                    && locationChanged) {
+                return WindowPathingState.ACTIVE;
+            }
+            if (intent.getTargetX() != null
+                    && intent.getTargetY() != null
+                    && previous != null
+                    && locationChangedAtMs > 0L
+                    && now - locationChangedAtMs < WINDOW_PATHING_ARRIVAL_STATIONARY_MS) {
+                return WindowPathingState.ACTIVE;
+            }
             return WindowPathingState.ARRIVED;
         }
         if (locationChanged) {
@@ -2636,7 +3734,9 @@ public class WindowTaskRunner {
             return requestedTaskType;
         }
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped before team role detection");
-        TeamRoleStatus liveRole = teamRoleDetectionService.detectCurrentRole(preflightContext);
+        TeamRoleDetectionService.TeamRoleDetectionResult liveDetection =
+                teamRoleDetectionService.detectCurrentRoleWithEvidence(preflightContext);
+        TeamRoleStatus liveRole = liveDetection.role();
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped during team role detection");
         TeamRoleStatus assignmentRole = liveRole;
         if ((assignmentRole == null || assignmentRole.isUnknown()) && windowContext.getRole() != null) {
@@ -2649,6 +3749,54 @@ public class WindowTaskRunner {
             }
         }
         syncWindowRole(liveRole);
+        TeamRoleDetectionService.TeamTooltipGroupEvidence tooltipEvidence =
+                liveDetection.tooltipGroupEvidence();
+        if (tooltipEvidence != null
+                && liveRole != null
+                && liveRole.isMember()
+                && !preflightContext.hasLocalTeamSession()) {
+            TaskMaintenanceService.LocalTeamSessionAttachResult attachResult =
+                    taskMaintenanceService.attachExistingLocalTeamSessionForMember(
+                            windowContext.getWindowId(),
+                            tooltipEvidence.currentPlayerId(),
+                            tooltipEvidence.groupHash(),
+                            tooltipEvidence.leaderPlayerId(),
+                            liveRole.name(),
+                            "runner-role-preflight:late-member");
+            if (attachResult.status() == TaskMaintenanceService.LocalTeamSessionAttachStatus.ATTACHED) {
+                activeLocalTeamSessionKey = attachResult.sessionKey();
+                activeLocalLeaderWindowId = attachResult.leaderWindowId();
+                activeLocalLeaderPresent = true;
+                preflightContext = buildExecutionContext(
+                        requestedTaskType,
+                        preflightContext.getStopToken(),
+                        preflightContext.getPauseToken(),
+                        preflightContext.getStartupMode());
+                log.info("{} window [{}] late member attached to existing local-team session: requested={} session={} leaderWindow={} leaderPlayerId={} currentPlayerId={} groupHash={}",
+                        preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType,
+                        attachResult.sessionKey(), attachResult.leaderWindowId(),
+                        tooltipEvidence.leaderPlayerId(), tooltipEvidence.currentPlayerId(),
+                        tooltipEvidence.groupHash());
+            } else if (attachResult.status() == TaskMaintenanceService.LocalTeamSessionAttachStatus.AMBIGUOUS_MATCH) {
+                throw new IllegalStateException("late member local-team session ambiguous: leaderPlayerId="
+                        + tooltipEvidence.leaderPlayerId() + ", windowId=" + windowContext.getWindowId());
+            } else {
+                log.warn("{} window [{}] late member has no existing local-team session attachment: requested={} status={} leaderPlayerId={} currentPlayerId={} groupHash={}; continue as standalone auto-battle only after explicit warning",
+                        preflightContext.getLogPrefix(), windowContext.getWindowId(), requestedTaskType,
+                        attachResult.status(), tooltipEvidence.leaderPlayerId(),
+                        tooltipEvidence.currentPlayerId(), tooltipEvidence.groupHash());
+            }
+        }
+        if (tooltipEvidence != null) {
+            taskMaintenanceService.recordLocalTeamTooltipGroup(
+                    preflightContext,
+                    windowContext.getWindowId(),
+                    tooltipEvidence.currentPlayerId(),
+                    tooltipEvidence.groupHash(),
+                    tooltipEvidence.leaderPlayerId(),
+                    liveRole == null ? null : liveRole.name(),
+                    "runner-role-preflight");
+        }
         taskMaintenanceService.markLocalTeamWindowRoleDetected(
                 preflightContext,
                 windowContext.getWindowId(),
@@ -2816,8 +3964,187 @@ public class WindowTaskRunner {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private static long ageMs(long nowMs, long timestampMs) {
         return timestampMs <= 0L ? -1L : Math.max(0L, nowMs - timestampMs);
+    }
+
+    private record PostCombatIdleDecision(boolean publish,
+                                          long lastCombatExitAtMs,
+                                          long elapsedMs,
+                                          String summary) {
+
+        private static PostCombatIdleDecision no() {
+            return new PostCombatIdleDecision(false, 0L, 0L, null);
+        }
+    }
+
+    /** Runtime-only cloud terminal delivery state. It is intentionally discarded on process exit. */
+    private record PendingRouteOutcomeDelivery(RouteMemoryOutcomeReport report,
+                                               int attempts,
+                                               long nextRetryAtMs,
+                                               String lastFailureReason) {
+    }
+
+    private static class PostCombatIdleTracker {
+        private long lastCombatExitAtMs;
+        private long idleStartedAtMs;
+        private long pausedAccumulatedMs;
+        private long pauseStartedAtMs;
+        private long lastLocationChangedAtMs;
+        private String lastLocationSignature;
+        private boolean timeoutPublished;
+
+        private void onCombatTick(AutoCombatService.TickResult oldTick,
+                                  AutoCombatService.TickResult newTick,
+                                  long nowMs) {
+            if (newTick == AutoCombatService.TickResult.IN_COMBAT) {
+                reset();
+                return;
+            }
+            if (oldTick == AutoCombatService.TickResult.IN_COMBAT
+                    && newTick != AutoCombatService.TickResult.IN_COMBAT) {
+                lastCombatExitAtMs = nowMs;
+                idleStartedAtMs = nowMs;
+                pausedAccumulatedMs = 0L;
+                pauseStartedAtMs = 0L;
+                lastLocationChangedAtMs = nowMs;
+                lastLocationSignature = null;
+                timeoutPublished = false;
+            }
+        }
+
+        private void onPauseTick(long nowMs) {
+            if (lastCombatExitAtMs <= 0L || pauseStartedAtMs > 0L) {
+                return;
+            }
+            pauseStartedAtMs = nowMs;
+        }
+
+        private PostCombatIdleDecision evaluate(long nowMs,
+                                                long timeoutMs,
+                                                WindowPathingSnapshot pathingSnapshot,
+                                                PreparedDialogAction preparedAction,
+                                                DialogPreparationStatus dialogStatus,
+                                                WindowDialogSnapshot visibleDialog) {
+            if (lastCombatExitAtMs <= 0L) {
+                return PostCombatIdleDecision.no();
+            }
+            resumePauseIfNeeded(nowMs);
+            String locationSignature = locationSignature(pathingSnapshot);
+            boolean locationChanged = lastLocationSignature == null
+                    || !Objects.equals(lastLocationSignature, locationSignature)
+                    || (pathingSnapshot != null
+                            && pathingSnapshot.getLocationChangedAtMs() > lastLocationChangedAtMs);
+            if (locationChanged) {
+                lastLocationSignature = locationSignature;
+                lastLocationChangedAtMs = pathingSnapshot == null
+                        ? nowMs
+                        : Math.max(nowMs, pathingSnapshot.getLocationChangedAtMs());
+                resetIdleTimer(nowMs);
+                return PostCombatIdleDecision.no();
+            }
+
+            boolean activePathing = isActivePathing(pathingSnapshot);
+            boolean freshPreparedAction = isFreshPreparedAction(nowMs, preparedAction);
+            boolean dialogProgress = isDialogProgress(nowMs, dialogStatus, visibleDialog);
+            if (activePathing || freshPreparedAction || dialogProgress) {
+                resetIdleTimer(nowMs);
+                return PostCombatIdleDecision.no();
+            }
+
+            long elapsedMs = Math.max(0L, nowMs - idleStartedAtMs - pausedAccumulatedMs);
+            if (elapsedMs < timeoutMs || timeoutPublished) {
+                return PostCombatIdleDecision.no();
+            }
+            timeoutPublished = true;
+            String summary = "location=" + locationSignature
+                    + ", stationaryMs=" + elapsedMs
+                    + ", lastLocationChangedAtMs=" + lastLocationChangedAtMs
+                    + ", pathingState=" + (pathingSnapshot == null ? null : pathingSnapshot.getState())
+                    + ", activePathing=" + activePathing
+                    + ", freshPreparedAction=" + freshPreparedAction
+                    + ", dialogProgress=" + dialogProgress
+                    + ", pausedAccumulatedMs=" + pausedAccumulatedMs;
+            return new PostCombatIdleDecision(true, lastCombatExitAtMs, elapsedMs, summary);
+        }
+
+        private void resetIdleTimer(long nowMs) {
+            idleStartedAtMs = nowMs;
+            pausedAccumulatedMs = 0L;
+            pauseStartedAtMs = 0L;
+            timeoutPublished = false;
+        }
+
+        private void resumePauseIfNeeded(long nowMs) {
+            if (pauseStartedAtMs <= 0L) {
+                return;
+            }
+            pausedAccumulatedMs += Math.max(0L, nowMs - pauseStartedAtMs);
+            pauseStartedAtMs = 0L;
+        }
+
+        private boolean isActivePathing(WindowPathingSnapshot snapshot) {
+            if (snapshot == null) {
+                return false;
+            }
+            return snapshot.isProbeInProgress()
+                    || snapshot.getState() == WindowPathingState.ACTIVE
+                    || snapshot.getState() == WindowPathingState.UNKNOWN;
+        }
+
+        private boolean isFreshPreparedAction(long nowMs, PreparedDialogAction action) {
+            if (action == null) {
+                return false;
+            }
+            long lastVerifiedAtMs = action.getLastVerifiedAtMs() > 0L
+                    ? action.getLastVerifiedAtMs()
+                    : action.getPreparedAtMs();
+            return lastVerifiedAtMs > 0L
+                    && nowMs - lastVerifiedAtMs <= WINDOW_DIALOG_VISIBLE_MAX_AGE_MS;
+        }
+
+        private boolean isDialogProgress(long nowMs,
+                                         DialogPreparationStatus status,
+                                         WindowDialogSnapshot visibleDialog) {
+            if (status != null
+                    && (status.getPhase() == DialogPreparationPhase.REQUESTED
+                            || status.getPhase() == DialogPreparationPhase.PREPARING
+                            || status.getPhase() == DialogPreparationPhase.READY)) {
+                return true;
+            }
+            return visibleDialog != null
+                    && visibleDialog.getType() != null
+                    && visibleDialog.getType() != DialogType.NONE
+                    && visibleDialog.getDetectedAtMs() > 0L
+                    && nowMs - visibleDialog.getDetectedAtMs() <= WINDOW_DIALOG_VISIBLE_MAX_AGE_MS;
+        }
+
+        private String locationSignature(WindowPathingSnapshot snapshot) {
+            if (snapshot == null) {
+                return "no-pathing-snapshot";
+            }
+            return normalizeSignaturePart(snapshot.getCurrentMapName())
+                    + ":" + snapshot.getCurrentX()
+                    + "," + snapshot.getCurrentY();
+        }
+
+        private String normalizeSignaturePart(String value) {
+            return value == null || value.isBlank() ? "unknown-map" : value.trim();
+        }
+
+        private void reset() {
+            lastCombatExitAtMs = 0L;
+            idleStartedAtMs = 0L;
+            pausedAccumulatedMs = 0L;
+            pauseStartedAtMs = 0L;
+            lastLocationChangedAtMs = 0L;
+            lastLocationSignature = null;
+            timeoutPublished = false;
+        }
     }
 
     private record PathingDialogBlock(boolean blocking,

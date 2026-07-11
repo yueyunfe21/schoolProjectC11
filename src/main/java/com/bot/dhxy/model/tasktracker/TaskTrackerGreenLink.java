@@ -16,6 +16,7 @@ import java.awt.Point;
  * @param targetMapName map name parsed from this green link text, or blank when not recognized.
  * @param targetMapScore confidence-like diagnostic score for {@code targetMapName}.
  * @param targetMapDebugPath optional debug image used for map-name OCR.
+ * @param sourceType reader that produced this clickable link.
  */
 @Value
 @Builder
@@ -28,6 +29,8 @@ public class TaskTrackerGreenLink {
     String targetMapName;
     double targetMapScore;
     String targetMapDebugPath;
+    @Builder.Default
+    TaskTrackerPanelSourceType sourceType = TaskTrackerPanelSourceType.LOCAL;
 
     public int width() {
         return maxX - minX + 1;

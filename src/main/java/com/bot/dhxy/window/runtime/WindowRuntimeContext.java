@@ -5,10 +5,15 @@ import com.bot.dhxy.model.dialog.DialogPreparationRequest;
 import com.bot.dhxy.model.dialog.DialogPreparationPhase;
 import com.bot.dhxy.model.dialog.DialogPreparationStatus;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.model.job.PreparedActionJob;
+import com.bot.dhxy.model.job.PreparedActionJobType;
+import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.model.TaskRunResult;
 import com.bot.dhxy.model.navigation.PendingTransferChoiceMemory;
-import com.bot.dhxy.model.navigation.WorldMapRouteResultPendingMemory;
+import com.bot.dhxy.model.navigation.PendingRouteOutcome;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelCacheEntry;
+import com.bot.dhxy.model.tasktracker.TaskTrackerPanelNegativeResult;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.task.model.TaskType;
@@ -27,8 +32,12 @@ import com.bot.dhxy.tools.GameStateUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -69,12 +78,26 @@ public class WindowRuntimeContext {
     private final AtomicLong observerWakeSeq = new AtomicLong();
     private final AtomicReference<DialogPreparationRequest> dialogPreparationRequest = new AtomicReference<>();
     private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
+    // CR253: 修罗 green-chain typed prepared jobs plus the attempt identity they are gated on.
+    private final AtomicReference<XiuluoGreenChainSchedule> xiuluoGreenChainSchedule = new AtomicReference<>();
+    private final ConcurrentHashMap<PreparedActionJobType, PreparedActionJob> preparedActionJobs =
+            new ConcurrentHashMap<>();
     private final AtomicReference<PendingTransferChoiceMemory> pendingTransferChoiceMemory = new AtomicReference<>();
-    private final AtomicReference<WorldMapRouteResultPendingMemory> pendingWorldMapRouteResultMemory =
+    private final AtomicReference<PendingRouteOutcome> pendingRouteOutcome =
             new AtomicReference<>();
+    private final ConcurrentLinkedQueue<PendingRouteOutcomeAbandonment> pendingRouteOutcomeAbandonments =
+            new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<PendingRouteOutcomeReplacement> pendingRouteOutcomeReplacements =
+            new ConcurrentLinkedQueue<>();
+    private final AtomicReference<TaskTrackerPanelCacheEntry> taskTrackerPanelCache = new AtomicReference<>();
+    private final AtomicReference<TaskTrackerPanelNegativeResult> taskTrackerPanelNegativeResult =
+            new AtomicReference<>();
+    private final AtomicLong taskTrackerPanelNegativeSequence = new AtomicLong();
     private final AtomicReference<String> pendingSmartClickEvidenceProofToken = new AtomicReference<>();
     private final AtomicReference<String> leftTopStatusSwitchClosePending = new AtomicReference<>();
     private final AtomicReference<String> taskQueueStartupPreparationDone = new AtomicReference<>();
+    private final AtomicReference<TaskQueueStartupUiCleanupProbe> taskQueueStartupUiCleanupProbe =
+            new AtomicReference<>();
     private final AtomicReference<GameStateUtil.FlyingState> taskQueueStartupFlyingState = new AtomicReference<>();
     private final AtomicReference<String> taskQueueStartupFlyingStateSource = new AtomicReference<>();
     private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
@@ -252,8 +275,172 @@ public class WindowRuntimeContext {
 
     public String getPendingSmartClickEvidenceProofToken() { return pendingSmartClickEvidenceProofToken.get(); }
 
-    public WorldMapRouteResultPendingMemory getPendingWorldMapRouteResultMemory() {
-        return pendingWorldMapRouteResultMemory.get();
+    public PendingRouteOutcome getPendingRouteOutcome() {
+        return pendingRouteOutcome.get();
+    }
+
+    public TaskTrackerPanelCacheEntry getTaskTrackerPanelCache() {
+        return taskTrackerPanelCache.get();
+    }
+
+    public TaskTrackerPanelNegativeResult getTaskTrackerPanelNegativeResult() {
+        return taskTrackerPanelNegativeResult.get();
+    }
+
+    /**
+     * Store the latest successful tracker-panel parse for this runtime only.
+     *
+     * @param entry window-relative task-tracker cache entry; null clears the cache.
+     */
+    public void updateTaskTrackerPanelCache(TaskTrackerPanelCacheEntry entry) {
+        taskTrackerPanelCache.set(entry);
+    }
+
+    /**
+     * Clear the task-tracker panel cache when the runtime/window identity no longer owns it.
+     *
+     * @param reason diagnostic reason written to logs; nullable.
+     */
+    public void clearTaskTrackerPanelCache(String reason) {
+        TaskTrackerPanelCacheEntry cleared = taskTrackerPanelCache.getAndSet(null);
+        if (cleared != null) {
+            log.info("[task-tracker cache] cleared: windowId={} taskCode={} source={} reason={}",
+                    windowId, cleared.getTaskCode(), cleared.getSource(), normalize(reason));
+        }
+    }
+
+    /**
+     * Store the latest Runner-owned tracker negative for this runtime.
+     *
+     * @param result fresh tracker no-action result; null clears the current negative.
+     */
+    public void updateTaskTrackerPanelNegativeResult(TaskTrackerPanelNegativeResult result) {
+        if (result == null) {
+            clearTaskTrackerPanelNegativeResult("null tracker negative");
+            return;
+        }
+        long now = System.currentTimeMillis();
+        TaskTrackerPanelNegativeResult stored = result.toBuilder()
+                .windowId(windowId)
+                .observedAtMs(result.getObservedAtMs() > 0L ? result.getObservedAtMs() : now)
+                .sequence(taskTrackerPanelNegativeSequence.incrementAndGet())
+                .build();
+        taskTrackerPanelNegativeResult.set(stored);
+        log.info("[task-tracker negative] updated: windowId={} taskType={} taskCode={} status={} source={} reason={} sequence={} ageMs={}",
+                windowId, stored.getTaskType(), stored.getTaskCode(), stored.getStatus(),
+                normalize(stored.getSource()), normalize(stored.getReason()), stored.getSequence(),
+                ageMs(now, stored.getObservedAtMs()));
+    }
+
+    /**
+     * Atomically consume a fresh tracker negative only for the expected task/window.
+     *
+     * @param expectedTaskType task type that is allowed to consume this negative.
+     * @param expectedTaskCode tracker-reader task code such as {@code wuhuan}.
+     * @param maxAgeMs maximum accepted age in milliseconds; negative disables freshness check.
+     * @param reason diagnostic reason written to logs.
+     * @return consumed negative result, or null when absent, stale, or mismatched.
+     */
+    public TaskTrackerPanelNegativeResult consumeFreshTaskTrackerPanelNegativeResult(TaskType expectedTaskType,
+                                                                                     String expectedTaskCode,
+                                                                                     long maxAgeMs,
+                                                                                     String reason) {
+        return consumeFreshTaskTrackerPanelNegativeResult(
+                expectedTaskType, expectedTaskCode, maxAgeMs, reason, null, null, -1L);
+    }
+
+    /**
+     * Atomically consume a fresh tracker negative unless a fresher higher-priority prepared action
+     * is currently ready for this window.
+     *
+     * @param expectedTaskType task type that is allowed to consume this negative.
+     * @param expectedTaskCode tracker-reader task code such as {@code wuhuan}.
+     * @param maxAgeMs maximum accepted age in milliseconds; negative disables freshness check.
+     * @param reason diagnostic reason written to logs.
+     * @param allowedPreparedOperation prepared action operation that may coexist with this negative.
+     * @param allowedPreparedTargetKeyword prepared action target that may coexist with this negative.
+     * @param preparedMaxAgeMs maximum accepted age for the blocking prepared action; negative disables
+     *                         the prepared-action block.
+     * @return consumed negative result, or null when absent, stale, mismatched, or preempted.
+     */
+    public TaskTrackerPanelNegativeResult consumeFreshTaskTrackerPanelNegativeResult(TaskType expectedTaskType,
+                                                                                     String expectedTaskCode,
+                                                                                     long maxAgeMs,
+                                                                                     String reason,
+                                                                                     DialogOperation allowedPreparedOperation,
+                                                                                     String allowedPreparedTargetKeyword,
+                                                                                     long preparedMaxAgeMs) {
+        while (true) {
+            TaskTrackerPanelNegativeResult current = taskTrackerPanelNegativeResult.get();
+            if (current == null) {
+                return null;
+            }
+            if (!current.matches(windowId, expectedTaskType, expectedTaskCode)) {
+                logTaskTrackerPanelNegativeConsume("mismatch", reason, current, expectedTaskType, expectedTaskCode);
+                return null;
+            }
+            if (!current.freshWithin(System.currentTimeMillis(), maxAgeMs)) {
+                if (!taskTrackerPanelNegativeResult.compareAndSet(current, null)) {
+                    continue;
+                }
+                logTaskTrackerPanelNegativeConsume("stale", reason, current, expectedTaskType, expectedTaskCode);
+                return null;
+            }
+            if (freshPreparedActionBlocksTrackerNegative(
+                    allowedPreparedOperation, allowedPreparedTargetKeyword, preparedMaxAgeMs) != null) {
+                logTaskTrackerPanelNegativeConsume(
+                        "prepared-blocked", reason, current, expectedTaskType, expectedTaskCode);
+                return null;
+            }
+            if (!taskTrackerPanelNegativeResult.compareAndSet(current, null)) {
+                continue;
+            }
+            logTaskTrackerPanelNegativeConsume("consumed", reason, current, expectedTaskType, expectedTaskCode);
+            return current;
+        }
+    }
+
+    private PreparedDialogAction freshPreparedActionBlocksTrackerNegative(DialogOperation allowedPreparedOperation,
+                                                                         String allowedPreparedTargetKeyword,
+                                                                         long preparedMaxAgeMs) {
+        if (allowedPreparedOperation == null || preparedMaxAgeMs < 0L) {
+            return null;
+        }
+        PreparedDialogAction action = preparedDialogAction.get();
+        if (action == null || !preparedActionMatchesCurrentWindow(action)) {
+            return null;
+        }
+        if (!action.verifiedWithin(System.currentTimeMillis(), preparedMaxAgeMs)) {
+            return null;
+        }
+        return action.matches(allowedPreparedOperation, allowedPreparedTargetKeyword) ? null : action;
+    }
+
+    private void logTaskTrackerPanelNegativeConsume(String result,
+                                                    String reason,
+                                                    TaskTrackerPanelNegativeResult current,
+                                                    TaskType expectedTaskType,
+                                                    String expectedTaskCode) {
+        long now = System.currentTimeMillis();
+        log.info("[task-tracker negative] consume: result={} windowId={} reason={} expectedTaskType={} expectedTaskCode={} status={} taskType={} taskCode={} source={} sequence={} ageMs={}",
+                result, windowId, normalize(reason), expectedTaskType, expectedTaskCode,
+                current == null ? null : current.getStatus(),
+                current == null ? null : current.getTaskType(),
+                current == null ? null : current.getTaskCode(),
+                current == null ? null : normalize(current.getSource()),
+                current == null ? -1L : current.getSequence(),
+                current == null ? -1L : ageMs(now, current.getObservedAtMs()));
+    }
+
+    public void clearTaskTrackerPanelNegativeResult(String reason) {
+        TaskTrackerPanelNegativeResult cleared = taskTrackerPanelNegativeResult.getAndSet(null);
+        if (cleared != null) {
+            long now = System.currentTimeMillis();
+            log.info("[task-tracker negative] cleared: windowId={} taskType={} taskCode={} status={} source={} reason={} sequence={} ageMs={}",
+                    windowId, cleared.getTaskType(), cleared.getTaskCode(), cleared.getStatus(),
+                    normalize(cleared.getSource()), normalize(reason), cleared.getSequence(),
+                    ageMs(now, cleared.getObservedAtMs()));
+        }
     }
 
     /** @return true when member startup detected an open CR107 left-top switch that still needs a safe-window close. */
@@ -291,6 +478,7 @@ public class WindowRuntimeContext {
     /** Clear queue-scoped startup UI preparation markers before a new accepted task queue runs. */
     public void clearTaskQueueStartupPreparationState(String source) {
         taskQueueStartupPreparationDone.set(null);
+        taskQueueStartupUiCleanupProbe.set(null);
         clearTaskQueueStartupFlyingState(source);
     }
 
@@ -307,6 +495,37 @@ public class WindowRuntimeContext {
     /** Mark queue-scoped common startup UI preparation as completed. */
     public void markTaskQueueStartupPreparationDone(String taskCode) {
         taskQueueStartupPreparationDone.set(normalize(taskCode));
+    }
+
+    /**
+     * Record whether background startup proved that no UI cleanup is needed.
+     *
+     * @param taskCode queue/task code that produced the startup probe.
+     * @param clean true only when the background probe saw no map, dialog, or generic close window.
+     * @param source diagnostic source.
+     */
+    public void markTaskQueueStartupUiCleanupProbe(String taskCode, boolean clean, String source) {
+        taskQueueStartupUiCleanupProbe.set(new TaskQueueStartupUiCleanupProbe(
+                normalize(taskCode), clean, System.currentTimeMillis(), normalize(source)));
+        log.info("[window startup ui-clean] marked: windowId={} taskCode={} clean={} source={}",
+                windowId, normalize(taskCode), clean, normalize(source));
+    }
+
+    /**
+     * @return true only when a fresh background startup probe already confirmed the UI is clean for
+     *         the same accepted task queue.
+     */
+    public boolean consumeFreshTaskQueueStartupUiCleanupClean(String taskCode, long maxAgeMs) {
+        TaskQueueStartupUiCleanupProbe probe = taskQueueStartupUiCleanupProbe.getAndSet(null);
+        String normalizedTaskCode = normalize(taskCode);
+        long ageMs = probe == null ? -1L : Math.max(0L, System.currentTimeMillis() - probe.createdAtMs());
+        boolean fresh = probe != null
+                && probe.clean()
+                && (normalizedTaskCode == null || Objects.equals(normalizedTaskCode, probe.taskCode()))
+                && (maxAgeMs <= 0L || ageMs <= maxAgeMs);
+        log.info("[window startup ui-clean] consumed: windowId={} taskCode={} freshClean={} ageMs={} source={}",
+                windowId, normalizedTaskCode, fresh, ageMs, probe == null ? null : probe.source());
+        return fresh;
     }
 
     /**
@@ -381,6 +600,23 @@ public class WindowRuntimeContext {
     }
 
     public long getObserverWakeSeq() { return observerWakeSeq.get(); }
+
+    /**
+     * Wake the window observer loop without publishing a task-ready business event.
+     *
+     * <p>The observer uses this monotonic sequence to break out of short sleeps when control-plane
+     * state changes, such as leader pause entering read-only combat observation. This method does
+     * not prepare actions, send input, or advance any task phase.</p>
+     *
+     * @param reason diagnostic reason written to logs; nullable.
+     * @return new observer wake sequence value.
+     */
+    public long wakeObserver(String reason) {
+        long wakeSeq = observerWakeSeq.incrementAndGet();
+        log.info("[latency] event=window.observer.wake windowId={} reason={} wakeSeq={}",
+                windowId, normalize(reason), wakeSeq);
+        return wakeSeq;
+    }
 
     public long getPlayerIdentityEpoch() { return playerIdentityEpoch.get(); }
 
@@ -620,6 +856,223 @@ public class WindowRuntimeContext {
     }
 
     /**
+     * Shift automation-owned volatile cache timestamps after CR160 has proven the pause/resume
+     * fingerprint still matches.
+     *
+     * <p>This method compensates only framework wait budgets and cache ages: prepared dialog age,
+     * visible-dialog cache age, dialog preparation request/status, dialog-interest allowance, and
+     * pathing observer timestamps. Real game-world durations such as item pending TTL, incense, boxes,
+     * or buffs must never be adjusted here.</p>
+     *
+     * @param blockedMs wall-clock milliseconds spent blocked by user pause.
+     * @param source diagnostic source written to logs.
+     * @return names of volatile automation timers that were shifted.
+     */
+    public List<String> compensateVolatileAutomationTimersAfterPause(long blockedMs, String source) {
+        if (blockedMs <= 0L) {
+            return List.of();
+        }
+        List<String> compensatedTimers = new ArrayList<>();
+        if (shiftPreparedDialogAction(blockedMs)) {
+            compensatedTimers.add("preparedActionAge");
+        }
+        if (shiftDialogPreparationRequest(blockedMs)) {
+            compensatedTimers.add("dialogPreparationRequest");
+        }
+        if (shiftDialogPreparationStatus(blockedMs)) {
+            compensatedTimers.add("dialogPreparationStatus");
+        }
+        if (shiftVisibleDialogSnapshot(blockedMs)) {
+            compensatedTimers.add("visibleDialogCache");
+        }
+        if (shiftDialogInterest(blockedMs)) {
+            compensatedTimers.add("dialogInterest");
+        }
+        if (shiftPathingSnapshot(blockedMs)) {
+            compensatedTimers.add("pathingWaitBudget");
+        }
+        log.info("[cr160 pause-resume] volatile timers compensated: windowId={} source={} pauseBlockedMs={} compensatedTimers={}",
+                windowId, normalize(source), blockedMs, compensatedTimers);
+        return List.copyOf(compensatedTimers);
+    }
+
+    /**
+     * Clear stale volatile state after CR160 decides the paused fingerprint no longer matches.
+     *
+     * @param reason diagnostic reason written to each clear log.
+     * @return names of volatile state groups that were cleared.
+     */
+    public List<String> clearPauseResumeVolatileState(String reason) {
+        List<String> cleared = new ArrayList<>();
+        String clearReason = "cr160 pause-resume mismatch: " + normalize(reason);
+        if (preparedDialogAction.get() != null) {
+            cleared.add("preparedAction");
+        }
+        if (dialogPreparationRequest.get() != null
+                || dialogPreparationStatus.get().getPhase() != DialogPreparationPhase.NONE) {
+            cleared.add("dialogPreparationRequest");
+        }
+        if (dialogPreparationRequest.get() != null
+                || dialogPreparationStatus.get().getPhase() != DialogPreparationPhase.NONE) {
+            clearDialogPreparationRequest(clearReason);
+        } else if (preparedDialogAction.get() != null) {
+            clearPreparedDialogAction(clearReason);
+        }
+        if (dialogInterest.get() != null) {
+            cleared.add("dialogInterest");
+            clearDialogInterest(clearReason);
+        }
+        if (visibleDialogSnapshot.get() != null) {
+            cleared.add("visibleDialogCache");
+            clearVisibleDialogSnapshot(clearReason);
+        }
+        WindowPathingSnapshot snapshot = pathingSnapshot.get();
+        if (snapshot != null
+                && (snapshot.getState() != WindowPathingState.NONE || snapshot.getIntent() != null)) {
+            cleared.add("pathingSignal");
+            clearPathingSignal(clearReason);
+        }
+        log.info("[cr160 pause-resume] volatile state cleared: windowId={} reason={} clearedVolatileState={}",
+                windowId, clearReason, cleared);
+        return List.copyOf(cleared);
+    }
+
+    private boolean shiftPreparedDialogAction(long blockedMs) {
+        while (true) {
+            PreparedDialogAction current = preparedDialogAction.get();
+            if (current == null) {
+                return false;
+            }
+            PreparedDialogAction shifted = current.toBuilder()
+                    .preparedAtMs(shiftPositiveTimestamp(current.getPreparedAtMs(), blockedMs))
+                    .lastVerifiedAtMs(shiftPositiveTimestamp(current.getLastVerifiedAtMs(), blockedMs))
+                    .build();
+            if (preparedDialogAction.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private boolean shiftDialogPreparationRequest(long blockedMs) {
+        while (true) {
+            DialogPreparationRequest current = dialogPreparationRequest.get();
+            if (current == null) {
+                return false;
+            }
+            DialogPreparationRequest shifted = DialogPreparationRequest.builder()
+                    .operation(current.getOperation())
+                    .targetKeyword(current.getTargetKeyword())
+                    .source(current.getSource())
+                    .fromMap(current.getFromMap())
+                    .rememberedRelativeX(current.getRememberedRelativeX())
+                    .rememberedRelativeY(current.getRememberedRelativeY())
+                    .rememberedOptionText(current.getRememberedOptionText())
+                    .createdAtMs(shiftPositiveTimestamp(current.getCreatedAtMs(), blockedMs))
+                    .expiresAtMs(shiftPositiveTimestamp(current.getExpiresAtMs(), blockedMs))
+                    .build();
+            if (dialogPreparationRequest.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private boolean shiftDialogPreparationStatus(long blockedMs) {
+        while (true) {
+            DialogPreparationStatus current = dialogPreparationStatus.get();
+            if (current == null || current.getPhase() == DialogPreparationPhase.NONE) {
+                return false;
+            }
+            DialogPreparationStatus shifted = DialogPreparationStatus.builder()
+                    .phase(current.getPhase())
+                    .operation(current.getOperation())
+                    .targetKeyword(current.getTargetKeyword())
+                    .source(current.getSource())
+                    .requestCreatedAtMs(shiftPositiveTimestamp(current.getRequestCreatedAtMs(), blockedMs))
+                    .preparingStartedAtMs(shiftPositiveTimestamp(current.getPreparingStartedAtMs(), blockedMs))
+                    .completedAtMs(shiftPositiveTimestamp(current.getCompletedAtMs(), blockedMs))
+                    .failureReason(current.getFailureReason())
+                    .build();
+            if (dialogPreparationStatus.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private boolean shiftVisibleDialogSnapshot(long blockedMs) {
+        while (true) {
+            WindowDialogSnapshot current = visibleDialogSnapshot.get();
+            if (current == null) {
+                return false;
+            }
+            WindowDialogSnapshot shifted = WindowDialogSnapshot.builder()
+                    .windowId(current.getWindowId())
+                    .hwnd(current.getHwnd())
+                    .type(current.getType())
+                    .source(current.getSource())
+                    .detectedAtMs(shiftPositiveTimestamp(current.getDetectedAtMs(), blockedMs))
+                    .dialogRect(copyRect(current.getDialogRect()))
+                    .captureProvider(current.getCaptureProvider())
+                    .build();
+            if (visibleDialogSnapshot.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private boolean shiftDialogInterest(long blockedMs) {
+        while (true) {
+            WindowDialogInterest current = dialogInterest.get();
+            if (current == null) {
+                return false;
+            }
+            WindowDialogInterest shifted = current.toBuilder()
+                    .createdAtMs(shiftPositiveTimestamp(current.getCreatedAtMs(), blockedMs))
+                    .expiresAtMs(shiftPositiveTimestamp(current.getExpiresAtMs(), blockedMs))
+                    .absentAllowedAtMs(shiftPositiveTimestamp(current.getAbsentAllowedAtMs(), blockedMs))
+                    .build();
+            if (dialogInterest.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private boolean shiftPathingSnapshot(long blockedMs) {
+        while (true) {
+            WindowPathingSnapshot current = pathingSnapshot.get();
+            if (current == null
+                    || (current.getState() == WindowPathingState.NONE && current.getIntent() == null)) {
+                return false;
+            }
+            WindowPathingIntent intent = current.getIntent();
+            WindowPathingIntent shiftedIntent = intent == null
+                    ? null
+                    : intent.toBuilder()
+                    .createdAtMs(shiftPositiveTimestamp(intent.getCreatedAtMs(), blockedMs))
+                    .build();
+            WindowPathingSnapshot shifted = current.toBuilder()
+                    .intent(shiftedIntent)
+                    .locationChangedAtMs(shiftPositiveTimestamp(current.getLocationChangedAtMs(), blockedMs))
+                    .updatedAtMs(shiftPositiveTimestamp(current.getUpdatedAtMs(), blockedMs))
+                    .probeStartedAtMs(shiftPositiveTimestamp(current.getProbeStartedAtMs(), blockedMs))
+                    .probeFinishedAtMs(shiftPositiveTimestamp(current.getProbeFinishedAtMs(), blockedMs))
+                    .uiCleanupRecommendedAtMs(shiftPositiveTimestamp(current.getUiCleanupRecommendedAtMs(), blockedMs))
+                    .dialogBlockingDetectedAtMs(shiftPositiveTimestamp(current.getDialogBlockingDetectedAtMs(), blockedMs))
+                    .build();
+            if (pathingSnapshot.compareAndSet(current, shifted)) {
+                return true;
+            }
+        }
+    }
+
+    private long shiftPositiveTimestamp(long timestamp, long deltaMs) {
+        return timestamp <= 0L ? timestamp : timestamp + deltaMs;
+    }
+
+    private int[] copyRect(int[] rect) {
+        return rect == null ? null : rect.clone();
+    }
+
+    /**
      * Store the latest dialog shape observed by this window's background watcher.
      *
      * @param snapshot visible dialog fact for this bound window; null is ignored.
@@ -807,6 +1260,193 @@ public class WindowRuntimeContext {
                     cleared.getSource(), ageMs(now, cleared.getPreparedAtMs()), ageMs(now, cleared.getLastVerifiedAtMs()));
         }
         clearReadyDialogPreparationStatus();
+    }
+
+    /**
+     * CR253: open (or replace) the 修罗 green-chain attempt identity that gates typed prepared jobs.
+     *
+     * <p>Replacing the schedule drops every pending job that does not match the new identity, so a
+     * saved-green re-press (new attemptId) atomically invalidates all work produced for the old
+     * attempt.</p>
+     *
+     * @param schedule new attempt identity; null is ignored (use {@link #clearXiuluoGreenChainSchedule}).
+     * @param reason diagnostic reason written to logs.
+     */
+    public void updateXiuluoGreenChainSchedule(XiuluoGreenChainSchedule schedule, String reason) {
+        if (schedule == null) {
+            return;
+        }
+        XiuluoGreenChainSchedule previous = xiuluoGreenChainSchedule.getAndSet(schedule);
+        preparedActionJobs.entrySet().removeIf(entry -> {
+            PreparedActionJob job = entry.getValue();
+            if (schedule.sameIdentity(job)) {
+                return false;
+            }
+            log.info("[latency] event=window.prepared-job.discard windowId={} reason=schedule-replaced:{} job=[{}] newSchedule=[{}]",
+                    windowId, normalize(reason), job.identityText(), schedule.identityText());
+            return true;
+        });
+        // CR253 review P1: the local kanda prepared shares the attempt identity rule — a dialog
+        // prepared stamped for another (or no) attempt dies with the schedule replacement.
+        discardStaleXiuluoEnterBattlePrepared(schedule.getAttemptId(),
+                "schedule-replaced:" + normalize(reason));
+        log.info("[latency] event=window.green-chain.schedule.update windowId={} reason={} schedule=[{}] previous=[{}]",
+                windowId, normalize(reason), schedule.identityText(),
+                previous == null ? null : previous.identityText());
+    }
+
+    /**
+     * CR253: close the green-chain attempt identity and drop every pending typed prepared job.
+     *
+     * <p>Called on new attempt setup failure, round restart/abandon, stop, binding/session loss,
+     * watchdog cleanup, and confirmed combat entry — the contract's mandatory discard boundaries.</p>
+     *
+     * @param reason diagnostic reason written to logs.
+     */
+    public void clearXiuluoGreenChainSchedule(String reason) {
+        XiuluoGreenChainSchedule cleared = xiuluoGreenChainSchedule.getAndSet(null);
+        clearPreparedActionJobs(reason);
+        if (cleared != null) {
+            // CR253 review P1: closing the attempt also discards its stamped local kanda prepared;
+            // an unstamped action (no schedule was open when it was prepared) is not attempt work
+            // and keeps its own lifecycle (e.g. WAIT_COMBAT re-registration).
+            discardStaleXiuluoEnterBattlePrepared(null, "schedule-closed:" + normalize(reason));
+            log.info("[latency] event=window.green-chain.schedule.clear windowId={} reason={} schedule=[{}]",
+                    windowId, normalize(reason), cleared.identityText());
+        }
+    }
+
+    /**
+     * CR253 review P1: drop an XIULUO_ENTER_BATTLE prepared dialog action whose stamped attempt
+     * identity no longer matches the green chain.
+     *
+     * @param allowedAttemptId attemptId that may survive; null means no stamped action may survive.
+     * @param reason diagnostic reason written to logs.
+     */
+    private void discardStaleXiuluoEnterBattlePrepared(String allowedAttemptId, String reason) {
+        PreparedDialogAction current = preparedDialogAction.get();
+        if (current == null || current.getOperation() != DialogOperation.XIULUO_ENTER_BATTLE) {
+            return;
+        }
+        String stampedAttemptId = current.getIntentId();
+        if (stampedAttemptId == null) {
+            // Unstamped: prepared outside any green-chain schedule; owned by its own consumer.
+            return;
+        }
+        if (allowedAttemptId != null && allowedAttemptId.equals(stampedAttemptId)) {
+            return;
+        }
+        if (preparedDialogAction.compareAndSet(current, null)) {
+            clearReadyDialogPreparationStatus();
+            log.info("[latency] event=window.prepared-dialog.stale-attempt-discarded windowId={} reason={} stampedAttemptId={} allowedAttemptId={} source={}",
+                    windowId, reason, stampedAttemptId, allowedAttemptId, normalize(current.getSource()));
+        }
+    }
+
+    public Optional<XiuluoGreenChainSchedule> getXiuluoGreenChainSchedule() {
+        return Optional.ofNullable(xiuluoGreenChainSchedule.get());
+    }
+
+    /**
+     * CR253 publish gate (background half of the double invalidation gate): a typed prepared job is
+     * stored only while its full identity still matches the current green-chain schedule and this
+     * window's native binding.
+     *
+     * @param job candidate job stamped by the producer.
+     * @param reason diagnostic reason written to logs.
+     * @return true when the job was published.
+     */
+    public boolean publishPreparedActionJob(PreparedActionJob job, String reason) {
+        if (job == null || job.getType() == null) {
+            return false;
+        }
+        XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+        if (schedule == null || !schedule.sameIdentity(job)) {
+            log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={} job=[{}] schedule=[{}]",
+                    windowId, normalize(reason), job.identityText(),
+                    schedule == null ? null : schedule.identityText());
+            return false;
+        }
+        WindowNativeBinding binding = nativeBinding;
+        String currentHwnd = binding == null ? null : binding.getNativeHandle();
+        if (currentHwnd == null || !currentHwnd.equals(job.getHwnd()) || !windowId.equals(job.getWindowId())) {
+            log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={}:binding-mismatch job=[{}] currentHwnd={}",
+                    windowId, normalize(reason), job.identityText(), currentHwnd);
+            return false;
+        }
+        PreparedActionJob previous = preparedActionJobs.put(job.getType(), job);
+        log.info("[latency] event=window.prepared-job.publish windowId={} reason={} job=[{}] source={} click=({}, {}) replaced={}",
+                windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
+                job.getWindowRelativeX(), job.getWindowRelativeY(), previous != null);
+        return true;
+    }
+
+    /**
+     * CR253 consume gate (foreground half of the double invalidation gate): the consumer supplies
+     * the identity it is currently executing under; a stored job that does not match is a stale
+     * leftover from an older attempt/round/run and is discarded here — never clicked.
+     *
+     * @param type typed work kind the consumer owns.
+     * @param expectedTaskRunId task run the consumer is executing.
+     * @param expectedRound current 修罗 round.
+     * @param expectedAttemptId current green-click attemptId (pathing intent id).
+     * @param reason diagnostic reason written to logs.
+     * @return consumed job, or null when absent or stale.
+     */
+    public PreparedActionJob consumePreparedActionJobValidated(PreparedActionJobType type,
+                                                               long expectedTaskRunId,
+                                                               int expectedRound,
+                                                               String expectedAttemptId,
+                                                               String reason) {
+        if (type == null) {
+            return null;
+        }
+        PreparedActionJob job = preparedActionJobs.get(type);
+        if (job == null) {
+            return null;
+        }
+        WindowNativeBinding binding = nativeBinding;
+        String currentHwnd = binding == null ? null : binding.getNativeHandle();
+        boolean identityMatched = expectedAttemptId != null
+                && expectedAttemptId.equals(job.getAttemptId())
+                && expectedTaskRunId == job.getTaskRunId()
+                && expectedRound == job.getRound()
+                && windowId.equals(job.getWindowId())
+                && currentHwnd != null && currentHwnd.equals(job.getHwnd());
+        if (!identityMatched) {
+            preparedActionJobs.remove(type, job);
+            log.info("[latency] event=window.prepared-job.stale-discarded windowId={} reason={} job=[{}] expectedTaskRunId={} expectedRound={} expectedAttemptId={} currentHwnd={}",
+                    windowId, normalize(reason), job.identityText(), expectedTaskRunId, expectedRound,
+                    expectedAttemptId, currentHwnd);
+            return null;
+        }
+        if (!preparedActionJobs.remove(type, job)) {
+            return null;
+        }
+        log.info("[latency] event=window.prepared-job.consume windowId={} reason={} job=[{}] source={} preparedAgeMs={}",
+                windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
+                ageMs(System.currentTimeMillis(), job.getPreparedAtMs()));
+        return job;
+    }
+
+    /**
+     * Return one pending typed prepared job without consuming it (producer dedupe only).
+     */
+    public PreparedActionJob peekPreparedActionJob(PreparedActionJobType type) {
+        return type == null ? null : preparedActionJobs.get(type);
+    }
+
+    /**
+     * CR253: drop all pending typed prepared jobs without touching the schedule.
+     */
+    public void clearPreparedActionJobs(String reason) {
+        if (preparedActionJobs.isEmpty()) {
+            return;
+        }
+        preparedActionJobs.forEach((type, job) ->
+                log.info("[latency] event=window.prepared-job.clear windowId={} reason={} job=[{}]",
+                        windowId, normalize(reason), job.identityText()));
+        preparedActionJobs.clear();
     }
 
     /**
@@ -1047,20 +1687,59 @@ public class WindowRuntimeContext {
     }
 
     /**
-     * Remember a world-map route-result click until the pathing watcher proves or rejects it.
+     * Retain a cloud-authorized route click until the pathing watcher reports its outcome.
      *
-     * @param memory window-relative route-result click metadata. Null clears the pending record.
+     * @param outcome window-relative route click evidence. Null clears the live record.
      */
-    public void updatePendingWorldMapRouteResultMemory(WorldMapRouteResultPendingMemory memory) {
-        pendingWorldMapRouteResultMemory.set(memory);
+    public void updatePendingRouteOutcome(PendingRouteOutcome outcome) {
+        pendingRouteOutcome.set(outcome);
     }
 
-    public WorldMapRouteResultPendingMemory consumePendingWorldMapRouteResultMemory() {
-        return pendingWorldMapRouteResultMemory.getAndSet(null);
+    /**
+     * Ask the runner owner to replace the live route outcome without allowing this pure runtime
+     * context to send HTTP.
+     *
+     * <p>The current outcome remains installed until the runner has reported it as
+     * {@code ABANDONED}; only then may the runner install this replacement. This ordering keeps a
+     * second navigation from silently dropping the first cloud-issued decision id.</p>
+     *
+     * @param outcome next live route outcome; null only clears the live slot without creating a
+     *                replacement record.
+     * @param reason diagnostic replacement reason for the runner's cloud outcome report.
+     */
+    public void requestPendingRouteOutcomeReplacement(PendingRouteOutcome outcome, String reason) {
+        if (outcome == null) {
+            return;
+        }
+        if (pendingRouteOutcome.get() == null) {
+            pendingRouteOutcome.set(outcome);
+            return;
+        }
+        pendingRouteOutcomeReplacements.offer(new PendingRouteOutcomeReplacement(outcome, normalize(reason)));
+        wakeObserver("route-outcome-replacement-requested:" + normalize(reason));
     }
 
-    public void clearPendingWorldMapRouteResultMemory(String reason) {
-        pendingWorldMapRouteResultMemory.set(null);
+    public PendingRouteOutcome consumePendingRouteOutcome() {
+        return pendingRouteOutcome.getAndSet(null);
+    }
+
+    /**
+     * Mark the live outcome abandoned for the runner owner. This context never reports directly.
+     */
+    public void markPendingRouteOutcomeAbandoned(String reason) {
+        PendingRouteOutcome pending = pendingRouteOutcome.getAndSet(null);
+        if (pending != null) {
+            pendingRouteOutcomeAbandonments.offer(new PendingRouteOutcomeAbandonment(pending, normalize(reason)));
+            wakeObserver("route-outcome-abandoned:" + normalize(reason));
+        }
+    }
+
+    public PendingRouteOutcomeAbandonment pollPendingRouteOutcomeAbandonment() {
+        return pendingRouteOutcomeAbandonments.poll();
+    }
+
+    public PendingRouteOutcomeReplacement pollPendingRouteOutcomeReplacement() {
+        return pendingRouteOutcomeReplacements.poll();
     }
 
     public Optional<WindowPathingIntent> getActivePathingIntent() {
@@ -1265,6 +1944,60 @@ public class WindowRuntimeContext {
         }
     }
 
+    /**
+     * Clear a terminal pathing signal only when both its owner source and current state still match.
+     *
+     * <p>This is used by task-specific recovery code after the watcher has already written and
+     * published a terminal snapshot. The state guard prevents a stale task thread from clearing a
+     * newer active navigation intent that reused the same source family.</p>
+     *
+     * @param sourcePrefixes allowed prefixes of {@link WindowPathingIntent#getSource()}.
+     * @param expectedState required current pathing state, usually {@link WindowPathingState#STOPPED_AWAY}.
+     * @param reason diagnostic reason written into the replacement idle snapshot.
+     * @return true when a matching snapshot was cleared.
+     */
+    public boolean clearPathingSignalIfSourcePrefixesAndState(List<String> sourcePrefixes,
+                                                              WindowPathingState expectedState,
+                                                              String reason) {
+        if (sourcePrefixes == null || sourcePrefixes.isEmpty() || expectedState == null) {
+            return false;
+        }
+        List<String> normalizedPrefixes = sourcePrefixes.stream()
+                .map(WindowRuntimeContext::normalize)
+                .filter(Objects::nonNull)
+                .toList();
+        if (normalizedPrefixes.isEmpty()) {
+            return false;
+        }
+        while (true) {
+            WindowPathingSnapshot snapshot = pathingSnapshot.get();
+            if (snapshot == null || !snapshot.hasActiveIntent() || snapshot.getState() != expectedState) {
+                return false;
+            }
+            WindowPathingIntent intent = snapshot.getIntent();
+            String activeSource = intent == null ? null : normalize(intent.getSource());
+            String matchedPrefix = normalizedPrefixes.stream()
+                    .filter(prefix -> activeSource != null && activeSource.startsWith(prefix))
+                    .findFirst()
+                    .orElse(null);
+            if (matchedPrefix == null) {
+                return false;
+            }
+            WindowPathingSnapshot clearedSnapshot = WindowPathingSnapshot.builder()
+                    .state(WindowPathingState.NONE)
+                    .message(normalize(reason))
+                    .build();
+            if (!pathingSnapshot.compareAndSet(snapshot, clearedSnapshot)) {
+                continue;
+            }
+            clearPendingTransferChoiceMemory("pathing signal cleared");
+            log.info("window pathing intent cleared by source prefixes and state: windowId={} intentId={} source={} matchedPrefix={} target={} state={} reason={}",
+                    windowId, intent.getIntentId(), activeSource, matchedPrefix, intent.getTargetMapName(),
+                    snapshot.getState(), normalize(reason));
+            return true;
+        }
+    }
+
     public void clearPathingSignal(String reason) {
         pathingSnapshot.set(WindowPathingSnapshot.builder()
                 .state(WindowPathingState.NONE)
@@ -1387,11 +2120,15 @@ public class WindowRuntimeContext {
         this.lastQueueResult = null;
         this.lastQueueMessage = null;
         this.lastQueueFailurePolicy = null;
+        markPendingRouteOutcomeAbandoned("runtime reset");
         clearPathingSignal("runtime reset");
         clearOrdinaryPreBattleTimer("runtime reset");
         clearVisibleDialogSnapshot("runtime reset");
         clearDialogPreparationRequest("runtime reset");
         clearDialogInterest("runtime reset");
+        clearTaskQueueStartupPreparationState("runtime reset");
+        clearTaskTrackerPanelCache("runtime reset");
+        clearTaskTrackerPanelNegativeResult("runtime reset");
         this.gameState.resetRuntimeState();
     }
 
@@ -1481,7 +2218,9 @@ public class WindowRuntimeContext {
         clearDialogPreparationRequest(reason);
         clearDialogInterest(reason);
         pendingTransferChoiceMemory.set(null);
-        pendingWorldMapRouteResultMemory.set(null);
+        markPendingRouteOutcomeAbandoned(reason);
+        clearTaskTrackerPanelCache(reason);
+        clearTaskTrackerPanelNegativeResult(reason);
         leftTopStatusSwitchClosePending.set(null);
     }
 
@@ -1753,6 +2492,25 @@ public class WindowRuntimeContext {
             return taskType;
         }
         return selectedTaskType == null ? TaskType.UNKNOWN : selectedTaskType;
+    }
+
+    private record TaskQueueStartupUiCleanupProbe(String taskCode,
+                                                  boolean clean,
+                                                  long createdAtMs,
+                                                  String source) {
+    }
+
+    /**
+     * A local state-only request for the runner owner to report a discarded cloud route decision.
+     */
+    public record PendingRouteOutcomeAbandonment(PendingRouteOutcome outcome, String reason) {
+    }
+
+    /**
+     * A local state-only request for the runner to report the previous outcome before installing
+     * the next one.
+     */
+    public record PendingRouteOutcomeReplacement(PendingRouteOutcome outcome, String reason) {
     }
 
     public interface PreparedDialogActionValidator {

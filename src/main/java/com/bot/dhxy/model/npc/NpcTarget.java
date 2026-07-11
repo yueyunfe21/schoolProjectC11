@@ -85,6 +85,19 @@ public class NpcTarget {
     String expectedDialogTemplatePath;
 
     /**
+     * Raw dialog-option template used by opt-in targets that should skip green washing during
+     * expected-dialog verification. Null keeps the legacy green-washed verifier.
+     */
+    String expectedDialogRawTemplatePath;
+
+    /**
+     * True when the owning task phase will handle the opened dialog immediately after the NPC click.
+     * This keeps NPC smart click from doing a duplicate visibility-only dialog verification.
+     */
+    @Builder.Default
+    boolean deferDialogVerificationToTask = false;
+
+    /**
      * Optional visual tooltip template above this target. Null falls back to the standard task
      * tooltip template in {@code NpcClickService}.
      */
@@ -131,6 +144,8 @@ public class NpcTarget {
                 .tuneX(tuneX)
                 .tuneY(tuneY)
                 .expectedDialogTemplatePath(expectedDialogTemplatePath)
+                .expectedDialogRawTemplatePath(expectedDialogRawTemplatePath)
+                .deferDialogVerificationToTask(deferDialogVerificationToTask)
                 .roamingTarget(roaming)
                 .tooltipType(tooltipType)
                 .tooltipTemplatePath(tooltipTemplatePath)
