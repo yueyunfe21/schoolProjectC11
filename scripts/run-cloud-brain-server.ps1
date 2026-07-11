@@ -4,6 +4,9 @@ param(
     [string]$Token = "local-dev-token",
     [string]$BrainProjectPath = "D:\mavenProject\dhxy-cloud-brain",
     [int]$OcrPort = 18761,
+    # CR257 review P1-1: a fresh/empty vision memory must be an explicit operator decision, never
+    # an accident of a missing canonical file (the DHXY-side copy is deleted by C1).
+    [switch]$AllowEmptyVisionMemory,
     [switch]$Rebuild
 )
 
@@ -157,12 +160,15 @@ $launchUtc = (Get-Date).ToUniversalTime().ToString("o")
 
 # ---------------------------------------------------------------------------
 # CR257 A.1-A.4: cloud-brain owns its OCR sidecar lifecycle.
-#   A.1 identity-bearing health (protocolVersion/build/bind/pid) gates every accept.
-#   A.2 registry-based stop: only a PID this launcher registered AND whose identity still
-#       matches may be terminated; never kill by port.
+#   A.1 identity-bearing health gates every accept: protocolVersion + sidecarBuild (parsed from
+#       the owned sidecar script, so accept binds to the exact artifact this launcher starts) +
+#       loopback bindHost + exact bindPort.
+#   A.2 registry-based stop: only a PID this launcher itself launched (mode=launched) AND whose
+#       FULL identity (pid + startedAtMs + build + model fingerprint + port + command line) still
+#       matches may be terminated; never kill by port. mode=reused can never enter the stop branch.
 #   A.3 occupied-but-mismatched port fails the launch with structured ocr-sidecar-conflict.
-#   A.4 orphan with matching identity is reused; a sidecar dying later is NOT relaunched here
-#       (OCR calls fail closed until the next launcher cycle).
+#   A.4 orphan with matching identity is reused (recorded as mode=reused, no ownership); a sidecar
+#       dying later is NOT relaunched here (OCR calls fail closed until the next launcher cycle).
 # Logs carry runId/pid/version fingerprints and reasons only — never image data or OCR text.
 # ---------------------------------------------------------------------------
 $ocrExpectedProtocol = "dhxy-ocr-v2"
@@ -171,6 +177,17 @@ $ocrServerScript = Join-Path $BrainProjectPath "ocr\local_ocr_server.py"
 $ocrRegistryFile = Join-Path $BrainProjectPath "data\ocr-sidecar-registry.json"
 $ocrLogDir = Join-Path $BrainProjectPath "logs"
 $ocrRunId = [guid]::NewGuid().ToString()
+
+if (-not (Test-Path -LiteralPath $ocrServerScript -PathType Leaf)) {
+    throw "ocr-sidecar-missing: sidecar script not found at $ocrServerScript (CR257 A: OCR ships with dhxy-cloud-brain)"
+}
+# Review P1-2: the expected build comes from the sidecar script this launcher owns, so identity
+# acceptance can never drift from the artifact we would actually start.
+$ocrBuildMatch = Select-String -LiteralPath $ocrServerScript -Pattern 'SIDECAR_BUILD\s*=\s*"([^"]+)"' | Select-Object -First 1
+if ($null -eq $ocrBuildMatch) {
+    throw "ocr-sidecar-missing: SIDECAR_BUILD marker not found in $ocrServerScript"
+}
+$ocrExpectedBuild = $ocrBuildMatch.Matches[0].Groups[1].Value
 
 function Get-OcrHealth {
     try {
@@ -182,9 +199,12 @@ function Get-OcrHealth {
 
 function Test-OcrIdentityMatch {
     param($Health)
+    # A.1 (review P1-2): full identity — protocol, exact expected build, loopback host, exact port.
     return ($null -ne $Health) -and ($Health.ok -eq $true) `
         -and ($Health.protocolVersion -eq $ocrExpectedProtocol) `
-        -and (@("127.0.0.1", "localhost", "::1") -contains [string]$Health.bindHost)
+        -and ([string]$Health.sidecarBuild -eq $ocrExpectedBuild) `
+        -and (@("127.0.0.1", "localhost", "::1") -contains [string]$Health.bindHost) `
+        -and ([int]$Health.bindPort -eq $OcrPort)
 }
 
 function Get-OcrRegistry {
@@ -198,12 +218,51 @@ function Get-OcrRegistry {
     }
 }
 
-function Test-RegisteredOcrProcess {
+function Write-OcrRegistry {
+    param($Health, [string]$Mode, [string]$Command)
+    $registryDir = Split-Path -Parent $ocrRegistryFile
+    if (-not (Test-Path -LiteralPath $registryDir -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $registryDir | Out-Null
+    }
+    [pscustomobject]@{
+        runId = $ocrRunId
+        pid = [long]$Health.pid
+        startedAtMs = [long]$Health.startedAtMs
+        protocolVersion = [string]$Health.protocolVersion
+        sidecarBuild = [string]$Health.sidecarBuild
+        modelFingerprint = [string]$Health.modelFingerprint
+        bindHost = [string]$Health.bindHost
+        bindPort = [int]$Health.bindPort
+        registeredAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        command = $Command
+        mode = $Mode
+    } | ConvertTo-Json | Set-Content -LiteralPath $ocrRegistryFile -Encoding UTF8
+}
+
+function Test-OcrStopEligible {
     param($Registry, $Health)
+    # A.2 (review P1-2): stop is allowed ONLY for a process this launcher itself launched, whose
+    # full recorded identity still matches the live health, and whose OS command line still runs
+    # the sidecar script. mode=reused (adopted orphan) is never stop-eligible.
     if ($null -eq $Registry -or $null -eq $Health) {
         return $false
     }
+    if ([string]$Registry.mode -ne "launched") {
+        return $false
+    }
     if ([long]$Registry.pid -ne [long]$Health.pid) {
+        return $false
+    }
+    if ([long]$Registry.startedAtMs -ne [long]$Health.startedAtMs) {
+        return $false
+    }
+    if ([string]$Registry.sidecarBuild -ne [string]$Health.sidecarBuild) {
+        return $false
+    }
+    if ([string]$Registry.modelFingerprint -ne [string]$Health.modelFingerprint) {
+        return $false
+    }
+    if ([int]$Registry.bindPort -ne [int]$Health.bindPort) {
         return $false
     }
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($Registry.pid)" -ErrorAction SilentlyContinue
@@ -214,15 +273,8 @@ function Test-RegisteredOcrProcess {
 }
 
 function Start-OcrSidecar {
-    if (-not (Test-Path -LiteralPath $ocrServerScript -PathType Leaf)) {
-        throw "ocr-sidecar-missing: sidecar script not found at $ocrServerScript (CR257 A: OCR ships with dhxy-cloud-brain)"
-    }
     if (-not (Test-Path -LiteralPath $ocrLogDir -PathType Container)) {
         New-Item -ItemType Directory -Force -Path $ocrLogDir | Out-Null
-    }
-    $registryDir = Split-Path -Parent $ocrRegistryFile
-    if (-not (Test-Path -LiteralPath $registryDir -PathType Container)) {
-        New-Item -ItemType Directory -Force -Path $registryDir | Out-Null
     }
     $ocrLog = Join-Path $ocrLogDir "ocr-sidecar.log"
     $launcher = $null
@@ -236,63 +288,57 @@ function Start-OcrSidecar {
     } else {
         throw "ocr-sidecar-launch-failed: neither 'py' nor 'python' is available to start the OCR sidecar"
     }
+    $command = "$launcher $($launcherArgs -join ' ')"
     $process = Start-Process -FilePath $launcher -ArgumentList $launcherArgs `
         -RedirectStandardOutput $ocrLog -RedirectStandardError "$ocrLog.err" `
         -WindowStyle Hidden -PassThru
-    $registry = [pscustomobject]@{
-        runId = $ocrRunId
-        pid = $process.Id
-        startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-        command = "$launcher $($launcherArgs -join ' ')"
-        expectedProtocol = $ocrExpectedProtocol
-        port = $OcrPort
-        mode = "launched"
-    }
-    $registry | ConvertTo-Json | Set-Content -LiteralPath $ocrRegistryFile -Encoding UTF8
     Write-Host "CR257 OCR sidecar launched: runId=$ocrRunId pid=$($process.Id) port=$OcrPort log=$ocrLog"
     $deadline = (Get-Date).AddSeconds(90)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 750
         $health = Get-OcrHealth
-        if (Test-OcrIdentityMatch -Health $health) {
-            Write-Host "CR257 OCR sidecar ready: pid=$($health.pid) protocolVersion=$($health.protocolVersion) build=$($health.sidecarBuild) model=$($health.modelFingerprint)"
+        if ((Test-OcrIdentityMatch -Health $health) -and ([long]$health.pid -eq [long]$process.Id)) {
+            # Review P1-2: the registry records the FULL live identity (pid + startedAtMs + build
+            # + model + bind) only after health confirms it is OUR process answering on the port.
+            Write-OcrRegistry -Health $health -Mode "launched" -Command $command
+            Write-Host "CR257 OCR sidecar ready: pid=$($health.pid) startedAtMs=$($health.startedAtMs) protocolVersion=$($health.protocolVersion) build=$($health.sidecarBuild) model=$($health.modelFingerprint)"
             return
+        }
+        if (($null -ne $health) -and ($health.ok -eq $true) -and ([long]$health.pid -ne [long]$process.Id)) {
+            # Someone else answers the port while our process is alive — conflict; stop only our
+            # own just-started PID and fail closed.
+            try { Stop-Process -Id $process.Id -Force -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+            throw "ocr-sidecar-conflict: port $OcrPort is answered by pid=$($health.pid) while this launcher's own sidecar pid=$($process.Id) is starting; refusing to start"
         }
         if ($process.HasExited) {
             throw "ocr-sidecar-launch-failed: sidecar process exited early (exitCode=$($process.ExitCode)); see $ocrLog"
         }
     }
     try { Stop-Process -Id $process.Id -Force -Confirm:$false -ErrorAction SilentlyContinue } catch {}
-    throw "ocr-sidecar-launch-failed: health did not become ready within 90s; registered pid=$($process.Id) stopped"
+    throw "ocr-sidecar-launch-failed: health did not become ready within 90s; own pid=$($process.Id) stopped"
 }
 
 $ocrHealth = Get-OcrHealth
 if ($null -ne $ocrHealth) {
     if (-not (Test-OcrIdentityMatch -Health $ocrHealth)) {
-        # A.3: occupied but identity mismatch (old script, wrong version, unknown service) —
-        # fail closed; never take over, overwrite, or silently reuse. The foreign process stays.
-        throw "ocr-sidecar-conflict: port $OcrPort is serving a non-matching health (protocolVersion='$($ocrHealth.protocolVersion)' expected='$ocrExpectedProtocol'); refusing to start"
+        # A.3: occupied but identity mismatch (old script, wrong build, wrong port claim, unknown
+        # service) — fail closed; never take over, overwrite, silently reuse, or stop it.
+        throw "ocr-sidecar-conflict: port $OcrPort is serving a non-matching health (protocolVersion='$($ocrHealth.protocolVersion)' build='$($ocrHealth.sidecarBuild)' bindHost='$($ocrHealth.bindHost)' bindPort='$($ocrHealth.bindPort)' expectedProtocol='$ocrExpectedProtocol' expectedBuild='$ocrExpectedBuild' expectedPort='$OcrPort'); refusing to start"
     }
     $ocrRegistry = Get-OcrRegistry
-    if (Test-RegisteredOcrProcess -Registry $ocrRegistry -Health $ocrHealth) {
-        # A.2/A.4 normal restart: this is OUR registered previous instance — stop it (verified
-        # PID + command line, never by port) and launch a fresh one.
-        Write-Host "CR257 OCR sidecar restart: stopping registered previous instance pid=$($ocrRegistry.pid) runId=$($ocrRegistry.runId)"
+    if (Test-OcrStopEligible -Registry $ocrRegistry -Health $ocrHealth) {
+        # A.2/A.4 normal restart: this is OUR previously launched instance (mode=launched, full
+        # identity verified) — stop it (never by port) and launch a fresh one.
+        Write-Host "CR257 OCR sidecar restart: stopping own registered instance pid=$($ocrRegistry.pid) startedAtMs=$($ocrRegistry.startedAtMs) runId=$($ocrRegistry.runId)"
         Stop-Process -Id $ocrRegistry.pid -Force -Confirm:$false
         Start-Sleep -Milliseconds 1500
         Start-OcrSidecar
     } else {
-        # A.4 orphan with matching identity: reuse without adopting ownership.
-        Write-Host "CR257 OCR sidecar reuse: identity-matched orphan pid=$($ocrHealth.pid) build=$($ocrHealth.sidecarBuild) model=$($ocrHealth.modelFingerprint) (not registered by this launcher; reuse only)"
-        [pscustomobject]@{
-            runId = $ocrRunId
-            pid = $ocrHealth.pid
-            startedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-            command = "(reused orphan; not launched by this runId)"
-            expectedProtocol = $ocrExpectedProtocol
-            port = $OcrPort
-            mode = "reused"
-        } | ConvertTo-Json | Set-Content -LiteralPath $ocrRegistryFile -Encoding UTF8
+        # A.4 orphan with matching identity: reuse WITHOUT adopting ownership. mode=reused is
+        # never stop-eligible on later cycles (review P1-2), so this process can only ever be
+        # reused again or conflict-fail — never killed by this launcher.
+        Write-Host "CR257 OCR sidecar reuse: identity-matched orphan pid=$($ocrHealth.pid) startedAtMs=$($ocrHealth.startedAtMs) build=$($ocrHealth.sidecarBuild) model=$($ocrHealth.modelFingerprint) (not launched by this launcher; reuse only, never stopped)"
+        Write-OcrRegistry -Health $ocrHealth -Mode "reused" -Command "(reused orphan; not launched by this runId)"
     }
 } else {
     $portOwner = Get-NetTCPConnection -LocalPort $OcrPort -State Listen -ErrorAction SilentlyContinue
@@ -303,11 +349,29 @@ if ($null -ne $ocrHealth) {
     Start-OcrSidecar
 }
 
+# ---------------------------------------------------------------------------
+# CR257 review P1-1: the NPC click memory canonical is the cloud-brain-owned file below (CR181/
+# CR185 lineage; the DHXY-side config/vision_memory.json copy is deleted by C1). Pin it explicitly
+# via sysprop so the store never depends on the java process working directory, and refuse to
+# start with a silently missing canonical unless the operator explicitly allows an empty memory.
+# ---------------------------------------------------------------------------
+$visionMemoryPath = Join-Path $BrainProjectPath "data\vision_memory.json"
+if (Test-Path -LiteralPath $visionMemoryPath -PathType Leaf) {
+    $visionMemoryItem = Get-Item -LiteralPath $visionMemoryPath
+    $visionMemorySha256 = (Get-FileHash -LiteralPath $visionMemoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath bytes=$($visionMemoryItem.Length) sha256=$visionMemorySha256 lastWriteUtc=$($visionMemoryItem.LastWriteTimeUtc.ToString('o'))"
+} elseif ($AllowEmptyVisionMemory) {
+    Write-Host "CR257 vision memory canonical: path=$visionMemoryPath MISSING — starting with empty memory (explicit -AllowEmptyVisionMemory)"
+} else {
+    throw "vision-memory-missing: canonical NPC click memory not found at $visionMemoryPath; provision it (copy from the live cloud-brain data dir) or pass -AllowEmptyVisionMemory to start with an empty store"
+}
+
 Write-Host "Starting external DHXY cloud brain from fresh classpath on port $Port"
 Write-Host "devArtifactMode=classpath launchUtc=$launchUtc projectPath=$BrainProjectPath classesPath=$classesPath classpathFile=$classpathFile sourceMaxUtc=$(Format-Utc $state.SourceMaxUtc) classesMaxUtc=$(Format-Utc $state.ClassesMaxUtc) classpathUtc=$(Format-Utc $state.ClasspathUtc) classpathSha256=$($state.ClasspathSha256)"
 & java `
     "-Ddhxy.cloud.brain.localOcrEndpoint=$ocrEndpoint" `
     "-Ddhxy.cloud.brain.localOcrTimeoutMs=10000" `
+    "-Ddhxy.cloud.brain.visionMemoryPath=$visionMemoryPath" `
     "-Ddhxy.cloudbrain.devArtifactMode=classpath" `
     "-Ddhxy.cloudbrain.launchUtc=$launchUtc" `
     "-Ddhxy.cloudbrain.projectPath=$BrainProjectPath" `
