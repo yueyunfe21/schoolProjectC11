@@ -57,3 +57,8 @@ images/test-cases/*
 images/temp/
 images/failure-cases/
 images/img.png
+
+# Runtime artifacts / large binaries
+lib/
+data/
+.superpowers/

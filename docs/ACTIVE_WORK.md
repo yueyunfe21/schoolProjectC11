@@ -1,5 +1,68 @@
 # DHXY Active Work
 
+## 2026-07-11 / CR208 P1：移除正常云端任务的本地 OCR 启动 gate（已修，fresh 待验）
+
+- 基线：当前分支 `codex/hybrid-cloud-protection`，HEAD 与 pushed
+  `origin/codex/hybrid-cloud-protection` 同为 `9aa987d 修罗云端能跑`；工作区已有其他并行修改，
+  本项仅触碰 `MainWindowController` 的启动 gate 与 CR208 记录，不回退任何既有改动。
+- 基线代码证据：pushed `MainWindowController` 的四条正常启动入口均先调
+  `ensureLocalOcrReadyForTaskStart()`，再调 `ensureCloudDecisionDevReadyForTaskStart()`；前者无条件执行
+  `LocalOcrSidecarService.ensureRunningBlocking()`，本地 OCR 不可用即阻止任务启动。
+- 已核对 `docs/业务逻辑.md` 的五倍/修罗基线：本项只移除启动层错误依赖，不改任务 phase、OCR 决策、截图 ROI、
+  输入、retry/fallback、park/yield 或坐标业务语义。无已批准业务差异；按基线等价迁移。
+- 实施目标：普通 cloud 任务启动只保留既有 cloud readiness gate；本地 OCR legacy/offline 路径暂不删除，
+  也不再作为正常启动前置条件。
+- 实施结果：`MainWindowController` 已删除本地 OCR sidecar 字段、四条启动入口的 blocking 调用和对应 UI 提示；
+  `ensureCloudDecisionDevReadyForTaskStart()` 保持原位置。`rg` 复核本地 OCR sidecar 只剩类定义、无生产调用；
+  DHXY `mvn -q -DskipTests compile` exit 0。fresh 验收：本地 OCR sidecar 不可用但 cloud ready 时，修罗/五倍仍可启动。
+
+## 2026-07-11 / CR208-10 review Approved，实现者 heartbeat 按规则 15 停止
+
+- reviewer 结论（2026-07-10 23:53 EDT，写入父卡 item 10）：**通过 / Approved，无 P0/P1/P2**——
+  DHXY active 路径仅解码已绑定窗口截图后上传；云端完成 WASH_YELLOW、OCR、与基线同构的 regex 和
+  地图 canonicalize；NO_RESULT 回原有单样本 miss、无本地 OCR fallback；三次采样时序、异步
+  pipelining、requestId 防 stale、hint 消费语义均未改；未新增 plausibility/retry/fallback。
+  fresh runtime 按 worker 验收点独立待验，不阻塞本 review。
+- 卡片 item 10 状态行已记 Approved + heartbeat 停止原因；表行同步；dashboard 已重生成。
+  父卡 CR208 不关闭：剩余未消项 item 15（`OcrRoiMemoryService`）+ 各已迁项 fresh 证据未齐。
+
+## 2026-07-11 / CR208-10 实施：五倍目的地黄字提示 OCR 迁云端（待复审 + fresh）
+
+- 按父卡 Goal 与 item 10 下 reviewer 预置要求实施完成，四项交付齐：
+  - **云端 service/协议**：新 `WUBEI_DEST_HINT_READER`——external `WubeiDestHintRecognizer`
+    （QuestDetailTextRecognizer 同构：decode raw ROI → WASH_YELLOW → `LocalOcrClient` 真 OCR →
+    去空白 + 本地同构 regex `前往(.+?)[(（](\d+)[,，](\d+)[)）]` → `MiniMapRecognizer.canonicalizeMapName`）
+    + `DecisionEngine` case；decision 复用 objectiveMap/X/Y 字段合同，NO_RESULT 带
+    `cloud-brain-wubei-dest-hint-*` 失败原因，rawText 进 diagnostics。刻意不加坐标 plausibility
+    （本地基线无此校验，迁移保持行为等价）。
+  - **DHXY 调用替换**：`CloudDecisionServiceId.WUBEI_DEST_HINT_READER` + properties 四键；
+    `ObjectiveTextReaderCloudDecisionService.readWubeiDestHint(...)`（复用既有 read/gate/
+    `ObjectiveTextResult`）；`WubeiTask.parseTrackerDestinationHintCapture` 云端优先——原
+    "云 IMAGE_PREPROCESS 洗图 + 本地 sidecar OCR + 本地 regex" 三段合成一次云往返；旧链改名
+    `parseTrackerDestinationHintCaptureLocallyLegacy` @Deprecated(since="CR208-10") 仅 rollback。
+    3 次采样时序（500/1000/1500ms）、pipelining、requestId 新鲜性、`TrackerDestinationHint`
+    三个消费方（smart click 约束/direct combat/到点判断）全部零改动。
+  - **编译证据**：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package`
+    （含测试）exit 0。
+  - **fresh 验收点**：probe 绿链后 `cloud.decision serviceId=WUBEI_DEST_HINT_READER ... status=FOUND`
+    + `[wubei] destination hint cloud reader parsed`；不再出现 `destination hint wash missed`/
+    本地 sidecar OCR 日志；miss 按既有 3-sample 语义继续。
+- 父卡 item 10 两处清单已勾选 + 实施记录；历史"不通过"结论保留并逐项回应；表行/dashboard 已同步
+  （父卡剩余未消项仅 15）。heartbeat 已建，等 reviewer 复审。
+
+## 2026-07-11 / CR250-251 云端导航迁移方案复核：P1，暂不得实施
+
+- 已按 `docs/业务逻辑.md` 的导航基线复核两张卡：小地图点击后的 pathing intent 注册、Runner watcher、
+  park/wake、keep-turn、stop/pause 仍必须留在本地；云端只可计算候选点和返回受限动作，不能引入新的本地
+  调度语义。
+- CR250：远端动作协议尚无可实现的执行器合同。需要先逐 phase 冻结 action allowlist、client ROI/bounds、
+  键白名单、token/decision/request/window/intent 绑定、仅内存 execution ledger、重放和 stop/submit outcome；
+  未完成时不得让云端获得任意输入执行权。
+- CR251：用户最终确认允许一次性返回多个候选，方案收口为**首包有序多候选预取**，不使用短 batch TTL 或
+  中途换批。本地仍逐条点击、fast-edge/坐标确认；`NO_PATHING` 后按既有 200ms 直接消费下一条；成功、绑定/
+  intent 变化、stop、60 秒到期或候选耗尽时作废。用户明确接受本地提前持有多个运行时点位；CR251 与
+  CR250 已 **Approved（方案 review）**。后续 C/D 子卡实施仍须单独立卡并经 review。
+
 ## 2026-07-11 / CR256 P2 返修 + Approved，实现者 heartbeat 按规则 15 停止
 
 - reviewer 首轮 P2：direct helper 未显式限制为本地 `local-kanda` 硬证据 action（合同 2 授权边界）。

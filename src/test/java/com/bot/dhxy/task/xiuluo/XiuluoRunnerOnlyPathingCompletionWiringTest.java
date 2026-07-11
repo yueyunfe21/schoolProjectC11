@@ -46,12 +46,15 @@ public class XiuluoRunnerOnlyPathingCompletionWiringTest {
 
         String shortcutWait = between(xiuluo,
                 "private XiuluoStepOutcome waitTrackerShortcutPathing(",
-                "private boolean isShortcutTargetMapArrival(");
-        require(shortcutWait.contains("WindowPathingState.ACTIVE"),
-                "CR111 修罗 shortcut wait must keep waiting on watcher ACTIVE");
-        require(shortcutWait.contains("WindowPathingState.ARRIVED")
-                        && shortcutWait.contains("WindowPathingState.STOPPED_AWAY"),
-                "CR111 修罗 shortcut wait must consume watcher terminal states");
+                "private void openXiuluoGreenChainSchedule(");
+        require(shortcutWait.contains("consumeXiuluoEnterBattleCloudJob(")
+                        && shortcutWait.contains("consumeTrackerGreenRetryJob(")
+                        && shortcutWait.contains("consumeSummonSkillCleanupJob("),
+                "CR253 修罗 shortcut wait must only consume typed prepared work for the current attempt");
+        require(!shortcutWait.contains("WindowPathingState.ARRIVED")
+                        && !shortcutWait.contains("WindowPathingState.STOPPED_AWAY"),
+                "CR253 修罗 shortcut wait must not consume watcher terminal states in the foreground; "
+                        + "the runner-side stop-static pipeline owns them");
         require(!shortcutWait.contains("gameStateUtil.detectMovementState()"),
                 "CR111 修罗 shortcut wait must not use local movement detection to re-read/re-click tracker");
         require(!shortcutWait.contains("MovementState.MAYBE_MOVING"),

@@ -50,6 +50,11 @@ public class ObjectiveTextReaderCloudDecisionService {
         return coordinator.isActive(CloudDecisionServiceId.QUEST_DETAIL_READER);
     }
 
+    /** CR208-10: 五倍 transient destination-hint OCR reader activation. */
+    public boolean isWubeiDestHintActive() {
+        return coordinator.isActive(CloudDecisionServiceId.WUBEI_DEST_HINT_READER);
+    }
+
     /**
      * Recognize the objective map/coordinate from the panel image through the cloud reader.
      *
@@ -70,6 +75,17 @@ public class ObjectiveTextReaderCloudDecisionService {
      */
     public Optional<ObjectiveTextResult> readQuestDetail(BufferedImage image, String taskCode, String source) {
         return read(CloudDecisionServiceId.QUEST_DETAIL_READER, "quest-detail-ocr", image, taskCode, source);
+    }
+
+    /**
+     * CR208-10: recognize the 五倍 transient "正在自动寻路前往地图(x,y)" destination hint from the
+     * raw hint ROI screenshot through the cloud reader. Cloud-brain owns the yellow wash, real OCR,
+     * the "前往地图(x,y)" parse and label-dictionary canonicalization; the local 3-sample capture
+     * timing stays a client scheduling concern. The result reuses {@link ObjectiveTextResult}
+     * (map/x/y/score) like the quest-detail reader.
+     */
+    public Optional<ObjectiveTextResult> readWubeiDestHint(BufferedImage image, String source) {
+        return read(CloudDecisionServiceId.WUBEI_DEST_HINT_READER, "wubei-dest-hint", image, "wubei", source);
     }
 
     private Optional<ObjectiveTextResult> read(CloudDecisionServiceId serviceId,

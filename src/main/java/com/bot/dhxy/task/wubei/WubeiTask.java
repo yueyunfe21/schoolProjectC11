@@ -5,6 +5,7 @@ import com.bot.dhxy.cloud.task.ImagePreprocessOperation;
 import com.bot.dhxy.cloud.task.ImageProcessorService;
 import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
 import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
+import com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService;
 import com.bot.dhxy.cloud.task.TaskPolicyCloudDecision;
 import com.bot.dhxy.cloud.task.TaskPolicyCloudDecisionService;
 import com.bot.dhxy.cloud.task.TaskRecoveryCloudDecision;
@@ -33,6 +34,7 @@ import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
 import com.bot.dhxy.model.navigation.NavigationRequest;
 import com.bot.dhxy.model.navigation.NavigationResult;
 import com.bot.dhxy.model.navigation.NavigationResultStatus;
+import com.bot.dhxy.model.navigation.ObjectiveTextResult;
 import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
 import com.bot.dhxy.model.ocr.LocationInfo;
@@ -94,10 +96,15 @@ import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import javax.imageio.ImageIO;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.awt.Point;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -303,6 +310,7 @@ public class WubeiTask implements GameTask {
     private final TrackerLinkRankerCloudShadowService trackerLinkRankerCloudShadowService;
     private final TaskPolicyCloudDecisionService taskPolicyCloudDecisionService;
     private final TaskRecoveryCloudDecisionService taskRecoveryCloudDecisionService;
+    private final ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService;
     private final AutomationMetricsService automationMetricsService;
     private int currentRoundNumber;
     private boolean currentRoundChainedCombatExpected;
@@ -3614,6 +3622,63 @@ public class WubeiTask implements GameTask {
     }
 
     private Optional<TrackerDestinationHint> parseTrackerDestinationHintCapture(TrackerDestinationHintCapture capture) {
+        /*
+         * CR208-10: cloud owns the whole hint recognition — the raw ROI screenshot goes up and
+         * cloud-brain runs the yellow wash, real OCR, the "前往地图(x,y)" parse and label-dictionary
+         * canonicalization in one round-trip (previously: cloud wash + LOCAL sidecar OCR + local
+         * regex). The 3-sample capture timing, pipelining and staleness rules stay local and
+         * unchanged; a cloud NO_RESULT/miss keeps the existing per-sample miss semantics.
+         */
+        if (objectiveTextReaderCloudDecisionService.isWubeiDestHintActive()) {
+            return parseTrackerDestinationHintCaptureViaCloud(capture);
+        }
+        return parseTrackerDestinationHintCaptureLocallyLegacy(capture);
+    }
+
+    private Optional<TrackerDestinationHint> parseTrackerDestinationHintCaptureViaCloud(
+            TrackerDestinationHintCapture capture) {
+        long parseStartedAt = System.currentTimeMillis();
+        BufferedImage raw;
+        try {
+            raw = ImageIO.read(new File(capture.rawPath()));
+        } catch (IOException e) {
+            log.warn("[wubei] destination hint raw image unreadable for cloud reader: label={} sample={} raw={}",
+                    capture.label(), capture.sample(), capture.rawPath(), e);
+            return Optional.empty();
+        }
+        if (raw == null) {
+            log.warn("[wubei] destination hint raw image decoded null for cloud reader: label={} sample={} raw={}",
+                    capture.label(), capture.sample(), capture.rawPath());
+            return Optional.empty();
+        }
+        Optional<ObjectiveTextResult> result = objectiveTextReaderCloudDecisionService.readWubeiDestHint(
+                raw, "wubei:destination-hint:" + capture.label() + ":sample-" + capture.sample());
+        long afterCloudAt = System.currentTimeMillis();
+        if (result.isEmpty()) {
+            log.info("[wubei] destination hint cloud reader miss: label={} sample={} region={} captureElapsedMs={} cloudMs={} raw={}",
+                    capture.label(), capture.sample(), capture.region().toShortText(),
+                    capture.captureElapsedMs(), afterCloudAt - parseStartedAt, capture.rawPath());
+            return Optional.empty();
+        }
+        ObjectiveTextResult found = result.get();
+        TrackerDestinationHint hint = new TrackerDestinationHint(found.mapName(), found.x(), found.y(),
+                "cloud-dest-hint:score=" + found.mapScore());
+        log.info("[wubei] destination hint cloud reader parsed: label={} sample={} region={} captureElapsedMs={} cloudMs={} delayMs={} refreshMs={} captureMs={} map={} coord=({}, {}) raw={}",
+                capture.label(), capture.sample(), capture.region().toShortText(),
+                capture.captureElapsedMs(), afterCloudAt - parseStartedAt,
+                capture.delayMs(), capture.refreshMs(), capture.captureMs(),
+                hint.mapName(), hint.x(), hint.y(), capture.rawPath());
+        return Optional.of(hint);
+    }
+
+    /**
+     * Pre-CR208-10 local recognition chain (cloud IMAGE_PREPROCESS wash + local sidecar OCR + local
+     * regex parse). Kept only as an offline dev/rollback path when WUBEI_DEST_HINT_READER is
+     * inactive; production runs the cloud reader above.
+     */
+    @Deprecated(since = "CR208-10")
+    private Optional<TrackerDestinationHint> parseTrackerDestinationHintCaptureLocallyLegacy(
+            TrackerDestinationHintCapture capture) {
         long parseStartedAt = System.currentTimeMillis();
         /*
          * 每张截图落盘后立刻启动解析；截图调度仍按固定时间点推进，避免第一张 OCR 慢时

@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DHXY Hybrid 云端服务拍板表</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --line: #d9dfeb;
+      --text: #182230;
+      --muted: #667085;
+      --blue: #175cd3;
+      --green: #087443;
+      --orange: #b54708;
+      --red: #b42318;
+      --purple: #6941c6;
+      --soft-blue: #eff8ff;
+      --soft-green: #ecfdf3;
+      --soft-orange: #fffaeb;
+      --soft-red: #fff1f0;
+      --soft-purple: #f4f3ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.48 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.96);
+      padding: 14px 18px;
+    }
+    h1 {
+      margin: 0 0 5px;
+      font-size: 21px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 20px 0 10px;
+      font-size: 16px;
+    }
+    p { margin: 0; }
+    .subtitle {
+      max-width: 1080px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="search"], select, textarea, button {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+    input[type="search"] {
+      min-width: 280px;
+      padding: 8px 10px;
+    }
+    select {
+      min-width: 132px;
+      padding: 7px 8px;
+    }
+    button {
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+    .save-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .save-status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+    .save-status.dirty::before { background: var(--orange); }
+    main {
+      padding: 18px;
+    }
+    .notice {
+      border: 1px solid #b2ddff;
+      border-left: 5px solid var(--blue);
+      border-radius: 8px;
+      background: var(--soft-blue);
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      display: grid;
+      gap: 8px;
+    }
+    .notice strong { color: #1849a9; }
+    .warning {
+      border-color: #fedf89;
+      border-left-color: var(--orange);
+      background: var(--soft-orange);
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 10px 12px;
+    }
+    .metric b {
+      display: block;
+      font-size: 23px;
+      margin-bottom: 2px;
+    }
+    .metric span { color: var(--muted); }
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-left: 6px solid #cfd6e4;
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    .card.P0 { background: linear-gradient(90deg, var(--soft-red), #fff 28%); }
+    .card.P1 { background: linear-gradient(90deg, var(--soft-purple), #fff 24%); }
+    .card.Hybrid { border-left-color: var(--purple); }
+    .card.Cloud { border-left-color: var(--blue); }
+    .card.Shadow { border-left-color: #667085; }
+    .card.Local { border-left-color: var(--green); }
+    .card.Defer { border-left-color: var(--orange); }
+    .card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(330px, 0.42fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      font-size: 17px;
+      font-weight: 800;
+    }
+    .id {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .pill {
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .pill.Hybrid { background: #ebe9fe; color: var(--purple); }
+    .pill.Cloud { background: #dbeafe; color: var(--blue); }
+    .pill.Shadow { background: #eef2f7; color: #475467; }
+    .pill.Local { background: #dcfae6; color: var(--green); }
+    .pill.Defer { background: #fef0c7; color: var(--orange); }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .tag {
+      border-radius: 999px;
+      background: #eef2f7;
+      color: #344054;
+      padding: 3px 8px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .tag.strong { background: #fee4e2; color: var(--red); font-weight: 800; }
+    .tag.mid { background: #ebe9fe; color: var(--purple); }
+    .decision {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .decision label {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .decision textarea {
+      grid-column: 1 / -1;
+      min-height: 70px;
+      padding: 8px;
+      resize: vertical;
+    }
+    .plain {
+      border: 1px solid #b2ddff;
+      border-radius: 8px;
+      background: #f5fbff;
+      padding: 10px 12px;
+    }
+    .plain h3,
+    .block h3,
+    .field h3 {
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .plain p {
+      font-size: 15px;
+      font-weight: 650;
+    }
+    .blocks {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .block {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px 11px;
+    }
+    .block.cloud { border-color: #b2ddff; background: var(--soft-blue); }
+    .block.local { border-color: #abefc6; background: var(--soft-green); }
+    .block.risk { border-color: #fedf89; background: var(--soft-orange); }
+    .block.split {
+      border-color: #d9d6fe;
+      background: var(--soft-purple);
+    }
+    .block ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .block li + li { margin-top: 4px; }
+    details.tech {
+      border-top: 1px dashed var(--line);
+      padding-top: 8px;
+    }
+    details.tech summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .field {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 9px 10px;
+    }
+    .questions {
+      display: grid;
+      gap: 10px;
+    }
+    .question {
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 0.38fr);
+      gap: 12px;
+    }
+    .question h3 {
+      margin: 0 0 4px;
+      font-size: 15px;
+    }
+    .question p {
+      color: var(--muted);
+    }
+    dialog {
+      width: min(980px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0;
+    }
+    dialog header {
+      position: static;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .dialog-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    pre {
+      max-height: 62vh;
+      overflow: auto;
+      margin: 0;
+      padding: 16px;
+      background: #0b1020;
+      color: #d9e3f0;
+      white-space: pre-wrap;
+    }
+    @media (max-width: 980px) {
+      .card-head,
+      .blocks,
+      .fields,
+      .question {
+        grid-template-columns: 1fr;
+      }
+      .decision { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DHXY Hybrid 云端服务拍板表</h1>
+    <p class="subtitle">简化版：不用再选 26 个细能力点，只按 6 个重要 Service 决定“策略上云、本地执行”的边界。</p>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="搜索 service、文件、风险、说明">
+      <select id="modeFilter">
+        <option value="">全部方式</option>
+        <option value="Hybrid">Hybrid Service</option>
+        <option value="Cloud">Cloud Service</option>
+        <option value="Shadow">Shadow First</option>
+        <option value="Local">Local Only</option>
+        <option value="Defer">Defer</option>
+      </select>
+      <button id="resetFilters">清筛选</button>
+      <button id="applyCoreCloudPreset">一键套用：核心逻辑上云</button>
+      <button id="saveLocal">保存到本机</button>
+      <button class="primary" id="exportJson">导出/提交 JSON</button>
+      <span class="save-status" id="saveStatus">已自动保存到本机</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="notice">
+      <p><strong>怎么填：</strong>如果你的口径是“核心逻辑能放云端就放云端”，前面 1-6 不用逐项纠结，直接点“一键套用：核心逻辑上云”。它会保留你已经选好的全局问题，只更新 6 个 Service 的推荐选择。</p>
+      <p><strong>怎么提交：</strong>选择会自动保存到本机浏览器；要交给我继续做架构/拆卡时，点“导出/提交 JSON”，复制弹窗内容发给我。</p>
+    </section>
+
+    <section class="notice warning">
+      <p><strong>核心边界：</strong>这里说的“Service 上云”不是把本地 Java Service 整个搬走。本地仍负责窗口绑定、截图、输入队列、pause/stop、二次校验和最终点击；云端负责策略、候选排序、资产、阈值、失败归因。</p>
+      <p><strong>落地方式：</strong>如果某个 Service 仍然太大，就按卡片里的“小云端 Service”再拆。大卡用于你拍板，小云端 Service 才是后续真正开发和部署的单位。</p>
+    </section>
+
+    <section class="summary" id="summary"></section>
+
+    <h2>一、6 个重要 Service</h2>
+    <section class="grid" id="services"></section>
+
+    <h2>二、全局拍板问题</h2>
+    <section class="questions" id="questions"></section>
+  </main>
+
+  <dialog id="exportDialog">
+    <header>
+      <h1>导出结果</h1>
+      <div class="dialog-actions">
+        <button id="copyExport">复制 JSON</button>
+        <button id="closeDialog">关闭</button>
+      </div>
+    </header>
+    <pre id="exportText"></pre>
+  </dialog>
+
+  <script>
+    const STORAGE_KEY = "dhxy-hybrid-cloud-protection-survey-service-v2";
+
+    const services = [
+      {
+        id: "SVC-01",
+        name: "Task Strategy 云端服务",
+        mode: "Hybrid",
+        priority: "P0",
+        files: "WubeiTask, FiveRingTaskV2, XiuluoTaskV2, TaskTrackerPanelService, XiuluoHotStartResolver",
+        plain: "把五倍/修罗的任务大脑收成一个云端策略服务：本地把当前任务、截图证据、phase、失败原因发过去，云端返回下一步走哪条分支。",
+        cloud: ["五倍任务类型和分支：暗雷、白龙马、黄袍、普通怪。", "修罗 phase 下一步、失败后重试/重接/停止策略。", "hot-start/startup 入口、连续任务跳过前置检查策略。"],
+        local: ["仍由本地截图、识图、校验当前游戏状态。", "仍由本地点 NPC、点绿链、用道具、暂停/停止。", "云端返回策略 enum 或 candidate id，本地二次验证后执行。"],
+        splits: ["TaskClassifierCloud：只判断任务类型/标题/状态。", "TaskPolicyCloud：只返回下一步 phase/branch。", "TaskRecoveryCloud：只管失败后的 retry/reaccept/stop。"],
+        risk: "云端错判会走错任务分支，所以第一版建议 Hybrid，不建议直接让云端发裸点击动作。",
+        request: "taskCode, phase, tracker/title evidence, currentMap, failureReason, retryCount, sessionId",
+        response: "decision enum, branch, policyVersion, retryBudget, ttl, optional candidateId"
+      },
+      {
+        id: "SVC-02",
+        name: "Navigation 云端服务",
+        mode: "Hybrid",
+        priority: "P0",
+        files: "NavigationService, MapSurveyService, CoordinateHelper, WorldMapRouteResultMemoryService",
+        plain: "把最值钱的导航经验放云端：怎么选黄字结果、哪条 route memory 可信、地图坐标怎么换算、失败以后怎么降权。",
+        cloud: ["世界地图黄字候选评分和路线选择。", "route memory clean/dirty/降权策略。", "地图标定、坐标转换、禁区和 correction 资产下发。"],
+        local: ["打开世界地图、截图、点击、确认移动都留本地。", "pathing watcher 的到达/停滞判断留本地。", "云端资产要带签名、版本和过期时间。"],
+        splits: ["RouteCandidateCloud：只给黄字候选评分。", "MapTransformAssetCloud：只下发地图坐标转换资产。", "RouteMemoryCloud：只管 clean/dirty/降权和共享经验。"],
+        risk: "地图资产一旦错，会系统性错点；云端延迟也不能卡住实时移动确认。",
+        request: "fromMap, targetMap, routePanelCrop/ref, currentPosition, resolution, memoryState",
+        response: "route candidate, transform asset version, confidence, dirty/clean update, ttl"
+      },
+      {
+        id: "SVC-03",
+        name: "Interaction 云端服务",
+        mode: "Hybrid",
+        priority: "P0",
+        files: "TaskTrackerPanelService, NpcClickService, DialogService",
+        plain: "把绿色链接、NPC click smart、Dialog 选项策略合成一个交互决策服务。它不直接控制鼠标，只告诉本地应该信哪个候选、走哪种点击策略。",
+        cloud: ["绿色链接候选排序、segment id、任务类型对应点击段。", "NPC learned memory、黄名、tooltip、玩家锚点、Ctrl probe 的策略顺序。", "Dialog 业务选项 catalog、fallback 顺序、记忆点 TTL。"],
+        local: ["本地做最终 fingerprint/模板二次验证。", "真实鼠标点击和 Ctrl 菜单闭环必须留本地。", "点击前仍要检查窗口绑定和 pause/stop。"],
+        splits: ["TrackerLinkRankerCloud：只排绿色链接候选。", "NpcClickStrategyCloud：只排 NPC 点击策略和 retry 预算。", "DialogPolicyCloud：只给业务选项和 fallback 顺序。"],
+        risk: "返回错候选会误点 NPC/链接/对话框，所以 first release 应该返回 candidate，不直接返回未验证动作。",
+        request: "roi crop/ref, taskContext, candidate list, npcName/dialogIntent, recentFailures",
+        response: "candidateId, strategyOrder, fallbackPolicy, confidence, ttl"
+      },
+      {
+        id: "SVC-04",
+        name: "Team/Maintenance 云端服务",
+        mode: "Hybrid",
+        priority: "P1",
+        files: "TaskMaintenanceService, TeamReturnService, CommonBoxService, PlayerStateService, SummonSkillService",
+        plain: "把队伍维护策略统一到云端：什么时候放权、盒子和归队谁优先、什么时候补血蓝/摄妖香/三技能，以及超时后怎么降级。",
+        cloud: ["capability gate 组合：FIRST_AID、TEAM_RETURN、PATHING、COMMON_BOX、SUMMON。", "盒子 TTL、归队窗口、补给阈值、unknown backoff。", "不同任务场景下的维护优先级策略。"],
+        local: ["live leader/session 真值留本地。", "队长放权、队员抢权、窗口 focus、真实点击留本地。", "盒子/补给/归队前必须本地确认 UI。"],
+        splits: ["CapabilityGateCloud：只下发允许哪些能力。", "MaintenanceThresholdCloud：只下发补给/摄妖香/三技能阈值。", "TeamReturnPolicyCloud：只下发归队窗口、超时和优先级。"],
+        risk: "云端不能替代本地队长状态；误放权会抢队长输入或让队员乱点。",
+        request: "teamSession, leaderSignal, workerState, pendingBox, hpMpState, taskPhase",
+        response: "allowed capabilities, priority order, timeout, cooldown, fallback mode"
+      },
+      {
+        id: "SVC-05",
+        name: "Asset/Memory 云端服务",
+        mode: "Cloud",
+        priority: "P1",
+        files: "MapSurveyService, NpcClickService learned memory, WorldMapRouteResultMemoryService, maps.json/templates",
+        plain: "把可复用的资产和经验放云端：地图标定、NPC 学习点、route memory、策略版本、模板包。客户端只拿短期签名缓存。",
+        cloud: ["地图 transform/correction 资产。", "NPC learned click memory 和 route memory clean 样本。", "模板/策略包版本、license/session 绑定、强制升级。"],
+        local: ["本地只缓存短期签名资产。", "资产使用前检查版本、分辨率、过期时间。", "敏感模板不直接长期裸放客户端。"],
+        splits: ["SignedAssetBundleCloud：下发模板/地图/策略包。", "LearnedMemoryCloud：管理 NPC/route 学习点。", "PolicyVersionCloud：按 license/session 下发策略版本。"],
+        risk: "这是保护价值最高的一类，但要处理离线可用时间、版本兼容和误污染。",
+        request: "license, device, taskFeature, map/resolution, requestedAssetVersion",
+        response: "signed asset bundle, expiry, feature flags, revoke/upgrade hints"
+      },
+      {
+        id: "SVC-06",
+        name: "Diagnostics/Policy 云端服务",
+        mode: "Shadow",
+        priority: "P1",
+        files: "DiagnosticCaseCaptureService, DiagnosticCaseUploaderService, AutomationMetricsService, run reports",
+        plain: "先把失败样本、策略建议、灰度开关和性能指标集中起来。第一版可以只影子评估，不影响本地执行，用来安全地学习哪些策略值得真正上云。",
+        cloud: ["失败归因、样本聚类、策略热修建议。", "feature flag、灰度比例、版本健康度。", "延迟、错判、fallback、用户机器差异统计。"],
+        local: ["默认不因为诊断服务失败而停任务。", "上传内容要按用户选择脱敏或裁剪。", "本地日志仍是最终排障依据。"],
+        splits: ["FailureClassifierCloud：分类失败原因。", "FeatureFlagCloud：灰度和热修开关。", "MetricsIngestCloud：收集延迟、错判和 fallback 指标。"],
+        risk: "上传策略要明确，否则会有隐私和成本问题；但不上诊断，云端策略迭代会很慢。",
+        request: "failureCase, metrics, selected crop/ref, appVersion, policyVersion, taskContext",
+        response: "classification, suggested policy, featureFlag, uploadAck, dashboard summary"
+      }
+    ];
+
+    const globalQuestions = [
+      {
+        id: "G-01",
+        name: "云不可用时怎么办？",
+        plain: "这是最重要的商业/稳定性选择：没网、云端超时、授权失败时，是直接停，还是允许本地老逻辑继续跑。",
+        options: ["关键服务 fail closed，其余本地降级", "全部 fail closed", "全部允许本地降级"],
+        defaultValue: "关键服务 fail closed，其余本地降级"
+      },
+      {
+        id: "G-02",
+        name: "允许上传什么证据？",
+        plain: "云端要做候选排序和失败归因，最好有小区域截图。这里决定隐私边界和调试能力。",
+        options: ["允许小 ROI/crop，不传全屏", "只传结构化摘要，不传图片", "失败 case 可传全图"],
+        defaultValue: "允许小 ROI/crop，不传全屏"
+      },
+      {
+        id: "G-03",
+        name: "云端 response 能不能包含最终点击点？",
+        plain: "最保守是云端只返回 candidate id，本地根据候选重新算点；更激进是云端可返回坐标，但本地必须二次验证。",
+        options: ["只返回 enum/candidate id", "允许返回坐标，但本地二次验证", "允许云端直接返回动作序列"],
+        defaultValue: "只返回 enum/candidate id"
+      },
+      {
+        id: "G-04",
+        name: "第一版上线节奏",
+        plain: "为了不把现有稳定性打崩，建议先 shadow 记录，再挑 P0 服务进入 Hybrid 执行。",
+        options: ["先 Shadow，再 P0 Hybrid", "P0 直接 Hybrid", "只做授权和资产云端化"],
+        defaultValue: "先 Shadow，再 P0 Hybrid"
+      },
+      {
+        id: "G-05",
+        name: "学习数据是否共享？",
+        plain: "route memory、NPC memory 如果共享，云端价值很高；但也可能有分辨率、账号、机器差异污染。",
+        options: ["默认不跨账号共享，只共享人工确认样本", "同账号多机器共享", "全局共享并按置信度隔离"],
+        defaultValue: "默认不跨账号共享，只共享人工确认样本"
+      }
+    ];
+
+    const defaults = {
+      services: Object.fromEntries(services.map(item => [item.id, {
+        mode: item.mode,
+        priority: item.priority,
+        notes: ""
+      }])),
+      questions: Object.fromEntries(globalQuestions.map(item => [item.id, {
+        answer: item.defaultValue,
+        notes: ""
+      }]))
+    };
+
+    const CORE_CLOUD_PRESET = {
+      "SVC-01": {mode: "Hybrid Service", priority: "P0", notes: "按用户口径：五倍/修罗核心任务策略能上云就上云，本地保留状态校验和执行。"},
+      "SVC-02": {mode: "Hybrid Service", priority: "P0", notes: "按用户口径：导航核心策略和地图资产上云，本地保留截图、点击、移动确认。"},
+      "SVC-03": {mode: "Hybrid Service", priority: "P0", notes: "按用户口径：绿色链接/NPC/Dialog 策略上云，本地做最终 fingerprint 验证和点击。"},
+      "SVC-04": {mode: "Hybrid Service", priority: "P1", notes: "按用户口径：队伍维护策略上云，本地保留 leader/session/窗口/focus 真值。"},
+      "SVC-05": {mode: "Cloud Service", priority: "P1", notes: "按用户口径：地图、模板、memory、策略包这类资产优先云端化。"},
+      "SVC-06": {mode: "Shadow First", priority: "P1", notes: "按用户口径：诊断先影子模式收集样本，不直接影响当前稳定运行。"}
+    };
+
+    let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || defaults;
+    state = {
+      services: {...defaults.services, ...(state.services || {})},
+      questions: {...defaults.questions, ...(state.questions || {})}
+    };
+
+    function setSaveStatus(kind, text) {
+      const status = document.getElementById("saveStatus");
+      status.className = `save-status ${kind}`;
+      status.textContent = text;
+    }
+
+    function save(manual = false) {
+      setSaveStatus("dirty", "正在保存...");
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state, null, 2));
+      renderSummary();
+      const now = new Date().toLocaleTimeString("zh-CN", {hour12: false});
+      setSaveStatus("saved", manual ? `已手动保存 ${now}` : `已自动保存 ${now}`);
+    }
+
+    function htmlList(items) {
+      return `<ul>${items.map(item => `<li>${item}</li>`).join("")}</ul>`;
+    }
+
+    function serviceModeClass(mode) {
+      if (mode.startsWith("Hybrid")) return "Hybrid";
+      if (mode.startsWith("Cloud")) return "Cloud";
+      if (mode.startsWith("Shadow")) return "Shadow";
+      if (mode.startsWith("Local")) return "Local";
+      return "Defer";
+    }
+
+    function filteredServices() {
+      const q = document.getElementById("search").value.trim().toLowerCase();
+      const mode = document.getElementById("modeFilter").value;
+      return services.filter(item => {
+        const current = state.services[item.id] || defaults.services[item.id];
+        const modeClass = serviceModeClass(current.mode);
+        const haystack = [
+          item.id, item.name, item.files, item.plain, item.risk, item.request, item.response,
+          item.cloud.join(" "), item.local.join(" "), current.mode, current.priority, current.notes
+        ].join(" ").toLowerCase();
+        return (!q || haystack.includes(q)) && (!mode || modeClass === mode);
+      });
+    }
+
+    function renderSummary() {
+      const visible = filteredServices();
+      const counts = visible.reduce((acc, item) => {
+        const current = state.services[item.id] || defaults.services[item.id];
+        const key = serviceModeClass(current.mode);
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      const p0 = services.filter(item => (state.services[item.id] || defaults.services[item.id]).priority === "P0").length;
+      document.getElementById("summary").innerHTML = [
+        ["显示 Service", visible.length],
+        ["P0", p0],
+        ["Hybrid", counts.Hybrid || 0],
+        ["Cloud", counts.Cloud || 0],
+        ["Shadow", counts.Shadow || 0],
+        ["Local", counts.Local || 0]
+      ].map(([label, value]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
+    }
+
+    function renderServices() {
+      const modes = ["Hybrid Service", "Cloud Service", "Shadow First", "Local Only", "Defer"];
+      const priorities = ["P0", "P1", "P2", "P3", "Later"];
+      const cards = filteredServices().map(item => {
+        const current = state.services[item.id] || defaults.services[item.id];
+        const modeClass = serviceModeClass(current.mode);
+        return `
+          <article class="card ${modeClass} ${current.priority}">
+            <div class="card-head">
+              <div>
+                <div class="title"><span class="id">${item.id}</span>${item.name}<span class="pill ${modeClass}">${current.mode}</span></div>
+                <div class="tags">
+                  <span class="tag ${current.priority === "P0" ? "strong" : "mid"}">${current.priority}</span>
+                  <span class="tag">策略上云，本地执行</span>
+                  <span class="tag">${item.files}</span>
+                </div>
+              </div>
+              <div class="decision">
+                <label><span>云端化方式</span><select data-kind="service" data-id="${item.id}" data-field="mode">
+                  ${modes.map(v => `<option value="${v}" ${current.mode === v ? "selected" : ""}>${v}</option>`).join("")}
+                </select></label>
+                <label><span>优先级</span><select data-kind="service" data-id="${item.id}" data-field="priority">
+                  ${priorities.map(v => `<option value="${v}" ${current.priority === v ? "selected" : ""}>${v}</option>`).join("")}
+                </select></label>
+                <textarea data-kind="service" data-id="${item.id}" data-field="notes" placeholder="你的备注：比如先不上云、必须第一版做、只做影子模式">${current.notes || ""}</textarea>
+              </div>
+            </div>
+            <div class="plain"><h3>这张卡在决定什么</h3><p>${item.plain}</p></div>
+            <div class="blocks">
+              <div class="block cloud"><h3>云端负责</h3>${htmlList(item.cloud)}</div>
+              <div class="block local"><h3>本地必须保留</h3>${htmlList(item.local)}</div>
+              <div class="block risk"><h3>最大风险</h3><p>${item.risk}</p></div>
+            </div>
+            <div class="block split"><h3>如果这个 Service 还是太大，可以拆成这些明确上云的小 Service</h3>${htmlList(item.splits)}</div>
+            <details class="tech">
+              <summary>展开接口草案和文件范围</summary>
+              <div class="fields">
+                <div class="field"><h3>请求大概带什么</h3><p>${item.request}</p></div>
+                <div class="field"><h3>云端大概返回什么</h3><p>${item.response}</p></div>
+                <div class="field"><h3>主要本地入口</h3><p>${item.files}</p></div>
+                <div class="field"><h3>落地口径</h3><p>第一版优先做远程策略接口和影子模式日志，不直接删除现有本地逻辑。</p></div>
+              </div>
+            </details>
+          </article>
+        `;
+      }).join("");
+      document.getElementById("services").innerHTML = cards || `<article class="card">没有匹配的 Service。</article>`;
+      bindInputs();
+      renderSummary();
+    }
+
+    function renderQuestions() {
+      const questions = globalQuestions.map(item => {
+        const current = state.questions[item.id] || defaults.questions[item.id];
+        return `
+          <article class="question">
+            <div>
+              <h3>${item.id} ${item.name}</h3>
+              <p>${item.plain}</p>
+            </div>
+            <div class="decision">
+              <label><span>你的选择</span><select data-kind="question" data-id="${item.id}" data-field="answer">
+                ${item.options.map(v => `<option value="${v}" ${current.answer === v ? "selected" : ""}>${v}</option>`).join("")}
+              </select></label>
+              <label><span>备注</span><textarea data-kind="question" data-id="${item.id}" data-field="notes" placeholder="可选备注">${current.notes || ""}</textarea></label>
+            </div>
+          </article>
+        `;
+      }).join("");
+      document.getElementById("questions").innerHTML = questions;
+      bindInputs();
+    }
+
+    function bindInputs() {
+      document.querySelectorAll("[data-kind]").forEach(el => {
+        if (el.dataset.bound === "true") return;
+        el.dataset.bound = "true";
+        el.addEventListener("input", event => {
+          const kind = event.target.dataset.kind;
+          const id = event.target.dataset.id;
+          const field = event.target.dataset.field;
+          const bucket = kind === "service" ? "services" : "questions";
+          state[bucket][id] = {...state[bucket][id], [field]: event.target.value};
+          save();
+          if (kind === "service" && (field === "mode" || field === "priority")) renderServices();
+        });
+      });
+    }
+
+    function applyCoreCloudPreset() {
+      Object.entries(CORE_CLOUD_PRESET).forEach(([id, preset]) => {
+        const previous = state.services[id] || {};
+        state.services[id] = {
+          ...previous,
+          mode: preset.mode,
+          priority: preset.priority,
+          notes: previous.notes || preset.notes
+        };
+      });
+      save(true);
+      renderServices();
+    }
+
+    function init() {
+      document.getElementById("search").addEventListener("input", renderServices);
+      document.getElementById("modeFilter").addEventListener("input", renderServices);
+      document.getElementById("resetFilters").addEventListener("click", () => {
+        document.getElementById("search").value = "";
+        document.getElementById("modeFilter").value = "";
+        renderServices();
+      });
+      document.getElementById("applyCoreCloudPreset").addEventListener("click", applyCoreCloudPreset);
+      document.getElementById("saveLocal").addEventListener("click", () => save(true));
+      document.getElementById("exportJson").addEventListener("click", () => {
+        save(true);
+        const payload = {
+          exportedAt: new Date().toISOString(),
+          source: "docs/hybrid-cloud-protection-survey.html",
+          framing: "Service-level simplified hybrid cloud protection decisions",
+          services: services.map(item => ({...item, ...(state.services[item.id] || defaults.services[item.id])})),
+          globalQuestions: globalQuestions.map(item => ({...item, ...(state.questions[item.id] || defaults.questions[item.id])}))
+        };
+        document.getElementById("exportText").textContent = JSON.stringify(payload, null, 2);
+        document.getElementById("exportDialog").showModal();
+      });
+      document.getElementById("copyExport").addEventListener("click", async () => {
+        const text = document.getElementById("exportText").textContent;
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          document.getElementById("copyExport").textContent = "已复制";
+          setTimeout(() => document.getElementById("copyExport").textContent = "复制 JSON", 1200);
+        } catch (error) {
+          window.prompt("复制失败，手动复制下面这段 JSON：", text);
+        }
+      });
+      document.getElementById("closeDialog").addEventListener("click", () => {
+        document.getElementById("exportDialog").close();
+      });
+      renderServices();
+      renderQuestions();
+      renderSummary();
+    }
+
+    init();
+  </script>
+</body>
+</html>

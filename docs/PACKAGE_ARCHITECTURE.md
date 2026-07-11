@@ -1521,7 +1521,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR205 | 谢帅 + worker/reviewer | Review：第三版无新 service，本地 gate 通过，待复审/fresh runtime | `UICleanerService`, `TaskMaintenanceService`, `SummonSkillService`, `XiuluoTaskV2`, CR205 focused guard/replay, `images/template/dialog/maintenance/*raw.png` | 已删除第二版新增 `MaintenanceBroadcastRoiService`，维护广播 ROI matcher 收回既有 `UICleanerService`：固定窗口相对 `(260,381)->(378,413)` raw 匹配、heal before repair、queued 路径走 `InputSequences.moveAndClickLeft`、三技能 exclusive 路径走 direct `InputProvider` + `InputActionScope.checkpoint()`；四个生产入口不通过 `DialogService` / `DialogHandleRequest.handleMaintenanceBroadcastOption` / `DIALOG_POLICY` 点击 heal/repair。 |
 | CR206 | worker + 双 reviewer | Review：fresh runtime 正向通过，可关候选 | `XiuluoTaskV2`, 修罗启动维护 source guard, fresh 修罗启动日志 | 2026-07-08 01:43 fresh 日志证明 `xiuluo.brain.start` 前已有 no-focus 血蓝检查与 `SHEYAOXIANG_STATUS` 摄妖香检查/用香成功；CR206 原 fresh gate 已满足，建议下一轮集中关卡时关闭。 |
 | CR207 | 谢帅 + worker + 双 reviewer | Review：fresh P1（`WAIT_COMBAT` no-pending-wait 复发）已修——本地每次 outcome 上报 `eventWaitArmed`（由 `outcome.waitSpec()!=null` 导出），云端仅 true 才发 `WAIT_FOR_EVENT`，false 回 `EXECUTE_PHASE WAIT_COMBAT`；双侧构建通过，待双 reviewer + fresh | `XiuluoTaskV2`, `XiuluoBrainCloudDecisionService`, external `DecisionEngine`, `XiuluoBrainRoundState`, 修罗 `WAIT_COMBAT` / `WAIT_TRACKER_SHORTCUT_PATHING` / `ACCEPT_TASK_CLICK_NPC` 日志/case | 2026-07-10 09:44:55，67555 快速脱战后本地上报无 wait spec 的 `SHARED_STATE_TRIGGERED`，云端仍下发 `WAIT_FOR_EVENT`，本地拒绝 `WAIT_FOR_EVENT requires pending wait spec` 并 FAILED。必须以明确 `eventWaitArmed` 当前 outcome fact，而非旧 message/遗留 combat fact，决定是否可发 `WAIT_FOR_EVENT`；修后重走双 reviewer + fresh。 |
-| CR208 | 谢帅 | Review：item 11 fresh P1（`routeMode` 协议不一致）已修——cloud 回包改 canonical `routeMode=`，client 过渡兼容旧 `mode=`；双侧构建通过，fresh 待验 | `TextRecognizer`, `GameTextLineOcrService`, `TaskTrackerPanelService`, `DialogService`, `NpcClickService`, `QuestManagerService`, `PlayerStateService`, `TeamRoleDetectionService`, `LocationVisionService`, `NavigationService`, `RouteCloudDecisionService`, cloud OCR endpoint | 已划掉：1（CR212，fresh 待验）、2（CR209）、7/8（CR213，专项 fresh 待验）及补充白模板项；12/13/14 已明确不迁。2026-07-10 fresh：云端已返回黄色目的地 click，但本地严格 gate 只读 `routeMode`，cloud 回包实际为 `mode=yellow-destination-mini-map`，导致未发物理点击。3/4 仍有本地 OCR fallback；5/6、9-11、15/16 尚未迁或依赖云端 word boxes，父卡不能关闭。 |
+| CR208 | 谢帅 | Review：业务 OCR active path 已迁云端；本地 OCR startup P1 已修、compile 通过，fresh 待验 | `MainWindowController`, `TextRecognizer`, `GameTextLineOcrService`, `TaskTrackerPanelService`, `DialogService`, `NpcClickService`, `QuestManagerService`, `PlayerStateService`, `TeamRoleDetectionService`, `LocationVisionService`, `NavigationService`, `WubeiTask`, `RouteCloudDecisionService`, cloud OCR endpoint | 已划掉：1（CR212）、2（CR209）、3/4（CR248）、5/6（CR247）、7/8（CR213）、9/10/11（2026-07-10/11 迁云端）、16（CR246）及补充白模板项；12/13/14 明确不迁、12a 本地不留持久路线记忆，15 为零生产调用的 ROI 记录服务。2026-07-11 已移除 `MainWindowController` 四个正常入口对本地 OCR sidecar 的无条件 blocking gate，保留 cloud readiness gate；DHXY compile 通过。fresh 需确认本地 OCR sidecar 不可用时云端任务仍可启动。 |
 | CR209 | Codex | Done：Ctrl 菜单 OCR 已由 raw `(NPC)` 模板匹配替代，replay/compile/CLI fresh 通过 | `NpcClickService`, `images/calibrate/npc_menu_clean_sample.png`, `NpcClickCtrlMenuTemplateReplayTest`, `NpcClickCtrlMenuLiveTemplateProbeTest`, NPC Ctrl menu runtime 日志 | CR208 子卡 2 已完成：`scanCtrlMenuAndVerifyKeywordDirect(...)` 不再 `WASH_YELLOW` / `TextRecognizer` OCR 菜单；保留原 Ctrl hover、原 `scanRect`、原点击后 verifier，直接在 raw `npc_menu_scan.png` 里匹配保存的 `(NPC)` 模板并点击模板中心。Replay 标注图确认红点落在 `(NPC)` 标签；CLI fresh 调用生产 `executeCtrlMenuProbeDirect(...)`，日志 `NPC_CLICK_SMART Ctrl menu template clicked score=0.9997376799583435 hover=(1775,455) click=(1871,442) verified=true`，并打开 dialog。 |
 | CR210 | 谢帅 + worker + 双 reviewer | Review：Gateway 骨架双 reviewer 已通过，无 fresh runtime | external `dhxy-cloud-brain` `CloudBrainServer`, Gateway/router/endpoint adapters, `CloudApiGatewayCompatibilityTest`, `HYBRID_CLOUD_WORKFLOW` | Task 1 已把外部 HTTP 入口整理为 API Gateway / route / endpoint adapter：`CloudBrainServer` 只保留 lifecycle 和显式旧 route 注册，四个旧 endpoint 继续薄转 `DecisionEngine`；兼容性测试、修罗协议测试和 compile 均通过。Aquinas/Beauvoir 双 reviewer 批准，P3 仅建议后续补 missing-auth 用例/收窄 `DecisionEngine` 暴露；未改 DHXY runtime caller，无需 fresh。 |
 | CR211 | 谢帅 + worker + 双 reviewer | Done：v1 start typed endpoint 双 reviewer 已通过，无 fresh runtime | external `dhxy-cloud-brain` `/api/v1/xiuluo/brain/start`, `XiuluoBrainStartEndpoint`, `XiuluoBrainService`, `XiuluoBrainV1StartEndpointTest` | Peirce 已交付 v1 typed start endpoint：Gateway route 直接进入 `XiuluoBrainStartEndpoint -> XiuluoBrainService.start(...)`，返回 typed command JSON；legacy `/api/cloud/decision + XIULUO_BRAIN` 未改，DHXY runtime caller 未切。Bernoulli/Fermat 双 reviewer 批准，focused tests 与 compile 均通过；v1 目前只有 start，不可与 legacy step/action-outcome 混用。 |
@@ -1557,8 +1557,8 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR243 | Codex | Implemented：绿链后队长先补给再永久事件 park，队员血蓝 Q 后台自行推进；fresh 待验 | `TaskMaintenanceService`, `AutoCombatService`, `XiuluoTaskV2`, 本地队伍 tooltip group / 血蓝队列 / 修罗绿链日志 | 用户于 2026-07-10 批准业务差异：废止“队员先、队长最后、leader 每秒轮询 Q”。绿链后队长先执行自己的血蓝补给及既有延后恢复，然后只等 `PATHING_TERMINAL`、`PREPARED_ACTION_READY`、`COMBAT_STATE_CHANGED`；队员 FIFO 不再唤醒/阻塞队长，最后一项出队且全员已报备时由队列自行关闭。DHXY compile passed，待 fresh。 |
 | CR244 | Codex | Implemented：队员自检 Set + Gate A/B event park；正常接任务短路径恢复 baseline keep-turn，compile/fresh 待验 | `AutoBattleTask`, `TeamReturnService`, `TaskMaintenanceService`, `XiuluoTaskV2`, `WindowReadyEventType`, external `dhxy-cloud-brain`, local-team session | 队员脱战后各自检查归队图标，存在则把自己的 `windowId` 放入本队 session 的 pending-return Set，归队图标确认消失后自行移除（截图失败/模板不可读/分析异常一律 UNKNOWN，不 remove、不发事件，下个 tick 重试）。队长只在回城落地 Gate A 和接任务 option 点击前 Gate B 读取 Set，`prepareRound` 不再读取；两 gate 之间依靠 NPC smart/dialog/option 匹配的自然耗时。仅队长死亡回城的导航可 park；正常修罗接任务 NPC 的同图短路径必须保持基线同步 keep-turn，不能被本卡改成等待 terminal。 |
 | CR245 | Codex | Review P1 阻塞：队长开队 FIFO 实现已编译，但新的维护队列 park 未接入云脑 shell 的同 phase wait 放行，实际会触发 local yield guard；修后再 fresh | `TaskMaintenanceService`, `AutoBattleTask`, `XiuluoTaskV2`, `WindowReadyEventType`, local-team session | 医宝宝/修装备两个串行维护 hook 改为：队长 NPC 命中即触发全队 broadcast 并开队（开队时刻确认 tooltip group 的本地队员快照 FIFO，队列即授权），队长不点自己的确认、立即放权 park（wake=队列变更事件，5s 上限=放行）；队首成员一次扫描+点击后无论成败无条件出队并发事件；队长唤醒后用后台预识别坐标点自己的确认再继续。当前 review 发现 `WAIT_MAINTENANCE_BROADCAST_QUEUE` 未纳入 cloud shell 的同 phase event-wait 分支，不能 fresh。 |
-| CR250 | Codex | Review blocked：首轮四项已修；仍缺远端动作输入安全门与 action 一次执行契约 | `NavigationService`, `CoordinateHelper`, external `dhxy-cloud-brain`（新 `NAVIGATION_ROUTE_PLAN` + `MINIMAP_LOCATION` 扩展）, `NavigationRequest`/`NavigationResult` 契约 | 云端只决定“点哪/看哪”、本地独占 intent/park 已明确；但执行器尚未定义 phase-scoped action allowlist、client 边界/步数限制、InputSequences 原子提交和 `(windowId,requestId,actionId)` 去重，云端 response 超时重放可能重复物理点击。 |
-| CR251 | Codex | Review blocked：首轮四项已修；仍缺 candidate outcome/decision token 与 observation freshness 可执行契约 | `CoordinateHelper`, `NavigationService.navigateInCurrentMap`, external `MINIMAP_LOCATION` | 固定 client-relative 帧、candidateId、6 处 transform 调用表已齐；仍须补 `decisionId`/单次 token、候选 outcome enum、input snapshot 最大年龄与 local retry/replay 规则，避免网络重试把同一点击执行两次或把过期观察送云端决策。 |
+| CR250 | Codex | Approved（方案 review）：导航云端化边界与执行器合同已定 | `NavigationService`, `CoordinateHelper`, external `dhxy-cloud-brain`（新 `NAVIGATION_ROUTE_PLAN` + `MINIMAP_LOCATION` 扩展）, `NavigationRequest`/`NavigationResult` 契约 | 云端决定路线/候选，本地独占输入、确认、intent、watcher、park/turn/stop。CR251 支持首包多候选预取，本地按基线 200ms 逐条消费；动作 allowlist、token/ledger、绑定/重放与后续子卡边界均已收口。子卡 C/D 仍须各自立卡 review 后实施。 |
+| CR251 | Codex | Approved（方案 review）：有序多候选预取，保持本地轮换 | `CoordinateHelper`, `NavigationService.navigateInCurrentMap`, external `MINIMAP_LOCATION` | 用户明确接受本地提前拿到多个运行时点位。云端首包按有序批次返回候选，批内不短 TTL 失效；本地逐条点击、fast-edge/坐标确认，`NO_PATHING` 后按原 200ms 消费下一条，成功才 handoff；60 秒和候选耗尽语义不变。 |
 | CR252 | Codex | Review P1（第四轮）已修：pause/stop/session 完结/group/binding 失效统一只读降级——`isMemberReadOnlyDegrade` 以"本轮 run 内曾被覆盖"判定，覆盖失效一律纯读 early-return（无 enter 消费/`Alt+8`/exit recovery）；只有新 task run（`initializeForCurrentWindow` 重置覆盖历史）或下一次真实入战广播才恢复正常语义；从未被覆盖的独立窗口 bootstrap 不变；compile passed，待复审 + fresh | `WindowTaskRunner`, `AutoCombatService`, `AutoCombatPanelService`, `BattleRadarService`, `TaskMaintenanceService`, `XiuluoTaskV2`, `WubeiTask` | 首个 P1 已修：covered 无广播成员安静等待不扫模板；第三轮 P1 已修：leaderPaused 走 early-return self-radar，不消费 enter、无 `Alt+8`。新 P1：非 pause 的 leader coverage 丢失（stop/session/group/binding）落入“binding fully gone -> standalone semantics”，清 `memberReadOnlySelfObserve` 后继续 `maybeHandleCombatEnter`；一旦 radar 发现战斗，仍可能 `ensurePanelVisible` 按 `Alt+8`。卡片业务边界已把 pause/stop/session/group/binding 并列为零物理输入降级，必须统一只读。 |
 | CR253 | Codex | Approved（第三轮）：三项 P1 已通过源码复审；click-failed fallback 改为发布 `TRACKER_GREEN_RETRY` job 与 `PREPARED_ACTION_READY` 后无限 park，统一 consumer 在新 command cycle 复按；双侧编译通过，fresh 作为独立运行验收待记录 | `XiuluoTaskV2`, `WindowTaskRunner`, `WindowRuntimeContext`, `TaskMaintenanceService`, new `PreparedActionJob`/`PreparedActionJobType`/`XiuluoGreenChainSchedule`, external `dhxy-cloud-brain` `DecisionEngine` | 首轮三项 P1：本地 kanda 无 attempt 身份、click-failed 前台直接复按、三技能 60s 退避均已按"所有来源统一 typed prepared + 发布/消费双身份校验 + 发布-唤醒-消费-再 park 边界"收口；退避已移除只留既有业务时序。fresh 继续作为独立运行验收记录，不阻塞 review 通过。 |
 | CR254 | Codex | Implemented：修罗绿链移动中 `pathing watcher` 慢 probe 分段诊断；已记录截图、编码、云端 decision 与总耗时，主项目 compile 通过，待重启后取证 | `MiniMapCoordinateReader`, `WindowTaskRunner` 日志链路 | 前四轮共 13 次超过 1.5 秒，最高 7.470 秒；先确认慢在 HWND 截图、PNG 编码还是云端 HTTP，再讨论性能修复。 |
@@ -25598,7 +25598,48 @@ Goal:
 9. [x] ~~`XiuluoTaskV2` 修罗任务栏目标 OCR。~~ 2026-07-10 已迁云端（本地只传 objective 面板图，
     云端 `OBJECTIVE_TEXT_READER` 洗图+模板匹配+合理性校验一体返回，见下方 "2026-07-10 item 9
     实施记录"）；fresh 待验。
-10. `WubeiTask` 五倍目的地黄字提示 OCR。
+10. [x] ~~`WubeiTask` 五倍目的地黄字提示 OCR。~~ 2026-07-11 已迁云端（见下方 "2026-07-11 item 10
+    实施记录"）；源码 review 已通过（见本项末尾 Approved 结论），fresh 独立待验。实现者 item-10
+    heartbeat 已按规则 15 于 Approved 后停止并删除（2026-07-11）。
+    - 历史 review 结论（2026-07-10 23:44 EDT，Review required / 不通过）：当时卡内无 worker 交付/
+      编译证据，`parseTrackerDestinationHintCapture(...)` 仍调用本地 sidecar OCR。要求：保持既有
+      多次短生命周期截图时序与 `TrackerDestinationHint` 消费语义；本地只截 ROI 上传；云端返回
+      结构化地图/坐标或 NO_RESULT；本地不得再 OCR/解析提示文字；交付云端 service/协议、DHXY 调用
+      替换、双侧 compile 证据及 fresh 验收点。
+    - **worker 交付（2026-07-11，对照上述四项）：**
+      1. 云端 service/协议：新 `WUBEI_DEST_HINT_READER`（external `DecisionEngine` switch +
+         `wubeiDestHintReader(...)` + 新 `WubeiDestHintRecognizer`）：decode raw ROI →
+         `ImageAlgorithms.wash(WASH_YELLOW)` → `LocalOcrClient.readWords("wubei-dest-hint")` →
+         去空白 + 本地同构 regex `前往(.+?)[(（](\d+)[,，](\d+)[)）]` →
+         `MiniMapRecognizer.canonicalizeMapName`；decision 复用 objectiveMap/X/Y 字段合同
+         （`status=FOUND;objectiveMap=..;objectiveX=..;objectiveY=..` / `status=NO_RESULT;reason=
+         cloud-brain-wubei-dest-hint-{image-unreadable|ocr-unavailable|miss|map-blank}`），rawText
+         进 diagnostics。刻意不加坐标 plausibility guard（本地基线无此校验，保持行为等价）。
+      2. DHXY 调用替换：`CloudDecisionServiceId.WUBEI_DEST_HINT_READER` + application.properties
+         四键（shadow/execute/100/STOP）；`ObjectiveTextReaderCloudDecisionService` 增
+         `isWubeiDestHintActive()` + `readWubeiDestHint(image, source)`（复用既有 read/gate，
+         NO_RESULT=accepted-empty）；`WubeiTask.parseTrackerDestinationHintCapture` 改为 cloud
+         active 时读 raw 截图直接上云（一次往返替代原"云洗图+本地 OCR+本地 regex"三段），miss
+         语义与旧 OCR miss 相同；旧链整体改名
+         `parseTrackerDestinationHintCaptureLocallyLegacy`（@Deprecated(since="CR208-10")，仅
+         rollback）。3 次采样时序（500/1000/1500ms）、pipelining、requestId 新鲜性、
+         `TrackerDestinationHint` 消费方全部零改动；本地不再 OCR/解析提示文字。
+      3. 编译证据：DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package`
+         （含测试）exit 0。
+      4. fresh 验收点：probe 绿链点击后应看到
+         `cloud.decision serviceId=WUBEI_DEST_HINT_READER ... status=FOUND objectiveMap=...`
+         与本地 `[wubei] destination hint cloud reader parsed`；不得再出现
+         `destination hint wash missed`/本地 sidecar OCR 日志；云端 miss 样本应看到
+         `destination hint cloud reader miss` 且按既有 3-sample 语义继续；hint 消费方
+         （smart click 约束/direct combat/到点判断）行为不变。
+    - **Review 通过 / Approved（2026-07-10 23:53 EDT）：** 审查范围为 CR208-10 的
+      `WUBEI_DEST_HINT_READER` 双端迁移。DHXY active 路径仅解码本地已绑定窗口截图后上传；云端完成
+      `WASH_YELLOW`、OCR、与基线同构的 regex 和地图 canonicalize，`NO_RESULT` 回到原有单样本 miss，
+      没有本地 OCR fallback。三次采样时序、异步 pipelining、requestId 防 stale、hint 消费与坐标业务
+      语义均未改；未新增坐标 plausibility/retry/fallback 条件。DHXY `mvn -q -DskipTests compile`、
+      cloud-brain `mvn -q compile` 均通过，相关 diff check 通过；未运行测试。cloud `DecisionEngine` 内
+      并存的 CR256 变更不属于本次审查范围，未计入本结论。无 P0/P1/P2；fresh runtime 仍按 worker
+      验收点独立待验，不阻塞本 review 通过。
 11. [x] ~~`NavigationService` 世界地图路线目的地 / 名字 OCR。~~ 2026-07-10 已迁云端（本地只截图上传，
     云端记忆优先→黄字识别，见下方 "2026-07-10 item 11 实施记录"）；fresh 待验。
 12. [x] ~~`NavigationService` 世界地图绿色路线行 / 坐标结果 OCR。~~ 不迁移且已从当前分支删除；完整历史仅保留在 pushed baseline `origin/codex/migrate-runner-dialog` / `696a12b`。旧模式/无 mode memory 回退/配置记录/专用 guard 已一并删掉；无最终坐标请求现在明确失败。双 reviewer 已批准。
@@ -25662,7 +25703,27 @@ In-scope OCR inventory to eliminate:
       与本地 `[objective-recognition] cloud reader result: hit=true`；不再出现本地
       `[objective-recognition] map matched/templates loaded`；坐标越界样本应看到
       `coordinate-implausible` 或修复后 FOUND。
-10. `WubeiTask` 五倍目的地黄字提示 OCR：解析短暂黄字提示里的地图/坐标。
+10. [x] ~~`WubeiTask` 五倍目的地黄字提示 OCR：解析短暂黄字提示里的地图/坐标。~~
+    2026-07-11 已迁云端。实施记录（item 10）：
+    - 目标语义（父卡 Goal）：本地只按窗口绑定截 raw 浮框 ROI（时序调度是本地职责：probe 绿链点击后
+      500/1000/1500ms 三次采样、pipelining、requestId 新鲜性全部不动）并传图；云端一次往返完成
+      洗黄、真 OCR、"前往地图(x,y)"解析与 label 字典 canonicalize，返回结构化 map/x/y 或
+      NO_RESULT+失败原因。此前该链是"云端 IMAGE_PREPROCESS 洗图 + 本地 sidecar OCR + 本地 regex"
+      的半云端形态，本卡收口为单次云端调用。
+    - external `dhxy-cloud-brain`：新 `WubeiDestHintRecognizer`（QuestDetailTextRecognizer 同构最小
+      形状：decodeImage → wash(WASH_YELLOW) → LocalOcrClient.readWords → join+去空白 → 本地同构
+      regex → canonicalizeMapName）+ `DecisionEngine` switch case `WUBEI_DEST_HINT_READER` 与
+      `wubeiDestHintReader(...)`（decision 复用 objectiveMap/X/Y 字段合同，rawText 进 diagnostics；
+      不加坐标 plausibility——本地基线无此校验，保持迁移行为等价）。
+    - DHXY：`CloudDecisionServiceId.WUBEI_DEST_HINT_READER` + properties 四键；
+      `ObjectiveTextReaderCloudDecisionService.readWubeiDestHint(...)`（复用既有 read/gate/
+      `ObjectiveTextResult`，NO_RESULT=accepted-empty）；`WubeiTask` 注入该 service，
+      `parseTrackerDestinationHintCapture` 云端优先，旧链改名
+      `parseTrackerDestinationHintCaptureLocallyLegacy` @Deprecated(since="CR208-10") 仅离线
+      rollback；`TrackerDestinationHint` 三个消费方（smart click 约束、direct combat、到点判断）
+      零改动。
+    - 验证：DHXY `mvn -q -DskipTests compile` exit 0；external `mvn -q package`（含测试）exit 0。
+    - Fresh gate：见业务逻辑选项总览 item 10 的 worker 交付第 4 条。
 11. [x] ~~`NavigationService` 世界地图路线目的地/名字 OCR，经 `GameTextLineOcrService` 读取。~~
     2026-07-10 已迁云端。实施记录（item 11）：
     - 目标语义（用户定稿）：本地仅截世界地图搜索结果图并发云端；云端先查路线记忆，miss 后识别黄色
@@ -25858,6 +25919,32 @@ Out of scope for parent card:
 
 - CR208 父卡本身不改阈值、不改点击坐标、不改业务顺序。
 - 不在父卡里删除本地 OCR 实现；删除/禁用必须等对应子卡迁移、验证和 fresh runtime 证据齐全。
+
+2026-07-11 CR208 全量 active-path 复核（Review required / 不通过）：
+
+- 已核对 item 1-14、16-17 的当前生产分支：对应 cloud service 在 `application.properties` 均为
+  `execute-enabled=true`、`execute-percent=100`、`fallback=STOP`；cloud active 时，队长 tooltip、
+  五倍 tracker 黄/绿字、修罗 objective、五倍短暂目的地提示、世界地图目的地、位置读取均不回退
+  `TextRecognizer`。遗留 `TextRecognizer` 调用均位于 `@Deprecated` 的 offline/rollback 实现或零生产调用
+  的通用类；item 15 也已复核为零生产调用的 word-box/ROI 记录服务，不是独立 provider，按既有边界无需另迁。
+- **P1 blocker：本地 OCR sidecar 仍是所有正常任务启动入口的硬 gate。**
+  `MainWindowController` 的已选任务、启动队列、恢复暂停窗口与 `startWindows(...)` 四条入口均先调用
+  `ensureLocalOcrReadyForTaskStart()`，该方法无条件执行
+  `LocalOcrSidecarService.ensureRunningBlocking()`；失败时返回“未启动任务”。这直接违反本卡
+  “已迁移任务不再需要本地 OCR sidecar 作为启动/运行 gate”的验收条件，即使运行中 OCR 决策已经迁云端，
+  本地 OCR 不可用仍会阻止任务启动。
+- 结论：**CR208 不能关闭，也不能称为“所有 OCR 业务逻辑已不在本地”。** 当前准确表述是：
+  “业务识别 active path 已云端化；本地仍保留禁用 legacy 代码，且启动层仍错误依赖本地 OCR sidecar。”
+- 修复方向（需单独实现，不改任何 OCR 业务决策/截图时序/坐标/fallback 语义）：普通 cloud 任务启动只保留
+  cloud readiness gate，移除本地 OCR sidecar 的无条件启动与阻塞；若仍需保留离线 rollback，只能由明确的
+  offline/debug 开关按需启用本地 OCR gate。复验点：停用本地 OCR sidecar 后，云端 ready 的修罗/五倍仍可启动，
+  日志不再出现本地 OCR startup gate；运行中不得出现 active local OCR 调用。
+- **P1 修复（2026-07-11）：** `MainWindowController` 已删除
+  `LocalOcrSidecarService` 注入、`ensureLocalOcrReadyForTaskStart()`、启动提示及四条正常入口
+  （已选任务、启动队列、恢复暂停窗口、`startWindows(...)`）对该方法的调用。四条入口原有
+  `ensureCloudDecisionDevReadyForTaskStart()` 均保持原位置；未改任何任务 phase、OCR 决策、截图 ROI、
+  输入、坐标、retry/fallback 或 park/yield。`rg` 复核显示 `LocalOcrSidecarService` 仅余类定义、无生产调用；
+  `mvn -q -DskipTests compile` exit 0。**P1 源码修复完成，fresh runtime 待验；父卡不关闭。**
 
 Card CR209: NPC Ctrl 菜单从 OCR 改为 raw `(NPC)` 模板匹配
 
@@ -31832,9 +31919,11 @@ Card CR250: NavigationService 决策/知识上云父卡（防破解：本地退�
 
 Status:
 
-- Ready / 修订版待复核（2026-07-10）。首轮 review 四条 P1 已全部采纳修订（词表移出 intent/park、
-  防破解表述收窄为真实威胁模型、step 协议补绑定字段与陈旧响应门、子卡顺序改 CR251 先收口 point
-  contract）；正文已就地修订，修订对照见 review 节末尾。待 reviewer 复核后按子卡开工。
+- Approved（方案 review）/ 2026-07-11 reviewer：CR251 v5 的有序多候选预取已补齐用户选择 B 所需的
+  批次有效期与作废边界；本地确认、200ms、60 秒、候选耗尽、input/intent/watcher/park 全部保持基线。
+  本父卡只批准架构边界和子卡顺序；C/D 仍须单独立卡、对照各自基线并 review 后实施。
+- 历史：Review P1 / 2026-07-11：首轮四项修订仍有效，但二次 review 的“本地输入安全门 + 最多一次执行”尚未
+  收口成可实施协议；CR251 的 candidate/outcome/freshness 也尚未闭合，CR250 不得开工。
 - 历史：Ready / pending review（2026-07-10，用户口述立项："navigation 里很多后端思维的代码，核心
   路线知识不想暴露在本地被破解，云端返回 JSON 动作串"）。
 
@@ -31969,13 +32058,79 @@ Status:
    同 action 的重放只重报已知 outcome，不再次发送物理输入；未知/过期 token 一律 fail-closed。这个 ledger 是
    执行去重，不是路线记忆，不能落盘。
 
+### 2026-07-11 复核：P1，仍不进入实施
+
+1. **二次 review P1 尚未变成协议。**当前正文只在“明确禁止”后记录了 action allowlist 与 execution ledger
+   的原则，没有定义可实现的 `NAVIGATION_ROUTE_PLAN` action contract：每个导航 phase 到底允许哪些 action enum、
+   `CLICK_CLIENT_POINT` 的 phase ROI/bounds、`KEY` 的键白名单、`CLOSE_PANEL` 的目标面板、单次 token 的回显
+   字段，以及 submit 成功、submit 失败、stop 中断、重放命中分别上报什么 outcome。这不是实现者可自行补全的
+   安全细节；缺它会导致各子卡各自解释“允许点击”。
+2. **父/子卡依赖尚未闭合。**CR250 明确把 point contract 的收口前置给 CR251，但 CR251 的
+   decision/outcome/freshness 和 `NO_PATHING` 语义仍未定稿。因此 CR250 只能保持 review blocked，不能让
+   子卡 C/D 先按笼统 JSON plan 开工。
+3. **返修要求：**在 CR250 内新增一张“执行器合同表”，逐 action/phase 写清 allowlist、client bounds/ROI、
+   token/decision/request/window/intent 绑定、ledger key、重放行为与 outcome enum；并明确该表由 CR251 的
+   point action contract 先产出、由 CR250 统一复用。未写清前不得给云端扩展任意 `KEY`、`CLOSE_PANEL` 或点击
+   动作的执行权。
+
+### 2026-07-11 补充 review（Codex，对照代码事实；与上方复核结论不冲突，返修时一并处理）
+
+- **P2：step 循环缺预算护栏。** 协议只有单响应 TTL，没有"一次导航最多多少个 step 段/导航级总时长"
+  封顶。云端故障返回循环动作段（反复 CAPTURE_ROI、反复等价 CLICK）时本地壳会无限执行。返修执行器
+  合同表时须加：每次导航 step 段预算（参照 XIULUO_BRAIN loop guard 量级）、等价动作循环护栏
+  （execution ledger 覆盖的是同 actionId 重放，这里指**不同 actionId 的等价动作循环**）、导航级总
+  TTL；超限=结构化失败上抛（fail-closed），不本地兜底决策。
+- 确认项：`hints` 已限定为"只影响本地壳选用哪条既有等待语义"，该表述应作为硬边界写入执行器合同表，
+  后续子卡不得把 hints 扩展成指令。
+
+### 执行器合同表 v1（2026-07-11 Codex 返修，由 CR251 Point Action Contract 产出，本卡统一复用）
+
+按 2026-07-11 复核返修要求产出；CR251 之外的动作行在对应子卡落卡时扩展并逐行过 review。
+
+| action | 允许 phase/场景 | bounds/ROI | 绑定与 token | ledger key | 重放行为 | outcome enum |
+| --- | --- | --- | --- | --- | --- | --- |
+| `CLICK_CLIENT_POINT` | 仅 currentMap 小地图点击（CR251） | 点必须在 1024x768 client bounds 内且落在小地图面板既有 ROI | `decisionId` 单次 token + windowId/hwnd/taskRunId/navigationRequestId/candidateId 全回显 + TTL | windowId+hwnd+taskRunId+navigationRequestId+decisionId+candidateId | 同 key 只重报已知 outcome，不再发物理输入；未知/过期 token=STALE_REJECTED | `CLICK_SUBMITTED` / `INPUT_CANCELLED` / `STALE_REJECTED` |
+| `KEY` | **CR251 不授予**（Alt+1 等仍由本地既有代码自主执行） | — | — | — | — | — |
+| `CLOSE_PANEL` | **CR251 不授予** | — | — | — | — | — |
+| `CAPTURE_ROI` | **CR251 不授予**（本卡观察由既有位置读取承担） | — | — | — | — | — |
+
+硬规则（全表适用）：
+
+- 所有物理输入必须经既有 `InputSequences` 原子序列，云端不能绕过 input queue；不接受远端 sleep、
+  回调、拖拽、screen-absolute 坐标。
+- （2026-07-11 v2 加注）`CLICK_CLIENT_POINT` 点击后的确认链（fast-edge 像素差→坐标确认→确认才注册
+  intent；NO_PATHING 同 turn 200ms 换候选）为**本地既有语义**，不属云端职权；云端只提供候选点。
+- `hints` 只影响本地壳选用哪条既有等待语义，永不构成指令（硬边界，后续子卡不得扩展）。
+- 预算护栏（v3 修正范围）：**仅适用于子卡 C 的多段 `NAVIGATION_ROUTE_PLAN`**，落卡时对照该子路径
+  现有终止条件单独定量（等价动作循环护栏 + plan 段预算）；CR251 的小地图重试**不设新上限**——终止
+  条件精确复用基线（60s 总超时 + candidate ring 耗尽），见 CR251 合同第 6 条 v3。
+- ledger 为内存态执行去重，TTL 内有效，不落盘，不是路线记忆。
+
+待 reviewer 复核。
+
 Card CR251: 小地图点位计算上云（CR250 子卡 B）
 
 Status:
 
-- Ready / 修订版待复核（2026-07-10）。首轮 review 四条 P1 已全部采纳修订（client-relative 坐标帧 +
-  candidateId 重试协议 + 观察事实由本地上报 + transform 资产 6 消费方迁移表），并承接父卡 review #4
-  的 point contract 收口职责；正文已就地修订，修订对照见 review 节末尾。待 reviewer 复核后开工。
+- Approved（方案 review）/ 2026-07-11 reviewer：用户拍板 B 后的 v5 已定义有序多候选预取、逐候选
+  token、批次绑定和无短 TTL 作废规则；批内 `NO_PATHING` 保持既有 200ms 无网络往返，分批仅在自然耗尽时
+  请求，60 秒与完整候选环终止条件不变。后续 Java 实施须另立子卡。
+- 历史：返修完成 v4 / 待 reviewer 复核（2026-07-11 Codex）：复核（三）升级的候选轮换时序已由**用户拍板 B
+  （预取/流式候选）**——批次响应（逐候选独立单次 token + 批次级 stale 整批丢弃 +
+  PATHING_STARTED 后弃余票作废 token），失败轮换保持基线 200ms 无云往返，换批请求才有 100-300ms；
+  终止条件维持 v3（60s 基线时钟 + ring 跨批耗尽）。复核（四）指出批次 TTL 未定义，已由 v5 修正。
+- 历史：返修完成 v3 / 待 reviewer 复核（2026-07-11 Codex）：复核（二）P1 已采纳——~12 请求上限作废，终止
+  条件精确复用基线（60s `timeoutMs` 同一时钟 + 云端 ring 全集−已尝试 candidateId 判耗尽，对应
+  `exhausted mini-map click points`）；防循环护栏范围移交子卡 C。v2 的点击确认链/审计 outcome/
+  token/ledger/freshness/maps 属主/DPI 分工不变。
+- 历史：返修完成 v2 / 待 reviewer 复核（2026-07-11 Codex）：v1 迁移顺序 P1 已采纳修正——本地同 turn 点击
+  确认链（fast-edge 像素差→坐标确认→确认 `PATHING_STARTED` 才注册 intent；`NO_PATHING` 同 turn
+  200ms 换候选）保持基线原样，云端只供候选点；复核（二）指出其候选护栏仍改基线终止条件，已由 v3 修正。
+- 历史：Review P1 / 2026-07-11 reviewer：返修的 Point Action Contract v1 补齐了 token、ledger、年龄和
+  maps/DPI 属主，但“点击即注册 intent、由 Runner 产生 `NO_PATHING`”与基线实现相反；必须恢复既有本地
+  点击后确认、`NO_PATHING` 同回合候选轮换、确认成功后才注册 intent 的顺序，才可复审。
+- 历史：Review P1 / 2026-07-11：首轮修订仍有效，但二次 review 的 decision/outcome/freshness 未收口，且
+  `NO_PATHING` 会引入未批准的导航等待/候选轮换语义；不得开工。
 - 历史：Ready / pending review（2026-07-10；CR250 批准后首个实施件）。
 
 ### 目标
@@ -32078,6 +32233,247 @@ Status:
 2. **`observedAt` 还只是字段，不是 freshness 规则。** 卡片要定义本地上传观察的最大年龄、云端允许的最大
    observation age，以及 response 到达后本地再次验证的条件（同 window/hwnd、同 intent、同 map、未过 TTL）。
    任何一项不符都回 `STALE_REJECTED` 并重新截图/观察，不能把旧 map/coordinate 当作下一次候选的失败。
+
+### 2026-07-11 复核：P1，仍不进入实施
+
+1. **candidateId 不等于可执行 decision。**二次 review 要求的 `decisionId`/单次 token、固定 outcome enum、
+   observation age 仍未写入“方案/边界/验收”的正式合同。必须定义完整 key：`windowId + hwnd + taskRunId +
+   navigationIntentId + navigationRequestId + decisionId + candidateId + actionId/token`；response 回显，执行
+   ledger 以其中的单次 action 身份去重。仅按 candidateId 去重无法区分同一候选的陈旧 response、合法重算与
+   网络重放。
+2. **`NO_PATHING` 没有基线等价的产生时机。**现有已批准导航规则是在小地图点击后注册 intent、立即返回
+   `PATHING_STARTED`，随后由既有 Runner/pathing terminal 观察移动、停稳或重导航；没有“点击后等待 N ms，
+   未观察移动就立即换 candidate”的新阶段。若 CR251 自行定义 `NO_PATHING` 的时间阈值，会新增等待、检测与
+   候选轮换，违反“导航顺序/retry 不变”。
+3. **需要用户拍板的两种路线：**
+   - A（建议，基线等价）：本地只上报 `CLICK_SUBMITTED`；`PATHING_STARTED`/终态仍完全由既有 Runner 观测后
+     上报。云端只有在既有终态/失败事实到达时才决定是否给下一个 candidate，不增加任何新等待。
+   - B（业务差异）：新增短时“未起步”观察窗口，超时上报 `NO_PATHING` 并换 candidate。必须单独写出窗口时长、
+     对五倍/修罗/黄字终点的适用范围、与现有 terminal/retry 的优先级，并经用户明确批准。
+4. **返修要求：**先由用户选择 A 或 B；随后把 decision/token、observation 最大年龄、response TTL、
+   `STALE_REJECTED`/`CLICK_SUBMITTED`/`PATHING_STARTED`/`INPUT_CANCELLED` 等 outcome 的责任方与时序写入
+   本卡，再将同一合同回填 CR250 的执行器 allowlist。未完成前 CR251 不得实施，CR250 子卡 C/D 也不得启动。
+
+### 2026-07-11 补充 review（Codex，对照代码事实；与上方复核结论不冲突，返修时一并处理）
+
+1. **P1 补充：`config/maps.json` 双属主冲突。** 本卡写"变换参数表迁 cloud resources"，但 CR247 表行已
+   宣称"maps.json 快照迁 cloud resources，云端为 maps/模板数据属主，未来标定走 outcome 上云"——同一
+   资产两张卡各自迁移会产生两份漂移的云端副本。返修必须收敛为**单一云端属主**（建议：沿用 CR247 已
+   迁快照，CR251 只为这份数据新增 `RESOLVE_MINIMAP_CLICK` 等求值 operation），并写明数据更新流程。
+   配套事实：`CoordinateHelper.saveNewMapConfig`（运行时标定写 maps.json）**当前无任何生产调用方**
+   （2026-07-11 grep 核实，仅定义处）——本地无写方，云端快照不会漂移；该死代码随子卡 E 的 rollback
+   清理一并删除。
+2. **P2：坐标帧的物理换算职责要写全。** `CoordinateHelper` 存在 `systemScaleRatio`（系统 DPI 缩放，
+   构造时从 GraphicsConfiguration 读取，`getScaledRect` 消费）；`getPhysicalMapPoint` 现实现 =
+   `windowBase + zeroOffset + logical*scale`（不乘 DPI，成立的前提是游戏客户区物理尺寸恒为
+   1024x768）。本卡"本地唯一负责 windowBase + clientRelative 换算"须扩成"本地负责 windowBase、DPI/
+   缩放在内的全部物理换算，并回传 client frame 供云端回显校验"，防止实施者在 DPI≠1.0 环境盲搬。
+3. **P2（优化，迁移表修正建议）：`LocationVisionService` L128 一行不应走 `CHECK_COORDINATE_PLAUSIBLE`。**
+   该校验的对象本来就是云端 `READ_LOCATION` OCR fallback 的返回值——再发一次云校验是"云调用后再云校
+   验"的多余往返。更优去向：把合理性校验并入云端 `READ_LOCATION` OCR fallback 内部（出结果前自检，
+   不合理即按原 reason miss），该消费方行从迁移表移除，拒绝样本归档改由 miss reason 驱动。
+
+### 2026-07-11 返修（Codex author 侧）：采纳路线 A + Point Action Contract v1
+
+**路线拍板依据**：用户 2026-07-11 指示"双方都同意方案后停下"，将收敛委托给 author/reviewer 双方；
+author 采纳 reviewer 建议的 **路线 A（基线等价）**——本地只报 `CLICK_SUBMITTED`，起步/终态完全由既有
+Runner/pathing watcher 观测，云端只凭既有事实决定下一候选，不新增任何等待/检测阶段。
+
+**A 路线与基线的逐步映射（v2，按 2026-07-11 reviewer 复核修正）**：基线（`696a12b`
+`clickMiniMapPointForHandoff`）= 点击 → **同一 foreground turn 内本地确认**（先
+`isMovingByPixelDiff(handoff-fast-edge)`，未命中再 `confirmMiniMapPathingStarted` 读坐标变化）→
+确认 `PATHING_STARTED` 才 `registerWindowPathingIntent` + 关小地图 + 交 Runner watcher；两者都未确认
+= `NO_PATHING`，**同 turn** 失败计数 +1、200ms 间隔取下一候选。v2 下唯一变化是"取下一候选点"从本地
+`resolveMiniMapClickPoint` 换成云端请求：本地确认器返回 `NO_PATHING` 后，**立即在同一 turn 内**携带
+该事实（`priorAttemptFact=NO_PATHING`，来源=本地确认器）发起下一次 `RESOLVE_MINIMAP_CLICK`；本地
+点击确认链、200ms 节奏、intent 注册边界全部保持基线原样。Runner terminal 事实（STOPPED_AWAY 等）
+仅用于 handoff 之后重入导航的场景（既有语义），同样经 `priorAttemptFact` 转述。每次候选轮换新增一次
+云往返（~100-300ms），叠加在既有 200ms 间隔上，为已接受的迁移代价。v1 中"点击后立即注册 intent 并
+返回 PATHING_STARTED"的描述作废。
+
+**Point Action Contract v1（毫秒数为量级基准，实施可调）**：
+
+1. **Request**：`windowId`、`hwnd`、`taskRunId`、`navigationRequestId`（本地按导航调用生成）、
+   observed `{mapName, x, y, source, observedAtMs}`（本地观察年龄 ≤5s 才可上传，否则先重新观察）、
+   target `{logicalX, logicalY}`、randomize `{enabled, radiusPx}`、`attemptedCandidateIds` 列表、
+   `priorAttemptFact`（既有 Runner 事实转述：STOPPED_AWAY / TERMINAL_TIMEOUT / 首次请求为空）、
+   clientFrame `{width=1024, height=768, dpiScale, frameVersion}`。
+2. **Response**：回显全部绑定字段 + `decisionId`（单次 token）+ `candidateId` + attempt cursor +
+   client-relative 点（**未缩放 1024x768 逻辑客户端像素**）+ logicalPointKey + `ttlMs`（~5s）+
+   结构化 reason。云端对 observedAt 超 ~10s 拒绝（reason=stale-observation）。
+3. **本地执行门**：同 windowId+hwnd、同 navigationRequestId、response 未过 TTL；任一不符 →
+   `STALE_REJECTED`（不发输入，重新观察后重新请求）。物理换算全部本地：windowBase + DPI/
+   systemScaleRatio（Codex 补充 #2 采纳：本地负责含 DPI 的全部换算，dpiScale 回传供云端回显校验）。
+4. **Execution ledger**（内存、TTL 内、不落盘）：key = `windowId + hwnd + taskRunId +
+   navigationRequestId + decisionId + candidateId`；成功提交输入后记录；同 key 重放只重报已知
+   outcome 不再发物理输入；未知/过期 decisionId 一律 `STALE_REJECTED`（fail-closed）。
+5. **Outcome enum（v2，按 2026-07-11 reviewer 复核修正）**：执行器级 outcome = `CLICK_SUBMITTED`
+   （审计用：输入队列提交成功，**不替代确认**）/ `INPUT_CANCELLED`（stop/pause/队列取消）/
+   `STALE_REJECTED`（绑定或 TTL 不符，未发输入）。点击后的**本地确认链保持基线原样**：
+   fast-edge 像素差 → 坐标确认 → 确认 `PATHING_STARTED` 才注册 intent 并 handoff；未确认 =
+   `NO_PATHING`，由**本地确认器**（非 Runner terminal）产生，同 turn 200ms 后立即驱动下一次云端
+   candidate 请求（`priorAttemptFact=NO_PATHING`）。Runner terminal 事实仅覆盖 handoff 后重入场景。
+   本地确认器（像素差/坐标读取）属 B/C 类观察执行，留本地，不含标定知识。
+6. **终止条件（v3，按 2026-07-11 reviewer 复核（二）修正——精确复用基线，不新设上限）**：
+   - 候选耗尽：云端持有完整既有 candidate ring 逻辑（`MINI_MAP_FALLBACK_MAX_RING_RADIUS=10` 多圈
+     候选语义整体迁移），以 ring 全集 − 已尝试 candidateId 集合判定"候选已耗尽"，对应基线
+     `resolveMiniMapClickPoint` 返回 null → `pointNotReached("exhausted mini-map click points")`。
+   - 总超时：本地精确复用基线 `timeoutMs=60000`（同一时钟涵盖 200ms 间隔、输入与确认耗时、云往返），
+     **不另设云端导航级 TTL**，超时语义与现状完全一致。
+   - v1/v2 中"RESOLVE 请求数上限（量级 ~12）"作废——它会截断基线仍允许的候选，属未批准的 retry
+     上限变化。多段 plan 的防循环护栏归子卡 C，落卡时单独对照该子路径的现有终止条件定量，不借本卡
+     改小地图重试预算。
+
+**Codex 补充 4 条的处理**：
+
+- #1 maps.json 单一属主（P1）：**收敛为 CR247 已迁云端快照为唯一属主**；CR251 不再另迁，只为同一份
+  云端数据新增 `RESOLVE_MINIMAP_CLICK` / `RESOLVE_APPROACH_COORDINATE` 求值 operation；数据更新流程
+  归 CR247 的"标定走 outcome 上云"路线；本地 `config/maps.json` 与 `saveNewMapConfig` 死代码随父卡
+  子卡 E 删除。方案节"变换参数表迁 cloud resources"按此解释。
+- #2 DPI 职责：已并入合同第 3 条。
+- #3 LocationVisionService L128：采纳——该行从迁移表移除，合理性校验并入云端 `READ_LOCATION` OCR
+  fallback 内部自检（不合理按原 reason miss，本地归档由 miss reason 驱动）。迁移表以本条为准修正。
+- 接近点去向拍板（author）：独立 operation `RESOLVE_APPROACH_COORDINATE`（消费方要的是逻辑坐标而非
+  点击点，语义不同不并入），入参/绑定沿用本合同第 1/3 条。
+
+本合同同步回填 CR250"执行器合同表 v1"（见 CR250 卡）。待 reviewer 复核。
+
+### 2026-07-11 reviewer 复核：P1，Point Action Contract v1 尚不等价
+
+**基线证据：**确认基线提交 `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` 的
+`NavigationService.navigateInCurrentMap` 调用 `clickMiniMapPointForHandoff`。每次点击后，后者先调用
+`isMovingByPixelDiff(...:handoff-fast-edge)`；未命中再调用 `confirmMiniMapPathingStarted` 读取坐标变化。
+两者都未确认才返回 `NO_PATHING`，调用方在**同一 foreground turn** 增加失败计数、按既有 200ms 间隔尝试
+下一候选点。只有确认 `PATHING_STARTED` 后才 `registerWindowPathingIntent(...)`、关闭小地图并交 Runner watcher。
+
+因此 v1 第 5 条和“逐步映射”中的 `小地图点击 -> 注册 intent -> PATHING_STARTED -> Runner` 是错误的迁移顺序：
+它会把已有的本地点击确认和本地候选轮换删掉，改成 Runner terminal 后才决定下一点，改变 retry、时序和
+intent 注册边界，违反本卡“业务等价迁移”。
+
+**返修方向：**云端只负责给出本次 `candidateId`/点位；本地必须仍执行
+`点击 -> fast-edge 确认 -> 坐标确认 -> (PATHING_STARTED: 注册 intent 并 handoff | NO_PATHING: 200ms 后取下一候选)`。
+`CLICK_SUBMITTED` 可作为审计 outcome，但不能替代上述确认；`priorAttemptFact` 不能只从 Runner terminal 生成，
+本次本地确认器返回的 `NO_PATHING` 必须能立即驱动下一次云端 candidate 请求。保留 token、ledger、freshness、
+maps 单一属主与 DPI 分工修订，改正这一顺序后再复核。CR250 不得因 v1 表面“已回填”而开工。
+
+**Codex 返修响应（2026-07-11 同日，v1→v2，P1 采纳）**：
+
+- 承认 v1 第 5 条与"逐步映射"是错误迁移顺序——基线的同 turn 本地确认链（fast-edge 像素差→坐标
+  确认→确认才注册 intent；NO_PATHING 同 turn 200ms 换候选）不可删除。已按返修方向改写"逐步映射
+  （v2）"与合同第 5 条：`CLICK_SUBMITTED` 降级为审计 outcome；`NO_PATHING` 由本地确认器产生并立即
+  驱动同 turn 内的下一次云端 candidate 请求；Runner terminal 事实仅覆盖 handoff 后重入场景；本地
+  确认器属 B/C 类留本地。token/ledger/freshness/maps 单一属主/DPI 分工不变。
+- 已同步注明每次候选轮换新增一次云往返（~100-300ms）叠加在既有 200ms 间隔上的代价。
+- CR250 执行器合同表同步加注：CLICK_CLIENT_POINT 的点击后确认链为本地既有语义，不属云端职权。
+
+### 2026-07-11 reviewer 复核（二）：P1，v2 仍不能开工
+
+v2 已正确恢复“点击 → 本地 fast-edge/坐标确认 → 成功才 handoff；`NO_PATHING` 同回合 200ms 换候选”的
+主顺序；但它新增的候选护栏仍会改变基线终止条件：合同第 6 条写“单次导航 RESOLVE 请求数上限（量级 ~12）+
+导航级总 TTL”。确认基线 `696a12b...` 是 `timeoutMs=60000`，并按 `failedMiniMapClicks` 继续调用
+`CoordinateHelper.resolveMiniMapClickPoint(...)`；后者的 `MINI_MAP_FALLBACK_MAX_RING_RADIUS=10` 会生成多圈候选，
+候选数不等于 12。用约 12 次云请求提前 fail-closed 会把原本仍可继续的候选截断，属于未批准的 retry 上限变化。
+
+**返修要求：**删除“量级 ~12”作为 CR251 的终止条件。云端应以完整的既有 candidate ring/已尝试 candidateId
+集合判定“候选已耗尽”；本地总超时必须精确复用基线 60 秒（不是另设云端 TTL），既有 200ms 间隔和 input/确认耗时
+计入同一时钟。若 CR250 的未来多段 `NAVIGATION_ROUTE_PLAN` 另需防循环，必须在子卡 C 单独对照该子路径的现有
+终止条件，不能借 CR251 改小地图重试预算。修正后再复核。
+
+**Codex 返修响应（2026-07-11 同日，v2→v3，P1 采纳）**：
+
+- 合同第 6 条已重写为"终止条件（v3）"：~12 请求上限作废；候选耗尽 = 云端 ring 全集 − 已尝试
+  candidateId（对应基线 `exhausted mini-map click points`）；总超时精确复用基线 `timeoutMs=60000`
+  同一时钟（含 200ms 间隔、输入/确认耗时、云往返），不另设云端导航级 TTL。
+- 防循环护栏的适用范围移交子卡 C（多段 plan 落卡时对照该子路径现有终止条件单独定量）；CR250 执行器
+  合同表的预算护栏条目已同步改为仅指向子卡 C 场景。
+
+### 2026-07-11 reviewer 复核（三）：P1，待用户确认候选轮换时序取舍
+
+v3 已通过两项基线等价核对：本地点击后确认/200ms 轮换/确认后 handoff 的顺序保留；候选终止条件恢复为
+完整 ring 耗尽或本地 60 秒同一时钟。但 v2/v3 也明确写出：每次 `NO_PATHING` 后，下一候选需要一次新的
+`RESOLVE_MINIMAP_CLICK` 往返，约在旧 200ms 间隔外再增加 100-300ms。作者写“为已接受的迁移代价”，但
+卡片没有用户明确批准这项时序变化，且项目基线规则禁止 agent 自行改变 retry timing。
+
+**请用户拍板：**
+
+- **A：按次云端返回（安全优先）。** 保持当前 v3：本地 `NO_PATHING` 后等云端新候选，再按既有 200ms
+  点击。优点是本地每次只拿到实际要点的一个点；代价是失败候选轮换更慢。
+- **B：预取/流式候选（速度优先）。** 云端在首个请求后可提前准备后续 candidate 并按身份顺序推送，本地
+  `NO_PATHING` 时直接消费已到达的下一条，尽量维持旧 200ms 节奏。优点是减少失败时等待；代价是本地会
+  更早收到多个运行时点位，协议、token 与 stale 丢弃也更复杂。
+
+在用户选择前，CR251 不得标记 Approved，CR250 也不得启动子卡 C/D。
+
+**Codex author 侧记录（2026-07-11 同日）**：确认该升级成立——v2/v3 写"为已接受的迁移代价"没有用户
+批准依据，撤回该表述。已向用户提交 A/B 拍板请求。author 侧推荐 **A（按次云端返回）**：理由 ①用户
+立项动机是防破解，A 保持"本地一次只见一个实际点位"，B 的预取会更早暴露多个运行时点位并加重
+token/stale 协议复杂度；②轮换只发生在首点未起步的失败场景（点到障碍等），常规导航首点即起步、零
+额外往返，100-300ms 的代价只落在少数失败重试上，且 60s 总超时不变。待用户选择后回填此处。
+
+**用户拍板（2026-07-11）**：选择 **B（预取/流式候选，速度优先）**——云端首次请求后预先准备后续候选
+并按身份顺序下发，本地 `NO_PATHING` 时直接消费已到达的下一条，维持旧 200ms 节奏；接受"本地更早持有
+多个运行时点位"的防破解弱化与更复杂的 token/stale 协议。附带说明：B 模式下失败轮换节奏与基线 200ms
+完全一致，复核（三）指出的 100-300ms 额外往返只存在于批次耗尽后的换批请求，不在逐候选轮换路径上。
+
+**Point Action Contract v4 修订（2026-07-11 Codex，按用户拍板 B 落协议）**：
+
+1. **批次响应（v5 修订）**：`RESOLVE_MINIMAP_CLICK` response 从单候选改为**有序候选批次**
+   `candidates[{candidateId, decisionId(单次 token，逐候选独立), clientRelativePoint, logicalPointKey,
+   cursor}]` + `batchId` + 批次级绑定字段回显（windowId/hwnd/taskRunId/navigationRequestId/
+   clientFrame）+ **`batchExpiresAtMs`**：批次有效期上界 = 本次导航调用的既有本地 60 秒 deadline
+   （起算点 = 进入 `navigateInCurrentMap` 时刻的基线时钟，由 request 上报、response 回显），**不设
+   独立短 TTL**——绑定不变期间批内未消费候选持续有效。批次大小/分批策略为云端标定知识，本地不感知
+   （可为完整 ring 或分圈）；下一批只能在当前批**自然耗尽**时请求。
+2. **本地消费**：点击第 i 条 → 既有本地确认链（fast-edge→坐标确认）→ `PATHING_STARTED` 确认 →
+   注册 intent + handoff，**丢弃批内剩余候选并作废其 token**（上报 batch 关闭事实）；`NO_PATHING`
+   → 既有 200ms 间隔后直接消费第 i+1 条（无云往返）。批次耗尽 → 携带已尝试 candidateId 集合发起
+   换批请求（此处才有 100-300ms 往返）。
+3. **stale/绑定（v5 修订：作废条件穷举，无短 TTL）**：批次仅在以下情况**整批作废**（剩余 token 全
+   废，outcome=STALE_REJECTED）：①导航成功（`PATHING_STARTED` 确认，按第 2 条弃余票）；②pathing
+   intent 已变化；③窗口绑定（windowId/hwnd）变化；④任务 stop；⑤基线 60 秒 deadline
+   （`batchExpiresAtMs`）到期；⑥binding/clientFrame 回显不匹配。除此之外批内未消费候选持续有效，
+   **不因任何中途短 TTL 失效**——失败轮换永不因批次有效期回到网络等待。不允许跨导航请求复用批次。
+4. **ledger**：仍逐候选记账（key 含 candidateId + decisionId），同 key 重放只重报不重点；已作废
+   token 一律 STALE_REJECTED。
+5. **终止条件不变（v3 语义）**：60s 基线总时钟 + ring 全集耗尽（跨批次累计已尝试集合判定）。
+
+### 2026-07-11 reviewer 复核（四）：P1，B 的批次有效期尚未定义
+
+用户选择 B 后，v4 已正确把多个候选按序预取：本地仍逐条点击、逐条走既有 fast-edge/坐标确认；
+`NO_PATHING` 后仍等既有 200ms 再直接消费下一条；`PATHING_STARTED` 后作废批内余票。这些都通过基线对照。
+
+但协议仅写“批次 TTL”，没有确定它的数值、起算点和在候选尚未耗尽时过期的行为。若一个仍属同
+`windowId/hwnd/taskRunId/navigationRequestId` 的批次在第 2 条后过期，本地会整批丢弃、重新观察并重新请求，
+把 B 的失败轮换重新拉回网络等待。这会无故改变用户刚拍板要保留的 200ms 轮换体验。
+
+**返修要求：**批次必须以当前导航调用的既有本地 60 秒 deadline 为上界，显式回传 `batchExpiresAtMs`；只要
+同 window/hwnd/taskRun/intent/request、client frame 和导航 deadline 未变，批内未消费候选持续有效，不因一个
+短 TTL 中途失效。批次只能在以下情况整批作废：导航成功/intent 已变、窗口绑定变、任务停止、基线 60 秒到期，
+或 binding/client frame 不匹配。若云端希望分批，下一批只能在当前批**自然耗尽**时请求；不能由任意短 TTL
+强制换批。逐候选 `decisionId` 仍可保持短期单次性，但不得令未消费批次失效。补齐后再复核 CR251/CR250。
+
+**Codex 返修响应（2026-07-11 同日，v4→v5，P1 采纳）**：
+
+- 合同第 1 条改为显式 `batchExpiresAtMs` = 本导航调用既有本地 60 秒 deadline（起算点=进入
+  `navigateInCurrentMap` 的基线时钟，request 上报、response 回显），不设独立短 TTL。
+- 合同第 3 条改为作废条件穷举（导航成功弃余票 / intent 变化 / 窗口绑定变化 / 任务 stop / 60s
+  deadline 到期 / binding-clientFrame 不匹配），绑定不变期间批内候选持续有效，失败轮换永不因批次
+  有效期回到网络等待；换批仅在自然耗尽后。
+- 逐候选 `decisionId` 保持单次性但不影响未消费批次有效性（第 4 条 ledger 语义不变）。
+- 其余条款（点击确认链本地职权、审计 outcome、观察上报、maps 单一属主、DPI 分工、v3 终止条件）
+  全部不变。
+
+待 reviewer 复核 v5。
+
+### 2026-07-11 reviewer v5 结论：Approved（方案 review）
+
+用户已明确批准“首次 response 一次性多返回候选点”，v5 将其落实为有序候选批次：批内无独立短 TTL，
+`batchExpiresAtMs` 与本地既有 60 秒导航 deadline 对齐；失败候选仍由本地按原 200ms 直接消费下一条，
+只有当前批自然耗尽才发起下一批请求。逐候选 token/ledger、整批 binding 作废、成功后弃余票、完整 ring
+耗尽和本地 fast-edge/坐标确认均已定义，未发现 P0/P1/P2。
+
+因此 CR251 **Approved（方案 review）**，并连带 CR250 的执行器边界与子卡顺序 **Approved（方案 review）**。
+本结论不授权直接实施 `NAVIGATION_ROUTE_PLAN` 子卡 C/D；它们仍必须各自建卡、明确触及的旧逻辑并通过 review。
 
 Card CR253: 修罗绿链统一 prepared-action 调度（CR230/CR232/CR243 收口父卡）
 

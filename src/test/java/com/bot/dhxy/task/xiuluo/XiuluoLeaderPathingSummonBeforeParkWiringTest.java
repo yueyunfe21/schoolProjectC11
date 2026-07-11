@@ -29,14 +29,26 @@ public class XiuluoLeaderPathingSummonBeforeParkWiringTest {
                 "private XiuluoStepOutcome parkAfterYieldIfNeeded(");
         require(beforePark.contains("outcome.transactionResult() != TaskTransactionResult.PATHING_STARTED"),
                 "CR119: before-park maintenance must be limited to pathing-started outcomes");
-        require(beforePark.contains("reason != XiuluoWaitReason.WAIT_TRACKER_SHORTCUT_PATHING"),
-                "CR119: tracker shortcut pathing must be eligible for before-park leader maintenance");
+        require(!beforePark.contains("WAIT_TRACKER_SHORTCUT_PATHING\n")
+                        && !beforePark.contains("reason != XiuluoWaitReason.WAIT_TRACKER_SHORTCUT_PATHING"),
+                "CR253: the green-chain park must NOT run opportunistic before-park maintenance; "
+                        + "its summon work arrives as a SUMMON_SKILL_CLEANUP prepared job");
         require(beforePark.contains("reason != XiuluoWaitReason.WAIT_TARGET_PATHING_TERMINAL"),
                 "CR119: target pathing waits must be eligible for before-park leader maintenance");
         require(beforePark.contains("runLeaderPathingSummonSkillMaintenance("),
                 "CR119: before-park hook must reuse the existing leader pathing summon maintenance path");
         require(beforePark.contains("\"before-park\""),
                 "CR119: before-park maintenance needs a distinct log/source suffix for runtime validation");
+
+        String summonJobConsumer = between(task,
+                "private XiuluoStepOutcome consumeSummonSkillCleanupJob(",
+                "private XiuluoStepOutcome clickCloudEnterBattlePoint(");
+        require(summonJobConsumer.contains("PreparedActionJobType.SUMMON_SKILL_CLEANUP"),
+                "CR253: the green-chain summon consumer must consume the typed SUMMON_SKILL_CLEANUP job");
+        require(summonJobConsumer.contains("runLeaderPathingSummonSkillMaintenance("),
+                "CR253: the summon job consumer must run the full existing three-skill maintenance flow");
+        require(summonJobConsumer.contains("waitForTrackerShortcutWake("),
+                "CR253: the summon job consumer must park again after the maintenance flow");
 
         String leaderMaintenance = between(task,
                 "private XiuluoStepOutcome runLeaderPathingSummonSkillMaintenance(",

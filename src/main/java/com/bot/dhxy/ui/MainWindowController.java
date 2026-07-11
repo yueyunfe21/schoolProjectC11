@@ -111,7 +111,6 @@ public class MainWindowController {
     private final BotProperties botProperties;
     private final CommonBoxService commonBoxService;
     private final GameUiSettingsStore gameUiSettingsStore;
-    private final LocalOcrSidecarService localOcrSidecarService;
     private final CloudDecisionDevSidecarService cloudDecisionDevSidecarService;
     private final MapSurveyService mapSurveyService;
     private final CoordinateHelper coordinateHelper;
@@ -1019,10 +1018,6 @@ public class MainWindowController {
             List<String> windowIds = getSelectedWindowIds();
             warnUnavailableSelectedWindows("启动已选任务");
             runWindowCommandInBackground(() -> {
-                WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
-                if (ocrGate != null) {
-                    return ocrGate;
-                }
                 List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
                 if (acceptingWindowIds.isEmpty()) {
                     return WindowTaskCommandResult.empty("选中的窗口当前不可接任务，未启动任务",
@@ -2332,15 +2327,10 @@ public class MainWindowController {
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        announceLocalOcrGateForStart();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         List<String> windowIds = getSelectedWindowIds();
         warnUnavailableSelectedWindows("启动队列");
         runWindowCommandInBackground(() -> {
-            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
-            if (ocrGate != null) {
-                return ocrGate;
-            }
             List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
             if (acceptingWindowIds.isEmpty()) {
                 return WindowTaskCommandResult.empty("选中的窗口当前不可接任务，未启动队列",
@@ -2376,7 +2366,6 @@ public class MainWindowController {
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        announceLocalOcrGateForStart();
         List<String> selectedWindowIds = getSelectedWindowIds();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         TaskType defaultTaskType = pendingTaskQueue.isEmpty() ? selectedTaskType : pendingTaskQueue.get(0);
@@ -2385,10 +2374,6 @@ public class MainWindowController {
                 : "启动：自动刷新/发现游戏窗口，然后启动可接任务窗口");
         renderLogList();
         runWindowCommandInBackground(() -> {
-            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
-            if (ocrGate != null) {
-                return ocrGate;
-            }
             List<String> pausedWindowIds = selectedSnapshots.stream()
                     .filter(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED)
                     .map(WindowTaskSnapshot::getWindowId)
@@ -2463,13 +2448,8 @@ public class MainWindowController {
             return;
         }
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
-        announceLocalOcrGateForStart();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         runWindowCommandInBackground(() -> {
-            WindowTaskCommandResult ocrGate = ensureLocalOcrReadyForTaskStart();
-            if (ocrGate != null) {
-                return ocrGate;
-            }
             List<String> acceptingWindowIds = filterAcceptingWindowIds(windowIds);
             if (acceptingWindowIds.isEmpty()) {
                 return WindowTaskCommandResult.empty(actionName + "失败：窗口当前不可接任务",
@@ -2481,22 +2461,6 @@ public class MainWindowController {
             }
             return windowTaskControlService.start(WindowTaskStartRequest.sameQueue(acceptingWindowIds, queue));
         });
-    }
-
-    private void announceLocalOcrGateForStart() {
-        addWindowLog("本地OCR/Cloud决策：启动前确认中；OCR未就绪不会控制游戏窗口，Cloud失败会按必需服务 fail-closed/STOP");
-        renderLogList();
-    }
-
-    private WindowTaskCommandResult ensureLocalOcrReadyForTaskStart() {
-        LocalOcrSidecarService.StartupResult result = localOcrSidecarService.ensureRunningBlocking();
-        if (result.healthy()) {
-            log.info("UI task start OCR gate passed: {}", result.message());
-            return null;
-        }
-        log.warn("UI task start OCR gate blocked: {}", result.message());
-        return WindowTaskCommandResult.empty(result.message() + "，未启动任务",
-                windowTaskControlService.getSnapshots());
     }
 
     private WindowTaskCommandResult ensureCloudDecisionDevReadyForTaskStart() {
