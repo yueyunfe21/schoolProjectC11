@@ -230,6 +230,19 @@ if ($ocrDeriveExit -ne 0 -or [string]::IsNullOrWhiteSpace($ocrExpectedModel)) {
     throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint (rapidocr not importable via $ocrPythonLauncher, exit=$ocrDeriveExit); install it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr\requirements.txt"
 }
 $ocrExpectedModel = $ocrExpectedModel.Trim()
+
+# Resolve the real python.exe behind the launcher: starting the sidecar via py.exe makes
+# Start-Process return the SHIM's pid while the sidecar reports the child python.exe pid via
+# os.getpid(), which falsely trips the own-pid conflict check during the ready poll. Launching
+# python.exe directly keeps $process.Id == health.pid.
+$ocrPythonExeRaw = & $ocrPythonLauncher @($ocrPythonBaseArgs + @("-c", "import sys; print(sys.executable)")) 2>$null
+$ocrPythonExeExit = $LASTEXITCODE
+$ocrPythonExe = [string](@($ocrPythonExeRaw) | Select-Object -First 1)
+if ($ocrPythonExeExit -ne 0 -or [string]::IsNullOrWhiteSpace($ocrPythonExe) -or -not (Test-Path -LiteralPath $ocrPythonExe.Trim() -PathType Leaf)) {
+    throw "ocr-sidecar-launch-failed: cannot resolve the real python executable via $ocrPythonLauncher (exit=$ocrPythonExeExit, path='$ocrPythonExe')"
+}
+$ocrPythonExe = $ocrPythonExe.Trim()
+Write-Host "CR257 OCR python runtime: exe=$ocrPythonExe"
 Write-Host "CR257 OCR expected identity: protocol=$ocrExpectedProtocol build=$ocrExpectedBuild model=$ocrExpectedModel port=$OcrPort"
 
 function Get-OcrHealth {
@@ -322,8 +335,10 @@ function Start-OcrSidecar {
         New-Item -ItemType Directory -Force -Path $ocrLogDir | Out-Null
     }
     $ocrLog = Join-Path $ocrLogDir "ocr-sidecar.log"
-    $launcher = $ocrPythonLauncher
-    $launcherArgs = @($ocrPythonBaseArgs + @($ocrServerScript, "--host", "127.0.0.1", "--port", "$OcrPort"))
+    # Launch the resolved python.exe directly (never the py shim) so $process.Id matches the
+    # sidecar's own os.getpid() in /health.
+    $launcher = $ocrPythonExe
+    $launcherArgs = @($ocrServerScript, "--host", "127.0.0.1", "--port", "$OcrPort")
     $command = "$launcher $($launcherArgs -join ' ')"
     $process = Start-Process -FilePath $launcher -ArgumentList $launcherArgs `
         -RedirectStandardOutput $ocrLog -RedirectStandardError "$ocrLog.err" `
