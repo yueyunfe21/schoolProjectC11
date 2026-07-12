@@ -43,6 +43,7 @@ public class NpcClickSmartCloudDecisionService {
     private static final String PHASE = "npc-click-smart";
     private static final String NPC_CLICK_START = "NPC_CLICK_START";
     private static final String NPC_CLICK_POLL = "NPC_CLICK_POLL";
+    private static final String DIRECT_COMBAT_AUTHORIZE = "DIRECT_COMBAT_AUTHORIZE";
     private static final String OUTCOME_VERIFIED = "VERIFIED";
     private static final String OUTCOME_VERIFICATION_FAILED = "VERIFICATION_FAILED";
     private static final String OUTCOME_CANCELLED = "CANCELLED";
@@ -207,6 +208,59 @@ public class NpcClickSmartCloudDecisionService {
             return false;
         }
         return postOutcome(body, request.getNpcRequest().npcName(), message.getDecisionId(), message.getSessionId(), outcome.name());
+    }
+
+    /**
+     * CR267: ask cloud whether the current structured task facts authorize entering the game's
+     * direct combat-click mode ({@code Alt+A} scene transition).
+     *
+     * <p>The request intentionally carries no screenshot. Cloud decides only from task facts
+     * (target role, 五倍 probe target-ready, ordinary-FIFO terminal state, canonical map and
+     * player/target logical coordinates with the task's existing tolerance) and answers with an
+     * independent {@code ENTER_DIRECT_COMBAT} action or a refusal. Any transport/config failure is
+     * a refusal; it never authorizes a local scene switch.</p>
+     *
+     * @param request light cloud request with identity fields and the {@link NpcClickRequest}
+     *                business facts; image payload fields may be empty.
+     * @return structured authorization; {@code authorized()} is true only for an explicit
+     *         {@code action=ENTER_DIRECT_COMBAT;status=AUTHORIZED} cloud answer.
+     */
+    public NpcClickSmartDirectCombatAuthorization authorizeDirectCombat(NpcClickSmartCloudRequest request) {
+        if (!coordinator.isActive(CloudDecisionServiceId.NPC_CLICK_SMART)) {
+            return NpcClickSmartDirectCombatAuthorization.refused("DISABLED", "service disabled", null);
+        }
+        if (request == null
+                || request.getNpcRequest() == null
+                || !hasText(request.getSessionId())
+                || !hasText(request.getWindowId())
+                || !hasText(request.getTaskRunId())
+                || !hasText(request.getNpcRequest().npcName())) {
+            return NpcClickSmartDirectCombatAuthorization.refused("REQUIRED_FAILURE",
+                    "missing direct-combat authorize identity or npc facts", null);
+        }
+        Map<String, String> context = mutableContext(request);
+        context.put("queueOperation", DIRECT_COMBAT_AUTHORIZE);
+        context.put("messageType", DIRECT_COMBAT_AUTHORIZE);
+        CloudDecisionRequest cloudRequest = cloudRequest(request, "npc-click-direct-combat-authorize", context,
+                "action=DIRECT_COMBAT_AUTHORIZE;sessionId=" + safe(request.getSessionId()));
+        CloudDecisionResult result = coordinator.shadow(cloudRequest, cloudRequest.getLocalDecision(),
+                acceptAnyResponseGate());
+        if (!result.isExecuted() || result.getResponse() == null) {
+            return NpcClickSmartDirectCombatAuthorization.refused("REQUIRED_FAILURE", result.getReason(), null);
+        }
+        Map<String, String> fields = fields(result.getResponse().getDecision());
+        String action = normalizedUpper(fields.get("action"));
+        String status = normalizedUpper(fields.get("status"));
+        boolean authorized = "ENTER_DIRECT_COMBAT".equals(action) && "AUTHORIZED".equals(status);
+        log.info("NPC direct-combat cloud authorization answer: authorized={} npc={} task={} windowId={} status={} reason={} decisionId={}",
+                authorized, request.getNpcRequest().npcName(), request.getTaskCode(), request.getWindowId(),
+                status, fields.get("reason"), fields.get("decisionId"));
+        return NpcClickSmartDirectCombatAuthorization.builder()
+                .authorized(authorized)
+                .status(status)
+                .reason(firstText(fields.get("reason"), result.getReason()))
+                .decisionId(normalize(fields.get("decisionId"), null))
+                .build();
     }
 
     /**
@@ -752,6 +806,14 @@ public class NpcClickSmartCloudDecisionService {
         context.put("closeStoryBeforeDirectSceneClick", booleanText(
                 request.getCloseStoryBeforeDirectSceneClick(),
                 npc.closeStoryBeforeDirectSceneClick()));
+        // CR267: direct-combat facts. directCombatMode marks the post-Alt+A second session; the
+        // three fact fields feed the cloud DIRECT_COMBAT_AUTHORIZE decision only.
+        context.put("directCombatMode",
+                Boolean.toString("direct-combat".equalsIgnoreCase(safe(request.getVerificationMode()))));
+        context.put("directCombatProbeTargetReady", Boolean.toString(npc.directCombatProbeTargetReady()));
+        context.put("directCombatNormalFifoUnverified", Boolean.toString(npc.directCombatNormalFifoUnverified()));
+        context.put("directCombatArrivalTolerance", Integer.toString(npc.directCombatArrivalTolerance()));
+        context.put("directCombatScenario", enumName(npc.directCombatScenario()));
         context.put("expectedDialogTemplatePath", safe(npc.expectedDialogTemplatePath()));
         context.put("expectedDialogRawTemplatePath", safe(npc.expectedDialogRawTemplatePath()));
         context.put("expectedDialogTemplatePaths", join(npc.expectedDialogTemplatePaths()));

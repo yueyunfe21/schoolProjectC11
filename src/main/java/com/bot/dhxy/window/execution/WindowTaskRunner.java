@@ -34,6 +34,7 @@ import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.MemoryService;
 import com.bot.dhxy.service.TaskMaintenanceService;
@@ -120,7 +121,13 @@ public class WindowTaskRunner {
     private static final long WINDOW_OBSERVER_WAKE_CHECK_INTERVAL_MS = 100L;
     private static final long WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS = 500L;
     private static final long WINDOW_POST_COMBAT_IDLE_TIMEOUT_MS = 180_000L;
-    private static final long WUBEI_ORDINARY_PRE_BATTLE_TIMEOUT_MS = 300_000L;
+    /*
+     * CR266 contract item 3: one global pre-battle budget per 五倍 round — from the successful task
+     * accept until the runner first confirms IN_COMBAT — covering maintenance, tracker read, green
+     * link, navigation, ENTER_BATTLE and every internal wait/retry. Was 300s from the first green
+     * click; now 180s from accept (user-approved baseline diff, 业务逻辑.md 普通怪入战前超时).
+     */
+    private static final long WUBEI_ORDINARY_PRE_BATTLE_TIMEOUT_MS = 180_000L;
     private static final long ROUTE_OUTCOME_RETRY_BASE_DELAY_MS = 1_000L;
     private static final long ROUTE_OUTCOME_RETRY_MAX_DELAY_MS = 30_000L;
     private static final String XIULUO_TRACKER_SHORTCUT_SOURCE_PREFIX = "xiuluo-v2:tracker-shortcut";
@@ -137,6 +144,7 @@ public class WindowTaskRunner {
     private final AutoCombatService autoCombatService;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final DialogService dialogService;
+    private final UICleanerService uiCleanerService;
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
@@ -193,9 +201,10 @@ public class WindowTaskRunner {
                             TaskTeamAssignmentPolicy taskTeamAssignmentPolicy,
                             AutomationMetricsService automationMetricsService,
                             AutoCombatService autoCombatService,
-                            MiniMapCoordinateReader miniMapCoordinateReader,
-                            DialogService dialogService,
-                             TaskTrackerPanelService taskTrackerPanelService,
+                             MiniMapCoordinateReader miniMapCoordinateReader,
+                             DialogService dialogService,
+                             UICleanerService uiCleanerService,
+                              TaskTrackerPanelService taskTrackerPanelService,
                              MapNameCanonicalizer mapNameCanonicalizer,
                              MemoryService memoryService,
                              RouteCloudDecisionService routeCloudDecisionService,
@@ -214,6 +223,7 @@ public class WindowTaskRunner {
         this.autoCombatService = Objects.requireNonNull(autoCombatService, "autoCombatService must not be null");
         this.miniMapCoordinateReader = Objects.requireNonNull(miniMapCoordinateReader, "miniMapCoordinateReader must not be null");
         this.dialogService = Objects.requireNonNull(dialogService, "dialogService must not be null");
+        this.uiCleanerService = Objects.requireNonNull(uiCleanerService, "uiCleanerService must not be null");
         this.taskTrackerPanelService = Objects.requireNonNull(taskTrackerPanelService, "taskTrackerPanelService must not be null");
         this.mapNameCanonicalizer = Objects.requireNonNull(mapNameCanonicalizer, "mapNameCanonicalizer must not be null");
         this.memoryService = Objects.requireNonNull(memoryService, "memoryService must not be null");
@@ -1358,6 +1368,9 @@ public class WindowTaskRunner {
             windowContext.clearPreparedDialogAction("wubei combat entered");
         }
         windowContext.clearOrdinaryEnterBattleTargetMapGate("wubei combat entered");
+        // CR266: the runner's confirmed combat entry is the authoritative end of the global
+        // pre-battle budget; combat duration is never limited by it.
+        windowContext.clearOrdinaryPreBattleTimer("wubei combat entered (runner confirmed)");
         log.info("[latency] event=wubei.combat-entry.dialog-cleanup windowId={} hwnd={} oldTick={} newTick={} clearedInterest={} interestOperations={} clearedRequest={} requestOperation={} requestTarget={} requestSource={} clearedPrepared={} preparedOperation={} preparedTarget={} preparedSource={}",
                 windowContext.getWindowId(), hwnd, oldTick, newTick,
                 clearInterest, interest == null ? null : interest.getOperations(),
@@ -2843,6 +2856,20 @@ public class WindowTaskRunner {
         long locationChangedAtMs = locationChanged || previous == null
                 ? now
                 : previous.getLocationChangedAtMs();
+        /*
+         * CR266: only a location change between two REAL observations of the same intent counts as
+         * a movement fact. hasLocationChanged also fires on the very first observation (the
+         * registration snapshot has a null location), which proves nothing about actual walking.
+         * The intent-mismatch guard at the top of refreshPathingSignal already prevents carrying a
+         * previous snapshot from another intent into this update.
+         */
+        boolean previousHasRealLocation = previous != null
+                && previous.getCurrentMapName() != null
+                && previous.getCurrentX() != null
+                && previous.getCurrentY() != null;
+        long movementObservedAtMs = locationChanged && previousHasRealLocation
+                ? now
+                : previous == null ? 0L : previous.getMovementObservedAtMs();
         PathingDialogBlock dialogBlock = resolvePathingDialogBlock(now);
         WindowPathingState state = classifyPathingState(intent, previous, location, locationChanged,
                 locationChangedAtMs, now, dialogBlock);
@@ -2855,6 +2882,7 @@ public class WindowTaskRunner {
                 .currentY(coordinate == null ? null : coordinate.getY())
                 .message(pathingMessageForState(state, "mini-map template location refreshed", dialogBlock))
                 .locationChangedAtMs(locationChangedAtMs)
+                .movementObservedAtMs(movementObservedAtMs)
                 .updatedAtMs(now)
                 .probeStartedAtMs(startedAt)
                 .probeFinishedAtMs(now)
@@ -3497,6 +3525,7 @@ public class WindowTaskRunner {
                 .currentY(previous == null ? null : previous.getCurrentY())
                 .message(pathingMessageForState(state, message, dialogBlock))
                 .locationChangedAtMs(previous == null ? 0L : previous.getLocationChangedAtMs())
+                .movementObservedAtMs(previous == null ? 0L : previous.getMovementObservedAtMs())
                 .updatedAtMs(previousUpdatedAtMs)
                 .probeStartedAtMs(startedAt)
                 .probeFinishedAtMs(now)
@@ -3734,6 +3763,11 @@ public class WindowTaskRunner {
             return requestedTaskType;
         }
         TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped before team role detection");
+        // A visible option dialog suppresses the hover tooltip used by live role detection. Reuse the
+        // existing cleanup policy before probing; it handles option dialogs and leaves story handling
+        // to its established safety rules.
+        uiCleanerService.forceCloseDialog();
+        TaskCheckpoint.throwIfStopRequested(preflightContext, "task queue stopped during preflight dialog cleanup");
         TeamRoleDetectionService.TeamRoleDetectionResult liveDetection =
                 teamRoleDetectionService.detectCurrentRoleWithEvidence(preflightContext);
         TeamRoleStatus liveRole = liveDetection.role();

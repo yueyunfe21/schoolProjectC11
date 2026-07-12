@@ -43,7 +43,9 @@ import com.bot.dhxy.model.maintenance.TaskMaintenanceRequest;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceResult;
 import com.bot.dhxy.model.maintenance.TaskMaintenanceStatus;
 import com.bot.dhxy.model.metrics.AutomationMetricStatus;
+import com.bot.dhxy.model.npc.NpcDirectCombatScenario;
 import com.bot.dhxy.model.npc.NpcMovementType;
+import com.bot.dhxy.model.npc.NpcSmartClickOutcome;
 import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.model.npc.NpcTooltipType;
@@ -338,6 +340,7 @@ public class XiuluoTaskV2 implements GameTask {
     private final QuestManagerService questManagerService;
     private final ObjectiveTextRecognitionService objectiveTextRecognitionService;
     private final com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService;
+    private final com.bot.dhxy.cloud.task.NavigationPointCloudDecisionService navigationPointCloudDecisionService;
     private final TextRecognizer textRecognizer;
     private final AutoCombatService autoCombatService;
     private final BattleRadarService battleRadarService;
@@ -4178,8 +4181,24 @@ public class XiuluoTaskV2 implements GameTask {
                     activeState.next(XiuluoPhase.READ_OBJECTIVE, "missing-objective-before-navigation"),
                     "missing objective before navigation; reread objective");
         }
-        MapCoordinate approach = coordinateHelper.calculateApproachCoordinate(
-                objective.getMapName(), objective.getX(), objective.getY());
+        /*
+         * CR258 (CR251): the approach point comes from the cloud transform owner. Cloud unreachable
+         * is fail-closed — this must not silently navigate to the original coordinate, so it takes
+         * the same exits as a target-navigation failure.
+         */
+        Optional<MapCoordinate> approachResolved = navigationPointCloudDecisionService.resolveApproachCoordinate(
+                objective.getMapName(), objective.getX(), objective.getY(), TASK_CODE, "xiuluo-v2:target");
+        if (approachResolved.isEmpty()) {
+            log.warn("[xiuluo-v2] cloud approach coordinate unavailable; fail-closed navigation failure: objective={}",
+                    objective);
+            if (isXiuluoBrainLoopEnabled()) {
+                return XiuluoStepOutcome.failed(activeState,
+                        "cloud approach coordinate unavailable; report to XIULUO_BRAIN");
+            }
+            return recoverTargetNavigationFailure(context, activeState,
+                    "cloud approach coordinate unavailable");
+        }
+        MapCoordinate approach = approachResolved.get();
         NavigationResult result = navigationService.navigateToNPC(NavigationRequest.builder()
                 .targetMapName(objective.getMapName())
                 .targetX(approach.getX())
@@ -4252,12 +4271,15 @@ public class XiuluoTaskV2 implements GameTask {
                 .expectedDialogTemplatePath(ENTER_BATTLE_TEMPLATE)
                 .source("xiuluo-v2:combatTarget:" + objective.getSource())
                 .build();
-        boolean clicked = npcClickService.clickNpcSmart(combatTarget.toClickRequest(gameContext.getMe(), TaskType.XIULUO_V2));
-        if (!clicked) {
+        // CR267 reviewer P1 #3: keep the structured smart-click terminal so the direct-combat
+        // recovery only claims "ordinary FIFO fully consumed unverified" on a genuine queue END.
+        NpcSmartClickOutcome clickOutcome = npcClickService.clickNpcSmartWithOutcome(
+                combatTarget.toClickRequest(gameContext.getMe(), TaskType.XIULUO_V2));
+        if (!clickOutcome.isVerified()) {
             if (isXiuluoBrainLoopEnabled()) {
                 return XiuluoStepOutcome.failed(state, "target click failed; report to XIULUO_BRAIN");
             }
-            return recoverTargetClickFailure(context, state);
+            return recoverTargetClickFailure(context, state, clickOutcome.isNormalFifoConsumedUnverified());
         }
         return XiuluoStepOutcome.continueTo(
                 state.next(XiuluoPhase.CONFIRM_ENTER_BATTLE, "target-clicked"),
@@ -5125,7 +5147,9 @@ public class XiuluoTaskV2 implements GameTask {
                 "target navigation failed and objective refresh missed; restart accept flow");
     }
 
-    private XiuluoStepOutcome recoverTargetClickFailure(TaskExecutionContext context, XiuluoRoundContext state) {
+    private XiuluoStepOutcome recoverTargetClickFailure(TaskExecutionContext context,
+                                                        XiuluoRoundContext state,
+                                                        boolean normalFifoConsumedUnverified) {
         TaskCheckpoint.throwIfStopRequested(context, taskExecutionContextHolder, "Xiuluo V2 task interrupted");
         NpcTarget objective = state.objective();
         /*
@@ -5193,8 +5217,22 @@ public class XiuluoTaskV2 implements GameTask {
                     .expectedDialogTemplatePath(ENTER_BATTLE_TEMPLATE)
                     .source("xiuluo-v2:directCombat:" + objective.getSource())
                     .build();
+            /*
+             * CR267 old-route facts: this recovery runs only after the ordinary NPC_CLICK_SMART
+             * FIFO for this combat target stayed unverified. Cloud authorizes ENTER_DIRECT_COMBAT
+             * only when the canonical map matches and the player is within the existing per-axis
+             * combat-target tolerance; the tracker-shortcut route never reaches this call.
+             */
             DirectCombatClickResult directCombat = npcClickService.tryDirectCombatTargetClick(
-                    combatTarget.toClickRequest(gameContext.getMe(), TaskType.XIULUO_V2));
+                    combatTarget.toClickRequest(gameContext.getMe(), TaskType.XIULUO_V2).toBuilder()
+                            // CR267 reviewer P1 #3: fact from the CLICK_TARGET_NPC smart-click
+                            // structured terminal (genuine FIFO END unverified), never hardcoded.
+                            .directCombatNormalFifoUnverified(normalFifoConsumedUnverified)
+                            .directCombatArrivalTolerance(UNKNOWN_COMBAT_TARGET_DISTANCE_TOLERANCE)
+                            // CR267 reviewer P1 #2: old-route scenario fact; the tracker-shortcut
+                            // route must use TRACKER_SHORTCUT and is refused by cloud.
+                            .directCombatScenario(NpcDirectCombatScenario.LEGACY_COMBAT_TARGET)
+                            .build());
             if (directCombat.combatEntered()) {
                 return enterBattleFromDirectCombatClick(context, state, "direct-combat-click");
             }
@@ -6278,7 +6316,7 @@ public class XiuluoTaskV2 implements GameTask {
                 log.info("[xiuluo-v2] task-panel cloud reader result: source={} hit={} value={}",
                         source, cloud.isPresent(), cloud.orElse(null));
                 return cloud.map(this::toXiuluoObjective)
-                        .filter(target -> isObjectivePlausible(target, source + ":cloud"));
+                        .filter(target -> isObjectivePlausibleByCloud(target, source + ":cloud"));
             }
             return parseTaskPanelObjectiveByOcr(capture.imagePath(), source);
         } finally {
@@ -6375,6 +6413,31 @@ public class XiuluoTaskV2 implements GameTask {
         return fullText.toString();
     }
 
+    /**
+     * CR258 (CR251): production plausibility verdict comes from the cloud transform owner. Cloud
+     * unreachable is fail-closed — the objective is rejected, never validated with local math.
+     * The 80px margin matches the retired local guard.
+     */
+    private boolean isObjectivePlausibleByCloud(NpcTarget target, String source) {
+        Optional<Boolean> verdict = navigationPointCloudDecisionService.checkCoordinatePlausible(
+                target.getMapName(), target.getX(), target.getY(), 80, TASK_CODE, source);
+        if (verdict.isEmpty()) {
+            log.warn("[xiuluo-v2] objective plausibility cloud check unavailable; fail-closed reject: source={} target={}",
+                    source, target);
+            return false;
+        }
+        if (!verdict.get()) {
+            log.warn("[xiuluo-v2] objective rejected by cloud coordinate plausibility: source={} target={}",
+                    source, target);
+        }
+        return verdict.get();
+    }
+
+    /**
+     * Legacy local plausibility guard. CR258 moved the production verdict to the cloud
+     * {@code CHECK_COORDINATE_PLAUSIBLE}; only the deprecated offline OCR chain still calls this.
+     */
+    @Deprecated(since = "CR258", forRemoval = false)
     private boolean isObjectivePlausible(NpcTarget target, String source) {
         boolean plausible = coordinateHelper.isLogicalCoordinatePlausible(
                 target.getMapName(), target.getX(), target.getY(), 80);

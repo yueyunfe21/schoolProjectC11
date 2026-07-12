@@ -28,6 +28,17 @@ public class WindowPathingSnapshot {
      */
     @Builder.Default
     long locationChangedAtMs = System.currentTimeMillis();
+    /**
+     * Wall-clock time when REAL movement was confirmed for the CURRENT intent.
+     *
+     * <p>CR266: set only when two observations of the same intent both carried a real
+     * map/coordinate and the location differed between them. The very first observation after an
+     * intent registration never counts — {@link #locationChangedAtMs} is seeded there without any
+     * proven movement. {@code 0} therefore means "this intent has no movement fact yet", and a
+     * terminal {@code STOPPED_AWAY} without it must not be read as "walked to the target".</p>
+     */
+    @Builder.Default
+    long movementObservedAtMs = 0L;
     @Builder.Default
     long updatedAtMs = System.currentTimeMillis();
     /**

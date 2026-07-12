@@ -64,6 +64,25 @@ public class MiniMapCoordinateReader {
     }
 
     public Optional<TemplateLocationInfo> readCurrentTemplateLocation() {
+        return readCurrentTemplateLocationForScan().location();
+    }
+
+    /**
+     * CR258: read result of the scan path, including the cloud OCR-fallback rejection diagnostics.
+     * The plausibility guard moved into the cloud READ_LOCATION fallback (CR251 Codex #3); a
+     * rejected coordinate comes back as a miss whose {@code ocrFallbackMissReason} lets the caller
+     * keep its failure-sample archive without any local transform math.
+     */
+    public record TemplateLocationScanResult(Optional<TemplateLocationInfo> location,
+                                             String ocrFallbackMissReason,
+                                             String ocrRejectedLocation) {
+
+        static TemplateLocationScanResult miss() {
+            return new TemplateLocationScanResult(Optional.empty(), null, null);
+        }
+    }
+
+    public TemplateLocationScanResult readCurrentTemplateLocationForScan() {
         long startedAtMs = System.currentTimeMillis();
         long captureStartedAtMs = startedAtMs;
         BufferedImage raw = captureCoordinateStrip();
@@ -72,7 +91,7 @@ public class MiniMapCoordinateReader {
             log.info("[latency] event=minimap.template-location source=read-current-template-location "
                             + "captureMs={} recognizeMs=0 totalMs={} result=missing-capture",
                     captureElapsedMs, System.currentTimeMillis() - startedAtMs);
-            return Optional.empty();
+            return TemplateLocationScanResult.miss();
         }
         try {
             long recognizeStartedAtMs = System.currentTimeMillis();
@@ -89,7 +108,9 @@ public class MiniMapCoordinateReader {
             if (!decision.isCloudExecuted()
                     || decision.getCoordinate() == null
                     || !hasText(decision.getMapName())) {
-                return Optional.empty();
+                return new TemplateLocationScanResult(Optional.empty(),
+                        decision == null ? null : decision.getOcrFallbackReason(),
+                        decision == null ? null : decision.getOcrRejectedLocation());
             }
             boolean ocrFallback = decision.getReason() != null
                     && decision.getReason().contains("minimap-ocr-fallback");
@@ -101,13 +122,13 @@ public class MiniMapCoordinateReader {
                     String.format("%.3f", decision.getScore()),
                     ocrFallback,
                     decision.getReason());
-            return Optional.of(new TemplateLocationInfo(
+            return new TemplateLocationScanResult(Optional.of(new TemplateLocationInfo(
                     decision.getMapName(),
                     decision.getCoordinate(),
                     decision.getScore(),
                     decision.getLabelPath(),
                     ocrFallback
-            ));
+            )), null, null);
         } finally {
             raw.flush();
         }

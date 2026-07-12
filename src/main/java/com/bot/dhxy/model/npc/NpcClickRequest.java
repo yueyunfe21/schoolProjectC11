@@ -55,13 +55,35 @@ import java.util.List;
  *                   that differ between entering battle and opening ordinary NPC dialogs.
  * @param sourceTask task that produced this request, for example 五环/五倍/修罗. This is diagnostic
  *                   and allows task-scoped strategy tuning without guessing from NPC names.
- * @param consumeStoryDialogVisibleEvents CR255: true only for the 修罗 accept-phase smart click.
- *                                        At the FIFO queue's natural boundary the pipeline then
- *                                        reads (in-memory, zero I/O) fresh STORY_DIALOG_VISIBLE
- *                                        events for this window/task, fast-clicks the known small
- *                                        story dialog once per event sequence, and restarts the
- *                                        smart session. The default keeps every other smart click
- *                                        free of any story-event behavior.
+ * @param consumeStoryDialogVisibleEvents CR255/CR267: true for the 修罗 accept-phase smart click
+ *                                        and the 五倍白龙马 probe-target smart click. At the FIFO
+ *                                        queue's natural boundary the pipeline then reads
+ *                                        (in-memory, zero I/O) fresh STORY_DIALOG_VISIBLE events
+ *                                        for this window/task, fast-clicks the known small story
+ *                                        dialog once per event sequence, and restarts the smart
+ *                                        session. The default keeps every other smart click free
+ *                                        of any story-event behavior.
+ * @param directCombatProbeTargetReady CR267 structured task fact for cloud direct-combat
+ *                                     authorization: true only when the 五倍白龙马 probe already
+ *                                     produced its dedicated {@code wubei.probeTargetReady} result,
+ *                                     i.e. Runner/provider confirmed the target appeared. Never set
+ *                                     this from generic STORY/OPTION visibility.
+ * @param directCombatNormalFifoUnverified CR267 structured task fact for cloud direct-combat
+ *                                         authorization: true only when the ordinary
+ *                                         {@code NPC_CLICK_SMART} FIFO for this target was fully
+ *                                         consumed without any verified target/combat action. The
+ *                                         call site that observed that terminal state must set it.
+ * @param directCombatArrivalTolerance CR267 structured task fact for cloud direct-combat
+ *                                     authorization: the task's existing per-axis logical-coordinate
+ *                                     arrival tolerance around the target. Negative means the caller
+ *                                     supplies no coordinate fact and the coordinate branch must not
+ *                                     authorize.
+ * @param directCombatScenario CR267 structured route/scenario fact for cloud direct-combat
+ *                             authorization. Cloud allowlists only
+ *                             {@code WUBEI_PROBE_TARGET_READY} and {@code LEGACY_COMBAT_TARGET};
+ *                             {@code TRACKER_SHORTCUT}, null, and unknown values are always
+ *                             refused. Null is the default so a request that never packs the fact
+ *                             cannot be authorized.
  */
 @Value
 @Builder(toBuilder = true)
@@ -97,6 +119,13 @@ public class NpcClickRequest {
     TaskType sourceTask = TaskType.UNKNOWN;
     @Builder.Default
     boolean consumeStoryDialogVisibleEvents = false;
+    @Builder.Default
+    boolean directCombatProbeTargetReady = false;
+    @Builder.Default
+    boolean directCombatNormalFifoUnverified = false;
+    @Builder.Default
+    int directCombatArrivalTolerance = -1;
+    NpcDirectCombatScenario directCombatScenario;
 
     /**
      * Build a fixed-coordinate target request. OCR regions are resolved later by vision memory.

@@ -68,6 +68,19 @@ Important behavior constraints:
 
 6. Use Chinese in conversation with the user unless they switch language.
 
+6A. Image/template communication rule.
+   - When explaining, proposing, reviewing, or asking the user to decide about an image, screenshot,
+     template, ROI crop, or image file, do not refer only to a filename such as `foo.png`.
+   - In the same user-facing message, display the actual local image inline with an absolute filesystem
+     path, label what it visually represents, and state whether it is the live incident image, a
+     historical/example image, or a template. The user must be able to inspect the pixels before being
+     asked to judge a match, ROI, click point, or deletion.
+   - If the exact historical image has been overwritten or is unavailable, say so plainly. Do not show a
+     later screenshot as if it were the incident image. Still display every remaining relevant template
+     and clearly label any illustrative/historical image.
+   - Before saying an image/template should be deleted, retained, or replaced, show that image and every
+     directly competing image in the same reply, with their roles in the current call path.
+
 7. No-local-test mode is active by default.
    - As of 2026-07-10, do not create, restore, run, or cite local automated tests, source guards, replay tests, testcase images, or generated marked testcase outputs unless the user explicitly asks for that specific test or test family.
    - Do not ask the user to run fresh runtime because a local test passed. Default validation remains code review, log/screenshot inspection, and user-run runtime evidence.

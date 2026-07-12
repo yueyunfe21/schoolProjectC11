@@ -4,6 +4,7 @@ import com.bot.dhxy.cloud.task.NpcClickSmartCloudDecision;
 import com.bot.dhxy.cloud.task.NpcClickSmartCloudDecisionService;
 import com.bot.dhxy.cloud.task.NpcClickSmartCloudRequest;
 import com.bot.dhxy.cloud.task.NpcClickSmartCloudSession;
+import com.bot.dhxy.cloud.task.NpcClickSmartDirectCombatAuthorization;
 import com.bot.dhxy.cloud.task.NpcClickSmartQueueMessage;
 import com.bot.dhxy.cloud.task.NpcClickSmartQueueOutcome;
 import com.bot.dhxy.cloud.task.ImageProcessorService;
@@ -28,6 +29,7 @@ import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.npc.DirectCombatClickResult;
 import com.bot.dhxy.model.npc.NpcClickRequest;
+import com.bot.dhxy.model.npc.NpcSmartClickOutcome;
 import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -215,17 +217,41 @@ public class NpcClickService {
      * @return true when any strategy opens and verifies the expected dialog.
      */
     public boolean clickNpcSmart(NpcClickRequest request) {
+        return clickNpcSmartWithOutcome(request).isVerified();
+    }
+
+    /**
+     * CR267: same smart-click entry as {@link #clickNpcSmart(NpcClickRequest)} but returns the
+     * structured terminal, so direct-combat callers can pack an auditable
+     * {@code directCombatNormalFifoUnverified} fact instead of assuming every {@code false} means
+     * the FIFO was fully consumed.
+     *
+     * <p>{@code normalFifoConsumedUnverified} maps ONLY from the genuine queue {@code END}
+     * terminal ({@code CLOUD_NO_ACTION}). Disabled cloud, session-start failure, invalid message,
+     * stop/cancel, WAIT timeout, and candidate-budget exhaustion all map to false and therefore
+     * can never authorize {@code ENTER_DIRECT_COMBAT}.</p>
+     */
+    public NpcSmartClickOutcome clickNpcSmartWithOutcome(NpcClickRequest request) {
         NpcClickVerifier verifier = dialogClickVerifier(request);
         NpcClickSmartExecutionResult cloudResult = tryClickNpcSmartViaCloud(request, verifier, "dialog");
-        if (!cloudResult.verifiedTargetAction()) {
-            log.warn("NPC_CLICK_SMART did not produce a verified executable action; production smart click fails closed: "
-                            + "npcName={} task={} status={}",
-                    request == null ? null : request.npcName(),
-                    request == null ? null : request.sourceTask(),
-                    cloudResult.status());
-            return false;
+        if (cloudResult.verifiedTargetAction()) {
+            return NpcSmartClickOutcome.builder()
+                    .verified(true)
+                    .terminalStatus(cloudResult.status().name())
+                    .build();
         }
-        return true;
+        boolean fifoConsumedUnverified =
+                cloudResult.status() == NpcClickSmartCloudDecision.Status.CLOUD_NO_ACTION;
+        log.warn("NPC_CLICK_SMART did not produce a verified executable action; production smart click fails closed: "
+                        + "npcName={} task={} status={} normalFifoConsumedUnverified={}",
+                request == null ? null : request.npcName(),
+                request == null ? null : request.sourceTask(),
+                cloudResult.status(), fifoConsumedUnverified);
+        return NpcSmartClickOutcome.builder()
+                .verified(false)
+                .normalFifoConsumedUnverified(fifoConsumedUnverified)
+                .terminalStatus(cloudResult.status() == null ? null : cloudResult.status().name())
+                .build();
     }
 
     /**
@@ -1156,20 +1182,26 @@ public class NpcClickService {
     }
 
     /**
-     * Try to enter combat by switching to the game's direct combat-click mode, then executing the
-     * cloud-owned {@code NPC_CLICK_SMART} target action.
+     * CR267: try to enter combat through the two-step direct combat-click contract.
      *
-     * <p>This path is for 修罗/monster targets whose normal dialog trigger is blocked by combat
-     * targeting mode. Local code does not press Alt+A or Alt+C before cloud has chosen an action;
-     * cloud must return an allowlisted action bundle such as {@code PRESS_HOTKEY_THEN_CLICK
-     * hotkey=ALT_A}. If the task is stopped/interrupted, the method intentionally does not
-     * right-click out of the mode, so the user's stop/pause command remains the owner of recovery.</p>
+     * <p>Step 1 asks cloud for an independent {@code ENTER_DIRECT_COMBAT} authorization from
+     * structured task facts only (no screenshot). Step 2, only after an explicit authorization,
+     * presses {@code Alt+A} once through the input queue with the baseline short wait. Step 3
+     * captures a fresh raw screenshot and starts a new {@code NPC_CLICK_SMART} session with
+     * {@code directCombatMode=true}; cloud answers with ordinary window-relative target clicks and
+     * never bundles {@code Alt+A} into a click candidate. Only a real click verified as
+     * {@code IN_COMBAT} counts as success. If the task is stopped/interrupted, the method
+     * intentionally does not right-click out of the mode, so the user's stop/pause command remains
+     * the owner of recovery.</p>
      *
-     * @param request immutable NPC/monster target request. Coordinates are logical map coordinates;
+     * @param request immutable NPC/monster target request carrying the CR267 direct-combat facts
+     *                ({@code directCombatProbeTargetReady}, {@code directCombatNormalFifoUnverified},
+     *                {@code directCombatArrivalTolerance}). Coordinates are logical map coordinates;
      *                generated click points are screen-absolute through the existing smart-click
      *                conversion path.
-     * @return structured result. Failed attempts after Alt+A was entered are marked
-     *         position-refresh-required because canceling direct-combat mode can move the character.
+     * @return structured result. Refusals before Alt+A are plain skips; failed attempts after Alt+A
+     *         was entered are marked position-refresh-required because canceling direct-combat mode
+     *         can move the character.
      */
     public DirectCombatClickResult tryDirectCombatTargetClick(NpcClickRequest request) {
         if (request == null) {
@@ -1180,6 +1212,52 @@ public class NpcClickService {
             return DirectCombatClickResult.skipped("stop-requested-before-direct-combat");
         }
 
+        /*
+         * CR267 reviewer P1 #3: the ordinary-FIFO gate fact is a hard local precondition. When the
+         * ordinary NPC_CLICK_SMART queue did not genuinely END unverified (disabled cloud, start/
+         * protocol failure, cancel, budget), no DIRECT_COMBAT_AUTHORIZE request is sent at all —
+         * those terminals keep the caller's existing failure path.
+         */
+        if (!request.directCombatNormalFifoUnverified()) {
+            log.warn("NPC direct-combat skipped; ordinary smart FIFO did not genuinely END unverified, no authorize request is sent: "
+                            + "npcName={} task={} map={} target=({}, {}) scenario={}",
+                    request.npcName(), request.sourceTask(), request.mapName(), request.mapX(), request.mapY(),
+                    request.directCombatScenario());
+            return DirectCombatClickResult.skipped("direct-combat-normal-fifo-terminal-not-end");
+        }
+
+        // CR267 step 1: cloud owns the ENTER_DIRECT_COMBAT decision from structured task facts.
+        // A refusal keeps the caller's existing failure path without any scene switch.
+        NpcClickSmartDirectCombatAuthorization authorization = npcClickSmartCloudDecisionService
+                .authorizeDirectCombat(directCombatAuthorizeCloudRequest(request));
+        if (!authorization.isAuthorized()) {
+            log.warn("NPC direct-combat not authorized by cloud; no Alt+A is pressed: npcName={} task={} map={} target=({}, {}) status={} reason={}",
+                    request.npcName(), request.sourceTask(), request.mapName(), request.mapX(), request.mapY(),
+                    authorization.getStatus(), authorization.getReason());
+            return DirectCombatClickResult.skipped("direct-combat-cloud-refused");
+        }
+        if (shouldStop()) {
+            return DirectCombatClickResult.skipped("stop-requested-before-direct-combat");
+        }
+
+        // CR267 step 2: authorized scene transition. Alt+A goes through the input queue with the
+        // baseline 3f0a2e7 short wait; nothing else is pressed here.
+        boolean enteredMode = inputSequences.submitAndWait("npcClick:directCombat:enterAltA", List.of(
+                InputAction.pressAltA(),
+                InputAction.sleep(350)
+        ));
+        if (!enteredMode || shouldStop()) {
+            log.warn("NPC direct-combat click could not enter Alt+A mode: npcName={} enteredMode={}",
+                    request.npcName(), enteredMode);
+            return DirectCombatClickResult.skipped("direct-combat-alt-a-not-entered");
+        }
+        log.info("NPC direct-combat click mode entered: npcName={} map={} target=({}, {}) authorizeDecisionId={} modeLikely={}",
+                request.npcName(), request.mapName(), request.mapX(), request.mapY(),
+                authorization.getDecisionId(),
+                gameStateUtil.isDirectCombatClickModeLikely("npc-direct-combat-entered"));
+
+        // CR267 steps 3-5: fresh raw screenshot + new directCombatMode=true session; cloud returns
+        // ordinary clicks and the existing combat verifier proves IN_COMBAT.
         NpcClickSmartExecutionResult result = tryClickNpcSmartViaCloud(
                 request,
                 combatClickVerifier(),
@@ -1200,6 +1278,36 @@ public class NpcClickService {
                 request.npcName(), request.sourceTask(), request.mapName(), request.mapX(), request.mapY(),
                 result.status(), result.finalAction());
         return DirectCombatClickResult.positionRefreshRequired("direct-combat-cloud-failed-no-local-recovery");
+    }
+
+    /**
+     * CR267: build the screenshot-free cloud request that carries only identity and structured
+     * task facts for the {@code DIRECT_COMBAT_AUTHORIZE} decision. The main click chain still
+     * captures exactly one base screenshot per smart session; this request must never trigger a
+     * capture or input preparation.
+     */
+    private NpcClickSmartCloudRequest directCombatAuthorizeCloudRequest(NpcClickRequest request) {
+        String sessionId = UUID.randomUUID().toString();
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        return NpcClickSmartCloudRequest.builder()
+                .sessionId(sessionId)
+                .npcRequest(request)
+                .taskCode(taskCode(request.sourceTask()))
+                .source("npc-click-direct-combat")
+                .phase("npc-click-direct-combat-authorize")
+                .verificationMode("direct-combat-authorize")
+                .playerName(request.player() == null ? "" : request.player().getName())
+                .playerMapName(request.player() == null ? "" : request.player().getCurrentMapName())
+                .playerMapX(request.player() == null ? null : request.player().getX())
+                .playerMapY(request.player() == null ? null : request.player().getY())
+                .windowWidth(WINDOW_WIDTH)
+                .windowHeight(WINDOW_HEIGHT)
+                .windowId(runtime == null ? null : runtime.getWindowId())
+                .taskRunId(currentTaskRunId(sessionId))
+                .hwnd(runtime == null || runtime.getNativeBinding() == null
+                        ? null
+                        : runtime.getNativeBinding().getNativeHandle())
+                .build();
     }
 
     private record NpcClickSmartExecutionResult(

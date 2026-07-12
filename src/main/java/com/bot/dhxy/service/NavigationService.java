@@ -3,6 +3,8 @@ package com.bot.dhxy.service;
 import com.bot.dhxy.cloud.decision.CloudDecisionServiceId;
 import com.bot.dhxy.cloud.runtime.RuntimeDecisionShadowService;
 import com.bot.dhxy.cloud.task.ImagePreprocessCloudRequest;
+import com.bot.dhxy.cloud.task.NavigationPointCloudDecisionService;
+import com.bot.dhxy.cloud.task.NavigationRoutePlanCloudDecisionService;
 import com.bot.dhxy.cloud.task.RouteCloudDecision;
 import com.bot.dhxy.cloud.task.RouteCloudDecisionService;
 import com.bot.dhxy.config.BotProperties;
@@ -34,6 +36,7 @@ import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcTarget;
 import com.bot.dhxy.model.npc.NpcTooltipType;
 import com.bot.dhxy.model.ocr.LocationInfo;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
@@ -66,12 +69,14 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -188,8 +193,29 @@ public class NavigationService {
     private final MemoryService memoryService;
     private final RuntimeDecisionShadowService runtimeDecisionShadowService;
     private final RouteCloudDecisionService routeCloudDecisionService;
+    private final NavigationPointCloudDecisionService navigationPointCloudDecisionService;
+    private final NavigationRoutePlanCloudDecisionService navigationRoutePlanCloudDecisionService;
 
     private final Map<String, NavigationRuntimeState> runtimeStates = new ConcurrentHashMap<>();
+
+    /**
+     * CR260 route-plan execution ledger: in-memory replay dedup per step. Key =
+     * windowId|hwnd|taskRunId|routePlanRequestId|stepId. A replayed stepId re-reports its recorded
+     * outcome instead of re-executing the action. Lives only for the navigateToMap call; not disk.
+     */
+    private final Map<String, String> routePlanExecutionLedger = new ConcurrentHashMap<>();
+
+    /**
+     * CR258 execution ledger: in-memory outcome record per cloud-resolved mini-map click.
+     * Key = windowId|hwnd|taskRunId|navigationRequestId|decisionId|candidateId. A replayed key
+     * re-reports the recorded outcome instead of submitting physical input again. Note this is
+     * defense-in-depth: the primary click dedup is the attemptedCandidateIds set plus the batch
+     * being a method-local object, so the replay branch is unreachable through internal flows —
+     * the ledger keeps the contract's token-spend record auditable and guards protocol drift.
+     * Entries live only for the duration of their navigation call — this is not route memory and
+     * never touches disk.
+     */
+    private final Map<String, String> miniMapClickExecutionLedger = new ConcurrentHashMap<>();
 
     // ==============================
     // Public navigation entry points
@@ -262,6 +288,482 @@ public class NavigationService {
      *         appears to be there.
      */
     public NavigationResult navigateToMap(NavigationRequest request) {
+        if (request == null) {
+            log.warn("navigateToMap skipped: request is null");
+            return NavigationResult.failed("request is null");
+        }
+        return navigateToMapCloudPlan(request);
+    }
+
+    /**
+     * CR260 (CR259 v5): navigateToMap route-decision shell. The cloud {@code NAVIGATION_ROUTE_PLAN}
+     * orchestrator owns the six-stage ladder ordering; this shell reports observation booleans
+     * (computed by the identical local helpers), executes the one directive the cloud returns, and
+     * applies the terminal-fact-gate before constructing any NavigationResult. Cloud unavailable /
+     * echo mismatch / unbacked terminal are all structured MAP_NOT_REACHED failures (fail-closed).
+     * The finally-block intent three-guard is unchanged from baseline; intent registration is driven
+     * only by the backed terminal's alreadyActive/ownedByNestedRoute flags, never by the cloud.
+     */
+    private NavigationResult navigateToMapCloudPlan(NavigationRequest request) {
+        String targetMapName = request.getTargetMapName();
+        String source = request.getSource();
+        long latencyStart = LatencyMetrics.start();
+        NavigationResult result = NavigationResult.mapNotReached("not started");
+        boolean pathingIntentAlreadyActive = false;
+        boolean pathingIntentOwnedByNestedRoute = false;
+        String routePlanRequestId = UUID.randomUUID().toString();
+        RoutePlanIdentity identityBaseline = currentRoutePlanIdentity();
+        // Persisted backing facts (survive intermediate CLEAR/CONFIRM steps + round-trips).
+        boolean arrivedEstablished = false;
+        boolean pathingActiveCompatibleEstablished = false;
+        boolean preparedGuardClicked = false;
+        boolean preparedWorldMapClicked = false;
+        boolean worldMapClickedConfirmed = false;
+        String priorAction = "";
+        String priorContext = "";
+        String priorOutcome = "";
+        try {
+            PlayerCharacter me = context.getMe();
+            log.info("navigate to map (cloud route plan): {} current={} routePlanRequestId={}",
+                    targetMapName, me == null ? null : me.getCurrentMapName(), routePlanRequestId);
+
+            while (true) {
+                TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+                if (isRoutePlanIdentityStale(identityBaseline)) {
+                    result = NavigationResult.mapNotReached("cloud route plan stale: window/hwnd/epoch changed");
+                    return result;
+                }
+
+                RoutePlanObservation obs = observeRoutePlanFacts(request, targetMapName, source);
+                // Persist the ARRIVED backing the instant it is observed (snapshot ARRIVED or
+                // caller-fresh map == target), so a terminal that arrives on the first step or after
+                // an intermediate CLEAR still has its backing fact. CONFIRM arrived-true is persisted
+                // post-action below.
+                if (obs.snapshotMapCheck().equals(RecentPathingMapCheck.ARRIVED.name())
+                        || (obs.hasCallerFreshMap() && obs.callerFreshMapMatchesTarget())) {
+                    arrivedEstablished = true;
+                }
+                // Persist the pathing-active-compatible fact the instant it is observed (P2), so the
+                // RECENT_PATHING_STILL_ACTIVE terminal reached AFTER a B2 CLEAR round-trip still has
+                // its backing even if the 1500ms snapshot window lapses mid-round-trip.
+                if (obs.snapshotMapCheck().equals(RecentPathingMapCheck.PATHING_ACTIVE.name())
+                        && obs.compatibleActiveIntent()) {
+                    pathingActiveCompatibleEstablished = true;
+                }
+                NavigationRoutePlanCloudDecisionService.RoutePlanStepRequest stepReq =
+                        NavigationRoutePlanCloudDecisionService.RoutePlanStepRequest.builder()
+                                .routePlanRequestId(routePlanRequestId)
+                                .hasRuntime(obs.hasRuntime())
+                                .preparedRouteDialogUsable(obs.preparedRouteDialogUsable())
+                                .snapshotMapCheck(obs.snapshotMapCheck())
+                                .currentAlreadyTarget(obs.currentAlreadyTarget())
+                                .compatibleActiveIntent(obs.compatibleActiveIntent())
+                                .hasActiveRouteTransferPreparation(obs.hasActiveRouteTransferPreparation())
+                                .shouldYield(obs.shouldYield())
+                                .freshSameTargetRoutePending(obs.freshSameTargetRoutePending())
+                                .hasCallerFreshMap(obs.hasCallerFreshMap())
+                                .callerFreshMapMatchesTarget(obs.callerFreshMapMatchesTarget())
+                                .staleRoutePreparation(obs.staleRoutePreparation())
+                                .priorAction(priorAction)
+                                .priorContext(priorContext)
+                                .priorOutcome(priorOutcome)
+                                .targetMapName(targetMapName)
+                                .taskCode(currentNavigationTaskCode())
+                                .source(source)
+                                .build();
+                NavigationRoutePlanCloudDecisionService.RoutePlanStepResult stepResult =
+                        navigationRoutePlanCloudDecisionService.decideNextStep(stepReq);
+                if (stepResult.status() != NavigationRoutePlanCloudDecisionService.RoutePlanStepStatus.OK
+                        || stepResult.directive() == null) {
+                    result = NavigationResult.mapNotReached("cloud route plan unavailable: " + stepResult.reason());
+                    return result;
+                }
+                /*
+                 * CR260 review P1-3: execute-time identity gate. The five-field echo verified the
+                 * request-time identity, but the window/hwnd/epoch may have changed DURING the HTTP
+                 * round trip. Re-check live identity here, before any terminal build or physical
+                 * action, so a directive computed for the old identity never runs on a rebound /
+                 * relogged window. Any drift = STALE_REJECTED, zero input, structured failure.
+                 */
+                if (isRoutePlanIdentityStale(identityBaseline)) {
+                    log.warn("cloud route plan directive rejected by execute-time identity gate: routePlanRequestId={} stepId={} directive={}",
+                            routePlanRequestId, stepResult.directive().stepId(), stepResult.directive().kind());
+                    result = NavigationResult.mapNotReached("cloud route plan stale: identity changed during round trip");
+                    return result;
+                }
+                NavigationRoutePlanCloudDecisionService.RoutePlanDirective directive = stepResult.directive();
+                String ledgerKey = routePlanLedgerKey(identityBaseline, routePlanRequestId, directive.stepId());
+
+                if (directive.kind() == NavigationRoutePlanCloudDecisionService.DirectiveKind.TERMINAL) {
+                    NavigationResult terminal = buildBackedRoutePlanTerminal(directive, obs,
+                            arrivedEstablished, pathingActiveCompatibleEstablished,
+                            preparedGuardClicked, preparedWorldMapClicked, worldMapClickedConfirmed);
+                    if (terminal == null) {
+                        result = NavigationResult.mapNotReached(
+                                "cloud route plan terminal not backed by local fact: " + directive.messageKey());
+                        return result;
+                    }
+                    pathingIntentAlreadyActive = directive.alreadyActive();
+                    pathingIntentOwnedByNestedRoute = directive.ownedByNestedRoute();
+                    result = terminal;
+                    return result;
+                }
+
+                // ACTION
+                String replay = routePlanExecutionLedger.get(ledgerKey);
+                RoutePlanActionOutcome ao;
+                if (replay != null) {
+                    log.warn("cloud route plan action replay re-reported without re-execution: routePlanRequestId={} stepId={} action={} outcome={}",
+                            routePlanRequestId, directive.stepId(), directive.action(), replay);
+                    ao = new RoutePlanActionOutcome(replay);
+                } else {
+                    ao = executeRoutePlanAction(request, targetMapName, source, directive);
+                    routePlanExecutionLedger.put(ledgerKey, ao.outcome());
+                }
+                /*
+                 * The cloud owns the terminal (review P1-2). The shell only persists the local
+                 * backing facts each action produces, then reports the outcome; the terminal is
+                 * built next iteration via buildBackedRoutePlanTerminal, which re-verifies backing.
+                 */
+                if ("CONSUME_PREPARED_ROUTE_DIALOG".equals(directive.action())
+                        && "OPTION_KEYWORD_CLICKED".equals(ao.outcome())) {
+                    if ("pathing-guard".equals(directive.actionContext())) {
+                        preparedGuardClicked = true;
+                    } else {
+                        // Outer stage5 gate and the CR263 world-map inner gate share this backing
+                        // flag — both are the same baseline gate helper producing the same message.
+                        preparedWorldMapClicked = true;
+                    }
+                }
+                if ("WORLD_MAP_PREPARE_AND_CLICK".equals(directive.action())
+                        && "CLICKED_CONFIRMED".equals(ao.outcome())) {
+                    worldMapClickedConfirmed = true;
+                }
+                if ("CONFIRM_CURRENT_MAP_FRESH".equals(directive.action()) && "arrived-true".equals(ao.outcome())) {
+                    arrivedEstablished = true;
+                }
+                priorAction = directive.action();
+                priorContext = directive.actionContext();
+                priorOutcome = ao.outcome();
+            }
+        } finally {
+            if (result.getStatus() == NavigationResultStatus.PATHING_STARTED) {
+                if (pathingIntentAlreadyActive) {
+                    log.info("skip duplicate pathing intent registration: source={} target={} reason=watcher-already-active",
+                            source, targetMapName);
+                } else if (pathingIntentOwnedByNestedRoute) {
+                    log.info("skip outer pathing intent registration: source={} target={} reason=nested-route-owns-current-leg",
+                            source, targetMapName);
+                } else {
+                    registerWindowPathingIntent(request, "navigateToMap", result.getMessage(), false);
+                }
+            }
+            routePlanExecutionLedger.keySet().removeIf(key -> key.contains("|" + routePlanRequestId + "|"));
+            LatencyMetrics.info(log, "navigation.toMap", latencyStart,
+                    "result=" + result.getStatus() + " source=" + source + " target=" + targetMapName);
+        }
+    }
+
+    private String currentNavigationTaskCode() {
+        return taskExecutionContextHolder.current()
+                .map(ctx -> ctx.getTaskCode())
+                .orElse("navigation");
+    }
+
+    /**
+     * CR260 review P2-4: full binding ledger key = windowId|hwnd|taskRunId|routePlanRequestId|stepId,
+     * so replay dedup and cleanup are scoped to the live bound identity, not just the request UUID.
+     */
+    private String routePlanLedgerKey(RoutePlanIdentity identity, String routePlanRequestId, String stepId) {
+        return identity.windowId() + "|" + identity.hwnd() + "|" + identity.taskRunId()
+                + "|" + routePlanRequestId + "|" + stepId;
+    }
+
+    private record RoutePlanIdentity(String windowId, String hwnd, String taskRunId, long epoch) {
+    }
+
+    private RoutePlanIdentity currentRoutePlanIdentity() {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            return new RoutePlanIdentity(null, null, null, -1L);
+        }
+        String hwnd = runtime.getNativeBinding() == null ? null : runtime.getNativeBinding().getNativeHandle();
+        String taskRunId = taskExecutionContextHolder.current()
+                .map(ctx -> Long.toString(ctx.getTaskRunId()))
+                .orElse("0");
+        return new RoutePlanIdentity(runtime.getWindowId(), hwnd, taskRunId, runtime.getPlayerIdentityEpoch());
+    }
+
+    private boolean isRoutePlanIdentityStale(RoutePlanIdentity baseline) {
+        RoutePlanIdentity live = currentRoutePlanIdentity();
+        return !Objects.equals(live.windowId(), baseline.windowId())
+                || !Objects.equals(live.hwnd(), baseline.hwnd())
+                || !Objects.equals(live.taskRunId(), baseline.taskRunId())
+                || live.epoch() != baseline.epoch();
+    }
+
+    private record RoutePlanObservation(boolean hasRuntime,
+                                        boolean preparedRouteDialogUsable,
+                                        String snapshotMapCheck,
+                                        boolean currentAlreadyTarget,
+                                        boolean compatibleActiveIntent,
+                                        boolean hasActiveRouteTransferPreparation,
+                                        boolean shouldYield,
+                                        boolean freshSameTargetRoutePending,
+                                        boolean hasCallerFreshMap,
+                                        boolean callerFreshMapMatchesTarget,
+                                        boolean staleRoutePreparation) {
+    }
+
+    private record RoutePlanActionOutcome(String outcome) {
+    }
+
+    /**
+     * CR260: compute the ladder observation booleans with the identical baseline helper methods. All
+     * reads here are pure (no input); the three active executors run only when the cloud requests
+     * them as actions.
+     */
+    private RoutePlanObservation observeRoutePlanFacts(NavigationRequest request, String targetMapName, String source) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        PlayerCharacter me = context.getMe();
+        long now = System.currentTimeMillis();
+
+        RecentPathingMapCheck snapshotCheck =
+                confirmCurrentMapFromRecentPathingSnapshot(targetMapName, "navigateToMap:staleCacheGuard");
+
+        WindowPathingIntent activeIntent = runtime == null ? null : runtime.getActivePathingIntent().orElse(null);
+        boolean compatibleActiveIntent = isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source);
+        boolean currentAlreadyTarget = me != null && gameStateUtil.isSameMapName(me.getCurrentMapName(), targetMapName);
+
+        DialogPreparationStatus status = runtime == null ? null : runtime.getDialogPreparationStatus();
+        PreparedDialogAction action = runtime == null ? null : runtime.getPreparedDialogAction();
+        boolean hasActiveRouteTransferPreparation = runtime != null
+                && ((status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName))
+                || (action != null && action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)));
+        boolean staleRoutePreparation = runtime != null
+                && ((status != null
+                && status.getOperation() == DialogOperation.ROUTE_TRANSFER
+                && status.getTargetKeyword() != null
+                && !targetMapName.equals(status.getTargetKeyword()))
+                || (action != null
+                && action.getOperation() == DialogOperation.ROUTE_TRANSFER
+                && action.getTargetKeyword() != null
+                && !targetMapName.equals(action.getTargetKeyword())));
+
+        boolean preparedRouteDialogUsable = runtime != null
+                && isPreparedRouteDialogActionUsable(runtime, action, targetMapName, now);
+        boolean shouldYield = runtime != null
+                && shouldYieldForRouteDialogBeforeWorldMap(runtime, targetMapName, source, source + ":route-plan-observe");
+        boolean freshSameTargetRoutePending = isFreshSameTargetRoutePending(runtime, targetMapName, source, now, true);
+
+        boolean hasCallerFreshMap = hasFreshCurrentLocationForMapGuard(request);
+        boolean callerFreshMapMatchesTarget = hasCallerFreshMap
+                && gameStateUtil.isSameMapName(request.getFreshCurrentMapName(), targetMapName);
+
+        return new RoutePlanObservation(runtime != null, preparedRouteDialogUsable, snapshotCheck.name(),
+                currentAlreadyTarget, compatibleActiveIntent, hasActiveRouteTransferPreparation, shouldYield,
+                freshSameTargetRoutePending, hasCallerFreshMap, callerFreshMapMatchesTarget, staleRoutePreparation);
+    }
+
+    /**
+     * CR260: execute the one cloud-directed action via the existing local compound executor
+     * (zero behavior change), returning a structured outcome the cloud consumes next step.
+     */
+    private RoutePlanActionOutcome executeRoutePlanAction(NavigationRequest request,
+                                                          String targetMapName,
+                                                          String source,
+                                                          NavigationRoutePlanCloudDecisionService.RoutePlanDirective directive) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        switch (directive.action()) {
+            case "CONSUME_PREPARED_ROUTE_DIALOG": {
+                // Reason strings are the verbatim baseline call-site reasons; the inner gate (CR263)
+                // is the wrapper's pre-open re-run of the same gate helper.
+                String reason;
+                String suffix;
+                if ("pathing-guard".equals(directive.actionContext())) {
+                    reason = "navigateToMap:prepared-route-dialog-priority";
+                    suffix = ":priority-prepared";
+                } else if ("world-map-inner-gate".equals(directive.actionContext())) {
+                    reason = "submitWorldMapSearchAndClickDestination:before-open";
+                    suffix = ":world-map-gate";
+                } else {
+                    reason = "navigateToMap:before-world-map";
+                    suffix = ":world-map-gate";
+                }
+                RouteDialogClickResult r = consumePreparedRouteDialogAction(
+                        runtime, targetMapName, source, reason, null, null, null, suffix);
+                if (r == null) {
+                    return new RoutePlanActionOutcome("SKIPPED");
+                }
+                if (r.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
+                    return new RoutePlanActionOutcome("OPTION_KEYWORD_CLICKED");
+                }
+                if (r.result() == DialogResultStatus.FAILED) {
+                    return new RoutePlanActionOutcome("FAILED");
+                }
+                return new RoutePlanActionOutcome("SKIPPED");
+            }
+            case "CONFIRM_CURRENT_MAP_FRESH": {
+                String reason = "mismatched-active-intent".equals(directive.actionContext())
+                        ? "navigateToMap:staleCacheGuard:mismatched-active-intent"
+                        : "navigateToMap:staleCacheGuard";
+                boolean arrived = gameStateUtil.confirmCurrentMapFresh(targetMapName, 0L, reason);
+                return new RoutePlanActionOutcome(arrived ? "arrived-true" : "arrived-false");
+            }
+            case "CLEAR_STALE_ROUTE_PREPARATION": {
+                if (runtime != null) {
+                    runtime.clearDialogPreparationRequest(directive.actionReason());
+                }
+                return new RoutePlanActionOutcome("done");
+            }
+            case "WORLD_MAP_PREPARE_AND_CLICK": {
+                // CR263 (CR261 Approved A): one baseline attempt-loop iteration, verbatim. The
+                // exclusive input section, its internal template branching and all settle timings
+                // stay inside the reused local compounds; on CLICKED the intent (with coordinates)
+                // and route memory are registered here, atomic with the click, exactly like the
+                // baseline wrapper did.
+                int attempt = "attempt-2".equals(directive.actionContext()) ? 2 : 1;
+                return executeWorldMapPrepareAndClick(request, targetMapName, source, attempt);
+            }
+            case "CLOSE_ROUTE_SEARCH_PANEL": {
+                closeRouteSearchPanelQueued(directive.actionReason());
+                if (directive.actionContext().startsWith("destination-mismatch")) {
+                    // Baseline `if (!TaskSleep.sleep(250)) { return false; }` — an interrupted
+                    // mismatch wait aborts the whole submit (review P2), never queuing attempt 2.
+                    if (!TaskSleep.sleep(250)) {
+                        return new RoutePlanActionOutcome("interrupted");
+                    }
+                }
+                return new RoutePlanActionOutcome("done");
+            }
+            default:
+                log.warn("cloud route plan unknown action: action={} routePlanRequestId-context={}",
+                        directive.action(), directive.actionContext());
+                return new RoutePlanActionOutcome("UNKNOWN_ACTION");
+        }
+    }
+
+    /**
+     * CR263: one iteration of the baseline world-map attempt loop
+     * ({@code performWorldMapSearchAndClickDestination}), decomposed so the cloud owns the attempt
+     * rotation while every input stays in the original exclusive compounds.
+     */
+    private RoutePlanActionOutcome executeWorldMapPrepareAndClick(NavigationRequest request,
+                                                                  String targetMapName,
+                                                                  String source,
+                                                                  int attempt) {
+        if (attempt == 1) {
+            state().clearWorldMapRouteResultClick();
+        }
+        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
+            log.warn("navigation world-map route rejected: final mini-map coordinate is required after legacy green route removal target={} request={}",
+                    targetMapName, request);
+            return new RoutePlanActionOutcome("PREPARE_FAILED");
+        }
+        long prepareStartMs = System.currentTimeMillis();
+        boolean prepared = inputSequences.submitExclusiveAndWait(
+                "submitWorldMapSearchAndClickDestination:prepare:" + targetMapName + ":attempt" + attempt,
+                () -> prepareWorldMapSearchResultsDirect(targetMapName, attempt));
+        log.info("navigation map search split: stage=prepare target={} attempt={}/{} elapsedMs={}",
+                targetMapName, attempt, 2, System.currentTimeMillis() - prepareStartMs);
+        if (!prepared) {
+            return new RoutePlanActionOutcome("PREPARE_FAILED");
+        }
+        long scanStartMs = System.currentTimeMillis();
+        WorldMapDestinationClickResult status = clickYellowDestinationAndTargetMiniMap(
+                "submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap",
+                targetMapName,
+                request);
+        log.info("navigation map search split: stage=yellow-destination-mini-map target={} attempt={}/{} status={} elapsedMs={}",
+                targetMapName, attempt, 2, status, System.currentTimeMillis() - scanStartMs);
+        if (status == WorldMapDestinationClickResult.CLICKED) {
+            String fromMapName = canonicalCurrentMapForWorldMapRouteMemory(source);
+            String canonicalTargetMapName = canonicalMapName(targetMapName,
+                    "world-map-route-memory:target:" + source);
+            registerWindowPathingIntent(request, "worldMapYellowDestinationMiniMap",
+                    source + ":yellow-destination-mini-map-pathing-confirmed", true);
+            rememberPendingRouteOutcome(fromMapName, canonicalTargetMapName, source,
+                    WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP);
+            return new RoutePlanActionOutcome("CLICKED_CONFIRMED");
+        }
+        if (status == WorldMapDestinationClickResult.WRONG_DESTINATION) {
+            return new RoutePlanActionOutcome("WRONG_DESTINATION");
+        }
+        return new RoutePlanActionOutcome("NOT_FOUND");
+    }
+
+    /**
+     * CR260 terminal-fact-gate (CR259 v3): the cloud can only close the ladder on a locally verified
+     * fact. Each messageKey maps to the verbatim baseline NavigationResult message; the backing
+     * check re-verifies the establishing fact (persisted click/arrived, live pathing-active/yield, or
+     * the kept submit result). Returns null when no local backing supports the requested terminal.
+     * MAP_NOT_REACHED terminals need no backing (the cloud may freely give up).
+     */
+    private NavigationResult buildBackedRoutePlanTerminal(
+            NavigationRoutePlanCloudDecisionService.RoutePlanDirective d,
+            RoutePlanObservation obs,
+            boolean arrivedEstablished,
+            boolean pathingActiveCompatibleEstablished,
+            boolean preparedGuardClicked,
+            boolean preparedWorldMapClicked,
+            boolean worldMapClickedConfirmed) {
+        boolean pathingActiveCompatible = obs.snapshotMapCheck().equals(RecentPathingMapCheck.PATHING_ACTIVE.name())
+                && obs.compatibleActiveIntent();
+        switch (d.messageKey()) {
+            case "ROUTE_DIALOG_CLICKED_BEFORE_PATHING_GUARD":
+                return preparedGuardClicked
+                        ? NavigationResult.pathingStarted("route dialog clicked before pathing guard; observer will confirm pathing")
+                        : null;
+            case "ROUTE_DIALOG_CLICKED_BEFORE_WORLD_MAP":
+                return preparedWorldMapClicked
+                        ? NavigationResult.pathingStarted("route dialog clicked before world-map search")
+                        : null;
+            case "ROUTE_DIALOG_CLICK_FAILED_BEFORE_WORLD_MAP":
+                // MAP_NOT_REACHED needs no backing.
+                return NavigationResult.mapNotReached("route dialog prepared action click failed before world-map search");
+            case "SAME_TARGET_ROUTE_PENDING":
+                return pathingActiveCompatible && obs.shouldYield()
+                        && obs.freshSameTargetRoutePending() && !obs.currentAlreadyTarget()
+                        ? NavigationResult.pathingStarted("same target route already submitted; watcher will confirm pathing")
+                        : null;
+            case "PATHING_ACTIVE_ROUTE_OPTION_VISIBLE":
+                return pathingActiveCompatible && obs.shouldYield() && !obs.currentAlreadyTarget()
+                        ? NavigationResult.dialogPreparing("pathing active but route option is visible; watcher will prepare route dialog")
+                        : null;
+            case "RECENT_PATHING_STILL_ACTIVE":
+                // Backed by the live pathing-active fact OR the one persisted at the B2 trigger, so a
+                // B2 CLEAR round-trip does not turn a genuine mid-route into a spurious failure (P2).
+                return pathingActiveCompatible || pathingActiveCompatibleEstablished
+                        ? NavigationResult.pathingStarted("recent window pathing still active; observer will confirm map")
+                        : null;
+            case "TARGET_MAP_CONFIRMED":
+                return arrivedEstablished
+                        ? NavigationResult.arrived("target map confirmed by stale-cache guard")
+                        : null;
+            case "SAME_TARGET_ROUTE_PENDING_BEFORE_WORLD_MAP":
+                return obs.shouldYield() && obs.freshSameTargetRoutePending()
+                        ? NavigationResult.pathingStarted("same target route already submitted before world-map search; watcher will confirm pathing")
+                        : null;
+            case "ROUTE_DIALOG_PENDING_BEFORE_WORLD_MAP":
+                return obs.shouldYield()
+                        ? NavigationResult.dialogPreparing("route dialog visible/preparing or route intent pending before world-map search")
+                        : null;
+            case "USE_WORLD_MAP_RESULT":
+                // CR263: backed by the world-map click confirmed in the compound action (intent with
+                // coordinates + route memory already registered there, atomic with the click).
+                return worldMapClickedConfirmed
+                        ? NavigationResult.pathingStarted("world-map yellow destination mini-map pathing confirmed")
+                        : null;
+            case "MAP_ROUTE_SUBMIT_FAILED":
+                // MAP_NOT_REACHED needs no backing.
+                return NavigationResult.mapNotReached("map route submit failed");
+            default:
+                return null;
+        }
+    }
+
+    @Deprecated(since = "CR260", forRemoval = false)
+    private NavigationResult navigateToMapLocalLadder(NavigationRequest request) {
         if (request == null) {
             log.warn("navigateToMap skipped: request is null");
             return NavigationResult.failed("request is null");
@@ -549,14 +1051,23 @@ public class NavigationService {
         long latencyStart = LatencyMetrics.start();
         NavigationResult result = NavigationResult.pointNotReached("not started");
         boolean pathingIntentRegistered = false;
+        String navigationRequestId = UUID.randomUUID().toString();
         try {
             String mapName = context.getMe().getCurrentMapName();
             log.info("navigate in map: {} target=({}, {})", mapName, targetX, targetY);
 
             long startTime = System.currentTimeMillis();
             long timeoutMs = 60000;
+            /*
+             * CR258 (CR251 contract v5): candidate points now come from the cloud transform owner as
+             * one ordered prefetched batch per navigation call. The 60s clock, per-round checks,
+             * click-confirm chain, keep-turn semantics and the 200ms rotation below stay baseline;
+             * only the candidate source changed.
+             */
+            long navigationDeadlineMs = startTime + timeoutMs;
             int failedMiniMapClicks = 0;
-            Set<String> attemptedMiniMapLogicalPoints = new HashSet<>();
+            Set<String> attemptedCandidateIds = new LinkedHashSet<>();
+            CloudMiniMapBatchState batchState = new CloudMiniMapBatchState();
 
             while (System.currentTimeMillis() - startTime < timeoutMs) {
                 TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
@@ -581,30 +1092,27 @@ public class NavigationService {
                 log.info("navigate in current map skips heavy pre-click movement probe: target=({}, {}) source={}",
                         targetX, targetY, request.getSource());
 
-                CoordinateHelper.MiniMapClickPoint clickPoint = null;
-                while (clickPoint == null && System.currentTimeMillis() - startTime < timeoutMs) {
-                    CoordinateHelper.MiniMapClickPoint candidate = coordinateHelper.resolveMiniMapClickPoint(
-                            mapName, targetX, targetY, failedMiniMapClicks,
-                            request.isRandomizeMiniMapClickPoint(),
-                            request.getMiniMapClickRandomRadiusPx());
-                    if (candidate == null) {
-                        break;
-                    }
-                    String logicalKey = candidate.logicalX() + "," + candidate.logicalY();
-                    if (attemptedMiniMapLogicalPoints.add(logicalKey)) {
-                        clickPoint = candidate;
-                    } else {
-                        log.info("navigate in current map skip duplicate mini-map logical point: target=({}, {}) logical=({}, {}) failedClicks={} reason={}",
-                                targetX, targetY, candidate.logicalX(), candidate.logicalY(), failedMiniMapClicks,
-                                candidate.reason());
-                        failedMiniMapClicks++;
-                    }
-                }
-                if (clickPoint == null) {
-                    log.warn("navigate in current map exhausted mini-map click points: target=({}, {}) failedClicks={}",
-                            targetX, targetY, failedMiniMapClicks);
+                MiniMapClickAcquisition acquisition = acquireCloudMiniMapClickPoint(request, mapName,
+                        targetX, targetY, navigationRequestId, navigationDeadlineMs, startTime, timeoutMs,
+                        batchState, attemptedCandidateIds);
+                if (acquisition.exhausted()) {
+                    log.warn("navigate in current map exhausted mini-map click points: target=({}, {}) failedClicks={} cloudReason={}",
+                            targetX, targetY, failedMiniMapClicks, acquisition.reason());
                     result = NavigationResult.pointNotReached("exhausted mini-map click points");
                     return result;
+                }
+                if (acquisition.failed()) {
+                    log.warn("navigate in current map cloud mini-map click point unavailable: target=({}, {}) navigationRequestId={} reason={}",
+                            targetX, targetY, navigationRequestId, acquisition.reason());
+                    result = NavigationResult.pointNotReached(
+                            "cloud mini-map click point unavailable: " + acquisition.reason());
+                    return result;
+                }
+                CoordinateHelper.MiniMapClickPoint clickPoint = acquisition.clickPoint();
+                if (clickPoint == null) {
+                    // Deadline elapsed while acquiring; let the outer loop condition produce the
+                    // baseline timeout result.
+                    continue;
                 }
 
                 boolean checkPanelBeforeOpen = failedMiniMapClicks > 0;
@@ -616,6 +1124,9 @@ public class NavigationService {
                 } else {
                     attemptResult = clickMiniMapPointForHandoff(
                             clickPoint, "navigateInCurrentMap:click", mapName, checkPanelBeforeOpen);
+                }
+                if (acquisition.ledgerKey() != null) {
+                    miniMapClickExecutionLedger.put(acquisition.ledgerKey(), attemptResult.name());
                 }
                 TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
                 if (attemptResult == MiniMapPathingAttemptResult.PATHING_STARTED) {
@@ -631,6 +1142,12 @@ public class NavigationService {
                             : "current-map mini-map click started pathing";
                     pathingIntentRegistered = registerWindowPathingIntent(
                             request, "navigateInCurrentMap", pathingMessage, true);
+                    /*
+                     * The batch gate treats a foreign pathing-intent change as batch invalidation.
+                     * This registration is our own, so move the gate baseline forward — keep-turn
+                     * retries must keep consuming the same batch without a network wait.
+                     */
+                    batchState.intentBaselineId = currentActivePathingIntentId();
                     if (request.isKeepTurnOnCurrentMapPathing()) {
                         /*
                          * Short leader-only corrections should not yield. They are followed
@@ -669,6 +1186,8 @@ public class NavigationService {
                                 request.getSource(), targetX, targetY, failedMiniMapClicks);
                         continue;
                     }
+                    discardRemainingCloudMiniMapCandidates(batchState, navigationRequestId,
+                            "pathing-started-handoff");
                     result = NavigationResult.pathingStarted(pathingMessage);
                     return result;
                 }
@@ -711,10 +1230,282 @@ public class NavigationService {
             } else {
                 closeMiniMapIfOpen("navigateInCurrentMap:finish");
             }
+            // CR258: the execution ledger only lives for this navigation call.
+            miniMapClickExecutionLedger.keySet().removeIf(key -> key.contains(navigationRequestId));
             LatencyMetrics.info(log, "navigation.currentMap", latencyStart,
                     "result=" + result.getStatus() + " source=" + request.getSource()
                             + " target=(" + targetX + "," + targetY + ")");
         }
+    }
+
+    /**
+     * CR258: mutable state of the cloud-prefetched candidate batch for one navigation call.
+     * intentBaselineId is the pathing intent observed when the batch was fetched (or re-observed
+     * after our own registration); a different live intent means a foreign navigation took over and
+     * the batch must be discarded.
+     */
+    private static final class CloudMiniMapBatchState {
+        private NavigationPointCloudDecisionService.MiniMapClickCandidateBatch batch;
+        private int cursor;
+        private String intentBaselineId;
+        /**
+         * CR253 same-hwnd identity drift detector: a relog on the same window handle bumps the
+         * epoch without changing windowId/hwnd, and points computed for the old character must not
+         * be clicked for the new one.
+         */
+        private long identityEpochBaseline;
+    }
+
+    /**
+     * One acquisition step outcome. Exactly one of clickPoint / exhausted / failed is meaningful;
+     * all-empty means the navigation deadline elapsed while acquiring (caller falls through to the
+     * baseline timeout result).
+     */
+    private record MiniMapClickAcquisition(CoordinateHelper.MiniMapClickPoint clickPoint,
+                                           String ledgerKey,
+                                           boolean exhausted,
+                                           boolean failed,
+                                           String reason) {
+
+        static MiniMapClickAcquisition of(CoordinateHelper.MiniMapClickPoint clickPoint, String ledgerKey) {
+            return new MiniMapClickAcquisition(clickPoint, ledgerKey, false, false, null);
+        }
+
+        static MiniMapClickAcquisition exhausted(String reason) {
+            return new MiniMapClickAcquisition(null, null, true, false, reason);
+        }
+
+        static MiniMapClickAcquisition failed(String reason) {
+            return new MiniMapClickAcquisition(null, null, false, true, reason);
+        }
+
+        static MiniMapClickAcquisition deadline() {
+            return new MiniMapClickAcquisition(null, null, false, false, null);
+        }
+    }
+
+    /**
+     * CR258 (CR251 contract v5): take the next cloud candidate for one mini-map click.
+     *
+     * <p>Consumes the current prefetched batch cursor-in-order with no network wait; requests the
+     * first/next batch only on natural exhaustion, carrying the attempted candidateId set so the
+     * cloud never repeats a point. Every consumption passes the execution gate first — window
+     * binding, foreign-intent, deadline — and any mismatch discards the whole batch as
+     * STALE_REJECTED before re-observing. Cloud unavailable is a structured failure; there is no
+     * local transform fallback.</p>
+     */
+    private MiniMapClickAcquisition acquireCloudMiniMapClickPoint(NavigationRequest request,
+                                                                  String mapName,
+                                                                  int targetX,
+                                                                  int targetY,
+                                                                  String navigationRequestId,
+                                                                  long navigationDeadlineMs,
+                                                                  long startTime,
+                                                                  long timeoutMs,
+                                                                  CloudMiniMapBatchState state,
+                                                                  Set<String> attemptedCandidateIds) {
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
+            if (state.batch == null || state.cursor >= state.batch.candidates().size()) {
+                if (state.batch != null) {
+                    log.info("cloud mini-map candidate batch naturally exhausted; requesting next batch: navigationRequestId={} batchId={} attempted={}",
+                            navigationRequestId, state.batch.batchId(), attemptedCandidateIds.size());
+                    state.batch = null;
+                }
+                NavigationPointCloudDecisionService.MiniMapClickBatchResult batchResult =
+                        navigationPointCloudDecisionService.resolveMiniMapClickBatch(
+                                cloudMiniMapBatchRequest(request, mapName, targetX, targetY,
+                                        navigationRequestId, navigationDeadlineMs, attemptedCandidateIds));
+                if (batchResult.status() == NavigationPointCloudDecisionService.MiniMapClickBatchStatus.EXHAUSTED) {
+                    return MiniMapClickAcquisition.exhausted(batchResult.reason());
+                }
+                if (batchResult.status() == NavigationPointCloudDecisionService.MiniMapClickBatchStatus.FAILED) {
+                    return MiniMapClickAcquisition.failed(batchResult.reason());
+                }
+                state.batch = batchResult.batch();
+                state.cursor = 0;
+                state.intentBaselineId = currentActivePathingIntentId();
+                state.identityEpochBaseline = currentPlayerIdentityEpoch();
+            }
+            NavigationPointCloudDecisionService.MiniMapClickCandidate candidate =
+                    state.batch.candidates().get(state.cursor);
+            state.cursor++;
+            String staleReason = cloudMiniMapBatchStaleReason(state);
+            if (staleReason != null) {
+                discardRemainingCloudMiniMapCandidates(state, navigationRequestId,
+                        "STALE_REJECTED:" + staleReason);
+                continue;
+            }
+            if (!attemptedCandidateIds.add(candidate.candidateId())) {
+                log.info("navigate in current map skip duplicate mini-map candidate: target=({}, {}) candidateId={} reason={}",
+                        targetX, targetY, candidate.candidateId(), candidate.reason());
+                continue;
+            }
+            String ledgerKey = cloudMiniMapLedgerKey(state.batch, candidate);
+            String replayedOutcome = miniMapClickExecutionLedger.get(ledgerKey);
+            if (replayedOutcome != null) {
+                log.warn("cloud mini-map candidate replay re-reported without physical input: navigationRequestId={} candidateId={} decisionId={} outcome={}",
+                        navigationRequestId, candidate.candidateId(), candidate.decisionId(), replayedOutcome);
+                continue;
+            }
+            return MiniMapClickAcquisition.of(toPhysicalMiniMapClickPoint(candidate), ledgerKey);
+        }
+        return MiniMapClickAcquisition.deadline();
+    }
+
+    private NavigationPointCloudDecisionService.MiniMapClickBatchRequest cloudMiniMapBatchRequest(
+            NavigationRequest request,
+            String mapName,
+            int targetX,
+            int targetY,
+            String navigationRequestId,
+            long navigationDeadlineMs,
+            Set<String> attemptedCandidateIds) {
+        long now = System.currentTimeMillis();
+        String observedMapName;
+        Integer observedX;
+        Integer observedY;
+        String observedSource;
+        long observedAgeMs;
+        if (request.getFreshCurrentMapName() != null
+                && request.getFreshCurrentLocationAtMs() > 0
+                && now - request.getFreshCurrentLocationAtMs() <= 5_000L) {
+            observedMapName = request.getFreshCurrentMapName();
+            observedX = request.getFreshCurrentX();
+            observedY = request.getFreshCurrentY();
+            observedSource = "caller-fresh-scan";
+            observedAgeMs = now - request.getFreshCurrentLocationAtMs();
+        } else {
+            // Cached player state has no reliable capture timestamp; report the age as unknown
+            // instead of fabricating "now" — the cloud freshness gate skips negative ages.
+            PlayerCharacter me = context.getMe();
+            observedMapName = mapName;
+            observedX = me == null ? null : me.getX();
+            observedY = me == null ? null : me.getY();
+            observedSource = "cached-player-state";
+            observedAgeMs = -1L;
+        }
+        return NavigationPointCloudDecisionService.MiniMapClickBatchRequest.builder()
+                .mapName(mapName)
+                .targetX(targetX)
+                .targetY(targetY)
+                .randomizeClickPoint(request.isRandomizeMiniMapClickPoint())
+                .randomRadiusPx(request.getMiniMapClickRandomRadiusPx())
+                .navigationRequestId(navigationRequestId)
+                .navigationDeadlineMs(navigationDeadlineMs)
+                .attemptedCandidateIds(attemptedCandidateIds)
+                .taskCode(taskExecutionContextHolder.current()
+                        .map(TaskExecutionContext::getTaskCode)
+                        .orElse("navigation"))
+                .source(request.getSource())
+                .observedMapName(observedMapName)
+                .observedX(observedX)
+                .observedY(observedY)
+                .observedSource(observedSource)
+                .observedAgeMs(observedAgeMs)
+                .build();
+    }
+
+    /**
+     * Batch invalidation gate (contract v5 item 3). Null means the batch is still valid; otherwise
+     * the returned reason names the first mismatch. The 60s deadline check is nominally redundant
+     * with the caller's loop clock but kept so the gate is self-contained.
+     */
+    private String cloudMiniMapBatchStaleReason(CloudMiniMapBatchState state) {
+        NavigationPointCloudDecisionService.MiniMapClickCandidateBatch batch = state.batch;
+        if (batch == null) {
+            return "batch-missing";
+        }
+        if (System.currentTimeMillis() > batch.batchExpiresAtMs()) {
+            return "navigation-deadline-expired";
+        }
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        if (runtime == null) {
+            return "window-context-missing";
+        }
+        if (!Objects.equals(runtime.getWindowId(), batch.windowId())) {
+            return "windowId-changed";
+        }
+        String liveHwnd = runtime.getNativeBinding() == null
+                ? null
+                : runtime.getNativeBinding().getNativeHandle();
+        if (!Objects.equals(liveHwnd, batch.hwnd())) {
+            return "hwnd-changed";
+        }
+        if (runtime.getPlayerIdentityEpoch() != state.identityEpochBaseline) {
+            return "player-identity-epoch-changed";
+        }
+        /*
+         * Only a live *different* intent means a foreign navigation took over. Our own intent
+         * finishing its natural lifecycle (watcher marks ARRIVED, active intent becomes empty)
+         * must not void the batch — a keep-turn retry would otherwise pay a pointless network
+         * round trip, and a cloud blip at that moment would fail a navigation the baseline
+         * retried locally.
+         */
+        String liveIntentId = currentActivePathingIntentId();
+        if (liveIntentId != null && !Objects.equals(liveIntentId, state.intentBaselineId)) {
+            return "pathing-intent-changed";
+        }
+        return null;
+    }
+
+    private long currentPlayerIdentityEpoch() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getPlayerIdentityEpoch)
+                .orElse(0L);
+    }
+
+    private String currentActivePathingIntentId() {
+        return windowTaskContextHolder.rawCurrent()
+                .flatMap(WindowRuntimeContext::getActivePathingIntent)
+                .map(WindowPathingIntent::getIntentId)
+                .orElse(null);
+    }
+
+    /**
+     * CR258: the only local math left on this path — physical point = live window base plus the
+     * cloud's unscaled 1024x768 client-relative pixel (baseline formula; DPI stays a clientFrame
+     * echo concern, never a multiplication here).
+     */
+    private CoordinateHelper.MiniMapClickPoint toPhysicalMiniMapClickPoint(
+            NavigationPointCloudDecisionService.MiniMapClickCandidate candidate) {
+        tracker.refreshWindowState();
+        int baseX = tracker.getWindowBaseX();
+        int baseY = tracker.getWindowBaseY();
+        return CoordinateHelper.MiniMapClickPoint.builder()
+                .logicalX(candidate.logicalX())
+                .logicalY(candidate.logicalY())
+                .basePixelPoint(new Point(baseX + candidate.baseRelX(), baseY + candidate.baseRelY()))
+                .pixelPoint(new Point(baseX + candidate.relX(), baseY + candidate.relY()))
+                .jitterX(candidate.jitterX())
+                .jitterY(candidate.jitterY())
+                .reason("cloud:" + candidate.reason() + ":candidateId=" + candidate.candidateId())
+                .build();
+    }
+
+    /**
+     * Voids all unconsumed candidate tokens of the current batch (contract v5 items 2/3). The cloud
+     * holds no token state, so closure is recorded here: the tokens can never be spent again because
+     * the batch object is dropped and any replayed response fails the binding/ledger gates.
+     */
+    private void discardRemainingCloudMiniMapCandidates(CloudMiniMapBatchState state,
+                                                        String navigationRequestId,
+                                                        String reason) {
+        if (state.batch == null) {
+            return;
+        }
+        int remaining = Math.max(0, state.batch.candidates().size() - state.cursor);
+        log.info("cloud mini-map candidate batch closed: navigationRequestId={} batchId={} reason={} remainingTokensVoided={}",
+                navigationRequestId, state.batch.batchId(), reason, remaining);
+        state.batch = null;
+        state.cursor = 0;
+    }
+
+    private static String cloudMiniMapLedgerKey(
+            NavigationPointCloudDecisionService.MiniMapClickCandidateBatch batch,
+            NavigationPointCloudDecisionService.MiniMapClickCandidate candidate) {
+        return String.join("|", batch.windowId(), batch.hwnd(), batch.taskRunId(),
+                batch.navigationRequestId(), candidate.decisionId(), candidate.candidateId());
     }
 
     private boolean matchesCurrentPreparedDialogBinding(WindowRuntimeContext runtime, PreparedDialogAction action) {
@@ -1172,6 +1963,8 @@ public class NavigationService {
                 routeDialog.targetMap(), routeDialog.relativeX(), routeDialog.relativeY(), routeDialog.optionText());
     }
 
+    /** Legacy attempt loop; CR263 moved the rotation cloud-side. Offline rollback only (CR262 deletes). */
+    @Deprecated(since = "CR263", forRemoval = false)
     private boolean performWorldMapSearchAndClickDestination(String fromMapName,
                                                              String targetMapName,
                                                              String canonicalTargetMapName,
@@ -1272,17 +2065,46 @@ public class NavigationService {
                     request, expectedDestinationName);
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
-        CoordinateHelper.MiniMapClickPoint miniMapClickPoint = coordinateHelper.resolveMiniMapClickPoint(
-                expectedDestinationName,
-                request.getTargetX(),
-                request.getTargetY(),
-                0,
-                request.isRandomizeMiniMapClickPoint());
-        if (miniMapClickPoint == null) {
-            log.warn("navigation cloud yellow route skipped: mini-map coordinate mapping missing target={} final=({}, {})",
-                    expectedDestinationName, request.getTargetX(), request.getTargetY());
+        /*
+         * CR258: the destination mini-map point comes from the cloud transform owner. This path is
+         * a one-shot fire-and-handoff — only the first (original) candidate is consumed, matching
+         * the baseline failedClickCount=0 call. The jitter radius stays the baseline overload
+         * default (4px), which this path never took from the request. Cloud miss or transport
+         * failure is fail-closed NOT_FOUND, same as the old missing-transform exit.
+         */
+        String yellowNavigationRequestId = UUID.randomUUID().toString();
+        PlayerCharacter yellowObserver = context.getMe();
+        NavigationPointCloudDecisionService.MiniMapClickBatchResult yellowBatchResult =
+                navigationPointCloudDecisionService.resolveMiniMapClickBatch(
+                        NavigationPointCloudDecisionService.MiniMapClickBatchRequest.builder()
+                                .mapName(expectedDestinationName)
+                                .targetX(request.getTargetX())
+                                .targetY(request.getTargetY())
+                                .randomizeClickPoint(request.isRandomizeMiniMapClickPoint())
+                                .randomRadiusPx(4)
+                                .navigationRequestId(yellowNavigationRequestId)
+                                .navigationDeadlineMs(System.currentTimeMillis() + 60_000L)
+                                .attemptedCandidateIds(Set.of())
+                                .taskCode(taskExecutionContextHolder.current()
+                                        .map(TaskExecutionContext::getTaskCode)
+                                        .orElse("navigation"))
+                                .source("yellow-destination:" + request.getSource())
+                                .observedMapName(yellowObserver == null ? null : yellowObserver.getCurrentMapName())
+                                .observedX(yellowObserver == null ? null : yellowObserver.getX())
+                                .observedY(yellowObserver == null ? null : yellowObserver.getY())
+                                .observedSource("cached-player-state")
+                                .observedAgeMs(-1L)
+                                .build());
+        if (yellowBatchResult.status() != NavigationPointCloudDecisionService.MiniMapClickBatchStatus.BATCH
+                || yellowBatchResult.batch().candidates().isEmpty()) {
+            log.warn("navigation cloud yellow route skipped: cloud mini-map point unavailable target={} final=({}, {}) status={} reason={}",
+                    expectedDestinationName, request.getTargetX(), request.getTargetY(),
+                    yellowBatchResult.status(), yellowBatchResult.reason());
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
+        NavigationPointCloudDecisionService.MiniMapClickCandidate yellowCandidate =
+                yellowBatchResult.batch().candidates().get(0);
+        CoordinateHelper.MiniMapClickPoint miniMapClickPoint = toPhysicalMiniMapClickPoint(yellowCandidate);
 
         /*
          * Cloud candidate click owns the yellow-destination decision and keeps the established
@@ -1312,6 +2134,14 @@ public class NavigationService {
             }
             return true;
         });
+        /*
+         * One-shot path: the batch object dies right here, so the single-use token cannot be spent
+         * twice structurally — the audit trail is this log line, not a ledger entry.
+         */
+        log.info("cloud mini-map yellow-destination click outcome recorded: navigationRequestId={} batchId={} candidateId={} decisionId={} outcome={}",
+                yellowNavigationRequestId, yellowBatchResult.batch().batchId(),
+                yellowCandidate.candidateId(), yellowCandidate.decisionId(),
+                submitted ? "CLICK_SUBMITTED" : "INPUT_CANCELLED");
         if (!submitted) {
             return WorldMapDestinationClickResult.NOT_FOUND;
         }
@@ -1456,6 +2286,12 @@ public class NavigationService {
                 "submitWorldMapSearchAndClickDestination:" + targetMapName + ":attempt" + attempt);
     }
 
+    /**
+     * Legacy world-map submit wrapper. CR263 decomposed the attempt loop into cloud-driven
+     * WORLD_MAP_PREPARE_AND_CLICK / CLOSE_ROUTE_SEARCH_PANEL steps; this stays only as the
+     * offline rollback entry used by the deprecated local ladder. Deletion belongs to CR262.
+     */
+    @Deprecated(since = "CR263", forRemoval = false)
     private NavigationResult submitWorldMapSearchAndClickDestination(NavigationRequest request,
                                                                      String targetMapName,
                                                                      String source) {

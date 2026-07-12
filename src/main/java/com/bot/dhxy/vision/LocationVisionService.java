@@ -11,6 +11,8 @@ import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.navigation.MapLabelTemplateMatch;
 import com.bot.dhxy.model.navigation.TemplateLocationInfo;
+import com.bot.dhxy.cloud.task.NavigationPointCloudDecisionService;
+import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
@@ -34,6 +36,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -51,6 +54,7 @@ public class LocationVisionService {
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final TaskExecutionContextHolder taskExecutionContextHolder;
     private final MapNameCanonicalizer mapNameCanonicalizer;
+    private final NavigationPointCloudDecisionService navigationPointCloudDecisionService;
 
     private static final int ANCHOR_DIFF_X = 46;
     private static final int ANCHOR_DIFF_Y = 59;
@@ -121,6 +125,11 @@ public class LocationVisionService {
         }
     }
 
+    /**
+     * Legacy local plausibility gate. CR258 moved the production verdict into the cloud
+     * READ_LOCATION OCR fallback; this stays only as offline/rollback reference.
+     */
+    @Deprecated(since = "CR258", forRemoval = false)
     private boolean isPlausibleLocation(LocationInfo location, String sourceImagePath, String provider) {
         if (location == null) {
             return false;
@@ -257,42 +266,114 @@ public class LocationVisionService {
         long templateStartedAt = System.currentTimeMillis();
         try {
             checkpoint("before minimap template reader");
-            return miniMapCoordinateReader.readCurrentTemplateLocation()
-                    .map(location -> {
-                        checkpoint("convert minimap template result");
-                        MapCoordinate coordinate = location.coordinate();
-                        LocationInfo info = new LocationInfo(
-                                location.mapName(),
-                                coordinate.getX(),
-                                coordinate.getY()
-                        );
-                        if (location.ocrFallback()) {
-                            /*
-                             * CR246: cloud OCR fallback results keep the retired local-OCR
-                             * discipline — canonical map name plus the local coordinate-transform
-                             * plausibility gate. Rejected values archive a metadata-only failure
-                             * sample (the strip image lives cloud-side now).
-                             */
-                            info = canonicalizeOcrLocation(info, "location:cloud-ocr-fallback");
-                            if (!isPlausibleLocation(info, null, "CLOUD_OCR")) {
-                                return null;
-                            }
-                        }
-                        log.info("[location] selected provider={} elapsedMs={} templateElapsedMs={} "
-                                        + "map={} coord=({}, {}) score={} label={}",
-                                location.ocrFallback() ? "CLOUD_OCR" : "MINIMAP_TEMPLATE",
-                                System.currentTimeMillis() - startedAt,
-                                System.currentTimeMillis() - templateStartedAt,
-                                info.mapName, info.x, info.y,
-                                String.format("%.3f", location.mapLabelScore()),
-                                location.mapLabelPath());
-                        return info;
-                    })
-                    .orElse(null);
+            MiniMapCoordinateReader.TemplateLocationScanResult scan =
+                    miniMapCoordinateReader.readCurrentTemplateLocationForScan();
+            if (scan.location().isEmpty()) {
+                archiveCloudRejectedOcrLocationIfAny(scan);
+                return null;
+            }
+            TemplateLocationInfo location = scan.location().get();
+            checkpoint("convert minimap template result");
+            MapCoordinate coordinate = location.coordinate();
+            LocationInfo info = new LocationInfo(
+                    location.mapName(),
+                    coordinate.getX(),
+                    coordinate.getY()
+            );
+            if (location.ocrFallback()) {
+                /*
+                 * CR258: the coordinate plausibility gate moved into the cloud READ_LOCATION OCR
+                 * fallback — but that self-check ran under the cloud's own canonical map name,
+                 * which lacks the local fuzzy (edit-distance) correction. When canonicalization
+                 * changes the name to a different calibrated map, the coordinate was effectively
+                 * never validated for that map: re-check it with the cloud transform owner so the
+                 * baseline "canonicalize first, then validate" order still holds. No local
+                 * transform math either way.
+                 */
+                String cloudMapName = info.mapName;
+                info = canonicalizeOcrLocation(info, "location:cloud-ocr-fallback");
+                if (!Objects.equals(cloudMapName, info.mapName)
+                        && !isCloudPlausibleAfterCanonicalize(info)) {
+                    return null;
+                }
+            }
+            log.info("[location] selected provider={} elapsedMs={} templateElapsedMs={} "
+                            + "map={} coord=({}, {}) score={} label={}",
+                    location.ocrFallback() ? "CLOUD_OCR" : "MINIMAP_TEMPLATE",
+                    System.currentTimeMillis() - startedAt,
+                    System.currentTimeMillis() - templateStartedAt,
+                    info.mapName, info.x, info.y,
+                    String.format("%.3f", location.mapLabelScore()),
+                    location.mapLabelPath());
+            return info;
         } catch (TaskStopRequestedException e) {
             throw e;
         } catch (Exception e) {
             log.warn("[location] minimap template location failed: reason={}", e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * CR258: the rejected-sample archive is now driven by the cloud miss diagnostics instead of a
+     * local plausibility verdict. Metadata-only, same directory convention as before (the strip
+     * image lives cloud-side).
+     */
+    private void archiveCloudRejectedOcrLocationIfAny(
+            MiniMapCoordinateReader.TemplateLocationScanResult scan) {
+        if (!"coordinate-out-of-transform-bounds".equals(scan.ocrFallbackMissReason())) {
+            return;
+        }
+        LocationInfo rejected = parseCloudRejectedLocation(scan.ocrRejectedLocation());
+        log.warn("[location] rejected implausible OCR coordinate: provider=CLOUD_OCR map={} coord=({}, {}) source=cloud-diagnostics reason={}",
+                rejected == null ? null : rejected.mapName,
+                rejected == null ? null : rejected.x,
+                rejected == null ? null : rejected.y,
+                scan.ocrFallbackMissReason());
+        archiveRejectedLocationSample(rejected, null, "CLOUD_OCR", scan.ocrFallbackMissReason());
+    }
+
+    /**
+     * CR258 review fix: cloud plausibility verdict for a locally canonicalized OCR map name. The
+     * cloud's embedded guard only covered its own name; a fuzzy-corrected name needs one more cloud
+     * verdict under the corrected map. Cloud unavailable is fail-closed — reject and archive.
+     */
+    private boolean isCloudPlausibleAfterCanonicalize(LocationInfo info) {
+        Optional<Boolean> verdict = navigationPointCloudDecisionService.checkCoordinatePlausible(
+                info.mapName, info.x, info.y, LOCATION_COORDINATE_PLAUSIBLE_MARGIN_PX,
+                currentTaskCode(), "location:canonicalized-ocr-fallback");
+        boolean plausible = verdict.orElse(false);
+        if (!plausible) {
+            String reason = verdict.isEmpty()
+                    ? "cloud-plausibility-unavailable"
+                    : "coordinate-out-of-transform-bounds";
+            log.warn("[location] rejected canonicalized OCR coordinate: provider=CLOUD_OCR map={} coord=({}, {}) reason={}",
+                    info.mapName, info.x, info.y, reason);
+            archiveRejectedLocationSample(info, null, "CLOUD_OCR", reason);
+        }
+        return plausible;
+    }
+
+    private String currentTaskCode() {
+        return taskExecutionContextHolder.current()
+                .map(TaskExecutionContext::getTaskCode)
+                .orElse("navigation");
+    }
+
+    private LocationInfo parseCloudRejectedLocation(String rejected) {
+        if (rejected == null || rejected.isBlank()) {
+            return null;
+        }
+        String[] parts = rejected.split(",");
+        if (parts.length < 3) {
+            return null;
+        }
+        try {
+            return new LocationInfo(
+                    parts[0],
+                    Integer.parseInt(parts[parts.length - 2].trim()),
+                    Integer.parseInt(parts[parts.length - 1].trim()));
+        } catch (NumberFormatException e) {
             return null;
         }
     }

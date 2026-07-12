@@ -561,14 +561,19 @@ public class TaskMaintenanceService {
         long openedAt = System.currentTimeMillis();
         TeamMaintenanceWindowState previous = teamMaintenanceWindowStateByRound.put(
                 roundKey, TeamMaintenanceWindowState.PATHING_WINDOW_OPEN);
-        maintenanceSnapshotOpenedAtByRound.put(roundKey, openedAt);
+        // A task round can submit more than one green link (for example, WUBEI probe retries).
+        // The first real pathing snapshot is this round's queue boundary; a later link in the same
+        // round must not turn already-queued summon-skill work into a consumable "next" window.
+        Long existingSnapshotOpenedAt = maintenanceSnapshotOpenedAtByRound.putIfAbsent(roundKey, openedAt);
+        long snapshotOpenedAt = existingSnapshotOpenedAt == null ? openedAt : existingSnapshotOpenedAt;
         openLocalTeamSupportCapability(context, TeamSupportCapability.FIRST_AID, sourceTask);
         openLocalTeamSupportCapability(context, TeamSupportCapability.PATHING_WINDOW, sourceTask);
         openLocalTeamSupportCapability(context, TeamSupportCapability.COMMON_BOX, sourceTask);
         openLocalTeamSupportCapability(context, TeamSupportCapability.SUMMON_SKILL, sourceTask);
         openLocalTeamSupportCapability(context, TeamSupportCapability.LEFT_TOP_STATUS, sourceTask);
-        log.info("{} maintenance team pathing window opened: teamRound={} previous={} source={}",
-                logPrefix(context), roundKey, previous, sourceTask);
+        log.info("{} maintenance team pathing window opened: teamRound={} previous={} source={} snapshotOpenedAt={} snapshotCreated={}",
+                logPrefix(context), roundKey, previous, sourceTask, snapshotOpenedAt,
+                existingSnapshotOpenedAt == null);
     }
 
     /**
@@ -892,10 +897,10 @@ public class TaskMaintenanceService {
     }
 
     /**
-     * CR252 leader-side: the leader's round exit passed the existing correction chain (e.g.
-     * return-home verified). Marks every phase this window leads as exited so bound members apply
-     * the FREE verdict once through their normal exit machinery. Candidate quick-exits must NOT
-     * call this.
+     * CR252 leader-side: a task-owned combat exit passed the existing correction chain (for example
+     * return-home verification or a confirmed 黄袍 post-battle boundary). Marks every phase this
+     * window leads as exited so bound members apply the FREE verdict once through their normal exit
+     * machinery. Candidate quick-exits must NOT call this.
      */
     public void confirmTeamCombatPhaseExitedForLeader(TaskExecutionContext context, String sourceTask) {
         String windowId = context == null ? null : normalizeText(context.getWindowId());

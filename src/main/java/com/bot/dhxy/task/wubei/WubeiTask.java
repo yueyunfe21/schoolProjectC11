@@ -41,7 +41,9 @@ import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.model.pause.TaskPauseResumeFingerprint;
 import com.bot.dhxy.model.pause.TaskPauseResumeReconcileResult;
 import com.bot.dhxy.model.npc.DirectCombatClickResult;
+import com.bot.dhxy.model.npc.NpcDirectCombatScenario;
 import com.bot.dhxy.model.npc.NpcMovementType;
+import com.bot.dhxy.model.npc.NpcSmartClickOutcome;
 import com.bot.dhxy.model.npc.NpcRole;
 import com.bot.dhxy.model.npc.NpcClickRequest;
 import com.bot.dhxy.model.npc.NpcTargetEvidence;
@@ -161,7 +163,6 @@ public class WubeiTask implements GameTask {
     private static final String ENTER_BATTLE_KUIXING_TEMPLATE = "images/template/dialog/wubei/wubei_enter_battle_kuixing.png";
     private static final String PROBE_STORY_TEMPLATE = "images/template/dialog/wubei/wubei_probe_story_koukou.png";
     private static final String PROBE_WRONG_POSITION_TEMPLATE = "images/template/dialog/wubei/wubei_probe_story_wrong_position.png";
-    private static final String HEAL_PET_OPTION_TEMPLATE = "images/template/dialog/maintenance/heal_pet_option.png";
     private static final String HEAL_PET_NPC_TOOLTIP_TEMPLATE = "images/template/npc/npc_wuyi_tooltip.png";
     private static final String REPAIR_EQUIPMENT_OPTION_TEMPLATE = "images/template/dialog/maintenance/repair_equipment_option.png";
     private static final String REPAIR_EQUIPMENT_TOOLTIP_TEMPLATE = "images/template/npc/npc_xiuli_tooltip.png";
@@ -187,7 +188,6 @@ public class WubeiTask implements GameTask {
     private static final String DARK_THUNDER_KEYWORD = "暗雷怪";
     private static final String CHAINED_COMBAT_TARGET_KEYWORD = "黄袍";
     private static final String PROBE_TARGET_NPC_NAME = "白龙马";
-    private static final int MAX_CHAINED_COMBAT_ATTEMPTS = 5;
     private static final int MAX_TRACKER_CLICK_ATTEMPTS = 12;
     private static final int MAX_TRACKER_ANCHOR_RECOVERY_ATTEMPTS = 5;
     private static final int MAX_PROBE_ITEM_ATTEMPTS_PER_LINK = 2;
@@ -261,7 +261,11 @@ public class WubeiTask implements GameTask {
             .role(NpcRole.INTERACTION_TARGET)
             .movementType(NpcMovementType.FIXED)
             .tooltipTemplatePath(HEAL_PET_NPC_TOOLTIP_TEMPLATE)
-            .expectedDialogTemplatePath(HEAL_PET_OPTION_TEMPLATE)
+            /*
+             * CR266 用户定稿：五倍医宝宝不再带 expectedDialogTemplatePath 做 NPC 点击层的
+             * "只确认、不点击"验证。点到沙拉买提后，dialog 识别/点击的唯一属主是既有
+             * TaskMaintenanceService 的维护 ROI 匹配；同一个选项不得拆成两层各确认一次。
+             */
             .source("wubei")
             .build();
 
@@ -882,6 +886,22 @@ public class WubeiTask implements GameTask {
 
     private WubeiStepOutcome consumeOrdinaryPreBattleTimeoutBeforeNormalPhase(WubeiRoundContext state,
                                                                               WindowRuntimeContext runtime) {
+        WindowReadyEvent timeoutEvent = pendingPreBattleBudgetTimeoutEvent(runtime);
+        if (timeoutEvent == null) {
+            return null;
+        }
+        return consumePreBattleBudgetTimeout(state, runtime, timeoutEvent, "phase-boundary");
+    }
+
+    /**
+     * CR266 contract items 3/4: return the runner-published {@code PRE_BATTLE_TIMEOUT} event when
+     * the current round's global pre-battle budget has expired and is still unconsumed (the timer
+     * is active and the event was published after the timer was armed).
+     */
+    private WindowReadyEvent pendingPreBattleBudgetTimeoutEvent(WindowRuntimeContext runtime) {
+        if (runtime == null) {
+            return null;
+        }
         WindowReadyEvent timeoutEvent = windowReadyEventBus
                 .latest(runtime.getWindowId(), WindowReadyEventType.PRE_BATTLE_TIMEOUT)
                 .orElse(null);
@@ -892,19 +912,57 @@ public class WubeiTask implements GameTask {
                 || timeoutEvent.getCreatedAtMs() < startedAt) {
             return null;
         }
-        log.warn("[wubei ordinary-prebattle] timeout consumed by task: phase={} round={} windowId={} hwnd={} readySeq={} readyAgeMs={} timerElapsedMs={} target={} source={}",
-                state.phase(), state.round(), runtime.getWindowId(), timeoutEvent.getHwnd(),
+        return timeoutEvent;
+    }
+
+    /**
+     * CR266 contract item 4: the global budget timeout outranks every internal loop. Consuming it
+     * clears ALL task-owned runtime — dialog preparation/interest/prepared action, pathing signal,
+     * enter-battle/probe/chained-combat runtime, tracker snapshot and destination hint — then goes
+     * straight back to the re-accept entry. Entering real combat already cleared the timer, so this
+     * can never fire during or after an actual battle of the same round.
+     */
+    private WubeiStepOutcome consumePreBattleBudgetTimeout(WubeiRoundContext state,
+                                                           WindowRuntimeContext runtime,
+                                                           WindowReadyEvent timeoutEvent,
+                                                           String trigger) {
+        long startedAt = runtime.getOrdinaryPreBattleStartedAtMs();
+        log.warn("[wubei ordinary-prebattle] timeout consumed by task: trigger={} phase={} round={} windowId={} hwnd={} readySeq={} readyAgeMs={} timerElapsedMs={} target={} source={}",
+                trigger, state.phase(), state.round(), runtime.getWindowId(), timeoutEvent.getHwnd(),
                 timeoutEvent.getSequence(), readyAgeMs(timeoutEvent),
-                Math.max(0L, timeoutEvent.getCreatedAtMs() - startedAt),
+                startedAt <= 0L ? -1L : Math.max(0L, timeoutEvent.getCreatedAtMs() - startedAt),
                 timeoutEvent.getTargetKeyword(), timeoutEvent.getSource());
-        runtime.clearOrdinaryPreBattleTimer("wubei consumed PRE_BATTLE_TIMEOUT");
-        clearCurrentPathingSignal("wubei ordinary pre-battle timeout consumed");
+        runtime.clearOrdinaryPreBattleTimer("wubei consumed PRE_BATTLE_TIMEOUT:" + trigger);
+        runtime.clearDialogPreparationRequest("wubei consumed PRE_BATTLE_TIMEOUT");
+        runtime.clearDialogInterest("wubei consumed PRE_BATTLE_TIMEOUT");
+        runtime.clearPreparedDialogAction("wubei consumed PRE_BATTLE_TIMEOUT");
+        clearCurrentPathingSignal("wubei pre-battle budget timeout consumed");
         resetEnterBattleRuntime();
+        resetProbeRuntime();
+        resetChainedCombatRuntime();
         currentTrackerPanel = null;
         currentTrackerDestinationHint = null;
+        postAcceptTrackerPanelFuture = null;
         return WubeiStepOutcome.continueTo(
                 state.next(WubeiPhase.ROUTE_TO_MAIN_TASK, "ordinary-prebattle-timeout-reaccept"),
-                "ordinary pre-battle timeout; route back and reaccept");
+                "pre-battle budget timeout; route back and reaccept");
+    }
+
+    /**
+     * CR266 contract item 4: turn-owned inner waits (prepared-dialog reply, probe enter-battle
+     * wait, probe story wait) must react to the runner-published budget timeout instead of waiting
+     * only for {@code PREPARED_ACTION_READY}. The signal is caught once in {@code runPhase} and
+     * consumed by {@link #consumePreBattleBudgetTimeout}.
+     */
+    private void throwPreBattleBudgetTimeoutIfNeeded(String source) {
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowReadyEvent timeoutEvent = pendingPreBattleBudgetTimeoutEvent(runtime);
+        if (timeoutEvent == null) {
+            return;
+        }
+        log.warn("[wubei ordinary-prebattle] budget timeout fired inside turn-owned wait: source={} readySeq={} eventSource={}",
+                source, timeoutEvent.getSequence(), timeoutEvent.getSource());
+        throw new PreBattleBudgetTimeoutSignal(timeoutEvent, source);
     }
 
     private WubeiStepOutcome consumeCurrentPreparedBeforeNormalPhase(TaskExecutionContext context,
@@ -1016,7 +1074,8 @@ public class WubeiTask implements GameTask {
         }
         clearTrackerGreenPathingIntent("wubei prepared enter battle consumed");
         clearCurrentPathingSignal("wubei consumed prepared enter battle dialog by priority");
-        runtime.clearOrdinaryPreBattleTimer("wubei consumed prepared enter battle dialog by priority");
+        // CR266: the enter-battle dialog click is NOT combat entry; the global pre-battle budget
+        // keeps running until the runner first confirms IN_COMBAT.
         autoCombatService.initializeForCurrentWindow();
         autoCombatService.authorizeCombatDetectionAfterEnterBattleAction(
                 "wubei:priority-enter-battle-clicked:" + confirm.getActionKey());
@@ -1038,13 +1097,16 @@ public class WubeiTask implements GameTask {
     private boolean canConsumeEnterBattlePreparedAction(WubeiPhase phase, WindowRuntimeContext runtime) {
         /*
          * 普通怪和黄袍第一战在点绿字后会停在 RESOLVE_AFTER_PATHING 无限等待 Runner。
-         * 只有 active pre-battle timer 能证明这里是普通/黄袍第一战的 Runner 结果，不是白龙马
-         * probe 或其它阶段的旧 prepared action。PATHING_TERMINAL 仍然走 CR43 的同绿字重导航。
+         * active pre-battle timer 证明这里在本轮入战预算内的 Runner 结果链上；CR266 起该
+         * 预算从接任务成功就在计时（探测任务期间同样激活），所以必须再排除白龙马 probe
+         * runtime，避免 probe 的 prepared action 被普通链在 RESOLVE_AFTER_PATHING 抢消费。
+         * PATHING_TERMINAL 仍然走 CR43 的同绿字重导航。
          */
         return phase == WubeiPhase.ENTER_BATTLE
                 || (phase == WubeiPhase.RESOLVE_AFTER_PATHING
                 && runtime != null
-                && runtime.getOrdinaryPreBattleStartedAtMs() > 0L);
+                && runtime.getOrdinaryPreBattleStartedAtMs() > 0L
+                && !isProbeRuntimeActive());
     }
 
     private WubeiStepOutcome yieldToReadyEvent(WubeiRoundContext state,
@@ -1603,22 +1665,35 @@ public class WubeiTask implements GameTask {
         if (probeTimeout != null) {
             return probeTimeout;
         }
-        return switch (state.phase()) {
-            case HOT_START_DETECT -> runHotStartDetectPhase(context, state);
-            case ROUTE_TO_MAIN_TASK -> runRouteToNPC(context, state);
-            case ACCEPT_TASK -> runAcceptTaskPhase(context, state);
-            case READ_TRACKER -> runReadTrackerPhase(context, state);
-            case AFTER_ACCEPT_MAINTENANCE_CHECK -> runAfterAcceptMaintenanceCheck(context, state);
-            case BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK -> runBeforeTrackerPathingMaintenanceCheck(context, state);
-            case TRACKER_PATHING -> runTrackerPathingPhase(context, state);
-            case RESOLVE_AFTER_PATHING -> runResolveAfterPathingPhase(context, state);
-            case ENTER_BATTLE -> runEnterBattlePhase(context, state);
-            case WAIT_BATTLE_FINISH -> runWaitBattleFinishPhase(context, state);
-            case POST_BATTLE_RECOVER -> runPostBattleRecoverPhase(context, state);
-            case RETURN_HOME -> runReturnHomePhase(context, state);
-            case WAIT_TEAM_RETURN -> runWaitTeamReturnPhase(context, state);
-            case ROUND_DONE, FAILED, STOPPED -> WubeiStepOutcome.continueTo(state, "terminal");
-        };
+        try {
+            return switch (state.phase()) {
+                case HOT_START_DETECT -> runHotStartDetectPhase(context, state);
+                case ROUTE_TO_MAIN_TASK -> runRouteToNPC(context, state);
+                case ACCEPT_TASK -> runAcceptTaskPhase(context, state);
+                case READ_TRACKER -> runReadTrackerPhase(context, state);
+                case AFTER_ACCEPT_MAINTENANCE_CHECK -> runAfterAcceptMaintenanceCheck(context, state);
+                case BEFORE_TRACKER_PATHING_MAINTENANCE_CHECK -> runBeforeTrackerPathingMaintenanceCheck(context, state);
+                case TRACKER_PATHING -> runTrackerPathingPhase(context, state);
+                case RESOLVE_AFTER_PATHING -> runResolveAfterPathingPhase(context, state);
+                case ENTER_BATTLE -> runEnterBattlePhase(context, state);
+                case WAIT_BATTLE_FINISH -> runWaitBattleFinishPhase(context, state);
+                case POST_BATTLE_RECOVER -> runPostBattleRecoverPhase(context, state);
+                case RETURN_HOME -> runReturnHomePhase(context, state);
+                case WAIT_TEAM_RETURN -> runWaitTeamReturnPhase(context, state);
+                case ROUND_DONE, FAILED, STOPPED -> WubeiStepOutcome.continueTo(state, "terminal");
+            };
+        } catch (PreBattleBudgetTimeoutSignal signal) {
+            /*
+             * CR266 contract item 4: the budget timeout fired inside a turn-owned inner wait. It
+             * outranks whatever the phase was doing; consume it here so every phase shares one
+             * clear-and-reaccept path.
+             */
+            WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+            if (runtime == null) {
+                return WubeiStepOutcome.failed(state, "pre-battle budget timeout without window runtime");
+            }
+            return consumePreBattleBudgetTimeout(state, runtime, signal.timeoutEvent, "turn-owned-wait");
+        }
     }
 
     private WubeiStepOutcome runHotStartDetectPhase(TaskExecutionContext context, WubeiRoundContext state) {
@@ -1743,6 +1818,7 @@ public class WubeiTask implements GameTask {
                                                                       String navigationSource,
                                                                       WubeiPhase nextPhaseAfterMaintenance) {
         WubeiRoundContext activeState = state;
+        boolean npcDialogPossiblyOpened = false;
         for (int attempt = 1; attempt <= MAX_MAINTENANCE_HOOK_ATTEMPTS; attempt++) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
             WubeiStepOutcome pendingPathing = continueIfMaintenanceNavigationStillPathing(
@@ -1780,6 +1856,9 @@ public class WubeiTask implements GameTask {
                 log.warn("[wubei] {} NPC smart-click failed: attempt={}", hookName, attempt);
                 continue;
             }
+            // CR266-1: this hook has now clicked its maintenance NPC at least once, so a leftover
+            // NPC dialog is possible if every remaining maintenance attempt ends in a skip.
+            npcDialogPossiblyOpened = true;
 
             long maintenanceStartedAt = System.currentTimeMillis();
             TaskMaintenanceResult maintenanceResult = taskMaintenanceService.runOpportunisticMaintenance(context,
@@ -1807,7 +1886,68 @@ public class WubeiTask implements GameTask {
 
         log.warn("[wubei] {} hook skipped after {} attempts; continue main task",
                 hookName, MAX_MAINTENANCE_HOOK_ATTEMPTS);
+        if (npcDialogPossiblyOpened) {
+            WubeiStepOutcome closeGate = closeLeftoverMaintenanceDialogBeforeSkip(context, activeState, hookName);
+            if (closeGate != null) {
+                return closeGate;
+            }
+        }
         return null;
+    }
+
+    /**
+     * CR266 contract item 1: the maintenance hook opened its own NPC dialog and then decided to
+     * skip maintenance for this round. A leftover OPTION dialog must be closed and confirmed gone
+     * BEFORE any tracker green-link click, otherwise the green click lands on the dialog and the
+     * later pathing terminal is misread as combat arrival.
+     *
+     * <p>One existing {@code UICleanerService.forceCloseDialog()} call plus one fresh no-focus
+     * fact recheck — no new retry counts, TTLs or speculative option clicks. When the dialog cannot
+     * be confirmed closed, the hook exits through the existing phase failure/recovery path instead
+     * of continuing to the green link.</p>
+     *
+     * @param context current task execution context for stop-aware checkpoints.
+     * @param state current round state used for the failure outcome.
+     * @param hookName maintenance hook label for logs.
+     * @return {@code null} when no dialog remains (skip may continue to the main task), otherwise a
+     *         failed outcome that routes into the existing round recovery.
+     */
+    private WubeiStepOutcome closeLeftoverMaintenanceDialogBeforeSkip(TaskExecutionContext context,
+                                                                      WubeiRoundContext state,
+                                                                      String hookName) {
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
+        WindowDialogSnapshot runnerDialog = runtime == null
+                ? null
+                : runtime.getVisibleDialogSnapshot(ENTER_BATTLE_DIALOG_BLOCK_MAX_AGE_MS).orElse(null);
+        DialogType detectedBefore = dialogService.detectDialogTypeNoFocus(
+                "wubei:" + hookName + "-skip-dialog-check", false, 0);
+        boolean dialogPresent = (runnerDialog != null && runnerDialog.getType() != DialogType.NONE)
+                || (detectedBefore != null && detectedBefore != DialogType.NONE);
+        if (!dialogPresent) {
+            log.info("[wubei] {} maintenance skip found no leftover dialog: runnerDialog={} detected={}",
+                    hookName, runnerDialog == null ? null : runnerDialog.getType(), detectedBefore);
+            return null;
+        }
+        log.warn("[wubei] {} maintenance skip found leftover dialog; force close before green link: runnerDialog={} runnerDialogSource={} detected={}",
+                hookName, runnerDialog == null ? null : runnerDialog.getType(),
+                runnerDialog == null ? null : runnerDialog.getSource(), detectedBefore);
+        boolean closeSubmitted = uiCleanerService.forceCloseDialog();
+        TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+        DialogType detectedAfter = dialogService.detectDialogTypeNoFocus(
+                "wubei:" + hookName + "-skip-dialog-recheck", false, 0);
+        if (detectedAfter == null || detectedAfter == DialogType.NONE) {
+            if (runtime != null) {
+                runtime.clearVisibleDialogSnapshot("wubei " + hookName + " maintenance-skip dialog closed");
+            }
+            log.info("[wubei] {} maintenance skip dialog confirmed closed: closeSubmitted={} detectedAfter={}",
+                    hookName, closeSubmitted, detectedAfter);
+            return null;
+        }
+        log.warn("[wubei] {} maintenance skip dialog still visible after force close; refuse green link and exit via recovery: closeSubmitted={} detectedAfter={}",
+                hookName, closeSubmitted, detectedAfter);
+        return WubeiStepOutcome.failed(state,
+                hookName + " leftover maintenance dialog could not be closed before green link");
     }
 
     private WubeiStepOutcome continueIfMaintenanceNavigationStillPathing(TaskExecutionContext context,
@@ -1972,6 +2112,8 @@ public class WubeiTask implements GameTask {
         if (!triggerCombatTrackerPathing(context, currentTrackerPanel, "combat")) {
             return WubeiStepOutcome.failed(state, "tracker pathing failed");
         }
+        // CR266: normally a no-op — the budget is armed at accept success. Kept as the CAS fallback
+        // for hot-start rounds that resume with an already-accepted task and never pass the accept.
         windowTaskContextHolder.rawCurrent().ifPresent(runtime ->
                 runtime.startOrdinaryPreBattleTimer(
                         TaskType.WUBEI,
@@ -2027,30 +2169,32 @@ public class WubeiTask implements GameTask {
         if (pathingState == WindowPathingState.ARRIVED
                 || pathingState == WindowPathingState.STOPPED_AWAY) {
             clearCurrentPathingSignal("wubei consumed tracker pathing terminal snapshot: " + pathingState);
-            if (currentTrackerPanel == null || !currentTrackerPanel.isFound()
-                    || currentTrackerPanel.getGreenLinks().isEmpty()) {
-                log.warn("[wubei] ordinary pathing terminal cannot re-click tracker green: state={} hasPanel={} found={} links={} yellow='{}'",
-                        pathingState,
-                        currentTrackerPanel != null,
-                        currentTrackerPanel != null && currentTrackerPanel.isFound(),
-                        currentTrackerPanel == null ? null : currentTrackerPanel.getGreenLinks().size(),
-                        currentTrackerPanel == null ? null : currentTrackerPanel.getYellowText());
-                return WubeiStepOutcome.failed(state, "ordinary pathing terminal missing tracker green link");
-            }
-            log.info("[wubei] ordinary pathing terminal re-clicks same tracker green: state={} yellow='{}' links={}",
-                    pathingState, currentTrackerPanel.getYellowText(), currentTrackerPanel.getGreenLinks().size());
-            if (!triggerCombatTrackerPathing(context, currentTrackerPanel, "combat-terminal-repath")) {
-                return WubeiStepOutcome.failed(state, "ordinary pathing terminal tracker green re-click failed");
-            }
-            return waitForPathingWake(WubeiStepOutcome.pathingStarted(
-                    state.retrySamePhase("ordinary-pathing-terminal-reclick"),
-                    "ordinary pathing terminal re-clicked tracker green"));
         }
-        log.warn("[wubei] ordinary pathing snapshot reached unexpected non-active state: state={} message={}",
-                pathingState, snapshot.getMessage());
-        return waitForPathingWake(WubeiStepOutcome.sharedState(
-                state,
-                "ordinary pathing waits for runner terminal"));
+        /*
+         * CR266 contract item 2: STOPPED_AWAY only means "the location stopped changing", which is
+         * also true when the green click never started any movement (e.g. it landed on a leftover
+         * dialog). Entering battle needs the REAL movement fact recorded on this intent's snapshot;
+         * without it the terminal goes back to the same green-link navigation per the 五倍 baseline
+         * (the CR266 180s global pre-battle budget bounds these renavigations — no new counter here).
+         */
+        if (pathingState == WindowPathingState.STOPPED_AWAY
+                && snapshot.getMovementObservedAtMs() <= 0L) {
+            log.warn("[wubei] tracker STOPPED_AWAY without movement fact; renavigate same green link instead of enter battle: intent={} locationChangedAtMs={} current={}({}, {})",
+                    snapshot.getIntent(), snapshot.getLocationChangedAtMs(),
+                    snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY());
+            return WubeiStepOutcome.continueTo(
+                    state.next(WubeiPhase.TRACKER_PATHING, "stopped-away-no-movement-renavigate"),
+                    "tracker stopped without movement fact; renavigate same green link");
+        }
+        /*
+         * Keep the verified 3f0a2e7 local-Wubei transition: once runner reports that the
+         * ordinary tracker route is no longer active, resolve the already visible battle dialog.
+         * Do not re-click the tracker here; that repeats the bag prescan and can bypass the
+         * existing local WUBEI_ENTER_BATTLE template path.
+         */
+        return WubeiStepOutcome.continueTo(
+                state.next(WubeiPhase.ENTER_BATTLE, "tracker-pathing-terminal-" + pathingState),
+                "tracker pathing terminal; resolve combat entry");
     }
 
     private WubeiStepOutcome runEnterBattlePhase(TaskExecutionContext context, WubeiRoundContext state) {
@@ -2067,11 +2211,9 @@ public class WubeiTask implements GameTask {
                 || outcome.nextState().phase() != WubeiPhase.ENTER_BATTLE) {
             resetEnterBattleRuntime();
         }
-        if (outcome.nextState().phase() == WubeiPhase.WAIT_BATTLE_FINISH) {
-            windowTaskContextHolder.rawCurrent()
-                    .ifPresent(runtime -> runtime.clearOrdinaryPreBattleTimer(
-                            "wubei entered WAIT_BATTLE_FINISH from ENTER_BATTLE"));
-        }
+        // CR266: entering WAIT_BATTLE_FINISH no longer clears the global pre-battle budget — only a
+        // runner-confirmed IN_COMBAT (or a recovered combat exit) ends it, so a battle dialog click
+        // that never actually enters combat stays inside the 180s budget.
         return outcome;
     }
 
@@ -2114,6 +2256,11 @@ public class WubeiTask implements GameTask {
             currentRoundChainedCombatRecoveryBroadcastCount = combatCount;
             taskMaintenanceService.openTeamFirstAidMaintenanceWindow(context, TASK_CODE, currentRoundNumber,
                     "wubei:chained-combat-post-battle-first-aid-precheck");
+            // This branch is reached only after the task-owned chained-combat exit is confirmed.
+            // Members must receive FREE before the five-second supply window, otherwise their
+            // existing post-combat precheck remains unreachable while they still consume IN_COMBAT.
+            taskMaintenanceService.confirmTeamCombatPhaseExitedForLeader(
+                    context, "wubei:chained-combat-first-aid-window-opened");
         } else {
             log.info("[wubei] chained combat first-aid window already opened: count={} recordedCount={}",
                     combatCount, currentRoundChainedCombatRecoveryBroadcastCount);
@@ -2378,6 +2525,18 @@ public class WubeiTask implements GameTask {
                 "DIALOG_TEMPLATE", confirmSource);
         clearVerifiedReturnHomeLocation("accept option clicked: " + confirmSource);
         /*
+         * CR266 contract item 3: the 180s global pre-battle budget starts at the successful task
+         * accept, not at the first green click. CAS semantics keep the FIRST accept of the round
+         * authoritative (a dark-thunder reroll re-accept does not restart the budget); the old
+         * green-click arm stays only as a hot-start fallback and is a no-op once this fired.
+         */
+        windowTaskContextHolder.rawCurrent().ifPresent(runtime ->
+                runtime.startOrdinaryPreBattleTimer(
+                        TaskType.WUBEI,
+                        "wubei:task-accepted:" + nextSource,
+                        null,
+                        System.currentTimeMillis()));
+        /*
          * 接任务成功后马上启动后台 tracker 读图计时，再做 Alt+C/小地图预走路。
          * 这样 1 秒后的截图和模板匹配不被前台小地图点击串行卡住；后台线程会显式
          * 绑定当前窗口上下文，避免多开时截图落到别的窗口。
@@ -2601,9 +2760,12 @@ public class WubeiTask implements GameTask {
                 break;
             }
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+            // CR266: the global pre-battle budget outranks this bounded prepared-dialog wait.
+            throwPreBattleBudgetTimeoutIfNeeded(source + ":prepared-wait");
             Optional<WindowReadyEvent> ready = windowReadyEventBus.awaitNewer(
                     runtime.getWindowId(),
-                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY),
+                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY,
+                            WindowReadyEventType.PRE_BATTLE_TIMEOUT),
                     afterSequence,
                     remainingMs);
             if (ready.isEmpty()) {
@@ -3295,9 +3457,12 @@ public class WubeiTask implements GameTask {
         while (true) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
             throwProbeEnterBattleTimeoutIfNeeded(context, state, operation, source);
+            // CR266: the global pre-battle budget outranks this reply wait.
+            throwPreBattleBudgetTimeoutIfNeeded(source + ":runner-reply");
             Optional<WindowReadyEvent> ready = windowReadyEventBus.awaitNewer(
                     runtime.getWindowId(),
-                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY),
+                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY,
+                            WindowReadyEventType.PRE_BATTLE_TIMEOUT),
                     afterSequence,
                     preparedDialogReplyRecheckMs(operation));
             if (ready.isEmpty()) {
@@ -3347,6 +3512,8 @@ public class WubeiTask implements GameTask {
         while (true) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
             throwProbeEnterBattleTimeoutIfNeeded(context, state, DialogOperation.WUBEI_ENTER_BATTLE, source);
+            // CR266: the global pre-battle budget outranks the probe enter-battle wait.
+            throwPreBattleBudgetTimeoutIfNeeded(source + ":probe-enter-battle-wait");
             runtime = windowTaskContextHolder.rawCurrent().orElse(null);
             if (runtime == null) {
                 log.warn("[wubei] probe enter-battle wait lost window runtime: source={}", source);
@@ -3382,7 +3549,8 @@ public class WubeiTask implements GameTask {
             long afterSequence = windowReadyEventBus.currentSequence();
             windowReadyEventBus.awaitNewer(
                     runtime.getWindowId(),
-                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY),
+                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY,
+                            WindowReadyEventType.PRE_BATTLE_TIMEOUT),
                     afterSequence,
                     waitMs);
         }
@@ -3768,6 +3936,8 @@ public class WubeiTask implements GameTask {
         long lastProgressLogAt = 0L;
         while (true) {
             TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
+            // CR266: the global pre-battle budget outranks the probe story wait.
+            throwPreBattleBudgetTimeoutIfNeeded(source);
             WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
             long afterSequence = windowReadyEventBus.currentSequence();
             DialogResult result = tryConsumePreparedWubeiDialog(
@@ -3790,7 +3960,8 @@ public class WubeiTask implements GameTask {
             }
             windowReadyEventBus.awaitNewer(
                     runtime.getWindowId(),
-                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY),
+                    EnumSet.of(WindowReadyEventType.PREPARED_ACTION_READY,
+                            WindowReadyEventType.PRE_BATTLE_TIMEOUT),
                     afterSequence,
                     WUBEI_WAIT_UNTIL_RUNNER_EVENT_MS);
         }
@@ -3849,21 +4020,42 @@ public class WubeiTask implements GameTask {
                                                WubeiRoundContext state,
                                                String label,
                                                boolean storyConfirmed) {
+        if (storyConfirmed) {
+            /*
+             * CR267 reviewer P1 repair: the target-ready story is a task-owned fact confirmed
+             * BEFORE this method runs, so its STORY_DIALOG_VISIBLE sequence can never pass the
+             * CR255 fresh-blocker anchor inside the smart session. Close the known story here
+             * first; only a submitted fast-close may start the first ordinary NPC_CLICK_SMART.
+             * The request-level consumeStoryDialogVisibleEvents opt-in stays for genuinely fresh
+             * story covers appearing mid-session.
+             */
+            boolean storyClosed = dialogService.fastClickKnownSmallStoryDialog(
+                    "wubei:probe-target-ready-story:" + label);
+            if (!storyClosed) {
+                log.warn("[wubei] probe target-ready story fast-close not submitted; keep existing failure path without smart click: label={}",
+                        label);
+                return false;
+            }
+        }
 
-        boolean clicked = tryClickTrackerCombatTargetSmart(
+        SmartCombatClickAttempt attempt = tryClickTrackerCombatTargetSmart(
                 context,
                 state,
                 label + (storyConfirmed ? "-story" : "-no-story"),
                 storyConfirmed ? NpcTargetEvidence.CONFIRMED : NpcTargetEvidence.TENTATIVE);
-        if (clicked || !storyConfirmed) {
-            return clicked;
+        if (attempt.clicked() || !storyConfirmed) {
+            return attempt.clicked();
         }
-        log.warn("[wubei] probe story confirmed but runner enter-battle action was not consumed; use direct-combat fallback: label={}",
-                label);
-        return tryDirectCombatFromTrackerHint(context, label + "-direct-combat");
+        log.warn("[wubei] probe story confirmed but runner enter-battle action was not consumed; use direct-combat fallback: label={} normalFifoConsumedUnverified={}",
+                label, attempt.normalFifoConsumedUnverified());
+        // CR267: probeTargetReady=true here is the dedicated wubei.probeTargetReady fact. The FIFO
+        // gate fact comes from the smart-click structured terminal, not an assumption — cloud
+        // refuses when the ordinary FIFO did not genuinely END unverified.
+        return tryDirectCombatFromTrackerHint(context, label + "-direct-combat", true,
+                attempt.normalFifoConsumedUnverified());
     }
 
-    private boolean tryClickTrackerCombatTargetSmart(TaskExecutionContext context,
+    private SmartCombatClickAttempt tryClickTrackerCombatTargetSmart(TaskExecutionContext context,
                                                     WubeiRoundContext state,
                                                     String label,
                                                     NpcTargetEvidence targetEvidence) {
@@ -3874,7 +4066,7 @@ public class WubeiTask implements GameTask {
                     label,
                     currentTrackerPanel == null ? null : currentTrackerPanel.getYellowText(),
                     currentTrackerDestinationHint);
-            return false;
+            return new SmartCombatClickAttempt(false, false);
         }
 
         /*
@@ -3908,17 +4100,37 @@ public class WubeiTask implements GameTask {
                 .sourceTask(TaskType.WUBEI)
                 .tooltipFirst(probeTarget)
                 .closeStoryBeforeDirectSceneClick(false)
+                /*
+                 * CR267: 白龙马 story fast-close opt-in. When Runner publishes STORY_DIALOG_VISIBLE
+                 * for this window/task, the smart-click FIFO boundary fast-clicks the known small
+                 * story dialog once and restarts the session, instead of consuming candidates under
+                 * the confirmed story cover. Only the 白龙马 probe target opts in; 黄袍/generic
+                 * tracker combat targets keep their existing behavior.
+                 */
+                .consumeStoryDialogVisibleEvents(PROBE_TARGET_NPC_NAME.equals(targetName))
                 .targetEvidence(targetEvidence)
                 .build();
         log.info("[wubei] try smart combat target click: label={} target={} evidence={} hint={} requestMap={}({}, {})",
                 label, targetName, targetEvidence, hint, mapName, mapX, mapY);
-        if (!npcClickService.clickNpcSmart(request)) {
-            return false;
+        /*
+         * CR267 reviewer P1 #3: keep the structured smart-click terminal. Only a genuine queue END
+         * without any verified action counts as the direct-combat FIFO gate fact; disabled cloud,
+         * start/protocol failure, cancel, and budget terminals stay false.
+         */
+        NpcSmartClickOutcome outcome = npcClickService.clickNpcSmartWithOutcome(request);
+        if (!outcome.isVerified()) {
+            return new SmartCombatClickAttempt(false, outcome.isNormalFifoConsumedUnverified());
         }
-        return tryClickKnownEnterBattleDialog(context, state, "wubei:smart-combat-target:" + label);
+        boolean enteredBattle = tryClickKnownEnterBattleDialog(context, state, "wubei:smart-combat-target:" + label);
+        // The smart click produced a verified action, so the ordinary FIFO was NOT all-unverified;
+        // a missed enter-battle dialog here must not fabricate the direct-combat gate fact.
+        return new SmartCombatClickAttempt(enteredBattle, false);
     }
 
-    private boolean tryDirectCombatFromTrackerHint(TaskExecutionContext context, String label) {
+    private boolean tryDirectCombatFromTrackerHint(TaskExecutionContext context,
+                                                   String label,
+                                                   boolean probeTargetReady,
+                                                   boolean normalFifoConsumedUnverified) {
         TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
         String targetName = resolveDirectCombatTargetName(label);
         if (targetName.isBlank()) {
@@ -3937,6 +4149,10 @@ public class WubeiTask implements GameTask {
          * This Alt+A fallback is only reached after 五倍 tracker pathing has stopped near the
          * tracker destination. It must not be used for accept/maintenance NPCs, because Alt+A turns
          * the next click into a direct battle click instead of opening the normal NPC dialog.
+         *
+         * CR267: this method only packs structured facts. Cloud decides ENTER_DIRECT_COMBAT from
+         * them; local presses Alt+A only after that authorization. Both call sites reach this
+         * method strictly after the ordinary smart-click FIFO finished without a verified action.
          */
         NpcClickRequest request = NpcClickRequest.builder()
                 .player(gameContext.getMe())
@@ -3950,6 +4166,16 @@ public class WubeiTask implements GameTask {
                 .roamingTarget(true)
                 .targetRole(NpcRole.COMBAT_TARGET)
                 .sourceTask(TaskType.WUBEI)
+                .directCombatProbeTargetReady(probeTargetReady)
+                // CR267 reviewer P1 #3: this fact comes from the smart-click structured terminal
+                // (genuine FIFO END unverified), never hardcoded by the caller.
+                .directCombatNormalFifoUnverified(normalFifoConsumedUnverified)
+                .directCombatArrivalTolerance(TRACKER_DEST_HINT_ARRIVAL_TOLERANCE)
+                // CR267 reviewer P1 #2: explicit allowlisted scenario fact; cloud refuses
+                // TRACKER_SHORTCUT / missing / unknown values unconditionally.
+                .directCombatScenario(probeTargetReady
+                        ? NpcDirectCombatScenario.WUBEI_PROBE_TARGET_READY
+                        : NpcDirectCombatScenario.LEGACY_COMBAT_TARGET)
                 .build();
         log.info("[wubei] try direct combat fallback: label={} target={} hint={} requestMap={}({}, {})",
                 label, targetName, hint, mapName, mapX, mapY);
@@ -4118,6 +4344,10 @@ public class WubeiTask implements GameTask {
         if (tick == AutoCombatService.TickResult.IN_COMBAT) {
             waitBattleSawCombat = true;
             currentProbeTaskStartedAt = 0L;
+            // CR266: first confirmed IN_COMBAT ends the global pre-battle budget.
+            if (runtime != null) {
+                runtime.clearOrdinaryPreBattleTimer("wubei combat observed in ENTER_BATTLE");
+            }
             // CR252: chained combat can already be running when ENTER_BATTLE re-ticks; the leader's
             // confirmed in-combat state (re-)broadcasts the team combat phase.
             taskMaintenanceService.openTeamCombatPhaseForLeader(context,
@@ -4132,6 +4362,11 @@ public class WubeiTask implements GameTask {
             return prepared;
         }
         if (tick == AutoCombatService.TickResult.EXIT_RECOVERED) {
+            // CR266: EXIT_RECOVERED proves combat happened (entered and finished between ticks);
+            // the budget must not keep running into the post-battle flow.
+            if (runtime != null) {
+                runtime.clearOrdinaryPreBattleTimer("wubei combat exit recovered in ENTER_BATTLE");
+            }
             return WubeiStepOutcome.continueTo(
                     state.next(WubeiPhase.POST_BATTLE_RECOVER, "combat-ended-during-enter-battle"),
                     "combat ended during enter battle phase");
@@ -4163,14 +4398,19 @@ public class WubeiTask implements GameTask {
             log.info("[wubei] runner snapshot says leader is near tracker destination; try combat target: hint={} snapshot={}({}, {})",
                     currentTrackerDestinationHint,
                     snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY());
-            if (tryClickTrackerCombatTargetSmart(context, null, "runner-destination-smart-click",
-                    NpcTargetEvidence.CONFIRMED)) {
+            SmartCombatClickAttempt attempt = tryClickTrackerCombatTargetSmart(
+                    context, null, "runner-destination-smart-click", NpcTargetEvidence.CONFIRMED);
+            if (attempt.clicked()) {
                 enterBattleNextRetryAt = now + 6_000L;
                 return WubeiStepOutcome.sharedState(
                         state.next(WubeiPhase.WAIT_BATTLE_FINISH, "smart-combat-target-clicked"),
                         "destination smart target clicked");
             }
-            if (tryDirectCombatFromTrackerHint(context, "runner-destination-direct-combat")) {
+            // CR267: not a probe target-ready fact — this branch relies on the combat-target map/
+            // coordinate facts (leader already near the tracker destination) checked by cloud; the
+            // FIFO gate fact comes from the smart-click structured terminal.
+            if (tryDirectCombatFromTrackerHint(context, "runner-destination-direct-combat", false,
+                    attempt.normalFifoConsumedUnverified())) {
                 enterBattleNextRetryAt = now + 6_000L;
                 return WubeiStepOutcome.sharedState(
                         state.next(WubeiPhase.WAIT_BATTLE_FINISH, "direct-combat-target-clicked"),
@@ -4273,6 +4513,11 @@ public class WubeiTask implements GameTask {
                 AutoCombatService.PostCombatRecoveryPolicy.FAST_EXPECTED_EXIT);
         if (tick == AutoCombatService.TickResult.EXIT_RECOVERED) {
             log.info("[wubei] battle finished and recovered");
+            // CR266: combat definitely happened; make sure the global pre-battle budget is closed
+            // even when the entry itself fell between combat ticks.
+            windowTaskContextHolder.rawCurrent()
+                    .ifPresent(runtime -> runtime.clearOrdinaryPreBattleTimer(
+                            "wubei combat exit recovered in WAIT_BATTLE_FINISH"));
             if (currentRoundChainedCombatExpected) {
                 return WubeiStepOutcome.sharedState(
                         state.next(WubeiPhase.POST_BATTLE_RECOVER, "chained-battle-finished"),
@@ -4542,11 +4787,6 @@ public class WubeiTask implements GameTask {
 
         TaskCheckpoint.throwIfStopRequested(context, "Wubei task interrupted");
         int combatCount = currentRoundChainedCombatContinueCount + 1;
-        if (combatCount > MAX_CHAINED_COMBAT_ATTEMPTS) {
-            log.warn("[wubei] chained combat limit reached: count={} max={}",
-                    combatCount, MAX_CHAINED_COMBAT_ATTEMPTS);
-            return WubeiStepOutcome.failed(state, "chained combat limit reached");
-        }
         /*
          * 黄袍怪是否继续只信战后左侧任务追踪：还有“黄袍”就继续，没有才允许回程。
          * 战斗中右上角标记不能证明战后仍需要续打，所以这里不再做战斗内 marker 扫描。
@@ -4768,7 +5008,8 @@ public class WubeiTask implements GameTask {
         log.warn("[wubei] chained combat tracker has no green segment; try visible tooltip: count={} yellow='{}'",
                 combatCount, panel.getYellowText());
         return tryClickTrackerCombatTargetSmart(
-                context, null, "chained-combat-tracker-fallback-" + combatCount, NpcTargetEvidence.CONFIRMED);
+                context, null, "chained-combat-tracker-fallback-" + combatCount, NpcTargetEvidence.CONFIRMED)
+                .clicked();
     }
 
     private boolean clickCachedChainedTrackerGreen(TaskExecutionContext context,
@@ -4929,6 +5170,20 @@ public class WubeiTask implements GameTask {
         }
     }
 
+    /**
+     * CR266 contract item 4: carrier for the runner-published pre-battle budget timeout when it
+     * fires inside a turn-owned inner wait. Caught once in {@code runPhase}; never escapes the
+     * phase driver.
+     */
+    private static class PreBattleBudgetTimeoutSignal extends RuntimeException {
+        private final WindowReadyEvent timeoutEvent;
+
+        private PreBattleBudgetTimeoutSignal(WindowReadyEvent timeoutEvent, String source) {
+            super("wubei pre-battle budget timeout inside turn-owned wait: " + source, null, false, false);
+            this.timeoutEvent = timeoutEvent;
+        }
+    }
+
     private static class ProbeEnterBattleTimeoutSignal extends RuntimeException {
         private final WubeiStepOutcome outcome;
 
@@ -4953,5 +5208,14 @@ public class WubeiTask implements GameTask {
             long delayMs,
             long refreshMs,
             long captureMs) {
+    }
+
+    /**
+     * CR267 reviewer P1 #3: one smart combat-target click attempt with its auditable FIFO terminal.
+     * {@code normalFifoConsumedUnverified} is true only when the ordinary NPC_CLICK_SMART queue
+     * genuinely reached END without a verified action — the only fact allowed to feed the cloud
+     * direct-combat gate.
+     */
+    private record SmartCombatClickAttempt(boolean clicked, boolean normalFifoConsumedUnverified) {
     }
 }

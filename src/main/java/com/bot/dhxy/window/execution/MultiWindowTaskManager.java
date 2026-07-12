@@ -6,6 +6,7 @@ import com.bot.dhxy.metrics.AutomationMetricsService;
 import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.service.AutoCombatService;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.service.MapNameCanonicalizer;
 import com.bot.dhxy.service.MemoryService;
 import com.bot.dhxy.service.TaskMaintenanceService;
@@ -64,6 +65,7 @@ public class MultiWindowTaskManager {
     private final AutoCombatService autoCombatService;
     private final MiniMapCoordinateReader miniMapCoordinateReader;
     private final DialogService dialogService;
+    private final UICleanerService uiCleanerService;
     private final TaskTrackerPanelService taskTrackerPanelService;
     private final MapNameCanonicalizer mapNameCanonicalizer;
     private final MemoryService memoryService;
@@ -110,9 +112,10 @@ public class MultiWindowTaskManager {
                                   WindowNativeBindingRefreshService bindingRefreshService,
                                   AutomationMetricsService automationMetricsService,
                                   AutoCombatService autoCombatService,
-                                  MiniMapCoordinateReader miniMapCoordinateReader,
-                                  DialogService dialogService,
-                                   TaskTrackerPanelService taskTrackerPanelService,
+                                   MiniMapCoordinateReader miniMapCoordinateReader,
+                                   DialogService dialogService,
+                                   UICleanerService uiCleanerService,
+                                    TaskTrackerPanelService taskTrackerPanelService,
                                    MapNameCanonicalizer mapNameCanonicalizer,
                                    MemoryService memoryService,
                                    RouteCloudDecisionService routeCloudDecisionService,
@@ -133,6 +136,7 @@ public class MultiWindowTaskManager {
         this.autoCombatService = autoCombatService;
         this.miniMapCoordinateReader = miniMapCoordinateReader;
         this.dialogService = dialogService;
+        this.uiCleanerService = uiCleanerService;
         this.taskTrackerPanelService = taskTrackerPanelService;
         this.mapNameCanonicalizer = mapNameCanonicalizer;
         this.memoryService = memoryService;
@@ -165,9 +169,10 @@ public class MultiWindowTaskManager {
             }
             WindowRuntimeContext windowContext = windowRuntimeContextFactory.create(request);
             return new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
-                    taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
-                    automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                    taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
+                     taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
+                     automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
+                    uiCleanerService,
+                     taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
                     dialogPreparationProviders, windowReadyEventBus);
         });
     }
@@ -192,9 +197,10 @@ public class MultiWindowTaskManager {
         }
         return runnersByWindowId.computeIfAbsent(windowId,
                 ignored -> new WindowTaskRunner(windowContext, taskFactory, windowTaskContextHolder, startupInitializer,
-                        taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
-                        automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
-                        taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
+                         taskExecutionContextHolder, inputSequences, teamRoleDetectionService, taskTeamAssignmentPolicy,
+                         automationMetricsService, autoCombatService, miniMapCoordinateReader, dialogService,
+                        uiCleanerService,
+                         taskTrackerPanelService, mapNameCanonicalizer, memoryService, routeCloudDecisionService, taskMaintenanceService,
                         dialogPreparationProviders, windowReadyEventBus));
     }
 

@@ -1350,7 +1350,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR30 | 谢帅 | Done | `WubeiTask.tickEnterBattle`, WUBEI prepared-dialog / auto-combat logs | At `18:05:51`, Runner prepared `WUBEI_ENTER_BATTLE click=(1682,480)`, but `tickEnterBattle(...)` first accepted `AutoCombatService.TickResult.EXIT_RECOVERED`, skipped the prepared click, jumped to `POST_BATTLE_RECOVER`, and later `RETURN_HOME`; the prepared action then expired (`prepared-stale:3878ms`). Source patch gives fresh `WUBEI_ENTER_BATTLE` prepared actions priority at ENTER_BATTLE phase start and before stale combat-exit recovery, while keeping `IN_COMBAT` as the independent battle-confirmed path. Post-restart log `2026-06-18 18:31:20.809-18:34:24.232` validated three prepared enter-battle consumes/clicks before `WAIT_BATTLE_FINISH`, with no `combat ended during enter battle phase` or `ready dialog pending too long` signatures. |
 | CR31 | 谢帅 | Done | `scripts/analyze_wubei_latency.ps1`, heartbeat log-scan notes | Timing fields now use Int64 storage, so sentinel values such as `ageMs=9223372036854775807` no longer crash mixed-log heartbeat performance reports. Verified full range after `18:55:00.331` and WUBEI-filtered range. |
 | CR32 | 谢帅 | Review: compile passed; needs fresh WUBEI validation | `WindowReadyEventType`, `WindowTaskRunner`, `WubeiTask`, `scripts/analyze_wubei_latency.ps1`, latency logs | Source patch adds `COMBAT_STATE_CHANGED`, publishes it from the window combat watcher on `IN_COMBAT <-> NONE` transitions, and makes `WAIT_BATTLE_FINISH` wait on that event with a 1.5s fallback instead of timeout-only 400ms. Compile passed. Heartbeat audit `2026-06-18 20:55:33.576-21:07:16.516` still had no post-restart CR32 runtime evidence (`COMBAT_STATE_CHANGED=0`, `wakeTypes=[COMBAT_STATE_CHANGED]=0`, `timeoutMs=400=395`). Follow-up audit `2026-06-18 21:07:16.516-21:15:29.790` still has `COMBAT_STATE_CHANGED=0`, `window.combat.state.changed=0`, `wakeTypes=[COMBAT_STATE_CHANGED]=0`; the dominant churn is now `RESOLVE_AFTER_PATHING same=200/200` and `WAIT_BATTLE_FINISH same=66/66`, with `wubei.wait.wakeTimeout=203`. Restart/focused WUBEI validation is still required to prove `WAIT_BATTLE_FINISH sameAsPrevious` / `wakeTimeout` drop and no prepared-dialog latency regression. |
-| CR33 | 谢帅 | Review: baseline gate restored/split; compile passed; needs fresh WUBEI validation | `WubeiTask`, `NavigationService`, `TaskMaintenanceService`, `AutoBattleTask` | Restore/guard the latest-push 五倍 business baseline before continuing runner/park migration. Latest pushed baseline is `3f0a2e7`; local diff and `docs/WUBEI_BUSINESS_DIFF_AUDIT.md` confirm business-logic deltas that are not just runner/park architecture migration. Source patch restores the probe ACTIVE guard, the bounded 15s probe-story decision window, and the enter-battle first-tick no-immediate-yield behavior while preserving CR30 fresh prepared-action priority. Remaining local business deltas are not candidates to keep by default: CR24/CR28/CR34 are existing review cards requiring validation against the pushed baseline, and CR35 is now a restore-to-baseline card for AutoBattle maintenance-window gating. |
+| CR33 | Codex | Implemented：普通怪终态已恢复进入 `ENTER_BATTLE`，compile 通过，待 fresh | `WubeiTask.runResolveAfterPathingPhase`, 五倍普通怪绿链/入战日志 | 用户于 2026-07-11 明确按五倍基线 `3f0a2e7` 修复：普通怪绿链停稳后直接进入 `ENTER_BATTLE`，不要求目标地图名、不重按绿链。已删除当前 `combat-terminal-repath` 分支，避免重复开包预扫并让已出现的 `OPTION` 回到本地入战模板链；`mvn -q -DskipTests compile` 通过。未改模板、点击坐标、白龙马、黄袍或战后回程。 |
 | CR34 | 唐德 | Review: baseline route gate restored; compile passed; needs fresh WUBEI validation | `WubeiTask.waitForAcceptNpcPathingIfStillActive`, accept-NPC route logs | CR33 split-out. Local code had broadened accept-NPC route waiting beyond the pushed fresh matching prepared-route dialog path: `recoverStaleAcceptNpcCurrentMapPathing(...)`, `acceptNpcRouteWakeFact(...)`, and terminal/visible-dialog/preparation facts could release or recover the accept-NPC pathing wait. 唐德 compared against latest pushed baseline `3f0a2e7` and restored the route gate so only a freshly prepared matching `ROUTE_TRANSFER` action for `宝象国` releases the accept-NPC pathing wait. The runner wait-spec / park plumbing remains, but generic visible dialogs, preparation REQUESTED/PREPARING/READY status, pathing terminal events, task-attention events, and bounded current-map recheck no longer change this business decision. `git diff --check` passed with only line-ending warnings; `mvn -q -DskipTests compile` passed. Needs fresh WUBEI validation before Done. |
 | CR35 | 谢帅 | Review: baseline restored; compile passed; needs fresh WUBEI/XIULUO maintenance validation | `AutoBattleTask`, `TaskMaintenanceService`, WUBEI/XIULUO follower maintenance logs | Restored latest-push maintenance baseline. `AutoBattleTask.maybeRunIdleMaintenance(...)` again passes `handleMaintenanceBroadcast(true)` unconditionally, and the local `requiresTeamMaintenanceWindowGate(...)` / `isTeamFirstAidMaintenanceWindowOpen(...)` broadcast gate was removed. `TaskMaintenanceService` still keeps the private first-aid window helper for follower first-aid waits. `git diff 3f0a2e7 -- AutoBattleTask.java TaskMaintenanceService.java` is empty for this scope, and `mvn -q -DskipTests compile` passed. Keep in Review until fresh WUBEI/XIULUO follower maintenance logs prove no new maintenance-broadcast churn or task-flow regression. |
 | CR36 | 谢帅 | Review: latest-push route-intent ownership baseline restored; compile passed; needs fresh WUBEI route validation | `NavigationService`, `WindowRuntimeContext`, WUBEI route intent / prepared route logs | Restored the strict pushed-baseline ownership rules checked against `3f0a2e7`: active prepared routes must match the active `intentId`; same-target route re-entry no longer reuses an old active intent and instead registers a fresh pathing intent; cleared-route recovery is only allowed when the active intent has already been cleared. `mvn -q -DskipTests compile` passed. Remaining acceptance item: collect fresh WUBEI route logs showing no stale/cross-intent prepared route consumption. |
@@ -1366,7 +1366,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR46 | Codex | Done: 黄袍第一战 validated | `WubeiTask`, `WindowRuntimeContext`, `WindowTaskRunner`, 黄袍第一战 logs | Make 黄袍怪 first-battle pre-battle path explicitly follow the ordinary CR41-CR44 contract while preserving the 黄袍连战 marker and switching to the documented hot path after the first `WAIT_BATTLE_FINISH`. Fresh `2026-06-19 15:58-15:59` logs show `wubei:first-chained-green-click`, terminal same-green re-click, `PREPARED_ACTION_READY / WUBEI_ENTER_BATTLE`, timer clear on prepared consumption, and first battle recovery. Can close; continuation stays under CR47/CR49. |
 | CR47 | Codex | Done: fresh 黄袍续战热路径 validated | `WubeiTask`, `WubeiWaitSpec`, 黄袍续战 logs | Fresh `2026-06-19 21:29-21:40` 黄袍 logs supersede the old `16:00-16:04` blocker: chained-combat 1-4 registered `WUBEI_ENTER_BATTLE interest` before the physical green click, skipped ordinary pathing intent, consumed fresh prepared actions, and did not hit the old phase loop guard. Chain-end / return-home is still CR49, not CR47. |
 | CR48 | Codex | Review: audit-only; continuation hot path proof received; chain-end still waiting CR49 | `WubeiTask`, tracker panel read logs, latest-push diff | Audit/restore 黄袍怪 continuation fallback, chain-end, and protection-cap behavior against `3f0a2e7`; migration must not invent new no-green click strategy, end-condition, or retry policy. CR47 hot path is now fresh-validated; keep CR48 open until CR49 supplies chain-end / return-home proof. |
-| CR49 | Codex | Partial: continuation passed; chain-end/return-home still unvalidated | `logs/dhxy-console.log`, `scripts/analyze_wubei_latency.ps1`, `docs/ACTIVE_WORK.md` | Fresh 黄袍怪 validation card: first battle follows ordinary, post-first-battle stays in chained hot path, chain-end/return-home works, and 白龙马/普通怪 business logic plus performance goals do not regress. Fresh `21:29-21:40` logs prove first battle and chained-combat 1-4 hot path, but the user stopped at `21:42:58` while still in `WAIT_BATTLE_FINISH`; no fresh chain-end / return-home evidence yet, so CR49 cannot close. |
+| CR49 | Codex | Review required P1：2026-07-11 黄袍链第 6 场先触发 `chained combat limit reached`，失败恢复直接导航接任务，未执行回城道具；链末回城验收失败 | `WubeiTask.returnHomeAfterCombatOrContinueSpecialTarget`, 黄袍 `RETURN_HOME` / `TASK_RECOVERY` / 回城道具日志 | `17:06:56.895` count=6/max=5 在读取链末 tracker、调用 `useReturnItemAndVerifyStartMap(...)` 前返回 FAILED；`17:07:01.256` 随即以 `wubei:accept-npc:map` 从平顶山导航宝象国。需先按黄袍基线/用户决策确定保护上限是否允许替代“链结束即回城道具”，再修复。 |
 | CR50 | Codex | Review: fresh 黄袍 terminal proof passed; needs fresh ordinary terminal proof | `WubeiTask.runResolveAfterPathingPhase`, ordinary/黄袍第一战 pathing logs | Removed the ordinary/黄袍第一战 `STOPPED_AWAY + fresh ROUTE_TRANSFER` terminal interceptor; `PATHING_TERMINAL` now clears the terminal snapshot and re-clicks the same current tracker green before releasing again. Fresh `2026-06-19 15:59` 黄袍第一战 logs prove `STOPPED_AWAY -> same tracker green re-click -> PREPARED_ACTION_READY / WUBEI_ENTER_BATTLE` with no terminal `ROUTE_TRANSFER` wait. |
 | CR51 | Codex | Done: phase-owned lifecycle fresh runtime validated | `WindowDialogInterest`, `WindowRuntimeContext`, `WindowTaskRunner`, `WubeiTask`, WUBEI dialog-interest logs | Fresh `2026-06-19 20:46-21:42` logs show `ttl=phase-owned` interest updates and `reason=expired=0`; prepared actions still publish/consume after the old 15s window, and 黄袍续战 pre-click interest stays phase-owned. CR52 owns the 10s timing replacement; CR51 lifecycle invariant is validated. |
 | CR52 | Codex | Done: target-map gate fresh runtime validated | `TaskTrackerGreenLink`, `TaskTrackerPanelReadResult`, `TaskTrackerPanelService`, `MapNameCanonicalizer`, `WindowTaskRunner`, `WindowRuntimeContext`, `WubeiTask`, WUBEI ordinary/黄袍第一战 logs | Fresh `2026-06-19 20:46-21:42` logs show `ordinary enter-battle target map gate armed=22`, `opened=22`, `normal-enter-battle-map-matched` interest and prepared consumption, with `normal-enter-battle-delayed=0`. This closes the runtime proof for replacing fixed 10s registration with canonical target-map match. |
@@ -1481,7 +1481,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR166 | 谢帅+worker | Review：单槽 tooltip/slot status 云端识别与双 review 通过，fresh runtime 待验 | `SummonSkillService`, `SummonSkillCloudDecisionService`, dev sidecar, summon-skill queue guards, tooltip replay | `SummonSkillCloud` 第一批子卡。已接 `inspectCurrentHoverTip(...)` 单槽 tooltip/slot status 云端识别：cloud active 时上传 raw tooltip ROI，dev sidecar 会从 `imagePayloadBase64` 洗黄字并匹配 `status_*.png` 模板，返回 `NORMAL_SKILL` / `KEEP_SKILL` / `LOCKED_SLOT` / `EMPTY_SLOT` / `UNKNOWN` 和 `action/reason`；timeout、低置信、invalid schema/status 直接 `UNKNOWN`/fail-closed，不调用本地洗字或 template fallback。CR145 queue 调度、窗口打开/hover、raw 截图、input queue、pause/stop、删除/确认点击点仍留本地；删除动作和确认点击云端化后续拆卡。 |
 | CR167 | 谢帅+worker | Review：Dialog prepared 与 `VERIFY_GREEN_TEMPLATE` 已收口到云端语义；修复旧 sidecar jar 风险，fresh runtime 待验 | `WubeiDialogPreparationProvider`, `DialogService`, `DialogPolicyCloudDecisionService`, 外部 `dhxy-cloud-brain` `DialogOptionRecognizer`, `scripts/run-cloud-brain-server.ps1`, dialog cloud guards | 五倍 accept prepared 已改为单次 composite cloud request；probe story prepared 由 `DIALOG_POLICY` no-click semantic action 决定 matched/miss/absent。2026-07-03 修复修罗 accept NPC tooltip 点击后 dialog verify 被无图 after-local 覆盖的问题：`VERIFY_GREEN_TEMPLATE` 也改为 image-backed `DIALOG_POLICY` request，外部 brain 用旧 option-lower/full-ROI template pipeline 返回 `NO_ACTION/status=FOUND/actionId=<GreenTemplateClickSpec.name>` 与 `candidateBox`。03:55 fresh runtime 失败确认为旧 sidecar jar 未重打包导致，已重打外部 jar、停旧 `18080` sidecar，并让启动脚本自动检测 stale jar 后 package；下一轮必须重启 DHXY/sidecar 验 `cloud-brain-dialog-green-template-visible`。 |
 | CR168 | 谢帅+worker | Ready：BagItemCloud 背包道具定位/使用第二批子卡 | `BagService`, return item/xianxing mirror raw bag ROI, bag slot cloud decision, testcase replay | 第二批 `BagItemCloud` 子卡。目标把背包道具模板匹配、任务页/普通页候选排序、显形镜/回程道具槽位定位迁到云端；本地负责打开背包/任务页、截 raw bag ROI、执行云端返回的窗口相对槽位点击并验证结果。第一刀建议只覆盖“已打开主包任务页里的任务道具定位”，不改补给药/摄妖香/普通包裹批量扫描。 |
-| CR169 | 谢帅+worker | Review：FIFO/Purple 双 reviewer 通过；fresh runtime 待验 | `NpcClickService`, `NpcClickSmartCloudDecisionService`, `NpcClickSmartQueueMessage`, `NpcClickSmartQueueOutcome`, `D:\mavenProject\dhxy-cloud-brain` NPC click queue/session/memory/purple player-anchor | 2026-07-03 queue/FIFO 打回修复：DHXY `NPC_CLICK_START/POLL` 的真实 `CloudDecisionRequest.context` 显式携带 `sessionId/windowId/taskRunId`，三者缺失本地 fail closed；`WAIT` 改为独立 30s wall-clock 等待 + 100ms sleep + `TaskCheckpoint`，不消耗 12 条候选预算。外部 queue `Session` 保存 owner，错 `windowId/taskRunId` poll 不消费消息；终态 outcome owner-aware 清理 session。二轮打回已补行为测试：多 `WAIT` 后继续、no-click `MEMORY` -> `SKIPPED` 继续、普通候选进入 input/verifier、memory click 不提交 input、stop checkpoint 后不再 poll/execute；本地 terminal outcome 除 `VERIFICATION_FAILED`/`SKIPPED` 外会停止当前 FIFO session。最终复审 P2 已修：普通阶段 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 的 `NO_ACTION` 无 click 现在上报 `SKIPPED` 并继续 poll，focused test 证明不提交 input、不触发 `SAFETY_REJECTED` terminal，后续 `YELLOW_NAME` 可执行候选仍能提交并 verify；queue/FIFO no-click P2 修复两个独立 reviewer 均 PASS。Purple 重修已通过：`PLAYER_ANCHOR_FORMULA` 使用旧本地 OpenCV HSV + `Core.inRange(120,50,50)-(160,255,255)` + `Core.bitwise_not` 语义，不再使用 RGB/HSB 或 BLOB fallback；OCR miss fail closed。Focused replay 产出 clean-name/source、old HSV washed、production anchor marked、final click marked 四张图，`click=480,357` 落在 `灵兽村使者` target hit area，`anchor=520,407` / `candidateBox=476,395,88,24` / `matchedPlayerName=乌龟的黑头`。外部测试 `NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest` 全绿，两个独立 reviewer PASS。CR169 仍非 Done，需重启 DHXY 与 external sidecar/JAR 后采集真实 NPC runtime 证据。 |
+| CR169 | 谢帅+worker | Review P1：17:17 五倍白龙马遗漏 Story 快关且 `Alt+A` 未发出，错误回到接任务路线 | `NpcClickService`, `NpcClickSmartCloudDecisionService`, `NpcClickSmartQueueMessage`, `NpcClickSmartQueueOutcome`, `WubeiTask`, `D:\mavenProject\dhxy-cloud-brain` NPC click queue/session/memory/purple player-anchor | 2026-07-11 fresh runtime：白龙马探测后已有 `STORY` 遮挡，但 CR255 的 fast story close 仅修罗接任务 opt-in，五倍请求未开启且显式 `closeStoryBeforeDirectSceneClick(false)`。更严重的是相对基线 `3f0a2e7`，本地 direct-combat 已不再先发送 `Alt+A`；迁移后要求云端 FIFO 返回 `PRESS_HOTKEY_THEN_CLICK(ALT_A)`，本轮没有该动作，故物理 `Alt+A` 根本未发生。随后所有候选未形成有效入战，五倍通用失败恢复将 `RESOLVE_AFTER_PATHING` 送回 `ROUTE_TO_MAIN_TASK`，表现为重新导航宝象国，不是回城道具。必须先恢复白龙马的既有前置顺序/等价云端指令合同，再复验。 |
 | CR170 | 谢帅+worker | Review：objective 纯洗图已接统一门面，fresh runtime 待验 | `ImagePreprocessCloudService`, `CloudDecisionDevServer`, `ObjectiveTextRecognitionService`, `ImageProcessorService`, `ObjectiveTextRecognitionCloudWiringTest` | 已新增 `RETURN_WASHED_IMAGE` 合同：`IMAGE_PREPROCESS` 响应可携带 washed PNG payload/mime/sha/宽高，service-specific gate 校验 `image/png`、base64、sha、尺寸和置信度；`NO_RESULT`/低置信/invalid 不可用。CR177A 后 `ObjectiveTextRecognitionService` 的绿色 objective 洗图通过统一 `ImageProcessorService` 请求 `WASH_GREEN`，有效 washed image 才继续原 `cropToForeground`/地图模板/数字模板流程；cloud disabled/timeout/no-result/invalid 直接 objective miss，不回本地 `ImagePreprocessor`。CR177G 后 dev sidecar 在 `src/test/java` 用测试侧 `DevImagePreprocessor` 模拟云洗图并返回 washed payload。Focused tests 与 `compile` 已通过，fresh runtime 待验日志和真实 objective 匹配。 |
 | CR171 | 谢帅+worker | Review：通用云端图片处理 `ImagePreprocess` helper 与全 wash sidecar 已实现，fresh runtime 待验 | 通用云端图片处理 / `ImagePreprocessWashedImageClient`, `ImagePreprocessCloudService`, `CloudDecisionDevServer`, `ImagePreprocessOperation`, objective wiring tests | 通用 `ImagePreprocess` 底座：已新增 `ImagePreprocessWashedImageClient`，统一 raw PNG 编码、sha、`ImagePreprocessCloudRequest` 构造、washed PNG 解码和 path 落盘；`ObjectiveTextRecognitionService` 仅改用 helper 取得绿色 objective 洗后图，未改模板匹配、坐标 plausibility、阈值、checkpoint、点击或 phase。Dev sidecar 在 `src/test/java` 支持 `WASH_GREEN`、`WASH_YELLOW`、`WASH_PURPLE`、`WASH_WHITE`、`WASH_DIALOG_OPTION_TEMPLATE` 并返回 washed payload/mime/sha/尺寸；紫字 sidecar 使用隔离 temp 并清理。未迁移 Dialog/NPC/Tracker/GameTextLine/Wubei/Navigation 业务点，cloud active failure/no-result/invalid 仍 fail-closed，只有 `DISABLED` 才允许本地 fallback。 |
 | CR172 | 谢帅+worker | Review：第一批纯洗图 caller 已收口到统一门面，fresh runtime 待验 | `GameTextLineOcrService`, `ObjectiveTextRecognitionService`, `QuestManagerService`, `CoordinateHelper`, `WubeiTask`, `ImageProcessorService`, source guards | CR177A 已把 CR170/CR172 的纯洗图 caller 从 `wash*WithDisabledFallback(...)` 迁到统一 `ImageProcessorService`，并移除这些生产 caller 的本地 `local*WashedImage` helper；cloud disabled/timeout/no-result/invalid 现在按 miss/fail-closed 处理，不回本地 `ImagePreprocessor`。OCR/template/candidate 排序、点击坐标、导航 phase、五倍分流未改；fresh runtime 待验。 |
@@ -1559,11 +1559,23 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR245 | Codex | Review P1 阻塞：队长开队 FIFO 实现已编译，但新的维护队列 park 未接入云脑 shell 的同 phase wait 放行，实际会触发 local yield guard；修后再 fresh | `TaskMaintenanceService`, `AutoBattleTask`, `XiuluoTaskV2`, `WindowReadyEventType`, local-team session | 医宝宝/修装备两个串行维护 hook 改为：队长 NPC 命中即触发全队 broadcast 并开队（开队时刻确认 tooltip group 的本地队员快照 FIFO，队列即授权），队长不点自己的确认、立即放权 park（wake=队列变更事件，5s 上限=放行）；队首成员一次扫描+点击后无论成败无条件出队并发事件；队长唤醒后用后台预识别坐标点自己的确认再继续。当前 review 发现 `WAIT_MAINTENANCE_BROADCAST_QUEUE` 未纳入 cloud shell 的同 phase event-wait 分支，不能 fresh。 |
 | CR250 | Codex | Approved（方案 review）：导航云端化边界与执行器合同已定 | `NavigationService`, `CoordinateHelper`, external `dhxy-cloud-brain`（新 `NAVIGATION_ROUTE_PLAN` + `MINIMAP_LOCATION` 扩展）, `NavigationRequest`/`NavigationResult` 契约 | 云端决定路线/候选，本地独占输入、确认、intent、watcher、park/turn/stop。CR251 支持首包多候选预取，本地按基线 200ms 逐条消费；动作 allowlist、token/ledger、绑定/重放与后续子卡边界均已收口。子卡 C/D 仍须各自立卡 review 后实施。 |
 | CR251 | Codex | Approved（方案 review）：有序多候选预取，保持本地轮换 | `CoordinateHelper`, `NavigationService.navigateInCurrentMap`, external `MINIMAP_LOCATION` | 用户明确接受本地提前拿到多个运行时点位。云端首包按有序批次返回候选，批内不短 TTL 失效；本地逐条点击、fast-edge/坐标确认，`NO_PATHING` 后按原 200ms 消费下一条，成功才 handoff；60 秒和候选耗尽语义不变。 |
-| CR252 | Codex | Review P1（第四轮）已修：pause/stop/session 完结/group/binding 失效统一只读降级——`isMemberReadOnlyDegrade` 以"本轮 run 内曾被覆盖"判定，覆盖失效一律纯读 early-return（无 enter 消费/`Alt+8`/exit recovery）；只有新 task run（`initializeForCurrentWindow` 重置覆盖历史）或下一次真实入战广播才恢复正常语义；从未被覆盖的独立窗口 bootstrap 不变；compile passed，待复审 + fresh | `WindowTaskRunner`, `AutoCombatService`, `AutoCombatPanelService`, `BattleRadarService`, `TaskMaintenanceService`, `XiuluoTaskV2`, `WubeiTask` | 首个 P1 已修：covered 无广播成员安静等待不扫模板；第三轮 P1 已修：leaderPaused 走 early-return self-radar，不消费 enter、无 `Alt+8`。新 P1：非 pause 的 leader coverage 丢失（stop/session/group/binding）落入“binding fully gone -> standalone semantics”，清 `memberReadOnlySelfObserve` 后继续 `maybeHandleCombatEnter`；一旦 radar 发现战斗，仍可能 `ensurePanelVisible` 按 `Alt+8`。卡片业务边界已把 pause/stop/session/group/binding 并列为零物理输入降级，必须统一只读。 |
+| CR252 | Codex | Review required P1：黄袍连战 fresh 证实队员只收到 leader `IN_COMBAT`，未收到中间场次确认退出；FIRST_AID 窗口虽开但成员不产生战后 pending 补给 | `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, `AutoCombatService.reconcileReturnHomeVerifiedCombatState`, `AutoCombatService.handleCombatTick`, `WubeiTask`, 黄袍 17:03-17:06 多窗口日志 | epoch 92-96 只见 `team combat phase opened` 与成员 `external ... inCombat=true`，零 `team combat phase exit confirmed`、零成员 `auto-combat exit detected`/`pending follower first-aid`；确认 FREE 的既有调用只挂在“回城地图验证成功”与修罗链，黄袍中间连战 5 秒窗口前不可达。必须在既有“中间战斗终态已确认”事实点补发 FREE，不能用候选快脱战或改成员自行模板扫描代替。 |
 | CR253 | Codex | Approved（第三轮）：三项 P1 已通过源码复审；click-failed fallback 改为发布 `TRACKER_GREEN_RETRY` job 与 `PREPARED_ACTION_READY` 后无限 park，统一 consumer 在新 command cycle 复按；双侧编译通过，fresh 作为独立运行验收待记录 | `XiuluoTaskV2`, `WindowTaskRunner`, `WindowRuntimeContext`, `TaskMaintenanceService`, new `PreparedActionJob`/`PreparedActionJobType`/`XiuluoGreenChainSchedule`, external `dhxy-cloud-brain` `DecisionEngine` | 首轮三项 P1：本地 kanda 无 attempt 身份、click-failed 前台直接复按、三技能 60s 退避均已按"所有来源统一 typed prepared + 发布/消费双身份校验 + 发布-唤醒-消费-再 park 边界"收口；退避已移除只留既有业务时序。fresh 继续作为独立运行验收记录，不阻塞 review 通过。 |
 | CR254 | Codex | Implemented：修罗绿链移动中 `pathing watcher` 慢 probe 分段诊断；已记录截图、编码、云端 decision 与总耗时，主项目 compile 通过，待重启后取证 | `MiniMapCoordinateReader`, `WindowTaskRunner` 日志链路 | 前四轮共 13 次超过 1.5 秒，最高 7.470 秒；先确认慢在 HWND 截图、PNG 编码还是云端 HTTP，再讨论性能修复。 |
 | CR255 | Codex | Approved：Runner 确认 STORY 即发强类型 `STORY_DIALOG_VISIBLE`（OPTION 不发、observer 零输入、2.5s recency）；`NpcClickRequest` 新 opt-in 开关仅修罗 `ACCEPT_TASK_CLICK_NPC` 打开；smart click 在 FIFO `pollNext` 前的自然边界做纯内存新鲜事件读（anchor + lastConsumed 一次性消费），命中即 CANCELLED 结束旧 session -> 一次 `fastClickKnownSmallStoryDialog` -> 新 sessionId 重启；未提交不标已处理；restart 上限 3 次 fail-closed 回既有恢复链；DHXY compile exit 0，fresh 作为独立运行验收待记录 | `WindowTaskRunner`, `WindowReadyEventType`, `NpcClickRequest`, `NpcClickService`, `XiuluoTaskV2`（复用 `DialogService.fastClickKnownSmallStoryDialog`） | `TASK_ATTENTION_REQUIRED` 不能驱动点击：Runner 发现 `STORY` 时须发布强类型 `STORY_DIALOG_VISIBLE`；`OPTION` 只在已得到经验证点击动作时发布既有 `PREPARED_ACTION_READY`，不得向 NPC smart 发模糊通知。修罗接任务阶段只消费同窗口、同任务、当前 phase 后的新鲜 Story 事件；正常无事件时不截图、不 OCR、不请求云端、不等待。异常 Story 才调用现有 `fastClickKnownSmallStoryDialog(...)`，一次性消费事件后重新进入 smart click。 |
 | CR256 | Codex | Approved：两个绿链 park 唤醒点直连本地 `local-kanda` prepared action（同一身份/一次消费/模板活体复验 + 原子点击），点击 outcome 才上报云端；云端再推进 `WAIT_COMBAT`。P2 已加来源硬门，cloud job/其他来源回原路径；主项目 reviewer compile 通过，fresh 独立待验 | `XiuluoTaskV2`（shell yield 块 + `waitForXiuluoBrainEvent` + 新 helper）, `DialogService` local-kanda predicate, external `dhxy-cloud-brain` `DecisionEngine.trackerShortcutNext` | 已存在当前窗口、attemptId、操作类型、坐标和本地模板硬证据的 prepared action 时，本地只做身份/新鲜性安全校验并经输入队列点击；点击 outcome 再上报云端，由云端决定 `WAIT_COMBAT` 或恢复。禁止本地在点击前询问下一 phase 后才消费同一 action；cloud typed job 不得误入此直连。 |
+| CR257 | Codex | **Approved（全量 OCR 上云复审，2026-07-11）**：DHXY `bf3bf387` 完成 C2+C3；本地 `TextRecognizer`、Baidu SDK/配置/凭据、全部本地 OCR 调用和四条 rollback 均清零。DHXY/cloud-brain compile 通过；OCR 引擎仅由 cloud-brain sidecar 持有 | `WubeiTask`, `XiuluoTaskV2`, `TaskTrackerPanelService`, `BotProperties`, application.yml, pom.xml, external `dhxy-cloud-brain` `LocalOcrClient`/sidecar | 用户已明确“不需要本地兜底”，D2 等价批准四条 rollback 关闭；云端 reader inactive 统一 fail-closed miss，不重回本地 OCR。fresh runtime 独立核验 cloud sidecar diagnostics 和业务 OCR 日志。 |
+| CR258 | Codex | Approved（源码 review）：P1 标量回显门已修；点位候选、合理性、接近点与 OCR fallback 都经绑定/fail-closed 收口，候选顺序/200ms/60s/keep-turn/ring 保持基线；fresh 待验 | `NavigationPointCloudDecisionService`, `NavigationService`, `XiuluoTaskV2`, `LocationVisionService`, external `MiniMapPointResolver`/`DecisionEngine`, `MINIMAP_LOCATION` | `CHECK_COORDINATE_PLAUSIBLE`、`RESOLVE_APPROACH_COORDINATE` 已与候选批次同样验证 `windowId/hwnd/taskRunId/navigationRequestId/clientFrame`；错配无输入、无本地计算兜底。双侧 compile 已由实现者记录通过，fresh 验证多窗口绑定、批内 200ms 轮换和断云 fail-closed。 |
+| CR261 | Codex | 用户拍板 A + 返修完成 v2 待复核：首轮 2 P1 处理完毕——P1-1 用户明确批准范围收窄（云端只拥有 attempt 状态机，独占输入段及段内模板分支永久本地复合原子）；P1-2 补齐 inner route-dialog gate 子状态机（共享外层 stage5 词表、world-map-inner-gate context、CLICKED/FAILED/SKIPPED→message/intent 守卫完整映射、每 submit 一次且 attempt=2 不重跑）并校正基线行号（wrapper L2239-2242）。未实施 | `NavigationService.submitWorldMapSearchAndClickDestination`/`performWorldMapSearchAndClickDestination`/`prepareWorldMapSearchResultsDirect`/`closeRouteSearchPanelQueued`, external `NavigationRoutePlanResolver` | attempt 级编排上云、独占段本体零改动；message 兼容合同不变；不新增计数护栏；CR240/CR258 已迁部分不重复。 |
+| CR262 | Codex | Ready / Blocked on fresh：CR250 子卡 E——删本地决策实现与参数表 rollback（CoordinateHelper 7 方法+mapTransforms+本地 config/maps.json、navigateToMapLocalLadder、世界地图旧循环、LocationVisionService/XiuluoTaskV2 deprecated 链、张闻路线借 CR208-12）；实施硬前置=CR258/CR260/CR261 fresh 验收（CR208 删除纪律），完成后"本地磁盘不保存参数表"承诺正式成立 | `CoordinateHelper`, `config/maps.json`, `NavigationService`, `LocationVisionService`, `XiuluoTaskV2` | 删除前逐项 grep 零生产调用；删除后双侧 compile + 全库关键词零命中核验。 |
+| CR263 | Codex | **Approved（实施复审）**：外部 reviewer 复审通过（首轮 author P1/P2 闭环、双端 compile 现场复验、无 P0/P1/P2）；fresh 归 CR264；heartbeat 已停（fa44848f）。CR261 v2 Approved 后开工，云端 attempt 状态机（stage6→inner gate→WORLD_MAP_PREPARE_AND_CLICK/CLOSE 状态机、PREPARE_FAILED 直接失败不 CLOSE、mismatch 中断短路）+ 本地 executeWorldMapPrepareAndClick(独占段零改动+CLICKED 同段原子注册 intent 含坐标+route memory)、旧 submit/perform @Deprecated；author 3 维度自审 1P1+1P2 全修；双侧 compile exit 0 —— 子卡 D 实施件——云端 attempt 状态机扩展 + 本地 `WORLD_MAP_PREPARE_AND_CLICK`/`CLOSE_ROUTE_SEARCH_PANEL` 两复合 action 拆分（CLICKED 时 intent 注册同独占段原子完成）+ 旧 submit/perform @Deprecated；纪律沿用 CR260（绑定/ledger/身份门/无计数护栏/message 零改动）。卡族冻结成员，实施在本卡内消化不另立卡 | `NavigationService` 世界地图链, external `NavigationRoutePlanResolver` | 以 CR261 最终 Approved 文本为准实施；断云 fail-closed；fresh 归 CR264 汇总。 |
+| CR264 | Codex | 预建 / Blocked on（CR263 Approved + fresh）：navigation migration 收口卡——三链 fresh 汇总核销（CR258/CR260/CR263）、CR260 已知窄窗口处置（无影响关闭/有影响本卡内合同修订+用户拍板）、CR260 P3 shouldYield 日志降噪、CR262 删除执行确认、CR250 父卡收口 Done。全族最后一张卡，不再产生新卡 | 全族卡 + `NavigationService` 日志层 | 明确排除：张闻路线（CR208 族）、OCR 离线链删除（CR257 卡 C2）、任何新导航能力=用户新立项。 |
+| CR265 | Codex | Implemented：任务启动 role preflight 前复用 `UICleanerService.forceCloseDialog()`，先清理可能遮挡 tooltip hover 的 dialog，再检测队长/队员；主项目 compile 通过，fresh 待验 | `WindowTaskRunner.resolveTaskTypeBeforeStart`, `MultiWindowTaskManager`, `UICleanerService.forceCloseDialog`, 队长识别启动日志 | 只改变 role detection 前置顺序：先走现有 force-close，再做 live tooltip role detection；不改 role 算法、任务分配、story/option 处理策略或后续任务流程。 |
+| CR266 | Codex | Ready：五倍维护遗留对话框、绿链无移动误入战与三分钟全局入战预算收口 | `WubeiTask`, `WindowTaskRunner`, `WindowRuntimeContext`, `UICleanerService`, `WindowReadyEventBus`，五倍 maintenance/绿链/入战日志 | 2026-07-11 round 39：医宝宝广播失败后遗留巫医 `OPTION`，任务仍点绿链；`STOPPED_AWAY` 被误转 `ENTER_BATTLE`，旧 dialog 被当作看打反复匹配。任务成功接取起至实际 `IN_COMBAT` 前统一 180s（暂停补时）预算，必须打断所有内部等待并回重新接任务。 |
+| CR267 | Codex | **Approved（reviewer 复审，2026-07-11）**：三轮 P1 已闭环；真实 queue `END` 才可授权 direct-combat，白龙马已先关已知 Story，tracker shortcut/未知场景云端 fail-closed；双侧编译通过，fresh 独立验收 | `NpcClickService`, `NpcClickRequest`, `NpcSmartClickOutcome`, `NpcDirectCombatScenario`, `NpcClickSmartCloudDecisionService`, `WubeiTask`, `XiuluoTaskV2`, external `dhxy-cloud-brain` `DecisionEngine`/`SmartClickRecognizer` | 复审覆盖完整合同：白龙马 target-ready 先 task-owned fast-close，CR255 stale anchor 未放宽；授权仅 allowlist `WUBEI_PROBE_TARGET_READY`/`LEGACY_COMBAT_TARGET`，tracker shortcut/空值/未知拒绝；`NpcSmartClickOutcome` 只将真实 FIFO `END` 映射为 `normalFifoConsumedUnverified=true`，disabled/start/protocol/cancel/budget 均拒绝。reviewer 现场执行 DHXY `mvn -q -DskipTests compile` 与 cloud-brain `mvn -q package` 均成功。fresh 仍应验证实际输入顺序，但不阻塞本次 review 通过。 |
+| CR268 | Codex | Implemented：黄袍连战取消固定 5 场上限，链末只由 tracker 决定续战或回城；队长开 5 秒 FIRST_AID 窗口同时广播本场 FREE，主项目 compile 通过，fresh 待验 | `WubeiTask`, `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, 黄袍连战/队员补给/回城日志 | 用户明确批准：不再以连战次数提前失败；仍有黄袍 tracker 才续战，tracker 消失/不再黄袍/缓存 miss 均复用既有回城道具验证。中间战斗终态已由队长 task phase 确认，开补给窗口时才广播 FREE；候选快脱战不广播。 |
+| CR260 | Codex | **Approved（实施复审）**：首轮 3P1+1P2 返修通过——删 64 backstop、回退本地原子终态恢复云端编排（intent-gap 窄窗口如实记录）、执行时身份门 windowId/hwnd/taskRunId/epoch、ledger 完整绑定 key；拍板 B 未回退；reviewer 现场重跑双侧 compile exit 0；fresh 独立验收（六级 step 序列/窄窗口/世界地图 retry 时序） | `NavigationService.navigateToMap` 及六级 helper、新 `NavigationRoutePlanCloudDecisionService`、`CloudDecisionServiceId`、external 新 `NavigationRoutePlanResolver`/`DecisionEngine` | CR259 实施件：step 协议 observe→action→outcome→terminal，云端只据上报观察布尔做 1:1 阶梯分支决策；consume/confirm/submit 三复合执行器与 intent 三守卫零改动；断云 `MAP_NOT_REACHED`。 |
+| CR259 | Codex | **Approved（设计 review）**：用户拍板 B 后，C 卡只迁 `navigateToMap` 阶梯级决策、世界地图提交进入与最终收尾；内部 ≤2 attempt/`WRONG_DESTINATION`/250ms 保留本地复合 action，归 D。终态事实门、无新增业务封顶与 5 条修罗 message 合同均已通过复核。未实施 | `NavigationService.navigateToMap` L281-514、`NavigationService.performWorldMapSearchAndClickDestination`、`XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation`、external 新 `NAVIGATION_ROUTE_PLAN` | 设计已可开工：实现时保持 caller-fresh/ACTIVE snapshot/route-dialog gate 事实门、单 stepId 重放去重、五条 message 逐字兼容；C 不动世界地图内部 retry，D 再迁。fresh 作为实施后的独立运行验收。 |
 | CR249 | Codex | Implemented：五环 tracker 洗绿字识别（绿链分段+pathing link 选择）收口云端；最小切口只换识别引擎，未动标题 raw 匹配/拖动/缓存/消费方时序；本地绿字扫描降为离线 rollback；双侧 compile/test passed，fresh 待验 | `TaskTrackerPanelService`, external `DecisionEngine` `TRACKER_PANEL_READER` | CR208 子卡：五环 tracker 链原本云端调用数为 0。云端加 `wuhuan`+`DETAIL_BLOCK_CROP` 分支（本地已用 raw 标题模板裁好 detail，云端直接洗绿字/分段/选链；`selectWuhuanPathingSegments` 早已等价移植本地段选择规则）；本地 `findWuhuanTrackerGreenClickPoint` 改云端优先、cloud miss = miss，`scanWuhuanTrackerGreenLinks`/`findWuhuanPathingNameSegment` @Deprecated 仅离线。`readWuhuanTrackerTitle`（raw 匹配）、面板拖动、prepared 指纹缓存、FiveRingTaskV2/WindowTaskRunner 消费时序均零改动。 |
 | CR248 | Codex | Review passed：四轮基线复审通过；live/snapshot 均为本地 raw 标题匹配→detail crop→云端，五类绿链规则与字段已对齐；双侧 compile 已通过，fresh 待验 | `TaskTrackerPanelService`, `TrackerPanelReaderCloudRequest`, external `DecisionEngine`/`MiniMapRecognizer`, `TRACKER_PANEL_READER` | CR208 子卡（父卡条目 3+4）：黄字云端 OCR、`targetName` 常量、五倍首 green band、专有分段与五类逐段规则均已对齐基线。`readWubeiTrackerPanel()` 不再走整面板 `TRACKER_PANEL_CROP`（旧方法 @Deprecated），改为本地标题定位并裁 detail 块；`TrackerPanelReaderCloudRequest` 的 `taskKey` 已进入 HTTP context，云端 `wubei`+`DETAIL_BLOCK_CROP` 直接采用该值且不得重跑标题匹配。修罗用常量 taskKey，不受影响。本地 OCR 仍为 @Deprecated 离线 rollback。 |
 | CR247 | Codex | Review：CR208-5/6/9 source review 通过，双链独立、字面死方法未误迁；双侧 compile 通过，fresh 待验 | `ObjectiveTextRecognitionService`, `XiuluoTaskV2`, `ObjectiveTextReaderCloudDecisionService`, external `ObjectiveTextRecognizer`/`QuestDetailTextRecognizer`, objective 模板资产, `config/maps.json` | CR208 子卡（父卡条目 9 + 5/6）：修罗任务目标识别"传图→云端出结果"。story 弹框链：模板资产（20 地图名+218 数字）与 maps.json 快照迁 cloud resources，云端洗图+匹配+边界合理性校验+头位数字修复一体，本地薄壳化（本地整链 @Deprecated 仅离线）；面板链：`QUEST_DETAIL_READER` 云端 LocalOcr 真 OCR + "前往 地图(x,y)"解析（保持与模板链机制独立防共模数字 bug），恢复路径 5 处消费点零改动。云端为 maps/模板数据属主，未来标定走 outcome 上云。 |
@@ -4963,6 +4975,62 @@ Status:
   “云端逐步要求本地执行 `TRY_*` action/outcome”的方案。当前唯一有效实现方向是
   `NPC_CLICK_START` + 云端 FIFO candidate queue + 本地 FIFO consumer。谢帅只做主管/reviewer，不直接写
   Java 业务实现。
+
+Card CR267: 直接战斗模式的云端授权、Alt+A 场景切换与二次截图
+
+Status:
+
+- **Approved（reviewer 复审，2026-07-11）：** 三轮 P1 已闭环。白龙马 target-ready 先由 task-owned
+  `fastClickKnownSmallStoryDialog(...)` 关闭已知 Story；CR255 的 `sequence > anchor` 未放宽。云端仅 allowlist
+  `WUBEI_PROBE_TARGET_READY` 与 `LEGACY_COMBAT_TARGET`，对 tracker shortcut/缺失/未知 scenario fail-closed。
+  `NpcSmartClickOutcome` 只把真实 queue `END` 映射为 direct-combat FIFO 终态，非 END 本地不发授权。
+  reviewer 现场执行 DHXY `mvn -q -DskipTests compile` 与 external cloud-brain `mvn -q package` 均成功。
+  fresh runtime 仍用于验证实际输入顺序，但不阻塞本次源码 review 结论。Owner: Codex。
+- 历史复审（2026-07-11 第三轮）：route/scenario allowlist 返修已验证（云端只允许
+  `WUBEI_PROBE_TARGET_READY` 与 `LEGACY_COMBAT_TARGET`，`TRACKER_SHORTCUT`、缺失与未知值拒绝）；同轮提出
+  上述 FIFO 终态 P1 #3。
+- 历史复审（2026-07-11 第二轮）：白龙马 target-ready Story 早于 CR255 anchor 的首轮 fast-close 问题已验证
+  按返修方向解决（task-owned `fastClickKnownSmallStoryDialog(...)` 先关，未提交不开 FIFO，`sequence >
+  anchor` 未放宽）；同轮提出上述 scenario P1。
+- 历史状态：用户于 `2026-07-11` 批准业务合同；Codex 于同日按合同完成两段式实施（云端
+  `DIRECT_COMBAT_AUTHORIZE` 授权 → 本地 `Alt+A` → 二次截图 `directCombatMode=true` session +
+  五倍白龙马 Story 快关 opt-in），双侧编译门禁 GREEN（实现记录见本卡
+  `Worker implementation 2026-07-11`）。外部 reviewer 同日提出 P1（target-ready Story 的 sequence 早于
+  CR255 anchor，首轮 FIFO 不会 fast-close），已按返修方向完成 task-owned 先关修复并重过 DHXY 编译门禁
+  （见 `Worker repair 2026-07-11 - Reviewer P1`），待外部 reviewer 复审。Owner: Codex。
+- 背景：CR169 fresh 中五倍白龙马 probe 已得到 `target-ready`，但当前生产实现把 `Alt+A` 错绑为
+  “云端先从普通场景截图找到 click 后，才返回 `PRESS_HOTKEY_THEN_CLICK(ALT_A)`”。这与 `Alt+A` 的用途相反：
+  它本来用于清空普通界面遮挡、进入直接战斗场景，再让后续截图找目标。基线 `3f0a2e7` 的
+  `NpcClickService.tryDirectCombatTargetClick(...)` 是本地先 `pressAltA()`，再执行目标 pipeline。
+
+Approved business contract:
+
+1. `Alt+A` 是独立的 `ENTER_DIRECT_COMBAT` 场景转换 action，不能附属于已有 click candidate。
+2. 只有下列两类事实允许云端授权该 action：
+   - 五倍白龙马：当前 probe 的专用 `wubei.probeTargetReady` 已确认白龙马出现；先关闭该 Story 遮挡，
+     普通 `NPC_CLICK_SMART` FIFO 全部未得到 verified action。
+   - 旧路线修罗或其它可战斗怪：当前任务事实明确 `targetRole=COMBAT_TARGET`，当前 canonical 地图一致且
+     当前坐标位于目标坐标既有容差内；普通 `NPC_CLICK_SMART` FIFO 全部未得到 verified action。
+3. 接任务 NPC、医宝宝/修装备等维护 NPC、任何非 `COMBAT_TARGET`，以及新修罗 tracker 快捷路线，禁止授权
+   `ENTER_DIRECT_COMBAT`。新修罗快捷路线仍只消费 tracker prepared action，不能借本卡重新引入手点怪。
+4. 已获授权时，本地只通过输入队列执行 `Alt+A` 和既有短等待；随后重新截图并以
+   `directCombatMode=true` 新建 `NPC_CLICK_SMART` session。云端在第二张、已清屏的截图中返回普通目标 click，
+   不再把 `Alt+A` 塞进候选 click bundle。
+5. `Alt+A` 后只有真实点击并经战斗 verifier 确认 `IN_COMBAT` 才进入 `WAIT_BATTLE_FINISH`。无可执行目标或
+   verifier 失败沿已有“直接战斗失败后重导航/重抽”路径处理；不能把裸 `Alt+A` 当入战成功。
+6. 业务差异：白龙马 baseline `3f0a2e7` 还要求 `lastEnterBattleDialogResult == GREEN_TEMPLATE_NOT_FOUND`。
+   用户已批准以“普通 `NPC_CLICK_SMART` FIFO 全部未 verified”替代该旧实现门；除此以外不改点击候选顺序、
+   Story/probe 四分支、坐标容差、失败恢复或输入所有权。
+
+Implementation scope:
+
+- DHXY：仅任务事实打包、白龙马 Story 快关 opt-in、`ENTER_DIRECT_COMBAT` 输入执行、二次 raw screenshot/session
+  启动、既有 battle verifier/result 消费；不得恢复本地 full NPC pipeline。
+- external cloud-brain：只根据结构化任务事实决定是否返回 `ENTER_DIRECT_COMBAT`，并在
+  `directCombatMode=true` session 中返回目标 click；不得把 accept/maintenance 或 tracker-shortcut 误授权。
+- Fresh runtime：白龙马应出现 `STORY_DIALOG_VISIBLE -> fast close -> smart miss -> ENTER_DIRECT_COMBAT -> pressAltA
+  -> new raw screenshot/session -> target click -> IN_COMBAT -> WAIT_BATTLE_FINISH`。旧路线修罗只在目标附近的
+  `COMBAT_TARGET` 场景出现同一链；禁止在 accept/maintenance/shortcut 中出现 `pressAltA`。
 - 本地发起 session：普通初始 NPC click 先做必要安全检查，按一次 `Alt+4`，截取一次绑定窗口 base
   screenshot，然后向云端发送 `NPC_CLICK_START`。request 必须携带 `sessionId`、`npcName`、任务/source、
   玩家坐标、目标坐标、scan regions、base screenshot、窗口尺寸/坐标空间、验证模式和必要上下文。
@@ -4987,6 +5055,283 @@ Status:
   仍为 shadow/reference、消息顺序 FIFO 且等价旧顺序。testcase replay 必须覆盖 `MEMORY`、`TOOLTIP`、
   `YELLOW_NAME`、`PURPLE_FORMULA`、`CTRL_CANDIDATES`，并输出 marked 图标明 scan region、候选框、
   最终 window-relative click 点和策略名。独立 reviewer 复核全部通过前，不允许用户 fresh runtime。
+
+Review required / P1（2026-07-11 17:17 五倍白龙马 fresh runtime，已于同日更正根因）：
+
+- 目标窗口为 `hwnd-3D808B0 / 乌龟的黑头° / 67555`，`round=12`，请求明确携带
+  `npcName=白龙马`、`targetRole=COMBAT_TARGET`、`targetEvidence=CONFIRMED`；不是未发现目标。
+- **第一前置缺失：Story 快关没有接入五倍。** `17:17:56.195` Runner 已将当前窗口识别为 `STORY`；但
+  `NpcClickService` 仅当 request 的 `consumeStoryDialogVisibleEvents=true` 时才在 FIFO 自然边界消费事件并调用
+  `fastClickKnownSmallStoryDialog(...)`。全仓当前唯一 opt-in 是修罗 `ACCEPT_TASK_CLICK_NPC`
+  (`XiuluoTaskV2:2844`)；五倍白龙马构造 request 时没有该字段，且明确
+  `closeStoryBeforeDirectSceneClick(false)` (`WubeiTask:3896`)。因此本轮没有 fast-close 日志或输入，不是快关失败。
+- **第二前置缺失：`Alt+A` 没有发出。** 基线 `3f0a2e7` 的
+  `NpcClickService.tryDirectCombatTargetClick(...)` 先经 input queue 执行 `InputAction.pressAltA()` 再跑目标点击。
+  当前实现删除了这一段，改为只消费 `NPC_CLICK_SMART`，并规定必须由云端返回
+  `PRESS_HOTKEY_THEN_CLICK / ALT_A`。本轮 FIFO 没有该 action，日志也没有 `physical operation=pressAltA` 或
+  `NPC direct-combat click mode entered`，所以它没有进入直接战斗模式。
+- 后续 `MEMORY`、`TOOLTIP`、`PURPLE_FORMULA`、`CTRL_CANDIDATES` 都未产生有效入战 action；这只是两个前置
+  已遗漏后的下游失败，不能把黄字候选归一问题单独当成主因。
+- `17:17:59.972` 本地记录 `NPC direct-combat cloud flow ended without combat or recovery; no local recovery action is selected`，
+  下一条是 `RESOLVE_AFTER_PATHING FAILED`。`17:18:01.074` 既有 `TASK_RECOVERY` 按合同授权
+  `recover-to-main-task -> ROUTE_TO_MAIN_TASK`，所以后续去宝象国是失败恢复路线，不是使用了回城道具。
+  `17:16:50-53` 的 `bag/wubei_return_item.png` 只发生了预扫与缓存，没有道具点击或回城验证。
+- 影响：白龙马已出现而没有继续点击，随后丢弃当前任务并回主任务 NPC，违反本卡“云端普通候选应返回
+  窗口相对 click、本地执行并 verifier”的 FIFO 合同。
+- 返修方向：按白龙马既有业务顺序，先明确并接入“Runner 确认的 Story 遮挡 -> 本地已有
+  `fastClickKnownSmallStoryDialog(...)` -> 重启本次 smart session”的五倍 opt-in；再恢复基线等价的
+  `Alt+A` 前置，或让云端**稳定且必然**下发等价 `PRESS_HOTKEY_THEN_CLICK(ALT_A)`，不得因为该迁移让白龙马
+  在 Alt+A 前就开始候选点击。保留 FIFO/no-local-full-fallback 边界；**不要先改五倍通用
+  `recoverRoundAfterFailure(...)`**，否则只是遮住直接点击链失败。
+- 复验点：同一白龙马 raw screenshot 中应依序出现 `STORY_DIALOG_VISIBLE`、一次本地 fast story click、新 smart
+  session、`physical operation=pressAltA`（或同一原子云端授权 bundle 中的等价物）、目标点击、真实入战后
+  `WAIT_BATTLE_FINISH`。若这些前置完成后仍无可执行候选，再单独审查黄字/FIFO 结果。
+
+设计讨论记录（2026-07-11，未实施）：
+
+- 用户确认当前“先有 click 才下发 `Alt+A`”的倒置模型不成立：`Alt+A` 的目的正是清空普通场景遮挡，
+  让后续截图/目标定位能在直接战斗界面里发生。它必须是独立的 scene-transition action，不能作为已有
+  click candidate 的附属字段。
+- 计划统一两类**允许进入直接战斗模式**的任务事实：
+  1. 五倍白龙马：当前 probe 已由其专用 target-ready dialog 确认白龙马出现；先处理该 Story 遮挡，
+     普通 `NPC_CLICK_SMART` FIFO 已全部无 verified action 后允许进入。
+  2. 旧路线修罗/其他可战斗怪物：当前 task phase 明确是 combat target（绝不能是接任务、维护 NPC），
+     且当前 canonical 地图/坐标已落在目标坐标的既有容差内；普通 smart click 全部无 verified action 后允许进入。
+- 建议协议是两段而非 `PRESS_HOTKEY_THEN_CLICK`：云端依据上述结构化事实先返回
+  `ENTER_DIRECT_COMBAT`；本地经 input queue 单独按 `Alt+A` 并短等；随后重新截图、以
+  `directCombatMode=true` 重新启动云端 `NPC_CLICK_SMART`，云端只返回普通目标 click。这样云端仍拥有
+  “是否允许进入该模式”的决策，本地只执行场景切换/截图/点击，也不会要求云端在被遮挡的旧截图里先找到点。
+- 基线差异待用户最终确认：`3f0a2e7` 的白龙马除了 `storyConfirmed + 普通 smart click 失败` 外，还要求
+  Runner 的 `lastEnterBattleDialogResult == GREEN_TEMPLATE_NOT_FOUND` 才进入 direct-combat；当前用户的新定义
+  把该条件概括为“普通 FIFO 全部失败”。实施前须决定保留该窄门，还是以新结构化事实替代它；不得静默扩大
+  `Alt+A` 适用范围。
+
+Worker implementation 2026-07-11 - CR267 两段式直接战斗（授权 → Alt+A → 二次截图 session）:
+
+- DHXY 本地实现：
+  - `NpcClickService.tryDirectCombatTargetClick(...)` 改为合同三步：先经新
+    `NpcClickSmartCloudDecisionService.authorizeDirectCombat(...)` 发送无截图的
+    `queueOperation=DIRECT_COMBAT_AUTHORIZE` 请求（仅身份 + 结构化任务事实）；仅在云端回答
+    `action=ENTER_DIRECT_COMBAT;status=AUTHORIZED` 后，经输入队列执行基线 `3f0a2e7` 等价的
+    `npcClick:directCombat:enterAltA`（`pressAltA + sleep(350)`），并记录既有
+    `NPC direct-combat click mode entered` 日志；随后重新截取绑定窗口 raw screenshot，以
+    `verificationMode=direct-combat`（cloud context `directCombatMode=true`）新建 `NPC_CLICK_SMART`
+    FIFO session，候选一律普通窗口相对 click，由既有战斗 verifier 确认 `IN_COMBAT` 才算入战。
+  - 云端拒绝/服务不可用/授权传输失败都发生在 `Alt+A` 之前，返回
+    `skipped("direct-combat-cloud-refused")`，不切场景、沿调用方既有失败路径；`Alt+A` 之后失败保持现有
+    `positionRefreshRequired` 语义（五倍重挂 tracker pathing、修罗 recover 回 `NAVIGATE_TO_TARGET`），
+    失败恢复语义未改。
+  - `NpcClickRequest` 新增结构化事实字段：`directCombatProbeTargetReady`、
+    `directCombatNormalFifoUnverified`、`directCombatArrivalTolerance`（默认 false/false/-1）；
+    `NpcClickSmartCloudDecisionService.context(...)` 将三个事实与 `directCombatMode` 一并发往云端；
+    新模型 `NpcClickSmartDirectCombatAuthorization` 承载授权结果。授权请求本身不截图，主链路仍每
+    session 只截一张 base screenshot。
+  - 五倍 Story 快关 opt-in（P1 第一前置）：`WubeiTask.tryClickTrackerCombatTargetSmart(...)` 对
+    `白龙马` 目标设置 `consumeStoryDialogVisibleEvents=true`，复用 CR255 既有“FIFO 自然边界读
+    `STORY_DIALOG_VISIBLE` → `fastClickKnownSmallStoryDialog(...)` → 重启本次 smart session”机制；
+    黄袍/普通 tracker 目标与其他任务不变。
+  - `WubeiTask.tryDirectCombatFromTrackerHint(context, label, probeTargetReady)`（P1 第二前置的事实侧）：
+    probe `storyConfirmed` 分支传 `true`（即 `wubei.probeTargetReady` 事实）；ENTER_BATTLE
+    `runner-destination-direct-combat` 分支传 `false`（走地图+坐标事实分支）。两处均设置
+    `directCombatNormalFifoUnverified=true`（两个调用点都只在普通 smart click 失败后到达）与
+    `directCombatArrivalTolerance=TRACKER_DEST_HINT_ARRIVAL_TOLERANCE(12)`。
+  - `XiuluoTaskV2` 旧路线 target-click-failed recovery 的 direct-combat 请求追加
+    `directCombatNormalFifoUnverified=true` 与
+    `directCombatArrivalTolerance=UNKNOWN_COMBAT_TARGET_DISTANCE_TOLERANCE(10)`；新修罗 tracker
+    快捷路线不经过该调用点，不受影响。
+- external cloud-brain 实现：
+  - `DecisionEngine.npcClickSmart(...)` 新增 `DIRECT_COMBAT_AUTHORIZE` 分支
+    `npcClickDirectCombatAuthorize(...)`：`sessionId/windowId/taskRunId` 缺失、
+    `targetRole != COMBAT_TARGET`（覆盖接任务/维护 NPC/非战斗目标）、
+    `directCombatNormalFifoUnverified != true` 一律 `status=REFUSED` 且不下发任何 action；
+    `sourceTask=WUBEI + directCombatProbeTargetReady=true` → `AUTHORIZED(wubei-probe-target-ready)`；
+    否则要求 canonical 地图 loose 一致且玩家坐标与目标坐标双轴均在 caller 既有容差内 →
+    `AUTHORIZED(combat-target-within-tolerance)`；其余 `REFUSED(facts-not-authorized)`。
+  - `SmartClickRecognizer.actionSpec(...)` 删除 `verificationMode=direct-combat →
+    PRESS_HOTKEY_THEN_CLICK(hotkey=ALT_A)` 的倒置附着；directCombatMode session 的候选一律普通
+    `CLICK`，`Alt+A` 不再进入任何候选 click bundle。
+- 基线核对（`docs/业务逻辑.md`「直接战斗模式（Alt+A）的授权、场景切换与二次截图」全章 + 白龙马章
+  第 20-24 点）：已批准业务差异 = 合同第 6 点（白龙马 direct-combat 门由
+  `lastEnterBattleDialogResult == GREEN_TEMPLATE_NOT_FOUND` 替换为“普通 `NPC_CLICK_SMART` FIFO 全部未
+  verified”）。除此以外按基线等价迁移：Alt+A 输入序列与 350ms 短等待、probe 四分支、Story 语义、
+  候选顺序、坐标策略、失败恢复语义均未改。容差事实取各任务既有常量（五倍 12、修罗 10），云端不新造
+  业务数值。
+- 给 reviewer 的边界说明：
+  - CR73 时代的 direct-combat 前置飞行/坐骑检查（`detectFlyingState` → 必要时 Alt+C）在 CR169 迁移时已
+    从生产移除；本卡按批准范围未恢复该前置。`src/test/java/com/bot/dhxy/service/NpcClickDirectCombatSafetyWiringTest.java`
+    （CR73 源码 guard，main 方法式、不在编译门禁内）因此仍为 stale；是否恢复该前置或废弃该 guard 需
+    用户单独决定，不属于本卡。
+  - 授权决策只读结构化事实（“云端收到任务事实和普通 smart-click 的终态”），`directCombatNormalFifoUnverified`
+    由观察到普通 FIFO 终态的调用点如实设置，云端 fail-closed（缺事实即拒绝）。
+- Verification（no-local-test mode，未新增任何测试）：
+  - GREEN：DHXY `mvn -q -DskipTests compile`（2026-07-11）。
+  - GREEN：external `mvn -q package`（项目 enforcer 强制带测试的完整 package；既有测试全部通过，
+    2026-07-11）。
+- Fresh runtime 复验点（独立运行验收记录，不构成本卡关闭条件）：
+  - 需重启 DHXY 与外部 sidecar/JAR；旧进程仍是倒置模型。
+  - 白龙马同一 raw 流程应依序出现：`STORY_DIALOG_VISIBLE` → `NPC_CLICK_SMART story blocker ...
+    fast-clicked; restarting smart session` → 普通 FIFO 消费完未 verified →
+    `NPC direct-combat cloud authorization answer: authorized=true` → `physical operation=pressAltA` /
+    `NPC direct-combat click mode entered` → 新 session 普通目标 click → verifier `IN_COMBAT` →
+    `WAIT_BATTLE_FINISH`。
+  - 禁止验收条件：接任务/维护 NPC/新修罗快捷路线日志中出现 `pressAltA`；FIFO 候选出现
+    `PRESS_HOTKEY_THEN_CLICK`；未出现 `authorized=true` 便执行 `Alt+A`；裸 `Alt+A`/裸点击被当作入战成功。
+
+Reviewer 2026-07-11 - Review required / P1:
+
+- **P1：白龙马 Story 快关当前仍然不会发生。** `WubeiTask` 仅为白龙马 request 设置
+  `consumeStoryDialogVisibleEvents=true`，但 `NpcClickService.tryClickNpcSmartViaCloud(...)` 在进入 session 前把
+  `storyEventAnchorSequence` 设为 `windowReadyEventBus.currentSequence()`；`pollFreshStoryBlockerEvent(...)` 又严格
+  要求 `event.sequence > anchor`。白龙马 `wubei.probeTargetReady` 的 Story 是 Runner/provider 在
+  `tryClickProbeSpawnedTarget(..., storyConfirmed=true)` 之前已经确认的事实，因此它的 sequence 必然不大于 anchor，
+  第一轮 FIFO 永远不会走 `fastClickKnownSmallStoryDialog(...)`。这与卡面“先关闭该 Story 遮挡，再跑普通 FIFO”冲突。
+- 影响：本次要修的原始故障仍会重现——第一张普通场景截图继续被 target-ready Story 遮挡；即便后续
+  `ENTER_DIRECT_COMBAT`/`Alt+A` 两段协议正确，也没有满足白龙马的首个前置动作。
+- 返修方向：在**五倍已确认 `wubei.probeTargetReady` 的任务分支**直接调用现有
+  `DialogService.fastClickKnownSmallStoryDialog(...)`，成功提交后才发起第一轮 ordinary `NPC_CLICK_SMART`。
+  这是 task-owned 的已知 Story，不应借 CR255 的“新鲜 blocker”机制；不要放宽 `NpcClickService` 的全局
+  `sequence > anchor` 规则，否则修罗接任务会重新消费陈旧未知 Story。
+- 复验点：白龙马 target-ready 后必须先见一次 task-owned fast-close 输入，再产生首个 `NPC_CLICK_START`；
+  若 fast-close 未提交，直接走既有失败路径，不能在遮挡图上继续 FIFO。修后重新 review CR267。
+
+Worker repair 2026-07-11 - Reviewer P1（task-owned Story 先关再开 session）:
+
+- 修复：按返修方向，`WubeiTask.tryClickProbeSpawnedTarget(..., storyConfirmed=true)` 在发起任何
+  smart click 之前直接调用既有 `DialogService.fastClickKnownSmallStoryDialog("wubei:probe-target-ready-story:"
+  + label)`；仅在 fast-close 输入序列成功提交后才继续 `tryClickTrackerCombatTargetSmart(...)`（即首个
+  `NPC_CLICK_START` 之前必有一次 task-owned fast-close 输入）。fast-close 未提交（pause/stop 等）时记录
+  `probe target-ready story fast-close not submitted` 并直接 `return false`，走既有失败路径，不在遮挡图上
+  开 FIFO。
+- 未放宽 `NpcClickService` 全局 `sequence > anchor` 规则：CR255 fresh-blocker 机制原样保留；白龙马 request
+  级 `consumeStoryDialogVisibleEvents=true` opt-in 保留，仅用于 session 中途新出现（sequence > anchor）的
+  Story 遮挡，不再承担 target-ready Story 的首关责任。`storyConfirmed=false` 分支与
+  `runner-destination` 分支行为不变。
+- Verification（no-local-test mode）：GREEN：DHXY `mvn -q -DskipTests compile`（2026-07-11）。外部
+  `dhxy-cloud-brain` 本轮无改动，不需重新 package。
+- 状态：P1 已按返修方向修复，待外部 reviewer 复审（复验点：白龙马 target-ready →
+  `dialog known small story fast-click: source=wubei:probe-target-ready-story:*` → 首个 `NPC_CLICK_START`
+  顺序出现；fast-close 未提交时无 `NPC_CLICK_START`）。
+
+Reviewer 2026-07-11 - Review required / P1（云端无法区分禁止的新修罗 tracker shortcut）:
+
+- **P1：`DIRECT_COMBAT_AUTHORIZE` 缺少 route/scenario 事实，不能按已批准合同 fail-closed。**
+  `NpcClickService.directCombatAuthorizeCloudRequest(...)` 发给云端的实际区分信息只有
+  `targetRole`、`sourceTask`、`directCombatProbeTargetReady`、`directCombatNormalFifoUnverified`、
+  `directCombatArrivalTolerance` 与位置；`DecisionEngine.npcClickDirectCombatAuthorize(...)` 随后对非白龙马
+  请求只检查 `COMBAT_TARGET + FIFO 未 verified + sameLooseMapName + 坐标容差`。
+- 因而“新修罗 tracker 快捷路线”若有一次调用该授权入口，且携带该路线自然具备的
+  `COMBAT_TARGET + xiuluo_v2 + 同图近点 + FIFO 未 verified`，会被云端授权 `ENTER_DIRECT_COMBAT`。当前
+  `XiuluoTaskV2` 恰好没有让 tracker shortcut 到达该调用点，只是调用图的偶然保护，不是云端授权合同的保护。
+  这与本卡 Approved business contract 第 3 条及 Implementation scope 的“不得把 tracker-shortcut 误授权”冲突。
+- 修复方向：将任务路线/直接战斗场景作为结构化 request fact（例如
+  `WUBEI_PROBE_TARGET_READY`、`LEGACY_COMBAT_TARGET`、`TRACKER_SHORTCUT`），由云端显式 allowlist 前两者，
+  对 `TRACKER_SHORTCUT`、缺失值和未知值一律 `REFUSED`；保留已有 role/FIFO/地图/容差检查，不能仅靠本地
+  caller 保证。修后需重新编译 DHXY 与 external cloud-brain，再由 reviewer 复审。
+- 本轮复审范围：`docs/业务逻辑.md`「直接战斗模式」合同、`WubeiTask.tryClickProbeSpawnedTarget(...)` 的
+  P1 返修、`NpcClickService.directCombatAuthorizeCloudRequest(...)`、`DecisionEngine.npcClickDirectCombatAuthorize(...)`
+  与 `XiuluoTaskV2` 两条 direct-combat 调用。结论：**不通过 / Review required（P1）**。
+
+Worker repair 2026-07-11 - Reviewer P1 #2（direct-combat 场景枚举 allowlist）:
+
+- 修复：按返修方向把任务路线/场景做成不可混淆的结构化 request fact。
+  - DHXY 新增枚举 `com.bot.dhxy.model.npc.NpcDirectCombatScenario`：`WUBEI_PROBE_TARGET_READY`、
+    `LEGACY_COMBAT_TARGET`、`TRACKER_SHORTCUT`（后者专供快捷路线，云端无条件拒绝，防止未来调用点
+    伪装成 allowlisted 场景）；`NpcClickRequest` 新增 `directCombatScenario` 字段（默认 null，即
+    “未打包该事实的请求不可能被授权”）；`NpcClickSmartCloudDecisionService.context(...)` 以
+    `directCombatScenario` 键发送。
+  - 调用点：`WubeiTask.tryDirectCombatFromTrackerHint(...)` 按 `probeTargetReady` 填
+    `WUBEI_PROBE_TARGET_READY` / `LEGACY_COMBAT_TARGET`；`XiuluoTaskV2` 旧路线 direct-combat 填
+    `LEGACY_COMBAT_TARGET`。tracker 快捷路线仍无调用点，且即使未来出现也必须以 `TRACKER_SHORTCUT`
+    自报并被云端拒绝。
+  - 云端 `DecisionEngine.npcClickDirectCombatAuthorize(...)` 改为显式 allowlist 分支：
+    `WUBEI_PROBE_TARGET_READY` 分支仍要求 `sourceTask=WUBEI + directCombatProbeTargetReady=true`，否则
+    `REFUSED(probe-facts-missing)`；`LEGACY_COMBAT_TARGET` 分支保留原 map/容差/坐标检查；其余（含
+    `TRACKER_SHORTCUT`、缺失、未知值）一律 `REFUSED(scenario-not-allowlisted)`。原有
+    role/FIFO/identity 前置检查全部保留。
+- Verification（no-local-test mode，未新增任何测试）：
+  - GREEN：DHXY `mvn -q -DskipTests compile`（2026-07-11）。
+  - GREEN：external `mvn -q package`（enforcer 强制带测试完整 package，既有测试全部通过，2026-07-11）。
+- 状态：P1 #2 已按返修方向修复，待外部 reviewer 复审。复验点：`DIRECT_COMBAT_AUTHORIZE` 请求 context
+  必含 `directCombatScenario`；`TRACKER_SHORTCUT`/空值请求得到
+  `REFUSED(cloud-brain-direct-combat-scenario-not-allowlisted)`；白龙马/旧路线两分支原有授权理由不变。
+
+Reviewer 2026-07-11 - Review required / P1 #3（FIFO 终态被 boolean 丢失）:
+
+- **P1：direct-combat 仍没有证明普通 `NPC_CLICK_SMART` FIFO 已完整消费。**合同要求 direct-combat 前的
+  普通 FIFO “全部未得到 verified action”。但 `NpcClickService.clickNpcSmart(...)` 只将
+  `tryClickNpcSmartViaCloud(...)` 的所有未验证结果压成 `false`；`false` 同时覆盖 cloud inactive、
+  `NPC_CLICK_START` 身份/传输失败、`INVALID` message、candidate budget 到顶、stop/cancel 与真正的 queue `END`。
+  随后 `WubeiTask.tryDirectCombatFromTrackerHint(...)` 和 `XiuluoTaskV2` 旧路线调用点都无条件写入
+  `.directCombatNormalFifoUnverified(true)`。
+- 影响：首次普通 smart session 可能根本没有成功启动或还没自然走到 `END`，但第二个授权请求仍将“FIFO 已完整
+  无 verified action”作为 true 传给云端；route/scenario 门即使正确，也可能授权 `Alt+A`。这违反本卡合同第 2 条，
+  也把断云/协议错误错误地扩大成场景切换。
+- 修复方向：`NpcClickService` 必须将 FIFO 的结构化终态（至少 `END_WITHOUT_VERIFIED_ACTION` 与非等价的
+  `DISABLED`、`START_FAILED`、`PROTOCOL_FAILED`、`CANCELLED`、`BUDGET_EXHAUSTED`）回传给 task caller；只有
+  `END_WITHOUT_VERIFIED_ACTION` 或用户另行批准的等价成功耗尽终态才可填
+  `directCombatNormalFifoUnverified=true`。其他终态保持既有失败路径且不发 direct-combat 授权；云端对缺失/false
+  继续拒绝。不能以单个 boolean 或“调用过 clickNpcSmart”代替真实 queue terminal。
+- 复验点：普通 FIFO `NPC_CLICK_START` 失败/disabled/invalid/budget-exhausted 时日志中没有
+  `DIRECT_COMBAT_AUTHORIZE` 或 `pressAltA`；只有收到本 session 的 `END` 且无 verified action 后，才允许发授权。
+  修后重新编译 DHXY 与 external cloud-brain，再复审。结论：**不通过 / Review required（P1 #3）**。
+
+Worker repair 2026-07-11 - Reviewer P1 #3（FIFO 结构化终态与本地授权前置）:
+
+- 修复：
+  - `NpcClickService` 新增 `clickNpcSmartWithOutcome(NpcClickRequest)`，返回新模型
+    `com.bot.dhxy.model.npc.NpcSmartClickOutcome`（`verified`、`normalFifoConsumedUnverified`、
+    `terminalStatus`）。`normalFifoConsumedUnverified` 只在终态为真实 queue `END`（内部
+    `CLOUD_NO_ACTION`，即 FIFO 全部消费且无 verified action）时为 true；`DISABLED`（cloud inactive）、
+    `REQUIRED_FAILURE`（START 失败 / INVALID message / 协议错误 / stop/cancel / WAIT 超时 / candidate
+    budget 到顶 / story-restart 上限）一律 false。原 boolean `clickNpcSmart(...)` 保留为兼容入口
+    （委托新方法），其他任务调用点行为不变。
+  - `WubeiTask.tryClickTrackerCombatTargetSmart(...)` 改返回 `SmartCombatClickAttempt(clicked,
+    normalFifoConsumedUnverified)`；probe 分支与 ENTER_BATTLE `runner-destination` 分支把该结构化事实
+    传入 `tryDirectCombatFromTrackerHint(..., normalFifoConsumedUnverified)`，不再手填 true。注意：smart
+    click verified 但 enter-battle prepared dialog 未消费时，该事实为 false（FIFO 出过 verified action），
+    direct-combat 不会被授权——这正是合同第 2 条“普通 FIFO 全部未 verified”的忠实执行。
+  - `XiuluoTaskV2` CLICK_TARGET_NPC 用 `clickNpcSmartWithOutcome(...)` 捕获终态，经
+    `recoverTargetClickFailure(context, state, normalFifoConsumedUnverified)` 传入旧路线 direct-combat
+    请求，不再手填 true。
+  - 本地授权前置（复验点第一句的落实）：`NpcClickService.tryDirectCombatTargetClick(...)` 在
+    `directCombatNormalFifoUnverified=false` 时直接
+    `skipped("direct-combat-normal-fifo-terminal-not-end")`，**不发送** `DIRECT_COMBAT_AUTHORIZE`，日志为
+    `NPC direct-combat skipped; ordinary smart FIFO did not genuinely END unverified...`；云端对缺失/false
+    的既有拒绝逻辑保留为第二道门。
+- Verification（no-local-test mode，未新增任何测试）：
+  - GREEN：DHXY `mvn -q -DskipTests compile`（2026-07-11）。
+  - GREEN：external `mvn -q package`（enforcer 强制带测试完整 package，既有测试全部通过，2026-07-11；
+    本轮云端代码未改，按 reviewer 要求重新打包验证）。
+- 状态：P1 #3 已按返修方向修复，待外部 reviewer 复审。复验点：`NPC_CLICK_START` 失败/disabled/invalid/
+  budget-exhausted 时日志无 `DIRECT_COMBAT_AUTHORIZE`、无 `pressAltA`，出现
+  `direct-combat-normal-fifo-terminal-not-end`；只有本 session 真实 `END` 且无 verified action 后才发授权。
+
+Reviewer 2026-07-11 - Approved（CR267 全量复审）:
+
+- 审查范围：`docs/业务逻辑.md`「直接战斗模式（Alt+A）」合同；白龙马
+  `WubeiTask.tryClickProbeSpawnedTarget(...)` 与 task-owned Story 快关；五倍/修罗两条 direct-combat 调用；
+  `NpcClickService` 的 `Alt+A` 原子输入、二次 session 与 FIFO terminal；
+  `NpcClickSmartCloudDecisionService` request context；external `DecisionEngine` 授权分支。
+- P1 #1 已关闭：target-ready Story 在首个 smart session 前直接调用
+  `fastClickKnownSmallStoryDialog("wubei:probe-target-ready-story:...")`；未提交则不启动 FIFO，CR255 全局
+  stale-event anchor 未放宽。
+- P1 #2 已关闭：`NpcDirectCombatScenario` 成为授权事实，云端只 allowlist
+  `WUBEI_PROBE_TARGET_READY` / `LEGACY_COMBAT_TARGET`；`TRACKER_SHORTCUT`、空值、未知值均
+  `REFUSED`，不依赖调用图偶然保护。
+- P1 #3 已关闭：`NpcSmartClickOutcome` 只在 cloud FIFO 真正消费到 `END` 且无 verified action 时给出
+  `normalFifoConsumedUnverified=true`。`DISABLED`、START/协议失败、取消、超时和 budget 到顶均为 false；
+  `tryDirectCombatTargetClick(...)` 对 false 直接 skip，连 `DIRECT_COMBAT_AUTHORIZE` 都不发。五倍和旧路线修罗
+  都传递该终态，不再手填。
+- 现场验证：DHXY `mvn -q -DskipTests compile` exit `0`；external cloud-brain `mvn -q package` exit `0`。
+  未发现新的 P0/P1/P2。结论：**通过 / Approved**。fresh runtime 仍独立核验顺序：白龙马先 fast-close、只有
+  ordinary FIFO END 才授权、随后 `pressAltA -> 新 raw screenshot/session -> verified IN_COMBAT`；禁止路径不得出现
+  `pressAltA`。
+
+Implementation heartbeat closed 2026-07-11:
+
+- 实施 agent 按 AGENTS.md 第 15 条确认卡内外部 reviewer 已写入明确 `通过 / Approved` 最终结论、且无未解决
+  P0/P1/P2 或返修要求，于 `2026-07-11` 停止并删除 CR267 实施 heartbeat。fresh runtime 是独立运行验收记录，
+  按规则不构成本 heartbeat 的存续条件；上方 Approved 段落所列 fresh 核验顺序仍待用户运行时核对。
 
 Worker repair 2026-07-03 - async START producer and disabled MEMORY skip:
 
@@ -14125,6 +14470,20 @@ Acceptance:
   are not accidentally changed.
 
 Card CR49: 黄袍怪 fresh validation and regression check
+
+### Fresh runtime blocker（2026-07-11 17:03:25 - 17:07:01）
+
+- **P1，不通过。** 本轮黄袍链的第 6 场结束后，`17:06:51.651` 虽然打开了 5 秒
+  `FIRST_AID` 窗口，但 `17:06:56.895` 先命中 `chained combat limit reached: count=6 max=5`，
+  `RETURN_HOME` 直接成为 `FAILED`。这里尚未读取链末 tracker，也尚未进入
+  `useReturnItemAndVerifyStartMap(...)`；因此没有任何回城道具输入或起始地图验证。
+- `17:06:57.643` 的 `TASK_RECOVERY` 将失败恢复为 `ROUTE_TO_MAIN_TASK`，随后
+  `17:07:01.256` 以 `wubei:accept-npc:map` 从平顶山导航宝象国。这解释了观察到的“任务完成后靠
+  导航回去”：它不是回城成功后的接任务导航，而是上限失败后的恢复导航。
+- `3f0a2e7` 同样存在该 `combatCount > MAX_CHAINED_COMBAT_ATTEMPTS -> FAILED` 分支；但当前
+  `docs/业务逻辑.md` 黄袍链末合同要求 tracker 消失/不再黄袍时使用回城道具。保护上限是否允许抢在
+  tracker 链末判定之前失败，属于业务冲突，不能在迁移中自行选择。下一步验收点：用户确认上限语义后，
+  以黄袍末场日志证明“先判链末，再按批准语义回城或失败”。
 
 - [ ] Claim the card by changing the sprint board row from `Unclaimed | Ready` to
   `<agent> | In Progress` before validation.
@@ -25646,7 +26005,10 @@ Goal:
 12a. `世界地图黄色路线结果持久记忆`：用户已决定本地不保留任何跨运行路线记忆。删除本地 JSON/store/本地 fast-path/本地学习；云端 `RouteMemoryStore` 为唯一持久属主。窗口内只保留本次导航的 transient outcome 关联，用于把 Runner 的成功/失败回报给云端，不能落盘或参与本地选点。
 13. [x] ~~`DialogService` 对话选项关键字 OCR。~~ 不迁移；旧 `GameTextLineOcrService.readDialogOptionWords(...)` 当前无生产调用，实际 dialog 走任务专用模板/云端 `DIALOG_POLICY`。
 14. [x] ~~NPC / 怪物黄字、紫字名字 OCR。~~ 不迁移；旧 `GameTextLineOcrService` 通用 API 当前无生产调用，`NPC_CLICK_SMART` 已使用独立云端链路。
-15. `OcrRoiMemoryService` OCR ROI / Vision memory。
+15. `OcrRoiMemoryService` OCR ROI / Vision memory。→ 处置方案已并入 CR257（OCR 引擎整体上云）
+    切分 C1：盘点确认该类与其 JSON 数据（config/vision_memory.json、ocr_roi_memory.json）当前
+    零调用（smart-click 记忆已在云端 NpcClickSmartCloudDecisionService），处置=直接删除不迁移；
+    待 CR257 批准实施。
 16. [x] ~~`LocationVisionService` 旧位置 OCR / Baidu OCR fallback。~~ 已由 CR246 完成代码迁移（云端
     `READ_LOCATION` 内 OCR fallback）；replay/fresh runtime 待验。
 
@@ -30438,6 +30800,23 @@ Card CR252: 战斗模板检测仅在确认入战动作后临时授权
 
 Status:
 
+- **Fresh runtime P1（2026-07-11 17:03:25 - 17:06:56），不通过。** 黄袍连战 epoch 92-96 中，
+  日志只有 `team combat phase opened` 和四个成员的
+  `BattleRadarService ... external combat verdict applied: inCombat=true`；没有任何
+  `team combat phase exit confirmed`、`inCombat=false` 外部 verdict、成员
+  `auto-combat exit detected`、成员战后 `first-aid` precheck 或 `pending follower first-aid`。
+  队长每场仍正常打开并在 5 秒后关闭 `FIRST_AID` capability，所以不是窗口没开，而是成员根本没有
+  收到本轮已脱战事实，无法进入既有补给流程。
+- 源码证据：`confirmTeamCombatPhaseExitedForLeader(...)` 有生产调用，但现有五倍调用只在
+  `AutoCombatService.reconcileReturnHomeVerifiedCombatState(...)` 的“回城地图验证成功”后触发；修罗另有
+  自己的 trusted-return 调用。黄袍的中间连战不回城，所以每场结束到 5 秒 `FIRST_AID` 窗口之间没有
+  `exited=true` / `applyExternalCombatStateVerdict(false, ...)` 的来源。下一场入战前
+  `AutoCombatService.initializeForCurrentWindow()` 又会把旧 epoch 直接 invalidated，成员因而从
+  `IN_COMBAT` 跨越了中间黄袍战斗退出。
+- 修复方向：只在既有“中间黄袍战斗终态已确认”事实点调用该确认方法，广播 `FREE`；候选快脱战不得调用，
+  不得改成员为自行 template 扫描，也不得改变黄袍 5 秒窗口/补给 policy。下一次验收：成员日志必须在
+  FIRST_AID 窗口内出现 `external ... inCombat=false`、自身 exit 与已存在的补给 precheck/plan；没有
+  补给需求时应明确记录 HEALTHY，而不是完全无成员 exit 记录。
 - Review P1 已修（2026-07-10 第四轮）：pause / stop / runner/session 完结 / group/binding 失效
   统一并入同一只读降级语义。实现：
   - `handleCombatTick` 成员流的只读分支条件重构为 `isMemberReadOnlyDegrade(...)`：
@@ -31919,6 +32298,14 @@ Card CR250: NavigationService 决策/知识上云父卡（防破解：本地退�
 
 Status:
 
+- **卡族冻结（2026-07-11，用户指令"一次性规划完所有卡、中途不能再创建子卡"）**：navigation
+  migration 全族卡号最终固定为 9 张——CR250（父）、CR251（B 设计）、CR258（B 实施）、CR259
+  （C 设计）、CR260（C 实施）、CR261（D 设计）、CR263（D 实施，预建）、CR262（E 删除，Blocked
+  on fresh）、CR264（收口：fresh 汇总核销 + CR260 窄窗口处置 + P3 降噪 + 父卡关闭，预建）。
+  此后任何 reviewer 返修、用户拍板、fresh 发现一律在对应既有卡内消化（返修响应/合同修订写回
+  同卡）；若 reviewer 坚持需要拆新卡，升级用户决定；超出全族范围的新需求 = 用户新立项，不属
+  本 migration。散落各卡的"另立卡"尾巴已收编：CR260 P3 降噪与已知窄窗口处置 → CR264；D 实施
+  → CR263（不再"届时查空号"）。
 - Approved（方案 review）/ 2026-07-11 reviewer：CR251 v5 的有序多候选预取已补齐用户选择 B 所需的
   批次有效期与作废边界；本地确认、200ms、60 秒、候选耗尽、input/intent/watcher/park 全部保持基线。
   本父卡只批准架构边界和子卡顺序；C/D 仍须单独立卡、对照各自基线并 review 后实施。
@@ -32475,6 +32862,1162 @@ token/stale 协议复杂度；②轮换只发生在首点未起步的失败场�
 因此 CR251 **Approved（方案 review）**，并连带 CR250 的执行器边界与子卡顺序 **Approved（方案 review）**。
 本结论不授权直接实施 `NAVIGATION_ROUTE_PLAN` 子卡 C/D；它们仍必须各自建卡、明确触及的旧逻辑并通过 review。
 
+**实施子卡指针（2026-07-11 Codex）**：用户已批准按本卡 Approved 方案开工 navigation migration；
+Java 实施由 **CR258** 承担（见 CR258 卡），双仓库自 `xiuluo-migration` 快照 `91d3b07` 开出专用分支
+`navigation-migration`。本卡与 CR250 的 Approved 结论文本不再改动。
+
+Card CR263: 世界地图 attempt 状态机实施（CR261 设计卡实施件，预建）
+
+Status:
+
+- 实现者 heartbeat 已按 AGENTS 规则 15 于外部 reviewer Approved 后停止并删除（2026-07-11，job
+  fa44848f）。子卡 D（CR261 设计 + CR263 实施）全部闭环；全族剩 CR262（E 删除）与 CR264（收口）
+  均 Blocked on fresh，钥匙在用户（跑 fresh 或明确豁免）。
+- **Reviewer 复审通过 / Approved（2026-07-11）**：按 CR261 v2 Approved / 用户拍板 A / CR260
+  绑定纪律复审 DHXY 与 cloud-brain 当前实现，首轮 author P1/P2 均已闭环；reviewer 现场双端 compile
+  通过，未发现 P0/P1/P2 或待返修项。fresh runtime 归 CR264 汇总，不阻塞本结论。
+- **实施+author 自审完成 / 待外部 reviewer（2026-07-11）**：CR261 v2 已 Approved（用户拍板 A），前置满足开工双端；云端 stage6 改发 CONSUME(world-map-inner-gate)→innerGateAfterConsume→WORLD_MAP_PREPARE_AND_CLICK(attempt-1/2)+CLOSE_ROUTE_SEARCH_PANEL 状态机、CLICKED_CONFIRMED→USE_WORLD_MAP_RESULT(ownedByNestedRoute)；本地 executeWorldMapPrepareAndClick(独占段零改动+CLICKED 同段原子注册 intent 含坐标+route memory)、inner gate 复用 CONSUME、加 USE_WORLD_MAP_RESULT 终态背书 worldMapClickedConfirmed；旧 submit/perform @Deprecated(CR263)。author 3 维度自审 1P1（PREPARE_FAILED 误触发 CLOSE，三代理独立收敛）+1P2（CLOSE mismatch 中断语义）全修，双侧 compile exit 0；待外部 reviewer + fresh（归 CR264）。
+- 历史：**预建 / Blocked on CR261 design Approved**（2026-07-11）：按用户"一次性规划全族卡、中途不再建卡"
+  指令预建。CR261 设计 review 通过（含范围收窄论证被认可或经用户拍板）后本卡自动进入实施；设计
+  review 的返修结论若改变方案，实施以 CR261 最终 Approved 文本为准，在本卡内消化，不另立卡。
+
+### 用户流程指令记录（2026-07-11，最终版）
+
+用户裁定：**自审可以做（交付前 QA、自修缺陷），但自审结论永不算 Approved，且不得凭自审推进下一
+环节**——每个环节（设计→实施、实施→下一卡）的推进钥匙只有外部 reviewer 在卡内写的明确"通过/
+Approved"。本卡下方的"author 对抗性自审"记录按此定位：已修缺陷（1P1+1P2）的事实记录，**无 review
+效力**；本卡通过与否完全以外部 reviewer 结论为准。全族（含 CR262/CR264）同此规则。
+
+### 2026-07-11 author 对抗性自审（3 维度，P1/P2 已修）
+
+维度：attempt 循环等价 / inner gate 合同 / intent 原子性与 fail-closed。干净通过：inner gate 两次
+gate（外层 stage5 + wrapper inner，reason/suffix 逐字、次数与基线一致、attempt-2 不重入 gate）、
+三态映射、CLICKED 时 intent(含坐标)+route memory 同独占段原子注册、USE_WORLD_MAP_RESULT 仅由本地
+worldMapClickedConfirmed 背书（云端凭空发即 fail-closed）、循环 5 step 单调终止、断云 MAP_NOT_REACHED。
+发现并修复：
+
+1. **P1（三代理独立各自发现，高置信）PREPARE_FAILED 误触发 CLOSE**：基线 `if (!prepared) return
+   false;` 在 prepare 失败时**零** UI 清理输入；v1 把 PREPARE_FAILED 与 NOT_FOUND/attempt-2
+   WRONG_DESTINATION 归入同一 `CLOSE_ROUTE_SEARCH_PANEL(failed)` 分支，多做一次
+   `closeMapSearchInputByX2Direct`（截图 + 命中 x2.png 即真点击 + 移鼠标），可能在世界地图未开的
+   意外状态误点。修复：云端 WORLD_MAP_PREPARE_AND_CLICK 的 `PREPARE_FAILED` 直接
+   `TERMINAL(MAP_NOT_REACHED, MAP_ROUTE_SUBMIT_FAILED)`，不发 CLOSE；NOT_FOUND/attempt-2
+   WRONG_DESTINATION 仍走 CLOSE(failed)——与基线四条退出路径逐一对齐。
+2. **P2 CLOSE mismatch 250ms 中断语义丢失**：基线 `if (!TaskSleep.sleep(250)) return false;` 中断
+   即整链失败；v1 丢弃返回值、中断后仍排 attempt-2 独占输入。修复：本地 CLOSE action 的
+   destination-mismatch sleep 返回 false → 上报 outcome `interrupted`；云端据此走
+   `MAP_ROUTE_SUBMIT_FAILED` 失败终态，不再进 attempt-2。
+
+修复后双侧 compile exit 0。待外部 reviewer 复核 + fresh（归 CR264 汇总）。
+
+### 实施范围（以 CR261 最终 Approved 文本为准）
+
+1. 云端：`NavigationRoutePlanResolver` 扩展 attempt 状态机（gate 二次求值以新鲜观察复刻、
+   attempt=1/2 分派、`WRONG_DESTINATION`→CLOSE(mismatch,settle)→第二次、其余→CLOSE(failed)→
+   失败终态、CLICKED_CONFIRMED→`USE_WORLD_MAP_RESULT` 终态 ownedByNestedRoute=true）。
+2. 本地：`SUBMIT_WORLD_MAP_SEARCH` 拆为 `WORLD_MAP_PREPARE_AND_CLICK`(attempt)（独占段
+   prepare+clickYellow 零改动 + CLICKED 时同独占段原子完成 intent 注册(含坐标)与
+   `rememberPendingRouteOutcome`）与 `CLOSE_ROUTE_SEARCH_PANEL`(reason, settle)；终态事实门加
+   `CLICKED_CONFIRMED` 背书；`submitWorldMapSearchAndClickDestination`/
+   `performWorldMapSearchAndClickDestination` 转 `@Deprecated(since="CR263")` rollback。
+3. 纪律沿用：CR260 绑定/ledger/执行时身份门、不新增计数护栏、message 零改动、拍板边界内独占段
+   时序零改动；断云=MAP_NOT_REACHED fail-closed。
+4. 收尾：双侧编译门禁、author 对抗性自审（阶梯等价/终态门/协议对称/执行器保真/生命周期五维）、
+   署名写卡、dashboard、heartbeat 等 reviewer 至 Approved。
+
+### 验收
+
+沿用 CR261 卡验收 6 条（fresh 部分归 CR264 收口卡汇总核销）。
+
+### 2026-07-11 reviewer 实施复审：通过 / Approved
+
+审查范围：CR261 v2 Approved、用户拍板 A、CR260 已批准的 route-plan 绑定/ledger/执行时身份门、
+`docs/业务逻辑.md` 基线等价约束，以及当前 DHXY `NavigationService` 与 cloud-brain
+`NavigationRoutePlanResolver` / `DecisionEngine` diff。现场复验：DHXY `mvn -q -DskipTests compile`
+exit 0；cloud-brain `mvn -q compile` exit 0。未运行本地自动化测试，遵守 no-local-test mode。
+
+- inner gate 复用 `CONSUME_PREPARED_ROUTE_DIALOG(world-map-inner-gate)`，严格在 outer stage5 后、
+  attempt 1 前恰好一次运行；CLICKED/FAILED/SKIPPED 和两类 yield 均沿用 CR260 已批准的 message、
+  事实门与 intent 三守卫，`WRONG_DESTINATION` 的 attempt 2 不会重入 gate。
+- `WORLD_MAP_PREPARE_AND_CLICK` 保留既有独占 prepare 输入段、既有云端路线行/终点小地图子链和
+  原有 settle 时序；CLICKED 后在同一本地 action 内登记含坐标的 pathing intent 与 route memory，云端
+  terminal 只在 `worldMapClickedConfirmed` 本地事实存在时产生 `USE_WORLD_MAP_RESULT`。
+- P1 已闭环：`PREPARE_FAILED` 直接失败，未执行基线不存在的 close；`NOT_FOUND`、attempt 2
+  `WRONG_DESTINATION` 才 close(failed)，attempt 1 mismatch 按 close -> 250ms -> attempt 2。
+- P2 已闭环：mismatch close 后的 `TaskSleep.sleep(250)` 若中断，outcome 为 `interrupted`，云端直接
+  `MAP_ROUTE_SUBMIT_FAILED`，不会排入 attempt 2。
+
+结论：**通过 / Approved，无 P0/P1/P2、无待返修项。** fresh runtime 由 CR264 独立汇总：核验 step
+顺序、inner gate 一次性、mismatch close+250ms+retry、坐标 intent/route memory 与 CLICKED 同 action，
+以及五开 binding/epoch 拦截。
+
+Card CR264: navigation migration 收口卡（fresh 汇总核销 + 遗留项处置 + CR250 父卡关闭）
+
+Status:
+
+- **预建 / Blocked on（CR263 Approved + 用户跑 fresh）**（2026-07-11）：按"一次性规划全族卡"指令
+  预建。本卡是全族**最后一张卡**，吸收此前各卡记录的全部"另行处理"尾巴，完成后 navigation
+  migration 整体关闭；本卡自身范围内的工作不再产生新卡。
+
+### 范围（吸收的遗留尾巴，逐项来源）
+
+1. **fresh 验收汇总核销**：CR258（5 证据点 + 第 1 轮部分覆盖的未覆盖 6 项）、CR260（六级 step
+   序列/14 message/断云/五开/已记录窄窗口）、CR263（世界地图 attempt 时序 6 条）三链 fresh 证据
+   统一采集核对，写入各卡 fresh 记录并在本卡汇总。
+2. **CR260 已知窄窗口处置**（来源：CR260 返修响应"若 fresh 暴露实际影响，按合同选项交用户拍板"）：
+   fresh 无影响→记录关闭；有影响→**在本卡内**完成"点击携带本地原子终态映射"合同修订 + 用户
+   AskUserQuestion 拍板 + 实施返修，不另立卡。
+3. **CR260 P3 日志降噪**（来源：CR260 自审记录"fresh 通过后可另卡降噪"→收编入本卡）：fresh 通过
+   后为 `observeRoutePlanFacts` 的 `shouldYield` 大日志加节流/降级（仅日志层，零行为影响，实施
+   前列 diff 供 reviewer 快速过目）。
+4. **CR262（子卡 E）执行确认**：E 的删除清单在其 fresh 前置满足后执行；本卡核验删除后全库
+   grep 零命中 + 双侧 compile，并确认"本地磁盘不保存参数表"承诺成立。
+5. **CR250 父卡关闭**：全族（B/C/D/E）Approved + fresh 核销后，把 CR250 状态收口为 Done，
+   记录威胁模型承诺的最终成立状态与全族卡号索引。
+
+### 明确排除（不在本卡也不在本族）
+
+- 张闻废弃路线删除（借 CR208 item 12，属 CR208 族）；XiuluoTaskV2 `parseTaskPanelObjectiveByOcr`
+  离线链删除（属 CR257 OCR 卡 C2）；`NAVIGATION_ROUTE_PLAN` 之外的任何新导航能力=用户新立项。
+
+Card CR261: 世界地图搜索序列 attempt 级编排上云（CR250 子卡 D 设计卡）
+
+Status:
+
+- **Reviewer v2：通过 / Approved（2026-07-11，设计 review）**：用户已明确选择 A，P1-1 范围收窄获批；
+  P1-2 已以一次性 inner route-dialog gate 子状态机补齐并逐项对齐 wrapper 基线。无 P0/P1/P2，允许
+  预建实施件 CR263 按本卡最终文本开工；fresh 属实施后的独立验收。
+- **用户拍板 A + Codex 返修完成 v2（2026-07-11）/ 待 reviewer 复核**：P1-1 用户经 A/B 提问明确
+  选择 **A（批准收窄）**——云端只拥有 attempt 状态机，独占输入段及段内模板分支永久保持本地复合
+  原子；P1-2 已补"inner route-dialog gate 子状态机（v2）"节（与外层 stage5 共享 action 词表、
+  actionContext=world-map-inner-gate、CLICKED/FAILED/SKIPPED 三态到 message/intent 守卫完整映射、
+  gate 每次 submit 严格一次且在 attempt=1 之前、attempt=2 不重跑），并校正基线行号（intent 注册
+  /route memory 在 wrapper L2239-2242、成功 message L2243，非旧引 L1938-1941）。
+- 历史：**不通过 / Blocked（2026-07-11，设计 reviewer）**：发现 2 个 P1：其一，attempt 级收窄相对
+  CR250 子卡 D 的“打开/输入/滚动/截图/点行全部变成云端 plan steps”属于范围/所有权改变，尚无用户
+  明确拍板；其二，`submitWorldMapSearchAndClickDestination` 内部第二次 route-dialog gate 的完整
+  consume/outcome/终态合同未落到 D 状态机。详见本卡末尾 reviewer 设计复审；在用户决策并补齐合同前，
+  不得开 CR263 Java 实施。
+- 实施卡指针（卡族冻结）：本卡 Approved 后实施由**预建的 CR263** 承担，不再新建卡；设计 review
+  返修改变方案时以本卡最终 Approved 文本为准，CR263 内消化。
+- Ready / pending review（2026-07-11）：设计卡，未实施。用户"完成后面"已授权 D/E 推进；review
+  通过前不动任何 Java 代码。reviewer 由用户安排。
+
+### 目标与范围修正（对 CR250 父卡表述的收窄，供 reviewer 复核）
+
+CR250 子卡 D 原文"打开/输入/滚动/截图/点行全部变成云端 plan steps"。本卡收窄为：**attempt 级
+编排上云，独占输入段内的键鼠序列保持本地复合原子性**。理由（技术硬约束，非偏好）：
+1. `prepareWorldMapSearchResultsDirect`（L2101-2215+）整段运行在 `submitExclusiveAndWait` 独占
+   输入段内，含 80-500ms 级 settle 时序与**段内模板观察分支**（xunlu 缺失→stale 面板复用/Alt+2
+   重开）——把段内动作拆成云端 step 意味着跨 100-300ms 网络往返持有全局输入锁，会饿死其它窗口
+   输入并破坏 UI settle 时序；
+2. 段内分支依赖执行中途的模板观察（`useOpenRoutePanel` 等），预先决策不可行（CR250 §三"下一步
+   取决于屏幕"同理）；
+3. 真正的 A 类决策资产是 **attempt 状态机**（几次尝试、`WRONG_DESTINATION` 后是否重试、放弃
+   条件、面板清理时机）——正是 CR259 用户拍板 B 暂留本地、明确移交本卡的部分。
+本收窄若 reviewer 认为构成父卡范围变更，按 CR259 v4 先例升级用户拍板。
+
+### 现状冻结（2026-07-11 磁盘现状，实施基线）
+
+CR260 后世界地图链 = `SUBMIT_WORLD_MAP_SEARCH` 单复合 action：`submitWorldMapSearchAndClick
+Destination`（L1924 起：内部 gate 二次求值 L1927→`performWorldMapSearchAndClickDestination`→
+CLICKED 时 `registerWindowPathingIntent(includeCoordinate=true)` + `rememberPendingRouteOutcome` +
+message L1942）。`performWorldMapSearchAndClickDestination`（L1600 起）：`for(attempt=1..2)`——
+(a) 独占段 `prepareWorldMapSearchResultsDirect(target, attempt)`（L2101：Alt+2 开图 500ms/xunlu
+模板点击 120ms+250ms/stale 面板复用分支/`typeTextUnicode`+200ms/Enter/滚动到底）；(b)
+`clickYellowDestinationAndTargetMiniMap`（L2310，内含 CR240 `ROUTE_CANDIDATE` 行选择 + CR258
+终点小地图点击，均已在云）→ 三态 CLICKED/NOT_FOUND/WRONG_DESTINATION；(c) `WRONG_DESTINATION`
+且 attempt<2 → `closeRouteSearchPanelQueued(destinationMismatch)`+250ms→第二次；其余 →
+`closeRouteSearchPanelQueued(failed)`→false。
+
+### 方案：attempt 状态机迁云端 `NAVIGATION_ROUTE_PLAN`（扩展 CR260 既有 step 服务，不新增 serviceId）
+
+CR260 的 `SUBMIT_WORLD_MAP_SEARCH` 拆为两个更细的本地复合 action，云端 step 驱动 attempt 循环：
+
+| action | 本地执行体（零改动复用） | outcome |
+| --- | --- | --- |
+| `WORLD_MAP_PREPARE_AND_CLICK`(attempt) | 独占段 `prepareWorldMapSearchResultsDirect(target, attempt)` + `clickYellowDestinationAndTargetMiniMap`；**CLICKED 时同步完成基线 wrapper L2239-2242 的 intent 注册（includeCoordinate=true）与 `rememberPendingRouteOutcome`**（行号 v2 校正；C 类 intent 记账与点击原子，不跨云往返——CR260 P1-2 已知窄窗口不扩大到有坐标 intent 的世界地图链） | PREPARE_FAILED / CLICKED_CONFIRMED / NOT_FOUND / WRONG_DESTINATION |
+| `CLOSE_ROUTE_SEARCH_PANEL`(reason, settle) | `closeRouteSearchPanelQueued(reason)`；settle=true 时附基线 250ms 等待（仅 destinationMismatch 场景） | done |
+
+云端 attempt 状态机（1:1 复刻基线 for 循环）：
+- 进入世界地图前云端以当前观察复刻基线 L1927 的 gate 二次求值（同 CR260 stage5 谓词、新鲜观察）；
+- attempt=1 `WORLD_MAP_PREPARE_AND_CLICK`：CLICKED_CONFIRMED → TERMINAL(PATHING_STARTED,
+  `USE_WORLD_MAP_RESULT`, ownedByNestedRoute=true)；WRONG_DESTINATION → `CLOSE(destinationMismatch,
+  settle)` → attempt=2；PREPARE_FAILED/NOT_FOUND → `CLOSE(failed)` → TERMINAL(MAP_NOT_REACHED,
+  `MAP_ROUTE_SUBMIT_FAILED`)；
+- attempt=2：CLICKED_CONFIRMED → 同上成功终态；其余 → `CLOSE(failed)` → 失败终态。
+- 终态事实门：`USE_WORLD_MAP_RESULT` 背书 = 本次 CLICKED_CONFIRMED 事实（含已注册 intent），shell
+  产 message `world-map yellow destination mini-map pathing confirmed` 逐字；失败终态产
+  `map route submit failed`（基线外层降级 message，调用方可见文本不变）。
+- 绑定纪律/ledger/执行时身份门全部沿用 CR260 已 Approved 实现（同 routePlanRequestId 生命周期）。
+
+### 边界
+
+- `prepareWorldMapSearchResultsDirect`/`clickYellowDestinationAndTargetMiniMap`/
+  `closeRouteSearchPanelQueued` 本体零改动；独占段内时序（500/250/200/120/80ms）零改动；
+- CR240/CR258 已在云的行选择与终点点击不重复迁；
+- attempt 预算 1:1 复刻（≤2 次、mismatch 单次重试），**不新增任何计数护栏**（CR260 P1-1 纪律）；
+- `submitWorldMapSearchAndClickDestination`/`performWorldMapSearchAndClickDestination` 在实施后
+  `@Deprecated(since="CR26x")` rollback，删除归子卡 E；
+- 14 条 message 兼容合同不变（本卡不新增/不修改任何 message 文本）。
+
+### 验收（fresh 日志，实施卡细化）
+
+1. 世界地图 attempt 循环由云端 step 驱动（日志含 stepId/action=WORLD_MAP_PREPARE_AND_CLICK
+   attempt 参数），本地无 for 循环决策日志；2. WRONG_DESTINATION 场景：CLOSE(mismatch)+250ms+
+   第二次的时序与基线逐字一致；3. 成功场景 intent（含坐标）与 route memory 在点击同一独占段后
+   同步完成，message 逐字；4. 失败场景 CLOSE(failed) 后 `map route submit failed`；5. 断云=
+   MAP_NOT_REACHED fail-closed；6. 五开绑定/epoch 拦截。
+
+### 2026-07-11 reviewer 设计复审：不通过 / Blocked
+
+审查范围：CR250 父卡 D 原文、CR259 用户拍板 B 与已 Approved 的 CR260 边界、
+`docs/业务逻辑.md` 的“基线等价迁移/范围变更先用户拍板”规则，以及当前
+`NavigationService.performWorldMapSearchAndClickDestination(...)` / `submitWorldMapSearchAndClickDestination(...)`
+基线。CR261 仍为设计卡，未审查或要求 Java 实施。
+
+1. **P1：D 的范围被收窄，必须由用户明确拍板，不能由 reviewer 推断。** CR250 对 D 的原始授权是
+   “打开/输入/滚动/截图/点行全部变成云端 plan steps”；CR261 改为仅“attempt 级编排上云”，把
+   `prepareWorldMapSearchResultsDirect` 的段内模板分支、开图、输入、滚动和截图决策全部保留本地。
+   这可能是合理的输入队列原子性方案，但它改变了云端决策所有权，且 CR261 自己也写明“若 reviewer
+   认为构成父卡范围变更，升级用户拍板”。用户此前对 CR259 的 B 拍板只授权“内部 retry 暂留本地，归
+   D 处理”，不等于批准 D 再把父卡的细粒度云端 plan step 改为本地黑盒。
+   **待用户选择：**
+   - A：批准 CR261 当前收窄方案，即云端只拥有 attempt 状态机，独占输入段及其段内模板分支永久保持
+     本地复合原子；或
+   - B：维持 CR250 原授权，另设计“不得跨 HTTP 持有全局输入锁”的细粒度 cloud-plan 协议。
+   未选定前，CR263 不得实施。
+
+2. **P1：内部第二次 route-dialog gate 没有完整状态机合同，无法证明与基线等价。** 当前基线不是只有
+   CR260 外层 stage5：[`submitWorldMapSearchAndClickDestination`](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:2225)
+   在真正打开世界地图前会再次调用 `routeDialogGateBeforeWorldMap(...)`；该 helper 可能消费 prepared
+   route dialog、返回 `PATHING_STARTED`、`DIALOG_PREPARING` 或继续。CR261 只写“云端以当前观察复刻
+   gate 二次求值”，但没有定义这次 gate 的 `CONSUME_PREPARED_ROUTE_DIALOG` action、CLICKED/FAILED/
+   SKIPPED outcome、对应五条 message/intent 三守卫、以及 gate yield 时不进入 attempt=1 的终态。
+   仅传一个 gate boolean 会遗漏既有物理点击与 phase 结果；同时卡内把 intent registration 标成
+   基线 L1938-1941，但当前实际基线是在 submit wrapper 的
+   [`2239-2242 行`](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:2239)
+   完成，行号/时序依据也需校正。
+   **返修方向：**在 CR261 明列“inner route-dialog gate”子状态机：与外层 stage5 是否共享同一 action
+   词表、每个 outcome 如何映射到既有 `NavigationResult` message、何时注册/跳过 pathing intent，及它和
+   attempt=1 的严格先后；同时逐条对照当前 wrapper gate 的实际结果。补齐后再复审。
+
+**下一次验收点：**先获得用户对 P1-1 A/B 的明确裁定；再把 P1-2 inner gate 合同和准确基线时序写入
+CR261。两项都通过 reviewer 复审后，CR263 才能按最终文本开工；fresh runtime 仍是实施后的独立验收。
+
+**用户拍板（2026-07-11）**：选择 **A（批准收窄）**——云端只拥有 attempt 状态机（几次尝试/
+`WRONG_DESTINATION` 重试/放弃/面板清理时机），独占输入段及其段内模板分支永久保持本地复合原子。
+
+### inner route-dialog gate 子状态机（v2，按 reviewer P1-2 补齐）
+
+基线事实（2026-07-11 磁盘现状核正）：`submitWorldMapSearchAndClickDestination`（wrapper，L2225）
+在打开世界地图前调用 `routeDialogGateBeforeWorldMap(target, source,
+"submitWorldMapSearchAndClickDestination:before-open")`（L2228-2232）——**每次 submit 恰好一次、
+在 perform 的 attempt 循环之外**；attempt=2 不重跑 gate。gate 非 null 直接返回；成功链的 intent
+注册（includeCoordinate=true）与 `rememberPendingRouteOutcome` 在 wrapper L2239-2242，成功
+message L2243（旧引 L1938-1941 作废）。
+
+D 状态机对齐（与外层 stage5 共享同一 action 词表与终态合同，仅 actionContext 区分）：
+
+1. 外层 stage5 通过后、发出 `WORLD_MAP_PREPARE_AND_CLICK(1)` **之前**，云端以新鲜观察先跑 inner
+   gate 子状态机（一次，且仅此一次；WRONG_DESTINATION 换 attempt 时不重入）：
+   - `CONSUME_PREPARED_ROUTE_DIALOG`(actionContext=**world-map-inner-gate**, reason=
+     `submitWorldMapSearchAndClickDestination:before-open` 逐字)——**无条件**发出（CR260 P1-A
+     纪律：consume 内部实时校验决定点击与否）；
+   - outcome **CLICKED** → TERMINAL(PATHING_STARTED, `ROUTE_DIALOG_CLICKED_BEFORE_WORLD_MAP`,
+     alreadyActive=compatibleActiveIntent, ownedByNestedRoute=false)——与外层 gate 同 message
+     `route dialog clicked before world-map search`（基线内外 gate 均出自
+     `routeDialogGateBeforeWorldMap` 同一行，文本天然一致）；本地终态事实门背书=
+     `preparedWorldMapClicked` 持久事实（inner/outer 共用同一背书标志，因基线同一 helper）；
+   - outcome **FAILED** → TERMINAL(MAP_NOT_REACHED, `ROUTE_DIALOG_CLICK_FAILED_BEFORE_WORLD_MAP`)
+     ——message `route dialog prepared action click failed before world-map search` 逐字；
+   - outcome **SKIPPED** → 云端以该步新鲜观察判 yield：`shouldYield && freshSameTargetRoutePending`
+     → TERMINAL(PATHING_STARTED, `SAME_TARGET_ROUTE_PENDING_BEFORE_WORLD_MAP`,
+     alreadyActive=compatibleActiveIntent)；`shouldYield` → TERMINAL(DIALOG_PREPARING,
+     `ROUTE_DIALOG_PENDING_BEFORE_WORLD_MAP`)；否则 → `WORLD_MAP_PREPARE_AND_CLICK(1)`。
+     两个 yield 终态的事实门背书=当步 live `shouldYield`/`freshSameTargetRoutePending` 观察
+     （CR260 既有背书规则不变）。
+2. intent 三守卫：inner gate 的 CLICKED/same-target 终态按 CR260 现行规则由壳按背书驱动
+   （alreadyActive=compatibleActiveIntent 时 finally 跳过注册）；`CLICKED_CONFIRMED`（世界地图
+   点击成功）终态 ownedByNestedRoute=true（intent 已在复合 action 内同独占段注册），finally 零
+   注册——与基线 wrapper 时序等价。
+3. 失败终态 message：D 后 shell 产 `map route submit failed`（与 CR260 现状一致、调用方可见文本
+   不变；基线内部 `world-map route submit failed` 本就不外泄出 navigateToMap）。
+
+**Codex 返修响应（2026-07-11 同日，v1→v2，2 项 P1 处理完毕）**：P1-1 经用户 A/B 拍板选 A，范围
+收窄获批；P1-2 补齐上节 inner gate 子状态机（共享词表+三态映射+一次性时序+背书规则）并校正基线
+行号引用（方案表 L1938-1941→wrapper L2239-2242）。待 reviewer 复核 v2。
+
+### 2026-07-11 reviewer v2 复审：通过 / Approved
+
+审查范围：CR261 v2、用户“选择 A（批准收窄）”裁定、CR250 D 原文、CR259 B 边界、CR260 已批准的
+step/事实门/绑定纪律，及当前 `NavigationService` 世界地图 wrapper 基线。设计卡未实施，未运行编译或
+本地测试。
+
+- **P1-1 已解除：**用户明确批准 A。云端拥有 attempt 状态机（尝试次数、`WRONG_DESTINATION` 重试、
+  放弃与面板清理），独占输入段和段内模板分支保留为本地复合原子，范围不再存在未授权收窄。
+- **P1-2 已解除：**inner gate 被明确为 wrapper 每次 submit 恰好一次、位于 attempt 循环外、仅在
+  attempt 1 前运行；`CONSUME_PREPARED_ROUTE_DIALOG(world-map-inner-gate)` 的 CLICKED/FAILED/SKIPPED
+  三态、两类 yield、五条既有 message、`alreadyActive`/`ownedByNestedRoute` 三守卫与事实背书均已
+  写清。它不会在 `WRONG_DESTINATION` 的 attempt 2 重入，也不会绕过 `WORLD_MAP_PREPARE_AND_CLICK` 的
+  坐标 intent 原子登记。
+- intent 注册的基线依据已修正为 wrapper `2239-2242`，而非先前错误的 `1938-1941`；世界地图内部
+  ≤2 attempt、mismatch 后 close+250ms、CR240/CR258 云端子链与既有 message 均保持。
+
+结论：**通过 / Approved，无 P0/P1/P2、无待返修项。** CR263 可以按 CR261 v2 实施；fresh runtime
+独立验证 attempt step 顺序、inner gate 不在第二次 attempt 重入、mismatch 的 close+250ms+retry 时序与
+坐标 intent/route memory 同 action 完成。
+
+Card CR262: navigation 本地决策实现与参数表删除（CR250 子卡 E）
+
+Status:
+
+- Ready / **Blocked on fresh**（2026-07-11）：用户"完成后面"已授权推进，但本卡为**删除**操作，
+  实施硬前置 = CR258/CR260/CR261 fresh 运行验收通过（CR208 纪律：迁移未 fresh 验收前不得删除
+  本地实现；CR250 子卡 E 原文同）。fresh 完成或用户明确豁免前不动任何代码。reviewer 由用户安排。
+
+### 删除清单（fresh 后逐项执行，每项删除前 grep 确认零生产调用）
+
+1. `CoordinateHelper`：`resolveMiniMapClickPoint`(x2)/`isLogicalCoordinatePlausible`/
+   `calculateApproachCoordinate`/`getPhysicalMapPoint`/`getMapTransform`/`loadMapConfig`/
+   `saveNewMapConfig`（CR258 已 @Deprecated）+ `mapTransforms` 字段 + `MapTransform` 类 +
+   `MiniMapClickPoint` 的本地构造残留；**本地 `config/maps.json` 文件删除**——"本地磁盘不保存
+   参数表"承诺在此步成立（云端 CR247 快照为唯一副本）。
+2. `NavigationService`：`navigateToMapLocalLadder`（CR260 @Deprecated）+（CR261 实施后）
+   `submitWorldMapSearchAndClickDestination`/`performWorldMapSearchAndClickDestination` 旧循环。
+3. `LocationVisionService`：`isPlausibleLocation`（CR258 @Deprecated）、
+   `learnMissingMapLabelTemplate`/`verifyFloorTemplateWithOcr`（CR246 @Deprecated）。
+4. `XiuluoTaskV2`：`isObjectivePlausible`（CR258 @Deprecated，随其唯一调用方
+   `parseTaskPanelObjectiveByOcr` CR247 离线链一并评估——该链属 CR208 族，删除与 CR257(OCR 卡)
+   C2 对齐，避免双删）。
+5. 张闻废弃路线：借 CR208 item 12 的删除一起走（CR250 原文）。
+6. 删除后双侧 compile + 全库 grep `mapTransforms|resolveMiniMapClickPoint|getPhysicalMapPoint`
+   零命中（测试/离线工具除外，逐项列出保留理由）。
+
+### 防破解承诺闭环
+
+本卡完成后 CR250 的威胁模型承诺"本地磁盘/源码不保存参数表与路线策略"正式成立；在此之前
+@Deprecated rollback 属已知过渡态。
+
+Card CR260: NAVIGATION_ROUTE_PLAN 实施（CR259 设计卡实施件）
+
+Status:
+
+- 实现者 heartbeat 已按 AGENTS 规则 15 于 reviewer Approved 后停止并删除（2026-07-11，job
+  b1ec3f3e）。fresh runtime 独立验收保留（六级 step 序列 / prepared 点击后到下一次 cloud terminal
+  的已记录窄窗口 / 世界地图内部 retry 时序）。子卡 D/E 仍各自立卡。
+- **Reviewer 复审通过 / Approved（2026-07-11）**：首轮 3 P1 + 1 P2 已全部按批准合同返修；本 reviewer
+  复核 CR259 v5 / 用户拍板 B、DHXY 与 cloud-brain 当前源码并现场重跑双方 compile，未发现 P0/P1/P2
+  或待返修项。fresh runtime 仍作为独立验收，见本卡末尾复审记录。
+- **Codex 返修完成（2026-07-11，首轮 3P1+1P2 全部采纳）/ 待 reviewer 复核**：P1-1 删 64 backstop
+  （防环仅 ledger 同 stepId 去重）；P1-2 回退本地原子终态、恢复云端决定 CLICKED/FAILED 终态（原
+  自审 P1-B intent-gap 降为文档化已知限制，协议变更留待用户拍板）；P1-3 加执行时身份门（HTTP 返回
+  后进入 terminal/action 前复核 windowId/hwnd/taskRunId/epoch，漂移即零输入 MAP_NOT_REACHED）；
+  P2-4 ledger key 补全绑定三字段。双侧 compile exit 0。详见本卡末尾"Codex 返修响应"。
+- 历史：**不通过 / Blocked（2026-07-11，CR259 实施首轮 reviewer）**：实现虽已双端编译，但发现 3 个
+  P1 与 1 个 P2，不能进入 Approved。详见本卡末尾"reviewer 首轮实施复审"。
+- Implemented / 2026-07-11：CR259 v5 合同双端落地（云端 `NavigationRoutePlanResolver` 编排器 + 客户端
+  `NavigationRoutePlanCloudDecisionService` + `navigateToMapCloudPlan` 壳 + 终态事实门 + stepId
+  ledger + 五字段回显门 + epoch）；旧 body 存为 `@Deprecated navigateToMapLocalLadder` rollback。
+  author 侧 5 维度对抗性自审（两轮，首轮 Opus schema 故障，sonnet 重跑核心三维）：2 维干净通过，
+  核心三维发现 2 P1 + 1 P2 + 1 P3，P1/P2 全修（见"自审记录"），P3 记录接受。双侧 compile exit 0
+  （DHXY `mvn -q -DskipTests compile`、cloud-brain `mvn -q compile`）。待外部 reviewer + fresh。
+- 历史：In progress / 2026-07-11：用户 `完成CR259` 即批准按 CR259 v5 Approved 合同开工双端实施。分支
+  `navigation-migration`（DHXY 与 dhxy-cloud-brain）。reviewer 由用户安排。
+
+### 范围与依据
+
+- 实施合同 = CR259 v5 Approved 全文（step 协议、终态事实门 v3、动作词表 5 行、message 兼容合同、
+  CR258 同款绑定纪律、无业务护栏、拍板 B 世界地图内部 retry 留本地）。
+- 摸底冻结（2026-07-11，5 代理并行 + 亲读，navigation-migration 磁盘现状）：navigateToMap
+  L281-514 六级阶梯 + 全部 helper 已逐行冻结（见"阶梯冻结"）。
+
+### 实施架构
+
+云端 = **1:1 阶梯顺序转写的编排器**：本地每步用**与基线完全相同的 helper 方法**计算观察布尔并上报，
+云端决策树逐级复刻基线 stage ordering，返回下一个 action 或终态。等价性三支柱：①观察布尔由同一
+本地 helper 产出（零分歧）；②云端决策树是基线 stage 的 1:1 转写；③每步重新观察（无陈旧事实）。
+终态事实门保证云端不能凭空产终态。
+
+### 阶梯冻结（六级，纯读 vs 执行 action 分层）
+
+多数阶梯是**纯读观察**（读 snapshot/intent/status，不产生输入）；只有 3 类是**执行 action**（产生
+新事实）：CONFIRM_CURRENT_MAP_FRESH（截图）、CONSUME_PREPARED_ROUTE_DIALOG（点击）、
+SUBMIT_WORLD_MAP_SEARCH（世界地图输入序列）。故 step 循环常规 1-4 次云往返即收敛（与 CR259
+"3-6 决策点"估计一致）。
+
+| 级 | 现址 | 纯读观察布尔（上报云端） | 执行 action | 产出终态 message |
+| --- | --- | --- | --- | --- |
+| 1 prepared 优先 | L296-325 | preparedRouteDialogUsable | CONSUME_PREPARED_ROUTE_DIALOG | (clicked)"route dialog clicked before pathing guard; observer will confirm pathing" |
+| 2 stale-cache guard | L326-408 | snapshotMapCheck(ARRIVED/PATHING_ACTIVE/NO_USABLE)、currentAlreadyTarget、compatibleActiveIntent、hasActiveRouteTransferPrep、shouldYieldPathingActiveGate、freshSameTargetRoutePending、hasCallerFreshMap、callerFreshMapMatchesTarget | (B2/B4/D) CLEAR_STALE_ROUTE_PREPARATION / CONFIRM_CURRENT_MAP_FRESH | (B1)"same target route already submitted; watcher will confirm pathing" / "pathing active but route option is visible; watcher will prepare route dialog"；(B3)"recent window pathing still active; observer will confirm map" |
+| 3 到达短路 | L409-419 | (arrivedAfterFreshCheck 由前级 action/纯读产出) | (hasActiveRouteTransferPrep) CLEAR_STALE_ROUTE_PREPARATION | "target map confirmed by stale-cache guard"(ARRIVED) |
+| 4 stale 清理 | L420-442 | staleRoutePreparation（**精确 `!target.equals(keyword)` 非别名比较**） | CLEAR_STALE_ROUTE_PREPARATION | — |
+| 5 路线框 gate | L443-453/L1355-1383 | preparedRouteDialogUsable、shouldYieldBeforeWorldMap、freshSameTargetRoutePending | CONSUME_PREPARED_ROUTE_DIALOG(before-world-map) | (clicked)"route dialog clicked before world-map search"；(failed)"route dialog prepared action click failed before world-map search"；(yield+fresh)"same target route already submitted before world-map search; watcher will confirm pathing"；(yield)"route dialog visible/preparing or route intent pending before world-map search" |
+| 6 世界地图提交 | L459-498/L1802-1820 | （拍板 B：内部 ≤2 attempt/WRONG_DESTINATION 留本地复合，云端只收最终结果） | SUBMIT_WORLD_MAP_SEARCH | (PATHING_STARTED)"world-map yellow destination mini-map pathing confirmed"（+ownedByNestedRoute）；(DIALOG_PREPARING 透传)；(!success)"map route submit failed" |
+| finally | L499-513 | — | 本地 intent 三守卫（云端无权触发注册） | — |
+
+**message 兼容合同修正（对照磁盘现状，供 reviewer 复核）**：CR259 reviewer 列的 5 常量中，
+`world-map route clicked`（XiuluoTaskV2 L271 `NAV_MSG_WORLD_MAP_ROUTE_CLICKED`）在当前磁盘**无任何
+生产点**——绿字路线删除后世界地图成功实产 L1820 `world-map yellow destination mini-map pathing
+confirmed`（不在维护窗口 switch 内）。这是**基线既有的死常量/隐性不一致**，非 CR260 引入。CR260
+遵循"逐字保留基线实际产出"原则：世界地图成功产 L1820 原文（维护窗口按基线保持不开），**不得**
+"顺手修复"成 `world-map route clicked`（那会改变 `shouldOpenTeamPathingMaintenanceWindowAfter
+TargetNavigation` 决策）。其余 4 个 message 常量（pathing-guard/before-world-map/same-target ×2）
+均有生产点，逐字保留。navigateToMap 全部 ~14 条终态 message 逐条列于上表 + 主体 sentinel
+`mapNotReached("not started")` / `failed("request is null")`，实施逐字保留。
+
+### step 协议（CR258 同款绑定纪律）
+
+- request：绑定字段（windowId/hwnd 活值/taskRunId/routePlanRequestId=每次 navigateToMap 生成/
+  playerIdentityEpoch）+ clientFrame + 观察 facts（上表全部布尔 + 各带时效已在本地折算年龄，非
+  跨钟时间戳）+ `priorStepOutcome`（上一 action 的结构化 enum outcome）。
+- response：单个 step `{stepId 单次 token, directive}`，directive ∈ {ACTION(actionType, args) |
+  TERMINAL(status, messageKey)}；五字段绑定回显（windowId/hwnd/taskRunId/routePlanRequestId/
+  clientFrame，CR258 echoMismatch 同款）。
+- 本地执行门：CR258 同款（五字段回显 + epoch + 活值绑定），任一不符=STALE_REJECTED 丢弃重观察；
+  执行 ledger key = windowId+hwnd+taskRunId+routePlanRequestId+stepId，内存态不落盘，同 stepId
+  重放只重报不重执行（无业务护栏，唯一防环）。
+- **终态事实门（v3）**：RETURN_TERMINAL 各状态必须有本次已验证本地 outcome 背书——ARRIVED（snapshot
+  ARRIVED/confirmCurrentMapFresh true/caller-fresh map==target）、PATHING_STARTED（prepared 实际
+  OPTION_KEYWORD_CLICKED / SUBMIT 实际 PATHING_STARTED / existing-intent fresh PATHING_ACTIVE+
+  compatible）、DIALOG_PREPARING（gate/submit 实际 dialog-preparing）；`MAP_NOT_REACHED` 云端可自由
+  决定；无背书=STEP_FAILED fail-closed。intent 注册/alreadyActive/ownedByNestedRoute 三守卫完全
+  由本地壳按背书事实驱动，云端无权触发 `registerWindowPathingIntent`。
+
+### 动作词表（本地既有复合执行器零改动复用）
+
+| action | 本地执行体 | outcome enum |
+| --- | --- | --- |
+| CONSUME_PREPARED_ROUTE_DIALOG(context) | `consumePreparedRouteDialogAction` | SKIPPED(null) / OPTION_KEYWORD_CLICKED / FAILED |
+| CONFIRM_CURRENT_MAP_FRESH(reason) | `gameStateUtil.confirmCurrentMapFresh` | arrived true/false |
+| CLEAR_STALE_ROUTE_PREPARATION(reason) | `runtime.clearDialogPreparationRequest` | done |
+| SUBMIT_WORLD_MAP_SEARCH | `submitWorldMapSearchAndClickDestination`（完整复合，内部 gate 二次求值 + perform ≤2 attempt 留本地） | PATHING_STARTED / DIALOG_PREPARING / SUBMIT_FAILED |
+| RETURN_TERMINAL(status, messageKey) | 本地壳过终态事实门后构造 NavigationResult | — |
+
+硬规则：输入必经 InputSequences；不接受 sleep/回调/拖拽/screen-absolute；`KEY`/`CLOSE_PANEL`/
+`CAPTURE_ROI` 不授予；断云=`MAP_NOT_REACHED("cloud route plan unavailable: ...")` 结构化失败
+fail-closed，本地阶梯实现保留 `@Deprecated(since="CR260")` rollback（删除归子卡 E）。
+
+### 边界
+
+- pathing intent/watcher/keep-turn/stop-pause/park、InputSequences 队列、consume/confirm/submit
+  三复合执行器内部时序全部零改动；两个 checkpoint（L296/L420）保持。
+- 世界地图内部 ≤2 attempt/WRONG_DESTINATION/关面板+250ms（拍板 B）留本地复合。
+- 调用方兼容：navigateToNPC/WubeiTask/XiuluoTaskV2 对 navigateToMap 的 NavigationResult 状态+
+  message 消费全部逐字保持（见 message 兼容合同）。
+
+### 验收（fresh 日志）
+
+1. navigateToMap 阶梯级决策全部由云端 step 驱动（日志含 routePlanRequestId/stepId/action），本地无
+   阶梯 IF/ELSE 决策日志（SUBMIT 内部 attempt 日志除外）；2. 六级在修罗/五环/五倍对照场景 step
+   序列与基线决策一致，14 条 message 逐字一致（尤其世界地图成功产 L1820 原文、维护窗口按基线开关）；
+   3. 断云 `MAP_NOT_REACHED` 结构化失败；4. stepId ledger 重放去重仅注入故障触发（无业务护栏）；
+   5. 五开绑定/epoch 拦截。
+
+### 2026-07-11 author 侧对抗性自审（5 维度，P1/P2 已修）
+
+维度：阶梯决策等价 / 终态事实门与 message / 协议对称绑定 / action 执行器保真 / 生命周期 fail-closed。
+干净通过：协议对称（context/decision 串字段全对齐、五字段回显门对称、ledger/epoch）、action 保真
+（consume/confirm/clear/submit reason/suffix 逐字、submit 三态、双注册规避）、14 条 message 逐字节
+一致 + 终态背书充分 + 死常量 `world-map route clicked` 确认不产。发现并修复：
+
+1. **P1（阶梯等价）prepared 弹窗漏点**：云端用缓存态 `preparedRouteDialogUsable`（cached
+   verifiedWithin 10s）门控是否发 CONSUME，而基线 stage1/stage5 **无条件**调 consume——consume 内部
+   有独立的实时裁剪指纹重校验（与缓存陈旧度无关）。缓存过期但弹窗仍在屏幕的日常场景会被漏点，
+   触发不必要的世界地图重搜或返回不同终态。修复：云端 stage1（hasRuntime）/stage5 **无条件**发
+   CONSUME，点击与否交本地 consume 实时校验决定；consume 总次数恢复为基线的 3 次（stage1+stage5+
+   submit 内部）。
+2. **P1（生命周期）click↔intent 注册原子性丢失**：基线 prepared 点击与 finally 的
+   `registerWindowPathingIntent` 在同一同步调用内（零 checkpoint 间隔）；CR260 把终态推迟到下一次
+   云往返，点击后、终态前若 stop/epoch 变，`result` 仍是 sentinel `mapNotReached`→finally 跳过
+   intent 注册→已点击（角色已在走）的窗口丢失 pathing intent，watcher 无法追踪到达。修复：CONSUME
+   点击成功→本地**原子**产 `PATHING_STARTED` 终态（click→terminal 是确定性映射非云端决策），
+   `alreadyActive=compatibleActiveIntent`，finally 照常按背书注册；before-world-map 点击失败同样
+   本地原子产 `mapNotReached`。
+3. **P2（生命周期）B2 CLEAR 后终态背书 stale**：`RECENT_PATHING_STILL_ACTIVE`（B2 clear 后一步产）
+   用往返后重观察的 obs 复验，snapshot 若在往返间越过 1500ms 窗口→误 fail。修复：观察到
+   PATHING_ACTIVE+compatible 即持久化 `pathingActiveCompatibleEstablished`，该终态背书 = live obs
+   ∨ 持久标志（与 `arrivedEstablished` 同款持久化模式）。
+4. **P3（接受，记录）日志量**：`observeRoutePlanFacts` 每步算 `shouldYieldForRouteDialogBeforeWorldMap`，
+   其大结构化 INFO 日志 5-6×/次导航放大（五开更甚）。非正确性问题；迁移 fresh 验证期该逐步 gate
+   日志有观测价值，故本卡接受、不冒险重构共享 `shouldYield` 方法；fresh 通过后可另卡降噪。
+
+修复后双侧 compile exit 0。待外部 reviewer 复核 + fresh。
+
+### 2026-07-11 reviewer 首轮实施复审：不通过 / Blocked
+
+审查范围：CR259 v5 Approved、用户拍板 B、`docs/业务逻辑.md` 的“基线等价迁移/不得自行新增业务护栏”
+约束、DHXY `NavigationService` / `NavigationRoutePlanCloudDecisionService` 与 cloud-brain
+`NavigationRoutePlanResolver` / `DecisionEngine` 当前未提交实现。复验编译：DHXY
+`mvn -q -DskipTests compile` exit 0；cloud-brain `mvn -q compile` exit 0。未运行本地测试，遵守
+no-local-test mode。
+
+1. **P1：新增 `64` 次 route-plan loop backstop，直接违反 CR259 的“无业务护栏”合同。**
+   [`NavigationService.java`](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:209)
+   声明 `ROUTE_PLAN_STEP_LOOP_BACKSTOP=64`，并在
+   [342 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:342)
+   把实际导航改写为 `MAP_NOT_REACHED("cloud route plan loop backstop")`。CR259 v5 已明确“防环仅
+   ledger 对同 stepId 重放去重，任何计数器不得改变 NavigationResult”，且 `docs/业务逻辑.md` 禁止迁移
+   自行新增 fail-closed/业务护栏。不能以“约 10 倍正常路径”把未批准的终止条件带入业务链。
+   **返修：**删除该计数终止分支；只保留已批准的同 stepId 重放不重复物理执行。若确实需要总步数熔断，
+   必须另开行为变更卡并由用户拍板。
+
+2. **P1：prepared 路线框点击后的终态重新由本地决定，越出 CR259 批准的云端编排范围。**
+   [424-451 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:424)
+   在 `OPTION_KEYWORD_CLICKED` 后本地直接构造 `PATHING_STARTED`，并在 before-world-map `FAILED`
+   后本地直接构造 `MAP_NOT_REACHED`；
+   [628-630 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:628)
+   也明确说明这三类终态“不经 cloud TERMINAL”。但 CR259 v5 批准的是“云端选择下一个 action 或终态，
+   本地执行后上报 outcome facts，再经终态事实门构造 NavigationResult”。实现者为避免 click 到下一次
+   HTTP 往返的 intent 空档自行改变了协议，这属于新的 phase/终态归属选择，用户未批准。
+   **返修：**恢复经云端 step 的终态收尾，或先将“点击动作携带已批准的本地原子终态映射”作为新的合同
+   选项写回 CR259 并等待用户明确批准；不能把实现者自审的 P1-B 当成业务授权。
+
+3. **P1：epoch 只在发请求前检查，HTTP 返回到物理 action 之间没有执行时复核，五开身份切换可执行
+   旧窗口指令。** 初始 epoch 只在 [338 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:338)
+   比较；`decideNextStep()` 返回后立刻在 [396-419 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:396)
+   进入 terminal/action。请求 DTO 与云端 echo 也没有 `playerIdentityEpoch` 字段
+   （[`NavigationRoutePlanCloudDecisionService.java`](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/cloud/task/NavigationRoutePlanCloudDecisionService.java:81)
+   和 [110-131 行](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/cloud/task/NavigationRoutePlanCloudDecisionService.java:110)）。
+   这不满足 CR259 的“执行门 = 五字段回显 + epoch + 活值绑定”：HTTP 期间身份 epoch 改变时，
+   旧 response 仍可能通过旧 identity echo 并对新身份执行点击。
+   **返修：**至少在接受 directive、进入 terminal 或 `executeRoutePlanAction` 前复核当前 epoch 和 live
+   window/hwnd/taskRunId；按合同把 epoch 加入 request/echo（或在卡中明确为何本地 execute-time gate
+   足以等价），不符只能 `STALE_REJECTED` 后重观察，零输入。
+
+4. **P2：step ledger key 未按批准合同包含绑定身份。** 合同要求
+   `windowId|hwnd|taskRunId|routePlanRequestId|stepId`，实际
+   [`routePlanLedgerKey`](D:/mavenProject/DHXY/src/main/java/com/bot/dhxy/service/NavigationService.java:484)
+   只有 `routePlanRequestId|stepId`。UUID 虽降低碰撞概率，但不是卡内约定的绑定纪律，也无法作为
+   多窗口审计 key。
+   **返修：**按合同补齐 live binding 三字段，并在 cleanup 只清本次完整前缀；不得借此引入新的重试或
+   终止逻辑。
+
+**下一次验收点：**上述 P1/P2 全部返修、双方重新 compile 通过后，重点复审“云端 action/outcome/terminal
+归属是否恢复已批准合同”、identity epoch 在 HTTP 后到输入前的零输入拦截、以及 ledger 完整 key；随后
+fresh 仅核验六级日志序列、世界地图内部 `WRONG_DESTINATION`/关面板/250ms 仍由本地复合保留。
+
+### 2026-07-11 Codex 返修响应（首轮实施复审 3P1+1P2 全部采纳，双侧 compile exit 0）
+
+- **P1-1 采纳（删 64 backstop）**：`ROUTE_PLAN_STEP_LOOP_BACKSTOP=64` 常量与计数终止分支已删除。
+  防环只保留合同批准的同 stepId 重放去重（ledger）；无任何计数改变 `NavigationResult`。循环终止
+  依赖 ladder 单调有限 + 每轮 `TaskCheckpoint`（云往返天然限速、可中断），不再自设总步数熔断。若
+  未来确需总步数熔断，另开行为变更卡由用户拍板。
+- **P1-2 采纳（回退本地原子终态，恢复云端编排）**：删除 prepared 点击后的本地原子终态构造
+  （CLICKED→本地 PATHING_STARTED、before-world-map FAILED→本地 MAP_NOT_REACHED）。恢复为：shell
+  执行 consume 后只上报 outcome（含 CLICKED/FAILED），云端 `NavigationRoutePlanResolver` 决定
+  `ROUTE_DIALOG_CLICKED_BEFORE_PATHING_GUARD`/`..._BEFORE_WORLD_MAP`/`..._CLICK_FAILED...` 终态，
+  shell 经终态事实门（`preparedGuardClicked`/`preparedWorldMapClicked` 本地背书）构造
+  NavigationResult。P1-A（无条件 consume）与本项正交，保留。
+  - **遗留已知限制（原自审 P1-B，降级为文档记录）**：prepared 点击（executeRoutePlanAction 内）
+    与终态/intent 注册之间隔一次云往返，其间若 stop/身份变，`result` 为 sentinel→finally 跳过
+    intent 注册→已点击窗口该 leg 无 intent 追踪，retry 时可能多一次世界地图重搜。此 gap 是
+    step-protocol 模型固有、发生窗口窄（仅 rare prepared 路径 + 往返期中断），按 reviewer 意见
+    **不在本卡内以协议变更修复**；若 fresh 暴露实际影响，再按"点击携带本地原子终态映射"作为合同
+    选项写回 CR259 交用户拍板。
+- **P1-3 采纳（HTTP 后到输入前的执行时身份门）**：新增 `RoutePlanIdentity{windowId,hwnd,taskRunId,
+  epoch}`；导航入口捕获 baseline，(a) 每轮请求前、(b) `decideNextStep` 返回后进入 terminal/action
+  **之前** 各复核一次 `isRoutePlanIdentityStale`——任一字段漂移即
+  `MAP_NOT_REACHED("...identity changed during round trip")` 零输入返回。epoch 沿用 CR258 本地
+  execute-time gate 模式（不入 echo）：epoch 是本地单调计数、对云端无语义，本地实时比对即等价，
+  五字段回显仍覆盖 windowId/hwnd/taskRunId/routePlanRequestId/clientFrame。
+- **P2-4 采纳（ledger 完整绑定 key）**：`routePlanLedgerKey` 改为
+  `windowId|hwnd|taskRunId|routePlanRequestId|stepId`；finally cleanup 按 `|routePlanRequestId|`
+  完整前缀清理本次条目，不误删他窗口，不引入新重试/终止逻辑。
+
+待 reviewer 复核。
+
+### 2026-07-11 reviewer 返修复审：通过 / Approved
+
+复审范围：CR259 v5 Approved、用户拍板 B、`docs/业务逻辑.md` 的基线等价迁移约束，及 CR260 当前
+DHXY `NavigationService` / `NavigationRoutePlanCloudDecisionService`、cloud-brain
+`NavigationRoutePlanResolver` / `DecisionEngine` 实现。现场编译复验：DHXY
+`mvn -q -DskipTests compile` exit 0；cloud-brain `mvn -q compile` exit 0。未运行本地自动化测试，符合
+no-local-test mode。
+
+- P1-1 已清除：`ROUTE_PLAN_STEP_LOOP_BACKSTOP` 与计数改变 `NavigationResult` 的分支均不存在；当前
+  只保留同 `stepId` 的零重复物理执行 ledger，符合“无业务护栏”。
+- P1-2 已清除：prepared consume 的 `OPTION_KEYWORD_CLICKED` / before-world-map `FAILED` 只写
+  `priorOutcome`，下一轮由 `NavigationRoutePlanResolver` 返回 terminal；
+  `buildBackedRoutePlanTerminal` 以 `preparedGuardClicked` / `preparedWorldMapClicked` 作为本地事实门。
+  本地不再抢回 terminal 决策。点击到下一次 cloud terminal 的已知窄窗口已如实记录，未自行引入未经批准的
+  原子协议变更。
+- P1-3 已清除：`RoutePlanIdentity` 固定 `windowId/hwnd/taskRunId/epoch`；每轮发请求前与 HTTP 回来后、
+  terminal/action 进入前都走 `isRoutePlanIdentityStale`，漂移即零输入返回。epoch 不进云端 echo 的理由
+  已记录：它是本地单调活值，本地 execute-time gate 覆盖实际风险，五字段 echo 仍保持。
+- P2-4 已清除：ledger 现在是
+  `windowId|hwnd|taskRunId|routePlanRequestId|stepId`，cleanup 仅按本 request 完整片段清理。
+- 用户拍板 B 未回退：`SUBMIT_WORLD_MAP_SEARCH` 仍完整复用本地复合执行器；其内部 ≤2 attempt、
+  `WRONG_DESTINATION`、关面板和 250ms 均未迁移或改序。
+
+结论：**通过 / Approved，无 P0/P1/P2、无待返修项。** fresh runtime 独立关注六级 step 序列、prepared
+点击后到下一次 cloud terminal 的已记录窄窗口，以及世界地图内部 retry 时序；不阻塞本轮 reviewer 结论。
+
+Card CR259: navigateToMap 决策阶梯上云（NAVIGATION_ROUTE_PLAN，CR250 子卡 C 设计卡）
+
+Status:
+
+- **实施复审通过 / Approved（2026-07-11）**：实施件 CR260 已完成首轮 3 P1 + 1 P2 返修；reviewer
+  复核双方源码并现场通过 DHXY `mvn -q -DskipTests compile` 与 cloud-brain `mvn -q compile`，无
+  P0/P1/P2。用户拍板 B 的世界地图内部 retry 本地保留边界未变；fresh runtime 独立验收，不阻塞结论。
+- **实施复审不通过 / Blocked（2026-07-11）**：实施件 CR260 首轮 reviewer 发现 3 个 P1 + 1 个 P2：
+  未批准的 `64` 次 loop backstop、本地抢回 prepared-click terminal 决策、HTTP 返回后缺 epoch/live
+  execute-time 复核、ledger key 缺绑定三字段。CR260 返修并双端 compile 后再复审；设计 v5 Approved
+  结论不等于实施通过。
+- author heartbeat 已按 AGENTS 规则 15 于 reviewer Approved 后停止并删除（2026-07-11，job
+  8ff88206）。后续：`NAVIGATION_ROUTE_PLAN` 双端实施须另立实施卡，开工须用户批准。
+- **Reviewer v5：通过 / Approved（2026-07-11，设计 review）**：用户拍板 B 后，目标、六级表、动作表、
+  预算、事实门和验收已统一；无 P0/P1/P2，允许后续 worker 按本卡实施。fresh 属实施后的独立运行验收。
+- 历史：**用户拍板 B + Codex 返修完成 v5（2026-07-11）/ 待 reviewer 复核**：用户经 A/B 提问明确选择
+  **B（接受分期）**——C 卡只迁"是否进入世界地图提交/最终 outcome 收尾"，世界地图内部 ≤2 attempt /
+  `WRONG_DESTINATION` 重试作为完整本地复合 action 零改动保留，随子卡 D 一并上云。目标节已加
+  "范围排除（拍板 B）"、验收第 1/2/4 条已对齐 B 边界（内部 attempt 日志豁免、无业务护栏），
+  动作表/预算节/解剖表维持 v4 已同步文本；此前全部已修 P1 不回退。
+- 历史：**Reviewer v4 复核：Review required / Blocked（2026-07-11）**：v4 把原属 CR259 的世界地图 retry
+  决策迁移推迟给子卡 D，属主范围改变未经用户批准；等待 A/B 拍板。
+- 历史：**Codex 返修完成 v4（2026-07-11 同日，v3 复核 P1 采纳，选定方案 1）/ 待 reviewer 复核**：世界地图
+  retry 属主已明确——`SUBMIT_WORLD_MAP_SEARCH`(target) 是**完整**本地复合 action，零改动复用
+  `submitWorldMapSearchAndClickDestination`（内部 ≤2 attempt、首个 `WRONG_DESTINATION` 后关面板+
+  250ms+第二次全部保留为本地行为）；云端只决定是否进入该 action 与对最终 outcome（
+  PATHING_STARTED/DIALOG_PREPARING/SUBMIT_FAILED）的收尾；内部 retry 的拆分/上云归子卡 D。动作表、
+  预算护栏节、现状解剖第 6 级已同步，v2"由云端精确复刻"表述作废。
+- 历史：**Reviewer v3 复核：Review required / Blocked（2026-07-11）**：世界地图“单次 attempt”动作与所复用的
+  内部双 attempt 方法冲突；必须先明确 retry 属主，仍不得开工。
+- 历史：**Codex 返修完成 v3（2026-07-11 同日，v2 复核 P1 采纳）/ 待 reviewer 复核**：终态事实门按返修
+  方向逐项对齐基线 stale-cache guard——ARRIVED 背书补齐第三路 caller-fresh map
+  （`hasFreshCurrentLocationForMapGuard`，基线 L394-402，禁止实施者忽略既有事实额外截图/OCR）；
+  existing-intent PATHING_STARTED 收紧为"recent snapshot 为 fresh `PATHING_ACTIVE` 且 intent
+  compatible"并保留 `shouldYieldForRouteDialogBeforeWorldMap`/`isFreshSameTargetRoutePending`
+  既有分支约束；prepared/world-map 背书与 5 条 message 合同维持 v2。见"终态事实门（v3）"。
+- 历史：**Reviewer v2 复核：Review required / Blocked（2026-07-11）**：前三项 P1 已采纳，但终态事实门
+  遗漏 caller-fresh ARRIVED、又放宽 compatible intent 为无需 fresh `PATHING_ACTIVE` snapshot，仍不得开工。
+- 历史：**Codex 返修完成 v2（2026-07-11 同日，3 项 P1 全部采纳）/ 待 reviewer 复核**：①预算护栏节重写
+  ——step≤8 与同 outcome×3 业务封顶作废，防环仅剩 ledger 对同 stepId 重放去重（任何计数器不得改变
+  `NavigationResult`），世界地图 ≤2/`WRONG_DESTINATION` 1 次（含关面板+250ms 时序）云端精确复刻；
+  ②新增"终态事实门"——`RETURN_TERMINAL` 各状态必须有本次已验证本地 outcome 背书（`MAP_NOT_REACHED`
+  除外），无背书=STEP_FAILED fail-closed，intent 注册三守卫完全由壳按背书事实驱动，云端无权触发
+  注册；③message 兼容合同固定 5 条逐字保留并与背书事实一一绑定，实施卡开工前 grep 复核五环/五倍
+  消费点。见各节 v2 文本。
+- 历史：Review required / Blocked（2026-07-11）：设计卡，未实施。当前 reviewer 已记录 3 项 P1；
+  返修合同并复审通过前不动任何 Java 代码。
+- 历史：Ready / pending review（2026-07-11）：设计卡，未实施。reviewer 由用户安排；review 通过前不动
+  任何 Java 代码。
+- **落卡门豁免记录**：CR250 review #4 原定"CR251 point contract fresh 验收后才允许子卡 C 落卡"。
+  用户 2026-07-11 明确拍板"不测了直接下一步"——接受 CR258 fresh 第 1 轮部分覆盖（三条点击链
+  全过、零本地计算、零失败；未覆盖项见 CR258 卡 fresh 记录）即开子卡 C 落卡。豁免仅针对落卡
+  时点，CR258 未覆盖 fresh 项仍保留为独立验收债务。
+
+### 目标（v5，按用户 2026-07-11 拍板 B 收敛范围）
+
+`navigateToMap`（NavigationService L281-514）的路线方法选择阶梯——prepared 路线框优先、
+stale-cache/pathing guard、路线对话框 gate、**是否进入世界地图提交与对其最终 outcome 的收尾/放弃
+分类**——迁云端 `NAVIGATION_ROUTE_PLAN` step 服务。本地退化为"上报观察 → 执行云端指名的
+一个 step → 上报 outcome facts"的哑执行壳；park/yield/watcher/prepared 消费时序等 C 类语义零改动。
+**范围排除（用户拍板 B）**：世界地图搜索内部的 ≤2 attempt / `WRONG_DESTINATION` 重试决策不在
+本卡——它作为完整本地复合 action 零改动保留，随子卡 D 的世界地图序列动作化一并上云。
+
+### 现状解剖（2026-07-11，navigation-migration 磁盘现状，实施冻结基线）
+
+决策阶梯六级（调用顺序）：
+
+| 级 | 现址 | 决策内容（A 类，迁云） | 本地保留（B/C 类） |
+| --- | --- | --- | --- |
+| 1 prepared 路线框优先 | L297-325 `consumePreparedRouteDialogAction`（L1037） | 是否优先消费已备好的传送对话框 | 消费动作本身（prepared 绑定校验/点击，CR253 语义） |
+| 2 stale-cache/pathing guard | L326-408 `confirmCurrentMapFromRecentPathingSnapshot`（L516）+ PATHING_ACTIVE 分支迷宫 | ARRIVED/PATHING_ACTIVE/重新确认 的分类与 compatible-intent 判定、`shouldYieldForRouteDialogBeforeWorldMap`（L1171）让路条件、`isFreshSameTargetRoutePending`（L1385）判重 | snapshot 读取、fresh map confirm 的截图/OCR 观察 |
+| 3 到达短路 | L409-419 | 到达即返回 + 清理同目标 route 准备 | — |
+| 4 stale 准备清理 | L421-441 | 换目标时清旧 ROUTE_TRANSFER 准备的条件 | `clearDialogPreparationRequest` 执行 |
+| 5 路线对话框 gate | L443-453 `routeDialogGateBeforeWorldMap`（L1355） | 进世界地图前是否让位于路线框 | dialogPreparing yield 语义（任务层 park） |
+| 6 世界地图搜索提交 | L459-498 `submitWorldMapSearchAndClickDestination`（L1802）：`prepareWorldMapSearchResultsDirect` ≤2 次 attempt、`WRONG_DESTINATION` 重试一次、失败快速返回 `mapNotReached` 交任务层重试 | 阶梯级：是否进入世界地图提交、对最终 outcome 的收尾/放弃分类（v4：**action 内部 ≤2 attempt/`WRONG_DESTINATION` retry 不迁**，属主留本地复合 action，动作化归子卡 D） | 世界地图输入序列本体与内部 retry 时序（开图/输入/滚动/点行/关面板+250ms=**子卡 D**）、CR240 `ROUTE_CANDIDATE` 行选择与 CR258 终点小地图点击（已在云） |
+| finally intent 三守卫 | L499-513 | — | `pathingIntentAlreadyActive`/`OwnedByNestedRoute`/注册，全部本地 |
+
+已在云、不重复迁：`ROUTE_CANDIDATE`（CR240）、路线结果图云端预处理、黄字终点小地图点击
+（CR258 `RESOLVE_MINIMAP_CLICK`）。
+
+### step 协议（沿用 CR250 §3 形态 + CR251/CR258 绑定纪律）
+
+- request：绑定字段（windowId/hwnd 活值/taskRunId/routePlanRequestId=本地每次 navigateToMap 调用
+  生成/playerIdentityEpoch）+ clientFrame + 观察 facts（当前图/坐标/observedAgeMs 年龄语义、
+  pathing snapshot 状态+intent 目标+年龄、dialog preparation status/prepared action 的
+  operation+targetKeyword+年龄、目标图名、request source、fresh 字段）+ 上一 step 的
+  `priorStepOutcome`（结构化 enum + facts）。
+- response：单个 step 指令 `{stepId 单次 token, action, target, 绑定回显（CR258 五字段门同款）,
+  hints}`；action 词表见下节；hints（`expectsPathingToStart`/`expectsDialogPreparing`）只影响
+  本地壳选用哪条既有等待语义，永不构成指令（CR250 硬边界）。
+- 本地执行门：CR258 同款（五字段回显 + epoch + 活值绑定），任一不符=STALE_REJECTED 丢弃重观察；
+  执行 ledger 同款 key（stepId 替代 decisionId+candidateId），内存态不落盘。
+- outcome 上报：`STEP_DONE(facts)` / `STEP_FAILED(reason)` / `INPUT_CANCELLED` / `STALE_REJECTED`；
+  云端凭 outcome + 新观察给下一 step 或选择终态。
+- **终态事实门（v3，按 2026-07-11 reviewer v2 复核修正——逐项对齐基线 stale-cache guard，既不漏
+  合法 ARRIVED 也不放宽 PATHING_STARTED）**：本地壳维护本次 `routePlanRequestId` 内已验证的本地
+  outcome 事实集，终态必须有对应事实背书，否则=`STEP_FAILED("terminal-not-backed-by-local-fact")`
+  结构化失败（fail-closed）：
+  - `ARRIVED` 背书三选一（覆盖基线 L332-402 全部到达出口）：(a) recent snapshot ARRIVED
+    （`confirmCurrentMapFromRecentPathingSnapshot`）；(b) `CONFIRM_CURRENT_MAP_FRESH`
+    arrived=true；(c) **request caller-fresh map 与目标相同**（`hasFreshCurrentLocationForMapGuard`
+    复用，基线 L394-402——禁止实施者忽略该既有事实而额外截图/OCR，热启动/调用方已有位置时序
+    不变）。
+  - `PATHING_STARTED` 背书三选一：(a) 本次 prepared 路线框实际 `OPTION_KEYWORD_CLICKED`；(b) 本次
+    `SUBMIT_WORLD_MAP_SEARCH` 实际返回 PATHING_STARTED（nested-route 持有 intent）；(c)
+    **existing-intent 路径：当前本地 recent snapshot 为 fresh `PATHING_ACTIVE` 且 intent 与请求
+    compatible**（基线 L332-385——仅 compatible intent 不够，陈旧或非 ACTIVE 的 snapshot 不得交
+    watcher），且仍按原有 pathing-active 分支结构先过 `shouldYieldForRouteDialogBeforeWorldMap`/
+    `isFreshSameTargetRoutePending` 既有约束，据此产出 `alreadyActive` 返回、`DIALOG_PREPARING`
+    或 same-target message；intent 注册与 `alreadyActive`/`ownedByNestedRoute` 三守卫完全由壳按
+    背书事实驱动，云端无权触发 `registerWindowPathingIntent`。
+  - `DIALOG_PREPARING` 仅当本次让路 gate / submit 实际产生 dialog-preparing 本地事实背书。
+  - `MAP_NOT_REACHED` 云端可自由决定（放弃是 A 类决策，无输入副作用）。
+
+### 动作词表（CR250 执行器合同表扩展行，本卡逐行过 review）
+
+C 的动作是**本地既有复合执行器**（不是裸 KEY/CLICK——细粒度动作化归子卡 D）：
+
+| action | 本地执行体（零改动复用） | outcome facts |
+| --- | --- | --- |
+| `CONSUME_PREPARED_ROUTE_DIALOG` | `consumePreparedRouteDialogAction`（既有绑定校验+点击） | clicked/notClicked + DialogResultStatus |
+| `CONFIRM_CURRENT_MAP_FRESH` | `gameStateUtil.confirmCurrentMapFresh` / caller-fresh 复用 | arrived true/false + 观察 |
+| `CLEAR_STALE_ROUTE_PREPARATION` | `runtime.clearDialogPreparationRequest` | done |
+| `SUBMIT_WORLD_MAP_SEARCH`(target) | **（v4，reviewer v3 复核方案 1）**`submitWorldMapSearchAndClickDestination` 完整调用，零改动复用——内部 `performWorldMapSearchAndClickDestination` 的 ≤2 attempt 循环、首个 `WRONG_DESTINATION` 后关面板+既有 250ms 等待+第二次尝试全部保留为本地复合行为；云端只决定是否进入本 action 与如何处理最终 outcome，不拥有 action 内部 retry；内部 retry 的动作化/上云归子卡 D | 最终结果：PATHING_STARTED/DIALOG_PREPARING/SUBMIT_FAILED（对应基线 mapNotReached 快速返回） |
+| `RETURN_TERMINAL`(status, reason) | 无输入；壳先过**终态事实门**（见 step 协议 v3）——status 必须有本次已验证本地 outcome 背书（`MAP_NOT_REACHED` 除外），无背书=STEP_FAILED fail-closed | — |
+
+硬规则沿用全表：输入必经 InputSequences；不接受 sleep/回调/拖拽/screen-absolute；
+`KEY`/`CLOSE_PANEL`/`CAPTURE_ROI` 仍不授予。
+
+### 预算护栏（v2，按 2026-07-11 reviewer P1-1 修正——定量结论=该子路径无既有循环终止条件，不设业务护栏）
+
+- **v1 的 "step ≤ 8" 与"同 action+target 连续 3 次同 outcome 即失败"作废**——两者都是基线不存在
+  的新业务终止条件（基线是单向六级阶梯，唯一明确预算在世界地图内部：≤2 次 attempt，仅
+  `WRONG_DESTINATION` 在第 1 次后关面板、既有 250ms 等待、进第 2 次），会让云端重复/慢响应提前
+  改变任务层恢复入口。
+- **纯协议防环只保留 ledger**：同一 `stepId` 的 HTTP 重放由执行 ledger 去重（只重报不重执行）；
+  **不对不同 stepId 的等价动作计数，任何计数器都不得改变 `NavigationResult`**。可加仅诊断用途的
+  重复 step 警告日志（零行为影响）。
+- **不新增导航级总 TTL**：基线 navigateToMap 无总时钟（失败快速返回 `mapNotReached` 交任务层
+  既有重试语义），保持一致。
+- **世界地图内部 retry 属主（v4，按 reviewer v3 复核选定方案 1）**：≤2 attempt 与
+  `WRONG_DESTINATION` 首次后"关面板+既有 250ms 等待+第二次"**整体保留在本地复合 action
+  `SUBMIT_WORLD_MAP_SEARCH` 内部**（`performWorldMapSearchAndClickDestination` 零改动）；云端仅
+  决定阶梯级"是否进入世界地图提交/对最终 outcome 如何收尾"，不拥有也不复刻 action 内部 retry。
+  该内部预算的拆分与上云属子卡 D 的世界地图序列动作化范围。v2 文本中"由云端精确复刻"表述作废。
+- 与 CR250 执行器合同表"预算护栏"条目的衔接：该条目要求"落卡时对照该子路径现有终止条件单独
+  定量"——本卡定量结论即"无既有循环终止条件 → 不新增"，CR250 条目按此结论落地。
+
+### 兼容边界与三任务 fresh 对照点（CR250 review #4 要求单列）
+
+- **message 兼容合同（v2，按 2026-07-11 reviewer P1-3 修正——固定 5 条逐字保留）**：修罗
+  `XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation`（L6767，精确 switch
+  匹配）消费以下 5 个 `PATHING_STARTED` message，每条必须由其对应的本地已验证 action/outcome
+  产生且**逐字保留**；新的 step/终态不得伪造其中任一条，其余结果一律使用非匹配 message：
+  1. `world-map route clicked`（世界地图提交实际点击路线行）
+  2. `route dialog clicked before pathing guard; observer will confirm pathing`（阶梯第 1 级
+     prepared 路线框实际 `OPTION_KEYWORD_CLICKED`）
+  3. `route dialog clicked before world-map search`（第 5 级 gate 内路线框实际点击）
+  4. `same target route already submitted; watcher will confirm pathing`（第 2 级
+     `isFreshSameTargetRoutePending` 本地判重命中）
+  5. `same target route already submitted before world-map search; watcher will confirm pathing`
+     （第 5 级 gate 内同目标判重命中）
+  每条 message 与其背书事实一一对应（与"终态事实门"联动：无背书事实即无该 message）。
+  另：XiuluoTaskV2 `NAV_MSG_CURRENT_MAP_PATHING_STARTED` 匹配点属 navigateInCurrentMap 链
+  （CR258 未改其 message），本卡不触及。实施卡开工前须 grep 复核五环/五倍是否也消费
+  `NavigationResult.message`（本轮 reviewer 与 author grep 均未见）。
+- `NavigationResult` 状态集（ARRIVED/PATHING_STARTED/DIALOG_PREPARING/MAP_NOT_REACHED/
+  STOPPED/INTERRUPTED）与消费方式保持；上述 5 条以外的 message 文本变化必须在实施卡列出其余
+  `equals`/`contains` 消费方并逐个对照（当前已知无）。
+- fresh 对照点：修罗（接任务跨图 + 回城导航）、五环（黄字路线 `ROUTE_CANDIDATE` 链）、五倍
+  （L1940/L2467 currentMap 调用方的上游 navigateToMap 行为）各一组，逐项对照阶梯决策与基线一致。
+- 断云=`MAP_NOT_REACHED` 结构化失败（任务层既有恢复链承接），fail-closed 无本地决策 fallback；
+  本地阶梯实现保留 `@Deprecated` rollback，删除归子卡 E。
+
+### 验收（fresh 日志，实施卡细化；v5 对齐拍板 B 边界）
+
+1. navigateToMap 阶梯级决策全部由云端 step 驱动（日志含 routePlanRequestId/stepId/action），本地
+   无阶梯决策日志——**`SUBMIT_WORLD_MAP_SEARCH` 内部 attempt 循环日志除外（拍板 B 保留本地）**；
+   2. 阶梯六级在三任务对照场景下 step 序列与基线决策一致（世界地图内部两次 attempt 行为与基线
+   逐字一致）；3. 断云结构化失败；4. ledger 重放去重仅在注入故障时触发（无业务护栏）；5. 五开
+   绑定拦截。
+
+### Reviewer 复核（2026-07-11，Review required / 不通过）
+
+审查范围：`docs/业务逻辑.md` 的导航/任务调用方基线、CR250 执行器合同、当前
+`NavigationService.navigateToMap(...)` 与 `XiuluoTaskV2` 的 `NavigationResult` 消费点。当前是设计卡，
+未审到 CR259 业务实现；以下 P1 必须先写回合同，不能让实现者自行选择语义。
+
+1. **P1：`step <= 8` 和“同 action+target 连续 3 次同 outcome 即失败”是新的业务终止条件。**
+   当前基线 `navigateToMap` 是单向六级阶梯；唯一明确预算在世界地图内部
+   `performWorldMapSearchAndClickDestination(...)`：最多 2 次 attempt，且仅
+   `WRONG_DESTINATION` 才在第 1 次后关闭面板、等待既有 250ms、进入第 2 次。基线没有“8 个
+   plan step”或“同 outcome 三次”后直接 `MAP_NOT_REACHED` 的规则。新 cloud 的重复/慢响应会因这两个
+   护栏提前失败，改变任务层的恢复入口。**返修：**删除 8/3 作为业务失败封顶；若要保留纯协议防环，
+   它只能检测同一 `stepId` 的 HTTP 重放（ledger 已负责），不可对不同 stepId 的等价动作计数并改变
+   `NavigationResult`。所有世界地图 2 次/`WRONG_DESTINATION` 1 次重试继续由云端按基线精确复刻。
+
+2. **P1：`RETURN_TERMINAL(PATHING_STARTED)` 不能由云端直接授权。**当前本地 finally 只要收到
+   `NavigationResultStatus.PATHING_STARTED` 就会调用 `registerWindowPathingIntent(...)`，除非
+   `pathingIntentAlreadyActive` 或 `pathingIntentOwnedByNestedRoute`。因此当前协议允许云端仅凭观察返回
+   `PATHING_STARTED` 时，会在没有 prepared click、没有世界地图实际提交的情况下注册 watcher intent，
+   违背“本地独占输入/确认/intent”的 CR250 边界。**返修：**本地必须从本次 `STEP_DONE` 的已验证事实
+   生成终态：prepared 路线框实际 `OPTION_KEYWORD_CLICKED`、或世界地图提交实际 `PATHING_STARTED`，
+   才能返回该状态并保留既有 intent 注册/owned 语义；云端只能请求一个 allowlisted step 或在已回传的
+   本地 outcome 上选择下一步，不能裸下发 `PATHING_STARTED`。
+
+3. **P1：`NavigationResult.message` 兼容合同缺失，修罗维护窗口可能静默改变。**
+   `XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation(...)` 精确消费 5 个
+   `PATHING_STARTED` message：`world-map route clicked`、`route dialog clicked before pathing guard; observer will confirm pathing`、
+   `route dialog clicked before world-map search`、`same target route already submitted; watcher will confirm pathing`、
+   `same target route already submitted before world-map search; watcher will confirm pathing`。卡片只笼统写“message
+   文本会变化”且只举一个已知点，无法保证修罗是否开启队伍维护窗口。**返修：**把这 5 条列为固定兼容合同：
+   对应本地已验证 action/outcome 必须逐字保留；新的 step/terminal 不得伪造这五条中的任一条；其他结果使用
+   非匹配 message。实施前列出五环、五倍是否也消费 message（当前 grep 未见）。
+
+下一次验收点：返修后的 CR259 必须先由 reviewer 复核上述三项合同；通过后才允许 worker 开始双端
+`NAVIGATION_ROUTE_PLAN` 实现。fresh 验收继续以修罗/五环/五倍三条实际 step 序列为准，不能替代本轮源码/设计审查。
+
+### Reviewer v2 复核（2026-07-11，Review required / 不通过）
+
+v2 已正确采纳首轮三项 P1：删除 8/3 业务封顶、将 `PATHING_STARTED` 收回本地事实背书、固定 5 条修罗
+message 合同。未见 CR259 Java 实现。本轮仍有一项 P1，必须先修正文档合同：
+
+1. **P1：终态事实门没有逐项覆盖现有 stale-cache guard，既会漏掉合法 ARRIVED，也会放宽
+   PATHING_STARTED。**当前 `NavigationService.navigateToMap(...)` 的到达判断除了
+   `confirmCurrentMapFresh(...)` 和 recent snapshot ARRIVED 外，还明确接受
+   `hasFreshCurrentLocationForMapGuard(request)` 的 caller-provided fresh map（当前代码 L394-402）。v2 的
+   ARRIVED 背书只列前两者，实施者若照卡实现就会忽略这个已有事实、额外截图/OCR，改变热启动/调用方已有
+   位置时序。
+
+   反向地，v2 的 PATHING_STARTED 第 (c) 项只写“本地观察到 compatible active intent”，但基线只在
+   `confirmCurrentMapFromRecentPathingSnapshot(...) == PATHING_ACTIVE` 后才让 compatible intent 返回
+   PATHING_STARTED（L332-385）；它还受 fresh snapshot/intent 年龄及
+   `shouldYieldForRouteDialogBeforeWorldMap(...)`、`isFreshSameTargetRoutePending(...)` 的既有分支约束。
+   仅有 compatible intent 可能是陈旧或已非 ACTIVE 的 intent，不能据此交 watcher。
+
+   **返修方向：**终态事实门必须完整列为：
+   - ARRIVED = recent snapshot ARRIVED、`confirmCurrentMapFresh` true、或 request 的 caller-fresh map 与目标相同；
+   - existing-intent PATHING_STARTED = 当前本地 recent snapshot 为 fresh `PATHING_ACTIVE`，且 intent 与请求兼容，
+     并按原有 pathing-active/route-dialog gate 分支决定 `alreadyActive`、`DIALOG_PREPARING` 或 return；
+   - 其它 prepared/world-map 点击背书和 5 条 message 合同保持 v2 既定内容。
+
+   下一次验收点：先更新 CR259 的终态事实门与 action/outcome 对照，逐条指向上述基线 guard；再由 reviewer
+   复核。未完成前不得实现 `NAVIGATION_ROUTE_PLAN`。
+
+### Reviewer v3 复核（2026-07-11，Review required / 不通过）
+
+v3 已通过 stale-cache 事实门复核：caller-fresh ARRIVED、fresh `PATHING_ACTIVE` snapshot、原
+route-dialog gate 分支都已回填；此前预算、裸 terminal 与五条 message P1 继续保持修复。未见 CR259 Java
+实现。
+
+但发现新的 P1：**世界地图 retry 的云端属主与本地复合执行器描述相互矛盾。**动作表把
+`SUBMIT_WORLD_MAP_SEARCH(target, attempt)` 写成“单次 attempt”，并说云端按基线掌控“最多 2 次 attempt /
+`WRONG_DESTINATION` 一次重试”；但指定复用的 `submitWorldMapSearchAndClickDestination(...)` 会直接调用
+`performWorldMapSearchAndClickDestination(...)`，后者内部自身执行 `for (attempt = 1; attempt <= 2)`，且仅在
+第一次 `WRONG_DESTINATION` 后关闭面板、等待既有 250ms 后重试。复用该方法时云端只能收到最终结果，无法决定
+第二次；另写单次执行器则“零改动复用”不成立，必须冻结完整输入/关面板时序。
+
+**返修方向：**合同必须明确二选一：
+
+1. 世界地图完整两次搜索保留为一个既有本地复合 action，云端只决定是否进入它，不拥有 action 内部 retry；或
+2. 拆出真正单次 attempt 执行器，云端基于 `STEP_DONE(WRONG_DESTINATION)` 决定第二次；逐字保留第一次
+   错目的地后的关面板、250ms、第二次尝试与最终 `MAP_NOT_REACHED` 语义。
+
+当前同时声称“云端决定重试/放弃”与“零改动复用内部双 attempt 方法”，不可实施。下一次验收点：明确选定一个
+边界，并同步 action 表、step outcome、预算节与终态/message 事实门后再复审；此前不得实现
+`NAVIGATION_ROUTE_PLAN`。
+
+### Reviewer v4 复核（2026-07-11，Review required / 不通过）
+
+v4 已消除“单次 attempt”与内部双 attempt 方法的表面矛盾：当前文本明确把世界地图双 attempt 视为一个本地
+复合 action，原输入和 250ms 时序可以保持。但这同时带来新的 P1 **范围/属主冲突**：CR259 的目标与六级表原文
+明确把世界地图的“重试预算、放弃/换方法条件”列为 A 类、迁云端；v4 把 action 内部 retry 直接留给本地并推迟到
+子卡 D。这不是纯粹的执行器细节，而是把本卡承诺迁移的业务决策推迟，卡内没有用户批准此范围收缩。
+
+**需要用户或卡片明确拍板：**
+
+- **A：保持 CR259 原范围。**在 C 卡拆真实单次 attempt 执行器，云端依据本地
+  `STEP_DONE(WRONG_DESTINATION)` 决定是否发第二次；仍精确保留关面板、250ms、最终失败语义。
+- **B：接受 v4 分期。**明确批准 C 卡只迁“是否进入世界地图提交/最终 outcome 收尾”，世界地图内部两次
+  retry 暂留本地，后续 D 卡再迁。
+
+在用户选择前，reviewer 不能把作者自行选定的方案 1 当作既定范围。CR259 保持未实施 / Blocked；选定后需把
+目标、六级表 A/B 分类、动作表、预算节和验收文字统一为同一属主边界，再复审。
+
+**用户拍板（2026-07-11）**：选择 **B（接受 v4 分期）**——批准 C 卡只迁"是否进入世界地图提交/最终
+outcome 收尾"，世界地图内部两次 retry 暂留本地、后续 D 卡再迁。
+
+**Codex 返修响应（2026-07-11 同日，v4→v5，按拍板 B 统一属主边界）**：
+
+- 目标节改 v5：加"范围排除（用户拍板 B）"段，明确世界地图内部 retry 不在本卡、随子卡 D 上云；
+  "全部决策条件、重试预算"表述收敛为"是否进入世界地图提交与最终 outcome 收尾/放弃分类"。
+- 验收节改 v5：第 1 条豁免 `SUBMIT_WORLD_MAP_SEARCH` 内部 attempt 循环日志；第 2 条加"世界地图
+  内部两次 attempt 行为与基线逐字一致"；第 4 条改为"ledger 重放去重仅在注入故障时触发（无业务
+  护栏）"（对齐预算护栏 v2 结论）。
+- 六级表 A/B 分类、动作表 `SUBMIT_WORLD_MAP_SEARCH`(target) 行、预算护栏"世界地图内部 retry 属主"
+  条目在 v4 已按同一边界写就，本轮零改动；终态事实门 v3、5 条 message 合同、其余已修 P1 均不回退。
+
+待 reviewer 复核 v5。
+
+### Reviewer v5 复核（2026-07-11，通过 / Approved）
+
+审查范围：CR259 v5 的用户拍板 B、目标/范围排除、六级阶梯表、step/终态事实门、动作词表、预算、
+`NavigationResult.message` 兼容合同与验收文本；对照当前 `NavigationService.navigateToMap(...)`、
+`performWorldMapSearchAndClickDestination(...)`、`XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation(...)`
+及 `docs/业务逻辑.md` 导航基线。
+
+- 用户已明确批准 B：世界地图内部 ≤2 attempt、第一次 `WRONG_DESTINATION` 后关面板+250ms+第二次的
+  完整复合行为暂留本地、归子卡 D；C 卡范围已同步收敛为“是否进入世界地图提交/最终 outcome 收尾”。因此
+  v4 的范围/属主 P1 已关闭。
+- v5 保留所有已核准边界：没有 8-step/三次 outcome 的新业务封顶；云端不能裸发
+  `PATHING_STARTED` 注册 intent；ARRIVED 包含 caller-fresh map；existing-intent 要求 fresh
+  `PATHING_ACTIVE` snapshot 和原 route-dialog gate；五条修罗 `PATHING_STARTED` message 逐字绑定本地事实。
+- 当前 CR259 仍是设计卡、尚无本卡 Java 实现或新的编译材料可审。上述结论只批准 v5 设计，实施后仍需按
+  新 diff、适用 compile 和三任务 fresh 验收重新审查。
+
+**通过 / Approved：**本 reviewer 未发现 v5 剩余 P0/P1/P2 或待返修项；可以开始 CR259 实现。
+
+**Codex 返修响应（2026-07-11 同日，v3→v4，v3 复核 P1 采纳，选定方案 1）**：
+
+- 承认矛盾。选定**方案 1**：世界地图完整两次搜索保留为一个既有本地复合 action，理由——①"零改动
+  复用"真实成立，无需为拆单次执行器改动 `performWorldMapSearchAndClickDestination` 并跨云往返冻结
+  关面板+250ms 时序；②子卡 D 本就要动作化整个世界地图序列，内部 retry 属主到 D 一并拆分，不在
+  C 卡制造中间形态。
+- 同步修改：动作表 `SUBMIT_WORLD_MAP_SEARCH`(target)（去 attempt 参数，outcome=最终结果
+  PATHING_STARTED/DIALOG_PREPARING/SUBMIT_FAILED，SUBMIT_FAILED 对应基线 `mapNotReached` 快速返回
+  语义）；预算护栏节新增"世界地图内部 retry 属主"条目并作废 v2"由云端精确复刻"表述；现状解剖第 6
+  级 A 类列改为"阶梯级进入/收尾决策迁云，action 内部 retry 不迁（归子卡 D）"。终态事实门 (b) 背书
+  与 5 条 message 合同不受影响（`world-map route clicked` 仍由该复合 action 的实际点击产生）。
+
+待 reviewer 复核 v4。
+
+**Codex 返修响应（2026-07-11 同日，v2→v3，v2 复核 P1 采纳）**：
+
+- 承认 v2 终态事实门与基线 stale-cache guard 的对照不完整。已按返修方向改写为"终态事实门（v3）"：
+  - ARRIVED 三路背书补齐——recent snapshot ARRIVED / `CONFIRM_CURRENT_MAP_FRESH` true /
+    **caller-fresh map 与目标相同**（`hasFreshCurrentLocationForMapGuard`，基线 L394-402），并明文
+    禁止实施者忽略 caller-fresh 既有事实而额外截图/OCR（热启动/调用方已有位置时序不变）。
+  - existing-intent PATHING_STARTED 收紧——必须"recent snapshot 为 fresh `PATHING_ACTIVE` 且
+    intent 与请求 compatible"（基线 L332-385），且保留 `shouldYieldForRouteDialogBeforeWorldMap`/
+    `isFreshSameTargetRoutePending` 既有分支约束，据此才产出 alreadyActive 返回 /
+    `DIALOG_PREPARING` / same-target message；陈旧或非 ACTIVE snapshot 不得交 watcher。
+  - prepared/world-map 两路背书、`RETURN_TERMINAL` 词表行（引用改指 v3）、5 条 message 合同、
+    预算护栏 v2 结论均不变。
+
+待 reviewer 复核 v3。
+
+**Codex 返修响应（2026-07-11 同日，v1→v2，3 项 P1 全部采纳）**：
+
+- P1-1 采纳：承认 step≤8 / 同 outcome×3 是基线不存在的业务终止条件（与 CR251 v2 "~12 请求上限"
+  同类错误）。预算护栏节已重写为 v2：业务封顶作废；防环仅剩 ledger 对同 `stepId` HTTP 重放去重，
+  不对不同 stepId 等价动作计数、计数器永不改变 `NavigationResult`；重复 step 仅诊断日志。世界
+  地图 ≤2 attempt / `WRONG_DESTINATION` 单次重试（含关面板+250ms 时序）由云端精确复刻。
+- P1-2 采纳：新增"终态事实门"（step 协议 v2）——壳维护本次 `routePlanRequestId` 已验证本地
+  outcome 事实集；`PATHING_STARTED` 须由 (a) prepared 实际 `OPTION_KEYWORD_CLICKED`、(b) 世界地图
+  提交实际 PATHING_STARTED、(c) 本地观察 compatible active intent（壳自置 alreadyActive 跳过注册，
+  同基线 L384）之一背书；`ARRIVED`/`DIALOG_PREPARING` 同理；无背书=
+  `STEP_FAILED("terminal-not-backed-by-local-fact")` fail-closed；intent 注册三守卫由壳按背书事实
+  驱动，云端无权触发注册。`RETURN_TERMINAL` 词表行同步改写。
+- P1-3 采纳：message 兼容合同已固定为 reviewer 列出的 5 条逐字文本，并与背书事实一一绑定写入
+  "兼容边界"节 v2；新的 step/终态不得伪造任一条，其余结果用非匹配 message；实施卡开工前 grep
+  复核五环/五倍 message 消费点（本轮双方 grep 均未见）。
+
+待 reviewer 复核 v2。
+
+Card CR258: CR251 点位合同实施（小地图点位计算上云，CR250 子卡 B 实施件）
+
+Status:
+
+- **fresh 验收记录（第 1 轮，2026-07-11 05:45-05:49，单开修罗，部分覆盖）**：
+  - ✅ 验收 1（点击点全部来自云端）：3 次 `RESOLVE_MINIMAP_CLICK` 批次全部命中三条不同链——
+    黄字终点（05:45:32 `source=yellow-destination:xiuluo-v2:acceptNpc:map`，outcome
+    CLICK_SUBMITTED）、fire-and-handoff 白名单（05:46:01 `start-exit-prepath` 灵兽村(11,8)，
+    点击起步 + `candidate batch closed reason=pathing-started-handoff` 弃余票日志）、正常
+    currentMap（05:48:03 `acceptNpc` (112,93)，点击起步 + intent 注册）；日志含
+    navigationRequestId/batchId/candidateId；**全程零条本地变换计算日志**（`mini-map fallback
+    analysis` 0 次）。
+  - ✅ 零 STALE_REJECTED / 零 binding-echo reject / 零 cloud-unavailable / 零 exhausted——
+    健康路径无误伤。
+  - ⬜ 未覆盖（本轮未走到/未发生，非失败）：批内第二候选轮换（3 次首点全部直接起步，无
+    NO_PATHING 样本）；接近点 `RESOLVE_APPROACH_COORDINATE` 与合理性
+    `CHECK_COORDINATE_PLAUSIBLE`（round 未进行到 target 导航/quest-detail 链）；OCR fallback
+    拒绝归档（模板全程命中）；断云 fail-closed；五开跨窗拦截；标量 echo reject 零输入。
+    后续轮次（建议五开 + 一次刻意断云）补齐后 fresh 才算完整，子卡 C 落卡门以完整 fresh 为准。
+- 实现者 heartbeat 已按 AGENTS 规则 15 于 reviewer Approved 后停止并删除（2026-07-11，job
+  2d89b597）；fresh 运行验收独立保留（验收点见下方 reviewer Approved 记录与"验收"节）。
+- **Reviewer 复验 / Approved（2026-07-11）：**P1 已实修并通过源码复核。两个标量调用均生成独立
+  `pointRequestId`，以现有 `navigationRequestId` wire 字段发送；`MiniMapPointResolver.bindingEcho(...)`
+  原样回显五字段，客户端在读 `plausible`/`approachX/Y` 前复用候选批次同款
+  `echoMismatch(identity, pointRequestId, clientFrame)`。字段缺失、旧 `taskRunId`、其它 `hwnd`、错误
+  clientFrame 或任何错配均记录 `binding echo` reject 并返回 `Optional.empty()`；修罗目标因此拒绝，接近点
+  因此走既有导航失败出口，均无物理输入、无 `CoordinateHelper` 兜底。
+  - 已复核云端三个 operation（`RESOLVE_MINIMAP_CLICK`、`CHECK_COORDINATE_PLAUSIBLE`、
+    `RESOLVE_APPROACH_COORDINATE`）均经同一个 `bindingEcho(...)` 返回五字段；候选 client-relative
+    换算、全批顺序、`NO_PATHING -> 200ms`、60 秒时钟、keep-turn、ring 耗尽、InputSequences 所有权与
+    断云 fail-closed 未被本次返修改动。
+  - **Approved：**本 reviewer 未发现剩余 P0/P1/P2。实现者记录的 DHXY/cloud-brain compile 继续成立；
+    fresh 运行验收独立保留，重点记录五开绑定、批内第二候选无网络往返、标量 echo reject 零输入、正常
+    修罗 objective/approach 与断云 fail-closed。
+- 历史：Codex 返修完成（2026-07-11 同日，Review P1 采纳）/ 待 reviewer 复验：
+  `checkCoordinatePlausible(...)` 与 `resolveApproachCoordinate(...)` 已按返修方向复用批次同款
+  `currentIdentity + clientFrame + echoMismatch` 规则——每次调用生成 per-call `pointRequestId`
+  （复用 `navigationRequestId` wire 字段上送，云端 `bindingEcho` 原样回显），响应先过
+  windowId/hwnd/taskRunId/navigationRequestId/clientFrame 五字段回显门，任一缺失/错配即
+  `binding-echo` reject 日志 + `Optional.empty()`，调用方既有 fail-closed 不变（objective 拒绝、
+  approach 走既有导航失败出口）；未用本地 `CoordinateHelper` 兜底，候选顺序/200ms/60s/keep-turn/
+  ring 耗尽零改动。云端零改动（`bindingEcho` 本就覆盖标量分支）。DHXY `mvn -q -DskipTests compile`
+  exit 0。复验点见下方 reviewer P1 原文。
+- **Review P1 / 2026-07-11：标量云端决策缺响应绑定回显校验，不能 fresh。**
+  `NavigationPointCloudDecisionService.resolveMiniMapClickBatch(...)` 会调用
+  `echoMismatch(...)`，校验云端回显的 `windowId/hwnd/taskRunId/navigationRequestId/clientFrame`；但同一个
+  service 的 `checkCoordinatePlausible(...)` 和 `resolveApproachCoordinate(...)` 只读取
+  `status/plausible` 或 `approachX/approachY`，没有验证 `MiniMapPointResolver.bindingEcho(...)` 已返回的
+  identity/clientFrame。于是旧请求或另一窗口的 HTTP 响应只要是格式正确的 `HIT`，就会被当前调用采用：前者会
+  误筛/误放修罗 objective，后者会把当前目标改成另一请求的 approach 坐标。这违反 CR250/CR251 的 binding/
+  replay 安全门，且不只是诊断问题。
+  - **返修方向：**两个标量 parser 都复用同一 `currentIdentity + clientFrame + echoMismatch` 规则；任一字段
+    缺失/错配返回 `Optional.empty()`，保持现有调用方的 fail-closed（objective 拒绝、approach 走既有导航失败
+    出口）。`CHECK_COORDINATE_PLAUSIBLE` 若需要额外 trace identity，可加 request id 并回显；不得用本地
+    `CoordinateHelper` 兜底，不得修改候选顺序、200ms、60s、keep-turn 或 ring 耗尽语义。
+  - **复验：**同一有效标量请求仍通过；构造/记录旧 `taskRunId`、另一 `hwnd`、另一 `clientFrame` 或缺字段的
+    `HIT` 响应时，日志必须是 binding-echo reject 且无导航输入；双侧重新 compile 后，fresh 继续验证正常
+    修罗目标筛选与接近点。
+- 历史：Implemented / 2026-07-11：v5 合同全量落地（云端三 operation + `READ_LOCATION` 内嵌自检；本地
+  批次消费 + 执行门 + ledger + 黄字终点 + 消费方切换 + `@Deprecated`）；author 侧 5 维度对抗性
+  自审完成，2 项 P2 + 5 项 P3 全部修复（见"自审记录"节）；双侧 compile exit 0（DHXY
+  `mvn -q -DskipTests compile`、cloud-brain `mvn -q compile`）。待外部 reviewer（用户安排）+
+  fresh 运行验收。
+- 历史：In progress / 2026-07-11：用户批准按 CR250/CR251 Approved（方案 review）结果开工
+  navigation migration。实施分支：DHXY 与 dhxy-cloud-brain 均自 `xiuluo-migration`（DHXY 快照
+  `91d3b07`）开出 `navigation-migration`。reviewer 由用户安排。
+
+### 范围与依据
+
+- 实施合同 = CR251 Point Action Contract **v5**（用户拍板 B：有序多候选预取）+ CR250 执行器合同表
+  v1 的 `CLICK_CLIENT_POINT` 行。本卡不含子卡 C（`NAVIGATION_ROUTE_PLAN`）/ D（世界地图序列）/
+  E（删本地实现与参数表）内容。
+- 摸底修正（2026-07-11，以 navigation-migration 磁盘现状为准，卡片旧行号已漂移）：
+  - XiuluoTaskV2 合理性消费点实为 `isObjectivePlausible`（L6379；生产调用方是云
+    `QUEST_DETAIL_READER` 结果过滤 L6281，另一调用方 L6310 属 `@Deprecated(since="CR247")` 离线链）；
+    接近点消费点实为 `navigateToTarget`（L4181）。
+  - 迁移表 `ObjectiveTextRecognitionService` 行核实为**生产不可达**——该调用只在
+    `recognizeLocallyLegacy` `@Deprecated(since="CR208-9")` 链内，生产路径已走云端
+    `OBJECTIVE_TEXT_READER` 且云端自带同款 plausibility；本卡对其零改动（与 CR208-9/CR247 属主
+    对齐，防双迁成立）。
+  - 客户端复用 `CloudDecisionServiceId.MINIMAP_LOCATION`（生产已 execute-enabled，无新增配置项）。
+  - 云端数据 = CR247 已迁 classpath `config/maps.json` 快照（单一属主），本卡只新增求值
+    operation，不再迁数据；本地 `config/maps.json` 与 `saveNewMapConfig` 死代码删除仍归子卡 E。
+
+### 实施切分
+
+1. **云端 `MiniMapPointResolver`（新类）**，transform 数据经 `ObjectiveTextRecognizer` 的快照视图：
+   - `RESOLVE_MINIMAP_CLICK`：入参 = 观察 `{mapName,x,y,source,observedAtMs}`、目标逻辑坐标、
+     randomize 开关+半径、绑定字段（windowId/hwnd/taskRunId/navigationRequestId）、
+     `attemptedCandidateIds`、`navigationDeadlineMs`、clientFrame `{1024,768,dpiScale,frameVersion}`。
+     按基线算法一次生成**完整有序候选批次** = original + edge-biased 偏置 6 点
+     （`MINI_MAP_EDGE_INSET_TRIGGER_PX=240`、`logicalStepForPixelDirection` 符号语义）+ ring
+     1..`MINI_MAP_FALLBACK_MAX_RING_RADIUS=10`（每圈 4 正交 + 4 对角，offset 去重），减去
+     `attemptedCandidateIds`；jitter 在 client-relative 空间按请求半径计算并 clamp 到
+     [2,1022]x[2,766]（等价基线 windowBase±2 clamp），randomize=false 零抖动；每候选
+     `{candidateId, decisionId 单次 token, logicalX/Y, clientRelBaseX/Y, clientRelX/Y, cursor,
+     reason}`；批次级 `batchId` + 绑定字段全回显 + `batchExpiresAtMs`=request 上报的本地 60s
+     deadline 回显。transform 缺失或减完为空 = 结构化 miss（对应基线 exhausted 语义）。
+   - `CHECK_COORDINATE_PLAUSIBLE`：`mapName/x/y/marginPx`（消费方 margin=80 各自上送），unknown
+     map 放行 true，判定式与本地 `isLogicalCoordinatePlausible` 逐字等价。
+   - `RESOLVE_APPROACH_COORDINATE`：龙窟/凤巢例外返回原坐标、`APPROACH_LOGICAL_OFFSET=2`、朝
+     client 中心方向 ±1 逻辑步；transform 缺失回原坐标（语义同基线，不算失败）。
+   - `READ_LOCATION` OCR fallback 内嵌自检：`recognizeByOcr` 出结果后先过 `coordinatePlausible`
+     （mapName 空=放行，等价本地 unknown-map 行为），不合理 → 按原 template-miss reason miss，
+     diagnostics 带 `ocrFallbackReason=coordinate-out-of-transform-bounds` 与被拒 map/coord
+     （本地拒绝样本归档改由该 miss 诊断驱动，metadata-only 格式沿用）。
+   - `DecisionEngine.minimapLocation` 顶部按 `operation` 分发三个新分支；缺省走既有图像识别路径
+     **零改动**。
+2. **客户端 `NavigationPointCloudDecisionService`（新类）**，模式对齐
+   `ObjectiveTextReaderCloudDecisionService`：三个 operation 的 request 组装（hwnd 取
+   `WindowRuntimeContext.getNativeBinding()` 活值；taskRunId 按惯例 `Long.toString`；
+   navigationRequestId 本地按导航调用生成 UUID）与 decision 串解析；响应绑定字段/clientFrame 回显
+   校验；未 executed/解析失败一律 REQUIRED_FAILURE **fail-closed**，不本地兜底计算。
+3. **`navigateInCurrentMap` 批次消费改造**：
+   - 60s 时钟、每轮 checkpoint/战斗态/缓存到达检查、`checkPanelBeforeOpen`、fire-and-handoff
+     白名单、keep-turn 分支、`NO_PATHING`→200ms、INCONCLUSIVE 语义、finally 收尾**零改动**；
+   - 候选获取从 `coordinateHelper.resolveMiniMapClickPoint` 换成本地批次游标顺序消费；每次消费前
+     过执行门（同 windowId+hwnd 活值、同 navigationRequestId、批次获取时捕获的 pathing intent
+     未变、未过 `batchExpiresAtMs`、回显匹配），任一不符=整批作废 `STALE_REJECTED`、重新观察后
+     换批请求；批次**自然耗尽**才带跨批累计已尝试 candidateId 集合请求下一批；跨批耗尽 =
+     `pointNotReached("exhausted mini-map click points")`（消息与基线逐字一致）；
+   - 本地物理换算 = `tracker.refreshWindowState()` + windowBase + clientRelative（基线公式；不引
+     入 DPI 乘法，dpiScale 仅入 clientFrame 供回显校验——基线成立前提是客户区物理 1024x768）；
+     用候选构造 `MiniMapClickPoint` 喂给既有 `clickMiniMapPointForHandoff`，确认链零改动；
+   - **execution ledger**：`NavigationService` 内存 map，key = windowId+hwnd+taskRunId+
+     navigationRequestId+decisionId+candidateId；成功提交输入后记 outcome；同 key 重放只重报
+     （log）不再发物理输入；导航调用结束清理本 requestId 条目；不落盘、不是路线记忆。
+4. **黄字终点**（`executeCloudYellowDestinationRouteCandidateClick`）：同 operation 单候选消费
+   （request source=yellow-destination 区分，randomize 沿用），云 miss/不可达 = `NOT_FOUND`
+   fail-closed（基线 transform 缺失同语义），点击时序（同一原子输入序列内两击）零改动。
+5. **消费方切换**：
+   - XiuluoTaskV2 `isObjectivePlausible` 生产路径改云 `CHECK_COORDINATE_PLAUSIBLE`
+     （fail-closed=拒绝该 objective）；`@Deprecated` 离线链保持本地调用；
+   - XiuluoTaskV2 `navigateToTarget` 接近点改云 `RESOLVE_APPROACH_COORDINATE`（fail-closed=本轮
+     导航结构化失败，不静默用原坐标）；
+   - `LocationVisionService` 删除 ocrFallback 结果的本地 `isPlausibleLocation` 调用（云端已内
+     嵌），`canonicalizeOcrLocation` 保留；拒绝样本归档由云 miss 诊断驱动。
+6. **`CoordinateHelper`**：`resolveMiniMapClickPoint`(x2)/`isLogicalCoordinatePlausible`/
+   `calculateApproachCoordinate`/`getPhysicalMapPoint`/`getMapTransform`/`loadMapConfig`/
+   `saveNewMapConfig` 标 `@Deprecated(since="CR258")` 离线 rollback；实现与参数表删除归子卡 E。
+
+### 边界（沿用 CR251/CR250 硬规则）
+
+- 不动 Alt+1、点击输入参数、`InputSequences` 队列、intent 注册边界、watcher、keep-turn、
+  stop-pause checkpoint、200ms 轮换、60s 时钟、ring 耗尽语义。
+- 响应只含候选数据，无行为指令；`hints` 不存在于本卡。
+- 云端不可达/无结果 = 结构化失败上抛（fail-closed），不本地兜底计算。
+- `getScaledRect`/`resolveMatchedPointInRect` 等无标定知识方法留本地不动。
+
+### 验收（fresh 日志，对应 CR251 卡验收 5 条）
+
+1. 小地图点击点（含黄字目的地终点）全部来自云端 `RESOLVE_MINIMAP_CLICK`（日志含
+   batchId/decisionId/candidateId），本地无变换计算日志；点击物理坐标 = 本地 windowBase +
+   云端 client-relative 点。
+2. 首点未启动寻路时按既有 200ms 直接消费批内下一 candidateId（无网络往返日志）；批次耗尽后的
+   换批请求携带已试 candidateId 集合且云端返回不含重复；重复/陈旧 response（绑定字段或
+   deadline 不符）被本地丢弃并重观察，有 `STALE_REJECTED` 日志。
+3. 迁移表消费方逐一切换后行为与现状一致：修罗 objective 合理性过滤、接近点、位置 OCR fallback
+   拒绝（metadata 归档照旧、由 miss 诊断驱动）。
+4. 断云场景：导航/objective/接近点均结构化失败，不出现本地参数计算兜底。
+5. 五开并发：无跨窗口点击（response 绑定字段拦截日志可证）。
+
+### 2026-07-11 author 侧对抗性自审（5 维度并行，全部发现已修复）
+
+审查维度：候选数学基线等价 / navigateInCurrentMap 循环基线等价 / 云端协议对称 / fail-closed 与
+消费方切换 / 并发生命周期。通过项（摘要）：边缘偏置+ring 顺序与去重逐条一致；round 分解数值等价；
+jitter 分布与 clamp 等价；60s 时钟/200ms/keep-turn/fire-and-handoff/超时与 exhausted 消息逐字保留；
+协议 context 键与 decision 串字段全对齐、候选 wire 分隔符无冲突；@Deprecated 离线链完整；五开
+ledger 隔离与 finally 清理可靠。发现并已修复：
+
+1. **P2（三个维度独立收敛）OCR fallback 合理性门名字空间错位**：云端自检用云侧 exact/containment
+   规范名查 transform，本地随后才做编辑距离模糊纠错——错字图名+界内误读坐标会 fail-open（基线是
+   "先纠错后校验"）。修复：`LocationVisionService` 在 `canonicalizeOcrLocation` 改名时，用纠错后
+   名字补一次云端 `CHECK_COORDINATE_PLAUSIBLE`（margin=80，fail-closed 拒绝+归档），基线顺序恢复
+   且判定仍全用云端数据；云端内嵌自检保留（对可精确规范化的名字仍先拦）。
+2. **P2 跨机墙钟比较**：`observedAtMs` 绝对时间戳会在云端异机部署且时钟偏差>10s 时令全部
+   RESOLVE_MINIMAP_CLICK 恒 stale-observation 瘫痪导航。修复：协议改 `observedAgeMs` 年龄语义
+   （跨钟安全）；cached-player-state 路径如实上报 -1=年龄未知（云端跳过检查），不再伪造 now
+   时间戳（同时修掉 P3 协议符合性缺口）。
+3. **P3 intent 门误伤自然 ARRIVED**：自有 intent 被 watcher 判 ARRIVED 后 active intent 变空，
+   原判据把它当 foreign takeover 作废整批（keep-turn 重试多付一次云往返、云瞬断时基线可续而新版
+   失败）。修复：只有"非空且不同"的 live intent 才作废批次。
+4. **P3 batchExpiresAtMs 回显缺陷可致热循环**：云端回显过去值时批次即取即废、RPC 速度连环请求至
+   60s。修复：回显值纳入 echo 校验（必须等于上报的本地 deadline，不符=FAILED 一次性拒绝），本地
+   批次一律持有本地 deadline 权威值。
+5. **P3 同 hwnd 身份漂移穿透执行门**：CR253 的 `playerIdentityEpoch` 未纳入批次门，同窗重登换角色
+   可用旧图 transform 候选点击新角色。修复：批次获取时快照 epoch，消费前不等即
+   `player-identity-epoch-changed` 整批作废。
+6. **P3 黄字路径 ledger put-立删仪式**：无读者的无效操作，删除；审计由带全 key 成分的 outcome 日志
+   承担。主 ledger javadoc 改为如实的 defense-in-depth 定位（主去重=attemptedCandidateIds+批次
+   方法局部性；ledger 保留合同要求的 token 消费审计与协议漂移防线）。
+
+**已知行为差异（合同内，记录备查）**：云端内嵌合理性自检对*所有* `READ_LOCATION` OCR fallback
+消费方生效（含 NavigationService 点击确认链）——基线确认链会收到不合理坐标并可能因其"变化"误判
+PATHING_STARTED，新行为是 miss 后继续轮询（方向更安全；fast-edge 像素差是首要确认手段）。该差异
+是 CR251 已批准的"出结果前自检"的直接后果，fresh 验收时留意"模板持续 miss + OCR 持续误读"地图
+的寻路确认表现。
+
+修复后双侧 compile exit 0。待外部 reviewer 复核 + fresh。
+
 Card CR253: 修罗绿链统一 prepared-action 调度（CR230/CR232/CR243 收口父卡）
 
 Status:
@@ -32977,6 +34520,823 @@ Status:
 - **Approved：**基线第 1-6 条、云端单一业务决策、attempt/窗口/输入队列所有权、fallback 三次上限、旧 action
   丢弃和战斗确认均保持；本卡仅删除点击前的重复云脑往返。DHXY compile 已由 reviewer 复跑通过。fresh 继续
   记录性能与 runtime 顺序，不阻塞本次 review。
+
+Card CR257: OCR 引擎整体上云——DHXY 本地零 OCR 终态（CR208 收尾方案卡）
+
+Status:
+
+- **Approved（全量终态）/ 2026-07-11 reviewer 复审通过（C2+C3）**：用户 D2 逐条批准（CR247/
+  CR248-249/CR208-10 回滚窗口全部关闭）后，DHXY `bf3bf387` 单一提交完成 C2 全部回滚腿删除
+  （inactive fallback 改 fail-closed miss）+ C3 引擎/配置/SDK 清零（TextRecognizer/OcrWordResult/
+  BotProperties.OcrConfig/yml `bot.dhxy.ocr.*` 含凭据副本/pom Baidu SDK/scripts sidecar）。
+  reviewer 复验双侧编译与零命中 grep 后 **Approved，无 P0/P1/P2**（见卡末"reviewer 最终复审：
+  通过 / Approved（C2+C3）"）。**DHXY 本地零 OCR 调用终态达成**。fresh runtime 独立核验
+  sidecar diagnostics/云端业务 OCR/inactive fail-closed miss，不阻塞本结论。D4（Baidu 凭据
+  吊销/轮换）仍须用户在百度侧执行——Git 历史仍含凭据，删除配置不等于吊销。
+- 历史：Blocked（P1）/ 2026-07-11 reviewer 撤回首个 Approved：其范围仅 A/B/C1 局部，C2 回滚腿
+  与 C3 未实施（本节 C2+C3 Approved 后解除）。
+- 历史：Approved（A+B+C1 实现）/ 2026-07-11 reviewer 复审：首轮 Blocked 的
+  P1-1/P1-2/P1-3/P2-1/P2-2 + heartbeat 追加 preflight 顺序 P2 全部返修闭环（DHXY
+  `5f6b3af`+`a198a4d`、cloud-brain `c94608b`+`3b988ca`）——该结论范围后被更正为仅限 A/B/C1 局部。
+- 历史：Blocked / reviewer 2026-07-11：首轮实现审查确认 `3 P1 + 2 P2`（已全部返修，见上）。
+- 历史：Review / 2026-07-11 A+B+C1 已实施，待 review：在修罗 baseline 快照（DHXY `91d3b07`）上新开
+  branch `cr257-ocr-engine-cloud`（git worktree 隔离：`D:/mavenProject/DHXY-cr257` 与
+  `D:/mavenProject/dhxy-cloud-brain-cr257`），完成切分 A（sidecar 归属迁移 + A.1-A.4 lifecycle）、
+  切分 B（B1.1-B1.4 受限 bytes 契约）与 C1（休眠零调用 OCR 残留删除）。提交：DHXY `ad54463`、
+  cloud-brain `190a4f5`。编译门：DHXY `mvn -q -DskipTests compile` 通过、cloud-brain `mvn -q package`
+  通过。C2（四条 @Deprecated 回滚腿）待用户 D2 逐条批准；C3（TextRecognizer/OcrConfig/Baidu SDK/yml
+  同 commit 删除）阻塞于 C1+C2+A；D4（Baidu 凭据吊销/轮换）仍为必须执行的用户侧安全动作。
+  实施记录见下方"2026-07-11 实施记录（A+B+C1）"。
+- 历史：Ready / 2026-07-11 双方已就方案达成一致：reviewer A Approved（无新 P0/P1/P2）+ worker/B 方
+  同意（用户澄清协商双方即 A 与 worker 本人）。方案含两轮 P1 修订（B1.1-B1.4 受限 bytes 契约、
+  A.1-A.4 sidecar lifecycle 归属合同）。方案协商 heartbeat 已按停止条件删除（2026-07-11）。
+- 历史：Plan review 进行中 / 2026-07-11：reviewer A Approved，等待第二方结论。
+- 历史：Review P1（二轮）/ 2026-07-11：OCR sidecar 启动/health 缺 PID/版本/端口占用归属合同（已修订）。
+- 历史：Review P1（首轮）/ 2026-07-11：B1 字节化缺请求体/解码资源与 loopback 安全合同（已修订）。
+- 历史：Planned / 2026-07-11 建卡。
+
+### 终态定义（用户口述目标）
+
+- OCR 引擎（RapidOCR sidecar）整体归属 dhxy-cloud-brain：由 cloud-brain 部署单元携带、启动、健康
+  检查和调用；"云端上用 OCR 的服务在云端自己用"。
+- DHXY 本地源码中找不到任何 OCR 调用函数：无 `TextRecognizer`、无 sidecar HTTP、无 Baidu SDK、无
+  OCR provider 配置；本地职责仅剩截图/裁剪/传图/执行（与 CR208 父卡 Goal 一致的最终形态）。
+- 与既有裁定的关系：`XIULUO_CLOUD_MIGRATION_PLAN.md` L258/P2 已把"cloud-brain 的 OCR 运行时"列为
+  远端部署阻塞点并给出三个许可选项（随 cloud-brain 部署 / 同网服务 / 替换）；PLAN-R4（U1-U5）裁定
+  Phase 6 前 cloud-brain 严格同机运行。本卡在同机约束内完成"归属权与契约迁移"（选项一），使 Phase 6
+  远端化时 OCR 随 cloud-brain 直接可迁，不再依赖用户机器的隐式 `127.0.0.1:18761`。
+  2026-07-06 云视觉设计 spec 的终态口径（"OCR 只是云端内部能力"，最终步"移除本地 OCR sidecar/百度
+  OCR 依赖"）与本卡一致。
+
+### 现状盘点（2026-07-11，三路全量侦察结论）
+
+1. **引擎本体**：`DHXY/scripts/local_ocr_server.py`（RapidOCR + onnxruntime，单文件 HTTP 服务，
+   `127.0.0.1:18761`，`/health`、`/ocr/text`、`/ocr/words`）+ `requirements-local-ocr.txt`。
+   **API 是文件路径式**（`{"imagePath": 绝对路径}`），硬性同文件系统假设。程序在 DHXY 客户端仓库，
+   不在 dhxy-cloud-brain。
+2. **cloud-brain 消费**：`LocalOcrClient`（单一收口，12 个运行时调用点：DecisionEngine ×5、
+   SmartClickRecognizer ×4、QuestDetail/MiniMap/WubeiDestHint recognizer ×3）写临时 PNG 后传路径；
+   endpoint sysprop `dhxy.cloud.brain.localOcrEndpoint` 从未被任何脚本设置（编译内建 localhost
+   默认）；`run-cloud-brain-server.ps1` 不启动、不健康检查 sidecar；全部调用点 OCR 不可用时
+   fail-closed。
+3. **DHXY 残留**（当前配置 cloud.enabled=true 且全部 reader execute=100，**无任何 LIVE 本地 OCR
+   调用**）：
+   - dormant-zero-callers（删除零行为变化）：`GameTextLineOcrService` 整类（6 个 textRecognizer
+     调用点）、`TeamRoleDetectionService.extractLeaderIdFromTooltipOcr`、`QuestManagerService`
+     两个零调用 OCR 方法、`LocationVisionService.verifyFloorTemplateWithOcr`+
+     `learnMissingMapLabelTemplate`、`OcrRoiMemoryService`（= CR208 item 15）+
+     `config/vision_memory.json`/`ocr_roi_memory.json` 数据、`LocalOcrSidecarService`（当前主树
+     零调用）、`SheyaoxiangDigitTemplateReader`、NpcClickService/FiveRingTaskV2 的未用 DI 字段与
+     无用 import、OCR-only 模型类（OcrWordResult/OcrLineResult/TargetOcrResult/TextCandidate*/
+     PlayerAnchorMatch/RecordResult/LearnedNpcClickPoint）。
+   - @Deprecated-rollback（仅 cloud reader 关闭才可达）：TaskTrackerPanelService（CR248 两腿）、
+     XiuluoTaskV2 `parseTaskPanelObjectiveByOcr`（CR247）、WubeiTask
+     `parseTrackerDestinationHintCaptureLocallyLegacy`（CR208-10）。
+   - 引擎与配置：`TextRecognizer`（唯一 OCR I/O 类：Baidu SDK + sidecar HTTP）、
+     `BotProperties.OcrConfig`、application.yml `bot.dhxy.ocr.*`（Baidu 凭据 @NotBlank，且凭据
+     **已提交进仓库**：yml L52-54 与 TextRecognizer L46-48 硬编码默认）、pom `com.baidu.aip:java-sdk`。
+   - **保留清单**（非 OCR 调用，不在删除范围）：`OcrWindowRegion`/`LocationInfo`/
+     `ResolvedNpcClickRegion`（LIVE 几何/位置模型）、`OcrTextMatcher.editDistance`
+     （MapNameCanonicalizer 在用）、openpnp opencv。
+
+### 方案切分（待批准）
+
+- **切分 A（sidecar 归属迁移，cloud-brain 侧；按 2026-07-11 reviewer 二轮 P1 补齐 lifecycle
+  contract A.1-A.4，不可自行放宽）**：`local_ocr_server.py` + requirements 迁入 dhxy-cloud-brain
+  （建议 `dhxy-cloud-brain/ocr/`）；`run-cloud-brain-server.ps1`（及其远端后继）负责启动、就绪检查
+  与停止 OCR 运行时；脚本显式传 `-Ddhxy.cloud.brain.localOcrEndpoint/-DlocalOcrTimeoutMs`，消灭
+  编译内建默认的隐式依赖；cloud-brain 启动日志/diagnostics 暴露 `ocrAvailable`。DHXY 不再接触
+  18761（就绪门仍只查 decision 端点；OCR 健康属 cloud-brain 内部事务）。
+  - **A.1 身份化 health**：OCR `/health` 回传 `protocolVersion`、sidecarBuild/model fingerprint、
+    bind host/port 与进程启动标识（PID + 启动时间戳）；cloud-brain 只接受与自身期望
+    protocolVersion/fingerprint 匹配、且 bind 为 loopback 的健康服务，其余一律视为不可用。
+  - **A.2 登记式停止**：启动器以本次 cloud-brain instance/run id 登记自己拉起的 OCR PID、启动
+    命令/版本与端口；停止时只终止"已登记且 A.1 身份仍匹配"的 PID；绝不按端口盲杀。
+  - **A.3 冲突 fail-closed**：18761 已被占用但 health/版本/owner 不匹配（上一次残留、手工旧脚本、
+    无关进程）时，cloud-brain 启动以结构化 `ocr-sidecar-conflict` 失败——不覆盖、不接管、不静默
+    复用；只有"已登记 + 身份匹配"的存活进程才允许健康复用。
+  - **A.4 清理/恢复顺序**：写明四种异常路径——cloud-brain 异常退出（孤儿 OCR 由下次启动按 A.1/A.3
+    识别：匹配则复用、不匹配则 conflict 失败，不自动清理陌生进程）、cloud-brain 正常重启（先按 A.2
+    停旧 OCR 再拉新）、OCR 子进程提前死亡（不自动重拉，12 个调用点走既有 unavailable/fail-closed，
+    diagnostics 报 `ocrAvailable=false`，待下次 cloud-brain 启动周期恢复）、health 超时（同前，
+    fail-closed）。日志仅记录 run id、PID、版本指纹与 reason，不泄露图片/文字。
+- **切分 B（字节化契约，远端就绪）**：消灭共享文件系统假设。二选一（决策点 D1）：
+  - B1（推荐，按 2026-07-11 reviewer 首轮 P1 修订为**受限 bytes 契约**，以下四条为不可自行放宽的
+    实施合同）：
+    - **B1.1 绑定边界**：sidecar 仅绑定 loopback（cloud-brain 同机 sidecar，`127.0.0.1`）；不提供
+      任何通过环境变量/参数暴露到 `0.0.0.0` 的通道（启动参数校验拒绝非 loopback host）。Phase 6
+      远端阶段若改同网服务，必须另开部署/鉴权卡，不得复用本无鉴权接口。
+    - **B1.2 双侧限额与统一拒绝语义**：`LocalOcrClient` 在 base64 编码前校验 PNG bytes 上限；
+      sidecar 在 base64 解码前限制请求体/字符长度，解码后再限制 image byte size、允许格式
+      （仅 PNG）、宽高与总像素数。任何超限/坏格式/解码异常统一返回结构化
+      `{"ok":false,"error":"ocr-input-rejected:<bucket>"}`；`LocalOcrClient` 将其映射为既有
+      `unavailable(reason)`，12 个调用方保持既有 `*-ocr-unavailable`/fail-closed 语义零改动——
+      不重试、不落临时文件。
+    - **B1.3 限额取值纪律**：实施前先盘点现有全部已上传 ROI/全窗截图的真实最大尺寸（已知上界候选：
+      全窗 1024x768 raw PNG；tracker detail/dest-hint 330x93/slot 52x52 等业务 ROI 远小于全窗），
+      限额=真实最大值+安全余量，**写死在 cloud-brain 配置**；不得凭猜测写过小值使正常 NPC/任务面板
+      OCR 变成新 miss。日志只记录 reason、byte/pixel bucket 与 trace id，不记录图片内容、base64
+      或识别文字。
+    - **B1.4 imagePath 过渡与删除条件**：`imagePath` 旧形态仅限 cloud-brain 本机兼容期使用；删除
+      条件=cloud-brain 全部调用点切换 bytes 后、连续一个 fresh 验收周期 sidecar 日志零 imagePath
+      请求，随即删除该分支（含 sidecar 端文件读取代码）。
+  - B2：cloud-brain 内嵌 onnxruntime-java 跑同一组 RapidOCR 模型，彻底去掉 Python 进程。改动大、
+    模型分发复杂，仅当 B1 的进程管理被否时考虑。
+- **切分 C（DHXY 清零，三批）**：
+  - C1：dormant-zero-callers 全量删除（上表第一类 + 数据文件）；零行为变化，可独立先行。
+    该批同时消掉 CR208 item 15（`OcrRoiMemoryService` 处置=删除，不迁移），需在父卡 item 15 标注
+    由本卡承接。
+  - C2：四条 @Deprecated rollback 腿删除。**前置条件（决策点 D2）**：CR247/CR248/CR208-10 对应
+    cloud reader 的 fresh 证据齐或用户逐条宣布 rollback 窗口关闭；未获准前不删。
+  - C3：引擎删除——`TextRecognizer` + `BotProperties.OcrConfig` + application.yml `bot.dhxy.ocr.*`
+    必须同一 commit（否则 @NotBlank 启动校验失败）+ pom Baidu SDK + DHXY `scripts/
+    local_ocr_server.py`/requirements 移除（已随 A 迁走）+ `LocalOcrSidecarService` 删除。
+- **凭据卫生（决策点 D4，独立于方案批准建议尽快执行）**：仓库内已提交的 Baidu OCR 凭据
+  （application.yml + TextRecognizer 硬编码）随 C3 删除，并建议立即在百度侧吊销/轮换——即使本卡
+  不批，凭据已泄漏进版本历史的事实不变。
+- **Baidu OCR 处置（决策点 D5，2026-07-11 用户追问"Baidu 是不是也放云端"后固定选项）**：
+  - **推荐：不迁移，随 C3 直接删除。**依据：cloud-brain 的 12 个 OCR 调用点从未依赖 Baidu
+    （`LocalOcrClient` 只有 RapidOCR sidecar 一个后端）；CR212/CR246/CR247/CR248/CR208-9/10/11
+    等全部迁移复审都基于 RapidOCR 通过；Baidu 在本地也只是 hybrid provider 的 fallback 腿，当前
+    配置下不可达。保留它 = 付费外部 API + 凭据管理负担 + 一条谁也不走的路径。
+  - 备选（若用户要"第二 OCR 引擎备援"）：以 **cloud-brain 内部可选 provider** 形态实现——凭据只存
+    云端运行环境（环境变量/云端配置，绝不进 DHXY、绝不进任何仓库），在 `LocalOcrClient` 单收口后
+    做 provider 链。注意：这会改变现有"OCR 不可用即 fail-closed 降级"的失败语义（多一层外网重试
+    与延迟），属于新的业务批准项，不随本卡默认实施。
+  - 两个选项下本地终态一致：DHXY 源码零 Baidu（SDK、import、配置、凭据全清）。
+
+### 顺序与依赖
+
+A/B/C1 相互独立可并行先行；C2 依赖 D2 逐条批准；C3 依赖 C1+C2 完成（引擎失去全部调用方）与 A 完成
+（sidecar 已由 cloud-brain 携带）。基线副本 `DHXY-917ba16`/`DHXY-local-baseline` 内的 sidecar 拷贝
+保留不动（历史，决策点 D3）。
+
+### 非目标
+
+- 不做 Phase 6 远端部署本体（VPS/TLS/网关/license，PLAN-R4 已裁定顺序不变）；本卡只让 OCR 随
+  cloud-brain 可迁。
+- 不改任何既有云服务的业务语义（IMAGE_PREPROCESS、各 reader 的 decision 合同、fail-closed 行为）。
+- 不迁移/不删除 opencv 模板匹配等非 OCR 视觉能力与保留清单中的几何模型。
+
+### 验收（实施后）
+
+1. `grep -riE "textRecognizer|AipOcr|/ocr/words|/ocr/text|18761|bot\.dhxy\.ocr" DHXY/src/main
+   DHXY/src/main/resources DHXY/pom.xml` 零命中；OCR 相关残留仅限保留清单（几何模型可另拆 rename
+   子卡，不阻塞本卡）。
+2. DHXY `mvn -q -DskipTests compile` exit 0；dhxy-cloud-brain `mvn -q package` exit 0。
+3. cloud-brain 由自身脚本拉起 OCR 运行时（按 reviewer 二轮 P1 扩充为 lifecycle 验收）：启动日志出现
+   A.1 身份化就绪检查通过（protocolVersion/fingerprint/loopback 匹配）；杀掉 OCR 进程后 12 个调用点
+   按既有 fail-closed 语义降级且 decision 带 `*-ocr-unavailable` 原因、diagnostics 报
+   `ocrAvailable=false` 且不自动重拉；预先用旧脚本手工占用 18761（身份不匹配）再启动 cloud-brain，
+   必须得到结构化 `ocr-sidecar-conflict` 启动失败且该陌生进程未被杀；正常重启周期先停已登记旧 OCR
+   再拉新（A.2），全程无按端口盲杀。
+4. fresh：任一业务 OCR 场景（修罗 objective、五倍 tracker/dest-hint、team-role tooltip、minimap
+   fallback、NPC yellow、route yellow-destination）日志只出现云端 serviceId 调用；DHXY 日志全程
+   无 18761/本地 OCR 痕迹。
+5. B1 生效后（按 reviewer 首轮 P1 扩充）：cloud-brain 与 sidecar 之间不再产生临时 PNG 路径 handoff
+   （sidecar 日志/请求体可证）；构造超限/坏格式输入样本必须得到 `ocr-input-rejected` 结构化拒绝，且
+   12 条业务调用全部保持既有 fail-closed 降级（decision 带 `*-ocr-unavailable` 类 reason）、无重试、
+   无临时文件；正常业务 ROI（全窗/tracker/dest-hint/slot）在写死限额下零新增 miss；sidecar 启动参数
+   非 loopback host 被拒绝。
+
+### 2026-07-11 reviewer 首轮：P1，B1 必须成为受限 bytes 契约
+
+现有 `LocalOcrClient` 会把 `BufferedImage` 写为本机临时 PNG，再向 `127.0.0.1:18761/ocr/words` 只传
+`imagePath`。B1 将它改成 `imageBase64` 是正确的远端就绪方向，但目前没有限制 HTTP body、base64 解码、
+图片尺寸或格式。cloud-brain 有至少 12 个调用点；若 sidecar 接收任意 base64/图片解码，单次异常截图或恶意
+请求即可占满 Python/onnxruntime 的内存和 CPU，影响全部 OCR service 的 fail-closed 可用性。
+
+**返修要求：**在切分 B 写出不可自行放宽的 B1 contract：
+
+1. sidecar 仅绑定 loopback（cloud-brain 同机 sidecar），不允许通过环境变量暴露到 `0.0.0.0`；远端阶段若
+   改同网服务，必须另开部署/鉴权卡，不能复用无鉴权接口。
+2. `LocalOcrClient` 在 base64 前限制 PNG bytes；sidecar 在 base64 解码前限制请求体/字符长度，解码后再限制
+   image byte size、允许格式、宽高与总像素数。任何超限/坏格式/解码异常统一返回结构化 `ocr-input-rejected`，
+   保持调用方既有 `ocr-unavailable`/fail-closed 语义，不重试、不落临时文件。
+3. 限额数值必须按现有已上传 ROI/全窗截图的最大真实尺寸盘点后写死在 cloud-brain 配置中；不得凭猜测写一个
+   过小值而让正常 NPC/任务面板 OCR 变成新 miss。日志只记录 reason、byte/pixel bucket 和 trace id，不记录
+   图片内容、base64 或识别文字。
+4. `imagePath` 过渡接口必须仅 cloud-brain 本机兼容使用，并写明删除条件；B1 fresh gate 同时验证“无临时 PNG
+   路径 handoff”和“超限输入被拒绝且 12 条业务调用仍 fail-closed”。
+
+在此 P1 收口前，本 reviewer 不批准 CR257；heartbeat 继续运行，等待方案返修和另一独立 reviewer 结论。
+
+### 2026-07-11 reviewer 二轮：P1，OCR sidecar 生命周期必须可归属
+
+切分 A 目前只写“cloud-brain 启动、健康检查与停止 OCR 运行时”。这不足以覆盖 Windows 实际运行：`18761`
+可能已被上一次 cloud-brain 留下的 OCR、手工启动的旧脚本或无关程序占用。仅凭 `/health` 成功就复用，会把
+错误版本/错误模型/陌生进程纳入生产；直接按端口杀进程又可能误杀用户进程。
+
+**返修要求：**A 必须补 sidecar lifecycle contract：
+
+1. OCR `/health` 回传 protocolVersion、sidecarBuild/model fingerprint、bind host/port 与进程启动标识；
+   cloud-brain 只接受与自身期望版本匹配、且 loopback 的健康服务。
+2. 启动器以本次 cloud-brain 的 instance/run id 记录自己拉起的 OCR PID、命令/版本和端口；停止时只终止
+   这条已登记且身份仍匹配的 PID，绝不按端口盲杀。
+3. 端口已占用但 health/版本/owner 不匹配时，cloud-brain 启动应以结构化 `ocr-sidecar-conflict` 失败，
+   不覆盖、不接管、不静默复用；匹配的已登记进程才可健康复用。
+4. cloud-brain 异常退出、重启、OCR 子进程提前死亡和 health 超时的清理/恢复顺序必须写明，并保持现有
+   OCR unavailable 的 fail-closed 结果；日志仅记录 run id、PID、版本指纹和 reason，不泄露图片/文字。
+
+该 P1 属于部署/运行时归属，不改变 OCR 业务算法。收口前本 reviewer 不批准 CR257。
+
+### worker 回应（2026-07-11，二轮 P1 全部采纳）
+
+- 四条 lifecycle 要求逐条采纳并修订进切分 A（A.1-A.4，不可自行放宽）：身份化 health
+  （protocolVersion + build/model fingerprint + bind + 进程启动标识，仅接受匹配且 loopback）、
+  登记式停止（run id 登记 PID/命令/版本，只杀已登记且身份匹配者，绝不按端口盲杀）、冲突
+  fail-closed（不匹配即 `ocr-sidecar-conflict` 启动失败，不覆盖不接管不静默复用）、四种异常路径的
+  清理/恢复顺序（孤儿识别、正常重启先停后拉、子进程死亡不自动重拉走 fail-closed、health 超时同）+
+  日志脱敏。验收第 3 条同步扩充（含"陌生进程占端口→conflict 失败且不误杀"与"无盲杀"取证点）。
+- 设计取舍说明：A.4 选择"OCR 子进程死亡不自动重拉"，与现有 12 调用点 fail-closed 语义和 reviewer
+  首轮 B1.2 的"不重试"纪律一致——自动重拉属于新的可用性策略，若需要应另行批准。无分歧项。
+
+### 2026-07-11 reviewer A 结论：Approved（方案）
+
+复核确认：B1.1-B1.4 已把 bytes OCR 限定为 loopback、双侧资源上限、结构化拒绝与受控 imagePath 退出；
+A.1-A.4 已把 health/PID/版本/端口冲突/异常退出纳入 cloud-brain 自身的生命周期合同。C1/C2/C3 的删除
+顺序、rollback 门、同机到 Phase 6 的边界、12 条调用点的既有 OCR unavailable fail-closed 和 Baidu
+“默认删除、不迁移”的路径均清楚。没有发现新的 P0/P1/P2。
+
+本 reviewer **Approved** CR257 方案。D4 的 Baidu 凭据吊销/轮换是必须执行的安全操作，但不改变本方案的
+代码边界；仍等待第二独立 reviewer 在本卡写入明确 Approved。heartbeat 必须继续。
+
+### worker 回应（2026-07-11，首轮 P1 全部采纳）
+
+- 四条返修要求逐条采纳并已修订进方案正文：切分 B 的 B1 展开为不可自行放宽的受限 bytes 契约
+  B1.1-B1.4（loopback 绑定 + 拒绝 0.0.0.0 通道、双侧限额 + 统一 `ocr-input-rejected` 拒绝语义映射回
+  既有 `unavailable`/fail-closed、限额按真实已上传 ROI/全窗尺寸盘点后写死 + 日志脱敏、`imagePath`
+  过渡仅本机兼容 + 明确删除条件）；验收第 5 条同步扩充（超限拒绝样本 + 12 调用点 fail-closed +
+  正常 ROI 零新增 miss + 非 loopback 启动被拒）。
+- 补充说明与依据：B1.2 的映射设计（sidecar `ocr-input-rejected` → `LocalOcrClient.unavailable(reason)`）
+  刻意让 12 个调用点零改动，与盘点结论"单一收口、全部 fail-closed"一致；B1.3 的上界候选来自现状
+  盘点（全窗 1024x768 raw 是最大已知上传形态）。无分歧项。等待本 reviewer 复核与另一独立 reviewer
+  的方案结论。
+
+### 2026-07-11 worker（B 方）结论：同意方案
+
+- 用户澄清本卡协商双方为 reviewer A 与 worker 本人（方案作者即 B 方），不再等第三方。
+- B 方结论：**同意当前方案正文**。依据：① 首轮/二轮 P1 的全部八条返修要求均已逐条修订进正文
+  （B1.1-B1.4 受限 bytes 契约、A.1-A.4 sidecar lifecycle 归属合同）且与三路盘点事实一致；
+  ② 方案边界与既有裁定对齐（PLAN-R4 同机约束、XIULUO_CLOUD_MIGRATION_PLAN L258 选项一、
+  2026-07-06 云视觉设计终态口径）；③ C1/C2/C3 删除顺序与 D1-D5 决策点留给用户/实施期裁定的
+  部分（D2 rollback 窗口逐条批准、D5 Baidu 默认删除）无歧义；④ 本卡未写任何实现代码，实施以
+  "完成CR257"指令另行启动。无保留项。
+
+### 双方已就方案达成一致（2026-07-11）
+
+- reviewer A：Approved（方案，无新 P0/P1/P2，见上方结论段）。
+- worker/B 方：同意方案（见上方结论段）。
+- 按用户双同意指令，方案协商结束：Status 转 Ready（方案共识达成，待用户下达实施指令），
+  worker 方案协商 heartbeat 停止并删除。D4（Baidu 凭据吊销/轮换）保持"必须执行的安全操作"标记，
+  随实施或提前独立执行。
+
+### 2026-07-11 实施记录（A+B+C1）
+
+**分支与隔离**：用户指令"在修罗baseline的基础上新开1个branch，开始做CR257"。两仓主工作树均在
+`navigation-migration` 上带并行会话未提交改动，故用 git worktree 隔离：DHXY worktree
+`D:/mavenProject/DHXY-cr257`（branch `cr257-ocr-engine-cloud` @ 基线快照 `91d3b07`，含
+CR208-10/253/255/256 全部成果）、cloud-brain worktree `D:/mavenProject/dhxy-cloud-brain-cr257`
+（同名 branch @ `48e3781`）。提交：DHXY `ad54463`、cloud-brain `190a4f5`。
+
+**切分 A（sidecar 归属迁移 + A.1-A.4 lifecycle 合同）**：
+
+- `dhxy-cloud-brain/ocr/local_ocr_server.py`（新增，约 340 行）+ `ocr/requirements.txt`
+  （rapidocr/onnxruntime）：sidecar 源码归属 cloud-brain 部署单元。`PROTOCOL_VERSION="dhxy-ocr-v2"`、
+  `SIDECAR_BUILD="cr257-1"`。A.1 身份化 `/health`：protocolVersion/sidecarBuild/modelFingerprint/
+  bind host+port/pid/startedAtMs。
+- `DHXY/scripts/run-cloud-brain-server.ps1`：launcher 持有 sidecar 生命周期。A.2 登记式停止——
+  registry JSON（`data/ocr-sidecar-registry.json`，runId+PID+启动命令），停止仅按"registry PID 且
+  Win32_Process CommandLine 匹配 local_ocr_server.py"定点执行，绝不按端口 kill。A.3 端口被占但身份
+  不匹配 → 结构化 `ocr-sidecar-conflict` 启动失败（不接管/不覆盖/不静默复用）；身份匹配孤儿 → 复用。
+  A.4 brain 存活期 sidecar 死亡不自动拉起（fail-closed 至下一次 launcher 周期）。java 启动注入
+  `-Ddhxy.cloud.brain.localOcrEndpoint` 与 `localOcrTimeoutMs`。
+- `CloudBrainApplication`：启动打一条 `ocrAvailable=...` 身份日志（LocalOcrClient.checkHealth()，
+  校验 protocolVersion=dhxy-ocr-v2 + loopback bindHost）；OCR 不可用不阻塞 brain 启动（12 调用点
+  已 fail-closed）。
+
+**切分 B（B1.1-B1.4 受限 bytes 契约）**：
+
+- B1.1 loopback：sidecar 非 loopback 绑定启动即 `sys.exit(2)`；无任何 0.0.0.0 通道。
+- B1.2 双侧限额+统一拒绝语义：sidecar 侧 body 12MB / base64 11M chars / 解码后 8MB / PNG-only
+  （magic+IHDR `struct.unpack(">II", bytes[16:24])`）/ 2048x2048 / 4,194,304 像素，超限抛
+  `OcrInputRejected` → 结构化 `ocr-input-rejected:<bucket>`；客户端 `LocalOcrClient` 8MB PNG 门 →
+  `unavailable("ocr-input-rejected:client-png-too-large:<len>")`。全部映射回既有 unavailable/
+  fail-closed，12 个调用点零改动、零重试、零临时文件。
+- B1.3 限额依据现状盘点最大上传形态（1024x768 全窗 PNG）写死；日志只记 reason/字节/像素桶 +
+  traceId，不记图像内容/base64/识别文本。
+- B1.4 `imagePath` 过渡保留（仅本机兼容路径），删除条件：一个 fresh 周期内 imagePath 请求数为零。
+- 传输：`LocalOcrClient` 改 `imageBase64`+`traceId` bytes 直传（`run_ocr_bytes` 直接喂 RapidOCR），
+  消灭共享文件系统假设。
+
+**切分 C1（休眠零调用 OCR 残留删除，引用闭包内）**：
+
+- 整文件删除：`GameTextLineOcrService`、`OcrRoiMemoryService`、`OcrWindowScanService`、
+  `SheyaoxiangDigitTemplateReader`（+测试）、`LocalOcrSidecarService`、model.ocr 8 类
+  （OcrLineResult/TargetOcrResult/TextCandidate/TextCandidateScanResult/TextCandidateScanStatus/
+  PlayerAnchorMatch/RecordResult/LearnedNpcClickPoint）、`QuestTargetInfo`、
+  `config/vision_memory.json`、`config/ocr_roi_memory.json`。
+- 成员级删除：NpcClickService（textRecognizer 字段）、FiveRingTaskV2（OCR 字段+导入）、
+  TaskTrackerPanelService（OcrWindowScanService 导入）、XiuluoTaskV2（@Deprecated
+  resolveStartupTaskPanelHotStart）、QuestManagerService（readCurrentQuestDetailTextForTask 系 +
+  fetchCurrentQuestInfo/matchesQuestTargetInfo + 休眠常量/字段）、LocationVisionService
+  （extractPlayerPhysicalAnchor/verifyFloorTemplateWithOcr/learnMissingMapLabelTemplate 系 +
+  休眠常量；保留 canonicalizeOcrLocation——cloud-ocr-fallback 活体）、TeamRoleDetectionService
+  （extractLeaderIdFromTooltipOcr 系 + 内部类 + 构造器参数）。
+- KEEP until C2/C3（引用闭包裁定）：`TextRecognizer` 本体与 `OcrWordResult`、四个 @Deprecated
+  回滚腿持有者（TaskTrackerPanelService/WubeiTask/XiuluoTaskV2/GameStateUtil）、
+  `readWubeiTrackerPanelFromCloudPanel`（forRemoval=false，非 OCR）。
+
+**验证**：DHXY worktree `mvn -q -DskipTests compile` BUILD SUCCESS；cloud-brain worktree
+`mvn -q package` 通过；sidecar `py -3` AST 解析通过；run-cloud-brain-server.ps1 PowerShell 解析
+通过。验收 grep：C1 删除类型全仓零残留；`TextRecognizer`/`OcrWordResult` 仅剩 C2/C3 范围内的
+预期持有者（部分终态符合卡内验收定义）。
+
+**未完成（后续切分）**：C2 四条回滚腿删除待用户 D2 逐条批准（CR247/CR248×2/CR208-10）；C3
+（TextRecognizer + BotProperties.OcrConfig + application.yml `bot.dhxy.ocr.*` 同 commit + pom Baidu
+SDK + DHXY `scripts/local_ocr_server.py` 删除）阻塞于 C1+C2+A 完成与 fresh 验证；B1.4 imagePath
+退出门待一个 fresh 周期数据；D4 Baidu 凭据吊销/轮换（用户侧，必须执行）。
+
+### 2026-07-11 reviewer 首轮：不通过 / Blocked
+
+审查范围：CR257 A+B+C1 的提交 DHXY `ad54463`、cloud-brain `190a4f5`、两边 worktree 实际文件、
+`docs/业务逻辑.md` 及 CR257 已批准的 A.1-A.4 / B1.1-B1.4 合同。复核编译：DHXY
+`mvn -q -DskipTests compile` 通过；cloud-brain 因 enforcer 禁止 `skipTests=true`，改以
+`mvn -q compile` 通过。未运行本地自动化测试，遵守 no-local-test mode。
+
+**P1-1：C1 删除本地 `vision_memory.json` 前没有实际存在的 cloud canonical copy，会丢失已验证的
+NPC click memory。**
+
+- 证据：DHXY `ad54463^:config/vision_memory.json` 仍为 `4,795,741` bytes；但 CR257 cloud worktree
+  `D:/mavenProject/dhxy-cloud-brain-cr257/data/vision_memory.json` 不存在，主
+  `D:/mavenProject/dhxy-cloud-brain/data/vision_memory.json` 也不存在。`NpcClickMemoryStore` 的默认路径
+  正是 `data/vision_memory.json`。
+- 影响：卡片把 C1 描述为“零行为变化”，但这会让 `NPC_CLICK_SMART` 的 `MEMORY` 候选失去完整历史数据，
+  与既有 CR181/CR185 的 cloud canonical memory 业务事实冲突。
+- 返修：在删除本地源数据前，先把完整文件复制/迁移到实际启动的 cloud-brain `data/vision_memory.json`，
+  校验 schema、hash/大小和条目数；把启动工作目录与该 canonical 路径显式记录。无法保证 fresh 启动使用该
+  文件时，C1 不得删除本地文件。复验必须证明 cloud store 已加载该数据且 `MEMORY` 候选仍可读取。
+
+**P1-2：A.1/A.2 的身份与所有权检查没有真正落实，会接受错误 build/model，并在后续启动误杀复用的
+孤儿 sidecar。**
+
+- 证据一：[`run-cloud-brain-server.ps1`](D:/mavenProject/DHXY-cr257/scripts/run-cloud-brain-server.ps1:183)
+  的 `Test-OcrIdentityMatch` 只比较 protocol 和 bind host；`sidecarBuild`、`modelFingerprint`、
+  `bindPort`、`startedAtMs` 虽由 `/health` 返回，却不参与接受/停止判断。这违反卡内 A.1 的“期望
+  fingerprint + bind host/port + 启动标识”。
+- 证据二：脚本 285-295 行称 orphan “reuse without adopting ownership”，但仍将它写入 registry；下一次启动
+  时 [`Test-RegisteredOcrProcess`](D:/mavenProject/DHXY-cr257/scripts/run-cloud-brain-server.ps1:201)
+  只要 PID、命令名和 health PID 相同就返回 true，277-283 行会 `Stop-Process`。即一个并非本 launcher
+  拉起的复用 orphan 会在下一周期被当作自有进程杀掉，违背 A.2 的“只终止已登记且身份仍匹配的 own process”。
+- 返修：registry 必须记录并比对完整 health identity（protocol、build、model fingerprint、bind port、
+  PID、sidecar `startedAtMs`）；`mode=reused` 必须永远不可进入 stop 分支，或重新定义并明确采用 owner
+  的可证明接管协议。身份任一字段不匹配都必须 `ocr-sidecar-conflict` fail-closed，不得复用或停止。
+
+**P1-3：B1.4 保留的 `imagePath` 支路绕过了 B1.2 的资源上限。**
+
+- 证据：[`local_ocr_server.py`](D:/mavenProject/dhxy-cloud-brain-cr257/ocr/local_ocr_server.py:160)
+  的 `run_ocr_path` 在任何 stat/大小上限前执行 `path.read_bytes()`（165 行），随后才校验 PNG；loopback
+  请求仍可指定任意巨大本机文件，导致 Python 在拒绝前先把整文件读入内存。
+- 返修：若过渡路径必须保留，先用 `stat().st_size` 在读取前执行与 bytes 路径同等的上限检查，并限制路径到
+  cloud-brain 明确拥有的兼容目录；无实际 caller 时，优先提前删除该支路。所有 legacy 拒绝也必须返回
+  `ocr-input-rejected:<bucket>`，不允许 generic 500。
+
+**P2-1：坏 JSON/非法 Content-Length 落入 generic 500 且把异常文本回给调用者。**
+
+- 证据：`read_json()` 的 `int(...)` / `json.loads(...)` 异常没有转为 `OcrInputRejected`，而 326-327 行把
+  `str(exc)` 放入响应；这与 B1.2 的统一结构化拒绝合同不符。
+- 返修：将 header 解析、负数/缺失长度、JSON decode 统一映射为固定 bucket，响应不回传异常原文。
+
+**P2-2：`ocrAvailable` 仅在 cloud-brain 启动时打印一次，sidecar 后续死亡时没有诊断状态更新。**
+
+- 证据：[`CloudBrainApplication.java`](D:/mavenProject/dhxy-cloud-brain-cr257/src/main/java/com/yueyunfe/dhxy/cloudbrain/CloudBrainApplication.java:18)
+  只调用一次 `checkHealth()` 并打印；卡内 A.4 要求 sidecar 死亡后 diagnostics 能显示
+  `ocrAvailable=false`。
+- 返修：把 OCR health 作为可查询/可更新的 diagnostics 状态；任一 OCR transport failure 或健康刷新失败后
+  记录 unavailable，且不因此自动重拉或改变既有调用方 fail-closed 语义。
+
+本 reviewer 结论：**不通过 / Blocked**。以上 P1/P2 修复、两侧编译复验以及卡内明确返修记录完成前，
+CR257 不得标记 Approved 或进入 fresh runtime。
+
+### 2026-07-11 reviewer heartbeat：P1-3 有未提交预修，Blocked 保持
+
+- 新材料仅为 cloud worktree 未提交的 `ocr/local_ocr_server.py` diff：删除 `run_ocr_path` 与
+  `imagePath` dispatch，并把 `SIDECAR_BUILD` 改为 `cr257-2`。这条方向能消除 P1-3 的无上限文件读取，
+  但尚未提交、未重跑 cloud compile、也未写入 worker 返修记录，不能作为通过证据。
+- P1-1（canonical `vision_memory.json` 缺失）、P1-2（identity/ownership）及 P2-1/P2-2 没有对应的
+  DHXY/cloud-brain 新提交或 working-tree 修复。CR257 继续 **Blocked**；heartbeat 保留等待完整返修。
+
+### 2026-07-11 reviewer heartbeat：返修 diff 复核，P1-1/P1-2 仍阻塞
+
+- 新的未提交 diff 已方向性修复 P1-3/P2：删除 `imagePath` 读取支路；坏 JSON/Content-Length 改为固定
+  reject bucket；新增 `/api/cloud/ocr/health` 及 `LocalOcrClient` 可查询 diagnostics。尚未提交或编译，
+  暂不计入通过证据。
+- P1-1 仍未完成：launcher 新增 `vision-memory-missing` fail-closed 与显式 sysprop，能阻止“静默空
+  memory”启动，但两个 cloud worktree 仍没有实际 `data/vision_memory.json` 供该门验证。必须先 provision
+  完整 canonical 文件并核对 hash/schema/条目数，才能允许 C1 删除本地源数据。
+- P1-2 仍未完全满足 A.1：脚本现在比对 protocol/build/loopback/port，registry 也记录并比对
+  `startedAtMs` 与 model fingerprint，且 `mode=reused` 不再能 stop，孤儿误杀路径已消除；但
+  `Test-OcrIdentityMatch` 对 orphan/health accept 仍未有“期望 model fingerprint”的比较，
+  `LocalOcrClient.checkHealth()` 也仍只验 protocol + loopback。卡内 A.1 要求 cloud-brain 接受
+  protocol **与 model fingerprint** 均匹配的 sidecar，不能把“health 自报的 model”当成期望值。
+- 另记 P2：脚本在检查 `vision-memory-missing` 前已经可能启动 OCR sidecar；缺 memory 的启动失败会留下
+  已登记 OCR。应将 canonical memory preflight 前置到 `Start-OcrSidecar` 之前，避免失败启动产生额外
+  sidecar 生命周期状态。
+- 结论保持 **Blocked**；等待 worker 提交完整返修、写明数据 provision 证据并重新通过两侧编译后再复审。
+
+### worker 返修记录（2026-07-11，首轮 Blocked P1-1/P1-2/P1-3/P2-1/P2-2 + 两次 heartbeat 追加项，全部完成）
+
+提交：DHXY `5f6b3af`（P1-1/P1-2 launcher）+ `a198a4d`（P1-2 round 2 / preflight 前置）；
+cloud-brain `c94608b`（P1-3/P2-1/P2-2）+ `3b988ca`（P1-2 round 2 checkHealth）。
+编译复验：cloud-brain `mvn -q package` 通过（两次，含 round 2 后）；DHXY 本轮仅改
+`scripts/run-cloud-brain-server.ps1`（无 Java 变更，ps1 Parser 零错误）；sidecar `py -3` AST 通过。
+
+**P1-1（vision memory canonical）——数据事实与 provision 证据：**
+
+- 事实澄清：活体 canonical `D:/mavenProject/dhxy-cloud-brain/data/vision_memory.json` **实际存在**
+  （5,000,882 bytes，lastWrite 2026-07-10 22:00，CR181/CR185 血统的运行时延续，比 DHXY 被删快照
+  4,795,741 bytes 更新更大）。结构化对比（node 脚本，DHXY `ad54463^:config/vision_memory.json` vs
+  活体）：同 schema（8 个顶层键逐一致）；`entries`（学习记忆本体）459/459 键 100% 包含于活体；
+  `policies` 2/2 包含；`npcClickSamples` 活体 608 ⊇ 快照 600（滚动样本缓冲的更新后继）。
+  结论：C1 删除本地副本未造成任何已验证 NPC click memory 丢失。
+- provision：活体 canonical 已复制到 cr257 worktree `dhxy-cloud-brain-cr257/data/vision_memory.json`，
+  sha256 双侧一致 `7883d403281ba4461d4a78301b3d8573811a9806a0fe7406e8536444da128a45`（连同
+  route-memory.json 一并 provision；`data/` 为 gitignore 运行时状态，worktree 不自动携带，故显式复制）。
+- launcher 保证（`5f6b3af`+`a198a4d`）：显式下发
+  `-Ddhxy.cloud.brain.visionMemoryPath=<BrainProjectPath>\data\vision_memory.json`
+  （`NpcClickMemoryStore.configuredVisionMemoryPath()` 既有 sysprop 通道，消除 cwd 依赖）；启动打印
+  canonical path/bytes/sha256/lastWriteUtc；canonical 缺失 → `vision-memory-missing` 拒绝启动，空库
+  必须显式 `-AllowEmptyVisionMemory`。"cloud store 已加载该数据且 MEMORY 候选可读取"的运行时复验
+  归 fresh 验证（启动日志将带 canonical hash 供核对）。
+
+**P1-2（身份/所有权，含 round 2 追加）：**
+
+- 期望值来源（绝不采信自报）：期望 build 从本 launcher 拥有的 sidecar 脚本解析（`SIDECAR_BUILD`
+  标记，缺失即 fail）；期望 model fingerprint 用与 sidecar 同一 python 运行时现场推导
+  （`import rapidocr` → `'rapidocr-'+__version__`，与 sidecar `model_fingerprint()` 逐字符同构；
+  本机验证输出 `rapidocr-unknown`，两侧必然一致）；推导失败 → `ocr-model-fingerprint-unknown`
+  fail-closed。
+- `Test-OcrIdentityMatch` 全量比对：protocol + 期望 build + 期望 model + loopback bindHost +
+  精确 bindPort。
+- registry 在 health 确认（含 `health.pid == 自启进程 PID`）后才写入完整活体身份
+  （pid/startedAtMs/protocol/build/model/bindHost/bindPort/command/mode）。
+- stop 资格（`Test-OcrStopEligible`）：`mode=launched` 且 pid+startedAtMs+build+model+port 全部与
+  live health 匹配且 Win32 命令行仍为 sidecar 脚本——**`mode=reused` 永不进入 stop 分支**（复用
+  孤儿后续周期只会再复用或 conflict，绝不被本 launcher 杀死）；启动轮询发现端口被他人 PID 应答
+  时只停自己的 PID 并 conflict fail-closed。
+- brain 侧（`3b988ca`）：`checkHealth` 在 protocol+loopback 之后比对 launcher 下发的
+  `dhxy.cloud.brain.localOcrExpectedModelFingerprint`，不匹配 →
+  `health-model-mismatch:<actual>:expected:<expected>`；sysprop 缺席（无 launcher dev 直跑）时维持
+  protocol+loopback 门。
+
+**P1-3（imagePath 支路）：** 整支删除（`run_ocr_path` + dispatch 分支 + 文档），依据 reviewer
+"无实际 caller 时优先删除"——bytes 化后 sidecar 唯一 caller 是 `LocalOcrClient`（12 调用点单收口）
+且其已不发送 `imagePath`，caller 盘点闭合为零；任何 imagePath 请求现在得到
+`ocr-input-rejected:base64-missing`（400 结构化）。B1.4 过渡条款以"caller 闭包为零"提前满足，
+无需等 fresh 周期。`SIDECAR_BUILD` → `cr257-2`。
+
+**P2-1：** `read_json` 把 Content-Length 解析失败/负值 → `ocr-input-rejected:bad-content-length`、
+JSON decode/非 object → `ocr-input-rejected:bad-json`；generic 500 固定回 `ocr-internal-error`，
+异常 type/detail 只进 server 端日志，不回传 caller。
+
+**P2-2：** `LocalOcrClient` 增加 `AtomicReference<OcrDiagnostics>`（startup health probe 播种；每次
+health 探测刷新；业务 OCR 调用 transport 失败降级 unavailable、任何已解析 HTTP 应答恢复 reachable，
+identity 字段跨更新保留）；新增 `POST /api/cloud/ocr/health`（`OcrHealthEndpoint`，默认现场 refresh，
+`{"refresh":false}` 返回最近记录态；仅观察——永不重拉、不改调用方 fail-closed）。
+
+**heartbeat 追加 P2（preflight 顺序）：** vision memory canonical preflight 已前置到 OCR sidecar
+生命周期块之前——缺失中止不再留下已启动/已登记的 sidecar。
+
+等待 reviewer 复核。
+
+### 2026-07-11 reviewer 最终复审：通过 / Approved
+
+- 审查范围：DHXY `5f6b3af`、`a198a4d` 与 cloud-brain `c94608b`、`3b988ca`；同时复核 CR257
+  的 A.1-A.4、B1.1-B1.4、C1 合同，以及首轮 `P1-1/P1-2/P1-3/P2-1/P2-2` 和 heartbeat 追加
+  preflight 顺序 P2。
+- P1-1 已闭环：当前 cloud canonical `data/vision_memory.json` 的 SHA-256 为
+  `7883d403281ba4461d4a78301b3d8573811a9806a0fe7406e8536444da128a45`；与删除前快照同为 8 个
+  顶层键、`entries=459`、`policies=2`，活体 `npcClickSamples=608` 不少于快照 `600`。launcher
+  显式钉住该路径，缺失时 fail-closed，且 preflight 在 sidecar 生命周期之前。
+- P1-2 已闭环：launcher 从自己拥有的 sidecar 脚本/同一 Python 运行时推导期望 build/model，并以
+  protocol、build、model、loopback bind、精确端口做活体比对；registry 记录完整身份，只有
+  `mode=launched` 且 PID/启动时间/身份/命令行全量匹配才允许 stop，`mode=reused` 永不被接管或停止。
+  cloud-brain health 同时消费 launcher 下发的 expected model fingerprint。
+- P1-3/P2 已闭环：`imagePath`/`run_ocr_path` 支路已删除，输入只走受限 bytes；坏 header/JSON 统一
+  结构化拒绝且不回显异常；`POST /api/cloud/ocr/health` 与每次 transport outcome 可刷新 diagnostics。
+- 当前复验：cloud-brain `mvn -q compile` exit 0；DHXY launcher PowerShell Parser 零错误；sidecar
+  Python AST 解析通过；两 worktree 无未提交源码 diff，相关 `git diff --check` 无输出。未运行本地
+  自动化测试，符合当前 no-local-test 模式。
+- 结论：**通过 / Approved**。未发现遗留 P0/P1/P2；fresh runtime 仍作为独立运行验收，建议核验
+  launcher 的 canonical hash、sidecar 完整 identity 与 `/api/cloud/ocr/health` 在 sidecar 停止后的
+  unavailable 状态，但不阻塞 reviewer 结论。
+
+### 2026-07-11 reviewer 更正：撤回上述 Approved，P1 本地 OCR 尚未清零
+
+- 上述“Approved”只应覆盖 A/B/C1 已提交范围，误把该局部实现写成了 CR257 的整体终态，现明确撤回。
+- 现场源码仍有 `TextRecognizer`：它保留本地 HTTP OCR、Baidu OCR client 和内置 Baidu 凭据；并非单纯
+  空壳。`WubeiTask.java:3706` 的 destination-hint 路径仍直接调用
+  `textRecognizer.getAllTextResultsLocalOnly(capture.yellowPath())`，未标 `@Deprecated`，因此至少存在一条
+  可运行的本地 OCR 业务链。
+- 另有 C2 未关闭的 rollback 持有者：`XiuluoTaskV2`、`TaskTrackerPanelService` 等仍保留可调用 local OCR
+  路径。C3 约定的 `TextRecognizer`、`BotProperties.OcrConfig`、`application.yml` OCR 配置、Baidu SDK/
+  凭据删除也未实施。
+- 结论：**不通过 / Blocked（P1）**。返修方向不是改 A/B sidecar，而是先在卡内逐条确认 C2 rollback
+  是否关闭，再把 remaining destination-hint 迁入 cloud-brain，最后以 C3 同一提交删除本地引擎、配置、SDK
+  和全部调用。完成后需重新 review；fresh runtime 仍是独立验收。
+
+### 2026-07-11 reviewer heartbeat：C2 有未提交局部删除，仍不通过 / Review required
+
+- 新材料：DHXY CR257 worktree 出现未提交修改，仅触及 `WubeiTask` 与 `XiuluoTaskV2`。两处都删除了
+  各自的本地 OCR rollback，并在 cloud reader inactive 时改为 `Optional.empty()`；未发现导航、点击或 phase
+  顺序的额外改动。
+- 该方向只有在用户明确选择 D2 "关闭对应 rollback" 后才可作为 C2 实施。当前卡内仍只有 D2 选项，聊天中
+  用户只询问了选项含义，未见明确选择记录；代码注释“D2 approved”不能替代用户决定。
+- 即便 D2 已获批准，本次修改仍只是局部 C2：`TaskTrackerPanelService` 还保留两个
+  `TextRecognizer.getAllTextResultsForMatch(...)` 的 local OCR rollback；`TextRecognizer`、Baidu SDK/凭据、
+  `BotProperties.OcrConfig` 与 application.yml OCR 配置仍在，C3 尚未开始。worktree 未提交、没有新的编译
+  证据，也不能作为可交付结论。
+- 结论：**不通过 / Review required（P1）**。先在 CR257 写入用户 D2 的明确裁定；之后完整删除剩余 C2
+  rollback，再同一 C3 提交清零本地引擎/配置/SDK/凭据并完成两侧 compile，方可进入下一轮 review。
+
+### 2026-07-11 reviewer heartbeat：C2/C3 新未提交删除，仍不通过 / Review required
+
+- 新材料扩大为 7 个 DHXY 源文件：`TextRecognizer.java`、`OcrWordResult.java` 已删除；修罗 objective、
+  五倍 destination-hint、五倍 tracker detail/green-map 的 local OCR rollback 也已改为 cloud reader inactive
+  时直接 miss。源码 grep 已不再发现 `TextRecognizer` / `OcrWordResult` 的调用，局部方向符合“本地不留 OCR”。
+- **P1-1（C3 不完整）：** `pom.xml:87` 仍保留 `com.baidu.aip` SDK，
+  `src/main/resources/application.yml:46-54` 仍保留 `bot.dhxy.ocr` 及 Baidu 凭据。卡片 C3 明确要求它们与
+  `TextRecognizer` 同一提交删除；当前 worktree 既未修改这两处，也未提交，不能称本地 OCR 清零。
+- **P1-2（决策/证据不足）：** C2 删除已从两条扩大为四条，但卡内尚无用户 D2 的明确选择；且 worktree
+  没有 commit、DHXY compile 或 cloud compile 的新证据。代码注释“D2 approved”不构成裁定或验证。
+- 结论：**不通过 / Review required（P1）**。所需返修：先记录 D2 的明确用户决策；补同一 C3 变更删除
+  `application.yml` OCR/Baidu 凭据与 pom Baidu SDK，确认无其余本地 OCR/配置残留；提交并完成 DHXY 与
+  cloud-brain 当前代码 compile 后，再交 reviewer 复审。
+
+### 2026-07-11 reviewer 最终复审：通过 / Approved（C2+C3）
+
+- 新提交：DHXY `bf3bf387`，提交正文已把 D2 记录为“CR247、CR248/249、CR208-10 回滚窗口全部关闭”。
+  该裁定与用户此前明确的“不需要本地兜底、所有 OCR 上云”一致；此前“无 D2 记录”的阻塞撤销。
+- C2 已完整清除：修罗 objective、五倍 destination-hint、五倍 tracker detail/green-map 四条 local OCR
+  rollback 都改为 cloud reader inactive 时 fail-closed miss，未恢复本地执行器，也未改导航/点击/phase 顺序。
+- C3 已完整清除：`TextRecognizer.java`、`OcrWordResult.java`、DHXY 的 `scripts/local_ocr_server.py`/
+  requirements、`BotProperties.OcrConfig`、application.yml `bot.dhxy.ocr.*` 和 Baidu 凭据、pom
+  `com.baidu.aip:java-sdk` 均已删除。当前源码/资源/pom grep 对 `TextRecognizer`、`OcrWordResult`、
+  `AipOcr`、`getAllTextResults`、`bot.dhxy.ocr`、`com.baidu.aip` 为零命中；cloud-brain 持有 OCR 引擎。
+- 当前复验：DHXY worktree `mvn -q -DskipTests compile` exit 0；cloud-brain worktree `mvn -q compile`
+  exit 0；提交 diff 检查无错误。未运行本地自动化测试，符合 no-local-test mode。
+- 结论：**通过 / Approved**。未发现 P0/P1/P2；fresh runtime 仍独立核验 sidecar diagnostics、云端业务 OCR
+  调用以及 reader inactive 时的 fail-closed miss，但不阻塞本轮 reviewer 结论。
+
+### 2026-07-11 reviewer 再复审：通过 / Approved
+
+- 复审范围：CR257 当前完整提交链 DHXY `ad54463`、`5f6b3af`、`a198a4d`、`bf3bf387`，以及
+  cloud-brain `190a4f5`、`c94608b`、`3b988ca`；核对 A/B/C1/C2/C3 全量终态、卡片 D2 裁定与本地
+  OCR 清零。
+- 当前两 worktree 均无未提交源码变更；DHXY 源码/资源/pom 对 `TextRecognizer`、`OcrWordResult`、
+  `AipOcr`、`getAllTextResults`、`bot.dhxy.ocr`、`com.baidu.aip` 均为零命中。cloud-brain 仍为唯一
+  OCR 引擎/sidecar 属主，A/B 的 bytes、identity、ownership 与 diagnostics 修复仍在。
+- reviewer 现场复验：DHXY `mvn -q -DskipTests compile` exit 0；cloud-brain `mvn -q compile` exit 0；
+  两侧历史 diff `--check` 无错误。未运行本地自动化测试，符合 no-local-test mode。
+- 结论：**通过 / Approved**。没有新的 P0/P1/P2 或返修要求；fresh runtime 保持独立验收，不阻塞本次
+  reviewer 结论。
+
+### D2 裁定（2026-07-11，用户逐条批准：全部关闭）
+
+用户对 C2 回滚窗口关闭的逐条裁定（会话内明确选择"全部批准，直接 C2+C3"）：
+
+- **CR247 腿（XiuluoTaskV2.parseTaskPanelObjectiveByOcr，任务面板目标本地 OCR）**：批准关闭。
+  云替代 QUEST_DETAIL_READER 已生产运行。
+- **CR248/249 腿（TaskTrackerPanelService 五倍 detail 本地管线 + green map OCR 等
+  @Deprecated 方法组）**：批准关闭。云替代 CR248 cloud reader 已生产运行。
+- **CR208-10 腿（WubeiTask.parseTrackerDestinationHintCaptureLocallyLegacy，五倍目的地黄字
+  提示本地 wash+sidecar OCR+regex）**：批准关闭。云替代 WUBEI_DEST_HINT_READER 为生产路径；
+  用户知悉该腿最新迁云、fresh 证据尚未沉淀，接受"回退需 git revert 而非配置开关"的风险。
+- 现场事实更正（相对 reviewer 撤回一节）：Wubei legacy 腿实际已标
+  `@Deprecated(since = "CR208-10")`（WubeiTask 撤回时 3679 行），且 dispatcher 生产走云端
+  （`isWubeiDestHintActive()`），本地仅为 inactive fallback；destination-hint 云端迁移
+  （reviewer 返修方向第 2 步）在 CR208-10 已完成，本轮剩余工作即删除该 fallback。
+- 裁定后的实施口径：C2 三组腿删除 + 各 dispatcher 的 inactive fallback 改 fail-closed miss
+  （带日志），与 C3（TextRecognizer/BotProperties.OcrConfig/application.yml `bot.dhxy.ocr.*`/
+  pom Baidu SDK/DHXY `scripts/local_ocr_server.py`）同一提交执行；D4（Baidu 凭据吊销/轮换）
+  仍需用户在凭据侧执行，与本提交删除的已提交副本相互独立。
+
+### 2026-07-11 实施记录（C2+C3，DHXY 本地零 OCR 终态达成）
+
+提交：DHXY `bf3bf387`（单一提交，13 文件，+28/-1355），branch `cr257-ocr-engine-cloud`。
+编译门 `mvn -q -DskipTests compile` 通过。（reviewer 已复核并 Approved，见上方结论段。）
+
+**C2 回滚腿删除（每个 dispatcher 的 inactive fallback 改 fail-closed miss + 日志）：**
+
+- WubeiTask（CR208-10 腿）：删 `parseTrackerDestinationHintCaptureLocallyLegacy` 及级联孤儿
+  `parseTrackerDestinationHint`、`TRACKER_DEST_HINT_PATTERN`、textRecognizer 字段/导入；
+  cloud reader inactive 时按 per-sample miss 处理并打 `reason=cloud-reader-inactive` 日志。
+- XiuluoTaskV2（CR247 腿）：删 `parseTaskPanelObjectiveByOcr` 及级联孤儿
+  `parseTaskPanelObjectiveText`/`normalizeTaskPanelObjectiveText`/`cleanupTaskPanelMapName`/
+  `joinOcrText`/`matchesTaskPanelObjectiveText`/`TASK_PANEL_OBJECTIVE_PATTERN`、字段/导入。
+- TaskTrackerPanelService（CR248 两腿）：删 `readWubeiTrackerDetailLocallyLegacy`、
+  `scanWubeiTrackerGreenLinks`、`recognizeWubeiGreenMapText` 及独占孤儿
+  （`buildWubeiGreenMapOcrImage`/`resolveWubeiGreenMapOcrPath`/`joinOcrWords`/
+  `normalizeWubeiGreenMapText`/`shouldParseWubeiTargetMap`/`isWubeiDarkThunderTaskKey`/
+  `isWubeiMirrorProbeTaskKey`/`WubeiGreenLinkScan`/`WubeiGreenMapText` records/
+  `WUBEI_TRACKER_LINK_SINGLE_MAX_WIDTH`）。引用闭包裁定保留共用体：`washYellowToPath`
+  （修罗/task-tracker title 两个活体调用）、`splitWubeiTrackerGreenLinkSegments`/
+  `resolveGreenTextScanInput`/`safeSource`/像素工具（CR249 wuhuan 像素腿共用——非 OCR，
+  不在 C2/CR257 范围）；`readWubeiTrackerPanelFromCloudPanel` 保留（cloud panel 路径，非 OCR）。
+- GameStateUtil：删零调用 TextRecognizer import。
+- OcrTextMatcher：删零调用 `hasAnyKeyword(List<OcrWordResult>,...)`；保留 `editDistance` 等纯
+  字符串工具（`MapNameCanonicalizer` 活体依赖，无 OCR 调用）。
+
+**C3 引擎/配置/SDK 清零（同一提交）：**
+
+- 删 `core/TextRecognizer.java`（本地 HTTP OCR + Baidu client + 内置凭据默认值）与
+  `model/ocr/OcrWordResult.java`。
+- 删 `BotProperties.OcrConfig` 与 application.yml `bot.dhxy.ocr.*` 段（含已提交 Baidu 凭据
+  副本——**D4 凭据吊销/轮换仍须用户在百度侧执行**，Git 历史仍含凭据，删除配置不等于吊销）。
+- 删 pom.xml `com.baidu.aip:java-sdk` 依赖。
+- 删 DHXY `scripts/local_ocr_server.py` 与 `scripts/requirements-local-ocr.txt`（引擎归属
+  dhxy-cloud-brain `ocr/`）。
+- 修正 GameStateUtil/LocationVisionService 两处过时 javadoc（不再声称回滚实现"保留在下方"）。
+
+**终态验收 grep**：全源码（src/main、src/test、pom.xml、scripts/）
+`TextRecognizer|OcrWordResult|getAllTextResults|com.baidu.aip|local_ocr_server|18761` 零命中；
+唯一例外 `scripts/run-cloud-brain-server.ps1`——A.1-A.4 合同指定的 sidecar 生命周期 launcher，
+非 OCR 调用。剩余含 "ocr" 字样者均为云 reader 服务命名/注释与 `model/ocr/LocationInfo`
+（被动坐标 DTO，活体云链路使用）。fresh runtime 仍为独立验收。
+
+Card CR265: 启动队长识别前的 dialog 清理
+
+Status:
+
+- Implemented / compile passed / fresh runtime pending（2026-07-11）：用户明确要求启动时在检查队长前
+  直接使用既有 `forceCloseDialog()`；实现只在 role preflight 的 tooltip hover 前调用一次，未新建
+  option-only cleanup 策略。
+
+### 实施与编译证据
+
+- `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 已在 live role detection 前调用
+  `UICleanerService.forceCloseDialog()`，调用后保留 `TaskCheckpoint`，再进入
+  `TeamRoleDetectionService.detectCurrentRoleWithEvidence(...)`。
+- `MultiWindowTaskManager` 已向两个 `WindowTaskRunner` 创建路径注入同一 `UICleanerService`，不改变
+  其它 runner 构造或任务分配语义。
+- 2026-07-11：主项目执行 `mvn -q -DskipTests compile` 通过；未运行本地自动化测试（遵循 no-local-test
+  默认规则）。
+
+### 批准范围
+
+- 在 `WindowTaskRunner.resolveTaskTypeBeforeStart(...)` 中，完成既有 stop checkpoint 后、调用
+  `TeamRoleDetectionService.detectCurrentRoleWithEvidence(...)` 前，调用
+  `UICleanerService.forceCloseDialog()`。
+- `forceCloseDialog()` 的既有 story/option 规则原样复用；不改其选择逻辑、不加重试、不改变队长识别
+  算法、fallback、任务分配或后续 task phase。
+- 清理调用后再做一个既有 `TaskCheckpoint`，保证 stop/pause 不会继续进入 hover 输入。
+
+### 验收
+
+1. Java compile 通过；2. fresh 启动日志中可见 role preflight 先出现 UI cleanup dialog 处理，再出现
+   `teamRole:hoverAndCaptureTooltip`；3. 无 dialog 时不产生额外任务分配变化；4. story/option 的实际点击
+   仍完全由 `forceCloseDialog()` 的既有策略决定。
+
+Card CR266: 五倍维护对话框闭合、绿链移动事实门与三分钟全局入战预算
+
+Status:
+
+- Implemented（2026-07-11，Claude）：四项合同 + 医宝宝单一匹配定稿已作为同一条五倍入战前恢复合同
+  一次性落地（未只修单个 wait 分支）。`mvn -q -DskipTests compile` exit 0；`业务逻辑.md` 30-36 已按
+  批准差异替换为"入战前全局预算"；实施明细与改前 git 证据见 `docs/ACTIVE_WORK.md` 2026-07-11 CR266
+  节。Fresh 四条验收 gate 待验，不得据此标 Done。
+- 原 Ready（2026-07-11，用户已明确批准业务差异）：本卡尚未实施。不得只修一个 wait 分支；四项必须作为
+  同一条五倍入战前恢复合同落地。
+
+### 现场证据与先查项
+
+- `2026-07-11 14:34:44`，队长窗口 `hwnd-3D808B0` 的 `AFTER_ACCEPT_MAINTENANCE_CHECK` 已通过
+  `NPC_CLICK_SMART` 点到 `宝象国/沙拉买提`，并看到 `OPTION` dialog。随后
+  `wubei:heal-pet-broadcast` 连续五次得到 `NO_ACTION`，日志写
+  `heal-pet hook skipped after 5 attempts; continue main task`。
+- 同一轮 `14:34:44.615` 点五倍绿链前已是 `dialogBefore=OPTION`；`14:34:45.402` 开启普通怪 timer；
+  `14:34:54.557` Runner 报 `STOPPED_AWAY` 后，任务当前实现进入 `ENTER_BATTLE` 并注册
+  `WUBEI_ENTER_BATTLE interest`。Runner 随后将遗留巫医 dialog 用三张看打模板匹配，持续 `NOT_FOUND`。
+- `14:39:46.158` Runner 实际已发布 `PRE_BATTLE_TIMEOUT`，但 `ENTER_BATTLE` 内部等待只等
+  `PREPARED_ACTION_READY`，没有消费 timeout；interest 因而一直保留到后续 round reset。
+
+### 第一项调查结论（2026-07-11，尚未实施修复）
+
+- **不是“巫医 dialog 未识别”。** `14:34:31-14:34:44` 的 `NpcClickService` 已把
+  `沙拉买提` 的 `expectedDialogTemplatePath=images/template/dialog/maintenance/heal_pet_option.png`
+  交给云端验证；云端两次均返回 `status=FOUND` / `GREEN_TEMPLATE_VISIBLE`，最后一次的
+  `candidateBox=280,376,91,18`、窗口相对点击中心 `(325,385)`。模板文件本身也是 `91x18`，
+  因而该命中是尺寸一致的确定事实。
+- **真正失败发生在下一层。** `triggerMaintenanceBroadcastBeforeTracker(...)` 没有把上述“已命中
+  `heal_pet_option`”的结果或坐标交给维护处理，而是无条件调用
+  `TaskMaintenanceService.handleMaintenanceBroadcast(...)` 再扫一次。后者只扫
+  `maintenance_heal_all_repair_raw.png`（`106x16`）和 `maintenance_repair_confirm_raw.png`，根本不扫
+  已命中的 `heal_pet_option.png`。
+- **二次扫描的 ROI 还截掉了已命中条目顶部。** 二次扫描固定 ROI 是窗口相对
+  `(260,381)-(378,413)`；已命中框为 `(280,376)-(371,394)`，其上方 `5px` 被 ROI 排除。因此即使两张
+  模板语义相近，后续扫描也不是对前一命中结果的复用，而是在被裁坏的区域用不同尺寸模板重新猜一次，最终才输出
+  `maintenance broadcast not found in ROI`。
+- 结论：根因是**确认链与消费链断开 + 二次扫描模板/ROI 不等价**，不是先去调整 OCR、洗图、阈值或重做模板。
+  现场临时图片会被同名路径后续运行覆盖，故本结论以当时原始日志中的 template、box、ROI、尺寸和返回状态为证。
+
+### 用户定稿：医宝宝只保留维护 ROI 单一匹配（2026-07-11）
+
+- **删除第一层。** 五倍 `HEAL_PET_NPC` 不再携带/使用
+  `expectedDialogTemplatePath=heal_pet_option.png`；不得在 `NpcClickService` 的通用 NPC 点击完成后再做这张
+  `91x18` 图片的“只确认、不点击”验证。
+- 点到 `沙拉买提` 后，唯一的 dialog 识别/点击属主是既有 `TaskMaintenanceService`：仅使用
+  `maintenance_heal_all_repair_raw.png`（以及该维护模块既有 repair 模板）在它的维护 ROI 中匹配，命中后由
+  该模块原子点击。不要把同一个医宝宝选项拆成“NPC 点击层确认一次 + 维护层再确认一次”。
+- 本条只收口五倍医宝宝专用调用链；不删除或重写 `NpcClickService` 的通用 expected-dialog 能力，也不擅自改
+  maintenance ROI、模板、阈值、点击时序或 repair 路径。ROI/模板本身是否仍有问题，必须在删掉第一层后用 fresh
+  现场证据单独判断，不能与本条混改。
+
+### 用户批准的业务合同
+
+1. **maintenance 决定跳过前先关窗。** 医宝宝/维护广播自己打开过 NPC dialog，且最终决定本轮跳过维护时，
+   在任何绿链点击之前必须询问当前 `WindowRuntimeContext`/Runner 是否仍有可见 dialog。存在 dialog 时必须调用
+   既有 `UICleanerService.forceCloseDialog()`；只有 Runner 的后续事实快照确认 dialog 不在，才允许继续点绿链。
+   不得把“maintenance 放弃”当作“dialog 已消失”。若既有 force-close 未能关闭，不得继续点击绿链，沿既有失败/恢复
+   路径退出本次 maintenance 处理；不得在本卡自行新加次数、TTL 或猜测性 option 点击。
+
+2. **绿链到入战必须有真实移动事实。** 复用绿链点击已经绑定的 pathing intent / `WindowPathingSnapshot`：只有该
+   intent 已经有实际移动确认（既有 `PATHING_STARTED` 或与该 intent 对应的有效移动观察）时，后续
+   `STOPPED_AWAY` 才可进入入战处理。若点击后没有移动事实，`STOPPED_AWAY` 不能被解释为到怪点、更不能进入
+   `ENTER_BATTLE`；按五倍基线回同一条绿链导航处理。不得另写第二套“点前点后坐标”探测器；优先复用现有 snapshot
+   中已记录的 intent、状态和移动确认。
+
+3. **三分钟全局入战预算。** 从本轮“成功接任务”起，到 Runner 首次确认 `IN_COMBAT` 前，预算固定为
+   `180_000ms`。它覆盖 maintenance、读 tracker、绿链、导航、`ENTER_BATTLE` 及所有内部 wait/retry；
+   不得像当前普通怪 timer 一样从第一次绿链才开始，也不得保持 5 分钟。用户暂停/恢复期间，暂停阻塞时长必须
+   补回预算，和现有 pause timer compensation 语义一致。
+
+4. **预算优先级高于一切内部循环。** 到期后 Runner 发布一个可由当前任务立即消费的超时事实；五倍无论正处于
+   哪个 phase 或内部 `waitForPrepared...`，都必须先消费它、清 task-owned dialog/prepared/pathing/interest/runtime，
+   直接回重新接任务入口。不能只在普通 phase boundary 检查，不能因只监听 `PREPARED_ACTION_READY` 而漏掉 timeout。
+   进入真实战斗后该预算结束；战斗时长不受本卡限制。
+
+### 基线与明确差异
+
+- 已核对 `docs/业务逻辑.md` “普通怪入战前超时”第 30-36 条。该段当前写的是“第一次绿链起算、5 分钟”；
+  本卡按用户 2026-07-11 明确批准，将其替换为“成功接任务起算、3 分钟、可打断全部内部等待”。
+- 已核对普通怪 `PATHING_TERMINAL` 第 26-29 条：停稳本身不能等同进入战斗。本卡用“当前 intent 已有真实移动
+  确认”作为进入入战前置事实，恢复这一原则。
+- 除上述已批准差异外，不得改变 NPC/广播识别算法、模板、OCR、绿链选择顺序、输入队列原子动作、暂停 stop 语义、
+  既有失败恢复顺序或战斗内逻辑。
+
+### 实施边界
+
+- 预期文件：`WubeiTask`、`WindowTaskRunner`、`WindowRuntimeContext`，必要时仅复用既有
+  `UICleanerService`/`WindowReadyEventBus` 接口；不新建本地测试、replay、source guard，除非用户另行指定。
+- 先记录最新 pushed baseline、当前 `git status` 与涉及文件 diff 证据到 `docs/ACTIVE_WORK.md`，再改 Java。
+- Java 修改后主项目必须 `mvn -q -DskipTests compile` 成功；本卡不要求默认本地自动化测试。
+
+### Fresh 验收
+
+1. 复现“医宝宝广播失败但 dialog 留在前台”时，日志必须先看到 `forceCloseDialog` 成功及 Runner 无 dialog 事实，
+   才允许出现五倍绿链物理点击；若无法关窗，不能出现该绿链点击。
+2. 绿链点击未产生该 intent 的实际移动确认时，后续 `STOPPED_AWAY` 不得产生 `WUBEI_ENTER_BATTLE interest`，
+   必须回同一绿链导航链。
+3. 从接任务成功开始满 180 秒仍未 `IN_COMBAT` 时，无论主线程在 maintenance、pathing、enter-battle 或
+   `waitForPrepared...`，都必须出现 timeout 被任务消费、清理运行态并回重新接任务；暂停时对应暂停长度不计入 180 秒。
+4. 真实进入战斗后 timer 必须停止；战斗持续超过三分钟不得触发本卡回接任务。
+
+Card CR268: 黄袍连战终态广播与 tracker-only 链末判定
+
+Status:
+
+- Implemented / compile passed / fresh runtime pending（2026-07-11）。用户在查看 `17:03-17:07`
+  黄袍 fresh 日志后明确批准本卡两个业务变化；`mvn -q -DskipTests compile` exit 0，未运行本地
+  自动化测试（no-local-test 默认规则）。
+
+### 用户批准范围
+
+1. 删除 `WubeiTask` 的 `MAX_CHAINED_COMBAT_ATTEMPTS=5` 及 `combatCount > max -> FAILED` 分支。
+   黄袍战后只依现有 tracker 判断：缓存小区域 miss、tracker title 消失或黄字不再包含 `黄袍`，均走既有
+   `useReturnItemAndVerifyStartMap(...)`；仍命中黄袍才继续下一场。
+2. 队长在 `POST_BATTLE_RECOVER` 已确认本场黄袍脱战、并首次打开既有 5 秒
+   `FIRST_AID` maintenance window 的同一分支，调用既有
+   `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader(...)`。绑定成员收到 `FREE` 后，
+   继续走原有战后 exit -> 血蓝预检 -> pending plan/输入队列流程。
+
+### 不变边界
+
+- 不改变 5 秒窗口时长、补给阈值、队员补给 plan、tracker fast cache、绿字点击、回城道具实现、失败恢复或
+  非黄袍任务。
+- 不对候选快脱战广播 `FREE`；调用点只能是现有 `runPostBattleRecoverPhase(...)` 已进入的任务确认终态。
+- 不引入新的次数、TTL、重试或成员自扫战斗模板兜底。
+
+### 证据与验收
+
+- 修复前：`2026-07-11 17:03:25-17:06:56` 的 epoch 92-96 只有成员 `IN_COMBAT`，没有中间场次
+  `FREE`，每场 FIRST_AID capability 虽打开但无成员 `auto-combat exit detected` / pending first-aid。
+  `17:06:56.895` 因 count=6/max=5 提前失败，`17:07:01.256` 才走失败恢复导航。
+- fresh 必须同时证明：
+  1. 每场黄袍战后开启 FIRST_AID 时，成员先收到 `external ... inCombat=false`，再出现各自 exit/precheck；
+     健康成员记录 HEALTHY，低血蓝成员生成并执行既有补给 plan。
+  2. 黄袍链末 tracker miss/title gone/不再黄袍时出现回城道具物理使用与起始地图验证，而非
+     `chained combat limit reached` 或 `TASK_RECOVERY -> ROUTE_TO_MAIN_TASK`。
+  3. tracker 仍为黄袍时，继续现有 `chained-combat-*` 热路径；候选快脱战不产生 FREE 广播。
 
 ## Reviewer Notes
 

@@ -1,5 +1,184 @@
 # DHXY Active Work
 
+## 2026-07-11 / CR252 + CR49 黄袍中间脱战广播与链末回城（实施中）
+
+- **用户批准的业务差异**：黄袍连战不再用固定 `MAX_CHAINED_COMBAT_ATTEMPTS` 提前失败；每场战后只以
+  左侧 tracker 是否仍是黄袍决定续战或使用既有回城道具。队长决定开启既有 5 秒 `FIRST_AID` 窗口时，
+  同时广播本场已确认脱战 `FREE`，使本地绑定成员进入原有战后预检/补给链。
+- **改前基线与证据**：分支 `navigation-migration`；黄袍业务基线为
+  `origin/codex/migrate-runner-dialog` / `3f0a2e7`（见 `docs/业务逻辑.md` 黄袍章节）。
+  `git status --short` 显示 `WubeiTask.java`、`TaskMaintenanceService.java` 已有并行工作区改动，
+  不回退。`git show 3f0a2e7 -- WubeiTask.java TaskMaintenanceService.java` 确认上游已有固定 5 次
+  保护上限；本卡按用户此次明确批准删除该业务条件。
+- **fresh 失败证据**：`2026-07-11 17:03:25-17:06:56`，epoch 92-96 只有成员
+  `external ... inCombat=true`，没有中间场次 `FREE`；每场 leader 均开 5 秒 FIRST_AID 但成员无
+  `auto-combat exit detected` / pending first-aid。`17:06:56.895` count=6/max=5 在 tracker 与回城道具
+  前返回 FAILED，`17:07:01.256` 进入失败恢复导航。
+- **限制**：不广播候选快脱战；只在黄袍 `chained-battle-finished` 已到达
+  `POST_BATTLE_RECOVER` 的既有终态事实点广播。无已批准业务差异之外的 phase、点击、fallback、
+  时间或阈值变化。
+
+## 2026-07-11 / CR266 五倍维护对话框闭合、绿链移动事实门与三分钟全局入战预算（实施中）
+
+- **改前 git 证据**（按卡内实施边界先记录再改 Java）：
+  - 分支 `navigation-migration`，HEAD `91d3b070`（chore: 当前工作状态基础快照（开分支前））；最新 pushed baseline `origin/codex/migrate-runner-dialog` = `696a12b0`。
+  - 涉及文件改前状态：`WubeiTask.java` M（9+/23-：RESOLVE_AFTER_PATHING 终态从 HEAD 的"重点同绿链"改为 3f0a2e7 对齐的"直接进 ENTER_BATTLE"——即本卡第二项要加移动事实门的那条既有工作区改动）；`WindowTaskRunner.java` M（12+/3-：角色预检 forceCloseDialog 卡的已实施改动，UICleanerService 注入 + resolveTaskTypeBeforeStart 预检清窗）；`WindowRuntimeContext.java`、`WindowPathingSnapshot.java`、`UICleanerService.java` 干净。
+- 实施四项合同 + 医宝宝单一匹配定稿（详见 PACKAGE_ARCHITECTURE.md Card CR266）。
+- **实施记录（2026-07-11，Claude；`mvn -q -DskipTests compile` exit 0，遵循 no-local-test，fresh 待验）**：
+  - **定稿（医宝宝单一匹配）**：`WubeiTask` HEAL_PET_NPC 删除 `.expectedDialogTemplatePath(heal_pet_option.png)` 与常量；点到沙拉买提后 dialog 识别/点击唯一属主 = 既有 `TaskMaintenanceService` 维护 ROI；未动 NpcClickService 通用 expected-dialog 能力、维护 ROI/模板/阈值/repair 路径。
+  - **第 1 项（跳过前关窗）**：`triggerMaintenanceBroadcastBeforeTracker` 记录本 hook 是否成功点过 NPC；5 次尝试后跳过时新增 `closeLeftoverMaintenanceDialogBeforeSkip`：先查 runtime 可见 dialog 快照 + no-focus 检测，有 dialog → 一次 `forceCloseDialog()` + 一次 no-focus 复查；确认关闭才放行绿链，仍在则返回 failed 走既有 round recovery。无新增次数/TTL/猜测点击。
+  - **第 2 项（移动事实门）**：`WindowPathingSnapshot` 新增 `movementObservedAtMs`（同一 intent 两次真实位置观察之间发生变化才置位；intent 注册后的首次观察不算，`refreshPathingSignal` 顶部的 intent-mismatch guard 保证不跨 intent 污染）；`WindowTaskRunner` 两条快照更新链维护该字段；`WubeiTask.runResolveAfterPathingPhase` 对 `STOPPED_AWAY` 且无移动事实 → 回 `TRACKER_PATHING` 重点同一条绿字，不进 `ENTER_BATTLE`（重导航次数由 180s 预算兜底，无新计数器）。
+  - **第 3 项（180s 预算）**：Runner `WUBEI_ORDINARY_PRE_BATTLE_TIMEOUT_MS` 300s→180s；`afterAcceptTaskSucceeded` 起表（source `wubei:task-accepted:*`，CAS 首次接任务权威，reroll 不重置）；绿链起表保留为热启动兜底（已起表则 no-op）；暂停补时走既有 `pauseOrdinaryPreBattleTimer` 不变。
+  - **第 4 项（预算优先级）**：清表点收敛到"真实战斗"——Runner `clearWubeiDialogStateOnCombatEntry`（首次确认 IN_COMBAT）、`tickEnterBattle`/`tickWaitBattleFinish` 的 IN_COMBAT 与 EXIT_RECOVERED；删除两处"看打点击即清表"（priority 消费、ENTER_BATTLE→WAIT_BATTLE_FINISH）。新增 `PreBattleBudgetTimeoutSignal`：四个 turn-owned 内部等待循环（prepared-dialog reply / probe enter-battle / probe story / 有界 prepared 等待）每圈检查 runner 已发布的 `PRE_BATTLE_TIMEOUT` 并把该事件类型加进各自唤醒集；`runPhase` 统一捕获 → `consumePreBattleBudgetTimeout` 全量清理（dialog preparation/interest/prepared + pathing + enter-battle/probe/chained runtime + tracker 快照/hint）→ 直接回 `ROUTE_TO_MAIN_TASK`；phase 边界消费重构为同一消费器。`canConsumeEnterBattlePreparedAction` 补 `!isProbeRuntimeActive()`（预算改从接任务起表后，"timer 在"不再能区分普通链与 probe 链）。
+  - **文档**：`业务逻辑.md` "普通怪入战前超时" 30-36 条按用户批准差异替换为"入战前全局预算"（接任务起算/180s/暂停补时/可打断一切内部等待/首次 IN_COMBAT 结束）；黄袍两处引用同步。
+  - **Fresh 验收 gate**（卡内四条）：①医宝宝广播失败留窗时先见 `forceCloseDialog` 成功 + 无 dialog 事实才允许绿链点击；②无移动事实的 `STOPPED_AWAY` 不产生 `WUBEI_ENTER_BATTLE` interest、回同绿链导航；③接任务起 180s 未入战时任意 phase/内部等待都出现 timeout 消费 + 清运行态 + 回重接；④真实入战后 timer 停止，战斗超 3 分钟不触发回接。
+
+## 2026-07-11 / CR265 五倍(wubei)云端单脑迁移父卡（Planning · 自审完成未 Approved）
+
+- **状态**：仅完成现状 baseline + 自审(QA) + 分阶段计划，**零业务代码改动**。按工作区规矩，自审**不算 Approved、不得凭此推进实施**；开工唯一钥匙 = 外部 reviewer Approved + 用户排期，逐子卡走流程。
+- **目标**：把五倍做到与修罗同等的云端单脑迁移——本地只截图/点击/模板匹配/战斗 tick，全部决策（下一步 phase、重试、round restart、maintenance 判定、任务分类）上云 `WUBEI_BRAIN`；断云 fail-closed，无第二本地脑。
+- **第一步产物**：`docs/WUBEI_CLOUD_MIGRATION_BASELINE.md`——锁定行为基线 commit `91d3b070`，盘点五倍当前相位机 / 本地决策点 / 已迁 OCR / 独有业务 / 清理欠债 / 迁移待补清单。
+- **现状定性**：五倍 = 本地状态机 + 云端 OCR/影子决策的混合体。OCR 前置工程（CR248 面板/黄字/绿链、CR208-10 目的地提示、CR249 五环绿字）已具备，与修罗共享同一云端 decision 基础设施；但**没有 `WUBEI_BRAIN`、没有 start/step/actionOutcome 循环**，相位机与决策仍全在本地 `WubeiTask.java`（约 4943 行）。
+- **自审(QA) 六点**（详见 baseline 文档 §6/§7；均为迁移前风险，非 Approved 结论）：
+  - R1（利好）：OCR 前置已完成，五倍起点比修罗当年好；`runRoundPhases` 已用修罗轻量 phase runner。
+  - R2（P1 级设计约束）：五倍有暗雷怪 reroll、显形镜双绿链探测 + 白龙马 story、黄袍连战 continue/return、探测/返回道具、5 子任务 taskKey 分支——**修罗脑无对应命令语义**，不能照抄修罗指令集；须先在 `WubeiBrainActionType`/facts 精确定义。
+  - R3：baseline commit `91d3b070` 上 `WubeiTask.java` 仍有 9+/23- 未提交改动（`CloudDecisionServiceId`、`MiniMapLocation*` 亦 dirty），冻结为正式参照前须提交/复核。
+  - R4：`TASK_POLICY`/`TASK_RECOVERY` 当前是"本地决策 + 云端否决"的**影子语义**，与修罗"云端权威下发"相反；迁移须切换为云端单脑并加 no-dual-brain source guard（对标 CR196/CR201）。
+  - R5：`TextRecognizer` legacy 本地 OCR 腿在本基线 `91d3b070` 上确实仍在（`WubeiTask:18/299/3621/3692`，cloud inactive 时兜底）。CR257 的 OCR 清零提交 `bf3bf387` **不是本基线祖先**（分支已岔开），故须先决策"先合 CR257 还是在五倍迁移内一并下沉 OCR"，别让该腿成隐性 fallback。
+  - R7：cloud-brain 侧零 wubei 测试，须补 `WubeiCloudBrainContractTest` 对标 `XiuluoCloudBrainContractTest`。
+- **分阶段计划**（对标修罗 CR192-207 链，每阶段独立立子卡、外部 reviewer Approved 后才实施）：
+  1. **协议 scaffold**：`CloudDecisionServiceId.WUBEI_BRAIN` + 客户端 `com.bot.dhxy.cloud.wubei.*`（对标 xiuluo 9 文件）+ 云端 `wubeiBrain` start/step/actionOutcome hooks + `WubeiBrainSession` 有状态内类 + `wubei-brain` feature flag 默认 off（旧本地路径留 rollback）。
+  2. **facts + 壳**：`WubeiTask.runRoundWithWubeiBrain` + `executeWubeiBrainCommandShell` + `waitForWubeiBrainEvent` + `wubeiBrainOutcomeFacts` + `WubeiBrainRoundState`（loop guard / pre-battle watchdog）。
+  3. **逐 phase 云端决策**：`DecisionEngine` 每 `WubeiPhase` 一个 `*Next`，键 facts、注 `// Baseline Lxxxx`。
+  4. **独有业务命令语义**：R2 五项（暗雷 reroll / 显形镜探测 / 黄袍连战 / 探测·返回道具 / 5 子任务 key）。
+  5. **事件 park 机制**：`WAIT_BATTLE_FINISH` / `WAIT_TEAM_RETURN` / maintenance 广播队列 / tracker pathing 的 `WAIT_FOR_EVENT`（对标 CR207/244/245/253/256）。
+  6. **清理 + 测试**：切换/删除 R4/R5/R6 遗留 + 补 cloud-brain 契约测试与 DHXY 壳 wiring 测试。
+- **迁移契约（禁止项，沿用修罗）**：云端只据结构化 facts 决策不匹配日志串；断云/无效决策 fail-closed；stop/pause/window/input safety 永远本地；严格复现 baseline 不新增 TTL/校验/park/retry/cleanup/fallback；每分支注明 `91d3b070` 源行。
+- **不混入**：修罗任何在途卡（CR244/245/253/256）、导航迁移族（CR250/258-264）、OCR 引擎下沉（CR257）。五倍迁移只在五倍链增量。
+
+## 2026-07-11 / CR257 reviewer Approved：全量 OCR 已归 cloud-brain
+
+- 最终提交 DHXY `bf3bf387` 完成 C2+C3。用户此前明确“不需要本地兜底”，等价批准关闭
+  CR247、CR248/249、CR208-10 的四条 rollback；cloud reader inactive 统一 fail-closed miss。
+- 主项目的 `TextRecognizer`、`OcrWordResult`、本地 sidecar 脚本/requirements、OcrConfig、application.yml
+  OCR/Baidu 凭据、pom Baidu SDK 与全部本地 OCR 调用已清零。DHXY `mvn -q -DskipTests compile` 和
+  cloud-brain `mvn -q compile` 均通过。
+- fresh runtime 独立待验：检查 cloud sidecar diagnostics、云端 OCR 业务调用，以及 cloud reader inactive
+  时不回落本地 OCR。
+- 10:xx reviewer 再复审：两侧 worktree clean，本地 OCR 关键字仍零命中；DHXY `mvn -q -DskipTests compile`
+  与 cloud-brain `mvn -q compile` 现场复跑均通过。无新 P0/P1/P2，Approved 保持。
+
+## 2026-07-11 / CR257 Review Blocked：此前 Approved 已撤回（历史记录）
+
+- 更正：A/B/C1 的 sidecar 归属、bytes 契约及其 P1/P2 返修均已通过复核，但不等于 OCR 全量迁云。
+  `TextRecognizer` 仍在 DHXY，保留本地 HTTP/Baidu OCR 和凭据；`WubeiTask.java:3706` 仍有非 deprecated
+  的 `getAllTextResultsLocalOnly(...)` 直接调用。
+- P1 返修方向：完成 C2 rollback 窗口裁定与迁移，迁入五倍 destination-hint，之后 C3 同提交删除
+  `TextRecognizer`、OcrConfig、application.yml OCR 配置、Baidu SDK/凭据及剩余调用；完成后重新 review。
+- 最新 reviewer 发现 worktree 有未提交的 Xiuluo/Wubei 局部 C2 删除：方向正确，但当前无明确 D2 选择记录，
+  且 `TaskTrackerPanelService` 两条 local OCR rollback、`TextRecognizer` 与 C3 资产仍在；保持 P1 Review required。
+- 后续 worktree 又删除了 `TextRecognizer`、`OcrWordResult` 和剩余 tracker local OCR rollback，但 C3 仍不完整：
+  `pom.xml` 仍有 Baidu SDK，`application.yml` 仍有 `bot.dhxy.ocr`/凭据；并且尚无 commit/compile 证据。保持 P1。
+
+## 2026-07-11 / CR257 reviewer Approved：首轮 Blocked 全部返修通过（已撤回，历史记录）
+
+- reviewer 已复核 DHXY `5f6b3af`+`a198a4d`、cloud-brain `c94608b`+`3b988ca`：canonical memory
+  实存/结构、sidecar 完整身份及所有权、bytes-only、结构化拒绝、diagnostics 都已按卡片合同收口；
+  cloud `mvn -q compile`、PS1 Parser、sidecar AST 均通过。无遗留 P0/P1/P2。
+- fresh runtime 仍独立待验：启动日志核对 canonical hash/sidecar identity，并在停止 sidecar 后查
+  `/api/cloud/ocr/health` 返回 unavailable；不阻塞 CR257 reviewer 通过结论。
+
+## 2026-07-11 / CR257 首轮 Blocked 全部返修完毕：4 个提交，待 reviewer 复核（历史记录）
+
+- 提交：DHXY `5f6b3af`+`a198a4d`（launcher）、cloud-brain `c94608b`+`3b988ca`。cloud-brain
+  `mvn -q package` 复验通过；ps1 Parser 零错误；sidecar `py -3` AST 通过。
+- P1-1：数据事实核验——活体 canonical `dhxy-cloud-brain/data/vision_memory.json` 实存
+  （5,000,882B，比被删快照更新更大），结构化对比 459/459 entries 100% 包含、policies 包含、
+  npcClickSamples 608⊇600，零丢失；已按 sha256 provision 到 cr257 worktree；launcher 显式下发
+  `visionMemoryPath` sysprop（消除 cwd 依赖）+ 打印 path/bytes/sha256 + 缺失
+  `vision-memory-missing` fail-closed（空库须显式 -AllowEmptyVisionMemory），preflight 前置到
+  sidecar 生命周期之前（heartbeat 追加 P2）。
+- P1-2：期望 build 从自有 sidecar 脚本解析、期望 model fingerprint 用同一 python 运行时现场推导
+  （绝不采信自报值），Test-OcrIdentityMatch 全量比对 protocol+build+model+loopback+port；registry
+  在 health 确认（含 pid==自启 PID）后写完整活体身份；mode=reused 永不进 stop 分支；brain 侧
+  checkHealth 比对 launcher 下发的 localOcrExpectedModelFingerprint sysprop。
+- P1-3：`imagePath` 支路整删（bytes 化后 caller 闭包为零，B1.4 提前满足）；SIDECAR_BUILD→cr257-2。
+- P2-1：Content-Length/JSON 解析失败 → 固定 `ocr-input-rejected:*` bucket，500 不回传异常文本。
+- P2-2：`POST /api/cloud/ocr/health` + LocalOcrClient 可更新 diagnostics（transport 失败降级）。
+- 返修记录已写入卡；表行/dashboard 已同步；heartbeat 继续等待 reviewer 复核。
+
+## 2026-07-11 / CR257 reviewer 首轮：Blocked（3 P1 + 2 P2）
+
+- 审查实际提交：DHXY `ad54463`、cloud-brain `190a4f5`。DHXY `mvn -q -DskipTests compile` 通过；
+  cloud-brain `mvn -q compile` 通过（其 enforcer 禁止 `skipTests=true`）。未运行本地自动化测试。
+- P1：C1 删除的 `config/vision_memory.json` 在 cloud-brain CR257 worktree 与主目录均无实际
+  `data/vision_memory.json` canonical copy；A.1/A.2 实现未比 build/model/port/startedAt，且会把声明
+  不接管的 reused orphan 写入 registry 后在下一启动误杀；B1.4 `imagePath` 在大小检查前读完整文件。
+- P2：坏 JSON/非法 Content-Length 走 generic 500 并回显异常文本；`ocrAvailable` 只有启动时一次日志，
+  sidecar 运行中死亡不会变为可查询的 unavailable diagnostics。
+- 结论已写入 CR257 卡并同步 dashboard。heartbeat 每 5 分钟重读卡与最新提交；只要 P1/P2 未修，持续保持
+  Blocked，不等 fresh runtime。
+
+## 2026-07-11 / CR257 A+B+C1 已实施：OCR 引擎归 cloud-brain + bytes 契约 + C1 全删（待 review）
+
+- 用户指令"在修罗baseline的基础上新开1个branch，开始做CR257"。git worktree 隔离并行会话：
+  DHXY `D:/mavenProject/DHXY-cr257`（branch `cr257-ocr-engine-cloud` @ 修罗基线快照 `91d3b07`）、
+  cloud-brain `D:/mavenProject/dhxy-cloud-brain-cr257`（@ `48e3781`）。提交：DHXY `ad54463`、
+  cloud-brain `190a4f5`。
+- 切分 A：`local_ocr_server.py` 迁入 cloud-brain `ocr/`（protocolVersion=dhxy-ocr-v2）；
+  `run-cloud-brain-server.ps1` 持有生命周期（A.1 身份化 /health、A.2 registry PID+命令定点停止
+  绝不按端口 kill、A.3 占用不匹配→`ocr-sidecar-conflict` fail-closed、A.4 死亡不自动拉起）。
+- 切分 B：B1.1 loopback-only（非 loopback 启动 exit 2）；B1.2 双侧限额（客户端 8MB PNG 门 +
+  sidecar body/base64/解码/PNG-only/尺寸/像素六重）统一 `ocr-input-rejected:<bucket>` 映射回
+  unavailable/fail-closed，12 调用点零改动；B1.3 限额按 1024x768 全窗盘点写死、日志脱敏；
+  B1.4 imagePath 过渡保留；`LocalOcrClient` 改 imageBase64 直传，零临时文件。
+- 切分 C1：休眠零调用 OCR 残留全删（5 个 service/vision 整文件 + model.ocr 8 类 +
+  QuestTargetInfo + 2 个 config JSON + 7 个文件的成员级清理）；KEEP until C2/C3：TextRecognizer
+  本体、OcrWordResult、四条 @Deprecated 回滚腿。验收 grep 零残留（部分终态符合卡内定义）。
+- 验证：DHXY compile 门 + cloud-brain package 门均通过；sidecar `py -3` AST + ps1 解析通过。
+  卡 Status → **Review**；表行/dashboard 已同步。C2 待用户 D2 逐条批准；C3 阻塞于 C1+C2+A；
+  D4（Baidu 凭据吊销/轮换）仍须用户执行。
+
+## 2026-07-11 / CR257 方案协商完成：双方一致，Status 转 Ready
+
+- 用户澄清协商双方 = reviewer A 与 worker 本人（B 方）。协商全程：首轮 P1（B1 必须成为受限
+  bytes 契约）→ 修订 B1.1-B1.4；二轮 P1（sidecar 生命周期必须可归属）→ 修订 A.1-A.4；
+  reviewer A Approved（无新 P0/P1/P2）；worker/B 方书面同意（依据：八条返修全部落正文且与
+  三路盘点一致、边界对齐 PLAN-R4/L258 选项一/云视觉终态口径、D 决策点无歧义、本卡零实现代码）。
+- 卡内已写"双方已就方案达成一致（2026-07-11）"；Status → **Ready**（待用户"完成CR257"启动实施，
+  按切分 A/B/C1→C2→C3）；表行/dashboard 已同步；方案协商 heartbeat 已按停止条件删除。
+- 实施期保留的用户裁定/安全项：D2（CR247/CR248/CR208-10 四条 rollback 腿的窗口关闭需逐条批准）、
+  D4（已提交的 Baidu 凭据吊销/轮换，必须执行，可提前独立做）、D5 默认走"Baidu 删除不迁移"。
+
+## 2026-07-11 / CR257 方案首轮 reviewer：P1，B1 bytes OCR 入口必须受限
+
+- 已核实 cloud-brain `LocalOcrClient` 当前为“临时 PNG + `imagePath`”接口，默认 `127.0.0.1:18761`；B1 的
+  `imageBase64` 方向正确但缺请求体、解码字节/像素、格式、loopback 绑定和超限 reason 合同。12 个 OCR 调用点
+  共用此入口，若不受限会形成 OCR sidecar 内存/CPU 耗尽面。
+- P1 已写入 CR257：B1 必须限制客户端 PNG bytes、sidecar 请求/base64/图片 bytes 与像素、允许格式，并将超限
+  统一映射为结构化 `ocr-input-rejected` 后保持现有 fail-closed；限额基于真实 ROI 盘点，日志不得带图片/base64/
+  文字。`imagePath` 只保留过渡本机兼容并有删除条件。待返修与另一 reviewer。
+
+## 2026-07-11 / CR257 方案卡已建：OCR 引擎整体上云（DHXY 本地零 OCR 终态，待批准）
+
+- 用户定向：CR208 业务 OCR 迁移完成后，下一步把 OCR 引擎本身也移到 cloud-brain——云端服务在云端
+  自己用 OCR，完成后 DHXY 本地找不到任何 OCR 调用函数。本轮只出方案（Planned），未写实现。
+- 三路全量盘点结论（已写入卡）：
+  - 引擎 = `DHXY/scripts/local_ocr_server.py`（RapidOCR sidecar，:18761，**文件路径式 API**），
+    程序在 DHXY 仓库、无人启动管理；cloud-brain 12 个 OCR 调用点单收口 `LocalOcrClient`，
+    走临时 PNG 路径 handoff（硬性同文件系统假设），endpoint sysprop 从未被设置。
+  - DHXY 当前配置（全 reader execute=100）下已无 LIVE 本地 OCR 调用；残留 = 零调用类一批
+    （含 CR208 item 15 `OcrRoiMemoryService`）+ 四条 @Deprecated rollback 腿（CR247/CR248×2/
+    CR208-10）+ 引擎与配置（TextRecognizer/OcrConfig/Baidu SDK/**已提交的 Baidu 凭据**）。
+- 方案切分：A sidecar 归属迁 cloud-brain（脚本启动+健康检查+显式 endpoint 传参）；B 字节化契约
+  （推荐 B1：sidecar 加 imageBase64 形态，`LocalOcrClient` 单收口换传输，12 调用点零改动）；
+  C DHXY 三批清零（C1 零调用先行、C2 rollback 腿需逐条批准 D2、C3 引擎+配置+SDK 同 commit）。
+  决策点 D1-D4 列卡待裁（含 Baidu 凭据吊销轮换，建议无论批否都尽快做）。
+- 与既有裁定对齐：XIULUO_CLOUD_MIGRATION_PLAN L258 三选项取"随 cloud-brain 部署"；PLAN-R4 同机
+  约束内做归属/契约迁移，Phase 6 远端化 OCR 随 cloud-brain 直接可迁。
+- 卡片 CR257 已建（Planned）；父卡 CR208 item 15 已标注由 CR257 承接；表行/dashboard 已同步
+  （249 行）。等用户/reviewer 批准后拆分实施；未建 heartbeat（非"完成"指令）。
+
 ## 2026-07-11 / CR208 P1：移除正常云端任务的本地 OCR 启动 gate（已修，fresh 待验）
 
 - 基线：当前分支 `codex/hybrid-cloud-protection`，HEAD 与 pushed
@@ -74940,3 +75119,37 @@ Status: implemented; compile pending at record time.
   `0.4164736271`。这不是模板/阈值/点击逻辑回归。
 - Approved change：保持左上角 `(8,147)` 不变，将扫描尺寸由 `11x19` 扩至 `16x29`（右侧 +5px、
   下侧 +10px）；模板、`0.90` 阈值、匹配中心点击、任务/放权逻辑均不变。
+
+## 2026-07-11 / CR33 五倍普通怪停稳后未进战修复
+
+- 基线：五倍业务基线为 `origin/codex/migrate-runner-dialog` / `3f0a2e79007121c98a15ad90d5ed7b8902033068`，不是旧 `dev`，也不是已混入后续 runner 差异的 `696a12b0`。当前分支 `navigation-migration` / `91d3b070`；工作区已有并行脏改动，未回滚或清理。
+- 对比证据：基线 `WubeiTask.runResolveAfterPathingPhase(...)` 在普通绿链的 `ARRIVED`、`STOPPED_AWAY` 与其它非 ACTIVE 终态直接转入 `ENTER_BATTLE`。当前代码改为 `combat-terminal-repath` 重按同一绿链，且附带回程道具预扫。
+- 运行证据：`2026-07-11 10:29:29-10:30:11`，窗口 `hwnd-3D808B0` 已多次识别 `dialog detect ... result=OPTION`，但持续 `plain-dialog-no-business-wake -> combat-terminal-repath -> bag:prescanTaskPageItem`；每次预扫又在旧 JVM 中报 `NoClassDefFoundError: ReturnItemCachePoint$ReturnItemCachePointBuilder`。根因是错误终态 phase 转移，不是 dialog 未被基础识别。
+- 用户批准范围：普通怪绿链 terminal 只恢复为 `ENTER_BATTLE`，不重按绿链；不改五倍云端脑、模板、坐标、白龙马、黄袍、回程或 bag 扫描的其他入口。无已批准业务差异；按 `3f0a2e7` 基线等价迁移。
+- 实施：`WubeiTask.runResolveAfterPathingPhase(...)` 删除 `combat-terminal-repath` 及其二次 `triggerCombatTrackerPathing(...)` 调用；`ARRIVED`、`STOPPED_AWAY` 和其余非 ACTIVE 终态统一转入 `ENTER_BATTLE`，与 `3f0a2e7` 对齐。
+- 编译：`mvn -q -DskipTests compile` 于 2026-07-11 通过。按 no-local-test mode 未创建或运行自动化测试。
+- Fresh gate：重启 DHXY 后，普通怪绿链停稳应记录 `tracker-pathing-terminal-* -> ENTER_BATTLE`，随后本地 `WUBEI_ENTER_BATTLE` prepared action 消费/点击；不得再出现 `combat-terminal-repath` 或其附带的重复 `bag:prescanTaskPageItem`。
+
+## 2026-07-11 / 同轮多绿链不得提前消费三技能队列
+
+- Baseline：当前分支 `navigation-migration`，HEAD `91d3b070`；已核对 `docs/业务逻辑.md` 的三技能队列语义和黄袍连战规则。用户明确批准：同一任务轮次内的第二绿链/白龙马双探点/黄袍连续战斗均属于同一轮，不能把本轮中途入队的三技能当作“下一轮”消费。
+- Runtime evidence：`17:50:38.123` 队长在 `wubei#15` 首次寻路后将三技能标记为 `queued for later snapshot`；`17:51:04.558` 同轮 `second-probe` 再次调用 `openTeamPathingMaintenanceWindow` 并覆盖 snapshot 时间，`17:51:04.708` 因而错误领取同一队列，`17:51:04.810` 已按 `Alt+O`，而 `17:51:05.196` Runner 仍为 `pathingState=ACTIVE`。
+- Approved narrow change：`TaskMaintenanceService` 仅在每个 `teamRound` 首次真实寻路时记录 `maintenanceSnapshotOpenedAt`；同轮后续绿链只复用，不得刷新为可消费的“下一窗口”。不改三技能到期、队列、冷却、黄袍 5 秒补血窗口或输入逻辑。
+- Verification：`mvn -q -DskipTests compile` 于 2026-07-11 通过；按 no-local-test mode 未创建或运行自动化测试。Fresh gate：同轮 `second-probe`/多绿链日志必须显示 `snapshotCreated=false`，且本轮中途入队的三技能持续 `queued for later snapshot`；下一轮首绿链才可消费。黄袍连战不注册 pathing intent，只开 first-aid 窗口，因此不会新增三技能消费入口。
+
+## 2026-07-11 / CR267 直接战斗模式两段式云端授权与二次截图
+
+- Baseline：当前分支 `navigation-migration`，HEAD `91d3b070`；工作区已有大量并行/用户改动，本卡只触碰
+  `NpcClickRequest`、`NpcClickSmartCloudDecisionService`（新增 `NpcClickSmartDirectCombatAuthorization`）、
+  `NpcClickService.tryDirectCombatTargetClick`、`WubeiTask` 白龙马 smart/direct-combat 请求、
+  `XiuluoTaskV2` 旧路线 direct-combat 请求，以及外部 `dhxy-cloud-brain` 的 `DecisionEngine` /
+  `SmartClickRecognizer.actionSpec`。白龙马业务基线 `origin/codex/migrate-runner-dialog` / `3f0a2e7`：
+  `tryDirectCombatTargetClick` 为本地 `pressAltA()+350ms` 后跑目标 pipeline（`git show 3f0a2e7` 已核对）。
+- 业务基线核对：已读 `docs/业务逻辑.md`「直接战斗模式（Alt+A）的授权、场景切换与二次截图」全章与
+  白龙马章第 20-24 点。已批准业务差异（合同第 6 点）：白龙马 direct-combat 门由基线
+  `lastEnterBattleDialogResult == GREEN_TEMPLATE_NOT_FOUND` 替换为「普通 `NPC_CLICK_SMART` FIFO 全部未
+  verified」。除此以外按基线等价迁移：Alt+A 输入序列/短等待、probe 四分支、候选顺序、坐标策略、
+  失败恢复语义不变。
+- 实施摘要见 `docs/PACKAGE_ARCHITECTURE.md` CR267 卡「Worker implementation 2026-07-11」。
+- 编译门禁：DHXY `mvn -q -DskipTests compile` GREEN（2026-07-11）；外部 `mvn -q package`（项目 enforcer
+  要求带测试完整 package）结果见 CR267 卡。按 no-local-test mode 未新增任何测试。

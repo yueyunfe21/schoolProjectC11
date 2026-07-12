@@ -354,13 +354,13 @@ window.CR_DASHBOARD_DATA = [
   {
     "id": "CR33",
     "number": 33,
-    "owner": "谢帅",
-    "status": "Review: baseline gate restored/split; compile passed; needs fresh WUBEI validation",
-    "kind": "review",
+    "owner": "Codex",
+    "status": "Implemented：普通怪终态已恢复进入 `ENTER_BATTLE`，compile 通过，待 fresh",
+    "kind": "open",
     "domain": "五倍",
-    "files": "`WubeiTask`, `NavigationService`, `TaskMaintenanceService`, `AutoBattleTask`",
-    "summary": "Restore/guard the latest-push 五倍 business baseline before continuing runner/park migration. Latest pushed baseline is `3f0a2e7`; local diff and `docs/WUBEI_BUSINESS_DIFF_AUDIT.md` confirm business-logic deltas that are not just runner/park architecture migration. Source patch restores the probe ACTIVE guard, the bounded 15s probe-story decision window, and the enter-battle first-tick no-immediate-yield behavior while preserving CR30 fresh prepared-action priority. Remaining local business deltas are not candidates to keep by default: CR24/CR28/CR34 are existing review cards requiring validation against the pushed baseline, and CR35 is now a restore-to-baseline card for AutoBattle maintenance-window gating.",
-    "verification": "缺 fresh runtime"
+    "files": "`WubeiTask.runResolveAfterPathingPhase`, 五倍普通怪绿链/入战日志",
+    "summary": "用户于 2026-07-11 明确按五倍基线 `3f0a2e7` 修复：普通怪绿链停稳后直接进入 `ENTER_BATTLE`，不要求目标地图名、不重按绿链。已删除当前 `combat-terminal-repath` 分支，避免重复开包预扫并让已出现的 `OPTION` 回到本地入战模板链；`mvn -q -DskipTests compile` 通过。未改模板、点击坐标、白龙马、黄袍或战后回程。",
+    "verification": "需复核"
   },
   {
     "id": "CR34",
@@ -531,12 +531,12 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR49",
     "number": 49,
     "owner": "Codex",
-    "status": "Partial: continuation passed; chain-end/return-home still unvalidated",
-    "kind": "partial",
-    "domain": "通用",
-    "files": "`logs/dhxy-console.log`, `scripts/analyze_wubei_latency.ps1`, `docs/ACTIVE_WORK.md`",
-    "summary": "Fresh 黄袍怪 validation card: first battle follows ordinary, post-first-battle stays in chained hot path, chain-end/return-home works, and 白龙马/普通怪 business logic plus performance goals do not regress. Fresh `21:29-21:40` logs prove first battle and chained-combat 1-4 hot path, but the user stopped at `21:42:58` while still in `WAIT_BATTLE_FINISH`; no fresh chain-end / return-home evidence yet, so CR49 cannot close.",
-    "verification": "部分验证"
+    "status": "Review required P1：2026-07-11 黄袍链第 6 场先触发 `chained combat limit reached`，失败恢复直接导航接任务，未执行回城道具；链末回城验收失败",
+    "kind": "review",
+    "domain": "五倍",
+    "files": "`WubeiTask.returnHomeAfterCombatOrContinueSpecialTarget`, 黄袍 `RETURN_HOME` / `TASK_RECOVERY` / 回城道具日志",
+    "summary": "`17:06:56.895` count=6/max=5 在读取链末 tracker、调用 `useReturnItemAndVerifyStartMap(...)` 前返回 FAILED；`17:07:01.256` 随即以 `wubei:accept-npc:map` 从平顶山导航宝象国。需先按黄袍基线/用户决策确定保护上限是否允许替代“链结束即回城道具”，再修复。",
+    "verification": "需复核"
   },
   {
     "id": "CR50",
@@ -1796,11 +1796,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR169",
     "number": 169,
     "owner": "谢帅+worker",
-    "status": "Review：FIFO/Purple 双 reviewer 通过；fresh runtime 待验",
+    "status": "Review P1：17:17 五倍白龙马遗漏 Story 快关且 `Alt+A` 未发出，错误回到接任务路线",
     "kind": "review",
-    "domain": "窗口/Runner",
-    "files": "`NpcClickService`, `NpcClickSmartCloudDecisionService`, `NpcClickSmartQueueMessage`, `NpcClickSmartQueueOutcome`, `D:\\mavenProject\\dhxy-cloud-brain` NPC click queue/session/memory/purple player-anchor",
-    "summary": "2026-07-03 queue/FIFO 打回修复：DHXY `NPC_CLICK_START/POLL` 的真实 `CloudDecisionRequest.context` 显式携带 `sessionId/windowId/taskRunId`，三者缺失本地 fail closed；`WAIT` 改为独立 30s wall-clock 等待 + 100ms sleep + `TaskCheckpoint`，不消耗 12 条候选预算。外部 queue `Session` 保存 owner，错 `windowId/taskRunId` poll 不消费消息；终态 outcome owner-aware 清理 session。二轮打回已补行为测试：多 `WAIT` 后继续、no-click `MEMORY` -> `SKIPPED` 继续、普通候选进入 input/verifier、memory click 不提交 input、stop checkpoint 后不再 poll/execute；本地 terminal outcome 除 `VERIFICATION_FAILED`/`SKIPPED` 外会停止当前 FIFO session。最终复审 P2 已修：普通阶段 `TOOLTIP/YELLOW_NAME/PURPLE_FORMULA` 的 `NO_ACTION` 无 click 现在上报 `SKIPPED` 并继续 poll，focused test 证明不提交 input、不触发 `SAFETY_REJECTED` terminal，后续 `YELLOW_NAME` 可执行候选仍能提交并 verify；queue/FIFO no-click P2 修复两个独立 reviewer 均 PASS。Purple 重修已通过：`PLAYER_ANCHOR_FORMULA` 使用旧本地 OpenCV HSV + `Core.inRange(120,50,50)-(160,255,255)` + `Core.bitwise_not` 语义，不再使用 RGB/HSB 或 BLOB fallback；OCR miss fail closed。Focused replay 产出 clean-name/source、old HSV washed、production anchor marked、final click marked 四张图，`click=480,357` 落在 `灵兽村使者` target hit area，`anchor=520,407` / `candidateBox=476,395,88,24` / `matchedPlayerName=乌龟的黑头`。外部测试 `NpcClickSmartCurrentScreenPurpleAnchorReplayTest,NpcClickSmartFifoQueueSessionTest,AlgorithmFailClosedTest` 全绿，两个独立 reviewer PASS。CR169 仍非 Done，需重启 DHXY 与 external sidecar/JAR 后采集真实 NPC runtime 证据。",
+    "domain": "修罗",
+    "files": "`NpcClickService`, `NpcClickSmartCloudDecisionService`, `NpcClickSmartQueueMessage`, `NpcClickSmartQueueOutcome`, `WubeiTask`, `D:\\mavenProject\\dhxy-cloud-brain` NPC click queue/session/memory/purple player-anchor",
+    "summary": "2026-07-11 fresh runtime：白龙马探测后已有 `STORY` 遮挡，但 CR255 的 fast story close 仅修罗接任务 opt-in，五倍请求未开启且显式 `closeStoryBeforeDirectSceneClick(false)`。更严重的是相对基线 `3f0a2e7`，本地 direct-combat 已不再先发送 `Alt+A`；迁移后要求云端 FIFO 返回 `PRESS_HOTKEY_THEN_CLICK(ALT_A)`，本轮没有该动作，故物理 `Alt+A` 根本未发生。随后所有候选未形成有效入战，五倍通用失败恢复将 `RESOLVE_AFTER_PATHING` 送回 `ROUTE_TO_MAIN_TASK`，表现为重新导航宝象国，不是回城道具。必须先恢复白龙马的既有前置顺序/等价云端指令合同，再复验。",
     "verification": "需复核"
   },
   {
@@ -2632,11 +2632,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR252",
     "number": 252,
     "owner": "Codex",
-    "status": "Review P1（第四轮）已修：pause/stop/session 完结/group/binding 失效统一只读降级——`isMemberReadOnlyDegrade` 以\"本轮 run 内曾被覆盖\"判定，覆盖失效一律纯读 early-return（无 enter 消费/`Alt+8`/exit recovery）；只有新 task run（`initializeForCurrentWindow` 重置覆盖历史）或下一次真实入战广播才恢复正常语义；从未被覆盖的独立窗口 bootstrap 不变；compile passed，待复审 + fresh",
+    "status": "Review required P1：黄袍连战 fresh 证实队员只收到 leader `IN_COMBAT`，未收到中间场次确认退出；FIRST_AID 窗口虽开但成员不产生战后 pending 补给",
     "kind": "review",
-    "domain": "通用",
-    "files": "`WindowTaskRunner`, `AutoCombatService`, `AutoCombatPanelService`, `BattleRadarService`, `TaskMaintenanceService`, `XiuluoTaskV2`, `WubeiTask`",
-    "summary": "首个 P1 已修：covered 无广播成员安静等待不扫模板；第三轮 P1 已修：leaderPaused 走 early-return self-radar，不消费 enter、无 `Alt+8`。新 P1：非 pause 的 leader coverage 丢失（stop/session/group/binding）落入“binding fully gone -> standalone semantics”，清 `memberReadOnlySelfObserve` 后继续 `maybeHandleCombatEnter`；一旦 radar 发现战斗，仍可能 `ensurePanelVisible` 按 `Alt+8`。卡片业务边界已把 pause/stop/session/group/binding 并列为零物理输入降级，必须统一只读。",
+    "domain": "修罗",
+    "files": "`TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, `AutoCombatService.reconcileReturnHomeVerifiedCombatState`, `AutoCombatService.handleCombatTick`, `WubeiTask`, 黄袍 17:03-17:06 多窗口日志",
+    "summary": "epoch 92-96 只见 `team combat phase opened` 与成员 `external ... inCombat=true`，零 `team combat phase exit confirmed`、零成员 `auto-combat exit detected`/`pending follower first-aid`；确认 FREE 的既有调用只挂在“回城地图验证成功”与修罗链，黄袍中间连战 5 秒窗口前不可达。必须在既有“中间战斗终态已确认”事实点补发 FREE，不能用候选快脱战或改成员自行模板扫描代替。",
     "verification": "需复核"
   },
   {
@@ -2681,6 +2681,138 @@ window.CR_DASHBOARD_DATA = [
     "domain": "窗口/Runner",
     "files": "`XiuluoTaskV2`（shell yield 块 + `waitForXiuluoBrainEvent` + 新 helper）, `DialogService` local-kanda predicate, external `dhxy-cloud-brain` `DecisionEngine.trackerShortcutNext`",
     "summary": "已存在当前窗口、attemptId、操作类型、坐标和本地模板硬证据的 prepared action 时，本地只做身份/新鲜性安全校验并经输入队列点击；点击 outcome 再上报云端，由云端决定 `WAIT_COMBAT` 或恢复。禁止本地在点击前询问下一 phase 后才消费同一 action；cloud typed job 不得误入此直连。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR257",
+    "number": 257,
+    "owner": "Codex",
+    "status": "**Approved（全量 OCR 上云复审，2026-07-11）**：DHXY `bf3bf387` 完成 C2+C3；本地 `TextRecognizer`、Baidu SDK/配置/凭据、全部本地 OCR 调用和四条 rollback 均清零。DHXY/cloud-brain compile 通过；OCR 引擎仅由 cloud-brain sidecar 持有",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`WubeiTask`, `XiuluoTaskV2`, `TaskTrackerPanelService`, `BotProperties`, application.yml, pom.xml, external `dhxy-cloud-brain` `LocalOcrClient`/sidecar",
+    "summary": "用户已明确“不需要本地兜底”，D2 等价批准四条 rollback 关闭；云端 reader inactive 统一 fail-closed miss，不重回本地 OCR。fresh runtime 独立核验 cloud sidecar diagnostics 和业务 OCR 日志。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR258",
+    "number": 258,
+    "owner": "Codex",
+    "status": "Approved（源码 review）：P1 标量回显门已修；点位候选、合理性、接近点与 OCR fallback 都经绑定/fail-closed 收口，候选顺序/200ms/60s/keep-turn/ring 保持基线；fresh 待验",
+    "kind": "review",
+    "domain": "窗口/Runner",
+    "files": "`NavigationPointCloudDecisionService`, `NavigationService`, `XiuluoTaskV2`, `LocationVisionService`, external `MiniMapPointResolver`/`DecisionEngine`, `MINIMAP_LOCATION`",
+    "summary": "`CHECK_COORDINATE_PLAUSIBLE`、`RESOLVE_APPROACH_COORDINATE` 已与候选批次同样验证 `windowId/hwnd/taskRunId/navigationRequestId/clientFrame`；错配无输入、无本地计算兜底。双侧 compile 已由实现者记录通过，fresh 验证多窗口绑定、批内 200ms 轮换和断云 fail-closed。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR261",
+    "number": 261,
+    "owner": "Codex",
+    "status": "用户拍板 A + 返修完成 v2 待复核：首轮 2 P1 处理完毕——P1-1 用户明确批准范围收窄（云端只拥有 attempt 状态机，独占输入段及段内模板分支永久本地复合原子）；P1-2 补齐 inner route-dialog gate 子状态机（共享外层 stage5 词表、world-map-inner-gate context、CLICKED/FAILED/SKIPPED→message/intent 守卫完整映射、每 submit 一次且 attempt=2 不重跑）并校正基线行号（wrapper L2239-2242）。未实施",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`NavigationService.submitWorldMapSearchAndClickDestination`/`performWorldMapSearchAndClickDestination`/`prepareWorldMapSearchResultsDirect`/`closeRouteSearchPanelQueued`, external `NavigationRoutePlanResolver`",
+    "summary": "attempt 级编排上云、独占段本体零改动；message 兼容合同不变；不新增计数护栏；CR240/CR258 已迁部分不重复。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR262",
+    "number": 262,
+    "owner": "Codex",
+    "status": "Ready / Blocked on fresh：CR250 子卡 E——删本地决策实现与参数表 rollback（CoordinateHelper 7 方法+mapTransforms+本地 config/maps.json、navigateToMapLocalLadder、世界地图旧循环、LocationVisionService/XiuluoTaskV2 deprecated 链、张闻路线借 CR208-12）；实施硬前置=CR258/CR260/CR261 fresh 验收（CR208 删除纪律），完成后\"本地磁盘不保存参数表\"承诺正式成立",
+    "kind": "deprecated",
+    "domain": "通用",
+    "files": "`CoordinateHelper`, `config/maps.json`, `NavigationService`, `LocationVisionService`, `XiuluoTaskV2`",
+    "summary": "删除前逐项 grep 零生产调用；删除后双侧 compile + 全库关键词零命中核验。",
+    "verification": "未实现/未认领"
+  },
+  {
+    "id": "CR263",
+    "number": 263,
+    "owner": "Codex",
+    "status": "**Approved（实施复审）**：外部 reviewer 复审通过（首轮 author P1/P2 闭环、双端 compile 现场复验、无 P0/P1/P2）；fresh 归 CR264；heartbeat 已停（fa44848f）。CR261 v2 Approved 后开工，云端 attempt 状态机（stage6→inner gate→WORLD_MAP_PREPARE_AND_CLICK/CLOSE 状态机、PREPARE_FAILED 直接失败不 CLOSE、mismatch 中断短路）+ 本地 executeWorldMapPrepareAndClick(独占段零改动+CLICKED 同段原子注册 intent 含坐标+route memory)、旧 submit/perform @Deprecated；author 3 维度自审 1P1+1P2 全修；双侧 compile exit 0 —— 子卡 D 实施件——云端 attempt 状态机扩展 + 本地 `WORLD_MAP_PREPARE_AND_CLICK`/`CLOSE_ROUTE_SEARCH_PANEL` 两复合 action 拆分（CLICKED 时 intent 注册同独占段原子完成）+ 旧 submit/perform @Deprecated；纪律沿用 CR260（绑定/ledger/身份门/无计数护栏/message 零改动）。卡族冻结成员，实施在本卡内消化不另立卡",
+    "kind": "deprecated",
+    "domain": "通用",
+    "files": "`NavigationService` 世界地图链, external `NavigationRoutePlanResolver`",
+    "summary": "以 CR261 最终 Approved 文本为准实施；断云 fail-closed；fresh 归 CR264 汇总。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR264",
+    "number": 264,
+    "owner": "Codex",
+    "status": "预建 / Blocked on（CR263 Approved + fresh）：navigation migration 收口卡——三链 fresh 汇总核销（CR258/CR260/CR263）、CR260 已知窄窗口处置（无影响关闭/有影响本卡内合同修订+用户拍板）、CR260 P3 shouldYield 日志降噪、CR262 删除执行确认、CR250 父卡收口 Done。全族最后一张卡，不再产生新卡",
+    "kind": "open",
+    "domain": "导航",
+    "files": "全族卡 + `NavigationService` 日志层",
+    "summary": "明确排除：张闻路线（CR208 族）、OCR 离线链删除（CR257 卡 C2）、任何新导航能力=用户新立项。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR265",
+    "number": 265,
+    "owner": "Codex",
+    "status": "Implemented：任务启动 role preflight 前复用 `UICleanerService.forceCloseDialog()`，先清理可能遮挡 tooltip hover 的 dialog，再检测队长/队员；主项目 compile 通过，fresh 待验",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`WindowTaskRunner.resolveTaskTypeBeforeStart`, `MultiWindowTaskManager`, `UICleanerService.forceCloseDialog`, 队长识别启动日志",
+    "summary": "只改变 role detection 前置顺序：先走现有 force-close，再做 live tooltip role detection；不改 role 算法、任务分配、story/option 处理策略或后续任务流程。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR266",
+    "number": 266,
+    "owner": "Codex",
+    "status": "Ready：五倍维护遗留对话框、绿链无移动误入战与三分钟全局入战预算收口",
+    "kind": "ready",
+    "domain": "Dialog",
+    "files": "`WubeiTask`, `WindowTaskRunner`, `WindowRuntimeContext`, `UICleanerService`, `WindowReadyEventBus`，五倍 maintenance/绿链/入战日志",
+    "summary": "2026-07-11 round 39：医宝宝广播失败后遗留巫医 `OPTION`，任务仍点绿链；`STOPPED_AWAY` 被误转 `ENTER_BATTLE`，旧 dialog 被当作看打反复匹配。任务成功接取起至实际 `IN_COMBAT` 前统一 180s（暂停补时）预算，必须打断所有内部等待并回重新接任务。",
+    "verification": "未实现/未认领"
+  },
+  {
+    "id": "CR267",
+    "number": 267,
+    "owner": "Codex",
+    "status": "**Approved（reviewer 复审，2026-07-11）**：三轮 P1 已闭环；真实 queue `END` 才可授权 direct-combat，白龙马已先关已知 Story，tracker shortcut/未知场景云端 fail-closed；双侧编译通过，fresh 独立验收",
+    "kind": "review",
+    "domain": "五倍",
+    "files": "`NpcClickService`, `NpcClickRequest`, `NpcSmartClickOutcome`, `NpcDirectCombatScenario`, `NpcClickSmartCloudDecisionService`, `WubeiTask`, `XiuluoTaskV2`, external `dhxy-cloud-brain` `DecisionEngine`/`SmartClickRecognizer`",
+    "summary": "复审覆盖完整合同：白龙马 target-ready 先 task-owned fast-close，CR255 stale anchor 未放宽；授权仅 allowlist `WUBEI_PROBE_TARGET_READY`/`LEGACY_COMBAT_TARGET`，tracker shortcut/空值/未知拒绝；`NpcSmartClickOutcome` 只将真实 FIFO `END` 映射为 `normalFifoConsumedUnverified=true`，disabled/start/protocol/cancel/budget 均拒绝。reviewer 现场执行 DHXY `mvn -q -DskipTests compile` 与 cloud-brain `mvn -q package` 均成功。fresh 仍应验证实际输入顺序，但不阻塞本次 review 通过。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR268",
+    "number": 268,
+    "owner": "Codex",
+    "status": "Implemented：黄袍连战取消固定 5 场上限，链末只由 tracker 决定续战或回城；队长开 5 秒 FIRST_AID 窗口同时广播本场 FREE，主项目 compile 通过，fresh 待验",
+    "kind": "open",
+    "domain": "窗口/Runner",
+    "files": "`WubeiTask`, `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, 黄袍连战/队员补给/回城日志",
+    "summary": "用户明确批准：不再以连战次数提前失败；仍有黄袍 tracker 才续战，tracker 消失/不再黄袍/缓存 miss 均复用既有回城道具验证。中间战斗终态已由队长 task phase 确认，开补给窗口时才广播 FREE；候选快脱战不广播。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR260",
+    "number": 260,
+    "owner": "Codex",
+    "status": "**Approved（实施复审）**：首轮 3P1+1P2 返修通过——删 64 backstop、回退本地原子终态恢复云端编排（intent-gap 窄窗口如实记录）、执行时身份门 windowId/hwnd/taskRunId/epoch、ledger 完整绑定 key；拍板 B 未回退；reviewer 现场重跑双侧 compile exit 0；fresh 独立验收（六级 step 序列/窄窗口/世界地图 retry 时序）",
+    "kind": "review",
+    "domain": "通用",
+    "files": "`NavigationService.navigateToMap` 及六级 helper、新 `NavigationRoutePlanCloudDecisionService`、`CloudDecisionServiceId`、external 新 `NavigationRoutePlanResolver`/`DecisionEngine`",
+    "summary": "CR259 实施件：step 协议 observe→action→outcome→terminal，云端只据上报观察布尔做 1:1 阶梯分支决策；consume/confirm/submit 三复合执行器与 intent 三守卫零改动；断云 `MAP_NOT_REACHED`。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR259",
+    "number": 259,
+    "owner": "Codex",
+    "status": "**Approved（设计 review）**：用户拍板 B 后，C 卡只迁 `navigateToMap` 阶梯级决策、世界地图提交进入与最终收尾；内部 ≤2 attempt/`WRONG_DESTINATION`/250ms 保留本地复合 action，归 D。终态事实门、无新增业务封顶与 5 条修罗 message 合同均已通过复核。未实施",
+    "kind": "review",
+    "domain": "Dialog",
+    "files": "`NavigationService.navigateToMap` L281-514、`NavigationService.performWorldMapSearchAndClickDestination`、`XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation`、external 新 `NAVIGATION_ROUTE_PLAN`",
+    "summary": "设计已可开工：实现时保持 caller-fresh/ACTIVE snapshot/route-dialog gate 事实门、单 stepId 重放去重、五条 message 逐字兼容；C 不动世界地图内部 retry，D 再迁。fresh 作为实施后的独立运行验收。",
     "verification": "需复核"
   },
   {

@@ -96,6 +96,12 @@ public class CoordinateHelper {
         }
     }
 
+    /**
+     * CR258: the map transform table's production owner is the cloud snapshot (CR247); this local
+     * copy stays loaded only so the deprecated rollback methods below keep working offline. The
+     * local file and this loader are deleted by CR250 sub-card E after fresh acceptance.
+     */
+    @Deprecated(since = "CR258", forRemoval = false)
     @PostConstruct
     public void loadMapConfig() {
         File file = new File(MAP_CONFIG_PATH);
@@ -112,6 +118,8 @@ public class CoordinateHelper {
         }
     }
 
+    /** CR258: no production callers (verified 2026-07-11); calibration ingests cloud-side (CR247). */
+    @Deprecated(since = "CR258", forRemoval = false)
     public void saveNewMapConfig(String mapName, MapTransform transform) {
         mapTransforms.put(mapName, transform);
         try {
@@ -122,6 +130,8 @@ public class CoordinateHelper {
         }
     }
 
+    /** CR258: offline rollback only — production points come from cloud RESOLVE_MINIMAP_CLICK. */
+    @Deprecated(since = "CR258", forRemoval = false)
     public Point getPhysicalMapPoint(String mapName, int logicalX, int logicalY) {
         MapTransform transform = mapTransforms.get(mapName);
         if (transform == null) {
@@ -134,6 +144,8 @@ public class CoordinateHelper {
         return new Point(absoluteX, absoluteY);
     }
 
+    /** CR258: offline rollback only — the transform table's production owner is the cloud snapshot. */
+    @Deprecated(since = "CR258", forRemoval = false)
     public MapTransform getMapTransform(String mapName) {
         return mapTransforms.get(mapName);
     }
@@ -152,7 +164,10 @@ public class CoordinateHelper {
      * @param logicalY OCR/template logical Y coordinate.
      * @param marginPx tolerated pixel overflow around the 1024x768 client for edge labels/jitter.
      * @return false when the known transform maps the coordinate far outside the game client.
+     * @deprecated CR258: production verdicts come from cloud CHECK_COORDINATE_PLAUSIBLE / the
+     *             READ_LOCATION embedded guard; only deprecated offline chains still call this.
      */
+    @Deprecated(since = "CR258", forRemoval = false)
     public boolean isLogicalCoordinatePlausible(String mapName, int logicalX, int logicalY, int marginPx) {
         MapTransform transform = mapTransforms.get(mapName);
         if (transform == null) {
@@ -183,7 +198,10 @@ public class CoordinateHelper {
      *                         use the original point.
      * @return resolved logical coordinate, screen-absolute pixel point, and diagnostic reason; null
      *         when the transform is missing or all fallback points are exhausted.
+     * @deprecated CR258: production candidates come from the cloud RESOLVE_MINIMAP_CLICK batch;
+     *             this stays only as offline rollback until CR250 sub-card E deletes it.
      */
+    @Deprecated(since = "CR258", forRemoval = false)
     public MiniMapClickPoint resolveMiniMapClickPoint(String mapName,
                                                       int targetX,
                                                       int targetY,
@@ -193,6 +211,8 @@ public class CoordinateHelper {
                 randomizeClickPoint, MINI_MAP_CLICK_RANDOM_RADIUS_PX);
     }
 
+    /** @deprecated CR258: see the five-argument overload. */
+    @Deprecated(since = "CR258", forRemoval = false)
     public MiniMapClickPoint resolveMiniMapClickPoint(String mapName,
                                                       int targetX,
                                                       int targetY,
@@ -385,7 +405,10 @@ public class CoordinateHelper {
      * @param targetY original logical in-game Y coordinate.
      * @return logical in-game coordinate near the target; returns the original coordinate when the
      *         transform or physical point cannot be calculated.
+     * @deprecated CR258: production approach points come from cloud RESOLVE_APPROACH_COORDINATE;
+     *             this stays only as offline rollback until CR250 sub-card E deletes it.
      */
+    @Deprecated(since = "CR258", forRemoval = false)
     public MapCoordinate calculateApproachCoordinate(String mapName, int targetX, int targetY) {
         if (shouldUseOriginalTargetCoordinate(mapName)) {
             /*

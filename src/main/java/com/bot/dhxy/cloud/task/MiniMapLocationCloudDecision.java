@@ -22,6 +22,14 @@ public class MiniMapLocationCloudDecision {
     String labelImageSha256;
     int labelWidth;
     int labelHeight;
+    /**
+     * CR258: cloud-side OCR-fallback rejection detail on a NO_RESULT decision, e.g.
+     * {@code coordinate-out-of-transform-bounds}. Drives the client's metadata-only failure-sample
+     * archive now that the plausibility guard lives inside the cloud READ_LOCATION fallback.
+     */
+    String ocrFallbackReason;
+    /** CR258: rejected {@code map,x,y} echoed by the cloud for the failure-sample archive. */
+    String ocrRejectedLocation;
     @Builder.Default
     double confidence = 0.0d;
     CloudDecisionResult cloudResult;

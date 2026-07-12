@@ -82,9 +82,12 @@ public class MiniMapLocationCloudDecisionService {
         if (cloudResult.isExecuted()) {
             ParseResult parsed = parsedHolder[0];
             if (parsed.noResult()) {
+                Map<String, String> missDiagnostics = diagnostics(cloudResult.getResponse());
                 return MiniMapLocationCloudDecision.builder()
                         .status(MiniMapLocationCloudDecision.Status.CLOUD_NO_RESULT)
                         .reason(parsed.reason())
+                        .ocrFallbackReason(missDiagnostics.get("ocrFallbackReason"))
+                        .ocrRejectedLocation(missDiagnostics.get("ocrRejectedLocation"))
                         .confidence(cloudResult.getResponse().getConfidence())
                         .cloudResult(cloudResult)
                         .build();
