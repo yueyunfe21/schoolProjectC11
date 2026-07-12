@@ -1,6 +1,5 @@
 package com.bot.dhxy.config;
 
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,9 +18,6 @@ public class BotProperties {
      */
     @NotBlank(message = "配置缺失: bot.dhxy.window-keyword 不能为空")
     private String windowKeyword;
-
-    @Valid // 🌟 告诉 Spring：不仅要查外面的参数，还要进去查这个对象里面的参数！
-    private OcrConfig ocr = new OcrConfig();
 
     // ==========================================
     // 🌟 修复：用 @NotNull 替换 @NotBlank，并将 int 改为 Integer
@@ -113,30 +109,4 @@ public class BotProperties {
      */
     private String mapSurveyMapName = "";
 
-    @Data
-    public static class OcrConfig {
-        /**
-         * OCR provider:
-         * baidu   - current cloud OCR behavior.
-         * local   - local OCR sidecar only.
-         * compare - return Baidu result, also call local OCR and log differences.
-         * hybrid  - try local first; target-matching paths may retry Baidu when local text does not match.
-         */
-        private String provider = "baidu";
-
-        /**
-         * Local OCR sidecar base URL. See scripts/local_ocr_server.py.
-         */
-        private String localEndpoint = "http://127.0.0.1:18761";
-
-        private int localTimeoutMs = 10_000;
-        @NotBlank(message = "OCR AppID 不能为空")
-        private String appId;
-
-        @NotBlank(message = "OCR API Key 不能为空")
-        private String apiKey;
-
-        @NotBlank(message = "OCR Secret Key 不能为空")
-        private String secretKey;
-    }
 }

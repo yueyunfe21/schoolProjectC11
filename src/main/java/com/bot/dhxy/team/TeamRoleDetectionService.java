@@ -7,7 +7,6 @@ import lombok.Value;
 import lombok.experimental.Accessors;
 
 
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.runner.stop.TaskSleep;
 
 import com.bot.dhxy.config.BotProperties;
@@ -21,7 +20,6 @@ import com.bot.dhxy.cloud.task.TeamRoleTooltipCloudDecisionService;
 import com.bot.dhxy.cloud.task.TeamRoleTooltipCloudRequest;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputActionScope;
@@ -84,16 +82,13 @@ public class TeamRoleDetectionService {
     private static final double TEAM_STATUS_GROUPED_STDDEV_THRESHOLD = 60.0;
     private static final int TOOLTIP_OCR_FULL_RETRY_LIMIT = 2;
     private static final int TEAM_TOOLTIP_RETRY_DELAY_MS = 1000;
-    private static final int MIN_TOOLTIP_ID_DIGITS = 4;
     private static final int BATCH_TOOLTIP_DECISION_CACHE_MAX_ENTRIES = 512;
     private static final Pattern WINDOW_TITLE_ID_PATTERN = Pattern.compile("ID\\D{0,4}(\\d+)");
-    private static final Pattern DIGIT_SEQUENCE_PATTERN = Pattern.compile("\\d+");
 
     private final TeamTaskProperties teamTaskProperties;
     private final BotProperties botProperties;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final TextRecognizer textRecognizer;
     private final InputProvider inputProvider;
     private final InputSequences inputSequences;
     private final WindowTaskContextHolder windowTaskContextHolder;
@@ -113,8 +108,6 @@ public class TeamRoleDetectionService {
      *                      status area as a screen-region fallback after tooltip probing fails.
      * @param tracker screenshot provider for the currently bound window.
      * @param coordinateHelper coordinate scaler/randomizer for configured 1024x768 client points.
-     * @param textRecognizer OCR adapter used after tooltip screenshots are saved. It is not called
-     *                       while the exclusive input callback is holding the physical input queue.
      * @param inputProvider direct input provider used only inside exclusive input callbacks.
      * @param inputSequences global input queue used to serialize hover and Alt+T probing.
      * @param windowTaskContextHolder current window binding lookup.
@@ -130,7 +123,6 @@ public class TeamRoleDetectionService {
                                     BotProperties botProperties,
                                     GameClientTracker tracker,
                                     CoordinateHelper coordinateHelper,
-                                    TextRecognizer textRecognizer,
                                     InputProvider inputProvider,
                                     InputSequences inputSequences,
                                     WindowTaskContextHolder windowTaskContextHolder,
@@ -143,7 +135,6 @@ public class TeamRoleDetectionService {
         this.botProperties = botProperties;
         this.tracker = tracker;
         this.coordinateHelper = coordinateHelper;
-        this.textRecognizer = textRecognizer;
         this.inputProvider = inputProvider;
         this.inputSequences = inputSequences;
         this.windowTaskContextHolder = windowTaskContextHolder;
@@ -896,60 +887,6 @@ public class TeamRoleDetectionService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    /**
-     * Rollback-only local OCR path for reading the numeric leader ID from a saved tooltip image.
-     *
-     * <p>The full tooltip crop is OCR'd because the runtime cost is dominated by RapidOCR startup
-     * and inference overhead rather than the small difference between the full tooltip and a narrow
-     * ID strip. The selector ignores level text such as "195级" and prefers 4+ digit sequences below
-     * the level row, which matches the observed tooltip layout.</p>
-     *
-     * @param probe tooltip probe with a saved raw image path.
-     * @return selected leader ID, or empty when local OCR is unavailable or no reliable ID candidate
-     *         is found.
-     */
-    @Deprecated
-    private Optional<String> extractLeaderIdFromTooltipOcr(TeamTooltipProbe probe) {
-        if (probe == null || probe.rawPath() == null || probe.rawPath().isBlank()) {
-            return Optional.empty();
-        }
-
-        List<OcrWordResult> words = textRecognizer.getAllTextResultsLocalOnly(probe.rawPath());
-        if (words.isEmpty()) {
-            log.warn("team role tooltip OCR returned no words: raw={}", probe.rawPath());
-            return Optional.empty();
-        }
-
-        OptionalIntBox levelTop = findLevelRowTop(words);
-        List<TooltipIdCandidate> candidates = new ArrayList<>();
-        for (OcrWordResult word : words) {
-            String text = word.getText() == null ? "" : word.getText().trim();
-            if (text.isBlank() || text.contains("级")) {
-                continue;
-            }
-            Matcher matcher = DIGIT_SEQUENCE_PATTERN.matcher(text);
-            while (matcher.find()) {
-                String id = matcher.group();
-                if (id.length() >= MIN_TOOLTIP_ID_DIGITS) {
-                    candidates.add(new TooltipIdCandidate(id, word.getTop(), word.getLeft(), text));
-                }
-            }
-        }
-
-        Comparator<TooltipIdCandidate> comparator = Comparator
-                .comparing((TooltipIdCandidate candidate) -> isBelowLevelRow(candidate, levelTop)).reversed()
-                .thenComparing(Comparator.comparingInt((TooltipIdCandidate candidate) -> candidate.id().length()).reversed())
-                .thenComparingInt(TooltipIdCandidate::top)
-                .thenComparingInt(TooltipIdCandidate::left);
-        Optional<TooltipIdCandidate> selected = candidates.stream().sorted(comparator).findFirst();
-        log.info("team role tooltip OCR words: raw={} selectedId={} levelTop={} candidates={} words={}",
-                probe.rawPath(),
-                selected.map(TooltipIdCandidate::id).orElse("-"),
-                levelTop.present() ? Integer.toString(levelTop.value()) : "-",
-                summarizeIdCandidates(candidates),
-                summarizeOcrWords(words));
-        return selected.map(TooltipIdCandidate::id);
-    }
 
     /**
      * Resolve the current player ID from the bound window title.
@@ -1003,51 +940,6 @@ public class TeamRoleDetectionService {
         return Optional.of(matcher.group(1));
     }
 
-    @Deprecated
-    private OptionalIntBox findLevelRowTop(List<OcrWordResult> words) {
-        return words.stream()
-                .filter(word -> word.getText() != null && word.getText().contains("级"))
-                .mapToInt(OcrWordResult::getTop)
-                .min()
-                .stream()
-                .mapToObj(OptionalIntBox::present)
-                .findFirst()
-                .orElseGet(OptionalIntBox::empty);
-    }
-
-    @Deprecated
-    private boolean isBelowLevelRow(TooltipIdCandidate candidate, OptionalIntBox levelTop) {
-        return !levelTop.present() || candidate.top() > levelTop.value();
-    }
-
-    private String summarizeOcrWords(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return "[]";
-        }
-        int limit = Math.min(8, words.size());
-        List<String> summary = new ArrayList<>();
-        for (int i = 0; i < limit; i++) {
-            OcrWordResult word = words.get(i);
-            summary.add("'" + word.getText() + "'@(" + word.getLeft() + "," + word.getTop()
-                    + "," + word.getWidth() + "x" + word.getHeight() + ")");
-        }
-        if (words.size() > limit) {
-            summary.add("...+" + (words.size() - limit));
-        }
-        return summary.toString();
-    }
-
-    private String summarizeIdCandidates(List<TooltipIdCandidate> candidates) {
-        if (candidates == null || candidates.isEmpty()) {
-            return "[]";
-        }
-        return candidates.stream()
-                .limit(6)
-                .map(candidate -> candidate.id() + "@(" + candidate.left() + "," + candidate.top()
-                        + ") from='" + candidate.sourceText() + "'")
-                .toList()
-                .toString();
-    }
 
     private void saveBufferedImage(BufferedImage image, String path) {
         try {
@@ -1391,65 +1283,6 @@ public class TeamRoleDetectionService {
         private static TeamTooltipProbe missed(String rawPath, String purplePath) {
             return new TeamTooltipProbe(false, rawPath, purplePath, 0, 0,
                     new TextDistribution(0, 0, 0, 0));
-        }
-    
-
-    }
-
-    /**
-     * Candidate numeric ID extracted from a tooltip OCR word.
-     *
-     * @param id normalized digit sequence.
-     * @param top image-local top pixel of the source OCR word.
-     * @param left image-local left pixel of the source OCR word.
-     * @param sourceText full OCR word text that contained the digit sequence.
-     */
-    @Value
-
-    @Builder
-
-    @AllArgsConstructor(access = AccessLevel.PUBLIC)
-
-    @Accessors(fluent = true)
-
-    private static class TooltipIdCandidate {
-
-        String id;
-
-        int top;
-
-        int left;
-
-        String sourceText;
-
-    }
-
-    /**
-     * Tiny optional-int value object used to avoid nullable boxed integers in comparator code.
-     *
-     * @param present whether a value exists.
-     * @param value integer value when present.
-     */
-    @Value
-
-    @Builder
-
-    @AllArgsConstructor(access = AccessLevel.PUBLIC)
-
-    @Accessors(fluent = true)
-
-    private static class OptionalIntBox {
-
-        boolean present;
-
-        int value;
-
-        private static OptionalIntBox present(int value) {
-            return new OptionalIntBox(true, value);
-        }
-
-        private static OptionalIntBox empty() {
-            return new OptionalIntBox(false, 0);
         }
     
 

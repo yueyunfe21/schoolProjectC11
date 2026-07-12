@@ -9,14 +9,12 @@ import com.bot.dhxy.cloud.task.TrackerPanelReaderCloudDecisionService;
 import com.bot.dhxy.cloud.task.TrackerPanelReaderCloudRequest;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.model.dialog.DialogFingerprintWashMode;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
 import com.bot.dhxy.model.ocr.OcrWindowRegion;
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.model.tasktracker.TaskTrackerPanelCacheEntry;
 import com.bot.dhxy.model.tasktracker.TaskTrackerFastMatchResult;
 import com.bot.dhxy.model.tasktracker.TaskTrackerGreenLink;
@@ -27,7 +25,6 @@ import com.bot.dhxy.model.tasktracker.TaskTrackerPanelSourceType;
 import com.bot.dhxy.model.tasktracker.TaskTrackerTitleTemplate;
 import com.bot.dhxy.service.dialog.DialogOperation;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.vision.OcrWindowScanService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
@@ -104,7 +101,6 @@ public class TaskTrackerPanelService {
     private static final int TRACKER_COORD_GLYPH_MAX_WIDTH = 5;
     private static final int TRACKER_COORD_GLYPH_MIN_RUN = 5;
     private static final double TRACKER_ANCHOR_THRESHOLD = 0.82;
-    private static final int WUBEI_TRACKER_LINK_SINGLE_MAX_WIDTH = 72;
     private static final int WUBEI_CHAINED_FAST_FINGERPRINT_MAX_DISTANCE = 8;
     private static final int WUHUAN_PANEL_CACHE_FINGERPRINT_COLUMNS = 16;
     private static final int WUHUAN_PANEL_CACHE_FINGERPRINT_ROWS = 16;
@@ -124,7 +120,6 @@ public class TaskTrackerPanelService {
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final TextRecognizer textRecognizer;
     private final WindowScopedTempPath windowScopedTempPath;
     private final InputSequences inputSequences;
     private final MapNameCanonicalizer mapNameCanonicalizer;
@@ -609,82 +604,16 @@ public class TaskTrackerPanelService {
         if (cloudDecision.isPresent()) {
             return wubeiResultFromCloudDecision(source, cloudCrop, cloudDecision.get());
         }
-        if (trackerPanelReaderCloudDecisionService.isActive()) {
-            /*
-             * CR248 (CR208 items 3/4): the cloud reader owns 五倍 detail yellow text and green-link
-             * destination map names (real cloud OCR since CR248). A cloud miss is a miss — exactly
-             * like the 修罗 path — and must not fall back into the local OCR pipeline below, which
-             * the CR208 parent card forbids as an active production path.
-             */
-            log.info("[task-tracker wubei] cloud reader miss; no local OCR fallback in production: source={} detail={}",
-                    source, detailPath);
-            TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.empty();
-            CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
-            return applyTaskClassifierDecision(source, result, cloudResult, true);
-        }
-        return readWubeiTrackerDetailLocallyLegacy(detailPath, absoluteLeft, absoluteTop, titleTemplate, source);
-    }
-
-    /**
-     * Legacy local 五倍 detail pipeline (yellow-text OCR + green-link map-name OCR). CR248 moved
-     * production recognition to the cloud reader; this stays only for disabled/offline dev mode.
-     */
-    @Deprecated(since = "CR248", forRemoval = false)
-    private TaskTrackerPanelReadResult readWubeiTrackerDetailLocallyLegacy(String detailPath,
-                                                                           int absoluteLeft,
-                                                                           int absoluteTop,
-                                                                           TaskTrackerTitleTemplate titleTemplate,
-                                                                           String source) {
-        String safeSource = source == null ? "wubei" : source.replaceAll("[^a-zA-Z0-9._-]", "_");
-        Path detail = Path.of(detailPath);
-        String yellowPath = detail.resolveSibling(detail.getFileName() + "." + safeSource + ".wubei-detail-yellow.png")
-                .toString();
-        if (!washYellowToPath(detail, Path.of(yellowPath), source, "wubei-tracker-detail-yellow")) {
-            TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.empty();
-            CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
-            return applyTaskClassifierDecision(source, result, cloudResult, true);
-        }
-        List<OcrWordResult> words = textRecognizer.getAllTextResultsForMatch(
-            yellowPath,
-            "wubei-tracker-yellow:" + safeSource,
-            result -> !result.isEmpty());
-        String yellowText = words.stream().map(OcrWordResult::getText).collect(java.util.stream.Collectors.joining("|"));
-
-        try {
-            BufferedImage image = ImageIO.read(new File(detailPath));
-            if (image == null) {
-                log.warn("[task-tracker wubei] detail image unreadable: source={} path={}", source, detailPath);
-                TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.empty();
-                CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
-                return applyTaskClassifierDecision(source, result, cloudResult, true);
-            }
-            WubeiGreenLinkScan scan = scanWubeiTrackerGreenLinks(
-                image, absoluteLeft, absoluteTop, safeSource, titleTemplate);
-            log.info("[task-tracker wubei] panel read: source={} taskKey={} title={} yellow='{}' probe={} links={} detail={} yellowPath={}",
-                source,
-                titleTemplate == null ? null : titleTemplate.getTaskKey(),
-                titleTemplate == null ? null : titleTemplate.getDisplayName(),
-                yellowText, scan.isProbeObjective(), scan.links(), detailPath, yellowPath);
-            TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.builder()
-                .found(true)
-                .titleTemplate(titleTemplate)
-                .detailRawPath(detailPath)
-                .detailYellowPath(yellowPath)
-                .detailAbsoluteLeft(absoluteLeft)
-                .detailAbsoluteTop(absoluteTop)
-                .yellowText(yellowText)
-                .greenLinks(scan.links())
-                .greenBandWidth(scan.bandWidth())
-                .probeObjective(scan.isProbeObjective())
-                .build();
-            CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
-            return applyTaskClassifierDecision(source, result, cloudResult, true);
-        } catch (IOException e) {
-            log.warn("[task-tracker wubei] failed to read detail image: source={} path={}", source, detailPath, e);
-            TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.empty();
-            CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
-            return applyTaskClassifierDecision(source, result, cloudResult, true);
-        }
+        /*
+         * CR248 (CR208 items 3/4): the cloud reader owns 五倍 detail yellow text and green-link
+         * destination map names. CR257 C2 (D2 approved) deleted the pre-CR248 local OCR pipeline:
+         * a cloud miss OR an inactive cloud reader is now a miss, never a local OCR run.
+         */
+        log.info("[task-tracker wubei] no wubei detail result; no local OCR fallback: source={} cloudActive={} detail={}",
+                source, trackerPanelReaderCloudDecisionService.isActive(), detailPath);
+        TaskTrackerPanelReadResult result = TaskTrackerPanelReadResult.empty();
+        CloudDecisionResult cloudResult = taskClassifierCloudShadowService.shadowWubeiTrackerResult(source, result);
+        return applyTaskClassifierDecision(source, result, cloudResult, true);
     }
 
     /**
@@ -1920,208 +1849,10 @@ public class TaskTrackerPanelService {
         return segment.map(this::resolveTrackerGreenClickPoint).orElse(null);
     }
 
-    /** CR248: only reachable from {@code readWubeiTrackerDetailLocallyLegacy} (offline/rollback). */
-    @Deprecated(since = "CR248", forRemoval = false)
-    private WubeiGreenLinkScan scanWubeiTrackerGreenLinks(BufferedImage frame,
-                                                          int absoluteLeft,
-                                                          int absoluteTop,
-                                                          String source,
-                                                          TaskTrackerTitleTemplate titleTemplate) {
-        GreenTextScanInput greenText = resolveGreenTextScanInput(frame, source, "wubei-tracker-green-link");
-        if (greenText == null) {
-            log.info("[task-tracker wubei] green link scan: no green band");
-            return WubeiGreenLinkScan.empty();
-        }
-        try {
-            GreenTextBand band = greenText.band();
-            List<TrackerGreenLinkSegment> segments = splitWubeiTrackerGreenLinkSegments(
-                greenText.greenMask(), band, absoluteLeft, absoluteTop);
-            int bandWidth = band.maxX() - band.minX() + 1;
-            boolean probe = segments.size() >= 2
-                || (segments.size() == 1 && bandWidth > WUBEI_TRACKER_LINK_SINGLE_MAX_WIDTH);
-            String taskKey = titleTemplate == null ? "" : titleTemplate.getTaskKey();
-            boolean darkThunder = isWubeiDarkThunderTaskKey(taskKey);
-            boolean mirrorProbe = isWubeiMirrorProbeTaskKey(taskKey);
-            List<TaskTrackerGreenLink> links = new ArrayList<>();
-            for (int i = 0; i < segments.size(); i++) {
-                TrackerGreenLinkSegment segment = segments.get(i);
-                WubeiGreenMapText mapText = shouldParseWubeiTargetMap(darkThunder, mirrorProbe, i)
-                    ? recognizeWubeiGreenMapText(greenText.greenMask(), segment, absoluteLeft, absoluteTop, source, i)
-                    : WubeiGreenMapText.empty();
-                links.add(TaskTrackerGreenLink.builder()
-                    .minX(segment.minX())
-                    .minY(segment.minY())
-                    .maxX(segment.maxX())
-                    .maxY(segment.maxY())
-                    .pixels(segment.pixels())
-                    .targetMapName(mapText.targetMapName())
-                    .targetMapScore(mapText.score())
-                    .targetMapDebugPath(mapText.debugPath())
-                    .build());
-            }
-            log.info("[task-tracker wubei] green link scan: taskKey={} bands={} band=({}, {})-({}, {}) width={} links={} probe={} darkThunder={} mirrorProbe={}",
-                taskKey,
-                greenText.bands().size(), absoluteLeft + band.minX(), absoluteTop + band.minY(),
-                absoluteLeft + band.maxX(), absoluteTop + band.maxY(), bandWidth, links, probe, darkThunder, mirrorProbe);
-            return new WubeiGreenLinkScan(links, bandWidth, probe);
-        } finally {
-            greenText.flush();
-        }
-    }
-
-    private boolean shouldParseWubeiTargetMap(boolean darkThunder, boolean mirrorProbe, int linkIndex) {
-        if (darkThunder) {
-            return false;
-        }
-        return !mirrorProbe || linkIndex == 0;
-    }
-
-    private boolean isWubeiDarkThunderTaskKey(String taskKey) {
-        return WUBEI_TASK_KEY_DIANQIAN_XIANYI.equals(taskKey);
-    }
-
-    private boolean isWubeiMirrorProbeTaskKey(String taskKey) {
-        return WUBEI_TASK_KEY_BAOXIANG_MIQING.equals(taskKey);
-    }
-
-    /**
-     * CR248 (CR208 item 4): green-link destination map-name OCR moved to the cloud reader; this is
-     * reachable only from the legacy offline/rollback 五倍 detail path.
-     */
-    @Deprecated(since = "CR248", forRemoval = false)
-    private WubeiGreenMapText recognizeWubeiGreenMapText(BufferedImage greenMask,
-                                                         TrackerGreenLinkSegment segment,
-                                                         int absoluteLeft,
-                                                         int absoluteTop,
-                                                         String source,
-                                                         int index) {
-        if (greenMask == null || segment == null || textRecognizer == null) {
-            return WubeiGreenMapText.empty();
-        }
-
-        BufferedImage ocrImage = buildWubeiGreenMapOcrImage(greenMask, segment, absoluteLeft, absoluteTop);
-        if (ocrImage == null) {
-            return WubeiGreenMapText.empty();
-        }
-
-        Path ocrPath = resolveWubeiGreenMapOcrPath(source, index);
-        try {
-            Files.createDirectories(ocrPath.toAbsolutePath().getParent());
-            ImageIO.write(ocrImage, "png", ocrPath.toFile());
-            List<OcrWordResult> words = textRecognizer.getAllTextResultsForMatch(
-                ocrPath.toString(),
-                "wubei-tracker-green-map:" + safeSource(source),
-                result -> !joinOcrWords(result).isBlank());
-            String rawText = normalizeWubeiGreenMapText(joinOcrWords(words));
-            if (rawText.isBlank()) {
-                log.info("[task-tracker wubei] green map OCR empty: source={} index={} path={}",
-                    source, index, ocrPath);
-                return new WubeiGreenMapText("", 0.0, ocrPath.toString());
-            }
-            String canonical = mapNameCanonicalizer == null
-                ? rawText
-                : mapNameCanonicalizer.canonicalize(rawText, "wubei-tracker-green-map:" + safeSource(source));
-            double score = words.stream()
-                .mapToDouble(OcrWordResult::getScore)
-                .max()
-                .orElse(0.0);
-            if (score <= 0.0) {
-                score = 1.0;
-            }
-            log.info("[task-tracker wubei] green map parsed: source={} index={} raw='{}' canonical='{}' score={} path={}",
-                source, index, rawText, canonical, score, ocrPath);
-            return new WubeiGreenMapText(canonical, score, ocrPath.toString());
-        } catch (Exception e) {
-            log.warn("[task-tracker wubei] green map OCR failed: source={} index={} path={}",
-                source, index, ocrPath, e);
-            return WubeiGreenMapText.empty();
-        } finally {
-            ocrImage.flush();
-        }
-    }
-
-    private BufferedImage buildWubeiGreenMapOcrImage(BufferedImage greenMask,
-                                                     TrackerGreenLinkSegment segment,
-                                                     int absoluteLeft,
-                                                     int absoluteTop) {
-        int localLeft = Math.max(0, segment.minX() - absoluteLeft - 2);
-        int localTop = Math.max(0, segment.minY() - absoluteTop - 2);
-        int localRight = Math.min(greenMask.getWidth(), segment.maxX() - absoluteLeft + 3);
-        int localBottom = Math.min(greenMask.getHeight(), segment.maxY() - absoluteTop + 3);
-        if (localRight <= localLeft || localBottom <= localTop) {
-            return null;
-        }
-
-        BufferedImage crop = copyImageRegion(
-            greenMask, localLeft, localTop, localRight - localLeft, localBottom - localTop);
-        if (crop == null) {
-            return null;
-        }
-        int scale = 4;
-        int pad = 10;
-        BufferedImage ocrImage = new BufferedImage(
-            crop.getWidth() * scale + pad * 2,
-            crop.getHeight() * scale + pad * 2,
-            BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = ocrImage.createGraphics();
-        int greenPixels = 0;
-        try {
-            g.setColor(Color.WHITE);
-            g.fillRect(0, 0, ocrImage.getWidth(), ocrImage.getHeight());
-            g.setColor(Color.BLACK);
-            for (int y = 0; y < crop.getHeight(); y++) {
-                for (int x = 0; x < crop.getWidth(); x++) {
-                    if (isBrightTextPixel(crop.getRGB(x, y))) {
-                        greenPixels++;
-                        g.fillRect(pad + x * scale, pad + y * scale, scale, scale);
-                    }
-                }
-            }
-        } finally {
-            g.dispose();
-            crop.flush();
-        }
-        if (greenPixels < TRACKER_LINK_MIN_PIXELS) {
-            ocrImage.flush();
-            return null;
-        }
-        return ocrImage;
-    }
-
-    private Path resolveWubeiGreenMapOcrPath(String source, int index) {
-        String safeSource = safeSource(source);
-        String fileName = "task_tracker_green_map_" + Integer.toHexString((safeSource + ":" + index).hashCode())
-            + "_" + index + ".png";
-        if (windowScopedTempPath != null) {
-            return Path.of(windowScopedTempPath.resolve(fileName));
-        }
-        return Path.of("images", "temp", "wubei_tracker_green_map_ocr", fileName);
-    }
-
     private String safeSource(String source) {
         return source == null || source.isBlank()
             ? "wubei"
             : source.replaceAll("[^a-zA-Z0-9._-]", "_");
-    }
-
-    private String joinOcrWords(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return "";
-        }
-        return words.stream()
-            .filter(word -> word != null && word.getText() != null && !word.getText().isBlank())
-            .sorted(Comparator.comparingInt(OcrWordResult::getTop).thenComparingInt(OcrWordResult::getLeft))
-            .map(OcrWordResult::getText)
-            .collect(java.util.stream.Collectors.joining(""));
-    }
-
-    private String normalizeWubeiGreenMapText(String text) {
-        if (text == null) {
-            return "";
-        }
-        return text.replaceAll("[\\s　:：,，。.;；()（）\\[\\]【】<>《》\"'`·|丨/\\\\-]+", "")
-            .replaceAll("^[到至往去前往]+", "")
-            .trim();
     }
 
     private List<TrackerGreenLinkSegment> splitWubeiTrackerGreenLinkSegments(BufferedImage frame,
@@ -2777,20 +2508,6 @@ public class TaskTrackerPanelService {
     private record TrackerGreenLinkScan(List<TrackerGreenLinkSegment> segments, int bandWidth) {
         private static TrackerGreenLinkScan empty() {
             return new TrackerGreenLinkScan(List.of(), 0);
-        }
-    }
-
-    private record WubeiGreenLinkScan(List<TaskTrackerGreenLink> links,
-                                      int bandWidth,
-                                      boolean isProbeObjective) {
-        private static WubeiGreenLinkScan empty() {
-            return new WubeiGreenLinkScan(List.of(), 0, false);
-        }
-    }
-
-    private record WubeiGreenMapText(String targetMapName, double score, String debugPath) {
-        private static WubeiGreenMapText empty() {
-            return new WubeiGreenMapText("", 0.0, null);
         }
     }
 

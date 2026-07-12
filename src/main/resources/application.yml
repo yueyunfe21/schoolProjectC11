@@ -43,16 +43,6 @@ bot:
     # Game client window config.
     window-keyword: 大话西游2经典版
 
-    # Baidu OCR config.
-    ocr:
-      # baidu / local / compare / hybrid
-      provider: hybrid
-      local-endpoint: http://127.0.0.1:18761
-      local-timeout-ms: 10000
-      app-id: 7663260
-      api-key: sPCs5AFdc13mfgtqHnovGP5b
-      secret-key: yoDcd7FEqh4fkC5qLaE3igfQ0wEbPudx
-
     anchor_windowTo_map_scroll_X: 560
     anchor_windowTo_map_scroll_Y: 370
 

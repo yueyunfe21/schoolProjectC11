@@ -10,7 +10,6 @@ import com.bot.dhxy.model.ocr.LocationInfo;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.model.PlayerCharacter;
 import com.bot.dhxy.input.InputSequences;
@@ -190,7 +189,7 @@ public class GameStateUtil {
      * <p>That mode hides both the normal mini-map coordinate strip and the top-right HP/MP bars.
      * Use two lightweight no-input probes and require both to miss. Do not call
      * {@link PlayerStateService#syncMyPosition()} here because the business position sync falls
-     * through to local/Baidu OCR when the mini-map template reader misses.</p>
+     * through to the cloud OCR fallback when the mini-map template reader misses.</p>
      *
      * @param reason log label describing the caller.
      * @return true when the mini-map coordinate cannot be read, which is a likely signal that the

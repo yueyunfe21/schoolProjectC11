@@ -1,7 +1,6 @@
 package com.bot.dhxy.service;
 
 
-import com.bot.dhxy.model.ocr.OcrWordResult;
 import com.bot.dhxy.cloud.task.ImagePreprocessOperation;
 import com.bot.dhxy.cloud.task.ImageProcessorService;
 import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
@@ -9,7 +8,6 @@ import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
-import com.bot.dhxy.core.TextRecognizer;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
@@ -17,7 +15,6 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.navigation.PathingResult;
 import com.bot.dhxy.model.quest.QuestDetailCapture;
-import com.bot.dhxy.model.QuestTargetInfo;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -34,8 +31,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 任务情报总管。
@@ -50,7 +45,6 @@ public class QuestManagerService {
     private final WindowAwareInputCoordinator inputCoordinator;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final TextRecognizer ocr;
     private final GameContext context;
     private final WindowScopedTempPath windowScopedTempPath;
 
@@ -60,8 +54,6 @@ public class QuestManagerService {
     private static final int OFFSET_Y = 8;
     private static final int PANEL_H = 295;
     private static final int W_LEFT = 223;
-    private static final int W_RIGHT = 290;
-    private static final int OFFSET_X_RIGHT = OFFSET_X + W_LEFT;
     private static final int DETAIL_TEXT_OFFSET_X = -269;
     private static final int DETAIL_TEXT_OFFSET_Y = 12;
     private static final int DETAIL_TEXT_W = 264;
@@ -83,7 +75,6 @@ public class QuestManagerService {
     private static final long FAST = 200;
     private static final int WUHUAN_TASK_LINK_CLICK_HOLD_MS = 150;
 
-    private static final Pattern QUEST_PATTERN = Pattern.compile("([^\\(]+).*?在\\s*([\\u4e00-\\u9fa5]+)\\s*\\((\\d+)\\s*,\\s*(\\d+)\\)");
 
     public boolean activateTaskIfPresent(String task) { return activateTaskIfPresent(task, false); }
 
@@ -184,17 +175,6 @@ public class QuestManagerService {
         return existing.isEmpty() ? List.of(candidates.get(0)) : existing;
     }
 
-    public String readCurrentQuestDetailTextForTask(String task) {
-        AtomicReference<String> result = new AtomicReference<>("");
-        boolean completed = inputSequences.submitExclusiveAndWait("quest:readDetailText:" + task, () -> {
-            result.set(readCurrentQuestDetailTextForTaskDirect(task));
-            return true;
-        });
-        return completed ? result.get() : "";
-    }
-
-
-
     public QuestDetailCapture captureCurrentQuestDetailForTask(String task) {
         AtomicReference<QuestDetailCapture> result = new AtomicReference<>(QuestDetailCapture.empty());
         boolean completed = inputSequences.submitExclusiveAndWait("quest:captureDetail:" + task, () -> {
@@ -272,131 +252,6 @@ public class QuestManagerService {
         } catch (IOException e) {
             log.warn("quest detail debug save failed: task={} path={}", task, path, e);
         }
-    }
-
-    private String readCurrentQuestDetailTextForTaskDirect(String task) {
-        if (task == null || task.isBlank()) {
-            log.warn("quest detail read requested without task");
-            return "";
-        }
-
-        boolean activated = activateTaskIfPresentDirect(task, true);
-        if (!activated) {
-            log.info("quest detail read skipped, task not found: {}", task);
-            return "";
-        }
-
-        Point anchor = ensurePanelDirect();
-        if (anchor == null) {
-            log.warn("quest detail read failed, panel anchor not found: {}", task);
-            return "";
-        }
-
-        try {
-            int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(
-                    anchor, DETAIL_TEXT_OFFSET_X, DETAIL_TEXT_OFFSET_Y, DETAIL_TEXT_W, DETAIL_TEXT_H);
-            String detailPath = windowScopedTempPath.resolve("quest_detail_scan_" + task + ".png");
-            if (!tracker.captureToFile("quest-detail-" + task, detailPath,
-                    rightRect[0], rightRect[1], rightRect[2], rightRect[3])) {
-                log.warn("quest detail capture failed: task={}", task);
-                return "";
-            }
-
-            List<OcrWordResult> results = ocr.getAllTextResults(detailPath);
-            if (results == null || results.isEmpty()) {
-                log.info("quest detail OCR empty: task={} path={}", task, detailPath);
-                return "";
-            }
-
-            StringBuilder fullText = new StringBuilder();
-            for (OcrWordResult word : results) {
-                if (word.getText() != null) {
-                    fullText.append(word.getText());
-                }
-            }
-            String text = fullText.toString();
-            log.info("quest detail OCR result: task={} text={}", task, text);
-            return text;
-        } finally {
-            closePanelDirect();
-        }
-    }
-
-    public QuestTargetInfo fetchCurrentQuestInfo(String expectedTaskImage) {
-        log.info("📡 [深度解析] 启动重型 OCR 引擎获取任务情报...");
-
-        inputSequences.submitAndWait("quest:fetchOpenPanel", List.of(
-                InputAction.pressAltQ(),
-                InputAction.sleep((int) SLOW)
-        ));
-        Point anchor = ensurePanel();
-        if (anchor == null) return null;
-
-        int[] leftRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X, OFFSET_Y, W_LEFT, PANEL_H);
-        String taskTemplatePath = "images/template/" + expectedTaskImage;
-        Point taskLabelPoint = coordinateHelper.findImageAbsoluteCoordinate(taskTemplatePath, THRESHOLD_STRICT);
-
-        if (taskLabelPoint == null) {
-            log.warn("⏭️ 未发现任务标签 [{}]，判定可能已完成", expectedTaskImage);
-            closePanel("quest:fetchNoTaskClose");
-            return null;
-        }
-
-        click(taskLabelPoint.x, taskLabelPoint.y, 20, 5, MID);
-
-        int[] rightRect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X_RIGHT, OFFSET_Y, W_RIGHT, PANEL_H);
-        String detailPath = windowScopedTempPath.resolve("quest_detail_scan.png");
-
-        tracker.captureToFile("任务详情", detailPath, rightRect[0], rightRect[1], rightRect[2], rightRect[3]);
-
-        List<OcrWordResult> results = ocr.getAllTextResultsForMatch(
-                detailPath,
-                "quest-target-info:" + expectedTaskImage,
-                this::matchesQuestTargetInfo);
-        if (results == null || results.isEmpty()) {
-            closePanel("quest:fetchEmptyOcrClose");
-            return null;
-        }
-
-        StringBuilder fullText = new StringBuilder();
-        for (OcrWordResult word : results) {
-            fullText.append(word.getText());
-        }
-
-        String cleanText = fullText.toString();
-        log.info("🔍 OCR 结果: {}", cleanText);
-
-        Matcher matcher = QUEST_PATTERN.matcher(cleanText);
-        if (matcher.find()) {
-            String npc = matcher.group(1).trim();
-            String map = matcher.group(2).trim();
-            int x = Integer.parseInt(matcher.group(3));
-            int y = Integer.parseInt(matcher.group(4));
-
-            log.info("✅ 情报解锁 -> NPC: [{}], 地图: [{}], 坐标: ({}, {})", npc, map, x, y);
-            context.setCurrentTaskName(npc);
-
-            closePanel("quest:fetchParsedClose");
-            return new QuestTargetInfo(npc, map, x, y, cleanText);
-        }
-
-        log.warn("quest target OCR parse failed: expectedTaskImage={} path={} text={}",
-                expectedTaskImage, detailPath, cleanText);
-        closePanel("quest:fetchParseFailedClose");
-        return null;
-    }
-
-    private boolean matchesQuestTargetInfo(List<OcrWordResult> words) {
-        if (words == null || words.isEmpty()) {
-            return false;
-        }
-        StringBuilder fullText = new StringBuilder();
-        for (OcrWordResult word : words) {
-            if (word != null && word.getText() != null) {
-                fullText.append(word.getText());
-            }
-        }
-        return QUEST_PATTERN.matcher(fullText.toString()).find();
     }
 
     private Point ensurePanel() {
