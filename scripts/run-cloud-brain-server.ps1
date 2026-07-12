@@ -220,9 +220,14 @@ if (Get-Command "py" -ErrorAction SilentlyContinue) {
     throw "ocr-sidecar-launch-failed: neither 'py' nor 'python' is available for the OCR sidecar"
 }
 $ocrFingerprintCode = "import rapidocr; print('rapidocr-' + getattr(rapidocr, '__version__', 'unknown'))"
-$ocrExpectedModel = (& $ocrPythonLauncher @($ocrPythonBaseArgs + @("-c", $ocrFingerprintCode)) 2>$null | Select-Object -First 1)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ocrExpectedModel)) {
-    throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint (rapidocr not importable via $ocrPythonLauncher); install it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr\requirements.txt"
+# Collect the full output BEFORE taking the first line: piping a native command straight into
+# Select-Object -First 1 truncates the pipeline and leaves $LASTEXITCODE unset ($null), which
+# falsely fails the -ne 0 check even when the import succeeded.
+$ocrExpectedModelRaw = & $ocrPythonLauncher @($ocrPythonBaseArgs + @("-c", $ocrFingerprintCode)) 2>$null
+$ocrDeriveExit = $LASTEXITCODE
+$ocrExpectedModel = [string](@($ocrExpectedModelRaw) | Select-Object -First 1)
+if ($ocrDeriveExit -ne 0 -or [string]::IsNullOrWhiteSpace($ocrExpectedModel)) {
+    throw "ocr-model-fingerprint-unknown: cannot derive the expected model fingerprint (rapidocr not importable via $ocrPythonLauncher, exit=$ocrDeriveExit); install it: $ocrPythonLauncher $($ocrPythonBaseArgs -join ' ') -m pip install -r $BrainProjectPath\ocr\requirements.txt"
 }
 $ocrExpectedModel = $ocrExpectedModel.Trim()
 Write-Host "CR257 OCR expected identity: protocol=$ocrExpectedProtocol build=$ocrExpectedBuild model=$ocrExpectedModel port=$OcrPort"
