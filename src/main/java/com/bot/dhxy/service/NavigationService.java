@@ -126,6 +126,7 @@ public class NavigationService {
     private static final int GAME_WINDOW_WIDTH = 1024;
     private static final int GAME_WINDOW_HEIGHT = 768;
     private static final String ROUTE_RESULT_PAYLOAD_MIME_TYPE = "image/png";
+    private static final String INPUT_WORKER_THREAD_NAME_TOKEN = "dhxy-input-action-worker";
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_X = 120;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MAX_X = 900;
     private static final int ROUTE_CLOSE_RANDOM_MOUSE_MIN_Y = 130;
@@ -762,241 +763,6 @@ public class NavigationService {
         }
     }
 
-    @Deprecated(since = "CR260", forRemoval = false)
-    private NavigationResult navigateToMapLocalLadder(NavigationRequest request) {
-        if (request == null) {
-            log.warn("navigateToMap skipped: request is null");
-            return NavigationResult.failed("request is null");
-        }
-        String targetMapName = request.getTargetMapName();
-        String source = request.getSource();
-        long latencyStart = LatencyMetrics.start();
-        NavigationResult result = NavigationResult.mapNotReached("not started");
-        boolean pathingIntentAlreadyActive = false;
-        boolean pathingIntentOwnedByNestedRoute = false;
-        try {
-            PlayerCharacter me = context.getMe();
-            log.info("navigate to map: {} current={}", targetMapName, me.getCurrentMapName());
-
-            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-            WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-            if (runtime != null) {
-                /*
-                 * A ready route-transfer dialog is the highest-priority leader action. It means the
-                 * watcher has already proven that the transfer option is visible and click-ready; if
-                 * we let the stale-cache/pathing guard run first, it can return PATHING_ACTIVE and
-                 * leave the transfer dialog sitting open for another turn.
-                 */
-                RouteDialogClickResult routeDialog = consumePreparedRouteDialogAction(
-                        runtime,
-                        targetMapName,
-                        source,
-                        "navigateToMap:prepared-route-dialog-priority",
-                        null,
-                        null,
-                        null,
-                        ":priority-prepared");
-                if (routeDialog != null) {
-                    if (routeDialog.result() == DialogResultStatus.OPTION_KEYWORD_CLICKED) {
-                        pathingIntentAlreadyActive = runtime.getActivePathingIntent()
-                                .map(intent -> isActivePathingIntentCompatibleWithRequest(intent, targetMapName, source))
-                                .orElse(false);
-                        result = NavigationResult.pathingStarted("route dialog clicked before pathing guard; observer will confirm pathing");
-                        return result;
-                    }
-                    log.info("prepared route dialog priority consume did not click: target={} source={} result={}",
-                            targetMapName, source, routeDialog.result());
-                }
-            }
-            long stageStartedAt = System.currentTimeMillis();
-            /*
-             * Fresh confirmation is mandatory before map navigation can report ARRIVED. A stale
-             * cached map is especially dangerous for navigateToNPC(): it would make the next step
-             * click the NPC coordinate on whatever map is actually open.
-             */
-            RecentPathingMapCheck snapshotMapCheck = confirmCurrentMapFromRecentPathingSnapshot(
-                    targetMapName, "navigateToMap:staleCacheGuard");
-            boolean arrivedAfterFreshCheck;
-            if (snapshotMapCheck == RecentPathingMapCheck.ARRIVED) {
-                arrivedAfterFreshCheck = true;
-            } else if (snapshotMapCheck == RecentPathingMapCheck.PATHING_ACTIVE) {
-                DialogPreparationStatus status = runtime == null ? null : runtime.getDialogPreparationStatus();
-                PreparedDialogAction action = runtime == null ? null : runtime.getPreparedDialogAction();
-                boolean currentAlreadyTarget = gameStateUtil.isSameMapName(me.getCurrentMapName(), targetMapName);
-                boolean sameTargetIntent = runtime != null
-                        && runtime.getActivePathingIntent()
-                        .map(intent -> gameStateUtil.isSameMapName(intent.getTargetMapName(), targetMapName))
-                        .orElse(false);
-                WindowPathingIntent activeIntent = runtime == null
-                        ? null
-                        : runtime.getActivePathingIntent().orElse(null);
-                boolean compatibleActiveIntent =
-                        isActivePathingIntentCompatibleWithRequest(activeIntent, targetMapName, source);
-                if (runtime != null && !currentAlreadyTarget && compatibleActiveIntent) {
-                    if (shouldYieldForRouteDialogBeforeWorldMap(
-                            runtime, targetMapName, source, source + ":pathing-active-gate")) {
-                        boolean freshSameTargetRoutePending = isFreshSameTargetRoutePending(
-                                runtime, targetMapName, source, System.currentTimeMillis(), true);
-                        if (freshSameTargetRoutePending) {
-                            pathingIntentAlreadyActive = true;
-                        }
-                        result = freshSameTargetRoutePending
-                                ? NavigationResult.pathingStarted("same target route already submitted; watcher will confirm pathing")
-                                : NavigationResult.dialogPreparing("pathing active but route option is visible; watcher will prepare route dialog");
-                        return result;
-                    }
-                    log.info("navigate to map pathing-active route gate skipped: source={} target={} current={} existingPrepPhase={} preparedTarget={} sameTargetIntent={}",
-                            source, targetMapName, me.getCurrentMapName(),
-                            status == null ? null : status.getPhase(),
-                            action == null ? null : action.getTargetKeyword(),
-                            sameTargetIntent);
-                }
-                if (runtime != null
-                        && compatibleActiveIntent
-                        && ((status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName))
-                        || (action != null && action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)))) {
-                    /*
-                     * The route is already being followed by the window watcher. Any previous
-                     * route-dialog preparation belongs to the same submitted route and must not
-                     * later time out into a fresh world-map search.
-                     */
-                    runtime.clearDialogPreparationRequest("target route already pathing by watcher snapshot");
-                }
-                if (compatibleActiveIntent) {
-                    log.info("navigate to map stale-cache guard: target={} current={} pathingActive=true",
-                            targetMapName, me.getCurrentMapName());
-                    pathingIntentAlreadyActive = true;
-                    result = NavigationResult.pathingStarted("recent window pathing still active; observer will confirm map");
-                    return result;
-                }
-                log.info("navigate to map active pathing ignored because target/source changed: source={} target={} activeIntentSource={} activeIntentTarget={} current={}",
-                        source, targetMapName,
-                        activeIntent == null ? null : activeIntent.getSource(),
-                        activeIntent == null ? null : activeIntent.getTargetMapName(),
-                        me.getCurrentMapName());
-                arrivedAfterFreshCheck = gameStateUtil.confirmCurrentMapFresh(
-                        targetMapName, 0L, "navigateToMap:staleCacheGuard:mismatched-active-intent");
-            } else if (hasFreshCurrentLocationForMapGuard(request)) {
-                arrivedAfterFreshCheck = gameStateUtil.isSameMapName(request.getFreshCurrentMapName(), targetMapName);
-                log.info("[map-confirm] reused caller fresh location reason=navigateToMap:staleCacheGuard target={} current={} coord=({}, {}) arrived={}",
-                        targetMapName, request.getFreshCurrentMapName(),
-                        request.getFreshCurrentX(), request.getFreshCurrentY(), arrivedAfterFreshCheck);
-            } else {
-                arrivedAfterFreshCheck = gameStateUtil.confirmCurrentMapFresh(
-                        targetMapName, 0L, "navigateToMap:staleCacheGuard");
-            }
-            log.info("navigate to map stale-cache guard: target={} current={} arrived={}",
-                    targetMapName, me.getCurrentMapName(), arrivedAfterFreshCheck);
-            log.info("[productionNavigate-latency] stage=map-confirm elapsedMs={} totalMs={} target={} source={} arrived={}",
-                    Math.max(0L, System.currentTimeMillis() - stageStartedAt),
-                    LatencyMetrics.elapsedMs(latencyStart),
-                    targetMapName, source, arrivedAfterFreshCheck);
-            if (arrivedAfterFreshCheck) {
-                DialogPreparationStatus status = runtime == null ? null : runtime.getDialogPreparationStatus();
-                PreparedDialogAction action = runtime == null ? null : runtime.getPreparedDialogAction();
-                if (runtime != null
-                        && ((status != null && status.matches(DialogOperation.ROUTE_TRANSFER, targetMapName))
-                        || (action != null && action.matches(DialogOperation.ROUTE_TRANSFER, targetMapName)))) {
-                    runtime.clearDialogPreparationRequest("target map confirmed before route dialog click");
-                }
-                result = NavigationResult.arrived("target map confirmed by stale-cache guard");
-                return result;
-            }
-            TaskCheckpoint.throwIfStopRequested(taskExecutionContextHolder, "navigation interrupted");
-            stageStartedAt = System.currentTimeMillis();
-            if (runtime != null) {
-                DialogPreparationStatus status = runtime.getDialogPreparationStatus();
-                PreparedDialogAction action = runtime.getPreparedDialogAction();
-                boolean staleRoutePreparation =
-                        (status != null
-                                && status.getOperation() == DialogOperation.ROUTE_TRANSFER
-                                && status.getTargetKeyword() != null
-                                && !targetMapName.equals(status.getTargetKeyword()))
-                                || (action != null
-                                && action.getOperation() == DialogOperation.ROUTE_TRANSFER
-                                && action.getTargetKeyword() != null
-                                && !targetMapName.equals(action.getTargetKeyword()));
-                if (staleRoutePreparation) {
-                    log.info("clear stale route dialog preparation before map navigation: source={} target={} statusTarget={} preparedTarget={}",
-                            source, targetMapName,
-                            status == null ? null : status.getTargetKeyword(),
-                            action == null ? null : action.getTargetKeyword());
-                    runtime.clearDialogPreparationRequest("route dialog target changed before map navigation");
-                }
-            }
-            logRouteDialogPreparationSnapshot(runtime, targetMapName, source);
-            NavigationResult gateResult = routeDialogGateBeforeWorldMap(
-                    targetMapName, source, "navigateToMap:before-world-map");
-            if (gateResult != null) {
-                if (gateResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
-                    pathingIntentAlreadyActive = runtime != null && runtime.getActivePathingIntent()
-                            .map(intent -> isActivePathingIntentCompatibleWithRequest(intent, targetMapName, source))
-                            .orElse(false);
-                }
-                result = gateResult;
-                return result;
-            }
-
-            /*
-             * First route submission: open the world map, search the target map, scroll to the bottom
-             * result, and click the last route link. The called method owns the exclusive input section.
-             */
-            stageStartedAt = System.currentTimeMillis();
-            NavigationResult submitResult = submitWorldMapSearchAndClickDestination(request, targetMapName, source);
-            if (submitResult.getStatus() == NavigationResultStatus.DIALOG_PREPARING) {
-                result = submitResult;
-                return result;
-            }
-            if (submitResult.getStatus() == NavigationResultStatus.PATHING_STARTED) {
-                log.info("[productionNavigate-latency] stage=world-map-submit elapsedMs={} totalMs={} target={} source={} result=clicked",
-                        Math.max(0L, System.currentTimeMillis() - stageStartedAt),
-                        LatencyMetrics.elapsedMs(latencyStart),
-                        targetMapName, source);
-                /*
-                 * submitWorldMapSearchAndClickDestination owns the route-result pathing intent.
-                 * The only remaining route is CR99's yellow-link path, which registers the final
-                 * coordinate intent there. The old green-link route is deleted: requests without
-                 * final coordinates are rejected before submission and never register a map-only
-                 * legacy intent. Do not let the outer finally replace the current-leg intent with
-                 * a second same-leg navigateToMap intent.
-                 */
-                pathingIntentOwnedByNestedRoute = true;
-                result = submitResult;
-                return result;
-            }
-            if (!submitResult.success()) {
-                log.info("[productionNavigate-latency] stage=world-map-submit elapsedMs={} totalMs={} target={} source={} result=failed",
-                        Math.max(0L, System.currentTimeMillis() - stageStartedAt),
-                        LatencyMetrics.elapsedMs(latencyStart),
-                        targetMapName, source);
-                log.warn("first navigate attempt failed, entering retry loop");
-                /*
-                 * Phase tasks call map navigation while holding the task turn. If the first
-                 * route submission cannot even click a route, do not monopolize the turn for
-                 * the removed blocking arrival loop; return a retryable navigation result quickly
-                 * so the task layer can clean/retry without starving other windows.
-                 */
-                result = NavigationResult.mapNotReached("map route submit failed");
-                return result;
-            }
-            result = submitResult;
-            return result;
-        } finally {
-            if (result.getStatus() == NavigationResultStatus.PATHING_STARTED) {
-                if (pathingIntentAlreadyActive) {
-                    log.info("skip duplicate pathing intent registration: source={} target={} reason=watcher-already-active",
-                            source, targetMapName);
-                } else if (pathingIntentOwnedByNestedRoute) {
-                    log.info("skip outer pathing intent registration: source={} target={} reason=nested-route-owns-current-leg",
-                            source, targetMapName);
-                } else {
-                    registerWindowPathingIntent(request, "navigateToMap", result.getMessage(), false);
-                }
-            }
-            LatencyMetrics.info(log, "navigation.toMap", latencyStart,
-                    "result=" + result.getStatus() + " source=" + source + " target=" + targetMapName);
-        }
-    }
 
     private RecentPathingMapCheck confirmCurrentMapFromRecentPathingSnapshot(String targetMapName, String source) {
         WindowRuntimeContext windowContext = windowTaskContextHolder.rawCurrent().orElse(null);
@@ -1963,63 +1729,6 @@ public class NavigationService {
                 routeDialog.targetMap(), routeDialog.relativeX(), routeDialog.relativeY(), routeDialog.optionText());
     }
 
-    /** Legacy attempt loop; CR263 moved the rotation cloud-side. Offline rollback only (CR262 deletes). */
-    @Deprecated(since = "CR263", forRemoval = false)
-    private boolean performWorldMapSearchAndClickDestination(String fromMapName,
-                                                             String targetMapName,
-                                                             String canonicalTargetMapName,
-                                                             NavigationRequest request) {
-        long totalStartMs = System.currentTimeMillis();
-        state().clearWorldMapRouteResultClick();
-        if (request == null || request.getTargetX() == null || request.getTargetY() == null) {
-            log.warn("navigation world-map route rejected: final mini-map coordinate is required after legacy green route removal target={} request={}",
-                    targetMapName, request);
-            return false;
-        }
-        String routeMode = "yellow-destination-mini-map";
-        for (int attempt = 1; attempt <= 2; attempt++) {
-            final int currentAttempt = attempt;
-            final String currentTargetMapName = targetMapName;
-            long prepareStartMs = System.currentTimeMillis();
-            boolean prepared = inputSequences.submitExclusiveAndWait(
-                    "submitWorldMapSearchAndClickDestination:prepare:" + currentTargetMapName + ":attempt" + currentAttempt,
-                    () -> prepareWorldMapSearchResultsDirect(currentTargetMapName, currentAttempt));
-            long prepareElapsedMs = System.currentTimeMillis() - prepareStartMs;
-            log.info("navigation map search split: stage=prepare target={} attempt={}/{} elapsedMs={}",
-                    currentTargetMapName, currentAttempt, 2, prepareElapsedMs);
-            if (!prepared) {
-                return false;
-            }
-
-            long scanStartMs = System.currentTimeMillis();
-            WorldMapDestinationClickResult status = clickYellowDestinationAndTargetMiniMap(
-                    "submitWorldMapSearchAndClickDestination:yellowDestinationMiniMap",
-                    targetMapName,
-                    request);
-            long scanElapsedMs = System.currentTimeMillis() - scanStartMs;
-            log.info("navigation map search split: stage={} target={} attempt={}/{} status={} elapsedMs={} totalMs={}",
-                    routeMode,
-                    currentTargetMapName, currentAttempt, 2, status, scanElapsedMs,
-                    System.currentTimeMillis() - totalStartMs);
-            boolean routeClicked = status == WorldMapDestinationClickResult.CLICKED;
-            log.info("navigation map search: route action result={} status={} attempt={}/{} mode={}",
-                    routeClicked, status, attempt, 2,
-                    routeMode);
-            if (routeClicked) {
-                return true;
-            }
-            if (status == WorldMapDestinationClickResult.WRONG_DESTINATION && attempt < 2) {
-                closeRouteSearchPanelQueued("submitWorldMapSearchAndClickDestination:destinationMismatch:attempt" + attempt);
-                if (!TaskSleep.sleep(250)) {
-                    return false;
-                }
-                continue;
-            }
-            closeRouteSearchPanelQueued("submitWorldMapSearchAndClickDestination:failed");
-            return false;
-        }
-        return false;
-    }
 
     private WorldMapDestinationClickResult executeCloudRouteCandidateClick(String description,
                                                                            RouteCloudDecision routeDecision,
@@ -2286,32 +1995,6 @@ public class NavigationService {
                 "submitWorldMapSearchAndClickDestination:" + targetMapName + ":attempt" + attempt);
     }
 
-    /**
-     * Legacy world-map submit wrapper. CR263 decomposed the attempt loop into cloud-driven
-     * WORLD_MAP_PREPARE_AND_CLICK / CLOSE_ROUTE_SEARCH_PANEL steps; this stays only as the
-     * offline rollback entry used by the deprecated local ladder. Deletion belongs to CR262.
-     */
-    @Deprecated(since = "CR263", forRemoval = false)
-    private NavigationResult submitWorldMapSearchAndClickDestination(NavigationRequest request,
-                                                                     String targetMapName,
-                                                                     String source) {
-        NavigationResult gateResult = routeDialogGateBeforeWorldMap(
-                targetMapName, source, "submitWorldMapSearchAndClickDestination:before-open");
-        if (gateResult != null) {
-            return gateResult;
-        }
-        String fromMapName = canonicalCurrentMapForWorldMapRouteMemory(source);
-        String canonicalTargetMapName = canonicalMapName(targetMapName, "world-map-route-memory:target:" + source);
-        boolean clicked = performWorldMapSearchAndClickDestination(fromMapName, targetMapName, canonicalTargetMapName, request);
-        if (!clicked) {
-            return NavigationResult.mapNotReached("world-map route submit failed");
-        }
-        registerWindowPathingIntent(request, "worldMapYellowDestinationMiniMap",
-                source + ":yellow-destination-mini-map-pathing-confirmed", true);
-        rememberPendingRouteOutcome(fromMapName, canonicalTargetMapName, source,
-                WorldMapRouteResultMode.YELLOW_DESTINATION_MINI_MAP);
-        return NavigationResult.pathingStarted("world-map yellow destination mini-map pathing confirmed");
-    }
 
     private void rememberPendingRouteOutcome(String fromMapName,
                                              String targetMapName,
@@ -2519,7 +2202,7 @@ public class NavigationService {
     }
 
     private void closeRouteSearchPanelQueued(String source) {
-        inputSequences.submitExclusiveAndWait("navigation:routePanelCleanup:" + source,
+        runRouteCloseX2ClosedOperation("navigation:routePanelCleanup:" + source,
                 () -> {
                     if (InputActionScope.isCancelled()) {
                         log.info("navigation map search cleanup skipped because input request was cancelled: source={}",
@@ -2532,7 +2215,7 @@ public class NavigationService {
     }
 
     private void closeMapSearchInputAfterRouteDialog(String source) {
-        boolean closed = inputSequences.submitExclusiveAndWait("navigation:routeDialogCloseX2:" + source,
+        boolean closed = runRouteCloseX2ClosedOperation("navigation:routeDialogCloseX2:" + source,
                 () -> {
                     boolean result = uiCleanerService.closeMapSearchInputByX2Direct(source + ":closeMapSearchInput");
                     if (result) {
@@ -2541,6 +2224,26 @@ public class NavigationService {
                     return result;
                 });
         log.info("navigation route dialog: x2-only close after confirmed arrival source={} closed={}", source, closed);
+    }
+
+    /**
+     * Run one route-close X2 cleanup (X2 close + success mouse-away + its surrounding direct-input) as a
+     * single closed local navigation operation. When the caller already owns the exclusive input worker
+     * segment — the three X2 callers reach this from inside their own {@code navigateToNPC} exclusive owner —
+     * the operation runs direct on that segment, so the X2 sequence never nests a second
+     * {@code submitExclusiveAndWait} (no queue-in-queue). Off the worker it establishes the single exclusive
+     * owner itself, preserving the standalone byte-behavior. The X2 close, the {@code closed}-conditional
+     * mouse-away and the interruption/cancel checks are identical to the committed direct sequence either way.
+     */
+    private boolean runRouteCloseX2ClosedOperation(String description, java.util.function.Supplier<Boolean> operation) {
+        if (onInputWorkerThread()) {
+            return Boolean.TRUE.equals(operation.get());
+        }
+        return inputSequences.submitExclusiveAndWait(description, operation);
+    }
+
+    private boolean onInputWorkerThread() {
+        return Thread.currentThread().getName().contains(INPUT_WORKER_THREAD_NAME_TOKEN);
     }
 
     private void moveMouseAwayFromRouteCloseDirect(String source) {

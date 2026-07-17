@@ -578,20 +578,22 @@ public class AutoCombatService {
     }
 
     /**
-     * CR243 review P1-3: report-only split of the deferred leader recovery. Called at the green
-     * click BEFORE the first-aid queue opens so the leader can be consumed first. The no-focus
-     * probe takes no input; the caller then performs the leader's own queued attempt before it
-     * parks for pathing events.
+     * Record the leader's HP/MP result at the moment a Xiuluo return-home map has been verified.
+     * This is intentionally report-only: the existing tracker-green path remains responsible for
+     * opening the queue and consuming the leader head, so the bar snapshot is never repeated there.
+     *
+     * @param context current Xiuluo task context used for the bound HWND capture and queue scope.
+     * @param source diagnostic source for the verified return-home branch.
      */
-    public void reportQueuedLeaderPostCombatFirstAidIfPending(TaskExecutionContext context, String source) {
-        AutoCombatRuntimeState state = state();
-        if (!state.pendingLeaderPostCombatRecovery || !isXiuluoPostCombatFirstAidQueueMode(context)) {
+    public void reportXiuluoLeaderFirstAidAfterVerifiedReturn(TaskExecutionContext context, String source) {
+        if (!isXiuluoPostCombatFirstAidQueueMode(context)) {
             return;
         }
         PlayerStateService.FirstAidNoFocusProbeResult probeResult =
-                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(context, source + ":queued-leader-report");
+                playerStateService.probeAndConsumeHealthyFirstAidNoFocus(
+                        context, source + ":return-home-first-aid");
         taskMaintenanceService.reportPostCombatFirstAid(context,
-                toPostCombatFirstAidReport(probeResult), true, source + ":queued-leader-report");
+                toPostCombatFirstAidReport(probeResult), true, source + ":return-home-first-aid");
     }
 
     private void maybeHandleCombatEnter(String source) {

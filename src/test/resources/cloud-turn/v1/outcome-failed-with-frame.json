@@ -1,0 +1,63 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-failed-001",
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "0x000000000001A2B3",
+    "processId": 4242,
+    "windowRect": {
+      "left": 120,
+      "top": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "pauseRequested": false,
+    "stopRequested": false
+  },
+  "status": "FAILED",
+  "failedStepIndex": 1,
+  "code": "STEP_FAILED",
+  "message": "wait step was interrupted",
+  "stepResults": [
+    {
+      "index": 0,
+      "type": "INPUT",
+      "status": "COMPLETED",
+      "code": "INPUT_OK",
+      "match": null,
+      "localResultJson": null
+    },
+    {
+      "index": 1,
+      "type": "WAIT",
+      "status": "FAILED",
+      "code": "WAIT_INTERRUPTED",
+      "match": null,
+      "localResultJson": null
+    },
+    {
+      "index": 2,
+      "type": "CAPTURE",
+      "status": "NOT_RUN",
+      "code": "NOT_RUN",
+      "match": null,
+      "localResultJson": null
+    }
+  ],
+  "frame": {
+    "purpose": "FAILURE_EVIDENCE",
+    "contentType": "image/png",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "width": 1280,
+    "height": 720,
+    "region": {
+      "x": 120,
+      "y": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "sourceStepIndex": 1
+  }
+}

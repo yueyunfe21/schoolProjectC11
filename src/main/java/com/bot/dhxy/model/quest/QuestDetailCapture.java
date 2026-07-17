@@ -13,6 +13,8 @@ import java.awt.image.BufferedImage;
  *
  * @param image captured detail-panel image; caller owns and should flush it after use.
  * @param imagePath debug image path written during capture, or blank when unavailable.
+ * @param screenX captured image left edge in absolute screen pixels; valid only when {@link #hasImage()} is true.
+ * @param screenY captured image top edge in absolute screen pixels; valid only when {@link #hasImage()} is true.
  */
 @Value
 @Builder
@@ -21,12 +23,14 @@ import java.awt.image.BufferedImage;
 public class QuestDetailCapture {
     BufferedImage image;
     String imagePath;
+    int screenX;
+    int screenY;
 
     /**
      * @return an empty failed capture result.
      */
     public static QuestDetailCapture empty() {
-        return new QuestDetailCapture(null, "");
+        return new QuestDetailCapture(null, "", 0, 0);
     }
 
     /**

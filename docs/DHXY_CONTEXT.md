@@ -4,6 +4,74 @@ This document records the current state of the DHXY project so a new Codex/Deskt
 
 Last updated from the web ChatGPT debugging session after multi-window input queue and NPC click debugging.
 
+## 2026-07-15 CR271 HTTPS turn plan and test gate
+
+- 2026-07-16 03:29 EDT 掉线接续：原 TURN-28P、TURN-33 与 TURN-35/36/37、TURN-34C readiness 六个子
+  Agent 会话均已确认 `not_found`。TURN-28P 由 Locke `019f69ce-9359-71a1-8402-cb7ee7d34404`、TURN-33
+  由 Faraday `019f69ce-d84c-7a11-a832-3ce77f8f739a` 在原固定报告 true EOF replacement 接续；TURN-33
+  保留原四文件半成品。四条 whole-task/AutoBattle readiness 也已补回，只产 PRECHECK，不是实现或批准。
+
+- The authority plan is
+  `docs/superpowers/plans/2026-07-15-https-turn-complete-migration-card-plan.md`, currently
+  `PARENT PLAN + TEST GATE APPROVED / EXECUTION ACTIVE`.
+- Latest passed parent reviews include TURN-14/15/16/18/19/20/21/23P/24A/25/29/30/31/32 and TURN-T04;
+  their named tests/build remain in the stable-writer cohort.
+  TURN-23P now provides the byte-identical optional capture policy `clearPointerIfOverRegion`: only an inclusive
+  padded-ROI pointer hit causes one exact queued MOVE+WAIT before same-HWND capture; null/outside does no input and
+  pointer-clear failure does not execute the requested ROI capture.
+  TURN-23 Repair #1 has now passed parent production/test-source re-review with `P0/P1/P2=0/0/0`; its owner is
+  released. TURN-22 was parent-frozen and truly claimed at report EOF by Averroes
+  `019f6979-7699-7fc2-b50b-0c35c1d3ace2` at `2026-07-16T01:51:41-04:00`: each observation sends one exact
+  `272x69` raw PNG for Cloud member/leader matching, while member incense/click and leader wait/precheck retain
+  the `696a12b0` order. TURN-26 has now passed the parent's independent production/test-source review with
+  `P0/P1/P2=0/0/0`; its supplied-frame zero-command and single fresh CAPTURE path, green/raw/yellow OCR,
+  provider-order words, ordered `0.85` white-story match, typed `LocalOcrClient` reuse and terminal/source gates are
+  closed. Its named test and Cloud build remain pending the stable-writer cohort.
+- TURN-33 is now truly claimed at fixed-report EOF by Goodall `019f6990-dfbb-7373-8580-4944ce8f5c60` at
+  `2026-07-16T02:16:25.830-04:00`. Its fixed card combines the `696a12b0` deletion/ultimate/dialog/cleanup order with the
+  user-approved live `if8` and static reverse-slot scan; one synchronous Cloud pass may drive multiple exact-window
+  closed actions, but each action has a fresh UUID and local queue atomicity, with no cross-action session/owner/ledger
+  or transport retry.
+- Current progress is card lifecycle, not the historical `189/407` caller-coverage snapshot. The runtime must not
+  add a ledger/session/owner/durable workflow.
+- The corrected prerequisite chain is `(TURN-02R || TURN-40A) -> TURN-13G -> TURN-13H -> TURN-13C -> business
+  cards -> whole Tasks -> context/facade cleanup -> TURN-40B/C/D -> runtime gate -> ordered deletion`.
+- The user explicitly authorized `HTTPS_TURN_CONTRACT_TEST_FAMILY`. Every Java card now has a named unit/contract
+  test write set, required success/failure/stopped/uncertain cases and exact Maven `-Dtest` command in plan Section
+  19. Existing Foundation source uses test-debt cards `TURN-T01..T04`.
+- A card is not approved after source review alone. It requires parent source review, parent assertion review,
+  fresh named tests, and the applicable compile gate. Unit tests use fakes/loopback only and do not replace the
+  separate TURN-41 real Win32 user-runtime gate.
+- The permanent DHXY-local Services remain `BagService`, `UICleanerService`, `GiveItemService`, and
+  `QuestManagerService`. No other business Service is moved local by the test design.
+- No approved business difference exists; migration preserves baseline
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`.
+
+## 2026-07-13 Cloud migration placement decisions
+
+- A Service that can reasonably live either in DHXY or Cloud is a user-owned architecture decision. Agents must
+  present the local/cloud options and ask the user before choosing; convenience alone is not approval.
+- The user has explicitly fixed `BagService`, `UICleanerService`, and `GiveItemService` as DHXY-local Services.
+  Their screenshot, template/OCR, UI-state, input-queue, and physical-action implementations must not be copied
+  into Cloud. `GiveItemService` remains inside the existing Dialog exclusive-input path; do not create a same-name
+  Cloud Service or a standalone `GIVE_ITEM` wire operation.
+- Cloud business code may invoke those local Services only through a small closed typed operation/result contract.
+  A typed remote facade is not a second business Service and must not acquire local mechanics or independent state.
+- This decision does not move business decisions from Cloud back into DHXY: callers keep their existing phase,
+  order, delay, retry, fallback, and return-value semantics; DHXY performs only the requested local mechanics.
+- Placement criterion approved by the user: a Service may remain local when it is a closed mechanical loop with no
+  business brain: observe the exact bound window, match image/template/OCR, execute a fixed local input sequence,
+  and return a typed result. Local implementation may contain fixed mechanics delays or safety cleanup, but it must
+  not choose task phase, business strategy, cross-Service orchestration, or business retry/fallback. Services that
+  make those decisions belong in Cloud. Borderline cases must be presented to the user before implementation.
+- The user explicitly fixed two additional placements. `TaskTrackerPanelService` must migrate as a same-name Cloud
+  Service because panel/detail geometry, green-link segmentation, fingerprints/cache decisions, candidate ordering,
+  classification, and result construction are substantive algorithms. DHXY retains only exact-window capture,
+  locally required template/OCR primitives, coordinate-safe drag/input, and typed observation transport for it.
+  `QuestManagerService` remains a DHXY-local mechanical Service: it opens the exact task panel, matches/highlights a
+  requested task, scrolls/clicks, captures the requested detail, and returns the result; Cloud callers retain every
+  important task choice and orchestration decision.
+
 ## 1. High-level project purpose
 
 DHXY is a Java/Spring/JavaFX desktop automation tool for 大话西游2 classic client workflows.

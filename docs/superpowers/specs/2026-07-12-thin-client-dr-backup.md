@@ -1,79 +1,106 @@
-# A-7 权威数据灾备与恢复（THIN_CLIENT_V1）
+# A-7 首版运行恢复边界（THIN_CLIENT_V1）
 
-工件编号：A-7（终审 Final #1 工件计划）
-来源共识：草案 §12.6（Q6 回滚/S8/S9）、Final #6/#8、B Final #2 P1-3/P1-4、A-3 v2 §1/§6
-状态：设计工件 v1
-约束：设计级规格。原则：**任何恢复路径都不得从陈旧快照直接续跑执行**。
+工件编号：A-7
+状态：lift-and-shift 首版恢复合同
+
+本文配套 A-3 的 in-memory state + append-only journal。首版不把完整 PostgreSQL 灾备、同步副本或跨区域 RPO=0 作为迁移开工门；恢复目标是“不猜测执行、不跨窗口串状态、断线后由云端重连裁决”。
 
 ---
 
-## 1. 灾备分级（与 A-3 v2 §1 严格一致）
+## 1. 首版故障模型
 
-| 级别 | 数据 | RPO | 手段 |
-|---|---|---|---|
-| correctness | action_ledger、protocol_fact、connection_fence、input_lane_lease、outbox、task_run.revision、tombstone、authority_epoch/transfer、绑定 correctness 迁转的审计 | **0** | 同步耐久：`synchronous_commit=on` + 同步 standby（quorum ≥1）；V1 单节点开发期替代=同主机独立介质同步 WAL 镜像 + 生产前必须升级为真同步副本，此项为 S7 切换前置门 |
-| durable-audit | 独立运营审计 | ≤5min | WAL 连续归档 + PITR |
-| evidence | 帧/ROI/性能 trace | §10 批准保留期 | 对象存储版本化 + 定期 manifest 对账 |
-
-**correctness RPO=0 不可达时的唯一合法姿态**：全局停机 + 潜在丢失窗口人工外部对账（对照游戏世界实况与 cutover journal），禁止自动 re-admission（B Final#2 P1-4）。
-
-## 2. 备份策略
-
-| 项 | 策略 |
+| 故障 | 首版处理 |
 |---|---|
-| PG 基础备份 | 每日全量 + WAL 连续归档（PITR 粒度到事务） |
-| 同步副本 | correctness 库同步 standby；副本延迟>0 即告警（它不是异步灾备,是 RPO=0 的构成部分） |
-| 对象存储 | 版本化开启；object_metadata（A-3 §7）与实际对象每日 manifest 交叉核对，差异=审计事件 |
-| 加密 key/cert | 与数据备份**分开托管**（A-6 §4.3）；key 托管自身有恢复演练——数据可恢复而 key 不可恢复=数据丢失，等同灾难 |
-| 备份完整性 | 每次备份带 checksum + 恢复抽验（不是只备不验） |
+| 单次同步调用超时 | action 记 UNKNOWN，窗口停止 dispatch，等待迟到 outcome 或重连 |
+| client session 断线 | connection generation 换代；在途 action UNKNOWN；逐窗口重连 |
+| 云端进程重启且 journal 完整 | replay journal 重建候选状态，所有活跃窗口仍先 RECONCILING |
+| 云端进程重启且 journal 缺失/损坏 | 不恢复活跃执行；窗口保持暂停，重新注册、fresh observation、云端 resync |
+| 单窗口状态冲突 | 只暂停该 WindowKey；其他窗口继续运行 |
+| tenant/device identity 冲突 | 拒绝请求并审计，不尝试合并状态 |
 
-## 3. RTO 目标
+客户端本地 task state、Redis、临时文件和日志都不能替代云端裁决。
 
-| 场景 | RTO 目标 | 说明 |
-|---|---|---|
-| 主 PG 故障切副本 | ≤5min | 同步副本提升；恢复序列 §4 照跑（副本提升也算恢复事件,fence 换代不豁免） |
-| PITR 整库回滚 | ≤2h | 仅 durable-audit/evidence 级损坏场景;correctness 若需 PITR 即触发 §1 停机对账姿态 |
-| 对象存储区域故障 | ≤4h | 证据类可降级运行（verdict 记 INCONCLUSIVE），任务不停 |
-| 全量灾难重建 | ≤24h | 含 key 恢复 + 全设备重新 bootstrap |
+## 2. Journal 最小耐久规则
 
-数值随 quotaProfile 版本化,S6 压测校准后冻结（Q7#4 同源规则）。
+- journal 按 authenticated tenant/device/window namespace 写入，payload 不能选择目录或 stream。
+- 同一窗口 `eventSequence` 严格递增；eventId 唯一；事件 append-only。
+- `ACTION_DISPATCHED` 必须在调用 `RemoteGameClientPort` 前 flush 成功。
+- `ACTION_OUTCOME_RECORDED`、`ACTION_UNKNOWN`、`TASK_COMMAND_ACCEPTED`、`TASK_TURN_CHANGED` 在对应 API 返回成功前 flush 成功。
+- flush 失败时禁止新 action；不得以“内存里已经改了”为由继续执行。
+- journal 可使用本地 append file、云日志流或数据库 adapter。介质选择不是首版业务接口的一部分。
 
-## 4. 恢复后强制序列（Final #8 定案,任何恢复事件一律执行）
+## 3. 进程内恢复
 
+同一进程中发生 client 断线或调用异常时：
+
+1. 按 WindowKey 取得串行化锁。
+2. connection generation 增加 1，state 改 DISCONNECTED。
+3. 在途 DISPATCHED action 无可信 outcome 时记 UNKNOWN。
+4. 清 current turn 的 activeActionId，但不推进 phase，不创建 successor。
+5. pause/stop flag 和 task turn payload原样保留。
+6. flush disconnect/UNKNOWN journal 后释放锁。
+7. 进入 A-3 重连门；裁决完成前该窗口 dispatchAllowed=false。
+
+## 4. 云端进程重启
+
+### 4.1 journal 可验证
+
+1. 按 `(tenantId,deviceId,windowRegistrationId,incarnation,eventSequence)` 重放。
+2. 校验 event sequence 连续、prior/new digest 链、payload version 和完整 WindowKey。
+3. 重建 WindowRuntimeState、TaskRunState、current turn、request records、actions 与 late resolutions。
+4. replay 终点仍为 PREPARED 的 action 可安全视为未 dispatch；终点为 DISPATCHED 且无 outcome 的 action必须 UNKNOWN。
+5. 所有非终态窗口统一置 RECONCILING，增加 connection generation，不直接续跑。
+6. 每个窗口完成 authenticated reconnect、client ledger 对账、fresh observation 与云端 resync 后单独开放。
+
+### 4.2 journal 不完整或不可验证
+
+- 不从最后一条可读事件猜测 task turn。
+- 不把未知 action 标 NOT_EXECUTED，不自动重放旧 request。
+- 对受影响 WindowKey 建立 `RECOVERY_REQUIRED` 占位状态并保持 dispatch 关闭。
+- 要求重新注册/重连、fresh observation 和人工或任务已有 resync 裁决。
+- 无法确认旧 taskRun 时终止旧 run 的恢复尝试，创建新 run 必须使用新 start requestId；旧 actionId 永不复用。
+
+## 5. UNKNOWN 与迟到 outcome
+
+- UNKNOWN 是历史事实，不被删除或改写成 EXECUTED/NOT_EXECUTED。
+- 第一个 actionKey、原 connection generation、签名/会话身份全部正确的迟到 outcome 原子写入 LateOutcomeResolution。
+- 相同 outcome digest 重投返回原 resolution；不同 digest 返回冲突并保持窗口暂停。
+- resolution 只解除“是否收到可信结果”的不确定性；task phase 是否继续由云端已有任务逻辑结合 fresh observation 决定。
+
+## 6. Pause/stop 恢复
+
+- replay 或重连后 `stopRequested=true` 时禁止任何新 action，任务只可在已有 checkpoint 语义下收口 STOPPED。
+- `pauseRequested=true` 或 status=PAUSED 时禁止新 action；只有幂等 RESUME command 可重新开放。
+- 断线不能清除 stop/pause，重启不能把 PAUSED 自动改 RUNNING。
+- 终态 task 不参与重连续跑。
+
+## 7. 恢复接口
+
+```text
+RuntimeRecovery
+  verifyJournal() -> JournalVerification
+  rebuildCandidateState(verifiedEvents) -> RuntimeStateSnapshot
+  markUnresolvedActionsUnknown(snapshot) -> RuntimeStateSnapshot
+  requireReconnectForActiveWindows(snapshot) -> RuntimeStateSnapshot
+  installRecoveredState(expectedEmptyStore, snapshot) -> InstallResult
+
+ReconnectCoordinator
+  begin(authScope, WindowKey, clientSession, clientLedgerDigest) -> ReconcileState
+  attachFreshObservation(ReconcileState, observationRef) -> ReconcileState
+  decide(ReconcileState, taskResyncDecision) -> CONNECTED | PAUSED | RECOVERY_REQUIRED
 ```
-1. authority 校验：只读 PG 已提交状态（authority_epoch ACTIVE 行）;
-   处于 TRANSFER PREPARED 中断态 → 保持全系统停止,人工按 A-3 §6 T5' 记录裁决
-2. 全局 connectionFence 强制换代（每设备 generation+1,PG CAS）
-3. 全部设备 CLOUD_SUSPENDED（活跃连接立即失效,客户端按 §7.1 挂起）
-4. 恢复点之后的所有 DISPATCHED/在途 action 一律标 UNKNOWN
-   （correctness RPO=0 保证"恢复点之后"有完整台账可标;禁止 NOT_EXECUTED 推断）
-5. 全部 input_lane_lease 置 REVOKING → 等各设备重连对账
-6. 设备逐台重新 bootstrap（A-2 v2 §4）→ LOCAL_LEDGER_RESET 对账
-   → 逐窗口 fresh full frame + 身份 rebind + RESYNC_DECISION
-7. 云端逐窗口确认后才恢复该窗口 admission;无法对账的窗口保持暂停
-8. 恢复事件全程审计:恢复点 LSN、受影响 action 数、UNKNOWN 标记清单、重开时间线
-```
 
-## 5. 整体回滚（S8）与灾备的关系
+恢复实现只调用 A-3 `RuntimeStateStore`，不直接修改 task 业务 payload。未来增加 PostgreSQL snapshot、远端 event store 或备份时仍实现这些接口，不改变 UNKNOWN、generation、turn revision 和逐窗口开放规则。
 
-- 整体回滚（Q6 S8：THIN_CLIENT_V1 → 旧本地系统）走 **authority transfer**（A-3 §6 T5'：PREPARED→COMMITTED→manifest 后置签发）,不是灾备恢复;云端数据封存只读、不删除。
-- 灾备恢复（本工件）是**同一系统内**的时间点恢复;两者共享的只有"fence 换代 + 全设备挂起 + fresh 对账"的安全骨架。
-- 回滚窗口内云端 schema 只许 additive/独立 namespace（Q6#7 expand-contract）,保证封存数据对恢复工具可读。
+## 8. 首版验收点
 
-## 6. 演练（restore drill,进 S9 稳定门与常态运维）
+1. 两个窗口断线/重连时 state、action、stop/pause 不交叉。
+2. 同 requestId 同 digest 重放返回原结果；不同 digest 冲突。
+3. 同步调用超时后没有第二个 action，窗口进入 UNKNOWN/reconcile。
+4. 迟到 outcome 同 digest 幂等，不同 digest 冲突。
+5. journal replay 后 DISPATCHED 无 outcome 一律 UNKNOWN。
+6. journal 损坏时没有自动续跑或本地业务 fallback。
+7. stop/pause 在断线和进程重启后仍生效。
+8. 每个窗口独立通过 fresh observation + 云端 resync 后才恢复 dispatch。
 
-| 演练 | 频率 | 通过标准 |
-|---|---|---|
-| 备份恢复抽验 | 每次备份 | checksum + 抽样表行数/digest 对 |
-| 同步副本切换 | S6 前一次 + 季度 | RTO 达标 + §4 序列完整执行 + 零 correctness 丢失 |
-| PITR 演练 | S6 前一次 + 半年 | 恢复点精确 + 审计缺口显式标注 |
-| key/cert 恢复 | S6 前一次 + 半年 | 独立托管可用性 |
-| 全量灾难重建 | S6 前一次（staging） | ≤24h + §4 序列 + 人工对账流程走通 |
-| 回滚预演（S8） | 切换前必做 | 干净环境工件 checksum + authority transfer + 预输入健康门（Q6#7） |
-
-每次演练产出证据入 evidence_manifest（requirementId 挂 Q7 主验收矩阵对应行）。
-
-## 7. 监控挂钩（对齐 Q7 零不变量）
-
-- 同步副本延迟>0、WAL 归档中断、备份 checksum 失败、manifest 对账差异 → 告警（severity 按 correctness/evidence 分级,带 runbook,Q7 P2-2）。
-- 恢复序列执行期间,Q7 的"恒为零"监控全程在线——恢复路径本身不豁免任何不变量。
+完整数据库 RPO/RTO、跨区恢复与对象备份属于后续基础设施增强，不阻塞以上验收与首版编码。

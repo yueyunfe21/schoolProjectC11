@@ -2902,7 +2902,7 @@ public class XiuluoTaskV2 implements GameTask {
                     state, XiuluoPhase.TRY_TRACKER_SHORTCUT,
                     "after-accept-no-maintenance-start-exit-prepath");
             if (prepath != null) {
-                return attachAcceptObjectiveBackgroundParseAfterStartExitPrepath(prepath);
+                return prepath;
             }
             return XiuluoStepOutcome.continueTo(
                     scheduleAcceptObjectiveBackgroundParse(state, "after-accept-no-maintenance-no-prepath")
@@ -3515,12 +3515,10 @@ public class XiuluoTaskV2 implements GameTask {
                 ReturnItemPrescanService.Mode.MAIN_BAG_TASK_PAGE, 0,
                 "xiuluo-v2:tracker-shortcut-green-clicked");
         /*
-         * CR243 / user-approved 2026-07-10 order: the leader handles its own pending recovery
-         * immediately after the green click, then permanently parks for pathing/看打 events. The
-         * member FIFO continues in background; this phase must never poll it or wait for it.
+         * CR243: the leader's HP/MP fact was captured and reported at verified return home. This
+         * green-link handoff only opens that existing queue and consumes its leader head; it must
+         * not capture or classify HP/MP again. The member FIFO continues in background.
          */
-        autoCombatService.reportQueuedLeaderPostCombatFirstAidIfPending(context,
-                "xiuluo-v2:tracker-shortcut-green-clicked:round-" + next.round());
         taskMaintenanceService.openPostCombatFirstAidQueue(context,
                 "xiuluo-v2:tracker-shortcut-green-clicked:round-" + next.round());
         autoCombatService.consumeQueuedLeaderPostCombatFirstAidIfHead(context,
@@ -3573,19 +3571,6 @@ public class XiuluoTaskV2 implements GameTask {
                     absolutePoint.y - tracker.getWindowBaseY());
         }
         return null;
-    }
-
-    private XiuluoStepOutcome attachAcceptObjectiveBackgroundParseAfterStartExitPrepath(XiuluoStepOutcome outcome) {
-        if (outcome == null
-                || outcome.nextState() == null
-                || outcome.nextState().phase() != XiuluoPhase.TRY_TRACKER_SHORTCUT
-                || !outcome.nextState().startExitPrepathStarted()) {
-            return outcome;
-        }
-        XiuluoRoundContext nextState = outcome.nextState();
-        XiuluoRoundContext parsedState = scheduleAcceptObjectiveBackgroundParse(nextState, nextState.source())
-                .next(nextState.phase(), nextState.source());
-        return outcome.withNextState(parsedState);
     }
 
     private TaskTrackerPanelReadResult waitForAcceptTrackerPanelResult(
@@ -5399,6 +5384,8 @@ public class XiuluoTaskV2 implements GameTask {
             autoCombatService.reconcileReturnHomeVerifiedCombatState(
                     context, TASK_CODE, START_MAP_NAME,
                     "xiuluo-v2:return-home-verified:" + source + ":attempt-" + attempt);
+            autoCombatService.reportXiuluoLeaderFirstAidAfterVerifiedReturn(
+                    context, "xiuluo-v2:return-home-verified:" + source + ":attempt-" + attempt);
             return ReturnItemUseResult.verified(afterReturn);
         }
         log.warn("[xiuluo-v2] return item used but start map not verified: source={} location={}",
@@ -5860,10 +5847,11 @@ public class XiuluoTaskV2 implements GameTask {
     private XiuluoStepOutcome continueAfterAcceptOptionClicked(XiuluoRoundContext state, String source) {
         clearAcceptDialogCloudFallback("accept option clicked: " + source);
         clearStartMapVerifiedLocation("accept option clicked: " + source);
-        log.info("[xiuluo-v2] accept option clicked; start exit prepath before scheduling snapshot parse: source={} window={}",
+        XiuluoRoundContext stateWithBackgroundParse = scheduleAcceptObjectiveBackgroundParse(state, source);
+        log.info("[xiuluo-v2] accept option clicked; snapshot parse started before exit prepath: source={} window={}",
                 source, currentWindowLabel());
         return XiuluoStepOutcome.continueTo(
-                state.next(XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK, source),
+                stateWithBackgroundParse.next(XiuluoPhase.AFTER_ACCEPT_MAINTENANCE_CHECK, source),
                 "accept option clicked; maintenance then tracker shortcut");
     }
 

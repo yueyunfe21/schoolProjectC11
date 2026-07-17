@@ -473,16 +473,16 @@
       "relativeX" : 88,
       "relativeY" : 115,
       "optionText" : "images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu2.png",
-      "source" : "xiuluo-v2:accept:xiuluo-brain:cloud-action-cloud-xiuluo-session-1-3-6:local-template:template",
-      "successCount" : 207,
+      "source" : "xiuluo-v2:accept:xiuluo-brain:cloud-action-cloud-xiuluo-session-4-4-244:local-template:template",
+      "successCount" : 211,
       "failCount" : 0,
-      "consecutiveSuccessCount" : 1,
+      "consecutiveSuccessCount" : 5,
       "consecutiveFailureCount" : 0,
       "disabled" : false,
-      "lastSuccessAt" : "2026-07-11T05:46:01.247149400",
+      "lastSuccessAt" : "2026-07-11T21:02:47.085352600",
       "lastFailureAt" : "2026-07-10T22:00:56.549541700",
       "usable" : true,
-      "stableTaskChoice" : false
+      "stableTaskChoice" : true
     }
   }
 }

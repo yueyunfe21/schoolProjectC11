@@ -1,94 +1,93 @@
-# A-6 认证、密钥与管理授权生命周期（THIN_CLIENT_V1）
+# RemoteGameClientPort 最小认证与凭据生命周期
 
-工件编号：A-6（终审 Final #1 工件计划）
-来源共识：草案 §9.1、Q2 签名条款、Q4 资产撤销、Q5 认证路由、Final #7、B Final #2 复核（#7 无新增 P0/P1/P2）
-状态：设计工件 v1
-约束：设计级规格，非实现。密码学原语选型标注为语义要求。
+工件编号：A-6
 
----
+状态：lift-and-shift 开工契约 v1
 
-## 1. Principal / Role / Permission 模型
+本文只定义三种同步调用 `CAPTURE`、`WINDOW_FACT`、`EXECUTE_INPUT_BUNDLE` 开工所需的最小认证边界。它不引入自定义 frame signer、session HKDF、资产 keyring 或控制消息总协议。
 
-### 1.1 Principal 类型
+## 1. 认证边界
 
-| Principal | 载体 | 认证方式 |
+- transport 使用 TLS 1.3 HTTPS；客户端必须验证服务端证书和主机名，服务端必须认证 device credential。
+- 认证上下文至少解析出 `tenantId,userId,deviceId,clientSessionId`，由 server middleware 注入，不能信任 request body 自报身份。
+- 每个 device credential 只允许调用绑定到该 device 的 RemoteGameClientPort；跨 tenant、user 或 device 一律 `AUTH_FAILED`。
+- request body 中的 `windowId/nativeHandle/processId/playerIdentityEpoch` 仍必须经过本地 `WindowRuntimeContext` 核对。认证成功不代表窗口绑定正确。
+- access token、refresh token、device private key 和完整 Authorization header 禁止进入日志、metrics、截图和 outcome message。
+
+## 2. Credential 生命周期
+
+```text
+UNENROLLED -> ACTIVE -> SUSPENDED -> ACTIVE
+ACTIVE|SUSPENDED -> REVOKED
+```
+
+| 状态 | 新调用 | 已开始调用 |
 |---|---|---|
-| USER | 登录会话 | 登录凭据/license → 短期 access token |
-| DEVICE | 设备密钥对 | 设备私钥签名（enrollment 注册公钥） |
-| ADMIN | 管理会话 | USER 认证 + admin 角色 + 高危操作再认证 |
-| SERVICE | 云端内部组件 | 部署期服务凭据（不出云端边界） |
+| ACTIVE | 允许，继续做 binding/stop/timeout 门 | 按请求执行 |
+| SUSPENDED | 拒绝 AUTH_FAILED | CAPTURE/FACT 丢弃未返回结果；未开始输入取消，已开始输入返回 UNKNOWN 或 STOPPED |
+| REVOKED | 永久拒绝 AUTH_FAILED | 与 SUSPENDED 相同，并关闭 session |
 
-### 1.2 Role → Permission 矩阵
+device private key 优先存 Windows DPAPI/TPM 支持的不可导出存储。服务端只存验证材料或 credential hash。credential 轮换采用先激活新 credential、确认客户端可用、再撤销旧 credential的顺序；旧 credential 撤销后不得 fallback。
 
-| Role | 权限 |
-|---|---|
-| viewer | 只读：自有租户的任务状态、记忆、统计、审计摘要 |
-| operator | viewer + 任务命令、窗口注册管理、私有记忆编辑（自有用户范围） |
-| admin | operator + 记忆强制发布/取消发布/quarantine/回滚、资产撤销、quotaProfile 变更、trustedPublisher 配置、设备强制解绑、用户管理 |
-| （不存在） | 跨租户读写——任何角色都没有；平台运维走独立 maintenance 通道（A-3 §0）且全审计 |
+## 3. Token 规则
 
-高危操作清单（要求**再认证** + 同事务审计，A-3 §1 correctness 级）：强制发布、取消发布、quarantine、回滚、删除、trustedPublisher 变更、资产 REVOKE、设备解绑、quotaProfile 降低安全上限方向的变更、authority transfer。
+- access token 短期有效，建议不超过 60 分钟；refresh token 绑定 device 并单次滚动。
+- refresh token 重放时吊销该 token family 并暂停对应 device session。
+- 客户端不得内置共享永久 token。
+- transport 断线、token 过期或 credential 撤销不是 `NOT_EXECUTED` 证明。EXECUTE_INPUT_BUNDLE 已开始而结果未知时必须返回或由云端映射为 `UNKNOWN`。
 
-## 2. 设备生命周期
+## 4. 请求完整性与幂等身份
 
-```
-ENROLL:  用户在已认证会话内发起 → 客户端在 OS 密钥库（Windows DPAPI/TPM 优先）生成设备密钥对
-         → 公钥 + 设备指纹上送 → 服务端写 device 行（ENROLLED）→ 审计
-ACTIVE:  bootstrap 握手用设备私钥签名 HELLO 应答 challenge（A-2 v2 §4）
-UNBIND:  用户/admin 发起 → device 行置 REVOKED → 同事务：该设备全部活跃 token 吊销
-         + connection_fence 强制换代（在线连接立即断开走 CLOUD_SUSPENDED）→ 审计
+三种请求都携带：
+
+```text
+contractVersion, operation, requestId, actionId, taskRunId,
+window, stop, timeoutMs, requestDigest
 ```
 
-- 私钥永不离开设备密钥库；服务端只存公钥。
-- 设备指纹仅用于异常检测提示，不作为认证因子（可伪造）。
+`requestDigest = hex(SHA-256(JCS(request 去掉 requestDigest 字段)))`。服务端和本地 adapter 都校验 digest；相同 `(operation,requestId)` 不同 digest 拒绝 `IDEMPOTENCY_CONFLICT`。EXECUTE_INPUT_BUNDLE 的 actionId 还必须唯一映射到一个 requestId/digest，冲突拒绝 `ACTION_ID_REUSE`。
 
-## 3. Token 生命周期
+`JCS` 固定指 RFC 8785 canonical JSON 的 UTF-8 bytes；两端不得用字段插入顺序或平台默认 JSON bytes 计算 digest。
 
-| 属性 | 规则 |
-|---|---|
-| 形态 | 短期 access token（建议 ≤1h）+ refresh token（绑定设备，可撤销） |
-| 签发 | 登录/license 验证 + 设备签名双因子 |
-| 刷新 | refresh token 单次滚动（旧 refresh 用后即废，重放=吊销全链并审计） |
-| 撤销 | 服务端吊销列表即时生效；吊销传播到活跃连接=强制 fence 换代断连 |
-| 禁止 | 客户端内置共享永久 token（§9.1 硬边界）；token 入日志/metrics label（Q7 P2-3） |
+本契约不要求每个 request 再做自定义 detached signature；TLS + device credential 是 v1 transport trust boundary。未来更换 transport 时必须保留同样的认证上下文、digest、幂等和错窗门，不能仅凭 requestId 授权。
 
-## 4. 签名密钥三域分治（Final #7 定案）
+## 5. 窗口与输入授权
 
-### 4.1 连接消息签名（会话域）
-- bootstrap 协商派生会话签名密钥，绑定 {connectionFence, 算法}（A-2 v2 §2/§4）；帧头不携算法字段（防 confusion）。
-- fence 换代=会话密钥作废重派生。泄露影响半径=单连接单 fence 周期。
+认证 middleware 只决定“哪个 device 在调用”；本地 safety gate 决定“该 request 是否仍属于这个窗口和 task run”。执行前必须同时满足：
 
-### 4.2 资产签名（发布域，跨连接缓存）
-- 服务端资产签名密钥带 `signing_key_id`，客户端持 keyring（多把可验）。
-- **轮换**：新 key 签新资产 → 旧 key 置 RETIRING（可验不可签，期限=最长客户端缓存刷新周期）→ 到期置 RETIRED（不再可验，其资产自然升版重签）。
-- **Compromise**：keyId 置 REVOKED → 该 keyId 全部资产按 Q4/Q5 REVOKED 强路径（停 outbox 重投 → REVOKING/RESYNC → drain 后恢复）→ 客户端 keyring 更新经 bootstrap 版本协商下发。
-- 缓存资产每次使用前重 hash + 对照当前签名 plan/manifest（Q4#5），REVOKED keyId 验签直接失败=`ASSET_HASH_MISMATCH` 类拒绝。
+1. device credential ACTIVE。
+2. taskRunId 与当前窗口任务一致。
+3. stop.taskRunId 一致、stopEpoch 未落后且本地未 stop。
+4. windowId、nativeHandle、processId、playerIdentityEpoch 全部等于当前 WindowRuntimeContext。
+5. timeout 尚未到期。
+6. requestId/actionId 未发生幂等冲突。
 
-### 4.3 服务端 secret/cert（部署域）
-- TLS cert、PG/Redis/对象存储凭据、token 签发密钥：专用 secret 管理（环境注入，不入镜像/仓库）；轮换计划随部署版本；**与数据备份分开托管**（A-7：否则备份即泄露）。
+任何失败都不得标题搜索替代窗口、降低绑定字段、忽略 stop 或在另一窗口执行。
 
-## 5. Upload Grant（单次消费）
+## 6. 最小权限
 
-- 签发：CAPTURE_SPEC 触发，grant 绑定 {tenant, device, window, frameId, captureSpecDigest, expiry}。
-- 消费：五条件原子 UPDATE（A-3 §7）；二次使用/条件不符=拒绝+审计。
-- grant 本身短时效（≤ 上传预期时间 ×3），过期未用自动作废。
+device credential 只授予三项 permission：
 
-## 6. Key/Epoch 变化对运行态的影响矩阵
+| permission | operation | 限制 |
+|---|---|---|
+| `game.capture` | CAPTURE | 仅已注册窗口和请求 ROI |
+| `game.window_fact.read` | WINDOW_FACT | 仅 BINDING/GEOMETRY/FOCUS_STATE/STOP_STATE |
+| `game.input.execute` | EXECUTE_INPUT_BUNDLE | 仅 typed InputAction 列表、当前 taskRun、单 input queue |
 
-| 事件 | 活跃连接 | outbox 在途 | 客户端缓存资产 | 任务 |
-|---|---|---|---|---|
-| token 撤销 | fence 换代断连 | 按 fence 换代屏障（A-2 v2 §9.3） | 不受影响 | CLOUD_SUSPENDED→RESYNC |
-| 设备解绑 | 同上且永久 | 全标 UNKNOWN | 作废（下次验签失败） | 终止 |
-| 连接密钥泄露 | 强制 fence 换代 | 同屏障 | 不受影响 | RESYNC |
-| 资产 key RETIRING | 无影响 | 无影响 | 可验可用 | 无影响 |
-| 资产 key REVOKED | 无影响 | 停止相关重投 | 该 keyId 全体失效 | 相关 run REVOKING/RESYNC |
-| authority transfer | 全断（切换/回滚流程） | drain 后封存 | 按新 epoch 重协商 | 干净终态 |
+没有 `game.input.execute` 时不得通过 CAPTURE/WINDOW_FACT payload 夹带输入命令。没有 capture permission 时不得通过 WINDOW_FACT 返回图片 bytes。
 
-## 7. trustedPublisher 治理
+## 7. 审计与日志
 
-- 仅 admin 角色可写 `trusted_publisher` 标志（服务端配置，§8.2 硬边界），同事务审计。
-- 授予不追溯：只影响此后产生的因果强验证数据进入候选池；撤销即时：未发布候选冻结，已发布版本不自动下架（管理员可手动 quarantine）。
+每次调用记录：`tenantId,userId,deviceId,clientSessionId,operation,requestId,actionId,taskRunId,windowId,nativeHandle后8位,processId,playerIdentityEpoch,requestDigest,executionState,outcomeCode,elapsedMs`。
 
-## 8. 审计要求（与 A-3 §1 对齐）
+EXECUTE_INPUT_BUNDLE 额外记录 `actionCount,startedStepIndex,lastCompletedStepIndex,inputQueueRequestId`，但不得记录 TYPE_TEXT_UNICODE/PASTE_TEXT 的 text 内容。CAPTURE 只记录 ROI、provider、尺寸和 imageSha256，不记录图片 bytes。
 
-本工件全部生命周期事件（enroll/unbind/token 签发撤销/key 轮换撤销/grant 消费失败/RBAC 变更/高危操作）落 audit_event；其中绑定 correctness 迁转者同事务写入（RPO=0），独立运营类按 durable-audit 级。
+审计只用于追踪，不改变 outcome，不生成业务重试或 successor。
+
+## 8. 撤销与故障处理
+
+- AUTH_FAILED：本地不调用 capture/fact/input provider。
+- credential 在排队期间变为 SUSPENDED/REVOKED：未开始 request 取消；物理输入已开始则停止余下步骤并标记 UNKNOWN 或 STOPPED，禁止重发。
+- transport timeout/断线：CAPTURE/FACT 未返回的数据丢弃；EXECUTE 是否开始不明时标记 UNKNOWN。
+- 客户端重启：无法从幂等台账证明 input 未开始的 actionId 返回 UNKNOWN/CLIENT_RESTARTED。
+- 恢复认证后，云端继续使用现有 Service 的业务恢复逻辑；本地不推断下一动作。

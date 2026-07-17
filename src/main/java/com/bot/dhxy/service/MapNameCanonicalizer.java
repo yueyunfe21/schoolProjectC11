@@ -1,8 +1,6 @@
 package com.bot.dhxy.service;
 
 import com.bot.dhxy.vision.OcrTextMatcher;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -22,18 +19,26 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Inputs are raw OCR snippets from task trackers, story text, or other UI labels. The output is
  * either a known canonical map name, or the original trimmed text when the match is ambiguous. The
- * dictionary is loaded lazily from map-label templates and {@code config/maps.json}, then cached in
- * memory so runtime matching is only a tiny string-distance pass.</p>
+ * dictionary is loaded lazily from local map-label templates (plus a tiny name-only constant for the
+ * few maps that have a cloud transform but no local template), then cached in memory so runtime
+ * matching is only a tiny string-distance pass.</p>
  */
 @Slf4j
 @Service
 public class MapNameCanonicalizer {
 
     private static final Path MAP_LABEL_DIR = Path.of("images", "template", "map_label");
-    private static final Path MAP_CONFIG_PATH = Path.of("config", "maps.json");
     private static final int UNKNOWN_DISTANCE = 999;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    /**
+     * CR262: map names that live only in the cloud-owned transform snapshot (former local
+     * {@code config/maps.json}) and have no {@code map_label} template. Kept as a name-only constant
+     * so the local {@code config/maps.json} can be deleted without losing fuzzy-correction for these
+     * maps. This carries no calibration values, so it is not the "parameter table" the CR250
+     * anti-crack work removes.
+     */
+    private static final List<String> TRANSFORM_ONLY_MAP_NAMES = List.of("天宫", "御马监");
+
     private final AtomicReference<List<String>> cachedMapNames = new AtomicReference<>();
 
     /**
@@ -119,7 +124,7 @@ public class MapNameCanonicalizer {
     private List<String> loadKnownMapNames() {
         Set<String> names = new LinkedHashSet<>();
         loadMapLabelTemplateNames(names);
-        loadMapConfigNames(names);
+        names.addAll(TRANSFORM_ONLY_MAP_NAMES);
         return new ArrayList<>(names);
     }
 
@@ -134,20 +139,6 @@ public class MapNameCanonicalizer {
                     .forEach(names::add);
         } catch (IOException e) {
             log.warn("Failed to load map label templates for OCR canonicalization: dir={}", MAP_LABEL_DIR, e);
-        }
-    }
-
-    private void loadMapConfigNames(Set<String> names) {
-        if (!Files.isRegularFile(MAP_CONFIG_PATH)) {
-            return;
-        }
-        try {
-            Map<String, Object> config = objectMapper.readValue(
-                    MAP_CONFIG_PATH.toFile(),
-                    new TypeReference<Map<String, Object>>() {});
-            names.addAll(config.keySet());
-        } catch (IOException e) {
-            log.warn("Failed to load map config names for OCR canonicalization: path={}", MAP_CONFIG_PATH, e);
         }
     }
 

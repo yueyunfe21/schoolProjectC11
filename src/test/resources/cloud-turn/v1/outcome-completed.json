@@ -1,0 +1,71 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-input-capture-001",
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "0x000000000001A2B3",
+    "processId": 4242,
+    "windowRect": {
+      "left": 120,
+      "top": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "pauseRequested": false,
+    "stopRequested": false
+  },
+  "status": "COMPLETED",
+  "failedStepIndex": null,
+  "code": "ACTION_COMPLETED",
+  "message": "all ordered steps completed",
+  "stepResults": [
+    {
+      "index": 0,
+      "type": "INPUT",
+      "status": "COMPLETED",
+      "code": "INPUT_OK",
+      "match": null,
+      "localResultJson": null
+    },
+    {
+      "index": 1,
+      "type": "WAIT",
+      "status": "COMPLETED",
+      "code": "WAIT_OK",
+      "match": null,
+      "localResultJson": null
+    },
+    {
+      "index": 2,
+      "type": "LOCAL_SERVICE",
+      "status": "COMPLETED",
+      "code": "LOCAL_SERVICE_OK",
+      "match": null,
+      "localResultJson": "{\"status\":\"CLEANED\"}"
+    },
+    {
+      "index": 3,
+      "type": "CAPTURE",
+      "status": "COMPLETED",
+      "code": "CAPTURE_OK",
+      "match": null,
+      "localResultJson": null
+    }
+  ],
+  "frame": {
+    "purpose": "CAPTURE",
+    "contentType": "image/png",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "width": 700,
+    "height": 500,
+    "region": {
+      "x": 1080,
+      "y": 420,
+      "width": 700,
+      "height": 500
+    },
+    "sourceStepIndex": 3
+  }
+}

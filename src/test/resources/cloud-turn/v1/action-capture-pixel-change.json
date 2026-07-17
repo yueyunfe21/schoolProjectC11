@@ -1,0 +1,35 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-capture-pixel-change-001",
+  "deviceId": "device-alpha",
+  "windowId": "window-2",
+  "steps": [
+    {
+      "index": 0,
+      "type": "CAPTURE",
+      "inputAction": null,
+      "input": null,
+      "waitMs": null,
+      "capture": {
+        "region": {
+          "x": 139,
+          "y": 242,
+          "width": 2,
+          "height": 2
+        },
+        "resultMode": "UPLOAD_IMAGE",
+        "pixelChangeProbe": {
+          "targetX": 140,
+          "targetY": 243,
+          "ctrlDownSettleMs": 80,
+          "afterMoveSettleMs": 280,
+          "ctrlUpSettleMs": 100,
+          "differenceRatioThreshold": 0.05
+        }
+      },
+      "match": null,
+      "localService": null
+    }
+  ],
+  "fullWindowFailureEvidence": true
+}

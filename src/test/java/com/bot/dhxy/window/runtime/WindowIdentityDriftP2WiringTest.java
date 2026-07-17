@@ -67,17 +67,27 @@ public class WindowIdentityDriftP2WiringTest {
         assertContains(hwndKeyboard, "live-binding-refresh-unavailable");
         assertContains(hwndKeyboard, "unvalidated-background-shortcut");
         assertContains(hwndKeyboard, "backgroundHwndSupported()");
-        assertContains(hwndKeyboard, "ALT_A(\"Alt+A\", 0x41, 0x1E, false)");
-        assertContains(hwndKeyboard, "ALT_C(\"Alt+C\", 0x43, 0x2E, false)");
+        assertContains(hwndKeyboard, "ALT_A(\"Alt+A\", 0x41, 0x1E, true)");
+        assertContains(hwndKeyboard, "ALT_C(\"Alt+C\", 0x43, 0x2E, true)");
         assertContains(hwndKeyboard, "ALT_U(\"Alt+U\", 0x55, 0x16, false)");
         assertContains(hwndKeyboard, "terminalNotAttempted");
         assertContains(hwndKeyboard, "boolean terminalFailure;");
         assertOrder(hwndKeyboard, "refreshAndCommit(context);",
                 "if (requestEpoch != context.getPlayerIdentityEpoch())");
         assertOrder(hwndKeyboard, "if (requestEpoch != context.getPlayerIdentityEpoch())",
-                "WindowNativeBinding binding = context.getNativeBinding();");
+                "WindowNativeBinding binding = refreshedBinding.get();");
         assertOrder(hwndKeyboard, "live-binding-refresh-unavailable",
                 "if (requestEpoch != context.getPlayerIdentityEpoch())");
+        String exactShortcut = methodBody(
+                hwndKeyboard, "public ShortcutAttempt pressShortcut(WindowNativeBinding binding");
+        assertContains(exactShortcut, "toHwnd(binding)");
+        assertNotContains(exactShortcut, "refreshAndCommit");
+        String exactModifier = methodBody(
+                hwndKeyboard, "public KeyTransitionAttempt transitionModifier(WindowNativeBinding binding");
+        assertContains(exactModifier, "ModifierKey.CONTROL");
+        assertContains(exactModifier, "KeyTransition.UP");
+        assertContains(exactModifier, "postKey(");
+        assertNotContains(exactModifier, "refreshAndCommit");
 
         String submitMiniMapClick = methodBody(navigation, "private boolean submitMiniMapClick");
         assertContains(submitMiniMapClick, "if (!pressAlt1ForMiniMap(description + \":open\"))");

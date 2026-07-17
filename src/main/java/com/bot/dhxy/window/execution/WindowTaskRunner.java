@@ -119,7 +119,7 @@ public class WindowTaskRunner {
     private static final long WINDOW_TASK_DIALOG_STALE_REPUBLISH_COOLDOWN_MS = 1_000L;
     private static final long PREPARED_TRACKER_ACTION_MAX_AGE_MS = 2_500L;
     private static final long WINDOW_OBSERVER_WAKE_CHECK_INTERVAL_MS = 100L;
-    private static final long WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS = 500L;
+    private static final long WINDOW_PAUSED_READONLY_INTERVAL_MS = 500L;
     private static final long WINDOW_POST_COMBAT_IDLE_TIMEOUT_MS = 180_000L;
     /*
      * CR266 contract item 3: one global pre-battle budget per 五倍 round — from the successful task
@@ -856,10 +856,9 @@ public class WindowTaskRunner {
                                 AutoCombatService.TickResult lastCombatTick = AutoCombatService.TickResult.NONE;
                                 PostCombatIdleTracker postCombatIdleTracker = new PostCombatIdleTracker();
                                 while (running.get() && !Thread.currentThread().isInterrupted()) {
-                                    retryPendingRouteOutcomeDeliveries(false, "watcher-tick");
-                                    if (executionContext.isPauseRequested() && windowContext.isLeader()) {
+                                    if (executionContext.isPauseRequested()) {
                                         TaskCheckpoint.throwIfStopRequested(executionContext.getStopToken(),
-                                                "combat watcher interrupted during paused leader read-only observation");
+                                                "combat watcher interrupted during paused read-only observation");
                                         long tickStartedAt = System.currentTimeMillis();
                                         postCombatIdleTracker.onPauseTick(tickStartedAt);
                                         long observerWakeSeq = windowContext.getObserverWakeSeq();
@@ -867,11 +866,11 @@ public class WindowTaskRunner {
                                         AutoCombatService.TickResult tick = combatGuardEnabled
                                                 ? autoCombatService.probePausedWindowCombatStateReadOnly(
                                                         executionContext,
-                                                        "window-combat-watch:paused-leader-readonly:" + taskType.getCode())
+                                                        "window-combat-watch:paused-readonly:" + taskType.getCode())
                                                 : AutoCombatService.TickResult.NONE;
                                         long combatElapsedMs = Math.max(0L, System.currentTimeMillis() - combatStartedAt);
                                         if (combatGuardEnabled && tick != lastCombatTick) {
-                                            log.info("[latency] event=paused-leader-readonly.combat.state.changed windowId={} hwnd={} task={} source={} oldTick={} newTick={} elapsedMs={} inputAllowed=false preparedActionAllowed=false",
+                                            log.info("[latency] event=paused-readonly.combat.state.changed windowId={} hwnd={} task={} source={} oldTick={} newTick={} elapsedMs={} inputAllowed=false preparedActionAllowed=false",
                                                     windowContext.getWindowId(),
                                                     windowContext.getNativeBinding() == null
                                                             ? null
@@ -879,13 +878,25 @@ public class WindowTaskRunner {
                                                     taskType, executionContext.getLogPrefix(), lastCombatTick, tick, combatElapsedMs);
                                             lastCombatTick = tick;
                                         }
-                                        String observerBranch = "paused-leader-readonly-observer";
-                                        long intervalMs = WINDOW_PAUSED_LEADER_READONLY_INTERVAL_MS;
-                                        log.info("{} window [{}] paused-leader-readonly-observer tick: task={} tick={} inputAllowed=false preparedActionAllowed=false intervalMs={}",
+                                        long pathingStartedAt = System.currentTimeMillis();
+                                        WindowPathingSnapshot pathingSnapshot = refreshPathingSignal(
+                                                taskType, executionContext, true);
+                                        long pathingElapsedMs = Math.max(0L, System.currentTimeMillis() - pathingStartedAt);
+                                        String observerBranch = "paused-readonly-observer";
+                                        long intervalMs = pathingSnapshot != null && pathingSnapshot.hasActiveIntent()
+                                                ? WINDOW_PATHING_PROBE_ACTIVE_INTERVAL_MS
+                                                : WINDOW_PAUSED_READONLY_INTERVAL_MS;
+                                        log.info("{} window [{}] paused-readonly-observer tick: task={} tick={} pathingState={} pathingTarget={} pathingCurrent={} inputAllowed=false preparedActionAllowed=false intervalMs={}",
                                                 executionContext.getLogPrefix(), windowContext.getWindowId(),
-                                                taskType, tick, intervalMs);
+                                                taskType, tick,
+                                                pathingSnapshot == null ? null : pathingSnapshot.getState(),
+                                                pathingSnapshot == null || pathingSnapshot.getIntent() == null
+                                                        ? null : pathingSnapshot.getIntent().getTargetMapName(),
+                                                pathingSnapshot == null ? null : pathingSnapshot.getCurrentMapName(),
+                                                intervalMs);
                                         logSlowObserverTick(taskType, executionContext, observerBranch,
-                                                null, null, null, combatElapsedMs, -1L, -1L,
+                                                pathingSnapshot == null ? null : pathingSnapshot.getIntent(), pathingSnapshot,
+                                                null, combatElapsedMs, pathingElapsedMs, -1L,
                                                 -1L, -1L, -1L, -1L, -1L, -1L,
                                                 Math.max(0L, System.currentTimeMillis() - tickStartedAt), intervalMs);
                                         if (!sleepObserver(intervalMs, observerWakeSeq)) {
@@ -893,6 +904,7 @@ public class WindowTaskRunner {
                                         }
                                         continue;
                                     }
+                                    retryPendingRouteOutcomeDeliveries(false, "watcher-tick");
                                     executionContext.throwIfStopRequested();
                                     long tickStartedAt = System.currentTimeMillis();
                                     long observerWakeSeq = windowContext.getObserverWakeSeq();
@@ -2756,14 +2768,30 @@ public class WindowTaskRunner {
      * @return latest pathing snapshot, or null when there is no active pathing intent.
      */
     private WindowPathingSnapshot refreshPathingSignal(TaskType taskType, TaskExecutionContext executionContext) {
+        return refreshPathingSignal(taskType, executionContext, false);
+    }
+
+    /**
+     * Refresh an active pathing fact from the mini-map.
+     *
+     * @param taskType task currently observed by this runner.
+     * @param executionContext current task context used only for stop checks and diagnostics.
+     * @param pausedReadOnly whether this is a paused observer tick, where only local runtime facts
+     *                       and the existing terminal wake may be updated.
+     * @return latest pathing snapshot, or {@code null} when no active intent exists.
+     */
+    private WindowPathingSnapshot refreshPathingSignal(TaskType taskType,
+                                                       TaskExecutionContext executionContext,
+                                                       boolean pausedReadOnly) {
         return windowContext.getActivePathingIntent()
-                .map(intent -> refreshPathingSignal(taskType, executionContext, intent))
+                .map(intent -> refreshPathingSignal(taskType, executionContext, intent, pausedReadOnly))
                 .orElse(null);
     }
 
     private WindowPathingSnapshot refreshPathingSignal(TaskType taskType,
                                                        TaskExecutionContext executionContext,
-                                                       WindowPathingIntent intent) {
+                                                       WindowPathingIntent intent,
+                                                       boolean pausedReadOnly) {
         long startedAt = System.currentTimeMillis();
         WindowPathingSnapshot previous = windowContext.getPathingSnapshot();
         if (previous != null
@@ -2781,14 +2809,16 @@ public class WindowTaskRunner {
         windowContext.updatePathingSnapshot(probeSnapshot);
         try {
             return miniMapCoordinateReader.readCurrentTemplateLocation()
-                    .map(location -> updatePathingFromLocation(taskType, executionContext, intent, previous, location, startedAt))
+                    .map(location -> updatePathingFromLocation(
+                            taskType, executionContext, intent, previous, location, startedAt, pausedReadOnly))
                     .orElseGet(() -> updateUnknownPathing(taskType, executionContext, intent, previous, startedAt,
-                            "mini-map template location miss"));
+                            "mini-map template location miss", pausedReadOnly));
         } catch (RuntimeException e) {
             log.debug("{} window [{}] pathing watcher probe failed: task={} source={} reason={}",
                     executionContext.getLogPrefix(), windowContext.getWindowId(), taskType,
                     intent.getSource(), e.getMessage());
-            return updateUnknownPathing(taskType, executionContext, intent, previous, startedAt, e.getClass().getSimpleName());
+            return updateUnknownPathing(taskType, executionContext, intent, previous, startedAt,
+                    e.getClass().getSimpleName(), pausedReadOnly);
         }
     }
 
@@ -2835,7 +2865,8 @@ public class WindowTaskRunner {
                                                             WindowPathingIntent intent,
                                                             WindowPathingSnapshot previous,
                                                             TemplateLocationInfo location,
-                                                            long startedAt) {
+                                                            long startedAt,
+                                                            boolean pausedReadOnly) {
         MapCoordinate coordinate = location.coordinate();
         long now = System.currentTimeMillis();
         if (!isCurrentPathingIntent(intent)) {
@@ -2899,7 +2930,9 @@ public class WindowTaskRunner {
                 .dialogPreparationTarget(dialogBlock.targetKeyword())
                 .build();
         windowContext.updatePathingSnapshot(snapshot);
-        openWubeiOrdinaryEnterBattleInterestIfTargetMapMatched(taskType, executionContext, location, now);
+        if (!pausedReadOnly) {
+            openWubeiOrdinaryEnterBattleInterestIfTargetMapMatched(taskType, executionContext, location, now);
+        }
 
         long wallStationaryMs = Math.max(0L, now - locationChangedAtMs);
         long observedStationaryMs = Math.max(0L, snapshot.getUpdatedAtMs() - locationChangedAtMs);
@@ -2919,12 +2952,16 @@ public class WindowTaskRunner {
                     snapshot.getCurrentMapName(), snapshot.getCurrentX(), snapshot.getCurrentY(),
                     observedStationaryMs, wallStationaryMs, probeMs);
         }
-        logUntargetedDialogAttentionEvidence(taskType, executionContext, intent, locationChanged,
-                stateChanged, probeMs, dialogBlock);
-        settlePendingTransferChoiceMemory(intent, snapshot, state, executionContext);
-        settlePendingRouteOutcome(intent, snapshot, state, executionContext);
+        if (!pausedReadOnly) {
+            logUntargetedDialogAttentionEvidence(taskType, executionContext, intent, locationChanged,
+                    stateChanged, probeMs, dialogBlock);
+            settlePendingTransferChoiceMemory(intent, snapshot, state, executionContext);
+            settlePendingRouteOutcome(intent, snapshot, state, executionContext);
+        }
         publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
-        maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
+        if (!pausedReadOnly) {
+            maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
+        }
         return snapshot;
     }
 
@@ -3505,7 +3542,8 @@ public class WindowTaskRunner {
                                                        WindowPathingIntent intent,
                                                        WindowPathingSnapshot previous,
                                                        long startedAt,
-                                                       String message) {
+                                                       String message,
+                                                       boolean pausedReadOnly) {
         long now = System.currentTimeMillis();
         if (!isCurrentPathingIntent(intent)) {
             log.info("{} window [{}] discard stale pathing unknown result: task={} source={} target={}({}, {}) reason={} probeMs={}",
@@ -3543,9 +3581,13 @@ public class WindowTaskRunner {
                 .build();
         windowContext.updatePathingSnapshot(snapshot);
         boolean stateChanged = previous == null || state != previous.getState();
-        settlePendingRouteOutcome(intent, snapshot, state, executionContext);
+        if (!pausedReadOnly) {
+            settlePendingRouteOutcome(intent, snapshot, state, executionContext);
+        }
         publishPathingTerminalEventIfNeeded(taskType, intent, snapshot, state, stateChanged);
-        maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
+        if (!pausedReadOnly) {
+            maybeSubmitXiuluoGreenStopStaticArbitration(taskType, executionContext, intent, state, stateChanged);
+        }
         long probeMs = Math.max(0L, now - startedAt);
         if (state == WindowPathingState.STOPPED_AWAY || probeMs >= WINDOW_PATHING_SLOW_PROBE_LOG_MS) {
             log.info("{} window [{}] pathing watcher unknown probe: task={} state={} source={} reason={} probeMs={} dialogBlocking={} dialogAttentionOnly={} dialogReason={} dialogType={} dialogPhase={} dialogOperation={} dialogTarget={}",

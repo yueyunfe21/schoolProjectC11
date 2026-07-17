@@ -1,0 +1,42 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-stopped-001",
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "0x000000000001A2B3",
+    "processId": 4242,
+    "windowRect": {
+      "left": 120,
+      "top": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "pauseRequested": false,
+    "stopRequested": true
+  },
+  "status": "STOPPED",
+  "failedStepIndex": null,
+  "code": "STOP_REQUESTED",
+  "message": "execution stopped before the next step",
+  "stepResults": [
+    {
+      "index": 0,
+      "type": "INPUT",
+      "status": "COMPLETED",
+      "code": "INPUT_OK",
+      "match": null,
+      "localResultJson": null
+    },
+    {
+      "index": 1,
+      "type": "WAIT",
+      "status": "NOT_RUN",
+      "code": "STOPPED",
+      "match": null,
+      "localResultJson": null
+    }
+  ],
+  "frame": null
+}

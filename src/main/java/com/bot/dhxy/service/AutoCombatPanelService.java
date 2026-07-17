@@ -1,6 +1,8 @@
 package com.bot.dhxy.service;
 
 import com.bot.dhxy.config.BotProperties;
+import com.bot.dhxy.cloud.remote.RemoteAutoCombatPanelFact;
+import com.bot.dhxy.cloud.remote.RemoteCoordinateSpace;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.input.InputSequences;
@@ -69,6 +71,49 @@ public class AutoCombatPanelService {
     public Point ensurePanelVisible(String source, int waitAfterOpenMs) {
         AutoCombatPanelMatch match = ensurePanelMatchVisible(source, waitAfterOpenMs);
         return match == null ? null : match.panelCenter;
+    }
+
+    /**
+     * Reads the current bound window's auto-combat panel as a closed remote fact.
+     *
+     * <p>This probe delegates to the baseline {@link #findAutoCombatBox()} capture/template path,
+     * preserves its screen-absolute coordinate calculation, and performs no input, round refresh,
+     * missing-streak mutation, or metrics mutation.</p>
+     *
+     * @return typed panel observation; only {@code FOUND} contains screen-absolute coordinates
+     */
+    public RemoteAutoCombatPanelFact probeAutoCombatPanelFact() {
+        GameClientTracker.CaptureAudit beforeCapture = tracker.getLastCaptureAudit();
+        AutoCombatPanelMatch match = findAutoCombatBox();
+        GameClientTracker.CaptureAudit afterCapture = tracker.getLastCaptureAudit();
+        if (match != null) {
+            return RemoteAutoCombatPanelFact.builder()
+                    .state(RemoteAutoCombatPanelFact.State.FOUND)
+                    .panelCenterX(match.panelCenter.x)
+                    .panelCenterY(match.panelCenter.y)
+                    .greenMarkerX(match.greenMarker == null ? null : match.greenMarker.x)
+                    .greenMarkerY(match.greenMarker == null ? null : match.greenMarker.y)
+                    .greenTemplateWidth(match.greenTemplateWidth)
+                    .detectionSource(match.detectionSource)
+                    .coordinateSpace(RemoteCoordinateSpace.SCREEN_ABSOLUTE_PX)
+                    .build();
+        }
+
+        boolean captureFailed = afterCapture == beforeCapture
+                || afterCapture == null
+                || !afterCapture.success();
+        return RemoteAutoCombatPanelFact.builder()
+                .state(captureFailed
+                        ? RemoteAutoCombatPanelFact.State.CAPTURE_FAILED
+                        : RemoteAutoCombatPanelFact.State.NOT_FOUND)
+                .panelCenterX(null)
+                .panelCenterY(null)
+                .greenMarkerX(null)
+                .greenMarkerY(null)
+                .greenTemplateWidth(0)
+                .detectionSource("auto-remaining")
+                .coordinateSpace(RemoteCoordinateSpace.SCREEN_ABSOLUTE_PX)
+                .build();
     }
 
     private AutoCombatPanelMatch ensurePanelMatchVisible(String source, int waitAfterOpenMs) {

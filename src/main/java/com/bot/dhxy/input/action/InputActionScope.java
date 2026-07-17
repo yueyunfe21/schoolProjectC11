@@ -67,7 +67,10 @@ public final class InputActionScope {
                 throw e;
             }
         }
-        return !Thread.currentThread().isInterrupted() && !request.isCancelled();
+        if (Thread.currentThread().isInterrupted() || request.isCancelled()) {
+            return false;
+        }
+        return request.checkDetailedSafety("exclusive-callback");
     }
 
     /**

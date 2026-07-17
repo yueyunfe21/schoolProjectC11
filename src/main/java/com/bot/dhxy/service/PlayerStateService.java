@@ -292,6 +292,11 @@ public class PlayerStateService {
     public FirstAidNoFocusProbeResult probeAndConsumeHealthyFirstAidNoFocus(TaskExecutionContext taskContext,
                                                                            String source) {
         FirstAidNoFocusProbeResult result = probeFirstAidSupplyNoFocus(taskContext);
+        return consumeHealthyFirstAidProbeResult(result, source);
+    }
+
+    private FirstAidNoFocusProbeResult consumeHealthyFirstAidProbeResult(FirstAidNoFocusProbeResult result,
+                                                                          String source) {
         if (result == FirstAidNoFocusProbeResult.HEALTHY) {
             PlayerRuntimeState state = state();
             state.checksDoneThisRound++;
@@ -312,6 +317,13 @@ public class PlayerStateService {
      * all enabled HP/MP targets.
      */
     public FirstAidNoFocusProbeResult probeFirstAidSupplyNoFocus(TaskExecutionContext taskContext) {
+        BufferedImage bars = captureBarsSnapshotNoFocus();
+        return probeFirstAidSupplyFromBars(taskContext, bars, tracker.getLastCaptureAudit());
+    }
+
+    private FirstAidNoFocusProbeResult probeFirstAidSupplyFromBars(TaskExecutionContext taskContext,
+                                                                     BufferedImage bars,
+                                                                     GameClientTracker.CaptureAudit captureAudit) {
         checkpoint(taskContext);
         PlayerRuntimeState state = state();
         if (state.checksDoneThisRound >= MAX_CHECKS_BETWEEN_BATTLES) {
@@ -328,8 +340,6 @@ public class PlayerStateService {
             return FirstAidNoFocusProbeResult.UNKNOWN;
         }
 
-        BufferedImage bars = captureBarsSnapshotNoFocus();
-        GameClientTracker.CaptureAudit captureAudit = tracker.getLastCaptureAudit();
         if (bars == null) {
             log.warn("first-aid no-focus precheck failed: bars snapshot unavailable windowId={} player={} base=({}, {}) roiRel=({}, {}) {}x{} capture={}",
                     currentWindowId(), currentPlayerForLog(), planBaseX, planBaseY,

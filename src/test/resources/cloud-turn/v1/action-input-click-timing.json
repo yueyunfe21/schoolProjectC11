@@ -1,0 +1,29 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-input-click-timing-001",
+  "deviceId": "device-alpha",
+  "windowId": "window-2",
+  "steps": [
+    {
+      "index": 0,
+      "type": "INPUT",
+      "inputAction": "CLICK_LEFT",
+      "input": {
+        "x": 140,
+        "y": 243,
+        "endX": null,
+        "endY": null,
+        "scrollDelta": null,
+        "key": null,
+        "text": null,
+        "clickDelayMs": 150,
+        "queueHoldMs": 500
+      },
+      "waitMs": null,
+      "capture": null,
+      "match": null,
+      "localService": null
+    }
+  ],
+  "fullWindowFailureEvidence": false
+}

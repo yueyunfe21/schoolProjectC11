@@ -1,0 +1,73 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-input-capture-001",
+  "deviceId": "device-alpha",
+  "windowId": "window-2",
+  "steps": [
+    {
+      "index": 0,
+      "type": "INPUT",
+      "inputAction": "CLICK_LEFT",
+      "input": {
+        "x": 1420,
+        "y": 736,
+        "endX": null,
+        "endY": null,
+        "scrollDelta": null,
+        "key": null,
+        "text": null
+      },
+      "waitMs": null,
+      "capture": null,
+      "match": null,
+      "localService": null
+    },
+    {
+      "index": 1,
+      "type": "WAIT",
+      "inputAction": null,
+      "input": null,
+      "waitMs": 800,
+      "capture": null,
+      "match": null,
+      "localService": null
+    },
+    {
+      "index": 2,
+      "type": "LOCAL_SERVICE",
+      "inputAction": null,
+      "input": null,
+      "waitMs": null,
+      "capture": null,
+      "match": null,
+      "localService": {
+        "operation": "UI_CLEAN_LIGHTWEIGHT",
+        "bag": null,
+        "ui": {
+          "source": "golden-action"
+        },
+        "giveItem": null,
+        "quest": null
+      }
+    },
+    {
+      "index": 3,
+      "type": "CAPTURE",
+      "inputAction": null,
+      "input": null,
+      "waitMs": null,
+      "capture": {
+        "region": {
+          "x": 1080,
+          "y": 420,
+          "width": 700,
+          "height": 500
+        },
+        "resultMode": "UPLOAD_IMAGE"
+      },
+      "match": null,
+      "localService": null
+    }
+  ],
+  "fullWindowFailureEvidence": true
+}

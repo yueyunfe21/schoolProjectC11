@@ -1,0 +1,25 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-uncertain-001",
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "0x000000000001A2B3",
+    "processId": 4242,
+    "windowRect": {
+      "left": 120,
+      "top": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "pauseRequested": false,
+    "stopRequested": false
+  },
+  "status": "DUPLICATE_OR_UNCERTAIN",
+  "failedStepIndex": null,
+  "code": "DUPLICATE_ACTION_ID",
+  "message": "action identity is duplicate or transport-uncertain",
+  "stepResults": [],
+  "frame": null
+}

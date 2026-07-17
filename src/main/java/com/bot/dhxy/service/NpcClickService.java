@@ -574,20 +574,7 @@ public class NpcClickService {
             byte[] pngBytes = pngBytes(image);
             ImagePreprocessor.saveImage(image, rawPath);
             WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
-            List<String> targetTemplateSpecs = npcClickTargetTemplateSpecs(request);
-            List<String> yellowTemplateSpecs = npcClickYellowTemplateSpecs(request);
-            String targetGlyphTemplate = npcClickTargetGlyphTemplate(request);
-            List<String> templateSpecs = npcClickTemplateSpecs(
-                    request,
-                    targetTemplateSpecs,
-                    yellowTemplateSpecs,
-                    targetGlyphTemplate);
-            Map<String, String> glyphMetadata = npcClickGlyphMetadata(
-                    request,
-                    templateSpecs,
-                    targetTemplateSpecs,
-                    yellowTemplateSpecs,
-                    targetGlyphTemplate);
+            List<String> templateSpecs = npcClickTemplateSpecs(request);
             return NpcClickSmartCloudRequest.builder()
                     .imagePayloadBase64(Base64.getEncoder().encodeToString(pngBytes))
                     .payloadMimeType("image/png")
@@ -625,10 +612,6 @@ public class NpcClickService {
                             ? null
                             : runtime.getNativeBinding().getNativeHandle())
                     .templateSpecs(templateSpecs)
-                    .targetTemplateSpecs(targetTemplateSpecs)
-                    .yellowTemplateSpecs(yellowTemplateSpecs)
-                    .targetGlyphTemplate(targetGlyphTemplate)
-                    .glyphMetadata(glyphMetadata)
                     .build();
         } catch (IOException | NoSuchAlgorithmException e) {
             log.warn("NPC_CLICK_SMART payload build failed: npcName={} task={} reason={}",
@@ -1023,11 +1006,7 @@ public class NpcClickService {
                 && point.y < region.getWindowY() + region.getHeight();
     }
 
-    private static List<String> npcClickTemplateSpecs(
-            NpcClickRequest request,
-            List<String> targetTemplateSpecs,
-            List<String> yellowTemplateSpecs,
-            String targetGlyphTemplate) {
+    private static List<String> npcClickTemplateSpecs(NpcClickRequest request) {
         List<String> specs = new ArrayList<>();
         if (hasText(request.expectedDialogTemplatePath()) && Files.exists(Path.of(request.expectedDialogTemplatePath()))) {
             specs.add("expectedDialogTemplatePath=" + request.expectedDialogTemplatePath());
@@ -1046,55 +1025,7 @@ public class NpcClickService {
         if (hasText(tooltipTemplatePath) && Files.exists(Path.of(tooltipTemplatePath))) {
             specs.add("tooltipTemplatePath=" + tooltipTemplatePath);
         }
-        specs.addAll(targetTemplateSpecs);
-        specs.addAll(yellowTemplateSpecs);
-        if (hasText(targetGlyphTemplate)) {
-            specs.add("targetGlyphTemplate=" + targetGlyphTemplate);
-        }
         return List.copyOf(specs);
-    }
-
-    private static List<String> npcClickTargetTemplateSpecs(NpcClickRequest request) {
-        List<String> specs = new ArrayList<>();
-        specs.add("targetName=" + safeValue(request.npcName()));
-        String targetTemplatePath = npcClickTemplatePath(request, "target");
-        if (Files.exists(Path.of(targetTemplatePath))) {
-            specs.add("targetTemplatePath=" + targetTemplatePath);
-        }
-        String npcNameTemplatePath = npcClickTemplatePath(request, "name");
-        if (Files.exists(Path.of(npcNameTemplatePath))) {
-            specs.add("npcName@" + npcNameTemplatePath);
-        }
-        return List.copyOf(specs);
-    }
-
-    private static List<String> npcClickYellowTemplateSpecs(NpcClickRequest request) {
-        List<String> specs = new ArrayList<>();
-        specs.add("targetName=" + safeValue(request.npcName()));
-        String yellowTemplatePath = npcClickTemplatePath(request, "yellow");
-        if (Files.exists(Path.of(yellowTemplatePath))) {
-            specs.add("yellowTemplatePath=" + yellowTemplatePath);
-        }
-        String npcNameTemplatePath = npcClickTemplatePath(request, "name");
-        if (Files.exists(Path.of(npcNameTemplatePath))) {
-            specs.add("npcNameTemplatePath=" + npcNameTemplatePath);
-        }
-        return List.copyOf(specs);
-    }
-
-    private static String npcClickTargetGlyphTemplate(NpcClickRequest request) {
-        String path = npcClickTemplatePath(request, "glyph");
-        return Files.exists(Path.of(path)) ? path : "";
-    }
-
-    private static String npcClickTemplatePath(NpcClickRequest request, String templateKind) {
-        return "images/template/npc/"
-                + templateKind
-                + "/"
-                + taskCode(request.sourceTask())
-                + "/"
-                + safeDebugName(request.npcName())
-                + ".png";
     }
 
     private static String npcClickTooltipTemplatePath(NpcClickRequest request) {
@@ -1104,40 +1035,6 @@ public class NpcClickService {
         return request.tooltipType() == NpcTooltipType.NONE ? "" : NPC_TASK_TOOLTIP_TEMPLATE_PATH;
     }
 
-    private static Map<String, String> npcClickGlyphMetadata(
-            NpcClickRequest request,
-            List<String> templateSpecs,
-            List<String> targetTemplateSpecs,
-            List<String> yellowTemplateSpecs,
-            String targetGlyphTemplate) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("npcName", safeValue(request.npcName()));
-        metadata.put("targetName", safeValue(request.npcName()));
-        metadata.put("mapName", safeValue(request.mapName()));
-        metadata.put("target", request.mapX() + "," + request.mapY());
-        metadata.put("tooltipType", request.tooltipType() == null ? "" : request.tooltipType().name());
-        metadata.put("targetRole", request.targetRole() == null ? "" : request.targetRole().name());
-        metadata.put("targetEvidence", request.targetEvidence() == null ? "" : request.targetEvidence().name());
-        metadata.put("templateSpecs", joinNpcClickSpecs(templateSpecs));
-        metadata.put("targetTemplateSpecs", joinNpcClickSpecs(targetTemplateSpecs));
-        metadata.put("yellowTemplateSpecs", joinNpcClickSpecs(yellowTemplateSpecs));
-        metadata.put("targetGlyphTemplate", safeValue(targetGlyphTemplate));
-        putExistingPath(metadata, "targetTemplatePath", npcClickTemplatePath(request, "target"));
-        putExistingPath(metadata, "yellowTemplatePath", npcClickTemplatePath(request, "yellow"));
-        putExistingPath(metadata, "npcNameTemplatePath", npcClickTemplatePath(request, "name"));
-        return Map.copyOf(metadata);
-    }
-
-    private static String joinNpcClickSpecs(List<String> specs) {
-        return specs == null || specs.isEmpty() ? "" : String.join("|", specs);
-    }
-
-    private static void putExistingPath(Map<String, String> metadata, String key, String path) {
-        if (metadata == null || !hasText(path) || !Files.exists(Path.of(path))) {
-            return;
-        }
-        metadata.put(key, path);
-    }
 
     private static String taskCode(TaskType taskType) {
         return taskType == null ? TaskType.UNKNOWN.getCode() : taskType.getCode();

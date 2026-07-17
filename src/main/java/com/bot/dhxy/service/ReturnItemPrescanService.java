@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -42,7 +43,8 @@ public class ReturnItemPrescanService {
     private enum Strategy {
         AFTER_TRACKER_GREEN,
         BACKGROUND_PATHING,
-        IN_COMBAT_RANDOM
+        IN_COMBAT_RANDOM,
+        SKIP
     }
 
     /**
@@ -239,19 +241,49 @@ public class ReturnItemPrescanService {
             candidates.add(Strategy.BACKGROUND_PATHING);
         }
         candidates.add(Strategy.IN_COMBAT_RANDOM);
+        candidates.add(Strategy.SKIP);
         return candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }
 
     private void runPrescan(TaskExecutionContext context, PrescanState state, String source, boolean fallbackToCombat) {
         TaskCheckpoint.throwIfStopRequested(context, "Return item prescan interrupted");
         state.inProgress = true;
+        if (state.mode == Mode.MAIN_BAG_TASK_PAGE) {
+            BagService.ReturnItemPrescanSnapshots snapshots = bagService.captureMainBagTaskPagePrescanSnapshots(source, context);
+            if (snapshots == null) {
+                finishPrescan(state, null, source, fallbackToCombat);
+                return;
+            }
+            CompletableFuture.supplyAsync(() -> bagService.matchMainBagTaskPagePrescanSnapshots(
+                            snapshots, state.key.template, source))
+                    .whenComplete((point, error) -> {
+                        if (error != null) {
+                            log.warn("[return-item-prescan] async match failed: key={} source={} reason={}",
+                                    state.key, source, error.getMessage());
+                            finishPrescan(state, null, source, fallbackToCombat);
+                            return;
+                        }
+                        finishPrescan(state, point, source, fallbackToCombat);
+                    });
+            return;
+        }
         try {
             ReturnItemCachePoint point = switch (state.mode) {
-                case MAIN_BAG_TASK_PAGE -> bagService.prescanMainBagTaskPageItem(
-                        state.key.template, source, context);
+                case MAIN_BAG_TASK_PAGE -> throw new IllegalStateException("task-page prescan is asynchronous");
                 case MAIN_BAG_FROM_BACK -> bagService.prescanMainBagItemFromBack(
                         state.key.template, state.maxBackPage, source, context);
             };
+            finishPrescan(state, point, source, fallbackToCombat);
+        } finally {
+            state.inProgress = false;
+        }
+    }
+
+    private void finishPrescan(PrescanState state,
+                               ReturnItemCachePoint point,
+                               String source,
+                               boolean fallbackToCombat) {
+        try {
             if (point != null) {
                 state.cachePoint = point;
                 state.done = true;

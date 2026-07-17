@@ -13,7 +13,7 @@ import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.model.navigation.ObjectiveTextResult;
-import com.bot.dhxy.tools.CoordinateHelper;
+import com.bot.dhxy.cloud.task.NavigationPointCloudDecisionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -49,18 +49,18 @@ public class ObjectiveTextRecognitionService {
     private static final int COORDINATE_PLAUSIBILITY_MARGIN_PX = 80;
 
     private final TaskExecutionContextHolder taskExecutionContextHolder;
-    private final CoordinateHelper coordinateHelper;
+    private final NavigationPointCloudDecisionService navigationPointCloudDecisionService;
     private final ImageProcessorService imageProcessorService;
     private final com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService;
 
     private volatile TemplateBundle templateBundle;
 
     public ObjectiveTextRecognitionService(TaskExecutionContextHolder taskExecutionContextHolder,
-                                           CoordinateHelper coordinateHelper,
+                                           NavigationPointCloudDecisionService navigationPointCloudDecisionService,
                                            ImageProcessorService imageProcessorService,
                                            com.bot.dhxy.cloud.task.ObjectiveTextReaderCloudDecisionService objectiveTextReaderCloudDecisionService) {
         this.taskExecutionContextHolder = taskExecutionContextHolder;
-        this.coordinateHelper = coordinateHelper;
+        this.navigationPointCloudDecisionService = navigationPointCloudDecisionService;
         this.imageProcessorService = imageProcessorService;
         this.objectiveTextReaderCloudDecisionService = objectiveTextReaderCloudDecisionService;
     }
@@ -253,7 +253,7 @@ public class ObjectiveTextRecognitionService {
         int rawX = Integer.parseInt(xText);
         int rawY = Integer.parseInt(yText);
 
-        if (isCoordinatePlausible(mapName, rawX, rawY)) {
+        if (isCoordinatePlausible(mapName, rawX, rawY, source)) {
             return Optional.of(rawCoordinate);
         }
 
@@ -263,7 +263,7 @@ public class ObjectiveTextRecognitionService {
         if (xText.length() > 1) {
             String repaired = xText.substring(1) + "," + yText;
             int repairedX = Integer.parseInt(xText.substring(1));
-            if (isCoordinatePlausible(mapName, repairedX, rawY)) {
+            if (isCoordinatePlausible(mapName, repairedX, rawY, source)) {
                 log.info("[objective-recognition] coordinate repaired by map plausibility: source={} map={} rawCoord={} repairedCoord={}",
                         source, mapName, rawCoordinate, repaired);
                 return Optional.of(repaired);
@@ -272,10 +272,17 @@ public class ObjectiveTextRecognitionService {
         return Optional.empty();
     }
 
-    private boolean isCoordinatePlausible(String mapName, int x, int y) {
-        return coordinateHelper == null
-                || coordinateHelper.isLogicalCoordinatePlausible(
-                mapName, x, y, COORDINATE_PLAUSIBILITY_MARGIN_PX);
+    /**
+     * CR262: the coordinate plausibility verdict is owned solely by the cloud
+     * {@code CHECK_COORDINATE_PLAUSIBLE} operation (cloud-side maps.json transform snapshot). No local
+     * transform table remains, honoring the CR250 anti-crack promise. Cloud unavailable is
+     * fail-closed — the coordinate is rejected rather than falling back to a local guard, so a
+     * disconnected client stops repairing/accepting OCR coordinates instead of guessing.
+     */
+    private boolean isCoordinatePlausible(String mapName, int x, int y, String source) {
+        return navigationPointCloudDecisionService.checkCoordinatePlausible(
+                mapName, x, y, COORDINATE_PLAUSIBILITY_MARGIN_PX, currentTaskCode(), source)
+                .orElse(false);
     }
 
     private TemplateBundle loadTemplates() {

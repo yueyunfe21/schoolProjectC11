@@ -1,0 +1,7 @@
+{
+  "status": "IDLE",
+  "action": null,
+  "taskStartAck": {
+    "startRequestId": "start-request-001"
+  }
+}

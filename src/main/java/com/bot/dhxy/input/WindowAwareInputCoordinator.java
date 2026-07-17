@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -144,6 +145,40 @@ public class WindowAwareInputCoordinator {
         return result.focused();
     }
 
+    /**
+     * Focus exactly the caller-supplied frozen binding without refreshing or searching for another window.
+     *
+     * <p>This coordinator holds no second mutable-context comparator: the caller ({@code InputActionWorker})
+     * is the single authoritative exact-window checker and already owns the runtime-context generation
+     * monitor across this focus, the callback and its {@code finally}. Re-comparing a mutable context here
+     * would only add a second, weaker witness that can disagree with the one the monitor already froze.</p>
+     *
+     * @param actionName diagnostic action label
+     * @param windowId exact logical window id captured with the binding
+     * @param binding exact HWND/process/screen-rectangle binding snapshot; focused verbatim
+     * @return best-effort focus result; false when focus isolation is disabled or Windows rejects focus
+     */
+    public boolean focusFrozenBindingInActiveTransaction(
+            String actionName,
+            String windowId,
+            WindowNativeBinding binding) {
+        if (!inputTransactionActive.get()) {
+            throw new IllegalStateException(
+                    "focusFrozenBindingInActiveTransaction must run inside input transaction");
+        }
+        Objects.requireNonNull(binding, "binding");
+        if (!windowIsolationProperties.isInputFocusActive()) {
+            return false;
+        }
+        boolean focused = windowFocusService.focusWithoutLock(binding);
+        windowInteractionMetricsService.recordFocus(windowId, actionName, focused);
+        if (!focused) {
+            log.debug("Frozen input window focus failed before action: windowId={} action={}",
+                    windowId, actionName);
+        }
+        return focused;
+    }
+
     private FocusPreparationResult focusCurrentWindowWithoutLock(String actionName) {
         if (!windowIsolationProperties.isInputFocusActive()) {
             return FocusPreparationResult.SKIPPED;
@@ -182,6 +217,7 @@ public class WindowAwareInputCoordinator {
             currentInputActionName.set(previousActionName);
         }
     }
+
 
     private enum FocusPreparationResult {
         SKIPPED(false, false),

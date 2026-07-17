@@ -36,8 +36,12 @@ public class BoundWindowKeyboardService {
 
     private static final int WM_SYSKEYDOWN = 0x0104;
     private static final int WM_SYSKEYUP = 0x0105;
+    private static final int WM_KEYDOWN = 0x0100;
+    private static final int WM_KEYUP = 0x0101;
     private static final int VK_MENU = 0x12;
+    private static final int VK_CONTROL = 0x11;
     private static final int SCAN_ALT = 0x38;
+    private static final int SCAN_CONTROL = 0x1D;
 
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowIsolationProperties windowIsolationProperties;
@@ -87,7 +91,32 @@ public class BoundWindowKeyboardService {
                     context.getWindowId(), shortcut.displayName(), requestEpoch, context.getPlayerIdentityEpoch());
             return ShortcutAttempt.terminalNotAttempted("player-identity-epoch-changed");
         }
-        WindowNativeBinding binding = context.getNativeBinding();
+        WindowNativeBinding binding = refreshedBinding.get();
+        return pressShortcut(binding, context.getWindowId(), shortcut);
+    }
+
+    /**
+     * Send one background-validated Alt shortcut to the supplied immutable binding.
+     *
+     * @param binding exact target HWND binding already frozen by the caller; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @param shortcut closed Alt shortcut to deliver.
+     * @return typed delivery attempt; no foreground fallback or retry is performed.
+     */
+    public ShortcutAttempt pressShortcut(WindowNativeBinding binding,
+                                          String windowId,
+                                          AltShortcut shortcut) {
+        if (shortcut == null) {
+            return ShortcutAttempt.notAttempted("unsupported-shortcut");
+        }
+        if (!shortcut.backgroundHwndSupported()) {
+            log.warn("HWND keyboard shortcut rejected because shortcut is not background-validated: shortcut={}",
+                    shortcut.displayName());
+            return ShortcutAttempt.terminalNotAttempted("unvalidated-background-shortcut");
+        }
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return ShortcutAttempt.notAttempted("disabled");
+        }
         WinDef.HWND hwnd = toHwnd(binding);
         if (hwnd == null) {
             return ShortcutAttempt.notAttempted("invalid-hwnd");
@@ -101,11 +130,50 @@ public class BoundWindowKeyboardService {
         TaskSleep.sleep(40);
         PostResult altUp = postKey(hwnd, WM_SYSKEYUP, VK_MENU, SCAN_ALT, false, true);
         boolean success = altDown.success() && keyDown.success() && keyUp.success() && altUp.success();
-        windowInteractionMetricsService.recordHwndKeyboard(context.getWindowId(), shortcut.displayName(), success);
+        windowInteractionMetricsService.recordHwndKeyboard(windowId, shortcut.displayName(), success);
         log.info("HWND keyboard shortcut: windowId={} hwnd={} shortcut={} result={} altDown={} keyDown={} keyUp={} altUp={} title={}",
-                context.getWindowId(), binding.getNativeHandle(), shortcut.displayName(), success,
+                windowId, binding.getNativeHandle(), shortcut.displayName(), success,
                 altDown.toLogText(), keyDown.toLogText(), keyUp.toLogText(), altUp.toLogText(), binding.getTitle());
         return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
+    }
+
+    /**
+     * Post exactly one modifier transition to the supplied immutable HWND binding.
+     *
+     * @param binding exact target HWND binding already frozen by the turn action; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @param key closed modifier key; V1 supports CONTROL only.
+     * @param transition DOWN or UP transition; UP remains callable while the thread is interrupted.
+     * @return typed one-post attempt with no retry or foreground fallback.
+     */
+    public KeyTransitionAttempt transitionModifier(WindowNativeBinding binding,
+                                                   String windowId,
+                                                   ModifierKey key,
+                                                   KeyTransition transition) {
+        if (key != ModifierKey.CONTROL || transition == null) {
+            return KeyTransitionAttempt.notAttempted("unsupported-modifier-transition");
+        }
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return KeyTransitionAttempt.notAttempted("disabled");
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return KeyTransitionAttempt.notAttempted("invalid-hwnd");
+        }
+
+        boolean keyUp = transition == KeyTransition.UP;
+        PostResult post = postKey(
+                hwnd,
+                keyUp ? WM_KEYUP : WM_KEYDOWN,
+                VK_CONTROL,
+                SCAN_CONTROL,
+                false,
+                keyUp);
+        windowInteractionMetricsService.recordHwndKeyboard(
+                windowId, "Ctrl " + transition.name().toLowerCase(), post.success());
+        log.info("HWND modifier transition: windowId={} hwnd={} key={} transition={} result={} post={} title={}",
+                windowId, binding.getNativeHandle(), key, transition, post.success(), post.toLogText(), binding.getTitle());
+        return new KeyTransitionAttempt(true, post.success(), post.success() ? "OK" : "post-message-failed");
     }
 
     private PostResult postKey(WinDef.HWND hwnd, int message, int virtualKey, int scanCode, boolean altContext, boolean keyUp) {
@@ -233,8 +301,8 @@ public class BoundWindowKeyboardService {
         ALT_T("Alt+T", 0x54, 0x14, true),
         ALT_O("Alt+O", 0x4F, 0x18, true),
         ALT_E("Alt+E", 0x45, 0x12, true),
-        ALT_A("Alt+A", 0x41, 0x1E, false),
-        ALT_C("Alt+C", 0x43, 0x2E, false),
+        ALT_A("Alt+A", 0x41, 0x1E, true),
+        ALT_C("Alt+C", 0x43, 0x2E, true),
         ALT_U("Alt+U", 0x55, 0x16, true);
 
         private final String displayName;
@@ -263,6 +331,23 @@ public class BoundWindowKeyboardService {
 
         public boolean backgroundHwndSupported() {
             return backgroundHwndSupported;
+        }
+    }
+
+    public enum ModifierKey {
+        CONTROL
+    }
+
+    public enum KeyTransition {
+        DOWN,
+        UP
+    }
+
+    /** Result of one exact-HWND modifier transition attempt. */
+    public record KeyTransitionAttempt(boolean attempted, boolean success, String reason) {
+
+        private static KeyTransitionAttempt notAttempted(String reason) {
+            return new KeyTransitionAttempt(false, false, reason);
         }
     }
 

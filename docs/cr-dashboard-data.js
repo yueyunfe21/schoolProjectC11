@@ -2687,11 +2687,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR257",
     "number": 257,
     "owner": "Codex",
-    "status": "**Approved（全量 OCR 上云复审，2026-07-11）**：DHXY `bf3bf387` 完成 C2+C3；本地 `TextRecognizer`、Baidu SDK/配置/凭据、全部本地 OCR 调用和四条 rollback 均清零。DHXY/cloud-brain compile 通过；OCR 引擎仅由 cloud-brain sidecar 持有",
+    "status": "**Approved + fresh 部署已修复（2026-07-11）**：运行时 P1（实际 cloud-brain 目录缺 `ocr/local_ocr_server.py`，启动门 `ocr-sidecar-missing` fail-closed）已修——cr257 分支合并进 `D:\\mavenProject\\dhxy-cloud-brain`（`3b988ca`），compile 门通过、vision memory/rapidocr 就位。**待用户手动结束旧 sidecar PID 18628（占 18761，A.3 不接管）后重启修罗做 fresh 验收**",
     "kind": "open",
-    "domain": "通用",
-    "files": "`WubeiTask`, `XiuluoTaskV2`, `TaskTrackerPanelService`, `BotProperties`, application.yml, pom.xml, external `dhxy-cloud-brain` `LocalOcrClient`/sidecar",
-    "summary": "用户已明确“不需要本地兜底”，D2 等价批准四条 rollback 关闭；云端 reader inactive 统一 fail-closed miss，不重回本地 OCR。fresh runtime 独立核验 cloud sidecar diagnostics 和业务 OCR 日志。",
+    "domain": "修罗",
+    "files": "`scripts/run-cloud-brain-server.ps1`, external `dhxy-cloud-brain/ocr/local_ocr_server.py`, `CloudDecisionDevSidecarService`",
+    "summary": "`20:24:50` 启动门报 `ocr-sidecar-missing`；先将 CR257 cloud-brain 侧 OCR sidecar 文件/依赖部署到实际运行目录并编译，确认 18080 ready 后再核验修罗启动。",
     "verification": "需复核"
   },
   {
@@ -2720,12 +2720,12 @@ window.CR_DASHBOARD_DATA = [
     "id": "CR262",
     "number": 262,
     "owner": "Codex",
-    "status": "Ready / Blocked on fresh：CR250 子卡 E——删本地决策实现与参数表 rollback（CoordinateHelper 7 方法+mapTransforms+本地 config/maps.json、navigateToMapLocalLadder、世界地图旧循环、LocationVisionService/XiuluoTaskV2 deprecated 链、张闻路线借 CR208-12）；实施硬前置=CR258/CR260/CR261 fresh 验收（CR208 删除纪律），完成后\"本地磁盘不保存参数表\"承诺正式成立",
-    "kind": "deprecated",
+    "status": "**Implemented（B′）/ 待外部 reviewer**：删除前 grep 发现 maps.json 仍有两个活读者（ObjectiveTextRecognitionService 坐标合理性=CR258 漏切、MapNameCanonicalizer 地图名字典）；用户裁定 **B′+无本地 fallback**→消费方1 上云 `CHECK_COORDINATE_PLAUSIBLE`(断云 fail-closed)、消费方2 改本地模板+`天宫`/`御马监` 名常量，随后删 CoordinateHelper 变换簇 + `navigateToMapLocalLadder`/`submit`/`perform` 死簇(318 行) + 本地 `config/maps.json`。原清单 LocationVisionService/XiuluoTaskV2 目标已前删(零命中)、张闻路线不在本卡。双侧 compile exit 0；**author 自述无 review 效力**",
+    "kind": "review",
     "domain": "通用",
-    "files": "`CoordinateHelper`, `config/maps.json`, `NavigationService`, `LocationVisionService`, `XiuluoTaskV2`",
-    "summary": "删除前逐项 grep 零生产调用；删除后双侧 compile + 全库关键词零命中核验。",
-    "verification": "未实现/未认领"
+    "files": "`ObjectiveTextRecognitionService`, `MapNameCanonicalizer`, `CoordinateHelper`, `NavigationService`, 删 `config/maps.json`",
+    "summary": "云端 bundle 快照(31 图逐字一致)为唯一属主/回滚源；删后全库零实际调用(残留仅注释/reason 字面量)；断云坐标合理性路径待 fresh 归 CR264。",
+    "verification": "需复核"
   },
   {
     "id": "CR263",
@@ -2794,14 +2794,47 @@ window.CR_DASHBOARD_DATA = [
     "verification": "需复核"
   },
   {
+    "id": "CR269",
+    "number": 269,
+    "owner": "Codex",
+    "status": "Implemented：回城道具预扫改为“开包截页后关包，后台匹配”，普通轮次随机策略加 `SKIP`；主项目 compile 通过，fresh 待验",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`ReturnItemPrescanService`, `BagService`, 修罗/五倍 return-item prescan/cache 日志",
+    "summary": "用户批准：`MAIN_BAG_TASK_PAGE` 前台仅截当前页和任务页后立即关包/放权，后台在内存快照匹配模板并回写本轮缓存；后续轮次四选一等概率（绿字后、移动中、战斗中、跳过），第一轮保持既有不走移动中预扫，只在其余可用策略中等概率。显形镜强制槽位预扫、回城验证和缓存 miss 的完整找道具 fallback 不变。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR270",
+    "number": 270,
+    "owner": "Codex",
+    "status": "Implemented：暂停只冻结输入/业务 phase，Runner 保持只读观察并结算 active pathing；主项目 compile 通过，fresh 待验",
+    "kind": "open",
+    "domain": "修罗",
+    "files": "`WindowTaskRunner`, `WindowRuntimeContext`, `TaskPauseResumeReconciler`, 暂停恢复/`PATHING_TERMINAL` 日志",
+    "summary": "`21:03:35 -> 21:06:38` 修罗暂停期间 watcher 零 tick，恢复后实际已在大雁塔五层却保留六层→五层 `ACTIVE` intent，任务一直等 terminal 而不找怪。暂停 observer 只读战斗/小地图、更新事实并发布既有 terminal；禁止任何输入、dialog/维护/导航、云端动作决策或 phase 推进。",
+    "verification": "需复核"
+  },
+  {
+    "id": "CR271",
+    "number": 271,
+    "owner": "Codex",
+    "status": "父级审核与计划合同维护；TURN-27 Amendment #1 已 ACK，C `SOURCE_ACTIVE`",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud 业务决策/下一 JSON action；DHXY exact-window detector、runner pathing observation、capture/input 与四个永久本地 Service",
+    "summary": "action JSON 携 intent，positive 本地 proof 后登记 watcher，metadata 回传 typed snapshot；Cloud 只读镜像。C sole owner 已恢复，先清 active 旧宏。",
+    "verification": "需复核"
+  },
+  {
     "id": "CR260",
     "number": 260,
     "owner": "Codex",
-    "status": "**Approved（实施复审）**：首轮 3P1+1P2 返修通过——删 64 backstop、回退本地原子终态恢复云端编排（intent-gap 窄窗口如实记录）、执行时身份门 windowId/hwnd/taskRunId/epoch、ledger 完整绑定 key；拍板 B 未回退；reviewer 现场重跑双侧 compile exit 0；fresh 独立验收（六级 step 序列/窄窗口/世界地图 retry 时序）",
-    "kind": "review",
-    "domain": "通用",
-    "files": "`NavigationService.navigateToMap` 及六级 helper、新 `NavigationRoutePlanCloudDecisionService`、`CloudDecisionServiceId`、external 新 `NavigationRoutePlanResolver`/`DecisionEngine`",
-    "summary": "CR259 实施件：step 协议 observe→action→outcome→terminal，云端只据上报观察布尔做 1:1 阶梯分支决策；consume/confirm/submit 三复合执行器与 intent 三守卫零改动；断云 `MAP_NOT_REACHED`。",
+    "status": "**Blocked / P1**：截图时机复核发现本轮“先截 accept 图、再出村”的改动反了已验证顺序；无维护正确路径是出村点击并同步关小地图后再截图/后台解析，当前 Java 改动待撤回，禁止 fresh 运行",
+    "kind": "open",
+    "domain": "修罗",
+    "files": "`XiuluoTaskV2`, `NavigationService.navigateToMap` 及六级 helper、新 `NavigationRoutePlanCloudDecisionService`、`CloudDecisionServiceId`、external 新 `NavigationRoutePlanResolver`/`DecisionEngine`",
+    "summary": "CR259 实施件；本轮 snapshot 调度改动与 `ACTIVE_WORK` 2026-06-15“修罗接任务后无维护先离村”冲突。待用户确认后仅恢复既有快/保守双线，不改 consume/confirm/submit、黄字候选、世界地图 retry、坐标或 fallback。",
     "verification": "需复核"
   },
   {

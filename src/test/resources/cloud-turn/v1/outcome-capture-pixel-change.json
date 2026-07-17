@@ -1,0 +1,47 @@
+{
+  "contractVersion": 1,
+  "actionId": "action-capture-pixel-change-001",
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "12345",
+    "processId": 88,
+    "windowRect": {
+      "left": 137,
+      "top": 241,
+      "width": 10,
+      "height": 10
+    },
+    "pauseRequested": false,
+    "stopRequested": false
+  },
+  "status": "COMPLETED",
+  "failedStepIndex": null,
+  "code": "ACTION_COMPLETED",
+  "message": "pixel-change probe completed",
+  "stepResults": [
+    {
+      "index": 0,
+      "type": "CAPTURE",
+      "status": "COMPLETED",
+      "code": "PIXELS_CHANGED",
+      "match": null,
+      "localResultJson": null
+    }
+  ],
+  "frame": {
+    "purpose": "CAPTURE",
+    "contentType": "image/png",
+    "sha256": "31a38d5b7d06e5de1009ec59851b3654470f6fc84e0bde0320bc0084d2f8a3d3",
+    "width": 2,
+    "height": 2,
+    "region": {
+      "x": 139,
+      "y": 242,
+      "width": 2,
+      "height": 2
+    },
+    "sourceStepIndex": 0
+  }
+}

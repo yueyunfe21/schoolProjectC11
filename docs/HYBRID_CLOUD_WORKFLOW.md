@@ -3713,18 +3713,11 @@ NPC click smart target boundary:
   - 执行云端返回的受限动作：普通点击、`Ctrl`+点击、允许名单内的快捷键动作、等待/重新截图；
   - 在动作后验证本地可观测结果，例如 dialog 是否出现、是否移动、菜单是否出现、是否失败；
   - 把验证结果和新截图作为下一次 request 的输入。
-- `NPC_CLICK_SMART` request 必须给外部 brain 足够素材线索，不能只给 NPC 名和地图事实。DHXY 当前只允许传真实
-  存在的资产路径；不得把不存在的 `images/template/npc/target|yellow|glyph/<task>/<npc>.png` 当作有效
-  metadata。当前本地实际资产只有通用 NPC tooltip/tag 模板时，request 仍必须传 raw image、ROI、`targetName`
-  / `npcName` / `mapName` / `target` 等事实，由外部 brain 基于 raw image 和通用算法识别，或 fail closed。
-- 当前字段约束：
-  - `targetTemplateSpecs` / `yellowTemplateSpecs` 至少包含 `targetName=<npcName>`；
-  - `targetTemplatePath=`、`yellowTemplatePath=`、`npcNameTemplatePath=`、`targetGlyphTemplate=` 只有在
-    `Files.exists(...)` 为真时才出现；
-  - `templateSpecs` 和 `glyphMetadata` 只镜像真实存在的 template path 与 target facts，不能用虚假路径绕过
-    `hasTargetTemplateMetadata` / request gate；
-  - `imagePayloadBase64`、`payloadMimeType`、`imageSha256`、`roi`、`windowSize` 是普通和 direct-combat 路径的
-    必填视觉素材。
+- `NPC_CLICK_SMART` 不使用任何“按目标 NPC 名字制作的黄字/glyph/template”字段或素材。request 传 raw image、
+  ROI、`npcName` / `mapName` / `target` 等任务事实；黄色目标只能由外部 brain 在 raw image 中做语义识别。
+  通用 tooltip 模板和预期 dialog 模板仍是独立语义，不能被当作目标黄字模板复用。
+- `imagePayloadBase64`、`payloadMimeType`、`imageSha256`、`roi`、`windowSize` 是普通和 direct-combat 路径的
+  必填视觉素材。
 - 上述字段是 declarative request context；本地不得借这些字段生成 `candidateBox`、score/confidence 或 click。
   可执行点击必须来自云端 response 的 `WINDOW_RELATIVE` 动作，再由本地做边界校验和 input queue 执行。
 - 云端职责：

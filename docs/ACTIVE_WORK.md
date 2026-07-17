@@ -1,5 +1,5970 @@
 # DHXY Active Work
 
+## 2026-07-17 / CR271 TURN-27 ACTIVE_STALE
+
+- External C 最后 STATUS EVENT 为 `06:42`，Cloud `NavigationService.java` 最后变化为 `06:43:33`；至 `07:01`
+  已超过 10 分钟且无新事件/源码字节，按总账规则标 `ACTIVE_STALE`。
+- 当前源码 `4fb434fe...` / 181,096 bytes；active macro 仍有 1 个调用，handoff helper 尚未落盘，无整卡 delivery。
+- C sole owner 不撤销、不重派；已发定向父级消息，等待下一 heartbeat 报继续、阻断、归还或交付。
+- Java 活动状态不明，本轮不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 最终冻结合同双 ACK / 范围纠正闭合
+
+- External C 已 ACK Amendment #5 与父级 scope enforcement，并撤回 `expanded scope / 共享 UI 面须一并迁`。
+- 只迁 current-map/world-map 活跃链实际需要的 mini-map UI seam；其余 68 个 input/capture/OCR 站点保持原字节。
+- 当前 Cloud `NavigationService.java`=`5534bad1...` / 179,078 bytes；无新 Java 字节、无整卡 delivery，active macro 尚未清零。
+- C 继续 sole-owner `SOURCE_ACTIVE`；Java writer active，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 最终冻结执行合同
+
+- 父级承认原合同未一次完成传递审计，造成 macro、本地 pathing owner、proof、dispatch、resolver seam 四轮返工。
+- Amendment #1-#4 现合并为原卡唯一最终执行清单；旧冲突文字全部作废，不再边实施边扩设计。
+- C 只按清单完成 remaining methods/test 后整卡交付；任何新业务语义选择必须停笔并报唯一 blocker。
+
+## 2026-07-17 / CR271 TURN-27 Amendment #4 已 ACK
+
+- External C 已确认窄 resolver seam 全部限制并继续 sole-owner `SOURCE_ACTIVE`。
+- Cloud `NavigationService` 已增添 MOVE/WAIT/CLICK typed step builders，实盘 `a4630010...`；尚非整卡 delivery。
+- 下一步为 terminal guard、minimap click helper 与 current-map macro 清零；Java writer active，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 Amendment #4：Cloud 内部 resolver seam 冻结
+
+- 父级确认 `NavigationService` 与 `MiniMapPointResolver` 同属 Cloud 进程；允许窄 `public static
+  resolveMinimapClick(JsonNode)` 直接调用，禁止绕 `DecisionEngine.decisionResponse` 制造 HTTP 形 JSON 往返。
+- 只允许类与该单一方法 additive public；其它 resolver 方法、业务数据和 transform table 不扩大暴露。
+- External C 继续 `SOURCE_ACTIVE / SOLE OWNER`；尚无整卡 delivery，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 Amendment #3 已 ACK，下发重载落盘
+
+- C 已完成 factory/client typed intent 兼容 overload；旧 caller 继续 null、零改动，down-dispatch 缺口闭合。
+- C 继续 `SOURCE_ACTIVE`，尚无整卡 delivery；不提前 review，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 Amendment #3：补齐唯一 down-dispatch
+
+- 核实 `TurnGameClient -> CloudTurnActionFactory` 是唯一合法下发链；现有 API 无法填充 pathing intent。
+- TURN-27 写集增补 client/factory 兼容 overload 与既有 client contract test；旧 overload 传 null，全部旧 caller 零改动。
+- C 继续 sole-owner `SOURCE_ACTIVE`；Java writer 活动，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 C 已 ACK Amendment #2
+
+- C 已接受本地完整起步证明 `(C)` 和三文件增补写集；设计阻断清零，继续 `SOURCE_ACTIVE / SOLE OWNER`。
+- 当前尚无 proof-mechanics 新文件或整卡 delivery；不提前 review，不运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 Amendment #2：移动起步证明完整留在本地
+
+- C 的 executor-proof 问题已裁：不采用纯 `GameStateUtil` fast-edge，也不允许 action `COMPLETED` 直接登记。
+- DHXY 本地窄 mechanics 严格复用 `696a12b0` 的 `pixel fast-edge -> coordinate fallback`；positive 后才登记现有
+  watcher。Cloud 仍只发动作 JSON、读取 outcome/snapshot 并决定下一动作。
+- C sole owner 继续 `SOURCE_ACTIVE`；新增写集仅为本地 proof mechanics、executor 接线及既有 contract test。
+  Java writer 活动，未运行 Maven/runtime/input。
+
+## 2026-07-17 / CR271 TURN-27 C 已 ACK 并恢复 SOURCE_ACTIVE
+
+- External C 已确认 Amendment #1，解除全部 plan-contract blocker；继续持有 TURN-27 sole owner。
+- 恢复点源码尚未变化：Navigation 2810L/`90f5ea17`，pathing state 202L/`bb4ccebd`；下一步先删除错误
+  active macro，再实现 typed bridge 与 Cloud 只读镜像。
+- Java writer 已恢复，父级不运行 Maven、不审中途 WIP。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 Amendment #1 已冻结，C 恢复 Java
+
+- 父级完成 27/35-37/38-43 传递边界审计：Cloud 只拥有导航业务决策与下一 JSON action；DHXY 现有
+  `GameStateUtil` 起步检测、`WindowTaskRunner` watcher、`WindowRuntimeContext` pathing state 永久保留。
+- bridge 固定为 action JSON 携 intent，positive 本地起步 proof 后登记现有 watcher，后续 metadata 回传 typed
+  snapshot；Cloud state 只是 latest metadata 的只读镜像，不观察、不轮询、不造第二 store。
+- TURN-27 状态改为 `CONTRACT AMENDED / JAVA RESUME / EXTERNAL-C SOLE OWNER`；已通过共享总账发 C 定向消息，
+  下一 heartbeat 可继续同一整卡。active `NAVIGATE_IN_CURRENT_MAP` 仍须归零。
+
+**无已批准业务差异；父级仅修订文档合同，未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 Java halt 已回执
+
+- External C 已接受本地 runner/pathing 边界裁定并执行 `JAVA HALT`；`NavigationService.java` 冻结在
+  2810L/`90f5ea17`，没有继续写入，Cloud watcher 重建设计作废。
+- TURN-27 保持 `PLAN-CONTRACT BLOCKED / JAVA HALT ACKED`，C owner 暂保留、只读等待父级完整传递合同修复。
+  错误 active macro 仍是 WIP finding，尚未修复；不运行 Maven。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 本地 runner pathing 边界触发传递合同阻断
+
+- 用户纠正并由父级源码确认：即时移动事实属于 DHXY 本地 detector；`PATHING_STARTED` 后的 arrival/stopped-away
+  属于本地 `WindowTaskRunner` watcher。Cloud 只消费 typed fact 并选择下一 JSON action。
+- TURN-27 原冻结合同误写为 Cloud state 替代本地 watcher；上一轮 Cloud capture/OCR loop 纠正方案已撤回。
+  已向 External C 发出 `PARENT-TURN27-LOCAL-RUNNER-PATHING-BOUNDARY-HALT`，要求保护 WIP、暂停 Java/test。
+- 当前 `PLAN-CONTRACT BLOCKED / JAVA HALT`，C sole owner 暂保留；父级需完整审计 TURN-27、35/36/37 与
+  38-43 删除链后再冻结合同。active 旧导航宏零调用要求不变，不运行 Maven。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 合同叫停已回执，纠正中
+
+- External C 已 ACK `PARENT-TURN27-ACTIVE-PATH-MACRO-CONTRACT-STOP`，承认 active
+  `NAVIGATE_IN_CURRENT_MAP` 宏封装错误；其余 68 个 input/capture 站点尚未照此错误模式迁移。
+- C 正删除 active macro 路线，恢复 Cloud 持有 696 loop/fallback/retry、通过 exact-bound `TurnGameClient`
+  逐显式 action 下发。C sole owner 与通信正常。
+- 当前错误调用仍存在于源码、named test absent，故合同 finding 保持开放；状态为
+  `COURSE-CORRECTION SOURCE ACTIVE`。不运行 Maven，TURN-35/36/37 继续等待。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 active-path 宏路线合同阻断
+
+- 当前 Cloud WIP 在 `NavigationService.java:563-568` 调用
+  `executeLocalMacro(... LocalMacroKind.NAVIGATE_IN_CURRENT_MAP ...)`，以 120 秒本地宏承载整段 current-map loop。
+- 该实现违反 TURN-27 冻结合同的旧宏 active-path 零调用和逐显式 JSON action 边界。父级已在状态总账向
+  External C 发出 `PARENT-TURN27-ACTIVE-PATH-MACRO-CONTRACT-STOP`，等待下一拍 ACK 和纠正方案。
+- 状态为 `WHOLE-CARD CLAIMED / SOURCE ACTIVE / PLAN-CONTRACT BLOCKING FINDING / EXTERNAL-C SOLE OWNER`；
+  不撤 owner、不拆卡、不运行 Maven。TURN-35/36/37 继续等待 TURN-27 source pass。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 通信恢复、源码继续 active
+
+- External C 已回执父级 owner 裁决与 communication-stale 消息，解除 `COMMUNICATION_STALE`；C sole
+  owner 不变。
+- `CloudNavigationPathingState.java` 保持 202L/`bb4ccebd...`，`NavigationService.java` 已推进到
+  2804L/`ca064bf2...`；三 resolver 仍为领取 SHA，named test 尚不存在。
+- 状态为 `WHOLE-CARD CLAIMED / SOURCE ACTIVE / EXTERNAL-C SOLE OWNER`。保护中途 WIP，不审源码、
+  不撤卡、不拆卡、不双派。Java writer active，未运行 Maven/runtime/input。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-27 claim 竞态裁决：External C sole owner
+
+- TURN-27 开放后 C/D 均尝试 claim。append-only 原卡物理顺序显示 C 的原 claim 先落盘；D 已于 `03:08:30` canonical 自撤并明确 `OWNER=EXTERNAL-C`，C 于 `03:11` re-assert 解除双撤死锁。
+- 父级最终裁决：`WHOLE-CARD CLAIMED / SOURCE ACTIVE / EXTERNAL-C SOLE OWNER`。D 无卡退出；竞态期间双方对六文件写集均为零字节，四旧文件 SHA 未漂移、两 create 文件仍 absent。
+- 保护 C 的完整 TURN-27 写集，不双派、不审 WIP。TURN-35/36/37 继续等待 TURN-27 source pass。
+
+**无已批准业务差异；按唯一业务基线 `696a12b0` 等价迁移。**
+
+## 2026-07-17 / CR271 TURN-26 Parent Review #6 通过；TURN-27 开放
+
+- External B 于 `02:36` canonical 交付 comment-only Repair #4。两处 JavaDoc 已准确，三 test SHA 与 Repair #3 完全一致。
+- TURN-26 最终 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED / OWNER RELEASED`；写集外共享 compile debt 继续独立记录。
+- TURN-27 前置已满足，现为 `WHOLE-CARD SOURCE-START READY / ZERO OWNER`。父级不派卡；Worker 可按原卡 EOF 防竞态自行领取。TURN-35/36/37 继续等待 TURN-27 source pass。
+
+**无已批准业务差异；按唯一业务基线 `696a12b0` 等价迁移。**
+
+## 2026-07-17 / CR271 TURN-26 Repair #4 comment-only source active
+
+- External B 已开始 Review #5 指定的 comment-only 修复：`DialogService.java` 于 `02:29:02` 更新为
+  `5d175fd8...`，`CloudDialogPreparedActionState.java` 于 `02:29:11` 更新为 `169d4382...`。
+- 三份 test SHA 保持 `2e35148f...` / `87145468...` / `b970cf83...`，符合“禁止改 production/test 行为”的
+  返修边界。当前尚无 canonical Repair #4 delivery，不提前审核或释放 owner。
+- Java writer 活动中，不运行 Maven/JUnit/compile/runtime/input；TURN-27 与 35/36/37 继续等待。
+
+**无已批准业务差异；父级未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-26 Parent Review #5：comment-only 整卡返修 #4
+
+- External B 于 `02:30` canonical 交付 Build Repair #3 并回执父级消息，`COMMUNICATION_STALE` 已解除。
+  父级核实 return-bound、window/HWND/intent no-clear 与 public `handleDialog` objective READ positive 均已闭合。
+- 结论 `P0/P1/P2=0/0/2 / BLOCKED`：`DialogService.publishPreparedDialogAction` JavaDoc 仍称 caller
+  收到未绑定原 Optional；`CloudDialogPreparedActionState` 类 JavaDoc 仍称自身不校验 window binding，均与当前
+  safety-sensitive 实现相反。Build Repair #4 仅修这两处注释，不改业务字节。
+- 已运行授权 `mvn -q -Dtest=DialogOptionTurnContractTest test`，但在 test 执行前被 TURN-26 写集外共享编译债阻断：
+  `TextCandidateScanStatus`、`GameClientTracker`、`BagService`、`NavigationService` 等缺失符号。该结果不是 TURN-26
+  finding；待共享 compile debt 闭合后复跑。
+- 同一整卡返 External B，不拆卡、不换 owner、不创建 reviewer。TURN-27 与 35/36/37 继续等待 source pass。
+
+**无已批准业务差异；按唯一业务基线 `696a12b0` 等价迁移。**
+
+## 2026-07-17 / CR271 TURN-26 Repair #3 源码活动恢复
+
+- `DialogService.java` 于 `02:17:32` 更新为 SHA `b28b1335...`，`DialogOptionTurnContractTest.java` 于
+  `02:18:48` 更新为 SHA `2e35148f...`；Repair #3 已恢复真实 production/test 写作，解除 `ACTIVE_STALE`。
+- External B 尚未在共享总账回执 `PARENT-TURN26-REVIEW4-REPAIR3` 与 stale escalation，故
+  `COMMUNICATION_STALE` 保持。canonical whole-card owner 不变；当前仅保护 WIP，不做中途源码审核。
+- TURN-27 与 TURN-35/36/37 继续等待完整交付和父级 source pass。Java writer 活动中，不运行
+  Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；本轮仅同步协调状态，未由父级修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-26 Repair #3 通信与活动停滞
+
+- 父级 `02:03` 写入 `PARENT-TURN26-REVIEW4-REPAIR3` 后已连续两个 5 分钟审计周期无 External B
+  `ack_parent_message`；五文件 SHA/mtime 仍为交付快照，Repair #3 无新源码/test 字节。
+- 依总账规则标记 `COMMUNICATION_STALE + ACTIVE_STALE / EXTERNAL-B OWNER`。这不撤销 canonical owner，
+  不把整卡重派给其他 Worker；B 回执或恢复写作后立即解除相应 stale。
+- TURN-27 与 TURN-35/36/37 继续等待 TURN-26 source pass。Java writer 状态无法确认，本轮未运行
+  Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；本轮仅同步协调状态，未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-26 Parent Review #4：整卡返修 #3
+
+- External B 于 `02:22` canonical 交付 Build Repair #2；父级复算三份变更文件与两份冻结 test 的行数/SHA，
+  并逐文件对照 `696a12b0` prepared-action binding、consume fence、objective READ 业务路径。
+- 结论 `P0/P1/P2=0/1/2 / BLOCKED`：`publishPreparedDialogAction` 发布 bound clone 却返回未绑定原对象，
+  与 named test 的 exact window/HWND 断言直接矛盾；mismatch test 缺 wrong-window/wrong-HWND/wrong-intent
+  no-clear；objective READ 正例反射调用 private `handleStoryObjective`，未覆盖要求的 public `handleDialog`。
+- 同一整卡返 External B 做 Build Repair #3，不拆卡、不换 owner、不创建 reviewer。TURN-27 与 TURN-35/36/37
+  继续等待 TURN-26 source pass。源码审查已阻断，本轮未运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；按唯一业务基线 `696a12b0` 等价迁移。**
+
+## 2026-07-17 / CR271 TURN-26 源码活动恢复、通信仍停滞
+
+- External B 的唯一 named test 于 `01:57:31` 从 1,706 行/`aa5576cd...` 增至 1,916 行/`d208c1d2...`，
+  证明 Repair #2 已恢复真实写作；`DialogService` 与 prepared state 仍保持 3,081 行/`6b3c41dd...`、
+  212 行/`115d35aa...`。
+- 状态调整为 `SOURCE_ACTIVE_RECOVERED / COMMUNICATION_STALE / EXTERNAL-B OWNER`。B 尚未在总账回执父级
+  01:05/01:22/01:28 消息，也未 canonical delivery；因此只保护 WIP，不做中途源码审核、不撤 owner、不双派。
+- Java writer 已恢复，继续禁止 Maven/JUnit/compile/runtime/input。TURN-27 及 TURN-35/36/37 仍等待 TURN-26
+  完整交付和父级通过。
+
+**无已批准业务差异；本轮仅同步协调状态，未修改 Java/test 字节。**
+
+## 2026-07-17 / CR271 TURN-36 零字节归还已接受
+
+- External C 已 canonical 零字节归还 TURN-36；production `287ff0eb...`/2,775L、test absent，owner 释放。
+- TURN-35/36/37 现统一 `PLAN-CONTRACT BLOCKED / ZERO OWNER`，等待 TURN-26 -> TURN-27；无 Task writer 占卡。
+
+## 2026-07-17 / CR271 Whole Task 计划合同统一修复
+
+- External d canonical 零字节归还 TURN-37；父级接受四类阻断，并确认同一缺口影响 TURN-35/36。
+- 35/36/37 恢复以 TURN-26+27 为 source gate。TURN-27 固定原卡已冻结：新增唯一 exact-context、无 TTL 的
+  `CloudNavigationPathingState`，承担 pathing intent/snapshot；Task 禁止复制本地 runner/event bus/runtime。
+- TURN-35/37=`PLAN-CONTRACT BLOCKED / ZERO OWNER`。TURN-36 仍由 C canonical 持有，但已写
+  `OWNER RETURN REQUIRED`；C 必须零字节归还，归还前不撤 owner、不双派。
+- transaction wrapper 后续仅机械移除本地调度 ownership；每 phase 恰好执行一次及原 result/yield/park/retry/
+  fallback 次数顺序全部冻结。holder/runtime 诊断改显式 context；prepared/pathing 分别只读 26/27 唯一 state。
+
+**无已批准业务差异；本轮零 Java/test 修改，未运行 Maven/runtime/input。**
+
+## 2026-07-17 / CR271 TURN-26 活动与通信双停滞
+
+- B 对 01:05 Review #3 和 01:22 定向追问均未写 heartbeat 回执；`DialogService` 自 01:12:33 后保持
+  3,081 行/`6b3c41dd...`，prepared state 保持 212 行/`115d35aa...`，test 保持 1,706 行/`aa5576cd...`。
+- 已按协议升级为 `ACTIVE_STALE + COMMUNICATION_STALE`，再次要求下一拍回报 method/blocker，无法继续则
+  canonical 整卡归还。当前 B owner 未撤销，也没有把 TURN-26 重派给其他 Worker。
+- C=TURN-36、d=TURN-37 均已在总账写入完整只读迁移勘察，虽尚无 production/test 字节变化，但有新事件，
+  不属于停滞；TURN-35 继续 `READY / ZERO OWNER`。
+
+**本轮只更新协调状态；零 Java/test 修改，未运行 Maven/runtime/input。**
+
+## 2026-07-17 / CR271 TURN-26 通信停滞告警
+
+- B 的 TURN-26 Repair #2 production 仍有真实增量，canonical owner 与 `REPAIR_ACTIVE` 保持。
+- 但 01:05 父级 Review #3 消息连续两轮没有 heartbeat 回执，状态总账按规则标记
+  `COMMUNICATION_STALE`，并于 01:22 再次定向要求报告当前 method/SHA/阻断。
+- 该告警不撤销 owner、不要求停笔，也不影响 C=TURN-36、d=TURN-37 并行 source-start。
+
+## 2026-07-17 / CR271 并行 Whole Task 已领取
+
+- External d 于 `01:15` canonical 领取 TURN-37（Xiuluo）；External C 于其 Worker 时钟 `01:19:30`
+  canonical 领取 TURN-36（FiveRing）。两个原卡 physical EOF 均确认唯一 owner，领取 SHA 与冻结值一致。
+- 两张 Task production/test 尚无字节变化，当前只确认 claim，不冒充实现进度；TURN-35 继续
+  `WHOLE-CARD SOURCE-START READY / ZERO OWNER`。
+- External B 的 TURN-26 Repair #2 已有真实 production 增量：`DialogService` 3,081 行/`6b3c41dd...`，
+  `CloudDialogPreparedActionState` 212 行/`115d35aa...`。保持 B sole owner，不审中途 WIP。
+- 当前三个 Java writer 写集互斥；写作期间不运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；修罗/五倍按 `696a12b0`，五环按冻结业务顺序。**
+
+## 2026-07-17 / CR271 三大 Whole Task 解除错误串行
+
+- 父级传递审计确认 TURN-35/36/37 各自只写一个 Task 主文件和一个唯一 named test，三套写集互斥，也与
+  External B 的 TURN-26 写集互斥。
+- TURN-26/27 从三卡 `sourceDependsOn` 移至 `approvalDependsOn`：其 public Task caller surface 冻结，最终
+  source pass 仍是批准门，但不再阻止三张完整 Task 卡并行源码迁移。
+- `TURN-35/36/37` 已同时开放 `WHOLE-CARD SOURCE-START READY / ZERO OWNER`；Worker 通过状态总账得知后
+  自行防竞态 canonical claim，父级不派卡、不拆 fragment。
+- 三卡领取 SHA：Wubei `dfde0ad0...`/4,329 行；FiveRing `287ff0eb...`/2,775 行；Xiuluo
+  `46f96659...`/4,225 行；三个 named test 当前均不存在，分别由完整卡 sole owner 创建。
+
+**无已批准业务差异；五倍/修罗严格按 `docs/业务逻辑.md` 与 `696a12b0`，五环按冻结现有顺序。**
+
+## 2026-07-17 / CR271 TURN-26 Parent Review #3：整卡返修 #2
+
+- External B 于 `00:50` canonical 交付 TURN-26 Build Repair #1；五文件 SHA/行数与报告一致。
+- 父级结论 `P0/P1/P2=0/2/1 / WHOLE-CARD BUILD REPAIR #2 REQUIRED`。
+- `CloudDialogPreparedActionState.publish` 在 production 零调用，测试手动 publish 掩盖真实 prepared fast path 永远
+  absent；window/HWND/intent fence 又晚于 CAS consume，错误 action 会先清槽再拒绝。
+- objective 只有 end-to-end miss，正例直调 recognizer；proof 缺 null 负例。整卡返 B，TURN-27 继续等待。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-17 / CR271 External Worker 状态总账启用
+
+- 新增固定总账 `docs/superpowers/plans/reports/CR271_EXTERNAL_WORKER_STATUS.md`。
+- A/B/C/D 必须在 heartbeat/claim/source/delivery/return/repair/idle/capacity 变化时向总账 EOF 追加标准事件；
+  active 连续 15 分钟无字节也必须写精确阻断，不能只保留聊天或记忆。
+- 原卡 EOF 仍是 owner 唯一权威；父级每 5 分钟联合核对总账、88 卡、原卡 EOF 与源码。active 超过 10 分钟
+  无事件且无源码变化标记 `ACTIVE_STALE`，不再把旧 monitor 冒充工作状态。
+- 总账现为双向通道：父级在 EOF 写定向 `PARENT MESSAGE`，Worker 下一轮 heartbeat 必须用
+  `ack_parent_message` 回执；禁止要求用户转发。
+- 当前快照：A=`IDLE_CAPACITY`，B=`TURN-26 SOURCE_ACTIVE`，C=`IDLE_STATUS_REFRESH_REQUIRED`，
+  D 已 fresh 回执为 `IDLE_NO_READY_CARD / ENOUGH_WHOLE_CARD`。
+
+**该总账只做状态可见性，不派卡、不替代 canonical claim。**
+
+## 2026-07-17 / CR271 TURN-26 已由 External B 自领
+
+- External B 于 `00:36:41` 在 TURN-26 原卡 physical EOF canonical 领取完整 Build Repair #1，成为 sole owner。
+- 首窗已有真实 production 增量：`DialogService.java` 现约 3,072 行，新增
+  `CloudDialogPreparedActionState.java` 约 169 行；三份测试保持领取快照，属于中途 WIP，不做源码审核。
+- 写集为完整 DialogService/prepared-action state/三测试合同；禁止拆卡、第二协议/store、TTL/session/ledger。
+- B 写作期间不运行 Maven；TURN-27 继续等待 TURN-26 source/final API。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-17 / CR271 TURN-28 Parent Review #3 通过；TURN-26 已开放
+
+- TURN-28 Repair #5 十文件复算一致，父级源码结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；
+  External d owner 释放，不建额外 reviewer。
+- 第三 typed recognizer seam、yellow-name public-path HIT/重试预算与 public 6 参 `@Autowired` 均闭合。
+- 授权 named test `exit 1`，在测试前被 `TextCandidateScanStatus` 与 Wubei/Navigation/FiveRing 缺类等共享
+  Cloud main compile 债阻断；错误未指向 TURN-28 文件，source pass 保持。
+- TURN-26 前置 gate 自动满足，现为 `WHOLE-CARD BUILD REPAIR #1 READY / ZERO OWNER`，Worker 自领；
+  TURN-27 仅继续等待 TURN-26。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-17 / CR271 TURN-28 Parent Review #2：整卡返修 #5
+
+- External d 于 `00:06` canonical 交付 Repair #4；十文件 SHA/行数复算与报告一致。
+- 父级结论 `P0/P1/P2=0/2/0 / WHOLE-CARD BUILD REPAIR #5 REQUIRED`。
+- yellow-name HIT 仍被 `SmartClickRecognizer` 内静态 OCR 隔离，唯一 test 明示 residual；Repair #5 允许在
+  `NpcClickService` 增加第三个 package-private typed recognizer seam，生产逐次绑定真实 static facade。
+- `NpcClickService` 现有 public 6 参 + package-private 8 参双构造却无 Spring 构造选择；public 生产构造须显式
+  `@Autowired`，test 构造保持非 public/非候选。
+- 同一卡返 External d，不拆卡、不换 owner、不建 reviewer；TURN-26/27 继续等待 TURN-28 source pass。
+  本轮 source 已阻断，未运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Plan Amendment #5：同包测试路径已裁决
+
+- d 于 `23:34` 报告 package-private seam 对旧 cloudbrain test package 不可见；父级确认 finding。
+- 唯一 named test 迁至 `src/test/java/com/bot/dhxy/service/NpcClickTurnContractTest.java`，旧路径删除，
+  类名与授权命令不变；seam 和 8 参构造保持 package-private，不扩 public API。
+- 同步要求合并两个重复 `PipelineHarness`，并把 `StubDialogService` 从过期 12 参改为当前真实 9 参构造。
+- External d 保持 Repair #4 sole owner/source-active，无需归还重领；写作期间不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Repair #4 已由 External d 自领
+
+- External d 于 `23:24:30` 在原卡 physical EOF canonical 领取完整 Repair #4，成为 sole owner/source-active。
+- 领取点九 production SHA 与父级冻结值一致，唯一 test `1c4a9474...`/34 tests；既有 A/C WIP 全部保留。
+- `NpcClickService.java` 已产生首窗真实 Amendment #4 seam 增量；父级不审中途 WIP、不双派。
+- 写作期间不运行 Maven/JUnit/compile；TURN-26/27 继续等待 TURN-28 source pass。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Plan Amendment #4：Repair #4 已开放
+
+- 父级接受 External C `23:16:30` canonical 整卡归还，释放 owner；九 production SHA 冻结，保留唯一 test
+  `1c4a9474...`/34 tests、七个 public-path 维度和 exact-origin WIP。
+- 传递审计确认剩余阻断是 test-only 合同无法向静态 OCR 与 direct-combat status observation 提供确定输入，
+  不是必须启动 OCR sidecar/runtime 的业务阻断。
+- Repair #4 只允许在 `NpcClickService` 内增加 package-private OCR-word/status-observation 叶子 seam；production
+  构造仍逐次绑定真实 `LocalOcrClient.readWords`/`PlayerStateService` mode probe，禁止缓存、重试、短路或复制算法。
+- 状态 `WHOLE-CARD BUILD REPAIR #4 READY / ZERO OWNER`，Worker 自领；不降低 P1-1 全矩阵，不启 server，
+  TURN-26/27 继续等待 TURN-28 source pass。本轮仅修文档合同，未运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Repair #3 已由 External C 自领
+
+- External C 于 `22:29:29` 在原卡 physical EOF canonical 领取完整 Repair #3，成为 sole owner/source-active。
+- 领取点与 A capacity return 一致：test `83214018...`/1,102 行/27 tests，OcrRoiMemory
+  `22e12c52...`/1,791 行，其余 production/model SHA 保持冻结。
+- C 保留已闭合 `@TempDir` path seam 与 mask 四边，只补唯一 named test 的完整 public NpcClick pipeline
+  矩阵和 exact-metadata real-path origin。不审中途 WIP、不运行 Maven。
+- TURN-26/27 继续等待 TURN-28 source pass；父级不派卡、不建 reviewer。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34C named-test 门被共享 Cloud compile 债阻断
+
+- 稳定写者窗口执行 `mvn -q -Dtest=AutoBattleTaskTurnContractTest test`，结果 `exit 1`，未进入 test。
+- main compile 首错为 `TextCandidateScanResult` 缺 `TextCandidateScanStatus`；Wubei/Navigation/FiveRing 还缺
+  tracker/input/window/runtime 等未迁移类型。输出未指向 TURN-34C production/test。
+- TURN-34C source review `0/0/0 PASSED` 与 owner 释放保持；构建状态改为
+  `NAMED TEST+CLOUD COMPILE BLOCKED BY SHARED CLOUD COMPILE DEBT`，不退本卡返修。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Repair #3 capacity return 已接受
+
+- External A 于 `22:22:46` canonical 整卡归还，owner 已释放；这不是 delivery 或 source pass。
+- 保留已完成 WIP：`OcrRoiMemoryService` test-only path seam + `@TempDir` 关闭真实用户数据风险；mask test
+  已补四边、exclusive 相邻点与 edge clamp。
+- P1-1 完整 public NpcClick pipeline 矩阵和 P2-1 exact-metadata real-path origin 仍未完成。
+- 状态恢复 `WHOLE-CARD BUILD REPAIR #3 READY / ZERO OWNER`，External Worker 自领；父级不派卡、不拆卡、
+  不建 reviewer。TURN-26/27 继续等待 TURN-28 source pass。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34C Parent Review #1：源码通过
+
+- External d 于 `22:20` canonical 交付 Build Repair #1；父级复算 production `e1879ed9...`/326 行与唯一
+  named test `fa20cd29...`/1,052 行/32 tests 均与报告一致。
+- Verdict：`P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED / NAMED TEST+CLOUD COMPILE PENDING`。
+  startup seam 只机械绑定真实 service，同一字段/调用点；legacy-only diagnostic 已删除，冻结 696 task
+  orchestration 全矩阵由 public-path tests 覆盖。
+- External d owner 已释放，不建额外 reviewer。真实 startup authority/runtime 仍归 TURN-38B3/40B。
+- TURN-28 仍等待 External A 的 Repair #3；共享 Java writer 门未稳定，本轮未运行 Maven/JUnit/compile。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34C 注册表 stale owner 纠正
+
+- 原卡 physical EOF 证明 External d 已于 `22:07:20` canonical 领取 Repair #1，不是 READY/零 owner。
+- Cloud `AutoBattleTask.java` 已从领取点 294 行/`e13bfff7...` 增量到 326 行/`e1879ed9...`；唯一
+  `AutoBattleTaskTurnContractTest.java` 当前仍不存在，属于中途 WIP，不做源码审核。
+- 第 16 节已纠正为 `WHOLE-CARD BUILD REPAIR #1 SOURCE-ACTIVE / EXTERNAL-d OWNER`。继续保护 sole writer；
+  TURN-28 维持 Review #1 `0/2/1` 并等待 A 的 Repair #3。Java writer 活动中不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 Parent Review #1：整卡测试源码不通过
+
+- External A 的 Repair #2 十文件行数/SHA 与 canonical delivery 一致；九 production 文件当前冻结。
+- Verdict：`P0/P1/P2=0/2/1 / WHOLE-CARD BUILD REPAIR #3 REQUIRED`。唯一 named test 对 public
+  `clickNpcSmart(...)` 调用为 0，冻结 FIFO/TENTATIVE、一次 Alt+C、策略预算、1/9/17 Ctrl、dialog/combat
+  reads、pending proof 主矩阵没有 executable coverage。
+- test 还直接 move/delete 固定 production `config/vision_memory.json`/legacy 文件，可能在 crash/并发时破坏
+  用户数据；五 mask 只测内部点，未锁边界，full-window fallback 也未穿透真实 NpcClick exact-metadata origin
+  接线。
+- 同一完整卡返原 External A 做 test Repair #3；不拆卡、不派卡、不建 reviewer。TURN-26/27 继续等待
+  TURN-28 source gate。External d 的 TURN-34C writer 活动中，本轮未运行 Maven/JUnit/compile。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34C Plan Amendment #1：startup DAG 解环
+
+- External d 于 `22:01:30` canonical 零字节归还 TURN-34C；production 仍 `e13bfff7...`/294L，test ABSENT。
+- 父级确认缺口：真实 `TaskStartupCheckService` 不可从原 test package 构造，且 dual-path authority 属后续
+  TURN-38B3；若强制 34C 正向穿透会形成 `34C -> 38A -> 38B3 -> 34C` 环。
+- 修订为验收分层：`AutoBattleTask` 可增加 package-private scripted startup-check collaborator seam；public
+  production constructor 保持真实 `TaskStartupCheckService::checkAutoBattle`。唯一 test 路径改为
+  `src/test/java/com/bot/dhxy/task/AutoBattleTaskTurnContractTest.java`，只验 task orchestration；真实 startup
+  dual-path/context/authority/runtime integration 留 TURN-38B3/40B。
+- 授权在 AutoBattleTask 写集内删除唯一 legacy-only `logWindowContext(context)` 诊断调用；现有
+  `context.getLogPrefix()` 日志保留，零业务分支/时序变化。
+- TURN-34C 恢复 `WHOLE-CARD BUILD REPAIR #1 READY / ZERO OWNER`，Worker 自领。TURN-28 A 继续 source-active。
+
+## 2026-07-16 / CR271 TURN-28 与 TURN-34C 已并行领取
+
+- External A 于 `21:52:53` canonical 领取完整 TURN-28 Build Repair #2 十文件写集，成为 sole owner。
+- External d 于 `21:56:10` canonical 领取完整 TURN-34C，冻结 start 为 `AutoBattleTask.java`
+  `e13bfff7...`/294L、唯一 named test ABSENT-to-create，成为 sole owner。
+- 两卡写集互斥，均为 source-active；中途 WIP 不审，等待各自 canonical delivery/return。当前不运行 Maven。
+
+## 2026-07-16 / CR271 全注册表问题审计：TURN-28 Repair #2 与 TURN-34C 并行开放
+
+- TURN-28：接受 External A `21:20:46` canonical 整卡归还；A 已在写集内落盘 byte-exact
+  `RecordResult.java`，其余 WIP 全保留。第二阻断只涉及 `OcrWindowScanService` 三个纯静态 API：
+  `defaultMaskedWindowRegion`、`isDefaultMaskedWindowRegion`、`copyWithDefaultMasks` 及固定五块白色 mask。
+  Amendment #3 将这一 baseline-exact 静态子集加入写集，明确禁止移植其 DHXY tracker/capture/context
+  实例依赖，状态恢复 `WHOLE-CARD BUILD REPAIR #2 READY / ZERO OWNER`。
+- TURN-34C：重核注册表确认 `TURN-19/21/22/23/34A/34B` 均已父级 source review passed，不应继续停在
+  `PLANNED`。已创建固定原卡，冻结 Cloud `AutoBattleTask.java` 294 行/SHA `e13bfff7...`、唯一 named test
+  当前 ABSENT；状态 `WHOLE-CARD SOURCE-START READY / ZERO OWNER`。
+- 两卡 production/test 写集零交集，可由两个 External Worker 分别自行在原卡 physical EOF canonical claim；
+  父级不发卡、不创建 Worker/reviewer。TURN-28 source pass 后仍自动解锁 TURN-26。
+- 本轮只改计划/卡片/状态并刷新 dashboard；不改 Java、不运行 Maven/JUnit/runtime/input，零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-28 计划合同修复：恢复整卡自领
+
+- 父级接受 External C 于 `21:04:50` canonical `WHOLE-CARD OWNER RETURNED / PLAN-CONTRACT BLOCKED`；
+  C owner 已释放，五个 WIP 文件原样保留，但不构成交付、审核或批准。
+- 对 `696a12b0` 完整依赖复核确认 Cloud 不仅缺 `OcrRoiMemoryService`/`RecordResult`，还缺
+  `LearnedNpcClickPoint` 与 `ResolvedNpcClickRegion`。四者全部加入原 TURN-28 整卡写集，避免再次半途
+  触发冻结写集阻断。
+- `OcrRoiMemoryService` 必须保留基线 typed `config/vision_memory.json`、policy/sample 顺序、阈值、trim、
+  atomic save 与 learned-memory fallback。唯一允许适配：`recommendNpcClickRegions(...)` 额外接收 caller
+  从当前 exact `TurnWindowMetadata.windowRect.left/top` 得到的 screen-absolute origin；删除 DHXY
+  `GameClientTracker`/`WindowTaskContextHolder` fallback 与死 `TextRecognizer` import。禁止 stub、恒 null、
+  第二 store、JsonNode 替代或新增业务判断。
+- TURN-28 现为 `WHOLE-CARD BUILD REPAIR #1 READY / ZERO OWNER`，External Worker 自行在原卡 true EOF
+  canonical 领取；父级不发卡、不建 reviewer。TURN-28 source pass 后 TURN-26 自动转 READY。
+- 本轮仅修改计划/卡片/状态文档并刷新 dashboard；不改 Java，不运行 Maven/JUnit/runtime/input，零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-23 Parent Review #5：源码通过
+
+- External B Repair #4 四文件 SHA/行数与报告一致；三 production SHA 保持 Review #4 冻结，唯一 test
+  `421fbbe1...`/1,646 行。
+- wrong step index/status、FAILED status mismatch、decoded PNG dimension mismatch 均以 deterministic reply
+  命中 production fail-closed；stop/fatal 每案断言一条 command、一枚 UUID、零 retry及旧位置不变。
+- Verdict：`P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`，External B owner 释放；用户取消
+  额外 reviewer。C 的 TURN-28 仍为 active writer，named test/Cloud compile 留 stable-writer gate。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-23 Parent Review #4：整卡 Build Repair #4
+
+- External B Repair #3 四文件 SHA 与报告一致；production raw-result seam、11 参数 reflection 已删除，真实
+  template/OCR recognizer 链与 FAILED `size()==1` 修复通过源码复核。
+- Verdict：`P0/P1/P2=0/1/0 / WHOLE-CARD BUILD REPAIR #4 REQUIRED`。唯一 named test 仍缺 wrong step
+  index、wrong step status、metadata/SHA 正确但 decoded PNG dimension 错配三类冻结行为负例；stop/fatal
+  helper 也未逐案断言 UUID=`1`。
+- 三个 production SHA 冻结，同卡返 External B 补完整 negative matrix，不拆卡、不换 owner；父级不发卡、
+  不建 reviewer。C 的 TURN-28 active writer 期间不运行 Maven/JUnit/compile/runtime/server/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-23 Parent Review #3：整卡 Build Repair #3
+
+- External B 已 canonical 交付 Repair #2；父级复算四文件 SHA/行数与报告一致，并逐文件审核 production、
+  唯一 named test 和 `696a12b0` current-location 基线。
+- Verdict：`P0/P1/P2=0/2/1 / WHOLE-CARD BUILD REPAIR #3 REQUIRED`。正向 template/OCR 测试通过
+  public `RawLocation` seam 直接制造中间结果，真实 production recognizer 仅覆盖空图 miss；FAILED terminal
+  未拒绝 extra step，且 action/step/ROI/frame metadata/dimension 负例矩阵不完整；新增 seam 还依赖 private
+  constructor reflection。
+- 同卡返 External B：删除 raw-result seam，`syncMyPosition()` 只走 production recognizer；补真实 production
+  template/OCR 正向 fixture 与完整 exact-shape negatives。若 fixture/sidecar 在授权边界不可达，canonical
+  `PLAN-CONTRACT BLOCKED` 交父级修计划，不用假结果占位。
+- C 的 TURN-28 仍为 active writer，本轮未运行 Maven/JUnit/compile/runtime/input；父级不发卡、不建 reviewer。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34B Parent Review #4：源码通过
+
+- External A 已交付 Repair #2；父级复算 production `8d79d198...`/1,400 行冻结，唯一 test
+  `1c344e48...`/1,551 行/59 tests。
+- Review #3 唯一 P2 已闭合：public surface 计数改为 `getMethods()` + declaring-class 过滤，全文件
+  `getDeclared*`/`setAccessible`/`Unsafe` 为零。
+- Verdict：`P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`，A owner 已释放；用户取消额外
+  reviewer。C 的 TURN-28 仍为 active writer，本轮未运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34B Parent Review #3：同卡 Repair #2
+
+- External A 已 canonical 重交实际磁盘 production `8d79d198...`/1,400 行与唯一 test
+  `0edfb55c...`/1,547 行/59 tests；父级按现盘重新逐文件审核。
+- Verdict：`P0/P1/P2=0/0/1 / WHOLE-CARD REPAIR #2 REQUIRED`。test 第 173 行仍用
+  `getDeclaredMethods()` 枚举 production 私有成员，但报告声明“私有反射=0”。
+- 同卡返 A，仅把 public-surface 计数改为 `getMethods()` + `declaringClass == TaskMaintenanceService.class`，
+  并确保全部 `getDeclared*`/`setAccessible`/`Unsafe` 为零；production 冻结，不拆卡、不建 reviewer。
+- C 的 TURN-28 仍是 active Java writer，本轮未运行 Maven/JUnit/compile/runtime/input，零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34A Parent Review #3：源码通过并修正验收归属
+
+- External A 于 `19:11:39` canonical 交付 TURN-34A Repair #1；父级复算 production
+  `532e6f84...`/852 行冻结，唯一 named test `a88d2943...`/2,227 行/39 tests。
+- Review #2 的复制 caller reducer、expiry 冒充、source-gate 缺失与 reflection 口径问题均已闭合；父级结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`，A owner 释放，不创建额外 reviewer。
+- 原计划不可达部分已裁决：真实 caller 消费归现有 34C/35/36/37 TASK 卡；无 clock seam 的墙钟分支按
+  deadline/gate 合同验收；legacy authority 由 constructor/public surface gate 与父级静态审查证明，继续禁止
+  source-string scan。
+- A 释放后，TURN-34B 字节漂移返修转为 `SAME-CARD REPAIR READY / ZERO OWNER`，仅原合法交付者自行
+  canonical claim；父级不派卡。C 的 TURN-28 仍在写作，本轮未运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-23 计划合同修复、TURN-28P 状态纠正
+
+- TURN-23 的 current-location 缺口已在原完整卡闭合：复用现有 generic exact-window raw-PNG CAPTURE，Cloud
+  新增 `CloudPlayerStateLocationPort` 与同包 `PlayerStateLocationRecognizer`，复用现有 MiniMap recognition/
+  map-transform 资产；不改 DHXY/protocol、不新增第二协议或 local-service operation。状态现为
+  `WHOLE-CARD BUILD REPAIR #2 READY / ZERO OWNER`，外部 Worker 自行 canonical claim，父级不派卡。
+- TURN-28P 已核原卡 true EOF：Euler Repair #2 交付后 Parent Review #4 为 `P0/P1/P2=0/0/0`，owner 已释放；
+  第16节过期 `Euler ACTIVE` 已纠正为 `SOURCE+TEST SOURCE REVIEW PASSED / BUILD PENDING`。
+- 本轮仅修计划/卡片/状态文档，不改 Java/test，不运行 Maven/runtime/input，零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34A Parent Review #2：整卡返修
+
+- External A 于 `18:59:02` canonical 交付完整 TURN-34A；父级复算 production `532e6f84...`/852 行冻结，
+  唯一 named test `8133f2db...`/2,235 行/38 tests。
+- Verdict：`P0/P1/P2=0/3/1 / WHOLE-CARD REPAIR #1 REQUIRED`。三项 P1：test-private
+  `callerWakeClamp/autoBattleParkMs/fiveRingNextPhase` 冒充四个真实 caller；卡片点名的 15s/4s/40s/10s
+  expiry 分支明确未执行；named-test legacy authority/source gate 被明确省略。P2 为报告称零反射但源码使用 public
+  reflection。
+- 同一完整卡返 External A，production 保持冻结；若真实 caller/expiry/source gate 在当前 no-reflection/no-source-
+  guard/no-clock-seam 写集内不可达，必须报告计划合同阻断，由父级改写归属，不得复制 reducer 或冒充 matrix closed。
+- C 的 TURN-28 仍为 active Java writer，本轮未运行 Maven/JUnit/compile/runtime/input；零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34A/34B owner 状态纠正
+
+- External A 已完成并释放 TURN-34B 的合法交付 owner，随后于 `18:24:36` canonical claim 完整 TURN-34A；
+  A 当前唯一 owner 卡是 TURN-34A，正在修改其唯一 named test，尚未交付。
+- TURN-34B 在通过快照 `471cd324...` 后被 `REVOKED / NEVER OWNER` 的 d 覆盖为 `0edfb55c...`；d 不获得
+  ownership。当前状态为 `POST-REVIEW BYTE-DRIFT / REPAIR BLOCKED / ZERO OWNER`。
+- 严格单 owner 下，A 做 TURN-34A 期间不能同时接回 TURN-34B；TURN-34B 不开放给其他 Worker。待 A 完成或
+  释放 TURN-34A 后，再由原交付者按同卡返修规则自行 canonical claim，父级不派卡。
+- 本轮只纠正文档状态，不改 Java/test、不运行 Maven/runtime/input、零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-26/28 计划合同死锁修复
+
+- 用户明确授权父级修权威计划，但禁止父级派卡；External Worker 只从第 16 节自行领取明确
+  `READY / ZERO OWNER` 的完整卡。
+- 已解除循环：`TURN-28` source-start 删除 `TURN-26` 前置，External C 的连续 owner/WIP 保持有效；同卡新增
+  canonical objective typed API 与 exact-window pending proof-token read API acceptance。
+- `TURN-26` 状态改为 `PLAN-CONTRACT REPAIRED / WAITING TURN-28 SHARED-API SOURCE GATE / ZERO OWNER`；
+  新增 exact-window `CloudDialogPreparedActionState` 及两份旧 test 构造修复写集。TURN-28 shared API 父级 source
+  pass 后自动转 `READY / ZERO OWNER`，父级不指定领取者。
+- 撤销 Parent Review #2 的 scale finding：HTTPS turn 使用未缩放 screen-absolute 坐标，固定 `bottom - 40`
+  为批准的 exact mapping，不扩 `TurnWindowMetadata` DPI/scale。
+- 本轮只改 Markdown/计划/dashboard，不改 Java、不运行 Maven/runtime/input、零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34B Parent Review #2：整卡源码通过
+
+- External A 于 `18:16:42` canonical 交付完整 TURN-34B Repair #1；父级复算 production
+  `8d79d198...`/1,400 行保持冻结，唯一 named test `471cd324...`/1,377 行/52 tests。
+- 逐文件复审结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`：Review #1 的 broadcast、Summon
+  eligibility、exact metadata fence、deterministic tail-cache、capability lifecycle/isolation 与 private reflection
+  六项 finding 全部闭合。
+- A 在 `18:00:20` 先 canonical claim，d 的 `18:01:30` 后置同卡 claim 无效并正式撤销；A 是唯一有效交付者，
+  source pass 后 owner 释放。用户取消额外 reviewer，本卡只待 stable-writer named test/Cloud compile。
+- 本轮未运行 Maven/JUnit/compile/runtime/input；零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-26 Parent Review #2：整卡返修
+
+- External B 于 `18:02:30` canonical 交付完整 TURN-26；父级复算 production/test SHA 一致，逐文件审核结论
+  `P0/P1/P2=0/6/0 / WHOLE-CARD REPAIR #1 REQUIRED`。
+- 45+2 个 DHXY-only mechanics 引用已移除，但 production 引入四条未批准退化：story objective 恒 fatal、
+  prepared remembered-route 恒旁路、SmartClick proof token 恒 null、story click DPI offset 固定 40；两份既有
+  named test 仍按 14 参数构造当前 9 参数 `DialogService`，唯一新 test 也未覆盖四条退化。
+- 同一完整卡退 External B，不拆 fragment；若冻结写集无法承载 typed producer/state/scale，必须整卡 canonical
+  归还为 PLAN-CONTRACT BLOCKED，不能以占位交付。用户取消额外 reviewer，修复后仅由父级本人复审。
+- TURN-34B 已有 active Java claim，本轮未运行 Maven/JUnit/compile/runtime/input；零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34A/34B 父卡状态归一化
+
+- 用户批准解除两张父卡的历史计划锁，父级只改卡面状态，不发卡、不替 Worker claim。
+- `TURN-34A`：撤销 AT 分片作为后续 implementation assignment；保留 production `532e6f84...` 与已通过
+  test `bf7a671f...`，状态改为 `WHOLE-CARD SOURCE-START READY / ZERO OWNER`。下一 owner 必须整卡收口
+  剩余父级 acceptance matrix，不再拆卡。
+- `TURN-34B`：Parent Review #1 后 C 无 active implementation task、无 Repair #1 claim/增量，旧 owner 释放；
+  状态改为 `WHOLE-CARD REPAIR #1 READY / ZERO OWNER`。production `8d79d198...` 冻结，`0/5/1`
+  六项 test/report 返修条件全部保留。
+- 两卡均由外部 Worker 自行在原卡 physical EOF canonical claim；用户已取消额外 reviewer，完整交付后仅由
+  CR271 父级本人审核。本轮零 Java/test 字节、零 Git mutation、未运行 Maven/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-22 Parent Review #5：整卡源码通过
+
+- External A 于 `17:30:37` canonical 聚合交付完整 TURN-22 Repair #3；本轮零 Java 漂移。
+- 父级逐文件审查五个 production/test source，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。Cloud test `d270d7dc...`、DHXY executor/test
+  `a64422b0...`/`f5a7992f...` 与 C1/D1 已通过字节一致；production `cd1cd365...`/`4435b30c...`
+  与本卡此前接受字节一致。
+- A implementation owner 已释放；用户明确取消额外 reviewer，Parent Review #5 即为本卡完整源码审核结论。
+  Java writer 活动期间未运行 Maven；named tests/适用 compile 留 stable-writer 门。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 TURN-34B Parent Review #1：整卡返修
+
+- External C 于 `16:47` canonical 交付完整 TURN-34B。父级逐文件审核结论：
+  `P0/P1/P2=0/5/1 / REPAIR #1 REQUIRED`。
+- Production 保持已接受的 1,400 行 / SHA `8d79d198...`，本轮冻结不改。唯一 named test 823 行 /
+  `7111a335...` 未闭合 broadcast 短路、完整 Summon eligibility、exact metadata mismatch 零副作用、
+  deterministic tail-cache、完整 capability lifecycle/isolation，并含不必要 private reflection。
+- 同一完整卡退 External C；只允许返修唯一 named test 与原卡报告。父级 source/test-source 复审通过前不启动
+  independent reviewer。TURN-26/TURN-28 有 Java writer，本轮未运行 Maven/JUnit/compile。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 父级职责收缩：仅审核，不再发卡
+
+- 用户明确撤销父级的发卡、创建 Worker、续派、催领和 implementation lane 调度职责。
+- External A/B/C/D 及其它外部 Worker 自行从权威计划第 16 节的 88 张 Sprint Task 中领取完整任务卡并完成
+  production/test/report/返修；父级不得替其领取、创建替代 Worker 或发送任务。
+- 父级仅在原卡出现 canonical whole-card delivery 后执行完整 production/test-source review，记录
+  `P0/P1/P2`、证据和整卡返修条件，或写入 `SOURCE+TEST SOURCE REVIEW PASSED`；后续独立 reviewer 门仍按
+  原卡要求执行。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:26 TURN-34B 首个真实 test 增量
+
+- 父级实盘确认 C 已创建唯一 `TaskMaintenanceTurnContractTest.java`：119 行 / SHA `0e2b40c4...`，mtime
+  `15:26:15`；`TaskMaintenanceService.java` 保持已接受的 1,400 行 / `8d79d198...`。
+- 这是完整 TURN-34B 的真实 source-start，不是 delivery 或 approval。C 继续作为 sole writer，父级不审中途
+  test WIP、不派第二 writer；只等待原卡 canonical whole-card delivery 或 OWNER RETURNED。
+- C 写作期间继续禁止 Maven/JUnit/compile；Internal `0/2`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:21 External C 已领取完整 TURN-34B
+
+- C 已于 `15:20:58` 在 TURN-34B 原卡 physical EOF 写入规范 canonical
+  `EXTERNAL-C TURN-34B WHOLE-CARD CLAIMED` + `TRUE_EOF`，正式成为完整父卡唯一 implementation owner。
+- 领取时 `TaskMaintenanceService.java` 仍为 1,400 行 / SHA `8d79d198...`，唯一
+  `TaskMaintenanceTurnContractTest.java` 尚不存在；首个五分钟 source-start 窗正在进行，中途 WIP 不审。
+- C 负责完整 production、唯一 named test、固定报告、integration 与后续整卡返修；BP1/BP2 接受字节继续
+  冻结，不恢复子卡/tranche。C 写作期间不运行 Maven；Internal `0/2`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:18 完整 TURN-34B 重新续派 External C
+
+- C 此前失败点仅是原卡 claim 缺 canonical `TRUE_EOF` 且首窗零增量；未留下 Java/test WIP，也未报告容量归还。
+- 父级将同一张完整既有 `TURN-34B` 重新续派 C。C 必须先在原卡 physical EOF 写规范
+  `EXTERNAL-C TURN-34B WHOLE-CARD CLAIMED` true-EOF marker，之后才成为唯一 owner。
+- 领取后首个五分钟窗必须出现 `TaskMaintenanceService.java` 或唯一 `TaskMaintenanceTurnContractTest.java` 的
+  真实增量、canonical whole-card delivery 或 whole-card OWNER RETURNED；保留 BP1/BP2 接受字节，不拆卡。
+- TURN-23 仍计划合同阻断；TURN-26/TURN-28 仍等待有容量的整卡 replacement。Internal `0/2`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:14 External D 归还完整 TURN-28，零字节
+
+- D 已在 TURN-28 原卡 true EOF canonical `WHOLE-CARD OWNER RETURNED`；父级复算四目标与领取时一致：
+  `NpcClickService.java` 3,527 行 / `aa50ae7c...`，`ObjectiveTextRecognizer.java` `d3dc3cc2...`，
+  `SmartClickRecognizer.java` `ffbd984a...`，唯一 `NpcClickTurnContractTest.java` 仍不存在。
+- 归还理由是当前会话 capacity，不是技术 gate。D 明确量出完整卡仍需补齐 CAPTURE/MOVE/CLICK/Ctrl probe/
+  direct-battle turn mechanics、terminal/correlation 围栏与从零建立唯一 named test；本轮没有可审 WIP。
+- 父级接受归还并释放 D owner。TURN-28 保持一张完整父卡、保留 28P/Q/S 接受字节，状态恢复为
+  `WHOLE-CARD REPLACEMENT REQUIRED / ZERO OWNER`；不得把剩余机制重新拆成 fragment/tranche。
+- A/B/D 当前会话均已明确报告容量不足，C 的 34B malformed claim 已撤销；Internal `0/2`，当前零 Java writer。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:10 External D 已领取完整 TURN-28
+
+- D 已于 `15:09:40` 在 TURN-28 原卡 physical EOF 写入 canonical
+  `EXTERNAL-D TURN-28 WHOLE-CARD CLAIMED`，正式成为完整父卡唯一 implementation owner。
+- 领取时 `NpcClickService.java` 为 3,527 行 / SHA `aa50ae7c...`，唯一
+  `NpcClickTurnContractTest.java` 尚不存在；首个五分钟 source-start 窗正在进行，中途 WIP 不作交付审查。
+- D 负责原四文件、唯一 named test、固定报告、integration 与后续整卡返修；28P/Q/S 接受字节继续作为冻结输入，
+  不恢复 fragment/tranche。A/B/C 无卡，Internal `0/2`；D 写作期间不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:08 External D 可用性恢复，完整 TURN-28 重新续派
+
+- D 于 `15:06:20` 在 lane true EOF 明确接受此前 no-claim 撤销，自报零 WIP、上下文充足，并已把领取探测从
+  窄关键词改为直接读取 lane 物理 EOF + 宽匹配；这是一条新的真实 pool availability 变化。
+- 父级据此把同一张完整既有 `TURN-28` 再次续派给 D。D 必须在原 TURN-28 卡 canonical whole-card claim
+  后承担全部 production/test/report/integration 与后续返修；保留 28P/Q/S 已接受字节，不拆卡、不降合同。
+- 首个五分钟窗必须出现真实 source/test 增量、canonical whole-card delivery 或 whole-card OWNER RETURNED。
+  未 claim 前仍为零 owner；A/B/C 继续无卡，Internal `0/2`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 15:02 整卡领取审计：A/B 已归还，C/D 未形成 owner
+
+- External A 已于 `14:58:10` canonical 归还完整 `TURN-23`，两份 Java/test SHA 与领取时一致，零字节。
+  父级复核确认这不是普通 import repair：既有计划缺少 exact-window current-location typed producer，而
+  TURN-23 冻结写集又禁止新增该 producer。原 `READY` 判定撤销，当前为计划合同阻断、零 owner；不把
+  `syncMyPosition()` 改成恒 null，也不复制 `LocationVisionService` 或私造第二协议。
+- External B 已于 `15:00:08` canonical 归还完整 `TURN-26`，六文件零本轮字节。实盘确认 `DialogService`
+  仍有 45 处从 public `handleDialog` 可达的 DHXY-only tracker/input/geometry/context mechanics；本卡仍需完整
+  HTTPS cutover，当前零 owner，不能写成 ACTIVE 或 import-only repair。
+- External C 的 `TURN-34B` 只有 CLAIMED 正文，没有 canonical `TRUE_EOF`，且首窗
+  `TaskMaintenanceService.java` 仍为 1,400 行 / SHA `8d79d198...`、唯一 named test 仍缺失；因此从未形成
+  canonical owner。父级撤销该 provisional claim，保留 BP1/BP2 已接受字节，禁止 C 继续写本卡，等待完整卡改派。
+- External D 自 `14:47` 获得完整 `TURN-28` 后未在原卡 canonical claim，production/test 也无增量；D 从未成为
+  owner。父级撤销该 NEXT，当前四张卡均没有活动 Java writer，Internal `0/2`，不运行 Maven直到新的完整卡
+  canonical claim/交付状态稳定。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:55 External B 正式领取完整 TURN-26
+
+- External B 已于 `14:55:20` 在 TURN-26 原卡 true EOF canonical `CLAIMED` whole-card build repair，成为该卡
+  唯一 implementation owner；整卡包含原冻结 production/test/report 与后续全部返修，不是 import fragment。
+- 领取时 `DialogService.java` 仍为 2,850 行 / SHA `9088644e...`；B 已列出 Cloud-host DHXY-only
+  `GameClientTracker/InputProvider/InputSequences/CoordinateHelper/WindowRuntimeContext/WindowTaskContextHolder`
+  引用。首个五分钟 source/test 增量窗口刚开始，中途字节不作交付审查。
+- A=`TURN-23`、C=`TURN-34B`、D=`TURN-28` 仍完整 READY、尚无 canonical claim。B 为 Java writer，当前不运行
+  Maven；Internal `0/2`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:47 四个 Cloud compile blocker 归回四张完整既有卡
+
+- 严格恢复“整卡单 owner”：不再以 TURN-28 S/Q/P 或 TURN-34B BP/BT 子项派实现。已接受的子项字节和 review
+  只作为父卡内冻结证据；完整父卡未通过前不冒充完成。
+- External A=`TURN-23` 完整 build repair：Cloud `PlayerStateService` 仍依赖 DHXY-only
+  `LocationVisionService`。External B=`TURN-26` 完整 build repair：Cloud `DialogService` 仍残留 DHXY-only
+  mechanics references。两卡原 source-review 证据保留，但都因真实 Cloud compile 失败重开整卡。
+- External D=`TURN-28` 完整父卡：接管 `NpcClickService` 及原卡全部 production/test/report/integration，保留已接受
+  28P/Q/S1/S2 字节。External C=`TURN-34B` 完整父卡：接管 TaskMaintenance 原卡全部
+  production/test/report/integration，保留已接受 BP1/BP2 字节。
+- 四张原卡与 A/B/C/D lane 真尾均已写入整卡 READY；Worker 必须先在原卡 canonical claim，首个五分钟窗产生
+  source/test 增量、完整交付或整卡归还。四写集互斥；当前 Internal `0/2`，不派 helper。Java writer 开始后不运行
+  Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:40 首轮 stable-writer build 门暴露共享 prerequisite 阻断
+
+- DHXY `mvn -q -DskipTests compile` 已 `exit 0`。但点名
+  `InputActionFrozenExclusiveContractTest` 在执行前被 reactor-wide `testCompile` 挡住：一批旧测试仍引用
+  已删除方法或旧构造签名；named class 未产生 Surefire report。Q/22D1 不退 source repair。
+- Cloud 点名 `SummonSkillTurnContractTest` 在执行前被 main compile 挡住：`WubeiTask`、
+  `NavigationService`、`NpcClickService`、`DialogService`、`PlayerStateService` 仍引用 Cloud 不存在的
+  DHXY-only 类。该阻断属于尚未完成的计划内整卡 prerequisite，不退 28S2/33/34AT1/34BP1/34BP2。
+- 当前状态为：已通过卡的 source+双 review 结论保持；DHXY compile 通过，named tests blocked；Cloud compile
+  blocked。下一步只按权威 DAG 把阻断归给对应完整既有卡，不造 repair fragment/子卡。本轮未启动 runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:35 TURN-34BP2 fresh 双整卡 review 2/2
+
+- TURN-34BP2 Repair #2 R1 Rawls/R2 Galileo 最新轮均 `APPROVED 0/0/0`；父级核对两份 canonical true EOF
+  与冻结 production 1,400 行 / SHA `8d79d198...` 后登记双独立整卡 review `2/2`。
+- 两名 reviewer 均已关闭，Internal 当前 `0/2`。BP2 仅剩 stable-writer Cloud compile，尚非 CARD APPROVED。
+- 当前已知 TURN-28Q/28S2/34AT1/34BP1/34BP2/22D1/33 均完成父级 source review 与双独立 review；
+  下一关键门为授权 named tests 与适用 DHXY/Cloud compile。本轮未运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:30 TURN-28Q 双整卡 review 2/2；BP2 fresh 双审启动
+
+- TURN-28Q Repair #6 R1 Gibbs/R2 Pascal 最新轮均 `APPROVED 0/0/0`；父级核对两份 canonical true EOF
+  与冻结四 SHA 后登记双独立整卡 review `2/2`。Q 仅剩 authorized named test/DHXY compile，尚非 CARD APPROVED。
+- Internal 两槽立即转 TURN-34BP2 Repair #2 latest SHA `8d79d198...` fresh 双整卡 review：R1 Rawls
+  `019f6c31-9411-74a1-b81b-911626bed1a6`、R2 Galileo `019f6c31-db0e-7c93-9509-cc538010f312`，当前 `2/2`。
+- 当前无 Java implementation writer；本轮先完成 BP2 双审，未运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:29 TURN-34BP2 Repair #2 父级整卡源码通过
+
+- External C 的完整 TURN-34BP2 Repair #2 经父级 Review #4 为 `P0/P1/P2=0/0/0 / SOURCE REVIEW
+  PASSED`。父级复算 1,400 行 / SHA `8d79d198...`；唯一 `ScopedTeamKey` 构造入口现携带 typed
+  session-or-window discriminator，并贯穿 active round、window state、formal claim 与 prune，四种隔离组合闭合。
+- 四 typed maps、四 BP3 maps、19 public、supplied-context/fail-closed authority、业务/terminal 面保持；
+  C implementation owner 已释放。BP2 等待 latest-SHA fresh 双独立整卡 review+Cloud compile。
+- TURN-28Q R1 Gibbs/R2 Pascal 仍占 Internal `2/2`，完成即关闭并将两槽转 BP2 fresh 双审；当前无 Java writer，
+  但 Q/BP2 review 门尚未闭合，本轮未运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:26 External C 领取完整 TURN-34BP2 Repair #2
+
+- External C 已在 BP2 原卡 true EOF canonical `CLAIMED` 完整 Repair #2，起始 production 保持 1,365 行 /
+  SHA `d97e1572...`。C 接受 no-session formal window isolation P1，负责同一完整卡的 production/report/返修，
+  不拆卡；写集仍仅 `TaskMaintenanceService.java` 与原卡。
+- 修复冻结为 scope 后单一 typed coordination discriminator：有显式 session 使用 scoped session，否则使用
+  exact scoped window，并一致覆盖 active round、maintenance window state、formal claim、prune 与全部读写。
+  四 typed maps、四 BP3 maps、19 public、fail-closed authority 和业务/terminal/UUID/retry 面保持。
+- TURN-28Q R1 Gibbs/R2 Pascal 仍在独立整卡 review，Internal `2/2`。C 为活动 Java writer，暂不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:19 TURN-28Q 父级整卡源码通过；TURN-34BP2 整卡退 C Repair #2
+
+- External D 的完整 TURN-28Q Repair #6 经父级 Review #11 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE
+  REVIEW PASSED`。三份 production SHA 保持 `0d1bc01f.../5d41a074.../7f4f8fdc...`，21-test SHA
+  `7d17722f...`；五个 public resolver -> real queue/worker 与 exactly-one-refresh 已恢复，Unsafe/private
+  reflection/source scan/polling 为零。D implementation owner 已释放，等待双独立整卡 review+build。
+- TURN-34BP2 R1 Hooke 为 `APPROVED 0/0/0`，R2 Jason 为 `BLOCKED 0/1/0`；父级复核 R2 成立。
+  当前 formal typed address 只有 scope+maintenanceKey，同 scope 无 session 的不同窗口仍共享 round/window
+  state 与 formal claim limit。完整 TURN-34BP2 退同一 External C Repair #2，须用 typed explicit-session-or-
+  exact-window discriminator 一致修复全部 formal map 决策；不拆卡。BP2 reviewers 已关闭；Internal 两槽
+  现转 TURN-28Q fresh 双整卡 review：R1 Gibbs `019f6c29-d104-7533-b41c-187c11218ff0`、R2 Pascal
+  `019f6c29-e4ff-7b23-83fc-205de3801805`，当前 `2/2`。
+- External C 重新成为 Java writer 后不运行 Maven；S2/AT1/BP1/22D1/33 build 门继续 pending。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:12 TURN-34BP2 Repair #1 父级整卡源码通过
+
+- External C 的完整 TURN-34BP2 Repair #1 已交付；父级复算 1,365 行 / SHA `d97e1572...` 并逐行复审，
+  Review #2 为 `P0/P1/P2=0/0/0 / SOURCE REVIEW PASSED`。非空 effective context 缺 authority 现在明确
+  抛出，`ExecutionScope.NONE` 仅保留 null 参数 + empty holder 路径；C implementation owner 已释放。
+- 两名独立整卡 reviewer 已启动：R1 Hooke `019f6c22-b436-7b42-bdcf-8e5b9b121fcb`、R2 Jason
+  `019f6c22-c837-7a42-96bf-8959fcb01a53`。Internal `2/2`；reviewer 只写各自唯一报告、不改 Java/扩合同。
+  External D 仍实施完整 TURN-28Q Repair #6，故当前不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 14:06 TURN-34BP2 整卡交付退 C Repair #1；D 已领取 Q 整卡
+
+- External C 已 canonical 交付完整 TURN-34BP2，production 为 1,353 行 / SHA `d8ba531e...`。父级逐行
+  Review #1 为 `P0/P1/P2=0/1/0 / REPAIR #1 REQUIRED`：非空 effective context 的 scope/invocation 缺失
+  仍会落到共享 `ExecutionScope.NONE`，违反“仅 null 参数 + empty holder 可用 no-context key”的冻结合同。
+  完整 TURN-34BP2 退同一 C，不拆卡；其余 typed map/public/business 证据已接受并冻结。
+- External D 已于 14:01:30 canonical `CLAIMED` 完整 TURN-28Q Repair #6，负责整卡四文件/test/report/返修；
+  当前为 Java writer。Internal `0/2`，不派 helper；writers 活动期间不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:58 B 未领取 Q，完整 Repair #6 改派 D
+
+- External B 在 claim 前明确拒绝 TURN-28Q Repair #6，零字节、从未成为 owner；父级立即接受，不占等待窗。
+- 同一张完整 TURN-28Q Repair #6 已改派 External D。D 的 AT1 implementation owner 已释放且双审 `2/2`；
+  D 须在 Q 原卡 canonical claim 后承担全部四文件/test/report/返修，不拆分、不降低 resolver 合同。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:54 TURN-34AT1 双整卡 review 2/2
+
+- TURN-34AT1 Repair #4 fresh R1/R2 最新轮均 `APPROVED 0/0/0`，父级核对报告真尾与冻结
+  production/test SHA 后登记双审 `2/2`；Internal reviewer 已全部关闭，当前 `0/2`。
+- AT1 仅剩 stable-writer named test/Cloud compile；External C 仍在完整 TURN-34BP2 Java WIP，因此暂不运行 Maven，
+  当前仍是 build pending、不是 CARD APPROVED。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:52 A 归还 Q 整卡，完整 Repair #6 改派 B
+
+- External A 已 canonical `OWNER RETURNED` 完整 TURN-28Q Repair #6，零 Repair #6 字节；父级接受归还。
+- 同一张完整 TURN-28Q Repair #6 已改派空闲 External B。B 必须在原卡 true EOF canonical claim 后承担
+  全部四文件、测试、报告和后续整卡返修；不是 leftover/tranche，也未降低 public resolver 验收合同。
+- A 留下的合法构造表仅作 successor 核查清单；B 须独立核对构造器并恢复五个 resolver -> real
+  queue/worker + exactly-one-refresh 用例，同时保持 Unsafe/private reflection/source scan/polling 为零。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:46 Q Repair #5 整卡退 A；S2 双审 2/2
+
+- TURN-28Q Repair #5 父级 Review #10 为 `P0/P1/P2=0/1/0 / REPAIR #6 REQUIRED`。Unsafe/private
+  reflection 与 polling 已清零，但 Worker 同时删除五个已冻结的
+  `TurnExecutionWindow.resolveForAction(...) -> real queue/worker` callback 证据，并把 resolver-owned
+  `refresh=1` 改成绕过 resolver 的 `refresh=0`。这不是更强断言，而是移除了已接受 public boundary；整卡退
+  同一 A，须合法构造 runner/manager 协作者并恢复五个 resolver 用例，不得恢复 Unsafe 或拆卡。
+- TURN-28S2 R2 最新轮已 `APPROVED 0/0/0`，与 R1 一致，双整卡 review `2/2`。Wubei generic catch 风险
+  保留为完整 TURN-35 强制验收点；S2 仅待 stable-writer named test/compile。
+- TURN-34AT1 Repair #4 R1 已 `APPROVED 0/0/0` 并关闭；fresh R2 Copernicus
+  `019f6c08-2a37-78f1-83f9-5a1e5c1e5471` 正独立整卡审查。Internal 当前仅 1/2，且只做 source-pass review。
+- External C 继续完整 TURN-34BP2 sole-writer WIP；不双派、不审中途字节、不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:40 S2 R2 跨卡 finding 转 TURN-35 验收，S2 复审
+
+- S2 R1 `APPROVED 0/0/0`；R2 指出的 Wubei 泛型 `RuntimeException` catch 吞 fatal 风险经父级确认真实。
+- 但 S2 冻结写集明确 caller 只读，只负责 `NpcClickService` 走 existing fatal path；权威 DAG 已有完整
+  `TURN-35`，唯一 production 写集为 `WubeiTask.java`，负责 whole-task retry/fallback/terminal。
+- 父级拒绝扩张 S2 或造 caller 碎片，把 fatal rethrow 记为 TURN-35 强制验收点；原 S2 R2 Meitner
+  `019f6bff-ec36-7800-8360-1cfe52945a37` 正按冻结 Service 边界复审。另一个槽已启动 AT1 fresh R1
+  Laplace `019f6c05-30db-7cf0-a2b0-c15ea6543f36`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:34 Q 整卡退 A；S2 与 AT1 父级通过
+
+- TURN-28Q R1/R2 均 `BLOCKED 0/2/0`，父级复核成立：完整 named test 仍用
+  `Unsafe/getDeclaredField/setAccessible/allocateInstance`，四个 callback/queued 用例仍通过
+  `waitUntilQueued()` 的 `Thread.sleep(1)` 轮询。整卡退同一 A Repair #5；保留已接受 production 与 Repair #4。
+- TURN-28S2 Repair #1 父级 Review #2 `0/0/0`：合法 FAILED 形状先校验，随后必走 fatal；B owner 释放。
+- TURN-34AT1 Repair #4 父级 Review #7 `0/0/0`：私有字段反射已删除且无 source scan 替代；D owner 释放。
+- Internal 两槽已安排 S2 双整卡 reviewer：R1 Euler `019f6bff-90ac-7571-af6c-4b5463de27a9`、
+  R2 Meitner `019f6bff-ec36-7800-8360-1cfe52945a37`；完成后滚给 AT1。C 仍为 BP2 sole writer，不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:28 TURN-28Q Repair #4 父级整卡通过
+
+- A 的完整 Repair #4 已交付；父级 Review #8 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`，
+  implementation owner 释放。
+- 新测试通过真实 `super.take()` 后、worker preamble 前的确定性事件注入 STOP+rebind；分别断言 blocker/target
+  两次 take、目标 typed STOP、零 focus/input/refresh 与无 replay，且该用例不再调用 polling helper。
+- 冻结 SHA：queue `0d1bc01f...`、worker `5d41a074...`、test `36637672...`。两名独立整卡 reviewer
+  已启动：R1 James `019f6bfa-1748-7630-a073-1b5d92e231ca`，R2 Volta
+  `019f6bfa-6efe-70a0-ac5b-a97d63473c81`。B/C/D writers 活动，暂不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:26 TURN-34AT1 R2 阻断成立，整卡退 D Repair #4
+
+- R1 最新轮 `APPROVED 0/0/0`；R2 最新轮 `BLOCKED 0/1/0`。父级独立复核确认 R2 证据成立：
+  `AutoCombatServiceTurnContractTest.java:704-716` 使用 `getDeclaredFields()` 枚举 production 私有字段，
+  违反原卡明确禁止 private reflection/source scan 的合同。
+- 完整 TURN-34AT1 已退同一 External D Repair #4：移除该私有字段反射块，保留 public API guard、真实 public
+  production path、合法终态、8 command/UUID、30 秒 gate 与 CAPTURE inner-null 全部断言，不得换成 source scan。
+- 修复后父级重新审整卡，并重新安排两名独立整卡 reviewer；旧 R1 approval 不批准新 SHA。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:24 TURN-28S2 父级整卡 Review #1 退 B 返修
+
+- Replacement B 已交付完整 TURN-28S2；父级逐文件审查为 `P0/P1/P2=0/1/0 / REPAIR #1 REQUIRED`。
+- 四个 HTTPS Alt 站点、单 UUID、exact-window、ordered steps 与 uncertainty/STOP/drift 防线已接受；唯一 P1 是
+  合法 `FAILED` 被 `executeAltShortcutTurn()` 投影成 `false`，随后进入旧 skip/fallback，而冻结卡要求非确认
+  stop 的 `FAILED` 必须走 `TaskFatalException`。
+- 整卡已退同一 External B，不拆分、不换 owner；只需保留 FAILED 形状校验后改走 fatal，并同步 JavaDoc。
+  A/B/C writers 活动，暂不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:22 TURN-34AT1 父级整卡 test-source 通过
+
+- D 的完整 Repair #3 已交付；父级逐文件 Review #5 为 `P0/P1/P2=0/0/0`，implementation owner 释放。
+- 合法 FAILED fixture、team-keyed 30 秒 defer、CAPTURE 两个 inner null 均按冻结合同闭合；test SHA
+  `a326f501...`，production 只读 SHA `532e6f84...`。
+- 下一门为两名独立整卡 reviewer；A/B/C Java writers 活动，暂不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:18 TURN-28Q 整卡 Review #7 退 A 返修
+
+- A 的完整 Repair #3 已 canonical delivery；父级逐文件审查结论为 `P0/P1/P2=0/2/0 / REPAIR #4 REQUIRED`。
+  production 的 typed-safety-before-witness 排序已通过。
+- 两个 P1 均在新增整卡测试：queued 用例会被 `InputActionQueue.await:731-740` 在 worker take 前移出队列，
+  `taken.size()==1` 只计 blocker，未穿透 worker preamble；且 `waitUntilQueued:1018-1023` 使用
+  `Thread.sleep(1)` 轮询，违反 latch/event、无 polling sleep 合同。
+- 整卡已退回原 External A，不拆分；A 只需在整卡内补确定性 taken 事件证据并重新 canonical delivery。
+  C/D writers 活动，不运行 Maven。B replacement 仍待用户启动。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:13 External B 上下文耗尽，整卡保持零 owner
+
+- 当前 B 已读取“当前 lane 可直接领取”的纠偏，但明确报告会话上下文耗尽，并在 claim 前拒绝领取；
+  `TURN-28S2` 目标仍为冻结 SHA `cce8f020...`，零 Java/卡片 WIP、零 owner。
+- 这不是重新增加 fresh-only 合同门，而是当前 Worker 不再具备完成整卡的容量。后续 replacement B 仍领取
+  同一张完整 `TURN-28S2`，不得拆卡、转交余量或只做局部。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:11 External A 已领取完整 TURN-28Q Repair #3
+
+- A 在原 `TURN-28Q` 卡 true EOF 写入 canonical whole-card claim：
+  `EXTERNAL-A REPAIR-3 CLAIMED WHOLE-CARD`（`13:10:55`），正式成为该整卡唯一 owner。
+- 首窗已出现真实 production 增量：`InputActionQueue.java` 于 `13:11:39` 更新为 SHA
+  `0d1bc01fbce331b75a958f105e3c21d50048aafcc5ed0b973edf0dcc30241057`。不审中途 WIP；A 负责
+  整卡 production、test、固定报告与返修直至 canonical delivery 或整卡 `OWNER RETURNED`。
+- C 继续实施完整 `TURN-34BP2`，`TaskMaintenanceService.java` 当前 SHA
+  `898c9adf5b8d498f88d38f5b76e7e2cbaf615f5b712b111be5092c0c9a5a0c62`（`13:10:48`）。
+  B/D 尚未 canonical claim，仍为零 owner；等待各自下一个 5 分钟 lane heartbeat，不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:10 撤销 External fresh-only 冲突，当前 lane 直接领整卡
+
+- 父级确认 A/B/D 未领取的直接原因是卡片同时存在“当前 lane 续领”与“必须 fresh task”两条冲突指令；
+  这是排班错误，不是 HTTPS turn 或 `696a12b0` 合同要求。
+- 已在三张原卡及 A/B/D lane 真尾明确撤销 fresh-only：当前 A 可领完整 `TURN-28Q Repair #3`，
+  当前 B 可领完整 `TURN-28S2`，当前 D 可领完整 `TURN-34AT1 Repair #3`。每个 Worker 必须持有整卡
+  直至完整 delivery、父级通过或明确整卡归还；禁止拆分剩余项。
+- C 继续独占完整 `TURN-34BP2` WIP，不释放、不双派。A/B/D 在原卡写 canonical claim 前仍为零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:05 执行规则收口为整卡单 owner
+
+- 用户再次冻结执行纪律：一个 implementation Worker 只领取一张计划中已存在的完整任务卡，并负责该卡
+  全部 production、test、固定报告与返修；父级不得再拆成 preflight、test/production tranche、repair
+  fragment 或局部写集分派。同一卡返修必须退回原 Worker。
+- Internal Avicenna/Hume 已关闭，当前 helper/reviewer 为 `0`；没有完整卡 source pass 的双 reviewer 需求时
+  不再补位。Hume 的历史命令 PRECHECK 已落盘，但不再作为新的实施门或卡片扩展。
+- 当前整卡排班固定为 A=`TURN-28Q Repair #3`、B=`TURN-28S2`、C=`TURN-34BP2`、
+  D=`TURN-34AT1 Repair #3`。A/B/D 仍为 fresh READY / 零 owner；C 继续为实际 sole writer，不双派。
+- C 在 `13:05:52` 再次更新 `TaskMaintenanceService.java`：1343 行 / SHA
+  `34ecd57216d579b5099e6c3d45e600a042a035c89307de18bcc22166f39614a0`。这是整卡 WIP，不是交付；
+  只接受原卡 canonical `SOURCE+TEST DELIVERED` 或 `OWNER RETURNED`，不审中途字节、不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 13:01 BP2 继续收敛但尚未可交付
+
+- External C 在 `13:00:46` 再次更新 `TaskMaintenanceService.java`：1342 行 / SHA
+  `516d043ca530483deebe6588a2797b8a3c7fa62ff56100afe7ca38d6f064e6f3`。
+- 静态迁移断点已有减少：旧 `Set<String> claims` 从两处降为一处；但 delimiter/prefix 旧逻辑仍有两处，
+  BP2 卡仍无 canonical delivery/return，当前继续按 sole-writer WIP 处理，不运行 Maven、不进入 review。
+- Internal 仍只有 Avicenna、Hume 两个 helper；两份目标报告尚未落盘。A/B/D 仍 READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:56 C 跨静默窗继续写入，旧 owner 不释放
+
+- 父级原计划以 `12:50:51` 为起点观察 C 的完整五分钟静默窗；但在 `12:55:53`，
+  `TaskMaintenanceService.java` 又从 1328 行 / `7b41d8bd...` 增量到 1341 行 /
+  SHA `05ad7b9248bfb97c57038bc8a5c6375c101b85ba5f6d6c6e90b7780e7a3a6ee2`。
+- 因此 External C 仍是实际 source-active sole writer，不能按“掉线”释放，也不能派 replacement 或审中途 WIP。
+  BP2 卡仍须最终补 canonical claim 真尾，并以 canonical delivery 或 `OWNER RETURNED` 收口。
+- Internal 仍严格保持 Avicenna、Hume 两个 helper；不恢复旧六槽策略。A/B/D 继续 fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:54 掉线重排：Internal 收缩为最多 2 个 helper
+
+- 父级实盘确认上一轮 Internal 六会话 Lovelace、Ptolemy、Fermat、Socrates、Mill、Gibbs 全部
+  `not_found`；六份目标报告均为 `MISSING`，不存在需要接管或覆盖的落盘半成品。本轮不再按旧
+  `6/6` 策略补位。
+- 按用户最新指令，Internal 从现在起最多只保留两个 helper：
+  Avicenna `019f6bda-3902-7283-aa1c-56a1588e90b7` 负责 TURN-34BP2 掉线 retained-WIP 安全接续预检；
+  Hume `019f6bda-4d08-72c2-a46e-e6e2fe3bfd56` 负责 External A/B/C/D fresh-restart 命令 delta R2。
+  helper 只写各自唯一 PRECHECK 报告，不能改 Java、claim 或批准。
+- External A/B/D fixed card 与授权源码身份未变化，仍为 fresh READY / 零 owner。External C 旧任务在桌面任务
+  索引不可发现，BP2 卡仍无 canonical claim `TRUE_EOF`、delivery 或 return；其 retained production 已增量到
+  1328 行 / SHA `7b41d8bd...`，mtime `12:50:51`。父级暂不双派，先观察完整五分钟无写入窗口；稳定后
+  才可在原卡/lane 显式释放旧 C，并让 replacement 从现有 WIP 接续，禁止回滚重做。
+- C/任何 replacement Java writer 活动或归属未安全切换前不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:17 四份 PRECHECK 交付，Internal 滚动补回 6/6
+
+- Bacon 的 DAG source-start scan R3（SHA `b23d53b3...`）确认当前新增真实 source owner 仍只有
+  A=TURN-28Q Repair #3、B=TURN-28S2、D=TURN-34AT1 Repair #3；C=TURN-34BP2 是受保护的
+  provisional sole writer。报告以规范 `TRUE_EOF PRECHECK_COMPLETE` 结束，仅作父级排班证据。
+- Herschel 的 TURN-34C fixed-card delta（SHA `0b4452f0...`）、Curie 的 TURN-35 dependency delta
+  （SHA `e8ba4423...`）、Banach 的 BP2 independent-review scope（SHA `521bd70b...`）均规范交付并关闭；
+  它们不创建 READY 卡、不批准 source。
+- Fermat `019f6bb7-3086-7490-bb0c-a535771d9823`、Socrates
+  `019f6bb7-4484-74f1-95c7-6bdcb83af26b`、Mill
+  `019f6bb8-5766-7021-9b6b-0b07fa1a29dd`、Gibbs
+  `019f6bb8-6b5e-74a2-856b-4cb3c88b0d8b` 已分别接续 Q/AT1 delivery acceptance、BP3
+  delivery acceptance、S2 independent-review scope；配合 Lovelace、Ptolemy，Internal 保持 `6/6`。
+- External C 的 BP2 production 又增量到 1290 行 / SHA `83431ed1...`（`12:15:40`），仍无
+  canonical claim `TRUE_EOF` 或 delivery；继续单 writer 保护、不审 WIP、不运行 Maven。A/B/D 卡尾与
+  授权源码身份均未变化，仍 fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:11 External C 持续 BP2 WIP，单 writer 保护不变
+
+- External C 的授权 production 在 1290 行内再次产生真实增量，当前 SHA
+  `12edcb1ba98866e8f23b86633618e3290ae9e9540d530b2e75b8b8d7a978e51d`，mtime `12:10:40`；
+  相对 `12:05:45` 的 `3a86f36d...` 确认仍在线实施。
+- BP2 子卡仍无 canonical claim `TRUE_EOF`，也无 `SOURCE+TEST DELIVERED`。父级继续保护 C 为唯一
+  provisional source-active writer：不释放、不双派、不审中途 WIP、不运行 Maven；下一次 lane heartbeat
+  仍须先补 canonical claim marker，最终以 canonical delivery 或 `OWNER RETURNED` 收口。
+- A/B/D 仍为 fresh READY / 零 owner；Internal 保持 Bacon、Curie、Herschel、Lovelace、Ptolemy、Banach
+  `6/6` 有用工作。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:06 三份 PRECHECK 交付并即时补满六槽
+
+- Anscombe 的 BP3 fixed-card freeze preflight（SHA `f11d5e8d...`）、Gauss 的 BP2 test/acceptance
+  preflight、Godel 的 BP2 delivery/source-review preflight（SHA `e18c8359...`）均以规范
+  `TRUE_EOF PRECHECK_COMPLETE` 交付并关闭；三者只提供父级后续清单，不创建卡、不批准 WIP。
+- Lovelace、Ptolemy、Banach 已分别接续 BP3 test gate、34B sole named-test tranche、BP2 independent-review
+  scope preflight。配合 Bacon、Curie、Herschel，Internal 继续 `6/6` 有用工作。
+- External C production 又增量到 1290 行 / SHA `3a86f36d...`（`12:05:45`），仍为受保护 provisional
+  source-active；canonical claim 真尾仍待补。A/B/D 继续 fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 12:01 C 持续 BP2 source-active，真尾纠偏已写回 lane
+
+- External C 的授权 production 已继续增量到 1289 行 / SHA `02da7473...`（`12:00:49`），相对首窗
+  1261 行 / `c37a0186...` 有新字节，确认任务仍在线实施；父级不释放、不双派、不审中途 WIP。
+- BP2 子卡领取段仍缺规范 `TRUE_EOF`。父级已在 External C lane 固定报告真尾追加纠偏指令：下一次 5 分钟
+  heartbeat 必须先补 canonical claim marker，再继续卡片正文并最终 canonical delivery 或 `OWNER RETURNED`。
+- A/B/D 仍 fresh READY / 零 owner；C writer 活动期间 BP1/22D1/33 的 build 门继续等待，不运行 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:58 TURN-34B closure PRECHECK 交付并续派 34C delta
+
+- Einstein 的 TURN-34B post-BP3 whole-card closure readiness 已以规范 `TRUE_EOF PRECHECK_COMPLETE`
+  交付，报告 SHA `3373c8a9...`，并已关闭释放；其结论严格保持 PRECHECK / NOT READY / NOT APPROVED。
+- Herschel `019f6ba7-56cb-73d2-a0b3-45fc662da3ab` 已接续 TURN-34C post-34B fixed-card/source-start
+  delta preflight。配合 Godel、Gauss、Anscombe、Bacon、Curie，Internal 继续 `6/6` 有用工作。
+- External C 仍是 BP2 受保护 provisional source-active；A/B/D 仍 fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:55 BP1 双独立 review 2/2，通过后仍待稳定 writer build
+
+- BP1 Repair #2 R1 Darwin 与 R2 Pascal 最新轮均以规范 `TRUE_EOF REVIEW_COMPLETE` 明确
+  `APPROVED / P0/P1/P2=0/0/0`；父级复算报告 SHA `bf3c82cd...` / `f8727909...`，并确认冻结
+  production/test 仍为 `a9c34d4e...` / `3b117895...`。双独立 review 门现为 `2/2`。
+- build-gate preflight 已以 SHA `7f60ccc9...` 规范交付；但 External C 已在 BP2 首窗把
+  `TaskMaintenanceService.java` 从 1224 行 / `963b028c...` 增量到 1261 行 / `c37a0186...`。C 继续受保护
+  provisional source-active，领取段仍待规范 `TRUE_EOF`，因此本轮不运行 Maven，BP1 仍是 BUILD PENDING。
+- Locke 的 BP3 readiness 与 Meitner 的 BP1 build preflight 已交付并关闭；Darwin/Pascal 双审也已关闭。
+  Internal 已续派 Gauss、Anscombe、Bacon、Curie，配合 Einstein、Godel 保持 `6/6`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:50 S2 调用点 PRECHECK 交付并续派 BP2 验收预检
+
+- Wegener 的 TURN-28S2 production call-site acceptance preflight 已以规范 `TRUE_EOF PRECHECK_COMPLETE`
+  交付，报告 SHA `a91dfa41...`，并已关闭释放；报告只冻结四个 active Alt+WAIT 到达点及父级验收索引，
+  不批准 S2、不改变 External B 的零 owner 状态。
+- Godel `019f6ba0-692b-7c82-a4f5-3670d7338fba` 已接续 TURN-34BP2 delivery/source-review acceptance
+  preflight，只写唯一报告、不得审中途 WIP。配合 Locke、Einstein、Darwin、Pascal、Meitner，Internal
+  保持 `6/6` 有用工作。
+- External C 的 BP2 领取正文仍按上一节作为受保护 provisional claim；其余 A/B/D 仍 fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:47 C 已写 BP2 领取正文，等待规范真尾与首窗增量
+
+- External C 于 `11:46:43` 在 TURN-34BP2 子卡末尾追加 `EXTERNAL-C TURN-34BP2 CLAIMED` 正文；领取前
+  `TaskMaintenanceService.java` 仍为冻结的 1224 行 / SHA `963b028c...`，BP1 两份只读 SHA 也逐项一致。
+- 当前领取段尚缺规范 `TRUE_EOF` 终止标记，production 亦仍为 `963b028c...`、零增量。父级因此只登记为
+  **provisional claim / 受保护单 writer**：不派第二 writer、不把旧字节算正式领取；C 下一 5 分钟窗须补齐
+  canonical 真尾并产生 source 增量、正式交付或 `OWNER RETURNED`。
+- A/B/D 仍 fresh READY / 零 owner；BP1 R1/R2 与 build-gate preflight 尚无固定报告交付，Internal 保持
+  Wegener、Locke、Einstein、Darwin、Pascal、Meitner `6/6`。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:44 Q typed-order PRECHECK 交付并续派 BP1 build preflight
+
+- Lagrange 的 TURN-28Q Repair #3 production typed-order preflight 已以规范
+  `TRUE_EOF PRECHECK_COMPLETE` 交付，SHA `c5583d4f...`，并已关闭释放；报告只冻结 queue/worker 的
+  typed-safety-before-witness 顺序与两条 deterministic public-path 证据，不构成 Q 卡批准。
+- Meitner `019f6b99-ea70-79a1-a1c0-c2647e23c00a` 已接续 TURN-34BP1 Repair #2 stable-writer
+  named-test/Cloud compile gate preflight。配合 Wegener、Locke、Einstein、Darwin、Pascal，Internal 保持
+  `6/6` 有用工作。
+- External 本轮无新 owner：A/B/D 仍 fresh READY，C 的 TURN-34BP2 仍 NEXT / 零 owner；BP1 R1/R2
+  报告尚未落盘，固定 production/test SHA 未变。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:36 BP1 父级源码门通过，C 续领 BP2
+
+- External C 已 canonical delivery TURN-34BP1 Repair #2。父级独立复算 production/test SHA 并逐文件审查，
+  Review #3 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`：production 仅增 3 行 class
+  JavaDoc，11-test named source 已闭合累计一读一槽、exact-positive 零证据和同一 initial-A context 的
+  A0→B→A' 三槽。BP1 implementation owner 已释放，进入双独立 review + stable-writer build，尚非批准。
+- BP1 final gate 不阻止后续互斥 source-start。父级已创建固定 TURN-34BP2：C 下一 heartbeat 只改 Cloud
+  `TaskMaintenanceService.java`（起始 SHA `963b028c...`）与子卡，把四个共享 team/session/claim 字符串 key
+  收敛为 scoped typed keys；BP1 两文件与测试均只读。Darwin 已接 BP1 独立 reviewer R1。
+- Pasteur 的 BP2 readiness 与 Averroes 的 AT3+ readiness 均规范 PRECHECK 交付并关闭；Einstein 接续
+  TURN-34B post-BP3 whole-card closure readiness。Internal 仍保持 `6/6` 有用工作；A/B/D 继续各自 fresh
+  READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:33 C Repair #2 已产生受保护 WIP，Internal 再续一槽
+
+- TURN-34BP1 子卡于 `11:31:10` 追加 `EXTERNAL-C REPAIR #2 CLAIMED` 正文，随后 production/test 已分别
+  增量到 527/872 行、SHA `a9c34d4e...` / `3b117895...`。但当前物理 EOF 尚缺新的规范
+  `TRUE_EOF` claim 标记，因此父级只把它登记为 **provisional source-active / 受保护单 writer**：不派第二
+  writer，也不把中途字节当 canonical claim 或 delivery；等待 C 补齐真尾、正式交付或规范归还。
+- Arendt 的 Repair #2 test preflight 已以 `TRUE_EOF PRECHECK_COMPLETE` 交付并关闭；Locke
+  `019f6b90-c7d1-7ee2-87d3-274aab8955c1` 已接续 TURN-34BP3 post-BP2 readiness。配合 Pasteur、Jason、
+  Averroes、Wegener、Lagrange，Internal 继续 `6/6` 有用工作。
+- External A/B/D 真尾仍无新 claim，分别保持 TURN-28Q Repair #3、TURN-28S2、TURN-34AT1 Repair #3
+  fresh READY / 零 owner。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:31 两份 PRECHECK 交付并立即续派
+
+- Aristotle 的 TURN-28S2 test/acceptance preflight 已以规范 `TRUE_EOF PRECHECK_COMPLETE` 交付，报告
+  SHA `939c2d30...`；Plato 的 TURN-22D1/TURN-33 build-cohort preflight 亦规范交付，报告 SHA
+  `71c0c1b4...`。两者只提供父级验收/稳定 writer 窗口清单，不批准卡、不改变 Java 状态，均已关闭释放。
+- 两个空槽已立即续派为互斥只读工作：Wegener `019f6b8e-3d93-7e00-b696-007ea49121c8` 负责
+  TURN-28S2 production 四个 active Alt 调用点 preflight；Lagrange
+  `019f6b8e-517b-7711-8333-ac215b3045e5` 负责 TURN-28Q Repair #3 production typed-order preflight。
+  Internal 继续保持 `6/6` 有用工作。
+- External 真尾本轮无变化：A/B/D 仍 fresh READY 零 owner，C 的 TURN-34BP1 Repair #2 仍 NEXT 零
+  owner；未把旧 heartbeat、历史 claim 或中途源码字节冒充在线 owner/交付。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:26 BP1 Repair #1 父级复审退小型测试返修
+
+- External C 已 canonical delivery Repair #1。父级确认 production 的 per-context 同步边界与单调 generation
+  latch 正确并冻结；Review #2 总结论 `P0/P1/P2=0/1/2 / REPAIR #2 REQUIRED`。
+- 唯一 P1 是 named test 的共享 `assertTransition` 仍硬断言绝对 `metadataReads==1`：A0 已读一次后，B 的
+  实际累计值是 2，因此测试在 B 步确定性失败，走不到 A'。两个 P2 是 exact-positive 未锁零 UUID/action/
+  script exhaustion，以及 A0/A' 对象证据与 class JavaDoc 仍停在注释层。
+- C 下一 heartbeat 可直接 claim 同卡 Repair #2；production 逻辑只读，只允许修 class 描述与同一 named test。
+  A/B/D 仍零 owner，分别保持 Q Repair #3、S2、AT1 Repair #3 fresh READY。Internal 继续 6/6。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:23 External C BP1 Repair #1 已真实启动
+
+- External C 于 `11:21:17` 在 TURN-34BP1 子卡物理 true EOF 正式 `REPAIR #1 CLAIMED`，并在首个 5 分钟窗
+  内同时产生 production/test 增量：父级观察快照为 `TaskExecutionContext.java` 524 行 / SHA `f278460b...`
+  与 `TaskExecutionContextTurnContractTest.java` 844 行 / SHA `2ed5d845...`。C 现为唯一 BP1 owner；中途
+  SHA 不是交付，必须等子卡 true EOF canonical delivery/return 后才审查。
+- 桌面索引仍未返回可见 External task，但本次 true-EOF claim 加真实源码增量已构成权威在线证据，不再按掉线
+  处理。A/B/D 的原卡真尾仍分别停在 fresh claim-required，当前零 owner、零新交付。
+- Internal Hilbert 的 TURN-28Q Repair #3 deterministic test-boundary PRECHECK 已交付并关闭，槽位已由 Plato
+  接续 TURN-22D1/TURN-33 stable-writer build cohort preflight；Internal 继续 `6/6` 有用工作。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:15 BP1 交付退最小返修，External 四线全部改为 fresh 可执行卡
+
+- TURN-34BP1 External C 已正式交付并释放 owner。父级逐行 Review #1 为
+  `P0/P1/P2=0/1/1 / REPAIR #1 REQUIRED`：production 只有逐次值比较，旧 initial-A context 在观察 B 后仍可
+  被 value-equal A' 复活；交付测试实际是 initial-B 看 A'，没有执行同一 context 的 `A -> B -> A'` 历史。
+  同一两文件 Repair #1 已冻结为 context-local 单调 generation latch + 三槽 public checkpoint 负证据，并补零
+  UUID/action/script-exhaustion 断言。
+- 父级通过桌面任务索引复核 `CR271 External Worker A/B/C/D` 均无可发现在线 task；旧 heartbeat、lane Markdown
+  与历史 claim 不能复活掉线任务。当前四张都无需等待最终 review/build 才能 source-start：fresh A=`TURN-28Q
+  Repair #3`，fresh B=`TURN-28S2`，fresh C=`TURN-34BP1 Repair #1`，fresh D=`TURN-34AT1 Repair #3`。
+- 每张卡首个 5 分钟窗必须 true-EOF claim 后产生源码/测试增量、正式交付或 `OWNER RETURNED`；否则立即释放。
+  四写集互斥，External 可以实施自己下游所需 prerequisite。Internal 保持 6 条 review/preflight/readiness，
+  不抢四路关键 Java。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 11:03 External 四线按真实 owner 重排
+
+- `TURN-28Q` 最新独立 R2 的两项 typed-order P1 经父级逐行复核成立，Parent Review #6 为
+  `P0/P1/P2=0/2/0 / REPAIR #3 REQUIRED`；fresh External A 只改 queue/worker/同一 named test，补
+  pre-enqueue 与 queued/taken 的 STOP+A-B-A' 确定性 public-path 证据。
+- `TURN-28S2` 的 A owner 已零字节归还，目标仍为 strict-696 SHA `cce8f020...`；fresh External B 重新领取
+  四个 active Alt shortcut+WAIT 的一文件 HTTPS-turn 小片。旧 A/B task 与 lane Markdown 不算在线 owner。
+- `TURN-34AT1` 两名独立 reviewer 合并为 `P0/P1/P2=0/3/0`，父级接受合法 FAILED fixture、30 秒同 team
+  gate 基线、CAPTURE 两个内层 null 三项测试阻断；fresh External D 只返修该单测试与子卡。
+- External C 已在 `10:56` 领取 `TURN-34BP1` 并于 `11:01` 把 production 从 491 行真实增量到 502 行 / SHA
+  `05bbfda3...`，仍是唯一 owner；下一窗必须开始 named-test、交付或规范归还。当前 A/B/D 是需要用户重开
+  fresh task 的 READY lane，C 是唯一已有真实源码增量的 active lane。
+- Internal 继续保持 6 条独立 review/preflight/readiness；Java writer 活动时不运行 Maven/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:43 C AT1 父级通过并接手无人领取 BP1
+
+- C 的 TURN-34AT1 Repair #2 经父级独立复算 test/production SHA 与逐行复审，结论
+  `P0/P1/P2=0/0/0 / AT1 TEST-SOURCE REVIEW PASSED`。同一真实 service 已连续覆盖七个 terminal 与一个
+  completed Stage-1，精确产生 8 commands/8 canonical distinct UUID；旧 CAPTURE shape、raw PNG/SHA/
+  metadata 与 terminal 零 fallback 断言保持。AT1 owner 已释放，进入两名独立 reviewer + stable-writer build 门。
+- D 从未 claim TURN-34BP1，两目标仍为冻结初始 SHA、零 WIP。父级先撤销 D 后把该两文件 exact-metadata
+  self-unblock 小片改派在线 C；它与 AT1 固定 test snapshot 写集互斥，C 下一次 5 分钟 heartbeat 直接 claim，
+  不在 reviewer 期间空等。D 的旧 heartbeat 不得回放 BP1。
+- A 已于 `10:41:06` true-EOF 领取 TURN-28S2；当前仍在首个 source-start 窗。Internal 旧池整批掉线后已
+  保护所有 true-EOF 报告并重建 6 条有用工作：TURN-28Q 双审、TURN-34AT1 双审、S2 delivery preflight 与
+  一条后续 readiness；Java writers 活动期间继续不运行 Maven/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:38 A QP1 父级通过并接管无人领取 S2
+
+- A 的 TURN-28QP1 一行 production 已交付；父级复算 request/queue/worker/test 四 SHA并逐行核验，综合
+  TURN-28Q Parent Review #5 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。实现 owner 已释放，
+  现转两名独立 reviewer；named test/DHXY compile 等 writers 稳定。
+- External B 从未 claim TURN-28S2，目标 `NpcClickService.java` 仍为初始 `cce8f020...`、零 WIP。父级已安全
+  撤销 B 旧 assignment 并把 S2 改派给仍在线的 A；A 下一次 5 分钟 heartbeat 直接 replacement claim，四个
+  Alt shortcut+WAIT 一文件 strict-696 source-start，不等 TURN-28Q 最终 build。
+- C 仍执行 TURN-34AT1 Repair #2；D 仍需 fresh restart。Internal 两个 readiness 槽转为 TURN-28Q 独立 R1/R2，
+  其余四槽继续 DAG/BP3/TURN-39/build preflight。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:31 C AT1 Repair #1 复审后退单一 freshness P1
+
+- C 已交 Repair #1，完整 CAPTURE null shape 与七个 terminal case canonical/distinct UUID 已闭合；父级
+  Review #2 仍为 `P0/P1/P2=0/1/0`：新共享用例注释声称“terminal + positive”，实际只执行七个 terminal，
+  正例仍是单元素 freshness 自证。C 保持唯一 test-only owner，只把真实 completed Stage-1 battle-flag
+  capture 纳入同一序列，钉 8 commands/8 canonical distinct UUIDs 后再交付。
+- A 的下一张 TURN-28QP1 已 source-start open、待其 5 分钟 heartbeat claim；B/D 仍需 fresh restart。
+  Internal S3/AT1 delivery preflight 完成后已关闭，续派 TURN-28 post-S3 与 34A remaining-tranche 分解；
+  writers 活动期间未运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:27 A QT1 闭合、续一行 production QP1
+
+- A 的 TURN-28QT1 Repair #1 四个旧 test finding 已在 1283 行/19 tests、SHA `f72c7db0...` 闭合，QT1
+  test-only owner 已释放。父级完整 production 复读发现 `InputActionRequest.java:458` 调用未导入的
+  `Objects.equals(...)`，当前源码静态不可编译；TURN-28Q 综合结论仍为 `P0/P1/P2=0/1/0`。
+- 父级已冻结单行 production 子卡 `TURN-28QP1` 给 External A：只把该调用限定为同文件既有风格
+  `java.util.Objects.equals(...)`，queue/worker/test 全部只读。该片 source-start 已开放，不等最终 build/review。
+- 父级同时纠正历史证据措辞：`WindowNativeBinding` 当前未 override `equals/hashCode`，旧 `assertEquals`
+  今日也走 identity；保留 ordered `assertSame` 是显式且 future-proof，真实闭合的是首次 focus 会被覆盖的问题。
+- Internal TURN-35 与 TURN-34BP2 readiness 完成后均已关闭，已续派 TURN-39 latest readiness 与 BP3
+  readiness；内部仍为 6/6 有用工作。C 的 AT1 test-only Repair #1 继续 active；writers 稳定前不跑 Maven。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:23 C AT1 交付后退 test-only Repair #1
+
+- C 已在 TURN-34AT1 true EOF 正式交付 963 行/21 tests，test SHA `6be1f3bf...`，production
+  `AutoCombatService.java` 仍为冻结 SHA `532e6f84...`。父级逐文件 Test-Source Review #1 为
+  `P0/P1/P2=0/2/0 / REPAIR #1 REQUIRED`：CAPTURE 只断言 `input==null`，未锁 `inputAction/match/localService`
+  的最小 JSON 形状；七个 terminal case 每轮只有一个 action 却做 `distinct()==1`，不能证明 UUID 规范且跨例
+  新鲜。C 保持唯一 test-only owner，只修这一测试与子卡。
+- A 的 TURN-28QT1 Repair #1 已有真实测试增量，仍为另一条 Java writer；B/D 仍需 fresh restart 领取
+  TURN-28S2/TURN-34BP1。Internal Parfit 完成 28Q WIP pre-review 后已关闭，续派 Newton 做完整 DAG
+  source-start 扫描，内部继续 6/6 有用工作。
+- writers 活动期间未运行 Maven/JUnit/compile/runtime/input；全部 dirty/untracked 继续保护。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:13 A 交付后父级退回最小 test-only Repair #1
+
+- A 已在 TURN-28QT1 true EOF 正式交付 1224 行测试，父级逐行 Review #1 为
+  `P0/P1/P2=0/3/1 / REPAIR #1 REQUIRED`：缺 `assertSame` 静态 import；缺 `attempted=false` fallback；两次
+  frozen focus 只保存最后值且用 value equality，未逐次证明同一 binding object；另校正错位 JavaDoc 和
+  “11 旧 + 7 新 = 18”计数。A 恢复唯一 test-only owner，三份 production 继续冻结只读。
+- C 已真实领取 TURN-34AT1 并产生 Stage-1 测试增量，仍是唯一 owner、尚无正式 delivery。B/D 的
+  TURN-28S2/TURN-34BP1 截至本轮仍零 claim/零目标字节，按未重开/掉线处理，不冒充在线 owner；两张本身均为
+  无上游 source-start 门的自解锁小片。
+- Internal 完成 TURN-28S2 精确 preflight 与 TURN-34AT2 readiness 后均已释放并续派；内部仍保持 6 条有用
+  review/readiness，不抢 External Java。A/C writer 活动期间不运行 Maven/JUnit/compile/runtime/input。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 10:00 C AT0 通过并立即续派 AT1
+
+- C 于 `09:56:38` true EOF 交付 AT0 Repair #1；父级复算 test SHA `4b8460b0...`、production
+  `532e6f84...`、17 tests 与真实 package，Review #2 为 `P0/P1/P2=0/0/0 / AT0 TEST-SOURCE REVIEW PASSED`。
+  该小片 owner 已释放，但 TURN-34A 整体测试矩阵未完成、未批准。
+- 父级已创建下一张单测试 `TURN-34AT1` 给现有 External C：真实 Stage-1 battle-flag 首帧、exact
+  command/UUID/raw-PNG 和首 capture terminal/uncertain 零 fallback；production/POM/resources 全只读。
+  C 无需重开，下一次 5 分钟 heartbeat 直接 claim/start；之后仍有 AT2+，不在单片通过后停 lane。
+- A/B/D 仍分别需 fresh task 领取 TURN-28QT1、TURN-28S2、TURN-34BP1；三张均无上游 source-start 门。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。Java writer 活动时不运行 Maven/runtime/input。**
+
+## 2026-07-16 / CR271 09:56 A 交还 WIP 后再拆 test-only 四路均可开工
+
+- A 在首窗内真实修改 TURN-28Q 四文件并于 `09:51:32` 规范 `OWNER RETURNED`，不是空等，也未冒充交付。
+  父级核当前字节：三份 production 的 stop typing/final gate、frozen Alt exact binding、paused cancellation
+  delta 冻结只读；整体 WIP 为 `P0/P1/P2=0/1/0`，因为 `BarrierPauseToken.entered` 会在未暂停 pre-focus
+  revision check 提前释放，且五组 deterministic acceptance 仍缺。fresh A 下一张已缩为单测试文件
+  `TURN-28QT1`，无上游 source-start 门。
+- B=`TURN-28S2` 单 production；C=`TURN-34AT0 Repair #1` 单测试两行 import；D=`TURN-34BP1` 两文件。
+  四条都是真实 prerequisite/self-unblock implementation，不允许再输出泛化“门未开”。A/B/D 需用户重开
+  fresh External 任务后 true-EOF claim；C 当前唯一 owner 由其 5 分钟 heartbeat 读取父级返修。
+- TURN-22D1 独立 R1/R2 均 `APPROVED 0/0/0`，只待 writers 稳定后的授权 named test 与 DHXY compile；
+  Internal 继续 `6/6` 做 WIP pre-review、后续 tranche readiness 和 build-gate preflight，不抢 External Java。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。Java writer 活动时不运行 Maven/runtime/input。**
+
+## 2026-07-16 / CR271 09:50 External 实盘启动与 C 快速返修
+
+- A 已于 `09:46:07` 在 TURN-28Q 原卡 true EOF 领取 Repair #2；首个 5 分钟窗截至 `09:51:07`。当前四个
+  目标文件仍等于领取 SHA，故暂记 active claim、待真实 source/test 增量；逾期仍零增量则立即归还/撤销，不能空占。
+- B、D 的新小片分别是 TURN-28S2（一份 production）与 TURN-34BP1（production+existing test），但截至本轮
+  均无 true-EOF claim、零目标字节变化，按掉线/尚未重开处理，不再写成“在线等门”。需要 fresh External B/D
+  任务读取各自子卡后领取；两片本身就是自解锁 prerequisite，没有上游 source-start 门。
+- C 于 `09:46:07` 领取 TURN-34AT0，并在 `09:47:27` true EOF 真实交付，test SHA
+  `60e49ed9... -> 98e65586...`，production `532e6f84...` 保持只读。父级逐文件 Review #1 为
+  `P0/P1/P2=0/1/0`：两个 LocalServiceClient 的 import 仍错误指向不存在的 `.remote`，真实 package 是
+  `.turn.client`。C 保持唯一 owner，只返修这两行后再交付；通过后立即续 TURN-34AT1，不回到泛化等门。
+- TURN-22D1 独立 R1 已 `APPROVED 0/0/0`，R2 仍在审；Internal 完成的 helper 已释放并补派 TURN-28S2、
+  TURN-34BP1 精确 implementation preflight，内部继续保持 `6/6` 有用工作。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。Java writer 活动时不运行 Maven/runtime/input。**
+
+## 2026-07-16 / CR271 09:38 External 掉线撤单与四条可执行小片
+
+- 父级不再把 External lane 的旧 heartbeat/CLAIM 文本当成在线工作。实盘结果：A 于 `09:34` 真实交付
+  TURN-22D1 Repair #1；B 于 `09:32:59` 明确从未领取 TURN-34BT1 并归还；C 于 `09:31:43` 归还
+  TURN-34A 的 763 行 test WIP；D 截止 `09:32` 零 claim、两文件零变化，旧 assignment 已撤销。lane 在线与
+  card owner 分离，掉线/上下文不足不再占关键路径。
+- A 的 TURN-22D1 Repair #1 经父级独立 Review #2 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW
+  PASSED`，owner 已释放，双 reviewer/build 待定。TURN-28Q 的 R1/R2 新证据经父级独立复核合并为
+  `P0/P1/P2=0/4/0 / REPAIR #2 REQUIRED`：stop-only/final-stop typed closure、Alt exact-binding 零 refresh、
+  paused cancellation completion、deterministic pause-gate proof。A 的下一张为该四文件返修。
+- B 改接一文件 production slice `TURN-28S2`：只改 Cloud `NpcClickService.java`，迁四个 active
+  `ALT_C/ALT_A/ALT_4 + baseline WAIT` 到一次最小 HTTPS action；不再派从零几百行测试。
+- C 的 TURN-34A WIP 保留，先接小片 `TURN-34AT0`：只修现有 named test 的 package/constructor 编译表面，
+  production `532e6f84...` 只读；后续 AT1+ 再分 enter/exit/caller/timing/recovery/terminal 语义片。
+- D 的旧 TURN-34BP1 assignment 因掉线撤销后，同一两文件 self-unblock 片保持 replacement READY：只改
+  `TaskExecutionContext.java`、其 existing named test 与子卡，补 latest title/HWND/process exact-generation。
+- 四片写集互斥，fresh External A/B/C/D 均须先在对应子卡 true EOF CLAIM，并在首个 5 分钟窗口产生真实
+  source/test 增量；否则立即归还，不保留空 owner。Internal 仍保持 6 条独立 review/preflight/readiness，当前
+  TURN-22D1 R1/R2 已安排；helper 不能批准。
+- Java writers 领取/活动期间不运行 Maven/JUnit/compile/package，不启动 runtime/application/server/Task/UI/
+  capture/input，不做 Git mutation，保护两仓全部 dirty/untracked。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 09:26 External 四 lane 自解锁纠偏
+
+- External A 刚在 `09:20:05` 交付 TURN-22D1，并非空闲。父级独立 Review #1 为
+  `P0/P1/P2=0/1/0`：production 通过，test 仍以 private constructor reflection 构造
+  `TurnExecutionWindow`。A 保持 owner，立即做 public resolver test-only Repair #1。
+- External B 的 TURN-34BT1 是可直接开工的 self-unblock test tranche，但 `09:13` 改派后两个 heartbeat 窗仍
+  零 claim/零测试字节；最后 claim/start 截止 `09:32`，逾期先撤销再改派并认定该 External task stale。
+- External C 的 TURN-34A test Repair #1 最后写入 `08:45:50`，763 行 SHA `60e49ed9...`，此后无 delivery。
+  `09:32` 前必须交付、真实增量或 owner return；否则父级先释放再 replacement，保留 WIP 不双写。
+- External D 不再空等最终 TURN-22 门。父级独立审出 TURN-34B retained production `0/2/1` 后，冻结真实共享
+  prerequisite `TURN-34BP1`：只改 Cloud `TaskExecutionContext.java` 与其现有 named test，补 latest
+  title/HWND/process exact-generation checkpoint。D 的 claim/start 截止同为 `09:32`。
+- 新规则：最终 review/build 依赖不阻止写集互斥 prerequisite source-start；CLAIM 必须在一个 5 分钟窗口内
+  伴随源码/测试增量或 delivery，否则不再占 owner。Internal 继续保持 6 条 review/preflight/readiness，关键 Java
+  仍优先 External。Java writers 活动时不运行 Maven/runtime/input；保护两仓全部 dirty/untracked，零 Git mutation。
+
+**无已批准业务差异；唯一业务基线 `696a12b0`。**
+
+## 2026-07-16 / CR271 08:06 掉线重建与四条 External 源启动门拆分
+
+- 父级实时轮询确认旧 Internal 六会话 Ampere/Dewey/Sagan/Chandrasekhar/Gauss/Confucius 全部返回
+  `not_found`；不再把旧 UUID 冒充在线。当前已重建内部 `6/6`：Euler
+  `019f6acb-7722-7442-bd9a-f9204cf2e69c` 独占 TURN-28P 最后两份 real queue/worker contract test；Galileo
+  `019f6acc-5f29-7fe1-9a8b-60c780a4e3e5` 核 TURN-22 source-start；Laplace
+  `019f6acc-732b-7fa1-95fc-8b2460cd6148` 核 TURN-28 parent freeze；Leibniz
+  `019f6acc-877b-7ea1-9de7-b5d7e52043f5` 做 TURN-34A delivery preflight；Dalton
+  `019f6acc-9b9a-7810-b5c9-8b42478ee0b1` 做 TURN-33 build preflight；Nietzsche
+  `019f6acc-b310-7310-aee7-8cff7296a844` 扫完整 DAG READY。五 helper 只写互斥 PRECHECK，不改 Java/批准。
+- External D 在 `07:54:20` 最终截止后仍未领取 TURN-28P，两个目标测试保持 SHA
+  `ed2cd35c...` / `20db8bb7...` 与原 mtime。父级已在 TURN-28P 原卡和 D lane true EOF 正式撤销 D assignment，
+  再把同一 exact 两测试写集安全改派 Internal Euler；撤销在先、replacement 在后，零双 owner。
+- 排班纠偏：`source-start` 与 `final source/review/build` 分成两层。上游 production API 已冻结、剩余工作只在
+  互斥测试/集成文件时，下游可以开始源码实现，但最终通过继续等待上游测试/集成门，不能把“未最终批准”误写为
+  “任何源码都不能动”。
+- External A=`TURN-22 Repair #3 SOURCE-START READY`：只改 Cloud TeamReturn test、DHXY
+  `TurnInputStepExecutor`/named test 与原卡；直接使用已落盘 frozen exact-window public API。TURN-28P 两测试仍是
+  最终 source/build 门。A 必须先在 TURN-22 原卡 true EOF CLAIMED。
+- External B=`TURN-28 SOURCE-START READY`：父级新建固定卡，exact write set 为 Cloud
+  `NpcClickService`、`ObjectiveTextRecognizer`、`SmartClickRecognizer`、唯一 `NpcClickTurnContractTest` 与原卡；
+  选择 strict `696a12b0`，不保留当前未批准 `sourceTask` proof delta。TURN-28P/TURN-22 integration 与测试构建
+  留作最终门。B 必须先在 TURN-28 原卡 true EOF CLAIMED。
+- External C 继续作为 TURN-34A 唯一 owner；中途 named-test mtime 变化仍不算 delivery，只有原卡 true EOF
+  `SOURCE+TEST DELIVERED` 才触发父级审查。
+- External D=`TURN-34B SOURCE-START READY`：父级确认 `TaskMaintenanceService` 对 TURN-22 只维护既有
+  `TEAM_RETURN+COMMON_BOX` capability，零 TeamReturn mechanics；Repair #3 也不改 Cloud production。D 只改
+  `TaskMaintenanceService`、唯一 named test 与原卡，保持 19 public API、TURN-34A 六 API 和 696 语义；TURN-22
+  source pass仍是最终门。D 必须先在 TURN-34B 原卡 true EOF CLAIMED。
+- External A/B/C/D 均为 implementation lane、每 5 分钟 heartbeat；A/B/D 当前为 READY 未 claim，C 为 active
+  unique owner。Java writers 活动时不运行 Maven/JUnit/compile/package；不启动 runtime/application/server/Task/
+  UI/capture/input，不做 Git mutation，保护两仓全部 dirty/untracked。`0114604e`/`3b988caa` 只是两仓 HEAD，
+  唯一业务基线仍为 `696a12b0`。
+
+**无已批准业务差异；按 `696a12b0`、exact-window generation 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 07:03 实际写入核验与 Internal 四槽续派
+
+- 父级直接核对 TURN-28P Repair #2 的 handoff SHA、当前磁盘 SHA 与 mtime：External B 已在冻结的 11 个
+  production/test 文件中修改 `10/11`，最近两次真实写入为 DHXY real queue/worker contract test `06:46:19`
+  与 Cloud uncertainty contract test `06:50:58`；未变化的是 Cloud `TurnGameClientContractTest.java`。这证明 B
+  有实际源码/测试写入，但原卡物理 EOF 仍是 `EXTERNAL-B REPAIR #2 CLAIMED`，尚无
+  `REPAIR #2 SOURCE+TEST DELIVERED`，因此 TURN-28P source 门、External A 的 TURN-22 Repair #3 与
+  External D 的 TURN-34B 仍不得提前开放。
+- External B 随后明确说明 P1-1/P1-2 已闭合、P2-1 尚余两个 real queue/worker harness 与 Cloud
+  timeout/interrupted probe-caller 负例。父级已在原卡追加 `PARENT EXECUTION DIRECTIVE #1`：不写中间
+  `PROGRESS`、不提前冒充交付，按固定顺序一次闭合四个证据点后再写 `SOURCE+TEST DELIVERED`。
+- `07:20` 父级核验 B 所称最后 harness 实际尚未开工：两个目标测试 mtime 仍为 `06:22:53` / `06:08:33`。
+  原卡与 B lane 已写 `CRITICAL-PATH ESCALATION #2`：`07:27` 前必须开始两文件改造或归还 owner；逾期先释放 B，
+  再优先安全改派给等待上游的 External A，释放前禁止第二 writer 与同写集双写。
+- External B 已于 `07:25:04` 在 TURN-28P 原卡 true EOF 规范 `OWNER RETURNED`，交还当前 11 文件 SHA、
+  P1/P2 已闭合证据与唯一剩余 harness 配方，并停止写入。父级独立核验 A 无活动 Java owner后，于 `07:26:05`
+  把 replacement READY 给 External A；A 必须先在原卡 true EOF 领取，且只允许修改两个 DHXY test + 原卡，
+  其它 9 文件按 B 交还 SHA 只读保护。不存在同写集双 owner。
+- TURN-34A 原卡物理 EOF 仍是父级 `BLOCKER REJECTED / EXTERNAL-C RESUME REQUIRED`；点名
+  `AutoCombatServiceTurnContractTest.java` 当前仍不存在。External C 保持 owner，只能补该测试并在原卡 true EOF
+  正式交付，不得扩大 PlayerState/Dialog/POM/第三文件写集。
+- `07:16` 父级复核确认 C 在四个 5 分钟 heartbeat 窗口后仍无测试/resume/owner-return，且平台线程索引无法定位
+  External C 任务。为避免双写，C 暂保唯一 owner；父级已在原卡与 lane 报告写 `RESUME ESCALATION #1`：
+  `07:22` 前必须开始唯一测试或明确归还 owner，逾期先释放再安全改派，释放前绝不安排第二 writer。
+- `07:18:36` 父级实盘确认 C 已创建 `AutoCombatServiceTurnContractTest.java`（25,374 bytes），恢复时限已满足；
+  stale-owner 释放条件已取消。C 继续作为 TURN-34A 唯一 owner，当前只是恢复写入，尚未正式交付或通过。
+- `07:25:52` 该 named test 再次真实写入（24,679 bytes）；C 仍是唯一 owner，原卡尚无
+  `SOURCE+TEST DELIVERED`，不得把 mtime 变化冒充交付。
+- Internal 四份 fixed PRECHECK 已 true EOF 交付，但仍只作父级待审证据，不构成批准：TURN-35 latest readiness、
+  TURN-38A exact readiness、TURN-34C latest readiness、TURN-42M/43M deletion cohort decomposition。
+  父级已立即复用原四个 agent：Sagan -> TURN-36 latest readiness，Dewey -> TURN-38B1，Chandrasekhar ->
+  TURN-38B2，Gauss -> TURN-38B3；Ampere 继续 TURN-38M LeftTop route，Confucius 继续 TURN-44A readiness。
+  六槽保持有用工作且全部只写互斥 PRECHECK 报告。
+- `07:12` Internal 又有两份 fixed PRECHECK true EOF 交付：TURN-38M LeftTop route 与 TURN-44A post-45A deletion
+  boundary；两份均待父级独立审计，不构成分类或删除授权。原 agent 已立即续派：Ampere -> TURN-38M 三个
+  `DELETE` 候选的 companion/cohort closure，Confucius -> TURN-45B post-44A residual-seed readiness；六槽继续满载。
+- `07:28` TURN-38B1/B2/B3 三份 fixed PRECHECK 均已 true EOF 交付，状态为父级审计待办而非批准。三名
+  Internal helper 已立即续派到 TURN-37 latest dependency、TURN-40B runtime/factory 与 TURN-40C activation/host
+  lifecycle delta audit；六槽没有完成后空挂。
+- External B 已规范归还 TURN-28P owner；External A 尚未在原卡 true EOF 领取 replacement，两份目标测试 mtime
+  仍为 `06:22:53` / `06:08:33`。当前唯一真实 Java writer 是 External C；本轮不运行 Maven/JUnit/compile/
+  runtime/input，保护两仓全部 dirty/untracked，未执行 Git mutation。
+- `07:31:04` External A 已在 TURN-28P 原卡 true EOF 规范 `EXTERNAL-A REPLACEMENT CLAIMED`；领取前两份
+  目标测试 mtime 仍为 `06:22:53` / `06:08:33`，因此接续边界清楚且没有第二 owner。A 当前只允许修改这两份
+  DHXY contract test 与原卡，其余 9 文件按 B 交还 SHA 只读。
+- External A 随后因剩余上下文不足，于 `07:36:08` 在原卡规范 `OWNER RETURNED`，且 11 文件 SHA 与领取前
+  逐项一致、零 Java 写入。父级独立复核后已释放 A，并于 `07:38:20` 将同一两测试任务改派 External D；
+  D 必须先在原卡 true EOF 领取，当前 READY 不冒充 owner/交付。
+- `07:29..07:31` TURN-45B residual、TURN-36 latest 与 TURN-38M DELETE cohort 三份 PRECHECK 又已 true EOF
+  交付，均只作父级待审证据。Confucius、Sagan、Ampere 已立即续派 TURN-40D、TURN-38B4、TURN-38C readiness；
+  Internal 六槽继续有用工作，无完成后空挂。
+- 当前真实 Java writer 仅 External C（TURN-34A）；TURN-28P 在 D 领取前暂时零 owner。C 的 named test 于
+  `07:35:59` 再次写入但仍无正式 delivery。故继续不运行 Maven/JUnit/compile/runtime/input。
+- 术语校正：`0114604e` 是 DHXY 仓当前 HEAD，`3b988caa` 是 Cloud 仓当前 HEAD；它们是“两仓 HEAD”，不是
+  两条业务基线。CR271 的唯一业务逻辑基线仍为 `696a12b0`。
+
+**无已批准业务差异；按 `696a12b0`、exact-window generation 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-34A External C 已真实领取
+
+- 父级已独立核对当前 Cloud `AutoCombatService`、四个真实 Task caller、六个并行
+  `TaskMaintenanceService` API、TURN-19/20/21/23/24A/33 source gates 与 `696a12b0` 基线，固定卡
+  `2026-07-16-turn-card-TURN-34A.md` 已写为 `READY / PARENT BRIEF FROZEN / EXTERNAL-C NEXT`。
+- exact write set 只有 Cloud `AutoCombatService.java`、新 `AutoCombatServiceTurnContractTest.java` 与原卡。
+  迁移只把旧 `WindowTaskContextHolder/WindowRuntimeContext/TaskTurnCoordinator` 换成 turn-native exact context state；
+  public surface、四 Task phase/延时/返回、maintenance 顺序与动作数不得变化。
+- External C 已于 `06:26:22` 在 TURN-34A 固定卡 true EOF 真实 `CLAIMED`，当前唯一允许写 Cloud
+  `AutoCombatService.java`、新 `AutoCombatServiceTurnContractTest.java` 与原卡。TURN-33
+  Repair #3 当前为父级 `0/0/0`；独立 R1/R2 均已 `APPROVED 0/0/0` 并经父级分别采纳，review 门为 `2/2`，
+  只剩 writer 稳定后的点名测试与 Cloud compile/build。
+  External B 仍写 TURN-28P Repair #2。
+- External C 于 `06:47:53` 报 named-test instantiation `BLOCKED`；父级独立核验后以
+  `P0/P1/P2=0/1/0 / BLOCKER REJECTED / RESUME REQUIRED` 退回同一 owner。共享 Cloud main compile 阻断真实但
+  不阻止写 test source：`PlayerStateService` public constructor 的 `LocationVisionService` 参数可传合法 `null`，
+  `TaskMaintenanceService` 六个冻结 API 路径也无需实例化 `DialogService`。C 只补唯一 named test，不得扩大 Java 写集。
+- Internal 六槽保持有用工作：Ampere 已交付 TURN-38M GameContext route risk，现转 LeftTop owner route risk；
+  Dewey 已交付 TURN-39 readiness，现转 TURN-38A readiness；Sagan=TURN-35 latest readiness；Chandrasekhar
+  已交付 TURN-34B latest readiness，现转 TURN-34C post-34A/34B readiness；Gauss=TURN-42M/43M cohort
+  decomposition；Confucius 已交付 TURN-45A route-disconnect readiness，现转 TURN-44A post-45A deletion readiness。
+- TURN-34B 最新 PRECHECK 确认五项显式 source 启动依赖中当前唯一未满足项是 TURN-22 Repair #3；其唯一
+  production/test 写集仍是 `TaskMaintenanceService.java` 与 `TaskMaintenanceTurnContractTest.java`，不得提前建卡或
+  改 Java。TURN-39 PRECHECK 则确认当前仍有真实 DAG、old active reference、`InputSequences` 未归属、metadata
+  authority 与 test ownership 阻断；不是 READY。TURN-38M GameContext route helper 仅非绑定倾向 runtime 直接持有
+  `GameContext.State`，父级尚未冻结分类。Java writer 活动，不运行 Maven/JUnit/compile。
+- TURN-45A route PRECHECK 已把未来边界收敛为 `CloudBrainServer.java` 修改、删除
+  `RemoteTaskRunRoutes.java`/`RemoteTaskRunEndpoint.java`、新增 `OldRemoteRouteRemovalGuardTest.java`；对 17-file
+  old authority SCC 为 `0/17` 写入，并且只能在 TURN-39/40C/41/44M45M parent freeze 后领取。该材料不是 manifest
+  或 READY；Internal 已续派 TURN-44A post-45A 原子删除边界核验。
+
+**无已批准业务差异；按 `696a12b0` 与 exact-context HTTPS turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-33 Repair #3 父级源码门通过
+
+- External C 于 `06:10:45` true EOF 交付 TURN-33 Repair #3；父级独立逐行复核 Cloud production/test、
+  交付 SHA、`696a12b0:584-604` 与业务逻辑，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED / REVIEW+BUILD PENDING`。
+- generated NORMAL 的第 5 次删除不再提前 success；production 无条件执行一次 post-delete stability
+  observation，只接受稳定 EMPTY/KEEP。两个 production-path 用例分别锁住稳定 EMPTY 成功与仍为 NORMAL 失败，
+  并证明第五次后无第六次删除、无后续 static scan/action/UUID。
+- External C 的 TURN-33 owner 已释放；父级正在冻结它的下一张 TURN-34A，并为 TURN-33 安排两名非实现者独立
+  reviewer。External B 仍实施 TURN-28P Repair #2，Java writer 活动，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0` 与用户确认的 live static-tail/终极角规则等价迁移。**
+
+## 2026-07-16 / CR271 关键阻塞实现转交 External，TURN-33 进入 Repair #3
+
+- 用户确认新的排班优先级：会阻塞主链的 Java implementation 优先交给 External A/B/C/D；内部 6 个槽位主要做
+  独立 review、production/test preflight、readiness 与下一卡合同冻结。只要对应 External lane 在线且写集可交接，
+  内部 Worker 不再长期占用关键实现卡。
+- TURN-28P Repair #2 已完成安全交接：Maxwell 在原卡 true EOF 明确释放 owner，并证明 Review #3 后 11 个冻结
+  production/test 文件零修改；External B 已在同一原卡 true EOF 真实 `CLAIMED`，从交付 SHA 增量返修。
+- TURN-33 Repair #2 的独立 R2 找到一项真实 P1，父级逐行复核确认：当 generated-normal 删除恰好成为 whole-pass
+  第 5 次删除时，`SummonSkillService.java:830-832` 会在 baseline post-delete stability observation 前提前 success。
+  这会把未观察的 NORMAL/UNKNOWN 伪装成成功，违反 `696a12b0:590-604` 的稳定 EMPTY/KEEP 才终止合同。
+- TURN-33 Parent Review #4 为 `P0/P1/P2=0/1/0 / REPAIR #3 REQUIRED`。原 R1 已标记 superseded 并退出；
+  External C 已于 `06:05:57` 在 TURN-33 原卡 true EOF 真实 `CLAIMED` Repair #3，当前只允许改
+  `SummonSkillService.java`、`SummonSkillTurnContractTest.java` 与原卡。generated-normal 第 5 次删除后仍必须
+  恰好观察一次稳定结果，随后本 pass 零 static scan/action/UUID；TURN-34A 作为 C 的下一卡继续等待。
+- External A 继续等 TURN-28P source 门后做 TURN-22 Repair #3；External D 继续等 TURN-22/33 后做 TURN-34B。
+  External heartbeat 每 5 分钟、无变化静默；父级 heartbeat 每 1 分钟。Java writer 活动期间不运行 Maven。
+- 当前 Internal 6/6 均为非阻塞准备：Ampere=`TURN-40B readiness`、Dewey=`TURN-38M authority classification
+  preflight`、Sagan=`TURN-40C readiness`、Chandrasekhar=`TURN-40D readiness`、Gauss=`TURN-42M/43M DHXY
+  deletion-manifest readiness`、Confucius=`TURN-44M45M Cloud deletion-manifest readiness`。六人只写各自唯一报告，
+  不改 Java、不批准卡；完成后优先滚入新的 review/readiness，不从 External 抢关键 implementation。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned 业务等价迁移。**
+
+## 2026-07-16 / CR271 TURN-28P Repair #1 父级复审退回 Repair #2
+
+- Maxwell 于 `05:42:47` true EOF 交付 TURN-28P Repair #1；父级独立读取 11 个 production/test 文件、两份
+  PRECHECK、`696a12b0` 与当前调用链，并逐一核对交付 SHA。结论
+  `P0/P1/P2=0/2/1 / REPAIR #2 REQUIRED`。
+- 已关闭项：frozen path 零二次 refresh；queued remove 与 started callback cooperative cancellation；waiter 必须等
+  callback finally/Ctrl-UP settle；Ctrl-UP 任意会被 worker 正常化的 `Throwable` 先投影 `CTRL_RELEASE_FAILED`。
+- P1-1：queue API 仍由 caller 把 action-resolved binding 与稍后读取的 mutable epoch 拼接，且 coordinator 的
+  context monitor 在 focus 后、callback 前释放；binding commit 仍可插入 focus 与 before capture/Ctrl/MOVE 之间。
+  Repair #2 必须在 context monitor 内冻结 generation，并由 worker 持锁穿过 focus、callback 和 callback finally。
+- P1-2：frozen queue/facade 仍返回 boolean，丢掉既有 `InputActionExecutionResult.safetyReason=STOP_REQUESTED`，使
+  admission 前 STOP 可能被 capture 错投影为 `FAILED/PIXEL_PROBE_FAILED`。Repair #2 改为复用现有 structured result。
+- P2：named tests 未覆盖完整 public resolver -> real queue/worker 链、逐项+A->B->A drift、outer worker 的
+  non-Runtime UP seam，以及 Cloud code-only/frame-only uncertainty 独立负例。Maxwell 保持 owner；A/B 门继续关闭，
+  Java writer 活动期间不运行 Maven。
+
+**无已批准业务差异；按 `696a12b0`、exact-window generation 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-22 双 reviewer 阻断经父级确认
+
+- TURN-22 R1/R2 最新轮均 `BLOCKED`。父级独立核对后合并为
+  `P0/P1/P2=0/2/1 / REPAIR #3 REQUIRED / PREREQUISITE BLOCKED BY TURN-28P Repair #1`；旧的 Review #3
+  `0/0/0` 被新证据覆盖。
+- 两项 P1：Cloud `TeamReturnTurnContractTest` 直接导入 DHXY-only executor/queue/window 类，但 Cloud POM/源码树
+  没有这些类型，点名测试不可 test-compile；真实 `TurnInputStepExecutor` 仍把按 frozen window 映射的绝对坐标交给
+  会二次 refresh 的 legacy queue，可能混用旧坐标与新 binding。P2 是 empty-to-empty context restore 断言伪阳性。
+- Repair #3 等 TURN-28P frozen queue API source 门通过后才给 External A READY：Cloud test 只保留 assembly/JSON
+  业务断言；DHXY `TurnInputStepExecutor` 改用最终 frozen API，DHXY contract test 验证 exact snapshot、sentinel restore、
+  一次 `CLICK_LEFT(150)->SLEEP(500)` submission 与 drift 零 input。当前 External A 在线但不改 Java。
+- TURN-28P production/test 两份 preflight 均已 `PRECHECK_COMPLETE`，只作为 Maxwell delivery 后的父级检查清单，
+  不构成批准。Maxwell 仍写 Java，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0` 的一次 queue `CLICK_LEFT(150)+SLEEP(500)` 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-33 Repair #2 父级源码门通过
+
+- TURN-33 Repair #2 已于 `05:29:23` true EOF 交付。父级独立逐行复核 production/test、当前 SHA、
+  `696a12b0` 与 `docs/业务逻辑.md`，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED / REVIEW+BUILD PENDING`。
+- 终极角实际 click 后 `ultimateGenerateClicked` 会在任何 fresh rescan 前终止当前 pass；hover/miss 不伪装 click，
+  普通/locked-boundary 删除仍保留获批的 fresh static-tail scan。production API 用例锁住 ultimate click=`1`、
+  generated delete=`1`、后续 static scan/command/UUID=`0`，五次普通删除 budget 用例继续保留。
+- Leibniz implementation owner 已释放，转入两名非实现者独立 reviewer 门。Maxwell 仍实施 TURN-28P Repair #1，
+  Java writer 活动，本轮不运行 Maven/JUnit/compile；TURN-34A/C 只在 reviewer/build 与依赖门满足后继续。
+
+**无已批准业务差异；按 `696a12b0` 与用户确认的 live static-tail 规则等价迁移。**
+
+## 2026-07-16 / CR271 TURN-33 Repair #1 复审退回 Repair #2
+
+- TURN-33 Repair #1 已于 `05:16:34` true EOF 交付。父级独立逐行复审 production/test、`696a12b0` 与
+  `docs/业务逻辑.md`，结论 `P0/P1/P2=0/1/0 / REPAIR #2 REQUIRED`。原 P1-1 的 all-exit lightweight
+  cleanup 已关闭；fresh static rescan 与五次 budget 已进入 production public API。
+- 新唯一 P1：当前 fresh loop 会在终极角生成普通技能并删除后再次 static scan、再次点击终极角，最多随 budget
+  重复五次；基线每个 pass 的终极角调用完成后直接结束。现有五删 fixture 用“同一尾格已确认 EMPTY、无生成动作却
+  下一帧恢复全 OCCUPIED”的脚本绕开了该路径。Leibniz 已收到 Repair #2：保留普通/locked-boundary 删除后的 fresh
+  rescan，但终极角实际点击后无论生成 KEEP 或 NORMAL 都结束本 pass，并补 production-path 单次终极角负例。
+- TURN-34A/C 与 External C/D 的 TURN-33 依赖门继续关闭；“门未开”不表示 lane 离线。Maxwell 的 TURN-28P
+  Repair #1 仍在写入，Java writers 活动，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0` 与用户确认的 static-tail 前置识别规则等价迁移。**
+
+## 2026-07-16 / CR271 TURN-28P 返修、TURN-22 双 reviewer、TURN-33 合同裁决
+
+- TURN-28P 两名非实现者独立 reviewer 最新轮均发现同两项 P1；父级随后逐文件复核，确认 action resolve 后
+  legacy queue/focus 会再次 refresh，可能混用新 focus 与旧 frozen HWND/ROI；waiter interrupt/timeout 还会在
+  已启动 callback 的 Ctrl-UP/finally/settle 完成前返回 closed result。另有 probe-specific uncertainty evidence
+  与 non-Runtime Ctrl-UP typed failure 两项 P2，父级总计 `P0/P1/P2=0/2/2 / REPAIR #1 REQUIRED`，覆盖旧的
+  `0/0/0` 初审。Maxwell 已在原卡 true EOF 领取通用 frozen exact-window queue/cancellation barrier 返修；协议、
+  Cloud 业务、Task/caller 不扩写集。
+- External A 已完成 TURN-22 Repair #2。父级独立源码/测试源码 Review #3 为 `P0/P1/P2=0/0/0`：本卡 emitted
+  `TurnInputSpec` 已穿过 production `TurnInputStepExecutor`，recording `InputActionQueue` 直接证明恰好一次
+  `CLICK_LEFT(150) -> SLEEP(500)` submission、exact absolute point、`COMPLETED/OK` 与 context 恢复。当前状态
+  `SOURCE+TEST SOURCE REVIEW PASSED / REVIEW+BUILD PENDING`；Faraday、Peirce 是本卡仅有的两名独立 reviewer，
+  父级不计入 reviewer 数量。
+- TURN-33 Repair #1 的 P1-2 已由父级冻结：每次成功删除后 fresh 静态尾扫，只 hover 当轮唯一选中的
+  `OCCUPIED`，whole pass 共用最多 5 次删除预算，第五次后停止且第六次 command/UUID 为零；每轮 observation
+  是显式 Cloud 业务 action，不是 transport retry。Leibniz 正在原四文件写集实施，未见新 delivery true EOF。
+- 当前内部 6 条保持在线：Maxwell=TURN-28P Repair、Leibniz=TURN-33 Repair、Anscombe/Russell=TURN-28P
+  production/test preflight、Faraday/Peirce=TURN-22 R1/R2 review。External A/B/C/D 每 5 分钟轮询，无变化静默；
+  父级每 1 分钟。Java writers 活动，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 TURN-28P 父级源码门通过，External A 开工门已开
+
+- TURN-28P Maxwell 已于 `04:31:59` true EOF 交付。父级独立逐文件审查双仓 protocol、DHXY input/capture/local
+  executor、Cloud outcome correlation、named-test source 与 `696a12b0`，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。双仓协议/tests/fixtures SHA 逐对相同；click
+  `150ms + 500ms` 保持同一次 queue submission；Ctrl probe 保持 exact HWND/ROI、finally release、唯一 after raw
+  PNG，terminal/uncertain 不伪成功。两名独立 reviewer 与测试/构建门仍在后续，不冒充 CARD APPROVED。
+- External A 的 `TURN-22 Repair #1` 已在原卡和 lane 报告标记 `READY`：只改 Cloud assembly + named test，把旧
+  `CLICK_LEFT -> WAIT150 -> WAIT500` 改为一个携带 `clickDelayMs=150/queueHoldMs=500` 的 typed click，并穿透
+  production mapper/executor 证明一次 UUID/command/queue submission。External B 的 TURN-28 source dependency 也已
+  解除，父级正在把完整 696 FIFO/Ctrl/direct-combat 边界冻结为独立开工卡后立即放行。
+- 当前内部保持 6 个在线：Leibniz 修 TURN-33；Faraday/Anscombe 独立 review TURN-28P；Maxwell 扫 DAG；
+  Peirce/Russell 分别准备 TURN-28 与 TURN-34A 的即时开工包。完成后续派，不主动关闭。External heartbeat 每
+  `5` 分钟且无变化静默；父级每 `1` 分钟。
+- Leibniz 仍是活动 Java writer，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 TURN-33 父级审查退回；External 门与心跳口径明确
+
+- TURN-33 Leibniz 已于 `04:17:34` true EOF 交付四文件。父级独立对照 production、named-test、
+  `696a12b0` 与 `docs/业务逻辑.md:170-211`，结论 `P0/P1/P2=0/2/0 / REPAIR REQUIRED`：fatal/uncertain/
+  confirmed STOP 会绕过 baseline lightweight cleanup；“最多 5 次删除”测试仅反射常量，没有直接执行 production
+  budget。Repair #1 已退回原 Leibniz，C 的 TURN-34A 依赖门继续关闭。
+- External A/B/C/D 的“门未开”表示 lane 已上线但父级前置 source gate 尚未满足，不是掉线：A/B 等 TURN-28P，
+  C 等 TURN-33 Repair #1，D 等 TURN-33 与 A 的 TURN-22 Repair #1。完整 DAG 当前没有另一张依赖已满足、合同冻结、
+  写集互斥的真实实施卡，不用假卡或越依赖开工。
+- 用户确认 cadence：CR271 父级审查 heartbeat 保持每 `1` 分钟；External A/B/C/D implementation heartbeat 改为
+  每 `5` 分钟。External 无 gate/owner/delivery/review/assignment 变化时静默且不写 Markdown；单卡通过后续领下一张
+  READY，不停止 lane heartbeat。
+- Maxwell 仍实施 TURN-28P；Java writer 活动，本轮不运行 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 三条内部掉线再接续，External 四 lane intake
+
+- 父级实时轮询确认 Locke/TURN-28P、Faraday/TURN-33、Planck/TURN-22 preflight 三会话均为 `not_found`；
+  未把旧 heartbeat 名单冒充在线，也未回滚其落盘半成品。
+- 三条 replacement 已在各自原报告 true EOF 真实领取：Maxwell
+  `019f69f0-014a-7543-bfbf-b18c8864e411` 接续 TURN-28P，Leibniz
+  `019f69f0-9358-7aa1-b9c2-1dc829d9fe44` 接续 TURN-33，Bohr
+  `019f69f1-5df9-76a3-aca1-356dbf44e7eb` 接续 TURN-22-after-28P 非绑定预检。Bohr 已完成
+  `PRECHECK_COMPLETE + TRUE_EOF` 并关闭释放；当前内部只剩两条 implementation，共 `2/6` 在线。
+- External A/B/C/D 四份 lane 报告现均有规范 true EOF `LANE CLAIMED`，全部计为上线待门；四 lane 均未领取
+  Java 卡，依赖门仍未满足。External A 的当前任务仍有昨日旧 count-worker heartbeat 在扫描旧日志，该旧 heartbeat
+  不属于 CR271，必须在 External A 任务内删除；新 CR271 A lane 只读本次固定 lane/card/CR271。
+- Java writers 活动，不运行 Maven/JUnit/compile；保护两仓全部 dirty/untracked，不执行 Git mutation。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 External Worker 与 heartbeat 口径纠偏
+
+- 用户纠正 External A/B/C/D 的角色：四条都是 implementation Worker，不是 reviewer。此前把它们预留给
+  TURN-28P/TURN-33 delivery review 的指令作废；独立 reviewer 仍是卡片验收门，但按需另占内部池容量。
+- 平台内部子 Agent 硬上限固定为 `6`；implementation/helper/reviewer 共用该池。保留一条 helper/reviewer 时，
+  内部最多 `5` 条 implementation；用户另开的最多 `4` 条 External Worker 不计入内部池。
+- External Worker 的 5 分钟 heartbeat 不在单卡 `APPROVED` 时停止：交付后停止修改当前卡并等待父级 CR；若返修则回原卡，
+  若 `SOURCE APPROVED / BUILD PENDING` 已释放 owner 或卡已 `APPROVED/CLOSED`，立即领取父级为本 lane 指定的下一张
+  `READY` 卡。只有 CR271 全部完成、用户停止或父级明确退役 lane 才停止该 Worker heartbeat。
+- External 队首预留：A=`TURN-22 Repair #1`（等 TURN-28P），B=`TURN-28`（等 TURN-28P），C=`TURN-34A`
+  （等 TURN-33），D=`TURN-34B`（等 TURN-22+TURN-33）。没有父级 READY 不得提前改源码；固定 lane/card 报告
+  true EOF 真实 CLAIMED 后才算上线/领卡。
+- TURN-34C 与 TURN-37 readiness 已分别 `PRECHECK_COMPLETE`，Franklin/Feynman 已关闭释放。父级已用其中一槽
+  派 Planck `019f69e5-015b-7e71-aa0a-a30ea1f78b46` 做 TURN-22-after-28P 非绑定返修预检；只写唯一 helper 报告。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 六路掉线 replacement 接续完成
+
+- 父级逐一轮询确认原 TURN-28P Raman、TURN-33 Goodall、TURN-35/36/37 与 TURN-34C readiness 六个会话均为
+  `not_found`；没有把无响应误写成仍在线，也没有回滚或重做任何已落盘半成品。
+- 两条真实 implementation 已在原 fixed report true EOF 接续：TURN-28P Locke
+  `019f69ce-9359-71a1-8402-cb7ee7d34404` 于 `03:29:43` replacement CLAIMED；TURN-33 Faraday
+  `019f69ce-d84c-7a11-a832-3ce77f8f739a` 于 `03:29:47` replacement CLAIMED，并继续保护 Goodall 留下的三份
+  production 与 `SummonSkillTurnContractTest` 半成品。两写集互斥，不扩大原卡范围。
+- 四条非绑定 readiness 也已重新领取各自唯一报告：TURN-35 Pauli
+  `019f69d0-a377-7232-8d72-390ac1d8bc96`、TURN-36 James
+  `019f69d1-0b16-78d3-9a33-1b5d54e73128`、TURN-37 Feynman
+  `019f69d1-6733-79f0-b7b6-ce99b8830a18`、TURN-34C Franklin
+  `019f69d1-c21e-7862-afbe-bd0d971b200a`。Helper 只产 PRECHECK/证据，不能批准或改 Java。
+- 父级已要求六份报告追加平台真实 ID/nickname 校正；Worker 自报的非平台 UUID/昵称不作为 owner 真值。
+  Java writers 活动，本轮不运行 Maven/JUnit/compile；保护两仓全部 dirty/untracked，不执行 Git mutation。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 TURN-28P 父级冻结并派发共享 mechanics 实现
+
+- TURN-28P helper 已在 fixed report true EOF 完成；父级随后独立复读双仓 `TurnInputSpec`/`TurnCaptureSpec`/
+  validator、DHXY mapper/input/capture/local executor、exact keyboard API、Cloud `TurnInvocationResult`，并重新对照
+  `696a12b0` 的 TeamReturn 150ms+500ms 同 queue 时序与 NpcClick Ctrl probe 顺序，没有用 helper 自述代替裁决。
+- 父级把重叠写集收敛为一张 countDelta=0 的真实 prerequisite：CLICK_LEFT/RIGHT 可显式携带 nullable
+  `clickDelayMs/queueHoldMs`，由 production mapper 一次 queue submission 执行；CAPTURE 可显式携带 nullable
+  `pixelChangeProbe`，在同一 exclusive callback 内执行 exact-HWND before/Ctrl DOWN/MOVE/after/finally UP，只返回
+  `PIXELS_CHANGED/PIXELS_UNCHANGED + after raw PNG`。OCR、template、FIFO、点击和下一步仍全部由 Cloud 决定。
+- 精确 production/test/fixture 写集和 terminal/correlation 负例已冻结到
+  `reports/2026-07-16-turn-card-TURN-28P.md`。Raman `019f69c4-3ef0-7ff3-a5db-ebfc7c541130` 已派发，固定报告
+  true EOF CLAIMED 前不算真实领取；与 TURN-33 写集互斥。TURN-28P 通过后先返修 TURN-22，再解锁 TURN-28。
+- Java writers 活动，本轮不运行 Maven/JUnit/compile。保护两仓全部 dirty/untracked；不启动 runtime/application/
+  server/Task/UI/capture/input，不执行 Git mutation。
+
+**无已批准业务差异；按 `696a12b0`、最小 HTTPS JSON turn 与 Cloud-owned OCR/业务等价迁移。**
+
+## 2026-07-16 / CR271 TURN-22 父级审查退回，TURN-28P 通用 mechanics 前置预检
+
+- 父级已独立审查 TURN-22 三份 production/test source、`696a12b0` TeamReturn 基线与 DHXY 真实
+  `TurnInputActionMapper`/`LocalTurnActionExecutor`，结论 `P0/P1/P2=0/1/0 / REPAIR REQUIRED`。当前 JSON
+  `CLICK_LEFT -> WAIT(150) -> WAIT(500)` 在真实 DHXY executor 中会把 click 映射为零 delay，并把尾随 WAIT
+  留在全局 input queue 原子片段之外；因此不能证明基线的一次 queue ownership、150ms click delay 和 500ms
+  queue hold。Averroes owner 已释放；TURN-22 在通用 mechanics 前置完成前不得扩大私有写集或返修。
+- TURN-28 readiness 已确认现有协议/executor 不能表达后台 `Alt+A`/`Alt+C`，也不能在一个 closed action 内保证
+  Ctrl before/after capture 与 finally release。父级已派非绑定 TURN-28P mechanics helper 只读收敛最小通用写集；
+  其 fixed report true EOF 与父级复核前，TURN-28P 仍为 `PARENT PREFLIGHT ACTIVE / NOT CLAIMABLE`，不得让
+  Worker 擅自扩协议或下沉 NpcClick 业务判断。
+- TURN-27 readiness 已 `PRECHECK_COMPLETE` 并关闭：`navigateToNPC` 保持纯导航，NPC 点击仍由 Task 后续 phase
+  单独执行；必须等待 TURN-28 最终 public API，不能按猜测接口冻结。TURN-34B、TURN-35、TURN-36、TURN-37
+  继续在互斥报告文件内做非绑定 readiness，TURN-33 仍是当前 Java implementation。
+- Java writer 活动，本轮不运行 Maven/JUnit/compile；历史 `189/407` 仅旧覆盖快照。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-26 父级源码门通过并解锁 TURN-33
+
+- 父级独立逐文件复审 TURN-26 六份 production/test source，并复算全部 SHA；`DialogService` 14 参数构造链、
+  supplied/fresh 单帧路径、green/raw/yellow OCR 顺序、alias/provider/fallback、white-story `0.85` first-hit、
+  STOP/FAILED/uncertain/correlation 与旧三 macro active source gate 均闭合。
+- 结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；Ptolemy owner 已释放。named test 与 Cloud
+  compile/build 仍待所有 Java writers 稳定后的父级 cohort，当前不能冒充 CARD APPROVED/CLOSED。
+- TURN-26 source gate 解除后，父级已把 TURN-33 组合基线与 exact 三文件 production/一个 named test 写集冻结到
+  `reports/2026-07-16-turn-card-TURN-33.md`；Goodall `019f6990-dfbb-7373-8580-4944ce8f5c60` 已于
+  `2026-07-16T02:16:25.830-04:00` 在该原卡 true EOF 真实领取并进入实施，不是仅创建会话。
+- 当前 TURN-22、TURN-33 两条 Java writer 写集互斥，TURN-28/34A 两个 helper 仅做非绑定 readiness；本轮不运行
+  Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0`、用户确认静态格规则与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-33 父级前置审计完成，仍等待 TURN-26
+
+- 父级没有采用 helper 自述代替源码审查：已独立复读当前 `SummonSkillService`、真实
+  `TaskMaintenanceService::maybeCleanSummonSkill` caller、旧 whole-pass capability/authority、`696a12b0` 与
+  `docs/业务逻辑.md:170-211`，确认真实迁移边界和三文件互斥写集。
+- TURN-33 组合基线已预冻结：保留 `696a12b0` 删除/确认/终极角/dialog/cleanup/40s/result 顺序，并使用用户
+  已确认的 live `if8` + 静态格子倒扫替代旧 hover 6/8 与第 4/7 起点；机制失败必须 UNKNOWN。
+- 按用户已确认的最小 JSON turn 和无 session/owner/ledger 约束，whole pass 是一次同步 Cloud 调用连续决策多个
+  closed action，每 action exact-window + 新 UUID + 本地 queue 原子，观察后下一步是新业务 action且零 transport
+  retry；不恢复跨 action local exclusive session。
+- 状态仍为 `PARENT PRECHECK REVIEWED / WAITING TURN-26 SOURCE GATE / NOT READY`，未派 Java。完成的 TURN-33
+  helper 已关闭释放槽位，空位已用于 TURN-34A 非绑定 readiness 预审。
+
+## 2026-07-16 / CR271 TURN-22 true EOF 真实领取，TURN-28 前置预审并行
+
+- 父级独立核对 `696a12b0` TeamReturn、真实 caller、双仓模板 SHA、exact-window ROI 与当前 typed turn
+  合同后，已在固定报告冻结 TURN-22：每次 observation 只发一个 `272x69` raw PNG CAPTURE，由 Cloud 分别
+  匹配 member/leader；成员顺序保持 `observe -> incense -> observe -> random +-3 -> 单 JSON
+  CLICK_LEFT/WAIT150/WAIT500`，leader wait/precheck 不漂移，旧 fact/bundle active path 归零。
+- Averroes `019f6979-7699-7fc2-b50b-0c35c1d3ace2` 已于 `2026-07-16T01:51:41-04:00` 在固定报告
+  true EOF 真实领取 TURN-22 唯一两份 production、一个 named test 与报告写集；Worker 不是 reviewer。
+- TURN-26 Ptolemy 继续在互斥写集实施。其余并发位只做 TURN-28/33 非绑定 readiness 预审，不得写 Java、
+  自批或冒充 READY；任一真实依赖解锁后立即让位给 implementation。
+- 两条 Java writer 活动，本轮不运行 Maven/JUnit/compile。历史 `189/407` 仅旧覆盖快照，不是主进度。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-23 Repair #1 父级复审通过
+
+- 父级独立复读四份返修 production/test source、真实 FiveRing caller 与 `696a12b0`，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；四份 SHA 与交付一致。
+- open-main-bag caller session 保留至 TURN-36；confirmed CAPTURE failure 不重抓、只继续一次 Bag action；
+  first-aid/incense 两 port 在 UUID/command 前核 initial HWND/process，四个重绑负例均零 command/UUID。
+- Mill owner 释放，TURN-22 source 前置解除并进入父级 brief freeze。TURN-26 仍在写，当前不运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-23 Repair #1 与 TURN-26 真领取，下一波前置审计并行
+
+- TURN-23 首版父级独立源码/测试源码审查为 `P0/P1/P2=0/3/0 / REPAIR #1 REQUIRED`：在 TURN-36 前恢复
+  open-main-bag caller session；confirmed CAPTURE failure 按 `696a12b0` 继续恰好一次 Bag action；first-aid/
+  incense 两 port 在创建 UUID/action 前补 initial HWND/process fence。Mill 正在原写集返修。
+- TURN-26 已由 Ptolemy `019f6957-57b6-7c32-a80d-300555162be5` 于 `01:18:28` 在固定报告 true EOF
+  真实领取，不再是 claim pending。当前两张 Java 实现卡写集互斥。
+- 完整 DAG 复扫确认：TURN-22/28/27 受 TURN-23/26 阻断，TURN-33 受 TURN-26 阻断，后续 caller/Task 卡继续
+  受这些业务卡阻断；没有可合法提前写 Java 的第三张 READY implementation。为避免父级空等，已并行派两个
+  非绑定 helper 只读预审 TURN-22 与 TURN-33，产出 exact caller/write-set/test/基线 brief；不得写 Java、不得
+  自批，依赖通过后由父级直接冻结和派发。
+- Java writers 活动，本轮不运行 Maven/JUnit/compile。历史 `189/407` 仅旧 caller 覆盖快照，不是主进度。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-T04、TURN-21、TURN-25 复审通过，TURN-26 已冻结并派发
+
+- 父级独立逐文件复审三张 Repair #1：TURN-T04、TURN-21、TURN-25 均为
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；三个 owner 已释放。TURN-T04 四态确实穿过
+  production dispatcher；TURN-21 exact bind、latest identity fence 与 `MOVE/WAIT80/CLICK/WAIT120` 闭合；
+  TURN-25 fatal uncertain/STOP/exact HWND+process 边界闭合。named tests 与适用 compile 留 stable-writer cohort。
+- 父级重新逐行对照 `696a12b0` Dialog option/white-story 与 `GameTextLineOcrService`，已冻结 TURN-26 fixed report：
+  supplied detection 原帧路径零 command；缺原帧才经 TURN-25 一次 CAPTURE JSON/raw PNG；green/raw/yellow OCR
+  顺序、provider word order、alias/fallback 与 white template `0.85` first-hit 全在 Cloud，旧三 local macro active
+  path 归零。
+- TURN-26 已派发给 Ptolemy `019f6957-57b6-7c32-a80d-300555162be5`，等待 fixed-report true EOF CLAIMED；
+  与仍在实施的 TURN-23 Mill `019f692a-4148-7ac0-a064-ca68d8cc7f8d` 写集互斥。DAG 当前没有第三张依赖已满足
+  且写集互斥的真实 implementation 卡；不得伪造卡占槽。
+- Java writer 仍活动，本轮不运行 Maven/JUnit/compile。历史 `189/407` 仅旧 caller 覆盖快照，不是主进度。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-T04 dispatcher 四态测试返修已冻结
+
+- TURN-19 释放槽后，父级复查 READY DAG，确认 TURN-T04 的 `LocalServiceStepDispatcherContractTest` 仍只 override
+  旧 GiveItem boolean direct API；production adapter 已调用 TURN-10CR 四态 whole API，现测试会绕过/漏验真实路径。
+- Repair #1 只改该 dispatcher named test 与原 TURN-T04 报告：fake override 四态 whole API，逐态通过 production
+  dispatcher 断言 exact JSON、一次 exclusive/whole call、legacy direct 和其它 Service 零调用；原九 operation 与
+  malformed/queue-failure 断言不删。
+- 本卡是已授权 `HTTPS_TURN_CONTRACT_TEST_FAMILY` 的真实测试债，不是 helper 或凑槽；不改 production，Worker
+  不运行 Maven。当前四槽为 TURN-T04、TURN-21 Repair、TURN-25 Repair、TURN-23。
+
+**无已批准业务差异；测试只追平已批准的 TURN-10CR 四态合同。**
+
+## 2026-07-16 / CR271 TURN-19 Repair #1 父级复审通过
+
+- 父级独立复读 assembly、完整 named test 与 bound-client guard，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。
+- observe/click 均先用 exact invocation context 建立 bound `TurnGameClient`；错 current context 在 metadata/
+  execute port 前拒绝，测试锁住 `metadataReads=0/executeCalls=0`。
+- OPEN click 仍为一个 UUID/command，四步精确恢复 `MOVE/WAIT120/CLICK/WAIT250`；无第二 command/自动 retry。
+- Leibniz owner 释放；named test/Cloud compile/build 留 stable-writer cohort。空槽立即滚入 READY 的 TURN-T04
+  四态结果合同返修，不等待 TURN-21/25 Repair 或 TURN-23。
+
+**无已批准业务差异；按 `696a12b0` exact-window 与点击时序等价迁移。**
+
+## 2026-07-16 / CR271 TURN-25 父级源码与测试源码审查退回 Repair #1
+
+- 父级独立审查三个 production 文件、完整 named test、exact context/checkpoint 与 `696a12b0`，结论
+  `P0/P1/P2=0/3/0 / REPAIR #1 REQUIRED`。
+- P1-1：`DialogService` 宽捕获 `RuntimeException`，把 port 的 uncertain/correlation `TaskFatalException` 吞成
+  普通 null；只允许 confirmed capture miss 和真实 fingerprint mismatch 返回 null。
+- P1-2：两个 port 在 latest metadata 已 STOP 时仍创建 UUID/执行 CAPTURE；须在 command port 前 checkpoint，
+  confirmed stop 传播、未确认 stop typed fatal，并补 `uuid=0/execute=0`。
+- P1-3：两个 `requireExactBinding` 只核 device/window，漏核 context 初始 exact HWND/process；须在 UUID/action
+  前同时比较并补 handle/process mismatch 零 command 负例。
+- Repair #1 只允许原三 production、TURN-25 named test 与原报告；TURN-19/21 同时返修、TURN-23 写入，Java
+  writers 活动，本轮不跑 Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0` 与冻结 HTTPS turn 的 stop/exact-window/uncertain 边界等价迁移。**
+
+## 2026-07-16 / CR271 TURN-21 父级源码审查退回 Repair #1
+
+- 父级独立审查 TURN-21 production、完整 named-test source、真实 caller、TURN-13C/09R 与 `696a12b0`；结论
+  `P0/P1/P2=0/3/0 / REVIEW REQUIRED`。
+- 三项 P1：assembly 未在 port 前 bind exact context；基线 click 后 `120ms` 被丢失；turn-native pending 只用
+  immutable initial title，latest title 改变后旧 pending 仍可能到达 click。
+- Repair #1 保持原四文件写集：bound client 先拒绝错 context；同 command 恢复
+  `MOVE/WAIT80/CLICK/WAIT120`；same-context latest identity 变化必须在 input 前清除/拒绝 pending，并补零 click
+  command 负例。不得改协议/result/port signature/caller/DHXY，不新增 retry/session/ledger/cache/TTL。
+- TURN-19 同时处于 Repair #1，TURN-25 已交付待父级审查，TURN-23 仍写入；Java writers 活动，本轮不跑 Maven。
+
+**无已批准业务差异；按 `696a12b0` exact binding、identity fence 与点击时序等价迁移。**
+
+## 2026-07-16 / CR271 TURN-19 父级源码审查退回 Repair #1
+
+- 父级已独立读完 TURN-19 production、named-test source、真实 AutoCombat caller、TURN-09R executor 语义与
+  `696a12b0` 基线；结论 `P0/P1/P2=0/2/0 / REVIEW REQUIRED`，不以 Worker 自述代替审核。
+- P1-1：assembly 使用未绑定的共享 `TurnGameClient`，只在 execute 后比对 context；必须先
+  `bind(exact TurnInvocationContext)`，再用 bound view 完成 metadata/capture/execute，并补 wrong-current-context
+  在 command port 前拒绝的负例。
+- P1-2：基线 click 后 `250ms` delay 被丢失；同一 JSON command 必须保持
+  `MOVE -> WAIT(120) -> CLICK -> WAIT(250)`，不得变成第二 command 或 transport retry。
+- Repair #1 只允许改 assembly、TURN-19 named test 与原报告；TURN-21/25/23 仍为互斥活动写入，本轮不跑
+  Maven/JUnit/compile。
+
+**无已批准业务差异；按 `696a12b0` exact-window 与点击时序等价迁移。**
+
+## 2026-07-16 / CR271 TURN-23 父级实现 brief 已冻结
+
+- TURN-23 已于 `2026-07-16T00:27:10-04:00` 在固定报告 true EOF 由 Mill
+  `019f692a-4148-7ac0-a064-ca68d8cc7f8d` 真实领取；与 TURN-19/21/25 写集互斥，四个 implementation 槽满载。
+- 父级在 production 写入前再查 `696a12b0`，已纠正 incense capture 计数：cached icon offset 路径先做 computed
+  `48x34` narrow capture，template miss 后再做 `123x34` full-panel capture；两者各一新 UUID/action。这是既有
+  Cloud-owned business fallback，不是 transport auto-retry，不得删掉或下沉为 DHXY local loop。
+- TURN-23P source/test-source 门通过后，父级已冻结 TURN-23 fixed report；唯一
+  `countUnit=AutoCombatService -> PlayerStateService::probeAndConsumeHealthyFirstAidNoFocus`、`countDelta=+1`。
+- first-aid bars 与 incense status 只由 exact-window HTTPS CAPTURE 回 raw PNG，Cloud 完成 HP/MP、pending plan、
+  template/OCR/time/cache 判断；实际供给是一份 ordered right-click JSON action，用香只经既有永久本地 BagService。
+  identity 继续只读 latest exact metadata，零 action。
+- 旧 `PLAYER_STATE_FIRST_AID` local macro、旧 generic capture 与 Cloud 进程内 DHXY tracker/input/capture active path 必须
+  归零；named test 固定验证 non-zero origin、raw PNG correlation、success/failure/stopped/uncertain、command/UUID 数与
+  零 retry。精确写集与验收见 `reports/2026-07-15-turn-card-TURN-23.md`。
+
+**无已批准业务差异；按 `696a12b0` 与最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-16 / CR271 TURN-23P 父级源码与测试源码审查通过
+
+- 父级已独立逐文件审查 TURN-23P 的双仓 capture protocol/validator、DHXY production executor 与七份 named-test
+  source，并重新核对 byte parity 与 `696a12b0` pointer-over-ROI 分支；结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。
+- 可选 `clearPointerIfOverRegion` 只在 pointer 命中 inclusive padded ROI 时提交一次 exact
+  `MOVE_MOUSE -> SLEEP`；queue 成功且线程未中断后才对同一 HWND/ROI 后台截图。null/outside 零 input；queue
+  false、stop/interruption、异常均不执行本 step 的 requested capture，零 scale/clamp/自动 retry/第二 command。
+- `fullWindowFailureEvidence` 仍是 payload 显式开启的既有 action 失败证据，不属于本 step 的 requested ROI
+  capture，也不是本卡新增的第二 CAPTURE step。Anscombe owner 释放；TURN-23P 进入 stable-writer cohort。
+- TURN-19/21/25 Java writers 仍活动，本轮不运行 Maven/JUnit/compile；历史 `189/407` 仍仅为旧覆盖快照。
+
+**无已批准业务差异；按 `696a12b0` pointer-over-ROI 条件等价迁移。**
+
+## 2026-07-16 / CR271 四槽掉线接续并完成 true EOF replacement claim
+
+- TURN-23P/19/21/25 原四个 implementation 会话均返回 `not_found`；父级未回滚、覆盖或清理任何已落盘
+  半成品，已按原卡与原写集分别接续为 Anscombe `019f6913-a053-7041-a134-6ec890af35a8`、Leibniz
+  `019f6913-dc31-7e53-90a9-958f96285317`、Boole `019f6914-252c-7500-ae9d-0249bdc94294`、McClintock
+  `019f6914-61fd-7270-89d6-a251e826f71c`；四张固定报告均已有 replacement true EOF claim。
+- TURN-21 replacement 首次 claim 抄错 package 路径，父级在 production/test 写入前拦截；Worker 已在同一报告
+  true EOF 修正为冻结路径，并确认错误路径零创建、零修改。四条 production/test 写集继续互斥。
+- Java writers 活动，本轮不运行 Maven/JUnit/compile；未启动 runtime/application/server/Task/UI/capture/input，
+  未执行 Git mutation。历史 `189/407` 仍仅为旧 caller 覆盖快照。
+
+**无已批准业务差异；按 `696a12b0` 与用户确认的最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-15 / CR271 四项父级源码门通过，四个实现槽滚动补满
+
+- 父级已独立逐文件审查 TURN-16、TURN-30、TURN-31、TURN-32 的 production 与 named-test source，结论均为
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。四卡 owner 已释放；named tests 与适用 compile/build
+  仍待 stable-writer cohort，不冒充 `CARD APPROVED/CLOSED`。
+- 释放槽已真实滚入 TURN-23P Carver、TURN-19 Godel、TURN-21 Parfit、TURN-25 Volta；四卡固定报告 true EOF
+  均已领取。TURN-25 一次 HTTPS JSON action 按序执行可选 wait、后台 Alt+4、220ms settle 与 exact
+  dialog ROI capture，本地只回 raw PNG；Cloud 在同一 frame 上完成 mask/OPTION/STORY 分类。prepared validation
+  仅 fresh capture 一次 exact absolute ROI，wash/fingerprint/distance 全在 Cloud。
+- 当前四卡 production/test 写集互斥。历史 `189/407` 仍只是旧 caller 覆盖快照；Java writers 活动，本轮不运行
+  Maven/JUnit/compile，也未启动 runtime/application/server/Task/UI/capture/input 或执行 Git mutation。
+
+**无已批准业务差异；按 `696a12b0` 与用户确认的最小 HTTPS JSON turn 等价迁移。**
+
+## 2026-07-15 / CR271 TURN-23P 条件式 pointer-clear capture 合同已冻结
+
+- 父级已回查 `696a12b0` `PlayerStateService#moveMouseAwayBeforePlayerStateSnapshotIfNeeded`、当前双端
+  `TurnCaptureSpec`/validator、DHXY `TurnCaptureStepExecutor` 与 TURN-09R 原子输入合同。当前 CAPTURE JSON
+  确实缺少“pointer 只在覆盖 ROI 时移开”的表达，不能让 Worker 擅自改成每次抢前台移动。
+- 新共享前置 TURN-23P 固定为同一个 CAPTURE payload 内可选闭合对象
+  `clearPointerIfOverRegion={paddingPx,targetX,targetY,settleMs}`：Cloud 给 exact unscaled screen-absolute target；
+  DHXY 只做通用 pointer 命中判断，inside 时单 queue `MOVE_MOUSE -> SLEEP` 后对同一 HWND 后台截图，null/outside
+  零 input。TURN-23 使用基线 `padding=12`、`settle=300ms`。
+- TURN-23P production 仅改双仓 capture spec/validator 与 DHXY capture executor，并由 executor + 双仓 JSON/
+  validator named tests 验收；Service/Task/caller/input queue production 全只读。当前四实现槽仍为
+  TURN-30/31/32/16，23P 与已冻结 19/21 一起排入首个互斥释放槽。
+
+**无已批准业务差异；按 `696a12b0` pointer-over-ROI 条件等价迁移。**
+
+## 2026-07-15 / CR271 TURN-19/21 parent brief 已冻结，等待首个互斥槽
+
+- TURN-19 已绑定 `AutoCombatService -> LeftTopStatusSwitchService::handleCombatMaintenance`：真实 window origin
+  加 `(8,147)` 的 `11x19` raw PNG ROI 在 Cloud 同帧匹配 open/closed；只对 OPEN 下发原子
+  `MOVE -> WAIT(120ms) -> CLICK`。写集固定为 Cloud Service、现有 assembly、唯一 named test 与原报告。
+- TURN-21 已绑定 `AutoCombatService -> CommonBoxService::detectMemberBoxAfterCombatExit`：真实 window origin
+  加 `(623,590)` 的 `59x28` raw PNG ROI 在 Cloud 以 `0.86` 匹配；保留 role/task-run/window/identity key、优先级、
+  30 秒 pending，以及原子 `MOVE -> WAIT(80ms) -> CLICK`。写集固定为 Cloud Service、现有 assembly、唯一 named
+  test 与原报告。
+- 两卡均禁止改 protocol、DHXY、caller、Task、port/result records；禁止自动 retry/第二 capture/session/ledger/TTL。
+  当前四个 implementation 槽已满，首个槽释放后按写集互斥立即滚入，不用 helper 占槽。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-10CR Repair #1 父级复审通过，立即滚入 TURN-16
+
+- 父级独立逐文件复审永久本地 `GiveItemService`、GiveItem turn adapter、两份 named-test source，并回查
+  `696a12b0` Dialog 四分支，结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。
+- entry miss、首个 800ms wait 中断、direct give false/true 现分别闭合为
+  `GIVE_OPTION_NOT_FOUND/INTERRUPTED/GIVE_ITEM_FAILED/GIVEN`；adapter 固定输出
+  `{"state":"<ENUM>"}`，旧 boolean API、机械顺序、单 command/exclusive callback 与零 retry 均未漂移。
+- Repair owner 已释放；named tests/DHXY compile 待 stable-writer cohort，不冒充 CARD CLOSED。空出的实现槽立即
+  派 `TURN-16`，Cloud 严格消费同一四态 JSON。
+
+**无已批准业务差异；Repair #1 恢复 `696a12b0` 的真实 caller 状态分支。**
+
+## 2026-07-15 / CR271 TURN-10CR 集成复核发现四态缺口，10CR-R1 与 TURN-16 并行冻结
+
+- TURN-10CR 的机械顺序 `0/0/0` 仍成立；父级继续追到真实 `FiveRingTaskV2` caller 后发现结果 JSON 只有
+  `given` boolean，会把 `GIVE_OPTION_NOT_FOUND`、`GIVE_ITEM_FAILED`、`INTERRUPTED` 合并。五环对前两者分别走
+  cleanup+resync 与 error-count/fail，是实际业务差异，故 Parent Integration Review #2 记
+  `P0/P1/P2=0/1/0`。
+- Repair #1 只把新 whole API/adapter JSON 升为四态 closed state，不增加命令、retry、协议 DTO 或新 Service。
+  Cloud TURN-16 已按同一固定 JSON 合同冻结独立 Service/client/test 写集，两仓写集互斥，将同时派发，不等待
+  TURN-30/31/32。
+
+**无已批准业务差异；本次修正用于恢复 `696a12b0` 的真实 caller 分支。**
+
+## 2026-07-15 / CR271 TURN-10CR 父级源码门通过，TURN-16 立即解锁
+
+- 父级独立逐文件审查永久本地 `GiveItemService` whole open-dialog macro、adapter、两份 named-test source 与
+  只读 dispatcher，结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。一次现有 exclusive callback
+  完整闭合 `give-entry -> item-select -> final give`；旧 public API、基线顺序与短路语义未漂移。
+- 本卡 owner 已释放；named tests/DHXY compile 待 stable-writer cohort，不冒充 CARD CLOSED。依赖图已把
+  TURN-16 转为 READY，父级正在冻结唯一 Cloud Service/client/test 写集并立即补一条实现线；同时继续冻结
+  TURN-19/21，不等待 TURN-30/31/32 完成。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-09R Repair #1 父级复审通过，立即解锁 TURN-19/21
+
+- 父级独立复读双仓 core golden tests 与 DHXY executor regression，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。十一项 input enum/spec/index 已同字节闭合；
+  trailing WAIT 明确留在原单步路径，闭合 `MOVE -> WAIT -> CLICK` 仍只提交一次全局 input queue。
+- TURN-19 与 TURN-21 的共享原子输入前置已解除，父级正在冻结真实 caller、exact write set 与 named-test
+  brief，并将在不与 TURN-30/31/32 冲突的前提下立即补两条实现线。TURN-23 不随之盲发：它还需父级先解决
+  pointer-over-ROI 条件式 mouse-clear 的基线等价表达，Worker 不得自行选择“总是移开鼠标”。
+- TURN-09R fresh named tests 与双仓 compile 留 stable-writer cohort；当前不是 CARD CLOSED。父级同时继续独立
+  审查 TURN-10CR，若通过即释放 TURN-16，动态补槽不等待现有 Task callers 完成。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-29 父级源码门通过，立即并行释放 TURN-30/31/32
+
+- 父级独立逐文件审查 TURN-29 十个 Cloud production 文件、唯一 named test、八张实际 Cloud template 与
+  `696a12b0` tracker 基线，结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。同帧 raw PNG、
+  exact action/window/step/frame、单 UUID/command、terminal fail-closed 与 cache scope 均闭合；无自动 retry、
+  第二 exchange、session/ledger/TTL。
+- 八张 Cloud live template 与 DHXY 当前对应文件 SHA-256 全部一致；旧 DHXY-only tracker/input/OCR/temp mechanics
+  及 READ/MATERIALIZE transport 在本卡 production 写集中零引用。named test/Cloud build 仍待 stable-writer
+  cohort，本卡不是 `CARD CLOSED`。
+- TURN-30/31/32 已分别冻结为 Xiuluo/Wubei/FiveRing 三个真实 runnable caller 卡；每卡只有一个 Task production
+  文件、一个 named test 与本报告写集，互相不冲突，立即并行派发。父级继续同时复审 TURN-09R Repair #1 与
+  TURN-10CR，不等待三路完成。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 动态扩容续派 TURN-10CR，四槽不再是固定天花板
+
+- 用户要求父级在既有 Worker 写入时继续扫描可实施工作。父级已把调度规则改为最多七条 implementation 动态滚动，
+  helper/preflight 不占实现槽；只有真实依赖未满足或写集冲突时才不派，禁止用 DTO/helper 假卡填槽。
+- 当前 Java 实现线为 TURN-20 Repair #1、TURN-24A Repair #1、TURN-29、TURN-09R；另有 readiness helper。父级
+  复查 READY DAG 时发现 TURN-16 仍有真实 Foundation 缺口：现有 `GIVE_ITEM_FROM_OPEN_DIALOG` adapter 只包住
+  “选物+最终给予按钮”，没有包住 `696a12b0` 的“匹配并点击 dialog 给予入口”。
+- 已冻结 `TURN-10CR`，写集只含 DHXY `GiveItemService`、Give adapter、既有 adapter test 和新增真实 Service
+  contract test，与当前四条 Java 线互斥。目标是在 dispatcher 已有单 exclusive callback 内完整闭合
+  `give-entry -> item-select -> give-button`；旧 local Dialog 路径与旧 public give API 不变。通过后立即解锁 TURN-16。
+- Java writers 活动，本轮不运行 Maven/JUnit/compile；未启动 runtime/application/server/Task/UI/capture/input，
+  未做 Git mutation，全部 dirty/untracked 保留。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 动态扩槽：TURN-09R 开工，TURN-14 Repair #1 复审通过
+
+- 父级不再把四条实现线当固定天花板，按实际写集冲突动态扩槽。核查 `TURN-19/21` 时发现新 JSON
+  `TurnInputAction` 缺 `MOVE_MOUSE`，且 executor 把连续 mouse/WAIT step 分成多个 queue request，无法等价保持
+  基线 `move -> settle -> click` 的跨窗口原子性。
+- 已冻结 `TURN-09R` foundation repair 并派 Godel：双仓补 `MOVE_MOUSE`，DHXY 将连续
+  `MOVE_MOUSE -> WAIT -> mouse input` 一次提交为单个 queue request，覆盖 protocol/validator/executor named tests；
+  与当前 Service 卡写集互斥。`TURN-19/21` 只等该共享前置，禁止先写成非原子 click。
+- TURN-14 Repair #1 已父级独立复审 `P0/P1/P2=0/0/0`：FOUND cache-point 与本次请求模板精确绑定，双
+  prescan intent mismatch 均 fail-closed 且一 UUID/command、零 retry。owner 释放；named test/compile 仍待
+  stable-writer cohort，不冒充 CARD CLOSED。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-14 父级审查退 Repair #1
+
+- TURN-14 已在固定报告 true EOF 交付；父级独立核对四个 production 文件、12 项 named-test source、
+  `BagLocalOperationExecutor`/`BagService` 本地适配链和 `696a12b0` prescan/incense 基线，结论
+  `P0/P1/P2=0/1/0 / REPAIR #1 REQUIRED`。
+- 唯一 P1：`CloudBagLocalServiceClient` 对 `PRESCAN_* + FOUND` 只校验返回 cache-point 路径非空，未要求其
+  精确等于本次请求 `targetItemTemplate`；`ReturnItemPrescanService` 会缓存该点并在后续回程点击，坏关联结果
+  因而可能点击错误物品。正常本地 adapter 当前会返回同模板，但不能替代 HTTPS request/result 关联校验。
+- Repair #1 已退原 McClintock，只允许修改原 client/test/report：补模板等值校验与一个 mismatch 负例，断言
+  一 UUID、一 command、零 retry；不改协议、DHXY、caller、Task 或 Server。当前四槽为 TURN-14 Repair、TURN-20、
+  TURN-24A、TURN-29；Java writers 活动，不运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-15 Repair #1 父级复审通过，TURN-29 已领取
+
+- 父级独立复读 TURN-15 Repair #1 的完整 client、named test 与只读 facade，重算 SHA 后结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。duplicate key、numeric enum、string boolean、null
+  creator 与 scalar coercion 均由 production strict mapper fail-closed；四类新负例逐例断言一个 UUID、一个
+  command、异常后零 retry。四 operation、checkpoint、terminal 与 X2 单 closed macro 无漂移。
+- TURN-15 owner 已释放；fresh `UiCleanerTurnContractTest` 与 Cloud compile/build 仍归稳定 writer cohort，当前不是
+  `CARD APPROVED/CLOSED`。
+- 释放槽已冻结 TURN-29 十个 production 文件与唯一 named test，并派给 Galileo
+  `019f6880-b69e-77a1-9fbe-ce084910ae99`。该 integration 卡只闭合 TaskTracker core，三个真实 Task caller 仍留
+  TURN-30/31/32；Galileo 已于 `2026-07-15T21:20:07-04:00` 在固定报告 true EOF 真实领取并开始实施。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-17 父级源码门通过，TURN-15 严格 JSON 退 Repair #1
+
+- 父级独立逐文件审查 TURN-17 production、9 个 named-test methods、turn-native result/frame 合同与
+  `696a12b0` Quest 基线，结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；同 command raw PNG、
+  exact operation/window/task/keepOpen、四种 terminal、绝对 region/SHA/尺寸和无 retry 均闭合。Dalton owner 已释放，
+  caller 仍严格留 TURN-37；Maven/compile 待稳定 writer cohort，不是 CARD CLOSED。
+- TURN-15 首次父级审查保留四 operation、checkpoint、terminal 与 X2 单 macro 主链，但发现 strict JSON
+  `P1=1`：mapper 未拒 numeric enum、string boolean、duplicate key/scalar coercion，test 也缺对应负例。原 Mill
+  已收到 Repair #1，只改 client/test/report；`CloudUiCleanerPort` 全只读。
+- 释放槽已冻结并派发 TURN-24A，Pauli `019f6875-ec58-72f0-b9a1-528a2df54e20` 已于 `21:07:08 EDT`
+  在固定报告真实 EOF 领取；唯一旧覆盖键为
+  `AutoCombatService -> BattleRadarService::checkAndSyncCombatState`，唯一 production/test 写集为
+  `BattleRadarService` 与 `BattleRadarTurnContractTest`。当前四个实现槽重新为 `4/4`：TURN-14、TURN-15 Repair、
+  TURN-20、TURN-24A，production 写集互斥。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-18 父级源码与测试源码通过，槽位滚入 TURN-20
+
+- 父级独立逐行审查 `ClientIdentityService`、`ClientIdentityTurnMetadataContractTest`、turn-native context/client
+  合同并对照 `696a12b0`，结论 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`。
+- 生产代码仅从当前 exact-bound `TurnGameClient.latestWindowMetadata()` 读一次 metadata；missing/blank/malformed/
+  错 device-window 均不改角色，测试断言 exact ids、read=1、execute=0，未造 action、retry 或第二 cache/type。
+- Maven/JUnit/compile 因其余 Java writers 活动而未运行，状态为
+  `SOURCE+TEST SOURCE REVIEW PASSED / MAVEN+CLOUD COMPILE PENDING`，不是 CARD CLOSED。
+- Chandrasekhar owner 已释放；下一互斥槽 TURN-20 已由 Plato
+  `019f686a-195b-7d12-8ae8-a33d914709c1` 于 `20:54:42 EDT` 在固定报告 true EOF 真实领取。该槽只写 Cloud
+  `AutoCombatPanelService`、唯一 named test 与原报告；当前重新达到 `4/4 CLAIMED / IMPLEMENTING`。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13C 父级源码与测试源码通过，R2 四卡解锁
+
+- 父级逐文件审查 TURN-13C 七个 production 与 named test，结论
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；exact bound context、pre-port reject、
+  ACTIVE/PAUSE/STOP/missing metadata、旧 public API 和 `696a12b0` checkpoint/sleep 语义均闭合，Hume owner 释放。
+- 父级运行 `TaskExecutionContextTurnContractTest` 时在 JUnit 前被 Cloud 写集外旧 Service/Task 缺 DHXY-only 类
+  阻断；`-DskipTests compile` 又被 enforcer 拒绝，正常 `mvn -q compile` 同样停在共享缺类债。因此本卡不是
+  CARD APPROVED/CLOSED，但没有 TURN-13C 返修项，也不得为过门复制本地 runtime。
+- TURN-14/15 原 command-port P1 已由 TURN-13H/13C 关闭；TURN-14/15/17/18 已冻结互斥 production/test 写集。
+  TURN-17 只交付 typed client、真实 caller 留 TURN-37；TURN-18 是 `STATE+BASE` 零 action 读取，不造假 BC4。
+- 四个实现槽均已在固定报告 true EOF 真实领取：TURN-14 McClintock、TURN-15 Mill、TURN-17 Dalton、
+  TURN-18 Chandrasekhar；四路 production/test 写集互斥，状态为 `4/4 CLAIMED / IMPLEMENTING`。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13C 已真实领取并进入单线实施
+
+- Hume `019f683d-88bc-7262-8afa-476882b6d791` 已在固定报告 true EOF 写入 `CLAIMED`；唯一写集为父级冻结的
+  七个 Cloud production 文件、`TaskExecutionContextTurnContractTest` 与原报告，其他两仓路径全部只读。
+- 当前只有这一条 Java implementation writer。父级不并发修改其源码，也不在 writer 活动时运行 Maven；交付后
+  将逐文件独立审查 exact context/bound client/checkpoint/旧 public surface，再决定返修或释放后续 14/15/17/18。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13C 父级纠正漏项并冻结可实施 brief
+
+- 两个非绑定 helper 独立确认原五文件不足：provider 仍读取旧 `getScope().deviceId()`；父级决定把
+  `LegacyTaskExecutionTurnContextProvider` 与 `TurnGameClient` bound API 纳入唯一 production 写集。
+- turn-native factory 只接现有 `CloudServiceScope`、`TurnInvocationContext`、window/task metadata、诊断
+  taskRunId 和现有 singleton client，不构造 `RemoteTaskRun*`/owner/session/ledger；production Task factory 仍留
+  TURN-40B，不提前激活 runtime。
+- bound client 在 UUID/port 前校验 Holder exact context；Holder 不注入 client，避免 Spring constructor 环。
+  PAUSE/STOP/missing metadata、旧 public surface 与唯一 named test 验收已写入固定 TURN-13C 卡。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T03B Repair #1 父级测试源码复审通过
+
+- 父级独立读四个返修测试与直接 production 分支并重算六文件 SHA，`P0/P1/P2=0/0/0`：真实 ROI PNG
+  在 uncertain exchange 后跨显式 restart 保留原像素，重复 actionId 不重复 capture/input，ACTION/IDLE ACK
+  后下一 request 清空 outcome 与 PNG。
+- mode guard 以 `ThreadMXBean` 同时确认 remote 为 `BLOCKED` 且 lock owner 是 local winner；executor 事件严格
+  为 `capture:roi -> input:submit -> capture:failure-evidence`；exchange 后 stop/remove 竞态最终永久退役旧 loop。
+- 每个 helper/loop 均有 `finally` bounded cleanup 与 non-alive/non-running 断言。六个原 named Maven 命令及
+  compile 仍待 stable-writer cohort，本结论是 test-source review passed，不冒充 card/Maven approved。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13H Repair #1 父级复审通过，TURN-13C 解锁
+
+- 父级独立复读四 production 与完整 capability test，Repair #1 `P0/P1/P2=0/0/0`：真实 Spring host
+  refresh/open/close 前后比较全部 alive thread ID，零 name/ID allowlist，失败输出 exact id/name。
+- 原同一 commandPort/catalog、required host capability、窄 `turn.client` scan、零 command/metadata/template
+  调用及四项 null fail-fast 全保留；production 无漂移，Kuhn owner 释放。
+- TURN-13H 状态为 `SOURCE+TEST SOURCE REVIEW PASSED / MAVEN+CLOUD COMPILE PENDING`，不是 card approved；
+  Nash 仍写 T03B Repair #1，本轮不碰共享 Maven target。TURN-13C 依赖已满足并转 READY，等待 readiness brief
+  父级冻结后立即续派。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 T03A lazy client 源码通过，T03B 初判被真实合同缺口推翻退修
+
+- T03A Repair #3 父级全类扫描 `P0/P1/P2=0/0/0`：构造零 client/thread，exchange/download 共用唯一
+  `sendOnce`，volatile + monitor 双检只发布一个 reusable client；无 retry/per-request new，named tests/compile 待跑。
+- T03B Review #1 的 test-source 通过被父级 Review #2 覆盖为 `0/2/3 / Repair #1`：现有 loop tests 永远
+  optionalPng=null，未测 raw frame uncertain retention/ACK clear/defensive copy；mode guard 的 100ms negative
+  timing 不能证明 remote 已在 monitor 上 BLOCKED。
+- 原 Nash 仅改四测试+报告，另补机械事件顺序、所有 helper/loop finally 清理和 concurrent stop/remove；
+  production、另两测试与 Cloud 全只读。Ampere owner 释放。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13H production 审查保留，测试缺零线程断言退 Repair #1
+
+- 父级确认 routes/server/host/config 使用同一 commandPort/catalog、Host 四 required 参数 fail-fast、窄扫
+  `turn.client` 并保留零 activation；production 未发现 P0/P1/P2。
+- `CloudServiceHostTurnCapabilityContractTest:64-85` 只断言 command/metadata/template 计数为 0，没有在真实
+  context refresh/close 前后比较 live threads；不能满足计划第19.4节“零 host/Task/thread activation”，记
+  test `P1=1`。Repair #1 仅允许 Kuhn 改 test+报告，production 全只读。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13H 已真实领取，Cloud 与 DHXY 两条 production 返修互斥并行
+
+- Kuhn 于 `19:28:56 EDT` 在固定报告 true EOF 领取 TURN-13H：仅写 Cloud routes/server/host/config、
+  `CloudServiceHostTurnCapabilityContractTest` 与报告；必须注入同一 commandPort/catalog，零 host/server/loop
+  activation，Maven 在 Java writers 稳定前延后。
+- Ampere 同时领取 DHXY `HttpsTurnClient` Repair #3：单 reusable HTTP client 首次真实请求 lazy init，现有
+  T03B wiring test 只读。两条 production 写集与 T01/T03B 已交付测试互不重叠。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T03B 测试源码通过并揭出 TURN-06/13 eager HttpClient P1
+
+- 父级独立读取六测试及其直接 production：typed local result/PNG、N-step terminal 与 failure frame、ACK/
+  uncertain retention、registry race、mode guard、inert wiring 均实际调用 production，test-source
+  `P0/P1/P2=0/0/0`；Nash owner 释放。
+- `TurnConfigurationWiringContractTest` 的零线程断言有效，但真实 `HttpsTurnClient` 构造器立即
+  `HttpClient.build()`。父级无网络 JDK 探针观察到 `HttpClient-1-SelectorManager`，故 covered production
+  `P1=1`：TURN-06/T03A Repair #3 只把单个可复用 client 改为首次真实请求时线程安全 lazy init。
+- 禁止 per-request client、retry、fallback、第二 send 或 parser/auth/timeout 语义变化。六个标准 named Maven
+  仍 selected 0；production repair 与 shared testCompile 债关闭前 T03B 不是 card approved。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T01 Repair #1 父级复审通过，标准门与 Cloud test retention 待闭合
+
+- 父级逐行复审 mapper rename、三类 invalid step index 与 Quest-detail + capture 双帧负例，Repair #1
+  `P0/P1/P2=0/0/0`；测试不再冒充真实 HTTP parser，真实 client parser 已由 T03A 独立覆盖。
+- 父级重新计算双仓五测试/七 fixture `12/12` 与完整 protocol production `29/29`，全部 byte-identical。
+- 十条标准 Maven 仍在选中测试前被写集外编译债阻断；isolated `21+21` 仅诊断。Cloud `src/test/` 被 ignore
+  的交付门仍保留，未做 Git mutation。状态为 test-source passed、不是 card approved，Ohm owner 释放。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 T03A 与 13G Repair #2 父级复审通过，13H 解锁
+
+- 父级独立复读真实 `HttpsTurnClient` mapper 与 loopback 测试：numeric enum、null primitive、quoted numeric、
+  float-to-int 四类 malformed `200` 均映射 typed `RESPONSE_PARSE`，每例严格一次 POST；T03A Repair #2
+  `P0/P1/P2=0/0/0`，状态为 source/test-source passed，标准 named Maven 仍因共享 testCompile 债 selected 0。
+- 父级独立复读 `TurnInvocationResult` 与 13G 测试：所有 outcome 保持 exact action/window，full step
+  correlation 只限 COMPLETED/FAILED；canonical empty-step uncertain typed/no-retry 与真实 2x2 PNG 证据均成立。
+  13G Repair #2 `P0/P1/P2=0/0/0`，owner 释放并解锁 TURN-13H。
+- 当前仍有 Ohm 的 T01 Repair #1、Nash 的 T03B、其他 Java writer 在途；未运行 Maven cohort。T03A/13G 的
+  isolated 通过仅作诊断，不能替代后续标准命令复跑。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13G Repair #1 复审退回单项语义纠正
+
+- Repair #1 的真实 84-byte 2x2 PNG、像素/SHA/防御复制与 COMPLETED mismatch fail-closed 已关闭原 P1。
+- 新 `requireExactStepCorrelation` 错误覆盖所有 status，会拒绝冻结协议允许的
+  `DUPLICATE_OR_UNCERTAIN + empty stepResults`；TURN-01D 明确 STOPPED/UNCERTAIN 只保留 no-failed-index
+  规则，不得新增 shape 语义，父级记 `P1=1 / Repair #2`。
+- 原 Kuhn 只需把 full count/index/type 限于 COMPLETED/FAILED；所有 status 仍校验 action/window，新增 empty
+  uncertain typed/no-retry 用例。13G 未解锁 13H，其他三槽继续并行。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T01 首审退修并重开 T03A 真实 parser 边界
+
+- 父级逐行审查 T01 五测试与七 fixture，独立重算双仓 `12/12` test/fixture 及完整 production protocol
+  `29/29` byte-identical；标准十命令仍为 exit 1/selected 0，isolated 20+20 仅诊断。
+- T01 的 `PRODUCTION_MAPPER` 实为 test-local mapper，不能证明真实 HTTP parser；记 `P1=1`，要求更名并明确
+  实际边界由 T02/T03A 验证。另补 invalid step index 与 Quest+capture 双帧拒绝，记 `P2=2`，原 Ohm 返修。
+- 交叉检查发现 DHXY `HttpsTurnClient` 少四项严格 Jackson feature，真实 malformed 200 可在 validator 前被
+  coercion；T03A 以 `P1=1 / Repair #2` 重开，只改 client/test/report，补 typed failure + exactly-one-POST。
+- Cloud `src/test/` 当前被 `.gitignore` 隐藏，作为后续交付/commit gate 保留；本轮遵守 Git mutation 禁令，
+  不改 ignore、不 stage。T03B/13G 继续并行，写集不重叠。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-13G 父级首审退回 P1=2，TURN-T03B 已真实领取
+
+- 父级独立读取 TURN-13G 七个 production 文件与 `TurnGameClientContractTest`，保留一次 public invocation
+  一个 UUID、一次 command、typed uncertain/no retry 与 exact provider context 主链。
+- `TurnInvocationResult.from(...)` 只核对 actionId/device/window，未核对 action steps 与 outcome stepResults 的
+  数量/类型；合法但错形的 outcome 会进入 Cloud business，违反 `EX` exact-action correlation，记 `P1=1`。
+- `pngFixture()` 只有 PNG signature + `TURN-13G` 字符串，不是可解码 2x2 PNG，却用 2x2 metadata/SHA 通过
+  `IMG` 断言，记 `P1=1`。Repair #1 仅允许原 Kuhn 修改 result/test/report，补 fail-closed correlation 与真实 PNG。
+- `TURN-T03B` 已于固定报告 true EOF 被 Nash 领取，六个 executor/loop/guard tests 写集与 13G 返修互斥。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T03A Repair #1 父级复审通过，标准 Maven 仍阻断
+
+- 父级独立复审三份返修测试及对应 production，确认 HTTP interrupt typed mapping/单次发送、capture 真实 pixels
+  与 immutable HWND snapshot、WAIT 正常完成和 interrupted STOPPED/零输入均有直接断言；结论
+  `P0/P1/P2=0/0/0 / TEST SOURCE REVIEW PASSED`。
+- 28 个 isolated passes 只作诊断；五个标准 Maven 命令仍因写集外 stale DHXY tests 在 shared `testCompile`
+  失败而执行 0 个选中测试。DHXY main compile exit 0；T03A 不是 card approved，后续必须原命令重跑。
+- Ampere test-source owner 释放；T03B 六文件任务已发送给 Nash，等待其在固定报告写真实 `CLAIMED`。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T02 父级测试源码审查通过，标准 Maven 与 Cloud compile 仍阻断
+
+- 父级独立读取 T02 六个 Cloud tests 及 exchange/result/frame、HTTP、routes、catalog/handler production，结论
+  `P0/P1/P2=0/0/0 / TEST SOURCE REVIEW PASSED`。command/wait、busy/duplicate/late/interrupt、raw PNG 同
+  future、防御复制、唯一 auth、bounds/坏图/part-count、共享 exchange 与 catalog ETag/hash 均有直接断言。
+- 父级重算六个 Java hash 全部匹配交付表；fixture 为 126-byte `2x2` PNG，SHA-256
+  `0b4b8834d9fa2a0ee891481cd9e90eb8434a680bf92af684e33d7bd4fb0f8754`。
+- 六个权威 Maven 命令均在 `testCompile`/Surefire 前被写集外 Cloud production compile 债阻断，首错仍为
+  `TaskTrackerPanelService.java:3` 缺 `GameClientTracker`；选中测试执行数为 0。因此 T02 不是 card approved，
+  必须在 production cohort 恢复后原命令重跑。测试源码 owner 已释放，可滚入下一张互斥卡。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T03A 父级测试源码审查退回 P1=3，T03B 可互斥并行
+
+- Ampere 已交付 T03A 五个 DHXY Foundation tests 与 `2x2` fixture；父级独立读取全部测试、对应生产边界并
+  重算 fixture，确认 25 项 isolated pass 只作诊断，五个权威 Maven 命令仍因写集外旧 test 的共享
+  `testCompile` 错误而没有执行选中测试。
+- 父级结论 `P0/P1/P2=0/3/0 / TEST SOURCE REPAIR #1`：缺 HTTP interrupt typed mapping；capture 未直接
+  断言真实 pixels 且未证明 binding drift 不会切到别窗；WAIT 只测非法 0，未测成功和可中断 STOPPED。
+- 返修仅允许改 T03A 三个对应测试及原报告，不改 production/POM/fixture/旧测试。T03B 六个测试文件与该
+  返修完全互斥，可由释放槽并行实施，不等待 T03A 或全仓 Maven 门。
+- 同轮纠正测试写集冲突：T01 保留 18:25 先领取的 Ohm，Nash 停止后领取的重复 T01 写入；T02 保留
+  18:30 先领取的 Pasteur，由其整合后派 T02A 材料并对六测试统一交付，任何现有内容均不回滚。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-T04 测试源码通过、标准门阻断，槽位转入 TURN-13G
+
+- Kuhn 交付五个本地 Service contract tests。父级逐文件审查 19 个测试方法与 fake public Service 边界，确认
+  九 operation 只路由 Bag/UI/Give/Quest 四 Service，Bag/Give/X2 exclusive ownership 无嵌套，Quest 同次 PNG
+  像素/absolute origin/sourceStepIndex 及失败无图不二次 capture 均有直接断言；结论
+  `P0/P1/P2=0/0/0 / TEST SOURCE REVIEW PASSED`。
+- 五个权威 `mvn -q -Dtest=... test` 均在选中测试执行前被仓库既有 stale tests 的 `testCompile` 错误阻断；
+  isolated javac + surefire 19/19 只作诊断，不替代标准门。因此 T04 仍非 card approved，后续必须重跑五项。
+- T04 test source owner 已释放；Kuhn 同槽立即领取关键链 `TURN-13G` production +
+  `TurnGameClientContractTest`。当前四槽为 Nash=T01、Pasteur=T02、Ampere=T03A、Kuhn=13G；下一为 T03B/13H。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-40A 父级源码通过，测试名歧义关闭并续入 TURN-T01
+
+- Nash 交付双仓 8 对 Task lifecycle production protocol。父级重算 SHA，8/8 byte-identical，并逐行核对
+  closed remote task allowlist、ordered immutable queue、failure policy、stable startRequestId/exact ack、
+  pause/stop 与 response/request correlation，结论 `P0/P1/P2=0/0/0 / SOURCE REVIEW PASSED`。
+- DHXY compile 报告 exit 0；Cloud compile 首错仍是写集外 `TaskTrackerPanelService.java:3` 引用 absent
+  `GameClientTracker`。40A 仍需 T01 点名测试、父级测试审查和 fresh Cloud build，不能写 card approved。
+- 父级发现权威计划第 19.5 对 lifecycle test 误写为 `...ContractTest`，与第 19.3、第 19.4 和已冻结报告的
+  `TurnTaskLifecycleProtocolGoldenJsonTest` 不一致；现已统一为后者，禁止造第二套同义测试。
+- 40A production owner 已释放，Nash 同槽立即续派 `TURN-T01` 五个双仓 golden tests 与七个 fixtures。
+  当前四槽仍满：Nash=T01、Pasteur=T02、Ampere=T03A、Kuhn=T04；下一滚动队列为 T03B/13G。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 TURN-02R 父级源码通过，原槽立即滚入 TURN-T02
+
+- Pasteur 已交付 TURN-02R 三个 Cloud production 文件。父级独立展开结果对象、command port、exchange、
+  frame、HTTP handler 与全仓调用方，结论 `P0/P1/P2=0/0/0 / SOURCE REVIEW PASSED`：accepted outcome 与
+  optional raw PNG 经同一 future 原子返回，frame 双边防御性复制，latest metadata 按 exact device/window 单值
+  替换，exchange 不保留图片历史。
+- Worker 的 Cloud compile 首错已由父级独立核实为写集外 `TaskTrackerPanelService.java:3` 引用 Cloud 不存在的
+  `GameClientTracker`；当前 Nash 仍在写 Cloud protocol，因此父级未并发执行 clean Maven。02R 仍需 T02 点名测试
+  与 writers 稳定后的 fresh build，不能写 card approved。
+- 02R production owner 已释放，同一 Pasteur 槽已立即续派 `TURN-T02` 六个 Cloud contract tests 与唯一 2x2
+  PNG fixture。当前四槽仍满：Pasteur=T02、Nash=40A、Ampere=T03A、Kuhn=T04；写集互斥。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 最小 JSON turn 再确认后，四个后台槽全部恢复并滚动执行
+
+- 用户再次确认设计不变并要求尽量扩大安全并发。父级尝试扩至八路时工具返回 `agent thread limit reached`，确认
+  当前后台并发上限为 4；四槽均已占满，没有人为留空。
+- 当前真实实现槽：Pasteur=`TURN-02R production`，Nash=`TURN-40A 双仓 production protocol`，Ampere=
+  `TURN-T03` 第一半 client/cache/capture/match/input tests，Kuhn=`TURN-T04` 四本地 Service tests。四路 exact
+  write set 互斥；Ampere/Kuhn 不得越权修改 production。
+- 下一 READY 队列按依赖为：`T01 protocol golden tests`、`T02 Cloud transport/template tests`、`T03` 剩余
+  executor/loop/guard tests、`13G`。父级不等四路齐交；任一交付就独立审查 P0/P1/P2，通过后立即占用释放槽。
+- 已重新建立 `cr271` 一分钟父级滚动审核 heartbeat；每轮只在真实领取、交付、审查、返修、测试或构建变化时
+  通知，Worker 不自批。
+- 运行设计仍只有本地主动 HTTPS long-wait、Cloud response 一个 JSON action、DHXY next request 一个 JSON
+  outcome 加可选最多一张 raw PNG；没有 WebSocket/poller/broker/session/ledger/本地自动业务 retry。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 四路开工前暂停，等待用户重确认最小 JSON turn
+
+- 用户在四 Worker 分配后立即要求先确认设计。父级已 interrupt 四路并收到完整暂停回执：Pasteur/Ampere
+  零文件写入；Nash 仅新建 `2026-07-15-turn-card-TURN-40A-T01.md` 领取报告；Kuhn 仅新建
+  `2026-07-15-turn-card-TURN-T04.md` 领取报告。四路均未改 Java/test/fixture/POM，未运行 Maven/测试/compile，
+  未启动 runtime/application/server/Task/UI/capture/input，未做 Git mutation。
+- 待用户确认的设计仍是一个本地主动 HTTPS long-wait turn：Cloud response 下发一个 ordered JSON action；DHXY
+  只执行 CAPTURE/MATCH_TEMPLATE/INPUT/WAIT/四本地 Service；下一 request 交回 JSON outcome，并仅在 payload
+  请求或失败证据需要时附最多一张 raw PNG multipart。没有 WebSocket、第二协议、poller、broker、session、ledger
+  或本地自动业务 retry。
+- 当前权威状态改为 `IMPLEMENTATION PAUSED FOR USER DESIGN RECONFIRMATION`；原四 agent id/写集保留，确认后可
+  原路恢复，不重派、不丢领取证据。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 四条测试实施流水线并发启动
+
+- 用户明确恢复实施并要求四个后台 Agent 同时开工、父级负责检查。当前四路为：
+  Pasteur `019f67d6-836f-72a0-8d29-4bd89d0a87c9`=`TURN-02R+TURN-T02`，Nash
+  `019f67d6-d339-7de3-bcca-9a5ccdbc4ca5`=`TURN-40A+TURN-T01`，Ampere
+  `019f67d7-29cd-7292-8ffd-2b63ba6bb39f`=`TURN-T03`，Kuhn
+  `019f67d7-8c47-7d60-859e-7e6904074c21`=`TURN-T04`。
+- 四路写集互斥：Pasteur 只写 Cloud 02R production 与 Cloud transport tests；Nash 只写双仓 protocol/lifecycle
+  production、golden tests 与 fixtures；Ampere 只写 DHXY Foundation tests；Kuhn 只写四个本地 Service
+  adapter/dispatcher tests。C/D 遇到 production 缺陷只能交证据，禁止越权修生产。
+- 为满足真实并发，测试债依赖拆成 `startDependsOn/approvalDependsOn`：已有 production 足够时可先写独立测试，
+  但 `T01/T02/T03` 在 `40A/02R` 最终合同稳定、重读并 fresh 运行前不得批准。没有用 stub、猜测 DTO 或放宽断言。
+- Worker 必须先在固定报告写 `CLAIMED`，再交 `SOURCE DELIVERED + TEST DELIVERED` 或精确 blocker；不得自批。
+  父级将逐份读 production、测试和报告，运行/核对命名测试及 compile 门，再写 P0/P1/P2。
+- 当前只是领取并开工，没有 Worker 交付、测试结果或父级批准；未启动 application/server/Task/UI/capture/input，
+  未做 Git mutation，两仓既有 dirty/untracked 全部保护。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 HTTPS `/turn` 逐卡测试验收门已获用户批准，实施仍暂停
+
+- 父级先查两仓现有 `src/test`、Surefire/POM 与权威卡计划，确认当前 HTTPS turn 没有自动测试；既有
+  `SOURCE APPROVED` 只代表源码审查，不代表 Cloud JSON、DHXY success/failure outcome、raw PNG multipart、
+  action 去重或 Task start/ack 已被测试证明。
+- 用户明确授权命名测试族 `HTTPS_TURN_CONTRACT_TEST_FAMILY`，作为 no-local-test 的窄范围例外。权威计划
+  第 19 节现为每张 Java 卡冻结 `testWriteSet`、required cases、profile 与精确 `-Dtest` 命令；测试只使用
+  fake gateway/capture/input/local Service、scripted outcome 和 loopback HTTP，禁止真实桌面输入、截图、OCR
+  runtime、application/server/Task 启动。
+- 已交付 Foundation 不伪装成“以前测过”，新增四张补债卡：`TURN-T01` 双仓 protocol golden/parity、
+  `TURN-T02` Cloud exchange/HTTP/routes/template、`TURN-T03` DHXY client/cache/executor/loop、`TURN-T04`
+  四个永久本地 Service adapter/dispatcher。每张旧 Foundation 卡均有单独测试类和独有断言映射。
+- 未实施的 `TURN-13G..40D` 均与自己的 production source 同卡交付测试；业务卡默认覆盖
+  `COMPLETED/FAILED/STOPPED/DUPLICATE_OR_UNCERTAIN`，并断言 696a12b0 的条件、顺序、次数、fallback、
+  park/terminal 不变。三大 Task 35/36/37 在四张补债卡通过前不能批准。
+- 新审批状态机为 `SOURCE DELIVERED + TEST DELIVERED -> PARENT SOURCE REVIEW -> PARENT TEST REVIEW ->
+  NAMED TESTS exit 0 -> compile exit 0 -> CARD APPROVED`。只测 happy path、只比 metadata 不比 PNG bytes、
+  失败后仍执行后续 step 或用 mock 绕过目标边界，均为 `TEST BLOCKED`。
+- 纯 manifest/docs 卡使用逐文件引用+SHA 门；TURN-41 仍是用户真实 Win32 runtime；删除卡使用 source guard、
+  零引用扫描和 compile。Unit test 不替代 TURN-41。
+- 父级报告：`docs/superpowers/plans/reports/2026-07-15-https-turn-test-acceptance-plan-review.md`。本轮只改文档，
+  没有创建/运行测试或 Maven，没有修改 Java，没有启动 runtime/server/Task/UI/capture/input，没有 Git mutation；
+  两仓 dirty/untracked 全部保留。
+
+**无已批准业务差异；后续实施按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 HTTPS `/turn` 全卡两轮审计完成，实施继续暂停
+
+- 用户要求先把全部卡及卡间关系审清，不再边实施边补前置。父级已暂停 Java 派单，完成第一轮逐卡审计与第二轮
+  运行入口/删除终点逆向审计；四份 helper 只提供 PRECHECK，父级独立源码裁决为 `P0/P1/P2=0/8/1`。
+- 权威计划第 14..18 节现覆盖全部卡状态、直接依赖、精确写集、同文件 owner、验收、并行波次和删除顺序。
+  新增关键前置为 `TURN-02R`（outcome+PNG frame）、`TURN-13G`（统一 gateway/actionId）、`TURN-13H`
+  （同源 exchange/catalog 注入 dormant host）、`TURN-13C`（turn-native Task context）及 `TURN-40A/B/C/D`
+  （start/ack、Task runtime、Cloud activation、DHXY control lifecycle）。
+- 旧依赖环已拆除：业务 caller 一律在 13C 后；三大 Task 35/36/37 后才清旧 context/facade。删除阶段不再
+  provider-first：DHXY 固定 `43A -> 42A -> 43B`，Cloud 固定 `45A -> 44A -> 45B`，且先生成逐文件
+  reference + SHA-256 manifest。
+- 协议规格中的旧 `CLICK/KEY_PRESS` step 示例已改为真实 `INPUT + TurnInputAction`，并冻结 ordered Task queue、
+  stable startRequestId/ack、pause/stop 与 fixed tenant/user/stateRoot 最小合同。历史 `189/407` 仍仅为旧 caller
+  覆盖快照，不是当前 ledger 或主进度。
+- 父级审查报告：
+  `docs/superpowers/plans/reports/2026-07-15-full-card-plan-parent-two-pass-review.md`。当前结论为
+  `PARENT PLAN APPROVED / IMPLEMENTATION PAUSED`；用户确认后首波只开写集互斥的 `TURN-02R + TURN-40A`，
+  第三槽做 13G readiness，不按猜测接口写码。
+- 本轮只改文档，未改 Java，未运行 Maven/tests/runtime/server/Task/UI/capture/input，未做 Git mutation；两仓
+  dirty/untracked 全部保留。
+
+**无已批准业务差异；后续实施按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 HTTPS `/turn` 主计划改为七路并行并正式执行
+
+- **2026-07-15 17:08 EDT TURN-14/15/16 父级独立审查：三卡均 `P0/P1/P2=0/1/0 / BLOCKED`。**
+  三个 Worker 均已真实领取并先查 prerequisite，没有空等；父级随后独立读取 Server/routes/host/config 与全仓
+  command-port 引用，确认三卡遇到同一计划缺口：`CloudBrainServer` 创建的真实 `CloudTurnExchange` 只留在局部
+  bundle，未进入 dormant `CloudServiceHost`，而各卡禁止越权修改 Server/host。继续写只会造断开的第二 exchange、
+  无法装配的 facade 或 stub。现补 `TURN-13H` 共同前置，只建立同一 exchange 的惰性 host capability/Bean 注入，
+  不启动 host/server/loop、不做用户可见 activation；后者仍归 TURN-40。TURN-13H 通过后原样并行重发三卡。
+- **2026-07-15 16:38 EDT TURN-12 Repair #1：`P0/P1/P2=0/0/0 / SOURCE APPROVED / BUILD COHORT
+  PENDING`。** 父级独立复审确认 start/stop 与 start/retire 均在同一 lifecycle monitor 线性化，registry 只有
+  永久 retire 成功后才 remove；两个 P1 关闭，ACK/previous/actionId cache 主链未漂移。Foundation 至 TURN-12
+  共 23 张已关闭或源码批准；owner 释放，TURN-13 exact brief 已冻结并立即续派。新 writer 活动，不跑 Maven。
+- **2026-07-15 16:55 EDT TURN-13 首次父级审查：`P0/P1/P2=0/1/2 / REPAIR #1`。** Curie 已实际交付
+  三个 turn wiring/guard 类、真实 control-service 接线与独立 properties；不是未开工。配置装配、三个 local submit、
+  `startSameQueue` 副作用边界与 start-failure cleanup 可保留，但 remote start 会放行不存在或已 shutdown 的 runner，
+  造成无效 remote reservation。已退回原 Curie，仅改 `TurnModeGuard.java` 要求 exact runner 已注册、未 shutdown、
+  未运行。Helper-R3 风险 0；Helper-R4 的 P1 经父级独立确认。Cloud 首次 `-DskipTests` package 被 enforcer 拒绝，
+  不计构建证据；返修通过前不重跑 Maven。
+- **2026-07-15 17:01 EDT TURN-13 Repair #1：`P0/P1/P2=0/0/0 / SOURCE APPROVED`。** exact runner
+  missing/shutdown/running 三门已在同一 monitor 闭合，源码 owner 释放；DHXY compile exit 0。Cloud clean compile
+  exit 1 的错误全部来自写集外 legacy whole Service/Task 继续引用 DHXY-only tracker/input/window/runtime 与四个本地
+  Service，没有 TURN-13 新类错误；BUILD cohort 因而明确等待后续 cutover 消除引用，不复制本地 runtime。
+  TURN-14/15/16 当时已并行转 READY，后续 prerequisite 审查发现共同 `TURN-13H` 缺口并已转 BLOCKED。另已删除
+  `TURN-01B`、`TURN-01C`、`TURN-10B` 三个已释放 owner 的旧卡
+  heartbeat，停止重复“SOURCE APPROVED/BUILD PENDING，继续等待”噪声；CR271 父级一分钟 heartbeat 保留。
+- **2026-07-15 16:32 EDT TURN-12 Parent Source Review #1：`P0/P1/P2=0/2/0 / REPAIR #1`。**
+  父级确认 Helper-R1 的 `PRECHECK_CLEAR` 不是批准，并独立发现两个真实竞态：`start()` 在 publish thread 前可把
+  并发 `stop()` 的 flag 覆盖回 false；registry remove 返回的旧 loop 又可重新 start，并与同 windowId 新 loop
+  并跑。已退回 Curie，仅允许在 TURN-12 三文件内用同一 lifecycle 原子边界闭合 stop 与永久 retire；TURN-13
+  继续只做非绑定 readiness，尚未解锁。writer 活动，不运行 Maven。
+- **TURN-13 readiness 预检：** Helper-R2 返回非绑定 `MATERIAL_NOT_YET_AVAILABLE`；父级独立确认主计划原写的
+  `window/execution/WindowTaskControlService.java` 不存在，真实 Spring Service 为
+  `window/control/WindowTaskControlService.java`，已纠正权威写集。TURN-12 Repair #1 通过前不领取 TURN-13；
+  Helper 建议的互斥合同仍须父级后续独立冻结，Cloud command activation 保留给 TURN-40。
+- **2026-07-15 用户调整审核频率：** CR271 父级 reviewer heartbeat 从每 5 分钟改为每 1 分钟；每轮仍须
+  完整读取权威卡片和真实源码，独立写 P0/P1/P2，并在批准后立即续派。频率变化不放宽源码审查、写集互斥、
+  Maven cohort、dirty/untracked 保护或禁止 runtime/tests/Git mutation 的门。
+- **2026-07-15 用户批准增加父级辅助审查能力：** 已启动两个不占 implementation lane 的非绑定 helper。
+  Helper-R1 `Mill`（`019f6778-61bd-7513-be08-08041cae7c52`）只写
+  `2026-07-15-turn-12-delivery-preflight-helper-r1.md`，检查 TURN-12 ACK/去重/lifecycle/registry 风险；
+  Helper-R2 `Sartre`（`019f6778-cce2-7df1-aff4-573401581777`）只写
+  `2026-07-15-turn-13-readiness-helper-r2.md`，提前审 TURN-13 依赖、Spring wiring、模式互斥和构建汇合点。
+  两者只能写非绑定 PRECHECK/风险证据，不能写 APPROVED/BLOCKED、不能派任务，也不替代父级独立源码裁决。
+- **2026-07-15 用户批准进度口径纠偏：** `189/407` 仅是旧 caller 覆盖审计快照，不是 HTTPS turn
+  运行时 ledger，也不再作为 heartbeat/CR271 主进度。当前主进度按实施卡报告：Foundation 至 `TURN-10E`
+  共 21 张已 `CLOSED` 或 `SOURCE APPROVED / BUILD COHORT PENDING`，`TURN-11` 正在实施；旧覆盖清单只在
+  后续真实 caller cutover 时作为防重复审计项更新。
+- `TURN-11` 首次 source delivery 已由父级独立审查，结论 `P0/P1/P2=0/2/0 / REPAIR #1`：其
+  LOCAL_SERVICE 调用没有绑定已经解析的 exact-window context，Bag/UICleaner 等会退化到 global/UNKNOWN，且后续
+  InputSequences 可能丢失窗口隔离；失败证据 capture 异常时还会上传 prior success frame。两项均已写回原卡并
+  退回 Curie，仅允许在 TURN-11 写集内用现有 `WindowTaskContextHolder.callWith` 和 clear-before-capture 修复。
+  writers 活动，本轮不运行 Maven。
+- `TURN-11 Repair #1` 已经父级独立复审通过，`P0/P1/P2=0/0/0 / SOURCE APPROVED / BUILD COHORT
+  PENDING`：LOCAL_SERVICE 完整 dispatcher 调用现绑定同一 `window.context()`，failure-evidence capture 前清除
+  prior success frame，异常时 frame/PNG 同时为空。Foundation 当前 22 张已关闭或源码批准；owner 释放后原
+  Internal lane 已立即续派三文件 `TURN-12` long-wait loop/内存去重。writer 活动，本轮不运行 Maven。
+- 父级 reviewer heartbeat `CR271父级持续审核` 已建立并 ACTIVE，每 1 分钟回到当前父级线程读取新交付、
+  独立审源码、写 P0/P1/P2、返修与续派；不是由 Worker 自批，也不是只做状态提醒。
+- `TURN-04 Repair #1` 已收紧为 Authorization values list **恰好一个**且 exact Bearer；`TURN-10P Repair #1`
+  已改为 `ImageReader.read(0)` 完整像素解码并校验 decoded dimensions。父级逐行复审两项均为
+  `P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT PENDING`，原 P1 关闭，两个 owner 已释放。
+- External 林明交付的 `TURN-01D` 双仓 validator 虽 byte-identical，但父级发现 **P1=1**：未强制 step result
+  `code` 非空、未按 step type 限制 `match/localResultJson`，且 COMPLETED/FAILED outcome 未闭合各 step 状态序列。
+  已把精确 Repair #1 条件退回原 Worker；不由 Internal 接管，也不修改冻结 DTO/wire。
+- `TURN-01D Repair #1` 已在同轮返回；父级独立复核两仓 `:54-67/:238-267` 与 SHA 后确认上述 P1 全部关闭，
+  `P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT PENDING`。External owner 已释放并立即续派互斥
+  `TURN-10B UICleanerService closed adapter`，不等待 Maven、不留空档。
+- 释放的两个 Internal 槽已立即续派互斥 READY 卡：Franklin=`TURN-05 Cloud routes`，Copernicus=
+  `TURN-10A BagService closed adapter`；Ptolemy 继续 `TURN-08B explicit local match`。当前三条 Internal
+  implementation 全部有真实 CLAIMED 写集，分别位于 Cloud route、DHXY Bag adapter、DHXY match executor，
+  无同文件双写。
+- Java writers 仍活动，本轮不运行 Maven；Foundation/adapter 卡按卡片生命周期报告，不使用旧 `189/407`
+  覆盖快照衡量当前进度。
+- `TURN-05` source delivery 的两文件接线本身正确，但父级沿新 route 回读上游后发现
+  `CloudTemplateHttpHandler:58` 仍用 `getFirst(Authorization)`，重复安全头可被首值接受，故整体
+  `INTEGRATION BLOCKED / P1=1`。修复已按写集退回 `TURN-03B Repair #2`，禁止 TURN-05 越界改 handler。
+- `TURN-08B` 与 `TURN-10A` 已由父级独立回读协作者源码后通过，均 `P0/P1/P2=0 / SOURCE APPROVED /
+  BUILD COHORT PENDING`，两个 owner 释放。External `TURN-10B` 首次因把共享结果误找在 child package 而
+  BLOCKED；父级已指出真实 `cloud/turn/LocalServiceExecution.java` 并恢复原卡，未扩大写集。
+- `TURN-03B Repair #2` 已返回并由父级复核通过，完整 Authorization values list 唯一门闭合；`TURN-05` 随即
+  解除 integration blocker 并源码通过，两项均 `P0/P1/P2=0 / BUILD COHORT PENDING`。
+- `TURN-10B` source delivery 的四项 allowlist 可保留，但前三项 public flow 自管 queue、X2 direct flow 要求
+  已在 exclusive，导致统一调用边界不成立，父级记 `P1=1`。已退回原 External，要求 adapter 从队列外调用且
+  仅 X2 在 adapter 内获取一次 exclusive。释放的 Internal 两槽已续派 Singer=`TURN-10C`、Curie=`TURN-10D`；
+  Franklin 结束 03B 返修后 owner 释放。
+- `TURN-10B Repair #1` 已在同轮返回；父级确认三项 public flow 保持自管 queue，X2 仅在 adapter 内获取一次
+  exclusive 后调用既有 direct macro，结论 `P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT PENDING`，
+  External owner 释放。下一张 `TURN-10E` 等待 10C/10D source review 解锁，不伪造提前 CLAIMED。
+- `TURN-10C` GiveItem closed adapter 已由父级独立回读源码与既有 direct-for-exclusive 宏，结论
+  `P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT PENDING`，owner 释放；后续 dispatcher 只可对 Bag/Give
+  operation 建一次 exclusive，不能把 UI/Quest 一并包入。
+- `TURN-10D` Worker 的阻断经父级复核成立：Quest detail 单次 capture 已算真实 absolute ROI，但
+  `QuestDetailCapture` 只返回 image/path。父级记 `P1=1` 并把最小 `Repair Prerequisite #1` 退回原 Curie，
+  只允许在 `QuestDetailCapture`/`QuestManagerService` 返回同帧 `screenX/screenY`；禁止伪 `(0,0)`、第二次截图或
+  协议耦合。该前置通过前不创建 adapter；writers 活动，未运行 Maven。
+- `TURN-10D Repair Prerequisite #1` 已返回并由父级独立 diff/SHA 复审通过，`P0/P1/P2=0`：只增加同帧
+  absolute-screen `screenX/screenY`，原 activation/ROI/单次 capture/save/close 顺序未变。原 Curie 已恢复
+  `TURN-10D` adapter 实施，显式接收 `sourceStepIndex` 并从 queue 外调用 Quest public Service；仍未运行 Maven。
+- `TURN-10D` adapter 已同轮交付并由父级独立源码终审通过，`P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT
+  PENDING`：只闭合 activate/capture，两者参数门 exact；capture 同帧生成唯一 Quest PNG frame 后 flush，失败无
+  frame。owner 释放后 Curie 已立即续派 READY `TURN-10E` dispatcher，四个 adapter 写集冻结，不留规划空档。
+- `TURN-10E` dispatcher 已交付并经父级独立源码审查通过，`P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT
+  PENDING`：Bag/Give 各一次 exclusive 且不重跑，UI/Quest 从 queue 外调用，只有四 adapter 可达。owner 释放后
+  Curie 已立即续派四文件 `TURN-11` action executor；writers 继续活动，本轮不运行 Maven。
+- 父级已审本轮三项交付：`TURN-07` 为 `P0/P1/P2=0 / SOURCE APPROVED / BUILD PENDING`，owner 释放并
+  即时续派 `TURN-08B`；`TURN-04` 因 Authorization 重复头可被 `getFirst` 宽松接受记 `P1=1`；
+  `TURN-10P` 因 Quest PNG 只读 header 尺寸、未完整解码像素记 `P1=1`。两项均已退回原 Worker Repair #1。
+- 当前三条 Internal 为 `TURN-04 Repair #1`、`TURN-10P Repair #1`、`TURN-08B`，External 林明继续
+  `TURN-01D`；writers 活动中暂不运行 cohort Maven。
+- 当前滚动并行实况：`TURN-01A/01B/01C/02/03A/03B/06/08A/09` 已经父级独立源码通过并进入
+  Foundation build cohort；External 林明已先领取 `TURN-01D` validator/parity；三个 Internal 实现槽分别为
+  `TURN-04` Cloud ingress、`TURN-07` DHXY template cache、`TURN-10P` 本地 Service 共享执行结果，不等待 Maven。
+- 父级曾在未看到林明 heartbeat 已先领取 `TURN-01D` 时重复派出一个 Internal Worker；发现同写集双 CLAIMED 后
+  已立即停止后领取者，保留林明先领取权，并把 Internal 槽改派互斥 `TURN-10P`。没有允许两人并发改同一文件。
+- `TURN-06` 六个 HTTP client 文件已由父级逐行审查，结论 `P0/P1/P2=0 / SOURCE APPROVED / BUILD COHORT
+  PENDING`：HTTPS/loopback、HTTP/2、raw PNG multipart、单次 send、bounded response、accepted acknowledgement、
+  template ETag/SHA 均闭合。其 owner 已释放并立即启动 `TURN-07`。
+- 当前仍有四条真实 Java writer lane，故尚不运行 cohort Maven；这不是串行等待。任一 lane source-approved 后
+  立即从 READY 池补位，构建只在 writers 稳定的汇合点批量执行。
+- 实际滚动状态已不再是“只开林明一张”：`TURN-01A/03A/08A` 已父级源码通过并释放 owner；Internal
+  Poincare/Kepler/Laplace 已分别续领 `TURN-09/03B/02`；External 林明持有 `TURN-01B`；另一 External 已交付
+  `TURN-01C`；`TURN-06` 仍公开 READY。实现槽按源码交付滚动，不等待 cohort Maven。
+- 父级对 `TURN-01C` 独立审查发现 wire exact-contract 漂移：`window -> windowMetadata` 两处、
+  `TurnStepResult` 多 `message`、`TurnResponse` 多 `contractVersion`，故 `P0=0/P1=3/P2=0` 退回原卡返修。
+  双仓 byte-identical 只证明两边一致，不能掩盖两边共同偏离冻结合同；返修不占用其它互斥 lane。
+- `TURN-09` 三个 input executor/mapper 文件已由父级独立源码审查 `P0/P1/P2=0`：鼠标只走单一 queue
+  request，后台已验证键只走 HWND，无法安全后台表达的 down/up/text 返回 typed unsupported，不做前台 fallback；
+  WAIT 可中断。源码 owner 已释放并立即转领下一张 READY，构建仍归 Foundation cohort。
+- `TURN-01B` 当前 11 对 DTO 源码合同与双仓 parity 本身无 P0/P1；但交付报告中 3 个 SHA 与当前 bytes
+  不一致，后续 `ParityMismatch=` 又为空，父级记 `P2=1`。原 worker 只允许追加当前 SHA/parity，不得再改 Java
+  或在 writers 活动期自行构建；该证据修正与其它 lane 并行。
+- `TURN-03B` 首版 handler 的 catalog/ETag/body 边界可保留，但 raw suffix 允许未编码 `/`，且
+  `URLDecoder` 会把 raw `+` 变成空格，父级记 `P1=1`。原 worker 同卡只收紧 encoded single-key
+  canonicalization，不改 catalog/routes；其它 lane 不等待该返修。
+- `TURN-02` 的单槽/fencing/重复 outcome/frame 校验主体可保留，但源码消费了已被父级退回的错误 `01C`
+  API：`windowMetadata()` 与三参数 `TurnResponse`。父级记 `P1=1`，原 worker 只对齐冻结 `window()` 和二参数
+  response，不重写状态机；返修与 `01C` 并行。
+- `TURN-09` 释放的内部槽已于 `14:47` 实质领取 `TURN-06`，固定报告含 CLAIMED、六文件唯一写集与两仓
+  status；因此原第一波七张已全部被处理/领取，不再存在“只开林明一张”。
+- `TURN-03B` 已完成 strict encoded-key Repair #1；父级复审 `P0/P1/P2=0 / SOURCE APPROVED / BUILD PENDING`，
+  handler owner 释放。`TURN-07` 仍只等 `TURN-06` source delivery 后即可启动。
+
+- 用户明确否决“一张卡做完再开下一张”的串行排班。父级已把共享大卡拆成 58 张可领取卡（主编号
+  `TURN-00..47`，含 A-E 并行子卡），并引入 `startDependsOn` 与 `approvalDependsOn`：合同冻结后即可并行写，
+  依赖源码与 fresh Maven 只在批准/关卡前汇合。
+- `TURN-00` 文档交付已由父级独立审查：`P0/P1/P2=0`，报告写入
+  `PARENT APPROVED，P0/P1/P2=0，card CLOSED`。当前第一波必须同时开放七个互斥实现槽：`TURN-01A`、
+  `TURN-01B`、`TURN-01C`、`TURN-02`、`TURN-03A`、`TURN-06`、`TURN-08A`；任一槽释放即从预排第二波补位。
+- 三条 Internal 已实质领取：Poincare=`TURN-01A`、Kepler=`TURN-03A`、Laplace=`TURN-08A`，三份固定报告均有
+  `CLAIMED` 与精确写集；External 林明收到父级续派后已领取 `TURN-01B`。当前仍公开 READY 的三张 External lane
+  是 `TURN-01C`、`TURN-02`、`TURN-06`；它们不是占位任务，均是完整 Foundation 实现卡。
+- `TURN-01A` 已交付并经父级独立源码审查 `P0/P1/P2=0`，七对协议文件 byte-identical；只待 Foundation cohort
+  统一双仓 Maven。按并行规则源码 owner 已释放，Poincare 不空等构建，可立即滚动领取下一张 READY。
+- 协议、Cloud exchange/template、DHXY client/capture/input 与四个永久本地 Service adapter 都按精确文件拆分；
+  共享 validator、routes、dispatcher、action executor 只由后续单独 integration 卡写，禁止并行 worker 顺手修改。
+- 排班 helper 发现窗口 metadata/frame purpose 的承载类型与本地 Service 共享结果尚未明确；父级复核后已在
+  TURN-00 合同补齐 `TurnWindowMetadata`、`TurnFramePurpose`，并新增 `TURN-10P` 单一共享结果卡，避免四个 adapter
+  各造包装层。helper 只提供预检，最终修订由父级裁定。
+- 本轮只修改计划、TURN-00 审查报告与 CR 文档，没有修改 Java、没有运行 Maven、没有启动
+  runtime/application/Task/poller/UI/capture/input/tests，也没有执行 Git 写操作。hard ledger 仍为 `189/407`。
+
+**无已批准业务差异；后续实施按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 历史记录：HTTPS `/turn` 串行首版已被七路并行版取代
+
+- 这一版曾将协议闭口、双端 Foundation、四个永久本地 Service、全部旧 fact/macro 迁移、Dialog/Navigation/
+  TaskTracker/Summon、三大 Cloud Task 接线、显式激活、用户 fresh runtime 门、零引用删旧和最终双构建拆成
+  `TURN-00` 至 `TURN-47` 共 48 张卡；现已由上方 58 卡七路并行排班取代。主计划仍为：
+  `docs/superpowers/plans/2026-07-15-https-turn-complete-migration-card-plan.md`。
+- 三个只读规划 helper 分别核对 Cloud、DHXY 与业务迁移调用链；父级复核后补入完整输入动作、窗口身份 metadata、
+  operation-specific 本地 Service 参数、Quest PNG 回传、单 frame 规则、`IDLE` 确认上一 outcome、模板 hash 单一
+  权威及模式互斥。helper 不是 reviewer，最终计划由父级独立裁定。
+- 原 `2026-07-15-https-turn-protocol-foundation.md` 降为 Foundation 细节附录；原“先 Foundation A、以后再写
+  Cutover B”范围已被完整主计划取代。本段的 `DRAFT`/只开一张卡状态已经失效，不得用于领取判断。
+- 本轮只修改计划/CR 文档，没有修改 Java、没有运行 Maven、没有启动 runtime/application/Task/poller/UI/
+  capture/input/tests，也没有执行 Git 写操作。hard ledger 仍为 `189/407`；计划明确 infra/delete 卡不伪造增量，
+  业务 COUNT 卡必须一张闭合一个尚未 hard-counted 的真实 runnable caller。
+
+**无已批准业务差异；后续实施按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 HTTPS `/turn` Foundation A 实施计划已完成
+
+- 用户批准按 HTTPS `/turn` 设计进入实施计划。由于完整替换同时涉及传输基础、通用本地执行器、模板分发、
+  现有 Service 调用改线和旧协议删除，现拆成两个可独立审查子项目；先实施 Foundation A，再单独编写 Cutover B。
+- Foundation A 计划固定八项：双仓 exact protocol、Cloud 单槽交换、Cloud multipart/template handlers、DHXY
+  HTTPS client/template cache、exact-window executor、显式 per-window turn loop、独立 Cloud command port、双仓构建与
+  文档门。它会形成完整新纵向链，但不自动启动，不提前删除现有 `/poll + /outcome`。
+- 实施计划：`docs/superpowers/plans/2026-07-15-https-turn-protocol-foundation.md`。本轮只写计划与补齐已批准
+  `LOCAL_SERVICE` 白名单规格，没有修改 Java、没有运行 Maven、没有启动 runtime，也没有提交 Git。
+
+## 2026-07-15 / CR271 用户批准 HTTPS `/turn` 最简薄客户端协议
+
+- 用户重新审查本地与 Cloud 的传输方式后明确批准：V1 不采用 WebSocket、原生 TCP socket 或短间隔
+  polling；改用本地主动发起的 HTTPS 长等待 `POST /api/v1/client/turn`。每次请求交回上一动作结果及可选
+  multipart PNG，每次响应下发下一份完整 JSON 动作 payload。
+- payload 一次包含物理步骤及其 post-action 截图/本地模板匹配要求；大图不放 Base64 JSON。窗口矩形上左点
+  使用真实屏幕坐标，图片与点击坐标均不缩放。失败必须返回失败步骤与截图，本地不自行重跑业务动作，下一次
+  尝试由 Cloud 显式决定。
+- 本地模板按 `templateKey + contentHash` 缺失或过期时从 Cloud HTTPS 获取，无需重启。普通 OCR/图像计算
+  默认仍在 Cloud；只有 payload 明确要求时才在本地模板匹配。永久本地 Service 仍为 `BagService`、
+  `UICleanerService`、`GiveItemService`、`QuestManagerService`。
+- 权威规格：`docs/superpowers/specs/2026-07-15-https-turn-thin-client-protocol-design.md`。该决定取代旧架构草案
+  的 WebSocket 目标选择；现有 `/poll` + `/outcome` 代码只代表迁移现状，不再是最终目标。本轮仅记录设计，
+  未修改 Java、未运行 Maven、未启动 runtime。
+
+## 2026-07-15 / CR271 10:29 A 第十七领取窗逾期、第十八窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十七 `claimBy=10:29:20` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十八
+  `claimBy=10:49:25`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十七领取窗截止 `10:36:57`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 10:16 B 第十六领取窗逾期、第十七窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十六 `claimBy=10:16:52` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十七
+  `claimBy=10:36:57`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十七领取窗截止 `10:29:20`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 10:09 A 第十六领取窗逾期、第十七窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十六 `claimBy=10:09:14` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十七
+  `claimBy=10:29:20`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十六领取窗截止 `10:16:52`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:56 B 第十五领取窗逾期、第十六窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十五 `claimBy=09:56:47` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十六
+  `claimBy=10:16:52`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十六领取窗截止 `10:09:14`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:49 A 第十五领取窗逾期、第十六窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十五 `claimBy=09:49:09` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十六
+  `claimBy=10:09:14`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十五领取窗截止 `09:56:47`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:36 B 第十四领取窗逾期、第十五窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十四 `claimBy=09:36:42` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十五
+  `claimBy=09:56:47`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十五领取窗截止 `09:49:09`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:29 A 第十四领取窗逾期、第十五窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十四 `claimBy=09:29:04` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十五
+  `claimBy=09:49:09`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十四领取窗截止 `09:36:42`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:16 B 第十三领取窗逾期、第十四窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十三 `claimBy=09:16:37` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十四
+  `claimBy=09:36:42`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十四领取窗截止 `09:29:04`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 09:09 A 第十三领取窗逾期、第十四窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十三 `claimBy=09:08:29` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十四
+  `claimBy=09:29:04`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十三领取窗截止 `09:16:37`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:56 B 第十二领取窗逾期、第十三窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十二 `claimBy=08:55:55` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十三
+  `claimBy=09:16:37`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十三领取窗截止 `09:08:29`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:48 A 第十二领取窗逾期、第十三窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十二 `claimBy=08:47:52` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十三
+  `claimBy=09:08:29`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十二领取窗截止 `08:55:55`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:35 B 第十一领取窗逾期、第十二窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十一 `claimBy=08:35:23` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十二
+  `claimBy=08:55:55`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十二领取窗截止 `08:47:52`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:27 A 第十一领取窗逾期、第十二窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十一 `claimBy=08:27:09` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十二
+  `claimBy=08:47:52`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十一领取窗截止 `08:35:23`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:15 B 第十领取窗逾期、第十一窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第十 `claimBy=08:14:43` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十一
+  `claimBy=08:35:23`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十一领取窗截止 `08:27:09`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 08:07 A 第十领取窗逾期、第十一窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第十 `claimBy=08:06:18` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十一
+  `claimBy=08:27:09`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第十领取窗截止 `08:14:43`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:54 B 第九领取窗逾期、第十窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第九 `claimBy=07:54:02` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第十
+  `claimBy=08:14:43`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第十领取窗截止 `08:06:18`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:46 A 第九领取窗逾期、第十窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第九 `claimBy=07:45:43` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第十
+  `claimBy=08:06:18`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第九领取窗截止 `07:54:02`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:34 B 第八领取窗逾期、第九窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第八 `claimBy=07:33:35` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第九
+  `claimBy=07:54:02`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第九领取窗截止 `07:45:43`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:25 A 第八领取窗逾期、第九窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第八 `claimBy=07:25:05` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第九
+  `claimBy=07:45:43`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第八领取窗截止 `07:33:35`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:13 B 第七领取窗逾期、第八窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第七 `claimBy=07:12:40` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第八
+  `claimBy=07:33:35`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第八领取窗截止 `07:25:05`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 07:05 A 第七领取窗逾期、第八窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第七 `claimBy=07:04:40` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第八
+  `claimBy=07:25:05`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第七领取窗截止 `07:12:40`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:52 B 第六领取窗逾期、第七窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第六 `claimBy=06:52:10` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第七
+  `claimBy=07:12:40`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第七领取窗截止 `07:04:40`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:44 A 第六领取窗逾期、第七窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第六 `claimBy=06:44:10` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第七
+  `claimBy=07:04:40`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第六领取窗截止 `06:52:10`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:32 B 第五领取窗逾期、第六窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第五 `claimBy=06:31:35` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第六
+  `claimBy=06:52:10`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第六领取窗截止 `06:44:10`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:24 A 第五领取窗逾期、第六窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第五 `claimBy=06:23:40` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第六
+  `claimBy=06:44:10`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第五领取窗截止 `06:31:35`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:11 B 第四领取窗逾期、第五窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第四 `claimBy=06:11:10` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第五
+  `claimBy=06:31:35`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集与验收条件均未改变，绝不内部接管。
+- A 第五领取窗截止 `06:23:40`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 06:03 A 第四领取窗逾期、第五窗原样续发
+
+- External A 的 `W-COUNT-AUTO-BATTLE-FOLLOWER-SUPPORT-1` 在第四 `claimBy=06:03:15` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 A 原样重发，第五
+  `claimBy=06:23:40`。`countUnit=AutoBattleTask::isFollowerSupportMode`、`countDelta=+1`、唯一写集与
+  验收条件均未改变，绝不内部接管。
+- B 第四领取窗截止 `06:11:10`；C TaskTracker 29-Java 与 D Xiuluo terminal 仍为已领取合法在途。
+  hard ledger `189/407`、去重待构建池 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:51 B 第三领取窗逾期、第四窗原样续发
+
+- External B 的 `W-COUNT-OBJECTIVE-TEXT-RECOGNIZE-1` 在第三 `claimBy=05:50:45` 后，固定日志
+  真实 EOF 仍无具体 `CLAIMED`；父级已记录 `UNCLAIMED` 并只向原 B 原样重发，第四
+  `claimBy=06:11:10`。`countUnit=ObjectiveTextRecognitionService::recognize(raw,source)`、
+  `countDelta=+1`、唯一写集和验收条件均未改变，绝不内部接管。
+- A 第四领取窗截止 `06:03:15`；C 的 TaskTracker 29-Java 整链与 D 的 Xiuluo terminal 已领取并可继续
+  工作超过 20 分钟。hard ledger 仍 `189/407`、去重待构建池仍 `53`；Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:39 I47 真链放行、I46 exact-context 阻断
+
+- 父级独立通过 I47 `WorldMapRouteResultMemoryService::recordAbandoned`：active Navigation
+  second-navigation 会消费旧 pending、按 `second-navigation` 记录 metadata-only abandoned，再安装下一
+  pending；目标 Service 与 `696a12b0` blob 完全一致，`P0/P1/P2=0`。去重待构建池 `52 -> 53`，fresh
+  package 前 hard ledger 仍 `189/407`。
+- I46 `PlayerStateService::syncMyIdentity` 的 BINDING typed producer 已存在，但 active Cloud 中 `syncAll`
+  零 caller，且没有 production execution host 把 exact `TaskExecutionContext` 对应的 retained
+  `GameContext.State/me` 投影到同一调用栈；父级 `P1=2/countDelta=0`，不重复计算已批准的
+  `ClientIdentityService::scanAndSyncIdentity`。
+- Internal I46/I47 已审结并释放实现槽；H7 扫描当前矩阵与 active caller 后返回 `NONE`：最近候选均为
+  private/facade 子段、已计父链、non-compiling Whole Task caller 或与 C 29-Java shared lane 冲突，父级不以
+  假任务凑槽。A 第三窗仍未领取，已 true EOF 第四次原样重发，截止 06:03:15；B 第三窗截止
+  05:50:45，C TaskTracker 29-Java 与 D Xiuluo terminal 仍合法在途。Java writers 活动，未运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:34 两项新增源码放行、假 caller 计数剔除、A/B 第三领取窗
+
+- I43 `TaskMaintenanceService::initializeForTaskStart` 由当前可达 `AutoBattleTask:136` 闭合到首个 patrol tick，
+  父级 `P0/P1/P2=0`；I45R 在同一 `recordFailure +1` 整链内恢复 baseline exact
+  `WorldMapRouteResultMode.LEGACY_GREEN_LINK` 后闭合 active Navigation failure/persistence/fallback，父级
+  `P0/P1/P2=0`。去重待构建池 `50 -> 52`，hard ledger 在 fresh package 前仍 `189/407`。
+- I44 `BattleRadarService::consumeCombatExitSignalForExpectedWait` 方法本身等价，但唯一 FAST caller 位于仍不能
+  compile/run 的 Wubei/Xiuluo whole Task；父级判 `P1=1/countDelta=0`，没有把 source-only caller 冒充 active。
+- Internal 当前 I46 `PlayerStateService::syncMyIdentity`、I47
+  `WorldMapRouteResultMemoryService::recordAbandoned` 在途；I45R 完成槽已释放。External A/B 第二领取窗均未领，
+  已 true EOF 第三次原样重发，截止 05:42:53 / 05:50:45；C TaskTracker 29-Java、D Xiuluo terminal 仍在途。
+- Java writers 活动，未运行 Maven；全部稳定后才执行 fresh Cloud package 与适用 DHXY compile并原子记账。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:18 三个零计数内部单父级阻断，互斥 `+1` 实现槽即时补满
+
+- 父级独立复核 I40/I41/I42：route-plan facts 属后基线且缺 active caller/typed facts（`P1=2`）；NPC
+  fresh story blocker 属后基线且现有 remote port 无 ready-event producer/operation（`P1=2`）；UI-clean
+  lightweight 在 Summon whole-pass handler 与 Cloud caller 各执行一次，形成重复本地清理（`P1=1`）。三项均
+  `countDelta=0/NO_CODE_CHANGE`，没有用不可达 helper、DTO 或双输入冒充进度。
+- 三个内部实现槽已立即换发 I43 `TaskMaintenanceService::initializeForTaskStart`、I44
+  `BattleRadarService::consumeCombatExitSignalForExpectedWait`、I45R
+  `WorldMapRouteResultMemoryService::recordFailure`，三个 Cloud Java 写集彼此互斥，也不碰 A/B/C/D。
+  原拟重复的 `AutoCombatPanelService::ensurePanelVisible` 已在发单后立即中止，因为 I7 已
+  `SOURCE APPROVED/COUNT PENDING BUILD`，禁止重复计数。
+- hard ledger 仍 `189/407`，去重待构建池仍 `50`；External C 与三条 Internal writer 活动时不跑 Maven。
+  A/B 分别仍在第二领取窗 05:22:40 / 05:26:35 内；D Xiuluo terminal 已领取。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:10 三个完整 Task 基线源码保全，内部三线继续闭合独立 typed 链
+
+- `WubeiTask.java`、`FiveRingTaskV2.java`、`XiuluoTaskV2.java` 已完整 new 到 active Cloud，父级独立
+  `git hash-object` 分别确认与 `696a12b0` blob
+  `7c85ca645494623f102ca0ccd873bb4ef74e41c3`、`f5c5022162b89953216e1787546f4a0c616e5fe0`、
+  `a010a0f5b267b02e0b202c2addf4a8bcc2c9600f` 完全一致。完整 public/private/phase/delay/fallback/state/
+  comments 已保全，不再缺 Task caller 源码。
+- 三个 execute 单元仍各为 `BLOCKED_MISSING_TYPED_BOUNDARIES/countDelta=0`：缺现有合法
+  TaskExecutionContext runtime projection、transaction/turn/ready-event owner，以及永久本地 Bag/UI-clean/
+  QuestManager、capture/template/OCR/input 的 closed DHXY mechanics。父级未复制本地 runtime、未伪造
+  terminal，hard ledger 仍 `189/407`、待构建池仍 `50`。
+- Internal 已立即续派 I40 `NavigationService::observeRoutePlanFacts`、I41
+  `NpcClickService::pollFreshStoryBlockerEvent`、I42 `UICleanerService::cleanLightweightInterruptions`，三份
+  写集互斥，目标都是一次闭合 active Cloud caller 到 typed/local terminal。
+- External A/B 均在首领取窗未领取，已分别 true EOF 原样重发 A/B，第二截止为 05:22:40 / 05:26:35；
+  C TaskTracker 29-Java 整链继续在途；D Xiuluo terminal 已领取，可超过 20 分钟。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 05:03 缺失 Cloud Task caller 根因确认，三条内部线改迁完整 Task
+
+- hard ledger 仍 `189/407`、去重待构建池仍 `50`。I34 summon business-dialog 证明 public whole-pass 不到达
+  旧 private caller，且 maintenance Dialog 仍 Cloud-local capture/input，父级 `P1=2/countDelta=0`；I35
+  FiveRing terminal 证明 Cloud 缺 `FiveRingTaskV2` phase loop，父级 `P1=1/countDelta=0`。两项均未拿 enum/
+  private helper 冒充进度。
+- Internal 已改为三个完整 Task 入口大单：I37 `WubeiTask::execute`、I38
+  `FiveRingTaskV2::execute`、I39 `XiuluoTaskV2::execute`，各自只 new 一个完整 baseline Task 文件，保留
+  全部 public/private/phase/判断/delay/fallback/state；缺 typed boundary 时同单精确阻断，不拆 filler。
+- External A follower-support 首轮到 05:00 未领取，父级已在 A true EOF 记录 UNCLAIMED 并原样重发 A，
+  第二 `claimBy=05:22:40`；B Wubei terminal 因同样缺 Cloud caller `P1=1/countDelta=0`，已即时换发
+  active `DialogService -> ObjectiveTextRecognitionService::recognize(raw,source)` 完整类单；B 首窗到
+  05:06 未领取，已 true EOF 原样重发 B，第二 `claimBy=05:26:35`。C 29-Java
+  TaskTracker 继续在途；D Xiuluo terminal 已领取，等待真实可达性材料。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 04:40 五十项源码待构建，七条 `+1` 实现线重新补满
+
+- hard ledger 仍 `189/407`；C 的 29-Java TaskTracker READ/MATERIALIZE writer 与新 Internal writers
+  尚在活动，因此未提前运行 Maven。父级新增源码放行 A
+  `AutoBattleTask::getPollingIntervalMs`、I30 `WorldMapRouteResultMemoryService::findClean`、I31
+  `BattleRadarService::updateCombatState`、I32 `SummonSkillService::cleanTailNormalSkillsDirect`、I33
+  `AutoBattleTask::maybeRunIdleMaintenance`、D `AutoCombatService::initializeForCurrentWindow`，去重待构建池
+  `44 -> 50`；六项均 `P0/P1/P2=0`。
+- B `PlayerStateService::ensureSheYaoXiangActive` 的 ROI 映射等价，但两个 capture 前仍由 Cloud
+  `MouseInfo/InputSequences/InputProvider` 移动云主机鼠标，未闭合 exact DHXY binding 的
+  mouse-away -> 300ms -> capture；父级 `BLOCKED_SHARED_LANE，P0=0/P1=1/P2=0，countDelta=0`。
+  现有源码保留，待 C shared lane 稳定后在同一 `+1` 单接既有
+  `PlayerStateIncenseStatusLocalObservationMechanics`，不新建第二 owner/TTL/retry。
+- External 当前：A `AutoBattleTask::isFollowerSupportMode`、B `WubeiPhase::isTerminal`、C
+  `TaskTrackerPanelService::read` 29-Java 双仓整链、D `XiuluoPhase::isTerminal`。A/B/D 真实 EOF 新单
+  `claimBy=05:00`，External 任务绝不内部接管。
+- Internal 当前：I34 `SummonSkillService::handleBusinessDialogDuringSkillClean`、I35
+  `FiveRingPhase::isTerminal`、I36 `WubeiRoundContext::next`，三份写集互斥；helper H4 继续仅作非绑定
+  预检/后续排班。所有 writer 稳定后父级运行 fresh Cloud package 与适用 DHXY compile，再按去重批准顺序
+  原子更新 ledger。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 04:13 四十四项源码待构建，七条 `+1` 实现线持续运行
+
+- hard ledger 仍 `189/407`；fresh Maven 尚未运行。03:42 后父级新增源码放行 I22
+  `CommonBoxService::isRoleEnabled`、A `AutoCombatService::maybeHandleCombatEnter`、D 修复后的
+  `SmartClickEvidenceConfirmationService::confirmExpectedOptionProof`、I23
+  `AutoCombatPanelService::alignPanelIfNeeded`、I25 `LeftTopStatusSwitchService::resolveState`、I27
+  `SummonSkillService::maybeClickUltimateCorner`，去重待构建池由 `38 -> 44`。
+- I24 `findUsable` 与 I28 `detectBox` 属已批准父链内部重复边界；I26 `chooseStrategy` 无 active Cloud caller；
+  I29 auto-panel warning 缺 exact-window closed warning transport。四项均 `countDelta=0`，没有拿 helper/stub
+  冒充进度。
+- External 当前：A `AutoBattleTask::getPollingIntervalMs`、B `PlayerStateService::ensureSheYaoXiangActive`
+  scope amendment、C TaskTracker READ/MATERIALIZE 29-Java 整链、D
+  `AutoCombatService::initializeForCurrentWindow`。A/D 新单已在真实 EOF 发布，领取截止 04:26:05。
+- Internal 当前：I30 `WorldMapRouteResultMemoryService::findClean`、I31
+  `BattleRadarService::updateCombatState`、I32 `SummonSkillService::cleanTailNormalSkillsDirect`；helper H4
+  已交下一批排班。B/C 与 Internal Java writer 稳定前不运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 03:42 三十八项源码待构建，七条实现线重新补满
+
+- hard ledger 仍 `189/407`；父级撤销 D smart-click proof 的假通过（pending 未保存/校验 sourceTask，
+  `BLOCKED P1=1/countDelta=0`），同时放行 I18 baseline-exact `BaseTaskTemplate::beforeTask/afterTask` 与
+  I20 `CommonBoxService::clearPendingForRole`。净结果为 `38` 个去重 count unit
+  `SOURCE APPROVED / COUNT PENDING BUILD`。
+- I18 首版擅加空步骤 `afterTask(SKIPPED)` 已被父级 `BLOCKED P1=1` 并由原 Worker 精确撤销；Repair #1
+  恢复 `696a12b0` 空步骤直接 SKIPPED，父级复核 `P0/P1/P2=0`。
+- External：A 的 `maybeHandleCombatEnter` 与 D smart-click R1 已在真实 EOF 重发，领取截止 04:00；B 已领取
+  incense whole chain 并获直接实施指令；C 已领取 29-Java TaskTracker READ/MATERIALIZE/final-consumed 整链。
+- Internal 三线：I21 `checkFiveRing`、I22 `CommonBoxService::isRoleEnabled`、I23
+  `AutoCombatPanelService::alignPanelIfNeeded`；helper H4 提前准备下一批。Java writers 稳定前不运行 Maven。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 03:25 三十七项源码待构建，TaskTracker 最终扩成 29 文件完整整链
+
+- ledger 仍 `189/407`；父级新增放行 A auto-battle startup gate、B stop-aware sleep、D smart-click proof commit、
+  I15 rounds refresh reason、I17 summon locked-tail scanner，去重后 `SOURCE APPROVED / COUNT PENDING BUILD`
+  从 32 增至 37 项。
+- I16 suppression gate 因 active Cloud 缺真实 AutoBattle caller 与既有 tooltip-group/leader producer，父级
+  `BLOCKED P1=1/countDelta=0` 并关闭；禁止在 TaskMaintenance 内造第二 owner/session/TTL。
+- C 第二次精确发现 Cloud emitter/retained/broker/final-consumed attachment 缺口；父级把同一 TaskTracker
+  `+1` 单从 21 扩至 29 Java 文件，要求直接一次闭合，不再拆零计数前置。
+- 当前 C 与内部实现线仍有 Java writer，不运行 Maven；三条内部完成线关闭后立即续派三个互斥 `+1`。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 03:10 三十二项源码待构建，五项放行、归队自检精确阻断
+
+- ledger 仍 `189/407`；父级新增放行 BattleRadar dynamic polling、Navigation current-map closed macro、
+  AutoCombat exit recovery、AutoCombatPanel typed rounds refresh、TaskMaintenance summon window-state/cache，去重后
+  `SOURCE APPROVED / COUNT PENDING BUILD` 为 32 项。
+- I14 `AutoBattleTask::tryRunLocalTeamReturnSelfCheck` 因既有 `TaskMaintenanceService` CR244 coordination owner
+  缺失被父级 `BLOCKED P1=1/countDelta=0`，不在 Task 内造第二 owner。
+- C 已于 02:59 领取 TaskTracker 21-Java 双仓完整 scope；仍有 Java writer，不运行 Maven。三条内部旧线完成父级
+  收口后关闭并立即续派三张互斥独立 `+1`。
+
+**无已批准业务差异；按 `696a12b0` 基线等价迁移。**
+
+## 2026-07-15 / CR271 03:03 二十七项源码待构建，TaskTracker 扩为完整双仓整链
+
+- ledger 仍 `189/407`；父级新增放行 `AutoCombatService::maybeRunCombatMaintenance`，去重后
+  `SOURCE APPROVED / COUNT PENDING BUILD` 增至 27 个，fresh Maven 前不记账。
+- C 的 TaskTracker 首轮精确发现 Cloud emitter/consumer 与 DHXY READ/MATERIALIZE 两端都 dormant，原六文件范围
+  `BLOCKED P1=2/countDelta=0`；父级未换小单，已把同一 countUnit 扩成 21 Java 文件完整双仓 scope，要求直接实施
+  READ capture -> Cloud 算法 -> MATERIALIZE input-worker -> final-consumed，仍只计 `+1`。
+- A 已在门内领取 BattleRadar dynamic polling；B 正按批准方向实施 Navigation current-map macro；D 已续领
+  `AutoCombatService::consumeExitAndRecover`；I12/I13/I14 三条内部实现线与 queue/preflight helper 均在运行。
+- 当前有 Java writer，不运行 Maven。无已批准业务差异；按 `696a12b0` 等价迁移。
+
+## 2026-07-15 / CR271 02:47 二十六项源码待构建，四外部线继续、内部槽换成独立 +1
+
+- hard ledger 仍为 `189/407`；新增父级放行 `AutoCombatService::runPendingFollowerFirstAidIfAllowed` 与
+  `AutoCombatPanelService::recordCombatExit`，当前 `SOURCE APPROVED / COUNT PENDING BUILD` 增至 26 个，fresh Maven 前不记账。
+- 父级剔除 A `BattleRadarService::discardStaleCombatExitSignalIfInCombat` 与 I10
+  `TaskMaintenanceService::maybeCleanSummonSkill`：前者不在独立矩阵计数项，后者与已批准
+  `runOpportunisticMaintenance` 属同一 matrix bullet；两者均 `COUNT BOUNDARY BLOCKED P1=1/countDelta=0`。
+- External：A 已改发 BattleRadar dynamic polling；B 的 Navigation current-map DTO/State 已确认 field-complete，父级已
+  `DESIGN APPROVED` 并命令直接实施；C 已领取 TaskTracker whole read 六文件整链；D 已改发 AutoCombat combat-maintenance。
+  Internal I10/I11 完成父级收口后关闭，立即补新的互斥独立计数线。
+- B/C 与新内部 Java writer 稳定前不运行 Maven；统一 fresh Cloud package，若 DHXY Java 被 C 修改，同轮另跑 DHXY compile。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 02:33 二十四项源码待构建，剔除两项重复计数并续派大单
+
+- hard ledger 仍为 `189/407`；当前 24 个**互不重复**的完整 count unit 已由父级
+  `SOURCE APPROVED / COUNT PENDING BUILD`。本轮新增放行为 cached-first-aid、panel ensure-visible、
+  BattleRadar combat-enter consume、LeftTop supported-task gate、AutoCombat pending CommonBox；统一 fresh Maven 前不记账。
+- 父级剔除两个伪增量：I9 `CommonBoxService::detectBox` 与已批准的 public member-detect 是同一 observation/pending
+  链；C `LeftTopStatusSwitchService::resolveTaskCode` 与已批准的 combat-maintenance/supported-task 是同一 allowlist/typed
+  terminal 链。两者源码均无缺陷，但均 `COUNT BOUNDARY BLOCKED P1=1 / countDelta=0`，不进入 ledger。
+- External 当前：A 已领取 `BattleRadarService::discardStaleCombatExitSignalIfInCombat (+1)`；B 原 identity 单因 Cloud
+  无 caller 阻断，已改发 `NavigationService::navigateInCurrentMap (+1)` 真 macro 接入；C 已改发
+  `TaskTrackerPanelService::read (+1)` 六文件整链；D 已领取 `AutoCombatService::runPendingFollowerFirstAidIfAllowed (+1)`。
+  Internal 三槽为 I9 交付审查收口、I10 TaskMaintenance summon-clean、I11 AutoCombatPanel record-exit；写集互斥。
+- 当前 Java writers 尚未全部稳定，不运行 Maven。稳定后父级 fresh Cloud package + DHXY compile，并只按 24 个已批准
+  非重复单位的顺序原子更新 ledger。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 01:55 十九项源码待构建，七条计数线持续满载
+
+- ledger 仍严格保持 `189/407`，没有 fresh Maven 证据前不提前记账。当前
+  `SOURCE APPROVED / COUNT PENDING BUILD` 共 19 个：TaskMaintenance opportunistic、SummonSkill whole-pass、
+  BattleRadar full-sync/fast-exit/baseline-refresh、LeftTop check/combat-maintenance/follower-safe、CommonBox
+  consume/member-detect/has-pending、Navigation navigateToNPC、PlayerState startup-first-aid、TeamReturn member-click、
+  ClientIdentity scan/title、MapName canonicalize、Dialog prepared-validation/detect-type。
+- 本轮父级新增源码放行 6 项：MapName canonicalize、Dialog prepared validation、BattleRadar baseline refresh、
+  Dialog detect type no focus、LeftTop follower safe window、CommonBox has pending；均为真实 caller 到 typed DHXY
+  mechanics/closed terminal 的完整 active chain，`P0/P1/P2=0`，只在统一构建通过同轮各 `+1`。
+- 当前 External：A 已领取并交付 BattleRadar expected-exit consume，正在 helper 预检后由父级复核；B/C/D 已在真实
+  EOF 收到 Dialog green-template、LeftTop supported-task gate、AutoCombat pending CommonBox 三张互斥 `+1` 单，领取窗
+  截止 `02:07 EDT`。当前 Internal：I6 cached-first-aid 按严格基线“先取并清、不恢复失败 plan”，I7 已交付
+  AutoCombatPanel ensure-visible 待父级源码审查，I9 已接替不可达 capability 单实施 CommonBox detectBox。
+- I8 对 `TaskMaintenanceService::isLocalTeamSupportCapabilityOpen` 精确判定 `BLOCKED P1=1 / countDelta=0`：现有
+  session/role/capability producer 只有定义、无 active caller；禁止在 gate 内猜测或默认放行。该阻塞单已释放，
+  不占实现槽、不进入构建计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 01:30 两条再放行、纠正 Navigation 假闭合并保持七线
+
+- ledger 仍严格保持 `189/407`，等待所有 Java writer 稳定后的统一 fresh Maven。当前
+  `SOURCE APPROVED / COUNT PENDING BUILD` 共 13 个：TaskMaintenance opportunistic、SummonSkill whole-pass、
+  BattleRadar full-sync/fast-exit、LeftTop check/combat-maintenance、CommonBox consume/member-detect、Navigation
+  navigateToNPC、PlayerState startup-first-aid、TeamReturn click-return、ClientIdentity scan/title。
+- 父级独立源码审查纠正 D 的 NO_CODE_CHANGE：active Cloud `navigateInCurrentMap` 没有调用已存在的
+  `NAVIGATE_IN_CURRENT_MAP` macro，仍直接跑 Cloud window/runtime/mini-map 逻辑，判 `BLOCKED P1=1`、不计数；
+  D 已改发 `DialogService::validatePreparedDialogActionForConsume (+1)`。
+- A/B 的 blocker 均成立：AutoCombatPanel align 与 Dialog maintenance strip 都缺 cloud-safe window origin，未授权
+  geometry shared lane 前不得伪造。真实 EOF 已分别改发 BattleRadar baseline refresh 与 AutoCombat baseline-refresh
+  facade。C 的 BattleRadar fast-exit 与 I4 的 LeftTop combat-maintenance 已父级源码通过，并立即续派 C follower
+  safe-window、I4 `NpcClickService::clickNpcSmart`。
+- 当前七条互斥实现线：A BattleRadar refresh、B AutoCombat refresh、C LeftTop follower、D Dialog prepared
+  validation、I1 MapName canonicalize、I4 NpcClick smart、I6 PlayerState sync-position；helper 只做下一单排班。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 01:19 四条新增源码放行，七线立即续派
+
+- ledger 仍为 `189/407`，严格等待统一 fresh Maven 门；本轮新增四个 source-approved/count-pending-build：
+  D `NavigationService::navigateToNPC`、I4 `PlayerStateService::performStartupFirstAidCheck`、I1
+  `TeamReturnService::clickReturnTeamIfPresent`、I6 `ClientIdentityService::scanAndSyncIdentity`。连同既有
+  TaskMaintenance/SummonSkill/BattleRadar/LeftTop/CommonBox，共九个可在统一构建通过后按批准顺序原子 `+1` 的单位。
+- External：A 的 `verifyAndAlignPanel` 因 rounds shared fact `BLOCKED P1=1`，真实 EOF 已改发
+  `AutoCombatPanelService::alignPanelIfNeeded (+1)`；C 的 `handleCombatTick` 因 AutoCombatPanel 与 incense-status
+  两个 collaborator terminal `BLOCKED P1=2`，已改发
+  `BattleRadarService::checkFastExpectedCombatExitByAvatarDiff (+1)`；D 的 navigateToNPC 已父级通过，真实 EOF
+  改发 `NavigationService::navigateInCurrentMap (+1)`；B 继续 `DialogService::handleDialog (+1)` 实施。
+  A/C/D 新单领取截止分别为 `01:30:30/01:30:30/01:39:00`，逾期只重发原 Worker，绝不内部接管。
+- Internal 三个实现槽继续满载：I1 转入 `CommonBoxService::detectMemberBoxAfterCombatExit (+1)`；I4 转入
+  `LeftTopStatusSwitchService::handleCombatMaintenance (+1)`；I6 转入
+  `ClientIdentityService::resolveCurrentWindowTitle (+1)`。H5 排班 helper 只准备后续互斥 count 单，不改 Java、
+  不替代父级审查。
+- 当前不运行 Maven：B 与三条 Internal writer 活动，A/C/D 正在新领取窗。所有 writer 稳定后父级运行 Cloud
+  `mvn -q clean package` 与 DHXY `mvn -q -DskipTests compile`，通过当轮同步 ledger/CR271/计划/矩阵/dashboard。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 00:58 父级纠正假通过，七线继续无空槽
+
+- ledger 仍为 `189/407`，尚未运行统一构建，因此任何 source-approved 单都没有提前记账。
+- External 当前四线均已领取：A `AutoCombatPanelService::verifyAndAlignPanel (+1)`（`00:49:45`）；B 原
+  white-story 因 caller/生产 handler owner/PNG 完整性/基础设施终态 `BLOCKED P1=4/P2=1`，已在同一日志改发
+  `DialogService::handleDialog (+1)`，B 已于 `00:58:04` CLAIMED，父级 `01:03` 明确跳过 Design #2、直接实施；
+  C `AutoCombatService::handleCombatTick (+1)`
+  （`00:52:00`）；D `NavigationService::navigateToNPC (+1)` 按单一路线继续实施。
+- Internal 三个实现槽保持：I1 的 CommonBox 生产 bean 图返修已父级 `REPAIR SOURCE APPROVED`，并立即转入
+  `TeamReturnService::clickReturnTeamIfPresent (+1)`；I4
+  已交付 LeftTop 且父级 `SOURCE APPROVED` 后立即转入
+  `PlayerStateService::performStartupFirstAidCheck (+1)`；I6 的 NpcClick 因四个 port 未接 shared lane
+  `BLOCKED P1=1`，已立即替换为 `ClientIdentityService::scanAndSyncIdentity (+1)`。External 任务未被内部接管。
+- 当前 source-approved / count-pending-build 顺序：I3 TaskMaintenance、I5 SummonSkill、A BattleRadar、I4
+  LeftTop、I1 CommonBox。CommonBox 旧 Parent Review #1 曾被 Review #2 的生产 bean 证据作废；Repair #1 现已
+  精确 `@Import` 现有 `BotProperties` 与唯一 assembly，Parent Review #3 判 `P0=0/P1=0/P2=1`，P2 仅披露
+  leader caller 尚未迁入，不阻断真实 member count unit。
+- I2 TeamReturn 为 `BLOCKED P1=2 / NEEDS_USER_DECISION`：active Cloud 无 wait/precheck caller，且 baseline
+  “先 capture 后异步分析”被改成同步 fact 分析。源码保护不回滚，但不进计数/构建队列。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 七条计数线全部领取，I1/I3 源码通过等待统一构建
+
+- 用户否决“合同/DTO/helper 完成但 `189/407` 不动”的排法。新硬门：每张新实现单必须声明唯一
+  `countUnit` 与 `countDelta=+1`，并一次闭合 reachable public caller -> Cloud Service -> typed DHXY
+  primitive/mechanics -> closed terminal/result；父级源码审查和适用 fresh Maven 门通过的同一轮，ledger 必须
+  从当时值原子变为 `before + 1`。没有计数增量不得把任务写为完成。
+- External 四线均有计数单且已领取：A `BattleRadarService::checkAndSyncCombatState (+1)` 于 `00:35:21`
+  CLAIMED；B 当前 white-story 19-Java 全链绑定 `DialogService::prepareWhiteStoryTemplateOrAbsent (+1)`；C
+  `PlayerStateService::ensureSheYaoXiangActive (+1)` 于 `00:38:00` CLAIMED；D
+  `NavigationService::navigateToNPC (+1)` 于 `00:32:00` CLAIMED。External 任务绝不内部接管。
+- Internal 始终保持三个实现槽且与 External 写集互斥：I2
+  `TeamReturnService::waitForMembersReturnIfNeeded (+1)`、I4
+  `LeftTopStatusSwitchService::checkAndMaybeClose (+1)`、I5
+  `SummonSkillService::cleanSummonSkillsOnce (+1)` 当前在途。I1/I3 已结束源码写入并释放实现槽；审核 helper
+  可另开但只做非绑定预检，不能替代父级最终裁决。
+- A Repair #1 与 D Repair #1 已父级 `SOURCE APPROVED，P0/P1/P2=0`；C Repair #1 因缺完整 8-byte PNG
+  signature 判 `BLOCKED，P2=1` 后，R2 已补齐并由父级 `SOURCE APPROVED，P0/P1/P2=0`；C 已转入
+  `PlayerStateService::ensureSheYaoXiangActive (+1)` 领取窗。B 继续已领取 19-Java 写入。
+- Internal I3 的 `TaskMaintenanceService::runOpportunisticMaintenance (+1)` 已交付并经父级整类对照
+  `SOURCE APPROVED，P0/P1/P2=0`：47/47 baseline 方法保留，只把 Cloud 不存在的 window holder 换成同线程
+  `TaskExecutionContext`。状态为 `COUNT PENDING BUILD`；所有 writer 稳定后的 fresh Cloud package 一绿，必须首先
+  把 ledger 从 `189/407` 改为 `190/407`。
+- Internal I1 的 `CommonBoxService::consumePendingBoxIfAllowed (+1)` 也已由父级独立源码复核
+  `SOURCE APPROVED，P0/P1/P2=0`：完整 caller、30 秒 TTL、role/window/identity/taskRun 陈旧闸、成功才清
+  pending、DHXY exact-window `COMMON_BOX` fact 与单个原子 InputBundle 均闭合。它排在 I3 之后等待同一统一构建；
+  构建全绿时再原子推进下一格。H1 对 B 的 00:35 in-flight snapshot 只给出风险清单，B 尚未交正式
+  `Implementation #2`，父级不会把半成品计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-15 / CR271 A/C/D 合同首版阻断并原 Worker 续修
+
+- Delivery Preflight Helper 完成 A/C/D 三路非绑定预检后，父级独立源码审查：A `BLOCKED P1=1`，tooltip
+  command 错把基线 null/blank/empty terminal 收紧为构造异常并 trim path；只返修两侧 tooltip command。
+- C `BLOCKED P1=1/P2=1`：`CloudNpcYellowTargetPort` 是可注入但固定抛异常的 stub，且两侧 result 没有复现 local
+  `ImageEvidence` 的 PNG decode/actual dimensions/SHA invariant；返修为纯 port interface + 两侧严格 result。
+- D `BLOCKED P1=2/P2=1`：5 个 standalone contract 提前依赖未注册 kind/permits/outcome，Cloud port 又 import
+  DHXY-only mechanics 并硬编码 transport folding；返修为真正 standalone contract、纯 port interface 与两侧严格 result。
+- A/C/D 三个 R1 已于 `00:06:30` 发回原 Worker，并分别于 A `00:11:01`、C `00:10:00`、D `00:09:00`
+  在截止前真实 CLAIMED，绝不内部接管。B 已采纳父级 white-story 19 Java scope amendment 并继续实施。四路均有实质任务；Java writers 稳定前不运行 Maven，
+  approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A/C 已交付预检，B white-story 无损缺口已裁决
+
+- A tooltip+prepared-point 10 个专用合同与 C yellow-target 5 个专用合同已在真实 EOF 交付；父级已启动
+  Delivery Preflight Helper，父级源码审查同步进行。D player-anchor 5 文件仍在连续写入期。
+- B 在落码前正确发现 approved white-story observation 的 `STORY_MISS/STORY_ABSENT` 没有携带 detection rect，
+  会让 Cloud 丢失 miss 标记或把 absent 坐标退化为 0。父级选择最小保真路线：把 local mechanics 纳入 B 写集，
+  仅让这两个 terminal 携 rect+dimensions；supplied frame 使用既有 PNG bytes+SHA+rect+type，并在 handler 调用
+  mechanics 前核 SHA。B 已收到 Resume Directive，直接继续 19 Java 完整链。
+- 四路仍保持互斥：B 独占 generic shared integration；A/C 已交付等待父级裁决；D 只写 player-anchor 专用合同。
+  Java writers 稳定前不运行 Maven；approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 C R2 放行，修正 A/B/D 空转并恢复四路并行
+
+- 父级确认调度缺陷：A 自 `22:20:55`、B 自 `22:03:30`、D 自 `22:26:50` 起均已完成旧单却没有续派，
+  空转约一小时；原因是错误地把后续整条 chain 全部绑定到 generic LocalMacro shared 12 文件，而不是只串行
+  shared integration。该空档属于父级排班问题，不是 Worker 实施慢。
+- C option-OCR R2 经 Delivery Preflight Helper 非绑定预检和父级独立源码审查后
+  `SOURCE APPROVED，P0/P1/P2=0`：optional SHA、wash exception 降级、handler pre-mechanics SHA 门与合同注释
+  均闭合，`696a12b0` 的 raw/green/yellow 顺序未漂移；C 写集已释放。
+- `23:46-23:47` 已在四份固定日志真实 EOF 发布新波：B 独占 shared 槽完成 white-story 18 Java 双端完整链；
+  A 完成 tooltip+prepared-point 10 个专用合同；C 完成 yellow-target 5 个专用合同；D 完成 player-anchor 5 个
+  专用合同。后三路不碰 shared 12、Cloud `NpcClickService` 或彼此写集，后续由单一 shared integration 波闭合 caller。
+- A/D 首次 brief 曾因重复锚点误插历史中段，已在真实 EOF 明确作废并于 `23:47:30` 权威重发。四路均已真实
+  CLAIMED：A `23:49:09`、B `23:49:40`、C `23:50:00`、D `23:52:00`；各自唯一写集生效，可工作超过
+  20 分钟，不内部接管。Java writers 稳定前不运行 Maven。
+- active Service 保持 `28 exact / 4 expected-missing / 0 divergent`，approved same-path 保持 `189/407`；专用合同
+  cohort 不冒充完整 caller chain 进度。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 C same-frame option OCR R1 仍阻断
+
+- C 已按时领取并交付 R1；Delivery Preflight Helper 非绑定预检后，父级独立源码复核判
+  `BLOCKED，P0=0/P1=3/P2=1`。supplied SHA 已进入两仓 request tree，rect 三形态与 RAW/green/yellow
+  caller 路由主体可保留。
+- 剩余 P1：Cloud image port 对合法缺席的 green/yellow 仍无条件 `verifySha(null)`；green/yellow wash 的
+  `RuntimeException` 仍把整链变成 `MECHANICS_FAILED`，没有按 696 基线分别降级为 raw/保-green；supplied SHA
+  重算仍在 mechanics 内，而非 Review #12 要求的 handler 调用 mechanics 前。P2 为 touched public contract 注释仍描述
+  旧的 frame/rect 全有全无及三图全有合同。
+- 原 C 已收到 `W-696-DIALOG-OPTION-OCR-FULL-SAME-FRAME-CHAIN-1-R2`，截止 `23:45:42`；shared slot 继续归 C，
+  B white-story 不抢写。Queue #26 已提前备妥后序完整单 `B -> D -> A`，不运行 Maven。
+- approved same-path 保持 `189/407`；A tooltip R2、D player-anchor R2、B prepared-action R2 的既有
+  `SOURCE APPROVED` 不回退。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 C same-frame option OCR 首版阻断返修
+
+- C 完整 option OCR 双仓链经 Delivery Preflight Helper 非绑定预检、父级独立源码对照后判
+  `BLOCKED，P0=0/P1=3/P2=0`：supplied frame bytes 被 request digest 剥离却无 SHA；image macro 要求
+  raw/green/yellow 三图全成功，丢失基线 green-wash 失败走 raw OCR、yellow-wash 失败保留 green words；
+  detection rect 也被错误绑定到 detection image，fresh fallback 会改抓默认大框。
+- 原 C 已收到 `W-696-DIALOG-OPTION-OCR-FULL-SAME-FRAME-CHAIN-1-R1`，截止 `23:14:03`；同一 shared slot
+  一次补 supplied SHA、closed partial availability/RAW pass 与 rect-only fresh capture，B white-story 继续等待，
+  不内部接管、不运行 Maven。
+- A tooltip R2、D player-anchor R2、B prepared-action R2 的既有父级 `SOURCE APPROVED` 不回退；后序仍为
+  `C option-OCR -> B white-story -> D player-anchor caller -> A tooltip caller`，approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A/D 精确返修放行，C 完整双仓链在途
+
+- B prepared-action validation R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：Cloud caller 仅把 null washMode
+  规范化为 `TEMPLATE_SPECIFIC`，两仓 command 恢复 closed non-null，四个显式 mode、8/16、fresh handle、
+  single capture、四 wash 与三层 measured result 均未回退。B 的 white-story 完整链等待 C 释放唯一 shared slot。
+- C option OCR words R1 已父级 `SOURCE APPROVED，P0/P1/P2=0`，并于 `22:04` 领取完整
+  `DialogService` same-frame option OCR 双仓链：一次 capture 产出 green/yellow 同帧 evidence，Cloud 保留
+  green-first、yellow fallback、merge/action，C 当前独占 generic enum/codec/digest/handler 写集。
+- A tooltip R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：每次模板 capture 后都先重验 exact HWND/geometry，
+  empty/nonempty 均不能绕过；input-worker、0.82/36、move/click/delay/verify、Y+90/ROI 与七态均冻结。
+- D player-anchor R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：六个 OpenCV owner 全部 null-first、try 内逐项
+  acquisition、finally nonnull 恰一次 release；inclusive blob 的右/下严格小于 exclusive scanRect 上界，settle
+  false 仍映 `INTERRUPTED`。A/D 当前均只完成 local mechanics，caller 真链按
+  `C option-OCR -> B white-story -> D player-anchor caller -> A tooltip caller` 排队，不用填充小任务冒充进度。
+- C 双仓 writer 仍活动，统一 Maven 门暂不运行；approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 D yellow-target 放行续派，B/C 继续窄返修
+
+- D `NpcClickYellowTargetLocalObservationMechanics` R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：masked copy
+  异常由 helper 自释放、成功由 outer owner 释放，strict-yellow/refresh/interrupt/result 全部冻结。D 已立即收到完整
+  `NpcClickPlayerAnchorLocalObservationMechanics`，领取截止 `22:07`。
+- B prepared-action R1 的 refresh/handle、8/16 与三层 measured invariant 已通过，但 null washMode 仍会被
+  冻结 codec 的 required non-null 和 DHXY digest `.name()` 拦截；父级纠正 R1 方向，判 `BLOCKED，P1=1`，R2
+  仅由 Cloud caller 规范化 null -> `TEMPLATE_SPECIFIC` 并恢复两仓 command non-null，截止 `22:07`。
+- C option OCR words 首版的单 provider、unavailable/empty 分离、word order/owner 成立；因 ImageIO/resolve runtime
+  可绕过五态、null variant、非 strict PNG 与 int rect overflow，父级判 `BLOCKED，P1=1/P2=2`，同文件 R1 截止
+  `22:07`。A tooltip continuous mechanics 已领取在途。
+- Java writers 继续活动，不运行 Maven；approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A prepared-point 放行续派，B/D 精确返修
+
+- A `NpcClickPreparedPointLocalMacroMechanics` R1 已父级 `SOURCE APPROVED，P0/P1/P2=0`：retry 接受域严格
+  收回 0/1，terminal/`clickProduced` 不变量闭合，动作、delay、verify、异常和零 queue-in-queue 未回退。A 已立即
+  收到完整 `NpcClickTaskTooltipLocalMacroMechanics` continuous local macro，领取截止 `21:51`。
+- D yellow-target R1 的四项主返修均通过，只剩 `copyWithDefaultMasks` 在 helper 分配 copy 后异常时，outer finally
+  看不到 owner 的释放缺口；父级判 `BLOCKED，P2=1`，原 D 的权威 true-EOF 同文件 R2 截止 `21:56`。
+- B 20 文件 Dialog prepared-action validation 真链、四个 exact `ImagePreprocessor` add-back、8/16 正常 producer、
+  command/result key 与 canonical parity 均成立；因 refresh runtime 可越过 typed terminal、fresh binding 未重验 handle、
+  null washMode 接受域及 closed DTO 不变量不足，父级判 `BLOCKED，P1=2/P2=2`，原 B 五文件 R1 截止 `21:51`。
+- C 已领取 `DialogOptionOcrWordsLocalObservationMechanics`。四路 writers 仍活动，不运行 Maven；approved
+  same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 C white-story R3 放行续派，A prepared-point 定点返修
+
+- C `DialogWhiteStoryTemplateLocalObservationMechanics` R3 已父级 `SOURCE APPROVED，P0/P1/P2=0`：selected
+  supplied/fallback frame 总是 materialize 到新的 window-scoped raw artifact，evidence 与 wash/template 输入同帧，
+  dimensions/PNG/hash/save 异常闭合，borrowed/owned frame owner 未回退。C 已于 `21:20` 领取下一项完整
+  `DialogOptionOcrWordsLocalObservationMechanics` 单色 variant observation。
+- A `NpcClickPreparedPointLocalMacroMechanics` 的 direct input-worker move/click/delay/verify 顺序与零 queue-in-queue
+  已通过，但 public intent 允许 `maxRetries>=2`，超出 696 四个真实 caller 的 0/1 输入集；public result 也未约束
+  terminal 与 `clickProduced` 组合。父级判 `BLOCKED，P1=1/P2=1`，已给原 A 同文件 R1，截止 `21:39`。
+- D yellow-target R1 与 B 20 Java Dialog validation 双端完整链均已交付，Delivery Preflight Helper 正并行做
+  非绑定预检；父级随后独立逐行裁决。writers 未稳定，不运行 Maven，approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A R3 放行并续派，C/D 一次性返修
+
+- Delivery Preflight Helper 已完成 A R3、C R2、D I1 的非绑定合并预检；父级随后独立逐行裁决。
+- A `DialogOptionOcrImageLocalObservationMechanics` R3 已 `SOURCE APPROVED，P0/P1/P2=0`：supplied decode/
+  dimensions 的 RuntimeException、raw owner、strict frame/rect iff 与三图 evidence 全部闭合。A 已立即收到完整
+  `NpcClickPreparedPointLocalMacroMechanics`，领取截止 `21:26`，只写一个完整 continuous mechanics 文件。
+- C white-story R2 因仍复用 supplied `rawPath` 而 `BLOCKED，P1=1/P2=1`；R3 要求 selected frame 总是
+  materialize 到 window-scoped raw 后再 wash/match，并收敛 frame/save RuntimeException。
+- D yellow-target I1 因缺 default-mask/skip、refresh terminal 错映、额外 capture 后 interruption gate 与 result
+  invariant 不闭合而 `BLOCKED，P1=3/P2=1`；R1 一次修完，exact yellow-shape 算法冻结。
+- B 的 20 Java 文件 Dialog validation 双端真链仍在实施。A/C/D 新单彼此及 B shared wire 互斥；writers 未稳定，
+  不运行 Maven，approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A R2 仅余 supplied 异常闭环，C R2 补同帧输入权威
+
+- A R2 已正确闭合 frame/rect strict iff 与 validation decode `finally` owner；父级全 public-entry 复扫发现
+  supplied `ImageIO.read` 只 catch `IOException`，且 decoded dimensions 在 raw-owner `try/finally` 前读取，
+  RuntimeException 可逸出并泄漏 raw。父级判 `BLOCKED，P0=0/P1=0/P2=1`，已退原 A 同文件 R3，领取截止
+  `21:17:30`。
+- C 已在 `20:54:00` 领取 R2。父级确认 `DialogDetection` builder 不结构性绑定 `rawPath` 与 `image`；为避免
+  returned evidence 来自 image、模板匹配却来自另一 path，当前 R2 scope 已要求 supplied/fallback 都从选定的
+  同一个 `frameImage` 物化 window-scoped raw artifact，再 wash/match。该 amendment 继承原领取，不新增 capture、
+  retry、terminal 或业务判断。
+- B 的 20 Java 文件完整 Dialog validation 双端链仍在实施；D 已开始写 exact yellow-target mechanics。四路
+  writers 未稳定，不运行 Maven，approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A/C R1 父级复审仍阻断，已退窄 R2
+
+- A R1 已修正 green-only wash、三图 evidence、terminal shape 与 refresh 异常，但 intent 仍允许 rect-only 后
+  静默 fresh capture，validation decode 也未在 finally 释放；父级判 `BLOCKED，P0=0/P1=1/P2=1`。
+- C R1 已恢复 supplied/fallback matrix、nullable name 与 Mat owner，但 MATCHED constructor 未解码/重算
+  PNG/SHA，也未绑定 dimensions/rect/relative-absolute point；fresh detection 与 coordinate collaborator 异常可
+  逸出 closed entry。父级判 `BLOCKED，P0=0/P1=1/P2=1`。
+- 两个 R2 均已在原固定日志发布，截止 `21:09:10`，只修同一类的窄 invariant/owner/exception，不扩写集。
+  B 20 文件完整链与 D yellow-shape 完整观察继续在途；Java writers 未稳定，不运行 Maven，计数 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 D yellow-shape prerequisite 已由父级定源，继续同一完整实现
+
+- External D 的零 Java prerequisite 报告确认当前 DHXY 缺 `GameTextLineOcrService/TextCandidateScanResult`，
+  但这不是用户决策或 Design blocker。父级已从 Git 直接复核 `696a12b0:GameTextLineOcrService` 的 exact
+  `findYellowTextCandidateResult` 依赖闭包，明确禁止调用 Cloud `CloudImageProcessor`，也禁止用当前 yellow
+  wash 冒充候选算法。
+- 原 D 同一任务继续有效：单文件内聚严格黄色 RGB mask、半径 2 阴影扩展、连通域/文本行/横向空隙、原
+  score/reason/sort/limit，以及 image-local 到 screen-absolute 映射；Cloud 继续保留 NPC 名称/OCR、点击、验证
+  与 fallback。父级另核实候选输入必须是同一次 capture 经 baseline default-window mask/skip 分支得到的
+  prepared `scanImage`，D command 显式携 `skipDefaultMask`，不得直接对未 mask raw 求候选。D 不再写 Design、
+  不重置领取门、不扩 shared DTO。
+- A 已于 `20:40:42` 领取 OCR-image R1，C 已于 `20:36:00` 领取 white-story R1；B 的 20 Java 文件 Dialog
+  validation 双端真链仍在实施。四路 Java writer 未稳定，不运行 Maven；approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A Dialog option OCR 首版纠正错误 green wash
+
+- External A 的 271 行 `DialogOptionOcrImageLocalObservationMechanics` 经 helper 预检后由父级独立对照
+  `696a12b0:DialogService` 与 `GameTextLineOcrService`，判 `BLOCKED，P0=0/P1=1/P2=3`。首版错误使用会把
+  highlighted-yellow 混入 green pass 的 template wash；supplied/result 尚未绑定 PNG/rect/dimensions/hash；
+  non-CAPTURED rect shape 与 JavaDoc 冲突；refresh 异常可绕过 closed terminal。
+- R1 已退原 A，只修同一大类：改回 baseline green-only wash，严格建立三图/rect/hash authority，统一
+  non-CAPTURED 零 evidence shape并收敛 refresh 异常。领取截止 `20:56`；不触 B 的 `ImagePreprocessor` 写集。
+- C white-story R1 仍在领取窗；B 20 文件 Dialog validation 双端真链在途；D 已于 `20:27:51` 领取 NPC
+  yellow-target 完整观察。四路 writer 未稳定，不运行 Maven；approved same-path 保持 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 C white-story 首版父级阻断，原 C 一次性闭合完整观察
+
+- Phase 1/2 事实不变：`696a12b0` 的 32 个 Service 已先 `32/32 exact` 保全，随后只删除永久本地的
+  `BagService/UICleanerService/GiveItemService/QuestManagerService`；active 仍为
+  `28 exact / 4 expected-missing / 0 divergent`，approved same-path 保持 `189/407`。
+- External C 的 `DialogWhiteStoryTemplateLocalObservationMechanics` 首版经 helper 预检后由父级独立对照
+  `DialogService:451-499,971-1018,1616-1632`，判 `BLOCKED，P0=0/P1=3/P2=2`：删除 no-supplied 的单次
+  fresh detection fallback；在有效 supplied frame 前新增 binding 门；nullable template name 命中被改成 failure；
+  typed result 缺同帧 evidence；OpenCV Mat 只在成功尾部释放。
+- R1 已写回 C 固定日志，仍由原 C 一次性只修同一大类：严格恢复 STORY/NONE/absentAllowed supplied matrix，
+  其它情况恰一次调用现有 `DialogDetectionLocalMechanics`，保留 0.85 first-hit/坐标空间，并闭合 evidence 与
+  native owner。领取截止 `20:51`；不写 Design、不触 B/A/D 写集、不内部接管。
+- External A 已领取 Dialog option OCR image preparation；External B 继续 20 Java 文件 Dialog prepared-action
+  validation 双端真链；External D 的 NPC yellow-target 仍在首个领取窗。Java writers 未稳定，不运行 Maven。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 当前实质进度：A/D 大 mechanics 通过，B 20 文件双端真链继续，C 在途
+
+- Phase 1/2 事实不变：`696a12b0` 的 32 个 Service 已先 `32/32 exact` 保全，随后只删除永久留 DHXY 的
+  `BagService/UICleanerService/GiveItemService/QuestManagerService`；active 审计仍为
+  `28 exact / 4 expected-missing / 0 divergent`，approved same-path 仍为 `189/407`。
+- External A 的 AutoCombatPanel rounds 完整连续 observation 已父级 `SOURCE APPROVED，P0/P1/P2=0`：
+  两 rect、单 capture、4x red wash、black count、OCR/regex 与 image owner 均对齐 696。A 已立即收到完整
+  Dialog option OCR image preparation mechanics，领取截止 `20:44`；不触 B 独占的 shared wire/ImagePreprocessor。
+- External D 的 Dialog green-template R3 已父级 `SOURCE APPROVED，P0/P1/P2=0`：supplied PNG/rect 两维
+  绑定与 decoded evidence finally flush 闭合；D 已立即收到完整 NPC yellow-target local observation mechanics，
+  领取截止 `20:42`。
+- External B 已领取 Dialog prepared-action validation 双仓完整链。B 正确发现 DHXY `ImagePreprocessor` 缺
+  696 的四个 exact 方法；父级已把该文件加入同一任务写集，因此任务现为 20 Java 文件并继续原完整
+  caller -> Cloud Service -> port/transport -> DHXY handler/mechanics -> terminal -> Cloud return，不拆小单。
+- External C 已领取完整 white-story template observation mechanics，尚未交付。B/C/D writer 与 queue/preflight
+  helper 均在途，父级不运行并发 Maven；任何 source prerequisite 都不冒充整类完成。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 当前实质进度：B 半链通过，A/C/D 精确返修，下一波至少一条完整双端链
+
+- Phase 1/2 已完成且不重开：`696a12b0` 的 32 个 Service 已先 `32/32 exact` 进入 active Cloud，再仅删除
+  永久留 DHXY 的 `BagService/UICleanerService/GiveItemService/QuestManagerService`；当前审计仍为
+  `28 exact / 4 expected-missing / 0 divergent`。完整 caller -> Service -> typed local terminal 与 fresh 构建
+  未同时通过前，approved same-path 保持 `189/407`。
+- External A 的 388 行 AutoCombatPanel visibility/align R1 已父级 `SOURCE APPROVED，P0/P1/P2=0`：首次
+  capture-unavailable 恢复基线唯一 Alt+8 fallback，drag settle false 后仍恰一次 post-drag observe/fallback。
+  A 已收到下一条完整 rounds observation mechanics，不触 shared wire。
+- External B 的 PlayerState first-aid DHXY R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：fresh binding
+  `baseX==-1` 在 bars capture 前返回 unavailable，closed READABLE result 同样拒绝 X 哨兵；B 半链写集释放，
+  但完整双侧链仍等 C 与统一构建。
+- External C 的 Cloud R3 已父级 `SOURCE APPROVED，P0/P1/P2=0`：READABLE 仅拒绝基线 X 哨兵，B/C
+  接受域一致；PlayerState 双侧源码现均通过。C 已收到完整 white-story template observation mechanics。
+  External D 的 nullable/invalid candidate P1 已修，但 supplied PNG/rect 尺寸一致性和 `ImageEvidence` decoded
+  flush 仍 `BLOCKED，P2=2`，R3 只修同一文件。
+- Delivery Preflight Helper 已完成 B/C/D 非绑定预检并续检 A/R2；Next-Task Queue Helper 的 Queue #15 已落盘。
+  B 已在真实 EOF 收到 19 Java 文件的 Dialog prepared-action validation 完整双端可达链；A/C 为完整连续
+  mechanics，D 定点返修。父级仍是唯一 reviewer。
+- B 新大链及 A/C/D writer 未稳定，本轮不运行并发 Maven；不得用快速交付、文件数或 helper 自审提高计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 四路大链已交付首版，父级按 696 基线阻断快速但不完整的实现
+
+- Phase 1/2 事实不变：`696a12b0` 的 32 个 Service 已先在 active Cloud `32/32 exact` 保全，再只删除
+  `BagService/UICleanerService/GiveItemService/QuestManagerService`；当前仍为
+  `28 exact / 4 expected-missing / 0 divergent`。完整可达链与 fresh 构建未同时通过前，approved same-path
+  保持 `189/407`，不按交付速度、DTO/helper 数或零 Java 抬数。
+- External A 已交 396 行、三 operation 的 story-objective capture mechanics；父级按 696 独立审查判
+  `BLOCKED，P1=3/P2=1`：fresh/old geometry 混用、丢失原帧 crop fallback、擅增入口中断门、public image
+  result 未自校验。原 A 已于 `19:34:59` 领取 R1，只返修同一大类。
+- External B 已交 PlayerState first-aid 的 DHXY 9 Java half；父级判 `BLOCKED，P1=1/P2=2`：HEAL 入队前
+  geometry 可过期，command/result constructor 接受域与 Cloud 不对称。原 B 已于 `19:34:40` 领取 R1；C 审查
+  又发现 PROBE plan base 必须来自同一次 bars capture，已给 B 追加 scope amendment，仍由原 B 返修。
+- External C 已交 Cloud 10 Java contract/port/`PlayerStateService` active caller；父级判
+  `BLOCKED，P1=1/P2=1`：独立 GEOMETRY fact 与随后 PROBE frame 不是同一次 observation，且任意 name 会静默
+  映为宝宝法力。R1 要求 PROBE result 自带 capture-time base，并强制四 bar 固定 identity/order。
+- External D 的 Summon whole-pass R1 仍为 `SOURCE APPROVED，P0/P1/P2=0`；其后续 380 行 green-template
+  mechanics 首版已交，但父级按 prepare/click 两条 696 caller 判 `BLOCKED，P1=4/P2=2`：缺 supplied frame、
+  click verify 错误复用 detection frame、坏模板提前截断、capture geometry 未 fresh，以及 best-match/image
+  evidence 缺口。返修仍交原 D。
+- Delivery Preflight Helper 正预检 C/D；Next-Task Queue Helper 已提前备好 B 下一条完整
+  AutoCombatPanel visibility/align mechanics 大单。helper 只缩短取证/排班，父级仍是唯一 reviewer；A/B/C/D
+  Java 连续写入期不运行并发 clean，也不因交付快或文件多提高计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 整类交付与完整链续派，拒绝以快速小单刷进度
+
+- Phase 1/2 保持完成：`696a12b0` 的 32 个 Service 已先 `32/32 exact` 进入 Cloud，随后只删除永久本地的
+  `BagService/UICleanerService/GiveItemService/QuestManagerService`；active 仍为
+  `28 exact / 4 expected-missing / 0 divergent`，approved same-path 保持 `189/407`。
+- External D 的完整 `AutoCombatService` 已由父级逐类 diff 判 `SOURCE APPROVED，P0/P1/P2=0`：27 个方法、
+  `AutoBattleTask -> AutoCombatService -> BattleRadar` 可达链及 enter/exit/first-aid/maintenance/state 顺序均与
+  696 一致，唯一差异是两个已批准 `CloudUiCleanerPort` 原调用点。D 已于 `18:15` 收到下一条两 Service 大单
+  `TaskMaintenanceService + SummonSkillService` whole-pass 链，领取截止 `18:35`，不拆 DTO/helper。
+- External C 的完整 Memory storage 链已父级 `SOURCE APPROVED，P0/P1/P2=0`：三个 696 Service 源码内容不变，
+  `CloudServiceConfiguration` 唯一构造两个 tenant/user 私有 store，排除 component-scan duplicate 和共享
+  `config/*.json` 回退。C 写集已释放，next-task helper 正准备一条无缺失 contract 的 READY_NOW 完整链。
+- External A 的 349 行 Npc Ctrl-probe R2 交付很快但父级判 `BLOCKED，P1=2`：非空 expected template 被 generic
+  OPTION 绕过且匹配 raw frame；黄字 OCR 又遗漏 696 的 OpenCV 横线/连通域清理并反转前景极性。R3 已发回原 A，
+  只修 DHXY mechanics + `ImagePreprocessor` 的 exact baseline wash，领取截止 `18:40`。
+- External B 的 18-file Dialog cohort 首版 `P1=5/P2=1` 后，三文件 Repair #1 已于 `18:09` 领取、`18:14`
+  交付；父级逐项复核固定 identity、stop/finally、live HWND refresh、maintenance caller 与 image ownership，现为
+  `REPAIR SOURCE APPROVED，P0/P1/P2=0`。但 `LocalRemoteGameCommandHandler` 的真实 runtime construction/bean
+  owner 仍 `INTEGRATION PENDING`，在完整可达接线前不计整类完成。
+- Delivery Preflight Helper 继续只做非绑定风险扫描，Next-Task Queue Helper 同时为 B/C 准备立即可发的大单；
+  父级仍是唯一 reviewer。A/B/D writer 与下一 cohort 稳定前不运行并发 fresh 双构建。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 交付单扩大为完整链，四路继续推进
+
+- Phase 1/2 已完成且不重开：`696a12b0` 的 32 个 Service 已先在 Cloud 证据镜像与 active tree
+  `32/32 exact`，随后只从 active Cloud 删除用户指定永久本地的
+  `BagService/UICleanerService/GiveItemService/QuestManagerService`；当前 active 为
+  `28 exact / 4 expected-missing / 0 divergent`，approved same-path 仍为 `189/407`。
+- External A 的 349 行 Npc Ctrl-probe R1 经 helper 预检后由父级独立判
+  `BLOCKED，P1=5/P2=2`；本地 OCR/Dialog/Battle prerequisite 未齐时不继续堆同文件。父级已在真实 EOF 改派
+  3 文件大单 `W-696-AUTOBATTLE-WHOLE-CONTEXT-CHAIN-1`：完整恢复 `AutoBattleTask` 生命周期，并闭合 explicit
+  context -> combat tick -> BattleRadar typed terminal；领取截止 `16:48`。
+- External B 的两文件 Dialog detection 首版保留 baseline ROI/阈值/single-frame 主序，但父级判
+  `BLOCKED，P1=1/P2=4`：exception/unavailable、interrupt、window-scoped debug、crop ownership 与 record
+  不变量尚未闭合。R1 已在真实 EOF 发回原 B，领取截止 `16:48`，只修 detection 文件。
+- External C 的 FirstAid R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`，并于 `16:26` 领取四文件大 cohort：
+  本地 OCR DTO/client + 摄妖香数字模板 + exact-window incense observation，一次闭合 cyan-hour/green-minute
+  terminal，不把 Bag/吃香策略搬入 mechanics。
+- External D 的 StoryAdvance R1 保留 click/delay/random 与前后点击中断拆分，但空 binding 仍可落真实点击，
+  父级判 `BLOCKED，P1=1`；原 D 已于 `16:30:44` 领取 R2，只补输入前 exact binding/ROI closed 门。
+- Next-Task Queue Helper 已给 A 产出 3 文件 Queue #9A，并继续提前准备 B/C/D 的 2-5 文件 caller -> local
+  mechanics -> terminal 大 cohort；Delivery Preflight Helper 只在新交付出现时快速预检，父级仍是唯一 reviewer。
+  所有 Java writer 稳定前不并发构建，不因 helper/DTO/单文件存在增加 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 四份本地 mechanics 父级复审完成并零空档续派
+
+- Phase 1/2 事实保持：`696a12b0` 证据镜像/active promotion 均 `32/32 exact`，随后仅删除四个永久本地
+  Service；approved same-path 仍为 `189/407`。
+- External D 的 BattleRadar R1 已父级 `SOURCE APPROVED，P0/P1/P2=0`：恢复 OR/AND 真短路，capture
+  exception 与 unavailable 分离，模板按实际求值逐张加载/flush。External B 的 TaskTracker narrow/expanded/
+  必要 drag 后同调用 panel capture 同样 `SOURCE APPROVED`。External C 的 PlayerState first-aid 两真实入口与
+  基线顺序已通过，但 helper 提示后父级独立确认 `HealOutcome` 仍允许单边 click 坐标，现纠正为
+  `BLOCKED，P2=1`，只由原 C 修 compact constructor；incense 新单暂不落 Java。
+- External A 的 Npc Ctrl-probe 新类被父级 `BLOCKED，P1=2/P2=2`：没有 caller-supplied exact binding，仍用
+  tracker 隐式 capture；并以 Java 函数回调冒充 closed intent，把 `scanMenuAndVerifyKeywordDirect` 的 OCR/click/
+  verify 连续段留在 caller。原 A 只返修同一文件，补 exact HWND、完整 closed local macro、immutable payload 与
+  Spring 注入，不内部接管。
+- 父级已在三份通过日志真实 EOF 立即续派互斥直接实现单：B `DialogDetectionLocalMechanics`、C
+  `PlayerStateIncenseStatusLocalObservationMechanics`、D `DialogStoryAdvanceLocalMacroMechanics`。首次检查发现
+  C/D 新单误插旧历史段后，父级已在物理 EOF 权威重发；四路现均真实领取：A `15:52:05`、B `15:52:16`、
+  C `15:58:30`、D `15:56:30`。领取门已通过，允许实现超过 20 分钟，不内部接管。
+- Delivery Preflight Helper 已追加 TRUE EOF closeout 并关闭；Next-Task Queue Helper 已追加 Queue #8 并关闭。
+  父级仍是唯一 reviewer；A/B/D writer 与 C 定点 R2 稳定前不运行 fresh 双构建。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 BattleRadar 两侧收口与三条本地连续 mechanics 四路并发
+
+- Phase 1/2 事实不变：`696a12b0` Service 证据镜像 `32/32`、active promotion `32/32 exact`，随后仅删除
+  永久留 DHXY 的 `BagService/UICleanerService/GiveItemService/QuestManagerService`。approved same-path 仍为
+  `189/407`，helper/contract/mechanics 前置不冒充整类完成。
+- BattleRadar Cloud 侧 7 kind/3 fact 合同已父级 `SOURCE APPROVED`。External A 的完整
+  `BattleRadarService` R2 已父级 `SOURCE APPROVED，P0/P1/P2=0`：七 fact/七 slot、696 Stage/cadence/state、
+  terminal 与 hover 日志闭合；真实 task-entry `TaskExecutionContextHolder.callWith` producer 仍
+  `INTEGRATION PENDING`，因此不计整类完成。
+- DHXY BattleRadar producer 首版被父级 `BLOCKED，P1=3`：双模板失去 Java 短路、capture exception 被伪成
+  unavailable、非基线永久模板缓存。原 D 已于 `15:38:21` 领取 R1，只改
+  `BattleRadarLocalObservationMechanics.java`。TeamReturn leader fact 的 terminal 返修已父级
+  `SOURCE APPROVED，P0/P1/P2=0`，B 写集已释放。
+- 四路当前均已真实领取且写集互斥：A `15:35:48` 做 NpcClick Ctrl-probe 单 worker 连续 mechanics；B
+  `15:34:52` 做 TaskTracker narrow/expanded/必要 drag 后同帧 panel capture mechanics；C `15:40:00` 修
+  PlayerState first-aid，将被错误合并的 no-focus probe 与 heal-all direct 恢复为 696 两条路径；D 做上述
+  BattleRadar R1。20 分钟门只查领取，绝不内部接管。
+- Delivery Preflight Helper 正对 A R2/C first-aid 做非绑定复核，Next-Task Queue Helper 正准备 Queue #7；
+  父级仍是唯一 reviewer。四路 Java writer 稳定前不运行 Cloud/DHXY 构建。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 BattleRadar 双侧事实链开工，NpcClick 整类继续实施
+
+- 父级已对第一批四个整类交付做独立审查。External A 的 `BattleRadarService` 首版为
+  `BLOCKED，P0=0/P1=3/P2=1`：三个 baseline public 签名被改坏、typed observation 没有 producer、
+  一次预取布尔值破坏 Stage 1->2->3->4 的按需短路，且 exact per-run context 被错误回退到 `"default"`。
+  原 A 的 `W-696-BATTLE-RADAR-WHOLE-ADAPT-1-R1` 已在真实 EOF 发布，领取截止 `15:14 EDT`。
+- External C 的 `PlayerStateService` 与 External D 的 `DialogService` 均确认当前 active blob 仍与
+  `696a12b0` byte-exact，Java 零改动；两者因缺真实 typed local producer 被父级判
+  `PREREQUISITE BLOCKED，P0=0/P1=1/P2=1`，没有伪造整类完成。C 已于 `14:56` 领取
+  `W-696-BATTLE-RADAR-CLOUD-FACT-1`，只补 Cloud 7 kind / 3 closed fact 的 sealed、match、parse 合同。
+- D 的权威 TRUE EOF 任务为 `W-696-BATTLE-RADAR-DHXY-FACT-1`，领取截止 `15:16 EDT`；只补 DHXY
+  7 kind 镜像、exact-window 本地 BattleRadar 机械观测与 handler producer，不在本地推进业务状态。
+  External B 已于 `14:32:49` 领取 `NpcClickService` 完整整类适配，尚未交付，允许工作超过 20 分钟。
+- Delivery Preflight Helper 只提供非绑定风险清单；Next-Task Queue Helper 正提前生成 Candidate Queue #5。
+  父级仍是唯一 reviewer，四路 Java 稳定前不运行并发构建。`approved same-path` 仍为 `189/407`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 fresh 编译收敛为 7 类，A/B/C/D 四个整类适配任务已发出
+
+- External A 的 LeftTop 返修、External C 的 CommonBox 返修、External D 的 TeamReturn 队员按钮链均已由
+  父级独立复核为 `SOURCE APPROVED，P0/P1/P2=0`；B 的 TaskTracker rect 单因真实 caller/context/
+  同帧 artifact 前置不存在而保持 superseded，Java 零改动，不把父级前置错误记给 B。
+- Java writer 稳定后父级执行 fresh Cloud `mvn -q clean package`，在编译阶段 exit 1。当前错误文件已准确
+  收敛为 7 个 Service：`BattleRadarService`、`ClientIdentityService`、`DialogService`、
+  `NavigationService`、`NpcClickService`、`PlayerStateService`、`TaskTrackerPanelService`；A/C/D 本轮
+  已通过源码不在失败名单中。`approved same-path` 仍为 `189/407`。
+- `TaskTrackerPanelService` 继续等待真实显式 `TaskExecutionContext` caller + exact-window 拖拽/同帧 capture；
+  `ClientIdentityService` 的 binding-title 与 baseline refresh/cache/locate fallback 取舍属于用户决策；
+  `NavigationService` 的 X2 nested-exclusive `P1=1` 继续进入专门 closed local macro cohort，三者不伪造 READY。
+- 父级已于 `14:28 EDT` 在四份 External 固定日志真实 EOF 发布四个互斥**整类**直接实现单：
+  A `BattleRadarService`、B `NpcClickService`、C `PlayerStateService`、D `DialogService`。四项均以
+  `696a12b0` 完整类为业务权威，pre-cutover preserved 文件只作 typed port 接法参考；领取截止统一
+  `14:48 EDT`，20 分钟只查 CLAIMED，绝不内部接管。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 A/D 源码通过，C 进入终态与 TTL 返修，B 双侧 TaskTracker 真链预排
+
+- External A 的 `LEFT_TOP_STATUS` 首版被父级以 `P1=2/P2=1` 阻断后，原 A 已领取并交付返修；父级独立复核
+  fact/input terminal 矩阵、interrupt unwind、`rect=null` 诚实日志及原 bundle 顺序，现结论
+  `SOURCE APPROVED，P0/P1/P2=0`，只等待统一 Cloud package。
+- External D 的 `TeamReturnService.clickReturnTeamIfPresent(...)` 队员按钮链已父级
+  `SOURCE APPROVED，P0/P1/P2=0`：两次 fresh fact、摄妖香调用位置、第二次坐标、X/Y 独立随机偏移、
+  `CLICK_LEFT(150ms) -> SLEEP(500ms)` 和 timestamp/log/terminal 路径均与 `696a12b0` 对齐。
+- External C 的 `CommonBoxService` 首版父级结论为 `BLOCKED，P1=3/P2=1`。返修只处理：停止/未决/中断不得
+  降为普通 miss 或 click-false；30 秒 TTL 必须从 DHXY 真命中时间 `matchedAtEpochMs` 起算；把新拆的
+  `recordMatched/consumeClick/actionSlot` 收回 baseline 原调用点。领取截止 `14:28 EDT`，只查领取、不内部接管。
+- External B 原 TaskTracker 单文件任务因没有 caller 可达 fact、只有 client-px 几何且缺同帧 capture artifact，被父级
+  作为前置错误 supersede。排班 helper 首个 TaskMaintenance 替代候选又被父级在发单前否决：Cloud
+  `TaskExecutionContextHolder` 没有实际 producer，不能让 null-context 路径静默退到 default window/epoch 0。
+  B 当前没有被伪造任务占用；helper 正把 TaskTracker 改成真实双侧 cohort：DHXY exact-window 定位/必要拖拽/
+  同帧 capture，Cloud 保留绿链、fingerprint/cache、候选排序、分类与结果构造；闭合后立即分别发给 B/D。
+- Navigation 三个 X2 caller 的 nested exclusive queue `P1=1` 继续开放，后续必须把 X2、成功后 mouse-away 与外围
+  direct-input 合为一个 closed local macro；不重开已通过的普通 `UI_CLEAN` 合同。当前 approved same-path 仍为
+  `189/407`，A/C 写入稳定前不并发构建。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 helper 流水线首轮父级裁决：Navigation 三个 X2 点进入 Phase 4 集成门
+
+- Delivery Preflight Helper 已完成首轮非绑定预检；父级随后独立复核确认 `UI_CLEAN` 合同、DHXY handler
+  与五个普通 caller 继续 `SOURCE APPROVED`。helper 只缩短取证时间，不替代父级结论。
+- `NavigationService` 的三个 X2 caller 需要单独标记为 `INTEGRATION BLOCKED，P1=1`：`:1536` 位于
+  `:1448-1450` 的 baseline exclusive callback 内；`:2247` 的方法按原注释只从已持有 exclusive input
+  worker 的 direct-input 路径调用；`:2271` 直接位于 `:2269-2275` 的 exclusive callback 内。Cloud
+  `InputSequences:27-29` 明确不提供跨进程 `submitExclusiveAndWait(Supplier)`，而 DHXY handler
+  `:1168-1171` 会再次进入 `submitRemoteExclusiveAndWaitDetailed`。当前组合不能作为最终可运行链。
+- 精确收口条件不是重开 `UI_CLEAN` wire：Phase 4 将这三个 X2 动作连同原来的成功后 mouse-away 以及
+  各自外围 direct-input 序列折叠为同一个 closed 本地宏，保持 `696a12b0` 的原子性、顺序、delay、
+  fallback 和日志。AutoCombat 两点、SummonSkill 两点及 Navigation mini-map fallback 一点继续通过。
+- Next-Task Queue Helper 的首版中，LeftTop、CommonBox 与 TaskTracker panel-rect 候选可用；父级否决把
+  `AUTO_COMBAT_PANEL` 和 `TEAM_RETURN` 整类写成“现有 fact 已足够”的过度承诺，要求 helper 收窄后再发单。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+### External A/B/C/D 下一波已由父级发布（13:35 EDT）
+
+- Next-Task Queue Helper 的 `Candidate Queue Repair #1` 已经父级逐项裁决并实际发单，不再让 External Worker
+  空等父级重新盘点。四个 active 文件的发布前 blob 均与 `696a12b0` 精确相同：LeftTop
+  `a46fde69...`、TaskTracker `ad46ec86...`、CommonBox `195c1db...`、TeamReturn `286c5a85...`。
+- A：`W-696-LEFT-TOP-STATUS-TYPED-ADAPT-1`，只写 Cloud `LeftTopStatusSwitchService.java`；领取截止
+  `13:55`。B：`W-696-TASK-TRACKER-PANEL-RECT-TYPED-ADAPT-1`，只写 Cloud
+  `TaskTrackerPanelService.java` 的 panel-rect 边界；领取截止 `13:55`，不得宣称整类完成。
+- C：`W-696-COMMON-BOX-TYPED-ADAPT-1`，只写 Cloud `CommonBoxService.java`；领取截止 `13:55`。
+  D：`W-696-TEAM-RETURN-MEMBER-BUTTON-TYPED-ADAPT-1`，只写 Cloud `TeamReturnService.java` 的
+  `clickReturnTeamIfPresent` 队员按钮链；因历史重复锚点，首份 brief 落在旧段并已明确作废，真实 EOF 于
+  `13:36` 重发，领取截止 `13:56`。
+- 四个 External 写集互斥；20 分钟只查各日志真实 EOF 的 `CLAIMED`，已领取后允许实现超过 20 分钟，逾期
+  只原样重发给同一 External Worker、绝不内部接管。首个 Implementation 出现后先交 Delivery Preflight
+  Helper 做非绑定快速预检，再由父级独立终审。
+- 领取实时状态：A 已于 `13:36:03` CLAIMED，C 已于 `13:36:55` CLAIMED，D 已于 `13:37:13`
+  在 TRUE EOF reissue 后 CLAIMED；B 也已于 `13:40:00` CLAIMED。四路均已在截止前确认唯一写集，允许实现
+  超过 20 分钟；截至 `13:41:36` 尚无本轮 Implementation/Repair，不误判为停滞，也不提前并发构建。
+- B 于 `13:44:04` 提交前置缺口且保持 Java 零改动。父级独立核对确认原 brief 不可实施：
+  `TaskTrackerPanelService.resolveTrackerPanelRect(String)` 没有可达 `TaskExecutionContext`/fact 实例，现有
+  `TASK_TRACKER_PANEL_RECT` 又只有 `WINDOW_CLIENT_PX` 几何，不能在单文件内替代 baseline 的
+  screen-absolute rect + `captureToFile` 结果。该单已标 `CURRENT TASK SUPERSEDED / PARENT PREREQUISITE
+  BLOCKED，P1=1/P2=1`，错误归父级前置假设，不记作 B 实现缺陷；B 等候预排班中的替换实现单。
+
+## 2026-07-14 / CR271 并行流水线调整：内部预检 + 下一任务编排，父级仍唯一终审
+
+- 用户要求消除 External A/B/C/D 完成后等待父级临时重新盘点的空档。内部两个槽位现在固定承担
+  非绑定辅助工作：一个先读最新交付、核对实际写集并列候选 P0/P1/P2 证据；另一个提前准备四个互斥的
+  下一实现单及备用队列。二者都不下 `APPROVED/BLOCKED`，父级仍必须独立读源码、核证据并运行适用构建门。
+- Internal CL 的 `spring-boot-starter-validation:3.2.4` POM 闭包已经父级 `SOURCE APPROVED`，未改
+  Boot parent/plugin、测试门或既有 Spring/SLF4J 版本；CL 随后转为交付预检 helper。
+- Internal CM 的 `CloudBagUseIncensePort` 已父级 `SOURCE APPROVED`：一次 `BAG_USE_INCENSE`、前后
+  checkpoint、120 秒 timeout、closed terminal 映射，无 retry/owner/session/ledger；CM 已关闭。
+- Internal CN 正完成 `SheyaoxiangDigitTemplateReader` 的 `696a12b0` 原字节纯 CPU helper 复制，随后转为
+  A/B/C/D 下一任务编排 helper。当前 Cloud package 仍以完整 Phase 3/4 依赖闭包为开放门，不能据源码批准
+  宣称整体构建通过；approved same-path 保持 `189/407`。
+- CN 的 helper 复制随后已父级 `SOURCE APPROVED`：源/目标 Git blob 均为
+  `234f77f06bbaeeaa8f75b8170ffc480f7447f303`、长度均为 `14,307` bytes。父级重新执行 Cloud
+  `mvn -q clean package` 仍在 compile 阶段 exit 1，但 `BotProperties` 的 Boot/validation/annotation 报错与
+  `SheyaoxiangDigitTemplateReader` 报错均已消失；剩余错误集中在 desktop/window/capture/OCR/input
+  collaborators 以及 `PlayerStateService -> BagService`、`DialogService -> GiveItemService` 两个永久本地边界。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 `UI_CLEAN` 四路源码全部通过，DHXY compile 绿，Cloud 进入下一依赖闭包
+
+- External A 的三个完整 Service caller 替换已按 `migration-baseline/696a12b0` 做限定 diff：差异仅为
+  3 个 `CloudUiCleanerPort` 注入替换与 brief 指定的 8 个调用点，结论
+  `SOURCE APPROVED，P0/P1/P2=0`。External B 的 handler 注释归属返修已复核通过，首轮已通过的
+  exact-context、队列所有权、fence、terminal 分流未变，结论 `SOURCE APPROVED，P0/P1/P2=0`。
+- External C 的 Cloud contract/facade/wire 3 New + 7 Modify 已与 External D 的 DHXY DTO/codec/digest
+  逐字段对照；operation/state、source 规则、typed variant 互斥、all-terminal allowlist、flat 四键 payload 与
+  request/outcome canonical tree 一致。C/D 均为 `APPROVED，P0/P1/P2=0`，没有开放返修项。
+- 父级 fresh DHXY `mvn -q -DskipTests compile` 已通过（exit 0）。父级 fresh Cloud
+  `mvn -q clean package` 已执行但在 compile 阶段 exit 1；错误不在本波 UI_CLEAN 文件，而来自整类 promotion
+  后仍未闭合的 Phase 3/4 依赖：active Service 共引用 20 个尚未进入 Cloud 的 desktop/window/capture/OCR/input
+  collaborator，另有 `PlayerStateService -> BagService`、`DialogService -> GiveItemService` 两个永久本地 Service
+  类型，以及 `BotProperties` 所需 Spring Boot/validation 依赖。
+- 该 Cloud 失败是下一轮依赖清单，不回退四路源码批准，也不增加 `approved same-path`；计数保持
+  `189/407`。下一步按根因分类：先补无歧义的 Cloud config/passive closure 与永久本地 typed boundary，再按
+  Phase 4 把 desktop mechanics 在原调用点替换为现有 typed remote primitive / closed macro；禁止把本地
+  `GameClientTracker`、OCR、window/input 实现盲目复制成 Cloud 权威。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 Phase 3 `UI_CLEAN` 四路已领取，ReturnItemPrescan 边界通过
+
+- External A/B/C/D 的 `UI_CLEAN` 四个互斥实现单均已在 20 分钟领取窗内于各自固定日志真实 EOF
+  追加 `CLAIMED`：A `12:33:59`、B `12:36:26`、C `12:37:24`、D `12:35:27`。A 只改 Cloud
+  三个 Service 的 `UICleanerService` 调用点，B 只改 DHXY handler，C 只做 Cloud closed contract/facade/wire，
+  D 只做 DHXY payload/codec/digest；四路没有重叠写集，也没有交给内部 Worker 接管。
+- A 已明确等待 C 先落 `CloudUiCleanerPort`，B 已明确等待 D 先落 DHXY payload；这是已领取任务的编译依赖，
+  不是未领取或停滞。C/D 正在实现。合同仍限定四个 operation、closed state、flat 四键 terminal payload，
+  `cachePoint=null`，且不改变 `696a12b0` 的判断、顺序、delay、fallback 或 state。
+- D 已交付 DHXY wire 2 New + 5 Modify，父级逐文件源码审查结论 `SOURCE APPROVED，P0/P1/P2=0`；
+  command/result closed matrix、all-terminal strict codec 与 canonical digest 均闭合，既有 BAG/NAV 分支未变。
+  父级已在 B 固定日志解除 DTO 等待，B 可立即实施 handler；D 的最终门仍等待 C parity 与统一双构建。
+- B 已交付唯一 handler 文件；父级确认四 operation 的队列所有权、exact context、fence、state 与 terminal
+  分流均正确，但原 Navigation JavaDoc 被新 UI_CLEAN 方法隔离，结论 `BLOCKED，P2=1`。已要求原 B 只移动
+  注释/方法排列恢复直接归属，不得改已通过逻辑；C 尚未正式交付，但 facade 已落盘并解除 A 等待。
+- C 已实际开始 3 New + 7 Modify 连续写入，`CloudUiCleanerPort.java` 于 `12:50:56` 落盘；父级已在 A
+  固定日志追加 dependency release，A 可与 C 以互斥写集并行完成三个 Service 的八个 caller 替换。C 尚未
+  追加正式 Implementation，因此当前不提前审查其在途源码、不运行构建。
+- Internal CK3 的 `ReturnItemPrescanService` 返修已由父级完成源码复核：active Git blob
+  `61b6190f0ab5e49b82ed8c6281ffc619e66b03e5`，SHA-256
+  `3d78417e2834ad332fce26037e72116224ffc4727914c732287299caf81e21bd`；基线 7 个 public 方法完整，
+  非基线 `hasCached` 已删除，三个已批准 `BAG_RETURN_ITEM` operation 各出现一次。结论
+  `APPROVED，P0/P1/P2=0`，CK3 已关闭。
+- 四个 External Java writer 尚未全部稳定，因此本轮未并发运行 Maven。approved same-path 继续保持
+  `189/407`；待 A/B/C/D 交付并逐项父级审查后，再统一运行 Cloud `mvn -q clean package` 与 DHXY
+  `mvn -q -DskipTests compile`。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 Phase 2 完成，Phase 3 由 fresh Cloud 编译驱动
+
+- External C 已在第二确认窗内暂停旧单，并完成 `NpcClickService.java` 的原字节 promotion；父级复核
+  preservation=`7574e3c35cb6ba789d0c9f4dd99abdaac54597b6`、active/baseline=
+  `74d9b26b76b84052718d5679529f7ffeb46e3273`，SHA-256=
+  `cce8f0203ac90a0d39f7cff99dda8d9a616656a55467ed4ae3aa053ad0923441`，结论
+  `APPROVED，P0/P1/P2=0`。父级随后遍历完整 Service 树，得到
+  `TOTAL=32 EXACT=32 MISSING=0 DIFF=0`；Phase 1 与 active whole-Service promotion 均完成。
+- 父级在删除前逐一确认四个目标 active 文件仍与 `696a12b0`/证据镜像同 blob，随后只从 active Cloud
+  删除用户明确永久留 DHXY 的 `BagService`、`UICleanerService`、`GiveItemService`、`QuestManagerService`。
+  四份 DHXY 源码和 Cloud `migration-baseline/696a12b0` 证据均仍存在；当前 active 对镜像统计为
+  `28 exact / 4 expected-missing / 0 divergent`，没有删除其它 Service。
+- 删除后父级运行 fresh Cloud `mvn -q clean package`，编译按预期失败（exit 1）。首批 100 个唯一编译错误
+  主要集中于 `NpcClickService`、`TaskTrackerPanelService`、`DialogService`、`LeftTopStatusSwitchService`、
+  `PlayerStateService`、`BattleRadarService`；原因分为：缺失的 passive shared DTO/config/model、四个已删本地
+  Service 的真实调用点，以及尚未在 Phase 4 抽离的桌面/window/capture/OCR/input collaborator。
+- Phase 3 现在只做两件事：先从 `696a12b0` 原字节复制可独立共享的被动类型；再为四个永久本地 Service
+  建立最小 typed local boundary。不得为了编译而缩短任一 Service、复制桌面 mechanics、提前改动作顺序，
+  或新增 owner/permit/session/ledger/TTL/retry。完整 desktop collaborator 替换仍严格留到 Phase 4。
+- 当前 approved same-path 继续保持 `189/407`；Phase 2 完成、DTO 存在或编译错误减少都不单独增加计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 四阶段顺序锁定：先完整镜像，再删本地重复类，再补边界，最后拆动作
+
+- 用户明确批准新的严格顺序：先把 `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` 的全部
+  `service/**` 完整复制到 Cloud；确认完整调用图后，再从 active Cloud 源码删除永久留在 DHXY 的
+  `BagService`、`UICleanerService`、`GiveItemService`、`QuestManagerService`；随后以 Cloud 编译错误和完整调用图
+  为依据补最小 Cloud -> local typed boundary；最后才统一抽离其余 Service 中的 capture/template/OCR/watcher/input
+  动作。禁止再在复制整类的同时拆动作或改写中间逻辑。
+- 父级已在 Cloud 仓建立不可编译参与、不可改写的完整证据镜像：
+  `D:\mavenProject\dhxy-cloud-brain\migration-baseline\696a12b0\src\main\java\com\bot\dhxy\service\**`。
+  现场验证 `32/32` 文件、总计 `1,110,791` bytes、逐文件 Git blob 与 `696a12b0` 完全一致，`BAD=0`，
+  Runner 文件 `0`。该镜像只证明完整源已进入 Cloud 仓，不计 active Service 完成、不参与 Maven 编译。
+- active Cloud 原缺的 8 个同路径 Service 已由 Internal CG/CH 以 CreateNew/无覆盖方式原字节落盘，父级独立复核
+  `8/8` Git blob 与 `696a12b0` 一致、`BAD=0`。active tree 现有 32/32 个基线文件名，其中 16 个已原字节一致、
+  16 个仍是此前边迁边拆版本。父级已把这 16 个当前版本完整保存到
+  `D:\mavenProject\dhxy-cloud-brain\migration-preserved\pre-696a12b0-whole-service-cutover-20260714T1129\**`，
+  snapshot `16/16`、`BAD=0`；因此后续协调 promotion 不会丢失任何在途实现。
+- Internal CG/CH 已按新顺序追加 `HALTED_BY_WHOLE_COPY_SEQUENCE`，零新 Java；External A/B/C/D 也必须停止
+  当前 active Service 的提前边界适配，保留既有部分但不回滚、不覆盖。等四路确认暂停后，父级再按互斥整类 cohort
+  协调 active-tree promotion。
+- Internal CI2/CJ2 已对 12 个无外部 owner 的 divergent active Service 完成受控 promotion：每个文件替换前
+  current blob 必须仍等于 preservation snapshot，替换后必须等于 mirror 与 `696a12b0` blob。父级复核
+  `12/12`、`BAD=0`。External A/B/D 随后各自完成单文件 mechanical promotion，父级独立复核 preservation
+  preflight 与 active/baseline 后置 blob，三项均 `APPROVED，P0/P1/P2=0`；active exact 已由 `16/32`
+  提升到 `31/32`。
+- 当前唯一 divergent 文件为 External C 持有的 `NpcClickService.java`。C 在首轮 20 分钟暂停确认窗内未于真实
+  EOF 追加 `HALTED_BY_WHOLE_COPY_SEQUENCE`；父级已于 `11:43:50` 在原日志记录 `UNACKNOWLEDGED` 并把同一
+  暂停指令原样重发给 C，第二确认截止 `12:03:50`。该任务绝不内部接管，C 确认暂停后仍由原 C 执行单文件
+  原字节 promotion。
+- 当前 approved same-path 保持 `189/407`。镜像文件、单方法、helper、DTO 和暂时编译成功均不增加计数。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 用户重定基线：696a12b0 整体 Service 先迁，Runner 排除
+
+- Git 拓扑复核：`3f0a2e7` 的直接后继 `2a97dd43` 只新增文档；`c155ef36`、`c37723e6`、
+  `696a12b0` 均无 Cloud Java；`dc4394f4` 只新增迁云计划且 `src/` 与 `696a12b0` 完全相同；第一笔真实
+  Cloud Java 是 `9aa987d1`（新增约 77 个 Cloud 路径文件）。用户据此明确选择
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7` 作为整包迁云前源码基线。
+- 新执行顺序：先把 `696a12b0` 的 `service/**` 完整类迁入 Cloud，Runner 实现不迁；每类必须保留完整
+  public/private 调用图、判断、顺序、delay、fallback、状态更新。随后才在类内逐个把 HWND/capture/template/OCR/
+  watcher/input 调用替换成 typed remote operation、InputBundle 或 closed 本地宏。禁止继续按若干 public API、helper、
+  DTO 或 zero-Java 清单推进。
+- `696a12b0` 含 32 个 Service 文件；Cloud 当前同名 24 个、缺 8 个，但“同名存在”不等于完整迁移。新权威计划为
+  `docs/superpowers/plans/2026-07-14-696a12b0-whole-service-first-migration.md`。第一波六个整类：External A
+  `TaskTrackerPanelService`、B `TaskMaintenanceService`、C `NpcClickService`、D `NavigationService`、Internal CG
+  `PlayerStateService`、Internal CH `AutoCombatService`。
+- 所有旧方法切片保留为可复用代码，不回滚、不清理，但停止作为任务完成单位。approved same-path 仍为
+  `189/407`；只有完整 Service + reachable caller + typed DHXY terminal 经父级整类审查和 fresh 双构建后才增加。
+
+**无已批准业务差异；按用户选择的 `696a12b0` 完整源码等价迁移。**
+
+## 2026-07-14 / CR271 迁移单位纠偏：整类复制，边界替换，不再拼 public 方法
+
+- 用户明确确认：默认迁移单位是完整 `Task` / `Service` 类。`0114604e` 仅是当前结构/迁移起点；五倍、修罗
+  业务行为必须使用 `docs/业务逻辑.md` 指定的用户已验证提交。Cloud 保留适用业务基线的类边界、public/private
+  调用图、判断、顺序、delay、fallback 与状态更新；只在原调用点把 HWND/capture/template/OCR/watcher/input
+  换成共享 typed fact/capture/InputBundle 或 closed 本地宏。禁止拆成多轮 helper/public API 后宣称完成。
+- 既有方法级成果不回滚，全部降级为“整类迁移可复用代码块”。只有
+  `reachable public caller -> 完整同路径 Service -> typed DHXY primitive/terminal result` 闭合、父级整类对照通过并
+  完成 fresh 构建，才增加 `approved same-path`；当前仍为 `189/407`。
+- Internal CI 的 `BattleRadarService` 三个 typed-consumer 块已由父级逐行对照并
+  `SOURCE APPROVED，P0/P1/P2=0`，但未接完整 caller，因此只保留、不计整类完成；CI 已关闭。
+- External A 的 TaskTracker 11 个方法首版被父级 `BLOCKED，P1=4`：裸 `byte[]` 非深不可变、window-relative
+  写入 screen-absolute 类型、detail 内容被 hash 取代、五倍 target-map/classifier 字段丢失。原 A 已收到一次性
+  Repair，修复后仍须按完整 `TaskTrackerPanelService` 调用链验收，不能按“11 个方法存在”验收。
+- External D 的 Navigation 继续按完整 `NavigationRequest` / 完整 terminal status 过 wire，并在 input queue 外
+  复用既有本地 `NavigationService.navigateInCurrentMap`；不得另写 mechanics 或截断中间逻辑。B/CG/CH 的依赖
+  代码保持暂停或可保留状态，等待共享边界稳定后按完整 Service 恢复。
+
+**无已批准业务差异；按适用的用户已验证业务基线等价迁移。**
+
+## 2026-07-14 / CR271 B 29 API 通过、D 导航宏三项返修、CH 12 API 保留
+
+- External B 的 TaskMaintenance 五族协调链已有 29 个 public API 和共享 state closure 父级可保留；第 30 个
+  `consumeMaintenanceBroadcastQueueTurnIfHead` 仍 `BLOCKED P1=1`。FIFO/head/deadline/dequeue 继续在 Cloud，
+  仅中间一次 maintenance capture/click 是 closed 本地宏。B 先暂停，等 D 释放 shared `LOCAL_MACRO` 后由同一 B
+  把同步 typed result 调用放回 baseline 的 head-check 与 dequeue 之间。
+- External D 的 NAVIGATE wire 第一版双编译虽绿，但 `BLOCKED P1=3/P2=1`：四字段 command 丢完整
+  `NavigationRequest` 行为；三状态 result 丢 `PATHING_STARTED/INTERRUPTED/POINT_NOT_REACHED`；另写专用
+  mechanics 或在 input-worker callback 内调用导航都会漂移/死锁。D 已收到唯一返修路线：完整 request/status
+  逐值过 wire，handler 在 input queue 外调用既有 DHXY `NavigationService.navigateInCurrentMap`，不复制算法。
+- Internal CH 新增 `initializeForCurrentWindow`、`reconcileReturnHomeVerifiedCombatState` 和六个 private closure
+  父级可保留，累计 12 public definitions；剩余六 definitions 等 CI BattleRadar 与 D closed UI-clean adapter，CH
+  已要求安全暂停。AutoCombat 仍 `PARTIAL SOURCE APPROVED / BLOCKED，P1=1`，不计完整链。
+- A/C/D/CI 继续实际写码；B/CH 是明确依赖暂停，不误判为完成。approved same-path 保持 `189/407`，Java writer
+  全部稳定前不并发 clean。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A 合同裁定、PlayerState 顺序拦截与 BattleRadar 新实现槽
+
+- External A 的 `W-TTPS-REMAINING-PUBLIC-CHAIN-IMP2` 已由父级裁定采用 typed-consumer：DHXY 继续负责
+  exact-window capture/title template/OCR/drag/input，Cloud 的 11 个 baseline-name 入口统一消费一个共享 immutable
+  artifact，并返回 window-relative decision/result。A 不得再交契约说明，必须直接补齐 11 个 public algorithm API。
+- Internal CG 的 `PlayerStateService` 首版经源码复核为 `PARTIAL SOURCE APPROVED / BLOCKED，P1=2`。
+  `healAll` 把 baseline 的“单一 exclusive 内逐目标确认后立即补给”改成“先确认全部、后统一点击”；
+  `healPlayer/healPet` 也把逐目标 `capture -> immediate input -> safe move` 改成先 capture 全部。CG 已在固定
+  报告追加 `SUSPENDED_WAITING_SHARED_MACRO` 并关闭并发槽；保留已通过的 startup/no-focus/cache/single-bar/
+  incense 部分，等 D 释放 shared `LOCAL_MACRO` 写集后恢复同一 CG 做 exact repair。
+- 新内部 CI 直接闭合 `BattleRadarService` 缺失的 `checkAndSyncCombatState`、
+  `checkFastExpectedCombatExitByAvatarDiff`、`refreshFastExpectedCombatExitAvatarBaseline` 三个 typed-consumer
+  public 入口。CI 只写该 Cloud Service 与固定报告；battle capture/template/avatar diff mechanics 仍在 DHXY，
+  Cloud 只保持 committed 的 signal priority、2 次 exit miss、15s/1s timing 与 state transition。
+- 当前 External A/B/C/D、Internal CH/CI 六路写集互斥；D 的 shared macro 写入稳定前不跑父级 clean。
+  approved same-path 仍为 `189/407`，只在完整 caller -> Service -> typed terminal 链通过父级复审和 fresh 构建后增加。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 AutoCombat 完整链首版父级审查：10 API 可保留、8 个主入口继续阻断
+
+- Internal CH 已交 `AutoCombatService` 首版。父级按 committed `0114604e` 复核，授权/撤销、polling/wake
+  deadline、pending 查询、leader first-aid FIFO 与 deferred recovery 共 10 个 public API 可保留，未发现新的
+  条件、顺序、delay、fallback 或 stop 语义差异。
+- 本单仍 `PARTIAL SOURCE APPROVED / BLOCKED，P0=0/P1=1/P2=0`：`initializeForCurrentWindow`、两个
+  `handleCombatTick`、guard tick、两个 read-only probe、fast-exit baseline refresh、verified-return reconcile
+  共 8 个 committed 主入口尚未落，Cloud 全树也没有真实 caller，故不能把支撑 helper 算作完整 Service chain。
+- 原 CH 保持 owner，等待 B 的 TaskMaintenance team-phase/session API 与 D 的 shared local-macro 写集稳定后继续。
+  BattleRadar 只消费本地 continuous watcher typed verdict；`UICleanerService` 仍永久留 DHXY，只经 closed local
+  operation 调用。CH 不得越界修改 B/D 写集，不得造 stub、固定终态或把本地 capture/template/HWND 搬 Cloud。
+- 其它 A/B/C/D/CG 五路继续实施；所有 Java writer 稳定前不跑父级 clean。approved same-path 保持
+  `189/407`。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 六路完整链全部领取或已续派，A/B 直接进入第二个大 cohort
+
+- External A 的 TaskTracker 无回归分流返修已父级功能源码通过：五环/修罗 detail 走同路径 Service，五倍与
+  其它未迁 mode 继续 legacy；`links` 格式等价。唯一 P2 JavaDoc 已并入下一张大单，不再单开小轮。A 当前
+  `W-TTPS-REMAINING-PUBLIC-CHAIN-IMP2` 一次闭合剩余 11 public API，领取截止 `10:23`。
+- External B 的 TaskMaintenance startup cooldown 与 JavaDoc 已父级 `SOURCE APPROVED，P0/P1/P2=0`；本轮
+  module compile 失败仅来自 D 的 remote local-macro 五字段构造器在途 call site，B 文件零错误。B 已续派
+  `W-TMS-REMAINING-COORDINATION-PUBLIC-CHAIN-IMP2`，一次闭合 local-team/session、combat phase、pathing/
+  return、broadcast FIFO、throttle 五族 30 public API，领取截止 `10:25`；三个 capture/input mechanics 入口冻结
+  后续走 typed local operation。
+- External C 已于 `10:00:27` 领取 NpcClick 四 public 智能点击链；External D 已于 `09:57:14` 领取双仓
+  `NAVIGATE_IN_CURRENT_MAP` closed local macro 真链。Internal CG/CH 已分别领取 PlayerState 19 public 补给/
+  首援/摄妖香链与 AutoCombat 19 public 非 host 编排链，并持续写入各自单一 Service 文件。
+- 六个实现槽均有大任务；外部 A/B 的新一轮只看 20 分钟 `CLAIMED`，逾期重发原 Worker，绝不内部接管。
+  Java writer 稳定前不跑父级 clean。A/B 的首个 cohort 源码通过不等于整类计数完成；approved same-path 保持
+  `189/407`，等待大 cohort 父级复审与 fresh 双构建。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 吞吐纠偏 #2：六路改为完整公开链，三份空转/回归材料已立即返修
+
+- 父级按 committed `0114604e` 审查 External A/B/D 最新材料。A 已形成真实
+  `DecisionEngine -> TaskTrackerPanelService` 链，但无条件切换会让非 `DETAIL_BLOCK_CROP` 模式静默
+  `NO_ACTION`，且丢 `links`/五倍富化字段，故 `BLOCKED，P1=2/P2=1`；原 A 已收到只做无回归分流与
+  exact diagnostics 的 Repair。B 的 TaskMaintenance summon/first-aid/team-window 18 方法闭包可保留，
+  仅缺启动 cooldown 初始化入口，故 `PARTIAL SOURCE APPROVED / BLOCKED，P1=1`；原 B 只补
+  `initializeForTaskStart`，local shadow 作为诊断 plumbing 不迁。D 再次交 zero-Java 清单，父级
+  `BLOCKED，P1=1`，已把 `navigateInCurrentMap` 扩为一个端到端 closed 本地宏任务，禁止继续只交依赖表。
+- External C 的 SummonSkill public local-pass facade 已父级 `SOURCE APPROVED，P0/P1/P2=0`，随后在固定日志
+  真实 EOF 发布完整 `NpcClickService` 四 public 智能点击链。A/B/D 的 Repair 领取截止 `10:09`，C 新单截止
+  `10:16`；20 分钟只检查 `CLAIMED`，领取后允许长时间实施，逾期只向同一外部 Worker 原样重发，绝不内部
+  接管。
+- 两个内部实现槽已真实领取且写集互斥：CG `019f60e1-96f2-7f83-b9eb-f0775b36210d` 一次闭合
+  `PlayerStateService` 补给/首援/摄妖香公开链；CH `019f60e1-aaeb-7252-a4db-552735d83db0` 一次闭合
+  `AutoCombatService` 全部非 host 公开编排 API。二者只写各自一个 Cloud Service 与固定报告，不写 shared
+  remote/schema，不承担 reviewer。
+- 当前最多六路实现并发已拉满。验收单位固定为“可达 public caller -> 同路径 Service -> typed 本地原语/terminal
+  result 的完整链”，private helper、passive value 和 zero-Java 不再作为整类进度。A 涉及五倍/修罗的审查已核对
+  `docs/业务逻辑.md` 的 tracker 最新面板、绿字点击原子序列、目标地图来源和非已批准 fallback 边界。Java writer
+  稳定前不并发 clean；approved same-path 仍为 `189/407`。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 吞吐纠偏：六条完整 public Service chain 已真实下发
+
+- 上一批六个所谓“大 cohort”实际只落 A 的 1 个方法、C 的 3 个方法；B/D/Internal CA/CB 均为
+  zero-Java。父级确认根因是任务合同错误地写成“缺 collaborator 即排除”，把实现 Worker 变成排除清单
+  Worker。该准入规则现已废止，CA/CB 已父级接受零改动证据并关闭，零代码不计迁移成果。
+- External A 的实际 1 方法经父级独立基线复核 `APPROVED，P0/P1/P2=0`；External C 的
+  `matchYellowTemplateInScan` 因把本地 template primitive 放进 Cloud 被 `BLOCKED，P1=1`，原 C 只撤该
+  新方法/专用 import 后直接继续完整 SummonSkill public local-pass facade；`readImage/saveImage` 可保留。
+- A/B/C/D 四份固定日志真实 EOF 的新大单已分别于 `09:22`、`09:24`、`09:19`、`09:19` 真实
+  `CLAIMED`：A 闭合
+  `DecisionEngine -> 同路径 TaskTrackerPanelService -> typed decision`；B 闭合 TaskMaintenance 的 summon/
+  first-aid/team-window public queue chain；C 闭合 SummonSkill 两个 committed public API 到现有 closed local
+  whole-pass capability；D 闭合 Navigation 的 `navigateToNPC/navigateToMap/navigateInCurrentMap` 到 shared typed
+  fact/capture/InputBundle port。外部任务仍绝不内部接管。
+- 两个内部实质实现槽已在 `09:25`、`09:27` 写入 `CLAIMED` 且写集互斥：CE
+  `019f60ca-18b8-7173-ab9d-cb347c5d485d` 闭合
+  TeamReturn public fact/InputBundle 与 leader precheck chain；CF `019f60ca-6344-7811-9f6d-f275717649cb`
+  闭合 BattleRadar Cloud-owned state/signal/timer public chain。二者不写 remote/schema，不做 reviewer。
+- 六单均直接实施，不写 Design，不再以 helper 数量验收；必要 Service 自有 passive type/state/config/explicit
+  context closure 已纳入各自写集。永久本地 capture/template/OCR/watcher/pathing/battle observation/单一输入队列
+  不迁；禁止新 owner/session/ledger/business TTL/auto retry。Java writer 稳定前不跑父级 clean，approved
+  same-path 计数保持 `189/407`，只在完整公开链父级审查与 fresh package 后增加。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 提速切换：四个外部大 cohort + 两个内部大 cohort 并发
+
+- 用户明确指出单 helper 粒度过小；父级已停止按一个 helper 一轮拆单。A/B/C/D 的 marked-image、not-due log、
+  image payload、polling interval 小单均已父级源码 `APPROVED，P0/P1/P2=0`，并在其后真实 EOF 直接续派
+  大 cohort。
+- External A 当前大单为 TaskTracker pure artifact/image/result cohort，目标至少 6 个完整方法或一条完整算法链；
+  External B 为 TaskMaintenance summon queue/window-state 八方法 cohort；External C 已于 `08:59:23` 领取
+  SummonSkill image/artifact cohort；External D 已于 `08:58:51` 领取 Navigation route-policy cohort。A/B
+  领取截止 `09:15`，外部任务仍绝不内部接管。
+- 两个内部实现槽同时启动且写集互斥：CA `019f60b1-323f-74e1-8eb3-54b4a2f8aabe` 已领取
+  NpcClick pure request/result/metadata cohort；CB `019f60b1-46a7-7902-91f1-44e85feb4b85` 已领取
+  PlayerState pure snapshot/request/result/policy cohort。六路分别只写 TaskTracker、TaskMaintenance、
+  SummonSkill、Navigation、NpcClick、PlayerState 一个 Cloud Service 文件。
+- 所有 cohort 只允许 committed `0114604e` 完整块等价迁移；缺失 collaborator 的候选记录
+  `SOURCE_DEPENDENCY_EXCLUDED` 后继续其它方法，禁止适配、造 seam 或新增 workflow machinery。Java writer
+  稳定前不跑并发 clean；最终由父级统一 fresh Cloud package。approved same-path 计数保持 `189/407`。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 四个直接实现块通过 fresh package，A-D 新任务已写入真实 EOF
+
+- 父级已按 committed `0114604e` 独立复核 External A 的 TaskTracker detail crop、B 的 Navigation
+  canonical map name、C 的 AutoCombat deferred-log throttle、D 的 PlayerState incense fact apply；四个完整块
+  均按任务合同 exact（D 仅保留批准的显式 `windowId` 日志投影），结论均为
+  `APPROVED，P0/P1/P2=0`。
+- 所有 Java writer 稳定后，父级 fresh Cloud `mvn -q clean package` exit 0，Surefire
+  `4 suites / 21 tests`、0 failure/error/skipped；shaded JAR
+  `dhxy-cloud-brain-0.1.0-SNAPSHOT.jar` 为 `120458926` bytes，生成时间 `08:31:49`。本波未改
+  DHXY Java，故未重复运行 DHXY compile。
+- 下一波四个互斥直接实现单已追加到固定日志真实 EOF，领取截止 `09:02:43`：A=
+  `W-TTPS-XIULUO-MARKED-IMAGE-IMP1`，B=`W-TMS-NOT-DUE-LOG-IMP1`，C=
+  `W-SS-IMAGE-PAYLOAD-IMP1`，D=`W-BRADAR-POLL-INTERVAL-IMP1`。D 已于 `08:44:27` 领取；A/B/C
+  仍在领取窗口。四项分别只写 TaskTracker/TaskMaintenance/SummonSkill/BattleRadar 一个 Cloud Service
+  文件，不写 Design、不接 caller/host、不执行本地 capture/template/OCR/input，也不新增 workflow machinery。
+- 20 分钟门只检查真实 EOF `CLAIMED`；领取后可长时间实施，逾期只原样重发同一 External Worker，绝不内部
+  接管。四项仍为 dormant prerequisites，完整 Service/caller/typed-local 链尚未闭合，approved same-path
+  计数保持 `189/407`；两仓全部 dirty/untracked 继续受保护，未做 Git mutation。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 队列/算法波父级通过、fresh 双仓门通过并续派四个直接实现
+
+- External A 的 TaskMaintenance 召唤兽技能队列三字段/六方法、B 的 TaskTracker prepared-action 72 行算法、
+  C 的 PlayerState conservative first-aid plan、D 的 SummonSkill clean deadline 常量/方法均已由父级从
+  committed `0114604e` 与当前 Cloud 独立抽取复核；完整块 exact、定义数与文件 SHA 一致，结论均为
+  `APPROVED，P0/P1/P2=0`。D 的早期批准误插历史区，已按 append-only 规则在真实物理 EOF 重发权威结论。
+- 全部 Java writer 稳定后，父级 fresh Cloud `mvn -q clean package` exit 0，Surefire
+  `4 suites / 21 tests`、0 failure/error/skipped；shaded JAR `dhxy-cloud-brain-0.1.0-SNAPSHOT.jar`
+  为 `120456347` bytes，生成时间 `08:11:29`。DHXY `mvn -q -DskipTests compile` 同轮 exit 0。
+- 新一波四个互斥直接实现单已于 `08:20` 写入固定日志真实 EOF，领取截止 `08:39`：A=
+  `W-TTPS-DETAIL-CROP-CPU-IMP1`（TaskTracker supplied-artifact detail crop），B=
+  `W-NAV-CANONICAL-NAME-IMP1`，C=`W-ACS-REFRESH-DEFERRED-LOG-IMP1`，D=
+  `W-PSS-SHEYAUXIANG-FACT-APPLY-IMP1`。四项分别只写 TaskTracker/Navigation/AutoCombat/PlayerState 一个
+  Cloud Service 文件；不写 Design、不接 caller/host、不执行本地 capture/input，也不新增 workflow machinery。
+- 20 分钟门只检查真实 EOF `CLAIMED`；领取后可长时间实施，逾期只原样重发同一 External Worker，绝不内部
+  接管。上一波仍是 dormant prerequisites，完整 Service/caller/typed-local 链尚未闭合，approved same-path
+  计数保持 `189/407`；两仓 dirty/untracked 均受保护，未做 Git mutation。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 上一波父级通过，四个完整算法 cohort 与两个内部实现槽已启动
+
+- 父级从 committed `0114604e` 与当前 Cloud 独立抽取完整块：External A 的
+  `decideMaintenanceThreshold`、B 的五环内存绿链两方法、C 的 IF8 6/8 判定、D 的 route-pending freshness gate
+  均 `APPROVED，P0/P1/P2=0`；D 因重复锚点已在真实 EOF 补权威批准副本。
+- External A/B/C/D 已在四份固定日志真实 EOF 收到下一张直接实现单，领取截止 `07:39/07:40`：A 迁
+  TaskMaintenance 召唤兽技能缓存状态 cohort，B 迁 TaskTracker 修罗绿链扫描完整算法，C 迁 PlayerState 四条血法条
+  in-memory 汇总算法，D 迁 Navigation fire-and-handoff/intent/task-code 三项纯业务判定。四份 Java 写集完全互斥；
+  20 分钟只检查 `CLAIMED`，逾期只原样重发原 Worker，绝不内部接管。
+- Internal BX `019f605f-351d-7040-8788-18422c14d6c7` 已启动 Cloud TeamReturn typed button-point fact adapter，
+  仅写 `TeamReturnService.java` 与固定报告；Internal BY `019f605f-7ee9-7dc3-ab74-782cbb08a768` 已启动
+  AutoCombat 两个 pure policy mapper，仅写 `AutoCombatService.java` 与固定报告。二者与 A/B/C/D 完全互斥，
+  Worker 自审不算批准，父级仍是唯一 reviewer。
+- Internal BV 的 closed `BAG_USE_INCENSE` 本地宏已完成父级源码审查，`APPROVED，P0/P1/P2=0`；等待当前六个
+  Java writer 稳定后的 consolidated Cloud package 与适用 DHXY compile。完整 public/caller 链仍未闭合，批准计数
+  暂保持 `189/407`；运行面 dormant，未做 Git mutation。
+
+**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 上一波通过 fresh package，A-D 真实 EOF 续派并恢复领取可见性
+
+- 父级独立源码审查通过 External A 的 `AutoCombatPanelService` 完整等价收口（`NO_CODE_CHANGE`）、
+  External B 的 TaskTracker `resolveGreenTextScanInput`、External C 的 SummonSkill 静态槽 classifier、
+  External D 的 PlayerState supply-plan 两方法与 immutable settings；均 `APPROVED，P0/P1/P2=0`。
+- 所有上一波 Java writer 稳定后，父级 fresh Cloud `mvn -q clean package` exit 0，Surefire
+  `4 suites / 21 tests`、0 failure/error/skipped，shaded JAR 于 `06:41:01` 重建。上一波未改 DHXY Java，
+  未重复运行 DHXY compile。完整同名 Service/caller 链仍未全部闭合，计数保持 `189/407`。
+- Internal BW 的 `SheyaoxiangStatusDecisionFacade` 与 `DecisionEngine` 单点包可见性修改已父级
+  `SOURCE APPROVED，P0/P1/P2=0`，BW 已关闭；最终 consolidated fresh package 等当前 writer 稳定后统一执行。
+  Internal BV 正直接实现 closed `BAG_USE_INCENSE` 本地宏，不接 caller/host，不改变是否用香的业务判断。
+- External A/B/C/D 的新直接实现任务第一次因 Markdown 重复尾句锚点误插入历史区；父级未删除历史，已在四份
+  固定日志真实物理 EOF 写入权威副本。A=`TaskMaintenanceService.decideMaintenanceThreshold`，
+  B=TaskTracker 五环内存绿链扫描，C=SummonSkill IF8 6/8 判定，D=Navigation route-pending freshness gate；
+  四个 Java 写集互斥。B 已于 `07:00:10`、C 已于 `06:59:47` 领取；A/D 领取截止分别为 `07:17/07:18`。
+- External 任务绝不内部接管；20 分钟只检查真实 EOF `CLAIMED`，领取后允许长时间实施。运行面继续 dormant，
+  未做 Git mutation。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 已续派四个完整算法/Service 收口波
+
+- External A/B/C/D 的上一波 current-message identity、image metadata、cleanup-result 与 first-aid bar probe
+  已全部父级通过，随后 fresh Cloud package 为 `4 suites / 21 tests` 全绿；四个旧写集均已释放。
+- 父级已在四份固定日志真实 EOF 发布下一波直接实现单，统一领取截止 `06:36`：A 收口完整
+  `AutoCombatPanelService`（允许当前源码已等价时 `NO_CODE_CHANGE`），B 接 `TaskTrackerPanelService`
+  绿字内存处理链，C 接 `SummonSkillService` 静态技能槽分类器，D 接 `PlayerStateService` 补给计划算法与
+  一次性 `CloudPlayerSupplySettings` 快照。四组 Java 写集完全互斥。
+- 本波不写 Design，不启动 caller/host；B 只注入 Cloud `ImageProcessorService`，C 只处理内存图像，D 的
+  settings 不带 owner/revision/TTL。A 只允许既有 typed fact / InputBundle 机械替换，不得扩展 wire/schema。
+- External 任务绝不内部接管；20 分钟只看真实 EOF `CLAIMED`，领取后允许长时间实施。当前批准计数先保持
+  `189/407`，待完整 Service 或可计数同路径链经父级源码审查和 fresh package 收口后再调整。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 第二个直接代码波全部通过 fresh package
+
+- External A 的 NpcClick current-queue identity、B 的 TaskTracker image metadata、C 的 SummonSkill
+  cleanup-result builder、D 的 PlayerState first-aid bar probe 均已在领取窗内领取并交付；父级按 committed
+  `0114604e` 独立抽取完整块，四项 `Exact=True`、定义数均为 1、文件 SHA 与交付一致，全部
+  `APPROVED，P0/P1/P2=0`。D 正确纠正了父级 brief 的近似 6 参描述，严格复制真实 8 参基线方法。
+- 所有 Java writer 稳定后父级 fresh Cloud `mvn -q clean package` exit 0，Surefire
+  `4 suites / 21 tests`、0 failure/error/skipped；shaded JAR `120429334` bytes，写入时间 `06:05:11`。
+  本波未触碰 DHXY Java，故未重复运行 DHXY compile。
+- 四项仍是 private dormant dependency leaves，尚未闭合完整 Service public API/caller/typed local primitive
+  链，approved same-path count 保持 `189/407`。下一轮从真实方法差集优先派可编译的完整算法 cohort；不再为
+  保持并发把 Service 人为切成无意义的一行 helper，也不把本地 transport/window/input 基础设施误迁 Cloud。
+- A/B/C/D 已完成本轮、写集释放；External 任务绝不内部接管。运行面继续 dormant，未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 四个外部纯叶子通过 fresh package，并立即续派下一波
+
+- 父级以 committed `0114604e` 独立源码审查 External A 的 NpcClick metadata cohort、External B 的
+  TaskTracker classifier projection、External C 的 SummonSkill slot-offset metadata、External D 的 PlayerState
+  supply-target helpers；四项完整块均 exact、文件 SHA 与交付一致，结论全部
+  `APPROVED，P0/P1/P2=0`。D 的历史重复锚点已按 append-only 规则在真实物理 EOF 补权威批准副本。
+- 父级在所有 Java writer 稳定后运行 Cloud `mvn -q clean package`，exit 0；Surefire 共
+  `4 suites / 21 tests`，0 failure/error/skipped，shaded JAR 已重新生成。本波未触碰 DHXY Java，故未重复运行
+  DHXY compile。
+- External A/B/C/D 的下一张互斥直接实现单已写入各自固定日志真实 EOF：A 迁 NpcClick 当前队列消息
+  identity check，B 迁 TaskTracker image metadata builder，C 迁 SummonSkill cleanup-result builder，D 迁
+  PlayerState first-aid bar probe。统一领取截止 `06:12`；B/C 已于 `05:53` 领取，A/D 仍在领取窗内。
+- 四刀均为 committed private dormant CPU/value helper，不执行 capture/template/OCR/input，不接 caller，
+  不新增 owner/session/ledger/TTL/retry。完整 Service public/caller/typed-local primitive 链尚未闭合，approved
+  same-path count 保持 `189/407`；运行面继续 dormant。
+- 本地落点维持用户决定：`BagService`、`UICleanerService`、`GiveItemService`、`QuestManagerService`；
+  `TaskTrackerPanelService` 的几何、分割、fingerprint/cache、排序、分类和结果构造继续迁 Cloud。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 与 BR/BS 六份源码通过，四个外部代码波继续
+
+- 父级按 committed `0114604e` 独立逐块复核并批准 External A 的 NpcClick 三个 template-spec 方法、
+  External B 的 TaskTracker expanded-anchor 坐标换算、External C 的 TaskMaintenance first-aid group-hash、
+  External D 的 TeamReturn leader-precheck result，以及 Internal BR 的 SummonSkill tip rect 和 Internal BS 的
+  PlayerState `transferablePng`；六项均 `APPROVED，P0/P1/P2=0`，完整块 exact、文件 SHA 与交付一致。
+- BR/BS 已关闭。External A/B/C/D 的下一张直接实现单已追加到各自固定日志真实 EOF：A 迁 NpcClick
+  metadata cohort，B 迁 TaskTracker classifier projection，C 迁 SummonSkill slot-offset 元数据，D 迁
+  PlayerState 两个 supply-target decision helper；统一领取截止 `05:42`，20 分钟只检查 `CLAIMED`，逾期仅
+  原样重发原 Worker、绝不内部接管。
+- 四份新 Java 写集彼此互斥，只迁 committed 纯 metadata/CPU/result projection，不执行 capture/template/OCR/input，
+  不接 caller，不新增 owner/session/ledger/TTL/retry。完整同名 Service public API、caller 与 typed local primitive
+  链仍未闭合，approved same-path count 保持 `189/407`。
+- 四个外部 Worker 交付稳定后由父级逐项源码审查并统一执行 fresh Cloud `mvn -q clean package`；本轮未触碰
+  DHXY Java，未启动运行面、未做 Git mutation。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 与 BQ 新叶子通过，六路下一波已直接续派
+
+- 父级以 committed `0114604e` 为唯一业务基线，独立逐块批准 External A 的 AutoCombat 五个 timing
+  constants 与 NpcClick `pngBytes`、External B 的 TaskTracker chained-fast result、External D 的 TeamReturn
+  `ReturnButtonNoMatchScan`，以及 Internal BQ 的 PlayerState `isSupplyNeededFromSnapshot`；全部
+  `P0/P1/P2=0`、完整块 exact、文件 SHA 与交付一致。External C 的 Navigation duplicate-source helper
+  在发单前已 exact 存在，父级按 no-op 通过且不重复计成果。
+- BQ 已关闭。Internal BR 在实施前正确发现父级派单把基线返回类型 `int[]` 误写为 `Rectangle`；父级已按
+  committed 源码纠正为 corner tuple，原 BR 继续且此前未改 Java。新 Internal BS
+  `019f5fdc-0c81-7511-953d-9bbd3f57d5f9` 已续派 PlayerState `transferablePng` 内存编码 leaf。
+- External A/B/C/D 的下一张直接实现单已写入各自固定日志真实 EOF：A 迁 NpcClick template-spec metadata，
+  B 迁 TaskTracker expanded-anchor 纯坐标，C 迁 TaskMaintenance first-aid group-hash 内存判定，D 迁
+  TeamReturn leader-precheck result value。20 分钟只检查 `CLAIMED`，逾期仅原样重发原 Worker，绝不内部接管。
+- 当前仍为 partial helper/value 依赖，完整同名 Service/Task public API、caller 与 typed local primitive 链未闭合，
+  approved same-path count 保持 `189/407`。共享 Java 写入稳定前不跑父级 `clean`；未启动运行面、未做
+  Git mutation。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 第二波与 BN 通过，BM 安全撤回，六路代码继续
+
+- 父级以 committed `0114604e` 为唯一业务基线，独立逐字符复核并批准 External A 的 NpcClick
+  tooltip-path、External B 的 TaskTracker 五倍/修罗 title-family、External C 的 TaskMaintenance 双向 identity
+  index、External D 的 AutoBattle dormant retry-policy，以及 Internal BN 的 TeamReturn `pathingText`；全部
+  `P0/P1/P2=0`、完整块 `exact=True`、目标 SHA 与交付一致。BN 已关闭。
+- Internal BM 暴露了真实合同差异：本地 `TaskExecutionContext.taskRunId` 为 `long`，Cloud 为 `String`。父级没有
+  允许擅自 parse 或改变 `<=0` 语义，而是要求 BM 只撤回自己三处未批准增量；撤回后 Cloud compile 通过，
+  `PlayerStateService` 不再含该 helper，原 `P1=1` 以安全撤回关闭且不计成果。BM 已关闭。
+- External A/B/C/D 已在各自固定日志真实 EOF 续派互斥直接实现单：A 迁 NpcClick verification-outcome mapper，
+  B 补 TaskTracker 五环 title value，C 补 TaskMaintenance first-aid participant projection，D 补 AutoBattle 两个
+  polling 常量；领取截止 `04:46/04:47`，20 分钟只检查 `CLAIMED`，逾期只重发原 Worker、绝不内部接管。
+- 两个内部空槽已立即续派：BO `019f5fc0-1591-70b1-bfa7-360a4274127c` 只迁
+  `PlayerStateService.calculateX(...)` 纯 CPU 坐标算法；BP `019f5fc0-298e-7983-95c5-8e9ee07b632d` 只迁
+  `LeftTopStatusSwitchService.resolveState(...)` 纯 score 判定。两者写集与 A/B/C/D 完全互斥。
+- 当前仍是 partial helper/value 依赖，完整同名 Service/Task public API、caller 与 typed local primitive 链未闭合，
+  approved same-path count 保持 `189/407`。共享 Java 写入稳定前不跑父级 `clean`；未启动运行面、未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 与 BK/BL 六份源码通过，六路下一波已续派
+
+- 父级以 committed `0114604e` 为唯一业务基线，独立逐块复核并批准：External A 的 NpcClick
+  scan-rect/terminal/SHA，External B 的 TaskTracker link/band conversion，External C 的 TaskMaintenance
+  key mappers，External D 的 dormant `AutoBattleTask` task identity/budget，Internal BK 的 SummonSkill
+  remaining value types，以及 Internal BL 的 TeamReturn diagnostic helpers；全部 `P0/P1/P2=0`、完整块
+  `exact=True`、目标 SHA 与交付一致，BK/BL 已关闭。
+- External A/B/C/D 已在各自固定日志真实 EOF 收到下一张直接实现单：A 补 NpcClick tooltip-path 纯选择，
+  B 补 TaskTracker 五倍/修罗 title-family 静态元数据与 resolver，C 补 TaskMaintenance 既有 state 的双向身份索引
+  leaf，D 补 dormant AutoBattle retry-policy leaf；领取截止 `04:27/04:28`，20 分钟只检查 `CLAIMED`，
+  逾期只重发原 Worker、绝不内部接管。
+- 两个内部空槽已立即续派：BM `019f5fae-fb80-7921-abd9-a4e7ca7650a5` 只迁
+  `PlayerStateService.taskRunId(...)`；BN `019f5faf-0f7b-7543-b9be-6cf77efac93a` 只迁
+  `TeamReturnService.pathingText(...)`。两者写集与 A/B/C/D 完全互斥，父级仍是唯一 reviewer。
+- 当前仍是 partial CPU/value/metadata 依赖，完整同名 Service/Task public API、caller 与 typed local primitive
+  链未闭合，approved same-path count 保持 `189/407`。Java 连续写入稳定前不跑父级 `clean`；未启动运行面、
+  未做 Git mutation。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 新纯块通过，六路代码任务已续派
+
+- 父级从 committed `0114604e` 独立逐块复核并批准：External A 的 NpcClick outcome/path 五 helper、
+  External B 的 TaskTracker local-failure + 五 value records、External C 的 TaskMaintenance 四 result mapper、
+  External D 的 PlayerState incense/summary/SHA helper，以及 Internal BJ 的 SummonSkill 三 value records；全部
+  `P0/P1/P2=0`、规范化块 exact、目标 SHA 与交付一致，BJ 已关闭。
+- External A/B/C/D 均已在各自固定日志真实 EOF 收到下一张直接实现单：A 迁 NpcClick scan-rect/terminal/SHA，
+  B 迁 TaskTracker 纯 link/band conversion，C 迁 TaskMaintenance 两个纯 key mapper，D 新建 dormant partial
+  `AutoBattleTask` 的 task code/name/budget 三方法；领取截止分别为 `04:13/04:14`，20 分钟只检查 `CLAIMED`，
+  逾期只重发原 Worker、绝不内部接管。
+- Internal BK `019f5fa0-ef31-75d0-9b90-0fd46827bc1a` 正迁 SummonSkill 剩余两个 value records；Internal BL
+  `019f5fa3-01dc-7701-8c5c-dfb3fb9dda9b` 正迁 TeamReturn 三个纯 diagnostic/geometry helper。两内部写集与
+  A/B/C/D 完全互斥；父级仍是唯一 reviewer。
+- 当前只完成 partial CPU/value 依赖，完整同名 Service/Task public API、caller 与 typed local primitive 链未闭合，
+  approved same-path count 保持 `189/407`。Java 并行写入稳定前不跑父级 `clean`；未启动运行面、未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 六个 Service 纯块续波父级通过并持续直派
+
+- 父级按 committed `0114604e` 独立逐块复核并批准：Navigation request/cleanup gates，TaskMaintenance
+  remaining state 与 no-action/key helpers，NpcClick window geometry，TaskTracker 绿字/五环分段及 image/text helpers，
+  PlayerState bar-pixel sampling，SummonSkill color-distance/slot-geometry/payload-text，另含 BattleRadar state core 与
+  PlayerRuntimeState；全部 `P0/P1/P2=0`、SHA 与 Worker 交付一致。完成的 Internal BD/BE/BF/BG/BH/BI 均已关闭。
+- External A 已领取 `W-NPCCLICK-OUTCOME-PATH-CPU-IMP1`；其首次误用当前工作树 grep 判两个基线方法不存在，
+  父级已在固定日志给出 `git show 0114604e:.../NpcClickService.java` 的 `1090/1131` 行证据并要求原 A 继续，
+  不内部接管。External B/C/D 分别续派 TaskTracker value records、TaskMaintenance result mappers、PlayerState
+  summary helpers；20 分钟门只检查 `CLAIMED`。
+- Internal BJ `019f5f93-e4cf-73d3-8b98-ccd787092af3` 正直接实施 SummonSkill 三个 baseline value records，
+  写集与 A/B/C/D 完全互斥；父级保持第二内部槽只用于新的互斥实质切片，不为凑并发制造跨文件适配。
+- 当前同名 Service 的 public API、caller 与 typed local primitive 链仍未全部闭合，approved same-path count 诚实保持
+  `189/407`；共享 Java 连续写入稳定前不跑并发 `clean`。未启动 application/server/host/Task/poller/UI/capture/input，
+  未做 Git mutation。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A/D 与 BB/BC 源码通过，六路立即续派
+
+- 父级独立逐类型比较 committed `0114604e` 与当前 Cloud：A 的八个 Navigation route model、D 的
+  `AutoCombatRuntimeState`、Internal BB 的四个 NpcClick result model、Internal BC 的三个 PlayerState record
+  全部 `exact=True`，文件 SHA 与交付一致，四项均 `APPROVED，P0/P1/P2=0`；BB/BC 已关闭。
+- External A 已收到 `W-NAVIGATION-RUNTIME-STATE-TYPE-IMP1`，只迁
+  `DEFAULT_LOGICAL_COORDINATE + NavigationRuntimeState`；External D 已收到
+  `W-AUTOCOMBAT-PURE-GATES-CPU-IMP1`，只迁 `isMemberReadOnlyDegrade/shouldDeferFollowerFirstAid`；领取截止
+  均为 `03:19`。External B 已领取 TaskTracker 绿字分割纯 CPU 内核；External C 的 summon state type 单
+  领取截止 `03:15`，逾期只重发 C、不内部接管。
+- 两个新内部槽已续派：BD `019f5f6c-e535-7613-ad5c-b434b892d354` 新建 Cloud
+  `BattleRadarService` 的 baseline exit-signal state core；BE `019f5f6d-3107-7852-aac3-eb4012571c72` 迁
+  `PlayerRuntimeState`。两者与 A/B/C/D 写集完全互斥，父级仍是唯一 reviewer。
+- 当前同名 Service public 调用链尚未闭合，approved same-path count 保持 `189/407`；共享 Java 仍在并行写入，
+  稳定前不跑并发 `clean`。未启动 application/server/host/Task/poller/UI/capture/input，未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 A-D 与 BB/BC 六路直接实现已发单
+
+- External A/B/C/D 已在各自固定日志真实 EOF 收到互不重叠的直接实现单：A 迁 Navigation 八个路线
+  nested model，B 迁 TaskTracker 绿色文字分割纯 CPU 内核，C 迁 TaskMaintenance post-combat first-aid
+  queue 两个基线状态类型，D 迁 AutoCombat 原有 runtime state 形状。领取截止分别为 `03:05`，D 因旧日志
+  重复锚点改为 TRUE EOF `03:10`；20 分钟只检查 `CLAIMED`，领取后可持续实施，绝不内部接管。
+- Internal BB `019f5f61-33f5-72b0-9329-b769fcd57788` 已领取 NpcClick 四个结果模型；Internal BC
+  `019f5f61-47d4-7bd2-95a5-9a1fd85a890b` 已领取 PlayerState 三个 remaining first-aid model。两者写集与
+  A/B/C/D 完全互斥，父级是唯一 reviewer。
+- 上一波 Navigation ROI、TaskTracker rect parser、TaskMaintenance session-attach、AutoCombat first-aid
+  mapper、PlayerState probe models 与 NpcClick request DTO 均已父级 `SOURCE APPROVED，P0/P1/P2=0`；本波
+  Java 尚在并行写入，稳定前不跑并发 `clean`。approved same-path count 暂保持 `189/407`。
+- 未启动 application/server/host/Task/poller/UI/capture/input，未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 TeamReturn leader 与 TaskTracker rect 续波通过 fresh 双仓门
+
+- External A/B/C/D 均在固定日志真实 EOF 领取并交付：A 补 Cloud
+  `TeamReturnService.isReturnTeamSignalPresent()`，B 同步两个 WINDOW_FACT 协议合同，C 将 TaskTracker
+  `imageOriginWindow` 收紧为 typed `Point`，D 接通 DHXY `TASK_TRACKER_PANEL_RECT` enum/handler。
+- 父级逐项源码/协议复核均为 `APPROVED，P0/P1/P2=0`。TeamReturn leader 只做一次 closed fact 读取；
+  TaskTracker 本地只做 exact-window 单 capture/单 template match 并上报 window-client rect，算法仍在 Cloud。
+- 父级 fresh Cloud `mvn -q clean package` exit 0，4 suites / 21 tests，0 failures/errors/skipped，shaded JAR
+  已生成；fresh DHXY `mvn -q -DskipTests compile` exit 0。运行面仍 dormant，未启动 host/Task/UI/capture/input。
+- TeamReturn 与 TaskTracker 同名 Service 仍有后续 public cohort/typed capture-drag 调用链未闭合，因此 approved
+  same-path count 诚实保持 `189/407`，不把基础 wire 或部分方法提前计作整类迁移完成。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 TeamReturn leader wire 与 TaskTracker rect typed 链源码通过
+
+- TeamReturn leader 的 Cloud closed fact、DHXY mirror/handler 与 exact-window `zhao.png` mechanics 已全部经父级
+  源码审查 `APPROVED，P0/P1/P2=0`；Cloud `TeamReturnService.probeMemberReturnMarker(...)` 首刀仍保持通过。
+- TaskTracker Cloud typed request 首刀、DHXY exact-window panel-rect mechanics、DHXY mirror DTO 与 Cloud sealed
+  `TASK_TRACKER_PANEL_RECT` fact 均已父级 `SOURCE APPROVED，P0/P1/P2=0`。本地只做单 capture/单 template
+  match 并返回六态；Cloud 继续拥有 panel/detail、分割、排序、OCR 与结果算法。
+- External A/B/C/D 已在各自固定日志真实 EOF 收到新直接实施单：A 补 Cloud leader public probe，B 同步
+  WINDOW_FACT 协议文档，C 把 TaskTracker origin 从 raw String 改为 typed Point，D 接 DHXY rect enum/handler。
+  领取截止分别为 `01:13`，A 因旧日志锚点纠正以 `01:15` TRUE EOF copy 为准；20 分钟只检查 CLAIMED。
+- Internal AU/AV/AW/AX 均已父级审查通过并关闭；当前共享 Java 仍可能被 A/C/D 写入，故父级 fresh DHXY compile
+  与 Cloud clean package 等四外部交付稳定后统一执行。approved same-path count 暂保持 `189/407`，不提前计数。
+- 未启动 application/server/host/Task/poller/UI/capture/input，未做 Git mutation。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-14 / CR271 TeamReturn 按钮 fact 最终通过，六路直接实现均已领取
+
+- `TEAM_RETURN_BUTTON` exact-window 本地 mechanics、Cloud/DHXY closed fact、handler 与 schema 已经父级
+  `FINAL APPROVED，P0/P1/P2=0`；fresh DHXY `mvn -q -DskipTests compile` exit 0，fresh Cloud
+  `mvn -q clean package` exit 0，4 suites / 21 tests 全绿，运行面仍 dormant。
+- External A 的 Cloud `TeamReturnService.probeMemberReturnMarker(...)` 首刀已交付并经父级源码
+  `APPROVED，P0/P1/P2=0`；每次 idle tick 在前一 final-consumed occurrence 后取得新的 typed fact，失败与中断
+  均保持 `UNKNOWN`，不会折成业务 `ABSENT`。整波 fresh package 等 leader 依赖稳定后统一执行。
+- External B/C/D 已在 20 分钟领取窗内分别领取 leader closed Cloud fact、DHXY mirror/handler 与 exact-window
+  `zhao.png` 本地观察 mechanics；External A/B/C/D 任务均不由内部接管。
+- Internal AU/AV 已领取两个与外部写集互斥的 TaskTracker 直接实现：AU 把 Cloud 算法入口改为一次
+  `JsonNode -> typed request` 翻译，AV 新增 exact-window 面板锚点/矩形只读 mechanics。父级是唯一 reviewer，
+  谁先交付谁先审，不新增 reviewer agent。
+- approved same-path count 仍为 `189/407`；TeamReturn 同名 Service 其余 public cohort 与 TaskTracker typed
+  capture/drag 链未闭合前不提前计数。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 TaskTracker 首刀通过，TeamReturn 按钮 fact 四外部并行
+
+- Internal AT 已将 Cloud `DecisionEngine` 的 `TRACKER_PANEL_READER` 全部算法等价抽入新的
+  `com.yueyunfe.dhxy.cloudbrain.TaskTrackerPanelService`；router 只剩单次委派。父级 Repair #1 复核
+  `P0/P1/P2=0`，fresh Cloud `mvn -q clean package` exit 0，4 suites / 21 tests 全绿；AT 已关闭。
+- 该首刀只完成 Cloud 算法单一所有权，exact-window typed capture/tracker drag 共享端口尚未闭合，因此批准计数
+  仍为 `189/407`，不得把算法复制回 DHXY adapter。
+- External A/B/C/D 已在各自固定日志真实 EOF 收到直接实施单：A 新建 exact-window 返队按钮本地观察 mechanics；
+  B 扩展 Cloud `TEAM_RETURN_BUTTON` closed fact；C 扩展 DHXY fact/handler 投影；D 同步 schema。四份写集互斥，
+  均禁止 owner/session/ledger/TTL/retry，统一领取截止 `2026-07-14T00:13:54-04:00`。20 分钟只检查
+  `CLAIMED`，领取后允许持续实施；逾期只原样重发同一外部 Worker，绝不内部接管。
+- 本轮未启动 host/application/Task/UI/capture/input。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 用户确定 TaskTrackerPanel 与 QuestManager 落点
+
+- `TaskTrackerPanelService` 必须迁 Cloud。用户指出该类不只是图片匹配：面板/详情几何、绿链像素分割、指纹与
+  cache 命中、候选排序、任务分类和结果组织均是实质算法。Cloud 保持 committed `0114604e` 的 public API、调用
+  顺序、阈值、cache/fallback 与返回形状；DHXY 只留 exact-window capture、本地 template/OCR 原语、tracker
+  拖拽/InputBundle 和 closed typed observation transport。
+- `QuestManagerService` 永久留 DHXY。本类只按 Cloud 调用方给定的任务名打开 exact task panel、做模板/高亮
+  匹配、滚动/固定点击、详情截图并返回结果，不负责选择任务 phase、优先级或跨 Service 业务策略。
+- “输入来自截图”本身不能决定本地归属；要看类内是否存在候选选择、缓存策略、分类与结果算法。本轮只固化
+  架构决定，未改 Java、未启动 runtime，批准计数保持 `189/407`。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 用户冻结 BagService 与 UICleanerService 留本地
+
+- 用户明确决定真实 `BagService` 与 `UICleanerService` 永久留在 DHXY 本地；Cloud 不创建它们的业务副本。
+  本波只新增共享 closed `LOCAL_MACRO/BAG_RETURN_ITEM`，让 Cloud 原样保留 `ReturnItemPrescanService` 的策略、
+  时序和 fallback，本地 `BagService` 在单一输入队列中执行 committed 的 capture/template/input 交错步骤。
+- 用户进一步决定 `GiveItemService` 永久留 DHXY 本地。committed `0114604e` 只有
+  `DialogService` 在既有 input-worker 独占段内调用 `executeGiveDirectForExclusive(...)`；本地继续完成 Bag 选物、
+  “给予”按钮模板匹配和固定点击。当前不另建同名 Cloud Service，也不拆出独立 `GIVE_ITEM` 网络命令；以后迁
+  `DialogService` 时由其 closed 本地宏保持这一整段调用和结果，避免多一次网络往返或打断独占输入。
+- 首批只覆盖基线真正需要的三项 API：任务页预扫、从后往前预扫、使用已缓存点。普通公共
+  scope/window/taskRun/runRevision fence、stable request/action identity 与 terminal outcome 继续复用；明确禁止
+  Bag 专属 owner/permit/session/ledger/TTL/auto-retry，也不恢复旧 RX3。
+- External A/B/C/D 分别负责 Cloud closed types、DHXY wire/strict codec、本地 Bag mechanics+handler、schema；
+  Internal AO/AP 分别负责 Cloud 通用 plumbing 与直接使用 typed macro 的 `ReturnItemPrescanService`。六块写集互不重叠，
+  均直接实现、不写 Design #N；外部领取截止 `2026-07-13T21:53:00-04:00`。
+- 今后遇到一个 Service 既可留本地也可迁云，父级必须先列两种落点及影响并向用户确认，不得自行选择。
+- 用户补充冻结判据：纯“绑定窗口观察 -> 图片/模板/OCR 匹配 -> 固定输入 -> typed result”的闭合机械 Service
+  可以留本地；一旦包含任务阶段、业务策略、跨 Service 编排或业务 retry/fallback 决策，就应迁 Cloud。固定 UI
+  操作 delay、输入安全和失败清理属于本地 mechanics，不等于业务脑子；边界不清仍须先问用户。
+- 父级已复核 B Repair #2：DHXY all-terminal strict codec 与 Cloud parser 均只接受
+  `EXECUTED/NOT_EXECUTED/STOPPED/UNKNOWN`，`OBSERVED/null` 在摘要前拒绝；exact 四键、closed
+  `BAG_RETURN_ITEM`、non-EXECUTED 显式 null、EXECUTED typed matrix 与 canonical tree 全部一致。
+- 父级 fresh DHXY `mvn -q -DskipTests compile` exit 0；fresh Cloud `mvn -q clean package` exit 0，
+  4 suites / 21 tests，0 failures/errors/skipped，新的 shaded JAR 已生成。Bag return-item local-macro 波次
+  `FINAL APPROVED，P0/P1/P2=0`，批准计数由 `188/407` 增至 `189/407`；运行面仍 dormant。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 CommonBoxService 直接迁云通过双仓门禁
+
+- `CommonBoxService` 已以 committed `0114604e` 为业务权威迁入 Cloud；五个 public API、角色开关、异步探测边界、
+  pending 的 30 秒 TTL、窗口/身份/taskRun 陈旧闸、消费成功后清理与失败保留语义均保持不变。Cloud 只用 closed
+  `COMMON_BOX` fact 读取一次本地 ROI/template 结果，并在原消费点发送原 80/120 delay 的 move+click bundle。
+- DHXY 新路径只读：`CommonBoxLocalObservationMechanics` 对 exact HWND 做一次 fixed ROI/template 匹配，handler
+  只映射五态和 client->screen 坐标，绝不点击；transport `UNKNOWN`、capture/template/mechanics failure 均不会伪装成
+  业务 `NOT_MATCHED`。截图、模板和实际点击仍由本地能力及单一输入队列执行。
+- 父级源码与协议审查均为 `APPROVED，P0/P1/P2=0`。fresh DHXY `mvn -q -DskipTests compile` exit 0；fresh
+  Cloud `mvn -q clean package` exit 0，4 suites / 21 tests，0 failures/errors/skipped，shaded JAR 已重新生成。
+- 父级批准同路径计数由 `187/407` 增至 `188/407`；磁盘机械存在为 `198/407`，另 10 个暂停/未批准在途件继续
+  保护且不计完成。下一关键依赖为 `BagService`：只补一个共享 closed local-macro 通道，不恢复逐 Service
+  owner/permit/ledger，也不再写多轮 Design。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 首批两个 Service 直接迁云通过双仓门禁
+
+- `LeftTopStatusSwitchService` 与 `AutoCombatPanelService` 已按 committed `0114604e` 原样迁入 Cloud；业务条件、
+  调用顺序、delay、fallback 与返回形状不变。Cloud 只通过 `CloudGameClient` 读取 closed typed fact，并用
+  `InputSequences` 一次发送原顺序 `InputBundle`；截图/模板匹配和实际输入仍留 DHXY。
+- 双端已具备 `LEFT_TOP_STATUS` 与 `AUTO_COMBAT_PANEL` typed fact。后者仅传状态和屏幕绝对坐标，不传图片、
+  模板、路径或 HWND；transport `UNKNOWN/NOT_EXECUTED` 不会伪装成视觉 `NOT_FOUND` 后触发额外输入。
+- 父级源码审查均为 `APPROVED，P0/P1/P2=0`。fresh DHXY `mvn -q -DskipTests compile` exit 0；fresh Cloud
+  `mvn -q clean package` exit 0，4 suites / 21 tests，0 failures/errors/skipped，shaded JAR 已生成。
+- 父级批准口径由 `185/407` 增至 `187/407`。磁盘机械扫描当前同路径实际为 `197/407`，多出的 10 个属于此前
+  暂停或尚未批准的在途源码，继续保护并分类，不能计作已完成迁移。下一波继续直接迁 Service，不写 Design #N。
+  **无已批准业务差异；按 `0114604e` 基线等价迁移。**
+- RX3 停止后的文件级分类已父级 `APPROVED`：37 个文件闭合，7 个纯 generic-exclusive 新文件标为
+  `OBSOLETE_BY_SIMPLIFICATION`，30 个 mixed files 标为 `PREEXISTING_OR_UNCERTAIN`。当前只禁止后续 Service
+  依赖前述 7 文件；不删除、不回滚 mixed files 中仍在使用的错窗门、stable identity、ordinary fact/capture/bundle、
+  digest/dedupe/terminal 与单 input queue。
+
+## 2026-07-13 / CR271 输入盘点收口，首批共享代码直接实施
+
+- External A/B/D 的输入清单已由父级逐项复核并 `APPROVED`；A 补全 Navigation world-map 宏内
+  `pressCtrlA/pressEnter`，B 更正 `moveAndClickLeft` 原子性，D 明确 FiveRing 鞋店流是 Cloud 编排中的三个
+  独立 bundle，不新造本地宏。External C 首轮超过 20 分钟未 `CLAIMED`，已在原固定日志记录
+  `UNCLAIMED` 并原样重发给 C，绝不内部接管。
+- Internal AG/AH 的 20 个 Service 依赖盘点已父级 `APPROVED WITH OWNERSHIP CORRECTION`：报告中的
+  `LOCAL_RESIDENT` 只表示机械能力留 DHXY；除用户明确保留的 UICleaner、continuous watcher、窗口身份/绑定、
+  宿主电源外，Service 业务 facade 与调用形状仍迁 Cloud。
+- Internal AI 已收到 `W-GCF-IMP1`，直接实现共享 `CloudGameClient` facade，隐藏 opaque handle/identity，
+  不新增 Service 专属状态机；Internal AJ 已收到 `W-LTS-FACT-IMP1`，直接把左上状态本地截图/模板判断接成
+  closed typed `WINDOW_FACT`，只读不点击。两者写集互不重叠，均不写 Design #N。
+- 下一门：AI/AJ 交付后父级源码审查，统一运行 DHXY compile 与 Cloud clean package；随后直接迁
+  `LeftTopStatusSwitchService` Cloud 业务 facade。**无已批准业务差异；按 `0114604e` 基线等价迁移。**
+
+## 2026-07-13 / CR271 用户确认简化为 Service 原样迁云 + InputBundle
+
+- 用户确认 Service 之间的调用、判断、时序全部原封不动；Cloud 只在原代码要点击/按键的位置向 DHXY 发一次结构化
+  `InputBundle`。本地永久保留窗口绑定、截图、模板/OCR、watcher、dialog/pathing/movement/battle observation、
+  UICleaner、单一输入队列和安全执行。
+- 停止继续构造逐 Service owner/permit/ledger、parent/child action、compaction 与多轮纸面 Design。Internal AB 的
+  RX3 已停止且不清理/回滚在途源码；A/B/C/D 原复杂任务均取消，改做 19 个真实输入调用点的机械清单。
+- 原子边界只有两类：纯输入序列整体发一个 bundle；按键期间必须截图/匹配的序列整体留成本地宏操作。其余
+  Task/Service 按 committed `0114604e` 直接复制和依赖顺序迁移。
+- 新执行计划：`docs/superpowers/plans/2026-07-13-direct-service-input-bundle-migration.md`。当前不启动 runtime，
+  不删除既有代码，不在共享 Java 写入未稳定时运行 `mvn clean`。**无已批准业务差异；按基线等价迁移。**
+- External C 的旧 Bag 日志含非 UTF-8 历史字节，未做破坏性转码；其简化任务改用固定 UTF-8 日志
+  `docs/superpowers/plans/reports/2026-07-13-input-bundle-worker-c.md`。
+- 父级已直接扫描 committed `0114604e` 的全部 Service/Task `InputAction.*` 调用：实际只使用
+  `clickLeft`、`clickRight`、`dragAndDrop`、`moveMouse`、`pressAlt1`、`pressAlt4`、`pressAlt8`、
+  `pressAltA`、`pressAltC`、`pressAltQ`、`scrollDown`、`sleep` 共 12 种；当前
+  `RemoteInputActionType` 与 `RemoteInputActionMapper` 已全部覆盖，**当前基线无需新增任何按键协议类型**。
+
+## 2026-07-13 / CR271 四外部源码通过并立即续派，AB/AE 继续内部并行
+
+- External A 的 NpcClick 输入侧 6 个 closed enum 已两仓逐字/SHA 镜像复核并 `SOURCE APPROVED`；结果矩阵
+  D2 同时通过，已发布 `W-NPC-ENUM-IMP1B`，只落两仓 4 个结果 enum，明确 Ctrl terminal 恰 4 值且
+  pre-side-effect capture/template failure 为 `NOT_EXECUTED + null terminal`，不制造 `NO_MENU`。
+- External B 的 `LeaderPrecheckAction` 单文件已逐行及完整 SHA 复核，`SOURCE APPROVED`；当前
+  `W-TEAMRETURN-CHILD-D1` 只锚定 AB 最终 retained API 补 BEGIN/CONSUME child derivation Delta，Java冻结，避免
+  与 RX3 共享文件冲突。
+- External C Bag R5 与 External D ReturnItemPrescan R3 的两个 dormant state-core 均已父级
+  `SOURCE APPROVED，P0/P1/P2=0`；C/D 已分别收到 assembly/construction/settlement 接线设计任务，领取截止约
+  `19:24`，逾期只重发原 Worker、绝不内部接管。
+- Internal AE 已落 `CommonBoxLocalObservationMechanics` 单文件，父级正在等待其 D3 与正式交付；Internal AB 继续
+  RX3 竞态/wire-digest 审计及最终双构建。共享 Java 未正式稳定，故本轮不并发 Maven。当前同路径仍
+  `185/407`，所有运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/B 独立类型落码，C/D state-core 权威返修
+
+- External A 的 NpcClick timing leaf 已父级 `SOURCE APPROVED`。closed-type Delta 只部分放行：
+  `CtrlScanRectKind`、`NpcCtrlMenuTagSet`、`NpcVerifyMode` 两仓 6 New 可立即实施；结果 enum 仍因丢失
+  `DIALOG_OPEN_UNVERIFIED`、发明不可证明的 `NO_MENU`，以及 list/combat resource-key/null 矩阵错误而
+  `BLOCKED，P1=2/P2=1`。A 当前 `W-NPC-ENUM-IMP1A+D2` 兼做六文件实施与结果矩阵返修，领取截止 `19:01:35`。
+- External B 的 TeamReturn D28 已父级 `DESIGN APPROVED，P0/P1/P2=0`。两仓 4 个
+  `LeaderPrecheckSource/Disposition` enum 已逐文件镜像复核并 `SOURCE APPROVED`；B 当前
+  `W-TEAMRETURN-PARENT-IMP1` 只新建 Cloud `LeaderPrecheckAction` 单文件，领取截止 `19:04:48`，双构建待 AB 稳定。
+- External C 的 Bag R3 仍暴露 public owner factory、可互换空 permit、无 final-consumed proof 的 pending clear 与
+  foreign observation handle；父级 `BLOCKED，P1=4/P2=1`，C 已于 `18:44` CLAIMED R4，只改自己的两个 state-core 文件。
+- External D 的 ReturnItemPrescan R1 仍以 caller-mintable binding/resolution/enum 充当 terminal/final proof，且 owner 可重复
+  构造；父级 `BLOCKED，P1=3/P2=1`，D 已于 `18:40:07` CLAIMED R2，只改自己的两个 state-core 文件。
+- Internal AE 的 CommonBox 集成设计被父级 `BLOCKED，P1=4/P2=2`，已领取 D2；Internal AB 仍在 RX3 双仓实施，父级已要求
+  在真实 EOF 补 progress 与剩余缺口。共享 Java 未正式稳定，故本轮不并发 Maven。当前同路径仍 `185/407`，所有运行面
+  dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 四外部切片最新复审，AB/AE 双内部流水线并行
+
+- External A 的 NpcClick D8 已闭合完整 receipt correlation、两阶段 delivered lease、legacy/retained隔离、真实 codec表与
+  全部 HEAD timing；父级 `DESIGN APPROVED`。`W-NPC-0-IMP1` 单文件 timing leaf已交付并经父级
+  `SOURCE APPROVED，P0/P1/P2=0`，统一 Maven门待 AB稳定。A 当前 `W-NPC-ENUM-D1` 只在日志冻结下一批 closed enum/DTO，
+  领取截止 `18:36`，Java冻结。
+- External B 的 TeamReturn D27 已修正 business occurrence、cleanup/final 分离、nested handle visibility 与 cap 镜像；但
+  一个 `ActionHandle` 无法绑定 BEGIN/CONSUME 两份 immutable request，已绑定 UNKNOWN 也不能在 resume 后铸 successor，且
+  sealed UNKNOWN 与 late-final 入口互相矛盾。父级 `BLOCKED，P1=3/P2=0`，当前 `W-TEAMRETURN-MOUNT-D28` 只补设计
+  Delta，领取截止 `18:26`，Java冻结。
+- External C 的 Bag R2 已修 stale revision/raw slot，但源码仍公开接 caller-mintable scope/window，final-consumption proof
+  只做 `instanceof` 且 finish无 proof；BOUND_BASE/teardown package-private mint又与 `.remote` assembly跨包断裂，public record
+  仍可直接构造 CUSTOM layout。父级 `BLOCKED，P1=4/P2=2`，当前 `W-BAG-C0-IMP1-R3` 只改 C 自己两文件，
+  领取截止 `18:34`。
+- External D 的 ReturnItemPrescan D3 已关闭 raw identity、stale completion、caller-selected strategy/random/clock、
+  template traversal 与 closed resolution matrix；父级绑定固定 `1000/64` 容量及 run-handle+terminal-binding 清理后
+  `DESIGN APPROVED，P0/P1/P2=0`。当前 `W-RIPS-C0-IMP-A` 只新建两个 dormant Cloud state-core 文件，领取截止
+  `18:20`，不得并发 Maven clean。
+- Internal AB 继续 `W-TTR-RX3-IMP1` 双仓实施；Internal AE 已 CLAIMED `W-CBOX-1-D1`，只设计 CommonBox 主体集成。
+  AB 共享 Java 连续写入稳定前不并发 `mvn clean`。当前同路径仍 `185/407`，运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 四外部槽均有交付，A/B/D 续返修，C 源码定点修复
+
+- A 的 NpcClick D5 已通过固定 timing、common-state/digest 与 Ctrl terminal matrix；仍因 fingerprint 被放进 map key、
+  delivered candidate 未接真实 final-consumed transaction、package-private root core 无法注入 `.remote` assembly 而
+  `BLOCKED，P1=3/P2=1`，当前 `W-NPC-D6` 只补日志 Delta，领取截止 `17:51:09`。
+- B 的 TeamReturn D24 已通过 post-I/O loser cleanup、sealed UNKNOWN 与 canonical digest；parent identity 仍由本地
+  BEGIN 事后铸造却要求 Cloud 事前引用，且缺完整 window/revision、CHECKED_OUT terminal CAS 与 opaque retained port。
+  父级 `BLOCKED，P1=4/P2=1`，当前 `W-TEAMRETURN-MOUNT-D25` 只补日志 Delta，领取截止 `17:51:09`。
+- C 已交两个 Bag state-core 源码；父级源码审查发现 raw string action mint、pending handle 覆盖/无 expected-clear、
+  跨 revision cursor 无 flow generation 三项 P1，另有 unbounded key 与 numeric atomicity 两项 P2。当前
+  `W-BAG-C0-IMP1-R1` 只改 C 自己两个 New 文件，领取截止 `17:47:34`，AB 未稳定前不跑 clean。
+- D 已交 ReturnItemPrescan Design #1；inventory/容量方向正确，但两文件直接引用 `.remote` package-private 类型无法编译，
+  又缺 per-attempt handle、误在 background downgrade 后新增 return、把 random/clock 交 caller并保留两种待定 mechanics。
+  父级 `BLOCKED，P1=5/P2=1`，当前 `W-RIPS-C0-D2` 只补设计 Delta，领取截止 `17:51:09`。
+  Internal AB 继续 RX3；当前同路径仍 `185/407`，运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 NpcClick D4、TeamReturn D23 父级复审；C/D 均已领取
+
+- External A 的 `W-NPC-D4` 已闭合 Ctrl whole-probe 原子边界与 generation-specific sessionId，但仍把 HEAD
+  固定 input timing 作为 Cloud request 参数；当前 queue 的 START 会 `put` 覆盖活 session、poll 又破坏性 dequeue，
+  所以 stable candidate/重投不成立。七个 public raw queue DTO/facade 还会绕过 retained context，common-state 与
+  digest 也误按 record 字段顺序建模。父级 `BLOCKED，P0=0/P1=4/P2=1`，已在真实 EOF 发布 `W-NPC-D5`，
+  领取截止 `17:39:52`，Java冻结。
+- External B 的 `W-TEAMRETURN-MOUNT-D23` 已保存 Live+Settled 并采用 PENDING owner，但 BEGIN/CONSUME 的不同
+  child identity 没有共享 parent operation key；terminal 可在 mechanics reserve 前空释放、in-flight begin 随后仍制造
+  orphan；poll 异常后的 ledger UNKNOWN duplicate 也不会重新 poll，digest 同样误写成业务字段序列。父级
+  `BLOCKED，P0=0/P1=4/P2=1`，已在真实 EOF 权威重发 `W-TEAMRETURN-MOUNT-D24`，领取截止 `17:39:52`，
+  Java冻结。
+- External C 已于 `17:12:51` CLAIMED `W-BAG-C0-IMP1`，只新建两个 Cloud Bag state-core 文件；External D 已于
+  `17:15:41` CLAIMED `W-RIPS-C0-D1`，只写 ReturnItemPrescan state/owner Design #1。两者均在 `17:27`
+  截止前领取，可工作超过 20 分钟。Internal AB 继续 RX3 双仓实施；共享 Java 稳定前不并发 `mvn clean`。
+  当前同路径仍 `185/407`，全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 外部并发扩为 A/B/C/D，C/D 独立写集已发布
+
+- 为避免 RX3 的 `remote/broker/ledger/input queue` 共享写集成为唯一吞吐瓶颈，父级新增两个**用户侧外部实现 Worker**任务，
+  不创建线程、不挪用 A/B 任务：External C 领取 `W-BAG-C0-IMP1`，只新建 Cloud
+  `CloudBagStateOwner.java` 与 `BagWorkflowState.java`；External D 领取 `W-RIPS-C0-D1`，只在独立日志闭合
+  ReturnItemPrescan state/owner 的 implementation-ready 设计，父级批准前零 Java。
+- C/D 固定日志分别为 `2026-07-13-cloud-bag-state-owner-worker-c.md` 与
+  `2026-07-13-cloud-return-item-prescan-state-worker-d.md`；均于 `17:07` 发布，领取截止 `17:27`。20 分钟只检查
+  真实 EOF 的 `CLAIMED`，领取后可工作超过 20 分钟；未领取只重发给原 C/D，不由内部 Worker 接管。
+- A 的 NpcClick、B 的 TeamReturn、AB 的 RX3 与 C/D 写集互不重叠。AB 连续写共享 Java 期间不并发 `mvn clean`；
+  C 的 Java 源码交付与 D 的设计材料均由父级独立审查，最终仍以独占 Cloud package / 适用 DHXY compile 收口。
+  当前同路径仍 `185/407`，全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 TeamReturn D22 父级复审，B 转 D23；A 已领取 D4
+
+- External B 已在领取窗内交付 `W-TEAMRETURN-MOUNT-D22`。BEGIN/CONSUME 与 package-private handle owner 方向成立，
+  但 D22 把 baseline 的 immediate Settled handle（尤其 `capture-failed`）提前在 BEGIN 终结并跳过 CONSUME；owner 又是
+  先启动 mechanics 再 retain，容量/terminal 竞态会留下无法单独取消的 live handle。父级
+  `BLOCKED，P0=0/P1=4/P2=1`，B 当前 `W-TEAMRETURN-MOUNT-D23` 只补日志 Delta，领取截止 `17:13`，Java冻结。
+- 两仓 outcome envelope 均要求 payload 始终为 object，D22 的 null payload matrix 非法；Cloud sealed
+  request/outcome/permits、gate/executor/service port/assembly 与 DHXY strict codec/digest/handler/schema 的真实接线仍未闭合。
+  duplicate exact replay应完全归现有 `RemoteOperationLedger`，本地 handle owner只供 OWNER claim 使用，禁止第二 ledger。
+- External A 已于 `16:53:14` 在窗内 CLAIMED `W-NPC-D4`。Internal AB 继续 RX3 双仓实施；Internal AC 已交 GiveItem
+  D3 closed fact/file table，待父级源码复审。共享 Java 连续写入稳定前不运行 Maven；当前同路径仍 `185/407`，全部运行面
+  dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 NpcClick D3 父级复审，A 转 D4；B 仍在领取窗
+
+- External A 的 `W-NPC-D3` 已按时领取并交 Design Repair #2。Ctrl 三分拆与零新 wire 声明虽已撤回，但
+  `CTRL_MENU_PROBE` 仍在 click 后释放 Ctrl/RX3 再运行 verifier，且没有确认一个 cloud probe candidate 的全部 local
+  small-ring offsets 共用同一 exclusive；两个新 operation 的 common/payload 状态矩阵、closed resource keys、strict
+  parser/digest/file table 仍推迟到实施期。父级 `BLOCKED，P0=0/P1=4/P2=1`，A 当前 `W-NPC-D4` 只做日志 Delta，
+  领取截止 `17:07`，Java冻结。
+- Cloud typed facade 还没有接入现有 `CloudBrainServer -> RemoteTaskRunRoutes -> CloudTaskRunAuthorityAssembly` 唯一
+  object graph；当前 queue 仅按 `sessionId` 索引，D3 让同一 sessionId 跨 story generation 复用，会使旧 terminal 删除新
+  session。`candidateId` 在现有 `SmartClickRecognizer.Result` 中也不存在，须由唯一 push/delivery owner 明确定义。
+- External B 的 `W-TEAMRETURN-MOUNT-D22` 截止仍为 `16:54`，本轮处在合法领取窗内，不提前记 UNCLAIMED；External A/B
+  任务绝不由内部 Worker 接管。Internal AB 已于 `16:40:51` 恢复并 CLAIMED RX3 实施，Internal AC 尚无 D3 新材料；共享
+  Java 稳定前不运行并发 Maven。当前同路径仍 `185/407`，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A-D2 与 B-D21 父级复审，双路原 Worker 定点返修
+
+- External A 已按时领取并交 NpcClick Design Repair #1。session-wide exclusive 已撤回、10 类机械动作与权威 baseline rows
+  已补齐；但 committed Ctrl probe 的一次 `submitExclusiveAndWait` 仍被拆成 hover/capture/click 三条 command，且“本地
+  template/OCR/verifier”与“零新 wire”冲突，Cloud package-private FIFO engine 也没有可编译 typed facade。父级
+  `BLOCKED，P0=0/P1=3/P2=1`；A 当前 `W-NPC-D3` 只补日志 Delta，领取截止 `16:55`，Java冻结。
+- External B 已在真实 EOF 重发窗内领取并交 TeamReturn mount D21。父级确认 RX3 先行和 closed operation 方向，但设计没有
+  跨 BEGIN/CONSUME 保存同一 `LeaderPrecheckHandle` 的本地 retained owner，把业务 inconclusive 错编成 transport UNKNOWN/
+  只读结果错编成 EXECUTED，并在 payload 重复 envelope identity、引用了 lifecycle request。父级
+  `BLOCKED，P0=0/P1=3/P2=1`；B 当前 `W-TEAMRETURN-MOUNT-D22` 只做原日志返修，领取截止 `16:54`，绝不内部接管。
+- Internal AC 仍待 `W-GIVE-D3` 双仓 closed fact 文件表 Delta；Internal AB 继续 RX3 双仓 Java，尚无 Implementation 交付，
+  连续写入稳定前不运行并发 Maven。当前同路径仍 `185/407`，本地 capture/template/OCR/watcher/dialog/pathing/movement/
+  battle observation/UICleaner/input safety 永久保留，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 NpcClick D1 与 GiveItem D2 复审，B 真实 EOF 重发
+
+- External A 的 NpcClick Design #1 已按 `0114604e` 和 `docs/业务逻辑.md` 复审，职责拆分与 CR255/CR267/FIFO
+  顺序方向成立；但 normal 路径拟跨 Cloud poll/最长 30 秒 WAIT 持有 whole-pass，改变 committed 的逐候选 input queue
+  边界；四个 freeze 槽未覆盖 Alt+4/base capture/story/direct 等机械动作和多候选稳定 identity，主体波也缺双仓 closed
+  protocol/精确文件表。父级 `BLOCKED，P0=0/P1=3/P2=2`，A 当前 `W-NPC-D2` 领取截止 `16:46`，Java冻结。
+- Internal AC 的 GiveItem exact-HWND/单 frame/scale bracket/`WINDOW_CLIENT_PX`/唯一 flush Delta 已关闭上一轮错窗门；
+  但 W-GIVE-F0 文件表只列 Cloud kind，遗漏 DHXY `RemoteWindowFactKind` 与 Cloud sealed fact/matches/parser 等闭合分支，且
+  DHXY remote 路径写错。父级 `BLOCKED，P0=0/P1=1/P2=1`，原 AC 已收到 `W-GIVE-D3`，只补日志 Delta。
+- External B 的首个 `W-TEAMRETURN-MOUNT-D21` 因父级块误插历史中段未被领取；已在真实物理 EOF 记
+  `UNCLAIMED` 并原样重发给 B，第二领取截止 `16:41`，绝不内部接管。Internal AB 仍连续实施 RX3 双仓 Java，未交
+  Implementation 前不并发 clean。当前同路径仍 `185/407`，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 NpcClick 已领取，GiveItem exact-HWND 设计返修
+
+- External A 已于 `16:14:53` 在领取窗内 CLAIMED `W-NPC-D1`，只写 NpcClick 整类迁云 Design #1；两仓
+  Java/Maven/schema/resources/tests/host/caller 冻结。本地 HWND/capture/OCR/template/coordinate/Ctrl probe/
+  UICleaner/input safety 永久保留。
+- Internal AC 的 GiveItem Design #1 已对齐 800ms、`GIVE_BAG`、0.85、`(20,8)`、click 100ms、settle 1000ms、
+  normal 可插入/direct whole-pass 与 stable W；父级复审发现 fixed button provider 仍拟调用
+  `CoordinateHelper.findImageAbsoluteCoordinate`，该方法读取 tracker/current latest vision 而非 remote command exact HWND，
+  双窗口可错帧并发布错误 `WINDOW_CLIENT_PX`，当前 `BLOCKED，P0=0/P1=1/P2=1`。原 AC 只补 handler-bound
+  `BoundWindowCaptureService` + stable scale/flush owner Delta，并同步 RX3 已批准、实施在途的真实状态；Java继续冻结。
+- Internal AB 正连续实施 `W-TTR-RX3-IMP1` 双仓 dormant generic retained exclusive，当前不并发 clean/package；External B 的
+  `W-TEAMRETURN-MOUNT-D21` 领取截止仍为 `16:20`，截止未领取只原样重发给 B，绝不内部接管。当前同路径仍
+  `185/407`，全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 B-Z 最终构建收口，A/AB 继续设计返修
+
+- External B 的 `CaptureAttempt` closed-shape Repair #1 已由父级逐行复核：success 必须正面积 corner 且无
+  failureReason，failure 必须无 frame、非空白 reason 且四 corner 全零；父级 fresh DHXY compile 通过，
+  `W-TEAMRETURN-MECH-LEAF-IMP2-R1 FINAL APPROVED，P0/P1/P2=0`。真实 handler/lifecycle mount 仍未批准。
+- Internal Z 的 SummonSkill whole-pass Repair #2 已关闭 cleanup message 双仓 digest 分叉与 UNKNOWN-before-pause
+  未续代问题；父级 fresh Cloud package 4 suites/21 tests 全绿，合并后的 fresh DHXY compile 也通过，
+  `W-SS-X1-IMP1-R2 FINAL APPROVED，P0/P1/P2=0`，Z 已关闭。
+- External A 的 resolver D3 已补 active-host 检查、journal write-ahead 主序与 nested authorization，但真实 inventory/
+  activation owner 仍不存在，且 public `CloudServiceHost.create` bypass、锁内 Spring close、force 失败回 FREE 与 journal
+  无界历史仍未闭合；父级将 resolver `PARKED/BLOCKED，P1=3/P2=1`，不再做 D4。A 已转去新固定日志
+  `W-NPC-D1`，只设计 NpcClick 可落 W-NPC-0 与 RX3 后主体，Java冻结。Internal AB 的 generic retained exclusive
+  D2 已关闭固定 120 秒非暂停预算、第二 REBIND 权威、poll-loop 自锁与 stable business action identity 四项，父级
+  `DESIGN APPROVED，P0/P1/P2=0`；原 AB 已进入 dormant 双仓 `W-TTR-RX3-IMP1` 实施。
+- 截图所示 Move+5 Java 授权属于旧波次；当前 B 的新单文件返修已领取、交付并批准，无需再点旧授权。B 已续派
+  `W-TEAMRETURN-MOUNT-D21`，只设计 closed operation/retained owner，若与 AB RX3 共享 remote 文件则明确 RX3 先行。
+  Internal AC 已启动 `W-GIVE-D1`，只设计 GiveItem Cloud 编排与本地 retained mechanics 边界。AB/AC 写集互不重叠；
+  当前同路径仍 `185/407`。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 重启后真实 EOF 对齐：A/AB 已领取，B 在窗内，Z 返修重发
+
+- External A 的 DialogChoice cutover runbook Repair #1 已父级 `APPROVED，P0/P1/P2=0`；生产切换仍禁止。后续
+  trusted resolver Design #1 因未认证 SHA、restart FREE 绕过 freeze、`ATOMIC_MOVE` no-replace 证明不足与未知容量上界，
+  当前 `BLOCKED，P1=3/P2=1`。A 已于 `15:37:04` 按时领取 `W-DCM-RESOLVER-D2`，只写固定日志，Java冻结。
+- External B 的 exact-binding immutable corner 叶子设计已通过；真实 handler/lifecycle mount 仍因缺 closed typed
+  leader-precheck operation/retained owner 而 `BLOCKED，P1=1/P2=1`。当前只允许实施
+  `BoundLeaderPrecheckCaptureCapability` 与 `LeaderPrecheckMechanics` 两个 dormant leaf，领取截止 `15:51`，未领取只重发给 B，
+  绝不内部接管。
+- Internal Z whole-pass Repair #1 经父级源码复审仍 `BLOCKED，P1=2`：cleanup message null/empty 导致双仓 digest 分叉，且
+  UNKNOWN-before-pause 后 resume 未推进 interaction revision/generation。先前返修块误插历史中间，现已在固定日志真实物理 EOF
+  重新发布并通知原 Z，只改 Cloud/DHXY 两文件并复跑双构建。Internal AB 已于 `15:33:24` 领取 generic retained exclusive
+  projection Design #1，design-only、零 Java。
+- 截图中的 TeamReturn Move+5 Java 授权询问属于旧节点；该波早已实施、复审并进入后续 leaf/mount 阶段，不应再次点击旧授权。
+  当前同路径仍 `185/407`；host/Task/caller/poller/UI/capture/input 全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Runbook 与 TeamReturn 挂载定点阻断，AA/Z 进入构建
+
+- External A 已交 DialogChoice cutover runbook；父级发现 `REPLACE_EXISTING` 会在 scope 竞态下覆盖既有云状态、
+  trusted tenant/user resolver/manifest 实际不存在，另有 18 字段误写为 17 与 staging 崩溃恢复缺口，判
+  `BLOCKED，P0=0/P1=2/P2=2`。A 只修 runbook 与固定日志，不执行生产复制。
+- External B 已领取并交 TeamReturn mount 草案；父级源码证实 `CoordinateHelper.getScaledRect` 返回 corner tuple 且读取
+  tracker base，草案既二次相加右下角又未绑定 handler exact window，判 `BLOCKED，P0=0/P1=2/P2=1`。B 只修设计，
+  Java继续冻结并等待 Z 稳定后重锚真实 composition root。
+- Internal AA 的 `W-TTR-0` 两文件实现主体通过，但 release history 漏存 yield，父级 `BLOCKED P1=1` 后已定点返修并
+  正在 Cloud package。Internal Z 的 SummonSkill 双仓原子波已进入 DHXY compile；父级协调禁止并发 Cloud clean。
+  当前同路径仍 `185/407`，所有运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 DialogChoice 收口，TeamReturn 源码通过，A/B 续派
+
+- External A 的 DialogChoice Repair #2 已撤回全部 per-mutation transport/dedupe/runtime bootstrap，确认现有 Cloud
+  `DialogChoiceMemoryService` + `MemoryService` + scoped bean 即代码迁移结果；父级 `FINAL APPROVED，P0/P1/P2=0`。
+  A 已续派 `W-DCM-RUNBOOK-IMP1`，只形成生产切换前 state artifact 预置/校验/失败不激活 runbook，不执行生产复制。
+- External B 的 TeamReturn mechanics Repair #1 已补齐 FRESH 后 capture 前异常与 worker throwable 的 total cleanup；父级
+  `SOURCE APPROVED，P0/P1/P2=0`，最终 fresh DHXY compile 等 Internal Z 同包原子波停止写入后统一复跑。B 已续派
+  `W-TEAMRETURN-MOUNT-D1`，只设计 handler/lifecycle 的真实挂载闭包，Java冻结。
+- Internal Z 继续 SummonSkill 双仓 whole-pass 原子波并已收到父级完成/构建提醒；Internal AA 继续
+  `TaskTransactionRunner` implementation-ready Design #1。当前同路径仍 `185/407`，共享 Java 稳定前不跑并发 clean，
+  全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Y 收口，A/B 定点返修，Z/AA 双路持续
+
+- Internal Y 的 `CloudPlayerStateStateGovernor` 定点返修已关闭 resume/terminal 后重放旧 committed handle；父级源码
+  `APPROVED，P0/P1/P2=0`，Y 已关闭。最终 fresh Cloud package 等 Internal Z 的共享 remote 原子波稳定后统一执行。
+- External B 已完成 TeamReturn dormant mechanics 的 registry 单一 Move + 5 New，Move 反向还原 SHA 与批准源一致、全树只留
+  一个 registry、DHXY worker compile 通过；父级源码发现 FRESH reservation 后 rect/capture 异常及 pickup 后非 Exception 退出
+  都会漏还 frame/permit，判 `BLOCKED，P0=0/P1=1/P2=0`，只允许 B 修改 `LeaderPrecheckMechanics.java` 做 total cleanup。
+- External A 的 DialogChoice Repair #1 已撤回重复 Service/bean，但仍为同进程 Cloud facade 另造远程 mutation 协议与 256 条
+  FIFO dedupe 表，并用不可恢复的内存 `initialized` 声称 restart-safe；父级 `BLOCKED，P0=0/P1=2/P2=1`。A 只收缩为现有
+  Cloud Service 直调 + 生产切换前可信 state artifact 预置/digest 门，Java继续冻结。
+- Internal Z 继续 SummonSkill 双仓 whole-pass 原子波；Internal AA 已领取 `TaskTransactionRunner` Cloud lift Design #1。两者均在
+  运行，当前不等待、不误判 20 分钟完成门。当前同路径仍 `185/407`，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/B 已领取，Y/Z 源码复审定点返修
+
+- External A 的 Quest artifact 四类型经父级逐文件源码审查 `P0/P1/P2=0`，Cloud fresh package 4 suites/21 tests
+  全绿；DHXY compile 当前仅被 Internal Z 尚未闭合的 `SUMMON_SKILL_WHOLE_PASS` protocol switch 阻塞，A 自身四文件移除后
+  错误不变，因此 A 当前为 `SOURCE APPROVED / FINAL BUILD PENDING`。A 已在领取窗内交付新
+  `DialogChoiceMemoryService` 设计；父级发现 Cloud exact-copy Service/host bean 早已存在、remote mutation 缺 exactly-once、
+  bootstrap 与首个业务调用未线性化，判 `BLOCKED，P0=0/P1=3/P2=1`，只补 Design Repair #1，Java冻结。
+- External B 的 TeamReturn D5 已 `DESIGN APPROVED，P0/P1/P2=0`，并在领取窗内领取 mechanics leaf；父级已明确授权把
+  untracked registry 先校验复制到 remote 目标、再移除旧路径，避免双权威，B 正实施 1 Move + 5 New，handler/lifecycle/
+  caller 继续冻结。
+- Internal Y 的 PlayerState state-core 首版 build 通过，但 `commitInitialProjection` 在 resume/terminal 后可再次返回缓存旧
+  handle，父级 `BLOCKED P1=1` 并恢复原 Y 只改 governor。Internal Z 的原子文件表漏了
+  `RemoteCommandOutcomeEnvelope` 穷尽 switch；父级只扩权这一文件并恢复原 Z 继续完整双仓波。共享 Java 仍在写入期，暂不跑
+  并发 clean。当前同路径仍 `185/407`，运行面全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A 已领取并落四类型，Y/Z 进入连续写入
+
+- External A 已于 `14:12:31` 在第二领取窗内领取 `W-QM-ARTIFACT-TYPES-IMP1`；Cloud/DHXY 各一 closed
+  `XIULUO` enum 与 immutable intent DTO 共四个目标文件已出现，当前仍等待 A 的双构建与正式 Implementation 交付，父级不以
+  写入中源码提前 FINAL APPROVE。External B 的 `W-TEAMRETURN-OWNER-D5` 领取截止仍为 `14:29:30`，截至本轮尚无新
+  `CLAIMED`，仍在合法领取窗内。
+- Internal Y 已写入 `CloudPlayerStateStateOwner`，governor 仍在实施；Internal Z 已开始连续修改 SummonSkill payload、operation、
+  codec、ledger 与 digest。两者均已领取且正在工作，不适用 20 分钟完成门。
+- 共享双仓处于连续 Java 写入期，本轮不启动并发 Maven；待各 Worker 写入稳定并追加交付后由父级逐文件审查与 fresh build。
+  当前同路径仍 `185/407`，运行面全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 TeamReturn D4 错窗门复审，A/Y/Z 领取状态核实
+
+- External B 已在领取窗内交付 `W-TEAMRETURN-OWNER-D4`。reserve-before-capture、typed failure settle 与
+  `Live/Settled` closed handle 三项通过；父级复审发现新 mechanics 仍拟从远程 handler 线程调用全局
+  `GameClientTracker.captureToMemory`，没有使用 handler 已持有的 exact `BoundWindowCaptureService + WindowNativeBinding`
+  权威，存在多窗口错帧风险；ROI/threshold 依赖与 async future owner 也未写成单一路径。父级
+  `BLOCKED，P0=0/P1=1/P2=2`，已只向 B 发布 `W-TEAMRETURN-OWNER-D5`，领取截止 `14:29:30`，Java冻结。
+- External A 的 `W-QM-ARTIFACT-TYPES-IMP1` 首轮未领取后已原样重发，第二领取截止 `14:20:25`；截至本轮仍无新
+  `CLAIMED`，任务绝不内部接管。Internal Y 已于 `14:01:29` 领取 `W-PSS-Y3A-STATE-CORE-IMP1`；Internal Z 已领取
+  `W-SS-X1-IMP1`，两者仍在实现，允许超过 20 分钟，不能误判为停滞。
+- Y/Z 尚无稳定 Implementation 交付，本轮不对并发写入期运行 Maven。当前同路径仍 `185/407`；本地永久保留
+  capture/template/OCR、continuous watcher、dialog/pathing/movement/battle observation、UICleaner 与输入安全；运行面
+  全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 PlayerState 与 SummonSkill 进入实施，A 重发、B 定点返修
+
+- Internal Y 的 PlayerState D3 已父级 `DESIGN APPROVED，P0/P1/P2=0`：different epoch 只有在旧
+  PROVISIONAL/ACTIVE/RELEASE_PENDING 全零、exact reservation/version/owner 重验通过后才原子换 owner；session release
+  与 quota 清账单一线性化。Y 已续派 `W-PSS-Y3A-STATE-CORE-IMP1`，只新建 governor/owner 两个 Cloud state-core 文件。
+- Internal Z 的 SummonSkill D3 已父级 `DESIGN APPROVED，P0/P1/P2=0`：同一 local handle 具备
+  `ACTIVE -> PAUSED -> ACTIVE` 双向 snapshot publication，STOPPING/terminal/replacement 主动 invalidate；Z 已领取
+  `W-SS-X1-IMP1`，按 R4.1-R4.4 实施 dormant 双仓原子波，host/caller 继续冻结。
+- External A 在首轮 20 分钟内未登记 `W-QM-ARTIFACT-TYPES-IMP1`，已按用户规则标记 `UNCLAIMED` 并原样重发给 A，
+  新领取截止 `14:20:25`，绝不内部接管。External B 的 TeamReturn D3 已按时交付，但 capture 发生在 permit reserve 前、
+  假设不存在的 `completeFailed(reservation,result)` 重载且 non-FRESH/capture-failed handle 无可编码形状；父级
+  `BLOCKED，P0=0/P1=2/P2=1`，D4 仍只交 B，Java冻结。
+- 当前同路径仍 `185/407`；本地永久保留 capture/template/OCR、continuous watcher、dialog/pathing/movement/battle
+  observation、UICleaner 与输入安全；application/server/host/Task/poller/UI/capture/input 未启动。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Navigation workflow 最终通过，Quest 类型实施与 B/Y/Z 定点返修
+
+- External A 的 `W-NAV-WF-IMP1` 已父级 `FINAL APPROVED，P0/P1/P2=0`：新增 package-private freeze-only
+  `NavigationWorkflowState`，固定 5-slot `EnumMap`、同 key payload exact-equality、严格旧 key 拒绝与 terminal 幂等清理；
+  未建立第二 commit ledger、TTL/LRU/retry 或 public/raw capability。父级 fresh Cloud `mvn -q clean package` exit 0，
+  4 suites/21 tests 全绿。A 已续派 `W-QM-ARTIFACT-TYPES-IMP1`，只新增 Cloud/DHXY 各一 closed enum + immutable intent DTO，
+  共享 wire/codec/digest/assembly 继续冻结。
+- External B 的 TeamReturn owner D2 已关闭 terminal retry 与 `DeferredCancel`/外锁两项；仍
+  `BLOCKED，P0=0/P1=1/P2=1`：直接注入 generic registry 后没有 HEAD capture/两模板分析/frame flush/result 的真实
+  mechanics producer，registry 迁包也必须是单一 Move 而非留下第二类型。D3 只修设计，Java冻结，外部任务绝不内部接管。
+- Internal Y 的 PlayerState D2 已通过 runRevision wire/digest 三门、typed capacity 与 exact-context 合同，但 epoch 不同的
+  physical owner 不能在旧 active/provisional/release-pending projection 尚存时原位替换；父级 `BLOCKED，P1=1` 并续派
+  `W-PSS-D3`。Internal Z 的 SummonSkill whole-pass D2 已关闭 finish UICleaner 与 H 后不可失败 publication；仍
+  `BLOCKED，P1=1`，只补同一 local in-flight handle 的 `ACTIVE -> PAUSED -> ACTIVE` snapshot publication，已续派
+  `W-SS-X1-D3`。
+- 当前同路径仍 `185/407`；本地永久保留 capture/template/OCR、continuous watcher、dialog/pathing/movement/battle
+  observation、UICleaner 与输入安全；host/Task/poller/UI/capture/input 未启动。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Navigation 配置与 PlayerState Y0 通过，A/B/Y/Z 四路持续推进
+
+- External A 的 `W-NAV-0-IMP1` 已完成 `CloudNavigationProperties` 与
+  `CloudNavigationPropertiesAuthority` 两个 Cloud 叶子；父级源码审查 `APPROVED，P0/P1/P2=0`，fresh Cloud
+  `mvn -q clean package` exit 0（4 suites/21 tests、0 failures/errors/skipped）。A 的 `NavigationWorkflowState` D2
+  已删除平行 commit 真值，补齐 exact terminal caller、固定 5-slot 结构上界与 enum/equality fence，父级
+  `DESIGN APPROVED，P0/P1/P2=0`；`W-NAV-WF-IMP1` 领取截止 `13:40`，唯一写集为 Cloud 1 New + 2 Modify。
+- External B 的 `LeaderPrecheckFrameRegistry` 叶子仍为最终通过；其 TeamReturn D9 集成设计因 duplicate reservation、
+  native-window stale fence、terminal cleanup 与 raw mechanics capability 问题被父级判
+  `BLOCKED，P0=0/P1=4/P2=1`。D10 又因 exact client session、duplicate caller 保留、terminal owner 与主体计数边界被
+  判 `BLOCKED，P0=0/P1=3/P2=1`。D11 已修 duplicate 与计数边界，但把零 caller 的 `unregister` 当 terminal 事件且拟向
+  Task context 暴露 session，仍 `BLOCKED，P0=0/P1=2/P2=0`；`W-TEAMRETURN-OWNER-D1` 领取截止 `13:40`，外部任务
+  绝不交内部 Worker 接管。
+- Internal Y 的 `PlayerFirstAidDecision` Y0 已父级 `FINAL APPROVED，P0/P1/P2=0`；父级 fresh Cloud package
+  4 suites/21 tests 全绿，shaded JAR SHA-256 `11C77E2C4C511F7511EC1D4B06F653B25E98DBEA825014B89199C7BECED70685`。
+  Y 已复用原会话领取主体 `W-PSS-D2` 设计返修；Internal Z 继续 `W-SS-X1-D1` SummonSkill whole-pass owner 设计，
+  两者写集互斥。
+- 当前同路径仍 `185/407`；本地永久保留 capture/template/OCR、continuous watcher、dialog/pathing/movement/battle
+  observation、UICleaner 与输入安全能力；host/Task/poller/UI/capture/input 未启动。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Client-PX 最终通过，A/B/U2/W 四路并行
+
+- Replacement V2 的通用 `WINDOW_CLIENT_PX` input wire 已父级最终 `APPROVED，P0/P1/P2=0`。DHXY 在
+  handler 副作用提交前取得 current exact binding，并把同一 geometry snapshot 同时带入 worker admission 与 detailed
+  safety supplier；geometry 变化返回 `WINDOW_BINDING_CHANGED`，普通 `SCREEN_ABSOLUTE_PX` 的 wire/digest/行为保持不变。
+  父级 fresh Cloud `mvn -q clean package` exit 0（4 suites/21 tests、0 failures/errors/skipped），shaded JAR
+  SHA-256 `700C236B4277890224949EA5FFFAAFB83B5F6070165EFF87CBC558F789421361`；DHXY
+  `mvn -q -DskipTests compile` exit 0。V2 已关闭。
+- External A 已于 `11:08:12` 在领取窗内领取 `W-NAV-D5`，只补可编译 retained-action 入口、12 caller/逐动作
+  exact 分支与真实 observation API/依赖门；Java冻结。External B 的 TeamReturn D6 父级仍
+  `BLOCKED，P0=0/P1=4/P2=1`，`W-TEAMRETURN-D7` 领取截止 `11:36`，只修 RETIRING/cap、双索引、terminal caller、
+  closed capability 与 frame owner。
+- Internal U2 已于 `11:16:37` 领取 TaskTracker `W-TTPS-D3`，只修同帧 artifact dependency lease、side-effect 前
+  quota reservation、local terminal payload 物理副本计费与 exact closed capability。空出的第二内部槽已派 W
+  `019f5c0f-c6ef-7c00-9c7c-45060470701e` 实施已批准的 Cloud-only `CloudLeftTopTemplateMatcher` 单文件叶子，
+  不碰 remote/assembly/caller/local retained UI-clean 边界。
+- 当前同路径仍 `185/407`；host/Task/poller/UI/capture/input 未启动。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 重启恢复：A/B D4/D5 复审，U2/V2 接管
+
+- External A 的 Navigation D4 已按时领取并交付；父级仍判 `BLOCKED，P0=0/P1=2/P2=1`。当前设计从
+  `com.bot.dhxy.service.NavigationService` 直接调用 package-private `CloudTaskRetainedActionState` 不可编译，caller/
+  failure 表仍保留“同 #/按 HEAD/实现时再填”，且依赖未定义 observation transport。`W-NAV-D5` 只修真实可见 retained
+  入口、逐入口完整分支和可实施依赖波次，领取截止 `11:18`，Java冻结。
+- External B 的 TeamReturn D5 已按时领取并交付；父级仍判 `BLOCKED，P0=0/P1=3/P2=1`。retired
+  `IN_FLIGHT` slot 无可达终态会永久卡 same-key；新 frame registry 又没有真实 registration generation/terminal hook，
+  capture-reserve-submit 失败所有权未闭合，Cloud 业务仍拟直取 raw ledger。`W-TEAMRETURN-D6` 领取截止 `11:18`，Java冻结。
+- 桌面重启后原 Internal U/V 会话均返回 `not_found`，不是完成。Replacement U2
+  `019f5bf6-697a-7a72-98d8-e8e27f94a9f0` 接管 TaskTracker D2 设计返修；Replacement V2
+  `019f5bf6-82ad-7c92-84ae-a084cdbce562` 接管 `WINDOW_CLIENT_PX` 双仓实现，继续原固定日志和互斥写集，不回滚原 V
+  可能留下的范围内编辑。父级只审源码/证据，不让 Worker 自审充当批准。
+- 当前同路径 `185/407`，host/caller与全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A Navigation D3、B TeamReturn D4 与新实施槽
+
+- A 的 Navigation D3 仍 `BLOCKED，P0=0/P1=2/P2=2`：caller 表把 Wubei `2344`、Xiuluo `3140/4174/4874`
+  等不同业务入口错误合并为“同 #”，并让业务 Service/adapter 直接接触 raw action ledger 与 opaque bundle；D4 只修
+  exact caller 分支、retained facade call chain、method/line failure table 和确定 wire 表，领取截止 `07:50`。
+- B 的 TeamReturn D4 已正确把 runRevision 从 semantic address 拆回 request fence，但 async precheck 仍可能由 RESERVED
+  canceler 与晚启动 worker 双 flush/release，same-key active acquisition 也留“复用或拒绝”二选一；D5 还须用 DHXY
+  `RemoteTaskRunRegistry` 的 10000/1000 真实 cap给 exact file/method 表。当前 `BLOCKED，P0=0/P1=2/P2=1`，领取截止
+  `07:50`，Java冻结。
+- Full R0 释放的内部槽已派 Internal V `019f5b3b-08b3-7333-862d-14ced4ef767b` 实施已批准的
+  `WINDOW_CLIENT_PX` input wire：仅 Cloud validator、DHXY strict codec/最终 current-binding 坐标换算与协议 schema，普通
+  screen-absolute bytes/digest/行为不变。U 同时继续 TaskTracker D2 设计返修；两者写集不交叉。
+- 当前同路径 `185/407`，host/caller与全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Navigation D2 与 TaskTracker D1 父级复审
+
+- External A 的 Navigation D2 已修正真实 12 caller、双层 semantic/mechanical 防重、本地 runtime state 和无伪叶子，
+  但仍把 caller 对各 `NavigationResultStatus` 的 exact 分支、每个副作用点的四态 failure matrix、route-dialog 本地最终
+  freshness fence 及 Full R0 稳定后的 exact 文件/API/cap 表推迟到实施期；父级仍判 `BLOCKED，P0=0/P1=4/P2=1`，
+  已发布 `W-NAV-D3`，领取截止 `07:40`，Java冻结。
+- Internal U 的 TaskTracker D1 总边界成立，但把发布 `PreparedDialogAction` 的有副作用命令塞进 read-only `CAPTURE`，
+  又用含 revision 的 artifact 在 resume 后重铸 prepared identity，并写反 final-consumed control/receipt 方向；Cloud broker
+  retained outcome 中真实存在的 encoded bytes 与 Runner 可能新增 tracker poll 也未计入。父级判
+  `BLOCKED，P0=0/P1=5/P2=2`，同一 U 已收到 `W-TTPS-D2` 设计返修，仍仅写固定日志。
+- Full R0 已 `FINAL APPROVED`，A/U 下一版可直接基于真实 ledger/broker/handler/codec 文件收口，不再以等待 P2 为由延期。
+  当前同路径 `185/407`，全部运行面 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Full R0 事务返修 FINAL APPROVED
+
+- Internal P2 的 `FULL-R0-IMP1-R1` 已经父级逐行复审并 `FINAL APPROVED，P0/P1/P2=0`。callback 成功后的 ACK/
+  control publication 现在先完成 ledger/broker 全量 prevalidate/precompute，再原子收口为 `NOTICE_PENDING+QUEUED`，
+  或在任一前置失败时收口为 `BUSINESS_CONSUMPTION_UNKNOWN` 并精确释放 control quota/reservation。
+- receipt 已进入 `LOCAL_APPLIED` 后若 action compaction 异常，不再返回永久 `REJECTED`；broker 保留 exact compacted
+  witness 与 action-commit marker，同一 receipt bytes 重投时只续办 action ledger compact，不重进 business callback。
+  Cloud runtime exception 不会形成 2xx ACK，本地 transport/polling loop 将断连、5xx、timeout 等记为 delivery uncertain。
+- 父级 fresh Cloud `mvn -q clean package` exit 0，4 suites/21 tests 全绿、0 skipped；shaded JAR SHA-256
+  `6E06C0FD105E27EFF2E3E855DD2C46D0E590D41A49E13FC51E329E6560E9CEB4`。DHXY
+  `mvn -q -DskipTests compile` exit 0。P2 内部槽已释放，后续依赖 Full R0 的 Service 切片可按不重叠写集进入实施。
+  当前同路径仍 `185/407`，运行面全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Navigation Design #1 父级审查
+
+- External A 的 `W-NAV-D1` 已按时领取并交付。父级以 committed HEAD `0114604e` 的 3453 行
+  `NavigationService.java` 和全部 caller 复审，判定 `BLOCKED，P0=0/P1=6/P2=2`。Cloud route/point/plan 决策与
+  DHXY exact-window capture/template/pathing/dialog/input 总边界通过，但 caller inventory 错误：真实只有 Wubei 4、
+  FiveRingTaskV2 3、XiuluoTaskV2 5 共 12 个调用，没有 AutoBattle 或 direct `navigateToMap` caller。
+- 两个 class-local execution ledger 不能只迁到 Cloud；Cloud retained ledger 持 semantic occurrence/action，本地
+  `RemoteOperationLedger` 或等价 owner 仍须保存 exact mechanical outcome，确保 transport 重投只回报、不再点击。
+  HEAD `NavigationRuntimeState` 也只有 click coordinate/matched text/decision diagnostic 六类字段，不是设计所称的
+  per-taskRun phase/pending/terminal store，须逐字段拆分，不能凭空造 `NavigationInvocationStore`。
+- `W-NAV-D2` 已写回原日志，领取截止 `07:26:37`，只修 caller/result mapping、双层防重、真实 state ownership、
+  每个 timer 的 due/wake 顺序、逐 API failure matrix、capacity 与 exact 文件表；全部 Java 继续冻结。P2 Full R0
+  `FULL-R0-IMP1-R1` 仍在三份 Cloud transaction owner 上写入，当前不跑并发 Maven；B TeamReturn D3 领取截止
+  `07:20`，U TaskTracker 已领取且仍在设计。当前同路径 `185/407`，运行面全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+- External B 已于 `07:06:25` 在领取窗内交付 TeamReturn D3。live `UNKNOWN/STOPPED`、click EXECUTED 非归队完成、
+  frontier 跨 business-state recreate 与 legacy API 留 DHXY dormant 已通过；父级 Review #3 仍
+  `BLOCKED，P0=0/P1=2/P2=1`。D3 错把 `runRevision` 塞进 semantic address，而 Full R0 的真实地址仅为
+  `phaseCode/actionSlot/occurrence/attempt`，revision 只能作为 request fence；异步 precheck 又缺少 IN_FLIGHT
+  replacement/abandon 的唯一 flush/release 与 generation-CAS，`global=256` 也无仓库依据。`W-TEAMRETURN-D4`
+  领取截止 `07:31:12`，只修这两项；主体文件表继续等 Full R0 stable。
+
+## 2026-07-13 / CR271 Full R0 事务返修、CommonBox 源码批准、TeamReturn 新切片
+
+- Internal P2 已在 `06:36:31` 领取 `FULL-R0-IMP1-R1`。父级对 Full R0 Implementation #1 判定
+  `BLOCKED，P0=0/P1=2/P2=0`：业务 callback 成功后的 ACK/publish 与 receipt `LOCAL_APPLIED` 后的 action compaction
+  都可能形成 broker/action 双账本半提交。返修必须先只读 prevalidate/precompute，再执行不抛出的确定提交；已进入
+  `LOCAL_APPLIED` 但未双侧 compact 的同一 receipt 必须可重投继续完成，不能永久 `REJECTED`。
+- External A 已于 `06:34:47` 领取并交付 CommonBox Repair #2。父级逐行确认执行中/封存 pending 不再被新观察覆盖，
+  `PendingKey` 已含完整 run scope/window/stop 身份，单调 tenant-state incarnation 关闭 retire/recreate ABA；两个 dormant
+  Cloud 状态叶子现 `SOURCE APPROVED，P0/P1/P2=0`，最终构建等待 P2 写入稳定。
+- External B 的 `ReturnItemPrescanDecision` 已按 HEAD `0114604e` 恢复三项 strategy 与普通 long 算术，源码
+  `APPROVED，P0/P1/P2=0`，并绑定 assembly-owned bounded state registry；fresh package 仍排在 P2 后。B 的下一任务
+  `W-TEAMRETURN-D1` 已于 `06:39` 写入独立日志，B 于 `06:41:53` 在领取窗内 `CLAIMED`；本轮只设计
+  `TeamReturnService` 的 Cloud 业务状态与本地 capture/template/input/observer 边界。D2 已关闭两 leader 合同、deadline poll、
+  member occurrence 与 queue 边界；父级 Review #2 仍 `BLOCKED，P0=0/P1=4/P2=1`：须补 Wubei live `UNKNOWN/STOPPED`、
+  state remove/recreate 跨 run frontier 防 ABA、precheck 本地 artifact cap/全退出释放，并决定零 caller legacy wait 原样留本地或
+  无线程 continuation。`W-TEAMRETURN-D3` 领取截止 `07:20`，Java继续冻结；exact 主体文件表等 Full R0 稳定。
+- Internal T 的 `GiveItemService` 设计已父级 `DESIGN APPROVED，P0/P1/P2=0` 并关闭；未发现可脱离 Full R0、Bag 与
+  whole-pass/client-pixel 前置独立实施的真实叶子。用户确认的本地边界继续生效：Runner/UI clean 在 DHXY 保留 exact-window
+  capture、模板匹配、dialog/持续观察、soft wake 与 input queue，Cloud 只持业务 phase/timer/fallback/pending 和 typed 裁决。
+- External A 已续派 `W-NAV-D1`，固定日志 `2026-07-13-cloud-navigation-service-worker-a.md`，并于 `06:52:46` 在领取窗内
+  `CLAIMED`；只按
+  HEAD `0114604e` 与 `docs/业务逻辑.md` 设计 3453 行 NavigationService 的 Cloud route authority / 本地 pathing watcher、
+  capture/template/input/fact gate 边界，工作区相对 HEAD 的 318 行删除不得作为迁移权威。第二个内部槽续派 U
+  `019f5b15-70fd-7ee1-91f6-380a5d73552f`，只设计 clean HEAD 的 `TaskTrackerPanelService` 最终 local capture / Cloud OCR
+  边界；U 已于 `06:50:17` CLAIMED。两者 Java 均冻结且与 P2/B 写集零重叠。
+- 当前同路径仍 `185/407`；P2/A Java 写入稳定前不跑并发 Maven，application/server/host/Task/poller/UI/capture/input
+  全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 UI clean 固定保留在本地 Runner
+
+- 用户进一步确认：`UI clean` 必须保留在 DHXY 本地。现有 `UICleanerService` 的真实调用链需要 exact bound-window 截图、地图/checkbox/`x1/x2/x3/npc_busy_cancel` 模板匹配、dialog inspect、同一 cleanup pass 帧复用/动作后失效，以及经本地 input queue 的安全点击；这些都是低延迟、窗口绑定和输入安全能力，不能搬成 Cloud 侧截图轮询或像素级决策。
+- 边界固定为：Cloud 只决定业务阶段何时请求 cleanup，并消费 typed `CLEANED/ALREADY_CLEAN/UNKNOWN/STOPPED` 结果；DHXY Runner/UICleaner 持有 capture、模板资源、ROI/match、dialog probe、多层关闭循环和原子输入执行。Runner 仅沿用 HEAD 已有启动/中断安全清理触发点，不新增离线业务 phase/fallback/retry。
+- External A 已在 `06:07:41` 领取并交付 `W-CBOX-0-IMP1`；父级源码复核为 `BLOCKED，P1=4/P2=1`：commit/reserve 未重验当前 stop/revision/session，reservation 可并发双领且 boolean settle 压扁 uncertain，过期 pending 不 prune 会耗尽 cap，tenant scope 又无显式退场。External B 的 ReturnItem decision 叶子也因新增 `SKIP` 与饱和 wall-clock 加法处于 `BLOCKED，P1=2/P2=1`。A/B 均已收到同文件定点返修任务；P2 Full R0 仍在连续写双仓 remote 文件，稳定前不跑 Maven。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 Runner 本地观察边界定案，A/B 直接进入叶子实现
+
+- 用户确认并由父级固化：本地 `Runner` 继续持有窗口绑定、持续观察、移动/战斗/dialog/小 ROI 事实采集、observer wake、截图与输入安全门；Cloud 只持业务 phase、timer、fallback、pending 与动作裁决。断线时本地可继续观察和拒绝输入，但不得离线接管业务决策。
+- External A 的 CommonBox D4 已关闭 per-scope tenant 隔离与 hard-cap 两项问题；父级放行 `W-CBOX-0-IMP1` 两个 Cloud 状态叶子，并把原“Cloud detect scheduler”改为后波 typed 本地 observer transport。完整 service/adapter/assembly/caller 仍冻结。
+- External B 的 ReturnItemPrescan inventory 通过并放行 `W-RIPS-0-IMP1` 纯判定叶子；完整设计仍 `BLOCKED，P1=4/P2=1`，须补完整 window tuple、per-state occurrence identity、typed uncertain 结果、本地 observer boundary 与明确容量。
+- Internal P2 的 Full R0 双仓实现仍在持续写入，报告尚无稳定 Implementation；Internal T 已领取 `GiveItemService` 设计。P2 写入稳定前不跑并发 Maven。当前同路径仍 `185/407`，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/B/S 最新复审，P2 Full R0 继续实施
+
+- 外部 A 的 QuestManager `W-QM-D5` 已父级 `DESIGN APPROVED，P0/P1/P2=0`；实现与 P2 Full R0 的
+  request/wire/assembly 写集顺序化。CommonBox D3 已用单 governor lock 关闭 toggle-off/late-put 竞态，但 assembly 单例
+  仍只有全 JVM 一份 toggle/revision，父级 `BLOCKED，P1=1/P2=1` 并发布 D4：改为 bounded per-`CloudServiceScope`
+  state，Java继续冻结。
+- 外部 B 的 LeftTop D3 已把 pending 业务权威迁入 Cloud retained state，并更正两仓既有 `WINDOW_CLIENT_PX` enum；
+  父级 `DESIGN APPROVED，P0/P1/P2=0`，纯 `LeftTopStatusDecision` 叶子源码批准保持。B 已转入独立
+  `ReturnItemPrescanService` Design #1，20 分钟领取门只看新日志 CLAIMED。
+- Internal S 的 Cloud `ImageFinder.findAll(...,maxMatches)` 获父级 SOURCE APPROVED，Bag D3 获
+  `DESIGN APPROVED，P0/P1/P2=0`；S 已关闭，fresh package 等 P2 稳定后统一执行。空槽已续派 Internal T
+  `019f5ae3-5a3d-7132-a788-f559632e9090` 设计 `GiveItemService`。Internal P2 的 `FULL-R0-IMP1` 仍在双仓
+  原子实施，尚无稳定 Implementation 交付，因此不跑并发 Maven。
+- 当前同路径计数仍 `185/407`；host/Task/caller/poller/UI/capture/input 全部 dormant，未执行生产切换。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 warning transport 设计收口，B 转入 LeftTop，A/P2/S 继续
+
+- 外部 B 的 `W-ACP-WARN-D10` 已关闭 deferred route/outbox admission、claimed-entry non-spinning due predicate 与固定
+  1 秒 transport pacing；父级补充 `stateLock -> routeLock -> outboxLock` 一致 retirement 临界区后判定
+  `DESIGN APPROVED，P0/P1/P2=0`。与 P2 Full R0 重叠的 warning Java 继续顺序化，待 P2 稳定后再合并实现。
+- B 的下一独立任务 `W-LTSS-D1` 已写入 `2026-07-13-cloud-left-top-status-switch-worker-b.md`，只设计
+  `LeftTopStatusSwitchService` HEAD 基线整类迁云；B 已于 `05:15:08` 在截止前 CLAIMED，允许继续工作超过 20 分钟。
+- 外部 A 已领取并交付 QuestManager `W-QM-D4`。closed task code、跨 revision key、UNKNOWN 不铸新 ID 与空 `imagePath`
+  方向通过；父级仍判 `BLOCKED，P0=0/P1=4/P2=1`：必须统一 `artifactIntent` canonical 键并补齐 DHXY strict DTO，给
+  workflow state 真实 assembly/runtime 挂载及 opaque generation，固定 stale/timeout fence 后的 artifact 写盘时序。
+  `W-QM-D5` 已发布，`05:37:00` 只检查 CLAIMED，Java继续冻结。
+- Internal P2 的 Full R0 双仓原子实施仍在进行，尚无稳定 Implementation 交付，不跑并发构建。Internal S 的 BagService
+  D1 已交付，inventory/业务矩阵通过，但父级判 `BLOCKED，P1=3/P2=2`：三张业务 cache 必须迁 Cloud，禁止新增
+  `BAG_MECHANICAL`，无 context API 必须绑定 per-runtime 实例，并删除已有 `WINDOW_CLIENT_PX` 的伪 delta 与 trivial policy 类；
+  S 已收到 `W-BAG-D2` Repair。当前同路径仍 `185/407`，全部运行面 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/B D3/D9 已复审，P2/S 实施与设计继续并行
+
+- 外部 A 已于 `04:58:29` 在领取窗内领取并交付 QuestManager `W-QM-D3`。父级确认每 candidate/title/glow 独立 fresh
+  capture 与 Direct failure matrix 已通过；整体仍 `BLOCKED，P0=0/P1=4/P2=1`：typed artifact intent 必须补齐 Cloud
+  request 重建/封装/port/gate/executor 全链，task code 必须 closed allowlist，workflow owner 必须跨 runRevision 且同一逻辑
+  invocation 可重入复用，artifact diagnostic 语义必须唯一。`W-QM-D4` 已发布，`05:24:57` 只检查 CLAIMED。
+- 外部 B 已于 `04:56:14` 在领取窗内领取并交付 warning `W-ACP-WARN-D9`。单一 RouteState 与无线程
+  `min(clientDeadline,nextEligibleAt)` 方向通过；整体仍 `BLOCKED，P0=0/P1=3/P2=1`：notification-first route/outbox
+  admission 必须同事务回滚，route retirement 必须本波次实装，claimed due entry 不能让并发 poll 零等待自旋，resend pacing
+  必须有 exact transport 配置与溢出安全算术。`W-ACP-WARN-D10` 已发布，`05:20:30` 只检查 CLAIMED。
+- Internal P2 已领取 Full R0 双仓原子实施，当前仍在读/写准备期，报告尚无稳定 Implementation 材料，因此未跑并发构建；
+  Internal S 已领取 BagService HEAD `0114604e` 设计，父级已预读 HEAD 1207 行 API/调用面及本地 `+134` 行 dirty 冲突，只等
+  S 的 Design #1 做正式审查。当前同路径仍 `185/407`，运行面全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 R-X0 代码批准，Full R0 开始实施，A/B/S 持续并行
+
+- Internal R2 的 `CloudTaskExclusiveInteractionState` 已父级 `FINAL APPROVED，P0/P1/P2=0`；fresh Cloud clean package
+  为 4 suites/21 tests 全绿，shaded JAR SHA-256 `01D42445...325B0C0`。该文件仅为 dormant package-private policy leaf，
+  R1 owner/port/handler 尚未接线。
+- Full R0 Repair #2 已关闭 level wake 与 route retirement 最后一个 P1，父级 `DESIGN APPROVED，P0/P1/P2=0`；同一 P2 已收到
+  `FULL-R0-IMP1`，将实施批准的 Cloud `1 New+16 Modify`、DHXY `12 Java Modify+1 schema` 原子 cohort。B warning transport
+  在此 cohort 完成前不写重叠 broker/transport 文件。
+- A 的 QuestManager D2 已部分通过，但仍 `BLOCKED，P1=4`：必须保留 HEAD 每个 label/title 各自 fresh capture，补真实 typed
+  quest artifact intent、跨 slot workflow owner，以及 direct tab/click/scroll/close 的原始 failure matrix。`W-QM-D3` 已发布，
+  `05:13` 只检查 CLAIMED。
+- B 的 warning D8 已保留有界 command lane 与唯一 generation claim，但仍 `BLOCKED，P1=2`：notification-only route 必须可创建/
+  poll，SENT resend-due 必须有不新增线程的 timed level predicate。`W-ACP-WARN-D9` 已发布，`05:13` 只检查 CLAIMED。
+- Internal S 已于 `04:51:04` 领取 `W-BAG-D1`，只按 HEAD `0114604e` 设计 BagService 整类迁云；本地 dirty BagService
+  只读识别冲突，不写 Java。当前同路径仍 `185/407`，运行面全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 QuestManager、warning transport 与 SummonSkill exclusive 最新门
+
+- 外部 A 已于 `04:37:58` 在截止前领取 `W-QM-D2`。父级对 `QuestManagerService` Design #1 判定
+  `BLOCKED，P0=0/P1=4/P2=1`：Repair 必须把同帧 capture 的 `observedWindow/systemScaleRatio` 与 ROI/点击换算绑定，
+  给重复 probe/action 分配单调 occurrence，复用现有 `QuestDetailCapture` 并闭合本地 artifact 单一属主，同时逐分支保持 HEAD
+  close/finally 和 ordinary-sequenced/detail-exclusive 边界。Java/resources/schema 继续冻结。
+- 外部 B 已于 `04:37:34` 领取并交付 `W-ACP-WARN-D7`。Review #10 已冻结 ACK whole receipt 为 PASS；当前仅剩
+  route wake/select 设计待父级复审，D7 选择 `ReentrantLock + Condition` 并补充锁序、counter reset 与选中后失败恢复。
+- Internal R2 已获 SummonSkill whole-pass exclusive `DESIGN APPROVED，P0/P1/P2=0`，并于 `04:36:30` 领取
+  `R-X0-IMP1`：只新增 package-private `CloudTaskExclusiveInteractionState` 状态叶子；父级将在交付后审查源码并跑 fresh
+  Cloud package。Internal P2 已领取 Full R0 Repair #1，仍在设计返修，Java 冻结。
+- 当前同路径计数仍 `185/407`；host/Task/caller/poller/UI/capture/input 全部 dormant，未执行生产切换。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 重启续跑：scale-wire 最终批准，A/B 新任务发布，P2/R2 接管
+
+- A 的 `Q-SCALE-WIRE-IMP1-R1` 已获父级 `FINAL APPROVED，P0/P1/P2=0`：双仓 finite binary64
+  canonicalizer 改用 RFC 8785 参考实现，父级 fresh Cloud `mvn -q clean package` 为 4 suites/21 tests 全绿，DHXY
+  `mvn -q -DskipTests compile` exit 0；shaded JAR SHA-256
+  `52AC214B7B82A9397F538F31C9F461D80E677F42C7E0382871E597DB4DAAFAD7`。A 的下一任务 `W-QM-D1`
+  已写入 `2026-07-13-cloud-quest-manager-service-worker-a.md`，领取截止 `04:38:00`。
+- B 的 `RuntimeWarningIdentity/RuntimeWarningNotification` WARN-0 纯类型叶子已获父级
+  `FINAL APPROVED，P0/P1/P2=0`。D5 transport 仍 `BLOCKED，P1=2/P2=1`：all-or-nothing ACK 批次可被永久
+  rejected entry 毒化，outbox 与 queue item 双 owner 可重复/丢失，单 FIFO union 无法兑现 K=4 双 lane fairness。
+  `W-ACP-WARN-D6` 已发布，领取截止 `04:38:00`。
+- 原 Internal P/R 会话在桌面重启后不可达；文档确认 Review 后没有新 CLAIMED，因此不是把“已发单”误认成“已领取”。
+  replacement P2 `019f5a91-0a26-79a0-8d37-165498e31352` 接管 Full R0 Repair #1，replacement R2
+  `019f5a91-456d-7e00-8a69-e02a17e5c497` 接管 whole-pass exclusive Repair #1；两者只写各自固定日志，Java 冻结。
+- 当前同路径计数仍 `185/407`；所有 host/Task/caller/poller/UI/capture/input 继续 dormant，未授权生产切换。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/B/P 全部按时领取，scale-wire 实施与 Full R0/整段独占并行
+
+- A 的 W-TMS-D8 已父级 `DESIGN APPROVED，P0/P1/P2=0`；cleanup ledger/capability/tri-state/retry 全部删除，TMS
+  cleanup 保持 HEAD 一次调用与异常传播。A 已于 `02:37:55` 在 scale-wire 固定日志领取 `Q-SCALE-WIRE-IMP1`，按批准的
+  DHXY 4 Modify + Cloud 4 Modify 实施同帧 typed `systemScaleRatio`；领取截止为 `02:54:00`，故无需接管。
+- B 已于 `02:36:38` 领取并交付 W-ACP-WARN-D3；父级 Review #7 为 `BLOCKED，P0=0/P1=4/P2=1`：现有 poll
+  response 只有 `IDLE/COMMAND`，通知 response variant、pending-ack retain/settle、occurrence commit point、exact
+  per-run/tenant/global budget 仍缺。W-ACP-WARN-D4 已发布，领取截止 `03:00:00`；20 分钟仅检查 CLAIMED。
+- 内部 P 已于 `02:37:55` 领取 Full R0 最终 reconciliation，只产出基于已批准 lifecycle adapter 与 A 最新 scale wire 的
+  method-level 实施 Delta，Java 冻结。第二内部槽发布 Internal R 的 typed whole-pass exclusive interaction Design #1，关闭
+  SummonSkill 主体剩余 P1；R 必须先写 CLAIMED，Java/schema/resources/tests 冻结。
+- 最近父级 fresh Cloud `mvn -q clean package` 仍为 4 suites/21 tests 全绿，JAR SHA-256
+  `DE29FD5A...F2EE870F`；本轮新增均为文档协调，尚无新 Java 可构建。当前同路径计数 `185/407`，所有 host/Task/caller/
+  poller/UI/capture/input 继续 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 lifecycle adapter 与三叶子最终批准，A/B 新返修已发布
+
+- 内部 P 已交付并获父级 `APPROVED，P0/P1/P2=0`：Cloud 新增
+  `CloudTaskRunRetainedLifecycleActivationAdapter`、修改 `CloudTaskRunAuthorityAssembly`，完成 bounded initial admission、
+  exact generation resume、opaque PAUSED capability 与 terminal exact retry/retirement；无 TTL/LRU/takeover/restart restore/
+  host/caller。父级 fresh Cloud `mvn -q clean package` exit 0，4 suites/21 tests 全绿，JAR SHA-256
+  `DE29FD5A...F2EE870F`。
+- 同一 fresh 构建最终收口三个既有叶子：A `W-TMS-0B`、B `W-ACP-1`、内部 N `W-SS-0` 均
+  `IMPLEMENTATION APPROVED，P0/P1/P2=0`；shaded JAR 已实际含全部类型。TMS/Panel/SummonSkill 主体前置仍开放，未因叶子
+  编译通过而解冻。
+- A `W-TMS-D7` 复审仍 `BLOCKED，P1=2`：package-private cleanup capability 无法跨包给
+  `com.bot.dhxy.service.TaskMaintenanceService` 调用，且 proposed `cleanupFinalized`/exact retry 改变 HEAD 异常语义。父级已发布
+  简化 `W-TMS-D8`：删除 cleanup ledger/witness，纯内存 cleanup 按原 caller 一次调用、异常原样传播；A 领取截止
+  `02:43:51`。
+- B warning Design #1 为 `BLOCKED，P1=3/P2=1`：wall-clock `lastAttentionAt` 不是 retained identity owner，当前没有单向
+  warning transport，metrics 也没有 durable identity 去重。`W-ACP-WARN-D2` 已发布，领取截止 `02:31:07`；20 分钟仍只检查
+  `CLAIMED`。内部 Q 已于 `02:01:16` CLAIMED capture-time typed `systemScaleRatio` 设计，可超过 20 分钟。
+- 当前同路径计数仍 `185/407`；所有 host/Task/caller/poller/UI/capture/input 继续 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 领取回执门禁生效，A/B 实现叶子交付，N/P 双内部槽推进
+
+- Worker 20 分钟门禁现统一为“看领取、不看完成”：父级发布任务后 20 分钟内必须在固定日志追加 `CLAIMED`（任务标题、
+  领取时间、唯一写集）；一旦领取，设计/实现可超过 20 分钟。只有截止仍无回执才内部接管。外部 A 于 `01:45:57`
+  领取 W-TMS-0B、B 于 `01:49:33` 领取 W-ACP-1，均在 `01:43:56` 发单后的 20 分钟内，故没有误接管。
+- A 已交付 Cloud 2 New：`MaintenanceProbeResult` 三态防御拷贝与 `MaintenanceUnresolvedException` typed unwind；父级源码
+  审查 `P0/P1/P2=0`。B 已交付 `AutoCombatPanelDecision` 1 Modify 的 missing-streak 四分支纯状态转移；父级源码审查
+  `P0/P1/P2=0`，等待统一 fresh package 后给最终实现结论。TMS 主体仍 `P1=2`，Panel 主体仍 `P1=2/P2=1`。
+- M0 跨仓 DTO Repair 已父级 `APPROVED`，Cloud package 21/21 与 DHXY compile 通过；J task-turn 两个 Cloud 类型也已
+  `APPROVED`。M lifecycle adapter 1 New+1 Modify 已单独放行，由内部 P
+  `019f5a07-908f-7f11-9bd9-34e665d666d2` 实施。
+- SummonSkillService Design #1 已完成父级复核：主体因整 pass exclusive interaction 与同帧 typed scale 两项 P1 继续冻结；
+  纯 CPU `SummonSkillStaticSlotPolicy` W-SS-0 已放行，由内部 N `019f59f2-e2dd-75b1-9b1d-6a3f0523ca63` 实施。
+  N/P 写集互斥，稳定后父级统一 Cloud clean package。当前同路径计数仍 `185/407`，host/Task/caller/poller dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 重启恢复：B 决策叶子通过，A/M 分层返修，J/M 实施槽恢复
+
+- 外部 B 的 `W-ACP-0` 纯决策叶子 `AutoCombatPanelDecision` 已获父级
+  `APPROVED，P0/P1/P2=0`；父级 fresh Cloud `mvn -q clean package` 为 4 suites / 21 tests 全绿。主体
+  `AutoCombatPanelService` Repair #2 仍 `BLOCKED，P1=4/P2=1`：bundle 仍无真实 owner 且错误按 run 固定五个 handle，
+  UNRESOLVED 没有 retained resolver，STOPPED 被矛盾地映射为 false，H ctx-only API 丢失 State handle且 warning owner仍缺；
+  DPI 前置固定为 DHXY capture-time typed `systemScaleRatio`，另立双仓协议切片。
+- 外部 A 的 `W-TMS-0A` 既有批准保持；整类 `TaskMaintenanceService` Repair #3 复审仍为
+  `BLOCKED，P1=4/P2=1`：attempt ledger 错误随 revision 重建、所谓 O(1) 未清底层 retained records、UNKNOWN resolver
+  不存在，并引用了源码中不存在的 `REGISTERING/SUBMIT/TransitionEvidence`；exact 文件表仍有聚合行。A 只补
+  Design Repair #4 Delta，Java 冻结。
+- 内部 M 的 fixed-slot/pre-claim R0 方向通过，父级只放行 M0 双仓 8 个 immutable final-consumed DTO；Full R0 仍
+  `BLOCKED，P1=1`，因为源码中不存在报告声称的 retained lifecycle activation adapter。M replacement
+  `019f59d5-9366-7a41-baba-45a42286ddce` 正实施 M0 并补 Adapter Delta。
+- 重启丢失的 J2 会话已由 `019f59d5-7f2f-7df2-b553-abcf6d085f13` 接棒，只实施已批准的
+  `CloudTaskTurnCoordination` / `CloudTaskTurnAuthority` 两个 Cloud New。J/M 写集互斥；两方写入稳定后由父级统一执行
+  Cloud clean package 与 DHXY compile。当前同路径计数仍 `185/407`，host/Task/caller/poller 全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-13 / CR271 A/K 实施收口，B/M 定点返修，J2 接棒实施
+
+- 外部 A 的 `W-TMS-0A` 获父级 `APPROVED，P0/P1/P2=0`：新增 tenant-scoped maintenance 五项配置接口/authority，
+  exact-copy 两张维护对话框模板；父级 source/SHA 复核和 fresh Cloud clean package 4 suites/21 tests 全绿。整类
+  `TaskMaintenanceService` 仍有 `P1=5/P2=1`，A 已获明确下一项 `Design Repair #2 Delta`，不重写已批准章节。
+- 内部 K 的 current-context slot terminal revision 返修获父级 `APPROVED，P0/P1/P2=0`：terminal 只接受当前 ACTIVE
+  revision 的 exact next revision，旧 slot 不能跨 pause/resume/reconfirm 关闭新代 runtime。K 已关闭，释放槽立即续派 J2
+  `019f59bf-10a8-74c1-9517-58c49e174720` 实施已批准的 task-turn 两个 Cloud new-only 文件。
+- 外部 B 的 `AutoCombatPanelService` Design #1 父级为 `BLOCKED，P0=0/P1=5/P2=1`：缺 retained handle 入参，
+  UNKNOWN 被压成 miss/failure，引用不存在的 `WINDOW_BASE_POINT`，坐标空间与 v1 screen-absolute 冲突，遗漏 DPI scale，H
+  State/warning owner 不可调用。为避免继续纯设计等待，B 已获 `W-ACP-0` 纯决策叶子直接实施许可。
+- 内部 M Repair #1 仍 `BLOCKED，P1=3`，只补 fixed control-lane capacity、可达 admission owner 和 PAUSED canonical slot
+  factory delta；K 已收口后可继续，但父级批准前零 Java。当前同路径计数仍 `185/407`，全部 host/Task/caller/poller dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A TaskMaintenance 与 M R0 首轮设计均 BLOCKED
+
+- 外部 A 的 `TaskMaintenanceService` Design #1 父级结论为 `BLOCKED，P0=0/P1=6/P2=1`：现有 typed port 强制 opaque
+  retained action handle，但设计只给 context；tenant bean 仍留 stale/null/raw-key mutation；ROI 未保留两模板各自 fresh
+  capture 与 image-local 到 screen-absolute 坐标；maintenance 五项 config authority 不存在且 wall-clock 被未批准地改成
+  monotonic；soft wake 无消费路由；`SummonSkillService` 前置未交付。A 只做 Design Repair #1，Java 继续冻结。
+- 内部 M 的 final-consumed/compaction Design #1 父级结论为 `BLOCKED，P0=0/P1=4/P2=2`：业务 mutation 与 consumed
+  notice 之间仍可重复解释；PAUSED observation 无 canonical occurrence owner；现有 poll route 缺 bounded control lane/
+  fairness/send-handle；outcome echo address 未在 accepted/late/compacted 三路径完整校验。M 已恢复原会话，只做 Design
+  Repair #1；`A -> K -> M -> L2` 顺序不变。
+- K 仍按已批准 current-slot Repair #3 实施，外部 B 的 `AutoCombatPanelService` 尚无 Design #1 新材料。当前同路径计数仍为
+  `185/407`，本轮没有 Java 改动、无需构建；host/Task/caller/poller 均 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A observer 收口，K Repair #3 设计批准实施
+
+- 外部 A 的 W0 PAUSED observer Repair #1 获父级 `APPROVED，P0/P1/P2=0`：observer dispatch 后 operation
+  deadline 固定按 wall clock 到期，不再继承持续 PAUSED 的 pause-progress extension；未标记 ACTIVE 请求的 pause-freeze
+  路径保持不变。父级 fresh Cloud clean package 为 4 suites/21 tests 全绿。
+- 本轮 Repair 只改 Cloud broker，未改 DHXY Java；上轮父级 DHXY compile 证据仍对应原双仓实现。observer 仍 dormant，
+  未启动 caller/host/poller，也不授权生产切换。
+- 内部 K Repair #3 获父级 `DESIGN APPROVED，P0/P1/P2=0`：exact generation permit 在 H 前完成全部可失败工作，
+  H 正常返回后只做 handle plain attach + unconditional volatile publish；A-first 双门已满足，现放行 K 按 1 New + 7 Modify
+  实施。内部 M 继续 R0 compaction 设计，外部 B 已领取 `AutoCombatPanelService` Design #1，三者写集互不重叠。
+- 外部 A 已续派 `TaskMaintenanceService` 3136 行整类迁云 Design #1，固定日志
+  `2026-07-12-cloud-task-maintenance-service-worker-a.md`；先做完整状态/机械/soft-wake/caller/tenant authority 矩阵，父级批准前
+  零 Java，与 B/K/M 写集隔离。
+- 当前同路径计数仍为 `185/407`。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 B/L 收口，A/K 各一 P1，R0 Worker M 启动
+
+- 外部 B artifact/template Repair #2 与内部 L BattleRadar L1 均获父级 `APPROVED，P0/P1/P2=0`；fresh Cloud clean
+  package 4 suites/21 tests 全绿，JAR SHA-256 `3C0261F0...729606`。B 的 collision/tmp/owner/CJK 修复与 L 的三叶子
+  均无 host/caller 激活，不增加同路径计数。
+- 外部 A PAUSED observer 实现父级 `BLOCKED，P0=0/P1=1/P2=0`：observer operation deadline 被持续 PAUSED
+  pause-progress 无限顺延；A 只修 broker marker 分支 wall-clock timeout，普通 ACTIVE pause-freeze 不变。父级 fresh DHXY
+  compile 同时 exit 0。
+- 内部 K Repair #2 父级 `BLOCKED，P0=0/P1=1/P2=0`：H `StateActivationHandle` 未纳入 runtime，先 H activate
+  后 slot CAS 可裂开；K Repair #3 只补 assembly-owned 原子 transition，Java仍等 A 批准。
+- L 已关闭；空槽启动内部 M `019f5989-430b-78d1-bac2-70af9bbc3d5e`，只设计双仓 final-consumed ack +
+  monotonic compaction frontier。当前同路径计数仍 `185/407`，运行面全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 BattleRadar L1 放行，L2 三项 P1 冻结
+
+- 内部 L 的 `BattleRadarService` Design #1 已完成父级审查：14 个 public API、四 stage、expected fast-exit、signal/timer/
+  state inventory 与 DHXY HEAD `0114604e` 对齐。L1 三个独立 Cloud 叶子获 `DESIGN APPROVED，P0/P1/P2=0`，L 已恢复
+  实施 `CloudBattleRadarProperties*` 与 canonical minimap readability seam；无 bean/producer/caller。
+- L2 主体仍 `BLOCKED，P0=0/P1=3/P2=0`：unresolved capture 不能返回 remembered boolean；持续观察必须先有双仓
+  final-consumed compaction/frontier 合同；Stage 2/3 capture failure 不能未经批准删除 HEAD stale-temp 命中腿。R0/K/A/H/B
+  前置关闭前不写 `BattleRadarService`、capture port、factory、assembly 或 caller。
+- 外部 A/B 与内部 K 暂无更新材料；J 继续等待 K。当前同路径计数仍 `185/407`，所有 host/Task/caller dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 B/K 二轮返修，A/L 继续实施与设计
+
+- 外部 B artifact Implementation Repair #1 父级 `BLOCKED，P0=0/P1=2/P2=2`：新 token 未做 full-key collision
+  reservation，失败 cleanup 可删旧 artifact 并留 ghost；startup 又会删除共享 scope 根任意 `*.png.tmp`。另需失败 owner
+  entry 清理与 CJK template allowlist 恢复。B 只在原七文件做 Repair #2。
+- 内部 K current slot Repair #1 父级 `BLOCKED，P0=0/P1=2/P2=1`：它与 A 同时修改 action ledger，必须顺序合并 A 的
+  observation identity/combined quota；resume 还必须复用 initial immutable metadata，且 broker miss 不能泛化为可 renewal
+  证据。K 等 A Implementation 材料后做 Repair #2，Java 继续冻结。
+- 外部 A 正按已批准 PAUSED observer 写集实施；内部 L 继续 `BattleRadarService` Design #1；J 暂关等待 K。父级没有在
+  A 写入期并发跑 package，待各写集稳定后执行 fresh 双构建。计数仍 `185/407`，运行面全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A observer 设计批准并实施，K/L 并行
+
+- 外部 A 的 PAUSED observer Repair #2 已父级 `DESIGN APPROVED，P0/P1/P2=0`：ACTIVE identity 路径零改，observer
+  改为独立 typed identity/记录，combined quota 与 mode conflict 由 ledger 强制；unknown/null=`DESERIALIZATION`、非法
+  operation=`SCHEMA_MISMATCH`，协议 schema 入写集。A 已获授权实施 Cloud 2 new+6 modify、DHXY 1 new+4 Java modify+doc，
+  完成后必须 fresh Cloud package 与 DHXY compile。
+- K 正返修 current slot 的 same-taskRun retained state 跨 revision 复用；L 并行设计 `BattleRadarService`；J 设计已批准并
+  暂关等待 K Implementation APPROVED。B 仍等待 artifact Implementation Repair #1，无新材料不重复刷记录。
+- 当前同路径计数仍 `185/407`，所有 host/Task/caller dormant；本轮只有设计/文档更新，尚无新 Java 构建门。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A/K 返修，J 设计批准，L 续接 BattleRadar
+
+- 外部 A 的 PAUSED observer Repair #1 父级仍 `BLOCKED，P0=0/P1=1/P2=2`：共享 ledger identity 仍只有 ACTIVE
+  context 槽且 ACTIVE/observer 同 key 冲突未定义；unknown/null 的真实 transport 分类是 `DESERIALIZATION`，协议 schema
+  也漏出写集。A 只做 Repair #2，双仓 Java 继续冻结。
+- 内部 J 的 Cloud task-turn 设计获 `DESIGN APPROVED，P0/P1/P2=0`：assembly 级 FIFO、exact handle reentry、all-depth
+  forceRelease 与 typed lifecycle wakeup 方向成立；但 Java 明确等 K Implementation APPROVED 后再恢复实施，J 会话已暂关。
+- 内部 K current-context slot Design #1 父级 `BLOCKED，P0=0/P1=1/P2=1`：每个 resume runtime 会 new 一份
+  `CloudTaskRetainedActionState`，使旧 stable action handle/UNKNOWN same-bytes 无法由新 context port 续接；K Repair #1 必须
+  跨 revision 复用同一 per-taskRun retained state，并撤销把 self-CAS 当 lifecycle lease 的表述。
+- 外部 B 尚无 Implementation Repair #1 新材料，原 `P1=5/P2=2` 保持；父级未重复刷审查。空出的内部槽已续派 L，只设计
+  `BattleRadarService` 整类 Cloud lift，固定日志 `2026-07-12-cloud-battle-radar-service-worker-l.md`，与 A/B/K/J 写集互斥。
+  当前同路径计数仍 `185/407`，host/Task/caller 全部 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 H APPROVED，A/B 返修，I/J 双内部槽继续
+
+- H3 per-run `GameContext.State` owner 已父级 `APPROVED，P0/P1/P2=0`：三个入口各只剩一次最终 typed gate，terminal
+  exact release 支持严格校验后的 `ALREADY_RELEASED`；fresh Cloud clean package 最终 exit 0，4 suites/21 tests 全绿，
+  JAR SHA-256 `A2C6B7D1...6CDBFFB`。该 runtime 新边界不增加同路径计数，当前仍 `185/407`。
+- 外部 A 的 W0 PAUSED observer Design #1 父级 `BLOCKED，P0=0/P1=2/P2=2`：必须用独立 read-only context，补专用
+  retained identity/同字节重投且结构性禁止 PAUSED renewal，并修 typed wire/null canonical schema；AutoCombat Java 继续冻结。
+- 外部 B artifact Implementation #1 编译通过但父级 `BLOCKED，P0=0/P1=5/P2=2`：encode permit 顺序、business-delete/
+  eviction ghost 竞态、跨 scope token map、budgetLock 内 I/O、失败写 cleanup 后低估账及 FIFO/template canonical 均需原 B
+  在批准七文件内返修；三 caller/host 仍 dormant。
+- 内部 I 的 `CloudAutoBattleProperties` 2 New / 0 Modify 已父级 `APPROVED，P0/P1/P2=0`；fresh Cloud package
+  4 suites/21 tests 全绿，JAR SHA-256 `2EAAB576...6F0534`，无 producer/bean/caller。I 已关闭。
+- 当前两个内部槽：J 设计 W0.2 `CloudTaskTurnCoordination`；K 设计 non-mintable
+  `CloudTaskRunCurrentContextSlot` exact current/install/terminal close。J/K 写集与 A/B 完全不重叠，不等待外部返修。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 G APPROVED 185/407，H P2 返修与 Worker I 启动
+
+- G2 startup role gate 返修获父级 `APPROVED，P0/P1/P2=0`；fresh Cloud clean package exit 0，4 suites/21 tests 全绿，
+  JAR SHA-256 `60CEF8E6...EAD3377`。同路径计数 `184/407 -> 185/407`，但 producer/host/Task 仍 dormant。
+- H2 per-run State owner 同一构建通过，源码审查仍 `BLOCKED，P0=0/P1=0/P2=2`：一次 State projection 重复 3 checkpoint+
+  2 revalidate；terminal release 成功后的 exact capability 重试不幂等。H3 只改 owner 单文件，assembly 冻结。
+- 第二内部槽 Worker I 已启动 AutoCombat W0 `CloudAutoBattleProperties` tenant-scoped configless 边界 Design #1，日志
+  `docs/superpowers/plans/reports/2026-07-12-cloud-auto-battle-properties-worker-i.md`；批准前零 Java。
+- A 下一步 W0 PAUSED observer Design，B artifact Implementation #1 均继续由外部 Worker 推进。无 host/Task/caller 激活。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A Repair #2 DESIGN APPROVED 与 G2 源码返修完成
+
+- 外部 A 已关闭 stable run/current revision 与 verify-gate cleanup 两个 P1，父级 `DESIGN APPROVED，P0/P1/P2=0`。
+  `CloudTaskRunCurrentContextSlot` 必须 full stable key、每次 current/install typed ACTIVE gate，且只有 exact STOPPED/
+  COMPLETED 才 close；PAUSED/stale 不丢 `AutoCombatRuntimeState`。A 下一步只设计 W0 PAUSED read-only observer，不得直接写
+  AutoCombat Java。
+- G2 已按唯一 P1 修复 `parseRole`：原始字符串只 exact case-insensitive 映射四个 enum，任何前后空白仍为 UNKNOWN；源码
+  review 通过，等待 H2 写入稳定后的统一 fresh Cloud package 后再给最终 Implementation APPROVED/计 `185/407`。
+- H2 仍在实施 per-run State owner；B 等待 artifact Implementation #1。host/Task/caller cohort 全部 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 重启冷恢复与四路续接
+
+- 桌面重启后 heartbeat `agent-b` 仍 ACTIVE，两仓 HEAD 保持 DHXY `0114604e` / Cloud `3b988caa`，全部既有 dirty/
+  untracked 完整保留。旧内部 G/H 会话已 `not_found`，但报告与 G 两个 Java 文件均落盘；H 只有 Design、无 Java。
+- G Implementation #1 父级 cold review 为 `BLOCKED，P0=0/P1=1/P2=0`：`parseRole.trim()` 会把带空白非法标签升级为
+  MEMBER/LEADER，改变 unknown gate。新 G2 只修这一方法；通过前计数保持 `184/407`。
+- H per-run `GameContext.State` 设计获 `DESIGN APPROVED，P0/P1/P2=0`；父级删除 PREPARED reservation，State 只在 current
+  confirmed ACTIVE 后分配。新 H2 实施 Cloud 1 new + assembly 1 modify，host/Task 继续 dormant。
+- 外部 A Repair #1 仍 `BLOCKED，P0=0/P1=2/P2=0`：immutable revision context 无法同时跨 resume 保留
+  `AutoCombatRuntimeState`，且 run-terminal 清 verify gate 会削弱 HEAD 跨 run 30 秒闸。等待 A Repair #2。
+- 外部 B artifact Repair #3 获 `DESIGN APPROVED，P0/P1/P2=0`，直接绑定 checked/saturating totals、reclaim 零进展
+  fail-closed 与原 createdAt FIFO；等待 B Implementation #1。父级将在 G2/H2 写入稳定后统一 fresh Cloud package。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 AutoCombatService Design #1 父级 BLOCKED
+
+- A 的 HEAD 方法/caller/7 协作 Service 盘点成立，但父级结论为 `BLOCKED，P0=0/P1=3/P2=1`：Cloud 无
+  `getStopToken` 或 PAUSED read-only capture/fact capability；方案给 9 个 public 方法加 context，违反整类 API 保持；7 个
+  collaborator/turn/config 仍是条件占位，写集不可编译。
+- Repair #1 必须补 paused observer typed 前置、per-run context-bound Service 保留无参 API、确定 dependency DAG 与 Cloud
+  monotonic timer 映射。A Java/host/cohort 冻结，继续由同一 A 返修。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Worker G startup role gate DESIGN APPROVED
+
+- Worker G 的 Cloud-native startup role gate 已父级 `DESIGN APPROVED，P0/P1/P2=0`，放行 Cloud
+  `TaskStartupCheckService` + package-private `CloudStartupGateAuthority` 两个新文件。
+- policy baseline 只能在 future adapter 明确 `NO_OVERRIDE` 后 seed；role fact 只能从 exact non-mintable context 投影；每次
+  check 只做一次 typed checkpoint 后 exact compare。无 producer/host/concrete Task 时保持 dormant，本地 detector 全留 thin
+  client。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 artifact Design Repair #2 父级审查 #3
+
+- B 已关闭 tuple authority/锁逆序/orphan callback/reparse/public governor，但父级仍判
+  `BLOCKED，P0=0/P1=2/P2=0`：victim 在物理删除前就从账面扣除，部分删除失败或并发 reserve 会把未释放空间重复授予；
+  startup scan 达上限即停止又会留下未计账、未索引 artifact。
+- Repair #3 只需改 `EvictionPlan(EVICTING 仍计账) -> 实际删除 -> settle 成功项扣账 -> 新 Reservation`，并为完整 scan
+  选择有界批次自动回收或明确 `SATURATED_UNINDEXED` 运维 fail-closed。typed API/写集不推翻，Java 继续冻结。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Worker F 实现 APPROVED 与 Worker H 启动
+
+- Cloud-safe `BaseTaskTemplate` + `TaskStepExecutor` 定点 adaptation 已父级 `APPROVED，P0/P1/P2=0`；fresh Cloud package
+  4 suites/21 tests 全绿。explicit context、源 before/checkpoint/steps/after、typed unwind、retry 与 GameContext cleanup 均
+  保持，host/concrete Task 继续 dormant。Cloud 同路径计数 `183/407 -> 184/407`。
+- 空出的内部槽已续接 Worker H：只设计 same-process per-run `GameContext.State` owner，保证 exact scope/run、resume 保留、
+  stale revision 拒绝、terminal 释放和 restart fail-closed；不与 A/B/G 写集交叉。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 外部 Worker A 续接 AutoCombatService 复杂切片
+
+- A 的 resume executor-readiness 已父级 APPROVED，现已发布下一固定日志
+  `docs/superpowers/plans/reports/2026-07-12-cloud-auto-combat-service-worker-a.md`，首轮只设计
+  `AutoCombatService` 整类 Cloud lift-and-shift。
+- 业务权威固定 DHXY HEAD `0114604e`，不得带入当前 dirty；机械截图/窗口事实/原子输入只能走 retained typed Service port，
+  稳定 action identity 只归 ledger。A 与 B artifact、F Base、G startup role gate 写集零交集，host/cohort 继续 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 artifact Design Repair #1 父级审查 #2
+
+- 外部 Worker B 已关闭 typed context/owner/revision 和可信 root 写集问题，但父级仍判
+  `BLOCKED，P0=0/P1=2/P2=2`：bytes/count 双 CAS 与 per-scope FIFO 的锁序不能组成原子容量事务；重启 seed 统计未注册
+  scope 文件却只有已注册 store callback 可回收，会永久锁死全局预算。
+- Repair #2 必须采用 budgetLock 下的 tuple reservation handle + exact-once commit/rollback，并让 governor 对 startup
+  orphan 建有界可信 reclaim index；同时把 hostile reparse TOCTOU 收窄为受信 stateRoot 威胁边界，governor 改
+  package-private。typed artifact API 不推翻，Java 继续冻结。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Worker F BaseTaskTemplate Design #1 父级批准
+
+- Worker F 的 Cloud-safe `BaseTaskTemplate` compatibility design 已获父级 `DESIGN APPROVED，P0/P1/P2=0`，放行 Cloud
+  `BaseTaskTemplate` 1 new + `TaskStepExecutor` 1 modify。explicit context、typed transition passthrough 与本地窗口/focus
+  authority 删除方向成立。
+- 父级绑定三项实现修正：不在源 `beforeTask` 之前新增 checkpoint；`stop()` 保留源 GameContext cleanup 而不抛新异常；
+  public executor 的实际 step 仍必须在既有 checkStop 位置对 null context typed fail-closed。F 已进入同写集实施，host/
+  concrete Task/cohort 继续 dormant。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 A 返修与内部 Worker E 父级 APPROVED
+
+- 外部 Worker A 的 resume executor-readiness Repair #1 已获父级 `APPROVED，P0/P1/P2=0`：coordinator 原子写门
+  自校验完整 request/fact/outer digest，registry receipt CAS 补 taskRunId，ledger terminal+revision 同 monitor 原子发布，
+  readiness HTTP 固定 10 秒。父级 fresh Cloud package 21/21 与 DHXY compile 均通过；host/cohort 继续 dormant。
+- 内部 Worker E 的 Cloud-native configless `TaskTeamAssignmentPolicy` 已获父级 `APPROVED，P0/P1/P2=0`：仅移除未使用的
+  `TeamTaskProperties` 依赖，四个业务方法与 DHXY HEAD 逐句等价；同一 fresh Cloud package 21/21 通过。
+- Cloud 同路径计数由 `182/407` 增至 `183/407`。Worker E 关闭后立即补充下一独立实现切片，不等待外部 A/B。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 并行 Worker C/D 与 Artifact Design #1 父级结论
+
+- 内部 Worker D exact-copy `TaskStepExecutor` 已获父级 `APPROVED`：源目标 3437 bytes/SHA256 相同，fresh Cloud
+  package 21/21 全绿。该类保持 dormant，只建立后续 BaseTaskTemplate/Task cohort 的原 retry 执行边界。
+- 内部 Worker C 的 `TeamTaskProperties` + `TaskTeamAssignmentPolicy` exact-copy 因 Cloud 无 Spring Boot
+  `ConfigurationProperties` 编译失败；C 已只回滚自己新增的两文件，目标均不存在，不计迁移。下一批改走 configless
+  `TaskTeamAssignmentPolicy` Cloud adaptation，不引入 Boot。
+- 外部 Worker B 的 artifact/template Design #1 父级结论为 `BLOCKED，P0=0/P1=3/P2=0`：必须补 exact
+  TaskExecutionContext+revision owner/read/delete 门、root-wide 磁盘/编码容量 owner，以及当前写集无法实现的 real-path
+  containment。精确返修门已写回 B 固定日志。
+- A 的 resume-confirm P1/P2 返修继续并行；无 worker 互相审核。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 resume executor-readiness 实现父级审查 #1
+
+- Worker A 的双仓实现已通过父级 fresh Cloud package（21/21）与 DHXY compile，但源码审查结论为
+  **BLOCKED，P0=0/P1=1/P2=3**：coordinator 原子写门未自行验证 outer request digest，registry 最终 CAS 漏验
+  receipt.taskRunId，ledger terminal 可见性与 ledgerRevision 非原子，readiness 同步 HTTP 未落实独立固定 10s 上限。
+- 精确证据、影响和最小返修条件已追加至
+  `docs/superpowers/plans/reports/2026-07-12-cloud-resume-reconcile-confirm.md` 的
+  `Local Implementation Review #1`；只由 Worker A 原地返修，未新增 reviewer/agent。host/Task/Service cohort 继续 dormant。
+- Worker B 的独立 artifact/template adapter 任务简报已发布于
+  `docs/superpowers/plans/reports/2026-07-12-cloud-artifact-template-adapter.md`；当前尚无 Design #1，不重复催写。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Cloud resume reconcile-confirm 原子合同（外部 Design #1）
+
+- same-process checkpoint/sleep 已父级 `APPROVED`，但它只会让旧 stack typed unwind；真正 resume activation 仍缺
+  “DHXY 本地对账事实 + Cloud 新 ACTIVE revision execution confirmation”同一原子提交。若 confirm 与 fact 分开，
+  Cloud 可能在本地窗口/注册尚未可信时重建新 context，形成错窗或 stale 本地状态复活。
+- 下一复杂切片固定唯一日志
+  `docs/superpowers/plans/reports/2026-07-12-cloud-resume-reconcile-confirm.md`，继续使用同一外部 worker 先追加
+  `External Worker - Design #1`。父级 `DESIGN APPROVED` 前 Java/Maven/resources/tests 全冻结。
+- 设计必须保持双侧权威：DHXY 只产 exact local registration/reconcile fact，Cloud 只做 lifecycle confirm/context mint；
+  两者在同一 current ACTIVE revision 原子验证记录。不得把本地 HWND/runtime/token 搬云，不开放 raw fact/confirm
+  bypass，不启动 host/cohort。**无已批准业务差异；按基线等价迁移。**
+- 并行重扫 DHXY HEAD-clean 且 Cloud 同路径缺失的剩余 `service/vision`：最小 `GiveItemService` 已直接依赖
+  `InputSequences`/`InputProvider` 与 raw `TaskSleep.sleep`；`LeftTopStatusSwitchService`/`LocationVisionService` 继续依赖
+  tracker、`WindowRuntimeContext`/holder 或本地 Path，其余候选依赖闭包更大。当前没有可安全 exact-copy 的纯叶子，
+  本轮不为增加文件数强搬本地机械权威；待 typed artifact/window/input adapter 与 cohort 设计后再迁。
+- 父级只读调用链确认当前 `confirmExecution(...)` 仅有双侧 API/endpoint 定义，DHXY main 零调用；resume 会先在
+  Cloud 得到 ACTIVE，再由本地 registry 发布 ACTIVE 并唤醒 pause token，但不会向 Cloud 提交 reconcile fact/confirm。
+  Cloud coordinator 也只保存内存 `taskRunId -> confirmedRevision`。因此 host dormant/unconfirmed 仍是当前安全门，
+  新设计必须闭合本地发布后的幂等重试与 Cloud fact+confirm 原子记录，不能把现有 API 当已接通链路。
+- **父级 Design Review #1：BLOCKED，P0=0/P1=2/P2=1。** one-record 原子确认方向成立，但 Design #1 把本地
+  reconciler 的 continue/hot-start 决定和 phase/action/dialog/pathing fingerprint 写进 Cloud confirmation，重新形成
+  本地业务第二大脑；而该 observation 的所有 caller 又只存在于即将迁云的五环/五倍/修罗本地 Task，迁后合同不可达。
+  pending request 唯一 owner/清理也未定义。已要求同一 worker 返修为纯 mechanical executor-readiness fact，移除对
+  reconciler/model/业务 Task 的拟改，绑定 registry + operation-ledger + 现有 transport 的可达 trigger，并写死 one-per-run
+  retained request owner/清理；Java 继续冻结。
+- **父级 Design Review #2：BLOCKED，P0=0/P1=2/P2=1。** Repair #1 已删除本地业务恢复决定并采用 registry
+  one-per-run slot，但 producer 对象图仍不可构造：registry 无 entry lock/ledger collaborator，ledger 无 run/revision
+  identity 或回调，poll loop 无 registry/ledger/API 引用且任意 confirm 异常会终止循环。跨仓文件表同时漏掉 DHXY
+  action/request/response/digest，并错误保留 Cloud “4 new 不变”的已禁止 decision/mismatch 文件；slot 迟到结果也无
+  generation handle CAS，10,000 ready 扫描可能饿死 command poll。已要求同一 worker 追加 Design Repair #2，完整重列
+  constructor/API/锁/文件/schema 闭包与 bounded exact-session send；Java 继续冻结。
+- **并发收口 / 父级 Design Review #3：BLOCKED，P0=0/P1=0/P2=1。** worker 在 Review #2 后续写了完整 Repair #1，
+  已实际关闭 producer、wire 表、poller 异常隔离与 bounded send 两个 P1，因此 Review #2 标记 superseded。完整方案仅剩
+  锁外 HTTP 迟到结果的 slot-handle CAS：旧 r+1 response 不得清除/回退新 r+3 slot。已要求同一 worker Repair #2 只补
+  `(entryGeneration,slotGeneration,requestId,toRevision,retainedSend)` exact 回写与 stale-result 丢弃；Java 继续冻结。
+- **父级 Design Review #4：DESIGN APPROVED，P0/P1/P2=0。** Repair #2 已补齐 immutable send handle、exact-handle
+  CAS/stale result 丢弃和 bounded exact-session send。父级直接绑定三项实现修正以避免继续空转：factDigest 排除自身后
+  requestDigest 覆盖 finalized fact；双仓各补 `RemoteTaskRunErrorCode` typed code；异常隔离使用
+  `RemoteTaskRunClientException` + 单独 `RuntimeException` catch，不写非法继承 multi-catch。ledger 统计 exact identity 下
+  所有旧 revision。现已放行同一 worker 按 Cloud 4 new+9 modify、DHXY 3 new+10 modify 实施并跑双构建门。
+
+## 2026-07-12 / CR271 Cloud checkpoint + pause/resume rehydration（外部 Design #1）
+
+- 已关闭的前置门：task-run lifecycle/revision、Task/Service context、retained-action typed Service port、
+  Cloud-native `ImageProcessorService`，均 `P0/P1/P2=0`。下一阻塞是让迁入的同步 Task/Service 在 Cloud 安全点区分
+  ACTIVE、pause/resume 后 stale revision、STOPPED/COMPLETED 与其它拒绝，并从可信持久业务状态重建新 context/
+  retained action handle。
+- 本地 `TaskCheckpoint`/`TaskSleep`/`TaskExecutionContextHolder`/`TaskPauseToken`/
+  `TaskPauseResumeReconciler` 直接持有线程、pause token 或 `WindowRuntimeContext` 机械事实，不得原样复制为 Cloud
+  authority。Cloud 旧 context/handle 在任何 revision 变化后永久失效，resume 只能在新 ACTIVE revision 经 local confirm
+  后由 package-private activation/rehydration owner 重建。
+- 唯一追加式日志为 `docs/superpowers/plans/reports/2026-07-12-cloud-checkpoint-rehydration.md`。仍只使用同一
+  外部 worker，首轮只写 `Design #1`，父级批准前不改 Java。设计需覆盖 typed checkpoint outcome、sleep safe-point、
+  persisted phase/action catalog、UNKNOWN/final/stable ID、崩溃原子性、本地 reconcile fact handoff、tenant/capacity/
+  运维与 dormant host gate。**无已批准业务差异；按基线等价迁移。**
+- **父级 Design Review #1：BLOCKED，P0=0/P1=3/P2=0。** 当前无 durable authority backend，不能把内存
+  coordinator/broker/ledger + 单独 phase JSON 冒充 crash rehydration。父级决定将本切片收窄为 same-process typed
+  checkpoint classifier 与 explicit-context `TaskCheckpoint/TaskSleep` 兼容层；不做 WAL/catalog/rehydration owner，
+  不改 ledger/broker/action ID。未来 resume 的 local reconcile fact 选择与 execution confirmation 原子提交，但放到下一
+  跨仓切片；mid-sleep crash recovery 同样延期，host/cohort 继续 dormant。已退回同一 worker 做 Design Repair #1。
+- **父级 Design Review #2：DESIGN APPROVED，P0/P1/P2=0。** 当前实现只做 same-process typed classifier、
+  explicit-context checkpoint/sleep；durable/rehydration/action/wire/DHXY 全后置。父级额外封闭 boolean 绕过：
+  Cloud 不提供 `isPauseRequested()`；`isStopRequested()` 只在 CURRENT 返回 false、STOPPED 返回 true，其余全部 typed
+  unwind；PAUSED disposition 只能 park，newer-unconfirmed 为 DENIED。现放行同一 worker 仅改批准 9 个 Cloud 文件，
+  host/cohort 继续 dormant。
+- **父级 Implementation Review #1：APPROVED，P0/P1/P2=0。** 9 个批准 Cloud 文件已形成 coordinator-owned
+  structured classifier、explicit-context `TaskCheckpoint`/`TaskSleep` 与 fail-closed stop boolean；无 holder/pause token/
+  raw sleep/text reason parsing/map mutation。父级 fresh `mvn -q clean package` exit 0（62.4s），4 suites/21 tests 全绿，
+  JAR SHA-256 `DA5D951F...7C3547`。本切片 CLOSED，但只关闭 same-process compatibility；durable crash rehydration、
+  resume reconcile-confirm 原子跨仓合同和 host transition 仍未实现，所有业务 cohort 继续 dormant。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Cloud-native ImageProcessorService（外部 Design #1）
+
+- 叶子扫描确认 DHXY `CloudImageProcessor` 不是可原样搬迁的云端业务叶子：它依赖本地
+  `ImagePreprocessWashedImageClient -> ImagePreprocessCloudService`，读取本地 `TaskExecutionContextHolder`、
+  HWND/窗口几何与本地 `Path` 元数据后经 HTTP 调用 Cloud `IMAGE_PREPROCESS`。原样复制会形成 Cloud 回调自身，
+  并把本地 runtime/path 权威带入云端，故本候选明确排除 exact-source copy。
+- 下一复杂切片改为在 Cloud Brain 内以既有 `ImageAlgorithms` 为唯一算法属主，设计一个 in-process
+  `ImageProcessorService` 实现，供后续迁入 Service 保持现有接口调用；不得复制本地 transport client，
+  不得重复图像算法或开放 raw HTTP/poll/outcome 绕过。
+- 唯一追加式日志为
+  `docs/superpowers/plans/reports/2026-07-12-cloud-native-image-processor-service.md`。本轮只允许一个外部 worker
+  追加 `External Worker - Design #1`，父级 `DESIGN APPROVED` 前不得修改 Java。设计必须完整处理全部 operation、
+  structured result、`washToPath` 的本地/云端路径所有权、并发/内存/租户隔离、Spring reachability 与无测试构建门。
+  **无已批准业务差异；按基线等价迁移。**
+- **父级 Design Review #1：BLOCKED，P0=0/P1=1/P2=0。** Design #1 的 self-HTTP 排除、单一算法属主与
+  `washToPath` 风险判断成立，但拟把 `ImageAlgorithms.addImageDiagnostics` 全面改造成 typed nested records，
+  会扩大现有 HTTP 生产路径回归面。父级已拍板 Cloud `washToPath` 固定 fail-closed、依赖该方法的三个 caller 在
+  artifact/template adapter 前不得激活，且 in-process `ImageProcessorResult.decision()` 固定 `null` 不伪造 transport
+  provenance。现退回同一 worker 只设计最小 `process(status/reason/washed/canonicalDiagnostics)` 复用现有 helper；
+  Java 继续冻结。
+- **父级 Design Review #2：DESIGN APPROVED，P0/P1/P2=0。** Repair #1 已撤回 typed helper 重构，固定只加
+  最小 canonical process result，现有 diagnostics/wash/全部 low-level helper 主体不动；Cloud `washToPath`
+  fail-closed、三 caller cohort gate 与 `decision=null` 已明确。现放行同一 worker 只改批准的四个 Cloud 文件，随后
+  fresh `mvn -q clean package` 并回写可见性/reachability/无 filesystem/无测试与构建证据。
+- **父级 Implementation Review #1：APPROVED，P0/P1/P2=0。** 四个批准文件源码、operation projection、
+  image ownership、public API、self-HTTP/filesystem/reachability 与保护范围复核通过。父级 fresh Cloud
+  `mvn -q clean package` exit 0（73.3s），4 suites/21 tests 全绿；当前 JAR SHA-256
+  `96C2AB2433B747F6F0C002556817FFFC96DE193E08EEF799063953C900C50F92`。本切片 CLOSED；三个 Path caller
+  在 artifact/template adapter 前继续禁止激活，下一关键路径进入 checkpoint/pause-resume rehydration 与 Service cohort。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 retained action state + typed Service port（外部 Design #1）
+
+- Task/Service context 与波次 1-6 已冻结通过；下一阻塞是把现有 package-private
+  `CloudTaskRunActionLedger.acquire`、同 assembly `RemoteGameClientPort` 收敛成供迁入 Service 使用的类型化边界，
+  同时禁止 Service/host 获得自由字符串 mint、ledger、raw request、broker poll 或 outcome completion。
+- 唯一追加式协作日志固定为
+  `docs/superpowers/plans/reports/2026-07-12-cloud-retained-action-service-port.md`。本轮只允许现有 Carver worker
+  追加完整 Design #1 后停住；父级未写 `DESIGN APPROVED` 前不得改 Java。
+- 设计必须覆盖 opaque non-mintable action handle、exact run/operation 绑定、same-byte UNKNOWN redelivery、仅经
+  executor 验证 `NOT_EXECUTED` 后的 trusted renewal、并发/容量/生命周期威胁与 fact/capture/atomic-input 三个调用例。
+  不新增 reviewer/agent，不迁业务 Service/Task，不启动 host/poller/UI/capture/input。
+  **无已批准业务差异；按基线等价迁移。**
+- **父级 Design Review #1：BLOCKED，P0=0/P1=1/P2=0。** 当前 broker 保存 late resolution 但相同请求重入仍
+  返回冻结的 `UNKNOWN`，ledger 又拒绝 `UNKNOWN -> 最终态`，导致同字节重投永不收敛且 verified
+  `NOT_EXECUTED` 无法 renewal。已在唯一日志写出 5 条精确返修条件并退回同一 Carver；重复旧 Design #1 已标记
+  stale，不授权 Java/Maven。下一有效材料只能是 `External Worker - Design Repair #1`。
+- **父级 Design Review #2：DESIGN APPROVED，P0/P1/P2=0。** Repair #1 已加入 broker 相同请求读取已认证
+  late resolution，并把 ledger 收敛为 `unrecorded -> UNKNOWN -> one exact final state`；无自动 redispatch、
+  新 ID 或 outcome 注入面。现已放行同一 Carver 仅改批准的 2 个新文件 + 8 个 Cloud 文件，随后 fresh
+  `mvn -q clean package` 并把 `javap`/reachability/Surefire/无测试与无运行副作用证据追加回唯一日志。
+  **无已批准业务差异；按基线等价迁移。**
+- **父级 Implementation Review #1：APPROVED，P0/P1/P2=0。** 10 个批准文件源码、哈希、调用面与二进制可见性
+  独立复核通过；raw authority 均为 package-internal，公开面只有三种 typed call。父级 fresh Cloud
+  `mvn -q clean package` exit 0（63.4s），4 suites/21 tests 全绿，JAR SHA-256
+  `A95AF8085F0A65B0EB2CB1A8959C46B798943A5D549D66F70A48199CBE101D05`，无测试/DHXY Java/运行副作用/Git
+  mutation。本切片已 CLOSED；下一步进入可信 persisted action catalog/rehydration 与可直接迁移的 Service 叶子。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 Task/Step 契约叶子迁移波次 6（完成）
+
+- **基线**：DHXY `thin-client-design@0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain
+  `navigation-migration@3b988caa010254973e03342272e6d1d6a9685b01`。两仓原有 dirty 改动全部保护。
+  `GameTask.java` 与 `task/template/TaskStep.java` 对 DHXY HEAD scoped status 为空，Cloud 同路径目标均不存在；
+  其 imports 只依赖已迁入的 `TaskRunResult`、`TaskStepResult` 与刚批准的 Cloud-safe `TaskExecutionContext`。
+- 本波只 exact-source copy 两个无状态接口，保留现有 `execute(TaskExecutionContext)`/step 类边界供后续主体迁移编译；
+  不复制 `TaskFactory`（仍依赖本地 `WindowRuntimeContext`）、`TaskStepExecutor`（含 checkpoint/retry/sleep）或任何
+  Task 实现。`GameTask.stop()` 仅作为 dormant 接口签名存在，本波不实现、不调用，也不把它当作 Cloud lifecycle
+  权威；stop/pause 仍由后续 coordinator/checkpoint 切片处理。
+- 复制后要求源目标 Length/SHA256 一致并运行 fresh Cloud `mvn -q clean package`；不新增测试、不装配 host/poller、
+  不执行 Task/capture/input。**无已批准业务差异；按基线等价迁移。**
+- **交付/验证**：`GameTask.java`（1080 bytes，SHA256 `B4F575803E884A2297CB95FEABAA7B140E74A5F6FE9526047EED9BA6EAE46A48`）
+  与 `TaskStep.java`（303 bytes，SHA256 `0B6E72C64BBAE788ABF047A35A7ECFFC6682A35DA791A4A9546C10D516A39D11`）
+  源目标逐字节一致。fresh Cloud `mvn -q clean package` exit 0（58.9s），4 suites/21 tests，
+  0 failures/errors/skipped；未迁 Task 实现或执行器，未启动 host/poller/Task/capture/input。当前同路径计数
+  `181/407`，剩余 `226` 含明确本地保留能力。
+
+## 2026-07-12 / CR271 Task/Service context 最小兼容边界（APPROVED）
+
+- Repair #1 已把 authoritative `binding.taskType` 收敛为实际 `metadata.taskCode`；原始
+  `requestedTaskCode` 独立保留并允许在成员转 `AUTO_BATTLE` 时不同。future dormant activation 只能在 effective
+  task 选定后 PREPARE，不创建 requested/effective 双 run。
+- 本地独立复核已在唯一协作日志追加 `Local Review #2 - APPROVED`：`P0/P1/P2=0`。Cloud context 继续绑定 exact
+  scope/taskRun/window/stopEpoch/runRevision；无 `WindowRuntimeContext`、`TaskPauseToken`、HWND 对象、Input queue
+  或 runner 权威；assembly/factory package-private，Service context 无 public constructor，机械能力只预留同 assembly
+  retained-authority `RemoteGameClientPort` 路径。
+- 本地 fresh Cloud `mvn -q clean package` exit 0（58.9s），4 suites/21 tests，0 failures/errors/skipped；JAR 四类
+  齐全，`src/test` 无变化，host/poller/UI/capture/input 未启动。本批准只关闭 dormant context 边界，activation、
+  retained-action adapter、pause/resume rehydration、typed window facts、checkpoint/sleep 仍是后续切片。
+  **无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 修罗 cloud protocol DTO 迁移波次 5（完成）
+
+- DHXY `thin-client-design@0114604e` 下 `XiuluoBrainActionOutcomeDecision`、
+  `XiuluoBrainActionOutcomeRequest`、`XiuluoBrainDecision`、`XiuluoBrainResponse`、
+  `XiuluoBrainStartRequest`、`XiuluoBrainStepRequest` 6 个源文件 scoped status 为空，Cloud 目标均不存在。
+- imports 只落在已迁移的 `CloudDecisionResult`、`XiuluoPhase`、JDK 与 Lombok；本波只 exact-source copy 这些
+  request/response/decision DTO，不复制 842 行的 `XiuluoBrainCloudDecisionService` bean，不注册 endpoint/host，
+  不执行修罗 phase 或动作。
+- 要求源目标 Length/SHA256 一致，父级统一 package；字段、Instant、Map/List payload 与 phase 语义保持原样。
+  **无已批准业务差异；按基线等价迁移。**
+- **复制/构建验证**：本地再次复核 6/6 源文件 scoped status 为空、源目标 Length/SHA256 一致（`BAD=0`），
+  未复制 `XiuluoBrainCloudDecisionService`，未覆盖目标、未执行 Git 写操作。与已批准 context 边界合并运行 fresh
+  Cloud `mvn -q clean package` exit 0，4 suites/21 tests，0 failures/errors/skipped。
+
+## 2026-07-12 / CR271 Cloud task decision DTO 迁移波次 4（完成）
+
+- DHXY `thin-client-design@0114604e` 下 19 个源文件 scoped status 为空、Cloud 目标不存在，且 imports 只落在
+  已迁移的 `CloudDecisionResult`、dialog/model/task transaction DTO、JDK 与 Lombok：
+  `CapabilityGateCloudDecision`、`DialogPolicyPreClickCloudRequest`、`ImagePreprocessCloudRequest`、
+  `MaintenanceThresholdCloudDecision`、`NpcClickStrategyCloudDecision`、`SheyaoxiangStatusCloudDecision`、
+  `TaskRecoveryCloudDecision`、`TeamReturnPolicyCloudDecision`、`TeamRoleTooltipCloudDecision`、
+  `DialogPolicyCloudDecision`、`DialogPolicyPreClickCloudDecision`、`MiniMapLocationCloudDecision`、
+  `NpcClickSmartCloudDecision`、`NpcClickSmartQueueMessage`、`RouteCloudDecision`、`SummonSkillCloudDecision`、
+  `TaskPolicyCloudDecision`、`TrackerLinkRankerCloudDecision`、`TrackerPanelReaderCloudDecision`。
+- 本波只 exact-source copy 被动 request/decision/result 类型，不复制任何 `*DecisionService` bean、HTTP client、
+  endpoint、host、本地机械执行器或业务 Task；要求目标此前不存在且源目标 bytes/SHA256 一致。worker 不跑 Maven，
+  父级在并行写入稳定后统一执行 Cloud fresh clean package。
+- 字段、builder/default、enum、Point/ROI 坐标语义与旧 decision status 原样保持；不把这些旧 DTO 当作新的业务
+  权威或运行入口。**无已批准业务差异；按基线等价迁移。**
+- **复制验证**：worker 19/19 完成，父级独立重算源/目标 Length 与 SHA256，19/19 全一致；与波次 3 合并校验
+  `BAD=0`。未复制任何 `*DecisionService`、未覆盖目标、未执行 Git 写操作。父级在稳定源码窗口运行 Cloud
+  fresh `mvn -q clean package` exit 0，4 suites/21 tests，0 failures/errors/skipped。
+
+## 2026-07-12 / CR271 Cloud task 被动请求/结果 DTO 迁移波次 3（完成）
+
+- DHXY `thin-client-design@0114604e` 下以下 10 个源文件 scoped status 为空，Cloud 目标均不存在：
+  `NpcClickSmartQueueOutcome`、`NpcClickSmartCloudSession`、`NpcClickSmartDirectCombatAuthorization`、
+  `RouteMemoryOutcomeIngestResult`、`RouteMemoryOutcomeReport`、`MiniMapLocationCloudRequest`、
+  `SheyaoxiangStatusCloudRequest`、`SummonSkillCloudRequest`、`TeamRoleTooltipCloudRequest`、
+  `TrackerPanelReaderCloudRequest`。
+- 它们仅是 enum/Lombok immutable request/result DTO，不截图、不发送输入、不访问本地窗口、不注册 Spring bean、
+  endpoint、host 或 Task；本波只 exact-source copy，要求目标此前不存在且源目标 bytes/SHA256 一致，不覆盖任何
+  在途文件。父级在复杂 context worker 完成或达到稳定点后统一运行 Cloud fresh clean package，避免并行 build
+  与源写入互扰。
+- 不复制 `CloudDecisionClient`、本地 `InputAction/InputProvider`、window discovery/execution enum 或其它本地机械
+  能力；不改变旧云决策字段、默认值或业务含义。**无已批准业务差异；按基线等价迁移。**
+- **复制验证**：worker 10/10 完成，父级独立重算源/目标 Length 与 SHA256，10/10 全一致；两波总计 29/29、
+  `BAD=0`。未覆盖目标、未执行 Git 写操作。父级 Cloud fresh `mvn -q clean package` exit 0，4 suites/21 tests，
+  0 failures/errors/skipped；当前同路径迁移计数为 172/407，剩余 235。
+
+## 2026-07-12 / CR271 Cloud Task/Service execution-context 兼容边界（外部 worker 开工）
+
+- **基线**：DHXY `thin-client-design@0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain
+  `navigation-migration@3b988caa010254973e03342272e6d1d6a9685b01`。两仓已有大量用户/并行在途改动，全部保护，
+  禁止 reset/checkout/clean/revert/commit。本切片原则上只改 Cloud Brain 的 task/service context、remote authority
+  assembly 或 host 装配边界；如确需触碰 DHXY，必须先在共享报告列出精确理由与文件，父级未复核前不得修改。
+- **现状证据**：本地 `com.bot.dhxy.runner.context.TaskExecutionContext` 直接持有 `TaskStopToken`、
+  `TaskPauseToken`、`WindowRuntimeContext`、本地 HWND/几何与 team-session 元数据；`GameTask`、`TaskStep`、
+  `TaskCheckpoint` 及主体 Task/Service 依赖其 getter/checkpoint。直接原样复制会把本地窗口、线程暂停和 runner
+  权威搬入 Cloud，违反 thin-client 边界。Cloud 已有经双审关闭的 `CloudTaskRunExecutionContext`、
+  retained-action `RemoteGameClientPort` 与 broker/coordinator revision fence，但尚未形成供原业务类使用的兼容上下文。
+- **目标**：建立最小、可审查的 Cloud execution-context/Service host 兼容边界，使后续 Task/Service 可按原类边界
+  迁入，同时机械事实只能经 `RemoteGameClientPort` 获取/执行；不得复制或伪造本地 `WindowRuntimeContext`、
+  HWND authority、TaskPauseToken/InputActionQueue，也不得启动 Task host。必须保留 stable ID、immutable redelivery、
+  runRevision 与 package-internal client-ingress capability 隔离。
+- **协作/验收**：外部 worker 的设计、拟改文件、实现、build 输出和 blocker 只追加到
+  `docs/superpowers/plans/reports/2026-07-12-cloud-task-service-context.md`。不新增/恢复测试；Cloud Java 变更必须
+  fresh `mvn -q clean package`，若确有 DHXY Java 变更则另跑 `mvn -q -DskipTests compile`。本切片不迁业务 Task、
+  不改变 phase/retry/fallback/click/navigation/stop/pause 语义。**无已批准业务差异；按基线等价迁移。**
+
+## 2026-07-12 / CR271 叶子状态类迁移波次 1（完成）
+
+- 前置门：execution-context Repair #8 与 local lifecycle empty-publication 均已有两名独立 reviewer 对最新源码
+  明确 `APPROVED`，P0/P1/P2=0；双 build fresh 通过。Task host/poller 仍 dormant，本波只复制源码，不装配运行。
+- **基线**：DHXY `thin-client-design@0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain
+  `navigation-migration@3b988caa010254973e03342272e6d1d6a9685b01`。两仓原有 dirty 改动全部保留。本波 11 个源文件
+  对 DHXY HEAD 均无 diff，Cloud 目标均不存在；复制前后要求 bytes+SHA256 一致，禁止覆盖。
+- **文件范围**：`TaskHotStartSnapshot`、`TaskStartupCheckResult`、`WubeiDialogCatalog`、`WubeiStepOutcome`、
+  `WubeiWaitSpec`、`FiveRingPhaseContext`、`FiveRingStepOutcome`、`XiuluoBrainRoundState`、
+  `XiuluoDialogCatalog`、`XiuluoRoundContext`、`XiuluoStepOutcome`。它们是状态/结果/模板目录叶子类，不接
+  HWND、截图、输入或 host。`SystemPowerService` 明确保留本地，因为它执行 Windows 睡眠，属于本地机械能力。
+- 无已批准业务差异；按基线等价迁移。不修改源文件、不删除本地副本、不注册 Spring/Task host、不新增测试。
+  两个简单 worker 分 disjoint 文件集做机械复制与 SHA 校验，父级随后统一跑 Cloud `mvn -q clean package`。
+- **交付/验证**：11/11 文件均为源对 HEAD 无 diff、目标复制前不存在，父级独立重验 length+SHA256 全一致
+  （`BAD=0`）。Cloud fresh `mvn -q clean package` exit 0，4 suites/21 tests，0 failures/errors/skipped；未修改
+  DHXY Java、未新增测试、未装配 host/poller/Task。`SystemPowerService` 未复制并继续作为本地机械能力保留。
+
+## 2026-07-12 / CR271 云端纯配置与图像工具迁移波次 2（完成）
+
+- 目标是为后续 `service/task` 主体编译补齐 Cloud-owned 纯依赖，不接运行入口。候选为 DHXY HEAD 干净且目标
+  不存在的 `BotProperties`、`TaskRunProperties`、`TeamTaskProperties`、`TeleportConfig`、`VisionProvider`、
+  `ImageFinder`、`OpenCvNativeLoader`、`ImagePreprocessor`、`LatencyMetrics`、`TeamRoleStatus`。
+- `WindowIsolationProperties`、`InputAction*`、`InputProvider`、`Window*` discovery/runtime、`SystemPowerService`
+  明确保留本地，不因“当前 imports 已齐”而复制。纯配置/图像类在 Cloud 只先编译，不注册/启动 Spring host；
+  资源路径和 tenant 隔离在 Service 宿主接线时另做实审。
+- 基线仍为 DHXY `thin-client-design@0114604e` 与 Cloud `navigation-migration@3b988caa`；源逐文件对 HEAD
+  无 diff、目标不存在、复制后 bytes/SHA 一致。无已批准业务差异；按基线等价迁移。不运行 DHXY 测试或应用，
+  父级统一执行 Cloud clean package。
+- **首次 package 阻断与收窄**：10 个文件 bytes/SHA 复制一致后，Cloud compile 仅在 `BotProperties`、
+  `TaskRunProperties`、`TeamTaskProperties` 失败：它们依赖当前 Cloud Brain 未采用的 Spring Boot
+  `@ConfigurationProperties` 与 Jakarta Validation。其余 7 个文件没有编译错误。当前不为 dormant 配置类引入整套
+  Boot/Validation 及潜在 Spring 版本耦合；这 3 个目标副本删除并延期到 Service 宿主配置绑定切片，届时统一决定
+  Boot binder 或 plain Spring adapter。保留 `TeleportConfig`、`VisionProvider`、`TeamRoleStatus`、`ImageFinder`、
+  `OpenCvNativeLoader`、`ImagePreprocessor`、`LatencyMetrics`。
+- **交付/验证**：上述 7 个保留文件均为源对 HEAD 无 diff、目标复制前不存在，父级独立重验 length+SHA256
+  全一致（`BAD=0`）。删除仅限本波新建且无法在当前 Cloud 依赖图编译的 3 个配置副本，没有触碰 DHXY 源文件
+  或两仓其它在途改动。Cloud fresh `mvn -q clean package` exit 0，4 suites/21 tests，0 failures/errors/skipped；
+  未注册配置 binder、Service host、Task/poller，未新增测试。当前 Cloud 已具备 DHXY 407 个 Java 文件中的
+  143 个，剩余 264 个；下一实质阻塞是把本地 `TaskExecutionContext` 的窗口/暂停机械事实改由已封闭的远程
+  task-run context 提供，而不是继续机械复制本地窗口权威。
+
+## 2026-07-12 / Execution-context Repair #8 禁止 action null 字段绕过（已实现，等待原双 reviewer 复审）
+
+- Repair #7 两名全新 reviewer 得到一通过一阻断；阻断为 `P2=1`。协议 7.2 规定每类 input action 只允许其
+  必填动作字段，其余字段“禁止”，但 `RemoteOperationPayloadCodec` 先按全部 action 字段并集检查，随后
+  `RemoteInputActionDto.forbid` 只能看到 materialized value，显式 `null` 的禁用字段会丢失 presence 信息。
+  例如 `HOLD_CTRL` 携 `"x":null` 可通过 strict payload 校验，之后才 claim ledger/refresh binding/执行输入。
+- **改前基线**：DHXY 分支 `thin-client-design`、HEAD
+  `0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain 分支 `navigation-migration`、HEAD
+  `3b988caa010254973e03342272e6d1d6a9685b01`。两仓原有大量用户/并行 dirty 改动全部保留；本轮 Java 写集仅
+  `RemoteOperationPayloadCodec.java`，另追加协作日志/CR271/本记录，不覆盖或提交其它改动。
+- 修复不变量：在 handler 已建立的 digest 后、ledger/binding 前 decode 边界内，从原始 action node 读取 textual
+  `RemoteInputActionType`，按 type-specific exact key set 拒绝任何禁用字段（包括显式 null），再对整个 payload
+  materialize 一次；不改变允许字段、必填值、动作顺序、输入 bundle、wire/digest/stable IDs/revision/lifecycle。
+  无已批准业务差异；按基线等价迁移。按 no-local-test mode 不新增/恢复/运行 DHXY 测试；完成后重跑 Cloud
+  `mvn -q clean package` 与 DHXY `mvn -q -DskipTests compile`，host/poller/UI/capture/input 保持 dormant。
+- **实现/验证**：codec 在 typed materialization 前从 raw action node 读取 textual enum，并按八组 type-specific
+  exact field set 执行 allowed+required presence 校验；禁用 key 即使值为 null 也会在 handler ledger 前抛
+  `RemotePayloadException`。合法 payload 仍只整体 materialize 一次，`RemoteInputActionDto.validate` 的非负值与动作
+  参数语义未改。fresh DHXY compile exit 0；fresh Cloud clean package exit 0，4 suites/21 tests，0 failures/errors/
+  skipped；无测试源改动、无运行入口或 Git mutation。
+- **双审收口**：原两名 execution reviewer 均对 Repair #8 当前源码重新审查并明确 `APPROVED`，P0/P1/P2=0；
+  lifecycle empty-publication 同样已有两名全新 `APPROVED`。两个通信/生命周期前置门现已关闭，Task host 仍 dormant，
+  下一步进入干净叶子类迁移波次；不把 `SystemPowerService` 搬云，因为它是本地 Windows 睡眠机械能力。
+
+## 2026-07-12 / Repair #7 payload 预验证与 lifecycle empty-publication 收敛（已实现，等待全新双审）
+
+- **最新外审材料**：execution-context Repair #6 新 reviewer 给出 `P2=1/BLOCKED`：
+  `LocalRemoteGameCommandHandler.handle` 在 request digest 校验后先执行 `operationLedger.claim`，严格 payload
+  materialization 却延后到 operation 方法内，期间 `requireBoundWindow` 还可能刷新并提交本地 binding。无效 payload
+  因而会先占用 request/action ledger 与触碰本地状态，再返回 `INVALID_REQUEST`。lifecycle 新双审为一通过一阻断；
+  阻断 P2 指出 `applyConfirmed`、`beginStopPublication`、`retainStoppingProgress` 的 registry
+  `Optional.empty()` 经 `orElseThrow` 直接携 recovery 重抛，跳过 reservation cleanup 同步。
+- **改前基线**：DHXY 分支 `thin-client-design`、HEAD
+  `0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain 分支 `navigation-migration`、HEAD
+  `3b988caa010254973e03342272e6d1d6a9685b01`。两仓 `git status --short` 均有大量用户/并行在途改动，全部保留；
+  本轮不 reset/checkout/覆盖/提交。已复核唯一协作日志、CR271 最新 reviewer 证据和上述两个 Java 调用链。
+- **本轮写集/不变量**：DHXY 仅修改 `LocalRemoteGameCommandHandler.java` 与
+  `RemoteTaskRunLifecycleService.java`，另追加本实施记录、协作日志和 CR271 卡。handler 在 digest 成功后、ledger
+  claim 与任何 registration/window refresh 前，按 operation 严格解码一次；后续执行只消费该 typed payload，不再
+  二次 materialize。lifecycle 三个 empty publication 分支显式保留最后可信 recovery、同步 exact start reservation
+  为 `cleanupPending=true`，并返回 typed retryable recovery；不重发 HTTP/mutation。
+- 不改变 wire/digest、stable IDs、runRevision Cloud enqueue/final-dispatch/DHXY pre-side-effect/worker admission 门，
+  不改变 pause/stop/confirm/revision/stopEpoch、Task phase/retry/fallback/click/navigation 或输入 bundle 语义；host 仍
+  dormant。无已批准业务差异；按基线等价迁移。按 no-local-test mode 不新增/恢复/运行 DHXY 测试；完成后重跑
+  Cloud `mvn -q clean package` 与 DHXY `mvn -q -DskipTests compile`。
+- **实现/验证**：handler 在 digest 成功后于第一个 ledger/binding 操作前按 operation 严格 materialize payload，
+  `operationLedger.claim` 后只传递该 typed object，三个 execute 方法不再二次 decode。lifecycle 三个 registry
+  mutation 的 empty 结果均显式 `bindExistingReservation(trusted, true)` 后抛 typed、retryable recovery，不再由
+  `orElseThrow` 绕过 reservation 收敛。fresh DHXY `mvn -q -DskipTests compile` exit 0；fresh Cloud
+  `mvn -q clean package` exit 0，4 suites / 21 tests / 0 failures / 0 errors / 0 skipped；两仓无测试源改动，未启动
+  host/poller/UI/capture/input，未执行 Git mutation。
+
+## 2026-07-12 / Cloud execution context Repair #6（已实现，等待全新双审）
+
+- Repair #5 第一名独立 reviewer 在唯一协作日志追加 `BLOCKED`：P1 为 host 仍持有 public broker，并可用
+  `poll/completeOutcome` 抢先伪造相关 `NOT_EXECUTED`；P2 为 top-level strict mapper 后的 `JsonNode payload`
+  二次 decode 未拒绝 numeric enum/float-to-int，且初始 parser 未拒绝 duplicate fields。
+- **根因**：Service send capability 与 client-ingress capability 仍落在同一个 public broker 对象；strict policy
+  只覆盖 envelope materialization，没有覆盖原始 parser 与 payload materialization 两个边界。
+- **Repair #6 写集**：Cloud Brain 将新增 remote-package route factory，内部创建 coordinator/broker/两个 client
+  ingress endpoint；`CloudBrainServer` 只接 opaque routes，不再持有 broker/coordinator；broker 与 authority assembly
+  降为 package-internal，poll/outcome/raw send 均不形成 public typed mutation surface，旧 public poll/outcome endpoint
+  文件由内部 endpoint 替代。DHXY `HttpRemoteCommandTransport` 增加 duplicate detection，
+  `RemoteOperationPayloadCodec` 复用同样的 numeric/enum coercion policy。
+- 不改 wire 字段/digest、runRevision 三道门、stable identity、Task/Service 业务、lifecycle 或输入顺序；host 仍 dormant，
+  不新增 auth/TTL/retry/takeover。无已批准业务差异；按基线等价迁移。完成后重跑 Cloud clean package 与 DHXY
+  compile，不新增/恢复本地测试。
+- **实现/验证**：broker/authority assembly/executor 均 package-internal；新 `RemoteTaskRunRoutes` 在 remote package
+  内部创建 coordinator+broker，并只向 `CloudBrainServer` 返回三个 opaque `CloudApiRoute`，旧 public poll/outcome
+  endpoint 已删除，server 不再持有 broker/coordinator。DHXY initial parser 增 strict duplicate detection，payload codec
+  增 numeric-enum 与 float-to-int reject，协议第 2 节同步 retained-authority port。fresh Cloud clean package 21/21 与
+  DHXY compile 均 exit 0；无测试源改动、无应用/输入启动。
+
+## 2026-07-12 / Local lifecycle publication race 复审返修（已实现，等待新双审）
+
+- 新独立 reviewers Erdos/Tesla 对当前冻结源码均给出 `BLOCKED`。共同 P1：`applyConfirmed` 与
+  `retainStoppingProgress` 在 registry race 后可重读 terminal，却未把 terminal 同步到 start reservation，返回的
+  `cleanupPending=false` recovery 随后无法通过 `consumeTerminal`；无 local cleanup 的 terminal 仍直接
+  `registry.register`，race 时错误保存未登记的 remote terminal。
+- Tesla 另补 P2：`beginStop`、`requestPause`、`releaseTerminal` 仍存在直接 registry mutation，竞态异常未转换为
+  typed lifecycle recovery。根因是 publication policy 尚未覆盖“mutation 失败后的 registry + reservation 双状态
+  收敛”，而非单一调用点的状态判断错误。
+- 本轮只修改 `RemoteTaskRunLifecycleService.java` 及 CR 文档：把 terminal recovery 同步、无 local terminal
+  register race、begin-stop/pause-request/terminal-release race 收入真实 typed publication 边界；不增加 HTTP/
+  mutation retry，不改变 lifecycle transition、revision、stopEpoch、pause token、CONFIRM、TTL/takeover 或业务语义。
+  无已批准业务差异；按基线等价迁移。验证只跑 `mvn -q -DskipTests compile`，不运行/新增本地测试。
+- **实现结果**：`bindExistingReservation` 现在回报是否真实同步；`applyConfirmed` 与
+  `retainStoppingProgress` 在 success/race 两条路径都同步 registry + reservation，terminal 只有同步成功才返回
+  cleanup=false。初始 terminal STATUS 与无 local cleanup terminal 共用
+  `publishTerminalWithoutLocalRegistration`：capacity/identity/non-exact race 保留可信 non-terminal、
+  cleanup/retryable=true，仅 exact terminal 幂等收敛。`beginStopPublication`、`requestPausePublication`、
+  `releaseTerminalPublication` 统一把 registry race 转成携 latest exact/最后可信 recovery 的 typed exception，且不重发
+  mutation。fresh `mvn -q -DskipTests compile` exit 0（17.5 秒）；scoped whitespace clean。
+- **最新 P2 返修**：第二名 reviewer 指出旧 `latestExactRegistration` 用 fallback 返回值掩盖“registry 无 exact”事实，
+  以及 release identity race 错把旧 terminal 标为 cleanup=false。该 helper 现返回 `Optional`；四个 publication
+  boundary 只有 Optional 有值才把 latest 当 registry 实态，无 exact/identity conflict 一律保留旧可信 recovery 且
+  cleanup/retryable=true。terminal release identity race 不再把冲突 latest 写入 reservation，而是保留 expected
+  terminal、cleanup/retryable=true。fresh compile exit 0（17.9 秒），等待两名基于此源码的全新 reviewer。
+
+## 2026-07-12 / Cloud execution context Repair #5（实施中）
+
+- **审查触发**：独立 reviewer Ohm 在 `docs/superpowers/plans/reports/2026-07-12-cloud-execution-context-review.md`
+  对 Repair #4 给出 `BLOCKED`：公共低层 `RemoteGameClientPort` 可绕过 retained identity；
+  `CloudTaskRunAuthorityAssembly.create(coordinator, anyPort)` 允许调用方替换真实 broker outcome；
+  DHXY `HttpRemoteCommandTransport` 的默认 Jackson mapper 会先做宽松类型归一化。
+- **改前基线**：DHXY 分支 `thin-client-design`、HEAD
+  `0114604e1ff5f15491d2910959c45252e893d04f`；Cloud Brain 分支
+  `navigation-migration`、HEAD `3b988caa010254973e03342272e6d1d6a9685b01`。两仓均有大量用户/并行
+  在途改动；本轮不 reset、checkout、覆盖或提交任何现有改动。
+- **本轮写集**：Cloud Brain 仅
+  `remote/RemoteGameClientPort.java`、`remote/RemoteGameCommandBroker.java`、
+  `remote/CloudTaskRunCommandExecutor.java`、`remote/CloudTaskRunAuthorityAssembly.java`；DHXY 仅
+  `cloud/remote/HttpRemoteCommandTransport.java`，另追加本实施记录、共享 review 日志和 CR 卡。
+- **设计不变量**：Service 面只能提交 `CloudTaskRunExecutionContext + RetainedActionIdentity + payload`；
+  raw wire request 只能由 package 内 broker 接收；executor 必须绑定具体 `RemoteGameCommandBroker`，
+  assembly 从该 broker 取得同一个 coordinator，禁止任意 wrapper port；DHXY 在 schema/digest/副作用前
+  拒绝 scalar coercion、float-to-int、numeric enum 和 trailing tokens。host/Task 保持 dormant，不新增
+  retry/TTL/takeover，不改变 pause/stop/confirm/revision 或任何业务 phase/retry/fallback/click/navigation
+  语义。无已批准业务差异；按基线等价迁移。
+- **验证门**：Cloud `mvn -q clean package`（不可 skip）与 DHXY
+  `mvn -q -DskipTests compile`；不新增、恢复或运行 DHXY 本地测试，不启动 host/poller/UI/截图/输入。
+
+## 2026-07-11 / CR243 修罗回程确认即血蓝预检（实施中）
+
+- 基线：分支 `navigation-migration`，上游最新提交 `a65c5db3`；开始前工作区已有并行 dirty 改动，
+  本次仅触碰 `AutoCombatService.java`、`XiuluoTaskV2.java` 与 CR243 文档，不回退其它改动。
+- 用户已明确批准业务差异：队长回程并确认灵兽村后立刻只截一次人物/宝宝血蓝窄区域并做无焦点预检，写入既有
+  `post-combat first-aid` Q，再消费队长队首；删除“FAST_EXPECTED_EXIT 只挂血蓝 pending”和“tracker 绿链后
+  才 report/open/consume 队长血蓝”的旧入口。医宝宝、修装备、摄妖香及队员消费逻辑不在本次范围。
+- 已核对 `docs/业务逻辑.md` 修罗基线与 CR243 当前卡：这是用户批准的血蓝时序变更，不是等价迁移。
+
+## 2026-07-11 / CR270 暂停期间 Runner 只读观察与路径结算（已实现，fresh 待验）
+
+- **用户批准的行为**：暂停只冻结任务 phase、物理输入和业务动作；`WindowTaskRunner` 不能停止观察。
+  暂停期间它仅允许读取战斗/小地图和更新 `ActionState`、`WindowPathingSnapshot`，并可发布既有
+  `PATHING_TERMINAL` 纯事实事件；不得点击、按键、使用道具、准备 dialog、发起维护、导航、重开任务或
+  请求云端下一步动作。
+- **本次实证**：`2026-07-11 21:03:35 -> 21:06:38`，`hwnd-72D11EE` 暂停期间没有
+  `window-combat-watch` tick；恢复后真实小地图已读为 `大雁塔五层(32,73)`，但遗留
+  `ACTIVE 大雁塔六层(71,31) -> 大雁塔五层(32,74)`，修罗因此继续
+  `WAIT_TARGET_PATHING_TERMINAL`，没有识别或点击怪物。
+- **改前基线/工作区**：当前分支 `navigation-migration`，HEAD `4a116bde`；修罗业务裁决基线
+  `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`，已核对 `docs/业务逻辑.md` 的修罗 tracker
+  路线第 8-10 条和任务类热启动 Policy。`git status --short` 已有用户/并行工作的
+  `BagService.java`、`ReturnItemPrescanService.java`、CR269 文档及配置改动，本卡不回退。
+  `WindowTaskRunner` 当前已有 paused-leader combat read-only 半成品，但未 probe pathing；
+  `TaskPauseResumeReconciler` 匹配指纹后只补时、保留旧 pathing signal，正是本次缺口。
+- **边界**：不改变修罗 `PATHING_TERMINAL` 的既有消费语义、怪物识别/点击顺序、重试或 watchdog 规则；
+  恢复后任务仍在正常 phase 边界消费 runner 已写入的事实。无已批准业务差异；按基线等价迁移。
+- **实现/编译**：`WindowTaskRunner` 的 paused 分支已扩为全窗口 `paused-readonly-observer`；active
+  pathing 调用现有 mini-map probe 并只写 snapshot/发布既有 terminal。暂停分支显式跳过
+  route outcome delivery、route/transfer memory 回报、green-stop cloud arbitration、五倍开打 interest
+  和所有 dialog/tracker preparation。`mvn -q -DskipTests compile` 已通过；无本地测试。
+
+## 2026-07-11 / CR257 fresh 启动阻塞已修：cloud-brain CR257 合入实际运行目录（待用户清旧 sidecar 后重试）
+
+- 运行时 P1 根因（用户诊断）：DHXY 侧 CR257 已合 `navigation-migration`，但实际运行目录
+  `D:\mavenProject\dhxy-cloud-brain` 未部署 cloud-brain 侧提交，启动门按合同
+  `ocr-sidecar-missing` fail-closed（正确行为，未恢复本地 OCR）。
+- 修复：fast-forward 合并 `cr257-ocr-engine-cloud`（`3b988ca`）进实际运行目录；
+  `ocr/local_ocr_server.py`+`requirements.txt` 就位；launcher 启动门 `mvn -q compile` exit 0；
+  `data/vision_memory.json`（5.18MB 活体）与 rapidocr 导入均核验通过。
+- `mvn package` 4 个 contract 测试失败与 CR257 无关：源自并行 navigation-migration 会话未提交的
+  DecisionEngine/SmartClickRecognizer 半成品（同套提交在干净 worktree 全绿）；启动门只跑 compile。
+- **待用户动作**：手动结束旧版 sidecar 进程 PID 18628（2026-07-05 启动，占 127.0.0.1:18761，
+  health 无身份，launcher 按 A.3 不接管、本会话终止它被权限门拦截）→ 重新启动修罗做 fresh 验收
+  （验收点：OCR sidecar ready + 18080 ready + XIULUO_V2 进入 role preflight/task dispatch）。
+
 ## 2026-07-11 / CR252 + CR49 黄袍中间脱战广播与链末回城（实施中）
 
 - **用户批准的业务差异**：黄袍连战不再用固定 `MAX_CHAINED_COMBAT_ATTEMPTS` 提前失败；每场战后只以
@@ -75153,3 +81118,359 @@ Status: implemented; compile pending at record time.
 - 实施摘要见 `docs/PACKAGE_ARCHITECTURE.md` CR267 卡「Worker implementation 2026-07-11」。
 - 编译门禁：DHXY `mvn -q -DskipTests compile` GREEN（2026-07-11）；外部 `mvn -q package`（项目 enforcer
   要求带测试完整 package）结果见 CR267 卡。按 no-local-test mode 未新增任何测试。
+
+## 2026-07-11 / NPC_CLICK_SMART 删除目标黄字 glyph/template 元数据分支
+
+- Baseline：当前分支 `navigation-migration`，HEAD `4a116bde50df107e9de0819f21b124cb08442288`；
+  `origin/dev=e543d024bf900853944b36d27d0f736005d9eeb9`。当前工作区与外部
+  `D:\mavenProject\dhxy-cloud-brain` 都有并行脏改动，不能回滚或覆盖。
+- Baseline evidence：`origin/dev` 的 `NpcClickService` 不含 `targetTemplateSpecs`、
+  `yellowTemplateSpecs`、`targetGlyphTemplate` 或 `glyphMetadata`。这些是迁云后新增的 NPC 名字专用
+  template/glyph request 分支，不是用户已验证的黄字 OCR、tooltip、记忆或 Ctrl 主路径。
+- 用户批准删除：移除 `NPC_CLICK_SMART` 的目标名字/黄字 glyph/template metadata 字段、请求构造、云端模板候选
+  解析与对应 request gate；保留 raw window image、scan ROI、`npcName`/地图坐标任务事实、tooltip 模板、
+  原始黄字 OCR、learned-memory、Ctrl 流程和既有输入安全边界。
+- 已批准业务差异：不再允许针对某个 NPC 名字依赖独立黄字/glyph 图片模板；云端只能通过 raw 图黄字识别、
+  tooltip 或已验证记忆决定候选。此为用户明确删除无批准逻辑，不改变任务 phase、回退顺序或点击坐标换算。
+
+## 2026-07-12 / CR271 全量云端直迁通信桥开工基线
+
+- 用户最终选择：不再把逐方法反编译、344 类全量 inventory、完整 DDL/密码学形式化当作开工门。现有
+  `Task` / `Service` 保持类边界和业务逻辑整体搬入 `D:\mavenProject\dhxy-cloud-brain`；本地 DHXY
+  最终只保留窗口绑定、截图、输入队列、动作执行、UI 和安全拒绝。开发按依赖顺序搬类，生产整体切换。
+- DHXY 当前基线：分支 `thin-client-design`，HEAD `0114604e1ff5f15491d2910959c45252e893d04f`；
+  该分支未配置 upstream。`git status --short` 显示大量用户/并行未提交改动，全部保留；首轮 worker 只新增
+  `com.bot.dhxy.cloud.remote`，不碰现有业务文件。首轮拟复用的 `HttpCloudDecisionClient.java` 对 HEAD 无 diff。
+- Cloud Brain 当前基线：分支 `navigation-migration`，HEAD
+  `3b988caa010254973e03342272e6d1d6a9685b01`；该分支未配置 upstream。已有
+  `DecisionEngine.java`、`ObjectiveTextRecognizer.java`、`SmartClickRecognizer.java` 及 navigation 新文件
+  的用户/并行改动，全部保留；首轮只新增 `remote/**`、两个 endpoint，并最小注册 `CloudBrainServer`。
+- 业务合同：已核对 `docs/业务逻辑.md` 第 217-219 行等价迁移总门、五倍
+  `origin/codex/migrate-runner-dialog` / `3f0a2e7` 和修罗 `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`。
+  **无已批准业务差异；按基线等价迁移。** 本切片只搭通信与机械执行边界，不改 phase、retry、fallback、
+  OCR/template/click/navigation 顺序、stop/pause checkpoint 或任务成功条件。
+- 第一切片：云端实现同步 `RemoteGameClientPort` + command broker + poll/outcome；本地实现纯 HTTP transport
+  + polling loop。polling loop 默认不启动且不接截图/输入，先完成无副作用往返和双侧编译。
+- 实施计划：`docs/superpowers/plans/2026-07-12-direct-cloud-lift-and-shift.md`。
+
+### CR271 第一组 Service 源码迁移基线
+
+- 首批选择 `SmartClickEvidenceConfirmationService`、`DialogChoiceMemoryService`、`MemoryService`：三者不读取
+  HWND、不截图、不发送输入，适合作为 Cloud Brain Service 宿主的无副作用首批源码。
+- 迁移前 `git diff --` 以上三个 DHXY 文件无输出，当前工作树内容等于 DHXY HEAD `0114604e`；本轮只把
+  同一源码复制进 Cloud Brain 的原 package，暂不修改本地调用方、不注册云端运行入口、不删除本地文件。
+- `DialogChoiceMemoryService` 的成功/失败计数、连续成功门槛、三次失败禁用、key 规则、legacy route key
+  迁移和原子文件保存全部原样保留。**无已批准业务差异；按基线等价迁移。**
+
+### CR271 远程输入逐步截止时间与执行进度基线
+
+- 当前分支仍为 `thin-client-design`，HEAD `0114604e1ff5f15491d2910959c45252e893d04f`，未配置
+  upstream。迁移前 `InputActionRequest.java`、`InputActionQueue.java`、`InputActionWorker.java` 对 HEAD
+  均无 diff；`LocalRemoteGameCommandHandler.java` 是本轮新增且尚未接入启动路径的文件。
+- 现有本地调用继续使用原 `submitAndWait(...) -> boolean` 合同、120 秒等待、暂停不扣等待时间、同一请求内
+  原子执行全部 action、身份 epoch/stop/pause/焦点规则；本次不得改变任何已有调用方的 phase、输入顺序、
+  retry、fallback 或 move+click 原子性。
+- 仅为尚未启用的远程输入增加可选绝对截止时间和结构化结果，使本地能够证明「未开始 / 已开始到第几步 /
+  全部完成」，并在远程截止时间到达后不再开始下一步。旧请求不携带截止时间，因此运行行为保持不变。
+- 按仓库 no-local-test mode 不新增或运行自动化测试；Java 修改必须通过 `mvn -q -DskipTests compile`。
+  **无已批准业务差异；按基线等价迁移。**
+
+### CR271 第二组纯协议/度量源码迁移基线
+
+- 迁移前已核对以下 DHXY 文件对 HEAD `0114604e` 均无 diff：`CloudDecisionMode`、
+  `CloudFallbackMode`、`CloudDecisionServiceId`、`CloudDecisionRequest`、`CloudDecisionResponse`、
+  `CloudDecisionResult`、`CloudDecisionMetricsService`、`ImagePreprocessOperation`、
+  `ImagePreprocessCloudDecision`、`ImageProcessorService`；Cloud Brain 当前无同路径文件。
+- 本波次只做 exact-source copy 与 Cloud Brain package 门禁，不修改 DHXY 调用方、不注册运行入口、不改变
+  cloud/local decision mode、fallback、图像处理顺序或指标采样语义。
+- `ImageProcessorService.washToPath(...)` 的 `Path` 是旧同机合同，只作为依赖闭包保留，禁止在分离部署的云端
+  当作可访问的本地文件路径；后续实际图片输入只能来自 `RemoteGameClientPort.capture(...)` 的 bytes，适配
+  必须另开机械边界且不得改变图像算法。**无已批准业务差异；按基线等价迁移。**
+
+### CR271 Cloud Service Host 私有记忆隔离基线
+
+- `CloudServiceConfiguration.java`、`CloudServiceHost.java` 为 CR271 首轮新增文件，当前没有任何生产/开发调用者；
+  `CloudBrainServer` 未创建 host。现配置会扫描 `com.bot.dhxy.service`，若未来直接调用无参 `create()`，
+  `DialogChoiceMemoryService` 将使用共享默认 `config/dialog_choice_memory.json`，因此必须在激活前封死。
+- 本切片只改 Cloud Brain host 装配层：host 创建必须显式提供非空 tenantId、userId 与 state root；Spring scan
+  排除默认 `DialogChoiceMemoryService`，改为注入 tenant+user 专属 Path。三个 copied Service 的业务源码、
+  key、成功/失败计数、稳定门、禁用门和文件内容格式不改。
+- scope 目录不得直接信任用户字符串或允许路径穿越，使用 tenant/user UTF-8 长度前缀编码后的稳定哈希目录；host 仍不接 `CloudBrainServer`、
+  endpoint 或 poller。Cloud Brain 必须 fresh `mvn -q package`。**无已批准业务差异；按基线等价迁移。**
+
+### CR271 Remote Task-Run Coordinator 基线
+
+- Cloud Brain 当前没有通用 task-run coordinator；现有 `RemoteGameCommandBroker` 只按 tenant/device 路由命令，
+  `XiuluoBrainStartEndpoint` 是修罗专用业务入口，不能复用。`CloudBrainServer`、broker 和 endpoint 本切片不改。
+- 本切片只在新 `remote/run/**` 包实现未接线的 in-memory coordinator/value objects：完整
+  tenant/user/device/session/window binding、startRequestId 幂等、同窗口单非终态 run、revision CAS、
+  PREPARED/ACTIVE/PAUSED/STOPPED/COMPLETED 和只读 authorization decision。
+- 不创建业务 Task、不 dispatch command、不启动 host/poller、不改本地 runner 或 UI；pause deadline 延长与本地
+  pause token 接线留在后续显式切片。Cloud Brain 必须 `mvn -q package`。**无已批准业务差异；按基线等价迁移。**
+- 实现结果：`remote/run/**` 现为有界 coordinator；跨 session prepare 明确冲突，新 session 只能只读发现并
+  fail-closed STOP 旧 run，不能接管。全局/owner retained/non-terminal 配额在写前原子检查，terminal 历史
+  不淘汰复用；replacement STOP 幂等。worker `mvn -q package` exit 0，独立二轮 reviewer 给出
+  `Spec PASS / Code quality APPROVED`，无 P0/P1/P2。
+
+### CR271 Dialog 协议/模型依赖闭包迁移基线
+
+- 当前 DHXY 仍为 `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f`；迁移前
+  `src/main/java/com/bot/dhxy/service/dialog/**`、`model/dialog/**`、
+  `model/navigation/ObjectiveTextResult.java`、`model/tasktracker/TaskTrackerPanelSourceType.java`
+  对 HEAD 的 `git diff --` 无输出，当前内容可作为最新 pushed 业务基线。
+- 本波次只做以上 20 个纯协议/值对象的 exact-source copy；它们不读取 HWND、不截图、不发送输入、不写
+  tenant/user 状态，也不注册 endpoint/host/Task。若 Cloud Brain 编译暴露 closure 外依赖，必须先证明该依赖
+  同样是无副作用值类型并记录后才能追加，禁止顺手复制 `DialogService` 或机械实现。
+- 本波次不改变 dialog operation、fallback、option/story policy、prepared action、template spec、result/status
+  语义。**无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 fresh `mvn -q package`，不使用 skip。
+
+### CR271 Navigation/OCR 值对象依赖闭包迁移基线
+
+- `model/navigation/**`、`model/ocr/**` 与 `model/MapCoordinate.java` 对 DHXY HEAD `0114604e` 的
+  `git diff --` 无输出；其中 `ObjectiveTextResult` 已随上一 dialog 闭包逐字节迁移，本波次只补其余 14 个
+  新文件并复核整个目录闭包。
+- 这些类型只承载导航请求/结果、路线 pending 状态、地图标签/小地图快照、OCR 窗口区域和坐标值；本波次
+  不复制 `NavigationService`、vision/OCR 实现、模板文件或输入代码，不注册 host/endpoint，也不执行路径决策。
+- 字段、builder/default、enum、注释及 `MapCoordinate` 坐标语义必须 exact-source 保持。
+  **无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip。
+
+### CR271 Task-tracker 值对象依赖闭包迁移基线
+
+- `model/tasktracker/**` 与 `task/model/TaskType.java` 对 DHXY HEAD `0114604e` 的 `git diff --` 无输出；
+  `TaskTrackerPanelSourceType` 已随 dialog 闭包迁移，本波次补齐其余 7 个 tracker 值对象与 `TaskType`。
+- 依赖只允许已迁移的 `PreparedDialogAction`、`OcrWindowRegion`、本目录类型、JDK 与 Lombok；不复制
+  TaskTrackerPanelService、OCR/template 实现、runner、Task 或输入路径，不注册运行入口。
+- 字段、状态、任务 code/displayName、negative/cache/prepare/read result 语义 exact-source 保持。
+  **无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip。
+
+### CR271 NPC/Quest/Bag 模型依赖闭包迁移基线
+
+- `model/npc/**`、`model/quest/**`、`model/bag/**` 与 `model/PlayerCharacter.java` 对 DHXY HEAD
+  `0114604e` 的 `git diff --` 无输出，共 12 个纯数据/enum 类型；依赖的 `TaskType` 已迁移。
+- 本波次只 exact-source copy，不复制 NpcClickService、QuestManagerService、BagService、vision/input 或模板资源，
+  不注册 host/endpoint。`QuestDetailCapture` 的 `BufferedImage` 仅作为未激活的进程内模型保留，禁止当作跨进程
+  wire；分离部署的图片仍必须来自 `RemoteGameClientPort.capture(...)` bytes。
+- NPC role/movement/scenario/evidence/request/outcome、PlayerCharacter 状态和 quest/bag cache 字段语义不改。
+  **无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip。
+
+### CR271 Job/Maintenance/Metrics 值对象依赖闭包迁移基线
+
+- 当前 DHXY 仍为 `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f`；迁移前
+  `model/job/**` 3 文件、`model/maintenance/**` 9 文件、`model/metrics/**` 3 文件与
+  `model/TaskRunResult.java` 对该 HEAD 的 `git diff --` 无输出，Cloud Brain 当前无同路径文件，共 16 个。
+- 这些类型的 imports 只落在 JDK 与 Lombok；本波次只做 exact-source copy，不复制 job scheduler、maintenance
+  Service、metrics sink、Task/runner/输入代码，不注册 Spring bean、endpoint、host 或执行入口。
+- prepared action job、修罗绿链 schedule、维护请求/结果/能力、指标 event/status 与 task-run result 的字段、
+  builder/default、enum 和注释逐字节保持。**无已批准业务差异；按基线等价迁移。** Cloud Brain 必须运行
+  `mvn -q package` 无 skip，并复核 16/16 源目标 SHA-256 一致。
+
+### CR271 Task Phase/Transaction 枚举依赖闭包迁移基线
+
+- 当前 DHXY `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f` 下，
+  `task/hotstart/TaskHotStartScreenState.java`、`task/template/TaskStepResult.java`、
+  `task/transaction/**` 2、`task/wubei/**` 2、`task/wuhuan/**` 2 与 `task/xiuluo/**` 4 个 phase/wait/source/
+  route 类型对 HEAD 的 scoped `git diff --` 无输出；Cloud Brain 当前无同路径文件，共 12 个。
+- 12 个文件均无 import，只定义既有任务状态、等待原因、transaction/yield 结果和 hot-start/template step 结果；
+  本波次只 exact-source copy，不复制任何 Task/Service/runner，不新增状态转换、过期、retry、park、checkpoint、
+  endpoint、host 或执行入口。
+- 五倍、五环、修罗的枚举常量、顺序、code/comment 必须逐字节保持。
+  **无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip，并复核 12/12 SHA。
+
+### CR271 Window 业务状态值对象依赖闭包迁移基线
+
+- DHXY `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f` 下，
+  `window/model` 的 dialog interest/snapshot、pathing intent/snapshot/state、ready event、role、runtime status
+  共 10 文件对 HEAD 的 scoped `git diff --` 无输出，Cloud Brain 当前无同路径文件。
+- 依赖只落在已迁移的 `TaskType`、dialog operation/model、JDK 与 Lombok；明确排除仍引用本地
+  `WindowHandleParser` 的 `WindowNativeBinding`，也不复制 `window/runtime`、runner、input 或本地窗口发现实现。
+- 本波次只 exact-source copy 被动状态与事件 DTO/enum，不创建云端窗口权威、不发布 ready/pathing 事件、
+  不改变 dialog/pathing/runner 决策。**无已批准业务差异；按基线等价迁移。** Cloud Brain 必须
+  `mvn -q package` 无 skip，并复核 10/10 SHA。
+
+### CR271 Cloud CONFIRM_EXECUTION 启动/恢复门基线
+
+- Cloud Brain 当前仍为 `navigation-migration` / `3b988caa010254973e03342272e6d1d6a9685b01`，
+  `remote/run/**`、`RemoteTaskRunEndpoint` 与 broker 是 CR271 尚未提交的新实现；最近一轮完整
+  `mvn -q package` 已通过。现 coordinator 的 `ACTIVE` 会直接让 `authorizeInternal(...)` 允许 broker dispatch，
+  但本地可能尚未把 activate/resume 响应发布到 registry，存在首条/下一条 command 抢跑窗口。
+- 本切片只在 Cloud Brain 增加 `CONFIRM_EXECUTION`：完整 scope、taskRunId、expectedRevision 与 exact window
+  必须匹配仍为 ACTIVE 的 binding；确认记录不增加 runRevision，同 revision 重试幂等，按 retained run 有界。
+  broker 最终 authorization 还须确认 revision 等于当前 ACTIVE revision；任何 lifecycle revision/status 变化会
+  自动使旧确认失效。
+- 不创建/启动 Task 或 Service host，不接 UI/poller，不发送截图/输入，不改变 prepare/activate/pause/resume/
+  stop/complete 的既有状态转换。Local action/lifecycle 调用留给下一独立切片，未接入前 broker 统一 fail closed。
+  **无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip。
+
+### CR271 纯 CPU OCR/召唤兽尾界 helper 迁移基线
+
+- DHXY `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f` 下，
+  `vision/OcrTextMatcher.java` 与 `service/SummonSkillTailBoundaryScanner.java` 对 HEAD 的 scoped `git diff --`
+  无输出；Cloud Brain 当前无同路径文件。
+- `OcrTextMatcher` 只做字符串规范化、编辑距离与最长公共子串，依赖 JDK/Lombok；
+  `SummonSkillTailBoundaryScanner` 只做 locked-tail slot 状态扫描，依赖已迁移的 `SummonSkillSlotStatus` 与 JDK。
+  两者均不截图、不调用 OCR provider、不发送输入、不读窗口、不注册 Spring bean/host/endpoint。
+- 本波次只 exact-source copy 这两个未激活 helper，不复制 `SummonSkillService` 或任何本地执行路径。
+  `MapNameCanonicalizer` 明确排除：其工作树含 CR262 尚待外部 review 的本地差异，不能越过最新推送业务基线
+  偷带入本轮迁移。**无已批准业务差异；按基线等价迁移。** Cloud Brain 必须 `mvn -q package` 无 skip，
+  并复核源目标 bytes/SHA-256 `2/2` 一致。
+
+**2026-07-12 用户裁定后的波次调整：取消独立迁移。** `OcrTextMatcher` 确实来自早期本地 OCR 整理，当前仅
+剩 `MapNameCanonicalizer` 使用其 edit-distance API；它改为随地图名/vision owner 波次一起收口，不提前形成孤立
+Cloud helper。`SummonSkillTailBoundaryScanner` 则不是局部 OCR/上云桥接，而是 CR63 为恢复“锁槽后继续向前回扫、
+普通技能删除、KEEP/EMPTY/UNKNOWN 分流”的既有业务语义所引入；不得回退到其 parent commit 的错误短路逻辑，
+改为随 `SummonSkillService` 同波迁移。当前只取消独立波次，不删除本地类、不改变业务行为；若外部 worker 已领取
+这两个文件，应停止该任务。Runner primitives 与 GameContext/pause model 的独立波次不受影响。
+
+**交付时序补记。** 外部 worker 在上述取消通知到达前已完成两个 helper 的 exact-source copy；主线程确认
+源目标 bytes/SHA `2/2` 一致且整合 package 通过，因此不再删除制造 churn。它们只作为未激活的被动依赖保留，
+后续仍随各自 owner Service 验收；这不改变“不得回退 CR63 尾槽业务语义”的裁定。
+
+### CR271 Local lifecycle reviewer-B P1 定点返修基线
+
+- 当前分支/HEAD 为 `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f`；工作树已有大量并行迁移
+  改动，全部保留。本轮 Java 写集仅限尚未进入 HEAD 的
+  `cloud/remote/RemoteTaskRunLifecycleService.java`，不回滚或覆盖其它在途文件。
+- reviewer A 对 exact-snapshot 版给出独立 APPROVED，但 reviewer B 从当前冻结源码复现两个 P1：registration-race
+  STATUS 与 ACTIVATE exact-progress 拒绝仍可能保留 `cleanupPending=false`；无 local 的 terminal 首次登记只捕获
+  capacity，冲突 registration race 会裸漏异常且无 typed recovery。
+- 本轮只修恢复/并发失败合同：任何 exact-progress 拒绝保留最后可信 local 并标记 cleanup；terminal registration
+  race 只允许完全相同终态幂等收敛，identity 冲突保留 PREPARED recovery。不得新增 HTTP 调用、mutation retry、
+  TTL/takeover、CONFIRM、Task host、poller/UI 或输入，不改变 pause/stop/status/revision 业务迁移。
+  **无已批准业务差异；按基线等价迁移。** 完成后运行 `mvn -q -DskipTests compile`，不创建或运行本地测试。
+- 返修完成：registration-race STATUS 与 ACTIVATE exact-progress catch 均绑定最后可信 local 且
+  `cleanupPending=true`；无 local terminal register race 仅在 registry 已存在完全相同终态时幂等收敛，identity
+  冲突保留 PREPARED，identity 相同但终态不一致保留可信 local 并要求 cleanup。fresh
+  `mvn -q -DskipTests compile` exit 0，源码无 trailing whitespace；未运行测试或应用。
+- 新 reviewer 发现 ACTIVATE 非 ACTIVE/未前进 revision 与 cleanup retryability 的后续缺口后已定点返修：非法
+  PAUSED/同 revision ACTIVE 均不保存 remote，只绑定 localPrepared、cleanup true；ACTIVATE exact-progress 与
+  existing-ACTIVE convergence reject 均允许同 start 的恢复重入。未新增 HTTP 或 ACTIVATE 自动重发，fresh
+  `mvn -q -DskipTests compile` exit 0，等待又一轮双审。
+
+### CR271 MapNameCanonicalizer owner 收口基线
+
+- Cloud 目标当前无 `service/MapNameCanonicalizer.java`，但 `OcrTextMatcher` 已 exact-source 落地；Cloud resources
+  已含完整 `src/main/resources/config/maps.json` 与 `images/template/map_label`。
+- 本地工作树的 MapNameCanonicalizer 含 CR262 B′ 尚待外部 review 的“删本地 maps.json”差异，不能复制。迁移
+  唯一源码基线固定为 DHXY HEAD `0114604e1ff5f15491d2910959c45252e893d04f` blob；其候选集、edit-distance、
+  次优距离门、五倍 tracker 特例与 fallback 全量保持。
+- 本波次只把 HEAD Java 决策类 exact-source 写入 Cloud，不改调用方、不激活 host。Cloud 当前资源位于
+  classpath 而 HEAD 类使用工作目录路径，资源定位适配作为 host 启动前独立机械验收门记录，不在本波次顺手
+  重写决策逻辑。**无已批准业务差异；按基线等价迁移。** Cloud `mvn -q package` 无 skip。
+### CR271 Local lifecycle transition/recovery P2 返修基线（2026-07-12）
+
+- 当前分支/HEAD 为 `thin-client-design` / `0114604e1ff5f15491d2910959c45252e893d04f`；两仓工作树均有并行迁移改动，
+  全部保留。本轮 Java 写集限于尚未进入 HEAD 的 `RemoteTaskRunLifecycleService.java` 与
+  `RemoteTaskRunRegistry.java`，不回滚、覆盖或提交其它在途文件。
+- Reviewer Heisenberg 基于当前冻结源码确认三个 P2：初始 `PREPARED -> ACTIVE/PAUSED` 状态变化可在 revision
+  未前进或状态图不允许时越过服务层校验；`cleanupPending=true` 仍可能暴露 `retryable=false`；reconcile 的非法
+  remote transition 可能直到 registry publication 才抛裸 `IllegalStateException`。
+- 根因是 lifecycle progress helper 只核 stopEpoch/revision，而完整 `transitionAllowed` 规则仅在 registry 内；恢复异常
+  工厂也未强制“仍有 cleanup 就允许同 run 的 STATUS/STOP 恢复重入”。返修将复用同一状态图，在任何 reservation/
+  registry publication 前校验状态变化与 revision 前进，并把 publication race 包装为携最后可信 registration 的 typed
+  lifecycle exception。`cleanupPending` 只表示允许调用方重入恢复，不新增自动 mutation retry。
+- 不改变 PREPARE/STATUS/ACTIVATE/pause/resume/stop/complete 的 HTTP 次数、状态图、revision 自增、pause token、
+  业务 phase/retry/fallback；不接 `CONFIRM_EXECUTION`、host、poller、UI、截图或输入。按 no-local-test 模式不新增/
+  运行测试，修改后必须 fresh `mvn -q -DskipTests compile`。**无已批准业务差异；按基线等价迁移。**
+- 返修完成：lifecycle progress helper 复用 registry 唯一状态图，状态变化统一要求 revision 前进；异常工厂统一
+  `cleanupPending => retryable`；reconcile publication race 统一保留最后可信 registration。fresh
+  `mvn -q -DskipTests compile` exit 0（26.1 秒），scoped whitespace 检查无错误；未运行测试或应用，等待两名
+  基于当前冻结源码的全新 reviewer。
+- 新双审仍为 BLOCKED：两名 reviewer 一致发现 reconcile validation 会忽略 reservation 已有 cleanup；无 local
+  cleanup 与 replacement STOP 的非终态 response 未复用 shared transition/revision 门；STOPPING revision retention
+  和多个 confirmed publication 调用仍直接进入 registry，竞态拒绝可裸漏。根因是 publication policy 分散在调用点。
+  本轮将现有 `applyConfirmed` 收口为统一 typed publication 边界，并建立一个统一 STOPPING progress retention 边界，
+  六处调用不再直接访问 registry；拒绝携最后可信 exact registration 与真实 cleanup 状态，不增加 HTTP、自动 mutation
+  retry、CONFIRM/TTL/takeover/host。**无已批准业务差异；按基线等价迁移。**
+- 统一返修完成：`applyConfirmed` 集中包装 confirmed registry/reservation publication，六处 STOPPING retention
+  全部改走 `retainStoppingProgress`；两者在竞态时重读 exact registration，保留最新 terminal 或最后可信 nonterminal
+  recovery。cleanup STOP 与 replacement STOP 在任何 bind 前均走 shared transition/revision 门，reconcile 延续
+  reservation cleanup。fresh `mvn -q -DskipTests compile` exit 0（16.1 秒），未运行测试或应用，等待两名全新
+  reviewer。
+# CR271 2026-07-15 22:05 EDT - TURN-20/24A 父级审查退修；并发继续滚动
+
+- TURN-20 父级独立审查 `P0/P1/P2=0/2/0`：已知 input FAILED 漂移为 fatal；Service 内又绕开 canonical
+  `LocalOcrClient` 新造第二 HTTP/OCR client。原 Plato Repair #1 恢复 `696a12b0` 的 null/false/drag fallback，
+  并复用唯一 Cloud OCR authority；零 retry。
+- TURN-24A 父级独立审查 `P0/P1/P2=0/1/0`：STOPPED/interrupt 被 `captureRoi` 包装为普通 unavailable，宽
+  `RuntimeException` catch 还会吞 checkpoint exception。原 Pauli Repair #1 补 confirmed-stop 传播；未确认 stop
+  仍保守保持 IN_COMBAT，单 capture、零 retry。
+- TURN-23 依赖补为 `14+18+09R`：first-aid 多 click closed action 必须等 09R 单 queue 原子片段；不得提前派出
+  一张无法验收的卡。TURN-09R、TURN-29 继续并行写入；父级继续审交付与扫描互斥 READY 池，不等待固定 cohort。
+- Java writers 活动，Maven/JUnit/compile cohort 本轮未运行。保护两仓全部 dirty/untracked；无 Git mutation。
+
+# CR271 2026-07-15 22:23 EDT - TURN-09R 父级审查退修并保持动态扩容
+
+- 父级独立逐文件审查 TURN-09R production/test source，结论 `P0/P1/P2=0/1/1`。双仓协议及本卡 protocol
+  tests SHA 对称、screen-absolute `MOVE_MOUSE` 与单 queue 原子片段实现通过；没有 retry、第二 exchange、
+  session/owner/ledger/TTL。
+- P1：双仓既有 `TurnCoreProtocolGoldenJsonTest` 仍硬编码十项 input/spec/index，新增第十一项后必然越界；P2：
+  缺 `MOVE -> WAIT -> CLICK -> trailing WAIT -> CAPTURE` 回归，尚未锁住尾随 WAIT 留在 queue 外的承诺。
+  Repair #1 已精确扩写双仓 core golden test、DHXY executor contract test 与原报告，production 全部只读。
+- TURN-19/21/23 在 09R 返修通过前继续阻断；TURN-10CR 已在独立写集实施。TURN-20/24A Repair #1、TURN-29
+  已交父级待审，父级不等待固定 cohort，释放任一依赖后立即补派所有 READY 且写集互斥卡。
+- Java writers 活动，本轮未运行 Maven/JUnit/compile/runtime；两仓 dirty/untracked 全部保护，无 Git mutation。
+
+# CR271 2026-07-15 22:27 EDT - TURN-20/24A Repair #1 父级复审通过
+
+- TURN-20 Repair #1 父级独立复审 `P0/P1/P2=0/0/0`：open/refresh/drag 的 known FAILED 已恢复
+  `696a12b0` 的 `null/false/单次 re-observe+fallback`，STOPPED/uncertain 继续 checkpoint/fatal；Service 删除第二
+  OCR HTTP/codec，统一复用 canonical `LocalOcrClient.readJoinedText`。owner 已释放。
+- TURN-24A Repair #1 父级独立复审 `0/0/0`：confirmed STOPPED/INTERRUPTED 传播
+  `TaskStopRequestedException`，不被宽 catch 吞；unconfirmed terminal 仍 typed unavailable、保守保持 IN_COMBAT；
+  一 capture、一 UUID/command、零 retry。owner 已释放，countDelta 仍待点名测试/build。
+- 两卡均仅为 source/test-source review passed，named tests 与适用 Cloud build 待全部 writer 稳定 cohort；当前继续
+  审 TURN-29 以解锁 30/31/32，并跟进 TURN-09R Repair #1、TURN-10CR。无 Git mutation或运行路径。
+## 2026-07-16 15:31 TURN-34B 整卡 test-source 继续增量
+
+- External C sole-writer 的 `TaskMaintenanceTurnContractTest.java` 已由 119 行 / `0e2b40c4...` 增至 161 行 / `9721e2e0...`（mtime `15:30:55`）。
+- `TaskMaintenanceService.java` 仍为已接受的 1,400 行 / `8d79d198...`；原卡 true EOF 仍是 source-start observed，尚无整卡 delivery/return。
+- 当前继续保护 C 的完整 TURN-34B 单 owner，不审 WIP、不双派，writer 活动期间不运行 Maven。
+## 2026-07-16 15:32 TURN-34B test-source 最新增量
+
+- External C 的完整卡唯一测试现为 164 行 / `9770816d...`（mtime `15:31:21`）；production 仍为 1,400 行 / `8d79d198...`。
+- C 继续 sole-writer，尚无 canonical whole-card delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 15:41 TURN-34B test-source 持续增量
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 203 行 / `3b7c4531...`（mtime `15:40:56`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡仍是 C sole-writer WIP，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 15:46 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 269 行 / `cca30a77...`（mtime `15:45:55`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 15:51 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 305 行 / `b20e06df...`（mtime `15:50:47`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:01 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已稳定增至 401 行 / `298a0554...`（mtime `16:00:59`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:06 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 480 行 / `36bf7da3...`（mtime `16:05:50`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:11 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 564 行 / `f8b38cac...`（mtime `16:11:04`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:16 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 638 行 / `f87a3ced...`（mtime `16:15:51`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:21 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已稳定增至 702 行 / `00c188fb...`（mtime `16:20:58`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:26 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已稳定增至 753 行 / `d732ca08...`（mtime `16:26:05`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:31 TURN-34B test-source 持续写入
+
+- External C 的唯一 `TaskMaintenanceTurnContractTest.java` 已增至 812 行 / `a57bb165...`（mtime `16:30:59`）；production 仍为 1,400 行 / `8d79d198...`。
+- 完整卡继续由 C sole-writer 持有，尚无 canonical delivery/return；不审 WIP、不运行 Maven。
+## 2026-07-16 16:36 Worker 实体校正 + TURN-34B 增量
+
+- 桌面任务索引仅当前主任务为 `active`；A/B/D 对应 implementation 任务不可发现，检索结果只有旧 helper/reviewer 且为 `notLoaded`。Markdown lane/旧 heartbeat 不再视为 Worker 实体。
+- External C 的完整 TURN-34B 唯一测试继续增至 816 行 / `5c987d4f...`（mtime `16:36:09`）；production 仍为 1,400 行 / `8d79d198...`。C 的磁盘增量继续作为 sole-writer WIP 保护，尚无 delivery/return。
+- A/B/D 在真实 active implementation 任务出现前保持零 owner；父级不得仅凭 lane 文本续派或宣称开工。

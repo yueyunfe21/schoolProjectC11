@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "window": {
+    "deviceId": "device-alpha",
+    "windowId": "window-2",
+    "windowTitle": "Classic Client - Alpha",
+    "nativeHandle": "0x000000000001A2B3",
+    "processId": 4242,
+    "windowRect": {
+      "left": 120,
+      "top": 80,
+      "width": 1280,
+      "height": 720
+    },
+    "pauseRequested": false,
+    "stopRequested": false
+  },
+  "waitTimeoutMs": 25000,
+  "previousOutcome": null,
+  "taskStartRequest": {
+    "startRequestId": "start-request-001",
+    "taskCodes": [
+      "WUHUAN_V2",
+      "WUBEI",
+      "XIULUO_V2",
+      "AUTO_BATTLE"
+    ],
+    "failurePolicy": "CONTINUE_ON_FAILURE"
+  }
+}

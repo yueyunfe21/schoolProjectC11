@@ -1,0 +1,13 @@
+package com.bot.dhxy.cloud.turn.protocol;
+
+public enum TurnLocalOperation {
+    BAG_RETURN_ITEM,
+    BAG_USE_INCENSE,
+    UI_CLEAN_ALL,
+    UI_CLOSE_GENERIC_WINDOWS,
+    UI_CLEAN_LIGHTWEIGHT,
+    UI_CLOSE_MAP_SEARCH_INPUT_BY_X2,
+    GIVE_ITEM_FROM_OPEN_DIALOG,
+    QUEST_ACTIVATE,
+    QUEST_CAPTURE_DETAIL
+}

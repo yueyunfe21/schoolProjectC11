@@ -224,7 +224,7 @@ public class QuestManagerService {
             String latestPath = saveQuestDetailDebugImage(task, image);
             log.info("quest detail capture success: task={} path={} size={}x{}",
                     task, latestPath, image.getWidth(), image.getHeight());
-            return new QuestDetailCapture(image, latestPath);
+            return new QuestDetailCapture(image, latestPath, rightRect[0], rightRect[1]);
         } finally {
             closePanelDirect();
         }

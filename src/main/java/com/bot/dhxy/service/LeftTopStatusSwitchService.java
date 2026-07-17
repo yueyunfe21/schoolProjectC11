@@ -2,6 +2,8 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.OpenCvNativeLoader;
+import com.bot.dhxy.cloud.remote.RemoteLeftTopStatusFact;
+import com.bot.dhxy.cloud.remote.RemoteCoordinateSpace;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -33,10 +35,8 @@ public class LeftTopStatusSwitchService {
 
     public static final int LEFT_TOP_STATUS_RECT_X_OFFSET = 8;
     public static final int LEFT_TOP_STATUS_RECT_Y_OFFSET = 147;
-    // Keep the verified top-left anchor. The current client can render the same switch lower,
-    // so preserve enough lower/right margin for the unchanged templates to fit completely.
-    public static final int LEFT_TOP_STATUS_RECT_WIDTH = 16;
-    public static final int LEFT_TOP_STATUS_RECT_HEIGHT = 29;
+    public static final int LEFT_TOP_STATUS_RECT_WIDTH = 11;
+    public static final int LEFT_TOP_STATUS_RECT_HEIGHT = 19;
     public static final String LEFT_TOP_OPEN_TEMPLATE = "images/template/status/left_top_open.png";
     public static final String LEFT_TOP_CLOSED_TEMPLATE = "images/template/status/left_top_closed.png";
 
@@ -138,6 +138,28 @@ public class LeftTopStatusSwitchService {
         return "xiuluo_v2".equalsIgnoreCase(taskCode)
                 || "wubei".equalsIgnoreCase(taskCode)
                 || "wuhuan_v2".equalsIgnoreCase(taskCode);
+    }
+
+    /**
+     * Reads the left-top status switch as a closed remote fact without changing local pending state
+     * or submitting physical input.
+     *
+     * @param source diagnostic source label used for the existing window-scoped capture path
+     * @return typed status fact with screen-absolute click coordinates only for OPEN
+     */
+    public RemoteLeftTopStatusFact probeLeftTopStatusFact(String source) {
+        DetectionResult detection = detect(source);
+        Point openCenter = detection.state() == SwitchState.OPEN
+                ? detection.openCenter()
+                : null;
+        return RemoteLeftTopStatusFact.builder()
+                .state(RemoteLeftTopStatusFact.State.valueOf(detection.state().name()))
+                .openScore(detection.openScore())
+                .closedScore(detection.closedScore())
+                .clickX(openCenter == null ? null : openCenter.x)
+                .clickY(openCenter == null ? null : openCenter.y)
+                .coordinateSpace(RemoteCoordinateSpace.SCREEN_ABSOLUTE_PX)
+                .build();
     }
 
     private SwitchActionResult checkAndMaybeClose(TaskExecutionContext context,

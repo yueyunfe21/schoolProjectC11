@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.control;
 
+import com.bot.dhxy.cloud.turn.TurnModeGuard;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.startup.TaskTeamAssignmentPolicy;
 import com.bot.dhxy.service.TaskMaintenanceService;
@@ -31,15 +32,18 @@ public class WindowTaskControlService {
     private final WindowTaskAssignmentPolicy assignmentPolicy;
     private final TaskTeamAssignmentPolicy taskTeamAssignmentPolicy;
     private final TaskMaintenanceService taskMaintenanceService;
+    private final TurnModeGuard turnModeGuard;
 
     public WindowTaskControlService(MultiWindowTaskManager taskManager,
                                     WindowTaskAssignmentPolicy assignmentPolicy,
                                     TaskTeamAssignmentPolicy taskTeamAssignmentPolicy,
-                                    TaskMaintenanceService taskMaintenanceService) {
+                                    TaskMaintenanceService taskMaintenanceService,
+                                    TurnModeGuard turnModeGuard) {
         this.taskManager = taskManager;
         this.assignmentPolicy = assignmentPolicy;
         this.taskTeamAssignmentPolicy = taskTeamAssignmentPolicy;
         this.taskMaintenanceService = taskMaintenanceService;
+        this.turnModeGuard = turnModeGuard;
     }
 
     public WindowSystemSnapshot getSystemSnapshot() {
@@ -118,6 +122,14 @@ public class WindowTaskControlService {
                     List.of(WindowTaskCommandDetail.failed(null, "任务队列无效")));
         }
 
+        try {
+            return turnModeGuard.startLocal(ids, () -> startSameQueueUnderModeGuard(ids, safeQueue));
+        } catch (TurnModeGuard.ModeConflictException conflict) {
+            return localStartModeConflict(ids, conflict, "独立窗口批量启动已拒绝");
+        }
+    }
+
+    private WindowTaskCommandResult startSameQueueUnderModeGuard(List<String> ids, WindowTaskQueue safeQueue) {
         String localLeaderWindowId = ids.stream()
                 .map(id -> taskManager.getSnapshot(id).orElse(null))
                 .filter(Objects::nonNull)
@@ -220,6 +232,14 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
         }
 
+        try {
+            return turnModeGuard.startLocal(ids, () -> startSelectedTasksUnderModeGuard(ids));
+        } catch (TurnModeGuard.ModeConflictException conflict) {
+            return localStartModeConflict(ids, conflict, "独立窗口已选任务启动已拒绝");
+        }
+    }
+
+    private WindowTaskCommandResult startSelectedTasksUnderModeGuard(List<String> ids) {
         int successCount = 0;
         List<WindowTaskCommandDetail> details = new ArrayList<>();
         for (String windowId : ids) {
@@ -248,6 +268,17 @@ public class WindowTaskControlService {
             return WindowTaskCommandResult.empty("没有选中的窗口", getSnapshots());
         }
 
+        try {
+            return turnModeGuard.startLocal(
+                    ids,
+                    () -> startByDetectedRoleForTestUnderModeGuard(ids, leaderTaskType));
+        } catch (TurnModeGuard.ModeConflictException conflict) {
+            return localStartModeConflict(ids, conflict, "测试按身份启动已拒绝");
+        }
+    }
+
+    private WindowTaskCommandResult startByDetectedRoleForTestUnderModeGuard(List<String> ids,
+                                                                              TaskType leaderTaskType) {
         int successCount = 0;
         List<WindowTaskAssignment> assignments = new ArrayList<>();
         List<WindowTaskCommandDetail> details = new ArrayList<>();
@@ -271,6 +302,19 @@ public class WindowTaskControlService {
         }
 
         return buildResult(ids.size(), successCount, "测试按身份启动完成", assignments, details);
+    }
+
+    private WindowTaskCommandResult localStartModeConflict(List<String> windowIds,
+                                                            TurnModeGuard.ModeConflictException conflict,
+                                                            String summary) {
+        List<WindowTaskCommandDetail> details = windowIds.stream()
+                .map(windowId -> WindowTaskCommandDetail.failed(
+                        windowId,
+                        windowId.equals(conflict.windowId())
+                                ? "启动失败：该窗口已注册远程 turn loop"
+                                : "启动失败：同批次窗口存在远程 turn loop"))
+                .toList();
+        return buildResult(windowIds.size(), 0, summary, Collections.emptyList(), details);
     }
 
     public WindowTaskCommandResult stopWindows(Collection<String> windowIds) {

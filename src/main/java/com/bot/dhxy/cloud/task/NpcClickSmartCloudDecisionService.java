@@ -820,10 +820,6 @@ public class NpcClickSmartCloudDecisionService {
         context.put("tooltipTemplatePath", safe(npc.tooltipTemplatePath()));
         context.put("tooltipType", enumName(npc.tooltipType()));
         context.put("templateSpecs", join(request.getTemplateSpecs()));
-        context.put("targetTemplateSpecs", join(request.getTargetTemplateSpecs()));
-        context.put("yellowTemplateSpecs", join(request.getYellowTemplateSpecs()));
-        context.put("targetGlyphTemplate", safe(request.getTargetGlyphTemplate()));
-        context.put("glyphMetadata", request.getGlyphMetadata() == null ? "" : request.getGlyphMetadata().toString());
         context.put("imagePayloadBase64", safe(request.getImagePayloadBase64()));
         context.put("payloadMimeType", safe(request.getPayloadMimeType()));
         context.put("imageSha256", safe(request.getImageSha256()));

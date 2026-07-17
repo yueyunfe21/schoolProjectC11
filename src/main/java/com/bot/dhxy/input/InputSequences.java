@@ -1,7 +1,10 @@
 package com.bot.dhxy.input;
 
 import com.bot.dhxy.input.action.InputAction;
+import com.bot.dhxy.input.action.InputActionExecutionResult;
 import com.bot.dhxy.input.action.InputActionQueue;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -58,6 +61,59 @@ public class InputSequences {
      */
     public boolean submitExclusiveAndWait(String description, Supplier<Boolean> callback) {
         return inputActionQueue.submitExclusiveAndWait(description, callback);
+    }
+
+    /**
+     * Run a direct-input callback against one immutable action-resolver window snapshot.
+     *
+     * <p>No caller-supplied identity epoch is accepted: the queue freezes the {@code (binding, epoch)}
+     * generation itself under the context monitor. The worker's typed terminal result is returned
+     * verbatim so callers can project a real {@code STOP_REQUESTED} instead of guessing from a boolean.</p>
+     *
+     * @param description diagnostic label for logs
+     * @param context exact resolved window context
+     * @param binding exact HWND/process/screen-rectangle snapshot; must still be the context's current
+     *                generation object
+     * @param callback worker callback; it must not submit nested input requests
+     * @return the worker's typed terminal result: status, safety reason and detail, never flattened
+     */
+    public InputActionExecutionResult submitFrozenExactWindowExclusiveAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            Supplier<Boolean> callback) {
+        return inputActionQueue.submitFrozenExactWindowExclusiveAndWait(
+                description, context, binding, callback);
+    }
+
+    /**
+     * Submit one complete ordered action list against one immutable action-resolver window snapshot.
+     *
+     * <p>Same frozen boundary as
+     * {@link #submitFrozenExactWindowExclusiveAndWait(String, WindowRuntimeContext, WindowNativeBinding, Supplier)}:
+     * no caller-supplied identity epoch is accepted, the queue freezes the {@code (binding, epoch)}
+     * generation itself under the context monitor, and the worker's typed terminal result is returned
+     * verbatim instead of a flattened boolean.</p>
+     *
+     * <p>Use this when the whole list must stay under the frozen boundary. The list is submitted once, as
+     * one request; the worker executes every action and delay inside one input transaction and one
+     * generation monitor, so no binding commit interleaves between elements. Do not wrap
+     * {@link #submitAndWait(String, List)} inside the frozen callback: that is a nested queue submission.</p>
+     *
+     * @param description diagnostic label for logs
+     * @param context exact resolved window context
+     * @param binding exact HWND/process/screen-rectangle snapshot; must still be the context's current
+     *                generation object
+     * @param actions complete ordered action list with screen-absolute coordinates where applicable
+     * @return the worker's typed terminal result: status, safety reason and detail, never flattened
+     */
+    public InputActionExecutionResult submitFrozenExactWindowActionsAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            List<InputAction> actions) {
+        return inputActionQueue.submitFrozenExactWindowActionsAndWait(
+                description, context, binding, actions);
     }
 
     /**

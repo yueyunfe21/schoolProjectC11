@@ -5,12 +5,11 @@ import lombok.Builder;
 import lombok.Value;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Request envelope for CR165 NPC_CLICK_SMART cloud-owned ordinary NPC dialog clicks.
  *
- * <p>The local runtime sends raw bound-window pixels plus target facts and template/glyph metadata.
+ * <p>The local runtime sends raw bound-window pixels plus target facts and reusable dialog/tooltip templates.
  * Any executable click returned by cloud must use window-relative pixels; local code only validates
  * the point against the game window and ROI before submitting real input. Logical map coordinates
  * such as player/target map X/Y remain explicitly labeled as map facts in the cloud context.</p>
@@ -55,13 +54,6 @@ public class NpcClickSmartCloudRequest {
     List<ScanRegion> scanRegions = List.of();
     @Builder.Default
     List<String> templateSpecs = List.of();
-    @Builder.Default
-    List<String> targetTemplateSpecs = List.of();
-    @Builder.Default
-    List<String> yellowTemplateSpecs = List.of();
-    String targetGlyphTemplate;
-    @Builder.Default
-    Map<String, String> glyphMetadata = Map.of();
 
     @Value
     @Builder
