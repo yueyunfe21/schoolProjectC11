@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -34,9 +35,33 @@ class TurnCoreProtocolGoldenJsonTest {
                 names(TurnInputAction.values()));
         assertArrayEquals(new String[]{"BAG_RETURN_ITEM", "BAG_USE_INCENSE", "UI_CLEAN_ALL",
                         "UI_CLOSE_GENERIC_WINDOWS", "UI_CLEAN_LIGHTWEIGHT", "UI_CLOSE_MAP_SEARCH_INPUT_BY_X2",
-                        "GIVE_ITEM_FROM_OPEN_DIALOG", "QUEST_ACTIVATE", "QUEST_CAPTURE_DETAIL"},
+                        "GIVE_ITEM_FROM_OPEN_DIALOG", "QUEST_ACTIVATE", "QUEST_CAPTURE_DETAIL",
+                        "TASK_TRACKER_CAPTURE_PANEL",
+                        "WHOLE_TASK_PATHING_REGISTER", "WHOLE_TASK_PATHING_READ", "WHOLE_TASK_PATHING_CLEAR_INTENT",
+                        "WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX", "WHOLE_TASK_PATHING_CLEAR",
+                        "WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP",
+                        "WHOLE_TASK_MOVEMENT_INTENT_RECORD", "WHOLE_TASK_TARGET_MAP_GATE_START",
+                        "WHOLE_TASK_TARGET_MAP_GATE_OPEN", "WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST",
+                        "WHOLE_TASK_PRE_BATTLE_TIMER_READ", "WHOLE_TASK_PRE_BATTLE_FACT_READ",
+                        "WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK", "WHOLE_TASK_PRE_BATTLE_TIMER_START",
+                        "WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE", "WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR",
+                        "WHOLE_TASK_DIALOG_INTEREST_UPDATE", "WHOLE_TASK_DIALOG_INTEREST_CLEAR",
+                        "WHOLE_TASK_PROGRESS_UPDATE", "WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME",
+                        "WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE",
+                        "WHOLE_TASK_DIALOG_RUNTIME_READ", "WHOLE_TASK_COMBAT_ENTRY_CLEANUP",
+                        "WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE",
+                        "WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME",
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ",
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE",
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME",
+                        "WUHUAN_ACCEPT_DIALOG_EXCLUSIVE",
+                        "METRIC_RECORD_ROUND_STARTED", "METRIC_RECORD_ROUND_FINISHED",
+                        "METRIC_RECORD_XIULUO_FAILURE_CASE",
+                        "BAG_FIVERING_SUPPLY_CHECK", "BAG_FIND_AND_USE_FROM_BACK",
+                        "BAG_FIND_ITEM_PAGE_INDEX", "HOST_SLEEP_COMPUTER", "MAP_SURVEY_POINTER_SAMPLE"},
                 names(TurnLocalOperation.values()));
-        assertArrayEquals(new String[]{"CAPTURE", "MATCH_EVIDENCE", "QUEST_DETAIL", "FAILURE_EVIDENCE"},
+        assertArrayEquals(new String[]{"CAPTURE", "MATCH_EVIDENCE", "QUEST_DETAIL", "TASK_TRACKER_PANEL",
+                        "FIVERING_INCENSE_OBSERVATION", "FIVERING_DIALOG_OBSERVATION", "FAILURE_EVIDENCE"},
                 names(TurnFramePurpose.values()));
         assertArrayEquals(new String[]{"UPLOAD_IMAGE", "NO_IMAGE"},
                 names(TurnCaptureSpec.ResultMode.values()));
@@ -47,12 +72,14 @@ class TurnCoreProtocolGoldenJsonTest {
                 names(TurnOutcome.Status.values()));
         assertArrayEquals(new String[]{"COMPLETED", "FAILED", "NOT_RUN"},
                 names(TurnStepResult.Status.values()));
-        assertArrayEquals(new String[]{"ACTION", "IDLE"}, names(TurnResponse.Status.values()));
-        assertArrayEquals(new String[]{"WUHUAN_V2", "WUBEI", "XIULUO_V2", "AUTO_BATTLE"},
+        assertArrayEquals(new String[]{"ACTION", "IDLE", "CONTINUATION"}, names(TurnResponse.Status.values()));
+        assertArrayEquals(new String[]{"WUHUAN_V2", "WUBEI", "XIULUO_V2", "AUTO_BATTLE", "SLEEP_COMPUTER"},
                 names(TurnTaskCode.values()));
         assertArrayEquals(new String[]{"CONTINUE_ON_FAILURE", "STOP_ON_FAILURE"},
                 names(TurnTaskQueueFailurePolicy.values()));
-        assertArrayEquals(new String[]{"PRESCAN_TASK_PAGE", "PRESCAN_FROM_BACK", "USE_CACHED_RETURN_ITEM"},
+        assertArrayEquals(
+                new String[]{"PRESCAN_TASK_PAGE", "PRESCAN_FROM_BACK", "USE_CACHED_RETURN_ITEM",
+                        "FIND_AND_USE_TASK_PAGE"},
                 names(TurnBagOperationArguments.ReturnItemIntent.values()));
     }
 
@@ -129,7 +156,7 @@ class TurnCoreProtocolGoldenJsonTest {
     }
 
     @Test
-    void allNineLocalOperationsRetainTheirTypedArgumentUnion() throws IOException {
+    void allLocalOperationsRetainTheirTypedArgumentUnion() throws IOException {
         List<TurnLocalServiceCall> calls = List.of(
                 new TurnLocalServiceCall(TurnLocalOperation.BAG_RETURN_ITEM,
                         new TurnBagOperationArguments(TurnBagOperationArguments.ReturnItemIntent.USE_CACHED_RETURN_ITEM,
@@ -148,7 +175,84 @@ class TurnCoreProtocolGoldenJsonTest {
                 new TurnLocalServiceCall(TurnLocalOperation.QUEST_ACTIVATE, null, null, null,
                         new TurnQuestOperationArguments("wuhuan", Boolean.TRUE)),
                 new TurnLocalServiceCall(TurnLocalOperation.QUEST_CAPTURE_DETAIL, null, null, null,
-                        new TurnQuestOperationArguments("wuhuan", null)));
+                        new TurnQuestOperationArguments("wuhuan", null)),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_REGISTER, wtBuilder("golden")
+                        .pathingIntent(new TurnPathingIntent("golden", "intent-golden", "长安", 1, 2, 5, "TARGETED"))),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_READ, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR_INTENT,
+                        wtBuilder("golden").intentId("intent-golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX,
+                        wtBuilder("golden").sourcePrefix("wubei:tracker-green-click:")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR,
+                        wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP,
+                        wtBuilder("golden").intentId("intent-golden").targetMapName("宝象国")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_MOVEMENT_INTENT_RECORD,
+                        wtBuilder("golden").protectionMs(2000L)),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_TARGET_MAP_GATE_START,
+                        wtBuilder("golden").taskCode("wubei").targetMapName("宝象国")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_TARGET_MAP_GATE_OPEN, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST,
+                        wtBuilder("golden").taskCode("wubei")
+                                .interestOperations(List.of("WUBEI_ENTER_BATTLE"))),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_TIMER_READ, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_FACT_READ, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_TIMER_START,
+                        wtBuilder("golden").taskCode("wubei").targetKeyword("kw")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE,
+                        wtBuilder("golden").blockedMs(500L)),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_DIALOG_INTEREST_UPDATE,
+                        wtBuilder("golden").taskCode("wubei").interestOperations(List.of("WUBEI_ENTER_BATTLE"))),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_DIALOG_INTEREST_CLEAR, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PROGRESS_UPDATE,
+                        wtBuilder("golden").completedRuns(1).totalRuns(5)),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE,
+                        wtBuilder("golden").startupFlyingState("FLYING")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_DIALOG_RUNTIME_READ,
+                        wtBuilder("golden").dialogSnapshotMaxAgeMs(1500L)),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_COMBAT_ENTRY_CLEANUP,
+                        wtBuilder("golden").taskCode("wubei").sourcePrefix("wubei:tracker-green-click")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE,
+                        wtBuilder("golden").transferChoice(new TurnPendingTransferChoice(
+                                "长安", 1320, 760, "宝象国", 12, -8, "前往宝象国", "golden", 123_456_789L))),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME,
+                        wtBuilder("golden").intentId("intent-golden").sourcePrefix("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ, wtBuilder("golden")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE,
+                        wtBuilder("golden")
+                                .routeOutcome(new TurnPendingRouteOutcome(
+                                        "长安", "宝象国", "YELLOW_DESTINATION_MINI_MAP", 12, -8, "宝象国", "golden",
+                                        true, "route-golden", "intent-golden", 123_456_789L))
+                                .routeOutcomeReplacementReason("golden-replacement")),
+                wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME,
+                        wtBuilder("golden").intentId("intent-golden").sourcePrefix("golden")),
+                wholeTaskCall(TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE, wtBuilder("golden")),
+                metricCall(TurnLocalOperation.METRIC_RECORD_ROUND_STARTED, new TurnMetricEventPayload(
+                        "wubei", "五倍", "window-golden", "LEADER", "0x5150",
+                        "round-7", 7, "普通怪", null, null, "轮次开始", null,
+                        null, null, null, null, Map.of("sourcePhase", "ACCEPT"))),
+                metricCall(TurnLocalOperation.METRIC_RECORD_ROUND_FINISHED, new TurnMetricEventPayload(
+                        "wubei", "五倍", "window-golden", "LEADER", "0x5150",
+                        "round-7", 7, "普通怪", "SUCCESS", "SUCCESS", "轮次完成", 1234L,
+                        null, null, null, null, Map.of("sourcePhase", "COMBAT"))),
+                metricCall(TurnLocalOperation.METRIC_RECORD_XIULUO_FAILURE_CASE, new TurnMetricEventPayload(
+                        "xiuluo_v2", "修罗", "window-golden", "MEMBER", "0x5151",
+                        null, null, null, null, null, "watchdog timeout", null,
+                        "D:\\cloud\\cases\\2026-07-18\\case-golden", "PRE_COMBAT_TIMEOUT",
+                        "WAIT_TRACKER", 8, null)),
+                bagCall(TurnLocalOperation.BAG_FIVERING_SUPPLY_CHECK, new TurnBagOperationArguments(
+                        null, "wuhuan/shoe.png", 3, null, "golden")),
+                bagCall(TurnLocalOperation.BAG_FIND_AND_USE_FROM_BACK, new TurnBagOperationArguments(
+                        null, "bag/probe.png", 5, null, "golden")),
+                bagCall(TurnLocalOperation.BAG_FIND_ITEM_PAGE_INDEX, new TurnBagOperationArguments(
+                        null, "bag/shoe.png", null, null, "golden")),
+                new TurnLocalServiceCall(TurnLocalOperation.HOST_SLEEP_COMPUTER,
+                        null, null, null, null, null, null, null),
+                new TurnLocalServiceCall(TurnLocalOperation.MAP_SURVEY_POINTER_SAMPLE,
+                        null, null, null, null, null, null, null));
 
         List<TurnStep> steps = new ArrayList<>();
         for (int index = 0; index < calls.size(); index++) {
@@ -156,10 +260,96 @@ class TurnCoreProtocolGoldenJsonTest {
         }
         TurnAction action = TurnProtocolGoldenSupport.action("core-all-local-operations", steps);
         TurnProtocolValidator.requireValid(action);
-        assertEquals(List.of(TurnLocalOperation.values()), action.steps().stream()
+        EnumSet<TurnLocalOperation> covered = action.steps().stream()
                 .map(step -> step.localService().operation())
-                .toList());
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(TurnLocalOperation.class)));
+        TurnAction trackerAction = TurnProtocolGoldenSupport.action("core-task-tracker", List.of(
+                TurnProtocolGoldenSupport.localStep(0, new TurnLocalServiceCall(
+                        TurnLocalOperation.TASK_TRACKER_CAPTURE_PANEL,
+                        null, null, null, null, null, null,
+                        new TurnTaskTrackerOperationArguments("golden")))));
+        TurnProtocolValidator.requireValid(trackerAction);
+        covered.add(TurnLocalOperation.TASK_TRACKER_CAPTURE_PANEL);
+        assertEquals(EnumSet.allOf(TurnLocalOperation.class), covered);
         assertEquals(action, TurnProtocolGoldenSupport.roundTrip(action, TurnAction.class));
+    }
+
+    private static TurnLocalServiceCall wholeTaskCall(TurnLocalOperation operation, WtArgs args) {
+        return new TurnLocalServiceCall(operation, null, null, null, null, args.build());
+    }
+
+    private static TurnLocalServiceCall metricCall(TurnLocalOperation operation, TurnMetricEventPayload payload) {
+        return new TurnLocalServiceCall(operation, null, null, null, null, null, payload);
+    }
+
+    private static TurnLocalServiceCall bagCall(TurnLocalOperation operation, TurnBagOperationArguments bag) {
+        return new TurnLocalServiceCall(operation, bag, null, null, null);
+    }
+
+    private static WtArgs wtBuilder(String source) {
+        return new WtArgs(source);
+    }
+
+    /** Compact builder mirroring the wire record so golden calls stay readable. */
+    private static final class WtArgs {
+        private final String source;
+        private TurnPathingIntent pathingIntent;
+        private String intentId;
+        private String sourcePrefix;
+        private Long protectionMs;
+        private Integer currentX;
+        private Integer currentY;
+        private String targetMapName;
+        private Integer targetX;
+        private Integer targetY;
+        private Integer tolerance;
+        private Long confirmTimeoutMs;
+        private String taskCode;
+        private String targetKeyword;
+        private Long blockedMs;
+        private List<String> interestOperations;
+        private Integer completedRuns;
+        private Integer totalRuns;
+        private Long dialogSnapshotMaxAgeMs;
+        private TurnPendingTransferChoice transferChoice;
+        private TurnPendingRouteOutcome routeOutcome;
+        private String routeOutcomeReplacementReason;
+        private String startupFlyingState;
+
+        private WtArgs(String source) {
+            this.source = source;
+        }
+
+        private WtArgs pathingIntent(TurnPathingIntent v) { this.pathingIntent = v; return this; }
+        private WtArgs intentId(String v) { this.intentId = v; return this; }
+        private WtArgs sourcePrefix(String v) { this.sourcePrefix = v; return this; }
+        private WtArgs protectionMs(Long v) { this.protectionMs = v; return this; }
+        private WtArgs currentX(Integer v) { this.currentX = v; return this; }
+        private WtArgs currentY(Integer v) { this.currentY = v; return this; }
+        private WtArgs targetMapName(String v) { this.targetMapName = v; return this; }
+        private WtArgs targetX(Integer v) { this.targetX = v; return this; }
+        private WtArgs targetY(Integer v) { this.targetY = v; return this; }
+        private WtArgs tolerance(Integer v) { this.tolerance = v; return this; }
+        private WtArgs confirmTimeoutMs(Long v) { this.confirmTimeoutMs = v; return this; }
+        private WtArgs taskCode(String v) { this.taskCode = v; return this; }
+        private WtArgs targetKeyword(String v) { this.targetKeyword = v; return this; }
+        private WtArgs blockedMs(Long v) { this.blockedMs = v; return this; }
+        private WtArgs interestOperations(List<String> v) { this.interestOperations = v; return this; }
+        private WtArgs completedRuns(Integer v) { this.completedRuns = v; return this; }
+        private WtArgs totalRuns(Integer v) { this.totalRuns = v; return this; }
+        private WtArgs dialogSnapshotMaxAgeMs(Long v) { this.dialogSnapshotMaxAgeMs = v; return this; }
+        private WtArgs transferChoice(TurnPendingTransferChoice v) { this.transferChoice = v; return this; }
+        private WtArgs routeOutcome(TurnPendingRouteOutcome v) { this.routeOutcome = v; return this; }
+        private WtArgs routeOutcomeReplacementReason(String v) { this.routeOutcomeReplacementReason = v; return this; }
+        private WtArgs startupFlyingState(String v) { this.startupFlyingState = v; return this; }
+
+        private TurnWholeTaskRuntimeArguments build() {
+            return new TurnWholeTaskRuntimeArguments(
+                    source, pathingIntent, intentId, sourcePrefix, protectionMs, null, currentX, currentY,
+                    targetMapName, targetX, targetY, tolerance, confirmTimeoutMs, taskCode, targetKeyword,
+                    blockedMs, interestOperations, null, null, completedRuns, totalRuns, dialogSnapshotMaxAgeMs,
+                    transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState);
+        }
     }
 
     @Test
@@ -178,8 +368,43 @@ class TurnCoreProtocolGoldenJsonTest {
     }
 
     @Test
-    void lifecycleTaskCodeEnumDoesNotContainSleepComputer() {
-        assertThrows(IllegalArgumentException.class, () -> TurnTaskCode.valueOf("SLEEP_COMPUTER"));
+    void lifecycleTaskCodeIncludesExplicitSleepComputerHostTask() {
+        assertEquals(TurnTaskCode.SLEEP_COMPUTER, TurnTaskCode.valueOf("SLEEP_COMPUTER"));
+    }
+
+    @Test
+    void findAndUseTaskPageReturnItemRoundTripsThroughStrictContractMapper() throws IOException {
+        TurnLocalServiceCall call = new TurnLocalServiceCall(
+                TurnLocalOperation.BAG_RETURN_ITEM,
+                new TurnBagOperationArguments(
+                        TurnBagOperationArguments.ReturnItemIntent.FIND_AND_USE_TASK_PAGE,
+                        "bag/xiuluo_return_item.png", -1, null, "golden"),
+                null, null, null);
+        TurnAction action = TurnProtocolGoldenSupport.action(
+                "core-find-and-use-task-page",
+                List.of(TurnProtocolGoldenSupport.localStep(0, call)));
+
+        assertSame(action, TurnProtocolValidator.requireValid(action));
+
+        TurnAction roundTripped = TurnProtocolGoldenSupport.roundTrip(action, TurnAction.class);
+        assertEquals(action, roundTripped);
+        TurnProtocolValidator.requireValid(roundTripped);
+
+        // P-PROTO result carrier (folded here to keep the frozen golden count): the nullable
+        // pendingRouteOutcome and its five-field backward-compatible constructor round-trip through the
+        // strict contract mapper, and the compat constructor defaults pendingRouteOutcome to null.
+        TurnPendingRouteOutcome routeOutcome = new TurnPendingRouteOutcome(
+                "长安", "宝象国", "YELLOW_DESTINATION_MINI_MAP", 12, -8, "宝象国", "golden",
+                true, "route-golden", "intent-golden", 123_456_789L);
+        TurnWholeTaskRuntimeResult present =
+                new TurnWholeTaskRuntimeResult(null, null, null, null, null, routeOutcome);
+        assertEquals(present, TurnProtocolGoldenSupport.roundTrip(present, TurnWholeTaskRuntimeResult.class));
+        assertEquals(routeOutcome, TurnProtocolGoldenSupport.roundTrip(
+                present, TurnWholeTaskRuntimeResult.class).pendingRouteOutcome());
+        TurnWholeTaskRuntimeResult compat =
+                new TurnWholeTaskRuntimeResult(Boolean.TRUE, "EXECUTED", 1_500L, null, null);
+        assertEquals(new TurnWholeTaskRuntimeResult(Boolean.TRUE, "EXECUTED", 1_500L, null, null, null), compat);
+        assertEquals(compat, TurnProtocolGoldenSupport.roundTrip(compat, TurnWholeTaskRuntimeResult.class));
     }
 
     private static String[] names(Enum<?>[] values) {

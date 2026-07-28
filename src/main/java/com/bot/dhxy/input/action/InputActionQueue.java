@@ -317,6 +317,28 @@ public class InputActionQueue {
     }
 
     /**
+     * Run a callback under the single worker without focusing first. The callback may capture through
+     * an exact HWND and may explicitly focus later only if it reaches a real mouse operation.
+     */
+    public boolean submitBackgroundExclusiveAndWait(String description, Supplier<Boolean> callback) {
+        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty()) {
+            log.warn("Background exclusive action rejected because no window context exists: {}", description);
+            return false;
+        }
+        WindowRuntimeContext context = current.get();
+        if (!refreshAndValidateNativeBinding(context, description, true)) {
+            return false;
+        }
+        CapturedTaskTokens taskTokens = captureTaskTokens();
+        InputActionRequest request = new InputActionRequest(
+                context, description, callback, taskTokens.pauseToken(), taskTokens.stopToken());
+        request.suppressExclusiveCallbackFocus();
+        AwaitOutcome outcome = await(request);
+        return outcome.waiterCompletedNormally() && outcome.executionResult().isCompleted();
+    }
+
+    /**
      * Run one callback through the global input worker against an already resolved window snapshot.
      * This path never refreshes or searches for a window; drift is rejected before focus or callback.
      *
@@ -339,6 +361,16 @@ public class InputActionQueue {
             WindowRuntimeContext context,
             WindowNativeBinding binding,
             Supplier<Boolean> callback) {
+        return submitFrozenExactWindowExclusiveAndWait(
+                description, context, binding, callback, null);
+    }
+
+    public InputActionExecutionResult submitFrozenExactWindowExclusiveAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            Supplier<Boolean> callback,
+            Supplier<InputActionSafetyReason> externalSafetyReason) {
         WindowRuntimeContext exactContext = Objects.requireNonNull(context, "context");
         WindowNativeBinding exactBinding = Objects.requireNonNull(binding, "binding");
         Supplier<Boolean> exactCallback = Objects.requireNonNull(callback, "callback");
@@ -354,14 +386,19 @@ public class InputActionQueue {
              */
             request = InputActionRequest.frozenExactWindowExclusive(
                     exactContext, exactBinding, exactContext.getPlayerIdentityEpoch(), description,
-                    exactCallback, taskTokens.pauseToken(), taskTokens.stopToken());
+                    exactCallback, taskTokens.pauseToken(), taskTokens.stopToken(), externalSafetyReason);
             InputActionRequest.DetailedCancellation frozenFailure =
                     request.frozenExactWindowFailure("before-enqueue");
             if (frozenFailure != null) {
+                log.warn("Frozen exact-window input rejected before enqueue: windowId={} description={} safetyReason={} reason={}",
+                        exactContext.getWindowId(), description,
+                        frozenFailure.safetyReason(), frozenFailure.reason());
                 request.cancel(frozenFailure.safetyReason(), frozenFailure.reason());
                 return request.getResult().join();
             }
             if (!request.isFrozenExactWindowGenerationCurrent()) {
+                log.warn("Frozen exact-window input rejected before enqueue: windowId={} description={} safetyReason={} reason=frozen-generation-changed-before-enqueue",
+                        exactContext.getWindowId(), description, InputActionSafetyReason.WINDOW_BINDING_CHANGED);
                 request.cancel(InputActionSafetyReason.WINDOW_BINDING_CHANGED,
                         "frozen-generation-changed-before-enqueue");
                 return request.getResult().join();

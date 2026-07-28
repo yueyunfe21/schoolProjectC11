@@ -1,6 +1,8 @@
 package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
+import com.bot.dhxy.window.observation.ObservationRunnerWiring;
+import com.bot.dhxy.window.observation.WindowObservationRunnerFactory;
 
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -10,10 +12,25 @@ public final class TurnLoopFactory {
 
     private final TurnClient turnClient;
     private final LocalTurnActionExecutor actionExecutor;
+    private final WindowObservationRunnerFactory observationRunnerFactory;
 
     public TurnLoopFactory(TurnClient turnClient, LocalTurnActionExecutor actionExecutor) {
+        this(turnClient, actionExecutor, null);
+    }
+
+    /**
+     * TURN-40G overload: additionally threads a per-window observation runner factory into every created loop.
+     * The two-argument form resolves the process-wide {@link ObservationRunnerWiring} registration lazily at
+     * creation time instead, so processes without an observation plane (contract tests) are unaffected.
+     *
+     * @param observationRunnerFactory explicit runner factory, or {@code null} to resolve from the wiring bridge.
+     */
+    public TurnLoopFactory(TurnClient turnClient,
+                           LocalTurnActionExecutor actionExecutor,
+                           WindowObservationRunnerFactory observationRunnerFactory) {
         this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.actionExecutor = Objects.requireNonNull(actionExecutor, "actionExecutor");
+        this.observationRunnerFactory = observationRunnerFactory;
     }
 
     /**
@@ -29,12 +46,16 @@ public final class TurnLoopFactory {
                           String windowId,
                           long waitTimeoutMs,
                           Supplier<TurnWindowMetadata> windowMetadataSupplier) {
+        WindowObservationRunnerFactory runnerFactory = observationRunnerFactory != null
+                ? observationRunnerFactory
+                : ObservationRunnerWiring.current();
         return new WindowTurnLoop(
                 deviceId,
                 windowId,
                 waitTimeoutMs,
                 windowMetadataSupplier,
                 turnClient,
-                actionExecutor);
+                Objects.requireNonNull(actionExecutor, "actionExecutor")::execute,
+                runnerFactory);
     }
 }

@@ -1,11 +1,7 @@
 package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnPathingIntent;
-import com.bot.dhxy.model.MapCoordinate;
-import com.bot.dhxy.model.navigation.TemplateLocationInfo;
-import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.tools.GameStateUtil;
-import com.bot.dhxy.vision.MiniMapCoordinateReader;
+import com.bot.dhxy.cloud.turn.local.LocalMovementFactMechanics;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -13,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
+import java.awt.image.BufferedImage;
 
 /**
  * Narrow exact-window local proof observer for the Local Pathing Fact Bridge (TURN-27 Amendment #2).
@@ -24,27 +21,20 @@ import java.util.Objects;
  * {@link WindowRuntimeContext} on a positive proof.</p>
  *
  * <p>It is <b>not</b> a fifth permanent local Service. It sends no input, chooses no business next
- * step, copies no business retry/fallback, and does not modify the {@link GameStateUtil} detector,
- * {@link MiniMapCoordinateReader} reader, or the runner watcher algorithms. The proof is: read the
- * mini-map coordinate baseline once before the action input; after the action reaches a
- * {@code COMPLETED} terminal, run the fast-edge {@link GameStateUtil#isMovingByPixelDiff} first and,
- * only when it is false, the coordinate-change fallback; any positive registers the intent, while a
+ * step and copies no business retry/fallback. The proof captures a fixed mini-map strip baseline
+ * before input; after a {@code COMPLETED} terminal it checks fixed edge-frame change first and then
+ * fixed strip pixel change. It performs no OCR, map-name or numeric-coordinate interpretation. Any
+ * positive registers the intent, while a
  * double-negative or a non-{@code COMPLETED} terminal registers nothing.</p>
  */
 @Slf4j
 @Component
-public final class LocalPathingStartProofMechanics {
+public class LocalPathingStartProofMechanics {
 
-    private static final long COORD_CONFIRM_TIMEOUT_MS = 1000L;
-    private static final long COORD_CONFIRM_POLL_MS = 200L;
+    private final LocalMovementFactMechanics movementFacts;
 
-    private final GameStateUtil gameStateUtil;
-    private final MiniMapCoordinateReader miniMapCoordinateReader;
-
-    public LocalPathingStartProofMechanics(GameStateUtil gameStateUtil,
-                                           MiniMapCoordinateReader miniMapCoordinateReader) {
-        this.gameStateUtil = Objects.requireNonNull(gameStateUtil, "gameStateUtil");
-        this.miniMapCoordinateReader = Objects.requireNonNull(miniMapCoordinateReader, "miniMapCoordinateReader");
+    public LocalPathingStartProofMechanics(LocalMovementFactMechanics movementFacts) {
+        this.movementFacts = Objects.requireNonNull(movementFacts, "movementFacts");
     }
 
     /**
@@ -52,8 +42,8 @@ public final class LocalPathingStartProofMechanics {
      *
      * @return the pre-action logical coordinate, or null when it cannot be read.
      */
-    public MapCoordinate readBaseline() {
-        return currentCoordinate();
+    public BufferedImage readBaseline() {
+        return movementFacts.captureCoordinateStrip();
     }
 
     /**
@@ -69,51 +59,27 @@ public final class LocalPathingStartProofMechanics {
      * @param intent typed start-action pathing intent attached by Cloud.
      * @param baseline pre-action coordinate baseline captured by {@link #readBaseline()}.
      */
-    public void proveAndRegister(WindowRuntimeContext context, TurnPathingIntent intent, MapCoordinate baseline) {
+    public void proveAndRegister(WindowRuntimeContext context, TurnPathingIntent intent, BufferedImage baseline) {
         if (context == null || intent == null) {
             return;
         }
         String source = "turn:pathing-start-proof:" + intent.intentId();
-        if (gameStateUtil.isMovingByPixelDiff(source + ":fast-edge")) {
-            register(context, intent, source + ":fast-edge");
-            return;
-        }
-        if (confirmByCoordinateChange(baseline, source)) {
-            register(context, intent, source + ":coord-fallback");
-            return;
+        try {
+            if (movementFacts.edgePixelsChanged(source + ":fast-edge")) {
+                register(context, intent, source + ":fast-edge");
+                return;
+            }
+            if (movementFacts.coordinateStripChanged(baseline, source)) {
+                register(context, intent, source + ":coordinate-strip");
+                return;
+            }
+        } finally {
+            if (baseline != null) {
+                baseline.flush();
+            }
         }
         log.info("local pathing start proof negative; no registration: source={} baseline={}",
-                source, formatCoordinate(baseline));
-    }
-
-    private boolean confirmByCoordinateChange(MapCoordinate baseline, String source) {
-        long deadline = System.currentTimeMillis() + COORD_CONFIRM_TIMEOUT_MS;
-        MapCoordinate previous = null;
-        while (System.currentTimeMillis() < deadline) {
-            MapCoordinate current = currentCoordinate();
-            if (current != null) {
-                if (isCoordinateChanged(baseline, current) || isCoordinateChanged(previous, current)) {
-                    log.info("local pathing start proof coordinate change: source={} baseline={} previous={} current={}",
-                            source, formatCoordinate(baseline), formatCoordinate(previous), formatCoordinate(current));
-                    return true;
-                }
-                previous = current;
-            }
-            if (!TaskSleep.sleep(COORD_CONFIRM_POLL_MS)) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    private MapCoordinate currentCoordinate() {
-        MapCoordinate fromTemplate = miniMapCoordinateReader.readCurrentTemplateLocation()
-                .map(TemplateLocationInfo::coordinate)
-                .orElse(null);
-        if (fromTemplate != null) {
-            return fromTemplate;
-        }
-        return miniMapCoordinateReader.readCurrentCoordinate().orElse(null);
+                source, baseline == null ? "missing" : baseline.getWidth() + "x" + baseline.getHeight());
     }
 
     private void register(WindowRuntimeContext context, TurnPathingIntent intent, String source) {
@@ -132,12 +98,6 @@ public final class LocalPathingStartProofMechanics {
                 windowIntent.getTargetX(), windowIntent.getTargetY());
     }
 
-    private static boolean isCoordinateChanged(MapCoordinate baseline, MapCoordinate current) {
-        return baseline != null
-                && current != null
-                && (baseline.getX() != current.getX() || baseline.getY() != current.getY());
-    }
-
     private static WindowPathingIntentType parseIntentType(String name) {
         if (name == null) {
             return WindowPathingIntentType.TARGETED;
@@ -149,7 +109,4 @@ public final class LocalPathingStartProofMechanics {
         }
     }
 
-    private static String formatCoordinate(MapCoordinate coordinate) {
-        return coordinate == null ? "null" : "(" + coordinate.getX() + "," + coordinate.getY() + ")";
-    }
 }

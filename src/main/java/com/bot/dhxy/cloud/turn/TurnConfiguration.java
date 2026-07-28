@@ -8,8 +8,13 @@ import org.springframework.context.annotation.Configuration;
 
 /** Inert Spring wiring for the explicit HTTPS turn path. */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(TurnClientProperties.class)
+@EnableConfigurationProperties({TurnClientProperties.class, CloudTurnSidecarProperties.class})
 public class TurnConfiguration {
+
+    @Bean
+    ObjectMapper objectMapper() {
+        return new ObjectMapper();
+    }
 
     @Bean
     TurnClient turnClient(TurnClientProperties properties, ObjectMapper objectMapper) {
@@ -49,6 +54,7 @@ public class TurnConfiguration {
                                 MultiWindowTaskManager taskManager,
                                 TurnLoopRegistry loopRegistry) {
         properties.requireValid();
-        return new TurnModeGuard(taskManager, loopRegistry, properties.getLongWaitTimeoutMs());
+        return new TurnModeGuard(
+                taskManager, loopRegistry, properties.getLongWaitTimeoutMs(), properties.getDeviceId());
     }
 }

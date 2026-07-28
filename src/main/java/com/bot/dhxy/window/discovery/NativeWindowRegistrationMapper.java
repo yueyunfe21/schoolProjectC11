@@ -4,6 +4,7 @@ import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRegistrationRequest;
+import com.bot.dhxy.window.runtime.WindowTitleIdentityParser;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -32,7 +33,7 @@ public class NativeWindowRegistrationMapper {
             requests.add(WindowRegistrationRequest.of(
                     window.toWindowId(),
                     role,
-                    window.toDisplayName(),
+                    roleName(window),
                     safeTaskType,
                     toBinding(window)
             ));
@@ -60,7 +61,7 @@ public class NativeWindowRegistrationMapper {
             requests.add(WindowRegistrationRequest.of(
                     window.toWindowId(),
                     role,
-                    window.toDisplayName(),
+                    roleName(window),
                     taskType,
                     toBinding(window)
             ));
@@ -79,6 +80,12 @@ public class NativeWindowRegistrationMapper {
                 window.getWidth(),
                 window.getHeight()
         );
+    }
+
+    private String roleName(NativeWindowInfo window) {
+        return WindowTitleIdentityParser.parse(window.getTitle())
+                .map(identity -> identity.playerName())
+                .orElseGet(window::toDisplayName);
     }
 
     private String scannerHandleForBinding(String handle) {

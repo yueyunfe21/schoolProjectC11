@@ -13,11 +13,6 @@ import com.sun.jna.platform.win32.WinDef;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.awt.AWTException;
-import java.awt.GraphicsEnvironment;
-import java.awt.Robot;
-import java.awt.event.KeyEvent;
-
 /**
  * Windows 原生窗口激活服务。
  *
@@ -30,7 +25,6 @@ import java.awt.event.KeyEvent;
 public class WindowFocusService {
 
     private final GlobalInputLock inputLock;
-    private Robot focusRobot;
 
     public WindowFocusService(GlobalInputLock inputLock) {
         this.inputLock = inputLock;
@@ -62,7 +56,6 @@ public class WindowFocusService {
 
         boolean focused = isFocused(hwnd);
         if (!foregroundOk || !focused) {
-            unlockForegroundPermission();
             User32.INSTANCE.BringWindowToTop(hwnd);
             foregroundOk = User32.INSTANCE.SetForegroundWindow(hwnd) || foregroundOk;
             TaskSleep.sleep(120);
@@ -135,34 +128,6 @@ public class WindowFocusService {
             return null;
         }
         return String.valueOf(Pointer.nativeValue(foreground.getPointer()));
-    }
-
-    private void unlockForegroundPermission() {
-        Robot robot = getFocusRobot();
-        if (robot == null) {
-            return;
-        }
-        robot.keyPress(KeyEvent.VK_ALT);
-        robot.delay(20);
-        robot.keyRelease(KeyEvent.VK_ALT);
-        robot.delay(20);
-    }
-
-    private Robot getFocusRobot() {
-        if (GraphicsEnvironment.isHeadless()) {
-            return null;
-        }
-        if (focusRobot != null) {
-            return focusRobot;
-        }
-        try {
-            focusRobot = new Robot();
-            focusRobot.setAutoDelay(0);
-            return focusRobot;
-        } catch (AWTException e) {
-            log.debug("Unable to create focus helper robot: {}", e.getMessage());
-            return null;
-        }
     }
 
     private WinDef.HWND toHwnd(String handleText) {

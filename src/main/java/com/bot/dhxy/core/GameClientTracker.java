@@ -5,6 +5,7 @@ import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.config.BotProperties;
 import com.bot.dhxy.config.VisionProvider;
 import com.bot.dhxy.config.WindowIsolationProperties;
+import com.bot.dhxy.capture.WindowCaptureEvidenceStore;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.GlobalInputLock;
 import com.bot.dhxy.tools.CoordinateHelper;
@@ -54,6 +55,7 @@ public class GameClientTracker {
     private final BoundWindowCaptureService boundWindowCaptureService;
     private final WindowInteractionMetricsService windowInteractionMetricsService;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final WindowCaptureEvidenceStore captureEvidenceStore;
 
     public static final String LATEST_VISION_PATH = "images/temp/latest_vision.png";
     private static final int WINDOW_WIDTH = 1024;
@@ -134,128 +136,47 @@ public class GameClientTracker {
         return true;
     }
 
+    /*
+     * Captures no longer take the global input lock. The lock's only legitimate job is
+     * serializing REAL mouse/keyboard (its own class comment says captures may run in
+     * parallel); captures were only ever inside it as a legacy of the removed
+     * foreground-capture fallback. The whole capture chain is now pure background
+     * PrintWindow (BoundWindowCaptureService never focuses or foregrounds), so holding the
+     * input lock here only starved observation frames whenever the shared input worker was
+     * busy — with five windows clicking, unlucky windows went 20+ seconds without a frame
+     * and the Cloud misjudged their state.
+     */
     public boolean captureToFile(String elementName, String savePath, int x1, int y1, int x2, int y2) {
-        return globalInputLock.callWithLock(() -> captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2));
+        return captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2);
+    }
+
+    /**
+     * Kept for API compatibility: captures are lock-free now, so "if idle" simply captures.
+     */
+    public BufferedImage captureToMemoryIfIdle(String elementName, int x1, int y1, int x2, int y2) {
+        return captureToMemory(elementName, x1, y1, x2, y2);
     }
 
     public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
-        return globalInputLock.callWithLock(() -> {
-            if (!isValidRect(x1, y1, x2, y2)) {
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "INVALID_RECT");
-                return null;
-            }
-            if (!checkBaseAddress()) {
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "CHECK_BASE_FAILED");
-                return null;
-            }
-            Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
-            if (hwndCapture.isPresent()) {
-                BoundWindowCaptureService.CaptureResult result = hwndCapture.get();
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, true, "OK", result.provider().name());
-                return result.image();
-            }
-            if (!windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false,
-                        "HWND_CAPTURE_FAILED", "HWND");
-                return null;
-            }
-            if (!focusCurrentWindowForScreenCaptureWithoutLock(elementName)) {
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false,
-                        "FOCUS_NOT_CONFIRMED", "ROBOT");
-                return null;
-            }
-            logTrackerState("captureToMemory:" + elementName);
-            try {
-                BufferedImage image = eyes.captureRegionByCoordinates(x1, y1, x2, y2);
-                boolean success = image != null;
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, success,
-                        success ? "OK" : "CAPTURE_PROVIDER_FAILED", "ROBOT");
-                return image;
-            } catch (Exception e) {
-                logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "EXCEPTION:" + e.getClass().getSimpleName());
-                throw e;
-            }
-        });
-    }
-
-    public void captureRegionDiagnostics(String elementName, String savePathPrefix,
-                                         int x1, int y1, int x2, int y2) {
-        globalInputLock.callWithLock(() -> {
-            if (!isValidRect(x1, y1, x2, y2)) {
-                log.warn("capture diagnostics skipped: element={} reason=INVALID_RECT rect=({}, {})-({}, {})",
-                        elementName, x1, y1, x2, y2);
-                return null;
-            }
-            if (!checkBaseAddress()) {
-                log.warn("capture diagnostics skipped: element={} reason=CHECK_BASE_FAILED rect=({}, {})-({}, {})",
-                        elementName, x1, y1, x2, y2);
-                return null;
-            }
-
-            String hwndPath = savePathPrefix + "_hwnd_raw.png";
-            String robotPath = savePathPrefix + "_robot_raw.png";
-            String hwndFullOverlayPath = savePathPrefix + "_hwnd_full_overlay.png";
-            String robotFullOverlayPath = savePathPrefix + "_robot_full_overlay.png";
-            String robotReason = "NOT_ATTEMPTED";
-            boolean hwndSaved = false;
-            boolean robotSaved = false;
-            boolean hwndFullOverlaySaved = false;
-            boolean robotFullOverlaySaved = false;
-
-            Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
-            String hwndProvider = hwndCapture.map(result -> result.provider().name()).orElse("NONE");
-            if (hwndCapture.isPresent()) {
-                hwndSaved = writeCaptureToFile(hwndCapture.get().image(), hwndPath);
-            }
-
-            String foregroundBefore = windowFocusService.getForegroundNativeHandleText();
-            TrackerState s = state();
-            int fullX1 = s.windowBaseX;
-            int fullY1 = s.windowBaseY;
-            int fullX2 = fullX1 + WINDOW_WIDTH;
-            int fullY2 = fullY1 + WINDOW_HEIGHT;
-            Optional<BoundWindowCaptureService.CaptureResult> hwndFullCapture = captureToMemoryByHwndIfAvailable(
-                    fullX1, fullY1, fullX2, fullY2);
-            if (hwndFullCapture.isPresent()) {
-                hwndFullOverlaySaved = writeCaptureOverlayToFile(
-                        hwndFullCapture.get().image(), hwndFullOverlayPath,
-                        x1, y1, x2, y2, fullX1, fullY1);
-            }
-
-            if (windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
-                try {
-                    BufferedImage robotImage = eyes.captureRegionByCoordinates(x1, y1, x2, y2);
-                    robotSaved = writeCaptureToFile(robotImage, robotPath);
-                    robotReason = robotImage == null ? "NULL_IMAGE" : "OK";
-                    BufferedImage robotFullImage = eyes.captureRegionByCoordinates(fullX1, fullY1, fullX2, fullY2);
-                    robotFullOverlaySaved = writeCaptureOverlayToFile(
-                            robotFullImage, robotFullOverlayPath,
-                            x1, y1, x2, y2, fullX1, fullY1);
-                } catch (Exception e) {
-                    robotReason = "EXCEPTION:" + e.getClass().getSimpleName();
-                    log.warn("capture diagnostics robot capture failed: element={} reason={}",
-                            elementName, e.getMessage(), e);
-                }
-            } else {
-                robotReason = "ROBOT_DISABLED";
-            }
-            String foregroundAfter = windowFocusService.getForegroundNativeHandleText();
-
-            Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
-            String windowId = current.map(WindowRuntimeContext::getWindowId).orElse("NO_WINDOW_CONTEXT");
-            String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
-            log.info("capture diagnostics: element={} windowId={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} "
-                            + "relativeRect=({}, {})-({}, {}) foregroundBefore={} foregroundAfter={} "
-                            + "hwndProvider={} hwndSaved={} hwndPath={} hwndFullOverlaySaved={} hwndFullOverlayPath={} "
-                            + "robotSaved={} robotReason={} robotPath={} robotFullOverlaySaved={} robotFullOverlayPath={}",
-                    elementName, windowId, x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText,
-                    x1 - s.windowBaseX, y1 - s.windowBaseY, x2 - s.windowBaseX, y2 - s.windowBaseY,
-                    foregroundBefore, foregroundAfter, hwndProvider, hwndSaved, hwndPath,
-                    hwndFullOverlaySaved, hwndFullOverlayPath,
-                    robotSaved, robotReason, robotPath, robotFullOverlaySaved, robotFullOverlayPath);
+        if (!isValidRect(x1, y1, x2, y2)) {
+            logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "INVALID_RECT");
             return null;
-        });
+        }
+        if (!checkBaseAddress()) {
+            logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "CHECK_BASE_FAILED");
+            return null;
+        }
+        Optional<BoundWindowCaptureService.CaptureResult> hwndCapture = captureToMemoryByHwndIfAvailable(x1, y1, x2, y2);
+        if (hwndCapture.isPresent()) {
+            BoundWindowCaptureService.CaptureResult result = hwndCapture.get();
+            logCaptureResult("memory", elementName, null, x1, y1, x2, y2, true, "OK", result.provider().name());
+            return result.image();
+        }
+        logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false,
+                "HWND_CAPTURE_FAILED_NO_FOREGROUND_FALLBACK", "HWND");
+        return null;
     }
+
 
     private boolean captureToFileWithoutLock(String elementName, String savePath, int x1, int y1, int x2, int y2) {
         if (!isValidRect(x1, y1, x2, y2)) {
@@ -274,27 +195,9 @@ public class GameClientTracker {
                     success ? "OK" : "WRITE_FAILED", result.provider().name());
             return success;
         }
-        if (!windowIsolationProperties.isHwndCaptureFallbackToRobotActive()) {
-            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false,
-                    "HWND_CAPTURE_FAILED", "HWND");
-            return false;
-        }
-        if (!focusCurrentWindowForScreenCaptureWithoutLock(elementName)) {
-            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false,
-                    "FOCUS_NOT_CONFIRMED", "ROBOT");
-            return false;
-        }
-        logTrackerState("captureToFile:" + elementName);
-        log.debug("截图：{} savePath={} rect=({}, {})-({}, {})", elementName, savePath, x1, y1, x2, y2);
-        try {
-            boolean success = eyes.captureRegionToFile(savePath, x1, y1, x2, y2);
-            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, success,
-                    success ? "OK" : "CAPTURE_PROVIDER_FAILED", "ROBOT");
-            return success;
-        } catch (Exception e) {
-            logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false, "EXCEPTION:" + e.getClass().getSimpleName());
-            throw e;
-        }
+        logCaptureResult("file", elementName, savePath, x1, y1, x2, y2, false,
+                "HWND_CAPTURE_FAILED_NO_FOREGROUND_FALLBACK", "HWND");
+        return false;
     }
 
     private Optional<BoundWindowCaptureService.CaptureResult> captureToMemoryByHwndIfAvailable(int x1, int y1, int x2, int y2) {
@@ -319,6 +222,12 @@ public class GameClientTracker {
         return result;
     }
 
+    private WindowNativeBinding currentBinding() {
+        return windowTaskContextHolder.rawCurrent()
+                .map(WindowRuntimeContext::getNativeBinding)
+                .orElse(WindowNativeBinding.empty());
+    }
+
     private boolean writeCaptureToFile(BufferedImage image, String savePath) {
         if (image == null || savePath == null || savePath.isBlank()) {
             return false;
@@ -336,28 +245,6 @@ public class GameClientTracker {
         }
     }
 
-    private boolean writeCaptureOverlayToFile(BufferedImage image, String savePath,
-                                              int x1, int y1, int x2, int y2,
-                                              int baseX, int baseY) {
-        if (image == null || savePath == null || savePath.isBlank()) {
-            return false;
-        }
-        BufferedImage copy = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = copy.createGraphics();
-        try {
-            g.drawImage(image, 0, 0, null);
-            g.setColor(Color.RED);
-            g.setStroke(new BasicStroke(3));
-            g.drawRect(x1 - baseX, y1 - baseY, Math.max(1, x2 - x1), Math.max(1, y2 - y1));
-        } finally {
-            g.dispose();
-        }
-        try {
-            return writeCaptureToFile(copy, savePath);
-        } finally {
-            copy.flush();
-        }
-    }
 
     private boolean isValidRect(int x1, int y1, int x2, int y2) {
         return x1 != x2 && y1 != y2;
@@ -391,44 +278,6 @@ public class GameClientTracker {
         } else {
             log.debug(message, args);
         }
-    }
-
-    private boolean focusCurrentWindowForScreenCaptureWithoutLock(String elementName) {
-        if (!windowIsolationProperties.isInputFocusActive()) {
-            return true;
-        }
-        Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
-        if (current.isEmpty()) {
-            return true;
-        }
-        WindowNativeBinding binding = current.get().getNativeBinding();
-        if (binding == null || !binding.hasNativeHandle()) {
-            return true;
-        }
-
-        String before = windowFocusService.getForegroundNativeHandleText();
-        windowFocusService.focusWithoutLock(binding);
-        String after = windowFocusService.getForegroundNativeHandleText();
-
-        Long expected = parseHandleValue(binding.getNativeHandle());
-        boolean focused = expected != null && after != null && after.equals(String.valueOf(expected));
-        windowInteractionMetricsService.recordFocus(current.get().getWindowId(), "capture:" + elementName, focused);
-        if (!focused) {
-            log.warn("Capture focus not confirmed before screenshot: element={} windowId={} expectedHwnd={} beforeForeground={} afterForeground={} title={}",
-                    elementName, current.get().getWindowId(), binding.getNativeHandle(), before, after, binding.getTitle());
-        }
-        String line = LocalDateTime.now()
-                + " | action=capture-focus"
-                + " | element=" + elementName
-                + " | windowId=" + current.get().getWindowId()
-                + " | expectedHwnd=" + binding.getNativeHandle()
-                + " | beforeForeground=" + before
-                + " | afterForeground=" + after
-                + " | focused=" + focused
-                + " | title=" + binding.getTitle();
-        log.debug("[TrackerCoordinate] {}", line);
-        appendTrackerDiagnostic(line);
-        return focused;
     }
 
     private boolean checkBaseAddress() {

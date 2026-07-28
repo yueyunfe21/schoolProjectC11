@@ -63,6 +63,11 @@ public class InputSequences {
         return inputActionQueue.submitExclusiveAndWait(description, callback);
     }
 
+    /** Run an exact-HWND capture callback without focusing unless the callback explicitly reaches mouse input. */
+    public boolean submitBackgroundExclusiveAndWait(String description, Supplier<Boolean> callback) {
+        return inputActionQueue.submitBackgroundExclusiveAndWait(description, callback);
+    }
+
     /**
      * Run a direct-input callback against one immutable action-resolver window snapshot.
      *
@@ -84,6 +89,17 @@ public class InputSequences {
             Supplier<Boolean> callback) {
         return inputActionQueue.submitFrozenExactWindowExclusiveAndWait(
                 description, context, binding, callback);
+    }
+
+    public InputActionExecutionResult submitFrozenExactWindowExclusiveAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            Supplier<Boolean> callback,
+            java.util.function.Supplier<com.bot.dhxy.input.action.InputActionSafetyReason>
+                    externalSafetyReason) {
+        return inputActionQueue.submitFrozenExactWindowExclusiveAndWait(
+                description, context, binding, callback, externalSafetyReason);
     }
 
     /**

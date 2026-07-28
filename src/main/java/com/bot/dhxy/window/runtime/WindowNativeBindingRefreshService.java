@@ -5,10 +5,13 @@ import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.ptr.IntByReference;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Service
 public class WindowNativeBindingRefreshService {
 
@@ -16,6 +19,7 @@ public class WindowNativeBindingRefreshService {
     private static final int CLASS_BUFFER_CHARS = 256;
 
     private final NativeWindowProbe nativeWindowProbe;
+    private final ConcurrentHashMap<String, String> reportedGeometryMismatches = new ConcurrentHashMap<>();
 
     public WindowNativeBindingRefreshService() {
         this(new JnaNativeWindowProbe());
@@ -48,11 +52,14 @@ public class WindowNativeBindingRefreshService {
             return Optional.empty();
         }
         LiveWindowSnapshot live = snapshot.get();
-        int width = Math.max(live.width(), 0);
-        int height = Math.max(live.height(), 0);
+        int liveWidth = Math.max(live.width(), 0);
+        int liveHeight = Math.max(live.height(), 0);
+        int width = binding.hasGeometry() ? binding.getWidth() : liveWidth;
+        int height = binding.hasGeometry() ? binding.getHeight() : liveHeight;
         if (width <= 0 || height <= 0) {
             return Optional.empty();
         }
+        logGeometryMismatchOnce(binding, liveWidth, liveHeight, width, height);
         return Optional.of(binding.withLiveState(
                 live.title(),
                 live.className(),
@@ -61,6 +68,26 @@ public class WindowNativeBindingRefreshService {
                 live.y(),
                 width,
                 height));
+    }
+
+    private void logGeometryMismatchOnce(WindowNativeBinding binding,
+                                         int liveWidth,
+                                         int liveHeight,
+                                         int adoptedWidth,
+                                         int adoptedHeight) {
+        String handle = binding.getNativeHandle();
+        if (liveWidth == adoptedWidth && liveHeight == adoptedHeight) {
+            reportedGeometryMismatches.remove(handle);
+            return;
+        }
+        String mismatch = liveWidth + "x" + liveHeight + "->" + adoptedWidth + "x" + adoptedHeight;
+        if (mismatch.equals(reportedGeometryMismatches.put(handle, mismatch))) {
+            return;
+        }
+        log.warn("Native geometry refresh size mismatch; preserving registered exact-window size: "
+                        + "hwnd={} title={} live={}x{} registered={}x{} position=({}, {})",
+                handle, binding.getTitle(), liveWidth, liveHeight,
+                adoptedWidth, adoptedHeight, binding.getX(), binding.getY());
     }
 
     /**

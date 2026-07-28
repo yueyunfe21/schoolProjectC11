@@ -141,7 +141,7 @@ class UiLocalOperationExecutorContractTest {
         private String lastSource;
 
         private FakeUiCleanerService() {
-            super(null, null, null, null, null, null, null, null, null);
+            super(null, null, null, null, null);
         }
 
         @Override

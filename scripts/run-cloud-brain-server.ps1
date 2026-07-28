@@ -3,6 +3,9 @@ param(
     [string]$Path = "/api/cloud/decision",
     [string]$Token = "local-dev-token",
     [string]$BrainProjectPath = "D:\mavenProject\dhxy-cloud-brain",
+    [string]$TenantId = "",
+    [string]$UserId = "",
+    [string]$StateRoot = "",
     [int]$OcrPort = 18761,
     # CR257 review P1-1: a fresh/empty vision memory must be an explicit operator decision, never
     # an accident of a missing canonical file (the DHXY-side copy is deleted by C1).
@@ -19,6 +22,55 @@ if ($Path -ne "/api/cloud/decision") {
 if (-not (Test-Path -LiteralPath $BrainProjectPath -PathType Container)) {
     throw "External dhxy-cloud-brain project not found: $BrainProjectPath"
 }
+
+if ([string]::IsNullOrWhiteSpace($TenantId) -or
+        [string]::IsNullOrWhiteSpace($UserId) -or
+        [string]::IsNullOrWhiteSpace($StateRoot)) {
+    throw "TURN-41 scope is required: pass explicit -TenantId, -UserId, and -StateRoot"
+}
+if (-not [System.IO.Path]::IsPathRooted($StateRoot)) {
+    throw "TURN-41 StateRoot must be an absolute path: $StateRoot"
+}
+$StateRoot = [System.IO.Path]::GetFullPath($StateRoot)
+
+function Get-CloudServiceScopeHash {
+    param([string]$Tenant, [string]$User)
+    $tenantBytes = [System.Text.Encoding]::UTF8.GetBytes($Tenant.Trim())
+    $userBytes = [System.Text.Encoding]::UTF8.GetBytes($User.Trim())
+    $frame = New-Object byte[] (8 + $tenantBytes.Length + $userBytes.Length)
+    $offset = 0
+    foreach ($bytes in @($tenantBytes, $userBytes)) {
+        $length = $bytes.Length
+        $frame[$offset++] = [byte]($length -shr 24)
+        $frame[$offset++] = [byte]($length -shr 16)
+        $frame[$offset++] = [byte]($length -shr 8)
+        $frame[$offset++] = [byte]$length
+        [Array]::Copy($bytes, 0, $frame, $offset, $length)
+        $offset += $length
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($frame))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-FileSha256 {
+    param([string]$LiteralPath)
+    $stream = [System.IO.File]::OpenRead($LiteralPath)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
+}
+
+$scopeHash = Get-CloudServiceScopeHash -Tenant $TenantId -User $UserId
+$scopeRoot = Join-Path $StateRoot $scopeHash
+$visionMemoryPath = Join-Path $scopeRoot "vision_memory.json"
 
 $classesPath = Join-Path $BrainProjectPath "target\classes"
 $classpathFile = Join-Path $BrainProjectPath "target\dependency-classpath.txt"
@@ -89,7 +141,7 @@ function Get-CloudBrainRuntimeState {
         [DateTime]::MinValue.ToUniversalTime()
     }
     $classpathSha256 = if (Test-Path -LiteralPath $classpathFile -PathType Leaf) {
-        (Get-FileHash -LiteralPath $classpathFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        Get-FileSha256 -LiteralPath $classpathFile
     } else {
         ""
     }
@@ -166,10 +218,9 @@ $launchUtc = (Get-Date).ToUniversalTime().ToString("o")
 # This preflight runs BEFORE the OCR sidecar lifecycle (review P2): a missing-memory abort must
 # not leave a freshly launched/registered sidecar behind.
 # ---------------------------------------------------------------------------
-$visionMemoryPath = Join-Path $BrainProjectPath "data\vision_memory.json"
 if (Test-Path -LiteralPath $visionMemoryPath -PathType Leaf) {
     $visionMemoryItem = Get-Item -LiteralPath $visionMemoryPath
-    $visionMemorySha256 = (Get-FileHash -LiteralPath $visionMemoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $visionMemorySha256 = Get-FileSha256 -LiteralPath $visionMemoryPath
     Write-Host "CR257 vision memory canonical: path=$visionMemoryPath bytes=$($visionMemoryItem.Length) sha256=$visionMemorySha256 lastWriteUtc=$($visionMemoryItem.LastWriteTimeUtc.ToString('o'))"
 } elseif ($AllowEmptyVisionMemory) {
     Write-Host "CR257 vision memory canonical: path=$visionMemoryPath MISSING — starting with empty memory (explicit -AllowEmptyVisionMemory)"
@@ -419,4 +470,7 @@ Write-Host "devArtifactMode=classpath launchUtc=$launchUtc projectPath=$BrainPro
     -cp $runtimeClasspath `
     $mainClassName `
     "--port=$Port" `
-    "--token=$Token"
+    "--token=$Token" `
+    "--tenant=$($TenantId.Trim())" `
+    "--user=$($UserId.Trim())" `
+    "--state-root=$StateRoot"

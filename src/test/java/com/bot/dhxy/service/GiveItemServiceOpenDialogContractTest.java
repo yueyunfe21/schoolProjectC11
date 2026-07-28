@@ -163,7 +163,7 @@ class GiveItemServiceOpenDialogContractTest {
         private String lastGiveButtonTemplate;
 
         private FakeCoordinateHelper(List<String> events) {
-            super(null, null, null);
+            super(null, null);
             this.events = events;
         }
 
@@ -217,7 +217,7 @@ class GiveItemServiceOpenDialogContractTest {
         private Integer lastBagIndex;
 
         private FakeBagService(List<String> events) {
-            super(null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null);
             this.events = events;
         }
 

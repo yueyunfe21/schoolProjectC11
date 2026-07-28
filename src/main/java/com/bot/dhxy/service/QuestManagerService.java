@@ -1,13 +1,10 @@
 package com.bot.dhxy.service;
 
 
-import com.bot.dhxy.cloud.task.ImagePreprocessOperation;
-import com.bot.dhxy.cloud.task.ImageProcessorService;
-import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
-import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
@@ -18,6 +15,7 @@ import com.bot.dhxy.model.quest.QuestDetailCapture;
 import com.bot.dhxy.runner.stop.TaskSleep;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -47,6 +45,8 @@ public class QuestManagerService {
     private final CoordinateHelper coordinateHelper;
     private final GameContext context;
     private final WindowScopedTempPath windowScopedTempPath;
+    private final WindowTaskContextHolder windowTaskContextHolder;
+    private final BoundWindowKeyboardService boundWindowKeyboardService;
 
     private static final String ANCHOR_PATH = "images/template/task/task_fenxiang.png";
 
@@ -275,7 +275,9 @@ public class QuestManagerService {
             if (!InputActionScope.checkpoint()) {
                 return null;
             }
-            inputProvider.pressAltQ();
+            if (!pressBackgroundAltQ("ensure-panel-direct")) {
+                return null;
+            }
             if (!TaskSleep.sleep(SLOW) || !InputActionScope.checkpoint()) {
                 return null;
             }
@@ -382,7 +384,25 @@ public class QuestManagerService {
         if (!InputActionScope.checkpoint()) {
             return;
         }
-        inputProvider.pressAltQ();
+        pressBackgroundAltQ("close-panel-direct");
+    }
+
+    private boolean pressBackgroundAltQ(String source) {
+        var current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty() || current.get().getNativeBinding() == null) {
+            log.warn("[quest] background Alt+Q rejected without an exact window binding: source={}", source);
+            return false;
+        }
+        var context = current.get();
+        var attempt = boundWindowKeyboardService.pressShortcut(
+                context.getNativeBinding(), context.getWindowId(),
+                BoundWindowKeyboardService.AltShortcut.ALT_Q);
+        if (!attempt.attempted() || !attempt.success()) {
+            log.warn("[quest] background Alt+Q failed: source={} windowId={} reason={}",
+                    source, context.getWindowId(), attempt.reason());
+            return false;
+        }
+        return true;
     }
 
     private Point findAnchor() { return coordinateHelper.findImageAbsoluteCoordinate(ANCHOR_PATH, THRESHOLD_NORMAL); }

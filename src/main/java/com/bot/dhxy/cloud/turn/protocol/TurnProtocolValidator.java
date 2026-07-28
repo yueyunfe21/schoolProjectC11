@@ -1,5 +1,8 @@
 package com.bot.dhxy.cloud.turn.protocol;
 
+import com.bot.dhxy.runner.context.TaskStartupMode;
+
+import java.util.EnumSet;
 import java.util.List;
 
 /**
@@ -23,6 +26,28 @@ public final class TurnProtocolValidator {
         }
         if (request.taskStartRequest() != null) {
             requireTaskStartRequest(request.taskStartRequest());
+            requireTaskStartWindowAuthority(request.window());
+        }
+        if (request.mapSurveyCommand() != null) {
+            require(request.taskStartRequest() == null && request.continuation() == null,
+                    "mapSurveyCommand must not contain taskStartRequest or continuation");
+            require(request.mapSurveyResultAckId() == null,
+                    "mapSurveyCommand must not contain mapSurveyResultAckId");
+            requireMapSurveyCommand(request.mapSurveyCommand());
+        }
+        if (request.mapSurveyResultAckId() != null) {
+            requireText(request.mapSurveyResultAckId(), "request.mapSurveyResultAckId");
+            require(request.taskStartRequest() == null && request.continuation() == null,
+                    "mapSurveyResultAckId must not contain taskStartRequest or continuation");
+        }
+        if (request.continuation() != null) {
+            require(request.previousOutcome() == null,
+                    "continuation request must not contain previousOutcome");
+            require(request.taskStartRequest() == null,
+                    "continuation request must not contain taskStartRequest");
+            require(request.waitTimeoutMs() == 0L,
+                    "continuation request waitTimeoutMs must be zero");
+            requireContinuationRequest(request.continuation());
         }
         return request;
     }
@@ -31,8 +56,22 @@ public final class TurnProtocolValidator {
         require(response != null, "response must not be null");
         require(response.status() != null, "response.status must not be null");
         switch (response.status()) {
-            case ACTION -> require(response.action() != null, "ACTION response requires action");
-            case IDLE -> require(response.action() == null, "IDLE response must not contain action");
+            case ACTION -> {
+                require(response.action() != null, "ACTION response requires action");
+                require(response.continuationDecision() == null,
+                        "ACTION response must not contain continuationDecision");
+            }
+            case IDLE -> {
+                require(response.action() == null, "IDLE response must not contain action");
+                require(response.continuationDecision() == null,
+                        "IDLE response must not contain continuationDecision");
+            }
+            case CONTINUATION -> {
+                require(response.action() == null, "CONTINUATION response must not contain action");
+                require(response.taskStartAck() == null,
+                        "CONTINUATION response must not contain taskStartAck");
+                requireContinuationDecision(response.continuationDecision());
+            }
         }
         if (response.action() != null) {
             requireValid(response.action());
@@ -40,12 +79,32 @@ public final class TurnProtocolValidator {
         if (response.taskStartAck() != null) {
             requireTaskStartAck(response.taskStartAck());
         }
+        if (response.mapSurveyResult() != null) {
+            requireMapSurveyResult(response.mapSurveyResult());
+            require(response.status() != TurnResponse.Status.CONTINUATION,
+                    "CONTINUATION response must not contain mapSurveyResult");
+        }
+        if (response.taskTerminalResult() != null) {
+            requireText(response.taskTerminalResult().startRequestId(),
+                    "taskTerminalResult.startRequestId");
+            require(response.taskTerminalResult().status() != null,
+                    "taskTerminalResult.status must not be null");
+            require(response.status() != TurnResponse.Status.CONTINUATION,
+                    "CONTINUATION response must not contain taskTerminalResult");
+        }
         return response;
     }
 
     public static TurnResponse requireValid(TurnResponse response, TurnRequest request) {
         TurnRequest validRequest = requireValid(request);
         TurnResponse validResponse = requireValid(response);
+        if (validRequest.continuation() != null) {
+            require(validResponse.status() == TurnResponse.Status.CONTINUATION,
+                    "continuation request requires CONTINUATION response");
+            return validResponse;
+        }
+        require(validResponse.status() != TurnResponse.Status.CONTINUATION,
+                "normal turn request must not receive CONTINUATION response");
         if (validResponse.action() != null) {
             require(validRequest.window().deviceId().equals(validResponse.action().deviceId())
                             && validRequest.window().windowId().equals(validResponse.action().windowId()),
@@ -61,7 +120,105 @@ public final class TurnProtocolValidator {
                             .equals(validResponse.taskStartAck().startRequestId()),
                     "taskStartAck.startRequestId must match taskStartRequest.startRequestId");
         }
+        if (validRequest.mapSurveyCommand() == null) {
+            require(validResponse.mapSurveyResult() == null,
+                    "response must not contain mapSurveyResult without mapSurveyCommand");
+        } else {
+            require(validResponse.mapSurveyResult() != null,
+                    "response requires mapSurveyResult for mapSurveyCommand");
+            require(validRequest.mapSurveyCommand().commandId()
+                            .equals(validResponse.mapSurveyResult().commandId()),
+                    "mapSurveyResult.commandId must match mapSurveyCommand.commandId");
+        }
         return validResponse;
+    }
+
+    private static void requireMapSurveyCommand(TurnMapSurveyCommand command) {
+        requireText(command.commandId(), "mapSurveyCommand.commandId");
+        require(command.operation() != null, "mapSurveyCommand.operation must not be null");
+        if (command.mapName() != null) {
+            requireText(command.mapName(), "mapSurveyCommand.mapName");
+        }
+    }
+
+    private static void requireMapSurveyResult(TurnMapSurveyResult result) {
+        requireText(result.commandId(), "mapSurveyResult.commandId");
+        require(result.status() != null, "mapSurveyResult.status must not be null");
+        requireText(result.message(), "mapSurveyResult.message");
+        require((result.projectedX() == null) == (result.projectedY() == null),
+                "mapSurveyResult projected coordinates must be both present or both absent");
+    }
+
+    private static void requireContinuationRequest(TurnContinuationRequest continuation) {
+        requireText(continuation.actionId(), "continuation.actionId");
+        require(continuation.sourceStepIndex() >= 0,
+                "continuation.sourceStepIndex must be nonnegative");
+        require(continuation.kind() != null, "continuation.kind must not be null");
+        require(continuation.stage() != null, "continuation.stage must not be null");
+        boolean kindStageAllowed = switch (continuation.kind()) {
+            case FIVERING_INCENSE -> continuation.stage() == TurnContinuationRequest.Stage.TICK
+                    || continuation.stage() == TurnContinuationRequest.Stage.STATUS_IMAGE
+                    || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_USED
+                    || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_NOT_FOUND;
+            case FIVERING_ACCEPT_DIALOG -> continuation.stage()
+                    == TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE
+                    || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE
+                    || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_CLOSED;
+        };
+        require(kindStageAllowed,
+                continuation.stage() + " is not valid for continuation kind " + continuation.kind());
+        boolean incenseImage = continuation.kind() == TurnContinuationRequest.Kind.FIVERING_INCENSE
+                && continuation.stage() == TurnContinuationRequest.Stage.STATUS_IMAGE;
+        boolean dialogImage = continuation.kind() == TurnContinuationRequest.Kind.FIVERING_ACCEPT_DIALOG
+                && (continuation.stage() == TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE
+                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE);
+        if (incenseImage || dialogImage) {
+            require(continuation.frame() != null, continuation.stage() + " continuation requires frame");
+            requireFrame(continuation.frame());
+            TurnFramePurpose expected = incenseImage
+                    ? TurnFramePurpose.FIVERING_INCENSE_OBSERVATION
+                    : TurnFramePurpose.FIVERING_DIALOG_OBSERVATION;
+            require(continuation.frame().purpose() == expected,
+                    continuation.stage() + " frame purpose must be " + expected);
+            require(Integer.valueOf(continuation.sourceStepIndex()).equals(
+                            continuation.frame().sourceStepIndex()),
+                    "STATUS_IMAGE frame sourceStepIndex must match continuation");
+        } else {
+            require(continuation.frame() == null,
+                    continuation.stage() + " continuation must not contain frame");
+        }
+        boolean outcome = continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_USED
+                || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_NOT_FOUND
+                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_CLOSED
+                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE;
+        if (outcome) {
+            requireText(continuation.decisionId(), "continuation.decisionId");
+        } else {
+            require(continuation.decisionId() == null,
+                    continuation.stage() + " continuation must not contain decisionId");
+        }
+    }
+
+    private static void requireContinuationDecision(TurnContinuationDecision decision) {
+        require(decision != null, "CONTINUATION response requires continuationDecision");
+        require(decision.directive() != null, "continuationDecision.directive must not be null");
+        requireText(decision.reason(), "continuationDecision.reason");
+        boolean directedAction = decision.directive() == TurnContinuationDecision.Directive.USE_INCENSE
+                || decision.directive() == TurnContinuationDecision.Directive.CLICK_ACCEPT
+                || decision.directive() == TurnContinuationDecision.Directive.CLOSE_STORY;
+        if (directedAction) {
+            requireText(decision.decisionId(), decision.directive() + " continuationDecision.decisionId");
+        } else {
+            require(decision.decisionId() == null,
+                    decision.directive() + " continuationDecision must not contain decisionId");
+        }
+        if (decision.directive() == TurnContinuationDecision.Directive.CLICK_ACCEPT) {
+            require(decision.clickX() != null && decision.clickY() != null,
+                    "CLICK_ACCEPT continuationDecision requires clickX/clickY");
+        } else {
+            require(decision.clickX() == null && decision.clickY() == null,
+                    decision.directive() + " continuationDecision must not contain click coordinates");
+        }
     }
 
     public static TurnAction requireValid(TurnAction action) {
@@ -278,6 +435,14 @@ public final class TurnProtocolValidator {
 
     private static int requireLocalService(TurnLocalServiceCall call) {
         require(call.operation() != null, "localService.operation must not be null");
+        boolean metricOperation = call.operation() == TurnLocalOperation.METRIC_RECORD_ROUND_STARTED
+                || call.operation() == TurnLocalOperation.METRIC_RECORD_ROUND_FINISHED
+                || call.operation() == TurnLocalOperation.METRIC_RECORD_XIULUO_FAILURE_CASE;
+        require(metricOperation || call.metric() == null,
+                "only METRIC_* operations may contain metric arguments");
+        require(call.operation() == TurnLocalOperation.TASK_TRACKER_CAPTURE_PANEL
+                        || call.taskTracker() == null,
+                "only TASK_TRACKER_CAPTURE_PANEL may contain taskTracker arguments");
         return switch (call.operation()) {
             case BAG_RETURN_ITEM -> {
                 require(call.bag() != null && call.ui() == null && call.giveItem() == null && call.quest() == null,
@@ -285,8 +450,11 @@ public final class TurnProtocolValidator {
                 requireBag(call.bag());
                 yield 0;
             }
-            case BAG_USE_INCENSE, UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS -> {
-                require(call.bag() == null && call.ui() == null && call.giveItem() == null && call.quest() == null,
+            case BAG_USE_INCENSE, UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, HOST_SLEEP_COMPUTER,
+                    MAP_SURVEY_POINTER_SAMPLE, LEFT_TOP_STATUS_OBSERVE -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() == null && call.taskTracker() == null,
                         call.operation() + " must not contain arguments");
                 yield 0;
             }
@@ -316,12 +484,439 @@ public final class TurnProtocolValidator {
                 require(call.quest().keepOpen() == null, "QUEST_CAPTURE_DETAIL.keepOpen must be null");
                 yield 1;
             }
+            case TASK_TRACKER_CAPTURE_PANEL -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() == null && call.taskTracker() != null,
+                        "TASK_TRACKER_CAPTURE_PANEL requires only taskTracker arguments");
+                requireText(call.taskTracker().source(), "localService.taskTracker.source");
+                yield 1;
+            }
+            case WHOLE_TASK_PATHING_REGISTER,
+                 WHOLE_TASK_PATHING_READ,
+                 WHOLE_TASK_PATHING_CLEAR_INTENT,
+                 WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX,
+                 WHOLE_TASK_PATHING_CLEAR,
+                 WHOLE_TASK_RECOVERY_RESET,
+                 WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP,
+                 WHOLE_TASK_MOVEMENT_INTENT_RECORD,
+                 WHOLE_TASK_TARGET_MAP_GATE_START,
+                 WHOLE_TASK_TARGET_MAP_GATE_OPEN,
+                 WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_READ,
+                 WHOLE_TASK_PRE_BATTLE_FACT_READ,
+                 WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_START,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR,
+                 WHOLE_TASK_DIALOG_INTEREST_UPDATE,
+                 WHOLE_TASK_DIALOG_INTEREST_CLEAR,
+                 WHOLE_TASK_PROGRESS_UPDATE,
+                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
+                 WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE,
+                 WHOLE_TASK_DIALOG_RUNTIME_READ,
+                 WHOLE_TASK_COMBAT_ENTRY_CLEANUP,
+                 WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE,
+                 WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME,
+                  WHOLE_TASK_RETURN_HOME_REPLAY_ARM,
+                  WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM,
+                  WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME,
+                  WUHUAN_ACCEPT_DIALOG_EXCLUSIVE -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() != null,
+                        call.operation() + " requires only wholeTaskRuntime arguments");
+                requireWholeTaskRuntime(call.operation(), call.wholeTaskRuntime());
+                yield 0;
+            }
+            case BAG_FIVERING_SUPPLY_CHECK -> {
+                require(call.bag() != null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null,
+                        "BAG_FIVERING_SUPPLY_CHECK requires only bag arguments");
+                require(call.bag().intent() == null && call.bag().cachedPoint() == null,
+                        "BAG_FIVERING_SUPPLY_CHECK carries no return-item intent or cached point");
+                requireText(call.bag().targetItemTemplate(),
+                        "BAG_FIVERING_SUPPLY_CHECK.targetItemTemplate");
+                require(call.bag().maxBagIndex() != null && call.bag().maxBagIndex() > 0,
+                        "BAG_FIVERING_SUPPLY_CHECK.requiredCount (maxBagIndex slot) must be positive");
+                requireText(call.bag().source(), "BAG_FIVERING_SUPPLY_CHECK.source");
+                yield 0;
+            }
+            case BAG_FIND_AND_USE_FROM_BACK -> {
+                require(call.bag() != null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null,
+                        "BAG_FIND_AND_USE_FROM_BACK requires only bag arguments");
+                require(call.bag().intent() == null && call.bag().cachedPoint() == null,
+                        "BAG_FIND_AND_USE_FROM_BACK carries no return-item intent or cached point");
+                requireText(call.bag().targetItemTemplate(),
+                        "BAG_FIND_AND_USE_FROM_BACK.targetItemTemplate");
+                require(call.bag().maxBagIndex() != null && call.bag().maxBagIndex() > 0,
+                        "BAG_FIND_AND_USE_FROM_BACK.maxBagIndex must be positive");
+                requireText(call.bag().source(), "BAG_FIND_AND_USE_FROM_BACK.source");
+                yield 0;
+            }
+            case BAG_FIND_ITEM_PAGE_INDEX -> {
+                require(call.bag() != null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null,
+                        "BAG_FIND_ITEM_PAGE_INDEX requires only bag arguments");
+                require(call.bag().intent() == null && call.bag().cachedPoint() == null
+                                && call.bag().maxBagIndex() == null,
+                        "BAG_FIND_ITEM_PAGE_INDEX carries only the template and source");
+                requireText(call.bag().targetItemTemplate(),
+                        "BAG_FIND_ITEM_PAGE_INDEX.targetItemTemplate");
+                requireText(call.bag().source(), "BAG_FIND_ITEM_PAGE_INDEX.source");
+                yield 0;
+            }
+            case METRIC_RECORD_ROUND_STARTED,
+                 METRIC_RECORD_ROUND_FINISHED,
+                 METRIC_RECORD_XIULUO_FAILURE_CASE -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() != null,
+                        call.operation() + " requires only metric arguments");
+                requireMetric(call.operation(), call.metric());
+                yield 0;
+            }
+        };
+    }
+
+    private static void requireMetric(TurnLocalOperation operation, TurnMetricEventPayload m) {
+        // Every persisted identity fact must ride the wire; the local authority never synthesizes it.
+        requireText(m.taskCode(), "localService.metric.taskCode");
+        requireText(m.taskName(), "localService.metric.taskName");
+        requireText(m.windowId(), "localService.metric.windowId");
+        requireText(m.windowRole(), "localService.metric.windowRole");
+        requireText(m.nativeWindowHandle(), "localService.metric.nativeWindowHandle");
+        switch (operation) {
+            case METRIC_RECORD_ROUND_STARTED -> {
+                requireText(m.roundId(), "METRIC_RECORD_ROUND_STARTED.roundId");
+                require(m.status() == null && m.resultCode() == null && m.elapsedMs() == null
+                                && m.caseDir() == null && m.reason() == null && m.phase() == null
+                                && m.round() == null,
+                        "METRIC_RECORD_ROUND_STARTED carries only round-start fields");
+            }
+            case METRIC_RECORD_ROUND_FINISHED -> {
+                requireText(m.roundId(), "METRIC_RECORD_ROUND_FINISHED.roundId");
+                requireText(m.status(), "METRIC_RECORD_ROUND_FINISHED.status");
+                require(isLegalMetricStatus(m.status()),
+                        "METRIC_RECORD_ROUND_FINISHED.status must be a legal AutomationMetricStatus value");
+                require(m.elapsedMs() != null && m.elapsedMs() >= 0L,
+                        "METRIC_RECORD_ROUND_FINISHED.elapsedMs must be a non-negative value");
+                require(m.caseDir() == null && m.reason() == null && m.phase() == null
+                                && m.round() == null,
+                        "METRIC_RECORD_ROUND_FINISHED carries only round-finish fields");
+            }
+            case METRIC_RECORD_XIULUO_FAILURE_CASE -> {
+                requireText(m.caseDir(), "METRIC_RECORD_XIULUO_FAILURE_CASE.caseDir");
+                requireText(m.reason(), "METRIC_RECORD_XIULUO_FAILURE_CASE.reason");
+                requireText(m.phase(), "METRIC_RECORD_XIULUO_FAILURE_CASE.phase");
+                require(m.round() != null, "METRIC_RECORD_XIULUO_FAILURE_CASE.round must not be null");
+                require(m.roundId() == null && m.roundNumber() == null && m.roundType() == null
+                                && m.status() == null && m.resultCode() == null && m.elapsedMs() == null,
+                        "METRIC_RECORD_XIULUO_FAILURE_CASE carries only failure-case fields");
+            }
+            default -> throw new IllegalStateException("not a metric operation: " + operation);
+        }
+    }
+
+    /** The wire status is a closed set: only legal AutomationMetricStatus names pass the boundary. */
+    private static boolean isLegalMetricStatus(String status) {
+        try {
+            com.bot.dhxy.model.metrics.AutomationMetricStatus.valueOf(status);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private static void requireWholeTaskRuntime(TurnLocalOperation operation, TurnWholeTaskRuntimeArguments a) {
+        requireText(a.source(), "localService.wholeTaskRuntime.source");
+        switch (operation) {
+            case WHOLE_TASK_PATHING_REGISTER -> {
+                require(a.pathingIntent() != null,
+                        "WHOLE_TASK_PATHING_REGISTER requires pathingIntent");
+                requireText(a.pathingIntent().intentId(),
+                        "WHOLE_TASK_PATHING_REGISTER.pathingIntent.intentId");
+                requireText(a.pathingIntent().source(),
+                        "WHOLE_TASK_PATHING_REGISTER.pathingIntent.source");
+                requireText(a.pathingIntent().type(),
+                        "WHOLE_TASK_PATHING_REGISTER.pathingIntent.type");
+            }
+            case WHOLE_TASK_PATHING_CLEAR_INTENT ->
+                    requireText(a.intentId(), "WHOLE_TASK_PATHING_CLEAR_INTENT.intentId");
+            case WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX ->
+                    requireText(a.sourcePrefix(), "WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX.sourcePrefix");
+            case WHOLE_TASK_COMBAT_ENTRY_CLEANUP -> {
+                requireText(a.taskCode(), "WHOLE_TASK_COMBAT_ENTRY_CLEANUP.taskCode");
+                requireText(a.sourcePrefix(), "WHOLE_TASK_COMBAT_ENTRY_CLEANUP.sourcePrefix");
+            }
+            case WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP -> {
+                requireText(a.intentId(), "WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP.intentId");
+                requireText(a.targetMapName(), "WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP.targetMapName");
+            }
+            case WHOLE_TASK_MOVEMENT_INTENT_RECORD ->
+                    require(a.protectionMs() == null || a.protectionMs() >= 0L,
+                            "WHOLE_TASK_MOVEMENT_INTENT_RECORD.protectionMs must not be negative");
+            case WHOLE_TASK_TARGET_MAP_GATE_START -> {
+                requireText(a.taskCode(), "WHOLE_TASK_TARGET_MAP_GATE_START.taskCode");
+                requireText(a.targetMapName(), "WHOLE_TASK_TARGET_MAP_GATE_START.targetMapName");
+            }
+            case WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST -> {
+                requireText(a.taskCode(), "WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST.taskCode");
+                require(a.interestOperations() != null && !a.interestOperations().isEmpty(),
+                        "WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST requires nonempty interestOperations");
+                require(a.absentAllowedAtMs() == null || a.absentAllowedAtMs() >= 0L,
+                        "WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST.absentAllowedAtMs must not be negative");
+            }
+            case WHOLE_TASK_PRE_BATTLE_TIMER_START ->
+                    requireText(a.taskCode(), "WHOLE_TASK_PRE_BATTLE_TIMER_START.taskCode");
+            case WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE ->
+                    require(a.blockedMs() != null && a.blockedMs() >= 0L,
+                            "WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE.blockedMs must be nonnegative");
+            case WHOLE_TASK_DIALOG_INTEREST_UPDATE -> {
+                requireText(a.taskCode(), "WHOLE_TASK_DIALOG_INTEREST_UPDATE.taskCode");
+                require(a.interestOperations() != null && !a.interestOperations().isEmpty(),
+                        "WHOLE_TASK_DIALOG_INTEREST_UPDATE requires nonempty interestOperations");
+                require(a.absentAllowedAtMs() == null || a.absentAllowedAtMs() >= 0L,
+                        "WHOLE_TASK_DIALOG_INTEREST_UPDATE.absentAllowedAtMs must not be negative");
+                require(a.probeStartAtMs() == null || a.probeStartAtMs() > 0L,
+                        "WHOLE_TASK_DIALOG_INTEREST_UPDATE.probeStartAtMs must be positive when present");
+                // TURN-40G repair review: the four schedule identity fields are all-or-none — a partial identity
+                // is rejected on the wire so the client can never install a fabricated attempt.
+                boolean anySchedule = a.scheduleAttemptId() != null || a.scheduleRound() != null
+                        || a.scheduleTaskRunId() != null || a.scheduleOpenedAtMs() != null;
+                if (anySchedule) {
+                    requireText(a.scheduleAttemptId(), "WHOLE_TASK_DIALOG_INTEREST_UPDATE.scheduleAttemptId");
+                    require(a.scheduleRound() != null && a.scheduleRound() > 0,
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE.scheduleRound must be present and positive (rounds are one-based)");
+                    requireText(a.scheduleTaskRunId(), "WHOLE_TASK_DIALOG_INTEREST_UPDATE.scheduleTaskRunId");
+                    require(a.scheduleOpenedAtMs() != null && a.scheduleOpenedAtMs() > 0L,
+                            "WHOLE_TASK_DIALOG_INTEREST_UPDATE.scheduleOpenedAtMs must be present and positive");
+                }
+            }
+            case WHOLE_TASK_PROGRESS_UPDATE -> require(
+                    a.completedRuns() != null && a.completedRuns() >= 0 && a.totalRuns() != null,
+                    "WHOLE_TASK_PROGRESS_UPDATE requires nonnegative completedRuns and totalRuns");
+            case WHOLE_TASK_DIALOG_RUNTIME_READ -> require(
+                    a.dialogSnapshotMaxAgeMs() == null || a.dialogSnapshotMaxAgeMs() >= 0L,
+                    "WHOLE_TASK_DIALOG_RUNTIME_READ requires a nonnegative dialogSnapshotMaxAgeMs when present");
+            case WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE -> require(
+                    a.transferChoice() != null,
+                    "WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE requires a transferChoice payload");
+            case WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME -> {
+                requireText(a.intentId(), operation + ".intentId");
+                requireText(a.sourcePrefix(), operation + ".sourcePrefix");
+            }
+            case WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE -> {
+                require(a.routeOutcome() != null,
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE requires a routeOutcome payload");
+                require("YELLOW_DESTINATION_MINI_MAP".equals(a.routeOutcome().routeMode()),
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE.routeOutcome.routeMode must be "
+                                + "YELLOW_DESTINATION_MINI_MAP");
+                requireText(a.routeOutcomeReplacementReason(),
+                        "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE.routeOutcomeReplacementReason");
+            }
+            case WHOLE_TASK_RETURN_HOME_REPLAY_ARM -> {
+                requireText(a.taskCode(), "WHOLE_TASK_RETURN_HOME_REPLAY_ARM.taskCode");
+                requireText(a.replayObservationRunId(),
+                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM.replayObservationRunId");
+                requireText(a.replayBusinessTaskRunId(),
+                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM.replayBusinessTaskRunId");
+                require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
+                                || "WUBEI".equalsIgnoreCase(a.taskCode()),
+                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM supports only XIULUO_V2/WUBEI");
+            }
+            case WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM -> {
+                requireText(a.taskCode(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.taskCode");
+                requireText(a.expectedCombatClaimId(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.claimId");
+                requireText(a.expectedCombatObservationRunId(),
+                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.observationRunId");
+                requireText(a.expectedCombatBusinessTaskRunId(),
+                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.businessTaskRunId");
+                requireText(a.expectedCombatAttemptId(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.attemptId");
+                require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
+                                || "WUBEI".equalsIgnoreCase(a.taskCode()),
+                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM supports only XIULUO_V2/WUBEI");
+            }
+            case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME -> {
+                requireText(a.intentId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.intentId");
+                requireText(a.taskCode(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.taskCode");
+                requireText(a.targetKeyword(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.targetKeyword");
+                TurnNpcArrivalFrameFifoSpec spec = a.npcArrivalFifo();
+                require(spec != null, "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME requires npcArrivalFifo");
+                requireText(spec.tenantId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.tenantId");
+                requireText(spec.deviceId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.deviceId");
+                requireText(spec.windowId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.windowId");
+                requireText(spec.hwnd(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.hwnd");
+                requireText(spec.observationRunId(),
+                        "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.observationRunId");
+                requireText(spec.businessTaskRunId(),
+                        "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.businessTaskRunId");
+                require(spec.allowedLeft() >= 0 && spec.allowedTop() >= 0
+                                && spec.allowedWidth() > 0 && spec.allowedHeight() > 0
+                                && (long) spec.allowedLeft() + spec.allowedWidth() <= 1024
+                                && (long) spec.allowedTop() + spec.allowedHeight() <= 768,
+                        "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME allowed region must be inside 1024x768");
+                require(spec.expectedDialogTemplatePaths() != null,
+                        "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME expected templates must be present");
+                spec.expectedDialogTemplatePaths().forEach(path ->
+                        requireText(path, "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME expected template"));
+            }
+            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE ->
+                    require(a.startupFlyingState() != null
+                                    && ("FLYING".equals(a.startupFlyingState())
+                                    || "NOT_FLYING".equals(a.startupFlyingState())
+                                    || "UNKNOWN".equals(a.startupFlyingState())),
+                            "WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE requires a valid startupFlyingState");
+            case WHOLE_TASK_PATHING_CLEAR,
+                 WHOLE_TASK_RECOVERY_RESET,
+                 WHOLE_TASK_PATHING_READ,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
+                 WHOLE_TASK_TARGET_MAP_GATE_OPEN,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_READ,
+                 WHOLE_TASK_PRE_BATTLE_FACT_READ,
+                 WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR,
+                 WHOLE_TASK_DIALOG_INTEREST_CLEAR,
+                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
+                 WUHUAN_ACCEPT_DIALOG_EXCLUSIVE -> {
+                // source-only operations: no additional payload fields required.
+            }
+            default -> throw new IllegalArgumentException(
+                    "non-whole-task operation routed to requireWholeTaskRuntime: " + operation);
+        }
+        // Internal exactly-one payload closure: reject every present field outside this operation's
+        // own payload, so a source-only or clear operation can never smuggle another op's fields.
+        EnumSet<WtField> extras = presentFields(a);
+        extras.removeAll(allowedWholeTaskFields(operation));
+        require(extras.isEmpty(),
+                operation + " carries wholeTaskRuntime fields outside its payload: " + extras);
+    }
+
+    private enum WtField {
+        PATHING_INTENT, INTENT_ID, SOURCE_PREFIX, PROTECTION_MS, CURRENT_MAP, CURRENT_X, CURRENT_Y,
+        TARGET_MAP, TARGET_X, TARGET_Y, TOLERANCE, CONFIRM_TIMEOUT, TASK_CODE, TARGET_KEYWORD,
+        BLOCKED_MS, INTEREST_OPS, ABSENT_ALLOWED, PROBE_ONLY, COMPLETED_RUNS, TOTAL_RUNS,
+        DIALOG_MAX_AGE, TRANSFER_CHOICE, ROUTE_OUTCOME, ROUTE_OUTCOME_REASON, STARTUP_FLYING_STATE,
+        PROBE_START_AT, SCHEDULE_ATTEMPT, SCHEDULE_ROUND, SCHEDULE_TASK_RUN, SCHEDULE_OPENED_AT,
+        SCHEDULE_OBSERVATION_RUN,
+        REPLAY_OBSERVATION_RUN, REPLAY_BUSINESS_TASK_RUN, EXPECTED_CLAIM_ID,
+        EXPECTED_OBSERVATION_RUN, EXPECTED_BUSINESS_TASK_RUN, EXPECTED_ATTEMPT_ID,
+        NPC_ARRIVAL_FIFO
+    }
+
+    private static EnumSet<WtField> presentFields(TurnWholeTaskRuntimeArguments a) {
+        EnumSet<WtField> present = EnumSet.noneOf(WtField.class);
+        if (a.pathingIntent() != null) present.add(WtField.PATHING_INTENT);
+        if (a.intentId() != null) present.add(WtField.INTENT_ID);
+        if (a.sourcePrefix() != null) present.add(WtField.SOURCE_PREFIX);
+        if (a.protectionMs() != null) present.add(WtField.PROTECTION_MS);
+        if (a.currentMapName() != null) present.add(WtField.CURRENT_MAP);
+        if (a.currentX() != null) present.add(WtField.CURRENT_X);
+        if (a.currentY() != null) present.add(WtField.CURRENT_Y);
+        if (a.targetMapName() != null) present.add(WtField.TARGET_MAP);
+        if (a.targetX() != null) present.add(WtField.TARGET_X);
+        if (a.targetY() != null) present.add(WtField.TARGET_Y);
+        if (a.tolerance() != null) present.add(WtField.TOLERANCE);
+        if (a.confirmTimeoutMs() != null) present.add(WtField.CONFIRM_TIMEOUT);
+        if (a.taskCode() != null) present.add(WtField.TASK_CODE);
+        if (a.targetKeyword() != null) present.add(WtField.TARGET_KEYWORD);
+        if (a.blockedMs() != null) present.add(WtField.BLOCKED_MS);
+        if (a.interestOperations() != null) present.add(WtField.INTEREST_OPS);
+        if (a.absentAllowedAtMs() != null) present.add(WtField.ABSENT_ALLOWED);
+        if (a.probeOnly() != null) present.add(WtField.PROBE_ONLY);
+        if (a.completedRuns() != null) present.add(WtField.COMPLETED_RUNS);
+        if (a.totalRuns() != null) present.add(WtField.TOTAL_RUNS);
+        if (a.dialogSnapshotMaxAgeMs() != null) present.add(WtField.DIALOG_MAX_AGE);
+        if (a.transferChoice() != null) present.add(WtField.TRANSFER_CHOICE);
+        if (a.routeOutcome() != null) present.add(WtField.ROUTE_OUTCOME);
+        if (a.routeOutcomeReplacementReason() != null) present.add(WtField.ROUTE_OUTCOME_REASON);
+        if (a.startupFlyingState() != null) present.add(WtField.STARTUP_FLYING_STATE);
+        if (a.probeStartAtMs() != null) present.add(WtField.PROBE_START_AT);
+        if (a.scheduleAttemptId() != null) present.add(WtField.SCHEDULE_ATTEMPT);
+        if (a.scheduleRound() != null) present.add(WtField.SCHEDULE_ROUND);
+        if (a.scheduleTaskRunId() != null) present.add(WtField.SCHEDULE_TASK_RUN);
+        if (a.scheduleOpenedAtMs() != null) present.add(WtField.SCHEDULE_OPENED_AT);
+        if (a.scheduleObservationRunId() != null) present.add(WtField.SCHEDULE_OBSERVATION_RUN);
+        if (a.replayObservationRunId() != null) present.add(WtField.REPLAY_OBSERVATION_RUN);
+        if (a.replayBusinessTaskRunId() != null) present.add(WtField.REPLAY_BUSINESS_TASK_RUN);
+        if (a.expectedCombatClaimId() != null) present.add(WtField.EXPECTED_CLAIM_ID);
+        if (a.expectedCombatObservationRunId() != null) present.add(WtField.EXPECTED_OBSERVATION_RUN);
+        if (a.expectedCombatBusinessTaskRunId() != null) present.add(WtField.EXPECTED_BUSINESS_TASK_RUN);
+        if (a.expectedCombatAttemptId() != null) present.add(WtField.EXPECTED_ATTEMPT_ID);
+        if (a.npcArrivalFifo() != null) present.add(WtField.NPC_ARRIVAL_FIFO);
+        return present;
+    }
+
+    private static EnumSet<WtField> allowedWholeTaskFields(TurnLocalOperation operation) {
+        return switch (operation) {
+            case WHOLE_TASK_PATHING_REGISTER -> EnumSet.of(WtField.PATHING_INTENT);
+            case WHOLE_TASK_PATHING_CLEAR_INTENT -> EnumSet.of(WtField.INTENT_ID);
+            case WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX -> EnumSet.of(WtField.SOURCE_PREFIX);
+            case WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP -> EnumSet.of(WtField.INTENT_ID, WtField.TARGET_MAP);
+            case WHOLE_TASK_MOVEMENT_INTENT_RECORD -> EnumSet.of(WtField.PROTECTION_MS);
+            case WHOLE_TASK_TARGET_MAP_GATE_START -> EnumSet.of(WtField.TASK_CODE, WtField.TARGET_MAP);
+            case WHOLE_TASK_TARGET_MAP_GATE_OPEN_AND_DIALOG_INTEREST -> EnumSet.of(
+                    WtField.TASK_CODE, WtField.INTEREST_OPS, WtField.ABSENT_ALLOWED, WtField.PROBE_ONLY);
+            case WHOLE_TASK_COMBAT_ENTRY_CLEANUP -> EnumSet.of(WtField.TASK_CODE, WtField.SOURCE_PREFIX);
+            case WHOLE_TASK_PRE_BATTLE_TIMER_START -> EnumSet.of(WtField.TASK_CODE, WtField.TARGET_KEYWORD);
+            case WHOLE_TASK_PRE_BATTLE_TIMER_PAUSE -> EnumSet.of(WtField.BLOCKED_MS);
+            case WHOLE_TASK_DIALOG_INTEREST_UPDATE -> EnumSet.of(WtField.TASK_CODE, WtField.INTEREST_OPS,
+                    WtField.ABSENT_ALLOWED, WtField.PROBE_ONLY, WtField.PROBE_START_AT,
+                    WtField.SCHEDULE_ATTEMPT, WtField.SCHEDULE_ROUND, WtField.SCHEDULE_TASK_RUN,
+                    WtField.SCHEDULE_OPENED_AT, WtField.SCHEDULE_OBSERVATION_RUN);
+            case WHOLE_TASK_PROGRESS_UPDATE -> EnumSet.of(WtField.COMPLETED_RUNS, WtField.TOTAL_RUNS);
+            case WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE -> EnumSet.of(WtField.STARTUP_FLYING_STATE);
+            case WHOLE_TASK_DIALOG_RUNTIME_READ -> EnumSet.of(WtField.DIALOG_MAX_AGE);
+            case WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE -> EnumSet.of(WtField.TRANSFER_CHOICE);
+            case WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME,
+                 WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME -> EnumSet.of(WtField.INTENT_ID, WtField.SOURCE_PREFIX);
+            case WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE ->
+                    EnumSet.of(WtField.ROUTE_OUTCOME, WtField.ROUTE_OUTCOME_REASON);
+            case WHOLE_TASK_RETURN_HOME_REPLAY_ARM ->
+                    EnumSet.of(WtField.TASK_CODE, WtField.REPLAY_OBSERVATION_RUN,
+                            WtField.REPLAY_BUSINESS_TASK_RUN);
+            case WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM ->
+                    EnumSet.of(WtField.TASK_CODE, WtField.EXPECTED_CLAIM_ID,
+                            WtField.EXPECTED_OBSERVATION_RUN, WtField.EXPECTED_BUSINESS_TASK_RUN,
+                             WtField.EXPECTED_ATTEMPT_ID);
+            case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME ->
+                    EnumSet.of(WtField.INTENT_ID, WtField.TASK_CODE, WtField.TARGET_KEYWORD,
+                            WtField.NPC_ARRIVAL_FIFO);
+            case WHOLE_TASK_PATHING_READ, WHOLE_TASK_PATHING_CLEAR, WHOLE_TASK_RECOVERY_RESET, WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_READ,
+                 WHOLE_TASK_PRE_BATTLE_FACT_READ,
+                 WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK, WHOLE_TASK_TARGET_MAP_GATE_OPEN,
+                 WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR, WHOLE_TASK_DIALOG_INTEREST_CLEAR,
+                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, WUHUAN_ACCEPT_DIALOG_EXCLUSIVE ->
+                    EnumSet.noneOf(WtField.class);
+            default -> throw new IllegalArgumentException(
+                    "non-whole-task operation routed to allowedWholeTaskFields: " + operation);
         };
     }
 
     private static void requireBag(TurnBagOperationArguments bag) {
         require(bag.intent() != null, "localService.bag.intent must not be null");
         requireText(bag.source(), "localService.bag.source");
+        boolean anyReplayIdentity = bag.retainedReplayTaskCode() != null
+                || bag.retainedReplayObservationRunId() != null
+                || bag.retainedReplayBusinessTaskRunId() != null;
+        if (anyReplayIdentity) {
+            requireText(bag.retainedReplayTaskCode(), "localService.bag.retainedReplayTaskCode");
+            requireText(bag.retainedReplayObservationRunId(),
+                    "localService.bag.retainedReplayObservationRunId");
+            requireText(bag.retainedReplayBusinessTaskRunId(),
+                    "localService.bag.retainedReplayBusinessTaskRunId");
+            require("XIULUO_V2".equalsIgnoreCase(bag.retainedReplayTaskCode())
+                            || "WUBEI".equalsIgnoreCase(bag.retainedReplayTaskCode()),
+                    "retained replay supports only XIULUO_V2/WUBEI");
+            require(bag.intent() == TurnBagOperationArguments.ReturnItemIntent.USE_CACHED_RETURN_ITEM
+                            || bag.intent() == TurnBagOperationArguments.ReturnItemIntent.FIND_AND_USE_TASK_PAGE,
+                    "retained replay requires a return-item use intent");
+        }
         switch (bag.intent()) {
             case PRESCAN_TASK_PAGE -> {
                 requireText(bag.targetItemTemplate(), "PRESCAN_TASK_PAGE.targetItemTemplate");
@@ -339,6 +934,11 @@ public final class TurnProtocolValidator {
                 if (bag.cachedPoint() != null) {
                     requireCachePoint(bag.cachedPoint());
                 }
+            }
+            case FIND_AND_USE_TASK_PAGE -> {
+                requireText(bag.targetItemTemplate(), "FIND_AND_USE_TASK_PAGE.targetItemTemplate");
+                require(bag.maxBagIndex() != null && bag.maxBagIndex() == -1 && bag.cachedPoint() == null,
+                        "FIND_AND_USE_TASK_PAGE requires maxBagIndex=-1 and no cachedPoint");
             }
         }
     }
@@ -434,14 +1034,121 @@ public final class TurnProtocolValidator {
         require(request.taskCodes() != null && !request.taskCodes().isEmpty(),
                 "taskStartRequest.taskCodes must not be empty");
         for (int index = 0; index < request.taskCodes().size(); index++) {
-            require(request.taskCodes().get(index) != null,
+            TurnTaskCode taskCode = request.taskCodes().get(index);
+            require(taskCode != null,
                     "taskStartRequest.taskCodes[" + index + "] must not be null");
+            require(request.taskMaxRuns() != null,
+                    "taskStartRequest.taskMaxRuns must not be null");
+            require(request.taskMaxRuns().size() == request.taskCodes().size(),
+                    "taskStartRequest.taskMaxRuns size must equal taskCodes size");
+            Integer maxRuns = request.taskMaxRuns().get(index);
+            require(maxRuns != null,
+                    "taskStartRequest.taskMaxRuns[" + index + "] must not be null");
+            switch (taskCode) {
+                case WUBEI, XIULUO_V2 -> require(maxRuns >= 0,
+                        "taskStartRequest.taskMaxRuns[" + index + "] must be >= 0 for " + taskCode);
+                case WUHUAN_V2 -> require(maxRuns == 1 || maxRuns == 2,
+                        "taskStartRequest.taskMaxRuns[" + index + "] must be 1 or 2 for " + taskCode);
+                case AUTO_BATTLE, SLEEP_COMPUTER -> require(maxRuns == 1,
+                        "taskStartRequest.taskMaxRuns[" + index + "] must be 1 for " + taskCode);
+            }
         }
         require(request.failurePolicy() != null, "taskStartRequest.failurePolicy must not be null");
     }
 
+    /**
+     * A window carrying a {@code taskStartRequest} must project the exact baseline role/team/startup authority
+     * facts. The facts must be present and self-consistent per the local runner's baseline invariants — a
+     * present team session or leader window id or support member each requires a present leader, and a present
+     * leader requires a team session — and {@code startupMode} must name an existing {@link TaskStartupMode}.
+     */
+    private static void requireTaskStartWindowAuthority(TurnWindowMetadata window) {
+        requireText(window.windowRole(), "taskStartRequest.window.windowRole");
+        requireText(window.startupMode(), "taskStartRequest.window.startupMode");
+        requireStartupMode(window.startupMode());
+        require(window.localLeaderPresent() != null,
+                "taskStartRequest.window.localLeaderPresent must not be missing");
+        require(window.localSupportMember() != null,
+                "taskStartRequest.window.localSupportMember must not be missing");
+        boolean leaderPresent = window.localLeaderPresent();
+        boolean supportMember = window.localSupportMember();
+        boolean hasSession = isPresent(window.localTeamSessionKey());
+        boolean hasLeaderWindow = isPresent(window.localLeaderWindowId());
+        require(hasSession == leaderPresent,
+                "taskStartRequest.window local team facts are contradictory: "
+                        + "localTeamSessionKey presence must equal localLeaderPresent");
+        require(!hasLeaderWindow || leaderPresent,
+                "taskStartRequest.window.localLeaderWindowId requires localLeaderPresent");
+        require(!supportMember || leaderPresent,
+                "taskStartRequest.window.localSupportMember requires localLeaderPresent");
+        requireLocalTeamRolePreflightFacts(window);
+    }
+
+    /**
+     * Validate CR212 repaired local preflight as one all-or-none fact bundle.
+     *
+     * <p>A completed preflight may report solo/unknown without a tooltip group. A grouped preflight carries one
+     * batch session and group hash for every group member, but only the representative carries the mask PNG.
+     * Cloud must never treat a partial bundle as permission to hover/capture the game window a second time.</p>
+     */
+    private static void requireLocalTeamRolePreflightFacts(TurnWindowMetadata window) {
+        boolean complete = Boolean.TRUE.equals(window.localTeamRolePreflightComplete());
+        boolean hasAny = window.localTeamRolePreflightComplete() != null
+                || isPresent(window.localTeamRolePreflightSessionKey())
+                || isPresent(window.localTeamRoleTooltipGroupHash())
+                || isPresent(window.localTeamRoleTooltipMaskBase64())
+                || window.localTeamRoleTooltipRepresentative() != null;
+        if (!complete) {
+            require(!hasAny, "taskStartRequest.window local team-role preflight facts must be all-or-none");
+            return;
+        }
+        requireText(window.localTeamRolePreflightSessionKey(),
+                "taskStartRequest.window.localTeamRolePreflightSessionKey");
+        require(window.localTeamRoleTooltipRepresentative() != null,
+                "taskStartRequest.window.localTeamRoleTooltipRepresentative must not be missing");
+        requireKnownTeamRole(window.windowRole());
+        boolean hasGroup = isPresent(window.localTeamRoleTooltipGroupHash());
+        boolean representative = window.localTeamRoleTooltipRepresentative();
+        if (!hasGroup) {
+            require(!representative && !isPresent(window.localTeamRoleTooltipMaskBase64()),
+                    "solo/unknown local preflight must not carry representative tooltip payload");
+            return;
+        }
+        if (representative) {
+            requireText(window.localTeamRoleTooltipMaskBase64(),
+                    "taskStartRequest.window.localTeamRoleTooltipMaskBase64");
+        } else {
+            require(!isPresent(window.localTeamRoleTooltipMaskBase64()),
+                    "non-representative local preflight must not carry tooltip mask");
+        }
+    }
+
+    private static void requireKnownTeamRole(String windowRole) {
+        require("LEADER".equals(windowRole) || "MEMBER".equals(windowRole)
+                        || "SOLO".equals(windowRole) || "UNKNOWN".equals(windowRole),
+                "taskStartRequest.window.windowRole must be LEADER, MEMBER, SOLO, or UNKNOWN for local preflight");
+    }
+
+    private static void requireStartupMode(String startupMode) {
+        try {
+            TaskStartupMode.valueOf(startupMode);
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalArgumentException(
+                    "taskStartRequest.window.startupMode is not a valid TaskStartupMode: " + startupMode);
+        }
+    }
+
+    private static boolean isPresent(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private static void requireTaskStartAck(TurnTaskStartAck ack) {
         requireText(ack.startRequestId(), "taskStartAck.startRequestId");
+        if (ack.effectiveTaskCodes() != null) {
+            for (TurnTaskCode code : ack.effectiveTaskCodes()) {
+                require(code != null, "taskStartAck.effectiveTaskCodes must not contain null");
+            }
+        }
     }
 
     private static void requireSameWindow(TurnWindowMetadata expected, TurnWindowMetadata actual, String field) {

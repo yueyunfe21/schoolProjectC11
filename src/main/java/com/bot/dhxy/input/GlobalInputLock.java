@@ -37,4 +37,19 @@ public class GlobalInputLock {
     public boolean isLocked() {
         return lock.isLocked();
     }
+
+    /**
+     * G002: observation-class work must never block real input. Runs the action only when the lock
+     * is free right now; returns {@code null} when another owner holds it.
+     */
+    public <T> T tryCallWithLock(Supplier<T> action) {
+        if (!lock.tryLock()) {
+            return null;
+        }
+        try {
+            return action.get();
+        } finally {
+            lock.unlock();
+        }
+    }
 }

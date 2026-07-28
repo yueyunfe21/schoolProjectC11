@@ -1,5 +1,6 @@
 package com.bot.dhxy.cloud.turn;
 
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 
 import java.util.HashMap;
@@ -32,6 +33,30 @@ public final class TurnLoopRegistry {
                                               String windowId,
                                               long waitTimeoutMs,
                                               Supplier<TurnWindowMetadata> windowMetadataSupplier) {
+        return createInternal(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, null);
+    }
+
+    /**
+     * TURN-40D remote overload: creates and registers one stopped loop and attaches the exact immutable
+     * {@link TurnTaskStartRequest} before it is started, so the remote start rides every turn until its matching
+     * ack. Callers of the four-argument form are unchanged.
+     *
+     * @param startRequest non-null immutable remote start request carried until acknowledged.
+     */
+    public synchronized WindowTurnLoop create(String deviceId,
+                                              String windowId,
+                                              long waitTimeoutMs,
+                                              Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                                              TurnTaskStartRequest startRequest) {
+        return createInternal(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier,
+                Objects.requireNonNull(startRequest, "startRequest"));
+    }
+
+    private WindowTurnLoop createInternal(String deviceId,
+                                          String windowId,
+                                          long waitTimeoutMs,
+                                          Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                                          TurnTaskStartRequest startRequest) {
         requireWindowId(windowId);
         if (loopsByWindowId.containsKey(windowId)) {
             throw new IllegalStateException("turn loop already exists for windowId=" + windowId);
@@ -41,6 +66,9 @@ public final class TurnLoopRegistry {
                 windowId,
                 waitTimeoutMs,
                 windowMetadataSupplier);
+        if (startRequest != null) {
+            loop.attachStartRequest(startRequest);
+        }
         loopsByWindowId.put(windowId, loop);
         return loop;
     }

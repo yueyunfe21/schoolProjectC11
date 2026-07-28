@@ -168,6 +168,30 @@ public class AutomationMetricsService {
         writeDashboardThrottled();
     }
 
+    /**
+     * TURN-40B-C1 sole wire seam: records one already-reconstructed metric event exactly like
+     * {@link #record(AutomationMetricEvent)} and, only when {@code queueDashboard} is true, also
+     * queues the same dashboard write that the baseline {@code recordRoundFinished} queues.
+     *
+     * <p>The per-operation mapping is frozen as STARTED=false, FINISHED=true, FAILURE_CASE=false,
+     * matching the baseline methods byte-for-byte. This method adds no second store, thread,
+     * throttle, or retry — it only composes the two existing private behaviors for the local
+     * metric-wire executor.</p>
+     *
+     * @param event fully reconstructed event; identity fields are preserved, missing
+     *              ids/timestamps/session fields are filled exactly as in {@code record}.
+     * @param queueDashboard true only for the round-finished wire operation.
+     */
+    public void recordWireEvent(AutomationMetricEvent event, boolean queueDashboard) {
+        if (event == null) {
+            return;
+        }
+        record(event);
+        if (queueDashboard) {
+            queueDashboardWrite("round-finished");
+        }
+    }
+
     private void maybeCaptureDiagnosticCase(AutomationMetricEvent event) {
         if (diagnosticCaseCaptureService == null) {
             return;

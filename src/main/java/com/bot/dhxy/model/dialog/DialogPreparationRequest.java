@@ -1,6 +1,6 @@
 package com.bot.dhxy.model.dialog;
 
-import com.bot.dhxy.service.dialog.DialogOperation;
+import com.bot.dhxy.model.dialog.DialogOperation;
 import lombok.Builder;
 import lombok.Value;
 

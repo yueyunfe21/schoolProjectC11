@@ -1,5 +1,3690 @@
 # DHXY Package Architecture
 
+## CR271 五环大雁塔二层交鞋 Dialog 地图分流恢复
+
+- 状态：`SOURCE IMPLEMENTED / CLOUD COMPILE PASSED / FRESH RUNTIME REQUIRED`。
+- 证据：`451753529 / hwnd-D51906` 已在 `大雁塔二层(96,32)` 且 phase 为
+  `HANDLE_DIALOG`，但 phase-boundary priority 先消费
+  `TASK_TRACKER_PATHING`；两次绿色链接点击均无本地移动证明。
+- 修复：恢复 Git `9aa987d1` 的地图业务边界。大雁塔二层
+  `HANDLE_DIALOG` 不得消费 Tracker prepared action，必须先走现有
+  `INSPECT -> GIVE_ITEM`；成功后才 `SYNC_TASK_PANEL`。其他地图不进入给鞋链。
+- 写集：Cloud `FiveRingTaskV2.java`、
+  `FiveRingPreparedNpcContractTest.java`；CR worktree 本文件、`ACTIVE_WORK.md`
+  与生成的 dashboard 数据。Client Java 零修改。
+- 验证：Cloud `mvn -q -DskipTests=false compile` exit `0`；focused test 被
+  既有全仓 testCompile API 漂移阻断。Fresh runtime 必须证明给鞋发生在任何
+  `phase-priority:HANDLE_DIALOG` Tracker 点击之前。
+
+## CR271 LOCAL-RUNNER Repair #29 - 基线连续坐标判停恢复
+
+- 状态：`SOURCE FIX IMPLEMENTED / P0-P1-P2=0-0-0 / CLIENT POLICY TEST 5-5 /
+  CLIENT COMPILE PASSED / FRESH CLIENT RESTART REQUIRED`。
+- 现场证据：`67555 / hwnd-25F1CE8` 的 Tracker intent `ef238a52...` 在
+  `00:12:36.061` 被首次坐标 `大雁塔一层(128,82)` 错判为 `STOPPED_AWAY`；
+  角色随后仍移动到 `(66,82)`、`(56,74)`。Cloud 被动消费错误终态后于
+  `00:12:39.503` 再点同一绿色链接。
+- 基线 `696a12b0` / `9aa987d1` 的终态证据是连续识别位置：首次位置或地图/X/Y
+  变化均为 `ACTIVE`，只有同一 intent 的识别位置连续不变达到 `2200ms` 才
+  `STOPPED_AWAY`。CR271 迁移时错误简化成“小 ROI 稳定后一次坐标回包即终态”。
+- 修复只恢复上述基线裁决和约 `2000ms` 坐标复核 cadence；保留现有 `45x12`
+  坐标数字帧差区域，继续解决整条 `178x35` ROI 稀释最后一格移动变化的问题。
+  不改 Cloud 判定、五环业务恢复、Tracker 点击、导航、NPC 或输入。
+- 验证：`WindowObservationPathingPolicyTest` `5/5`，Client main compile exit `0`。
+  Fresh 验收必须看到第一份识别坐标保持 `ACTIVE`；只有后续同位置持续满基线边界才
+  允许终态。移动途中不得因一次坐标结果重复点击 Tracker。
+
+## CR277 Repair #6 - ARRIVED 后点击失败不得回退小地图导航
+
+- 状态：`SOURCE FIX IMPLEMENTED / P0-P1-P2=0-0-0 / CLOUD COMPILE PASSED /
+  FRESH CLOUD RESTART REQUIRED`。
+- 运行证据：Runner 已于 `13:23:16.522` 对 `67555` 发布 exact `ARRIVED`，
+  坐标 `(87,173)`、目标 `(87,174)`；NPC FIFO 候选全部失败后，旧控制流于
+  `13:25:22` 再次执行 `Alt+1` 并点击 `(87,174)`。这不是新的导航需求，而是
+  `tryClickNearbyAcceptNpc(...) == false` 后错误落穿到 `navigateWithTaskTurn(...)`。
+- 修复：删除 `tryClickNearbyAcceptNpc(...)` 整个中间层及其中的 fallback 语义。
+  `FiveRingTaskV2.acceptTask(...)` 将 ARRIVED/nearby 直接定义为 NPC 点击分支；点击失败只
+  执行既有 `cleanupUiBeforeAcceptNpcClick(...)`、递增 retry 并继续点击。小地图导航仅允许
+  在从未到达且当前位置不在 NPC 附近时进入。
+- 冻结：不改 `NPC ClickSmart`、prepared FIFO、候选顺序、视觉算法、模板、ROI、
+  阈值、坐标或 Client。
+- 验证：Cloud `mvn -q compile` exit `0`；源代码控制流合同通过。Focused Maven test
+  被全仓既有 test-source/API 漂移阻断于 `testCompile`，包括旧
+  `CloudWholeTaskObserver.probeTypedPathing/classify` 调用，需独立修复测试门禁。
+
+## CR277 Fresh Runtime Reopen - 2026-07-27 00:06 Restart Audit
+
+- 状态：`FRESH RUNTIME FAILED / P0-P1-P2=0-2-0 / PLAN PENDING USER CONFIRMATION`。
+- P1-1：用户关闭两个未到 cooldown 的游戏窗口后，于 `23:53:13.518` 对剩余窗口点击启动；
+  扫描正确只返回三个真实窗口，并清理两个 idle stale registration，但
+  `snapshot count=3 accepting=[]`、`targetWindowIds=[]`，所以本次启动实际为 `0/0`，
+  没有创建任何新 Cloud task run。`23:53:51.757` 随后的停止又将这三个旧 run 全部
+  terminal 为 `STOPPED`；停止之后没有第二次有效启动请求。这直接解释了三个已经接过任务的
+  角色为何全部不动：它们不是等待 ready-event，而是已经没有运行中的新任务。
+- P1-2：停止后 `main-window-snapshot-refresh` 将同一个
+  `windowId=hwnd-1940D2E / hwnd=26479918` 在多个角色标题和 ID 之间持续改写；
+  `WindowRuntimeContext.setNativeBinding()` 每次均按 `native title/player drift` 清除
+  Dialog/Tracker/pathing 等 player-scoped transient state。该 HWND 当前不能作为稳定 exact-player
+  identity 使用；在修复 stable registration/rebind 前，即使重新创建 run，也会被身份漂移持续清空
+  prepared 状态。
+- 待确认修复合同：先修正 Start/remote lifecycle reconciliation，禁止 UI 进入“启动”分支后静默
+  得到 `accepting=[]`；再修关闭窗口后的 stable HWND/player 重绑定，禁止把同一 runtime 就地改写成
+  另一个角色。不得用 sleep、重复点击或放宽 exact-window fence 规避。
+
+## CR277 Fresh Runtime Reopen - 2026-07-26 23:31 Multi-window Audit
+
+- 状态：`FRESH RUNTIME FAILED / P0-P1-P2=0-2-0 / PLAN PENDING USER CONFIRMATION`。
+- P1-1：小地图高层动作仍被拆为多个普通 input request。Fresh 日志中的
+  `turn:input:keyboard:ALT_1`、地图鼠标片段和关闭动作均可在请求边界被其他窗口插入；
+  普通片段明确为 `exclusive=false`。现有 `LocalTurnActionExecutor` 只合并连续
+  mouse/WAIT，遇到 KEY_TAP、CAPTURE 或下一次 Cloud turn 即结束原子边界，因此不能保证
+  “同一窗口打开小地图 -> 点击 -> 关闭/交接”完成后才切换窗口。
+- P1-2：五环接任务 background interest/ready-event 链确实启动，但
+  `acceptInitialDialogAndTriggerPathing` 在等待 prepared action 前主动
+  `forceRelease` task turn；新出现的“距离下次……” STORY 又不在
+  `WuhuanDialogCatalog.completionStorySpecs()`，所以 Cloud 将其作为未识别结果反复重试
+  接任务。日志可见五个窗口反复 update/clear
+  `[ACCEPT_TASK, VERIFY_WHITE_TEMPLATE]` interest，而不是一次 terminal。
+- 用户新增 raw 模板：
+  `images/template/dialog/wuhuan/Snipaste_2026-07-26_23-34-54.png`。目标语义是
+  “五环 cooldown 未到，本窗口任务直接结束”，必须继续走既有后台
+  `VERIFY_WHITE_TEMPLATE -> PREPARED_ACTION_READY`，不得在前台重新截图计算。
+- 待确认修复合同：恢复一段高层小地图导航的窗口独占边界；五环 prepared 等待不得占用
+  前台输入，但 ready 后的点击才取得输入权；新增 cooldown STORY catalog key/template，
+  命中即 terminal，不 cleanup、不重试接任务。未修改 Java、未运行 runtime/input。
+
+## START-STOP Pause-to-Stop Repair - 2026-07-26
+
+- 状态：`P1 REPAIRED / SOURCE REVIEW P0-P1-P2=0-0-0 / CLIENT COMPILE PASSED /
+  FRESH CLIENT+CLOUD RESTART REQUIRED`。
+- Fresh 证据：暂停发生于 `22:46:08.783`；停止发生于 `22:51:59.199`。两个 Client
+  turn loop 当场以 `stopCheckpoint=true` 退出，却没有发送 final stop-bearing turn，
+  因而没有 Cloud terminal ACK，也没有 registry remove/runner STOPPED 投影。
+- 修复：暂停等待被 stop 中断后不再 `return`，而是进入统一 final stop exchange；
+  pause/resume 拒绝已停止的注册 loop，避免 UI 假恢复。仅修改 Client
+  `WindowTurnLoop` 与 `TurnModeGuard`，任务业务和 Cloud 均冻结。
+- Client compile `exit 0`。本次已损坏的旧 run 不能由新代码追溯补发 stop，fresh 验收前
+  需重启 Client 并清理 Cloud 旧 slot。
+
+## CR277 Fresh Runtime Repair #5 - 2026-07-26
+
+- 状态：`REPAIR #5 IMPLEMENTED / SOURCE REVIEW P0-P1-P2=0-0-0 /
+  CLOUD COMPILE PASSED / FRESH CLOUD RESTART+RUNTIME RETEST REQUIRED`。
+- Fresh run `remote-turn-a3f36d77-e4f9-401c-840f-df943623f056` 已证明
+  NPC FIFO 在 ARRIVED 后约 `1.38s` ready；实际点击仍晚到约 `9.4s`，原因是 exact
+  arrival 后重复等待两次 Dialog inspection，并非 SmartClick 识别慢。
+- 同 run 的 prepared Tracker 点击后未读回 exact 本地 pathing fact，phase 没有进入
+  `WAIT_PATHING`。因此 `STOPPED_AWAY` 发生时仍困在 `ACCEPT_TASK` 的 30 秒 Dialog
+  wait，超时后错误重走接任务 NPC；五环 `(87,174)` fire-and-handoff 又不携带真实
+  intent，最终抛 `accept NPC pathing started without an exact active intent`。
+- 修复合同：exact ARRIVED 直接消费现成 FIFO；等待可被 exact terminal 唤醒；
+  Tracker 点击后读回本地 fact 并进入 `WAIT_PATHING`；
+  Tracker `STOPPED_AWAY -> HANDOVER_DETECT` 复用现有热启动；五环接任务重导航恢复真实
+  intent。冻结视觉算法、模板、ROI、NPC ClickSmart 候选与 Client。
+- 实现复核：上述五项均已落地；接任务前 NPC 导航的停远重试未改，只有已经接到任务的
+  Tracker 寻路停远才回热启动。Cloud `mvn -q compile` 为 `exit 0`，等待重启 Cloud
+  JVM 后验证 exact ARRIVED 到点击延迟、Tracker 停远热启动和 exact intent 三条真实链路。
+
+## CR277 Fresh Runtime Repair #4 - 2026-07-26
+
+- 状态：`P0/P1/P2=0/1/0 / REPAIR #4 IMPLEMENTED / DUAL COMPILE PASSED /
+  FRESH DUAL RESTART+RUNTIME RETEST REQUIRED`。
+- Fresh run `remote-turn-5f7897fb-77be-4b52-8032-e6ea7133da41` 已通过 Repair #3：
+  exact `ARRIVED` 被消费，且 `NPC_CLICK_PLAN_READY` sequence `8` 已生成。
+- 新根因是五环在消费 exact FIFO 前调用 `clearPathing()`，该 clear 同时取消 arrival
+  session，导致 Client 返回 `cloud-brain-npc-arrival-session-missing-or-stale`。
+  现改为与修罗一致：先消费 FIFO，之后才 clear。
+- 同轮 fallback 暴露 Client prepared-frame 将窗口相对 `(0,0)` 当成屏幕绝对坐标；
+  现使用 exact window base 捕获 `1024x768`。未改 SmartClick 识别、模板、ROI 或输入顺序。
+
+## CR277 Fresh Runtime Repair #3 - 2026-07-26
+
+- 状态：`P0/P1/P2=0/1/0 / REPAIR #3 IMPLEMENTED / CLOUD COMPILE PASSED /
+  FRESH CLOUD RESTART+RUNTIME RETEST REQUIRED`。
+- Fresh run `remote-turn-2767b323-dc32-4979-bb14-ed00d58f71fe` 中 Client Runner 已发布
+  exact `ARRIVED`，Cloud 也已发布同 intent 的 `PATHING_TERMINAL` 和
+  `NPC_CLICK_PLAN_READY`；五环仍重复等待，是因为 Cloud phase 的
+  `pathingStartedAtMs` 比 Client intent 创建晚约 `2.2s`，超过 `1s` grace，错误拒绝
+  exact terminal。
+- 修复仅调整五环 exact accept-NPC intent 的新鲜度裁决：intentId 精确一致时以身份为准；
+  非 exact 路径继续保留原 source/target/time fence。未改 Runner、导航、NPC ClickSmart、
+  FIFO、模板、ROI 或输入。
+
+## CR277 Repair #2 Handover Negative Consumption - 2026-07-26
+
+- 状态：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0-0-0 /
+  FRESH CLOUD RESTART+RUNTIME RETEST REQUIRED`。
+- 五环启动 handover 现在消费 exact fresh Tracker 负结果：
+  `TASK_NOT_FOUND -> ACCEPT_TASK`，
+  `TASK_FOUND_NO_GREEN/NO_LINK -> SYNC_TASK_PANEL`。正 prepared action 始终优先；
+  真正没有正负结果时才继续 park。
+- exact identity、task/operation/target 和 3 秒 freshness 均 fail-closed。
+  父级 focused `3/3`、Cloud compile `0`；未改视觉算法和输入边界。
+
+## CR277 Fresh Runtime P1 Reopen - 2026-07-26
+
+- 状态：`FRESH RUNTIME FAILED / P0-P1-P2=0-1-0 / REPAIR #2 REQUIRED`。
+- exact Tracker 负结果已由后台持续发布，但五环 handover 没有消费其业务含义，
+  把所有“没有正候选”都误判为“尚未准备完成”，导致永久 `HANDOVER_DETECT`。
+- 修复合同：正候选优先；`TASK_NOT_FOUND` 转 `ACCEPT_TASK`；
+  `TASK_FOUND_NO_GREEN/NO_LINK` 转 `SYNC_TASK_PANEL`；无正负结果才 park。
+  视觉算法和输入边界冻结。
+
+## CR277 五环后台 prepared-event 唤醒 - 2026-07-26
+
+- 状态：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0-0-0 / OWNER RELEASED /
+  FRESH FIVE-WINDOW RUNTIME REQUIRED`。
+- 五环 Tracker、Dialog 与 NPC visual preparation 以 exact window/task run 为作用域，
+  在 task turn 之外后台准备；Ready Event 只有在候选/terminal message 已存在且 exact
+  arrival frame 已 unlock 后才 exact-once 发布。task turn 不承担 OCR/template 计算，
+  只验证并消费已准备的物理输入。
+- NPC SmartClick 保留既有 `NpcClickSmartQueueStore` 流式 FIFO，按
+  MEMORY/TOOLTIP/FORMULA/CTRL 顺序逐项发布；首个可执行候选即可唤醒，不等待整批完成。
+  鞋店老板、接任务、story 与 give-item 等 converted 路径在真实输入前重新取得既有
+  coarse task turn，未新增第二套协调器或识别算法。
+- exact frame demand 使用 UUID correlation，15 秒有界等待，pause/stop/timeout 精确取消；
+  Client capture 在成功和异常出口均释放图片。Ready recovery 保留同 intent
+  `STOPPED_AWAY` 后 10 秒单次 re-wake。
+- 父级独立验证：Client `4/4`、Cloud CR277 `18/18`、Ready recovery `2/2`、
+  双仓 compile `0`、共享 wire `5/5 byte-identical`。未运行 runtime/UI/capture/input；
+  fresh 五窗口实机时序仍为最终验收门。
+
+## CR276 单人任务角色预检与五环 Spring 启动修复 - 2026-07-26
+
+- 状态：`SOURCE REVIEW COMPLETE / P0-P1-P2=0-0-0 / CLIENT+CLOUD COMPILE 0 /
+  FRESH RUNTIME REQUIRED`。
+- 事故一：单人任务仍必须执行既有 hover 与 tooltip 截图，但截图成功且没有可用 tooltip 是正常
+  `SOLO` 证据，不应被折叠为 `UNKNOWN`。该规则按 `TaskType.isSinglePlayer()` 语义执行，不在
+  预检服务中硬编码五环任务名；当前五环声明为单人任务，修罗/五倍保持非单人。截图、输入或绑定失败
+  仍 fail-closed 为 `UNKNOWN`。
+- 事故二：Cloud `FiveRingTaskV2` 同时存在 Lombok 18 参数构造器和手写 17 参数兼容构造器，
+  Spring 无法选定构造器并报 `No default constructor found`，导致任务在业务代码前失败。已删除
+  手写构造器，保留唯一完整注入构造器；`NpcPreparedClickPlanState` 继续由 Spring 注入共享实例，
+  不再由任务内部 `new` 出第二份状态。
+- 未改变 hover 坐标/次数、tooltip ROI/识别算法、组队角色 OCR、窗口绑定或五环 phase。Client
+  `mvn -q -DskipTests compile`、Cloud `mvn -q -DskipTests=false compile` 均 exit `0`；
+  `javap` 确认 `FiveRingTaskV2` 仅一个构造器。未运行 runtime/UI/capture/input。
+
+## G02 CR271 本地进战来源与回城结果统一 - 2026-07-25
+
+- 状态：`P1 修复已实现，等待主审；禁止 fresh run`。
+- 基线：工作树 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `59b85e0bb494f43ad7e7434f3d2170deb373c6ef`；最新 pushed `origin/dev`
+  `e543d024 Stabilize task navigation and window readiness`。开工前已 dirty，特别是
+  `WindowRuntimeContext` 与 `BagLocalOperationExecutor` 的 CR271 迁移差异不得回退或顺带改写。
+- 已核对业务合同“Expected 战斗快脱战与回程验证兜底”：expected 快路径首个回城道具尝试不应直接计入
+  正式失败；只有未回起点后的可信战斗状态与既有安全恢复才决定后续。unexpected/incidental 战斗不得
+  自动使用回城道具。
+- 当前代码证据：`WindowRuntimeContext.registerExpectedCombatEnterClaim(...)` 只接受
+  `local-template` / `cloud-fallback`；`WindowObservationSampler` 只为已绑定 claim 发布 combat edge，
+  未 claim 的本地真实进战会被丢弃；`WholeTaskRuntimeLocalOperationExecutor` 仍能写入
+  `cloud-fallback` claim。
+- 已实施范围：仅本地真实模板点击和 `Alt+A` 后的实际目标点击登记 expected；移除
+  Cloud fallback 作为 accepted source；observer 观察到每次真实进战时向 Cloud 传递
+  expected/unexpected 本地事实；回城由三条任务路径共用“expected 快路径首试不计数、未回起点后等正式
+  exit、第二次才计数、既有有界失败后回接任务/导航；unexpected 禁止自动回城”，并保留 CR271 已有
+  true-exit second-return replay。
+- 票据机制已放宽为通用窗口运行时事实，未新增 taskCode 或 `UNEXPECTED` 协议：无票真实进战沿既有链不发
+  expected edge。`WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM` 只暂存 `local-alt-a` 票；同一 action 内严格
+  `ALT_A -> WAIT/MOVE -> 唯一 CLICK_LEFT` 的原子点击成功才正式登记，失败/不符/结束清票。模板点击保留
+  `local-template` 的点击成功后登记。Cloud 已删除所有后置 `claimCloudFallback`，只在直战 Alt+A 前 arm。
+- P1 已修：首版错误地将 Alt+A 与目标点击当作同一 `TurnAction`，在第一条 action 结束清票。现为 Alt+A 成功后票跨
+  action 保留，只有第二条携带 `directCombatTargetClick=true` 的原子目标左键成功才登记；普通左键、失败、停止或标记不匹配
+  都清票且不登记。票据与已确认基线一致最多保留 `10s`，到期的标记点击也不得登记。已新增
+  `LocalTurnActionExecutorContractTest` 的两-turn 正例、普通点击负例与过期票负例。
+- 定向测试 `mvn -q -Dtest=LocalTurnActionExecutorContractTest test`、Client `mvn -q -DskipTests compile`、Cloud
+  `mvn -q -DskipTests=false compile` 均 exit `0`，双仓 `git diff --check` 无错误。未执行 runtime/input；仍待主审，
+  fresh 需验证直战的 exact ticket 消费、意外战斗零
+  expected edge/零自动回城，并确认既有 true-exit second-return、修罗/五倍有界回接任务不变。
+
+## CR275 修罗医宝宝临时 live-test 覆盖恢复 - 2026-07-25
+
+- 恢复生产默认值：
+  `taskStartupPreparationEnabled=true`、
+  `xiuluoMaintenanceRunImmediatelyOnStart=false`。
+- 删除 `DHXY_XIULUO_HEAL_PET_LIVE_TEST` / `dhxy.xiuluoHealPetLiveTest`
+  在 Client、Cloud 和 launcher 中的专用绕行及独立 live-test 脚本。
+- 不删除或回滚任何正式修罗任务、维护、寻路、Runner、OCR、NPC ClickSmart 逻辑。
+- 状态：`SOURCE REVIEW COMPLETE / P0-P1-P2=0-0-0 / CLIENT+CLOUD COMPILE 0 /
+  FRESH RESTART REQUIRED`。静态扫描无测试开关残留；等待同时重启 Client/Cloud 验证。
+
+## CR274 Cloud OCR 同生命周期启动与任务启动快速失败 - 2026-07-25
+
+- 用户批准的故障修复：OCR 虽以 Python 进程实现，但属于 Cloud Brain，不是用户需要单独
+  启动的第二个服务。`CloudBrainApplication` 必须在开放 `18080` 监听前确保本机 OCR
+  sidecar 健康；由本次 Cloud 启动创建的进程随 Cloud 关闭，已存在且身份一致的进程只复用、
+  不误杀。OCR 无法启动或健康身份不符时 Cloud 启动直接失败，不进入半可用状态。
+- 修罗/五倍启动需要队伍身份 OCR 时，无法取得队长 ID 必须在 start ACK 前返回带明确原因的
+  `TASK_START_REJECTED`，不得先 ACK、创建空 effective queue、再异步 `SKIPPED`。
+- Client 收到 start 拒绝后必须立即结束对应 loop、释放运行/设置锁，并把 Cloud problem 的
+  `code/detail` 传到窗口错误详情和 UI；不得等待 60 秒 terminal poll，也不得只显示泛化“异常”。
+- 本卡不改变队伍角色 OCR 算法、tooltip ROI、队长/队员分配规则或修罗/五倍业务 phase。
+  无已批准业务差异；仅修复服务生命周期和启动失败传播。
+- 事故证据：2026-07-25 `09:47`，tooltip mask 清晰包含队长 ID `67555`，但
+  `127.0.0.1:18761` 无监听，Cloud 记录 `tooltip OCR unavailable`、
+  `leaderIdPresent=false`，五个 `XIULUO_V2` 均终态 `SKIPPED`；四个空队列 Client loop
+  继续占用约 60 秒后才释放。
+- 状态：`SOURCE REVIEW COMPLETE / P0-P1-P2=0-0-0 / CLIENT+CLOUD COMPILE 0 /
+  FRESH RUNTIME REQUIRED`。Cloud 已在监听前复用或拉起并健康校验 OCR；角色预检不可解析时
+  start ACK 前拒绝，Client 解析明确原因并沿既有失败路径立即释放。Fresh gate：直接从 IntelliJ 启动
+  `CloudBrainApplication` 时 OCR 自动 ready；停止 Cloud 后只清理本次拥有的 OCR；
+  OCR 启动失败时 Cloud 不监听；任务启动拒绝须即时、可读且 UI 不残留 busy。
+
+## CR273 到达稳定帧复用与 NPC SmartClick 流式 FIFO - 2026-07-25
+
+- 状态：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0-0-0 / OWNER RELEASED / FRESH RUNTIME REQUIRED`。
+- 用户冻结的单向链路：
+  `Runner 同一稳定整帧 -> 坐标识别与 NPC FIFO 并行预计算 -> exact ARRIVED(frameId) 解锁
+  -> Client 按生产顺序即时消费`。首轮不得在到达后再次截图或等待完整候选列表。
+- 保留现有 `NpcClickSmartQueueStore`、`SmartClickRecognizer`、候选顺序、模板、阈值、
+  Ctrl 安全和原子 move+click；禁止第二套识别器、Cloud 到达裁决、observer 补发或完整 plan
+  影子算法。
+- 首个 FIFO 完整失败后只允许 `cleanupAll` 一次、fresh frame 一次和替换 FIFO 一次；
+  第二次失败返回既有任务失败，不得第三次、不重新导航。
+- Fresh runtime 发现普通/近距离 `clickNpcSmart` 仍等待完整 prepared plan 后才点击；
+  现已改为复用同一 `NpcClickSmartQueueStore` producer 和 Client FIFO consumer，direct fresh
+  frame 立即解锁。识别器、候选顺序、模板、阈值、验证和失败重试语义均未修改。
+- 权威卡：
+  `docs/superpowers/plans/reports/2026-07-25-turn-card-CR273-NPC-ARRIVAL-FRAME-FIFO-P1.md`。
+  Client 仅写 `D:\mavenProject\DHXY-cr271`，Cloud 仅写
+  `D:\mavenProject\dhxy-cloud-brain`；`D:\mavenProject\DHXY` 保持只读。
+
+## CR271 寻路异步帧时钟与到达重试锁存修复 - 2026-07-24
+
+### 2026-07-25 位置记忆与 Alt+A 失败重试收窄
+
+- 已批准差异：current pathing intent 的已识别坐标通过既有栅栏后，同步写入该窗口
+  `GameContext.me`；不改变终态分类、ready event 或输入。修罗 local-kanda 的确认点击前捕获
+  小地图坐标条并随 observation 异步识别，识别结果只写位置内存。
+- 普通 SmartClick 不再因其内部坐标刷新发现跨地图/坐标变化而重跑原 NPC。`Alt+A` 失败退出的
+  direct-combat 仅在同地图且 X/Y 变化时重试一次；跨地图、无坐标或无位移都交回任务导航。
+- 回程成功后的坐标写入保持修罗/五倍已有 `syncMyPosition()`，本项未重复新增。双仓 compile
+  均 exit `0`；未运行 runtime/UI/capture/input/tests，需重启双端 fresh 验收。
+
+- 状态：`SOURCE REPAIR COMPLETE / CLIENT TEST 4/4 / CLIENT+CLOUD COMPILE 0 / FRESH BOTH RESTART REQUIRED`。
+- Fresh 日志中 `19:00:55.172` 的坐标帧实际仅稳定 `1244ms`，但 Client 在约 `1090ms`
+  HTTP 往返后用响应时刻重新计算停稳时间，错误跨过 `2200ms` 并在
+  `19:00:56.262` 将途中 `(173,93)` 发布为 `STOPPED_AWAY`，直接触发同目标重复导航。
+- `WindowObservationSampler` 现冻结坐标帧采集时的 `stableMs/intentAgeMs`；Cloud 响应延迟仅
+  记为诊断字段，不得增加停稳年龄。移动、intent 替换和 reset 会清除冻结值。
+- `19:01:03.561` 已正确到达 `(117,69)`，但 NPC 点击远程续跑前过早清除
+  `waitingPathing`，导致同一维护尝试重新进入导航。修罗医宝宝/修装备现把既有到达事实保留到
+  当前维护尝试真正返回；收到终态后只能继续 NPC 点击，不得再次打开小地图。
+- Git 对照：`9aa987d1` 的同步 Runner 在同一识别帧时刻判断，不存在 HTTP 延迟计时问题；
+  `9aa987d1`、`ba9c5b7e`、`a65c5db3` 的维护失败路径均仍会清掉到达事实并重新导航，不能照抄该旧行为。
+- 验证：Client 延迟响应回归与 CR142 policy `4/4`，双仓 main compile exit `0`。Cloud
+  test-compile 被当前仓既有旧夹具阻断（`CloudWholeTaskReadyEventState` 构造签名和已删除
+  `probeTypedPathing`），本修复未扩散修改无关夹具。Fresh 验收必须重启 Client 与 Cloud；
+  途中帧应记录 `capturedStableMs < 2200` 并保持 `ACTIVE`，到达后 NPC 点击失败不得产生同目标新 intent。
+
+## CR271 寻路终态基线裁决顺序恢复 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / CLIENT+CLOUD COMPILE 0 / FRESH BOTH RESTART REQUIRED`。
+- Fresh 根因：Client 仅凭坐标条稳定 `2.2s` 就先发布 `STOPPED_AWAY`；Cloud 随后才识别出
+  `current=灵兽村(115,69)` 与目标完全相同，但终态已被任务消费，触发多次多余小地图 fallback。
+- 恢复只读基线 `WindowTaskRunner.classifyPathingState(...)` 的裁决顺序：
+  `本地稳定 -> 上传 exact-intent coordinate-strip -> Cloud 仅返回结构化 map/x/y
+  -> Client Runner 先按地图与逐轴 tolerance 判 ARRIVED -> 否则 STOPPED_AWAY
+  -> Cloud 被动消费最终事实`。
+- 坐标未识别时保持 `ACTIVE` 并重试，不发布猜测终态；移动恢复或 intent 更换会使旧响应失效。
+  Cloud 不再补写 pathing fact，也不参与 ARRIVED/STOPPED_AWAY 业务判断。
+- `ObservationAnalysisResult` 双仓增加结构化 `mapName/coordinateX/coordinateY`，validator
+  强制 resolved 结果字段完整；协议文件 SHA 一致。
+
+## CR271 医宝宝第二次寻路终态谱系修复 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / CLIENT COMPILE 0 / FRESH CLIENT RESTART REQUIRED`。
+- Fresh 日志证明 fallback intent 的 Client 终态已产生，但因同一 intent 的后续帧错误重复
+  `REPLACED(oldIntent)`，Cloud 前向谱系栅栏将其拒绝，修罗未进入 `NPC_CLICK_SMART`。
+- `WindowObservationSampler` 现仅在新 intent 首帧发送一次 `REPLACED`，后续 ACTIVE/终态
+  使用 `CURRENT`。未改变寻路、NPC 点击、模板或业务阶段。
+
+## CR271 Runner 寻路终态单向直达 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / CLIENT+CLOUD COMPILE 0 / FRESH BOTH RESTART REQUIRED`。
+- 根因：Client Runner 已产生 exact `STOPPED_AWAY`，Cloud 却同时保留 coordinator
+  入站桥、pathing mirror 业务判断和 periodic observer 二次分类/补发；终态可在这些层之间
+  被去重或延后，修罗最终只由整轮 `180s` watchdog 唤醒。
+- 修复后唯一链路为：
+  `Client Runner -> observation HTTPS -> CloudWholeTaskReadyEventState -> owning task`。
+  coordinator 不再处理 pathing，Cloud observer 不再读取坐标、判断到达/停下或发布
+  `PATHING_TERMINAL`；pathing state 仅缓存 exact Client 原始事实供既有任务读取。
+- Client 删除 `60s` 硬判停，Cloud 修罗删除独立 `180s` pathing 清理；保留本地
+  `2.2s` 稳定停下判定和原业务整轮 `180s` pre-combat watchdog。
+- Client `mvn -q -DskipTests compile` 与 Cloud
+  `mvn -q -DskipTests=false compile` 均通过；未运行测试/runtime/UI/capture/input。
+
+## CR271 医宝宝失败保留当前任务 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / CLIENT+CLOUD COMPILE 0 / FRESH BOTH RESTART REQUIRED`。
+- 根因：医宝宝属于接任务后的可选维护，但旧失败出口复用了
+  `restartRoundAfterPhaseFailure(...)`，会丢弃已经接受的 objective 并重新接任务，形成同轮死循环。
+- 修复：Client Runner 以既有 `2.2s` 停稳判断为唯一寻路终态；Cloud 收到终态后不再重复导航，
+  每个真实轮次只尝试一次医宝宝。失败或异常直接保留 objective 并进入当前任务后续路线，
+  不写成功冷却；下一真实轮次仍可重新尝试。
+- Cloud 启动装配沿用既有 `CloudWholeTaskReadyEventState`；隔离端口 `18082`
+  烟测已出现 `DHXY cloud brain listening`，缺 Bean 启动错误关闭。
+- 未运行 runtime/UI/capture/input。Fresh 验收要求同一 round 中出现
+  `heal-pet maintenance failed; continue current accepted task` 后直接进入 Tracker/目标导航，
+  禁止回到 `ACCEPT_TASK_*`。
+
+## CR271 LOCAL-RUNNER-AUTHORITY-P1 Repair #20 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / CLOUD COMPILE 0 / WUBEI 5/5 / FRESH CLOUD RESTART REQUIRED`。
+- `14:43` fresh 日志证明队长 `hwnd-74A0D06` 已收到 exact Client `IN_COMBAT`
+  （`COMBAT_STATE_CHANGED sequence=28`），但队长没有任何
+  `auto-combat enter detected` / `Alt+8`；四个队员的自动战斗链正常，故障不是识别、
+  HWND 键盘或输入队列。
+- 只读基线 `D:\mavenProject\DHXY` 的 `XiuluoTaskV2.waitCombat(...)` 会在每次战斗 tick
+  调用现有 `AutoCombatService.handleCombatTick(...)`。Cloud 迁移版只读
+  `GameContext=IN_COMBAT` 后 park，漏掉该调用，因此首次面板补开和后续 4 秒/长战维护均不运行。
+- Cloud 修罗 `WAIT_COMBAT` 与五倍 `WAIT_BATTLE_FINISH` 已恢复调用既有
+  `handleCombatTick(..., CLIENT_RUNNER_EXIT)`。该分支只消费 Client Runner 已同步的状态，
+  不调用 Cloud Radar，不新增战斗判断；首次进入执行既有面板补开，后续 timeout tick 执行既有维护。
+- 同轮修复 observation pathing terminal 隐藏二跳：Cloud inbox 接受 exact Client
+  `ARRIVED/STOPPED_AWAY` 后立即更新同一 pathing mirror 并单次发布 `PATHING_TERMINAL`；
+  `CloudWholeTaskObserver` 仅保留停止点结算，不再重复发布终态。
+- Cloud main compile exit `0`；五倍 tracker 合同 `5/5`。修罗旧 tracker 合同仍有三个缺
+  `xiuluo_tracker_title.png` 和一个 local-service fixture unavailable，均在进入本次
+  `waitCombat` 改动前失败，未修改生产逻辑迁就旧夹具。
+
+## CR271 LOCAL-RUNNER-AUTHORITY-P1 Repair #19 - 2026-07-24
+
+- 状态：`SOURCE REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH CLOUD RESTART REQUIRED`。
+- 最新 fresh run 中队长每轮 exact Client `IN_COMBAT` 已到达，但队长零 `Alt+8`；四个队员
+  HWND `Alt+8` 均成功。故障是迁移断档，不是键盘发送失败。
+- `AutoCombatService.handleCombatTick(... CLIENT_RUNNER_EXIT)` 绕过了基线首次进战
+  `maybeHandleCombatEnter()`；初始化又清除了 entry pending，团队 refresh gate 可继续延后
+  队长普通维护。Cloud 修罗 `WAIT_COMBAT` 同时被改为 `timeoutMs(-1)`，丢失基线动态维护
+  deadline，所以后续 entry/UI-clean/panel-refresh 也不会定时执行。
+- `AutoCombatService` 已在每轮首次 exact Client `IN_COMBAT` 恢复原有一次性面板开启和
+  entry maintenance，并在初始化/确认退出时重新武装；重复 tick 不重复输入。
+- 修罗与五倍均恢复 `500ms..10s` 动态 maintenance deadline；超时只执行维护，
+  `CLIENT_RUNNER_EXIT` 生产分支仍无 Radar、模板判断或第二状态权威。
+- 新增行为测试单跑 `1/1`、Cloud compile exit `0`。完整历史服务测试类另有
+  `5 failures / 6 errors` 的既有时序/非法矩形夹具问题，已如实保留，不属于本次生产修复。
+- 2026-07-24 新增待验收的修罗 NPC Ctrl 保护：Ctrl fallback 的候选场景固定为本轮
+  `NpcClickPipelineState.playerLocation`；真正创建 Ctrl probe 前，Cloud 通过绑定 Client 新采集
+  一次 `178x35` 坐标条并复用 `PlayerStateLocationRecognizer` 读取当前地图/`x/y`。当前场景与候选
+  场景任一不一致、或读取失败时，返回 `ctrl-scene-changed-or-unavailable`，不得发送 Ctrl、鼠标移动
+  或探测截图。此处不恢复本地 OCR，不改变 Ctrl 候选顺序、ROI、阈值或菜单模板；待 Cloud 重启后的 fresh
+  修罗场景验证“中途人为移动后无 Ctrl 输入、任务按既有失败恢复链处理”。当前 Maven Enforcer 强制
+  `skipTests=false`，故 `mvn -q -DskipTests compile` 在 Enforcer 入口退出；已改用
+  `mvn -q -DskipTests=false compile` 完成 main compile（exit `0`，未执行测试），仍待 fresh runtime 验收。
+- 同一修罗恢复收口：首个普通左键保持轻量原路径，不增加坐标 gate 或额外截图；只有 Ctrl fallback
+  做上述刷新校验。首击失败后才刷新当前地图/坐标；与首击场景不一致时跳过旧 `Alt+C`，按新场景重跑视觉
+  pipeline 并重新采集当前图像；相同才保留原 `Alt+C` 重试。`XiuluoTaskV2` 现把 phase 内 `TaskFatalException` 与其他非 stop 异常一样归档、清理后
+  回到同轮 `PREPARE_ROUND`；仅既有连续失败上限 `10` 才能终止窗口任务。回程道具 local-service unresolved
+  改走既有“未使用 -> 接任务 fallback”，不再单独 fatal。
+
+## CR271 PATHING-FACT-TIMELINE-P1 - 2026-07-24
+
+- 状态：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH CLIENT RESTART REQUIRED`。
+- Fresh 日志证明本地 Runner 已正确产生 `STOPPED_AWAY`，实际阻断是 observation pathing fact
+  时间轴逆序，被 Cloud validator 连续 HTTP 400 拒绝；因此这不是 NPC 点击或停稳识别失败。
+- `WindowObservationSampler` 现以读取 exact intent 后的新时钟生成终态，并保持同 intent
+  `pathingStartedAtMs` 稳定；所有状态时间被规范到合法 pathing interval，clear 仍单调。
+  未改变 `2200ms` 停稳合同、导航业务、NPC 点击和 Cloud 状态机。
+- Client 观察合同 `11/11`、compile exit `0`。重启 Client 后验收同 intent
+  `STOPPED_AWAY` 被 Cloud 接收并立即推进 NPC 阶段；不得再出现
+  `pathingUpdatedAtMs must not precede pathingStartedAtMs` 或 interval validator 错误。
+
+## CR271 START-STOP-CONTROL-P1 - 2026-07-24
+
+- 状态：`SOURCE REPAIR COMPLETE / P0-P1-P2=0/0/0 / FRESH CLIENT RESTART REQUIRED`。
+- `09:29-09:31` 日志根因不是修罗状态机：首次启动等待 Cloud sidecar 约 98 秒，
+  期间重复点击创建了 7 个 UI worker；当时尚无 `WindowTurnLoop`，旧 `stopAll()` 只能返回
+  `0/5`，无法撤销仍在 preflight/ACK 前的启动线程，线程稍后继续创建 loop 并发送输入。
+- Client 现对整批远程启动实行 single-flight，并用 start epoch 贯穿 sidecar readiness、
+  本地队伍身份 preflight、逐窗口 loop 创建及 start ACK；暂停/停止先使 epoch 失效，
+  即使竞态发生在 loop 创建或 ACK 边界，也会立即停止该 exact loop，旧批次不得复活。
+- `Ctrl+Shift+F11` 恢复为暂停/继续 toggle（全暂停时恢复，其余运行态暂停），`Ctrl+Shift+F12` 保持幂等 hard stop，
+  两者均有 500ms 重复消息抑制。UI 暂停/停止使用独立中断线程，可在普通窗口命令等待期间执行；
+  恢复仍走普通串行命令，避免误切回运行。
+- Client compile exit `0`；sidecar cancellation 与 preflight focused tests `4/4`。
+  既有 `WindowRemoteTurnControlContractTest` 另有 4 个旧任务映射/身份断言失败，
+  与本卡控制链无关，本卡未为迁就旧断言改动业务映射。未运行 runtime/UI/capture/input。
+
+## CR271 LOCAL-RUNNER Pause/Resume Long-Poll Repair - 2026-07-24
+
+- 状态：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH RUNTIME REQUIRED`。
+- Fresh 日志证明队长暂停时 observation exchange 被中断，恢复后又被 Cloud 180 秒等待挡住；
+  队长因此没有战斗边沿，既无法进入既有 `Alt+8` 维护，也无法在脱战后推进。
+- Client 现以零等待发送 pause exchange，并在普通长轮询前恢复同一 per-window Runner；
+  stop 优先级、Cloud 业务状态机和现有自动战斗实现均未改变。
+- 聚焦回归与 Client compile 通过；下一轮只验收队长恢复、`Alt+8` 和脱战推进，不宣称实机已通过。
+
+## CR271 LOCAL-RUNNER-AUTHORITY-P1 - 2026-07-23
+
+- Repair #28 修复整个 Client 截图层的 ROI 边界合同：只要请求矩形与真实图像有交集，
+  左/上/右/下四边统一裁到图内，仅完全无交集才返回 unavailable。Runner 共享帧裁剪
+  与通用 HWND `captureRegion(...)` 使用同一语义；Cloud 请求合同和输入坐标仍严格校验。
+  同时，多阶段本地战斗识别不再因第一块 ROI unavailable 提前退出，后续 stage 命中仍可
+  发布 `IN_COMBAT`；无 stage 命中且存在 unavailable 时仍 fail-closed。真实五环帧回放、
+  两项聚焦测试和 Client compile 均通过，状态为
+  `SOURCE REPAIR COMPLETE / FRESH CLIENT RUNTIME REQUIRED`。
+- Repair #18 按用户批准补齐本地双证据三态：小地图锚点命中为
+  `WORLD_CONFIRMED` 并发布 `COMBAT_EXITED`；战斗模板命中为
+  `COMBAT_CONFIRMED` 并继续等待；两边均未命中或采集不可用为 `UNKNOWN`，
+  保持当前状态并按 1 秒 cadence 重试。未命中不构成相反状态事实。
+- Client compile exit `0`；未运行 runtime/UI/capture/input，fresh Client 重启后验收。
+- Repair #17 已把脱战收敛成单一 Client 事实：Runner 在已知战斗期间每秒匹配本地小地图锚点，
+  可见即 exact `COMBAT_EXITED`；不再存在 15 秒 avatar fast probe、两次 miss、Cloud
+  coordinate-readability 或 Cloud Radar 二次裁决。
+- 已删除专用 fast interest/event/gate 及 Cloud fast Radar 子路径；修罗/五倍生产调用不再触达
+  `BattleRadarService`。五环/挂机尚未迁移的普通 Radar 保留，禁止误删。
+- 真实画面生产算法重放 `11/11`、Cloud observation `18/18`、双仓 `test-compile` 均通过；
+  状态为 `SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH DUAL RESTART REQUIRED`。
+- 历史传递调用审计发现的 `NpcClickService -> BattleRadarService` P1、no-op arm API、
+  `ArmStatus` 和未使用 Radar 注入均已在 Repair #17 关闭；五环/挂机仍依赖正常 Cloud
+  Radar，禁止整类误删。
+- 状态：`REPAIR #14 DELIVERED / FRESH RUNTIME REQUIRED`。最新 fresh run 已证明 Fast Pass
+  生效，但回城后的 NPC 寻路只保留 `ACTIVE`，Client 无生产终态观察者，导致等待
+  `164.376s` 后由 watchdog 错误跨轮。Repair #14 恢复 exact-HWND 坐标条本地帧差：
+  移动中保持 `ACTIVE`，稳定 `2200ms` 写出 `STOPPED_AWAY`；Cloud 只按 exact intent 单次
+  发布终态，不再二次判定是否停下。
+- `03:18-03:22` fresh run 证明
+  Review #14 漏审 `CloudWholeTaskObserver.probeCombat()` 旁路：它仍调用 Cloud
+  `BattleRadarService`，并在 Client 已脱战后持续发布 `cloud-combat-watch` 保持
+  `IN_COMBAT`。Repair #12 已禁止修罗/五倍进入该 Cloud probe。
+- 后续 run `remote-turn-3cd107ab-af62-4411-97c5-983afc4c314a` 进一步证明 exact 脱战已到达，
+  但修罗 phase loop 丢弃进战确认返回值并将 round 降回 pending。Repair #13 已传播
+  `enteredBattleByXiuluo`，禁止确认状态降级。
+- Client：`WindowObservationSampler` 以稳定的 `combat-signal` duty 维护 per-window 机械战斗
+  时序；进入后仅以本地小地图锚点确认脱战，incidental 零 Cloud 业务边沿。
+  `DeferredReturnHomeReplayCoordinator` 以 exact token/generation 保留、武装并在真实脱战时异步重放原回程宏。
+- Cloud：修罗/五倍不再做机械战斗匹配，只消费 Client runner 的 exact
+  `IN_COMBAT/COMBAT_EXITED`；退出事件立即进入 `RETURN_HOME`，trusted correction 只武装本地重放，
+  Cloud phase 不回滚；重放成功只验证回城，失败/身份拒绝进入既有 Cloud fallback。
+- 安全边界：仅修罗/五倍 post-combat return-home；taskRun/HWND/任务替换/stop 清理；
+  cached 坐标仅支持同尺寸窗口平移补偿；每个 Bag direct-input checkpoint 重验 lifecycle；
+  OCR、导航、NPC 与业务选择不下迁。
+- Repair #12 按用户要求未跑测试；Cloud compile exit `0`。下一轮必须重启 Cloud，
+  fresh 日志不得再出现 `cloud-combat-watch:xiuluo_v2` 或 `cloud-combat-watch:wubei`。
+
+## CR271 OBSERVATION-PAUSE-RESUME-CONTINUITY-P1 - 2026-07-23
+
+- 状态：`PARENT SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH RUNTIME REQUIRED`。
+  最新无暂停轮次仍失败，是因为它复用了早先暂停/恢复已损坏的
+  `remote-turn-befd525e-80b7-4e38-bf91-3876333e7a5a`，不是该轮再次发生暂停。
+- 根因：pause 曾关闭并丢弃 per-window `WindowObservationRunner`；resume 在同一 task run 下新建
+  runner，导致 observer sequence 回到 `1`，并丢失 sampler 的 pathing replacement lineage。
+  Cloud 保留旧 sequence/current intent，故先拒绝 replay，再拒绝无 lineage 的 `CURRENT` 和错误
+  intent 的 `CLEARED/REPLACED`。后续 observation 持续 HTTP `400`，Cloud 无法发布新的
+  `fast-expected-combat-exit` interest，本地 Fast Pass probe 实际未武装。
+- 修复合同：pause/drift-pause 只 suspend observation traffic，不销毁已 ACK run 的身份状态；
+  resume 校验窗口后必须重启同一 runner 实例，保留 sequence、interest revision、未 ACK event 和
+  pathing lineage。task terminal/stop 仍必须 bounded stop、清空 retained state 并释放实例。
+  不改变 Fast Pass ROI、阈值、周期、战斗业务判定、导航、NPC 或输入顺序。
+- 父级终审：新增 sequence/interest/event 与 pathing replacement 两项回归；runner `10/10`、
+  turn-loop `7/7`、Client compile、diff-check 均 exit `0`，`P0/P1/P2=0/0/0`。
+- fresh gate：必须重启 Client 并创建新 task run；旧 run 不具备自愈条件。暂停/恢复后 sequence
+  必须连续、Cloud 不得再报 replay/current-intent lineage `400`，并须观察 exact Fast Pass interest
+  在下一场战斗成功武装与消费。
+
+## CR271 FAST-EXIT-STALE-MIRROR-RACE-P1 - 2026-07-23
+
+- 状态：`PARENT SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH RUNTIME REQUIRED`。最新 run
+  `remote-turn-20f101db-a1d8-4808-b401-1dc7e9e6f294` 中，本地 exact fast-exit 已按
+  `expectedWaitId + combatGeneration` 发布并推进 ready sequence；主任务仍看到延迟的
+  `GameContext=IN_COMBAT`，遂把正确 one-shot 当作 stale 删除，随后实际等待 `10003ms`，最后才运行
+  full radar。此前方法级绿测在登记 edge 时同步把状态改为 `FREE`，未覆盖该生产竞态。
+- 修复合同：exact identity 匹配的 fast-exit 是本轮权威机械事实；旧 `IN_COMBAT` 镜像不得删除它。
+  主任务必须在 full radar 和十秒 wait 前原子消费一次；错误 wait/generation/run/window 仍 fail-closed。
+  不改变 `20x20 / 15s / 1s / 0.35`、业务 phase、导航或输入。
+- 验收必须使用 coordinator、observer、ready-state、BattleRadar 和 task tick 的组合路径，明确复现
+  “edge 已到、镜像仍 IN_COMBAT”；要求 exact consume `1`、full radar `0`、十秒 wait `0`。
+- 落地结论：`AutoCombatService.handleCombatTick(...)` 在 stale Cloud `IN_COMBAT` 镜像尚未收敛时，
+  仍优先按 exact wait/generation/run/window 消费 Fast Exit，再考虑 full radar。父级独立命名回归通过，
+  Cloud compile exit `0`；未修改 Fast Exit ROI、阈值、周期、业务 phase 或输入。
+
+## CR271 PATHING-POSITION-DATA-PLANE-P1 - 2026-07-23
+
+- 状态：`PARENT SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH RUNTIME REQUIRED`。最新修罗实跑中 Client runner 持续运行并报告
+  `successfulSends=98`，但 Cloud pathing snapshot 约 `11898ms` 始终为
+  `ACTIVE current=null`，零 `ARRIVED/STOPPED_AWAY`、零 `PATHING_TERMINAL`；
+  `navigation.currentMap=14544ms`、task turn 持有 `21852ms`，人物已经到 NPC 附近而任务仍等待。
+- 这推翻了“revision/ACK 修复后路线终态已闭合”的旧结论：前轮只修控制面，本轮失败在数据面。
+  `successfulSends` 只表示 HTTP/ACK 成功，不能证明有效坐标样本或终态产生。
+- 修复合同：以只读基线 `696a12b0` 的 pathing watcher 阈值和 exact intent 语义为准，闭合
+  `ACTIVE -> 有效当前位置序列 -> ARRIVED/STOPPED_AWAY -> exact terminal -> Cloud retained state
+  -> task wake`。CR271 已删除完整本地 `MiniMapCoordinateReader`，禁止为修复无界恢复整套 OCR/service；
+  应优先修通现有 bounded coordinate ROI 数据链并明确记录 `validPositionSamples /
+  positionUnavailable / terminalEvents`。若现有 thin-client 无法在不复制 Cloud 算法的前提下本地分类，
+  保留 Cloud 单一识别 owner，但必须消除 `current=null` 的静默失败。
+- 验收不再以 HTTP 200 或 send count 代替业务链路：同一 exact run/window/intent 至少接受连续真实位置
+  样本，终态恰好发布一次，终态先于 park 或 park 中到达均可消费；最后一次移动到 NPC 点击阶段开始
+  的 fresh runtime 目标为约 `3-4s`，不得依赖十秒 timeout。
+- 落地结论：Client 仅给 `coordinate-strip` 绑定同快照 active pathing `intentId`；Cloud 对该 ROI
+  使用 exact window/hwnd/geometry/intent 与 freshness 栅栏，不再让无关 dialog revision 作废仍有效
+  坐标帧。真实生产截图 `灵兽村 [113,92]` 重放成功并跨无关 revision 推进 typed pathing。
+  父级审查另发现并修复“把 pathing intent 误写入所有非 dialog ROI”的 P1，避免 validator 拒绝整包。
+  Client 相关合同、Cloud 两项精确回归及两仓 compile 均通过。
+
+## CR271 FAST-EXIT-CONSUME-BEFORE-RADAR-P1 - 2026-07-23
+
+- fresh run `remote-turn-005a7151-e207-47af-bcfa-29bb4ef233f0` 证明上一轮 observer visible
+  保护已生效，但 task tick 自己仍先跑 full radar、后消费 exact fast exit，导致 `FREE`
+  被同步探测复写为 `IN_COMBAT`，one-shot 再被 stale 丢弃。
+- `AutoCombatService.handleCombatTick(...)` 现规定：已验证 exact fast-exit 且窗口为 `FREE`
+  时，消费优先于所有 radar fallback；无 exact terminal 时旧探测链保持不变。
+- 父级 review `P0/P1/P2=0/0/0`。新增精确回归 `1/1`，既有 fast/observer 合同
+  `49/49`，Cloud compile/diff-check exit `0`。需重启 Cloud 后 fresh 复验。
+
+## CR271 FAST-EXIT-PENDING-VISIBLE-RACE-P1 - 2026-07-23
+
+- fresh run `remote-turn-92876022-061e-4330-95fb-70c8c294bdd3` 证明 fast edge 已成功发布并在
+  `313ms` 内唤醒任务；实际失败是 no-turn observer 在 one-shot 退出尚未消费时用重叠
+  `COMBAT_SIGNAL=VISIBLE` 把同一战斗重新登记为新 generation，随后任务按 `IN_COMBAT` 丢弃退出。
+- `BattleRadarService` 现把 exact fast-exit pending 到任务消费定义为原子边界：该窗口内旧 visible
+  不得复活战斗；one-shot 消费后保护结束，下一场真实 visible 保持可用。未改变 fast ROI/阈值/时序、
+  完整雷达退出判定、导航、输入或业务 phase。
+- 父级 review `P0/P1/P2=0/0/0`；聚焦合同 `49/49`、Cloud compile/diff-check exit `0`。
+  fresh gate：重启 Cloud 后 fast edge 必须直接推进 post-combat，不得再出现同战 battleCount 复活
+  或 `discard stale`。
+
+## CR271 FAST-EXIT-EXACT-COMBAT-IDENTITY-P1 - 2026-07-23
+
+- fresh run `remote-turn-0b7b68b7-00cd-4573-8993-483d6dc304cb:0:XIULUO_V2`
+  已由完整雷达两次确认脱战，但任务两次以 `discard stale expected combat-exit signal` 拒绝并停在
+  `WAIT_COMBAT`。根因是 Fast Exit 先按 combat identity A arm，同 tick 后续 combat-enter 又建立
+  identity B；旧 reconcile 只处理 `PENDING`，不能替换已 `ARMED` 的 A。
+- `CloudFastExpectedCombatExitCoordinator` 现对 `PENDING/ARMED` 都执行 combat-enter reconcile：
+  identity 相同幂等，identity 改变则原子替换 exact wait/interest；`AutoCombatService` 在 confirmed
+  combat-enter 后调用该路径。Fast Exit ROI/阈值/时序、完整雷达退出判定和业务 phase 均未改。
+- 父级 review `P0/P1/P2=0/0/0`；Cloud 聚焦合同 `48/48`、compile exit `0`。
+  fresh gate：重启 Cloud 后验证脱战推进 post-combat；本地 `20x20` fast edge 仍需实跑确认，
+  fallback 即使接管也不得再因 identity 漂移卡死。
+
+## CR271 FAST-EXIT-ARM-AND-INTEREST-REVISION-P1 - 2026-07-23
+
+- 状态：`PARENT SOURCE+TEST REVIEW PASSED / P0-P1-P2=0/0/0 / FRESH RUNTIME REQUIRED`。
+- Fast Exit 根因：生产任务码是 `xiuluo_v2/wubei`，coordinator 却按
+  `XIULUO_V2/WUBEI` 枚举名授权，导致真实 observation binding 永远不能 arm。fallback 又被误记
+  为 `ARMED`，同时失去 fast probe 和完整雷达的正常频率。现按 `TaskType.getCode()` 授权；
+  无绑定时进入显式 `FULL_RADAR_FALLBACK` 并保留完整雷达，不再静默卡住。
+- NPC 长等待根因：`coordinate-strip` 与 `xiuluo-dialog` 共享 run revision，却各自把“全局 revision
+  被另一 interest 推进”误当成自身需重发，造成每周期互相 bump。Inbox 相同 interest upsert
+  现为幂等；Observer 按当前 interest 内容而非全局 revision 决定增删，两个动态 ROI 并存时 revision
+  收敛，fresh frame 可到达 `ARRIVED/STOPPED_AWAY`。
+- 未修改 Fast Exit `20x20 / 15s / 1s / 0.35`、BattleRadar 业务判定、导航/NPC phase、模板、
+  click 或输入顺序。定向测试 `32/32`，Cloud compile exit `0`。
+- fresh gate：重启 Cloud 后，修罗 confirmed combat 必须输出
+  `fast expected-exit observation armed: task=xiuluo_v2` 并由真实本地 exit event 推进；到 NPC
+  后不得再出现约 165 秒 `PATHING_TERMINAL` timeout，动态 interest revision 不得持续自增。
+
+## CR271 COMBAT-OBS-REPLACEMENT-LINEAGE-P1 observation 整包拒绝修复 - 2026-07-23
+
+- 状态：`FRESH RUNTIME FAILED / P1 SOURCE+TEST REPAIR PASSED / RESTART+RERUN REQUIRED`。
+- fresh 修罗 run `remote-turn-1820f6a3-c15e-42cb-a861-bc22cd8feab5` 中，Client 连续 `38` 次
+  observation 被 Cloud 以 `400 REPLACED pathing fact must name the current intent` 拒绝。
+  整包原子拒绝同时吞掉战斗事实，Cloud 在 `WAIT_TRACKER_SHORTCUT_PATHING` 等满 `179985ms`，
+  Fast Expected Exit 从未获得 confirmed-combat arm 前提。
+- 根因是两端合同冲突：Client 既有测试要求当前新 intent 持续携带同一
+  `REPLACED(old -> new)` 血缘；Cloud 只允许首帧替换。Cloud 现仅放行已经接受的完全相同替换血缘
+  重报，错误 lineage、clear 后复活和跨 intent 替换仍 fail-closed。
+- 验证：Cloud `CloudObservationContractTest + CloudWholeTaskObserverProductionHarnessTest`
+  `35/35`；Client `WindowObservationRunnerContractTest` `8/8`。未改 Fast Exit 参数、Client
+  sampler、任务 phase、输入或导航。重启 Cloud 后 fresh rerun 必须证明无该 400，且
+  `PATHING_TERMINAL / COMBAT_STATE_CHANGED` 在 watchdog 前唤醒任务。
+
+## CR271 FAST-EXIT-SAME-MILLISECOND-P1 同毫秒真实脱战信号恢复 - 2026-07-23
+
+- 状态：`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`。
+- P1 根因：历史 CR136 已修复的 arm 边界在 Cloud 迁移中回退为
+  `combatExitPendingAtMs <= armedAtMs`；误判快速脱战被 trusted `IN_COMBAT` 拉回后，真实 exit 与
+  下一次 arm 同毫秒时会被误删，修罗/五倍可能持续停在战斗等待 phase。
+- 修复：`BattleRadarService.isPendingExitStaleAtArm(...)` 仅把严格更旧的
+  `pendingAtMs < armedAtMs` 判为 stale；相等时间戳无法确定先后，必须保留。回归测试直接验证
+  equality、future、older 和 invalid 四个边界。
+- 验证：`BattleRadarTurnContractTest`、`FastExpectedExitObservationContractTest`、
+  `FastExpectedExitGateTest`、`CloudFastExpectedCombatExitArmLifecycleTest` 全部通过；Cloud compile
+  与精确写集 `git diff --check` exit `0`。Fast Exit 的 ROI、延迟、周期、阈值和业务消费顺序未改。
+- fresh gate：重启 Cloud 后，实跑必须证明 false-positive correction 后的真实脱战仍可被 exact wait
+  消费并推进 `RETURN_HOME`，不得再出现同毫秒 `discard stale combat-exit signal`。
+
+## CR271 TURN-40G-DIALOG-DEMAND-P1 本地 kanda2 优先与 Cloud dialog ROI 按需兜底 - 2026-07-23
+
+- 状态：`SOURCE+TEST DELIVERED / AWAITING PARENT REVIEW / FRESH RUNTIME REQUIRED`，是 TURN-40G
+  Review #27 后用户批准的 observation 调度修订，不改变修罗 phase、模板、阈值或重试次数。
+- Client 在每个 observation 周期先执行 exact-window local kanda2；普通 miss 零副作用，成功 claim
+  进入同一 dialog fact 并阻止该请求上传陈旧 dialog ROI。生产开关恢复为 enabled。
+- Cloud 不再静态订阅 `xiuluo-dialog 529x208 @2s`。动态需求为
+  `route/full-dialog OR probeOnly=false 显式确认 OR exact stopped-static fallback`；tracker
+  首次 `ARRIVED/STOPPED_AWAY` 以 Client capture/terminal timestamp 为锚，固定等待 `3000ms`，
+  exact 身份仍有效且未 `IN_COMBAT`、未 claim/click/replaced 才请求 ROI。
+- stopped-static 只分析 `capturedAtMs > fallbackEligibleAtMs` 且序号晚于 demand 创建序号的帧；
+  `probeOnly=true` 不进入 Cloud attention/prepared 链。local click、真实 `IN_COMBAT`、clear 和
+  replacement 撤销动态需求。
+- 源码门：Client `27/27`、Cloud `45/45`、双 compile、双仓 diff-check 与共享 DTO SHA 对称均通过；
+  未运行 runtime/UI/live capture/input。父级终审与 fresh deployed runtime 尚未执行。
+
+## CR271 TURN-ACTION-FIFO-P1 同窗口 HTTPS action FIFO 与 stop/restart 清栏 - 2026-07-23
+
+- 状态：`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`。这是 HTTPS turn/Cloud 后的 transport 卡；不改变五环、修罗、
+  五倍、自动战斗的业务 phase、OCR/template、点击/导航顺序或任何任务完成判定。
+- 新鲜实跑证据：`2026-07-23 10:04:52-10:06:06`，五环 `hwnd-7890F00`（`451753529`）启动后已进入
+  `PREPARE`。`FiveRingTaskV2` 的接任务坐标预热异步提交 `178x35` 坐标条 `CAPTURE`，启动急救同时提交
+  `198x17` 血蓝条 `CAPTURE`。现有 `CloudTurnExchange` 对同窗口只保留一个 `currentAction`，第二条立即返回
+  `BUSY`；`CloudPlayerStateFirstAidPort` fail-closed 抛出
+  `PlayerState first-aid turn failed closed: first-aid capture command unresolved: BUSY`，整轮在买鞋、领任务前
+  终态 `FAILED`。这两张都是 raw 裁剪 PNG，不是可直接复用的同一整图。
+- 历史佐证：已有 stop/restart 记录也证明 terminal predecessor 的 unresolved action 会使 replacement run 的
+  首次 capture 得到 `WINDOW_BUSY`。因此问题不是“血蓝与坐标”的专项规则，而是同一窗口的 command admission
+  把正常并发请求当成不可恢复错误。
+- 目标合同：`CloudTurnExchange` 按精确 `deviceId + windowId` 维护 FIFO action 队列。同窗口 action 只允许队首
+  下发到本地；队首收到并验收 exact outcome 后才推进下一项。不同窗口维持并行，不能引入全局锁。Cloud task 调用者
+  仍通过自己的 correlated future 等待本 action 的 completed/failed/stopped terminal，不得把异步队列误解释为业务成功。
+- stop 合同：收到用户 stop 后，尚未下发的队列项全部移除并以 `STOPPED` 完成；已经下发、但 outcome 未返回的
+  当前项不能伪装为“从未执行”，必须留在旧 run 的 quarantine fence 中，仅接受一次 exact outcome 用于收尾，
+  禁止它再推动后续队列或影响新 run。
+- restart 合同：新 run 必须携带新的 `startRequestId/runRevision/stopEpoch`。旧 run 的 pending 队列清空，旧
+  in-flight action 的迟到 outcome 只能收尾，不得唤醒、修改或输入到新 run；新 run 的首 action 不得因旧 action
+  返回 `BUSY`。不得用“直接置空 currentAction”规避，因为本地可能已执行旧截图/输入，必须保留 exact action
+  fence 与 correlation。
+- timeout/duplicate 合同：排队但尚未下发的 action 超时或取消必须从队列移除，不能随后变成 ghost input；已下发
+  action 的 timeout 保持 uncertainty fence，直到 stop/terminal/outcome 的既有安全路径完成。重复 actionId、
+  previousOutcome canonical hash、frame checksum 和 exact window/HWND/PID 校验保持现有语义。
+- 实施范围预期：Cloud `CloudTurnExchange`、其 action lifecycle/result model 与 `CloudTurnHttpHandler` 的
+  stop/replacement 交接；必要的 Client outcome/terminal 协议适配与双端合同测试。禁止用五环专用 sleep、
+  全窗口大截图或“BUSY 后当作业务失败/成功”的补丁替代队列合同。当前五环预热串行化可作为短期安全带，但不替代本卡。
+- 验证门：至少覆盖同窗 A/B capture FIFO（B 不得 `BUSY`）、异窗并行、stop 清除未下发 B、stop 后 A 的迟到
+  outcome 隔离、restart 后 C 不消费 A/B、重复 outcome/idempotency、queued timeout 无 ghost input；再跑 Cloud
+  compile 与相关 Client 协议合同。fresh runtime 用五环启动急救+坐标预热复现，确认两次 capture 按序完成、无
+  `BUSY`/`FAILED`，并验证 stop/restart 后旧 action 不会点击或截图到新 run。
+- 实现：Cloud `CloudTurnExchange` 已从每窗口单 `currentAction` 改为精确 `deviceId + windowId` 的
+  `pendingActions` FIFO。`execute(...)` 对同窗 action 入队并等待各自 correlated future；仅队首可由
+  `exchange(...)` 下发，前一 outcome 被 exact actionId/hash 接受时在同一锁内先推进下一项，再完成前一 future，
+  防止回调反插队。异窗仍由独立 `WindowTurnState` 并行。
+- stop/restart：显式 stop 与既有 terminal-predecessor retirement 现会清空所有未下发项并以 `STOPPED` 完成；
+  已经下发的队首移入 `retiredActions` quarantine。它的迟到 outcome 仍须经过原有 exact window、frame checksum、
+  canonical outcome hash 校验，但只作旧 action 收尾，不能推进或完成 replacement run。既有
+  `CloudTurnHttpHandler.retireTerminalPredecessorAction(...)` 入口不改业务判定，自动获得该清栏语义。
+- timeout：若 command wait 超时/中断时该 action 尚未下发，则从队首或 pending FIFO 原子移除并完成该 wait 结果，
+  后续不会成为 ghost delivery；已经下发的 action 保持原 reconnect/outcome uncertainty fence。
+- 验证：`mvn -q "-Dtest=CloudTurnExchangeContractTest" test` exit `0`，新增/更新合同覆盖同窗 A->B FIFO、
+  异窗并行、排队 B timeout 撤销无 ghost、terminal predecessor 的已下发 A quarantine + queued B stop +
+  replacement C、重复 outcome/idempotency 和既有断线/interrupt 路径；`mvn -q compile` exit `0`。未运行
+  runtime/UI/live capture/input；fresh runtime 仍必须验证五环两张不同 ROI capture、stop/restart 后本地实际输入隔离。
+
+## CR271 PAUSE-DRIFT-P1 暂停静默与窗口重绑可恢复 - 2026-07-23
+
+- 状态：`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`。这是 HTTPS turn/Cloud 后的新卡，`P` 表示 pause/drift
+  contract；不与历史 CR95 的 live identity guard 混用。
+- 本次实跑证据：`2026-07-23 08:28:21.309` 用户已对 `hwnd-7890F00`
+  （`451753529`）发出“远程暂停选中窗口”；但该窗口的 `WindowObservationRunner` 仍继续
+  取图/上报至 `observerSeq=300`。`08:28:32.233` 和 `08:28:38.233`，同一 HWND 的缓存短标题
+  `大话西游2经典版`/空角色被刷新为完整标题和 `单飞打手机°/451753529`；当前
+  `WindowRuntimeContext.detectIdentityDrift(...)` 将“未知身份 -> 完整身份”计为 drift，递增
+  identity epoch。随后 Cloud `BattleRadarService` 报 `exact outcome window metadata mismatch`，
+  `TaskExecutionContext.latestExactTurnMetadata()` 将 native generation 退休并抛
+  `WINDOW_MISMATCH`，`08:29:23.745` Client 接收 terminal `FAILED`。
+- 已确认边界：用户暂停是业务静默，不是允许继续 read-only runtime observation 的状态。暂停后禁止
+  `WindowObservationRunner` 截图/ROI 识别/战斗雷达/窗口 binding refresh/Cloud
+  `PAUSED_READ_ONLY` 请求；不得因用户临时打开其他游戏、切换账号或标题延迟补全而改变旧 task run。
+  UI 的普通展示刷新不得提交 native binding 或触发 identity drift。
+- 恢复合同：用户点击继续时才一次性重新校验当前绑定。原 HWND、PID、标题和任务角色仍精确匹配时，恢复
+  原 task run 和原 phase；不匹配时保持 `PAUSED`，记录“等待切回任务角色/窗口”，不置 `ERROR`、不发布
+  terminal `FAILED`、不清空任务上下文。后续继续请求必须可重试；切回原窗口后再恢复。
+- 安全合同：运行期真实 drift 仍禁止任何旧输入/旧截图结果落到新窗口；但其 task-level 后果必须是
+  `PAUSED + retry`，不是 `WINDOW_MISMATCH -> FAILED`。用户明确 stop 才允许终止 run。不得放宽
+  exact-HWND/role/input fence，不改变修罗、五倍、五环业务 phase、OCR/template 或点击顺序。
+- 实施范围预期：Client `WindowTurnLoop`/`WindowObservationRunner`、pause/resume 控制与
+  `WindowRuntimeContext` 的 binding/identity 状态；Cloud remote run pause 与 terminal 映射。先补
+  暂停无 observation、resume exact-match、resume mismatch 保持暂停、真实 drift 不 FAILED、切回后可恢复
+  的双端合同测试，再运行双仓编译；fresh runtime 验收必须覆盖暂停后打开其他游戏、切回、继续同一任务。
+- 实现：`WindowTurnLoop.requestPause()` 立即关闭本窗口 observer；暂停检查点已发布后，loop 在本地
+  monitor 驻留，零 binding refresh、零新 turn metadata、零 observer/`PAUSED_READ_ONLY` 观测。继续按钮只
+  发起恢复校验；loop 只在当前标题/HWND/PID 与启动 ACK 的 native generation 完全一致时清 pause 并发送恢复
+  turn，不一致则维持 pause、保留原 run、等待下一次继续请求。运行期发现 generation drift 时，Client 先用
+  已确认 generation 发布 pause，禁止 drift metadata 和任何 action 进入 Cloud，因此不会走
+  `WINDOW_MISMATCH -> FAILED`；切回原窗口后再恢复。`WindowRuntimeContext` 同 HWND 的“无可解析角色标题
+  -> 可解析完整角色标题”改为 identity enrichment，只更新身份，不清状态/不递增 drift epoch。
+- 验证：Client `WindowTurnLoopObservationContractTest` 通过（新增用户 pause 立即停止 observer 且后续零
+  heartbeat 的合同），`mvn -q -DskipTests compile` exit `0`；Cloud `mvn -q compile` exit `0`。未运行
+  runtime/UI/live capture/input。fresh runtime：启动原任务后暂停，打开或切换其他游戏窗口至少 60 秒，确认
+  `observerSeq`/观测 PNG/Cloud paused-read-only 均不增长且 task 不终态；按继续时不在原窗口应保持 PAUSED，
+  切回原窗口再次继续后恢复原 phase。
+
+## CR271 TURN-40G 队员本地维护巡检 effective-task P1 修复 - 2026-07-23
+
+- 状态：`SOURCE+TEST PASSED / P0/P1/P2=0/0/0 / FRESH RUNTIME REQUIRED`。重新打开此前
+  “本地挂机维护巡检”终审：Cloud 已把组队任务队员投影为 `AUTO_BATTLE/MEMBER`，但 Client 创建 runner
+  时错误使用请求队列 `XIULUO_V2/WUBEI`，导致四个队员均未创建 `LocalMaintenanceBroadcastRunner`。
+- `WindowTurnLoop` 现使用已接受 `TurnTaskStartAck.effectiveTaskCodes` 作为 runner 的任务身份；只有旧 ACK
+  缺 projection 时才回退 requested queue。`SpringObservationRunnerFactory` 仅在 effective queue 全部为
+  `AUTO_BATTLE` 时启动被动巡检，混合队列不跨非被动任务误巡检。
+- Spring 单例 `OpenCvLocalMaintenanceBroadcastHandler` 已移除全局 `lastSuccessfulClickAtMs`；1.5 秒成功
+  去重归每个 `LocalMaintenanceBroadcastRunner` 独立持有。固定 ROI、raw 模板、`0.85` 阈值、原子点击、
+  `FREE` gate、TEAM-TURN capability 和 Cloud 队长广播冷却均未改变。
+- Client 聚焦合同 `11/11`、main compile、精确写集 `git diff --check` 均通过。四队员并发合同证明四窗共享
+  handler 时各自成功且互不压制；未运行 runtime/UI/capture/input。fresh 验收要求队长零巡检，四队员分别
+  对正确 HWND 点击医宝宝选项，且该本地路径不产生 observation PNG 或 Cloud cooldown 更新。
+
+## CR271 TURN-40G Observation / Task-Turn 解耦 - 2026-07-23
+
+- Stage 6 父级最终 Review #27：`P0/P1/P2=0/0/0 / SOURCE+TEST PASSED / OWNER RELEASED`。
+  同序 fact/ROI 配对、旧 intent/旧序列拒绝，以及重复同意图 `CURRENT` 保留 Cloud 已观察坐标和
+  stationary clock 的合同全部闭合。父级独立验证 Cloud `70/70`、consumers/replay `3/3`、
+  Client `8/8`、双 compile、DTO `16/16` 与 Observer 禁止引用扫描 `0`。
+  TURN-40G 的 Stage 1-6 源码测试门已关闭；fresh runtime 验收仍未执行。
+- Stage 5 父级 Review #24：`P0/P1/P2=0/0/0 / PASSED`。task-owned consequence 已闭合，
+  Observer 对 Wubei gate、transfer/world settlement、Xiuluo prepared clear 为零调用；父级独立
+  验证 Cloud `68/68`、consumers `2/2`、tracker replay `1/1`、Client `8/8` 与双仓 compile。
+- 状态：`Stage 1-6 SOURCE+TEST PASSED / OWNER RELEASED / FRESH RUNTIME REQUIRED`。Observer 的
+  turn wrapper 和最后的 command/local-service 依赖已移除，全源零引用及同组回归关闭门已通过。
+
+- Stage 3 父级 Review #22：`P0/P1/P2=0/0/0 / PASSED`。Review #21 的同窗 radar 竞争已通过
+  现有 exact-window `BattleRuntimeState` monitor 闭合；完整 sample、两次 miss、pending edge、
+  expected wait/generation 与 fast-exit 消费同窗有序，不同窗口并行。父级独立验证 Cloud compile
+  与聚焦合同 `57/57` 通过；无全局锁、第二 store/queue/lease/worker 或 task-turn 回退。
+
+- 历史状态：`Stage 1-4 已通过 / Stage 5 实施中 / Stage 6 待开放`。当时 Cloud Observer 虽是独立线程，仍与主任务争用同一 task turn，
+  且部分 probe 直接调用 command/local-service，形成任务等待 Observer、Observer 等待放权的闭环。
+- 批准结构：Client per-window runner 独立采样，Cloud 无 turn 地更新 exact-run fact/prepared store 并发布
+  soft-ready；主任务醒来、重读并重新取得 task turn 后，才执行补抓图、cleanup、点击或键盘。
+- 冻结合同：fast expected-exit 的 runner/wait/generation/`15s/1s/0.35` 不变；五环五个 outside-turn
+  phase、两个 inherited-turn 连续动作例外、ready 优先级和一次性 prepared/cleanup 不变；五倍/修罗
+  phase、判断、fallback 与输入顺序不变。无已批准业务差异。
+- 分六阶段实施并逐阶段终审；最终 `CloudWholeTaskObserver` 对 `CloudTaskTurnCoordination`、
+  `TurnGameClient` 和 runtime local-service 为零引用。实施期禁止 runtime/UI/live capture/input。
+- Stage 1 的 `dialogBlocking/reason/detectedAtMs` P1 已返修并由父级 Review #18 通过；Stage 2
+  reliable timeout edge 经 Review #19 返修后，由 Review #20 以 `P0/P1/P2=0/0/0` 通过，聚焦合同
+  `43/43`、Cloud compile exit 0。Stage 3 只把既有 radar combat fact/ready 移出 turn；原 Wubei/
+  Xiuluo cleanup 由任务恢复持有 turn 后按 exact run/window/sequence 一次性消费，不新增第二状态平面。
+  Stage 4 只拆 dialog/tracker preparation，并已由父级 Review #23 以 `0/0/0`、Client `8/8`、
+  Cloud `60/60`、consumer `2/2`、tracker replay `1/1` 和双 compile 通过。Stage 5 正把 gate、路线学习
+  settlement、prepared destructive consume 与补抓/drag/input consequences 收回 owning task 持-turn 流程。
+
+## CR271 JavaFX 主窗口响应性修复 - 2026-07-23
+
+- 状态：`源码与测试通过 / 待 fresh runtime`。`MainWindowController` 不再在
+  `buildView()` 或 JavaFX Timeline 回调中同步读取 `WindowSystemSnapshot`；首屏先显示
+  “正在初始化窗口状态”，并在首份后台结果应用前禁用窗口操作与设置入口。
+- 每轮刷新由 `UiRefreshExecutor` 单线程执行并使用 single-flight admission；上一轮未完成时跳过新轮次。
+  后台每轮只调用一次 `WindowTaskControlService.getSystemSnapshot()`，同一结果派生表格可见行、统计数据，
+  并作为按钮状态、选中窗口详情和设置锁的唯一缓存快照。FX 线程只应用结果和 render。
+- `MainWindowService` / `MainWindowController` 新增 stage shown、首次可交互、首轮后台耗时、
+  `>=1000ms` 慢刷新 WARN 与关闭日志；`shutdownUi()` 停止 UI timelines 并 shutdown refresh executor。
+- 边界：未修改 task phase、OCR/template/capture/input/navigation 或 Cloud；无已批准业务差异。
+  聚焦测试 `5/5` PASS，Client `mvn -q -DskipTests compile` PASS，`git diff --check` 无错误。
+  未运行 runtime/UI/capture/input；fresh runtime 仅需确认 stage shown 后控件保持响应、初始化文案可见，
+  并检查 `[UI_RESPONSIVENESS]` 首次可交互与慢刷新耗时。
+
+## CR271 GameStateUtil 基线职责迁移完整性复核请求 - 2026-07-22
+
+- 状态：`SOURCE REVIEW PASSED / P0=0 P1=0 P2=0 / FRESH RUNTIME REQUIRED`。逐项矩阵与固定写集见
+  `docs/superpowers/plans/reports/2026-07-22-turn-card-GAMESTATE-OWNER-P1.md`；不恢复完整
+  `GameStateUtil`，由 Cloud `NavigationService` 成为地图名/近坐标纯规则唯一 owner。
+- 2026-07-22 19:54 修罗队长 `hwnd-13D1548`（角色 `67555`）执行“超级巫医”维护时，日志先确认
+  `PATHING_TERMINAL / ARRIVED`，当前位置已为 `灵兽村(117,70)`，随后目标为 `(117,69)`、默认容差 `5`；
+  按 `696a12b0` 基线应直接视为到达并进入 `NpcClickService.clickNpcSmart`。实际却反复打开小地图并改写近邻目标，
+  没有任何 tooltip/NPC smart-click 入口日志。
+- 已确认直接根因：基线
+  `D:\\mavenProject\\DHXY\\src\\main\\java\\com\\bot\\dhxy\\tools\\GameStateUtil.java`
+  的 `isNearCoordinate` 约定为“`targetMapName` 为空时只比较坐标；非空时才比较地图；负容差收敛为 `0`”。当前
+  Cloud `NavigationService.isNearCoordinate` 则无条件要求两个地图名均非空且相等；维护路径刻意传入
+  `null, ..., null, ...` 的坐标缓存检查因此恒为 `false`。这不是 tooltip 模板失败，而是到达 gate 错误，导致根本
+  到不了 NPC 点击阶段。
+- 迁移完整性缺口：当前运行的 thin client `D:\\mavenProject\\DHXY-cr271` 与 Cloud 均不存在
+  `com.bot.dhxy.tools.GameStateUtil`；基线原类共 832 行，包含移动/像素探测、飞行状态、地图标签快照与变化、地图确认、
+  地图名与近坐标、移动意图、战斗状态等职责。当前仅部分职责被拆到 local runtime 或 Cloud，且 `isSameMapName` /
+  `isNearCoordinate` 至少同时存在于 Cloud `NavigationService`、`XiuluoTaskV2`、`FiveRingTaskV2` 等多处，不能证明
+  是单一、完整、等价迁移。现有“仍由 DHXY 本地 `GameStateUtil` 执行”的注释与实际缺类状态矛盾。
+- 复核要求：以 `696a12b0` 的 `GameStateUtil` 为逐项基线，形成“原方法 -> 当前唯一 owner -> 调用入口 -> 等价证据 ->
+  重复/缺失结论”的迁移矩阵；尤其先判定 `isNearCoordinate` 应恢复为本地唯一基线调用，还是提取为本地/Cloud 共用的
+  单一纯规则。禁止继续在 Cloud 新增或修补第二份近坐标业务语义；在父级确定唯一 owner 前，不得宣称本次巫医循环已修复。
+- 父级裁决：12 个公开职责中，地图标签快照/变化、cached map confirm、movement state、`isInBattle`
+  在基线已无活调用；移动确认、飞行、direct-combat、fresh map confirm、movement intent 已有明确 owner。
+  唯一缺口为 `isSameMapName` / `isNearCoordinate` 的 Cloud 重复副本。两者收口到现有
+  `NavigationService`，任务只调用/转发，不新增类、协议、store 或 Client 往返；无业务差异。
+- Worker `Beauvoir` 已交付，父级逐文件终审确认修罗 5 个 near 调用、修罗/五倍全部 map 调用均进入
+  唯一 owner；五环只保留无条件转发 seam。父级 `P0/P1/P2=0/0/0`，Cloud 独立
+  `mvn -q compile` exit `0`。fresh 仍须验证 `灵兽村(117,70)` 到 `(117,69)` 不再重开小地图并进入
+  NPC smart-click。
+
+## CR271 TEAM-TURN-CAPABILITY-P1 队员前台放权恢复 - 2026-07-22
+
+- 状态：`SOURCE DELIVERED / COMPILE PASSED / FRESH RUNTIME REQUIRED`。
+- 根因：CR271 task-start 丢失同批 local-team session facts；Cloud 虽识别 `MEMBER`，但上下文仍是 standalone，
+  队员补给绕过既有 `FIRST_AID` capability gate，在队长寻路期间进入输入队列。
+- 修复复用基线现有两层控制：task turn 仍按原 `PATHING_STARTED` 轮转；队员鼠标动作必须等待队长显式
+  capability。未新增 lease、锁或 store，未改变导航/补给业务顺序。双仓 compile exit `0`。
+
+## CR271 TURN-40G 快速脱战本地机械探测合同 - 2026-07-22
+
+- 状态：`IMPLEMENTING / Worker Fermat / 待父级终审`。复用现有 `WindowObservationRunner`，不新增线程。
+- Client 保持基线 `20x20` 头像 ROI、确认进战后首帧建基准、15秒门、1秒周期与`0.35`阈值；正常周期零
+  PNG 上传、零 command-slot capture，命中只发 exact wait/generation 的可靠事件。
+- Cloud 仍拥有脱战业务事实、任务唤醒、回城/补给和误判拉回；trusted `IN_COMBAT` 换代 interest 后由
+  Client 重建基准。普通 Cloud battle radar 保留为保守兜底。
+
+## CR271 TURN-40G 本地挂机维护巡检与基线 1/2/6 修复终审 - 2026-07-22
+
+- `AUTO_BATTLE` 的维护广播改为 Client exact-window 本地巡检：仅 `FREE` 态、3秒周期、固定小 ROI、raw 模板
+  `0.85` 匹配和原子点击；不进入 observation HTTP，不上报业务事实，也不刷新队长广播冷却。
+- 修罗 tracker 绿链点击恢复基线左偏 X；补齐 `修罗古城`/`铁匠屋` canonical map key；五环 handover 在
+  `RUNNER_PREPARED_NOT_READY` 且标题存在时先回 `SYNC_TASK_PANEL`，避免重复接任务。
+- 父级终审 `P0/P1/P2=0/0/0`；Client `19/19` + compile、Cloud `36/36` 均通过。未运行 runtime/UI/input。
+
+## CR271 TURN-40G Cloud Frame Fence Review #12 - 2026-07-22
+
+实跑根因不是Cloud模板：首次`PATHING_TERMINAL`立即消费了同批/缓存的对话框帧，约1.8秒后按钮才出现，
+但attempt已被`CLOUD_NO_ACTION`终结。Cloud现要求`observerSeq`和Client`capturedAtMs`都严格晚于首次terminal，
+并在Client发送与Cloud分析端记录PNG尺寸/字节/SHA-256。Cloud模板、洗图链和阈值不变。本地kanda生产默认关闭，
+关闭合同保证零matcher/claim/input/event；其CLICKED状态缺口已按exact attempt/round补齐但仍不可达。双端compile及
+focused named tests通过，状态为`P0/P1/P2=0/0/0 / SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`。
+
+## CR271 TURN-40G Enter-Battle Wake Repair Review #11 - 2026-07-22
+
+- Review #10只关闭queue-run child栅栏和ROI尺寸；fresh日志证明Cloud模板`prepared=true`后Observer丢弃
+  返回动作，只发布`TASK_ATTENTION_REQUIRED`，无法唤醒等待`PREPARED_ACTION_READY`的修罗任务。
+- Observer现在核对exact-window prepared槽，必要时显式发布同一绑定动作；相同动作不重复发布，
+  `XIULUO_ENTER_BATTLE / xiuluo.enterBattle`精确匹配且只消费一次。
+- 父级终审=`P0/P1/P2=0/0/0`；生产合同`7/7`、修罗整卡`19/19`、Cloud compile通过。仍须重启
+  Cloud并fresh实跑实际点击/入战。
+
+## CR271 Identity / CR212 Member AutoBattle / Xiuluo Enter-Battle Parent Review - 2026-07-22
+
+- 四个非代表窗口均已被Cloud明确判定为`MEMBER`；失败根因是Cloud创建分配后的`AutoBattleTask`时未明确
+  选择现有生产构造器，Spring报`No default constructor found`，不是队员识别失败。
+- 修复后生产构造器显式`@Autowired`，start ACK回传Cloud实际任务队列，Client UI对队员显示`自动战斗`；
+  terminal同时携带失败原因。父级源码审查`P0/P1/P2=0/0/0`，Cloud隔离合同`64/64`，双端main compile通过。
+- Client首次绑定即通过共享窗口标题解析器填充角色名/服务器/ID。修罗本地kanda仅接受ACK queue-run的
+  `queueRunId:index:taskCode`子run；单ROI PNG上限双端对称调整为`640KiB`以容纳真实`529x208`对话框，
+  整包仍为`4MiB`。状态=`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`，必须重启双端JVM验收。
+
+## CR271 Observation Payload Envelope Repair Passed - 2026-07-22
+
+- 双端Observation完整JSON包络为有界4MiB；后续真实修罗对话框证据将单ROI原始PNG上限对称修订为
+  `640KiB`，每包最多8张及ROI尺寸边界保持不变。
+- 真实HTTP五ROI夹具明确超过旧256KiB并成功入Cloud inbox；声明超过4MiB仍返回413。Client `6/6`、
+  Cloud `19/19`通过，源码审查`0/0/0`；需重启双端JVM做fresh runtime。
+
+## CR271 Observation Payload Envelope Reopen - 2026-07-21
+
+- Fresh日志确认五ROI请求全部在Client被旧整包`256KiB`门拒绝，Cloud仅收到交替空heartbeat；因此没有
+  `PATHING_TERMINAL`，也不会进入`NPC_CLICK_SMART`。
+- 当前“单ROI原始PNG 256KiB、每包8张、整包Base64 JSON仍256KiB”合同不自洽。状态=`P1 REPAIR
+  PROPOSED / USER APPROVAL REQUIRED`；拟双端统一4MiB整包上限，保留单图与数量边界并补正负HTTP合同。
+
+## CR271 Observation HTTP Starvation Repair - 2026-07-21
+
+- 修罗停在NPC旁并非`NPC_CLICK_SMART`坐标算法失败，而是Cloud的4核心HTTP线程被阻塞式turn请求占满；
+  有界队列使observation POST排队超时，Cloud一直没有可消费的观察帧。
+- `CloudBrainServer`改为`32/32`有界执行器并允许空闲核心线程回收；Client补观察传输失败、恢复和停止摘要。
+  协议、ROI上限、task phase及输入顺序均未改变。
+- 真实HTTP五ROI合同、线程饥饿回归合同及既有观察族合计Client `6/6`、Cloud `19/19`通过；
+  状态=`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`，重启Client与Cloud JVM后验收。
+
+## CR271 NAV Observer Post-Intent Fence + Baseline Cadence - 2026-07-21
+
+- Repair #6的单序号去重仍允许新pathing intent消费创建前缓存的latest-wins坐标帧；Cloud每秒坐标采样也偏离
+  `696a12b0`的2000ms最小probe间隔，使原2200ms阈值的实际判停节奏发生变化。
+- 每个exact intent首次出现时，Cloud现在冻结当前正`observerSeq`并等待更大的post-intent序号；首个接受帧仅建立
+  timing baseline。`coordinate-strip`恢复2000ms，战斗/dialog ROI仍为1000ms。
+- `STOPPED_AWAY`阈值、ARRIVED、导航重试和修罗phase均未改变。观察收件箱/策略/生产桩/registry合计
+  `19/19`通过；状态=`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`，需重启Cloud JVM。
+
+## CR271 NAV Observer Fresh-Frame Stop Repair - 2026-07-21
+
+- Cloud Observer不再把latest-wins inbox中的同一张坐标ROI重复当作多次观察；每个exact pathing intent只消费
+  单调递增的`observerSeq`。
+- 静止时间改用Client `capturedAtMs`，Cloud排队/调度延迟只影响探测到达时间，不再制造`STOPPED_AWAY`。
+  服务端时钟仅保留intent最小年龄门，因此移动中不会再次打开小地图补点。
+- 修罗`isNearCoordinate`保持本地基线同地图+X/Y逐轴容差语义，但对Cloud已有事实零Client命令。Observer
+  `12/12`、修罗整族`19/19`，合计`31/31`通过；状态=`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`。
+
+## CR271 Stop/Restart Exact-Run Lifecycle Repair - 2026-07-21
+
+- `TURN_RUNTIME_STOP_TIMEOUT`后旧Cloud Observer继续占用窗口，导致新run角色预检`WINDOW_BUSY`并异步
+  `SKIPPED`；Client只看到早先ACK，所以错误地继续显示运行中。
+- Cloud停止现在先关闭exact run Observer，停止与Observer登记竞争由同一RunSlot收口；角色预检busy重试使用本地
+  backoff，不再占Client command slot。Cloud终态携带精确`startRequestId`，Client仅消费当前run终态。
+- `P0/P1/P2=0/0/0 SOURCE+TEST PASSED`：两仓定向合同和compile通过，共享协议三文件SHA一致；未运行
+  runtime/UI/capture/input。须重启两端JVM后验收“启动→停止→立即重启”。
+
+## CR271 Fresh Runtime Mini-map Queue Delivery Repair - 2026-07-21
+
+- fresh日志显示Cloud已算出灵兽村小地图终点`(1710,527)`，但Client没有对应输入记录；故障发生在本地输入
+  enqueue之前，不是黄字OCR或坐标映射失败。
+- pathing baseline截图现在先于最终exact-window binding冻结执行，避免截图刷新出的等值新binding对象使物理输入
+  代际门拒绝点击；Cloud动作语义与696基线顺序保持不变。
+- 新合同直接证明截图替换binding后，原子`MOVE_MOUSE/SLEEP/CLICK_LEFT`仍送达物理队列。Client相关`22/22`、
+  Cloud导航`26/26`通过；源码门通过，等待fresh runtime确认真实点击与后续移动/关图。
+
+## CR271 NAV Regression Parent Review #1 - 2026-07-21
+
+- Client pathing proof的exact-window `callWith`与确认寻路后立即关小地图的顺序已接受。
+- 本轮仍为`P0/P1/P2=0/2/2 REPAIR REQUIRED`：keep-turn `ACTIVE`缺当前`intentId`门；首轮关图后仍可见时错误地
+  再按一次`Alt+1`，未恢复基线`closeAllGenericWindows`兜底。新增source-string guard删除，重复/错误注释修正。
+- 独立卡：`docs/superpowers/plans/reports/2026-07-21-turn-card-NAV-REGRESSION-P1.md`。TURN-40G Review #4
+  exact taskRun P1仍未关闭；两卡通过前不可称正式测试就绪。
+
+## CR271 TURN-40G Parent Review - Local Kanda Production Wiring P1 - 2026-07-21
+
+- local-kanda matcher/CAS虽已实现并有isolated contracts，但生产Cloud流程未传probe-only/25秒anchor，也未在
+  Client打开同attempt的`XiuluoGreenChainSchedule`，实际不可达，父级判定`P0/P1/P2=0/1/0`。
+- 原卡退回同owner，只准恢复Git `59b85e0b`的attempt identity与anchor接线并补生产入口测试。
+- Cloud完整dialog stopped-static兜底保持不变；父级复审`0/0/0`前不是正式实机测试就绪。
+
+## CR271 TURN-40G Step 5 Cloud Dialog Path Correction - 2026-07-21
+
+- local-kanda快速通道独占`kanda2`；Cloud stopped-static不复制模板，复用原始完整dialog snapshot + 既有Cloud
+  `prepareGreenTemplateOption/enterBattleSpecs`语义路径。
+- 有限扩写Cloud `XiuluoTaskV2`以消费current-attempt verdict并保留CR232最多3次实际成功重按；phase/order不变。
+- External-A owner保留，已定向要求ACK并继续Step 5；尚未父级终审或实机验收。
+
+## CR271 TURN-40G Local Observation Runner Plan Frozen - 2026-07-21
+
+- 用户批准把常驻Observation Runner迁回本地；新原卡冻结为`READY / ZERO OWNER / IMPLEMENTATION NOT STARTED`。
+- observation使用独立HTTP平面，不再与Cloud Task争用普通turn单槽；Cloud继续拥有phase、OCR/dialog、路线学习和memory。
+- 修罗唯一主动输入例外按Git CR232/253/256恢复：`41x21`原图`local-kanda`匹配、attempt CAS、统一输入队列、
+  `ENTER_BATTLE_CLICKED`与`IN_COMBAT`分离，pathing terminal才触发一次Cloud静态兜底。
+- TURN-42M及后续删除清理在TURN-40G source review通过前阻塞；本轮只写计划，未改Java、未运行runtime/input。
+
+## CR271 TURN-40F Repair #8 Parent Final Review #12 - 2026-07-21
+
+- 父级最终source+test review=`P0/P1/P2=0/0/0`，Lorentz owner已释放；TURN-40F全部P1关闭。
+- stable-window统一为14个consumer真实生产入口，维护`STORY`恢复member/non-combat零输入安全门且不增加二次分类。
+- 父级复跑49项focused contracts、两端compile及`git diff --check`均PASS。TURN-41 data cutover证据恢复有效，状态为正式实机测试就绪；P2清理不冒充迁移完成。
+
+## CR271 TURN-40F Repair #8 Parent Review #11 - 2026-07-21
+
+- Repair #8 whole-card delivery父级结论=`0/2/0 REPAIR REQUIRED`，Lorentz owner保留并继续原卡返修。
+- P1为维护`STORY`成员/非战斗安全门缺失，以及cross-consumer stable-window测试未驱动14个consumer生产入口。
+- TURN-41数据cutover历史通过不覆盖这两个source/test阻断；父级复验前仍不可称正式测试就绪。
+
+## CR271 Tracker ABSENT Parse Repair - 2026-07-21
+
+- 修罗真实运行已完成ACK、队长预检和摄妖香使用；唯一停点为task-tracker anchor absent后，Cloud严格mapper
+  错拒协议合法的nullable image字段，异常又被runtime静默收敛为FAILED。
+- Cloud mapper现只放开协议声明的nullable creator字段，仍严格拒绝unknown/missing/trailing；runtime为任务异常和
+  terminal异常补齐带`taskCode/taskRunId/windowId`的错误日志。
+- 相关五组点名合同`48/48` PASS；fresh Cloud PID `45812`、OCR PID `40836`。状态为用户实机复测就绪，
+  未经复测不得称修罗迁移完成。
+
+## CR271 Task-Start Long-Poll Ordering Repair - 2026-07-21
+
+- Cloud task-start握手不再先进入普通60秒action long-poll；该轮以零等待登记metadata/outcome，随后activation
+  runtime并返回匹配ACK。runtime发布的第一条action保留给客户端下一turn。
+- 真实症状为首次10秒`0/1`、第二次ACK后无动作；修复后activation/exchange/handler contracts 17/17 PASS，
+  Cloud compile PASS。fresh Cloud PID `31924`、OCR PID `28476`已部署，状态为用户复测就绪。
+
+## CR271 Fresh Runtime Start ACK Gate - 2026-07-21
+
+- UI远程启动成功不再以本地`WindowTurnLoop`线程创建为准；`WindowTaskControlService`等待最多10秒的匹配
+  Cloud `taskStartAck`，ACK前不写入running状态、不报告成功，失败时清理刚创建的loop。
+- Cloud stop handler在返回前等待runtime terminal，关闭“停止已返回但旧runtime仍ACTIVE、立即重启冲突”的窗口。
+- client named tests 4/4、compile PASS；Cloud named tests 16/16 PASS。fresh Cloud PID `33608`与OCR PID
+  `24200`已部署；用户需重新启动AutoBot并复测启动、停止、立即重启。
+
+## CR271 Fresh Runtime Stop Long-Poll Repair - 2026-07-21
+
+- fresh runtime暴露stop-bearing turn仍携带普通60秒long-wait：日志实测停止耗时`59006ms`，属于协议生命周期
+  阻塞，不是JavaFX崩溃。
+- Cloud `CloudTurnExchange`现在将显式stop作为transport authority：立即`IDLE`，取消尚未执行action并向Cloud
+  caller返回typed `STOPPED`；`CloudTurnHttpHandler`同时传播runtime cooperative stop。客户端仍发送恰一次
+  final stop-bearing turn，且不会执行其返回ACTION。
+- focused tests 16/16 PASS；新Cloud PID `37340`已由fresh classpath启动；真实60秒stop-turn smoke在
+  `444ms`返回HTTP 200/IDLE。状态保持`TEST READY`，等待用户复测开始后立即停止的响应时间。
+
+## CR271 TURN-41 Real Data Cutover Passed / Test Ready - 2026-07-20
+
+- 本机production scope固定为`dhxy-local` + Windows SID，仓库外stateRoot位于
+  `%LOCALAPPDATA%\DHXY\cloud-brain\state`；hashed scope=`5f8f5fe2...fa6a71e`。
+- Inspect/DryRun/Apply/post-read均PASS，canonical counts=`22/460/600/1000/80`且四文件SHA精确匹配；backup保留。
+- 数据cutover gate已闭合，现开放用户fresh runtime；尚未运行server/UI/input，runtime通过前不称迁移完成。
+
+## CR271 TURN-41 Repair #1 Parent Review Passed - 2026-07-20
+
+- `P0/P1/P2=0/0/0`：Apply backup可发现性、失败自动四文件恢复、原异常/rollback诊断及安全JavaDoc闭合。
+- 父级复跑named tests `7+1`与Cloud compile均PASS；Huygens owner释放。
+- 仅剩真实scope三元组与实际cutover，成功前NOT TEST READY，未运行runtime/input。
+
+## CR271 TURN-41 Parent Review #1 Repair Active - 2026-07-20
+
+- `P0/P1/P2=0/1/1 / REPAIR REQUIRED`：cutover `Apply`缺少中途失败后的自动全量恢复，且成功前未暴露
+  可恢复backup路径；安全敏感public command文档也未闭合。
+- Huygens保留owner并实施事务回滚与故障注入contracts；scope三元组仍不得猜测，当前NOT TEST READY。
+
+## CR271 TURN-41 Canonical Claim Active - 2026-07-20
+
+- Huygens已在独立TURN-41原卡canonical claim并ACK；owner保留，状态=`SOURCE+TEST DATA-CUTOVER SOURCE ACTIVE`。
+- scope tracing、cutover tooling与contracts正在实施；用户fresh runtime仍blocked，尚非TEST READY。
+
+## CR271 TURN-41 Data Cutover Worker Started - 2026-07-20
+
+- Huygens已接收TURN-41 pre-runtime数据cutover；先确定实际tenant/user/stateRoot与hashed scope，再做备份、
+  schema merge及22/460/80、600/1000和map-bounds SHA验证。
+- TURN-41不再误写为纯USER_GATE：数据cutover由Worker完成，之后才开放用户fresh runtime。当前仍NOT TEST READY。
+
+## CR271 TURN-40F Repair #7 Parent Review Passed - 2026-07-20
+
+- `P0/P1/P2=0/0/0`：Cloud校正算法与当前baseline逐行等价，focused tests `6+2`及Cloud compile父级复跑PASS。
+- map-label 62/62逐字节一致；`铁匠屋.png`正确，重复资源树和旧production引用均为零。Huygens owner释放。
+- TURN-41仍需精确tenant/user/stateRoot数据cutover，尚不可用户测试。
+
+## CR271 Repair #7 ACK / Fourth Protected Baseline Subtree - 2026-07-20
+
+- Huygens已ACK全部三个Repair #7消息并保持`SOURCE ACTIVE`，stale状态正式解除。
+- baseline新增`.codex-audit-legendary-game/`独立仓库（111项），dirty 96 -> 97；FOREIGN/PROTECTED，排除迁移。
+- Repair #7验收门与TURN-41阻断不变。
+
+## CR271 TURN-40F Repair #7 Worker Resumed - 2026-07-20
+
+- Huygens已从stale恢复并接收Repair #7同卡返修；状态=`SOURCE ACTIVE / OWNER RETAINED`。
+- 固定范围仍为Cloud校正算法、production-path tests、缺失`铁匠屋.png`及重复资源树清理；TURN-41仍blocked。
+
+## CR271 Third Protected Baseline Foreign Subtree - 2026-07-20
+
+- baseline新增`.codex-audit-h5-mir/`独立工作树（445项），dirty 95 -> 96；与DHXY无关，保护且排除迁移。
+- `.codex-audit-CQWebGame/`与`.codex-audit-legend-web/`同样保持保护；Repair #7/TURN-41状态不变。
+
+## CR271 Second Protected Baseline Foreign Subtree - 2026-07-20
+
+- baseline新增`.codex-audit-legend-web/`独立工作树（12,368项），dirty 94 -> 95；与DHXY无关，保护且排除迁移。
+- 原`.codex-audit-CQWebGame/`同样保持保护；Repair #7/TURN-41状态不变。
+
+## CR271 Protected Baseline Foreign Subtree - 2026-07-20
+
+- 用户只读基线新增`D:\mavenProject\DHXY\.codex-audit-CQWebGame\`独立浅克隆，dirty count 93 -> 94。
+  它与DHXY业务源码无关，作为外部并行工作严格保护，不纳入迁移、不清理。
+- TURN-40F Repair #7与TURN-41状态不变。
+
+## CR271 TURN-40F Repair #7 Worker Stale - 2026-07-20
+
+- Huygens对18:59/19:04两个Repair #7消息连续两轮无ACK，且超过10分钟无事件/源码变化，现为
+  `COMMUNICATION_STALE + ACTIVE_STALE`。owner与冻结写集保留，不另派Worker。
+- TURN-41继续blocked；未运行构建或runtime/input。
+
+## CR271 TURN-40F Parent Review #9 / MapSurvey Correction And Asset Drift - 2026-07-20
+
+- `P0/P1/P2=0/2/1 / REPAIR #7 REQUIRED`：Cloud map-survey correction复用了历史error并以反距离平均替代
+  baseline的current-base exact delta与屏幕聚类/加权仿射/奇异和残差拒绝，校准结果会在边界更新、梯度场或脏样本下漂移。
+- Huygens保留owner，仅修Cloud唯一算法与真实contract tests；不得引入第二算法/store或把校正放回client。
+- Cloud真实`templates/map_label`缺baseline新增`铁匠屋.png`；另一个`resources/images/template/map_label`目录生产零引用且
+  重复61张。Repair #7须迁入真实consumer并删除重复副本，以manifest/SHA和零引用test验收。
+- TURN-41和用户测试继续blocked；Repair #6 focused tests/build PASS证据保留。
+
+## CR271 TURN-41 Data Cutover Contract Clarification - 2026-07-20
+
+- 六份dirty runtime JSON已分类：三个`config` canonical stores（dialog/vision/world-map route）与三个旧`data`
+  sidecar/compatibility stores。旧`data`文件不得作为第二套权威数据盲拷贝到Cloud。
+- baseline canonical规模为dialog 22 entries、vision 460 entries + 600 NPC samples + 1000 target samples、route
+  80 entries；`map_camera_bounds.json` SHA-256=`4428F7F998C11AC787A27C1DEE98D186DEB97D9A24307F2E1BD4224FB8E8A74B`。
+- Cloud通过显式`tenantId/userId/stateRoot`解析哈希私有作用域，仓内尚无目标数据。TURN-41继续blocked，须先确定
+  exact scope、备份Cloud现存文件、执行schema-compatible merge/import并核对条目数/SHA；禁止覆盖只读baseline。
+
+## CR271 TURN-40F MapSurvey Typed Turn Session - 2026-07-20
+
+- 同一HTTPS turn v1新增可选MapSurvey command/result/ack与`MAP_SURVEY_POINTER_SAMPLE`，manual command不进入
+  普通task queue；exact command/window correlation和transport retry去重为强制门。
+- Cloud唯一拥有标定session/math/persistence，client仅mechanics；无新endpoint、第二store或第五local Service。
+- Asset-byte addendum：Cloud真实consumer引用的Wubei tracker anchor与五张yellow title仍为旧SHA；Repair #4须迁入
+  当前只读baseline生产字节。四个当前baseline已删除、production零引用的旧模板仍被Cloud打包，须删除并修正
+  失真README。
+- 方法级delta gate：Cloud route OCR尚未吸收当前baseline的wrapped-continuation yellow-pixel点击中心校正；必须迁入
+  Cloud唯一owner并以marked replay证明最终点击点。整卡Review #4为`P0/P1/P2=0/5/2`。
+- Startup P1-2覆盖完整initializer：Alt+1三项、Alt+U、Alt+5/6、flying、五环background-first、queue幂等及
+  leader/member/debug/identity/left-top策略；Cloud决策、client typed mechanics，UNKNOWN不得猜测点击。
+- Enabled live-role P1：当前turn只信窗口顺序metadata，未承接baseline启用的tooltip/OCR角色预检与member任务改派；
+  必须在Cloud factory dispatch前通过同一turn恢复。
+- Prepared-action P1：Cloud还须承接baseline新增的同run owner、combat/pathing/probe、priority双阶段fence，以及
+  stale可见弹窗静止重发布、Wubei no-pathing窄例外和1000ms cooldown。
+- Five-ring post-combat P1：Cloud五环在tracker pathing期间经历战斗并完成恢复后，必须按两类五环tracker source
+  prefix定向清理旧intent再回`SYNC_TASK_PANEL`；不得无条件清空foreign/route intent。整卡Review #4为
+  `P0/P1/P2=0/8/2`。
+- Maintenance broadcast P1：当前baseline只允许固定raw ROI两模板，fixed miss即no-action；Cloud仍有生产可达的
+  full-dialog green/yellow business-option fallback。须从`TaskMaintenanceService`/`CloudUiCleanerPort`真实链删除旧fallback，
+  保留exact-window raw capture与typed click，整卡Review #4为`P0/P1/P2=0/9/2`。
+
+## CR271 TURN-40F Parent Review #4 / Full Baseline Gap Audit - 2026-07-20
+
+- `P0/P1/P2=0/3/1 / REPAIR #4 REQUIRED`：terminal settlement需失败后重试；startup map/Alt+5/Alt+6准备无新owner；
+  map-survey完整UI与Cloud calibration/persistence入口缺失。
+- Cloud保持业务/OCR/标定owner，client只留raw capture/input/manual sample；永久本地Service exact four、单HTTPS turn v1不变。
+- TURN-41与用户测试继续blocked。
+- TURN-41另有数据cutover gate：六份现有learned-memory JSON与`map_camera_bounds.json`尚未导入Cloud的
+  exact tenant/user scope；须先备份、兼容校验、一次性导入并验收，禁止覆盖只读本地基线。
+
+## CR271 TURN-40F Repair #3 Parent Review #3 - 2026-07-20
+
+- Delivery verdict：`P0/P1/P2=0/3/1 / REPAIR REQUIRED`。authoritative cleanup、pre-battle CAS与短authority lease已接受。
+- parked dialog priority/current-stale fence仍不等价；Wubei gate-open与interest登记跨两次HTTPS会形成stranded gate；pathing terminal后的transfer/world-map memory settlement缺失。
+- 必须补observer真实production tests；TURN-41与用户测试继续blocked，用户本地基线保持只读。
+
+## CR271 TURN-40F Repair #3 Parent Review #2 - 2026-07-20
+
+- Delivery verdict：`P0/P1/P2=0/2/1 / REPAIR REQUIRED`。combat-entry只清 Cloud pathing mirror，client权威 intent
+  会被后续 local read回灌；Wubei target-map gate/完整 cleanup亦未闭合。
+- observer没有执行基线 parked dialog preparation chain，`PREPARED_ACTION_READY` 目前只是 state publish hook而非
+  observer production closure；pre-battle payload/fence不完整。
+- 返修必须补生产集成测试，不接受 helper/direct publish伪闭环；TURN-41和用户测试继续 blocked。
+
+## CR271 TURN-40F Repair #3 Parent Review #1 - 2026-07-20
+
+- WIP pathing slice review：`P0/P1/P2=0/2/1 / REPAIR REQUIRED`。`PATHING_TERMINAL` 主阈值/到达判定与当前
+  本地 Runner 对齐，但其它四类 production publisher尚未实现。
+- Cloud observer 与 task thread 当前竞争同一 `CloudTurnExchange` action slot，缺 task-priority/park-only admission
+  和 bounded wake并发证据；不得用第二 endpoint/action consumer解决。
+- Huygens 继续原卡返修；TURN-41 与用户测试仍 blocked，父级未运行 Maven/runtime/input。
+
+## CR271 TURN-40F Repair #3 Ready Event Closure - 2026-07-20
+
+- Repair #2 清理/授权测试/compile 证据保留，但父级发现 Cloud Ready Event state 有 consumer 无 production
+  publisher，五类旧 Runner soft wake 全部断链；当前 `P0/P1/P2=0/1/0 / NOT READY FOR USER TEST`。
+- 固定原卡第 16 节开放 `REPAIR #3 READY / ZERO OWNER`：observer/识别/transition 全在 Cloud，客户端仅通过现有
+  HTTPS turn v1 提供 HWND raw facts；禁止恢复本地 Bus、厚 Runner、第二 endpoint/transport 或双 store。
+- TURN-41 继续 blocked；视觉 replay blocker仍保留。
+
+## CR271 TURN-40F Repair #2 Source/Test Delivered / Visual Gate Blocked - 2026-07-20
+
+- client 业务 Service 层已收缩为 exact four：`BagService`、`UICleanerService`、`GiveItemService`、
+  `QuestManagerService`；vision 与旧 `cloud/task|decision|xiuluo|remote` 均清零，点名厚 Service 生产零引用。
+- 五环香检查使用现有 HTTPS turn v1 同 action、同 bag-exclusive callback 的一次开包 continuation；Windows sleep
+  由 Cloud `HostSleepTask` 下发 `HOST_SLEEP_COMPUTER`，client 非 Service host executor 保留显式 side effect。
+- 双仓 T01=`44/44 PASS`，Cloud T02=`30 PASS`，client T03+T04=`41 PASS`，双端 compile exit 0。
+- 状态为 `SOURCE + AUTHORIZED TESTS DELIVERED / VISUAL REPLAY BLOCKED / PARENT REVIEW PENDING`：仓内没有五环
+  accept/story raw testcase，且本轮禁止 live capture，不能伪造 marked output；TURN-41 继续 blocked。
+
+## CR271 Local Host Sleep Capability Preserved - 2026-07-20
+
+- Windows sleep 属本地宿主 side effect，必须保留为非 Service host/local-operation executor；不计入四个永久
+  本地业务 Service，也不恢复客户端厚 Task。仅用户显式选择可触发，行为保持基线等价。
+
+## CR271 TURN-40F Repair #2 Exactly Four Local Services - 2026-07-20
+
+- 永久本地 Service keep set 纠正为且仅为 `BagService`、`UICleanerService`、`GiveItemService`、
+  `QuestManagerService`；禁止第五 Service。`SystemPowerService` 只能降为非 Service host executor。
+- Epicurus 接手 Wave D/E 全量 Service/OCR/旧栈迁移；一次开包约束不变，TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40F Repair #1 One-Bag Continuation - 2026-07-20
+
+- 用户冻结“一次开包”硬约束；唯一方案是在现有 HTTPS turn action 与输入独占 callback 内做有界 continuation：
+  client 上报香 observation、Cloud 决策、client 机械执行后 checkpoint/数鞋/关包。
+- 不允许第二开包、第二协议/endpoint/store、旧 sidecar 或客户端业务判断。Lagrange 恢复 SOURCE ACTIVE，
+  TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40F Partial A/B/C / Contract Blocked - 2026-07-20
+
+- remote-default start 与客户端三大厚 Task/专属 local factory 退役已落盘，client compile 据 Worker 报告 exit 0；
+  尚未整卡 delivery/父级审核。
+- Wave D/E 阻断于五环一次开包合同与 Cloud-only 香判断冲突。Worker 已 return，当前 ZERO OWNER；未运行
+  tests/runtime/input，TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40F Whole-Card Worker Active - 2026-07-20
+
+- 用户批准后台实现、父级前台独立审核；唯一 owner=`Lagrange (019f7fb5-95fa-7762-acbf-c731dfdca085)`，
+  状态 `SOURCE ACTIVE / WHOLE-CARD IMPLEMENTATION`。
+- 可写范围仅 CR271/Cloud；本地旧基线严格只读。禁止 runtime/input，TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40F Client Residual Audit Complete - 2026-07-20
+
+- 全面只读盘点确认 client production Java=`586` 文件/`124,233` 行；本地残余不只三张厚 Task，还包括
+  Service `30,843`、Vision/OCR `3,612`、旧 remote `18,627`、旧局部 Cloud decision `10,918` 行。
+- 完整报告已冻结业务 owner/本地机械保护边界及七波实施顺序：Cloud-default start、断开 factory/runner、厚
+  Task 退役、Service/OCR 收薄、旧 remote SCC 退役、双端构建/父级审核、用户 fresh runtime。
+- 当前 `PLAN AUDIT COMPLETE / IMPLEMENTATION NOT STARTED / ZERO OWNER`；未改 Java，TURN-41 保持阻塞。
+
+## CR271 TURN-40E Completion Reopened / TURN-40F Required - 2026-07-20
+
+- 用户指出 client 修罗/五环仍有 6,853/3,361 行。父级复核确认它们仍是可执行 Spring Task，
+  `DefaultTaskFactory`/`WindowTaskRunner` 仍真实调用；UI 默认启动进入 local mode。
+- 两个 remote start API 在 production Java 中只有声明、零 caller。Cloud 厚 Task 已存在不等于生产入口已切换，
+  当前不是“Cloud task + client mechanics only”。此前 TURN-41 READY 结论撤销。
+- TURN-40F 新卡冻结为完整 call-graph/write-set 审计、remote-default UI/control cutover、客户端厚 Task 与专属
+  残余零引用退役；当前 ZERO OWNER，不改 Java、不运行 runtime/input。
+
+## CR271 TURN-40E Parent Source Review #3 Passed / TURN-41 Ready - 2026-07-20
+
+- Repair #7 单 Cloud facade 文件复审 `P0/P1/P2=0/0/0`；五倍/修罗 accept-time snapshot 均恢复当前本地
+  direct-title 语义并保留 supplied absolute origin，Review #1/#2 全部 finding 关闭。
+- 23 路径、10 行为簇最终按当前本地 workspace 等价迁移；父级稳定源码现场 Cloud compile=0、
+  DHXY-cr271 compile=0，无 named tests。TURN-40E owner released。
+- TURN-41=`READY / USER FRESH RUNTIME GATE`；Agent 不启动 runtime/application/server/Task/UI/capture/input，
+  用户 IntelliJ baseline 继续严格只读。
+
+## CR271 TURN-40E Repair #7 Re-Delivered - 2026-07-20
+
+- Wubei/Xiuluo accept-time snapshot facade 现直接调用既有 `analyzeSnapshot` title/detail/green-link 主干，
+  不要求 anchor，并保留 caller supplied absolute origin；live observe/local mechanics/algorithm 均未改。
+- 唯一 Cloud production 文件完成返修，`mvn -q compile` exit 0；tests 零运行。状态
+  `WHOLE-CARD SOURCE+TEST RE-DELIVERED / REPAIR #7 / PARENT REVIEW #3 PENDING`，TURN-41 BLOCKED。
+
+## CR271 TURN-40E Parent Source Review #2 Blocked / Repair #7 - 2026-07-20
+
+- 父级复审 `P0/P1/P2=0/1/0`。Repair #6 的 tracker 参数/分支、production asset、双仓协议物理字节和
+  ownership JavaDoc 已接受。
+- 唯一 P1：Cloud 五倍/修罗 accept-time snapshot 入口错误要求 tracker anchor；当前只读本地基线及
+  `XiuluoTaskV2` 生产 caller 均直接在 supplied snapshot 中识别任务标题。
+- 原 Worker owner retained；Repair #7 仅允许同一 Cloud facade 两入口复用既有 direct snapshot 分析。
+  TURN-41 继续 BLOCKED，本地 workspace 零写入，无 tests/runtime/input。
+
+## CR271 TURN-40E Repair #6 Re-Delivered - 2026-07-20
+
+- Review #1 的 tracker P1 已闭合：Cloud 唯一识别 owner 使用 Wuhuan/Xiuluo raw title，共同 live/full-window/
+  replay 主干吸收 baseline geometry、detail、green-link 与 progress-tail 全部指定差异。
+- Wuhuan yellow-title production asset SHA 符合指定值；双仓 `TurnFramePurpose` byte-identical；facade 只修
+  local mechanics 独占 cache/ROI/fallback/drag/final capture 的说明，无第二 cache/算法。
+- `TURN-40E WHOLE-CARD SOURCE+TEST RE-DELIVERED / PARENT REVIEW #2 PENDING`；双端 compile exit 0，
+  tests 零运行，TURN-41 BLOCKED，未写 Approved。
+
+## CR271 TURN-40E Parent Source Review #1 Blocked / Repair Required - 2026-07-20
+
+- 父级结论 `P0/P1/P2=0/1/2`。Cloud tracker 仍保留旧 `panel_title.png`/yellow wash、旧
+  panel/detail geometry 及旧 green-link/progress-tail 解析，未吸收当前本地 tracker 差异与新 raw title asset。
+- 双仓 `TurnFramePurpose.java` 物理 SHA/换行不一致；Cloud facade 注释仍描述旧属主。原 Worker owner
+  retained 返修，TURN-41 继续 BLOCKED；本地 baseline 不写不 build，暂无测试资格。
+
+## CR271 TURN-40E Whole-Card Delivered / Parent Review Pending - 2026-07-20
+
+- 23 路径和 10 行为簇已按 thin-client/HTTPS/Cloud 唯一属主闭合；Repairs #1-#5 全部进入原卡 ledger。
+- DHXY-cr271 `mvn -q -DskipTests compile` 与 Cloud `mvn -q compile` 均 exit 0；无 named tests 授权，零测试执行。
+- 状态为 `TURN-40E WHOLE-CARD SOURCE+TEST DELIVERED / PARENT REVIEW PENDING`，不是 Approved；TURN-41
+  继续 BLOCKED，等待父级 P0/P1/P2 审核。
+
+## CR271 TURN-40E Plan-Contract Repair #5 / Default Mask Owner - 2026-07-20
+
+- main compile 暴露 thin client 缺少 Repair #2 指定的 default-window mask owner；禁止恢复完整 OCR Service。
+- 新增与 Cloud 同路径 byte-identical 的 pure/stateless `OcrWindowScanService` subset；tracker 和两处 NPC local
+  mechanics 共用并删除重复 masks。客户端仍只持 capture/preprocess mechanics，Cloud 仍独占识别决策。
+- `TURN-40E SOURCE ACTIVE / REPAIR #5 / OWNER RETAINED`；双端 compile/整卡 delivery 待续，TURN-41 BLOCKED。
+
+## CR271 TURN-40E Plan-Contract Repair #4 / First-Aid Mouse Cleanup - 2026-07-20
+
+- Cloud 唯一 first-aid mechanics assembler 已加入写集：非空 target 仍单 command、每个右键后 800ms，最后
+  恰好一次随机安全点 `MOVE_MOUSE -> WAIT(300)`；空/healthy/disabled 路径零鼠标动作。
+- 同一 port 的旧 capture-before pointer clear 必须删除，匹配当前本地“仅真实补给后移开”语义；无第二 submit、
+  retry、store 或协议。`TURN-40E SOURCE ACTIVE / REPAIR #4`，TURN-41 BLOCKED。
+
+## CR271 TURN-40E Plan-Contract Repair #3 / Alt+A Mask Equivalence - 2026-07-20
+
+- 当前本地 Alt+A 直战明确关闭 NPC profile region masks；Cloud 唯一 `ImageAlgorithms` 入口此前无此参数。
+- 追加该唯一算法属主文件，只增加 boolean overload 并让旧入口默认 true；normal=true、direct-combat=false，
+  其余 profile/candidate 算法完全不变。禁止在 recognizer/service 复制第二 mask 算法。
+- `TURN-40E SOURCE ACTIVE / REPAIR #3 / OWNER RETAINED`；TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40E Plan-Contract Repair #2 / Tracker Same-Turn Closure - 2026-07-20
+
+- 父级选择现有 turn `LOCAL_SERVICE` 作为唯一 tracker mechanics 通道：DHXY 独占 window-relative cache、
+  cached ROI、masked full-window fallback、必要 drag 与 post-drag capture；Cloud 独占 title/green/ranking。
+- 双仓强类型协议、DHXY dispatcher/executor/runtime cache 与 Cloud same-turn client/consumer 写集已补入原卡；
+  禁止 dedicated tracker step、dormant remote fact、Cloud `pendingRepositions` 和第二算法/store。
+- `TURN-40E SOURCE ACTIVE / REPAIR #2 / OWNER RETAINED`；TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40E Plan-Contract Blocked / Tracker Local Cache Transport - 2026-07-20
+
+- Repair #1 的 `taskMaxRuns` 同协议闭包已实现并双端 compile；`CloudTurnTaskFactory` 未改，无第二 store/global mutation。
+- LD-03 现有 runtime 调用链仍是 Cloud `TaskTrackerPanelService.observe` -> generic `TurnGameClient.capture/execute`；
+  anchor matching/reposition cache 留在 Cloud，而本地 `TaskTrackerPanelCaptureLocalMechanics.capturePanel` 零 caller。
+- `TURN-40E-PCB-02`：父级须先扩写集并冻结 tracker local cache/cached ROI/masked fallback 通过现有 HTTPS turn
+  的唯一强类型命令闭包；不得复活 dormant remote fact 形成第二协议。TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40E Plan-Contract Repair #1 - 2026-07-20 00:16 EDT
+
+- run-count transport 缺口已由父级补齐：同一 HTTPS `TurnTaskStartRequest` 以 index-aligned
+  `taskMaxRuns` 携带 exact queue element 配置，Cloud immutable task context 消费；无第二 store/protocol。
+- Worker claim 后 production 零写入再报 blocker，原 owner retained；按修复后写集继续，TURN-41 blocked。
+
+## CR271 TURN-40E Plan-Contract Blocked / Remote Run Count - 2026-07-20 00:13 EDT
+
+- Worker 已 canonical claim；Wave 0 证明本地修罗/五倍次数没有进入现有 HTTPS start request，Cloud Task
+  实际读取 Cloud 全局 `BotProperties`，无法保证 exact window/taskRun 的 `0=无限` 与正数语义。
+- 阻断号 `TURN-40E-PCB-01`。必须先扩写集到双仓 `TurnTaskStartRequest`/validator、DHXY
+  `WindowTaskControlService`、Cloud runtime/factory 与 `WubeiTask`，并冻结 ordered queue element 的 count
+  表示；不得增加第二协议/store 或修改 Cloud 全局配置模拟 per-run 事实。
+- production/resource 零写入，未运行 Maven/runtime/tests；TURN-41 继续 BLOCKED。
+
+## CR271 TURN-40E Whole-Card Ready - 2026-07-20 00:05 EDT
+
+- 用户要求后台 Worker 将当前本地 workspace 全部逻辑等价迁入 CR271，完成后由父级本人终审。
+- TURN-40E 整卡冻结 23 个 production Java 差异、10 个行为簇、双仓写集和 compile/ledger 证据；当前
+  `WHOLE-CARD READY / ZERO OWNER`，待 Worker canonical claim。
+- TURN-41 保持 `BLOCKED / TURN-40E REQUIRED`；本地运行基线严格只读，禁止 runtime/input/capture。
+
+## CR271 Post-696 Local Delta Migration Gate - 2026-07-20 03:25 EDT
+
+- 用户确认 `D:\mavenProject\DHXY` 当前 workspace 业务逻辑全部需要迁入 CR271；本地基线继续严格只读。
+- 已建立 post-696 行为簇迁移计划；Cloud 接业务决策/识别/task phase，本地保留 HWND capture/input/窗口缓存和
+  永久本地 Service，禁止第二协议、第二 store 或双算法。
+- TURN-40B/C/D 原源码审核保持通过；TURN-41 回退为 `BLOCKED / POST-696 LOCAL DELTA MIGRATION REQUIRED`。
+- 本轮无 Java/build/runtime/input mutation。
+
+## CR271 TURN-40D Pass ACK Closed / Communication Recovered - 2026-07-19 22:56 EDT
+
+- A 已具名 ACK Review #3 pass/release 消息，TURN-40D owner release 与通信恢复终态闭环；A/C 均 idle。
+- TURN-41 仍为 `READY / USER FRESH RUNTIME GATE`，不由 Agent 领取或启动 runtime/input/capture。
+
+## CR271 TURN-40D Review #3 Passed / TURN-41 Ready - 2026-07-19 22:48 EDT
+
+- TURN-40D Repair #2 父级 `P0/P1/P2=0/0/0`：九路径源码、selected public entry、guard cleanup policy、
+  22T family 与 compile 全闭合；A owner released，communication recovered。
+- 父级现场 compile=0、isolated named family=22/22；Maven aggregate 仍被卡外旧 testCompile 债阻断。
+  TURN-41 开放 `READY / USER FRESH RUNTIME GATE`，不由 Agent 启动应用或输入。
+
+## CR271 TURN-40D Repair #2 Source Active / Communication Stale - 2026-07-19 22:41 EDT
+
+- Review #2 对症源码已在原九路径内落盘：guard=`53BD6055`/241L；loop test 最新观察
+  `0FD0324A`/922L，包含 selected public entry 与 exact-created-loop cleanup policy WIP。
+- 仍非 delivery；A 尚未具名 ACK `2216+2226`，communication stale 保留。Java writer active，不跑 Maven。
+
+## CR271 TURN-40D Parent Review #2 Blocked / 0-1-0 - 2026-07-19 22:26 EDT
+
+- Repair #1 的 JavaDoc 与六项 guard/control lifecycle 证明有效，但 public selected-task start 从未被测试调用；
+  start-failure exact-loop registry cleanup 亦只有不可达说明，没有 §19.5 要求的 executable proof。
+- 原九路径内返修：补 `startRemoteSelectedTask` success + missing/UNKNOWN rejection，并把 guard 的 exact-created-loop
+  cleanup policy 形成可直接执行的同包测试边界；禁止新增 factory/store/第二生命周期。A owner 保留，
+  `COMMUNICATION_STALE` 继续，须 ACK `...2216+...2226` 后整卡重交。
+
+## CR271 TURN-40D Repair Source Active / Communication Stale - 2026-07-19 22:16 EDT
+
+- A 连续两轮未具名 ACK Review #1 消息，故标 `COMMUNICATION_STALE` 并追加 `...2216` 定向消息；sole owner
+  保留。下一 STATUS EVENT 必须 ACK `...2200+...2216`。
+- 两个测试路径已推进至 control test=`03030069`/201L、loop test=`29C96D0A`/733L，故不是
+  `ACTIVE_STALE`。仍为返修 WIP、非 canonical re-delivery；Java writer active，未跑 Maven/runtime/input。
+
+## CR271 TURN-40D Parent Review #1 Blocked / 0-1-1 - 2026-07-19 22:00 EDT
+
+- P1：当前 12T 只覆盖 mapping/metadata 与 loop final-stop，未调用新增 public control entry 或 4-arg guard start；
+  §19 要求的 mutex、start attach/ack、pause/resume、guard stop/unregister、failure cleanup 尚无行为证明。
+- P2：control test JavaDoc 仍把 R2 已裁决的 lifecycle test placement 写成 pending question。A owner 保留，
+  同卡 `BLOCKED / REPAIR REQUIRED`；父级 main compile exit0，Maven named family 被既有全局 testCompile 债阻断。
+
+## CR271 TURN-40D R2 ACK / Ninth Path Active / 6 Of 9 - 2026-07-19 21:55 EDT
+
+- A 已 ACK `...2111+2121+2141`，R2 冻结解除、通信同步、sole owner 保持。existing loop contract test 已从
+  `E91B5E2A`/273L 推进为 `0085BCB8`/334L，承接 final-stop lifecycle 行为证明。
+- 当前 6/9 source active，尚非 delivery/review；Java writer active，父级不跑 Maven/runtime/input。稳定后仍须
+  两类 named family、compile、canonical 9-path delivery 与父级逐文件终审。
+
+## CR271 TURN-40D Communication Recovered / R2 ACK Pending - 2026-07-19 21:45 EDT
+
+- 账本物理顺序确认 A 的 21:45 event 位于 R2 之后；其已 ACK `...2111+2121`，故清除 communication stale，
+  但尚未 ACK R2 `...2141`。A sole owner 保持，整卡仍 5/9 WIP frozen。
+- Q1 已由 R2 指定 existing loop contract test 承接；Q2 三个 no-change 路径保持 clean。A 报 compile exit 0
+  与 control test 9/9 isolate-run，仅登记 WIP 证据；R2 两类 named family 与后续 compile 仍是交付门。
+
+## CR271 TURN-40D Plan-Contract Repair R2 / 5 Of 9 Frozen - 2026-07-19 21:41 EDT
+
+- 新 control test=`44AD81C9`/200L 无法直接构造 package-private loop；其 prose disclaimer 不构成 stop 行为证明。
+- 完整依赖/collision 审计确认 tracked-clean `WindowTurnLoopContractTest=E91B5E2A`/273L 已有唯一合适 harness。
+  原卡从 8 扩为 9 路径：control test 保留 authority 覆盖，loop test 承接 single-stop/zero-action/unregister proof；
+  named family 改为两个类。当前 5/9 WIP frozen。
+- A owner/communication stale 保持；ACK `...2111+2121+2141` 前停止新增 Java/Maven，无 runtime/input。
+
+## CR271 TURN-40D Stop-Action Source Repair Landed - 2026-07-19 21:27 EDT
+
+- loop=`19B69135`/417L 已在响应分派前检查 `stopCheckpoint`，final stop-bearing turn 不再执行返回 ACTION；
+  `...2111` 的源码缺陷闭合。
+- named zero-action/removal-order proof 和 `...2111+2121` ACK 仍待；communication stale、A owner、4/8 不变，
+  未运行 Maven/runtime/input。
+
+## CR271 TURN-40D Communication Stale / Source Active - 2026-07-19 21:21 EDT
+
+- A 连续两个 physical STATUS EVENT 未 ACK stop-action message `...2111`，现标 `COMMUNICATION_STALE`；已发
+  `...2121`，下一事件须同时 ACK 两个 id。
+- control=`3E2A0D06`/712L 仍在变化，因此不标 `ACTIVE_STALE`。A sole owner、4/8 与 stop-action gate 不变；
+  未运行 Maven/runtime/input。
+
+## CR271 TURN-40D Control Source Started / 4 Of 8 - 2026-07-19 21:16 EDT
+
+- `WindowTaskControlService=B7BE569E`/497L 已进入 active WIP；guard=`44770301`/233L 已加入 live-loop
+  pause/resume 路由。整卡推进到 4/8。
+- A sole owner、Java writer active；stop-action gate `...2111` 首轮 ACK 待回，未重复发消息或运行 Maven/runtime。
+
+## CR271 TURN-40D Loop Repair Source / Stop Action Gate - 2026-07-19 21:13 EDT
+
+- `WindowTurnLoop=868E4BC5`/412L、`TurnModeGuard=E9FD87AE`/200L 已落 loop-owned checkpoint、flag union 与
+  graceful `requestStop`；整卡仍为 3/8 WIP。
+- 父级发现 final exchange 的响应分派未检查 live stop checkpoint，Cloud 返回 `ACTION` 时可能继续执行新业务/
+  输入动作。已向 A 发具名 repair message；交付门要求 single send、zero returned-action execution、then unregister。
+- A sole owner 保持，ACK 待回；Java writer active，未运行 Maven/runtime/input。
+
+## CR271 TURN-40D Repair R1 ACK / Repair Active - 2026-07-19 21:00 EDT
+
+- A 已具名 ACK R1 并撤回三项被拒设计，保留 sole owner，在原八文件内按真实 696 authority、loop-owned
+  checkpoint 和 final stop turn 返修。当前仍 3/8，guard=`4AEF9A83` 待修，未运行 Maven。
+
+## CR271 TURN-40D Plan-Contract Repair / WIP Frozen - 2026-07-19 20:55 EDT
+
+- 同秒竞态 `TurnModeGuard=4AEF9A83`/198L 已登记为修约前 WIP：直接 stop/await/remove 未满足 final
+  stop-bearing turn，仍为 3/8，不计新完成路径。
+- 父级拒绝 taskless remote start 将六项 authority 机械写成 `false/null/NORMAL`，并拒绝 control-side
+  checkpoint map 成为 registry 之外的第二 lifecycle owner。现有 3/8 WIP 保留冻结。
+- 原八文件内修复：按 `696a12b0` 复用 SAME_TASK team/role 事实，SELECTED_TASK 逐窗口解析；pause/stop
+  归 live loop，stop-bearing turn 必须在 stopped/unregister 前恰好发送一次。A ACK 后方可继续。
+
+## CR271 TURN-40D First Source Batch / 3 Of 8 Landed - 2026-07-19 20:40 EDT
+
+- A 已落 loop=`569E9F01`、registry=`5315553F`、guard=`5DBB924D`；其余 5 路径未变/测试 absent。
+- 初核 start-request set-before-start、uncertain resend 与 matching-ack 停附均复用 HTTPS turn validator，保留
+  旧 registry 签名且不改写集外 factory/第二协议。整卡仍 WIP，父级未跑 Maven、未作 final review。
+
+## CR271 TURN-40D Canonical Claim / External A Source Active - 2026-07-19 20:25 EDT
+
+- TURN-40D 原卡 EOF 已出现 physically-earliest External A whole-card self-claim；父级确认唯一 owner。该领取为
+  Worker canonical self-claim，不是父级派卡。
+- 固定 8-path 与 lifecycle 验收不变，当前 `SOURCE ACTIVE / RECON`。A 已 ACK 40C 终审；C anti-race
+  precheck 后退出竞争。尚无 Java/构建变化，父级未运行 Maven。
+
+## CR271 TURN-40C Review #2 Passed / TURN-40D Ready Zero Owner - 2026-07-19 20:14 EDT
+
+- TURN-40C Repair #1 父级 `0/0/0`：`destroyMethod=""`、8T activation proof、35/0/0 family、compile 0、
+  15-path collision audit 全闭合；A owner released，communication stale 清除。
+- TURN-40D source gates 已满足。7 个生产路径均 clean，新增测试路径无现存 collision；固定 8-path 原卡已
+  冻结并开放 `READY / ZERO OWNER`。总账不派卡，只允许 Worker 从原卡 EOF canonical whole-card self-claim。
+
+## CR271 TURN-40C Repair Source Active / Communication Still Stale - 2026-07-19 20:14 EDT
+
+- config=`FBB02200`/176L 已落 `@Bean(destroyMethod = "")`；activation test=`8B1E11C3`/397L/8T 已新增
+  deterministic annotation assertion。其余 13 路径 SHA 不变，15-path 无扩张。
+- 清除 repair-active stale，改为 `REPAIR_SOURCE_ACTIVE`；A 未 STATUS ACK 四个待确认 id，communication stale
+  暂保留。新增测试使冻结 family 变为 35T（8+3+24），build/re-delivery 待续，父级不并发 Maven。
+
+## CR271 TURN-40C Communication + Repair Active Stale / Owner Retained - 2026-07-19 19:59 EDT
+
+- Review #1 返修消息连续两轮无 A STATUS ACK，标 `COMMUNICATION_STALE`；返修源码超过 10 分钟无变化，
+  同时标 `REPAIR_ACTIVE_STALE`。A sole owner/15-path 保留，不释放、不转交。
+- P1 及 repair gate 不变：`@Bean(destroyMethod = "")`、activation no-second-close proof、冻结 34-test family
+  与 compile/test-compile 后重交。父级追加具名 stale message，未并发运行 Maven。
+
+## CR271 TURN-40C Parent Source+Test Review #1 Blocked / Repair Required - 2026-07-19 19:47 EDT
+
+- canonical 15-path delivery 已终审，结论 `P0/P1/P2=0/1/0`；External A sole owner 保留，状态回退为
+  `SOURCE+TEST REVIEW BLOCKED / REPAIR REQUIRED`。
+- P1：`CloudTurnRuntimeConfiguration.cloudTurnTaskRuntime()` 的默认 `@Bean` 会让 Spring 对 public
+  `CloudTurnTaskRuntime.close()` 推断销毁方法。Server 已显式先关 runtime，随后 `host.close()` 又随 context
+  关闭同一 runtime，破坏冻结的 exact-once runtime→host→server→executor 顺序，并可能产生第二次 5 秒 join。
+- 返修保持 15-path：runtime bean 设 `destroyMethod = ""`，activation test 必须证明 host context 不拥有
+  runtime close；重跑 34-test family、compile/test-compile 后 canonical re-delivery。父级本轮未跑 Maven。
+
+## CR271 TURN-40C Activation 7/7 Passed / Communication Recovering - 2026-07-19 19:40 EDT
+
+- A 已 ACK R5 `1924`，并报告 R5 host graph 完整 refresh 0 bean error；通信从 stale 转为 recovering。R1
+  `1926` 与 stale `1930` 仍待 ACK，A owner/15-path WIP 保留。
+- activation 修后源码为 `7B418DF0`/376L/7T，A 已报告点名测试 `7/7 PASS / EXIT 0`；host refresh 与
+  activation 门闭合。stale/recovery 尾部消息仍待 ACK，通信保持 recovering。
+- 全 family、compile/test-compile 与 canonical delivery 待续；非 active stale、非 source review，父级未跑 Maven。
+
+## CR271 TURN-40C Communication Stale / Source Still Active - 2026-07-19 19:30 EDT
+
+- A 连续两轮未 STATUS ACK R5 `1924` 与 R1 `1926`，现标 `COMMUNICATION_STALE`；owner 与 15-path WIP 保留。
+- activation test 仍在推进至 `864BFC9F`/369L/7T，故不标 `ACTIVE_STALE`。config/Host/Server 分别保持
+  `4E91D53E/05FB55E9/CA2A1EF4`；尚无 canonical delivery、refresh/named/build 证据，父级未跑 Maven。
+
+## CR271 TURN-40C R5 Assembly Source Landed / ACK Pending R1 - 2026-07-19 19:28 EDT
+
+- Host `05FB55E9` 保留旧 overload 并注册 caller-supplied non-null engine；Server `CA2A1EF4` 将其唯一 legacy
+  route `DecisionEngine` 传入同一 host；activation test `3922CBAA`/7T 使用新 seam。连同 scoped OCR bean
+  `4E91D53E`，R5 两项装配源码均已落盘，未见第二 engine/store、scan 或 15-path 扩张。
+- 尚无 A 对 R5 与 R1 reminder 的 STATUS ACK，也无 refresh/named/build/delivery 新证据；当前仍为第一轮 pending，
+  owner/WIP 保留，非 delivery/review，父级不并发 Maven。
+
+## CR271 TURN-40C R5 Scoped Bean Landed / Registry Restored To 88 - 2026-07-19 19:26 EDT
+
+- A 已在 runtime configuration 落实 R5 scoped OCR memory bean：`4E91D53E`/173 physical lines，使用现有
+  `CloudServiceStorage` scope root 和真实 `OcrRoiMemoryService(Path)`，无 direct import/global `config/`/
+  第二 store。R5 ACK 仍为第一轮 pending；owner/WIP 保留，DecisionEngine host seam 与 build/delivery 待续。
+- 第 16 节曾误少 `TURN-40B-C1/C2/C3/C4` 四张已有固定原卡，现按各卡最终 parent review physical EOF
+  恢复为 88 行。四卡均保持既有 passed/owner-released/build 结论，不重开、不分派。
+
+## CR271 TURN-40C Plan Contract Repaired R5 / Scoped OCR Store Correction - 2026-07-19 19:24 EDT
+
+- R5 纠正 R4 的 OCR 装配措辞：不得直接 `@Import OcrRoiMemoryService`，因为其无参生产构造器会绑定进程
+  工作目录全局 `config/`。应在可写 runtime configuration 内用现有 `CloudServiceStorage` 的 tenant/user
+  `resolvePrivateFile("vision_memory.json").getParent()` 构造真实 `OcrRoiMemoryService(Path)` 单例 bean，使
+  `vision_memory.json` 与 legacy 文件都位于同一 scope root；不新增 store/路径/算法。
+- 同一 `DecisionEngine` host 注册口径不变。R5 supersedes R4；15-path、owner、测试门与卡外 foundation
+  collision 均不变，A 只依据 R5 ACK 后恢复。
+
+## CR271 TURN-40C Plan Contract Repaired R4 / Complete Constructor Closure - 2026-07-19 19:18 EDT
+
+- 父级完成 Cloud 实盘全图审计：`CloudServiceConfiguration` 的已迁移 service scan 与四个真实 task prototype
+  在当前 WIP 下只剩两个非扫描必需项。`CloudTurnRuntimeConfiguration` 仅再显式导入真实
+  `OcrRoiMemoryService`；`CloudServiceHost` 接收并注册 `CloudBrainServer` 已创建的同一个
+  `DecisionEngine`，保留其 `routeClickOverride`，禁止第二实例、复制算法或扩大 scan。
+- R4 不增加 Java 路径，仍是完整 15-path 整卡。A 已 ACK R3、通信 current、owner/WIP 保留；具名 ACK R4 后
+  可恢复 host refresh、冻结 named family 与 compile/test-compile。foundation 7 个卡外 decimal-HWND fixture
+  error 继续单列，不得修改其 fixture/owner 写集。
+
+## CR271 TURN-40C Communication Recovered / Plan Audit Continues - 2026-07-19 19:05 EDT
+
+- A 已三重 ACK 并清除 communication stale，且暂停新增 imports；R3 block 因竞态待 ACK。
+- broad service scan 的 eager whole-graph 与四 task 真实依赖边界需要父级一次性分类。卡继续
+  `PLAN-CONTRACT BLOCKED`，不向用户抛 A/B/C 选择，不恢复 Java/Maven。
+
+## CR271 TURN-40C Plan Contract Blocked / Full Import Closure - 2026-07-19 19:04 EDT
+
+- A 已 ACK Repair R2 核心消息，`TurnGameClient` ctor 修复有效；通信进入 recovering，尾部 R1/stale ACK 待补。
+- Config=`15E6F1E7` 已逐层 import dialog/UI ports，host refresh 又露非扫描 `OcrRoiMemoryService`，证明现合同
+  仍非完整 constructor DAG。卡回退为父级 full import-closure audit；A owner/WIP 保留，暂停新增 import、
+  Java/Maven，等待一次性合同修复。无业务选择或业务差异。
+
+## CR271 TURN-40C Communication Stale / Owner Retained - 2026-07-19 18:59 EDT
+
+- A 连续两轮未 ACK Repair R2 原消息与 R1 reminder，通信状态转 `COMMUNICATION_STALE`；owner 不释放，
+  `TurnGameClient=1B203987` 及 15-path WIP 保留。
+- 已追加 stale 定向 id，下一 A STATUS EVENT 须三重 ACK 并报告构建/测试/交付。源码变化距本轮不足
+  10 分钟，未标 `ACTIVE_STALE`；尚无 canonical delivery/review。
+
+## CR271 TURN-40C Fifteenth Path Landed / ACK Pending R1 - 2026-07-19 18:55 EDT
+
+- `TurnGameClient=1B203987`/221L 已按 15-path 合同完成生产 ctor `@Autowired`；测试 seam、`bind()`、业务
+  方法保持。尚无 canonical delivery/review。
+- A 未在 STATUS EVENT 具名 ACK Repair R2，当前第一轮漏回执、未达 stale；已定向 reminder。A writer active，
+  父级不跑 Maven，等待 host refresh/授权 family/build 与整卡交付。
+
+## CR271 TURN-40C Plan Contract Repair #2 / 15-Path Closure - 2026-07-19 18:48 EDT
+
+- 14-path 已 implementation + compile/test-compile `EXIT 0`，但 host refresh 到 scanned `TurnGameClient` 时因
+  三构造器无 Spring selection 阻断；factory/runtime tests 已推进至 `FEFB6DC2`/`DB3A486A`。
+- 父级完成两个 component-scan root 的全量多构造器闭包核对，确认它是唯一遗漏。原卡追加该 1 路径，
+  冻结为仅给三参数生产构造器加 `@Autowired`；测试 seam、`bind()`、业务方法及单一 client bean 不变。
+  A owner 保留，待具名 ACK 后恢复；不是业务选择，尚非 delivery/review。
+- A 随后报告 foundation family 23/30、7 ERROR；父级源码核实错误来自写集外 untracked `remote/run`
+  decimal-HWND 校验与既有 `"hwnd-" + windowId` fixture 冲突，并早于 40C authority seam。记为独立 build
+  collision，不纳入 40C Java 写集、不据此判 40C source 缺陷。
+
+## CR271 TURN-40C Runtime Contract Test WIP - 2026-07-19 18:34 EDT
+
+- `CloudTurnTaskRuntimeContractTest=1D9D32D3`/825L 已进入连续返修；追加路径进度 6/7，仅 factory test 未变。
+- 尚无 test-compile/named family/canonical delivery；A active，父级不跑 Maven。
+
+## CR271 TURN-40C Production Mechanics Complete / Main Compile Exit 0 - 2026-07-19 18:32 EDT
+
+- Factory=`3B511EE8` 与 runtime=`8368ED7E` 已闭合 descriptor→exact context→pre-provider bind→pre-ack
+  materialize/identity-check→same-context execution；全部 production mechanics 已落盘。
+- repair batch 6 production/config 文件有增量、追加 7 路径为 5/7；两个测试路径待更新。A 报 Cloud main
+  compile `EXIT 0`；尚非整卡 delivery/review，父级不重复跑 Maven。
+
+## CR271 TURN-40C Source Active / Mechanics 1, 2, 4 Landed - 2026-07-19 18:27 EDT
+
+- Authority=`C651BD8D` 保留 slot-backed 路径并增加 holder-backed exact-context source；新 assembly=
+  `69A51B55` 仅持一个共享 authority，config=`E59C20B8` 以 prototype bean mint fresh coordination handle。
+- Factory=`3B511EE8` 已加入固定四码 descriptor，mechanic 3 进入实施；runtime/tests 未变。repair batch 现
+  5 文件有增量、追加 7 路径为 4/7；尚非 delivery/review，父级不跑 Maven。
+
+## CR271 TURN-40C Source Active / First Repair-Batch Increment - 2026-07-19 18:17 EDT
+
+- `PlayerStateService=1E932914` 已完成生产构造器 Spring selection；`CloudTurnRuntimeConfiguration=64A54422`
+  已完成真实基础 bean import 与 exact-context prototype startup gate。两处均在修复后的固定写集内。
+- 其余五个追加路径仍未变/absent；当前非 delivery/review。A sole owner/active writer，父级不跑 Maven；
+  baseline-696、唯一 authority、零业务差异不变。
+
+## CR271 TURN-40C Implementation Resumed - 2026-07-19 18:07 EDT
+
+- A 已 ACK repaired contract 并恢复 14-path 整卡实施；当前先做追加路径重读，尚无新 Java 字节。
+- A 为 active Cloud writer，父级不跑 Maven；baseline-696 与零业务差异合同不变。
+
+## CR271 TURN-40C Plan Contract Repaired - 2026-07-19 17:57 EDT
+
+- baseline-696 静态审计已冻结 14-path 完整 Spring/runtime 装配闭包；A 保持 sole owner 并可恢复。
+- exact context 必须先于真实 prototype 构造，startup gate 与 turn coordination 使用现有唯一权威；无用户
+  选择、无业务差异、无 stub/第二 protocol/store/authority。
+
+## CR271 TURN-40C Communication Recovered / Frozen WIP - 2026-07-19 17:22 EDT
+
+- External A 已双 ACK 核心合同裁定并确认停止 Java/Maven、冻结 7-path WIP；通信 stale 已清除。
+- A owner 保留；18:22 已补 terminal recovery ACK，全部父级消息闭合。TURN-40C 仍为计划合同阻断，完整
+  装配闭包按 696 审计，不需要用户选择。
+
+## CR271 TURN-40C Communication Stale / Owner Retained - 2026-07-19 17:16 EDT
+
+- External A 连续两轮未 ACK 父级计划合同裁定，状态增加 `COMMUNICATION_STALE`。
+- A 仍是 TURN-40C canonical owner；7-path WIP 不转交，Java/Maven 继续暂停。完整装配闭包仍按 696 审计，
+  不向用户索要业务选择。
+
+## CR271 TURN-40C Plan-Contract Blocked / Full Wiring Closure - 2026-07-19 17:05 EDT
+
+- 原 7 路径已 authored，main compile/test-compile exit 0；具名测试 7 个为 2 PASS/5 host-refresh ERROR。
+- 父级确认真实缺口包含 Player production ctor selection、exact per-run startup authority、唯一 turn coordination、
+  非扫描 Task 基础 bean 与 factory-before-context 顺序；不向用户索要选择，不接受 stub/scan narrowing。
+- A owner 保留但暂停 Java/Maven；状态=`PLAN-CONTRACT BLOCKED / PARENT TRANSITIVE-CLOSURE AUDIT`。
+
+## CR271 TURN-40C 6 of 7 / Main Compile Exit 0 - 2026-07-19 16:45 EDT
+
+- Server=`9A3B17AB`/195L 已完成，6 个 production/config 路径均有增量；仅 activation test absent。
+- A 的 Cloud main compile `EXIT 0`；test-compile/named test/delivery 尚未发生。父级不重复跑 Maven，无用户选择。
+
+## CR271 TURN-40C Source Active / 5 of 7 Paths - 2026-07-19 16:38 EDT
+
+- Routes=`063DE4FC`/94L 已加入 active batch；当前五个 production/config 路径有增量，Server 未变，
+  activation test absent。尚非 delivery/review，A writer active，父级不跑 Maven。
+
+## CR271 TURN-40C Source Active / 4 of 7 Paths - 2026-07-19 16:35 EDT
+
+- Handler=`01DE94A2`/399L 已完成当前 active-batch 写入；连同 Application=`5711BC3E`、Host=`E90F22C8`、
+  RuntimeConfiguration=`D4636072`，当前固定写集 4/7 有增量。Server/Routes 未变，test absent。
+- 尚非整卡 delivery/review；A writer active，父级未跑 Maven，无业务选择。
+
+## CR271 TURN-40C Source Active / 3 of 7 Paths - 2026-07-19 16:25 EDT
+
+- A 的固定写集已有三个实盘增量：Application=`5711BC3E`/112L、Host=`E90F22C8`/103L、
+  RuntimeConfiguration=`D4636072`/105L；Server/Handler/Routes 未变，activation test absent。
+- 这仍是 active source progress，不是整卡 delivery/review；父级未跑 Maven，无业务差异或用户选择。
+
+## CR271 TURN-40C Source Active / File 1 of 7 - 2026-07-19 16:19 EDT
+
+- External A 已在固定写集内创建 `CloudTurnRuntimeConfiguration.java`=`D4636072`/105L；其余五个 MODIFY
+  SHA 未变，activation contract test 仍 absent。该进度不是整卡 delivery 或审核结论。
+- A 保持唯一 owner/Java writer，父级未跑 Maven。C communication recovered/owner-free；baseline-A/696
+  与无业务差异合同不变。
+
+## CR271 TURN-40C Claimed / External A Sole Owner - 2026-07-19 16:04 EDT
+
+- TURN-40C 原卡物理顺序裁决：A claim 最早，C 后到 claim 已自撤且零源码写入；A 为 Cloud activation
+  固定 7-path 唯一 owner，状态 `SOURCE_ACTIVE`。
+- 七路径源码仍处于 pre-claim SHA/absent 基线。C 已精确 ACK recovery id+stale reminder，通信恢复；
+  40B PASSED、C owner-free 与 A 的 40C ownership 不受影响。
+
+## CR271 Runtime/Factory Review Passed / TURN-40C Ready - 2026-07-19 15:51 EDT
+
+- `TURN-40B/RUNTIME-FACTORY` re-delivery #3 证据已与父级实测对齐，最终
+  `P0/P1/P2=0/0/0 SOURCE+TEST SOURCE REVIEW PASSED`，External C owner 释放。
+- CR aggregate `test-compile` 仍被 12 个写集外 dirty tests 阻断并如实保留；这不回退已通过的整卡源码审核。
+  `TURN-40C` 经依赖、真实路径和 collision 审计后开放为 `READY / ZERO OWNER / UNASSIGNED`，不派卡。
+
+## CR271 Runtime/Factory Re-Delivery #2 Review P2 Blocked - 2026-07-19 15:39 EDT
+
+- 4 个 repair 文件源码复审通过，前次 P1-1/P1-2 已关闭；父级 Cloud test-compile 与 CR main compile 均
+  exit 0，五 shared 文件保持同字节。
+- P2：CR aggregate test-compile 的卡外阻断清单误写 5 个，父级实测 12 个唯一失败测试文件。C 仅需
+  修正完整证据并 re-deliver；不得改业务源码。`P0/P1/P2=0/0/1`，40C 继续 BLOCKED。
+
+## CR271 Runtime/Factory Repair ACK / Source Active - 2026-07-19 15:19 EDT
+
+- External C 已 ACK Parent Review #1 定向消息，通信恢复正常；原 `TURN-40B/RUNTIME-FACTORY` owner 不变，
+  状态为 `SOURCE_ACTIVE / REPAIR`。
+- 返修严格限制在原 17-path 与 `0/3/1` findings；尚无 re-delivery，原审核仍 BLOCKED，无业务选择，
+  `TURN-40C` 继续 BLOCKED。
+
+## CR271 Runtime/Factory Delivery Review #1 Blocked - 2026-07-19 15:02 EDT
+
+- 17-path canonical delivery 已审，父级 verdict=`P0/P1/P2=0/3/1 BLOCKED / REPAIR REQUIRED`；External C 保留
+  `TURN-40B/RUNTIME-FACTORY` owner。
+- 修复项限定在原整卡：queue iteration 在任何 preflight/skip/create failure 前清旧 context；runtime 在任何
+  retained ack/registry decision 前验六 authority；补对应生产路径负例；修正 runtime 22/22 计数并完成冻结的
+  Maven test-compile/compile gate。无业务差异、无需用户选择，40C 继续 BLOCKED。
+
+## CR271 All Six Steps Complete / Delivery Gate Running - 2026-07-19 14:52 EDT
+
+- consumer runtime test=`327D6E10` 24/24、handler=`A63493E4` 7/7；producer/validator/lifecycle/core 也保持
+  17/17、18/18、5/5、7/7，六实施 step 完成。
+- 尚待 full authorized family、五 shared 文件 byte-identical、双 compile、17-path 物理证据和原卡 canonical
+  delivery，故无整卡 source review/owner release。
+- C 对 1442 第一拍漏 ACK，未达 stale；无父级 Maven/runtime/input，40C BLOCKED。
+
+## CR271 Producer Test Gate Passed / Consumer Resume - 2026-07-19 14:42 EDT
+
+- `HttpsTurnClientContractTest=DE50232B` 17/17 经父级逐行复核，Review #4=`P0/P1/P2=0/0/0 PASSED`。
+- 已证明 runner order、两 detach attached-at-clear、handle atomic、current handle/context 各单读、正例六事实
+  与负例六字段全空；producer gate 关闭。
+- C 可继续 consumer step⑤⑥；runtime=`53FE8363` 仍未审且尚无整卡 delivery。无父级 Maven/runtime/input，
+  40C BLOCKED。
+
+## CR271 Communication Recovered / Detach Passed / Projection Test Repair - 2026-07-19 14:37 EDT
+
+- C 三 exact ACK 已齐，communication stale 清除；`7EB2C269` 17/17 的 runner order、两 detach
+  attached-at-clear 与 handle atomic 通过父级复核。
+- projection `P1`：只计 currentTask read，不计 executionContext read，重复读 context 时仍绿；须 counting
+  handle 证明一次 context snapshot。`P2`：null-context 只验三字段，须六 authority 字段全 null。
+- consumer=`53FE8363` 继续 stopped/unreviewed；无 delivery/Maven/runtime/input，40C BLOCKED。
+
+## CR271 Producer Repair Communication Stale / Source Active - 2026-07-19 14:32 EDT
+
+- C 连续两轮未 ACK ledger `1404`，18:04 又未读 `1422` repair，现 `COMMUNICATION_STALE`；test 源码仍变化，
+  非 ACTIVE_STALE，owner retained。
+- `7A7EABB5` 17/17 的 projection 可保留，但两 detach 仍只验返回后双 null；当前 `BA515A97` 仅开始加入
+  attached-at-clear 字段，尚未接入测试/报告通过，producer gate 不能宣称完成。
+- consumer=`53FE8363` 继续 stopped/unreviewed；无 delivery/Maven/runtime/input，40C BLOCKED。
+
+## CR271 Runner Order Green / Detach Ordering Test Repair - 2026-07-19 14:22 EDT
+
+- `HttpsTurnClientContractTest=2E73E978` 14/14 已真实驱动 AUTO_BATTLE runner，接受
+  `[clear,update,publish,execute,clear]` 的 queue order/cleanup 执行证据。
+- `P1 / TEST FALSE POSITIVE`：两 detach 测试只验返回后 context/currentTask 均 null，先 detach 后 clear 的
+  回归仍绿。须让 RecordingHandle 在 clear 调用瞬间断言 runner.currentTask 仍是自身，两 detach 均覆盖。
+- 14:04 harness 消息第一拍未 ACK，未达 stale；projection/consumer=`53FE8363` 继续 blocked/unreviewed。
+  无业务差异、delivery、Maven/runtime/input，40C BLOCKED。
+
+## CR271 Communication Recovered / Producer Harness Contract Corrected - 2026-07-19 14:04 EDT
+
+- C 已精确 ACK Repair #1 三条消息，`COMMUNICATION_STALE` 清除；producer test=`D7B1143E` 13/13 已真实
+  覆盖第二 detach，排序/第一 detach/projection 仍待补。
+- 父级按既有代码直接裁决，无需用户选择或 production seam：`AUTO_BATTLE` 驱动内层真实排序；空队列驱动
+  外层 `runQueue` finally；真实 `resolveForAction` 验单 handle/context 六事实。`WUHuan_V2` 会启动 observer，
+  内层 runQueue 也不会 terminal detach，禁止按该错误 recon 实施。
+- consumer=`53FE8363` 继续保留未审 WIP；无 delivery/Maven/runtime/input，40C BLOCKED。
+
+## CR271 Producer-Test Repair Communication Stale / Recon Active - 2026-07-19 14:00 EDT
+
+- C 连续两拍未 ACK Repair #1 original/reminder1，现 `COMMUNICATION_STALE`；已停 consumer 并回 test recon，
+  source 非 active stale，owner retained。
+- 当前 projection-side BareRunner 设计只闭合一半；同 test path 还必须证明 runner production order 与双 detach。
+- Cloud runtime=`53FE8363` 仍是未审 WIP；无 delivery/Maven，40C BLOCKED。
+
+## CR271 Producer-Test Repair First Missed ACK / Consumer WIP Out Of Order - 2026-07-19 13:56 EDT
+
+- C 未 ACK producer-test Repair #1 即越过前置门修改 consumer；第一拍漏回执，未达 stale，owner retained。
+- Cloud runtime=`53FE8363`/compile exit0 仅为 unreviewed out-of-order WIP，不构成 consumer 完成或 delivery。
+- reminder1 要求先补同 test path 的真实 production wiring 证明，再恢复 consumer。无业务差异/Maven，40C BLOCKED。
+
+## CR271 Communication Recovered / Producer Test Repair #1 - 2026-07-19 13:50 EDT
+
+- C 已精确 ACK 三条 A#5 消息，communication stale 清除；A#5 production source acceptance 不变。
+- `HttpsTurnClientContractTest=7F0DCA39` 的 12/12 仅手工验证 handle API，没有覆盖 production runner 顺序；
+  runner 回归时测试仍会绿，判 `P1 / TEST FALSE POSITIVE / REPAIR REQUIRED`。
+- 同一既有测试文件须补 production clear/update/publish/execute、双 detach clear 与单快照投影门，再进
+  consumer。无业务差异、未 delivery/review/Maven，40C BLOCKED。
+
+## CR271 Amendment #5 Source Corrected / Communication Stale - 2026-07-19 13:42 EDT
+
+- C 连续两条 event 未精确 ACK A#5 original+reminder1，现标 `COMMUNICATION_STALE`；source active，非
+  active stale，owner retained。
+- runner=`CE4DDA83` 已闭合 clear-before-update 与双 terminal clear；TurnExecutionWindow=`8AF1BED9`
+  单快照投影保持。producer source shape 已修正，但现有测试尚无 previous-context reuse 证明。
+- reminder2 要求先精确 ACK 并闭合 producer test，再进入 consumer。无 delivery/review/Maven，40C BLOCKED。
+
+## CR271 Amendment #5 First Missed ACK / Producer WIP Noncompliant - 2026-07-19 13:37 EDT
+
+- C 未 ACK A#5 即修改 producer；这是第一拍漏回执，未达 communication stale，owner 保留。
+- `WindowTaskRunner:624-632` 仍在 clear old context 之前执行 `updateTask`，且
+  `getActiveTaskHandle:565-567` detach 前未 clear；当前 producer 不是完成或 delivery。
+- reminder1 已要求先闭合 clear->update->publish->execute 与两处 terminal clear-before-detach，再进入
+  Cloud consumer。无业务差异、父级不跑 Maven，40C BLOCKED。
+
+## CR271 Amendment #4 Done / Producer Transition Contract Repair - 2026-07-19 13:32 EDT
+
+- A#4 已 ACK/完成：metadata `6F6EAC55`、fixture `77C68B25`，5/5+7/7+18/18；通信正常。
+- RunningTaskHandle=`19C38B92` 首增量后，父级发现 queue item replacement 间隙会暂留旧 context。
+- A#5 固定 clear→update→build/publish→execute 与 terminal clear-before-detach；TurnExecutionWindow 单读
+  handle/context，不重读 mutable authority。写集仍17，待 ACK；无 delivery/review，40C BLOCKED。
+
+## CR271 Communication Recovered / Amendment #4 First Missed ACK - 2026-07-19 13:26 EDT
+
+- C 已精确 ACK A#3+reminder2，communication stale 清除；source 非 active stale，owner retained。
+- A#4 后首条 event 未 ACK A#4，记第一次漏回执、未达 stale；pathingSnapshot source-level 兼容修复尚未落盘。
+- 无 delivery/review；父级不跑 Maven，40C BLOCKED。
+
+## CR271 Amendment #3 ACKed / Pathing Null Compatibility Repair - 2026-07-19 13:24 EDT
+
+- C 已 ACK/完成 A#3，通信恢复；lifecycle 5/5、core 7/7、validator 18/18 为 bounded evidence。
+- 复审发现 `request-start.json` 额外固化 `pathingSnapshot:null`，越过 A#3 六 authority 字段范围并吸收旧债。
+- A#4 固定为 metadata.pathingSnapshot `NON_NULL` + fixture 删除显式 null；写集仍 17、无业务差异。待 ACK，
+  无 delivery/review，40C BLOCKED。
+
+## CR271 Amendment #3 Communication Stale / Source Still Active - 2026-07-19 13:21 EDT
+
+- C 连续两条 event 未 ACK A#3，达到 `COMMUNICATION_STALE`；但 validator test 有真实增量，未标 active stale，
+  owner retained。
+- 双仓 validator contract test=`C32D4522` 同形且 isolated `18/18`，只作为 WIP evidence；17-path lifecycle
+  修复尚未开始，未 delivery/review。
+- reminder2 已发；父级不跑 Maven，40C BLOCKED。
+
+## CR271 Amendment #2 Communication Recovered / A#3 First Missed ACK - 2026-07-19 13:10 EDT
+
+- C 已补齐 Amendment #2 original+reminder ACK，通信恢复；core golden 7/7 与当前双仓 source 证据不变。
+- A#3 后下一条 C event 未 ACK A#3，仍把 lifecycle 冲突当待裁；这是 A#3 第一次漏回执，未达 stale。
+- A#3 已固定 17-path 合同。C owner retained，待下一拍 ACK 后实施；无 delivery/review，40C BLOCKED。
+
+## CR271 Lifecycle Golden Contract Repaired / C ACK Partial - 2026-07-19 13:08 EDT
+
+- C 已 ACK Amendment #2 original，当前 metadata/validator compile 且 core golden 7/7；reminder id 尚未具名
+  ACK，记 partial recovery，不标 communication stale。
+- shared validator 的 task-start authority gate 保留；旧 lifecycle test/`request-start.json` 无 authority 是过期
+  测试输入。双仓各新增 lifecycle test+fixture 到写集，总数 17；core helper 与非 task-start fixtures 继续只读。
+- fixture 只承载一组合法非默认 authority 事实，不成为生产默认。待 C ACK Amendment #3；无 delivery/review，
+  父级不跑 Maven，40C BLOCKED。
+
+## CR271 Contract Repair #2 Physical Source Corrected / ACK Pending - 2026-07-19 13:06 EDT
+
+- 双仓 metadata=`D22B62D9` 已闭合 boxed Boolean、六项 `NON_NULL` 与 legacy 六 null；validator=`56383C98`
+  已显式拒绝缺失 booleans，且两仓各自逐字节一致。
+- C 尚未回执 original+reminder，也未报告当前字节的 build/test 或 canonical delivery；因此仅确认 physical
+  source correction，不构成整卡交付或父级通过。
+- 仍为第一次漏回执，未达 communication stale；C owner retained，父级不跑 Maven，40C BLOCKED。
+
+## CR271 Contract Repair #2 First Missed ACK - 2026-07-19 13:02 EDT
+
+- C 未读 Amendment #2 即继续写 validator `4799662C`；记录第一次漏回执，未达 communication stale。
+- 当前 validator 依赖 primitive booleans，不能证明缺字段拒绝；须先修 metadata 后重做同一 WIP。
+- C owner retained，reminder 已发；父级不跑 Maven，40C BLOCKED。
+
+## CR271 Runtime Metadata Contract Repair #2 - 2026-07-19 12:56 EDT
+
+- `F34734A7` primitive booleans 不能区分缺失/false，旧 ctor 也会污染严格 JSON round-trip。
+- 同卡固定改为 boxed `Boolean` + 六项 `NON_NULL`；旧 ctor 六项全 null，合法 false 保留在线上 JSON。
+- 双仓 `TurnCoreProtocolGoldenJsonTest` 为只读兼容门，不得改 fixture。C owner retained，待 ACK；40C BLOCKED。
+
+## CR271 Runtime Baseline Amendment ACKed - 2026-07-19 12:51 EDT
+
+- C 已具名 ACK baseline-A 合同与 13 路径边界，P1-5 解锁并恢复 `SOURCE_ACTIVE / REPAIR`；owner 不变。
+- C 接受 exact Task context authority、双仓 shared metadata 同形及 task-start ack 前拒绝门；A idle 避免碰撞。
+- 尚无 amendment source/delivery；父级不跑 Maven，40C 继续 BLOCKED。
+
+## CR271 Runtime Authority Baseline Decision Recorded - 2026-07-19 12:35 EDT
+
+- 用户明确旧代码行为即唯一权威；P1-5 固定采用 baseline-equivalent A，B 的固定默认差异未获批准。
+- 既有 `TurnWindowMetadata` 透传 `TaskExecutionContext` 的 role/team/startup 事实；Cloud 缺失即在 task-start
+  materialize/ack 前拒绝。禁止默认值、第二 store/session/protocol。
+- C 保持同卡 owner；写集扩为 DHXY 7 + Cloud 6 路径并等待 ACK/实施。40C 继续 BLOCKED。
+
+## CR271 Runtime-Factory Repair Complete Except P1-5 - 2026-07-19 12:28 EDT
+
+- C 已精确 ACK 父级 Review #1 返修消息，通信正常并进入 `SOURCE_ACTIVE / REPAIR`；owner 不变。
+- 当前七文件隔离编译 exit 0，factory 2/2 + runtime lifecycle 20/20=`22/22`；P1-1..4 与 P2-1 已闭合。
+- Registry/Runtime/runtime-test=`BB41A9CA`/`099F3704`/`E174F304`；尚未 canonical re-deliver/review。
+- P1-5 仍等待用户 A（推荐，协议携权威 role/team/startup）或 B（批准固定差异）；40C 继续 BLOCKED。
+
+## CR271 Runtime-Factory Review #1 Blocked - 2026-07-19 11:47 EDT
+
+- C 的 7/7 delivery 已完成父级 review：`P0/P1/P2=0/5/1 BLOCKED / REPAIR REQUIRED`；named `11/11`
+  与 Cloud `test-compile/compile EXIT0` 仅保留为当前字节构建证据，不构成源码通过。
+- prototype Task 单例化、terminal 后才 ack、exact device+window/异常 aggregate/close 不闭合；硬编码
+  `LEADER/no-team/NORMAL` 无权威来源。C owner 保留并待具名 ACK 返修消息。
+- 用户需在 A（推荐：shared metadata protocol 传 role/team/startup）与 B（批准固定默认差异）间裁决；
+  `TURN-40C` 继续 BLOCKED。
+
+## CR271 Runtime-Factory Runtime WIP Updated - 2026-07-19 11:42 EDT
+
+- production runtime 已从 `30128CFD` 更新为 `704650C7`/9646B/201L；当前 runtime/test=`704650C7`+`598FD192`。
+- 物理仍 7/7，但当前字节尚无 build/test 回执与 delivery/review；父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory Final Test WIP Updated - 2026-07-19 11:39 EDT
+
+- runtime contract test 已从中间 SHA `C0C81975` 更新为 `598FD192`/19002B/427L；物理仍 7/7。
+- final test 尚无 build/test 回执与 canonical delivery/review；父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory Physical Source+Test 7/7 - 2026-07-19 11:37 EDT
+
+- final runtime contract test=`C0C81975`/18083B/412L 已落盘，七个固定路径全部存在。
+- final test 尚无 Worker build/test 回执，也无 canonical delivery/review；父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory Source+Test Increment 6/7 - 2026-07-19 11:32 EDT
+
+- factory allowlist test=`F274A975`/6379B/129L 已落盘并由 C 报告通过 1/1。
+- 当前 6/7，仅 runtime contract test absent；未 delivery/review，父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory All Production Compile Clean - 2026-07-19 11:21 EDT
+
+- C 回执五 production 联合 compile EXIT0；当前仍 5/7，两 test absent。
+- 未 delivery/review/整卡 Maven；C writer active，父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory Source Increment 5/7 - 2026-07-19 11:20 EDT
+
+- runtime=`30128CFD`/9403B/197L 已落盘；五 production 全部存在，只剩两 test absent。
+- runtime/control port 暂无 Worker build 回执；未 delivery/review，父级不跑 Maven，40C blocked。
+
+## CR271 Runtime-Factory Source Increment 4/7 - 2026-07-19 11:18 EDT
+
+- registry=`576B2DEA` 已有 Worker compile EXIT0 回执；control port=`56DA5571`/1806B/42L 新落盘。
+- 当前 4/7，runtime 与两 test absent；control port 暂无 Worker build 回执。
+- 未 delivery/review；C writer active，父级不跑 Maven，`TURN-40C` blocked。
+
+## CR271 Runtime-Factory Source Increment 3/7 - 2026-07-19 11:15 EDT
+
+- C sole owner 已新增 registry=`576B2DEA`/3237B/73L，当前 factory+start-result+registry 共 3/7。
+- factory/start-result 各自 compile EXIT0 报告保持；registry 暂无 Worker build 回执，余四路径 absent。
+- 未 delivery/review；C writer active，父级不跑 Maven，`TURN-40C` blocked。
+
+## CR271 Runtime-Factory Two Files Individually Compile Clean - 2026-07-19 11:10 EDT
+
+- C 报告 factory=`B2839BE9`、start-result=`BE8A15BF` 均单文件 compile EXIT0，五路径仍 absent。
+- 未 delivery/review/整卡 Maven；C sole writer active，父级不并发 Maven，40C blocked。
+
+## CR271 Runtime-Factory Source Increment 2/7 - 2026-07-19 11:08 EDT
+
+- C 已创建 factory=`B2839BE9` 和 start-result=`BE8A15BF`；其余五路径 absent。
+- 尚未 delivery/review，父级不并发 Maven；`TURN-40C` BLOCKED。
+
+## CR271 Runtime-Factory Source Increment 1/7 - 2026-07-19 11:05 EDT
+
+- C sole owner 已创建 factory=`B2839BE9`/2482B/53L，并报告单文件 compile EXIT0；其余六路径 absent。
+- 这是固定写集内活动快照，尚非 delivery/review/whole-card build pass；父级不并发 Maven。
+- `TURN-40C` 继续 BLOCKED。
+
+## CR271 Runtime-Factory Claimed By External C - 2026-07-19 10:59 EDT
+
+- C 在原卡 physical EOF 唯一最早领取 runtime/factory 整卡，现为 `SOLE OWNER / SOURCE_ACTIVE`；A ACK 后 idle，无冲突。
+- 七个 CREATE 路径当前仍 absent；C 为唯一 Cloud Java writer，父级不运行 Maven。
+- `TURN-40C` 仍 BLOCKED，等待 runtime/factory SOURCE+TEST 交付、父级 review 与 build gates。
+
+## CR271 P-COMPILE Passed / Runtime-Factory Ready - 2026-07-19 10:49 EDT
+
+- P-COMPILE 父级终审 `0/0/0 PASSED`，A owner 释放，communication/activity stale 清除。
+- 父级 full testCompile EXIT0、四 WholeTask `67/67`、Cloud compile EXIT0；production 四文件冻结。
+- `TURN-40B/RUNTIME-FACTORY` 现为 `READY / ZERO OWNER / UNASSIGNED`，固定五 production + 两 test CREATE-only 整卡；`TURN-40C` 继续 BLOCKED。
+
+## CR271 P-COMPILE Bounded Test Repair Byte Progress - 2026-07-19 10:37 EDT
+
+- 四测试现为 Summon `244F71C5`、FiveRing `C4939131`、Wubei `2CA1F71C`、Xiuluo `D0BA4DAB`；后三者
+  于 10:29-10:36 连续变化，证明 A 的固定范围返修仍在推进。
+- production 四文件保持 `018F2348/67AF905C/E546928F/7691F295`；无 Maven、re-delivery 或新 review。
+- A sole owner 与 Review #1 保持，旧 09:09 消息仍未具名 ACK，故 communication stale 不解除。
+
+## CR271 P-COMPILE Q1-Q4 ACKed / Bounded Repair Resumed - 2026-07-19 10:27 EDT
+
+- A 已具名 ACK Q1-Q4 父级裁决，计划等待解除，按四 WholeTask gate 继续 strict fixture test-only repair。
+- 四测试 SHA=`244F71C5/42CFFE0D/A7A985C6/B7D5BF03`；尚无新 Maven/re-delivery/review。
+- 旧 09:09 stale 消息仍未具名 ACK，故 communication stale 暂保留；A owner 与 production frozen 不变。
+
+## CR271 P-COMPILE Plan-Contract Ruling / Repair Resumed - 2026-07-19 10:19 EDT
+
+- Q1=`A`：Review #1 runtime gate 只含四个 WholeTask tests；其余 6 类只要求 testCompile clean。
+- Q2：仅四个 named tests 可按当前 production strict result shape 修 test fixture；Q3：Summon 38-value exact
+  golden 接受，DialogOption runtime 不纳入；Q4：production 30s 保持，tracker PT20S 红项不纳入本卡 gate。
+- plan-contract blocker 已闭合，A sole owner 继续 test-only repair；新父级消息待 ACK，communication stale 保留。
+
+## CR271 P-COMPILE Ten-Test Rerun Failed / Repair Active - 2026-07-19 10:09 EDT
+
+- 固定 10-test Maven 已结束失败：239 tests / 22 failures / 67 errors；DialogDetection 9/9、SummonSkill
+  19/19 通过，其余 8 类待修。
+- 红项集中在 Cloud task/game-client context binding、strict result JSON 与 local-action outcome fixtures；
+  不需要扩大既有 10-test test-only write-set。
+- 状态为 `BUILD FAILED / REPAIR ACTIVE / COMMUNICATION_STALE`；A sole owner，尚无 re-delivery/review，
+  production/main compile 证据不回退。runtime/factory tail 与 TURN-40C blocked。
+
+## CR271 P-COMPILE Authorized Ten-Test Rerun Active - 2026-07-19 10:08 EDT
+
+- A 将 tracker test 更新为 `B8EA0515`，10:07 启动固定 10-test Maven (`10424/27456`, timeout 180s)；
+  NpcClick/Foundation/DialogDetection 已生成首批报告，进程仍存活。
+- 当前为 `NAMED TEST RUNNING / SOURCE ACTIVE / COMMUNICATION_STALE`；没有最终 exit、canonical re-delivery
+  或 review。A sole owner、Review #1 test-only repair、production frozen 均保持。
+- 父级不并发跑 Maven；runtime/factory tail 与 TURN-40C 继续 blocked，C idle。
+
+## CR271 P-COMPILE Source Activity Recovered / Communication Stale - 2026-07-19 09:52 EDT
+
+- A 的固定测试写集恢复字节活动，Four WholeTask/skill fixtures 最新 SHA 为 `3D2CEEFE`、`AC90360A`、
+  `244F71C5`、`F32E8972`（09:54:59 快照），清除 `ACTIVE_STALE`；A sole owner 与 production frozen 不变。
+- 原 five-test Maven/父 Powershell 已退出，但没有 FiveRing/Xiuluo/tracker 报告或 exit-code 证据，named-test
+  gate 仍 `BLOCKED / PENDING`，没有 canonical re-delivery/review。
+- A 尚未 ACK 09:09 定向消息，保持 `SOURCE ACTIVE / COMMUNICATION_STALE`；runtime/factory tail 与 TURN-40C blocked。
+
+## CR271 P-COMPILE Communication Stale - 2026-07-19 09:19 EDT
+
+- A 连续两轮未 ACK stale 状态询问，现为 `ACTIVE_STALE / COMMUNICATION_STALE`；Maven 存活但无新报告/源码。
+- A sole owner 保持；testCompile clean、production frozen 与 main compile green 不回退，尚无 re-delivery/review。
+- 父级不终止进程、不并发跑 Maven；等待具名 ACK。C idle，runtime/factory tail 与 TURN-40C blocked。
+
+## CR271 P-COMPILE Named-Test Active Stale - 2026-07-19 09:09 EDT
+
+- A 的 5 项 named-test Maven 进程仍存活，但 08:56 后无新 surefire 报告或源码字节，现标 `ACTIVE_STALE`。
+- A sole owner 保持；testCompile 27->0 与 production frozen 不回退，原卡仍无 canonical re-delivery/review。
+- 总账已定向询问阻塞测试/等待点并要求下一 heartbeat ACK；父级不终止进程、不跑 Maven，runtime/factory/40C blocked。
+
+## CR271 P-COMPILE TestCompile Clean / Named Tests Running - 2026-07-19 08:59 EDT
+
+- Review #1 的 27 testCompile errors 已清零；A 正运行四 WholeTask + tracker named tests，并处理剩余 runtime fixtures。
+- production frozen，A owner retained；尚无 canonical re-delivery/review，父级不跑 Maven。
+- runtime/factory tail 与 TURN-40C blocked；deprecated Navigation 继续排除。
+
+## CR271 P-COMPILE TestCompile Reduced To One File / 14 Errors - 2026-07-19 08:54 EDT
+
+- A 的固定 10-test repair 已使 8/10 文件 testCompile clean；当前只剩
+  `FiveRingTaskTrackerTurnContractTest` 的 14 errors，tracker Cloud harness 迁移 active。
+- Wubei/Xiuluo runtime harness、四 WholeTask named tests 与 re-delivery 未完成；production frozen，A owner retained。
+- runtime/factory tail 与 TURN-40C blocked；父级不跑 Maven，deprecated Navigation 继续排除。
+
+## CR271 P-COMPILE Review #1 ACKed / Test-Only Repair Active - 2026-07-19 08:39 EDT
+
+- External A 已 ACK `0/1/0` 返修结论并开始固定 10-test test-only repair；sole owner 保持，C idle，通信正常。
+- production 四文件与 main compile EXIT=0 证据冻结；尚无 re-delivery，Java test writer active，本轮不跑 Maven。
+- runtime/factory tail 与 TURN-40C blocked；deprecated Navigation、协议/store/context/runtime 继续排除。
+
+## CR271 P-COMPILE Review #1 Blocked / Test-Only Repair - 2026-07-19 08:34 EDT
+
+- verdict=`P0/P1/P2=0/1/0 BLOCKED / REPAIR REQUIRED`：production 四文件/compile 无 finding；SOURCE+TEST 门未过。
+- 授权 named-test 命令复现 27 个 testCompile errors；隔离 Wubei/Xiuluo 22/30、另 8 失败，FiveRing/Summon
+  不可编译。A owner retained，同卡固定 10-test harness/compile repair，production frozen。
+- runtime/factory tail 与 TURN-40C blocked；不触碰 deprecated Navigation、协议/store/context 或业务实现。
+
+## CR271 P-COMPILE Main Compile Green / Named Tests Pending - 2026-07-19 08:27 EDT
+
+- 固定四文件修复已落盘，Cloud main compile `EXIT=0`，原六个 javac 错误清零；A 继续 sole owner / SOURCE_ACTIVE。
+- full-tree testCompile 被写集外既有测试债阻断，A 正做适用 named tests 隔离验证；尚无 canonical delivery/review。
+- runtime/factory tail 与 TURN-40C 仍 blocked；deprecated Navigation 旧链、协议/store/context/runtime 未触碰。
+
+## CR271 P-COMPILE A Sole Owner / C Withdrawn - 2026-07-19 08:16 EDT
+
+- A/C 双领按原卡 physical append order 裁决：A claim 在前，为 sole owner / `SOURCE_ACTIVE`；C 后 claim 已
+  canonical withdraw，确认零源码写入并回到 idle available。
+- 固定四文件/六错误合同不变；Java writer active，不跑 Maven。runtime/factory tail 与 TURN-40C 继续 blocked，
+  deprecated Navigation 旧链不在范围内。
+
+## CR271 Aggregate Compile Rechecked / P-COMPILE Ready - 2026-07-19 08:01 EDT
+
+- A/C idle 后完整 Cloud compile 进入 javac，旧 7-file blocker 被真实证据替换为 4 production files / 6 errors。
+- `TURN-40B/P-COMPILE` 已固定为 `READY / ZERO OWNER / UNASSIGNED`：仅 Wubei/FiveRing metric-id String 适配、
+  Summon record factory 命名冲突、Xiuluo terminal intent 清除与 null-context fail-fast；无业务差异。
+- 不触碰 deprecated Navigation 旧链、P-PROTO/P-CLIENT、协议/store/context model。runtime/factory tail 与 40C
+  继续 blocked，直到本整卡 source+test review 和 aggregate compile 通过。
+
+## CR271 P-NAV Closure ACKed / A+C Idle - 2026-07-19 07:56 EDT
+
+- C 精确 ACK Review #2 pass/owner-release，P-NAV=`CLOSED / PASSED`，通信 healthy，C idle available；A 亦 idle。
+- 40B 五个 pre-runtime source gates 全 passed，但无新 READY 卡。aggregate 7-file blocker、runtime/factory tail
+  BLOCKED/ZERO OWNER 与 TURN-40C blocked 均不变。
+
+## CR271 P-NAV Review #2 Passed / Owner Released - 2026-07-19 07:46 EDT
+
+- final P-NAV=`0/0/0 SOURCE+TEST SOURCE REVIEW PASSED`，production `D56DEAFD` + test `87C6BC45`/23T；
+  四个 current-yellow tests 闭合 Review #1，deprecated helper 调用清零，External C owner released。
+- 528-file isolate compile 0 error、23/23 accepted；named Maven/aggregate build 仍被写集外 7-file debt 阻断。
+  runtime/factory tail 保持 BLOCKED/ZERO OWNER，TURN-40C 不开放。
+
+## CR271 P-NAV Four Deprecated Tests Replaced / Verification Pending - 2026-07-19 07:41 EDT
+
+- test=`87C6BC45`/23T：四个 deprecated direct-call tests 均已换为 current yellow hit/miss/capture-fail/
+  OCR-fail-closed；旧 helper 调用已清零，`LEGACY_GREEN_LINK` 只作为负断言出现。
+- production=`D56DEAFD` frozen。等待 C ACK、isolated compile/test 与 canonical re-delivery；Java writer active，
+  不跑 Maven，aggregate 7-file blocker 不变。
+
+## CR271 P-NAV Test-Only Repair Started / ACK Pending - 2026-07-19 07:36 EDT
+
+- test 从 `2FDB2D02` 变化为 `65DEF10A`，首个 deprecated remembered-route 测试已改为 current yellow memory
+  证据并加入 no-`LEGACY_GREEN_LINK` 断言；余 3 个 deprecated direct tests 仍在返修。
+- production 仍冻结 `D56DEAFD`；C owner retained / repair active，但 Review #1 message 的具名 ACK 尚待下一事件。
+  Java writer active，不跑 Maven；aggregate build 仍被写集外 7-file debt 阻断。
+
+## CR271 P-NAV Source+Test Review #1 Blocked - 2026-07-19 07:19 EDT
+
+- delivery `D56DEAFD` + `2FDB2D02`/23T 审核为 `P0/P1/P2=0/1/0 BLOCKED / REPAIR REQUIRED`；
+  production 无新增 finding，External C 保留 sole owner 做 test-only repair。
+- 4/23 测试直接调用用户已排除的两个 deprecated 旧 helper，并保留 `LEGACY_GREEN_LINK` fixture；current yellow
+  destination + mini-map 路径缺直接等价覆盖。返修只替换这四项为 yellow 路径证据，不改 deprecated production，
+  不重开 P-PROTO/P-CLIENT。aggregate build 仍由写集外 7-file debt 阻断。
+
+## CR271 P-NAV C Recovered / Deprecated Scope Clarified - 2026-07-19 03:59 EDT
+
+- C 双 ACK stale+用户 B 合同并恢复源码写入，NavigationService=`4915DEC5`/3078L；清除
+  `COMMUNICATION_STALE / ACTIVE_STALE`，sole owner / SOURCE_ACTIVE 保持。
+- deprecated 方法不再继续修改、扩协议或补测试；不为字节还原回滚此前机械 collaborator 替换，final review 只核
+  其无业务语义变化且 current yellow 路径不依赖旧链。无 delivery，Java writer active，不跑 Maven。
+
+## CR271 P-NAV Deprecated Legacy Chain Excluded / C Communication Stale - 2026-07-19 03:49 EDT
+
+- 用户明确 `clickRememberedWorldMapRouteResult(...)` 是 deprecated 旧链：不迁、不续接、不改其函数内部，也不为
+  `LEGACY_GREEN_LINK` 重开 P-PROTO/P-CLIENT。P-NAV legacy 子项合同阻断解除；当前 yellow 路径仍须按原卡完成。
+- C 连续两轮未 ACK active-stale 消息，现为 `COMMUNICATION_STALE / ACTIVE_STALE`，sole owner 保留；已定向要求
+  ACK 用户裁决与 stale，并回报精确 SHA/mtime/进度。runtime/factory/40C 与 aggregate build 仍 blocked。
+
+## CR271 P-NAV First Source Increment / C ACKed - 2026-07-19 02:14 EDT
+
+- External C 已具名 ACK sole-owner 恢复消息；P-NAV 保持 `SOURCE_ACTIVE` 与冻结 NavigationService/test 写集。
+- `NavigationService` 首个增量删除 DEAD `InputProvider` import/field，现 `3C12E5E4`/3153L；test 仍
+  `79D48FE0`/1470L/23T。余 rewire WIP，尚无 delivery/source review；runtime/factory/40C blocked。
+
+## CR271 P-NAV Double Claim Resolved / C Sole Owner - 2026-07-19 02:02 EDT
+
+- 原卡 physical append order 明确为 C claim lines 1567-1594 早于 A lines 1596-1605；C 是 P-NAV sole
+  canonical owner。A 已 canonical 自撤并确认零 Java；C 可恢复冻结 NavigationService/test 边界的单 writer 实施。
+- baseline 仍 `B57ECC50` + `79D48FE0`/23T；runtime/factory/40C 与 aggregate build blocked。
+
+## CR271 P-CLIENT Review #3 Passed / P-NAV Ready - 2026-07-19 01:52 EDT
+
+- P-CLIENT final client/test=`087D053F`/521L + `4892F1D9`/604L/33T；父级 Review #3=`0/0/0 PASSED`，
+  External C owner released，无协议/store/算法/业务差异。
+- P-PROTO/P-OCR/P-LOCAL/P-CLIENT source gates 均闭合；P-NAV 固定 NavigationService/test 边界现为公共
+  `READY / ZERO OWNER / UNASSIGNED`。runtime/factory/40C 与 aggregate Cloud build 仍 blocked。
+
+## CR271 P-CLIENT Review #2 Blocked 0/1/2 - 2026-07-19 01:42 EDT
+
+- Repair #1=`AC14E006`/520L + `9A237B1A`/555L/33T；production accepted，父级 Review #2=`0/1/2 BLOCKED`。
+- failed-replace fixture 无批准 routeMode，不能进入 NOT_EXECUTED；非成功 outbound proof、smuggle negative 与
+  reason nonblank JavaDoc 仍缺。C owner retained，同两文件/33T Repair #2。
+- P-NAV 不开放；无 runtime/input/Git mutation。
+
+## CR271 P-CLIENT Client Repair Done / Test Active - 2026-07-19 01:37 EDT
+
+- client `AC14E006`/520L 已闭合 production findings；test=`D827B8D8`/529L/33T 正在补 outbound mapping 证据。
+- 尚无 re-delivery，C owner retained；P-NAV 不开放，无 Maven/runtime/input/Git mutation。
+
+## CR271 P-CLIENT Communication Recovered / Repair Active - 2026-07-19 01:32 EDT
+
+- C 已双 ACK Review #1+stale，communication recovered，按 `0/2/1` 在原两文件返修。
+- client=`AC14E006`/520L，test 仍 `541B4D14`/506L/33T；尚无 re-delivery。
+- C owner retained，P-NAV 不开放；无 Maven/runtime/input/Git mutation。
+
+## CR271 P-CLIENT Communication Stale - 2026-07-19 01:27 EDT
+
+- C 连续两轮未 ACK P-CLIENT Review #1 `0/2/1` 返修消息，标 `COMMUNICATION_STALE`。
+- C owner、delivery SHA、原 client+test 两文件与 33T 返修合同不变；不撤卡、不重派。
+- P-NAV 不开放；无 Maven/runtime/input/Git mutation。
+
+## CR271 P-CLIENT Review #1 Blocked 0/2/1 - 2026-07-19 01:22 EDT
+
+- delivery `FFEB7679`/481L + `541B4D14`/506L/33T；父级结论 `0/2/1 BLOCKED / REPAIR REQUIRED`，C owner retained。
+- P1：三个新 op 缺 result-kind 分派；pendingRouteOutcome 缺 exactly-one/clear/dialog shape closure。P1：33T
+  不证明 outbound op/payload/reason，replacement fixture 使用 validator 禁止的 routeMode。P2：新 public API 缺 JavaDoc。
+- 返修保持原两文件与 33T；P-NAV 不开放。named Maven test 被既有 P-NAV shared compile debt 阻断。
+
+## CR271 P-CLIENT Production Done / Test Active - 2026-07-19 01:17 EDT
+
+- C 的 P-CLIENT client production 已为 `FFEB7679`/481L；冻结方法、builder、转换与 accessor 已落盘。
+- test 正在写入，最近观测 `73D44A6D`/420L/27T；尚无 33T 或 canonical delivery，不进入父级 review。
+- P-NAV 继续仅等待 P-CLIENT；writer active，父级未跑 Maven/runtime/input/Git mutation。
+
+## CR271 A Pass ACKed / P-CLIENT Recon Complete - 2026-07-19 01:07 EDT
+
+- A 已 ACK P-LOCAL Review #2 pass/release，通信闭合并 idle available。
+- C 的 P-CLIENT recon 已确认 builder、3 methods、outcome accessor 与 +6T 均不越出冻结 client+test 两文件；
+  当前两文件仍为基线 SHA，暂无 delivery。
+- P-NAV 继续仅等待 P-CLIENT；writer active，父级未跑 Maven/runtime/input/Git mutation。
+
+## CR271 P-CLIENT Canonically Claimed / Source Active - 2026-07-19 01:02 EDT
+
+- External C 已在 P2 原卡 physical EOF canonical 自领 `TURN-40B/P-CLIENT`；sole owner，非父级派卡。
+- Cloud client `59BF77E8`/414L 与 test `0A248C8B`/417L/27T 仍为基线字节，尚无源码增量；冻结边界为
+  3 client methods + 6 tests。
+- P-NAV 继续仅等待 P-CLIENT source review；Java writer active，父级未跑 Maven/runtime/input/Git mutation。
+
+## CR271 P-LOCAL Review #2 Passed / A Communication Recovered - 2026-07-19 00:59 EDT
+
+- P-LOCAL Repair #1 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；22T 已证明两个真实 runtime
+  的 exact binding，并核对 queued second decision/intent/target/reason 与 first-live preservation。
+- production executor/dispatcher 与 `WindowRuntimeContext` 均未改；A owner 释放。A 的并发 ACK+delivery 清除
+  communication stale，旧 stale inquiry 被实际进展取代。
+- P-PROTO/P-OCR/P-LOCAL 已通过；P-CLIENT READY/ZERO OWNER，P-NAV 仅等待 P-CLIENT，runtime/40C blocked。
+
+## CR271 C ACKed / A Communication Stale - 2026-07-19 00:57 EDT
+
+- C 已 ACK P-OCR `0/0/0` 与 owner release，冻结三文件不再修改，当前 idle available。
+- A 连续两轮未 ACK P-LOCAL Review #1 test-only repair，标 `COMMUNICATION_STALE`；canonical owner、`0/1/0`
+  blocker 与 22T 返修条件保留。源码 SHA 未变化，尚未达到 ACTIVE_STALE 时间门。
+- P-CLIENT READY/ZERO OWNER；P-NAV/runtime/factory/40C blocked。无 Maven/runtime/input/Git mutation。
+
+## CR271 P-OCR Review #3 Passed / P-LOCAL Review #1 Blocked - 2026-07-19 00:47 EDT
+
+- P-OCR Repair #2 为 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；packed、same-row、
+  wrapped/right-edge、green coordinate-link 分支隔离与 approved-difference 注释闭合，C owner 释放。
+- P-LOCAL 为 `P0/P1/P2=0/1/0 / BLOCKED / REPAIR REQUIRED / EXTERNAL-A OWNER`。三项 production bridge
+  接受；22T 未证明跨两个 bound runtime 的 key isolation，也未读取 queued replacement 核对第二 decision/reason，
+  因而 watcher identity/no-silent-drop 验收未闭合。返修限同一测试边界且总数保持 22T。
+- P-CLIENT 仍 READY/ZERO OWNER；P-NAV/runtime/factory/40C blocked。父级未运行 Maven/runtime/input。
+
+## CR271 P-OCR Review #2 Blocked / P-LOCAL Active - 2026-07-19 00:31 EDT
+
+- P-OCR is `BLOCKED / REPAIR REQUIRED / EXTERNAL-C OWNER`, review `P0/P1/P2=0/1/1`. Current 7T do not
+  deterministically isolate packed selection, wrapped/right-edge selection, or green coordinate-link fallback; the
+  DecisionEngine section comment also overstates full baseline equivalence despite the approved provider difference.
+- P-LOCAL is now `SOURCE_ACTIVE / EXTERNAL-A OWNER`; executor+dispatcher source is present and test/compile remain.
+  P-CLIENT stays `READY / ZERO OWNER`; P-NAV/runtime/factory/40C remain blocked. No parent Maven/runtime/input.
+
+## CR271 P-PROTO Amendment #6 ACKed / Contract Unblocked - 2026-07-18 22:55 EDT
+
+- A explicitly accepted the exact mirror fields and separate replacement reason; P-PROTO returns to source active.
+- `TurnPendingTransferChoice`=`5CAF8C15` and `TurnPendingRouteOutcome`=`B3C9B713` are byte-identical in both repos;
+  `TurnLocalOperation` remains `D199953C`. Args/Result/Validator/tests are still pending.
+- C remains active on disjoint P-OCR. No delivery/new READY/build change; no Maven with dual Java writers.
+
+## CR271 P-PROTO Payload Contract Repaired - 2026-07-18 22:49 EDT
+
+- Parent approved two pure byte-identical protocol mirror records instead of flattening roughly twenty state fields
+  into the shared arguments/result records. The mirrors carry exactly the local 9-field transfer-choice and 11-field
+  route-outcome shapes; `routeMode` is a stable enum name and local reconstruction remains in the DHXY executor.
+- `routeOutcomeReplacementReason` is a separate operation field; the common diagnostic `source` is not overloaded.
+  No runtime owner/store, watcher lifecycle or business decision changes.
+- A retains P-PROTO owner and must ACK Amendment #6 before resuming. C remains source active on disjoint P-OCR and has
+  completed enum `F67FDF75` 1/3. No Maven/runtime/input while both Java writers are active.
+
+## CR271 P-OCR Contract Unblocked / Dual Source Active - 2026-07-18 22:44 EDT
+
+- C ACKed and froze the complete P-OCR three-file boundary; owner C is source active and the temporary contract
+  blocker is closed. DecisionEngine remains `FA5512F9`, enum/test absent at this audit point.
+- A's P-PROTO `TurnLocalOperation` is now `D199953C` and byte-identical across CR/Cloud with all three operations.
+- The write sets remain disjoint. No Maven/runtime/input ran while both Java writers are active; downstream gates stay blocked.
+
+## CR271 P-PROTO Claimed / P-OCR Claim Contract Corrected - 2026-07-18 22:39 EDT
+
+- A owns P-PROTO and is source active. C owns P-OCR, but its claim omitted the parent-merged
+  `TextCandidateScanStatus`; C owner is retained while that card is plan-contract blocked for a named ACK.
+- The complete P-OCR boundary remains DecisionEngine + byte-identical enum + seven-test contract. Current evidence is
+  `FA5512F9` with enum/test absent, so no incomplete Java implementation has started.
+- No Maven/runtime/input ran. Dependent pre-build boundaries, runtime/factory and TURN-40C remain blocked.
+
+## CR271 TURN-40B-P2 Review #5 Passed / P-PROTO + P-OCR Ready - 2026-07-18 22:26 EDT
+
+- Parent final report review is `P0/P1/P2=0/0/0`; External A's report owner is released. The sole local
+  `WindowRuntimeContext` state authority, typed LOCAL_SERVICE bridge and one Cloud DecisionEngine OCR owner are frozen
+  without business differences or a second store/protocol.
+- Parent merged the ten-line no-test enum split into the complete P-OCR boundary and corrected the external JUnit
+  standalone evidence to `2,680,679B/A1DE5578`.
+- `TURN-40B/P-PROTO` and `TURN-40B/P-OCR` are public `READY / ZERO OWNER / UNASSIGNED`; later LOCAL/CLIENT/NAV,
+  runtime/factory and TURN-40C remain dependency-blocked. No Java/Maven/runtime/input ran.
+
+## CR271 TURN-40B-P2 Review #2 Communication Recovered - 2026-07-18 21:41 EDT
+
+- External A double-ACKed Review #2 and stale messages, acknowledged the frozen-baseline/current-worktree mix-up,
+  and resumed report repair against current CR authority. `COMMUNICATION_STALE` is cleared.
+- Same-card repair now targets current `PendingRouteOutcome` lifecycle, dialog-preparation liveness, one exact OCR
+  owner, literal per-card cohorts and exact named-test gates. A retains report-only ownership.
+- No `RE-DELIVERED #2`, implementation READY card or build change exists; TURN-40C remains BLOCKED.
+
+## CR271 TURN-40B-P2 Review #2 Communication Stale - 2026-07-18 21:31 EDT
+
+- External A missed the Review #2 directed message in two consecutive post-message STATUS EVENTs and continued to
+  report that no review existed. The lane is now `COMMUNICATION_STALE` under the fixed two-round rule.
+- Original-card authority remains Parent Review #2 `0/4/1 BLOCKED`; A keeps the report-only owner and must ACK/read
+  the current EOF before repairing. There is no withdrawal, reallocation or new READY card.
+- TURN-40C remains BLOCKED; no Java/Maven/runtime/input ran.
+
+## CR271 TURN-40B-P2 Parent Review #2 Blocked - 2026-07-18 21:28 EDT
+
+- Parent verdict on the formal re-delivery is `P0/P1/P2=0/4/1 / BLOCKED / REPAIR REQUIRED`; External A retains
+  report-only ownership. The proposed bridge targets retired world-map memory methods instead of current
+  `PendingRouteOutcome` replacement/abandonment/report-delivery semantics.
+- Dialog-request liveness, a single exact OCR owner, literal implementation-card write sets and exact test
+  commands/counts remain open. `TextCandidateScanStatus` stays accepted as the independent shape-only closure.
+- No implementation card is READY and TURN-40C remains BLOCKED; no Java/Maven/runtime/input ran.
+
+## CR271 TURN-40B-P2 Direction ACKed / Communication Recovered - 2026-07-18 21:19 EDT
+
+- External A具名 ACK 了父级 Cloud-slots 否决消息，并将 P1-1 cohort 改为 typed cross-repo
+  `LOCAL_SERVICE`，由 Cloud 调用写回唯一 local `WindowRuntimeContext`；不再创建 Cloud runtime store。
+- 跨仓边界覆盖 shared operation/arguments/validator、Cloud client、DHXY executor/dispatcher 和双边 tests，
+  同时保留本地 watcher、identity、replacement/CAS、atomic-consume 与 cleanup 语义。
+- 通信已恢复，A 继续持有 report-only P2；尚无正式 re-delivery、实现卡 READY 或构建状态变化，TURN-40C
+  继续 BLOCKED。
+
+## CR271 TURN-40B-P2 Re-delivery Paused For Direction ACK - 2026-07-19
+
+- A's 14:22 status says the five findings are analyzed, but its pending report composition still uses the rejected
+  Cloud runtime-slots cohort and has not ACKed the parent correction message.
+- This is ACK round one, not `COMMUNICATION_STALE`. Any re-delivery retaining Cloud slots is contract-invalid; it
+  must first switch to typed cross-repo `LOCAL_SERVICE` operations targeting the sole local runtime owner.
+- No implementation card is READY and TURN-40C remains BLOCKED.
+
+## CR271 TURN-40B-P2 Cloud Runtime Slots Rejected - 2026-07-19
+
+- A's runtime-gap ACK is accepted, but a new Cloud `CloudNavigationRuntimeSlots` store is rejected. The baseline
+  local `WindowTaskRunner` consumes the preparation request and atomically settles pending transfer/route-result
+  memory; Cloud-only slots would be invisible to it and duplicate the read-only local runtime authority.
+- The safe migration boundary is the existing turn `LOCAL_SERVICE`: Cloud sends typed update/clear/replace calls to
+  the sole local `WindowRuntimeContext`, preserving watcher timing, identity checks and get-and-set settlement.
+- P2 must freeze shared protocol, Cloud client, DHXY local executor and both-side tests. No implementation card is
+  READY and TURN-40C remains BLOCKED.
+
+## CR271 TURN-40B-P2 Two Missing Owners Confirmed - 2026-07-19
+
+- The repaired audit now confirms two real pre-build owner gaps: exact-window dialog/pending runtime state and the
+  complete route-OCR business API. Raw `LocalOcrClient` and the current yellow-only `DecisionEngine` helper are both
+  incomplete for baseline destination plus green-coordinate fallback behavior.
+- The implementation boundary is therefore not the earlier two-file trivial rewire. P2 must freeze one canonical
+  state owner, one canonical OCR owner, exact tests and the separate runtime/factory DAG before any READY card opens.
+- TURN-40C remains BLOCKED. No Java, Maven, runtime or input ran.
+
+## CR271 TURN-40B-P2 Runtime-State Contract Gap Confirmed - 2026-07-19
+
+- Parent source audit confirms Cloud has only read-only dialog runtime facts and the prepared-action slot; it has no
+  update/clear owner for `DialogPreparationRequest`. `DialogService` preparation APIs publish actions, not the
+  baseline request/status lifecycle.
+- Pending transfer-choice and pending world-map-route-result state also lack a proven exact-window Cloud owner.
+  P2 must freeze one canonical replacement owner with CAS/get-and-set, clear and tenant/user/device/window tests.
+- This is a migration-contract gap, not approval for a second store or business change. No implementation card is
+  READY and TURN-40C remains BLOCKED.
+
+## CR271 TURN-40B-P2 Review ACKed / Report Repair Active - 2026-07-19
+
+- External A named-ACKed `PARENT-TURN40B-P2-REVIEW1-REPAIR-20260719`; the prior ACK-pending state is cleared and
+  communication is normal. A retains the same report-only card and is actively repairing the `0/4/1` findings.
+- Repair scope remains the complete runtime-state owner table, single route-OCR owner, affected tests, separated
+  pre-build/runtime DAG, and correct Cloud test/compile commands. This is contract repair, not Java implementation.
+- No implementation card is READY and TURN-40C remains BLOCKED. No Java, Maven, runtime or input ran.
+
+## CR271 TURN-40B-P2 Report Review #1 Blocked - 2026-07-19
+
+- Parent final review of A's P2 report is `P0/P1/P2=0/4/1 / BLOCKED / REPAIR REQUIRED`; A retains the report-only
+  owner. The 33-error split remains useful, but the proposed implementation contract is not yet safe.
+- Missing closure covers the full `WindowRuntimeContext` state surface, route-OCR preprocessing/fallback ownership,
+  affected test fixtures/assertions, separation of pre-build and actual runtime/factory cohorts, and the correct
+  Cloud compile/test commands.
+- No implementation card is READY and TURN-40C remains BLOCKED. No Java, Maven, runtime or input was run.
+
+## CR271 TURN-40B-P2 Claimed / Communication Recovered - 2026-07-19
+
+- External A explicitly ACKed parent messages 2017 and 2047 and is the sole canonical owner at the fixed P2 card
+  physical EOF. C also double-ACKed and correctly declined the later competing claim; both communication lanes are
+  recovered, while C remains normally idle because no second READY card exists.
+- `TURN-40B-P2` is `REPORT_ACTIVE / OWNER EXTERNAL-A`, with only its report file writable. It is auditing the exact
+  33-error transitive closure and must freeze the minimal implementation cohort before any Java card opens.
+- TURN-40C remains BLOCKED/NOT READY. No Java, Maven, runtime, UI, capture or input was authorized by this claim.
+
+## CR271 P2 Publication Communication Stale - 2026-07-19 00:47 UTC
+
+- The fixed TURN-40B-P2 card is still public READY with zero owner. A/C repeatedly missed its publication message
+  and continued reporting no claimable card, so both communication lanes are stale under the two-round rule.
+- Recovery message 2047 requires both 2017/2047 ACKs and a fresh card-EOF read. No card assignment, runtime scope,
+  source write set or 40C gate changed.
+
+## CR271 TURN-40B-P2 Remaining Compile Closure Ready - 2026-07-19 00:17 UTC
+
+- The parent corrected the DAG: TURN-40B-C1 through C4 do not constitute the planned Cloud runtime/factory. Those
+  five runtime production files and two tests are still absent, so TURN-40C remains BLOCKED/NOT READY.
+- Fresh Maven compilation reports exactly 33 errors in two families: missing `TextCandidateScanStatus`, and
+  `NavigationService` retaining nine DHXY-local collaborator types. This is a bounded migration contract problem,
+  not thousands of application errors.
+- Fixed report-only card `TURN-40B-P2` is `READY / ZERO OWNER / UNASSIGNED`. It must produce the complete live/dead
+  symbol table, turn-native owner mapping, exact implementation cohorts and aggregate compile point. No Java, stub,
+  copied business algorithm, second protocol/store/queue or Worker assignment is authorized by the card.
+
+## CR271 Cloud Compile Still Blocked - 2026-07-18 23:32 UTC
+
+- Parent stable-window recheck confirms the shared Cloud missing-type debt remains. Compile reaches javac with
+  `skipTests=false` and fails on OCR/status, tracker/input, navigation helper and window-runtime types absent from
+  the Cloud source set; the three authorized named tests never execute.
+- This does not reopen TURN-40B-C2, whose DHXY compile and isolated 14/14 gate remain passed. It also does not infer
+  a business choice or authorize stubs/copies; the remaining transitive ownership must stay with its planned cards.
+
+## CR271 TURN-40B-C2 Review #7 Passed - 2026-07-18 23:22 UTC
+
+- Final parent source/test review: `P0/P1/P2=0/0/0`; External A owner released, Repair #6 closed.
+- Accepted bytes: `TurnExecutionWindow.java`=`77692F3F`; read-only test=`16B93D61`. Parent DHXY compile exits 0 and
+  isolated `LocalTurnActionExecutorContractTest` passes 14/14 with typed `STOPPED`, zero mouse queue and zero capture.
+- Global historical `testCompile` debt remains separate and does not reopen C2. No approved business difference.
+
+## CR271 TURN-40B-C2 Claimed By A / Source Active - 2026-07-18 23:17 UTC
+
+- Original-card EOF records External A's sole earliest whole-card claim (`10:32 -04:00`). The public-pool
+  clarification was not an assignment; C ACKed and deferred to the physically earlier A claim.
+- Frozen scope remains one production file, `TurnExecutionWindow.java`, now SHA `77692F3F`; the read-only
+  replacement-race test remains SHA `16B93D61`. Status: `OWNER EXTERNAL-A / SOURCE ACTIVE / NO MAVEN`.
+- No business/input/protocol expansion is authorized. Acceptance remains isolated 14/14, typed `STOPPED`, zero
+  mouse queue and zero capture, followed by the authorized named family/applicable compile after writer stability.
+
+## CR271 TURN-40B-C2 Plan Repair #6 Ready - 2026-07-18 23:02 UTC
+
+- Root cause is a resolve snapshot split: `TurnExecutionWindow` reads current task once for metadata stop state and
+  again for captured action ownership, allowing a successor to be frozen between reads.
+- The repaired card permits one production-file correction so handle, stop and pause derive from one reference;
+  the later live identity predicate stays live. The existing replacement-race test remains read-only and must pass.
+- Card is public `READY / ZERO OWNER / UNASSIGNED`; this is not assignment. No business/input architecture change.
+
+## CR271 TURN-39C1 Review #2 Passed - 2026-07-18 22:57 UTC
+
+- Parent final source/test review passed `0/0/0`; A owner is released and communication stale is cleared.
+- Direct OCR/scroll checkpoint tests and an all-production retired-input scan close the two prior test blind spots.
+  Navigation production remains baseline-equivalent and preserves background keyboard / foreground mouse ownership.
+- TURN-39 source migration is closed; shared Cloud compile debt still blocks the named family and runtime handoff.
+
+## CR271 TURN-39C1 Communication Stale / Repair Active - 2026-07-18 22:52 UTC
+
+- External A missed two named-ACK rounds for Review #1 message 2240, so `COMMUNICATION_STALE` is canonical.
+- Fresh Navigation/old-facade test bytes show active repair; production Navigation is unchanged, so no active-stale,
+  ownership, architecture, or review-scope transition occurred. Build remains blocked/pending; no Maven ran.
+
+## CR271 TURN-39C1 Review #1 - Test Repair Required - 2026-07-18 22:40 UTC
+
+- Canonical delivery was reviewed at `P0/P1/P2=0/2/0`. Production ownership is accepted as baseline-equivalent:
+  `NavigationService` now uses the shared task checkpoint/stop channel, the legacy five-file cohort is deleted, and
+  the keyboard-background/mouse-foreground architecture is unchanged.
+- Acceptance is blocked only by two test blind spots: missing direct post-capture/OCR and scroll-loop checkpoint
+  proof, and a TURN-44A SCC exemption that makes the retired-type tree scan capable of false passing.
+- External A retains owner for same-card test-only repair. Shared Cloud compile debt keeps the named family pending.
+
+## CR271 TURN-39C1 Claimed / C4 Release ACKed - 2026-07-18 22:05 UTC
+
+- External A canonical-claimed the fixed TURN-39C1 card from its READY/ZERO-OWNER physical EOF and is sole earliest
+  owner. Current state is `OWNER A / SOURCE ACTIVE`; the frozen Navigation checkpoint migration, five deletions and
+  two test write paths are unchanged.
+- External C ACKed C4 Review #10, holds no card and is idle/available. No collision or reclaim exists.
+- Cloud source hashes remain at the pre-39C1 claim values; parent does not run Maven while A is active. Build remains
+  BLOCKED/PENDING and the user IntelliJ baseline worktree remains read-only.
+
+## CR271 C4 Passed / TURN-39C1 Fixed Contract Ready - 2026-07-18 21:51 UTC
+
+- TURN-40B-C4 parent final review passed `P0/P1/P2=0/0/0`; External C owner is released. The exact-HWND background
+  keyboard, cross-window parallelism, foreground/global-serial mouse, eight caller dispositions and retained 696
+  behavior are accepted. Named tests remain blocked before execution by shared Cloud compile debt.
+- The former 39C1 five-delete-only shape was not source-true: `NavigationService` retained every active external
+  `InputActionScope` reference under C4's accepted contract. 39C1 now sequentially owns that file and its contract
+  test, replaces those checks only with existing `TaskCheckpoint`/turn-outcome stop handling, then deletes the five
+  legacy files and creates `OldFacadeRemovalContractTest`.
+- Fixed card `reports/2026-07-19-turn-card-TURN-39C1.md` is `READY / ZERO OWNER / UNASSIGNED`. No second stop channel,
+  queue, protocol, store, business algorithm or behavior choice is authorized; parent did not assign a Worker.
+
+## CR271 C4 Recovered / Review #9 One P2 - 2026-07-18 21:41 UTC
+
+- Fresh C re-delivery clears communication/activity stale. Two production comments, test harness wording, and exact
+  2051 correction are verified; production/test behavior remains unchanged.
+- One P2 remains in `closeMapSearchInputAfterRouteClick` JavaDoc, which still describes retired exclusive-callback
+  ownership. Status is `OWNER C / REVIEW BLOCKED / COMMENT-ONLY REPAIR`; build blocked, 39C1 NOT READY.
+
+## CR271 C4 Communication/Activity Stale - 2026-07-18 21:41 UTC
+
+- TURN-40B-C4 owner C missed the two-round ACK gate for Review #8 message 2128 and has no fresh repair bytes/event
+  beyond ten minutes; canonical flags are `COMMUNICATION_STALE / ACTIVE_STALE`.
+- Review remains `P0/P1/P2=0/0/3`, limited to comments and exact ACK traceability. Owner/write set and keyboard/mouse
+  architecture are unchanged; no reallocation or Java behavior change.
+- Shared Cloud compile debt remains; 39C1 is NOT READY.
+
+## CR271 C4 Review #8 - P2 Repair / Shared Build Blocker - 2026-07-18 21:28 UTC
+
+- TURN-40B-C4 production/test functionality is complete (`P0/P1=0/0`), including exact-HWND background keyboard
+  turns, globally serialized foreground mouse turns, all-eight caller mapping, and the 696 finish retry sequence.
+- Three P2 traceability repairs remain: stale legacy-worker comments, stale test allocation wording, and the exact
+  2051 ACK. Status is `OWNER C / REVIEW BLOCKED / P2 REPAIR REQUIRED`; no behavior change is authorized.
+- Named-test Maven invocation reached compilation but no tests executed because shared Cloud migration types remain
+  missing. Build is `BLOCKED/PENDING`; TURN-39C1 is not open.
+
+## CR271 C4 Communication Recovered / Repair Active - 2026-07-18 21:08 UTC
+
+- C 已 ACK 2031/2041，communication 恢复；2051 首轮待 ACK，owner/source active 且非 ACTIVE_STALE。
+- `Unsafe.allocateInstance(subclass)` 已移除，stub 改普通构造；但 2081 成功 OCR/click 与 1070 valid prepared MOVE/WAIT/CLICK 仍缺。
+- C4 保持 `TEST REPAIR REQUIRED / NO DELIVERY`；writer active 不跑 Maven，39C1 不开放。
+
+## CR271 C4 Test Repair Required - 2026-07-18 20:51 UTC
+
+- C4 测试在父级 Repair #5 后仍以 `Unsafe.allocateInstance(subclass)` 跳过可正常调用的 stub 构造器，构成计划合同违反；通信仍 stale。
+- `@2081` 只覆盖 capture-failure/no-input，未覆盖冻结的成功 OCR 到 click turn；`@1070` real `WindowRuntimeContext`/prepared 路径仍缺。
+- 状态改为 `OWNER C / TEST REPAIR REQUIRED / NO DELIVERY`；2051 要求普通构造、成功路径完整取证，writer active 不跑 Maven，39C1 不开放。
+
+## CR271 C4 Communication Stale - 2026-07-18 20:41 UTC
+
+- C4 owner C 连续两轮漏 ACK 2031，标 COMMUNICATION_STALE；2041 双 ACK 待回。
+- fresh event/source 证明非 ACTIVE_STALE；test implementation 与 production complete 状态不变。
+- remaining callers 必须普通 subclass 正常构造，禁止 Unsafe 跳构造/source-only；无 Maven，39C1 未开放。
+
+## CR271 C4 Remaining-Five Repair - 2026-07-18 20:31 UTC
+
+- C4 caller tests 4/8；剩余 coordinate/OCR/memory/prepared 前置改由 frozen test 内普通 subclass 提供受控观察。
+- 不新增 production seam，不递归 Unsafe 注入，不降为 source-only；真实 production caller + real turn observation 不变。
+- C 继续 test active，2031 待 ACK，无 delivery/Maven，39C1 未开放。
+
+## CR271 C4 ACK / Test Active - 2026-07-18 20:16 UTC
+
+- TURN-40B-C4 owner C 已 ACK 2004，communication normal，测试合同阻断解除。
+- production complete；frozen all-eight tests 进入实现，1968 与 finish-cleanup 保持独立证明，无 delivery。
+- 键盘 exact-HWND 后台跨窗并行、仅鼠标前台全局串行不变；无 Maven，39C1 未开放。
+
+## CR271 C4 Test Contract Repair - 2026-07-18 20:04 UTC
+
+- TURN-40B-C4 不新增 production seam、不缩减八行验收；production 写集和键鼠不变量不变。
+- test-only 使用真实 packaged mini-map 模板构造 patterned capture 并沿用 production OpenCV；必要时反射
+  调真实 production caller，仍须由真实 `TurnGameClient` 观察动作，禁止 source-only/mock-only。
+- C 保持 source/test active，2004 定向消息待 ACK；39C1 未开放，Cloud build/named tests 未运行。
+
+## CR271 C Communication Recovery - 2026-07-19 05:34 EDT
+
+- TURN-40B-C4 owner C 已双 ACK 0416/0432，COMMUNICATION_STALE 清除；6/8 SOURCE ACTIVE、无 blocker。
+- dead 2334 删除与 active `closeMiniMapIfOpenTurn` 的 696 retry transfer、1968 独立测试合同均已接受。
+- A 39W 已 ACK 且 3/4；两名 Worker 均正常推进，owner/写集/键鼠不变量不变。
+
+## CR271 39W ACK and 3-of-4 - 2026-07-19 05:32 EDT
+
+- TURN-39W owner A 已具名接受 4/4 caller proof 合同，通信正常；第三个 tracker caller test 已落盘，现为
+  3/4，仅剩 prepared GREEN caller，无 delivery、无 blocker。
+- TURN-40B-C4 保持 6/8 SOURCE ACTIVE。
+- 两卡写集仍互斥；键盘 exact-HWND 后台跨窗并行、仅鼠标前台全局串行不变。
+
+## CR271 C4 6-of-8 Coherent State - 2026-07-19 05:28 EDT
+
+- TURN-40B-C4 已完成六行，剩 `1450/2334`；共享 helper 解包后无 turn-inside-exclusive。
+- `pressAlt1ForMiniMap` 不再有 focused keyboard fallback，键盘 exact-HWND 后台并行不变量闭合；C 仍因
+  0416/0432 未 ACK 保持 COMMUNICATION_STALE，但非 ACTIVE_STALE。
+- TURN-39W 仍须 4/4 caller tests，A 的 2 个代表证不能交整卡。
+
+## CR271 39W Four-Caller Gate / C4 5-of-8 - 2026-07-19 05:22 EDT
+
+- TURN-39W 不能以 2 个代表性测试替代 fixed-card 要求的 4 个 caller proofs；剩余 tracker/prepared-dialog
+  caller 必须在既有 test write set 内直接取证。不可执行的 Cloud gate 独立保持 BLOCKED/PENDING。
+- TURN-40B-C4 已推进至 5/8，剩 `1450/1968/2334`；owner C SOURCE ACTIVE、非 ACTIVE_STALE，但仍未 ACK
+  0416/0432，COMMUNICATION_STALE 不变。
+- 用户输入边界不变：键盘 exact-HWND 后台且跨窗并行，只有鼠标前台全局串行，同窗步骤顺序执行。
+
+## CR271 A Communication Recovery / C Atomic Migration WIP - 2026-07-19 04:48 EDT
+
+- TURN-39W owner A 已 ACK build/delivery gate，测试源码 active，尚未 delivery；build 仍 BLOCKED/PENDING。
+- TURN-40B-C4 owner C 持续源码活动但未 ACK，保持 COMMUNICATION_STALE、非 ACTIVE_STALE。
+- NavigationService 的 8-row cohort 与共享 helpers 必须同一原子 pass 去除 exclusive 包裹并迁 turn action，
+  禁止形成 turn-inside-exclusive 中间态；写集和用户键鼠不变量不变。
+
+## CR271 Active Writer Communication and Build Gate - 2026-07-19 04:32 EDT
+
+- TURN-40B-C4 owner C 仍 SOURCE ACTIVE，但 dead-row transfer 父级消息连续两轮未回执，标
+  `COMMUNICATION_STALE`；已有 NavigationService WIP 字节，未标 ACTIVE_STALE。
+- TURN-39W owner A 可在 frozen test source 完成后交完整 SOURCE+TEST；Cloud compile/named test 因写集外
+  在飞迁移失败，独立记 BLOCKED/PENDING，不回退 source review gate。
+- 两卡 owner/写集仍互斥；writer 活跃期不再运行 Maven。
+
+## CR271 C4 Dead Legacy Row Transfer - 2026-07-19 04:16 EDT
+
+- `closeMiniMapIfOpen@2334` 经全仓符号审计为零调用死方法，允许删除，禁止重造重复 dead implementation。
+- 其 696 语义由唯一活跃 `closeMiniMapIfOpenTurn` 承担并补齐 observe/Alt+1/WAIT300/re-observe/retry-once；
+  `NavigationTurnContractTest` 对该 active finish-cleanup 与 1968 分别取证。
+- C owner 与三文件写集不变；键盘 exact-HWND 后台并行、仅鼠标前台全局串行不变。
+
+## CR271 C4 Exact-Eight Clarification ACK - 2026-07-19 03:50 EDT
+
+- External C 已具名 ACK `PARENT-C-TURN40B-C4-EXACT8-INCLUDE-2334-0347`，确认 C4 精确八行包含
+  `closeMiniMapIfOpen@2334`。
+- `1968` 与 `2334` 必须独立测试；共享 `pressAlt1ForMiniMap` 对迁移路径不得保留 focused keyboard fallback。
+- C 继续持有 TURN-40B-C4，A 继续持有 TURN-39W；两整卡写集互斥，均无 owner/status 冲突。
+
+## CR271 C4 Exact Eight-Caller Clarification - 2026-07-19 03:47 EDT
+
+- C4 固定八行核正为 `1070 + 1450/1674/1968/2081/2218/2231/2334`；C 当前 recon 漏列独立
+  `closeMiniMapIfOpen@2334`。原卡无扩写集澄清并要求 1968/2334 各自测试。
+- 共享 `pressAlt1ForMiniMap` 对迁移 caller 必须零 focused-keyboard fallback；键盘只走 39K exact-HWND
+  后台路径。C owner 保留，具名 ACK pending round 1；A/C writer 活动，父级不跑 Maven。
+
+## CR271 Parallel Claims / 88-Card Registry Repair - 2026-07-19 03:15 EDT
+
+- External A canonical claim `TURN-39W`；External C canonical claim `TURN-40B-C4`。两个 Cloud 整卡写集互斥，
+  可并行推进；父级未派卡。A 已 ACK 39K Review #2，C 03:10 STATUS EVENT 已确认 C4 SOURCE_ACTIVE。
+- 第 16 节恢复为 88 张 Sprint 主卡：39K/39W/39C1 作为 TURN-39 的固定实施子卡归并展示，不删除原卡；
+  C4 继续在 TURN-40B 主行展示。39C1 仍等 39W+C4 active-zero。
+- Java writer 即将活动，父级本轮不跑 Maven/runtime/input。
+
+## CR271 TURN-39K Review #2 Passed / Downstream Ready - 2026-07-19 03:05 EDT
+
+- Repair #2 的 4 production + 2 tests 经父级终审 `P0/P1/P2=0/0/0`，A owner released；exact action
+  stop/pause freeze、per-window generation admission、跨窗后台键盘并行与 KEY_UP cleanup 闭合。
+- main compile GREEN；授权 named family 因写集外 dirty testCompile 阻断，仍为 BLOCKED/PENDING。
+- 固定原卡 `TURN-39W`、`TURN-40B-C4` 已按真实 Cloud 包路径开放为
+  `READY / ZERO OWNER / UNASSIGNED`；不派卡。C2 独立 bag regression 债保持不变且不与两卡碰撞。
+
+## CR271 TURN-39K Stale Delivery Reconciled - 2026-07-19 02:25 EDT
+
+- 01:18 delivery 物理晚于 Repair #2，却仍声明 holder admission 与五文件；当前新增
+  `TurnExecutionWindow=a9820301...` 未包含在 manifest，交付已被 source drift supersede。
+- 状态保持 `REPAIR ACTIVE / OWNER A / ACK 0220 PENDING R1`；需 fresh 4 production+2 tests delivery 后再审，
+  C4/39W 不开放，Maven named gate 仍 BLOCKED/PENDING。
+
+## CR271 TURN-39K Plan-Contract Repair #2 - 2026-07-19 02:20 EDT
+
+- 生产 `WindowTurnLoop` 为独立 `dhxy-turn-*` 线程，不持有 window-task 的 `TaskExecutionContextHolder`；nullable
+  holder 不能作为 live pause/stop 权威。
+- 39K 增加 `TurnExecutionWindow.java`：在既有 exact action handle snapshot 内并列冻结 stop/pause token，
+  executor 使用该快照并在 context generation monitor 下准入；tests 走 production resolve seam。
+- 状态仍 `P1 REPAIR ACTIVE / OWNER A / MAVEN NAMED BLOCKED-PENDING`；C4/39W 不开放，其余边界不扩。
+
+## CR271 TURN-39K Source Review #1 Blocked - 2026-07-19 01:55 EDT
+
+- 父级结论 `P0=0 / P1=1 / P2=0`：后台键盘机械能力与跨窗口并行方向正确，但 direct keyboard 缺少绕过
+  frozen queue 后必须保留的 live stop、pause、exact binding-generation admission。
+- External A 保留 owner，在原 39K 写集内补 late-stop/pause/A->B->A drift 的零投递门禁与测试；禁止新增
+  keyboard queue/store/global lock/focus，mouse、wire、Cloud、C2 均不扩。
+- 39K 状态为 `REPAIR REQUIRED / MAVEN NAMED GATE BLOCKED-PENDING`，下游 C4/39W 不开放。
+
+## CR271 TURN-39K Delivery Scope / C2 Build Regression - 2026-07-19 01:25 EDT
+
+- 39K test-1 isolated 16/16；test-2 的 mixed-order proof 与七个既有 mouse regressions 全绿。唯一剩余红测属于
+  C2 bag admission/typed-STOPPED 路径，零 mouse queue submission，非 39K 增量。
+- 父级允许 A canonical delivery 后进入五文件终审；Maven named gate 仍 `BLOCKED/PENDING`，整类 13/14 如实保留。
+- TURN-40B-C2 登记 direct isolated build regression，当前 `ZERO OWNER / ROOT-CAUSE AUDIT / NOT CLAIMABLE`；未派卡，
+  未授权修改 bag 生产或测试。
+
+## CR271 TURN-39K Test-2 Contract Repair - 2026-07-19 01:17 EDT
+
+- test-2 的 same-window mixed-order 增量已落，但旧 `RecordingInputQueue` test double 未覆盖 TURN-22D1 frozen
+  exact-window queue API，导致七个既有 mouse tests 与新 test 同根失败。
+- 父级批准仅在冻结的 `LocalTurnActionExecutorContractTest` 内升级 test double，保留 C2 delta 与既有 queue
+  result/event 语义；这是 39K 既定 mouse-unchanged 验收，不扩 production 写集或业务语义。
+- 修复后做隔离取证并允许 source delivery；Maven named gate 仍因写集外 dirty testCompile 保持
+  `BLOCKED/PENDING`。
+
+## CR271 TURN-39K Test Gate Adjudication - 2026-07-19 01:13 EDT
+
+- test-1 隔离运行 16/16 passed，main compile green；标准 Maven named-test 被写集外 dirty testCompile 错误阻断。
+- 隔离结果可作为 source-test review evidence，test-2 完成后允许 source delivery；Maven named gate 保持 `BLOCKED/PENDING`，不得碰无关测试或宣称已通过。
+- A test-2 writer active，父级未运行 Maven/runtime/input。
+
+## CR271 TURN-39K Test-1 Active - 2026-07-19 00:58 EDT
+
+- `TurnInputStepExecutorContractTest` 已开始 39K 增量：unsupported negatives、后台调用记录、双窗口 deterministic barrier；仍在活动写入。
+- 第二份 named test 尚无本卡新字节。整卡未 delivery，A test writer active，父级未运行 Maven/JUnit/compile/runtime/input。
+
+## CR271 TURN-39K Production Done / Compile Green - 2026-07-19 00:54 EDT
+
+- A 报告三 production 完成，DHXY `mvn -q -DskipTests compile` exit 0；键盘 exact-HWND 后台并行合同与 mouse-only queue 边界保持。
+- 两 named test 仍待实现，整卡未 delivery、未 review。A 正在写测试，父级不并发运行 Maven；无 runtime/input。
+- A sole owner/communication normal；C self-withdraw 后 idle/no-reclaim。
+
+## CR271 TURN-39K Three Production Deltas - 2026-07-19 00:53 EDT
+
+- 三 production 均已产生增量；executor 现将 KEY_TAP/DOWN/UP/TEXT_INPUT 直接交给 exact-HWND 后台 service，键盘跨窗口并行且不进全局 mouse queue。
+- 两 named test 尚无本卡新字节，Java writer active，未运行 Maven/JUnit/compile/runtime/input。
+- C 已双 ACK 0034+0045 并 idle/no-reclaim；A sole owner/communication normal，继续测试实现。
+
+## CR271 TURN-39K First Production Delta - 2026-07-19 00:52 EDT
+
+- External A 已修改 `BoundWindowKeyboardService` 与 `TurnKeyMapper`：新增 exact-HWND Ctrl chord、Enter、WM_CHAR Unicode 投递及闭合 key mapping；键盘不进全局 worker、不聚焦、不前台 fallback。
+- executor 与两份 39K test 尚无本卡新增量；C2 的既有 test delta 保留。Java writer active，未运行 Maven/JUnit/compile/runtime/input。
+- A sole owner、C idle/no-reclaim，communication normal；后续 C4/39W 仍等待 39K source review pass。
+
+## CR271 TURN-39K Communication Race Correction - 2026-07-19 00:46 EDT
+
+- A/C 的 ledger `STATUS EVENT` 与父级 00:45 状态块并发落盘，现确认两边均已正式 ACK 0034；stale 判定作废，通信恢复 normal，0045 仅 pending round 1。
+- External A 为 39K sole owner 且已进入 source recon，尚无 Java/test 新字节；External C 已自撤并 idle/no-reclaim。
+- `LocalTurnActionExecutorContractTest` 在领取前已有 C2 累积 delta，00:34“全写集 clean”说明不准确；该 delta 必须保留扩写。未运行 Maven/runtime/input/build。
+
+## CR271 TURN-39K Claim Resolution - 2026-07-19 00:45 EDT
+
+- 原卡 physical append order 裁决 External A 为 `TURN-39K` 唯一 owner；External C 的并发 claim 已 canonical self-withdraw，零 Java/test 写入。
+- 39K 仍为 DHXY 3 production+2 test：键盘 exact-HWND 后台且跨窗口并行，仅鼠标前台全局串行。当前相关源码 SHA/mtime 未变，C4/39W 仍等 39K source pass。
+- A/C 连续两轮未在 ledger 用 `STATUS EVENT` 回执，均标 `COMMUNICATION_STALE/STATUS_STALE` 并已定向要求修复；未运行 Maven/runtime/input/build。
+
+## CR271 TURN-39 Keyboard Contract Correction - 2026-07-19 00:34 EDT
+
+- 用户确认：键盘按窗口 exact-HWND 后台并行；只有鼠标前台且全局串行。原 foreground-keyboard user gate 与 keyboard-global-queue 假设作废。
+- `TURN-39K` 固定原卡现为 `READY / ZERO OWNER`：3 production + 2 test，仅 DHXY；各窗口 turn 线程直接调用后台键盘 service，不经 `InputActionWorker/Queue`，无 Cloud wire 改动。
+- 后续顺序为 `39K->{C4,39W}->39C1`；总账只公告 READY，不分派 Worker。无 Java/Maven/runtime/input。
+
+## CR271 TURN-39P1 Review #15 Passed - 2026-07-18 23:15 EDT
+
+- Repair #14 父级终审=`0/0/0 PASSED`；双仓 validator/test、empty-field shape 与双 compile gate 完整；A 23:17 已具名 ACK、report closed、owner released 并转 idle/available；23:37 已 ACK C2 stale 状态纠正，确认 C2 Review #4 passed/owner released/closed/no-reclaim。
+- TURN-39 stale 七路径写集已改为六 facade READ-ONLY umbrella；39K/C4/39W/39C1 单一 DAG 冻结。
+- 四张实施卡均 `NOT READY / ZERO OWNER`，只待用户前台键盘能力决定；无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #14 - 2026-07-18 23:05 EDT
+
+- Repair #13 复审=`0/1/0 BLOCKED`；六 facade source census 与唯一 card DAG 已闭合。
+- 39K 为双仓 enum 新增 `PRESS_CTRL_A`，但漏 Cloud byte-identical exhaustive `TurnProtocolValidator` 及 contract test，Cloud 侧将无法编译且字段形状无验收；双仓 compile gate 也未点明。
+- A owner retained、communication normal；所有实施卡未开放，前台键盘能力仍是唯一待用户语义决策，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #13 - 2026-07-18 22:49 EDT
+
+- Repair #12 复审=`0/2/0 BLOCKED`；Navigation 三路径已唯一归 C4，上一轮 collision 闭合。
+- `(K)/(W)/TURN-39C1` 仍无固定卡 id/原卡/完整写集与 named-test/compile 合同；TURN-39 所称六文件实列七个 stale-package path，与 Cloud 当前 `turn/client`+remote facade 树不一致。
+- A owner retained、communication normal；所有实施卡继续未开放，前台键盘能力仍是唯一待用户语义决策，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #12 - 2026-07-18 22:27 EDT
+
+- Repair #11 复审=`0/1/0 BLOCKED`；Wubei whole-task test 的构造与四迁移站点责任已闭合。
+- TURN-39 与已父级通过的 TURN-40B-C4 双重占有 Cloud `NavigationService.java`、`NavigationTurnContractTest.java`，且未冻结单 owner DAG、C4 FiveRing test 归并和唯一 compile/test 点。A owner retained；22:29 keepalive 为旧快照竞态，Review #12 ACK pending round 1。
+- TURN-39/C4 均未开放；前台键盘能力仍是唯一待用户语义决策，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #11 - 2026-07-18 22:17 EDT
+
+- Repair #10 复审=`0/1/0 BLOCKED`：Review #10 两个 manifest 漏项已闭合。
+- 最终 test manifest 漏 `WubeiWholeTaskTurnContractTest`，无法随 `WubeiTask` 四 caller 与 `InputSequences` constructor dependency 退役同步验证 action order/timing。A owner retained、communication normal；22:17 keepalive 为旧快照竞态，Review #11 ACK pending round 1。TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #10 / Communication Recovered - 2026-07-18 22:05 EDT
+
+- Repair #9 复审=`0/2/0 BLOCKED`：三个 turn execution owner、完整 mapper 词汇、泛型 frozen input/WAIT、`KEY_DOWN/KEY_UP` unsupported 与真实 worker test 职责接受。
+- 最终 production/test manifest 分别漏 `LocalTurnActionExecutor.java` 与 `TurnInputStepExecutorContractTest.java`，导致 branch grouping owner 与 executor direct contract 不完整。A owner retained，21:56 双 ACK 后 communication normal；TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Communication Stale - 2026-07-18 21:51 EDT
+
+- External A 连续两轮未 ACK Review #9 返修消息，现标记 `COMMUNICATION_STALE`；原卡 EOF 仍为 `0/2/0 REPAIR REQUIRED`、owner A retained。
+- 最后 A 事件为 21:44，源码无变化但尚未达到十分钟 `ACTIVE_STALE` 门。已追加双 ACK 定向消息；TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #9 - 2026-07-18 21:45 EDT
+
+- Repair #8 复审=`0/2/0 BLOCKED`：repo-qualified Cloud 五文件 cohort/`TURN-39C1` 前置形状、镜像 wire/Cloud producer、Enter=`KEY_TAP` 与 Alt+1 独立请求接受。
+- 生产写集仍漏 `TurnInputStepExecutor`/`TurnKeyMapper` 与 mapper 的完整 keyboard/text 职责；测试写集漏真实 worker harness `InputActionFrozenExclusiveContractTest`，不能证明 Alt+1 三分支及 `PRESS_CTRL_A` 物理派发。A owner retained、communication normal；TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #8 - 2026-07-18 21:30 EDT
+
+- Repair #7 复审=`0/2/0 BLOCKED`：branch-level 单请求与显式无 hold `PRESS_CTRL_A` 接受；报告仍混淆 DHXY/Cloud 同名 `InputAction`，三文件删除会遗留 Cloud `InputAction`/`InputActionType`，建议 `TURN-39D` 尚未冻结为权威卡。
+- 能力写集仍为条件式并遗漏 DHXY worker、Cloud 镜像协议 enum/Navigation producer；Alt+1 后台资格及 terminal/focused fallback 测试未冻结。A owner retained、communication normal；21:29 keepalive 为旧快照竞态，Review #8 ACK pending round 1。TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #7 - 2026-07-18 21:15 EDT
+
+- Repair #6 复审=`0/2/0 BLOCKED`：单 queue/worker 方向和 44A 17-SCC 归属接受，但 per-INPUT queue request 破坏旧 prepare 全段原子输入，`LocalTurnActionExecutor`/branch sequence tests 与唯一 Ctrl+A cleanup 合同仍缺。
+- 四个 external input 文件仍为 owner-unfrozen，未形成 44A 前 compile closure。A owner retained、communication recovered；TURN-39 未开放，无 Java/Maven/runtime/input/build 变化。
+
+## CR271 TURN-39P1 Review #6 - 2026-07-18 20:55 EDT
+
+- Repair #5 复审=`0/2/0 BLOCKED`：前台键盘能力未落入现有唯一输入队列，且五个 44A SCC 成员被错误提前归属 TURN-44。
+- 四个 SCC 外 input 文件仍须按 section 17 冻结精确 owner/compile closure。A owner retained；communication stale、active 正常，TURN-39 未开放。
+
+## CR271 TURN-39P1 Communication Recovered - 2026-07-18 20:50 EDT
+
+- External A 已 ACK Review #5 并完成返修取证，`COMMUNICATION_STALE` 解除；owner A 正组装 Repair #5。
+- stale 通知本身仍 pending round 1；尚无 canonical delivery/source/build 变化，TURN-39 继续 BLOCKED/未开放。
+
+## CR271 TURN-39P1 Communication Stale - 2026-07-18 20:40 EDT
+
+- External A 连续两轮未 ACK Review #5 返修消息，现标记 `COMMUNICATION_STALE`；原卡 EOF 仍为 `0/2/1 REPAIR REQUIRED`、owner A retained。
+- 尚未达到 `ACTIVE_STALE` 十分钟门；无 delivery/source/build 变化。已追加定向双 ACK 消息，无 Java/Maven/runtime/input。
+
+## CR271 TURN-39P1 Review #5 - 2026-07-18 20:35 EDT
+
+- Repair #4 父级复审=`0/2/1 BLOCKED`：遗漏 close-world-map 与 scroll-loop 传递边，且拟删除 Alt+1 focused fallback，违反基线等价迁移。
+- 行2 old-facade 残留例外不符合 TURN-39 零 active-reference 固定门；拒绝前台键盘能力只能保持 BLOCKED。retained allowlist 还须逐文件冻结准确 MODIFY/DELETE/后续 owner。
+- A owner retained；TURN-39 未开放，无 Java/Maven/runtime/input，build 状态不变。
+
+## CR271 TURN-39P1 Audit Complete - 2026-07-18 20:25 EDT
+
+- A 已 ACK blocker 消息并完成全取证：Unicode/Enter/Alt+1 focused fallback 归同一前台键盘能力决策；四 facade 为 input-scope byte-read-only，双 allowlist 已枚举。
+- Repair #4 正在组装，尚无 delivery/source/build 变化；TURN-39 BLOCKED/未开放，无 Maven/runtime/input。
+
+## CR271 TURN-39 TEXT_INPUT Blocker - 2026-07-18 20:20 EDT
+
+- 父级确认 world-map 活跃 fallback 需要 Ctrl+A+Unicode text；TURN-09 executor 对该能力固定返回 `BACKGROUND_KEY_UNSUPPORTED` 并禁止前台 fallback。
+- 唯一待用户决策是是否另批 exact-window、全局串行的前台键盘能力。A 继续 report 全闭包审计；TURN-39 BLOCKED/未开放，无 Java/Maven/runtime/input。
+
+## CR271 TURN-39P1 Review #4 ACK - 2026-07-18 20:15 EDT
+
+- A 已具名 ACK Review #4 `0/2/1`，communication normal，保持 report owner 并进行六 helper+传递 callee 取证。
+- 无新 delivery/source/build 变化；TURN-39 继续 PLAN-CONTRACT BLOCKED，未开放实施卡。C idle/no-reclaim；无 Maven/runtime/input。
+
+## CR271 TURN-39P1 Review #4 - 2026-07-18 20:07 EDT
+
+- Review #4=`0/2/1 BLOCKED`；RETAIN 撤回、12 direct caller、六 facade disposition、service guards 与 44A 字节边界已接受，A owner retained。
+- Navigation exclusive callback 的完整 helper 传递闭包和现有 typed seam/owner/test 映射仍缺；四个 remote facade 的 MODIFY 未落到精确 symbol delta。
+- 新门测试须显式列出 zero-active caller 与 44A-retained infrastructure allowlist。TURN-39 未开放；无 Java/Maven/runtime/input。
+
+## CR271 TURN-39P1 Review #3 - 2026-07-18 19:54 EDT
+
+- 39P1 19:48 re-delivery 复审=`0/2/1 BLOCKED`；12 caller/C2 EOF 接受，A owner retained。
+- RETAIN 保留五个 active old facade consumer，违反固定 TURN-39 typed-only/zero-active-old-facade gate，父级裁为不合规；无需用户决策，只允许 RETIRE，物理定义留 44A。
+- A 返修仅需保留三个既有 service guards、冻结 active-token guard 与六 facade disposition；无 Java/Maven/runtime/input。
+
+## CR271 A/C Review ACK Snapshot - 2026-07-18 19:49 EDT
+
+- A 已精确 ACK 39P1 Review #2，owner A/report repair active；26 项映射冻结，待补两套 option 写集、TURN-39/44A 边界、12 caller 与当前 C2 EOF，无新 delivery。
+- C 已精确 ACK C2 Review #4 并确认 closed/owner released/no-reclaim，现 idle/available；C2 build 状态不变。
+- A/C communication normal；未运行 Maven/runtime/input。
+
+## CR271 39P1 Review #2 / C2 Review #4 - 2026-07-18 19:38 EDT
+
+- 39P1 Review #2=`P0/P1/P2=0/1/2 / REPAIR REQUIRED`：26 项 active/dead 映射通过，但 TURN-39 六个 facade 文件、44A 边界与 `OldFacadeRemovalContractTest` 必建路径未纳入完整写集；两种语义选项写集互相矛盾，caller 计数应为 12。A owner retained。
+- C2 三处直接 testCompile 缺陷返修经 Review #4=`0/0/0 PASSED`，owner C released；C 19:30 ACK/重交构成 communication recovery，不标 stale。
+- 授权 named family 仍被卡外历史测试源码阻断而未执行；C2 直接错误已清零。DHXY main compile 通过，Cloud tests/compile 未运行。
+
+## CR271 C2 Review #3 Test-Compile Blocked - 2026-07-18 19:11 EDT
+
+- 授权 DHXY named family 在 `testCompile` 失败，且三份 C2 test source 有直接错误：两个 fake `PlayerStateService` 旧构造、executor fixture 缺 imports 并有同类旧构造。
+- 因此新 build 证据覆盖 Review #2 release：C2=`P0/P1/P2=0/1/0 / BLOCKED / REPAIR REQUIRED`，owner C restored/retained；Cloud tests/compile 未运行。
+- 已定向要求 C 仅修既有测试签名/import 后重交。39P1 仍 Review #1 blocked；无 runtime/input。
+- C 19:16 的 closed/owner-release 仅基于旧 Review #2，未读到更晚 Review #3，故不接受；C2 原卡 EOF 的 owner C/repair required 继续权威。A 已 ACK 39P1 返修消息。
+
+## CR271 TURN-40B-C2 Review #2 Passed - 2026-07-18 19:09 EDT
+
+- C2 Amendment #1 re-delivery 终审 `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`；真实 inherited guarded/session 测试闭合 supply 单 session/精确顺序/三字段，guarded test 闭合 bag-open failure 与成功 open/close-once。
+- 三处 approved protected seam 保持方法体/签名/生产序不变，其余 24 文件 parity；owner C released/source gate closed，无业务差异。
+- 39P1 独立保持 Review #1 blocked/owner A retained。父级接管授权 named-test/compile aggregate gate；无 runtime/input。
+
+## CR271 TURN-39P1 Review #1 Blocked - 2026-07-18 19:06 EDT
+
+- 父级完成 A 的 39P1 report source review：`P0/P1/P2=0/2/1 / BLOCKED / REPAIR REQUIRED`，A owner retained；不开放实施卡。
+- 当前协议没有 double-right-click interval/text-mode 数据面，validator 禁止 double-click timing，DHXY executor 又拒绝 KEY_DOWN/KEY_UP/TEXT_INPUT；报告的零 protocol/executor 变更与 27→11 矩阵不成立。
+- 最小写集遗漏必需 DHXY files/tests，Navigation named test 路径也未冻结；旧 enum 实为 26 项。已发具名返修消息，retire-vs-retain 继续保持唯一待用户语义决策但暂不裁决。
+- C2 tests 有活跃写入但未 re-deliver；Java/test writer active，无 Maven/runtime/input。
+
+## CR271 C Communication Recovered / C2 Seam Landed - 2026-07-18 18:43 EDT
+
+- C 已精确双 ACK 1814+1836，communication recovered；C2 继续 source+test repair active。
+- `BagService.java` 三处 visibility-only seam 已落盘，SHA-256=`CE0EA995...`；方法体/生产序保持 Amendment 合同。两份测试仍为旧 blob，supply 与 guarded outcome repair 待写，尚无 re-delivery。
+- A 的 39P1 item-4/6 已完成，正在组装报告；无 canonical delivery。C writer 活动期间无 Maven/runtime/input。
+
+## CR271 C2 Amendment #1 / A Communication Recovered - 2026-07-18 18:36 EDT
+
+- A 已双 ACK 1759+1822 并恢复通信；39P1 item-5 七个 Navigation exclusive 复合块已分类，report-only 继续推进。
+- C2 原卡已 canonical 返回 `PLAN-CONTRACT BLOCKED`。父级完成完整符号/继承面审计后冻结 Amendment #1：原写集内 `BagService.java` 仅将 `ensureBagOpened`、`closeBagIfNeeded`、`countItemUpToInOpenMainBag` 改为 `protected`，方法体和生产调用序不变，零新文件/协议/store/helper，生产树零 `BagService` 子类。
+- 两份既有测试须执行 inherited guarded/session 真路径，闭合 supply 单 session/精确顺序/三字段，以及 bag-open failure 与成功 open/close-once；C owner retained/source repair active。
+- C 对 Review #1 的 ACK ID 不精确，连续两轮未回执 `PARENT-C-TURN40B-C2-REVIEW1-REPAIR-1814`，标 `COMMUNICATION_STALE`；不标 active stale、不撤 owner。无 Maven/runtime/input。
+
+## CR271 TURN-40B-C2 Review #1 Blocked / 39P1 Active - 2026-07-18 18:14 EDT
+
+- C2 27-file delivery 父级 review=`P0/P1/P2=0/1/1 / REPAIR REQUIRED`；生产链暂无新语义 finding，C owner retained。
+- P1：缺 supply 单 guarded session、incense→checkpoint→count 与三字段结果的可执行测试。P2：BagService guarded test 缺 bag-open failure 和成功 open/close exactly-once。
+- A 的 report-only 39P1 item-1 审计正常推进；C2 返修期间无 Maven/runtime/input。
+- A 已完成 39P1 item-2 caller census，但连续两轮漏 ACK 1759，现为 `COMMUNICATION_STALE`；报告活动真实，不标 active stale。C 的 Review #1 返修消息 ACK pending round 1。
+
+## CR271 TURN-39P1 Claimed / C2 Tests 10-of-11 - 2026-07-18 17:59 EDT
+
+- A 已合法 canonical claim report-only `TURN-39P1`；prior READY/zero owner、唯一 claim、分支 HEAD 与单卡写集均核验通过，A 为 sole owner/report active。
+- C2 Wubei/FiveRing whole-task tests 已完成构造对齐和错包修复，tests 10/11，blob=`7168b543`/`b54396be`；仅余 executor contract test 后交付。
+- 39P1 与 C2 写集零碰撞；C writer 活动期间无 Maven/runtime/input。
+
+## CR271 C3 Review #2 Passed / C2 Tests 8-of-11 - 2026-07-18 17:41 EDT
+
+- C3 同文件返修父级复审 `P0/P1/P2=0/0/0`：fake OCR endpoint 确定性覆盖 available/unavailable 并 finally 恢复属性和端口，缺失 `windowRect` fallback retained case 闭合；production 两文件无漂移，A owner released。
+- A 17:44 已具名 ACK Review #2 通过消息并转 `IDLE / AVAILABLE`，不持卡；当前无 A lane 可领 READY/ZERO-OWNER 原卡。
+- C2 已新增 `BagServiceGuardedAdmissionTest` 与 Cloud `CloudBagLocalServiceClientContractTest`，累计 8/11，最新 SHA-256=`A8F88F12...`，余 3 tests；C 继续 source active，尚无 delivery。
+- C2 writer 活动期间无 Maven/runtime/input；C3 named test/Cloud compile 继续 deferred。
+
+## CR271 C2 Tests 6-of-11 / C3 Repair ACK Pending - 2026-07-18 17:25 EDT
+
+- C2 bag executor contract test 已完成，累计 6/11，SHA-256=`A25E919C...`，余 5 tests。
+- A 的 17:19 keepalive 与 C3 Review #1 消息并发，现为 ACK pending round 1；Review #1 `0/1/1` 与 owner retained 不变。
+- 双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C3 Review #1 Blocked - 2026-07-18 17:17 EDT
+
+- 父级三文件 source+test review=`P0/P1/P2=0/1/1 / REPAIR REQUIRED`；A owner retained。
+- P1：非空 OCR 测试直连默认 loopback sidecar，依赖外部进程且无 available words 正向映射；须在同一 test 文件用确定性 fake endpoint/响应闭合 available+unavailable。
+- P2：补 `windowRect` 缺失时 approach 原坐标 fallback retained case。C2 仍 5/11；未运行 Maven/runtime/input。
+
+## CR271 C2 Tests 5-of-11 / C3 Test Bytes Active - 2026-07-18 17:12 EDT
+
+- C2 `LocalServiceStepDispatcherContractTest` 已完成，累计 5/11，SHA-256=`0F3661F8...`，余 6 tests。
+- C3 whole-task test 已开始写入，当前 SHA-256=`99FFC4B8...`；尚无 File 3/3 完成事件或 canonical delivery，不触发 review。
+- A/C communication normal；双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 C2 Tests 4-of-11 / C3 File 2-of-3 - 2026-07-18 17:04 EDT
+
+- C2 双仓 action + envelope golden tests 已完成，累计 4/11；LF-normalized SHA-256=`61D842FB...`/`15D2691F...`，四个协议测试跨仓内容一致，余 7 tests。
+- C3 `XiuluoTaskV2` production 已推进到 File 2/3；父级实测 Cloud 文件 SHA-256=`6B90ECD1...` 且事件后仍有写入，whole-task test 待完成。
+- 两卡均无 delivery；A/C communication normal，双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C2 Tests 2-of-11 - 2026-07-18 16:58 EDT
+
+- C2 双仓 core golden + validator tests 已完成，2/11；SHA-256=`3737B04C...`/`2407D499...`，mirror identical。
+- 共享测试顺带补齐 C1 遗漏的 METRIC×3 closed-enum 字面量；作为 C2 披露项，不回退 C1 source gate。
+- C2/C3 均无 delivery；双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 C3 Amendment #2 ACK / C2 Production Complete - 2026-07-18 16:54 EDT
+
+- A 已 ACK Amendment #2、确认 #1 superseded；C3 File 1/3 `ObjectiveTextRecognizer` 按 public plausibility + defensive-copy transform 落盘，SHA-256=`1D97D996...`。
+- C2 Wubei rewire 完成，production 13/13 全落；11 个测试待完成，尚无 delivery。两卡仍为 disjoint source-active WIP。
+- 双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 C3 Amendment #2 / C2 Production 12-of-13 - 2026-07-18 16:42 EDT
+
+- C3 Amendment #2 supersedes 未 ACK 的 #1：公开纯 `coordinatePlausible`，并公开 `mapTransform` 但必须返回 defensive copy；内部 maps.json 快照不可泄露，精确写集仍为 3 文件。
+- A 下一 STATUS EVENT 需具名 ACK Amendment #2。C2 FiveRing rewire 已完成，production 12/13，仅余 Wubei rewire 与 11 个测试。
+- 双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 C3 Plan Contract Repaired / C2 Production 11-of-13 - 2026-07-18 16:32 EDT
+
+- C3 可见性缺口已闭合：仓内无其它 public plausibility API，批准 `ObjectiveTextRecognizer.coordinatePlausible` 仅公开修饰符，精确写集扩为 3 文件；算法、margin-80 与单 maps.json owner 不变。
+- A 下一 STATUS EVENT 需 ACK Amendment #1；C3 继续 source active。C2 已删除 `PlayerStateService` 死法，production 11/13。
+- 两名 Java writer 活动期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C3 Baseline Semantics Extracted - 2026-07-18 16:23 EDT
+
+- A 已从 `696a12b0` 精确提取 C3 三种坐标语义：randomize `(1,1)` 对称偏移、approach offset=2/龙窟凤巢短路、margin-80 plausibility。
+- C3 维持 A sole owner/source active/communication normal；目标源码和测试未变化、无 delivery。C2 同轮 10/13。
+- 两名 Java writer 活动期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C2 Production 10-of-13 - 2026-07-18 16:22 EDT
+
+- C2 Cloud `CloudBagLocalServiceClient` 三个 typed 方法已落盘，真实 SHA-256=`2F361F49...`；production 进度 10/13。
+- C sole owner/source active/communication normal；剩余 Cloud 3 个 production 文件与 11 个测试，尚无 delivery，不审 WIP。
+- A 的 C3 仍处 recon；C2/C3 写集不交，双 writer 活动期间无 Maven/runtime/input。
+
+## CR271 A Communication Recovered / C2 DHXY Production Complete - 2026-07-18 16:16 EDT
+
+- A 已具名双 ACK 1600+1602 并确认旧 TURN-38B3 授权问题废弃，communication normal；C3 仍为 A sole owner/source active recon，尚无 delivery。
+- C2 DHXY 侧 6 个 production 文件全部落盘，总进度 9/13 production；C sole owner/communication normal，尚无 delivery，不审 WIP。
+- C2/C3 两名 writer 写集不交；未运行 Maven/runtime/input。
+
+## CR271 TURN-40B-C3 Claimed By A - 2026-07-18 16:02 EDT
+
+- A 已 canonical claim 正确的 TURN-40B-C3，父级接受其 sole owner/source-active；这不是已关闭 TURN-38B3 的重领。
+- A communication stale 待 STATUS ACK 1600+1602；未满 10 分钟且零源码变化，不标 active stale。C2/C3 写集不交并行，
+  两名 writer 活动期间无 Maven/runtime/input。
+
+## CR271 A Obsolete Prompt Corrected / C2 5-of-13 WIP - 2026-07-18 16:00 EDT
+
+- A 的用户弹窗错误地把已通过/owner released 的 TURN-38B3 当 READY；父级已定向要求废弃，不再向用户索权。
+  当前 READY 是独立 TURN-40B-C3，仍零 owner/未分派。
+- C2 5/13 production WIP 已落盘，C sole owner/source active；尚无 delivery，不审 WIP、不跑 Maven/runtime/input。
+
+## CR271 C2 Double ACK / Protocol Source Moving - 2026-07-18 15:49 EDT
+
+- C 已双 ACK 1534+1542，communication normal；C2 operation/arguments 双仓镜像开始真实推进，owner/source-active 不变。
+- 尚无 delivery，不审 WIP；C3 继续 READY/零 owner。active writer 期间无 Maven/runtime/input。
+
+## CR271 External C Communication Recovered / C2 Active - 2026-07-18 15:44 EDT
+
+- C 15:43 合规 STATUS ACK 1534，communication stale 解除；C2 owner/source-active 不变，C3 继续 READY/零 owner。
+- 1542 为并发后 ACK pending round 1。尚无 delivery；active writer 期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C2 Claimed / Status ACK Stale - 2026-07-18 15:42 EDT
+
+- C 的 15:40 C2 whole-card claim 经父级接受，C 为 sole owner/source active；C3 继续 READY/零 owner。
+- 1534 仅在 claim marker 内被引用，尚缺 STATUS EVENT 合规 ACK；现标 COMMUNICATION_STALE，但源码活动存在，
+  不标 ACTIVE_STALE、不撤 owner。active writer 期间无 Maven/runtime/input。
+
+## CR271 TURN-40B-C1 Review #2 Passed / C2 Ready - 2026-07-18 15:34 EDT
+
+- C1 Review #2=`0/0/0 PASSED`：shared validator exact-shape/status closure 与 executor no-silent-normalize
+  已闭合，双仓 mirror/test 证据一致；C1 owner 释放。
+- C2 bag/UI fixed whole-card 现 `READY / ZERO OWNER / UNASSIGNED`，C3 继续 READY，均非派卡。C4 仍等
+  TURN-39P1；A 仍 COMMUNICATION_STALE。聚合 build 等 C1-C4 收口，本轮无 Maven/runtime/input。
+
+## CR271 TURN-40B-C1 Repair ACK Received - 2026-07-18 15:18 EDT
+
+- C 已具名 ACK Review #1 返修消息并进入 `SOURCE_ACTIVE / REPAIRING`；exact-shape/status closure 与 mirrored
+  negative gaps 的边界复述准确。当前没有 Review #2 re-delivery，C1 owner 不变。
+- C2 继续阻断；C3 仍 READY/零 owner/未分派；A 仍 COMMUNICATION_STALE。active writer 期间不运行 Maven/runtime/input。
+
+## CR271 TURN-40B-C1 Parent Source Review #1 Blocked - 2026-07-18 15:13 EDT
+
+- C1 16-file canonical delivery 父级结论 `P0/P1/P2=0/1/0 / REPAIR REQUIRED`。shared strict validator
+  对 STARTED/FINISHED 未关闭 failure-only `phase`，unknown status 又会被 executor 静默映射成 `INFO`，
+  使非法 wire metric truth 被接受并改写。
+- C 保持 C1 sole owner，须补 validator exact-shape/status 闭集与 mirrored negative tests 后同卡 re-delivery。
+  C2 继续等待；C3 仍 READY/零 owner/未分派；A 仍 COMMUNICATION_STALE。本轮无 Maven/runtime/input。
+
+## CR271 C1 Source Active / External A Communication Stale - 2026-07-18 13:52 EDT
+
+- C1 已出现双仓 mirrored protocol 真实源码变化，C sole owner/source active，无 active-stale；父级不跑 Maven。
+- A 对 13:38 具名消息连续两轮无 ACK，现标 `COMMUNICATION_STALE` 并定向重发。C3 继续公开
+  `READY / ZERO OWNER / UNASSIGNED`，不因 A stale 而关闭、派发或预留。
+
+## CR271 TURN-40B-C1 Claimed / C3 Remains Ready - 2026-07-18 13:47 EDT
+
+- External C 13:42 canonical claim C1，父级核验零 earlier claim、READY prior EOF、具名 ACK 与回读证据后
+  接受 C 为 sole owner；metrics wire/persistence seam 当前 `SOURCE_ACTIVE`。
+- C3 Xiuluo coordinate/OCR 原卡仍 `READY / ZERO OWNER / UNASSIGNED`，与 C1 不碰撞，未派卡或预留。
+  A 对 13:38 双向消息尚处 ACK pending 第一轮；C active writer 期间不运行 Maven/runtime/input。
+
+## CR271 TURN-40BP1 Review #7 Passed / Two Parallel Implementation Cards Ready - 2026-07-18 13:36 EDT
+
+- BP1 canonical re-delivery #6 父级终审 `P0/P1/P2=0/0/0`：guarded admission rejection 在首个 Bag 输入前
+  判定，穿过 boolean queue boundary 后由 Bag adapter 唯一映射 typed STOPPED；普通 queue/open failure 不冒充
+  STOPPED，四 outcome test 合同闭合。C report owner released。
+- `TURN-40B-C1` metrics wire/persistence seam 与 `TURN-40B-C3` Xiuluo coordinate/OCR Cloud-form 已创建为
+  `READY / ZERO OWNER / UNASSIGNED`，两卡写集不相交，可供两名 Worker 自行 canonical claim 并行实施，非派卡。
+- C2 等 C1 source review passed；C4 等 TURN-39P1 parent report review。无 Java/Maven/runtime 状态变化。
+
+## CR271 TURN-40BP1 Report Review #6 Blocked - 2026-07-18 13:13 EDT
+
+- C 已 ACK Review #5；13:04 canonical re-delivery #5 父级结论 `P0/P1/P2=0/1/0`。
+- live admission fence 与 STOPPED iff 已通过；guarded generic `T` 尚无可表示的拒绝传播，worker 又会把回调 stop
+  异常压成 boolean false，导致 identity replacement 可能退化为 generic failure。
+- C 须 ACK `PARENT-TURN40BP1-REVIEW6-REPAIR-1313` 并返修同一报告；Java 卡不得开放，TURN-39P1 仍
+  READY/zero owner。
+
+## CR271 TURN-40BP1 Report Review #5 Blocked - 2026-07-18 12:53 EDT
+
+- C 已 ACK Review #4；12:44 canonical re-delivery #4 父级结论为 `P0/P1/P2=0/2/0`，C 保持 report owner。
+- task identity 被提前压成 boolean，未在 Bag exclusive callback 的首次输入前 live 验证；local stop discriminator
+  也未与 `code=STOPPED` 建立双向闭集不变量。
+- C 须 ACK `PARENT-TURN40BP1-REVIEW5-REPAIR-1253` 并返修同一报告；Java 卡不得开放，TURN-39P1 仍
+  READY/zero owner。
+
+## CR271 TURN-40BP1 Report Review #4 Blocked - 2026-07-18 12:33 EDT
+
+- 12:19 canonical report re-delivery #3 父级结论为 `P0/P1/P2=0/2/0`，External C 保持 report owner。
+- live token 提案缺 exact task-handle/run identity fence，可能错绑后继任务；现有 local result/status 类型也无法
+  表示所宣称的 typed STOPPED，executor 会降成 generic failure。metrics 真身 retained test finding 已关闭。
+- C 须具名 ACK `PARENT-TURN40BP1-REVIEW4-REPAIR-1233` 后返修同一报告；Java 卡不得开放，TURN-39P1 仍
+  READY/zero owner。
+
+## CR271 TURN-40BP1 Review #3 ACK / Report Repair Active - 2026-07-18 12:10 EDT
+
+- C 已具名 ACK `PARENT-TURN40BP1-REVIEW3-REPAIR-1204` 并接受 `0/1/1` 两项 finding；通信闭环。
+- 仅同一报告返修 production live stop context/typed STOPPED 与 `recordWireEvent` 真身 retained test；ACK
+  不关闭 finding，Java 卡仍禁止开放。TURN-39P1 继续 READY/zero owner。
+
+## CR271 TURN-40BP1 Report Review #3 Blocked - 2026-07-18 12:04 EDT
+
+- 11:49 canonical report re-delivery #2 父级结论为 `P0/P1/P2=0/1/1`，External C 保持 report owner。
+- specialized Bag op 缺 production live stop-token/context bridge；`recordWireEvent` 真身 persistence/dashboard
+  seam 缺 retained 行为测试。C 须具名 ACK 后返修同一报告；Java 卡不得开放，TURN-39P1 仍 READY/zero owner。
+
+## CR271 TURN-40BP1 Review #2 ACK / Report Repair Active - 2026-07-18 11:39 EDT
+
+- C 已具名 ACK `PARENT-TURN40BP1-REVIEW2-REPAIR-1132`，Review #2 `0/2/2` finding 全接受，通信闭环。
+- 仅同一报告返修 metrics identity/full `caseDir`、dispatcher/Bag queue ownership 和精确写集/test gate；ACK
+  不关闭 finding，Java 卡仍禁止开放。TURN-39P1 继续 READY/zero owner。
+
+## CR271 TURN-40BP1 Report Review #2 Blocked - 2026-07-18 11:32 EDT
+
+- C 的 11:19 canonical 返修重交父级结论仍为 `P0/P1/P2=0/2/2`，C 保持 report owner。
+- metrics wire 缺 task/window identity、full `caseDir` 与 `TurnLocalServiceCall`/dispatcher 路由，不能等价调用
+  DHXY 真身；FiveRing supply op 按现有 Bag dispatcher 会 outer-exclusive 内再次获取同一 input queue。
+- C1/C2 exact write set/test gate 仍漏 dispatcher、constructor callsites 与 exact retained tests。禁止开放 Java
+  卡；TURN-39P1 继续 READY/zero owner。
+
+## CR271 TURN-40BP1 Review #1 ACK / Report Repair Active - 2026-07-18 11:04 EDT
+
+- C 已具名 ACK `PARENT-TURN40BP1-REVIEW1-REPAIR-1055` 并接受全部 `0/2/2` finding；仅同一报告返修。
+- 返修须冻结真实 metrics 持久化权威、FiveRing 专用单会话 supply-check typed op/result、C1-C4 精确写集
+  与完整 mirrored protocol/test gate。ACK 不关闭 finding，Java 卡仍禁止开放；39P1 仍 READY/零 owner。
+
+## CR271 TURN-40BP1 Report Review #1 Blocked - 2026-07-18 10:55 EDT
+
+- 父级终审 C 的 10:44 canonical report delivery：`P0/P1/P2=0/2/2`，C 保持 report owner 返修。
+- `40B-METRICS` 纯内存方案丢失 typed model 与 696 的持久化事件合同；`40B-BAGUI` 未表达 FiveRing
+  `withMainBagOpen` 单排他会话内补香+计鞋的泛型闭包、复合结果与 stop/input 原子性。
+- C2/C3 精确写集与协议 blast-radius named tests 未冻结，禁止据此开放 Java 卡。TURN-39P1 仍 READY/零 owner。
+
+## CR271 TURN-40BP1 Claimed - 2026-07-18 10:11 EDT
+
+- External C 已以匹配冻结 SHA 的首个 physical-EOF claim 成为 TURN-40BP1 sole owner；当前仅进行 shared
+  compile transitive closure 报告审计，无 Java/Maven/runtime 权限。
+- TURN-39P1 仍为 `READY / ZERO OWNER / UNASSIGNED`，与 C 报告写集零碰撞，可由 A 独立领取并行推进。
+
+## CR271 Parallel Contract Cards Ready - 2026-07-18 10:03 EDT
+
+- 计划合同修复：TURN-38A-C 因 old assembly 两个真实 legacy context 构造点与 44A old-SCC 保留边界继续
+  `PLAN-CONTRACT BLOCKED`；TURN-39 的旧“前置未完成”理由已替换为真实循环/写集阻断。
+- 新开放 TURN-39P1 与 TURN-40BP1 两张 `REPORT-ONLY / READY / ZERO OWNER / UNASSIGNED` 固定原卡，
+  分别闭合 input bridge 与 shared compile 全传递合同。两卡写集只有各自报告，A/C 可并行自行领取，无派卡。
+- 未修改 Java、未运行 Maven/runtime；dashboard 已要求随本次状态变化刷新。
+
+## CR271 TURN-38C ACK Closed / C Available - 2026-07-18 09:53 EDT
+
+- C 09:48 具名 ACK TURN-38C Review #1，通过结论闭环；卡 closed、owner released，C 转 available。
+- 四文件 reviewed SHA 无漂移。build 仍只由 TURN-40B shared Cloud main compile debt 阻断；当前无新 READY 卡。
+
+## CR271 TURN-38C Source Review Passed / Owner Released - 2026-07-18 09:43 EDT
+
+- TURN-38C 四文件终审 `P0/P1/P2=0/0/0`：turn-native context-local single bit、legacy delegate、8T 状态矩阵、
+  9T LeftTop 机械真值表和 11T context authority/generation 合同闭合；无业务差异，C owner 释放。
+- 授权 named family 在 JUnit 前被 TURN-40B shared Cloud main compile debt 阻断，错误未指向 38C 写集；
+  source review 保持 PASSED，build gate 随 40B 闭合。
+
+## CR271 TURN-38C Claimed / External C Owner - 2026-07-18 09:16 EDT
+
+- TURN-38C 原卡 09:12 sole canonical claim 已由父级接受；C 已 ACK readiness 消息，状态
+  `SOURCE_ACTIVE / EXTERNAL-C SOLE OWNER`。领取点 3 个既有 SHA 与新 test ABSENT 全部吻合。
+- 固定写集仍为 `TaskExecutionContext` + 3 tests；五个 old authority、Service/Task caller、runtime/host 只读。
+  active writer 期间不跑 Maven/runtime，A stale 且无写集碰撞。
+
+## CR271 TURN-38M Frozen / TURN-38C Ready - 2026-07-18 09:05 EDT
+
+- 父级逐 symbol 冻结五个 old-authority 文件全部为 `DELETE`，保留到 TURN-44A whole-cohort deletion；
+  GameContext replacement 归 40B runtime，LeftTop replacement 归 38C concrete context。
+- TURN-38C 已开放 `READY / ZERO OWNER`，固定 `TaskExecutionContext` + 3 tests；旧 target、Service/Task caller、
+  runtime/host 全只读。context-local single bit 不构成第二 store/session/ledger，无业务差异，A/C 可自行竞领。
+
+## CR271 TURN-38B4 Review #3 ACK / C Available - 2026-07-18 08:46 EDT
+
+- C 已具名 ACK Review #3 通过消息并转 `AVAILABLE / IDLE POOL-SCAN`；B4 保持
+  `SOURCE+TEST SOURCE REVIEW PASSED / OWNER RELEASED`，通信闭环。
+- shared Cloud build blocker 仍归 TURN-40B；无 B4 源码返修、无业务差异、无 runtime。
+
+## CR271 TURN-38B4 Source+Test Review #3 Passed - 2026-07-18 08:40 EDT
+
+- 父级终审 `P0/P1/P2=0/0/0`：sealed store-private `ArtifactId`、production 默认不变的 atomic no-replace
+  failure seam、close-only existing-scope discovery 与 15T 全部通过；固定四文件 SHA 与 canonical delivery 一致。
+- `24+8`、16-field exact identity、双 cleanup、governor accounting 与 byte-exact 合同无漂移，C owner 释放。
+  named test 仍被 TURN-40B shared main compile debt 前置阻断；该 build blocker 不回退 B4 source gate。
+
+## CR271 TURN-38B4 Review #2 ACK / Repair #2 Active - 2026-07-18 08:15 EDT
+
+- C 已 ACK Review #2，当前 `SOURCE_ACTIVE / REVIEW #2 REPAIRING / EXTERNAL-C OWNER`。sealed id、窄
+  move/no-replace seam、close-only existing-scope discovery 均按同四文件合同执行，报无需第五文件。
+- 尚无新返修字节；active writer 期间不跑 Maven/runtime，Review #2 `0/1/2` 保持至 canonical re-delivery。
+
+## CR271 TURN-38B4 Source+Test Review #2 Blocked - 2026-07-18 08:05 EDT
+
+- Review #2=`P0/P1/P2=0/1/2`：同包仍可调用 `ArtifactId.issue`；ACL 未进入 move/no-replace 与预存 target
+  分支；restart 测试先 write，未证 unused recreated host close 清旧 artifact。C 保持 owner，整卡返修。
+- 合同允许同 store 文件内 store-private id implementation、窄 atomic-failure test seam、close-only existing-scope
+  discovery；不开放第五文件/第二 store/ledger/token 变化。named test 仍被 shared main compile debt 前置阻断。
+
+## CR271 TURN-38B4 Repair Bytes Complete / Wait Redelivery - 2026-07-18 07:49 EDT
+
+- C 07:48 已完成四项返修字节，named test=`E33E84D5...`/580L/13T；当前
+  `SOURCE_ACTIVE / REPAIR COMPLETE / REDELIVERY PREP / EXTERNAL-C OWNER`。
+- 原卡尚无新 canonical delivery，父级未复审，Review #1 `0/1/3` 仍有效；不运行 Maven/runtime。
+
+## CR271 TURN-38B4 Review #1 ACK / Repair Active - 2026-07-18 07:42 EDT
+
+- C 已具名 ACK Review #1，当前 `SOURCE_ACTIVE / REVIEW #1 REPAIRING / EXTERNAL-C OWNER`。production 已落
+  non-mintable `ArtifactId` 与 lazy-close/restart reconcile 两项返修，固定四文件、`24+8` 和双 cleanup 不变。
+- named test 仍需闭合真实 atomic failure、完整 identity tuple、unused/restart close；重交前不复审、不跑 Maven。
+  A 仍 `COMMUNICATION_STALE`，没有第二 owner。
+
+## CR271 TURN-38B4 Source+Test Review #1 Blocked - 2026-07-18 07:31 EDT
+
+- Review #1：`P0/P1/P2=0/1/3`。`CloudArtifactStore.ArtifactId` 公开可铸且 token 不绑定 metadata，导致 forged
+  metadata 无法在文件访问前拒绝；测试缺少真实 atomic failure、完整 identity tuple 与 unused/restart close 证明。
+- C 保持 sole owner，整卡 `REPAIR REQUIRED`；若完整 close accounting 必须修改 governor/第五路径，须按合同先
+  报 `PLAN-CONTRACT BLOCKED`，不得自行扩写集。named test 被既有 Cloud main compile debt 前置阻断。
+
+## CR271 TURN-38B4 Delivery EOF Reassert Required - 2026-07-18 07:22 EDT
+
+- 四文件与 named test 已完成，但 C 07:21 delivery 块因并发父级 ACK 写入而未占原卡 physical EOF。按唯一
+  owner/delivery 权威规则，当前标记 `SOURCE+TEST DELIVERY REASSERT REQUIRED / EXTERNAL-C OWNER`；C 只需
+  在 EOF 原样重申并 ACK，不需要改源码。父级在 canonical reassert 后立即独立终审。
+
+## CR271 TURN-38B4 Amendment #1 ACK Accepted - 2026-07-18 06:56 EDT
+
+- External C 06:55 已具名 ACK `PARENT-TURN38B4-AMENDMENT1-0652`，撤回 `16+16` token split，并接受
+  `24 hex exact-context digest prefix + 8 hex random nonce`、exact-task sibling-preserving cleanup 与
+  quiescent host-close whole-scope cleanup。06:52 hold 解除，当前 `SOURCE_ACTIVE / EXTERNAL-C OWNER /
+  AMENDMENT #1 ACKED`；固定四文件外仍只读，A 仍 `COMMUNICATION_STALE`。
+
+## CR271 TURN-38B4 Amendment #1 / Hold For ACK - 2026-07-18 06:52 EDT
+
+- 父级在 C 06:50 recon、零 Java 字节阶段修复 B4 两处歧义：token 不采用 64-bit context 的 `16+16`，固定为
+  `24 hex context digest + 8 hex nonce`；exact-task cleanup 与 host-close whole-scope cleanup 分开验收。
+- task cleanup 必须保留 sibling window/task；host close 只在 40C 保证 scope quiescent 后清本 scope 全部 canonical
+  artifacts，并保留其它 tenant/user scope。C owner 不变，ACK Amendment #1 前暂停实施；无 Maven/runtime。
+
+## CR271 TURN-38B4 Claimed / External C Owner - 2026-07-18 06:46 EDT
+
+- B4 原卡 physical EOF 确认 C 06:43 唯一 whole-card claim；06:45 ledger 已具名 ACK READY 消息并复核
+  anti-race。三 production 仍等于 freeze SHA，named test absent，未出现第五路径或写集碰撞。
+- 状态更新为 `SOURCE_ACTIVE / EXTERNAL-C OWNER`。C 只实施 turn-native/raw PNG/atomic cleanup capability 四文件；
+  real terminal caller/host activation 仍归 40B/40C。A 继续通信停滞，当前不运行 Maven/runtime。
+
+## CR271 TURN-38B4 Contract Frozen / READY - 2026-07-18 06:38 EDT
+
+- B4 旧 readiness 阻点已按当前实盘闭合：38A-F/B3 turn-native context、TURN-17 raw frame 与 TURN-13H real host
+  seam 均 source-passed；现有 `CloudArtifactCapacityGovernor` 的单 artifact delete/settle 足够支持 exact-prefix cleanup，
+  无需扩写 governor 或引入第二 authority。
+- 固定写集为 `CloudArtifactStore`、`ScopedPngArtifactStore`、`CloudServiceConfiguration` 与唯一
+  `ScopedPngArtifactStoreTurnTest`，状态 `READY / ZERO OWNER`。API 只接 `TaskExecutionContext`/`CloudTurnFrame`；
+  禁 old remote context、owner/session/ledger、TTL、sidecar、重编码和共享 caller path。task/host cleanup capability
+  在 B4 内，真实 terminal caller/order 在 40B。
+- C 已实质 ACK B3 终审并 idle；A 仍通信停滞。父级不派卡，Worker 必须从 B4 原卡自行 canonical claim。
+
+## CR271 TURN-38B3 Source+Test Review Passed - 2026-07-18 06:27 EDT
+
+- B3 三文件 canonical delivery 经父级终审为 `P0/P1/P2=0/0/0`。authority 只消费 turn-native exact
+  scope/context，16 元 immutable fact、两 public factory、原角色真值表、STOP/PAUSE 与零 action/UUID 合同闭合；
+  11 个 named tests 源码覆盖原卡八项 gate，`无已批准业务差异`，C owner 释放。
+- named test 命令在 test-compile 前被 TURN-40B shared main compile 缺类阻断，未发现 B3 编译错误。A 仍
+  `COMMUNICATION_STALE`，当前尚无第二 active writer。
+
+## CR271 TURN-38B3 Claimed / External C Owner - 2026-07-18 06:02 EDT
+
+- C ACK 并收官 TURN-38B2 后，于 05:57 对 TURN-38B3 完成唯一 canonical whole-card claim；原卡 EOF 与
+  ledger 05:58 STATUS EVENT 一致。领取点 `CloudStartupGateAuthority`/`TaskStartupCheckService` SHA 保持
+  freeze，`StartupGateTurnStateTest` 仍 ABSENT，固定三文件写集无漂移。
+- B3 现为 `SOURCE_ACTIVE / EXTERNAL-C OWNER`。A 仍 `COMMUNICATION_STALE`，A/C 双写并行尚未恢复；
+  C active Java writer 期间不运行 Maven/runtime。
+
+## CR271 TURN-38B2 Review #2 Passed / C Recovered - 2026-07-18 05:47 EDT
+
+- B2 五文件返修通过父级终审：`P0/P1/P2=0/0/0`。scope owner 为 scanned `@Component` 并实现
+  `AutoCloseable`，现有 host 的 exact `CloudServiceScope` 注入与 shutdown close 契约闭合；retained TURN-14
+  test 改为 exact owner 两参构造，14 个既有测试语义与计数保持。C 通信恢复且 owner 释放。
+- named test 当前仍被 TURN-40B shared main compile debt 阻断。A 仍 stale，B3 仍 READY/零 owner。
+
+## CR271 External C Communication Stale - 2026-07-18 05:34 EDT
+
+- C 对 `PARENT-TURN38B2-REVIEW1-REPAIR-0524` 连续两轮无 ACK，并持续读取旧四文件 delivery 快照，现标
+  `COMMUNICATION_STALE`。B2 仍由 C sole-owned、`BLOCKED / REPAIR REQUIRED`，五文件合同与两个 P1 不变。
+- A 仍 stale，B3 仍 READY/零 owner；A/C 并行尚未恢复。本轮无新源码、构建或工作树切换。
+
+## CR271 TURN-38B2 Review Blocked / A Communication Stale - 2026-07-18 05:24 EDT
+
+- B2 父级 source+test review=`P0/P1/P2=0/2/0`。`ReturnItemPrescanService` 新增 owner 必需依赖后，owner 本身
+  没有 Spring stereotype，且普通 `close()` 未接 host destruction；现有 TURN-14 test 仍用旧单参构造器。
+  原卡扩为五文件 whole-card repair，C 保持 owner，禁止兼容 stub、动态第二 owner 或把 assembly 债伪装成 40B。
+- named test 先被已知 TURN-40B shared Cloud main compile debt 阻断。A 对 05:08 定向澄清连续两轮未 ACK，
+  标 `COMMUNICATION_STALE`；B3 仍 READY/零 owner，唯一外部阻点为 A automation instruction。
+
+## CR271 TURN-38B3 A ACK / Worker-Prompt Hold - 2026-07-18 05:08 EDT
+
+- A 已 ACK B3 READY，但因自己的旧 automation prompt 仍显式禁领 38 族而保持 HOLD。用户要求 A/C 并行的
+  直接原话已固化到原卡；B3 继续 `READY / ZERO OWNER`，技术合同与 B2 零碰撞结论不变。
+- 下一拍若仍拒领，剩余阻点仅为 A automation instruction 更新，不是 DAG、source gate 或计划合同。
+
+## CR271 TURN-38B3 Contract Frozen / READY - 2026-07-18 05:00 EDT
+
+- 用户已解除 External A 的 38 族领取禁令。B3 原卡现为 `READY / ZERO OWNER`，固定真实
+  `task/startup/CloudStartupGateAuthority`、`TaskStartupCheckService` 与唯一 named test，和 C 的 B2 零碰撞。
+- old scope/epoch/revision/revalidate 改为 turn-native exact context；显式 baseline/control-plane policy factory
+  只产 dormant per-run evaluation。role/team wire 与 production activation 归 40B/40D，不扩协议、不改业务矩阵。
+
+## CR271 TURN-38B2 Claimed / External C Owner - 2026-07-18 04:50 EDT
+
+- 原卡 physical EOF=`EXTERNAL-C WHOLE-CARD CLAIMED 04:47`，父级接受 C sole owner；领取点三 production
+  protected SHA 未漂移，唯一 test 仍 ABSENT，状态更新为 `SOURCE_ACTIVE`。
+- A 受 38 族 lane 禁令不能竞争，B/D 任务已删除；当前 38 族并行度实际为 1。C 写作期间关闭 Maven/runtime gate。
+
+## CR271 TURN-38B2 Contract Frozen / READY - 2026-07-18 04:36 EDT
+
+- Parent audit 发现旧 B2 两文件与 live `ReturnItemPrescanService` 完全断开；只改旧核会制造第二状态权威。
+  固定写集已修为 live service + owner + workflow + one named test，状态 `READY / ZERO OWNER`。
+- 唯一 scope owner 承接现有 state fields；Task public API、696/TURN-14 strategy/timing/fallback/terminal、exact
+  screen-absolute cache 与一 action 均不变。旧 dormant capacity/permit/receipt 不得接入。
+
+## CR271 TURN-38B1 Review #2 Passed - 2026-07-18 04:28 EDT
+
+- Parent source+test review=`P0/P1/P2=0/0/0`：唯一 owner workflow map、native drift 原子单代推进、
+  tenant-only/user-only 与 generation exact +1 的 14T 矩阵均闭合；通信恢复，External C owner 释放。
+- named test 在执行前被 Cloud 写集外共享 main compile debt 阻断；该债归 TURN-40B，不回退 B1 source gate，
+  当前仍不可运行 runtime。
+
+## CR271 TURN-38B1 Communication Stale - 2026-07-18 01:34 EDT
+
+- Review #1 后连续两轮无 C 具名 ACK，production/test 仍为 delivery SHA、无返修字节；状态标为
+  `COMMUNICATION_STALE / REPAIR REQUIRED`。
+- C canonical owner 与固定三文件返修边界保持，不撤卡、不改派；Maven/runtime gate 继续关闭。
+
+## CR271 TURN-38B1 Review #1 Blocked - 2026-07-18 01:26 EDT
+
+- Parent source+test review=`P0/P1/P2=0/1/2`：public state constructor 绕过唯一 map；native drift 的
+  generation 提交非原子且一次推进两代；named test 缺 exact +1 与 tenant/user 单维隔离。
+- External C owner 保持，限原三文件返修并重新整卡交付；Maven/runtime gate 尚未开放。
+
+## CR271 TURN-38B1 Amendment #1 ACK - 2026-07-18 01:04 EDT
+
+- C 具名 ACK 并采用父级修订：turn-native observation handle/custody/sequence fence 保留，旧 authority permit/
+  ledger 删除，native identity 只用 title/handle/process。
+- HOLD 期间源码未漂移；C 现恢复 implementing。named test 必含 out-of-order/replay/conflict/foreign-handle。
+
+## CR271 TURN-38B1 Amendment #1 - 2026-07-18 01:01 EDT
+
+- 父级纠正 C recon：旧 retained-authority permit/ledger 必须删除，但 bound-base 的 owner-issued typed handle、
+  pending custody 与单调 sequence fence 是 stale-result 安全语义，不得同时删除。
+- 冻结 `<` 拒绝、`==` 同值幂等/异值拒绝、`>` 原子推进；native identity 仅 title/handle/process，禁止新增
+  `identityEpoch`。C 尚未写 Java，owner 保持并等待 ACK。
+
+## CR271 TURN-38B1 Claimed / External C Owner - 2026-07-18 00:54 EDT
+
+- 原卡 physical EOF 确认 C 00:47 canonical claim；A 00:47 具名 ACK 后保持 idle，父级接受 C sole owner。
+- protected production SHA/mtime 未漂移，test 仍 ABSENT；C 正核 owner/context/旧 authority 足迹，尚未写 Java。
+  active writer 保护已生效，不运行 Maven；验收合同与 40B handoff 不变。
+
+## CR271 TURN-38B1 Contract Frozen / READY - 2026-07-18 00:41 EDT
+
+- 父级完整核对两 protected untracked production、turn-native `TaskExecutionContext`、TURN-14/38A-F 与 40B handoff，
+  修复旧 precheck 的 stale predecessor 结论；原卡现为 `READY / ZERO OWNER`。
+- 唯一 owner 绑定 `CloudServiceScope`，workflow exact key=`tenant/user/device/window/taskRunId`；三 terminal 仅释放
+  workflow，page/item/anchor/geometry cache 继续跨 task terminal，无 TTL。host close 才清 scope，40B 后续接线。
+
+## CR271 TURN-37 Whole-Card Review #2 Passed - 2026-07-17 23:46 EDT
+
+- canonical zero-byte re-delivery 保持 production/test `2d4bc1a0...`/`d809700a...`；父级逐方法对照
+  `696a12b0` 并合并既有 7T、TURN-30、GAP#2/#3、bag、38A-F/foundation/protocol，结论 `0/0/0`。
+- TURN-37 source+test source gate closed，C owner released；无已批准业务差异。S1-S3 shared compile/public
+  assembly 仍由 40B 闭合，fresh runtime=41，本结论不表示当前可运行。
+
+## CR271 TURN-37 Amendment #4 Layered Gate - 2026-07-17 23:34 EDT
+
+- 父级确认 public full-loop harness 被三类共享 Cloud compile debt 阻断，采用 TURN-35/36 同款 layered gate；
+  TURN-37 由当前 component test、已通过专项矩阵和父级 696 逐方法源审闭合，不造 26 collaborator fake harness。
+- `AutomationMetricsService`、`CoordinateHelper`、`TextRecognizer` 的三 Task/Navigation 全 caller 与候选写集已登记
+  40B；metrics/artifact owner 与 typed coordinate/OCR mapping 未冻结前 40B 保持 NOT READY。
+
+## CR271 TURN-37 P1 ACK / Test Repair Active - 2026-07-17 23:17 EDT
+
+- C 已具名 ACK Parent Review #1 P1，正核 public execute path 的 production collaborator、两条 route 与失败矩阵；
+  唯一 test 尚未漂移，production `2d4bc1a0...` 继续冻结。
+- C sole owner 保持；只返修 test 后 re-deliver，active writer 期间不运行 Maven。
+
+## CR271 TURN-37 Whole-Card Review #1 Blocked - 2026-07-17 23:12 EDT
+
+- 父级 `P0/P1/P2=0/1/0`：Xiuluo production `2d4bc1a0...` 4/4 迁移与 GAP#2/#3/#4 冻结，无新增
+  production blocker；唯一 whole-card test `d809700a...`/7T 未走 public execute/phase loop。
+- 缺冻结 `BC4+BASE+TASK+IMG+LS`、shortcut/non-shortcut、四 terminal、raw PNG/closed service、UUID/command
+  与失败处理矩阵。C owner 保持，只返修 test 后 canonical re-deliver；未运行 Maven。
+
+## CR271 TURN-37 Amendment #3 Bag Contract Frozen - 2026-07-17 18:48 EDT
+
+- 父级确认 baseline `findAndUseMainBagTaskPageItem` 必须保持单 exclusive find+use；冻结唯一
+  `FIND_AND_USE_TASK_PAGE` intent，复用 BAG_RETURN_ITEM/现有 client，不新增 wrapper、cache/store 或两段 turn。
+- `UNKNOWN` uncertainty-upward，不得映射业务 false。共享 protocol 与 A 的 TURN-35 owner 冲突，C 等 A release
+  后实施 foundation，同时继续其余无冲突 Audit-A/B。
+
+## CR271 TURN-35 P1-2 Scope Adjudicated - 2026-07-17 18:43 EDT
+
+- 父级批准 option B：TURN-35 不为 private caller glue 建约 10 个重协作者 full-loop harness；P1-2 以已通过
+  foundation 矩阵、可驱 public/component tests 与父级逐 caller `696a12b0` source review闭合。
+- 完整 production assembly/全环 `execute` 归 TURN-40B/TURN-41；A 保持 sole owner，具名 ACK 后直接收口
+  canonical whole-card delivery。当前仍非交付、非 build passed。
+
+## CR271 TURN-35 Repair Bytes Active - 2026-07-17 18:01 EDT
+
+- Amendment #12 Review #1 后已出现 Cloud client=`1cd35eae` 与双仓 result DTO=`1b9ae100` 的真实返修字节；
+  client test 尚未漂移，ACK/canonical re-delivery 均未到，故 caller gate 保持关闭且不做 WIP review。
+- TURN-36 source review pass 保持；C 回执仍在首个 heartbeat 窗口。TURN-37 是当前唯一 READY/ZERO OWNER 完整卡。
+
+## CR271 TURN-36 Parent Review #4 Passed - 2026-07-17 17:45 EDT
+
+- whole-card source+test-source=`P0/P1/P2=0/0/0 PASSED`；null-context lifecycle、18T frozen caller/consumer、
+  Amendment #12 scope 与 `696a12b0` diff 闭合，External C owner 释放。
+- 真实 startup authority integration 继续归 38B3/40B；本卡通过不代表该下游 runtime gate 已完成。
+- named test/Cloud compile 为独立 pending build gate，A active writer 期间未运行。
+
+## CR271 TURN-35 Amendment #12 Foundation Review #1 - 2026-07-17 17:45 EDT
+
+- 父级逐文件 review=`P0/P1/P2=0/2/1 / REPAIR REQUIRED`；External A owner 保持，caller gate 关闭。
+- Cloud client 的旧 result kinds 没有拒绝新增 dialog fact 夹带，operation-specific union closure 不完整；preparation
+  status 必测矩阵缺 REQUESTED/PREPARING/非 blocking/absent；双仓 result DTO 类合同过期。
+- enum/validator/golden parity、DHXY exact-bound flat fact 映射及 route-result Runner owner 去旧已确认无问题。
+
+## CR271 TURN-36 Amendment #12 - 2026-07-17 17:45 EDT
+
+- TURN-36 canonical blocker 已确认；17:47 EOF-missing 是并发旧视图并已 supersede。BASE 全 phase-loop 大 harness
+  不再作为本卡 source gate，改由 18T frozen caller/consumer tests 与 `696a12b0` 完整 diff 验收。
+- 真实 startup authority 的 dual-path context、role/team metadata、非反射构造与 runtime activation 固定归
+  TURN-38B3/40B；TURN-36 不扩 `task/startup/*` 或 test seam。C owner 保持并可按 P1-a/P2 返修重交。
+- TURN-38B3 仅确认 ownership，因 metadata authority/construction/40B assembly 未冻结仍 `NOT READY`。
+
+## CR271 Review #3 ACK / Blocker EOF Correction - 2026-07-17 17:47 EDT
+
+- C 已 ACK TURN-36 Review #3；P1-a/P2 返修 WIP 已落，但 BASE/startup `PLAN_CONTRACT_BLOCKED` 仅见总账声明，
+  未写 TURN-36 原卡 physical EOF，暂不构成 canonical blocker。已要求 C 补齐完整传递缺口后再由父级裁决。
+- A 的 Amendment #12 foundation source layer 已全落，继续 tests，未 delivery；active writers 期间不跑 Maven。
+
+## CR271 TURN-36 Parent Review #3 - 2026-07-17 17:40 EDT
+
+- whole-card source+test-source review=`P0/P1/P2=0/2/1 / REPAIR REQUIRED`；External C sole owner 保持。
+- `execute(null)` 在 try/finally 外抛，与 named test 的 `FAILED + forceRelease` 合同相反；BASE phase-loop/startup-check
+  未交且未获豁免；test 类仍保留已失效 shared-foundation blocker 说明。C 须 ACK 后整卡返修重交。
+- A 仍在 TURN-35 Amendment #12 active write，故本轮不并发 Maven/JUnit/compile。
+
+## CR271 Amendment #12 First Bytes / TURN-36 Battery 17T - 2026-07-17 17:31 EDT
+
+- A 已 ACK 并实施 route-owner 去旧，Wubei=`675b8405`/4442L；双仓 typed dialog DTO=`4704b65d`/22L，
+  Amendment #12 foundation active，非 delivery。
+- C 已补 A4 caller hit/miss，prod=`7d493c5d`/3023L、test=`6b64ce32`/935L/17T。BASE/startup 原卡门保留；
+  不得用范围说明跳过，不能驱动时须先提交完整 plan-contract blocker。
+
+## CR271 TURN-35 Amendment #12 / TURN-36 Battery Progress - 2026-07-17 17:23 EDT
+
+- TURN-35 真实残留为 5 caller。4 个 dialog fact caller 冻结为一个 closed typed LOCAL_SERVICE read op，禁止
+  metadata mirror/第二 store；旧 route-result 由当前 DHXY `PendingRouteOutcome`/Runner abandonment owner 闭合，
+  Wubei 不再二次 consume/record。A 保持 sole owner，foundation active，尚未 delivery/review。
+- TURN-36 production blob=`9ff98487`/3013L；battery test=`467a3f19`/872L/16T，BC4+A1-positive 已落，
+  A4/BASE/startup 与 whole-card delivery 仍待。A/C active，未运行 Maven。
+
+## CR271 TURN-36 Batch 8 Production Complete - 2026-07-17 17:07 EDT
+
+- FiveRing runExclusive 已迁至 DHXY exact local accept op，旧 Cloud callback/点击算法与死注入清除；prod=`8406450c`/3003L。
+- non-executed fatal 属 uncertainty 向上传播，不是业务 NOT_ACCEPTED；production 无返修。battery/整卡交付仍待，未批准。
+
+## CR271 TURN-36 Batch 7 / Communication Recovered - 2026-07-17 17:02 EDT
+
+- C 已 ACK gate-open/runExclusive 裁决；Git blob `ec7d3941` 与 SHA-256 `bdf2dee6` 的口径差异已闭合。
+- FiveRing 五处 unconditional clear 与 direct runtime block 已迁，状态为 batch7 WIP；runExclusive、cleanup、
+  acceptance battery 尚待，未形成整卡交付或父级批准。
+
+## CR271 Amendment #11 Passed / TURN-36 Unblocked - 2026-07-17 16:47 EDT
+
+- Amendment #11 Repair #1 父级 review=`0/0/0 PASSED`；validator 顶层路由闭合，13 个 unconditional clear caller
+  gate 开放，但三张 whole-card 均未最终批准。
+- TURN-36 runExclusive contract 已从冻结 local implementation 裁决：DHXY 单 exclusive callback 承载原 accept body，
+  enum 固定三值；Cloud 仅映射结果并删除旧 callback/点击/日限副本。C 当前无合同阻断，可完成余项后整卡交付。
+
+## CR271 Amendment #11 Review #1 - 2026-07-17 16:36 EDT
+
+- 父级 source+test-source review=`P0/P1/P2=0/1/0 / REPAIR REQUIRED`：双仓
+  `TurnProtocolValidator.requireLocalService(...)` 顶层 whole-task 路由漏 `WHOLE_TASK_PATHING_CLEAR`，新增 enum
+  使 exhaustive switch 无法编译；下游 source-only/allowed-fields 代码不能弥补入口漏项。
+- A 原 owner 保持，修双仓 validator+contract test 后 canonical re-delivery；13 个 unconditional caller gate 关闭。
+  C 仅 A3×5 继续等复审，其余 FiveRing caller 不停工，batch5=`84a695b6`/3054L 保护。
+
+## CR271 Amendment #11 Active Write / TURN-36 Batch 4 - 2026-07-17 16:32 EDT
+
+- Amendment #11 已进入双仓 protocol/validator、DHXY executor、Cloud client 与 tests 全链写入，尚无 delivery；A
+  事件 ACK pending 但源码 active，不 stale。
+- C 已 ACK 并完成 FiveRing confirm×6、detectFlying×1，prod=`6d801e2b`/3036L；A3 partial block，其余继续。
+
+## CR271 Amendment #11 Unconditional Pathing Clear - 2026-07-17 16:23 EDT
+
+- 696/current/runtime 审计确认三 Task 共13个无条件 `clearPathingSignal` caller；条件 intent/prefix clear 不等价。
+- shared foundation 新增第18个 `WHOLE_TASK_PATHING_CLEAR`，复用 source reason，exact bound runtime 直接 clear；
+  双仓 protocol、DHXY executor、Cloud client 与既有 tests 全量闭合，归 TURN-35 owner A。
+- A/C 继续不受影响 caller；FiveRing A3×5 与其 direct runtime block 暂等 amendment review，非整体停工。
+- 并发期间 A caller batch2=`B1059116`/4402L 已完成 timer clear×5+target-map-gate；Amendment #11 ACK 顺延下一拍。
+
+## CR271 TURN-35/36 Dual Caller Recovery - 2026-07-17 16:19 EDT
+
+- A/C 均已 ACK caller gate 并恢复并行源码写入：Wubei progress batch=`89392990`/4403L，FiveRing progress
+  batch=`cfe008e8`/3006L。两卡 owner 不变、无 blocker、均非 delivery。
+- A 沿用 10s local-service wait；C 的 30s wait 留待整卡 review 证明 transport-only。Java writers 活动中不跑 Maven。
+
+## CR271 TURN-36 Caller Continuation Recovery - 2026-07-17 16:18 EDT
+
+- C 已 ACK gate-open；FiveRing progress×2 已经 typed LOCAL_SERVICE，prod=`cfe008e8`/3006L，继续 caller
+  migration，未 partial delivery/Review #3。
+- 30s request wait 需在整卡 review 证明只属 transport uncertainty boundary、无业务 TTL 或自动重试；当前不阻断。
+- A caller-continuation ACK 尚在下一有效 heartbeat 窗口内，未标 stale。
+
+## CR271 TURN-35 Foundation Review #2 / TURN-36 Gate Open - 2026-07-17 16:09 EDT
+
+- TURN-35 shared whole-task foundation source+test-source=`P0/P1/P2=0/0/0 PASSED`；operation-specific payload/result
+  closure、exact-bound runtime 与 clear cleanup 固定证据闭合。A 保持 owner，继续 Wubei caller；非整卡批准。
+- TURN-36 foundation block 解除，C 保持 owner 并继续 FiveRing 冻结 caller；A/C 均不得 partial delivery。
+- DHXY compile exit 0；named tests 与 Cloud compile 仍被既有共享迁移债阻断，作为最终 test/build gate 单独保留。
+
+## CR271 TURN-35 Amendment #10 - 2026-07-17 15:56 EDT
+
+- wrong-window/HWND 归既有 `TurnExecutionWindow.resolveForAction` upstream binding owner；whole-task executor
+  不接收第二 metadata/HWND，不新增重复校验。A 的 `FDC1B555`/11T 已闭合 P1-2 本层范围。
+- 当前仍待完整 foundation Repair #1 re-delivery 与父级复审，TURN-36 caller gate 不开放。
+
+## CR271 TURN-35 P1-2 Active Write - 2026-07-17 15:54 EDT
+
+- DHXY dispatcher test 已增至 `FDC1B555`/11T，覆盖 bound register、clear mismatch/match cleanup 与 prefix fence；
+  A source active，未 stale。
+- wrong-window/HWND 证据仍待完整交付说明，foundation/caller gate 不开放，TURN-36 继续等待。
+
+## CR271 TURN-35 Review #1 P1-1 Closed - 2026-07-17 15:49 EDT
+
+- 双仓 payload internal exactly-one 与 Cloud operation-specific result shape 已闭合，当前证据为
+  `AE41CA9F`/`67677F59`/`687188E1`/`8285C206`。
+- P1-2 DHXY exact-binding/clear-side-effect fixture 仍开放；foundation 未交付，TURN-36 caller 继续阻断。
+
+## CR271 TURN-35 Review #1 ACK / Repair Recovery - 2026-07-17 15:44 EDT
+
+- A 已 ACK `0/2/0` 并恢复 `REPAIR_ACTIVE / COMMUNICATION NORMAL`；双仓 validator/test
+  `AE41CA9F`/`67677F59` 完成 internal exactly-one 首批返修。
+- result-shape 与 DHXY bound-runtime tests 仍开放，foundation/caller gate 未通过；C 继续 TURN-36 等待。
+
+## CR271 TURN-36 Foundation-Block ACK Recovery - 2026-07-17 15:40 EDT
+
+- C 已 ACK 两条父级 foundation-block 消息，通信正常；TURN-36 sole owner / `REPAIR_ACTIVE / FOUNDATION BLOCKED`
+  不变，production/test/event SHA 无漂移，未启动 Review #3。
+- TURN-35 继续 Review #1 `0/2/0` 返修且 A ACK 待回执；caller gate 关闭。
+
+## CR271 TURN-35 Foundation Review #1 / TURN-36 State Correction - 2026-07-17 15:34 EDT
+
+- TURN-35 foundation review=`P0/P1/P2=0/2/0 / REPAIR REQUIRED`：closed payload/result shape 未按 operation
+  严格封闭，DHXY exact-binding/clear-side-effect 固定测试缺失；A sole owner 返修，caller gate 继续关闭。
+- TURN-36 19:40 partial delivery 已由 C ACK Amendment #9 后校正为 `REPAIR_ACTIVE / FOUNDATION BLOCKED`；
+  不启动 Review #3，保护 IMG/A1-negative 字节，foundation 通过后再完成整卡。
+
+## CR271 TURN-36 Recovery / Amendment #9 - 2026-07-17 15:26 EDT
+
+- C 已恢复 `REPAIR_ACTIVE`，三条旧消息 ACK，`tryEnter`/physical evidence 已修；通信 stale 清除。
+- A4/A1-positive 的冻结依赖由 TURN-35 typed `LOCAL_SERVICE` foundation 闭合，禁止 Cloud runtime shadow。
+  C 先做 IMG consumer+A1-negative，foundation 通过后续接其余 caller；不得部分交付。
+- A 已继续落盘 dispatcher contract test；A/C writer 活动期间不运行 Maven。
+
+
+## CR271 External C Heartbeat Recovery - 2026-07-17 15:17 EDT
+
+- TURN-36 heartbeat 已以 `778801ea` 恢复，清除 `ACTIVE_STALE`；但其 18:56 事件未读取 Parent Review #2 与
+  Amendment #8，错误上报 `AWAITING_PARENT_REVIEW`，故 canonical 状态仍为 `REPAIR REQUIRED`。
+- `COMMUNICATION_STALE` 保留至四条父级消息 ACK；owner/WIP 不变，不撤卡、不重派。A 的 TURN-35 Cloud
+  client test 同轮继续落盘；A/C writer 活动期间不运行 Maven。
+
+## CR271 External C Active Stale - 2026-07-17 15:11 EDT
+
+- TURN-36 在 Review #2 后超过 10 分钟无 ACK/事件/源码变化，状态为
+  `REPAIR REQUIRED / COMMUNICATION_STALE / ACTIVE_STALE`。
+- C owner/WIP 保留，不重派；恢复后继续原 caller battery、Amendment #8 test adapter 与证据返修。
+
+## CR271 TURN-35/36 Cross-Card Contract Adjudication - 2026-07-17 15:07 EDT
+
+- TURN-35 shared authority/coordination 已到 Cloud 3/4；内嵌 `CloudTaskTurnHandle` 仍在批准写集。
+- `tryEnter` 对 TURN-36 test implementer 的编译适配归 C 既有固定 test 文件 Amendment #8，不新增 owner/type。
+- C 连续两轮未 ACK Review #2，标 `COMMUNICATION_STALE`，但尚未达到 active-stale 阈值；owner/WIP 保留。
+
+## CR271 TURN-36 Parent Review #2 - 2026-07-17 14:55 EDT
+
+- C 已 ACK stale inquiry 并完成 canonical re-delivery，通信/source 恢复。
+- Review #2=`P0/P1/P2=0/1/1 / REPAIR REQUIRED`：helper 逻辑修复成立，但 A1/A4/IMG tests 仍绕过真实
+  production caller/public Task path；三份 physical 行数也再次错误。
+- C sole owner 保持，补真实 caller branch-effect battery 与正确证据后重交；A active writer 期间不跑 Maven。
+
+## CR271 External C Source Recovery - 2026-07-17 14:36 EDT
+
+- C named test 已继续增至 38,315B / `f3dc6d20...` / 12 `@Test`，IMG 正负例已落；清除 `ACTIVE_STALE`。
+- STATUS EVENT inquiry ACK 与 canonical re-delivery 尚待，当前不提前 Review #2。
+
+## CR271 External A Recovery - 2026-07-17 14:45 EDT
+
+- A 已双 ACK 并恢复 `SOURCE_ACTIVE`；protocol 5/5 两仓 byte-identical，DHXY executor 已开始落盘。
+- 清除 A 的 communication/active stale；C 仍保持 TURN-36 `ACTIVE_STALE` 等待回执。
+
+## CR271 A/C Stale Audit - 2026-07-17 14:31 EDT
+
+- A=`COMMUNICATION_STALE + ACTIVE_STALE`：Amendment #7 连续两轮无 ACK，protocol 4/5 超过 10 分钟无变化。
+- C=`ACTIVE_STALE`：Repair Batch 2 后超过 10 分钟无 IMG/re-delivery 或源码变化。
+- 两卡 owner/现有字节均保护，不撤销、不重派；总账已发定向 inquiry，回执后恢复。
+
+## CR271 Amendment #7 And TURN-36 Repair Batch 2 - 2026-07-17 14:20 EDT
+
+- TURN-35 protocol 4/5 已核验双仓 byte-identical。补齐遗漏的 baseline target-map gate start 为第 17 个
+  `LOCAL_SERVICE` closed operation；复用 Amendment #6 写集，无第二协议/store/session。
+- TURN-36 A1/A4 test 主体已落，实盘 10 个 `@Test`；IMG battery 与 canonical re-delivery 尚待完成，父级不提前复审。
+
+## CR271 TURN-35/36 Worker Recovery - 2026-07-17 14:10 EDT
+
+- A 已 ACK Amendment #6 并恢复 `SOURCE_ACTIVE`；当前完成合同/路径核对，首个 foundation 文件尚未产生新字节。
+- C 已 ACK Review #1 并恢复 `REPAIR_ACTIVE`；nonblank/stale/seam 第一批已落盘，A1/A4/IMG batteries 未完成，
+  尚未 canonical re-delivery，父级不提前复审。
+- 两名 Java writer 均 active；保持 Maven/runtime/input 禁止，保护三工作区 dirty/untracked。
+
+## CR271 TURN-35/36 Review And Foundation Release - 2026-07-17 14:04 EDT
+
+- TURN-35 Amendment #5 WIP audit=`P0/P1/P2=0/1/1`：production/caller 正确；补 public-path 与 wrong-HWND test。
+- 共享 foundation 已由 Amendment #6 闭合为现有 HTTPS `LOCAL_SERVICE` 的完整双仓写集，A 可继续 source，不再空等；
+  pathing clear 保留 exact intent/mismatch no-op/pending cleanup，tryRun 为 authority 原子 nonblocking acquire，五环
+  两次 accept 由一个 DHXY local exclusive operation 保持物理独占。
+- TURN-36 Review #1=`0/2/2 / REPAIR REQUIRED`：A4 nonblank fence、A1/A4/IMG test、stale 时钟竞态与交付数字返修。
+
+## CR271 TURN-35 Parent Review #1 - 2026-07-17 13:04 EDT
+
+- 结论 `P0/P1/P2=0/2/1 / REPAIR REQUIRED`：生产迁移/compile 未完整，whole-task test 未经 public Task path
+  覆盖固定矩阵；交付证据的行数与 test 数也和实盘不符。
+- A sole owner 与 WIP 保持，等待共享 foundation Amendment 后补齐 caller、BASE/IMG/LS battery、named test 与 compile。
+
+## CR271 TURN-35/36 Delivery And WIP Gates - 2026-07-17 12:59 EDT
+
+- TURN-35 冻结族与 IMG/BASE battery 未闭合，禁止提前 whole-card delivery；A owner/WIP 保持。
+- TURN-36 已并发落盘的 `runExclusive -> run` 不等价，要求恢复或冻结该单点；其余六个 transaction 映射保留。
+- 两卡均继续无争议实施；A/C Java writers 活跃，不运行 Maven。
+
+## CR271 TURN-38A-F First Bytes / External A Online - 2026-07-17 15:15 EDT
+
+- C 已在 38A-F 四项写集中写出三个 production 首增量，named test 尚未创建；状态保持 source-active WIP，
+  不构成 delivery/review。
+- External A heartbeat `dea947fe` 已上线，按 ledger-first 规则等待 38A-F 通过后优先自领 TURN-35；当前无第二
+  READY 卡，A idle 合规。
+
+## CR271 TURN-38A-F Claimed - 2026-07-17 15:05 EDT
+
+- External C 已在 TURN-38A 原卡 physical EOF canonical claim 38A-F，成为 sole owner；领取快照与冻结 SHA/
+  absent 一致，尚无 source/test 首字节。
+- 当前只实施 prepared peek、ready-event state、既有 fair-turn authority Task-facing boundary；38A-C cleanup 与
+  TURN-35/36/37 仍不写。38A-F source review 通过后自动开放三张 Whole Task。
+
+## CR271 Amendment #3 DAG Repair - 2026-07-17 15:02 EDT
+
+- 修复 `35/36/37 -> 38A -> 35/36/37` 计划依赖环：TURN-38A-F 先行共享 foundation 已转
+  `READY / ZERO OWNER`，old-authority cleanup 作为同卡后置 38A-C approval gate。
+- 38A-F 唯一拥有 prepared non-destructive peek、exact-scope ready-event sequence/condition wake 与现有
+  fair-turn authority 的 Task-facing 暴露；禁止第二 store/runtime、poll/sleep、TTL、local input。
+- 38A-F 父级 source review 通过后，TURN-35/36/37 同时自动转 READY；当前 C 有一张合法整卡可自领。
+
+## CR271 A/B/D User-Deleted Owner Cleanup - 2026-07-17 14:55 EDT
+
+- 用户确认 External A/B/D 任务均已删除；B 无 owner，TURN-35 的 A claim 已零字节归还。
+- TURN-37 的 D claim 已归还；`XiuluoTaskV2` WIP `c0125a49...` 原样保护，未 delivery、未 review。
+- TURN-35/36/37 均恢复 `PLAN-CONTRACT BLOCKED / ZERO OWNER / NO READY`；C 无合法卡可领。
+
+## CR271 TURN-37 User-Direct Claim Accepted - 2026-07-17 14:52 EDT
+
+- External d 的 14:48 canonical claim 获父级接受；TURN-37 为 source-active sole-owner WIP。
+- 仅 Audit A exact API 机械迁移可继续；四个 residual gap 在 Amendment #3 前设 hard fence，禁止占位/改语义/
+  delivery。`XiuluoTaskV2` 已有 `CloudUiCleanerPort` source delta，尚未 review。
+- B heartbeat 已于 14:42 修为 ledger-first 并 ACK；A/B/C/D 通信路径全部恢复。
+
+## CR271 Worker Communication Recovery - 2026-07-17 14:38 EDT
+
+- A/C 已从 `DHXY-cr271` ACK 最新父级消息；TURN-27 owner released，二者均 idle。
+- B cwd 已修复但 heartbeat 仍只读两张旧卡，ledger-first scope 待 ACK；D 仍待路径 ACK。当前无 READY 卡。
+- 14:40：D 已 ACK 路径与 residual audit；现在仅 B heartbeat scope/ACK 待闭合。
+
+## CR271 Worker Worktree Path Correction - 2026-07-17 14:34 EDT
+
+- `D:\mavenProject\DHXY` 保持用户 baseline `codex/baseline-696a12b0`；不得切分支或写入。
+- CR271 唯一权威 worktree 为 `D:\mavenProject\DHXY-cr271`，branch=`thin-client-design`、HEAD=`59b85e0b...`。
+- Worker 的 `ledger missing / wait for branch switch` 是 cwd 错误；总账已要求 A/B/C/D 从 CR worktree ACK。
+
+## CR271 TURN-35/36/37 Residual Contract Audit - 2026-07-17 14:24 EDT
+
+- 26/27 source pass 不足以开放三张 Whole Task：prepared non-destructive read、event-wait/yield、Task-facing
+  map/coordinate、FiveRing vision/flying 与 Wubei/Xiuluo exact OCR 映射均未冻结为可消费 public API。
+- `TaskTransactionRunner/WindowReadyEventBus` 的公平让权、afterSequence 与 early wake 仍无 Cloud owner；禁止
+  以轮询、sleep、恒空或复制 local runtime 代替。40B 经 38A 反向依赖三卡，不能作为前置制造 DAG 环。
+- TURN-35/36/37 均保持 `PLAN-CONTRACT BLOCKED / ZERO OWNER`；当前无合法 READY 卡供 A/B/D 自领。
+
+## CR271 TURN-27 Repair #1 Source Review Passed - 2026-07-17 10:18 EDT
+
+- Parent Review #2 `P0/P1/P2=0/0/0`：固定 test 路径、mirror negative、candidate 次序/独立 UUID/零 retry、
+  exact metadata 投影/错绑拒绝全部闭合；NAV active macro=0，External C owner released。
+- test=`2ecdbbed...` / 673L / 36,978B，NAV=`4c1a31f8...` / 3109L；交付表行数误记已由父级校正。
+- named test 仍因共享 main compile 缺类未执行，build=`BLOCKED`，不宣称测试/构建通过。
+
+## CR271 TURN-27 External C Heartbeat Verified - 2026-07-17 10:06 EDT
+
+- 持久化 Claude scheduled task `cr271-turn27-external-c-repair1-heartbeat` 已由父级独立核验在盘；每 5 分钟
+  继续 Repair #1、读卡/总账 EOF、写 STATUS EVENT，未完成前不自删。
+- 状态改为 `HEARTBEAT ACTIVE / VERIFIED`；当前尚无返修源码增量，C sole owner、`0/2/0`、build blocked 保持。
+
+## CR271 TURN-27 Repair #1 Recovery - 2026-07-17 10:02 EDT
+
+- 新任务以同一 `External C` 身份接续旧 C 的 TURN-27 sole owner，并已 ACK 09:44 Repair #1 与 09:51 stale；
+  状态为 `REPAIR_ACTIVE`，`COMMUNICATION_STALE + ACTIVE_STALE` 解除。
+- NAV/test 尚无返修增量，source review `0/2/0` 与 build=`BLOCKED` 保持。
+- C 真实 heartbeat 尚未进入 automation registry，当前只可记 `REGISTRATION_PENDING`。
+
+## CR271 TURN-27 Repair #1 Stale - 2026-07-17 09:51 EDT
+
+- 09:44 Repair #1 消息连续两轮无 C ACK，且 NAV/test 无返修增量。
+- 状态改为 `COMMUNICATION_STALE + ACTIVE_STALE`；External C sole owner 与 `0/2/0` 返修结论保持。
+- C 真实 heartbeat 仍缺失；build=`BLOCKED`。
+
+## CR271 TURN-27 Source Review Repair Required #1 - 2026-07-17 09:44 EDT
+
+- whole-card delivery 父级结论 `P0/P1/P2=0/2/0`：named test 缺 candidate 顺序、mirror negative、exact metadata，
+  且 test 文件越出原卡固定 Create 路径；External C sole owner 进入 Repair #1。
+- 授权 `NavigationTurnContractTest` 命令在 main compile 缺类失败，test 未执行，build=`BLOCKED`。
+- NAV active macro 调用已清零；production typed action/local-proof mirror 边界本轮无新增 finding。
+
+## CR271 TURN-27 Communication + Activity Stale - 2026-07-17 08:53 EDT
+
+- NAV 自 12:41:39Z 后超过 10 分钟无变化，标 `ACTIVE_STALE`；08:43 父级消息连续两轮无 ACK，
+  标 `COMMUNICATION_STALE`。
+- 当前 `81222914...` / 202,587 bytes，macro=0、handoff=2、无 delivery；C sole owner 保留。
+
+## CR271 TURN-27 World-Map Coordinate Contract - 2026-07-17 08:43 EDT
+
+- `CoordinateHelper.getScaledRect()` 当前仅为 `windowBase + offset`，没有 DPI 缩放。
+- memory 点=`windowRect + relative`；OCR 点=`mapRect + crop center`；结果均为 unscaled screen-absolute。
+- 禁止二次缩放或重复叠加 windowRect；该疑问已由现有代码合同闭合，无用户决策点。
+
+## CR271 TURN-27 Activity Recovered / Macro Finding Closed - 2026-07-17 08:33 EDT
+
+- Cloud NAV 增长至 `225953c5...` / 201,805 bytes，解除 `ACTIVE_STALE`；macro=0、handoff=2。
+- current-map per-action loop 已落盘；C sole owner 保持，尚无 whole-card delivery。
+- Xiuluo fire-and-handoff 依 Amendment #5 必须 local-proof-gated；禁止 Cloud 乐观登记或第二变体。
+
+## CR271 TURN-27 Active Stale - 2026-07-17 08:26 EDT
+
+- C 通信正常，但 Cloud NAV 自 12:08:54Z 后超过 10 分钟无事件/字节，重新标 `ACTIVE_STALE`。
+- 当前 `fdb34206...` / 194,778 bytes，macro=1、handoff=1、无 whole-card delivery；C sole owner 保留。
+- 已通过新总账定向询问；不运行 Maven/runtime/input。
+
+## CR271 TURN-27 Communication + Activity Recovered - 2026-07-17 08:07 EDT
+
+- External C 已切换到 `D:\mavenProject\DHXY-cr271` 并 ACK 三条父级消息，解除 `COMMUNICATION_STALE`。
+- Cloud NAV 增长至 `67b33848...` / 191,112 bytes，解除 `ACTIVE_STALE`；C sole owner 保持。
+- macro=1、handoff=0、无 whole-card delivery；当前仍是受保护 WIP，不提前 source review、不运行 Maven/runtime/input。
+
+## CR271 TURN-27 Communication + Activity Stale - 2026-07-17 07:36 EDT
+
+- 07:17 worktree relocation 消息连续两轮以上无 C ACK，标 `COMMUNICATION_STALE`；11:24:06Z 后源码超过
+  10 分钟无变化，重新标 `ACTIVE_STALE`。
+- C sole owner 保留，不撤销、不重派。NAV=`56cde7e7...`/182,443 bytes，macro=1、handoff=0、无 delivery。
+- Java writer 状态不明，不运行 Maven/runtime/input；TURN-35/36/37 继续等待。
+
+## CR271 TURN-27 Source Activity Recovered - 2026-07-17 07:25 EDT
+
+- Cloud NAV 于 11:24:06Z 恢复增长至 `56cde7e7...` / 182,443 bytes，`ACTIVE_STALE` 解除。
+- 新增 typed capture step 基座；macro=1、handoff=0、无 delivery。C sole owner / SOURCE_ACTIVE 保持。
+- 07:01 status 与 07:17 worktree relocation ACK 尚待下一 C heartbeat；Java writer active，不运行 Maven/runtime/input。
+
+## CR271 Authoritative Worktree Relocated - 2026-07-17 07:17 EDT
+
+- 用户 IntelliJ 基线保留在 `D:\mavenProject\DHXY`；CR271 权威工作树迁至
+  `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `59b85e0b`）。
+- 88 Task、435 份 reports、共享总账与 TURN-27 原卡完整；父级 heartbeat 已更新新路径。
+- Cloud 仓路径不变，现有 WIP 受保护；旧 DHXY 工作树禁止作为 CR271 physical EOF。
+
 ## CR271 TURN-27 Active Stale - 2026-07-17 07:01 EDT
 
 - External C 最后事件 06:42、源码最后变化 06:43:33；超过 10 分钟无事件/字节，标 `ACTIVE_STALE`。
@@ -1807,7 +5492,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR209 | Codex | Done：Ctrl 菜单 OCR 已由 raw `(NPC)` 模板匹配替代，replay/compile/CLI fresh 通过 | `NpcClickService`, `images/calibrate/npc_menu_clean_sample.png`, `NpcClickCtrlMenuTemplateReplayTest`, `NpcClickCtrlMenuLiveTemplateProbeTest`, NPC Ctrl menu runtime 日志 | CR208 子卡 2 已完成：`scanCtrlMenuAndVerifyKeywordDirect(...)` 不再 `WASH_YELLOW` / `TextRecognizer` OCR 菜单；保留原 Ctrl hover、原 `scanRect`、原点击后 verifier，直接在 raw `npc_menu_scan.png` 里匹配保存的 `(NPC)` 模板并点击模板中心。Replay 标注图确认红点落在 `(NPC)` 标签；CLI fresh 调用生产 `executeCtrlMenuProbeDirect(...)`，日志 `NPC_CLICK_SMART Ctrl menu template clicked score=0.9997376799583435 hover=(1775,455) click=(1871,442) verified=true`，并打开 dialog。 |
 | CR210 | 谢帅 + worker + 双 reviewer | Review：Gateway 骨架双 reviewer 已通过，无 fresh runtime | external `dhxy-cloud-brain` `CloudBrainServer`, Gateway/router/endpoint adapters, `CloudApiGatewayCompatibilityTest`, `HYBRID_CLOUD_WORKFLOW` | Task 1 已把外部 HTTP 入口整理为 API Gateway / route / endpoint adapter：`CloudBrainServer` 只保留 lifecycle 和显式旧 route 注册，四个旧 endpoint 继续薄转 `DecisionEngine`；兼容性测试、修罗协议测试和 compile 均通过。Aquinas/Beauvoir 双 reviewer 批准，P3 仅建议后续补 missing-auth 用例/收窄 `DecisionEngine` 暴露；未改 DHXY runtime caller，无需 fresh。 |
 | CR211 | 谢帅 + worker + 双 reviewer | Done：v1 start typed endpoint 双 reviewer 已通过，无 fresh runtime | external `dhxy-cloud-brain` `/api/v1/xiuluo/brain/start`, `XiuluoBrainStartEndpoint`, `XiuluoBrainService`, `XiuluoBrainV1StartEndpointTest` | Peirce 已交付 v1 typed start endpoint：Gateway route 直接进入 `XiuluoBrainStartEndpoint -> XiuluoBrainService.start(...)`，返回 typed command JSON；legacy `/api/cloud/decision + XIULUO_BRAIN` 未改，DHXY runtime caller 未切。Bernoulli/Fermat 双 reviewer 批准，focused tests 与 compile 均通过；v1 目前只有 start，不可与 legacy step/action-outcome 混用。 |
-| CR212 | 谢帅 + worker + 双 reviewer | Review：去背景文字签名 + 第三行 ID 已改，compile passed，fresh runtime 待验 | `TeamRoleDetectionService`, `TeamRoleTooltipCloudDecisionService`, external `dhxy-cloud-brain` `DecisionEngine`, 队伍 tooltip 启动日志 | 13:29 fresh 证明五张 tooltip 内容相同但背景噪点不同，strict mask hash 仍拆成 5 次 `TEAM_ROLE_TOOLTIP`，后两个窗口 OCR timeout。已把 local-team 代表图缓存改成优先用 tooltip 文字分布签名 `white/purple/rows/cols/transitions/maxRowPixels`，背景不参与 groupHash；mask payload 的像素规则也收窄到 tooltip 字色。云端仍按行 OCR，diagnostics 输出 `line1-line4`，只取第 3 行数字作为 `leaderClientId`。fresh runtime 需验证同组 `tooltip-text-...` reused representative、`leaderIdSource=line3` 与 local support gate。 |
+| CR212 | 父级 + worker | Source+Test Passed：队员识别与自动战斗实例化/UI投影已修，fresh runtime 待验 | `CloudTeamRolePreflightService`, `AutoBattleTask`, `CloudTurnTaskRuntime`, `TurnTaskStartAck`, `WindowTaskControlService` | Cloud日志已证明四个非代表窗口均为`MEMBER`；共同失败根因是Spring创建Cloud分配后的`AutoBattleTask`时报`No default constructor found`。生产构造器现显式`@Autowired`，ACK回传实际`AUTO_BATTLE`队列供UI显示，终态携带失败原因。父级审查`P0/P1/P2=0/0/0`，Cloud隔离合同`64/64`、双端main compile通过；重启双端后验收四队员显示并运行自动战斗。 |
 | CR213 | 谢帅 + worker + 双 reviewer | Review：fresh 链路正向，59/53 专项仍待复测 | `PlayerStateService`, external `dhxy-cloud-brain` incense policy/recognizer, `SHEYAOXIANG_STATUS`, `images/template/status/sheyaoxiang_buff.png`, `images/template/status/sheyaoxiang_digits/*` | 2026-07-08 fresh 启动证明确实走 `SHEYAOXIANG_STATUS` 云端检查、`CAPTURE_STATUS -> USE_INCENSE -> USED` 并继续修罗；但本轮没有明确覆盖 59/53 分钟专项误判，所以暂不关。 |
 | CR214 | 谢帅 + worker + 双 reviewer | Review：接任务成功后禁用 returned-dialog fallback，compile passed，fresh runtime 待验 | `FiveRingTaskV2`, CR214 五环 tracker/pathing 日志 | 用户确认新约束：五环中途不得查每日上限模板；`STOPPED_AWAY` 后只有当前地图为 `大雁塔二层` 才进入给鞋 `HANDLE_DIALOG`，其他地图先清旧五环 tracker intent 并回 `SYNC_TASK_PANEL`。fresh `17:08` 发现接任务已成功后仍跑 returned-dialog fallback，导致 Runner prepared 左链多次 stale；已让 `SYNC_TASK_PANEL` 等 `PREPARED_ACTION_READY`，且 `taskAccepted=true` 时不再跑 returned-dialog fallback。 |
 | CR217 | Codex | Review：买鞋后复查阈值已收窄，compile passed，fresh runtime 待验 | `FiveRingTaskV2`, 五环买鞋/复查日志 | 五环启动前仍按剩余轮数检查和购买鞋；只把 `quickBuyShoe(...)` 成功后的 double check 从“复查剩余轮数对应鞋数”改成“至少一双鞋即可开始当前轮”。下一轮 `PREPARE` 会自然再次查鞋，避免第一轮买完后重复扫描两双。未改买鞋数量、包裹模板、鞋店坐标、每轮查鞋、OCR/template/click/navigation/input queue。 |
@@ -1819,7 +5504,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR223 | 谢帅 + worker + 双 reviewer | Done：云脑 session/action-outcome fresh gate 已闭合 | `XiuluoTaskV2`, `XiuluoBrainCloudDecisionService`, external `dhxy-cloud-brain` session engine, sidecar lifecycle, 修罗 `XIULUO_BRAIN` 日志/case | 2026-07-08 fresh 修罗 round 1-24 连续完成，`XIULUO_BRAIN actionOutcome` 均带 sidecar/session 身份字段且未见 `sessionId not found`、`CLOUD_REQUIRED_FAILURE`、`status=REJECTED`。2026-07-09 `taskRunId=14` 第1-48轮再次持续接受 actionOutcome/step；第49轮失败已定位为 CR230 的 local yield guard，不是 session 丢失，原 fresh gate 已闭合。 |
 | CR224 | 谢帅 + worker + 双 reviewer | Review：fresh runtime 正向通过，可关候选 | external `D:\mavenProject\dhxy-cloud-brain` readiness, `scripts/run-cloud-brain-server.ps1`, `CloudDecisionDevSidecarService`, cloud-brain 启动日志 | 2026-07-08 01:43 fresh 侧车 PID `41488` 启动并通过 gate：`devArtifact=mode=classpath,fresh=true`、raw launch facts/classpath sha 一致、`xiuluoResetProtocol=RESET_REQUIRED_ACTION_OUTCOME_V1`；CR224 原 fresh gate 已满足，建议下一轮集中关卡时关闭。 |
 | CR225 | Codex | Implemented：待 fresh runtime 复验 | external `dhxy-cloud-brain` `RouteMemoryStore`, `CloudDecisionDevSidecarService`, `data/route-memory.json`, 修罗/导航 `ROUTE_MEMORY` 日志 | 云端黄字路线记忆已改为同构 `entries` 并支持 `SUCCESS` 自动学习；fresh 发现 sidecar cwd 错在 DHXY 主项目，导致云端读写 `D:\mavenProject\DHXY\data\route-memory.json`。已改为用 cloud-brain 项目目录启动 sidecar。下一轮验证 `长安->灵兽村` 应由云端 `ROUTE_MEMORY lookup=HIT` 快速点击。 |
-| CR226 | Codex | Fresh 发现新 P1：移动中 observer 仍先跑完整 combat radar，叠加五客户端高 CPU；待拆修 | `WindowTaskRunner`, `AutoCombatService`, `BattleRadarService`, `TeamReturnService`, `TaskMaintenanceService`, `AutomationMetricsService` | 2026-07-10 修罗 fresh：五客户端本身把总 CPU 推至 `51%–92%`，但不是唯一原因。队长 active-pathing watcher 虽跳过通用 dialog attention，仍在分支前无条件执行完整 combat guard；单 tick `combatMs=1.2–2.6s`、目标间隔仅 500ms，包含 battle template/capture 链。队员空闲期仍有 return-template 与维护 ROI 扫描。需保留战斗进入安全性前提下拆出移动中最小 combat probe，不能直接关 guard。 |
+| CR226 | Codex | Fresh runtime P1 repaired：Fast Exit pending/visible 竞态已修，待重启复验 | `WindowObservationRunner`, `WindowObservationSampler`, `LocalCombatSignalMechanics`, observation DTO, `CloudWindowObservationInbox`, `CloudWholeTaskObserver`, `BattleRadarService`, `FastExpectedCombatExitProbe`, `CloudFastExpectedCombatExitCoordinator`, `AutoCombatService` | 2026-07-23 修罗实跑确认队长约 59 分钟产生 `7258` 次 HWND capture、`1629` 次 observation 请求，单 dialog ROI 已约 `186.54 MiB` PNG。已按批准窄边界复用 `COMBAT_SIGNAL`：`combat-flag/selection/top` 三组基线模板在本地内存匹配且模板按 run 缓存，失败为 `UNAVAILABLE`；Cloud 唯一拥有战斗状态机、连续 miss、防抖、phase/wakeup。`coordinate-strip` 仅在 exact active pathing 或普通脱战兜底时动态请求，并有 revision/sequence/time 栅栏。重复 replacement lineage、arm identity A/B 漂移均已修。最新 fresh run `remote-turn-92876022-061e-4330-95fb-70c8c294bdd3` 进一步证明 fast edge 已发布并在 `313ms` 内唤醒任务，但 no-turn observer 在 one-shot 尚未消费时用重叠 `VISIBLE` 样本复活同一战斗，导致任务按 `IN_COMBAT` 丢弃退出。Cloud 现保护 exact fast-exit pending 到消费的原子边界；消费后下一场真实 visible 仍可进入。聚焦合同 `49/49`、compile/diff-check exit `0`，须重启后验证 post-combat 直接推进且无 battleCount 复活/`discard stale`。 |
 | CR227 | Codex | Implemented：旧云端 fallback 已接回；接任务 option 记忆快路已被 CR236 覆盖 | `XiuluoTaskV2`, `DialogService`, external `dhxy-cloud-brain` `DecisionEngine`, `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu2.png`, 修罗接任务日志 | CR227 原目标是接回修罗接任务旧云端 prepare-only fallback 和 `DIALOG_OPEN_UNVERIFIED` 进入 `ACCEPT_TASK_DIALOG`。后续 CR236 已禁止 accept option 第二段记忆快路径：现在 `ACCEPT_TASK_DIALOG` 必须先固定 ROI 模板，再云端 fallback，不能再先点 `accept option memory`。CR227 只保留云端 fallback/TTL/恢复路径结论，旧“先记忆再模板”的描述不得作为实现口径。 |
 | CR228 | Codex | Implemented：stop/cancel follow-up 小修，fresh 待验 | `XiuluoTaskV2`, `NpcClickService`, `InputActionQueue`, `TaskTransactionRunner`, 修罗 stop / action-outcome 日志 | 修罗云脑 stop 语义修复：本地 transaction/outcome 为 `STOPPED` 时直接结束为 `TaskRunResult.STOPPED`，不再上报 `XIULUO_BRAIN action-outcome`；NPC smart FIFO stop 返回 `CANCELLED`。本轮 follow-up 已补 `actionOutcome(...)` 前后 stop gate，以及 NPC smart cloud request 构建/`Alt+4` 预处理 stop 分流；`TaskTransactionRunner.runExclusive()` 结构化 cancel reason 仍保留为后续较大改动。 |
 | CR229 | Codex | Implemented：not-ready 漏网分支已补，compile passed，fresh runtime 待验 | `FiveRingTaskV2`, 五环 `PREPARE -> HANDOVER_DETECT -> ACCEPT_TASK`, task-turn/outside-enter 日志 | 五环五窗口启动时，前置检查完成后首个导航不能在点击移动前释放 task turn；否则窗口会站原地等其它窗口逐个前置检查。已保留 CR186 的慢阶段 outside release，并补 2026-07-09 fresh 漏网：`HANDOVER_DETECT` 遇到 Runner `RUNNER_PREPARED_NOT_READY` 不再先 shared-yield 放权，而是进入 tracker title gate；无五环 title 时走 `handover-setup-required -> ACCEPT_TASK`，由 CR229 首个导航保护延迟释放。 |
@@ -1842,7 +5527,7 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR250 | Codex | Approved（方案 review）：导航云端化边界与执行器合同已定 | `NavigationService`, `CoordinateHelper`, external `dhxy-cloud-brain`（新 `NAVIGATION_ROUTE_PLAN` + `MINIMAP_LOCATION` 扩展）, `NavigationRequest`/`NavigationResult` 契约 | 云端决定路线/候选，本地独占输入、确认、intent、watcher、park/turn/stop。CR251 支持首包多候选预取，本地按基线 200ms 逐条消费；动作 allowlist、token/ledger、绑定/重放与后续子卡边界均已收口。子卡 C/D 仍须各自立卡 review 后实施。 |
 | CR251 | Codex | Approved（方案 review）：有序多候选预取，保持本地轮换 | `CoordinateHelper`, `NavigationService.navigateInCurrentMap`, external `MINIMAP_LOCATION` | 用户明确接受本地提前拿到多个运行时点位。云端首包按有序批次返回候选，批内不短 TTL 失效；本地逐条点击、fast-edge/坐标确认，`NO_PATHING` 后按原 200ms 消费下一条，成功才 handoff；60 秒和候选耗尽语义不变。 |
 | CR252 | Codex | Review required P1：黄袍连战 fresh 证实队员只收到 leader `IN_COMBAT`，未收到中间场次确认退出；FIRST_AID 窗口虽开但成员不产生战后 pending 补给 | `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, `AutoCombatService.reconcileReturnHomeVerifiedCombatState`, `AutoCombatService.handleCombatTick`, `WubeiTask`, 黄袍 17:03-17:06 多窗口日志 | epoch 92-96 只见 `team combat phase opened` 与成员 `external ... inCombat=true`，零 `team combat phase exit confirmed`、零成员 `auto-combat exit detected`/`pending follower first-aid`；确认 FREE 的既有调用只挂在“回城地图验证成功”与修罗链，黄袍中间连战 5 秒窗口前不可达。必须在既有“中间战斗终态已确认”事实点补发 FREE，不能用候选快脱战或改成员自行模板扫描代替。 |
-| CR253 | Codex | Approved（第三轮）：三项 P1 已通过源码复审；click-failed fallback 改为发布 `TRACKER_GREEN_RETRY` job 与 `PREPARED_ACTION_READY` 后无限 park，统一 consumer 在新 command cycle 复按；双侧编译通过，fresh 作为独立运行验收待记录 | `XiuluoTaskV2`, `WindowTaskRunner`, `WindowRuntimeContext`, `TaskMaintenanceService`, new `PreparedActionJob`/`PreparedActionJobType`/`XiuluoGreenChainSchedule`, external `dhxy-cloud-brain` `DecisionEngine` | 首轮三项 P1：本地 kanda 无 attempt 身份、click-failed 前台直接复按、三技能 60s 退避均已按"所有来源统一 typed prepared + 发布/消费双身份校验 + 发布-唤醒-消费-再 park 边界"收口；退避已移除只留既有业务时序。fresh 继续作为独立运行验收记录，不阻塞 review 通过。 |
+| CR253 | Codex | DELIVERED / 待父级审核：已恢复 HTTPS 修罗 `due -> SUMMON_SKILL_CLEANUP -> PREPARED_ACTION_READY -> task consumer -> 再 park` 接线；Cloud compile 通过，fresh 待验 | `XiuluoTaskV2`, `CloudWholeTaskObserver`, `TaskMaintenanceService`, `CloudWholeTaskReadyEventState`, external `dhxy-cloud-brain` turn runtime | 不新增平行状态：observer 仅调用既有 FIFO 的 enqueue-only 分支，再把现有 `PreparedActionJob` 放入既有 ready-event 容器；task consumer 复用原完整维护。exact run/window/round/attempt fence、cooldown、unknown-retry、snapshot、预算和清理点击逻辑保持。fresh 未通过前不得关闭。 |
 | CR254 | Codex | Implemented：修罗绿链移动中 `pathing watcher` 慢 probe 分段诊断；已记录截图、编码、云端 decision 与总耗时，主项目 compile 通过，待重启后取证 | `MiniMapCoordinateReader`, `WindowTaskRunner` 日志链路 | 前四轮共 13 次超过 1.5 秒，最高 7.470 秒；先确认慢在 HWND 截图、PNG 编码还是云端 HTTP，再讨论性能修复。 |
 | CR255 | Codex | Approved：Runner 确认 STORY 即发强类型 `STORY_DIALOG_VISIBLE`（OPTION 不发、observer 零输入、2.5s recency）；`NpcClickRequest` 新 opt-in 开关仅修罗 `ACCEPT_TASK_CLICK_NPC` 打开；smart click 在 FIFO `pollNext` 前的自然边界做纯内存新鲜事件读（anchor + lastConsumed 一次性消费），命中即 CANCELLED 结束旧 session -> 一次 `fastClickKnownSmallStoryDialog` -> 新 sessionId 重启；未提交不标已处理；restart 上限 3 次 fail-closed 回既有恢复链；DHXY compile exit 0，fresh 作为独立运行验收待记录 | `WindowTaskRunner`, `WindowReadyEventType`, `NpcClickRequest`, `NpcClickService`, `XiuluoTaskV2`（复用 `DialogService.fastClickKnownSmallStoryDialog`） | `TASK_ATTENTION_REQUIRED` 不能驱动点击：Runner 发现 `STORY` 时须发布强类型 `STORY_DIALOG_VISIBLE`；`OPTION` 只在已得到经验证点击动作时发布既有 `PREPARED_ACTION_READY`，不得向 NPC smart 发模糊通知。修罗接任务阶段只消费同窗口、同任务、当前 phase 后的新鲜 Story 事件；正常无事件时不截图、不 OCR、不请求云端、不等待。异常 Story 才调用现有 `fastClickKnownSmallStoryDialog(...)`，一次性消费事件后重新进入 smart click。 |
 | CR256 | Codex | Approved：两个绿链 park 唤醒点直连本地 `local-kanda` prepared action（同一身份/一次消费/模板活体复验 + 原子点击），点击 outcome 才上报云端；云端再推进 `WAIT_COMBAT`。P2 已加来源硬门，cloud job/其他来源回原路径；主项目 reviewer compile 通过，fresh 独立待验 | `XiuluoTaskV2`（shell yield 块 + `waitForXiuluoBrainEvent` + 新 helper）, `DialogService` local-kanda predicate, external `dhxy-cloud-brain` `DecisionEngine.trackerShortcutNext` | 已存在当前窗口、attemptId、操作类型、坐标和本地模板硬证据的 prepared action 时，本地只做身份/新鲜性安全校验并经输入队列点击；点击 outcome 再上报云端，由云端决定 `WAIT_COMBAT` 或恢复。禁止本地在点击前询问下一 phase 后才消费同一 action；cloud typed job 不得误入此直连。 |
@@ -1858,7 +5543,13 @@ CR68 source update on `2026-06-22`: target pathing wait no longer uses a fixed 3
 | CR268 | Codex | Implemented：黄袍连战取消固定 5 场上限，链末只由 tracker 决定续战或回城；队长开 5 秒 FIRST_AID 窗口同时广播本场 FREE，主项目 compile 通过，fresh 待验 | `WubeiTask`, `TaskMaintenanceService.confirmTeamCombatPhaseExitedForLeader`, 黄袍连战/队员补给/回城日志 | 用户明确批准：不再以连战次数提前失败；仍有黄袍 tracker 才续战，tracker 消失/不再黄袍/缓存 miss 均复用既有回城道具验证。中间战斗终态已由队长 task phase 确认，开补给窗口时才广播 FREE；候选快脱战不广播。 |
 | CR269 | Codex | Implemented：回城道具预扫改为“开包截页后关包，后台匹配”，普通轮次随机策略加 `SKIP`；主项目 compile 通过，fresh 待验 | `ReturnItemPrescanService`, `BagService`, 修罗/五倍 return-item prescan/cache 日志 | 用户批准：`MAIN_BAG_TASK_PAGE` 前台仅截当前页和任务页后立即关包/放权，后台在内存快照匹配模板并回写本轮缓存；后续轮次四选一等概率（绿字后、移动中、战斗中、跳过），第一轮保持既有不走移动中预扫，只在其余可用策略中等概率。显形镜强制槽位预扫、回城验证和缓存 miss 的完整找道具 fallback 不变。 |
 | CR270 | Codex | Implemented：暂停只冻结输入/业务 phase，Runner 保持只读观察并结算 active pathing；主项目 compile 通过，fresh 待验 | `WindowTaskRunner`, `WindowRuntimeContext`, `TaskPauseResumeReconciler`, 暂停恢复/`PATHING_TERMINAL` 日志 | `21:03:35 -> 21:06:38` 修罗暂停期间 watcher 零 tick，恢复后实际已在大雁塔五层却保留六层→五层 `ACTIVE` intent，任务一直等 terminal 而不找怪。暂停 observer 只读战斗/小地图、更新事实并发布既有 terminal；禁止任何输入、dialog/维护/导航、云端动作决策或 phase 推进。 |
-| CR271 | Codex | 父级审核与计划合同维护；TURN-27 Amendment #1 已 ACK，C `SOURCE_ACTIVE` | Cloud 业务决策/下一 JSON action；DHXY exact-window detector、runner pathing observation、capture/input 与四个永久本地 Service | action JSON 携 intent，positive 本地 proof 后登记 watcher，metadata 回传 typed snapshot；Cloud 只读镜像。C sole owner 已恢复，先清 active 旧宏。 |
+| CR271 | Codex | STOP-RESTART-P1源码与合同测试通过：旧Observer及终态旧命令槽均不再污染fresh run，异步终态可准确退出UI运行态 | `SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED` | 保持696动作顺序；exact-run Observer收口、终态前序命令按不同`startRequestId`精确释放、瞬时busy本地退避及终态回传均有定向合同。重启两端JVM后验收启动→停止→立即重启。 |
+| G02 | Codex | P1 已实现，待主审：Alt+A 与目标点击跨两条 TurnAction；第二条标记左键成功才登记 expected | `主审 + fresh runtime 待验` | 通用 ticket 与 cloud-fallback 删除已接；Alt+A 后票据最多保留 10 秒，`directCombatTargetClick=true` 的原子目标左键成功才消费。focused 两-turn、普通点击、过期票负例和双仓编译均已通过。 |
+| CR272 | Codex | Review：五环 Tracker/NPC 后台预计算；接任务 OPTION 点击后等待 fresh Tracker anchor；HWND 截图统一注册几何 | external `dhxy-cloud-brain` `FiveRingTaskV2`, `NpcClickService`, `DialogService`, observer、Client `FiveRingAcceptDialogLocalOperation`, `WindowNativeBindingRefreshService`, `BoundWindowCaptureService` | 已接通 NPC prepared FIFO；接任务点击后不再立即截 STORY，而是 `250ms` 后每秒探测 anchor、最长 `5s`，命中才上传 fresh Tracker panel；超时先由 Cloud 重判当前 Dialog。白字结果构造 NPE 已修。窗口未缩放时拒绝将运行期错误 `812x663` 当作整图尺寸，后台 HWND 截图固定沿用注册 `1036x783`；不改 ROI、不恢复前台 Robot 兜底。双仓 compile 通过，fresh runtime 待验。 |
+| CR273 | ZERO OWNER | 源码与合同终审通过，fresh runtime 待验：到达路径和普通/近距离 NPC ClickSmart 均复用现有流式 FIFO；候选产生即由 Client 消费，不再等待完整 plan | Client observation/Runner/FIFO transport；Cloud observation ingress、`NpcClickSmartQueueStore`、`NpcClickService`、修罗/五倍接线 | 父级增量审查 `P0/P1/P2=0/0/0`；新增 direct FIFO 合同与 Store 合计 `10/10`，双仓 compile exit `0`。未改识别器、候选顺序、模板、阈值和验证语义；首轮完整失败仍只允许一次 `cleanupAll` 和替换 FIFO。需重启双端做真实窗口验收。 |
+| CR275 | ZERO OWNER | 源码终审完成：撤销修罗医宝宝临时 live-test 默认值与专用启动绕行，恢复正常启动准备和维护到期判断；等待 fresh restart | Client `AutoBot`/metadata/launcher；Cloud `BotProperties`/host | `P0/P1/P2=0/0/0`，双仓 compile exit `0`，测试开关引用清零；未回滚正式修罗维护、寻路、Runner、OCR 或 NPC ClickSmart。 |
+| CR274 | ZERO OWNER | 源码终审完成：Cloud 启动前同步拥有 OCR sidecar 生命周期；OCR/队伍身份不可用时 start ACK 前明确拒绝，Client 立即释放并显示真实原因；等待 fresh runtime | Cloud `CloudBrainApplication`/OCR lifecycle/turn start；Client `HttpsTurnClient` 错误详情 | `P0/P1/P2=0/0/0`，双仓 compile exit `0`。修复 09:47 OCR 未启动导致五窗口 `UNKNOWN -> SKIPPED`、空队列占用 60 秒和设置锁定；未改变 OCR/角色分配/任务业务语义。 |
+| CR276 | ZERO OWNER | 源码终审完成：单人任务 hover 截图成功且无 tooltip 时判 `SOLO`；五环删除冲突的手写 Spring 构造器；等待 fresh runtime | Client `TaskType`/`LocalTeamRolePreflightService`；Cloud `FiveRingTaskV2` | `P0/P1/P2=0/0/0`，双仓 compile exit `0`，五环仅剩一个完整注入构造器。规则按单人任务能力声明，不在预检中硬编码五环；截图/输入失败仍为 `UNKNOWN`。 |
 | CR260 | Codex | **Blocked / P1**：截图时机复核发现本轮“先截 accept 图、再出村”的改动反了已验证顺序；无维护正确路径是出村点击并同步关小地图后再截图/后台解析，当前 Java 改动待撤回，禁止 fresh 运行 | `XiuluoTaskV2`, `NavigationService.navigateToMap` 及六级 helper、新 `NavigationRoutePlanCloudDecisionService`、`CloudDecisionServiceId`、external 新 `NavigationRoutePlanResolver`/`DecisionEngine` | CR259 实施件；本轮 snapshot 调度改动与 `ACTIVE_WORK` 2026-06-15“修罗接任务后无维护先离村”冲突。待用户确认后仅恢复既有快/保守双线，不改 consume/confirm/submit、黄字候选、世界地图 retry、坐标或 fallback。 |
 | CR259 | Codex | **Approved（设计 review）**：用户拍板 B 后，C 卡只迁 `navigateToMap` 阶梯级决策、世界地图提交进入与最终收尾；内部 ≤2 attempt/`WRONG_DESTINATION`/250ms 保留本地复合 action，归 D。终态事实门、无新增业务封顶与 5 条修罗 message 合同均已通过复核。未实施 | `NavigationService.navigateToMap` L281-514、`NavigationService.performWorldMapSearchAndClickDestination`、`XiuluoTaskV2.shouldOpenTeamPathingMaintenanceWindowAfterTargetNavigation`、external 新 `NAVIGATION_ROUTE_PLAN` | 设计已可开工：实现时保持 caller-fresh/ACTIVE snapshot/route-dialog gate 事实门、单 stepId 重放去重、五条 message 逐字兼容；C 不动世界地图内部 retry，D 再迁。fresh 作为实施后的独立运行验收。 |
 | CR249 | Codex | Implemented：五环 tracker 洗绿字识别（绿链分段+pathing link 选择）收口云端；最小切口只换识别引擎，未动标题 raw 匹配/拖动/缓存/消费方时序；本地绿字扫描降为离线 rollback；双侧 compile/test passed，fresh 待验 | `TaskTrackerPanelService`, external `DecisionEngine` `TRACKER_PANEL_READER` | CR208 子卡：五环 tracker 链原本云端调用数为 0。云端加 `wuhuan`+`DETAIL_BLOCK_CROP` 分支（本地已用 raw 标题模板裁好 detail，云端直接洗绿字/分段/选链；`selectWuhuanPathingSegments` 早已等价移植本地段选择规则）；本地 `findWuhuanTrackerGreenClickPoint` 改云端优先、cloud miss = miss，`scanWuhuanTrackerGreenLinks`/`findWuhuanPathingNameSegment` @Deprecated 仅离线。`readWuhuanTrackerTitle`（raw 匹配）、面板拖动、prepared 指纹缓存、FiveRingTaskV2/WindowTaskRunner 消费时序均零改动。 |
@@ -19556,6 +23247,39 @@ Verification:
   or combat maintenance.
 - [ ] Fresh runtime: no 五环 startup log or click for this feature.
 
+2026-07-22 HTTPS-turn migration addendum (user-approved):
+
+- CR107 的早期 `16x29` / 任务范围文字是旧现场卡的历史记录，不得据此覆盖当前 HTTPS-turn
+  已验证业务范围。本次只恢复视觉机械层：现行窗口相对 ROI 为 `(8,147,11,19)`，使用
+  `left_top_open.png` 与 `left_top_closed.png` 在绑定窗口本地成对匹配，阈值仍为
+  `open >= 0.90 && open >= closed + 0.02`、`closed >= 0.90 && closed > open`。
+- 不新增 observer、线程或 tick。既有 cloud `LeftTopStatusSwitchService` 继续拥有启动、稀疏
+  战斗维护（40 秒）和队员安全窗口的时机/是否点击决定；Runner 新增一次性
+  `LEFT_TOP_STATUS_OBSERVE` local-service 操作，仅返回 `OPEN/CLOSED/UNKNOWN/CAPTURE_FAILED`
+  与 OPEN 的屏幕绝对点击点。原有 `MOVE -> wait 120ms -> CLICK_LEFT -> wait 250ms` 点击顺序不变。
+- 本次禁止把 ROI 原图上传给云端，也禁止借此调整 task phase、任务范围、点击节流或 pending 语义。
+  两仓 compile 已通过；仍须以新的本地 runner 日志和用户实跑完成 fresh-runtime 门禁。
+
+2026-07-22 fresh-runtime observation (repair required):
+
+- 最新五开启动中，队长 `hwnd-305DE` 确实调用了新的本地 Runner 操作：`10:00:19.193`
+  `LEFT_TOP_STATUS_OBSERVE` 返回 `UNKNOWN(open=0.4164736271, closed=0.3644074202)`；云端随即以
+  `leader-startup / clickAllowed=true` 消费同一结果，但 OPEN 门槛未达，故没有发送关闭点击。
+- 该 `0.4164736271` 与本卡已记录的“11x19 截断 `left_top_open.png` 下部”低分完全一致。问题不在
+  调度、角色 gate、prepared action 或输入队列，而在当前恢复实现错误沿用了 `11x19` 视觉裁剪。
+  下一次修复必须恢复已验证的 `(8,147,16,29)` 完整模板 ROI，并在不改变现有时机/点击顺序的前提下
+  重新完成本地 Runner fresh-runtime 观察；在此之前不得将本卡判为通过。
+- Git 根因核对：`696a12b0` 仍是早期 `(8,147,11,19)` 版本；实际高分稳定提交
+  `9aa987d1` 已将同一锚点扩为 `(8,147,16,29)`，并通过 `WindowScopedTempPath` 保存
+  `left_top_status_switch_<source>.png` 供现场查看。2026-07-22 迁移错误地取回了前者的尺寸，
+  同时改为内存匹配后立即释放 ROI，导致本次日志没有可展示的 live crop。此为视觉机械迁移回归，
+  不应归因于模板、云端决策或输入点击。
+- 2026-07-22 repair delivered：经用户批准，Runner local adapter 已恢复稳定提交的
+  `(8,147,16,29)`，并恢复每窗最新 ROI 诊断图
+  `images/temp/<windowId>/left_top_status_switch_runner.png`；probe 日志携带该绝对路径。未改动任务时机、
+  队长/队员 gate、40 秒稀疏维护、pending 语义或 `MOVE -> 120ms -> CLICK -> 250ms` 输入顺序。
+  Client compile 已通过；fresh-runtime 必须检查实际 ROI 图和 OPEN 命中/点击结果。
+
 Card CR128: startup UI guards must be background probe plus pending consume
 
 Business source:
@@ -23090,6 +26814,12 @@ Status:
 - Review. Owner: 子智能体.
 - 2026-06-30 唐德记录 fresh 五倍接任务黄字路线误到达问题；未改源码。
 - 2026-06-30 子智能体完成 Runner 到达停稳源码修复与 focused guard；fresh runtime 待验。
+- 2026-07-24 CR271 恢复：确认固定迁移基线 `696a12b0` 早于 CR142，后续提交
+  `9aa987d1` 才包含 `WINDOW_PATHING_ARRIVAL_STATIONARY_MS=600ms`。当前 thin client
+  已在本地 Runner 恢复该已批准语义：active pathing 使用 `300ms` cadence，intent 登记后主动
+  唤醒 Runner；坐标型目标稳定 `600ms` 后可判 `ARRIVED`，范围外仍须稳定 `2200ms` 才判
+  `STOPPED_AWAY`。Client compile、聚焦 policy test 与 turn-loop observation contract 通过；
+  fresh runtime 仍待用户验证，故状态保持 Review。
 
 Business source:
 
@@ -27134,6 +30864,50 @@ Fresh runtime gate:
 - 若同一启动批次存在多个 tooltip hash group，fresh 日志必须按当前窗口的 `groupHash` 判断：
   本地队长组 member 进入 local support gate 并 suppress idle broadcast；外部队长组 member 不进入
   unrelated local support gate，也不 suppress。
+
+Live repair 2026-07-22 09:14:
+
+- `remote-turn-878e9383-b313-4fb7-854c-5ca833be1320` 的“不动”已定位为 role preflight
+  `UNKNOWN -> XIULUO_V2 SKIPPED`，不是修罗 task 已启动后卡住。
+- 固化原图 `images/temp/hwnd-4E131E/team_role_tooltip_raw.png` 明确包含第三行 `67555`；当前迁移 mask
+  的 OCR 仅返回前两行。对同一原图离线恢复 CR212 原始白/绿/紫/黄阈值后，OCR 返回第三行 `67555`
+  （score `0.98419`），证明迁移版遗漏绿色文字阈值是本轮直接根因。
+- 已恢复 `LocalTeamRolePreflightService.isTooltipSignaturePixel(...)` 的 CR212 原阈值；Cloud
+  `CloudTeamRolePreflightService` 删除任意数字候选算法，复用 `DecisionEngine` 已有第三行解析并输出
+  `line1-line4` / `leaderIdSource=line3`。
+- 两仓定向合同测试均退出 `0`。fresh runtime 前须同时刷新 client、Cloud classes 与 `18761` OCR sidecar；
+  当前监听进程仍是旧 `imagePath` 合同，不能与最新 `LocalOcrClient` 的 `imageBase64` 合同混跑。
+
+2026-07-22 fresh-runtime verification (current five-window batch):
+
+- 本地 `10:00:13.255` 至 `10:00:16.293` 为五个窗口分别写出 raw/mask 证据；五张 mask 均为
+  `518` bytes、同一 `mask-ab4b58...c3df`。随后本地日志只把 `hwnd-305DE` 标为
+  `representative=true`，其余四个窗口均为 `representative=false`，`groupSize=5`。
+- Cloud 对该 session 只执行一次 tooltip OCR，识别第 3 行 `67555`；其后复用同一 leader ID 分派为
+  `hwnd-305DE=LEADER`、其余四窗口=MEMBER。结论：CR212 的“本地 mask 归组 -> 单代表上送 -> Cloud
+  单次 OCR -> 按本地标题 ID 分派”链路已在本轮成功生效。
+- 本轮尚未同时覆盖 CR212 的队员 idle-scan suppression、队长主动 maintenance 响应、外部队长/leader
+  absent fallback，故 CR212 保持 Review/fresh runtime 未闭合；不得把本次角色识别成功外推成整卡通过。
+
+2026-07-22 member `AUTO_BATTLE` lifecycle/projection repair delivery:
+
+- 精确 runtime 根因已由 Cloud 日志冻结：四个队员均已正确得到 `role=MEMBER`，随后分别在
+  `CloudTurnTaskRuntime.materializeAssignedEntry(...)` 创建已分派的 `AUTO_BATTLE` 时抛出
+  `BeanCreationException: No default constructor found`。`AutoBattleTask` 同时存在 production/test 两个
+  constructor，Spring 未获明确候选而回退查找不存在的无参 constructor；这不是 CR212 role assignment
+  错误，也不是 60 秒业务 timeout。约 60 秒来自 Client 下一次 ordinary long-poll 才取得已保留的终态。
+- Cloud `AutoBattleTask` production constructor 已显式标记 `@Autowired`；Spring-host 合同测试直接用
+  `AutowiredAnnotationBeanPostProcessor.determineCandidateConstructors(...)` 验证只选择真实 10 参数
+  constructor。未改变 `AutoBattleTask` 巡逻、维护、战斗或角色策略。
+- start ACK 增加 nullable `effectiveTaskCodes`：Cloud 复用同一 CR212 assignment policy，在 ACK 时投影
+  `XIULUO_V2 + MEMBER -> AUTO_BATTLE`；Client `WindowTurnLoop` 保留 accepted ACK，
+  `WindowTaskControlService` 以 effective queue 更新 runner/UI。旧 Cloud 不提供该字段时保持原 requested
+  queue，failure policy 不变。terminal payload 同时增加 nullable `reason`，避免异常根因再次丢失。
+- Source verification：Cloud main compile `0`；隔离 named tests `64/64`；Client main compile `0`，本修复
+  focused tests `6/6`；三份 shared protocol source 双仓 SHA-256 完全一致。Cloud 全量 test-compile 被两处
+  与本卡无关的既有测试 constructor drift 阻断，Client 整类测试有五项既有 stale expectation，均未纳入
+  本写集。未运行 runtime/UI/capture/input。状态保持 Review，等待父级逐文件 source review；fresh restart
+  仍须验证四成员 UI 显示“自动战斗”且不再进入 retained `FAILED`。
 
 Card CR213: 摄妖香检查与剩余时间决策迁云端
 
@@ -35732,10 +39506,14 @@ Status:
 ### 用户批准的业务合同
 
 1. **maintenance 决定跳过前先关窗。** 医宝宝/维护广播自己打开过 NPC dialog，且最终决定本轮跳过维护时，
-   在任何绿链点击之前必须询问当前 `WindowRuntimeContext`/Runner 是否仍有可见 dialog。存在 dialog 时必须调用
-   既有 `UICleanerService.forceCloseDialog()`；只有 Runner 的后续事实快照确认 dialog 不在，才允许继续点绿链。
-   不得把“maintenance 放弃”当作“dialog 已消失”。若既有 force-close 未能关闭，不得继续点击绿链，沿既有失败/恢复
-   路径退出本次 maintenance 处理；不得在本卡自行新加次数、TTL 或猜测性 option 点击。
+    在任何绿链点击之前必须询问当前 `WindowRuntimeContext`/Runner 是否仍有可见 dialog。存在 dialog 时必须调用
+    既有 `UICleanerService.forceCloseDialog()`；只有 Runner 的后续事实快照确认 dialog 不在，才允许继续点绿链。
+    不得把“maintenance 放弃”当作“dialog 已消失”。若既有 force-close 未能关闭，不得继续点击绿链，沿既有失败/恢复
+    路径退出本次 maintenance 处理；不得在本卡自行新加次数、TTL 或猜测性 option 点击。
+   2026-07-24 收口：该规则精确适用于“前置维护失败/耗尽后，恢复路径下一步准备点击 Tracker”的出口。
+   Cloud 必须调用 `cleanUpAll`，并以 fresh `NO_DIALOG` 检查确认全量 UI 已清理；只调用
+   `closeAllGenericWindows` 不满足合同，因为它不能保证清除 `OPTION`/`STORY`。确认失败必须 fail-closed，
+   不得继续点击 Tracker。本规则不泛化到小地图关闭、同一 NPC 内部重试或其他不通向 Tracker 的专用 fallback。
 
 2. **绿链到入战必须有真实移动事实。** 复用绿链点击已经绑定的 pathing intent / `WindowPathingSnapshot`：只有该
    intent 已经有实际移动确认（既有 `PATHING_STARTED` 或与该 intent 对应的有效移动观察）时，后续
@@ -40386,3 +44164,579 @@ Card CR271 update 2026-07-14 09:20 EDT — 吞吐纠偏 / full public chain：
   resolver seam 分四轮补齐；这是计划合同缺陷，不是业务本身需要四套实现。
 - 原卡现以一份最终清单统一 #1-#4，旧冲突文字作废。Cloud 只做业务决策/逐动作 JSON，本地 runner 保留
   movement proof/watcher；禁止再扩 facade/store/watcher/HTTP seam 或新增业务算法。
+
+## CR271 TURN-27 Continuous-Delivery Contract - 2026-07-17 09:03 EDT
+
+- External C 当前没有业务 blocker，但在完成 active-chain 主体后再次停在阶段边界；状态为
+  `COMMUNICATION_STALE + ACTIVE_STALE`，C sole owner 与现有 WIP 继续保护。
+- 用户明确要求后续 heartbeat 自动连续实施到 canonical whole-card `SOURCE+TEST DELIVERED`。helper、checklist
+  单项、turn 或 heartbeat 完成均不是停点；只有精确单一 blocker 或 canonical owner return 可提前停止。
+- 所有实现问题必须通过共享总账直接询问父级，不得询问用户或让用户转发。本条只修执行合同，无业务差异。
+
+## CR271 TURN-27 Source Activity Recovered - 2026-07-17 09:07 EDT
+
+- Cloud `NavigationService` 已更新为 SHA-256 `037c5f45...` / 182,230 bytes，active macro=0、handoff=2；
+  `ACTIVE_STALE` 解除，旧违规 dead cluster 已删除。
+- External C 下一项为唯一 named test，随后逐文件 SHA canonical delivery；C sole owner 与 continuous-delivery
+  合同保持。父级消息尚未显式 ACK，`COMMUNICATION_STALE` 暂保留。
+
+## CR271 TURN-27 Continuous-Delivery Contract Violation - 2026-07-17 09:12 EDT
+
+- External C 在中间阶段完成后再次向用户询问是否继续/等待下一 heartbeat；这不是业务决策点，违反连续交付合同。
+- 父级已禁止流程性问句与等待用户，要求立即完成 named test 与整卡 SHA delivery；真实合同问题只经总账问父级。
+- 当前 C sole owner，named test 未落盘，无 canonical delivery；无业务合同变化。
+
+## CR271 TURN-27 External C Heartbeat Missing - 2026-07-17 09:15 EDT
+
+- Codex 真实 automation 表不存在 C 自报的 `5379f59b`；`heartbeat RUNNING` 为 stale 文本，09:13 未执行。
+- TURN-27 状态纠正为 `HEARTBEAT_MISSING + COMMUNICATION_STALE`。NAV 仍为 `037c5f45...`，named test 未落盘。
+- C canonical owner 暂保留，不撤销、不重派；父级 heartbeat 不能替代不存在的 implementation heartbeat。
+
+## CR271 TURN-27 User-Authorized Heartbeat Registration - 2026-07-17 09:23 EDT
+
+- 用户已明确命令 C 作废 session-only `5379f59b` 并在 C 当前任务注册真实 heartbeat；C 的“无用户明令”错误。
+- C 必须立即注册并回写 registry 证据；这不是第二 Worker。随后立即完成 focused named test 与整卡交付。
+- TURN-27 无 2,200 行测试指标；禁止以任意体量目标扩大验收合同。当前仍无真实 C heartbeat/test/delivery。
+
+## CR271 TURN-27 Test-Source Activity Recovered - 2026-07-17 09:33 EDT
+
+- `NavigationTurnContractTest.java` 首增量为 455 行 / SHA-256 `b9272375...`；当前仅为 WIP，不提前 review。
+- NAV=`037c5f45...`，C sole owner / SOURCE_ACTIVE 保持。真实 heartbeat 仍未注册，用户授权指令待 ACK。
+
+## CR271 TURN-38A-F Parent Review #1 - 2026-07-17 11:35 EDT
+
+- 结论：`P0/P1/P2=0/1/0`，source review 未通过。
+- production prepared peek、turn default boundary、ready-event state 未发现阻断；named test 的 `RecordingTurn` 没有执行 production `CloudTaskTurnAuthority` FIFO。
+- External C 保持 sole owner 返修；TURN-35/36/37 在复审通过前保持 WAITING。
+
+## CR271 TURN-38A-F Repair Activity - 2026-07-17 11:42 EDT
+
+- 唯一 named test 已增长至 35,053B / SHA-256 `f515373e...`，确认 C 正在补 Review #1 的 production FIFO 覆盖。
+- 当前为 WIP，父级 ACK 尚待回执；无 re-delivery、无提前批准，35/36/37 保持 WAITING。
+
+## CR271 TURN-38A-F Parent Review #2 - 2026-07-17 11:47 EDT
+
+- production FIFO 覆盖已闭合；剩余 `P2=1` 为测试失败路径的无界 authority acquire 与缺失 finally 清理。
+- External C 只返修 named test 的 bounded wait、异常回传和线程收尾；production 不改，后续卡暂不开放。
+# CR271 TURN-38A-F Review #3 / Ready Release（2026-07-17 12:12 EDT）
+
+- TURN-38A-F Repair #2 父级 source review：`P0/P1/P2=0/0/0`，foundation source gate 通过。
+- TURN-35、TURN-36、TURN-37 依 Amendment #3 同时开放为 `READY / ZERO OWNER`；这是 canonical ready pool，
+  不是父级派卡。TURN-37 保留 `c0125a49...` WIP。
+- TURN-38A 保持 External C sole owner，状态为 `38A-F PASSED / 38A-C WAITING`；共享 main compile debt 仍阻断
+  named test execution，未伪报测试通过。
+
+## CR271 TURN-35 Claim（2026-07-17 12:21 EDT）
+
+- External A 已从 READY pool 防竞态 canonical claim TURN-35，当前为 sole owner / `SOURCE_ACTIVE`。
+- 领取点 `WubeiTask=dfde0ad...`，named test absent；TURN-36/37 继续 READY / ZERO OWNER。
+
+## CR271 TURN-38A Phase DAG Repair（2026-07-17 12:25 EDT）
+
+- 38A-F 已关闭并释放 External C owner；38A-C 改为 caller-zero 后独立开放的 cleanup phase。
+- 38B/38M 只依赖已通过的 `38A-F`，不再被 38A-C 反向阻塞。C 恢复为无持卡可用容量。
+
+## CR271 Whole-Task Parallel Activity（2026-07-17 12:38 EDT）
+
+- External A=`TURN-35 SOURCE_ACTIVE`，External C=`TURN-36 SOURCE_ACTIVE`；写集互斥并行。
+- TURN-35 timer/interest 缺口按 baseline-preserving typed owner/bridge 方向冻结，Task-local self-check/语义吸收禁止。
+- TURN-36 Amendment #4 批准 ReadyEventState 最窄 additive 异窗 pathing-terminal 查询；不新增 store。
+## CR271 TURN-35 Question #2 Shared Foundation Audit - 2026-07-17 12:33 EDT
+
+- TURN-35 新报告的 pathing 写/清、movement intent、progress、startup flying、dialog watcher 缺口经 696 基线与
+  当前源码核对，确认横跨 TURN-35/36/37，不允许 Task-local state、第二 store 或 Cloud pathing mirror setter。
+- Question #1/2 合并为共享 foundation Amendment 审计：一次冻结唯一 owner、双仓 bridge/API/write set、exact
+  slot/source/revision/proof/no-op/cleanup 与三卡 named-test matrix。A/C 继续无争议站点，不因审计互相等待。
+## CR271 TURN-36 Consolidated Addendum Review - 2026-07-17 12:54 EDT
+
+- 批准 proof-gated tracker intent、exact route prepared association 与 action-equivalent 无条件 UI cleanup。
+- 拒绝 WAIT-only intent 和 Task-local consumed-id；`runExclusive -> coordination.run` 因缺整段 input-worker
+  独占也不是等价迁移。上述缺口与 movement/runtime/progress 继续进入 35/36/37 共享 foundation Amendment。
+- External C 继续 TURN-36 无争议族；External A 已开始 TURN-35 named test。Java writers 活跃，未运行 Maven。
+
+## CR271 TURN-35 Amendment #5 - 2026-07-17 13:23 EDT
+
+- `696a12b0` 的三个 Wubei raw prepared-slot reads 对 intent-stamped route action 可见；当前 generic peek 的 consume
+  fence 会隐藏它并改变 park/defer。父级拒绝把该差异当作安全收严。
+- TURN-35 最窄增加同一 `CloudDialogPreparedActionState` 的 bound-slot raw-read view 及既有 foundation test 写集；
+  exact slot/window/HWND 仍受约束，intent/operation/target 仅在消费 API 校验。无第二 store，无业务差异。
+## CR271 TURN-35 Review #2 Passed / TURN-37 Claimed - 2026-07-17 18:06 EDT
+
+- TURN-35 Amendment #12 foundation Repair #1 父级复审=`P0/P1/P2=0/0/0 PASSED`；inverse result closure、
+  REQUESTED/PREPARING/READY/FAILED/absent preparation matrix 与双仓 DTO 合同闭合，A caller gate 开放。
+- External C 已 canonical claim TURN-37 whole-card，sole owner=C；受保护 WIP `c0125a49...` 不回滚，先按
+  hard-gap fence 审计，Amendment #3 前不得把缺口族标完成或交付。
+- A/C active Java writers，named tests 与双仓 compile 继续等待稳定 writer 窗口。
+## CR271 TURN-37 Migrating / A Communication Stale - 2026-07-17 18:16 EDT
+
+- External C 完成 TURN-37 hard-gap audit 并进入机械迁移；首批死字段删除后 Cloud Xiuluo 当前
+  WIP=`cb1db7c...`/4,222L，owner=C，尚无 whole-card delivery。
+- External A 连续两轮未 ACK TURN-35 Review #2 pass 消息，标记 `COMMUNICATION_STALE`；Wubei caller
+  WIP=`37cad3f...`/4,468L 继续保护，owner=A/caller gate 不变，不审半成品。
+- A/C active Java writers，未运行 Maven；用户 IntelliJ 基线工作树保持只读。
+## CR271 A Communication Recovered / Dual WIP Progress - 2026-07-17 18:26 EDT
+
+- External A 已在 STATUS EVENT 具名 ACK TURN-35 Review #2 与 stale 询问，通信恢复；4 dialog caller 与
+  5 真死 param 清理后 Wubei WIP=`839b1e3a...`/4,464L，下一步唯一 whole-card test。
+- External C 的 TURN-37 Audit-A batch 2 已闭合 taskRunId + uiCleaner×21；Xiuluo WIP=`f0319233...`/4,222L。
+- 两卡均为 source WIP、非 delivery；A/C active writers，未运行 Maven。
+
+## CR271 TURN-35 Whole-Card Review #1 Blocked - 2026-07-17 19:03 EDT
+
+- External A canonical 交付 production `839b1e3a...`/4,464L 与 test `22775dd0...`/499L/10T；父级
+  SOURCE+TEST Review #1=`P0/P1/P2=0/2/1 BLOCKED / REPAIR REQUIRED`，A 保持 sole owner。
+- P1：`runRoundPhases`/`execute`/两处 async 泛型 catch 仍会降级 `TaskFatalException`；Cloud production
+  仍依赖不存在的 `TaskTurnCoordinator`、`GameStateUtil`、`WindowRuntimeContext`、
+  `WindowTaskContextHolder`，18 个 local-runtime guard/runWith 仍会跳过 turn-native typed 行为。
+- P2：production/test 对覆盖层、构造器参数和 foundation 状态的说明过时。Option B 三层测试裁决不变；
+  修复后仍需父级复审与 stable-writer named test/compile。A/C active，本轮未运行 Maven。
+
+## CR271 External A Communication Stale / TURN-37 Input Progress - 2026-07-17 19:12 EDT
+
+- TURN-35 Review #1 返修消息连续 19:07、19:11 两轮未获 External A STATUS EVENT 具名 ACK，标记
+  `COMMUNICATION_STALE`；A 最近事件未超过 10 分钟，不标 `ACTIVE_STALE`，owner 不释放。
+- External C 已完成 TURN-37 input×3 exact-window-bound turn 迁移，production=`1695379e...`/4,335L；
+  与冻结 Bag 共享写集无冲突，Bag 仍等 A release。A/C active，未运行 Maven。
+
+## CR271 External A Communication Recovered / TURN-35 Repair Active - 2026-07-17 19:13 EDT
+
+- External A 已具名 ACK TURN-35 Review #1，承认四个 Cloud absent 类型/runtime guard 问题，并完成首个
+  priority guard 删除；Wubei WIP=`06a0562a...`，状态=`REPAIR_ACTIVE`。
+- 19:12 stale 标记与 A 回执同秒并发；有效回执到达后已清除 `COMMUNICATION_STALE`。owner 与 `0/2/1`
+  返修门不变，A/C active，未运行 Maven。
+
+## CR271 TURN-35 Repair #1 Review #2 Blocked - 2026-07-17 19:44 EDT
+
+- production `52e88c68...` 与 test `576b2123...`/11T 完成父级 Review #2=`P0/P1/P2=0/0/1`。
+- fatal 重抛、四 absent 类型/runtime 清零、24 参数构造与 tryRun 语义均通过；唯一 P2 是 test JavaDoc
+  把 direct coordination tests 过度写成 public execute coverage。
+- Repair #2 仅允许 test 说明修正，production/test 行为冻结；A 保持 owner，A/C active，未运行 Maven。
+
+## CR271 TURN-35 Repair #2 Review #3 Passed - 2026-07-17 19:54 EDT
+
+- 父级 SOURCE+TEST Review #3=`P0/P1/P2=0/0/0 PASSED`；test JavaDoc 已准确区分唯一 public
+  `execute(null)` gate、direct `CloudTaskTurnCoordination.run`/其它 production-component assertions 与父级
+  private-caller source-review 层，上一轮唯一 P2 闭合。
+- Wubei production=`52e88c68...`/4432L 冻结，test=`43e491e2...`/523L/11T；A 的 TURN-35 source owner
+  释放，状态转 `ZERO OWNER / BUILD GATE PENDING`。
+- TURN-37 Bag Amendment #3 的共享 protocol 写集碰撞门解除；C 仍为 active Java writer，本轮未运行 Maven，
+  named test/compile 待稳定窗口。
+
+## CR271 External C Communication Stale - 2026-07-17 20:02 EDT
+
+- A 已具名 ACK TURN-35 Review #3 并进入无卡 idle；C 连续两轮未 ACK 同一释放消息，最新事件仍称 Bag 等 A，
+  标记 `COMMUNICATION_STALE`。
+- TURN-37 owner 与 Xiuluo WIP 保留；最新事件/源码未超过 10 分钟，不标 `ACTIVE_STALE`。Bag Amendment #3
+  碰撞条件已经满足，C 无需另卡或重领即可继续。
+- 已在总账定向要求 C 双 ACK；C 仍为 active Java writer，本轮未运行 Maven。
+
+## CR271 External C Communication Recovered / Bag Amendment Active - 2026-07-17 20:04 EDT
+
+- C 的 20:04 具名 ACK 与 stale 记录并发落盘，父级接受回执并清除 `COMMUNICATION_STALE`；失效 stale inquiry
+  不计漏 ACK。
+- TURN-37 Bag Amendment #3 已开始实施，双仓 enum/validator 以 Git blob `61b2b6c5`/`4990df0c`
+  byte-identical 落盘；owner 与 pathing proposal gate 保持。
+- 当前仍为 Java WIP、非 canonical delivery/build passed，本轮未运行 Maven。
+
+## CR271 TURN-37 Amendment #3 Freeze #2 - 2026-07-17 21:28 EDT
+
+- 父级冻结 pathing/park closure：唯一新增 `WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP` 与
+  `CloudWholeTaskReadyEventState.awaitNewerPathingTerminalOrPreparedRoute(...)`；前者必须由 async exact-context
+  dependent future 承载并传播四 terminal，后者保持 intent/route 精确过滤与 newest sequence。
+- fresh prepared route 复用现有唯一 prepared/pathing 状态做 op、exact binding、freshness、active/terminal
+  intent-or-target 关联；后台 objective parse 继续 `TaskExecutionContextHolder.callWith`，不新增 async job、
+  第二 store、poll/sleep、TTL、retry 或同步 parse。C sole owner 继续，整卡仍未 delivery/build passed。
+
+## CR271 TURN-37 Freeze #2 ACK / GAP#2 Foundation WIP - 2026-07-17 21:38 EDT
+
+- C 已具名 ACK Freeze #2 并开始 GAP#2；双仓 `TurnLocalOperation`/`TurnProtocolValidator` SHA-256
+  `85ffa009...`/`60da55b2...` byte-identical，new op strict whole-task field shape 已落盘。
+- 状态仍为 `SOURCE_ACTIVE`，非 canonical delivery/source review/build passed；executor/client/tests、filtered await、
+  fresh-route composition、async caller 与 Xiuluo whole-card test 尚待闭合。C active writer，未运行 Maven。
+
+## CR271 TURN-37 GAP#2 Code Path WIP - 2026-07-17 21:43 EDT
+
+- GAP#2 production code path 已落盘：DHXY dispatcher/executor SHA-256=`546301ba...`/`3820bde5...`，Cloud client
+  `59bf77e8...`。路由、baseline atomic upgrade 与单 typed turn 形状经父级实盘核对。
+- tests、四 terminal/dependent future 与 GAP#3/#4/#5 仍待；这不是 whole-card delivery/review/build passed。
+  C 保持 sole owner/active writer，未运行 Maven。
+<!-- CR271 TURN-37 2026-07-17 21:49 EDT: GAP#2 dispatcher test contract clarified. The stale enum-length=9
+     assertion belongs to the explicit nine permanent local-service operations; upgrade receives a dedicated
+     exact-bound whole-task route test. No 28-operation payload guessing or production expansion. -->
+<!-- CR271 TURN-37 2026-07-17 21:55 EDT: GAP#2 validator tests are byte-identical across DHXY/Cloud
+     (SHA-256 c73bd7cd...). Dispatcher explicit-nine-set + exact-bound upgrade route repair remains required. -->
+<!-- CR271 TURN-37 2026-07-17 22:03 EDT: GAP#2 dispatcher test Review #1 is blocked P0/P1/P2=0/1/0.
+     Fixture.totalServiceCalls counts only bag/ui/give/quest and must remain zero for whole-task upgrade;
+     exact-bound runtime mutation and typed boolean prove routing. -->
+<!-- CR271 TURN-37 2026-07-17 22:09 EDT: GAP#3 filtered await code matches the 696 exact intent/route and
+     newest-sequence contract on the existing condition/checkpoint owner. Foundation test remains pending;
+     GAP#2 dispatcher-test P1 remains open. -->
+<!-- CR271 TURN-37 2026-07-17 22:18 EDT: GAP#2 dispatcher test Review #2 passed 0/0/0. Permanent adapter
+     count remains zero; exact-bound runtime mutation/mismatch no-op and zero input prove the route. -->
+<!-- CR271 TURN-37 2026-07-17 22:27 EDT: GAP#3 foundation test Review #1 blocked 0/1/0. The exact filtered
+     await still needs unrelated-prepared, both newest-selection orders, interrupt, and typed-stop coverage. -->
+<!-- CR271 TURN-37 2026-07-17 22:39 EDT: GAP#3 foundation test Review #2 passed 0/0/0. Wrong/non-route
+     prepared events, both newest-selection orders, bounded interrupt with flag preservation, and typed stop
+     are covered (SHA-256 9c35897e...). GAP#3 is complete; whole-card delivery/build are still pending. -->
+<!-- CR271 TURN-37 2026-07-17 22:41 EDT: tryTrackerShortcut register + async upgrade is protected WIP
+     (SHA-256 1de14739...); 3/4 Xiuluo methods are present and rawCurrent remains only in continueIfNav.
+     This is not whole-card delivery/review/build. -->
+<!-- CR271 TURN-37 2026-07-17 22:53 EDT: production 4/4 is protected WIP (SHA-256 2d4bc1a0...);
+     continueIfNav is migrated and rawCurrent/frozen runtime owners are zero. The unique whole-card test and
+     canonical delivery remain, so no whole-card review/build conclusion exists yet. -->
+
+## CR271 TURN-39W Parent Review #1 Blocked - 2026-07-18 15:46 EDT
+
+- External A 的 canonical delivery 经父级逐文件审核为 `P0/P1/P2=0/2/2 / BLOCKED / REPAIR REQUIRED`；A 保持
+  whole-card owner。四个 production caller 已确认按 696 基线等价迁移，键盘仍为 exact-HWND 后台跨窗并行，
+  仅鼠标前台全局串行。
+- 测试 P1：randomized tracker 在默认 `COMPLETED` 后继续进入 null `TaskMaintenanceService`；chained tracker、
+  prepared GREEN 与 ordinary tracker 未完整断言 terminal-to-caller-result truth。P2：生产 JavaDoc 邻接错误与
+  测试说明/构造参数数量陈旧。
+- A 仅在原 39W 写集返修并重交 fresh blobs；C4 仍 6/8 active，Cloud build/named test 保持 BLOCKED/PENDING，
+  本轮未运行 Maven。
+
+## CR271 TURN-40B-C4 All Active Rows Migrated - 2026-07-18 15:48 EDT
+
+- C 已迁完七个 active row `1070/1450/1674/1968/2081/2218/2231`，production `inputProvider.*=0`；唯一残留
+  legacy exclusive 是已裁决删除的 dead 2334。
+- 剩余 closure 为 active `closeMiniMapIfOpenTurn` 补 696 re-observe/retry-once、退休 InputSequences ownership
+  清理及 active-finish/1968 两项独立测试。C 保持 source-active、通信正常，无 blocker/无 delivery。
+- A 的 39W repair message 处于 ACK pending 第一轮；双 writer active，未运行 Maven。
+
+## CR271 C4 Production Complete / A Communication Stale - 2026-07-18 15:55 EDT
+
+- C4 production 八行全部闭合：七个 active row 迁移、dead 2334 删除、active mini-map helper 承接 696
+  re-observe/retry-once；`NavigationService`=`8bd13811...`/3162L，legacy input ownership 为零。C 转两 test，
+  无 blocker/无 delivery。
+- A 的 39W 返修文件持续变化，故不是 ACTIVE_STALE；但连续两轮未具名 ACK Review #1 消息，标
+  `COMMUNICATION_STALE` 并要求下轮双 ACK。39W owner/返修合同不变。
+- 双 Cloud writer active，未运行 Maven，未提前 review WIP。
+
+## CR271 TURN-39W Review #2 Passed / Owner Released - 2026-07-18 16:01 EDT
+
+- A 已双 ACK Review #1/stale 消息并恢复通信；四 fresh blobs 经父级复审为
+  `P0/P1/P2=0/0/0 / SOURCE+TEST SOURCE REVIEW PASSED`，两 P1、两 P2 全闭合。
+- 四个 real caller 的 exact steps/timing/terminal truth 已覆盖，production 与 696 等价，键盘仍 exact-HWND
+  后台跨窗并行、仅鼠标前台全局串行。A source owner 释放。
+- C4 test source 仍 active，Cloud build/named test 继续 BLOCKED/PENDING；39C1 不开放，本轮未跑 Maven。
+# TURN-40B-P2 Parent Review #3 (2026-07-18 21:56 EDT)
+
+- `P0/P1/P2=0/2/1 / BLOCKED / REPAIR REQUIRED`; External A retains the report-only owner.
+- Accepted: current `PendingRouteOutcome`, dead dialog-request writes, three local-state op directions,
+  `DecisionEngine` single OCR owner direction and enum closure.
+- Still blocked: literal OCR API/result contract, canonical original-card write-set table, and exact executable test
+  commands/counts. No implementation card is READY; TURN-40C remains BLOCKED.
+# TURN-40B-P2 Review #3 ACK (2026-07-18 22:06 EDT)
+
+- External A 已 ACK `0/2/1` review，owner retained；OCR literal contract 草案完成。
+- Canonical original-card table 与 exact commands/counts 仍待闭合；无 implementation READY，TURN-40C blocked。
+# TURN-40B-P2 Parent Review #4 (2026-07-18 22:11 EDT)
+
+- `P0/P1/P2=0/1/1 BLOCKED`; A owner retained. OCR literal contract accepted.
+- Fixed original-card boundaries, real protocol test paths and executable per-repo commands/counts remain required.
+- No implementation READY; TURN-40C remains BLOCKED.
+# TURN-40B-P2 Review #4 ACK (2026-07-18 22:21 EDT)
+
+- A 已 ACK；真实 tests/counts 与 TURN-40B 单一原卡行已核。
+- Fixed sub-boundaries 和双仓 literal commands 仍待重交；无 READY，TURN-40C blocked。
+
+# TURN-40B P-OCR Parent Review #1 (2026-07-18 23:15 EDT)
+
+- C 的三文件 canonical delivery 经父级逐文件审核为 `P0/P1/P2=0/3/1 / BLOCKED / REPAIR REQUIRED`，owner 保留。
+- `verifyWorldMapRouteDestination` 反转 blank expected-name 的 baseline allow 语义；坐标 OCR 把 configured hybrid
+  local-first/Baidu matcher fallback 降为不重试 `LocalOcrClient`；7T 未证明 packed/wrapped/green-link/raw fallback；
+  两个 public OCR API 的 JavaDoc 也未写参数 nullability、坐标单位与结果合同。
+- P-OCR/P-NAV 继续 blocked，A 仍写 P-PROTO tests，未跑 Maven。唯一待用户决策：扩计划保留 696 hybrid
+  fallback（推荐），或明确批准 Cloud 单 provider 业务差异。
+
+# TURN-40B P-OCR Review #1 ACK (2026-07-18 23:26 EDT)
+
+- C 已具名 ACK `0/3/1` 全部 finding，通信正常、owner 保留，Java 交付冻结等待用户 A/B provider 决策。
+- A 的 P-PROTO 八个双仓同字节 source/test 文件已齐，但尚未 canonical delivery 或进入父级审核；未跑 Maven。
+# CR271 P-PROTO Review #1 - 2026-07-18 23:46 EDT
+
+P-PROTO 八文件 canonical delivery 的父级结论为 `P0/P1/P2=0/2/1 / BLOCKED / REPAIR REQUIRED`。A 保留 owner，
+须在同一双仓同字节写集内补齐 REPLACE nonblank reason、唯一合法
+`YELLOW_DESTINATION_MINI_MAP` routeMode 闭集和 Result present/null/compat 严格序列化测试。额外补入的既有
+upgrade golden call 已接受。P-LOCAL/P-CLIENT 不开放；P-OCR 的用户 A/B 决策不变。
+
+# CR271 P-PROTO Review #2 - 2026-07-19 00:01 EDT
+
+P-PROTO Repair #1 父级复审为 `P0/P1/P2=0/1/1 / BLOCKED / REPAIR REQUIRED`。nonblank replacement reason
+与 result carrier present/null/compat 语义已接受；A 保留 owner。shared validator 仍须仅接受 DHXY 接收端唯一
+wire 值 `YELLOW_DESTINATION_MINI_MAP` 并拒绝 `LEGACY_GREEN_LINK`/unknown；新增第 8 个 golden test 须折回
+现有方法，恢复冻结 7T。P-LOCAL/P-CLIENT 不开放；P-OCR 用户 A/B 决策不变。
+
+# CR271 P-PROTO Review #3 - 2026-07-19 00:11 EDT
+
+P-PROTO Repair #2 父级复审为 `P0/P1/P2=0/0/1 / BLOCKED / REPAIR REQUIRED`。production 唯一 routeMode
+wire 值与冻结 `17+7` 已接受；validator test 只拒绝 blank 与 `LEGACY_GREEN_LINK`，仍缺 Review #2 明定的任意
+未知非空值负例。A 保留 owner 做 test-only Repair #3；P-LOCAL/P-CLIENT 不开放，P-OCR 用户决策不变。
+
+# CR271 P-PROTO Review #4 Passed / P-LOCAL + P-CLIENT Ready - 2026-07-19 00:21 EDT
+
+P-PROTO Repair #3 父级复审 `P0/P1/P2=0/0/0`，A owner 释放；最终八文件双仓同字节，隔离
+validator/golden=`17+7`。P-LOCAL 与 P-CLIENT 按既定 gate 开放为公共 `READY / ZERO OWNER / UNASSIGNED`。
+用户已选 P-OCR 方案 B，批准 Cloud single-provider/no-Baidu 差异，C source-active 返修；P-NAV 继续 blocked。
+
+# CR271 P-CLIENT Review #2 Blocked - 2026-07-19 01:42 EDT
+
+P-PROTO、P-OCR、P-LOCAL 已分别通过并释放 owner。P-CLIENT Repair #1 的 production result-kind、strict
+result-shape 与字段转换已接受，但父级复审仍为 `P0/P1/P2=0/1/2 / BLOCKED / REPAIR REQUIRED`：failed
+replacement fixture 会被 routeMode validator 前置拒绝，三个 non-success/empty 方法的 outbound
+source/payload/reason 证据不完整，尚缺 pendingRouteOutcome smuggle negative，replacement reason JavaDoc 也须
+由 nullable 改为 nonblank。External C 保留 owner，仅在原 client+test 两文件内做 Repair #2，并保持 exactly 33T；
+P-NAV、runtime/factory 与 TURN-40C 继续 blocked。
+
+# CR271 TURN-40E Parent Review #2 Blocked - 2026-07-20
+
+Repair #6 的 tracker recognition 参数、production asset、双仓 frame-purpose 物理字节和 facade ownership
+JavaDoc 已通过；整卡仍为 `P0/P1/P2=0/1/0 / BLOCKED / REPAIR #7 REQUIRED`。Cloud facade 的五倍/修罗
+accept-time snapshot 入口错误增加 tracker-anchor 前置条件，而当前只读本地基线与修罗接任务生产 caller
+要求 supplied snapshot 直接寻找任务标题。原 owner 保留，只允许同一 facade 两入口复用既有 direct snapshot
+分析并重新 Cloud compile；TURN-41 不开放，无 tests/runtime/input。
+
+# CR271 TURN-40F Parent Review #5 Blocked - 2026-07-20
+
+Repair #4 whole-card delivery=`P0/P1/P2=0/2/0 / BLOCKED / REPAIR #5 REQUIRED`。世界地图换行点击中心只有
+synthetic/private-helper测试，没有真实raw production replay；五环战后tracker intent cleanup只有source-string guard，
+没有生产路径调用矩阵。Huygens owner保留；TURN-41与用户测试不开放。
+
+18:17 Repair #5已`SOURCE ACTIVE`：route test出现真实raw/public入口WIP但仍故意失败，FiveRing harness尚未修改；不跑Maven。
+
+# CR271 TURN-40F Repair #5 Parent Verification #6 - 2026-07-20
+
+Repair #5 focused gates父级复核=`P0/P1/P2=0/0/0`，focused named tests与Cloud compile均PASS。整卡其余Repair #4写集仍在父级终审，owner保留；TURN-41继续BLOCKED，尚不可用户测试。
+
+# CR271 TURN-40F Parent Whole-Card Review #7 - 2026-07-20
+
+整卡终审=`P0/P1/P2=0/2/0 / REPAIR #6 REQUIRED`：Cloud缺失live UNKNOWN时existing window role assignment fallback，并删掉tooltip随机hover与1秒retry settle。owner保留，TURN-41继续BLOCKED，尚不可用户测试。
+
+18:41 EDT Huygens已ACK并进入Repair #6 `SOURCE ACTIVE`；通信正常，Java writer活动中不跑Maven。
+
+18:47 EDT Repair #6 focused parent verification=`0/0/0`，30 tests与Cloud compile PASS；whole-card终审继续，owner保留，TURN-41仍BLOCKED。
+
+# CR271 TURN-40F Four-Way Equivalence Audit - 2026-07-21
+
+最新修罗 start-exit 小地图关闭缺口已在 Cloud 按 baseline fire-and-handoff 语义修复，定向合同和compile通过。
+父级加三路只读Worker去重审计=`P0/P1/P2=0/10/3`；stable-window metadata、accept同帧、维护dialog关闭与
+暂态异常恢复仍直接阻断修罗，另有turn/input、召唤兽和自动战斗差异。状态回退为
+`REPAIR REQUIRED / ZERO OWNER / NOT READY FOR FORMAL USER TEST`，详见TURN-40F原卡§65。
+
+# CR271 Five-Window Fresh Runtime Review - 2026-07-21
+
+fresh日志结论=`P0/P1/P2=0/1/0 / REPAIR REQUIRED`。`08:25:32`本地扫描与注册5/5成功，随后
+`hwnd-18F17C2`获得Cloud ACK；`hwnd-87410DA`、`hwnd-AE70F5E`、`hwnd-BB2137E`、`hwnd-C5113D8`
+均报`response requires taskStartAck for taskStartRequest`，UI最终`requested=5 success=1 failed=4`。
+
+P1证据：Cloud `CloudTurnTaskRegistry`明示为single-window minimal single-slot store，并以唯一字段
+`private Slot slot`在任一ACTIVE run存在时将不同task identity判为`ACTIVE_CONFLICT`；HTTP handler在启动被拒时
+未产生客户端必需的`taskStartAck`。修复必须按tenant/user/device/stable-window identity隔离完整
+`CloudTurnTaskRuntime`实例及其registry/worker/current-task状态，禁止仅把一个共享runtime的slot改成Map。
+
+队长本轮不能用于否定Repair #8当前源码：正在监听的Cloud PID `13860`启动于`03:57:31`，而最新
+`XiuluoTaskV2.class`与`TaskTrackerPanelService.class`生成于`05:41`。日志`08:26:42`仍走旧版
+`TASK_TRACKER_CAPTURE_PANEL source=xiuluo-v2:tracker-bg:known-dialog:accept-task-memory`后停止。多窗口P1修复后
+必须部署fresh Cloud，再验证5/5 ACK与队长接任务后继续；当前状态为`NOT READY FOR FORMAL USER TEST`。
+
+# CR271 Five-Window Source Review Passed / TURN-40G Repair Required - 2026-07-21
+
+五窗口Cloud runtime修复父级终审=`P0/P1/P2=0/0/0`。`CloudTurnTaskRegistry`现按exact
+`(deviceId,windowId)`持有独立`RunSlot`；五窗口合同覆盖并发进入、逐窗duplicate/conflict、单窗stop不影响其余
+四窗、独立terminal/restart。父级Cloud组合compile+named tests=`48/48` PASS。源码门关闭，fresh进程5/5 ACK仍是
+实机验收门。
+
+TURN-40G Runner整卡同时终审=`P0/P1/P2=0/2/0 / REPAIR REQUIRED`：Cloud生产入口用String
+`taskRunId.hashCode()`生成long schedule identity，存在确定碰撞；协议schedule四元组未做all-or-none校验，Client
+还会把缺项默认成`0/当前时间`并写状态。要求exact String identity端到端、非法partial tuple fail-closed且零mutation，
+补碰撞与负向合同后重审。此前`22/22`、`17/17`及本轮Cloud`48/48`不覆盖这两个缺口，故暂不恢复正式测试就绪。
+
+# CR271 TURN-40G Parent Review #3 - 2026-07-21
+
+Round-2已正确恢复exact String taskRunId并删除Client默认值，但终审仍为`P0/P1/P2=0/2/0`。生产executor按顺序
+分别写interest和schedule，不是同一原子状态转换；并发Sampler可观察到新interest+旧schedule。validator还接受
+一始计数合同之外的round=0。交付也没有新增要求的碰撞、partial tuple、zero-mutation及replacement race测试，
+Client计数仍为旧`22/22`。owner保留返修，测试数实际增加且父级复验前仍`NOT FORMAL TEST READY`。
+
+# CR271 TURN-40G Parent Review #4 - 2026-07-21
+
+Review #3 的paired原子转换、round正值、String taskRun与新增负向合同均确认关闭；父级独立复跑Client
+`26/26`、Cloud `17/17`与compile通过。仍有一个P1：`WindowObservationSampler`没有携带创建它的observation
+`taskRunId`，stop/restart重叠时旧Runner可读取新run paired schedule并赢得新attempt点击，事件却仍属于旧run。
+要求在matcher前、fresh-frame后以及同monitor claim/release内验证完整expected schedule identity，并补旧run面对
+新schedule零matcher/零input/零event、不能释放新run claim的竞态合同。五窗口registry/runtime另案已`0/0/0`
+通过，父级复跑`31/31`，不随本卡重开；整体正式测试门仍关闭。
+
+# CR271 NAV Fresh Runtime Repair #5 - 2026-07-21
+
+新日志确认黄字点击已执行，但同一TurnAction中间截图把字段相同的窗口绑定换成新对象，最终小地图点击被
+`WINDOW_BINDING_CHANGED`代次门拒绝。Client现在仅对八字段完全相同的刷新保留绑定对象；真实窗口或几何变化仍
+生成新代次并拦截旧输入。暂停窗口从主按钮恢复后立即返回，不再继续刷新、注册或重启队列。相关Client合同
+`22/22`及Controller源码门通过；状态为`SOURCE+TEST REPAIR PASSED / FRESH RUNTIME REQUIRED`。
+# CR271 STOP-RESTART Fresh Runtime Repair #2 - 2026-07-21
+
+Fresh日志证明Cloud Observer因跨线程上下文缺失无法发布`PATHING_TERMINAL`，导致修罗停在NPC点击前；停止固定
+等待5秒超时，后续启动又收到缺`taskStartAck`的非法响应。Cloud现使用exact-run Observer handle和显式
+device/window元数据读取，停止中断exact worker，active冲突返回`409 TASK_START_CONFLICT`。相关完整测试族与
+compile通过；状态为源码测试通过、待重启Cloud JVM fresh验收，不宣称runtime完成。
+
+# CR271 修罗热启动 Tracker Raw Anchor Repair - 2026-07-22
+
+09:27实跑证明Client在Cloud业务识别前把肉眼可见的`任务追踪/修罗任务`误报为anchor absent。根因为本地机械层
+对full-window先套OCR mask，且运行目录遗留`64x16`旧通用锚点；同帧分数仅`0.386 < 0.82`。Client现直接用
+raw HWND帧匹配，并恢复基线`77x18`通用`任务追踪`资产；Cloud仍独占`修罗任务`标题、绿字和业务决策。
+真实失败帧点名重放`1/1`及main/test compile通过，状态为`SOURCE+TEST PASSED / FRESH CLIENT RESTART REQUIRED`。
+
+# CR272 五环 Tracker/NPC 全窗口并行预计算 - 2026-07-24
+
+Status: `DELIVERED / REVIEW / FRESH RUNTIME NOT AUTHORIZED`
+
+用户要求五环不再在获得前台 task turn 后才计算点击目标。Tracker 绿链保持现有
+`CloudWholeTaskObserver -> prepared action -> PREPARED_ACTION_READY -> FiveRingTaskV2` 链路；接任务
+NPC 增加同样的 exact-run prepared/ready 边界。每个窗口可并行截图和计算，只有完整候选队列 ready 后才
+竞争唯一前台输入执行。
+
+只读 Git 结论：
+
+- `66987933`、`c155ef36`、`917ba165` 提供 Tracker 后台 prepare/cache/ready/consume 模型。
+- `9aa987d1` 提供 NPC 有序 candidate producer 与 FIFO 执行顺序。
+- `59b85e0b` 提供已准备点位的本地原子点击/验证边界。
+- 没有历史提交包含完整 NPC prepared-ready 闭环；本卡补接线，不伪称存在可整搬提交。
+
+固定业务合同：
+
+1. preparation 不发送键盘/鼠标，不占前台输入；所有窗口按 exact window/task run 并行。
+2. demand/cache 按 device、windowId、taskRunId 隔离；plan 绑定 windowId、taskRunId、NPC、
+   observation sequence/capture time 和创建时间，执行前再以当前 exact-window metadata 换算坐标。
+3. ready 只在完整 FIFO 形成后发布；消费端逐项执行
+   `MEMORY -> TOOLTIP -> YELLOW_NAME -> PURPLE_FORMULA -> CTRL_CANDIDATES`。
+4. 单项 miss/verification failure 继续下一项；全部耗尽后返回失败，由五环原恢复/重试 phase
+   申请新帧计划，禁止在已唤醒窗口内重新跑 OCR/template。
+5. 旧 run、旧 demand 或身份不匹配 plan 零输入 fail-closed。
+6. 不改 Tracker/NPC OCR、模板、颜色 profile、候选公式、点击验证或 fallback 顺序。
+
+验证门：focused contracts 覆盖零输入 preparation、五窗隔离、ready-after-complete、全 FIFO 消费和
+stale fail-closed；随后运行 Cloud named tests与 compile。fresh runtime 需用户另行授权。
+
+交付（2026-07-24 12:55 -04:00）：
+
+- 新增 `NpcPreparedClickPlan` 与 `NpcPreparedClickPlanState`，按 exact device/window/taskRun 保存 demand
+  和完整 FIFO；同目标重复请求复用 demand，消费为一次性。
+- `CloudWholeTaskObserver` 只在五环存在 NPC demand 且非暂停/战斗时动态申请整窗 observation，
+  在 no-turn probe 中计算；空计划不发布 ready，完整且有可执行候选的计划才发布
+  `NPC_CLICK_PLAN_READY`。
+- `FiveRingTaskV2` 在 `taskTurnCoordination.run(...)` 之前登记 demand，并等待 ready event/消费计划；
+  获得计划后才竞争前台。不同窗口各有独立 observer、demand 和 task thread，可并行计算。
+- `NpcClickService` 仅执行 prepared FIFO，逐项验证；全部失败后返回五环原恢复链，不再调用
+  `clickNpcSmart(request)` 做前台识别。
+- Tracker 绿链未改算法，继续现有
+  `CloudWholeTaskObserver -> prepared action -> PREPARED_ACTION_READY -> FiveRingTaskV2`。
+- 精确生产写集：Cloud `DecisionEngine.java`、`NpcClickService.java`、`FiveRingTaskV2.java`、
+  `CloudWholeTaskObserver.java`、`WindowReadyEventType.java`、
+  `NpcPreparedClickPlan.java`、`NpcPreparedClickPlanState.java`。
+  测试写集：`FiveRingPreparedNpcContractTest.java`。
+- 自动门：
+  - `mvn -q -DskipTests=false compile`：通过。
+  - `mvn -q -DskipTests=false -Dtest=FiveRingPreparedNpcContractTest test`：`3/3` 通过。
+  - 联跑时新增测试与 `CloudWholeTaskObserverPolicyContractTest` 通过；既有
+    `FiveRingTaskTrackerTurnContractTest` 有 `7` 项当前迁徙分支历史漂移失败（缺失 local-service
+    test seam、旧超时断言和空协调器），未冒充本卡通过，也未扩大 CR272 去改这些旧断言。
+- 未启动 runtime/application/Task/poller/UI/capture/input；需要 fresh runtime 才能验收实际五窗
+  ready 到前台点击的时延。
+
+接任务 Dialog P1 返修（2026-07-24）：
+
+- 事故根因一：Client `FiveRingAcceptDialogLocalOperation` 在点击接任务第一条后仍持有输入独占并立即
+  `captureStory(...)`，界面尚未切换时会把旧 OPTION 帧作为 STORY continuation 上传。
+- 事故根因二：Cloud 在未获得 Tracker 正证据的接任务阶段允许完成 STORY fallback；通用分类器
+  lower-half green 总量 miss 后，上半区文字可能把同一 OPTION 帧误标为 STORY。
+- 事故根因三：`DialogWhiteStoryTemplateMacroResult` compact constructor 通过实例方法读取
+  尚未完成隐式赋值的 record 字段，合法 frame-only 结果也会 NPE。
+- 修复合同：
+  1. Client 独占操作只识别/点击 OPTION，点击后立即返回，不再生产即时 STORY 帧。
+  2. Cloud 保留 `250ms` settle，再以本地 anchor 模板每 `1s` 探测、最长 `5s`；命中后才抓取并解析
+     fresh Tracker panel。
+  3. 超时必须 fresh capture 并由 Cloud 重判 Dialog；OPTION 回接任务重试，明确 STORY 才能匹配
+     daily-limit/完成模板，NONE 回正常 NPC/接任务恢复。
+  4. 普通 accept 与未确认 `taskAccepted` 的 Tracker-miss 路径禁止完成 STORY fallback；
+     `DialogService` 的 OPTION 优先分类增加 lower-half 多绿字行证据。
+  5. 白字结果矩形校验只使用 compact constructor 参数，不读取未赋值实例字段。
+- 精确新增写集：
+  - Client `FiveRingAcceptDialogLocalOperation.java`、`FiveRingDialogObservationLocalMechanics.java`。
+  - Cloud `FiveRingTaskV2.java`、`TaskTrackerPanelService.java`、`DialogService.java`、
+    `DialogWhiteStoryTemplateMacroResult.java`；修罗仅将同一 anchor API 改为显式 `75ms` poll，
+    其 `2s` 行为不变。
+- 门禁：Client `mvn -q -DskipTests compile` exit `0`；Cloud
+  `mvn -q -DskipTests=false compile` exit `0`。按 no-local-test 规则未新增或运行未点名测试。
+- Fresh runtime：接任务点击后不得立即出现 `DIALOG_STORY_IMAGE` 或完成模板调用；anchor 命中后只处理
+  fresh Tracker panel；五秒超时必须先出现 Dialog recheck，再允许 OPTION 重试或明确 STORY 完成判断。
+
+HWND 截图几何 P1 返修（2026-07-24）：
+
+- 用户确认窗口从未调整；注册外框 `1036x783` 与既有 `1024x768` 内容坐标有效。
+  日志中的 `812x663` 是后台截图链路取得的错误整图尺寸，不是 ROI。
+- 本地基线同样先走 HWND 截图，但失败后会 focus 窗口并使用 Robot 屏幕截图兜底；CR271 禁止该
+  前台兜底后，错误整图导致 `(974,630) 51x20` 等既有 ROI 越界并无帧。
+- 保留所有 ROI、模板和阈值。`WindowNativeBindingRefreshService` 运行期仅更新位置，宽高沿用
+  显式扫描注册的 exact-window 几何；`BoundWindowCaptureService` 使用同一注册宽高创建
+  `PrintWindow`/`BitBlt` 位图，不再采用观察线程第二次 `GetWindowRect` 的异常尺寸。
+- Client `mvn -q -DskipTests compile` exit `0`；未启动 runtime/UI/capture/input。
+  Fresh 门禁：整图必须为 `1036x783`，不得再有 `image=812x663` 或由此产生的
+  `HWND_CAPTURE_FAILED_NO_FOREGROUND_FALLBACK` ROI 越界。
+## CR271 NAV accept snapshot readiness - 2026-07-24
+
+- 修罗接任务后的 tracker 与旧剧情目标继续消费同一张整窗截图；本轮只修复过早截图。
+- Cloud 在最终截图前通过 exact Client window 本地匹配通用 tracker anchor，命中立即截图，最多等待
+  `2s`；探测仅回传匹配元数据，不上传图片。超时仍截同一张图并保持原 fallback。
+- 父级源码审核 `P0/P1/P2=0/0/0`；Cloud compile 和 `TurnGameClientContractTest` 通过，等待重启
+  Cloud 后 fresh runtime 验收。tooltip 采样问题不在本轮写集。
+
+## CR271 / CR253 修罗三技能 prepared-job 链路缺失（fresh P1，2026-07-24）
+
+- **fresh 事实：**本轮 HTTPS 修罗从 `14:26` 启动，至 `15:00` dashboard 已记录 16 轮；队长
+  `hwnd-74A0D06` 每轮均为 `hadMaintenance=false`、`hadSummonSkillCleanup=false`。配置仍为
+  `summon-skill-clean-enabled=true`、`intervalMs=1200000`，既有 90 秒提前量下约 `14:43:37` 即应 due；
+  运行日志没有 `summon skill due`、enqueue、prepared publish、consumer 或 clean-start。
+- **根因：**当前 HTTPS 修罗运行时保留了 `PreparedActionJobType.SUMMON_SKILL_CLEANUP` 和
+  `WindowRuntimeContext` 的 typed-job 存储，却没有实际 producer/consumer 调用。旧
+  `TaskMaintenanceService` + `XiuluoTaskV2` 的 phase 内 opportunistic caller 无法在无限 park 后再次
+  获得执行机会；当前 `CloudWholeTaskObserver` 也不得直接运行三技能，因为 observer 不拥有 task turn
+  或物理输入权。
+- **不可删除的业务不变量：**修罗队长三技能必须始终走
+  `due（只读 cooldown/unknown-retry + FIFO） -> 当前 attempt 的 SUMMON_SKILL_CLEANUP typed prepared job
+  -> PREPARED_ACTION_READY -> 持有该 task turn 的修罗 consumer -> 完整既有三技能维护 -> 再 park`。
+  这条链路**不得删除、不得改回 phase 内 opportunistic 调用、不得在 observer 内直接执行、不得改成到期后
+  中途抢输入**。发布与消费都必须保留 `windowId/hwnd + taskRunId + round + attemptId + actionType` identity
+  fence；新 attempt/round、stop、binding/session 失效与确认进战必须丢弃旧 job；本轮 due 只入队，按既有
+  安全维护窗口/FIFO/预算在下一轮消费。
+- **修复范围：**只恢复 CR253 已批准的 producer/consumer wiring，并复用既有 `TaskMaintenanceService`
+  cooldown、unknown-retry、队列、窗口及预算语义和既有三技能窗口内点击算法。不得借此修改 OCR/template、
+  导航、绿链、战斗判断或三技能视觉点击逻辑。
+- **fresh 验收：**长跑跨过 due 后必须出现一次当前 identity 的 `SUMMON_SKILL_CLEANUP` publish 与
+  `PREPARED_ACTION_READY`；下一安全维护窗口仅由修罗 consumer 开始一次完整清理，完成后继续 park。旧
+  attempt/round job 必须有 discard 日志且零输入；没有 prepared 时仍保持无限 park。
+
+### P1 接线交付（2026-07-24，待父级审核）
+
+- **复用而非恢复旧实现：**当前 Cloud 的 `TaskMaintenanceService` 原有 FIFO、去重、窗口 snapshot、
+  budget、cooldown、unknown-retry 和 `SummonSkillService` 清理算法均未复制或改写；observer 只调用既有
+  enqueue-only 分支。
+- **producer：**`CloudWholeTaskObserver` 仅在 current `LEADER`、当前修罗 tracker attempt 和已打开的
+  pathing maintenance window 下，把既有 FIFO 的 enqueue-only 结果写入既有
+  `CloudWholeTaskReadyEventState` 的 `PreparedActionJob` 并发送 `PREPARED_ACTION_READY`。observer 不持有
+  task turn，不发送任何三技能输入。
+- **consumer：**`XiuluoTaskV2.waitTrackerShortcutPathing(...)` 只在当前 `taskRunId + hwnd + round +
+  attemptId` 完整匹配时消费 job，调用已有 `runLeaderPathingSummonSkillMaintenance(...)`，随后重新 park。
+  旧 attempt/round job 直接 discard；同一 attempt 已消费的 due 不重复发布，下一 attempt 才可再次发布，
+  保持“本轮 due 入 FIFO、下一安全窗口消费”。
+- **收口：**删除 shortcut phase 内两处旧 opportunistic maintenance 调用，防止同一三技能维护绕过
+  prepared 边界或重复执行；非-shortcut `NAVIGATE_TO_TARGET` 既有维护链不动。
+- **门禁：**external `dhxy-cloud-brain` 执行 `mvn -q -DskipTests=false compile`，exit `0`；未启动
+  runtime/application/Task/poller/UI/capture/input/tests。
+## CR277 修复状态（2026-07-27 00:20）
+
+`SOURCE REVIEW PASSED / P0-P1-P2=0-0-0 / DUAL COMPILE PASSED / FRESH RUNTIME
+RETEST REQUIRED`：已关闭五环 cooldown STORY 未识别、五环小地图高层交互跨窗口交错、
+旧 loop 阻断重新启动、旧 terminal 覆盖新 run、Dashboard 被动刷新造成同 HWND 角色漂移
+并清空 prepared/pathing 状态。未新增业务算法、锁或输入队列。

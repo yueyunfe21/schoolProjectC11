@@ -26,6 +26,7 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
         assertEquals("start-request-001", request.taskStartRequest().startRequestId());
         assertEquals(List.of(TurnTaskCode.WUHUAN_V2, TurnTaskCode.WUBEI, TurnTaskCode.XIULUO_V2,
                 TurnTaskCode.AUTO_BATTLE), request.taskStartRequest().taskCodes());
+        assertEquals(List.of(1, 0, 0, 1), request.taskStartRequest().taskMaxRuns());
         assertEquals(TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE,
                 request.taskStartRequest().failurePolicy());
         assertEquals(TurnResponse.Status.IDLE, response.status());
@@ -40,13 +41,13 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
     void orderedQueueIsDefensivelyCopiedAndBothFailurePoliciesRemainClosed() throws IOException {
         List<TurnTaskCode> mutableCodes = new ArrayList<>(List.of(TurnTaskCode.WUBEI, TurnTaskCode.XIULUO_V2));
         TurnTaskStartRequest start = new TurnTaskStartRequest(
-                "stable-start-002", mutableCodes, TurnTaskQueueFailurePolicy.STOP_ON_FAILURE);
+                "stable-start-002", mutableCodes, List.of(0, 0), TurnTaskQueueFailurePolicy.STOP_ON_FAILURE);
         mutableCodes.clear();
 
         assertEquals(List.of(TurnTaskCode.WUBEI, TurnTaskCode.XIULUO_V2), start.taskCodes());
         assertThrows(UnsupportedOperationException.class, () -> start.taskCodes().add(TurnTaskCode.AUTO_BATTLE));
         TurnRequest request = new TurnRequest(
-                1, TurnProtocolGoldenSupport.window(false, false), 25_000L, null, start);
+                1, taskStartAuthorityWindow(), 25_000L, null, start);
         TurnRequest roundTripped = TurnProtocolGoldenSupport.roundTrip(request, TurnRequest.class);
         TurnProtocolValidator.requireValid(roundTripped);
         assertEquals(TurnTaskQueueFailurePolicy.STOP_ON_FAILURE,
@@ -56,15 +57,15 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
 
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(new TurnRequest(1,
                 request.window(), 25_000L, null,
-                new TurnTaskStartRequest("start-empty", List.of(),
+                new TurnTaskStartRequest("start-empty", List.of(), List.of(),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE))));
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(new TurnRequest(1,
                 request.window(), 25_000L, null,
-                new TurnTaskStartRequest(" ", List.of(TurnTaskCode.WUBEI),
+                new TurnTaskStartRequest(" ", List.of(TurnTaskCode.WUBEI), List.of(0),
                         TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE))));
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(new TurnRequest(1,
                 request.window(), 25_000L, null,
-                new TurnTaskStartRequest("start-no-policy", List.of(TurnTaskCode.WUBEI), null))));
+                new TurnTaskStartRequest("start-no-policy", List.of(TurnTaskCode.WUBEI), List.of(0), null))));
     }
 
     @Test
@@ -83,6 +84,19 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
 
         TurnRequest noStart = new TurnRequest(1, request.window(), request.waitTimeoutMs(), null, null);
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(exact, noStart));
+    }
+
+    /**
+     * A local explicit task-start window carrying all six baseline authority facts (Amendment #3). It is a
+     * fixture-shaped example — {@code MEMBER} with a present leader, team session, leader window id, both
+     * booleans true, and a non-NORMAL startup — never a production default. Non-task-start assertions keep
+     * using the shared {@code TurnProtocolGoldenSupport.window(...)} helper.
+     */
+    private static TurnWindowMetadata taskStartAuthorityWindow() {
+        return new TurnWindowMetadata(
+                "device-alpha", "window-2", "Classic Client - Alpha", "0x000000000001A2B3", 4242L,
+                new TurnWindowRect(120, 80, 1280, 720), false, false, null,
+                "MEMBER", "team-session-alpha", "window-leader-1", true, true, "AFTER_COMBAT_EXIT_STARTUP");
     }
 
     @Test
@@ -105,8 +119,9 @@ class TurnTaskLifecycleProtocolGoldenJsonTest {
     }
 
     @Test
-    void sleepComputerAndUnknownFailurePolicyAreRejectedByStrictContractMapper() throws IOException {
-        for (String forbidden : List.of("SLEEP_COMPUTER", "UNKNOWN_TASK")) {
+    void sleepComputerIsExplicitAndUnknownTaskOrFailurePolicyRemainRejected() throws IOException {
+        assertEquals(TurnTaskCode.SLEEP_COMPUTER, TurnTaskCode.valueOf("SLEEP_COMPUTER"));
+        for (String forbidden : List.of("UNKNOWN_TASK")) {
             ObjectNode taskRequest = (ObjectNode) TurnProtocolGoldenSupport.STRICT_CONTRACT_MAPPER.readTree(
                     TurnProtocolGoldenSupport.fixtureBytes("request-start.json"));
             taskRequest.with("taskStartRequest").withArray("taskCodes").set(0,

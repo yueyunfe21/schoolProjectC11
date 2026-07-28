@@ -15,6 +15,7 @@ import com.sun.jna.platform.win32.WinDef.DWORD;
 import com.sun.jna.platform.win32.WinDef.WORD;
 import com.sun.jna.platform.win32.WinUser;
 import com.sun.jna.platform.win32.WinUser.INPUT;
+import com.sun.jna.platform.win32.WinDef.POINT;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -450,7 +451,19 @@ public class WinApiMouseController implements InputProvider {
         double scale = coordinateHelper.getScaleRatio();
         int physicalX = (int) Math.round(x * scale);
         int physicalY = (int) Math.round(y * scale);
-        User32.INSTANCE.SetCursorPos(physicalX, physicalY);
+        POINT before = new POINT();
+        User32.INSTANCE.GetCursorPos(before);
+        boolean moved = User32.INSTANCE.SetCursorPos(physicalX, physicalY);
+        POINT after = new POINT();
+        boolean readAfter = User32.INSTANCE.GetCursorPos(after);
+        boolean reached = readAfter && Math.abs(after.x - physicalX) <= 1 && Math.abs(after.y - physicalY) <= 1;
+        log.info("[INPUT_CURSOR_TRACE] requestedLogical=({}, {}) requestedPhysical=({}, {}) before=({}, {}) after=({}, {}) setCursorPos={} readAfter={} reached={}",
+                x, y, physicalX, physicalY, before.x, before.y, after.x, after.y,
+                moved, readAfter, reached);
+        if (!reached) {
+            throw new IllegalStateException("Physical cursor move failed: target=(" + physicalX + "," + physicalY
+                    + ") actual=(" + after.x + "," + after.y + ")");
+        }
     }
 
     private static INPUT buildMouseInput(int mouseEventFlag) {
@@ -489,4 +502,5 @@ public class WinApiMouseController implements InputProvider {
         input.input.ki.dwFlags = new DWORD(FLAG_KEY_UNICODE | (keyUp ? FLAG_KEY_UP : 0));
         return input;
     }
+
 }

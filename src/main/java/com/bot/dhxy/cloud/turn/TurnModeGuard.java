@@ -1,14 +1,19 @@
 package com.bot.dhxy.cloud.turn;
 
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
+import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyCommand;
+import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.execution.WindowTaskRunner;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.concurrent.CompletableFuture;
 
 /** Exact-window policy boundary preventing simultaneous local and remote execution modes. */
 public final class TurnModeGuard {
@@ -17,16 +22,29 @@ public final class TurnModeGuard {
     private final MultiWindowTaskManager taskManager;
     private final TurnLoopRegistry loopRegistry;
     private final long longWaitTimeoutMs;
+    private final String deviceId;
 
     public TurnModeGuard(MultiWindowTaskManager taskManager,
                          TurnLoopRegistry loopRegistry,
                          long longWaitTimeoutMs) {
+        this(taskManager, loopRegistry, longWaitTimeoutMs, "dhxy-client");
+    }
+
+    public TurnModeGuard(MultiWindowTaskManager taskManager,
+                         TurnLoopRegistry loopRegistry,
+                         long longWaitTimeoutMs,
+                         String deviceId) {
         this.taskManager = Objects.requireNonNull(taskManager, "taskManager");
         this.loopRegistry = Objects.requireNonNull(loopRegistry, "loopRegistry");
         if (longWaitTimeoutMs <= 0L) {
             throw new IllegalArgumentException("longWaitTimeoutMs must be positive");
         }
         this.longWaitTimeoutMs = longWaitTimeoutMs;
+        this.deviceId = requireExactIdentity(deviceId, "deviceId");
+    }
+
+    public String deviceId() {
+        return deviceId;
     }
 
     /**
@@ -65,6 +83,28 @@ public final class TurnModeGuard {
     public WindowTurnLoop startRemote(String deviceId,
                                       String windowId,
                                       Supplier<TurnWindowMetadata> windowMetadataSupplier) {
+        return startRemoteInternal(deviceId, windowId, windowMetadataSupplier, null);
+    }
+
+    /**
+     * TURN-40D remote overload: same exact-window mutex and runner gating, additionally carrying the one immutable
+     * {@link TurnTaskStartRequest} into the created loop so the remote start rides every turn until acknowledged.
+     * The three-argument form and its callers are unchanged.
+     *
+     * @param startRequest non-null immutable remote start request.
+     */
+    public WindowTurnLoop startRemote(String deviceId,
+                                      String windowId,
+                                      Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                                      TurnTaskStartRequest startRequest) {
+        return startRemoteInternal(deviceId, windowId, windowMetadataSupplier,
+                Objects.requireNonNull(startRequest, "startRequest"));
+    }
+
+    private WindowTurnLoop startRemoteInternal(String deviceId,
+                                               String windowId,
+                                               Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                                               TurnTaskStartRequest startRequest) {
         String exactDeviceId = requireExactIdentity(deviceId, "deviceId");
         String exactWindowId = requireExactIdentity(windowId, "windowId");
         Objects.requireNonNull(windowMetadataSupplier, "windowMetadataSupplier");
@@ -85,11 +125,29 @@ public final class TurnModeGuard {
                         exactWindowId,
                         "remote start rejected because the local runner is active for windowId=" + exactWindowId);
             }
-            WindowTurnLoop loop = loopRegistry.create(
-                    exactDeviceId,
-                    exactWindowId,
-                    longWaitTimeoutMs,
-                    windowMetadataSupplier);
+            WindowTurnLoop existingLoop = loopRegistry.find(exactWindowId).orElse(null);
+            if (existingLoop != null) {
+                if (existingLoop.isRunning()) {
+                    throw new ModeConflictException(
+                            exactWindowId,
+                            "remote start rejected because a remote turn loop is already running for windowId="
+                                    + exactWindowId);
+                }
+                if (existingLoop.lastFailure() == null) {
+                    throw new ModeConflictException(
+                            exactWindowId,
+                            "remote start rejected because a stopped remote turn loop is still registered for windowId="
+                                    + exactWindowId);
+                }
+                // An uncertain transport restart must reuse the exact loop, start request and retained outcome.
+                // Creating a replacement request here could start the same Cloud task twice.
+                existingLoop.start();
+                return existingLoop;
+            }
+            WindowTurnLoop loop = startRequest == null
+                    ? loopRegistry.create(exactDeviceId, exactWindowId, longWaitTimeoutMs, windowMetadataSupplier)
+                    : loopRegistry.create(
+                            exactDeviceId, exactWindowId, longWaitTimeoutMs, windowMetadataSupplier, startRequest);
             try {
                 loop.start();
                 return loop;
@@ -100,9 +158,17 @@ public final class TurnModeGuard {
         }
     }
 
-    private void removeStoppedLoopCreatedByThisStart(String windowId,
-                                                      WindowTurnLoop createdLoop,
-                                                      Throwable startFailure) {
+    /**
+     * TURN-40D: exact-created-loop start-failure cleanup policy. When {@link #startRemote} creates and registers a loop
+     * but {@code loop.start()} throws, this retires only the exact loop this start created and only while it is stopped
+     * and still the registered one for the window; a still-running loop or a non-identical registered loop is left
+     * untouched. A cleanup failure never masks the original start failure — it is attached as a suppressed exception.
+     * Package-visible so the loop-package contract test can exercise the real-registry removal/non-removal policy
+     * directly without fabricating a start() failure.
+     */
+    void removeStoppedLoopCreatedByThisStart(String windowId,
+                                             WindowTurnLoop createdLoop,
+                                             Throwable startFailure) {
         if (createdLoop.isRunning() || loopRegistry.find(windowId).orElse(null) != createdLoop) {
             return;
         }
@@ -110,6 +176,144 @@ public final class TurnModeGuard {
             loopRegistry.remove(windowId);
         } catch (RuntimeException cleanupFailure) {
             startFailure.addSuppressed(cleanupFailure);
+        }
+    }
+
+    /**
+     * TURN-40D: stops and unregisters the exact remote loop under the same mode monitor, so no local start can
+     * interleave with the teardown. The loop is interrupted, joined within a bounded wait, and only then removed —
+     * {@link TurnLoopRegistry#remove} itself refuses to retire a still-running loop, so a loop that survives the
+     * bounded wait is never silently removed. Returns false when no remote loop is registered for the window.
+     *
+     * @param windowId exact nonblank window identity.
+     * @return true when a registered remote loop was stopped and removed; false when none was registered.
+     */
+    public boolean stopRemote(String windowId) {
+        if (!requestRemoteStop(windowId)) {
+            return false;
+        }
+        return awaitAndRemoveStoppedRemote(windowId);
+    }
+
+    /**
+     * Broadcasts the graceful stop checkpoint for one exact loop without waiting for Cloud termination.
+     * Batch callers must invoke this for every selected window before awaiting any one of them.
+     *
+     * @param windowId exact nonblank window identity
+     * @return true when a live registered loop accepted the stop request; false when none is registered
+     */
+    public boolean requestRemoteStop(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        synchronized (modeMonitor) {
+            WindowTurnLoop loop = loopRegistry.find(exactWindowId).orElse(null);
+            if (loop == null) {
+                return false;
+            }
+            loop.requestStop();
+            return true;
+        }
+    }
+
+    /**
+     * Waits for the exact loop already asked to stop, then removes it only after Cloud accepted its terminal result.
+     * The wait happens outside the mode mutex so other windows can receive their own stop signal immediately.
+     *
+     * @param windowId exact nonblank window identity
+     * @return true when the requested loop stopped and was removed; false when no loop is currently registered
+     */
+    public boolean awaitAndRemoveStoppedRemote(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        WindowTurnLoop loop;
+        synchronized (modeMonitor) {
+            loop = loopRegistry.find(exactWindowId).orElse(null);
+            if (loop == null) {
+                return false;
+            }
+        }
+        try {
+            if (!loop.awaitStopped(Duration.ofMillis(longWaitTimeoutMs))) {
+                throw new IllegalStateException(
+                        "远程 turn loop 未在时限内停止：windowId=" + exactWindowId);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "等待远程 turn loop 停止时被中断：windowId=" + exactWindowId, interrupted);
+        }
+        synchronized (modeMonitor) {
+            if (loopRegistry.find(exactWindowId).orElse(null) != loop) {
+                return false;
+            }
+            if (!loop.hasAcceptedTaskTerminal()) {
+                // A stopped client loop alone is not proof that Cloud released the exact RunSlot. Keeping the loop
+                // registered prevents the UI from minting a conflicting startRequestId against a still-active run.
+                throw new IllegalStateException(
+                        "云端未确认终止，保留远程 turn loop：windowId=" + exactWindowId);
+            }
+            loopRegistry.remove(exactWindowId);
+            return true;
+        }
+    }
+
+    /**
+     * TURN-40D: flips the exact remote loop's live pause checkpoint. Pause only changes the Cloud checkpoint flag the
+     * loop projects onto its metadata; the long-wait loop stays alive and no local mechanic is parked. Returns false
+     * when no remote loop is registered for the window.
+     */
+    public boolean pauseRemote(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        synchronized (modeMonitor) {
+            WindowTurnLoop loop = loopRegistry.find(exactWindowId).orElse(null);
+            if (loop == null || !loop.isRunning()) {
+                return false;
+            }
+            loop.requestPause();
+            return true;
+        }
+    }
+
+    /**
+     * TURN-40D: clears the exact remote loop's live pause checkpoint. Resume mints no new start request. Returns
+     * false when no remote loop is registered for the window.
+     */
+    public boolean resumeRemote(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        synchronized (modeMonitor) {
+            WindowTurnLoop loop = loopRegistry.find(exactWindowId).orElse(null);
+            if (loop == null || !loop.isRunning()) {
+                return false;
+            }
+            loop.requestResume();
+            return true;
+        }
+    }
+
+    /** Returns the live transport state for UI/runtime projection without creating a second state store. */
+    public RemoteLoopState remoteState(String windowId) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        synchronized (modeMonitor) {
+            WindowTurnLoop loop = loopRegistry.find(exactWindowId).orElse(null);
+            return loop == null
+                    ? RemoteLoopState.absent()
+                    : new RemoteLoopState(true, loop.isRunning(), loop.isPauseRequested(),
+                    loop.hasAcceptedTaskTerminal(), loop.lastFailure());
+        }
+    }
+
+    /** Attach one manual survey command to an existing task-free remote loop for the exact window. */
+    public CompletableFuture<TurnMapSurveyResult> submitMapSurvey(
+            String windowId, TurnMapSurveyCommand command) {
+        String exactWindowId = requireExactIdentity(windowId, "windowId");
+        synchronized (modeMonitor) {
+            WindowTaskRunner runner = taskManager.getRunner(exactWindowId).orElse(null);
+            if (runner == null || runner.isRunning()) {
+                throw new ModeConflictException(
+                        exactWindowId, "MapSurvey rejected because the exact local window is active or absent");
+            }
+            WindowTurnLoop loop = loopRegistry.find(exactWindowId).orElseThrow(() ->
+                    new ModeConflictException(exactWindowId,
+                            "MapSurvey requires an existing remote loop for windowId=" + exactWindowId));
+            return loop.attachMapSurveyCommand(command);
         }
     }
 
@@ -143,6 +347,16 @@ public final class TurnModeGuard {
 
         public String windowId() {
             return windowId;
+        }
+    }
+
+    public record RemoteLoopState(boolean registered,
+                                  boolean running,
+                                  boolean paused,
+                                  boolean terminalAcknowledged,
+                                  Throwable lastFailure) {
+        private static RemoteLoopState absent() {
+            return new RemoteLoopState(false, false, false, false, null);
         }
     }
 }

@@ -3,5 +3,6 @@
   "action": null,
   "taskStartAck": {
     "startRequestId": "start-request-001"
-  }
+  },
+  "continuationDecision": null
 }

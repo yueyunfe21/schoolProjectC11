@@ -6,6 +6,7 @@ import com.bot.dhxy.cloud.turn.protocol.TurnFramePurpose;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputAction;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputSpec;
 import com.bot.dhxy.cloud.turn.protocol.TurnOutcome;
+import com.bot.dhxy.cloud.turn.protocol.TurnPathingIntent;
 import com.bot.dhxy.cloud.turn.protocol.TurnRegion;
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
@@ -33,10 +34,12 @@ import com.bot.dhxy.runner.context.TaskExecutionContextHolder;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.diagnostics.WindowInteractionMetricsService;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
-import com.bot.dhxy.window.execution.RunningTaskHandle;
 import com.bot.dhxy.window.execution.WindowTaskRunner;
+import com.bot.dhxy.window.policy.WindowCapacityPolicy;
+import com.bot.dhxy.window.runtime.WindowRuntimeContextFactory;
 import com.bot.dhxy.window.interaction.WindowFocusService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -62,6 +65,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongPredicate;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -90,7 +94,7 @@ class LocalTurnActionExecutorContractTest {
 
         ExecutedTurn executed = harness.executor().execute(action);
 
-        assertEquals(TurnOutcome.Status.COMPLETED, executed.outcome().status());
+        assertEquals(TurnOutcome.Status.COMPLETED, executed.outcome().status(), executed.outcome().toString());
         assertEquals(List.of(
                         TurnStepResult.Status.COMPLETED,
                         TurnStepResult.Status.COMPLETED,
@@ -106,6 +110,70 @@ class LocalTurnActionExecutorContractTest {
         assertEquals(103, submitted.get(2).getX());
         assertEquals(203, submitted.get(2).getY());
         assertEquals(List.of(TurnContractFixtures.WINDOW_ID), harness.queue().boundWindowIds);
+    }
+
+    @Test
+    void pathingBaselineCaptureCannotInvalidateTheFinalMouseQueueGeneration() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(
+                true,
+                false,
+                context -> new TurnContractFixtures.BindingReplacingPathingProof(context));
+        TurnAction action = new TurnAction(
+                1,
+                "action-pathing-baseline-before-freeze",
+                TurnContractFixtures.DEVICE_ID,
+                TurnContractFixtures.WINDOW_ID,
+                List.of(
+                        TurnContractFixtures.moveStep(0, 102, 202),
+                        TurnContractFixtures.waitStep(1, 150L),
+                        TurnContractFixtures.clickStep(2, 103, 203)),
+                false,
+                new TurnPathingIntent("test", "intent-1", "灵兽村", 112, 93, 5, "TARGETED"));
+
+        ExecutedTurn executed = harness.executor().execute(action);
+
+        assertEquals(TurnOutcome.Status.COMPLETED, executed.outcome().status());
+        assertEquals(1, harness.refresh().calls,
+                "the exact action generation must be frozen once, after baseline capture");
+        assertSame(harness.binding(), harness.context().getNativeBinding());
+        assertEquals(1, harness.queue().submissions.size(),
+                "the pathing MOVE/WAIT/CLICK must reach the physical input queue");
+        assertEquals(List.of(InputActionType.MOVE_MOUSE, InputActionType.SLEEP, InputActionType.CLICK_LEFT),
+                harness.queue().submissions.get(0).stream().map(InputAction::getType).toList());
+    }
+
+    @Test
+    void equivalentCaptureRefreshBetweenMouseFragmentsPreservesTheFrozenGeneration() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
+        harness.capture().refreshContext = harness.context();
+        TurnAction action = new TurnAction(
+                1,
+                "action-capture-refresh-between-clicks",
+                TurnContractFixtures.DEVICE_ID,
+                TurnContractFixtures.WINDOW_ID,
+                List.of(
+                        TurnContractFixtures.moveStep(0, 102, 202),
+                        TurnContractFixtures.waitStep(1, 150L),
+                        TurnContractFixtures.clickStep(2, 102, 202),
+                        TurnContractFixtures.captureStep(
+                                3,
+                                new TurnRegion(102, 202, 2, 2),
+                                TurnCaptureSpec.ResultMode.UPLOAD_IMAGE),
+                        TurnContractFixtures.moveStep(4, 103, 203),
+                        TurnContractFixtures.waitStep(5, 150L),
+                        TurnContractFixtures.clickStep(6, 103, 203)),
+                false);
+
+        ExecutedTurn executed = harness.executor().execute(action);
+
+        assertEquals(TurnOutcome.Status.COMPLETED, executed.outcome().status(), executed.outcome().toString());
+        assertSame(harness.binding(), harness.context().getNativeBinding(),
+                "an equivalent capture refresh must not replace the action generation");
+        assertEquals(2, harness.queue().submissions.size(),
+                "both the yellow-result click and final minimap click must reach the input queue");
+        assertEquals(List.of("input:submit", "capture:roi", "input:submit"), harness.events());
+        assertEquals(List.of(InputActionType.MOVE_MOUSE, InputActionType.SLEEP, InputActionType.CLICK_LEFT),
+                harness.queue().submissions.get(1).stream().map(InputAction::getType).toList());
     }
 
     @Test
@@ -517,6 +585,103 @@ class LocalTurnActionExecutorContractTest {
         assertEquals(0, harness.capture().totalCalls());
         assertEquals(0, harness.queue().submissions.size());
     }
+
+    // Retained contract: an atomic mouse-queue that fails after a completed click prefix reports the executed
+    // prefix as COMPLETED (never NOT_RUN) and only the failing step as FAILED, via the pure expansion helper.
+    @Test
+    void completedClickPrefixIsReportedCompletedAndNeverNotRun() {
+        List<TurnStep> steps = List.of(clickStep(0), clickStep(1), clickStep(2));
+        TurnInputStepExecutor.MouseSequenceResult partial = new TurnInputStepExecutor.MouseSequenceResult(
+                new TurnInputStepExecutor.Result(
+                        TurnInputStepExecutor.Status.FAILED,
+                        TurnInputStepExecutor.Code.INPUT_QUEUE_FAILED,
+                        "worker terminal after click"),
+                2);
+
+        List<TurnStepExecution> expanded =
+                LocalTurnActionExecutor.expandMouseSequenceExecutions(steps, partial);
+
+        assertEquals(List.of(
+                        TurnStepResult.Status.COMPLETED,
+                        TurnStepResult.Status.COMPLETED,
+                        TurnStepResult.Status.FAILED),
+                expanded.stream().map(execution -> execution.result().status()).toList());
+    }
+
+    @Test
+    void directCombatTicketSurvivesAltATurnAndOnlyMarkedNextTurnClickRegistersExpectedCombat() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
+        WindowExpectedCombatEnterClaim claim = new WindowExpectedCombatEnterClaim(
+                "direct-claim", "observation-run", "business-run", "XIULUO_V2", "attempt-1",
+                TurnContractFixtures.WINDOW_ID, harness.binding().getNativeHandle(), "local-alt-a", null);
+        assertTrue(harness.context().armPendingDirectCombatEnterClaim(claim));
+
+        TurnAction altATurn = new TurnAction(
+                1, "direct-alt-a", TurnContractFixtures.DEVICE_ID, TurnContractFixtures.WINDOW_ID,
+                List.of(new TurnStep(0, TurnStepType.INPUT, TurnInputAction.KEY_TAP,
+                        new TurnInputSpec(null, null, null, null, null, "ALT_A", null), null, null, null, null)),
+                false);
+        assertEquals(TurnOutcome.Status.COMPLETED, harness.executor().execute(altATurn).outcome().status());
+        assertNotNull(harness.context().currentPendingDirectCombatEnterClaim(),
+                "the ticket must cross from the Alt+A turn to its separately delivered target-click turn");
+
+        TurnAction targetClickTurn = new TurnAction(
+                1, "direct-target-click", TurnContractFixtures.DEVICE_ID, TurnContractFixtures.WINDOW_ID,
+                List.of(new TurnStep(0, TurnStepType.INPUT, TurnInputAction.CLICK_LEFT,
+                        new TurnInputSpec(102, 202, null, null, null, null, null, null, null, true),
+                        null, null, null, null)), false);
+        assertEquals(TurnOutcome.Status.COMPLETED, harness.executor().execute(targetClickTurn).outcome().status());
+
+        assertNull(harness.context().currentPendingDirectCombatEnterClaim());
+        assertNotNull(harness.context().bindExpectedCombatEnterClaim("observation-run", 1L),
+                "only a completed marked target click turns the pending ticket into an expected-combat claim");
+    }
+
+    @Test
+    void ordinaryClickCannotConsumeDirectCombatTicket() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
+        WindowExpectedCombatEnterClaim claim = new WindowExpectedCombatEnterClaim(
+                "direct-claim", "observation-run", "business-run", "XIULUO_V2", "attempt-1",
+                TurnContractFixtures.WINDOW_ID, harness.binding().getNativeHandle(), "local-alt-a", null);
+        assertTrue(harness.context().armPendingDirectCombatEnterClaim(claim));
+
+        TurnAction ordinaryClick = new TurnAction(
+                1, "ordinary-click", TurnContractFixtures.DEVICE_ID, TurnContractFixtures.WINDOW_ID,
+                List.of(TurnContractFixtures.clickStep(0, 102, 202)), false);
+        assertEquals(TurnOutcome.Status.COMPLETED, harness.executor().execute(ordinaryClick).outcome().status());
+
+        assertNull(harness.context().currentPendingDirectCombatEnterClaim(),
+                "an unmarked click invalidates rather than consumes the direct-combat ticket");
+        assertNull(harness.context().bindExpectedCombatEnterClaim("observation-run", 1L));
+    }
+
+    @Test
+    void expiredDirectCombatTicketCannotRegisterFromAMarkedTargetClick() {
+        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
+        WindowExpectedCombatEnterClaim claim = new WindowExpectedCombatEnterClaim(
+                "expired-direct-claim", "observation-run", "business-run", "XIULUO_V2", "attempt-1",
+                TurnContractFixtures.WINDOW_ID, harness.binding().getNativeHandle(), "local-alt-a", null);
+        assertTrue(harness.context().armPendingDirectCombatEnterClaim(claim));
+        TurnContractFixtures.expirePendingDirectCombatTicket(harness.context());
+
+        TurnAction targetClickTurn = new TurnAction(
+                1, "expired-direct-target-click", TurnContractFixtures.DEVICE_ID, TurnContractFixtures.WINDOW_ID,
+                List.of(new TurnStep(0, TurnStepType.INPUT, TurnInputAction.CLICK_LEFT,
+                        new TurnInputSpec(102, 202, null, null, null, null, null, null, null, true),
+                        null, null, null, null)), false);
+        assertEquals(TurnOutcome.Status.COMPLETED, harness.executor().execute(targetClickTurn).outcome().status());
+
+        assertNull(harness.context().currentPendingDirectCombatEnterClaim());
+        assertNull(harness.context().bindExpectedCombatEnterClaim("observation-run", 1L),
+                "an expired ticket must not authorize the later marked click as expected combat");
+    }
+
+    private static TurnStep clickStep(int index) {
+        return new TurnStep(
+                index, TurnStepType.INPUT, TurnInputAction.CLICK_LEFT,
+                new TurnInputSpec(10 + index, 20 + index, null, null, null, null, null),
+                null, null, null, null);
+    }
 }
 
 /** Shared fake-only fixtures for the six TURN-T03B tests; none starts a real runner or desktop boundary. */
@@ -536,6 +701,27 @@ final class TurnContractFixtures {
     }
 
     static ActionHarness actionHarness(boolean queueComplete, boolean stopRequested) {
+        return actionHarness(queueComplete, stopRequested, context -> null);
+    }
+
+    static void expirePendingDirectCombatTicket(WindowRuntimeContext context) {
+        try {
+            Field ticketField = WindowRuntimeContext.class.getDeclaredField("pendingDirectCombatEnterClaim");
+            ticketField.setAccessible(true);
+            Object ticket = ((AtomicReference<?>) ticketField.get(context)).get();
+            assertNotNull(ticket, "test precondition: direct-combat ticket is armed");
+            Field armedAtMs = ticket.getClass().getDeclaredField("armedAtMs");
+            UNSAFE.putLong(ticket, UNSAFE.objectFieldOffset(armedAtMs),
+                    System.currentTimeMillis() - 10_001L);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot expire direct-combat ticket fixture", failure);
+        }
+    }
+
+    static ActionHarness actionHarness(
+            boolean queueComplete,
+            boolean stopRequested,
+            Function<WindowRuntimeContext, LocalPathingStartProofMechanics> proofFactory) {
         WindowRuntimeContext context = new WindowRuntimeContext(WINDOW_ID, new GameContext());
         WindowNativeBinding binding = binding();
         context.setNativeBinding(binding);
@@ -543,7 +729,7 @@ final class TurnContractFixtures {
             context.setStatus(WindowRuntimeStatus.STOPPED);
         }
 
-        BareWindowTaskRunner runner = bareRunner(context, false, false);
+        WindowTaskRunner runner = bareRunner(context);
         TestTaskManager manager = new TestTaskManager();
         manager.putRunner(WINDOW_ID, runner);
         RecordingBindingRefreshService refresh = new RecordingBindingRefreshService(binding);
@@ -563,6 +749,7 @@ final class TurnContractFixtures {
                 new PoisonTurnClient());
         TurnMatchStepExecutor matchExecutor = new TurnMatchStepExecutor(templateCache, captureExecutor);
         LocalServiceStepDispatcher dispatcher = allocate(LocalServiceStepDispatcher.class);
+        LocalPathingStartProofMechanics proof = proofFactory.apply(context);
         LocalTurnActionExecutor executor = new LocalTurnActionExecutor(
                 manager,
                 refresh,
@@ -571,8 +758,9 @@ final class TurnContractFixtures {
                 matchExecutor,
                 inputExecutor,
                 dispatcher,
+                new PoisonTurnClient(),
                 new TurnOutcomeAssembler(),
-                allocate(LocalPathingStartProofMechanics.class));
+                proof == null ? allocate(LocalPathingStartProofMechanics.class) : proof);
         return new ActionHarness(
                 executor, manager, runner, context, binding, refresh, contextHolder, capture, queue, events);
     }
@@ -582,7 +770,7 @@ final class TurnContractFixtures {
         WindowNativeBinding binding = binding();
         context.setNativeBinding(binding);
 
-        BareWindowTaskRunner runner = bareRunner(context, false, false);
+        WindowTaskRunner runner = bareRunner(context);
         TestTaskManager manager = new TestTaskManager();
         manager.putRunner(WINDOW_ID, runner);
         RecordingBindingRefreshService refresh = new RecordingBindingRefreshService(binding);
@@ -643,6 +831,7 @@ final class TurnContractFixtures {
                 matchExecutor,
                 inputExecutor,
                 allocate(LocalServiceStepDispatcher.class),
+                new PoisonTurnClient(),
                 new TurnOutcomeAssembler(),
                 allocate(LocalPathingStartProofMechanics.class));
         return new ProbeActionHarness(
@@ -785,12 +974,11 @@ final class TurnContractFixtures {
                 "12345", "game-window-7", "GameWindow", 88L, 100, 200, 8, 6);
     }
 
-    static BareWindowTaskRunner bareRunner(WindowRuntimeContext context,
-                                            boolean running,
-                                            boolean shutdown) {
-        BareWindowTaskRunner runner = allocate(BareWindowTaskRunner.class);
-        runner.initialize(context, running, shutdown);
-        return runner;
+    static WindowTaskRunner bareRunner(WindowRuntimeContext context) {
+        // WindowTaskRunner is final now; a real runner bound to the test context is exactly what
+        // TurnExecutionWindow.resolveForAction reads (getWindowContext); no running task is needed for these
+        // mechanical action contracts, so getRemoteTaskHandle() stays null (no stop/pause tokens).
+        return new WindowTaskRunner(context);
     }
 
     static <T> T allocate(Class<T> type) {
@@ -813,7 +1001,7 @@ final class TurnContractFixtures {
 
     record ActionHarness(LocalTurnActionExecutor executor,
                          TestTaskManager manager,
-                         BareWindowTaskRunner runner,
+                         WindowTaskRunner runner,
                           WindowRuntimeContext context,
                           WindowNativeBinding binding,
                           RecordingBindingRefreshService refresh,
@@ -891,9 +1079,11 @@ final class TurnContractFixtures {
         private int getRunnerCalls;
 
         TestTaskManager() {
-            super(
-                    null, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, null, List.of(), null);
+            // MultiWindowTaskManager gained a 3-arg constructor; getRunner is overridden below, so the
+            // injected collaborators are never invoked — inert allocations keep the real capacity policy.
+            super(allocate(WindowRuntimeContextFactory.class),
+                    new WindowCapacityPolicy(5),
+                    allocate(WindowNativeBindingRefreshService.class));
         }
 
         void putRunner(String windowId, WindowTaskRunner runner) {
@@ -912,52 +1102,6 @@ final class TurnContractFixtures {
         public Optional<WindowTaskRunner> getRunner(String windowId) {
             getRunnerCalls++;
             return Optional.ofNullable(runners.get(windowId));
-        }
-    }
-
-    static final class BareWindowTaskRunner extends WindowTaskRunner {
-        private WindowRuntimeContext testContext;
-        private boolean testRunning;
-        private boolean testShutdown;
-
-        private BareWindowTaskRunner() {
-            super(
-                    null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, null, null, null, null, null, List.of(), null);
-        }
-
-        void initialize(WindowRuntimeContext context, boolean running, boolean shutdown) {
-            this.testContext = context;
-            this.testRunning = running;
-            this.testShutdown = shutdown;
-        }
-
-        void setRunning(boolean running) {
-            this.testRunning = running;
-        }
-
-        void setShutdown(boolean shutdown) {
-            this.testShutdown = shutdown;
-        }
-
-        @Override
-        public RunningTaskHandle getCurrentTask() {
-            return null;
-        }
-
-        @Override
-        public WindowRuntimeContext getWindowContext() {
-            return testContext;
-        }
-
-        @Override
-        public boolean isRunning() {
-            return testRunning;
-        }
-
-        @Override
-        public boolean isShutdown() {
-            return testShutdown;
         }
     }
 
@@ -982,6 +1126,7 @@ final class TurnContractFixtures {
     static final class RecordingCaptureService extends BoundWindowCaptureService {
         private final List<String> events;
         private int[] regionPixels = new int[] {ROI_PIXEL};
+        WindowRuntimeContext refreshContext;
         int failRegionCall;
         int fullWindowCalls;
         int regionCalls;
@@ -992,6 +1137,7 @@ final class TurnContractFixtures {
         }
 
         RecordingCaptureService(List<String> events) {
+            super(null);
             this.events = events;
         }
 
@@ -1014,6 +1160,12 @@ final class TurnContractFixtures {
             events.add("capture:roi");
             regionCalls++;
             lastBinding = binding;
+            if (refreshContext != null) {
+                refreshContext.setNativeBinding(new WindowNativeBinding(
+                        binding.getNativeHandle(), binding.getTitle(), binding.getClassName(),
+                        binding.getProcessId(), binding.getX(), binding.getY(),
+                        binding.getWidth(), binding.getHeight()));
+            }
             if (regionCalls == failRegionCall) {
                 throw new IllegalStateException("region-capture-failed-" + regionCalls);
             }
@@ -1062,17 +1214,74 @@ final class TurnContractFixtures {
         }
 
         @Override
-        public boolean submitAndWait(String description, List<InputAction> actions) {
+        public InputActionExecutionResult submitFrozenExactWindowActionsAndWait(
+                String description,
+                WindowRuntimeContext context,
+                WindowNativeBinding binding,
+                List<InputAction> actions) {
+            if (context.getNativeBinding() != binding) {
+                return notStarted(description);
+            }
             events.add("input:submit");
             submissions.add(List.copyOf(actions));
             boundWindowIds.add(contextHolder.rawCurrent()
                     .map(WindowRuntimeContext::getWindowId)
                     .orElse(null));
             if (interruptOnSubmit) {
+                // A worker-side stop: interrupt so the executor maps this to a typed STOPPED terminal, with
+                // no completed prefix (the whole tail stays NOT_RUN).
                 Thread.currentThread().interrupt();
-                return false;
+                return notStarted(description);
             }
-            return complete;
+            if (complete) {
+                return InputActionExecutionResult.builder()
+                        .requestId(description)
+                        .started(true)
+                        .startedStepIndex(0)
+                        .lastCompletedStepIndex(Math.max(0, actions.size() - 1))
+                        .status(InputActionExecutionResult.Status.COMPLETED)
+                        .build();
+            }
+            // A non-completing queue with no completed prefix: the first Turn step is FAILED, tail NOT_RUN.
+            return notStarted(description);
+        }
+
+        private static InputActionExecutionResult notStarted(String description) {
+            return InputActionExecutionResult.builder()
+                    .requestId(description)
+                    .started(false)
+                    .startedStepIndex(-1)
+                    .lastCompletedStepIndex(-1)
+                    .status(InputActionExecutionResult.Status.NOT_STARTED)
+                    .build();
+        }
+    }
+
+    static final class BindingReplacingPathingProof extends LocalPathingStartProofMechanics {
+        private final WindowRuntimeContext context;
+
+        BindingReplacingPathingProof(WindowRuntimeContext context) {
+            super(allocate(com.bot.dhxy.cloud.turn.local.LocalMovementFactMechanics.class));
+            this.context = context;
+        }
+
+        @Override
+        public BufferedImage readBaseline() {
+            WindowNativeBinding current = context.getNativeBinding();
+            context.setNativeBinding(new WindowNativeBinding(
+                    current.getNativeHandle(), current.getTitle(), current.getClassName(),
+                    current.getProcessId(), current.getX(), current.getY(),
+                    current.getWidth(), current.getHeight()));
+            return new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        }
+
+        @Override
+        public void proveAndRegister(WindowRuntimeContext context,
+                                     TurnPathingIntent intent,
+                                     BufferedImage baseline) {
+            if (baseline != null) {
+                baseline.flush();
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 package com.bot.dhxy.driver;
 
+import com.bot.dhxy.capture.WindowCaptureEvidenceStore;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -43,6 +44,24 @@ public class BoundWindowCaptureService {
     private static final int DIB_RGB_COLORS = 0;
     private static final int BI_RGB = 0;
 
+    private final WindowCaptureEvidenceStore captureEvidenceStore;
+
+    public BoundWindowCaptureService(WindowCaptureEvidenceStore captureEvidenceStore) {
+        this.captureEvidenceStore = captureEvidenceStore;
+    }
+
+    /**
+     * Captures the portion of a screen-absolute rectangle that overlaps the bound HWND.
+     *
+     * @param binding exact native window binding to capture.
+     * @param windowBaseX screen-absolute X coordinate of the window origin.
+     * @param windowBaseY screen-absolute Y coordinate of the window origin.
+     * @param x1 first screen-absolute X edge; ordering with {@code x2} is irrelevant.
+     * @param y1 first screen-absolute Y edge; ordering with {@code y2} is irrelevant.
+     * @param x2 second screen-absolute X edge.
+     * @param y2 second screen-absolute Y edge.
+     * @return the visible intersection with the HWND, or empty when the request has no overlap.
+     */
     public Optional<CaptureResult> captureRegion(WindowNativeBinding binding,
                                                  int windowBaseX,
                                                  int windowBaseY,
@@ -61,27 +80,40 @@ public class BoundWindowCaptureService {
             return Optional.empty();
         }
 
-        Optional<CaptureResult> fullWindow = captureWindow(binding);
+        Optional<CaptureResult> fullWindow = captureWindowInternal(binding);
         if (fullWindow.isEmpty()) {
             return Optional.empty();
         }
 
         BufferedImage windowImage = fullWindow.get().image();
         try {
-            int relativeX = startX - windowBaseX;
-            int relativeY = startY - windowBaseY;
-            if (relativeX < 0 || relativeY < 0
-                    || relativeX + width > windowImage.getWidth()
-                    || relativeY + height > windowImage.getHeight()) {
-                log.warn("HWND capture crop outside window: hwnd={} title={} base=({}, {}) rect=({}, {})-({}, {}) relative=({}, {}) size={}x{} image={}x{}",
+            int requestedLeft = startX - windowBaseX;
+            int requestedTop = startY - windowBaseY;
+            int requestedRight = requestedLeft + width;
+            int requestedBottom = requestedTop + height;
+            int relativeLeft = Math.max(0, requestedLeft);
+            int relativeTop = Math.max(0, requestedTop);
+            int relativeRight = Math.min(windowImage.getWidth(), requestedRight);
+            int relativeBottom = Math.min(windowImage.getHeight(), requestedBottom);
+            int clippedWidth = relativeRight - relativeLeft;
+            int clippedHeight = relativeBottom - relativeTop;
+            if (clippedWidth <= 0 || clippedHeight <= 0) {
+                log.warn("HWND capture crop has no overlap with window: hwnd={} title={} base=({}, {}) rect=({}, {})-({}, {}) relative=({}, {})-({}, {}) image={}x{}",
                         binding.getNativeHandle(), binding.getTitle(), windowBaseX, windowBaseY,
-                        x1, y1, x2, y2, relativeX, relativeY, width, height,
+                        x1, y1, x2, y2, requestedLeft, requestedTop, requestedRight, requestedBottom,
                         windowImage.getWidth(), windowImage.getHeight());
                 return Optional.empty();
             }
 
-            BufferedImage cropped = windowImage.getSubimage(relativeX, relativeY, width, height);
-            return Optional.of(new CaptureResult(copiedImage(cropped), fullWindow.get().provider()));
+            BufferedImage cropped = windowImage.getSubimage(
+                    relativeLeft, relativeTop, clippedWidth, clippedHeight);
+            CaptureResult result = new CaptureResult(copiedImage(cropped), fullWindow.get().provider());
+            int actualStartX = windowBaseX + relativeLeft;
+            int actualStartY = windowBaseY + relativeTop;
+            captureEvidenceStore.persist(result.image(), binding, result.provider().name(),
+                    actualStartX, actualStartY,
+                    actualStartX + clippedWidth, actualStartY + clippedHeight);
+            return Optional.of(result);
         } finally {
             windowImage.flush();
         }
@@ -118,6 +150,17 @@ public class BoundWindowCaptureService {
     }
 
     public Optional<CaptureResult> captureWindow(WindowNativeBinding binding) {
+        Optional<CaptureResult> captured = captureWindowInternal(binding);
+        captured.ifPresent(result -> captureEvidenceStore.persist(
+                result.image(), binding, result.provider().name(),
+                binding == null ? 0 : binding.getX(),
+                binding == null ? 0 : binding.getY(),
+                binding == null ? result.image().getWidth() : binding.getX() + result.image().getWidth(),
+                binding == null ? result.image().getHeight() : binding.getY() + result.image().getHeight()));
+        return captured;
+    }
+
+    private Optional<CaptureResult> captureWindowInternal(WindowNativeBinding binding) {
         WinDef.HWND hwnd = toHwnd(binding);
         if (hwnd == null) {
             return Optional.empty();
@@ -126,10 +169,16 @@ public class BoundWindowCaptureService {
         if (!User32.INSTANCE.GetWindowRect(hwnd, rect)) {
             return Optional.empty();
         }
-        int width = Math.max(0, rect.right - rect.left);
-        int height = Math.max(0, rect.bottom - rect.top);
+        int liveWidth = Math.max(0, rect.right - rect.left);
+        int liveHeight = Math.max(0, rect.bottom - rect.top);
+        int width = binding.hasGeometry() ? binding.getWidth() : liveWidth;
+        int height = binding.hasGeometry() ? binding.getHeight() : liveHeight;
         if (width <= 0 || height <= 0) {
             return Optional.empty();
+        }
+        if (liveWidth != width || liveHeight != height) {
+            log.debug("HWND capture uses registered geometry: hwnd={} title={} live={}x{} registered={}x{}",
+                    binding.getNativeHandle(), binding.getTitle(), liveWidth, liveHeight, width, height);
         }
 
         long hwndValue = Pointer.nativeValue(hwnd.getPointer());

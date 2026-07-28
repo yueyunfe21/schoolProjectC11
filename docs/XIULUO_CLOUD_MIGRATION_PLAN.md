@@ -1,5 +1,56 @@
 # 修罗玩法逻辑上云迁移方案（终极目标：路线 B 原语化薄壳）
 
+> **2026-07-24 LOCAL PATHING DIRECT WAKE REPAIR #25：** Client Runner 的
+> `ARRIVED/STOPPED_AWAY` 经 observation HTTPS 入站后直接写入 ready-event state；
+> Cloud 不再轮询坐标、重判终态或通过 coordinator 二跳。撤销临时 `60s` 本地硬判停与
+> 修罗独立 pathing timeout，保留 `2.2s` 本地停稳和原整轮 `180s` watchdog。
+>
+> **2026-07-24 LOCAL PATHING TERMINAL REPAIR #14：** 回城后的目标寻路必须由 Client
+> Runner 观察 exact-HWND 坐标条变化，并在稳定 `2200ms` 后发布 `STOPPED_AWAY`；Cloud
+> 只消费 exact intent terminal，再做新鲜位置同步和 NPC 业务点击。禁止仅登记 `ACTIVE`
+> 后依赖 180 秒 watchdog。双仓 compile exit `0`，待 fresh runtime。
+>
+> **2026-07-24 LOCAL-RUNNER-AUTHORITY-P1 FINAL SOURCE PASS：** 本地 Runner 负责所有战斗
+> generation 的机械进出；incidental 只更新本地状态，exact 修罗/五倍 enter claim 才发布业务
+> fast-exit。误判后的 retained return replay 具备 stop/replacement/lifecycle 栅栏，失败转既有
+> Cloud fallback。Parent Review #6=`0/0/0`，named families/双 compile/协议 `7/7` 通过；
+> fresh-runtime 尚未执行。
+>
+> **2026-07-23 xiuluo dialog local-first amendment delivered：** Client local kanda2 重新作为
+> exact-window first refusal；普通 miss 零副作用。Cloud `xiuluo-dialog 529x208` 从静态全程订阅改为
+> route/full-dialog、显式确认或 tracker terminal `+3000ms` stopped-static 的需求并集。
+> fallback 只消费严格晚于 eligible timestamp 和 demand sequence 的 exact 帧；claim、`IN_COMBAT`、
+> clear/replacement 立即撤销。源码测试已交付，父级终审与 fresh runtime 尚待完成。
+>
+> **2026-07-23 TURN-40G Stage 6 FINAL SOURCE+TEST PASS：** 父级 Review #27
+> `P0/P1/P2=0/0/0 / OWNER RELEASED`。Observer 已脱离 task turn/command/local-service；
+> 同序 dialog/pathing observation、replacement stale fence 与 repeated-CURRENT stationary timing
+> 全部闭合。真实 `IN_COMBAT` 仍是唯一推进依据，local-kanda 启用状态、fallback 和 phase 未改变。
+> 源码测试门已通过；fresh runtime 尚未执行。
+>
+> **2026-07-23 TURN-40G Stage 5 PASS / Stage 6：** local-kanda click 仍只作为 exact attempt fact；
+> prepared exact-CAS clear 与 pending combat confirmation 已回到修罗 owning task 持-turn 流程，
+> 真实 `IN_COMBAT` 仍是唯一推进依据。父级 Review #24 `0/0/0`。Stage 6 仅删除 Observer
+> turn/command wrapper，不改变该业务边界。
+>
+> **2026-07-23 TURN-40G Stage 4/5：** Stage 4 uploaded dialog/tracker ROI preparation 已由父级
+> Review #23 `0/0/0` 通过。Stage 5 只把 local-kanda prepared 清理、路线学习 settlement 与补充动作
+> 收回 owning task 持-turn 流程；点击仍只表示待确认，只有真实 `IN_COMBAT` 可推进修罗战斗状态。
+
+> **2026-07-22 TURN-40G Review #11更正：** Review #10未闭合实际点击。Cloud命中
+> `xiuluo.enterBattle`后Observer丢弃prepared返回值，只发通用attention，修罗phase无法从
+> `PREPARED_ACTION_READY`等待中醒来。现由Observer保证非空结果进入exact-window单槽并发布精确
+> operation/target；相同动作不重复发布且只消费一次。`7/7 + 19/19`与compile通过，仍待fresh实跑。
+
+> **2026-07-22 enter-battle执行链修复：** Client观察器以ACK queue-run为根，只接受
+> `queueRunId:index:taskCode`格式的同run修罗schedule，避免把合法子run误判为foreign；真实`529x208`
+> dialog ROI要求双端单图上限从256KiB调整为`640KiB`，完整JSON仍为4MiB。Cloud既有dialog识别与
+> kanda/fallback业务顺序未改，待重启双端fresh验收。
+
+> **2026-07-21 NAV Observer Repair #7：** 修罗phase与导航决策仍在Cloud；为恢复`696a12b0`的观察语义，
+> 新exact pathing intent不再消费创建前缓存的坐标ROI，并仅在更新的post-intent `observerSeq`上判定。
+> `coordinate-strip`采样恢复2000ms，其他观察ROI保持1000ms。相关合同`19/19`通过，待重启Cloud fresh验收。
+
 > 状态：**待 review**（作者已完成全量只读审计，等待 reviewer 结论写回本卡）
 > 编写时间：2026-07-10
 > 目标读者：reviewer / 架构决策人

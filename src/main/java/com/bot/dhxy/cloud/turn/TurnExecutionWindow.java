@@ -5,9 +5,11 @@ import com.bot.dhxy.cloud.turn.protocol.TurnPathingIntent;
 import com.bot.dhxy.cloud.turn.protocol.TurnPathingSnapshot;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
+import com.bot.dhxy.runner.context.TaskStartupMode;
+import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
-import com.bot.dhxy.window.execution.RunningTaskHandle;
+import com.bot.dhxy.window.execution.RemoteTaskHandle;
 import com.bot.dhxy.window.execution.WindowTaskRunner;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
@@ -33,14 +35,36 @@ public final class TurnExecutionWindow {
     private final WindowNativeBinding binding;
     private final TurnWindowMetadata metadata;
 
+    /**
+     * TURN-40B-C2 capture-at-resolve: the exact action-owning task handle and its live stop token,
+     * frozen with the other snapshot fields. The token object stays live (a later
+     * {@code requestStop()} is observable without re-resolving the runner), and the identity
+     * predicate compares the runner's current handle against this exact captured reference — same
+     * window/task ids are never identity. No TTL, cache, or second authority.
+     */
+    private final RemoteTaskHandle actionTaskHandle;
+    private final TaskStopToken actionStopToken;
+    /**
+     * The exact action-owning task's live pause token, frozen at the same resolve point as the stop token so a
+     * direct keyboard post can honor the running task's pause without a thread-local holder (production turn
+     * threads never bind {@code TaskExecutionContextHolder}). The token object stays live; no TTL or second store.
+     */
+    private final TaskPauseToken actionPauseToken;
+
     private TurnExecutionWindow(WindowTaskRunner runner,
                                 WindowRuntimeContext context,
                                 WindowNativeBinding binding,
-                                TurnWindowMetadata metadata) {
+                                TurnWindowMetadata metadata,
+                                RemoteTaskHandle actionTaskHandle,
+                                TaskStopToken actionStopToken,
+                                TaskPauseToken actionPauseToken) {
         this.runner = runner;
         this.context = context;
         this.binding = binding;
         this.metadata = metadata;
+        this.actionTaskHandle = actionTaskHandle;
+        this.actionStopToken = actionStopToken;
+        this.actionPauseToken = actionPauseToken;
     }
 
     /**
@@ -81,6 +105,14 @@ public final class TurnExecutionWindow {
                 binding.getY(),
                 binding.getWidth(),
                 binding.getHeight());
+        // TURN-40B-C2 single-snapshot resolve: read the action-owning handle exactly once, then derive the
+        // metadata stop state, the frozen handle, and the stop/pause tokens all from this one reference. A task
+        // replacement during resolve can no longer split the snapshot between the original handle (metadata stop
+        // state) and its successor (frozen handle); previously that split let the later identity predicate pass
+        // and the queue-owning bag path return generic FAILED instead of typed STOPPED.
+        RemoteTaskHandle actionTaskHandle = runner.getRemoteTaskHandle();
+        TaskStopToken actionStopToken = actionTaskHandle == null ? null : actionTaskHandle.getStopToken();
+        TaskPauseToken actionPauseToken = actionTaskHandle == null ? null : actionTaskHandle.getPauseToken();
         TurnWindowMetadata metadata = new TurnWindowMetadata(
                 deviceId,
                 context.getWindowId(),
@@ -88,10 +120,17 @@ public final class TurnExecutionWindow {
                 binding.getNativeHandle(),
                 binding.getProcessId(),
                 windowRect,
+                actionPauseToken != null && actionPauseToken.isPauseRequested(),
+                isStopRequested(actionTaskHandle, context),
+                toTurnPathingSnapshot(context.getPathingSnapshot()),
+                context.getRole().name(),
+                null,
+                null,
                 false,
-                isStopRequested(runner, context),
-                toTurnPathingSnapshot(context.getPathingSnapshot()));
-        return new TurnExecutionWindow(runner, context, binding, metadata);
+                false,
+                TaskStartupMode.NORMAL.name());
+        return new TurnExecutionWindow(
+                runner, context, binding, metadata, actionTaskHandle, actionStopToken, actionPauseToken);
     }
 
     public WindowTaskRunner runner() {
@@ -108,6 +147,34 @@ public final class TurnExecutionWindow {
 
     public TurnWindowMetadata metadata() {
         return metadata;
+    }
+
+    /**
+     * @return the live stop token of the exact task that owned this window at action resolution,
+     *         or null when no task owned it then. The token is never re-resolved: a successor
+     *         task's token is unreachable through this snapshot.
+     */
+    public TaskStopToken actionStopToken() {
+        return actionStopToken;
+    }
+
+    /**
+     * @return the live pause token of the exact task that owned this window at action resolution, or null when
+     *         no task owned it then. Never re-resolved: a successor task's token is unreachable through this
+     *         snapshot. A direct keyboard post honors this token so a running-task pause blocks it without a queue.
+     */
+    public TaskPauseToken actionPauseToken() {
+        return actionPauseToken;
+    }
+
+    /**
+     * Live identity predicate for queue-owning local-service admission: true only while the runner
+     * still owns the exact captured {@link RemoteTaskHandle} by reference identity. Evaluated at
+     * call time (never a snapshot); a resolve-time no-owner stays false, so queue-owning
+     * operations fail closed as stopped.
+     */
+    public boolean isActionTaskStillCurrent() {
+        return actionTaskHandle != null && runner.getRemoteTaskHandle() == actionTaskHandle;
     }
 
     /**
@@ -145,8 +212,7 @@ public final class TurnExecutionWindow {
                 snapshot.getDialogBlockingDetectedAtMs());
     }
 
-    private static boolean isStopRequested(WindowTaskRunner runner, WindowRuntimeContext context) {
-        RunningTaskHandle task = runner.getCurrentTask();
+    private static boolean isStopRequested(RemoteTaskHandle task, WindowRuntimeContext context) {
         TaskStopToken stopToken = task == null ? null : task.getStopToken();
         WindowRuntimeStatus status = context.getStatus();
         return (stopToken != null && stopToken.isStopRequested())

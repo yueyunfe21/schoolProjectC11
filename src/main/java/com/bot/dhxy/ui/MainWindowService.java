@@ -60,6 +60,7 @@ public class MainWindowService {
     }
 
     private void createStage() {
+        long createStartedAtNanos = System.nanoTime();
         Stage stage = new Stage();
         stage.setTitle("DHXY Robot 控制台");
         Scene scene = new Scene(mainWindowController.buildView(), 1280, 820);
@@ -71,6 +72,11 @@ public class MainWindowService {
             mainWindowController.shutdownUi();
             stage.hide();
             Platform.exit();
+        });
+        stage.setOnShown(event -> {
+            log.info("[UI_RESPONSIVENESS] JavaFX stage shown createElapsedMs={}",
+                    (System.nanoTime() - createStartedAtNanos) / 1_000_000L);
+            mainWindowController.onStageShown();
         });
         stage.show();
     }

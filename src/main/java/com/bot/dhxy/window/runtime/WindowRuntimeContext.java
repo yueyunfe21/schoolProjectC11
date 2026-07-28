@@ -19,16 +19,19 @@ import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowDialogInterest;
 import com.bot.dhxy.window.model.WindowDialogSnapshot;
+import com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowPathingIntent;
 import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.model.WindowPathingSnapshot;
 import com.bot.dhxy.window.model.WindowPathingState;
+import com.bot.dhxy.window.model.WindowRetainedReturnHomeReplay;
 import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
-import com.bot.dhxy.service.dialog.DialogOperation;
-import com.bot.dhxy.tools.GameStateUtil;
+import com.bot.dhxy.model.dialog.DialogOperation;
+import com.bot.dhxy.model.dialog.DialogType;
+import com.bot.dhxy.window.model.WindowFlyingState;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -49,6 +52,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Slf4j
 public class WindowRuntimeContext {
+    private static final long EXPECTED_BATTLE_ENTRY_TICKET_MAX_AGE_MS = 10_000L;
     private static final long ORDINARY_PRE_BATTLE_PAUSE_COMPENSATION_THRESHOLD_MS = 500L;
 
 
@@ -74,12 +78,22 @@ public class WindowRuntimeContext {
     private final AtomicReference<WindowPathingSnapshot> pathingSnapshot =
             new AtomicReference<>(WindowPathingSnapshot.idle());
     private final AtomicReference<WindowDialogSnapshot> visibleDialogSnapshot = new AtomicReference<>();
+    private final AtomicLong storyDialogVisibleSequence = new AtomicLong();
     private final AtomicReference<WindowDialogInterest> dialogInterest = new AtomicReference<>();
     private final AtomicLong observerWakeSeq = new AtomicLong();
+    private final AtomicLong observationPathingFactResetGeneration = new AtomicLong();
     private final AtomicReference<DialogPreparationRequest> dialogPreparationRequest = new AtomicReference<>();
     private final AtomicReference<PreparedDialogAction> preparedDialogAction = new AtomicReference<>();
     // CR253: 修罗 green-chain typed prepared jobs plus the attempt identity they are gated on.
     private final AtomicReference<XiuluoGreenChainSchedule> xiuluoGreenChainSchedule = new AtomicReference<>();
+    // TURN-40G: attempt-scoped one-shot local-kanda click claim (winner's attemptId; reset with the schedule).
+    private final AtomicReference<String> xiuluoEnterBattleClickClaim = new AtomicReference<>();
+    // TURN-40G review#3 P1: single monitor for every transition of the paired xiuluo probe state — a probe-only
+    // interest installed together with its green-chain schedule, schedule open/replace/clear, and the one-shot
+    // click claim all mutate under this lock, and the observation sampler snapshots the pair under the same lock.
+    // A reader can therefore never observe a new interest paired with the previous attempt's schedule (or the
+    // reverse) in the middle of an attempt replacement.
+    private final Object xiuluoKandaTransitionLock = new Object();
     private final ConcurrentHashMap<PreparedActionJobType, PreparedActionJob> preparedActionJobs =
             new ConcurrentHashMap<>();
     private final AtomicReference<PendingTransferChoiceMemory> pendingTransferChoiceMemory = new AtomicReference<>();
@@ -90,15 +104,26 @@ public class WindowRuntimeContext {
     private final ConcurrentLinkedQueue<PendingRouteOutcomeReplacement> pendingRouteOutcomeReplacements =
             new ConcurrentLinkedQueue<>();
     private final AtomicReference<TaskTrackerPanelCacheEntry> taskTrackerPanelCache = new AtomicReference<>();
+    private final AtomicReference<WindowTrackerAnchorMemory> taskTrackerAnchorMemory = new AtomicReference<>();
     private final AtomicReference<TaskTrackerPanelNegativeResult> taskTrackerPanelNegativeResult =
             new AtomicReference<>();
     private final AtomicLong taskTrackerPanelNegativeSequence = new AtomicLong();
     private final AtomicReference<String> pendingSmartClickEvidenceProofToken = new AtomicReference<>();
     private final AtomicReference<String> leftTopStatusSwitchClosePending = new AtomicReference<>();
+    private final AtomicReference<WindowRetainedReturnHomeReplay> retainedReturnHomeReplay =
+            new AtomicReference<>();
+    private final AtomicLong returnHomeReplayLifecycleGeneration = new AtomicLong();
+    private final AtomicReference<WindowExpectedCombatEnterClaim> expectedCombatEnterClaim =
+            new AtomicReference<>();
+    /** A Cloud-correlated direct-combat ticket; it is not expected until the marked local click succeeds. */
+    private final AtomicReference<PendingDirectCombatEnterTicket> pendingDirectCombatEnterClaim =
+            new AtomicReference<>();
+    private final AtomicLong localCombatGeneration = new AtomicLong();
+    private volatile boolean localCombatVisible;
     private final AtomicReference<String> taskQueueStartupPreparationDone = new AtomicReference<>();
     private final AtomicReference<TaskQueueStartupUiCleanupProbe> taskQueueStartupUiCleanupProbe =
             new AtomicReference<>();
-    private final AtomicReference<GameStateUtil.FlyingState> taskQueueStartupFlyingState = new AtomicReference<>();
+    private final AtomicReference<WindowFlyingState> taskQueueStartupFlyingState = new AtomicReference<>();
     private final AtomicReference<String> taskQueueStartupFlyingStateSource = new AtomicReference<>();
     private final AtomicReference<DialogPreparationStatus> dialogPreparationStatus =
             new AtomicReference<>(DialogPreparationStatus.none());
@@ -175,15 +200,27 @@ public class WindowRuntimeContext {
             next = next.withLiveState(previous.getTitle(), next.getClassName(), next.getProcessId(),
                     next.getX(), next.getY(), next.getWidth(), next.getHeight());
         }
+        // A capture may refresh the same live HWND snapshot between two input fragments of one turn.
+        // Preserve object identity for a byte-for-byte equivalent snapshot so the exact-generation
+        // input fence rejects only a real binding change, not a harmless refresh allocation.
+        if (sameNativeBindingSnapshot(previous, next)) {
+            return WindowIdentityDrift.none(windowId, previous, previous, playerIdentityEpoch.get());
+        }
         WindowIdentityDrift drift = detectIdentityDrift(previous, next);
         boolean hardNativeChange = !sameNativeWindow(previous, next);
         if (hardNativeChange) {
             if (previous != null && previous.hasNativeHandle() && next.hasNativeHandle()) {
                 playerIdentityEpoch.incrementAndGet();
-                WindowTitleIdentityParser.parse(next.getTitle()).ifPresent(this::applyParsedIdentity);
             }
             clearPlayerScopedRuntimeState("native binding changed");
+            invalidateReturnHomeReplayLifecycle("native binding changed");
+            clearExpectedCombatEnterClaim("native binding changed");
             clearIdentitySuspension("native binding changed");
+            WindowTitleIdentityParser.parse(next.getTitle()).ifPresent(this::applyParsedIdentity);
+        } else if (isIdentityEnrichment(previous, next)) {
+            // The same live HWND may first expose a short generic title and only later expose the
+            // player suffix. That enriches an unknown identity; it is not a player replacement.
+            WindowTitleIdentityParser.parse(next.getTitle()).ifPresent(this::applyParsedIdentity);
         } else if (drift.isDrifted()) {
             applyParsedIdentity(drift.newIdentity());
             if (isBusy()) {
@@ -212,6 +249,343 @@ public class WindowRuntimeContext {
         return nativeBinding != null && nativeBinding.hasNativeHandle();
     }
 
+    public void retainReturnHomeReplay(WindowRetainedReturnHomeReplay replay) {
+        retainedReturnHomeReplay.set(Objects.requireNonNull(replay, "replay"));
+        log.info("[local-runner] retained post-combat return replay: windowId={} task={} observationRunId={} businessTaskRunId={} intent={} hwnd={}",
+                windowId, replay.taskCode(), replay.observationRunId(), replay.businessTaskRunId(),
+                replay.arguments().intent(), replay.sourceHwnd());
+    }
+
+    public ReplayArmResult armRetainedReturnHomeReplay(
+            String taskCode,
+            String observationRunId,
+            String businessTaskRunId,
+            String exactWindowId,
+            String exactHwnd) {
+        while (true) {
+            WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+            if (current == null) {
+                return ReplayArmResult.NO_RETAINED_COMMAND;
+            }
+            if (!current.taskCode().equalsIgnoreCase(taskCode)
+                    || !current.observationRunId().equals(observationRunId)
+                    || !current.businessTaskRunId().equals(businessTaskRunId)
+                    || !current.windowId().equals(exactWindowId)
+                    || !current.sourceHwnd().equals(exactHwnd)) {
+                return ReplayArmResult.IDENTITY_REJECTED;
+            }
+            if (current.state() == WindowRetainedReturnHomeReplay.State.ARMED
+                    || current.state() == WindowRetainedReturnHomeReplay.State.REPLAYING) {
+                return ReplayArmResult.ARMED;
+            }
+            if (retainedReturnHomeReplay.compareAndSet(
+                    current, current.withState(WindowRetainedReturnHomeReplay.State.ARMED))) {
+                return ReplayArmResult.ARMED;
+            }
+        }
+    }
+
+    public ReplayClaim claimArmedReturnHomeReplay(
+            String taskCode,
+            String observationRunId,
+            String businessTaskRunId,
+            String exactWindowId,
+            String exactHwnd) {
+        while (true) {
+            WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+            if (current == null || current.state() != WindowRetainedReturnHomeReplay.State.ARMED) {
+                return ReplayClaim.none();
+            }
+            if (!current.taskCode().equalsIgnoreCase(taskCode)
+                    || !current.observationRunId().equals(observationRunId)
+                    || !current.businessTaskRunId().equals(businessTaskRunId)
+                    || !current.windowId().equals(exactWindowId)
+                    || !current.sourceHwnd().equals(exactHwnd)) {
+                return ReplayClaim.rejected(current);
+            }
+            WindowRetainedReturnHomeReplay replaying =
+                    current.withState(WindowRetainedReturnHomeReplay.State.REPLAYING);
+            if (retainedReturnHomeReplay.compareAndSet(current, replaying)) {
+                return ReplayClaim.claimed(replaying);
+            }
+        }
+    }
+
+    public boolean hasArmedReturnHomeReplay(
+            String taskCode,
+            String observationRunId,
+            String businessTaskRunId) {
+        WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+        return current != null
+                && current.state() == WindowRetainedReturnHomeReplay.State.ARMED
+                && current.taskCode().equalsIgnoreCase(taskCode)
+                && current.observationRunId().equals(observationRunId)
+                && current.businessTaskRunId().equals(businessTaskRunId)
+                && current.windowId().equals(windowId);
+    }
+
+    /**
+     * Returns the armed replay for this exact observation run without claiming it.
+     *
+     * @param observationRunId client observation-run identity; must be non-blank and exact.
+     * @return the immutable armed replay, or {@code null} when no exact replay is armed.
+     */
+    public WindowRetainedReturnHomeReplay currentArmedReturnHomeReplay(String observationRunId) {
+        if (observationRunId == null || observationRunId.isBlank()) {
+            return null;
+        }
+        WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+        return current != null
+                && current.state() == WindowRetainedReturnHomeReplay.State.ARMED
+                && current.observationRunId().equals(observationRunId)
+                && current.windowId().equals(windowId)
+                ? current
+                : null;
+    }
+
+    public long currentReturnHomeReplayLifecycleGeneration() {
+        return returnHomeReplayLifecycleGeneration.get();
+    }
+
+    public boolean isReturnHomeReplayActive(WindowRetainedReturnHomeReplay replay) {
+        if (replay == null
+                || replay.lifecycleGeneration() != returnHomeReplayLifecycleGeneration.get()) {
+            return false;
+        }
+        WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+        return current != null
+                && current.state() == WindowRetainedReturnHomeReplay.State.REPLAYING
+                && current.tokenId().equals(replay.tokenId())
+                && current.observationRunId().equals(replay.observationRunId())
+                && current.businessTaskRunId().equals(replay.businessTaskRunId())
+                && current.taskCode().equalsIgnoreCase(replay.taskCode())
+                && current.windowId().equals(replay.windowId());
+    }
+
+    public boolean completeRetainedReturnHomeReplay(
+            WindowRetainedReturnHomeReplay replay,
+            String reason) {
+        if (replay == null) {
+            return false;
+        }
+        while (true) {
+            WindowRetainedReturnHomeReplay current = retainedReturnHomeReplay.get();
+            if (current == null
+                    || !current.tokenId().equals(replay.tokenId())
+                    || current.lifecycleGeneration() != replay.lifecycleGeneration()
+                    || !current.observationRunId().equals(replay.observationRunId())
+                    || !current.businessTaskRunId().equals(replay.businessTaskRunId())) {
+                return false;
+            }
+            if (retainedReturnHomeReplay.compareAndSet(current, null)) {
+                log.info("[local-runner] completed exact retained replay: windowId={} tokenId={} task={} observationRunId={} businessTaskRunId={} reason={}",
+                        windowId, replay.tokenId(), replay.taskCode(), replay.observationRunId(),
+                        replay.businessTaskRunId(), normalize(reason));
+                return true;
+            }
+        }
+    }
+
+    public long invalidateReturnHomeReplayLifecycle(String reason) {
+        long generation = returnHomeReplayLifecycleGeneration.incrementAndGet();
+        WindowRetainedReturnHomeReplay cleared = retainedReturnHomeReplay.getAndSet(null);
+        log.info("[local-runner] invalidated return replay lifecycle: windowId={} generation={} tokenId={} reason={}",
+                windowId, generation, cleared == null ? null : cleared.tokenId(), normalize(reason));
+        return generation;
+    }
+
+    public void clearRetainedReturnHomeReplay(String reason) {
+        WindowRetainedReturnHomeReplay cleared = retainedReturnHomeReplay.getAndSet(null);
+        if (cleared != null) {
+            log.info("[local-runner] cleared retained post-combat return replay: windowId={} task={} observationRunId={} businessTaskRunId={} reason={}",
+                    windowId, cleared.taskCode(), cleared.observationRunId(),
+                    cleared.businessTaskRunId(), normalize(reason));
+        }
+    }
+
+    public boolean registerExpectedCombatEnterClaim(WindowExpectedCombatEnterClaim claim) {
+        Objects.requireNonNull(claim, "claim");
+        WindowNativeBinding binding = nativeBinding;
+        if (!windowId.equals(claim.windowId())
+                || binding == null
+                || !binding.hasNativeHandle()
+                || !binding.getNativeHandle().equals(claim.hwnd())
+                || (!"local-template".equals(claim.source())
+                && !"local-alt-a".equals(claim.source()))) {
+            return false;
+        }
+        WindowExpectedCombatEnterClaim stored = localCombatVisible && localCombatGeneration.get() > 0L
+                ? claim.bind(localCombatGeneration.get()) : claim;
+        expectedCombatEnterClaim.set(stored);
+        return true;
+    }
+
+    /** Stores an exact direct-combat ticket until its marked Alt+A target click has actually completed. */
+    public boolean armPendingDirectCombatEnterClaim(WindowExpectedCombatEnterClaim claim) {
+        Objects.requireNonNull(claim, "claim");
+        WindowNativeBinding binding = nativeBinding;
+        if (!windowId.equals(claim.windowId()) || binding == null || !binding.hasNativeHandle()
+                || !binding.getNativeHandle().equals(claim.hwnd()) || !"local-alt-a".equals(claim.source())) {
+            return false;
+        }
+        pendingDirectCombatEnterClaim.set(new PendingDirectCombatEnterTicket(claim, System.currentTimeMillis()));
+        return true;
+    }
+
+    /** Consumes the pending ticket only after the exact marked target click completed. */
+    public boolean consumePendingDirectCombatEnterClaim(String claimId) {
+        PendingDirectCombatEnterTicket ticket = currentPendingDirectCombatEnterTicket();
+        if (ticket == null || !ticket.claim().claimId().equals(claimId)
+                || !pendingDirectCombatEnterClaim.compareAndSet(ticket, null)) {
+            return false;
+        }
+        return registerExpectedCombatEnterClaim(ticket.claim());
+    }
+
+    public WindowExpectedCombatEnterClaim currentPendingDirectCombatEnterClaim() {
+        PendingDirectCombatEnterTicket ticket = currentPendingDirectCombatEnterTicket();
+        return ticket == null ? null : ticket.claim();
+    }
+
+    private PendingDirectCombatEnterTicket currentPendingDirectCombatEnterTicket() {
+        while (true) {
+            PendingDirectCombatEnterTicket ticket = pendingDirectCombatEnterClaim.get();
+            if (ticket == null) {
+                return null;
+            }
+            long ageMs = System.currentTimeMillis() - ticket.armedAtMs();
+            if (ageMs >= 0L && ageMs <= EXPECTED_BATTLE_ENTRY_TICKET_MAX_AGE_MS) {
+                return ticket;
+            }
+            if (pendingDirectCombatEnterClaim.compareAndSet(ticket, null)) {
+                log.info("[local-runner] cleared expired direct-combat enter ticket: windowId={} claimId={} ageMs={}",
+                        windowId, ticket.claim().claimId(), ageMs);
+                return null;
+            }
+        }
+    }
+
+    public void clearPendingDirectCombatEnterClaim(String reason) {
+        pendingDirectCombatEnterClaim.set(null);
+    }
+
+    public void updateLocalCombatGeneration(long generation, boolean visible) {
+        if (generation > 0L) {
+            localCombatGeneration.set(generation);
+        }
+        localCombatVisible = visible;
+    }
+
+    public WindowExpectedCombatEnterClaim bindExpectedCombatEnterClaim(
+            String observationRunId, String taskCode, long combatGeneration) {
+        while (true) {
+            WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+            if (current == null || current.combatGeneration() != null
+                    || !current.observationRunId().equals(observationRunId)
+                    || !current.taskCode().equalsIgnoreCase(taskCode)
+                    || !current.windowId().equals(windowId)) {
+                return null;
+            }
+            WindowExpectedCombatEnterClaim bound = current.bind(combatGeneration);
+            if (expectedCombatEnterClaim.compareAndSet(current, bound)) {
+                return bound;
+            }
+        }
+    }
+
+    public WindowExpectedCombatEnterClaim bindExpectedCombatEnterClaim(
+            String observationRunId, long combatGeneration) {
+        while (true) {
+            WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+            if (current == null || current.combatGeneration() != null
+                    || !current.observationRunId().equals(observationRunId)
+                    || !current.windowId().equals(windowId)) {
+                return null;
+            }
+            WindowExpectedCombatEnterClaim bound = current.bind(combatGeneration);
+            if (expectedCombatEnterClaim.compareAndSet(current, bound)) {
+                return bound;
+            }
+        }
+    }
+
+    public WindowExpectedCombatEnterClaim currentExpectedCombatEnterClaim(
+            String observationRunId, String taskCode, long combatGeneration) {
+        WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+        return current != null
+                && Objects.equals(current.combatGeneration(), combatGeneration)
+                && current.observationRunId().equals(observationRunId)
+                && current.taskCode().equalsIgnoreCase(taskCode)
+                && current.windowId().equals(windowId)
+                ? current : null;
+    }
+
+    public WindowExpectedCombatEnterClaim currentExpectedCombatEnterClaim(
+            String observationRunId, long combatGeneration) {
+        WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+        return current != null
+                && Objects.equals(current.combatGeneration(), combatGeneration)
+                && current.observationRunId().equals(observationRunId)
+                && current.windowId().equals(windowId)
+                ? current : null;
+    }
+
+    public void clearExpectedCombatEnterClaim(String reason) {
+        WindowExpectedCombatEnterClaim cleared = expectedCombatEnterClaim.getAndSet(null);
+        if (cleared != null) {
+            log.info("[local-runner] cleared expected combat enter claim: windowId={} claimId={} observationRunId={} businessTaskRunId={} reason={}",
+                    windowId, cleared.claimId(), cleared.observationRunId(),
+                    cleared.businessTaskRunId(), normalize(reason));
+        }
+    }
+
+    private void clearUnboundExpectedCombatClaimForReplacedAttempt(
+            XiuluoGreenChainSchedule schedule,
+            String reason) {
+        while (true) {
+            WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
+            if (current == null
+                    || current.combatGeneration() != null
+                    || !"XIULUO_V2".equalsIgnoreCase(current.taskCode())
+                    || !current.businessTaskRunId().equals(schedule.getTaskRunId())
+                    || Objects.equals(current.attemptId(), schedule.getAttemptId())) {
+                return;
+            }
+            if (expectedCombatEnterClaim.compareAndSet(current, null)) {
+                log.info("[local-runner] cleared stale expected enter claim on attempt replacement: windowId={} claimId={} businessTaskRunId={} oldAttemptId={} newAttemptId={} reason={}",
+                        windowId, current.claimId(), current.businessTaskRunId(), current.attemptId(),
+                        schedule.getAttemptId(), normalize(reason));
+                return;
+            }
+        }
+    }
+
+    public enum ReplayArmResult {
+        ARMED,
+        NO_RETAINED_COMMAND,
+        IDENTITY_REJECTED
+    }
+
+    public record ReplayClaim(ReplayClaimStatus status, WindowRetainedReturnHomeReplay replay) {
+        static ReplayClaim none() {
+            return new ReplayClaim(ReplayClaimStatus.NONE, null);
+        }
+
+        static ReplayClaim claimed(WindowRetainedReturnHomeReplay replay) {
+            return new ReplayClaim(ReplayClaimStatus.CLAIMED, replay);
+        }
+
+        static ReplayClaim rejected(WindowRetainedReturnHomeReplay replay) {
+            return new ReplayClaim(ReplayClaimStatus.IDENTITY_REJECTED, replay);
+        }
+    }
+
+    public enum ReplayClaimStatus {
+        NONE,
+        CLAIMED,
+        IDENTITY_REJECTED
+    }
+
     public LocalDateTime getLastStartedAt() { return lastStartedAt; }
 
     public LocalDateTime getLastFinishedAt() { return lastFinishedAt; }
@@ -236,6 +610,11 @@ public class WindowRuntimeContext {
 
     public Optional<WindowDialogSnapshot> getVisibleDialogSnapshot() {
         return Optional.ofNullable(visibleDialogSnapshot.get());
+    }
+
+    /** Monotonic edge sequence for transitions into a visible story dialog. */
+    public long getStoryDialogVisibleSequence() {
+        return storyDialogVisibleSequence.get();
     }
 
     /**
@@ -281,6 +660,16 @@ public class WindowRuntimeContext {
 
     public TaskTrackerPanelCacheEntry getTaskTrackerPanelCache() {
         return taskTrackerPanelCache.get();
+    }
+
+    /** @return the last window-relative tracker anchor for this exact runtime, or empty. */
+    public Optional<WindowTrackerAnchorMemory> getTaskTrackerAnchorMemory() {
+        return Optional.ofNullable(taskTrackerAnchorMemory.get());
+    }
+
+    /** @param anchor window-relative tracker anchor, or null to clear the exact-window cache. */
+    public void setTaskTrackerAnchorMemory(WindowTrackerAnchorMemory anchor) {
+        taskTrackerAnchorMemory.set(anchor);
     }
 
     public TaskTrackerPanelNegativeResult getTaskTrackerPanelNegativeResult() {
@@ -538,8 +927,8 @@ public class WindowRuntimeContext {
      * @param state observed flying state; null is stored as {@link GameStateUtil.FlyingState#UNKNOWN}.
      * @param source diagnostic source that produced the observation.
      */
-    public void markTaskQueueStartupFlyingState(GameStateUtil.FlyingState state, String source) {
-        GameStateUtil.FlyingState normalizedState = state == null ? GameStateUtil.FlyingState.UNKNOWN : state;
+    public void markTaskQueueStartupFlyingState(WindowFlyingState state, String source) {
+        WindowFlyingState normalizedState = state == null ? WindowFlyingState.UNKNOWN : state;
         String normalizedSource = normalize(source);
         taskQueueStartupFlyingState.set(normalizedState);
         taskQueueStartupFlyingStateSource.set(normalizedSource == null ? "unknown" : normalizedSource);
@@ -553,10 +942,10 @@ public class WindowRuntimeContext {
      * @param source diagnostic consume source.
      * @return the observed startup state, or UNKNOWN when no startup observation exists.
      */
-    public GameStateUtil.FlyingState consumeTaskQueueStartupFlyingState(String source) {
-        GameStateUtil.FlyingState state = taskQueueStartupFlyingState.getAndSet(null);
+    public WindowFlyingState consumeTaskQueueStartupFlyingState(String source) {
+        WindowFlyingState state = taskQueueStartupFlyingState.getAndSet(null);
         String observedSource = taskQueueStartupFlyingStateSource.getAndSet(null);
-        GameStateUtil.FlyingState result = state == null ? GameStateUtil.FlyingState.UNKNOWN : state;
+        WindowFlyingState result = state == null ? WindowFlyingState.UNKNOWN : state;
         log.info("[window startup flying] consumed: windowId={} state={} observedSource={} consumeSource={}",
                 windowId, result, observedSource, normalize(source));
         return result;
@@ -564,7 +953,7 @@ public class WindowRuntimeContext {
 
     /** Clear stale startup flying evidence without consuming it as a task decision. */
     public void clearTaskQueueStartupFlyingState(String source) {
-        GameStateUtil.FlyingState cleared = taskQueueStartupFlyingState.getAndSet(null);
+        WindowFlyingState cleared = taskQueueStartupFlyingState.getAndSet(null);
         String observedSource = taskQueueStartupFlyingStateSource.getAndSet(null);
         if (cleared != null || observedSource != null) {
             log.info("[window startup flying] cleared: windowId={} state={} observedSource={} source={}",
@@ -662,6 +1051,8 @@ public class WindowRuntimeContext {
     }
 
     public long getOrdinaryPreBattleStartedAtMs() { return ordinaryPreBattleStartedAtMs.get(); }
+
+    public long getOrdinaryPreBattleTimeoutPublishedAtMs() { return ordinaryPreBattleTimeoutPublishedAtMs.get(); }
 
     public TaskType getOrdinaryPreBattleTaskType() { return ordinaryPreBattleTaskType; }
 
@@ -771,6 +1162,20 @@ public class WindowRuntimeContext {
             return false;
         }
         return ordinaryEnterBattleTargetMapOpenedAtMs.compareAndSet(0L, Math.max(1L, nowMs));
+    }
+
+    /**
+     * Atomically open the active target-map gate and install its exact dialog interest.
+     * Replays are idempotent: an already-open gate refreshes the same interest in the same call.
+     */
+    public synchronized boolean openOrdinaryEnterBattleTargetMapGateAndUpdateDialogInterest(
+            WindowDialogInterest interest, String source, long nowMs) {
+        if (ordinaryEnterBattleTargetMapGateStartedAtMs.get() <= 0L || interest == null) {
+            return false;
+        }
+        ordinaryEnterBattleTargetMapOpenedAtMs.compareAndSet(0L, Math.max(1L, nowMs));
+        updateDialogInterest(interest, source);
+        return ordinaryEnterBattleTargetMapOpenedAtMs.get() > 0L;
     }
 
     /**
@@ -1082,7 +1487,11 @@ public class WindowRuntimeContext {
         if (snapshot == null) {
             return;
         }
-        visibleDialogSnapshot.set(snapshot);
+        WindowDialogSnapshot previous = visibleDialogSnapshot.getAndSet(snapshot);
+        if (snapshot.getType() == DialogType.STORY
+                && (previous == null || previous.getType() != DialogType.STORY)) {
+            storyDialogVisibleSequence.incrementAndGet();
+        }
         long now = System.currentTimeMillis();
         WindowPathingIntent activeIntent = getActivePathingIntent().orElse(null);
         log.info("[latency] event=window.dialog.visible.update windowId={} hwnd={} type={} source={} reason={} detectedAgeMs={} rect={} provider={} activeIntentId={} activeIntentTarget={} activeIntentSource={} activeIntentAgeMs={}",
@@ -1276,7 +1685,64 @@ public class WindowRuntimeContext {
         if (schedule == null) {
             return;
         }
+        synchronized (xiuluoKandaTransitionLock) {
+            applyXiuluoGreenChainScheduleLocked(schedule, reason);
+        }
+    }
+
+    /**
+     * TURN-40G review#3 P1: installs (or replaces) the paired probe-only dialog interest AND green-chain attempt
+     * schedule as ONE atomic transition under the kanda monitor. The stale-job discard, stale prepared-kanda
+     * discard and one-shot click-claim re-arm run inside the same transition, so a concurrent sampler that reads
+     * through {@link #getXiuluoKandaProbeView()} can never pair the new interest with the old attempt's schedule
+     * (or click for a stale attempt before the fence runs). Ordinary interest-only updates keep using
+     * {@link #updateDialogInterest} unchanged.
+     *
+     * @param interest probe-only interest published by the attempt; required.
+     * @param schedule exact attempt identity opened/replaced with the interest; required.
+     * @param reason diagnostic reason written to logs.
+     */
+    public void updateDialogInterestWithXiuluoGreenChainSchedule(WindowDialogInterest interest,
+                                                                 XiuluoGreenChainSchedule schedule,
+                                                                 String reason) {
+        Objects.requireNonNull(interest, "interest");
+        Objects.requireNonNull(schedule, "schedule");
+        synchronized (xiuluoKandaTransitionLock) {
+            applyXiuluoGreenChainScheduleLocked(schedule, reason);
+            dialogInterest.set(interest);
+        }
+        long wakeSeq = observerWakeSeq.incrementAndGet();
+        log.info("[latency] event=window.dialog.interest-with-schedule.update windowId={} task={} operations={} source={} reason={} schedule=[{}] wakeSeq={}",
+                windowId, interest.getTaskType(), interest.getOperations(), normalize(interest.getSource()),
+                normalize(reason), schedule.identityText(), wakeSeq);
+    }
+
+    /** Immutable single-transition snapshot of the paired xiuluo probe state (TURN-40G review#3 P1). */
+    public record XiuluoKandaProbeView(
+            WindowDialogInterest interest,
+            XiuluoGreenChainSchedule schedule,
+            boolean enterBattleClaimed) {
+    }
+
+    /**
+     * Reads the interest+schedule pair under the same monitor as every paired transition. The two components are
+     * always from one consistent state: mid-replacement the reader sees either the complete old pair or the
+     * complete new pair, never a torn mixture.
+     */
+    public XiuluoKandaProbeView getXiuluoKandaProbeView() {
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            return new XiuluoKandaProbeView(
+                    dialogInterest.get(),
+                    schedule,
+                    schedule != null
+                            && Objects.equals(schedule.getAttemptId(), xiuluoEnterBattleClickClaim.get()));
+        }
+    }
+
+    private void applyXiuluoGreenChainScheduleLocked(XiuluoGreenChainSchedule schedule, String reason) {
         XiuluoGreenChainSchedule previous = xiuluoGreenChainSchedule.getAndSet(schedule);
+        clearUnboundExpectedCombatClaimForReplacedAttempt(schedule, reason);
         preparedActionJobs.entrySet().removeIf(entry -> {
             PreparedActionJob job = entry.getValue();
             if (schedule.sameIdentity(job)) {
@@ -1290,9 +1756,64 @@ public class WindowRuntimeContext {
         // prepared stamped for another (or no) attempt dies with the schedule replacement.
         discardStaleXiuluoEnterBattlePrepared(schedule.getAttemptId(),
                 "schedule-replaced:" + normalize(reason));
+        // TURN-40G: a replaced attempt re-arms the local-kanda one-shot click claim; the previous attempt's
+        // click (if any) can never satisfy the new attempt.
+        xiuluoEnterBattleClickClaim.set(null);
         log.info("[latency] event=window.green-chain.schedule.update windowId={} reason={} schedule=[{}] previous=[{}]",
                 windowId, normalize(reason), schedule.identityText(),
                 previous == null ? null : previous.identityText());
+    }
+
+    /**
+     * TURN-40G: attempt-scoped one-shot arbitration for the restored xiuluo local-kanda click. Exactly one winner
+     * may submit the enter-battle input per green-chain attempt — a second local hit for the same attempt, or any
+     * competitor racing this attempt, loses the CAS and only records superseded. A physically unexecuted click
+     * releases the claim so the still-open attempt keeps its fast path (execution failure consumes nothing).
+     */
+    public boolean tryClaimXiuluoEnterBattleClick(XiuluoGreenChainSchedule expected, String reason) {
+        if (expected == null || expected.getAttemptId() == null || expected.getAttemptId().isBlank()) {
+            return false;
+        }
+        boolean claimed;
+        // TURN-40G review#3 P1: the identity check and the claim CAS are one transition under the kanda
+        // monitor — a schedule replacement can never slip between them and let a stale attempt claim the click.
+        // TURN-40G review#5 P1: the live schedule must match the caller's FULL five-field identity (windowId,
+        // hwnd, taskRunId, round, attemptId), so an old runner OR a same-run replacement that changed round/hwnd
+        // (even while ids collide/reuse) can never claim the current schedule's click.
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            if (schedule == null || !schedule.sameFullIdentity(expected)) {
+                return false;
+            }
+            claimed = xiuluoEnterBattleClickClaim.compareAndSet(null, expected.getAttemptId());
+        }
+        log.info("[latency] event=window.local-kanda.claim windowId={} claimed={} expected=[{}] reason={}",
+                windowId, claimed, expected.identityText(), normalize(reason));
+        return claimed;
+    }
+
+    /**
+     * TURN-40G: releases the one-shot click claim after a physically unexecuted click (nothing was consumed).
+     * TURN-40G review#5: the release is fenced to the caller's FULL five-field schedule identity — the live
+     * schedule must still be that exact identity, so an old runner or a same-run round/hwnd replacement can
+     * never release (and thereby re-arm) a different schedule's claim.
+     */
+    public void releaseXiuluoEnterBattleClick(XiuluoGreenChainSchedule expected, String reason) {
+        if (expected == null || expected.getAttemptId() == null) {
+            return;
+        }
+        boolean released;
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            if (schedule == null || !schedule.sameFullIdentity(expected)) {
+                return;
+            }
+            released = xiuluoEnterBattleClickClaim.compareAndSet(expected.getAttemptId(), null);
+        }
+        if (released) {
+            log.info("[latency] event=window.local-kanda.claim-release windowId={} expected=[{}] reason={}",
+                    windowId, expected.identityText(), normalize(reason));
+        }
     }
 
     /**
@@ -1304,7 +1825,13 @@ public class WindowRuntimeContext {
      * @param reason diagnostic reason written to logs.
      */
     public void clearXiuluoGreenChainSchedule(String reason) {
-        XiuluoGreenChainSchedule cleared = xiuluoGreenChainSchedule.getAndSet(null);
+        XiuluoGreenChainSchedule cleared;
+        // TURN-40G review#3 P1: the close runs under the same kanda monitor as open/replace and the paired reader.
+        synchronized (xiuluoKandaTransitionLock) {
+            cleared = xiuluoGreenChainSchedule.getAndSet(null);
+            // TURN-40G: the local-kanda one-shot click claim dies with its attempt.
+            xiuluoEnterBattleClickClaim.set(null);
+        }
         clearPreparedActionJobs(reason);
         if (cleared != null) {
             // CR253 review P1: closing the attempt also discards its stamped local kanda prepared;
@@ -1394,7 +1921,7 @@ public class WindowRuntimeContext {
      * @return consumed job, or null when absent or stale.
      */
     public PreparedActionJob consumePreparedActionJobValidated(PreparedActionJobType type,
-                                                               long expectedTaskRunId,
+                                                               String expectedTaskRunId,
                                                                int expectedRound,
                                                                String expectedAttemptId,
                                                                String reason) {
@@ -1409,7 +1936,7 @@ public class WindowRuntimeContext {
         String currentHwnd = binding == null ? null : binding.getNativeHandle();
         boolean identityMatched = expectedAttemptId != null
                 && expectedAttemptId.equals(job.getAttemptId())
-                && expectedTaskRunId == job.getTaskRunId()
+                && expectedTaskRunId != null && expectedTaskRunId.equals(job.getTaskRunId())
                 && expectedRound == job.getRound()
                 && windowId.equals(job.getWindowId())
                 && currentHwnd != null && currentHwnd.equals(job.getHwnd());
@@ -1669,6 +2196,16 @@ public class WindowRuntimeContext {
         return pendingTransferChoiceMemory.getAndSet(null);
     }
 
+    public PendingTransferChoiceMemory consumePendingTransferChoiceMemoryIfPathingCurrent(
+            String expectedIntentId, String expectedSource) {
+        WindowPathingIntent active = getActivePathingIntent().orElse(null);
+        if (active == null || !Objects.equals(active.getIntentId(), normalize(expectedIntentId))
+                || !Objects.equals(active.getSource(), normalize(expectedSource))) {
+            return null;
+        }
+        return pendingTransferChoiceMemory.getAndSet(null);
+    }
+
     public void clearPendingTransferChoiceMemory(String reason) {
         pendingTransferChoiceMemory.set(null);
     }
@@ -1720,6 +2257,16 @@ public class WindowRuntimeContext {
     }
 
     public PendingRouteOutcome consumePendingRouteOutcome() {
+        return pendingRouteOutcome.getAndSet(null);
+    }
+
+    public PendingRouteOutcome consumePendingRouteOutcomeIfPathingCurrent(
+            String expectedIntentId, String expectedSource) {
+        WindowPathingIntent active = getActivePathingIntent().orElse(null);
+        if (active == null || !Objects.equals(active.getIntentId(), normalize(expectedIntentId))
+                || !Objects.equals(active.getSource(), normalize(expectedSource))) {
+            return null;
+        }
         return pendingRouteOutcome.getAndSet(null);
     }
 
@@ -2006,6 +2553,22 @@ public class WindowRuntimeContext {
         clearPendingTransferChoiceMemory("pathing signal cleared");
     }
 
+    /**
+     * Cloud-commanded recovery: asks the observation sampler to drop its retained pathing-fact
+     * lineage on its next sampling cycle. The sampler lives on the observation thread, so the
+     * request travels through this monotonic generation counter instead of a direct call.
+     */
+    public void requestObservationPathingFactReset(String reason) {
+        long generation = observationPathingFactResetGeneration.incrementAndGet();
+        log.info("[local-runner] observation pathing-fact reset requested: windowId={} generation={} reason={}",
+                windowId, generation, normalize(reason));
+    }
+
+    /** Current pathing-fact reset generation; the sampler consumes changes of this value. */
+    public long getObservationPathingFactResetGeneration() {
+        return observationPathingFactResetGeneration.get();
+    }
+
     public void markQueued(TaskType taskType) {
         this.lastTaskType = resolveTaskForRuntimeEvent(taskType);
         this.status = WindowRuntimeStatus.QUEUED;
@@ -2129,6 +2692,11 @@ public class WindowRuntimeContext {
         clearTaskQueueStartupPreparationState("runtime reset");
         clearTaskTrackerPanelCache("runtime reset");
         clearTaskTrackerPanelNegativeResult("runtime reset");
+        invalidateReturnHomeReplayLifecycle("runtime reset");
+        clearExpectedCombatEnterClaim("runtime reset");
+        clearPendingDirectCombatEnterClaim("runtime reset");
+        localCombatVisible = false;
+        localCombatGeneration.set(0L);
         this.gameState.resetRuntimeState();
     }
 
@@ -2168,6 +2736,22 @@ public class WindowRuntimeContext {
                 && left.getProcessId() == right.getProcessId();
     }
 
+    private static boolean sameNativeBindingSnapshot(WindowNativeBinding left, WindowNativeBinding right) {
+        if (left == right) {
+            return true;
+        }
+        return left != null
+                && right != null
+                && Objects.equals(left.getNativeHandle(), right.getNativeHandle())
+                && Objects.equals(left.getTitle(), right.getTitle())
+                && Objects.equals(left.getClassName(), right.getClassName())
+                && left.getProcessId() == right.getProcessId()
+                && left.getX() == right.getX()
+                && left.getY() == right.getY()
+                && left.getWidth() == right.getWidth()
+                && left.getHeight() == right.getHeight();
+    }
+
     private WindowIdentityDrift detectIdentityDrift(WindowNativeBinding previous, WindowNativeBinding next) {
         if (previous == null
                 || next == null
@@ -2180,13 +2764,23 @@ public class WindowRuntimeContext {
         WindowTitleIdentity oldIdentity = WindowTitleIdentityParser.parse(previous.getTitle()).orElse(null);
         WindowTitleIdentity newIdentity = WindowTitleIdentityParser.parse(next.getTitle()).orElse(null);
         boolean titleChanged = !Objects.equals(normalize(previous.getTitle()), normalize(next.getTitle()));
-        boolean playerChanged = newIdentity != null
-                && (oldIdentity == null || !newIdentity.samePlayer(oldIdentity));
+        boolean playerChanged = oldIdentity != null
+                && newIdentity != null
+                && !newIdentity.samePlayer(oldIdentity);
         if (!titleChanged || !playerChanged) {
             return WindowIdentityDrift.none(windowId, previous, next, playerIdentityEpoch.get());
         }
         long epoch = playerIdentityEpoch.incrementAndGet();
         return WindowIdentityDrift.detected(windowId, previous, next, oldIdentity, newIdentity, epoch);
+    }
+
+    private boolean isIdentityEnrichment(WindowNativeBinding previous, WindowNativeBinding next) {
+        if (previous == null || next == null || !sameNativeWindow(previous, next)) {
+            return false;
+        }
+        WindowTitleIdentity oldIdentity = WindowTitleIdentityParser.parse(previous.getTitle()).orElse(null);
+        WindowTitleIdentity newIdentity = WindowTitleIdentityParser.parse(next.getTitle()).orElse(null);
+        return oldIdentity == null && newIdentity != null;
     }
 
     private void applyParsedIdentity(WindowTitleIdentity identity) {
@@ -2220,6 +2814,7 @@ public class WindowRuntimeContext {
         pendingTransferChoiceMemory.set(null);
         markPendingRouteOutcomeAbandoned(reason);
         clearTaskTrackerPanelCache(reason);
+        taskTrackerAnchorMemory.set(null);
         clearTaskTrackerPanelNegativeResult(reason);
         leftTopStatusSwitchClosePending.set(null);
     }
@@ -2498,6 +3093,24 @@ public class WindowRuntimeContext {
                                                   boolean clean,
                                                   long createdAtMs,
                                                   String source) {
+    }
+
+    private static final class PendingDirectCombatEnterTicket {
+        private final WindowExpectedCombatEnterClaim claim;
+        private final long armedAtMs;
+
+        private PendingDirectCombatEnterTicket(WindowExpectedCombatEnterClaim claim, long armedAtMs) {
+            this.claim = claim;
+            this.armedAtMs = armedAtMs;
+        }
+
+        private WindowExpectedCombatEnterClaim claim() {
+            return claim;
+        }
+
+        private long armedAtMs() {
+            return armedAtMs;
+        }
     }
 
     /**

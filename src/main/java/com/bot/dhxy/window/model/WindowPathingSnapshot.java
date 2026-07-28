@@ -2,7 +2,7 @@ package com.bot.dhxy.window.model;
 
 import com.bot.dhxy.model.dialog.DialogPreparationPhase;
 import com.bot.dhxy.model.dialog.DialogType;
-import com.bot.dhxy.service.dialog.DialogOperation;
+import com.bot.dhxy.model.dialog.DialogOperation;
 import lombok.Builder;
 import lombok.Value;
 

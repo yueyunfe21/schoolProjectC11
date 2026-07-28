@@ -1,6 +1,9 @@
 package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
+import com.bot.dhxy.cloud.task.NpcClickSmartCloudSession;
+import com.bot.dhxy.cloud.task.NpcClickSmartQueueMessage;
+import com.bot.dhxy.cloud.task.NpcClickSmartQueueOutcome;
 
 /**
  * Transport boundary for one client-initiated turn exchange and one conditional template download.
@@ -27,4 +30,43 @@ public interface TurnClient {
      */
     TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch)
             throws TurnTransportException;
+
+    default NpcClickSmartCloudSession openNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId)
+            throws TurnTransportException {
+        throw new TurnTransportException(
+                TurnTransportException.Kind.REQUEST_CONTRACT,
+                "NPC arrival-frame FIFO transport is unavailable");
+    }
+
+    default NpcClickSmartQueueMessage pollNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId)
+            throws TurnTransportException {
+        throw new TurnTransportException(
+                TurnTransportException.Kind.REQUEST_CONTRACT,
+                "NPC arrival-frame FIFO transport is unavailable");
+    }
+
+    default void replaceNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId,
+            long frameId, long generation,
+            long capturedAtMs, byte[] pngBytes) throws TurnTransportException {
+        throw new TurnTransportException(
+                TurnTransportException.Kind.REQUEST_CONTRACT,
+                "NPC arrival-frame replacement transport is unavailable");
+    }
+
+    default void reportNpcArrivalFrameOutcome(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId,
+            NpcClickSmartQueueMessage message,
+            NpcClickSmartQueueOutcome outcome,
+            String reason) throws TurnTransportException {
+        throw new TurnTransportException(
+                TurnTransportException.Kind.REQUEST_CONTRACT,
+                "NPC arrival-frame outcome transport is unavailable");
+    }
 }

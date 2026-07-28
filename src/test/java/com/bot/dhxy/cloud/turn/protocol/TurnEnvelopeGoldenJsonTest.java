@@ -76,4 +76,37 @@ class TurnEnvelopeGoldenJsonTest {
         assertEquals(actionResponse, TurnProtocolValidator.requireValid(actionResponse, request));
         assertEquals(idleResponse, TurnProtocolValidator.requireValid(idleResponse, request));
     }
+
+    @Test
+    void queueOwningBagActionResponseValidatesInsideTheEnvelopeUnion() throws IOException {
+        TurnBagOperationArguments bag = new TurnBagOperationArguments(
+                null, "bag/probe.png", 5, null, "wubei:probe-first-aid");
+        TurnAction bagAction = TurnProtocolGoldenSupport.action(
+                "envelope-bag-001",
+                List.of(TurnProtocolGoldenSupport.localStep(0, new TurnLocalServiceCall(
+                        TurnLocalOperation.BAG_FIND_AND_USE_FROM_BACK, bag, null, null, null))));
+        TurnRequest request = new TurnRequest(1, TurnProtocolGoldenSupport.window(false, false), 25_000L, null, null);
+        TurnResponse bagResponse = new TurnResponse(TurnResponse.Status.ACTION, bagAction, null);
+
+        assertEquals(bagResponse, TurnProtocolValidator.requireValid(bagResponse, request));
+        assertEquals(bagAction, TurnProtocolGoldenSupport.roundTrip(bagAction, TurnAction.class));
+    }
+
+    @Test
+    void metricActionResponseValidatesInsideTheEnvelopeUnion() throws IOException {
+        TurnMetricEventPayload payload = new TurnMetricEventPayload(
+                "wubei", "五倍", "window-1", "LEADER", "0x5150",
+                "round-7", 7, "普通怪", "SUCCESS", "SUCCESS", "轮次完成", 1234L,
+                null, null, null, null, null);
+        TurnAction metricAction = TurnProtocolGoldenSupport.action(
+                "envelope-metric-001",
+                List.of(TurnProtocolGoldenSupport.localStep(0, new TurnLocalServiceCall(
+                        TurnLocalOperation.METRIC_RECORD_ROUND_FINISHED,
+                        null, null, null, null, null, payload))));
+        TurnRequest request = new TurnRequest(1, TurnProtocolGoldenSupport.window(false, false), 25_000L, null, null);
+        TurnResponse metricResponse = new TurnResponse(TurnResponse.Status.ACTION, metricAction, null);
+
+        assertEquals(metricResponse, TurnProtocolValidator.requireValid(metricResponse, request));
+        assertEquals(metricAction, TurnProtocolGoldenSupport.roundTrip(metricAction, TurnAction.class));
+    }
 }

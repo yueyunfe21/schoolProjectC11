@@ -63,7 +63,8 @@ class LocalServiceExecutionContractTest {
         IllegalArgumentException purposeFailure = assertThrows(
                 IllegalArgumentException.class,
                 () -> LocalServiceExecution.completed("OK", "{}", wrongPurpose));
-        assertEquals("local Service frame purpose must be QUEST_DETAIL", purposeFailure.getMessage());
+        assertEquals("local Service frame purpose must be QUEST_DETAIL or TASK_TRACKER_PANEL",
+                purposeFailure.getMessage());
 
         TurnFrameMetadata badHashMetadata = new TurnFrameMetadata(
                 TurnFramePurpose.QUEST_DETAIL,
@@ -77,7 +78,7 @@ class LocalServiceExecutionContractTest {
         IllegalArgumentException hashFailure = assertThrows(
                 IllegalArgumentException.class,
                 () -> LocalServiceExecution.completed("OK", "{}", badHash));
-        assertEquals("Quest frame SHA-256 does not match its raw PNG bytes", hashFailure.getMessage());
+        assertEquals("local Service frame SHA-256 does not match its raw PNG bytes", hashFailure.getMessage());
 
         TurnFrameMetadata badDimensionsMetadata = new TurnFrameMetadata(
                 TurnFramePurpose.QUEST_DETAIL,

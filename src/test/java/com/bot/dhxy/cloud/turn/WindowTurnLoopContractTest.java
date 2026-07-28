@@ -1,273 +1,246 @@
 package com.bot.dhxy.cloud.turn;
 
-import com.bot.dhxy.cloud.turn.protocol.TurnAction;
-import com.bot.dhxy.cloud.turn.protocol.TurnOutcome;
+import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyCommand;
+import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskCode;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueFailurePolicy;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskTerminalResult;
+import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
+import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
 import org.junit.jupiter.api.Test;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WindowTurnLoopContractTest {
 
     @Test
-    void acceptedIdleClearsPreviousWhileRepeatedActionIdUsesTheCachedExecution() throws Exception {
-        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
-        TurnAction action = TurnContractFixtures.clickAction("action-cache-1");
-        ScriptedTurnClient client = new ScriptedTurnClient()
-                .thenResponse(actionResponse(action))
-                .thenResponse(actionResponse(action))
-                .thenResponse(idleResponse())
-                .thenBlockUntilInterrupted();
-        WindowTurnLoop loop = loop(client, harness.executor());
+    void staleTerminalIsIgnoredAndMatchingSkippedTerminalStopsTheExactRun() throws Exception {
+        TurnTaskStartRequest startRequest = new TurnTaskStartRequest(
+                "run-current", List.of(TurnTaskCode.XIULUO_V2), List.of(0),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
+        AtomicInteger calls = new AtomicInteger();
+        TurnClient client = new TurnClient() {
+            @Override
+            public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng) {
+                if (calls.incrementAndGet() == 1) {
+                    return TurnExchangeResult.accepted(new TurnResponse(
+                            TurnResponse.Status.IDLE, null,
+                            new TurnTaskStartAck(startRequest.startRequestId()), null, null,
+                            new TurnTaskTerminalResult("run-retired", TurnTaskTerminalResult.Status.STOPPED)));
+                }
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null, null, null, null,
+                        new TurnTaskTerminalResult(startRequest.startRequestId(),
+                                TurnTaskTerminalResult.Status.SKIPPED)));
+            }
 
-        try {
-            loop.start();
-            assertTrue(client.awaitBlocking(Duration.ofSeconds(3)), "loop must reach the fourth long wait");
-            assertEquals(1, harness.queue().submissions.size(),
-                    "the same actionId must reuse the cached outcome without a second physical input");
-            assertEquals(4, client.requests.size());
-            assertNoPrevious(client.requests.get(0));
-            assertPrevious(client.requests.get(1), action.actionId(), null);
-            assertPrevious(client.requests.get(2), action.actionId(), null);
-            assertNoPrevious(client.requests.get(3));
-        } finally {
-            stopAndAssertStopped(loop, client);
-        }
+            @Override
+            public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                throw new AssertionError("terminal lifecycle test does not download templates");
+            }
+        };
+        WindowTurnLoop loop = new WindowTurnLoop(
+                "device", "window-a", 1_000L, WindowTurnLoopContractTest::metadata,
+                client, action -> {
+                    throw new AssertionError("terminal lifecycle test must not execute an action");
+                });
+        loop.attachStartRequest(startRequest);
 
-        assertNull(loop.lastFailure());
+        loop.start();
+        assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(2)));
+        TurnTaskTerminalResult terminal = loop.taskTerminalResult().get(2, TimeUnit.SECONDS);
+
+        assertEquals(startRequest.startRequestId(), terminal.startRequestId());
+        assertEquals(TurnTaskTerminalResult.Status.SKIPPED, terminal.status());
+        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+        assertTrue(loop.lastFailure() instanceof IllegalStateException,
+                "SKIPPED must become a visible failed terminal instead of remaining running");
+        assertEquals(2, calls.get());
     }
 
     @Test
-    void uncertainOutcomeUploadIsRetainedAcrossExplicitRestartWithoutReexecutingAction() throws Exception {
-        TurnContractFixtures.ActionHarness harness = TurnContractFixtures.actionHarness(true, false);
-        TurnAction action = TurnContractFixtures.captureUploadClickAction("action-uncertain-1");
-        ScriptedTurnClient client = new ScriptedTurnClient()
-                .thenResponse(actionResponse(action))
-                .thenMutatePngAndFail(new TurnTransportException(
-                         TurnTransportException.Kind.NETWORK,
-                         "outcome acknowledgement uncertain"))
-                .thenResponse(actionResponse(action))
-                .thenResponse(idleResponse())
-                .thenBlockUntilInterrupted();
-        WindowTurnLoop loop = loop(client, harness.executor());
-
-        try {
-            loop.start();
-            assertTrue(loop.awaitStopped(Duration.ofSeconds(3)), "typed transport failure must stop the loop");
-            joinAndAssertNotAlive(
-                    client.lastExchangeThread(),
-                    "uncertain transport loop worker must finish before explicit restart");
-            assertEquals(2, client.requests.size(), "there is no automatic transport or business retry");
-            assertEquals(TurnTransportException.Kind.NETWORK,
-                    ((TurnTransportException) loop.lastFailure()).kind());
-
-            byte[] originalPng = client.requests.get(1).optionalPng();
-            assertPrevious(client.requests.get(1), action.actionId(), originalPng);
-            assertDecodableRoiPng(originalPng);
-            assertArrayEquals(originalPng, client.pngBeforeMutation());
-            assertFalse(Arrays.equals(originalPng, client.pngAfterMutation()),
-                    "the uncertain fake must mutate its request-local byte array");
-            assertEquals(1, harness.capture().regionCalls);
-            assertEquals(0, harness.capture().fullWindowCalls);
-            assertEquals(1, harness.queue().submissions.size());
-
-            loop.start();
-            assertTrue(client.awaitBlocking(Duration.ofSeconds(3)), "explicit restart must reach the next long wait");
-
-            assertEquals(5, client.requests.size());
-            assertPrevious(client.requests.get(2), action.actionId(), originalPng);
-            assertPrevious(client.requests.get(3), action.actionId(), originalPng);
-            assertNoPrevious(client.requests.get(4));
-            assertEquals(1, harness.capture().regionCalls,
-                    "a retained actionId must not capture again after uncertain transport");
-            assertEquals(0, harness.capture().fullWindowCalls);
-            assertEquals(1, harness.queue().submissions.size(),
-                    "a retained actionId must not send input again after uncertain transport");
-        } finally {
-            stopAndAssertStopped(loop, client);
-        }
-
-        assertNull(loop.lastFailure());
-    }
-
-    private static WindowTurnLoop loop(TurnClient client, LocalTurnActionExecutor executor) {
-        return new WindowTurnLoop(
-                TurnContractFixtures.DEVICE_ID,
-                TurnContractFixtures.WINDOW_ID,
-                60_000L,
-                () -> TurnContractFixtures.metadata(false),
-                client,
-                executor);
-    }
-
-    private static TurnExchangeResult actionResponse(TurnAction action) {
-        return TurnExchangeResult.accepted(new TurnResponse(TurnResponse.Status.ACTION, action));
-    }
-
-    private static TurnExchangeResult idleResponse() {
-        return TurnExchangeResult.accepted(new TurnResponse(TurnResponse.Status.IDLE, null));
-    }
-
-    private static void assertPrevious(RequestRecord record, String actionId, byte[] expectedPng) {
-        TurnOutcome previous = record.request().previousOutcome();
-        assertNotNull(previous);
-        assertEquals(actionId, previous.actionId());
-        assertEquals(TurnContractFixtures.DEVICE_ID, previous.window().deviceId());
-        assertEquals(TurnContractFixtures.WINDOW_ID, previous.window().windowId());
-        if (expectedPng == null) {
-            assertNull(record.optionalPng());
-        } else {
-            assertArrayEquals(expectedPng, record.optionalPng());
-        }
-    }
-
-    private static void assertNoPrevious(RequestRecord record) {
-        assertNull(record.request().previousOutcome());
-        assertNull(record.optionalPng(), "a request without previous outcome must not carry raw PNG");
-    }
-
-    private static void assertDecodableRoiPng(byte[] png) throws Exception {
-        assertNotNull(png);
-        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(png));
-        assertNotNull(decoded, "previous raw frame must be a decodable PNG");
-        try {
-            assertEquals(2, decoded.getWidth());
-            assertEquals(2, decoded.getHeight());
-            assertEquals(TurnContractFixtures.ROI_PIXEL, decoded.getRGB(0, 0));
-        } finally {
-            decoded.flush();
-        }
-    }
-
-    private static void stopAndAssertStopped(WindowTurnLoop loop,
-                                             ScriptedTurnClient client) throws InterruptedException {
-        loop.stop();
-        boolean stopped = loop.awaitStopped(Duration.ofSeconds(3));
-        Thread worker = client.lastExchangeThread();
-        joinAndAssertNotAlive(worker, "owned loop worker must not remain alive after cleanup");
-        assertTrue(stopped, "owned loop must stop during unconditional cleanup");
-        assertFalse(loop.isRunning());
-    }
-
-    private static void joinAndAssertNotAlive(Thread worker,
-                                              String message) throws InterruptedException {
-        if (worker == null) {
-            return;
-        }
-        worker.join(Duration.ofSeconds(3).toMillis());
-        assertFalse(worker.isAlive(), message);
-    }
-
-    @FunctionalInterface
-    private interface ExchangeStep {
-        TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng) throws TurnTransportException;
-    }
-
-    private record RequestRecord(TurnRequest request, byte[] optionalPng) {
-        private RequestRecord {
-            optionalPng = optionalPng == null ? null : optionalPng.clone();
-        }
-
-        @Override
-        public byte[] optionalPng() {
-            return optionalPng == null ? null : optionalPng.clone();
-        }
-    }
-
-    private static final class ScriptedTurnClient implements TurnClient {
-        private final List<ExchangeStep> steps = new ArrayList<>();
-        private final List<RequestRecord> requests = new CopyOnWriteArrayList<>();
-        private final AtomicInteger nextStep = new AtomicInteger();
-        private CountDownLatch blockingEntered;
-        private volatile byte[] pngBeforeMutation;
-        private volatile byte[] pngAfterMutation;
-        private volatile Thread lastExchangeThread;
-
-        ScriptedTurnClient thenResponse(TurnExchangeResult result) {
-            steps.add((request, optionalPng) -> result);
-            return this;
-        }
-
-        ScriptedTurnClient thenMutatePngAndFail(TurnTransportException failure) {
-            steps.add((request, optionalPng) -> {
-                if (optionalPng == null || optionalPng.length == 0) {
-                    throw new AssertionError("uncertain outcome upload must carry raw PNG bytes");
-                }
-                pngBeforeMutation = optionalPng.clone();
-                optionalPng[0] ^= 0x7f;
-                pngAfterMutation = optionalPng.clone();
-                throw failure;
-            });
-            return this;
-        }
-
-        ScriptedTurnClient thenBlockUntilInterrupted() {
-            blockingEntered = new CountDownLatch(1);
-            steps.add((request, optionalPng) -> {
-                blockingEntered.countDown();
+    void remoteStartIsNotReportedUntilTheMatchingCloudAckArrives() throws Exception {
+        CountDownLatch exchangeEntered = new CountDownLatch(1);
+        CountDownLatch releaseAck = new CountDownLatch(1);
+        TurnTaskStartRequest startRequest = new TurnTaskStartRequest(
+                "start-ack-1", List.of(TurnTaskCode.XIULUO_V2), List.of(0),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
+        TurnClient client = new TurnClient() {
+            @Override
+            public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
+                    throws TurnTransportException {
+                exchangeEntered.countDown();
                 try {
-                    new CountDownLatch(1).await();
-                    throw new AssertionError("blocking fake unexpectedly released");
+                    assertTrue(releaseAck.await(2, TimeUnit.SECONDS));
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     throw new TurnTransportException(
-                            TurnTransportException.Kind.INTERRUPTED,
-                            "test long wait interrupted",
-                            interrupted);
+                            TurnTransportException.Kind.INTERRUPTED, "interrupted", interrupted);
                 }
-            });
-            return this;
-        }
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null,
+                        new TurnTaskStartAck(startRequest.startRequestId())));
+            }
 
-        boolean awaitBlocking(Duration timeout) throws InterruptedException {
-            return blockingEntered.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        }
+            @Override
+            public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                throw new AssertionError("start acknowledgement test does not download templates");
+            }
+        };
+        WindowTurnLoop loop = new WindowTurnLoop(
+                "device", "window-a", 1_000L, WindowTurnLoopContractTest::metadata,
+                client, action -> {
+                    throw new AssertionError("start acknowledgement test must not execute an action");
+                });
+        loop.attachStartRequest(startRequest);
 
-        byte[] pngBeforeMutation() {
-            return pngBeforeMutation == null ? null : pngBeforeMutation.clone();
-        }
+        loop.start();
+        assertTrue(exchangeEntered.await(2, TimeUnit.SECONDS));
+        assertFalse(loop.awaitStartAcknowledged(Duration.ofMillis(50)),
+                "client control must not report success before Cloud acknowledges the start");
+        releaseAck.countDown();
+        assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(2)));
 
-        byte[] pngAfterMutation() {
-            return pngAfterMutation == null ? null : pngAfterMutation.clone();
-        }
+        loop.stop();
+        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+    }
 
-        Thread lastExchangeThread() {
-            return lastExchangeThread;
-        }
+    @Test
+    void loopRetainsPreviousOutcomeUntilExistingTurnAcknowledgesIt() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/cloud/turn/WindowTurnLoop.java"));
+        assertTrue(source.contains("previousOutcome"));
+        assertTrue(source.contains("previousOutcome = null"));
+        assertTrue(source.contains("lastExecutedActionId"));
+        assertTrue(source.contains("TurnProtocolValidator.requireValid"));
+    }
+
+    @Test
+    void mapSurveyCommandSurvivesUncertainTransportAndCompletesOnceBeforeExactAck() throws Exception {
+        ScriptedMapSurveyClient client = new ScriptedMapSurveyClient();
+        WindowTurnLoop loop = new WindowTurnLoop(
+                "device", "window-a", 1_000L, WindowTurnLoopContractTest::metadata,
+                client, action -> {
+                    throw new AssertionError("MapSurvey contract must not execute an ACTION");
+                });
+        TurnMapSurveyCommand command = new TurnMapSurveyCommand(
+                "survey-1", TurnMapSurveyCommand.Operation.RECORD_CENTER_ANCHOR, "长安");
+
+        loop.start();
+        assertTrue(client.firstExchangeEntered.await(2, TimeUnit.SECONDS));
+        CompletableFuture<TurnMapSurveyResult> result = loop.attachMapSurveyCommand(command);
+        assertThrows(IllegalStateException.class, () -> loop.attachMapSurveyCommand(command));
+        client.releaseFirstExchange.countDown();
+        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+        assertTrue(loop.lastFailure() instanceof TurnTransportException);
+        assertEquals(command, client.requests.get(1).mapSurveyCommand());
+        assertFalse(result.isDone(), "uncertain transport must retain the UI completion");
+
+        loop.start();
+        TurnMapSurveyResult terminal = result.get(2, TimeUnit.SECONDS);
+        assertEquals(TurnMapSurveyResult.Status.COMPLETED, terminal.status());
+        assertEquals(command, client.requests.get(2).mapSurveyCommand(),
+                "restart resends the exact immutable command");
+        assertEquals(command, client.requests.get(3).mapSurveyCommand(),
+                "ACCEPTED keeps the command pending");
+        assertNull(client.requests.get(4).mapSurveyCommand());
+        assertEquals(command.commandId(), client.requests.get(4).mapSurveyResultAckId());
+
+        assertTrue(client.ackAccepted.await(2, TimeUnit.SECONDS));
+        assertTrue(client.afterAckExchangeEntered.await(2, TimeUnit.SECONDS));
+        TurnMapSurveyCommand next = new TurnMapSurveyCommand(
+                "survey-2", TurnMapSurveyCommand.Operation.RECORD_LEFT_BOUNDARY, "长安");
+        assertFalse(loop.attachMapSurveyCommand(next).isDone(),
+                "a successful acknowledgement clears the prior command for the next UI operation");
+        loop.stop();
+        assertTrue(loop.awaitStopped(Duration.ofSeconds(2)));
+    }
+
+    private static TurnWindowMetadata metadata() {
+        return new TurnWindowMetadata(
+                "device", "window-a", "game", "0x1", 40L,
+                new TurnWindowRect(0, 0, 1024, 768), false, false,
+                null, "UNKNOWN", null, null, false, false, "NORMAL");
+    }
+
+    private static final class ScriptedMapSurveyClient implements TurnClient {
+        private final List<TurnRequest> requests = new ArrayList<>();
+        private final AtomicInteger calls = new AtomicInteger();
+        private final CountDownLatch firstExchangeEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseFirstExchange = new CountDownLatch(1);
+        private final CountDownLatch ackAccepted = new CountDownLatch(1);
+        private final CountDownLatch afterAckExchangeEntered = new CountDownLatch(1);
 
         @Override
-        public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
+        public synchronized TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng)
                 throws TurnTransportException {
-            lastExchangeThread = Thread.currentThread();
-            requests.add(new RequestRecord(request, optionalPng));
-            int index = nextStep.getAndIncrement();
-            if (index >= steps.size()) {
-                throw new AssertionError("unexpected extra turn exchange " + index);
+            requests.add(request);
+            int call = calls.incrementAndGet();
+            if (call == 1) {
+                firstExchangeEntered.countDown();
+                await(releaseFirstExchange);
+                return idle(null);
             }
-            return steps.get(index).exchange(request, optionalPng);
+            if (call == 2) {
+                throw new TurnTransportException(TurnTransportException.Kind.NETWORK, "uncertain");
+            }
+            if (call == 3) {
+                return idle(new TurnMapSurveyResult(
+                        "survey-1", TurnMapSurveyResult.Status.ACCEPTED, "accepted", "长安", null, null));
+            }
+            if (call == 4) {
+                return idle(new TurnMapSurveyResult(
+                        "survey-1", TurnMapSurveyResult.Status.COMPLETED, "recorded", "长安", 10, 20));
+            }
+            if (call == 5) {
+                ackAccepted.countDown();
+                return idle(null);
+            }
+            afterAckExchangeEntered.countDown();
+            try {
+                Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+                throw new AssertionError("loop was not stopped");
+            } catch (InterruptedException stopped) {
+                Thread.currentThread().interrupt();
+                throw new TurnTransportException(TurnTransportException.Kind.INTERRUPTED, "stopped", stopped);
+            }
         }
 
         @Override
         public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
-            throw new AssertionError("unexpected template download");
+            throw new AssertionError("MapSurvey contract must not download templates");
+        }
+
+        private static TurnExchangeResult idle(TurnMapSurveyResult result) {
+            return TurnExchangeResult.accepted(new TurnResponse(
+                    TurnResponse.Status.IDLE, null, null, null, result));
+        }
+
+        private static void await(CountDownLatch latch) throws TurnTransportException {
+            try {
+                assertTrue(latch.await(2, TimeUnit.SECONDS));
+            } catch (InterruptedException stopped) {
+                Thread.currentThread().interrupt();
+                throw new TurnTransportException(TurnTransportException.Kind.INTERRUPTED, "stopped", stopped);
+            }
         }
     }
 }

@@ -41,6 +41,7 @@ public class InputActionRequest {
     private final Supplier<InputActionSafetyReason> externalSafetyReason;
     private final Supplier<InputActionSafetyReason> workerAdmission;
     private final boolean frozenExactWindow;
+    private boolean exclusiveCallbackFocusRequired;
     private final CompletableFuture<InputActionExecutionResult> result = new CompletableFuture<>();
     private final CompletableFuture<SessionAdmission> sessionAdmitted = new CompletableFuture<>();
     private final ArrayBlockingQueue<RetainedSessionSignal> retainedSessionLane =
@@ -230,6 +231,7 @@ public class InputActionRequest {
         this.description = description == null ? "" : description;
         this.actions = actions == null ? List.of() : List.copyOf(actions);
         this.exclusiveCallback = exclusiveCallback;
+        this.exclusiveCallbackFocusRequired = exclusiveCallback != null;
         this.deadlineAware = deadlineNanos != null;
         this.deadlineNanos = deadlineNanos == null ? 0L : deadlineNanos;
         this.excludePauseFromDeadline = deadlineNanos != null && excludePauseFromDeadline;
@@ -250,9 +252,23 @@ public class InputActionRequest {
             Supplier<Boolean> exclusiveCallback,
             TaskPauseToken pauseToken,
             TaskStopToken stopToken) {
+        return frozenExactWindowExclusive(
+                windowContext, frozenNativeBinding, frozenPlayerIdentityEpoch, description,
+                exclusiveCallback, pauseToken, stopToken, null);
+    }
+
+    static InputActionRequest frozenExactWindowExclusive(
+            WindowRuntimeContext windowContext,
+            WindowNativeBinding frozenNativeBinding,
+            long frozenPlayerIdentityEpoch,
+            String description,
+            Supplier<Boolean> exclusiveCallback,
+            TaskPauseToken pauseToken,
+            TaskStopToken stopToken,
+            Supplier<InputActionSafetyReason> externalSafetyReason) {
         return new InputActionRequest(
                 windowContext, description, List.of(), exclusiveCallback, pauseToken, stopToken,
-                null, null, null, null, false,
+                null, null, externalSafetyReason, null, false,
                 frozenNativeBinding, frozenPlayerIdentityEpoch, true);
     }
 
@@ -412,6 +428,15 @@ public class InputActionRequest {
 
     /** @return true when this request should run a callback instead of replaying action objects. */
     public boolean hasExclusiveCallback() { return exclusiveCallback != null; }
+
+    boolean isExclusiveCallbackFocusRequired() { return exclusiveCallbackFocusRequired; }
+
+    void suppressExclusiveCallbackFocus() {
+        if (exclusiveCallback == null) {
+            throw new IllegalStateException("only exclusive callbacks have a focus policy");
+        }
+        exclusiveCallbackFocusRequired = false;
+    }
 
     /** @return true when this request must execute against its immutable exact-window snapshot. */
     boolean isFrozenExactWindow() { return frozenExactWindow; }
@@ -939,6 +964,10 @@ public class InputActionRequest {
             return new DetailedCancellation(
                     "task-stop:" + normalizedStage,
                     InputActionSafetyReason.STOP_REQUESTED);
+        }
+        DetailedCancellation externalFailure = detectExternalSafetyReason(stage);
+        if (externalFailure != null) {
+            return externalFailure;
         }
         if (windowContext.isIdentitySuspended()
                 || playerIdentityEpoch != windowContext.getPlayerIdentityEpoch()) {

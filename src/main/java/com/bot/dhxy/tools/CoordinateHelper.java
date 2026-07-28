@@ -1,9 +1,5 @@
 package com.bot.dhxy.tools;
 
-import com.bot.dhxy.cloud.task.ImagePreprocessOperation;
-import com.bot.dhxy.cloud.task.ImageProcessorService;
-import com.bot.dhxy.cloud.task.ImageProcessorService.ImageProcessorResult;
-import com.bot.dhxy.cloud.task.ImageProcessorService.RequestMetadata;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -20,7 +16,7 @@ import org.springframework.stereotype.Component;
 
 import java.awt.*;
 import java.awt.geom.AffineTransform;
-import java.nio.file.Path;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -34,15 +30,12 @@ public class CoordinateHelper {
 
     private final GameClientTracker tracker;
     private final WindowScopedTempPath windowScopedTempPath;
-    private final ImageProcessorService imageProcessorService;
     private final Random random = new Random();
 
     public CoordinateHelper(@Lazy GameClientTracker tracker,
-                            WindowScopedTempPath windowScopedTempPath,
-                            ImageProcessorService imageProcessorService) {
+                            WindowScopedTempPath windowScopedTempPath) {
         this.tracker = tracker;
         this.windowScopedTempPath = windowScopedTempPath;
-        this.imageProcessorService = imageProcessorService;
     }
 
     private double systemScaleRatio = 1.0;
@@ -297,22 +290,20 @@ public class CoordinateHelper {
             return null;
         }
         String washedScanPath = windowScopedTempPath.resolve("tem_dialog_cut_washed.png");
-        ImageProcessorResult washResult =
-                imageProcessorService.washToPath(
-                        Path.of(rawScanPath),
-                        Path.of(washedScanPath),
-                        ImagePreprocessOperation.WASH_GREEN,
-                        RequestMetadata.builder()
-                                .rawImagePath(rawScanPath)
-                                .debugImageId("coordinate-helper:green-text-region")
-                                .source("coordinate-helper")
-                                .phase("green-text-region-wash")
-                                .build());
-        if (!washResult.hasImage()) {
-            log.info("Green text wash missed [{}]: status={} reason={}",
-                    templatePath, washResult.status(), washResult.reason());
+        BufferedImage raw = ImagePreprocessor.pathToBufferedImage(rawScanPath);
+        if (raw == null) {
             return null;
         }
+        BufferedImage washed = ImagePreprocessor.washGreenTextToBlackAndWhite(raw);
+        raw.flush();
+        if (washed == null || !ImagePreprocessor.saveImage(washed, washedScanPath)) {
+            if (washed != null) {
+                washed.flush();
+            }
+            log.info("Green text wash missed [{}]", templatePath);
+            return null;
+        }
+        washed.flush();
 
         double[] result = ImageFinder.find(washedScanPath, templatePath, matchRate);
         if (result != null && result.length >= 2) {

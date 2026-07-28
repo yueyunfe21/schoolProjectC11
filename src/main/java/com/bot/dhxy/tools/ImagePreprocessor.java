@@ -172,7 +172,9 @@ public class ImagePreprocessor {
         Mat mask = new Mat();
         Core.inRange(hsv, lowerGreen, upperGreen, mask);
 
-        saveDebugImage(mask, debugOutputPath);
+        if (debugOutputPath != null && !debugOutputPath.isBlank()) {
+            saveDebugImage(mask, debugOutputPath);
+        }
 
         int count = Core.countNonZero(mask);
 
@@ -311,7 +313,9 @@ public class ImagePreprocessor {
         Mat gray = new Mat();
         Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY);
 
-        saveDebugImage(gray, debugOutputPath);
+        if (debugOutputPath != null && !debugOutputPath.isBlank()) {
+            saveDebugImage(gray, debugOutputPath);
+        }
 
         org.opencv.core.MatOfDouble mean = new org.opencv.core.MatOfDouble();
         org.opencv.core.MatOfDouble stddev = new org.opencv.core.MatOfDouble();

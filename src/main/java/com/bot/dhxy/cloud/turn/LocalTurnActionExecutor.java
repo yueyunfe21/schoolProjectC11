@@ -2,23 +2,28 @@ package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnAction;
 import com.bot.dhxy.cloud.turn.protocol.TurnCaptureSpec;
+import com.bot.dhxy.cloud.turn.protocol.TurnContinuationDecision;
+import com.bot.dhxy.cloud.turn.protocol.TurnContinuationRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnFramePurpose;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputAction;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputSpec;
 import com.bot.dhxy.cloud.turn.protocol.TurnMatchResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnProtocolValidator;
+import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
+import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
 import com.bot.dhxy.cloud.turn.protocol.TurnStep;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepType;
-import com.bot.dhxy.model.MapCoordinate;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.awt.image.BufferedImage;
 
 /** Executes one validated Cloud action strictly against one refreshed local window snapshot. */
 @Component
@@ -31,6 +36,7 @@ public final class LocalTurnActionExecutor {
     private final TurnMatchStepExecutor matchExecutor;
     private final TurnInputStepExecutor inputExecutor;
     private final LocalServiceStepDispatcher localServiceDispatcher;
+    private final TurnClient turnClient;
     private final TurnOutcomeAssembler outcomeAssembler;
     private final LocalPathingStartProofMechanics pathingStartProofMechanics;
 
@@ -41,6 +47,7 @@ public final class LocalTurnActionExecutor {
                                    TurnMatchStepExecutor matchExecutor,
                                    TurnInputStepExecutor inputExecutor,
                                    LocalServiceStepDispatcher localServiceDispatcher,
+                                   TurnClient turnClient,
                                    TurnOutcomeAssembler outcomeAssembler,
                                    LocalPathingStartProofMechanics pathingStartProofMechanics) {
         this.taskManager = Objects.requireNonNull(taskManager, "taskManager");
@@ -50,6 +57,7 @@ public final class LocalTurnActionExecutor {
         this.matchExecutor = Objects.requireNonNull(matchExecutor, "matchExecutor");
         this.inputExecutor = Objects.requireNonNull(inputExecutor, "inputExecutor");
         this.localServiceDispatcher = Objects.requireNonNull(localServiceDispatcher, "localServiceDispatcher");
+        this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.outcomeAssembler = Objects.requireNonNull(outcomeAssembler, "outcomeAssembler");
         this.pathingStartProofMechanics =
                 Objects.requireNonNull(pathingStartProofMechanics, "pathingStartProofMechanics");
@@ -63,91 +71,129 @@ public final class LocalTurnActionExecutor {
      */
     public ExecutedTurn execute(TurnAction action) {
         TurnAction validated = TurnProtocolValidator.requireValid(action);
+        // Local Pathing Fact Bridge: read the pre-input coordinate baseline once for a start action that
+        // carries a pathing intent, so the local proof can compare it after the action completes. Capture
+        // happens before resolveForAction freezes the native-binding generation: capture providers may
+        // refresh a value-equivalent binding object, and freezing first would make the subsequent mouse
+        // request fail the queue's object-identity generation witness before it ever reaches the worker.
+        WindowRuntimeContext baselineContext = validated.pathingIntent() == null
+                ? null
+                : taskManager.getRunner(validated.windowId())
+                        .map(runner -> runner.getWindowContext())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Turn window is not registered: " + validated.windowId()));
+        BufferedImage pathingStartBaseline = validated.pathingIntent() == null
+                ? null
+                : contextHolder.callWith(baselineContext, pathingStartProofMechanics::readBaseline);
         TurnExecutionWindow window = TurnExecutionWindow.resolveForAction(
                 validated, taskManager, bindingRefreshService);
-        // Local Pathing Fact Bridge: read the pre-input coordinate baseline once for a start action that
-        // carries a pathing intent, so the local proof can compare it after the action completes.
-        MapCoordinate pathingStartBaseline = validated.pathingIntent() == null
-                ? null
-                : pathingStartProofMechanics.readBaseline();
+        if (baselineContext != null && baselineContext != window.context()) {
+            if (pathingStartBaseline != null) {
+                pathingStartBaseline.flush();
+            }
+            throw new IllegalStateException("Turn window context changed during pathing baseline capture");
+        }
 
-        List<TurnStepExecution> executions = new ArrayList<>(validated.steps().size());
-        TurnFrame candidateFrame = null;
-        boolean terminal = false;
-        for (int index = 0; index < validated.steps().size(); index++) {
-            TurnStep step = validated.steps().get(index);
-            if (terminal) {
-                executions.add(TurnStepExecution.notRun(step));
-                continue;
+        boolean pathingBaselineHandedToProof = false;
+        try {
+            List<TurnStepExecution> executions = new ArrayList<>(validated.steps().size());
+            TurnFrame candidateFrame = null;
+            boolean terminal = false;
+            for (int index = 0; index < validated.steps().size(); index++) {
+                TurnStep step = validated.steps().get(index);
+                if (terminal) {
+                    executions.add(TurnStepExecution.notRun(step));
+                    continue;
+                }
+
+                int mouseSequenceEnd = findMouseSequenceEndExclusive(validated.steps(), index);
+                if (mouseSequenceEnd > index + 1
+                        || (isMouseInput(step) && window.context().currentPendingDirectCombatEnterClaim() != null)) {
+                    List<TurnStep> mouseSequence = validated.steps().subList(index, mouseSequenceEnd);
+                    com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim pendingDirectCombatClaim =
+                            window.context().currentPendingDirectCombatEnterClaim();
+                    boolean markedDirectTarget = pendingDirectCombatClaim != null
+                            && isDirectCombatTargetMouseSequence(mouseSequence);
+                    // A pending Alt+A ticket may span Cloud turns.  A later ordinary left click must never
+                    // consume it; instead it proves that the promised direct-combat target action was replaced.
+                    if (pendingDirectCombatClaim != null && !markedDirectTarget
+                            && containsLeftClick(mouseSequence)) {
+                        window.context().clearPendingDirectCombatEnterClaim("alt-a target click marker mismatch");
+                        pendingDirectCombatClaim = null;
+                    }
+                    TurnInputStepExecutor.MouseSequenceResult sequenceResult;
+                    try {
+                        sequenceResult = inputExecutor.executeMouseSequence(window, mouseSequence);
+                    } catch (Exception mechanicalFailure) {
+                        sequenceResult = new TurnInputStepExecutor.MouseSequenceResult(
+                                new TurnInputStepExecutor.Result(
+                                        TurnInputStepExecutor.Status.FAILED,
+                                        TurnInputStepExecutor.Code.INPUT_QUEUE_FAILED,
+                                        diagnostic(mechanicalFailure)),
+                                0);
+                    }
+
+                    executions.addAll(expandMouseSequenceExecutions(mouseSequence, sequenceResult));
+                    if (markedDirectTarget) {
+                        if (sequenceResult.result().status() == TurnInputStepExecutor.Status.COMPLETED) {
+                            window.context().consumePendingDirectCombatEnterClaim(pendingDirectCombatClaim.claimId());
+                        } else {
+                            window.context().clearPendingDirectCombatEnterClaim("alt-a target click not executed");
+                        }
+                    }
+                    terminal = sequenceResult.result().status() != TurnInputStepExecutor.Status.COMPLETED;
+                    index = mouseSequenceEnd - 1;
+                    continue;
+                }
+
+                TurnStepExecution execution = executeStep(validated, window, step);
+                executions.add(execution);
+                if (execution.frame() != null) {
+                    candidateFrame = execution.frame();
+                }
+                terminal = execution.stopped() || execution.result().status() == TurnStepResult.Status.FAILED;
             }
 
-            int mouseSequenceEnd = findMouseSequenceEndExclusive(validated.steps(), index);
-            if (mouseSequenceEnd > index + 1) {
-                List<TurnStep> mouseSequence = validated.steps().subList(index, mouseSequenceEnd);
-                TurnStepExecution firstExecution;
+            boolean stopped = executions.stream().anyMatch(TurnStepExecution::stopped);
+            boolean failed = !stopped && executions.stream()
+                    .anyMatch(execution -> execution.result().status() == TurnStepResult.Status.FAILED);
+            if ((stopped || failed) && window.context().currentPendingDirectCombatEnterClaim() != null) {
+                window.context().clearPendingDirectCombatEnterClaim(
+                        stopped ? "turn stopped before direct-combat target click" : "turn failed before direct-combat target click");
+            }
+            if (failed && validated.fullWindowFailureEvidence()) {
+                candidateFrame = null;
                 try {
-                    firstExecution = fromInputResult(
-                            step,
-                            inputExecutor.executeMouseSequence(window, mouseSequence),
-                            null,
-                            null);
-                } catch (Exception mechanicalFailure) {
-                    firstExecution = TurnStepExecution.failed(
-                            step,
-                            "STEP_EXECUTION_EXCEPTION",
-                            null,
-                            null,
-                            null,
-                            diagnostic(mechanicalFailure));
+                    candidateFrame = captureExecutor.capture(
+                            window, null, TurnFramePurpose.FAILURE_EVIDENCE, null);
+                } catch (RuntimeException failureEvidenceUnavailable) {
+                    // Keep the original failed execution without frame evidence; never retry or fabricate metadata.
                 }
-
-                if (firstExecution.result().status() == TurnStepResult.Status.COMPLETED) {
-                    for (TurnStep sequenceStep : mouseSequence) {
-                        executions.add(TurnStepExecution.completed(sequenceStep, "OK", null, null, null));
-                    }
-                } else {
-                    executions.add(firstExecution);
-                    for (int sequenceIndex = 1; sequenceIndex < mouseSequence.size(); sequenceIndex++) {
-                        executions.add(TurnStepExecution.notRun(mouseSequence.get(sequenceIndex)));
-                    }
-                    terminal = true;
-                }
-                index = mouseSequenceEnd - 1;
-                continue;
             }
 
-            TurnStepExecution execution = executeStep(window, step);
-            executions.add(execution);
-            if (execution.frame() != null) {
-                candidateFrame = execution.frame();
+            // Local Pathing Fact Bridge: only a COMPLETED start action (no stop, no failure) with a positive
+            // local movement proof registers its intent; the proof runs its own baseline-vs-current check and
+            // registers nothing on a double-negative. Cloud never observes movement itself.
+            if (validated.pathingIntent() != null && !stopped && !failed) {
+                pathingBaselineHandedToProof = true;
+                // Bound to this exact window: the proof captures the same coordinate strip / edge frames as
+                // the baseline read above, so it must run under the same callWith or the tracker loses the
+                // window and the proof samples (and would register against) the wrong window.
+                contextHolder.callWith(window.context(), () -> {
+                    pathingStartProofMechanics.proveAndRegister(
+                            window.context(), validated.pathingIntent(), pathingStartBaseline);
+                    return null;
+                });
             }
-            terminal = execution.stopped() || execution.result().status() == TurnStepResult.Status.FAILED;
-        }
 
-        boolean stopped = executions.stream().anyMatch(TurnStepExecution::stopped);
-        boolean failed = !stopped && executions.stream()
-                .anyMatch(execution -> execution.result().status() == TurnStepResult.Status.FAILED);
-        if (failed && validated.fullWindowFailureEvidence()) {
-            candidateFrame = null;
-            try {
-                candidateFrame = captureExecutor.capture(
-                        window, null, TurnFramePurpose.FAILURE_EVIDENCE, null);
-            } catch (RuntimeException failureEvidenceUnavailable) {
-                // Keep the original failed execution without frame evidence; never retry or fabricate metadata.
+            return new ExecutedTurn(
+                    outcomeAssembler.assemble(validated, window.metadata(), executions, candidateFrame),
+                    candidateFrame == null ? null : candidateFrame.pngBytes());
+        } finally {
+            if (!pathingBaselineHandedToProof && pathingStartBaseline != null) {
+                pathingStartBaseline.flush();
             }
         }
-
-        // Local Pathing Fact Bridge: only a COMPLETED start action (no stop, no failure) with a positive
-        // local movement proof registers its intent; the proof runs its own baseline-vs-current check and
-        // registers nothing on a double-negative. Cloud never observes movement itself.
-        if (validated.pathingIntent() != null && !stopped && !failed) {
-            pathingStartProofMechanics.proveAndRegister(
-                    window.context(), validated.pathingIntent(), pathingStartBaseline);
-        }
-
-        return new ExecutedTurn(
-                outcomeAssembler.assemble(validated, window.metadata(), executions, candidateFrame),
-                candidateFrame == null ? null : candidateFrame.pngBytes());
     }
 
     /**
@@ -190,7 +236,29 @@ public final class LocalTurnActionExecutor {
         };
     }
 
-    private TurnStepExecution executeStep(TurnExecutionWindow window, TurnStep step) {
+    /** The marker is consumed only by one atomic target sequence: move(s), waits and one marked left click. */
+    private static boolean isDirectCombatTargetMouseSequence(List<TurnStep> steps) {
+        int leftClicks = 0;
+        for (TurnStep step : steps) {
+            if (step.type() == TurnStepType.WAIT) continue;
+            if (step.type() != TurnStepType.INPUT || step.inputAction() == null) return false;
+            if (step.inputAction() == TurnInputAction.CLICK_LEFT) {
+                if (step.input() == null || !Boolean.TRUE.equals(step.input().directCombatTargetClick())) {
+                    return false;
+                }
+                leftClicks++;
+            }
+            else if (step.inputAction() != TurnInputAction.MOVE_MOUSE) return false;
+        }
+        return leftClicks == 1;
+    }
+
+    private static boolean containsLeftClick(List<TurnStep> steps) {
+        return steps.stream().anyMatch(step -> step.type() == TurnStepType.INPUT
+                && step.inputAction() == TurnInputAction.CLICK_LEFT);
+    }
+
+    private TurnStepExecution executeStep(TurnAction action, TurnExecutionWindow window, TurnStep step) {
         try {
             return switch (step.type()) {
                 case CAPTURE -> executeCapture(window, step);
@@ -201,7 +269,7 @@ public final class LocalTurnActionExecutor {
                         null,
                         null);
                 case WAIT -> executeWait(window, step);
-                case LOCAL_SERVICE -> executeLocalService(window, step);
+                case LOCAL_SERVICE -> executeLocalService(action, window, step);
             };
         } catch (Exception mechanicalFailure) {
             return TurnStepExecution.failed(
@@ -264,14 +332,89 @@ public final class LocalTurnActionExecutor {
         return fromInputResult(step, inputExecutor.waitFor(step.waitMs()), null, null);
     }
 
-    private TurnStepExecution executeLocalService(TurnExecutionWindow window, TurnStep step) {
+    private TurnStepExecution executeLocalService(TurnAction action,
+                                                  TurnExecutionWindow window,
+                                                  TurnStep step) {
+        // TURN-40B-C2: the captured action-owning token and the live identity predicate ride the
+        // local-service path so queue-owning bag admission is evaluated inside the exclusive
+        // callback, never as a pre-queue snapshot. The predicate closes over the window's exact
+        // captured handle; the token object is the one captured at resolveForAction.
         LocalServiceExecution local = contextHolder.callWith(
                 window.context(),
-                () -> localServiceDispatcher.execute(step.localService(), step.index()));
+                () -> localServiceDispatcher.execute(
+                        step.localService(),
+                        step.index(),
+                        window.actionStopToken(),
+                        window::isActionTaskStillCurrent,
+                        action.actionId(),
+                        action.deviceId(),
+                        action.windowId(),
+                        (request, frame) -> exchangeContinuation(window, request, frame)));
+        if (local.stopRequested()) {
+            // The sole typed local stop (FAILED + reserved STOPPED code) maps to the existing
+            // typed stopped step outcome; it never degrades to a generic failure.
+            return TurnStepExecution.stopped(step, null, null, local.code());
+        }
         return local.status() == TurnStepResult.Status.COMPLETED
                 ? TurnStepExecution.completed(step, local.code(), null, local.localResultJson(), local.frame())
                 : TurnStepExecution.failed(
                         step, local.code(), null, local.localResultJson(), local.frame(), local.code());
+    }
+
+    /** Expand one atomic worker result without turning its completed click prefix into NOT_RUN. */
+    static List<TurnStepExecution> expandMouseSequenceExecutions(
+            List<TurnStep> mouseSequence,
+            TurnInputStepExecutor.MouseSequenceResult sequenceResult) {
+        List<TurnStepExecution> expanded = new ArrayList<>(mouseSequence.size());
+        if (sequenceResult.result().status() == TurnInputStepExecutor.Status.COMPLETED) {
+            for (TurnStep step : mouseSequence) {
+                expanded.add(TurnStepExecution.completed(step, "OK", null, null, null));
+            }
+            return expanded;
+        }
+        int failedOffset = Math.min(
+                sequenceResult.completedTurnStepCount(), mouseSequence.size() - 1);
+        for (int index = 0; index < failedOffset; index++) {
+            expanded.add(TurnStepExecution.completed(
+                    mouseSequence.get(index), "OK", null, null, null));
+        }
+        TurnStep failedStep = mouseSequence.get(failedOffset);
+        TurnInputStepExecutor.Result result = sequenceResult.result();
+        expanded.add(switch (result.status()) {
+            case FAILED -> TurnStepExecution.failed(
+                    failedStep, result.code().name(), null, null, null, result.detail());
+            case STOPPED -> TurnStepExecution.stopped(failedStep, null, null, result.detail());
+            case COMPLETED -> throw new IllegalStateException("completed mouse result handled above");
+        });
+        for (int index = failedOffset + 1; index < mouseSequence.size(); index++) {
+            expanded.add(TurnStepExecution.notRun(mouseSequence.get(index)));
+        }
+        return expanded;
+    }
+
+    private TurnContinuationDecision exchangeContinuation(TurnExecutionWindow window,
+                                                          TurnContinuationRequest continuation,
+                                                          TurnFrame frame) {
+        try {
+            TurnRequest request = TurnProtocolValidator.requireValid(new TurnRequest(
+                    1,
+                    window.metadata(),
+                    0L,
+                    null,
+                    null,
+                    continuation));
+            TurnExchangeResult exchange = turnClient.exchange(
+                    request,
+                    frame == null ? null : frame.pngBytes());
+            TurnResponse response = exchange.response();
+            if (response.status() != TurnResponse.Status.CONTINUATION
+                    || response.continuationDecision() == null) {
+                throw new IllegalStateException("Cloud did not return a continuation decision");
+            }
+            return response.continuationDecision();
+        } catch (TurnTransportException transportFailure) {
+            throw new IllegalStateException("Turn continuation transport failed", transportFailure);
+        }
     }
 
     private TurnStepExecution fromInputResult(TurnStep step,

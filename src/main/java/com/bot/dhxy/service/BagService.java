@@ -2,15 +2,18 @@ package com.bot.dhxy.service;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.model.bag.ReturnItemCachePoint;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
-import com.bot.dhxy.service.bag.BagReturnItemMacroIntent;
-import com.bot.dhxy.service.bag.BagReturnItemMacroResult;
+import com.bot.dhxy.model.bag.BagReturnItemMacroIntent;
+import com.bot.dhxy.model.bag.BagReturnItemMacroResult;
 import com.bot.dhxy.runner.stop.TaskCheckpoint;
 import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
+import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
@@ -29,6 +32,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -41,14 +46,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @Component
 @RequiredArgsConstructor
 public class BagService {
-    private static final String MAIN_BAG_ANCHOR_TEMPLATE = "images/template/bag/anchor_huanzhuang.png";
-    private static final String MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE = "images/template/bag/anchor_cunkuan.png";
-    private static final String[] MAIN_BAG_TAB_FALLBACK_TEMPLATES = {
-            "images/template/bag/task_tab_fallback_a.png",
-            "images/template/bag/task_tab_fallback_b.png"
-    };
+    private static final String MAIN_BAG_ANCHOR_TEMPLATE = "images/template/bag/anchor_cunkuan.png";
     private static final double MAIN_BAG_ANCHOR_MATCH_RATE = 0.8;
-    private static final double MAIN_BAG_TAB_FALLBACK_MATCH_RATE = 0.8;
     private static final double BAG_ITEM_MATCH_RATE = 0.85;
     private static final double BAG_ITEM_MATCH_MIN_DISTANCE = 24.0;
     private static final String INCENSE_ITEM_TEMPLATE = "bag/sheyaoxiang_item.png";
@@ -68,6 +67,7 @@ public class BagService {
     private final CoordinateHelper coordinateHelper;
     private final WindowScopedTempPath windowScopedTempPath;
     private final WindowTaskContextHolder windowTaskContextHolder;
+    private final BoundWindowKeyboardService boundWindowKeyboardService;
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
     private final Map<String, Point> lastMainBagAnchorCache = new ConcurrentHashMap<>();
@@ -117,7 +117,7 @@ public class BagService {
 
     public static final BagLayout MAIN_BAG = new BagLayout(
             MAIN_BAG_ANCHOR_TEMPLATE, true,
-            -299, 16, 312, 208, 29, 32, 35
+            -176, 41, 312, 208, 152, 57, 35
     );
 
     public static final BagLayout GIVE_BAG = new BagLayout(
@@ -165,6 +165,69 @@ public class BagService {
             return null;
         }
         return result.get();
+    }
+
+    /**
+     * TURN-40B-C2 guarded variant of {@link #withMainBagOpen}: the queue-owning entry for turn
+     * local-service bag operations.
+     *
+     * <p>The exclusive callback's FIRST action — before {@code ensureBagOpened} and before any
+     * physical input — evaluates the live identity {@code admission} predicate, then the captured
+     * live {@code stopToken}. A rejection only sets the callback-local flag and returns false: no
+     * exception crosses the input-worker boundary and no Cloud type enters this service. After the
+     * queue wait returns false, a flagged rejection (or a captured token that stopped during the
+     * wait) converts to the existing {@link TaskStopRequestedException}; an ordinary queue failure
+     * with an unstopped token keeps the existing generic null semantics. Bag-open failure inside
+     * an admitted session also keeps its existing generic null result. The existing
+     * {@code withMainBagOpen}/{@code withMainBagOpenExclusive} paths are byte-unchanged.</p>
+     *
+     * @param source diagnostic source included in the input queue request name.
+     * @param admission live reference-identity predicate captured at action resolution.
+     * @param stopToken captured live stop token of the action-owning task; nullable.
+     * @param operation receives the session exactly like {@link #withMainBagOpen}.
+     * @return operation result, or null on generic queue/open failure.
+     * @throws TaskStopRequestedException on identity replacement or a requested stop.
+     */
+    public <T> T withMainBagOpenGuarded(String source,
+                                        BooleanSupplier admission,
+                                        TaskStopToken stopToken,
+                                        Function<MainBagSession, T> operation) {
+        Objects.requireNonNull(admission, "admission");
+        Objects.requireNonNull(operation, "operation");
+        AtomicReference<T> result = new AtomicReference<>();
+        AtomicReference<GuardedRejection> rejection = new AtomicReference<>();
+        String requestName = "bag:withMainBagOpenGuarded:"
+                + (source == null || source.isBlank() ? "unknown" : source);
+        boolean ok = inputSequences.submitExclusiveAndWait(requestName, () -> {
+            if (!admission.getAsBoolean()) {
+                rejection.set(GuardedRejection.IDENTITY_REPLACED);
+                return false;
+            }
+            if (stopToken != null && stopToken.isStopRequested()) {
+                rejection.set(GuardedRejection.STOP_REQUESTED);
+                return false;
+            }
+            result.set(withMainBagOpenExclusive(null, operation));
+            return true;
+        });
+        if (!ok) {
+            GuardedRejection flagged = rejection.get();
+            if (flagged != null) {
+                throw new TaskStopRequestedException("guarded main-bag admission rejected: " + flagged);
+            }
+            if (stopToken != null && stopToken.isStopRequested()) {
+                throw new TaskStopRequestedException("stop requested during guarded main-bag queue wait");
+            }
+            throwIfInterrupted("Bag guarded batch operation input was interrupted");
+            return null;
+        }
+        return result.get();
+    }
+
+    /** Callback-owned guarded rejection kinds; stack-local per call, never a field or store. */
+    private enum GuardedRejection {
+        IDENTITY_REPLACED,
+        STOP_REQUESTED
     }
 
     private Integer findItemPageIndexExclusive(BagLayout layout, String targetItemTemplate, TaskExecutionContext context) {
@@ -276,6 +339,11 @@ public class BagService {
                 ReturnItemCachePoint cachedPoint = intent.getCachedPoint();
                 boolean used = cachedPoint != null
                         && useCachedMainBagReturnItemExclusive(cachedPoint, intent.getSource(), context);
+                yield used ? BagReturnItemMacroResult.used() : BagReturnItemMacroResult.notUsed();
+            }
+            case FIND_AND_USE_TASK_PAGE -> {
+                boolean used = interactWithMainBagTaskPageItemExclusive(
+                        intent.getTargetItemTemplate(), ItemAction.USE, context);
                 yield used ? BagReturnItemMacroResult.used() : BagReturnItemMacroResult.notUsed();
             }
         };
@@ -498,7 +566,7 @@ public class BagService {
         return getBaseAnchor(MAIN_BAG, context) != null;
     }
 
-    private Point ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
+    protected Point ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
         throwIfStopRequested(context);
         if (!layout.autoManageUI) {
             log.info("[bag] layout does not need auto-open UI, use window base directly");
@@ -524,7 +592,9 @@ public class BagService {
         if (!InputActionScope.checkpoint()) {
             return null;
         }
-        inputProvider.pressAltE();
+        if (!pressBackgroundAltE("open-main-bag-first")) {
+            return null;
+        }
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
         if (!InputActionScope.checkpoint()) {
             return null;
@@ -571,7 +641,9 @@ public class BagService {
         if (!InputActionScope.checkpoint()) {
             return null;
         }
-        inputProvider.pressAltE();
+        if (!pressBackgroundAltE("open-main-bag-retry")) {
+            return null;
+        }
         TaskSleep.sleepOrStop(context, BAG_OPEN_WAIT_MS, "Bag operation wait was interrupted");
         if (!InputActionScope.checkpoint()) {
             return null;
@@ -589,8 +661,8 @@ public class BagService {
             log.warn("[bag] main bag panel is visible after Alt+E retry but primary anchor is still missing: visibleBy={}",
                     check.visibleBy);
         } else {
-            log.warn("[bag] no main bag UI indicators after Alt+E retry: primaryAnchor={} fallbackTabs={} extraAnchor={}",
-                    layout.anchorTemplate, String.join(",", MAIN_BAG_TAB_FALLBACK_TEMPLATES), MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE);
+            log.warn("[bag] no main bag UI indicators after Alt+E retry: primaryAnchor={}",
+                    layout.anchorTemplate);
         }
         return null;
     }
@@ -672,13 +744,15 @@ public class BagService {
         return point == null ? "unknown" : "(" + point.x + ", " + point.y + ")";
     }
 
-    private void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
+    protected void closeBagIfNeeded(BagLayout layout, TaskExecutionContext context) {
         if (layout.autoManageUI) {
             log.info("[bag] close main bag by Alt+E");
             if (!InputActionScope.checkpoint()) {
                 return;
             }
-            inputProvider.pressAltE();
+            if (!pressBackgroundAltE("close-main-bag")) {
+                return;
+            }
             TaskSleep.sleepOrStop(context, 500, "Bag operation wait was interrupted");
             InputActionScope.checkpoint();
         }
@@ -940,7 +1014,7 @@ public class BagService {
         return foundIndex;
     }
 
-    private ItemCountResult countItemUpToInOpenMainBag(Point baseAnchor, String targetItemTemplate,
+    protected ItemCountResult countItemUpToInOpenMainBag(Point baseAnchor, String targetItemTemplate,
                                                        int requiredCount, TaskExecutionContext context) {
         int safeRequiredCount = Math.max(0, requiredCount);
         if (safeRequiredCount == 0) {
@@ -1081,7 +1155,7 @@ public class BagService {
                     layoutName(layout), base.x, base.y);
             return base;
         }
-        Point anchor = coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, 0.8);
+        Point anchor = coordinateHelper.findImageAbsoluteCoordinate(layout.anchorTemplate, MAIN_BAG_ANCHOR_MATCH_RATE);
         log.debug("[bag] anchor search result: template={} point={}", layout.anchorTemplate, anchor);
         return anchor;
     }
@@ -1106,46 +1180,7 @@ public class BagService {
             return BagOpenCheck.ready(anchor, layout.anchorTemplate);
         }
 
-        Point tabPoint = findFirstTemplateInScreen(MAIN_BAG_TAB_FALLBACK_TEMPLATES, screenPath,
-                MAIN_BAG_TAB_FALLBACK_MATCH_RATE, context);
-        if (tabPoint != null) {
-            log.info("[bag] main bag task-tab fallback matched: stage={} point=({}, {}), derive geometry without clicking task page",
-                    stage, tabPoint.x, tabPoint.y);
-            Point geometryAnchor = deriveAnchorFromTaskTab(layout, tabPoint);
-            log.info("[bag] use task tab fallback as bag geometry anchor: stage={} tab=({}, {}) geometryAnchor=({}, {})",
-                    stage, tabPoint.x, tabPoint.y, geometryAnchor.x, geometryAnchor.y);
-            return BagOpenCheck.ready(geometryAnchor, "task-tab-fallback");
-        }
-
-        Point cunkuanAnchor = findTemplateInScreen(MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE, screenPath,
-                MAIN_BAG_ANCHOR_MATCH_RATE, context);
-        if (cunkuanAnchor != null) {
-            log.info("[bag] main bag extra anchor matched: stage={} template={} point=({}, {})",
-                    stage, MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE, cunkuanAnchor.x, cunkuanAnchor.y);
-            return BagOpenCheck.visible(null, MAIN_BAG_CUNKUAN_ANCHOR_TEMPLATE);
-        }
-
         return BagOpenCheck.notVisible();
-    }
-
-    private Point deriveAnchorFromTaskTab(BagLayout layout, Point taskTabPoint) {
-        double scale = coordinateHelper.getScaleRatio();
-        int anchorX = taskTabPoint.x - (int) Math.round(layout.tabOffsetX / scale);
-        int anchorY = taskTabPoint.y - (int) Math.round((layout.tabOffsetY + MAIN_BAG_TASK_TAB_INDEX * layout.tabStepY) / scale);
-        return new Point(anchorX, anchorY);
-    }
-
-    private Point findFirstTemplateInScreen(String[] templates, String screenPath, double matchRate, TaskExecutionContext context) {
-        for (String template : templates) {
-            throwIfStopRequested(context);
-            Point point = findTemplateInScreen(template, screenPath, matchRate, context);
-            if (point != null) {
-                log.info("[bag] fallback template matched: template={} point=({}, {})",
-                        template, point.x, point.y);
-                return point;
-            }
-        }
-        return null;
     }
 
     private Point findTemplateInScreen(String template, String screenPath, double matchRate, TaskExecutionContext context) {
@@ -1357,6 +1392,24 @@ public class BagService {
 
     private void throwIfInterrupted(String message) {
         TaskCheckpoint.throwIfInterrupted(message);
+    }
+
+    private boolean pressBackgroundAltE(String source) {
+        var current = windowTaskContextHolder.rawCurrent();
+        if (current.isEmpty() || current.get().getNativeBinding() == null) {
+            log.warn("[bag] background Alt+E rejected without an exact window binding: source={}", source);
+            return false;
+        }
+        var context = current.get();
+        var attempt = boundWindowKeyboardService.pressShortcut(
+                context.getNativeBinding(), context.getWindowId(),
+                BoundWindowKeyboardService.AltShortcut.ALT_E);
+        if (!attempt.attempted() || !attempt.success()) {
+            log.warn("[bag] background Alt+E failed: source={} windowId={} reason={}",
+                    source, context.getWindowId(), attempt.reason());
+            return false;
+        }
+        return true;
     }
 
     private boolean isInputWorkerThread() {

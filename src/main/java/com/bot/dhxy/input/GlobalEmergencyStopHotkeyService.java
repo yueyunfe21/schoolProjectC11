@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Windows global task-control hotkeys.
@@ -30,10 +31,13 @@ public class GlobalEmergencyStopHotkeyService {
     private static final int VK_F12 = 0x7B;
     private static final String PAUSE_HOTKEY_TEXT = "Ctrl+Shift+F11";
     private static final String STOP_HOTKEY_TEXT = "Ctrl+Shift+F12";
+    private static final long HOTKEY_DEBOUNCE_NANOS = java.time.Duration.ofMillis(500L).toNanos();
 
     private final WindowTaskControlService windowTaskControlService;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicLong lastPauseTriggerNanos = new AtomicLong(Long.MIN_VALUE);
+    private final AtomicLong lastStopTriggerNanos = new AtomicLong(Long.MIN_VALUE);
 
     private Thread hotkeyThread;
 
@@ -122,6 +126,9 @@ public class GlobalEmergencyStopHotkeyService {
     }
 
     private void triggerPauseAll() {
+        if (!claimTrigger(lastPauseTriggerNanos)) {
+            return;
+        }
         log.warn("{} pause/resume hotkey triggered: toggling all window tasks...", PAUSE_HOTKEY_TEXT);
         try {
             windowTaskControlService.togglePauseResumeAll();
@@ -132,6 +139,9 @@ public class GlobalEmergencyStopHotkeyService {
     }
 
     private void triggerEmergencyStop() {
+        if (!claimTrigger(lastStopTriggerNanos)) {
+            return;
+        }
         log.warn("{} emergency stop triggered: stopping all window tasks...", STOP_HOTKEY_TEXT);
         try {
             windowTaskControlService.stopAll();
@@ -139,6 +149,19 @@ public class GlobalEmergencyStopHotkeyService {
             log.warn("{} emergency stop failed while stopping window tasks", STOP_HOTKEY_TEXT, e);
         }
         log.warn("{} emergency stop request sent.", STOP_HOTKEY_TEXT);
+    }
+
+    private static boolean claimTrigger(AtomicLong lastTriggerNanos) {
+        long now = System.nanoTime();
+        while (true) {
+            long previous = lastTriggerNanos.get();
+            if (previous != Long.MIN_VALUE && now - previous < HOTKEY_DEBOUNCE_NANOS) {
+                return false;
+            }
+            if (lastTriggerNanos.compareAndSet(previous, now)) {
+                return true;
+            }
+        }
     }
 
     private boolean isWindows() {

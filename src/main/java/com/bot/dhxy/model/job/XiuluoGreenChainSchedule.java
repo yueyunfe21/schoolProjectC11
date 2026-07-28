@@ -23,7 +23,8 @@ import lombok.Value;
 public class XiuluoGreenChainSchedule {
     String windowId;
     String hwnd;
-    long taskRunId;
+    String observationRunId;
+    String taskRunId;
     int round;
     String attemptId;
     long openedAtMs;
@@ -32,15 +33,32 @@ public class XiuluoGreenChainSchedule {
         if (job == null) {
             return false;
         }
-        return taskRunId == job.getTaskRunId()
+        return taskRunId != null && taskRunId.equals(job.getTaskRunId())
                 && round == job.getRound()
                 && windowId != null && windowId.equals(job.getWindowId())
                 && hwnd != null && hwnd.equals(job.getHwnd())
                 && attemptId != null && attemptId.equals(job.getAttemptId());
     }
 
+    /**
+     * TURN-40G review#5: the full five-field attempt identity ({@code windowId}, {@code hwnd},
+     * {@code taskRunId}, {@code round}, {@code attemptId}). {@code openedAtMs} is a diagnostic timestamp,
+     * not an identity field. A same-run replacement that changes {@code round} or {@code hwnd} (even while
+     * loose ids collide or reuse an attemptId) is a different identity, so a stale holder is fenced out.
+     */
+    public boolean sameFullIdentity(XiuluoGreenChainSchedule other) {
+        return other != null
+                && taskRunId != null && taskRunId.equals(other.taskRunId)
+                && java.util.Objects.equals(observationRunId, other.observationRunId)
+                && round == other.round
+                && windowId != null && windowId.equals(other.windowId)
+                && hwnd != null && hwnd.equals(other.hwnd)
+                && attemptId != null && attemptId.equals(other.attemptId);
+    }
+
     public String identityText() {
-        return "windowId=" + windowId + " hwnd=" + hwnd + " taskRunId=" + taskRunId
+        return "windowId=" + windowId + " hwnd=" + hwnd + " observationRunId=" + observationRunId
+                + " taskRunId=" + taskRunId
                 + " round=" + round + " attemptId=" + attemptId;
     }
 }

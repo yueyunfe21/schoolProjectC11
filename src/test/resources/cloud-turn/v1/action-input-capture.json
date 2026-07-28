@@ -47,7 +47,10 @@
           "source": "golden-action"
         },
         "giveItem": null,
-        "quest": null
+        "quest": null,
+        "wholeTaskRuntime": null,
+        "metric": null,
+        "taskTracker": null
       }
     },
     {
@@ -69,5 +72,6 @@
       "localService": null
     }
   ],
-  "fullWindowFailureEvidence": true
+  "fullWindowFailureEvidence": true,
+  "pathingIntent": null
 }

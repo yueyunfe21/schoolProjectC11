@@ -4,6 +4,9 @@ import com.bot.dhxy.cloud.turn.protocol.TurnFrameMetadata;
 import com.bot.dhxy.cloud.turn.protocol.TurnProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
+import com.bot.dhxy.cloud.task.NpcClickSmartQueueMessage;
+import com.bot.dhxy.cloud.task.NpcClickSmartCloudSession;
+import com.bot.dhxy.cloud.task.NpcClickSmartQueueOutcome;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -45,10 +48,12 @@ public final class HttpsTurnClient implements TurnClient {
     };
     private static final Pattern SHA256_ETAG = Pattern.compile("\\\"sha256:([0-9a-f]{64})\\\"");
     private static final String TURN_PATH = "/api/v1/client/turn";
+    private static final String NPC_ARRIVAL_FRAME_QUEUE_PATH = "/api/v1/npc-arrival-frame/queue";
     private static final String TEMPLATE_PATH_PREFIX = "/api/v1/templates/";
 
     private final URI baseUri;
     private final URI turnUri;
+    private final String bearerToken;
     private final String authorizationHeader;
     private final Duration connectTimeout;
     private final Duration requestTimeout;
@@ -72,7 +77,8 @@ public final class HttpsTurnClient implements TurnClient {
             ObjectMapper objectMapper) {
         this.baseUri = requireBaseUri(baseUri);
         this.turnUri = this.baseUri.resolve(TURN_PATH);
-        this.authorizationHeader = "Bearer " + requireToken(bearerToken);
+        this.bearerToken = requireToken(bearerToken);
+        this.authorizationHeader = "Bearer " + this.bearerToken;
         this.requestTimeout = requirePositive(requestTimeout, "requestTimeout");
         this.connectTimeout = requirePositive(connectTimeout, "connectTimeout");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper")
@@ -84,6 +90,174 @@ public final class HttpsTurnClient implements TurnClient {
                 .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
                 .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
                 .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+    }
+
+    /**
+     * TURN-40G: creates the sibling observation-plane transport from this client's exact configuration and
+     * authentication (origin, bearer token, timeouts, strict mapper). This is a pure configuration-reuse seam —
+     * the returned client posts only to the independent observation endpoint and shares no turn state, so
+     * observation traffic can never occupy this client's turn slot.
+     */
+    public com.bot.dhxy.window.observation.HttpsObservationClient newObservationClient() {
+        return new com.bot.dhxy.window.observation.HttpsObservationClient(
+                baseUri, bearerToken, connectTimeout, requestTimeout, objectMapper);
+    }
+
+    @Override
+    public NpcClickSmartCloudSession openNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId)
+            throws TurnTransportException {
+        com.fasterxml.jackson.databind.node.ObjectNode request = objectMapper.createObjectNode();
+        request.put("operation", "OPEN");
+        putArrivalIdentity(request, tenantId, deviceId, windowId, hwnd,
+                observationRunId, businessTaskRunId, intentId);
+        byte[] response = postNpcArrivalJson(request);
+        try {
+            return objectMapper.readValue(response, NpcClickSmartCloudSession.class);
+        } catch (IOException failure) {
+            throw new TurnTransportException(
+                    TurnTransportException.Kind.RESPONSE_PARSE,
+                    "NPC arrival-frame open response is invalid",
+                    failure);
+        }
+    }
+
+    @Override
+    public NpcClickSmartQueueMessage pollNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId)
+            throws TurnTransportException {
+        com.fasterxml.jackson.databind.node.ObjectNode request = objectMapper.createObjectNode();
+        request.put("operation", "POLL");
+        putArrivalIdentity(request, tenantId, deviceId, windowId, hwnd,
+                observationRunId, businessTaskRunId, intentId);
+        byte[] response = postNpcArrivalJson(request);
+        try {
+            return objectMapper.readValue(response, NpcClickSmartQueueMessage.class);
+        } catch (IOException failure) {
+            throw new TurnTransportException(
+                    TurnTransportException.Kind.RESPONSE_PARSE,
+                    "NPC arrival-frame poll response is invalid: cause="
+                            + failure.getMessage()
+                            + " response="
+                            + boundedResponsePreview(response),
+                    failure);
+        }
+    }
+
+    private static String boundedResponsePreview(byte[] response) {
+        if (response == null) {
+            return "null";
+        }
+        String text = new String(response, StandardCharsets.UTF_8)
+                .replace('\r', ' ')
+                .replace('\n', ' ');
+        return text.length() <= 1_024 ? text : text.substring(0, 1_024) + "...";
+    }
+
+    @Override
+    public void replaceNpcArrivalFrame(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId,
+            long frameId, long generation,
+            long capturedAtMs, byte[] pngBytes) throws TurnTransportException {
+        if (pngBytes == null || pngBytes.length > MAX_PNG_BYTES) {
+            throw new TurnTransportException(
+                    TurnTransportException.Kind.REQUEST_CONTRACT,
+                    "NPC replacement frame is missing or oversized");
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode request = objectMapper.createObjectNode();
+        request.put("operation", "REPLACE");
+        putArrivalIdentity(request, tenantId, deviceId, windowId, hwnd,
+                observationRunId, businessTaskRunId, intentId);
+        request.put("frameId", frameId);
+        request.put("generation", generation);
+        request.put("capturedAtMs", capturedAtMs);
+        request.put("imagePayloadBase64", java.util.Base64.getEncoder().encodeToString(pngBytes));
+        byte[] response = postNpcArrivalJson(request);
+        try {
+            String status = objectMapper.readTree(response).path("status").asText();
+            if (!status.contains("FRAME_PREPARING")) {
+                throw new TurnTransportException(
+                        TurnTransportException.Kind.RESPONSE_CONTRACT,
+                        "Cloud rejected NPC replacement frame: " + status);
+            }
+        } catch (java.io.IOException failure) {
+            throw new TurnTransportException(
+                    TurnTransportException.Kind.RESPONSE_PARSE,
+                    "NPC replacement response is invalid",
+                    failure);
+        }
+    }
+
+    @Override
+    public void reportNpcArrivalFrameOutcome(
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId,
+            NpcClickSmartQueueMessage message,
+            NpcClickSmartQueueOutcome outcome,
+            String reason) throws TurnTransportException {
+        com.fasterxml.jackson.databind.node.ObjectNode request = objectMapper.createObjectNode();
+        request.put("operation", "REPORT");
+        putArrivalIdentity(request, tenantId, deviceId, windowId, hwnd,
+                observationRunId, businessTaskRunId, intentId);
+        request.put("taskRunId", businessTaskRunId);
+        request.put("sessionId", message == null ? "" : message.getSessionId());
+        request.put("decisionId", message == null ? "local-terminal" : message.getDecisionId());
+        request.put("messageType", message == null || message.getType() == null
+                ? "INVALID" : message.getType().name());
+        request.put("strategy", message == null ? "INVALID" : message.getStrategy());
+        request.put("candidateBox", message == null ? "" : message.getCandidateBox());
+        request.put("matchedText", message == null ? "" : message.getMatchedText());
+        request.put("result", outcome == null ? "FINAL_FAILED" : outcome.name());
+        request.put("localVerificationReason", reason);
+        request.put("reason", message == null || message.getReason() == null
+                ? reason : message.getReason());
+        if (message != null && message.getWindowRelativeClickPoint() != null) {
+            com.fasterxml.jackson.databind.node.ObjectNode click = request.putObject("click");
+            click.put("x", message.getWindowRelativeClickPoint().x);
+            click.put("y", message.getWindowRelativeClickPoint().y);
+        }
+        postNpcArrivalJson(request);
+    }
+
+    private void putArrivalIdentity(
+            com.fasterxml.jackson.databind.node.ObjectNode request,
+            String tenantId, String deviceId, String windowId, String hwnd,
+            String observationRunId, String businessTaskRunId, String intentId) {
+        request.put("tenantId", tenantId);
+        request.put("deviceId", deviceId);
+        request.put("windowId", windowId);
+        request.put("hwnd", hwnd);
+        request.put("observationRunId", observationRunId);
+        request.put("businessTaskRunId", businessTaskRunId);
+        request.put("intentId", intentId);
+    }
+
+    private byte[] postNpcArrivalJson(com.fasterxml.jackson.databind.node.ObjectNode request)
+            throws TurnTransportException {
+        byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(request);
+        } catch (JsonProcessingException failure) {
+            throw new TurnTransportException(
+                    TurnTransportException.Kind.SERIALIZATION,
+                    "cannot serialize NPC arrival-frame request",
+                    failure);
+        }
+        HttpRequest httpRequest = requestBuilder(baseUri.resolve(NPC_ARRIVAL_FRAME_QUEUE_PATH))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build();
+        HttpResponse<InputStream> response = sendOnce(httpRequest);
+        byte[] responseBytes = readBounded(response, MAX_JSON_BYTES, "NPC arrival-frame response");
+        if (response.statusCode() != 200) {
+            throw httpStatusFailure(response.statusCode(), responseBytes);
+        }
+        requireContentType(response.headers(), "application/json", "NPC arrival-frame response");
+        return responseBytes;
     }
 
     /**
@@ -139,7 +313,7 @@ public final class HttpsTurnClient implements TurnClient {
                     "turn response is not strict TurnResponse JSON",
                     e);
         }
-        requireValidResponse(response);
+        requireValidResponse(response, request);
         return TurnExchangeResult.accepted(response);
     }
 
@@ -218,7 +392,9 @@ public final class HttpsTurnClient implements TurnClient {
                     e);
         }
 
-        TurnFrameMetadata frame = request.previousOutcome() == null ? null : request.previousOutcome().frame();
+        TurnFrameMetadata frame = request.continuation() != null
+                ? request.continuation().frame()
+                : request.previousOutcome() == null ? null : request.previousOutcome().frame();
         if ((frame == null) != (optionalPng == null)) {
             throw new TurnTransportException(
                     TurnTransportException.Kind.REQUEST_CONTRACT,
@@ -256,31 +432,18 @@ public final class HttpsTurnClient implements TurnClient {
         }
     }
 
-    private void requireValidResponse(TurnResponse response) throws TurnTransportException {
+    private void requireValidResponse(TurnResponse response, TurnRequest request) throws TurnTransportException {
         if (response == null || response.status() == null) {
             throw new TurnTransportException(
                     TurnTransportException.Kind.RESPONSE_CONTRACT,
                     "turn response and status must be present");
         }
-        if (response.status() == TurnResponse.Status.IDLE) {
-            if (response.action() != null) {
-                throw new TurnTransportException(
-                        TurnTransportException.Kind.RESPONSE_CONTRACT,
-                        "IDLE turn response must not contain an action");
-            }
-            return;
-        }
-        if (response.status() != TurnResponse.Status.ACTION || response.action() == null) {
-            throw new TurnTransportException(
-                    TurnTransportException.Kind.RESPONSE_CONTRACT,
-                    "ACTION turn response must contain one action");
-        }
         try {
-            TurnProtocolValidator.requireValid(response.action());
+            TurnProtocolValidator.requireValid(response, request);
         } catch (RuntimeException e) {
             throw new TurnTransportException(
                     TurnTransportException.Kind.RESPONSE_CONTRACT,
-                    "invalid turn action: " + e.getMessage(),
+                    "invalid turn response: " + e.getMessage(),
                     e);
         }
     }
@@ -384,14 +547,27 @@ public final class HttpsTurnClient implements TurnClient {
         }
     }
 
-    private static TurnTransportException httpStatusFailure(int status, byte[] body) {
+    private TurnTransportException httpStatusFailure(int status, byte[] body) {
         String detail = new String(body, 0, Math.min(body.length, 512), StandardCharsets.UTF_8)
                 .replace('\r', ' ')
                 .replace('\n', ' ')
                 .trim();
         String message = "unexpected HTTP status " + status;
         if (!detail.isEmpty()) {
-            message += ": " + detail;
+            try {
+                com.fasterxml.jackson.databind.JsonNode problem = objectMapper.readTree(detail);
+                String code = problem.path("code").asText("").trim();
+                String explanation = problem.path("message").asText("").trim();
+                if (!explanation.isEmpty()) {
+                    message = "Cloud request rejected"
+                            + (code.isEmpty() ? "" : " [" + code + "]")
+                            + ": " + explanation;
+                } else {
+                    message += ": " + detail;
+                }
+            } catch (IOException invalidProblemJson) {
+                message += ": " + detail;
+            }
         }
         return new TurnTransportException(
                 TurnTransportException.Kind.HTTP_STATUS,

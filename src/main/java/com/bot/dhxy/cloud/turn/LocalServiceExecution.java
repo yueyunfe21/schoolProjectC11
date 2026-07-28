@@ -21,19 +21,38 @@ import java.util.Objects;
 /**
  * Immutable mechanical result returned by one permanent local-Service adapter.
  *
+ * <p>TURN-40B-C2 closed typed-stop invariant: {@code stopRequested == true} if and only if the
+ * result is the exact typed stop representation {@code status == FAILED && code == "STOPPED"}.
+ * The {@code STOPPED} code is reserved — a generic failure must never carry it, and a stop result
+ * can never carry any other code — so two representations of the same stop can never disagree.
+ * Only {@link #stopped(String)} mints the stop form.</p>
+ *
  * @param status completed or failed step status; {@code NOT_RUN} is rejected.
  * @param code nonblank stable mechanical result code.
  * @param localResultJson optional immutable JSON text, limited by UTF-8 byte size.
- * @param frame optional single Quest-detail raw PNG frame with matching protocol metadata.
+ * @param frame optional single Quest-detail or task-tracker-panel raw PNG frame with matching metadata.
+ * @param stopRequested true only for the typed stop representation defined above.
  */
 public record LocalServiceExecution(
         TurnStepResult.Status status,
         String code,
         String localResultJson,
-        TurnFrame frame) {
+        TurnFrame frame,
+        boolean stopRequested) {
 
     public static final int MAX_LOCAL_RESULT_JSON_BYTES = 64 * 1024;
     public static final int MAX_QUEST_FRAME_BYTES = 8 * 1024 * 1024;
+
+    /** The single reserved typed-stop code; hardcoded by {@link #stopped(String)}. */
+    public static final String STOPPED_CODE = "STOPPED";
+
+    /** Compatibility shape for every non-stop construction site. */
+    public LocalServiceExecution(TurnStepResult.Status status,
+                                 String code,
+                                 String localResultJson,
+                                 TurnFrame frame) {
+        this(status, code, localResultJson, frame, false);
+    }
 
     public LocalServiceExecution {
         Objects.requireNonNull(status, "status");
@@ -42,6 +61,15 @@ public record LocalServiceExecution(
         }
         if (code == null || code.isBlank()) {
             throw new IllegalArgumentException("code must not be blank");
+        }
+        if (stopRequested) {
+            if (status != TurnStepResult.Status.FAILED || !STOPPED_CODE.equals(code)) {
+                throw new IllegalArgumentException(
+                        "a stop result must be exactly FAILED with the reserved STOPPED code");
+            }
+        } else if (STOPPED_CODE.equals(code)) {
+            throw new IllegalArgumentException(
+                    "a generic result must not carry the reserved STOPPED code");
         }
         if (!code.equals(code.trim())) {
             throw new IllegalArgumentException("code must not contain leading or trailing whitespace");
@@ -60,7 +88,7 @@ public record LocalServiceExecution(
             if (status != TurnStepResult.Status.COMPLETED) {
                 throw new IllegalArgumentException("only a completed local Service result may carry a Quest frame");
             }
-            requireValidQuestFrame(frame);
+            requireValidLocalFrame(frame);
         }
     }
 
@@ -87,36 +115,51 @@ public record LocalServiceExecution(
         return new LocalServiceExecution(TurnStepResult.Status.FAILED, code, localResultJson, null);
     }
 
-    private static void requireValidQuestFrame(TurnFrame frame) {
+    /**
+     * Create the sole typed stop result: FAILED with the hardcoded reserved {@code STOPPED} code
+     * and {@code stopRequested=true}. Callers cannot choose another code, so the stop discriminator
+     * and the code can never disagree.
+     *
+     * @param localResultJson optional JSON stop detail no larger than 64 KiB when UTF-8 encoded.
+     * @return validated immutable typed stop result.
+     */
+    public static LocalServiceExecution stopped(String localResultJson) {
+        return new LocalServiceExecution(
+                TurnStepResult.Status.FAILED, STOPPED_CODE, localResultJson, null, true);
+    }
+
+    private static void requireValidLocalFrame(TurnFrame frame) {
         TurnFrameMetadata metadata = frame.metadata();
-        if (metadata.purpose() != TurnFramePurpose.QUEST_DETAIL) {
-            throw new IllegalArgumentException("local Service frame purpose must be QUEST_DETAIL");
+        if (metadata.purpose() != TurnFramePurpose.QUEST_DETAIL
+                && metadata.purpose() != TurnFramePurpose.TASK_TRACKER_PANEL) {
+            throw new IllegalArgumentException(
+                    "local Service frame purpose must be QUEST_DETAIL or TASK_TRACKER_PANEL");
         }
         if (!"image/png".equalsIgnoreCase(metadata.contentType())) {
-            throw new IllegalArgumentException("Quest frame contentType must be image/png");
+            throw new IllegalArgumentException("local Service frame contentType must be image/png");
         }
         if (metadata.width() <= 0 || metadata.height() <= 0) {
-            throw new IllegalArgumentException("Quest frame dimensions must be positive");
+            throw new IllegalArgumentException("local Service frame dimensions must be positive");
         }
         TurnRegion region = metadata.region();
         if (region == null || region.width() != metadata.width() || region.height() != metadata.height()) {
-            throw new IllegalArgumentException("Quest frame dimensions must match its region");
+            throw new IllegalArgumentException("local Service frame dimensions must match its region");
         }
         if (metadata.sourceStepIndex() != null && metadata.sourceStepIndex() < 0) {
-            throw new IllegalArgumentException("Quest frame sourceStepIndex must be nonnegative");
+            throw new IllegalArgumentException("local Service frame sourceStepIndex must be nonnegative");
         }
 
         byte[] pngBytes = frame.pngBytes();
         if (pngBytes.length > MAX_QUEST_FRAME_BYTES) {
-            throw new IllegalArgumentException("Quest frame exceeds " + MAX_QUEST_FRAME_BYTES + " bytes");
+            throw new IllegalArgumentException("local Service frame exceeds " + MAX_QUEST_FRAME_BYTES + " bytes");
         }
         if (!isPng(pngBytes)) {
-            throw new IllegalArgumentException("Quest frame must contain raw PNG bytes");
+            throw new IllegalArgumentException("local Service frame must contain raw PNG bytes");
         }
         requireMatchingPngDimensions(pngBytes, metadata.width(), metadata.height());
         String actualSha256 = sha256(pngBytes);
         if (!actualSha256.equalsIgnoreCase(metadata.sha256())) {
-            throw new IllegalArgumentException("Quest frame SHA-256 does not match its raw PNG bytes");
+            throw new IllegalArgumentException("local Service frame SHA-256 does not match its raw PNG bytes");
         }
     }
 

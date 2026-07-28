@@ -38,10 +38,13 @@ public class BoundWindowKeyboardService {
     private static final int WM_SYSKEYUP = 0x0105;
     private static final int WM_KEYDOWN = 0x0100;
     private static final int WM_KEYUP = 0x0101;
+    private static final int WM_CHAR = 0x0102;
     private static final int VK_MENU = 0x12;
     private static final int VK_CONTROL = 0x11;
+    private static final int VK_RETURN = 0x0D;
     private static final int SCAN_ALT = 0x38;
     private static final int SCAN_CONTROL = 0x1D;
+    private static final int SCAN_RETURN = 0x1C;
 
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowIsolationProperties windowIsolationProperties;
@@ -174,6 +177,115 @@ public class BoundWindowKeyboardService {
         log.info("HWND modifier transition: windowId={} hwnd={} key={} transition={} result={} post={} title={}",
                 windowId, binding.getNativeHandle(), key, transition, post.success(), post.toLogText(), binding.getTitle());
         return new KeyTransitionAttempt(true, post.success(), post.success() ? "OK" : "post-message-failed");
+    }
+
+    /**
+     * Send one background-validated Ctrl+letter chord to the supplied immutable binding.
+     *
+     * @param binding exact target HWND binding already frozen by the caller; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @param shortcut closed Ctrl chord to deliver.
+     * @return typed delivery attempt; no foreground fallback or retry is performed.
+     */
+    public ShortcutAttempt pressControlShortcut(WindowNativeBinding binding,
+                                                String windowId,
+                                                ControlShortcut shortcut) {
+        if (shortcut == null) {
+            return ShortcutAttempt.notAttempted("unsupported-control-shortcut");
+        }
+        if (!shortcut.backgroundHwndSupported()) {
+            log.warn("HWND keyboard chord rejected because chord is not background-validated: chord={}",
+                    shortcut.displayName());
+            return ShortcutAttempt.terminalNotAttempted("unvalidated-background-chord");
+        }
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return ShortcutAttempt.notAttempted("disabled");
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return ShortcutAttempt.notAttempted("invalid-hwnd");
+        }
+
+        PostResult ctrlDown = postKey(hwnd, WM_KEYDOWN, VK_CONTROL, SCAN_CONTROL, false, false);
+        TaskSleep.sleep(40);
+        PostResult keyDown = postKey(hwnd, WM_KEYDOWN, shortcut.virtualKey(), shortcut.scanCode(), false, false);
+        TaskSleep.sleep(60);
+        PostResult keyUp = postKey(hwnd, WM_KEYUP, shortcut.virtualKey(), shortcut.scanCode(), false, true);
+        TaskSleep.sleep(40);
+        PostResult ctrlUp = postKey(hwnd, WM_KEYUP, VK_CONTROL, SCAN_CONTROL, false, true);
+        boolean success = ctrlDown.success() && keyDown.success() && keyUp.success() && ctrlUp.success();
+        windowInteractionMetricsService.recordHwndKeyboard(windowId, shortcut.displayName(), success);
+        log.info("HWND keyboard chord: windowId={} hwnd={} chord={} result={} ctrlDown={} keyDown={} keyUp={} ctrlUp={} title={}",
+                windowId, binding.getNativeHandle(), shortcut.displayName(), success,
+                ctrlDown.toLogText(), keyDown.toLogText(), keyUp.toLogText(), ctrlUp.toLogText(), binding.getTitle());
+        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
+    }
+
+    /**
+     * Send one background Enter key tap to the supplied immutable binding.
+     *
+     * @param binding exact target HWND binding already frozen by the caller; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @return typed delivery attempt; no foreground fallback or retry is performed.
+     */
+    public ShortcutAttempt pressEnter(WindowNativeBinding binding, String windowId) {
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return ShortcutAttempt.notAttempted("disabled");
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return ShortcutAttempt.notAttempted("invalid-hwnd");
+        }
+
+        PostResult keyDown = postKey(hwnd, WM_KEYDOWN, VK_RETURN, SCAN_RETURN, false, false);
+        TaskSleep.sleep(40);
+        PostResult keyUp = postKey(hwnd, WM_KEYUP, VK_RETURN, SCAN_RETURN, false, true);
+        boolean success = keyDown.success() && keyUp.success();
+        windowInteractionMetricsService.recordHwndKeyboard(windowId, "Enter", success);
+        log.info("HWND keyboard Enter: windowId={} hwnd={} result={} keyDown={} keyUp={} title={}",
+                windowId, binding.getNativeHandle(), success,
+                keyDown.toLogText(), keyUp.toLogText(), binding.getTitle());
+        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
+    }
+
+    /**
+     * Post one Unicode string to the supplied immutable binding as ordered background {@code WM_CHAR} messages.
+     *
+     * <p>Each code unit is delivered in order to the exact HWND; no clipboard, focus or foreground path is used.
+     * A single failed post makes the whole attempt unsuccessful without any retry or fallback.</p>
+     *
+     * @param binding exact target HWND binding already frozen by the caller; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @param text Unicode text to deliver; blank text is not attempted.
+     * @return typed delivery attempt; no foreground fallback or retry is performed.
+     */
+    public ShortcutAttempt typeUnicodeText(WindowNativeBinding binding, String windowId, String text) {
+        if (text == null || text.isEmpty()) {
+            return ShortcutAttempt.notAttempted("empty-text");
+        }
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return ShortcutAttempt.notAttempted("disabled");
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return ShortcutAttempt.notAttempted("invalid-hwnd");
+        }
+
+        boolean success = true;
+        for (int index = 0; index < text.length(); index++) {
+            if (index > 0) {
+                TaskSleep.sleep(10);
+            }
+            char codeUnit = text.charAt(index);
+            long lParam = 1L;
+            boolean posted = User32Keyboard.INSTANCE.PostMessage(
+                    hwnd, WM_CHAR, new WinDef.WPARAM(codeUnit), new WinDef.LPARAM(lParam));
+            success = success && posted;
+        }
+        windowInteractionMetricsService.recordHwndKeyboard(windowId, "text[" + text.length() + "]", success);
+        log.info("HWND keyboard text: windowId={} hwnd={} length={} result={} title={}",
+                windowId, binding.getNativeHandle(), text.length(), success, binding.getTitle());
+        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
     }
 
     private PostResult postKey(WinDef.HWND hwnd, int message, int virtualKey, int scanCode, boolean altContext, boolean keyUp) {
@@ -311,6 +423,39 @@ public class BoundWindowKeyboardService {
         private final boolean backgroundHwndSupported;
 
         AltShortcut(String displayName, int virtualKey, int scanCode, boolean backgroundHwndSupported) {
+            this.displayName = displayName;
+            this.virtualKey = virtualKey;
+            this.scanCode = scanCode;
+            this.backgroundHwndSupported = backgroundHwndSupported;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public int virtualKey() {
+            return virtualKey;
+        }
+
+        public int scanCode() {
+            return scanCode;
+        }
+
+        public boolean backgroundHwndSupported() {
+            return backgroundHwndSupported;
+        }
+    }
+
+    public enum ControlShortcut {
+        CTRL_A("Ctrl+A", 0x41, 0x1E, true),
+        CTRL_U("Ctrl+U", 0x55, 0x16, true);
+
+        private final String displayName;
+        private final int virtualKey;
+        private final int scanCode;
+        private final boolean backgroundHwndSupported;
+
+        ControlShortcut(String displayName, int virtualKey, int scanCode, boolean backgroundHwndSupported) {
             this.displayName = displayName;
             this.virtualKey = virtualKey;
             this.scanCode = scanCode;

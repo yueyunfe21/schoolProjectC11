@@ -2,19 +2,14 @@ package com.bot.dhxy.service;
 
 
 import com.bot.dhxy.core.GameClientTracker;
-import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.core.ImageFinder;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionScope;
-import com.bot.dhxy.model.dialog.DialogResultStatus;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.service.dialog.DialogHandleRequest;
 import com.bot.dhxy.tools.CoordinateHelper;
-import com.bot.dhxy.tools.GameStateUtil;
 import com.bot.dhxy.tools.ImagePreprocessor;
-import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,11 +51,7 @@ public class UICleanerService {
     private final InputProvider inputProvider;
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-    private final GameStateUtil gameStateUtil;
-    private final DialogService dialogService;
     private final WindowScopedTempPath windowScopedTempPath;
-    private final GameContext gameContext;
-    private final WindowTaskContextHolder windowTaskContextHolder;
 
     private final Random random = new Random();
 
@@ -80,10 +71,6 @@ public class UICleanerService {
             cleanedAny = closeMapWindow(cleanupPass) || cleanedAny;
         }
 
-        if (forceCloseDialog()) {
-            cleanedAny = true;
-        }
-
         if (closeAllGenericWindows(cleanupPass)) {
             cleanedAny = true;
         }
@@ -101,20 +88,6 @@ public class UICleanerService {
      * @param source diagnostic source for logs.
      * @return true only when cleanup is clearly unnecessary.
      */
-    public boolean probeStartupCleanNoInput(String source) {
-        CleanupPass cleanupPass = CleanupPass.start();
-        boolean worldMapOpen = isWorldMapOpened(cleanupPass);
-        DialogResultStatus dialogStatus = dialogService
-                .handleDialog(DialogHandleRequest.inspect(safeSource(source) + ":dialog"))
-                .getStatus();
-        Point closePoint = findGenericCloseButtonPoint(safeSource(source) + ":generic-close-probe", cleanupPass);
-        boolean clean = !worldMapOpen && dialogStatus == DialogResultStatus.NO_DIALOG && closePoint == null;
-        log.info("UI startup cleanup precheck: source={} clean={} worldMapOpen={} dialogStatus={} genericClosePoint={}",
-                safeSource(source), clean, worldMapOpen, dialogStatus,
-                closePoint == null ? "none" : closePoint.x + "," + closePoint.y);
-        return clean;
-    }
-
     private boolean isWorldMapOpened(CleanupPass cleanupPass) {
         String screenPath = cleanupPass.screenPath(tracker);
         if (screenPath == null || screenPath.isBlank()) {
@@ -207,22 +180,6 @@ public class UICleanerService {
      * was nothing actionable or cleanup was interrupted.
      */
     public boolean cleanLightweightInterruptions(String sourceTask) {
-        DialogResultStatus dialogResult = dialogService
-                .handleDialog(DialogHandleRequest.handleBusinessOption(sourceTask))
-                .getStatus();
-        if (dialogResult == DialogResultStatus.BUSINESS_OPTION_CLICKED) {
-            log.info("UI lightweight cleanup handled business dialog: source={}", sourceTask);
-            return true;
-        }
-        if (dialogResult == DialogResultStatus.INTERRUPTED) {
-            log.info("UI lightweight cleanup interrupted: source={}", sourceTask);
-            return false;
-        }
-        if (dialogResult == DialogResultStatus.FAILED) {
-            log.warn("UI lightweight cleanup business dialog scan failed: source={}", sourceTask);
-            return false;
-        }
-
         if (closeAllGenericWindows()) {
             log.info("UI lightweight cleanup closed generic window: source={}", sourceTask);
             return true;
@@ -337,54 +294,6 @@ public class UICleanerService {
         void invalidateFrame(String reason) {
             screenPath = null;
         }
-    }
-
-    /**
-     * Close the currently visible dialog only when it matches a generic safe-close pattern.
-     *
-     * <p>Story dialogs are only fast-clicked when the current window/task state allows it. Option
-     * dialogs first try known close/cancel keywords, then fall back to the last green option. The
-     * method can send real clicks through the input queue.</p>
-     *
-     * @return true when a dialog was closed; false when no dialog was present or it was unsafe to
-     * close automatically.
-     */
-    public boolean forceCloseDialog() {
-        var dialogInspect = dialogService.handleDialog(DialogHandleRequest.inspect("ui-cleaner:force-close"));
-        if (dialogInspect.getStatus() == DialogResultStatus.NO_DIALOG) {
-            return false;
-        }
-
-        if (dialogInspect.getStatus() == DialogResultStatus.STORY_IGNORED) {
-            if (!canFastClickStoryDialog()) {
-                log.info("UI cleanup story dialog fast-click skipped: role={} actionState={}",
-                        currentWindowRoleText(), gameContext.getCurrentActionState());
-                return false;
-            }
-            dialogService.handleDialog(DialogHandleRequest.clickStory("ui-cleaner:force-close-story"));
-            TaskSleep.sleep(350);
-            return true;
-        }
-
-        DialogResultStatus fallbackResult = dialogService.handleDialog(DialogHandleRequest.fallbackLastOption("ui-cleaner")).getStatus();
-        log.info("UI cleanup dialog fallback last option result={}", fallbackResult);
-        return fallbackResult == DialogResultStatus.FALLBACK_CLICKED;
-    }
-
-    private boolean canFastClickStoryDialog() {
-        boolean member = windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.isMember())
-                .orElse(false);
-        if (!member) {
-            return true;
-        }
-        return gameContext.getCurrentActionState() == GameContext.ActionState.IN_COMBAT;
-    }
-
-    private String currentWindowRoleText() {
-        return windowTaskContextHolder.rawCurrent()
-                .map(windowContext -> windowContext.getRole().name())
-                .orElse("UNKNOWN");
     }
 
     private void clickAbsolutePoint(int x, int y, String description) {

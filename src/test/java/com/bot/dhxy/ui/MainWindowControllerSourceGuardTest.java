@@ -40,6 +40,10 @@ public class MainWindowControllerSourceGuardTest {
                 "row stop action should stay a plain stop action");
         require(!source.contains("rowActionButton(\"↻\""),
                 "操作 column should not render the retry icon");
+        require(source.contains("return windowTaskControlService.resumeWindows(pausedWindowIds);"),
+                "main start button must return immediately after resuming paused windows");
+        require(!source.contains("WindowTaskCommandResult resumeResult = windowTaskControlService.resumeWindows(pausedWindowIds);"),
+                "resume must not fall through into refresh/register/start when a pending queue still exists");
         require(source.contains("actionsCol.setPrefWidth(58);"),
                 "操作 column should be compact for only start/pause and stop buttons");
         require(source.contains("rowActionButton(\"fas-pause\", \"暂停该窗口任务\", \"row-pause-button\""),

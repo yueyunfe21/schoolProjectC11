@@ -365,6 +365,7 @@ class TurnCapturePointerClearContractTest {
         private int y2;
 
         private RecordingCaptureService(List<String> events) {
+            super(null);
             this.events = events;
         }
 

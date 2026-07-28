@@ -19,10 +19,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * Single background worker that executes queued physical input requests.
  *
- * <p>The worker is the only consumer of {@link InputActionQueue}. For key-only Alt shortcut
- * sequences it first attempts background hwnd keyboard delivery; mouse actions and exclusive
+ * <p>The worker is the only consumer of {@link InputActionQueue}. Keyboard actions are delivered only
+ * through the request's exact HWND and never fall back to foreground input. Mouse actions and exclusive
  * callbacks still require focused real input. The worker binds the request's captured window context
- * while executing so downstream focus/input helpers operate on the correct window.</p>
+ * while executing so downstream capture/input helpers operate on the correct window.</p>
  */
 @Slf4j
 @Component
@@ -130,7 +130,9 @@ public class InputActionWorker {
             }
             boolean preferBackgroundKeyboard = canUseBackgroundKeyboard(request);
             boolean focusBeforeInput = request.isRetainedSessionMode()
-                    || request.hasExclusiveCallback() || !preferBackgroundKeyboard;
+                    || (request.hasExclusiveCallback()
+                    ? request.isExclusiveCallbackFocusRequired()
+                    : !preferBackgroundKeyboard);
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
                     inputCoordinator.callInputTransaction("queued:" + request.getDescription(), false, () -> {
                         /*
@@ -342,18 +344,12 @@ public class InputActionWorker {
             inputProvider.moveMouse(action.getX(), action.getY());
         } else if (type == InputActionType.DRAG_AND_DROP) {
             inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
-        } else if (type == InputActionType.HOLD_CTRL) {
-            inputProvider.holdCtrl();
-        } else if (type == InputActionType.RELEASE_CTRL) {
-            inputProvider.releaseCtrl();
-        } else if (type == InputActionType.PRESS_CTRL_U) {
-            inputProvider.pressCtrlU();
-        } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
-            inputProvider.typeTextUnicode(action.getText());
+        } else if (isBackgroundKeyboardAction(type)) {
+            return executeBackgroundKeyboard(request, action);
         } else if (type == InputActionType.PASTE_TEXT) {
-            inputProvider.pasteText(action.getText());
-        } else if (type == InputActionType.PRESS_ENTER) {
-            inputProvider.pressEnter();
+            log.warn("Clipboard paste rejected because foreground keyboard fallback is disabled: windowId={} request={}",
+                    request.getWindowId(), request.getDescription());
+            return false;
         } else if (isAltShortcutAction(type)) {
             return pressAltShortcut(request, type, preferBackgroundKeyboard, stage);
         } else if (type == InputActionType.SCROLL_DOWN) {
@@ -501,7 +497,7 @@ public class InputActionWorker {
      * mapped by the caller's existing catch to {@code STOP_REQUESTED}. Nothing is retried or replayed.</p>
      *
      * @param request frozen exact-window request carrying the complete action list
-     * @param preferBackgroundKeyboard whether alt shortcuts prefer the background keyboard path
+     * @param preferBackgroundKeyboard whether the complete action list needs no foreground mouse input
      * @return true only when every action completed under one unbroken frozen generation
      */
     private boolean runFrozenExactWindowActions(InputActionRequest request, boolean preferBackgroundKeyboard) {
@@ -525,10 +521,12 @@ public class InputActionWorker {
             if (!isFrozenExactWindowStillOwned(request, "before-frozen-focus")) {
                 return false;
             }
-            inputCoordinator.focusFrozenBindingInActiveTransaction(
-                    "queued:" + request.getDescription(),
-                    request.getWindowId(),
-                    request.getNativeBinding());
+            if (!preferBackgroundKeyboard) {
+                inputCoordinator.focusFrozenBindingInActiveTransaction(
+                        "queued:" + request.getDescription(),
+                        request.getWindowId(),
+                        request.getNativeBinding());
+            }
             return Boolean.TRUE.equals(InputActionScope.callWith(request, () -> {
                 int actionIndex = 0;
                 for (InputAction action : request.getActions()) {
@@ -608,7 +606,7 @@ public class InputActionWorker {
     }
 
     /**
-     * Press an Alt shortcut, preferring background hwnd delivery when the sequence is keyboard-only.
+     * Press an Alt shortcut through exact-HWND delivery. Foreground keyboard fallback is forbidden.
      */
     private boolean pressAltShortcut(InputActionRequest request,
                                      InputActionType type,
@@ -622,56 +620,17 @@ public class InputActionWorker {
          * and the legacy path keeps its existing behavior byte-for-byte.
          */
         boolean frozen = request.isFrozenExactWindow();
-        if (preferBackgroundKeyboard) {
-            BoundWindowKeyboardService.ShortcutAttempt attempt = frozen
-                    ? boundWindowKeyboardService.pressShortcut(
-                            request.getNativeBinding(), request.getWindowId(), shortcut)
-                    : boundWindowKeyboardService.pressShortcut(shortcut);
-            if (attempt.attempted() && attempt.success()) {
-                return true;
-            }
-            if (attempt.terminalFailure()) {
-                log.warn("HWND {} terminally rejected; skip focused real-input fallback: reason={}",
-                        shortcutDisplayName(shortcut, type), attempt.reason());
-                return false;
-            }
-            if (attempt.attempted()) {
-                log.warn("HWND {} failed, falling back to focused real input: reason={}",
-                        shortcutDisplayName(shortcut, type), attempt.reason());
-            } else {
-                log.debug("HWND {} not attempted, falling back to focused real input: reason={}",
-                        shortcutDisplayName(shortcut, type), attempt.reason());
-            }
-            if (!waitIfPaused(request, stage + "-before-focused-fallback")) {
-                return false;
-            }
-            if (!request.checkDetailedSafety(stage + "-before-focused-fallback")) {
-                return false;
-            }
-            if (frozen) {
-                if (!isFrozenExactWindowStillOwned(request, stage + "-before-focused-fallback")) {
-                    return false;
-                }
-                inputCoordinator.focusFrozenBindingInActiveTransaction(
-                        "fallback:" + shortcutDisplayName(shortcut, type),
-                        request.getWindowId(),
-                        request.getNativeBinding());
-            } else {
-                inputCoordinator.focusCurrentWindowInActiveTransaction(
-                        "fallback:" + shortcutDisplayName(shortcut, type));
-            }
-            if (request.hasDeadline()
-                    && (!isPlayerIdentityEpochCurrent(request, stage + "-after-focused-fallback")
-                    || !request.checkDetailedSafety(stage + "-after-focused-fallback"))) {
-                return false;
-            }
+        BoundWindowKeyboardService.ShortcutAttempt attempt = frozen
+                ? boundWindowKeyboardService.pressShortcut(
+                        request.getNativeBinding(), request.getWindowId(), shortcut)
+                : boundWindowKeyboardService.pressShortcut(
+                        request.getNativeBinding(), request.getWindowId(), shortcut);
+        if (attempt.attempted() && attempt.success()) {
+            return true;
         }
-        // Real input is unconditional and irreversible, so a frozen request re-proves ownership first.
-        if (frozen && !isFrozenExactWindowStillOwned(request, stage + "-before-real-input")) {
-            return false;
-        }
-        pressAltShortcutWithRealInput(type);
-        return !Thread.currentThread().isInterrupted();
+        log.warn("HWND {} failed; foreground keyboard fallback is disabled: windowId={} reason={}",
+                shortcutDisplayName(shortcut, type), request.getWindowId(), attempt.reason());
+        return false;
     }
 
     /**
@@ -730,7 +689,7 @@ public class InputActionWorker {
     }
 
     /**
-     * @return true when every action is either sleep or a supported Alt shortcut.
+     * @return true when every action is sleep or an exact-HWND keyboard operation.
      */
     private boolean canUseBackgroundKeyboard(InputActionRequest request) {
         if (request.hasExclusiveCallback()) {
@@ -741,7 +700,10 @@ public class InputActionWorker {
         }
         for (InputAction action : request.getActions()) {
             InputActionType type = action.getType();
-            if (type != InputActionType.SLEEP && toAltShortcut(type) == null) {
+            if (type != InputActionType.SLEEP
+                    && !isBackgroundKeyboardAction(type)
+                    && toAltShortcut(type) == null
+                    && type != InputActionType.PASTE_TEXT) {
                 return false;
             }
         }
@@ -776,41 +738,66 @@ public class InputActionWorker {
         if (type == InputActionType.PRESS_ALT_Q) {
             return BoundWindowKeyboardService.AltShortcut.ALT_Q;
         }
+        if (type == InputActionType.PRESS_ALT_A) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_A;
+        }
+        if (type == InputActionType.PRESS_ALT_C) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_C;
+        }
+        if (type == InputActionType.PRESS_ALT_U) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_U;
+        }
         return null;
+    }
+
+    /** Execute one non-Alt keyboard action against the request's immutable HWND without foreground fallback. */
+    private boolean executeBackgroundKeyboard(InputActionRequest request, InputAction action) {
+        BoundWindowKeyboardService.ShortcutAttempt attempt;
+        InputActionType type = action.getType();
+        if (type == InputActionType.HOLD_CTRL || type == InputActionType.RELEASE_CTRL) {
+            BoundWindowKeyboardService.KeyTransition transition = type == InputActionType.HOLD_CTRL
+                    ? BoundWindowKeyboardService.KeyTransition.DOWN
+                    : BoundWindowKeyboardService.KeyTransition.UP;
+            BoundWindowKeyboardService.KeyTransitionAttempt result = boundWindowKeyboardService.transitionModifier(
+                    request.getNativeBinding(), request.getWindowId(),
+                    BoundWindowKeyboardService.ModifierKey.CONTROL, transition);
+            if (result.attempted() && result.success()) {
+                return true;
+            }
+            log.warn("HWND Ctrl transition failed; foreground keyboard fallback is disabled: windowId={} transition={} reason={}",
+                    request.getWindowId(), transition, result.reason());
+            return false;
+        }
+        if (type == InputActionType.PRESS_CTRL_U) {
+            attempt = boundWindowKeyboardService.pressControlShortcut(
+                    request.getNativeBinding(), request.getWindowId(),
+                    BoundWindowKeyboardService.ControlShortcut.CTRL_U);
+        } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
+            attempt = boundWindowKeyboardService.typeUnicodeText(
+                    request.getNativeBinding(), request.getWindowId(), action.getText());
+        } else if (type == InputActionType.PRESS_ENTER) {
+            attempt = boundWindowKeyboardService.pressEnter(request.getNativeBinding(), request.getWindowId());
+        } else {
+            throw new IllegalArgumentException("Unsupported background keyboard action: " + type);
+        }
+        if (attempt.attempted() && attempt.success()) {
+            return true;
+        }
+        log.warn("HWND keyboard action failed; foreground keyboard fallback is disabled: windowId={} action={} reason={}",
+                request.getWindowId(), type, attempt.reason());
+        return false;
+    }
+
+    private boolean isBackgroundKeyboardAction(InputActionType type) {
+        return type == InputActionType.HOLD_CTRL
+                || type == InputActionType.RELEASE_CTRL
+                || type == InputActionType.PRESS_CTRL_U
+                || type == InputActionType.TYPE_TEXT_UNICODE
+                || type == InputActionType.PRESS_ENTER;
     }
 
     private String shortcutDisplayName(BoundWindowKeyboardService.AltShortcut shortcut, InputActionType fallbackType) {
         return shortcut == null ? fallbackType.name() : shortcut.displayName();
-    }
-
-    private void pressAltShortcutWithRealInput(InputActionType type) {
-        if (type == InputActionType.PRESS_ALT_1) {
-            inputProvider.pressAlt1();
-        } else if (type == InputActionType.PRESS_ALT_2) {
-            inputProvider.pressAlt2();
-        } else if (type == InputActionType.PRESS_ALT_4) {
-            inputProvider.pressAlt4();
-        } else if (type == InputActionType.PRESS_ALT_6) {
-            inputProvider.pressAlt6();
-        } else if (type == InputActionType.PRESS_ALT_8) {
-            inputProvider.pressAlt8();
-        } else if (type == InputActionType.PRESS_ALT_T) {
-            inputProvider.pressAltT();
-        } else if (type == InputActionType.PRESS_ALT_O) {
-            inputProvider.pressAltO();
-        } else if (type == InputActionType.PRESS_ALT_E) {
-            inputProvider.pressAltE();
-        } else if (type == InputActionType.PRESS_ALT_Q) {
-            inputProvider.pressAltQ();
-        } else if (type == InputActionType.PRESS_ALT_A) {
-            inputProvider.pressAltA();
-        } else if (type == InputActionType.PRESS_ALT_C) {
-            inputProvider.pressAltC();
-        } else if (type == InputActionType.PRESS_ALT_U) {
-            inputProvider.pressAltU();
-        } else {
-            throw new IllegalArgumentException("Unsupported Alt shortcut: " + type);
-        }
     }
 
     private boolean isAltShortcutAction(InputActionType type) {

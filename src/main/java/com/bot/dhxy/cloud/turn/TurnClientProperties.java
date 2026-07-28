@@ -12,6 +12,7 @@ public class TurnClientProperties {
 
     private URI baseUri = URI.create("http://127.0.0.1:18080");
     private String bearerToken = "local-dev-token";
+    private String deviceId = "dhxy-client";
     private long connectTimeoutMs = 3_000L;
     private long requestTimeoutMs = 65_000L;
     private long longWaitTimeoutMs = 60_000L;
@@ -31,6 +32,14 @@ public class TurnClientProperties {
 
     public void setBearerToken(String bearerToken) {
         this.bearerToken = bearerToken;
+    }
+
+    public String getDeviceId() {
+        return deviceId;
+    }
+
+    public void setDeviceId(String deviceId) {
+        this.deviceId = deviceId;
     }
 
     public long getConnectTimeoutMs() {
@@ -79,6 +88,9 @@ public class TurnClientProperties {
         }
         if (bearerToken == null || bearerToken.isBlank() || !bearerToken.equals(bearerToken.trim())) {
             throw new IllegalArgumentException("cloud.turn.bearer-token must be nonblank without surrounding whitespace");
+        }
+        if (deviceId == null || deviceId.isBlank() || !deviceId.equals(deviceId.trim())) {
+            throw new IllegalArgumentException("cloud.turn.device-id must be nonblank without surrounding whitespace");
         }
         if (connectTimeoutMs <= 0L || requestTimeoutMs <= 0L || longWaitTimeoutMs <= 0L) {
             throw new IllegalArgumentException("cloud.turn timeouts must be positive");

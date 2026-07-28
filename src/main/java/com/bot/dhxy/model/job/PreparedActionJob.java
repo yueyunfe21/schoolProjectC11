@@ -31,7 +31,7 @@ public class PreparedActionJob {
     PreparedActionJobType type;
     String windowId;
     String hwnd;
-    long taskRunId;
+    String taskRunId;
     int round;
     String attemptId;
     Integer windowRelativeX;

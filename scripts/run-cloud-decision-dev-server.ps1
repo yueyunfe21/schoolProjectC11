@@ -2,6 +2,9 @@ param(
     [int]$Port = 18080,
     [string]$Path = "/api/cloud/decision",
     [string]$Token = "local-dev-token",
+    [string]$TenantId = "",
+    [string]$UserId = "",
+    [string]$StateRoot = "",
     [string]$ForcedDecision = ""
 )
 
@@ -12,4 +15,5 @@ if ($ForcedDecision -ne "") {
 }
 
 $launcher = Join-Path $PSScriptRoot "run-cloud-brain-server.ps1"
-& $launcher -Port $Port -Path $Path -Token $Token
+& $launcher -Port $Port -Path $Path -Token $Token `
+    -TenantId $TenantId -UserId $UserId -StateRoot $StateRoot

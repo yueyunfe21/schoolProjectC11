@@ -136,6 +136,61 @@ class TurnActionGoldenJsonTest {
     }
 
     @Test
+    void metricLocalStepRoundTripsWithOnlyTheMetricSlotAndVerbatimCaseDir() throws IOException {
+        TurnMetricEventPayload payload = new TurnMetricEventPayload(
+                "xiuluo_v2", "修罗", "window-2", "MEMBER", "0x5151",
+                null, null, null, null, null, "watchdog timeout", null,
+                "D:\\cloud\\cases\\2026-07-18\\case-golden", "PRE_COMBAT_TIMEOUT",
+                "WAIT_TRACKER", 8, null);
+        TurnAction action = TurnProtocolGoldenSupport.action(
+                "metric-local-step-round-trip",
+                List.of(TurnProtocolGoldenSupport.localStep(0, new TurnLocalServiceCall(
+                        TurnLocalOperation.METRIC_RECORD_XIULUO_FAILURE_CASE,
+                        null, null, null, null, null, payload))));
+
+        TurnAction roundTripped = TurnProtocolGoldenSupport.roundTrip(action, TurnAction.class);
+
+        assertEquals(action, roundTripped);
+        TurnProtocolValidator.requireValid(roundTripped);
+        assertEquals(payload, roundTripped.steps().get(0).localService().metric());
+        ObjectNode actionJson = TurnProtocolGoldenSupport.STRICT_CONTRACT_MAPPER.valueToTree(roundTripped);
+        ObjectNode localJson = (ObjectNode) actionJson.withArray("steps").get(0).get("localService");
+        assertTrue(localJson.has("operation"));
+        assertTrue(localJson.has("metric"));
+        assertTrue(localJson.get("bag").isNull(), "the metric slot never rides with another argument group");
+        ObjectNode metricJson = (ObjectNode) localJson.get("metric");
+        assertEquals("D:\\cloud\\cases\\2026-07-18\\case-golden", metricJson.get("caseDir").textValue(),
+                "the Cloud filesystem locator serializes verbatim");
+        assertEquals("0x5151", metricJson.get("nativeWindowHandle").textValue());
+        assertEquals(8, metricJson.get("round").intValue());
+    }
+
+    @Test
+    void queueOwningBagLocalStepRoundTripsWithOnlyTheBagSlot() throws IOException {
+        TurnBagOperationArguments bag = new TurnBagOperationArguments(
+                null, "wuhuan/shoe.png", 3, null, "wuhuan-v2:prepare-supplies");
+        TurnAction action = TurnProtocolGoldenSupport.action(
+                "bag-supply-check-round-trip",
+                List.of(TurnProtocolGoldenSupport.localStep(0, new TurnLocalServiceCall(
+                        TurnLocalOperation.BAG_FIVERING_SUPPLY_CHECK, bag, null, null, null))));
+
+        TurnAction roundTripped = TurnProtocolGoldenSupport.roundTrip(action, TurnAction.class);
+
+        assertEquals(action, roundTripped);
+        TurnProtocolValidator.requireValid(roundTripped);
+        assertEquals(bag, roundTripped.steps().get(0).localService().bag());
+        ObjectNode actionJson = TurnProtocolGoldenSupport.STRICT_CONTRACT_MAPPER.valueToTree(roundTripped);
+        ObjectNode localJson = (ObjectNode) actionJson.withArray("steps").get(0).get("localService");
+        assertTrue(localJson.has("operation"));
+        assertTrue(localJson.has("bag"));
+        assertTrue(localJson.get("metric").isNull(), "the bag slot never rides with a metric payload");
+        ObjectNode bagJson = (ObjectNode) localJson.get("bag");
+        assertEquals(3, bagJson.get("maxBagIndex").intValue(), "requiredCount rides the maxBagIndex slot");
+        assertEquals("wuhuan/shoe.png", bagJson.get("targetItemTemplate").textValue());
+        assertTrue(bagJson.get("intent").isNull(), "a queue-owning bag op carries no return-item intent");
+    }
+
+    @Test
     void missingActionIdAndMixedStepUnionFailClosed() throws IOException {
         TurnAction action = TurnProtocolGoldenSupport.readFixture("action-input-capture.json", TurnAction.class);
         TurnAction missingId = new TurnAction(action.contractVersion(), null, action.deviceId(), action.windowId(),

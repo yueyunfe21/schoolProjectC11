@@ -151,7 +151,7 @@ class QuestLocalOperationExecutorContractTest {
         private QuestDetailCapture capture;
 
         private FakeQuestManagerService() {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null);
         }
 
         @Override

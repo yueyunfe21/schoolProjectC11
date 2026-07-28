@@ -13,7 +13,13 @@
       "height": 720
     },
     "pauseRequested": false,
-    "stopRequested": false
+    "stopRequested": false,
+    "windowRole": "MEMBER",
+    "localTeamSessionKey": "team-session-alpha",
+    "localLeaderWindowId": "window-leader-1",
+    "localLeaderPresent": true,
+    "localSupportMember": true,
+    "startupMode": "AFTER_COMBAT_EXIT_STARTUP"
   },
   "waitTimeoutMs": 25000,
   "previousOutcome": null,
@@ -25,6 +31,8 @@
       "XIULUO_V2",
       "AUTO_BATTLE"
     ],
+    "taskMaxRuns": [1, 0, 0, 1],
     "failurePolicy": "CONTINUE_ON_FAILURE"
-  }
+  },
+  "continuation": null
 }

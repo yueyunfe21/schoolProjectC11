@@ -13,7 +13,8 @@ public record TurnInputSpec(
         @JsonInclude(JsonInclude.Include.NON_NULL)
         Integer clickDelayMs,
         @JsonInclude(JsonInclude.Include.NON_NULL)
-        Integer queueHoldMs) {
+        Integer queueHoldMs,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Boolean directCombatTargetClick) {
 
     public TurnInputSpec(
             Integer x,
@@ -23,6 +24,11 @@ public record TurnInputSpec(
             Integer scrollDelta,
             String key,
             String text) {
-        this(x, y, endX, endY, scrollDelta, key, text, null, null);
+        this(x, y, endX, endY, scrollDelta, key, text, null, null, null);
+    }
+
+    public TurnInputSpec(Integer x, Integer y, Integer endX, Integer endY, Integer scrollDelta, String key, String text,
+                         Integer clickDelayMs, Integer queueHoldMs) {
+        this(x, y, endX, endY, scrollDelta, key, text, clickDelayMs, queueHoldMs, null);
     }
 }
