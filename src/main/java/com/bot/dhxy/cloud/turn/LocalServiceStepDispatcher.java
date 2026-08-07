@@ -10,10 +10,27 @@ import com.bot.dhxy.cloud.turn.local.TaskTrackerLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.UiLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.WholeTaskRuntimeLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.local.TurnContinuationGateway;
+import com.bot.dhxy.cloud.turn.local.XinshouCombatLocalMechanics;
+import com.bot.dhxy.cloud.turn.local.XinshouTitleMechanicalExecutor;
 import com.bot.dhxy.cloud.turn.local.host.HostLocalOperationExecutor;
 import com.bot.dhxy.cloud.turn.protocol.TurnLocalServiceCall;
+import com.bot.dhxy.cloud.turn.protocol.TurnXinshouMechanicalAction;
+import com.bot.dhxy.cloud.turn.protocol.TurnXinshouMechanicalArguments;
+import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.input.action.InputActionExecutionResult;
+import com.bot.dhxy.input.action.InputActionSafetyReason;
+import com.bot.dhxy.input.action.InputActionScope;
+import com.bot.dhxy.runner.stop.TaskSleep;
+import com.bot.dhxy.runner.stop.TaskPauseToken;
+import com.bot.dhxy.runner.stop.TaskStopRequestedException;
 import com.bot.dhxy.runner.stop.TaskStopToken;
+import com.bot.dhxy.window.observation.XinshouRecoveryLocalMechanics;
+import com.bot.dhxy.window.observation.XinshouRunnerAutoCombatState;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -34,7 +51,15 @@ public final class LocalServiceStepDispatcher {
     private final HostLocalOperationExecutor hostAdapter;
     private final MapSurveyPointerLocalOperationExecutor mapSurveyPointerAdapter;
     private final LeftTopStatusLocalOperationExecutor leftTopStatusAdapter;
+    private final com.bot.dhxy.cloud.turn.local.XinshouDragLocalOperationExecutor xinshouDragAdapter;
+    private final com.bot.dhxy.cloud.turn.local.XinshouTrackerLinkChainLocalOperationExecutor xinshouTrackerChainAdapter;
+    private final XinshouTitleMechanicalExecutor xinshouTitleMechanicalExecutor;
+    private final XinshouCombatLocalMechanics xinshouCombatLocalMechanics;
+    private final XinshouRecoveryLocalMechanics xinshouRecoveryLocalMechanics;
+    private final InputProvider inputProvider;
     private final InputSequences inputSequences;
+    private final WindowTaskContextHolder contextHolder;
+    private XinshouRunnerAutoCombatState xinshouRunnerAutoCombatState;
 
     public LocalServiceStepDispatcher(BagLocalOperationExecutor bagAdapter,
                                       UiLocalOperationExecutor uiAdapter,
@@ -46,7 +71,14 @@ public final class LocalServiceStepDispatcher {
                                       HostLocalOperationExecutor hostAdapter,
                                       MapSurveyPointerLocalOperationExecutor mapSurveyPointerAdapter,
                                       LeftTopStatusLocalOperationExecutor leftTopStatusAdapter,
-                                      InputSequences inputSequences) {
+                                      com.bot.dhxy.cloud.turn.local.XinshouDragLocalOperationExecutor xinshouDragAdapter,
+                                       com.bot.dhxy.cloud.turn.local.XinshouTrackerLinkChainLocalOperationExecutor xinshouTrackerChainAdapter,
+                                       XinshouTitleMechanicalExecutor xinshouTitleMechanicalExecutor,
+                                       XinshouCombatLocalMechanics xinshouCombatLocalMechanics,
+                                       XinshouRecoveryLocalMechanics xinshouRecoveryLocalMechanics,
+                                      InputProvider inputProvider,
+                                      InputSequences inputSequences,
+                                      WindowTaskContextHolder contextHolder) {
         this.bagAdapter = Objects.requireNonNull(bagAdapter, "bagAdapter");
         this.uiAdapter = Objects.requireNonNull(uiAdapter, "uiAdapter");
         this.giveItemAdapter = Objects.requireNonNull(giveItemAdapter, "giveItemAdapter");
@@ -57,7 +89,28 @@ public final class LocalServiceStepDispatcher {
         this.hostAdapter = Objects.requireNonNull(hostAdapter, "hostAdapter");
         this.mapSurveyPointerAdapter = Objects.requireNonNull(mapSurveyPointerAdapter, "mapSurveyPointerAdapter");
         this.leftTopStatusAdapter = Objects.requireNonNull(leftTopStatusAdapter, "leftTopStatusAdapter");
+        this.xinshouDragAdapter = Objects.requireNonNull(xinshouDragAdapter, "xinshouDragAdapter");
+        this.xinshouTrackerChainAdapter = Objects.requireNonNull(xinshouTrackerChainAdapter, "xinshouTrackerChainAdapter");
+        this.xinshouTitleMechanicalExecutor = Objects.requireNonNull(
+                xinshouTitleMechanicalExecutor, "xinshouTitleMechanicalExecutor");
+        this.xinshouCombatLocalMechanics = Objects.requireNonNull(
+                xinshouCombatLocalMechanics, "xinshouCombatLocalMechanics");
+        this.xinshouRecoveryLocalMechanics = Objects.requireNonNull(
+                xinshouRecoveryLocalMechanics, "xinshouRecoveryLocalMechanics");
+        this.inputProvider = Objects.requireNonNull(inputProvider, "inputProvider");
         this.inputSequences = Objects.requireNonNull(inputSequences, "inputSequences");
+        this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
+    }
+
+    /**
+     * Direct mechanical-success callback into the already acknowledged Xinshou observation run.
+     * Test fixtures that construct this dispatcher manually remain intentionally unarmed.
+     */
+    @Autowired
+    void bindXinshouRunnerAutoCombatState(
+            XinshouRunnerAutoCombatState xinshouRunnerAutoCombatState) {
+        this.xinshouRunnerAutoCombatState = Objects.requireNonNull(
+                xinshouRunnerAutoCombatState, "xinshouRunnerAutoCombatState");
     }
 
     /**
@@ -72,6 +125,7 @@ public final class LocalServiceStepDispatcher {
      *
      * @param call typed closed local-Service request.
      * @param sourceStepIndex zero-based action step index forwarded only to the Quest adapter.
+     * @param actionPauseToken live pause token captured from the exact action-owning task.
      * @param actionStopToken live stop token captured at action resolution; null when no task
      *                        owned the window then (queue-owning bag ops then fail closed).
      * @param actionTaskStillCurrent live reference-identity predicate over the captured handle.
@@ -79,6 +133,7 @@ public final class LocalServiceStepDispatcher {
      */
     public LocalServiceExecution execute(TurnLocalServiceCall call,
                                          int sourceStepIndex,
+                                         TaskPauseToken actionPauseToken,
                                          TaskStopToken actionStopToken,
                                          BooleanSupplier actionTaskStillCurrent,
                                          String actionId,
@@ -114,7 +169,12 @@ public final class LocalServiceStepDispatcher {
                         ? result.get()
                         : LocalServiceExecution.failed("LOCAL_SERVICE_INPUT_FAILED", null);
             }
-            case UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, UI_CLEAN_LIGHTWEIGHT,
+            // The adapter opens one retained worker request on the first sweep. Later HTTPS rounds
+            // only submit callbacks to that request; wrapping either branch here would deadlock.
+            case XINSHOU_DRAG_SWEEP -> xinshouDragAdapter.sweep(
+                    call, actionPauseToken, actionStopToken, actionTaskStillCurrent);
+            case XINSHOU_DRAG_RELEASE -> xinshouDragAdapter.release(actionStopToken);
+            case UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, UI_PROBE_GENERIC_CLOSE, UI_CLEAN_LIGHTWEIGHT,
                     UI_CLOSE_MAP_SEARCH_INPUT_BY_X2 -> uiAdapter.execute(call);
             case QUEST_ACTIVATE, QUEST_CAPTURE_DETAIL -> questAdapter.execute(call, sourceStepIndex);
             case TASK_TRACKER_CAPTURE_PANEL -> {
@@ -129,10 +189,13 @@ public final class LocalServiceStepDispatcher {
                         ? result.get()
                         : LocalServiceExecution.failed("LOCAL_SERVICE_INPUT_FAILED", null);
             }
+            case XINSHOU_TRACKER_LINK_CHAIN -> xinshouTrackerChainAdapter.execute(call);
+            // Each mechanical collaborator already owns its exact input/capture boundary. Wrapping
+            // this route in another exclusive callback would create queue-in-queue deadlocks.
+            case XINSHOU_MECHANICAL_ACTION -> executeXinshouMechanical(call.xinshouMechanical());
             // Whole-task runtime facts (pathing/timer/dialog-interest/progress/flying/map/near) are
             // AtomicReference state or read-only local observations owned by the bound runtime, so they
-            // do not acquire the input worker here. WUHUAN_ACCEPT_DIALOG_EXCLUSIVE carries its own
-            // indivisible input-queue exclusivity inside FiveRingAcceptDialogLocalOperation.
+            // do not acquire the input worker here.
             case WHOLE_TASK_PATHING_REGISTER, WHOLE_TASK_PATHING_READ,
                     WHOLE_TASK_PATHING_CLEAR_INTENT,
                     WHOLE_TASK_PATHING_CLEAR_SOURCE_PREFIX, WHOLE_TASK_PATHING_CLEAR,
@@ -157,7 +220,10 @@ public final class LocalServiceStepDispatcher {
                     WHOLE_TASK_RETURN_HOME_REPLAY_ARM,
                     WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM,
                     WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME,
-                    WUHUAN_ACCEPT_DIALOG_EXCLUSIVE -> wholeTaskAdapter.execute(
+                    XIULUO_ACCEPT_DIALOG_TEMPLATE,
+                    JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
+                    CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
+                    CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> wholeTaskAdapter.execute(
                             call, actionId, sourceStepIndex, continuationGateway);
             // Metric records are pure diagnostics: no input, no capture, no queue ownership, so
             // they are never wrapped in an exclusive input callback.
@@ -176,5 +242,226 @@ public final class LocalServiceStepDispatcher {
                             call, actionStopToken, actionTaskStillCurrent,
                             actionId, sourceStepIndex, continuationGateway);
         };
+    }
+
+    private LocalServiceExecution executeXinshouMechanical(TurnXinshouMechanicalArguments arguments) {
+        if (!hasValidXinshouMechanicalShape(arguments)) {
+            return LocalServiceExecution.failed("INVALID_XINSHOU_MECHANICAL_CALL", null);
+        }
+        TurnXinshouMechanicalAction action = arguments.action();
+        try {
+            return switch (action) {
+                case CONFIRM_ADOPTION,
+                     USE_UPGRADE_ITEM_AND_CLOSE_GENERIC_WINDOWS,
+                     USE_SHELL_AND_BLOW,
+                     HAND_IN_MATERIALS,
+                     REPAIR_ITEMS_ONCE,
+                     CLOSE_REPAIR_WINDOW,
+                     USE_LUNHUI_ITEM_AND_START -> {
+                    XinshouTitleMechanicalExecutor.ExecutionResult result =
+                            xinshouTitleMechanicalExecutor.execute(action);
+                    String code = "XINSHOU_MECHANICAL_" + action + '_' + result.code();
+                    yield result.completed()
+                            ? LocalServiceExecution.completed(code, null, null)
+                            : LocalServiceExecution.failed(code, null);
+                }
+                case PRESS_ESCAPE -> mapRecoveryResult(
+                        action, xinshouRecoveryLocalMechanics.pressEscapeOnce());
+                case CLICK_RECOVERY_TEMPLATE -> mapRecoveryResult(
+                        action,
+                        xinshouRecoveryLocalMechanics.matchAndClickOnce(
+                                arguments.recoveryTemplateName()));
+                case CLICK_PREPARED_POINT -> clickPreparedPoint(arguments);
+                case PRESS_ORDINARY_AUTO_COMBAT -> mapCombatResult(
+                        action,
+                        xinshouCombatLocalMechanics.pressOrdinaryAutoCombatOnce());
+                case CAPTURE_COMBAT -> mapCombatResult(
+                        action,
+                        xinshouCombatLocalMechanics.captureCombatOnce(
+                                arguments.screenX(),
+                                arguments.screenY(),
+                                arguments.sourceWindowLeft(),
+                                arguments.sourceWindowTop(),
+                                arguments.sourceWindowWidth(),
+                                arguments.sourceWindowHeight()));
+                case RESTORE_AUTO_COMBAT -> {
+                    XinshouCombatLocalMechanics.Result result =
+                            xinshouCombatLocalMechanics.restoreAutoCombatOnce();
+                    if (result.status() == XinshouCombatLocalMechanics.Status.COMPLETED
+                            && xinshouRunnerAutoCombatState != null) {
+                        xinshouRunnerAutoCombatState.arm(
+                                contextHolder.rawCurrent().orElse(null));
+                    }
+                    yield mapCombatResult(action, result);
+                }
+            };
+        } catch (RuntimeException failure) {
+            return LocalServiceExecution.failed(
+                    "XINSHOU_MECHANICAL_" + action + "_FAILED", null);
+        }
+    }
+
+    private LocalServiceExecution clickPreparedPoint(TurnXinshouMechanicalArguments arguments) {
+        WindowRuntimeContext context = contextHolder.rawCurrent().orElse(null);
+        WindowNativeBinding binding = context == null ? null : context.getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+            return LocalServiceExecution.failed(
+                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_WINDOW_UNAVAILABLE", null);
+        }
+        AtomicReference<LocalServiceExecution> callbackResult = new AtomicReference<>();
+        InputActionExecutionResult terminal;
+        try {
+            terminal = inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                    "xinshou:prepared-point",
+                    context,
+                    binding,
+                    () -> {
+                        /*
+                         * The worker has already witnessed this exact binding generation and holds the
+                         * context monitor. Keep translation and direct input inside that same boundary so a
+                         * refresh cannot splice a newer window onto this source-frame point.
+                         */
+                        if (binding.getWidth() != arguments.sourceWindowWidth()
+                                || binding.getHeight() != arguments.sourceWindowHeight()) {
+                            callbackResult.set(LocalServiceExecution.failed(
+                                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_WINDOW_SIZE_CHANGED",
+                                    null));
+                            return true;
+                        }
+                        long translatedX = (long) arguments.screenX()
+                                + binding.getX() - arguments.sourceWindowLeft();
+                        long translatedY = (long) arguments.screenY()
+                                + binding.getY() - arguments.sourceWindowTop();
+                        if (translatedX < binding.getX()
+                                || translatedY < binding.getY()
+                                || translatedX >= (long) binding.getX() + binding.getWidth()
+                                || translatedY >= (long) binding.getY() + binding.getHeight()
+                                || translatedX < Integer.MIN_VALUE
+                                || translatedY < Integer.MIN_VALUE
+                                || translatedX > Integer.MAX_VALUE
+                                || translatedY > Integer.MAX_VALUE) {
+                            callbackResult.set(LocalServiceExecution.failed(
+                                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_OUTSIDE_WINDOW", null));
+                            return true;
+                        }
+                        try {
+                            if (!InputActionScope.checkpoint()) {
+                                return false;
+                            }
+                            inputProvider.moveMouse((int) translatedX, (int) translatedY);
+                            if (!TaskSleep.sleep(80) || !InputActionScope.checkpoint()) {
+                                return false;
+                            }
+                            inputProvider.clickLeft((int) translatedX, (int) translatedY, 250);
+                            callbackResult.set(LocalServiceExecution.completed(
+                                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_COMPLETED",
+                                    null,
+                                    null));
+                            return true;
+                        } catch (TaskStopRequestedException stopped) {
+                            throw stopped;
+                        } catch (RuntimeException inputFailure) {
+                            callbackResult.set(LocalServiceExecution.failed(
+                                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_INPUT_FAILED", null));
+                            return true;
+                        }
+                    });
+        } catch (RuntimeException submissionFailure) {
+            return LocalServiceExecution.failed(
+                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_INPUT_FAILED", null);
+        }
+        if (terminal == null) {
+            return LocalServiceExecution.failed(
+                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_INPUT_FAILED", null);
+        }
+        if (terminal.isCompleted()) {
+            LocalServiceExecution exactResult = callbackResult.get();
+            return exactResult == null
+                    ? LocalServiceExecution.failed(
+                            "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_CALLBACK_MISSING", null)
+                    : exactResult;
+        }
+        if (terminal.getSafetyReason() == InputActionSafetyReason.STOP_REQUESTED) {
+            return LocalServiceExecution.stopped(null);
+        }
+        if (terminal.getSafetyReason() == InputActionSafetyReason.WINDOW_BINDING_CHANGED
+                || terminal.getSafetyReason() == InputActionSafetyReason.TASK_RUN_MISMATCH) {
+            return LocalServiceExecution.failed(
+                    "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_STALE", null);
+        }
+        return LocalServiceExecution.failed(
+                "XINSHOU_MECHANICAL_CLICK_PREPARED_POINT_INPUT_FAILED", null);
+    }
+
+    private static LocalServiceExecution mapRecoveryResult(
+            TurnXinshouMechanicalAction action,
+            XinshouRecoveryLocalMechanics.Result result) {
+        String code = "XINSHOU_MECHANICAL_" + action + '_' + result.status();
+        return result.status() == XinshouRecoveryLocalMechanics.Status.INPUT_APPLIED
+                ? LocalServiceExecution.completed(code, null, null)
+                : LocalServiceExecution.failed(code, null);
+    }
+
+    private static LocalServiceExecution mapCombatResult(
+            TurnXinshouMechanicalAction action,
+            XinshouCombatLocalMechanics.Result result) {
+        String code = "XINSHOU_MECHANICAL_" + action + '_' + result.status();
+        return result.status() == XinshouCombatLocalMechanics.Status.COMPLETED
+                ? LocalServiceExecution.completed(code, null, null)
+                : LocalServiceExecution.failed(code, null);
+    }
+
+    private static boolean hasValidXinshouMechanicalShape(
+            TurnXinshouMechanicalArguments arguments) {
+        if (arguments == null || arguments.action() == null) {
+            return false;
+        }
+        return switch (arguments.action()) {
+            case CLICK_RECOVERY_TEMPLATE -> (
+                    "tiaoguo.png".equals(arguments.recoveryTemplateName())
+                            || "quedingguan_.png".equals(arguments.recoveryTemplateName())
+                            || "confirm.png".equals(arguments.recoveryTemplateName()))
+                    && hasNoPreparedPoint(arguments);
+            case CLICK_PREPARED_POINT, CAPTURE_COMBAT ->
+                    arguments.recoveryTemplateName() == null
+                    && hasCompletePreparedPoint(arguments)
+                    && arguments.sourceWindowWidth() > 0
+                    && arguments.sourceWindowHeight() > 0
+                    && arguments.screenX() >= arguments.sourceWindowLeft()
+                    && arguments.screenY() >= arguments.sourceWindowTop()
+                    && arguments.screenX()
+                    < (long) arguments.sourceWindowLeft() + arguments.sourceWindowWidth()
+                    && arguments.screenY()
+                    < (long) arguments.sourceWindowTop() + arguments.sourceWindowHeight();
+            case CONFIRM_ADOPTION,
+                 USE_UPGRADE_ITEM_AND_CLOSE_GENERIC_WINDOWS,
+                 USE_SHELL_AND_BLOW,
+                 HAND_IN_MATERIALS,
+                 REPAIR_ITEMS_ONCE,
+                 CLOSE_REPAIR_WINDOW,
+                 USE_LUNHUI_ITEM_AND_START,
+                 PRESS_ESCAPE,
+                 PRESS_ORDINARY_AUTO_COMBAT,
+                 RESTORE_AUTO_COMBAT -> arguments.recoveryTemplateName() == null
+                    && hasNoPreparedPoint(arguments);
+        };
+    }
+
+    private static boolean hasCompletePreparedPoint(TurnXinshouMechanicalArguments arguments) {
+        return arguments.screenX() != null
+                && arguments.screenY() != null
+                && arguments.sourceWindowLeft() != null
+                && arguments.sourceWindowTop() != null
+                && arguments.sourceWindowWidth() != null
+                && arguments.sourceWindowHeight() != null;
+    }
+
+    private static boolean hasNoPreparedPoint(TurnXinshouMechanicalArguments arguments) {
+        return arguments.screenX() == null
+                && arguments.screenY() == null
+                && arguments.sourceWindowLeft() == null
+                && arguments.sourceWindowTop() == null
+                && arguments.sourceWindowWidth() == null
+                && arguments.sourceWindowHeight() == null;
     }
 }

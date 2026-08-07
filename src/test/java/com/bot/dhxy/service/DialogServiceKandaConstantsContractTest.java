@@ -2,6 +2,8 @@ package com.bot.dhxy.service;
 
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -34,5 +36,20 @@ class DialogServiceKandaConstantsContractTest {
     void theExistingTemplateAssetIsPresentAndReused() {
         assertTrue(Files.exists(Path.of(DialogService.XIULUO_ENTER_BATTLE_LOCAL_TEMPLATE)),
                 "the frozen kanda2 template must be the existing repository asset, never replaced");
+    }
+
+    @Test
+    void jianghuLilianTemplateAlwaysFitsItsOwnLocalProbeRoi() throws Exception {
+        Path templatePath = Path.of("images/template/dialog/a3/kaida.png");
+        BufferedImage template = ImageIO.read(templatePath.toFile());
+        assertTrue(template != null, "jianghu-lilian kaida template must decode");
+        assertEquals(261, DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_LEFT);
+        assertEquals(374, DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_TOP);
+        assertEquals(186, DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_WIDTH);
+        assertEquals(27, DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT);
+        assertTrue(DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_WIDTH >= template.getWidth(),
+                "the probe ROI must not be narrower than kaida.png");
+        assertTrue(DialogService.XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT >= template.getHeight(),
+                "the probe ROI must not be shorter than kaida.png");
     }
 }

@@ -25,16 +25,6 @@ public class TaskRunProperties {
     private List<String> tasks = new ArrayList<>(List.of("wuhuan_v2"));
 
     /**
-     * 是否循环执行任务队列。
-     */
-    private boolean loop = false;
-
-    /**
-     * 测试模式：只验证任务注册与队列调度，不真正执行任务逻辑。
-     */
-    private boolean testMode = false;
-
-    /**
      * 是否在启动前自动初始化游戏窗口。
      *
      * 正式运行时应该保持 true。
@@ -68,14 +58,8 @@ public class TaskRunProperties {
                 .collect(Collectors.toList());
     }
 
-    public boolean hasTasks() {
-        return !getNormalizedTasks().isEmpty();
-    }
-
     public String toLogText() {
         return "tasks=" + getNormalizedTasks()
-                + " | loop=" + loop
-                + " | testMode=" + testMode
                 + " | initGameWindow=" + initGameWindow
                 + " | showUi=" + showUi
                 + " | autoStart=" + autoStart;

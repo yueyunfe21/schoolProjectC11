@@ -4,6 +4,8 @@ import com.bot.dhxy.cloud.turn.protocol.observation.ObservationFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationInterest;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationKeyEvent;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingFact;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingState;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingTransition;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedFrame;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedFrameDemand;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
@@ -68,6 +70,8 @@ public final class WindowObservationRunner {
     private volatile long lastTransportFailureAtMs;
     private volatile long successfulSendCount;
     private volatile long consecutiveTransportFailures;
+    private volatile long lastSuccessfulSendAtMs;
+    private volatile ObservationPathingFact lastDeliveredPathingFact;
 
     /** Unacknowledged key events by eventId, insertion-ordered; guarded by its own monitor. */
     private final LinkedHashMap<String, ObservationKeyEvent> pendingKeyEvents = new LinkedHashMap<>();
@@ -83,6 +87,8 @@ public final class WindowObservationRunner {
     private final PreparedFrameCapture preparedFrameCapture;
     private volatile ObservationPreparedFrameDemand preparedFrameDemand;
     private volatile ObservationPreparedFrame retainedPreparedFrame;
+    /** True until Cloud has accepted this new run's first observation-plane request. */
+    private boolean startupScreenObservationPending = true;
 
     public WindowObservationRunner(ObservationClient client,
                                    String tenantId,
@@ -211,9 +217,6 @@ public final class WindowObservationRunner {
      */
     public void requestSuspend() {
         retainStateOnStop.set(true);
-        if (sampler != null) {
-            sampler.invalidateTerminalFrameForSuspend();
-        }
         requestThreadStop();
     }
 
@@ -335,7 +338,11 @@ public final class WindowObservationRunner {
                         windowId, unexpected.getClass().getSimpleName(), unexpected.getMessage());
             }
         } finally {
-            if (!retainStateOnStop.get()) {
+            if (retainStateOnStop.get()) {
+                if (sampler != null) {
+                    sampler.invalidateTerminalFrameForSuspend();
+                }
+            } else {
                 resetRetainedState();
             }
             synchronized (lifecycleMonitor) {
@@ -363,6 +370,8 @@ public final class WindowObservationRunner {
         interestRevision = 0L;
         preparedFrameDemand = null;
         retainedPreparedFrame = null;
+        lastSuccessfulSendAtMs = 0L;
+        lastDeliveredPathingFact = null;
     }
 
     private void sendOnce() {
@@ -380,10 +389,35 @@ public final class WindowObservationRunner {
         List<ObservationRoi> roisForThisRequest = List.of();
         List<ObservationTerminalFrame> terminalFramesForThisRequest = List.of();
         List<ObservationPreparedFrame> preparedFramesForThisRequest = List.of();
-        long requestObserverSeq = observerSeq.incrementAndGet();
+        long requestObserverSeq = observerSeq.get() + 1L;
+        // A Cloud-requested exact frame is the active protocol step. Capture it before ordinary sampling so
+        // multi-window observer work cannot starve a demand that remains valid until ACK/cancel/replacement.
+        ObservationPreparedFrameDemand demand = preparedFrameDemand;
+        if (preparedFrameCapture != null && demand != null) {
+            ObservationPreparedFrame retained = retainedPreparedFrame;
+            if (retained == null
+                    || !Objects.equals(retained.demandId(), demand.demandId())
+                    || retained.generation() != demand.generation()) {
+                try {
+                    retained = preparedFrameCapture.capture(demand);
+                    retainedPreparedFrame = retained;
+                    log.info("Prepared-frame captured for upload: windowId={} taskRunId={} demandId={} purpose={} "
+                                    + "generation={} capturedAtMs={} size={}x{} pngBytes={}",
+                            windowId, taskRunId, demand.demandId(), demand.purpose(), demand.generation(),
+                            retained.capturedAtMs(), retained.width(), retained.height(), retained.pngBytes().length);
+                } catch (RuntimeException captureFailure) {
+                    log.warn("Prepared-frame capture failed; demand retained: windowId={} demandId={} message={}",
+                            windowId, demand.demandId(), captureFailure.getMessage());
+                }
+            }
+            if (retained != null) {
+                preparedFramesForThisRequest = List.of(retained);
+            }
+        }
         if (sampler != null) {
             try {
-                WindowObservationSampler.SampleBatch batch = sampler.collect(interests, requestObserverSeq);
+                WindowObservationSampler.SampleBatch batch = sampler.collect(
+                        interests, requestObserverSeq, startupScreenObservationPending && observesWuhuan());
                 factsForThisRequest = batch.facts();
                 pathingFactsForThisRequest = batch.pathingFacts().stream()
                         .filter(fact -> taskRunId.equals(fact.taskRunId())
@@ -441,24 +475,31 @@ public final class WindowObservationRunner {
         }
         String currentIntentId = pathingFactsForThisRequest.isEmpty()
                 ? null : pathingFactsForThisRequest.get(0).intentId();
-        ObservationPreparedFrameDemand demand = preparedFrameDemand;
-        if (preparedFrameCapture != null && demand != null
-                && demand.expiresAtMs() >= System.currentTimeMillis()) {
-            ObservationPreparedFrame retained = retainedPreparedFrame;
-            if (retained == null
-                    || !Objects.equals(retained.demandId(), demand.demandId())
-                    || retained.generation() != demand.generation()) {
-                try {
-                    retained = preparedFrameCapture.capture(demand);
-                    retainedPreparedFrame = retained;
-                } catch (RuntimeException captureFailure) {
-                    log.warn("Prepared-frame capture failed; demand retained: windowId={} demandId={} message={}",
-                            windowId, demand.demandId(), captureFailure.getMessage());
-                }
-            }
-            if (retained != null) {
-                preparedFramesForThisRequest = List.of(retained);
-            }
+        long nowMs = System.currentTimeMillis();
+        boolean heartbeatDue = lastSuccessfulSendAtMs <= 0L
+                || nowMs - lastSuccessfulSendAtMs >= parkedHeartbeatPeriodMs;
+        boolean immediatePathingSend = pathingFactsForThisRequest.stream()
+                .anyMatch(fact -> requiresImmediatePathingSend(fact, lastDeliveredPathingFact));
+        boolean hasImmediatePayload = !factsForThisRequest.isEmpty()
+                || !eventsForThisRequest.isEmpty()
+                || !roisForThisRequest.isEmpty()
+                || !dialogInterestsForThisRequest.isEmpty()
+                || !preparedDialogsForThisRequest.isEmpty()
+                || !terminalFramesForThisRequest.isEmpty()
+                || !preparedFramesForThisRequest.isEmpty()
+                || immediatePathingSend;
+        if (!hasImmediatePayload && !heartbeatDue) {
+            return;
+        }
+        if (!hasImmediatePayload) {
+            // The slow connection/interest heartbeat is transport-only. Do not turn it back into a repeated
+            // ACTIVE pathing update while the local movement ROI is still changing.
+            pathingFactsForThisRequest = List.of();
+            currentIntentId = null;
+        }
+        long assignedObserverSeq = observerSeq.incrementAndGet();
+        if (assignedObserverSeq != requestObserverSeq) {
+            throw new IllegalStateException("Observation sequence changed outside the runner thread");
         }
         ObservationRequest request = new ObservationRequest(
                 ObservationProtocolValidator.CONTRACT_VERSION,
@@ -474,7 +515,7 @@ public final class WindowObservationRunner {
                 currentIntentId,
                 null,
                 null,
-                RUNNER_SOURCE,
+                startupScreenObservationPending ? "startup-screen-observation" : RUNNER_SOURCE,
                 null,
                 pathingFactsForThisRequest,
                 factsForThisRequest,
@@ -493,15 +534,32 @@ public final class WindowObservationRunner {
                         sha256Hex(roi.pngBytes()));
             }
         }
+        for (ObservationPreparedFrame frame : preparedFramesForThisRequest) {
+            log.info("Prepared-frame upload sending: windowId={} taskRunId={} observerSeq={} demandId={} purpose={} "
+                            + "generation={} capturedAtMs={} pngBytes={}",
+                    windowId, taskRunId, request.observerSeq(), frame.demandId(), frame.purpose(),
+                    frame.generation(), frame.capturedAtMs(), frame.pngBytes().length);
+        }
         try {
             ObservationResponse response = client.send(request);
+            // A failed send deliberately keeps the startup marker so the next request describes the same fresh
+            // screen boundary. Only the first accepted request consumes it.
+            startupScreenObservationPending = false;
             synchronized (pendingKeyEvents) {
                 for (String acknowledged : response.acknowledgedEventIds()) {
                     pendingKeyEvents.remove(acknowledged);
                 }
             }
+            long previousInterestRevision = interestRevision;
+            List<ObservationInterest> previousInterests = interests;
             interestRevision = response.interestRevision();
             interests = response.interests();
+            if (previousInterestRevision != interestRevision || !previousInterests.equals(interests)) {
+                log.info("Observation interests applied: windowId={} taskRunId={} observerSeq={} revision={} interests={}",
+                        windowId, taskRunId, request.observerSeq(), interestRevision,
+                        interests.stream().map(ObservationInterest::interestKey).toList());
+            }
+            ObservationPreparedFrameDemand previousDemand = preparedFrameDemand;
             ObservationPreparedFrameDemand nextDemand = response.preparedFrameDemands().isEmpty()
                     ? null : response.preparedFrameDemands().getFirst();
             preparedFrameDemand = nextDemand;
@@ -512,6 +570,14 @@ public final class WindowObservationRunner {
                 retainedPreparedFrame = null;
             }
             if (nextDemand != null) {
+                if (previousDemand == null
+                        || !Objects.equals(previousDemand.demandId(), nextDemand.demandId())
+                        || previousDemand.generation() != nextDemand.generation()) {
+                    log.info("Prepared-frame demand received: windowId={} taskRunId={} observerSeq={} demandId={} "
+                                    + "purpose={} generation={} issuedAtMs={}",
+                            windowId, taskRunId, request.observerSeq(), nextDemand.demandId(), nextDemand.purpose(),
+                            nextDemand.generation(), nextDemand.issuedAtMs());
+                }
                 wakeForLocalStateChange();
             }
             if (sampler != null) {
@@ -520,6 +586,16 @@ public final class WindowObservationRunner {
                         .toList());
                 sampler.acceptAnalysisResults(response.analysisResults());
                 sampler.acknowledgeDeliveredPathingFacts(pathingFactsForThisRequest);
+                if (response.acceptedObserverSeq() == requestObserverSeq) {
+                    sampler.acknowledgeDeliveredFacts(requestObserverSeq, factsForThisRequest);
+                    if (response.interestRevision() == request.interestRevision()) {
+                        sampler.acknowledgeDeliveredRois(requestObserverSeq, roisForThisRequest);
+                    }
+                }
+            }
+            lastSuccessfulSendAtMs = System.currentTimeMillis();
+            if (!pathingFactsForThisRequest.isEmpty()) {
+                lastDeliveredPathingFact = pathingFactsForThisRequest.getFirst();
             }
             successfulSendCount++;
             long recoveredFailures = consecutiveTransportFailures;
@@ -553,6 +629,46 @@ public final class WindowObservationRunner {
                 sampler.suppressRejectedPathingFact(transportFailure.getMessage());
             }
         }
+    }
+
+    private boolean observesWuhuan() {
+        for (String code : taskCode.split(",")) {
+            if ("WUHUAN_V2".equalsIgnoreCase(code.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether a locally sampled pathing fact carries a semantic edge that Cloud must see immediately.
+     * Timestamp-only movement updates remain local; Runner still samples them, but the transport stays quiet until
+     * an identity, terminal, blocking, or coordinate-verdict payload needs delivery.
+     */
+    static boolean requiresImmediatePathingSend(ObservationPathingFact current,
+                                                ObservationPathingFact lastDelivered) {
+        if (current == null) {
+            return false;
+        }
+        if (lastDelivered == null
+                || current.transition() != ObservationPathingTransition.CURRENT
+                || current.state() != ObservationPathingState.ACTIVE
+                || lastDelivered.transition() != ObservationPathingTransition.CURRENT
+                || lastDelivered.state() != ObservationPathingState.ACTIVE) {
+            return true;
+        }
+        return !Objects.equals(current.taskRunId(), lastDelivered.taskRunId())
+                || !Objects.equals(current.windowId(), lastDelivered.windowId())
+                || !Objects.equals(current.hwnd(), lastDelivered.hwnd())
+                || !Objects.equals(current.intentId(), lastDelivered.intentId())
+                || !Objects.equals(current.source(), lastDelivered.source())
+                || !Objects.equals(current.targetMapName(), lastDelivered.targetMapName())
+                || !Objects.equals(current.targetX(), lastDelivered.targetX())
+                || !Objects.equals(current.targetY(), lastDelivered.targetY())
+                || current.tolerance() != lastDelivered.tolerance()
+                || current.pathingType() != lastDelivered.pathingType()
+                || current.dialogBlocking() != lastDelivered.dialogBlocking()
+                || !Objects.equals(current.dialogBlockingReason(), lastDelivered.dialogBlockingReason());
     }
 
     private static String sha256Hex(byte[] bytes) {

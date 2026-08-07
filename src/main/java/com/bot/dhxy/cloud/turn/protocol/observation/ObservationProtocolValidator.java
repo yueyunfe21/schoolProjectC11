@@ -353,8 +353,10 @@ public final class ObservationProtocolValidator {
             require(event.taskCode() != null && event.businessTaskRunId() != null,
                     "combat/replay task-run identity fields must be present together");
             require("XIULUO_V2".equalsIgnoreCase(event.taskCode())
+                            || "XINSHOU_TRAINING".equalsIgnoreCase(event.taskCode())
+                            || "CATCH_GHOST".equalsIgnoreCase(event.taskCode())
                             || "WUBEI".equalsIgnoreCase(event.taskCode()),
-                    "expected-combat/replay transition supports only XIULUO_V2/WUBEI");
+                    "expected-combat/replay transition supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
         }
     }
 
@@ -512,8 +514,6 @@ public final class ObservationProtocolValidator {
         requireBoundedText(demand.taskRunId(), "preparedFrameDemand.taskRunId");
         require(demand.generation() > 0L, "preparedFrameDemand.generation must be positive");
         require(demand.issuedAtMs() > 0L, "preparedFrameDemand.issuedAtMs must be positive");
-        require(demand.expiresAtMs() > demand.issuedAtMs(),
-                "preparedFrameDemand.expiresAtMs must be after issuedAtMs");
     }
 
     private static long readUnsignedInt(byte[] bytes, int offset) {

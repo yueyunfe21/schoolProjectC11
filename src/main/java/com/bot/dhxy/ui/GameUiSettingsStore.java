@@ -25,8 +25,13 @@ public class GameUiSettingsStore {
     private static final Path SETTINGS_PATH = Path.of("config", "ui-game-settings.properties");
 
     private static final String XIULUO_MAX_RUNS = "xiuluoMaxRuns";
+    private static final String XINSHOU_TRAINING_MAX_RUNS = "xinshouTrainingMaxRuns";
+    private static final String CATCH_GHOST_MAX_RUNS = "catchGhostMaxRuns";
     private static final String WUHUAN_MAX_RUNS = "wuhuanMaxRuns";
     private static final String FIVEFOLD_MAX_RUNS = "fivefoldMaxRuns";
+    private static final String WILD_BATTLE_DURATION_MINUTES = "wildBattleDurationMinutes";
+    private static final String AUTO_BATTLE_DURATION_MINUTES = "autoBattleDurationMinutes";
+    private static final String TIANTING_MAX_RUNS = "tiantingMaxRuns";
     private static final String SUMMON_SKILL_CLEAN_ENABLED = "summonSkillCleanEnabled";
     private static final String SUMMON_SKILL_CLEAN_INTERVAL_MS = "summonSkillCleanIntervalMs";
     private static final String XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS = "xiuluoHealPetMaintenanceIntervalMs";
@@ -62,8 +67,17 @@ public class GameUiSettingsStore {
         }
 
         botProperties.setXiuluoMaxRuns(readInt(properties, XIULUO_MAX_RUNS, botProperties.getXiuluoMaxRuns()));
+        botProperties.setXinshouTrainingMaxRuns(readInt(
+                properties, XINSHOU_TRAINING_MAX_RUNS, botProperties.getXinshouTrainingMaxRuns()));
+        botProperties.setCatchGhostMaxRuns(readInt(
+                properties, CATCH_GHOST_MAX_RUNS, botProperties.getCatchGhostMaxRuns()));
         botProperties.setWuhuanMaxRuns(readInt(properties, WUHUAN_MAX_RUNS, botProperties.getWuhuanMaxRuns()));
         botProperties.setFivefoldMaxRuns(readInt(properties, FIVEFOLD_MAX_RUNS, botProperties.getFivefoldMaxRuns()));
+        botProperties.setWildBattleDurationMinutes(readInt(
+                properties, WILD_BATTLE_DURATION_MINUTES, botProperties.getWildBattleDurationMinutes()));
+        botProperties.setAutoBattleDurationMinutes(readInt(
+                properties, AUTO_BATTLE_DURATION_MINUTES, botProperties.getAutoBattleDurationMinutes()));
+        botProperties.setTiantingMaxRuns(readInt(properties, TIANTING_MAX_RUNS, botProperties.getTiantingMaxRuns()));
         botProperties.setSummonSkillCleanEnabled(readBoolean(properties, SUMMON_SKILL_CLEAN_ENABLED, botProperties.isSummonSkillCleanEnabled()));
         botProperties.setSummonSkillCleanIntervalMs(readLong(properties, SUMMON_SKILL_CLEAN_INTERVAL_MS, botProperties.getSummonSkillCleanIntervalMs()));
         botProperties.setXiuluoHealPetMaintenanceIntervalMs(readLong(properties, XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, botProperties.getXiuluoHealPetMaintenanceIntervalMs()));
@@ -94,8 +108,15 @@ public class GameUiSettingsStore {
         }
         Properties properties = new Properties();
         properties.setProperty(XIULUO_MAX_RUNS, String.valueOf(botProperties.getXiuluoMaxRuns()));
+        properties.setProperty(XINSHOU_TRAINING_MAX_RUNS, String.valueOf(botProperties.getXinshouTrainingMaxRuns()));
+        properties.setProperty(CATCH_GHOST_MAX_RUNS, String.valueOf(botProperties.getCatchGhostMaxRuns()));
         properties.setProperty(WUHUAN_MAX_RUNS, String.valueOf(botProperties.getWuhuanMaxRuns()));
         properties.setProperty(FIVEFOLD_MAX_RUNS, String.valueOf(botProperties.getFivefoldMaxRuns()));
+        properties.setProperty(
+                WILD_BATTLE_DURATION_MINUTES, String.valueOf(botProperties.getWildBattleDurationMinutes()));
+        properties.setProperty(
+                AUTO_BATTLE_DURATION_MINUTES, String.valueOf(botProperties.getAutoBattleDurationMinutes()));
+        properties.setProperty(TIANTING_MAX_RUNS, String.valueOf(botProperties.getTiantingMaxRuns()));
         properties.setProperty(SUMMON_SKILL_CLEAN_ENABLED, String.valueOf(botProperties.isSummonSkillCleanEnabled()));
         properties.setProperty(SUMMON_SKILL_CLEAN_INTERVAL_MS, String.valueOf(botProperties.getSummonSkillCleanIntervalMs()));
         properties.setProperty(XIULUO_HEAL_PET_MAINTENANCE_INTERVAL_MS, String.valueOf(botProperties.getXiuluoHealPetMaintenanceIntervalMs()));

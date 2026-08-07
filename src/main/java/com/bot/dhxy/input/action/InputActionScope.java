@@ -56,6 +56,12 @@ public final class InputActionScope {
         if (request == null) {
             return true;
         }
+        if (!request.isPlayerIdentityEpochCurrent()) {
+            return false;
+        }
+        if (request.isExecutionStarted()) {
+            return true;
+        }
         if (request.isCancelled()) {
             return false;
         }
@@ -80,5 +86,17 @@ public final class InputActionScope {
      */
     public static boolean isCancelled() {
         return !checkpoint();
+    }
+
+    /**
+     * @return true only inside an admitted input-worker transaction with the same player identity.
+     * G008 uses this narrow state to finish one atomic physical sequence after the old run is stopped.
+     */
+    public static boolean isActiveAtomicTransaction() {
+        InputActionRequest request = CURRENT.get();
+        return request != null
+                && request.isExecutionStarted()
+                && request.isPlayerIdentityEpochCurrent()
+                && !Thread.currentThread().isInterrupted();
     }
 }

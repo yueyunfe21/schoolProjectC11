@@ -737,3 +737,96 @@ Fresh gate：重启 Cloud JVM 后，ARRIVED 后 NPC 点击失败只能看到 cle
 不得再出现五环接任务导航 `Alt+1`。运行验证通过前 CR277 仍保持 fresh pending。
 
 <!-- TRUE_EOF: CR277 REPAIR-6-IMPLEMENTED SOURCE-REVIEW-P0-P1-P2=0-0-0 CLOUD-COMPILE-0 TESTCOMPILE-BLOCKED FRESH-CLOUD-RESTART-REQUIRED 2026-07-27 -->
+
+## 2026-08-03 常见错误清单专项复审
+
+结论：`P0/P1/P2=0/3/2 / REPAIR REQUIRED`。本轮只读源码和清单，不运行 runtime/UI/capture/input。
+
+### 已确认满足的清单约束
+
+- E1/E10：`CloudWholeTaskObserver.publishObservationInterests(...)` 为五环发布 title/dialog
+  presence；`WindowObservationSampler.sampleWuhuanPresence(...)` 从同一 shared cycle frame
+  裁剪，未新增独立 PrintWindow capture。
+- E3：Runner 的 pathing/combat 物理事实仍独立上报，不以 prepared claim 作为上报门。
+- E5/E17/E26：五环 dialog 使用 exact `FrameDemand -> PreparedAction -> actionId`；Cloud 在
+  dialog chain pending 时禁止 Tracker action，五环已不再订阅旧 `wuhuan-tracker` / `xiuluo-dialog`
+  周期图，也不以 `TASK_ATTENTION_REQUIRED` 唤醒五环主循环。
+- E11：title/dialog presence 兴趣在 NPC/dialog 点击前已常驻，full frame 仅在 Cloud exact demand
+  后上送。
+- E12：PreparedAction 的正常成功路径只提交输入并等待 Runner pathing/combat 事实，不在 Client
+  侧解释 dialog/Tracker 业务。
+
+### P1-1：绿链输入成功被“同步 movement proof”否决，重新引入 E24 的重复点击
+
+`FiveRingTaskV2.submitWuhuanTrackerGreenClick(...)` 在 turn `COMPLETED` 后立即调用
+`runtimeClient.readPathing(...)`，并要求同一时刻 already 存在当前 intent 的 ACTIVE snapshot；
+没有即时 snapshot 就返回 `false`。Runner 是异步观察者，正常的“点击完成、下一拍才登记 intent”会被
+误判失败。随后 `clickPreparedWuhuanTrackerGreen(...)` 会 `cleanUpAll` 并重发同一 evidence 的新
+PreparedAction，因而可能再次物理点击同一绿链。
+
+这正是 E24 所禁止的“动作没有立刻产生观察事实，就再做一次动作”。修复必须将 turn `COMPLETED`
+视为已提交动作，直接进入 `WAIT_PATHING` 并只等待 exact Runner terminal/active fact；不得用一次
+同步 readback 作为 pathing-start 的业务门，也不得因该 readback 缺失重发绿链。
+
+### P1-2：五环 title/template miss 没有保存被搜帧，触发 E29 后只能猜
+
+`WuhuanPresenceLocalMechanics.sample(...)` 对 `panel_title_yellow.png` 的 `ImageFinder.find(...)`
+返回 miss 只折叠成 `titlePresent=false`；没有保存该次 tracker crop、分数、窗口/run/observer sequence。
+这会直接阻断 title event frame 与 Cloud Tracker PreparedAction，却没有原图可判断是模板、ROI、窗口绑定
+还是渲染帧问题。
+
+修复必须复用受限数量的 window-scoped miss dump：保存实际 tracker crop，文件名带 windowId、taskRunId、
+observerSeq、score；不改变模板、阈值和判断语义。
+
+### P1-3：没有五环生产连通性合同，违反 E13
+
+当前 Client 只存在 terminal-frame wire 测试，Cloud test 目录没有五环 test。没有一条合同从真实
+`WUHUAN_TITLE_PRESENCE` / `WUHUAN_DIALOG_PRESENCE` 出发，穿过 serializer/validator/inbox/
+FrameDemand/Cloud observer/PreparedAction ready/五环 exact consume/local command ACK。
+
+此前的分层测试无法发现 P1-1 这种“命令完成但观察事实晚一拍”的接缝错误。返修必须增加至少两条生产
+连通性合同：Tracker 绿链的 command-completed -> later Runner fact 不得重击；dialog presence -> exact
+demand -> one PreparedAction -> exact actionId consume。每一跳断言 tenant/device/window/hwnd/taskRun/actionId。
+
+### P2
+
+- E4：`awaitPreparedWuhuanAction(...)` 与 `consumePreparedWuhuanClick(...)` 单次等待为 `30s`，
+  超过清单规定的 park slice 上限 `25s`。`awaitNewer(...)` 能响应 stop/pause，但暂时不符合统一有界
+  slice 约束。
+- E9：鞋店视觉使用 `CompletableFuture.supplyAsync(...).join()`；虽在 outside-turn phase，仍无独立
+  timeout，慢 capture/template load 会无上限阻塞该窗口 phase。应改为带 deadline 的后台结果等待。
+
+### 后续验收
+
+完成 P1 后，双仓 compile；禁止在用户运行实例时编译。fresh run 必须验证：一次绿链命令完成后即使
+Runner 下一拍才出现 ACTIVE/terminal，也绝不第二次点击；title miss 有对应原图；dialog/Tracker 两条
+生产连通性合同都经过真实协议链。
+
+<!-- TRUE_EOF: CR277 COMMON-ERROR-AUDIT-REPAIR-REQUIRED P0-P1-P2=0-3-2 2026-08-03 -->
+
+## 2026-08-03 常见错误复审返修 A
+
+已实施，不运行 runtime/UI/capture/input：
+
+- **P1-1 已修**：`FiveRingTaskV2.submitWuhuanTrackerGreenClick(...)` 的完成条件收窄为
+  input turn 的 `COMPLETED`。删除点击后的同步 `readPathing` 和 active-intent mirror proof；
+  Runner 异步登记 intent/terminal 的事实由既有 `WAIT_PATHING` 消费。故“点击已提交但 Runner
+  下一拍才登记”不再被当作命令失败而重发绿链。
+- **P1-2 已修**：Client `WuhuanPresenceLocalMechanics` 以同一 `TM_CCOEFF_NORMED` 分数判断
+  title 阈值，首次/状态切换 miss 在
+  `images/temp/match-miss/wuhuan-title/` 保存 bounded（最多 20）Tracker ROI；文件名包含
+  window/taskRun/observerSeq/score。未改模板、ROI、阈值和上送语义。
+- **P2/E4 已修**：prepared action park 从 30 秒改为 20 秒，仍经 `awaitNewer` 的 stop/pause
+  checkpoint。
+
+验证：Client `mvn -q compile` -> `exit 0`；Cloud `mvn -q compile` -> `exit 0`。
+
+**P2/E9 已修**：`awaitBackgroundShoeVisual(...)` 改用 20 秒有界 `get(...)`；超时取消
+future 并以该次视觉 miss 返回，不无限阻塞当前窗口 phase。Cloud 再次 `mvn -q compile` ->
+`exit 0`。
+
+仍未关闭：P1-3（真实五环 observation -> Cloud observer -> prepared action -> exact local command
+ACK 的生产连通性合同）尚未实现；因此本卡仍为 `REPAIR REQUIRED`，不得标记
+`SOURCE+TEST REVIEW PASSED`。
+
+<!-- TRUE_EOF: CR277 COMMON-ERROR-REPAIR-A P0-P1-P2=0-1-0 COMPILE-CLIENT-CLOUD-PASSED 2026-08-03 -->

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "card": "G016",
+  "changeType": "governance",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design"
+  },
+  "rules": [],
+  "affectedPaths": [
+    "AGENTS.md",
+    "docs/ACTIVE_WORK.md",
+    "docs/BUSINESS_RULE_GOVERNANCE.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/rule-traceability/G015.json",
+    "docs/rule-traceability/G016.json",
+    "docs/业务逻辑.md",
+    "scripts/check-business-rule-gate.js",
+    "scripts/test-business-rule-gate.js"
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "summary": "治理卡不修改运行时业务语义。"
+  },
+  "connectivity": [],
+  "verification": [
+    {
+      "name": "Business rule gate self-test",
+      "result": "PASS",
+      "evidence": "scripts/test-business-rule-gate.js passed 5 cases: valid chain, missing producer, unresolved conflict, incomplete approval, explicit user approval."
+    },
+    {
+      "name": "Registered card audit",
+      "result": "PASS",
+      "evidence": "check-business-rule-gate passed for G015, G016, and --all."
+    }
+  ]
+}

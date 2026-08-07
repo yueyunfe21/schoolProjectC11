@@ -13,9 +13,10 @@ public final class TurnLoopFactory {
     private final TurnClient turnClient;
     private final LocalTurnActionExecutor actionExecutor;
     private final WindowObservationRunnerFactory observationRunnerFactory;
+    private final TaskQueueEventRecorder taskQueueEventRecorder;
 
     public TurnLoopFactory(TurnClient turnClient, LocalTurnActionExecutor actionExecutor) {
-        this(turnClient, actionExecutor, null);
+        this(turnClient, actionExecutor, null, TaskQueueEventRecorder.NO_OP);
     }
 
     /**
@@ -28,9 +29,17 @@ public final class TurnLoopFactory {
     public TurnLoopFactory(TurnClient turnClient,
                            LocalTurnActionExecutor actionExecutor,
                            WindowObservationRunnerFactory observationRunnerFactory) {
+        this(turnClient, actionExecutor, observationRunnerFactory, TaskQueueEventRecorder.NO_OP);
+    }
+
+    public TurnLoopFactory(TurnClient turnClient,
+                           LocalTurnActionExecutor actionExecutor,
+                           WindowObservationRunnerFactory observationRunnerFactory,
+                           TaskQueueEventRecorder taskQueueEventRecorder) {
         this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.actionExecutor = Objects.requireNonNull(actionExecutor, "actionExecutor");
         this.observationRunnerFactory = observationRunnerFactory;
+        this.taskQueueEventRecorder = taskQueueEventRecorder == null ? TaskQueueEventRecorder.NO_OP : taskQueueEventRecorder;
     }
 
     /**
@@ -56,6 +65,7 @@ public final class TurnLoopFactory {
                 windowMetadataSupplier,
                 turnClient,
                 Objects.requireNonNull(actionExecutor, "actionExecutor")::execute,
-                runnerFactory);
+                runnerFactory,
+                taskQueueEventRecorder);
     }
 }

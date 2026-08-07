@@ -7,6 +7,9 @@ import com.bot.dhxy.cloud.turn.protocol.observation.ObservationKeyEventType;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingState;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingTransition;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingType;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedFrame;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedFrameDemand;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationRequest;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationResponse;
@@ -29,7 +32,9 @@ import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.List;
@@ -38,6 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -56,6 +62,66 @@ class WindowObservationRunnerContractTest {
     private static final String HWND = "12345";
     private static final String TASK_CODE = "XIULUO_V2";
     private static final String TASK_RUN = "start-req-1";
+
+    @Test
+    void exactFrameDemandDoesNotExpireAndResendsUntilCloudClearsIt() throws Exception {
+        long issuedLongBeforeTheOldLease = System.currentTimeMillis() - 60_000L;
+        ObservationPreparedFrameDemand demand = new ObservationPreparedFrameDemand(
+                "demand-persistent", "wuhuan-dialog", "dialog-episode-1",
+                WINDOW, HWND, TASK_RUN, 41L, issuedLongBeforeTheOldLease);
+        AtomicInteger captureCount = new AtomicInteger();
+        byte[] png = fullWindowPng();
+        PreparedFrameCapture capture = requested -> {
+            captureCount.incrementAndGet();
+            return new ObservationPreparedFrame(
+                    requested.demandId(), requested.purpose(), requested.generation(),
+                    0, 0,
+                    ObservationProtocolValidator.TERMINAL_FRAME_WIDTH,
+                    ObservationProtocolValidator.TERMINAL_FRAME_HEIGHT,
+                    "PNG", System.currentTimeMillis(), png);
+        };
+        ScriptedObservationClient client = new ScriptedObservationClient()
+                .thenRespond(request -> response(request, List.of(), 0L, List.of(), List.of(demand)))
+                .thenRespond(request -> response(request, List.of(), 0L, List.of(), List.of(demand)))
+                .thenRespond(request -> response(request, List.of(), 0L, List.of(), List.of()));
+        WindowObservationRunner runner = new WindowObservationRunner(
+                client, TENANT, DEVICE, WINDOW, HWND, TASK_CODE, TASK_RUN,
+                null, null, capture, 50L);
+        try {
+            runner.start();
+            assertTrue(client.awaitHandled(3, Duration.ofSeconds(3)));
+            assertTrue(client.requests.get(0).preparedFrames().isEmpty());
+            assertEquals(1, client.requests.get(1).preparedFrames().size());
+            assertEquals(1, client.requests.get(2).preparedFrames().size(),
+                    "the exact frame must be retained and resent until Cloud clears the demand");
+            assertArrayEquals(client.requests.get(1).preparedFrames().getFirst().pngBytes(),
+                    client.requests.get(2).preparedFrames().getFirst().pngBytes());
+            assertEquals(1, captureCount.get(), "one demand generation is captured only once");
+        } finally {
+            stopAndAssertStopped(runner);
+        }
+    }
+
+    @Test
+    void movingPathingFactStaysLocalUntilARealEdgeNeedsTransport() {
+        ObservationPathingFact first = activePathingFact("intent-1", 1_100L, 1_100L, false);
+        ObservationPathingFact moving = activePathingFact("intent-1", 1_400L, 1_400L, false);
+        ObservationPathingFact blocked = activePathingFact("intent-1", 1_700L, 1_700L, true);
+        ObservationPathingFact arrived = new ObservationPathingFact(
+                TASK_RUN, WINDOW, HWND, "intent-1", null, "test", "灵兽村",
+                112, 93, 5, ObservationPathingType.TARGETED,
+                1_000L, 2_000L, ObservationPathingState.ARRIVED, ObservationPathingTransition.CURRENT,
+                "灵兽村", 112, 93, 2_000L, 1_400L, false, null, 0L);
+
+        assertTrue(WindowObservationRunner.requiresImmediatePathingSend(first, null),
+                "the first fact must register the intent");
+        assertFalse(WindowObservationRunner.requiresImmediatePathingSend(moving, first),
+                "timestamp-only movement updates must remain local");
+        assertTrue(WindowObservationRunner.requiresImmediatePathingSend(blocked, first),
+                "dialog blocking changes must wake Cloud");
+        assertTrue(WindowObservationRunner.requiresImmediatePathingSend(arrived, moving),
+                "ARRIVED must be delivered immediately");
+    }
 
     @Test
     void heartbeatCarriesMonotonicSequenceAndAdoptsInterests() throws Exception {
@@ -78,6 +144,132 @@ class WindowObservationRunnerContractTest {
         } finally {
             stopAndAssertStopped(runner);
         }
+    }
+
+    @Test
+    void revisionMismatchDoesNotAcknowledgeChangeOnlyRoiAndTheNextRequestRetransmitsIt()
+            throws Exception {
+        ObservationInterest trackerInterest = new ObservationInterest(
+                WindowObservationSampler.XINSHOU_TRACKER_INTEREST,
+                1L,
+                null,
+                0,
+                100,
+                280,
+                604);
+        WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
+        context.setNativeBinding(new WindowNativeBinding(
+                HWND, "title", "class", 7L, 0, 0, 1024, 768));
+        ScriptedObservationClient client = new ScriptedObservationClient()
+                .thenRespond(request -> response(
+                        request, List.of(), 1L, List.of(trackerInterest)))
+                .thenRespond(request -> response(
+                        request, List.of(), 2L, List.of(trackerInterest)))
+                .thenRespond(request -> response(
+                        request, List.of(), 2L, List.of(trackerInterest)))
+                .thenRespond(request -> response(
+                        request, List.of(), 2L, List.of(trackerInterest)));
+        WindowObservationRunner runner = new WindowObservationRunner(
+                client,
+                TENANT,
+                DEVICE,
+                WINDOW,
+                HWND,
+                TASK_CODE,
+                TASK_RUN,
+                sampler(context),
+                50L);
+
+        try {
+            runner.start();
+            assertTrue(client.awaitHandled(4, Duration.ofSeconds(4)));
+            ObservationRequest revisionMismatched = client.requests.get(1);
+            ObservationRequest retransmitted = client.requests.get(2);
+            ObservationRequest afterMatchingAck = client.requests.get(3);
+            assertEquals(1L, revisionMismatched.interestRevision());
+            assertEquals(1, revisionMismatched.rois().size());
+            assertEquals(2L, retransmitted.interestRevision());
+            assertEquals(1, retransmitted.rois().size(),
+                    "revision mismatch must retain the hash for the next request");
+            assertTrue(afterMatchingAck.rois().isEmpty(),
+                    "the matching seq/revision response may acknowledge the retransmission");
+        } finally {
+            stopAndAssertStopped(runner);
+        }
+    }
+
+    @Test
+    void suspendInvalidatesChangeOnlyRoiAfterTheInFlightResponseReturns() throws Exception {
+        ObservationInterest trackerInterest = new ObservationInterest(
+                WindowObservationSampler.XINSHOU_TRACKER_INTEREST,
+                1L,
+                null,
+                0,
+                100,
+                280,
+                604);
+        WindowRuntimeContext context = new WindowRuntimeContext(WINDOW, new GameContext());
+        context.setNativeBinding(new WindowNativeBinding(
+                HWND, "title", "class", 7L, 0, 0, 1024, 768));
+        CountDownLatch inFlightRoiSend = new CountDownLatch(1);
+        CountDownLatch releaseOldResponse = new CountDownLatch(1);
+        ScriptedObservationClient client = new ScriptedObservationClient()
+                .thenRespond(request -> response(
+                        request, List.of(), 1L, List.of(trackerInterest)))
+                .thenRespond(request -> {
+                    inFlightRoiSend.countDown();
+                    while (true) {
+                        try {
+                            if (releaseOldResponse.await(3, TimeUnit.SECONDS)) {
+                                break;
+                            }
+                            throw new AssertionError("timed out releasing the in-flight observation response");
+                        } catch (InterruptedException ignored) {
+                            // Model a transport whose response still arrives after stop interrupts the sender.
+                        }
+                    }
+                    return response(request, List.of(), 1L, List.of(trackerInterest));
+                })
+                .thenRespond(request -> response(
+                        request, List.of(), 1L, List.of(trackerInterest)));
+        WindowObservationRunner runner = new WindowObservationRunner(
+                client,
+                TENANT,
+                DEVICE,
+                WINDOW,
+                HWND,
+                TASK_CODE,
+                TASK_RUN,
+                sampler(context),
+                50L);
+
+        try {
+            runner.start();
+            assertTrue(inFlightRoiSend.await(3, TimeUnit.SECONDS));
+            ObservationRequest oldRequest = client.requests.get(1);
+            assertEquals(1, oldRequest.rois().size());
+
+            runner.requestSuspend();
+            releaseOldResponse.countDown();
+            assertTrue(runner.awaitStopped(Duration.ofSeconds(3)));
+
+            runner.start();
+            assertTrue(client.awaitHandled(3, Duration.ofSeconds(4)));
+            ObservationRequest resumed = client.requests.get(2);
+            assertEquals(1, resumed.rois().size(),
+                    "suspend exit must invalidate the old acknowledgement after the in-flight send");
+            assertEquals(oldRequest.rois().getFirst().roiKey(),
+                    resumed.rois().getFirst().roiKey());
+            assertArrayEquals(oldRequest.rois().getFirst().pngBytes(),
+                    resumed.rois().getFirst().pngBytes(),
+                    "the unchanged Xinshou ROI must be retransmitted after resume");
+        } finally {
+            releaseOldResponse.countDown();
+            stopAndAssertStopped(runner);
+        }
+        assertEquals(0L, runner.currentInterestRevision(),
+                "ordinary stop after resume must still reset retained observation state");
+        assertTrue(runner.currentInterests().isEmpty());
     }
 
     @Test
@@ -188,13 +380,11 @@ class WindowObservationRunnerContractTest {
                     "pause must retain an event whose acknowledgement has not arrived");
 
             runner.start();
-            assertTrue(client.awaitHandled(4, Duration.ofSeconds(4)));
+            assertTrue(client.awaitHandled(3, Duration.ofSeconds(4)));
             assertEquals(sequenceAtPause + 1L, client.requests.get(2).observerSeq(),
                     "resume must continue the acknowledged run's monotonic sequence");
             assertEquals(1, client.requests.get(2).events().size());
             assertEquals("edge-resume", client.requests.get(2).events().getFirst().eventId());
-            assertEquals(0, client.requests.get(3).events().size(),
-                    "the post-ack request is the deterministic response-applied synchronization point");
             assertEquals(0, runner.pendingKeyEventCount());
         } finally {
             stopAndAssertStopped(runner);
@@ -306,9 +496,9 @@ class WindowObservationRunnerContractTest {
         assertEquals(ObservationPathingTransition.REPLACED, replaced.transition());
 
         ObservationPathingFact repeated = sampler.collect(List.of()).pathingFacts().get(0);
-        assertEquals(ObservationPathingTransition.REPLACED, repeated.transition(),
-                "replacement lineage remains explicit until this intent is cleared or replaced");
-        assertEquals("intent-A", repeated.replacedIntentId());
+        assertEquals(ObservationPathingTransition.CURRENT, repeated.transition(),
+                "REPLACED is a one-frame lineage edge; subsequent samples are CURRENT");
+        assertNull(repeated.replacedIntentId());
     }
 
     @Test
@@ -477,7 +667,7 @@ class WindowObservationRunnerContractTest {
     private static WindowObservationSampler sampler(WindowRuntimeContext context) {
         WindowTaskContextHolder holder = new WindowTaskContextHolder(new WindowIsolationProperties());
         GameClientTracker tracker = new GameClientTracker(
-                null, null, null, null, null, null, null, null, null, null, null, null) {
+                null, null, null, null, null, null, null, null, null, null, null) {
             @Override
             public boolean refreshWindowState() {
                 return true;
@@ -539,10 +729,53 @@ class WindowObservationRunnerContractTest {
                 request);
     }
 
+    private static ObservationResponse response(ObservationRequest request,
+                                                List<String> acknowledgedEventIds,
+                                                long interestRevision,
+                                                List<ObservationInterest> interests,
+                                                List<ObservationPreparedFrameDemand> demands) {
+        return ObservationProtocolValidator.requireValid(
+                new ObservationResponse(
+                        ObservationProtocolValidator.CONTRACT_VERSION,
+                        request.observerSeq(),
+                        interestRevision,
+                        acknowledgedEventIds,
+                        interests,
+                        List.of(),
+                        demands),
+                request);
+    }
+
+    private static byte[] fullWindowPng() throws Exception {
+        BufferedImage image = new BufferedImage(
+                ObservationProtocolValidator.TERMINAL_FRAME_WIDTH,
+                ObservationProtocolValidator.TERMINAL_FRAME_HEIGHT,
+                BufferedImage.TYPE_INT_RGB);
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            ImageIO.write(image, "PNG", output);
+            return output.toByteArray();
+        } finally {
+            image.flush();
+        }
+    }
+
     private static ObservationKeyEvent keyEvent(String eventId) {
         return new ObservationKeyEvent(
                 eventId, ObservationKeyEventType.PATHING_TERMINAL, System.currentTimeMillis(),
                 null, null, null, "test", null);
+    }
+
+    private static ObservationPathingFact activePathingFact(String intentId,
+                                                            long updatedAtMs,
+                                                            long movementObservedAtMs,
+                                                            boolean dialogBlocking) {
+        return new ObservationPathingFact(
+                TASK_RUN, WINDOW, HWND, intentId, null, "test", "灵兽村",
+                112, 93, 5, ObservationPathingType.TARGETED,
+                1_000L, updatedAtMs, ObservationPathingState.ACTIVE, ObservationPathingTransition.CURRENT,
+                null, null, null, 0L, movementObservedAtMs,
+                dialogBlocking, dialogBlocking ? "OPTION_DIALOG" : null,
+                dialogBlocking ? updatedAtMs : 0L);
     }
 
     private static WindowPathingIntent pathingIntent(String intentId, String source) {

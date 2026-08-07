@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "card": "G020",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-002"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/业务逻辑.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/superpowers/plans/2026-08-05-g020-wuhuan-route-close-immediate-yield.md",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnUiOperationArguments.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/UiLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/service/UICleanerService.java",
+    "src/test/java/com/bot/dhxy/cloud/turn/local/WuhuanRouteCloseImmediateReturnContractTest.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnUiOperationArguments.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/navigation/NavigationRequest.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudUiCleanerPort.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudUiCleanerLocalServiceClient.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/NavigationServiceWuhuanImmediateYieldContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "共用导航链在五环寻路窗口 x2 关闭后仍继续移鼠、世界地图残留检查和 PendingRouteOutcome 登记，晚于用户指定的放权终点。",
+    "userDecision": "用户明确要求只对五环，以 23:12:27.081 的 x2 关闭完成为交接终态，删除其后的所有导航逻辑并立即放权。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G020"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-002",
+      "producer": "NavigationService 的最终小地图坐标点击携带 TurnPathingIntent，并在关闭 UI 前取得本地 pathing proof。",
+      "transport": "五环 NavigationRequest 显式携带 finishAfterRoutePanelClose；CloudUiCleanerPort 通过 TurnUiOperationArguments.returnImmediatelyAfterClick 把本次 X2 的即时返回策略传给 exact-HWND Client，随后 NavigationResult.PATHING_STARTED 直接沿调用栈返回。",
+      "consumer": "FiveRingTaskV2.navigateWithTaskTurn 使用既有 TaskYieldPolicy.MUST_YIELD 释放当前窗口；Runner 持续观察 ARRIVED / STOPPED_AWAY 并唤醒后续 phase。",
+      "ordering": "final coordinate click + pathing proof -> close destination mini-map -> close route panel x2 -> immediate return -> MUST_YIELD -> Runner terminal wakeup",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/NavigationServiceWuhuanImmediateYieldContractTest.java",
+          "command": "javac -proc:none then mvn -q -DskipTests=false -Dtest=NavigationServiceWuhuanImmediateYieldContractTest surefire:test",
+          "proves": ["五环显式启用 x2 终态", "x2 后跳过移鼠和世界地图检查", "五环不在关闭后登记 PendingRouteOutcome", "其他任务默认行为不变"]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/cloud/turn/local/WuhuanRouteCloseImmediateReturnContractTest.java",
+          "command": "javac -proc:none then mvn -q -DskipTests=false -Dtest=WuhuanRouteCloseImmediateReturnContractTest surefire:test",
+          "proves": ["typed immediate-return flag reaches Client executor", "五环 X2 跳过 post-click 250ms", "普通 X2 调用保留既有 settle"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "G020 business-rule gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G020"
+    },
+    {
+      "name": "Client and Cloud production compile",
+      "result": "PASS",
+      "evidence": "Client mvn -q -DskipTests compile; Cloud mvn -q -DskipTests=false compile"
+    },
+    {
+      "name": "G020 immediate-yield contracts",
+      "result": "PASS",
+      "evidence": "Cloud NavigationServiceWuhuanImmediateYieldContractTest 2/2 PASS; Client WuhuanRouteCloseImmediateReturnContractTest 1/1 PASS via isolated javac -proc:none + surefire:test"
+    }
+  ]
+}

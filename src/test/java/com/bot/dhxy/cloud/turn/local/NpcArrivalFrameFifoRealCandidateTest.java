@@ -87,7 +87,7 @@ class NpcArrivalFrameFifoRealCandidateTest {
         windowHolder.bind(runtime);
 
         DialogService verifier = new DialogService(
-                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null),
+                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
                 new CoordinateHelper(null, null));
         NpcArrivalFrameFifoLocalExecutor executor = new NpcArrivalFrameFifoLocalExecutor(
                 turnClient,
@@ -117,6 +117,152 @@ class NpcArrivalFrameFifoRealCandidateTest {
         assertEquals(NpcClickSmartQueueOutcome.VERIFIED, turnClient.reportedOutcome);
     }
 
+    @Test
+    void strictFixedPointJsonIsConsumedByTheExistingOrdinaryCandidateFifo() throws Exception {
+        ObjectMapper mapper = new ObjectMapper()
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);
+        NpcClickSmartQueueMessage fixed = mapper.readValue(
+                cloudFixedPointJson(), NpcClickSmartQueueMessage.class);
+        List<NpcClickSmartQueueMessage> strictMessages = List.of(
+                queueMessage(NpcClickSmartQueueMessage.Type.MEMORY, "memory-miss"),
+                fixed,
+                queueMessage(NpcClickSmartQueueMessage.Type.YELLOW_NAME, "yellow-miss"),
+                queueMessage(NpcClickSmartQueueMessage.Type.END, "strict-end"));
+        assertEquals(List.of(
+                        NpcClickSmartQueueMessage.Type.MEMORY,
+                        NpcClickSmartQueueMessage.Type.FIXED_POINT,
+                        NpcClickSmartQueueMessage.Type.YELLOW_NAME,
+                        NpcClickSmartQueueMessage.Type.END),
+                strictMessages.stream().map(NpcClickSmartQueueMessage::getType).toList());
+        assertTrue(fixed.isOrdinaryClickCandidate());
+
+        StubTurnClient turnClient = new StubTurnClient(strictMessages);
+        RecordingInputSequences input = new RecordingInputSequences();
+        WindowIsolationProperties isolation = new WindowIsolationProperties();
+        WindowTaskContextHolder windowHolder = new WindowTaskContextHolder(isolation);
+        WindowRuntimeContext runtime = new WindowRuntimeContext(WINDOW, new GameContext());
+        runtime.setNativeBinding(new WindowNativeBinding(
+                "hwnd-F42196", "game", "DHXYJYMainFrame", 1L,
+                167, 45, 1036, 783));
+        windowHolder.bind(runtime);
+
+        DialogService verifier = new DialogService(
+                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
+                new CoordinateHelper(null, null));
+        NpcArrivalFrameFifoLocalExecutor executor = new NpcArrivalFrameFifoLocalExecutor(
+                turnClient,
+                windowHolder,
+                new TaskExecutionContextHolder(),
+                null,
+                input,
+                null,
+                null,
+                verifier,
+                null);
+
+        assertTrue(executor.execute(arguments()));
+        assertEquals(
+                List.of(
+                        NpcClickSmartQueueMessage.Type.MEMORY,
+                        NpcClickSmartQueueMessage.Type.FIXED_POINT),
+                turnClient.polledTypes);
+        assertEquals(1, input.submissions.size());
+        List<InputAction> actions = input.submissions.get(0);
+        assertEquals(List.of(
+                        InputActionType.MOVE_MOUSE,
+                        InputActionType.SLEEP,
+                        InputActionType.CLICK_LEFT,
+                        InputActionType.SLEEP),
+                actions.stream().map(InputAction::getType).toList());
+        assertEquals(479, actions.get(0).getX());
+        assertEquals(368, actions.get(0).getY());
+        assertEquals(479, actions.get(2).getX());
+        assertEquals(368, actions.get(2).getY());
+        assertTrue(turnClient.reported.await(2, TimeUnit.SECONDS));
+        assertEquals(NpcClickSmartQueueOutcome.VERIFIED, turnClient.reportedOutcome);
+    }
+
+    @Test
+    void shoeShopMemoryPointReachesTheBoundWindowAtomicInputSequence() throws Exception {
+        ObjectMapper mapper = new ObjectMapper()
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);
+        NpcClickSmartQueueMessage memory = mapper.readValue(
+                shoeShopMemoryJson(), NpcClickSmartQueueMessage.class);
+        StubTurnClient turnClient = new StubTurnClient(List.of(memory));
+        RecordingInputSequences input = new RecordingInputSequences();
+        WindowIsolationProperties isolation = new WindowIsolationProperties();
+        WindowTaskContextHolder windowHolder = new WindowTaskContextHolder(isolation);
+        WindowRuntimeContext runtime = new WindowRuntimeContext(WINDOW, new GameContext());
+        runtime.setNativeBinding(new WindowNativeBinding(
+                "hwnd-F42196", "game", "DHXYJYMainFrame", 1L,
+                167, 45, 1036, 783));
+        windowHolder.bind(runtime);
+
+        DialogService verifier = new DialogService(
+                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
+                new CoordinateHelper(null, null));
+        NpcArrivalFrameFifoLocalExecutor executor = new NpcArrivalFrameFifoLocalExecutor(
+                turnClient, windowHolder, new TaskExecutionContextHolder(), null,
+                input, null, null, verifier, null);
+
+        assertTrue(executor.execute(arguments()));
+        assertEquals(List.of(NpcClickSmartQueueMessage.Type.MEMORY), turnClient.polledTypes);
+        List<InputAction> actions = input.submissions.get(0);
+        assertEquals(List.of(
+                        InputActionType.MOVE_MOUSE,
+                        InputActionType.SLEEP,
+                        InputActionType.CLICK_LEFT,
+                        InputActionType.SLEEP),
+                actions.stream().map(InputAction::getType).toList());
+        assertEquals(620, actions.get(0).getX());
+        assertEquals(492, actions.get(0).getY());
+        assertEquals(620, actions.get(2).getX());
+        assertEquals(492, actions.get(2).getY());
+    }
+
+    @Test
+    void retainedPointReplaySkipsCloudQueueAndUsesTheSameAtomicClickPoint() throws Exception {
+        ObjectMapper mapper = new ObjectMapper()
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+                .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);
+        NpcClickSmartQueueMessage fixed = mapper.readValue(
+                cloudFixedPointJson(), NpcClickSmartQueueMessage.class);
+        StubTurnClient turnClient = new StubTurnClient(List.of(fixed));
+        RecordingInputSequences input = new RecordingInputSequences();
+        WindowIsolationProperties isolation = new WindowIsolationProperties();
+        WindowTaskContextHolder windowHolder = new WindowTaskContextHolder(isolation);
+        WindowRuntimeContext runtime = new WindowRuntimeContext(WINDOW, new GameContext());
+        runtime.setNativeBinding(new WindowNativeBinding(
+                "hwnd-F42196", "game", "DHXYJYMainFrame", 1L,
+                167, 45, 1036, 783));
+        windowHolder.bind(runtime);
+
+        DialogService verifier = new DialogService(
+                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
+                new CoordinateHelper(null, null));
+        NpcArrivalFrameFifoLocalExecutor executor = new NpcArrivalFrameFifoLocalExecutor(
+                turnClient, windowHolder, new TaskExecutionContextHolder(), null,
+                input, null, null, verifier, null);
+
+        assertTrue(executor.execute(arguments(false)));
+        assertTrue(executor.execute(arguments(true)));
+        assertEquals(1, turnClient.openCount);
+        assertEquals(List.of(NpcClickSmartQueueMessage.Type.FIXED_POINT), turnClient.polledTypes);
+        assertEquals(2, input.submissions.size());
+        assertEquals(input.submissions.get(0).get(0).getX(), input.submissions.get(1).get(0).getX());
+        assertEquals(input.submissions.get(0).get(0).getY(), input.submissions.get(1).get(0).getY());
+        assertEquals(input.submissions.get(0).get(2).getX(), input.submissions.get(1).get(2).getX());
+        assertEquals(input.submissions.get(0).get(2).getY(), input.submissions.get(1).get(2).getY());
+    }
+
     private static String cloudTooltipJson() {
         return """
                 {
@@ -136,11 +282,67 @@ class NpcArrivalFrameFifoRealCandidateTest {
                 """;
     }
 
+    private static String cloudFixedPointJson() {
+        return """
+                {
+                  "type":"FIXED_POINT",
+                  "sessionId":"npc-arrival-real-frame",
+                  "windowId":"hwnd-F42196",
+                  "taskRunId":"remote-turn-real-frame:0:XIULUO_V2",
+                  "decisionId":"cloud-npc-fixed-point",
+                  "strategy":"TARGET_METADATA",
+                  "windowRelativeClickPoint":{"x":312,"y":323},
+                  "candidateBox":"312,323,1,1",
+                  "matchedText":null,
+                  "ctrlProbePoints":[],
+                  "reason":"cloud-brain-npc-target-metadata",
+                  "confidence":1.0
+                }
+                """;
+    }
+
+    private static String shoeShopMemoryJson() {
+        return """
+                {
+                  "type":"MEMORY",
+                  "sessionId":"npc-arrival-real-frame",
+                  "windowId":"hwnd-F42196",
+                  "taskRunId":"remote-turn-real-frame:0:XIULUO_V2",
+                  "decisionId":"g018-shoe-shop-owner-memory",
+                  "strategy":"LEARNED_MEMORY",
+                  "windowRelativeClickPoint":{"x":453,"y":447},
+                  "candidateBox":"453,447,1,1",
+                  "matchedText":null,
+                  "ctrlProbePoints":[],
+                  "reason":"cloud-brain-npc-memory-hit",
+                  "confidence":1.0
+                }
+                """;
+    }
+
+    private static NpcClickSmartQueueMessage queueMessage(
+            NpcClickSmartQueueMessage.Type type,
+            String decisionId) {
+        return NpcClickSmartQueueMessage.builder()
+                .type(type)
+                .sessionId(SESSION)
+                .windowId(WINDOW)
+                .taskRunId(BUSINESS_RUN)
+                .decisionId(decisionId)
+                .strategy(type.name())
+                .build();
+    }
+
     private static TurnWholeTaskRuntimeArguments arguments() {
+        return arguments(false);
+    }
+
+    private static TurnWholeTaskRuntimeArguments arguments(boolean reuseLastVerifiedPoint) {
         TurnNpcArrivalFrameFifoSpec spec = new TurnNpcArrivalFrameFifoSpec(
                 "dhxy-local", "dhxy-client", WINDOW, HWND_DECIMAL,
                 "remote-turn-real-frame", BUSINESS_RUN,
-                0, 0, 1024, 768, List.of(), null, true, false);
+                0, 0, 1024, 768, List.of(), null, true, false,
+                reuseLastVerifiedPoint);
         return new TurnWholeTaskRuntimeArguments(
                 "test", null, "npc-real-frame", null, null,
                 null, null, null, null, null, null, null, null,
@@ -165,27 +367,28 @@ class NpcArrivalFrameFifoRealCandidateTest {
 
     private static final class StubTurnClient implements TurnClient {
         private final Queue<NpcClickSmartQueueMessage> messages = new ArrayDeque<>();
+        private final List<NpcClickSmartQueueMessage.Type> polledTypes = new ArrayList<>();
         private final CountDownLatch reported = new CountDownLatch(1);
         private final String sessionId;
+        private int openCount;
         private volatile NpcClickSmartQueueOutcome reportedOutcome;
 
         private StubTurnClient(NpcClickSmartQueueMessage tooltip) {
-            sessionId = tooltip.getSessionId();
-            messages.add(NpcClickSmartQueueMessage.builder()
-                    .type(NpcClickSmartQueueMessage.Type.MEMORY)
-                    .sessionId(sessionId)
-                    .windowId(WINDOW)
-                    .taskRunId(BUSINESS_RUN)
-                    .decisionId("memory-miss")
-                    .strategy("MEMORY")
-                    .build());
-            messages.add(tooltip);
+            this(List.of(
+                    queueMessage(NpcClickSmartQueueMessage.Type.MEMORY, "memory-miss"),
+                    tooltip));
+        }
+
+        private StubTurnClient(List<NpcClickSmartQueueMessage> messages) {
+            sessionId = messages.get(0).getSessionId();
+            this.messages.addAll(messages);
         }
 
         @Override
         public NpcClickSmartCloudSession openNpcArrivalFrame(
                 String tenantId, String deviceId, String windowId, String hwnd,
                 String observationRunId, String businessTaskRunId, String intentId) {
+            openCount++;
             return NpcClickSmartCloudSession.builder()
                     .status(NpcClickSmartCloudSession.Status.STARTED)
                     .sessionId(sessionId)
@@ -198,7 +401,9 @@ class NpcArrivalFrameFifoRealCandidateTest {
         public NpcClickSmartQueueMessage pollNpcArrivalFrame(
                 String tenantId, String deviceId, String windowId, String hwnd,
                 String observationRunId, String businessTaskRunId, String intentId) {
-            return messages.remove();
+            NpcClickSmartQueueMessage message = messages.remove();
+            polledTypes.add(message.getType());
+            return message;
         }
 
         @Override

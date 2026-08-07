@@ -1,5 +1,6 @@
 package com.bot.dhxy.runner.stop;
 
+import com.bot.dhxy.input.action.InputActionScope;
 import com.bot.dhxy.runner.context.TaskExecutionContext;
 
 /**
@@ -45,11 +46,15 @@ public final class TaskSleep {
         if (millis <= 0) {
             return;
         }
-        TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
+        if (!InputActionScope.isActiveAtomicTransaction()) {
+            TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
+        }
         if (!sleep(millis)) {
             throw new TaskStopRequestedException(interruptedMessage);
         }
-        TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
+        if (!InputActionScope.isActiveAtomicTransaction()) {
+            TaskCheckpoint.throwIfStopRequested(context, interruptedMessage);
+        }
     }
 
     /**

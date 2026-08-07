@@ -3,6 +3,7 @@ package com.bot.dhxy.cloud.turn.local;
 import com.bot.dhxy.cloud.turn.LocalServiceExecution;
 import com.bot.dhxy.cloud.turn.protocol.TurnLocalServiceCall;
 import com.bot.dhxy.cloud.turn.protocol.TurnDialogRuntimeFact;
+import com.bot.dhxy.cloud.turn.protocol.TurnExactAttemptRecoveryResetAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnCombatCleanupFact;
 import com.bot.dhxy.cloud.turn.protocol.TurnPreBattleFact;
 import com.bot.dhxy.cloud.turn.protocol.TurnPendingRouteOutcome;
@@ -46,16 +47,16 @@ import java.util.Optional;
  * introduces no second store.</p>
  *
  * <p>The exact-window binding is the current bound runtime from {@link WindowTaskContextHolder}; a
- * missing bound runtime is a fail-closed result and never a fabricated business false. The
- * {@code WUHUAN_ACCEPT_DIALOG_EXCLUSIVE} operation is delegated to
- * {@link FiveRingAcceptDialogLocalOperation}, which carries the physical input exclusivity itself.</p>
+ * missing bound runtime is a fail-closed result and never a fabricated business false.</p>
  */
 @Component
 public final class WholeTaskRuntimeLocalOperationExecutor {
 
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final LocalMovementFactMechanics movementFacts;
-    private final FiveRingAcceptDialogLocalOperation fiveRingAcceptDialogLocalOperation;
+    private final XiuluoAcceptDialogLocalOperation xiuluoAcceptDialogLocalOperation;
+    private final JianghuLilianDialogLocalOperation jianghuLilianDialogLocalOperation;
+    private final CatchGhostDialogLocalOperation catchGhostDialogLocalOperation;
     private final com.bot.dhxy.window.observation.DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
     private final NpcArrivalFrameFifoLocalExecutor npcArrivalFrameFifoLocalExecutor;
     private final ObjectMapper objectMapper;
@@ -63,14 +64,20 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
     @Autowired
     public WholeTaskRuntimeLocalOperationExecutor(WindowTaskContextHolder windowTaskContextHolder,
                                                   LocalMovementFactMechanics movementFacts,
-                                                  FiveRingAcceptDialogLocalOperation fiveRingAcceptDialogLocalOperation,
+                                                  XiuluoAcceptDialogLocalOperation xiuluoAcceptDialogLocalOperation,
+                                                  JianghuLilianDialogLocalOperation jianghuLilianDialogLocalOperation,
+                                                  CatchGhostDialogLocalOperation catchGhostDialogLocalOperation,
                                                   com.bot.dhxy.window.observation.DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
                                                   NpcArrivalFrameFifoLocalExecutor npcArrivalFrameFifoLocalExecutor,
                                                   ObjectMapper objectMapper) {
         this.windowTaskContextHolder = Objects.requireNonNull(windowTaskContextHolder, "windowTaskContextHolder");
         this.movementFacts = Objects.requireNonNull(movementFacts, "movementFacts");
-        this.fiveRingAcceptDialogLocalOperation =
-                Objects.requireNonNull(fiveRingAcceptDialogLocalOperation, "fiveRingAcceptDialogLocalOperation");
+        this.xiuluoAcceptDialogLocalOperation = Objects.requireNonNull(
+                xiuluoAcceptDialogLocalOperation, "xiuluoAcceptDialogLocalOperation");
+        this.jianghuLilianDialogLocalOperation = Objects.requireNonNull(
+                jianghuLilianDialogLocalOperation, "jianghuLilianDialogLocalOperation");
+        this.catchGhostDialogLocalOperation = Objects.requireNonNull(
+                catchGhostDialogLocalOperation, "catchGhostDialogLocalOperation");
         this.returnHomeReplayCoordinator = Objects.requireNonNull(
                 returnHomeReplayCoordinator, "returnHomeReplayCoordinator");
         this.npcArrivalFrameFifoLocalExecutor = Objects.requireNonNull(
@@ -80,12 +87,12 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
 
     WholeTaskRuntimeLocalOperationExecutor(WindowTaskContextHolder windowTaskContextHolder,
                                            LocalMovementFactMechanics movementFacts,
-                                           FiveRingAcceptDialogLocalOperation fiveRingAcceptDialogLocalOperation,
                                            ObjectMapper objectMapper) {
         this.windowTaskContextHolder = Objects.requireNonNull(windowTaskContextHolder, "windowTaskContextHolder");
         this.movementFacts = Objects.requireNonNull(movementFacts, "movementFacts");
-        this.fiveRingAcceptDialogLocalOperation =
-                Objects.requireNonNull(fiveRingAcceptDialogLocalOperation, "fiveRingAcceptDialogLocalOperation");
+        this.xiuluoAcceptDialogLocalOperation = null;
+        this.jianghuLilianDialogLocalOperation = null;
+        this.catchGhostDialogLocalOperation = null;
         this.returnHomeReplayCoordinator = null;
         this.npcArrivalFrameFifoLocalExecutor = null;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -104,9 +111,36 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
         if (call == null || call.operation() == null || call.wholeTaskRuntime() == null) {
             return LocalServiceExecution.failed("INVALID_WHOLE_TASK_CALL", null);
         }
-        if (call.operation() == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE) {
-            return fiveRingAcceptDialogLocalOperation.execute(
-                    call, actionId, sourceStepIndex, continuationGateway);
+        if (call.operation() == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.XIULUO_ACCEPT_DIALOG_TEMPLATE) {
+            if (xiuluoAcceptDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("XIULUO_ACCEPT_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_XIULUO_ACCEPT_DIALOG_TEMPLATE",
+                    xiuluoAcceptDialogLocalOperation.execute().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE) {
+            if (jianghuLilianDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("JIANGHU_LILIAN_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE",
+                    jianghuLilianDialogLocalOperation.executeAccept().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE) {
+            if (catchGhostDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("CATCH_GHOST_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE",
+                    catchGhostDialogLocalOperation.executeAccept().name());
+        }
+        if (call.operation()
+                == com.bot.dhxy.cloud.turn.protocol.TurnLocalOperation.CATCH_GHOST_CANCEL_DIALOG_TEMPLATE) {
+            if (catchGhostDialogLocalOperation == null) {
+                return LocalServiceExecution.failed("CATCH_GHOST_DIALOG_NOT_WIRED", null);
+            }
+            return completedEnum("WHOLE_TASK_CATCH_GHOST_CANCEL_DIALOG_TEMPLATE",
+                    catchGhostDialogLocalOperation.executeCancel().name());
         }
         WindowRuntimeContext runtime = windowTaskContextHolder.rawCurrent().orElse(null);
         if (runtime == null) {
@@ -177,9 +211,25 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                  * mirror. Travels over the command plane, so it works even while the observation
                  * plane is failing.
                  */
-                runtime.clearPathingSignal(a.source());
-                runtime.requestObservationPathingFactReset(a.source());
-                yield completedBoolean("WHOLE_TASK_RECOVERY_RESET", true);
+                if (a.recoveryTaskRunId() == null) {
+                    // Legacy CatchGhost/Xinshou callers keep their source-only pathing reconcile and
+                    // cannot clear any exact 修罗 attempt-owned slot.
+                    runtime.clearPathingSignal(a.source());
+                    runtime.requestObservationPathingFactReset(a.source());
+                    yield completedBoolean("WHOLE_TASK_RECOVERY_RESET", true);
+                }
+                WindowRuntimeContext.ExactAttemptAbandonResult reset = runtime.abandonExactXiuluoAttempt(
+                        a.recoveryTaskRunId(), a.recoveryRound(), a.recoveryAttemptId(), a.source());
+                TurnExactAttemptRecoveryResetAck ack = new TurnExactAttemptRecoveryResetAck(
+                        reset.taskRunId(), reset.round(), reset.attemptId(), reset.exactAttemptMatched(),
+                        reset.pathingCleared(), reset.observationLineageCleared(), reset.scheduleCleared(),
+                        reset.clickClaimCleared(), reset.clickProgressCleared(),
+                        reset.expectedCombatClaimCleared(), reset.pendingCombatTicketCleared(),
+                        reset.preparedDialogActionCleared(), reset.preparedActionJobCleared(),
+                        reset.combatAlreadyConfirmed());
+                yield completed("WHOLE_TASK_RECOVERY_RESET",
+                        new TurnWholeTaskRuntimeResult(
+                                null, null, null, null, null, null, null, null, null, null, ack));
             }
             case WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP -> completedBoolean(
                     "WHOLE_TASK_PATHING_UPGRADE_TARGET_MAP",
@@ -209,7 +259,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
             case WHOLE_TASK_PRE_BATTLE_FACT_READ -> completed(
                     "WHOLE_TASK_PRE_BATTLE_FACT_READ",
                     new TurnWholeTaskRuntimeResult(null, null, null, null, null, null, null, null,
-                            preBattleFact(runtime, false), null));
+                            preBattleFact(runtime, false), null, null));
             case WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK -> {
                 long now = System.currentTimeMillis();
                 long startedAt = runtime.getOrdinaryPreBattleStartedAtMs();
@@ -217,7 +267,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                         && runtime.markOrdinaryPreBattleTimeoutPublished(now);
                 yield completed("WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK",
                         new TurnWholeTaskRuntimeResult(null, null, null, null, null, null, null, null,
-                                preBattleFact(runtime, published), null));
+                                preBattleFact(runtime, published), null, null));
             }
             case WHOLE_TASK_PRE_BATTLE_TIMER_START -> completedBoolean(
                     "WHOLE_TASK_PRE_BATTLE_TIMER_START",
@@ -324,7 +374,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 yield completed("WHOLE_TASK_COMBAT_ENTRY_CLEANUP",
                         new TurnWholeTaskRuntimeResult(null, null, null, null, null, null, null, null, null,
                                 new TurnCombatCleanupFact(pathingCleared ? clearedIntentId : null,
-                                        dialogCleanup, dialogCleanup, dialogCleanup)));
+                                        dialogCleanup, dialogCleanup, dialogCleanup), null));
             }
             case WHOLE_TASK_PENDING_TRANSFER_CHOICE_UPDATE -> {
                 // Overwrite the sole local pending transfer-choice memory; the pathing watcher confirms
@@ -336,7 +386,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                     "WHOLE_TASK_PENDING_TRANSFER_CHOICE_CONSUME",
                     new TurnWholeTaskRuntimeResult(null, null, null, null, null,
                             toWireTransferChoice(runtime.consumePendingTransferChoiceMemoryIfPathingCurrent(
-                                    a.intentId(), a.sourcePrefix())), null, null, null, null));
+                                    a.intentId(), a.sourcePrefix())), null, null, null, null, null));
             case WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ -> {
                 // Read-only typed copy of the sole local pending route outcome; null when absent. The
                 // Cloud caller keeps every settlement/consume decision.
@@ -355,7 +405,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                     "WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME",
                     new TurnWholeTaskRuntimeResult(null, null, null, null, null, null,
                             toWireRouteOutcome(runtime.consumePendingRouteOutcomeIfPathingCurrent(
-                                    a.intentId(), a.sourcePrefix())), null, null, null));
+                                    a.intentId(), a.sourcePrefix())), null, null, null, null));
             case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME -> completedBoolean(
                     "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME",
                     npcArrivalFrameFifoLocalExecutor != null

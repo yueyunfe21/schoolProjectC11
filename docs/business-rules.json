@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "rules": [
+    {
+      "id": "BR-START-001",
+      "title": "战斗中启动任务的逻辑",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-START-001] 战斗中启动任务的逻辑",
+      "domains": ["startup", "combat", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-DIALOG-001",
+      "title": "未知 Phase 的 Title/Dialog 仲裁与绿链无移动恢复",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-DIALOG-001] 未知 Phase 的 Title/Dialog 仲裁与绿链无移动恢复",
+      "domains": ["startup", "dialog", "tracker", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-TIANTING-001",
+      "title": "天庭多谢到封妖符的本地连续状态",
+      "source": "docs/天庭任务流程大MD.md",
+      "heading": "[BR-TIANTING-001] 多谢分支",
+      "domains": ["tianting", "dialog", "observation", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-TIANTING-002",
+      "title": "天庭战后任务框变化与暗雷连续性",
+      "source": "docs/天庭任务流程大MD.md",
+      "heading": "[BR-TIANTING-002] 战斗结束后的通用处理",
+      "domains": ["tianting", "tracker", "combat", "state-lifecycle", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUHAN-001",
+      "title": "五环接任务 Title 确认与暂不可用 Story 重试",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUHAN-001] 五环接任务 Title 确认与“暂不可用”Story 重试",
+      "domains": ["wuhuan", "dialog", "tracker", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUHAN-002",
+      "title": "五环世界地图寻路关闭后立即放权",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUHAN-002] 五环世界地图寻路关闭后立即放权",
+      "domains": ["wuhuan", "navigation", "pathing", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
+      "id": "BR-WUHAN-003",
+      "title": "五环买鞋后经长安地图标签直达接任务 NPC",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-WUHAN-003] 五环买鞋后经长安地图标签直达接任务 NPC",
+      "domains": ["wuhuan", "shoe-shop", "navigation", "pathing", "client-cloud"],
+      "crossBoundary": true,
+      "status": "active"
+    }
+  ]
+}

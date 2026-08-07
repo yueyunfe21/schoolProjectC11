@@ -244,15 +244,33 @@ public final class TurnModeGuard {
             if (loopRegistry.find(exactWindowId).orElse(null) != loop) {
                 return false;
             }
-            if (!loop.hasAcceptedTaskTerminal()) {
+            if (!canRemoveStoppedLoop(loop)) {
                 // A stopped client loop alone is not proof that Cloud released the exact RunSlot. Keeping the loop
                 // registered prevents the UI from minting a conflicting startRequestId against a still-active run.
+                // Transport-only loops (for example map survey) own no Cloud task RunSlot and have no task terminal.
                 throw new IllegalStateException(
                         "云端未确认终止，保留远程 turn loop：windowId=" + exactWindowId);
             }
             loopRegistry.remove(exactWindowId);
             return true;
         }
+    }
+
+    static boolean canRemoveStoppedLoop(WindowTurnLoop loop) {
+        /*
+         * A loop that died on a local failure can never satisfy hasAcceptedTaskTerminal: fetching the
+         * Cloud terminal is that same loop's job, and it is dead. Holding it registered anyway wedged the
+         * whole window — every later start was refused with 云端未确认终止 while the stop button answered
+         * 当前没有远程 turn loop, and the only way out was restarting the client. A wild-battle run hit
+         * this on five windows at once: each loop NPE'd seconds after start, and from then on every start
+         * click just replayed the team-role hover sweep across the windows and failed again. The Cloud
+         * runtime finishes its own queue regardless (its startup turn times out and fails the run), so
+         * removing the dead loop risks no double-started RunSlot.
+         */
+        return !loop.hasTaskStartRequest()
+                || loop.hasAcceptedTaskTerminal()
+                || loop.wasTaskStartExplicitlyRejected()
+                || loop.lastFailure() != null;
     }
 
     /**

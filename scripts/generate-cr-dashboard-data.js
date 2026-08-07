@@ -58,12 +58,12 @@ function inferDomain(summary) {
 function parseMarkdownTable(markdown) {
   const parsed = [];
   for (const line of markdown.split(/\r?\n/)) {
-    if (!line.startsWith("| CR")) continue;
+    if (!/^\| (?:CR|G)\d+\s*\|/.test(line)) continue;
     const parts = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(part => part.trim());
     if (parts.length < 5) continue;
     const [id, owner, status, files, summary] = parts;
-    if (!/^CR\d+$/.test(id)) continue;
-    const number = Number(id.slice(2));
+    if (!/^(?:CR|G)\d+$/.test(id)) continue;
+    const number = Number(id.replace(/^(?:CR|G)/, ""));
     parsed.push({
       id,
       number,

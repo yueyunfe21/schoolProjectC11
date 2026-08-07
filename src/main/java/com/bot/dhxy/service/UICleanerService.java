@@ -22,12 +22,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Random;
-import java.util.stream.Stream;
 
 /**
  * Handles non-task UI interruptions for the currently bound game window.
@@ -157,6 +154,64 @@ public class UICleanerService {
         return closeAllGenericWindows(CleanupPass.start());
     }
 
+    /**
+     * Reads whether any generic close template is visible without sending input.
+     *
+     * @param source diagnostic source only; the probe never clicks, closes, or sends a hotkey
+     * @return {@code TRUE} when any template matches, {@code FALSE} after a complete same-frame
+     *         scan, or {@code null} when capture/template/matching evidence is unavailable
+     */
+    public Boolean probeGenericCloseButtonPresent(String source) {
+        CleanupPass cleanupPass = CleanupPass.start();
+        String screenPath = cleanupPass.screenPath(tracker);
+        if (screenPath == null || screenPath.isBlank()) {
+            log.warn("UI generic-close read-only probe unavailable: source={} cause=capture-failed", source);
+            return null;
+        }
+        List<String> templates = genericCloseButtonTemplates();
+        if (templates.isEmpty()) {
+            log.warn("UI generic-close read-only probe unavailable: source={} cause=no-templates", source);
+            return null;
+        }
+        BufferedImage frame = null;
+        try {
+            frame = ImageIO.read(new File(screenPath));
+            if (frame == null) {
+                return null;
+            }
+            for (String templatePath : templates) {
+                BufferedImage template = ImageIO.read(new File(templatePath));
+                if (template == null || template.getWidth() > frame.getWidth()
+                        || template.getHeight() > frame.getHeight()) {
+                    if (template != null) {
+                        template.flush();
+                    }
+                    log.warn("UI generic-close read-only probe unavailable: source={} template={} cause=invalid-template",
+                            source, templatePath);
+                    return null;
+                }
+                try {
+                    if (ImageFinder.find(frame, template, 0.8) != null) {
+                        log.info("UI generic-close read-only probe present: source={} template={}", source, templatePath);
+                        return true;
+                    }
+                } finally {
+                    template.flush();
+                }
+            }
+            log.info("UI generic-close read-only probe absent: source={} templates={}", source, templates.size());
+            return false;
+        } catch (IOException | RuntimeException failure) {
+            log.warn("UI generic-close read-only probe unavailable: source={} cause={}",
+                    source, failure.toString());
+            return null;
+        } finally {
+            if (frame != null) {
+                frame.flush();
+            }
+        }
+    }
+
     private boolean closeAllGenericWindows(CleanupPass cleanupPass) {
         boolean closedAny = false;
         if (isWorldMapOpened(cleanupPass)) {
@@ -208,6 +263,18 @@ public class UICleanerService {
      *         or the capture failed.
      */
     public boolean closeMapSearchInputByX2Direct(String description) {
+        return closeMapSearchInputByX2Direct(description, true);
+    }
+
+    /**
+     * Close the world-map search/input overlay with optional post-click settling.
+     *
+     * @param description diagnostic source written to input and cleanup logs.
+     * @param settleAfterClick true to retain the normal 250ms post-click settle; false when the
+     *                         caller has declared this physical click to be its final foreground action.
+     * @return true when the {@code x2.png} button was found and clicked.
+     */
+    public boolean closeMapSearchInputByX2Direct(String description, boolean settleAfterClick) {
         if (!tracker.updateGlobalVision()) {
             log.warn("UI cleanup x2-only close skipped: capture failed description={}", description);
             return false;
@@ -227,6 +294,9 @@ public class UICleanerService {
             return false;
         }
         inputProvider.clickLeft(clickX, clickY, 80);
+        if (!settleAfterClick) {
+            return true;
+        }
         return TaskSleep.sleep(250) && InputActionScope.checkpoint();
     }
 
@@ -237,12 +307,7 @@ public class UICleanerService {
             return null;
         }
         Point closeBtnPoint = null;
-        String[] closeButtonTemplates = {
-                "images/template/cancel/x1.png",
-                "images/template/cancel/x2.png",
-                "images/template/cancel/x3.png",
-                "images/template/cancel/npc_busy_cancel.png"
-        };
+        List<String> closeButtonTemplates = genericCloseButtonTemplates();
         for (String templatePath : closeButtonTemplates) {
             closeBtnPoint = coordinateHelper.findImageAbsoluteCoordinateByImagePath(templatePath, screenPath, 0.8);
             if (closeBtnPoint != null) {
@@ -251,11 +316,31 @@ public class UICleanerService {
         }
 
         if (closeBtnPoint == null) {
-            log.info("UI cleanup close button not found: description={} screenPath={} templates=x1,x2,x3,npc_busy_cancel",
-                    description, screenPath);
+            log.info("UI cleanup close button not found: description={} screenPath={} templates={}",
+                    description, screenPath, closeButtonTemplates);
             return null;
         }
         return closeBtnPoint;
+    }
+
+    /**
+     * Discovers every cancel-template asset rather than hard-coding a subset of X-button skins.
+     *
+     * <p>The list is sorted only for reproducible logs/tests, not as a business priority. A missing
+     * directory fails closed, so cleanup performs no generic click rather than guessing a point.</p>
+     */
+    static List<String> genericCloseButtonTemplates() {
+        try (var paths = Files.list(GENERIC_CLOSE_TEMPLATE_DIR)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".png"))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .map(Path::toString)
+                    .toList();
+        } catch (IOException directoryUnavailable) {
+            log.warn("UI cleanup generic close-template directory is unavailable: dir={} message={}",
+                    GENERIC_CLOSE_TEMPLATE_DIR, directoryUnavailable.getMessage());
+            return List.of();
+        }
     }
 
     private boolean clickCloseButtonOnceDirect(String description, Point closeBtnPoint) {
@@ -268,10 +353,6 @@ public class UICleanerService {
         }
         inputProvider.clickLeft(clickX, clickY, 80);
         return TaskSleep.sleep(250) && InputActionScope.checkpoint();
-    }
-
-    private String safeSource(String source) {
-        return source == null || source.isBlank() ? "unknown" : source.trim();
     }
 
     private static class CleanupPass {
@@ -294,10 +375,6 @@ public class UICleanerService {
         void invalidateFrame(String reason) {
             screenPath = null;
         }
-    }
-
-    private void clickAbsolutePoint(int x, int y, String description) {
-        inputSequences.clickLeft(description, x + (random.nextInt(5) - 2), y + (random.nextInt(5) - 2), 80);
     }
 
 }

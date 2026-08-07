@@ -1,13 +1,17 @@
 package com.bot.dhxy.input;
 
+import com.bot.dhxy.ui.MainWindowController;
 import com.bot.dhxy.window.control.WindowTaskControlService;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.platform.win32.WinUser;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -33,7 +37,9 @@ public class GlobalEmergencyStopHotkeyService {
     private static final String STOP_HOTKEY_TEXT = "Ctrl+Shift+F12";
     private static final long HOTKEY_DEBOUNCE_NANOS = java.time.Duration.ofMillis(500L).toNanos();
 
-    private final WindowTaskControlService windowTaskControlService;
+    private final BooleanSupplier pauseRunningAction;
+    private final Runnable resumePausedAction;
+    private final Runnable stopAllAction;
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastPauseTriggerNanos = new AtomicLong(Long.MIN_VALUE);
@@ -41,8 +47,20 @@ public class GlobalEmergencyStopHotkeyService {
 
     private Thread hotkeyThread;
 
-    public GlobalEmergencyStopHotkeyService(WindowTaskControlService windowTaskControlService) {
-        this.windowTaskControlService = windowTaskControlService;
+    @Autowired
+    public GlobalEmergencyStopHotkeyService(WindowTaskControlService windowTaskControlService,
+                                             MainWindowController mainWindowController) {
+        this(() -> pauseRunningWindows(windowTaskControlService),
+                mainWindowController::handleGlobalPauseResumeHotkey,
+                windowTaskControlService::stopAll);
+    }
+
+    GlobalEmergencyStopHotkeyService(BooleanSupplier pauseRunningAction,
+                                     Runnable resumePausedAction,
+                                     Runnable stopAllAction) {
+        this.pauseRunningAction = Objects.requireNonNull(pauseRunningAction, "pauseRunningAction");
+        this.resumePausedAction = Objects.requireNonNull(resumePausedAction, "resumePausedAction");
+        this.stopAllAction = Objects.requireNonNull(stopAllAction, "stopAllAction");
     }
 
     public void start() {
@@ -125,26 +143,44 @@ public class GlobalEmergencyStopHotkeyService {
         }
     }
 
-    private void triggerPauseAll() {
+    void triggerPauseAll() {
         if (!claimTrigger(lastPauseTriggerNanos)) {
             return;
         }
         log.warn("{} pause/resume hotkey triggered: toggling all window tasks...", PAUSE_HOTKEY_TEXT);
         try {
-            windowTaskControlService.togglePauseResumeAll();
+            if (!pauseRunningAction.getAsBoolean()) {
+                resumePausedAction.run();
+            }
         } catch (Exception e) {
             log.warn("{} pause/resume hotkey failed while toggling window tasks", PAUSE_HOTKEY_TEXT, e);
         }
         log.warn("{} pause/resume request sent.", PAUSE_HOTKEY_TEXT);
     }
 
-    private void triggerEmergencyStop() {
+    private static boolean pauseRunningWindows(WindowTaskControlService windowTaskControlService) {
+        var runningWindowIds = windowTaskControlService.getSnapshots().stream()
+                .filter(snapshot -> snapshot.isRunning())
+                .map(snapshot -> snapshot.getWindowId())
+                .toList();
+        if (runningWindowIds.isEmpty()) {
+            return false;
+        }
+        log.warn("{} dispatching immediate pause outside JavaFX: windows={}",
+                PAUSE_HOTKEY_TEXT, runningWindowIds);
+        var result = windowTaskControlService.pauseWindows(runningWindowIds);
+        log.warn("{} immediate pause completed: successCount={} requestedCount={} message={}",
+                PAUSE_HOTKEY_TEXT, result.getSuccessCount(), result.getRequestedCount(), result.getMessage());
+        return true;
+    }
+
+    void triggerEmergencyStop() {
         if (!claimTrigger(lastStopTriggerNanos)) {
             return;
         }
         log.warn("{} emergency stop triggered: stopping all window tasks...", STOP_HOTKEY_TEXT);
         try {
-            windowTaskControlService.stopAll();
+            stopAllAction.run();
         } catch (Exception e) {
             log.warn("{} emergency stop failed while stopping window tasks", STOP_HOTKEY_TEXT, e);
         }

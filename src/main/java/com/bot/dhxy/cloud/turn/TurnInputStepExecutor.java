@@ -9,10 +9,7 @@ import com.bot.dhxy.input.action.InputAction;
 import com.bot.dhxy.input.action.InputActionExecutionResult;
 import com.bot.dhxy.input.action.InputActionQueue;
 import com.bot.dhxy.input.action.InputActionSafetyReason;
-import com.bot.dhxy.runner.stop.TaskPauseToken;
 import com.bot.dhxy.runner.stop.TaskSleep;
-import com.bot.dhxy.runner.stop.TaskStopRequestedException;
-import com.bot.dhxy.runner.stop.TaskStopToken;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -28,18 +25,15 @@ import java.util.function.Supplier;
 public final class TurnInputStepExecutor {
 
     private final InputActionQueue inputActionQueue;
-    private final BoundWindowKeyboardService keyboardService;
     private final WindowTaskContextHolder contextHolder;
     private final TurnInputActionMapper inputActionMapper;
     private final TurnKeyMapper keyMapper;
 
     public TurnInputStepExecutor(InputActionQueue inputActionQueue,
-                                 BoundWindowKeyboardService keyboardService,
                                  WindowTaskContextHolder contextHolder,
                                  TurnInputActionMapper inputActionMapper,
                                  TurnKeyMapper keyMapper) {
         this.inputActionQueue = Objects.requireNonNull(inputActionQueue, "inputActionQueue");
-        this.keyboardService = Objects.requireNonNull(keyboardService, "keyboardService");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.inputActionMapper = Objects.requireNonNull(inputActionMapper, "inputActionMapper");
         this.keyMapper = Objects.requireNonNull(keyMapper, "keyMapper");
@@ -72,7 +66,8 @@ public final class TurnInputStepExecutor {
                 return submitMouseActions(
                         window,
                         "turn:input:step-" + sourceStepIndex + ":" + action,
-                        actions);
+                        actions,
+                        allowsCombatActiveMouse(action, input));
             }
 
             // Baseline-supported Alt taps use the existing serialized worker so its HWND attempt and
@@ -97,33 +92,29 @@ public final class TurnInputStepExecutor {
         }
     }
 
-    /**
-     * Deliver one KEY_TAP through the closed background vocabulary: existing Alt shortcut, then Ctrl chord,
-     * then Enter. Unsupported spellings fail without any foreground fallback. The actual irreversible post runs
-     * through the live pre-delivery admission.
-     */
+    /** Deliver one validated key tap through the frozen exact-window input queue. */
     private Result deliverKeyTap(TurnExecutionWindow window, TurnInputSpec input) {
         String key = input.key();
         BoundWindowKeyboardService.AltShortcut alt = keyMapper.findBackgroundTap(key).orElse(null);
         if (alt != null) {
             InputAction serializedAlt = toSerializedAltAction(alt);
-            if (serializedAlt != null) {
-                return submitMouseActions(
-                        window,
-                        "turn:input:keyboard:" + alt.name(),
-                        List.of(serializedAlt));
-            }
-            return deliverKeyboardWithLiveAdmission(window, () -> toResult(keyboardService.pressShortcut(
-                    window.binding(), window.metadata().windowId(), alt)));
+            return submitKeyboardActions(
+                    window,
+                    "turn:input:keyboard:" + alt.name(),
+                    List.of(serializedAlt));
         }
         BoundWindowKeyboardService.ControlShortcut ctrl = keyMapper.findControlShortcut(key).orElse(null);
         if (ctrl != null) {
-            return deliverKeyboardWithLiveAdmission(window, () -> toResult(keyboardService.pressControlShortcut(
-                    window.binding(), window.metadata().windowId(), ctrl)));
+            InputAction action = ctrl == BoundWindowKeyboardService.ControlShortcut.CTRL_A
+                    ? InputAction.pressCtrlA()
+                    : InputAction.pressCtrlU();
+            return submitKeyboardActions(
+                    window,
+                    "turn:input:keyboard:" + ctrl.name(),
+                    List.of(action));
         }
         if (keyMapper.isEnterKey(key)) {
-            return deliverKeyboardWithLiveAdmission(window, () -> toResult(keyboardService.pressEnter(
-                    window.binding(), window.metadata().windowId())));
+            return submitKeyboardActions(window, "turn:input:keyboard:ENTER", List.of(InputAction.pressEnter()));
         }
         return Result.failed(Code.BACKGROUND_KEY_UNSUPPORTED, "key is not background-validated: " + key);
     }
@@ -141,13 +132,14 @@ public final class TurnInputStepExecutor {
             case ALT_E -> InputAction.pressAltE();
             case ALT_Q -> InputAction.pressAltQ();
             case ALT_A -> InputAction.pressAltA();
+            case ALT_B -> InputAction.pressAltB();
             case ALT_C -> InputAction.pressAltC();
             case ALT_U -> InputAction.pressAltU();
-            case ALT_5 -> null;
+            case ALT_5 -> InputAction.pressAlt5();
         };
     }
 
-    /** Deliver one KEY_DOWN modifier press through the live pre-delivery admission. */
+    /** Deliver one KEY_DOWN modifier press through the frozen exact-window input queue. */
     private Result deliverModifierDown(TurnExecutionWindow window, TurnInputSpec input) {
         BoundWindowKeyboardService.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
         if (modifier == null) {
@@ -155,17 +147,13 @@ public final class TurnInputStepExecutor {
                     Code.BACKGROUND_KEY_UNSUPPORTED,
                     "modifier is not background-validated: " + input.key());
         }
-        return deliverKeyboardWithLiveAdmission(window, () -> toTransitionResult(keyboardService.transitionModifier(
-                window.binding(), window.metadata().windowId(), modifier,
-                BoundWindowKeyboardService.KeyTransition.DOWN)));
+        return submitKeyboardActions(
+                window,
+                "turn:input:keyboard:" + modifier.name() + ":DOWN",
+                List.of(InputAction.holdCtrl()));
     }
 
-    /**
-     * Deliver one KEY_UP modifier release. Release is cleanup: it must remain callable even under a live stop,
-     * pause or interrupt (mirroring the existing {@code transitionModifier} "UP remains callable while interrupted"
-     * contract), so it deliberately bypasses the live-stop/pause/generation admission and posts to the frozen
-     * binding directly, leaving no modifier held down.
-     */
+    /** Deliver one KEY_UP modifier release; an aborted request invokes provider release-all cleanup. */
     private Result deliverModifierRelease(TurnExecutionWindow window, TurnInputSpec input) {
         BoundWindowKeyboardService.ModifierKey modifier = keyMapper.findModifierKey(input.key()).orElse(null);
         if (modifier == null) {
@@ -173,85 +161,22 @@ public final class TurnInputStepExecutor {
                     Code.BACKGROUND_KEY_UNSUPPORTED,
                     "modifier is not background-validated: " + input.key());
         }
-        return toTransitionResult(keyboardService.transitionModifier(
-                window.binding(), window.metadata().windowId(), modifier,
-                BoundWindowKeyboardService.KeyTransition.UP));
+        return submitKeyboardActions(
+                window,
+                "turn:input:keyboard:" + modifier.name() + ":UP",
+                List.of(InputAction.releaseCtrl()));
     }
 
-    /** Deliver one TEXT_INPUT as an ordered exact-HWND background Unicode post through the live admission. */
+    /** Deliver one TEXT_INPUT through the frozen exact-window input queue. */
     private Result deliverText(TurnExecutionWindow window, TurnInputSpec input) {
         String text = input.text();
         if (text == null || text.isEmpty()) {
             return Result.failed(Code.INVALID_INPUT, "text input requires non-empty text");
         }
-        return deliverKeyboardWithLiveAdmission(window, () -> toResult(keyboardService.typeUnicodeText(
-                window.binding(), window.metadata().windowId(), text)));
-    }
-
-    /**
-     * Reinstate the frozen queue's live safety admission for a direct keyboard post that deliberately bypasses the
-     * mouse queue. The keyboard path still owns no queue, store, global lock or focus; this only restores the
-     * pause/stop/binding-generation guarantees the queue used to provide.
-     *
-     * <p>First honor the existing pause contract with the existing event-based wait (no keyboard queue/store, no
-     * poll-sleep): {@code waitIfPaused} blocks while paused and throws a typed stop if a stop lands during the
-     * wait. Then, serialized against the context generation monitor so a binding commit cannot interleave between
-     * the check and the first post, reject a live task stop and a thread interrupt as typed {@code STOPPED}, and
-     * reject any binding generation whose current context binding object is no longer the exact frozen object as a
-     * typed failure. Only after all checks pass is the irreversible post performed inside the same monitor.</p>
-     */
-    private Result deliverKeyboardWithLiveAdmission(TurnExecutionWindow window, Supplier<Result> post) {
-        // Consume only the exact action window's frozen stop/pause tokens. Production turn threads
-        // ({@code dhxy-turn-*}) never bind a TaskExecutionContextHolder, so the frozen snapshot is the sole
-        // live-safety source; it is captured through the same production resolve seam the tests exercise.
-        TaskStopToken stopToken = window.actionStopToken();
-        TaskPauseToken pauseToken = window.actionPauseToken();
-
-        if (pauseToken != null) {
-            try {
-                pauseToken.waitIfPaused(stopToken);
-            } catch (TaskStopRequestedException stopped) {
-                return Result.stopped("task stop during keyboard pause wait");
-            }
-        }
-
-        synchronized (window.context()) {
-            if (stopToken != null && stopToken.isStopRequested()) {
-                return Result.stopped("live task stop before keyboard delivery");
-            }
-            if (Thread.currentThread().isInterrupted()) {
-                return Result.stopped("interrupted before keyboard delivery");
-            }
-            if (window.context().getNativeBinding() != window.binding()) {
-                return Result.failed(
-                        Code.BACKGROUND_KEY_FAILED,
-                        "frozen window generation changed before keyboard delivery");
-            }
-            return post.get();
-        }
-    }
-
-    /** Map one modifier transition attempt to a typed result. */
-    private Result toTransitionResult(BoundWindowKeyboardService.KeyTransitionAttempt attempt) {
-        if (attempt.success()) {
-            return Result.completed();
-        }
-        return Result.failed(
-                Code.BACKGROUND_KEY_FAILED,
-                attempt.reason() == null ? "background keyboard delivery failed" : attempt.reason());
-    }
-
-    /** Map one background delivery attempt to a typed result; a post-delivery interrupt is a stop, not a failure. */
-    private Result toResult(BoundWindowKeyboardService.ShortcutAttempt attempt) {
-        if (Thread.currentThread().isInterrupted()) {
-            return Result.stopped("background keyboard delivery interrupted");
-        }
-        if (attempt.success()) {
-            return Result.completed();
-        }
-        return Result.failed(
-                Code.BACKGROUND_KEY_FAILED,
-                attempt.reason() == null ? "background keyboard delivery failed" : attempt.reason());
+        return submitKeyboardActions(
+                window,
+                "turn:input:keyboard:TEXT",
+                List.of(InputAction.typeTextUnicode(text)));
     }
 
     /**
@@ -305,7 +230,10 @@ public final class TurnInputStepExecutor {
             }
             InputActionExecutionResult execution = submitMouseActionsRaw(
                     window, "turn:input:steps-" + first.index() + "-" + last.index() + ":mouse-sequence",
-                    List.copyOf(actions));
+                    List.copyOf(actions),
+                    sequence.stream()
+                            .filter(this::isMouseInput)
+                            .allMatch(step -> allowsCombatActiveMouse(step.inputAction(), step.input())));
             Result result = toResult(execution);
             if (result.status() == Status.COMPLETED) {
                 return new MouseSequenceResult(result, sequence.size());
@@ -367,17 +295,53 @@ public final class TurnInputStepExecutor {
      */
     private Result submitMouseActions(TurnExecutionWindow window,
                                       String description,
-                                      List<InputAction> actions) {
-        return toResult(submitMouseActionsRaw(window, description, actions));
+                                      List<InputAction> actions,
+                                      boolean allowDuringCombat) {
+        return toResult(submitMouseActionsRaw(window, description, actions, allowDuringCombat));
     }
 
     private InputActionExecutionResult submitMouseActionsRaw(TurnExecutionWindow window,
                                                               String description,
-                                                              List<InputAction> actions) {
+                                                              List<InputAction> actions,
+                                                              boolean allowDuringCombat) {
+        return submitThroughQueue(window, description, actions,
+                () -> !allowDuringCombat && window.context().isLocalCombatVisible()
+                        ? InputActionSafetyReason.COMBAT_ACTIVE
+                        : InputActionSafetyReason.CLEAR);
+    }
+
+    /** Only the typed automatic-combat panel drag may bypass G004's combat mouse fence. */
+    static boolean allowsCombatActiveMouse(TurnInputAction action, TurnInputSpec input) {
+        return action == TurnInputAction.DRAG_LEFT
+                && input != null
+                && Boolean.TRUE.equals(input.autoCombatPanelDrag());
+    }
+
+    /**
+     * Serialized keyboard delivery that shares the mouse queue and its exact-window freeze, but not the
+     * combat gate.
+     *
+     * <p>G004 fenced mouse input during combat because queued walk/patrol clicks kept firing after the
+     * Runner had already entered a battle. Its stated boundary is that auto-combat's {@code Alt+8} panel
+     * maintenance is keyboard and stays exempt — and it must be: that maintenance exists precisely to run
+     * <em>during</em> a fight. Routing it through the mouse gate blocked it whenever it mattered, which
+     * reads from the outside as "auto-combat is not topping itself up".</p>
+     */
+    private Result submitKeyboardActions(TurnExecutionWindow window,
+                                         String description,
+                                         List<InputAction> actions) {
+        return toResult(submitThroughQueue(
+                window, description, actions, () -> InputActionSafetyReason.CLEAR));
+    }
+
+    private InputActionExecutionResult submitThroughQueue(TurnExecutionWindow window,
+                                                         String description,
+                                                         List<InputAction> actions,
+                                                         Supplier<InputActionSafetyReason> safetyGate) {
         return contextHolder.callWith(
                 window.context(),
                 () -> inputActionQueue.submitFrozenExactWindowActionsAndWait(
-                        description, window.context(), window.binding(), actions));
+                        description, window.context(), window.binding(), actions, safetyGate));
     }
 
     private Result toResult(InputActionExecutionResult result) {
@@ -393,6 +357,10 @@ public final class TurnInputStepExecutor {
          */
         if (result.getSafetyReason() == InputActionSafetyReason.STOP_REQUESTED) {
             return Result.stopped(describe("input stopped", result));
+        }
+        if (result.getSafetyReason() == InputActionSafetyReason.COMBAT_ACTIVE) {
+            return Result.failed(Code.LOCAL_COMBAT_ACTIVE,
+                    describe("local Runner blocked mouse input during combat", result));
         }
         if (Thread.currentThread().isInterrupted()) {
             return Result.stopped("input queue wait interrupted");
@@ -430,6 +398,7 @@ public final class TurnInputStepExecutor {
         OK,
         INVALID_INPUT,
         INPUT_QUEUE_FAILED,
+        LOCAL_COMBAT_ACTIVE,
         BACKGROUND_KEY_UNSUPPORTED,
         BACKGROUND_KEY_FAILED,
         STOPPED

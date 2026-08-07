@@ -18,5 +18,12 @@ public enum DialogOperation {
     XIULUO_ENTER_BATTLE,
     READ_STORY_OBJECTIVE,
     ACCEPT_TASK,
+    /** 天庭 combat-entry options matched and clicked entirely on the client. */
+    TIANTING_COMBAT_OPTION,
+    TIANTING_ACCEPT_TASK,
+    TIANTING_YINYAO,
+    TIANTING_FENGYAO,
+    /** All known 天庭 options, armed only after a tracker click starts no movement. */
+    TIANTING_RECOVERY_OPTION,
     CLEANUP
 }

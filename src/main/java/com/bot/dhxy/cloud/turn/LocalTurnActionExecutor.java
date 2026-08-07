@@ -14,19 +14,23 @@ import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
 import com.bot.dhxy.cloud.turn.protocol.TurnStep;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnStepType;
+import com.bot.dhxy.cloud.turn.protocol.TurnPathingIntent;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
+import com.bot.dhxy.window.model.WindowPathingIntent;
+import com.bot.dhxy.window.model.WindowPathingIntentType;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.awt.image.BufferedImage;
 
 /** Executes one validated Cloud action strictly against one refreshed local window snapshot. */
 @Component
+@Slf4j
 public final class LocalTurnActionExecutor {
 
     private final MultiWindowTaskManager taskManager;
@@ -38,7 +42,6 @@ public final class LocalTurnActionExecutor {
     private final LocalServiceStepDispatcher localServiceDispatcher;
     private final TurnClient turnClient;
     private final TurnOutcomeAssembler outcomeAssembler;
-    private final LocalPathingStartProofMechanics pathingStartProofMechanics;
 
     public LocalTurnActionExecutor(MultiWindowTaskManager taskManager,
                                    WindowNativeBindingRefreshService bindingRefreshService,
@@ -48,8 +51,7 @@ public final class LocalTurnActionExecutor {
                                    TurnInputStepExecutor inputExecutor,
                                    LocalServiceStepDispatcher localServiceDispatcher,
                                    TurnClient turnClient,
-                                   TurnOutcomeAssembler outcomeAssembler,
-                                   LocalPathingStartProofMechanics pathingStartProofMechanics) {
+                                   TurnOutcomeAssembler outcomeAssembler) {
         this.taskManager = Objects.requireNonNull(taskManager, "taskManager");
         this.bindingRefreshService = Objects.requireNonNull(bindingRefreshService, "bindingRefreshService");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
@@ -59,8 +61,6 @@ public final class LocalTurnActionExecutor {
         this.localServiceDispatcher = Objects.requireNonNull(localServiceDispatcher, "localServiceDispatcher");
         this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.outcomeAssembler = Objects.requireNonNull(outcomeAssembler, "outcomeAssembler");
-        this.pathingStartProofMechanics =
-                Objects.requireNonNull(pathingStartProofMechanics, "pathingStartProofMechanics");
     }
 
     /**
@@ -71,32 +71,12 @@ public final class LocalTurnActionExecutor {
      */
     public ExecutedTurn execute(TurnAction action) {
         TurnAction validated = TurnProtocolValidator.requireValid(action);
-        // Local Pathing Fact Bridge: read the pre-input coordinate baseline once for a start action that
-        // carries a pathing intent, so the local proof can compare it after the action completes. Capture
-        // happens before resolveForAction freezes the native-binding generation: capture providers may
-        // refresh a value-equivalent binding object, and freezing first would make the subsequent mouse
-        // request fail the queue's object-identity generation witness before it ever reaches the worker.
-        WindowRuntimeContext baselineContext = validated.pathingIntent() == null
-                ? null
-                : taskManager.getRunner(validated.windowId())
-                        .map(runner -> runner.getWindowContext())
-                        .orElseThrow(() -> new IllegalStateException(
-                                "Turn window is not registered: " + validated.windowId()));
-        BufferedImage pathingStartBaseline = validated.pathingIntent() == null
-                ? null
-                : contextHolder.callWith(baselineContext, pathingStartProofMechanics::readBaseline);
         TurnExecutionWindow window = TurnExecutionWindow.resolveForAction(
                 validated, taskManager, bindingRefreshService);
-        if (baselineContext != null && baselineContext != window.context()) {
-            if (pathingStartBaseline != null) {
-                pathingStartBaseline.flush();
-            }
-            throw new IllegalStateException("Turn window context changed during pathing baseline capture");
-        }
-
-        boolean pathingBaselineHandedToProof = false;
-        try {
-            List<TurnStepExecution> executions = new ArrayList<>(validated.steps().size());
+        log.info("[turn-action-evidence] received actionId={} windowId={} hwnd={} steps={}",
+                validated.actionId(), window.metadata().windowId(), window.binding().getNativeHandle(),
+                describeSteps(validated.steps()));
+        List<TurnStepExecution> executions = new ArrayList<>(validated.steps().size());
             TurnFrame candidateFrame = null;
             boolean terminal = false;
             for (int index = 0; index < validated.steps().size(); index++) {
@@ -171,29 +151,56 @@ public final class LocalTurnActionExecutor {
                 }
             }
 
-            // Local Pathing Fact Bridge: only a COMPLETED start action (no stop, no failure) with a positive
-            // local movement proof registers its intent; the proof runs its own baseline-vs-current check and
-            // registers nothing on a double-negative. Cloud never observes movement itself.
+            // A completed action only arms the exact window runner with its route. The long-lived
+            // runner, not a second synchronous screenshot probe, is the sole source of motion facts.
             if (validated.pathingIntent() != null && !stopped && !failed) {
-                pathingBaselineHandedToProof = true;
-                // Bound to this exact window: the proof captures the same coordinate strip / edge frames as
-                // the baseline read above, so it must run under the same callWith or the tracker loses the
-                // window and the proof samples (and would register against) the wrong window.
                 contextHolder.callWith(window.context(), () -> {
-                    pathingStartProofMechanics.proveAndRegister(
-                            window.context(), validated.pathingIntent(), pathingStartBaseline);
+                    window.context().markPathingStarted(toWindowPathingIntent(validated.pathingIntent()));
                     return null;
                 });
             }
 
-            return new ExecutedTurn(
-                    outcomeAssembler.assemble(validated, window.metadata(), executions, candidateFrame),
-                    candidateFrame == null ? null : candidateFrame.pngBytes());
-        } finally {
-            if (!pathingBaselineHandedToProof && pathingStartBaseline != null) {
-                pathingStartBaseline.flush();
-            }
+            var outcome = outcomeAssembler.assemble(validated, window.metadata(), executions, candidateFrame);
+            log.info("[turn-action-evidence] completed actionId={} windowId={} status={} steps={} frameEvidence={}",
+                    validated.actionId(), window.metadata().windowId(), outcome.status(),
+                    executions.stream().map(execution -> execution.result().status().name()).toList(),
+                    candidateFrame == null ? "none" : candidateFrame.metadata());
+            return new ExecutedTurn(outcome, candidateFrame == null ? null : candidateFrame.pngBytes());
+    }
+
+    /** Compact, coordinate-preserving action transcript used to join Cloud decisions to physical-input logs. */
+    private static List<String> describeSteps(List<TurnStep> steps) {
+        if (steps == null) {
+            return List.of();
         }
+        return steps.stream().map(step -> {
+            if (step == null) {
+                return "null";
+            }
+            if (step.type() == TurnStepType.INPUT && step.input() != null) {
+                return step.index() + ":" + step.inputAction() + "@"
+                        + step.input().x() + "," + step.input().y();
+            }
+            return step.index() + ":" + step.type();
+        }).toList();
+    }
+
+    private WindowPathingIntent toWindowPathingIntent(TurnPathingIntent intent) {
+        WindowPathingIntentType type;
+        try {
+            type = WindowPathingIntentType.valueOf(intent.type());
+        } catch (IllegalArgumentException | NullPointerException invalidType) {
+            type = WindowPathingIntentType.TARGETED;
+        }
+        return WindowPathingIntent.builder()
+                .source(intent.source())
+                .intentId(intent.intentId())
+                .targetMapName(intent.targetMapName())
+                .targetX(intent.targetX())
+                .targetY(intent.targetY())
+                .tolerance(intent.tolerance())
+                .type(type)
+                .build();
     }
 
     /**
@@ -344,6 +351,7 @@ public final class LocalTurnActionExecutor {
                 () -> localServiceDispatcher.execute(
                         step.localService(),
                         step.index(),
+                        window.actionPauseToken(),
                         window.actionStopToken(),
                         window::isActionTaskStillCurrent,
                         action.actionId(),

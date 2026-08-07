@@ -6,15 +6,21 @@ import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 import com.bot.dhxy.core.GameContext;
 import com.bot.dhxy.task.model.TaskType;
+import com.bot.dhxy.cloud.turn.local.LocalTeamRolePreflightService;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
 import com.bot.dhxy.window.execution.WindowTaskQueue;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.model.WindowRole;
+import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -51,7 +57,20 @@ class WindowRemoteTurnControlContractTest {
         assertEquals(TurnTaskCode.WUHUAN_V2, WindowTaskControlService.toTurnTaskCode(TaskType.WUHuan_V2));
         assertEquals(TurnTaskCode.WUBEI, WindowTaskControlService.toTurnTaskCode(TaskType.WUBEI));
         assertEquals(TurnTaskCode.XIULUO_V2, WindowTaskControlService.toTurnTaskCode(TaskType.XIULUO_V2));
+        assertEquals(TurnTaskCode.XINSHOU, WindowTaskControlService.toTurnTaskCode(TaskType.XINSHOU));
+        assertEquals(TurnTaskCode.WILD_BATTLE, WindowTaskControlService.toTurnTaskCode(TaskType.WILD_BATTLE));
+        assertEquals(TurnTaskCode.TIANTING, WindowTaskControlService.toTurnTaskCode(TaskType.TIANTING));
         assertEquals(TurnTaskCode.AUTO_BATTLE, WindowTaskControlService.toTurnTaskCode(TaskType.AUTO_BATTLE));
+    }
+
+    @Test
+    void everyWireTaskCodeMapsBackToItsExactLocalTaskType() {
+        // The round trip is what keeps an ack's effective codes from silently landing on another task.
+        for (TurnTaskCode code : TurnTaskCode.values()) {
+            TaskType local = WindowTaskControlService.fromTurnTaskCode(code);
+            assertEquals(code, WindowTaskControlService.toTurnTaskCode(local),
+                    "wire code " + code + " must round-trip through its local task type");
+        }
     }
 
     @Test
@@ -63,6 +82,115 @@ class WindowRemoteTurnControlContractTest {
                 () -> WindowTaskControlService.toTurnTaskCode(TaskType.SLEEP_COMPUTER));
         assertThrows(IllegalArgumentException.class,
                 () -> WindowTaskControlService.toTurnTaskCode(TaskType.UNKNOWN));
+    }
+
+    // ---- G008 pause-resume lifecycle: retained identity only, no visible UI preflight --------------------------
+
+    @Test
+    void lifecycleClassificationSeparatesColdStartPauseResumeAndMixedSelections() {
+        assertEquals(WindowTaskControlService.StartLifecycle.COLD_START,
+                WindowTaskControlService.classifyStartLifecycleStatuses(
+                        List.of(WindowRuntimeStatus.IDLE, WindowRuntimeStatus.STOPPED)));
+        assertEquals(WindowTaskControlService.StartLifecycle.PAUSE_RESUME,
+                WindowTaskControlService.classifyStartLifecycleStatuses(
+                        List.of(WindowRuntimeStatus.PAUSED, WindowRuntimeStatus.PAUSED)));
+        assertEquals(WindowTaskControlService.StartLifecycle.MIXED,
+                WindowTaskControlService.classifyStartLifecycleStatuses(
+                        List.of(WindowRuntimeStatus.PAUSED, WindowRuntimeStatus.IDLE)));
+    }
+
+    @Test
+    void pauseResumeUsesRetainedLeaderAndMemberAuthority() {
+        WindowRuntimeContext leader = retainedContext("leader", WindowRole.LEADER, TaskType.TIANTING);
+        WindowRuntimeContext member = retainedContext("member", WindowRole.MEMBER, TaskType.TIANTING);
+
+        Map<String, LocalTeamRolePreflightService.Preflight> preflights =
+                WindowTaskControlService.retainedPauseResumePreflights(
+                        List.of(leader, member),
+                        Map.of("leader", TaskType.TIANTING, "member", TaskType.TIANTING));
+
+        assertEquals(LocalTeamRolePreflightService.Role.LEADER, preflights.get("leader").role());
+        assertEquals(LocalTeamRolePreflightService.Role.MEMBER, preflights.get("member").role());
+    }
+
+    @Test
+    void acknowledgedPreflightPersistsLeaderMemberAndSoloAuthority() {
+        assertEquals(WindowRole.LEADER, WindowTaskControlService.acknowledgedWindowRole(
+                "leader", preflight("leader", LocalTeamRolePreflightService.Role.LEADER), null));
+        assertEquals(WindowRole.MEMBER, WindowTaskControlService.acknowledgedWindowRole(
+                "member", preflight("member", LocalTeamRolePreflightService.Role.MEMBER), null));
+        assertEquals(WindowRole.LEADER, WindowTaskControlService.acknowledgedWindowRole(
+                "solo", preflight("solo", LocalTeamRolePreflightService.Role.SOLO), null));
+        assertEquals(WindowRole.LEADER, WindowTaskControlService.acknowledgedWindowRole(
+                "explicit-leader", preflight("explicit-leader", LocalTeamRolePreflightService.Role.SOLO),
+                "explicit-leader"));
+        assertEquals(WindowRole.MEMBER, WindowTaskControlService.acknowledgedWindowRole(
+                "explicit-member", preflight("explicit-member", LocalTeamRolePreflightService.Role.SOLO),
+                "explicit-leader"));
+    }
+
+    @Test
+    void pauseCleanupRetainsAcknowledgedSoloAuthorityAndResumeProjectsSolo() {
+        WindowRuntimeContext solo = retainedContext("solo", WindowRole.UNKNOWN, TaskType.WUHuan_V2);
+        solo.setRole(WindowTaskControlService.acknowledgedWindowRole(
+                "solo", preflight("solo", LocalTeamRolePreflightService.Role.SOLO), null));
+
+        solo.clearTaskExecutionState("pause cleanup");
+
+        assertEquals(WindowRole.LEADER, solo.getRole());
+        Map<String, LocalTeamRolePreflightService.Preflight> retained =
+                WindowTaskControlService.retainedPauseResumePreflights(
+                        List.of(solo), Map.of("solo", TaskType.WUHuan_V2));
+        assertEquals(LocalTeamRolePreflightService.Role.SOLO, retained.get("solo").role());
+    }
+
+    @Test
+    void acknowledgedRoleWriteOccursOnlyAfterAckAndFinalCancellationFence() throws IOException {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"));
+        int methodStart = source.indexOf("private WindowTaskCommandDetail startOneRemote(");
+        int methodEnd = source.indexOf("private void projectRemoteTerminal(", methodStart);
+        String method = source.substring(methodStart, methodEnd);
+
+        int ackGate = method.indexOf("if (!loop.awaitStartAcknowledged(REMOTE_START_ACK_TIMEOUT))");
+        int lifecycleMonitor = method.indexOf("synchronized (remoteStartLifecycleMonitor)", ackGate);
+        int cancellationFence = method.indexOf("if (isRemoteStartCancelled(startEpoch))", lifecycleMonitor);
+        int markStarted = method.indexOf("runner.markRemoteStarted(effectiveQueue)", cancellationFence);
+        int roleWrite = method.indexOf("context.setRole(acknowledgedWindowRole(", markStarted);
+
+        assertTrue(ackGate >= 0, "start must wait for Cloud ACK before retaining authority");
+        assertTrue(lifecycleMonitor > ackGate, "ACK commit must share the lifecycle monitor with pause/stop");
+        assertTrue(cancellationFence > lifecycleMonitor, "cancel must be checked again inside the commit lock");
+        assertTrue(markStarted > cancellationFence, "cancelled starts must not become locally started");
+        assertTrue(roleWrite > markStarted, "failed local start bookkeeping must not retain a new role");
+        assertEquals(1, occurrences(method, "context.setRole("),
+                "failure, timeout and pre-ACK paths must not have another role write");
+    }
+
+    @Test
+    void pauseResumeRejectsMissingRetainedRoleOrBinding() {
+        WindowRuntimeContext unknownRole = retainedContext("unknown", WindowRole.UNKNOWN, TaskType.TIANTING);
+        assertThrows(IllegalStateException.class,
+                () -> WindowTaskControlService.retainedPauseResumePreflights(
+                        List.of(unknownRole), Map.of("unknown", TaskType.TIANTING)));
+
+        WindowRuntimeContext missingBinding = new WindowRuntimeContext("missing-binding", new GameContext());
+        missingBinding.setRole(WindowRole.LEADER);
+        missingBinding.setSelectedTaskType(TaskType.TIANTING);
+        assertThrows(IllegalStateException.class,
+                () -> WindowTaskControlService.retainedPauseResumePreflights(
+                        List.of(missingBinding), Map.of("missing-binding", TaskType.TIANTING)));
+    }
+
+    @Test
+    void pauseResumeRejectsTeamAuthorityWithoutExactlyOneLeader() {
+        WindowRuntimeContext first = retainedContext("first", WindowRole.MEMBER, TaskType.XIULUO_V2);
+        WindowRuntimeContext second = retainedContext("second", WindowRole.MEMBER, TaskType.XIULUO_V2);
+
+        assertThrows(IllegalStateException.class,
+                () -> WindowTaskControlService.retainedPauseResumePreflights(
+                        List.of(first, second),
+                        Map.of("first", TaskType.XIULUO_V2, "second", TaskType.XIULUO_V2)));
     }
 
     @Test
@@ -198,6 +326,31 @@ class WindowRemoteTurnControlContractTest {
 
     private static WindowNativeBindingRefreshService refreshServiceReturning(Optional<WindowNativeBinding> result) {
         return new RecordingRefreshService(result);
+    }
+
+    private static WindowRuntimeContext retainedContext(String windowId, WindowRole role, TaskType taskType) {
+        WindowRuntimeContext context = new WindowRuntimeContext(windowId, new GameContext());
+        context.setRole(role);
+        context.setSelectedTaskType(taskType);
+        context.setNativeBinding(new WindowNativeBinding(
+                "0x" + Integer.toHexString(Math.abs(windowId.hashCode()) + 1),
+                windowId, "GameWindowClass", 1L, 10, 20, 800, 600));
+        return context;
+    }
+
+    private static LocalTeamRolePreflightService.Preflight preflight(
+            String windowId, LocalTeamRolePreflightService.Role role) {
+        return new LocalTeamRolePreflightService.Preflight(windowId, role, null, false, null);
+    }
+
+    private static int occurrences(String source, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = source.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
     }
 
     /**

@@ -11,6 +11,7 @@ import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingState;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingTransition;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPathingType;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPositionValue;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPreparedDialogFact;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationRoi;
@@ -37,10 +38,15 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -72,12 +78,26 @@ public final class WindowObservationSampler {
     /** Local-kanda probe pacing (mirrors the baseline observer's ~1s tick). */
     static final String KANDA_PROBE_KEY = "xiuluo-local-kanda";
     static final long KANDA_PROBE_PERIOD_MS = 1_000L;
+    /**
+     * 天庭 option probe pacing. The probe both captures a fresh frame and can click, so it must never
+     * ride the raw collect cycle — one second matches the kanda probe it is modelled on.
+     */
+    static final String TIANTING_PROBE_KEY = "tianting-dialog-option";
+    static final long TIANTING_PROBE_PERIOD_MS = 1_000L;
+
     static final String WUBEI_PREPARE_KEY = "wubei-enter-battle-local-prepare";
     static final long WUBEI_PREPARE_PERIOD_MS = 100L;
     static final String COORDINATE_STRIP_INTEREST = "coordinate-strip";
     static final String PRE_COMBAT_COORDINATE_STRIP_ROI = "pre-combat-coordinate-strip";
+    static final String XINSHOU_TRACKER_INTEREST = "xinshou-tracker";
+    static final String XINSHOU_DIALOG_INTEREST = "xinshou-dialog";
+    static final long XINSHOU_NO_PROGRESS_REFRESH_MS = 10_000L;
+    private static final int LOCAL_COMBAT_FRAME_UNSET = -1;
+    private static final int LOCAL_COMBAT_FRAME_UNKNOWN = 0;
+    private static final int LOCAL_COMBAT_FRAME_WORLD_CONFIRMED = 1;
+    private static final int LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED = 2;
     private static final String RUNNER_SOURCE = "window-observation-runner";
-    static final long LOCAL_PATHING_SAMPLE_PERIOD_MS = 300L;
+    static final long LOCAL_PATHING_SAMPLE_PERIOD_MS = 1_500L;
     static final long LOCAL_PATHING_ARRIVAL_STATIONARY_MS = 600L;
     private static final long LOCAL_PATHING_COORDINATE_PROBE_MIN_INTERVAL_MS = 2_000L;
     private static final long LOCAL_PATHING_STOPPED_AWAY_MS = 2_200L;
@@ -101,7 +121,6 @@ public final class WindowObservationSampler {
     private static final int PATHING_MOVEMENT_DIFF_Y = 70;
     private static final int PATHING_MOVEMENT_DIFF_WIDTH = 45;
     private static final int PATHING_MOVEMENT_DIFF_HEIGHT = 12;
-
     private final WindowRuntimeContext context;
     private final WindowTaskContextHolder contextHolder;
     private final GameClientTracker tracker;
@@ -110,8 +129,32 @@ public final class WindowObservationSampler {
     private final InputSequences inputSequences;
     private final boolean localKandaEnabled;
     private final LocalCombatSignalMechanics combatSignalMechanics;
+    private final XinshouAnchorLocalMechanics xinshouAnchorMechanics;
+    private final WuhuanPresenceLocalMechanics wuhuanPresenceMechanics;
+    private final UnknownPhasePresenceLocalMechanics unknownPhasePresenceMechanics;
+    private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
+    private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
+    /** Last Cloud-acknowledged content per new-player ROI key; sampler-thread confined. */
+    private final Map<String, XinshouRoiVersion> deliveredXinshouRois = new HashMap<>();
+    /** Candidate content carried by the current request, committed only after a successful response. */
+    private final Map<String, XinshouRoiVersion> sampledXinshouRois = new HashMap<>();
+    /** Last content seen by the local tick, independent of Cloud acknowledgement. */
+    private final Map<String, String> observedXinshouRoiHashes = new HashMap<>();
+    /** Last Cloud-acknowledged new-player fact values; sampler-thread confined. */
+    private final Map<ObservationFactType, XinshouFactVersion> deliveredXinshouFacts =
+            new EnumMap<>(ObservationFactType.class);
+    /** Fact values carried by the current request; committed only after exact sequence acknowledgement. */
+    private final Map<ObservationFactType, XinshouFactVersion> sampledXinshouFacts =
+            new EnumMap<>(ObservationFactType.class);
+    /** Last fact values seen by the local tick, independent of transport delivery. */
+    private final Map<ObservationFactType, String> observedXinshouFacts =
+            new EnumMap<>(ObservationFactType.class);
+    private long lastXinshouEffectiveProgressAtMs;
+    private long lastXinshouRefreshAcknowledgedAtMs;
+    private boolean xinshouRefreshPending;
+    private long xinshouRefreshObserverSeq;
     private boolean localCombatVisible;
-    private LocalCombatFrameState lastLocalCombatFrameState;
+    private int lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_UNSET;
     private long localCombatGeneration;
     private boolean localCombatEntryPublished;
     private com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim boundExpectedCombatClaim;
@@ -164,6 +207,14 @@ public final class WindowObservationSampler {
     private Long lastTerminalFrameId;
     private Long lastTerminalFrameGeneration;
     private String lastTerminalFrameIntentId;
+    /** Latest bound-window position accepted from Cloud analysis, retained until Cloud acknowledges the fact. */
+    private ObservationFact pendingPositionFact;
+    /** Last local 五环 presence state; facts are edge/terminal driven, never a recurring image stream. */
+    private Boolean observedWuhuanTitlePresent;
+    private Boolean observedWuhuanDialogPresent;
+    private String lastWuhuanTitleSnapshotKey;
+    private String lastWuhuanDialogInterestId;
+    private String lastWuhuanTerminalKey;
 
     public WindowObservationSampler(WindowRuntimeContext context,
                                     WindowTaskContextHolder contextHolder,
@@ -211,6 +262,21 @@ public final class WindowObservationSampler {
                              boolean localKandaEnabled,
                              LocalCombatSignalMechanics combatSignalMechanics,
                              DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator) {
+        this(context, contextHolder, tracker, coordinateHelper, dialogService, inputSequences,
+                taskRunId, localKandaEnabled, combatSignalMechanics, returnHomeReplayCoordinator, null);
+    }
+
+    WindowObservationSampler(WindowRuntimeContext context,
+                             WindowTaskContextHolder contextHolder,
+                             GameClientTracker tracker,
+                             CoordinateHelper coordinateHelper,
+                             DialogService dialogService,
+                             InputSequences inputSequences,
+                             String taskRunId,
+                             boolean localKandaEnabled,
+                             LocalCombatSignalMechanics combatSignalMechanics,
+                             DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
+                             XinshouRunnerAutoCombatState xinshouAutoCombatState) {
         this.context = Objects.requireNonNull(context, "context");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.tracker = Objects.requireNonNull(tracker, "tracker");
@@ -220,8 +286,15 @@ public final class WindowObservationSampler {
         this.taskRunId = requireIdentity(taskRunId, "taskRunId");
         this.localKandaEnabled = localKandaEnabled;
         this.combatSignalMechanics = Objects.requireNonNull(combatSignalMechanics, "combatSignalMechanics");
+        this.xinshouAnchorMechanics = new XinshouAnchorLocalMechanics(tracker, coordinateHelper);
+        this.wuhuanPresenceMechanics = new WuhuanPresenceLocalMechanics(coordinateHelper);
+        this.unknownPhasePresenceMechanics = new UnknownPhasePresenceLocalMechanics(coordinateHelper);
+        this.xinshouAutoCombatState = xinshouAutoCombatState;
         this.returnHomeReplayCoordinator = returnHomeReplayCoordinator;
         this.combatSignalMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+        this.xinshouAnchorMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+        this.wuhuanPresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+        this.unknownPhasePresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
     }
 
     /**
@@ -241,7 +314,7 @@ public final class WindowObservationSampler {
             sharedCycleFrameRect = null;
         }
         int[] rect = coordinateHelper.getScaledRect(0, 0, 1024, 768);
-        BufferedImage frame = tracker.captureToMemoryIfIdle(
+        BufferedImage frame = tracker.captureToMemory(
                 "observe:shared-cycle-frame", rect[0], rect[1], rect[2], rect[3]);
         if (frame != null) {
             sharedCycleFrame = frame;
@@ -305,17 +378,6 @@ public final class WindowObservationSampler {
                               List<ObservationKeyEvent> events,
                               List<ObservationRoi> rois,
                               List<TerminalCandidateFrame> terminalFrames) {
-        public SampleBatch(List<ObservationPathingFact> pathingFacts,
-                           List<ObservationFact> facts,
-                           List<ObservationKeyEvent> events,
-                           List<ObservationRoi> rois) {
-            this(pathingFacts, List.of(), List.of(), facts, events, rois, List.of());
-        }
-
-        public static SampleBatch empty() {
-            return new SampleBatch(
-                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
-        }
     }
 
     /**
@@ -339,12 +401,28 @@ public final class WindowObservationSampler {
      * combat miss or produce an exit edge.
      */
     public SampleBatch collect(List<ObservationInterest> interests) {
-        return collect(interests, 0L);
+        return collect(interests, 0L, false);
     }
 
     public SampleBatch collect(List<ObservationInterest> interests, long observerSeq) {
+        return collect(interests, observerSeq, false);
+    }
+
+    /**
+     * Collects one exact-window observation batch.
+     *
+     * @param interests Cloud-issued observation duties; never interpreted as local business permission.
+     * @param observerSeq monotonic sequence that will identify the outgoing observation request.
+     * @param startupWuhuanPresence true only for a newly acknowledged 五环 run's first screen observation; it
+     *                               enables the existing read-only title/dialog presence facts before Cloud has
+     *                               re-issued its normal interests.
+     * @return mechanical facts, events and requested evidence from this one shared-frame cycle.
+     */
+    public SampleBatch collect(List<ObservationInterest> interests,
+                               long observerSeq,
+                               boolean startupWuhuanPresence) {
         List<ObservationInterest> safeInterests = interests == null ? List.of() : interests;
-        return contextHolder.callWith(context, () -> collectBound(safeInterests, observerSeq));
+        return contextHolder.callWith(context, () -> collectBound(safeInterests, observerSeq, startupWuhuanPresence));
     }
 
     /** Whether the frozen 100ms WUBEI_ENTER_BATTLE preparation cadence currently applies. */
@@ -365,10 +443,16 @@ public final class WindowObservationSampler {
                 || snapshot.getState() == WindowPathingState.UNKNOWN);
     }
 
-    private SampleBatch collectBound(List<ObservationInterest> interests, long observerSeq) {
+    private SampleBatch collectBound(List<ObservationInterest> interests,
+                                     long observerSeq,
+                                     boolean startupWuhuanPresence) {
         long now = System.currentTimeMillis();
         refreshSharedCycleFrame();
+        boolean forceXinshouRefresh = beginXinshouObservationCycle(interests, now);
         List<ObservationFact> facts = new ArrayList<>();
+        if (pendingPositionFact != null) {
+            facts.add(pendingPositionFact);
+        }
         List<ObservationKeyEvent> events = new ArrayList<>();
         List<ObservationRoi> rois = new ArrayList<>();
         List<TerminalCandidateFrame> terminalFrames = new ArrayList<>(1);
@@ -379,9 +463,21 @@ public final class WindowObservationSampler {
             try {
                 sampleXiuluoLocalKanda(now, events, rois);
             } catch (RuntimeException kandaFailure) {
-                log.debug("Local-kanda probe failed (no fact fabricated): windowId={} message={}",
-                        context.getWindowId(), kandaFailure.getMessage());
+                // A swallowed probe exception is indistinguishable from a template miss in a live run.
+                // Keep this at INFO until the local-kanda path is stable; no synthetic fact is emitted.
+                log.info("Local-kanda probe failed (no fact fabricated): windowId={} type={} message={}",
+                        context.getWindowId(), kandaFailure.getClass().getName(), kandaFailure.getMessage(),
+                        kandaFailure);
             }
+        }
+        try {
+            if (isDue(TIANTING_PROBE_KEY, TIANTING_PROBE_PERIOD_MS, now)) {
+                markSampled(TIANTING_PROBE_KEY, now);
+                sampleTiantingDialogProbe(now, events, rois);
+            }
+        } catch (RuntimeException probeFailure) {
+            log.debug("Tianting dialog probe failed (no fact fabricated): windowId={} message={}",
+                    context.getWindowId(), probeFailure.getMessage());
         }
         refreshLocalPathingTerminal(now);
         List<ObservationPathingFact> pathingFacts = sampleCurrentPathingFact();
@@ -395,6 +491,10 @@ public final class WindowObservationSampler {
             try {
                 LocalCombatSignalMechanics.Signal signal = combatSignalMechanics.sample();
                 observeLocalCombatTransition(signal, now, observerSeq, events);
+                if (xinshouAutoCombatState != null && localCombatVisible) {
+                    xinshouAutoCombatState.maintain(
+                            context, taskRunId, localCombatGeneration, now);
+                }
                 if (interests.stream().anyMatch(i -> LocalCombatSignalMechanics.INTEREST_KEY.equals(i.interestKey()))) {
                     facts.add(new ObservationFact(ObservationFactType.COMBAT_SIGNAL, signal.wireValue(), now));
                 }
@@ -403,13 +503,60 @@ public final class WindowObservationSampler {
                         context.getWindowId(), sampleFailure.getMessage());
             }
         }
+        sampleWuhuanPresence(interests, dialogInterests, pathingFacts, events, observerSeq, now, facts, rois,
+                startupWuhuanPresence);
+        sampleUnknownPhasePresence(interests, now, facts, rois);
         for (ObservationInterest interest : interests) {
+            // The two 天庭 daily-count interests are fulfilled exactly by the shared/fresh frames
+            // retained in sampleTiantingDialogProbe. Sampling them again here would add captures
+            // after the dialog is already closed and would overwrite the paired evidence.
+            if ("tianting-daily-count-first".equals(interest.interestKey())
+                    || "tianting-daily-count-fresh".equals(interest.interestKey())
+                    || WuhuanPresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey())
+                    || WuhuanPresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey())
+                    || UnknownPhasePresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey())
+                    || UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey())) {
+                continue;
+            }
             if (!isDue(interest.interestKey(), interest.samplePeriodMs(), now)) {
                 continue;
             }
             try {
                 if (INTEREST_PREBATTLE_TIMER.equals(interest.interestKey())) {
                     samplePreBattleTimerEdge(now, events);
+                    markSampled(interest.interestKey(), now);
+                } else if (XinshouAnchorLocalMechanics.INTEREST_KEY.equals(interest.interestKey())) {
+                    XinshouAnchorLocalMechanics.AnchorSample xinshou = xinshouAnchorMechanics.sample();
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_ANCHOR,
+                            xinshou.primaryAnchor() == null ? "absent" : xinshou.primaryAnchor(),
+                            now, facts);
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_ESC_VISIBLE,
+                            xinshou.escVisible() ? "present" : "absent",
+                            now, facts);
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_SKIP_VISIBLE,
+                            xinshou.skipVisible() ? "present" : "absent",
+                            now, facts);
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_ESC_BOT,
+                            xinshou.escBotVisible() ? "present" : "absent",
+                            now, facts);
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_ADOPTION,
+                            xinshou.adoptionTarget() != null ? "present" : "absent",
+                            now, facts);
+                    String recoveryStatus = xinshou.recoveryTarget() == null
+                            ? "absent"
+                            : switch (xinshou.recoveryTarget().templateName()) {
+                                case "quedingguan_.png" -> "quedingguan_.png";
+                                case "confirm.png" -> "confirm.png";
+                                default -> "absent";
+                            };
+                    sampleXinshouFact(observerSeq,
+                            ObservationFactType.XINSHOU_RECOVERY_STATUS,
+                            recoveryStatus, now, facts);
                     markSampled(interest.interestKey(), now);
                 } else if (!LocalCombatSignalMechanics.INTEREST_KEY.equals(interest.interestKey())
                         && interest.hasRoi()) {
@@ -418,7 +565,8 @@ public final class WindowObservationSampler {
                     // A cycle whose shared frame was unavailable produced no ROI at all, so it must not
                     // consume this interest's slot: the next cycle retries immediately instead of going
                     // blind for another full period.
-                    if (sampleRoi(interest, dialogInterest, pathingIntentId, rois)) {
+                    if (sampleRoi(interest, dialogInterest, pathingIntentId,
+                            observerSeq, now, facts, rois, forceXinshouRefresh)) {
                         markSampled(interest.interestKey(), now);
                     }
                 } else {
@@ -440,11 +588,167 @@ public final class WindowObservationSampler {
     }
 
     /**
+     * Samples only local 五环 presence mechanics. A title frame is emitted with the fact that made it
+     * relevant (first/changed title, a new pathing terminal, or a combat edge); it is never an
+     * independently scheduled Tracker upload. Dialog pixels never leave here: Cloud must issue an
+     * exact one-shot prepared-frame demand after receiving the presence fact.
+     */
+    private void sampleWuhuanPresence(List<ObservationInterest> interests,
+                                      List<ObservationDialogInterestFact> dialogInterests,
+                                      List<ObservationPathingFact> pathingFacts,
+                                      List<ObservationKeyEvent> events,
+                                      long observerSeq,
+                                      long now,
+                                      List<ObservationFact> facts,
+                                      List<ObservationRoi> rois,
+                                      boolean startupScreenObservation) {
+        ObservationInterest titleInterest = interests.stream()
+                .filter(interest -> WuhuanPresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey()))
+                .findFirst()
+                .orElse(null);
+        boolean titleRequested = titleInterest != null || startupScreenObservation;
+        String titleSnapshotKey = titleInterest == null ? null : titleInterest.detail();
+        boolean newTitleSnapshot = titleSnapshotKey != null
+                && !Objects.equals(titleSnapshotKey, lastWuhuanTitleSnapshotKey);
+        boolean dialogRequested = interests.stream().anyMatch(interest ->
+                WuhuanPresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey()))
+                || startupScreenObservation;
+        boolean terminalEdge = observeWuhuanTerminal(pathingFacts);
+        boolean combatEdge = events.stream().anyMatch(event ->
+                event.eventType() == ObservationKeyEventType.IN_COMBAT
+                        || event.eventType() == ObservationKeyEventType.COMBAT_EXITED);
+        String dialogInterestId = dialogInterests.stream()
+                .filter(ObservationDialogInterestFact::active)
+                .map(ObservationDialogInterestFact::interestId)
+                .findFirst()
+                .orElse(null);
+        boolean newDialogInterest = dialogInterestId != null
+                && !Objects.equals(dialogInterestId, lastWuhuanDialogInterestId);
+        // A pathing terminal is an exact Cloud-visible transition. Do not let a title sample from
+        // the preceding sub-second tick defer its one required terminal-frame observation.
+        boolean sampleTitle = titleRequested && (startupScreenObservation || newTitleSnapshot || terminalEdge || isDue(
+                WuhuanPresenceLocalMechanics.TITLE_INTEREST,
+                WuhuanPresenceLocalMechanics.SAMPLE_PERIOD_MS,
+                now));
+        boolean sampleDialog = dialogRequested && (startupScreenObservation || newDialogInterest || terminalEdge || isDue(
+                WuhuanPresenceLocalMechanics.DIALOG_INTEREST,
+                WuhuanPresenceLocalMechanics.SAMPLE_PERIOD_MS,
+                now));
+        if (!sampleTitle && !sampleDialog) {
+            return;
+        }
+
+        WuhuanPresenceLocalMechanics.Sample sample = wuhuanPresenceMechanics.sample(sampleTitle, sampleDialog);
+        if (sample.titleSampled()) {
+            boolean changed = observedWuhuanTitlePresent == null
+                    || observedWuhuanTitlePresent != sample.titlePresent();
+            observedWuhuanTitlePresent = sample.titlePresent();
+            if (newTitleSnapshot) {
+                lastWuhuanTitleSnapshotKey = titleSnapshotKey;
+            }
+            if (!sample.titlePresent() && changed) {
+                WuhuanTitleMatchMissDump.write(sample.trackerMissPng(), context.getWindowId(), taskRunId,
+                        observerSeq, sample.titleScore());
+            }
+            if (changed || newTitleSnapshot || terminalEdge || combatEdge) {
+                facts.add(new ObservationFact(
+                        ObservationFactType.WUHUAN_TITLE_PRESENCE,
+                        sample.titlePresent() ? "present" : "absent",
+                        now));
+                log.info("Wuhuan title presence queued: windowId={} taskRunId={} observerSeq={} snapshotKey={} newSnapshot={} present={} score={} terminalEdge={} combatEdge={}",
+                        context.getWindowId(), taskRunId, observerSeq, titleSnapshotKey,
+                        newTitleSnapshot, sample.titlePresent(), sample.titleScore(), terminalEdge, combatEdge);
+                if (sample.titlePresent() && sample.trackerPng() != null) {
+                    rois.add(new ObservationRoi(
+                            WuhuanPresenceLocalMechanics.TITLE_FRAME_ROI,
+                            0,
+                            100,
+                            280,
+                            604,
+                            sample.trackerPng(),
+                            "wuhuan-title-event:" + observerSeq,
+                            pathingFacts.isEmpty() ? null : pathingFacts.getFirst().intentId(),
+                            null,
+                            null));
+                }
+            }
+            markSampled(WuhuanPresenceLocalMechanics.TITLE_INTEREST, now);
+        }
+        if (sample.dialogSampled()) {
+            boolean changed = observedWuhuanDialogPresent == null
+                    || observedWuhuanDialogPresent != sample.dialogPresent();
+            observedWuhuanDialogPresent = sample.dialogPresent();
+            if (newDialogInterest) {
+                lastWuhuanDialogInterestId = dialogInterestId;
+            }
+            if (changed || newDialogInterest || terminalEdge || combatEdge) {
+                facts.add(new ObservationFact(
+                        ObservationFactType.WUHUAN_DIALOG_PRESENCE,
+                        sample.dialogPresent() ? "present" : "absent",
+                        now));
+                log.info("Wuhuan dialog presence queued: windowId={} taskRunId={} observerSeq={} interestId={} newInterest={} present={} terminalEdge={} combatEdge={}",
+                        context.getWindowId(), taskRunId, observerSeq, dialogInterestId,
+                        newDialogInterest, sample.dialogPresent(), terminalEdge, combatEdge);
+            }
+            markSampled(WuhuanPresenceLocalMechanics.DIALOG_INTEREST, now);
+        }
+    }
+
+    /** Emits both BR-DIALOG-001 facts together; Cloud rejects any pair from different envelopes. */
+    private void sampleUnknownPhasePresence(List<ObservationInterest> interests,
+                                            long now,
+                                            List<ObservationFact> facts,
+                                            List<ObservationRoi> rois) {
+        boolean titleRequested = interests.stream().anyMatch(interest ->
+                UnknownPhasePresenceLocalMechanics.TITLE_INTEREST.equals(interest.interestKey()));
+        boolean dialogRequested = interests.stream().anyMatch(interest ->
+                UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST.equals(interest.interestKey()));
+        boolean due = isDue(UnknownPhasePresenceLocalMechanics.TITLE_INTEREST,
+                UnknownPhasePresenceLocalMechanics.SAMPLE_PERIOD_MS, now)
+                || isDue(UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST,
+                UnknownPhasePresenceLocalMechanics.SAMPLE_PERIOD_MS, now);
+        if (!titleRequested || !dialogRequested || !due) {
+            return;
+        }
+        UnknownPhasePresenceLocalMechanics.Sample sample = unknownPhasePresenceMechanics.sample();
+        facts.add(new ObservationFact(
+                ObservationFactType.UNKNOWN_PHASE_TITLE_PRESENCE, sample.titlePresence(), now));
+        facts.add(new ObservationFact(
+                ObservationFactType.UNKNOWN_PHASE_DIALOG_PRESENCE, sample.dialogPresence(), now));
+        byte[] dialogPng = sample.dialogPng();
+        if (dialogPng != null) {
+            rois.add(new ObservationRoi(
+                    UnknownPhasePresenceLocalMechanics.DIALOG_FRAME_ROI,
+                    200, 250, 640, 300, dialogPng));
+        }
+        markSampled(UnknownPhasePresenceLocalMechanics.TITLE_INTEREST, now);
+        markSampled(UnknownPhasePresenceLocalMechanics.DIALOG_INTEREST, now);
+        log.info("G017 paired presence queued: windowId={} taskRunId={} title={} dialog={}",
+                context.getWindowId(), taskRunId, sample.titlePresence(), sample.dialogPresence());
+    }
+
+    private boolean observeWuhuanTerminal(List<ObservationPathingFact> pathingFacts) {
+        ObservationPathingFact terminal = pathingFacts.stream()
+                .filter(fact -> fact.state() == ObservationPathingState.ARRIVED
+                        || fact.state() == ObservationPathingState.STOPPED_AWAY)
+                .findFirst()
+                .orElse(null);
+        if (terminal == null) {
+            lastWuhuanTerminalKey = null;
+            return false;
+        }
+        String key = terminal.intentId() + ":" + terminal.state() + ":" + terminal.pathingUpdatedAtMs();
+        boolean changed = !Objects.equals(lastWuhuanTerminalKey, key);
+        lastWuhuanTerminalKey = key;
+        return changed;
+    }
+
+    /**
      * Applies the 59b combat-state mechanics locally. Entry is the first visible template stage.
-     * Once combat is visible, positive world and combat evidence form a three-state decision:
-     * a visible mini-map anchor confirms exit, a visible combat template confirms combat, and
-     * all remaining combinations are unknown and retain the current state. Only exact task-run
-     * edges cross the wire.
+     * Once combat is visible, local world and combat evidence are reciprocal: a visible mini-map
+     * anchor confirms exit, a visible combat template confirms combat, and an explicit miss from
+     * both confirms exit. An unavailable capture remains unknown and retains the current state.
+     * Only exact task-run edges cross the wire.
      */
     void observeLocalCombatTransition(
             LocalCombatSignalMechanics.Signal signal,
@@ -453,23 +757,30 @@ public final class WindowObservationSampler {
             List<ObservationKeyEvent> events) {
         if (localCombatVisible) {
             LocalCombatSignalMechanics.Signal minimapSignal = combatSignalMechanics.sampleMinimap();
-            LocalCombatFrameState frameState;
+            int frameState;
             if (minimapSignal.state() == LocalCombatSignalMechanics.State.VISIBLE) {
-                frameState = LocalCombatFrameState.WORLD_CONFIRMED;
-            } else if (signal != null && signal.state() == LocalCombatSignalMechanics.State.VISIBLE) {
-                frameState = LocalCombatFrameState.COMBAT_CONFIRMED;
+                finishLocalCombat(now, events, "minimap-visible");
+                return;
+            }
+            if (minimapSignal.state() == LocalCombatSignalMechanics.State.ABSENT
+                    && signal != null
+                    && signal.state() == LocalCombatSignalMechanics.State.ABSENT) {
+                // The minimap is a fast positive exit proof. If that tiny anchor misses, the normal
+                // combat templates are its reciprocal proof: with both explicitly absent, retaining
+                // IN_COMBAT would permanently freeze this window after a visually completed fight.
+                finishLocalCombat(now, events, "minimap-and-combat-absent");
+                return;
+            }
+            if (signal != null && signal.state() == LocalCombatSignalMechanics.State.VISIBLE) {
+                frameState = LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED;
             } else {
-                frameState = LocalCombatFrameState.UNKNOWN;
+                frameState = LOCAL_COMBAT_FRAME_UNKNOWN;
             }
             if (frameState != lastLocalCombatFrameState) {
                 log.debug("Local combat evidence changed: windowId={} state={} combatSignal={} minimapSignal={}",
                         context.getWindowId(), frameState,
                         signal == null ? "null" : signal.wireValue(), minimapSignal.wireValue());
                 lastLocalCombatFrameState = frameState;
-            }
-            if (frameState == LocalCombatFrameState.WORLD_CONFIRMED) {
-                finishLocalCombat(now, events, "minimap-visible");
-                return;
             }
         }
         if (signal == null || signal.state() == LocalCombatSignalMechanics.State.UNAVAILABLE) {
@@ -482,9 +793,11 @@ public final class WindowObservationSampler {
                 context.updateLocalCombatGeneration(localCombatGeneration, true);
                 boundExpectedCombatClaim =
                         context.bindExpectedCombatEnterClaim(taskRunId, localCombatGeneration);
+                context.confirmLocalTemplateCombatEntry(boundExpectedCombatClaim);
+                endActivePathingLegOnCombatEntry(now);
             }
             localCombatVisible = true;
-            lastLocalCombatFrameState = LocalCombatFrameState.COMBAT_CONFIRMED;
+            lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_COMBAT_CONFIRMED;
             if (!localCombatEntryPublished) {
                 localCombatEntryPublished = publishCombatEdge(
                         ObservationKeyEventType.IN_COMBAT, now, events, "combat-signal-visible", false);
@@ -497,12 +810,18 @@ public final class WindowObservationSampler {
             long occurredAtMs,
             List<ObservationKeyEvent> events,
             String source) {
+        log.info("Local combat exit confirmed: windowId={} generation={} source={} entryPublished={}",
+                context.getWindowId(), localCombatGeneration, source, localCombatEntryPublished);
         localCombatVisible = false;
-        lastLocalCombatFrameState = null;
+        lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_UNSET;
         context.updateLocalCombatGeneration(localCombatGeneration, false);
         if (localCombatEntryPublished) {
             publishCombatEdge(
                     ObservationKeyEventType.COMBAT_EXITED, occurredAtMs, events, source, true);
+            // Combat hides the normal Tracker/Dialog scene. Reprove that scene immediately after the exit edge
+            // instead of waiting for the ordinary ten-second no-progress heartbeat.
+            xinshouRefreshPending = true;
+            xinshouRefreshObserverSeq = 0L;
         } else {
             submitArmedReturnHomeReplayWithoutBusinessExit();
         }
@@ -534,28 +853,32 @@ public final class WindowObservationSampler {
          * run binding it already fences on.
          */
         boolean expected = claim != null && Objects.equals(claim.combatGeneration(), localCombatGeneration);
+        boolean passiveCombat = !expected && context.getSelectedTaskType().isSinglePlayer();
         ObservationKeyEvent edge = new ObservationKeyEvent(
                 (eventType == ObservationKeyEventType.IN_COMBAT ? "combat-enter:" : "combat-exit:")
-                        + (expected ? claim.claimId() : "unexpected") + ":" + localCombatGeneration,
+                        + (expected ? claim.claimId() : passiveCombat ? "passive" : "unexpected")
+                        + ":" + localCombatGeneration,
                 eventType,
                 occurredAtMs,
                 null,
                 expected ? claim.attemptId() : null,
                 null,
                 "window-observation-runner:" + source,
-                expected ? "explicit-enter-claim=" + claim.source() : "unexpected-combat",
+                expected ? "explicit-enter-claim=" + claim.source()
+                        : passiveCombat ? "passive-single-player-combat" : "unexpected-combat",
                 expected ? claim.claimId() : null,
                 localCombatGeneration,
                 expected ? claim.taskCode() : null,
                 expected ? claim.businessTaskRunId() : null);
         Consumer<ObservationKeyEvent> publisher = asyncEventPublisher;
+        // The local Runner is the sole authority for a physical combat edge. A retained replay is
+        // a later local input action; it must never delay or replace COMBAT_EXITED on the wire.
+        events.add(edge);
         if (expected && terminal && returnHomeReplayCoordinator != null && publisher != null
                 && context.hasArmedReturnHomeReplay(
                         claim.taskCode(), taskRunId, claim.businessTaskRunId())) {
             returnHomeReplayCoordinator.submitOnLocalExit(
-                    context, claim.taskCode(), taskRunId, claim.businessTaskRunId(), edge, publisher);
-        } else {
-            events.add(edge);
+                    context, claim.taskCode(), taskRunId, claim.businessTaskRunId(), null, publisher);
         }
         if (terminal && expected) {
             boundExpectedCombatClaim = null;
@@ -648,12 +971,22 @@ public final class WindowObservationSampler {
     /** Releases identity-scoped image state when the owning observation runner stops. */
     public void reset() {
         lastSampledAtMs.clear();
+        deliveredXinshouRois.clear();
+        sampledXinshouRois.clear();
+        observedXinshouRoiHashes.clear();
+        deliveredXinshouFacts.clear();
+        sampledXinshouFacts.clear();
+        observedXinshouFacts.clear();
+        lastXinshouEffectiveProgressAtMs = 0L;
+        lastXinshouRefreshAcknowledgedAtMs = 0L;
+        xinshouRefreshPending = false;
+        xinshouRefreshObserverSeq = 0L;
         lastPathingFact = null;
         clearedPathingFactDelivered = false;
         lastDialogInterestFact = null;
         terminalCoordinateAcknowledgedIntentId = null;
         localCombatVisible = false;
-        lastLocalCombatFrameState = null;
+        lastLocalCombatFrameState = LOCAL_COMBAT_FRAME_UNSET;
         localCombatGeneration = 0L;
         localCombatEntryPublished = false;
         boundExpectedCombatClaim = null;
@@ -661,6 +994,18 @@ public final class WindowObservationSampler {
         localPathingGeneration = 0L;
         nextTerminalFrameId = 1L;
         combatSignalMechanics.reset();
+        xinshouAnchorMechanics.reset();
+        wuhuanPresenceMechanics.reset();
+        unknownPhasePresenceMechanics.reset();
+        observedWuhuanTitlePresent = null;
+        observedWuhuanDialogPresent = null;
+        lastWuhuanTitleSnapshotKey = null;
+        lastWuhuanDialogInterestId = null;
+        lastWuhuanTerminalKey = null;
+        pendingPositionFact = null;
+        if (xinshouAutoCombatState != null) {
+            xinshouAutoCombatState.close(context, taskRunId);
+        }
         if (returnHomeReplayCoordinator != null) {
             returnHomeReplayCoordinator.clear(context, "observation runner closed");
         }
@@ -938,6 +1283,8 @@ public final class WindowObservationSampler {
     /** A retained runner may resume after pause, but terminal image evidence must start a fresh generation. */
     void invalidateTerminalFrameForSuspend() {
         advanceLocalPathingGeneration();
+        deliveredXinshouRois.clear();
+        sampledXinshouRois.clear();
     }
 
     private void advanceLocalPathingGeneration() {
@@ -1055,12 +1402,55 @@ public final class WindowObservationSampler {
         }
     }
 
+    /**
+     * A fight starting is the end of whatever walk was under way — the character cannot walk in combat.
+     *
+     * <p>Without this, a leg interrupted by its own destination's fight (the ordinary 天庭 shape: green
+     * link → walk → dialog answered → combat) stayed ACTIVE all the way through the battle and long past
+     * it: the coordinate strip is hidden in combat so the arrival check cannot classify anything, and the
+     * post-combat re-render keeps resetting its stability window. A real run held the intent ACTIVE for 61
+     * seconds after the fight ended. All of that time the Cloud correctly refused to release an ACTIVE
+     * intent, and the observer correctly published nothing while an intent was on record — so the whole
+     * post-combat recovery (fresh green link included) sat behind a walk that had in fact ended the moment
+     * the fight began. The combat entry edge is this window's own physical fact, known right here, so the
+     * leg is closed on it rather than guessed from coordinates a minute later.</p>
+     */
+    private void endActivePathingLegOnCombatEntry(long now) {
+        WindowPathingSnapshot snapshot = context.getPathingSnapshot();
+        WindowPathingIntent intent = snapshot == null ? null : snapshot.getIntent();
+        if (intent == null) {
+            return;
+        }
+        WindowPathingState state = snapshot.getState();
+        if (state != WindowPathingState.ACTIVE && state != WindowPathingState.UNKNOWN) {
+            return;
+        }
+        context.updatePathingSnapshot(snapshot.toBuilder()
+                .state(WindowPathingState.STOPPED_AWAY)
+                .message("combat entry ended the walk")
+                .updatedAtMs(now)
+                .probeFinishedAtMs(now)
+                .probeInProgress(false)
+                .build());
+        terminalCoordinateAcknowledgedIntentId = intent.getIntentId();
+        localPathingCoordinatePending = false;
+        invalidateTerminalFrameEvidence();
+        log.info("Local pathing terminal classified by combat entry: windowId={} intentId={} source={}",
+                context.getWindowId(), intent.getIntentId(), intent.getSource());
+    }
+
     /** Updates only this bound window's logical player location from a Cloud-recognized coordinate. */
     private void updateWindowPlayerLocation(ObservationAnalysisResult result, String source) {
         PlayerCharacter me = context.getGameState().getMe();
         me.setCurrentMapName(result.mapName());
         me.setX(result.coordinateX());
         me.setY(result.coordinateY());
+        long observedAtMs = System.currentTimeMillis();
+        pendingPositionFact = new ObservationFact(
+                ObservationFactType.POSITION_SAMPLE,
+                new ObservationPositionValue(
+                        result.mapName(), result.coordinateX(), result.coordinateY()).encode(),
+                observedAtMs);
         log.info("Window player location memory updated from {}: windowId={} map={} coord=({}, {})",
                 source, context.getWindowId(), result.mapName(), result.coordinateX(), result.coordinateY());
     }
@@ -1355,8 +1745,9 @@ public final class WindowObservationSampler {
      * probe-only mode past the CR253 timing anchor AND an open green-chain attempt exists. An ordinary miss does
      * nothing (no Cloud request, no event, no interest change). A raw hit is revalidated on a fresh frame, must
      * win the attempt-scoped one-shot CAS, and then submits exactly one atomic move+click+delay request through
-     * the single input queue. Click success publishes {@code ENTER_BATTLE_CLICKED} and deliberately leaves the
-     * interest, schedule and probe open — only real {@code IN_COMBAT} tears the attempt down.
+     * the single input queue. Click success waits for Runner-confirmed {@code IN_COMBAT}; no combat within four
+     * seconds re-arms the same attempt for at most two more local clicks. Only the final local exhaustion is
+     * reported to Cloud, which alone may decide a saved-green fallback.
      */
     private void sampleXiuluoLocalKanda(long now,
                                         List<ObservationKeyEvent> events,
@@ -1365,16 +1756,33 @@ public final class WindowObservationSampler {
         // the paired install/replace transition) — never a new interest with the previous attempt's schedule.
         WindowRuntimeContext.XiuluoKandaProbeView view = context.getXiuluoKandaProbeView();
         WindowDialogInterest interest = view.interest();
-        if (interest == null
-                || interest.getTaskType() != TaskType.XIULUO_V2
-                || interest.getOperations() == null
-                || !interest.getOperations().contains(DialogOperation.XIULUO_ENTER_BATTLE)
-                || !interest.isLocalTemplateProbeOnly()
-                || !interest.isProbeStartReached(now)) {
+        if (interest == null) {
+            return;
+        }
+        if (interest.getTaskType() != TaskType.XIULUO_V2
+                && interest.getTaskType() != TaskType.XINSHOU_TRAINING
+                && interest.getTaskType() != TaskType.CATCH_GHOST) {
+            return;
+        }
+        if (interest.getOperations() == null
+                || !interest.getOperations().contains(DialogOperation.XIULUO_ENTER_BATTLE)) {
+            return;
+        }
+        if (!interest.isLocalTemplateProbeOnly()) {
+            log.info("Local-kanda probe blocked: windowId={} task={} reason=not-probe-only source={}",
+                    context.getWindowId(), interest.getTaskType(), interest.getSource());
+            return;
+        }
+        if (!interest.isProbeStartReached(now)) {
+            log.info("Local-kanda probe blocked: windowId={} task={} reason=probe-delay nowMs={} probeStartAtMs={} remainingMs={} source={}",
+                    context.getWindowId(), interest.getTaskType(), now, interest.getProbeStartAtMs(),
+                    interest.getProbeStartAtMs() - now, interest.getSource());
             return;
         }
         XiuluoGreenChainSchedule schedule = view.schedule();
         if (schedule == null) {
+            log.info("Local-kanda probe blocked: windowId={} task={} reason=no-schedule source={}",
+                    context.getWindowId(), interest.getTaskType(), interest.getSource());
             return;
         }
         // TURN-40G review#4: BEFORE the matcher runs, fence to this sampler's authoritative run identity. An
@@ -1388,17 +1796,46 @@ public final class WindowObservationSampler {
         WindowNativeBinding binding = context.getNativeBinding();
         if (binding == null || !binding.hasNativeHandle()
                 || !binding.getNativeHandle().equals(schedule.getHwnd())) {
+            log.info("Local-kanda probe blocked: windowId={} task={} reason=hwnd-mismatch bindingHwnd={} scheduleHwnd={} schedule={}",
+                    context.getWindowId(), interest.getTaskType(),
+                    binding == null ? null : binding.getNativeHandle(), schedule.getHwnd(), schedule.identityText());
+            return;
+        }
+        WindowRuntimeContext.XiuluoKandaRetryState retryState = context.evaluateXiuluoLocalKandaRetry(
+                schedule, now, localCombatVisible);
+        if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.WAITING_FOR_COMBAT
+                || retryState == WindowRuntimeContext.XiuluoKandaRetryState.COMBAT_CONFIRMED
+                || retryState == WindowRuntimeContext.XiuluoKandaRetryState.EXHAUSTED_REPORTED
+                || retryState == WindowRuntimeContext.XiuluoKandaRetryState.STALE) {
+            log.info("Local-kanda probe blocked: windowId={} task={} reason=retry-state state={} schedule={}",
+                    context.getWindowId(), interest.getTaskType(), retryState, schedule.identityText());
+            return;
+        }
+        if (retryState == WindowRuntimeContext.XiuluoKandaRetryState.EXHAUSTED_NEW) {
+            events.add(new ObservationKeyEvent(
+                    "enter-battle-click-failed-" + schedule.getAttemptId(),
+                    ObservationKeyEventType.ENTER_BATTLE_CLICK_FAILED,
+                    now, null, schedule.getAttemptId(), schedule.getRound(), "local-kanda",
+                    "reason=no-in-combat-after-three-executed-clicks", null, null, null, null));
             return;
         }
         long epochBefore = context.getPlayerIdentityEpoch();
-        if (dialogService.findXiuluoEnterBattleLocalTemplate(
-                RUNNER_SOURCE, "probe:round-" + schedule.getRound()).isEmpty()) {
+        log.info("Local-kanda probe matching: windowId={} task={} templateTask={} schedule={} identityEpoch={}",
+                context.getWindowId(), interest.getTaskType(), interest.getTaskType(),
+                schedule.identityText(), epochBefore);
+        if (dialogService.findTaskEnterBattleLocalTemplate(
+                interest.getTaskType(), RUNNER_SOURCE, "probe:round-" + schedule.getRound(),
+                sharedCycleFrame, sharedCycleFrameRect).isEmpty()) {
+            log.info("Local-kanda probe miss: windowId={} task={} schedule={} template-match=none",
+                    context.getWindowId(), interest.getTaskType(), schedule.identityText());
             return;
         }
         // Consume-time revalidation on a fresh frame plus binding/attempt/interest consistency re-checks.
-        DialogService.LocalDialogTemplateMatch validated = dialogService.revalidateXiuluoEnterBattleLocalTemplate(
-                RUNNER_SOURCE, "round-" + schedule.getRound()).orElse(null);
+        DialogService.LocalDialogTemplateMatch validated = dialogService.revalidateTaskEnterBattleLocalTemplate(
+                interest.getTaskType(), RUNNER_SOURCE, "round-" + schedule.getRound()).orElse(null);
         if (validated == null) {
+            log.info("Local-kanda probe abandoned: windowId={} task={} reason=fresh-revalidation-miss schedule={}",
+                    context.getWindowId(), interest.getTaskType(), schedule.identityText());
             return;
         }
         WindowRuntimeContext.XiuluoKandaProbeView liveView = context.getXiuluoKandaProbeView();
@@ -1413,6 +1850,13 @@ public final class WindowObservationSampler {
                 || liveInterest == null
                 || !liveInterest.isLocalTemplateProbeOnly()
                 || context.getPlayerIdentityEpoch() != epochBefore) {
+            log.info("Local-kanda probe abandoned: windowId={} task={} reason=post-match-fence"
+                            + " expectedSchedule={} liveSchedule={} expectedProbeOnly=true liveProbeOnly={}"
+                            + " identityEpochBefore={} identityEpochNow={}",
+                    context.getWindowId(), interest.getTaskType(), schedule.identityText(),
+                    liveSchedule == null ? null : liveSchedule.identityText(),
+                    liveInterest != null && liveInterest.isLocalTemplateProbeOnly(),
+                    epochBefore, context.getPlayerIdentityEpoch());
             return;
         }
         // The claim compares the live schedule's full identity to this exact captured schedule atomically under
@@ -1438,12 +1882,13 @@ public final class WindowObservationSampler {
             context.releaseXiuluoEnterBattleClick(schedule, "click-not-executed");
             return;
         }
+        context.recordXiuluoLocalKandaClick(schedule, System.currentTimeMillis());
         String claimId = UUID.randomUUID().toString();
         if (!context.registerExpectedCombatEnterClaim(new com.bot.dhxy.window.model.WindowExpectedCombatEnterClaim(
                 claimId,
                 taskRunId,
                 schedule.getTaskRunId(),
-                TaskType.XIULUO_V2.getCode(),
+                interest.getTaskType().getCode(),
                 schedule.getAttemptId(),
                 context.getWindowId(),
                 binding.getNativeHandle(),
@@ -1464,7 +1909,7 @@ public final class WindowObservationSampler {
                         + "|score=" + validated.score() + "|executed=true",
                 claimId,
                 null,
-                TaskType.XIULUO_V2.getCode(),
+                interest.getTaskType().getCode(),
                 schedule.getTaskRunId()));
     }
 
@@ -1539,7 +1984,11 @@ public final class WindowObservationSampler {
     private boolean sampleRoi(ObservationInterest interest,
                               ObservationDialogInterestFact dialogInterest,
                               String pathingIntentId,
-                              List<ObservationRoi> rois) {
+                              long observerSeq,
+                              long observedAt,
+                              List<ObservationFact> facts,
+                              List<ObservationRoi> rois,
+                              boolean forceXinshouRefresh) {
         if ("xiuluo-dialog".equals(interest.interestKey())
                 && dialogInterest != null && dialogInterest.enterBattleClaimed()) {
             return true;
@@ -1555,6 +2004,40 @@ public final class WindowObservationSampler {
             return false;
         }
         try {
+            if (XINSHOU_DIALOG_INTEREST.equals(interest.interestKey())) {
+                boolean present = dialogFramePresenceMechanics.isPresent(image);
+                sampleXinshouFact(
+                        observerSeq,
+                        ObservationFactType.XINSHOU_DIALOG_PRESENCE,
+                        present ? "present" : "absent",
+                        observedAt,
+                        facts);
+                if (!present) {
+                    // Absence is explicit structural evidence, but carries no image. Forget the previous
+                    // dialog hash so an identical dialog reopening is uploaded as a fresh event.
+                    deliveredXinshouRois.remove(interest.interestKey());
+                    sampledXinshouRois.remove(interest.interestKey());
+                    observedXinshouRoiHashes.remove(interest.interestKey());
+                    return true;
+                }
+            }
+            if (isXinshouChangeInterest(interest.interestKey())) {
+                String contentHash = hashImageContent(image);
+                String previousObserved =
+                        observedXinshouRoiHashes.put(interest.interestKey(), contentHash);
+                if (!Objects.equals(previousObserved, contentHash)) {
+                    markXinshouEffectiveProgress(observedAt);
+                }
+                XinshouRoiVersion delivered = deliveredXinshouRois.get(interest.interestKey());
+                if (!forceXinshouRefresh
+                        && delivered != null
+                        && delivered.contentHash().equals(contentHash)) {
+                    sampledXinshouRois.remove(interest.interestKey());
+                    return true;
+                }
+                sampledXinshouRois.put(
+                        interest.interestKey(), new XinshouRoiVersion(contentHash, observerSeq));
+            }
             ByteArrayOutputStream png = new ByteArrayOutputStream(4096);
             ImageIO.write(image, "png", png);
             boolean dialogRoi = "xiuluo-dialog".equals(interest.interestKey())
@@ -1566,12 +2049,26 @@ public final class WindowObservationSampler {
                     interest.roiWidth(),
                     interest.roiHeight(),
                     png.toByteArray(),
-                    dialogRoi ? dialogInterest.interestId() : null,
+                    // A Cloud-issued ROI detail is an opaque correlation id. Echo it on ordinary
+                    // shared-cycle ROI evidence too, so a post-input verifier can reject frames that
+                    // belong to another decision without requesting a second capture.
+                    dialogRoi ? dialogInterest.interestId() : interest.detail(),
                     dialogRoi
                             ? dialogInterest.intentId()
                             : coordinateStrip ? pathingIntentId : null,
                     dialogRoi ? dialogInterest.attemptId() : null,
                     dialogRoi ? dialogInterest.round() : null));
+            if (forceXinshouRefresh && xinshouRefreshPending
+                    && isXinshouChangeInterest(interest.interestKey())) {
+                xinshouRefreshObserverSeq = observerSeq;
+                if (facts.stream().noneMatch(fact ->
+                        fact.factType() == ObservationFactType.XINSHOU_NO_PROGRESS_REFRESH)) {
+                    facts.add(new ObservationFact(
+                            ObservationFactType.XINSHOU_NO_PROGRESS_REFRESH,
+                            "no-progress",
+                            observedAt));
+                }
+            }
             if (coordinateStrip) {
                 coordinateFramesCaptured++;
             }
@@ -1586,6 +2083,490 @@ public final class WindowObservationSampler {
         } finally {
             image.flush();
         }
+    }
+
+    /**
+     * Commits only the new-player ROI versions carried by a successfully accepted observation request.
+     * A failed transport leaves the candidate uncommitted, so the next cycle resends the same or newer frame.
+     */
+    void acknowledgeDeliveredRois(long observerSeq, List<ObservationRoi> deliveredRois) {
+        if (deliveredRois == null || deliveredRois.isEmpty()) {
+            return;
+        }
+        for (ObservationRoi roi : deliveredRois) {
+            if (roi == null || !isXinshouChangeInterest(roi.roiKey())) {
+                continue;
+            }
+            XinshouRoiVersion sampled = sampledXinshouRois.get(roi.roiKey());
+            if (sampled != null && sampled.observerSeq() == observerSeq) {
+                deliveredXinshouRois.put(roi.roiKey(), sampled);
+                sampledXinshouRois.remove(roi.roiKey());
+            }
+        }
+        if (xinshouRefreshPending
+                && xinshouRefreshObserverSeq == observerSeq
+                && deliveredRois.stream().anyMatch(roi ->
+                        roi != null && isXinshouChangeInterest(roi.roiKey()))) {
+            xinshouRefreshPending = false;
+            xinshouRefreshObserverSeq = 0L;
+            lastXinshouRefreshAcknowledgedAtMs = System.currentTimeMillis();
+        }
+    }
+
+    /**
+     * Commits each new-player fact only when Cloud accepted the exact request that carried it.
+     * A transport failure or stale acknowledgement leaves candidates uncommitted, so the next
+     * observation cycle resends the current values.
+     */
+    void acknowledgeDeliveredFacts(long observerSeq, List<ObservationFact> deliveredFacts) {
+        if (deliveredFacts == null || deliveredFacts.isEmpty()) {
+            return;
+        }
+        for (ObservationFact fact : deliveredFacts) {
+            if (fact == null) {
+                continue;
+            }
+            if (fact.factType() == ObservationFactType.POSITION_SAMPLE) {
+                if (fact.equals(pendingPositionFact)) {
+                    pendingPositionFact = null;
+                }
+                continue;
+            }
+            if (!isVersionedXinshouFact(fact.factType())) {
+                continue;
+            }
+            XinshouFactVersion sampled = sampledXinshouFacts.get(fact.factType());
+            if (sampled != null
+                    && sampled.observerSeq() == observerSeq
+                    && sampled.value().equals(fact.value())) {
+                deliveredXinshouFacts.put(fact.factType(), sampled);
+                sampledXinshouFacts.remove(fact.factType());
+            }
+        }
+    }
+
+    /**
+     * G005: match the 天庭 dialog options on this cycle's shared frame and, on a hit, click locally.
+     *
+     * <p>The whole point of keeping these templates on the client is that a visible option needs no
+     * cloud round trip. Nothing happens until the task installs one explicit 天庭 probe interest, so
+     * this duty is inert for every other task and for 天庭's own quiet phases.</p>
+     *
+     * <p>A hit is re-matched on a fresh capture immediately before the click, the same guard the 修罗
+     * 看打 probe uses: the shared frame may be up to one cycle old, and clicking a dialog that has
+     * already closed would land on whatever replaced it.</p>
+     */
+    private void sampleTiantingDialogProbe(long now,
+                                           List<ObservationKeyEvent> events,
+                                           List<ObservationRoi> rois) {
+        WindowDialogInterest interest = context.getDialogInterest().orElse(null);
+        if (interest == null
+                || interest.getTaskType() != TaskType.TIANTING
+                || interest.getOperations() == null
+                || !interest.isLocalTemplateProbeOnly()
+                || !interest.isProbeStartReached(now)
+                || interest.isExpired(now)) {
+            return;
+        }
+        /*
+         * One duty, one explicitly selected option set. Narrow sets own their normal phases; the broad
+         * recovery set is armed only after the exact tracker click started no movement.
+         */
+        TiantingOptionSet optionSet = TiantingOptionSet.from(interest.getOperations());
+        if (optionSet == null) {
+            return;
+        }
+        /*
+         * The interest carries no run id, so the run fence available here is the window binding plus
+         * the player-identity epoch: a sampler whose window was rebound or whose character changed
+         * under it must not click for whatever now owns that window.
+         */
+        WindowNativeBinding binding = context.getNativeBinding();
+        if (binding == null || !binding.hasNativeHandle()) {
+            return;
+        }
+        long epochBefore = context.getPlayerIdentityEpoch();
+        int[] rect = coordinateHelper.getScaledRect(
+                TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT);
+        BufferedImage shared = cropSharedCycleFrame(rect);
+        if (shared == null) {
+            return;
+        }
+        TiantingDialogLocalMechanics.OptionHit hit;
+        BufferedImage firstAcceptFrame = null;
+        try {
+            /*
+             * 使用封妖符 is offered after 多谢 is answered, and it is matched here on top of whatever set
+             * the cloud armed. It has to be: the answer to 多谢 needs a sampling cycle and
+             * two round trips to reach the cloud, so an interest armed from there arrives after the option
+             * has gone — the branch would then never start, and nothing in the log would say so. The
+             * window is opened below by the very click that causes the option to appear.
+             */
+            hit = context.isTiantingFengyaoPending()
+                    ? TiantingDialogLocalMechanics.matchFengyaoOption(shared)
+                            .or(() -> optionSet.match(shared))
+                            .orElse(null)
+                    : optionSet.match(shared).orElse(null);
+            if (hit != null && TiantingDialogLocalMechanics.ACCEPT.equals(hit.templatePath())) {
+                firstAcceptFrame = copyImage(shared);
+            }
+        } finally {
+            shared.flush();
+        }
+        if (hit == null && optionSet == TiantingOptionSet.RECOVERY
+                && !context.isTiantingFengyaoPending()) {
+            /*
+             * A timeout is not proof that all known options missed. Re-read the exact bound HWND and
+             * publish a retained terminal only when a real frame was available and the whole recovery
+             * set missed again. Cloud may run its generic fallback only after this event.
+             */
+            BufferedImage freshMissFrame = tracker.captureToMemory(
+                    "tianting-dialog-recovery:all-miss", rect[0], rect[1], rect[2], rect[3]);
+            if (freshMissFrame == null) {
+                return;
+            }
+            try {
+                hit = optionSet.match(freshMissFrame).orElse(null);
+            } finally {
+                freshMissFrame.flush();
+            }
+            if (hit == null) {
+                events.add(new ObservationKeyEvent(
+                        "tianting-recovery-all-missed-" + interest.getCreatedAtMs(),
+                        ObservationKeyEventType.TIANTING_RECOVERY_ALL_MISSED,
+                        now,
+                        null,
+                        null,
+                        0,
+                        "tianting-dialog-recovery",
+                        "probeCorrelation=" + interest.getSource()));
+                context.clearTiantingDialogOptionClaim();
+                return;
+            }
+        }
+        if (hit == null) {
+            // No option on screen means the dialog this probe last answered is gone, so the next one
+            // may be answered again. This is the only place the one-shot claim re-arms.
+            context.clearTiantingDialogOptionClaim();
+            return;
+        }
+        /*
+         * The interest deliberately stays installed across the click (the task keeps it armed for the
+         * whole移动 leg), so nothing upstream stops a second click while the dialog is still closing.
+         * Without this latch the same 看打 gets clicked several times, and the extra clicks land on
+         * the combat screen that replaced it.
+         */
+        String optionKey = interest.getCreatedAtMs() + "|" + hit.actionKey();
+        if (context.hasTiantingDialogOptionClaim(optionKey)) {
+            return;
+        }
+        BufferedImage fresh = tracker.captureToMemory(
+                "tianting-dialog-option:revalidate", rect[0], rect[1], rect[2], rect[3]);
+        if (fresh == null) {
+            return;
+        }
+        TiantingDialogLocalMechanics.OptionHit validated;
+        BufferedImage freshAcceptFrame = null;
+        try {
+            // Revalidated against the same rule the shared frame was matched with, or a 封妖符 hit would
+            // be dropped here as "the dialog changed".
+            validated = context.isTiantingFengyaoPending()
+                    ? TiantingDialogLocalMechanics.matchFengyaoOption(fresh)
+                            .or(() -> optionSet.match(fresh))
+                            .orElse(null)
+                    : optionSet.match(fresh).orElse(null);
+            if (validated != null && TiantingDialogLocalMechanics.ACCEPT.equals(validated.templatePath())) {
+                freshAcceptFrame = copyImage(fresh);
+            }
+        } finally {
+            fresh.flush();
+        }
+        if (validated == null || !validated.actionKey().equals(hit.actionKey())
+                || !validated.templatePath().equals(hit.templatePath())
+                || context.getPlayerIdentityEpoch() != epochBefore
+                || !binding.equals(context.getNativeBinding())) {
+            // The dialog changed — or the window did — between the shared frame and now. Report
+            // nothing and let the next cycle decide on a frame that is actually current.
+            log.info("Tianting dialog option abandoned before click: windowId={} shared={} fresh={}",
+                    context.getWindowId(), templateName(hit.templatePath()),
+                    validated == null ? "-" : templateName(validated.templatePath()));
+            return;
+        }
+        /*
+         * Claim immediately before the click and only after the fresh frame agreed: a failed
+         * revalidation must not burn the claim (the dialog is still there and still unanswered),
+         * while an input that throws must still consume it — a retry loop on a dialog that may have
+         * already accepted the click is worse than one lost report.
+         */
+        if (!context.tryClaimTiantingDialogOption(optionKey)) {
+            return;
+        }
+        boolean clicked;
+        try {
+            clicked = inputSequences.moveAndClickLeft(
+                    "tianting:dialog-option",
+                    rect[0] + validated.roiOffsetX(),
+                    rect[1] + validated.roiOffsetY(),
+                    80, 150);
+        } catch (RuntimeException inputFailure) {
+            clicked = false;
+        }
+        // Input has completed. Only now encode the two already-retained pixels for the observation
+        // response; no capture or encode work is permitted to delay the physical accept click.
+        try {
+            if (clicked && firstAcceptFrame != null && freshAcceptFrame != null) {
+                byte[] firstPng = encodePng(firstAcceptFrame);
+                byte[] freshPng = encodePng(freshAcceptFrame);
+                if (firstPng != null && freshPng != null) {
+                    rois.add(new ObservationRoi("tianting-daily-count-first",
+                        TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
+                        firstPng));
+                    rois.add(new ObservationRoi("tianting-daily-count-fresh",
+                        TiantingDialogLocalMechanics.DIALOG_ROI_LEFT,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_TOP,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_WIDTH,
+                        TiantingDialogLocalMechanics.DIALOG_ROI_HEIGHT,
+                        freshPng));
+                }
+            }
+        } finally {
+            if (firstAcceptFrame != null) {
+                firstAcceptFrame.flush();
+            }
+            if (freshAcceptFrame != null) {
+                freshAcceptFrame.flush();
+            }
+        }
+        log.info("Tianting dialog option {}: windowId={} template={} score={} click=({}, {})",
+                clicked ? "clicked" : "click failed", context.getWindowId(),
+                templateName(validated.templatePath()), validated.score(),
+                rect[0] + validated.roiOffsetX(), rect[1] + validated.roiOffsetY());
+        if (clicked && TiantingDialogLocalMechanics.DUOXIE.equals(validated.templatePath())) {
+            /*
+             * 多谢 is what puts 使用封妖符 on screen. Record the causal state here, in the same pass as
+             * the click, and keep it until the follow-up is actually consumed; sampling/HTTP latency is
+             * not evidence that the business branch ended.
+             */
+            context.markTiantingFengyaoPending(optionKey);
+            log.info("Tianting 封妖符 local follow-up pending: windowId={} sourceOptionKey={}",
+                    context.getWindowId(), optionKey);
+        } else if (clicked && TiantingDialogLocalMechanics.FENGYAO.equals(validated.templatePath())) {
+            context.clearTiantingFengyaoPending();
+            log.info("Tianting 封妖符 local follow-up consumed: windowId={}", context.getWindowId());
+        }
+        /*
+         * No task/run identity on this edge, and that is not an omission. The wire validator requires the
+         * identity fields to be present EXACTLY for expected-combat and replay edges, and it runs on this
+         * side before the request is sent. A dialog-click edge that carried them would be rejected as a
+         * contract violation — and because a key event is retained until acked, the rejection would repeat
+         * on every subsequent request: the whole window's observation plane stops uploading pathing,
+         * combat, tracker, everything, and never recovers. The cloud reader does not look at these fields
+         * anyway; the window and run are already established by the observation-run binding.
+         */
+        events.add(new ObservationKeyEvent(
+                "tianting-dialog-" + interest.getCreatedAtMs() + "-" + validated.actionKey(),
+                ObservationKeyEventType.TIANTING_DIALOG_CLICKED,
+                now,
+                null,
+                null,
+                0,
+                "tianting-dialog-option",
+                validated.actionKey()
+                        + "|score=" + validated.score()
+                        + "|executed=" + clicked));
+    }
+
+    /** Encodes an already-captured observation ROI without requesting another window capture. */
+    private static byte[] encodePng(BufferedImage image) {
+        if (image == null) {
+            return null;
+        }
+        try {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream(4096);
+            ImageIO.write(image, "png", buffer);
+            return buffer.toByteArray();
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static BufferedImage copyImage(BufferedImage source) {
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        var graphics = copy.createGraphics();
+        try {
+            graphics.drawImage(source, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+        return copy;
+    }
+
+    /**
+     * Which 天庭 option set one interest arms.
+     *
+     * <p>Exactly one set is live at a time, and the task decides which by the operation it installs.
+     * That exclusivity is the point: answering 为民除害 during a fight leg, or a combat option during
+     * the post-combat pass, would answer a dialog the flow is not in.</p>
+     */
+    private enum TiantingOptionSet {
+        /** 为民除害 on 李靖's dialog. */
+        ACCEPT(DialogOperation.TIANTING_ACCEPT_TASK),
+        /** 使用引妖香 when its own narrow phase explicitly asks for it. */
+        YINYAO(DialogOperation.TIANTING_YINYAO),
+        /** The four resident combat-entry options. */
+        COMBAT(DialogOperation.TIANTING_COMBAT_OPTION),
+        /**
+         * 使用封妖符, offered only in the short window that follows 多谢.
+         *
+         * <p>Its own set rather than a fifth resident option: it is conditional, and having it live
+         * during a normal leg would answer a dialog the flow is not in.</p>
+         */
+        FENGYAO(DialogOperation.TIANTING_FENGYAO),
+        /** All seven known options after a tracker click starts no movement. */
+        RECOVERY(DialogOperation.TIANTING_RECOVERY_OPTION);
+
+        private final DialogOperation operation;
+
+        TiantingOptionSet(DialogOperation operation) {
+            this.operation = operation;
+        }
+
+        /**
+         * @param operations the live interest's operations.
+         * @return the single set to match, or null when this interest arms none. An interest carrying
+         *         more than one 天庭 operation is refused rather than silently resolved to whichever
+         *         happens to be checked first.
+         */
+        static TiantingOptionSet from(List<DialogOperation> operations) {
+            TiantingOptionSet found = null;
+            for (TiantingOptionSet candidate : values()) {
+                if (operations.contains(candidate.operation)) {
+                    if (found != null) {
+                        return null;
+                    }
+                    found = candidate;
+                }
+            }
+            return found;
+        }
+
+        Optional<TiantingDialogLocalMechanics.OptionHit> match(BufferedImage roi) {
+            return switch (this) {
+                case ACCEPT -> TiantingDialogLocalMechanics.matchAcceptOption(roi);
+                case YINYAO -> TiantingDialogLocalMechanics.matchYinyaoOption(roi);
+                case COMBAT -> TiantingDialogLocalMechanics.matchResidentOption(roi);
+                case FENGYAO -> TiantingDialogLocalMechanics.matchFengyaoOption(roi);
+                case RECOVERY -> TiantingDialogLocalMechanics.matchRecoveryOption(roi);
+            };
+        }
+    }
+
+    private static String templateName(String templatePath) {
+        return templatePath == null ? "-" : templatePath.substring(templatePath.lastIndexOf('/') + 1);
+    }
+
+    private void sampleXinshouFact(long observerSeq,
+                                   ObservationFactType factType,
+                                   String value,
+                                   long observedAtMs,
+                                   List<ObservationFact> facts) {
+        String previousObserved = observedXinshouFacts.put(factType, value);
+        if (!Objects.equals(previousObserved, value)) {
+            markXinshouEffectiveProgress(observedAtMs);
+        }
+        XinshouFactVersion delivered = deliveredXinshouFacts.get(factType);
+        if (delivered != null && value.equals(delivered.value())) {
+            sampledXinshouFacts.remove(factType);
+            return;
+        }
+        sampledXinshouFacts.put(factType, new XinshouFactVersion(value, observerSeq));
+        facts.add(new ObservationFact(factType, value, observedAtMs));
+    }
+
+    /**
+     * Starts one local Xinshou observation tick. The timeout grants only permission to resend the
+     * current shared-frame evidence; it never grants permission to choose or execute an action.
+     */
+    private boolean beginXinshouObservationCycle(
+            List<ObservationInterest> interests, long now) {
+        boolean observesXinshouScene = interests.stream().anyMatch(interest ->
+                XINSHOU_TRACKER_INTEREST.equals(interest.interestKey())
+                        || XINSHOU_DIALOG_INTEREST.equals(interest.interestKey()));
+        if (!observesXinshouScene) {
+            return false;
+        }
+        if (lastXinshouEffectiveProgressAtMs <= 0L) {
+            lastXinshouEffectiveProgressAtMs = now;
+        }
+        if (hasActivePathingIntent()) {
+            return false;
+        }
+        long referenceAt = Math.max(
+                lastXinshouEffectiveProgressAtMs,
+                lastXinshouRefreshAcknowledgedAtMs);
+        if (!xinshouRefreshPending
+                && now - referenceAt >= XINSHOU_NO_PROGRESS_REFRESH_MS) {
+            xinshouRefreshPending = true;
+            xinshouRefreshObserverSeq = 0L;
+        }
+        return xinshouRefreshPending;
+    }
+
+    private void markXinshouEffectiveProgress(long observedAtMs) {
+        lastXinshouEffectiveProgressAtMs =
+                Math.max(lastXinshouEffectiveProgressAtMs, observedAtMs);
+        /*
+         * Once a scene reproof is armed, a different fact changing earlier in the same observation
+         * cycle must not cancel it. Combat exit is the important case: ESC/skip commonly disappears
+         * before the unchanged Tracker ROI is sampled. Only an ACK for the reproof ROI closes it.
+         */
+    }
+
+    private static boolean isVersionedXinshouFact(ObservationFactType factType) {
+        return factType == ObservationFactType.XINSHOU_ANCHOR
+                || factType == ObservationFactType.XINSHOU_ESC_VISIBLE
+                || factType == ObservationFactType.XINSHOU_SKIP_VISIBLE
+                || factType == ObservationFactType.XINSHOU_ESC_BOT
+                || factType == ObservationFactType.XINSHOU_ADOPTION
+                || factType == ObservationFactType.XINSHOU_RECOVERY_STATUS
+                || factType == ObservationFactType.XINSHOU_DIALOG_PRESENCE;
+    }
+
+    private static boolean isXinshouChangeInterest(String interestKey) {
+        return XINSHOU_TRACKER_INTEREST.equals(interestKey)
+                || XINSHOU_DIALOG_INTEREST.equals(interestKey);
+    }
+
+    /** Exact ARGB pixel hash; PNG encoder details cannot create false content changes. */
+    private static String hashImageContent(BufferedImage image) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateDigestInt(digest, image.getWidth());
+            updateDigestInt(digest, image.getHeight());
+            int[] row = new int[image.getWidth()];
+            for (int y = 0; y < image.getHeight(); y++) {
+                image.getRGB(0, y, image.getWidth(), 1, row, 0, image.getWidth());
+                for (int argb : row) {
+                    updateDigestInt(digest, argb);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static void updateDigestInt(MessageDigest digest, int value) {
+        digest.update((byte) (value >>> 24));
+        digest.update((byte) (value >>> 16));
+        digest.update((byte) (value >>> 8));
+        digest.update((byte) value);
     }
 
     /**
@@ -1611,9 +2592,9 @@ public final class WindowObservationSampler {
         return value == null ? "" : value;
     }
 
-    private enum LocalCombatFrameState {
-        WORLD_CONFIRMED,
-        COMBAT_CONFIRMED,
-        UNKNOWN
+    private record XinshouRoiVersion(String contentHash, long observerSeq) {
+    }
+
+    private record XinshouFactVersion(String value, long observerSeq) {
     }
 }

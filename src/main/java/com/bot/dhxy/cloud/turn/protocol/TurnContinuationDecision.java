@@ -17,7 +17,6 @@ public record TurnContinuationDecision(
         USE_INCENSE,
         KEEP_INCENSE,
         COMPLETE,
-        CLICK_ACCEPT,
         CLOSE_STORY,
         COMPLETE_ACCEPTED,
         COMPLETE_NOT_ACCEPTED,

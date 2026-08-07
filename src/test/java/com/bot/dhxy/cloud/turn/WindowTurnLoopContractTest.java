@@ -32,6 +32,81 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WindowTurnLoopContractTest {
 
     @Test
+    void transportOnlyLoopDoesNotRequireCloudTaskTerminalBeforeRemoval() {
+        TurnClient client = new TurnClient() {
+            @Override
+            public TurnExchangeResult exchange(TurnRequest request, byte[] optionalPng) {
+                return TurnExchangeResult.accepted(new TurnResponse(
+                        TurnResponse.Status.IDLE, null, null, null, null));
+            }
+
+            @Override
+            public TurnTemplateDownload downloadTemplate(String templateKey, String ifNoneMatch) {
+                throw new AssertionError("removal policy does not download templates");
+            }
+        };
+        WindowTurnLoop loop = new WindowTurnLoop(
+                "device", "window-a", 1_000L, WindowTurnLoopContractTest::metadata,
+                client, action -> {
+                    throw new AssertionError("removal policy does not execute actions");
+                });
+
+        assertTrue(TurnModeGuard.canRemoveStoppedLoop(loop),
+                "map-survey/transport loops own no Cloud task terminal");
+
+        loop.attachStartRequest(new TurnTaskStartRequest(
+                "task-run", List.of(TurnTaskCode.XINSHOU), List.of(1),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE));
+
+        assertFalse(TurnModeGuard.canRemoveStoppedLoop(loop),
+                "a real task loop remains fenced until Cloud acknowledges its terminal");
+    }
+
+    @Test
+    void explicitCloudStartRejectionCanBeRemovedButGenericHttpFailureRemainsFenced() throws Exception {
+        TurnTaskStartRequest rejectedStart = new TurnTaskStartRequest(
+                "start-rejected", List.of(TurnTaskCode.TIANTING), List.of(1),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
+        WindowTurnLoop rejectedLoop = new WindowTurnLoop(
+                "device", "window-rejected", 1_000L, WindowTurnLoopContractTest::metadata,
+                (request, optionalPng) -> {
+                    throw new TurnTransportException(
+                            TurnTransportException.Kind.HTTP_STATUS,
+                            "Cloud request rejected [TASK_START_REJECTED]: team missing",
+                            409,
+                            "TASK_START_REJECTED",
+                            null);
+                },
+                action -> { throw new AssertionError("rejected start must not execute an action"); });
+        rejectedLoop.attachStartRequest(rejectedStart);
+        rejectedLoop.start();
+        assertTrue(rejectedLoop.awaitStopped(Duration.ofSeconds(2)));
+        assertTrue(rejectedLoop.wasTaskStartExplicitlyRejected());
+        assertTrue(TurnModeGuard.canRemoveStoppedLoop(rejectedLoop),
+                "Cloud explicitly denied the start before an ACK, so no RunSlot can remain");
+
+        WindowTurnLoop uncertainLoop = new WindowTurnLoop(
+                "device", "window-uncertain", 1_000L, WindowTurnLoopContractTest::metadata,
+                (request, optionalPng) -> {
+                    throw new TurnTransportException(
+                            TurnTransportException.Kind.HTTP_STATUS,
+                            "Cloud request rejected [OTHER]: unknown",
+                            409,
+                            "OTHER",
+                            null);
+                },
+                action -> { throw new AssertionError("uncertain start must not execute an action"); });
+        uncertainLoop.attachStartRequest(new TurnTaskStartRequest(
+                "start-uncertain", List.of(TurnTaskCode.TIANTING), List.of(1),
+                TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE));
+        uncertainLoop.start();
+        assertTrue(uncertainLoop.awaitStopped(Duration.ofSeconds(2)));
+        assertFalse(uncertainLoop.wasTaskStartExplicitlyRejected());
+        assertFalse(TurnModeGuard.canRemoveStoppedLoop(uncertainLoop),
+                "only the exact Cloud rejection code may release a pre-ACK task loop");
+    }
+
+    @Test
     void staleTerminalIsIgnoredAndMatchingSkippedTerminalStopsTheExactRun() throws Exception {
         TurnTaskStartRequest startRequest = new TurnTaskStartRequest(
                 "run-current", List.of(TurnTaskCode.XIULUO_V2), List.of(0),

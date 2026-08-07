@@ -8,12 +8,16 @@ import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
 import com.bot.dhxy.tools.LatencyMetrics;
+import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.awt.MouseInfo;
+import java.awt.Point;
+import java.awt.PointerInfo;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -134,89 +138,8 @@ public class InputActionWorker {
                     ? request.isExclusiveCallbackFocusRequired()
                     : !preferBackgroundKeyboard);
             Boolean ok = windowTaskContextHolder.callWith(request.getWindowContext(), () ->
-                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), false, () -> {
-                        /*
-                         * A frozen exact-window request owns the runtime-context generation monitor from its
-                         * single authoritative check through focus, the callback and the callback's own
-                         * finally. WindowNativeBindingRefreshService.refreshAndCommit commits only while
-                         * holding the same monitor, so no binding drift can be interleaved into that span.
-                         */
-                        if (request.isFrozenExactWindow()) {
-                            return request.hasExclusiveCallback()
-                                    ? runFrozenExactWindowExclusive(request)
-                                    : runFrozenExactWindowActions(request, preferBackgroundKeyboard);
-                        }
-                        if (focusBeforeInput) {
-                            if (!waitIfPaused(request, "before-transaction-focus")
-                                    || request.isCancelled()
-                                    || !isPlayerIdentityEpochCurrent(request, "before-transaction-focus")
-                                    || !request.checkDetailedSafety("before-transaction-focus")
-                                    || !request.admitWorkerStart("before-transaction-focus")) {
-                                return false;
-                            }
-                            inputCoordinator.focusCurrentWindowInActiveTransaction(
-                                    "queued:" + request.getDescription());
-                        }
-                        return InputActionScope.callWith(request, () -> {
-                        if (!waitIfPaused(request, "before-actions")
-                                || request.isCancelled()
-                                || !isPlayerIdentityEpochCurrent(request, "before-actions")
-                                || !request.checkDetailedSafety("before-actions")
-                                || !request.admitWorkerStart("before-actions")) {
-                            return false;
-                        }
-
-                        if (request.isRetainedSessionMode()) {
-                            if (!request.completeRetainedSessionAdmission()) {
-                                return false;
-                            }
-                            return runRetainedSession(request, preferBackgroundKeyboard);
-                        }
-                        if (request.hasExclusiveCallback()) {
-                            if (!waitIfPaused(request, "before-exclusive-callback")
-                                    || !isPlayerIdentityEpochCurrent(request, "before-exclusive-callback")
-                                    || !request.tryStartStep(0, "before-exclusive-callback")) {
-                                return false;
-                            }
-                            boolean callbackCompleted = Boolean.TRUE.equals(request.getExclusiveCallback().get());
-                            if (callbackCompleted
-                                    && request.isFrozenExactWindow()
-                                    && !request.checkDetailedSafety("after-exclusive-callback-cleanup")) {
-                                return false;
-                            }
-                            if (callbackCompleted) {
-                                request.markStepCompleted(0);
-                            }
-                            return callbackCompleted;
-                        }
-                        int actionIndex = 0;
-                        for (InputAction action : request.getActions()) {
-                            int stepIndex = actionIndex;
-                            actionIndex++;
-                            if (!waitIfPaused(request, "action-" + actionIndex)
-                                    || request.isCancelled()
-                                    || Thread.currentThread().isInterrupted()
-                                    || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)) {
-                                return false;
-                            }
-                            log.info("[INPUT_TRACE] queued-action request={} windowId={} actionIndex={}/{} action={}",
-                                    request.getDescription(), request.getWindowId(), actionIndex,
-                                    request.getActions().size(), action);
-                            if (!request.tryStartStep(stepIndex, "action-" + actionIndex)) {
-                                return false;
-                            }
-                            if (!execute(request, action, preferBackgroundKeyboard, "action-" + actionIndex)) {
-                                return false;
-                            }
-                            request.markStepCompleted(stepIndex);
-                            if (request.hasDeadline() && request.isCancelled()) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    });
-                    })
-            );
+                    inputCoordinator.callInputTransaction("queued:" + request.getDescription(), false,
+                            () -> runInputTransaction(request, preferBackgroundKeyboard, focusBeforeInput)));
             completed = Boolean.TRUE.equals(ok);
             request.complete(completed, completed ? "completed" : "worker-returned-false");
             if (!completed) {
@@ -229,103 +152,308 @@ public class InputActionWorker {
             request.complete(false, "exception:" + e.getClass().getSimpleName() + ":" + e.getMessage());
             deadLetter.record(request, e);
         } finally {
+            if (!completed) {
+                try {
+                    inputProvider.releaseAllInput();
+                } catch (Throwable releaseFailure) {
+                    log.error("Input provider release-all failed after aborted request: windowId={} request={} backend={}",
+                            request.getWindowId(), request.getDescription(),
+                            inputProvider.getClass().getSimpleName(), releaseFailure);
+                }
+            }
             request.complete(false, "worker-exited-without-terminal-result");
             request.ensureRetainedSessionAdmission();
             request.completePendingRetainedSessionStep();
             LatencyMetrics.info(log, "input.request", latencyStart,
                     "result=" + completed + " request=" + request.getDescription()
                             + " windowId=" + request.getWindowId()
+                            + " backend=" + inputProvider.getClass().getSimpleName()
                             + " actions=" + request.getActions().size()
                             + " exclusive=" + request.hasExclusiveCallback());
             request.releaseRetainedTerminalPublication();
         }
     }
 
-    private boolean runRetainedSession(
-            InputActionRequest request,
-            boolean preferBackgroundKeyboard) {
-        while (true) {
-            if (!waitIfPaused(request, "retained-session-idle")
-                    || request.isCancelled()
-                    || !isPlayerIdentityEpochCurrent(request, "retained-session-idle")
-                    || !request.checkDetailedSafety("retained-session-idle")) {
+    /**
+     * Execute one request's whole body inside the already-open global input transaction.
+     *
+     * <p>Extracted from {@link #handle} so the no-park sweep can be the single tail of every
+     * execution path: legacy actions, frozen actions, and the frozen exclusive callback all return
+     * through here.</p>
+     */
+    private boolean runInputTransaction(InputActionRequest request,
+                                        boolean preferBackgroundKeyboard,
+                                        boolean focusBeforeInput) {
+        try {
+            if (!hasSafeForegroundModifierLifecycle(request)) {
+                log.error("Foreground input request rejected because Ctrl would remain held across queue requests: "
+                                + "windowId={} request={} actions={}",
+                        request.getWindowId(), request.getDescription(), request.getActions());
                 return false;
             }
-            long remaining = request.remainingDeadlineNanos(System.nanoTime());
-            if (remaining <= 0L) {
-                request.expireDeadline("retained-session-idle");
-                return false;
+            /*
+             * A frozen exact-window request owns the runtime-context generation monitor from its
+             * single authoritative check through focus, the callback and the callback's own
+             * finally. WindowNativeBindingRefreshService.refreshAndCommit commits only while
+             * holding the same monitor, so no binding drift can be interleaved into that span.
+             */
+            if (request.isFrozenExactWindow()) {
+                return request.hasExclusiveCallback()
+                        ? runFrozenExactWindowExclusive(request)
+                        : runFrozenExactWindowActions(request, preferBackgroundKeyboard);
             }
-            InputActionRequest.RetainedSessionSignal signal;
-            try {
-                signal = request.pollRetainedSessionSignal(
-                        Math.min(TimeUnit.SECONDS.toNanos(1L), remaining));
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                request.requestDetailedCancellation(
-                        "worker-interrupted:retained-session-idle");
-                return false;
-            }
-            if (signal == null) {
-                continue;
-            }
-            if (signal instanceof InputActionRequest.RetainedSessionTerminal) {
-                return true;
-            }
-            InputActionRequest.RetainedSessionStep step =
-                    (InputActionRequest.RetainedSessionStep) signal;
-            boolean successful = false;
-            try {
-                String focusStage = "retained-step-focus";
-                if (!waitIfPaused(request, focusStage)
+            if (focusBeforeInput) {
+                if (!waitIfPaused(request, "before-transaction-focus")
                         || request.isCancelled()
-                        || Thread.currentThread().isInterrupted()
-                        || !isPlayerIdentityEpochCurrent(request, focusStage)
-                        || !request.checkDetailedSafety(focusStage)) {
+                        || !isPlayerIdentityEpochCurrent(request, "before-transaction-focus")
+                        || !request.checkDetailedSafety("before-transaction-focus")
+                        || !request.admitWorkerStart("before-transaction-focus")) {
                     return false;
                 }
                 inputCoordinator.focusCurrentWindowInActiveTransaction(
-                        "queued-retained-step:" + request.getDescription());
-                if (!isPlayerIdentityEpochCurrent(request, focusStage + "-after")
-                        || !request.checkDetailedSafety(focusStage + "-after")) {
+                        "queued:" + request.getDescription());
+            }
+            // G008: after every pre-input safety/admission gate has passed, this complete queue item is
+            // one physical atomic transaction. A later pause/stop may cancel queued work, but must not
+            // split MOVE -> CLICK (or an exclusive callback) halfway through this item.
+            request.markExecutionStarted();
+            return InputActionScope.callWith(request, () -> {
+            if (!waitIfPaused(request, "before-actions")
+                    || !isPlayerIdentityEpochCurrent(request, "before-actions")
+                    || !request.checkDetailedSafety("before-actions")
+                    || !request.admitWorkerStart("before-actions")) {
+                return false;
+            }
+
+            if (request.isRetainedSessionMode()) {
+                if (!request.completeRetainedSessionAdmission()) {
                     return false;
                 }
-                int actionIndex = 0;
-                for (InputAction action : step.actions()) {
-                    int currentIndex = actionIndex++;
-                    String stage = "retained-step-action-" + actionIndex;
-                    if (!waitIfPaused(request, stage)
-                            || request.isCancelled()
-                            || Thread.currentThread().isInterrupted()
-                            || !isPlayerIdentityEpochCurrent(request, stage)
-                            || !request.checkDetailedSafety(stage)
-                            || !request.tryStartRetainedAction(step, currentIndex, stage)) {
-                        return false;
-                    }
-                    if (!execute(request, action, preferBackgroundKeyboard, stage)) {
-                        return false;
-                    }
-                    if (!waitIfPaused(request, stage + "-after")
-                            || request.isCancelled()
-                            || Thread.currentThread().isInterrupted()
-                            || !isPlayerIdentityEpochCurrent(request, stage + "-after")
-                            || !request.checkDetailedSafety(stage + "-after")) {
-                        return false;
-                    }
-                    request.markRetainedActionCompleted(step, currentIndex);
-                }
-                successful = true;
-            } finally {
-                InputActionExecutionResult terminalSnapshot =
-                        request.retainedTerminalSnapshot();
-                step.complete(
-                        request.getRequestId(),
-                        successful,
-                        successful ? "completed" : request.getCancellationReason(),
-                        terminalSnapshot == null
-                                ? InputActionSafetyReason.CLEAR
-                                : terminalSnapshot.getSafetyReason());
+                return runRetainedSession(request, preferBackgroundKeyboard);
             }
+            if (request.hasExclusiveCallback()) {
+                if (!waitIfPaused(request, "before-exclusive-callback")
+                        || !isPlayerIdentityEpochCurrent(request, "before-exclusive-callback")
+                        || !request.tryStartStep(0, "before-exclusive-callback")) {
+                    return false;
+                }
+                boolean callbackCompleted = Boolean.TRUE.equals(request.getExclusiveCallback().get());
+                if (callbackCompleted
+                        && request.isFrozenExactWindow()
+                        && !request.checkDetailedSafety("after-exclusive-callback-cleanup")) {
+                    return false;
+                }
+                if (callbackCompleted) {
+                    request.markStepCompleted(0);
+                }
+                return callbackCompleted;
+            }
+            int actionIndex = 0;
+            for (InputAction action : request.getActions()) {
+                int stepIndex = actionIndex;
+                actionIndex++;
+                if (!waitIfPaused(request, "action-" + actionIndex)
+                        || Thread.currentThread().isInterrupted()
+                        || !isPlayerIdentityEpochCurrent(request, "action-" + actionIndex)) {
+                    return false;
+                }
+                log.info("[INPUT_TRACE] queued-action request={} windowId={} actionIndex={}/{} action={}",
+                        request.getDescription(), request.getWindowId(), actionIndex,
+                        request.getActions().size(), action);
+                if (!request.tryStartStep(stepIndex, "action-" + actionIndex)) {
+                    return false;
+                }
+                if (!execute(request, action, preferBackgroundKeyboard, "action-" + actionIndex)) {
+                    return false;
+                }
+                request.markStepCompleted(stepIndex);
+                if (request.hasDeadline() && request.isCancelled() && !request.isExecutionStarted()) {
+                    return false;
+                }
+            }
+            return true;
+        });
+        } finally {
+            /*
+             * The single tail of every path above. It has to be the tail of the whole request, not of
+             * each action: moveAndClickLeft is MOVE then CLICK, so sweeping after the MOVE would put
+             * the click itself on the park point.
+             */
+            parkPointerOutOfNoParkZone(request);
+        }
+    }
+
+    /**
+     * Move the pointer out of the dialog no-park rectangle when the finished request left it there.
+     *
+     * <p>Runs on the worker thread inside the already-open global input transaction, so it adds no
+     * lock contention, and it never goes through {@code TurnInputStepExecutor}, so the local combat
+     * gate cannot refuse it — dialogs appear during combat too. A pointer already outside the
+     * rectangle produces no input at all.</p>
+     *
+     * <p>Every deliberate hover in the codebase drives {@code InputProvider} directly instead of
+     * queueing, so none of them reach this sweep. A future queued hover that means to rest inside the
+     * rectangle would need an explicit exemption here.</p>
+     *
+     * <p>A pure right-click request is movement/patrol input, not a dialog choice. Its measured map
+     * point may overlap this rectangle, so sweeping it would only move the cursor away after every
+     * patrol tick. Requests containing a left click, exclusive callbacks, and non-mouse requests keep
+     * the existing sweep behavior.</p>
+     */
+    private void parkPointerOutOfNoParkZone(InputActionRequest request) {
+        try {
+            boolean hasRightClick = false;
+            boolean hasLeftClick = false;
+            for (InputAction action : request.getActions()) {
+                hasRightClick |= action.getType() == InputActionType.CLICK_RIGHT;
+                hasLeftClick |= action.getType() == InputActionType.CLICK_LEFT;
+            }
+            if (hasRightClick && !hasLeftClick) {
+                return;
+            }
+            WindowRuntimeContext context = request.getWindowContext();
+            WindowNativeBinding binding = context == null ? null : context.getNativeBinding();
+            if (binding == null || !binding.hasGeometry()) {
+                return;
+            }
+            PointerInfo pointerInfo = MouseInfo.getPointerInfo();
+            Point pointer = pointerInfo == null ? null : pointerInfo.getLocation();
+            if (pointer == null
+                    || !DialogMouseNoParkZone.contains(
+                            pointer.x, pointer.y, binding.getX(), binding.getY())) {
+                return;
+            }
+            Point target = DialogMouseNoParkZone.parkTarget(
+                    binding.getX(), binding.getY(), binding.getWidth(), binding.getHeight());
+            /*
+             * The move must land inside the current window. A move whose endpoint is outside the
+             * window is a no-op — the cursor stays where it was, still covering the dialog — so
+             * emitting it would only produce a log line claiming the pointer was parked when it
+             * was not. With sane geometry the bottom-left target is inside by construction; this
+             * guard catches stale or degenerate bindings.
+             */
+            if (!DialogMouseNoParkZone.insideWindow(
+                    target, binding.getX(), binding.getY(), binding.getWidth(), binding.getHeight())) {
+                log.warn("No-park sweep skipped, park target outside the window: windowId={} target=({}, {}) window=({}, {}, {}x{})",
+                        request.getWindowId(), target.x, target.y,
+                        binding.getX(), binding.getY(), binding.getWidth(), binding.getHeight());
+                return;
+            }
+            inputProvider.moveMouse(target.x, target.y);
+            log.info("[INPUT_TRACE] no-park sweep moved pointer out of the dialog zone: windowId={} request={} from=({}, {}) to=({}, {})",
+                    request.getWindowId(), request.getDescription(),
+                    pointer.x, pointer.y, target.x, target.y);
+        } catch (RuntimeException sweepFailure) {
+            // A parked pointer is an optimisation, never a reason to fail a completed request.
+            log.warn("No-park sweep skipped: windowId={} request={} cause={}",
+                    request.getWindowId(), request.getDescription(), sweepFailure.toString());
+        }
+    }
+
+    private boolean runRetainedSession(
+            InputActionRequest request,
+            boolean preferBackgroundKeyboard) {
+        try {
+            while (true) {
+                if (!waitIfPaused(request, "retained-session-idle")
+                        || request.isCancelled()
+                        || !isPlayerIdentityEpochCurrent(request, "retained-session-idle")
+                        || !request.checkDetailedSafety("retained-session-idle")) {
+                    return false;
+                }
+                long remaining = request.remainingDeadlineNanos(System.nanoTime());
+                if (remaining <= 0L) {
+                    request.expireDeadline("retained-session-idle");
+                    return false;
+                }
+                InputActionRequest.RetainedSessionSignal signal;
+                try {
+                    signal = request.pollRetainedSessionSignal(
+                            Math.min(TimeUnit.SECONDS.toNanos(1L), remaining));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    request.requestDetailedCancellation(
+                            "worker-interrupted:retained-session-idle");
+                    return false;
+                }
+                if (signal == null) {
+                    continue;
+                }
+                if (signal instanceof InputActionRequest.RetainedSessionTerminal) {
+                    return true;
+                }
+                InputActionRequest.RetainedSessionStep step =
+                        (InputActionRequest.RetainedSessionStep) signal;
+                boolean successful = false;
+                try {
+                    String focusStage = "retained-step-focus";
+                    if (!waitIfPaused(request, focusStage)
+                            || request.isCancelled()
+                            || Thread.currentThread().isInterrupted()
+                            || !isPlayerIdentityEpochCurrent(request, focusStage)
+                            || !request.checkDetailedSafety(focusStage)) {
+                        return false;
+                    }
+                    inputCoordinator.focusCurrentWindowInActiveTransaction(
+                            "queued-retained-step:" + request.getDescription());
+                    if (!isPlayerIdentityEpochCurrent(request, focusStage + "-after")
+                            || !request.checkDetailedSafety(focusStage + "-after")) {
+                        return false;
+                    }
+                    request.markRetainedSessionWorkStarted();
+                    if (step.hasCallback()) {
+                        String stage = "retained-step-callback";
+                        if (!request.tryStartRetainedAction(step, 0, stage)) {
+                            return false;
+                        }
+                        if (!Boolean.TRUE.equals(step.callback().get())
+                                || !request.checkDetailedSafety(stage + "-after")) {
+                            return false;
+                        }
+                        request.markRetainedActionCompleted(step, 0);
+                    } else {
+                        int actionIndex = 0;
+                        for (InputAction action : step.actions()) {
+                            int currentIndex = actionIndex++;
+                            String stage = "retained-step-action-" + actionIndex;
+                            if (!waitIfPaused(request, stage)
+                                    || request.isCancelled()
+                                    || Thread.currentThread().isInterrupted()
+                                    || !isPlayerIdentityEpochCurrent(request, stage)
+                                    || !request.checkDetailedSafety(stage)
+                                    || !request.tryStartRetainedAction(step, currentIndex, stage)) {
+                                return false;
+                            }
+                            if (!execute(request, action, preferBackgroundKeyboard, stage)) {
+                                return false;
+                            }
+                            if (!waitIfPaused(request, stage + "-after")
+                                    || request.isCancelled()
+                                    || Thread.currentThread().isInterrupted()
+                                    || !isPlayerIdentityEpochCurrent(request, stage + "-after")
+                                    || !request.checkDetailedSafety(stage + "-after")) {
+                                return false;
+                            }
+                            request.markRetainedActionCompleted(step, currentIndex);
+                        }
+                    }
+                    successful = true;
+                } finally {
+                    InputActionExecutionResult terminalSnapshot =
+                            request.retainedTerminalSnapshot();
+                    step.complete(
+                            request.getRequestId(),
+                            successful,
+                            successful ? "completed" : request.getCancellationReason(),
+                            terminalSnapshot == null
+                                    ? InputActionSafetyReason.CLEAR
+                                    : terminalSnapshot.getSafetyReason());
+                }
+            }
+        } finally {
+            // This is still the same worker thread and the same global input transaction.
+            // A retained request may never publish its terminal result before its held button is up.
+            request.runRetainedSessionCleanup();
         }
     }
 
@@ -345,13 +473,22 @@ public class InputActionWorker {
         } else if (type == InputActionType.DRAG_AND_DROP) {
             inputProvider.dragAndDrop(action.getX(), action.getY(), action.getEndX(), action.getEndY());
         } else if (isBackgroundKeyboardAction(type)) {
-            return executeBackgroundKeyboard(request, action);
+            if (!inputProvider.requiresForegroundKeyboard()) {
+                return executeBackgroundKeyboard(request, action);
+            }
+            executeForegroundKeyboard(action);
         } else if (type == InputActionType.PASTE_TEXT) {
-            log.warn("Clipboard paste rejected because foreground keyboard fallback is disabled: windowId={} request={}",
-                    request.getWindowId(), request.getDescription());
-            return false;
+            if (!inputProvider.requiresForegroundKeyboard()) {
+                log.warn("Clipboard paste rejected because foreground keyboard fallback is disabled: windowId={} request={}",
+                        request.getWindowId(), request.getDescription());
+                return false;
+            }
+            inputProvider.pasteText(action.getText());
         } else if (isAltShortcutAction(type)) {
-            return pressAltShortcut(request, type, preferBackgroundKeyboard, stage);
+            if (!inputProvider.requiresForegroundKeyboard() || isBackgroundAltWhitelist(type)) {
+                return pressAltShortcut(request, type);
+            }
+            executeForegroundAltShortcut(type);
         } else if (type == InputActionType.SCROLL_DOWN) {
             inputProvider.scrollDown(action.getClicks());
         } else if (type == InputActionType.SCROLL_UP) {
@@ -369,6 +506,13 @@ public class InputActionWorker {
     }
 
     private boolean waitIfPaused(InputActionRequest request, String stage) {
+        if (request.isExecutionStarted() && !request.isRetainedSessionMode()) {
+            return request.isPlayerIdentityEpochCurrent() && !Thread.currentThread().isInterrupted();
+        }
+        if (request.isRetainedSessionMode() && request.isPauseRequested()) {
+            request.requestDetailedCancellation("task-pause:" + stage);
+            return false;
+        }
         if (request.excludesPauseFromDeadline()) {
             boolean pausedAtBoundary = request.isPauseRequested();
             if (pausedAtBoundary) {
@@ -421,11 +565,12 @@ public class InputActionWorker {
      *
      * <p>Pause waiting and worker admission stay outside the monitor so a paused or rejected request never
      * blocks binding commits. Everything that must observe one indivisible generation — the single
-     * authoritative exact check, the explicit frozen focus, {@code tryStartStep(0)}, the callback and the
+     * authoritative exact check, the optional frozen focus, {@code tryStartStep(0)}, the callback and the
      * callback's own {@code finally} — runs while this thread holds {@code synchronized (context)}.
      * {@code WindowNativeBindingRefreshService.refreshAndCommit} commits only under the same monitor, so no
      * A -> B -> A drift can be interleaved between the check and the mechanics, and no action can bind an
-     * old absolute ROI to a newer context generation.</p>
+     * old absolute ROI to a newer context generation. A background frozen callback skips only focus; it
+     * retains every ownership and safety boundary in this method.</p>
      *
      * @param request frozen exact-window request carrying an exclusive callback
      * @return true only when the callback completed and its post-callback cleanup safety still holds
@@ -449,13 +594,15 @@ public class InputActionWorker {
              * it. Recheck in priority order — typed safety, then the witness — so a stop that closed during the
              * wait is reported as a stop rather than as drift discovered by the witness first.
              */
-            if (!isFrozenExactWindowStillOwned(request, "before-frozen-focus")) {
+            if (!isFrozenExactWindowStillOwned(request, "before-frozen-exclusive")) {
                 return false;
             }
-            inputCoordinator.focusFrozenBindingInActiveTransaction(
-                    "queued:" + request.getDescription(),
-                    request.getWindowId(),
-                    request.getNativeBinding());
+            if (request.isExclusiveCallbackFocusRequired()) {
+                inputCoordinator.focusFrozenBindingInActiveTransaction(
+                        "queued:" + request.getDescription(),
+                        request.getWindowId(),
+                        request.getNativeBinding());
+            }
             return Boolean.TRUE.equals(InputActionScope.callWith(request, () -> {
                 if (!request.tryStartStep(0, "before-exclusive-callback")) {
                     return false;
@@ -608,23 +755,12 @@ public class InputActionWorker {
     /**
      * Press an Alt shortcut through exact-HWND delivery. Foreground keyboard fallback is forbidden.
      */
-    private boolean pressAltShortcut(InputActionRequest request,
-                                     InputActionType type,
-                                     boolean preferBackgroundKeyboard,
-                                     String stage) {
+    private boolean pressAltShortcut(InputActionRequest request, InputActionType type) {
         BoundWindowKeyboardService.AltShortcut shortcut = toAltShortcut(type);
-        /*
-         * A frozen request owns an exact binding and must not let any keyboard/focus path re-resolve or
-         * refresh the window from mutable current state: that would commit a new generation inside the very
-         * monitor this request holds. Both exact-binding overloads already exist, so the frozen path uses them
-         * and the legacy path keeps its existing behavior byte-for-byte.
-         */
-        boolean frozen = request.isFrozenExactWindow();
-        BoundWindowKeyboardService.ShortcutAttempt attempt = frozen
-                ? boundWindowKeyboardService.pressShortcut(
-                        request.getNativeBinding(), request.getWindowId(), shortcut)
-                : boundWindowKeyboardService.pressShortcut(
-                        request.getNativeBinding(), request.getWindowId(), shortcut);
+        // Frozen and legacy requests both press through the same exact-binding overload; the binding
+        // captured on the request is authoritative, so no re-resolution path exists here.
+        BoundWindowKeyboardService.ShortcutAttempt attempt = boundWindowKeyboardService.pressShortcut(
+                request.getNativeBinding(), request.getWindowId(), shortcut);
         if (attempt.attempted() && attempt.success()) {
             return true;
         }
@@ -700,6 +836,12 @@ public class InputActionWorker {
         }
         for (InputAction action : request.getActions()) {
             InputActionType type = action.getType();
+            if (inputProvider.requiresForegroundKeyboard()) {
+                if (type != InputActionType.SLEEP && !isBackgroundAltWhitelist(type)) {
+                    return false;
+                }
+                continue;
+            }
             if (type != InputActionType.SLEEP
                     && !isBackgroundKeyboardAction(type)
                     && toAltShortcut(type) == null
@@ -708,6 +850,22 @@ public class InputActionWorker {
             }
         }
         return true;
+    }
+
+    /** Physical HID modifiers may not remain held after one queue request and leak into another window. */
+    private boolean hasSafeForegroundModifierLifecycle(InputActionRequest request) {
+        if (!inputProvider.requiresForegroundKeyboard() || request.hasExclusiveCallback()) {
+            return true;
+        }
+        boolean ctrlHeldByRequest = false;
+        for (InputAction action : request.getActions()) {
+            if (action.getType() == InputActionType.HOLD_CTRL) {
+                ctrlHeldByRequest = true;
+            } else if (action.getType() == InputActionType.RELEASE_CTRL) {
+                ctrlHeldByRequest = false;
+            }
+        }
+        return !ctrlHeldByRequest;
     }
 
     private BoundWindowKeyboardService.AltShortcut toAltShortcut(InputActionType type) {
@@ -719,6 +877,9 @@ public class InputActionWorker {
         }
         if (type == InputActionType.PRESS_ALT_4) {
             return BoundWindowKeyboardService.AltShortcut.ALT_4;
+        }
+        if (type == InputActionType.PRESS_ALT_5) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_5;
         }
         if (type == InputActionType.PRESS_ALT_6) {
             return BoundWindowKeyboardService.AltShortcut.ALT_6;
@@ -740,6 +901,9 @@ public class InputActionWorker {
         }
         if (type == InputActionType.PRESS_ALT_A) {
             return BoundWindowKeyboardService.AltShortcut.ALT_A;
+        }
+        if (type == InputActionType.PRESS_ALT_B) {
+            return BoundWindowKeyboardService.AltShortcut.ALT_B;
         }
         if (type == InputActionType.PRESS_ALT_C) {
             return BoundWindowKeyboardService.AltShortcut.ALT_C;
@@ -772,11 +936,17 @@ public class InputActionWorker {
             attempt = boundWindowKeyboardService.pressControlShortcut(
                     request.getNativeBinding(), request.getWindowId(),
                     BoundWindowKeyboardService.ControlShortcut.CTRL_U);
+        } else if (type == InputActionType.PRESS_CTRL_A) {
+            attempt = boundWindowKeyboardService.pressControlShortcut(
+                    request.getNativeBinding(), request.getWindowId(),
+                    BoundWindowKeyboardService.ControlShortcut.CTRL_A);
         } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
             attempt = boundWindowKeyboardService.typeUnicodeText(
                     request.getNativeBinding(), request.getWindowId(), action.getText());
         } else if (type == InputActionType.PRESS_ENTER) {
             attempt = boundWindowKeyboardService.pressEnter(request.getNativeBinding(), request.getWindowId());
+        } else if (type == InputActionType.PRESS_ESCAPE) {
+            attempt = boundWindowKeyboardService.pressEscape(request.getNativeBinding(), request.getWindowId());
         } else {
             throw new IllegalArgumentException("Unsupported background keyboard action: " + type);
         }
@@ -792,8 +962,67 @@ public class InputActionWorker {
         return type == InputActionType.HOLD_CTRL
                 || type == InputActionType.RELEASE_CTRL
                 || type == InputActionType.PRESS_CTRL_U
+                || type == InputActionType.PRESS_CTRL_A
                 || type == InputActionType.TYPE_TEXT_UNICODE
-                || type == InputActionType.PRESS_ENTER;
+                || type == InputActionType.PRESS_ENTER
+                || type == InputActionType.PRESS_ESCAPE;
+    }
+
+    /** Execute a non-Alt keyboard action through the selected focused provider. */
+    private void executeForegroundKeyboard(InputAction action) {
+        InputActionType type = action.getType();
+        if (type == InputActionType.HOLD_CTRL) {
+            inputProvider.holdCtrl();
+        } else if (type == InputActionType.RELEASE_CTRL) {
+            inputProvider.releaseCtrl();
+        } else if (type == InputActionType.PRESS_CTRL_U) {
+            inputProvider.pressCtrlU();
+        } else if (type == InputActionType.PRESS_CTRL_A) {
+            inputProvider.pressCtrlA();
+        } else if (type == InputActionType.TYPE_TEXT_UNICODE) {
+            inputProvider.typeTextUnicode(action.getText());
+        } else if (type == InputActionType.PRESS_ENTER) {
+            inputProvider.pressEnter();
+        } else if (type == InputActionType.PRESS_ESCAPE) {
+            inputProvider.pressEscape();
+        } else {
+            throw new IllegalArgumentException("Unsupported foreground keyboard action: " + type);
+        }
+    }
+
+    /** Execute an ordinary Alt shortcut through the selected focused provider. */
+    private void executeForegroundAltShortcut(InputActionType type) {
+        if (type == InputActionType.PRESS_ALT_1) {
+            inputProvider.pressAlt1();
+        } else if (type == InputActionType.PRESS_ALT_2) {
+            inputProvider.pressAlt2();
+        } else if (type == InputActionType.PRESS_ALT_4) {
+            inputProvider.pressAlt4();
+        } else if (type == InputActionType.PRESS_ALT_T) {
+            inputProvider.pressAltT();
+        } else if (type == InputActionType.PRESS_ALT_O) {
+            inputProvider.pressAltO();
+        } else if (type == InputActionType.PRESS_ALT_E) {
+            inputProvider.pressAltE();
+        } else if (type == InputActionType.PRESS_ALT_Q) {
+            inputProvider.pressAltQ();
+        } else if (type == InputActionType.PRESS_ALT_A) {
+            inputProvider.pressAltA();
+        } else if (type == InputActionType.PRESS_ALT_B) {
+            inputProvider.pressAltB();
+        } else if (type == InputActionType.PRESS_ALT_C) {
+            inputProvider.pressAltC();
+        } else if (type == InputActionType.PRESS_ALT_U) {
+            inputProvider.pressAltU();
+        } else {
+            throw new IllegalArgumentException("Unsupported foreground Alt shortcut: " + type);
+        }
+    }
+
+    private boolean isBackgroundAltWhitelist(InputActionType type) {
+        return type == InputActionType.PRESS_ALT_5
+                || type == InputActionType.PRESS_ALT_6
+                || type == InputActionType.PRESS_ALT_8;
     }
 
     private String shortcutDisplayName(BoundWindowKeyboardService.AltShortcut shortcut, InputActionType fallbackType) {
@@ -804,6 +1033,7 @@ public class InputActionWorker {
         return type == InputActionType.PRESS_ALT_1
                 || type == InputActionType.PRESS_ALT_2
                 || type == InputActionType.PRESS_ALT_4
+                || type == InputActionType.PRESS_ALT_5
                 || type == InputActionType.PRESS_ALT_6
                 || type == InputActionType.PRESS_ALT_8
                 || type == InputActionType.PRESS_ALT_T
@@ -811,6 +1041,7 @@ public class InputActionWorker {
                 || type == InputActionType.PRESS_ALT_E
                 || type == InputActionType.PRESS_ALT_Q
                 || type == InputActionType.PRESS_ALT_A
+                || type == InputActionType.PRESS_ALT_B
                 || type == InputActionType.PRESS_ALT_C
                 || type == InputActionType.PRESS_ALT_U;
     }

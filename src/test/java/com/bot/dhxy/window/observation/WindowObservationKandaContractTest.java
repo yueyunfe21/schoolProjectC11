@@ -461,7 +461,7 @@ class WindowObservationKandaContractTest {
             return new WindowObservationSampler(
                     context,
                     contextHolder,
-                    new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null),
+                    new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
                     new CoordinateHelper(null, null),
                     dialogService,
                     inputSequences,
@@ -480,7 +480,7 @@ class WindowObservationKandaContractTest {
         private DialogService.LocalPreparedDialogMatch wubeiPrepared;
 
         ScriptedDialogService() {
-            super(new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null),
+            super(new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
                     new CoordinateHelper(null, null));
         }
 

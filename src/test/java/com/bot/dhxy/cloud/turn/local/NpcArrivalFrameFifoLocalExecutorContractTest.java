@@ -92,6 +92,18 @@ class NpcArrivalFrameFifoLocalExecutorContractTest {
         assertTrue(source.contains("lastConsumedStorySequence = result.storySequence();"));
     }
 
+    @Test
+    void exactWaitAndRetainedPointReplayHaveNoWallClockExpiry() throws Exception {
+        String source = source();
+
+        assertFalse(source.contains("WAIT_TIMEOUT_MS"));
+        assertFalse(source.contains("WAIT timeout"));
+        assertTrue(source.contains("spec.reuseLastVerifiedPoint()"));
+        assertTrue(source.contains("replayLastVerifiedPoint(arguments, spec, binding)"));
+        assertTrue(source.contains("verifiedReplayPoints.get(ReplayPointKey.from(arguments, spec))"));
+        assertTrue(source.contains("fifoRetainedPointReplay"));
+    }
+
     private static String source() throws Exception {
         return Files.readString(Path.of(
                 "src/main/java/com/bot/dhxy/cloud/turn/local/NpcArrivalFrameFifoLocalExecutor.java"),

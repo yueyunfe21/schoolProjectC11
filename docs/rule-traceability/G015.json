@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "card": "G015",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "businessReference": "696a12b0ffb8aa21f7d5dee841a65cecd78be9f7"
+  },
+  "rules": ["BR-START-001"],
+  "affectedPaths": [
+    "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java",
+    "src/main/java/com/bot/dhxy/window/observation/StartupCombatGateService.java",
+    "src/test/java/com/bot/dhxy/window/control/WindowColdStartCombatConnectivityContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/StartupCombatGateServiceTest.java"
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "summary": "无已批准业务差异；恢复权威业务 MD 与旧本地基线已经定义的冷启动战斗门。"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-START-001",
+      "producer": "WindowTaskControlService cold-start entry invokes StartupCombatGateService before visible preflight",
+      "transport": "RemoteTurnMetadataSupplier carries TaskStartupMode.AFTER_COMBAT_EXIT_STARTUP in Cloud start metadata",
+      "consumer": "Cloud task startup branches consume AFTER_COMBAT_EXIT_STARTUP",
+      "ordering": "combat gate -> verified exit -> role preflight -> calibration -> Cloud start",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/control/WindowColdStartCombatConnectivityContractTest.java",
+          "command": "mvn -q -Dtest=WindowColdStartCombatConnectivityContractTest test",
+          "proves": ["producer reachable", "metadata carried", "visible preflight ordered after gate"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "G015 isolated connectivity contracts",
+      "result": "PASS",
+      "evidence": "G015 card records 7/7 focused tests and both Client/Cloud compile gates."
+    }
+  ]
+}

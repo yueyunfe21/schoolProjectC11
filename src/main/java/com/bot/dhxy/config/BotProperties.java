@@ -1,8 +1,6 @@
 package com.bot.dhxy.config;
 
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -19,20 +17,6 @@ public class BotProperties {
     @NotBlank(message = "配置缺失: bot.dhxy.window-keyword 不能为空")
     private String windowKeyword;
 
-    // ==========================================
-    // 🌟 修复：用 @NotNull 替换 @NotBlank，并将 int 改为 Integer
-    // ==========================================
-    @NotNull(message = "配置缺失: 客户端到地图坐标框滚动的 X 偏移量不能为空")
-    private Integer anchor_windowTo_map_scroll_X; // 注意：建议这里的命名和 yaml 里严格保持一致，或者全用驼峰命名
-
-    @NotNull(message = "配置缺失: 客户端到地图坐标框滚动的 Y 偏移量不能为空")
-    private Integer anchor_windowTo_map_scroll_Y;
-
-    @NotNull(message = "配置缺失: 客户端到地图坐标框的 Y 偏移量不能为空")
-    private Integer anchor_windowTo_map_search_X;
-    @NotNull(message = "配置缺失: 客户端到地图坐标框的 Y 偏移量不能为空")
-    private Integer anchor_windowTo_map_search_Y;
-
     /**
      * 人物/宝宝血法补给开关与阈值。
      * 阈值会规整到 30 / 50 / 70，方便后续 UI 直接做固定选项。
@@ -46,18 +30,6 @@ public class BotProperties {
     private boolean petMpSupplyEnabled = true;
     private int petMpSupplyThreshold = 70;
 
-    /**
-     * 自动战斗挂机维护配置。
-     */
-    private long autoBattleRefreshIntervalMs = 120_000L;
-    private long autoBattleUiCleanIntervalMs = 30_000L;
-    private int returnTeamAreaX = 342;
-    private int returnTeamAreaY = 57;
-    private int returnTeamAreaW = 272;
-    private int returnTeamAreaH = 69;
-    private double returnTeamMatchRate = 0.85;
-    private long returnTeamLeaderWaitTimeoutMs = 120_000L;
-    private long returnTeamLeaderWaitPollMs = 3_000L;
 
     /**
      * 召唤兽尾部普通技能清理配置。
@@ -65,9 +37,6 @@ public class BotProperties {
      */
     private boolean summonSkillCleanEnabled = true;
     private long summonSkillCleanIntervalMs = 20 * 60 * 1000L;
-    private long summonSkillUnknownFailureRetryAfterMs = 5 * 60 * 1000L;
-    private boolean summonSkillCleanRunImmediatelyOnStart = false;
-    private long summonSkillUltimateGenerateCooldownMs = 3 * 60 * 60 * 1000L;
     private long xiuluoHealPetMaintenanceIntervalMs = 30 * 60 * 1000L;
     private long xiuluoRepairEquipmentMaintenanceIntervalMs = 55 * 60 * 1000L;
     private boolean xiuluoMaintenanceRunImmediatelyOnStart = false;
@@ -95,14 +64,19 @@ public class BotProperties {
      */
     private int wuhuanMaxRuns = 1;
     private int fivefoldMaxRuns = 1;
+    /** G004 running duration in minutes; zero means unlimited. */
+    private int wildBattleDurationMinutes = 0;
+    /** Standalone auto-battle duration in minutes; zero means unlimited. */
+    private int autoBattleDurationMinutes = 0;
+    /** G005 天庭 round count, one round being six sub-quests; zero means unlimited. */
+    private int tiantingMaxRuns = 1;
 
     /**
      * 修罗任务第一版配置。后续 UI 会把这些值暴露成可选项。
      */
     private int xiuluoMaxRuns = 1;
-    private boolean xiuluoAllowUnderFiveMembers = false;
-    private long xiuluoReturnVerifyTimeoutMs = 10_000L;
-    private long xiuluoReturnVerifyPollMs = 1_000L;
+    private int xinshouTrainingMaxRuns = 1;
+    private int catchGhostMaxRuns = 1;
 
     /**
      * UI map-survey target name used by the manual map-template/camera-boundary tools.

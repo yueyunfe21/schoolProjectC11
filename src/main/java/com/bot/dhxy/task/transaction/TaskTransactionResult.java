@@ -3,7 +3,7 @@ package com.bot.dhxy.task.transaction;
 /**
  * Business result returned by one task transaction.
  *
- * <p>The value is consumed by {@link TaskTurnCoordinator} to decide whether the current window keeps
+ * <p>The value is consumed by the turn coordination boundary to decide whether the current window keeps
  * the leader/task turn or releases it for other windows. These states describe task progress, not
  * low-level input success.</p>
  */

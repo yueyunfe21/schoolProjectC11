@@ -52,6 +52,6 @@ class ObservationPreparedFrameDemandIdentityContractTest {
         long now = System.currentTimeMillis();
         return new ObservationPreparedFrameDemand(
                 "demand-1", "WUHUAN_NPC_CLICK", "correlation-1",
-                windowId, hwnd, taskRunId, 1L, now, now + 15_000L);
+                windowId, hwnd, taskRunId, 1L, now);
     }
 }

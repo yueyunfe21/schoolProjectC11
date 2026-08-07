@@ -1,9 +1,7 @@
 package com.bot.dhxy.core;
 
-import com.bot.dhxy.runner.stop.TaskSleep;
 
 import com.bot.dhxy.config.BotProperties;
-import com.bot.dhxy.config.VisionProvider;
 import com.bot.dhxy.config.WindowIsolationProperties;
 import com.bot.dhxy.capture.WindowCaptureEvidenceStore;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
@@ -21,9 +19,7 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.HWND;
-import com.sun.jna.platform.win32.WinDef.LPARAM;
 import com.sun.jna.platform.win32.WinDef.RECT;
-import com.sun.jna.platform.win32.WinDef.WPARAM;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -44,7 +40,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class GameClientTracker {
 
-    private final VisionProvider eyes;
     private final BotProperties config;
     private final CoordinateHelper coordinateHelper;
     private final WindowTaskContextHolder windowTaskContextHolder;
@@ -57,26 +52,18 @@ public class GameClientTracker {
     private final WindowNativeBindingRefreshService bindingRefreshService;
     private final WindowCaptureEvidenceStore captureEvidenceStore;
 
-    public static final String LATEST_VISION_PATH = "images/temp/latest_vision.png";
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
     private static final Path TRACKER_DIAGNOSTIC_LOG = Path.of("logs", "tracker-coordinate.log");
 
     private final TrackerState sharedState = new TrackerState();
     private final ThreadLocal<TrackerState> threadState = ThreadLocal.withInitial(TrackerState::new);
-    private volatile CaptureAudit lastCaptureAudit = CaptureAudit.empty();
 
     public int getWindowBaseX() { return state().windowBaseX; }
 
     public int getWindowBaseY() { return state().windowBaseY; }
 
-    public String getFullWindowTitle() { return state().fullWindowTitle; }
-
-    public HWND getGameHwnd() { return state().gameHwnd; }
-
     public String getLatestVisionPath() { return windowScopedTempPath.resolve("latest_vision.png"); }
-
-    public CaptureAudit getLastCaptureAudit() { return lastCaptureAudit; }
 
     public boolean refreshWindowState() {
         return globalInputLock.callWithLock(this::checkBaseAddress);
@@ -150,13 +137,6 @@ public class GameClientTracker {
         return captureToFileWithoutLock(elementName, savePath, x1, y1, x2, y2);
     }
 
-    /**
-     * Kept for API compatibility: captures are lock-free now, so "if idle" simply captures.
-     */
-    public BufferedImage captureToMemoryIfIdle(String elementName, int x1, int y1, int x2, int y2) {
-        return captureToMemory(elementName, x1, y1, x2, y2);
-    }
-
     public BufferedImage captureToMemory(String elementName, int x1, int y1, int x2, int y2) {
         if (!isValidRect(x1, y1, x2, y2)) {
             logCaptureResult("memory", elementName, null, x1, y1, x2, y2, false, "INVALID_RECT");
@@ -222,12 +202,6 @@ public class GameClientTracker {
         return result;
     }
 
-    private WindowNativeBinding currentBinding() {
-        return windowTaskContextHolder.rawCurrent()
-                .map(WindowRuntimeContext::getNativeBinding)
-                .orElse(WindowNativeBinding.empty());
-    }
-
     private boolean writeCaptureToFile(BufferedImage image, String savePath) {
         if (image == null || savePath == null || savePath.isBlank()) {
             return false;
@@ -265,15 +239,12 @@ public class GameClientTracker {
         String hwndText = s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()) + "";
         String foregroundHwnd = windowFocusService.getForegroundNativeHandleText();
         windowInteractionMetricsService.recordCapture(windowId, provider, success, mode, elementName);
-        lastCaptureAudit = new CaptureAudit(System.currentTimeMillis(), mode, elementName, savePath,
-                success, reason, provider, x1, y1, x2, y2, s.windowBaseX, s.windowBaseY,
-                windowId, hwndText, foregroundHwnd, s.fullWindowTitle);
         String message = "Capture result: mode={} element={} windowId={} result={} reason={} provider={} path={} rect=({}, {})-({}, {}) base=({}, {}) hwnd={} foreground={} title={}";
         Object[] args = {
                 mode, elementName, windowId, success ? "success" : "failed", reason, provider, savePath,
                 x1, y1, x2, y2, s.windowBaseX, s.windowBaseY, hwndText, foregroundHwnd, s.fullWindowTitle
         };
-        if (!success || "ROBOT".equalsIgnoreCase(provider)) {
+        if (!success) {
             log.info(message, args);
         } else {
             log.debug(message, args);
@@ -419,34 +390,6 @@ public class GameClientTracker {
         appendTrackerDiagnostic(line);
     }
 
-    public boolean bringWindowToFront() {
-        return globalInputLock.callWithLock(this::bringWindowToFrontWithoutLock);
-    }
-
-    private boolean bringWindowToFrontWithoutLock() {
-        if (!checkBaseAddress()) {
-            return false;
-        }
-        TrackerState s = state();
-        logTrackerState("bringWindowToFront");
-        User32.INSTANCE.ShowWindow(s.gameHwnd, 9);
-        User32.INSTANCE.BringWindowToTop(s.gameHwnd);
-        boolean foregroundOk = User32.INSTANCE.SetForegroundWindow(s.gameHwnd);
-        TaskSleep.sleep(200);
-        HWND foreground = User32.INSTANCE.GetForegroundWindow();
-        boolean focused = foreground != null
-                && s.gameHwnd != null
-                && Pointer.nativeValue(foreground.getPointer()) == Pointer.nativeValue(s.gameHwnd.getPointer());
-        if (!foregroundOk || !focused) {
-            log.warn("窗口置前可能失败：title={} hwnd={} foregroundOk={} focused={}",
-                    s.fullWindowTitle,
-                    s.gameHwnd == null ? "null" : Pointer.nativeValue(s.gameHwnd.getPointer()),
-                    foregroundOk,
-                    focused);
-        }
-        return focused || foregroundOk;
-    }
-
     private TrackerState state() {
         return windowIsolationProperties.isTrackerStateIsolationActive() && windowTaskContextHolder.rawCurrent().isPresent()
                 ? threadState.get()
@@ -527,65 +470,6 @@ public class GameClientTracker {
         }
     }
 
-    public void testBackgroundAlt8() {
-        TrackerState s = state();
-        if (s.gameHwnd == null) {
-            log.warn("gameHwnd 为空，请先执行 locateWindow");
-            return;
-        }
-        int WM_SYSKEYDOWN = 0x0104;
-        int WM_SYSKEYUP = 0x0105;
-        int VK_8 = 0x38;
-        long lParamDown = (1 << 29) | (0x09 << 16) | 1;
-        long lParamUp = (1L << 31) | (1 << 30) | (1 << 29) | (0x09 << 16) | 1;
-        User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYDOWN, new WPARAM(VK_8), new LPARAM(lParamDown));
-        TaskSleep.sleep(50);
-        User32.INSTANCE.PostMessage(s.gameHwnd, WM_SYSKEYUP, new WPARAM(VK_8), new LPARAM(lParamUp));
-        log.info("后台 Alt+8 指令投递完毕");
-    }
-
-    /**
-     * Last screenshot attempt details for callers that need to prove which bound window produced a
-     * diagnostic image without turning every successful HWND capture into a high-volume info log.
-     */
-    public record CaptureAudit(long capturedAtMs,
-                               String mode,
-                               String elementName,
-                               String path,
-                               boolean success,
-                               String reason,
-                               String provider,
-                               int x1,
-                               int y1,
-                               int x2,
-                               int y2,
-                               int baseX,
-                               int baseY,
-                               String windowId,
-                               String hwnd,
-                               String foregroundHwnd,
-                               String title) {
-        private static CaptureAudit empty() {
-            return new CaptureAudit(0L, "-", "-", null, false, "NO_CAPTURE", "UNKNOWN",
-                    0, 0, 0, 0, 0, 0, "-", "-", "-", "-");
-        }
-
-        public String toLogText() {
-            return "capturedAtMs=" + capturedAtMs
-                    + " mode=" + mode
-                    + " element=" + elementName
-                    + " success=" + success
-                    + " reason=" + reason
-                    + " provider=" + provider
-                    + " path=" + path
-                    + " rect=(" + x1 + "," + y1 + ")-(" + x2 + "," + y2 + ")"
-                    + " base=(" + baseX + "," + baseY + ")"
-                    + " windowId=" + windowId
-                    + " hwnd=" + hwnd
-                    + " foreground=" + foregroundHwnd
-                    + " title=" + title;
-        }
-    }
 
     private static class TrackerState {
         private int windowBaseX = -1;

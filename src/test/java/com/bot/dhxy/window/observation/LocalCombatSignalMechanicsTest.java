@@ -148,7 +148,7 @@ class LocalCombatSignalMechanicsTest {
                 "0x40f", "title", "class", 1L, 0, 0, 1024, 768));
         WindowTaskContextHolder holder = new WindowTaskContextHolder(new WindowIsolationProperties());
         GameClientTracker tracker = new GameClientTracker(
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
         CoordinateHelper coordinates = new CoordinateHelper(null, null);
         WindowObservationSampler sampler = new WindowObservationSampler(
                 context, holder, tracker, coordinates,
@@ -227,11 +227,11 @@ class LocalCombatSignalMechanicsTest {
     }
 
     @Test
-    void visibleLocalMinimapImmediatelyPublishesOneExit() {
+    void visibleLocalMinimapImmediatelyPublishesOneExitAndSchedulesSceneReproof() throws Exception {
         WindowRuntimeContext context = context();
         assertEquals(true, context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
                 "claim-ordinary", "run", "business-ordinary", "XIULUO_V2", "attempt-ordinary",
-                "window", context.getNativeBinding().getNativeHandle(), "cloud-fallback", null)));
+                "window", context.getNativeBinding().getNativeHandle(), "local-template", null)));
         LocalCombatSignalMechanics mechanics = new LocalCombatSignalMechanics(
                 stage -> image(),
                 path -> image(),
@@ -245,6 +245,34 @@ class LocalCombatSignalMechanicsTest {
                 LocalCombatSignalMechanics.Signal.absent(), 2_000L, 2L, events);
         assertEquals(List.of(ObservationKeyEventType.IN_COMBAT, ObservationKeyEventType.COMBAT_EXITED),
                 events.stream().map(ObservationKeyEvent::eventType).toList());
+        Field refreshPending = WindowObservationSampler.class
+                .getDeclaredField("xinshouRefreshPending");
+        refreshPending.setAccessible(true);
+        assertEquals(true, refreshPending.getBoolean(sampler),
+                "the exact exit edge must schedule the post-combat scene reproof");
+    }
+
+    @Test
+    void absentMinimapAndAbsentCombatTemplatesConfirmExitWithoutParkingForever() {
+        WindowRuntimeContext context = context();
+        assertEquals(true, context.registerExpectedCombatEnterClaim(new WindowExpectedCombatEnterClaim(
+                "claim-reciprocal", "run", "business-reciprocal", "XIULUO_V2", "attempt-reciprocal",
+                "window", context.getNativeBinding().getNativeHandle(), "local-template", null)));
+        LocalCombatSignalMechanics mechanics = new LocalCombatSignalMechanics(
+                stage -> image(),
+                path -> image(),
+                (source, template, threshold) -> false);
+        WindowObservationSampler sampler = sampler(context, mechanics);
+        List<ObservationKeyEvent> events = new ArrayList<>();
+
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.visible("combat-flag"), 1_000L, 1L, events);
+        sampler.observeLocalCombatTransition(
+                LocalCombatSignalMechanics.Signal.absent(), 2_000L, 2L, events);
+
+        assertEquals(List.of(ObservationKeyEventType.IN_COMBAT, ObservationKeyEventType.COMBAT_EXITED),
+                events.stream().map(ObservationKeyEvent::eventType).toList());
+        assertEquals(false, context.isLocalCombatVisible());
     }
 
     private static WindowExpectedCombatEnterClaim claim(
@@ -276,7 +304,7 @@ class LocalCombatSignalMechanicsTest {
             LocalCombatSignalMechanics mechanics) {
         WindowTaskContextHolder holder = new WindowTaskContextHolder(new WindowIsolationProperties());
         GameClientTracker tracker = new GameClientTracker(
-                null, null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null, null);
         CoordinateHelper coordinates = new CoordinateHelper(null, null);
         return new WindowObservationSampler(
                 context, holder, tracker, coordinates,

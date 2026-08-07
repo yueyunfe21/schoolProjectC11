@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class TurnProtocolValidatorContractTest {
 
     @Test
-    void continuationKindStageAndDirectedClickShapeRemainClosed() {
+    void continuationKindStageAndDirectiveShapeRemainClosed() {
         TurnWindowMetadata window = TurnProtocolGoldenSupport.window(false, false);
         TurnContinuationRequest tick = new TurnContinuationRequest(
                 "action-continuation", 0, TurnContinuationRequest.Kind.FIVERING_INCENSE,
@@ -28,17 +28,17 @@ class TurnProtocolValidatorContractTest {
 
         TurnContinuationRequest wrongStage = new TurnContinuationRequest(
                 "action-continuation", 0, TurnContinuationRequest.Kind.FIVERING_INCENSE,
-                TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE, null, null);
+                TurnContinuationRequest.Stage.STATUS_IMAGE, null, null);
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(
                 new TurnRequest(1, window, 0L, null, null, wrongStage)));
-        assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(new TurnResponse(
-                TurnResponse.Status.CONTINUATION, null, null,
-                new TurnContinuationDecision(
-                        TurnContinuationDecision.Directive.CLICK_ACCEPT, "decision-1", "accept"))));
         assertDoesNotThrow(() -> TurnProtocolValidator.requireValid(new TurnResponse(
                 TurnResponse.Status.CONTINUATION, null, null,
                 new TurnContinuationDecision(
-                        TurnContinuationDecision.Directive.CLICK_ACCEPT, "decision-1", "accept", 420, 360))));
+                        TurnContinuationDecision.Directive.USE_INCENSE, "decision-1", "use incense"))));
+        assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(new TurnResponse(
+                TurnResponse.Status.CONTINUATION, null, null,
+                new TurnContinuationDecision(
+                        TurnContinuationDecision.Directive.USE_INCENSE, "decision-1", "use incense", 420, 360))));
     }
 
     @Test
@@ -192,6 +192,25 @@ class TurnProtocolValidatorContractTest {
                     () -> TurnProtocolValidator.requireValid(invalidAction),
                     "timing must be rejected for " + disallowed);
         }
+    }
+
+    @Test
+    void autoCombatPanelDragMarkerIsClosedToDragLeft() {
+        TurnInputSpec markedDrag = new TurnInputSpec(
+                140, 243, 141, 244, null, null, null,
+                null, null, null, null, true);
+        TurnProtocolValidator.requireValid(TurnProtocolGoldenSupport.action(
+                "auto-panel-drag",
+                List.of(TurnProtocolGoldenSupport.inputStep(0, TurnInputAction.DRAG_LEFT, markedDrag))));
+
+        TurnInputSpec markedClick = new TurnInputSpec(
+                140, 243, null, null, null, null, null,
+                null, null, null, null, true);
+        assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(
+                TurnProtocolGoldenSupport.action(
+                        "auto-panel-marker-on-click",
+                        List.of(TurnProtocolGoldenSupport.inputStep(
+                                0, TurnInputAction.CLICK_LEFT, markedClick)))));
     }
 
     @Test
@@ -574,9 +593,15 @@ class TurnProtocolValidatorContractTest {
         assertRejectedWholeTask(TurnLocalOperation.WHOLE_TASK_PROGRESS_UPDATE, sourceOnly("pr"));
 
         // Source-only operations accept a source and reject a blank one.
-        requireValidWholeTask(TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE, sourceOnly("a"));
         requireValidWholeTask(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR, sourceOnly("pc"));
         requireValidWholeTask(TurnLocalOperation.WHOLE_TASK_PATHING_READ, sourceOnly("pr"));
+        requireValidWholeTask(TurnLocalOperation.WHOLE_TASK_RECOVERY_RESET, sourceOnly("legacy-reset"));
+        requireValidWholeTask(TurnLocalOperation.WHOLE_TASK_RECOVERY_RESET,
+                new Wtb("exact-reset").recoveryIdentity("task-run-1", 3, "attempt-3").build());
+        assertRejectedWholeTask(TurnLocalOperation.WHOLE_TASK_RECOVERY_RESET,
+                new Wtb("partial-reset").recoveryIdentity("task-run-1", null, "attempt-3").build());
+        assertRejectedWholeTask(TurnLocalOperation.WHOLE_TASK_RECOVERY_RESET,
+                new Wtb("invalid-round-reset").recoveryIdentity("task-run-1", 0, "attempt-3").build());
         assertRejectedWholeTask(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR, sourceOnly(" "));
 
         // Pathing late target-map upgrade: needs a nonblank intentId and targetMapName together.
@@ -596,7 +621,7 @@ class TurnProtocolValidatorContractTest {
                 new Wtb("d").dialogSnapshotMaxAgeMs(-1L).build());
         // Exactly-one arg union: a whole-task op must not carry another argument group.
         TurnLocalServiceCall mixed = new TurnLocalServiceCall(
-                TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE,
+                TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR,
                 null, new TurnUiOperationArguments("must-not-be-present"), null, null, sourceOnly("f"));
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(
                 TurnProtocolGoldenSupport.action("wt-mixed",
@@ -604,7 +629,7 @@ class TurnProtocolValidatorContractTest {
 
         // A whole-task operation with no whole-task arguments at all is rejected.
         TurnLocalServiceCall missing = new TurnLocalServiceCall(
-                TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE, null, null, null, null);
+                TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR, null, null, null, null);
         assertThrows(IllegalArgumentException.class, () -> TurnProtocolValidator.requireValid(
                 TurnProtocolGoldenSupport.action("wt-missing",
                         List.of(TurnProtocolGoldenSupport.localStep(0, missing)))));
@@ -615,7 +640,7 @@ class TurnProtocolValidatorContractTest {
         TurnPathingIntent intent = new TurnPathingIntent("nav", "intent-1", "长安", 1, 2, 5, "TARGETED");
 
         // A source-only operation must not smuggle another op's field.
-        assertRejectedWholeTask(TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE,
+        assertRejectedWholeTask(TurnLocalOperation.WHOLE_TASK_PATHING_CLEAR,
                 new Wtb("a").interestOperations(List.of("WUBEI_ENTER_BATTLE")).build());
 
         // A clear operation with its required field plus an extra known field is rejected.
@@ -815,6 +840,9 @@ class TurnProtocolValidatorContractTest {
         private Integer completedRuns;
         private Integer totalRuns;
         private Long dialogSnapshotMaxAgeMs;
+        private String recoveryTaskRunId;
+        private Integer recoveryRound;
+        private String recoveryAttemptId;
 
         private Wtb(String source) {
             this.source = source;
@@ -830,11 +858,22 @@ class TurnProtocolValidatorContractTest {
         private Wtb completedRuns(Integer v) { this.completedRuns = v; return this; }
         private Wtb totalRuns(Integer v) { this.totalRuns = v; return this; }
         private Wtb dialogSnapshotMaxAgeMs(Long v) { this.dialogSnapshotMaxAgeMs = v; return this; }
+        private Wtb recoveryIdentity(String taskRunId, Integer round, String attemptId) {
+            this.recoveryTaskRunId = taskRunId;
+            this.recoveryRound = round;
+            this.recoveryAttemptId = attemptId;
+            return this;
+        }
 
         private TurnWholeTaskRuntimeArguments build() {
-            return new TurnWholeTaskRuntimeArguments(source, pathingIntent, intentId, null, null, null,
-                    null, null, targetMapName, null, null, null, confirmTimeoutMs, taskCode, null,
-                    blockedMs, interestOperations, null, null, completedRuns, totalRuns, dialogSnapshotMaxAgeMs);
+            return new TurnWholeTaskRuntimeArguments(
+                    source, pathingIntent, intentId, null, null, null, null, null,
+                    targetMapName, null, null, null, confirmTimeoutMs, taskCode, null,
+                    blockedMs, interestOperations, null, null, completedRuns, totalRuns,
+                    dialogSnapshotMaxAgeMs, null, null, null, null,
+                    null, null, null, null, null, null,
+                    null, null, null, null, null, null,
+                    null, recoveryTaskRunId, recoveryRound, recoveryAttemptId);
         }
     }
 
@@ -984,7 +1023,7 @@ class TurnProtocolValidatorContractTest {
                 observationRunId, businessTaskRunId,
                 left, top, width, height,
                 List.of("images/template/xiuluo/enter_battle.png"),
-                null, false, true);
+                null, false, true, false);
     }
 
     private static TurnWholeTaskRuntimeArguments arrivalFifoArgs(

@@ -75,7 +75,8 @@ class WindowTurnLoopObservationContractTest {
             assertEquals("12345", creation.hwnd(), "the runner binds the acknowledged native handle");
             assertEquals("start-obs-1", creation.taskRunId(),
                     "the acknowledged start request id is the observation run identity");
-            assertEquals(TurnTaskCode.XIULUO_V2.name(), creation.taskCode());
+            assertEquals("xiuluo_v2", creation.taskCode(),
+                    "the observation plane carries the canonical business task code, not the protocol enum name");
             WindowObservationRunner runner = loop.observationRunner();
             assertNotNull(runner);
             assertTrue(runner.isRunning(), "the runner must be live while the acknowledged loop runs");
@@ -97,8 +98,30 @@ class WindowTurnLoopObservationContractTest {
             assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(3)));
             assertTrue(turnClient.awaitBlocking(Duration.ofSeconds(3)));
             assertEquals(1, factory.createCalls.size());
-            assertEquals(TurnTaskCode.AUTO_BATTLE.name(), factory.createCalls.get(0).taskCode(),
+            assertEquals("auto_battle", factory.createCalls.get(0).taskCode(),
                     "local runner wiring must use the effective member assignment carried by Cloud ACK");
+        } finally {
+            loop.stop();
+            assertTrue(loop.awaitStopped(Duration.ofSeconds(3)));
+        }
+    }
+
+    @Test
+    void tiantingObservationRequestUsesCanonicalBusinessTaskCode() throws Exception {
+        RecordingRunnerFactory factory = new RecordingRunnerFactory();
+        AckEchoTurnClient turnClient = new AckEchoTurnClient(3);
+        WindowTurnLoop loop = loop(turnClient, factory, "window-tianting");
+        loop.attachStartRequest(startRequest("start-tianting", TurnTaskCode.TIANTING));
+        try {
+            loop.start();
+            assertTrue(loop.awaitStartAcknowledged(Duration.ofSeconds(3)));
+            assertTrue(awaitCondition(Duration.ofSeconds(3), () ->
+                            !factory.observationRequestsFor("window-tianting").isEmpty()),
+                    "the acknowledged 天庭 runner must publish its startup observation request");
+            assertEquals("tianting", factory.createCalls.get(0).taskCode());
+            assertTrue(factory.observationRequestsFor("window-tianting").stream()
+                            .allMatch(request -> "tianting".equals(request.taskCode())),
+                    "every real observation request must match the Cloud business task code exactly");
         } finally {
             loop.stop();
             assertTrue(loop.awaitStopped(Duration.ofSeconds(3)));
@@ -317,8 +340,12 @@ class WindowTurnLoopObservationContractTest {
     }
 
     private static TurnTaskStartRequest startRequest(String id) {
+        return startRequest(id, TurnTaskCode.XIULUO_V2);
+    }
+
+    private static TurnTaskStartRequest startRequest(String id, TurnTaskCode taskCode) {
         return new TurnTaskStartRequest(
-                id, List.of(TurnTaskCode.XIULUO_V2), List.of(0), TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
+                id, List.of(taskCode), List.of(0), TurnTaskQueueFailurePolicy.CONTINUE_ON_FAILURE);
     }
 
     private static boolean awaitCondition(Duration timeout, BooleanSupplier condition) throws InterruptedException {

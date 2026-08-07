@@ -9,6 +9,7 @@ import com.bot.dhxy.cloud.turn.protocol.TurnMapSurveyResult;
 import com.bot.dhxy.cloud.turn.protocol.TurnRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnResponse;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskCode;
+import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueEvent;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartRequest;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskTerminalResult;
@@ -20,6 +21,8 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.StringJoiner;
@@ -29,6 +32,8 @@ import java.util.function.Supplier;
 
 /** Explicit long-wait turn lifecycle for one immutable device/window identity. */
 public final class WindowTurnLoop {
+
+    private static final String TASK_START_REJECTED_CODE = "TASK_START_REJECTED";
 
     private static final Logger log = LoggerFactory.getLogger(WindowTurnLoop.class);
     private static final int CONTRACT_VERSION = 1;
@@ -41,6 +46,7 @@ public final class WindowTurnLoop {
     private final Supplier<TurnWindowMetadata> windowMetadataSupplier;
     private final TurnClient turnClient;
     private final TurnActionRunner actionExecutor;
+    private final TaskQueueEventRecorder taskQueueEventRecorder;
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -60,6 +66,8 @@ public final class WindowTurnLoop {
     // is accepted exactly once. Both survive an explicit restart so an accepted start is never re-minted or re-sent.
     private volatile TurnTaskStartRequest pendingStartRequest;
     private volatile boolean startAckAccepted;
+    /** True only when Cloud explicitly rejected this start before allocating a task RunSlot. */
+    private volatile boolean startExplicitlyRejected;
     private volatile TurnTaskStartAck acceptedStartAck;
     private final CompletableFuture<TurnTaskTerminalResult> taskTerminalResult = new CompletableFuture<>();
 
@@ -84,6 +92,7 @@ public final class WindowTurnLoop {
     // this process has no observation plane and the loop behaves exactly as before.
     private final WindowObservationRunnerFactory observationRunnerFactory;
     private volatile WindowObservationRunner observationRunner;
+    private final LinkedHashSet<String> acceptedTaskQueueEventIds = new LinkedHashSet<>();
 
     WindowTurnLoop(String deviceId,
                    String windowId,
@@ -92,7 +101,7 @@ public final class WindowTurnLoop {
                    TurnClient turnClient,
                    LocalTurnActionExecutor actionExecutor) {
         this(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, turnClient,
-                Objects.requireNonNull(actionExecutor, "actionExecutor")::execute, null);
+                Objects.requireNonNull(actionExecutor, "actionExecutor")::execute, null, TaskQueueEventRecorder.NO_OP);
     }
 
     WindowTurnLoop(String deviceId,
@@ -101,7 +110,8 @@ public final class WindowTurnLoop {
                    Supplier<TurnWindowMetadata> windowMetadataSupplier,
                    TurnClient turnClient,
                    TurnActionRunner actionExecutor) {
-        this(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, turnClient, actionExecutor, null);
+        this(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, turnClient, actionExecutor, null,
+                TaskQueueEventRecorder.NO_OP);
     }
 
     WindowTurnLoop(String deviceId,
@@ -111,6 +121,18 @@ public final class WindowTurnLoop {
                    TurnClient turnClient,
                    TurnActionRunner actionExecutor,
                    WindowObservationRunnerFactory observationRunnerFactory) {
+        this(deviceId, windowId, waitTimeoutMs, windowMetadataSupplier, turnClient, actionExecutor,
+                observationRunnerFactory, TaskQueueEventRecorder.NO_OP);
+    }
+
+    WindowTurnLoop(String deviceId,
+                   String windowId,
+                   long waitTimeoutMs,
+                   Supplier<TurnWindowMetadata> windowMetadataSupplier,
+                   TurnClient turnClient,
+                   TurnActionRunner actionExecutor,
+                   WindowObservationRunnerFactory observationRunnerFactory,
+                   TaskQueueEventRecorder taskQueueEventRecorder) {
         this.deviceId = requireIdentity(deviceId, "deviceId");
         this.windowId = requireIdentity(windowId, "windowId");
         if (waitTimeoutMs <= 0L) {
@@ -121,6 +143,9 @@ public final class WindowTurnLoop {
         this.turnClient = Objects.requireNonNull(turnClient, "turnClient");
         this.actionExecutor = Objects.requireNonNull(actionExecutor, "actionExecutor");
         this.observationRunnerFactory = observationRunnerFactory;
+        this.taskQueueEventRecorder = taskQueueEventRecorder == null
+                ? TaskQueueEventRecorder.NO_OP
+                : taskQueueEventRecorder;
     }
 
     /**
@@ -142,6 +167,11 @@ public final class WindowTurnLoop {
         }
     }
 
+    /** Whether this loop owns a Cloud business task that must acknowledge a terminal before removal. */
+    boolean hasTaskStartRequest() {
+        return pendingStartRequest != null;
+    }
+
     /** Starts this window's explicit daemon loop without clearing in-memory acknowledgement state. */
     public void start() {
         synchronized (lifecycleMonitor) {
@@ -153,6 +183,7 @@ public final class WindowTurnLoop {
             }
             stopRequested.set(false);
             lastFailure = null;
+            startExplicitlyRejected = false;
             Thread thread = new Thread(this::runLoop, "dhxy-turn-" + windowId);
             thread.setDaemon(true);
             workerThread = thread;
@@ -350,6 +381,15 @@ public final class WindowTurnLoop {
         return taskTerminalResult.isDone();
     }
 
+    /**
+     * @return true only when the pending start received Cloud's explicit {@code TASK_START_REJECTED} response before
+     * the matching start acknowledgement. Network/timeout failures deliberately remain false because Cloud may still
+     * own the same start request.
+     */
+    public boolean wasTaskStartExplicitlyRejected() {
+        return startExplicitlyRejected;
+    }
+
     /** Permanently prevents any later start, or fails when start already won the lifecycle race. */
     void retireIfStopped() {
         synchronized (lifecycleMonitor) {
@@ -367,12 +407,18 @@ public final class WindowTurnLoop {
         } catch (RuntimeException localFailure) {
             if (!stopRequested.get() && !stopCheckpoint.get() && !Thread.currentThread().isInterrupted()) {
                 lastFailure = localFailure;
+                /*
+                 * The stack goes with it. A wild-battle run died five-for-five on
+                 * 'Cannot invoke "java.lang.Boolean.booleanValue()"' and the message alone named no class,
+                 * no line, nothing — the whole diagnosis stalled on this one missing argument (E18).
+                 */
                 log.error(
                         "Turn loop stopped after local failure: deviceId={} windowId={} type={} message={}",
                         deviceId,
                         windowId,
                         localFailure.getClass().getSimpleName(),
-                        localFailure.getMessage());
+                        localFailure.getMessage(),
+                        localFailure);
             }
         } finally {
             // TURN-40G: fence and terminate this window's observation runner with a bounded join before the loop
@@ -434,7 +480,7 @@ public final class WindowTurnLoop {
         }
         StringJoiner taskCodes = new StringJoiner(",");
         for (TurnTaskCode code : observationTaskCodes) {
-            taskCodes.add(code.name());
+            taskCodes.add(code.name().toLowerCase(Locale.ROOT));
         }
         try {
             WindowObservationRunner runner = observationRunnerFactory.create(
@@ -549,6 +595,7 @@ public final class WindowTurnLoop {
                 if (stopCheckpoint.get() || Thread.currentThread().isInterrupted()) {
                     break;
                 }
+                recordExplicitStartRejection(transportFailure);
                 lastFailure = transportFailure;
                 log.error(
                         "Turn loop stopped after transport failure: deviceId={} windowId={} kind={} message={}",
@@ -573,6 +620,18 @@ public final class WindowTurnLoop {
                         finalTransportFailure.kind(),
                         finalTransportFailure.getMessage());
             }
+        }
+    }
+
+    private void recordExplicitStartRejection(TurnTransportException transportFailure) {
+        if (pendingStartRequest == null || startAckAccepted
+                || transportFailure.kind() != TurnTransportException.Kind.HTTP_STATUS
+                || !TASK_START_REJECTED_CODE.equals(transportFailure.cloudErrorCode())) {
+            return;
+        }
+        synchronized (lifecycleMonitor) {
+            startExplicitlyRejected = true;
+            lifecycleMonitor.notifyAll();
         }
     }
 
@@ -709,6 +768,7 @@ public final class WindowTurnLoop {
             }
         }
         acceptMatchingTaskTerminal(response.taskTerminalResult());
+        acceptTaskQueueEvents(response.taskQueueEvents());
         // TURN-40G: only an acknowledged window observes. Covers both the first acknowledgement and an explicit
         // restart of an already-acknowledged loop; a loop without a task start request never starts a runner.
         maybeStartObservationRunner(metadata);
@@ -811,6 +871,44 @@ public final class WindowTurnLoop {
         stopRequested.set(true);
         log.info("Cloud task terminal accepted: deviceId={} windowId={} startRequestId={} status={}",
                 deviceId, windowId, terminal.startRequestId(), terminal.status());
+    }
+
+    /** Persist each Cloud child-task result once, without making it a lifecycle/control event. */
+    private void acceptTaskQueueEvents(List<TurnTaskQueueEvent> events) {
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+        for (TurnTaskQueueEvent event : events) {
+            if (event == null || !acceptTaskQueueEventId(event.eventId())) {
+                continue;
+            }
+            try {
+                taskQueueEventRecorder.record(windowId, event);
+                log.info("Cloud queue diagnostic: deviceId={} windowId={} startRequestId={} taskRunId={} "
+                                + "queueIndex={} taskCode={} type={} result={} phase={} round={} reason={} exceptionType={} elapsedMs={}",
+                        deviceId, windowId, event.startRequestId(), event.taskRunId(), event.queueIndex(),
+                        event.taskCode(), event.type(), event.result(), event.phase(), event.round(), event.reason(),
+                        event.exceptionType(), event.elapsedMs());
+            } catch (RuntimeException recorderFailure) {
+                log.warn("Cloud queue diagnostic recorder failed: eventId={} startRequestId={} taskRunId={}",
+                        event.eventId(), event.startRequestId(), event.taskRunId(), recorderFailure);
+            }
+        }
+    }
+
+    private boolean acceptTaskQueueEventId(String eventId) {
+        if (eventId == null || eventId.isBlank()) {
+            return false;
+        }
+        synchronized (lifecycleMonitor) {
+            if (!acceptedTaskQueueEventIds.add(eventId)) {
+                return false;
+            }
+            while (acceptedTaskQueueEventIds.size() > 1024) {
+                acceptedTaskQueueEventIds.removeFirst();
+            }
+            return true;
+        }
     }
 
     /**

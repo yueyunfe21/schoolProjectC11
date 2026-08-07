@@ -3,6 +3,7 @@ param(
     [string]$Path = "/api/cloud/decision",
     [string]$Token = "local-dev-token",
     [string]$BrainProjectPath = "D:\mavenProject\dhxy-cloud-brain",
+    [string]$BusinessLogPath = "",
     [string]$TenantId = "",
     [string]$UserId = "",
     [string]$StateRoot = "",
@@ -32,6 +33,15 @@ if (-not [System.IO.Path]::IsPathRooted($StateRoot)) {
     throw "TURN-41 StateRoot must be an absolute path: $StateRoot"
 }
 $StateRoot = [System.IO.Path]::GetFullPath($StateRoot)
+
+if ([string]::IsNullOrWhiteSpace($BusinessLogPath)) {
+    $BusinessLogPath = Join-Path (Split-Path -Parent $PSScriptRoot) "logs\cloud-brain-console.log"
+}
+$BusinessLogPath = [System.IO.Path]::GetFullPath($BusinessLogPath)
+$businessLogDirectory = Split-Path -Parent $BusinessLogPath
+if (-not (Test-Path -LiteralPath $businessLogDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $businessLogDirectory | Out-Null
+}
 
 function Get-CloudServiceScopeHash {
     param([string]$Tenant, [string]$User)
@@ -453,7 +463,9 @@ if ($null -ne $ocrHealth) {
 
 Write-Host "Starting external DHXY cloud brain from fresh classpath on port $Port"
 Write-Host "devArtifactMode=classpath launchUtc=$launchUtc projectPath=$BrainProjectPath classesPath=$classesPath classpathFile=$classpathFile sourceMaxUtc=$(Format-Utc $state.SourceMaxUtc) classesMaxUtc=$(Format-Utc $state.ClassesMaxUtc) classpathUtc=$(Format-Utc $state.ClasspathUtc) classpathSha256=$($state.ClasspathSha256)"
+Write-Host "Cloud business log: $BusinessLogPath"
 & java `
+    "-Dorg.slf4j.simpleLogger.logFile=$BusinessLogPath" `
     "-Ddhxy.cloud.brain.localOcrEndpoint=$ocrEndpoint" `
     "-Ddhxy.cloud.brain.localOcrTimeoutMs=10000" `
     "-Ddhxy.cloud.brain.localOcrExpectedModelFingerprint=$ocrExpectedModel" `

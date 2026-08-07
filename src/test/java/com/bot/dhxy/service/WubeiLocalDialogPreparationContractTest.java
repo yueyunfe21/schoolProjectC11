@@ -24,7 +24,7 @@ class WubeiLocalDialogPreparationContractTest {
     void allFrozenEnterBattleTemplatesPrepareTheirExactActionWithoutInputOrDisk() {
         OpenCvNativeLoader.ensureLoaded();
         DialogService service = new DialogService(
-                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null),
+                new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
                 new CoordinateHelper(null, null) {
                     @Override
                     public int[] getScaledRect(int x, int y, int width, int height) {

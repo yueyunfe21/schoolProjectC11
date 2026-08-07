@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "card": "G040",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-TIANTING-002"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/天庭任务流程大MD.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G040.json",
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/dialog/CloudDialogPreparedActionState.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingSubtaskDecision.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "conflictSummary": "G040 已让异图 Tracker action 原子替换旧 action，但消费者在决策前没有结束上一暗雷腿，导致旧 darkThunder/legStopped 压住新普通绿链。",
+    "userDecision": "恢复既有天庭流程第 7 节：同图暗雷才继承巡逻；task-box 变化必须结束旧暗雷连续性并进入当前新任务的普通绿链。",
+    "decisionRecordedAt": "2026-08-06",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G040"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-TIANTING-002",
+      "producer": "Client Runner 发布战斗退出边沿和后续 fresh Tracker observation；CloudWholeTaskObserver 分析完整 task-box，并生成携带当前 darkThunder 判定的新 prepared action。",
+      "transport": "CloudDialogPreparedActionState 以 exact run/window/HWND/expected action ID 原子替换 TASK_TRACKER_PATHING 槽，并发布与新 action 对应的 ready event。",
+      "consumer": "TiantingTask 必须在 TiantingSubtaskDecision 读取旧 stopped/darkThunder 前消费 task-box 已变化的当前 action：结算旧小任务、结束旧暗雷连续性，再点击新绿链并只从新 action 锁存下一腿 darkThunder。",
+      "ordering": "combat exit -> fresh task-box compare -> changed action atomic replacement -> close old dark-thunder leg and count old subtask -> click new tracker link -> latch new action darkThunder; same task-box alone preserves dark-thunder patrol continuity",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "focused G040 lifecycle contract",
+          "proves": [
+            "old stopped darkThunder cannot outrank a changed ordinary tracker action",
+            "changed ordinary action is clicked and next leg latches darkThunder=false",
+            "changed dark-thunder action is clicked before next leg latches darkThunder=true",
+            "same task-box dark-thunder remains eligible to continue patrol",
+            "Dialog priority and Fengyaofu ownership remain unchanged"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G040 business-rule gate", "result": "PASS", "evidence": "node scripts/check-business-rule-gate.js --card G040"},
+    {"name": "Cloud production compile", "result": "PASS", "evidence": "mvn -o -q compile -DskipTests=false"},
+    {"name": "Cloud G040 lifecycle contract", "result": "PASS", "evidence": "isolated javac + JUnit Console TiantingSubtaskLoopContractTest: 26/26"},
+    {"name": "main-thread review", "result": "PASS", "evidence": "P0/P1/P2=0/0/0; exact write set diff check passed"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

@@ -28,6 +28,8 @@ public class GiveItemService {
     private static final String OPTION_GIVE_TEMPLATE =
             "images/template/dialog/maintenance/dialog_opt_give.png";
     private static final String BTN_GIVE_TEMPLATE = "images/template/300huan/btn_give.png";
+    private static final int GIVE_BUTTON_GONE_ATTEMPTS = 6;
+    private static final long GIVE_BUTTON_GONE_POLL_MS = 500L;
     private static final int DIALOG_SMALL_X = 250;
     private static final int DIALOG_SMALL_Y = 345;
     private static final int DIALOG_SMALL_W = 529;
@@ -141,6 +143,35 @@ public class GiveItemService {
             log.info("Give item flow finished");
         }
         return clicked;
+    }
+
+    /**
+     * Clicks the existing Give button after a caller has already selected an item locally.
+     *
+     * <p>This keeps the 新手“交付物资” flow local: its own deterministic {@code wuzi.png}
+     * selection is not replaced by the five-ring bag-selection macro. The method owns only the
+     * final existing Give-button matcher and atomic click.</p>
+     *
+     * @return true when the Give button was matched and its queued click completed.
+     */
+    public boolean clickGiveButtonAfterLocalSelection() {
+        if (!clickGiveButton()) {
+            return false;
+        }
+        /*
+         * 新手 §9.3: the hand-in is only complete once the Give button itself disappeared. The caller
+         * owns the alternate tracker-panel-hash signal; this is the local half of that contract.
+         */
+        for (int attempt = 0; attempt < GIVE_BUTTON_GONE_ATTEMPTS; attempt++) {
+            if (coordinateHelper.findImageAbsoluteCoordinate(BTN_GIVE_TEMPLATE, 0.85) == null) {
+                return true;
+            }
+            if (!TaskSleep.sleep(GIVE_BUTTON_GONE_POLL_MS)) {
+                return false;
+            }
+        }
+        log.warn("Give button still visible after click; hand-in not verified");
+        return false;
     }
 
     private boolean clickGiveButtonDirectForExclusive() {

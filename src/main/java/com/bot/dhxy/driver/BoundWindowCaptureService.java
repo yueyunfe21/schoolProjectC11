@@ -87,6 +87,12 @@ public class BoundWindowCaptureService {
 
         BufferedImage windowImage = fullWindow.get().image();
         try {
+            // A region request is physically produced from this full HWND frame before cropping. Preserve that
+            // source frame as well as the ROI below: otherwise a later template mismatch cannot be replayed
+            // against the exact pixels that were available to the crop operation.
+            captureEvidenceStore.persist(windowImage, binding, fullWindow.get().provider().name(),
+                    windowBaseX, windowBaseY,
+                    windowBaseX + windowImage.getWidth(), windowBaseY + windowImage.getHeight());
             int requestedLeft = startX - windowBaseX;
             int requestedTop = startY - windowBaseY;
             int requestedRight = requestedLeft + width;

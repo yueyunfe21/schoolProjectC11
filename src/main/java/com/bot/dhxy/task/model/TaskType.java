@@ -5,6 +5,12 @@ public enum TaskType {
     WUBEI("wubei", "五倍", false),
     XIULUO("xiuluo", "修罗", false),
     XIULUO_V2("xiuluo_v2", "修罗", false),
+    XINSHOU("xinshou", "新手", true),
+    XINSHOU_TRAINING("xinshou_training", "江湖历练", false),
+    CATCH_GHOST("catch_ghost", "抓鬼", false),
+    YIPIN_GUARD_TEST("yipin_guard_test", "测试一品侍卫接任务", false),
+    WILD_BATTLE("wild_battle", "野外战斗", false),
+    TIANTING("tianting", "天庭", false),
     AUTO_BATTLE("auto_battle", "自动战斗", false),
     SLEEP_COMPUTER("sleep_computer", "睡眠计算机", false),
     UNKNOWN("unknown", "未知任务", false);

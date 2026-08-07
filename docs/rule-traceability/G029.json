@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "card": "G029",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-DIALOG-001", "BR-TIANTING-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/天庭任务流程大MD.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G029.json",
+    "docs/superpowers/plans/2026-07-29-g005-tianting-task.md",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/main/java/com/bot/dhxy/window/runtime/WindowRuntimeContext.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationKeyEventType.java",
+    "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/observation/ObservationKeyEventType.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/window/model/WindowReadyEventType.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "G017 清除天庭本地七模板 probe 并直接 Cloud fallback，且 Client 又用 2.5 秒墙钟淘汰多谢后的封妖符资格；同步观察循环实际周期包含 HTTP 往返，正确弹窗可在下一次采样前被资格门丢弃。",
+    "userDecision": "仅对天庭恢复 G014：exact no-movement 后 known local templates 优先，all-miss 才 Cloud fallback；Dialog 可见时禁止 Tracker reopen；删除多谢后的 2.5 秒墙钟门，改为 DUOXIE 成功后建立、FENGYAO 成功或 interest/run 清理时结束的本地状态。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G029"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-DIALOG-001",
+      "producer": "TiantingTask exact Tracker click 经 Runner legStarted=false 后安装 TIANTING_RECOVERY_OPTION；WindowObservationSampler 在 exact HWND shared frame 上匹配、fresh 复验并点击七张已知模板，发布稳定 actionKey 的 TIANTING_DIALOG_CLICKED。",
+      "transport": "ObservationKeyEvent 经 Cloud observer 映射为 exact TIANTING_DIALOG_ANSWERED 或 TIANTING_RECOVERY_ALL_MISSED ready event，保留 current task run/window/HWND observation binding；all-miss detail 原样携带 Cloud 为本轮 recovery 生成的唯一 probeCorrelation。",
+      "consumer": "TiantingTask 在 unknown-phase fallback 前消费已执行的 known actionKey，经 consumeDialogOutcome 复用 DUOXIE/FENGYAO 等既有业务语义；只有 Client exact frame 发布且 probeCorrelation 与当前 recovery 完全一致的 retained all-miss 才允许 generic Cloud fallback，迟到或外来终态被忽略。",
+      "ordering": "tracker click -> exact no movement -> unique probeCorrelation -> recovery probe -> known event wins OR matching retained all-miss -> at most one fallback; elapsed time and stale recovery terminal never become all-miss proof",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java",
+          "command": "focused G029 connectivity contract",
+          "proves": [
+            "no-movement installs TIANTING_RECOVERY_OPTION instead of clearing it",
+            "known local event is consumed before generic fallback",
+            "DUOXIE and FENGYAO preserve existing task consumers",
+            "fallback remains reachable only after exact retained all-miss",
+            "retained all-miss from recovery A cannot authorize recovery B",
+            "visible option/coordinate dialog cannot trigger tracker reopen"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-TIANTING-001",
+      "producer": "WindowObservationSampler 在 fresh 复验后实际点击 DUOXIE 成功，同一 Client 窗口运行态登记待处理 FENGYAO。",
+      "transport": "状态保存在 exact WindowRuntimeContext，不经过同步 HTTP 往返，也不按采样年龄淘汰；观察循环后续 shared frame 继续匹配 FENGYAO。",
+      "consumer": "WindowObservationSampler 命中并 fresh 复验 FENGYAO 后执行一次原子点击、发布稳定 ACTION_FENGYAO，并立即清除待处理状态。",
+      "ordering": "DUOXIE executed -> pending FENGYAO survives arbitrary observation-cycle delay -> FENGYAO executed -> pending cleared; dialog interest clear or task reset also clears",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+          "command": "mvn -q -Dtest=TiantingDialogProbeContractTest test",
+          "proves": [
+            "多谢后的封妖符资格不接受 now/deadline 参数且不存在 2.5 秒年龄门",
+            "封妖符点击成功立即消费资格",
+            "Dialog interest 清除后资格失效，不能泄漏到后续阶段"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G029 business-rule gate", "result": "PASS", "evidence": "node scripts/check-business-rule-gate.js --card G029"},
+    {"name": "Client production compile", "result": "PASS", "evidence": "mvn -q -DskipTests=false compile"},
+    {"name": "Client dialog connectivity contract", "result": "PASS", "evidence": "isolated javac + JUnit Console TiantingDialogProbeContractTest: 14/14"},
+    {"name": "Cloud production compile", "result": "PASS", "evidence": "mvn -q -DskipTests=false compile"},
+    {"name": "Cloud G029 connectivity contract", "result": "PASS", "evidence": "isolated javac + JUnit Console TiantingSubtaskLoopContractTest: 16/16, including recovery A -> B stale-correlation rejection"},
+    {"name": "shared key-event protocol", "result": "PASS", "evidence": "ObservationKeyEventType.java SHA-256 both repos 794AE5229005785867D4DF00417B8AC91E353602CCA80BE8E844A779E3C7A83B"},
+    {"name": "fresh runtime", "result": "PENDING"}
+  ]
+}

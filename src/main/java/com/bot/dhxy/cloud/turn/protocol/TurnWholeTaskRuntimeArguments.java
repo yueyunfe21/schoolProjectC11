@@ -3,7 +3,7 @@ package com.bot.dhxy.cloud.turn.protocol;
 import java.util.List;
 
 /**
- * Arguments for the closed {@code WHOLE_TASK_*} / {@code WUHUAN_ACCEPT_DIALOG_EXCLUSIVE} local
+ * Arguments for the closed {@code WHOLE_TASK_*} local
  * runtime operations (TURN-35 Amendment #6 shared whole-task local-fact foundation).
  *
  * <p>{@code source} is required for every operation. Every other field is owned by exactly one
@@ -51,7 +51,61 @@ public record TurnWholeTaskRuntimeArguments(
         String expectedCombatObservationRunId,
         String expectedCombatBusinessTaskRunId,
         String expectedCombatAttemptId,
-        TurnNpcArrivalFrameFifoSpec npcArrivalFifo) {
+        TurnNpcArrivalFrameFifoSpec npcArrivalFifo,
+        String recoveryTaskRunId,
+        Integer recoveryRound,
+        String recoveryAttemptId) {
+
+    /** Backward-compatible full constructor before exact recovery identity was added. */
+    public TurnWholeTaskRuntimeArguments(
+            String source,
+            TurnPathingIntent pathingIntent,
+            String intentId,
+            String sourcePrefix,
+            Long protectionMs,
+            String currentMapName,
+            Integer currentX,
+            Integer currentY,
+            String targetMapName,
+            Integer targetX,
+            Integer targetY,
+            Integer tolerance,
+            Long confirmTimeoutMs,
+            String taskCode,
+            String targetKeyword,
+            Long blockedMs,
+            List<String> interestOperations,
+            Long absentAllowedAtMs,
+            Boolean probeOnly,
+            Integer completedRuns,
+            Integer totalRuns,
+            Long dialogSnapshotMaxAgeMs,
+            TurnPendingTransferChoice transferChoice,
+            TurnPendingRouteOutcome routeOutcome,
+            String routeOutcomeReplacementReason,
+            String startupFlyingState,
+            Long probeStartAtMs,
+            String scheduleAttemptId,
+            Integer scheduleRound,
+            String scheduleTaskRunId,
+            Long scheduleOpenedAtMs,
+            String scheduleObservationRunId,
+            String replayObservationRunId,
+            String replayBusinessTaskRunId,
+            String expectedCombatClaimId,
+            String expectedCombatObservationRunId,
+            String expectedCombatBusinessTaskRunId,
+            String expectedCombatAttemptId,
+            TurnNpcArrivalFrameFifoSpec npcArrivalFifo) {
+        this(source, pathingIntent, intentId, sourcePrefix, protectionMs, currentMapName, currentX, currentY,
+                targetMapName, targetX, targetY, tolerance, confirmTimeoutMs, taskCode, targetKeyword, blockedMs,
+                interestOperations, absentAllowedAtMs, probeOnly, completedRuns, totalRuns, dialogSnapshotMaxAgeMs,
+                transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
+                probeStartAtMs, scheduleAttemptId, scheduleRound, scheduleTaskRunId, scheduleOpenedAtMs,
+                scheduleObservationRunId, replayObservationRunId, replayBusinessTaskRunId,
+                expectedCombatClaimId, expectedCombatObservationRunId, expectedCombatBusinessTaskRunId,
+                expectedCombatAttemptId, npcArrivalFifo, null, null, null);
+    }
 
     /**
      * Backward-compatible constructor for the 21 pre-Amendment-#12 fields. The Amendment #12
@@ -190,7 +244,7 @@ public record TurnWholeTaskRuntimeArguments(
                 interestOperations, absentAllowedAtMs, probeOnly, completedRuns, totalRuns, dialogSnapshotMaxAgeMs,
                 transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
                 null, null, null, null, null, null, null, null, null, null, null, null,
-                null);
+                null, null, null, null);
     }
 
     public TurnWholeTaskRuntimeArguments(
@@ -210,6 +264,6 @@ public record TurnWholeTaskRuntimeArguments(
                 transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
                 probeStartAtMs, scheduleAttemptId, scheduleRound, scheduleTaskRunId, scheduleOpenedAtMs,
                 null, null, null, null, null, null, null,
-                null);
+                null, null, null, null);
     }
 }

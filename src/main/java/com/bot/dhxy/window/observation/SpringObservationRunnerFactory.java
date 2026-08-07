@@ -41,6 +41,7 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
     private final InputSequences inputSequences;
     private final LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler;
     private final DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
+    private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
     private final boolean localKandaEnabled;
 
     public SpringObservationRunnerFactory(TurnClient turnClient,
@@ -53,6 +54,7 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                                           InputSequences inputSequences,
                                           LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler,
                                           DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
+                                          XinshouRunnerAutoCombatState xinshouAutoCombatState,
                                           @Value("${bot.xiuluo.local-kanda-enabled:false}") boolean localKandaEnabled) {
         Objects.requireNonNull(turnClient, "turnClient");
         this.tenantId = Objects.requireNonNull(sidecarProperties, "sidecarProperties").getTenantId();
@@ -66,6 +68,8 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 maintenanceBroadcastHandler, "maintenanceBroadcastHandler");
         this.returnHomeReplayCoordinator = Objects.requireNonNull(
                 returnHomeReplayCoordinator, "returnHomeReplayCoordinator");
+        this.xinshouAutoCombatState = Objects.requireNonNull(
+                xinshouAutoCombatState, "xinshouAutoCombatState");
         this.localKandaEnabled = localKandaEnabled;
         if (turnClient instanceof HttpsTurnClient httpsTurnClient) {
             this.observationClient = httpsTurnClient.newObservationClient();
@@ -90,12 +94,13 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 .map(runner -> runner.getWindowContext())
                 .orElse(null);
         returnHomeReplayCoordinator.clear(context, "new acknowledged taskRun " + taskRunId);
+        xinshouAutoCombatState.begin(context, taskCode, taskRunId);
         WindowObservationSampler sampler = context == null
                 ? null
                 : new WindowObservationSampler(context, contextHolder, tracker, coordinateHelper,
                 kandaDialogService, inputSequences, taskRunId, localKandaEnabled,
                 new LocalCombatSignalMechanics(tracker, coordinateHelper),
-                returnHomeReplayCoordinator);
+                returnHomeReplayCoordinator, xinshouAutoCombatState);
         if (sampler == null) {
             log.warn("Observation runner created without a sampler (no registered window context): windowId={}",
                     windowId);

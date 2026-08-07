@@ -740,7 +740,6 @@ final class TurnContractFixtures {
         RecordingInputQueue queue = new RecordingInputQueue(contextHolder, queueComplete, events);
         TurnInputStepExecutor inputExecutor = new TurnInputStepExecutor(
                 queue,
-                new RecordingKeyboardService(),
                 contextHolder,
                 new TurnInputActionMapper(),
                 new TurnKeyMapper());
@@ -815,7 +814,6 @@ final class TurnContractFixtures {
         RecordingInputQueue inputQueue = new RecordingInputQueue(contextHolder, true, events);
         TurnInputStepExecutor inputExecutor = new TurnInputStepExecutor(
                 inputQueue,
-                new RecordingKeyboardService(),
                 contextHolder,
                 new TurnInputActionMapper(),
                 new TurnKeyMapper());

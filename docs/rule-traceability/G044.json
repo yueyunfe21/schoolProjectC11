@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "card": "G044",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G044.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingCompletionPolicy.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/WuhuanDialogCatalog.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/wuhuan/G044FiveRingFactOrderingAndStoryRecoveryContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "同一 task-run 内，接任务前的旧 TASK_NOT_FOUND 在更新 tracker/Story 事实之后仍被复用；普通 STORY 模板 miss 没有 prepared action。",
+    "userDecision": "自行修复并后台持续跑五环；发现问题停止、修复后继续。",
+    "decisionRecordedAt": "2026-08-06",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G044"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-001",
+      "producer": "Cloud observer publishes exact-window monotonic ready events; visible unknown 五环 Story publishes wuhuan.storyOther instead of empty NO_MATCH.",
+      "transport": "CloudWholeTaskReadyEventState stores exact task-run facts without TTL and assigns one process-wide monotonic sequence.",
+      "consumer": "FiveRingTaskV2 accepts TASK_TRACKER_NEGATIVE_READY only when no newer PreparedAction supersedes it; wuhuan.storyOther is clicked through the existing task-turn only outside combat.",
+      "ordering": "exact negative -> optional newer PreparedAction supersession -> current tracker decision; Story visible -> explicit miss PreparedAction -> combat guard -> task-turn Story click -> SYNC_TASK_PANEL",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/wuhuan/G044FiveRingFactOrderingAndStoryRecoveryContractTest.java",
+          "command": "isolated JUnit Console G044 contract",
+          "proves": [
+            "newer prepared sequence supersedes an older exact tracker negative without a wall-clock TTL",
+            "unknown visible Story creates the explicit wuhuan.storyOther prepared action",
+            "Story click is guarded by combat state and returns to SYNC_TASK_PANEL"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "Cloud production compile", "result": "PASS"},
+    {"name": "G044 isolated contract", "result": "PASS 3/3"},
+    {"name": "background FiveRing runtime", "result": "PENDING"}
+  ]
+}

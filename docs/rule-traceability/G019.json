@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "card": "G019",
+  "changeType": "business",
+  "status": "REVIEW_PASSED",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": [
+    "BR-WUHAN-001",
+    "BR-DIALOG-001"
+  ],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/cr-dashboard-data.js",
+    "docs/业务逻辑.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/rule-traceability/G019.json",
+    "images/template/dialog/wuhuan/temp_na_story_raw_source.png",
+    {
+      "repo": "cloud",
+      "path": ".gitignore"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/wuhuan/WuhuanDialogCatalog.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/main/resources/images/template/dialog/wuhuan/wuhuan_temporarily_unavailable_story.png"
+    },
+    {
+      "repo": "cloud",
+      "path": "images/test-cases/wuhuan/g019/temporarily-unavailable-story-raw.png"
+    },
+    {
+      "repo": "cloud",
+      "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G019WuhuanTemporaryUnavailableStoryReplayTest.java"
+    }
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "接任务点击后 Title 超时，观察器已把‘现在暂时没有’发布为 VERIFY_WHITE_TEMPLATE，但任务消费者用 INSPECT 再消费同一单槽动作；operation mismatch 返回 null 后又被错误映射为 DialogType.NONE。",
+    "userDecision": "删除这层重复 DialogType 检查。模板已命中时直接复用现有 VERIFY_WHITE_TEMPLATE 消费、clickPreparedStory 和重新接任务链，不得把消费不匹配解释为画面无 dialog。Title 正证据最多等待 2 秒，不再等待 5 秒。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G019"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-001",
+      "producer": "CloudWholeTaskObserver/WuhuanDialogCatalog 将五环‘现在暂时没有’白字模板分类为 VERIFY_WHITE_TEMPLATE。",
+      "transport": "PreparedDialogActionState 单槽状态与 PREPARED_ACTION_READY 携带 actionId、operation 和 targetKeyword。",
+      "consumer": "FiveRingTaskV2 在 Title 超时分支直接走 acceptInitialDialogAndTriggerPathing/consumePreparedAcceptDialog，消费同一个 VERIFY_WHITE_TEMPLATE，点击 Story 后返回 ACCEPT_TASK 重试。",
+      "ordering": "先等待 Title；超时后等待并消费新发布的精确 dialog 动作；模板动作消费成功后点击 Story，再重新获取 NPC 接任务，不再先做 INSPECT。",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G019WuhuanTemporaryUnavailableStoryReplayTest.java",
+          "command": "mvn -Dtest=G019WuhuanTemporaryUnavailableStoryReplayTest test",
+          "proves": [
+            "生产洗图与 0.85 阈值能把真实截图识别为 temporarily-unavailable",
+            "Title 超时消费者不再用 INSPECT 抢占 VERIFY_WHITE_TEMPLATE",
+            "精确模板动作进入现有点击并重接任务链"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-DIALOG-001",
+      "producer": "后台 dialog 观察器在真实弹窗矩形上生成精确 PreparedDialogAction。",
+      "transport": "PreparedDialogActionState 保留生产者发布的 operation/target，消费者必须按同一 actionId 和 operation 消费。",
+      "consumer": "FiveRingTaskV2 只按准备动作的真实 operation 分流，不再把 operation mismatch 的 null 转换为 DialogType.NONE。",
+      "ordering": "生产者分类完成后才消费；消费失败只能表示合同不匹配，不能作为‘没有 dialog’的视觉事实。",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/G019WuhuanTemporaryUnavailableStoryReplayTest.java",
+          "command": "mvn -Dtest=G019WuhuanTemporaryUnavailableStoryReplayTest test",
+          "proves": [
+            "真实 Story 图像识别合同保持成立",
+            "回归合同禁止 Title 超时分支再次调用 inspectPreparedDialogType",
+            "NONE 不再由操作类型不匹配产生"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "G019 business rule gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G019"
+    },
+    {
+      "name": "Cloud production compile",
+      "result": "PASS",
+      "evidence": "mvn -q -DskipTests=false compile"
+    },
+    {
+      "name": "G019 image replay, exact consumer routing, and two-second Title gate",
+      "result": "PASS",
+      "evidence": "isolated javac plus mvn surefire:test: G019WuhuanTemporaryUnavailableStoryReplayTest, 2/2 PASS, score=1.000000, Duration.ofSeconds(2L) asserted"
+    },
+    {
+      "name": "G019 scoped diff check",
+      "result": "PASS",
+      "evidence": "git diff --check PASS for G019 production, test, and governance files"
+    }
+  ]
+}

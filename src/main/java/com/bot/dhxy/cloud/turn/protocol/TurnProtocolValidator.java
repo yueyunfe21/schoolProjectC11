@@ -92,6 +92,19 @@ public final class TurnProtocolValidator {
             require(response.status() != TurnResponse.Status.CONTINUATION,
                     "CONTINUATION response must not contain taskTerminalResult");
         }
+        for (TurnTaskQueueEvent event : response.taskQueueEvents()) {
+            require(event != null, "taskQueueEvents must not contain null");
+            requireText(event.eventId(), "taskQueueEvent.eventId");
+            requireText(event.startRequestId(), "taskQueueEvent.startRequestId");
+            requireText(event.taskRunId(), "taskQueueEvent.taskRunId");
+            requireText(event.taskCode(), "taskQueueEvent.taskCode");
+            requireText(event.taskName(), "taskQueueEvent.taskName");
+            require(event.queueIndex() >= 0, "taskQueueEvent.queueIndex must not be negative");
+            require(event.type() != null, "taskQueueEvent.type must not be null");
+            require(event.elapsedMs() >= 0L, "taskQueueEvent.elapsedMs must not be negative");
+            require(response.status() != TurnResponse.Status.CONTINUATION,
+                    "CONTINUATION response must not contain taskQueueEvents");
+        }
         return response;
     }
 
@@ -160,24 +173,15 @@ public final class TurnProtocolValidator {
                     || continuation.stage() == TurnContinuationRequest.Stage.STATUS_IMAGE
                     || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_USED
                     || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_NOT_FOUND;
-            case FIVERING_ACCEPT_DIALOG -> continuation.stage()
-                    == TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE
-                    || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE
-                    || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_CLOSED;
         };
         require(kindStageAllowed,
                 continuation.stage() + " is not valid for continuation kind " + continuation.kind());
         boolean incenseImage = continuation.kind() == TurnContinuationRequest.Kind.FIVERING_INCENSE
                 && continuation.stage() == TurnContinuationRequest.Stage.STATUS_IMAGE;
-        boolean dialogImage = continuation.kind() == TurnContinuationRequest.Kind.FIVERING_ACCEPT_DIALOG
-                && (continuation.stage() == TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE
-                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE);
-        if (incenseImage || dialogImage) {
+        if (incenseImage) {
             require(continuation.frame() != null, continuation.stage() + " continuation requires frame");
             requireFrame(continuation.frame());
-            TurnFramePurpose expected = incenseImage
-                    ? TurnFramePurpose.FIVERING_INCENSE_OBSERVATION
-                    : TurnFramePurpose.FIVERING_DIALOG_OBSERVATION;
+            TurnFramePurpose expected = TurnFramePurpose.FIVERING_INCENSE_OBSERVATION;
             require(continuation.frame().purpose() == expected,
                     continuation.stage() + " frame purpose must be " + expected);
             require(Integer.valueOf(continuation.sourceStepIndex()).equals(
@@ -188,9 +192,7 @@ public final class TurnProtocolValidator {
                     continuation.stage() + " continuation must not contain frame");
         }
         boolean outcome = continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_USED
-                || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_NOT_FOUND
-                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_CLOSED
-                || continuation.stage() == TurnContinuationRequest.Stage.DIALOG_STORY_IMAGE;
+                || continuation.stage() == TurnContinuationRequest.Stage.OUTCOME_NOT_FOUND;
         if (outcome) {
             requireText(continuation.decisionId(), "continuation.decisionId");
         } else {
@@ -204,7 +206,6 @@ public final class TurnProtocolValidator {
         require(decision.directive() != null, "continuationDecision.directive must not be null");
         requireText(decision.reason(), "continuationDecision.reason");
         boolean directedAction = decision.directive() == TurnContinuationDecision.Directive.USE_INCENSE
-                || decision.directive() == TurnContinuationDecision.Directive.CLICK_ACCEPT
                 || decision.directive() == TurnContinuationDecision.Directive.CLOSE_STORY;
         if (directedAction) {
             requireText(decision.decisionId(), decision.directive() + " continuationDecision.decisionId");
@@ -212,13 +213,8 @@ public final class TurnProtocolValidator {
             require(decision.decisionId() == null,
                     decision.directive() + " continuationDecision must not contain decisionId");
         }
-        if (decision.directive() == TurnContinuationDecision.Directive.CLICK_ACCEPT) {
-            require(decision.clickX() != null && decision.clickY() != null,
-                    "CLICK_ACCEPT continuationDecision requires clickX/clickY");
-        } else {
-            require(decision.clickX() == null && decision.clickY() == null,
-                    decision.directive() + " continuationDecision must not contain click coordinates");
-        }
+        require(decision.clickX() == null && decision.clickY() == null,
+                decision.directive() + " continuationDecision must not contain click coordinates");
     }
 
     public static TurnAction requireValid(TurnAction action) {
@@ -332,6 +328,20 @@ public final class TurnProtocolValidator {
     }
 
     private static void requireInput(TurnInputAction action, TurnInputSpec input) {
+        if (input.autoCombatPanelDrag() != null) {
+            require(Boolean.TRUE.equals(input.autoCombatPanelDrag()) && action == TurnInputAction.DRAG_LEFT,
+                    "autoCombatPanelDrag=true is valid only for DRAG_LEFT");
+        }
+        if (input.coordinateSpace() != null) {
+            require(action == TurnInputAction.MOVE_MOUSE
+                            || action == TurnInputAction.CLICK_LEFT
+                            || action == TurnInputAction.CLICK_RIGHT
+                            || action == TurnInputAction.DOUBLE_CLICK_LEFT
+                            || action == TurnInputAction.DOUBLE_CLICK_RIGHT
+                            || action == TurnInputAction.DRAG_LEFT
+                            || action == TurnInputAction.SCROLL,
+                    "coordinateSpace is valid only for mouse input");
+        }
         switch (action) {
             case MOVE_MOUSE -> {
                 requirePoint(input.x(), input.y(), "input");
@@ -443,6 +453,12 @@ public final class TurnProtocolValidator {
         require(call.operation() == TurnLocalOperation.TASK_TRACKER_CAPTURE_PANEL
                         || call.taskTracker() == null,
                 "only TASK_TRACKER_CAPTURE_PANEL may contain taskTracker arguments");
+        require(call.operation() == TurnLocalOperation.XINSHOU_TRACKER_LINK_CHAIN
+                        || call.xinshouTrackerChain() == null,
+                "only XINSHOU_TRACKER_LINK_CHAIN may contain xinshou tracker-chain arguments");
+        require(call.operation() == TurnLocalOperation.XINSHOU_MECHANICAL_ACTION
+                        || call.xinshouMechanical() == null,
+                "only XINSHOU_MECHANICAL_ACTION may contain xinshou mechanical arguments");
         return switch (call.operation()) {
             case BAG_RETURN_ITEM -> {
                 require(call.bag() != null && call.ui() == null && call.giveItem() == null && call.quest() == null,
@@ -450,7 +466,8 @@ public final class TurnProtocolValidator {
                 requireBag(call.bag());
                 yield 0;
             }
-            case BAG_USE_INCENSE, UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, HOST_SLEEP_COMPUTER,
+            case BAG_USE_INCENSE, UI_CLEAN_ALL, UI_CLOSE_GENERIC_WINDOWS, UI_PROBE_GENERIC_CLOSE,
+                 HOST_SLEEP_COMPUTER,
                     MAP_SURVEY_POINTER_SAMPLE, LEFT_TOP_STATUS_OBSERVE -> {
                 require(call.bag() == null && call.ui() == null && call.giveItem() == null
                                 && call.quest() == null && call.wholeTaskRuntime() == null
@@ -492,6 +509,44 @@ public final class TurnProtocolValidator {
                 requireText(call.taskTracker().source(), "localService.taskTracker.source");
                 yield 1;
             }
+            case XINSHOU_TRACKER_LINK_CHAIN -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() == null && call.taskTracker() == null
+                                && call.xinshouDrag() == null && call.xinshouTrackerChain() != null,
+                        "XINSHOU_TRACKER_LINK_CHAIN requires only xinshou tracker-chain arguments");
+                requireText(call.xinshouTrackerChain().source(), "localService.xinshouTrackerChain.source");
+                requireSourceWindowRect(
+                        call.xinshouTrackerChain().sourceWindowLeft(),
+                        call.xinshouTrackerChain().sourceWindowTop(),
+                        call.xinshouTrackerChain().sourceWindowWidth(),
+                        call.xinshouTrackerChain().sourceWindowHeight(),
+                        "XINSHOU_TRACKER_LINK_CHAIN");
+                require(call.xinshouTrackerChain().links().size() == 1,
+                        "XINSHOU_TRACKER_LINK_CHAIN requires exactly one parser-selected link");
+                for (TurnXinshouTrackerLink link : call.xinshouTrackerChain().links()) {
+                    require(link != null,
+                            "XINSHOU_TRACKER_LINK_CHAIN link must not be null");
+                    requirePointInsideSourceWindow(
+                            link.x(), link.y(),
+                            call.xinshouTrackerChain().sourceWindowLeft(),
+                            call.xinshouTrackerChain().sourceWindowTop(),
+                            call.xinshouTrackerChain().sourceWindowWidth(),
+                            call.xinshouTrackerChain().sourceWindowHeight(),
+                            "XINSHOU_TRACKER_LINK_CHAIN link");
+                }
+                yield 0;
+            }
+            case XINSHOU_MECHANICAL_ACTION -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.metric() == null && call.taskTracker() == null
+                                && call.xinshouDrag() == null && call.xinshouTrackerChain() == null
+                                && call.xinshouMechanical() != null,
+                        "XINSHOU_MECHANICAL_ACTION requires only xinshou mechanical arguments");
+                requireXinshouMechanical(call.xinshouMechanical());
+                yield 0;
+            }
             case WHOLE_TASK_PATHING_REGISTER,
                  WHOLE_TASK_PATHING_READ,
                  WHOLE_TASK_PATHING_CLEAR_INTENT,
@@ -524,11 +579,35 @@ public final class TurnProtocolValidator {
                   WHOLE_TASK_RETURN_HOME_REPLAY_ARM,
                   WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM,
                   WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME,
-                  WUHUAN_ACCEPT_DIALOG_EXCLUSIVE -> {
+                  XIULUO_ACCEPT_DIALOG_TEMPLATE,
+                  JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
+                  CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
+                  CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> {
                 require(call.bag() == null && call.ui() == null && call.giveItem() == null
                                 && call.quest() == null && call.wholeTaskRuntime() != null,
                         call.operation() + " requires only wholeTaskRuntime arguments");
                 requireWholeTaskRuntime(call.operation(), call.wholeTaskRuntime());
+                yield 0;
+            }
+            case XINSHOU_DRAG_SWEEP -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.xinshouDrag() != null,
+                        "XINSHOU_DRAG_SWEEP requires only xinshouDrag arguments");
+                TurnXinshouDragArguments drag = call.xinshouDrag();
+                require(drag.segment() > 0, "XINSHOU_DRAG_SWEEP.segment must be positive");
+                require(drag.rightX() >= drag.leftX(), "XINSHOU_DRAG_SWEEP right bound must not precede left");
+                require(drag.endY() >= drag.startY(), "XINSHOU_DRAG_SWEEP endY must not precede startY");
+                require(drag.rowStepPx() > 0, "XINSHOU_DRAG_SWEEP.rowStepPx must be positive");
+                require(drag.progressRoiWidth() > 0 && drag.progressRoiHeight() > 0,
+                        "XINSHOU_DRAG_SWEEP progress ROI must be a nonempty region");
+                yield 0;
+            }
+            case XINSHOU_DRAG_RELEASE -> {
+                require(call.bag() == null && call.ui() == null && call.giveItem() == null
+                                && call.quest() == null && call.wholeTaskRuntime() == null
+                                && call.xinshouDrag() == null,
+                        "XINSHOU_DRAG_RELEASE takes no arguments");
                 yield 0;
             }
             case BAG_FIVERING_SUPPLY_CHECK -> {
@@ -580,6 +659,94 @@ public final class TurnProtocolValidator {
                 yield 0;
             }
         };
+    }
+
+    private static void requireXinshouMechanical(TurnXinshouMechanicalArguments arguments) {
+        require(arguments.action() != null,
+                "XINSHOU_MECHANICAL_ACTION.action must not be null");
+        switch (arguments.action()) {
+            case CLICK_RECOVERY_TEMPLATE -> {
+                requireText(arguments.recoveryTemplateName(),
+                        "CLICK_RECOVERY_TEMPLATE.recoveryTemplateName");
+                require("tiaoguo.png".equals(arguments.recoveryTemplateName())
+                                || "quedingguan_.png".equals(arguments.recoveryTemplateName())
+                                || "confirm.png".equals(arguments.recoveryTemplateName()),
+                        "CLICK_RECOVERY_TEMPLATE.recoveryTemplateName is not allow-listed");
+                requireNoPreparedPoint(arguments, "CLICK_RECOVERY_TEMPLATE");
+            }
+            case CLICK_PREPARED_POINT, CAPTURE_COMBAT -> {
+                String operation = arguments.action().name();
+                require(arguments.recoveryTemplateName() == null,
+                        operation + " must not contain recoveryTemplateName");
+                require(arguments.screenX() != null && arguments.screenY() != null,
+                        operation + " requires screenX/screenY");
+                require(arguments.sourceWindowLeft() != null
+                                && arguments.sourceWindowTop() != null
+                                && arguments.sourceWindowWidth() != null
+                                && arguments.sourceWindowHeight() != null,
+                        operation + " requires complete source window rect");
+                requireSourceWindowRect(
+                        arguments.sourceWindowLeft(),
+                        arguments.sourceWindowTop(),
+                        arguments.sourceWindowWidth(),
+                        arguments.sourceWindowHeight(),
+                        operation);
+                requirePointInsideSourceWindow(
+                        arguments.screenX(), arguments.screenY(),
+                        arguments.sourceWindowLeft(), arguments.sourceWindowTop(),
+                        arguments.sourceWindowWidth(), arguments.sourceWindowHeight(),
+                        operation);
+            }
+            case CONFIRM_ADOPTION,
+                 USE_UPGRADE_ITEM_AND_CLOSE_GENERIC_WINDOWS,
+                 USE_SHELL_AND_BLOW,
+                 HAND_IN_MATERIALS,
+                 REPAIR_ITEMS_ONCE,
+                 CLOSE_REPAIR_WINDOW,
+                 USE_LUNHUI_ITEM_AND_START,
+                 PRESS_ESCAPE,
+                 PRESS_ORDINARY_AUTO_COMBAT,
+                 RESTORE_AUTO_COMBAT -> {
+                require(arguments.recoveryTemplateName() == null,
+                        arguments.action() + " must not contain action-specific arguments");
+                requireNoPreparedPoint(arguments, arguments.action().name());
+            }
+        }
+    }
+
+    private static void requireNoPreparedPoint(
+            TurnXinshouMechanicalArguments arguments,
+            String operation) {
+        require(arguments.screenX() == null
+                        && arguments.screenY() == null
+                        && arguments.sourceWindowLeft() == null
+                        && arguments.sourceWindowTop() == null
+                        && arguments.sourceWindowWidth() == null
+                        && arguments.sourceWindowHeight() == null,
+                operation + " must not contain prepared-point geometry");
+    }
+
+    private static void requireSourceWindowRect(
+            int left,
+            int top,
+            int width,
+            int height,
+            String field) {
+        require(width > 0 && height > 0, field + " source window size must be positive");
+    }
+
+    private static void requirePointInsideSourceWindow(
+            int x,
+            int y,
+            int left,
+            int top,
+            int width,
+            int height,
+            String field) {
+        long right = (long) left + width;
+        long bottom = (long) top + height;
+        require(x >= left && y >= top && x < right && y < bottom,
+                field + " point must be inside source window rect");
     }
 
     private static void requireMetric(TurnLocalOperation operation, TurnMetricEventPayload m) {
@@ -726,8 +893,10 @@ public final class TurnProtocolValidator {
                 requireText(a.replayBusinessTaskRunId(),
                         "WHOLE_TASK_RETURN_HOME_REPLAY_ARM.replayBusinessTaskRunId");
                 require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
+                                || "XINSHOU_TRAINING".equalsIgnoreCase(a.taskCode())
+                                || "CATCH_GHOST".equalsIgnoreCase(a.taskCode())
                                 || "WUBEI".equalsIgnoreCase(a.taskCode()),
-                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM supports only XIULUO_V2/WUBEI");
+                        "WHOLE_TASK_RETURN_HOME_REPLAY_ARM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
             }
             case WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM -> {
                 requireText(a.taskCode(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.taskCode");
@@ -738,8 +907,11 @@ public final class TurnProtocolValidator {
                         "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.businessTaskRunId");
                 requireText(a.expectedCombatAttemptId(), "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM.attemptId");
                 require("XIULUO_V2".equalsIgnoreCase(a.taskCode())
+                                || "XINSHOU_TRAINING".equalsIgnoreCase(a.taskCode())
+                                || "CATCH_GHOST".equalsIgnoreCase(a.taskCode())
+                                || "TIANTING".equalsIgnoreCase(a.taskCode())
                                 || "WUBEI".equalsIgnoreCase(a.taskCode()),
-                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM supports only XIULUO_V2/WUBEI");
+                        "WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/TIANTING/WUBEI");
             }
             case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME -> {
                 requireText(a.intentId(), "WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME.intentId");
@@ -771,8 +943,18 @@ public final class TurnProtocolValidator {
                                     || "NOT_FLYING".equals(a.startupFlyingState())
                                     || "UNKNOWN".equals(a.startupFlyingState())),
                             "WHOLE_TASK_STARTUP_FLYING_STATE_UPDATE requires a valid startupFlyingState");
+            case WHOLE_TASK_RECOVERY_RESET -> {
+                boolean anyExactIdentity = a.recoveryTaskRunId() != null
+                        || a.recoveryRound() != null
+                        || a.recoveryAttemptId() != null;
+                if (anyExactIdentity) {
+                    requireText(a.recoveryTaskRunId(), "WHOLE_TASK_RECOVERY_RESET.taskRunId");
+                    require(a.recoveryRound() != null && a.recoveryRound() > 0,
+                            "WHOLE_TASK_RECOVERY_RESET.round must be positive");
+                    requireText(a.recoveryAttemptId(), "WHOLE_TASK_RECOVERY_RESET.attemptId");
+                }
+            }
             case WHOLE_TASK_PATHING_CLEAR,
-                 WHOLE_TASK_RECOVERY_RESET,
                  WHOLE_TASK_PATHING_READ,
                  WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
                  WHOLE_TASK_TARGET_MAP_GATE_OPEN,
@@ -782,7 +964,10 @@ public final class TurnProtocolValidator {
                  WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR,
                  WHOLE_TASK_DIALOG_INTEREST_CLEAR,
                  WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME,
-                 WUHUAN_ACCEPT_DIALOG_EXCLUSIVE -> {
+                 XIULUO_ACCEPT_DIALOG_TEMPLATE,
+                 JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
+                 CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
+                 CATCH_GHOST_CANCEL_DIALOG_TEMPLATE -> {
                 // source-only operations: no additional payload fields required.
             }
             default -> throw new IllegalArgumentException(
@@ -805,6 +990,7 @@ public final class TurnProtocolValidator {
         SCHEDULE_OBSERVATION_RUN,
         REPLAY_OBSERVATION_RUN, REPLAY_BUSINESS_TASK_RUN, EXPECTED_CLAIM_ID,
         EXPECTED_OBSERVATION_RUN, EXPECTED_BUSINESS_TASK_RUN, EXPECTED_ATTEMPT_ID,
+        RECOVERY_TASK_RUN, RECOVERY_ROUND, RECOVERY_ATTEMPT,
         NPC_ARRIVAL_FIFO
     }
 
@@ -847,6 +1033,9 @@ public final class TurnProtocolValidator {
         if (a.expectedCombatObservationRunId() != null) present.add(WtField.EXPECTED_OBSERVATION_RUN);
         if (a.expectedCombatBusinessTaskRunId() != null) present.add(WtField.EXPECTED_BUSINESS_TASK_RUN);
         if (a.expectedCombatAttemptId() != null) present.add(WtField.EXPECTED_ATTEMPT_ID);
+        if (a.recoveryTaskRunId() != null) present.add(WtField.RECOVERY_TASK_RUN);
+        if (a.recoveryRound() != null) present.add(WtField.RECOVERY_ROUND);
+        if (a.recoveryAttemptId() != null) present.add(WtField.RECOVERY_ATTEMPT);
         if (a.npcArrivalFifo() != null) present.add(WtField.NPC_ARRIVAL_FIFO);
         return present;
     }
@@ -886,12 +1075,17 @@ public final class TurnProtocolValidator {
             case WHOLE_TASK_NPC_ARRIVAL_FIFO_CONSUME ->
                     EnumSet.of(WtField.INTENT_ID, WtField.TASK_CODE, WtField.TARGET_KEYWORD,
                             WtField.NPC_ARRIVAL_FIFO);
-            case WHOLE_TASK_PATHING_READ, WHOLE_TASK_PATHING_CLEAR, WHOLE_TASK_RECOVERY_RESET, WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
+            case WHOLE_TASK_RECOVERY_RESET -> EnumSet.of(
+                    WtField.RECOVERY_TASK_RUN, WtField.RECOVERY_ROUND, WtField.RECOVERY_ATTEMPT);
+            case WHOLE_TASK_PATHING_READ, WHOLE_TASK_PATHING_CLEAR, WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ,
                  WHOLE_TASK_PRE_BATTLE_TIMER_READ,
                  WHOLE_TASK_PRE_BATTLE_FACT_READ,
                  WHOLE_TASK_PRE_BATTLE_TIMEOUT_MARK, WHOLE_TASK_TARGET_MAP_GATE_OPEN,
                  WHOLE_TASK_PRE_BATTLE_TIMER_CLEAR, WHOLE_TASK_DIALOG_INTEREST_CLEAR,
-                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, WUHUAN_ACCEPT_DIALOG_EXCLUSIVE ->
+                 WHOLE_TASK_STARTUP_FLYING_STATE_CONSUME, XIULUO_ACCEPT_DIALOG_TEMPLATE,
+                 JIANGHU_LILIAN_ACCEPT_DIALOG_TEMPLATE,
+                 CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE,
+                 CATCH_GHOST_CANCEL_DIALOG_TEMPLATE ->
                     EnumSet.noneOf(WtField.class);
             default -> throw new IllegalArgumentException(
                     "non-whole-task operation routed to allowedWholeTaskFields: " + operation);
@@ -910,9 +1104,11 @@ public final class TurnProtocolValidator {
                     "localService.bag.retainedReplayObservationRunId");
             requireText(bag.retainedReplayBusinessTaskRunId(),
                     "localService.bag.retainedReplayBusinessTaskRunId");
-            require("XIULUO_V2".equalsIgnoreCase(bag.retainedReplayTaskCode())
+                require("XIULUO_V2".equalsIgnoreCase(bag.retainedReplayTaskCode())
+                                || "XINSHOU_TRAINING".equalsIgnoreCase(bag.retainedReplayTaskCode())
+                                || "CATCH_GHOST".equalsIgnoreCase(bag.retainedReplayTaskCode())
                             || "WUBEI".equalsIgnoreCase(bag.retainedReplayTaskCode()),
-                    "retained replay supports only XIULUO_V2/WUBEI");
+                    "retained replay supports only XIULUO_V2/XINSHOU_TRAINING/CATCH_GHOST/WUBEI");
             require(bag.intent() == TurnBagOperationArguments.ReturnItemIntent.USE_CACHED_RETURN_ITEM
                             || bag.intent() == TurnBagOperationArguments.ReturnItemIntent.FIND_AND_USE_TASK_PAGE,
                     "retained replay requires a return-item use intent");
@@ -1045,11 +1241,11 @@ public final class TurnProtocolValidator {
             require(maxRuns != null,
                     "taskStartRequest.taskMaxRuns[" + index + "] must not be null");
             switch (taskCode) {
-                case WUBEI, XIULUO_V2 -> require(maxRuns >= 0,
+                case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WILD_BATTLE, AUTO_BATTLE, TIANTING -> require(maxRuns >= 0,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be >= 0 for " + taskCode);
                 case WUHUAN_V2 -> require(maxRuns == 1 || maxRuns == 2,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 or 2 for " + taskCode);
-                case AUTO_BATTLE, SLEEP_COMPUTER -> require(maxRuns == 1,
+                case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST -> require(maxRuns == 1,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 for " + taskCode);
             }
         }

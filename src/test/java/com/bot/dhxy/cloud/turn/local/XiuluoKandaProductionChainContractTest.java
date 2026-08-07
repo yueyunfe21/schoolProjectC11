@@ -275,7 +275,6 @@ class XiuluoKandaProductionChainContractTest {
                     contextHolder,
                     new LocalMovementFactMechanics(
                             nullTracker(), new CoordinateHelper(null, null), contextHolder),
-                    allocate(FiveRingAcceptDialogLocalOperation.class),
                     new ObjectMapper());
         }
 
@@ -323,7 +322,7 @@ class XiuluoKandaProductionChainContractTest {
         }
 
         private static GameClientTracker nullTracker() {
-            return new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null);
+            return new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -333,7 +332,7 @@ class XiuluoKandaProductionChainContractTest {
         private DialogService.LocalDialogTemplateMatch revalidateResult;
 
         ScriptedDialogService() {
-            super(new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null, null),
+            super(new GameClientTracker(null, null, null, null, null, null, null, null, null, null, null),
                     new CoordinateHelper(null, null));
         }
 

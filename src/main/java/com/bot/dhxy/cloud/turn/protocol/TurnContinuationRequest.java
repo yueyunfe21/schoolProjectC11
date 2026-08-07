@@ -12,17 +12,13 @@ public record TurnContinuationRequest(
         String decisionId) {
 
     public enum Kind {
-        FIVERING_INCENSE,
-        FIVERING_ACCEPT_DIALOG
+        FIVERING_INCENSE
     }
 
     public enum Stage {
         TICK,
         STATUS_IMAGE,
         OUTCOME_USED,
-        OUTCOME_NOT_FOUND,
-        DIALOG_OPTION_IMAGE,
-        DIALOG_STORY_IMAGE,
-        DIALOG_STORY_CLOSED
+        OUTCOME_NOT_FOUND
     }
 }

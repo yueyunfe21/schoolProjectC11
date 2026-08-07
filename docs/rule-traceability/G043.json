@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "card": "G043",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-WUHAN-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G043.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudWholeTaskReadyEventState.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/task/wuhuan/G043WuhuanAcceptDialogPresenceConnectivityContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "conflictSummary": "直接接任务路径安装了 DialogInterest 并等待 PreparedAction，但没有武装已有五环 presence observation，导致生产者不可达。",
+    "userDecision": "按现有五环 Cloud PreparedAction 设计修复并在后台持续实跑；发现异常停止、修复后继续。",
+    "decisionRecordedAt": "2026-08-06",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G043"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-001",
+      "producer": "FiveRingTaskV2.acceptInitialDialogAndTriggerPathing 在 NPC Dialog 已打开后武装 exact observation-run 的五环 title/dialog presence 兴趣；Client WuhuanPresenceLocalMechanics 从共享周期帧产生 WUHUAN_DIALOG_PRESENCE。",
+      "transport": "Observation request 携带 exact taskRunId/windowId/HWND/observerSeq 的 WUHUAN_DIALOG_PRESENCE；CloudWindowObservationInbox 创建唯一 wuhuan-dialog FrameDemand，Client 回传 exact demanded frame。",
+      "consumer": "CloudWholeTaskObserver 分类 demanded frame、发布唯一 PreparedDialogAction 与 PREPARED_ACTION_READY；FiveRingTaskV2 仅消费当前 exact action，并在点击后等待 Title 确认。",
+      "ordering": "NPC FIFO VERIFIED -> arm Wuhuan presence interests -> install phase-owned DialogInterest -> dialog presence -> unique FrameDemand -> exact frame -> PreparedAction -> PREPARED_ACTION_READY -> option click -> Title confirmation",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/task/wuhuan/G043WuhuanAcceptDialogPresenceConnectivityContractTest.java",
+          "command": "focused G043 connectivity/ordering contract",
+          "proves": [
+            "direct accept path arms Wuhuan presence before installing DialogInterest",
+            "the arming method registers WUHUAN_DIALOG_PRESENCE_INTEREST",
+            "Cloud observer turns presence into the wuhuan-dialog demand and PreparedAction",
+            "the task wakes only through PREPARED_ACTION_READY before consuming the option action"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {"name": "G043 business-rule gate", "result": "PENDING"},
+    {"name": "Cloud production compile", "result": "PENDING"},
+    {"name": "Cloud G043 connectivity contract", "result": "PENDING"},
+    {"name": "background FiveRing runtime", "result": "PENDING"}
+  ]
+}

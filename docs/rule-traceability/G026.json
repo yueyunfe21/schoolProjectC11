@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "card": "G026",
+  "changeType": "business",
+  "status": "BLOCKED_USER_DECISION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": [
+    "BR-DIALOG-001",
+    "BR-WUHAN-002"
+  ],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/cr-dashboard-data.js",
+    "src/test/java/com/bot/dhxy/service/G026ReadOnlyGenericCloseProbeContractTest.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/LocalServiceStepDispatcher.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/local/UiLocalOperationExecutor.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java",
+    "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java",
+    "src/main/java/com/bot/dhxy/service/UICleanerService.java",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnLocalOperation.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/cloud/turn/protocol/TurnProtocolValidator.java"},
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/dialog/DialogFingerprintWashMode.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/model/dialog/PreparedDialogAction.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/DialogService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/remote/CloudUiCleanerPort.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/client/CloudUiCleanerLocalServiceClient.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/G026TrackerRawAndRouteFrameContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/G026FiveRingTimeAndBlockerContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "五环 prepared action 与 Runner 事实仍被 2.5s/10s/3s/20s 墙钟年龄淘汰，且 route dialog 可能用固定最大 dialogRect 外围画面作为验证证据。",
+    "userDecision": "用户明确要求 Tracker 改为完整 task-box 原图直接匹配且阈值 0.80；route 删除 10 秒年龄门并只用 frameRect；移动事实等待 Runner；20 秒以上位置先做只读遮挡与坐标不变验证后复用。1 秒 intent grace 仅记录不实施。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G026"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-DIALOG-001",
+      "producer": "Runner 提供 exact-window Tracker ROI、分类器确认的 dialog frameRect 与当前 dialog presence 事实。",
+      "transport": "prepared action 保留 run/window/HWND/operation/target/intent 绑定；点击前由 Client 截取同一 ROI 并把验证结果返回 Cloud。",
+      "consumer": "FiveRingTaskV2 仅在完整 task-box 原图分数达到 0.80 或既有 route frameRect 视觉校验通过后消费 Cloud 点击坐标。",
+      "ordering": "Runner frame -> Cloud prepare -> foreground acquire -> exact ROI recapture -> content validation -> click or park for a newer Runner frame",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/G026TrackerRawAndRouteFrameContractTest.java",
+          "command": "isolated javac -proc:none + java G026TrackerRawAndRouteFrameContractTest",
+          "proves": [
+            "完整 task-box 原尺寸 RGB 直接比较阈值为 0.80 且不洗图",
+            "route prepared-action 验证区域被限制在 classifier frameRect"
+          ]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/service/G026ReadOnlyGenericCloseProbeContractTest.java",
+          "command": "isolated javac -proc:none + java G026ReadOnlyGenericCloseProbeContractTest",
+          "proves": [
+            "generic-close 探测复用同一 exact-window frame",
+            "只读探测不进入 input queue 且 UNKNOWN fail-closed"
+          ]
+        }
+      ]
+    },
+    {
+      "rule": "BR-WUHAN-002",
+      "producer": "Runner 持续发布同 run/window/HWND/intent 的移动状态、地图名、小坐标和 exact-window 屏幕事实。",
+      "transport": "Cloud 等待 Runner 更新；位置预热超过 20 秒时通过只读 UI local operation 检查 generic-close，并复用现有 dialog runtime fact。",
+      "consumer": "FiveRingTaskV2 在无遮挡且地图与小坐标未变化时复用旧位置，否则等待新事实或按既有 90 秒恢复边界重新请求。",
+      "ordering": "prepared position -> age exceeds 20s -> read-only obstruction probe -> Runner dialog fact -> current map/coordinate comparison -> reuse, refresh, or park",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/G026FiveRingTimeAndBlockerContractTest.java",
+          "command": "isolated javac -proc:none + java G026FiveRingTimeAndBlockerContractTest",
+          "proves": [
+            "2.5s/10s/3s 年龄门已移除且 90s 恢复边界保留",
+            "20s 以上位置仅在无遮挡和 Runner 坐标未变时复用",
+            "observer 不再通过不可达 stale-clear 分支清除 Tracker 证据"
+          ]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/service/G026ReadOnlyGenericCloseProbeContractTest.java",
+          "command": "isolated javac -proc:none + java G026ReadOnlyGenericCloseProbeContractTest",
+          "proves": [
+            "generic-close 模板全量只读扫描",
+            "探测失败不会被解释为无遮挡"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "Client and Cloud production compile",
+      "result": "PASS",
+      "evidence": "Client and Cloud: mvn -q -DskipTests=false compile"
+    },
+    {
+      "name": "G026 isolated contracts",
+      "result": "PASS",
+      "evidence": "Cloud G026TrackerRawAndRouteFrameContractTest + G026FiveRingTimeAndBlockerContractTest; Client G026ReadOnlyGenericCloseProbeContractTest"
+    },
+    {
+      "name": "Protocol mirror and scoped diff checks",
+      "result": "PASS",
+      "evidence": "TurnLocalOperation.java and TurnProtocolValidator.java SHA-256 equal across repositories; scoped git diff --check passed"
+    }
+  ]
+}

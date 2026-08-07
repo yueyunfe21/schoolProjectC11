@@ -80,6 +80,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -188,6 +189,8 @@ public class MainWindowController {
     private ComboBox<Integer> petHpThresholdComboBox;
     private ComboBox<Integer> petMpThresholdComboBox;
     private TextField xiuluoRunCountField;
+    private TextField xinshouTrainingRunCountField;
+    private TextField catchGhostRunCountField;
     private ComboBox<Integer> wuhuanRunCountComboBox;
     private TextField fivefoldRunCountField;
     private CheckBox summonSkillCleanEnabledCheckBox;
@@ -228,6 +231,7 @@ public class MainWindowController {
     private final Map<TaskType, String> taskCountSummaries = createDefaultTaskCountSummaries();
     private final List<Button> taskTileButtons = new ArrayList<>();
     private final List<Button> mapSurveyButtons = new ArrayList<>();
+    private Button yipinGuardTestButton;
     private final Map<String, Label> selectedWindowDetailValueLabels = new LinkedHashMap<>();
     private List<String> pendingAutoSelectedWindowIds = List.of();
     private TaskType activeTaskCountType;
@@ -248,6 +252,11 @@ public class MainWindowController {
         summaries.put(TaskType.WUHuan_V2, "1轮");
         summaries.put(TaskType.WUBEI, "1次");
         summaries.put(TaskType.XIULUO_V2, "1次");
+        summaries.put(TaskType.XINSHOU, "1小时");
+        summaries.put(TaskType.XINSHOU_TRAINING, "1次");
+        summaries.put(TaskType.CATCH_GHOST, "1次");
+        summaries.put(TaskType.WILD_BATTLE, "无限");
+        summaries.put(TaskType.TIANTING, "1轮");
         summaries.put(TaskType.AUTO_BATTLE, "无限");
         summaries.put(TaskType.SLEEP_COMPUTER, "收尾");
         return summaries;
@@ -343,9 +352,9 @@ public class MainWindowController {
         startCurrentTaskButton = new Button("启动当前任务");
         startWindowSelectedTaskButton = new Button("启动已选任务");
         pauseSelectedWindowsButton = new Button("暂停选中窗口");
-        resumeSelectedWindowsButton = new Button("继续选中窗口");
+        resumeSelectedWindowsButton = new Button("重新启动选中窗口");
         pauseAllWindowsButton = new Button("暂停全部窗口");
-        resumeAllWindowsButton = new Button("继续全部窗口");
+        resumeAllWindowsButton = new Button("重新启动全部窗口");
         stopSelectedWindowsButton = new Button("停止选中窗口");
         stopAllWindowsButton = new Button("停止全部窗口");
         unregisterSelectedWindowsButton = new Button("移除选中窗口");
@@ -369,9 +378,9 @@ public class MainWindowController {
         unregisterSelectedWindowsMenuItem = new MenuItem("移除选中窗口");
         unregisterAllWindowsMenuItem = new MenuItem("移除全部窗口");
         pauseSelectedWindowsMenuItem = new MenuItem("暂停选中窗口");
-        resumeSelectedWindowsMenuItem = new MenuItem("继续选中窗口");
+        resumeSelectedWindowsMenuItem = new MenuItem("重新启动选中窗口");
         pauseAllWindowsMenuItem = new MenuItem("暂停全部窗口");
-        resumeAllWindowsMenuItem = new MenuItem("继续全部窗口");
+        resumeAllWindowsMenuItem = new MenuItem("重新启动全部窗口");
         stopSelectedWindowsMenuItem = new MenuItem("停止选中窗口");
         stopAllWindowsMenuItem = new MenuItem("停止全部窗口");
         windowSelectionMenuButton.getItems().setAll(
@@ -408,6 +417,8 @@ public class MainWindowController {
         petHpThresholdComboBox = buildSupplyThresholdComboBox(botProperties.getPetHpSupplyThreshold());
         petMpThresholdComboBox = buildSupplyThresholdComboBox(botProperties.getPetMpSupplyThreshold());
         xiuluoRunCountField = buildTaskRunCountField(botProperties.getXiuluoMaxRuns());
+        xinshouTrainingRunCountField = buildTaskRunCountField(botProperties.getXinshouTrainingMaxRuns());
+        catchGhostRunCountField = buildTaskRunCountField(botProperties.getCatchGhostMaxRuns());
         wuhuanRunCountComboBox = buildWuhuanRunCountComboBox(botProperties.getWuhuanMaxRuns());
         fivefoldRunCountField = buildTaskRunCountField(botProperties.getFivefoldMaxRuns());
         syncTaskCountSummariesFromProperties();
@@ -570,9 +581,13 @@ public class MainWindowController {
             return;
         }
         int xiuluoRuns = readRunCountField(xiuluoRunCountField);
+        int xinshouTrainingRuns = readRunCountField(xinshouTrainingRunCountField);
+        int catchGhostRuns = readRunCountField(catchGhostRunCountField);
         int wuhuanRuns = normalizeWuhuanRunCount(wuhuanRunCountComboBox.getValue());
         int fivefoldRuns = readRunCountField(fivefoldRunCountField);
         botProperties.setXiuluoMaxRuns(xiuluoRuns);
+        botProperties.setXinshouTrainingMaxRuns(xinshouTrainingRuns);
+        botProperties.setCatchGhostMaxRuns(catchGhostRuns);
         botProperties.setWuhuanMaxRuns(wuhuanRuns);
         botProperties.setFivefoldMaxRuns(fivefoldRuns);
         botProperties.setSummonSkillCleanEnabled(summonSkillCleanEnabledCheckBox.isSelected());
@@ -601,6 +616,8 @@ public class MainWindowController {
         showApplySettingsFeedback();
 
         addWindowLog("设置已应用：修罗=" + botProperties.getXiuluoMaxRuns()
+                + " 江湖历练=" + botProperties.getXinshouTrainingMaxRuns()
+                + " 抓鬼=" + botProperties.getCatchGhostMaxRuns()
                 + " 五环=" + botProperties.getWuhuanMaxRuns()
                 + " 五倍=" + botProperties.getFivefoldMaxRuns()
                 + " 前置检查=" + (botProperties.isTaskStartupPreparationEnabled() ? "开" : "关")
@@ -659,9 +676,19 @@ public class MainWindowController {
     private void syncTaskCountSummariesFromProperties() {
         taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(botProperties.getXiuluoMaxRuns(), "次"));
+        taskCountSummaries.put(TaskType.XINSHOU_TRAINING,
+                formatTaskCountSummary(botProperties.getXinshouTrainingMaxRuns(), "次"));
+        taskCountSummaries.put(TaskType.CATCH_GHOST,
+                formatTaskCountSummary(botProperties.getCatchGhostMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(botProperties.getFivefoldMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
-        taskCountSummaries.put(TaskType.AUTO_BATTLE, "无限");
+        taskCountSummaries.put(TaskType.XINSHOU, "1小时");
+        taskCountSummaries.put(TaskType.WILD_BATTLE,
+                formatTaskCountSummary(botProperties.getWildBattleDurationMinutes(), "分钟"));
+        taskCountSummaries.put(TaskType.TIANTING,
+                formatTaskCountSummary(botProperties.getTiantingMaxRuns(), "轮"));
+        taskCountSummaries.put(TaskType.AUTO_BATTLE,
+                formatTaskCountSummary(botProperties.getAutoBattleDurationMinutes(), "分钟"));
         refreshTaskTiles();
     }
 
@@ -691,7 +718,11 @@ public class MainWindowController {
      * their badges may represent time or manual/debug modes rather than a game-task run count.
      */
     private void syncTaskRunCountToProperties(TaskType taskType, int value) {
-        int normalized = normalizeRunCount(value);
+        // Duration tasks normalise a blank to 无限; run-count tasks normalise it to one run. See
+        // normalizeDurationMinutes.
+        int normalized = isDurationTask(taskType)
+                ? normalizeDurationMinutes(value)
+                : normalizeRunCount(value);
         switch (taskType) {
             case XIULUO, XIULUO_V2 -> {
                 botProperties.setXiuluoMaxRuns(normalized);
@@ -700,6 +731,20 @@ public class MainWindowController {
                 }
                 taskCountSummaries.put(TaskType.XIULUO, formatTaskCountSummary(normalized, "次"));
                 taskCountSummaries.put(TaskType.XIULUO_V2, formatTaskCountSummary(normalized, "次"));
+            }
+            case XINSHOU_TRAINING -> {
+                botProperties.setXinshouTrainingMaxRuns(normalized);
+                if (xinshouTrainingRunCountField != null) {
+                    xinshouTrainingRunCountField.setText(String.valueOf(normalized));
+                }
+                taskCountSummaries.put(TaskType.XINSHOU_TRAINING, formatTaskCountSummary(normalized, "次"));
+            }
+            case CATCH_GHOST -> {
+                botProperties.setCatchGhostMaxRuns(normalized);
+                if (catchGhostRunCountField != null) {
+                    catchGhostRunCountField.setText(String.valueOf(normalized));
+                }
+                taskCountSummaries.put(TaskType.CATCH_GHOST, formatTaskCountSummary(normalized, "次"));
             }
             case WUHuan_V2 -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
@@ -716,7 +761,19 @@ public class MainWindowController {
                 }
                 taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(normalized, "次"));
             }
-            case AUTO_BATTLE, UNKNOWN -> {
+            case WILD_BATTLE -> {
+                botProperties.setWildBattleDurationMinutes(normalized);
+                taskCountSummaries.put(TaskType.WILD_BATTLE, formatTaskCountSummary(normalized, "分钟"));
+            }
+            case AUTO_BATTLE -> {
+                botProperties.setAutoBattleDurationMinutes(normalized);
+                taskCountSummaries.put(TaskType.AUTO_BATTLE, formatTaskCountSummary(normalized, "分钟"));
+            }
+            case TIANTING -> {
+                botProperties.setTiantingMaxRuns(normalized);
+                taskCountSummaries.put(TaskType.TIANTING, formatTaskCountSummary(normalized, "轮"));
+            }
+            case XINSHOU, SLEEP_COMPUTER, UNKNOWN -> {
                 // These badges are labels/durations, not max-run task limits.
             }
         }
@@ -988,12 +1045,7 @@ public class MainWindowController {
         windowSearchField.textProperty().addListener(
                 (observable, oldValue, newValue) -> requestDashboardRefresh("search-changed"));
         startCurrentTaskButton.setText("启动");
-        startCurrentTaskButton.setOnAction(event -> {
-            TaskType selectedTaskType = windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue();
-            log.info("UI start button clicked: selectedTask={} pendingQueue={} disabled={}",
-                    selectedTaskType, pendingTaskQueue, startCurrentTaskButton.isDisabled());
-            handleMainStartPauseButton();
-        });
+        startCurrentTaskButton.setOnAction(event -> handleMainStartPauseButton());
         startWindowSelectedTaskButton.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
             warnUnavailableSelectedWindows("启动已选任务");
@@ -1009,11 +1061,12 @@ public class MainWindowController {
         pauseSelectedWindowsButton.setOnAction(event -> togglePauseResumeSelectedWindows());
         resumeSelectedWindowsButton.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
-            runWindowCommandInBackground(() ->
-                    windowTaskControlService.resumeWindows(windowIds));
+            startWindows(windowIds, "重新启动选中窗口");
         });
         pauseAllWindowsButton.setOnAction(event -> runWindowInterruptCommandInBackground(windowTaskControlService::pauseAll));
-        resumeAllWindowsButton.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::resumeAll));
+        resumeAllWindowsButton.setOnAction(event ->
+                startWindows(windowTaskControlService.getSnapshots().stream()
+                        .map(WindowTaskSnapshot::getWindowId).toList(), "重新启动全部窗口"));
         pauseSelectedWindowsMenuItem.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
             runWindowInterruptCommandInBackground(() ->
@@ -1021,11 +1074,12 @@ public class MainWindowController {
         });
         resumeSelectedWindowsMenuItem.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
-            runWindowCommandInBackground(() ->
-                    windowTaskControlService.resumeWindows(windowIds));
+            startWindows(windowIds, "重新启动选中窗口");
         });
         pauseAllWindowsMenuItem.setOnAction(event -> runWindowInterruptCommandInBackground(windowTaskControlService::pauseAll));
-        resumeAllWindowsMenuItem.setOnAction(event -> runWindowCommandInBackground(windowTaskControlService::resumeAll));
+        resumeAllWindowsMenuItem.setOnAction(event ->
+                startWindows(windowTaskControlService.getSnapshots().stream()
+                        .map(WindowTaskSnapshot::getWindowId).toList(), "重新启动全部窗口"));
         stopSelectedWindowsButton.setOnAction(event -> {
             List<String> windowIds = getSelectedWindowIds();
             runWindowInterruptCommandInBackground(() ->
@@ -1142,6 +1196,8 @@ public class MainWindowController {
     private Parent buildTaskRunConfigPanel() {
         FlowPane firstRow = buildControlRow(
                 new Label("修罗次数"), xiuluoRunCountField,
+                new Label("江湖历练次数"), xinshouTrainingRunCountField,
+                new Label("抓鬼次数"), catchGhostRunCountField,
                 new Label("五环次数"), wuhuanRunCountComboBox,
                 new Label("五倍次数"), fivefoldRunCountField);
         return buildSection("任务次数", firstRow);
@@ -1311,6 +1367,11 @@ public class MainWindowController {
         FlowPane mapSurveySampleRow = buildControlRow(
                 mapSurveyButton("保存地图名样本", TurnMapSurveyCommand.Operation.SAVE_MAP_LABEL_SAMPLE),
                 mapSurveyButton("测试地图名", TurnMapSurveyCommand.Operation.TEST_MAP_LABEL_SAMPLE));
+        /*
+         * The two-point calibration is the tool that used to live as a 「地图校准」 task. It solves a map's
+         * whole transform from two samples, so it stays on its own row above the five manual boundary
+         * commands rather than being mixed in with them.
+         */
         FlowPane mapSurveyBoundaryRow = buildControlRow(
                 mapSurveyButton("记左边界", TurnMapSurveyCommand.Operation.RECORD_LEFT_BOUNDARY),
                 mapSurveyButton("记右边界", TurnMapSurveyCommand.Operation.RECORD_RIGHT_BOUNDARY),
@@ -1322,14 +1383,40 @@ public class MainWindowController {
                 mapSurveyButton("记修正点", TurnMapSurveyCommand.Operation.RECORD_CORRECTION),
                 mapSurveyButton("测修正点", TurnMapSurveyCommand.Operation.TEST_CORRECTED_POINT),
                 mapSurveyButton("撤销上次记录", TurnMapSurveyCommand.Operation.UNDO_LAST_RECORD));
+        yipinGuardTestButton = new Button("测试一品侍卫接任务");
+        yipinGuardTestButton.getStyleClass().add("secondary-button");
+        yipinGuardTestButton.setOnAction(event -> runYipinGuardTest());
+        mapSurveyButtons.add(yipinGuardTestButton);
+        FlowPane yipinGuardTestRow = buildControlRow(
+                yipinGuardTestButton,
+                new Label("选中同队窗口后：队长导航、云端算一次第三行、全队点击"));
         VBox wrapper = new VBox(8,
                 buildSection("统计面板", dashboardRow),
                 buildSection("地图测绘", mapSurveyNameRow, mapSurveySampleRow,
                         mapSurveyBoundaryRow, mapSurveyPointRow, mapSurveyHintLabel),
+                buildSection("抓鬼测试", yipinGuardTestRow),
                 buildSection("日志文件", logFileRow));
         wrapper.setFillWidth(true);
         wrapper.getStyleClass().add("tab-content");
         return wrapper;
+    }
+
+    private void runYipinGuardTest() {
+        List<String> windowIds = getSelectedWindowIds();
+        if (windowIds.size() < 2) {
+            addWindowLog("一品侍卫测试需要选中同队窗口。");
+            renderLogList();
+            return;
+        }
+        yipinGuardTestButton.setDisable(true);
+        CompletableFuture.supplyAsync(() -> windowTaskControlService.startYipinGuardTest(windowIds))
+                .whenComplete((result, failure) -> javafx.application.Platform.runLater(() -> {
+                    yipinGuardTestButton.setDisable(false);
+                    addWindowLog(failure == null
+                            ? "一品侍卫测试已启动：" + result.getMessage()
+                            : "一品侍卫测试启动失败：" + failure.getMessage());
+                    renderLogList();
+                }));
     }
 
     private Button mapSurveyButton(String label, TurnMapSurveyCommand.Operation operation) {
@@ -1691,8 +1778,8 @@ public class MainWindowController {
         actions.setAlignment(Pos.CENTER_LEFT);
         actions.getStyleClass().add("row-actions");
         if (snapshot.getStatus() == WindowRuntimeStatus.PAUSED) {
-            actions.getChildren().add(rowActionButton("fas-play", "继续该窗口任务", "row-icon-button",
-                    () -> runWindowCommandInBackground(() -> windowTaskControlService.resumeWindows(List.of(snapshot.getWindowId())))));
+            actions.getChildren().add(rowActionButton("fas-play", "重新启动该窗口任务", "row-icon-button",
+                    () -> startWindows(List.of(snapshot.getWindowId()), "重新启动")));
         } else if (snapshot.isRunning()) {
             actions.getChildren().add(rowActionButton("fas-pause", "暂停该窗口任务", "row-pause-button",
                     () -> runWindowCommandInBackground(() -> windowTaskControlService.pauseWindows(List.of(snapshot.getWindowId())))));
@@ -1874,7 +1961,7 @@ public class MainWindowController {
         int value = normalizeInlineTaskCount(taskType, display.value());
         taskCountEditorTitleLabel.setText(taskType.getDisplayName());
         taskCountEditorField.setText(String.valueOf(value));
-        taskCountEditorUnitLabel.setText(display.unit());
+        taskCountEditorUnitLabel.setText(isDurationTask(taskType) ? "分钟" : display.unit());
         taskCountEditorBar.getStyleClass().remove("task-count-editor-hidden");
         taskCountEditorBar.setVisible(true);
         taskCountEditorBar.setManaged(true);
@@ -1891,7 +1978,8 @@ public class MainWindowController {
         if (taskCountEditorField == null) {
             return;
         }
-        int value = parseNonNegativeInt(taskCountEditorField.getText(), 1);
+        int value = parseNonNegativeInt(taskCountEditorField.getText(),
+                isDurationTask(activeTaskCountType) ? 0 : 1);
         taskCountEditorField.setText(String.valueOf(normalizeInlineTaskCount(activeTaskCountType,
                 Math.max(0, value + delta))));
     }
@@ -1926,11 +2014,15 @@ public class MainWindowController {
             return;
         }
         int value = normalizeInlineTaskCount(activeTaskCountType,
-                parseNonNegativeInt(taskCountEditorField.getText(), 1));
+                parseNonNegativeInt(taskCountEditorField.getText(),
+                        isDurationTask(activeTaskCountType) ? 0 : 1));
         String unit = taskCountEditorUnitLabel.getText() == null || taskCountEditorUnitLabel.getText().isBlank()
                 ? "次"
                 : taskCountEditorUnitLabel.getText().trim();
-        taskCountSummaries.put(activeTaskCountType, value + unit);
+        taskCountSummaries.put(activeTaskCountType,
+                isDurationTask(activeTaskCountType)
+                        ? formatTaskCountSummary(value, "分钟")
+                        : value + unit);
         syncTaskRunCountToProperties(activeTaskCountType, value);
         gameUiSettingsStore.save(botProperties);
         refreshPendingTaskQueueView();
@@ -1965,7 +2057,7 @@ public class MainWindowController {
 
     private boolean isEditableTaskCount(TaskType taskType) {
         return switch (taskType) {
-            case XIULUO, XIULUO_V2, WUHuan_V2, WUBEI -> true;
+            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WUHuan_V2, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
             case SLEEP_COMPUTER -> false;
             default -> false;
         };
@@ -1975,7 +2067,34 @@ public class MainWindowController {
         if (taskType == TaskType.WUHuan_V2) {
             return normalizeWuhuanRunCount(value);
         }
+        if (isDurationTask(taskType)) {
+            return normalizeDurationMinutes(value);
+        }
         return normalizeRunCount(value);
+    }
+
+    /**
+     * Neutral value for a duration task is 无限, not one minute.
+     *
+     * <p>{@link #normalizeRunCount} answers 1 for a missing or negative value, which is the right
+     * fallback for "how many runs" — one run is a sane minimum. It is the wrong answer for "how many
+     * minutes": auto-battle is defined as running without a time limit unless the user asks for one, and
+     * turning a blank field into 1 stops every member window a minute after it starts. That is exactly
+     * what happened on 2026-07-30, where four member windows all reported
+     * {@code 自动战斗达到配置时长 durationMinutes=1} two minutes into the run and looked, from the
+     * outside, like they had all dropped offline at once.</p>
+     *
+     * <p>0 is the value both {@code AutoBattleTask} and {@code WildBattleTask} already read as unlimited.</p>
+     */
+    private int normalizeDurationMinutes(Integer minutes) {
+        if (minutes == null || minutes < 0) {
+            return 0;
+        }
+        return minutes;
+    }
+
+    private boolean isDurationTask(TaskType taskType) {
+        return taskType == TaskType.WILD_BATTLE || taskType == TaskType.AUTO_BATTLE;
     }
 
     private int parseNonNegativeInt(String text, int fallback) {
@@ -2041,6 +2160,10 @@ public class MainWindowController {
         return switch (taskType) {
             case WUHuan_V2 -> "fas-circle-notch";
             case XIULUO_V2 -> "fas-ghost";
+            case XINSHOU_TRAINING -> "fas-graduation-cap";
+            case CATCH_GHOST -> "fas-ghost";
+            case WILD_BATTLE -> "fas-crosshairs";
+            case TIANTING -> "fas-cloud";
             case AUTO_BATTLE -> "fas-infinity";
             case SLEEP_COMPUTER -> "fas-moon";
             default -> null;
@@ -2052,6 +2175,8 @@ public class MainWindowController {
             case WUHuan_V2 -> "task-meta-wuhuan";
             case WUBEI -> "task-meta-wubei";
             case XIULUO_V2 -> "task-meta-xiuluo";
+            case XINSHOU_TRAINING -> "task-meta-xiuluo";
+            case CATCH_GHOST -> "task-meta-xiuluo";
             case AUTO_BATTLE -> "task-meta-auto";
             case SLEEP_COMPUTER -> "task-meta-sleep";
             default -> "task-meta-default";
@@ -2063,6 +2188,10 @@ public class MainWindowController {
             case WUHuan_V2 -> "五环";
             case WUBEI -> "五倍";
             case XIULUO_V2 -> "修罗";
+            case XINSHOU_TRAINING -> "江湖历练";
+            case CATCH_GHOST -> "抓鬼";
+            case WILD_BATTLE -> "野外战斗";
+            case TIANTING -> "天庭";
             case AUTO_BATTLE -> "挂机";
             case SLEEP_COMPUTER -> "睡眠计算机";
             default -> taskMetaText(taskType);
@@ -2358,19 +2487,79 @@ public class MainWindowController {
         List<WindowTaskSnapshot> selected = getSelectedWindowSnapshots();
         if (shouldPauseFromMainStartButton(selected)) {
             List<String> windowIds = getSelectedWindowIds();
+            log.info("UI main lifecycle action: action=PAUSE selectedWindows={} statuses={}",
+                    windowIds, selected.stream().map(WindowTaskSnapshot::getStatus).toList());
             runWindowInterruptCommandInBackground(() -> windowTaskControlService.pauseWindows(windowIds));
             return;
         }
+        boolean anyPaused = selected.stream()
+                .anyMatch(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED);
+        boolean allPaused = !selected.isEmpty() && selected.stream()
+                .allMatch(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED);
+        if (anyPaused && !allPaused) {
+            log.warn("UI main lifecycle action rejected: action=MIXED_START selectedWindows={} statuses={}",
+                    getSelectedWindowIds(), selected.stream().map(WindowTaskSnapshot::getStatus).toList());
+            addWindowLog("启动已拒绝：暂停窗口与非暂停窗口不能混合启动");
+            renderLogList();
+            return;
+        }
+        if (allPaused) {
+            List<String> windowIds = selected.stream().map(WindowTaskSnapshot::getWindowId).toList();
+            log.info("UI main lifecycle action: action=PAUSE_RESUME selectedTask={} pendingQueue={} "
+                            + "selectedWindows={} statuses={}",
+                    windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue(),
+                    pendingTaskQueue, windowIds,
+                    selected.stream().map(WindowTaskSnapshot::getStatus).toList());
+            startPausedWindows(windowIds, "恢复选中窗口");
+            return;
+        }
+        log.info("UI main lifecycle action: action=COLD_START selectedTask={} pendingQueue={} selectedWindows={} statuses={}",
+                windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue(),
+                pendingTaskQueue, getSelectedWindowIds(),
+                selected.stream().map(WindowTaskSnapshot::getStatus).toList());
         startMainSelectedTasks();
+    }
+
+    /**
+     * Handles the global F11 command on the JavaFX lifecycle path used by the main start/pause button.
+     * The Windows hotkey thread must never reconstruct a task queue or invoke the legacy remote toggle itself.
+     */
+    public void handleGlobalPauseResumeHotkey() {
+        if (!javafx.application.Platform.isFxApplicationThread()) {
+            javafx.application.Platform.runLater(this::handleGlobalPauseResumeHotkey);
+            return;
+        }
+        List<WindowTaskSnapshot> snapshots = windowTaskControlService.getSnapshots();
+        List<WindowTaskSnapshot> running = snapshots.stream()
+                .filter(WindowTaskSnapshot::isRunning)
+                .toList();
+        if (!running.isEmpty()) {
+            List<String> windowIds = running.stream().map(WindowTaskSnapshot::getWindowId).toList();
+            log.info("UI global hotkey lifecycle action: action=PAUSE windows={} statuses={}",
+                    windowIds, running.stream().map(WindowTaskSnapshot::getStatus).toList());
+            runWindowInterruptCommandInBackground(() -> windowTaskControlService.pauseWindows(windowIds));
+            return;
+        }
+
+        List<WindowTaskSnapshot> paused = snapshots.stream()
+                .filter(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED)
+                .toList();
+        if (paused.isEmpty()) {
+            log.info("UI global hotkey lifecycle action ignored: no RUNNING or PAUSED windows");
+            return;
+        }
+        List<String> windowIds = paused.stream().map(WindowTaskSnapshot::getWindowId).toList();
+        log.info("UI global hotkey lifecycle action: action=PAUSE_RESUME windows={} statuses={}",
+                windowIds, paused.stream().map(WindowTaskSnapshot::getStatus).toList());
+        startPausedWindows(windowIds, "快捷键恢复全部窗口");
     }
 
     private void startMainSelectedTasks() {
         List<WindowTaskSnapshot> selectedSnapshots = getSelectedWindowSnapshots();
-        boolean hasPausedSelection = hasPausedSelection(selectedSnapshots);
         TaskType selectedTaskType = windowTaskTypeComboBox == null ? null : windowTaskTypeComboBox.getValue();
         log.info("UI startMainSelectedTasks entered: selectedTask={} pendingQueue={} selectedWindows={}",
                 selectedTaskType, pendingTaskQueue, getSelectedWindowIds());
-        if (pendingTaskQueue.isEmpty() && !hasPausedSelection) {
+        if (pendingTaskQueue.isEmpty()) {
             addWindowLog("还没有选择任务，无法启动");
             renderLogList();
             return;
@@ -2378,23 +2567,11 @@ public class MainWindowController {
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
         List<String> selectedWindowIds = getSelectedWindowIds();
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
-        TaskType defaultTaskType = pendingTaskQueue.isEmpty() ? selectedTaskType : pendingTaskQueue.get(0);
-        addWindowLog(pendingTaskQueue.isEmpty()
-                ? "启动：继续暂停中的选中窗口"
-                : "启动：自动刷新/发现游戏窗口，然后启动可接任务窗口");
+        TaskType defaultTaskType = pendingTaskQueue.get(0);
+        addWindowLog("启动：自动刷新/发现游戏窗口，然后创建新的任务运行");
         renderLogList();
         runWindowCommandInBackground(() -> {
-            List<String> pausedWindowIds = selectedSnapshots.stream()
-                    .filter(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED)
-                    .map(WindowTaskSnapshot::getWindowId)
-                    .filter(id -> id != null && !id.isBlank())
-                    .distinct()
-                    .toList();
-            if (!pausedWindowIds.isEmpty()) {
-                log.info("Start selected task flow: resume paused selected windows={}", pausedWindowIds);
-                return windowTaskControlService.resumeWindows(pausedWindowIds);
-            }
-            log.info("Start selected task flow: refresh/register start defaultTask={} selectedWindows={}",
+            log.info("Start selected task flow: fresh run after lifecycle cleanup defaultTask={} selectedWindows={}",
                     defaultTaskType, selectedWindowIds);
             WindowTaskCommandResult scanResult = gameWindowRegistrationService.registerDetectedGameWindows(defaultTaskType);
             log.info("Start selected task flow: register result requested={} success={} failed={} message={}",
@@ -2449,6 +2626,28 @@ public class MainWindowController {
             renderLogList();
             return;
         }
+        List<WindowTaskSnapshot> targets = windowTaskControlService.getSnapshots().stream()
+                .filter(snapshot -> windowIds.contains(snapshot.getWindowId()))
+                .toList();
+        boolean anyPaused = targets.stream()
+                .anyMatch(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED);
+        boolean allPaused = !targets.isEmpty() && targets.stream()
+                .allMatch(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.PAUSED);
+        if (anyPaused && !allPaused) {
+            log.warn("UI lifecycle action rejected: action=MIXED_START selectedWindows={} statuses={}",
+                    windowIds, targets.stream().map(WindowTaskSnapshot::getStatus).toList());
+            addWindowLog(actionName + "失败：暂停窗口与非暂停窗口不能混合启动");
+            renderLogList();
+            return;
+        }
+        if (allPaused) {
+            log.info("UI lifecycle action: action=PAUSE_RESUME selectedWindows={} statuses={}",
+                    windowIds, targets.stream().map(WindowTaskSnapshot::getStatus).toList());
+            startPausedWindows(windowIds, actionName);
+            return;
+        }
+        log.info("UI lifecycle action: action=COLD_START selectedWindows={} statuses={}",
+                windowIds, targets.stream().map(WindowTaskSnapshot::getStatus).toList());
         syncTaskRunCountsFromTileEditor(pendingTaskQueue);
         WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
         runWindowCommandInBackground(() -> {
@@ -2461,18 +2660,27 @@ public class MainWindowController {
         });
     }
 
+    private void startPausedWindows(List<String> windowIds, String actionName) {
+        if (pendingTaskQueue.isEmpty()) {
+            addWindowLog(actionName + "失败：还没有选择任务");
+            renderLogList();
+            return;
+        }
+        syncTaskRunCountsFromTileEditor(pendingTaskQueue);
+        WindowTaskQueue queue = buildPendingTaskQueueForSubmit();
+        runWindowCommandInBackground(() -> windowTaskControlService.resumePaused(
+                WindowTaskStartRequest.sameQueue(windowIds, queue)));
+    }
+
     private void togglePauseResumeSelectedWindows() {
         List<String> windowIds = getSelectedWindowIds();
         List<WindowTaskSnapshot> selected = getSelectedWindowSnapshots();
-        boolean shouldResume = shouldShowResumeAction(selected);
-        WindowCommand command = () -> shouldResume
-                ? windowTaskControlService.resumeWindows(windowIds)
-                : windowTaskControlService.pauseWindows(windowIds);
-        if (shouldResume) {
-            runWindowCommandInBackground(command);
-        } else {
-            runWindowInterruptCommandInBackground(command);
+        boolean shouldRestart = shouldShowResumeAction(selected);
+        if (shouldRestart) {
+            startWindows(windowIds, "重新启动选中窗口");
+            return;
         }
+        runWindowInterruptCommandInBackground(() -> windowTaskControlService.pauseWindows(windowIds));
     }
 
     private void refreshPendingTaskQueueView() {
@@ -2653,8 +2861,16 @@ public class MainWindowController {
             javafx.application.Platform.runLater(() -> {
                 log.info("Window command UI update: resultMessage={}",
                         finalResult == null ? null : finalResult.getMessage());
-                handleWindowCommandResult(finalResult);
-                setWindowButtonsDisabled(false);
+                try {
+                    handleWindowCommandResult(finalResult);
+                } catch (RuntimeException failure) {
+                    // A result-render failure must not leave every task control permanently disabled.
+                    log.error("Window command UI result render failed; restoring task controls", failure);
+                    addWindowLog("窗口命令已结束，但结果刷新失败；已恢复操作按钮。请查看日志。");
+                    renderLogList();
+                } finally {
+                    setWindowButtonsDisabled(false);
+                }
             });
         }, "window-task-ui-worker");
         worker.setDaemon(true);
@@ -3109,6 +3325,8 @@ public class MainWindowController {
 
     private void setSettingsControlsDisabled(boolean disabled) {
         setNodeDisabled(xiuluoRunCountField, disabled);
+        setNodeDisabled(xinshouTrainingRunCountField, disabled);
+        setNodeDisabled(catchGhostRunCountField, disabled);
         setNodeDisabled(wuhuanRunCountComboBox, disabled);
         setNodeDisabled(fivefoldRunCountField, disabled);
         setNodeDisabled(taskStartupPreparationEnabledCheckBox, disabled);
@@ -3270,6 +3488,7 @@ public class MainWindowController {
     private List<TaskType> selectableTaskTypes() {
         return List.of(TaskType.values()).stream()
                 .filter(taskType -> taskType != TaskType.UNKNOWN)
+                .filter(taskType -> taskType != TaskType.YIPIN_GUARD_TEST)
                 .filter(taskType -> taskType != TaskType.XIULUO)
                 .toList();
     }

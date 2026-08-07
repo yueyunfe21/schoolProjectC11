@@ -10,8 +10,7 @@ package com.bot.dhxy.cloud.turn.protocol.observation;
  * @param hwnd exact native window handle
  * @param taskRunId exact observation run identity
  * @param generation positive demand generation
- * @param issuedAtMs Cloud issue time
- * @param expiresAtMs hard expiry; the Client must not capture after this time
+ * @param issuedAtMs Cloud issue time for diagnostics; demand lifetime is controlled by ACK/cancel/replacement
  */
 public record ObservationPreparedFrameDemand(
         String demandId,
@@ -21,6 +20,5 @@ public record ObservationPreparedFrameDemand(
         String hwnd,
         String taskRunId,
         long generation,
-        long issuedAtMs,
-        long expiresAtMs) {
+        long issuedAtMs) {
 }

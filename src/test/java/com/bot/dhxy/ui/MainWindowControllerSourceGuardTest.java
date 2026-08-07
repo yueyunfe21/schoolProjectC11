@@ -40,10 +40,26 @@ public class MainWindowControllerSourceGuardTest {
                 "row stop action should stay a plain stop action");
         require(!source.contains("rowActionButton(\"↻\""),
                 "操作 column should not render the retry icon");
-        require(source.contains("return windowTaskControlService.resumeWindows(pausedWindowIds);"),
-                "main start button must return immediately after resuming paused windows");
-        require(!source.contains("WindowTaskCommandResult resumeResult = windowTaskControlService.resumeWindows(pausedWindowIds);"),
-                "resume must not fall through into refresh/register/start when a pending queue still exists");
+        String mainLifecycle = sourceBlock(source,
+                "private void handleMainStartPauseButton()",
+                "private void startMainSelectedTasks()");
+        require(mainLifecycle.contains("action=PAUSE_RESUME")
+                        && mainLifecycle.contains("startPausedWindows(windowIds, \"恢复选中窗口\")"),
+                "all-PAUSED main selection must route to the dedicated pause-resume entry");
+        require(mainLifecycle.contains("if (anyPaused && !allPaused)")
+                        && mainLifecycle.contains("action=MIXED_START"),
+                "mixed PAUSED/non-PAUSED main selection must fail closed");
+        require(mainLifecycle.contains("action=COLD_START")
+                        && mainLifecycle.contains("startMainSelectedTasks();"),
+                "non-PAUSED main selection must retain the explicit cold-start path");
+        String pauseResume = sourceBlock(source,
+                "private void startPausedWindows(",
+                "private void togglePauseResumeSelectedWindows()");
+        require(pauseResume.contains("windowTaskControlService.resumePaused("),
+                "pause resume must invoke WindowTaskControlService.resumePaused");
+        require(!pauseResume.contains("registerDetectedGameWindows")
+                        && !pauseResume.contains("windowTaskControlService.start("),
+                "pause resume must not fall through into window discovery or cold start");
         require(source.contains("actionsCol.setPrefWidth(58);"),
                 "操作 column should be compact for only start/pause and stop buttons");
         require(source.contains("rowActionButton(\"fas-pause\", \"暂停该窗口任务\", \"row-pause-button\""),
@@ -64,8 +80,17 @@ public class MainWindowControllerSourceGuardTest {
                 "top window toolbar should not keep a separate pause selected button");
         require(!topWindowToolbarBlock(source).contains("stopSelectedWindowsButton"),
                 "top window toolbar should not keep a separate stop selected button");
-        require(source.contains("handleMainStartPauseButton();"),
+        require(source.contains("setOnAction(event -> handleMainStartPauseButton())"),
                 "main start button should route between start and pause behavior");
+        String globalHotkeyLifecycle = sourceBlock(source,
+                "public void handleGlobalPauseResumeHotkey()",
+                "private void startMainSelectedTasks()");
+        require(globalHotkeyLifecycle.contains("WindowTaskSnapshot::isRunning")
+                        && globalHotkeyLifecycle.contains("windowTaskControlService.pauseWindows(windowIds)"),
+                "global F11 must pause all currently running windows through the UI lifecycle path");
+        require(globalHotkeyLifecycle.contains("WindowRuntimeStatus.PAUSED")
+                        && globalHotkeyLifecycle.contains("startPausedWindows(windowIds, \"快捷键恢复全部窗口\")"),
+                "global F11 must resume paused windows through the dedicated UI pause-resume path");
         require(source.contains("updateMainStartButtonStyle(mainStartShouldPause);"),
                 "main start button should switch visual style when it becomes pause");
         require(source.contains("shouldPauseFromMainStartButton(selected)"),
@@ -101,6 +126,14 @@ public class MainWindowControllerSourceGuardTest {
         require(start >= 0, "main window table selection listener must exist");
         int end = source.indexOf("configureVisualStyles();", start);
         require(end > start, "main window table selection listener block must be readable");
+        return source.substring(start, end);
+    }
+
+    private static String sourceBlock(String source, String startMarker, String endMarker) {
+        int start = source.indexOf(startMarker);
+        require(start >= 0, "source block start must exist: " + startMarker);
+        int end = source.indexOf(endMarker, start + startMarker.length());
+        require(end > start, "source block end must exist: " + endMarker);
         return source.substring(start, end);
     }
 

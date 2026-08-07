@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "card": "G017",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": ["BR-DIALOG-001"],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/business-rules.json",
+    "docs/cr-dashboard-data.js",
+    "docs/业务逻辑.md",
+    "src/main/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanics.java",
+    "src/main/java/com/bot/dhxy/window/observation/UnknownPhasePresenceLocalMechanics.java",
+    "src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java",
+    "src/test/java/com/bot/dhxy/window/observation/G017UnknownPhaseConnectivityContractTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanicsTest.java",
+    "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudWindowObservationInbox.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java"},
+    {"repo": "cloud", "path": "src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicy.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingDialogCatalog.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicyContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017StartupObservationEntryContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/G017TiantingStartupPhaseDecisionContractTest.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "G014 的七模板优先恢复与 G017 的默认 presence-first、Title-present Option Cloud fallback 清障规则冲突；G029 fresh 现场证明天庭丢失 DUOXIE/FENGYAO 业务语义。",
+    "userDecision": "G017 继续作为通用默认；G029 明确恢复天庭唯一窄例外：exact no-movement 后七模板优先，all-miss 才 Cloud fallback。",
+    "decisionRecordedAt": "2026-08-04",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G017"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-DIALOG-001",
+      "producer": "WindowObservationSampler 从一个 shared-cycle exact-HWND frame 产生同 observerSeq 的任务 Title 与 Dialog presence；天庭本地 mechanics 还把七个 templatePath 显式映射为稳定 actionKey，并在 TIANTING_DIALOG_CLICKED 的 eventId/detail 中携带 actionKey、score、executed。G008 fresh-run 首包以 source=startup-screen-observation 标记 STARTUP_OR_RESUME episode。",
+      "transport": "ObservationRequest envelope 的 tenant/device/taskRunId/windowId/HWND/observerSeq 建立 exact observation binding；ObservationKeyEvent 不扩协议，只携带 eventId/occurredAt/actionKey detail/executed。CloudWindowObservationInbox 独立保留未 ACK 的 startup episode，普通高序帧、低序请求和 replay 不覆盖或重建；后续 exact Title/Dialog 必须同 seq、同 revision。",
+      "consumer": "TiantingTask 对 PRESENT/ABSENT+NONE 保留既有 terminal consumer；对 startup OPTION 安装既有 TIANTING_RECOVERY_OPTION，有界等待当前 exact TaskExecutionContext 的 TIANTING_DIALOG_ANSWERED，并仅在稳定已知 key、executed=true 且 task-specific consumer 成功后 exact ACK。accept 仍等 Title，进战 key 仍等 Runner IN_COMBAT，多谢/封妖/引妖保留 G005/G006 副作用；失败、超时、STORY/UNKNOWN 零 ACK。其他任务 startup/Story consumer 尚未迁移。",
+      "ordering": "exact click -> bounded movement proof -> same-lineage Title+Dialog -> deterministic arbitration -> at most one Client actionKey or Cloud PreparedAction -> result verification",
+      "contracts": [
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/G017UnknownPhaseConnectivityContractTest.java",
+          "command": "mvn -q -Dtest=G017UnknownPhaseConnectivityContractTest test",
+          "proves": ["same-cycle producer behavior and reachability", "explicit ABSENT terminal reaches Cloud", "unknown-phase presence producer remains passive until Cloud arms it"]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017UnknownPhaseRecoveryPolicyContractTest.java",
+          "command": "mvn -q -o -Dtest=G017UnknownPhaseRecoveryPolicyContractTest test -DskipTests=false",
+          "proves": ["four deterministic branches", "movement and ordinary pathing terminal do not arbitrate", "stale lineage and wrong HWND reject", "old action and unfinished fallback cannot retry"]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017StartupObservationEntryContractTest.java",
+          "command": "javac -proc:none then junit-platform-console-standalone 1.10.2 --select-class com.yueyunfe.dhxy.cloudbrain.turn.runtime.G017StartupObservationEntryContractTest",
+          "proves": ["startup episode survives a newer ordinary frame", "UNKNOWN remains pending until a later exact pair", "ACK is once-only and replay-safe", "ordinary source and stale lineage do not arbitrate"]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanicsTest.java",
+          "command": "javac -proc:none then junit-platform-console-standalone 1.10.2 --select-class com.bot.dhxy.window.observation.TiantingDialogLocalMechanicsTest",
+          "proves": ["all seven template paths map to stable business action keys", "production matcher returns the mapped action key"]
+        },
+        {
+          "path": "src/test/java/com/bot/dhxy/window/observation/TiantingDialogProbeContractTest.java",
+          "command": "javac -proc:none then junit-platform-console-standalone 1.10.2 --select-class com.bot.dhxy.window.observation.TiantingDialogProbeContractTest",
+          "proves": ["eventId and detail use actionKey instead of filename/path", "executed=false is reported without fabricating success"]
+        },
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/task/tianting/G017TiantingStartupPhaseDecisionContractTest.java",
+          "command": "javac -proc:none then junit-platform-console-standalone 1.10.2 --select-class com.bot.dhxy.task.tianting.G017TiantingStartupPhaseDecisionContractTest",
+          "proves": ["all seven known action keys drive the production startup OPTION consumer", "frozen OPTION evidence remains authoritative after a newer same-lineage NONE frame", "wrong run HWND old episode and mismatched evidence reject", "executed=false unknown missing and consumer rejection do not ACK", "ACK is once-only", "STORY and UNKNOWN do not enter the OPTION consumer"]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "G017 business-rule gate",
+      "result": "PASS",
+      "evidence": "node scripts/check-business-rule-gate.js --card G017"
+    },
+    {
+      "name": "Pass 2 production compile and behavior/connectivity contracts",
+      "result": "PASS",
+      "evidence": "Client and Cloud production compile passed; isolated G017 Client contract passed 4/4, Cloud behavior policy contract passed 4/4, retained G014 contracts passed Client 15/15 and Cloud 12/12. Standard Maven named lifecycle remained blocked before target execution by pre-existing aggregate testCompile debt, so the named classes were compiled with javac and executed with surefire:test."
+    },
+    {
+      "name": "STARTUP entry and retention slice",
+      "result": "PASS / PARENT REVIEW REQUIRED",
+      "evidence": "Cloud production compile passed; isolated G017StartupObservationEntryContractTest passed 6/6 via javac and junit-platform-console-standalone 1.10.2. Cross-task phase/action mapping remains fail-closed and is not claimed complete."
+    },
+    {
+      "name": "Tianting startup OPTION stable-action slice",
+      "result": "PARENT APPROVED / PASS",
+      "evidence": "Parent independently reviewed the production evidence binding and ran Client/Cloud production compile, isolated Cloud G017TiantingStartupPhaseDecisionContractTest 13/13, G017/all business gates and target Java diff-check. Frozen OPTION -> same-lineage NONE -> valid executed answer consumes and exact-ACKs once; wrong run/HWND/old episode/mismatched evidence reject. This Tianting startup OPTION slice has P0/P1/P2=0/0/0. Candidates all-miss fallback, STORY, cross-task migration and fresh runtime remain explicit blockers for the whole card."
+    }
+  ]
+}

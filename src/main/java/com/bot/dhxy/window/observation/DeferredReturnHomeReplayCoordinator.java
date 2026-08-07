@@ -279,7 +279,10 @@ public final class DeferredReturnHomeReplayCoordinator {
     }
 
     private static boolean isSupportedTask(String taskCode) {
-        return "XIULUO_V2".equalsIgnoreCase(taskCode) || "WUBEI".equalsIgnoreCase(taskCode);
+        return "XIULUO_V2".equalsIgnoreCase(taskCode)
+                || "XINSHOU_TRAINING".equalsIgnoreCase(taskCode)
+                || "CATCH_GHOST".equalsIgnoreCase(taskCode)
+                || "WUBEI".equalsIgnoreCase(taskCode);
     }
 
     public enum SubmitResult {

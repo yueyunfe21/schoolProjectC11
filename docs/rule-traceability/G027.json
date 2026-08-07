@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "card": "G027",
+  "changeType": "migration-wiring-repair",
+  "status": "REVIEW_PASSED_FRESH_REQUIRED",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": [
+    "BR-WUHAN-002"
+  ],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G027.json",
+    {"repo": "cloud", "path": ".gitignore"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/G027WuhuanNestedShoeShopIntentConnectivityContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "NONE",
+    "conflictSummary": "G023 只覆盖当前地图直达鞋店入口，跨地图黄字支路实际登记了 Client intent，却在 nested NavigationResult 中丢失 exact intentId。",
+    "userDecision": "保持 Client Runner 为唯一寻路事实权威，只修同一 intentId 的传递；不得新增 Cloud intent、时间猜测、重复导航或改变鞋店业务。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G027"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-002",
+      "producer": "世界地图 memory/OCR 黄字最终 mini-map 点击创建并携带 TurnPathingIntent；Client 在正向移动证明后登记同一 ID。",
+      "transport": "WorldMapDestinationClickResult -> NavigationResult -> navigateToMap -> navigateToNPC 原样携带 pathingIntentId。",
+      "consumer": "FiveRingTaskV2 BUY_SHOES 释放 task turn，并以该 exact ID park 等待 Runner 的 ARRIVED/STOPPED_AWAY。",
+      "ordering": "yellow route click -> Client exact registration -> nested result same ID -> BUY_SHOES exact park -> matching terminal wake",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/G027WuhuanNestedShoeShopIntentConnectivityContractTest.java",
+          "command": "isolated javac + java G027WuhuanNestedShoeShopIntentConnectivityContractTest",
+          "proves": [
+            "memory 和 OCR 黄字支路返回物理点击携带的同一 intentId",
+            "navigateToMap/navigateToNPC 不改写 nested result",
+            "五环空 ID 不再结束整轮且不会触发盲目重导航"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "name": "Isolated production compilation",
+      "result": "PASS",
+      "evidence": "NavigationService.java + FiveRingTaskV2.java + ImagePreprocessor.java compiled into target/g027-review-classes"
+    },
+    {
+      "name": "Focused connectivity and regression contracts",
+      "result": "PASS",
+      "evidence": "G027 + G023 + G024 + two G026 contracts passed"
+    },
+    {
+      "name": "Windows debug filename sanitization",
+      "result": "PASS",
+      "evidence": "cloud-memory:dialog_detect_green.png resolved to images/temp/cloud-memory_dialog_detect_green.png"
+    },
+    {
+      "name": "Fresh runtime",
+      "result": "REQUIRED",
+      "evidence": "Running Cloud PID 30336 predates this source repair; rebuild/restart before testing"
+    }
+  ]
+}

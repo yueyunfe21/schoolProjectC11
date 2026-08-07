@@ -1,10 +1,5 @@
 package com.bot.dhxy.tools;
 
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Value;
-import lombok.experimental.Accessors;
 
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.core.ImageFinder;
@@ -17,8 +12,6 @@ import org.springframework.stereotype.Component;
 import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Random;
 
 /**
@@ -52,33 +45,6 @@ public class CoordinateHelper {
             log.error("Failed to detect system scale, fallback to 1.0", e);
             this.systemScaleRatio = 1.0;
         }
-    }
-
-    /**
-     * Resolved mini-map click target.
-     *
-     * @param logicalX logical in-game X coordinate that will be clicked on the mini-map.
-     * @param logicalY logical in-game Y coordinate that will be clicked on the mini-map.
-     * @param basePixelPoint screen-absolute point calculated directly from the map transform, before
-     *                       physical-click randomization.
-     * @param pixelPoint final screen-absolute pixel point for the physical click.
-     * @param jitterX X random offset in screen pixels applied to {@code basePixelPoint}.
-     * @param jitterY Y random offset in screen pixels applied to {@code basePixelPoint}.
-     * @param reason diagnostic label such as {@code original}, {@code edge-fallback-1}, or
-     *               {@code near-fallback-3}.
-     */
-    @Value
-    @Builder
-    @AllArgsConstructor(access = AccessLevel.PUBLIC)
-    @Accessors(fluent = true)
-    public static class MiniMapClickPoint {
-        int logicalX;
-        int logicalY;
-        Point basePixelPoint;
-        Point pixelPoint;
-        int jitterX;
-        int jitterY;
-        String reason;
     }
 
     public Point getRandomizedPoint(int baseX, int baseY, int maxRadiusX, int maxRadiusY) {
@@ -225,62 +191,6 @@ public class CoordinateHelper {
                         + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
                         + " matchRate=" + matchRate);
         return null;
-    }
-
-    /**
-     * Find multiple template centers inside one screen-absolute capture rectangle.
-     *
-     * @param templatePath template image path.
-     * @param rect screen-absolute rectangle in {@code [left, top, right, bottom]} form.
-     * @param matchRate minimum OpenCV correlation score.
-     * @param minDistancePx minimum screen-pixel distance for de-duplicating nearby hits.
-     * @return score-sorted screen-absolute centers. Empty means no match or capture failure.
-     */
-    public List<Point> findImagesInRegion(String templatePath, int[] rect, double matchRate, double minDistancePx) {
-        String roiPath = windowScopedTempPath.resolve("roi_scan_all.png");
-        if (!tracker.captureToFile("ROI-Scan-All", roiPath, rect[0], rect[1], rect[2], rect[3])) {
-            return List.of();
-        }
-
-        long start = LatencyMetrics.start();
-        List<double[]> results;
-        try {
-            results = ImageFinder.findAll(roiPath, templatePath, matchRate, minDistancePx);
-        } catch (Throwable e) {
-            log.warn("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
-                    LatencyMetrics.elapsedMs(start),
-                    "result=exception template=" + templatePath
-                            + " roi=" + roiPath
-                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
-                            + " matchRate=" + matchRate
-                            + " error=" + e.getClass().getName() + ":" + e.getMessage());
-            throw e;
-        }
-
-        if (results == null || results.isEmpty()) {
-            log.debug("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
-                    LatencyMetrics.elapsedMs(start),
-                    "result=miss template=" + templatePath
-                            + " roi=" + roiPath
-                            + " rect=" + rect[0] + "," + rect[1] + "," + rect[2] + "," + rect[3]
-                            + " matchRate=" + matchRate);
-            return List.of();
-        }
-
-        List<Point> points = new ArrayList<>();
-        for (double[] result : results) {
-            Point absolute = resolveMatchedPointInRect(rect, result);
-            if (absolute != null) {
-                points.add(absolute);
-            }
-        }
-        log.info("[latency] event=coordinate.findImagesInRegion elapsedMs={} detail={}",
-                LatencyMetrics.elapsedMs(start),
-                "result=matched template=" + templatePath
-                        + " roi=" + roiPath
-                        + " count=" + points.size()
-                        + " points=" + points);
-        return List.copyOf(points);
     }
 
     public Point findGreenTextInRegion(String templatePath, int[] rect, double matchRate) {

@@ -74,7 +74,8 @@ public class NpcClickSmartQueueMessage {
 
     @JsonIgnore
     public boolean isOrdinaryClickCandidate() {
-        return type == Type.TOOLTIP
+        return type == Type.FIXED_POINT
+                || type == Type.TOOLTIP
                 || type == Type.YELLOW_NAME
                 || type == Type.PURPLE_FORMULA;
     }
@@ -86,6 +87,7 @@ public class NpcClickSmartQueueMessage {
 
     public enum Type {
         MEMORY,
+        FIXED_POINT,
         TOOLTIP,
         YELLOW_NAME,
         PURPLE_FORMULA,

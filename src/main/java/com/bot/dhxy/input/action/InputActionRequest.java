@@ -47,6 +47,8 @@ public class InputActionRequest {
     private final ArrayBlockingQueue<RetainedSessionSignal> retainedSessionLane =
             new ArrayBlockingQueue<>(1);
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    /** G008: true only after the worker commits this request to one atomic input transaction. */
+    private final AtomicBoolean executionStarted = new AtomicBoolean(false);
     private final AtomicReference<String> cancellationReason = new AtomicReference<>();
     private final Object progressLock = new Object();
     private InputActionSafetyReason cancellationSafetyReason = InputActionSafetyReason.CLEAR;
@@ -60,6 +62,9 @@ public class InputActionRequest {
     private InputActionExecutionResult terminalCompletion;
     private boolean retainedSessionMode;
     private boolean retainedTerminalPublicationOwnedByWorker;
+    private Runnable retainedSessionCleanup;
+    private boolean retainedSessionWorkStarted;
+    private boolean retainedSessionCleanupCompleted;
     private int nextRetainedPhysicalActionIndex;
 
     /**
@@ -273,6 +278,33 @@ public class InputActionRequest {
     }
 
     /**
+     * One frozen exact-window callback whose mechanics are fully HWND-background capable.
+     *
+     * <p>This request keeps the same immutable binding/epoch witness and the same pause and stop
+     * gates as {@link #frozenExactWindowExclusive}. The only difference is focus: the worker must
+     * not foreground the window before invoking the callback.</p>
+     */
+    static InputActionRequest frozenExactWindowBackgroundExclusive(
+            WindowRuntimeContext windowContext,
+            WindowNativeBinding frozenNativeBinding,
+            long frozenPlayerIdentityEpoch,
+            String description,
+            Supplier<Boolean> exclusiveCallback,
+            TaskPauseToken pauseToken,
+            TaskStopToken stopToken) {
+        InputActionRequest request = frozenExactWindowExclusive(
+                windowContext,
+                frozenNativeBinding,
+                frozenPlayerIdentityEpoch,
+                description,
+                exclusiveCallback,
+                pauseToken,
+                stopToken);
+        request.suppressExclusiveCallbackFocus();
+        return request;
+    }
+
+    /**
      * One frozen exact-window request carrying the complete ordered action list instead of a callback.
      *
      * <p>Identical generation semantics to {@link #frozenExactWindowExclusive}: the {@code (binding,
@@ -289,6 +321,7 @@ public class InputActionRequest {
      * @param actions complete ordered action list; copied immutably into this one request
      * @param pauseToken captured task pause token, nullable
      * @param stopToken captured task stop token, nullable
+     * @param externalSafetyReason live safety gate rechecked before focus and each physical action
      * @return frozen exact-window action-list request
      */
     static InputActionRequest frozenExactWindowActions(
@@ -298,10 +331,11 @@ public class InputActionRequest {
             String description,
             List<InputAction> actions,
             TaskPauseToken pauseToken,
-            TaskStopToken stopToken) {
+            TaskStopToken stopToken,
+            Supplier<InputActionSafetyReason> externalSafetyReason) {
         return new InputActionRequest(
                 windowContext, description, actions, null, pauseToken, stopToken,
-                null, null, null, null, false,
+                null, null, externalSafetyReason, null, false,
                 frozenNativeBinding, frozenPlayerIdentityEpoch, true);
     }
 
@@ -309,13 +343,16 @@ public class InputActionRequest {
             WindowRuntimeContext windowContext,
             String description,
             TaskPauseToken pauseToken,
+            TaskStopToken stopToken,
             long deadlineNanos,
             Supplier<InputActionSafetyReason> externalSafetyReason,
-            Supplier<InputActionSafetyReason> workerAdmission) {
+            Supplier<InputActionSafetyReason> workerAdmission,
+            Runnable retainedSessionCleanup) {
         InputActionRequest request = new InputActionRequest(
-                windowContext, description, List.of(), pauseToken, deadlineNanos,
-                externalSafetyReason, workerAdmission);
+                windowContext, description, List.of(), null, pauseToken, stopToken,
+                deadlineNanos, null, externalSafetyReason, workerAdmission, true);
         request.retainedSessionMode = true;
+        request.retainedSessionCleanup = retainedSessionCleanup;
         return request;
     }
 
@@ -402,6 +439,16 @@ public class InputActionRequest {
 
     /** @return task stop token captured at queue time, or null outside a managed task. */
     public TaskStopToken getStopToken() { return stopToken; }
+
+    /** Mark the physical-input transaction boundary after admission/identity checks. */
+    public void markExecutionStarted() {
+        executionStarted.set(true);
+    }
+
+    /** @return true after the input worker committed to this request. */
+    public boolean isExecutionStarted() {
+        return executionStarted.get();
+    }
 
     /**
      * @return true when the request still belongs to the same player identity epoch.
@@ -654,6 +701,26 @@ public class InputActionRequest {
         step.markCompleted(actionIndex);
     }
 
+    void markRetainedSessionWorkStarted() {
+        synchronized (progressLock) {
+            retainedSessionWorkStarted = true;
+        }
+    }
+
+    void runRetainedSessionCleanup() {
+        Runnable cleanup;
+        synchronized (progressLock) {
+            if (!retainedSessionWorkStarted || retainedSessionCleanupCompleted) {
+                return;
+            }
+            retainedSessionCleanupCompleted = true;
+            cleanup = retainedSessionCleanup;
+        }
+        if (cleanup != null) {
+            cleanup.run();
+        }
+    }
+
     /** @return first recorded cancellation reason, or null when the request has not been cancelled. */
     public String getCancellationReason() { return cancellationReason.get(); }
 
@@ -670,6 +737,12 @@ public class InputActionRequest {
     void cancel(InputActionSafetyReason safetyReason, String reason) {
         InputActionExecutionResult completion = null;
         synchronized (progressLock) {
+            // G008 only protects a request once the worker committed it to the global input
+            // transaction. Identity checks still run in the worker; this narrowly prevents a
+            // pause/stop from tearing an already-started MOVE -> CLICK sequence in half.
+            if (executionStarted.get() && safetyReason == InputActionSafetyReason.STOP_REQUESTED) {
+                return;
+            }
             cancellationReason.compareAndSet(null, normalizeReason(reason, "cancelled"));
             recordCancellationSafetyReason(safetyReason);
             cancelled.set(true);
@@ -920,6 +993,28 @@ public class InputActionRequest {
         if (!hasDeadline()) {
             return null;
         }
+        if (retainedSessionMode) {
+            String normalizedStage = normalizeReason(stage, "unknown-stage");
+            if (stopToken != null && stopToken.isStopRequested()) {
+                return new DetailedCancellation(
+                        "task-stop:" + normalizedStage,
+                        InputActionSafetyReason.STOP_REQUESTED);
+            }
+            if (pauseToken != null && pauseToken.isPauseRequested()) {
+                return new DetailedCancellation(
+                        "task-pause:" + normalizedStage,
+                        InputActionSafetyReason.CLEAR);
+            }
+            if (windowContext == null || windowId == null
+                    || !java.util.Objects.equals(windowId, windowContext.getWindowId())
+                    || windowContext.isIdentitySuspended()
+                    || playerIdentityEpoch != windowContext.getPlayerIdentityEpoch()
+                    || !sameExactWindow(nativeBinding, windowContext.getNativeBinding())) {
+                return new DetailedCancellation(
+                        "retained-window-generation-changed:" + normalizedStage,
+                        InputActionSafetyReason.WINDOW_BINDING_CHANGED);
+            }
+        }
         DetailedCancellation externalFailure = detectExternalSafetyReason(stage);
         if (externalFailure != null) {
             return externalFailure;
@@ -928,18 +1023,6 @@ public class InputActionRequest {
             return new DetailedCancellation(
                     "identity-suspended:" + normalizeReason(stage, "unknown-stage"),
                     InputActionSafetyReason.WINDOW_BINDING_CHANGED);
-        }
-        if (retainedSessionMode && windowContext != null) {
-            WindowNativeBinding currentBinding = windowContext.getNativeBinding();
-            if (nativeBinding == null || currentBinding == null
-                    || !java.util.Objects.equals(
-                            nativeBinding.getNativeHandle(), currentBinding.getNativeHandle())
-                    || nativeBinding.getProcessId() != currentBinding.getProcessId()) {
-                return new DetailedCancellation(
-                        "native-binding-changed:"
-                                + normalizeReason(stage, "unknown-stage"),
-                        InputActionSafetyReason.WINDOW_BINDING_CHANGED);
-            }
         }
         if (remainingDeadlineNanos(System.nanoTime()) <= 0L) {
             return new DetailedCancellation(
@@ -1106,6 +1189,7 @@ public class InputActionRequest {
 
     static final class RetainedSessionStep implements RetainedSessionSignal {
         private final List<InputAction> actions;
+        private final Supplier<Boolean> callback;
         private final CompletableFuture<InputActionExecutionResult> completion =
                 new CompletableFuture<>();
         private int startedStepIndex = -1;
@@ -1116,10 +1200,28 @@ public class InputActionRequest {
             if (this.actions.isEmpty()) {
                 throw new IllegalArgumentException("retained session input step must not be empty");
             }
+            this.callback = null;
+        }
+
+        RetainedSessionStep(Supplier<Boolean> callback) {
+            this.actions = List.of();
+            this.callback = java.util.Objects.requireNonNull(callback, "callback");
         }
 
         List<InputAction> actions() {
             return actions;
+        }
+
+        boolean hasCallback() {
+            return callback != null;
+        }
+
+        Supplier<Boolean> callback() {
+            return callback;
+        }
+
+        int workItemCount() {
+            return hasCallback() ? 1 : actions.size();
         }
 
         CompletableFuture<InputActionExecutionResult> completion() {
@@ -1141,11 +1243,11 @@ public class InputActionRequest {
         synchronized void complete(String requestId, boolean successful, String reason,
                                    InputActionSafetyReason safetyReason) {
             InputActionExecutionResult.Status status;
-            if (successful && lastCompletedStepIndex == actions.size() - 1) {
+            if (successful && lastCompletedStepIndex == workItemCount() - 1) {
                 status = InputActionExecutionResult.Status.COMPLETED;
             } else if (startedStepIndex < 0) {
                 status = InputActionExecutionResult.Status.NOT_STARTED;
-            } else if (lastCompletedStepIndex < actions.size() - 1) {
+            } else if (lastCompletedStepIndex < workItemCount() - 1) {
                 status = InputActionExecutionResult.Status.STARTED_UNKNOWN;
             } else {
                 status = InputActionExecutionResult.Status.PARTIALLY_COMPLETED;

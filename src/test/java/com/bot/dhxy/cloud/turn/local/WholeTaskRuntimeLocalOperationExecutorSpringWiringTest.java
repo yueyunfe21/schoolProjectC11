@@ -27,7 +27,9 @@ class WholeTaskRuntimeLocalOperationExecutorSpringWiringTest {
         assertArrayEquals(new Class<?>[]{
                         WindowTaskContextHolder.class,
                         LocalMovementFactMechanics.class,
-                        FiveRingAcceptDialogLocalOperation.class,
+                        XiuluoAcceptDialogLocalOperation.class,
+                        JianghuLilianDialogLocalOperation.class,
+                        CatchGhostDialogLocalOperation.class,
                         DeferredReturnHomeReplayCoordinator.class,
                         NpcArrivalFrameFifoLocalExecutor.class,
                         ObjectMapper.class

@@ -7,6 +7,7 @@ import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.dialog.DialogType;
 import com.bot.dhxy.model.dialog.GreenTemplateClickSpec;
 import com.bot.dhxy.model.dialog.PreparedDialogAction;
+import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.task.wubei.WubeiDialogCatalog;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.ImagePreprocessor;
@@ -14,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.image.BufferedImage;
 import java.util.Objects;
@@ -42,6 +44,18 @@ public class DialogService {
     static final int XIULUO_ENTER_BATTLE_LOCAL_ROI_RIGHT = 305;
     static final int XIULUO_ENTER_BATTLE_LOCAL_ROI_BOTTOM = 397;
     static final double XIULUO_ENTER_BATTLE_LOCAL_MATCH_RATE = 0.82;
+    // 江湖历练“开打”模板的实测屏幕 ROI 是 (1513,544)-(1699,571)。以当前 1024x768 窗口
+    // base=(1252,170) 换算为 (261,374,186,27)；它能完整容纳 61x20 的 kaida.png，且不改修罗 ROI。
+    static final int XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_LEFT = 261;
+    static final int XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_TOP = 374;
+    static final int XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_WIDTH = 186;
+    static final int XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT = 27;
+    // 抓鬼看打按钮会落在既有的 small dialog 内。不要再以窄条按钮 ROI 截图：不同对话框绘制状态
+    // 会让窄条遗漏模板；固定复用已验证的 DIALOG_SMALL 全区域，再由模板匹配确定实际点击中心。
+    static final int CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_LEFT = 250;
+    static final int CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_TOP = 345;
+    static final int CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_WIDTH = 529;
+    static final int CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_HEIGHT = 143;
     private static final int DIALOG_LEFT = 250;
     private static final int DIALOG_TOP = 312;
     private static final int DIALOG_WIDTH = 529;
@@ -49,7 +63,6 @@ public class DialogService {
 
     private final GameClientTracker tracker;
     private final CoordinateHelper coordinateHelper;
-
     public DialogService(GameClientTracker tracker, CoordinateHelper coordinateHelper) {
         this.tracker = Objects.requireNonNull(tracker, "tracker");
         this.coordinateHelper = Objects.requireNonNull(coordinateHelper, "coordinateHelper");
@@ -273,15 +286,72 @@ public class DialogService {
      * threshold {@code 0.82}, click point = ROI origin + match center.
      */
     public Optional<LocalDialogTemplateMatch> findXiuluoEnterBattleLocalTemplate(String source, String phase) {
+        return findTaskEnterBattleLocalTemplate(TaskType.XIULUO_V2, source, phase);
+    }
+
+    /**
+     * Matches the task-owned local "看打" button on the bound window. Both 修罗 and 江湖历练 use
+     * the same Runner probe/click lifecycle; only their button bitmap differs.
+     *
+     * @param taskType task that owns the currently armed local probe; only 修罗/江湖历练 are valid.
+     * @param source diagnostic source, never used to choose a window.
+     * @param phase diagnostic probe phase.
+     * @return fresh window-relative template hit converted to an absolute input point, or empty on a miss.
+     */
+    public Optional<LocalDialogTemplateMatch> findTaskEnterBattleLocalTemplate(
+            TaskType taskType, String source, String phase) {
+        return findTaskEnterBattleLocalTemplate(taskType, source, phase, null, null);
+    }
+
+    /**
+     * Matches a local "看打" button from the observation cycle's already-captured full frame when available.
+     * The full frame is only used for the in-memory ROI crop; it never changes match
+     * thresholds, click coordinates or task decisions.
+     *
+     * @param taskType task that owns the probe.
+     * @param source diagnostic source.
+     * @param phase diagnostic phase.
+     * @param fullWindowFrame shared bound-window frame, or null when a fresh standalone capture is required.
+     * @param fullWindowRect absolute [left, top, right, bottom] rectangle of {@code fullWindowFrame}, or null.
+     * @return the fresh match result, or empty on a miss.
+     */
+    public Optional<LocalDialogTemplateMatch> findTaskEnterBattleLocalTemplate(
+            TaskType taskType,
+            String source,
+            String phase,
+            BufferedImage fullWindowFrame,
+            int[] fullWindowRect) {
+        if (taskType != TaskType.XIULUO_V2 && taskType != TaskType.XINSHOU_TRAINING
+                && taskType != TaskType.CATCH_GHOST) {
+            return Optional.empty();
+        }
+        String templatePath = taskType == TaskType.CATCH_GHOST
+                ? "images/template/dialog/zhuagui/jinzhan.png"
+                : taskType == TaskType.XINSHOU_TRAINING
+                ? "images/template/dialog/a3/kaida.png"
+                : XIULUO_ENTER_BATTLE_LOCAL_TEMPLATE;
+        boolean catchGhost = taskType == TaskType.CATCH_GHOST;
+        boolean xinshouTraining = taskType == TaskType.XINSHOU_TRAINING;
         int[] rect = coordinateHelper.getScaledRect(
-                XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
-                XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP,
-                XIULUO_ENTER_BATTLE_LOCAL_ROI_RIGHT - XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
-                XIULUO_ENTER_BATTLE_LOCAL_ROI_BOTTOM - XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP);
-        BufferedImage roi = tracker.captureToMemory(
-                "xiuluo-enter-battle-local-template:" + safeDebugName(source) + ":" + safeDebugName(phase),
-                rect[0], rect[1], rect[2], rect[3]);
-        BufferedImage template = ImagePreprocessor.pathToBufferedImage(XIULUO_ENTER_BATTLE_LOCAL_TEMPLATE);
+                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_LEFT
+                        : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_LEFT
+                        : XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
+                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_TOP
+                        : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_TOP
+                        : XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP,
+                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_WIDTH
+                        : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_WIDTH
+                        : XIULUO_ENTER_BATTLE_LOCAL_ROI_RIGHT - XIULUO_ENTER_BATTLE_LOCAL_ROI_LEFT,
+                catchGhost ? CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_HEIGHT
+                        : xinshouTraining ? XINSHOU_TRAINING_ENTER_BATTLE_LOCAL_ROI_HEIGHT
+                        : XIULUO_ENTER_BATTLE_LOCAL_ROI_BOTTOM - XIULUO_ENTER_BATTLE_LOCAL_ROI_TOP);
+        BufferedImage roi = cropBoundWindowFrame(fullWindowFrame, fullWindowRect, rect);
+        if (roi == null) {
+            roi = tracker.captureToMemory(
+                    "xiuluo-enter-battle-local-template:" + safeDebugName(source) + ":" + safeDebugName(phase),
+                    rect[0], rect[1], rect[2], rect[3]);
+        }
+        BufferedImage template = ImagePreprocessor.pathToBufferedImage(templatePath);
         if (roi == null || template == null) {
             if (roi != null) {
                 roi.flush();
@@ -314,7 +384,37 @@ public class DialogService {
         return findXiuluoEnterBattleLocalTemplate(source, "consume-validate:" + reason);
     }
 
+    /** Re-runs the task-owned local 看打 matcher immediately before Runner input. */
+    public Optional<LocalDialogTemplateMatch> revalidateTaskEnterBattleLocalTemplate(
+            TaskType taskType, String source, String reason) {
+        return findTaskEnterBattleLocalTemplate(taskType, source, "consume-validate:" + reason);
+    }
+
     private static String safeDebugName(String value) {
         return value == null || value.isBlank() ? "-" : value;
     }
+
+    private BufferedImage cropBoundWindowFrame(BufferedImage frame, int[] frameRect, int[] targetRect) {
+        if (frame == null || frameRect == null || frameRect.length < 4 || targetRect == null || targetRect.length < 4) {
+            return null;
+        }
+        int cropX = targetRect[0] - frameRect[0];
+        int cropY = targetRect[1] - frameRect[1];
+        int cropWidth = targetRect[2] - targetRect[0];
+        int cropHeight = targetRect[3] - targetRect[1];
+        if (cropX < 0 || cropY < 0 || cropWidth <= 0 || cropHeight <= 0
+                || cropX + cropWidth > frame.getWidth() || cropY + cropHeight > frame.getHeight()) {
+            return null;
+        }
+        BufferedImage crop = new BufferedImage(cropWidth, cropHeight, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = crop.createGraphics();
+        try {
+            graphics.drawImage(frame, 0, 0, cropWidth, cropHeight,
+                    cropX, cropY, cropX + cropWidth, cropY + cropHeight, null);
+            return crop;
+        } finally {
+            graphics.dispose();
+        }
+    }
+
 }

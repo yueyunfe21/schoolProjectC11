@@ -33,7 +33,7 @@ import java.util.function.Supplier;
 @Component
 public class InputActionQueue {
 
-    private static final long RETAINED_SESSION_BUDGET_NANOS = TimeUnit.SECONDS.toNanos(120L);
+    private static final long RETAINED_SESSION_BUDGET_NANOS = TimeUnit.HOURS.toNanos(1L);
 
     private final BlockingQueue<InputActionRequest> queue = new LinkedBlockingQueue<>();
     private final WindowTaskContextHolder windowTaskContextHolder;
@@ -361,8 +361,8 @@ public class InputActionQueue {
             WindowRuntimeContext context,
             WindowNativeBinding binding,
             Supplier<Boolean> callback) {
-        return submitFrozenExactWindowExclusiveAndWait(
-                description, context, binding, callback, null);
+        return submitFrozenExactWindowRequestAndWait(
+                description, context, binding, callback, null, true);
     }
 
     public InputActionExecutionResult submitFrozenExactWindowExclusiveAndWait(
@@ -371,6 +371,41 @@ public class InputActionQueue {
             WindowNativeBinding binding,
             Supplier<Boolean> callback,
             Supplier<InputActionSafetyReason> externalSafetyReason) {
+        return submitFrozenExactWindowRequestAndWait(
+                description, context, binding, callback, externalSafetyReason, true);
+    }
+
+    /**
+     * Run one fully background-capable callback through the global input worker against an already
+     * resolved immutable window generation.
+     *
+     * <p>Unlike {@link #submitBackgroundExclusiveAndWait}, this path never refreshes or re-resolves
+     * the window and never weakens exact ownership. It freezes the same binding/epoch pair as the
+     * focused exact callback and keeps the same stop/pause safety; only the worker focus step is
+     * suppressed. The callback must therefore contain no physical mouse operation.</p>
+     *
+     * @param description diagnostic label for logs/dead letters
+     * @param context exact window context resolved by the caller
+     * @param binding immutable current binding object used as the generation witness
+     * @param callback HWND-background keyboard/capture callback; must not nest queue submissions
+     * @return typed worker terminal result
+     */
+    public InputActionExecutionResult submitFrozenExactWindowBackgroundExclusiveAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            Supplier<Boolean> callback) {
+        return submitFrozenExactWindowRequestAndWait(
+                description, context, binding, callback, null, false);
+    }
+
+    private InputActionExecutionResult submitFrozenExactWindowRequestAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            Supplier<Boolean> callback,
+            Supplier<InputActionSafetyReason> externalSafetyReason,
+            boolean focusRequired) {
         WindowRuntimeContext exactContext = Objects.requireNonNull(context, "context");
         WindowNativeBinding exactBinding = Objects.requireNonNull(binding, "binding");
         Supplier<Boolean> exactCallback = Objects.requireNonNull(callback, "callback");
@@ -384,9 +419,24 @@ public class InputActionQueue {
              * safety therefore runs first and reports the detector's own reason verbatim; only then does the
              * pure witness answer the object-identity question the detector's value comparison cannot see.
              */
-            request = InputActionRequest.frozenExactWindowExclusive(
-                    exactContext, exactBinding, exactContext.getPlayerIdentityEpoch(), description,
-                    exactCallback, taskTokens.pauseToken(), taskTokens.stopToken(), externalSafetyReason);
+            request = focusRequired
+                    ? InputActionRequest.frozenExactWindowExclusive(
+                            exactContext,
+                            exactBinding,
+                            exactContext.getPlayerIdentityEpoch(),
+                            description,
+                            exactCallback,
+                            taskTokens.pauseToken(),
+                            taskTokens.stopToken(),
+                            externalSafetyReason)
+                    : InputActionRequest.frozenExactWindowBackgroundExclusive(
+                            exactContext,
+                            exactBinding,
+                            exactContext.getPlayerIdentityEpoch(),
+                            description,
+                            exactCallback,
+                            taskTokens.pauseToken(),
+                            taskTokens.stopToken());
             InputActionRequest.DetailedCancellation frozenFailure =
                     request.frozenExactWindowFailure("before-enqueue");
             if (frozenFailure != null) {
@@ -437,6 +487,25 @@ public class InputActionQueue {
             WindowRuntimeContext context,
             WindowNativeBinding binding,
             List<InputAction> actions) {
+        return submitFrozenExactWindowActionsAndWait(description, context, binding, actions, null);
+    }
+
+    /**
+     * Submit one complete action list through the global input worker against an already resolved window snapshot.
+     *
+     * @param description diagnostic label for logs/dead letters
+     * @param context exact window context resolved by the cloud action boundary
+     * @param binding immutable native binding snapshot used by focus and direct input
+     * @param actions complete ordered action list with screen-absolute coordinates
+     * @param externalSafetyReason live gate rechecked before focus and before every physical action
+     * @return the worker's typed terminal result, carrying status, safety reason and detail verbatim
+     */
+    public InputActionExecutionResult submitFrozenExactWindowActionsAndWait(
+            String description,
+            WindowRuntimeContext context,
+            WindowNativeBinding binding,
+            List<InputAction> actions,
+            Supplier<InputActionSafetyReason> externalSafetyReason) {
         WindowRuntimeContext exactContext = Objects.requireNonNull(context, "context");
         WindowNativeBinding exactBinding = Objects.requireNonNull(binding, "binding");
         List<InputAction> exactActions = List.copyOf(Objects.requireNonNull(actions, "actions"));
@@ -451,7 +520,7 @@ public class InputActionQueue {
              */
             request = InputActionRequest.frozenExactWindowActions(
                     exactContext, exactBinding, exactContext.getPlayerIdentityEpoch(), description,
-                    exactActions, taskTokens.pauseToken(), taskTokens.stopToken());
+                    exactActions, taskTokens.pauseToken(), taskTokens.stopToken(), externalSafetyReason);
             InputActionRequest.DetailedCancellation frozenFailure =
                     request.frozenExactWindowFailure("before-enqueue");
             if (frozenFailure != null) {
@@ -474,14 +543,27 @@ public class InputActionQueue {
     public RetainedSessionHandle openRetainedSession(
             String description,
             TaskPauseToken pauseToken,
+            TaskStopToken stopToken,
             Supplier<InputActionSafetyReason> safetyReason,
-            Supplier<InputActionSafetyReason> workerAdmission) {
+            Supplier<InputActionSafetyReason> workerAdmission,
+            Runnable retainedSessionCleanup) {
+        if (pauseToken == null || stopToken == null) {
+            long rejectedAt = System.nanoTime();
+            InputActionRequest request = InputActionRequest.retainedSession(
+                    null, description, pauseToken, stopToken, rejectedAt,
+                    safetyReason, workerAdmission, retainedSessionCleanup);
+            request.cancel(InputActionSafetyReason.TASK_RUN_MISMATCH,
+                    "retained-session-requires-task-pause-and-stop-tokens");
+            request.ensureRetainedSessionAdmission();
+            return new RetainedSessionHandle(request,
+                    request.getSessionAdmitted().join());
+        }
         Optional<WindowRuntimeContext> current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty()) {
             long rejectedAt = System.nanoTime();
             InputActionRequest request = InputActionRequest.retainedSession(
-                    null, description, pauseToken, rejectedAt,
-                    safetyReason, workerAdmission);
+                    null, description, pauseToken, stopToken, rejectedAt,
+                    safetyReason, workerAdmission, retainedSessionCleanup);
             request.cancel(InputActionSafetyReason.WINDOW_BINDING_CHANGED, "no-window-context");
             request.ensureRetainedSessionAdmission();
             return new RetainedSessionHandle(request,
@@ -491,8 +573,8 @@ public class InputActionQueue {
         if (!refreshAndValidateNativeBinding(context, description, false)) {
             long rejectedAt = System.nanoTime();
             InputActionRequest request = InputActionRequest.retainedSession(
-                    context, description, pauseToken, rejectedAt,
-                    safetyReason, workerAdmission);
+                    context, description, pauseToken, stopToken, rejectedAt,
+                    safetyReason, workerAdmission, retainedSessionCleanup);
             request.cancel(InputActionSafetyReason.WINDOW_BINDING_CHANGED,
                     "retained-session-binding-unavailable");
             request.ensureRetainedSessionAdmission();
@@ -503,8 +585,8 @@ public class InputActionQueue {
         long deadline = now > Long.MAX_VALUE - RETAINED_SESSION_BUDGET_NANOS
                 ? Long.MAX_VALUE : now + RETAINED_SESSION_BUDGET_NANOS;
         InputActionRequest request = InputActionRequest.retainedSession(
-                context, description, pauseToken, deadline,
-                safetyReason, workerAdmission);
+                context, description, pauseToken, stopToken, deadline,
+                safetyReason, workerAdmission, retainedSessionCleanup);
         if (!request.checkDetailedSafety("retained-session-before-enqueue")) {
             request.ensureRetainedSessionAdmission();
             return new RetainedSessionHandle(request,
@@ -525,8 +607,13 @@ public class InputActionQueue {
                 if (admitted != null) {
                     return new RetainedSessionHandle(request, admitted);
                 }
-                request.compensatePause(pauseToken.waitIfPausedRevision(
-                        null, request::shouldAbortPauseWait));
+                if (!request.checkDetailedSafety("retained-session-admission-wait")) {
+                    if (queue.remove(request)) {
+                        request.releaseRetainedTerminalPublication();
+                        request.ensureRetainedSessionAdmission();
+                    }
+                    continue;
+                }
                 long remaining = request.remainingDeadlineNanos(System.nanoTime());
                 if (remaining <= 0L) {
                     boolean removed = queue.remove(request);
@@ -589,10 +676,54 @@ public class InputActionQueue {
         try {
             return step.completion().get();
         } catch (InterruptedException interrupted) {
+            request.requestDetailedCancellation(
+                    "retained-session-step-waiter-interrupted");
+            request.getResult().join();
             Thread.currentThread().interrupt();
             throw new IllegalStateException("retained-session step waiter interrupted", interrupted);
         } catch (java.util.concurrent.ExecutionException failure) {
             throw new IllegalStateException("retained-session step failed", failure.getCause());
+        }
+    }
+
+    /**
+     * Deliver one direct callback to the already-admitted retained worker request.
+     *
+     * <p>The callback runs on the same input worker thread and inside the same global input
+     * transaction as every earlier retained step. It must use direct input/capture APIs and must
+     * not submit another input-queue request.</p>
+     */
+    public InputActionExecutionResult submitRetainedSessionCallbackAndWait(
+            RetainedSessionHandle handle,
+            Supplier<Boolean> callback) {
+        InputActionRequest request = requireRetainedSession(handle);
+        InputActionRequest.RetainedSessionStep step =
+                new InputActionRequest.RetainedSessionStep(callback);
+        if (!request.offerRetainedSessionSignal(step)) {
+            InputActionExecutionResult terminal = request.getResult().getNow(null);
+            if (terminal == null && request.isRetainedSessionTerminalCommitted()) {
+                terminal = request.getResult().join();
+            }
+            if (terminal != null) {
+                step.complete(
+                        request.getRequestId(), false, terminal.getReason(),
+                        terminal.getSafetyReason());
+                return step.completion().join();
+            }
+            throw new IllegalStateException("retained-session callback lane is occupied");
+        }
+        try {
+            return step.completion().get();
+        } catch (InterruptedException interrupted) {
+            request.requestDetailedCancellation(
+                    "retained-session-callback-waiter-interrupted");
+            request.getResult().join();
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(
+                    "retained-session callback waiter interrupted", interrupted);
+        } catch (java.util.concurrent.ExecutionException failure) {
+            throw new IllegalStateException(
+                    "retained-session callback failed", failure.getCause());
         }
     }
 
@@ -637,12 +768,11 @@ public class InputActionQueue {
         try {
             return request.getResult().get();
         } catch (InterruptedException interrupted) {
+            request.requestDetailedCancellation(
+                    "retained-session-terminal-waiter-interrupted");
+            InputActionExecutionResult terminal = request.getResult().join();
             Thread.currentThread().interrupt();
-            InputActionExecutionResult terminal = request.getResult().getNow(null);
-            if (terminal != null) {
-                return terminal;
-            }
-            throw new IllegalStateException("retained-session terminal waiter interrupted", interrupted);
+            return terminal;
         } catch (java.util.concurrent.ExecutionException failure) {
             throw new IllegalStateException("retained-session terminal failed", failure.getCause());
         }
@@ -700,6 +830,31 @@ public class InputActionQueue {
         return taskExecutionContextHolder.current()
                 .map(context -> new CapturedTaskTokens(context.getPauseToken(), context.getStopToken()))
                 .orElseGet(() -> new CapturedTaskTokens(null, null));
+    }
+
+    /**
+     * G008 teardown: cancel only queued, not-yet-started requests for one exact task run.
+     * A request already admitted by the input worker is deliberately retained so MOVE -> CLICK
+     * remains atomic when Pause/Stop occurs in the middle of that transaction.
+     */
+    public int cancelQueuedRequests(TaskStopToken stopToken, String reason) {
+        if (stopToken == null) {
+            return 0;
+        }
+        int cancelledCount = 0;
+        for (InputActionRequest request : queue) {
+            if (request.getStopToken() != stopToken || request.isExecutionStarted()) {
+                continue;
+            }
+            if (queue.remove(request)) {
+                request.cancel(reason);
+                cancelledCount++;
+            }
+        }
+        if (cancelledCount > 0) {
+            log.info("G008 cancelled queued input for old run: count={} reason={}", cancelledCount, reason);
+        }
+        return cancelledCount;
     }
 
     private boolean refreshAndValidateNativeBinding(WindowRuntimeContext context,

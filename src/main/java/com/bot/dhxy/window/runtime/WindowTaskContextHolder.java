@@ -55,18 +55,6 @@ public class WindowTaskContextHolder {
     }
 
     /**
-     * Return the current binding only when window isolation is enabled.
-     *
-     * @return current window context, or empty when isolation is disabled or no context is bound.
-     */
-    public Optional<WindowRuntimeContext> current() {
-        if (!windowIsolationProperties.isIsolationEnabled()) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(currentContext.get());
-    }
-
-    /**
      * Return the raw current binding regardless of the isolation feature switch.
      *
      * @return current window context, or empty when no context is bound.

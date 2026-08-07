@@ -4,6 +4,7 @@ package com.bot.dhxy.input.action;
 public enum InputActionSafetyReason {
     CLEAR,
     STOP_REQUESTED,
+    COMBAT_ACTIVE,
     TASK_RUN_MISMATCH,
     WINDOW_BINDING_CHANGED;
 
@@ -15,6 +16,7 @@ public enum InputActionSafetyReason {
         return switch (this) {
             case CLEAR -> "safety-clear";
             case STOP_REQUESTED -> "external-stop-requested";
+            case COMBAT_ACTIVE -> "local-combat-active";
             case TASK_RUN_MISMATCH -> "task-run-mismatch";
             case WINDOW_BINDING_CHANGED -> "window-binding-changed";
         };

@@ -1,5 +1,6 @@
 package com.bot.dhxy.window.execution;
 
+import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.window.model.WindowNativeBinding;
 import com.bot.dhxy.window.policy.WindowCapacityPolicy;
 import com.bot.dhxy.window.runtime.WindowHandleParser;
@@ -25,15 +26,18 @@ public class MultiWindowTaskManager {
     private final WindowRuntimeContextFactory windowRuntimeContextFactory;
     private final WindowCapacityPolicy windowCapacityPolicy;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final InputSequences inputSequences;
     private final Map<String, WindowTaskRunner> runnersByWindowId = new ConcurrentHashMap<>();
 
     @Autowired
     public MultiWindowTaskManager(WindowRuntimeContextFactory windowRuntimeContextFactory,
                                   WindowCapacityPolicy windowCapacityPolicy,
-                                  WindowNativeBindingRefreshService bindingRefreshService) {
+                                  WindowNativeBindingRefreshService bindingRefreshService,
+                                  InputSequences inputSequences) {
         this.windowRuntimeContextFactory = windowRuntimeContextFactory;
         this.windowCapacityPolicy = windowCapacityPolicy;
         this.bindingRefreshService = bindingRefreshService;
+        this.inputSequences = inputSequences;
     }
 
     public WindowTaskRunner registerWindow(WindowRegistrationRequest request) {
@@ -49,7 +53,7 @@ public class MultiWindowTaskManager {
             if (!windowCapacityPolicy.canRegister(runnersByWindowId.size())) {
                 return null;
             }
-            return new WindowTaskRunner(windowRuntimeContextFactory.create(request));
+            return new WindowTaskRunner(windowRuntimeContextFactory.create(request), inputSequences);
         });
     }
 
@@ -65,7 +69,7 @@ public class MultiWindowTaskManager {
             return null;
         }
         return runnersByWindowId.computeIfAbsent(
-                windowContext.getWindowId(), ignored -> new WindowTaskRunner(windowContext));
+                windowContext.getWindowId(), ignored -> new WindowTaskRunner(windowContext, inputSequences));
     }
 
     public int registerWindows(Collection<WindowRegistrationRequest> requests) {

@@ -7,6 +7,7 @@ public final class TurnTransportException extends Exception {
 
     private final Kind kind;
     private final Integer httpStatus;
+    private final String cloudErrorCode;
 
     public TurnTransportException(Kind kind, String message) {
         this(kind, message, null, null);
@@ -17,12 +18,28 @@ public final class TurnTransportException extends Exception {
     }
 
     public TurnTransportException(Kind kind, String message, Integer httpStatus, Throwable cause) {
+        this(kind, message, httpStatus, null, cause);
+    }
+
+    /**
+     * @param kind typed transport failure category
+     * @param message diagnostic detail safe for the UI/log
+     * @param httpStatus optional HTTP response status
+     * @param cloudErrorCode optional structured Cloud problem code from an HTTP error body
+     * @param cause optional underlying failure
+     */
+    public TurnTransportException(Kind kind,
+                                  String message,
+                                  Integer httpStatus,
+                                  String cloudErrorCode,
+                                  Throwable cause) {
         super(message, cause);
         if (kind == null) {
             throw new IllegalArgumentException("kind must not be null");
         }
         this.kind = kind;
         this.httpStatus = httpStatus;
+        this.cloudErrorCode = cloudErrorCode;
     }
 
     public Kind kind() {
@@ -31,6 +48,11 @@ public final class TurnTransportException extends Exception {
 
     public Integer httpStatus() {
         return httpStatus;
+    }
+
+    /** @return Cloud's structured error code when an HTTP problem response supplied one. */
+    public String cloudErrorCode() {
+        return cloudErrorCode;
     }
 
     public enum Kind {

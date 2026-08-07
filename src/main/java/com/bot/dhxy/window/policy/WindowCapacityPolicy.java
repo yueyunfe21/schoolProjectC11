@@ -29,13 +29,4 @@ public class WindowCapacityPolicy {
         return Math.max(maxWindowCount - Math.max(currentCount, 0), 0);
     }
 
-    public WindowCapacityDecision evaluate(String windowId, int currentCount, boolean alreadyRegistered) {
-        if (alreadyRegistered) {
-            return WindowCapacityDecision.allowed(windowId, "窗口已存在，允许刷新");
-        }
-        if (canRegister(currentCount)) {
-            return WindowCapacityDecision.allowed(windowId, "容量允许注册");
-        }
-        return WindowCapacityDecision.rejected(windowId, "已达到最大窗口容量：" + maxWindowCount);
-    }
 }

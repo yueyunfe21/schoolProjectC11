@@ -232,16 +232,20 @@ public final class TurnCaptureStepExecutor {
                                     }
 
                                     ctrlDownInvoked = true;
-                                    BoundWindowKeyboardService.KeyTransitionAttempt down =
-                                            keyboardService.transitionModifier(
-                                                    window.binding(),
-                                                    window.metadata().windowId(),
-                                                    BoundWindowKeyboardService.ModifierKey.CONTROL,
-                                                    BoundWindowKeyboardService.KeyTransition.DOWN);
-                                    if (!down.attempted() || !down.success()) {
-                                        state.failed = true;
-                                        state.detail = "Ctrl DOWN failed: " + down.reason();
-                                        return true;
+                                    if (inputProvider.requiresForegroundKeyboard()) {
+                                        inputProvider.holdCtrl();
+                                    } else {
+                                        BoundWindowKeyboardService.KeyTransitionAttempt down =
+                                                keyboardService.transitionModifier(
+                                                        window.binding(),
+                                                        window.metadata().windowId(),
+                                                        BoundWindowKeyboardService.ModifierKey.CONTROL,
+                                                        BoundWindowKeyboardService.KeyTransition.DOWN);
+                                        if (!down.attempted() || !down.success()) {
+                                            state.failed = true;
+                                            state.detail = "Ctrl DOWN failed: " + down.reason();
+                                            return true;
+                                        }
                                     }
                                     if (!probeCheckpoint(state, "after Ctrl DOWN")) {
                                         return true;
@@ -307,15 +311,20 @@ public final class TurnCaptureStepExecutor {
                                         boolean released = false;
                                         String releaseDetail = null;
                                         try {
-                                            BoundWindowKeyboardService.KeyTransitionAttempt up =
-                                                    keyboardService.transitionModifier(
-                                                            window.binding(),
-                                                            window.metadata().windowId(),
-                                                            BoundWindowKeyboardService.ModifierKey.CONTROL,
-                                                            BoundWindowKeyboardService.KeyTransition.UP);
-                                            released = up.attempted() && up.success();
-                                            if (!released) {
-                                                releaseDetail = up.reason();
+                                            if (inputProvider.requiresForegroundKeyboard()) {
+                                                inputProvider.releaseCtrl();
+                                                released = true;
+                                            } else {
+                                                BoundWindowKeyboardService.KeyTransitionAttempt up =
+                                                        keyboardService.transitionModifier(
+                                                                window.binding(),
+                                                                window.metadata().windowId(),
+                                                                BoundWindowKeyboardService.ModifierKey.CONTROL,
+                                                                BoundWindowKeyboardService.KeyTransition.UP);
+                                                released = up.attempted() && up.success();
+                                                if (!released) {
+                                                    releaseDetail = up.reason();
+                                                }
                                             }
                                         } catch (Throwable releaseFailure) {
                                             state.releaseFailed = true;

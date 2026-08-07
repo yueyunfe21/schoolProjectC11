@@ -553,10 +553,12 @@ public final class HttpsTurnClient implements TurnClient {
                 .replace('\n', ' ')
                 .trim();
         String message = "unexpected HTTP status " + status;
+        String cloudErrorCode = null;
         if (!detail.isEmpty()) {
             try {
                 com.fasterxml.jackson.databind.JsonNode problem = objectMapper.readTree(detail);
                 String code = problem.path("code").asText("").trim();
+                cloudErrorCode = code.isEmpty() ? null : code;
                 String explanation = problem.path("message").asText("").trim();
                 if (!explanation.isEmpty()) {
                     message = "Cloud request rejected"
@@ -573,6 +575,7 @@ public final class HttpsTurnClient implements TurnClient {
                 TurnTransportException.Kind.HTTP_STATUS,
                 message,
                 status,
+                cloudErrorCode,
                 null);
     }
 

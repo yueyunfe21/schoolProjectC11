@@ -79,6 +79,9 @@ class InputActionWorkerAltFallbackContractTest {
                     InputProvider.class.getClassLoader(),
                     new Class<?>[]{InputProvider.class},
                     (proxy, method, args) -> {
+                        if (method.getName().equals("requiresForegroundKeyboard")) {
+                            return false;
+                        }
                         if (method.getName().equals("pressAlt1")) {
                             realAltCalls.incrementAndGet();
                         }
@@ -108,15 +111,14 @@ class InputActionWorkerAltFallbackContractTest {
             context.setNativeBinding(binding);
             request = InputActionRequest.frozenExactWindowActions(
                     context, binding, context.getPlayerIdentityEpoch(), "alt-fallback",
-                    List.of(InputAction.pressAlt1()), null, null);
+                    List.of(InputAction.pressAlt1()), null, null, null);
         }
 
         private boolean invoke() throws Exception {
             Method method = InputActionWorker.class.getDeclaredMethod(
-                    "pressAltShortcut", InputActionRequest.class, InputActionType.class,
-                    boolean.class, String.class);
+                    "pressAltShortcut", InputActionRequest.class, InputActionType.class);
             method.setAccessible(true);
-            return (boolean) method.invoke(worker, request, InputActionType.PRESS_ALT_1, true, "test");
+            return (boolean) method.invoke(worker, request, InputActionType.PRESS_ALT_1);
         }
 
         private boolean invokeFrozenActions() throws Exception {

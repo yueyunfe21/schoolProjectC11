@@ -42,9 +42,11 @@ public class BoundWindowKeyboardService {
     private static final int VK_MENU = 0x12;
     private static final int VK_CONTROL = 0x11;
     private static final int VK_RETURN = 0x0D;
+    private static final int VK_ESCAPE = 0x1B;
     private static final int SCAN_ALT = 0x38;
     private static final int SCAN_CONTROL = 0x1D;
     private static final int SCAN_RETURN = 0x1C;
+    private static final int SCAN_ESCAPE = 0x01;
 
     private final WindowTaskContextHolder windowTaskContextHolder;
     private final WindowIsolationProperties windowIsolationProperties;
@@ -249,6 +251,33 @@ public class BoundWindowKeyboardService {
     }
 
     /**
+     * Send one background Escape key tap to the supplied immutable binding.
+     *
+     * @param binding exact target HWND binding already frozen by the caller; never refreshed here.
+     * @param windowId owning runtime window id used only for diagnostics.
+     * @return typed delivery attempt; no foreground fallback or retry is performed.
+     */
+    public ShortcutAttempt pressEscape(WindowNativeBinding binding, String windowId) {
+        if (!windowIsolationProperties.isHwndKeyboardActive()) {
+            return ShortcutAttempt.notAttempted("disabled");
+        }
+        WinDef.HWND hwnd = toHwnd(binding);
+        if (hwnd == null) {
+            return ShortcutAttempt.notAttempted("invalid-hwnd");
+        }
+
+        PostResult keyDown = postKey(hwnd, WM_KEYDOWN, VK_ESCAPE, SCAN_ESCAPE, false, false);
+        TaskSleep.sleep(40);
+        PostResult keyUp = postKey(hwnd, WM_KEYUP, VK_ESCAPE, SCAN_ESCAPE, false, true);
+        boolean success = keyDown.success() && keyUp.success();
+        windowInteractionMetricsService.recordHwndKeyboard(windowId, "Escape", success);
+        log.info("HWND keyboard Escape: windowId={} hwnd={} result={} keyDown={} keyUp={} title={}",
+                windowId, binding.getNativeHandle(), success,
+                keyDown.toLogText(), keyUp.toLogText(), binding.getTitle());
+        return new ShortcutAttempt(true, success, success ? "OK" : "post-message-failed", false);
+    }
+
+    /**
      * Post one Unicode string to the supplied immutable binding as ordered background {@code WM_CHAR} messages.
      *
      * <p>Each code unit is delivered in order to the exact HWND; no clipboard, focus or foreground path is used.
@@ -414,6 +443,7 @@ public class BoundWindowKeyboardService {
         ALT_O("Alt+O", 0x4F, 0x18, true),
         ALT_E("Alt+E", 0x45, 0x12, true),
         ALT_A("Alt+A", 0x41, 0x1E, true),
+        ALT_B("Alt+B", 0x42, 0x30, true),
         ALT_C("Alt+C", 0x43, 0x2E, true),
         ALT_U("Alt+U", 0x55, 0x16, true);
 

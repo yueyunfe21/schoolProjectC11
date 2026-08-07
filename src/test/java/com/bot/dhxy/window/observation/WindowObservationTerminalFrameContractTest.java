@@ -2,6 +2,8 @@ package com.bot.dhxy.window.observation;
 
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationProtocolValidator;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationAnalysisResult;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationFactType;
+import com.bot.dhxy.cloud.turn.protocol.observation.ObservationPositionValue;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationRequest;
 import com.bot.dhxy.cloud.turn.protocol.observation.ObservationResponse;
 import com.bot.dhxy.config.WindowIsolationProperties;
@@ -40,6 +42,39 @@ class WindowObservationTerminalFrameContractTest {
     private static final String WINDOW = "window-7";
     private static final String HWND = "12345";
     private static final String TASK_RUN = "run-1";
+
+    @Test
+    void resolvedBoundWindowPositionIsRetainedAsPositionFactUntilAcknowledged() throws Exception {
+        Fixture fixture = fixture("intent-position-fact");
+        armStableCandidate(fixture);
+        var terminal = fixture.sampler.collect(List.of()).terminalFrames().getFirst();
+        fixture.sampler.acceptAnalysisResults(List.of(new ObservationAnalysisResult(
+                "analysis-position-fact",
+                "PATHING_COORDINATE_RESOLVED",
+                "coordinate-strip",
+                terminal.intentId(),
+                null,
+                null,
+                null,
+                "大雁塔四层",
+                24,
+                65,
+                null)));
+
+        var firstBatch = fixture.sampler.collect(List.of(), 7L);
+        var fact = firstBatch.facts().stream()
+                .filter(candidate -> candidate.factType() == ObservationFactType.POSITION_SAMPLE)
+                .findFirst()
+                .orElseThrow();
+        ObservationPositionValue position = ObservationPositionValue.decode(fact.value());
+
+        assertEquals("大雁塔四层", position.mapName());
+        assertEquals(24, position.x());
+        assertEquals(65, position.y());
+        fixture.sampler.acknowledgeDeliveredFacts(7L, List.of(fact));
+        assertTrue(fixture.sampler.collect(List.of(), 8L).facts().stream()
+                .noneMatch(candidate -> candidate.factType() == ObservationFactType.POSITION_SAMPLE));
+    }
 
     @Test
     void coordinateStripIsCroppedFromTheExactTerminalFrameAndAckPreventsReupload() throws Exception {
@@ -240,7 +275,7 @@ class WindowObservationTerminalFrameContractTest {
         private volatile int coordinateColor;
 
         private PatternTracker() {
-            super(null, null, null, null, null, null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null, null, null);
         }
 
         @Override

@@ -8,6 +8,14 @@ package com.bot.dhxy.input;
  * code already running inside an exclusive input callback.</p>
  */
 public interface InputProvider {
+    /**
+     * Whether ordinary keyboard actions require the same focused transaction as mouse input.
+     * FakerInput returns true; the legacy WinAPI provider returns false so existing routing stays unchanged.
+     */
+    default boolean requiresForegroundKeyboard() {
+        return false;
+    }
+
     /** Left-click at a screen-absolute point and wait the given milliseconds. */
     void clickLeft(int x, int y, int delayMs);
 
@@ -42,6 +50,11 @@ public interface InputProvider {
     /** Press Alt+4. */
     void pressAlt4();
 
+    /** Press Alt+5. */
+    default void pressAlt5() {
+        throw new UnsupportedOperationException("Alt+5 is not supported by this input provider");
+    }
+
     /** Press Alt+6. */
     void pressAlt6();
 
@@ -54,11 +67,21 @@ public interface InputProvider {
     /** Press Alt+A. */
     void pressAltA();
 
+    /** Press Alt+B. */
+    default void pressAltB() {
+        throw new UnsupportedOperationException("Alt+B is not supported by this input provider");
+    }
+
     /** Press Alt+C. */
     void pressAltC();
 
     /** Press Enter. */
     void pressEnter();
+
+    /** Press Escape. */
+    default void pressEscape() {
+        throw new UnsupportedOperationException("Escape is not supported by this input provider");
+    }
 
     /** Paste text through the active clipboard/input implementation. */
     void pasteText(String text);
@@ -86,4 +109,25 @@ public interface InputProvider {
 
     /** Scroll mouse wheel up by the given click count. */
     void scrollUp(int clicks);
+
+    /** Start and retain the new-player hold-sweep with the left button still down. */
+    default void holdSweepWithoutRelease(
+            int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
+        throw new UnsupportedOperationException("Retained hold-sweep is not supported by this input provider");
+    }
+
+    /** Continue a retained new-player sweep without changing the held left-button state. */
+    default void sweepWhileLeftHeld(
+            int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
+        throw new UnsupportedOperationException("Retained sweep is not supported by this input provider");
+    }
+
+    /** Release a left button retained by a previous sweep. */
+    default void releaseLeftButton() {
+        throw new UnsupportedOperationException("Retained left-button release is not supported by this input provider");
+    }
+
+    /** Release any virtual input state retained by the provider after a request abort or completion. */
+    default void releaseAllInput() {
+    }
 }

@@ -204,47 +204,7 @@ public class AutomationMetricsService {
         }
     }
 
-    /**
-     * Record the start of a concrete window task.
-     *
-     * @param context bound task/window context.
-     */
-    public void recordTaskStarted(TaskExecutionContext context) {
-        record(baseEvent(context)
-                .eventType(AutomationMetricEventType.TASK_STARTED)
-                .status(AutomationMetricStatus.STARTED)
-                .phase("task")
-                .message("task started")
-                .build());
-    }
 
-    /**
-     * Record the end of a concrete window task.
-     *
-     * @param context bound task/window context.
-     * @param taskType resolved task type.
-     * @param result task result returned to the window runner.
-     * @param message short finish message.
-     * @param elapsedMs task elapsed time in milliseconds.
-     * @param errorCode nullable error code/class when the task failed by exception.
-     */
-    public void recordTaskFinished(TaskExecutionContext context,
-                                   TaskType taskType,
-                                   TaskRunResult result,
-                                   String message,
-                                   long elapsedMs,
-                                   String errorCode) {
-        record(baseEvent(context)
-                .eventType(AutomationMetricEventType.TASK_FINISHED)
-                .status(statusFromTaskResult(result, errorCode))
-                .taskCode(taskType == null ? valueOrNull(context == null ? null : context.getTaskCode()) : taskType.getCode())
-                .taskName(taskType == null ? valueOrNull(context == null ? null : context.getTaskName()) : taskType.getDisplayName())
-                .phase("task")
-                .elapsedMs(elapsedMs)
-                .errorCode(errorCode)
-                .message(message)
-                .build());
-    }
 
     /**
      * Record a business round start for the operator-facing round ledger.
@@ -350,56 +310,7 @@ public class AutomationMetricsService {
                 .build());
     }
 
-    /**
-     * Link a saved Xiuluo failure case into the metrics stream.
-     *
-     * @param context bound task/window context.
-     * @param caseDir saved failure-case directory.
-     * @param reason stable failure reason.
-     * @param phase Xiuluo phase that failed.
-     * @param round Xiuluo round number.
-     * @param message short failure summary.
-     */
-    public void recordXiuluoFailureCase(TaskExecutionContext context,
-                                        Path caseDir,
-                                        String reason,
-                                        String phase,
-                                        int round,
-                                        String message) {
-        String caseId = caseDir == null ? null : caseDir.getFileName().toString();
-        record(baseEvent(context)
-                .eventType(AutomationMetricEventType.XIULUO_FAILURE_CASE)
-                .status(AutomationMetricStatus.FAILED)
-                .phase(phase)
-                .errorCode(reason)
-                .caseId(caseId)
-                .message(message)
-                .attributes(Map.of(
-                        "round", Integer.toString(round),
-                        "caseDir", caseDir == null ? "" : caseDir.toString()))
-                .build());
-    }
 
-    /**
-     * Record a non-fatal window warning that should be visible in the dashboard.
-     *
-     * @param windowContext current window runtime context, if any.
-     * @param source warning source/service.
-     * @param message short operator-facing warning.
-     * @param attributes optional structured details.
-     */
-    public void recordWindowWarning(WindowRuntimeContext windowContext,
-                                    String source,
-                                    String message,
-                                    Map<String, String> attributes) {
-        record(baseEvent(windowContext)
-                .eventType(AutomationMetricEventType.SYSTEM_WARNING)
-                .status(AutomationMetricStatus.WARNING)
-                .phase(source)
-                .message(message)
-                .attributes(attributes == null ? Map.of() : attributes)
-                .build());
-    }
 
     public Path writeDashboardNow() {
         writeDashboard();

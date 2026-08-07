@@ -18,6 +18,7 @@ import com.sun.jna.platform.win32.WinUser.INPUT;
 import com.sun.jna.platform.win32.WinDef.POINT;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.awt.AWTException;
@@ -27,6 +28,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.event.KeyEvent;
 
 @Component
+@ConditionalOnProperty(prefix = "bot.input", name = "backend", havingValue = "WIN_API", matchIfMissing = true)
 @RequiredArgsConstructor
 @Slf4j
 public class WinApiMouseController implements InputProvider {
@@ -49,9 +51,11 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_1 = 0x02;
     private static final int SCAN_2 = 0x03;
     private static final int SCAN_4 = 0x05;
+    private static final int SCAN_5 = 0x06;
     private static final int SCAN_6 = 0x07;
     private static final int SCAN_8 = 0x09;
     private static final int SCAN_A = 0x1E;
+    private static final int SCAN_B = 0x30;
     private static final int SCAN_C = 0x2E;
     private static final int SCAN_E = 0x12;
     private static final int SCAN_O = 0x18;
@@ -59,11 +63,14 @@ public class WinApiMouseController implements InputProvider {
     private static final int SCAN_T = 0x14;
     private static final int SCAN_U = 0x16;
     private static final int SCAN_ENTER = 0x1C;
+    private static final int SCAN_ESCAPE = 0x01;
 
     private static final String UNION_FIELD_MOUSE = "mi";
     private static final String UNION_FIELD_KEYBOARD = "ki";
     private static final DWORD INPUT_ARRAY_SIZE_ONE = new DWORD(1);
     private static final int LEFT_CLICK_HOLD_MS = 150;
+    private static final int CURSOR_MOVE_MAX_ATTEMPTS = 3;
+    private static final int CURSOR_MOVE_RETRY_DELAY_MS = 50;
 
     private final CoordinateHelper coordinateHelper;
     private final WindowAwareInputCoordinator inputCoordinator;
@@ -146,6 +153,12 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
+    public void pressAlt5() {
+        traceInput("pressAlt5", "shortcut=ALT+5");
+        inputCoordinator.runInput("pressAlt5", () -> pressAltScan(SCAN_5, "ALT+5"));
+    }
+
+    @Override
     public void pressAlt6() {
         traceInput("pressAlt6", "shortcut=ALT+6");
         inputCoordinator.runInput("pressAlt6", () -> pressAltScan(SCAN_6, "ALT+6"));
@@ -194,6 +207,12 @@ public class WinApiMouseController implements InputProvider {
     }
 
     @Override
+    public void pressAltB() {
+        traceInput("pressAltB", "shortcut=ALT+B");
+        inputCoordinator.runInput("pressAltB", () -> pressAltScan(SCAN_B, "ALT+B"));
+    }
+
+    @Override
     public void pressAltC() {
         traceInput("pressAltC", "shortcut=ALT+C");
         inputCoordinator.runInput("pressAltC", () -> pressAltScan(SCAN_C, "ALT+C"));
@@ -203,6 +222,17 @@ public class WinApiMouseController implements InputProvider {
     public void pressEnter() {
         traceInput("pressEnter", "key=ENTER");
         inputCoordinator.runInput("pressEnter", this::doPressEnter);
+    }
+
+    @Override
+    public void pressEscape() {
+        traceInput("pressEscape", "key=ESCAPE");
+        inputCoordinator.runInput("pressEscape", () -> {
+            sendInput(buildKeyboardScanInput(SCAN_ESCAPE, false));
+            TaskSleep.sleep(60);
+            sendInput(buildKeyboardScanInput(SCAN_ESCAPE, true));
+            TaskSleep.sleep(60);
+        });
     }
 
     @Override
@@ -235,7 +265,76 @@ public class WinApiMouseController implements InputProvider {
         inputCoordinator.runInput("scrollUp", () -> doScroll(120 * clicks));
     }
 
+    /**
+     * 新手 §8.2 hold-sweep: presses the left button at the start point, sweeps left→right→left twice
+     * per row while stepping down {@code rowStepPx}, and returns with the button STILL HELD so the
+     * caller can read the progress counter before deciding to continue or release.
+     */
     @Override
+    public void holdSweepWithoutRelease(int startX, int startY, int leftX, int rightX,
+                                        int endY, int rowStepPx) {
+        traceInput("holdSweep", "start=(" + startX + "," + startY + ") x=[" + leftX + "," + rightX
+                + "] endY=" + endY + " step=" + rowStepPx);
+        inputCoordinator.runInput("holdSweep",
+                () -> doHoldSweep(startX, startY, leftX, rightX, endY, rowStepPx));
+    }
+
+    /**
+     * Continues a retained sweep while the same worker transaction still owns LEFT_DOWN.
+     * No additional button-down or button-up event is emitted.
+     */
+    @Override
+    public void sweepWhileLeftHeld(int startX, int startY, int leftX, int rightX,
+                                   int endY, int rowStepPx) {
+        traceInput("sweepWhileLeftHeld",
+                "start=(" + startX + "," + startY + ") x=[" + leftX + "," + rightX
+                        + "] endY=" + endY + " step=" + rowStepPx);
+        inputCoordinator.runInput("sweepWhileLeftHeld",
+                () -> {
+                    moveCursorToLogicalPoint(startX, startY);
+                    TaskSleep.sleep(120);
+                    sweepRows(startX, startY, leftX, rightX, endY, rowStepPx);
+                });
+    }
+
+    /** Releases a button held by {@link #holdSweepWithoutRelease}; safe to call when nothing is held. */
+    @Override
+    public void releaseLeftButton() {
+        traceInput("releaseLeftButton", "");
+        inputCoordinator.runInput("releaseLeftButton",
+                () -> sendInput(buildMouseInput(FLAG_MOUSE_LEFT_UP)));
+    }
+
+    private void doHoldSweep(int startX, int startY, int leftX, int rightX, int endY, int rowStepPx) {
+        moveCursorToLogicalPoint(startX, startY);
+        TaskSleep.sleep(120);
+        sendInput(buildMouseInput(FLAG_MOUSE_LEFT_DOWN));
+        TaskSleep.sleep(150);
+        sweepRows(startX, startY, leftX, rightX, endY, rowStepPx);
+    }
+
+    private void sweepRows(int startX, int startY, int leftX, int rightX,
+                           int endY, int rowStepPx) {
+        int step = Math.max(1, rowStepPx);
+        for (int y = startY; y <= endY; y += step) {
+            // Two full horizontal round trips per row, at ordinary speed (§8.2-2/§8.2-6).
+            sweepRow(y, leftX, rightX);
+            sweepRow(y, leftX, rightX);
+        }
+        // Deliberately no LEFT_UP: the caller reads progress while the button stays down (§8.2-1/4).
+        log.info("Physical hold-sweep finished without release: start=({},{}) x=[{},{}] endY={} step={}",
+                startX, startY, leftX, rightX, endY, step);
+    }
+
+    private void sweepRow(int y, int leftX, int rightX) {
+        moveCursorToLogicalPoint(leftX, y);
+        TaskSleep.sleep(15);
+        moveCursorToLogicalPoint(rightX, y);
+        TaskSleep.sleep(15);
+        moveCursorToLogicalPoint(leftX, y);
+        TaskSleep.sleep(15);
+    }
+
     public void dragAndDrop(int startX, int startY, int endX, int endY) {
         traceInput("dragAndDrop", "from=(" + startX + "," + startY + ") to=(" + endX + "," + endY + ")");
         inputCoordinator.runInput("dragAndDrop", () -> doDragAndDrop(startX, startY, endX, endY));
@@ -452,18 +551,28 @@ public class WinApiMouseController implements InputProvider {
         int physicalX = (int) Math.round(x * scale);
         int physicalY = (int) Math.round(y * scale);
         POINT before = new POINT();
-        User32.INSTANCE.GetCursorPos(before);
-        boolean moved = User32.INSTANCE.SetCursorPos(physicalX, physicalY);
         POINT after = new POINT();
-        boolean readAfter = User32.INSTANCE.GetCursorPos(after);
-        boolean reached = readAfter && Math.abs(after.x - physicalX) <= 1 && Math.abs(after.y - physicalY) <= 1;
-        log.info("[INPUT_CURSOR_TRACE] requestedLogical=({}, {}) requestedPhysical=({}, {}) before=({}, {}) after=({}, {}) setCursorPos={} readAfter={} reached={}",
-                x, y, physicalX, physicalY, before.x, before.y, after.x, after.y,
-                moved, readAfter, reached);
-        if (!reached) {
-            throw new IllegalStateException("Physical cursor move failed: target=(" + physicalX + "," + physicalY
-                    + ") actual=(" + after.x + "," + after.y + ")");
+        for (int attempt = 1; attempt <= CURSOR_MOVE_MAX_ATTEMPTS; attempt++) {
+            User32.INSTANCE.GetCursorPos(before);
+            boolean moved = User32.INSTANCE.SetCursorPos(physicalX, physicalY);
+            boolean readAfter = User32.INSTANCE.GetCursorPos(after);
+            boolean reached = readAfter
+                    && Math.abs(after.x - physicalX) <= 1
+                    && Math.abs(after.y - physicalY) <= 1;
+            log.info("[INPUT_CURSOR_TRACE] requestedLogical=({}, {}) requestedPhysical=({}, {}) attempt={}/{} before=({}, {}) after=({}, {}) setCursorPos={} readAfter={} reached={}",
+                    x, y, physicalX, physicalY, attempt, CURSOR_MOVE_MAX_ATTEMPTS,
+                    before.x, before.y, after.x, after.y, moved, readAfter, reached);
+            if (reached) {
+                return;
+            }
+            if (attempt < CURSOR_MOVE_MAX_ATTEMPTS
+                    && !TaskSleep.sleep(CURSOR_MOVE_RETRY_DELAY_MS)) {
+                break;
+            }
         }
+        throw new IllegalStateException("Physical cursor move failed after " + CURSOR_MOVE_MAX_ATTEMPTS
+                + " attempts: target=(" + physicalX + "," + physicalY
+                + ") actual=(" + after.x + "," + after.y + ")");
     }
 
     private static INPUT buildMouseInput(int mouseEventFlag) {

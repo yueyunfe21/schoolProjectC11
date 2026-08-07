@@ -54,14 +54,13 @@ class TurnCoreProtocolGoldenJsonTest {
                         "WHOLE_TASK_PENDING_ROUTE_OUTCOME_READ",
                         "WHOLE_TASK_PENDING_ROUTE_OUTCOME_REPLACE",
                         "WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME",
-                        "WUHUAN_ACCEPT_DIALOG_EXCLUSIVE",
                         "METRIC_RECORD_ROUND_STARTED", "METRIC_RECORD_ROUND_FINISHED",
                         "METRIC_RECORD_XIULUO_FAILURE_CASE",
                         "BAG_FIVERING_SUPPLY_CHECK", "BAG_FIND_AND_USE_FROM_BACK",
                         "BAG_FIND_ITEM_PAGE_INDEX", "HOST_SLEEP_COMPUTER", "MAP_SURVEY_POINTER_SAMPLE"},
                 names(TurnLocalOperation.values()));
         assertArrayEquals(new String[]{"CAPTURE", "MATCH_EVIDENCE", "QUEST_DETAIL", "TASK_TRACKER_PANEL",
-                        "FIVERING_INCENSE_OBSERVATION", "FIVERING_DIALOG_OBSERVATION", "FAILURE_EVIDENCE"},
+                        "FIVERING_INCENSE_OBSERVATION", "FAILURE_EVIDENCE"},
                 names(TurnFramePurpose.values()));
         assertArrayEquals(new String[]{"UPLOAD_IMAGE", "NO_IMAGE"},
                 names(TurnCaptureSpec.ResultMode.values()));
@@ -73,7 +72,8 @@ class TurnCoreProtocolGoldenJsonTest {
         assertArrayEquals(new String[]{"COMPLETED", "FAILED", "NOT_RUN"},
                 names(TurnStepResult.Status.values()));
         assertArrayEquals(new String[]{"ACTION", "IDLE", "CONTINUATION"}, names(TurnResponse.Status.values()));
-        assertArrayEquals(new String[]{"WUHUAN_V2", "WUBEI", "XIULUO_V2", "AUTO_BATTLE", "SLEEP_COMPUTER"},
+        assertArrayEquals(new String[]{"WUHUAN_V2", "WUBEI", "XIULUO_V2", "XINSHOU", "WILD_BATTLE",
+                        "TIANTING", "AUTO_BATTLE", "SLEEP_COMPUTER"},
                 names(TurnTaskCode.values()));
         assertArrayEquals(new String[]{"CONTINUE_ON_FAILURE", "STOP_ON_FAILURE"},
                 names(TurnTaskQueueFailurePolicy.values()));
@@ -229,7 +229,6 @@ class TurnCoreProtocolGoldenJsonTest {
                                 .routeOutcomeReplacementReason("golden-replacement")),
                 wholeTaskCall(TurnLocalOperation.WHOLE_TASK_PENDING_ROUTE_OUTCOME_CONSUME,
                         wtBuilder("golden").intentId("intent-golden").sourcePrefix("golden")),
-                wholeTaskCall(TurnLocalOperation.WUHUAN_ACCEPT_DIALOG_EXCLUSIVE, wtBuilder("golden")),
                 metricCall(TurnLocalOperation.METRIC_RECORD_ROUND_STARTED, new TurnMetricEventPayload(
                         "wubei", "五倍", "window-golden", "LEADER", "0x5150",
                         "round-7", 7, "普通怪", null, null, "轮次开始", null,
@@ -315,6 +314,9 @@ class TurnCoreProtocolGoldenJsonTest {
         private TurnPendingRouteOutcome routeOutcome;
         private String routeOutcomeReplacementReason;
         private String startupFlyingState;
+        private String recoveryTaskRunId;
+        private Integer recoveryRound;
+        private String recoveryAttemptId;
 
         private WtArgs(String source) {
             this.source = source;
@@ -342,13 +344,22 @@ class TurnCoreProtocolGoldenJsonTest {
         private WtArgs routeOutcome(TurnPendingRouteOutcome v) { this.routeOutcome = v; return this; }
         private WtArgs routeOutcomeReplacementReason(String v) { this.routeOutcomeReplacementReason = v; return this; }
         private WtArgs startupFlyingState(String v) { this.startupFlyingState = v; return this; }
+        private WtArgs recoveryIdentity(String taskRunId, int round, String attemptId) {
+            this.recoveryTaskRunId = taskRunId;
+            this.recoveryRound = round;
+            this.recoveryAttemptId = attemptId;
+            return this;
+        }
 
         private TurnWholeTaskRuntimeArguments build() {
             return new TurnWholeTaskRuntimeArguments(
                     source, pathingIntent, intentId, sourcePrefix, protectionMs, null, currentX, currentY,
                     targetMapName, targetX, targetY, tolerance, confirmTimeoutMs, taskCode, targetKeyword,
                     blockedMs, interestOperations, null, null, completedRuns, totalRuns, dialogSnapshotMaxAgeMs,
-                    transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState);
+                    transferChoice, routeOutcome, routeOutcomeReplacementReason, startupFlyingState,
+                    null, null, null, null, null, null,
+                    null, null, null, null, null, null,
+                    null, recoveryTaskRunId, recoveryRound, recoveryAttemptId);
         }
     }
 
@@ -405,6 +416,28 @@ class TurnCoreProtocolGoldenJsonTest {
                 new TurnWholeTaskRuntimeResult(Boolean.TRUE, "EXECUTED", 1_500L, null, null);
         assertEquals(new TurnWholeTaskRuntimeResult(Boolean.TRUE, "EXECUTED", 1_500L, null, null, null), compat);
         assertEquals(compat, TurnProtocolGoldenSupport.roundTrip(compat, TurnWholeTaskRuntimeResult.class));
+    }
+
+    @Test
+    void exactAttemptRecoveryResetArgumentsAndAckRoundTripStrictly() throws IOException {
+        TurnWholeTaskRuntimeArguments arguments = wtBuilder("g010-reset")
+                .recoveryIdentity("task-run-10", 4, "attempt-10-4").build();
+        TurnAction action = TurnProtocolGoldenSupport.action(
+                "g010-exact-reset",
+                List.of(TurnProtocolGoldenSupport.localStep(0,
+                        new TurnLocalServiceCall(
+                                TurnLocalOperation.WHOLE_TASK_RECOVERY_RESET,
+                                null, null, null, null, arguments))));
+        TurnAction roundTripped = TurnProtocolGoldenSupport.roundTrip(action, TurnAction.class);
+        assertEquals(action, roundTripped);
+        assertSame(roundTripped, TurnProtocolValidator.requireValid(roundTripped));
+
+        TurnExactAttemptRecoveryResetAck ack = new TurnExactAttemptRecoveryResetAck(
+                "task-run-10", 4, "attempt-10-4", true,
+                true, true, true, true, true, true, true, true, true, false);
+        TurnWholeTaskRuntimeResult result = new TurnWholeTaskRuntimeResult(
+                null, null, null, null, null, null, null, null, null, null, ack);
+        assertEquals(result, TurnProtocolGoldenSupport.roundTrip(result, TurnWholeTaskRuntimeResult.class));
     }
 
     private static String[] names(Enum<?>[] values) {

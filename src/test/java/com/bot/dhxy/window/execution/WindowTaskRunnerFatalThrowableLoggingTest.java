@@ -29,6 +29,13 @@ public class WindowTaskRunnerFatalThrowableLoggingTest {
                 "fatal throwable must be logged with stack trace at the task boundary");
         require(taskBoundary.indexOf("} catch (Exception e) {") < taskBoundary.indexOf("} catch (Throwable e) {"),
                 "Throwable catch must stay after Exception so ordinary exceptions keep their existing logging path");
+
+        require(runner.contains("windowContext.clearTaskExecutionState(\"remote turn starting\")"),
+                "every newly accepted remote turn must start from an empty task execution state");
+        require(runner.contains("windowContext.clearTaskExecutionState(\"remote turn stopped: \" + message)"),
+                "explicit stop must clear all per-task state after the runner becomes terminal");
+        require(runner.contains("windowContext.clearTaskExecutionState(\"remote turn failed\")"),
+                "failed runs must not leak task state into a later manual restart");
     }
 
     private static String between(String source, String start, String end) {

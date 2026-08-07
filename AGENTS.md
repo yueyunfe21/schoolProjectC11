@@ -2,7 +2,80 @@
 
 This repository is the DHXY desktop automation project. When using Codex or any coding agent, read this file first, then read `docs/DHXY_CONTEXT.md` before making changes.
 
+**开工前的四件事,一件都不许跳(详见下面三节):**
+
+1. **读你要改的那个任务的业务文档**(下表对照)。
+2. **读 `docs/云端迁移常见错误清单.md`。**
+3. **为本卡建立 `docs/rule-traceability/G*.json`，并通过业务规则门禁。**
+4. 查完日志定位到错误后,**把结论写回清单**。
+
+用户不应该需要每次口头提醒这三条。
+
+## 强制规范一:先读你要改的那个任务的业务文档(所有 agent 一律遵守)
+
+**动任何一个任务的代码之前,先把那个任务的业务文档读完。** 不是"有空看看",是前置步骤。
+
+| 你要改的任务 | 必读文档 |
+|---|---|
+| **天庭**(TIANTING / G005) | `docs/天庭任务流程大MD.md` |
+| **新手**(XINSHOU / G003) | `docs/新手任务流程草案.md` |
+| **五倍**(WUBEI) | `docs/WUBEI_BUSINESS_DIFF_AUDIT.md`、`docs/WUBEI_CLOUD_MIGRATION_BASELINE.md` |
+| **修罗**(XIULUO_V2) | `docs/XIULUO_CLOUD_MIGRATION_PLAN.md` |
+| **五环**(WUHUAN / FiveRing) | `docs/业务逻辑.md`(见「修罗与五倍普通怪共用」「五倍 Dialog Interest 生命周期规则」等章节) |
+| 跨任务共用能力(通用盒子、三技能维护、快脱战回城、Dialog Interest) | `docs/业务逻辑.md` 对应章节 |
+| 卡内实施细节、已决议的开放问题 | `docs/superpowers/plans/` 下该卡的 MD |
+
+**为什么这条排在最前面**:业务文档里写死的东西(坐标、模板、优先级、"这一步在本地做还是云端做")是**用户实测拍板的结论**,不是建议。绕过它自己发挥,结果就是把用户已经验证过的东西推翻重做一遍,再被打回来。
+
+具体要求:
+
+1. **改之前读**,不是写完了再回头找依据。
+2. 业务文档、当前代码、最新推送基线或拟议实现发生实质冲突时，**任何 Agent 都无权自行选边**。必须立即停止业务实现，在当前 G 卡和追踪文件中写明冲突规则、两种选择、运行影响与建议，然后询问用户。只有用户针对该冲突作出明确决定后，才能先更新权威业务文档和决策记录，再继续代码。一般性的“修好”“完成该卡”“按计划做”不构成冲突项授权。
+3. 文档里没写到的地方**才**轮到自己判断;判断了要在回复里点明"这条文档没写,我按 X 做的",让用户能一眼否决。
+4. **实测得到的新数值(坐标、尺寸、阈值、行剖面)要写回业务文档**,并注明测量来源。下一个人不该再量一遍。
+5. 用户说"参考修罗怎么做的"这类话时,指的是**去读修罗的代码和文档,照抄它的时序**,不是照着印象自己发挥。
+
+## 强制规范二:常见错误清单(所有 agent 一律遵守)
+
+`docs/云端迁移常见错误清单.md` 是这个项目的错误账本。它不是背景阅读,是**必经流程**:
+
+1. **写任何代码之前,先通读 `docs/云端迁移常见错误清单.md`。** 这里记的每一条都是本项目真实踩过、而且**反复踩**的坑(事实链断裂族)。不读就写,等于重踩一遍。
+2. **每次查日志找错,查完必须把结论写回这份清单。** 只要从日志里定位到一个错误,就在清单里登记它——不管它看起来多小、多"这次特有"。
+3. **清单里已有同类条目时,不要新开一条,给原条目计数 +1**,并补上这次的现场(时间、任务、日志关键行)。同一个坑第二次出现,说明第一次的修法没有覆盖住,这个信息比新增一条更有价值。
+4. **重复出现的条目要显式高亮**(标题加 `🔴 重复 xN`),让它在清单里一眼可见。计数越高的条目,越应该被当成架构问题而不是个案。
+5. 清单的格式与计数约定见该文件开头的「登记规范」一节。
+
+这条规范优先于任何"赶时间"的判断:**跳过读清单、或者查完日志不登记,都算没做完。**
+
+## 强制规范三:业务规则追踪与冲突停工门禁(所有 agent 一律遵守)
+
+`docs/BUSINESS_RULE_GOVERNANCE.md` 是规则治理流程，`docs/business-rules.json` 只是业务 MD 的索引，
+不复制或覆盖业务语义。任何 G 卡准备修改任务行为、Client/Cloud 交互、Runner 事实、输入时序、OCR/template、
+导航、恢复、重试、超时或生命周期前，必须：
+
+1. 给被触及的业务 MD 规则分配稳定 `BR-<DOMAIN>-NNN` 编号，并登记到 `docs/business-rules.json`；
+2. 建立 `docs/rule-traceability/G*.json`，列出基线、受影响路径、规则编号，以及真实
+   `producer -> transport -> consumer -> ordering`；
+3. 跨边界规则必须列出会因生产者消失、metadata 丢失、顺序颠倒或 consumer 不可达而失败的连通性合同；
+4. 运行 `node scripts/check-business-rule-gate.js --card Gxxx`。门禁不通过不得写业务代码、不得交 worker、
+   不得声称 review passed；
+5. 若追踪文件存在未决冲突，其状态必须是 `BLOCKED_USER_DECISION`。禁止把冲突写成“Agent 已判断”、
+   禁止先改 MD 再把改后的 MD 当成批准证据。
+
+项目采用增量登记：不用一次性给全部历史规则编号，但某条规则一旦被新卡触及，就必须在修改前纳入索引。
+
 ## Project goal
+
+## Worktree selection
+
+- `D:\mavenProject\DHXY` is a protected baseline/reference worktree. Do not implement, migrate,
+  test, or modify project work there unless the user explicitly names this exact worktree.
+- The current active implementation and runtime worktree is `D:\mavenProject\DHXY-cr271` unless
+  the user explicitly selects another worktree. Before any edit or command that changes files,
+  state the target worktree in the active-work record and verify it from the current shell path.
+- If a task was accidentally implemented in the root `DHXY` worktree, first make a narrowly scoped
+  rollback of that task's own changes there; never use a broad checkout/reset that could erase
+  unrelated dirty work. Then re-implement only in the user-selected worktree.
 
 The project is a Java/Spring/JavaFX automation tool for 大话西游2 classic client workflows. The current major goal is to make the 五环 task run reliably across one or more game windows.
 
@@ -18,6 +91,14 @@ The intended final shape is:
 ## Current branch
 
 Use the `dev` branch unless the user explicitly says otherwise.
+
+## Work-card naming
+
+- All new project work cards must use the `G` prefix and the next available `G` number.
+- Do not create new `CR*` cards. Historical `CR*` records remain historical only and must not establish
+  a second active card numbering system.
+- A new investigation, repair, implementation, review, or acceptance task must be recorded under its
+  `G*` card in `docs/PACKAGE_ARCHITECTURE.md`, with the matching active-work summary when applicable.
 
 ## Important user preferences
 
@@ -58,6 +139,23 @@ Important behavior constraints:
    - Before handoff, the CR card must state which `docs/业务逻辑.md` rule/baseline rows were checked and list
      every intentional behavioral difference. If there are none, write `无已批准业务差异；按基线等价迁移`.
 
+2B. Business rules must have an executable connectivity gate.
+   - Reading or updating Markdown is not sufficient when a rule crosses Client/Cloud, runner/task, producer/consumer,
+     or lifecycle boundaries. Before changing such a path, identify the concrete producer, transport, consumer, and
+     the required ordering in production code.
+   - An enum, DTO field, interest type, or Cloud consumer that still exists does not prove the feature is connected.
+     Verify that a reachable production entry actually creates and carries the fact. Migration review must explicitly
+     search for both producer and consumer; a surviving consumer with no producer is a P1 regression.
+   - Every repaired cross-boundary rule needs a focused connectivity/ordering contract that fails when an agent removes
+     the producer, moves a visible preflight before its gate, drops transport metadata, or leaves the consumer
+     unreachable. A business-method return-value test alone does not satisfy this requirement.
+   - The work card must cite the controlling Markdown section and name the executable contract. A migration cannot be
+     marked reviewed merely because the new code and the document look individually reasonable.
+   - The user has explicitly approved this retained project-wide connectivity/ordering test family under G016. These
+     contracts are therefore a standing exception to no-local-test mode and do not need a new per-test permission each
+     time a cross-boundary business rule is touched. The exception covers connectivity and ordering only; it does not
+     authorize agents to invent business behavior or add unrelated test suites.
+
 3. Do not delete useful comments unless necessary.
    - Previous work accidentally removed some of the user's comments. Avoid repeating this.
 
@@ -87,6 +185,10 @@ Important behavior constraints:
    - If a task normally would require a testcase replay, record the runtime screenshot/log evidence that should be reviewed instead.
    - **Explicit-test exception:** when the user explicitly requests a named test, image/replay test, integration test, source guard, or a retained test suite, create/use only that requested scope and keep it in the repository unless the user later asks to remove it. Before starting the affected application/server or handing the build to the user, the responsible agent must run that explicitly requested test successfully against the current code. It may not bypass that required test with `-DskipTests`, an enforcer skip, a stale jar, or an IDE-only build.
    - Existing misleading cloud/NPC/dialog/brain tests remain removed by default; do not reintroduce them unless the user explicitly requests them.
+   - **G016 standing exception:** focused business-rule connectivity/ordering contracts required by rules 2B and the
+     traceability manifest are explicitly user-approved retained tests. They must be run for the touched card even when
+     the user does not repeat the request. This exception does not enable broad unit-test expansion or tests that replace
+     runtime visual evidence.
 
 8. Java compile gate is mandatory.
    - This is separate from local tests. No-local-test mode does not allow handing off uncompiled Java.
@@ -166,6 +268,13 @@ Important behavior constraints:
    - reviewer 发现 P0/P1/P2、缺证据或返修要求时，必须立即把“不通过 / Blocked / Review required”、证据、影响、修复方向和复验点写回 CR 卡；reviewer heartbeat 继续保留，等待返修后再次审核。
    - reviewer 只有在自己完成最新一轮复审，并已在 CR 卡明确写入“通过 / Approved”、审查范围、依据和时间后，才可以停止并删除自己的 reviewer heartbeat。若该 CR 的总流程仍需要另一名独立 reviewer，则本 reviewer 的通过不代表另一名 reviewer 可以停止或代表卡已完成。
    - 同一 CR 的实施 agent heartbeat 与 reviewer heartbeat 是两个独立但互相衔接的责任：实施 agent 看到所有 required reviewer 已在卡内写入 `通过 / Approved`、且没有待返修项后即可关闭；reviewer 在自己最新一轮复审确认无问题并写入 `通过 / Approved` 后即可关闭。两者都**不等待 fresh runtime**；fresh 是独立运行验收记录。用户明确暂停/停止 review，或卡被 Deprecated/Closed 时，reviewer 才可按原因写卡并停止。
+
+17. 五环业务基线锁定规则。
+   - 修改任何五环代码、观察链、phase、Runner/Cloud 调度、Tracker/title/dialog、导航、补给或恢复逻辑前，必须逐段对照受保护基线 `D:\mavenProject\DHXY` 的 commit `696a12b0ffb8aa21f7d5dee841a65cecd78be9f7`，并同时核对 CR188、CR229 与 `docs/superpowers/plans/reports/2026-07-20-turn-card-TURN-40E.md` 中冻结的五环语义。
+   - 编辑前必须把相关基线方法、当前方法和精确 diff 证据写入 `docs/ACTIVE_WORK.md`。不得只看当前 dirty 代码、当前卡片摘要或迁移后的调用形状来推断业务。
+   - 五环热启动的固定业务门是 title-first：title/Tracker 明确存在时接管现有任务；prepared action 尚未生成、action 过期、观察尚未返回或 binding 尚未就绪，只能等待 Runner refresh，绝不能解释成“没有任务”；只有 exact fresh negative 明确证明没有五环 title/Tracker，才能进入接任务。
+   - 云端迁移只能替换 capture、transport、park/wakeup、ownership 和输入承载方式，不得改变 phase 顺序、title/dialog/Tracker 判定、fallback 顺序或何时视为已接任务。任何与上述基线不同的业务变化，必须先在对应 G 卡写清旧行为、新行为、证据和影响，并获得用户明确批准；未批准不得实现。
+   - 发现当前代码与基线不一致时，默认按回归处理：停止扩大改动，保留所有 unrelated dirty，做最小恢复并补针对该基线不变量的合同测试。不得用 magic timeout、无结果 fallback 或迁移便利性覆盖基线事实。
 
 ## Code documentation rule
 

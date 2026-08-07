@@ -1,5 +1,2249 @@
 # DHXY Active Work
 
+## Codex - 2026-08-07 / G014+G033 引妖香 Tracker 先分类、后本地模板处理
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`，开工 dirty/untracked `251` 项）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`，开工 dirty/untracked `145` 项）。保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked 全部原样保护。
+- **最新现场：** `2026-08-07 08:31` 队长 `hwnd-35C2088` 的 Tracker task-box OCR 已明确读出
+  “请选择是否使用引妖香”，绿链点击后 Dialog 也已显示引妖香选项，但 Cloud 仅安装
+  `TIANTING_COMBAT_OPTION`。45x12 像素起步观察误写 `movementObservedAtMs` 后，G014 的
+  `TIANTING_RECOVERY_OPTION` 被跳过，所以本地 `yinyao.png` 根本没有参加匹配；约 29 秒后才误入 generic
+  fallback。
+- **用户批准业务裁决：** 天庭每次先用现有 Tracker task-box OCR 判断当前绿链分支；明确识别为“引妖香”时，
+  点击该 exact 绿链后直接让 Client 本地匹配并点击 `yinyao.png`，不再依赖是否启动移动。暗雷及其他普通绿链
+  保持现有业务顺序，不扩大本地模板常驻扫描。
+- **精确写集：** Cloud `TaskTrackerPanelService.java`、`CloudWholeTaskObserver.java`、
+  `CloudWholeTaskReadyEventState.java`、`TiantingTask.java` 与 G014 定向合同；Client 仅在共享枚举/协议确有必要时
+  修改，并复用现有 `TIANTING_YINYAO`/`TIANTING_RECOVERY_OPTION` 本地机制。治理只改 G014/G033、本文和生成的
+  `docs/cr-dashboard-data.js`。
+- **验证门：** 不启动 application/runtime/UI/capture/input。运行适用 production compile、隔离合同和
+  `git diff --check`；fresh runtime 保留到用户下一次明确允许继续测试。
+
+## Codex - 2026-08-06 / G044 五环旧 negative 与普通 Story 阻塞修复、后台连续测试
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。保护基线 `D:\mavenProject\DHXY` 不修改；两仓既有
+  dirty/untracked 全部保留。
+- **G043 fresh 结果：** `hwnd-35C2088` 已真实通过 `NPC VERIFIED -> DialogInterest -> presence -> demand ->
+  PreparedAction -> option click -> interest clear`，原断链关闭。连续运行随后在 `hwnd-10C1A8E` 暴露 G044。
+- **诊断：** exact 现场帧
+  `images/captures/20260806/hwnd-10C1A8E/20260806_215822_763_3134_HWND_PRINTWINDOW_1469_568_1024x768.png`
+  同时显示普通 STORY 与五环 tracker。当前 Cloud 生产 matcher 对整帧及 observer ROI replay 均
+  `titleFound=true` 且返回两条绿链；失败不是视觉算法。任务反复读取接任务前的旧 `TASK_NOT_FOUND`，而普通 STORY
+  的 completion 模板全 miss 后没有显式动作，导致每轮等待约 20 秒并累计 9 次失败。
+- **基线冲突判定：** E45 明确禁止把旧事实/没有新事件提升成当前 negative。本卡使用单调 sequence 让更新的
+  PreparedAction supersede 旧 negative，不引入 TTL。普通 STORY 复用现有白字模板 miss 合同与
+  `clickPreparedStory()`，只在非战斗时关闭，不改变已知 completion 模板优先级。
+- **精确写集：** 治理仅 `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、E45 补充、
+  `docs/rule-traceability/G044.json`、dashboard；Cloud 仅 `FiveRingTaskV2.java`、
+  `FiveRingCompletionPolicy.java`、`WuhuanDialogCatalog.java`、`CloudWholeTaskObserver.java` 和 G044 定向测试。
+- **执行：** 写规则 -> Cloud 最小修复 -> compile/隔离合同 -> 重启 fresh Cloud -> 后台 `start-wuhuan` 持续跑；
+  任一窗口 ERROR/FAILED 即正式 stop、取第一断点、返修并继续。
+- **23:12 全量重跑断点：** 五窗先完整停止为 `runningWindowCount=0`，再重新启动。两个窗口在云游大师
+  `NPC VERIFIED` 后都已上报新的 `dialog present`，但 Cloud 没有创建新 FrameDemand；它们持续 park 在
+  `[PATHING_TERMINAL, PREPARED_ACTION_READY]`。根因是已消费的旧启动 `INSPECT` action 只按 actionId 记账，
+  没有按 `interestId` 退休，因而挡住 NPC 点击后的新 dialog interest。本轮生产写集仍只含
+  `CloudWholeTaskObserver.java`；修复后 compile、重启并再次全量重跑。
+- **返修静态门：** Cloud `mvn compile` PASS（649 sources）；标准 Maven 定向测试被本卡外旧测试夹具的
+  `DialogService` 构造器/旧协议引用挡在 `testCompile`。按项目隔离方式用
+  `junit-platform-console-standalone 1.10.2` 编译并运行 G044 合同，`3/3 PASS`；新增断言锁定 action 的
+  originating `interestId`、replacement-interest 退休顺序以及原 title-rearm 分支仍在其后。
+
+## Codex - 2026-08-06 / G043 五环接任务 Dialog presence 生产链修复与后台连续测试
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。受保护基线 `D:\mavenProject\DHXY` 不修改。开工时
+  Client `git status --porcelain` 249 项、Cloud 144 项，全部既有 dirty/untracked 原样保护。
+- **最新 pushed 对照：** pushed Cloud 五环已有 background DialogInterest/PreparedAction 等待，但还没有
+  当前 presence-demand 交接；当前 dirty 迁移增加了 `armWuhuanTrackerInspection(...)` 及消费端，却只从 handover
+  分支调用，直接接任务路径断链。本卡按已批准 `BR-WUHAN-001` 与五环 Prepared Action 记录做最小连通性恢复，
+  无已批准业务差异。
+- **日志诊断：** `20:53:24.539` `hwnd-6B111B4` 的 NPC FIFO 为 `outcome=VERIFIED`；
+  `20:53:24.593` 安装 `source=wuhuan-v2:accept-dialog-background` 的 DialogInterest；之后至
+  `20:58:22` 停止前无 `WUHUAN_DIALOG_PRESENCE`、FrameDemand 或 PreparedAction。生产者不可达，消费者和等待端
+  虽存在也无法工作，登记为 E44 第二次复发。
+- **精确写集：** Client 仅本活动记录、G043 卡、E44、`docs/rule-traceability/G043.json` 和生成的 dashboard；
+  Cloud 仅 `FiveRingTaskV2.java`、必要的 existing ready-state 注释，以及
+  `G043WuhuanAcceptDialogPresenceConnectivityContractTest.java`。不修改模板、ROI、输入坐标或 Client Java。
+- **执行顺序：** 业务规则门禁 -> Cloud 最小修复 -> Cloud compile -> G043 定向连通性合同 -> 重启 fresh Cloud ->
+  `scripts/background-task-test.ps1 start-wuhuan` 后台运行。运行中发现第一个业务异常即正式 stop、写证据、返修并重启。
+
+## Codex - 2026-08-06 / G028 五环买鞋后长安城模板现场纠正
+
+- **目标 worktree：** Cloud `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`）修改五环模板引用与
+  canonical resource；Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`）提供用户新增模板、
+  保存现场 replay 与更新 G028 记录。保护基线 `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked
+  原样保护。
+- **最新推送对照：** Cloud HEAD `363d0e3 修罗五环云端V1版本`，Client HEAD
+  `2f083c14 修罗五环云端V1版本`。Cloud 当前 `FiveRingTaskV2.java` 已有本卡外大 diff，本次只改
+  `SHOE_SHOP_CHANGAN_LABEL_TEMPLATE`；不覆盖其他改动。
+- **现场证据：** `3465` / `hwnd-3AF20AE` 在 `20:01:52.654` 成功执行 `Alt+2`；随后按正确窗口相对
+  ROI `(479,404)-(672,548)` 截得 `193x144`，但生产常量仍引用旧
+  `images/template/map_label/长安.png`（117 bytes），而用户批准的新世界地图书法标签是
+  `images/template/map/changan.png`（5330 bytes）。现场因此只有反复开关地图，没有标签点击。
+- **本轮边界：** 保持 ROI、阈值、小地图目标坐标、intent/FIFO/Runner 语义不变；切换到正确模板并在当前
+  `3465` 窗口上按生产 ROI/阈值 replay，输出 raw 与 marked 证据后再判 visual gate。
+- **交付与验证：** Cloud 常量已改为 `images/template/map/changan.png`，正确模板已复制到 Cloud canonical
+  resources，源/目标 SHA-256 同为 `0DF337A3368DB2A52D032654A4899684F576C0BF58993BDCB25579828E95C81E`。
+  当前 `3465` 整窗 raw 已保存为
+  `D:\mavenProject\dhxy-cloud-brain\src\test\resources\images\test-cases\g028\3465-world-map-raw.jpg`；
+  生产 `ImageFinder` 隔离 replay 在原 ROI、原阈值下以 `score=0.995943` 命中，点击中心窗口相对
+  `(578,483)`，marked 为同目录 `3465-world-map-changan-marked.png`。执行命令为单文件 `javac` 加
+  `java com.bot.dhxy.service.G028WuhuanChanganLiveReplayTest`；Cloud `mvn -q compile` PASS。标准 Maven
+  定向 test 在执行本测试前被本卡外旧构造器/协议夹具的 aggregate `testCompile` 阻断，未扩大写集。
+- **Fresh gate：** 必须重启 Cloud 才会加载新常量与资源；下一次买鞋验鞋后应记录标签命中和
+  `(578,483)` 附近点击，随后打开长安小地图、点击 `(87,174)` 对应点并贯通 exact intent/FIFO/Runner terminal。
+
+## Codex - 2026-08-06 / G042 修罗出村预寻路临时关闭与鼠标禁停调查
+
+- **目标 worktree：** Cloud `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`）负责修罗实现；
+  Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`）只记录卡片与调查。保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked 原样保护。
+- **最新推送基线：** Cloud HEAD 与 `origin/navigation-migration` 均为
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。`XiuluoTaskV2.java` 已有本卡外大 diff；本卡只增加
+  `START_EXIT_PREPATH_ENABLED=false`，并在 `startLeavingStartMapIfPresent(...)` 最前端记录日志后返回。
+- **行为边界：** 只关闭接任务后的“提前点灵兽村出口”优化；接任务确认、Tracker 解析、正式目标导航、维护
+  判断、坐标和模板均不改。关闭后调用方沿原有 `prepath == null` 分支直接进入
+  `TRY_TRACKER_SHORTCUT`。
+- **鼠标调查：** `InputActionWorker.parkPointerOutOfNoParkZone(...)` 已经先用 `MouseInfo` 读取当前位置，只有
+  `DialogMouseNoParkZone.contains(...)` 命中才移动。`08:13:23-08:18:07` 反复出现的 `(515,676)` 来自
+  G004 野外战斗左下巡逻点（窗口相对约 `(334,649)`）的 `CLICK_RIGHT`，不是 Dialog 重试；它与全局 Dialog
+  禁停区重叠，故每次右键后都被 sweep 移走。用户已批准窄修复：明确包含 `CLICK_RIGHT` 且不含
+  `CLICK_LEFT` 的纯右键请求在读取鼠标前直接返回；左键、独占 Dialog callback 和其他既有路径保持原 sweep。
+  禁停区、停靠区与业务巡逻坐标均未改。
+- **静态验证：** Cloud `mvn -q -DskipTests=false compile` PASS，目标 diff check PASS。第一次
+  `-DskipTests` 编译被仓库 Enforcer 按设计拒绝，已按要求启用 tests 属性后复跑成功。
+- **第二项验证：** Client `mvn -q -DskipTests compile` PASS；隔离
+  `DialogMouseNoParkZoneContractTest` `11/11 PASS`；目标 diff check PASS。标准 Maven 定向测试仍被本卡外旧
+  `LocalTurnActionExecutorContractTest` 对已删除 `LocalPathingStartProofMechanics` 的引用阻断，未扩大写集。
+- **待验证：** 重启 Cloud 后 fresh 比较接任务到下一阶段的延迟，并核对 disabled 日志、无 prepath result、
+  正式路线仍正常；重启 Client 后确认 G004/抓鬼/天庭暗雷纯右键巡逻不再产生 `no-park sweep`，真实 Dialog
+  左键后仍会移开。
+
+## Codex - 2026-08-06 / G041 FakerInput 驱动级键鼠本地接入
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`（`thin-client-design`）。受保护基线
+  `D:\mavenProject\DHXY` 与 Cloud `D:\mavenProject\dhxy-cloud-brain` 不修改；当前大量既有 dirty/untracked
+  全部原样保护，不 reset/revert/clean/commit。
+- **最新推送基线：** Client HEAD 与 `origin/thin-client-design` 均为
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`（`修罗五环云端V1版本`）。当前输入层相对 pushed baseline 已有
+  用户未提交改动：`InputActionWorker.java`、`WinApiMouseController.java`、`BoundWindowKeyboardService.java`；
+  `InputProvider.java` 与 `pom.xml` 当前无差异。本卡只做增量适配，不覆盖现有改动。
+- **用户批准规则：** `Alt+5/6/8` 继续使用 exact-HWND `PostMessage`；其余键盘和全部鼠标经全局
+  `InputActionQueue` 聚焦目标窗口后由 FakerInput 虚拟 HID 发送。驱动缺失或不可用必须 fail-closed，禁止静默
+  回退 `SendInput`。
+- **已实现：** Client 新增默认关闭的后端配置、FakerInput 设备/API 版本探测、官方 HID 报告编码和
+  `FakerInputProvider`。调用方的屏幕绝对坐标由相对 HID 位移加光标回读复核实现。生产路由在 Faker 模式下仅
+  `Alt+5/6/8` 继续 exact-HWND，其余 Turn 键盘/文本/鼠标均经冻结窗口队列聚焦后发送；背包 `Alt+E`、任务面板
+  `Alt+Q`、新手 `Alt+B`、像素探针 Ctrl 的旧直发点也加了同一后端分流。默认 `WIN_API` 行为不变。
+- **第三方核查：** 采用官方 `Ryochan7/FakerInput v0.1.1` x64 MSI；已离线解包确认 INF 为
+  `NTamd64`、`UmdfLibraryVersion=2.15.0`。本机临时下载包 SHA-256 为
+  `4C0AEFB7340051A91D606776243298B5CD1143EF5508BBAE6800C474F9ED0840`，Authenticode 有效，尚未安装。
+- **验证：** Client `mvn -q -DskipTests compile` PASS；隔离合同
+  `FakerInputDeviceTest`、`G041FakerInputRoutingContractTest`、
+  `InputActionWorkerAltFallbackContractTest`、`TurnInputStepExecutorContractTest` 合计 `22/22 PASS`；
+  `git diff --check` PASS。标准 Maven 定向测试被本卡外旧
+  `LocalTurnActionExecutorContractTest -> LocalPathingStartProofMechanics` 编译引用阻断。无输入本机探测返回
+  `DRIVER_MISSING`，没有安装驱动、启动 UI 或发送真实键鼠。
+- **下一门：** 用户明确批准后安装官方 x64 MSI，设置 `bot.input.backend=FAKER_INPUT`，先做独立显式 debug
+  输入，再做任务 fresh；未通过前不得改变默认后端。
+- **2026-08-06 fresh 启动返修：** 当前仍在 `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；
+  G041 新文件相对 pushed baseline 均为 untracked，现有 dirty 原样保留。`19:42:14` 与 `19:45:47` 两次 Client
+  启动均在 Spring 创建 `FakerInputDevice` 时失败：该类同时有生产/测试两个构造器，生产构造器未显式标注注入，
+  Spring 转而查找不存在的无参构造器。返修写集仅为生产构造器注入标记及 G041 记录，不改变默认 `WIN_API`、
+  设备探测或输入路由语义。生产构造器已显式 `@Autowired`，Client `mvn -q -DskipTests compile` PASS；旧失败
+  Client Java 包装进程已清理，Cloud Brain 已恢复监听 `127.0.0.1:18080`，待下一次真实 Client UI 启动关闭 fresh 门。
+
+## Codex - 2026-08-06 / G011 Repair：同图暗雷续跑禁止重查飞行，巡逻间隔调为 700ms
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`）。受保护基线 `D:\mavenProject\DHXY` 不修改；
+  两仓现有 dirty/untracked 原样保护，不 reset/revert/clean/commit。
+- **基线与写集证据：** Cloud 当前 HEAD 为 `363d0e3fae73c0c55f4920f6f1c61338a0458d73`；该 pushed
+  commit 尚无 `src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java` 历史，故本次业务权威是已由用户确认的
+  G011 计划，而不是从旧 pushed commit 猜测天庭语义。精确生产写集仅
+  `TiantingTask.java`、`TiantingDarkThunderPlan.java`；合同写集仅既有天庭暗雷测试。
+- **fresh 失败证据：** G033 run `remote-turn-6037c1ea-6862-4dd5-8699-15a5e96249e1` 中，队长
+  `hwnd-140E163C` 于 `08:48:21.528 EDT` 从暗雷战斗脱战，随后在同一暗雷任务继续路径于
+  `08:48:27.116 EDT` 再次发送 `Alt+U`，违反 G011 “同图暗雷连续巡逻飞行检查 0 次”。
+- **根因：** `runDarkThunder()` 在 RUN_DARK_THUNDER 决策与调用之间发生入战竞态时，无条件调用
+  `resetDarkThunderAttempt()`；它把已确认的 `NOT_FLYING`、左右巡逻游标和 arrival-dialog 已清状态全部清空。
+  脱战后同 task-box 虽正确回到巡逻，空飞行态仍强制重走 `Alt+U`。
+- **用户批准的返修：** 同一暗雷 task-box 脱战后保留该暗雷 attempt，直接从下一侧继续，不重查飞行器；
+  新 task-box/新绿链/新 round 仍走完整 reset 与首次飞行检查。巡逻右键间隔由 `1000ms` 调为 `700ms`；
+  单次右键按压 `100ms` 保持不变。
+- **停机：** `08:54:27 EDT` 已正式执行 `scripts/background-task-test.ps1 stop`，结果
+  `5/5 STOPPED`、`runningWindowCount=0`。源码、合同与编译门通过前不得重启 G033。
+- **实现与审核：** Cloud `TiantingTask.runDarkThunder()` 的入战竞态不再销毁暗雷 attempt；fresh 同
+  task-box 连续性成立时显式锁定 `NOT_FLYING`，因此连最初由 `UNKNOWN` fallback 触发的战斗也不会在脱战后
+  重开 `Alt+U`。左右 click cursor、已清 arrival dialog 和巡逻点均保留；G040 异图 handoff、新绿链和新 round
+  仍完整 reset。`TiantingDarkThunderPlan.PATROL_CLICK_INTERVAL_MS=700`，右键按压仍为 `100ms`。
+- **验证：** 主线程源码复核 `P0/P1/P2=0/0/0`；Cloud
+  `mvn -o -q compile -DskipTests=false` PASS；选择性 javac + direct Surefire 运行
+  `TiantingDarkThunderPlanTest` `13/13`、`TiantingSubtaskLoopContractTest` `27/27`，合计 `40/40 PASS`。
+  标准 Maven `-Dtest=... test` 仍在全仓 `testCompile` 被本卡外旧构造器夹具、已删除协议枚举及旧 freshness
+  测试阻断，未扩大写集修理。下一门是 fresh 现场确认同图脱战后首个巡逻点击前无 `Alt+U`，点击间隔约
+  `700ms`。
+
+## Codex - 2026-08-06 / G040 fresh 失败：新普通 action 已替换但旧暗雷状态压住绿链
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`）。受保护基线 `D:\mavenProject\DHXY` 不修改；
+  两仓现有 dirty/untracked 原样保护，不 reset/revert/clean/commit。
+- **fresh 证据：** G033 run `remote-turn-c85b4a76-7ce7-4641-9854-f866231e0e7d` 先完成真实暗雷战斗；脱战后
+  Observer 对普通 task-box 得到 `anlei score=0.3857`，并把 action
+  `b1c88653-7ce3-44dc-b61f-63e17603644b` 以 `replaced=true` 写入槽，证明 G040 的持续观察和原子替换生效。
+- **失败链：** 新 action 已 `trackerLinkReady=true`，但任务上下文仍是上一腿的 `darkThunder=true`、
+  `legStopped=true`；决策器优先选择 `RUN_DARK_THUNDER`，普通任务绿链无法被消费，巡逻点击超过 160 次，
+  `completedSubtasks=0`。
+- **停机：** `2026-08-06 08:18:10 EDT` 已正式执行
+  `scripts/background-task-test.ps1 stop`，结果 `5/5 STOPPED`、`runningWindowCount=0`。修复与静态门完成前
+  不重启。
+- **修复边界：** 仅修 Cloud 天庭消费端的新旧腿状态交接：异图新 action 在决策前结束旧暗雷连续性并让新绿链
+  可达；点击新绿链后才锁存新 action 的 `darkThunder`。同图暗雷巡逻、封妖符 ownership、Dialog 优先级、
+  Tracker 模板/阈值和输入均不改。
+- **worker 交付与主线程审核：** Cloud 仅改 `TiantingTask.java` 和
+  `TiantingSubtaskLoopContractTest.java`；决策器、Observer、槽位、模板与输入未改。异图新 action 在 facts/决策
+  之前结算旧暗雷腿并清状态；其 `darkThunder` 仍只在新绿链提交后锁存。主线程审核
+  `P0/P1/P2=0/0/0`，G040 business-rule gate PASS，Cloud `mvn -o -q compile -DskipTests=false` PASS，隔离合同
+  `26/26 PASS`，精确写集 `git diff --check` PASS。运行仍为 `5/5 STOPPED`，待加载新 Cloud classpath 后 fresh
+  复验再继续 G033。
+- **fresh 重启：** Cloud 于 `08:37:27 EDT` 加载新 classpath；五窗于 `08:38:21 EDT` 启动为
+  `5/5 RUNNING`，队长 runId `remote-turn-6037c1ea-6862-4dd5-8699-15a5e96249e1`。首个普通 Tracker action
+  已在 `08:38` 选择 `CLICK_TRACKER_LINK`、真实点击并进入 `PARK_PATHING`。G040 仍等“暗雷脱战 -> 异图新任务”
+  的 exact fresh 现场，heartbeat 已更新为从本次启动时间逐任务审计。
+
+## Codex - 2026-08-06 / G014+G029 静态门通过，恢复 G033 fresh
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`。受保护基线 `D:\mavenProject\DHXY` 未修改；两仓已有
+  dirty/untracked 原样保护，不 reset/revert/clean/commit。
+- **用户授权：** `2026-08-06 07:36 EDT` 明确要求“继续测试”，因此解除昨晚的停机验证禁令；先完成静态门，
+  再以 fresh Cloud classpath 和高权限无 UI 宿主恢复天庭 `100` 次。
+- **验证结果：** Cloud `mvn -q compile` PASS；隔离执行
+  `TiantingSubtaskLoopContractTest` 为 `20/20 PASS`。标准
+  `mvn -q -Dtest=TiantingSubtaskLoopContractTest test` 仍在 aggregate `testCompile` 阶段被本卡外旧
+  `DialogService`、`FiveRingTaskV2`、`CloudTurnTaskFactory` 构造器夹具、已删除协议枚举和旧
+  `TiantingPostCombatTrackerFreshnessContractTest` 阻断，未扩大写集修理无关测试。
+- **下一门：** 重启 Cloud 和 G033 五窗后，逐小任务核对
+  `task-box -> 绿链/移动 -> Dialog actionKey -> 引妖香/封妖符/普通怪/暗雷分支 -> completedSubtasks`。
+  重点 fresh 证明：引妖香 no-movement 必须安装七模板；封妖符分支不得再被普通 Tracker 抢占，坐标和目标点击
+  必须等待真实移动、战斗或实际 STORY 清理结果。
+- **fresh 被显式热键暂停：** session `e41cf063-0143-4daf-8df8-d6661a53df0b` 于
+  `07:39:11 EDT` 成功启动 `5/5`；队长 runId
+  `remote-turn-27ded223-a097-470d-92bd-b6e0f475f6fe` 已接任务、点击 fresh 绿链并本地命中/点击
+  `kaida.png`。`07:40:16.014` Windows `WM_HOTKEY` 线程收到已注册的 `Ctrl+Shift+F11`，调用
+  `togglePauseResumeAll()`，随后五窗正常停止为 `PAUSED 5/5`，不是业务 `FAILED`。保持暂停，等待用户确认是否恢复；
+  heartbeat 不得自行重启。
+- **热键恢复失败根因与现场恢复：** `togglePauseResumeAll()` 只保留 `snapshot.isRunning()`，但 remote pause 按
+  G008 会执行 `abortRemoteRun(...)`、移除 turn loop，并把窗口投影为 `PAUSED + runningTask=UNKNOWN`；这些窗口因此
+  不会进入 `resumeAll()`。即使直接调用 `resumeRemoteWindows()`，当前实现也明确只返回“旧运行已清理，请重新启动”。
+  同时后台 `start-tianting` 会把暂停壳视为已有任务而拒绝叠加，所以现有唯一恢复链是正式 `stop 5/5 -> fresh
+  start-tianting 5/5`。已按用户恢复意图执行，新启动时间 `07:43:07 EDT`，队长 runId
+  `remote-turn-4eb15e4d-432c-496c-be11-e47ca27579be`，当前 `5/5 RUNNING`。热键行为作为 G033 待批准控制缺陷保留，
+  本轮不改生产控制语义。
+- **07:48 战后等待诊断：** `07:48:01.283` 队长真实脱战；绿链 prepared action 在战后恢复前已经 ready，且
+  task-box 连续 raw comparison 均为 `UNCHANGED`。`runPostCombat()` 尾部仍无条件执行 `25s`
+  `awaitSubtaskFact()`，但该 action 的 ready edge 已被 cursor 消费且 retained action 不重发 edge，于是等待满
+  `25,016ms` 后才在下一 pass 读取 `trackerLinkReady=true`；Client `07:48:29.147` 才点击。根因不是识别慢，
+  而是战后恢复之后错误地用 edge wait 挡住已经存在的 level-ready action。已写入 G033，等待用户批准精确返修。
+- **07:55 fresh 已停止并返修：** 权威进度到 `7/100` 后，G017 no-movement recovery 在固定 `4000ms` 边界把
+  `titleSeq=12/dialogSeq=12` 的 UNKNOWN/stale 当成 ERROR，先结束 task；真实
+  `tianting.yinyao|score=1.0|executed=true` 紧随其后才到，已无法被 terminal observer 消费。`07:55:06 EDT`
+  正式停止 `5/5`，证据目录 `images/test-cases/tianting-g033-failure-20260806-0755/`。用户已批准 worker James
+  同时修复 G017 时间截止竞态与 `runPostCombat()` 的无条件 `25s` park；适用 compile/合同和主线程审核前不重启。
+- **worker 交付与主线程审核：** Cloud 仅改 `TiantingTask.java` 与
+  `TiantingSubtaskLoopContractTest.java`。战后恢复不再在读取 retained level-ready Tracker action 前 park；G017
+  no-movement recovery 不再把 `4s UNKNOWN/stale` 变成整轮失败，迟到的 exact Dialog outcome 优先消费并继续按
+  `400ms` cooperative slice 等 Runner。启动阶段独立 `4s`、fallback terminal deadline、wrong
+  run/window/HWND/observer lineage fail-closed 均保留。主线程独立运行 Cloud `mvn -q compile` PASS；使用
+  JUnit console 隔离编译/执行 `TiantingSubtaskLoopContractTest`，`22/22 PASS`；review
+  `P0/P1/P2=0/0/0`。下一步重启 fresh Cloud/G033，旧 run 的 `7/100` 不作为新 run 起点。
+- **fresh 已恢复：** `08:09 EDT` 只重启 Cloud JVM，未替换高权限无 UI Client 宿主；`08:10:24 EDT` 正式启动
+  天庭 `100` 次，五窗 `5/5 RUNNING`，新队长 runId
+  `remote-turn-c85b4a76-7ce7-4641-9854-f866231e0e7d`。启动阶段未见新 `ERROR/FAILED`；heartbeat 已改为从该时间
+  增量逐任务审计，并重点验证 07:48/07:55 两个失败链。
+
+## Codex - 2026-08-06 / G029+G033 封妖符入口时序与分支 ownership 纠正
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。保护基线 `D:\mavenProject\DHXY` 未修改；两仓全部
+  dirty/untracked 原样保护，不 reset/revert/clean/commit。
+- **用户纠正：** 必须先在 Dialog 实际点击 `使用封妖符`，随后游戏才更新左侧 Tracker 绿链为封妖符。因此首次
+  进入分支以 `ACTION_FENGYAO` 为权威；Tracker “封妖符”只作确认/恢复，不能成为首次进入的前置条件。
+- **fresh/代码证据：** run `remote-turn-cc3273bb-8b2d-47d3-b4ab-63d5e63ca836` 已在
+  `ACTION_FENGYAO` 后 OCR 出“请按照封妖符上所示地图前往查探”，但当前 OCR 结果只参与暗雷纠偏；同时
+  `TiantingSubtaskDecision` 在 `fengyaofu=true`、`stopped=false` 时仍可选择通用 `CLICK_TRACKER_LINK`，导致专属
+  分支建立后又越权点击旧绿链。当前 `runFengyaofu` 还会把 direct click 的 `dispatched=true` 当作足够结果，提前
+  清坐标并比较 task box；NpcClick 管线也仍可能先读写记忆，均与用户裁决不等价。
+- **用户批准并已实施：** 分支建立后压住通用 Tracker click；每轮先查 `fengyaofu.png`，命中直接处理坐标，未命中
+  才点一次绿链重开；妖王幻影只走 tooltip 且不读写记忆；点击后保留坐标上下文，等待真实 `IN_COMBAT`，或未入战
+  STORY 被 Fast Click 实际处理，再比较完整 task box。坐标点击也复用 G014 exact intent 的真实移动证明：未移动不写
+  visited，先只清 STORY，再重试同一坐标。Cloud 写集为 `TiantingSubtaskDecision.java`、`TiantingTask.java`、
+  `NpcClickStrategyProfile.java`、`NpcClickService.java` 与既有合同源码；`TOOLTIP_ONLY` 阻断记忆/黄字/公式/Ctrl。
+  未运行 compile/test/runtime/application/UI/capture/input；五窗保持 `STOPPED`，等待用户另行允许验证。
+
+## Codex - 2026-08-06 / G029+G033 引妖香已知模板未进入探测链
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 只读诊断
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓已有 dirty/untracked 全部保护；未 reset/revert/clean/commit，
+  未修改受保护基线 `D:\mavenProject\DHXY`。
+- **任务事实：** `00:35:xx-00:36:xx` 队长 `hwnd-6EC05EE` 的完整 task-box OCR 为“本次所寻妖王异常谨慎，
+  请选择是否使用引妖香”，不是封妖符。`00:35:39` 脱战，`00:35:43` 点击 fresh 绿链。
+- **根因：** `yinyao.png` 及 `ACTION_YINYAO` 已存在，但 G014 exact no-movement gate 被错误短路。Client
+  `LocalTurnActionExecutor` 在携带 pathing intent 的 input action 完成后立即调用 `markPathingStarted(...)`；Cloud
+  `legStarted(...)` 只检查 exact intent 是否存在，未读取 Runner 的真实画面移动证据，所以误判已经起步并跳过
+  `TIANTING_RECOVERY_OPTION`。Runner 随后在 `00:36:00.431` 正常上报 `STOPPED_AWAY`，Cloud 也进入
+  `AWAIT_DIALOG`，但该分支只保留原 `TIANTING_COMBAT_OPTION`，不会把 probe 切成七模板 recovery。本地因此没有尝试
+  `yinyao.png`。约 `25s` 后 Cloud generic fallback 点击第一项；
+  随后无条件的封妖符 anchor probe 得分
+  `0.0789/0.0277/0.0594`，G029 以 `g029-fallback-fengyaofu-unconfirmed` 错误回李靖。
+- **停止与监控：** 该现场虽无 `ERROR/FAILED`，仍是静默业务失败。`00:48:38 EDT` 已通过
+  `scripts/background-task-test.ps1 -Action stop` 正式停止 `5/5`，五窗均 `STOPPED`。heartbeat `100` 已更新为
+  逐个小任务核对 `task-box -> 绿链/移动 -> Dialog actionKey -> 正确分支 -> completedSubtasks`；静默回李靖、
+  已知模板落入 fallback、错误分支或完成数不增长均必须停机。
+- **待用户批准的最小方向：** 修正 G014 的起步证明，让 exact 绿链点击只在 Runner 给出真实 movement proof 后
+  返回 `legStarted=true`；未起步则安装既有 `TIANTING_RECOVERY_OPTION`，由现有 `ACTION_YINYAO` 五次预算 consumer
+  处理。先不扩大到移动中/普通到站扫描，也不改模板、ROI、阈值、点击坐标或 generic fallback 分流。
+- **用户批准（2026-08-06）：** 按上述最小方向实施。精确生产写集仅为 Cloud
+  `src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java`，合同写集仅为既有
+  `src/test/java/com/bot/dhxy/task/tianting/TiantingSubtaskLoopContractTest.java`；Client 生产代码、协议、模板、ROI、
+  阈值、输入和 fallback 均不改。Cloud pushed `origin/navigation-migration@363d0e3` 不含 `TiantingTask`，故以当前
+  G014/G029 权威卡和现有未跟踪实现为增量基线；两仓既有 dirty/untracked 继续保护。用户明确要求修完后不启动
+  runtime/application，也不运行测试；本轮只做源码静态审查，随后调查下一轮真实封妖符错误。
+- **验证门：** 保存真实引妖香 dialog ROI 为 testcase；生产匹配必须命中 `yinyao.png` 并标出最终点击点；合同覆盖
+  exact click-no-movement 必须进入七模板、真实 movement-positive 不进入 recovery、封妖符仍走原有
+  DUOXIE/FENGYAO 链；
+  双仓适用 compile/合同通过后才能重启 G033 继续 100 次。
+- **G014 源码交付（按用户要求未测试）：** Cloud `TiantingTask.legStarted(...)` 现在除 exact intent ID 外，
+  还要求 `movementObservedAtMs > 0` 且不早于该 intent 的 `createdAtMs`；仅登记 intent 不再构成起步证明。
+  既有 `TiantingSubtaskLoopContractTest` 的源码断言同步收紧。未启动 application/runtime/UI/capture/input，未运行
+  Maven compile 或测试；仅对精确写集执行静态审查与 `git diff --check`。
+- **下一轮真实封妖符调查与已批准返修：** run
+  `remote-turn-cc3273bb-8b2d-47d3-b4ab-63d5e63ca836` 中，本地先后以 `1.0000` 命中
+  `duoxie.png`、`fengyao.png`，封妖符 anchor 也以 `1.0000` 命中，coordinate `0` 到达长寿村外 `(11,22)`；
+  `Alt+A` 与妖王幻影 direct click 均已发出，但 Runner 从未上报 `IN_COMBAT`。Cloud 却在
+  `enterFengyaofuCombat(...)` 仅返回 `dispatched=true` 后清掉 awaiting coordinate，并立即比较 task-box；随后把
+  `score=0.3232` 的画面差异判为 `CHANGED`，错误退出封妖符分支。业务文档要求先由真实入战/脱战或明确的未入战剧情
+  结果分类，task-box 比较只能发生在该结果之后。另在 FENGYAO 消费后、坐标分支取得控制前，decision 曾再次点击旧
+  Tracker 绿链并产生无关移动，说明封妖符 ownership 还未压住普通 Tracker 分支。现已把 ownership 提到 pathing/combat
+  门之后、stopped/普通绿链之前；坐标和目标点击均不再把 `dispatched` 当结果。按用户要求只做源码静态审查，未编译或实跑。
+- **同批收口：** 每个一二三四坐标点击只有在 exact intent 的 `movementObservedAtMs` 证明真实起步后才消费；未移动仅检测并
+  Fast Click STORY，随后重试同一坐标。坐标点击前会清掉上一腿的 terminal latch，但若本腿在 G014 起步确认期间已经快速
+  到达，则保留同一 intent 的 `ARRIVED/STOPPED_AWAY`，不会再次等待。妖王幻影只走 tooltip，不读写记忆；目标点击后必须由
+  Runner `IN_COMBAT -> NOT_IN_COMBAT` 或 STORY 实际关闭证明结果，之后才比较 task box。
+
+## Codex - 2026-08-06 / G033 天庭 100 次 fresh 普通任务无推进调查
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 只读诊断
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓现有 dirty/untracked 全部保护；不
+  reset/revert/clean/commit，不修改受保护基线 `D:\mavenProject\DHXY`。
+- **运行与停止证据：** fresh run `remote-turn-6d88179d-3776-49b7-b5ff-cfea42282ef7`
+  在队长 `hwnd-6EC05EE` 的普通“妖王已被引出”腿反复到达瑶池 `(51,83)`，没有 Dialog、战斗或真实
+  task-box 推进；`2026-08-06 00:19:36 EDT` 已用
+  `scripts/background-task-test.ps1 -Action stop` 正式停止 `5/5`，没有杀宿主进程。
+- **已撤回的误判：** 停止前画面右下角虽然存在“当前点数不足”的系统公告，但当前没有日志、输入拒绝或游戏
+  状态证据证明该公告阻断天庭任务。它与普通任务无推进只能算同时出现，不能作为根因；此前将两者直接建立
+  因果关系的结论已撤回。
+- **已确认事实：** Tracker 点击正确落在绿色 `(51,83)`；Runner 多次上报
+  `STOPPED_AWAY map=瑶池 coord=(51,83)`。Client 已挂载 `TIANTING_COMBAT_OPTION`，并按现有实现每 `1s`
+  在窗口相对 `(200,250,640x300)` 内本地匹配天庭选项；该轮没有 `妖王.png` 命中/点击事件，也没有
+  `TIANTING_DIALOG_CLICKED`、进入战斗或 task-box 内容变化。Cloud 随后按现有 Q11 的 `5s` grace 与
+  `25s` park 反复执行 `RECLICK_TRACKER_LINK`。根因继续沿 Tracker 到达后的 Dialog 探测/恢复链调查，不能用
+  右下角公告替代代码证据。
+- **exact-window 证据：** `images/test-cases/tianting-g033-failure-20260806-0019/` 保存五窗原图和
+  `capture-metadata.json`；队长图为 `hwnd-6EC05EE.png`。本轮停止终态记录
+  `completedSubtasks=1 stopped=true`，但未达到 `100` 次正常终态，G033 与 G040 fresh 均保持未关闭。
+- **调查结论：** 普通任务到达后没有 Dialog 的本轮现象交由既有 watchdog 恢复，不单独作为实现缺陷；不得把
+  本轮或右下角公告解释为业务通过/失败依据。
+- **用户裁决与恢复（2026-08-06 00:33 EDT）：** 上述普通小任务是自身超时未更新；现有 `180s watchdog -> 回李靖
+  重新接任务` 属于正常可恢复路径，不作为整轮错误，也不得因此停止 G033。已用同一后台控制 session
+  `47e83c2e-6082-4725-840c-f8edcb6d5d15` 重新启动天庭 `100` 次，结果 `5/5 RUNNING`；后续继续以
+  `completedSubtasks/tianting:progress` 判断整轮进度。
+
+## Codex - 2026-08-05 / G027 cloud-memory 调试图误落盘返修
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration`，HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓大量既有 dirty/untracked
+  全部保护，不 reset/revert/clean/commit，不修改受保护基线 `D:\mavenProject\DHXY`。
+- **G033 fresh 证据：** run `remote-turn-5159b635-1fec-4083-8ea9-5f58585f1318` 在战后 Dialog 行带检测中
+  连续 `ERROR`：`save debug image failed: cloud-memory:...`，OpenCV 报无可用扩展名 writer。已于约 `22:28`
+  正式停止五窗，exact-window 图保存在
+  `images/test-cases/tianting-g033-failure-20260805-2228/`；权威完成数仍为 `completedSubtasks=0`。
+- **根因：** G027 仅在 `Path.of(...)` 拒绝冒号时把文件名安全化；新的 Dialog 行带调用使用无扩展名
+  `cloud-memory:` 标识，安全化后仍被交给 OpenCV 写文件。该标识本义是“图像只存在于内存”，不应落盘。
+- **精确写集：** Cloud `src/main/java/com/bot/dhxy/tools/ImagePreprocessor.java`、
+  `src/test/java/com/bot/dhxy/service/G027CloudMemoryDebugNoSaveContractTest.java`、`.gitignore`；Client 本记录、
+  G027 卡及生成的 dashboard。只给两个 `saveDebugImage` 重载增加 `cloud-memory:` 跳过策略，保留其他路径和
+  G027 文件名安全化；不改 Dialog 判断、天庭业务、阈值、ROI 或输入。
+- **静态结果：** Cloud production compile PASS；G027 内存诊断不落盘合同 PASS；双仓精确写集
+  `git diff --check` PASS；dashboard 已生成 `279` 行。Cloud 已以 fresh classpath 重启（PID `2212`），
+  OCR sidecar `18762` 身份匹配复用。下一步恢复同一五窗天庭 `100` 次，观察同一 Dialog 分支无 ERROR 后才关闭返修。
+- **fresh 关闭证据：** run `remote-turn-e09e94ac-96e2-4a38-9e0f-b78275ad5fee` 已在首场脱战后进入
+  `RUN_POST_COMBAT`，并继续下一场暗雷战斗；同一 Dialog option 行带检测未再记录 `cloud-memory:` 保存 ERROR。
+  G027 返修关闭，G033 五窗保持运行，权威进度仍为 `completedSubtasks=0/100`。
+
+## Codex - 2026-08-05 / G036 无 UI 宿主 High-integrity 启动
+
+- **第三轮 fresh：** `19:24:48.752-19:24:48.867`，同一点击目标 `(2029,1012)` 三次
+  `SetCursorPos=false`，最终在 mouse-down 前 dead-letter，启动 `0/5`，随后已正式 stop/shutdown。
+- **权限证据：** 当前脚本/Codex 为 `Medium (0x2000)`，游戏 PID `12048` 为 `High (0x3000)`；
+  输入桌面均为 `Default`、裁剪范围正常、window-station 写权限可打开，但三种软件鼠标移动均不生效。
+  与项目 `2026-07-24` 已记录的低完整性终端输入失败一致。
+- **批准修复：** 只给 G033 脚本增加显式 `-ElevatedHost`，用 `RunAs` 拉起原无 UI 宿主；不改任务、
+  坐标、点击或 read-back。静态门后再次启动天庭 100 次，UAC 批准一次后继续自动监控。
+- **精确写集：** `scripts/background-task-test.ps1`、`BackgroundTaskTestControlContractTest.java`、
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、生成的 dashboard 数据。
+- **静态结果：** Client production compile PASS；PowerShell 5.1 parse、隔离源码合同、dashboard 与
+  `git diff --check` PASS。定向 Maven test 的全量 `testCompile` 被既有测试对已删除
+  `LocalPathingStartProofMechanics` 的引用阻断，已保留原始失败证据；下一步高权限 fresh。
+- **高权限宿主事实：** PID `59280` 已于 `19:31:50` ready 并写入新 `host.properties`；Medium 脚本只能读取
+  PID/进程名，不能读取 High 进程命令行，因此旧 `Get-LiveHost` 超时。现以该进程启动后新写的 exact host 文件
+  作为跨权限身份补证；命令行可读时仍执行原严格检查。
+
+## Codex - 2026-08-05 / G035 鼠标移动瞬时失败有限重试
+
+- **fresh 证据：** G034 第二轮在 `19:19:10.444` 尝试 story 点击 `(1996,1009)`；
+  `SetCursorPos=false`，before/after 均为 `(3930,999)`，随后动作在 mouse-down 前 dead-letter，五窗启动 `0/5`。
+  `18:46` 同一实现已有连续多次 `reached=true`，因此不是固定坐标系错误，而是一次瞬时系统拒绝。
+- **批准修复：** 只改现有 `moveCursorToLogicalPoint`：同一目标、同一输入事务最多三次，每次保留
+  `SetCursorPos + GetCursorPos` 到位证明；只有到位才返回，耗尽仍抛异常。禁止取消验证或吞最终失败。
+- **精确写集：** `WinApiMouseController.java`、`G035CursorMoveRetryContractTest.java`、G033 脚本 UTF-8 属性读取、
+  本卡/ACTIVE_WORK/dashboard。完成 compile/合同后第三次启动天庭 100 次。
+- **静态结果：** `G035CursorMoveRetryContractTest` `1/1 PASS`；Client production compile PASS；
+  `git diff --check` PASS。现在进入第三轮 fresh，不把静态通过解释为运行通过。
+
+## Codex - 2026-08-05 / G034 天庭无 UI 冷启动 Dialog blocker
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；保护 `D:\mavenProject\DHXY`，Cloud 只读。
+- **fresh 事实：** `19:10:00` G033 扫到 5 个窗口；`19:10:05-19:10:07` 逐窗发送 `Alt+T`；`19:10:16`
+  五窗均报“本地队伍菜单在 5 秒内未命中队长按钮”，启动 `0/5`。本轮保存的五张
+  `team_role_panel_latest_raw.png` 中四张被普通 dialog 挡住，一张未出现队伍面板。已正式 stop/shutdown。
+- **根因与修复：** 当前本地队伍面板预检缺失启动前阻挡 UI 清理。严格复用现有 generic X 关闭、结构性 dialog
+  presence 与 story advance mechanical click，再进入原 `Alt+T` 识别；不改角色算法、模板、ROI、阈值或任务业务。
+- **精确写集：** `LocalTeamRolePreflightService.java`、`DialogFramePresenceMechanics.java`、G034 定向测试与真实 testcase、
+  `scripts/background-task-test.ps1` 的 PowerShell 5.1/结果输出修复、`docs/ACTIVE_WORK.md`、
+  `docs/PACKAGE_ARCHITECTURE.md`、生成的 `docs/cr-dashboard-data.js`。
+- **下一门：** 真实图 replay + 标记点、隔离合同、Client compile、PowerShell 5.1 parse；随后重启天庭 100 次。
+- **静态结果：** Client production compile PASS；五张 fresh 原图 replay `5/5 PASS`，启动清场合同 `1/1 PASS`，
+  PowerShell 5.1 AST parse PASS。标记输出：
+  `images/test-output/g034-team-role-startup-blocker/`；下一步为第二轮天庭 100 次 fresh。
+
+## Codex - 2026-08-05 / G033 五环与天庭无 UI 实机后台控制入口
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`。保护基线 `D:\mavenProject\DHXY` 不动；Cloud
+  `D:\mavenProject\dhxy-cloud-brain` 只读，不在本卡写集。
+- **开工状态：** Client 与 Cloud 均有大量既有 dirty/untracked；本卡不 reset/revert/clean/commit，不覆盖现有改动。
+  `AutoBot` 已有 `show-ui=false + auto-start` 正式入口，UI 和无 UI 启动最终均复用
+  `GameWindowRegistrationService` 与 `WindowTaskControlService`，因此禁止复制五环/天庭业务逻辑。
+- **用户批准行为：** 新增默认关闭的实机后台测试控制入口，提供五环、天庭两个明确启动函数，默认 `100` 次；提供
+  `status/pause/resume/stop/shutdown`，让 Codex 读取新日志后可立即通过正式 `stopAll()` 停止，不依赖 UI、不得
+  直接强杀正在执行输入的任务。修复并重新编译后可重启后台宿主继续实测。
+- **精确写集：** `src/main/java/com/bot/dhxy/config/BackgroundTaskTestProperties.java`、
+  `src/main/java/com/bot/dhxy/window/control/BackgroundTaskTestControlService.java`、
+  `src/test/java/com/bot/dhxy/window/control/BackgroundTaskTestControlContractTest.java`、
+  `scripts/background-task-test.ps1`、`docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、
+  生成的 `docs/cr-dashboard-data.js`。不修改 `AutoBot`、任务业务类、UI 或 Cloud。
+- **验证边界：** 只运行源码合同、PowerShell 语法和 Maven 编译门；本轮不启动 application/runtime/Task/UI/capture/input。
+- **交付结果：** 新增默认关闭的 `BackgroundTaskTestControlService`；公开 `startWuhuanTest()`、
+  `startTiantingTest()`（默认 `100`）及 `status/pause/resume/stop`。控制宿主在 `ApplicationReadyEvent` 后才建立
+  非 daemon 阻塞式文件监听；每个请求必须携带当前随机 session，旧宿主命令不能重放。跨进程文件锁和脚本现有
+  `AutoBot` 进程检查共同禁止第二个 JVM 抢占游戏窗口。`shutdown` 先执行正式
+  `stopAll()`，写回结果后再关闭 Spring context。`BotProperties` 的次数只在构造正式启动请求期间临时覆盖，随后恢复。
+- **使用入口：** `powershell -ExecutionPolicy Bypass -File scripts/background-task-test.ps1 -Action start-wuhuan`
+  或 `-Action start-tianting`；可附加 `-MaxRuns 100`。同一脚本支持 `status/pause/resume/stop/shutdown`；
+  `-Action monitor` 只读取启动后的新 `dhxy-console.log` 行，发现 `ERROR` 即通过控制宿主调用正式 `stopAll()`。
+- **验证结果：** PowerShell AST 语法与保留变量 `$Host` 防回归检查 PASS；Client
+  `mvn -q -DskipTests compile` PASS；隔离执行 `BackgroundTaskTestControlContractTest` `2/2 PASS`；本卡文件
+  `git diff --check` PASS。标准 `mvn -Dtest=BackgroundTaskTestControlContractTest test` 在执行本卡测试前被既有
+  `LocalTurnActionExecutorContractTest` 对已删除 `LocalPathingStartProofMechanics` 的引用阻断，未扩大写集处理。
+- **状态：** SOURCE+CONTRACT PASSED / FRESH RUNTIME REQUIRED。尚未启动控制宿主、Cloud、游戏任务、截图或输入。
+
+## Codex - 2026-08-05 / G029 天庭封妖符已知 Dialog 语义恢复
+
+- **当前结论：** SOURCE+TEST REVIEW PASSED，fresh runtime required。exact no-movement 现在先安装
+  `TIANTING_RECOVERY_OPTION`；本地 known action 直接走既有 consumer，只有 retained
+  `TIANTING_RECOVERY_ALL_MISSED` 才授权 Cloud fallback。未确认 fallback 已禁止重新点 Tracker。
+- **验证：** Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；隔离 JUnit Console 执行
+  `TiantingDialogProbeContractTest` `14/14`、`TiantingSubtaskLoopContractTest` `16/16`；共享
+  `ObservationKeyEventType.java` SHA-256 为
+  `794AE5229005785867D4DF00417B8AC91E353602CCA80BE8E844A779E3C7A83B`。标准 Maven test 生命周期分别被
+  本卡外旧 fixture（`LocalPathingStartProofMechanics`、旧构造器签名等）阻断，未把这些无关断点混入本卡。
+- **终审：** 父级逐文件审核与独立只读复审均为 `P0/P1/P2=0/0/0`；独立复审确认旧 recovery A 的迟到
+  all-miss 无法授权 recovery B，且未确认封妖符路径不再重开 Tracker。
+- **fresh 验收点：** 重启 Client 与 Cloud；同轮必须依次看到具体 `tianting.duoxie`、
+  `tianting.fengyao` retained edge 并进入坐标分支；`使用封妖符`或坐标卷轴可见期间不得再次点击 Tracker。
+  每次 exact no-movement recovery 必须使用新的 `probeCorrelation`；旧 recovery 的迟到 all-miss 只能被忽略，
+  不得放行当前 recovery 的 generic fallback。
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration`，HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓既有大量 dirty/untracked，
+  本卡只做窄增量，不 reset/revert/clean，不修改保护基线 `D:\mavenProject\DHXY`。
+- **现场与根因：** `15:11:40` 出现 `多谢`，`15:11:45` 出现 `使用封妖符`，随后坐标卷轴已打开；G017
+  no-movement 入口清除本地七模板 probe 后只走通用 fallback，丢失 `DUOXIE/FENGYAO` actionKey，G006 未确认
+  恢复继续重按 Tracker 绿链。
+- **用户批准修复：** 恢复天庭 G014 窄例外；known local action 优先，all-miss 才 Cloud fallback；已知 Option
+  或封妖符坐标 Dialog 可见时禁止 tracker reopen。模板、ROI、阈值、点击与其他任务保持不变。
+- **最新推送对照：** 两仓最新推送仍为 `修罗五环云端V1版本`；天庭 G014/G017 均为推送后 dirty 增量，当前
+  生产代码和权威业务规则的冲突已由用户本轮明确裁决为恢复 G014 天庭例外。
+- **15:11 fresh 补充根因与批准：** `15:11:42.400` 的完整帧尚无第二个 Option，下一张可用完整帧
+  `15:11:45.159` 才命中；这只能把出现时刻限定在两帧之间，不能证明游戏延迟 `4.2s`。Client 观察循环为
+  `sample -> synchronous HTTP -> sleep(period)`，因此配置的 `1s` 只是每轮完成后的最小等待；现场相邻采样约
+  `2.7s`。`TIANTING_FENGYAO_LOCAL_WINDOW_MS=2500` 会在下一次采样前自行过期。用户批准删除该时间门，改为
+  `DUOXIE executed -> pending -> FENGYAO executed/interest clear/task reset` 的事实生命周期，不替换为更大超时。
+- **本次精确新增写集：** Client `WindowObservationSampler.java`、`WindowRuntimeContext.java`、
+  `TiantingDialogProbeContractTest.java`；治理 `天庭任务流程大MD.md`、`business-rules.json`、G029 trace/card、
+  错误清单、dashboard 和本记录。Cloud G029 既有写集不扩大；两仓其他 dirty/untracked 全部保护。
+- **Client 切片交付：** 已删除 `TIANTING_FENGYAO_LOCAL_WINDOW_MS` 与所有 `now/untilMs` 判断；DUOXIE 成功建立
+  pending，FENGYAO 成功、Dialog interest clear 或 task runtime reset 清除。Client production compile PASS；隔离
+  `TiantingDialogProbeContractTest` 在当前整合源码上 `14/14` PASS，包含实际等待 `2.6s` 后仍命中 FENGYAO 的
+  回归及同卡并行落盘的 recovery all-miss 合同。标准 Maven
+  `test` 被写集外 `LocalTurnActionExecutorContractTest` 继续引用已删除的 `LocalPathingStartProofMechanics` 阻断；
+  没有扩大范围修它。G029 business-rule gate PASS，未启动 runtime/application/UI/capture/input。
+
+## Codex - 2026-08-05 / G017 天庭前置检查后不动作诊断
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`；Cloud 只读核对
+  `D:\mavenProject\dhxy-cloud-brain`。两仓已有大量其他 dirty/untracked；本轮只追加诊断记录，未改 Java、未启动
+  runtime/UI/capture/input，保护基线 `D:\mavenProject\DHXY` 未修改。
+- **现场：** 队长 `468413443`（`hwnd-93B12C4`）天庭于 `14:20:10` 进入执行；前置急救与摄妖香完成，
+  `player.sheyaoxiang.ensure` 为 `13156ms`。Client 随后两次上报 `title=present, dialog=none`，证明 Tracker
+  已识别，不是绿链或 Title 漏检。
+- **P1 根因：** Client `WindowTurnLoop` 以 `TurnTaskCode.name()` 向观察面发送 `TIANTING`，Cloud
+  `TiantingTask.TASK_CODE` 为 `tianting`；G017 observer 和同步 ACK 使用大小写敏感 taskCode lineage 校验，故连续
+  `REJECTED_LINEAGE`，同步兜底也无法 exact ACK，最终在进入 `RUN_SUBTASKS` 前 fail-closed，完成数 `0`。
+- **实施：** Client `WindowTurnLoop` 只在 observation runner 创建边界把 `TurnTaskCode.name()` 通过
+  `Locale.ROOT` 规范为小写业务 code；Cloud 严格 lineage 校验和天庭业务流程均未修改。现有修罗/自动战斗断言同步
+  改为 canonical code，并新增真实 `TurnTaskCode.TIANTING -> ObservationRequest.taskCode=tianting` 合同。
+- **验证：** Client production compile PASS；隔离 `WindowTurnLoopObservationContractTest` `9/9` PASS；G016
+  `--card G017` PASS，精确 diff-check PASS。标准 Maven 定向测试被卡外旧测试引用已删除
+  `LocalPathingStartProofMechanics` 阻断；G016 `--all` 被卡外 G027 非法 `changeType/status` 阻断。本轮未启动
+  runtime/application/UI/capture/input。fresh 天庭仍需确认不再出现 `REJECTED_LINEAGE`，Title present 后进入
+  `RUN_SUBTASKS`。
+
+## Codex - 2026-08-05 / G028 五环买鞋后长安地图标签直达云游大师
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration`，`363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓已有大量其他 dirty/untracked，
+  本卡只做窄增量，不 reset/revert/clean，不修改保护基线 `D:\mavenProject\DHXY`。
+- **最新推送对照：** Cloud 最新推送 `363d0e3 修罗五环云端V1版本`；当前 `FiveRingTaskV2` 的鞋店右键返程、
+  视觉变化验证和洛阳 fallback 均是推送后的 dirty 增量。用户已明确批准以 G028 新链替换它们。
+- **批准链：** 购买按钮成功后先原地验鞋；按 `Alt+2`；以当前 exact-window base 将相对 ROI
+  `(479,404)-(672,548)` 投影到屏幕，在其中匹配 canonical `长安.png`；点击标签后复用既有小地图解析与
+  exact intent 点击云游大师坐标 `长安 (87,174)`；同 intent 注册到达帧 FIFO 并进入现有接任务 pathing wait。
+- **禁止项：** 不写死用户当次 base `(1350,145)`；不保留鞋店右键返程、画面变化猜测、重复地图确认或洛阳 fallback；
+  不新增 Cloud pathing truth、observer、timer 或第二套小地图算法。
+- **实现：** 买鞋后先用既有 Bag local-service 验鞋；购买已提交但暂未验到时仅重验，不重复点击购买。验鞋后在一个
+  既有 task-turn transaction 中完成 `Alt+2`、相对 ROI 模板点击、长安小地图 `(87,174)` 点击、exact intentId
+  回传、到达帧 FIFO 注册和 `waitingAcceptNpcPathing` 安装，然后才放权。最终输入若为 `UNCERTAIN`，保留同一
+  intentId 等 Runner，不再生成第二条腿；其他失败出口清地图 UI 并停留在 `BUY_SHOES` 重试。父级第三轮审查发现并
+  修复两条 P1：pending 验鞋门已提升到任何地图判断之前；G028 exact intent 未收到同 ID Runner terminal 前不再被
+  通用 90 秒恢复预算或“坐标接近 NPC”捷径抢跑，非 exact 路径预算保持原样。最终只读审查
+  `P0/P1/P2=0/0/0`。
+- **静态验证：** Cloud `mvn -q compile` PASS；G023、G024、G026 两份、G027、G028 共 6 份定向合同 PASS。
+  `长安.png` 已放入 Cloud canonical template 目录，G028 测试已由 `.gitignore` 精确放行。未启动
+  runtime/application/UI/capture/input；仓内没有包含该标签与指定 ROI 的 raw testcase，因此视觉 replay 和 fresh
+  exact-ID 时间线仍是明确验收门，不能声称已通过。
+
+## Codex - 2026-08-05 / G026 Fresh 五环买鞋后全体停住诊断
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`；Cloud 源码
+  `D:\mavenProject\dhxy-cloud-brain`。保护两仓既有 dirty/untracked；受保护基线 `D:\mavenProject\DHXY`
+  未修改。本轮仅调查并记录，未修改 Java、未启动 runtime/UI/capture/input。
+- **Fresh 时间线：** `12:35` 启动的五个窗口均取得买鞋 exact intent、收到同 ID terminal、完成鞋店 NPC/购买/
+  背包鞋页链；G027 已通过。随后所有窗口反复执行 generic-close absent、dialog read、pathing snapshot read，直至
+  `12:41` 用户停止，没有进入云游大师接任务导航。
+- **P1 根因：** `prepare()` 的接任务位置 prewarm 发生在买鞋前；买鞋耗时使其超过 20 秒。鞋店 pathing terminal
+  在 `BUY_SHOES` 内已结算并清除，返回长安后没有新的 active intent。G026 stale-prewarm 分支却只接受晚于 prewarm
+  的 Runner 位置，因此等待的事实没有生产者，永久返回 `accept-position-evidence-pending`。
+- **待批准修复：** 把成功买鞋并返回长安视为位置缓存生命周期边界，清除旧 prewarm；后续 `ACCEPT_TASK` 复用
+  既有 `syncAcceptNpcSetupPosition(...)` 获取 fresh exact-window 位置。补生产连通性合同，不改其他五环业务顺序。
+
+## 2026-08-05 / G026 五环预计算证据内容校验与 Runner 事实等待
+
+- 目标工作树：Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓均无 upstream 且存在大量既有 dirty/untracked，全部保护；
+  不 reset/revert/checkout/clean/commit，不修改受保护基线 `D:\mavenProject\DHXY`。
+- 当前基线证据：Cloud 当前唯一提交为 `363d0e3 修罗五环云端V1版本`，本卡相关实现全部位于该提交后的既有
+  dirty 增量中；触及的 `FiveRingTaskV2`、`NavigationService`、`DialogService`、`TaskTrackerPanelService`、
+  `CloudWholeTaskObserver` 已有大范围未提交修改，worker 只能按方法/行段做增量修改并先读现有 diff。
+- 用户确定边界：Tracker 完整 task-box 原始 RGB 直接相关匹配 `0.80`；route 保留现有点击前验证但删除 `10s`
+  年龄门并以 `frameRect` 限定证据；移动 `ACTIVE/UNKNOWN` 不再 3 秒淘汰、仍保留 90 秒恢复；位置预热超过 20 秒
+  先做只读 generic-close + Runner dialog 遮挡探测，再按 Runner 地图/坐标是否变化决定复用。1 秒 intent 时间兜底
+  只记录待审，本卡不改。
+- 状态：`DELIVERED / PARENT SOURCE REVIEW PASSED / FRESH RUNTIME REQUIRED`。首轮 P1 已全部返修：五环完整
+  task-box 直接比较原尺寸 RGB（阈值 `0.80`，不洗图）；route 点击前验证限定 classifier `frameRect`；移动事实
+  删除 `3s` 淘汰并保留 `90s` 恢复；超过 `20s` 的位置经通用只读 generic-close + Runner dialog 遮挡探测及
+  同地图/同小坐标确认后才复用。observer 不再保留不可达 stale-clear/按秒注释；第五点仍仅记录未实施。
+- 父级独立验证：Client/Cloud `mvn -q -DskipTests=false compile` 均 PASS；Cloud
+  `G026TrackerRawAndRouteFrameContractTest`、`G026FiveRingTimeAndBlockerContractTest` 与 Client
+  `G026ReadOnlyGenericCloseProbeContractTest` 隔离执行均 PASS；双仓两份协议镜像 SHA-256 一致，精确
+  `git diff --check` PASS。未启动 runtime/application/UI/capture/input，未提交、清理、回滚或覆盖既有改动。
+
+## 2026-08-05 / G024 五环接任务 NPC exact intent 竞态修复
+
+- 目标工作树：Client 文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design`）；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD `363d0e3`）。两仓既有 dirty/untracked
+  全部保护，不执行 reset/revert/checkout/clean/commit；受保护基线 `D:\mavenProject\DHXY` 不修改。
+- 现场：角色 `468413465` 于 `02:34:55` 成功点击前往云游大师，Cloud `02:34:58` 因 active mirror 暂空抛
+  `accept NPC pathing started without an exact active intent`；Client 后续 `02:35:24` 登记 exact intent、
+  `02:35:27` 确认 `ARRIVED (85,174)`，证明是镜像同步竞态而非导航失败。
+- 修改：五环直接使用 `NavigationResult.pathingIntentId` 关联 arrival FIFO；异步 active mirror 仅兼容兜底，
+  双方都暂缺 ID 时可诊断重试，不再终止整轮。Cloud production compile PASS，G024 隔离合同 PASS；状态
+  `DELIVERED / FRESH RUNTIME REQUIRED`。fresh run 需确认买鞋后前往云游大师只点击一次、同 intent 终态推进，
+  且不再出现旧 `IllegalStateException`。Cloud `.gitignore` 仅增加该合同文件的精确白名单。
+
+## 2026-08-05 / G020 五环关闭寻路窗口后立即放权
+
+- 目标工作树：Client 文档 `D:\\mavenProject\\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 生产实现
+  `D:\\mavenProject\\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。两仓均已有大量 dirty/untracked，全部原样保护；不执行
+  reset/revert/checkout/clean/commit，不触碰受保护基线 `D:\\mavenProject\\DHXY`。
+- 现场证据：`logs/archive/dhxy-console.2026-08-04.0.log` 中 `hwnd-49C017C` 于 `23:12:24.824` 完成最终
+  小地图坐标点击，`23:12:27.081` 完成寻路窗口 `x2` 关闭；之后仍有 `23:12:27.652` 移鼠、
+  `23:12:27.671-28.386` 整窗世界地图残留检查及约 `23:12:29.019` 的本地服务收尾。
+- 用户裁决：只对五环，`x2` 关闭完成就是 `PATHING_STARTED` 交接终态；其后不得再做输入、截图、
+  `Alt+2` 或 `PendingRouteOutcome` 服务登记，必须立即由既有 `MUST_YIELD` 放权。
+- 基线/调用链：最终坐标点击已经通过 `dispatchMiniMapHandoffClick(...)` 携带 `TurnPathingIntent` 并取得本地
+  pathing proof；五环没有 `PendingRouteOutcome` read/consume 调用，`waitPathing(...)` 只消费 Runner 的
+  pathing 终态。因此删掉五环关闭后的附加链不改变到达判定。
+- `23:12:27.081` 深挖：该行是 `UICleanerService` 发出物理 X2 点击；现宏在 `clickLeft(...)` 返回后仍固定
+  `TaskSleep.sleep(250)`，到 `23:12:27.511` 才回 Cloud。G020 增加 typed UI 参数，仅五环跳过该 post-click
+  settle；鼠标点击自身的既有按下/抬起时序不改，其他调用仍等待 250ms。
+- 精确写集：Cloud `NavigationRequest.java`、`NavigationService.java`、`FiveRingTaskV2.java`、
+  `CloudUiCleanerPort.java`、`CloudUiCleanerLocalServiceClient.java`、`TurnUiOperationArguments.java` 与 G020 合同；
+  Client 对应协议参数、`UiLocalOperationExecutor.java`、`UICleanerService.java`、定向合同及治理文档/dashboard。
+- 交付：五环 `finishAfterRoutePanelClose=true` 经 typed UI 参数到 Client；X2 点击自身完成后跳过 `250ms` settle，
+  Cloud 不再发移鼠、残留地图 capture/`Alt+2` 或 pending-route local service，直接返回 `PATHING_STARTED` 进入
+  `MUST_YIELD`。其他任务请求默认 false，保留原清理链。Cloud/Client production compile PASS；隔离 G020
+  Cloud 合同 `2/2`、Client 合同 `1/1` PASS；业务门 PASS。标准 Cloud named test 因既有 aggregate testCompile
+  欠账未进入目标类，已用单类 `javac -proc:none + surefire:test` 验证。状态：DELIVERED / FRESH RUNTIME REQUIRED。
+
+## 2026-08-05 / G019 五环接任务“暂不可用”Story 无限重试
+
+- 目标工作树：Client 文档/原始模板源 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 生产实现
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。保护两仓全部既有 dirty/untracked；禁止
+  reset/revert/checkout/clean/commit；受保护基线 `D:\mavenProject\DHXY` 只读。
+- 用户裁决：五环点击接任务 option 后，若 2 秒内仍未出现五环 Title，Cloud 重判当前 Dialog；新图
+  `images/template/dialog/wuhuan/temp_na_story_raw_source.png` 命中表示“当前暂不可用”，不是完成、今日上限
+  或普通失败。必须复用现有 `DialogService.clickPreparedStory()` 立即点掉 Story，然后重新点击云游大师 NPC
+  接任务；同一结果可无限重复，不消耗普通 `MAX_ACCEPT_RETRY=5`，直到 Title 确认成功或用户停止任务。
+- 已定位 P1 前置缺口：当前 `acceptInitialDialogAndTriggerPathing(...)` 在 accept 点击后等待 Tracker/Title 超时，
+  仍返回 `TASK_ACCEPTED_NEEDS_SYNC`，三个调用点随后写 `withTaskAccepted(...)`；已有
+  `TASK_ACCEPTED_ANCHOR_TIMEOUT -> recheckPostAcceptDialogAfterAnchorTimeout(...)` 因没有生产返回者成为死分支。
+- 业务基线：`CR218`、`CR227` 与 `BR-DIALOG-001` 均规定 accept 点击只进入 Title/Tracker 验证，不能直接
+  产生接取真值。HEAD `363d0e3` 也未在 accept 点击三个调用点写 `withTaskAccepted(...)`；当前 dirty 差异与
+  已确认业务相反，G019 仅恢复该边界并增加新 Story 结果。
+- 精确写集：Client 仅本卡文档、业务规则索引/追踪、dashboard 和用户提供的 raw source；Cloud 仅 `.gitignore`
+  的 G019 单文件白名单、
+  `WuhuanDialogCatalog.java`、`FiveRingTaskV2.java`、标准洗白模板资源、G019 定向 replay/合同测试及必要测试
+  证据。不得修改 Dialog/NPC 点击算法、ROI、阈值、其他五环完成语义或其他任务。
+- 已交付：Cloud 新增 `wuhuan.temporarilyUnavailable` 白字模板；Title gate 从错误的 60 秒/点击即成功恢复，并按
+  用户最新裁决收紧为 2 秒正证据门。`TASK_NOT_FOUND` 只继续等待，`TASK_FOUND_NO_GREEN` / `TASK_FOUND_NO_LINK` 与 prepared
+  绿链都确认 Title。超时后 Cloud 重判当前 Dialog；新 Story 命中后调用既有
+  `DialogService.clickPreparedStory()` 并通过 shared handoff 回 `ACCEPT_TASK`，不消耗三类重试计数。
+- 视觉回放：raw SHA-256
+  `B7DC08583FD52528495369973AAD4A839E861C2E5178DFF1213CC5356E2692EA`；生产模板 SHA-256
+  `ED576A3AD7224F6CD7B57600CCE82909174E7D581AF032AF25FB018B8E1ED221`。隔离 JUnit 按生产洗图、候选顺序和
+  `0.85` 阈值运行 `1/1` PASS，首命中新模板，score `1.000000`，marked 图：
+  `D:\mavenProject\dhxy-cloud-brain\target\g019-replay\temporarily-unavailable-story-marked.png`。
+- 机械验证：Cloud `mvn -q -DskipTests=false compile` PASS；定向测试使用 Maven test scope classpath 加
+  JUnit console 隔离运行 PASS；`git diff --check` PASS。完整 Maven testCompile 被既存非 G019 测试漂移
+  阻断（旧 `DialogService` 构造器、旧协议枚举等）。需要重启 Cloud 后 fresh run，连续触发该 Story 多次，
+  验证每次均快速关闭、重接，最终 Title 出现后停止重接。
+- 2026-08-05 fresh-runtime 结论：状态改为 `REPAIR REQUIRED / FRESH RUNTIME FAILED`。当前日志没有字面
+  ID `34333`；命中该 Story 的窗口是角色 ID `468413443`、`hwnd-49C017C`。新模板实际已经命中并发布
+  `VERIFY_WHITE_TEMPLATE / wuhuan.temporarilyUnavailable`，失败点是任务重判只按 `INSPECT` 消费同一槽，产生
+  `consume mismatch` 后误判 `type=NONE`。返修必须直接分派现有 prepared operation，并补完整
+  `publish -> ready -> exact consume -> clickPreparedStory -> ACCEPT_TASK` 合同；当前未改业务代码、未运行 runtime。
+- 返修已交付：仅修改 Cloud `FiveRingTaskV2.recheckPostAcceptDialogAfterAnchorTimeout(...)`，删除错误的
+  `INSPECT -> DialogType.NONE` 二次检查，直接复用现有 exact prepared action 分派。测试补在既有 G019 replay 类，
+  明确禁止该分支再次调用 `inspectPreparedDialogType(...)`。规则门 PASS；定向测试 `2/2 PASS`；当前 class 字节码
+  与源码路由一致；`git diff --check` PASS。标准 Maven compile 被本卡外 G022 进行中的 prepared-frame demand
+  协议漂移阻断（四个 `CloudWholeTaskObserver` 编译错误），未扩大写集。状态回到
+  `DELIVERED / FRESH RUNTIME REQUIRED`；未启动 runtime/application/UI/capture/input。
+- 2026-08-05 最新用户裁决：Title gate 从 `5s` 收紧为最多 `2s`；精确写集不变，只调整同一生产常量和
+  G019 回归断言，不改变 1 秒轮询、Title 正证据、模板识别、Story 点击或重接流程。
+- `2s` 时序修改验证：Cloud `mvn -q -DskipTests=false compile` PASS；G019 测试隔离编译并通过
+  `mvn surefire:test`，结果 `2/2 PASS`。完整 `mvn test` 已通过 production compile，但在 aggregate testCompile
+  被本卡外既有旧构造器/旧协议枚举测试漂移阻断。业务门与 `git diff --check` 均 PASS；状态
+  `DELIVERED / FRESH RUNTIME REQUIRED`，未启动 runtime/application/UI/capture/input。
+
+## 2026-08-04 / G018 五环鞋店恢复基线店内操作链
+
+- 目标工作树：Client 文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；
+  Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。保护两仓全部既有 dirty/untracked；禁止
+  reset/revert/checkout/clean/commit；受保护基线 `D:\mavenProject\DHXY` 只读。
+- 基线证据：受保护基线 `FiveRingTaskV2.buyShoeFromShopOwnerWithRetry(...)` 的固定顺序为：关闭遮挡窗口 ->
+  `npcClickService.clickNpcSmart(服装店老板)` -> `dialogService.handleDialog(五环鞋店购买)` -> 匹配鞋子并按缺口
+  点击 -> 匹配购买按钮（仅模板 miss 时固定点兜底）-> 关商店 -> 右键出口回长安。当前 Cloud 任务把前两步
+  替换为鞋店专用 prepared-frame FIFO 与 prepared dialog，已造成既有 NPC 记忆/黄色识别链行为漂移。
+- 用户裁决：进入牛记布店后的操作流程必须恢复上述旧业务顺序，不再使用鞋店专用 prepared-frame 等待入口；
+  Cloud 仍是业务调用者，实际输入仍走 HTTPS Turn/InputActionQueue，不恢复 Client 本地业务决策。
+- 精确写集：Cloud `FiveRingTaskV2.java`、`ImageAlgorithms.java`、`NpcClickMemoryStore.java`、JAR 内 memory seed、
+  `.gitignore` 的 G018 定向测试白名单及鞋店 replay/合同测试；Client 仅本文件、`docs/PACKAGE_ARCHITECTURE.md`、
+  dashboard 数据与既有 `NpcArrivalFrameFifoRealCandidateTest`。视觉修正只允许把 `服装店老板` 映射到已用现场原图
+  验证的 `BAILONGMA` 黄色档案；记忆只允许 exact canonical key 缺失时安装，不改 ROI、OCR、阈值或其他 NPC。
+- 数据事实：Cloud 进程不读取仓库 `data/vision_memory.json`，而读取
+  `C:\Users\Yunfeng Yue\AppData\Local\DHXY\cloud-brain\state\<tenant-user-hash>\vision_memory.json`；前者有
+  `牛记布店/服装店老板/13,9/player:10,7` canonical policy，当前租户文件没有，故运行时 MEMORY miss。可迁移 policy
+  已具备 `sampleCount=3`、`13/13`、`failureStreak=0`、实际测量强样本及相对点 `(453,447)`，不是把旧聚合记录伪造成
+  强记忆。
+- 交付：Cloud 恢复基线店内调用顺序，移除鞋店专用 prepared-frame owner 方法，并仅把 `服装店老板` 加入现有
+  `BAILONGMA` 黄字档案。生产 compile PASS；隔离 JUnit 定向 `2/2` PASS。真实旧现场原图 replay 在老板名字框
+  内得到 `1050` 个白色前景像素；输入/输出分别为
+  `D:\mavenProject\dhxy-cloud-brain\images\test-cases\wuhuan\g018\shoe-shop-owner-raw.png`、
+  `D:\mavenProject\dhxy-cloud-brain\target\g018-replay\shoe-shop-owner-mask.png` 和
+  `shoe-shop-owner-marked.png`。标准 Maven test lifecycle 被既有 aggregate testCompile 欠账阻断，与本卡无关；
+  后续按用户裁决把 canonical memory 嵌入 Cloud JAR resource
+  `src/main/resources/config/npc_click_memory_seeds.json`；`NpcClickMemoryStore` 只在租户 key 缺失时安装并持久化，已有
+  学习结果不覆盖。Cloud production compile PASS，isolated seed/FIFO replay `1/1` PASS；Client production compile
+  PASS，isolated MEMORY 输入合同 `1/1` PASS，证明 `(453,447)` 转成绝对 `(620,492)` 后进入同一原子输入序列。
+  marked replay：`D:\mavenProject\dhxy-cloud-brain\target\g018-replay\shoe-shop-owner-memory-marked.png`。
+  fresh runtime 仍须验证 `MEMORY -> clickNpcSmart -> 买鞋 option -> 选鞋 -> 购买 -> 回长安`。
+
+## 2026-08-04 / G017 天庭 startup OPTION 切片（PARENT APPROVED，P0/P1/P2=0/0/0）
+
+- 父级独立复核通过：Cloud/Client production compile、隔离 G017 `13/13`、G016 `--card G017`/`--all`
+  及目标 Java diff-check 均 PASS。确认 `OPTION -> NONE -> valid answer` 仍只消费/ACK 一次，错 run/HWND、
+  旧 episode 与错配 evidence 均拒绝。本 slice `P0/P1/P2=0/0/0`；未运行 fresh runtime，G017 整卡因
+  all-miss fallback、task-specific `STORY` 和其他任务迁移仍保持未关闭。
+
+- 父级 review 发现生产竞态：点击前 exact pair 是 `OPTION`，成功点击关闭 Dialog 后最新 pair 会先变为
+  `NONE`；现实现却在消费 `TIANTING_DIALOG_ANSWERED` 时重读最新 pair 并再次要求 `OPTION`，因此会把有效
+  `executed=true` actionKey 错拒为 `NOT_OPTION`。现有测试没有覆盖真实的 `OPTION -> NONE -> answer`
+  顺序。返修只允许冻结点击前 exact OPTION evidence、用它校验/ACK 当前 startup episode，并补该顺序及
+  错 run/HWND/旧 episode 拒绝合同；不扩大到 all-miss、STORY、其他任务或 runtime。
+
+- P1 返修结果：`awaitG017StartupPhase(...)` 在首次 exact `OPTION` 时冻结完整 `G017StartupPair`，随后安装
+  `TIANTING_RECOVERY_OPTION`；一旦冻结，不再让点击后较新的 `dialog=none` 被无 Dialog terminal 分支抢先
+  消费。`consumeG017StartupOption(...)` 改为接收冻结 evidence，不再重读 latest pair；它要求当前 pending
+  startup episode 与冻结 envelope 完全一致，并复核 task/run/window/HWND、Title/Dialog 同 observerSeq、同
+  revision、正确 fact 类型及事件时间不早于冻结 Dialog evidence。task-specific consumer 成功后仍只 exact
+  ACK 一次并清 interests，ACK 后重复消费、错 run/HWND、旧 episode、错配 pair 均拒绝且不再调用 consumer。
+- 返修验证：Cloud `mvn -q -o compile -DskipTests=false` PASS；隔离
+  `G017TiantingStartupPhaseDecisionContractTest` `13/13` PASS，新增覆盖
+  `OPTION -> same-lineage NONE -> valid executed answer -> CONSUMED/ACK once`，以及错 run、错 HWND、旧 episode、
+  observerSeq 不匹配 evidence 的零消费/零 ACK。未改 Client、协议、all-miss、STORY 或其他任务；未运行
+  runtime/application/UI/capture/input。G016 `--card G017`/`--all`、目标 whitespace/diff-check 与
+  `G017.json` 解析均 PASS。返修交付 SHA-256：
+  `TiantingTask.java=f70acd93275c80d2b8014e11f19cd92c9bac5776d4429105820d7131e0fda8c4`、
+  `G017TiantingStartupPhaseDecisionContractTest.java=f3e039f51d7c87e2be015d9a4a7ed0d634236a6e9d46a491b81ecd1ad50dabeb`。
+  状态：`REPAIR DELIVERED / PARENT REVIEW REQUIRED`。
+
+- 工作树已由当前 shell 核验：Client `D:\mavenProject\DHXY-cr271`，分支
+  `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均无配置 upstream；Client/Cloud
+  `git status --porcelain=v1 --untracked-files=all` 分别为 `242/488` 项，全部既有 dirty/untracked
+  原样保护。禁止 reset/revert/checkout/clean/commit；基线 `D:\mavenProject\DHXY` 绝不修改。
+- pushed/HEAD 证据：Client `WindowObservationSampler.java` 的 HEAD blob 为
+  `9fa29c24dc05a3a1c549e5d710b789f730c8e6a5`，其余本切片 Client 生产/测试文件为当前未跟踪迁移实现；
+  Cloud `TiantingDialogCatalog.java`、`TiantingTask.java` 与目标 G017 测试也均不在 HEAD。本轮以父级已批准
+  裁决、当前开工 SHA-256 和精确 diff 保护既有业务，不把本地其他差异带入本切片。
+- 开工 SHA-256：Client `TiantingDialogLocalMechanics.java=66000154c29dadbfe657eb84e96980711537700ba1ec3422529c10215804e07f`、
+  `WindowObservationSampler.java=02b989a16307f65272e3f3f969b4b31513a9c5e5b7127713eb3252f23a049afa`、
+  `TiantingDialogLocalMechanicsTest.java=f925c0bc03bb7716ee7fd16ce75fde4adebf600b894defde8f58647a3875d9b2`、
+  `TiantingDialogProbeContractTest.java=7a8cdf5b7130338d896851701c6eef9916835a5928d1837bf74d896bb47e77f9`；
+  Cloud `TiantingDialogCatalog.java=2eef902c6a8fa5dc371ab94a683016567c3cf887193b2ac806a0b7e9befcc8d0`、
+  `TiantingTask.java=d0e00d739410039f2f140e80d95b1ba35baf2c6b21d453d939f2abf719e38a58`、
+  `G017TiantingStartupPhaseDecisionContractTest.java=b7cea32c21cd78d3eba29f0da49a9de78656dbcfff358bdee396a9a75ad8dfd1`。
+- 精确写集：Client 仅 `src/main/java/com/bot/dhxy/window/observation/TiantingDialogLocalMechanics.java`、
+  `src/main/java/com/bot/dhxy/window/observation/WindowObservationSampler.java`、上述两个现有定向测试、
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/rule-traceability/G017.json`；Cloud 仅
+  `src/main/java/com/bot/dhxy/task/tianting/TiantingDialogCatalog.java`、
+  `src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java`、
+  `src/test/java/com/bot/dhxy/task/tianting/G017TiantingStartupPhaseDecisionContractTest.java`。
+  不改 `ObservationKeyEvent` 协议/validator，不改 Cloud all-miss fallback、STORY、跨任务迁移、视觉阈值、
+  ROI、点击坐标或正常 G005/G006 分支语义；若实现证明必须扩大写集，先回写本记录。
+- 实施合同：Client 将七个 templatePath 映射为与 Cloud catalog 完全一致的稳定业务 actionKey，事件
+  `eventId/detail` 均以 actionKey 为身份；Cloud 正常与 startup consumer 只接受已知 key 及 `executed=true`。
+  startup `OPTION` 安装既有 `TIANTING_RECOVERY_OPTION` 并有界等待 exact ready event；task-specific consumer
+  成功接管后才 exact ACK startup episode并清 interests。未知 key、`executed=false`、缺事件、超时、
+  `STORY/UNKNOWN` 全部 fail-closed。交付状态只能是 `DELIVERED / PARENT REVIEW REQUIRED`，父级唯一 reviewer。
+- 实施结果：Client 七个模板均通过显式 production map 输出与 Cloud catalog 完全一致的稳定 actionKey；sampler
+  以 actionKey 生成 claim/eventId/detail，detail 为 `actionKey|score=...|executed=...`，未改
+  `ObservationKeyEvent` 或 validator。Cloud 正常 consumer 已从模板路径比较迁移为七个稳定 key；startup pair
+  为 `OPTION` 时安装既有 `TIANTING_RECOVERY_OPTION` 并只轮询当前 exact context 的新 answered event。
+  task-specific consumer 成功后才 exact ACK 并清 startup interests/probe；未执行、未知、缺失、超时、consumer
+  拒绝或 ACK 拒绝均 fail-closed。accept 等既有 Title 确认；三类进战 key 只回到 `RUN_SUBTASKS` 等 Runner
+  `IN_COMBAT`；多谢/封妖/引妖保留既有 G005/G006 副作用。
+- 定向验证：Client `mvn -q -DskipTests compile` PASS；隔离
+  `TiantingDialogLocalMechanicsTest + TiantingDialogProbeContractTest` `17/17` PASS。Cloud
+  `mvn -q -o compile -DskipTests=false` PASS；隔离 `G017TiantingStartupPhaseDecisionContractTest` `11/11`
+  PASS。生产合同覆盖七 key、代表性 accept/enterBattle/多谢/封妖、`executed=false`、未知/缺事件、consumer
+  拒绝、重复 ACK，以及 `OPTION` 与 `STORY/UNKNOWN` 分离。G016 `--card G017`/`--all` PASS，tracked exact
+  `git diff --check` PASS；未运行 runtime/application/UI/capture/input。
+- 交付 SHA-256：Client `TiantingDialogLocalMechanics.java=e9b7a040d449d44cff9ebac140bc98e2b163d09e3785105d4fd6c4491fcac2db`、
+  `WindowObservationSampler.java=6a57833008bc2ddd85f9ed1a77f03f425d482bbaab75cd6771b69e246da4e34a`、
+  `TiantingDialogLocalMechanicsTest.java=4fff65676dbea21f75bc0d4a151357c217132f0a6e35a646271ed249b85ff18b`、
+  `TiantingDialogProbeContractTest.java=e0abc936b90b995b3a10b1d7d7d942d7bdcf10a1d589ad0e9db1765f80727bb4`；
+  Cloud `TiantingDialogCatalog.java=002459df9ad3b53d74faaee652d2144e202ad7fb6b3a32794c4e29b7a70e32b6`、
+  `TiantingTask.java=63d85b3864a579768e61092f934cbbc51fe8f35d89ab384c5b43943b30eca294`、
+  `G017TiantingStartupPhaseDecisionContractTest.java=6131fc78e281672df0ad901fefe917f8d90265c4cc1b7494eeba378071c1a7c1`。
+- 标准 named Maven lifecycle 未伪报通过：Client 被既有 `LocalTurnActionExecutorContractTest` 对已删除
+  `LocalPathingStartProofMechanics` 的引用阻断，Cloud 被既有历史构造器/协议测试漂移阻断，均发生在目标测试
+  执行前；本轮未扩大写集修这些卡外欠账，沿用项目已登记的隔离 `javac -proc:none + ConsoleLauncher`。
+- 未完成 blocker：candidates all-miss Cloud fallback、task-specific `STORY` consumer、跨任务迁移、其他任务
+  action/phase 映射和 fresh runtime 均不在本切片；G017 整卡不关闭。交付状态：
+  `DELIVERED / PARENT REVIEW REQUIRED`，父级唯一 reviewer。
+
+## 2026-08-04 / G017 天庭 found 合同映射（SECOND REPAIR WORKER）
+
+- 工作树与写集延续上一轮：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`，Cloud `D:\mavenProject\dhxy-cloud-brain` /
+  `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`；Client/Cloud status 仍为
+  `219/126` 项。保护全部 dirty/untracked，不 reset/revert/checkout/clean/commit，基线树只读。
+- 返修开工 hash：`TiantingTask.java=1B5D98BC32BB5EA95CAC9B887D8C93C2ED436C56125A4049BE38D1EECC0CDA8E`；
+  原测试 `C28D932DAA71150647706CE5C0AEF7762D3F25B034894D2A5504012CAC7BE8F5`。只改这两个 Cloud 文件与
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`。
+- 第二轮 P1 合同：`TaskTrackerPanelReadResult.found=true` 本身即 Title PRESENT，必须无条件映射
+  `RUN_SUBTASKS`，包括 zero links；`found=false -> ACCEPT_TASK`，null/RuntimeException -> UNKNOWN/null。
+  zero-links 同步 terminal 仍须 exact ACK pending 并清理 interests。状态仅
+  `REPAIR DELIVERED / PARENT REVIEW REQUIRED`，整卡不关闭。
+- 返修结果：生产映射已改为 `found ? RUN_SUBTASKS : ACCEPT_TASK`，完全移除 greenLinks 二次门槛；null 与
+  `RuntimeException` 路径未变，继续 UNKNOWN/null、零 ACK、fail-closed。新增合同以真实
+  `TaskTrackerPanelReadResult.builder().found(true).greenLinks(List.of()).build()` 驱动同步 consumer，验证
+  `RUN_SUBTASKS`、exact ACK、interest cleanup 与不可重复 ACK。
+- 验证：Cloud `mvn -q -DskipTests=false compile` PASS；Client `mvn -q -DskipTests compile` PASS；隔离
+  `G017TiantingStartupPhaseDecisionContractTest` `8/8` PASS；G016 `--card G017`/`--all` PASS；tracked
+  `git diff --check` PASS。inbox/observer hash 未变化；未运行 runtime/application/UI/capture/input。状态：
+  `REPAIR DELIVERED / PARENT REVIEW REQUIRED`，整卡未关闭。
+- 父级 review：`P0/P1/P2=0/0/0`。父级独立复跑两仓 production compile、隔离 JUnit `8/8`、G017/`--all`
+  gate 与 diff-check，全部通过；生产代码确认 zero-links 不再否定 Title PRESENT，异常/null 仍 fail-closed。
+  本天庭无 Dialog startup consumer 切片批准，G017 整卡继续等待 OPTION/STORY、稳定 actionKey 映射、跨任务迁移
+  和 fresh runtime，未关闭。
+
+## 2026-08-04 / G017 天庭 startup 同步三态与 terminal ACK（REPAIR WORKER）
+
+- 工作树复核：Client 文档树 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`，status `219` 项；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`，status `126` 项。继续保护全部 dirty/untracked，
+  不 reset/revert/checkout/clean/commit，`D:\mavenProject\DHXY` 只读。
+- 返修开工 hash：`TiantingTask.java=043F5137C70819864333CE92BCB2AAF8C0C1FBEB5D9ACCA2329555BA4DC99141`；
+  `G017TiantingStartupPhaseDecisionContractTest.java=E62767BD47E2F79F6F63453F41D1830DB1CA8E4249BF323ABFA2FFA0A4F71899`。
+- 精确写集不变：Cloud 仅上述生产类与原 G017 test；Client 仅 `docs/ACTIVE_WORK.md`、
+  `docs/PACKAGE_ARCHITECTURE.md`。不改 inbox/observer、协议、OPTION/STORY、视觉、输入、坐标或其他业务链。
+- 父级 P1 repair contract：同步 Tracker 读取保留三态；明确 Title+links 才 `RUN_SUBTASKS`，明确无 Title 才
+  `ACCEPT_TASK`，异常/null/Title 有但无可用 links 均为 UNKNOWN。同步明确 terminal 必须 exact ACK pending 并
+  清理 interests；同步 UNKNOWN 不 ACK，并在首轮进入任何点击 phase 前 fail-closed。交付状态仅
+  `REPAIR DELIVERED / PARENT REVIEW REQUIRED`。
+- 返修结果：`startupTrackerShowsQuest()` boolean 已移除；同步读取改为 `TiantingPhase/null` 三态。同步 UNKNOWN
+  清理本次 interests 但保留 pending 不 ACK，并立即返回 `FAILED`，不会进入 `ACCEPT_TASK`；同步明确 terminal
+  只有 exact ACK pending 成功并清理 interests 后才进入 `RUN_SUBTASKS`/`ACCEPT_TASK`，ACK 缺失或 lineage
+  拒绝同样 fail-closed。未修改 inbox/observer，二者 SHA-256 仍分别为
+  `05675DAD8BDA9116994BDF477F7BF307162874459A27C93A56F5885035D730A6`、
+  `4CDF8E9EE0381B8CD3D2D6BBED1AAC43E460F17D81877EA304431B6DDFBB1989`。
+- 验证：Cloud `mvn -q -DskipTests=false compile` PASS；Client `mvn -q -DskipTests compile` PASS；隔离
+  `G017TiantingStartupPhaseDecisionContractTest` `7/7` PASS；G016 `--card G017`/`--all` PASS；tracked
+  `git diff --check` PASS。未运行 runtime/application/UI/capture/input。状态：
+  `REPAIR DELIVERED / PARENT REVIEW REQUIRED`。
+- 父级第二轮 review：仍有 `P1=1`。`TaskTrackerPanelReadResult.found` 已是 Title PRESENT 的明确证据，
+  但返修把 `found=true && greenLinks=[]` 错判为 UNKNOWN 并终止任务；这与 G017
+  `PRESENT+NONE -> RUN_SUBTASKS` 冲突。要求原 worker 仅修该映射并补 zero-links 生产合同；读取异常/null
+  继续 fail-closed，明确 ABSENT 继续进入 `ACCEPT_TASK`，不得扩大写集。
+
+## 2026-08-04 / G017 天庭 STARTUP_OR_RESUME 无 Dialog terminal consumer（IMPLEMENTATION WORKER）
+
+- 活动工作树已从当前 shell 核验：Client 文档树 `D:\mavenProject\DHXY-cr271`，分支
+  `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud 实现树
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。`D:\mavenProject\DHXY` 仅作只读基线，禁止修改。
+- 开工现场：Client `git status --short` 共 `219` 项，Cloud 共 `126` 项，均为既有大量
+  dirty/untracked；本 worker 保护全部现场，不 reset/revert/checkout/clean/commit。Cloud 开工前 SHA-256：
+  `TiantingTask.java=4BD65A380877AF7EC75372A6B99C8701082ABE74366EED1CDF66CB2699EBDD9F`、
+  `CloudWholeTaskObserver.java=4CDF8E9EE0381B8CD3D2D6BBED1AAC43E460F17D81877EA304431B6DDFBB1989`、
+  `CloudWindowObservationInbox.java=05675DAD8BDA9116994BDF477F7BF307162874459A27C93A56F5885035D730A6`。
+- 最新推送证据：Cloud HEAD `363d0e3`（`修罗五环云端V1版本`）包含 inbox/observer 基线；当前
+  `TiantingTask.java` 为既有 untracked 天庭实现，故无可用 `git show HEAD:<path>`，本次以开工 hash 与精确
+  diff 保护其现有业务逻辑。现有首轮 `startupTrackerShowsQuest()` 同步直读 Tracker，并将 true 映射到
+  `RUN_SUBTASKS`、false 经 `PREPARE` 落到 `ACCEPT_TASK`；本切片只把 exact terminal fact 接到这两个既有结果。
+- 精确 write set：Cloud 仅
+  `src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java`、必要时
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java` 或
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudWindowObservationInbox.java`、以及唯一新增测试
+  `src/test/java/com/bot/dhxy/task/tianting/G017TiantingStartupPhaseDecisionContractTest.java`；Client 仅
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`，只有连通性描述确需同步时才改
+  `docs/rule-traceability/G017.json`。禁止碰 OPTION/STORY、视觉、输入、坐标、协议、服务或其他状态机。
+- 实施合同：首轮复用 pending startup episode 与现有 exact observation binding，发布既有
+  `unknown-phase-title-presence`/`unknown-phase-dialog-presence` interests；只接受同
+  run/window/HWND、同 `observerSeq`、同当前 revision 的 `PRESENT+NONE` 或 `ABSENT+NONE`。
+  terminal consumer 接管后才 exact ACK 并清理两项 interest；`UNKNOWN`、缺帧、OPTION、STORY、旧 run/HWND
+  均不 ACK、不点击、不猜 phase，4 秒有界等待后明确未接管并回到原同步 Tracker 安全路径。
+- 前置门禁：`node scripts/check-business-rule-gate.js --card G017` PASS。允许验证仅两仓 compile、隔离
+  JUnit、G016 gate 与精确 diff-check；禁止 runtime/application/UI/capture/input。交付状态只能是
+  `DELIVERED / PARENT REVIEW REQUIRED`，父级为唯一 reviewer。
+- 实施结果：仅修改 Cloud `TiantingTask.java` 并新增唯一
+  `G017TiantingStartupPhaseDecisionContractTest.java`；未修改 inbox/observer。天庭首轮现有 context 明确接收
+  `PRESENT+NONE -> RUN_SUBTASKS`、`ABSENT+NONE -> ACCEPT_TASK`，terminal ACK 后清理两项 interest；其余结果
+  4 秒 bounded HOLD 后不 ACK，并回到原同步 Tracker 安全路径。OPTION/STORY 的 task-specific consumer 与
+  `actionKey -> phase/action` 映射已在 G017 卡登记为 blocker，未伪装完成。
+- 实测：Cloud `mvn -q -DskipTests=false compile` PASS；Client `mvn -q -DskipTests compile` PASS。Cloud named
+  Maven test 被卡外既有 `DialogService`/`CloudTurnTaskFactory` 构造器和历史协议测试漂移阻断于 aggregate
+  `testCompile`；随后以 `javac -proc:none` + JUnit ConsoleLauncher 隔离执行
+  `G017TiantingStartupPhaseDecisionContractTest`，`5/5` PASS。G016
+  `node scripts/check-business-rule-gate.js --card G017` 与 `--all` 均 PASS；tracked 精确 `git diff --check`
+  PASS。未运行 runtime/application/UI/capture/input，交付状态为
+  `DELIVERED / PARENT REVIEW REQUIRED`，等待父级唯一 review。
+- 父级 review 退回：发现 `P1=1`。4 秒后回落的旧同步 Tracker 方法把读取异常折叠成 `false`，会把
+  `UNKNOWN` 猜成 `ABSENT -> ACCEPT_TASK`；同时 pending startup episode 未终结。要求原 worker 改成同步三态，
+  仅明确 PRESENT/ABSENT 才映射并 ACK，异常/不可用 fail-closed、零点击、零 ACK，并补两条生产边界合同。
+
+## 2026-08-04 / G017 STARTUP_OR_RESUME 生产入口（IMPLEMENTATION WORKER）
+
+- 活动工作树已从当前 shell 核验：Client `D:\mavenProject\DHXY-cr271`，分支
+  `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。保护基线 `D:\mavenProject\DHXY`
+  绝对不修改。
+- 开工现场：Client `git status --short` 共 `219` 项，Cloud 共 `126` 项，均为既有大量
+  dirty/untracked。本 worker 不 reset/revert/checkout/commit，不覆盖、清理或顺手整理卡外内容。
+- 本切片权威合同：G017 顶部完整卡、`BR-DIALOG-001`、G008
+  `2026-08-03-g008-pause-abort-hot-start.md`。客户端既有首包
+  `source=startup-screen-observation` 是唯一入口；不新增启动截图、启动状态机、普通
+  `STOPPED_AWAY` 或业务视觉算法。
+- 精确 write set：Client 仅
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`，以及只有规则连通性描述确需同步时才改
+  `docs/rule-traceability/G017.json`；G017 表格用户字段不变化时不生成 dashboard。Cloud 仅
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/observation/CloudWindowObservationInbox.java`、
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java`、
+  `src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/G017StartupObservationEntryContractTest.java`。
+  若生产接线证明必须扩大到任务 phase、模板/ROI/阈值、坐标、点击或共享协议，立即停工并在 G017 登记
+  blocker，不自行扩大。
+- 目标：把 startup episode 独立保留在 exact `tenant/device/taskRunId/windowId/HWND` lineage 下，不能被
+  后续普通高序帧、低序请求或同 seq replay 覆盖/重建。Cloud observer 仅在现有 consumer 接管明确终态后 ACK；
+  普通 source、旧 run/HWND、任一 UNKNOWN 和 STORY 均 fail-closed 零点击。
+- 允许验证：两仓 production compile、G017/G014 隔离合同、业务规则 gate、精确 diff check。禁止启动
+  runtime/application/UI/capture/input；本切片只能写 `DELIVERED / PARENT REVIEW REQUIRED`，不得关闭整卡。
+- 定点返修结果：`CloudWindowObservationInbox` 已增加独立 pending startup episode 与 exact ACK；
+  `CloudWholeTaskObserver.consumeG017StartupOrResume(...)` 改为读取 pending，不在缺帧/`UNKNOWN` 前消费，并允许
+  Cloud interest revision 更新后的 exact 新帧重查；Title/Dialog 仍必须同 seq、同 revision。只有五环既有
+  Tracker/Dialog consumer 接管明确终态后 ACK。其他任务继续 fail-closed HOLD，未宣称 phase/action 完成。
+- 验证结果：Cloud `mvn -q -DskipTests=false compile` exit `0`；named Maven test 被卡外既有
+  `DialogService` 构造器和历史协议测试漂移阻断于 aggregate `testCompile`。使用
+  `target/g017-test-classpath.txt`、`javac -proc:none` 与
+  `junit-platform-console-standalone-1.10.2.jar` 隔离执行
+  `G017StartupObservationEntryContractTest`，`6/6` 成功、零失败/错误/跳过。G016
+  `node scripts/check-business-rule-gate.js --card G017` 与 `--all` 均 PASS。未启动 runtime/application/UI/
+  capture/input；本切片保持 `DELIVERED / PARENT REVIEW REQUIRED`，整卡未关闭。
+- 父级 review：本切片 `P0/P1/P2=0/0/0`。父级重新执行两仓 production compile、隔离
+  `G017StartupObservationEntryContractTest`（`6/6`）、G016 `--card G017`/`--all` 与精确写集
+  `git diff --check`，均通过；只关闭 startup episode retention/ACK 两项 P1，整张 G017 继续保持未关闭。
+
+## 2026-08-04 / G017 剩余生产合同闭合（WORKER IMPLEMENTATION / PARENT REVIEW REQUIRED）
+
+- 目标工作树：Client `D:\mavenProject\DHXY-cr271`（`thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；
+  Cloud `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。
+  保护基线 `D:\mavenProject\DHXY` 绝对只读。两仓均存在大量既有 dirty/untracked，本轮不得回滚、覆盖、
+  清理或提交任何现场内容。
+- 权威基线：`BR-DIALOG-001`、`docs/PACKAGE_ARCHITECTURE.md` 顶部完整 G017、
+  `docs/superpowers/plans/2026-08-03-g008-pause-abort-hot-start.md`。G008 已有 production entry 为
+  `WindowTaskControlService.startOneRemote -> WindowTaskRunner.prepareRemoteFreshStart -> Cloud ACK -> 新
+  WindowObservationRunner 首包 source=startup-screen-observation`；本轮只复用该链，不建立第二套启动器。
+- 生产目标：把 `STARTUP_OR_RESUME` 接到上述 fresh-run 首帧，闭合 `WUHUAN_V2`、`XIULUO_V2`、`WUBEI`
+  以及最小 `TIANTING` 的同 lineage Title/Dialog 仲裁、task-specific startup/Story consumer 和稳定
+  `actionKey -> phase/expected verification`。保持已批准的天庭 exact tracker click-no-movement 切片不变。
+- 目标写集（实施前边界）：Client 仅限 G008/G017 observation 接线（`WindowObservationRunner.java`、
+  `WindowObservationSampler.java`、`UnknownPhasePresenceLocalMechanics.java` 中确有必要者）、对应生产边界测试、
+  本卡/本记录/dashboard；Cloud 仅限 `CloudWholeTaskObserver.java`、`G017UnknownPhaseRecoveryPolicy.java`、
+  四个任务现有 startup/PreparedAction consumer 中确有必要者、对应生产边界测试。若发现必须改模板、ROI、
+  阈值、坐标、点击顺序或卡外视觉行为，立即停工并登记 blocker。
+- 验证限制：只运行 compile、隔离行为合同、G008/G014 保留回归、G016 gate 与精确 diff check；不运行
+  runtime/application/UI/capture/input。最终状态只能写 `DELIVERED / PARENT REVIEW REQUIRED`，不得自批
+  `APPROVED/CLOSED`。
+
+## 2026-08-04 / G017 Pass2 有界返修切片（WORKER REPAIR / PARENT REVIEW REQUIRED）
+
+- Active worktrees：Client `D:\mavenProject\DHXY-cr271`，已由当前 shell 路径核验；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`，已由当前 shell 路径核验。保护基线
+  `D:\mavenProject\DHXY` 禁止修改。本轮保护两仓全部 dirty/untracked，不回滚、不清理、不提交，
+  不运行 runtime/application/UI/capture/input。
+- 开工基线：Client `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud
+  `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓 `git status --short`
+  均确认存在大量卡外 dirty/untracked；本轮只在用户指定 G017 写集上叠加，不把当前本地其他业务差异
+  当作返修授权。
+- pushed/diff 证据：Client pushed HEAD 不含未跟踪的
+  `UnknownPhasePresenceLocalMechanics.java` 与 `G017UnknownPhaseConnectivityContractTest.java`，当前
+  `WindowObservationSampler.java` 有大量既有迁移差异；Cloud pushed HEAD 不含未跟踪的
+  `G017UnknownPhaseRecoveryPolicy.java`、`TiantingTask.java` 与 G017 tests。故本切片以
+  `docs/PACKAGE_ARCHITECTURE.md` 顶部 G017 Pass 2 父级退回意见和 `BR-DIALOG-001` 为权威增量合同，
+  不恢复或重写卡外当前现场。
+- 有界范围：只修已经接通的天庭 exact Tracker click-no-movement 链。生产目标优先限定为 Client
+  `UnknownPhasePresenceLocalMechanics.java`、`WindowObservationSampler.java`（仅必要）及对应 G017 test；
+  Cloud `G017UnknownPhaseRecoveryPolicy.java`、`TiantingTask.java`，仅在 exact fallback terminal 必需时
+  定点改 ready-event/observer 及对应 G017 tests。Docs 只更新本卡、ACTIVE_WORK 和 dashboard snapshot。
+- 明确不做：`STARTUP_OR_RESUME` 生产入口、跨任务迁移、全项目盘点、普通 `STOPPED_AWAY`、movement
+  positive、正常 combat 边沿、已验证 Dialog ROI/模板/阈值/点击坐标与 G006 封妖符业务确认链。
+- 返修目标：有框不伪报 `option`；同 lineage 的真实 Cloud frame classifier 形成
+  `NONE|OPTION|STORY|UNKNOWN`；`ABSENT+OPTION/STORY` 立即失效旧 Tracker 后进入 task-specific 消费，
+  当前入口缺失则有界 fail-closed HOLD；G017 fallback 使用本 episode 的 post-click Dialog absent/current
+  exact terminal，terminal 前零 Tracker retry，禁止使用 `tianting-fallback-fengyaofu-anchor`，禁止把
+  fallback 当取消任务。
+- 实施结果：Client 有框只上报 `unknown` 并随同一 observation envelope 上传原始 Dialog ROI；Cloud 仅在
+  fact/ROI 的 `observerSeq/interestRevision/windowId/HWND` 全匹配时复用现有
+  `DialogService.classifySuppliedDialogFrame(...)` 得到 `option/story`。`ABSENT+OPTION/STORY` 清旧 action 后
+  明确有界 HOLD；`PRESENT+STORY` 同样因 task-specific consumer 缺失而 HOLD。G017 option clear 只等待本
+  episode 新于 click fence 的 exact `dialog=none`，不创建 G006 confirmation、不安装封妖符 anchor。
+- 父级有界源码 review：目标 diff 未发现新增 P0/P1/P2；普通 `STOPPED_AWAY`、movement positive、正常 combat
+  边沿与 G006 封妖符原链未改。状态按用户要求保持
+  `PARTIAL REPAIR DELIVERED / PARENT REVIEW REQUIRED`，不代表 G017 整卡批准。
+- 真实 replay 命令：Cloud 先用
+  `mvn ... dependency:build-classpath` 生成 test classpath，再以 `javac -proc:none` 只编译
+  `G017UnknownPhaseRecoveryPolicyContractTest`、`G017UnknownPhaseDialogReplayTest`，最后用 JUnit
+  ConsoleLauncher 执行。真实输入为 N05 no-dialog、P09 option、P08 story；输出在
+  `images/test-cases/dialog-frame-classification/replay-output/g017/`，包含
+  `g017-NONE-marked.png`、`g017-OPTION-marked.png`、`g017-STORY-marked.png` 和
+  `g017-UNKNOWN-wrong-lineage-marked.png`。
+- 最终生产编译：Client `mvn -q -DskipTests compile` exit `0`；Cloud
+  `mvn -q -DskipTests=false compile` exit `0`。最终隔离定向行为测试：Client G017 `4/4` + G014 `15/15`；
+  Cloud G017 `7/7` + G014 `12/12`，合计 `38/38`，零失败/错误/跳过。标准 Maven named lifecycle 分别被
+  Client 卡外旧 `LocalPathingStartProofMechanics` 引用、Cloud 卡外旧构造器/协议测试漂移挡在目标测试执行前；
+  隔离测试实际执行通过，未伪报 aggregate 绿灯。
+- G016：`node scripts/check-business-rule-gate.js --card G017` 与 `--all` 均 PASS。Dashboard 已运行
+  `node scripts/generate-cr-dashboard-data.js`，输出 `268` rows 到 `docs/cr-dashboard-data.js`。
+- Retained test 交付检查发现 Cloud `.gitignore` 的 `src/test/**` 会吞掉新增 replay test；已只增加
+  `G017UnknownPhaseDialogReplayTest.java` 的 unignore 例外，未改变其他 test/replay 忽略策略。两仓目标写集
+  `git diff --check`（untracked 文件以 `git diff --no-index --check /dev/null <file>`）均 PASS。
+- 未完成 gate：`STARTUP_OR_RESUME` 生产入口、天庭 task-specific startup/Story consumer、跨任务
+  `taskCode/actionKey/phase` 迁移和 fresh runtime 均未完成；本轮未运行 runtime/application/UI/capture/input，
+  未提交、未清理、未回滚两仓任何既有 dirty/untracked。
+
+## 2026-08-04 / G017 未知 Phase 仲裁续作（DELIVERED / 待父级 review）
+
+- 目标共享工作树：Client `D:\mavenProject\DHXY-cr271`，Cloud
+  `D:\mavenProject\dhxy-cloud-brain`；当前 shell 已在 Client 目标路径核验。保护基线
+  `D:\mavenProject\DHXY` 禁止修改。本轮不新建 worktree、不提交、不回滚、不清理两仓既有 dirty/untracked。
+- 开工基线：Client `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`，与
+  `origin/thin-client-design` 同点；Cloud
+  `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`，与
+  `origin/navigation-migration` 同点。Client 相关现状为 `WindowObservationSampler.java` 和 G017 文档已修改、
+  `G017UnknownPhaseConnectivityContractTest.java` / `G017.json` 未跟踪；Cloud 相关现状为
+  `CloudWholeTaskObserver.java` 已修改、`TiantingTask.java` / `G017UnknownPhaseRecoveryPolicy.java` 及测试目录未跟踪。
+- pushed 证据：Client pushed sampler 不含当前 G017/G014 partial 路径；Cloud pushed baseline 不含当前
+  `TiantingTask.java`，因此本轮以权威 `BR-DIALOG-001`、G017 卡和当前用户明确交付要求约束增量，不把本地其他
+  未提交业务差异当作可改范围。禁止修改模板、ROI、阈值、坐标与输入算法。
+- 本轮必须闭合：exact green click no-movement 后的同 run/window/HWND/observerSeq Title+Dialog 仲裁四分流；
+  movement positive 和普通 `STOPPED_AWAY` 零仲裁；五环明确 Dialog `ABSENT` 即时终态；旧 lineage/错 HWND/旧
+  action/fallback 未完成拒绝复点；启动/暂停恢复/热接保留为另一合法入口但不得常驻扫描。交付状态只能写
+  `DELIVERED / 待父级 review`，fresh runtime 仍为验收门。
+- 已实施：`WindowObservationSampler -> UNKNOWN_PHASE_*` 同一 shared-cycle 事实由 Cloud
+  `G017UnknownPhaseRecoveryPolicy` 与 `TiantingTask` 真实消费。no-movement 入口不再倒拨旧 grace 后直接 fallback；
+  active session 在普通 task decision 前执行，按 `PRESENT+NONE / PRESENT+OPTION / ABSENT / UNKNOWN` 四分流。
+  Option 只走现有 Cloud fallback，exact correlation 仍 active 时 Tracker retry 保持关闭；终结后也只接受不同于
+  被否定 actionId 的 fresh action。错 business/observation run、错 HWND、错 revision、混合 observerSeq 和旧 action
+  均拒绝。movement positive、普通 `STOPPED_AWAY/PATHING_TERMINAL` 的策略合同为零仲裁；
+  `STARTUP_OR_RESUME` 保留为另一显式合法 trigger，不存在常驻 interest。
+- G014 兼容：exact no-movement 会撤下该腿普通 probe，但不再武装
+  `TIANTING_RECOVERY_OPTION` 七模板；明确引妖重试仍保留原 probe。模板、ROI、阈值、坐标、原子输入和 movement
+  proof 均未改。五环 absent terminal 补 exact current fact/window/HWND fence，继续即时发布
+  `INSPECT/NONE/clickRequired=false`。
+- 验证结果：Client `mvn -q -DskipTests compile` exit `0`；Cloud
+  `mvn -q -o compile -DskipTests=false` exit `0`。G017 隔离行为/连通性合同 Client `4/4`、Cloud `4/4`；G014
+  保留回归 Client `15/15`、Cloud `12/12`，合计本轮定向 `35/35`。两仓标准 named Maven test 都先被已登记的
+  全树旧 testCompile 欠账挡住，之后按 `dependency:build-classpath -> javac -proc:none -> surefire:test` 真正执行
+  指定类，未伪造 aggregate 绿灯。未运行 runtime/application/UI/capture/input。
+- G016 gate：`--card G017`、`--card G016`、`--all` 均 PASS；dashboard 已运行
+  `node scripts/generate-cr-dashboard-data.js`，生成 `268` 行到 `docs/cr-dashboard-data.js`。
+  `git diff --check`：Client/G017 精确写集通过；Cloud/G017 精确写集通过。Cloud 全仓命令仍被本卡外既有
+  `src/main/resources/config/maps.json` 全文件 CRLF/trailing-whitespace 报告阻断，本轮按用户要求不清理 dirty，
+  不修改该文件。
+- Fresh gate：五环明确 absent 后一个观察周期内必须继续；天庭 no-movement 后必须先出现同 lineage paired
+  Title/Dialog。`PRESENT+OPTION` 在 fallback confirmation 终结前不得出现 Tracker click；`PRESENT+NONE` 的下一次
+  click actionId 必须不同于旧 action；`ABSENT` 必须零复点并进入既有回城/重接。父级 review 与 fresh runtime
+  前不得写 `APPROVED/CLOSED`。
+
+## 2026-08-04 / G017 通用任务启动/绿链无移动 Dialog 仲裁与本地动作语义同步（已建卡）
+
+- 实施领取（2026-08-04）：目标工作树固定为 Client `D:\mavenProject\DHXY-cr271` 和 Cloud
+  `D:\mavenProject\dhxy-cloud-brain`；保护基线 `D:\mavenProject\DHXY` 不进入写集。Client 当前分支/HEAD
+  为 `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`，pushed reference
+  `origin/thin-client-design` 指向同一提交；Cloud 当前分支/HEAD 为
+  `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`，pushed reference
+  `origin/navigation-migration` 指向同一提交。两仓均无 upstream 绑定，并已有大量 dirty/untracked；本卡不
+  回滚、不覆盖、不清理、不提交任何既有工作。
+- pushed baseline 对比：Client 的 observation/protocol 路径相对 `origin/thin-client-design` 已累计
+  `WindowObservationSampler`、presence 与 Runner 迁移改动；Cloud 相对 `origin/navigation-migration` 已累计
+  `CloudWholeTaskObserver`、`CloudWholeTaskReadyEventState`、`FiveRingTaskV2`、`TiantingTask` 等未提交实现。
+  G017 只在这些现有实现上做定点迁移，不把当前 dirty 当作可回退内容。
+- 实际链路复核：五环 Client 已由 `WindowObservationSampler.sampleWuhuanPresence(...)` 从同一 shared-cycle
+  frame 产生 Title/Dialog 两份事实；Cloud `probeWuhuanDialogDemand(...)` 当前只接受 `present`，明确
+  `absent` 被静默丢弃。天庭 exact 绿链点击由 `legStarted(...)` 给出本次 movement proof，但当前
+  `false` 后仍武装 G014 `TIANTING_RECOVERY_OPTION` 七模板路径，与用户批准的 G017 presence-first 裁决冲突。
+- G016 前置写集：`docs/业务逻辑.md` 新登记 `BR-DIALOG-001`，同步
+  `docs/business-rules.json`、`docs/rule-traceability/G017.json`，新增跨仓生产链合同
+  `G017UnknownPhaseConnectivityContractTest`。先运行 `node scripts/check-business-rule-gate.js --card G017`；
+  未通过前不修改生产 Java。
+- G016 结果：`node scripts/check-business-rule-gate.js --card G017` 已通过后才开始生产改动。
+- Pass 1 生产实现：Cloud `CloudWholeTaskObserver.probeWuhuanDialogDemand(...)` 把明确 absent 分流到
+  `publishWuhuanDialogAbsentTerminal(...)`，发布 `DialogType.NONE + DialogOperation.INSPECT +
+  clickRequired=false`，复用 exact-run prepared action slot 和 `PREPARED_ACTION_READY`；不新增截图、ROI、模板、
+  阈值或输入。Cloud `TiantingTask.clickTrackerLink(...)` 在本次 exact movement proof 为 false 时改走
+  `requestUnknownPhaseRecovery(...)`，撤下 G014 七模板 probe，并让原 stopped/reclick 分支立即只尝试 Cloud
+  fallback 清障；保留原 actionId、movement intent、input 原子序列及有界预算。
+- 验证证据：Client `mvn -q -DskipTests compile` PASS；Cloud
+  `mvn -q -DskipTests=false compile` PASS；G017 规则门禁 PASS；隔离
+  `G017UnknownPhaseConnectivityContractTest` `3/3` PASS。直接 Maven named test 被本卡外
+  `LocalTurnActionExecutorContractTest` 的旧 `LocalPathingStartProofMechanics` 引用阻断于 testCompile。目标
+  `git diff --check` PASS。双仓全协议目录检查为 Client 77 文件、Cloud 无缺失，但已有 25 个 byte difference；
+  G017 Pass 1 没有修改协议文件，未把该既有差异冒充通过。
+- 交付边界：本轮是 Pass 1，等待父级源码 review；尚未运行 runtime/UI/capture/input。整卡仍需继续闭合通用
+  startup candidate/actionKey/phase 映射、一胜一负和其余任务入口，不能自称 APPROVED/CLOSED。fresh gate：
+  五环 absent 后不得再等 20 秒；天庭 no-movement 后不得再出现七模板业务点击，只能 Cloud fallback 清障后
+  再重试 Tracker。
+
+- 目标 Client：`D:\mavenProject\DHXY-cr271` / `thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；目标 Cloud：
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓开工前均已有大量用户/历史 dirty 与 untracked，
+  本轮仅定点追加 G017 文档，不回滚、不覆盖、不清理、不提交；保护基线 `D:\mavenProject\DHXY` 未修改。
+- 五环现场：`16:31:52.506` 建立 `setup-dialog-check`，Client 于 `16:31:53.265` 已明确上报
+  `present=false`（约 `759ms`），Cloud 却对 absent 直接 return，未发布 INSPECT 终态；任务等满20秒后才在
+  `16:32:13.038` 执行 `Alt+1`。约 `19.26s` 为无意义等待。
+- 用户确认的通用合同：启动时 Title 与 Dialog 从同一 observation lineage 并行取得；PRESENT/ABSENT 均为
+  终态。Option Dialog 必须先由任务专属目录处理，否则会遮挡 Tracker 绿链。Cloud DialogService 返回稳定
+  `actionKey`，任务按 `(taskCode, actionKey)` 恢复 phase；全部 miss 只走 Cloud 现有 fallback，不重新读取
+  启动 Title。
+- 用户进一步明确：G017 是未知 phase 恢复仲裁器，目前只有启动/暂停恢复/热接无可信 phase，以及关键动作
+  没有产生唯一预期结果两类入口；它不是常驻检查。正常 phase、正常移动、正常进战、正常脱战和普通
+  `STOPPED_AWAY` 都不得重复跑全套仲裁。
+- 本地边界：本地只匹配并直接点击已知的接任务/进战类模板，不具备未知 Dialog 关闭或
+  `DIALOG_DISMISSED` 能力。点击后上报 exact `actionKey`，Cloud 负责 phase 映射并撤销同 evidence 的旧
+  PreparedAction，防止双点；点击只进入后续验证 phase，不伪造任务接取或真实进战。
+- 用户追加并修正运行中规则：Runner 证明本次绿链点击启动移动时保持原 pathing wait；只有 exact
+  click-no-movement 证明原 phase 假设失效时，才重新取得同 lineage Title + Dialog 仲裁。Title present +
+  none 保持 Tracker phase；Title present + Option 直接 Cloud fallback 清障后回 Tracker phase；Title absent
+  禁止复点旧绿链并按任务的无任务/完成/重新接取规则重定 phase；任一 `UNKNOWN` 有界重查且零点击。这里的
+  清障不等于取消当前任务。G014 的“七模板优先、all-miss 才 fallback”与本轮裁决冲突，实施前必须复审并
+  迁移或将例外另行请用户确认；其 exact movement proof、有界预算和防重复点击机制仍复用。
+- 本轮只建卡，未修改 Java、协议、模板、ROI、配置或输入，未编译、未运行测试/runtime。实施前必须按 G016
+  把规则登记为候选 `BR-DIALOG-001` 并完成 producer/transport/consumer/ordering 连通性门禁。完整规则、实施
+  顺序和 fresh-runtime 验收见 `docs/PACKAGE_ARCHITECTURE.md` 的 G017。
+
+## 2026-08-04 / G016 业务规则可追踪与冲突停工门禁（审核通过）
+
+- 目标 worktree：`D:\mavenProject\DHXY-cr271`，分支/HEAD：
+  `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`，与
+  `origin/thin-client-design` 同点。保护基线 `D:\mavenProject\DHXY` 不修改；Cloud
+  `D:\mavenProject\dhxy-cloud-brain` 不在本卡写集。工作树开工前已有大量用户/历史 dirty 与 untracked，
+  本卡只追加治理文件和规则，不回滚、不覆盖其他改动。
+- 用户批准：以后任何实施必须先关联业务 MD 中的稳定规则编号和完整生产链；若拟议实现、当前代码、最新推送
+  基线与业务 MD 出现实质冲突，Agent 必须停止，把冲突、选项和运行影响写入 G 卡并询问用户。一般性的“修好”
+  或“完成该卡”不构成冲突项授权，Agent 不得自行修改文档、选择代码现状或替用户决定。
+- 基线证据：G015 现场证明 `docs/业务逻辑.md`、`AFTER_COMBAT_EXIT_STARTUP` 枚举和 Cloud consumer 都存在，
+  但 reachable Client producer 已在迁移中消失；仅要求“读 MD”不能证明规则连通。当前 `AGENTS.md` 又同时包含
+  “跨边界规则必须有连通性合同”和默认 no-local-test，缺少项目级明确例外与机器门禁。
+- 精确写集：`AGENTS.md`、`docs/BUSINESS_RULE_GOVERNANCE.md`、`docs/business-rules.json`、
+  `docs/rule-traceability/G015.json`、`docs/rule-traceability/G016.json`、
+  `scripts/check-business-rule-gate.js`、`scripts/test-business-rule-gate.js`、本卡文档与 dashboard 快照。
+  不修改任何生产 Java 或业务决策。
+- 已完成：建立增量规则 ID、每卡追踪 manifest、跨边界 producer/transport/consumer/ordering 合同要求和
+  `BLOCKED_USER_DECISION` 冲突停工协议；把项目级连通性/顺序合同明确为用户已批准的 no-local-test 长期例外。
+  `BR-START-001` 与 G015 已作为第一条真实登记链。
+- 验证：门禁自测 `5/5`；G015、G016、`--all` 均通过；目标写集 `git diff --check` 通过。父级复审
+  `P0/P1/P2=0/0/0`。本卡未改 Java，因此不需要 Maven compile 或 fresh runtime。
+
+## 2026-08-04 / G015 战斗中冷启动等待脱战恢复（源码与测试通过，待实机）
+
+- 目标 Client：`D:\mavenProject\DHXY-cr271`，分支/HEAD：
+  `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`，与
+  `origin/thin-client-design` 同点；Cloud `D:\mavenProject\dhxy-cloud-brain` 当前仅只读核对。保护根仓
+  `D:\mavenProject\DHXY` 不修改。工作树开工前已有大量用户/历史 dirty 与 untracked，本卡不回滚、
+  不清理、不覆盖其他改动。
+- 现场：`07:04:16.583` 战斗画面冷启动 `TIANTING` 后，Client 在任何 combat gate 之前对五窗执行
+  `Alt+T`；`07:04:27.563` 全部因队长按钮 5 秒 miss 被启动前置拒绝，未创建 Cloud run/Runner，UI 汇总
+  `远程启动未执行：0/5`。`07:10` 脱战后重试可成功 `5/5`，排除任务内部主动结束。
+- 基线证据：`696a12b0`、`59b85e0b` 的 `WindowTaskRunner` 均在角色判定前执行
+  `deferStartupIfAlreadyInCombat(...)` 并返回 `AFTER_COMBAT_EXIT_STARTUP`；当前 thin-client 冷启动入口
+  缺少该门，且 `RemoteTurnMetadataSupplier` 固定发送 `NORMAL`。这违反 `docs/业务逻辑.md:1059-1073`。
+- 批准修复：恢复 Client 本地战斗权威下的冷启动批次等待；战斗期间零 `Alt+T`、零包裹校准、零 Cloud
+  task start，脱战后再执行既有前置并传递 `AFTER_COMBAT_EXIT_STARTUP`。新增端到端启动顺序合同，并把
+  “MD 规则必须有入口级可执行合同”写入常见错误/Agent 规则，防止后续迁移只保留枚举和消费端。
+- 已完成：`StartupCombatGateService` 复用 Runner 的 `LocalCombatSignalMechanics`，按 G002 每窗每 tick 单次
+  exact-HWND 整窗抓帧后内存裁剪；只门控需要唯一队长的五类主任务。`WindowTaskControlService` 已把 gate 放在
+  角色预检、包裹校准和 `startOneRemote` 之前，并将真实等待结果传入 `RemoteTurnMetadataSupplier`。
+- 父级终审：`P0/P1/P2=0/0/0`。Client/Cloud 生产 compile 均通过；本卡隔离合同 `7/7`，目标写集
+  `git diff --check` 通过。全仓 Client testCompile 的旧 `LocalPathingStartProofMechanics` 夹具阻断属于本卡外。
+  fresh runtime 按 G015 卡内顺序检查：defer 期间零可见输入/零 Cloud start，脱战后才预检并启动。
+
+## 2026-08-04 / G005 06:54 封妖符慢首点、直战终止与启动摄妖香（源码终审通过，待实机）
+
+- 目标 Client：`D:\mavenProject\DHXY-cr271`；运行代码只读核对 Cloud
+  `D:\mavenProject\dhxy-cloud-brain`；保护根仓 `D:\mavenProject\DHXY` 未修改。两仓既有 dirty/untracked
+  全部保留，本轮仅更新 G005/本记录，未改 Java、协议、模板或输入。
+- `06:55:42.694` 本地点击 `fengyao.png`，第 1 坐标到 `06:56:26.776` 才点击。约 `44s` 由旧绿链
+  `25s PARK_PATHING`、task-box baseline 晚到 `10.8s`、anchor capture `4.87s` 和输入 `2.34s` 串联造成。
+- `06:57:07.941` 已确认飞行并执行 `Alt+C`；随后 `WHOLE_TASK_EXPECTED_COMBAT_ENTER_CLAIM` 协议白名单缺
+  `TIANTING`，Cloud 立即抛 `IllegalArgumentException`，没有后续 `Alt+A`/妖王幻影点击，约 60 秒后 Client 才收到
+  FAILED 终态。
+- 本轮启动只做 `startup first-aid check` 后热接既有 tracker；没有包裹/摄妖香检查。当前摄妖香仅位于真实脱战后的
+  `FULL_RECOVERY_WITH_LEADER_INCENSE`。
+- 用户已批准三项修复并归入 G005：`fengyao.png` 成功答复立即终结旧绿链等待并复用已有 frame 钉 baseline；双仓
+  claim 协议加入 `TIANTING`；fresh/hot start 在第一次绿链前做一次 leader-only 既有摄妖香检查。禁止修改模板、ROI、
+  阈值、坐标与点击算法；首个 worker 初始化数分钟未产出文件改动，已关闭；现由 worker `Kierkegaard`
+  （`019fcc8f-382f-7361-9d26-8ab1662ce18e`）按精确写集实施，父级复审。fresh runtime 以“零 25s/10s 等待 +
+  直战完整 + 首绿链前摄妖香”验收。
+- 父级首轮 review：`REPAIR / P1=2`。旧 intent 清理返回值被忽略，清理失败仍可能回到 `PARK_PATHING`；协议虽已双仓
+  hash 一致并放行 `TIANTING`，但缺专属 claim 正反例合同。已退回同一 worker 按原写集返修。
+- 父级终审：`P0/P1/P2=0/0/0`。`fengyao.png` 实际点击后必须先由 Client 权威清除旧 pathing；清除失败在
+  `readFacts/PARK_PATHING` 前 fail-fast，成功才允许进入封妖符分支。第一坐标现已无条件跳过 task-box 当前帧抓取与
+  比较，直接进入既有 anchor/坐标点击；第二坐标以后仍保留 `0.8` 整框比较和有界 fail-closed。fresh/hot start 在
+  首次 tracker 路径前仅执行一次 leader-only 摄妖香检查。两仓 validator 与专属正反例合同分别 byte-identical，
+  SHA-256 为 `CDFF1D120B3E185EE4A9DC1816784AFA9BA998DC892D104A982718225C509F26`、
+  `DB7615B3C7E0410E7E607D05F195A557BB2678B3038B15165A8C32F26CB8FB9E`。
+- 父级重跑 Client/Cloud production compile 均为 exit `0`；worker 隔离合同 Cloud `9/9`、Client validator `2/2`，
+  终审返修后的封妖符合同 `7/7`。两仓 Maven 定向 test 入口仍被既有写集外 testCompile 欠账阻断：Client 为已删除的
+  `LocalPathingStartProofMechanics` 旧夹具引用，Cloud 为旧构造器/枚举测试（含 `CloudTurnTaskFactoryAllowlistTest`、
+  `TurnProtocolValidatorContractTest` 等）。未运行 runtime/application/UI/capture/input。
+- Fresh gate：启动时摄妖香检查必须早于第一条 tracker click 且只出现一次；`fengyao.png clicked` 后不得再出现旧腿
+  `25s PARK_PATHING` 或首坐标 task-box capture/late pin，须直接进入 anchor 与第 1 坐标；到点后继续看到
+  `STOPPED_AWAY -> flying/必要时 Alt+C -> expected-combat claim accepted -> Alt+A/妖王幻影 -> IN_COMBAT`。
+
+## 2026-08-04 / G014 天庭绿链未移动后的 Dialog 恢复（源码与隔离测试通过，待实机）
+
+- 目标 worktree：Client `D:\mavenProject\DHXY-cr271`，Cloud
+  `D:\mavenProject\dhxy-cloud-brain`；根基线 `D:\mavenProject\DHXY` 不在写集。
+- 开工基线：Client `thin-client-design@2f083c14`（与 `origin/thin-client-design` 同点）；Cloud
+  `navigation-migration@363d0e3`（与 `origin/navigation-migration` 同点）。两仓开工前已有大量 dirty 和
+  untracked 文件，本卡不回滚、不清理、不覆盖其他改动。
+- 用户批准的行为：绿链点击后先看 exact Runner 是否登记移动；移动则保持原流程。没有移动才启用七张
+  天庭模板本地恢复匹配；命中复用既有 Cloud 分支，全部 miss 才调用一次现有 DialogService fallback，
+  fallback 也无动作才允许重新点绿链。
+- 已实施：新增 `TIANTING_RECOVERY_OPTION` 双仓协议；Client 恢复集合复用现有 ROI、阈值、fresh 复验、原子点击
+  与 retained event；Cloud 仅在 `legStarted=false` 后切换恢复 interest，七张结果显式回到原业务语义；删除
+  脱战后抢先执行的旧引妖循环，改为 title→绿链→未移动才恢复 dialog。
+- 父级终审：`P0/P1/P2=0/0/0`。Client 两类隔离测试 `15/15`、Cloud 链路合同 `12/12`，合计
+  `27/27`；Client/Cloud 生产 `compile` 均通过；共享协议 SHA-256 均为
+  `DEAE51956D32E4D3CC9B8932A3429BCAB4AA3E3ECB06D400880F703114362712`。两仓现有全局
+  `testCompile` 分别被旧夹具 `LocalPathingStartProofMechanics` 缺失和旧 `DialogService` 构造器/协议测试
+  不同步阻断，故按既有隔离方式定向 `javac + surefire:test` 执行，未伪造全仓绿灯。
+- 精确计划与 fresh-runtime 门禁：
+  `docs/superpowers/plans/2026-08-04-g014-tianting-no-movement-dialog-recovery.md`。
+
+## 2026-08-04 / G013 天庭脱战维护中止与 Tracker 新鲜度栅栏（源码与测试通过，待 fresh runtime）
+
+- 目标 Client：`D:\mavenProject\DHXY-cr271` / `thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；目标 Cloud：`D:\mavenProject\dhxy-cloud-brain` /
+  `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。保护基线
+  `D:\mavenProject\DHXY` / `696a12b0` 仅只读比较。两仓既有 dirty/untracked 全部保护。
+- 现场：`hwnd-F99187E` 于 `03:41:53.491` 确认脱战，但旧 `PARK_COMBAT` 决策已启动 `40s` 周期
+  清理和 `REFRESH_DUE` 面板刷新；exact exit 到 Cloud 后维护链仍继续约 `6.6s`。随后 recovery 结束时间
+  又误伤脱战后已准备的正确 Tracker action，额外等待 `1.79s`。
+- 用户已批准建卡并交 worker `Ptolemy`（`019fcbea-91f2-7773-b93e-94d40c53639b`）实施，父级 Codex
+  独立审核。精确 Cloud 写集仅限
+  `AutoCombatService`、`AutoCombatPanelService`、`TiantingTask` 与两项命名合同测试；Client Java、协议、
+  模板/ROI、其他任务均写集外。详细合同见
+  `docs/superpowers/plans/2026-08-04-g013-tianting-post-combat-maintenance-and-tracker-fence.md`。
+- 父级首轮审核：`REPAIR / P1=2`。entry generic 调用前缺贴身战斗 gate；战后同 fingerprint 在 G011 未实施时会让
+  暗雷进入 `PARK_IDLE`。已退回同一 worker，要求在原精确写集内补 gate，并将暗雷同指纹事实桥接到既有巡逻分支。
+- 父级返修复核：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0-0-0`。两项指定合同测试共 `11` 项全绿，Cloud
+  `mvn -q compile` 与目标写集 `git diff --check` 通过；未运行 runtime/application/UI/capture/input。fresh runtime
+  仍须证明脱战后维护截断、changed fingerprint 立即放行，以及暗雷同指纹不点绿链且不永久 park。G011 独立合同
+  仍开放，本卡没有把它顺带关闭。
+
+## 2026-08-04 / G012 天庭队长异常终止调查（P1 已确认，待批准实施）
+
+- 目标 Client：`D:\mavenProject\DHXY-cr271` / `thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；目标 Cloud：`D:\mavenProject\dhxy-cloud-brain` /
+  `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓既有 dirty/untracked 全部保留，
+  保护基线 `D:\mavenProject\DHXY` 未触碰。
+- 队长 `hwnd-F99187E / 468413443` 在 `03:57:11.934` 被 Cloud 主动终止为 `FAILED`，无 Java exception。
+  第一现场保存帧证明 `03:48:26` 绿链点击后才弹出引妖窗口，而一次性 `TIANTING_YINYAO` 已在点击前
+  miss 并撤销；后续仅 `TIANTING_COMBAT_OPTION` 常驻，导致窗口三分钟无人处理并触发 watchdog。
+- watchdog 强制回城重接后，`天宫 (143,113)` 上一次无移动的绿链 leg 被判 `STOPPED_AWAY`；状态机未校验
+  暗雷地图，错误进入暗雷并在未知地图等满 `120000ms` 后返回 false，最终 `phase=FAILED / round=3`。
+- 本轮只调查并建立 G012，不改 Java、不编译、不启动 runtime/input。实施前等待用户批准；详细证据、拟议
+  修复边界和连通性门禁见 `docs/superpowers/plans/2026-08-04-g012-tianting-yinyao-dialog-terminal-failure.md`。
+
+## 2026-08-04 / G008 战斗中暂停热恢复被冷启动链阻断（父级源码复审通过，待实机）
+
+- `03:28:22` pause 正确投影五窗口 `PAUSED`，旧 terminal 全部被 stale-handle fence 忽略，上一处修复有效。
+- `03:28:31` 恢复错误进入 `action=FRESH_START`，并无条件重跑冷启动 `Alt+T` 队伍身份预检；战斗画面无法命中
+  队长按钮，`03:28:42` 五窗口全部失败，汇总 `远程启动未执行：0/5`。本轮没有创建新 `startRequestId`，所以
+  脱战后没有 runner 可推进，窗口继续显示 `PAUSED`。
+- 用户纠正后的合同：PAUSED 点击继续是独立的暂停热恢复，不是冷启动。`clearTaskExecutionState(...)` 已保留 exact
+  HWND、LEADER/MEMBER、已选任务和玩家身份；恢复直接据此创建全新 `teamSessionKey/startRequestId`，不继承旧
+  task phase，但禁止窗口重扫、`Alt+T`、包裹页校准和公共启动 UI 前置。战斗中只等待 verified exit，脱战后直接
+  进入 task-specific tracker/dialog/回程道具恢复；保留 identity 缺失时 fail-closed，不退回可见 UI 预检。
+- 本轮按 investigation-first 规则只更新 G008 文档与看板，不修改 Java、不编译、不启动 runtime/input。
+- 用户已批准交由 worker 实施；Faraday（`019fcbba-16bf-7bb0-9fc0-2fdf3077de3f`）只负责 Client 暂停热恢复
+  UI/控制入口和对应契约测试，父级 Codex 独立 review。Cloud、任务 phase、协议、模板/ROI、导航和输入均在写集外。
+- worker 已交付四文件精确写集；父级逐条源码复审未发现 P0/P1/P2。全部 `PAUSED` 走独立
+  `resumePaused(...)`，混合状态整组拒绝，冷启动保持原链；恢复跳过窗口发现、`Alt+T`、包裹页校准和公共启动
+  UI 前置，仅校验保留 HWND/角色/任务身份并重新生成 `teamSessionKey/startRequestId`。
+- 父级验证：`mvn -q -DskipTests compile` exit `0`；隔离 G008 生命周期合同 `4/4`；
+  `MainWindowControllerSourceGuardTest` 通过；精确四文件 `git diff --check` 通过。全类 Maven test 被仓内既有
+  `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失阻断于 test-compile，未伪造通过。
+- 当前状态：`PARENT SOURCE REVIEW APPROVED / FRESH RUNTIME REQUIRED`。下一次实机必须在战斗中暂停后恢复，证明
+  `action=PAUSE_RESUME`、新 `startRequestId`、无窗口扫描/`Alt+T`/包裹校准，并在 verified exit 后继续当前任务。
+
+### 07:17 fresh runtime 失败：冷启动角色未写回保留上下文
+
+- `07:17:20` 五个旧 run 均已终止，`07:17:49.231` UI 正确进入 `action=PAUSE_RESUME`；没有旧 loop 或按钮分支阻断。
+- 新 run 在本地创建 `startRequestId` 之前整组被拒绝，首个精确原因是
+  `暂停热恢复缺少已确认角色：hwnd-3BF13B0`，最终 `远程启动未执行：0/5`。
+- 冷启动日志已经解析出 `leaderWindowId=hwnd-F99187E, memberCount=4`，但
+  `prepareLocalTeamRoles(...) -> startOneRemote(...)` 只把角色作为本次 metadata preflight 使用，没有在 ACK 成功后
+  写入 `WindowRuntimeContext.role`。注册默认角色为 `UNKNOWN`，所以 pause 所保留的仍是 UNKNOWN；热恢复严格 gate
+  在第一个窗口抛异常，batch catch 随后拒绝全部五窗。
+- G008 fresh gate 失败，状态改为 `P1 REPAIR REQUIRED`。批准后的最小修复应在每窗 Cloud start ACK 成功后的同一
+  lifecycle 临界区写回 exact preflight 角色；失败/取消/未 ACK 不写。热恢复继续禁止角色 UI 预检、`Alt+T` 和猜测。
+- 本轮仅调查并更新 G008 持久证据，未修改 Java、未编译、未启动 runtime/application/UI/capture/input/tests。
+- 用户已批准继续修复。目标工作树固定为 `D:\mavenProject\DHXY-cr271`，分支/HEAD/上游为
+  `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a` /
+  `origin/thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；保护根仓和当前全部 dirty/untracked。
+- 本次生产/测试精确写集仅为 `WindowTaskControlService.java`、`WindowRemoteTurnControlContractTest.java`；持久记录写集为
+  本文件、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js`。当前两个 Java 文件已有 G008 未提交差异，
+  必须在现有热恢复实现上定点增量，不回滚、不覆盖、不扩大到 Cloud、任务 phase、协议、模板/ROI、导航或输入。
+- **实施完成**：`startOneRemote(...)` 仅在 Cloud ACK、最终 cancel fence、有效队列投影和本地 started 标记全部成功后，
+  于同一 lifecycle monitor 内写回 exact preflight 角色。`LEADER/MEMBER` 原样保留，`SOLO` 作为单窗主执行权限保存为
+  `WindowRole.LEADER`；显式 leader 路径按 exact leader id 映射。失败、取消、timeout、拒绝和未 ACK 均不写角色。
+- **父级审查/门禁**：未发现 P0/P1/P2。production compile exit `0`；隔离 G008 合同 `7/7` 通过；直接 Maven
+  定向测试仍被既有 `TurnContractFixtures.LocalPathingStartProofMechanics` 缺失阻断。隔离整类 `16/19`，三个失败均为
+  本卡之前的旧任务映射/metadata 断言。精确写集 `git diff --check` 通过。当前状态为
+  `PARENT SOURCE REVIEW PASSED / FRESH RUNTIME REQUIRED`，未启动 application/runtime/UI/capture/input。
+
+## 2026-08-04 / G008 暂停边界误投影 `STOPPED` P1 返修（源码已交付，待实机）
+
+- 目标 worktree：`D:\mavenProject\DHXY-cr271`；分支/HEAD：`thin-client-design` /
+  `2f083c14`。改前目标文件已有既有 dirty，全部原样保留并在当前内容上做定点修改；保护根仓
+  `D:\mavenProject\DHXY`，不回滚、不覆盖、不清理、不提交。
+- 运行证据：用户点击主按钮暂停后，旧远程 turn 的终态被 `abortRemoteRuns(...)` 统一硬编码为
+  `WindowRuntimeStatus.STOPPED`；恢复时 UI 只能走普通 fresh start，且旧终态可能在本地清理前先回调，导致
+  “暂停清空旧状态”被错误显示成“已停止”。
+- 用户批准的合同：暂停必须终止旧 remote turn、失效旧 handle/token 并清空 task-owned context，但窗口状态保持
+  `PAUSED`；恢复按当前屏幕创建全新 run。只有显式停止才投影 `STOPPED`。旧 Cloud 终态必须被 handle identity
+  fence 忽略，不得覆盖暂停状态。
+- 精确 Java 写集：`WindowTaskControlService`、`WindowTaskRunner`、`MainWindowController`。不改天庭/修罗/五倍
+  phase、OCR、模板、绿链、导航、坐标或输入动作。
+- 已实施：pause/stop 显式传入 `PAUSED`/`STOPPED`；本地 run 在请求 Cloud stop 前先失效 handle 并清态，
+  迟到 terminal 只能被 identity fence 忽略。`PAUSED` 不写任务结束时间/结果，仍允许下一次 fresh start。
+  主按钮日志改为分支后 `action=PAUSE/FRESH_START`。
+- 验证：`git diff --check` 通过（仅既有 CRLF 提示）；`mvn -q -DskipTests compile` 退出 0。按限制未启动
+  runtime/application/game/input/capture/tests。fresh gate：暂停后五窗口均须显示 `PAUSED`；重新启动须创建
+  新 `startRequestId` 并按当前屏幕恢复，旧 terminal 只允许出现 stale-handle ignore。
+
+## 2026-08-04 / G011 天庭暗雷战后连续巡逻（已建卡，待实施）
+
+- 目标 Client 工作树：`D:\mavenProject\DHXY-cr271` / `thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud 工作树：
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均有既有 dirty/untracked，全部保留；保护基线
+  `D:\mavenProject\DHXY` 未触碰。
+- 用户确认：本场由暗雷巡逻进战，且脱战后 fresh 天庭 Tracker 内容指纹与进战前相同，证明同一暗雷
+  小任务未完成。下一步直接恢复原左右巡逻；不点绿链、不新建 pathing、不检查飞行器。
+- 根因：现有流程把所有战后 title 存在统一导向绿链；`runPostCombat()` 清掉 `legStopped` 后，决策器没有
+  暗雷来源/前后指纹连续分支，只能选择 `CLICK_TRACKER_LINK`。
+- 现场证据：`hwnd-F99187E` 在 `02:45:36.062` 已处于暗雷路径，`02:46:16.389` 确认脱战，
+  `02:46:20.897` 再建立绿链 advance，`02:46:21.142` 实际点击 `(385,317)`，之后又回暗雷巡逻。
+- 本轮只建卡并修正文档业务权威；未修改、编译或运行 Client/Cloud Java。实施边界和验收见
+  `docs/superpowers/plans/2026-08-04-g011-tianting-dark-thunder-continuation.md`。
+- 2026-08-04 新增业务规则：蟠桃园暗雷停止后，先在右点连续右键两次，再按左→右交替；其他地图保持原交替规则。本次仅更新业务／设计文档与 G011 卡，未修改 Java、未编译、未启动运行时或发送输入。
+
+## 2026-08-03 / G008 第 2 阶段：暂停后按当前屏幕热启动（Cloud 协议/消费端收口，实施中）
+
+- 目标 worktree：`D:\mavenProject\DHXY-cr271`；分支/HEAD：`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`。根仓与任何 Cloud worktree 均未触碰；保留全部既有
+  dirty/untracked。
+- 已实施：新 remote start 在 Cloud ACK 前调用 `prepareRemoteFreshStart(...)`，先失效旧 handle、取消旧 token
+  尚未开始输入并清空旧 context；`markRemoteStarted(...)` 不再在 ACK 后抹掉已启动 observation runner 的
+  新首帧。五环首帧复用共享 HWND 截图，只读上报既有 title/dialog presence，并以
+  `source=startup-screen-observation` 标识；修罗、五倍只按 Cloud exact demand 回传启动帧。
+- 不变式：未改 OCR、模板、绿链、坐标、任务 phase 或 Cloud；本地 matcher 的既有执行仍走原 key event /
+  PreparedAction 通路，未新增本地业务输入链。
+- 本轮工作树/基线：Cloud 仅在 `D:\mavenProject\dhxy-cloud-brain-cr271`（`codex/g008-hot-screen` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`，开工时 clean）实施；Client 仅在
+  `D:\mavenProject\DHXY-cr271` 的文档、G008 卡和 dashboard 留痕。Client 分支/HEAD 仍为
+  `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`，开工前已有大量
+  dirty/untracked，全部保留。根 `DHXY`、根 `dhxy-cloud-brain` 不在读写集。
+- 精确实现写集：Cloud `CloudWindowObservationInbox`、`CloudObservationHttpHandler`、
+  `CloudWholeTaskObserver` 与其命名 contract test；Client Java 只允许镜像
+  `cloud/turn/protocol/**` 的 byte-identical 协议变更。本轮不改任何任务、OCR、模板、绿链、坐标、
+  本地输入或 Client matcher。
+- 收口合同：复用现有 typed `ObservationPreparedFrameDemand`。五环仅在启动首帧已报告
+  `WUHUAN_DIALOG_PRESENCE=present` 时 demand 并生成无点击 `INSPECT`；修罗、五倍每个 fresh run
+  各有一次 exact startup demand，Cloud 仅按各自既有 accept / enter-battle template 生成原有
+  PreparedAction。Client 不凭 dialog 存在猜 phase、不直接点击。故事框、未知 option、模板 miss，以及没有
+  Cloud task-specific dialog consumer 的 task code 都 fail-closed。
+- Cloud 实现已落盘：`CloudObservationHttpHandler` 仅按首帧 source/taskCode 创建一次 demand；
+  `CloudWindowObservationInbox` 以 exact demand/run/window/generation 保存回传帧；
+  `CloudWholeTaskObserver` 对五环发布无点击 `INSPECT` + `PREPARED_ACTION_READY`；修罗发布
+  `ACCEPT_TASK` / `XIULUO_ENTER_BATTLE`，五倍发布 `WUBEI_ACCEPT_TASK` /
+  `WUBEI_ENTER_BATTLE`，都只由已有 phase consumer 执行。战斗 visible 不 demand，任务保持自动战斗
+  到 verified exit。五环整窗帧先裁既有 `DIALOG_LARGE (200,250,640x300)` 再分类；`AUTO_BATTLE`、
+  `SLEEP_COMPUTER`、legacy `XIULUO` 与未知 task code 没有对应 consumer，不请求帧。
+- 验证：Cloud `mvn -o compile -DskipTests=false` 通过；Client
+  `mvn -q -DskipTests compile` 通过；两仓 `git diff --check` 通过。
+  共享 `ObservationFactType.java` 以 Client 字节为源镜像到 Cloud，SHA-256 两边均为
+  `294A7079211D06C6AFD940A3ACC8730E885B3591CE07AFC249BA96E23237487E`。
+ Cloud worktree 不含 `src/test/java`，无可运行 named contract test；未伪造测试绿灯。
+- 最终实现/验证（2026-08-03）：`WUHUAN_V2`、`XIULUO_V2`、`WUBEI` 的启动 dialog 均由 Cloud
+  task-specific template 解释后发布已有 PreparedAction；战斗 visible 不 demand，维持自动战斗至
+  verified exit；无 tracker 保留原有回程道具/已验证上下文/接任务 fallback。`AUTO_BATTLE`、
+  `SLEEP_COMPUTER`、legacy `XIULUO`、未知 code 没有 Cloud dialog consumer，显式 fail-closed。
+  最终 Cloud `mvn -o compile -DskipTests=false`、Client `mvn -q -DskipTests compile`、两仓
+  `git diff --check` 均退出 0；协议 SHA-256 两仓同为
+  `294A7079211D06C6AFD940A3ACC8730E885B3591CE07AFC249BA96E23237487E`。仅缺 fresh runtime，
+  不宣称 CLOSED。
+- 验证：`mvn -q -DskipTests compile` 通过；`git diff --check -- <4 个 G008 源文件>` 通过。
+  `mvn -q -Dtest=WindowObservationRunnerContractTest test` 被既有
+  `LocalTurnActionExecutorContractTest:724,1260` 引用已删除 `LocalPathingStartProofMechanics` 阻断于
+  test-compile，未伪造绿灯。fresh runtime：走路、已有 dialog、战斗分别 pause/restart，核验新
+  `startRequestId`、`startup-screen-observation`、旧 run identity fence；五环首帧 presence 可先验。
+- 卡片同步：已运行 `node scripts/generate-cr-dashboard-data.js`，输出 `Generated 268 CR rows ->
+  docs\\cr-dashboard-data.js`；该生成文件本轮无额外 Git diff。
+
+## 2026-08-03 / G008 第 1 阶段独立审核 P1 返修（待复审）
+
+- 审查证据：`MainWindowController.buildRowActions(...)` 的 PAUSED 行仍显示“继续该窗口任务”并调用
+  `resumeWindows(...)`；而 G008 已把 remote resume 定义为 no-op，行入口会造成用户点击无动作。
+- 精确返修：仅改该行按钮为“重新启动该窗口任务”，调用
+  `startWindows(List.of(snapshot.getWindowId()), "重新启动")`，与已改的选中/全部重新启动入口一致。
+- 边界：未修改根仓、Cloud、任务 phase、OCR、模板、导航、坐标；保留 cr271 全部既有 dirty/untracked。
+- 状态：第 1 阶段待独立审核（已移植到 cr271，P1 已返修待复审）。
+
+## 2026-08-03 / G008 五环接任务与 Tracker 唤醒双 P1 返修（实施中）
+
+- 改前基线：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`（无 upstream）；Cloud `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓已有大量既有 dirty/untracked 文件，全部保护，不 reset/revert/覆盖。
+- P1-A 证据：`hwnd-1EF1796` 的真实 option frame 能以当前 Cloud 洗图和 `wuhuan_accept_first_option.png` 得到 `0.99999994`，正确目标是第一项；实际第四项点击发生在 prepared accept 等待 30 秒超时后，是 `cleanupUnexpectedAcceptDialog -> cleanUpAll` 的“最后绿色选项”关闭退路。Client presence 探针也能对同帧返回 `true`，断点是新的本地 dialog interest 没有在 `present -> present` 场景强制产生新 presence 事实。
+- P1-B 证据：Client `images/template/wuhuan/panel_title_yellow.png` 为旧 `26x13` 模板，对真实 Tracker 仅 `0.35531655`；Cloud 已验证的 `30x17` 模板对同帧为 `0.99252295`。固定 Tracker ROI 与阈值本身无误。
+- 本轮精确写集：Client `WindowObservationSampler`、五环 title 模板与 G008 文档；Cloud `FiveRingTaskV2`。修复边界是“新 dialog interest 强制一次 presence 举证、prepared 超时不再误清有效 option、恢复已验证 title 模板”，不改接任务模板、匹配阈值、点击坐标、NPC/Tracker 业务顺序。
+- 已实施：Client 按 `ObservationDialogInterestFact.interestId` 划分新 dialog episode，新 interest 的
+  `present -> present` 也会强制上报一次 presence；Cloud 将无 prepared action 的超时拆为
+  `PREPARED_ACTION_TIMEOUT`，三个接任务入口只重试当前 phase、禁止 cleanup；Client title 模板已替换为
+  Cloud 同源 `30x17` 版本。
+- 回放：`images/test-cases/wuhuan/g008/title-present-raw.png` -> `title-present-marked.png`，生产匹配
+  `[39.0,142.5,0.99252295]`；`accept-dialog-raw.png` -> `accept-dialog-washed.png` ->
+  `accept-dialog-marked.png`，生产匹配 `[89.5,177.0,0.99999994]`，红点在第一项。
+- 验证：Client `mvn -q -DskipTests compile` 与 Cloud
+  `mvn -q -DskipTests=false "-Dmaven.test.skip=false" compile` 均通过。实际 presence replay 为 `true`。
+  Maven 定向测试被既有 `LocalTurnActionExecutorContractTest` 对已删除
+  `LocalPathingStartProofMechanics` 的两处引用阻断于 test-compile，未伪造通过。仍需 fresh runtime 验收。
+- 2026-08-04 用户要求补做真实截图到最终点击点的回放。新增 Cloud 定向用例
+  `G008WuhuanTrackerReplayTest`，输入为
+  `images/test-cases/wuhuan/g008/title-present-raw.png`，严格复现 Client 上传 ROI
+  `(0,100,280,604)`、Cloud 还原为 `1024x768` 整窗、生产
+  `TaskTrackerPanelService.analyzeFullWindow(..., "wuhuan", -1, ...)` 和
+  `selectedLink().centerPoint()`。单用例结果：`panel=true`、`title=true`、`links=2`，候选分别为
+  `[190,254]-[218,267]`（“李冰”）与 `[25,270]-[82,284]`（换行后的“冰的替身”），最终点击
+  `(204,260)` 正确落在“李冰”。标注输出：
+  `title-present-green-link-replay-marked.png`、`title-present-green-link-replay-zoom.png`。
+- 执行命令：先以 Maven `dependency:build-classpath` 生成 test classpath，再仅 `javac` 上述 JUnit
+  用例并直接运行其同类 `main` 入口，exit 0。直接执行
+  `mvn -Dtest=G008WuhuanTrackerReplayTest test` 会在运行该用例前被仓内其他既有未同步测试源码的
+  `DialogService` 构造参数、已删除协议枚举等 test-compile 错误阻断；没有把该全仓阻断伪报成用例失败。
+  回放证明 23:58 的 Tracker 图片并非匹配失败：当生产 matcher 真正执行时会产出正确点击点；运行时断点仍是
+  旧 dialog episode 在 matcher 之前永久返回 pending，Repair #4 的 episode retire/gate 修复针对的是该断点。
+
+## 2026-08-02 / 五环事件帧与一次性 FrameDemand 交接（实施中）
+
+- 用户已批准的边界：Cloud 是五环唯一业务大脑与唯一 `PreparedAction` 创建者；Runner 只观察 exact-HWND 的机械事实（寻路终态、进/脱战、五环 title present/absent、dialog presence）、执行 Cloud command、回执执行结果。Runner 命中五环 title 时可在同一 observation 请求附带一张当前 Tracker 图；其余 dialog/完成图只能由 Cloud 下发一次性 `demandId` 后回一张图。无事实、无 demand 时禁止上传五环 Tracker/dialog 图。
+- 改前基线：Client `D:\mavenProject\DHXY-cr271` 分支 `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud `D:\mavenProject\dhxy-cloud-brain` 分支 `navigation-migration`，HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓分别已有 178 / 110 个 dirty 或 untracked 路径，全部保护，不 reset/revert/覆盖/提交。
+- 差异证据：当前 Client `WindowObservationRunner` 持有 Cloud response 的 `List<ObservationInterest>` 并按周期调用 `WindowObservationSampler.collect(...)`；Cloud `CloudWholeTaskObserver.publishObservationInterests(...)` 为五环常驻发布 `wuhuan-tracker`（每秒），`syncDialogRoiInterest(...)` 为五环复用 `xiuluo-dialog`（每两秒）。该模式导致 `21:22:45` 接任务点击后，`21:22:46` 已清本地 dialog interest 却仍按旧订阅上传 option 图，Cloud 可重建 `ACCEPT_TASK` 占住 prepared slot，阻断后续 Tracker 绿链。
+- 本轮精确写集：双仓 byte-identical observation protocol；Client `WindowObservationRunner`、`WindowObservationSampler` 与必要的本地五环 title/presence 观察；Cloud `CloudWindowObservationInbox`、`CloudWholeTaskObserver`、`FiveRingTaskV2` 的事实/demand/action 交接；`docs/业务逻辑.md` 与 `docs/云端迁移常见错误清单.md`。不改变接任务 option、完成 story、绿链、回城、重试和 phase 的业务 owner：option/完成/绿链都仍由 Cloud 识别与决策。
+- 无已批准业务差异；按已批准的 owner/通信边界收敛迁移。No-local-test mode：不新增或运行测试；完成后仅执行两仓 `mvn -q -DskipTests compile`，不启动 runtime、UI、capture 或输入。
+- 已实施：Client 新增本地只读 `WuhuanPresenceLocalMechanics`，复用每轮共享 exact-HWND frame。仅 title 的
+  `present`/变化/寻路终态/战斗边沿才发 `WUHUAN_TITLE_PRESENCE`；命中时同包发一张
+  `wuhuan-title-frame`，以 `wuhuan-title-event:<observerSeq>` 绑定。dialog 只发
+  `WUHUAN_DIALOG_PRESENCE`，不发 dialog PNG。Cloud 五环 interests 已替换为两个 geometry-free presence key；
+  旧 `wuhuan-tracker` 常驻 ROI 和五环的 `xiuluo-dialog` interest 均已移除。
+- 已实施：Cloud `CloudWindowObservationInbox` 将 demand 命中的 exact frame 留到该 demand 被消费；
+  `CloudWholeTaskObserver` 对五环 dialog presence 发一次 `wuhuan-dialog` demand，消费同 generation 的
+  frame 后才发布 PreparedAction 并 ACK demand。dialog chain 未结算时禁止 tracker；结算后 tracker 还要求更新的
+  title observerSeq，不能使用 dialog 前的旧 Tracker 图。`CloudObservationHttpHandler` 不再把五环 dialog demand
+  当 NPC arrival frame 抢先消费。
+- 身份链：五环 dialog PreparedAction 的 `evidenceId` 固定写为
+  `wuhuan-dialog-demand:<demandId>`；五环 Tracker PreparedAction 的 `evidenceId` 固定写为
+  `wuhuan-title-event:<observerSeq>`。Prepared-action slot 继续分配唯一 `actionId`，因此消费端既能拒绝
+  旧 actionId，也能追溯该 action 的单次 frame/event 来源。
+- 静态验证：Client `mvn -q -DskipTests compile` 通过。Cloud 的 Enforcer 拒绝 `-DskipTests=true`；未运行测试，
+  以 `mvn -q -DskipTests=false "-Dmaven.test.skip=false" compile` 通过。共享
+  `ObservationFactType.java` SHA-256 双仓一致：`294A7079211D06C6AFD940A3ACC8730E885B3591CE07AFC249BA96E23237487E`。
+  本轮 touched-file `git diff --check` 通过；Cloud 全仓 `git diff --check` 仍被既有
+  `src/main/resources/config/maps.json` trailing whitespace 阻断，未触碰该文件。未运行 runtime/UI/capture/input/test。
+- 交付待父级源码审核：仍需 fresh runtime 验证 title template 和 dialog presence 在实际五环画面上的命中；本轮不宣称
+  runtime 通过，也不改变 option、完成 story、回城、重试或 phase 的既有业务语义。
+
+## 2026-08-02 / G007 通用本地归队优先级与停等隔离（已派工）
+
+- 用户裁决：`TEAM_RETURN` 是所有本地队伍任务共用的机制，禁止写成天庭特例。leader return signal 的边沿必须由共享 local-session owner 管理：首次出现只开一次 `FIRST_AID + TEAM_RETURN` 并唤醒；持续期间只 park/recheck；清除时只关一次并继续。
+- 现场基线：`D:\mavenProject\DHXY-cr271` / `thin-client-design`，Cloud `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration`；两仓均有大量既有 dirty/untracked 修改，全部保护。`2026-08-02 10:01` 归队窗口中 Runner 已于约 `10:01:11.46` 确认脱战，但 first return click 到 `10:01:39.763` 才发生；中间有 stale combat-entry cleanup/Alt+8、重复 tracker `PREPARED_ACTION_READY`、以及未开 `FIRST_AID` 的 team-return capability。
+- 卡片：[G007 本地队伍归队优先级与停等隔离](superpowers/plans/2026-08-02-g007-local-team-return-priority.md)。worker 只可改该卡精确写集；不运行 runtime、UI、capture、输入或实机任务。
+- 实施（Cloud `D:\mavenProject\dhxy-cloud-brain`）：`TaskMaintenanceService` 新增 session 级
+  `updateLocalTeamReturnSupport(inactive/active/inactive)` 与 `isLocalTeamReturnActive`。首次 active
+  只开启本次实际占有的 `FIRST_AID + TEAM_RETURN + COMMON_BOX` 并一次 `notifyAll`；持续 active 无动作；
+  clear 只关闭本次窗口实际打开的 capability，避免误关其它维护窗口。天庭、修罗、五倍既有归队等待均改为
+  该 API，重复 signal 不再写“open/yield”日志。
+- 同次优先级修复：`AutoBattleTask` 归队 release 改为 `FIRST_AID` best-effort 后必尝试 `TEAM_RETURN`，
+  不再让普通箱插在归队前；`AutoCombatService` 在 local-team-return active 期间清掉 stale entry deadline
+  并跳过 generic cleanup/Alt+8/round refresh，Runner 已确认非战斗时同样清掉过期 entry deadline；
+  `CloudWholeTaskObserver` active 时清理/停止 tracker `TASK_TRACKER_PATHING` prepared action，不再继续创建。
+- 静态验证：2026-08-02 在 Cloud worktree 执行 `mvn -q -DskipTests=false compile`，`BUILD SUCCESS`；
+  对本卡七个 Cloud 源文件执行 `git diff --check`，无空白错误。未启动 runtime、application、Task、UI、capture、输入或实机测试。
+- fresh-runtime 观察关键字：首次仅一条 `maintenance local-team return activated once`；持续 signal 不得再有
+  `capability opened` / `entry-maintenance-ui-clean` / `auto-combat panel: verify` / tracker prepared action；
+- 第一轮 review 结论：**P1 open，G007 不得关闭**。`TeamReturnService.clickReturnTeamIfPresent` 只回报“物理 click 已提交”，未确认移动，也未实现 no-match/click-no-movement 才 cleanup/retry；七项聚焦合同测试同样未交付。另有 P2：须封住 active 期间已经入队的 `PREPARED_ACTION_READY` 对 leader return wait 的唤醒。已返修给同一 worker。
+  clear 时仅一条 `maintenance local-team return cleared once`；队员日志顺序须先出现
+  `pending follower first-aid` 再出现 `team return: return button`。
+- 第二轮返修：`TeamReturnService.attemptReturnTeam` 以既有 Runner pathing mirror 确认 click 后移动；
+  只有 `NO_MATCH` / `CLICKED_NO_MOVEMENT` 才触发 `AutoBattleTask` 的 generic cleanup，成功移动不清理。
+  `mvn -q -DskipTests=false compile` 通过，`git diff --check` 通过。尝试
+  `mvn -q -Dtest=G007LocalTeamReturnContractTest test`，但 worktree 中既有 test-compile 错误先行阻断，
+  没有伪造绿灯；G007 seven-point 测试仍未齐全，卡继续保持 `REPAIR IN PROGRESS`。
+
+## 2026-08-02 / 修罗 expected combat gate 简化（进行中）
+
+- 用户裁决：每个窗口的任务运行只有一个当前战斗状态；重新接任务、停止和任务终态均应清零。不得让 Cloud 再维护一份会与 Client 脱节的 claim UUID 账本。
+- 现场：修罗窗口 `hwnd-8D216DA` 第 2 轮，本地看打点击后生成的进/脱战边沿均被 Cloud `expectedClaim` gate 拒绝，角色在脱战后停至 180 秒 watchdog。
+- 修复：Cloud `CloudFastExpectedCombatExitCoordinator` 已删除 `ExpectedClaim` 存储与 claim-id 比对。expected combat 仅按 Client 已标注的 expected 边沿建立 `activeCombat(generation, expected)`，对应 `COMBAT_EXITED` 只按同一 Runner generation 消费；unexpected combat 保持独立的同 generation 配对。`ENTER_BATTLE_CLICKED` 不再向 Cloud 记账。
+- 静态验证：Cloud `mvn -q compile` 通过；touched-file `git diff --check` 通过。仓库定向 Maven test 仍被 Cloud worktree 中既有的 `CloudTurnTaskFactoryAllowlistTest` 构造器漂移和 `YipinGuardClickPlanTest` 编译错误阻断于 test-compile，未触及这些文件；本卡测试类已用 `javac` 单独编译，并由 `junit-platform-console-standalone 1.10.2` 运行 `CloudFastExpectedCombatExitArmLifecycleTest`，5/5 通过。未启动 runtime、任务、截图或输入。fresh runtime 验收：看打后出现的 `IN_COMBAT` / `COMBAT_EXITED` 不得再出现 `client combat edge dropped by gate`，修罗必须在脱战边沿立即从 `WAIT_TRACKER_SHORTCUT_PATHING` 推进。
+
+## 2026-08-01 / G005 队列终态全链路诊断（进行中）
+
+- 用户要求：下一次天庭在未完成次数前跳到抓鬼或任何队列项异常结束时，必须能从本地日志完整看见
+  `startRequestId -> taskRunId -> queueIndex -> taskCode -> 子任务结果 -> policy 决策 -> 下一队列项`，不能再只剩
+  `tianting:task-finished` 或整条队列的最终状态。
+- 基线：客户端 `D:\mavenProject\DHXY-cr271` 分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud `D:\mavenProject\dhxy-cloud-brain` 分支
+  `navigation-migration`，HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均已有大量
+  dirty/untracked 修改，全部保留、不回滚、不覆盖、不清理。
+- 已核实的现状：`CloudTurnTaskRuntime.runQueue(...)` 只在整条队列结束时把
+  `TerminalState` 留给 `CloudTurnHttpHandler.withTaskTerminalResult(...)`；当 policy 为
+  `CONTINUE_ON_FAILURE`，前一子任务 `FAILED` 后进入下一子任务的原因不会透传客户端。Cloud worker 的
+  `log.error` 也没有可靠落盘，因此 `WindowTurnLoop` 与 `automation-metrics.jsonl` 无法解释队列推进。
+- 本轮精确写集：双仓 byte-identical 的 `cloud/turn/protocol/TurnResponse`、新增的队列诊断协议对象、
+  `TurnProtocolValidator`；Cloud 的 `CloudTurnTaskRegistry`、`CloudTurnTaskRuntime`、
+  `CloudTurnHttpHandler`；客户端的 `WindowTurnLoop` 与 `AutomationMetricsService` 事件枚举；本记录。
+  只追加诊断事件，不改任务 phase/导航/OCR/input/队列策略。
+- 待交付：每个子任务执行前后、异常、continue/stop 决策都有带关联号的 retained event；每个正常 HTTPS
+  response 附带该窗口当前 run 的事件快照；客户端去重写入 `logs/automation-metrics.jsonl` 与
+  `logs/dhxy-console.log`。天庭运行时另记录 round/phase 进入与最终返回，供同一 `taskRunId` 关联。
+- 已实施：新增双仓 byte-identical `TurnTaskQueueEvent`，并扩展 `TurnResponse.taskQueueEvents`。
+  Cloud `CloudTurnTaskRuntime` 为每个 queue item 记录 `TASK_STARTED`、`TASK_TERMINAL` 与
+  `QUEUE_DECISION`；`FAILED + CONTINUE_ON_FAILURE` 明确记为“queue continues”，`STOPPED` 和
+  `STOP_ON_FAILURE` 明确记为“queue stops”。`CloudTurnHttpHandler` 在普通 `ACTION/IDLE` 回包附带
+  retained snapshot；`CONTINUATION` 保持原协议，不携带该旁路诊断。客户端 `WindowTurnLoop` 以 eventId
+  去重，写 `dhxy-console.log` 的完整关联字段，并经 `AutomationMetricsService` 写入
+  `automation-metrics.jsonl` 的 `TASK_QUEUE_EVENT`。
+- 天庭补点：`TiantingTask.runRound(...)` 只写入诊断 ThreadLocal 的当前 `TiantingPhase`/round/terminal
+  reason；`CloudTurnTaskRuntime` 读取后填入终态事件。该 trace 不参与任何分支、park、输入、OCR、导航或
+  failure policy，因此不改变任务业务行为。
+- 验证：客户端 `D:\mavenProject\DHXY-cr271` 执行 `mvn -q compile` 通过；Cloud
+  `D:\mavenProject\dhxy-cloud-brain` 执行 `mvn -q compile -DskipTests=false` 通过。三个共享协议文件
+  `TurnResponse.java`、`TurnProtocolValidator.java`、`TurnTaskQueueEvent.java` SHA-256 双仓一致。
+  未启动 application、任务、capture、input 或 runtime；待下一次 fresh 天庭/抓鬼队列实机确认事件链。
+- 补全：任务 `execute()` 之外的 role-preflight、任务实例化或 startup-preparation 若抛出 RuntimeException，
+  runtime 也会按当前 queueIndex 写 `TASK_TERMINAL=FAILED` 与“queue aborted before policy”的事件，不再只有
+  无归属的整队列终态。
+
+## 2026-08-01 / G005 寻路事实权威与天庭回城物品（进行中）
+
+- 开工基线：Client worktree `thin-client-design`，最新已推提交 `2f083c14152106ba6ad418a0c29e3e0e2148e14a`，两仓均为既有 dirty 工作树；只改 Client `LocalTurnActionExecutor`/独立 proof 类，以及 Cloud `TiantingTask`。已对照 `docs/天庭任务流程大MD.md`：天庭仅在整轮 title 消失后回城，不能把修罗的单战回城物品预扫搬进多轮任务。
+- 现场：`01:07:20.180` 窗口 `hwnd-61F0D0C` 的绿链点击已实际完成，用户目视角色正常移动；`01:07:23.068` 独立 `LocalPathingStartProofMechanics` 仍以边缘像素 + 坐标条双阴性拒绝登记 intent。该双阴性只说明独立一次性截图没有看见移动，不能推翻已发生的物理移动。Cloud 因无 ACTIVE intent 错走“脚下已到达”。
+- 修复边界：输入完成后只登记 `WindowPathingIntent`，由常驻 `WindowObservationRunner/WindowObservationSampler` 独占观察并发布 `PATHING_TERMINAL` / 战斗事实；删除独立一次性 proof，不改 Runner 的到达/停稳语义。天庭删除战斗、寻路、绿链后的回城物品预扫/缓存，只在最终 `RETURN_HOME` 使用当前页面新鲜匹配回城道具；失败仍沿用既有清 UI、重试和步行回城兜底。
+- 静态验证：Client `mvn -q -DskipTests compile` 通过；Cloud 的 Enforcer 禁止 `skipTests=true`，按仓库要求执行 `mvn -q -DskipTests=false compile` 通过；两仓 touched-file `git diff --check` 通过。未运行 UI、capture、物理输入或实机任务。fresh run 观察点：绿链输入完成后应立即有 `pathing intent registered`，之后只由 Runner 产生 `PATHING_TERMINAL`/战斗边沿；天庭日志不得再出现 `tianting:prescan:*` 或 `useCached`，最终回城才出现 `BAG_RETURN_ITEM` 的 `FIND_AND_USE_TASK_PAGE`。
+
+## 2026-07-31 / G004 战斗态鼠标硬闸（进行中）
+
+- 16:05 实机窗口 `hwnd-61F0D0C`：`16:05:07.388` 本地 Runner 已确认进战并维护 Auto+8，
+  但 `16:05:07.506` 起仍连续消费野外战斗的巡逻右键。这不是 Runner 漏识别，而是 Cloud action
+  在输入队列中没有读取本地 `localCombatVisible`；Cloud 边沿回传再快也不能拦住已排队的鼠标。
+- 修复边界：只给 Cloud turn 下发的**鼠标**动作增加精确窗口的本地实时硬闸；该闸在请求入队、
+  聚焦前和每一个物理动作前重新读取 Runner 战斗态。命中时取消当前及后续鼠标步骤，禁止 focus、
+  move 或 click。自动战斗 `Alt+8` 是键盘维护，不受此闸影响；不改战斗业务判定、Cloud phase 或
+  模板匹配。
+- 16:57 野外战斗窗口 `hwnd-3AB11B6`：前 3 次战斗结束后都恢复了巡逻右键；第 4 次进战后，
+  `16:59:36` 已维护 Auto+8，但直到任务停止，每秒巡逻命令都因 `COMBAT_ACTIVE` 被本地硬闸拒绝。
+  根因是脱战只接受 `20x22` 放大镜锚点的正命中；放大镜漏检且战斗模板也未命中时，代码把状态永久保留
+  为 `UNKNOWN`。修复为本地双向反证：放大镜命中直接退出；放大镜与全部战斗模板都明确未命中也退出；
+  任一采集不可用仍保持未知。Cloud 不参与该判定。
+
+## 2026-07-31 / G01 江湖历练适配（进行中）
+
+- 07:17 实机 P1：江湖历练野外战斗脱战后没有回城，根因不是既有“Tracker 为空则回城”业务分支，
+  而是本地新装 dialog interest 时直接保留了云端较早的 `probeStartAtMs`，其值早于本地
+  `createdAtMs`。下一批 observation 被协议 validator 以
+  `dialogInterest.probeStartAtMs must be zero or not before creation` fail-closed 拒绝，Cloud 因而收不到
+  combat-exit / tracker 事实，无法走既有回城决定。修复边界：仅在本地安装 interest 时将过期的
+  `probeStartAtMs` 钳制为该 interest 的本地创建时刻；未来 probe 不动。普通和带 green-chain
+  schedule 的两条安装路径必须同样处理；不改变江湖、修罗的战斗/回城业务语义。
+- 静态验证：本次三文件 `git diff --check` 通过。Client `mvn -q -DskipTests compile` 与本次 context
+  定向测试均在主源码编译阶段被既有
+  `LocalServiceStepDispatcher.java:147` 非穷尽 `switch` 阻断，未进入本次测试；该文件不属于本修复。
+  fresh run 验收：迟到 schedule 安装后不再出现
+  `dialogInterest.probeStartAtMs must be zero or not before creation`，观察批次继续上报，江湖暗雷脱战后
+  Cloud 能收到 exit/tracker 事实并走既有回城分支。
+
+- 05:24 实机根因：江湖历练 `kaida.png` 是 `61x20`，却错误复用了修罗本地看打 `41x21` ROI；OpenCV
+  `matchTemplate` 每轮抛尺寸断言异常，旧 catch 以 debug 吞掉，故日志只见“matching”而没有点击。
+  已改为江湖历练独立 ROI：用户实测屏幕 `(1513,544)-(1699,571)`，按本轮绑定 base `(1252,170)`
+  换算为窗口相对 `(261,374,186,27)`；修罗 ROI 不动。`DialogServiceKandaConstantsContractTest`
+  钉死该 ROI 且断言模板必须放得进去。待下一次 dialog 实机帧做 marked replay 并验证真实点击。
+
+- 审计结论：`XinshouTrainingTask` 仍把任意 Runner `IN_COMBAT` 统一写成
+  `TRACKER_CONFIRM`；这会把移动中没有本地看打实际点击的意外战斗误走正常回城链。江湖历练没有
+  `Alt+A` 入口，因此它的唯一正常来源是已完成的本地看打模板点击；其余 Runner 进战事实均为
+  `INCIDENTAL`，脱战后只回 `TRY_TRACKER_SHORTCUT`。
+- 本次只复用 G01 的 Runner 来源消费与“本地模板点击已确认进战后停止重试”保护；不改阿三、绿链、
+  看打模板、自动战斗、回城道具或其他江湖业务判断。
+- 2026-07-31 watchdog 对齐：江湖历练同样在接任务选项实际成功后才开始 `180s` 进战前窗口；仅
+  `EXPECTED` 本地看打进战可关闭该保护。`INCIDENTAL` 脱战后回绿色链接，但 deadline 继续；到期仍无
+  expected edge 时清理并回阿三重新接任务。
+- 静态验证：Client `mvn -q "-Dmaven.test.skip=true" compile` 与 Cloud
+  `mvn -q -DskipTests=false compile` 通过，双仓 `git diff --check` 通过。新增 Client/Cloud 定向测试
+  未执行：Client 仍被既有 `WindowTurnLoopContractTest` 的 `TurnClient` lambda 漂移阻断；Cloud 仍被
+  `CloudTurnTaskFactory*Test` 的八参数旧构造器阻断。两者都不属于本次适配。
+- 实机 gate（未运行）：江湖历练绿链移动中触发无本轮本地看打点击的战斗，进战日志必须为
+  `client-combat-edge:unexpected:IN_COMBAT:*`；脱战后不得使用 `BAG_RETURN_ITEM`，并回
+  `TRY_TRACKER_SHORTCUT`。真实本地看打点击进战仍应走原正常战斗与回城链。
+
+## 2026-07-30 / G01 修罗意外战斗来源恢复（进行中）
+
+- 现场日志：窗口 `67555` 在第 11 轮蜂巢移动中没有本轮“看打”实际点击，却在 `23:03:28`
+  进入战斗后被 Cloud 当作正常修罗战斗；随后执行 `BAG_RETURN_ITEM`。这违反基线 G01：只有本地
+  `看打` 实际点击或 `Alt+A` 后实际目标点击可标记正常进战，移动中的无票战斗必须为意外战斗，
+  脱战后回绿色链接恢复，禁止回城道具。
+- 开工基线：只读原卡 `D:\mavenProject\DHXY\docs\PACKAGE_ARCHITECTURE.md` 的 G01；当前两仓
+  均为既有 dirty 工作树，绝不回滚其他改动。修复只触及 Client Runner 的本次点击身份/重试终结与
+  Cloud 修罗对 Runner `expected/unexpected` 事实的消费；不改寻路、OCR、模板、NPC 点击或物理输入。
+- 验收：无本次真实点击的 `IN_COMBAT -> COMBAT_EXITED` 必须写 `INCIDENTAL`、不得调用
+  `BAG_RETURN_ITEM`；被打断的绿链路线回 `TRY_TRACKER_SHORTCUT`，旧目标坐标路线回
+  `NAVIGATE_TO_TARGET`。真实本地看打点击与 `Alt+A` 后真实目标点击仍保持正常入战与原回城链。
+- 2026-07-31 追加修复：修罗本轮的 `180s` 仅在“接任务选项实际成功消费”后开始计时；只有 Runner
+  精确标注的 `EXPECTED` 进战可令本轮进入正常修罗战斗。`UNEXPECTED -> INCIDENTAL` 只等待和恢复被
+  打断路线，不得清零或关闭该 `180s` watchdog；若意外战斗脱战后仍未发生 `EXPECTED`，到期必须清理并
+  回接任务。验收须覆盖“接任务后意外战斗、脱战恢复、到 `180s` 仍无 expected edge”时确实重新接任务。
+  Cloud 主源码门 `mvn -q -DskipTests=false compile` 已通过；新增
+  `XiuluoRoundContextWatchdogTest` 的定向 Maven 测试仍被既有
+  `CloudTurnTaskFactory*Test` 测试构造器漂移阻断于 test-compile，尚未进入该测试执行。
+- 静态验证：Client 主源码 `mvn -q "-Dmaven.test.skip=true" compile` 通过；两仓
+  `git diff --check` 通过。两边定向测试均被既有测试编译漂移阻断，未执行到 G01 本身：Client
+  `WindowTurnLoopContractTest` 仍将多抽象方法的 `TurnClient` 当 lambda；Cloud 多个
+  `CloudTurnTaskFactory*Test` 仍按八参数构造器创建、而生产构造器已为九参数。二者均不属于 G01
+  改动范围。Cloud 主源码已完成编译，G01 定向测试本身没有出现编译报错。
+- 实机 gate（未运行）：制造一次“移动中、没有本轮看打实际点击且没有 `Alt+A` 目标点击”的野外战斗。
+  进战日志必须为 `client-combat-edge:unexpected:IN_COMBAT:*`；脱战后零 `BAG_RETURN_ITEM`，并依
+  旧 route mode 恢复绿链或目标导航。
+
+## 2026-07-30 / 江湖历练阿三与 A3 标题隔离（进行中）
+
+- 2026-07-30 P1 修复与配置拆分：基线取当前两仓工作树（`DHXY-cr271`、`dhxy-cloud-brain`，均为既有 dirty/untracked 状态；未回滚、覆盖或清理他人改动）。江湖历练 Tracker 绿链现先登记 movement intent、UNTARGETED_TRACKER pathing 与 A3 本地看打 interest，三者任一登记失败则不点击；真实点击失败会清理该 pathing/interest，避免首次移动或 dialog 在点击后注册前丢失。Tracker park 改为 25 秒有界切片，不再把 `-1` 展开成完整 180 秒 watchdog。盒子状态 key 改为 `xinshou_training`，失败目录改为 `images/failure-cases/jianghu-lilian`；“允许不足五人”配置不再影响江湖历练。客户端新增独立持久化配置 `xinshouTrainingMaxRuns`，设置页与任务卡均单独显示“江湖历练次数”；巫医、修理、三技能维护仍全局共用。验证：`git diff --check` 两仓通过；因用户正在运行/测试桌面与云端，未运行 Maven 编译或 runtime。
+
+- 2026-07-30 入战链修正：江湖历练绿链快捷路径恢复复用修罗的 Runner 本地看打链。
+  Cloud 仅登记同一份 `XIULUO_ENTER_BATTLE` probe-only schedule；Runner 按任务类型选择模板，
+  修罗仍用 `xiuluo_enter_battle_kanda2.png`，江湖历练仅替换为
+  `images/template/dialog/a3/kaida.png`，并保留同一份 fresh-frame 重验、原子移动点击和 Runner
+  入战确认。江湖历练不走修罗的 Cloud 看打 prepared-action、OCR、野怪取消或 saved-green re-press
+  兜底；本地三次看打耗尽后离开快捷路径。
+- 验证：`D:\mavenProject\DHXY-cr271` 与 `D:\mavenProject\dhxy-cloud-brain` 均已执行
+  `mvn -DskipTests=false compile`，结果 `BUILD SUCCESS`。未启动 runtime、任务或真实输入；首次实机
+  gate：阿三绿链后日志须显示 Runner 对 `a3/kaida.png` 的本地命中/点击，且不出现 Cloud prepared
+  看打或 saved-green re-press。
+- 2026-07-30 用户确认 Tracker-only 边界：江湖历练不得保留修罗的中间任务面板/目标坐标
+  OCR、目标导航、目标点击与旧看打链；左侧 Tracker 未找到可点绿链、绿链输入未执行、或
+  Runner 本地看打耗尽时，均回到 `ACCEPT_TASK_CLICK_NPC` 重新点阿三接任务。
+- 已物理删除江湖历练内复制自修罗的中间任务面板整窗截图/裁剪/OCR、目标坐标解析、目标导航、
+  目标 NPC 点击、旧看打确认、目标地图补写 pathing intent，以及相应的旧 phase；不再以 phase gate
+  保留这些旧实现。Tracker green 只登记 `UNTARGETED_TRACKER` intent；无绿链或本地看打耗尽均重回阿三。
+  同时移除阿三直接看打的 `JIANGHU_LILIAN_ENTER_BATTLE_TEMPLATE` 协议、本地执行器和 Cloud client
+  入口。两仓均已强制执行 `mvn clean -DskipTests=false compile` 并 `BUILD SUCCESS`；共享
+  `TurnLocalOperation.java` SHA-256 一致：
+  `17606F5C71DF79E12AD3749A916F955CDECB3FD84B55B8533D55C4D4102BB15F`。
+
+- 依据基线 `docs/阿三任务流程MD.md`，江湖历练的医宝宝为东海渔村 `超级巫医 (150,9)`；
+  新任务已使用该坐标，不使用修罗灵兽村的 `超级巫医 (116,70)`。
+- 用户新增的 `images/template/a3/a3_title.png` 已作为江湖历练的专属 tracker 标题：
+  新任务三处 tracker 读取（实时、快捷路径、接任务快照）均改为 `xinshou_training`，
+  并在 Cloud `TaskTrackerPanelService` 专门匹配该标题；修罗 `xiuluo_tracker_title.png`
+  完全未改。
+- 任务面板备用捕获同样改用 `xinshou_training`，Client `QuestManagerService` 为它解析
+  `images/template/a3/a3_title.png`，不再误用修罗 task title。云端资源副本与客户端源文件
+  SHA-256 一致：`DFEDB68211ADABB91887AEF96D6DAAF265B9C2E99774EAA5D9E8659F152F00B8`。
+- 验证：两仓 touched-file `git diff --check` 通过。用户正在运行 Client/Cloud，按项目约束
+  未运行 Maven 编译、测试或重启；fresh gate 为首次启动江湖历练时确认日志 taskCode 为
+  `xinshou_training` 且 tracker title 命中 A3，不得出现修罗 title 命中。
+- 2026-07-30 后续确认：A3 title 命中后的完整内容框改与天庭共用 `214x78`（标题左 `-5px`）；
+  绿色链接使用既有的完整两段式算法：`findClickableTrackerGreenLinkBands(...)`
+  先过滤，再以 `wuhuanTrackerLinks` 排除 `(x,y)` 进度尾巴。修罗的 `40px` 框和单分段链接筛选
+  仍只属于修罗。
+- 2026-07-30 江湖历练回城道具改为 A3 专属模板 `bag/a3_return_item.png`，来源为用户提供的
+  `images/template/a3/huicheng.png`；修罗继续使用 `bag/xiuluo_return_item.png`，两任务的回城
+  缓存键将按模板路径自然隔离。资源已同步到 Client 运行目录与 Cloud resources。验证：模板文件
+  SHA-256 必须一致；首次实机 gate 为江湖历练日志的 `template=bag/a3_return_item.png`，并确认背包
+  命中、使用和回到东海渔村。未启动 runtime 或真实输入。
+
+## 2026-07-30 / Cloud 明确拒绝启动后立即完整退役（进行中）
+
+- 现场：天庭第一次启动未组队时，五个窗口均收到 Cloud `TASK_START_REJECTED` 并已显示空闲；
+  用户随后组队再次点击启动，却全部报“`云端未确认终止，保留远程 turn loop`”。因此不是第二次
+  识别队长慢，而是第一次的五个已停止 loop 没有从 guard registry 删除。
+- 根因：`TurnModeGuard.canRemoveStoppedLoop(...)` 原先只允许无 task start request 或已收到 accepted
+  task terminal 的 loop 删除。明确拒绝发生在 ACK 前，没有 terminal，却又与网络超时共用
+  `lastFailure`，所以被错误保留。
+- 落地：`HttpsTurnClient` 将 HTTP problem 的结构化 `code` 保留到 `TurnTransportException`；
+  `WindowTurnLoop` 只对 `HTTP_STATUS + TASK_START_REJECTED + 尚未 ACK` 写入可安全退役标记；
+  `TurnModeGuard` 仅据该精确标记放行移除。`WindowTaskControlService` 在首次启动等待 ACK 失败时，
+  若为该明确拒绝，立即移除 loop 并调用 `WindowRuntimeContext.clearTaskExecutionState(...)`；网络、
+  超时及其他 HTTP 错误仍保持原 exact-request fence，绝不重发一个新 startRequest。
+- 验证：新增 `WindowTurnLoopContractTest.explicitCloudStartRejectionCanBeRemovedButGenericHttpFailureRemainsFenced`
+  覆盖“`TASK_START_REJECTED` 可移除 / 其他 HTTP 错误不可移除”。touched-file `git diff --check` 通过。
+  启动前一次外部编译因该查询方法非 public 失败、清空了 `target/classes`；已改为 public 后运行
+  `mvn -DskipTests compile`，exit `0`。随后 `restart-local-dhxy-stack.ps1 -SkipClientCompile` 成功启动
+  Client PID `9856`、Cloud `18080` 和 OCR `18762`。Fresh gate：先故意未组队点击一次天庭启动，
+  五个窗口应各自失败且无残留 remote loop；组队后立即第二次启动，日志不得再出现
+  `清理旧任务失败` 或 `云端未确认终止`，而应发出五个新的 startRequest。
+
+## 2026-07-30 / 停止后的运行态硬清理（进行中）
+
+- 现场：天庭新一轮启动时，队长 `67555` 仍消费上一轮在 `16:21:55` 建立的
+  `tianting:tracker-green-click:advance` 导航 intent；本轮 `16:26:24` 已确认新 taskRun，
+  却在 `16:26:29` 起等待旧 intent，直到 `16:26:43` 才清除。停止与下一次启动之间没有
+  任务运行态边界。
+- 基线：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design`；当前 `git status` 已有
+  大量既存 dirty/untracked（含 `WindowRuntimeContext.java`），不得回滚、覆盖、清理或提交。
+  本轮只触及 `WindowRuntimeContext`、`WindowTaskRunner` 及对应生命周期合同测试。
+- 目标：用户点停止或远端任务终态后，保留窗口注册/HWND/角色身份/用户配置，但清空所有会影响
+  下一任务的 transient state：pathing、dialog/prepared action、prepared jobs、修罗看打状态、
+  天庭认领与时间窗、tracker cache、启动预处理、回城 replay、战斗票据、任务进度与 `GameContext`
+  运行态。新 taskRun 不得读取上一 taskRun 的任何自动动作事实。
+- 落地：`WindowRuntimeContext.clearTaskExecutionState(...)` 成为统一硬清理入口；
+  `WindowTaskRunner` 在 `remote turn starting`、`remote turn stopped`、`remote turn failed`
+  三个边界调用。`resetRuntimeState()` 同样复用它。新增上下文合同测试，断言 pathing/dialog
+  事实被清空、但 HWND/角色/所选任务保持；新增 Runner 源码合同守护三处边界调用。
+- 验证：touched-file `git diff --check` 通过；静态生命周期合同核验通过。当前检测到多个 Java
+  运行进程，为避免覆盖用户正在测试的 Client 产物，本轮未运行 Maven 编译/测试。Fresh gate：
+  先点停止，随后重新启动天庭；日志必须先有 `[task-runtime-reset] ... remote turn stopped`，再有
+  `remote turn starting`，且新 taskRun 第一次 pathing 只能是本轮新建 intent，不得再出现旧
+  `16:21:55` 的 `ae9869c3-5450-451a-a7e1-6e75fc972d7c`。
+
+## 2026-07-30 / 修罗本地 Runner 脱战权威恢复
+
+- 现场：`13:17:02` 队长 `67555` 的 Client Runner 已发布 exact `COMBAT_EXITED`；Cloud 收到
+  `COMBAT_STATE_CHANGED` 后，旧 `XiuluoTaskV2.waitCombat` 又以 `gameContext` 重新裁决并进入
+  `AutoCombatService` 恢复链，随后 `RETURN_HOME` 命中旧输出缺失
+  `CommonBoxService$1`，任务终止。此行为违背已定合同：本地 Runner 是唯一战斗状态权威。
+- 修复：Client 始终先上传真实脱战边沿；若有 armed replay，replay 只作为附加的本地后续动作，
+  不再替换 `COMBAT_EXITED`。Cloud 新增 exact exit 查询；修罗 `WAIT_COMBAT` 只消费
+  Runner 的 `IN_COMBAT`/`NOT_IN_COMBAT` 边沿，移除 `gameContext`、Radar/Cloud AutoCombat 对
+  是否脱战的二次裁决。正常修罗脱战直接进入既有 `RETURN_HOME`；非修罗归因脱战恢复 Tracker。
+- 基线：Client `thin-client-design@2f083c14`，Cloud `navigation-migration@363d0e3`；两仓均有
+  既存脏改动，`D:\mavenProject\DHXY` 未修改。本轮 Cloud `mvn -q clean compile`、Client
+  `mvn -q -DskipTests compile` 均 exit `0`，且两仓 `git diff --check` 通过。
+- Fresh gate：重启 CloudBrain 和 Client 后由用户再跑一轮修罗；应看到 `COMBAT_EXITED` 后
+  立即 `WAIT_COMBAT -> RETURN_HOME`，日志中不得出现 `waitCombat` 调用
+  `AutoCombatService.handleCombatTick` 或用 `gameContext` 判断战斗。
+
+## 2026-07-30 / G003A 珊瑚海岛 title 失败穿透 Tracker
+
+- `07:31` fresh run 关闭了“前置成功后未放行”的假设：前置链实际完成后，Client 已在
+  `07:32:00` 消费并执行 `xinshou:tracker-link`，但点位 `(1649,228)` 相对窗口 `(261,113)`，
+  不在真实 Tracker 标题/内容区域 `(6,196)-(207,551)`。因此本轮未移动不是 release 漏发，
+  而是 `xinshou-tracker=(0,100,280,604)` 把顶部非 Tracker 的下划线绿字交给 Cloud，导致
+  识别器选中了错误候选。G003A 重新打开为 `REPAIR REQUIRED`；下一修复仅收紧新手 Tracker
+  观察 ROI 并以真实整窗帧回放验证候选与最终点击点。
+- 本轮源码修复：新手不再复用五环的粗范围。Cloud `xinshou-tracker` interest 已改为
+  真实 Tracker 内容 `(6,196,201,355)`；上传图外的窗口上沿绿字不再进入候选集。既有
+  `findClickableTrackerGreenLinkBands(...)` 下划线规则、Cloud PreparedAction、既有 queue 和 Client
+  输入 executor 均未改。`CloudXinshouPreparedActionObserverContractTest` 用原始 Tracker 帧回放并
+  强制断言最终点在 `x=[6,207)、y=[196,551)`；输出
+  `D:\mavenProject\dhxy-cloud-brain\target\testcase-replay\xinshou-tracker-content-green-link-marked.png`
+  （红点在 Tracker 内）。测试和 Cloud compile 均 exit `0`；状态更新为 `SOURCE REPAIRED / FRESH RUN REQUIRED`。
+- `02:10` fresh run 复核了成功方向的另一半断链：升级道具已匹配、右键使用并关闭窗口，
+  但 `shanhuhaidao.png` 的 Tracker 文本/像素未变化；Cloud 清掉已成功的特殊前置 lane 后，
+  既有证据去重把原绿链一并压掉，因此没有后续导航动作。
+- 修复只作用于 `shanhuhaidao.png` 当前 anchor episode：收到 exact
+  `USE_UPGRADE_ITEM_AND_CLOSE_GENERIC_WINDOWS=SUCCESS` 后，给本 episode 标记一次 Tracker
+  放行；下一帧即使是 byte-identical 的 Tracker 也照常发布既有
+  `TASK_TRACKER_PATHING` PreparedAction，成功发布即消费该标记。没有通用“前置完成”框架，
+  不改 `NPCClickSmart`、模板、坐标、点击或其他 title 的去重语义。
+- 连通性验证：`CloudXinshouPreparedActionObserverContractTest=62/62` 覆盖
+  `珊瑚海岛机械前置 SUCCESS -> 同 hash Tracker -> TASK_TRACKER_PATHING`；Cloud `mvn -q compile`
+  exit `0`。本轮仅改 Cloud，fresh gate 为重启 CloudBrain 后由用户启动新手任务，确认前置输入完成后
+  同一条绿链无需等待 Tracker 变化即可被消费。
+- 权威基线：Client `thin-client-design@2f083c14`；Cloud
+  `navigation-migration@363d0e3`。两仓均有大量既存脏改动，本轮只修改新手 title
+  优先级、四个 `BagService` 模板参数及对应合同/回放；`D:\mavenProject\DHXY` 未修改。
+- `01:36` fresh run 的精确链路：
+  `shanhuhaidao.png -> USE_UPGRADE_ITEM_AND_CLOSE_GENERIC_WINDOWS -> 3x ITEM_NOT_USED
+  -> RETRY_EXHAUSTED -> 普通 Tracker 被错误发布`。物理输入确实执行，问题不在鼠标。
+- 真实 `bag_scan.png` 回放对 `shengji.png` 得分 `1.000000`，证明模板和 `0.85`
+  阈值正确。生产失败来自完整路径被 `BagService` 再补 `images/template/`；现改为
+  `xinshou/shengji.png`，并同步修正 shell/repair/lunhui 三个同接口参数。
+- Cloud 失败终态不再释放仍可见的特殊 title；同一 title 未成功时只保持 lane owner，
+  不重复发布已耗尽动作，也不允许普通 Tracker 插入。title 消失/变化后正常释放。
+- 视觉证据：
+  输入 `images/test-cases/xinshou/shanhu-upgrade-20260730/bag_scan.png`；
+  输出 `images/test-cases/xinshou/shanhu-upgrade-20260730/bag_scan_marked.png`；
+  命令 `mvn -q -Dtest=XinshouUpgradeItemReplayTest test`。
+- 父级验证：Cloud Observer `62/62`；Client 标题执行器与真实回放 `15/15`；
+  双仓 compile exit `0`。新手 Tracker `280x604` ROI 的 fresh replay 已确认包含真实下划线
+  链接，未采用错误的扩宽方案。下一门禁为双端重启后的用户 fresh run。
+
+## 2026-07-30 / G003A 脱战后 PreparedAction 连通性断链
+
+- `01:23:52` fresh run `remote-turn-cf04f81f-8f5d-4f03-b1b6-8f228df26290`
+  已排除启动问题：Client `1/1`、Runner 正常启动，`01:24:05` 进入战斗并持续执行双
+  `Alt+A`。`01:25:17` Client 与 Cloud 均收到 exact `COMBAT_EXITED`，但 Cloud 此后只见
+  序号 18 的 `COMBAT_STATE_CHANGED`，连续等待 `PREPARED_ACTION_READY` 超时。
+- 精确根因：脱战已武装 `xinshouRefreshPending`，下一观察 tick 中 `ESC_VISIBLE`
+  先从 `present` 变为 `absent`；`markXinshouEffectiveProgress(...)` 错误清掉了已武装的
+  scene reproof。随后与战前 byte-identical 的 Tracker 虽被强制上传，却没有携带
+  `XINSHOU_NO_PROGRESS_REFRESH`，Cloud 将其视为无新证据，不生成下一动作。
+- 修复只收紧既有 ACK 生命周期：普通事实变化只更新时间，不再取消已经武装的重证；
+  只有 exact refresh ROI 被 Cloud ACK 后才关闭 pending。真实顺序合同现覆盖
+  `COMBAT_EXITED -> ESC present→absent -> unchanged Tracker -> refresh marker`。
+  Client `XinshouObservationChangeUploadContractTest` 通过、Client compile 通过；
+  Cloud exact HTTP/inbox/observer/task/client-command 连通测试通过。当前 Client PID
+  `2348` 启动于修复前，须重启 Client；Cloud 无代码改动、无需重启。
+- `00:56:25-00:56:32` 连续新手启动请求均在 Client 本地 `6-36ms` 内返回
+  `远程批量启动完成：0/1`，Cloud 没收到 start request，Runner 也未创建。直接前因是
+  `00:53` 地图标定使用三参数 `startRemote(...)` 创建了无 `TurnTaskStartRequest` 的
+  transport-only loop；标定完成后 loop 已停止但仍注册。正式任务启动清理旧 loop 时错误地
+  一律要求 `hasAcceptedTaskTerminal()`，而纯标定 loop 从不拥有 Cloud task terminal，
+  因此永久阻断后续任务启动。
+- 修复：`WindowTurnLoop.hasTaskStartRequest()` 区分业务任务 loop 与纯 transport loop；
+  `TurnModeGuard.awaitAndRemoveStoppedRemote(...)` 只对前者要求 Cloud terminal，后者停止后
+  可直接移除。真正 task loop 的防重启动 RunSlot fence 保持不变；启动 RuntimeException
+  现记录 exact window/tasks/reason。Client 生命周期策略 + 进战 + 脱战 focused `12/12`，
+  compile 通过。运行中的 Client PID `45668` 启动于修复前，须重启整个 Client。
+- `00:30:52` fresh run `remote-turn-01292521-8793-451f-8697-08ce5dcb9db7` 暴露独立构建产物
+  P1：Client 进战采样时抛
+  `NoClassDefFoundError: WindowObservationSampler$LocalCombatFrameState`，观察线程当场退出，
+  因此没有 `IN_COMBAT` wire、Cloud action 或 `Alt+A`。Client 进程启动于 `00:24:22`，
+  缺失的内部 class 到 `00:31:14` 才由后续 compile 生成；JVM 已缓存首次类加载失败，
+  单独重启 observation Runner 仍会继续失败。
+- 机械修复不改变任何战斗语义：三态采样记录改为 `WindowObservationSampler` 自身的整数常量，
+  删除额外 `$LocalCombatFrameState.class` 运行时依赖。随后从空 `target` 执行 clean focused
+  build，Client `11/11` 通过且确认该旧内部 class 不再生成；Cloud 完整 Observer
+  `61/61` 与 tests-enabled compile 均通过。下一 fresh gate 必须使用 clean build 后新启动的
+  Client 进程，旧 Client/仅重启 Runner 均无效。
+- 权威工作树：Client `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；
+  Cloud `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均有大量既存
+  脏改动，本轮不回滚；用户本地业务基线 `D:\mavenProject\DHXY` 保持只读。
+- 最新 fresh run `remote-turn-52ed255d-97a0-47eb-b961-6d97814d7246` 已证明 Client
+  上报 exact `IN_COMBAT`、Cloud 下发并由 Client 实际执行普通战斗双 `Alt+A`，随后
+  Client 又上报 exact `COMBAT_EXITED`；但 Cloud 在该事件后连续三次
+  `PREPARED_ACTION_READY` 等待超时，未产生战后下一动作。
+- 现有 `clientWireCrossesHttpInboxObserverTaskAndProducesExactClientCommand` 只覆盖
+  `IN_COMBAT -> command`，并把 `COMBAT_EXITED` 后 slot 为 `null` 写成终点断言；它没有覆盖
+  `COMBAT_EXITED -> 战后场景重证 -> 下一 PreparedAction`，因此不能作为完整连通性证明。
+- 修复边界：Client Runner 在真实 `COMBAT_EXITED` 边沿后立即安排一次 exact Xinshou
+  Dialog/Tracker 场景重证；Cloud 继续作为唯一业务决策者。不得新增本地业务判断、输入动作、
+  queue 或 coordinator。验证必须覆盖同一 run 的
+  `Tracker consumed -> IN_COMBAT -> COMBAT_EXITED -> scene reproof -> PreparedAction`。
+- 实现：`WindowObservationSampler.finishLocalCombat(...)` 在成功发布真实
+  `COMBAT_EXITED` 后立即设置既有 `xinshouRefreshPending`，下一采样周期复用现有共享帧和
+  HTTP observation wire 重证 Dialog/Tracker；不等待普通 `10s` no-progress heartbeat，
+  也不在 Client 决定战后动作。
+- 连通性合同现已覆盖同一 exact run 的完整接力：
+  `HTTP IN_COMBAT -> Cloud PreparedAction -> Client command seam -> HTTP COMBAT_EXITED
+  -> post-combat Tracker reproof -> Cloud TASK_TRACKER_PATHING PreparedAction`；旧 run 仍不得
+  唤醒。Client focused `11/11`、Cloud Observer `61/61`、双仓 compile、
+  touched-file `git diff --check` 均通过。未运行 runtime/UI/capture/input；fresh gate 为
+  重启 Client 后确认脱战不再出现三次 `PREPARED_ACTION_READY` 25 秒等待超时。
+
+## 2026-07-29 / 新手启动前置检查临时关闭
+
+- 用户明确要求 fresh-run 调试期间仅对 `XINSHOU` 暂时关闭通用启动准备，不删除实现。
+- 根因：Client 配置虽为 `bot.dhxy.task-startup-preparation-enabled=false`，Cloud 自身默认值仍为
+  `true`，且 `CloudTaskStartupPreparationService.beforeTask(...)` 在检查该开关前已经执行
+  身份同步和左上角准备，因此仍会产生 `Alt+1`、`Alt+U`、`Alt+6` 等动作。
+- 修复：Cloud 在 `XINSHOU` 进入 `beforeTask(...)` 后立即返回 ready；不执行身份同步、
+  左上角探测、地图选项、展开状态或玩家名屏蔽。其他任务和整套准备实现保持不变。
+
+## 2026-07-29 / G003 fresh-run 启动产物不一致
+
+- `23:42:05` 新手任务 `remote-turn-e285b133-c8fb-4746-86cf-4c7c27dcf5e0` 已由 Client
+  成功提交并启动 Runner，但 Cloud 在启动准备阶段抛出
+  `NoClassDefFoundError: CloudWholeTaskRuntimeLocalServiceClient$1`，随后将任务终结为
+  `SKIPPED`；这不是 park 或 PreparedAction 断链。
+- 运行中的 Cloud PID `27568` 创建于 `23:41:47`，早于完整 Cloud compile 产物
+  `23:42:24`。当前 `CloudWholeTaskRuntimeLocalServiceClient.class` 与其编译器生成的
+  `$1.class` 已同时存在，双仓 compile 通过；fresh gate 是重启该旧 Cloud 进程后重跑。
+  本轮未因该运行环境故障修改业务代码，也未操作 runtime/UI/capture/input。
+
+## 2026-07-29 / 新手动画“跳过”Cloud 授权点击
+
+- 用户给出的当前窗口屏幕绝对 ROI 为 `(2232,312)-(2346,361)`。按现有窗口基准换算为
+  1024x768 窗口相对 ROI `(870,57,114,49)`；它与现有 `ESC` ROI
+  `(870,57,128,35)` 左上角相同并重叠，但“跳过”向下多 `14px`。本轮使用联合观察 ROI
+  `(870,57,128,49)`，模板与动作仍分开：`ESC.png` 只请求键盘 ESC，
+  `tiaoguo.png` 只请求鼠标左键模板点击。
+- 权威基线：Client `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；
+  Cloud `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均有大量
+  既存脏改动，本轮不回滚；用户本地业务基线 `D:\mavenProject\DHXY` 不修改。
+- 冻结边界：Runner 只从 G002 shared frame 报 `跳过` 可见事实，不执行输入；Cloud 只在
+  该 exact task run 的可见 episode 生成一个既有 `PreparedAction`；Client 消费后使用
+  fresh exact-window ROI 再匹配 `tiaoguo.png`，命中才执行一次原子左键点击。
+- 暂停前的正确新手轮次是 `23:11:42` 启动的
+  `remote-turn-54d12ec9-3a6a-476e-ab1f-f99abebcce22`。Client Runner 持续发送
+  `115` 批且零传输失败；Cloud 在 `23:13:53.164` 收到 exact `IN_COMBAT`，但此前
+  已消费的 OPTION 仍留下 `dialog priority` gate，导致
+  `xinshou-combat:1:ordinary:0` 每轮被拒绝，直到 `23:14:17.455` 脱战也未下发
+  `Alt+A`。修复为进战独占分支先撤销旧 Dialog gate，再发布战斗 PreparedAction；
+  新增“Dialog 先消费、IN_COMBAT 后到达”的真实顺序合同。
+- 实现验证：Client ROI/ACK/协议/dispatcher/fresh-match focused `20/20`；
+  Cloud 新手 Observer focused `61/61`；双仓 compile 通过。未运行 runtime/UI/capture/input；
+  fresh run 需要双端重启，并确保实际提交队列首项为 `XINSHOU`。
+
+## 2026-07-29 / 新手普通战斗双 Alt+A 与 5 秒维护
+
+- 用户批准调整新手普通战斗机械节奏：Client Runner 首次确认 `IN_COMBAT` 后不再等待
+  `5s`，Cloud 可立即发布首个 `PRESS_ORDINARY_AUTO_COMBAT`；每次普通维护在同一个
+  frozen exact-window 输入事务中线性执行两次 `Alt+A`；成功后的维护周期由 `10s` 改为
+  `5s`，失败后的 `1s` 重试不变。
+- 权威基线：Client `thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；
+  Cloud `navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均有大量
+  既存迁移脏改动，本轮不回滚、不吸收；范围仅限
+  `XinshouCombatActionPlanner`、`XinshouCombatLocalMechanics` 及对应 focused tests。
+- 捕捉 `Alt+B`、捕捉后恢复双 `Alt+A`、Runner `Alt+8` 维护、进战/脱战本地判定均不改。
+- 实现与合同已完成：Client 每轮普通动作在一个 focused transaction 内产生
+  `ALT_A, ALT_A`，第二次失败返回 typed failure；Cloud 首轮候选在 `IN_COMBAT` 同时刻可用，
+  成功 terminal 后 `4999ms` 不重发、`5000ms` 准时可重发。
+- 验证：Client focused `22/22`、Cloud focused `60/60`，双仓 compile、相关
+  `git diff --check` 均通过；`PACKAGE_ARCHITECTURE`、G003b 卡、业务流程草案和 dashboard
+  已同步。未运行 runtime/UI/capture/物理输入；fresh run 需要重启 Client 与 Cloud。
+
+## 2026-07-29 / G003A 无推进 10 秒重证闭环
+
+- 用户临时关闭全局“任务启动前置检查”：`application.properties` 默认值与
+  `config/ui-game-settings.properties` 持久值均改为 `false`。启动时不再执行
+  小地图选项、`Alt+U` 展开/飞行状态和 `Alt+6` 名字屏蔽准备；窗口绑定、旧任务停止、
+  Cloud readiness/start ACK 等安全检查保持启用。
+- 已按用户定稿实现：无 active pathing 时，Client Runner 每 tick 使用 G002 同一张共享帧
+  比较本地上一 tick 的 Dialog/Tracker/title 事实；内容变化立即上传，连续 `10s` 无有效推进
+  则在同一个 observation request 中重发当前 Dialog/Tracker 证据。
+- 重证批次携带 `XINSHOU_NO_PROGRESS_REFRESH=no-progress`，该标记只说明“允许 Cloud 对
+  同 hash 当前画面重新决策”，不授予 Client 业务判断或点击权限。传输失败不开始新周期；
+  exact ACK 后才重新计时。
+- Cloud 仍是唯一业务决策者：同帧存在可执行或未解析 Dialog 时只处理 Dialog，不预计算或
+  发布 Tracker；Dialog 为 `STORY` 或明确 absent 时才处理 Tracker。每批最多发布一个
+  `PreparedAction`，主任务仍只由 `PREPARED_ACTION_READY` 唤醒。
+- 父级逐文件终审：`P0/P1/P2=0/0/0`。Client 新手 observation/Runner/validator/连通性
+  focused tests `59/59`；Cloud Observer 合同 `59/59`；双仓 compile、
+  协议 SHA 一致、`git diff --check` 均通过。
+- 已知非本卡门禁：`TurnCoreProtocolGoldenJsonTest` 的仓库快照同时缺少 9 个既存
+  `TurnLocalOperation`，本轮为 `7` 项中 `2` 项失败；它不是本次新增 observation fact
+  引起，未在本卡扩大范围重写。未运行 runtime/UI/capture/物理输入；下一步为双端重启后的
+  fresh run，观察停住且无新画面时约 `10s` 出现一次重证，并由 Cloud 只下发一个动作。
+
+## 2026-07-29 / 新手 Client-Cloud 生产连通性合同
+
+- 权威 Client：`thin-client-design@2f083c14152106ba6ad418a0c29e3e0e2148e14a`；
+  Cloud：`navigation-migration@363d0e3fae73c0c55f4920f6f1c61338a0458d73`。
+  两仓均有大量既存迁移脏改动，本卡不回滚、不吸收其他任务写集。
+- 用户批准将“连通性测试”设为跨仓改动的强制门禁。目标不是重复验证业务算法，而是让同一
+  `taskRunId/windowId/hwnd/observerSeq/actionId` 经过 Client observation wire、
+  Cloud HTTP ingress/Inbox/Observer/ReadyEvent/Task exact consume、Cloud command wire，
+  最终抵达 Client production dispatcher 的 fake input。
+- 本次只新增测试、共享 JSON 工件编排脚本和文档；不修改生产业务、模板、坐标、运行时或物理输入。
+- 已实现 `scripts/test-xinshou-connectivity.ps1` 三段编排：
+  1. Client 真实 `WindowObservationRunner` 生成 `IN_COMBAT/COMBAT_EXITED` wire JSON；
+  2. Cloud 真实 HTTP handler -> Inbox -> `CloudWholeTaskObserver` -> 唯一 PreparedAction ->
+     `PREPARED_ACTION_READY` -> `XinshouTask` exact consume，生成 Client command JSON；
+  3. Client 真实 `TurnProtocolValidator` -> `LocalServiceStepDispatcher` ->
+     `XinshouCombatLocalMechanics`，假输入端收到恰一次 `FOCUSED + ALT_A`。
+- 同一合同包含旧 `taskRunId` 迟到 `IN_COMBAT` 反例：可经 HTTP 入站，但不得唤醒或生成当前
+  PreparedAction。脚本会先删除本轮三个指定 JSON，逐跳检查新产物，禁止旧文件假通过。
+- 验证：编排脚本 exit `0`；Client 相关组 `23/23`，Cloud Observer/前台消费组 `94/94`；
+  双仓 compile 与 `git diff --check` 均 exit `0`。产物位于
+  `target/connectivity/xinshou-*.json`。本轮未运行 runtime/UI/capture/物理输入。
+- 当前覆盖的是新手战斗进入/退出接力。后续修改绿链或 Dialog 接力时，必须沿相同模板补各自
+  的 producer -> HTTP/Cloud -> Client consumer 场景，不能拿本场景替代。
+
+## 2026-07-29 / G003b 新手战斗独占与脱战恢复
+
+- `19:41` fresh 日志：新手普通战斗每 `10s` 下发的 `Alt+A` 全部走 HWND
+  `PostMessage`，日志 `result=true` 但用户未见游戏动作；脱战后进战前 pathing 继续被本地
+  判为 `STOPPED_AWAY`，Cloud 没有可靠恢复下一条业务动作。
+- 已恢复任务专属战斗所有权：Observer 在 `IN_COMBAT` 时清除非战斗 slot，禁止
+  Dialog/Tracker/title 抢占；普通战斗首个动作改为 `5s` 后，之后 `10s`；抓捕/恢复相位保留。
+- Client 普通/恢复 `Alt+A` 改为 frozen exact-window focused direct input。首个普通/抓捕
+  动作前经既有 runtime local-service 清理新手旧 pathing，并清 Cloud pathing 镜像与
+  `activeGreenLink`。Observer 以战斗期最后 pathing `observerSeq` 为 floor，脱战后拒绝旧事实。
+- 最终门禁：Client focused combat tests `20/20`、Cloud focused 新手 tests `93/93`，
+  双仓 compile 与 `git diff --check` 均 exit `0`。本项没有修改修罗/五环业务代码。
+- 待门禁：双端重启后 fresh run 验证
+  `5s Alt+A` 真正生效、战斗期间无绿链/dialog 输入、脱战后下一新鲜 action 立即继续。
+
+## 2026-07-29 / G003A fresh-run STOPPED_AWAY 消费闸门修复
+
+- `19:26` fresh run 不是 Client 停止、上传失败或 Cloud 没算动作：Client
+  `19:27:06.540` 上报 `STOPPED_AWAY`；Cloud 已发布 sequence `5` 的下一条
+  `TASK_TRACKER_PATHING`。
+- 根因：`XinshouTask.consumeOnePreparedAction(...)` 把
+  `state == ACTIVE || hasActiveIntent()` 当作阻断条件；终态仍携带 intent，
+  `STOPPED_AWAY` 因而被误判为 active，PreparedAction 永久留槽。
+- 修复：新手 Tracker 只在精确 `ACTIVE` 时 retained；`ARRIVED/STOPPED_AWAY/NONE`
+  可立即消费。未改全局 pathing 模型，未增加 coordinator、queue、线程或状态机。
+- 验证：Cloud `XinshouPreparedForegroundContractTest +
+  CloudXinshouPreparedActionObserverContractTest=93/93`，Maven 同轮完成 main/test
+  compile，exit `0`。必须重启 Cloud 后再 fresh run；Client 本轮无需代码更新。
+
+## 2026-07-29 / G003A Review #4 终审通过
+
+- 结论：`SOURCE+TEST REVIEW PASSED / P0-P1-P2=0-0-0 / FRESH RUNTIME READY`。
+- 最终链路只有一条：Client Runner/Sampler 观察上传 -> 既有 Cloud Inbox -> 唯一
+  `PreparedAction` slot -> `PREPARED_ACTION_READY` -> Cloud `XinshouTask` 按 exact
+  `actionId` CAS 消费 -> Client exact-window local-service/input queue 执行。
+- Repair #4 关闭 Review #3 全部 finding：Tracker/Dialog/Pathing/ROI 在同一 Inbox
+  exact-current commit 中线性化；terminal tombstone 拒绝同 run/HWND、旧 generation、
+  旧 HWND 的晚到 retry；新 claim 可开启新 generation；竞态合同测试已精确反忽略。
+- 未新增 coordinator、第二 queue/state machine、线程、timer 或刷新循环。
+- 父级验证：Cloud `185/185`、Client `68/68`，均 `0 failures / 0 errors / 0 skipped`；
+  双仓 compile 与 `git diff --check` 均 exit `0`。独立只读终审同样为 `0/0/0`。
+- 未运行 runtime/UI/capture/input。下一步仅需重启 Client/Cloud 后进行用户 fresh run。
+
+## 2026-07-29 / G003A Review #3 并发返修
+
+- 当前结论：`REPAIR REQUIRED / P0-P1-P2=0-3-1`，尚未 fresh-run-ready。
+- 已通过的机械门：Client 相关合同 `68/68`，Cloud 相关合同 `179/179`，双仓 compile exit `0`。
+- 三个 P1：Tracker 发布未把最新 Dialog/Pathing 纳入同一 Inbox 原子提交；Dialog
+  block/publish 未绑定 exact current Dialog 事实；terminal clear 后同 run/HWND 晚到 retry
+  仍可重新 publish。
+- 一个 P2：`CloudXinshouPreparedActionObserverContractTest` 被 Cloud `.gitignore` 的
+  `src/test/` 规则排除，干净检出无法复现。
+- 返修保持单线：现有 Inbox -> 唯一 PreparedAction slot -> `PREPARED_ACTION_READY` ->
+  exact Client command。禁止新增 coordinator、第二 queue/state machine、线程、timer 或刷新循环。
+
+## 2026-07-29 / G003A Review #2 窄返修
+
+- 当前结论：`REPAIR REQUIRED / P0-P1-P2=0-4-1`，尚未 fresh-run-ready。
+- 保持单线：Runner/Sampler 观察并上传；Cloud 只写一个 `PreparedAction`；新手主循环只因
+  `PREPARED_ACTION_READY` 醒来并按 actionId CAS 消费；Client exact-window 输入队列执行。
+- 本轮仅修五项：领养 `30s` retained candidate 绕开 `5s` raw-frame stale gate、park 恢复
+  既有 `25s` lifecycle checkpoint、resume 清除暂停前 action 并重发 fresh ROI、unresolved
+  Dialog 阻断机械动作、interest revision 拒收时不 ACK change-only ROI。
+- 禁止新增 coordinator、queue、manager、线程、timer、第二状态机或图片 refresh loop；
+  不改模板、坐标、业务节点顺序和已验证白名单。
+
+## 2026-07-29 / G003A 新手任务权威合同冻结
+
+- 业务节点继续以 `docs/新手任务流程草案.md` 为准，本轮不改变节点顺序、模板、坐标和战斗规则。
+- 用户确认三项已验证资产必须保留：领养 `30s` 单击锁、独立 Dialog 外框/尺寸识别、抓捕
+  `Alt+B -> 自动面板验证 -> 固定点点击`。白名单以外不继承“已正确”结论。
+- 新设计边界：Runner 首发变化；Cloud 可按业务阶段继续请求图片；后台取证不唤醒；只有唯一
+  `PreparedAction` 就绪才能发布 `PREPARED_ACTION_READY`；Cloud task 消费 action，
+  Client input queue 消费 command。
+- Client 本地模板匹配只提供证据，禁止 title 自主业务宏。绿链 in-flight 时
+  `TASK_ATTENTION_REQUIRED`、pathing/title/dialog 普通事实均不得解除 park。
+- 保留 `lingyang_title.png` 的 `30s` 绿链单击锁，释放条件仅为确认领养真实点击、title 改变或超时。
+- 本轮仅更新设计和 CR 记录，未修改 Java、模板、协议或输入逻辑。
+
+## 2026-07-29 / G003A 新手任务全链路复审
+
+- 本轮只审查，不改 Java/模板/输入。权威 Client 为 `D:\mavenProject\DHXY-cr271`
+  `thin-client-design@2f083c14`；Cloud 为 `D:\mavenProject\dhxy-cloud-brain`
+  `navigation-migration@363d0e3f`；用户基线 `D:\mavenProject\DHXY` 保持只读。
+- 结论：`REPAIR REQUIRED / P0-P1-P2=0-10-4`。主要阻断不是单个识别模板，而是普通 Tracker
+  无唤醒、Dialog prepared 管线未接、新手 title 宏与 Cloud 主循环双 owner、轮回准备/拖拽并发、
+  左键按住期间 input exclusive 被释放、失败紧循环、寻人同轮双派发、ESC 恢复误闯、暂停/重启
+  生命周期未隔离，以及测试未覆盖真实生产交接。
+- Client focused 测试 `10/10`，但只覆盖 detector/stub；生产绿链 executor、Cloud 主循环、
+  拖拽会话和跨仓事件生命周期没有端到端合同。双仓 compile exit `0`，共享新手协议 SHA 一致。
+- 当前禁止继续按症状追加分支。下一步必须先整理单一最终合同和每个阶段的唯一 owner/terminal，
+  再按 ready-event、retained input session、taskRun lifecycle、生产链合同测试的顺序返修。
+
+## 2026-07-29 / G003A 旧 STORY 不得冒充绿链点击效果
+
+- Fresh `01:32` 证据：同一绿链 `(1466,423)` 在移动过程中被反复下发；每次都是新的
+  `attempt=1`，不是同一 retry worker 的 attempt 递增。第一次点击后，Sampler 对点击前已经存在的
+  STORY 周期刷新 `dialogFrameObservedAtMs`，并立即清除新建 pathing intent；Executor 又把该刷新
+  当作“点击后出现新 Dialog”并返回成功。Cloud 因看不到 active pathing，约数秒后重新派发。
+- 修复边界：Sampler 的结构 Dialog 观察只更新时间，不再直接清任何 pathing；Executor 在每次点击前
+  记录是否已有 3 秒内的新鲜 Dialog。已有 Dialog 时，后续结构时间戳刷新不算点击效果，只接受真实
+  movement fact；点击前无 Dialog 时，新出现的 Dialog 仍可结束本地重试并清对应 intent。
+- 未改 STORY ignore、OPTION 优先、绿链候选/坐标、`2500ms` 等待或三次 retry 上限。
+- 验证：Client `DialogFramePresenceMechanicsReplayTest` 通过，
+  `mvn -q -DskipTests compile` exit `0`。Fresh 需重启 Client；同一绿链点击后移动期间不得再出现
+  新的 `attempt=1`，active pathing 必须保留至移动/正常终态。
+
+## 2026-07-29 / G003A STORY 不阻断 Tracker 绿链
+
+- Fresh `01:21` 证据：Client 已于 `01:21:18.505` 点击 Tracker 绿链；Cloud 随后将
+  南瓜选择框识别为 `OPTION` 并于 `01:21:27.742` 点击第一项。画面转为“你得到3390点经验”
+  的奖励 `STORY` 后，Cloud 按批准语义返回 `STORY_IGNORED` 并继续派发绿链，但 Client
+  `XinshouTrackerLinkChainLocalOperationExecutor` 仍以“任何 Dialog 外框可见”为条件，在首次
+  dispatch 和本地 retry 两处压制点击，形成永久等待。
+- 用户确认的唯一规则：`OPTION` 必须先由 Cloud 既有 Dialog 分支处理；`STORY` 直接忽略并继续
+  Tracker 绿链。Client 不得用无类型的 Dialog 外框事实重新覆盖 Cloud 已完成的类型裁决。
+- 修复：仅删除 `XinshouTrackerLinkChainLocalOperationExecutor` 两处 blanket visible-dialog
+  suppression；不改 `DialogService` 分类、`XinshouTask` 的 OPTION 优先级、绿链候选、坐标、
+  原子点击或本地三次重试。
+- 验证：Client `mvn -q -DskipTests compile` exit `0`。Fresh 需重启 Client；同类奖励
+  `STORY` 可保持可见，但日志必须出现绿链物理点击，不得再出现
+  `xinshou tracker link suppressed by visible dialog`。
+
+## 2026-07-29 / G003A Dialog 外框尺寸与 SMALL 双布局识别
+
+- 用户批准的边界：`DialogFrameClassifier` 除了确认外框存在，还要返回可靠的
+  `SMALL/MEDIUM/LARGE/UNKNOWN` 尺寸；`MEDIUM/LARGE` 继续使用当前固定
+  upper/lower ROI、原绿色算法和 `>150` 阈值，不改变既有分类语义。
+- `SMALL` 只增加两套固定布局，不做滑动或逐像素扩张：先检查“上方两行文字、较小 lower ROI”，
+  未命中再检查“上方一行文字、较大 lower ROI”；任一仍按旧算法命中即 `OPTION`，两套均未命中
+  才继续旧 `STORY/NONE` 判断。
+- 权威代码树：Cloud `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，
+  HEAD `363d0e3`；Client `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，
+  HEAD `2f083c14`。两树已有大量其他迁移脏改动，本项仅修改 Cloud Dialog 分类/测试和本记录，
+  不回滚现有工作。
+- 基线证据：Cloud HEAD 的 `DialogService` 使用单一 `529x143` 小框，固定
+  `CROP_TOP_Y=42`，先 lower 绿色检测再 upper story 检测。当前未提交
+  `DialogFrameClassifier` 的 first-pair 策略会把大型框内部横线误当底边，必须先修复真实外框，
+  才能用高度选择布局。
+- 测试语料：`images/test-cases/dialog-frame-classification/{positive,negative}`。实施必须输出
+  标记图，显示真实外框、尺寸类型和 SMALL 两套 lower ROI，并记录每套绿色计数。
+- 实施完成：已测并固化高度中心 `SMALL=143`、`MEDIUM=164`、`LARGE=210`（允许
+  `±12px`）；外框候选至少一边须覆盖最大截图宽度 `80%`，按最接近已测高度选框，解决大型框
+  内部分隔线与地形横线干扰。`SMALL` 固定两套 lower 起点为 `49px`、`34px`：蓝线位于
+  P09 绿色“别打了！”上沿之前，黄线位于其下沿之后；中大型仍使用旧 `42px` 逻辑。
+- 回放结果：P09 两行/一行 ROI 为 `0/154`，只由一行布局命中；P10 两行 ROI 为 `118`
+  （小框两行布局专用阈值 `>100`）；P08 两套均 `0`。HSV 颜色算法未改，中大型仍为
+  原 `>150` 阈值。
+  `DialogFrameClassifierReplayTest + DialogDetectionTurnContractTest` 隔离执行 `14/14`，
+  Cloud tests-enabled main compile exit `0`。全仓 testCompile 仍被既有 Observer/Navigation
+  旧测试源码漂移阻断。标记图已输出到
+  `images/test-cases/dialog-frame-classification/replay-output/`。
+
+## 2026-07-28 / G004 野外战斗（源码与测试终审通过）
+
+- 用户确认新任务 `G004 / WILD_BATTLE`：队长或单人窗口按四个窗口相对点循环右键，
+  每点随机 `±15px`、等待 `1000ms`；同队队员沿用现有预检分配为 `AUTO_BATTLE`。
+- 调度合同：复用 Cloud 既有 FIFO task-turn，操作组战前持续持有，Client Runner 报
+  `IN_COMBAT` 才释放；`COMBAT_EXITED` 后重新排队。Runner 是唯一战斗裁决者，不新增
+  Cloud Radar 或第二识别器。
+- 时长以分钟配置，`0=无限`；期限到达立即结束，即使仍在战斗。停止、异常、期限结束均
+  必须释放 task turn。
+- 权威卡：`docs/superpowers/plans/2026-07-28-g004-wild-battle.md`。Client 基线
+  `2f083c14`，Cloud 基线 `363d0e3`；两树已有脏改动，本卡只追加 G004，不回滚既有工作。
+- 已交付双仓任务注册、Client UI/分钟配置、Cloud `WildBattleTask` 与现有 FIFO
+  task-turn 的有界等待。四点、`±15px`、右键原子包、`1000ms` 等待及 waiter 超时撤销
+  聚焦测试共 `4/4`；Client 映射测试通过，双仓 main compile 通过。
+- 父级终审：`P0/P1/P2=0/0/0`。Cloud 全仓 testCompile 仍被既有旧 Observer/Navigation
+  测试源码漂移阻断；G004 测试已独立编译执行。未运行游戏或物理输入，fresh runtime
+  仍需验证多组 FIFO、进战放权、脱战恢复和时长终止。
+
+## 2026-07-28 / G003A 新手任务实施（进行中）
+
+- 认领依据：`docs/superpowers/plans/2026-07-28-g003a-xinshou-task-skeleton.md`，用户已明确要求实施 G003A。
+- 2026-07-28 用户明确修正绿链职责：Cloud 对首次 tracker 截图一次性解析全部候选绿链；候选列表下发后，
+  exact-window Client Runner 只用本地 dialog/移动事实依次尝试，第一条无效立即试下一条，不为单条失败
+  上报 Cloud、不重读 tracker、不以 tracker 视觉变化重置索引。当前基线：Client `thin-client-design`
+  `2f083c14`、Cloud `navigation-migration` `363d0e3`；两树已有迁移脏改动，相关现状为 Cloud
+  `XinshouTask`/`XinshouTrackerStateMachine` 逐条 Cloud 决策，Client 仅有 `TASK_TRACKER_CAPTURE_PANEL`。
+- 2026-07-28 已按该决定改为 `XINSHOU_TRACKER_LINK_CHAIN`：新手 Cloud 解析器只通过
+  `findClickableTrackerGreenLinkBands(...)` 选出一条带下划线的真实导航绿链，不再把普通绿色文字或多条
+  band 暴露给任务逻辑；Client `XinshouTrackerLinkChainLocalOperationExecutor` 对 exact HWND 原子
+  `MOVE -> 80ms -> CLICK`，每次最多 `2500ms` 等待“新 dialog / 地图坐标变化”，无效果就对同一点立即重试，
+  最多 3 次。Cloud 不再为 `STOPPED_AWAY`、无移动或单次无效重读 tracker、重置索引或下发下一次单条点击；
+  它只收到整个本地重试结束的机械结果。共享协议五文件 SHA-256 双仓一致；Client
+  `mvn -q -DskipTests compile`、Cloud `mvn -q compile` 均 exit `0`。未启动 runtime/UI/capture/input；
+  fresh gate：同一 tracker 双绿链首条无 dialog 且不移动时，日志必须在本地链中直接出现 index 1 的点击，
+  中间不得出现第二次 Cloud tracker capture 或 `STOPPED_AWAY` 驱动的 Cloud link decision。
+- 工作树：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` (`2f083c14`)；Cloud
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` (`363d0e3`)。两树均已有迁移脏改动；本卡只追加
+  `XINSHOU` 的协议、注册、任务、观察和对应测试，不回滚、不覆盖既有变更。
+- 基线核对：当前 `TaskType`、`TurnTaskCode`、`WindowTaskControlService` 与 Cloud
+  `CloudTurnTaskFactory` 仅接入五环/五倍/修罗/自动战斗/睡眠；两端尚不存在 `XinshouTask` 或新手观察事实。
+- 当前写集：Client `TaskType`、`WindowTaskControlService`、`WindowObservationSampler`、共享
+  `cloud/turn/protocol/**`、相关测试与本记录；Cloud `CloudTurnTaskFactory`、`CloudWholeTaskObserver`、
+  新 `task/xinshou/**`、共享协议镜像与相关测试。真实游戏、输入、截图和 UI runtime 均不启动。
+- WP2 返修：观察 inbox 按 fact type latest-wins，不能用两个 `XINSHOU_ANCHOR` 表达同帧
+  `title + esc_bot`。现共享协议新增 `XINSHOU_ESC_BOT`（两仓 byte-identical）；客户端每秒用 G002
+  共享帧显式发送 `XINSHOU_ANCHOR=<模板名|absent>` 与
+  `XINSHOU_ESC_BOT=<present|absent>`，Cloud 以两个镜像保存并在 esc_bot 变化时唤醒。Client
+  `mvn -q -Dtest=XinshouAnchorLocalMechanicsTest test`、双仓
+  `mvn -q -DskipTests=false compile` 均 exit `0`。
+- WP3 部分交付：Cloud 新增纯 `XinshouTrackerStateMachine` 与
+  `TaskTrackerPanelService.readXinshouTrackerPanelSnapshot(...)`。后者复用一次既有 Cloud tracker
+  panel capture，返回绿链和 full-panel 16x16 二值指纹，不新增 Client capture；状态机覆盖 option
+  优先、进战 park、两种 STOPPED_AWAY 与面板变化重置。其 isolated console runner 结果为
+  `4 tests successful / 0 failed`。未接入任何真实点击：缺少新手 tracker/esc dialog raw testcase
+  与标记回放，按 AGENTS 规则不得猜测物理点击点。fresh gate 是补齐 raw PNG + marked replay 后才
+  能接 green/ESC/confirm input command。
+- 2026-07-28 新手本地模板恢复边界更正：用户确认 `ESC`、`esc_bot`、`quedingguan_`、`confirm`
+  都是后台本地模板动作，Cloud 不应下发键或坐标。Client 新增
+  `XinshouLocalRecoveryHandler`：G002 共享帧命中后，对 exact HWND 用后台 `PRESS_ESCAPE`，或对
+  本地模板中心走现有原子输入队列点击；同一可见锚点只提交一次，直到本地帧清除。Cloud 只镜像
+  `XINSHOU_RECOVERY_STATUS`，无任何坐标/模板 target 传输或反向 command。Client
+  `mvn -q -DskipTests compile`、Cloud `mvn -q -DskipTests=false compile` 均 exit `0`；isolated
+  JUnit console 选择 `XinshouAnchorLocalMechanicsTest` + `XinshouLocalRecoveryHandlerTest` 结果
+  `4 tests successful / 0 failed`。尚未运行 runtime/UI/真实输入；实机 gate 是检查本地 UI 消失与
+  recovery status 顺序。
+- 2026-07-28 WP3 review repair：Tracker 状态机不再把末条链接无限重试。真实 `MOVE->CLICK`
+  成功之后才写入 clicked map coordinate 和 submitted count；STOPPED_AWAY 的换链分支不清坐标，
+  三条链接都提交过仍未转场即对未变化 panel `PARK_IDLE`。新增连续两次换链坐标保持、三链接整轮
+  失败停放测试；isolated `XinshouTrackerStateMachineTest` 为 `7/7`。Cloud production compile exit
+  `0`；Maven 定向 test 仍因当前工作树无关的旧 test-source 接口失配而无法进入本测试，未把它计入
+  本卡失败。
+- 2026-07-28 WP3 现场绿链判别补证：从当前 exact game window 保存
+  `src/test/resources/images/test-cases/xinshou/raw_tracker_underlined_green_link.jpg`。该 Tracker
+  同时包含两个绿色 `南瓜`，上方仅为绿色强调文字，下方带连续绿色下划线才是可点击导航链接。
+  Cloud 通用入口 `ImageAlgorithms.findClickableTrackerGreenLinkBands(...)` 以候选末四行的连续绿色
+  水平线作资格判断，并明确作为后续 Tracker 可点击导航绿链的主识别方法；
+  `TaskTrackerPanelService` 仅在 `xinshou` 路径应用该过滤，修罗/五倍/五环算法不变。隔离运行
+  `XinshouTrackerPanelReplayTest` 为 `1/1`，断言两个候选中仅下方候选命中；标记图
+  `images/test-cases/xinshou/marked_tracker_underlined_green_link.png` 中橙框=拒绝、绿框=有效、
+  红点=最终点击中心。Cloud `mvn -q -DskipTests=false compile` exit `0`；全仓 testCompile
+  仍被既有 Observer/Navigation 旧测试接口漂移阻断，与本 replay 无关。
+- 2026-07-28 23:46 fresh runtime P1：下划线绿链解析与 Cloud 下发均已发生，但 Client 未执行点击。
+  Cloud 连续记录 `xinshou tracker link dispatched locally`；Client 于 `23:46:08.645`、
+  `23:46:13.760`、`23:46:18.783`、`23:46:23.858` 全部记录
+  `xinshou tracker link suppressed by visible dialog`。直接根因是
+  `WindowObservationSampler.observeXinshouTrackerDialogFrame(...)` 对 `(200,250 640x300)` ROI 的
+  `DialogFramePresenceMechanics` 结构探测持续误报，即使 `intentId=null` 仍刷新
+  `dialogFrameObservedAtMs`；Executor 的 3 秒 fresh pre-click gate 因而永久为真。Cloud 的独立
+  `DialogService` 也把当前画面间歇误判为 `STORY`，但其策略为 `STORY_IGNORED`，仍继续下发，
+  所以不是本轮零点击的直接阻断。拟修：删除 dispatch/首击前的 recent-frame suppression；仅允许
+  `clickedAtMs` 之后的新移动或新 dialog 作为停止本地重试的效果证据，并为当前无 dialog 画面补
+  negative replay。未获用户批准前不改生产行为。
+- 2026-07-28 WP4 UICleaner 子项：`closeAllGenericWindows()` 已动态扫描
+  `images/template/cancel/*.png`，覆盖 x/x1..x7/npc_busy_cancel，不再维护固定四项白名单；目录不可读时
+  fail-closed。`UICleanerServiceTemplateCatalogTest` isolated `1/1`，Client compile exit `0`。由于这会影响
+  所有任务，fresh gate 是下一次既有任务实机确认 generic close 不误点、能关闭新增皮肤；新手 title 节点宏仍在实施。
+- 2026-07-28 WP4 title 节点旧交付声明已被 external review 推翻，**不可作为完成依据**：它当时让宏同步阻塞
+  `dhxy-observe`、缺 replay 却接真实输入、修复可能重复放入、寻人错误复用泛用 NPC 链。详见本文件末尾
+  `G003A WP4 review repair` 与主计划的 `REPAIR IN PROGRESS` 条目；后续验收只能以返修后的 evidence 为准。
+
+## 2026-07-28 / LOCAL-RUNNER 移动中静默传输
+
+- 现状审计：Runner 每 `300ms` 继续用本地 `45x12` ROI 判断移动，但
+  `WindowObservationRunner` 会把每一份同 intent 的 `CURRENT + ACTIVE`
+  pathing fact 都经 HTTPS 发给 Cloud；这些时间戳更新不参与 Cloud 业务裁决。
+- 修复：保留本地采样 cadence，不再发送只有
+  `pathingUpdatedAtMs/locationChangedAtMs/movementObservedAtMs` 变化的重复
+  `ACTIVE`。首次 intent、`REPLACED/CLEARED`、`ARRIVED/STOPPED_AWAY`、
+  Dialog 阻挡变化、坐标 ROI/终态帧及其他观察事件仍立即发送。
+- 保留 `5000ms` transport/interest heartbeat，但该心跳不携带重复 pathing fact，
+  不会重新制造 Cloud `ACTIVE pathing fact`。
+- 验证：`WindowObservationRunnerContractTest` +
+  `WindowObservationPathingPolicyTest` 共 `18/18`；Client compile exit `0`。
+  未运行游戏、截图或输入。Fresh gate：移动途中 Cloud 不应再连续收到同 intent
+  `CURRENT + ACTIVE`；疑似停稳后的坐标帧和最终终态必须仍能即时到达。
+
 ## 2026-07-28 / 五环大雁塔二层交鞋 Dialog 地图分流恢复
 
 - Fresh 五环 `451753529 / hwnd-D51906` 在 `00:41` 已停于
@@ -87454,3 +89698,1488 @@ Cloud helper。`SummonSkillTailBoundaryScanner` 则不是局部 OCR/上云桥接
 - Client/Cloud `mvn -q compile` 均 `exit 0`；未运行游戏、UI、截图或物理输入。
 - Fresh gate：重启双端后验证 cooldown 窗口正常结束、已接任务窗口由 prepared event
   唤醒、每个小地图动作不跨窗口交错、关闭部分窗口后剩余窗口可重新启动。
+# 2026-07-28 G003A 新手任务 WP1/WP2
+
+- 工作树：客户端 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，起点 `2f083c14`；云端 `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，起点 `363d0e3`。两仓原有 dirty/untracked 均保留，未清理、未回滚、未提交。
+- 已实现：`XINSHOU` 注册与 UI 映射；共享协议 `TurnTaskCode.XINSHOU`、`ObservationFactType.XINSHOU_ANCHOR`；客户端 `XinshouAnchorLocalMechanics` 仅裁剪 G002 shared cycle frame 做 1 秒 title/ESC/领养锚点探针；云端 `CloudWholeTaskObserver` 消费该事实、维护 exact-run 镜像并在 title 变化时发布 `XINSHOU_TITLE_CHANGED`；`XinshouTask` 采用 1 小时有效预算、暂停扣除、每次最多 25 秒的 event-only park。
+- 验证：`D:\mavenProject\DHXY-cr271` 运行 `mvn -q compile` 成功；`D:\mavenProject\dhxy-cloud-brain` 运行 `mvn -q -DskipTests=false compile` 成功。共享 `ObservationFactType.java` SHA-256 双仓一致；`TurnTaskCode.java` 已由客户端源文件机械同步到云端，SHA-256 双仓一致。
+- 剩余门禁：WP3/WP4 的真实 tracker 点击、ESC/确认、背包、导航、NPC、给予、修复和 UICleaner 全局模板扫描尚未接入；需要每个视觉点击节点先保存 testcase raw 图并生成 marked replay，符合 `AGENTS.md` 第 7 条后才可实施。
+- 业务修正：只有 `esc_bot.png` 可与 Tracker 同时出现，它是独立锚点，不得由 Tracker 可见性过滤；`ESC.png` 仍保持“Tracker 不可见才探测/上报”的原前提。后续 WP3 需保留这一不对称规则。
+- WP2 review repair：`esc_bot` 不再处于 title→领养→ESC 的单返回优先链，改为额外独立探测；因 observation inbox 对同一 fact type 是 latest-wins，客户端现在把 primary anchor 以 `XINSHOU_ANCHOR` 上报，并把 `esc_bot` 以独立 `XINSHOU_ESC_BOT=present/absent` 上报，Cloud 分别镜像。`XinshouAnchorLocalMechanicsTest` 覆盖 `xunren.png + esc_bot.png` 同帧共存和无模板空帧；隔离运行 2/2 成功。
+- WP3 已接绿链主循环：Cloud `XinshouTask` 消费 prepared option、combat/pathing 事实、独立 `esc_bot` 与 Tracker 面板快照；点击绿链后记录 index/地图坐标/pathing intent，并进入 `awaitingPathingTerminal`，防止本地 pathing 尚未回报时重复物理点击。纯状态机合同覆盖 prepared 优先、同/异坐标 `STOPPED_AWAY`、combat park、hash 推进、点击后 `NONE` 不复点。
+- 回放证据：输入 `images/test-cases/xinshou/raw_tracker_green_links.png`；输出 `images/test-cases/xinshou/marked_tracker_green_links_click.png`。Cloud `XinshouTrackerPanelReplayTest` 在同一原始面板上识别一条可点击绿链，红框为文本区、红点为最终点击中心；与状态机测试隔离运行 `6/6` 通过。Cloud `mvn -q -DskipTests=false compile` 通过。
+- 未接入：`esc_bot` 恢复的 ESC → `quedingguan_` → `confirm` 物理输入。原因是仓内没有该 dialog 的 raw testcase，不能按 AGENTS.md 第 7 条验证模板点位；当前分支只观察并 park，绝不猜坐标点击。取得 raw frame 后再补这一小段 WP3 子链；WP4 仍未开始。
+- WP2 隔离 DoD：使用 `C:\Users\Yunfeng Yue\.m2\repository\org\junit\platform\junit-platform-console-standalone\1.10.2\junit-platform-console-standalone-1.10.2.jar`，经 Maven `dependency:build-classpath` 生成 test-scope classpath 后，单独执行 `XinshouAnchorLocalMechanicsTest`；结果 2/2 成功、0 失败。WP3 可开始前必须重读 G003A 的四分支分流表与 25 秒 event-only park 契约。
+
+## 2026-07-28 G003A WP4 review repair
+
+- 外部 review 的六个 P1 已写回 `docs/superpowers/plans/2026-07-28-g003a-xinshou-task-skeleton.md`；当前 WP4 是 `REPAIR IN PROGRESS`，没有被表述为完成。
+- Client 修复范围仅限新手 observation/title 路径：`XinshouAnchorLocalMechanics`、`XinshouLocalTitleHandler`、`WindowObservationSampler`、`SpringObservationRunnerFactory` 及两个 focused tests。title 宏不再跑在 `dhxy-observe`；专用 daemon worker 通过 `WindowTaskContextHolder.runWith(exactWindowContext, ...)` 恢复正确 HWND 绑定后才调用现有输入/背包服务。
+- Replay gate：仓内不存在 WP4 六个节点的 raw + marked testcase，因此生产 `XinshouLocalTitleHandler` fail-closed，不提交任何背包/模板/修复真实输入；不可伪造回放图。寻人从 Cloud `XinshouTask` 移除了不符合“记忆→固定点→黄名 only”合同的通用 `clickNpcSmart` 调用，当前只安全 park。
+- 更正：此前记录的 `5 tests successful` 不准确；两个测试类当时实际共有 6 个用例，旧记录不可作为验收依据。本轮已按复核修掉 `finishInline` 持锁、修复超时无法重试和寻人压制 Tracker 三个新 P1，待重新运行定向测试和双仓编译后再记录真实结果。未启动 runtime/UI/capture/input。
+- 本轮真实验证：Client `mvn -q -DskipTests compile` exit 0；Cloud `mvn -q -DskipTests=false compile` exit 0；Client 定向 Surefire XML 显示 `XinshouLocalTitleHandlerTest=5/0/0/0`、`XinshouLocalRecoveryHandlerTest=2/0/0/0`，合计 **7 tests / 0 failures / 0 errors / 0 skipped**。此前“两个类 6 个用例”的更正本身仍不准确，现以此 XML 结果为唯一事实。
+- 第二轮复核后：`repairItems` 已修正为“opened 未见才重试使用”的明确括号逻辑；gate 改为逐物理步骤检查 raw+marked replay，缺任一证据不入真实输入。Client compile、Cloud compile、上述 7 个定向测试再次 exit 0。素材依赖未解除，WP4 仍 `REPAIR IN PROGRESS`。
+
+## 2026-07-28 新手 Tracker 全任务框内容比较修复（进行中）
+
+- 用户已明确批准：删除新手 Tracker 的 `16x16` 亮度指纹；不得再用该缩略亮度格判断任务是否推进。新的可复用方法必须基于解析器已定义的完整 task detail box，准确区分任务内容变化与背景/指针等非业务像素扰动；自行以仓内图像回放验证后再交付。
+- 工作树与基线：客户端 `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`，云端 `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`（当前 `origin/navigation-migration`）。两仓开始前均已有大量 dirty/untracked；均只记录、不回滚、不清理、不提交。
+- 基线证据：`363d0e3` 中不存在新手 `readXinshouTrackerPanelSnapshot` / `XinshouTrackerStateMachine`；本工作只修正当前未提交 WP3 新手路径的错误 16x16 状态 token。已检查 `docs/新手任务流程草案.md` §1.1/§1.2：绿链点击本身不视为 Tracker 内容变化；第一条未触发移动或 option 时必须按顺序试下一条；只有整个 Tracker 内容真实变化才开启新一轮。
+- 精确写集：云端 `src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`、新增的内容比较器、`src/main/java/com/bot/dhxy/task/xinshou/XinshouTrackerStateMachine.java`、`src/main/java/com/bot/dhxy/task/xinshou/XinshouTask.java`、必要的回放输出；本记录。不会修改客户端 Java、输入实现、模板或其它新手 title 节点。
+- 实现：删除仅供新手状态机使用的 `panelFingerprint16x16(...)`。新增 `TrackerTaskBoxContentComparator`：仅裁剪 Cloud parser 已定义的完整 `detail` box；正文采用 native-resolution task-text silhouette，绿链采用独立的 hue-independent glyph silhouette，正文比较排除每条绿链及其 5px 周边。返回 `UNCHANGED / TITLE_OR_BODY_CHANGED / LINK_CONTENT_CHANGED / LINK_STRUCTURE_CHANGED / INDETERMINATE`；`INDETERMINATE` fail-closed。状态机仅在后三种明确变化时重置链接 cursor，保持 `UNCHANGED` 时 `STOPPED_AWAY` 继续从 index 0 到 index 1。
+- 用户要求本次不新增新手 unit test，已未保留新增 test class。验证改为一次性非 JUnit replay：输入 `D:\mavenProject\dhxy-cloud-brain\src\test\resources\images\test-cases\xinshou\raw_tracker_green_links.png`，输出 `D:\mavenProject\dhxy-cloud-brain\target\testcase-replay\xinshou-tracker-task-box-content-replay-marked.png`；红框=完整 parser-defined task detail box，紫框=被正文比较排除、另行比较字形的绿链。实测 panel 外噪声结果 `UNCHANGED`，任务框正文增加金色内容结果 `TITLE_OR_BODY_CHANGED`。
+- 验证：云端生产编译 `mvn -q -DskipTests=false compile` exit 0。尝试 Maven 定向 test 时，testCompile 被现有无关测试源阻断（`CloudWholeTaskObserverProductionHarnessTest` 仍引用不存在的 `probeTypedPathing`，以及多个旧构造器/方法签名），与本次写集无交集；未将其伪称为本次失败或修改它们。
+
+## 2026-07-28 新手绿链本地循环修正
+
+- 运行证据：`remote-turn-72e7d6db-1b9f-4f80-9058-c17ed6208f45` 在 `21:00:03/05/08` 三次完成真实 `MOVE -> 80ms -> CLICK`，但观察线程结束时为 `interestRevision=0 interests=0 coordinateFramesCaptured=0`；原实现错误地在 local-service 内等待 dialog/移动，并把 `EFFECTIVE/EXHAUSTED` 当作 Cloud 业务结果。云端随后错误用 Tracker 截图 JSON 的严格校验读取该机械回包，抛出 `task-tracker local step shape is invalid` 并将任务标记 `FAILED`。
+- 修正写集：客户端 `XinshouTrackerLinkChainLocalOperationExecutor`、共享 `TurnXinshouTrackerChainArguments`/`TurnProtocolValidator`；云端 `CloudTaskTrackerLocalServiceClient`、`XinshouTask` 与同两份共享协议文件。两仓既有 dirty/untracked 均保留，未回滚、未清理、未提交。
+- 新合同：Cloud 只解析并下发一条有效绿链；客户端记录本地 pathing intent 后提交一次原子点击并立即返回传输确认。Cloud 不接收 `EFFECTIVE/EXHAUSTED` 等普通绿链结果、不依其转 phase。点击后的移动由本地 pathing 观察等待；可见 dialog 与特殊新手 title 仍按既有观察事实上报 Cloud 识别/规则决策。新手任务启动即登记 `DialogOperation.INSPECT` 的本地 dialog interest，结束时清理，避免点击后观察盲区。
+- 验证：客户端 `mvn -q -DskipTests compile` exit `0`；云端 `mvn -q compile` exit `0`。共享 `TurnXinshouTrackerChainArguments.java` 与 `TurnProtocolValidator.java` SHA-256 双仓一致。未启动 runtime/UI/capture/input；fresh gate 为重启客户端与云端后，以新手绿链实际验证“普通绿链移动不回云；dialog 与特殊 title 才上云”。
+- 边界补充：若已点预选绿链后本地短窗口内既无新 dialog、也无坐标变化，客户端 `XinshouTrackerLinkChainLocalOperationExecutor` 的 per-window daemon retry worker 在本地重试同一预选链接，最多 3 次；不向 Cloud 发送每次失败或耗尽。看到移动则保留 pathing intent 交给现有本地 pathing 观察；看到 dialog 则清该 retry intent，由 dialog 事实正常上云。此补充后再次运行 Client `mvn -q -DskipTests compile` 与 Cloud `mvn -q compile`，均 exit `0`；共享协议 SHA-256 再次一致。仍未启动 runtime/UI/capture/input。
+- 21:28 运行纠偏：retry worker 曾自行比较坐标前后值，导致游戏已移动、但坐标尚未回填时仍继续点同一绿链。该二次判断已删除；现在只读取既有 `WindowObservationSampler` 的 `WindowPathingSnapshot.movementObservedAtMs`（共享帧本地 movement watcher 已确认的正式事实）。只要该值不早于本次点击，立刻停止补点并保留 intent 交给原有 pathing 链。Client `mvn -q -DskipTests compile` exit `0`；未启动 runtime/UI/capture/input。
+
+## 2026-07-28 新手抓捕 `Alt+B` 后台输入补齐
+
+- 工作树/基线：客户端 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，最新提交 `2f083c14`；开始前工作树已有大量 dirty/untracked，均保留。此次只修改既有后台 Alt 快捷键输入链与本记录。
+- 运行证据：`remote-turn-aa7f492a-3ed6-4e62-9037-341bb92242a9` 已收到 `zhua_title.png` 并记录 `combat policy -> CAPTURE`；进入战斗后，Cloud 发送 `xinshou:combat:alt-b`，但返回 `status=FAILED`。根因是客户端 `BoundWindowKeyboardService.AltShortcut` / `InputActionType` / `InputAction` / `TurnInputStepExecutor` / `InputActionWorker` 都缺少 `ALT_B`，安全壳拒绝未白名单的后台按键，未发生真实物理输入。
+- 修复：按现有 `ALT_A` 同一条已验证的 exact-HWND + 单输入队列通路补入 `ALT_B`（VK `0x42`、scan `0x30`），不新增前台回退或绕过输入队列。
+- 验证：客户端 `mvn -q -DskipTests compile` exit `0`；fresh runtime gate 为下一次抓捕战斗应依次出现 `Alt+B` 的客户端输入 trace、自动面板消失确认、抓捕点点击 trace。未在本次修改中启动 runtime/UI/capture/input。
+
+## 2026-07-28 新手任务固定坐标空间审计（未改 Java）
+
+- 触发证据：fresh `remote-turn-956f1562-de22-4b58-992a-0f7f7ddb59ce` 的客户端输入 trace 已实际执行
+  `xinshou:combat:capture-click` 于屏幕 `(255,408)`；当时绑定窗口 `hwnd=237375238` 的 live
+  `GetWindowRect` 为 `left=158, top=168, width=1036, height=783`。该点虽然落在窗口内，
+  但它是参考图换算后的相对坐标，非实际目标。
+- 草案 `docs/新手任务流程草案.md:5` 的合同是：参考 base=`(991,369)`，所有参考绝对点先减该 base
+  得到窗口相对点，再在运行时加**当前**窗口 base；`TurnInputStepExecutor`/
+  `TurnInputActionMapper` 的合同则明确要求 `TurnInputSpec.x/y` 已是屏幕绝对坐标，并只做窗口内校验，
+  不会自动加 base。
+- 因此 Cloud `XinshouTask` 的三个固定点均为同一 P1 坐标空间缺陷：
+  1. 抓捕：参考 `(1246,777)` -> rel `(255,408)`；本轮当前窗口应发 `(413,576)`，代码误发 `(255,408)`。
+  2. 寻人村长：参考 `(1303,692)` -> rel `(312,323)`；本轮当前窗口应发 `(470,491)`，代码误发 `(312,323)`。
+  3. 轮回结束：参考 `(1630,674)` -> rel `(639,305)`；本轮当前窗口应发 `(797,473)`，代码误发 `(639,305)`。
+- 已核对的非缺陷路径：
+  - `XinshouLocalTitleHandler.clickRelative(...)` 统一经 `CoordinateHelper.getScaledRect(...)`，该方法用
+    `tracker.getWindowBaseX/Y()` 加当前 base；轮回开始、修复三件/槽位/关闭均属于这条正确路径。
+  - 本地模板命中（领养、确认、对话框）由 `XinshouAnchorLocalMechanics` 产出屏幕绝对点；恢复 handler
+    直接点击该绝对点，正确。
+  - 新手绿链 `TurnXinshouTrackerLink` 合同为屏幕绝对点；本地 executor 直接输入，正确。
+  - 轮回拖拽 `TurnXinshouDragArguments` 合同为窗口相对坐标，客户端 executor 经
+    `CoordinateHelper.getScaledRect(...)` 换算，正确。
+- 待批准的修复方向：Cloud 任何来自 `XinshouGeometry` / 参考图的固定相对点，在创建
+  `TurnInputSpec` 前必须以本次 `TaskExecutionContext` 的当前 `TurnWindowRect.left/top` 还原为屏幕绝对点；
+  动态模板、绿链、prepared dialog 的绝对点不得二次加 base。修改后需对三点各做截图/replay 并生成标注实际点击点。
+
+## 2026-07-28 通用 Dialog 框体 gate（进行中）
+
+- 用户已批准：以 `images/test-cases/dialog-frame-classification` 的完整正负样本集实现并回放验证通用 Dialog/人物绿名区分；该 gate 适用于新手、修罗、五倍，不是新手专用分支。
+- 基线：客户端 `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`；云端 `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3`。两仓开始前均已有大量 dirty/untracked；不回滚、不清理、不覆盖。
+- 已确认旧根因：Cloud `DialogService.classifyDialogDetection(...)` 只以平滑度加绿色/白色文本判断；`20260728_220100/220102` 的人物绿名与奖励提示落入固定 dialog ROI 后被误判 `OPTION`，从而触发 `xinshou:first-option` 物理点击。当前改动先以结构框体作为所有文本判定的共同前置条件，随后用全部样本生成标注 replay。
+- 实现与验证：Cloud 新增 `DialogFrameClassifier`，要求最大 ROI 内存在一对相互重叠、间距 `80-260px` 的低饱和长边；`DialogService` 在原有 mask/绿字/白字分类前 fail-closed，并只把已定位的完整面板交给 option/story 判定。直读端 `CloudDialogDetectionPort`、`DialogService` 与观察端统一为窗口相对 `(200,250,640,300)` 的最大共同 ROI，不能再发生 live 走 `529x208`、回放走另一 ROI 的双标准。输入为 `images/test-cases/dialog-frame-classification/{positive,negative}` 的原始图，输出为同目录 `replay-output/*.png`（绿框=ROI verdict、青框=实际 dialog 面板、红框=拒绝、紫线=最长候选边）。新增现场硬门：`positive/P08_live_20260728_224529_story_dialog.png` 正确框住故事面板，`negative/N05_live_20260728_224456_no_dialog_green_names.png` 在绿色人物名存在时明确拒绝；对应输出分别为 `replay-output/positive--P08_live_20260728_224529_story_dialog.png` 与 `replay-output/negative--N05_live_20260728_224456_no_dialog_green_names.png`。运行 `mvn -q compile` 成功；再用 `junit-platform-console-standalone-1.10.2` 单独编译/执行 `DialogFrameClassifierReplayTest` 与既有 `DialogDetectionTurnContractTest`，结果 **11/11 通过**。未启动 runtime/UI/capture/input。
+- 23:18 fresh-runtime 纠偏：先前 `11/11` 只说明既有样本集，不足以证明现场链闭合。`hwnd-A7209E` 的真实输入
+  `images/captures/20260728/hwnd-A7209E/20260728_231800_103_11_HWND_PRINTWINDOW_197_202_1024x768.png`
+  已复制为硬门 `positive/P09_live_20260728_231800_option_dialog.png`。日志显示 `23:17:58.980` 绿链第一次物理点击后，该 dialog 已出现且 `23:18:00.846` 已上传 dialog ROI；但
+  `XinshouTrackerLinkChainLocalOperationExecutor` 在 `23:18:01.362/03.897/06.445` 仍按
+  `no-local-effect` 重试。根因是它读取的 `WindowRuntimeContext.visibleDialogSnapshot` 没有任何客户端写入方，故“dialog 出现则停止”的分支不可达。
+- 修复：新增只读 `DialogFramePresenceMechanics`，仅在 active intent source 为
+  `xinshou:tracker-link:local-retry` 时，从 `WindowObservationSampler` 本周期既有 shared HWND frame
+  裁剪 `(200,250,640,300)` 做结构化框体存在判断；它不新增截图、不读文字、不下发或执行输入。命中仅写入
+  `WindowRuntimeContext.dialogFrameObservedAtMs`，retry worker 读到本次点击之后的该时间戳即清 retry intent 并停止补点；dialog 内容仍按原 dialog ROI 传 Cloud 识别。P09 的 Cloud marked replay 为
+  `replay-output/positive--P09_live_20260728_231800_option_dialog.png`，其 cyan 框包含 dialog 面板且也包含左侧 NPC 头像，故该结构信号只用于 suppress retry，绝不用于 option/story 文字或坐标。
+- 验证：Client `mvn -q -DskipTests compile` exit `0`；Client `mvn -q -Dtest=DialogFramePresenceMechanicsReplayTest test` exit `0`，该回放覆盖 corpus 中所有可用原始正负帧并包含 P09。Cloud `mvn -q compile` exit `0`；独立 P09 replay 的 `DialogFrameClassifier` 输出 `present=true`。本次未启动 runtime/UI/capture/input。Fresh gate：一次绿链点击后若 shared-frame 记录 `xinshou tracker dialog frame observed`，日志不得再出现该 window 的下一条 `xinshou tracker link local retry` 物理点击；若未见 dialog 也未见现有 movement fact，才允许最多三次原链接补点。
+- 23:31 第二层运行纠偏：前一修复已让同一个 retry worker 在 `23:31:14.643` 结束补点，但 `23:31:16.397` 已记录 dialog 后，旧 active pathing intent 仍存活；通用 watcher 到 `23:31:21.873` 将其误报为 `STOPPED_AWAY`，Cloud 遂在 `23:31:24.451` 新建 intent 并发生第二次真实绿链点击。这不是 retry worker 的剩余重试，而是 pathing terminal 误触发的重新派发。现将 dialog structural hit 改为同周期调用 `clearPathingSignalIfSourcePrefix("xinshou:tracker-link:local-retry", "xinshou:dialog-frame-observed")`，在 watcher 有机会写 `STOPPED_AWAY` 前结束对应 intent；不上传新业务结果、不执行新输入、不影响领养 title 的既有 30 秒锁。Client `mvn -q -DskipTests compile`、`mvn -q -Dtest=DialogFramePresenceMechanicsReplayTest test` 与 `git diff --check` 均 exit `0`。新的 fresh gate：dialog hit 之后，同一 window 不得出现 `STOPPED_AWAY`、Cloud 再派发的 `xinshou:tracker-local-link:1` 或新的该 source intent；只允许后续 dialog ROI 正常上传 Cloud。
+- 23:37 fresh-runtime 再纠偏：上项确实消除了 `STOPPED_AWAY`，但没有阻止点击本身。实证为 `23:37:06.337` 已 `dialog-frame-observed` 且 intent 已清，仍在 `23:37:08.548/08.716` 出现同一个 worker 的 `attempt=2` 真实点击；之后每次 Cloud `TASK_TRACKER_CAPTURE_PANEL` 又重派发相同链接（`23:37:11.206`、`16.355`、`21.450`、`26.421`）。根因是 structural frame 只在 active intent 时采样，且 local executor 对 Cloud 重派发或自己的下一次 retry 没有“当前 dialog 仍在屏幕”的前置否决。修复为：只要新手 `DialogOperation.INSPECT` interest 存在，sampler 每个既有 shared HWND frame 都刷新只读 dialog-frame timestamp；executor 在首次 dispatch 与每轮 retry 前若该事实在 3 秒内仍新鲜，则返回 `XINSHOU_TRACKER_LINK_SUPPRESSED_DIALOG` / 本地结束，绝不提交鼠标动作。该结构事实不解释 dialog 内容，Cloud 仍只从原 dialog ROI 获得内容。Client `mvn -q -DskipTests compile`、`mvn -q -Dtest=DialogFramePresenceMechanicsReplayTest test` 与 `git diff --check` 均 exit `0`。唯一验收门：dialog 在屏幕期间，日志可继续有 dialog ROI sending 和 suppression，但不得出现任何新的 `INPUT_TRACE ... xinshou:tracker-local-link`。
+- 23:41 fresh-runtime 协议纠偏：上项的本地防重入实际生效，`23:41:36` 后只发生第一击，`23:41:41.866` 已记录 `xinshou tracker link suppressed by visible dialog`，此后没有第二次 `tracker-local-link` 输入。但我错误地把 suppression 作为新的回包 `XINSHOU_TRACKER_LINK_SUPPRESSED_DIALOG`；Cloud `CloudTaskTrackerLocalServiceClient` 只接受既有 `XINSHOU_TRACKER_LINK_DISPATCHED`，于是抛出 `unexpected xinshou tracker-link dispatch acknowledgement` 并将 `remote-turn-62aadda4-03af-4ace-8f49-667bdc1fa507` 标记 FAILED。已恢复协议：本地继续不输入、只写 suppression log，但对 Cloud 返回原有 `XINSHOU_TRACKER_LINK_DISPATCHED`，因为 suppression 不是 Cloud 业务结果。Client `mvn -q -DskipTests compile`、`mvn -q -Dtest=DialogFramePresenceMechanicsReplayTest test`、`git diff --check` exit `0`。后续 fresh gate：同一场景不可有第二次本地绿链输入，也不可再有上述 unexpected acknowledgement FAILED；Cloud 应继续消费已上传的 dialog ROI。
+
+## 2026-07-29 Dialog 框体 gate 与类型分类职责纠偏
+
+- 用户决议：`DialogFrameClassifier` 只判断完整 Dialog 是否存在，替代旧 deviation mask；
+  `OPTION / STORY / NONE` 继续完整复用提交基线的固定 ROI、阈值和 option-first 顺序。
+- Cloud `DialogService` 已删除“先动态框、再按动态框 45%/58% 重裁类型区域”的路径；
+  `hasDialogMask(...)` 仅返回结构 gate verdict，随后 `hasOptionInLowerHalf(...)`、
+  `hasMultipleLowerOptionRows(...)`、`hasStoryInUpperHalf(...)` 均恢复固定 `DIALOG_SMALL_*` 裁剪。
+- 证据纠正：P09 的原验收目标只是“框体存在并压制绿链重试”，不能当作老 option 子判断
+  必须命中的证据。本次真实画面归档为
+  `images/test-cases/dialog-frame-classification/positive/P10_live_20260728_234539_short_cancel_option_dialog.png`；
+  回放中结构 gate 命中，固定 option ROI 的 `green=567`，最终 `DialogType.OPTION`。
+- 验证：Cloud `mvn -q compile` exit `0`；隔离 `DialogFrameClassifierReplayTest` +
+  `DialogDetectionTurnContractTest` 共 `12/12` 通过。标准 Maven testCompile 仍被仓内既有
+  Observer/Navigation 旧测试签名失配阻断，非本次生产或定向测试失败。未运行 runtime/UI/物理输入。
+
+## 2026-07-29 新手 Dialog inspect 状态语义修正
+
+- 运行证据：`remote-turn-2b8c4abb-1a3f-493b-bec4-3a2b68c14a53` 在对话框出现后，
+  `xinshou:dialog-scan` 先后记录 `STORY_IGNORED` 与 `OPTION_IGNORED`。新手流程草案规定
+  `STORY` 不处理；但 `OPTION` 的 inspect 是纯探测，错误使用 `IGNORE` 造成日志和结果都误称为忽略，
+  随后的第一绿项点击坐标也没有被任务日志明确记录。
+- 修复范围：Cloud `DialogHandleRequest.inspect(...)` 改为 `optionPolicy=VERIFY_OPTION`，故确认的选项框
+  返回 `OPTION_VISIBLE`；`STORY` 仍维持 `STORY_IGNORED`，严格遵守新手 MD 的“不处理 story”规则。
+  `XinshouTask` 仍仅在 `OPTION` 时执行既有 `fallbackFirstOption(...)`，现在记录该次实际输入的
+  `clicked` 与 screen-absolute `point=(x,y)`。未改领养 30 秒锁、绿链 retry、tracker、title 或 story 行为。
+- 基线/保护：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3`。两仓均已有大量 dirty/untracked，
+  未回滚、未清理、未覆盖、未提交。
+- 验证：Cloud `mvn -q compile` exit `0`，`git diff --check` exit `0`。未运行 runtime/UI/capture/input。
+  Fresh gate：重启 Cloud JVM 后，option dialog 应先日志 `OPTION_VISIBLE`，紧接 `xinshou option dialog
+  first-option result ... point=(x,y)`；story 仍只出现 `STORY_IGNORED` 且不发生 story 点击。
+# 2026-07-29 G003A 新手无推进观察重举证
+
+- 权威 Client：`D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，
+  `HEAD=2f083c14152106ba6ad418a0c29e3e0e2148e14a`（`修罗五环云端V1版本`）。
+- Cloud：`D:\mavenProject\dhxy-cloud-brain`，本轮只修改新手 observation/PreparedAction
+  既有链路；`D:\mavenProject\DHXY` 业务基线保持只读。
+- 编辑前两仓均为既有大规模 dirty worktree。本轮不得回退或覆盖既有改动；触及范围限定为
+  `WindowObservationSampler`、`CloudWholeTaskObserver`、对应连通性合同测试和 G003A 文档。
+- 已核对现状：Client 每轮只截一次 `1024x768` shared cycle frame，随后从同一帧裁出
+  `xinshou-dialog` / `xinshou-tracker`；ACK 后相同 hash 不再上传。Cloud 已有
+  Dialog > special-title mechanical/seek > Tracker 的单槽裁决，但相同画面没有无推进重举证入口。
+- 用户批准合同：无 active pathing 时 Runner 每 tick 比较本地连续画面；有效变化立即上报。
+  连续 `10s` 无有效推进时，在一个 observation request 中重送同一共享帧对应的当前
+  Dialog/Tracker 证据。Cloud 自行结合特殊 title 状态裁决；有 Dialog 只处理 Dialog，
+  无 Dialog 才处理 Tracker；一轮最多发布一个 `PreparedAction`。Client 不自行判断或点击。
+
+## 2026-07-30 修罗接任务基线恢复（进行中）
+
+- 用户已明确批准：修罗接任务必须恢复到 V1 迁移前已推送业务线 `9aa987d1`，不保留当前
+  Cloud 的“接任务记忆坐标先点”语义。
+- 权威对照：`D:\mavenProject\DHXY` 的 `9aa987d1:XiuluoTaskV2`；Client 工作树
+  `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`，Cloud 工作树
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3`。两仓均已有大量
+  用户/既有 dirty work，禁止回滚或覆盖无关修改。
+- 恢复合同：NPC 点击后，客户端在窗口相对 ROI `(250,312,529,208)` 内匹配
+  `images/template/dialog/xiuluo/xiuluo_accept_xianlaiwu2.png`，阈值 `0.82`；命中后以匹配锚点
+  横向 `+48px` 做一条原子左键点击。只有客户端回 `ACCEPTED`，Cloud 才能推进至接受成功；
+  模板 miss 才允许现有 Cloud fallback/接任务恢复。禁止把历史 dialog memory 或“NPC 点击已发出”
+  当成接受成功。
+
+### 2026-07-30 落地与验证
+
+- Client 新增 `XiuluoAcceptDialogLocalOperation`：保留基线的 ROI、`xiuluo_accept_xianlaiwu2.png`、
+  `.82` 阈值、锚点 `+48px` 与一条 `moveAndClickLeft` 原子动作；模板 miss 返回
+  `NOT_MATCHED`，不发送输入。
+- Cloud `XiuluoTaskV2` 已删除接任务的 remembered-choice 优先路径，改为先消费上述 Client
+  `ACCEPTED`；只有 `NOT_MATCHED` 才走现有单模板 Cloud fallback。`NPC clicked` 不再作为
+  `ACCEPT_TASK_DIALOG` 的成功证据。
+- 协议 `XIULUO_ACCEPT_DIALOG_TEMPLATE`、validator 两仓 byte-identical（`git diff --no-index`
+  exit `0`）。Client focused `XiuluoAcceptDialogLocalOperationTest` 与 Client `mvn -q compile` exit
+  `0`；Cloud `mvn -q compile` exit `0`；两仓 `git diff --check` exit `0`。
+- Fresh runtime gate（未执行）：重启 Client 与 Cloud 后，从修罗 NPC option dialog 开始；日志必须先有
+  `XIULUO_ACCEPT_DIALOG_TEMPLATE=ACCEPTED` 再出现 accept phase 推进。模板未命中时不得出现任何
+  memory-click 日志或 accept phase 推进。
+
+## 2026-07-30 修罗 local-kanda 未进战重试
+
+- 运行证据：修罗 round=8 的 `hwnd-3C81034` 在 `13:59:39.863` 已执行 `xiuluo-40g:local-kanda:8`
+  真实左键 `(1550,623)`，但未出现 `IN_COMBAT`；自 `13:59:45.165` 起模板仍命中而同一 attempt
+  持续 `claimed=false`。根因是旧 one-shot claim 只会在输入未执行时释放，把“点击已发出”误作
+  “已进入战斗”。
+- 用户批准的行为：看打实际点击后必须由本地 Runner 确认 `IN_COMBAT`；连续四个战斗采样未进战时，
+  同一 attempt 最多再点击两次。三次实际点击均未进战时，本地只上报
+  `ENTER_BATTLE_CLICK_FAILED`；Cloud 被该事实唤醒后才调用既有 saved-green fallback 并建立新 attempt。
+  本地不自行复按绿链，未执行的输入不消耗点击或 Cloud fallback 预算。
+- 文件：Client `WindowRuntimeContext`、`WindowObservationSampler`、共享
+  `ObservationKeyEventType`；Cloud `CloudXiuluoLocalClickState`、`CloudWholeTaskObserver`、
+  `XiuluoTaskV2`、`WindowReadyEventType`。业务合同与错误账本同步写入
+  `docs/业务逻辑.md`、`docs/云端迁移常见错误清单.md`。
+- 验证：`D:\mavenProject\DHXY-cr271` 与 `D:\mavenProject\dhxy-cloud-brain` 分别运行
+  `mvn -q compile`，均 exit `0`；共享 `ObservationKeyEventType` byte-identical；两仓
+  `git diff --check` exit `0`。未运行 test/runtime/UI/capture/input。
+- Fresh runtime gate：首次看打后应先有 `window.local-kanda.click-recorded ... clicks=1`；无
+  `IN_COMBAT` 满 4 秒后应有 `retry-rearm` 与 clicks=2/3；第三次仍未进战才上报
+  `ENTER_BATTLE_CLICK_FAILED`，随后 Cloud 日志才允许出现一次 saved-green re-press。任一次
+  `IN_COMBAT` 后不得再出现该 attempt 的 local-kanda retry 或 green fallback。
+
+## 2026-07-30 新增“江湖历练”任务（进行中）
+
+- 用户明确要求：这是一个**全新的独立任务**，不得替换、重命名或修改既有 `XINSHOU` / `新手` 任务；
+  初始业务行为完整复制当前修罗 V2，后续只在新任务副本中修改。
+- 基线：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`，Cloud
+  `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration` / `363d0e3`。两仓均有既有 dirty /
+  untracked 变更，禁止回滚、覆盖、清理或提交。
+- 精确写集：Client `TaskType`、共享 `TurnTaskCode`、`TurnProtocolValidator`、
+  `WindowTaskControlService`、`MainWindowController`；Cloud 镜像 `TaskType`、共享
+  `TurnTaskCode`、`TurnProtocolValidator`、`CloudTurnTaskFactory` 及新增
+  `task/xinshoulilian/**`。旧 `task/xinshou/**` 与其专用协议/观察逻辑不在写集内。
+- 当前运行中的 Client/Cloud 不编译、不重启；完成后仅做协议双仓一致性、`git diff --check` 与源码静态
+  检查。待用户停止运行实例后再做 Maven 编译和 fresh runtime 验证。
+
+### 已交付
+
+- 客户端新增 `TaskType.XINSHOU_TRAINING` 与 `TurnTaskCode.XINSHOU_TRAINING`，主控展示名称为“江湖历练”；既有任务未改名、未复用、未删除。
+- 云端新增独立的 `com.bot.dhxy.task.xinshoulilian` 包，完整复制修罗 V2 的 12 个任务状态/流程类；任务自身上报 `xinshou_training` / “江湖历练”，初始业务行为仍沿用修罗。
+- 新任务已接入云端工厂、角色预检、运行次数校验、队伍分配、观察兴趣、预备动作事件和修罗兼容的战斗/回城协议路径；后续改动可只落在新包内，不回写修罗或旧新手。
+- 新增独立说明：[江湖历练任务流程草案.md](江湖历练任务流程草案.md)。
+
+### 静态验证（未重启运行中实例）
+
+- `Get-FileHash`：客户端与云端的 `TurnTaskCode.java`、`TurnProtocolValidator.java`、`ObservationProtocolValidator.java` 三份共享协议均 SHA-256 相同。
+- `git diff --check`：`D:\mavenProject\DHXY-cr271` 与 `D:\mavenProject\dhxy-cloud-brain` 均无空白错误。
+- 新包污染扫描：未发现 `XiuluoTaskV2`、`TaskType.XIULUO_V2`、`xiuluo-v2` 或旧 `task.xiuluo` 包声明残留；修罗模板/目标等初始业务常量按需求保留。
+
+### 首次运行验收与风险
+
+- 需要在用户允许重启客户端和 Cloud Brain 后验收：主控可单独选择“江湖历练”，启动后云端解析 `xinshou_training`，并按修罗初始流程执行；其他任务仍可独立选择。
+- 未在运行中执行 Maven 编译或重启，避免打断当前测试；首次重启后若 Spring 构造注入或任务启动链出现问题，以该次日志为准修复。
+
+### 2026-07-30 阿三接任务第一步（进行中）
+
+- 用户已批准首个江湖历练业务改动：删除完整的修罗“接任务后出灵兽村”预寻路鼠标点击链；接任务 NPC 改为 `阿三`。
+- 依据：`D:\mavenProject\DHXY\docs\阿三任务流程MD.md`，接任务为 `东海渔村 (134,19)` 的阿三，医宝宝为 `东海渔村 (150,9)`。
+- 修改范围严格限于 Cloud 新任务副本 `task/xinshoulilian/XinshouTrainingTask.java` 与 `XinshouTrainingRoundContext.java`，以及新任务独立草案；未触及修罗和旧新手。
+- 当前运行实例不得编译或重启；完成源码静态核验后，等用户重启 Cloud Brain 才能 fresh 验收阿三接任务路径。
+
+#### 已完成的源码核验
+
+- `XinshouTrainingTask` 已改为 `东海渔村`、阿三 `(134,19)`，超级巫医 `(150,9)`；阿三和巫医的内部 NPC key 使用独立的 `xinshou-training.*` 命名。
+- 删除 `START_EXIT_*`、预寻路随机半径、`startLeavingStartMapIfPresent(...)`、接任务后调用点，以及 `XinshouTrainingRoundContext` 中全部 `startExitPrepathStarted` 状态传播。
+- 静态扫描确认新包没有 `startExitPrepath`、`start-exit-prepath`、`灵兽村出口` 或 `navigateInCurrentMap` 调用；`git diff --check` 无错误。
+- 未编译、未重启：Client 正在运行，按 `AGENTS.md` 不得重建运行实例可能懒加载的 `target/classes`。
+
+### 2026-07-30 江湖历练阿三接任务点击策略收紧（进行中）
+
+- 用户确认：阿三接任务只打开 `Memory -> Tooltip -> 黄字直接点击` 三种 `NpcClickSmart` 策略；人物锚点公式、`Ctrl` 菜单及其 `Alt+C` 重试全部关闭。失败仍复用本任务既有 `Clean Up All` 后重试，不改变修罗、五环、旧新手或其他 NPC。
+- Cloud 写集：`NpcClickStrategyProfile`、`NpcClickService`、`SmartClickRecognizer`、`XinshouTrainingTask`。阿三的附近直点、到达帧 FIFO 登记/消费、到达后直点与阶段直点均统一经 `acceptNpcClickRequest(...)` 注入同一受限策略，避免遗漏默认链入口。
+- 验证计划：运行中的 Client/Cloud 不编译、不重启、不发输入；仅做源码静态检查与 `git diff --check`。fresh runtime 时阿三点击日志应只出现 memory/tooltip/yellow 策略，黄字 miss 后不得出现 `formula`、`Ctrl` 或 `ALT_C`，且失败仍只走一次任务自有 cleanup/retry。
+# 2026-07-30 江湖历练阿三对话框与唯一入战入口
+
+- 范围：仅 `D:\mavenProject\DHXY-cr271` 客户端与
+  `D:\mavenProject\dhxy-cloud-brain` 的 `xinshoulilian` 独立任务；未修改
+  `D:\mavenProject\DHXY` 基线仓和真正的 `XiuluoTaskV2`。
+- 接任务：新增阿三本地模板结果 `ACCEPTED / RESET_CLICKED / TASK_UNAVAILABLE / NOT_MATCHED`，
+  删除江湖历练对修罗接受模板和 Cloud fallback 的调用。
+- 入战：仅保留 `CONFIRM_ENTER_BATTLE -> kaida.png` 本地匹配点击；删除江湖历练的修罗
+  kanda watcher、prepared action、通用 dialog 和目标失败恢复入口。
+- 验证：共享协议 byte-identical、旧入口静态搜索和 `git diff --check` 均通过；
+  `mvn -DskipTests=false compile` 在客户端与 Cloud Brain 两仓均 `BUILD SUCCESS`。未启动应用，
+  未执行测试或真实输入。
+- 剩余风险：四张 A3 模板目前只有裁剪模板，没有对应完整现场 raw testcase 与标记点击图；
+  正式验收前仍需按视觉点击门禁补 replay，确认 ROI、阈值与模板中心点击点。
+# 2026-07-31 单人任务中性战斗边沿
+
+- 基线：Client 与 Cloud 均为 `363d0e3 修罗五环云端V1版本`；两个工作树已有大量并行 dirty/untracked 改动，本项只触及战斗边沿标签和 `TaskType` 的单人属性。
+- 现场：`02:33:41` 窗口 `hwnd-3AB11B6`（ID 后缀 `3519`）进战时没有 enter claim，Client 标为 `combat-enter:unexpected`；Cloud 普通新手 `XINSHOU` 随即消费为战斗独占链。普通新手与五环属于单人任务，不能进入 G01 意外战斗恢复语义。
+- 决策：单人任务仍无条件上报 `IN_COMBAT` / `COMBAT_EXITED`，以保障自动战斗和脱战恢复；无 claim 的边沿统一为 `passive`，Cloud 只按物理边沿接收，不按 `unexpected` 处理。修罗/江湖历练保持无 claim 的 `unexpected` 语义。
+# 2026-07-31 本地看打诊断（江湖历练 `468413465`）
+
+- 基线：当前分支与最新本地已推送历史对比后确认，修罗和江湖历练均采用本地 Runner 的 25 秒后看打模板匹配、
+  本地点击、再上报 Cloud 的链路；差别只应是任务 bitmap。
+- 04:17 运行：`remote-turn-fe69ae53-5fe3-4143-acd4-96136ceb6739` 连续上传 dialog ROI，但未产生
+  `ENTER_BATTLE_CLICKED`/`IN_COMBAT`。旧 `latest_vision.png` 时间为 04:16:48，不可作为 04:17 dialog 判断证据。
+- 诊断改动：`WindowObservationSampler.sampleXiuluoLocalKanda` 已记录 probe delay、schedule、HWND、retry state、
+  matcher 首帧 miss 与 fresh-frame revalidation miss。下次 fresh run 以这些 INFO 日志确定实际断点；未改变业务判断或输入。
+
+# 2026-07-31 通用主包裹任务页启动校准（进行中）
+
+- 基线与现场：`D:\mavenProject\DHXY-cr271` / `thin-client-design` / `2f083c14`；工作树原本已有大量
+  dirty/untracked，未回滚或清理。`BagService.java` 的既有差异中，`MAIN_BAG_TASK_TAB_INDEX=5` 固定任务页。
+  最新日志 `04:52:15-04:52:17`：锚点 `(621,582)`、当前格子 `(445,623)-(757,831)` miss、固定第六页
+  点击 `(773,814)` 后仍 miss、`success=false`。
+- 用户决策：这是全部任务共用的主包裹布局状态。只由队长窗口在程序进程期间首次校准一次任务页码；
+  启动批次完成角色预检、但尚未启动任何远程任务 loop 时执行。该页码全局复用到所有窗口与任务，
+  每个窗口仍使用自己的 `anchor_cunkuan` 反算物理点击点。暂停、回合、关包、任务短暂停止均不清缓存；
+  未校准时不允许任何窗口猜页或回退点击第六页。
+- 修改：`WindowTaskControlService` 在两条批次启动入口完成角色预检后调用队长校准；`BagService.java`
+  用 `task_tab_fallback_a/b` 模板反推并进程缓存页码，所有任务页道具读取同一缓存，取消历史固定第六页。
+  同步更新 `docs/江湖历练任务流程草案.md` 与 `docs/云端迁移常见错误清单.md`（E32）。
+- 验证待办：运行中的客户端不得编译或重启。用户下次 fresh run 应在远程任务启动前出现一次
+  `[bag] main-bag task tab calibrated by leader`，之后所有任务页道具操作只出现 pageIndex 对应的 `click page N tab`，
+  不再出现无校准的固定第六页点击。`git diff --check` 已通过；尚缺本次真实打开包裹的完整 raw/marked replay，
+  需在首次 fresh run 补齐。运行中的客户端不得编译或重启。
+- 05:35 fresh-run 审计：该轮是单窗口 `hwnd-3AB11B6`，本地 role 为 `UNKNOWN`。启动前校准正确到达，
+  但被“只接受 `context.isLeader()`”的实现跳过；随后 `BAG_RETURN_ITEM` 成功 Alt+E、成功匹配
+  `anchor_cunkuan (1450,564)`，但因全局页码为空 fail-closed，并没有点错页或搜索任务页。待用户确认
+  单窗口校准 owner 的取法后，修复该启动门而不是修改回城模板匹配。
+- 2026-07-31 用户已确认修法：角色 tooltip 预检不能用两次 hover 失败后的 `UNKNOWN` 放行。每次无有效
+  tooltip 都先移动鼠标离开命中区，再重悬停、重截图；在启动后的 `30 秒` 内持续重试，得到可供 Cloud OCR
+  的 mask 即继续，超时或用户暂停/停止才取消整批启动。`LocalTeamRolePreflightService` 已改为有界、可取消
+  重试；锚点抓取失败也同样不再直接产出 `UNKNOWN`。未编译或重启运行中客户端；`git diff --check` 为本次
+  静态门。fresh runtime 应能看到 `hover-reset` 与 `tooltip unresolved ... re-hover` 后最终生成代表 mask；
+  30 秒无结果必须得到“队长身份识别超时，未启动任务”，而不是以 `UNKNOWN` 继续。预检发生非预期基础设施
+  异常时同样直接拒绝整批启动。`06:00:47` 现场已证明“本地 mask 有效但 Cloud OCR 未返回队长 ID”此前仍会在
+  `06:00:48.525` 立即 `TASK_START_REJECTED`；这同样必须当成未识别而非终态。现以同一 `30 秒` deadline
+  覆盖本地 hover/capture 与 Cloud OCR：代表窗口收到精确的 `tooltip OCR 未返回可用队长 ID` 拒绝后，先移除
+  pre-ACK rejected loop，再重新移开/悬停/截取新 mask 并重发同一 session；只有 Cloud 返回身份、超时或用户
+  暂停/停止才结束。未编译或重启运行中客户端；`git diff --check` 通过。fresh runtime 应看到该拒绝后新的
+  `hover-reset`、fresh mask 与新的 start request，而不是立即全窗口停止。
+
+# 2026-07-31 江湖历练当前小地图点击实时 HWND 重投影（进行中）
+
+- 范围：仅 `D:\mavenProject\DHXY-cr271` 与 `D:\mavenProject\dhxy-cloud-brain` 的 HTTPS turn 输入协议、
+  本地鼠标映射及 Cloud `NavigationService` 小地图逻辑点点击。任务目标、东海渔村地图配置和阿三流程不改。
+- 基线：Client `thin-client-design` / `origin/thin-client-design=2f083c14`，Cloud `navigation-migration` /
+  `origin/navigation-migration=363d0e3`；两仓均已有大量 dirty/untracked 改动，已确认不回滚、不覆盖、不清理。
+- 现场证据：`06:09` 同一 HWND 真实 rect=`1374,134,1036x783`；外部地图终点物理点击约 `(1839,707)`，
+  `navigateInCurrentMap` 重试却发出 `(1674,708)`，随后停在 `(69,20)`。阿三目标持续为 `东海渔村 (134,19)`。
+- 修法：Cloud 仅传 resolver 产出的窗口相对 mini-map 点；DHXY 在每个实际输入 turn 的 `TurnExecutionWindow.resolve(...)`
+  已刷新绑定 HWND 后，才将其重投影为物理屏幕点。旧绝对坐标语义保持不变。
+- 验证计划：更新两仓 byte-identical 协议和本地映射合同测试；运行实例存在时不执行 Maven/运行时，先执行
+  `git diff --check`、协议哈希比对及固定 rect 的坐标静态验证。fresh runtime/replay 待用户停止实例后补。
+- 已完成：新增共享 `TurnInputCoordinateSpace`，`TurnInputSpec.coordinateSpace` 默认仍是旧的
+  `SCREEN_ABSOLUTE`；Cloud `NavigationService` 的 current-map、yellow destination mini-map 和
+  fire-and-handoff 三条最终小地图点击均传 `WINDOW_RELATIVE` 的 resolver `relX/relY`。DHXY
+  `TurnInputActionMapper` 在 `TurnExecutionWindow` 已刷新后的 `TurnWindowRect` 上换算所有 mouse action。
+- 静态验证：`rel=(462,576)` 与 fresh `rect=(1374,134,1036,783)` 固定投影为 `(1836,710)`；三份共享协议
+  `TurnInputSpec.java`、`TurnInputCoordinateSpace.java`、`TurnProtocolValidator.java` 的 SHA-256 双仓一致；
+  `git diff --check` 通过。合同测试已写入
+  `TurnInputStepExecutorContractTest.windowRelativeMiniMapPointUsesTheFreshLocalWindowRectangle`。
+- 剩余风险：用户当前实例仍在运行，按 E28 未运行 Maven/JUnit 或 fresh-runtime/replay。下次停止客户端后应先运行
+  `mvn -Dtest=TurnInputStepExecutorContractTest test`，再重启 Client/Cloud 用阿三 `(134,19)` 走一次当前地图重试，
+  检查实际 click log 的物理点不再是旧 `(1674,708)`，且停点不再稳定落在 `(69,20)`。
+
+# 2026-07-31 江湖历练回城道具任务页按需校准（进行中）
+
+- 基线：`D:\mavenProject\DHXY-cr271` / `thin-client-design` / `origin/thin-client-design=2f083c14`；工作树已有并行 dirty/untracked，保持不回滚、不清理。
+- 现场：`06:47:15.444`、`06:47:20.820`、`06:47:28.276` 三次 `a3_return_item.png` 均已成功打开主包、命中 `anchor_cunkuan`、当前页 miss；随后均因 `main-bag task tab has not been calibrated` fail-closed。启动前 `06:45:32.924` 的校准因本地 role=`UNKNOWN` 被跳过。
+- 决策：不恢复固定第六页，不改回城模板。实际回城执行窗口已在同一个独占输入回调内打开背包并确认当前页 miss 时，直接用同一背包截图校准任务页并搜索；校准仍只写进程级页码缓存。运行实例存在，修改后仅做静态验证，不编译、不重启。
+- 已完成：`BagService` 的实际点击与 prescan 两条任务页路径均改为传入已打开的 `baseAnchor`；缓存为空时原地匹配 `task_tab_fallback_a/b`、反推页码，再执行原来的指定页搜索。没有恢复固定第六页，也没有新增开包、焦点或嵌套 input queue。`git diff --check` 通过；因用户实例仍运行，未执行 Maven/JUnit 或重启。
+
+# 2026-07-31 抓鬼初始独立复制（进行中）
+
+- 范围：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` 与 Cloud `D:\mavenProject\dhxy-cloud-brain` / `navigation-migration`；两仓均已有大量并行 dirty/untracked，严格不回滚、不覆盖、不清理。
+- 用户决策：新任务名为“抓鬼”。先完整复制当前江湖历练的所有任务承载点，随后只在抓鬼独立代码上修改业务；不得把抓鬼写成江湖历练的条件分支或别名。
+- 计划写集：两仓共享 `TurnTaskCode`/协议 validator、各自 `TaskType`；Client 的本地 dialog/观察/任务调度/UI 配置；Cloud `xinshoulilian` 的独立副本及工厂/策略；同名独立模板目录和本任务流程草案。用户实例正在运行，完成后只做静态一致性检查，不编译、不重启。
+- 已完成：Client 增加 `CATCH_GHOST` UI/次数持久化/启动协议映射、独立 `CatchGhostDialogLocalOperation`、
+  抓鬼标题和看打模板路径；Cloud 从 `xinshoulilian` 完整复制出 `task/zhuagui`，工厂创建独立 prototype，
+  Tracker、观察、组队准入、预期战斗与回城回放均允许 `CATCH_GHOST`。模板复制到 Client 的
+  `images/template/zhuagui`、`images/template/dialog/zhuagui`、`images/template/bag/zhuagui_return_item.png`
+  和 Cloud 的 `src/main/resources/images/template/zhuagui`，没有复用江湖历练的路径。
+- 静态验证：两仓 `TurnTaskCode.java`、`TurnLocalOperation.java`、`TurnProtocolValidator.java`、
+  `ObservationProtocolValidator.java` SHA-256 完全一致；两仓 `git diff --check` 通过。运行实例仍在，按 E28
+  未运行 Maven/JUnit、未重启 Client/Cloud、未做 fresh runtime/replay；首次运行应验证主控选择抓鬼后 Cloud
+  工厂实际创建 `CatchGhostTask`，并确认抓鬼次数不会写入江湖历练设置。
+- 2026-07-31 用户决策补充：抓鬼没有暗雷怪。Cloud 的 `CatchGhostTask`、`CatchGhostRoundContext`、
+  `CatchGhostPhase` 与抓鬼 Tracker 已移除抓鬼专属的暗雷识别、阶段/状态、飞行检测、`Alt+C` 下坐骑与
+  `WildBattleTask` 四点遇怪调用；天庭和江湖历练的暗雷逻辑保持不变。静态 `rg` 已确认抓鬼包与抓鬼
+  Tracker 均无活动暗雷引用，Cloud `git diff --check` 通过。运行实例仍在，未编译、重启或做 fresh runtime。
+- 2026-07-31 用户提供抓鬼专属 `zhuagui_title.png` 后，Client `QuestManagerService`、Cloud
+  `CatchGhostTask` 的接任务标题 gate，以及 Cloud `TaskTrackerPanelService` 的抓鬼 Tracker 标题匹配，
+  已从初始复制的 `a3_title.png` 统一切换到 `images/template/zhuagui/zhuagui_title.png`。PNG 已同步至
+  Cloud resources，SHA-256 双仓一致；运行实例仍在，未编译、重启或做 fresh runtime。
+- 2026-07-31 用户提供抓鬼唯一入战图 `jinzhan.png` 后，Client `DialogService` 的 `CATCH_GHOST`
+  本地看打路径已从不存在的初始 `kaida.png` 切换到 `images/template/dialog/zhuagui/jinzhan.png`；同一
+  PNG 已同步至 Cloud resources，SHA-256 双仓一致。修罗、江湖历练的入战图路径未改；运行实例仍在，
+  未编译、重启或做 fresh runtime。
+- 2026-07-31 抓鬼正式业务决策：接任务 NPC 改为地府 `钟馗 (29,55)`；不使用、不预扫回城道具，战后以
+  `COMBAT_EXITED` 为新鲜 Tracker 下限，title 在则续点绿链、title 消失则导航回地府。抓鬼不修装备；巫医
+  改用洛阳原修装备位置 `(324,109)`，三技能继续受用户全局开关控制。接任务模板改为用户提供的
+  `accept.png` 与 `cancel.png`：首次 accept 后无抓鬼 title，才执行“再点钟馗 -> cancel -> 第三次重新接取”。
+  旧江湖接任务模板和模板 miss Tracker fallback 必须物理删除。当前实例运行中，实施后只做静态验证，
+  不编译、不重启、不做 live 输入；正式视觉匹配仍需 raw/marked replay。
+- 2026-07-31 实施中：Client 抓鬼 dialog 已拆为 `accept.png` 的 `ACCEPTED/NOT_MATCHED` 与 `cancel.png`
+  的 `CANCELLED/NOT_MATCHED` 两个本地操作；Cloud 接取流程固定为 `accept -> fresh title`，标题未出现才
+  `钟馗 -> cancel -> 钟馗 -> accept`，不再走江湖模板 miss 的 Tracker green fallback。预期战斗退出改为
+  `POST_COMBAT_REFRESH_TRACKER`：仅在当前 `COMBAT_EXITED` 后重新读取绑定窗口的抓鬼 title，title 在则续绿链，
+  不在则正常导航回钟馗。抓鬼回城道具入口、移动预扫与修装备 hook 已从活动阶段机移除；新的共享
+  `TurnLocalOperation`/`TurnProtocolValidator` 已双仓 SHA-256 一致。E28 仍有效：未运行 Maven/JUnit、
+  未重启实例；待 fresh runtime 补 raw/marked replay。
+# 2026-07-31 抓鬼暗雷分支
+
+- 工作树：`D:\mavenProject\DHXY-cr271` / `thin-client-design`，当前本地提交 `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud：`D:\mavenProject\dhxy-cloud-brain`。两仓均已有其他未提交改动，本次只触及抓鬼暗雷的模板、Cloud Tracker 识别和抓鬼阶段机。
+- 实机 replay：`images/test-cases/zhuagui-darkthunder/current-window-recapture.png`。当前窗口 `hwnd=61F0D0C`，抓鬼 title 得分 `0.975541`，定位 `(24,311)`；任务框为 `(19,311,214x78)`；天庭 `anlei.png` 以 `0.988879` 命中该框 `(18,39)`，全窗口 `(37,350)`，阈值 `0.85`。
+- 可视证据：`images/test-cases/zhuagui-darkthunder/current-window-zhuagui-title-and-task-box-marked.png`、`images/test-cases/zhuagui-darkthunder/current-zhuagui-task-box-214x78.png`、`images/test-cases/zhuagui-darkthunder/current-zhuagui-task-box-anlei-marked.png`。
+- 用户批准实现：抓鬼绿链后的任务框一次性暗雷标记；到达/停下后仅暗雷分支下飞行并调用既有野外四点右键遇怪，战后新鲜 title 决定继续或回地府。普通看打链路不改。
+
+# 2026-07-31 抓鬼启动修复与链路残留收敛
+
+- 绿链确认：`CatchGhostTask` 与江湖历练 `XinshouTrainingTask` 均直接调用
+  `TaskTrackerPanelService.resolveXinshouTrackerGreenClickPoint(...)`；抓鬼没有另行计算或改用天庭算法。
+- 启动阻断修复：Cloud `BotProperties` 已补 `catchGhostMaxRuns`，
+  `CloudTurnRuntimeConfiguration` 已向 `CloudTurnTaskFactory` 注入 `CatchGhostTask` provider，消除重启脚本中 Cloud Maven 编译失败。
+- 任务自身收敛：删除抓鬼包内三个未引用的旧阶段壳类；任务状态、失败归档标题、日志和注释改为抓鬼语义。共享本地看打桥
+  `DialogOperation.XIULUO_ENTER_BATTLE` / `CloudXiuluoLocalClickState` 刻意保留，它按 `CATCH_GHOST` 选择抓鬼自己的
+  `jinzhan.png`，不改变本地 Runner 已验证的入战机制。
+- 验证：`D:\mavenProject\dhxy-cloud-brain` 已执行 `mvn -q compile`，通过。`git diff --check` 报出的
+  `src/main/resources/config/maps.json` 行尾空白属于既有并行脏改动，本次未触碰。用户决定接任务/title/看打的 raw+marked replay
+  不在本轮补，改由随后实机运行验证。
+- 客户端编译闭合：`LocalServiceStepDispatcher` 漏分派新加入的
+  `CATCH_GHOST_ACCEPT_DIALOG_TEMPLATE`、`CATCH_GHOST_CANCEL_DIALOG_TEMPLATE`，导致一键重启的 Client Maven 阶段失败；两者已按
+  修罗/江湖同类接任务模板路由至既有 `wholeTaskAdapter`。Client 与 Cloud 均已重新执行 `mvn -q compile` 并通过。
+- 10:16 实机启动根因：Cloud `CloudTurnRuntimeConfiguration` 已持有 `ObjectProvider<CatchGhostTask>`，但其
+  `@Import` 漏了 `CatchGhostTask.class`。因此 ACK 后 worker 无法 materialize 抓鬼 prototype，未发任何实际动作便终态失败。
+  已补该 `@Import` 项并重新执行 Cloud `mvn -q compile` 通过；必须重启现有 Cloud JVM 后才会生效。
+
+# 2026-07-31 抓鬼本地看打原图证据
+
+- 日志定位：`10:32:45` 起抓鬼本地 `jinzhan.png` probe 反复 `template-match=none`，此前代码只输出文字，
+  没有留下实际被匹配的 ROI。现已在 Client `DialogService.findTaskEnterBattleLocalTemplate(...)` 添加每次 probe
+  的覆盖式证据输出：每窗口 `images/temp/<windowId>/local_kanda_catch_ghost_latest_raw.png`（实际原始 ROI）、
+  `local_kanda_catch_ghost_latest_marked.png`（最佳框/分数/HIT-MISS）以及
+  `local_kanda_catch_ghost_template_used.png`（实际模板）。修罗、江湖历练也复用相同机制。仅写调试图，不改
+  匹配阈值、ROI、输入或任务状态机；写图异常 fail-open。
+- 静态验证：`D:\mavenProject\DHXY-cr271` 执行 `mvn -q compile` 通过；
+  `git diff --check -- src/main/java/com/bot/dhxy/service/DialogService.java` 通过。下一次实际本地看打 probe
+  后直接查看上述三张文件即可判断失败来源。
+
+- 用户确认仅保存 ROI 不足以审阅。现改为复用 `WindowObservationSampler` 已有的单周期 `1024x768`
+  shared frame：`latest_raw.png` 是该次完整窗口原图，`latest_marked.png` 在整图标出本地看打 ROI 与
+  最佳候选；精确裁片另存为 `latest_roi.png`，模板仍为 `template_used.png`。不新增 HWND 截图，不改变
+  匹配/点击决策。重新执行 `mvn -q compile` 通过。
+
+- 11:10 用户确认本轮完整原图有效，但要求抓鬼不再使用 `98x29` 窄条；Client
+  `DialogService` 的 `CATCH_GHOST_ENTER_BATTLE_LOCAL_ROI_*` 已改为既有完整
+  `small dialog=(250,345,529x143)`。以当时正在持续写入的完整窗口帧
+  `images/temp/hwnd-61F0D0C/local_kanda_catch_ghost_latest_raw.png` 复制后，用同一
+  OpenCV `TM_CCOEFF_NORMED` 重放，产物为
+  `images/temp/hwnd-61F0D0C/catch_ghost_small_dialog_replay_20260731_111052_raw.png`、
+  `..._roi.png`、`..._marked.png`；模板
+  `images/template/dialog/zhuagui/jinzhan.png`（75x18）在该帧最高分 `0.090599`，未达
+  `0.82`。标记原图显示该帧已经是战斗画面、small dialog 内不存在近战/看打按钮；本次结论仅证明
+  新 ROI 的实际重放结果，运行中 Client 尚需重启后才会加载新常量。`mvn -q compile` 通过。
+
+## 2026-07-31 抓鬼一品侍卫固定点：先做隔离测试，不接任务
+
+- 用户最新实测给定：到达长安小地图接近点 `(419,234)` 后，一品侍卫的实际屏幕绝对点击点为
+  `(1986,556)`；当前绑定窗口 `hwnd=102698252` 的 `GetWindowRect` 为
+  `(1401,162,1036,783)`，因此该点的窗口相对坐标为 `(585,394)`。
+- 本次只新增 Cloud Brain 的隔离测试，不修改 `CatchGhostTask`、任务 phase、导航或队长/队员广播。
+  计划验证请求严格使用 `MEMORY_FIXED_POINT_YELLOW`：记忆点 -> 固定窗口点 -> 黄字；
+  `tooltipType=NONE`，不得带 tooltip、公式或 Ctrl 菜单入口。
+- 基线记录：`D:\mavenProject\dhxy-cloud-brain` 当前 branch=`navigation-migration`，HEAD
+  `363d0e3 修罗五环云端V1版本`，工作树已有大量用户/并行任务 dirty 与 untracked 文件；
+  `CatchGhostTask.java` 尚未因本测试修改。不得清理、覆盖或提交其他改动。
+- 隔离测试源文件：
+  `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\bot\dhxy\task\zhuagui\YipinGuardClickPlanTest.java`。
+  因用户运行中的实例不得编译，尚未执行 Maven；测试只校验坐标投影与请求策略，不产生鼠标输入。
+- 点击前只读预检截图：
+  `D:\mavenProject\dhxy-cloud-brain\images\test-cases\npc\catch-ghost-yipin-guard\yipin-guard-live-raw-20260731-1401-0162.png`
+  与 `...\yipin-guard-live-marked-20260731-1401-0162.png`。当前画面尚未到一品侍卫，红点仅证明
+  相对 `(585,394)` 的投影，**不是**点击正确性验收；到长安 `(419,234)` 后必须重新抓 raw/marked，再做一次显式实机点击。
+
+- 用户随后明确：测试必须覆盖完整流程，而不是只做坐标投影。`YipinGuardClickPlanTest` 已扩展为五段有序隔离
+  流程合同：队长导航长安 `(419,234)` -> 到位确认 -> 固定点打开一品侍卫 -> 等待 OPTION dialog -> 全队广播固定第
+  `3` 行。每段失败立即中止，后续不得发生；仍未接入 `CatchGhostTask` 或正式任务 phase。
+- 第三行目前未有经用户实测的窗口相对像素，现有“医宝宝广播”又是模板匹配“医全部/修理”，不能冒充本次动作。
+  因此流程只传递明确 `optionRow=3` 机械语义，**不猜点击坐标、不调用巫医模板**；实机导航到位、打开一品侍卫 dialog
+  后先保存原图和第三行红点标记，确认真实相对坐标后才写实际 input adapter。
+- 用户当前运行实例，未执行 Maven 或任何鼠标输入；本次只写测试源与流程合同。
+
+### 第三行云端识别补正
+
+- 用户澄清：一品侍卫的第三行不允许写死坐标。它与既有“第一行”一样，必须由 Cloud 对当前 OPTION dialog
+  帧洗绿/黄字、识别从上至下的选项带后返回实际点击点；Client 只执行该已返回的原子点击。
+- Cloud `DialogOptionPolicy` 新增 `FALLBACK_OPTION_INDEX`，`DialogHandleRequest.fallbackOptionIndex(source, 3)`
+  传递一基选项序号；`DialogService` 新增对应的云端帧识别/点击分支。当前帧少于三条候选时 fail-closed，
+  返回失败且不点击。没有新增客户端绝对或相对坐标常量。
+- 运行中的实例未重启，未执行 Maven 或实机输入；下一步为把该能力接入一品侍卫完整显式测试入口，再由用户在
+  到达长安 `(419,234)` 的真实画面验证 Cloud 返回的第三行红框/点击点。
+- 用户进一步定案：一品侍卫第三行是**同队一次云端计算、全队相对坐标广播**，不是每窗口各自 OCR。
+  队长打开 dialog 后仅队长上传一帧；Cloud 返回第三条相对该 dialog/window 的点击坐标。广播载荷保存该
+  窗口相对点，同队每个窗口以自己的 `windowBase + relativeClick` 形成屏幕绝对点并提交同一原子点击。
+  队员不做截图、洗图、OCR 或独立坐标决策；不同队伍各有自己的队长计算/广播周期。
+- 已接入独立测试入口（不混入抓鬼正式任务）：Client 调试页按钮 `测试一品侍卫接任务` 仅接受同队多窗口选择，
+  启动隐藏任务码 `YIPIN_GUARD_TEST`。Cloud 原型任务的实际顺序为：队长导航长安 `(419,234)` -> 使用已定
+  `(585,394)` 窗口相对固定点打开一品侍卫 -> Cloud 从队长 dialog 帧解析第 3 条的窗口相对坐标 -> 临时同队
+  广播 -> 队长/队员各以自己 exact-window base 换算并执行同一原子点击。队员不单独截图或 OCR；候选不足三条、
+  导航/开 dialog 超时或输入失败均 fail-closed。
+- 当前用户实例仍运行，未执行 Maven 或点击测试；需要重启 Client/Cloud 后，在调试页选中该队窗口并点该按钮。
+
+### 一品侍卫显式测试入口交付补充
+
+- 用户要求入口必须真正可用，不允许停留在隔离计划。现已在 Client 的“调试”页加入隐藏于普通任务选择外的
+  `测试一品侍卫接任务`按钮：选中同队窗口后，仍复用既有远程启动的角色预检、队长先启动、成员并发启动链路。
+- Cloud 原型任务不重发导航：队长只向长安接近点 `(419,234)` 发起一次导航，随后由现有窗口观察持续更新的角色坐标
+  等待实际到位；一品侍卫自身目标事实为 `(422,233)`。到位后严格复用 SmartClick 的
+  `MEMORY_FIXED_POINT_YELLOW` 队列（记忆 -> 已确认固定窗口点 `(585,394)` -> 黄字，禁 tooltip/公式/Ctrl）。
+- 仅队长对实际 OPTION dialog 帧解析一次第 3 条绿色选项带，Cloud 产出窗口相对点击点；同队成员不截图/OCR，
+  只用自己的 exact `windowBase + relativePoint` 通过原子输入队列点击。候选不足三条、导航或 dialog 等待超时、坐标越界
+  或输入失败均 fail-closed。
+- 编译门：`D:\mavenProject\DHXY-cr271` 已执行 `mvn -q -DskipTests compile` 通过；
+  `D:\mavenProject\dhxy-cloud-brain` 的 Enforcer 禁止 `skipTests=true`，改执行 `mvn -q compile` 通过。
+  未启动游戏、未执行鼠标输入或实机任务；要加载这次新增 Client/Cloud 类，仍需重启两端后从调试页触发。
+
+## 2026-07-31 双倍状态剩余时间判断
+
+- 工作树：Client `D:\mavenProject\DHXY-cr271` / `thin-client-design` 只提供用户新增的
+  `images/template/status/shuangbei.png`；实现落在 Cloud `D:\mavenProject\dhxy-cloud-brain`，不修改
+  Client 状态截图流程。Cloud 工作树已有并行 dirty/untracked，本次精确写集仅为
+  `IncenseStatusRecognizer.java`、其被忽略但已存在的隔离测试源，以及新增 classpath 资源
+  `src/main/resources/images/template/status/shuangbei.png`。
+- 复用既有色妖箱状态 ROI：Client 已采集的 `123x34` 状态栏图，先按同一 `0.85` 阈值定位双倍图标，
+  再复用色妖箱的青色小时/绿色分钟数字模板和阈值读取。新只读方法为
+  `IncenseStatusRecognizer.isDoubleExperienceRemainingBelowTwentyMinutes(BufferedImage)`；严格
+  `< 20min` 才返回 `true`，恰好 `20min`、图标缺失、模板缺失或数字无法确认一律 `false`。
+- 模板资源已从 Client 图标复制到 Cloud classpath，SHA-256 两端一致：
+  `6BF8F001397E69A1A4516AA5C5680A239428DD3ECD740BE2B198D7A8B839EEA0`。隔离测试覆盖绿色
+  `19/20/21` 分钟与缺图标四种情况；Cloud 的 `src/test/**` 被仓库 `.gitignore` 忽略，因此该现有
+  测试源不显示在 `git status`。用户实例运行中，未执行 Maven；代码变更需重启 Cloud JVM 后才可加载。
+
+## 2026-07-31 G004 野外战斗自动战斗维护缺口
+
+- 基线：Cloud `D:\mavenProject\dhxy-cloud-brain` branch=`navigation-migration`，最新已推送提交为
+  `363d0e3 修罗五环云端V1版本`。`WildBattleTask.java` 为当前未跟踪实现；工作树其余大量 dirty/untracked
+  均为并行工作，未清理或覆盖。
+- 代码审阅确认原 `WildBattleTask` 在 Client Runner 已将当前窗口置为 `IN_COMBAT` 后仅释放 task turn 并等待
+  `COMBAT_STATE_CHANGED`，没有提交 `ALT_8`；因此野外战斗不维护自动战斗。修复为同一进战代仅提交一次
+  Cloud-to-Client `KEY_TAP ALT_8`，命令失败只在下一次一秒 combat wait slice 重试，不改变本地 Runner 战斗判断。
+- 组队语义同时对齐：`TaskTeamAssignmentPolicy` 将 `WILD_BATTLE` 作为 leader/solo 巡逻任务；`MEMBER`
+  转既有无限 `AUTO_BATTLE`，不会提交四点右键巡逻输入。
+- 合同：`WildBattleTaskContractTest` 断言 `ALT_8` 输入包；`TaskTeamAssignmentPolicyTest` 断言
+  `MEMBER -> AUTO_BATTLE`、`LEADER/SOLO -> WILD_BATTLE`。当前全仓 Maven compile 被并行未提交错误阻断：
+  `DialogService` 调用 `TurnWindowRect.right()/bottom()`（协议无此方法）及 `YipinGuardTestTask` 漏实现
+  `GameTask.stop()`；两者不在本修复文件内。改动生效需重启 Cloud JVM，随后以一次组队野外战斗验证：队长进战
+  日志出现 `G004 automatic combat maintained`，队员显示 `AUTO_BATTLE` 且不产生 `G004 right-click`。
+
+## 2026-07-31 一品侍卫测试启动预检修复
+
+- 现场失败证据：调试按钮首次测试未进入导航；`logs/dhxy-console.log` 记录五个窗口都在
+  `team-role:cr212:hover-capture` 的物理移鼠失败后，返回 `队长身份识别超时（30 秒），未启动任务`。
+  因此不是长安导航、NPC 固定点或第三行 dialog 识别失败，而是通用启动预检在任务创建前阻断。
+- 修复范围仅 `WindowTaskControlService`：一品侍卫显式测试不再调用通用 tooltip 预检；以已注册 leader
+  优先、否则按第一个已选窗口指定本次 `LEADER`，其余选中窗口为 `MEMBER`。启动元数据保留同一
+  `teamSessionKey`、队长先启动，Cloud 通过明确角色事实绑定上下文，不触发 tooltip OCR。
+- 验证：`D:\mavenProject\DHXY-cr271` 执行 `mvn -q -DskipTests compile` 通过。未伪造实机成功；需重启
+  Client/Cloud 后再次点“测试一品侍卫接任务”，预期首先出现队长向长安 `(419,234)` 的导航日志。
+
+## 2026-07-31 一品侍卫到点后未点击修复
+
+- 新鲜实机证据：重启后 `13:34:23` 五窗口均成功启动，队长 `hwnd-3AB11B6` 在 `13:34:45` 登记
+  `yipin_guard_test` 的长安 `(419,234)` pathing intent，并在 `13:34:59` 被本地 Runner 判为
+  `PATHING_TERMINAL=ARRIVED`、位置 `(417,234)`；但没有随后的一品侍卫点击，队长最终超时失败。
+- 根因：`YipinGuardTestTask` 错把 Cloud `GameContext.getMe()` 当作本地 Runner 坐标真相；该对象没有
+  接收 Client 到点事实。修复改为记录导航前 Ready-event sequence，读取 exact-window pathing intent，随后
+  只等待该 intent 的 `PATHING_TERMINAL`：`ARRIVED` 立即走已确认的固定点点击，`STOPPED_AWAY`/超时失败关闭。
+  不重发绿链导航。队员广播等待从 30 秒扩到 90 秒，避免队长正常导航超过 30 秒时先行超时。
+- 写集：Cloud `src/main/java/com/bot/dhxy/task/zhuagui/YipinGuardTestTask.java`；Client 仅更新本记录和
+  `docs/云端迁移常见错误清单.md`。两仓已有大量并行 dirty/untracked，未清理、未覆盖、未提交。
+- 验证：Cloud `D:\mavenProject\dhxy-cloud-brain` 已执行 `mvn -q compile` 通过。尚需重启本地 Client/Cloud
+  并由用户再次触发一品侍卫测试；验收日志应在 `PATHING_TERMINAL=ARRIVED` 后立刻出现
+  `MEMORY_FIXED_POINT_YELLOW` 的一品侍卫原子点击，再由队长解析第三行并广播。
+
+## 2026-07-31 一品侍卫按钮无可见动作修复
+
+- 新鲜日志显示首次点击后五窗口确实均已创建 remote turn；但诊断任务错误经过 `CloudTaskStartupPreparationService`
+  的通用 `Alt+1/Alt+U/Alt+5` 初始化，队长尚未导航就被第二次点击替换。随后 `Ctrl+Shift+F12` 全局停止结束
+  第二轮，故本次没有进入一品侍卫导航或到点点击。
+- 修复：Cloud 对 `yipin_guard_test` 与既有调试中的 `xinshou` 一样跳过通用启动准备；Client 测试入口发现任一
+  选中窗口已有 remote loop 时拒绝重复启动，不再覆盖正在执行的首轮。两处均不改变普通任务启动语义。
+
+## 2026-07-31 一品侍卫终点事件被错误 source 过滤修复
+
+- 新鲜实机证据：队长本轮已导航到长安 `(421,233)`，Cloud 收到 Client 的 pathing coordinate verdict；但
+  `YipinGuardTestTask` 随后仍报 `navigation timeout`，没有固定点点击。
+- 根因：测试任务把 intent source 写成必须完全等于 `yipin_guard_test`，而真实黄色导航会附带子路径 source
+  `yipin_guard_test:map:worldMap...`。因此任务忽略了自己当前 intent 的 `ARRIVED` 终点。
+- 修复：只校验 `source.startsWith("yipin_guard_test")` 和目标地图，再消费该 exact intent 的终点事件；
+  `ARRIVED` 立即调用 `MEMORY_FIXED_POINT_YELLOW` 的一品侍卫点击。
+
+## 2026-07-31 队长识别改为本地 Alt+T 菜单模板
+
+- 基线：Client `thin-client-design` 最新推送 `2f083c14`；本地 `LocalTeamRolePreflightService` 与
+  `WindowTaskControlService` 已有未提交 CR212 tooltip/OCR 改动。新鲜日志显示该路径在任务创建前反复
+  `hover-capture/reset`，25 秒后由紧急停止取消，实际启动 `0/5`。本次只替换角色识别机械链，不改任务业务。
+- 用户批准的新规则：每窗口以 exact HWND 输入队列执行 `Alt+T`；小地图放大镜模板消失即 `SOLO`。组队菜单
+  当前以已验证的 `hwnd-3AB11B6` 几何校准：窗口 base `(323,27)`，屏幕 ROI `(467,260)-(1210,617)`，故客户区
+  ROI 为 `(144,233)-(887,590)`，再按绑定窗口尺寸缩放；命中 `jiesan.png` 或 `transfer_leader_button.png` 即
+  `LEADER`，其余为 `MEMBER`。
+  随后以第二次 `Alt+T` 退出；放大镜未恢复时只再随机右键一次。`Alt+T` 后每 `500ms` 本地匹配一次，
+  最多 `5s`；未得到可读放大镜状态即作为启动前识别失败，整批不进入任务。tooltip、Cloud OCR、全窗口
+  hover 重试均不得执行。
+- 验证要求：增加本地模板匹配/角色分流测试；由于本轮不进行实机 capture/input，后续 fresh run 仍需保存
+  `Alt+T` 菜单 raw/marked replay，确认 ROI 和两个队长模板的命中框。
+- 代码验证：Client `mvn -q -DskipTests compile`、Cloud `mvn -q compile` 均通过。Client named test 被既有
+  `WindowTurnLoopContractTest:70,88` 的 `TurnClient` 非函数接口构造器失配阻断在 test-compile；该错误不涉及
+  本次队长识别文件。Cloud 的生产解析入口已禁止缺少本地事实时调用旧 `detect()`；该旧方法无生产调用者。
+- 固定角色豁免：`AUTO_BATTLE` 不开面板，直接 `MEMBER`；`WUHuan_V2` 与 `XINSHOU` 不开面板，直接 `SOLO`。
+  这三类窗口仍发送完整本地角色事实给 Cloud；`XINSHOU_TRAINING`（江湖历练）不在本次豁免范围。
+
+### 2026-07-31 补充：多窗口队长识别首命中收敛
+
+- 用户进一步收窄当前范围：动态组队预检默认本地批次只有一个队长；不处理多个队长，也不在该批次内推断
+  `SOLO`。五个窗口先各自发 `Alt+T`，随后各自用绑定 HWND 截图并行匹配 `jiesan.png`/
+  `transfer_leader_button.png`；首个命中通过原子 winner 成为 `LEADER`，其他选中窗口立即固定为 `MEMBER`。
+- 物理 `Alt+T` 仍经全局输入队列串行，避免输入交叉；截图和模板匹配并行执行。winner 出现后，其他匹配线程
+  在最多一个 `500ms` tick 内退出；所有已打开面板随后通过 `Alt+T` 关闭，只有关闭失败时才沿用右键恢复。
+  五秒内没有队长模板命中即整批拒绝启动，不能猜测角色后继续任务。
+- 合同新增：`LocalTeamRolePreflightServiceContractTest#firstLocalLeaderMakesEveryOtherSelectedWindowAMember`。
+  `mvn -q -DskipTests compile` 通过；named test 仍被无关的
+  `WindowTurnLoopContractTest:70,88`（`TurnClient` 已非函数接口）阻断在全仓 test-compile，未修改该非本卡失败。
+
+## 2026-08-01 天庭李靖面板“今日完成次数”权威校准（实施中）
+
+- 用户已确认：仅在天庭李靖接任务面板可见时，客户端上传只读截图给云端；云端从红字
+  `今日已完成天庭任务：N次` 读取当天权威次数。为不增加本地接任务等待，校验改为同一点击周期
+  已有的两帧：本地首次模板命中的共享帧与点击前 fresh-revalidate 帧；两帧得到同一合法整数 `N` 才允许把
+  天庭运行中的本地完成数**直接覆盖**为 `N`，并同步 UI 进度；OCR 不可用、格式不完整或三帧不一致时
+  保持本地计数，不阻断接任务。
+- 基线记录：Client worktree=`thin-client-design`，HEAD=`2f083c14`；Cloud worktree=`navigation-migration`，
+  HEAD=`363d0e3`。两仓均已有大量用户/并行任务的 dirty/untracked 改动；本项不回滚、不清理、不覆盖它们。
+  当前业务入口：Cloud `TiantingTask` 的 `completedSubtasks` 与 `runtimeClient(...).updateProgress(...)`；
+  Client `WindowObservationSampler.sampleTiantingDialogProbe(...)` 已在 `TIANTING_ACCEPT_TASK` 面板的共享帧上
+  本地匹配 `accept`。本项只扩展此接受面板的只读上传/云端 OCR/进度校准，不改本地接任务点击顺序。
+- 验收：保存李靖面板 raw、红字 mask、两帧 OCR 原文及一致结论；实机确认面板读数 `30` 时 UI 变为
+  `30/<配置目标>` 且后续只运行剩余次数。用户运行实例正在使用，实施阶段不编译、不启动、不重启。
+- 已实现：两张图只在同一 accept 点击周期里由既有 shared/fresh ROI 编码上传，不新增 capture、等待或
+  输入；Cloud 要求同 observerSeq 的精确 first/fresh ROI，红色 mask + 完整格式 OCR 后仅接受相同且
+  不小于当前数的 `N`。成功同步 `completedSubtasks`、`GameContext` 与 `runtimeClient.updateProgress`；其余
+  情形 fail-closed。实机证据生成到 Cloud `images/temp/tianting-daily-count/<windowId>/` 下的
+  `*-raw.png`、`*-red-mask.png`、`*-ocr.txt`，日志关键字为 `天庭 daily count calibration`。
+- 本次未运行 Maven、测试、runtime、UI/capture/input 或重启；用户实例运行中。仅执行 touched-file
+  `git diff --check` 静态空白检查。
+- P1 返修（review）：Cloud ROI 查询现通过 `CloudWholeTaskReadyEventState.exactObservationRunBinding(context)`
+  取得精确 `observationRunId`，不再错误使用业务 `taskRunId`；Client 仅在物理 accept click 返回后才 PNG
+  encode / 添加两张 ROI。点击前只做已有 frame 的内存副本以跨越既有 frame flush，不新截图、不等待。
+## 2026-08-02 自动挂机结束后 UI 控件恢复保护（实施中）
+
+- 用户现象：五个 `AUTO_BATTLE` 窗口达到 30 分钟后均已终止，但 UI 后续出现整页操作控件保持禁用。
+- 基线：`DHXY-cr271` 工作区存在大量并行 dirty/untracked 文件；本项只触及
+  `MainWindowController.java` 的后台窗口命令 UI 回调，不回滚、不清理其他改动。运行日志显示五个窗口均收到
+  `Cloud task terminal accepted ... status=SUCCESS`，且状态模型中 `STOPPED` 非 busy，故不能把问题归因于任务未停止。
+- 修复：结果处理 `handleWindowCommandResult(...)` 发生渲染异常时，原先后续的
+  `setWindowButtonsDisabled(false)` 不会执行。现改为 `finally` 必定恢复控件，并记录完整异常及用户可见提示。
+- 验证待办：下次任一窗口命令结果渲染异常时，日志应出现
+  `Window command UI result render failed; restoring task controls`，且所有窗口操作按钮恢复可用。
+
+## 2026-08-03 全量视觉证据保留与可追溯审查（实施中）
+
+- 用户要求：当天所有参与截图、模板匹配、OCR、dialog 判断、tracker、NPC、导航和云端动作计算的图片均必须保留；不得只留临时文件或只记日志。允许只清理昨天及更早日期，绝不删除当天证据。
+- 基线：Client worktree=`thin-client-design`，HEAD=`2f083c14`；Cloud worktree=`navigation-migration`，HEAD=`363d0e3`。两仓均已有大量用户及并行工作 dirty/untracked 改动，本项只新增诊断证据，不回滚、不覆盖任何现有业务改动。
+- 已完成第一轮入口审查：正常 HWND 成功截图统一经 `BoundWindowCaptureService -> WindowCaptureEvidenceStore`，现有实现会保留 raw PNG，但没有任务/ROI sidecar，也没有按日清理。Cloud `DialogService.prepareGreenTemplateOption(...)` 只在日志中记模板命中与点击坐标，未保存 raw、洗图或标记图，故无法把一次 dialog 模板判定与真实输入逐一核对。
+- 新鲜故障证据：`20260803_081215_719_441_HWND_PRINTWINDOW_314_574_1024x768.png`（窗口 `hwnd-5A01696`）显示五环接任务 dialog；随后 `08:12:16.396` 真实点击 `(639,1053)`，相对该窗口为 `(325,479)`，落在最后一项“没事路过，多多打扰”。该偏差约 50px，不能归咎于 `WuhuanDialogCatalog` 当前仅 `±4px` 的 Y 随机；必须补齐图像/动作关联后再定位产生该动作的真实链路。
+- 本项三轮审查：①本地所有成功 capture 的 raw/metadata/保留期；②云端视觉计算的 raw/washed/marked evidence；③下发 action 与客户端真实输入的 action-id、坐标、证据路径关联。每轮结论与验证命令将在本节继续追加。
+
+- 已实施：Client `WindowCaptureEvidenceStore` 继续同步保存每个成功 HWND raw PNG，并为每张图新增同名 `.meta`（窗口、当前任务/角色/状态、HWND、provider、screen ROI、图像尺寸、时间）。区域截图会同时保留裁剪前的完整 HWND 原图和裁后 ROI，避免只剩裁图而无法回放。每个自然日首次 capture 只清理 `images/captures/` 下可解析且早于当天的日期目录；当天目录绝不清理。
+- 已实施：Cloud 新增 `DialogVisualEvidenceStore`。`DialogService.prepareGreenTemplateOption(...)` 的每次命中/未命中都会保存 `raw.png`、`washed.png`、`marked.png` 和 `.meta`；青色十字是模板中心，红色十字是最终下发点击点。路径为 Cloud `images/evidence/dialog/YYYYMMDD/<source>/`，同样只删除旧日期。
+- 已实施：Client `LocalTurnActionExecutor` 在接收及结束一个 Cloud action 时记录 `actionId`、窗口/HWND、完整 step 类型与坐标、逐 step 终态和 frame metadata，补上原来只剩 `turn:input:step-*` 的关联缺口。
+- 第二轮审查结论：Cloud green-dialog 链此前是明确证据缺口，已关闭；其他 Cloud 视觉算法的输入均来自 Client 成功 HWND capture，现能由同日 raw/sidecar 和 action transcript 回放。第三轮审查确认没有第二个屏幕 capture provider 绕过 `BoundWindowCaptureService`；`Robot` 仅在鼠标控制器，不参与截图。
+- 静态验证：Client `mvn -q -DskipTests compile` 通过；Cloud 的 Enforcer 禁止 `skipTests=true`，执行 `mvn -q compile` 通过；两仓本项 touched-file `git diff --check` 通过。未启动 runtime、UI、截图或物理输入；下次 fresh run 必须检查 `logs/dhxy-console.log` 的 `[turn-action-evidence]` 和 Cloud `[dialog-evidence]`，并从上述目录打开 raw/marked 图核对。
+
+## 2026-08-03 G008 五环云端主导执行链收口审查
+
+- **启动阻断返修（11:38）**：五窗 `WUHUAN_V2` 已收到 Cloud 首个 `CAPTURE`，但 Client
+  `WindowCaptureEvidenceStore.persist()` 在观察线程同步删除多日 `images/captures`，使首帧回传阻塞超过两分钟。
+  保留当天证据规则不变；历史日清理由 `dhxy-capture-retention` daemon 后台单次执行，`persist()` 不再等待清理。
+- **接任务选项错点（11:48，Repair #2 已落地，待 fresh run）**：`316365558/hwnd-5900F1E` 已正确抵达云游大师并打开 option dialog，实际执行
+  `CLICK_LEFT (1412,876)`（窗口相对 `(332,478)`）并落在最后一项“没事路过，多多打扰”，不是串窗或未执行。
+  已与 `696a12b0` 基线对照：基线只截 `DIALOG_LARGE (640x300)` dialog ROI，洗图后在该 ROI 内匹配；当前 Cloud
+  将 `ExactWindowPreparedFrameCapture` 的整窗 `1024x768` frame 交给 `classifySuppliedDialogFrame`，后者把整窗误标为
+  dialogRect，`prepareGreenTemplateOption` 遂在整屏洗图中查找仅“我是大”的短模板。必须先把 supplied full-frame 裁回
+  基线 `DIALOG_LARGE` ROI，再匹配/换算坐标；并保存 raw/washed/marked evidence 与 actionId 的对应关系后才可重跑。
+  影响面已锁定为五环 `WUHUAN_DIALOG_FRAME_PURPOSE` 和 `WUHUAN_TITLE_REARM_FRAME_PURPOSE` 两条整窗 demand：
+  `wuhuan_accept_first_option.png`、`wuhuan_shop_buy_option.png`、`wuhuan_already_has_task_option.png` 及四张
+  completion story 模板都可能被错误整窗范围污染。新手/普通 dialog observer 传入的是带 ROI origin 的 frame，
+  不属于本缺陷。Repair #2 只把五环两条整窗入口内存裁为 `DIALOG_LARGE (200,250,640x300)`，然后继续走原有
+  `classifySuppliedDialogFrame -> wash -> ImageFinder(0.85) -> baseline X+20/Y±4`；不变更模板、阈值、候选顺序、
+  随机偏移或 Client 点击。新增 crop 由入口 finally 显式释放，整窗 frame 仍按原生命周期释放。
+  因用户运行中的 Java 进程尚在，本轮不编译覆盖 `target/classes`；fresh run 前需先停止旧 Cloud 进程、编译并重启 Cloud。
+- 基线：Client `thin-client-design@2f083c14`；Cloud `navigation-migration@363d0e3`。两个 worktree 均已有大量
+  用户/并行 dirty 改动，本审查不重置、不清理或覆盖它们。
+- 用户要求：把此前“Cloud 当大脑、Client Runner 只观察/受命匹配/执行、动作只能经 PreparedAction 唤醒消费”
+  的整体项目单独立卡，并由两名独立审查者和父级共同寻找所有仍可执行的旧五环链；旧链不能只在报告里存在，
+  必须成为后续明确删除/断开项。
+- 当前已知起点：08:12 的错误单步 option 点击来自旧 continuation 形态的高风险候选；本轮先完整画出
+  Client/Cloud 生产可达图、协议映射和基线差异，再决定精确删除集。禁止在审查未完成前临时改业务语义。
+
+- Repair #1 已完成：卡号统一为 `G008`；旧五环 accept continuation 的 Client 本地宏、Cloud handler/facade/
+  exchange、共享 operation/kind/directive/stage/frame-purpose、validator/dispatcher 和旧测试引用均已物理删除。
+  双仓 source compile 通过，全文零命中。当前只遗留 P2：把 prepared evidence/actionId 与最终 input actionId
+  形成一条强制可检索关联；该项不重新引入第二条动作链。
+
+- 14:49-14:53 fresh run 复盘（只读）：`316365558/hwnd-1EF1796` 的 option dialog 真实 click 是
+  `(512,509)`，窗口相对 `(321,478)`，即第四项“没事路过，多多打扰”；本地输入绑定和执行均正确。根因候选
+  已收窄为 Cloud 把 `WUHUAN_DIALOG_FRAME_PURPOSE` 的已裁 `640x300` frame 当整窗处理，固定 ROI/origin
+  与 frame metadata region 不一致。另，`hwnd-5900F1E` 接任务后保存帧已显示“五环”title 与绿链，然而没有
+  `WUHUAN_TITLE_PRESENCE=present`、tracker ROI 或 `PREPARED_ACTION_READY`，因此四个已接任务窗口全部 park。
+  下一步先对 `WuhuanPresenceLocalMechanics` title ROI/template/scale 做保存帧回放；不能绕过 runner 事实链。
+# G008 第 1 阶段移植到 cr271（待独立审核）- 2026-08-03
+
+- 工作树：`D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，起点 `2f083c14`；开始前已有大量 dirty/untracked，全部保留。
+- 对照基线：`D:\mavenProject\DHXY` 的 G008 第 1 阶段已独立审核通过；本次不修改根仓或 Cloud。
+- 写集：`WindowTaskControlService`、`MultiWindowTaskManager`、`WindowTaskRunner`、输入队列/worker/scope/sleep、`MainWindowController`、G008 文档和 dashboard。
+- 状态：第 1 阶段待独立审核（已移植到 cr271）。第 2 阶段未实施；未改变任务业务 phase、OCR/template、绿链或坐标。
+- Fresh 验收：重新启动后日志不得出现 `Start selected task flow: resume paused` 或 `Remote resume remains paused because the original window is not present`；应创建新的 remote run。
+# G008 第 2 阶段：暂停后屏幕热启动（2026-08-03）
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`（当前 shell 已验证）；根仓 `D:\mavenProject\DHXY` 与所有 cloud-brain worktree 均不在写集。
+- **当前分支：** `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`（`origin/thin-client-design`）；该分支无 upstream 配置。
+- **工作树：** 开工前已存在大量用户/其他卡的 dirty 与 untracked 文件；本卡只追加 G008 所需文件，绝不回滚、覆盖或清理既有改动。
+- **基线对照：** 已读取 `AGENTS.md`、`docs/DHXY_CONTEXT.md`、`docs/业务逻辑.md` 的本地/云端职责与热启动约束、`docs/云端迁移常见错误清单.md`、G008 卡及第 1 阶段计划。业务基线为“Cloud 决策 -> PreparedAction -> Client 输入 -> 结果事实”；本卡不改 OCR、模板、绿链、坐标和任务 phase 语义。
+- **实施目标：** 第 1 阶段 abort 后的下一次启动必须以当前绑定窗口的新观测恢复：本地模板先按既有语义消费并上报命中/执行结果；否则上传启动 dialog/frame/事实给既有 Cloud 通路；战斗中仅维持自动战斗，脱战后才按现有 tracker/title 与回城 fallback 继续。旧 handle/run 必须被 fence。
+
+## G009 修罗看打 probe 延迟诊断（2026-08-03）
+
+- 目标 worktree：`D:\mavenProject\DHXY-cr271`；当前 shell 已验证。根 `D:\mavenProject\DHXY` 与 Cloud worktree 不在写集。开始时该 worktree 已有大量 dirty/untracked，全部保留。
+- 只读现场：`22:49:17.339` 队长 `hwnd-10523A6` 到达大雁塔四层；`22:49:18.946` local-kanda 开始；`22:49:36.580` 用户暂停前没有 matcher 返回、点击或 combat edge。证据文件仅在 `22:49:44-46` 形成，marked 图最高候选 `0.0217`。
+- 结论：`DialogService` 在 `ImageFinder.find(...)` 前同步两轮写 raw/ROI/template/marked PNG，观察线程被诊断 I/O 卡住约 25 秒；不是 Cloud、输入队列或匹配阈值造成的等待。
+- 状态：仅完成诊断和错误清单登记，未改 Java、模板、阈值、输入或任务 phase。待用户批准后再按 G009 的“证据保留但热路径不等待 I/O”边界实施。
+
+## G009 修罗看打 probe 去除调试落盘（2026-08-03）
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`；当前 shell 已验证，分支 `thin-client-design`，HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`。根仓与 Cloud worktree 不在写集。
+- **开工状态：** worktree 原有大量 dirty/untracked，全部保留；本卡 Java 写集严格限于 `DialogService.java`，文档写集限于 G009 卡、架构卡和本记录。
+- **基线对照：** `origin/thin-client-design` 的 `DialogService.java` 不含 shared-frame 本地 probe 证据持久化；当前工作树的两处 `persistLocalEnterBattleProbeEvidence(...)` 是本次 25 秒阻塞的直接来源。
+- **用户批准：** 本地看打已完成调试，不需要再保存 raw/ROI/template/marked PNG。删除该专用持久化，不替换为后台队列。
+- **业务不变量：** 不改模板、ROI、阈值 `0.82` 的命中匹配、fresh revalidation、输入顺序或 Cloud fallback；仅让本地内存匹配不再等待磁盘 PNG 编码。
+- **已交付：** 删除两次 `persistLocalEnterBattleProbeEvidence(...)`、该私有落盘方法及其专用依赖；也删除只服务标记 PNG 的无阈值候选扫描。最终 probe 仅保留既有的 `ImageFinder.find(roi, template, 0.82)`。
+- **验证：** `mvn -q -DskipTests compile` 于 2026-08-03 通过；未启动应用或运行本地测试。下一次实机修罗 dialog 仅需确认点击不再被 PNG 落盘延迟。
+## 2026-08-03 G010 修罗维护补时、旧计划清场、位置同步与失败返程
+
+- 目标 Client worktree：`D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，
+  HEAD `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud worktree：
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均已有大量用户/并行任务改动，禁止回滚或覆盖。
+- 当前只完成调查与 G010 持久化，未改 Java、协议、运行时、UI、截图或输入。
+- 四项故障已拆开：①维护固定补时；②timeout 后 exact Client schedule/claim/ticket 清场；③Client 已更新
+  大雁塔位置但 Cloud task state 仍读灵兽村；④普通接任务入口被 stale near-NPC 捷径截走，未进入本会
+  fresh sync 的导航函数。
+- 用户确认预算规则：基础 `180s`；医宝宝触发 `+30s`；修装备触发 `+60s`；两者触发 `+90s`；同一 hook
+  重试只加一次，不计算精确维护墙钟耗时。
+- 已确认第二个 P1：Cloud 在 `22:23:33.551` 执行 `WHOLE_TASK_RECOVERY_RESET`，Client ACK 成功，但该操作
+  只清 pathing 与 observation pathing lineage，旧 `green-chain/local-kanda schedule` 未清；Cloud 同时直接重启
+  accept 流程并使用陈旧灵兽村位置/NPC memory，导致大雁塔四层同时出现旧看打点击和新接任务点击。
+- 下一步源码范围与验收门见 `docs/superpowers/plans/2026-08-03-g010-xiuluo-maintenance-budget-and-abandon-fence.md`；
+  必须先完成 exact-attempt 清场和恢复到起点的连通性审核，才能 fresh run。
+
+## 2026-08-03 G008 五环 23:58 fresh-runtime 事实链断裂复盘
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`；本次只读日志后追加 G008、错误账本和本记录。Client/Cloud 两仓
+  既有大量 dirty/untracked 全部保留，未改 Java、协议、模板、运行时或输入。
+- **四窗已接任务却不动：** `hwnd-1EF1796`、`hwnd-4C31E2A`、`hwnd-5900F1E`、`hwnd-10523A6` 的
+  `wuhuan accept input-attempt-completed` 分别出现在 `23:57:57`、`23:58:15`、`23:58:36`、`23:59:28`；随后 title
+  均以约 `0.994` 命中。Cloud 却持续得到 `runner-prepared-tracker-action-not-ready` 与 `prepared dialog peek absent`，
+  每 `900ms` 放权重试，未生成任何 Tracker PreparedAction、绿链点击或导航。
+- **光牛的滑子°未接任务：** `hwnd-F550FC6` 在 `23:58:19-22` 已完成云游大师 tooltip 点击并 `VERIFIED`，
+  `23:58:24` 已上报 dialog `present`；后续没有 `wuhuan accept input-attempt-completed` 或 PreparedDialogAction，不是
+  焦点/输入队列堵塞。Cloud 同类日志对多窗报 `wuhuan dialog demand attempts exhausted: ... attempts=3
+  waitingForInterestTerminal=true`，说明一次性 dialog demand 三次均未完成 Client frame → Cloud accepted frame →
+  PreparedAction 的交接。
+- **结论：** G008 fresh-runtime 验收失败，根因归属为 exact observation/demand handoff，不能归咎为“接任务慢”或
+  “title/绿字模板未识别”。返修必须先为每个 demandId 增加 Client 收到 capture、上传、Cloud accepted、prepare、publish
+  的可追踪终端，再修复断点；不得以本地直接点击或常驻扫描绕过。
+- **精确根因补充：** Client 空闲 observation 心跳与 Cloud 五环 demand TTL 都是 `5000ms`。presence 请求的响应先
+  返回，Cloud observer 才异步建 demand；Client 下一次 5 秒轮询到达时 demand 已过期，三个 attempt 均落入同一
+  竞争窗口。未完成 dialog chain 同时挡住 `probeTrackerPreparation`，所以一个窗口不点接受、四个窗口接完不点绿链
+  是同一根因。当前只完成诊断与记录，未实施 Java 修复或启动任何测试/运行时。
+
+## 2026-08-04 G008 Repair #4 worker 返修
+
+- **目标与 shell：** `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud 为 `D:\mavenProject\dhxy-cloud-brain`，分支
+  `navigation-migration`，HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓均有大量既存
+  dirty/untracked，全部保护，不回滚、不覆盖、不清理、不提交。
+- **问题 A：** parked poll 与五环 exact demand lease 同为 `5000ms`，presence response 先于异步 demand 创建，
+  因而三次 demand 均在 Client 下一次 poll 到达前过期。
+- **问题 B：** demand attempts 耗尽只写日志、不退休 presence episode，导致
+  `wuhuanDialogChainPending(...)` 永久阻断新 title/Tracker event，matcher 实际从未被调用。
+- **业务基线：**只恢复“接任务 dialog 与接任务后的绿色链接都能按 exact fresh frame 推进”；不改模板、ROI、
+  matcher、点击坐标、option 顺序、phase 或输入序列。active demand/未消费 prepared action 仍互斥；只有已终止的
+  旧 episode 不得继续挡住新事实。
+- **父级文档写集：**`docs/PACKAGE_ARCHITECTURE.md`、`docs/云端迁移常见错误清单.md`、
+  `docs/ACTIVE_WORK.md`、`docs/cr-dashboard-data.js`。**worker Java 写集：**Client 仅
+  `WindowObservationRunner.java`；Cloud 仅 `CloudWholeTaskObserver.java`，可少不可多。
+- **验证边界：**按 no-local-test 规则不新增/运行测试，不启动 runtime/application/UI/capture/input；Java 改动完成后
+  对实际触及仓分别执行 Maven 编译门，由父级复核 diff、行为边界与 fresh runtime 验收日志点。
+- **父级首轮 review：P1=2，已退回同一 worker。** 第一版 retired 后没有在 dialog demand 入口跳过同一
+  presence，reset 后会从 attempt 1 重建；同时错误地用 retired seq 压制 Tracker title freshness，可能丢掉同帧
+  有效 title/ROI。要求按 G008 Repair #4 卡内精确证据返修；当前不得交给用户 fresh run。
+- **返修与父级复核完成：**同一 retired presence 现在在 active-interest 检查后、demand 消费/创建前被跳过；
+  new interest/new presence seq 可重新尝试。Tracker title 不再比较 retired seq，只保留真实 dialog evidence 门；
+  active demand、awaiting action、title rearm 仍阻止并发输入。Cloud demand lease 调整为 `15000ms`，Client 保持
+  `5000ms` parked heartbeat，并补齐 request/receive/capture/upload/accept/publish 的 demandId 日志。
+- **门禁：**父级复跑 Client `mvn -q -DskipTests compile` exit 0、Cloud
+  `mvn -q -DskipTests=false compile` exit 0；目标 diff check 通过。未运行测试或 runtime。状态为
+  `SOURCE REVIEW PASSED / P0/P1/P2=0 / fresh runtime pending`，G008 尚未关闭。
+
+## 2026-08-04 G010 实施与父级终审
+
+- **目标工作树：** Client `D:\mavenProject\DHXY-cr271`（`thin-client-design`），Cloud
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`）；根仓 `D:\mavenProject\DHXY` 未修改。
+- **实施范围：** fixed maintenance budget、exact-attempt abandon ACK、exact-window position bridge、
+  force-accept recovery。未更改模板、ROI、物理输入顺序或导航算法。
+- **父级生产审查：** stale/wrong identity 清场为 no-op；同 attempt `IN_COMBAT` 优先；Cloud 只有收到成功
+  exact ACK 才恢复；位置桥带 tenant/device/window/run/seq fence；恢复先 fresh sync 并走既有
+  `navigateToNPC`。结论 `P0/P1/P2=0/0/0`。
+- **机械门：** 双仓共享协议 SHA-256 一致；Client/Cloud 生产编译均 exit 0；目标 `git diff --check` 仅有
+  既存 CRLF 提示，无 whitespace error。
+- **测试门：** worker 隔离副本 G010 定向测试 Client `6/6`、Cloud `5/5` 全通过。父级在当前 dirty
+  worktree 直接执行 Maven 定向测试，被本卡之外的既存 testCompile 漂移阻断；已在 G010 卡记录具体错误，
+  不误报为 G010 用例失败。
+- **状态：** `SOURCE+TEST REVIEW PASSED / fresh runtime pending`。由于 Client 和 Cloud 均有生产改动，
+  fresh run 前必须同时重启两端，并按 G010 卡的五个日志门验收。
+## 2026-08-04 / G008 23:58 五环停滞根因更正（调查完成，待批准修复）
+
+- 当前工作树：Client `D:\mavenProject\DHXY-cr271`，Cloud `D:\mavenProject\dhxy-cloud-brain`；两仓既有
+  dirty/untracked 全部保留。本轮只读源码/归档日志/现场截图并更新文档，没有修改生产 Java。
+- 更正此前结论：`5s` demand TTL 不是 `hwnd-5900F1E` 失败的根因。presence `observerSeq=97` 后 exact
+  `1024x768` full-window frame 已到 Cloud，并被正确分类为 `SMALL STORY`；同一 demand 随后记录
+  `retained without ACK ... reason=no-prepared-action`。将 TTL 改为 `15s` 只延后症状。
+- 当前 interest `tracker-miss-accept-returned-already-has-task` 只处理 `VERIFY_EXPECTED_DIALOG + OPTION`；实际是
+  任务说明 `STORY`，所以没有 PreparedAction。observer 未把这个确定的不匹配收敛为终态，反而让
+  `wuhuanDialogChainPending(...)` 在 Tracker matcher 之前持续返回，屏幕上已有的绿色链接无法生成动作。
+- 正确方向：恢复基线 Tracker-first 顺序；只有真实待消费 dialog action 才阻止 Tracker 输入；exact frame 与当前
+  interest 明确不匹配时立即终止该 attempt 并释放 gate，不让业务推进依赖 `5s/15s/20s` 超时。等待用户明确批准后
+  再改代码并补契约/回放门。
+- 证据：Client `logs/archive/local-stack-client.out.20260804-022524.log:64592`；Cloud
+  `logs/archive/local-stack-cloud.err.20260804-022524.log:78437-78439`；现场图
+  `images/captures/20260804/hwnd-5900F1E/20260804_000002_226_83456_HWND_PRINTWINDOW_82_76_1024x768.png`。
+- 继续向前追到状态丢失：接任务点击已确认，日志明确写 `keep ACCEPTED`，但三个
+  `TASK_ACCEPTED_NEEDS_SYNC` 调用分支只 `state.next(SYNC_TASK_PANEL, ...)`，没有
+  `withTaskAccepted(...)`，所以紧随其后的 outcome 仍为 `accepted=false`。过渡期 exact `TASK_NOT_FOUND` 因而错误触发
+  `tracker-miss-accept-returned-already-has-task` fallback；新 Tracker 出现后，旧 fallback 又没有失效，形成闭环阻断。
+## 2026-08-04 / G008 已接任务却进入 accept fallback：批准实施
+
+- 用户已批准按调查结论修复。运行代码目标为 Cloud worktree
+  `D:\mavenProject\dhxy-cloud-brain`，分支 `navigation-migration`，HEAD/latest pushed
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`（`origin/navigation-migration` 同点）；该仓现有大量
+  dirty/untracked，全部保护，不回滚、不覆盖。Client `D:\mavenProject\DHXY-cr271` 仅更新 G008 文档。
+- 精确运行代码写集：Cloud `FiveRingTaskV2.java`、`CloudWholeTaskObserver.java`；测试写集仅限 G008 五环契约/回放测试。
+- 实施边界：确认 accept click 后写入 `taskAccepted=true`；已确认接受后禁止 `already-has-task` fallback；exact
+  dialog frame 与当前 interest 无匹配动作时 ACK 并退休当前 presence，释放 Tracker gate；只有真实待消费 dialog
+  PreparedAction 阻止 Tracker。恢复 worker 的 `15s` 伪修为原 transport lease，不修改模板、ROI、绿链算法、点击点、
+  option 顺序或物理输入顺序。
+- 已交付：Cloud `FiveRingTaskV2.java`、`CloudWholeTaskObserver.java` 和 G008 定向测试/现场回放资源。生产 compile 门
+  `mvn -q -DskipTests=false "-Dmaven.test.skip=false" compile` 通过。
+- 定向回放输入 `post-accept-story-tracker-raw.png` 得到 `panel=true title=true links=2 click=(204,260)`；输出
+  `D:\mavenProject\dhxy-cloud-brain\images\test-cases\wuhuan\g008\post-accept-story-green-link-marked.png`。
+  `G008WuhuanTrackerReplayTest` 通过手工定向 `javac` + `java` 执行三项断言。直接 Maven test 被仓内既有测试源码
+  与当前生产构造器/协议枚举不同步阻断，未扩大本次写集。
+- 当前状态：静态交付完成，等待 fresh runtime 验收；未启动 application/runtime/UI/capture/input。
+
+## 2026-08-04 / G005 封妖符到点后跳过直战：运行审计
+
+- 目标工作树：Client 文档 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；运行代码只读核对 Cloud
+  `D:\mavenProject\dhxy-cloud-brain`。两仓现有 dirty/untracked 全部保护，本轮未改业务代码、未运行测试。
+- 证据：Client `logs/dhxy-console.log` 的 `05:48:29-05:50:17`；Cloud
+  `logs/local-stack-cloud.err.log:15893-15922`；Cloud
+  `TiantingTask.runFengyaofu` 的 exact task-box fingerprint 比较位于待到达坐标处理之前。
+- 结论：第 1 坐标点击、移动、`STOPPED_AWAY` 均成功；Cloud 把同一封妖符任务框的 strict fingerprint mismatch
+  错判为 `sub-quest advanced`，清掉封妖符分支，跳过 `Alt+A`，随后反复重点绿链。根因、修复边界和 fresh gate
+  已写回 G005；等待用户批准后再改行为。
+
+## 2026-08-04 / G005 任务框原图相似度修复：已批准实施
+
+- **目标 worktree：** Client 文档位于 `D:\mavenProject\DHXY-cr271`（`thin-client-design`，HEAD/latest pushed
+  `2f083c14`）；运行代码位于 Cloud `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration`，HEAD/latest
+  pushed `363d0e3f`）。两仓既有大量 dirty/untracked 全部保护，不回滚、不覆盖、不清理、不提交；根仓
+  `D:\mavenProject\DHXY` 不修改。
+- **精确写集：** Cloud 仅 `TrackerTaskBoxContentComparator.java`、`TaskTrackerPanelService.java`、
+  `TiantingTask.java`、`TiantingRoundContext.java`；Client 仅本记录、G005 计划与常见错误账本。
+- **用户批准的判据：**完整 task box ROI 保持原分辨率和原 RGB，直接做归一化相关系数；不洗背景、不洗色、
+  不用 OCR 关键词代替图片比较。`score >= 0.80` 视为同一内容，低于 `0.80` 才确认变化；不可读或尺寸不一致
+  为 `INDETERMINATE`，保持 fail-closed。
+- **已有原图实验：**20 张既有天庭 task-box 原图形成 21 组同内容、169 组不同内容；同内容最低 `0.8993`，
+  不同内容最高 `0.5524`，阈值 `0.80` 对当前 190 组全部分开。联系人图：
+  `images/temp/analysis-taskbox-raw-contact-sheet.png`。
+- **行为边界：**封妖符已有待到达坐标时，必须先等待 Runner 终态并执行 `Alt+A` / 妖王幻影直战；不得由
+  任务框比较抢先离开分支。比较复用 prepared tracker action 已携带的同帧 task box，不新增截图或网络 OCR。
+- **实施与门禁：**Cloud 四文件已完成；天庭封妖符、战后暗雷连续性、小任务计数和三分钟 watchdog 均改用
+  同一 `0.80` 原图比较，不再保留 strict-equals 分支。比较日志只写 score/threshold/尺寸/短 hash。
+  `mvn -q -DskipTests=false "-Dmaven.test.skip=false" compile` exit `0`；按项目 no-local-test 规则未运行测试，
+  未启动 runtime/application/UI/capture/input。fresh run 仍需验证
+  `fengyao-coord -> STOPPED_AWAY -> Alt+A -> 妖王幻影`，首次直战前不得再出现 reclick。
+
+## 2026-08-04 / G005 封妖符直战跳过坐骑检查：已批准实施
+
+- **目标 worktree：** Client 文档 `D:\mavenProject\DHXY-cr271`；Cloud 运行代码
+  `D:\mavenProject\dhxy-cloud-brain`。保护两仓全部既有 dirty/untracked，不回滚、不覆盖、不清理、不提交；
+  受保护根仓 `D:\mavenProject\DHXY` 不修改。
+- **基线与现状：** Cloud 分支 `navigation-migration`，HEAD/latest pushed `363d0e3f`。当前
+  `TiantingTask.enterFengyaofuCombat` 只允许记忆点和可见 tooltip，但调用的二参直战入口中 `true` 仅允许
+  `UNKNOWN` 坐骑状态继续；确认 `FLYING` 时仍会执行 `Alt+C`，与方法注释和用户业务规则不一致。
+- **精确写集：** Cloud `NpcClickService.java`、`TiantingTask.java`（仅必要调用/注释）及对应定向测试；Client
+  仅本记录和 G005 计划。
+- **批准行为：**封妖符坐标到达后不执行 `Alt+U` 坐骑探测、不执行 `Alt+C`，直接登记直战 claim、进入
+  `Alt+A`，并仅走记忆点/tooltip。默认直战入口、修罗/五倍和天庭暗雷的飞行检查/下坐骑行为保持不变。
+
+### 实施与验证结果
+
+- Cloud `NpcClickService.tryDirectCombatTargetClick(request, boolean)` 的参数已由“允许 UNKNOWN”收紧为
+  `skipFlyingCheck`：`true` 时整段跳过 `detectFlyingStateTurn` 和 `Alt+C`；expected-combat、`Alt+A`、失败退出和
+  点击管线均保持原顺序。无参默认入口仍固定传 `false`，生产二参 `true` 只有天庭封妖符一处。
+- `TiantingTask.enterFengyaofuCombat` 保持原 request、task-turn 和点击策略，只明确启用上述跳过策略；暗雷分支未改。
+- Cloud production compile：`mvn -q -DskipTests=false compile`，exit `0`。
+- 定向 Maven test 被本卡外既有 testCompile 漂移阻断，首批错误为旧 `DialogService` 构造器参数数量不符以及
+  `TurnProtocolValidatorContractTest` 仍引用已删除枚举。未扩大写集修这些欠账。
+- 本卡合同测试已用隔离方式单独 `javac` 编译，并通过 JShell 反射执行
+  `fengyaofuExplicitlySkipsMountPreflightWithoutChangingTheOtherTasks`，输出
+  `SINGLE_CONTRACT_TEST_PASSED`。`git diff --check` 通过；未启动 runtime/application/UI/capture/input。
+- Fresh runtime 门：封妖符坐标 `STOPPED_AWAY` 后必须直接出现 expected-combat/`Alt+A`，不得出现
+  `npc-direct-combat:pre-alt-a` 的 `Alt+U` action 或 `npcClick:directCombat:altC-dismount`；随后记忆点/tooltip
+  点击妖王幻影并进入 `IN_COMBAT`。
+## Codex - 2026-08-05 / G021 导航黄字记忆一次性迁入云端 scoped store
+
+- Target worktrees: `D:\mavenProject\dhxy-cloud-brain`（实现）与 `D:\mavenProject\DHXY-cr271`（卡片/证据）；受保护的 `D:\mavenProject\DHXY` 只读，绝不修改。
+- Cloud branch/HEAD: `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`；CR271 branch/HEAD: `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`。
+- 现状证据：旧权威文件 `D:\mavenProject\DHXY\config\world_map_route_result_memory.json` 有 94 条、29 条 `clean=true`、累计成功 405；当前 Cloud scoped store 只有 8 条、0 条 `clean=true`。最新五环日志为 3 次 lookup miss、3 次 pending created、0 次 fast-path use。
+- 用户裁决：旧仓库全部一次性覆盖到新 Cloud scoped store；迁移后不再读取旧仓库。迁移必须随 Cloud JAR 部署，并以版本标记保证同一版本只覆盖一次，后续运行学习不被每次重启抹掉。
+- Exact write set:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\bot\dhxy\service\WorldMapRouteResultMemoryService.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\resources\config\world_map_route_result_memory_seed.json`
+  - `D:\mavenProject\dhxy-cloud-brain\src\test\java\com\bot\dhxy\service\WorldMapRouteResultMemorySeedMigrationTest.java`
+  - `D:\mavenProject\dhxy-cloud-brain\.gitignore`（仅放行本卡隔离测试源）
+  - `D:\mavenProject\DHXY-cr271\docs\PACKAGE_ARCHITECTURE.md`
+  - `D:\mavenProject\DHXY-cr271\docs\ACTIVE_WORK.md`
+  - `D:\mavenProject\DHXY-cr271\docs\cr-dashboard-data.js`（仅卡片摘要变化时由生成器更新）
+- Implementation result: Cloud JAR 内置种子与旧权威文件 SHA-256 完全一致；迁移版本首次加载完整覆盖
+  scoped store，只有持久化成功才切换 cache；同版本后续加载保留运行学习。
+- Verification: Cloud production compile exit `0`；隔离 JUnit `WorldMapRouteResultMemorySeedMigrationTest`
+  `1/1` 通过。标准 Maven test 被本卡外既有 testCompile 漂移阻断，未扩大写集。
+- Runtime 未启动。fresh restart 后须验证 scoped store 版本/94 条记录及 `yellow fast path used`。
+- Review finding: 五环和天庭缺少 `consumePendingRouteOutcome(...)`，所以 watcher 能判终态但 Cloud 不会
+  `recordSuccess/recordFailure`；已作为 G021 `P1 OPEN` 写回卡片，本次未越权改变任务行为。
+- User approval: 继续完成 G021，补齐五环/天庭 task-owned pending outcome consumer。
+- Behavior-repair baseline: Cloud `navigation-migration` / `363d0e3f`；该 pushed baseline 的
+  `FiveRingTaskV2` 没有 route-outcome consumer，`TiantingTask` 在当前迁移工作树为既有 untracked 任务实现。
+  修改前已保存两文件当前 `git status` / `git diff` 证据；所有既有 dirty/untracked 原样保护。
+- G021 behavior-repair write-set extension:
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\bot\dhxy\task\wuhuan\FiveRingTaskV2.java`
+  - `D:\mavenProject\dhxy-cloud-brain\src\main\java\com\bot\dhxy\task\tianting\TiantingTask.java`
+- Approved boundary: 复用修罗/五倍 exact terminal 栅栏；仅 task owner 可消费 pending transfer/world outcome；
+  watcher 仍只判定，不直接写 Cloud 记忆。结算必须发生在 clear pathing 之前，并按新 terminal sequence 幂等。
+- Implementation: `FiveRingTaskV2` 和 `TiantingTask` 已补 task-owned pathing consequence consumer；exact
+  `taskRunId/windowId/hwnd/intentId/state/sequence` 全部一致才依次消费 transfer/world pending，并调用
+  `MemoryService` 结算。五环在 phase boundary 与终态 clear 前执行；天庭在 `PATHING_TERMINAL` wake 与统一
+  release 入口执行，ACTIVE intent 不消费、不清理。
+- Verification: 行为修复后 Cloud production compile `mvn -q -DskipTests=false compile` exit `0`；两任务源码
+  顺序审计输出 `G021_SOURCE_CONTRACT_PASS exact fences + transfer-before-world present in Wuhuan/Tianting`；
+  `git diff --check` 通过（仅既有 LF/CRLF 提示）。未启动 runtime/application/UI/capture/input。
+- Fresh gate: 五环和天庭各跑一条世界地图黄字路线，要求 exact terminal 后、clear 前出现一次且仅一次
+  `[world-map-route-memory] pending success|failure`，并确认 scoped store 对应计数变化。
+
+## Codex - 2026-08-05 / G022 exact-frame 请求取消时间租约
+
+- Target worktrees: Client `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `2f083c14`），Cloud
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` / `363d0e3f`）；保护两仓全部既有 dirty/untracked，
+  不回滚、不覆盖、不提交；受保护基线 `D:\mavenProject\DHXY` 不修改。
+- Runtime evidence: 五环 `hwnd-93B12C4` 与 `hwnd-E5F0A78` 已打开正常 `OPTION`；后者 attempt 2 于
+  `01:30:56.187` 收到、`01:31:01.054` 过期、`01:31:04.245` 才截图。5 秒租约先于普通采样完成，Cloud 三代
+  demand 全部退休，没有生成可点击 `PreparedAction`。
+- Approved invariant: exact-frame demand 只由 exact ACK、显式 cancel 或新阶段替换结束，不再由墙钟结束。
+  Client 优先处理 Cloud 明确请求，再做普通采样。动作后态失败由 Cloud 明确发起下一次图片请求，不复用传输超时。
+- Exact write set: 双仓 `ObservationPreparedFrameDemand` / `ObservationProtocolValidator`；Client
+  `WindowObservationRunner` 及连通性合同；Cloud `CloudWindowObservationInbox`、`CloudWholeTaskObserver`、
+  `NpcClickService`、`.gitignore` 仅放行本卡连通性合同；本卡、dashboard 数据。
+- Implementation complete: prepared-frame 协议不再有 `expiresAtMs`；Cloud inbox 只按 exact ACK/cancel/replacement
+  结束 demand；五环删除 5 秒三代重发/退休；Client exact capture 前置到普通 sampler 之前。
+- Verification: 双仓 protocol SHA-256 一致；双仓 production compile exit `0`；隔离合同 Client 4/4、Cloud 2/2
+  通过。标准 Maven test 分别被既有已删除类引用和旧构造器/枚举 testCompile 漂移阻断，未扩大本卡写集。
+- Status: SOURCE + ISOLATED CONTRACT REVIEW PASSED / FRESH RUNTIME REQUIRED。必须同时重启 Client/Cloud，验证
+  五环同一 demand 即使等待超过旧 5 秒仍上传并产出 `PreparedAction`。
+## Codex - 2026-08-05 / G023 五环鞋店精确导航 intent 登记与终态 Park
+
+- Target worktrees: Client governance `D:\mavenProject\DHXY-cr271` (`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`)；Cloud implementation
+  `D:\mavenProject\dhxy-cloud-brain` (`navigation-migration` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`)。两仓现有 dirty/untracked 全部保护，不回滚、不覆盖、不清理、
+  不提交；受保护基线 `D:\mavenProject\DHXY` 不修改。
+- Latest pushed comparison: Cloud pushed baseline `363d0e3f` 与当前 dirty 路径均保留鞋店 immediate
+  fire-and-handoff 特例；当前实现把该分支 `TurnPathingIntent` 设为 `null`，随后调用的
+  `registerWindowPathingIntent(...)` 仅记录 Cloud trace。Client `LocalTurnActionExecutor` 只会在完成的
+  `TurnAction.pathingIntent != null` 时调用 `markPathingStarted(...)`。
+- Approved business rule: 长安 `(130,130)` 点击完成并关闭小地图后立即放权；Cloud 按 exact intent 无限 park，
+  只等 `ARRIVED/STOPPED_AWAY`。终态后先 fresh-check `牛记布店`，否则在 exact `(130,130)` 继续既有门口处理。
+  现有飞行检测/下坐骑流程保持原样。
+- Exact write set: Cloud `NavigationResult.java`、`NavigationService.java`、`FiveRingTaskV2.java`、
+  `FiveRingPhaseContext.java`、一条 G023
+  定向合同及 `.gitignore` 的单文件放行；Client 本记录、G023 卡和生成的 dashboard 数据。
+- Implementation: shoe-shop immediate click now carries a non-null exact `TurnPathingIntent`; its
+  `intentId` returns through `NavigationResult`. `FiveRingTaskV2` releases the coarse turn and calls
+  `awaitNewerPathingTerminalOrPreparedRoute(..., timeout=-1)` for that exact id. The shoe branch no longer
+  converts `PATHING_OBSERVER_FAST_WAIT_MS` expiry into a second world-map navigation. Its pathing timestamp is
+  frozen before click/register so mini-map close latency cannot make the new intent look stale. Existing
+  door/flying handling was not edited.
+- Verification: Cloud production compile PASS; isolated source contracts G023 + existing Xiuluo
+  fire-and-handoff `2/2` PASS. `git diff --check` only reports pre-existing trailing whitespace in
+  `src/main/resources/config/maps.json`. Runtime/UI/input/capture not started. Fresh gate: one exact
+  `(130,130)` click, immediate turn release, matching terminal wake, zero repeated world-map search before terminal.
+
+## Codex - 2026-08-05 / G022 Fresh 返修：五环接任务取消超时并复用上次 NPC 点
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` /
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`，无 upstream）。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓现有全部 dirty/untracked 原样保护，不回滚、不覆盖、不清理、不提交。
+- **Fresh 失败证据：** 五环接任务 exact NPC frame 在约 `32.7s` 后产出有效 plan，但
+  `FiveRingTaskV2.clickInitialNpcForAccept(...)` 的独立 `15_000ms` deadline 已先取消 demand；外层累计到
+  `(5/5)` 后整轮 FAILED。该 deadline 与 G022“只由 exact ACK / 显式 cancel / replacement 结束”裁决冲突。
+- **用户批准行为：** exact NPC frame 等待和 Client FIFO `WAIT` 均不得由墙钟终止；stop/pause 仍可显式取消。
+  首次命中“暂时没有”后按既有左键动作关闭；随后最多 5 次只复用 Client 保存的上一次已验证 NPC 点击点，
+  不截图、不上传、不让 Cloud 重新计算 NPC 候选。每次仍出现“暂时没有”就继续关闭并复点；5 次仍未接到任务，
+  再清理当前对话框并回到 fresh exact-frame 分析。
+- **精确写集：** Cloud `FiveRingTaskV2.java`、`NpcClickService.java`、
+  `CloudWholeTaskRuntimeLocalServiceClient.java`、`TurnNpcArrivalFrameFifoSpec.java`；Client 同名协议、
+  `NpcArrivalFrameFifoLocalExecutor.java`、现有 FIFO 定向测试；本文件、G022 卡、`docs/业务逻辑.md` 和由脚本生成的
+  `docs/cr-dashboard-data.js`。不改变 NPC 候选顺序、模板、ROI、坐标公式或普通任务的 business fallback。
+- **实施结果：** 五环接任务 NPC plan 与 accept prepared-action 等待已删除墙钟终止；Client FIFO 删除
+  `30s WAIT`。Client 按 exact run/window/hwnd/intent 保存已执行成功的窗口相对点；“暂时没有”关闭后最多本地
+  重放 `5` 次，重放不打开 Cloud queue、不截图、不上传。只有再次明确命中该 Story 才继续重放；五次耗尽或
+  结果不明确时清理 Dialog、清空旧 intent，下一轮请求 fresh frame。
+- **验证结果：** 双仓 production compile `exit 0`；双仓协议 SHA-256 均为
+  `AB30D2994A5C511325B75088767BC331764D49B4F607881745CFDE3F6321DE85`。隔离执行三项定向合同均 PASS：
+  `exactWaitAndRetainedPointReplayHaveNoWallClockExpiry`、
+  `retainedPointReplaySkipsCloudQueueAndUsesTheSameAtomicClickPoint`、
+  `temporaryUnavailableUsesFiveLocalPointReplaysBeforeFreshFrame`。标准 Maven testCompile 被本卡外既有删除类与旧
+  构造器/枚举漂移阻断；未启动 runtime/application/UI/capture/input。
+- **Fresh runtime 门：** 同时重启 Client/Cloud；首次“暂时没有”后观察 replay `1/5` 至成功或 `5/5`，重放期间
+  不得出现新 NPC frame/open queue，坐标必须相同；只有五次仍失败才允许出现新 demand/frame。未过此门前
+  G022 保持 `FRESH RUNTIME REQUIRED`。
+
+## Codex - 2026-08-05 / G008 已有任务启动误进长安接任务诊断
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`；Cloud 实现参考
+  `D:\mavenProject\dhxy-cloud-brain`。本轮只调查和记录，未修改行为代码，未启动 runtime/application/UI/
+  capture/input/tests；两仓全部 dirty/untracked 原样保护。
+- **日志事实：** `03:16:55`，`hwnd-E5F0A78`、`hwnd-3841CC8`、`hwnd-49C017C` 的启动首帧均报告
+  `WUHUAN_TITLE_PRESENCE=present`（score 分别 `0.9622237/0.9740254/0.9769342`）；后续仍进入
+  `wuhuan-v2:acceptNpc:navigate`，因此不是 title 识别失败。
+- **源码根因：** `FiveRingTaskV2.detectHandover(...)` 在长 PREPARE 后只接受 arm 之后的新 ready event，并用
+  `80ms` 等待到期直接判定“initial setup required”。启动首帧 seq 已旧，预先准备的 tracker action 又超过
+  `2500ms` freshness；arm 只更新 interest，不能保证 title 未变化时 Client 立即重发，所以已有任务被误导向
+  `ACCEPT_TASK`。
+- **建议修复：** handover 等待 exact fresh tracker/title 结论；fresh prepared action 消费已有任务绿链，fresh
+  negative 才允许接任务。禁止用扩大 timeout 代替事实，禁止改模板、ROI、绿链算法、PREPARE 供给逻辑或导航。
+  行为代码等待用户明确批准后实施。
+- **基线二次核对纠正：** `D:\mavenProject\DHXY` 的 `696a12b0` 在 handover not-ready 时明确先读
+  五环 title，命中即进入 `SYNC_TASK_PANEL`；CR188、CR229 和 TURN-40E 也冻结 title-only hot start、stale
+  等 Runner refresh、phase 不下沉。Cloud 当前 HEAD 仍是 not-ready `retrySamePhase(...)`。现工作区新增的
+  `80ms -> ACCEPT_TASK` 与 not-usable -> `ACCEPT_TASK` 是无卡片记录的 dirty regression。返修应删除该 hunk，
+  让 exact title present 优先接管；只有 fresh negative 才能接任务，未知/未准备好继续等，不能猜成无任务。
+- **用户批准后的实施：** Cloud `FiveRingTaskV2.detectHandover(...)` 已恢复基线语义：先消费 exact
+  prepared/negative；not-ready 只 arm observation 并 `retrySamePhase(HANDOVER_DETECT)`，binding 未就绪同样
+  fail-closed 等待。删除 `80ms/no-result/not-usable -> ACCEPT_TASK`。方法内注释引用
+  `696a12b0 + CR188/CR229`，明确任何顺序变化都需用户批准。
+- **规则固化：** Client/Cloud `AGENTS.md`、`docs/业务逻辑.md` 已加入五环基线锁；迁移错误清单新增 E45，
+  禁止把 timeout/stale/无事件/binding 未就绪的 UNKNOWN 提升为 ABSENT。
+- **验证限制：** 静态检查确认错误 marker 已消失，现有 `FiveRingHandoverNegativeReadyContractTest` 的合同范围
+  正好覆盖本次回归；但本机有正在运行的 `java/javaw` 使用项目 classpath，按 E28 未执行 Maven compile/test，
+  避免重建 `target/classes` 使运行实例崩溃。停机后需补 Cloud compile 和该定向合同，再 fresh 验证已有 title 的
+  窗口不出现 `wuhuan-v2:acceptNpc:navigate`。
+
+## Codex - 2026-08-05 / G022 Fresh 返修：title 确认优先于 Dialog 分类
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `2f083c14`）；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` / `363d0e3f`）。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked 原样保护，不回滚、不覆盖、不提交。
+- **最新 pushed 对比：** Cloud 最新 pushed `363d0e3f` 不含当前 G022 title-rearm 链；当前 dirty
+  `CloudWholeTaskObserver.consumeWuhuanTitleRearmDemand(...)` 无条件先分类整窗 Dialog，之后才裁 Tracker。
+- **Fresh 失败证据：** `3511/13443/3519` 均已收到 exact `WUHUAN_TITLE_PRESENCE=present`，并在绿链移动后产生
+  `STOPPED_AWAY`；title-rearm 的同一不可变帧同时带短暂黄色寻路提示，被 classifier 判成 `STORY`，旧
+  `wuhuanDialogFact` 又只能产出 `STORY_MISS`，于是反复记录
+  `visible-dialog-without-prepared-action`，既不 ACK，也不进入 Tracker 绿链准备。
+- **用户批准顺序：** exact title 为 `present` 时，接任务已确认，必须跳过 Dialog 分类，直接用同一整窗帧裁
+  Tracker 并准备绿链 action/negative；只有 title 不存在时才允许分类并处理 Dialog。不得新增 timeout、
+  coordinator、业务 fallback 或第二次截图。
+- **精确写集：** Cloud `CloudWholeTaskObserver.java`、一条 G022 定向合同及该测试的 `.gitignore` 单文件放行；
+  Client 本记录、G022 卡与生成的
+  dashboard 数据。禁止修改模板、ROI、绿链选择、点击坐标和输入队列。
+- **实施：** title-rearm 先读取 exact current `WUHUAN_TITLE_PRESENCE`，仅接受晚于 originating Dialog presence
+  的 `present`；命中后跳过 classifier，用 accepted full frame 直接裁 Tracker。发布前再次核对同一 title fact，
+  ACK 后退休旧 Dialog episode 并清空 `wuhuanDialogFact`。title 未确认时原 Dialog 链保持不变。
+- **验证：** Cloud production compile `exit 0`；`G022_SOURCE_CONNECTIVITY_PASS`；新增合同源独立 `javac` 通过；
+  `git diff --check` 仅有 LF/CRLF 提示。标准 Maven 定向 test 被本卡外既有 testCompile 构造器/枚举/协议漂移阻断。
+  未启动 runtime/UI/capture/input；必须 fresh 同时重启两端验证。
+
+## Codex - 2026-08-05 / G008 08:32 五窗 handover rearm 卡死诊断
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`；Cloud 源码核对
+  `D:\mavenProject\dhxy-cloud-brain`。本轮只审计日志和记录证据，未修改行为代码，未启动 runtime/application/UI/
+  capture/input/tests；两仓既有 dirty/untracked 原样保护。
+- **启动与买鞋事实：** 五个 run 均已启动并进入 `PREPARE`。`hwnd-49C017C`、`hwnd-9970D92` 已有双鞋，按设计
+  跳过买鞋；`hwnd-93B12C4`、`hwnd-3841CC8`、`hwnd-E5F0A78` 只有一双，进入鞋店流程。因此现场不是“两窗未
+  启动”，而是两窗无需采购。
+- **共同卡点：** 五窗随后全部停在 `HANDOVER_DETECT`。Client 每窗仅于 `08:32:24` 上报一次 title absent；该
+  negative 在长 `PREPARE` 后超过 Cloud 的 `3000ms` freshness。Cloud 用相同 interest 反复 rearm 时 revision 不变；
+  Client title 未变化且无 terminal/combat edge，所以不重发。结果是 Cloud 永远拿不到 fresh exact negative，反复
+  `no exact Runner prepared/negative result yet`，直到 `08:37:06` 用户暂停后五 run 返回 `STOPPED`。
+- **P1 结论与待批准修复：** 显式 handover rearm 必须生成新的 one-shot/revision，并强制 Client 回传一次当前
+  title presence；继续坚持只有 fresh exact negative 才能进入 `ACCEPT_TASK`。禁止恢复 UNKNOWN fallback 或调大
+  timeout。需补长 PREPARE 后二次 absent fact 的合同与 fresh 五窗实机门。状态：
+  `P1 FRESH RUNTIME FAILED / OBSERVATION REARM REPAIR APPROVAL REQUIRED`。
+
+## Codex - 2026-08-05 / G008 用户裁决：删除 exact Tracker negative 三秒过期门
+
+- **目标 worktree 已确认：** Client/文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `2f083c14`）；
+  Cloud `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` / `363d0e3f`）。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓全部既有 dirty/untracked 原样保护，不回滚、不覆盖、不清理、不提交。
+- **最新 pushed 对比：** Cloud `363d0e3f` 已包含 `READY_EVENT_PRIORITY_MAX_AGE_MS=3000` 及
+  `freshExactTrackerNegativeStatus(...)` 的年龄过滤；当前 dirty 实现仍保留该门。本次是用户明确批准的业务修复，
+  不把它误记为迁移等价变更。
+- **精确写集：** Cloud `src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java`、新增
+  `src/test/java/com/bot/dhxy/task/wuhuan/G008FiveRingExactTrackerNegativeNoExpiryContractTest.java`；Client 本文件、
+  `docs/PACKAGE_ARCHITECTURE.md` 和生成的 `docs/cr-dashboard-data.js`。不修改 prepared click 坐标、路线坐标、位置
+  snapshot、寻路等待、观察 rearm 或任何输入逻辑。
+- **批准合同：** 同一 exact `taskRunId + windowId + HWND + taskType + operation + target` 的 Tracker negative
+  不再因超过三秒被丢弃；只保留精确身份和类型校验。UNKNOWN 仍不得提升为 ABSENT，错误窗口/run 的旧结果仍拒绝。
+- **实施：** Cloud `freshExactTrackerNegativeStatus(...)` 改名为 `exactTrackerNegativeStatus(...)`；删除
+  `readyAgeMs`、负 age 和 `>3000ms` 三项时间过滤，保留六项 exact 身份/类型判断。其他 prepared click、route、
+  snapshot、prewarm 与 pathing timeout 未修改。
+- **验证：** 新增 G008 源码合同；隔离 `javac` + JUnit Console `1/1` PASS，精确写集 `git diff --check`
+  PASS（仅 LF/CRLF 提示）。当前仍有 Java 进程，按 E28 不运行 Maven，不覆盖 `target/classes`；fresh gate 为重启
+  新 Cloud 构建后，长 PREPARE 结束必须直接消费启动首帧 exact `TASK_NOT_FOUND`，不得再无限停在
+  `HANDOVER_DETECT`。
+## Codex - 2026-08-05 / G025 Cloud 业务日志统一落盘
+
+- **目标 worktree：** Client/启动脚本/文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `2f083c14`）；
+  Cloud IntelliJ 配置 `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` / `363d0e3`）。保护两仓全部既有
+  dirty/untracked，不回滚、不覆盖、不提交；受保护基线 `D:\mavenProject\DHXY` 不修改。
+- **最新 pushed 对比：** pushed `run-cloud-brain-server.ps1` 未设置 `org.slf4j.simpleLogger.logFile`；当前
+  `restart-local-dhxy-stack.ps1` 将 Cloud stderr 重定向到 `local-stack-cloud.err.log`。Cloud IntelliJ 配置则使用
+  相对 `logs/cloud-brain-console.log`，两个入口目的地不一致。
+- **批准边界：** Client 保持独占 `dhxy-console.log`；Cloud 两种入口统一写
+  `D:\mavenProject\DHXY-cr271\logs\cloud-brain-console.log`，并纳入 local-stack 重启归档。stdout/stderr 文件保留
+  启动诊断，不再承担正常业务日志主文件职责。
+- **实施：** `run-cloud-brain-server.ps1` 新增 `BusinessLogPath`、目录创建及 JVM `simpleLogger.logFile`；
+  `restart-local-dhxy-stack.ps1` 显式传入固定路径、归档并保留最近 30 轮；Cloud IntelliJ run configuration 指向
+  同一绝对文件。
+- **验证：** 两个 PowerShell parser PASS；`G025_LOG_PATH_CONTRACT_PASS`；目标 `git diff --check` PASS。
+  未重启当前 Client/Cloud，下一次启动后确认 Cloud `INFO` 写入新文件且 `local-stack-cloud.err.log` 只剩启动/JVM 故障。
+
+## Codex - 2026-08-05 / G027 Fresh 五环三窗口 BUY_SHOES 异常诊断
+
+- **目标 worktree：** Client/文档 `D:\mavenProject\DHXY-cr271`（`thin-client-design` / `2f083c14`）；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`（`navigation-migration` / `363d0e3`）。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓既有 dirty/untracked 原样保护。本轮仅审计 fresh 日志并记录结论，尚未修改 Java。
+- **Fresh 失败窗口：** `67555 / hwnd-49C017C`、`451753529 / hwnd-9970D92`、
+  `316365558 / hwnd-E5F0A78` 均在 `BUY_SHOES` 以
+  `shoe-shop exact entry handoff missing intent id` 结束。对应 Client case 为
+  `20260805_115656_348_*_FAILED_hwnd-49C017C.case.json`、
+  `20260805_115746_516_*_FAILED_hwnd-9970D92.case.json`、
+  `20260805_115836_123_*_FAILED_hwnd-E5F0A78.case.json`。
+- **再次复现：** 下一轮 `hwnd-9970D92` 于 `12:11:23`、`hwnd-49C017C` 于 `12:11:29` 再次生成
+  `FAILED` case；Cloud 对应终态仍是同一 `shoe-shop exact entry handoff missing intent id`。因此没有出现新的
+  “下一层”业务故障，当前运行仍被 G027 的同一 P1 阻断。
+- **断点：** 三窗跨地图去长安时，Client 已登记真实 intent `6d3820bb-...`、`db2296c4-...`、
+  `25852e4f-...`；Runner 仍继续采样并对前两条发布 `牛记布店 (10,7)` 的终态。Cloud 上层收到的 nested
+  `NavigationResult` 却没有同一 ID，`FiveRingTaskV2` 因此错误地杀死整轮。G023 仅覆盖 direct current-map
+  分支，G024 覆盖的是买鞋后的云游大师导航，均未覆盖本支路。
+- **待批准修复：** 只补 exact ID 的 nested 生产接力并将空 ID 从 fatal 降为 fail-closed park/恢复；禁止创建第二
+  intent、禁止用时间或异步镜像猜 ID、禁止终态前重发导航。新增真实连通性合同覆盖 Client 注册到业务终态消费。
+- **旁路诊断：** Cloud Dialog 调试图文件名含 `:` 导致 Windows `InvalidPathException`，未造成三次 FAILED，
+  但会丢现场图；拟在独立诊断范围安全化文件名。
+- **实施完成：** Cloud `NavigationService` 让 memory/OCR 两条黄字最终点击把真实 `TurnPathingIntent.intentId`
+  沿 nested result 原样上送；纯 trace 不再伪造 ID。`FiveRingTaskV2` 空 ID 改为释放 turn 后保持 Runner pathing wait，
+  不再整轮 `FAILED`，且状态继续阻止重复导航。`ImagePreprocessor` 只对 Windows 非法调试文件名做安全化。
+- **父级审核与验证：** 三个生产文件隔离 `javac --release 21` PASS；G027/G023/G024/G026 五项合同 PASS；
+  `cloud-memory:dialog_detect_green.png` 反射验证得到
+  `images\temp\cloud-memory_dialog_detect_green.png`；目标 `git diff --check` PASS。Cloud PID `30336` 仍是
+  `11:54:00` 启动的旧代码，未运行会覆盖其 `target/classes` 的 Maven compile。fresh gate：重新构建并重启 Cloud，
+  跨地图买鞋日志必须显示非空 `intentId`，随后按同 ID terminal 唤醒，不能再出现 missing-intent `FAILED`。
+
+## Codex - 2026-08-05 14:46 / G017 fresh 天庭仍不动：Tracker prepared action 年龄死锁
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`；本轮只读诊断 Client/Cloud fresh 日志并更新治理记录，
+  未修改业务代码，未启动 runtime/application/UI/capture/input/tests。
+- **运行证据：** 队长 `468413443 / hwnd-93B12C4`，run
+  `remote-turn-31cb308d-da78-4ace-99da-5237b8cecf29`。Client 已从重启后的 `target/classes` 发送
+  canonical `taskCode=tianting`；Cloud 不再出现 `REJECTED_LINEAGE`，同步 startup exact ACK 成功进入
+  `RUN_SUBTASKS`，证明上一项 lineage 修复已生效。
+- **新 P1 根因：** observer 于 `14:41:09` 发布绿链 action `absolute=(353,328)`；启动补给/香检查及 G017
+  仲裁结束后，主任务首次读取该 action 时 age 已为 `14833ms`，超过
+  `TiantingTask.TRACKER_LINK_MAX_AGE_MS=10000ms`，故连续记录 `ignoring a stale tracker link` 并选择
+  `PARK_IDLE`。observer 的 `probeTrackerPreparation(...)` 又因 bound slot 非空直接返回，既不验证/刷新旧 action，
+  也不从后续新 ROI 重算，ready sequence 永远停在 `1`；主任务随后每 `25s` timeout，无法自行恢复。
+- **用户批准并已实施：** 不改大时间；按 G026 已确认的完整 task-box raw RGB `0.80` 内容校验消费。当前图仍一致
+  则允许消费原 Cloud 坐标；变化或证据缺失则由 `consumeValidatedForActionId(...)` 原子清除旧 action，observer
+  下一帧由新 ROI 重算。保留 exact run/window/HWND/operation/target 与战后 lineage 栅栏。
+- **精确源码写集：** Cloud
+  `src/main/java/com/bot/dhxy/service/TaskTrackerPanelService.java`、
+  `src/main/java/com/bot/dhxy/task/tianting/TiantingTask.java`、
+  `src/test/java/com/bot/dhxy/service/G026TrackerRawAndRouteFrameContractTest.java`；Client 仅本记录、G017 卡与生成的
+  `docs/cr-dashboard-data.js`。受保护基线 `D:\mavenProject\DHXY` 未修改，两仓其他 dirty/untracked 原样保护。
+- **实现：** 天庭 prepared Tracker action 改用完整 task-box `RAW_RGB` 主指纹；删除固定 `10s` age gate；真正点击
+  前绑定 peek 得到的同一 `actionId`，复用 G026 consume-time 原图 validator。两个封妖符读取旁路只统一到同一
+  prepared-link 入口，不改变封妖符动作顺序。
+- **验证（15:01 -04:00）：** Cloud production compile PASS；新增/既有
+  `G026TrackerRawAndRouteFrameContractTest` 隔离 PASS；`G026FiveRingTimeAndBlockerContractTest` 隔离 PASS；
+  精确 diff-check PASS。标准 Maven 定向 test 在 aggregate `testCompile` 阶段被大量本卡外旧构造器/已删除枚举
+  引用阻断，未扩大范围修复。未启动 runtime/application/UI/capture/input；状态为源码 `DELIVERED`，等待重启后
+  fresh 天庭证明旧 action 在内容不变时可消费、内容变化时会清槽重算。
+## Codex - 2026-08-05 / G030 天庭到达帧与李靖记忆断链
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`。保护基线 `D:\mavenProject\DHXY` 不修改；两仓现有大量 dirty/untracked
+  均保留，本卡只做 G030 窄增量，不 reset/revert/clean。
+- **分支与推送基线：** Client `thin-client-design`，HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud `navigation-migration`，HEAD
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。Cloud 推送基线没有天庭实现；本卡以当前已批准天庭业务、G005/G017
+  和修罗 exact 到达帧消费顺序为业务对照。
+- **现场证据：** 李靖 exact intent `909f1ca3-...` 于 `16:11:09.048` ARRIVED，原到达帧计划于
+  `16:11:10.882` ready；天庭却先释放 intent，后消费 FIFO，导致 ready 结果不可用，并于 `16:11:18.149`
+  重建 direct FIFO。已批准改为先消费、后释放。
+- **记忆审计结论：** launcher 的实际 scope 文件中没有任何李靖记录。Client FIFO REPORT 缺失 Cloud 已持有的
+  地图/NPC/目标/玩家坐标身份，写入端确定性跳过；天庭 deferred 点击也没有在“为民除害”被消费后正向结算。
+- **实施：** accept pass 先消费 exact ARRIVED FIFO 后清 intent；Cloud 仅从同 demand/session 的 recognition context
+  补齐 REPORT 身份。任务消费 `ACTION_ACCEPT_TASK` 后再严格确认 deferred pending 并持久化；错误 session、错误身份、
+  过期 pending fail closed。没有扩展协议，没有 Client Java 改动，没有二次截图或 Cloud 到达判断。
+- **验证：** Cloud production compile PASS；隔离 `NpcArrivalFrameQueueStoreContractTest` `12/12`、
+  `TiantingAcceptNpcParityContractTest` `7/7` PASS；目标 `git diff --check` PASS。标准 Maven test 生命周期被本卡外旧
+  fixture 构造器/协议枚举编译错误阻断。SOURCE+TEST REVIEW PASSED，fresh runtime 需确认首次成功后 promoted、
+  下次相同玩家坐标出现 MEMORY candidate，且不再创建 direct FIFO。
+
+## Codex - 2026-08-05 / G031 天庭到达后重复坐标复核与 FIFO 身份
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`；Cloud 实现
+  `D:\mavenProject\dhxy-cloud-brain`。保护基线 `D:\mavenProject\DHXY` 不修改；两仓现有 dirty/untracked
+  全部保留，不 reset/revert/clean。
+- **分支与推送基线：** Client `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud
+  `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。Cloud 推送基线没有天庭实现，本卡沿用
+  G005/G030 和当前已批准天庭业务。
+- **源码审计：** exact FIFO 正常成功时不会再同步坐标；但 FIFO 失败后当前 `acceptTask()` 仍释放 intent 并调用
+  `clickAcceptNpcFromNearby()`，后者通过 `syncPositionInTurn(...accept-nearby-check)` 发起真实位置同步。Client 已有
+  `NpcArrivalFrameFifoLocalExecutor`：Cloud 下发 consume 后它执行 `OPEN` 并以 `500ms` WAIT 节奏 `POLL`；不存在
+  “无人消费”，也不需要新增常驻 subscriber。通用 ready 回调当前错误写死 `TaskType.WUHuan_V2`。
+- **批准写集：** Cloud `TiantingTask.java`、`NpcClickService.java` 与现有天庭/FIFO 定向合同；Client 仅本记录、
+  G031 卡和生成 dashboard。目标是 exact arrival 尝试后禁止 nearby 二次坐标复核，同时保留首次启动就在 NPC
+  附近的 fast path；ready 事件使用当前任务类型。
+- **实施：** `acceptNpcPositionProven` 在 exact `ARRIVED`、同步导航 `ARRIVED/SUCCESS` 或首次 nearby 命中后置位；
+  置位后的失败只进入既有 `clickAcceptNpc()` cleanup/retry，不得再进入 nearby 坐标同步或导航。exact probe
+  安装失败也释放已认领 intent。FIFO ready 任务身份从 exact `TaskExecutionContext.taskCode` 映射，不再写死五环。
+- **验证：** Cloud `mvn -q -DskipTests=false compile` PASS；手工隔离编译并反射执行
+  `TiantingAcceptNpcParityContractTest` `10/10` PASS。标准 Maven named test 在运行目标测试前被本卡外旧
+  `DialogService/FiveRingTaskV2` 构造器和已删除协议枚举的 aggregate `testCompile` 阻断。源码审查确认 Client
+  继续复用 `NpcArrivalFrameFifoLocalExecutor OPEN/POLL`，未新增 subscriber/observer/thread。旧 dashboard 生成器
+  只解析 `CR*`；现已兼容历史 `CR*` 和当前 `G*`，重新生成后确认包含 G031。等待 fresh runtime。
+
+## Codex - 2026-08-05 / G032 本地整栈启动器永久阻塞
+
+- **目标 worktree：** `D:\mavenProject\DHXY-cr271`；保护基线 `D:\mavenProject\DHXY` 不修改。当前分支
+  `thin-client-design`，HEAD/最新推送基线 `2f083c14`（`修罗五环云端V1版本`）。启动脚本为当前 worktree
+  untracked 增量，推送基线不存在该文件；现有 docs/dashboard dirty 原样保留并在本卡上窄增量追加。
+- **现场证据：** 启动父进程始于 `17:25:12`；OCR PID `59140` 于 `17:25:44` 健康，Cloud PID `52376` 于
+  `17:25:47` 监听 `18080`；截至 `17:33+` Client 仍未创建，`dhxy-console.log` 停在 `16:11:33`，
+  `local-stack-processes.json` 仍记录上一轮已死亡 Client PID `16960`。
+- **根因与复现：** `Start-Process` 带 `RedirectStandardOutput/Error` 启动长驻 Cloud 时，调用方等待子进程退出；
+  同机最小复现中，带重定向的短子进程直到结束才返回，而无重定向调用约 `432ms` 返回且子进程继续运行。
+- **批准实现：** Cloud launcher 参数改由编码后的子 PowerShell 执行，stdout/stderr 在子进程内部落入原有
+  `local-stack-cloud.out/err.log`；父 `Start-Process` 不再建立重定向管道，端口 ready 后可继续启动 Client。
+  下一步执行语法/分离启动验证并清理由本轮旧脚本留下的精确进程树。
+- **验证结果：** 精确停止旧 PID `33760/32592/52376/59140` 后释放 `18080/18762`。首次真实验证发现包装命令
+  把 `-Port` 等参数名也引用成普通字符串，Cloud 未启动并在 90 秒门失败；修正为只引用参数值后再次完整运行。
+  第二次脚本在 `46s` 内完成两仓 compile 与整栈启动：Cloud PID `20648`、OCR PID `54400`、Client PID
+  `49804`；Client `17:44:52.639` Spring ready，`17:44:55.332` 首个可交互 dashboard 完成。进程登记刷新，
+  `local-stack-cloud.out/err.log`、`local-stack-client.out/err.log` 和 `dhxy-console.log` 均正常写入。
+- **结论：** G032 `SOURCE+RUNTIME PASSED`。保护基线未修改；未触发任务、截图或物理输入。
+## Codex - 2026-08-05 / G013 fresh 天庭战前 Tracker action 占槽返修
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`；Cloud 生产与测试
+  `D:\mavenProject\dhxy-cloud-brain`。保护基线 `D:\mavenProject\DHXY` 不修改；两仓现有 dirty/untracked
+  全部保留，不 reset/revert/clean。
+- **分支与推送基线：** Client `thin-client-design` / `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud
+  `navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。Cloud 推送基线没有天庭实现，返修以当前
+  G005/G013/G017 已批准业务为准。
+- **fresh 证据：** `18:30:15` observer 发布的 `TASK_TRACKER_PATHING` action 早于 exact
+  `combatExitedAtMs`；`TiantingTask` 每 `25s` 将其判为 `BEFORE_EXIT` 后只忽略不清除，observer 又因 bound slot
+  非空拒绝重算，ready sequence 停在 `22` 并永久 `PARK_IDLE`。
+- **批准写集：** Cloud 仅 `TiantingTask.java` 与现有天庭/G013 定向合同；Client 仅本记录、G013 卡和 dashboard。
+  修复只允许按 exact actionId 原子清除 `BEFORE_EXIT` Tracker action，让下一张 fresh ROI 重建；禁止修改模板、
+  ROI、点击坐标、任务顺序或添加超时。
+- **实现与审核：** `TiantingTask.preparedTrackerLink(...)` 对 `BEFORE_EXIT` action 执行 exact actionId CAS 清除，
+  其他 `NOT_APPLICABLE/FRESH/UNCHANGED/FINGERPRINT_MISSING` 分支保持原语义；日志增加
+  `clearedBeforeExit`。行为测试改用真实 RAW_RGB 指纹并证明旧 action 清槽后 fresh action 可再次发布、读取。
+- **验证：** Cloud `mvn -q compile` PASS；隔离 `TiantingPostCombatTrackerFreshnessContractTest` `8/8` PASS；
+  `G026TrackerRawAndRouteFrameContractTest` PASS；目标 diff-check PASS。聚合 testCompile 的失败均来自本卡外既有
+  旧构造器/协议夹具。状态为源码与测试审核通过，必须重启 Cloud 后 fresh 天庭确认运行时闭环。
+## Codex - 2026-08-05 / G037 蟠桃园暗雷巡逻顺序与 UI 遮挡点修复
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`（`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`）；Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`
+  （`navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`）。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓全部既有 dirty/untracked 原样保护，不 reset/revert/clean/commit。
+- **最新 pushed 对比：** Cloud `origin/navigation-migration=363d0e3f`，pushed 树中没有天庭实现；当前天庭文件
+  为未跟踪的 G005 迁移增量。业务基线采用 `docs/天庭任务流程大MD.md:102-113`：蟠桃园先对右点连续右键
+  两次，再按左/右交替；其他地图从左/右普通交替。当前代码仅按 click index 对列表取模，和已确认规则不等价。
+- **fresh 失败证据：** G033 高权限宿主 PID `59280` 启动 run
+  `remote-turn-ed8ab3c0-66b0-4632-9075-58051a4e649e`。Client 逐次成功执行 `(297,513)` 与 `(635,553)`
+  的交替右键；Cloud 记录 `clicks=0..43`，但未出现 combat，人物仍在蟠桃园 `(20,28)`，随后
+  `watchedMs=181871` watchdog 回城重接，完成数为 `0`。已通过正式 G033 `stop` 停止 5/5 窗口。
+- **追加 P1 实证：** `images/test-cases/tianting-dark-thunder/g037-pantao-live-raw.png` 与
+  `images/test-output/g037-tianting-dark-thunder/pantao-live-sequence-marked.png` 证明旧左点 `(82,381)` 位于
+  Tracker ROI `(0,100) 280x604`，并非地面。G005 设计已要求 UI 遮挡过滤，但生产 `TiantingGeometry` 漏实现。
+- **精确写集：** Cloud `TiantingGeometry.java`、`TiantingDarkThunderPlan.java`、`TiantingTask.java` 及两个
+  对应定向测试；Client 本记录、G037 卡、G005 设计/业务文档、生成 dashboard 与点击序列标注输出。只将
+  三个落入面板的左点按原 Y 校正到 `x=300`（蟠桃园/御马监/长寿村外），并落实既有遮挡门；瑶池、所有
+  右点、时间、输入类型、坐骑和 watchdog 不动。隔离合同首跑正是通过 `isBaseUsable=false` 检出另外两点，
+  不是实跑后继续猜改。
+- **验收计划：** 定向合同证明蟠桃园 `右、右、左、右、左`、四张地图均有两个非遮挡点，且其他地图仍
+  `左、右、左`；重新生成点击序列标注图；通过 Cloud production compile 和精确 diff-check 后重启 Cloud，
+  继续 G033 天庭 100 次。
+- **静态验收结果：** Cloud `mvn -q -DskipTests=false compile` PASS；隔离编译并直接执行两个 G037 测试类的
+  13 条相关合同，`13/13 PASS`。全量 Maven test 在执行目标测试前被仓库既有过期测试源码挡住（`DialogService`
+  构造器旧参数、已删除协议枚举等），未扩大本卡写集。最新现场标注输出已重新生成，蟠桃园两点均在 Tracker
+  右侧且序列正确。下一步重启 Cloud 并用 G033 继续 fresh。
+## Codex - 2026-08-05 21:33 / G038 天庭新版暗雷文案与原 action OCR 重试
+
+- **目标 worktree：** Client/治理 `D:\mavenProject\DHXY-cr271`，分支 `thin-client-design`，HEAD/最新推送
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`；Cloud 实现 `D:\mavenProject\dhxy-cloud-brain`，
+  分支 `navigation-migration`，HEAD/`origin/navigation-migration`
+  `363d0e3fae73c0c55f4920f6f1c61338a0458d73`。两仓 `git status --short` 均有大量既有
+  dirty/untracked；G038 只在下述精确写集追加窄增量，不回滚、不覆盖、不清理、不提交。受保护基线
+  `D:\mavenProject\DHXY` 不修改。
+- **编辑前状态：** Cloud 两个生产文件 `TaskTrackerPanelService.java`、`CloudWholeTaskObserver.java` 已是当前
+  天庭迁移的既有 modified 文件；两份拟用测试文件编辑前无 G038 diff。Client 的
+  `docs/ACTIVE_WORK.md`、`docs/PACKAGE_ARCHITECTURE.md`、`docs/cr-dashboard-data.js` 已有其他卡 dirty，
+  本卡仅追加记录/生成快照。
+- **最新 pushed 对比：** Cloud pushed `363d0e3f` 尚无当前天庭实现；业务对照为当前已批准 G005/G011/G013
+  天庭链。G011 明确规定：已点击的暗雷腿脱战后 task box 不变时继续巡逻；G038 不改变该决定，只恢复新版
+  文案标签及同一 action 的传输失败重试。
+- **fresh 证据：** G033 run `remote-turn-89603788-d886-47d7-959e-bc7f75f1df89`。`21:26:28`
+  action `4584b063-...` 从同一新版 task box 发布并于 `(468,552)` 点击；模板分 `0.2980`，首次 OCR
+  `definitive=false`。`21:30:33` 脱战后新 action `3f9cfb93-...` 的 OCR 完整读到
+  `如有遇到游荡的妖怪，切勿放过`，但旧分类只认 `雷战`，随后一直 `PARK_IDLE`、完成数 `0`。
+  `21:33:08` 已通过 G033 正式 stop 停止 `5/5`。
+- **精确写集：** Cloud
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/TaskTrackerPanelService.java`、
+  `src/main/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/CloudWholeTaskObserver.java`、
+  `src/test/java/com/yueyunfe/dhxy/cloudbrain/G038TiantingDarkThunderOcrPolicyTest.java`、
+  `src/test/java/com/yueyunfe/dhxy/cloudbrain/turn/runtime/DarkThunderOcrDedupContractTest.java`；Client
+  本记录、G038 卡、生成 dashboard。运行中的 Cloud 必须先停止，禁止热覆盖 `target/classes`。
+- **计划：** 分类同时接受 `雷战`/`游荡的妖怪`；仅对同一 task-box、同一原 action 的
+  `definitive=false` 异步结果，按既有 `10s` 冷却自动重试一次。通过 production compile、定向合同与
+  diff-check 后重启 Cloud，再继续 G033 天庭 `100` 次 fresh。
+- **静态交付：** `mvn -q compile` PASS。标准 Maven named test 被本卡外既有过期测试源码挡在
+  `testCompile`；隔离编译并执行 G038 文案策略与 OCR dedup/retry 合同 `8/8 PASS`。使用
+  `images/test-cases/tianting-post-combat/g038-post-combat-taskbox-before-stop.png` 直接调用生产
+  `matchDarkThunderMonsterByOcr(...)`，OCR 返回 `matched=true, definitive=true` 并完整读出新版文案。
+  精确写集 `git diff --check` PASS（仅既有 LF/CRLF 提示）。下一门为重启 Cloud 后 fresh。
+## Codex - 2026-08-05 / G037 Repair #1 暗雷飞行确认安静停放误判失败
+
+- Target worktrees: Client/docs `D:\mavenProject\DHXY-cr271` (`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`)；Cloud `D:\mavenProject\dhxy-cloud-brain`
+  (`navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`)。受保护基线
+  `D:\mavenProject\DHXY` 未修改；两仓全部既有 dirty/untracked 原样保护。
+- Fresh failure: run `remote-turn-e09e94ac-96e2-4a38-9e0f-b78275ad5fee` 在
+  `completedSubtasks=6` 后进入蟠桃园暗雷，飞行状态模板返回 `UNKNOWN`。一次
+  `DARK_THUNDER_FLIGHT_RETRY_PARK_MS=1500` 安静等待返回 false，被
+  `runDarkThunder(...) -> TiantingStepOutcome.failed(...)` 错当成整轮失败；Cloud 终态为
+  `result=FAILED`，并非 15 秒业务确认预算耗尽。
+- Formal stop/evidence: `2026-08-05 22:52:17 EDT` 经
+  `scripts/background-task-test.ps1 stop` 停止 `5/5`；exact-window 图保存到
+  `images/test-cases/tianting-g033-failure-20260805-2249/`。
+- Repair: Cloud `TiantingTask.java` 的飞行确认与未知地图两处安静 park 不再把 event wait
+  的 false 当业务失败；仍保留各自明确超时后 fail/fallback 的原语义。同步修正同卡陈旧测试：
+  `UNKNOWN` 必须继续 `DETECT_FLYING`，不能立刻巡逻或切坐骑。
+- Gates: Cloud `mvn -q compile` PASS；隔离 `TiantingDarkThunderPlanTest` `13/13` PASS；
+  精确写集 `git diff --check` PASS。标准 `mvn -q -Dtest=TiantingDarkThunderPlanTest test`
+  仍在选中测试前被写集外旧 `DialogService` 构造器、已删除协议枚举等 testCompile 债阻断。
+  下一步重启 Cloud，再以 G033 `-ElevatedHost` 继续 100 次 fresh。
+
+## Codex - 2026-08-05 / G039 战斗内自动面板拖拽合同缺口
+
+- Target worktrees: Client/docs `D:\mavenProject\DHXY-cr271` (`thin-client-design` /
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`)；Cloud `D:\mavenProject\dhxy-cloud-brain`
+  (`navigation-migration` / `363d0e3fae73c0c55f4920f6f1c61338a0458d73`)。受保护基线
+  `D:\mavenProject\DHXY` 不修改；两仓全部 dirty/untracked 原样保护，不回滚、不覆盖、不清理、不提交。
+- Fresh run: `remote-turn-d04dd1a3-8f23-40bd-8153-ef6a1af9a93a`。G038 已真实进入
+  `RUN_DARK_THUNDER -> PARK_COMBAT -> RUN_POST_COMBAT`，但自动战斗入场维护识别到面板后发送的
+  `DRAG_LEFT + WAIT` 在五个窗口被 Client 通用 `COMBAT_ACTIVE` 鼠标门拒绝并记录 `FAILED`。
+- Stop/evidence: `2026-08-05T22:04:46-04:00` 正式 stop `5/5`；exact-window 图保存于
+  `images/test-cases/tianting-g033-failure-20260805-2203/`。没有杀进程。
+- Latest pushed comparison: Client pushed `2f083c14` 尚无当前 typed combat mouse gate；当前 dirty
+  `TurnInputStepExecutor` 明确由 G004 阻止战斗后巡逻/NPC/导航鼠标，仅键盘维护例外。Cloud pushed
+  `363d0e3f` 与当前实现均保留战斗内自动面板拖拽。缺口是协议无法区分该合法拖拽。
+- Exact write set: Client `TurnInputSpec.java`、`TurnProtocolValidator.java`、
+  `TurnInputStepExecutor.java` 及现有两条定向合同；Cloud 同名协议两文件、
+  `AutoCombatPanelService.java`、现有 `AutoCombatPanelTurnContractTest.java`、`.gitignore` 单文件放行；
+  本记录、G039 卡、生成 dashboard 数据。
+- Repair: typed nullable `autoCombatPanelDrag` 只允许 `DRAG_LEFT`；仅 Cloud 自动面板 drag 标记；Client
+  仅此标记跳过 combat mouse gate。普通鼠标与未标记拖拽保持 fail-closed。完成双仓 compile/合同后重启
+  G033 天庭 `100` 次，并要求 `completedSubtasks` 增长且不再出现该类 `COMBAT_ACTIVE/FAILED`。
+- Static gates: Client/Cloud production compile PASS；双仓 `TurnInputSpec.java`、
+  `TurnProtocolValidator.java` SHA-256 一致；Client `G039AutoCombatPanelDragPolicyTest` `2/2` PASS；
+  Cloud `G039AutoCombatPanelDragContractTest` `1/1` PASS；精确写集 `git diff --check` PASS。
+  两仓 aggregate `testCompile` 仍被既有写集外陈旧合同阻塞；Cloud 旧视觉合同单方法受模板夹具漂移影响，
+  已保留失败证据。下一门是 fresh 战斗内拖拽 `COMPLETED` 且 `completedSubtasks` 增长。
+
+## Codex - 2026-08-05 23:13 / G037 Repair #1 fresh 过断点
+
+- `D:\mavenProject\DHXY-cr271` 仅记录 fresh 证据；受保护基线 `D:\mavenProject\DHXY` 未修改，两仓既有
+  dirty/untracked 原样保护。
+- 重启后的 Cloud run `remote-turn-cc247856-b1a8-46c9-a238-fee44f397c2a` 已连续推进到
+  `TiantingTask completedSubtasks=7/100`，越过上一轮在 `6` 次后立即 `result=FAILED` 的断点。
+- `scripts/background-task-test.ps1 status` 显示 `5/5 RUNNING`；当前 run 的 Client/Cloud 增量中
+  `ERROR/FAILED/异常终态=0`。G037 Repair #1 已取得 fresh 过断点证据，G033 保持运行直至 100 次正常终态。
+
+## Codex - 2026-08-05 23:24 / G040 脱战前暗雷旧帧迟到占槽
+
+- Target worktrees: Client/docs `D:\mavenProject\DHXY-cr271`；Cloud
+  `D:\mavenProject\dhxy-cloud-brain`。受保护基线 `D:\mavenProject\DHXY` 未修改；两仓既有
+  dirty/untracked 全部保护。本轮仅调查并登记卡，未修改生产逻辑。
+- G033 run `remote-turn-cc247856-b1a8-46c9-a238-fee44f397c2a` 在
+  `completedSubtasks=7/100` 后，普通“妖王”任务被旧 `state.darkThunder=true` 带入
+  `RUN_DARK_THUNDER`，巡逻点击超过 `296`。`23:24:35 EDT` 已正式 stop `5/5`；现场证据目录为
+  `images/test-cases/tianting-g033-failure-20260805-2324/`。
+- 正式代码回放：停机时普通任务图的 `anlei.png` 分数仅 `0.3608`；日志 `0.9981` 对应更早真实暗雷帧。
+  战前暗雷与战后普通 task-box 的 raw-RGB 分数为 `0.3003948`，明确 `CHANGED`。
+- 根因证据：combat exit=`1785986009447`；迟到 action prepared=`1785986011152`，但 action 的
+  task-box `hash=3d38f37b` 精确对应 `23:13:29.166` 脱战前截图。action 缺少原始帧采集时间，G013 将其
+  当成脱战后 `UNCHANGED` action 保留；observer 因 bound slot 非空不再分析后续普通帧。
+- 用户提出并完成方案复审：不再用 `capturedAtMs/preparedAtMs` 卡任务新旧。现有完整 task-box RGB `0.80`
+  比较应作为业务依据；真正根因是 `CloudWholeTaskObserver` 看到 bound slot 非空就停止分析，导致异图永远没有
+  机会替换旧 action。
+- 待用户批准的新修复边界：同 run 的现有 action 为 `TASK_TRACKER_PATHING` 时继续分析新 Tracker；同图保留，
+  异图按 expected action ID 原子替换并发布 ready event，非 Tracker Dialog action 保持优先。暗雷同图继续
+  G011 巡逻；封妖符同图继续既有四坐标进度，不使用会混淆两类业务的通用 `processed` 布尔标记。时间仅记日志。
+- 原子性核对：`CloudDialogPreparedActionState.publish(...)` 虽能替换，但没有 expected action ID 条件；现有
+  `publishXinshouTrackerIfUnchanged(...)` 已证明 slot monitor + expected action ID 的安全形状，但被限定为新手任务。
+  G040 应建立天庭 Tracker 的真实原子替换边界，避免分析期间到达的 Dialog 被覆盖。
+- 用户已明确批准 G040 无时间图片比较方案。实施写集冻结为 Cloud
+  `CloudWholeTaskObserver.java`、`CloudDialogPreparedActionState.java`、`TiantingTask.java` 和 G040 定向合同；Client/docs 仅
+  `docs/PACKAGE_ARCHITECTURE.md`、`docs/ACTIVE_WORK.md`、生成的 `docs/cr-dashboard-data.js`。不修改
+  `D:\mavenProject\DHXY`，不覆盖两仓其他 dirty/untracked。
+- 实施终审补充：`TiantingTask.classifyPostCombatTrackerFreshness(...)` 仍有旧
+  `preparedAtMs < combatExitedAtMs` 业务分支。为满足已批准的无时间方案，G040 写集加入该文件，仅删除该时间
+  判定和 `BEFORE_EXIT` 清槽；`combatExitedAtMs` 仍只表示当前是否处于战后比较阶段，具体新旧完全由 task-box
+  RGB 比较决定。
+- G040 source delivered：Observer 在天庭旧 Tracker action 占槽时继续分析；状态对象在 slot monitor 内用
+  expected action ID + 完整 RGB `0.80` 比较执行同图保留/异图替换，并保护并发 Dialog。`TiantingTask` 的
+  `preparedAtMs < combatExitedAtMs` 与 `BEFORE_EXIT` 清槽已移除，暗雷/封妖符状态机未改。
+- Gates：Cloud `mvn -q compile` PASS；G040 独立合同直接编译执行 PASS（同图 `1.0` 保留、异图新 action ID、
+  Dialog 抢槽后保持 Dialog）；既有 G026 raw-RGB 合同直接编译执行 PASS；精确写集 `git diff --check` PASS。
+  标准 Maven 定向 test 被写集外既有测试构造器/协议枚举断档阻塞，未扩大范围修复。下一门为 G033 fresh runtime。
+- Fresh 已启动：重编译后的 Cloud Java PID `39440`，`POST /api/cloud/ocr/health` 返回 HTTP `200`、
+  `ocrAvailable=true`；G033 Client session `47e83c2e-6082-4725-840c-f8edcb6d5d15`，队长 run
+  `remote-turn-6d88179d-3776-49b7-b5ff-cfea42282ef7`，正式脚本确认五窗 `5/5 RUNNING`。
+- 初步 fresh 证据：第一张普通 Tracker action 发布并以完整 task-box raw-RGB `score=1.0` 通过消费验证；
+  后续同图分析均输出 `taskBoxChange=UNCHANGED score=1.0` 并保留同一 action。异图替换与暗雷脱战断点尚未出现，
+  不提前关闭 G040；继续由 G033 heartbeat 监控到 `completedSubtasks=100/100` 或明确故障。
+# Codex - 2026-08-06 / G044 五环 title snapshot rearm fresh 返修
+
+- Target worktrees: Client/治理 `D:\mavenProject\DHXY-cr271` (`thin-client-design`, HEAD
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a`); Cloud `D:\mavenProject\dhxy-cloud-brain`
+  (`navigation-migration`, HEAD `363d0e3fae73c0c55f4920f6f1c61338a0458d73`). Protected baseline
+  `D:\mavenProject\DHXY` is not modified. Existing dirty/untracked files in both worktrees are preserved.
+- Fresh failure: the 22:27 five-window run was formally stopped after all windows remained RUNNING without
+  business progress. Two windows repeated `HANDOVER_DETECT -> no exact Runner prepared/negative result yet`;
+  three waited after NPC/accept. Client applied the Wuhuan interests but emitted no fresh unchanged title fact.
+- Exact cause: Cloud re-upserted byte-identical interests, while Client title dedup emitted only value changes,
+  pathing terminals or combat edges. A logical rearm therefore had no producer.
+- Approved repair: stable per-boundary `armKey` in the title interest plus Client one-shot emission when that key
+  changes. Same-boundary retries stay idempotent; handover, accept-dialog and post-accept use distinct keys.
+- Next gate: compile both repos, run the focused contract, restart both processes, then run Wuhuan continuously;
+  stop on the first new business failure, repair it, and restart.
+
+## Codex - 2026-08-07 / G033 Ctrl+Shift+F11 热恢复入口补线
+
+- Target worktree: Client/docs `D:\mavenProject\DHXY-cr271`, branch `thin-client-design`, pushed baseline
+  `2f083c14152106ba6ad418a0c29e3e0e2148e14a` (`origin/thin-client-design`). Protected baseline
+  `D:\mavenProject\DHXY` is not modified. Existing dirty/untracked files are preserved.
+- Fresh evidence: `07:59:28.907` UI pause correctly aborted five remote runs into `PAUSED`; Windows hotkey thread
+  received `Ctrl+Shift+F11` at `07:59:32.089` and `07:59:32.695`, but no resume followed.
+- Exact cause: `GlobalEmergencyStopHotkeyService` still calls legacy `togglePauseResumeAll()`. That method filters
+  `snapshot.isRunning()` before checking `PAUSED`, so the paused set becomes empty; its legacy `resumeAll()` path
+  also deliberately refuses resume. The UI path already uses `resumePaused(...)` with the current task queue.
+- User approval: wire F11 to the same JavaFX lifecycle entry used by the main start/pause button. Do not create a
+  second queue/role reconstruction path and do not change F12 stop semantics. Add a connectivity guard proving the
+  hotkey dispatch reaches the shared UI entry, then compile Client. Fresh requires one F11 pause and one F11 resume.
+- Delivered: F11 dispatches to `MainWindowController.handleGlobalPauseResumeHotkey()`. RUNNING windows use the
+  existing interrupt/pause path; PAUSED windows use `startPausedWindows(...) -> resumePaused(...)` and the current UI
+  queue. F12 remains direct `stopAll()`.
+- Gates: Client `mvn -q -DskipTests compile` PASS; isolated
+  `GlobalEmergencyStopHotkeyServiceConnectivityTest` and `MainWindowControllerSourceGuardTest` PASS; exact diff-check
+  PASS. Aggregate Maven test compilation is blocked by the pre-existing deleted `LocalPathingStartProofMechanics`
+  fixture references. The currently running Client predates this change and must be restarted before fresh F11 proof.
+- Fresh failure and Repair #1 (`2026-08-07 08:33 EDT`): target remains Client/docs
+  `D:\mavenProject\DHXY-cr271` on `thin-client-design`; protected baseline `D:\mavenProject\DHXY` is untouched.
+  The restarted Client loaded classes compiled at `08:12`, and the hotkey thread received F11 eight times from
+  `08:33:22.378` through `08:33:33.735`, but there was no `UI global hotkey lifecycle` event and physical task input
+  continued. Root cause is the first repair routing the safety-critical pause through `Platform.runLater`; a busy or
+  blocked JavaFX thread can therefore suppress pause indefinitely. Repair #1 makes RUNNING detection and
+  `pauseWindows(...)` execute immediately on the dedicated global-hotkey thread. Only the no-running/PAUSED resume
+  case is delegated to the existing JavaFX hot-resume path; F12 remains direct stop.
+- Repair #1 gates: Client `mvn -q -DskipTests compile` PASS. The updated isolated connectivity contract PASS and
+  asserts both branches: RUNNING invokes immediate pause without UI resume; no RUNNING window delegates exactly once
+  to the existing resume callback. Fresh still requires a Client restart because PID `41808` loaded the pre-repair
+  class at `08:13:40`.

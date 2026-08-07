@@ -43,11 +43,6 @@ bot:
     # Game client window config.
     window-keyword: 大话西游2经典版
 
-    anchor_windowTo_map_scroll_X: 560
-    anchor_windowTo_map_scroll_Y: 370
-
-    anchor_windowTo_map_search_X: 348
-    anchor_windowTo_map_search_Y: 376
 
     # Post-combat HP/MP supply config.
     # Recommended thresholds: 30 / 50 / 70. Code normalizes to those levels.
@@ -61,15 +56,7 @@ bot:
     pet-mp-supply-threshold: 70
 
     # Auto-battle maintenance config.
-    auto-battle-refresh-interval-ms: 120000
-    auto-battle-ui-clean-interval-ms: 30000
-    return-team-area-x: 342
-    return-team-area-y: 57
-    return-team-area-w: 272
-    return-team-area-h: 69
-    return-team-match-rate: 0.85
 
     # Summon skill cleanup config.
     summon-skill-clean-enabled: true
     summon-skill-clean-interval-ms: 1200000
-    summon-skill-clean-run-immediately-on-start: false

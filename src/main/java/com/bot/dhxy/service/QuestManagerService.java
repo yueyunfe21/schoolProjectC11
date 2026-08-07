@@ -83,7 +83,7 @@ public class QuestManagerService {
         if (anchor == null) return false;
 
         int[] rect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X, OFFSET_Y, W_LEFT, PANEL_H);
-        String titleImg = "images/template/task/" + task + "_title.png";
+        String titleImg = taskTitleTemplatePath(task);
         boolean titleClicked = false;
 
         for (int p = 0; p < 3; p++) {
@@ -118,7 +118,7 @@ public class QuestManagerService {
         if (anchor == null) return false;
 
         int[] rect = coordinateHelper.getAbsoluteRectByAnchor(anchor, OFFSET_X, OFFSET_Y, W_LEFT, PANEL_H);
-        String titleImg = "images/template/task/" + task + "_title.png";
+        String titleImg = taskTitleTemplatePath(task);
         boolean titleClicked = false;
 
         for (int p = 0; p < 3; p++) {
@@ -173,6 +173,17 @@ public class QuestManagerService {
             }
         }
         return existing.isEmpty() ? List.of(candidates.get(0)) : existing;
+    }
+
+    private String taskTitleTemplatePath(String task) {
+        // 江湖历练和抓鬼的 title are task-owned; they must never fall back to the 修罗 title.
+        if ("xinshou_training".equals(task)) {
+            return "images/template/a3/a3_title.png";
+        }
+        if ("catch_ghost".equals(task)) {
+            return "images/template/zhuagui/zhuagui_title.png";
+        }
+        return "images/template/task/" + task + "_title.png";
     }
 
     public QuestDetailCapture captureCurrentQuestDetailForTask(String task) {
@@ -388,6 +399,16 @@ public class QuestManagerService {
     }
 
     private boolean pressBackgroundAltQ(String source) {
+        if (inputProvider.requiresForegroundKeyboard()) {
+            try {
+                inputProvider.pressAltQ();
+                return true;
+            } catch (RuntimeException inputFailure) {
+                log.warn("[quest] FakerInput Alt+Q failed: source={} reason={}",
+                        source, inputFailure.toString());
+                return false;
+            }
+        }
         var current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty() || current.get().getNativeBinding() == null) {
             log.warn("[quest] background Alt+Q rejected without an exact window binding: source={}", source);

@@ -37,7 +37,9 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Exact-window adaptation of the validated 59b85e0b NPC smart-click FIFO consumer safety shell. */
@@ -48,7 +50,6 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private static final int WINDOW_WIDTH = 1024;
     private static final int WINDOW_HEIGHT = 768;
     private static final int CANDIDATE_LIMIT = 12;
-    private static final long WAIT_TIMEOUT_MS = 30_000L;
     private static final long WAIT_SLEEP_MS = 500L;
     private static final int CTRL_MENU_SCAN_W = 150;
     private static final int CTRL_MENU_SCAN_H = 120;
@@ -67,6 +68,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
     private final UICleanerService uiCleanerService;
     private final DialogService dialogService;
     private final CoordinateHelper coordinateHelper;
+    private final Map<ReplayPointKey, Point> verifiedReplayPoints = new ConcurrentHashMap<>();
 
     public NpcArrivalFrameFifoLocalExecutor(
             TurnClient turnClient,
@@ -111,6 +113,9 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     binding == null ? null : binding.getNativeHandle(),
                     arguments == null ? null : arguments.intentId());
             return false;
+        }
+        if (spec.reuseLastVerifiedPoint()) {
+            return replayLastVerifiedPoint(arguments, spec, binding);
         }
 
         long storyAnchor = spec.consumeStoryDialogVisibleEvents()
@@ -179,7 +184,6 @@ public final class NpcArrivalFrameFifoLocalExecutor {
             NpcClickSmartCloudSession session,
             long storyAnchor,
             long lastConsumedStorySequence) {
-        long waitStartedAt = -1L;
         int candidateMessageCount = 0;
         try {
             while (candidateMessageCount < CANDIDATE_LIMIT) {
@@ -230,12 +234,6 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     continue;
                 }
                 if (message.getType() == NpcClickSmartQueueMessage.Type.WAIT) {
-                    if (waitStartedAt < 0L) {
-                        waitStartedAt = System.currentTimeMillis();
-                    }
-                    if (System.currentTimeMillis() - waitStartedAt >= WAIT_TIMEOUT_MS) {
-                        break;
-                    }
                     if (!TaskSleep.sleep(WAIT_SLEEP_MS)) {
                         break;
                     }
@@ -243,7 +241,6 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                             taskContextHolder, "NPC arrival FIFO stopped after WAIT");
                     continue;
                 }
-                waitStartedAt = -1L;
                 log.info("NPC arrival FIFO message received: sessionId={} type={} decisionId={} strategy={} "
                                 + "point={} ctrlCandidates={} confidence={} reason={}",
                         message.getSessionId(), message.getType(), message.getDecisionId(),
@@ -309,7 +306,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 stopped ? NpcClickSmartQueueOutcome.CANCELLED : NpcClickSmartQueueOutcome.FINAL_FAILED,
                 stopped
                         ? "stop requested while consuming NPC arrival FIFO"
-                        : "NPC arrival FIFO candidate budget or WAIT timeout reached");
+                        : "NPC arrival FIFO candidate budget reached");
         return SessionResult.terminal();
     }
 
@@ -326,12 +323,32 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     spec.allowedLeft(), spec.allowedTop(), spec.allowedWidth(), spec.allowedHeight());
             return NpcClickSmartQueueOutcome.SAFETY_REJECTED;
         }
+        NpcClickSmartQueueOutcome outcome = executePointAndVerify(
+                arguments,
+                spec,
+                binding,
+                click,
+                "fifoCandidate:" + message.getType(),
+                "npc-click-smart-fifo:" + message.getType() + ":" + message.getDecisionId());
+        if (outcome == NpcClickSmartQueueOutcome.VERIFIED) {
+            rememberVerifiedPoint(arguments, spec, click);
+        }
+        return outcome;
+    }
+
+    private NpcClickSmartQueueOutcome executePointAndVerify(
+            TurnWholeTaskRuntimeArguments arguments,
+            TurnNpcArrivalFrameFifoSpec spec,
+            WindowNativeBinding binding,
+            Point click,
+            String actionSource,
+            String verificationSource) {
         int absoluteX = binding.getX() + click.x;
         int absoluteY = binding.getY() + click.y;
-        log.info("NPC arrival FIFO submitting candidate: sessionId={} type={} relative=({}, {}) absolute=({}, {})",
-                message.getSessionId(), message.getType(), click.x, click.y, absoluteX, absoluteY);
+        log.info("NPC arrival FIFO submitting point: source={} relative=({}, {}) absolute=({}, {})",
+                actionSource, click.x, click.y, absoluteX, absoluteY);
         boolean submitted = inputSequences.submitAndWait(
-                "npcClick:fifoCandidate:" + message.getType() + ":" + arguments.targetKeyword(),
+                "npcClick:" + actionSource + ":" + arguments.targetKeyword(),
                 List.of(
                         InputAction.moveMouse(absoluteX, absoluteY),
                         InputAction.sleep(150),
@@ -351,7 +368,7 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                 spec.expectedDialogTemplatePaths(),
                 spec.expectedDialogRawTemplatePath(),
                 spec.deferDialogVerificationToTask(),
-                "npc-click-smart-fifo:" + message.getType() + ":" + message.getDecisionId()));
+                verificationSource));
     }
 
     private NpcClickSmartQueueOutcome executeCtrlCandidates(
@@ -390,10 +407,45 @@ public final class NpcArrivalFrameFifoLocalExecutor {
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.DIALOG_OPEN_UNVERIFIED
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.CANCELLED
                     || outcomeRef.get() == NpcClickSmartQueueOutcome.SAFETY_REJECTED) {
+                if (outcomeRef.get() == NpcClickSmartQueueOutcome.VERIFIED) {
+                    rememberVerifiedPoint(arguments, spec, probeRel);
+                }
                 return outcomeRef.get();
             }
         }
         return NpcClickSmartQueueOutcome.VERIFICATION_FAILED;
+    }
+
+    private boolean replayLastVerifiedPoint(
+            TurnWholeTaskRuntimeArguments arguments,
+            TurnNpcArrivalFrameFifoSpec spec,
+            WindowNativeBinding binding) {
+        Point retained = verifiedReplayPoints.get(ReplayPointKey.from(arguments, spec));
+        if (!insideAllowedRegion(retained, spec)) {
+            log.warn("NPC arrival retained-point replay rejected: windowId={} taskRunId={} intentId={} point={}",
+                    spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), retained);
+            return false;
+        }
+        NpcClickSmartQueueOutcome outcome = executePointAndVerify(
+                arguments,
+                spec,
+                binding,
+                new Point(retained),
+                "fifoRetainedPointReplay",
+                "npc-click-smart-fifo:retained-point-replay");
+        log.info("NPC arrival retained-point replay finished: windowId={} taskRunId={} intentId={} point={} outcome={}",
+                spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), retained, outcome);
+        return outcome == NpcClickSmartQueueOutcome.VERIFIED;
+    }
+
+    private void rememberVerifiedPoint(
+            TurnWholeTaskRuntimeArguments arguments,
+            TurnNpcArrivalFrameFifoSpec spec,
+            Point point) {
+        ReplayPointKey key = ReplayPointKey.from(arguments, spec);
+        verifiedReplayPoints.put(key, new Point(point));
+        log.info("NPC arrival verified point retained for local replay: windowId={} taskRunId={} intentId={} point={}",
+                spec.windowId(), spec.businessTaskRunId(), arguments.intentId(), point);
     }
 
     private NpcClickSmartQueueOutcome executeCtrlMenuProbeDirect(
@@ -688,6 +740,29 @@ public final class NpcArrivalFrameFifoLocalExecutor {
         EXHAUSTED,
         STORY_BLOCKED,
         TERMINAL_FAILURE
+    }
+
+    private record ReplayPointKey(
+            String tenantId,
+            String deviceId,
+            String windowId,
+            String hwnd,
+            String observationRunId,
+            String businessTaskRunId,
+            String intentId) {
+
+        private static ReplayPointKey from(
+                TurnWholeTaskRuntimeArguments arguments,
+                TurnNpcArrivalFrameFifoSpec spec) {
+            return new ReplayPointKey(
+                    spec.tenantId(),
+                    spec.deviceId(),
+                    spec.windowId(),
+                    spec.hwnd(),
+                    spec.observationRunId(),
+                    spec.businessTaskRunId(),
+                    arguments.intentId());
+        }
     }
 
     private record SessionResult(SessionOutcome outcome, long storySequence) {

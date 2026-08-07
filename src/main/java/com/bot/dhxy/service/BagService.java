@@ -18,6 +18,9 @@ import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.tools.LatencyMetrics;
 import com.bot.dhxy.window.runtime.WindowScopedTempPath;
 import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
+import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.input.action.InputActionExecutionResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -53,8 +56,9 @@ public class BagService {
     private static final String INCENSE_ITEM_TEMPLATE = "bag/sheyaoxiang_item.png";
     private static final int BAG_OPEN_WAIT_MS = 1200;
     private static final int BAG_LATE_RENDER_WAIT_MS = 700;
-    private static final int BAG_TAB_CLICK_WAIT_MS = 500;
-    private static final int MAIN_BAG_TASK_TAB_INDEX = 5;
+    private static final String TASK_TAB_FALLBACK_A_TEMPLATE = "images/template/bag/task_tab_fallback_a.png";
+    private static final String TASK_TAB_FALLBACK_B_TEMPLATE = "images/template/bag/task_tab_fallback_b.png";
+    private static final double TASK_TAB_MATCH_RATE = 0.80;
     private static final int MAIN_BAG_MOUSE_SAFE_OFFSET_X = 60;
     private static final int GAME_CLIENT_WIDTH = 1024;
     private static final int GAME_CLIENT_HEIGHT = 768;
@@ -71,20 +75,13 @@ public class BagService {
     private final Map<String, Integer> visiblePageCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> itemPageCache = new ConcurrentHashMap<>();
     private final Map<String, Point> lastMainBagAnchorCache = new ConcurrentHashMap<>();
+    /**
+     * 主包裹任务页由队长在任务启动前视觉校准一次。页码是同一游戏程序的 UI 布局属性，
+     * 不是某个 HWND 的屏幕坐标；各窗口仍各自用本窗口锚点换算最终点击点。
+     */
+    private final AtomicReference<Integer> calibratedMainBagTaskTabIndex = new AtomicReference<>();
 
     public enum ItemAction { SELECT, USE }
-
-    /**
-     * Immutable bag-grid snapshots captured while the main bag was visibly open.
-     *
-     * <p>The capture holds no live window/UI reference. Callers may close the bag and release the
-     * input queue before matching the item template on these images in a background thread.</p>
-     */
-    public record ReturnItemPrescanSnapshots(BufferedImage currentPageImage,
-                                             BufferedImage taskPageImage,
-                                             int gridScreenX,
-                                             int gridScreenY) {
-    }
 
     /**
      * Summary for bounded item counting in an open bag.
@@ -125,10 +122,6 @@ public class BagService {
             359, 276, 308, 206, 681, 292, 35
     );
 
-    public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate) {
-        return findItemPageIndex(layout, targetItemTemplate, null);
-    }
-
     public Integer findItemPageIndex(BagLayout layout, String targetItemTemplate, TaskExecutionContext context) {
         AtomicReference<Integer> result = new AtomicReference<>();
         boolean ok = inputSequences.submitExclusiveAndWait("bag:findItemPage:" + targetItemTemplate, () -> {
@@ -143,32 +136,9 @@ public class BagService {
         return result.get();
     }
 
-    /**
-     * Open the main bag once, run a caller-owned set of item operations, then close the bag once.
-     *
-     * @param source diagnostic source included in the input queue request name.
-     * @param context optional stop token.
-     * @param operation receives a session whose methods reuse the same confirmed bag geometry.
-     * @return operation result, or null when the bag cannot be opened or the queued input section is
-     *         interrupted before execution.
-     */
-    public <T> T withMainBagOpen(String source, TaskExecutionContext context, Function<MainBagSession, T> operation) {
-        AtomicReference<T> result = new AtomicReference<>();
-        String requestName = "bag:withMainBagOpen:" + (source == null || source.isBlank() ? "unknown" : source);
-        boolean ok = inputSequences.submitExclusiveAndWait(requestName, () -> {
-            result.set(withMainBagOpenExclusive(context, operation));
-            return true;
-        });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Bag batch operation input was interrupted");
-            return null;
-        }
-        return result.get();
-    }
 
     /**
-     * TURN-40B-C2 guarded variant of {@link #withMainBagOpen}: the queue-owning entry for turn
+     * TURN-40B-C2 guarded variant of the queue-owning entry for turn
      * local-service bag operations.
      *
      * <p>The exclusive callback's FIRST action — before {@code ensureBagOpened} and before any
@@ -179,12 +149,12 @@ public class BagService {
      * wait) converts to the existing {@link TaskStopRequestedException}; an ordinary queue failure
      * with an unstopped token keeps the existing generic null semantics. Bag-open failure inside
      * an admitted session also keeps its existing generic null result. The existing
-     * {@code withMainBagOpen}/{@code withMainBagOpenExclusive} paths are byte-unchanged.</p>
+     * {@code withMainBagOpenExclusive} path is byte-unchanged.</p>
      *
      * @param source diagnostic source included in the input queue request name.
      * @param admission live reference-identity predicate captured at action resolution.
      * @param stopToken captured live stop token of the action-owning task; nullable.
-     * @param operation receives the session exactly like {@link #withMainBagOpen}.
+     * @param operation receives the main-bag session.
      * @return operation result, or null on generic queue/open failure.
      * @throws TaskStopRequestedException on identity replacement or a requested stop.
      */
@@ -283,10 +253,6 @@ public class BagService {
         return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.SELECT, null);
     }
 
-    public boolean findAndSelectItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, TaskExecutionContext context) {
-        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.SELECT, context);
-    }
-
     public boolean findAndSelectItemDirectForExclusive(BagLayout layout, String targetItemTemplate, Integer knownBagIndex) {
         if (!isInputWorkerThread()) {
             return findAndSelectItem(layout, targetItemTemplate, knownBagIndex);
@@ -370,200 +336,9 @@ public class BagService {
                 MAIN_BAG, INCENSE_ITEM_TEMPLATE, null, ItemAction.USE, context);
     }
 
-    public boolean findAndUseItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex) {
-        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE, null);
-    }
-
-    public boolean findAndUseItem(BagLayout layout, String targetItemTemplate, Integer knownBagIndex, TaskExecutionContext context) {
-        return interactWithItem(layout, targetItemTemplate, knownBagIndex, ItemAction.USE, context);
-    }
-
     public boolean findAndUseItemFromBack(BagLayout layout, String targetItemTemplate, int maxBagIndex,
                                           TaskExecutionContext context) {
         return interactWithItemFromBack(layout, targetItemTemplate, maxBagIndex, ItemAction.USE, context);
-    }
-
-    /**
-     * Locate a return item on the main-bag task page without clicking it.
-     *
-     * @param targetItemTemplate item template path relative to {@code images/template/}.
-     * @param source diagnostic source describing why the prescan is running.
-     * @param context optional task context for stop/pause checks.
-     * @return cached screen-absolute item point when the item is found; null otherwise.
-     */
-    public ReturnItemCachePoint prescanMainBagTaskPageItem(String targetItemTemplate,
-                                                           String source,
-                                                           TaskExecutionContext context) {
-        AtomicReference<ReturnItemCachePoint> result = new AtomicReference<>();
-        boolean ok = inputSequences.submitExclusiveAndWait(
-                "bag:prescanTaskPageItem:" + targetItemTemplate,
-                () -> {
-                    result.set(findMainBagTaskPageItemPointExclusive(targetItemTemplate, source, context));
-                    return true;
-                });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Bag task-page item prescan input was interrupted");
-            return null;
-        }
-        return result.get();
-    }
-
-    /**
-     * Open the main bag, capture the current and task-page grids, then close it before returning.
-     *
-     * <p>This method performs only the short UI transaction. Template matching intentionally runs
-     * later against the returned immutable snapshots, so it never holds the input queue while
-     * OpenCV searches the bag image.</p>
-     *
-     * @param source diagnostic source for the queue and capture logs.
-     * @param context current task context for stop checks and window binding.
-     * @return both grid snapshots with their screen-absolute origin, or {@code null} when the bag
-     *         could not be opened/captured.
-     */
-    public ReturnItemPrescanSnapshots captureMainBagTaskPagePrescanSnapshots(
-            String source,
-            TaskExecutionContext context) {
-        AtomicReference<ReturnItemPrescanSnapshots> result = new AtomicReference<>();
-        boolean ok = inputSequences.submitExclusiveAndWait(
-                "bag:captureTaskPagePrescan:" + (source == null ? "unknown" : source),
-                () -> {
-                    result.set(captureMainBagTaskPagePrescanSnapshotsExclusive(source, context));
-                    return true;
-                });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Bag task-page prescan capture input was interrupted");
-            return null;
-        }
-        return result.get();
-    }
-
-    /**
-     * Match a return-item template against snapshots already captured from the main bag.
-     *
-     * <p>This is pure background work: it performs no input, capture, focus, or temp-file write.
-     * The current page is preferred to preserve the existing scan order, then the task page.</p>
-     *
-     * @param snapshots immutable snapshots returned by
-     *                  {@link #captureMainBagTaskPagePrescanSnapshots(String, TaskExecutionContext)}.
-     * @param targetItemTemplate item template path relative to {@code images/template/}.
-     * @param source diagnostic source stored in the resulting cache point.
-     * @return cached screen-absolute item point, or {@code null} when neither snapshot matches.
-     */
-    public ReturnItemCachePoint matchMainBagTaskPagePrescanSnapshots(
-            ReturnItemPrescanSnapshots snapshots,
-            String targetItemTemplate,
-            String source) {
-        if (snapshots == null || targetItemTemplate == null || targetItemTemplate.isBlank()) {
-            return null;
-        }
-        try {
-            BufferedImage template = ImageIO.read(Path.of("images/template", targetItemTemplate).toFile());
-            if (template == null) {
-                log.warn("[bag] async task-page prescan template unavailable: template={} source={}",
-                        targetItemTemplate, source);
-                return null;
-            }
-            Point current = findItemInPrescanSnapshot(snapshots.currentPageImage(), template, snapshots);
-            if (current != null) {
-                return toReturnItemCachePoint(targetItemTemplate, current, source + ":current-page");
-            }
-            Point taskPage = findItemInPrescanSnapshot(snapshots.taskPageImage(), template, snapshots);
-            return toReturnItemCachePoint(targetItemTemplate, taskPage, source + ":task-page");
-        } catch (IOException e) {
-            log.warn("[bag] async task-page prescan template load failed: template={} source={} reason={}",
-                    targetItemTemplate, source, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Locate a return item by scanning normal main-bag pages from the back without clicking it.
-     *
-     * @param targetItemTemplate item template path relative to {@code images/template/}.
-     * @param maxBagIndex highest zero-based normal bag page to consider.
-     * @param source diagnostic source describing why the prescan is running.
-     * @param context optional task context for stop/pause checks.
-     * @return cached screen-absolute item point when the item is found; null otherwise.
-     */
-    public ReturnItemCachePoint prescanMainBagItemFromBack(String targetItemTemplate,
-                                                           int maxBagIndex,
-                                                           String source,
-                                                           TaskExecutionContext context) {
-        AtomicReference<ReturnItemCachePoint> result = new AtomicReference<>();
-        boolean ok = inputSequences.submitExclusiveAndWait(
-                "bag:prescanItemFromBack:" + targetItemTemplate,
-                () -> {
-                    result.set(findMainBagItemFromBackPointExclusive(targetItemTemplate, maxBagIndex, source, context));
-                    return true;
-                });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Bag from-back item prescan input was interrupted");
-            return null;
-        }
-        return result.get();
-    }
-
-    /**
-     * Open the main bag and click a previously learned return-item point.
-     *
-     * @param cachedPoint screen-absolute point produced by one of the prescan methods.
-     * @param source diagnostic source describing why the cached point is being consumed.
-     * @param context optional task context for stop/pause checks.
-     * @return true when the bag opened and the cached item click was submitted.
-     */
-    public boolean useCachedMainBagReturnItem(ReturnItemCachePoint cachedPoint,
-                                              String source,
-                                              TaskExecutionContext context) {
-        if (cachedPoint == null) {
-            return false;
-        }
-        AtomicReference<Boolean> result = new AtomicReference<>(false);
-        boolean ok = inputSequences.submitExclusiveAndWait(
-                "bag:useCachedReturnItem:" + cachedPoint.getTemplatePath(),
-                () -> {
-                    result.set(useCachedMainBagReturnItemExclusive(cachedPoint, source, context));
-                    return true;
-                });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Cached return item input was interrupted");
-            return false;
-        }
-        return result.get();
-    }
-
-    /**
-     * Use a task item that is expected to live only on the main-bag task page.
-     *
-     * @param targetItemTemplate item template path relative to {@code images/template/}, such as
-     *                           {@code bag/xiuluo_return_item.png}; must not be null/blank.
-     * @param context optional task execution context used for stop checks.
-     * @return true when the task page was opened, the template was found there, and the item click
-     *         was submitted; false when the bag cannot be opened or the item is not on the task
-     *         page. This method deliberately does not scan normal bag pages.
-     */
-    public boolean findAndUseMainBagTaskPageItem(String targetItemTemplate, TaskExecutionContext context) {
-        AtomicReference<Boolean> result = new AtomicReference<>(false);
-        boolean ok = inputSequences.submitExclusiveAndWait(
-                "bag:taskPageItemAction:USE:" + targetItemTemplate,
-                () -> {
-                    result.set(interactWithMainBagTaskPageItemExclusive(targetItemTemplate, ItemAction.USE, context));
-                    return true;
-                });
-        if (!ok) {
-            throwIfStopRequested(context);
-            throwIfInterrupted("Bag task-page item action input was interrupted");
-            return false;
-        }
-        return result.get();
-    }
-
-    public boolean isMainBagOpen(TaskExecutionContext context) {
-        throwIfStopRequested(context);
-        return getBaseAnchor(MAIN_BAG, context) != null;
     }
 
     protected Point ensureBagOpened(BagLayout layout, TaskExecutionContext context) {
@@ -838,8 +613,9 @@ public class BagService {
                 success = executeSafeAction(currentPageItem, action, context);
             }
             if (!success) {
-                Point pt = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate,
-                        MAIN_BAG_TASK_TAB_INDEX, context);
+                Integer taskTabIndex = resolveMainBagTaskTabIndex(baseAnchor, context);
+                Point pt = taskTabIndex == null ? null : searchItemInTabOnly(
+                        MAIN_BAG, baseAnchor, targetItemTemplate, taskTabIndex, context);
                 if (pt != null) {
                     success = executeSafeAction(pt, action, context);
                 }
@@ -867,42 +643,10 @@ public class BagService {
             if (currentPageItem != null) {
                 return toReturnItemCachePoint(targetItemTemplate, currentPageItem, source + ":current-page");
             }
-            Point taskPageItem = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate,
-                    MAIN_BAG_TASK_TAB_INDEX, context);
+            Integer taskTabIndex = resolveMainBagTaskTabIndex(baseAnchor, context);
+            Point taskPageItem = taskTabIndex == null ? null : searchItemInTabOnly(
+                    MAIN_BAG, baseAnchor, targetItemTemplate, taskTabIndex, context);
             return toReturnItemCachePoint(targetItemTemplate, taskPageItem, source + ":task-page");
-        } finally {
-            closeBagIfNeeded(MAIN_BAG, context);
-        }
-    }
-
-    private ReturnItemPrescanSnapshots captureMainBagTaskPagePrescanSnapshotsExclusive(
-            String source,
-            TaskExecutionContext context) {
-        throwIfStopRequested(context);
-        Point baseAnchor = ensureBagOpened(MAIN_BAG, context);
-        if (baseAnchor == null) {
-            return null;
-        }
-        try {
-            double scale = coordinateHelper.getScaleRatio();
-            int startX = baseAnchor.x + (int) Math.round(MAIN_BAG.gridOffsetX / scale);
-            int startY = baseAnchor.y + (int) Math.round(MAIN_BAG.gridOffsetY / scale);
-            int endX = startX + (int) Math.round(MAIN_BAG.gridW / scale);
-            int endY = startY + (int) Math.round(MAIN_BAG.gridH / scale);
-            BufferedImage currentPage = tracker.captureToMemory("bag prescan current grid", startX, startY, endX, endY);
-            if (currentPage == null) {
-                log.warn("[bag] async task-page prescan current capture failed: source={}", source);
-                return null;
-            }
-            switchBagTab(MAIN_BAG, baseAnchor, MAIN_BAG_TASK_TAB_INDEX, context);
-            BufferedImage taskPage = tracker.captureToMemory("bag prescan task grid", startX, startY, endX, endY);
-            if (taskPage == null) {
-                log.warn("[bag] async task-page prescan task capture failed: source={}", source);
-                return null;
-            }
-            log.info("[bag] async task-page prescan snapshots captured; bag will close before matching: source={} grid=({}, {}) size={}x{}",
-                    source, startX, startY, currentPage.getWidth(), currentPage.getHeight());
-            return new ReturnItemPrescanSnapshots(currentPage, taskPage, startX, startY);
         } finally {
             closeBagIfNeeded(MAIN_BAG, context);
         }
@@ -974,22 +718,6 @@ public class BagService {
                 .learnedAtMs(System.currentTimeMillis())
                 .source(source)
                 .build();
-    }
-
-    private Point findItemInPrescanSnapshot(BufferedImage snapshot,
-                                             BufferedImage template,
-                                             ReturnItemPrescanSnapshots snapshots) {
-        if (snapshot == null || template == null) {
-            return null;
-        }
-        double[] match = ImageFinder.find(snapshot, template, BAG_ITEM_MATCH_RATE);
-        if (match == null || match.length < 2) {
-            return null;
-        }
-        double scale = coordinateHelper.getScaleRatio();
-        return new Point(
-                snapshots.gridScreenX() + (int) Math.round(match[0] / scale),
-                snapshots.gridScreenY() + (int) Math.round(match[1] / scale));
     }
 
     private Integer findItemPageIndexInOpenMainBag(Point baseAnchor, String targetItemTemplate,
@@ -1223,6 +951,9 @@ public class BagService {
         throwIfStopRequested(context);
         if (matches.isEmpty()) {
             log.info("[bag] page {} no match: template={}", tabIndex + 1, targetItemTemplate);
+            // bag_scan.png is overwritten by the very next scan, so the frame that missed is gone by the
+            // time anyone looks. Keep a copy of that one.
+            BagScanMissDump.copy(path, targetItemTemplate, tabIndex + 1);
             return List.of();
         }
 
@@ -1271,6 +1002,8 @@ public class BagService {
         throwIfStopRequested(context);
         if (res == null || res.length < 2) {
             log.info("[bag] current visible page no match: template={}", targetItemTemplate);
+            // Same reason as the paged scan: bag_scan_current.png is gone on the next call.
+            BagScanMissDump.copy(path, targetItemTemplate, 0);
             return null;
         }
 
@@ -1278,6 +1011,106 @@ public class BagService {
         log.info("[bag] current visible page matched: template={} point=({}, {})",
                 targetItemTemplate, found.x, found.y);
         return found;
+    }
+
+    /**
+     * Calibrate the process-wide main-bag task tab before the leader task loop starts.
+     *
+     * <p>The supplied binding is frozen by the input queue, so opening the bag, taking the visual sample,
+     * and closing it stay scoped to the exact leader HWND. The result is a tab index only; each later
+     * window still derives its own physical click coordinate from its own bag anchor.</p>
+     *
+     * @param context leader runtime context that owns the one-time calibration.
+     * @param binding current exact native binding for {@code context}.
+     * @return true when an existing or newly matched task-tab index is available.
+     */
+    public boolean calibrateMainBagTaskTabAtStartup(WindowRuntimeContext context, WindowNativeBinding binding) {
+        if (calibratedMainBagTaskTabIndex.get() != null) {
+            return true;
+        }
+        if (context == null || !context.isLeader() || binding == null
+                || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+            log.info("[bag] skip startup task-tab calibration: windowId={} role={} bindingReady={}",
+                    context == null ? "unknown" : context.getWindowId(),
+                    context == null ? "unknown" : context.getRole(),
+                    binding != null && binding.hasNativeHandle() && binding.hasGeometry());
+            return false;
+        }
+        AtomicReference<Boolean> calibrated = new AtomicReference<>(false);
+        InputActionExecutionResult result = inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                "bag:startup-task-tab-calibration:" + context.getWindowId(), context, binding,
+                () -> windowTaskContextHolder.callWith(context, () -> {
+                    Point baseAnchor = ensureBagOpened(MAIN_BAG, null);
+                    if (baseAnchor == null) {
+                        return false;
+                    }
+                    try {
+                        calibrated.set(calibrateMainBagTaskTab(baseAnchor, context.getWindowId()));
+                        return calibrated.get();
+                    } finally {
+                        closeBagIfNeeded(MAIN_BAG, null);
+                    }
+                }));
+        boolean available = result.isCompleted() && Boolean.TRUE.equals(calibrated.get());
+        log.info("[bag] startup task-tab calibration result: windowId={} status={} available={} pageIndex={}",
+                context.getWindowId(), result.getStatus(), available, calibratedMainBagTaskTabIndex.get());
+        return available;
+    }
+
+    /**
+     * Returns the cached task tab, calibrating it from the already-open exact window when startup could not yet
+     * prove a local leader. This remains fail-closed: no tab is clicked until a template establishes the page.
+     */
+    private Integer resolveMainBagTaskTabIndex(Point baseAnchor, TaskExecutionContext context) {
+        Integer cached = calibratedMainBagTaskTabIndex.get();
+        if (cached == null && baseAnchor != null) {
+            String windowId = context == null ? "unknown" : context.getWindowId();
+            log.info("[bag] task-page tab missing at action time; calibrate from the already-open task window: windowId={}",
+                    windowId);
+            calibrateMainBagTaskTab(baseAnchor, windowId);
+            cached = calibratedMainBagTaskTabIndex.get();
+        }
+        if (cached == null) {
+            log.warn("[bag] main-bag task tab has not been calibrated; skip task-page action: windowId={} role={}",
+                    context == null ? "unknown" : context.getWindowId(),
+                    context == null ? "unknown" : context.getWindowRole());
+        }
+        return cached;
+    }
+
+    private boolean calibrateMainBagTaskTab(Point baseAnchor, String windowId) {
+        if (!tracker.updateGlobalVision()) {
+            log.warn("[bag] startup task-tab calibration capture failed: windowId={}", windowId);
+            return false;
+        }
+        String screenPath = tracker.getLatestVisionPath();
+        Point tabCenter = findTemplateInScreen(TASK_TAB_FALLBACK_A_TEMPLATE, screenPath, TASK_TAB_MATCH_RATE, null);
+        String matchedTemplate = TASK_TAB_FALLBACK_A_TEMPLATE;
+        if (tabCenter == null) {
+            tabCenter = findTemplateInScreen(TASK_TAB_FALLBACK_B_TEMPLATE, screenPath, TASK_TAB_MATCH_RATE, null);
+            matchedTemplate = TASK_TAB_FALLBACK_B_TEMPLATE;
+        }
+        if (tabCenter == null) {
+            log.warn("[bag] startup task-tab calibration did not match either task-tab template: windowId={} anchor=({}, {})",
+                    windowId, baseAnchor.x, baseAnchor.y);
+            return false;
+        }
+        double scale = coordinateHelper.getScaleRatio();
+        double firstTabCenterY = baseAnchor.y + MAIN_BAG.tabOffsetY / scale;
+        double stepY = MAIN_BAG.tabStepY / scale;
+        int pageIndex = (int) Math.round((tabCenter.y - firstTabCenterY) / stepY);
+        if (pageIndex < 0) {
+            log.warn("[bag] startup task-tab calibration rejected negative page: windowId={} template={} tabCenter=({}, {}) anchor=({}, {}) pageIndex={}",
+                    windowId, matchedTemplate, tabCenter.x, tabCenter.y, baseAnchor.x, baseAnchor.y, pageIndex);
+            return false;
+        }
+        calibratedMainBagTaskTabIndex.compareAndSet(null, pageIndex);
+        Integer calibrated = calibratedMainBagTaskTabIndex.get();
+        log.info("[bag] main-bag task tab calibrated from exact task window: windowId={} template={} tabCenter=({}, {}) anchor=({}, {}) pageIndex={} click=({}, {})",
+                windowId, matchedTemplate, tabCenter.x, tabCenter.y, baseAnchor.x, baseAnchor.y, calibrated,
+                baseAnchor.x + (int) Math.round(MAIN_BAG.tabOffsetX / scale),
+                baseAnchor.y + (int) Math.round((MAIN_BAG.tabOffsetY + calibrated * MAIN_BAG.tabStepY) / scale));
+        return true;
     }
 
     private void switchBagTab(BagLayout layout, Point baseAnchor, int tabIndex, TaskExecutionContext context) {
@@ -1395,6 +1228,16 @@ public class BagService {
     }
 
     private boolean pressBackgroundAltE(String source) {
+        if (inputProvider.requiresForegroundKeyboard()) {
+            try {
+                inputProvider.pressAltE();
+                return true;
+            } catch (RuntimeException inputFailure) {
+                log.warn("[bag] FakerInput Alt+E failed: source={} reason={}",
+                        source, inputFailure.toString());
+                return false;
+            }
+        }
         var current = windowTaskContextHolder.rawCurrent();
         if (current.isEmpty() || current.get().getNativeBinding() == null) {
             log.warn("[bag] background Alt+E rejected without an exact window binding: source={}", source);
@@ -1431,10 +1274,6 @@ public class BagService {
             return new BagOpenCheck(anchor, anchor != null, visibleBy);
         }
 
-        private static BagOpenCheck visible(Point anchor, String visibleBy) {
-            return new BagOpenCheck(anchor, true, visibleBy);
-        }
-
         private static BagOpenCheck notVisible() {
             return new BagOpenCheck(null, false, "none");
         }
@@ -1463,6 +1302,21 @@ public class BagService {
 
         public boolean useItem(String targetItemTemplate, Integer knownBagIndex) {
             return interactWithItemInOpenMainBag(baseAnchor, targetItemTemplate, knownBagIndex, ItemAction.USE, context);
+        }
+
+        /**
+         * Uses an item from the first main-bag tab only.
+         *
+         * <p>新手节点的升级/海螺/修复道具明确固定在 tab {@code 0}。This method deliberately
+         * does not fall through to another page: a visual match on a different tab would be a
+         * different item-selection decision.</p>
+         *
+         * @param targetItemTemplate local template path for the item inside tab {@code 0}; nonblank.
+         * @return true only when this tab contained the template and the serialized right click ran.
+         */
+        public boolean useItemOnFirstTab(String targetItemTemplate) {
+            Point item = searchItemInTabOnly(MAIN_BAG, baseAnchor, targetItemTemplate, 0, context);
+            return item != null && executeSafeAction(item, ItemAction.USE, context);
         }
     }
 }

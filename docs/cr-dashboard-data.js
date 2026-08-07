@@ -1,5 +1,170 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G044",
+    "number": 44,
+    "owner": "Codex",
+    "status": "修复进行中，待编译、合同与后台 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "五环 ready-event 新旧顺序、普通 Story 显式动作、后台连续测试",
+    "summary": "禁止旧 `TASK_NOT_FOUND` 压过更新事实；非战斗普通 Story 立即关闭并恢复 tracker。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G043",
+    "number": 43,
+    "owner": "Codex",
+    "status": "源码、编译、合同及接任务 fresh 链通过；后续转 G044",
+    "kind": "open",
+    "domain": "Dialog",
+    "files": "五环接任务 presence 武装、跨边界顺序合同、后台连续测试",
+    "summary": "NPC Dialog 后的 observation producer 与 PreparedAction 点击链已恢复。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G042",
+    "number": 42,
+    "owner": "Codex",
+    "status": "双项源码、编译与隔离合同通过，待 fresh",
+    "kind": "open",
+    "domain": "Dialog",
+    "files": "修罗接任务后出村预寻路临时开关、纯右键禁停避让",
+    "summary": "临时关闭灵兽村出口预寻路；纯右键巡逻跳过 Dialog sweep，左键与 Dialog callback 保持避让。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G041",
+    "number": 41,
+    "owner": "Codex",
+    "status": "源码与合同通过，待安装驱动并 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "FakerInput 设备桥、输入后端配置、队列路由合同",
+    "summary": "本地虚拟 HID 适配与队列路由已通过静态门；仅 `Alt+5/6/8` 保留后台 HWND，默认后端未切换。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G040",
+    "number": 40,
+    "owner": "Codex",
+    "status": "源码与合同通过，fresh 进行中",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭 Tracker 整图比较、原子 action 替换、定向合同",
+    "summary": "不按时间猜任务新旧；同图保留，异图按 expected action ID 原子替换，避免普通任务继承旧暗雷巡逻。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G039",
+    "number": 39,
+    "owner": "Codex",
+    "status": "源码与隔离合同通过，待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "自动面板拖拽标记、双仓协议与 Client 战斗门合同",
+    "summary": "仅允许显式自动面板拖拽在战斗内执行，保持其他鼠标输入 fail-closed。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G038",
+    "number": 38,
+    "owner": "Codex",
+    "status": "fresh 分支通过，G033 继续",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭 OCR 文案、原 action 延迟重试、定向合同",
+    "summary": "识别新版“游荡的妖怪”暗雷文案，并让首次 OCR 传输失败仍能修正已点击的 exact action。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G037",
+    "number": 37,
+    "owner": "Codex",
+    "status": "Repair #1 fresh 已越过旧失败点，G033 继续",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭暗雷巡逻顺序、飞行确认停放语义、定向合同、实跑证据",
+    "summary": "恢复蟠桃园巡逻顺序并确保安静的 event park 不会把飞行确认重试误判为整轮失败。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G036",
+    "number": 36,
+    "owner": "Codex",
+    "status": "隔离静态门通过，待高权限 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "G033 脚本、后台控制合同",
+    "summary": "用显式 UAC `RunAs` 启动与游戏同级的无 UI 宿主，不改业务或输入安全证明。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G035",
+    "number": 35,
+    "owner": "Codex",
+    "status": "源码与合同通过，待 fresh 重试",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`WinApiMouseController`、输入重试合同",
+    "summary": "同一输入事务内有限重试鼠标移动，保留最终 read-back fail-closed。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G034",
+    "number": 34,
+    "owner": "Codex",
+    "status": "源码与真实图 replay 通过，待 fresh 重试",
+    "kind": "open",
+    "domain": "窗口/Runner",
+    "files": "队伍角色预检、既有 dialog/generic 清理、真实 replay",
+    "summary": "角色预检前清除 exact-window 阻挡 UI，再保持原 `Alt+T` 队长模板链。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G033",
+    "number": 33,
+    "owner": "Codex",
+    "status": "F11 源码与隔离合同通过，待 Client 重启 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复",
+    "summary": "F11 已复用 UI 暂停/热恢复入口；新 run 继续验证战后 retained 绿链、迟到引妖香回执及快捷键暂停/恢复。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G032",
+    "number": 32,
+    "owner": "Codex",
+    "status": "完成：整栈启动恢复并通过真实启动验收",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`restart-local-dhxy-stack.ps1`、启动日志、进程登记",
+    "summary": "Cloud/OCR 就绪后父启动器继续创建 JavaFX Client，且保留启动日志。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G031",
+    "number": 31,
+    "owner": "Codex",
+    "status": "源码与定向合同通过，待 fresh runtime",
+    "kind": "open",
+    "domain": "导航",
+    "files": "`TiantingTask`, `NpcClickService`, 天庭接任务合同、dashboard 生成器",
+    "summary": "exact `ARRIVED` 后禁止再次同步坐标或重新导航；复用现有 Client FIFO 消费器，并让 ready 事件携带当前任务类型。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G027",
+    "number": 27,
+    "owner": "Codex",
+    "status": "Done：内存诊断 fresh 通过",
+    "kind": "done",
+    "domain": "五环",
+    "files": "`ImagePreprocessor`、内存诊断不落盘合同、G033 fresh 证据",
+    "summary": "`cloud-memory:` 不再误落盘；Dialog 与五环业务未改。",
+    "verification": "已验证/已关闭"
+  },
+  {
     "id": "CR1",
     "number": 1,
     "owner": "谢帅",
@@ -2824,6 +2989,17 @@ window.CR_DASHBOARD_DATA = [
     "domain": "通用",
     "files": "`SOURCE+TEST PASSED / FRESH RUNTIME REQUIRED`",
     "summary": "保持696动作顺序；exact-run Observer收口、终态前序命令按不同`startRequestId`精确释放、瞬时busy本地退避及终态回传均有定向合同。重启两端JVM后验收启动→停止→立即重启。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G02",
+    "number": 2,
+    "owner": "Codex",
+    "status": "P1 已实现，待主审：Alt+A 与目标点击跨两条 TurnAction；第二条标记左键成功才登记 expected",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`主审 + fresh runtime 待验`",
+    "summary": "通用 ticket 与 cloud-fallback 删除已接；Alt+A 后票据最多保留 10 秒，`directCombatTargetClick=true` 的原子目标左键成功才消费。focused 两-turn、普通点击、过期票负例和双仓编译均已通过。",
     "verification": "需复核"
   },
   {

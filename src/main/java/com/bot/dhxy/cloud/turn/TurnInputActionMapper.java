@@ -1,11 +1,13 @@
 package com.bot.dhxy.cloud.turn;
 
 import com.bot.dhxy.cloud.turn.protocol.TurnInputAction;
+import com.bot.dhxy.cloud.turn.protocol.TurnInputCoordinateSpace;
 import com.bot.dhxy.cloud.turn.protocol.TurnInputSpec;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowRect;
 import com.bot.dhxy.input.action.InputAction;
 import org.springframework.stereotype.Component;
 
+import java.awt.Point;
 import java.util.List;
 import java.util.Objects;
 
@@ -14,10 +16,12 @@ import java.util.Objects;
 public final class TurnInputActionMapper {
 
     /**
-     * Map one mouse input without scaling its screen-absolute coordinates.
+     * Map one mouse input using either its legacy screen-absolute point or a point relative to the
+     * freshly resolved exact HWND. Window-relative input is reserved for UI surfaces, such as the
+     * mini-map, whose logical point must survive an older Cloud-side window rectangle.
      *
      * @param action closed turn input action; must be one of the seven mouse actions.
-     * @param input typed input fields containing screen-absolute points and signed wheel delta.
+     * @param input typed input fields containing points in {@link TurnInputCoordinateSpace} and signed wheel delta.
      * @param windowRect current bound-window rectangle in screen-absolute pixels.
      * @return one ordered action list that must be submitted as a single queue request.
      */
@@ -34,12 +38,15 @@ public final class TurnInputActionMapper {
         }
 
         return switch (action) {
-            case MOVE_MOUSE -> List.of(InputAction.moveMouse(
-                    requirePointX(input, windowRect), requirePointY(input, windowRect)));
+            case MOVE_MOUSE -> {
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
+                yield List.of(InputAction.moveMouse(point.x, point.y));
+            }
             case CLICK_LEFT -> {
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
                 InputAction click = InputAction.clickLeft(
-                        requirePointX(input, windowRect),
-                        requirePointY(input, windowRect),
+                        point.x,
+                        point.y,
                         requireClickTiming(input.clickDelayMs(), "input.clickDelayMs"));
                 int queueHoldMs = requireClickTiming(input.queueHoldMs(), "input.queueHoldMs");
                 yield queueHoldMs > 0
@@ -47,9 +54,10 @@ public final class TurnInputActionMapper {
                         : List.of(click);
             }
             case CLICK_RIGHT -> {
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
                 InputAction click = InputAction.clickRight(
-                        requirePointX(input, windowRect),
-                        requirePointY(input, windowRect),
+                        point.x,
+                        point.y,
                         requireClickTiming(input.clickDelayMs(), "input.clickDelayMs"));
                 int queueHoldMs = requireClickTiming(input.queueHoldMs(), "input.queueHoldMs");
                 yield queueHoldMs > 0
@@ -57,25 +65,22 @@ public final class TurnInputActionMapper {
                         : List.of(click);
             }
             case DOUBLE_CLICK_LEFT -> {
-                int x = requirePointX(input, windowRect);
-                int y = requirePointY(input, windowRect);
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
                 yield List.of(
-                        InputAction.clickLeft(x, y, 0),
-                        InputAction.clickLeft(x, y, 0));
+                        InputAction.clickLeft(point.x, point.y, 0),
+                        InputAction.clickLeft(point.x, point.y, 0));
             }
-            case DOUBLE_CLICK_RIGHT -> List.of(InputAction.doubleRightClick(
-                    requirePointX(input, windowRect), requirePointY(input, windowRect), 0, 0));
+            case DOUBLE_CLICK_RIGHT -> {
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
+                yield List.of(InputAction.doubleRightClick(point.x, point.y, 0, 0));
+            }
             case DRAG_LEFT -> {
-                int startX = requirePointX(input, windowRect);
-                int startY = requirePointY(input, windowRect);
-                int endX = requireCoordinate(input.endX(), "input.endX");
-                int endY = requireCoordinate(input.endY(), "input.endY");
-                requireInsideWindow(endX, endY, windowRect, "input drag end");
-                yield List.of(InputAction.dragAndDrop(startX, startY, endX, endY));
+                Point start = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input drag start");
+                Point end = requirePoint(input.endX(), input.endY(), input.coordinateSpace(), windowRect, "input drag end");
+                yield List.of(InputAction.dragAndDrop(start.x, start.y, end.x, end.y));
             }
             case SCROLL -> {
-                int x = requirePointX(input, windowRect);
-                int y = requirePointY(input, windowRect);
+                Point point = requirePoint(input.x(), input.y(), input.coordinateSpace(), windowRect, "input point");
                 int delta = requireCoordinate(input.scrollDelta(), "input.scrollDelta");
                 if (delta == 0) {
                     throw new IllegalArgumentException("input.scrollDelta must not be zero");
@@ -86,7 +91,7 @@ public final class TurnInputActionMapper {
                 InputAction wheel = delta > 0
                         ? InputAction.scrollDown(delta)
                         : InputAction.scrollUp(-delta);
-                yield List.of(InputAction.moveMouse(x, y), wheel);
+                yield List.of(InputAction.moveMouse(point.x, point.y), wheel);
             }
             case KEY_TAP, KEY_DOWN, KEY_UP, TEXT_INPUT ->
                     throw new IllegalArgumentException("not a mouse input action: " + action);
@@ -103,18 +108,25 @@ public final class TurnInputActionMapper {
                 || action == TurnInputAction.SCROLL;
     }
 
-    private int requirePointX(TurnInputSpec input, TurnWindowRect windowRect) {
-        int x = requireCoordinate(input.x(), "input.x");
-        int y = requireCoordinate(input.y(), "input.y");
-        requireInsideWindow(x, y, windowRect, "input point");
-        return x;
-    }
-
-    private int requirePointY(TurnInputSpec input, TurnWindowRect windowRect) {
-        int x = requireCoordinate(input.x(), "input.x");
-        int y = requireCoordinate(input.y(), "input.y");
-        requireInsideWindow(x, y, windowRect, "input point");
-        return y;
+    private Point requirePoint(Integer rawX,
+                               Integer rawY,
+                               TurnInputCoordinateSpace declaredSpace,
+                               TurnWindowRect windowRect,
+                               String field) {
+        int x = requireCoordinate(rawX, field + ".x");
+        int y = requireCoordinate(rawY, field + ".y");
+        TurnInputCoordinateSpace coordinateSpace = declaredSpace == null
+                ? TurnInputCoordinateSpace.SCREEN_ABSOLUTE
+                : declaredSpace;
+        if (coordinateSpace == TurnInputCoordinateSpace.WINDOW_RELATIVE) {
+            if (windowRect.width() <= 0 || windowRect.height() <= 0
+                    || x < 0 || y < 0 || x >= windowRect.width() || y >= windowRect.height()) {
+                throw new IllegalArgumentException(field + " is outside the refreshed window-relative rectangle");
+            }
+            return new Point(windowRect.left() + x, windowRect.top() + y);
+        }
+        requireInsideWindow(x, y, windowRect, field);
+        return new Point(x, y);
     }
 
     private int requireCoordinate(Integer value, String field) {

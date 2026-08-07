@@ -1,410 +1,528 @@
 package com.bot.dhxy.cloud.turn.local;
 
+import com.bot.dhxy.core.ImageFinder;
+import com.bot.dhxy.cloud.turn.local.dialog.DialogStoryAdvanceLocalMacroMechanics;
 import com.bot.dhxy.driver.BoundWindowCaptureService;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.InputSequences;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.observation.DialogFramePresenceMechanics;
 import com.bot.dhxy.window.runtime.WindowNativeBindingRefreshService;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
+import com.bot.dhxy.window.runtime.WindowTaskContextHolder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.nio.ByteBuffer;
-import java.util.Optional;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BooleanSupplier;
 
 /**
- * Local mechanical half of the CR212 repaired team-role preflight.
+ * Local-only team-role probe used before a multi-window task starts.
  *
- * <p>For one selected start batch this service first groups exact HWND captures at the tooltip hover anchor,
- * without physical input. It then serializes hover/capture only for one usable representative per group and
- * removes that tooltip background. It intentionally does not OCR or decide leader/member: Cloud receives one
- * representative mask per group and compares its OCR leader ID with every window title. No task phase,
- * navigation, or maintenance decision is owned here.</p>
+ * <p>This service owns only the fixed visual mechanics: it opens the team panel with {@code Alt+T}, determines
+ * solo/grouped state from the normal-world mini-map magnifier, and matches the group panel's local leader buttons.
+ * It sends the resulting role as metadata to Cloud; no tooltip image, OCR payload, Cloud probe, or retry loop is
+ * involved. Every input/capture is scoped to the supplied native window and serialized as one atomic sequence.</p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class LocalTeamRolePreflightService {
 
-    private static final int HOVER_X = 644;
-    private static final int HOVER_Y = 91;
-    private static final int HOVER_RADIUS_X = 8;
-    private static final int HOVER_RADIUS_Y = 6;
-    private static final int TEAM_ANCHOR_SIZE = 10;
-    private static final int TOOLTIP_X = 680;
-    private static final int TOOLTIP_Y = 124;
-    private static final int TOOLTIP_W = 111;
-    private static final int TOOLTIP_H = 84;
-    private static final int TOOLTIP_ATTEMPTS = 2;
-    private static final long HOVER_SETTLE_MS = 500L;
-    private static final long RETRY_WAIT_MS = 1_000L;
-    private static final int WHITE_MIN = 100;
-    private static final int PURPLE_MIN = 20;
+    private static final int BASE_WINDOW_WIDTH = 1024;
+    private static final int BASE_WINDOW_HEIGHT = 768;
+
+    // Calibrated from the verified hwnd-3AB11B6 frame: screen (467,260)-(1210,617) over base (323,27),
+    // i.e. physical client ROI (144,233)-(887,590) at 1036x783. Values below are normalized to 1024x768.
+    private static final Rect TEAM_PANEL_ROI = new Rect(142, 229, 735, 350);
+    private static final Rect DIALOG_ROI = new Rect(250, 312, 529, 208);
+    private static final Rect MINIMAP_MAGNIFIER_ROI = new Rect(196, 65, 20, 22);
+    private static final String MINIMAP_MAGNIFIER_TEMPLATE = "images/template/map/minimap_visible_anchor.png";
+    private static final String DISMISS_TEAM_TEMPLATE = "images/template/team/jiesan.png";
+    private static final String TRANSFER_LEADER_TEMPLATE = "images/template/team/transfer_leader_button.png";
+    private static final double TEMPLATE_THRESHOLD = 0.85D;
+    private static final long PANEL_PROBE_TIMEOUT_MS = 5_000L;
+    private static final long PANEL_PROBE_INTERVAL_MS = 500L;
+    private static final long DISMISS_SETTLE_MS = 220L;
 
     private final InputSequences inputSequences;
     private final InputProvider inputProvider;
     private final BoundWindowCaptureService captureService;
     private final WindowNativeBindingRefreshService bindingRefreshService;
+    private final WindowTaskContextHolder windowTaskContextHolder;
+    private final UICleanerService uiCleanerService;
+    private final DialogFramePresenceMechanics dialogFramePresenceMechanics = new DialogFramePresenceMechanics();
+    private final DialogStoryAdvanceLocalMacroMechanics dialogStoryAdvanceLocalMacroMechanics;
 
     /**
-     * Produce one immutable local preflight fact for every selected window.
+     * Retained only for the existing start API. This local probe is bounded to one panel-open and two dismissal
+     * clicks per window, so callers must not wait on a role/OCR deadline.
      *
-     * @param contexts exact selected runtime contexts; each must have a live native binding
-     * @param localTeamSessionKey nonblank batch-local grouping key generated by the start owner
-     * @return window-id keyed facts; a tooltip group has exactly one representative mask payload
+     * @return a monotonic value compatible with existing callers
      */
-    public Map<String, Preflight> prepareBatch(List<WindowRuntimeContext> contexts, String localTeamSessionKey) {
-        return prepareBatch(contexts, localTeamSessionKey, () -> false);
+    public long newRoleResolutionDeadlineNanos() {
+        return Long.MAX_VALUE;
     }
 
-    /**
-     * Produce one preflight batch that stops issuing physical input as soon as its start owner is cancelled.
-     *
-     * @param contexts exact selected runtime contexts
-     * @param localTeamSessionKey nonblank batch-local grouping key
-     * @param cancelled true after pause/stop invalidates this start command
-     * @return completed facts gathered before cancellation; callers must reject a cancelled batch
-     */
+    public Map<String, Preflight> prepareBatch(List<WindowRuntimeContext> contexts, String localTeamSessionKey) {
+        return prepareBatch(contexts, localTeamSessionKey, () -> false, Long.MAX_VALUE);
+    }
+
     public Map<String, Preflight> prepareBatch(
             List<WindowRuntimeContext> contexts,
             String localTeamSessionKey,
             BooleanSupplier cancelled) {
-        if (contexts == null || contexts.isEmpty()) {
+        return prepareBatch(contexts, localTeamSessionKey, cancelled, Long.MAX_VALUE);
+    }
+
+    /**
+     * Resolves roles for a selected local batch. A single selected window retains the normal solo/grouped probe.
+     * A multi-window batch follows the local-team invariant: all panels are opened first, their leader templates
+     * are matched concurrently, and the first leader match makes every other selected window a member.
+     *
+     * @param contexts exact selected window contexts
+     * @param localTeamSessionKey batch identifier retained for the start contract
+     * @param cancelled true when the owner paused or stopped this start command
+     * @param ignoredDeadlineNanos compatibility argument; the local batch has its own five-second bound
+     * @return role metadata keyed by window id; cancellation returns an empty map
+     */
+    public Map<String, Preflight> prepareBatch(
+            List<WindowRuntimeContext> contexts,
+            String localTeamSessionKey,
+            BooleanSupplier cancelled,
+            long ignoredDeadlineNanos) {
+        if (contexts == null || contexts.isEmpty() || cancelled.getAsBoolean()) {
             return Map.of();
         }
-        if (localTeamSessionKey == null || localTeamSessionKey.isBlank()) {
-            throw new IllegalArgumentException("localTeamSessionKey is required");
-        }
-        BooleanSupplier cancellation = java.util.Objects.requireNonNull(cancelled, "cancelled");
-        Map<String, Candidate> candidates = new LinkedHashMap<>();
-        for (WindowRuntimeContext context : contexts.stream()
-                .filter(java.util.Objects::nonNull)
+        List<WindowRuntimeContext> selected = contexts.stream()
+                .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(WindowRuntimeContext::getWindowId))
-                .toList()) {
-            if (cancellation.getAsBoolean()) {
-                break;
-            }
-            candidates.put(context.getWindowId(), Candidate.of(context, captureAnchorHash(context, cancellation)));
+                .toList();
+        if (selected.isEmpty()) {
+            return Map.of();
         }
+        clearStartupUiBlockers(selected, cancelled);
+        if (cancelled.getAsBoolean()) {
+            return Map.of();
+        }
+        if (selected.size() == 1) {
+            WindowRuntimeContext context = selected.get(0);
+            Role role = detectRole(context, cancelled);
+            return role == null ? Map.of() : Map.of(context.getWindowId(), Preflight.completed(context.getWindowId(), role));
+        }
+        return detectGroupedBatch(selected, cancelled);
+    }
 
-        Map<String, List<Candidate>> byAnchor = new LinkedHashMap<>();
-        for (Candidate candidate : candidates.values()) {
-            if (candidate.anchorHash != null) {
-                byAnchor.computeIfAbsent(candidate.anchorHash, ignored -> new ArrayList<>()).add(candidate);
+    /**
+     * Restores the clean-screen precondition before {@code Alt+T}. Generic panels are closed through the
+     * existing exact-window cleaner; a structurally present story dialog is advanced through the existing
+     * baseline mechanical click. Neither operation decides a role or changes the team-panel matcher.
+     */
+    private void clearStartupUiBlockers(List<WindowRuntimeContext> contexts, BooleanSupplier cancelled) {
+        for (WindowRuntimeContext context : contexts) {
+            if (cancelled.getAsBoolean()) {
+                return;
             }
-        }
-        Map<String, Preflight> results = new LinkedHashMap<>();
-        for (Candidate candidate : candidates.values()) {
-            if (candidate.anchorHash == null) {
-                results.put(candidate.windowId, Preflight.completed(candidate.windowId, Role.UNKNOWN, null, false, null));
+            windowTaskContextHolder.callWith(context, uiCleanerService::closeAllGenericWindows);
+            WindowNativeBinding binding = bindingRefreshService.refreshAndCommit(context).orElse(null);
+            if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+                throw new PreflightTimeoutException("本地启动清场无法读取窗口绑定，未启动任务");
             }
-        }
-        for (Map.Entry<String, List<Candidate>> entry : byAnchor.entrySet()) {
-            String groupHash = "anchor-" + entry.getKey();
-            List<Candidate> group = entry.getValue();
-            TooltipResolution resolution = resolveTooltipRepresentative(group, cancellation);
-            TooltipCandidate representative = resolution.representative();
-            if (representative == null) {
-                for (Candidate candidate : group) {
-                    Role role = resolution.captureSucceeded() && candidate.context.getSelectedTaskType().isSinglePlayer()
-                            ? Role.SOLO
-                            : Role.UNKNOWN;
-                    results.put(candidate.windowId, Preflight.completed(candidate.windowId, role, null, false, null));
+            BufferedImage dialog = capture(binding, DIALOG_ROI);
+            boolean dialogPresent;
+            try {
+                dialogPresent = dialogFramePresenceMechanics.isPresent(dialog);
+            } finally {
+                if (dialog != null) {
+                    dialog.flush();
                 }
-                log.info("local team-role anchor group has no usable tooltip: session={} groupHash={} groupSize={} "
-                                + "captureSucceeded={} soloTasks={}",
-                        localTeamSessionKey, groupHash, group.size(), resolution.captureSucceeded(),
-                        group.stream().filter(candidate -> candidate.context.getSelectedTaskType().isSinglePlayer()).count());
+            }
+            if (!dialogPresent) {
                 continue;
             }
-            for (Candidate candidate : group) {
-                boolean isRepresentative = representative.candidate == candidate;
-                results.put(candidate.windowId, Preflight.completed(
-                        candidate.windowId,
-                        Role.UNKNOWN,
-                        groupHash,
-                        isRepresentative,
-                        isRepresentative ? representative.payload.base64() : null));
-                log.info("local team-role anchor group: session={} groupHash={} windowId={} representative={} groupSize={}",
-                        localTeamSessionKey, groupHash, candidate.windowId, isRepresentative, group.size());
+            boolean advanced = inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                    "team-role:startup-dialog-clear:" + context.getWindowId(), context, binding,
+                    () -> dialogStoryAdvanceLocalMacroMechanics.advanceStoryDialog(binding).status()
+                            == DialogStoryAdvanceLocalMacroMechanics.Status.ADVANCED).isCompleted();
+            if (!advanced || cancelled.getAsBoolean()) {
+                throw new PreflightTimeoutException("本地启动对话框清理失败，未启动任务");
             }
+            log.info("local team-role startup dialog cleared: windowId={}", context.getWindowId());
         }
-        return Map.copyOf(results);
     }
 
-    private TooltipResolution resolveTooltipRepresentative(List<Candidate> group, BooleanSupplier cancelled) {
-        boolean captureSucceeded = false;
-        for (Candidate candidate : group) {
-            TooltipInspection inspection = inspectTooltip(candidate.context, cancelled);
-            captureSucceeded |= inspection.captureSucceeded();
-            if (inspection.payload() != null) {
-                return new TooltipResolution(
-                        new TooltipCandidate(candidate, inspection.payload()),
-                        true);
+    /**
+     * Opens every team panel before matching. Physical key presses remain serialized by {@link InputSequences},
+     * while HWND captures and template matching deliberately run in parallel. The local product contract currently
+     * allows exactly one leader in this branch: the first matching window wins and all other selected windows are
+     * members. It intentionally does not infer a mixed solo/team batch.
+     */
+    private Map<String, Preflight> detectGroupedBatch(List<WindowRuntimeContext> contexts, BooleanSupplier cancelled) {
+        Map<String, ProbeTarget> targets = new LinkedHashMap<>();
+        try {
+            for (WindowRuntimeContext context : contexts) {
+                if (cancelled.getAsBoolean()) {
+                    return Map.of();
+                }
+                WindowNativeBinding binding = bindingRefreshService.refreshAndCommit(context).orElse(null);
+                if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+                    throw new PreflightTimeoutException("本地队伍菜单无法读取窗口绑定，未启动任务");
+                }
+                boolean opened = inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                        "team-role:local-panel-open:" + context.getWindowId(), context, binding, () -> {
+                            if (!cancelled.getAsBoolean()) {
+                                inputProvider.pressAltT();
+                            }
+                            return !cancelled.getAsBoolean();
+                        }).isCompleted();
+                if (!opened || cancelled.getAsBoolean()) {
+                    return Map.of();
+                }
+                targets.put(context.getWindowId(), new ProbeTarget(context, binding));
             }
+
+            AtomicReference<String> leaderWindowId = new AtomicReference<>();
+            List<CompletableFuture<Void>> probes = targets.values().stream()
+                    .map(target -> CompletableFuture.runAsync(() -> waitForLeaderMatch(target, leaderWindowId, cancelled)))
+                    .toList();
+            CompletableFuture.allOf(probes.toArray(CompletableFuture[]::new)).join();
             if (cancelled.getAsBoolean()) {
-                return new TooltipResolution(null, captureSucceeded);
+                return Map.of();
             }
-            log.info("local team-role tooltip representative retrying next same-anchor window: windowId={} groupSize={}",
-                    candidate.windowId, group.size());
+            String winner = leaderWindowId.get();
+            if (winner == null) {
+                throw new PreflightTimeoutException("本地队伍菜单在 5 秒内未命中队长按钮，未启动任务");
+            }
+            Map<String, Role> roles = assignGroupedRoles(targets.keySet().stream().toList(), winner);
+            Map<String, Preflight> results = new LinkedHashMap<>();
+            roles.forEach((windowId, role) -> results.put(windowId, Preflight.completed(windowId, role)));
+            log.info("local grouped team-role resolved: leaderWindowId={} memberCount={}", winner, roles.size() - 1);
+            return Map.copyOf(results);
+        } finally {
+            // A losing probe never owns input. Closing is a short, serialized Alt+T sequence after all capture
+            // workers have stopped, so it cannot cross a template match or leak an open panel into task startup.
+            targets.values().forEach(target -> closePanel(target, cancelled));
         }
-        return new TooltipResolution(null, captureSucceeded);
     }
 
-    private TooltipInspection inspectTooltip(WindowRuntimeContext context, BooleanSupplier cancelled) {
-        boolean captureSucceeded = false;
-        for (int attempt = 1; attempt <= TOOLTIP_ATTEMPTS; attempt++) {
-            if (cancelled.getAsBoolean()) {
-                return new TooltipInspection(null, captureSucceeded);
-            }
-            BufferedImage tooltip = hoverAndCapture(context, cancelled);
-            if (tooltip != null) {
-                captureSucceeded = true;
-                try {
-                    if (looksLikeTooltip(tooltip)) {
-                        MaskPayload payload = mask(tooltip);
-                        if (payload != null) {
-                            persistTooltipEvidence(context.getWindowId(), tooltip, payload);
-                            return new TooltipInspection(payload, true);
-                        }
-                    }
-                } finally {
-                    tooltip.flush();
+    private void waitForLeaderMatch(
+            ProbeTarget target,
+            AtomicReference<String> leaderWindowId,
+            BooleanSupplier cancelled) {
+        long deadlineNanos = System.nanoTime() + java.time.Duration.ofMillis(PANEL_PROBE_TIMEOUT_MS).toNanos();
+        while (!cancelled.getAsBoolean() && leaderWindowId.get() == null && System.nanoTime() < deadlineNanos) {
+            BufferedImage panel = capture(target.binding(), TEAM_PANEL_ROI);
+            try {
+                double[] dismissMatch = find(panel, DISMISS_TEAM_TEMPLATE);
+                double[] transferMatch = find(panel, TRANSFER_LEADER_TEMPLATE);
+                persistPanelProbeEvidence(target.context(), panel, dismissMatch, transferMatch);
+                if ((dismissMatch != null || transferMatch != null)
+                        && leaderWindowId.compareAndSet(null, target.context().getWindowId())) {
+                    return;
+                }
+            } finally {
+                if (panel != null) {
+                    panel.flush();
                 }
             }
-            if (attempt < TOOLTIP_ATTEMPTS && !sleep(RETRY_WAIT_MS, cancelled)) {
-                return new TooltipInspection(null, captureSucceeded);
+            if (!sleep(PANEL_PROBE_INTERVAL_MS, cancelled)) {
+                return;
             }
         }
-        return new TooltipInspection(null, captureSucceeded);
     }
 
-    private String captureAnchorHash(WindowRuntimeContext context, BooleanSupplier cancelled) {
+    private void closePanel(ProbeTarget target, BooleanSupplier cancelled) {
         if (cancelled.getAsBoolean()) {
-            return null;
+            return;
         }
-        WindowNativeBinding binding = bindingRefreshService.refreshAndCommit(context).orElse(null);
-        BufferedImage anchor = binding == null ? null : capture(binding, HOVER_X, HOVER_Y, TEAM_ANCHOR_SIZE, TEAM_ANCHOR_SIZE);
-        if (anchor == null) {
-            log.warn("local team-role anchor capture failed: windowId={}", context.getWindowId());
-            return null;
-        }
-        try {
-            return rawArgbSha256(anchor);
-        } finally {
-            anchor.flush();
-        }
+        inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                "team-role:local-panel-close:" + target.context().getWindowId(), target.context(), target.binding(), () -> {
+                    // This branch only runs after a grouped batch elected a leader. A second Alt+T closes the
+                    // panel; a missed minimap template must never turn into a world right-click here.
+                    inputProvider.pressAltT();
+                    return !cancelled.getAsBoolean();
+                });
     }
 
-    private void persistTooltipEvidence(String windowId, BufferedImage raw, MaskPayload payload) {
-        String safeWindowId = windowId == null || windowId.isBlank()
-                ? "unknown"
-                : windowId.replaceAll("[^a-zA-Z0-9._-]", "_");
-        Path directory = Path.of("images", "temp", safeWindowId).toAbsolutePath().normalize();
-        Path rawPath = directory.resolve("team_role_tooltip_raw.png");
-        Path maskPath = directory.resolve("team_role_tooltip_mask.png");
-        try {
-            Files.createDirectories(directory);
-            boolean rawWritten = ImageIO.write(raw, "png", rawPath.toFile());
-            byte[] maskBytes = Base64.getDecoder().decode(payload.base64());
-            Files.write(maskPath, maskBytes);
-            log.info("local team-role tooltip evidence saved: windowId={} raw={} mask={} "
-                            + "groupHash={} rawWritten={} maskBytes={}",
-                    windowId, rawPath, maskPath, payload.hash(), rawWritten, maskBytes.length);
-        } catch (IOException | IllegalArgumentException failure) {
-            log.warn("local team-role tooltip evidence save failed: windowId={} raw={} mask={} reason={}",
-                    windowId, rawPath, maskPath, failure.getMessage(), failure);
+    static Map<String, Role> assignGroupedRoles(List<String> windowIds, String leaderWindowId) {
+        if (leaderWindowId == null || windowIds == null || !windowIds.contains(leaderWindowId)) {
+            throw new IllegalArgumentException("grouped leader must be one of the selected windows");
         }
+        Map<String, Role> roles = new LinkedHashMap<>();
+        windowIds.forEach(windowId -> roles.put(windowId, windowId.equals(leaderWindowId) ? Role.LEADER : Role.MEMBER));
+        return Map.copyOf(roles);
     }
 
-    private BufferedImage hoverAndCapture(WindowRuntimeContext context, BooleanSupplier cancelled) {
-        if (cancelled.getAsBoolean()) {
-            return null;
-        }
+    /** No Cloud-OCR retry exists anymore; retained for the existing rejected-start call site. */
+    public Preflight recaptureRepresentative(
+            WindowRuntimeContext context,
+            Preflight previous,
+            BooleanSupplier cancelled,
+            long ignoredDeadlineNanos) {
+        return previous;
+    }
+
+    private Role detectRole(WindowRuntimeContext context, BooleanSupplier cancelled) {
         WindowNativeBinding binding = bindingRefreshService.refreshAndCommit(context).orElse(null);
         if (binding == null || !binding.hasNativeHandle() || !binding.hasGeometry()) {
+            log.warn("local team-role panel probe unavailable: windowId={} reason=binding-unavailable", context.getWindowId());
+            return Role.MEMBER;
+        }
+        Role[] resolved = new Role[]{Role.MEMBER};
+        boolean[] panelStateResolved = new boolean[1];
+        boolean completed = inputSequences.submitFrozenExactWindowExclusiveAndWait(
+                "team-role:local-panel:" + context.getWindowId(), context, binding, () -> {
+                    if (cancelled.getAsBoolean()) {
+                        return false;
+                    }
+                    inputProvider.pressAltT();
+                    Boolean minimapVisible = waitForPanelState(binding, cancelled);
+                    BufferedImage panel = null;
+                    try {
+                        if (minimapVisible == null) {
+                            // A capture failure/time-out is not proof that the magnifier disappeared and must
+                            // block task startup rather than silently assigning this window as a member.
+                            panelStateResolved[0] = false;
+                        } else {
+                            panelStateResolved[0] = true;
+                            if (minimapVisible) {
+                                panel = capture(binding, TEAM_PANEL_ROI);
+                            }
+                            resolved[0] = classifyPanel(minimapVisible, isLeaderPanel(panel));
+                        }
+                    } finally {
+                        if (panel != null) {
+                            panel.flush();
+                        }
+                    }
+                    if (resolved[0] == Role.SOLO) {
+                        closePanelWithAltTThenRecover(binding, cancelled);
+                    } else {
+                        inputProvider.pressAltT();
+                    }
+                    return !cancelled.getAsBoolean();
+                }).isCompleted();
+        if (cancelled.getAsBoolean()) {
             return null;
         }
-        BufferedImage[] captured = new BufferedImage[1];
-        int hoverX = binding.getX() + HOVER_X
-                + ThreadLocalRandom.current().nextInt(-HOVER_RADIUS_X, HOVER_RADIUS_X + 1);
-        int hoverY = binding.getY() + HOVER_Y
-                + ThreadLocalRandom.current().nextInt(-HOVER_RADIUS_Y, HOVER_RADIUS_Y + 1);
-        boolean completed = inputSequences.submitFrozenExactWindowExclusiveAndWait(
-                "team-role:cr212:hover-capture:" + context.getWindowId(), context, binding, () -> {
-                    if (cancelled.getAsBoolean()) {
-                        return false;
-                    }
-                    inputProvider.moveMouse(hoverX, hoverY);
-                    if (!sleep(HOVER_SETTLE_MS, cancelled)) {
-                        return false;
-                    }
-                    if (cancelled.getAsBoolean()) {
-                        return false;
-                    }
-                    captured[0] = capture(binding, TOOLTIP_X, TOOLTIP_Y, TOOLTIP_W, TOOLTIP_H);
-                    return captured[0] != null;
-                }).isCompleted();
-        return completed ? captured[0] : null;
+        if (!completed || !panelStateResolved[0]) {
+            throw new PreflightTimeoutException(PANEL_PROBE_TIMEOUT_MS);
+        }
+        log.info("local team-role panel resolved: windowId={} role={}", context.getWindowId(), resolved[0]);
+        return resolved[0];
     }
 
-    private BufferedImage capture(WindowNativeBinding binding, int x, int y, int width, int height) {
+    /**
+     * Waits up to three seconds for a readable minimap state after Alt+T. A visible magnifier means grouped;
+     * an absent magnifier means solo. The first readable frame ends the wait immediately.
+     */
+    private Boolean waitForPanelState(WindowNativeBinding binding, BooleanSupplier cancelled) {
+        long deadlineNanos = System.nanoTime() + java.time.Duration.ofMillis(PANEL_PROBE_TIMEOUT_MS).toNanos();
+        while (!cancelled.getAsBoolean() && System.nanoTime() < deadlineNanos) {
+            BufferedImage magnifier = capture(binding, MINIMAP_MAGNIFIER_ROI);
+            try {
+                if (magnifier != null) {
+                    return matches(magnifier, MINIMAP_MAGNIFIER_TEMPLATE);
+                }
+            } finally {
+                if (magnifier != null) {
+                    magnifier.flush();
+                }
+            }
+            if (!sleep(PANEL_PROBE_INTERVAL_MS, cancelled)) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private void closePanelWithAltTThenRecover(WindowNativeBinding binding, BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) {
+            return;
+        }
+        inputProvider.pressAltT();
+        if (!sleep(DISMISS_SETTLE_MS, cancelled) || minimapIsVisible(binding)) {
+            return;
+        }
+        dismissPanelUntilMagnifierReturns(binding, cancelled);
+    }
+
+    /** Applies the user-approved right-click recovery only when the normal second Alt+T close did not restore UI. */
+    private void dismissPanelUntilMagnifierReturns(WindowNativeBinding binding, BooleanSupplier cancelled) {
+        for (int attempt = 0; attempt < 2 && !cancelled.getAsBoolean(); attempt++) {
+            int jitter = attempt == 0 ? 0 : ThreadLocalRandom.current().nextInt(-24, 25);
+            int x = binding.getX() + binding.getWidth() / 2 + jitter;
+            int y = binding.getY() + binding.getHeight() / 2 + jitter;
+            inputProvider.clickRight(x, y, 0);
+            if (!sleep(DISMISS_SETTLE_MS, cancelled)) {
+                return;
+            }
+            if (minimapIsVisible(binding)) {
+                return;
+            }
+        }
+        log.warn("local team-role panel may remain open after two right-click dismiss attempts: hwnd={}",
+                binding.getNativeHandle());
+    }
+
+    private boolean isLeaderPanel(BufferedImage panel) {
+        return panel != null && (matches(panel, DISMISS_TEAM_TEMPLATE) || matches(panel, TRANSFER_LEADER_TEMPLATE));
+    }
+
+    private boolean minimapIsVisible(WindowNativeBinding binding) {
+        BufferedImage magnifier = capture(binding, MINIMAP_MAGNIFIER_ROI);
+        try {
+            return magnifier != null && matches(magnifier, MINIMAP_MAGNIFIER_TEMPLATE);
+        } finally {
+            if (magnifier != null) {
+                magnifier.flush();
+            }
+        }
+    }
+
+    static Role classifyPanel(boolean minimapVisibleAfterAltT, boolean leaderButtonVisible) {
+        if (!minimapVisibleAfterAltT) {
+            return Role.SOLO;
+        }
+        return leaderButtonVisible ? Role.LEADER : Role.MEMBER;
+    }
+
+    private boolean matches(BufferedImage source, String templatePath) {
+        return find(source, templatePath) != null;
+    }
+
+    private double[] find(BufferedImage source, String templatePath) {
+        if (source == null) {
+            return null;
+        }
+        BufferedImage template = null;
+        try {
+            template = ImageIO.read(Path.of(templatePath).toFile());
+            return template == null ? null : ImageFinder.find(source, template, TEMPLATE_THRESHOLD);
+        } catch (IOException | RuntimeException failure) {
+            log.warn("local team-role template match unavailable: template={} reason={}", templatePath, failure.toString());
+            return null;
+        } finally {
+            if (template != null) {
+                template.flush();
+            }
+        }
+    }
+
+    /**
+     * Persists the exact cropped source used for the local leader-template decision. This is diagnostic evidence
+     * only: it never changes matching, role assignment, or input. The latest frame is intentionally overwritten
+     * per window so a failed five-second probe leaves one inspectable raw and marked image for every participant.
+     */
+    private void persistPanelProbeEvidence(
+            WindowRuntimeContext context,
+            BufferedImage panel,
+            double[] dismissMatch,
+            double[] transferMatch) {
+        if (panel == null || context == null) {
+            return;
+        }
+        String safeWindowId = context.getWindowId().replaceAll("[^a-zA-Z0-9._-]", "_");
+        Path directory = Path.of("images", "temp", safeWindowId).toAbsolutePath();
+        Path raw = directory.resolve("team_role_panel_latest_raw.png");
+        Path marked = directory.resolve("team_role_panel_latest_marked.png");
+        BufferedImage evidence = new BufferedImage(panel.getWidth(), panel.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = evidence.createGraphics();
+        try {
+            graphics.drawImage(panel, 0, 0, null);
+            markTeamTemplate(graphics, dismissMatch, Color.RED, "dismiss");
+            markTeamTemplate(graphics, transferMatch, Color.YELLOW, "transfer");
+            Files.createDirectories(directory);
+            ImageIO.write(panel, "png", raw.toFile());
+            ImageIO.write(evidence, "png", marked.toFile());
+        } catch (IOException failure) {
+            log.warn("local team-role probe evidence write failed: windowId={} reason={}",
+                    context.getWindowId(), failure.toString());
+        } finally {
+            graphics.dispose();
+            evidence.flush();
+        }
+    }
+
+    private static void markTeamTemplate(Graphics2D graphics, double[] match, Color color, String label) {
+        if (match == null) {
+            return;
+        }
+        int x = (int) Math.round(match[0]);
+        int y = (int) Math.round(match[1]);
+        graphics.setColor(color);
+        graphics.drawOval(x - 12, y - 12, 24, 24);
+        graphics.drawString(label + String.format(" %.3f", match[2]), x + 14, y);
+    }
+
+    private BufferedImage capture(WindowNativeBinding binding, Rect rect) {
+        Rect scaled = rect.scale(binding.getWidth(), binding.getHeight());
         return captureService.captureRegion(binding, binding.getX(), binding.getY(),
-                        binding.getX() + x, binding.getY() + y,
-                        binding.getX() + x + width, binding.getY() + y + height)
+                        binding.getX() + scaled.left(), binding.getY() + scaled.top(),
+                        binding.getX() + scaled.right(), binding.getY() + scaled.bottom())
                 .map(BoundWindowCaptureService.CaptureResult::image)
                 .orElse(null);
     }
 
     private static boolean sleep(long millis, BooleanSupplier cancelled) {
-        long deadline = System.nanoTime() + java.time.Duration.ofMillis(millis).toNanos();
-        while (!cancelled.getAsBoolean()) {
-            long remainingMs = Math.max(0L,
-                    java.time.Duration.ofNanos(deadline - System.nanoTime()).toMillis());
-            if (remainingMs <= 0L) {
-                return true;
-            }
-            try {
-                Thread.sleep(Math.min(50L, remainingMs));
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
-        }
-        return false;
-    }
-
-    private static boolean looksLikeTooltip(BufferedImage image) {
-        int white = 0;
-        int purple = 0;
-        int rows = 0;
-        int transitions = 0;
-        int maxRow = 0;
-        int[] columns = new int[image.getWidth()];
-        for (int y = 0; y < image.getHeight(); y++) {
-            int row = 0;
-            boolean previous = false;
-            for (int x = 0; x < image.getWidth(); x++) {
-                int rgb = image.getRGB(x, y);
-                boolean text = isWhite(rgb) || isPurple(rgb);
-                if (isWhite(rgb)) white++;
-                if (isPurple(rgb)) purple++;
-                if (text) {
-                    row++;
-                    columns[x]++;
-                }
-                if (text && !previous) transitions++;
-                previous = text;
-            }
-            if (row >= 2) rows++;
-            maxRow = Math.max(maxRow, row);
-        }
-        int usedColumns = 0;
-        for (int count : columns) if (count > 0) usedColumns++;
-        return white >= WHITE_MIN && purple >= PURPLE_MIN && rows >= 8
-                && usedColumns >= 20 && transitions >= 20
-                && maxRow <= Math.max(1, image.getWidth() * 80 / 100);
-    }
-
-    private static MaskPayload mask(BufferedImage raw) {
-        BufferedImage mask = new BufferedImage(raw.getWidth(), raw.getHeight(), BufferedImage.TYPE_BYTE_BINARY);
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            for (int y = 0; y < raw.getHeight(); y++) {
-                for (int x = 0; x < raw.getWidth(); x++) {
-                    mask.setRGB(x, y, isTooltipSignaturePixel(raw.getRGB(x, y)) ? 0xFFFFFF : 0x000000);
-                }
-            }
-            if (!ImageIO.write(mask, "png", output)) {
-                return null;
-            }
-            byte[] png = output.toByteArray();
-            return new MaskPayload("mask-" + sha256(png), Base64.getEncoder().encodeToString(png));
-        } catch (IOException failure) {
-            log.warn("local team-role mask encode failed", failure);
-            return null;
-        } finally {
-            mask.flush();
-        }
-    }
-
-    private static String sha256(byte[] bytes) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (NoSuchAlgorithmException unavailable) {
-            throw new IllegalStateException("SHA-256 unavailable", unavailable);
+            Thread.sleep(millis);
+            return !cancelled.getAsBoolean();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
-    static String rawArgbSha256(BufferedImage image) {
-        ByteBuffer pixels = ByteBuffer.allocate(image.getWidth() * image.getHeight() * Integer.BYTES);
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                pixels.putInt(image.getRGB(x, y));
-            }
+    public enum Role { LEADER, MEMBER, SOLO }
+
+    /** Retained only to keep callers source-compatible while tooltip/OCR retry is removed. */
+    public static final class PreflightTimeoutException extends IllegalStateException {
+        public PreflightTimeoutException(long timeoutMs) {
+            super("队长身份识别超时（" + timeoutMs / 1_000L + " 秒），未启动任务");
         }
-        return sha256(pixels.array());
+
+        public PreflightTimeoutException(String message) {
+            super(message);
+        }
     }
 
-    static boolean isTooltipSignaturePixel(int rgb) {
-        int r = (rgb >> 16) & 0xff;
-        int g = (rgb >> 8) & 0xff;
-        int b = rgb & 0xff;
-        boolean whiteText = r >= 155 && g >= 155 && b >= 155;
-        boolean greenText = g >= 105 && g - r >= 18 && g - b >= 18;
-        boolean purpleText = r >= 95 && b >= 105 && r - g >= 18 && b - g >= 18;
-        boolean yellowText = r >= 125 && g >= 95 && b <= 125 && r - b >= 25 && g - b >= 15;
-        return whiteText || greenText || purpleText || yellowText;
-    }
-
-    private static boolean isWhite(int rgb) {
-        return ((rgb >> 16) & 255) >= 210 && ((rgb >> 8) & 255) >= 210 && (rgb & 255) >= 210;
-    }
-
-    private static boolean isPurple(int rgb) {
-        int r = (rgb >> 16) & 255;
-        int g = (rgb >> 8) & 255;
-        int b = rgb & 255;
-        return r >= 120 && b >= 140 && g <= 120 && b > g + 40;
-    }
-
-    public enum Role { SOLO, UNKNOWN }
-
+    /** Empty group/mask fields explicitly mean that Cloud must consume the local role and never OCR a tooltip. */
     public record Preflight(String windowId, Role role, String groupHash, boolean representative, String maskBase64) {
-        static Preflight completed(String windowId, Role role, String groupHash, boolean representative,
-                                  String maskBase64) {
-            return new Preflight(windowId, role, groupHash, representative, maskBase64);
+        static Preflight completed(String windowId, Role role) {
+            return new Preflight(windowId, role, null, false, null);
         }
     }
 
-    private record Candidate(WindowRuntimeContext context, String windowId, String anchorHash) {
-        static Candidate of(WindowRuntimeContext context, String anchorHash) {
-            return new Candidate(context, context.getWindowId(), anchorHash);
+    private record Rect(int left, int top, int width, int height) {
+        int right() { return left + width; }
+        int bottom() { return top + height; }
+
+        Rect scale(int actualWidth, int actualHeight) {
+            int scaledLeft = Math.round(left * actualWidth / (float) BASE_WINDOW_WIDTH);
+            int scaledTop = Math.round(top * actualHeight / (float) BASE_WINDOW_HEIGHT);
+            int scaledRight = Math.round(right() * actualWidth / (float) BASE_WINDOW_WIDTH);
+            int scaledBottom = Math.round(bottom() * actualHeight / (float) BASE_WINDOW_HEIGHT);
+            return new Rect(scaledLeft, scaledTop,
+                    Math.max(1, scaledRight - scaledLeft), Math.max(1, scaledBottom - scaledTop));
         }
     }
 
-    private record TooltipCandidate(Candidate candidate, MaskPayload payload) { }
-
-    private record TooltipResolution(TooltipCandidate representative, boolean captureSucceeded) { }
-
-    private record TooltipInspection(MaskPayload payload, boolean captureSucceeded) { }
-
-    private record MaskPayload(String hash, String base64) { }
+    private record ProbeTarget(WindowRuntimeContext context, WindowNativeBinding binding) { }
 }

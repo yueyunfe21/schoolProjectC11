@@ -54,6 +54,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public class WindowRuntimeContext {
     private static final long EXPECTED_BATTLE_ENTRY_TICKET_MAX_AGE_MS = 10_000L;
     private static final long ORDINARY_PRE_BATTLE_PAUSE_COMPENSATION_THRESHOLD_MS = 500L;
+    private static final long XIULUO_LOCAL_KANDA_CONFIRM_WINDOW_MS = 4_000L;
+    private static final int MAX_XIULUO_LOCAL_KANDA_CLICKS = 3;
 
 
     private final String windowId;
@@ -78,6 +80,8 @@ public class WindowRuntimeContext {
     private final AtomicReference<WindowPathingSnapshot> pathingSnapshot =
             new AtomicReference<>(WindowPathingSnapshot.idle());
     private final AtomicReference<WindowDialogSnapshot> visibleDialogSnapshot = new AtomicReference<>();
+    /** Latest shared-frame structural dialog observation, used only to stop a local tracker-link retry. */
+    private final AtomicLong dialogFrameObservedAtMs = new AtomicLong();
     private final AtomicLong storyDialogVisibleSequence = new AtomicLong();
     private final AtomicReference<WindowDialogInterest> dialogInterest = new AtomicReference<>();
     private final AtomicLong observerWakeSeq = new AtomicLong();
@@ -88,6 +92,12 @@ public class WindowRuntimeContext {
     private final AtomicReference<XiuluoGreenChainSchedule> xiuluoGreenChainSchedule = new AtomicReference<>();
     // TURN-40G: attempt-scoped one-shot local-kanda click claim (winner's attemptId; reset with the schedule).
     private final AtomicReference<String> xiuluoEnterBattleClickClaim = new AtomicReference<>();
+    // A physical 看打 click is not a battle confirmation. This keeps the bounded local confirmation/retry state
+    // attached to the exact schedule, while Cloud remains the only owner of a later green-link fallback.
+    private final AtomicReference<XiuluoLocalKandaClickProgress> xiuluoLocalKandaClickProgress = new AtomicReference<>();
+    /** Exact local-kanda attempt whose IN_COMBAT edge won before a concurrent recovery reset. */
+    private final AtomicReference<XiuluoConfirmedCombatAttempt> xiuluoConfirmedCombatAttempt =
+            new AtomicReference<>();
     // TURN-40G review#3 P1: single monitor for every transition of the paired xiuluo probe state — a probe-only
     // interest installed together with its green-chain schedule, schedule open/replace/clear, and the one-shot
     // click claim all mutate under this lock, and the observation sampler snapshots the pair under the same lock.
@@ -109,6 +119,16 @@ public class WindowRuntimeContext {
             new AtomicReference<>();
     private final AtomicLong taskTrackerPanelNegativeSequence = new AtomicLong();
     private final AtomicReference<String> pendingSmartClickEvidenceProofToken = new AtomicReference<>();
+    /** G005: identity of the 天庭 dialog instance this window has already answered; null re-arms it. */
+    private final AtomicReference<String> tiantingDialogOptionClaim = new AtomicReference<>();
+    /**
+     * The 多谢 click that opened a still-unconsumed 使用封妖符 follow-up.
+     *
+     * <p>This is action-owned state rather than a wall-clock window. Observation sampling includes a
+     * synchronous HTTP round trip, so even a nominal one-second probe can legitimately take longer than
+     * the former 2.5-second deadline to see its next frame.</p>
+     */
+    private final AtomicReference<String> tiantingFengyaoPending = new AtomicReference<>();
     private final AtomicReference<String> leftTopStatusSwitchClosePending = new AtomicReference<>();
     private final AtomicReference<WindowRetainedReturnHomeReplay> retainedReturnHomeReplay =
             new AtomicReference<>();
@@ -476,6 +496,19 @@ public class WindowRuntimeContext {
         localCombatVisible = visible;
     }
 
+    /**
+     * Returns the latest local Runner combat fact for this exact window.
+     *
+     * <p>This is deliberately a local safety fact, not a Cloud reclassification: physical mouse actions must
+     * stop as soon as the Runner sees combat, even while the corresponding observation is still in flight to
+     * Cloud.</p>
+     *
+     * @return {@code true} after the local Runner has observed combat entry and before it observes exit.
+     */
+    public boolean isLocalCombatVisible() {
+        return localCombatVisible;
+    }
+
     public WindowExpectedCombatEnterClaim bindExpectedCombatEnterClaim(
             String observationRunId, String taskCode, long combatGeneration) {
         while (true) {
@@ -483,7 +516,8 @@ public class WindowRuntimeContext {
             if (current == null || current.combatGeneration() != null
                     || !current.observationRunId().equals(observationRunId)
                     || !current.taskCode().equalsIgnoreCase(taskCode)
-                    || !current.windowId().equals(windowId)) {
+                    || !current.windowId().equals(windowId)
+                    || !isCurrentLocalTemplateClaim(current)) {
                 return null;
             }
             WindowExpectedCombatEnterClaim bound = current.bind(combatGeneration);
@@ -499,7 +533,8 @@ public class WindowRuntimeContext {
             WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
             if (current == null || current.combatGeneration() != null
                     || !current.observationRunId().equals(observationRunId)
-                    || !current.windowId().equals(windowId)) {
+                    || !current.windowId().equals(windowId)
+                    || !isCurrentLocalTemplateClaim(current)) {
                 return null;
             }
             WindowExpectedCombatEnterClaim bound = current.bind(combatGeneration);
@@ -531,7 +566,15 @@ public class WindowRuntimeContext {
     }
 
     public void clearExpectedCombatEnterClaim(String reason) {
-        WindowExpectedCombatEnterClaim cleared = expectedCombatEnterClaim.getAndSet(null);
+        WindowExpectedCombatEnterClaim cleared;
+        synchronized (xiuluoKandaTransitionLock) {
+            cleared = expectedCombatEnterClaim.getAndSet(null);
+            XiuluoConfirmedCombatAttempt confirmed = xiuluoConfirmedCombatAttempt.get();
+            if (cleared != null && confirmed != null
+                    && confirmed.matches(cleared.businessTaskRunId(), confirmed.round(), cleared.attemptId())) {
+                xiuluoConfirmedCombatAttempt.compareAndSet(confirmed, null);
+            }
+        }
         if (cleared != null) {
             log.info("[local-runner] cleared expected combat enter claim: windowId={} claimId={} observationRunId={} businessTaskRunId={} reason={}",
                     windowId, cleared.claimId(), cleared.observationRunId(),
@@ -546,7 +589,9 @@ public class WindowRuntimeContext {
             WindowExpectedCombatEnterClaim current = expectedCombatEnterClaim.get();
             if (current == null
                     || current.combatGeneration() != null
-                    || !"XIULUO_V2".equalsIgnoreCase(current.taskCode())
+                    || (!"XIULUO_V2".equalsIgnoreCase(current.taskCode())
+                    && !"XINSHOU_TRAINING".equalsIgnoreCase(current.taskCode())
+                    && !"CATCH_GHOST".equalsIgnoreCase(current.taskCode()))
                     || !current.businessTaskRunId().equals(schedule.getTaskRunId())
                     || Objects.equals(current.attemptId(), schedule.getAttemptId())) {
                 return;
@@ -610,6 +655,30 @@ public class WindowRuntimeContext {
 
     public Optional<WindowDialogSnapshot> getVisibleDialogSnapshot() {
         return Optional.ofNullable(visibleDialogSnapshot.get());
+    }
+
+    /**
+     * Records a read-only structural dialog-frame observation from this bound window's shared capture.
+     * It is intentionally separate from {@link #visibleDialogSnapshot}: no local component infers the
+     * dialog type or business meaning from this stop-retry safety fact.
+     */
+    public void markDialogFrameObserved(long observedAtMs) {
+        dialogFrameObservedAtMs.accumulateAndGet(observedAtMs, Math::max);
+    }
+
+    /** @return latest structural dialog-frame observation time, or zero when none has been recorded. */
+    public long getDialogFrameObservedAtMs() {
+        return dialogFrameObservedAtMs.get();
+    }
+
+    /**
+     * Returns whether the bound window's shared capture has structurally shown a dialog recently.
+     * This remains a local input-suppression fact only; it does not identify or interpret the dialog.
+     */
+    public boolean hasRecentDialogFrameObservation(long maxAgeMs) {
+        long observedAtMs = dialogFrameObservedAtMs.get();
+        return observedAtMs > 0L && maxAgeMs > 0L
+                && Math.max(0L, System.currentTimeMillis() - observedAtMs) <= maxAgeMs;
     }
 
     /** Monotonic edge sequence for transitions into a visible story dialog. */
@@ -1531,6 +1600,7 @@ public class WindowRuntimeContext {
             clearDialogInterest(reason);
             return;
         }
+        interest = normalizeDialogInterestProbeStart(interest, reason);
         dialogInterest.set(interest);
         long wakeSeq = observerWakeSeq.incrementAndGet();
         log.info("[latency] event=window.dialog.interest.update windowId={} task={} operations={} source={} reason={} ttl={} wakeSeq={}",
@@ -1545,8 +1615,35 @@ public class WindowRuntimeContext {
         return Math.max(0L, interest.getExpiresAtMs() - System.currentTimeMillis()) + "ms";
     }
 
+    /**
+     * Keeps a cloud-issued probe delay valid after a late local interest installation.
+     *
+     * <p>The observation wire contract rejects a probe start before the local interest creation time. A
+     * queued Cloud action can arrive after its originally calculated start time, so retaining that stale
+     * timestamp would fail-close every later observation batch. Future delays remain unchanged; only an
+     * already elapsed delay is advanced to this local interest's creation boundary.</p>
+     *
+     * @param interest interest about to become visible to the local observation runner; never null.
+     * @param reason diagnostic installation reason.
+     * @return the original interest when its timing is valid, otherwise a timing-normalized immutable copy.
+     */
+    private WindowDialogInterest normalizeDialogInterestProbeStart(WindowDialogInterest interest, String reason) {
+        long createdAtMs = interest.getCreatedAtMs();
+        long probeStartAtMs = interest.getProbeStartAtMs();
+        if (createdAtMs <= 0L || probeStartAtMs <= 0L || probeStartAtMs >= createdAtMs) {
+            return interest;
+        }
+        log.info("[window dialog-interest] normalized stale probe start windowId={} task={} source={} reason={} probeStartAtMs={} createdAtMs={}",
+                windowId, interest.getTaskType(), normalize(interest.getSource()), normalize(reason),
+                probeStartAtMs, createdAtMs);
+        return interest.toBuilder()
+                .probeStartAtMs(createdAtMs)
+                .build();
+    }
+
     public void clearDialogInterest(String reason) {
         WindowDialogInterest cleared = dialogInterest.getAndSet(null);
+        clearTiantingFengyaoPending();
         if (cleared != null) {
             log.info("[latency] event=window.dialog.interest.clear windowId={} task={} operations={} source={} reason={}",
                     windowId, cleared.getTaskType(), cleared.getOperations(), normalize(cleared.getSource()),
@@ -1623,40 +1720,51 @@ public class WindowRuntimeContext {
      * @param action prepared action for this window; null clears the cache.
      */
     public void updatePreparedDialogAction(PreparedDialogAction action) {
-        PreparedDialogAction previousAction = preparedDialogAction.getAndSet(action);
-        if (action != null) {
-            DialogPreparationStatus previous = dialogPreparationStatus.get();
-            boolean overwritten = previousAction != null && !samePreparedAction(previousAction, action);
-            long requestCreatedAtMs = previous != null
-                    && previous.matches(action.getOperation(), action.getTargetKeyword())
-                    ? previous.getRequestCreatedAtMs()
-                    : 0L;
-            long preparingStartedAtMs = previous != null
-                    && previous.matches(action.getOperation(), action.getTargetKeyword())
-                    && previous.getPreparingStartedAtMs() > 0L
-                    ? previous.getPreparingStartedAtMs()
-                    : action.getPreparedAtMs();
-            long now = System.currentTimeMillis();
-            dialogPreparationStatus.set(DialogPreparationStatus.builder()
-                    .phase(DialogPreparationPhase.READY)
-                    .operation(action.getOperation())
-                    .targetKeyword(action.getTargetKeyword())
-                    .source(action.getSource())
-                    .requestCreatedAtMs(requestCreatedAtMs)
-                    .preparingStartedAtMs(preparingStartedAtMs)
-                    .completedAtMs(now)
-                    .build());
-            log.info("[latency] event=window.dialog.prepare.state phase=READY windowId={} hwnd={} operation={} target={} source={} requestAgeMs={} preparingAgeMs={} preparedAgeMs={} verifiedAgeMs={} matchedText={} click=({}, {}) overwritten={} previousOperation={} previousTarget={} previousSource={} previousPreparedAgeMs={} previousVerifiedAgeMs={}",
-                    windowId, action.getHwnd(), action.getOperation(), action.getTargetKeyword(),
-                    normalize(action.getSource()), ageMs(now, requestCreatedAtMs), ageMs(now, preparingStartedAtMs),
-                    ageMs(now, action.getPreparedAtMs()), ageMs(now, action.getLastVerifiedAtMs()),
-                    normalize(action.getMatchedText()), action.getAbsoluteX(), action.getAbsoluteY(),
-                    overwritten,
-                    previousAction == null ? null : previousAction.getOperation(),
-                    previousAction == null ? null : previousAction.getTargetKeyword(),
-                    previousAction == null ? null : normalize(previousAction.getSource()),
-                    previousAction == null ? -1L : ageMs(now, previousAction.getPreparedAtMs()),
-                    previousAction == null ? -1L : ageMs(now, previousAction.getLastVerifiedAtMs()));
+        synchronized (xiuluoKandaTransitionLock) {
+            if (action != null && action.getOperation() == DialogOperation.XIULUO_ENTER_BATTLE
+                    && action.getIntentId() != null) {
+                XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+                if (schedule == null || !Objects.equals(schedule.getAttemptId(), action.getIntentId())) {
+                    log.info("[latency] event=window.dialog.prepare.reject-stale-attempt windowId={} attemptId={} source={}",
+                            windowId, action.getIntentId(), normalize(action.getSource()));
+                    return;
+                }
+            }
+            PreparedDialogAction previousAction = preparedDialogAction.getAndSet(action);
+            if (action != null) {
+                DialogPreparationStatus previous = dialogPreparationStatus.get();
+                boolean overwritten = previousAction != null && !samePreparedAction(previousAction, action);
+                long requestCreatedAtMs = previous != null
+                        && previous.matches(action.getOperation(), action.getTargetKeyword())
+                        ? previous.getRequestCreatedAtMs()
+                        : 0L;
+                long preparingStartedAtMs = previous != null
+                        && previous.matches(action.getOperation(), action.getTargetKeyword())
+                        && previous.getPreparingStartedAtMs() > 0L
+                        ? previous.getPreparingStartedAtMs()
+                        : action.getPreparedAtMs();
+                long now = System.currentTimeMillis();
+                dialogPreparationStatus.set(DialogPreparationStatus.builder()
+                        .phase(DialogPreparationPhase.READY)
+                        .operation(action.getOperation())
+                        .targetKeyword(action.getTargetKeyword())
+                        .source(action.getSource())
+                        .requestCreatedAtMs(requestCreatedAtMs)
+                        .preparingStartedAtMs(preparingStartedAtMs)
+                        .completedAtMs(now)
+                        .build());
+                log.info("[latency] event=window.dialog.prepare.state phase=READY windowId={} hwnd={} operation={} target={} source={} requestAgeMs={} preparingAgeMs={} preparedAgeMs={} verifiedAgeMs={} matchedText={} click=({}, {}) overwritten={} previousOperation={} previousTarget={} previousSource={} previousPreparedAgeMs={} previousVerifiedAgeMs={}",
+                        windowId, action.getHwnd(), action.getOperation(), action.getTargetKeyword(),
+                        normalize(action.getSource()), ageMs(now, requestCreatedAtMs), ageMs(now, preparingStartedAtMs),
+                        ageMs(now, action.getPreparedAtMs()), ageMs(now, action.getLastVerifiedAtMs()),
+                        normalize(action.getMatchedText()), action.getAbsoluteX(), action.getAbsoluteY(),
+                        overwritten,
+                        previousAction == null ? null : previousAction.getOperation(),
+                        previousAction == null ? null : previousAction.getTargetKeyword(),
+                        previousAction == null ? null : normalize(previousAction.getSource()),
+                        previousAction == null ? -1L : ageMs(now, previousAction.getPreparedAtMs()),
+                        previousAction == null ? -1L : ageMs(now, previousAction.getLastVerifiedAtMs()));
+            }
         }
     }
 
@@ -1703,10 +1811,11 @@ public class WindowRuntimeContext {
      * @param reason diagnostic reason written to logs.
      */
     public void updateDialogInterestWithXiuluoGreenChainSchedule(WindowDialogInterest interest,
-                                                                 XiuluoGreenChainSchedule schedule,
-                                                                 String reason) {
+                                                                  XiuluoGreenChainSchedule schedule,
+                                                                  String reason) {
         Objects.requireNonNull(interest, "interest");
         Objects.requireNonNull(schedule, "schedule");
+        interest = normalizeDialogInterestProbeStart(interest, reason);
         synchronized (xiuluoKandaTransitionLock) {
             applyXiuluoGreenChainScheduleLocked(schedule, reason);
             dialogInterest.set(interest);
@@ -1722,6 +1831,38 @@ public class WindowRuntimeContext {
             WindowDialogInterest interest,
             XiuluoGreenChainSchedule schedule,
             boolean enterBattleClaimed) {
+    }
+
+    /**
+     * A local 看打 claim belongs to one exact green-chain attempt. A later attempt must never inherit
+     * that click merely because it is running in the same window and observation session.
+     */
+    private boolean isCurrentLocalTemplateClaim(WindowExpectedCombatEnterClaim claim) {
+        if (!isLocalTemplateCombatTask(claim) || !"local-template".equals(claim.source())) {
+            return true;
+        }
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            // Direct unit consumers may exercise the generic combat ticket without a green-chain
+            // schedule. The production local-template path always has one, and then it is exact.
+            return schedule == null
+                    || (Objects.equals(schedule.getWindowId(), claim.windowId())
+                    && Objects.equals(schedule.getHwnd(), claim.hwnd())
+                    && Objects.equals(schedule.getObservationRunId(), claim.observationRunId())
+                    && Objects.equals(schedule.getTaskRunId(), claim.businessTaskRunId())
+                    && Objects.equals(schedule.getAttemptId(), claim.attemptId()));
+        }
+    }
+
+    /** Result of checking whether the current local 看打 click may be retried for this exact attempt. */
+    public enum XiuluoKandaRetryState {
+        AVAILABLE,
+        WAITING_FOR_COMBAT,
+        COMBAT_CONFIRMED,
+        RETRY_AVAILABLE,
+        EXHAUSTED_NEW,
+        EXHAUSTED_REPORTED,
+        STALE
     }
 
     /**
@@ -1742,6 +1883,7 @@ public class WindowRuntimeContext {
 
     private void applyXiuluoGreenChainScheduleLocked(XiuluoGreenChainSchedule schedule, String reason) {
         XiuluoGreenChainSchedule previous = xiuluoGreenChainSchedule.getAndSet(schedule);
+        xiuluoConfirmedCombatAttempt.set(null);
         clearUnboundExpectedCombatClaimForReplacedAttempt(schedule, reason);
         preparedActionJobs.entrySet().removeIf(entry -> {
             PreparedActionJob job = entry.getValue();
@@ -1759,6 +1901,7 @@ public class WindowRuntimeContext {
         // TURN-40G: a replaced attempt re-arms the local-kanda one-shot click claim; the previous attempt's
         // click (if any) can never satisfy the new attempt.
         xiuluoEnterBattleClickClaim.set(null);
+        xiuluoLocalKandaClickProgress.set(null);
         log.info("[latency] event=window.green-chain.schedule.update windowId={} reason={} schedule=[{}] previous=[{}]",
                 windowId, normalize(reason), schedule.identityText(),
                 previous == null ? null : previous.identityText());
@@ -1770,6 +1913,67 @@ public class WindowRuntimeContext {
      * competitor racing this attempt, loses the CAS and only records superseded. A physically unexecuted click
      * releases the claim so the still-open attempt keeps its fast path (execution failure consumes nothing).
      */
+    /**
+     * G005: claim the right to answer one 天庭 dialog instance.
+     *
+     * <p>The 天庭 option interest deliberately stays installed for the whole movement leg, so nothing
+     * upstream stops a second click while the answered dialog is still closing. This claim is what
+     * makes the answer one-shot; it lives on the context rather than on the sampler so a sampler
+     * rebuilt mid-run cannot re-answer a dialog this window already handled.</p>
+     *
+     * @param optionKey identity of the dialog instance being answered (interest instant + option).
+     * @return true when this caller may click; false when the same instance was already answered.
+     */
+    public boolean tryClaimTiantingDialogOption(String optionKey) {
+        if (optionKey == null || optionKey.isBlank()) {
+            return false;
+        }
+        return !optionKey.equals(tiantingDialogOptionClaim.getAndSet(optionKey));
+    }
+
+    /**
+     * Read-only check used before the expensive revalidation capture, so an already-answered dialog
+     * costs nothing per cycle.
+     *
+     * @param optionKey identity of the dialog instance about to be probed.
+     * @return true when this window already answered exactly this instance.
+     */
+    public boolean hasTiantingDialogOptionClaim(String optionKey) {
+        return optionKey != null && optionKey.equals(tiantingDialogOptionClaim.get());
+    }
+
+    /**
+     * Remembers that an executed 多谢 click requires local 使用封妖符 matching on later samples.
+     *
+     * @param sourceOptionKey identity of the executed 多谢 option; must be nonblank.
+     */
+    public void markTiantingFengyaoPending(String sourceOptionKey) {
+        if (sourceOptionKey == null || sourceOptionKey.isBlank()) {
+            throw new IllegalArgumentException("sourceOptionKey must not be blank");
+        }
+        tiantingFengyaoPending.set(sourceOptionKey);
+    }
+
+    /**
+     * @return true after 多谢 executed and before 使用封妖符 executed or the owning interest/run was cleared.
+     */
+    public boolean isTiantingFengyaoPending() {
+        return tiantingFengyaoPending.get() != null;
+    }
+
+    /** Clears the action-owned 使用封妖符 follow-up state. */
+    public void clearTiantingFengyaoPending() {
+        tiantingFengyaoPending.set(null);
+    }
+
+    /**
+     * Release the 天庭 dialog claim once no known option is on screen, which is the only evidence the
+     * client has that the answered dialog actually closed.
+     */
+    public void clearTiantingDialogOptionClaim() {
+        tiantingDialogOptionClaim.set(null);
+    }
+
     public boolean tryClaimXiuluoEnterBattleClick(XiuluoGreenChainSchedule expected, String reason) {
         if (expected == null || expected.getAttemptId() == null || expected.getAttemptId().isBlank()) {
             return false;
@@ -1790,6 +1994,116 @@ public class WindowRuntimeContext {
         log.info("[latency] event=window.local-kanda.claim windowId={} claimed={} expected=[{}] reason={}",
                 windowId, claimed, expected.identityText(), normalize(reason));
         return claimed;
+    }
+
+    /**
+     * Checks the Runner-owned confirmation window after a local 看打 click. A physical click only earns a
+     * bounded wait for {@code IN_COMBAT}; after four seconds without combat, the same still-open attempt may
+     * re-click at most twice. The final failure is reported once so Cloud can decide the green-link fallback.
+     */
+    public XiuluoKandaRetryState evaluateXiuluoLocalKandaRetry(
+            XiuluoGreenChainSchedule expected, long nowMs, boolean combatVisible) {
+        if (expected == null || expected.getAttemptId() == null || expected.getAttemptId().isBlank()) {
+            return XiuluoKandaRetryState.STALE;
+        }
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoConfirmedCombatAttempt confirmed = xiuluoConfirmedCombatAttempt.get();
+            if (confirmed != null && confirmed.matches(
+                    expected.getTaskRunId(), expected.getRound(), expected.getAttemptId())) {
+                return XiuluoKandaRetryState.COMBAT_CONFIRMED;
+            }
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            if (schedule == null || !schedule.sameFullIdentity(expected)) {
+                return XiuluoKandaRetryState.STALE;
+            }
+            XiuluoLocalKandaClickProgress progress = xiuluoLocalKandaClickProgress.get();
+            if (progress == null || !expected.getAttemptId().equals(progress.attemptId())) {
+                return XiuluoKandaRetryState.AVAILABLE;
+            }
+            if (progress.combatConfirmed()) {
+                return XiuluoKandaRetryState.COMBAT_CONFIRMED;
+            }
+            if (combatVisible || nowMs - progress.lastClickAtMs() < XIULUO_LOCAL_KANDA_CONFIRM_WINDOW_MS) {
+                return XiuluoKandaRetryState.WAITING_FOR_COMBAT;
+            }
+            if (progress.executedClicks() >= MAX_XIULUO_LOCAL_KANDA_CLICKS) {
+                if (!progress.failureReported()) {
+                    xiuluoLocalKandaClickProgress.set(progress.withFailureReported());
+                    return XiuluoKandaRetryState.EXHAUSTED_NEW;
+                }
+                return XiuluoKandaRetryState.EXHAUSTED_REPORTED;
+            }
+            xiuluoEnterBattleClickClaim.compareAndSet(expected.getAttemptId(), null);
+            log.info("[latency] event=window.local-kanda.retry-rearm windowId={} expected=[{}] clicks={} reason=no-in-combat-within-{}ms",
+                    windowId, expected.identityText(), progress.executedClicks(), XIULUO_LOCAL_KANDA_CONFIRM_WINDOW_MS);
+            return XiuluoKandaRetryState.RETRY_AVAILABLE;
+        }
+    }
+
+    /** Records only an actually executed local 看打 click; failed queue execution does not spend the budget. */
+    public void recordXiuluoLocalKandaClick(XiuluoGreenChainSchedule expected, long clickedAtMs) {
+        if (expected == null || expected.getAttemptId() == null) {
+            return;
+        }
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            if (schedule == null || !schedule.sameFullIdentity(expected)) {
+                return;
+            }
+            XiuluoLocalKandaClickProgress current = xiuluoLocalKandaClickProgress.get();
+            int clicks = current != null && expected.getAttemptId().equals(current.attemptId())
+                    ? current.executedClicks() + 1 : 1;
+            xiuluoLocalKandaClickProgress.set(new XiuluoLocalKandaClickProgress(
+                    expected.getAttemptId(), clicks, clickedAtMs, false, false));
+            log.info("[latency] event=window.local-kanda.click-recorded windowId={} expected=[{}] clicks={}",
+                    windowId, expected.identityText(), clicks);
+        }
+    }
+
+    /**
+     * Ends retry ownership once the Runner has confirmed that this exact local 看打 click entered combat.
+     * A later world frame after combat exit must not re-arm the completed attempt.
+     */
+    public void confirmLocalTemplateCombatEntry(WindowExpectedCombatEnterClaim claim) {
+        if (!isLocalTemplateCombatTask(claim) || !"local-template".equals(claim.source())) {
+            return;
+        }
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            XiuluoLocalKandaClickProgress progress = xiuluoLocalKandaClickProgress.get();
+            if (schedule == null
+                    || !Objects.equals(schedule.getAttemptId(), claim.attemptId())
+                    || !Objects.equals(schedule.getTaskRunId(), claim.businessTaskRunId())
+                    || progress == null
+                    || !Objects.equals(progress.attemptId(), claim.attemptId())) {
+                return;
+            }
+            log.info("[latency] event=window.local-kanda.combat-confirmed windowId={} attemptId={} generation={}",
+                    windowId, claim.attemptId(), claim.combatGeneration());
+            xiuluoConfirmedCombatAttempt.set(new XiuluoConfirmedCombatAttempt(
+                    schedule.getTaskRunId(), schedule.getRound(), schedule.getAttemptId(), claim.combatGeneration()));
+            /*
+             * The 看打 wait state dies here, whole. Schedule, click claim, click progress and the stamped
+             * prepared action exist only to let the local template click 看打 once before the fight; the
+             * Runner confirming combat entry is that job finished. It used to be merely marked
+             * COMBAT_CONFIRMED and kept alive across the whole fight — its own clear method's javadoc even
+             * lists confirmed combat entry as a mandatory discard boundary, but nothing called it — so a
+             * death, an odd exit or the next round inherited a completed attempt and wedged on it. The
+             * expected combat claim is a different thing and is not touched here: it is the identity fence
+             * that pairs this entry with its exit, and it lives until the Runner reports the exit.
+             *
+             * Reentrant on the same kanda monitor, so the identity check above and the clear are atomic —
+             * a replacement schedule cannot slip in between and be wrongly discarded.
+             */
+            clearXiuluoGreenChainSchedule("local-kanda-combat-confirmed:" + claim.attemptId());
+        }
+    }
+
+    private static boolean isLocalTemplateCombatTask(WindowExpectedCombatEnterClaim claim) {
+        return claim != null
+                && ("XIULUO_V2".equalsIgnoreCase(claim.taskCode())
+                || "XINSHOU_TRAINING".equalsIgnoreCase(claim.taskCode())
+                || "CATCH_GHOST".equalsIgnoreCase(claim.taskCode()));
     }
 
     /**
@@ -1831,6 +2145,7 @@ public class WindowRuntimeContext {
             cleared = xiuluoGreenChainSchedule.getAndSet(null);
             // TURN-40G: the local-kanda one-shot click claim dies with its attempt.
             xiuluoEnterBattleClickClaim.set(null);
+            xiuluoLocalKandaClickProgress.set(null);
         }
         clearPreparedActionJobs(reason);
         if (cleared != null) {
@@ -1840,6 +2155,160 @@ public class WindowRuntimeContext {
             discardStaleXiuluoEnterBattlePrepared(null, "schedule-closed:" + normalize(reason));
             log.info("[latency] event=window.green-chain.schedule.clear windowId={} reason={} schedule=[{}]",
                     windowId, normalize(reason), cleared.identityText());
+        }
+    }
+
+    /**
+     * Atomically abandons only the local facts owned by one exact 修罗 attempt.
+     *
+     * <p>The task run, one-based round and attempt id are one indivisible identity. A stale reset is
+     * therefore a complete no-op, including the pathing snapshot and observation-lineage generation.
+     * If local Runner combat confirmation already won for the same identity, no state is cleared and
+     * {@code combatAlreadyConfirmed} tells Cloud to continue the combat path.</p>
+     *
+     * @param taskRunId exact business task-run id; never null or blank.
+     * @param round one-based 修罗 round.
+     * @param attemptId exact local-kanda/pathing attempt id; never null or blank.
+     * @param reason diagnostic reason written to local logs; nullable.
+     * @return per-slot acknowledgement describing exactly what this transition cleared.
+     */
+    public ExactAttemptAbandonResult abandonExactXiuluoAttempt(
+            String taskRunId, int round, String attemptId, String reason) {
+        if (taskRunId == null || taskRunId.isBlank()) {
+            throw new IllegalArgumentException("taskRunId must not be blank");
+        }
+        if (round <= 0) {
+            throw new IllegalArgumentException("round must be positive");
+        }
+        if (attemptId == null || attemptId.isBlank()) {
+            throw new IllegalArgumentException("attemptId must not be blank");
+        }
+
+        synchronized (xiuluoKandaTransitionLock) {
+            XiuluoConfirmedCombatAttempt confirmed = xiuluoConfirmedCombatAttempt.get();
+            if (confirmed != null && confirmed.matches(taskRunId, round, attemptId)) {
+                return ExactAttemptAbandonResult.combatConfirmed(taskRunId, round, attemptId);
+            }
+
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            boolean scheduleMatched = schedule != null
+                    && Objects.equals(taskRunId, schedule.getTaskRunId())
+                    && round == schedule.getRound()
+                    && Objects.equals(attemptId, schedule.getAttemptId())
+                    && Objects.equals(windowId, schedule.getWindowId())
+                    && nativeBinding != null
+                    && Objects.equals(nativeBinding.getNativeHandle(), schedule.getHwnd());
+            boolean matchingJobPresent = preparedActionJobs.values().stream()
+                    .anyMatch(job -> exactAttemptMatches(job, taskRunId, round, attemptId));
+            if (!scheduleMatched && !matchingJobPresent) {
+                return ExactAttemptAbandonResult.noMatch(taskRunId, round, attemptId);
+            }
+
+            boolean clickClaimCleared = xiuluoEnterBattleClickClaim.compareAndSet(attemptId, null);
+            XiuluoLocalKandaClickProgress progress = xiuluoLocalKandaClickProgress.get();
+            boolean clickProgressCleared = progress != null && attemptId.equals(progress.attemptId());
+            if (clickProgressCleared) {
+                xiuluoLocalKandaClickProgress.set(null);
+            }
+
+            WindowExpectedCombatEnterClaim expectedClaim = expectedCombatEnterClaim.get();
+            boolean expectedCombatClaimCleared = exactAttemptMatches(expectedClaim, taskRunId, attemptId)
+                    && expectedCombatEnterClaim.compareAndSet(expectedClaim, null);
+            PendingDirectCombatEnterTicket pendingTicket = pendingDirectCombatEnterClaim.get();
+            boolean pendingCombatTicketCleared = pendingTicket != null
+                    && exactAttemptMatches(pendingTicket.claim(), taskRunId, attemptId)
+                    && pendingDirectCombatEnterClaim.compareAndSet(pendingTicket, null);
+
+            PreparedDialogAction preparedDialog = preparedDialogAction.get();
+            boolean preparedDialogActionCleared = preparedDialog != null
+                    && preparedDialog.getOperation() == DialogOperation.XIULUO_ENTER_BATTLE
+                    && Objects.equals(attemptId, preparedDialog.getIntentId())
+                    && preparedDialogAction.compareAndSet(preparedDialog, null);
+            if (preparedDialogActionCleared) {
+                clearReadyDialogPreparationStatusFor(preparedDialog);
+            }
+
+            boolean preparedActionJobCleared = false;
+            for (var entry : preparedActionJobs.entrySet()) {
+                PreparedActionJob job = entry.getValue();
+                if (exactAttemptMatches(job, taskRunId, round, attemptId)
+                        && preparedActionJobs.remove(entry.getKey(), job)) {
+                    preparedActionJobCleared = true;
+                }
+            }
+
+            boolean pathingCleared = false;
+            WindowPathingSnapshot snapshot = pathingSnapshot.get();
+            if (snapshot != null && snapshot.getIntent() != null
+                    && Objects.equals(attemptId, snapshot.getIntent().getIntentId())) {
+                pathingCleared = pathingSnapshot.compareAndSet(snapshot, WindowPathingSnapshot.builder()
+                        .state(WindowPathingState.NONE)
+                        .message(normalize(reason))
+                        .build());
+                if (pathingCleared) {
+                    clearPendingTransferChoiceMemory("exact attempt pathing reset");
+                }
+            }
+
+            boolean scheduleCleared = scheduleMatched && xiuluoGreenChainSchedule.compareAndSet(schedule, null);
+            long resetGeneration = observationPathingFactResetGeneration.incrementAndGet();
+            log.info("[local-runner] exact attempt abandoned: windowId={} taskRunId={} round={} attemptId={} pathingCleared={} scheduleCleared={} clickClaimCleared={} clickProgressCleared={} expectedCombatClaimCleared={} pendingCombatTicketCleared={} preparedDialogActionCleared={} preparedActionJobCleared={} observationResetGeneration={} reason={}",
+                    windowId, taskRunId, round, attemptId, pathingCleared, scheduleCleared,
+                    clickClaimCleared, clickProgressCleared, expectedCombatClaimCleared,
+                    pendingCombatTicketCleared, preparedDialogActionCleared, preparedActionJobCleared,
+                    resetGeneration, normalize(reason));
+            return new ExactAttemptAbandonResult(
+                    taskRunId, round, attemptId, true, pathingCleared, true, scheduleCleared,
+                    clickClaimCleared, clickProgressCleared, expectedCombatClaimCleared,
+                    pendingCombatTicketCleared, preparedDialogActionCleared,
+                    preparedActionJobCleared, false);
+        }
+    }
+
+    private boolean exactAttemptMatches(
+            PreparedActionJob job, String taskRunId, int round, String attemptId) {
+        WindowNativeBinding binding = nativeBinding;
+        return job != null
+                && Objects.equals(taskRunId, job.getTaskRunId())
+                && round == job.getRound()
+                && Objects.equals(attemptId, job.getAttemptId())
+                && Objects.equals(windowId, job.getWindowId())
+                && binding != null
+                && Objects.equals(binding.getNativeHandle(), job.getHwnd());
+    }
+
+    private static boolean exactAttemptMatches(
+            WindowExpectedCombatEnterClaim claim, String taskRunId, String attemptId) {
+        return claim != null
+                && "XIULUO_V2".equalsIgnoreCase(claim.taskCode())
+                && Objects.equals(taskRunId, claim.businessTaskRunId())
+                && Objects.equals(attemptId, claim.attemptId());
+    }
+
+    public record ExactAttemptAbandonResult(
+            String taskRunId,
+            int round,
+            String attemptId,
+            boolean exactAttemptMatched,
+            boolean pathingCleared,
+            boolean observationLineageCleared,
+            boolean scheduleCleared,
+            boolean clickClaimCleared,
+            boolean clickProgressCleared,
+            boolean expectedCombatClaimCleared,
+            boolean pendingCombatTicketCleared,
+            boolean preparedDialogActionCleared,
+            boolean preparedActionJobCleared,
+            boolean combatAlreadyConfirmed) {
+
+        private static ExactAttemptAbandonResult noMatch(String taskRunId, int round, String attemptId) {
+            return new ExactAttemptAbandonResult(taskRunId, round, attemptId,
+                    false, false, false, false, false, false, false, false, false, false, false);
+        }
+
+        private static ExactAttemptAbandonResult combatConfirmed(String taskRunId, int round, String attemptId) {
+            return new ExactAttemptAbandonResult(taskRunId, round, attemptId,
+                    true, false, false, false, false, false, false, false, false, false, true);
         }
     }
 
@@ -1884,28 +2353,30 @@ public class WindowRuntimeContext {
      * @return true when the job was published.
      */
     public boolean publishPreparedActionJob(PreparedActionJob job, String reason) {
-        if (job == null || job.getType() == null) {
-            return false;
+        synchronized (xiuluoKandaTransitionLock) {
+            if (job == null || job.getType() == null) {
+                return false;
+            }
+            XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
+            if (schedule == null || !schedule.sameIdentity(job)) {
+                log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={} job=[{}] schedule=[{}]",
+                        windowId, normalize(reason), job.identityText(),
+                        schedule == null ? null : schedule.identityText());
+                return false;
+            }
+            WindowNativeBinding binding = nativeBinding;
+            String currentHwnd = binding == null ? null : binding.getNativeHandle();
+            if (currentHwnd == null || !currentHwnd.equals(job.getHwnd()) || !windowId.equals(job.getWindowId())) {
+                log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={}:binding-mismatch job=[{}] currentHwnd={}",
+                        windowId, normalize(reason), job.identityText(), currentHwnd);
+                return false;
+            }
+            PreparedActionJob previous = preparedActionJobs.put(job.getType(), job);
+            log.info("[latency] event=window.prepared-job.publish windowId={} reason={} job=[{}] source={} click=({}, {}) replaced={}",
+                    windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
+                    job.getWindowRelativeX(), job.getWindowRelativeY(), previous != null);
+            return true;
         }
-        XiuluoGreenChainSchedule schedule = xiuluoGreenChainSchedule.get();
-        if (schedule == null || !schedule.sameIdentity(job)) {
-            log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={} job=[{}] schedule=[{}]",
-                    windowId, normalize(reason), job.identityText(),
-                    schedule == null ? null : schedule.identityText());
-            return false;
-        }
-        WindowNativeBinding binding = nativeBinding;
-        String currentHwnd = binding == null ? null : binding.getNativeHandle();
-        if (currentHwnd == null || !currentHwnd.equals(job.getHwnd()) || !windowId.equals(job.getWindowId())) {
-            log.info("[latency] event=window.prepared-job.publish-rejected windowId={} reason={}:binding-mismatch job=[{}] currentHwnd={}",
-                    windowId, normalize(reason), job.identityText(), currentHwnd);
-            return false;
-        }
-        PreparedActionJob previous = preparedActionJobs.put(job.getType(), job);
-        log.info("[latency] event=window.prepared-job.publish windowId={} reason={} job=[{}] source={} click=({}, {}) replaced={}",
-                windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
-                job.getWindowRelativeX(), job.getWindowRelativeY(), previous != null);
-        return true;
     }
 
     /**
@@ -1925,35 +2396,37 @@ public class WindowRuntimeContext {
                                                                int expectedRound,
                                                                String expectedAttemptId,
                                                                String reason) {
-        if (type == null) {
-            return null;
+        synchronized (xiuluoKandaTransitionLock) {
+            if (type == null) {
+                return null;
+            }
+            PreparedActionJob job = preparedActionJobs.get(type);
+            if (job == null) {
+                return null;
+            }
+            WindowNativeBinding binding = nativeBinding;
+            String currentHwnd = binding == null ? null : binding.getNativeHandle();
+            boolean identityMatched = expectedAttemptId != null
+                    && expectedAttemptId.equals(job.getAttemptId())
+                    && expectedTaskRunId != null && expectedTaskRunId.equals(job.getTaskRunId())
+                    && expectedRound == job.getRound()
+                    && windowId.equals(job.getWindowId())
+                    && currentHwnd != null && currentHwnd.equals(job.getHwnd());
+            if (!identityMatched) {
+                preparedActionJobs.remove(type, job);
+                log.info("[latency] event=window.prepared-job.stale-discarded windowId={} reason={} job=[{}] expectedTaskRunId={} expectedRound={} expectedAttemptId={} currentHwnd={}",
+                        windowId, normalize(reason), job.identityText(), expectedTaskRunId, expectedRound,
+                        expectedAttemptId, currentHwnd);
+                return null;
+            }
+            if (!preparedActionJobs.remove(type, job)) {
+                return null;
+            }
+            log.info("[latency] event=window.prepared-job.consume windowId={} reason={} job=[{}] source={} preparedAgeMs={}",
+                    windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
+                    ageMs(System.currentTimeMillis(), job.getPreparedAtMs()));
+            return job;
         }
-        PreparedActionJob job = preparedActionJobs.get(type);
-        if (job == null) {
-            return null;
-        }
-        WindowNativeBinding binding = nativeBinding;
-        String currentHwnd = binding == null ? null : binding.getNativeHandle();
-        boolean identityMatched = expectedAttemptId != null
-                && expectedAttemptId.equals(job.getAttemptId())
-                && expectedTaskRunId != null && expectedTaskRunId.equals(job.getTaskRunId())
-                && expectedRound == job.getRound()
-                && windowId.equals(job.getWindowId())
-                && currentHwnd != null && currentHwnd.equals(job.getHwnd());
-        if (!identityMatched) {
-            preparedActionJobs.remove(type, job);
-            log.info("[latency] event=window.prepared-job.stale-discarded windowId={} reason={} job=[{}] expectedTaskRunId={} expectedRound={} expectedAttemptId={} currentHwnd={}",
-                    windowId, normalize(reason), job.identityText(), expectedTaskRunId, expectedRound,
-                    expectedAttemptId, currentHwnd);
-            return null;
-        }
-        if (!preparedActionJobs.remove(type, job)) {
-            return null;
-        }
-        log.info("[latency] event=window.prepared-job.consume windowId={} reason={} job=[{}] source={} preparedAgeMs={}",
-                windowId, normalize(reason), job.identityText(), normalize(job.getSource()),
-                ageMs(System.currentTimeMillis(), job.getPreparedAtMs()));
-        return job;
     }
 
     /**
@@ -2671,6 +3144,47 @@ public class WindowRuntimeContext {
         }
     }
 
+    /**
+     * Clears every task-run-scoped fact that could make the next accepted task continue an older run.
+     *
+     * <p>Window registration, HWND binding, role, selected task, and parsed player identity deliberately
+     * survive this boundary. Everything else that can schedule, wake, click, resume navigation, or interpret
+     * a former task is discarded. This method is called both before a newly accepted remote turn and after a
+     * remote turn becomes terminal; do not weaken it into a UI-only reset.</p>
+     *
+     * @param reason lifecycle boundary recorded in diagnostics; nullable.
+     */
+    public void clearTaskExecutionState(String reason) {
+        String clearReason = normalize(reason) == null ? "task execution reset" : normalize(reason);
+
+        // Attempt-owned work must go first so no prepared click can outlive the intent that authorized it.
+        clearXiuluoGreenChainSchedule(clearReason);
+        clearPreparedDialogAction(clearReason);
+        clearPlayerScopedTransientState(clearReason);
+        pendingRouteOutcomeAbandonments.clear();
+        pendingRouteOutcomeReplacements.clear();
+
+        // These are queue/run facts rather than player identity. A new task must rediscover every one of them.
+        clearTaskQueueStartupPreparationState(clearReason);
+        invalidateReturnHomeReplayLifecycle(clearReason);
+        clearExpectedCombatEnterClaim(clearReason);
+        clearPendingDirectCombatEnterClaim(clearReason);
+        clearTiantingDialogOptionClaim();
+        clearTiantingFengyaoPending();
+        pendingSmartClickEvidenceProofToken.set(null);
+        dialogFrameObservedAtMs.set(0L);
+        localCombatVisible = false;
+        localCombatGeneration.set(0L);
+        clearIdentitySuspension(clearReason);
+        taskOwnerPlayerId = null;
+        taskOwnerPlayerName = null;
+        clearTaskRunProgress();
+        gameState.resetRuntimeState();
+
+        log.info("[task-runtime-reset] windowId={} reason={} retainedBinding={} retainedRole={} retainedSelectedTask={}",
+                windowId, clearReason, nativeBinding != null && nativeBinding.hasNativeHandle(), role, selectedTaskType);
+    }
+
     public void resetRuntimeState() {
         this.status = WindowRuntimeStatus.IDLE;
         this.lastStartedAt = null;
@@ -2683,21 +3197,7 @@ public class WindowRuntimeContext {
         this.lastQueueResult = null;
         this.lastQueueMessage = null;
         this.lastQueueFailurePolicy = null;
-        markPendingRouteOutcomeAbandoned("runtime reset");
-        clearPathingSignal("runtime reset");
-        clearOrdinaryPreBattleTimer("runtime reset");
-        clearVisibleDialogSnapshot("runtime reset");
-        clearDialogPreparationRequest("runtime reset");
-        clearDialogInterest("runtime reset");
-        clearTaskQueueStartupPreparationState("runtime reset");
-        clearTaskTrackerPanelCache("runtime reset");
-        clearTaskTrackerPanelNegativeResult("runtime reset");
-        invalidateReturnHomeReplayLifecycle("runtime reset");
-        clearExpectedCombatEnterClaim("runtime reset");
-        clearPendingDirectCombatEnterClaim("runtime reset");
-        localCombatVisible = false;
-        localCombatGeneration.set(0L);
-        this.gameState.resetRuntimeState();
+        clearTaskExecutionState("runtime reset");
     }
 
     public void applyRegistration(WindowRegistrationRequest request, boolean allowTaskChange) {
@@ -3110,6 +3610,27 @@ public class WindowRuntimeContext {
 
         private long armedAtMs() {
             return armedAtMs;
+        }
+    }
+
+    private record XiuluoLocalKandaClickProgress(
+            String attemptId, int executedClicks, long lastClickAtMs, boolean failureReported,
+            boolean combatConfirmed) {
+        private XiuluoLocalKandaClickProgress withFailureReported() {
+            return new XiuluoLocalKandaClickProgress(attemptId, executedClicks, lastClickAtMs, true, combatConfirmed);
+        }
+
+        private XiuluoLocalKandaClickProgress withCombatConfirmed() {
+            return new XiuluoLocalKandaClickProgress(attemptId, executedClicks, lastClickAtMs, failureReported, true);
+        }
+    }
+
+    private record XiuluoConfirmedCombatAttempt(
+            String taskRunId, int round, String attemptId, Long combatGeneration) {
+        private boolean matches(String expectedTaskRunId, int expectedRound, String expectedAttemptId) {
+            return Objects.equals(taskRunId, expectedTaskRunId)
+                    && round == expectedRound
+                    && Objects.equals(attemptId, expectedAttemptId);
         }
     }
 

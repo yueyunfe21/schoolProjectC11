@@ -79,6 +79,35 @@ public class ImageFinder {
     }
 
     /**
+     * Returns the strongest normalized template score without imposing a business threshold.
+     *
+     * <p>This is intentionally the same {@code TM_CCOEFF_NORMED} calculation as
+     * {@link #find(BufferedImage, BufferedImage, double)}. It exists for bounded miss diagnostics;
+     * callers still own their threshold and must not treat a score as a match by itself.</p>
+     */
+    public static double bestMatchScore(BufferedImage sourceImage, BufferedImage targetImage) {
+        if (sourceImage == null || targetImage == null) {
+            return Double.NaN;
+        }
+        Mat source = bufferedImageToMat(sourceImage);
+        Mat target = bufferedImageToMat(targetImage);
+        if (source.empty() || target.empty()) {
+            source.release();
+            target.release();
+            return Double.NaN;
+        }
+        Mat result = new Mat();
+        try {
+            Imgproc.matchTemplate(source, target, result, Imgproc.TM_CCOEFF_NORMED);
+            return Core.minMaxLoc(result).maxVal;
+        } finally {
+            source.release();
+            target.release();
+            result.release();
+        }
+    }
+
+    /**
      * 在大图中查找所有超过阈值的小图候选点，返回 [centerX, centerY, score]。
      * 结果会按相似度从高到低做一次近邻去重，避免同一个目标周围连续命中多个像素。
      */

@@ -106,6 +106,10 @@ public class InputAction {
         return simple(InputActionType.PRESS_CTRL_U);
     }
 
+    public static InputAction pressCtrlA() {
+        return simple(InputActionType.PRESS_CTRL_A);
+    }
+
     /**
      * @param text Unicode text to type through the input provider. Null handling is provider-specific.
      * @return text typing action.
@@ -127,6 +131,11 @@ public class InputAction {
         return new InputAction(InputActionType.PRESS_ENTER, 0, 0, 0, 0, 0, 0, 0, null);
     }
 
+    /** @return Escape key action. */
+    public static InputAction pressEscape() {
+        return new InputAction(InputActionType.PRESS_ESCAPE, 0, 0, 0, 0, 0, 0, 0, null);
+    }
+
     /** @return Alt+1 key action. */
     public static InputAction pressAlt1() {
         return simple(InputActionType.PRESS_ALT_1);
@@ -140,6 +149,11 @@ public class InputAction {
     /** @return Alt+4 key action. */
     public static InputAction pressAlt4() {
         return simple(InputActionType.PRESS_ALT_4);
+    }
+
+    /** Press Alt+5 through the configured input routing policy. */
+    public static InputAction pressAlt5() {
+        return simple(InputActionType.PRESS_ALT_5);
     }
 
     /** @return Alt+6 key action. */
@@ -175,6 +189,11 @@ public class InputAction {
     /** @return Alt+A key action. */
     public static InputAction pressAltA() {
         return simple(InputActionType.PRESS_ALT_A);
+    }
+
+    /** @return Alt+B key action. */
+    public static InputAction pressAltB() {
+        return simple(InputActionType.PRESS_ALT_B);
     }
 
     /** @return Alt+C key action. */

@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "card": "G028",
+  "changeType": "business",
+  "status": "APPROVED_IMPLEMENTATION",
+  "baseline": {
+    "clientBranch": "thin-client-design",
+    "clientCommit": "2f083c14152106ba6ad418a0c29e3e0e2148e14a",
+    "pushedReference": "origin/thin-client-design",
+    "cloudBranch": "navigation-migration",
+    "cloudCommit": "363d0e3fae73c0c55f4920f6f1c61338a0458d73",
+    "cloudPushedReference": "origin/navigation-migration"
+  },
+  "repositories": {
+    "cloud": "../dhxy-cloud-brain"
+  },
+  "rules": [
+    "BR-WUHAN-003"
+  ],
+  "affectedPaths": [
+    "docs/ACTIVE_WORK.md",
+    "docs/PACKAGE_ARCHITECTURE.md",
+    "docs/业务逻辑.md",
+    "docs/business-rules.json",
+    "docs/云端迁移常见错误清单.md",
+    "docs/cr-dashboard-data.js",
+    "docs/rule-traceability/G028.json",
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/service/NavigationService.java"},
+    {"repo": "cloud", "path": "src/main/java/com/bot/dhxy/task/wuhuan/FiveRingTaskV2.java"},
+    {"repo": "cloud", "path": "src/main/resources/images/template/map_label/长安.png"},
+    {"repo": "cloud", "path": "src/test/java/com/bot/dhxy/service/G028WuhuanShoeReturnConnectivityContractTest.java"}
+  ],
+  "businessDifference": {
+    "kind": "USER_APPROVED",
+    "conflictSummary": "当前 dirty 实现买鞋后先右键返长安，再用视觉变化/地图确认判断成功，最终还能导航洛阳李道宗；该链既没有产生云游大师接任务 intent，也让买鞋前位置预热失去生产者。",
+    "userDecision": "购买后先原地验鞋，再 Alt+2 匹配指定 ROI 内的长安模板，点击后直接在长安小地图点击云游大师接任务坐标；该动作等价于黄字入口，旧返程链删除。",
+    "decisionRecordedAt": "2026-08-05",
+    "cardReference": "docs/PACKAGE_ARCHITECTURE.md#G028"
+  },
+  "connectivity": [
+    {
+      "rule": "BR-WUHAN-003",
+      "producer": "FiveRingTaskV2 在购买输入后先取得 BagService 鞋存在正证据，再请求 NavigationService 执行 Alt+2 长安标签导航。",
+      "transport": "exact-window CAPTURE/INPUT turn + TurnPathingIntent；NavigationResult 原样携带同一 pathingIntentId。",
+      "consumer": "FiveRingTaskV2 以同一 intentId 注册云游大师到达帧 FIFO，进入 waitingAcceptNpcPathing；Runner 发布匹配 terminal。",
+      "ordering": "buy -> verify shoe -> Alt+2 -> ROI template -> label click -> mini-map target click -> exact intent -> FIFO -> pathing wait",
+      "contracts": [
+        {
+          "repo": "cloud",
+          "path": "src/test/java/com/bot/dhxy/service/G028WuhuanShoeReturnConnectivityContractTest.java",
+          "command": "focused G028 connectivity contract",
+          "proves": [
+            "验鞋发生在任何离店输入之前",
+            "购买待确认时地图识别失败也只能重验，不能落回鞋店入口导航",
+            "相对 ROI 使用 exact window base，长安标签点击后复用既有小地图 intent",
+            "同一 intentId 到达 FiveRingTaskV2 FIFO/waitingAcceptNpcPathing",
+            "同 ID Runner terminal 未到前，通用墙钟恢复不得创建第二个 intent",
+            "exact wait 不得由近 NPC 坐标捷径提前结束",
+            "旧右键、视觉变化和洛阳 fallback 不再可达"
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": [
+    {
+      "repo": "cloud",
+      "command": "mvn -q compile",
+      "result": "PASS"
+    },
+    {
+      "repo": "cloud",
+      "command": "javac/java focused G023, G024, G026 x2, G027, G028 contracts",
+      "result": "PASS 6/6"
+    },
+    {
+      "kind": "source-review",
+      "result": "PASS",
+      "evidence": "父级逐文件审核与独立只读终审 P0/P1/P2=0/0/0"
+    },
+    {
+      "kind": "visual-and-runtime-gate",
+      "result": "PENDING",
+      "reason": "当前仓内没有包含指定 ROI 长安标签的 raw testcase；下一次 fresh run 必须保存原图和标记图，并核对同一 intentId 的 Client/FIFO/Runner 时间线。"
+    }
+  ]
+}

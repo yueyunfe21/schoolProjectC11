@@ -19,5 +19,6 @@ public record TurnNpcArrivalFrameFifoSpec(
         List<String> expectedDialogTemplatePaths,
         String expectedDialogRawTemplatePath,
         boolean deferDialogVerificationToTask,
-        boolean consumeStoryDialogVisibleEvents) {
+        boolean consumeStoryDialogVisibleEvents,
+        boolean reuseLastVerifiedPoint) {
 }

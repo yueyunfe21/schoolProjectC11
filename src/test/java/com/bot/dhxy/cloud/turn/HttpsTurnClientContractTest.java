@@ -34,11 +34,11 @@ class HttpsTurnClientContractTest {
                 new TurnWindowRect(10, 20, 800, 600), false, false);
         TurnContinuationRequest invalid = new TurnContinuationRequest(
                 "action-1", 0, TurnContinuationRequest.Kind.FIVERING_INCENSE,
-                TurnContinuationRequest.Stage.DIALOG_OPTION_IMAGE, null, null);
+                TurnContinuationRequest.Stage.STATUS_IMAGE, null, null);
 
         TurnTransportException failure = assertThrows(TurnTransportException.class,
                 () -> client.exchange(new TurnRequest(1, window, 0L, null, null, invalid), null));
-        assertTrue(failure.getMessage().contains("not valid for continuation kind"));
+        assertTrue(failure.getMessage().contains("continuation requires frame"));
     }
 
     @Test

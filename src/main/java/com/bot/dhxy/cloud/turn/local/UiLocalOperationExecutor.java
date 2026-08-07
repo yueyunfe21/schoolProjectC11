@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Objects;
 
-/** Closed adapter for the four permanent-local UICleanerService turn operations. */
+/** Closed adapter for the permanent-local UICleanerService turn operations. */
 @Component
 public final class UiLocalOperationExecutor {
 
@@ -35,7 +35,7 @@ public final class UiLocalOperationExecutor {
      * X2 direct macro, preserving its capture-and-click sequence. A dispatcher must not wrap this whole
      * adapter in another exclusive callback.</p>
      *
-     * @param call typed local-Service call; only the four closed UICleanerService operations are supported.
+     * @param call typed local-Service call; only the closed UICleanerService operations are supported.
      * @return completed mechanical result with typed JSON, or a fail-closed result before physical input.
      */
     public LocalServiceExecution execute(TurnLocalServiceCall call) {
@@ -45,6 +45,7 @@ public final class UiLocalOperationExecutor {
         return switch (call.operation()) {
             case UI_CLEAN_ALL -> executeCleanAll(call);
             case UI_CLOSE_GENERIC_WINDOWS -> executeCloseGenericWindows(call);
+            case UI_PROBE_GENERIC_CLOSE -> executeProbeGenericClose(call);
             case UI_CLEAN_LIGHTWEIGHT -> executeCleanLightweight(call);
             case UI_CLOSE_MAP_SEARCH_INPUT_BY_X2 -> executeCloseMapSearchInputByX2(call);
             default -> LocalServiceExecution.failed("UNSUPPORTED_LOCAL_OPERATION", null);
@@ -66,6 +67,16 @@ public final class UiLocalOperationExecutor {
         return completed(call.operation(), uiCleanerService.closeAllGenericWindows());
     }
 
+    private LocalServiceExecution executeProbeGenericClose(TurnLocalServiceCall call) {
+        if (hasAnyArguments(call)) {
+            return LocalServiceExecution.failed("INVALID_UI_ARGUMENTS", null);
+        }
+        Boolean present = uiCleanerService.probeGenericCloseButtonPresent("turn:ui-probe-generic-close");
+        return present == null
+                ? LocalServiceExecution.failed("UI_GENERIC_CLOSE_PROBE_UNKNOWN", null)
+                : completed(call.operation(), present);
+    }
+
     private LocalServiceExecution executeCleanLightweight(TurnLocalServiceCall call) {
         String source = requireOnlyUiSource(call);
         if (source == null) {
@@ -81,7 +92,9 @@ public final class UiLocalOperationExecutor {
         }
         boolean closed = inputSequences.submitExclusiveAndWait(
                 "turn:ui-close-map-search-x2:" + source,
-                () -> uiCleanerService.closeMapSearchInputByX2Direct(source));
+                () -> call.ui().returnImmediatelyAfterClick()
+                        ? uiCleanerService.closeMapSearchInputByX2Direct(source, false)
+                        : uiCleanerService.closeMapSearchInputByX2Direct(source));
         return completed(call.operation(), closed);
     }
 
