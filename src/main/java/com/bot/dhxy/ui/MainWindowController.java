@@ -250,6 +250,7 @@ public class MainWindowController {
     private Map<TaskType, String> createDefaultTaskCountSummaries() {
         Map<TaskType, String> summaries = new EnumMap<>(TaskType.class);
         summaries.put(TaskType.WUHuan_V2, "1轮");
+        summaries.put(TaskType.WUHUAN_V3, "1轮");
         summaries.put(TaskType.WUBEI, "1次");
         summaries.put(TaskType.XIULUO_V2, "1次");
         summaries.put(TaskType.XINSHOU, "1小时");
@@ -682,6 +683,7 @@ public class MainWindowController {
                 formatTaskCountSummary(botProperties.getCatchGhostMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUBEI, formatTaskCountSummary(botProperties.getFivefoldMaxRuns(), "次"));
         taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
+        taskCountSummaries.put(TaskType.WUHUAN_V3, formatTaskCountSummary(botProperties.getWuhuanMaxRuns(), "轮"));
         taskCountSummaries.put(TaskType.XINSHOU, "1小时");
         taskCountSummaries.put(TaskType.WILD_BATTLE,
                 formatTaskCountSummary(botProperties.getWildBattleDurationMinutes(), "分钟"));
@@ -746,13 +748,14 @@ public class MainWindowController {
                 }
                 taskCountSummaries.put(TaskType.CATCH_GHOST, formatTaskCountSummary(normalized, "次"));
             }
-            case WUHuan_V2 -> {
+            case WUHuan_V2, WUHUAN_V3 -> {
                 int wuhuanRuns = normalizeWuhuanRunCount(normalized);
                 botProperties.setWuhuanMaxRuns(wuhuanRuns);
                 if (wuhuanRunCountComboBox != null) {
                     wuhuanRunCountComboBox.setValue(wuhuanRuns);
                 }
                 taskCountSummaries.put(TaskType.WUHuan_V2, formatTaskCountSummary(wuhuanRuns, "轮"));
+                taskCountSummaries.put(TaskType.WUHUAN_V3, formatTaskCountSummary(wuhuanRuns, "轮"));
             }
             case WUBEI -> {
                 botProperties.setFivefoldMaxRuns(normalized);
@@ -2057,14 +2060,14 @@ public class MainWindowController {
 
     private boolean isEditableTaskCount(TaskType taskType) {
         return switch (taskType) {
-            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WUHuan_V2, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
+            case XIULUO, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WUHuan_V2, WUHUAN_V3, WUBEI, WILD_BATTLE, AUTO_BATTLE, TIANTING -> true;
             case SLEEP_COMPUTER -> false;
             default -> false;
         };
     }
 
     private int normalizeInlineTaskCount(TaskType taskType, int value) {
-        if (taskType == TaskType.WUHuan_V2) {
+        if (taskType == TaskType.WUHuan_V2 || taskType == TaskType.WUHUAN_V3) {
             return normalizeWuhuanRunCount(value);
         }
         if (isDurationTask(taskType)) {
@@ -2158,7 +2161,7 @@ public class MainWindowController {
 
     private String taskMetaIconLiteral(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan_V2 -> "fas-circle-notch";
+            case WUHuan_V2, WUHUAN_V3 -> "fas-circle-notch";
             case XIULUO_V2 -> "fas-ghost";
             case XINSHOU_TRAINING -> "fas-graduation-cap";
             case CATCH_GHOST -> "fas-ghost";
@@ -2172,7 +2175,7 @@ public class MainWindowController {
 
     private String taskMetaStyleClass(TaskType taskType) {
         return switch (taskType) {
-            case WUHuan_V2 -> "task-meta-wuhuan";
+            case WUHuan_V2, WUHUAN_V3 -> "task-meta-wuhuan";
             case WUBEI -> "task-meta-wubei";
             case XIULUO_V2 -> "task-meta-xiuluo";
             case XINSHOU_TRAINING -> "task-meta-xiuluo";
@@ -2186,6 +2189,7 @@ public class MainWindowController {
     private String taskMetaAccessibleText(TaskType taskType) {
         return switch (taskType) {
             case WUHuan_V2 -> "五环";
+            case WUHUAN_V3 -> "wuhuanV3";
             case WUBEI -> "五倍";
             case XIULUO_V2 -> "修罗";
             case XINSHOU_TRAINING -> "江湖历练";

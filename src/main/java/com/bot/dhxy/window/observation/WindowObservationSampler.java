@@ -22,6 +22,7 @@ import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.model.dialog.DialogOperation;
 import com.bot.dhxy.model.job.XiuluoGreenChainSchedule;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.model.WindowDialogInterest;
@@ -127,6 +128,8 @@ public final class WindowObservationSampler {
     private final CoordinateHelper coordinateHelper;
     private final DialogService dialogService;
     private final InputSequences inputSequences;
+    /** Optional heavy-cleanup service for the pre-terminal-frame scene guard; null disables the guard. */
+    private volatile UICleanerService uiCleanerService;
     private final boolean localKandaEnabled;
     private final LocalCombatSignalMechanics combatSignalMechanics;
     private final XinshouAnchorLocalMechanics xinshouAnchorMechanics;
@@ -295,6 +298,11 @@ public final class WindowObservationSampler {
         this.xinshouAnchorMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.wuhuanPresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
         this.unknownPhasePresenceMechanics.bindCycleFrameCropper(this::cropSharedCycleFrame);
+    }
+
+    /** Enables the pre-terminal-frame scene guard; without this the sampler stays observation-only. */
+    public void bindUiCleanerService(UICleanerService uiCleanerService) {
+        this.uiCleanerService = uiCleanerService;
     }
 
     /**
@@ -479,6 +487,7 @@ public final class WindowObservationSampler {
             log.debug("Tianting dialog probe failed (no fact fabricated): windowId={} message={}",
                     context.getWindowId(), probeFailure.getMessage());
         }
+        maintainScenePresenceCache(now);
         refreshLocalPathingTerminal(now);
         List<ObservationPathingFact> pathingFacts = sampleCurrentPathingFact();
         String pathingIntentId = pathingFacts.isEmpty() ? null : pathingFacts.getFirst().intentId();
@@ -1153,6 +1162,7 @@ public final class WindowObservationSampler {
         localPathingRecognizedX = null;
         localPathingRecognizedY = null;
         localPathingRecognizedChangedAtMs = 0L;
+        clearScenePresenceCache();
         invalidateTerminalFrameEvidence();
         if (!retainTerminalLineage) {
             clearTerminalFrameLineage();
@@ -1177,6 +1187,7 @@ public final class WindowObservationSampler {
             return;
         }
         if (terminalCoordinateRoi == null) {
+            ensureCleanSceneBeforeTerminalFrame(fact);
             captureTerminalFrameEvidence(fact);
         }
         if (terminalCoordinateRoi == null) {
@@ -1195,6 +1206,104 @@ public final class WindowObservationSampler {
         localPathingCoordinateRequestedIntentAgeMs = intent == null
                 ? 0L
                 : Math.max(0L, localPathingLastSampleAtMs - intent.getCreatedAtMs());
+    }
+
+    /**
+     * Precomputed scene-presence cache, maintained every observation cycle while a pathing intent
+     * is active. The arrival moment reads these booleans in O(1) instead of recognizing on demand
+     * — the runner is always watching, so the answer is already known when the character stops.
+     */
+    private Boolean scenePresenceDialog;
+    private Boolean scenePresenceClosable;
+    private long scenePresenceSampledAtMs;
+    /** Recompute cadence during travel; the scene changes slowly, so 5s is plenty. */
+    private static final long SCENE_PRESENCE_SAMPLE_PERIOD_MS = 5_000L;
+    /** Two sample periods + margin; older cache counts as unknown (treated as blocked). */
+    private static final long SCENE_PRESENCE_CACHE_FRESH_MS = 12_000L;
+
+    /** Refreshes the scene-presence cache from the already-captured shared cycle frame. */
+    private void maintainScenePresenceCache(long now) {
+        UICleanerService cleaner = uiCleanerService;
+        if (cleaner == null || !hasActivePathingIntent()) {
+            return;
+        }
+        if (scenePresenceSampledAtMs > 0
+                && now - scenePresenceSampledAtMs < SCENE_PRESENCE_SAMPLE_PERIOD_MS) {
+            return;
+        }
+        String probeSource = "pathing-cycle:" + context.getWindowId();
+        Boolean dialogPresent = dialogService.probeOptionDialogPresent(
+                this::cropSharedCycleFrame, probeSource);
+        Boolean closablePresent = null;
+        BufferedImage fullFrame = cropSharedCycleFrame(
+                coordinateHelper.getScaledRect(0, 0, 1024, 768));
+        if (fullFrame != null) {
+            try {
+                closablePresent = cleaner.probeGenericCloseButtonPresent(fullFrame, probeSource);
+            } finally {
+                fullFrame.flush();
+            }
+        }
+        scenePresenceDialog = dialogPresent;
+        scenePresenceClosable = closablePresent;
+        scenePresenceSampledAtMs = now;
+    }
+
+    private void clearScenePresenceCache() {
+        scenePresenceDialog = null;
+        scenePresenceClosable = null;
+        scenePresenceSampledAtMs = 0L;
+    }
+
+    /**
+     * Pre-terminal-frame scene guard: the stationary-candidate frame becomes the Cloud's NPC
+     * arrival frame, so a leaked route panel or dialog left open during travel poisons every
+     * downstream OCR candidate. The verdict comes from the precomputed cache (instant); only a
+     * stale/missing cache falls back to one in-memory scan of the current shared frame. Only a
+     * hit triggers the heavy cleanup — a clean scene costs zero input and zero extra latency.
+     */
+    private void ensureCleanSceneBeforeTerminalFrame(ObservationPathingFact fact) {
+        UICleanerService cleaner = uiCleanerService;
+        if (cleaner == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long cacheAgeMs = scenePresenceSampledAtMs <= 0 ? -1L : now - scenePresenceSampledAtMs;
+        Boolean dialogPresent;
+        Boolean closablePresent;
+        String verdictSource;
+        boolean cleanupNeeded;
+        if (cacheAgeMs >= 0 && cacheAgeMs <= SCENE_PRESENCE_CACHE_FRESH_MS) {
+            dialogPresent = scenePresenceDialog;
+            closablePresent = scenePresenceClosable;
+            verdictSource = "cache";
+            cleanupNeeded = Boolean.TRUE.equals(dialogPresent)
+                    || Boolean.TRUE.equals(closablePresent);
+        } else {
+            /*
+             * No fresh precomputed answer (e.g. the trip ended before the first 5s sample).
+             * Per design the arrival moment never recognizes on demand — an unknown scene is
+             * treated as blocked and cleaned unconditionally.
+             */
+            dialogPresent = null;
+            closablePresent = null;
+            verdictSource = "no-cache-assume-blocked";
+            cleanupNeeded = true;
+        }
+        log.info("Terminal frame scene probe: windowId={} intentId={} dialogPresent={} closablePresent={} cleanup={} source={} cacheAgeMs={}",
+                context.getWindowId(), fact.intentId(), dialogPresent, closablePresent,
+                cleanupNeeded, verdictSource, cacheAgeMs);
+        if (!cleanupNeeded) {
+            return;
+        }
+        try {
+            cleaner.cleanUpAll();
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("Terminal frame scene cleanup failed; capturing frame as-is: windowId={} intentId={} reason={}",
+                    context.getWindowId(), fact.intentId(), cleanupFailure.toString(), cleanupFailure);
+        } finally {
+            clearScenePresenceCache();
+        }
     }
 
     private void captureTerminalFrameEvidence(ObservationPathingFact fact) {

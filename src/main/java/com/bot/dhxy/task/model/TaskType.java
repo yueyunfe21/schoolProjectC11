@@ -2,6 +2,7 @@ package com.bot.dhxy.task.model;
 
 public enum TaskType {
     WUHuan_V2("wuhuan_v2", "五环", true),
+    WUHUAN_V3("wuhuan_v3", "wuhuanV3", true),
     WUBEI("wubei", "五倍", false),
     XIULUO("xiuluo", "修罗", false),
     XIULUO_V2("xiuluo_v2", "修罗", false),

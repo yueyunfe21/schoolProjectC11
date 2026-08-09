@@ -857,6 +857,7 @@ public class WindowTaskControlService {
     static TurnTaskCode toTurnTaskCode(TaskType type) {
         return switch (type) {
             case WUHuan_V2 -> TurnTaskCode.WUHUAN_V2;
+            case WUHUAN_V3 -> TurnTaskCode.WUHUAN_V3;
             case WUBEI -> TurnTaskCode.WUBEI;
             case XIULUO_V2 -> TurnTaskCode.XIULUO_V2;
             case XINSHOU -> TurnTaskCode.XINSHOU;
@@ -885,6 +886,7 @@ public class WindowTaskControlService {
     static TaskType fromTurnTaskCode(TurnTaskCode code) {
         return switch (code) {
             case WUHUAN_V2 -> TaskType.WUHuan_V2;
+            case WUHUAN_V3 -> TaskType.WUHUAN_V3;
             case WUBEI -> TaskType.WUBEI;
             case XIULUO_V2 -> TaskType.XIULUO_V2;
             case XINSHOU -> TaskType.XINSHOU;
@@ -906,6 +908,7 @@ public class WindowTaskControlService {
             case CATCH_GHOST -> botProperties.getCatchGhostMaxRuns();
             case YIPIN_GUARD_TEST -> 1;
             case WUHUAN_V2 -> botProperties.getWuhuanMaxRuns();
+            case WUHUAN_V3 -> botProperties.getWuhuanMaxRuns();
             case XINSHOU -> 1;
             case WILD_BATTLE -> botProperties.getWildBattleDurationMinutes();
             case TIANTING -> botProperties.getTiantingMaxRuns();
@@ -1143,7 +1146,7 @@ public class WindowTaskControlService {
                     .orElse(TaskType.UNKNOWN);
             LocalTeamRolePreflightService.Role fixedRole = switch (taskType) {
                 case AUTO_BATTLE -> LocalTeamRolePreflightService.Role.MEMBER;
-                case WUHuan_V2, XINSHOU -> LocalTeamRolePreflightService.Role.SOLO;
+                case WUHuan_V2, WUHUAN_V3, XINSHOU -> LocalTeamRolePreflightService.Role.SOLO;
                 default -> null;
             };
             if (fixedRole != null) {

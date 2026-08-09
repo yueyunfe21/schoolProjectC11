@@ -633,7 +633,8 @@ public final class WindowObservationRunner {
 
     private boolean observesWuhuan() {
         for (String code : taskCode.split(",")) {
-            if ("WUHUAN_V2".equalsIgnoreCase(code.trim())) {
+            String trimmed = code.trim();
+            if ("WUHUAN_V2".equalsIgnoreCase(trimmed) || "WUHUAN_V3".equalsIgnoreCase(trimmed)) {
                 return true;
             }
         }

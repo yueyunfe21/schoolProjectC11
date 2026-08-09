@@ -1243,7 +1243,7 @@ public final class TurnProtocolValidator {
             switch (taskCode) {
                 case WUBEI, XIULUO_V2, XINSHOU_TRAINING, CATCH_GHOST, WILD_BATTLE, AUTO_BATTLE, TIANTING -> require(maxRuns >= 0,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be >= 0 for " + taskCode);
-                case WUHUAN_V2 -> require(maxRuns == 1 || maxRuns == 2,
+                case WUHUAN_V2, WUHUAN_V3 -> require(maxRuns == 1 || maxRuns == 2,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 or 2 for " + taskCode);
                 case XINSHOU, SLEEP_COMPUTER, YIPIN_GUARD_TEST -> require(maxRuns == 1,
                         "taskStartRequest.taskMaxRuns[" + index + "] must be 1 for " + taskCode);

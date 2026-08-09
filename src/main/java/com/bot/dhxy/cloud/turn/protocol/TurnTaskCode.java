@@ -2,6 +2,7 @@ package com.bot.dhxy.cloud.turn.protocol;
 
 public enum TurnTaskCode {
     WUHUAN_V2,
+    WUHUAN_V3,
     WUBEI,
     XIULUO_V2,
     XINSHOU,

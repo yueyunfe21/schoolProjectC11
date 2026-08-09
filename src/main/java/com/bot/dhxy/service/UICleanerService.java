@@ -168,17 +168,39 @@ public class UICleanerService {
             log.warn("UI generic-close read-only probe unavailable: source={} cause=capture-failed", source);
             return null;
         }
-        List<String> templates = genericCloseButtonTemplates();
-        if (templates.isEmpty()) {
-            log.warn("UI generic-close read-only probe unavailable: source={} cause=no-templates", source);
-            return null;
-        }
         BufferedImage frame = null;
         try {
             frame = ImageIO.read(new File(screenPath));
             if (frame == null) {
                 return null;
             }
+            return probeGenericCloseButtonPresent(frame, source);
+        } catch (IOException | RuntimeException failure) {
+            log.warn("UI generic-close read-only probe unavailable: source={} cause={}",
+                    source, failure.toString());
+            return null;
+        } finally {
+            if (frame != null) {
+                frame.flush();
+            }
+        }
+    }
+
+    /**
+     * Same read-only generic-close scan against a caller-supplied in-memory window frame — no
+     * capture, no file IO except template loads. Used by the observation cycle's precomputed
+     * scene-presence cache so the arrival moment never pays recognition latency.
+     */
+    public Boolean probeGenericCloseButtonPresent(BufferedImage frame, String source) {
+        if (frame == null) {
+            return null;
+        }
+        List<String> templates = genericCloseButtonTemplates();
+        if (templates.isEmpty()) {
+            log.warn("UI generic-close read-only probe unavailable: source={} cause=no-templates", source);
+            return null;
+        }
+        try {
             for (String templatePath : templates) {
                 BufferedImage template = ImageIO.read(new File(templatePath));
                 if (template == null || template.getWidth() > frame.getWidth()
@@ -199,16 +221,12 @@ public class UICleanerService {
                     template.flush();
                 }
             }
-            log.info("UI generic-close read-only probe absent: source={} templates={}", source, templates.size());
+            log.debug("UI generic-close read-only probe absent: source={} templates={}", source, templates.size());
             return false;
         } catch (IOException | RuntimeException failure) {
             log.warn("UI generic-close read-only probe unavailable: source={} cause={}",
                     source, failure.toString());
             return null;
-        } finally {
-            if (frame != null) {
-                frame.flush();
-            }
         }
     }
 

@@ -6,6 +6,7 @@ import com.bot.dhxy.cloud.turn.TurnClient;
 import com.bot.dhxy.core.GameClientTracker;
 import com.bot.dhxy.input.InputSequences;
 import com.bot.dhxy.service.DialogService;
+import com.bot.dhxy.service.UICleanerService;
 import com.bot.dhxy.tools.CoordinateHelper;
 import com.bot.dhxy.window.execution.MultiWindowTaskManager;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
@@ -42,6 +43,7 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
     private final LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler;
     private final DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator;
     private final XinshouRunnerAutoCombatState xinshouAutoCombatState;
+    private final UICleanerService uiCleanerService;
     private final boolean localKandaEnabled;
 
     public SpringObservationRunnerFactory(TurnClient turnClient,
@@ -55,6 +57,7 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                                           LocalMaintenanceBroadcastHandler maintenanceBroadcastHandler,
                                           DeferredReturnHomeReplayCoordinator returnHomeReplayCoordinator,
                                           XinshouRunnerAutoCombatState xinshouAutoCombatState,
+                                          UICleanerService uiCleanerService,
                                           @Value("${bot.xiuluo.local-kanda-enabled:false}") boolean localKandaEnabled) {
         Objects.requireNonNull(turnClient, "turnClient");
         this.tenantId = Objects.requireNonNull(sidecarProperties, "sidecarProperties").getTenantId();
@@ -70,6 +73,7 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 returnHomeReplayCoordinator, "returnHomeReplayCoordinator");
         this.xinshouAutoCombatState = Objects.requireNonNull(
                 xinshouAutoCombatState, "xinshouAutoCombatState");
+        this.uiCleanerService = Objects.requireNonNull(uiCleanerService, "uiCleanerService");
         this.localKandaEnabled = localKandaEnabled;
         if (turnClient instanceof HttpsTurnClient httpsTurnClient) {
             this.observationClient = httpsTurnClient.newObservationClient();
@@ -101,6 +105,9 @@ public class SpringObservationRunnerFactory implements WindowObservationRunnerFa
                 kandaDialogService, inputSequences, taskRunId, localKandaEnabled,
                 new LocalCombatSignalMechanics(tracker, coordinateHelper),
                 returnHomeReplayCoordinator, xinshouAutoCombatState);
+        if (sampler != null) {
+            sampler.bindUiCleanerService(uiCleanerService);
+        }
         if (sampler == null) {
             log.warn("Observation runner created without a sampler (no registered window context): windowId={}",
                     windowId);

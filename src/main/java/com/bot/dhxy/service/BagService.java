@@ -384,6 +384,11 @@ public class BagService {
             return p;
         }
         if (check.panelVisible) {
+            Point cleared = recheckAnchorAfterHoverClear(layout, context, "after-alt-e-first");
+            if (cleared != null) {
+                moveMouseAwayFromMainBagAnchor(layout, cleared, context, "after-alt-e-first-hover-cleared");
+                return cleared;
+            }
             log.warn("[bag] main bag panel is visible but primary anchor is still missing; skip second Alt+E to avoid closing it: visibleBy={}",
                     check.visibleBy);
             return null;
@@ -405,6 +410,11 @@ public class BagService {
                 return p;
             }
             if (check.panelVisible) {
+                Point cleared = recheckAnchorAfterHoverClear(layout, context, "after-alt-e-late-render");
+                if (cleared != null) {
+                    moveMouseAwayFromMainBagAnchor(layout, cleared, context, "after-alt-e-late-render-hover-cleared");
+                    return cleared;
+                }
                 log.warn("[bag] main bag panel appeared after late render wait but primary anchor is still missing; skip second Alt+E: visibleBy={}",
                         check.visibleBy);
                 return null;
@@ -433,6 +443,11 @@ public class BagService {
             return p;
         }
         if (check.panelVisible) {
+            Point cleared = recheckAnchorAfterHoverClear(layout, context, "after-alt-e-second");
+            if (cleared != null) {
+                moveMouseAwayFromMainBagAnchor(layout, cleared, context, "after-alt-e-second-hover-cleared");
+                return cleared;
+            }
             log.warn("[bag] main bag panel is visible after Alt+E retry but primary anchor is still missing: visibleBy={}",
                     check.visibleBy);
         } else {
@@ -456,10 +471,50 @@ public class BagService {
         }
         Point cached = lastMainBagAnchorCache.get(bagCacheKey(layout));
         if (cached == null) {
-            log.debug("[bag] no cached main bag anchor before open: stage={}", stage);
+            // 首次开包无缓存锚点:仍要把鼠标挪开——悬停提示可能正挡着锚点将要出现的位置
+            // (2026-08-08 实测:新进程首开必失败,重试鼠标不动则永远失败)。
+            log.debug("[bag] no cached main bag anchor before open; move mouse to opposite corner instead: stage={}", stage);
+            moveMouseToSafeParkPoint(context, stage + "-no-cache");
             return;
         }
         moveMouseAwayFromMainBagAnchor(layout, cached, context, stage, forceMove);
+    }
+
+    /**
+     * 不依赖任何缓存的兜底挪鼠标(用户 2026-08-08 拍板选 A):复用既有 pointer-clear 首选停靠点
+     * ——窗口左下贴边 (left+1, bottom-2),与 CloudPlayerStateIncenseStatusPort 的清指针候选一致,
+     * 贴边像素悬停不到任何 UI。用于首次开包(无缓存锚点)与"面板可见但锚点缺失"的悬停清除复查。
+     */
+    private void moveMouseToSafeParkPoint(TaskExecutionContext context, String stage) {
+        // (left+1, bottom-2) 实测会落到窗口客户区之外(差一点点),moveMouse 被丢弃、悬停提示
+        // 仍在;各内缩 10px 保证落点在窗口内(2026-08-08 用户实测拍板)。
+        int targetX = tracker.getWindowBaseX() + 11;
+        int targetY = tracker.getWindowBaseY() + GAME_CLIENT_HEIGHT - 12;
+        log.info("[bag] move mouse to safe park point to clear hover tooltip: stage={} target=({}, {})",
+                stage, targetX, targetY);
+        if (!InputActionScope.checkpoint()) {
+            return;
+        }
+        inputProvider.moveMouse(targetX, targetY);
+        TaskSleep.sleepOrStop(context, 150, "Bag mouse move wait was interrupted");
+        InputActionScope.checkpoint();
+    }
+
+    /**
+     * "面板可见但主锚点缺失"的悬停清除复查:头号成因是鼠标悬停提示正盖着锚点。
+     * 挪开鼠标后复查一次;仍缺失才交还调用方按原语义失败。
+     */
+    private Point recheckAnchorAfterHoverClear(BagLayout layout, TaskExecutionContext context, String stage) {
+        log.warn("[bag] panel visible but primary anchor missing; clear possible hover tooltip and recheck: stage={}", stage);
+        moveMouseToSafeParkPoint(context, stage);
+        BagOpenCheck check = checkBagOpened(layout, context, stage + "-hover-cleared");
+        if (check.ready()) {
+            Point p = check.anchor;
+            log.info("[bag] anchor appeared after hover clear: ({}, {}) stage={}", p.x, p.y, stage);
+            rememberMainBagAnchor(layout, p, stage + "-hover-cleared");
+            return p;
+        }
+        return null;
     }
 
     private void moveMouseAwayFromMainBagAnchor(BagLayout layout, Point anchor, TaskExecutionContext context, String stage) {

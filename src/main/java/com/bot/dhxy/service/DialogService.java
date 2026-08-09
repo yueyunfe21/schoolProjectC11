@@ -93,6 +93,50 @@ public class DialogService {
      * Verifies the post-NPC-click option dialog with the baseline generic/raw/green precedence.
      * This method never clicks an option.
      */
+    /**
+     * Reads whether the standard option-dialog area currently shows a dialog, without any input.
+     *
+     * @param source diagnostic source only; the probe never clicks or sends hotkeys
+     * @return {@code TRUE} when an option dialog is visible, {@code FALSE} after a clean scan,
+     *         or {@code null} when capture evidence is unavailable
+     */
+    public Boolean probeOptionDialogPresent(String source) {
+        int[] rect = coordinateHelper.getScaledRect(
+                DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
+        BufferedImage raw = tracker.captureToMemory(
+                "dialog-probe:" + safeDebugName(source), rect[0], rect[1], rect[2], rect[3]);
+        if (raw == null) {
+            log.warn("Option-dialog read-only probe unavailable: source={} cause=capture-failed", source);
+            return null;
+        }
+        try {
+            return isOptionDialog(raw, rect);
+        } finally {
+            raw.flush();
+        }
+    }
+
+    /**
+     * Same read-only option-dialog check fed from a caller-owned frame cropper (e.g. the
+     * observation cycle's shared in-memory frame) — no fresh capture. The cropper receives the
+     * scaled absolute dialog rect and must return that region's pixels or {@code null}.
+     */
+    public Boolean probeOptionDialogPresent(
+            java.util.function.Function<int[], BufferedImage> regionCropper, String source) {
+        int[] rect = coordinateHelper.getScaledRect(
+                DIALOG_LEFT, DIALOG_TOP, DIALOG_WIDTH, DIALOG_HEIGHT);
+        BufferedImage raw = regionCropper.apply(rect);
+        if (raw == null) {
+            log.debug("Option-dialog read-only probe unavailable: source={} cause=region-unavailable", source);
+            return null;
+        }
+        try {
+            return isOptionDialog(raw, rect);
+        } finally {
+            raw.flush();
+        }
+    }
+
     public NpcClickVerification verifyNpcArrivalExpectedDialog(
             List<String> expectedGreenTemplatePaths,
             String expectedRawTemplatePath,
