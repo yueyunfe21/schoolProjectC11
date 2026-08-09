@@ -28,7 +28,7 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.event.KeyEvent;
 
 @Component
-@ConditionalOnProperty(prefix = "bot.input", name = "backend", havingValue = "WIN_API", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "bot.input", name = "backend", havingValue = "WIN_API")
 @RequiredArgsConstructor
 @Slf4j
 public class WinApiMouseController implements InputProvider {

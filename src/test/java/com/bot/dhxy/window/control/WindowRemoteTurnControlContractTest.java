@@ -5,6 +5,7 @@ import com.bot.dhxy.cloud.turn.protocol.TurnTaskQueueFailurePolicy;
 import com.bot.dhxy.cloud.turn.protocol.TurnTaskStartAck;
 import com.bot.dhxy.cloud.turn.protocol.TurnWindowMetadata;
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.runner.context.TaskStartupMode;
 import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.cloud.turn.local.LocalTeamRolePreflightService;
 import com.bot.dhxy.window.execution.WindowTaskFailurePolicy;
@@ -97,6 +98,15 @@ class WindowRemoteTurnControlContractTest {
         assertEquals(WindowTaskControlService.StartLifecycle.MIXED,
                 WindowTaskControlService.classifyStartLifecycleStatuses(
                         List.of(WindowRuntimeStatus.PAUSED, WindowRuntimeStatus.IDLE)));
+    }
+
+    @Test
+    void pauseResumeCarriesDedicatedStartupModeInsteadOfColdStartNormal() throws IOException {
+        assertEquals("PAUSE_RESUME", TaskStartupMode.PAUSE_RESUME.name());
+        String source = Files.readString(Path.of(
+                "src/main/java/com/bot/dhxy/window/control/WindowTaskControlService.java"));
+        assertEquals(2, occurrences(source, ": TaskStartupMode.PAUSE_RESUME;"),
+                "both single-task and batch pause-resume starts must carry the dedicated startup fact");
     }
 
     @Test

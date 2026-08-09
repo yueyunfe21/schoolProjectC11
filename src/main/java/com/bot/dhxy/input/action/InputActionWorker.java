@@ -23,10 +23,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * Single background worker that executes queued physical input requests.
  *
- * <p>The worker is the only consumer of {@link InputActionQueue}. Keyboard actions are delivered only
- * through the request's exact HWND and never fall back to foreground input. Mouse actions and exclusive
- * callbacks still require focused real input. The worker binds the request's captured window context
- * while executing so downstream capture/input helpers operate on the correct window.</p>
+ * <p>The worker is the only consumer of {@link InputActionQueue}. Background-safe keyboard actions use
+ * the request's exact HWND; driver-routed keyboard, mouse actions and exclusive callbacks require a focused
+ * input transaction. The worker binds the request's captured window context while executing so downstream
+ * capture/input helpers operate on the correct window.</p>
  */
 @Slf4j
 @Component
@@ -485,7 +485,7 @@ public class InputActionWorker {
             }
             inputProvider.pasteText(action.getText());
         } else if (isAltShortcutAction(type)) {
-            if (!inputProvider.requiresForegroundKeyboard() || isBackgroundAltWhitelist(type)) {
+            if (!inputProvider.requiresForegroundKeyboard() || isBackgroundAltWhitelist(request, type)) {
                 return pressAltShortcut(request, type);
             }
             executeForegroundAltShortcut(type);
@@ -837,7 +837,7 @@ public class InputActionWorker {
         for (InputAction action : request.getActions()) {
             InputActionType type = action.getType();
             if (inputProvider.requiresForegroundKeyboard()) {
-                if (type != InputActionType.SLEEP && !isBackgroundAltWhitelist(type)) {
+                if (type != InputActionType.SLEEP && !isBackgroundAltWhitelist(request, type)) {
                     return false;
                 }
                 continue;
@@ -998,6 +998,10 @@ public class InputActionWorker {
             inputProvider.pressAlt2();
         } else if (type == InputActionType.PRESS_ALT_4) {
             inputProvider.pressAlt4();
+        } else if (type == InputActionType.PRESS_ALT_5) {
+            inputProvider.pressAlt5();
+        } else if (type == InputActionType.PRESS_ALT_6) {
+            inputProvider.pressAlt6();
         } else if (type == InputActionType.PRESS_ALT_T) {
             inputProvider.pressAltT();
         } else if (type == InputActionType.PRESS_ALT_O) {
@@ -1019,10 +1023,17 @@ public class InputActionWorker {
         }
     }
 
-    private boolean isBackgroundAltWhitelist(InputActionType type) {
-        return type == InputActionType.PRESS_ALT_5
-                || type == InputActionType.PRESS_ALT_6
-                || type == InputActionType.PRESS_ALT_8;
+    private boolean isBackgroundAltWhitelist(InputActionRequest request, InputActionType type) {
+        if (type == InputActionType.PRESS_ALT_8) {
+            return true;
+        }
+        if (type != InputActionType.PRESS_ALT_5 && type != InputActionType.PRESS_ALT_6) {
+            return false;
+        }
+        WindowRuntimeContext context = request.getWindowContext();
+        return context == null
+                || !context.isLeader()
+                || context.getSelectedTaskType().isSinglePlayer();
     }
 
     private String shortcutDisplayName(BoundWindowKeyboardService.AltShortcut shortcut, InputActionType fallbackType) {

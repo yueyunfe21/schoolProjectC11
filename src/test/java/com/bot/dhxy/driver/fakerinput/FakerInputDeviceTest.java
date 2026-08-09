@@ -72,16 +72,19 @@ class FakerInputDeviceTest {
 
         device.updateKeyboard(0x04, (byte) 0x04, (byte) 0x1E);
         device.updateRelativeMouse(0x01, 300, -120, -1, 2);
+        device.updateAbsoluteMouse(0x02, 16384, 8192, 1);
         device.releaseAll();
 
-        assertEquals(4, connection.reports.size());
+        assertEquals(5, connection.reports.size());
         assertReportPrefix(connection.reports.get(0),
                 0x40, 9, 0x01, 0x04, 0, 0x04, 0x1E, 0, 0, 0, 0);
         assertReportPrefix(connection.reports.get(1),
                 0x40, 8, 0x03, 0x01, 0x2C, 0x01, 0x88, 0xFF, 0xFF, 0x02);
         assertReportPrefix(connection.reports.get(2),
-                0x40, 9, 0x01, 0, 0, 0, 0, 0, 0, 0, 0);
+                0x40, 7, 0x04, 0x02, 0x00, 0x40, 0x00, 0x20, 0x01);
         assertReportPrefix(connection.reports.get(3),
+                0x40, 9, 0x01, 0, 0, 0, 0, 0, 0, 0, 0);
+        assertReportPrefix(connection.reports.get(4),
                 0x40, 8, 0x03, 0, 0, 0, 0, 0, 0, 0);
     }
 
@@ -95,6 +98,8 @@ class FakerInputDeviceTest {
                 () -> device.updateKeyboard(0, new byte[7]));
         assertThrows(IllegalArgumentException.class,
                 () -> device.updateRelativeMouse(0, 40_000, 0, 0, 0));
+        assertThrows(IllegalArgumentException.class,
+                () -> device.updateAbsoluteMouse(0, 32_768, 0, 0));
         assertEquals(0, connection.reports.size());
     }
 

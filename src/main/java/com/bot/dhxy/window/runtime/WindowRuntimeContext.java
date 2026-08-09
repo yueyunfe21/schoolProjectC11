@@ -1601,7 +1601,17 @@ public class WindowRuntimeContext {
             return;
         }
         interest = normalizeDialogInterestProbeStart(interest, reason);
-        dialogInterest.set(interest);
+        WindowDialogInterest previous = dialogInterest.getAndSet(interest);
+        boolean sameInterestIdentity = previous != null
+                && previous.getTaskType() == interest.getTaskType()
+                && previous.getCreatedAtMs() == interest.getCreatedAtMs()
+                && Objects.equals(previous.getSource(), interest.getSource())
+                && Objects.equals(previous.getOperations(), interest.getOperations());
+        if (!sameInterestIdentity) {
+            // A dialog claim belongs only to the interest that matched it. Task/phase replacement
+            // must re-arm matching instead of letting the previous task suppress the new dialog.
+            clearTiantingDialogOptionClaim();
+        }
         long wakeSeq = observerWakeSeq.incrementAndGet();
         log.info("[latency] event=window.dialog.interest.update windowId={} task={} operations={} source={} reason={} ttl={} wakeSeq={}",
                 windowId, interest.getTaskType(), interest.getOperations(), normalize(interest.getSource()),
@@ -1643,6 +1653,7 @@ public class WindowRuntimeContext {
 
     public void clearDialogInterest(String reason) {
         WindowDialogInterest cleared = dialogInterest.getAndSet(null);
+        clearTiantingDialogOptionClaim();
         clearTiantingFengyaoPending();
         if (cleared != null) {
             log.info("[latency] event=window.dialog.interest.clear windowId={} task={} operations={} source={} reason={}",

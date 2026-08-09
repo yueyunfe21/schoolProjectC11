@@ -1,12 +1,18 @@
 package com.bot.dhxy.input.action;
 
 import com.bot.dhxy.core.GameContext;
+import com.bot.dhxy.config.InputBackendProperties;
 import com.bot.dhxy.driver.BoundWindowKeyboardService;
+import com.bot.dhxy.driver.WinApiMouseController;
+import com.bot.dhxy.driver.fakerinput.FakerInputProvider;
 import com.bot.dhxy.input.InputProvider;
 import com.bot.dhxy.input.WindowAwareInputCoordinator;
+import com.bot.dhxy.task.model.TaskType;
 import com.bot.dhxy.window.model.WindowNativeBinding;
+import com.bot.dhxy.window.model.WindowRole;
 import com.bot.dhxy.window.runtime.WindowRuntimeContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -20,6 +26,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class G041FakerInputRoutingContractTest {
 
     @Test
+    void fakerInputIsDefaultAndLegacyWinApiRequiresExplicitSelection() {
+        assertEquals(InputBackendProperties.Backend.FAKER_INPUT,
+                new InputBackendProperties().getBackend());
+        ConditionalOnProperty fakerCondition = FakerInputProvider.class
+                .getAnnotation(ConditionalOnProperty.class);
+        ConditionalOnProperty legacyCondition = WinApiMouseController.class
+                .getAnnotation(ConditionalOnProperty.class);
+        assertTrue(fakerCondition.matchIfMissing());
+        assertFalse(legacyCondition.matchIfMissing());
+    }
+
+    @Test
     void onlyAltFiveSixEightRemainBackgroundWhenDriverBackendIsActive() throws Exception {
         Harness harness = new Harness();
 
@@ -30,6 +48,39 @@ class G041FakerInputRoutingContractTest {
         assertFalse(harness.canUseBackground(InputAction.pressCtrlA()));
         assertFalse(harness.canUseBackground(InputAction.pressEnter()));
         assertFalse(harness.canUseBackground(InputAction.clickLeft(100, 200, 50)));
+    }
+
+    @Test
+    void leaderTeamTaskRoutesAltFiveAndSixThroughDriverButKeepsAltEightOnExactHwnd() throws Exception {
+        Harness harness = new Harness();
+        harness.asLeader(TaskType.TIANTING);
+
+        assertFalse(harness.canUseBackground(InputAction.pressAlt5()));
+        assertFalse(harness.canUseBackground(InputAction.pressAlt6()));
+        assertTrue(harness.canUseBackground(InputAction.pressAlt8()));
+
+        assertTrue(harness.executeFrozen(InputAction.pressAlt5(), false));
+        assertTrue(harness.executeFrozen(InputAction.pressAlt6(), false));
+        assertEquals(2, harness.focusCalls.get());
+        assertEquals(1, harness.driverAltFiveCalls.get());
+        assertEquals(1, harness.driverAltSixCalls.get());
+        assertEquals(0, harness.hwndCalls.get());
+
+        assertTrue(harness.executeFrozen(InputAction.pressAlt8(), true));
+        assertEquals(2, harness.focusCalls.get());
+        assertEquals(1, harness.hwndCalls.get());
+    }
+
+    @Test
+    void leaderSinglePlayerAndMemberTeamTaskKeepAltFiveAndSixOnExactHwnd() throws Exception {
+        Harness harness = new Harness();
+        harness.asLeader(TaskType.WUHuan_V2);
+        assertTrue(harness.canUseBackground(InputAction.pressAlt5()));
+        assertTrue(harness.canUseBackground(InputAction.pressAlt6()));
+
+        harness.asMember(TaskType.TIANTING);
+        assertTrue(harness.canUseBackground(InputAction.pressAlt5()));
+        assertTrue(harness.canUseBackground(InputAction.pressAlt6()));
     }
 
     @Test
@@ -72,6 +123,8 @@ class G041FakerInputRoutingContractTest {
 
     private static final class Harness {
         private final AtomicInteger driverAltOneCalls = new AtomicInteger();
+        private final AtomicInteger driverAltFiveCalls = new AtomicInteger();
+        private final AtomicInteger driverAltSixCalls = new AtomicInteger();
         private final AtomicInteger hwndCalls = new AtomicInteger();
         private final AtomicInteger focusCalls = new AtomicInteger();
         private final InputActionWorker worker;
@@ -88,6 +141,10 @@ class G041FakerInputRoutingContractTest {
                         }
                         if (method.getName().equals("pressAlt1")) {
                             driverAltOneCalls.incrementAndGet();
+                        } else if (method.getName().equals("pressAlt5")) {
+                            driverAltFiveCalls.incrementAndGet();
+                        } else if (method.getName().equals("pressAlt6")) {
+                            driverAltSixCalls.incrementAndGet();
                         }
                         return null;
                     });
@@ -116,6 +173,16 @@ class G041FakerInputRoutingContractTest {
             context = new WindowRuntimeContext("window-1", new GameContext());
             binding = new WindowNativeBinding("12345", "title", "class", 77L, 10, 20, 800, 600);
             context.setNativeBinding(binding);
+        }
+
+        private void asLeader(TaskType taskType) {
+            context.updateRole(WindowRole.LEADER, "leader");
+            context.setSelectedTaskType(taskType);
+        }
+
+        private void asMember(TaskType taskType) {
+            context.updateRole(WindowRole.MEMBER, "member");
+            context.setSelectedTaskType(taskType);
         }
 
         private boolean canUseBackground(InputAction action) throws Exception {

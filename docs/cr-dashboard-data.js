@@ -1,5 +1,60 @@
 window.CR_DASHBOARD_DATA = [
   {
+    "id": "G049",
+    "number": 49,
+    "owner": "Codex",
+    "status": "最终源码与隔离合同通过，待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭引妖香 Tracker 分支、本地去重与 claim 生命周期",
+    "summary": "`YINYAO` 直接匹配；miss 可重试，match 后同任务停止，新任务清除旧 claim 后重开。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G048",
+    "number": 48,
+    "owner": "Codex",
+    "status": "源码与保存帧回放通过，待 fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "天庭 Tracker OCR 调度、日计数校准、端到端计时",
+    "summary": "日计数改为 `140x28` 纯黑白红字单次 OCR，并加 exact-run fence 与 ready-event；保存帧 OCR 1.612 秒，待 fresh。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G047",
+    "number": 47,
+    "owner": "Codex",
+    "status": "静态通过，01:38 fresh 已证明成功终止，待长跑",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud NPC FIFO outcome 栅栏、取消语义、顺序合同",
+    "summary": "`TOOLTIP VERIFIED` 后同 session 无后续候选；失败后下一次 poll 才继续的合同 3/3 通过。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G046",
+    "number": 46,
+    "owner": "Codex",
+    "status": "P1 返修与离线回放通过，待实机",
+    "kind": "open",
+    "domain": "通用",
+    "files": "Cloud 黄字 NPC 黑白候选 OCR、名字相似度、李靖/超级巫医回放",
+    "summary": "完整候选文本归一化编辑距离已生效，额外字符扣分；严格目标保留旧逻辑。",
+    "verification": "需复核"
+  },
+  {
+    "id": "G045",
+    "number": 45,
+    "owner": "Codex",
+    "status": "源码与隔离合同通过，待 Client fresh",
+    "kind": "open",
+    "domain": "通用",
+    "files": "`WindowCaptureEvidenceStore`、证据落盘合同、运行时延迟证据",
+    "summary": "队员截图不保存；队长/单人证据异步落盘，消除五窗同步写盘阻塞。",
+    "verification": "需复核"
+  },
+  {
     "id": "G044",
     "number": 44,
     "owner": "Codex",
@@ -36,11 +91,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G041",
     "number": 41,
     "owner": "Codex",
-    "status": "源码与合同通过，待安装驱动并 fresh",
+    "status": "完成：驱动、静态门与真实输入 fresh 通过",
     "kind": "open",
     "domain": "通用",
-    "files": "FakerInput 设备桥、输入后端配置、队列路由合同",
-    "summary": "本地虚拟 HID 适配与队列路由已通过静态门；仅 `Alt+5/6/8` 保留后台 HWND，默认后端未切换。",
+    "files": "FakerInput 设备桥、absolute HID、角色感知输入路由",
+    "summary": "普通键鼠默认走 FakerInput；队长非单人任务的 `Alt+5/6` 也走驱动，队员/单人任务保留 HWND，`Alt+8` 始终 HWND。",
     "verification": "需复核"
   },
   {
@@ -124,11 +179,11 @@ window.CR_DASHBOARD_DATA = [
     "id": "G033",
     "number": 33,
     "owner": "Codex",
-    "status": "F11 源码与隔离合同通过，待 Client 重启 fresh",
+    "status": "引妖香返修静态门通过，实机保持停止",
     "kind": "open",
     "domain": "通用",
     "files": "后台测试控制服务、逐小任务语义审计、五环/天庭入口、快捷暂停热恢复",
-    "summary": "F11 已复用 UI 暂停/热恢复入口；新 run 继续验证战后 retained 绿链、迟到引妖香回执及快捷键暂停/恢复。",
+    "summary": "引妖香改为 Tracker 先分类、本地模板命中后同队列点选项和绿链；待用户明确允许后 fresh 验证。",
     "verification": "需复核"
   },
   {

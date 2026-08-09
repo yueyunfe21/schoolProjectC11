@@ -463,6 +463,7 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
         for (String name : a.interestOperations()) {
             operations.add(DialogOperation.valueOf(name));
         }
+        com.bot.dhxy.cloud.turn.protocol.TurnDialogFollowUpClick followUp = a.dialogFollowUpClick();
         return WindowDialogInterest.builder()
                 .taskType(taskType(a.taskCode()))
                 .operations(operations)
@@ -470,6 +471,9 @@ public final class WholeTaskRuntimeLocalOperationExecutor {
                 .absentAllowedAtMs(a.absentAllowedAtMs() == null ? 0L : a.absentAllowedAtMs())
                 .localTemplateProbeOnly(a.probeOnly() != null && a.probeOnly())
                 .probeStartAtMs(a.probeStartAtMs() == null ? 0L : a.probeStartAtMs())
+                .followUpAbsoluteX(followUp == null ? null : followUp.absoluteX())
+                .followUpAbsoluteY(followUp == null ? null : followUp.absoluteY())
+                .followUpPathingIntent(followUp == null ? null : toPathingIntent(followUp.pathingIntent()))
                 .build();
     }
 

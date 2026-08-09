@@ -45,6 +45,18 @@ public class WindowDialogInterest {
      */
     @Builder.Default
     long probeStartAtMs = 0L;
+    /**
+     * Screen-absolute Tracker point to click immediately after this interest's local option matches.
+     * Present only for the narrow 天庭引妖香 chain.
+     */
+    Integer followUpAbsoluteX;
+    Integer followUpAbsoluteY;
+    /** Exact intent registered only after both the option and Tracker clicks complete. */
+    WindowPathingIntent followUpPathingIntent;
+
+    public boolean hasFollowUpClick() {
+        return followUpAbsoluteX != null && followUpAbsoluteY != null && followUpPathingIntent != null;
+    }
 
     public boolean isExpired(long nowMs) {
         return expiresAtMs > 0L && nowMs > expiresAtMs;

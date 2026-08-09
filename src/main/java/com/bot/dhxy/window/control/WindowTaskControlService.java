@@ -422,7 +422,7 @@ public class WindowTaskControlService {
             try {
                 startupMode = lifecycle == StartLifecycle.COLD_START
                         ? awaitColdStartCombatExit(ids, taskTypes, startEpoch)
-                        : TaskStartupMode.NORMAL;
+                        : TaskStartupMode.PAUSE_RESUME;
             } catch (StartupCombatGateService.StartupCombatProbeException unavailable) {
                 return remoteStartRejected(ids, unavailable.getMessage());
             }
@@ -542,7 +542,7 @@ public class WindowTaskControlService {
         try {
             startupMode = lifecycle == StartLifecycle.COLD_START
                     ? awaitColdStartCombatExit(windowIds, taskTypes, startEpoch)
-                    : TaskStartupMode.NORMAL;
+                    : TaskStartupMode.PAUSE_RESUME;
         } catch (StartupCombatGateService.StartupCombatProbeException unavailable) {
             return remoteStartRejected(windowIds, unavailable.getMessage());
         }

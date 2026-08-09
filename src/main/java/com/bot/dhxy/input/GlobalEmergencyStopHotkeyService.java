@@ -2,6 +2,7 @@ package com.bot.dhxy.input;
 
 import com.bot.dhxy.ui.MainWindowController;
 import com.bot.dhxy.window.control.WindowTaskControlService;
+import com.bot.dhxy.window.model.WindowRuntimeStatus;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.platform.win32.WinUser;
@@ -160,7 +161,7 @@ public class GlobalEmergencyStopHotkeyService {
 
     private static boolean pauseRunningWindows(WindowTaskControlService windowTaskControlService) {
         var runningWindowIds = windowTaskControlService.getSnapshots().stream()
-                .filter(snapshot -> snapshot.isRunning())
+                .filter(snapshot -> snapshot.getStatus() == WindowRuntimeStatus.RUNNING)
                 .map(snapshot -> snapshot.getWindowId())
                 .toList();
         if (runningWindowIds.isEmpty()) {

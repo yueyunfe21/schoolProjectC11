@@ -20,6 +20,15 @@
       "status": "active"
     },
     {
+      "id": "BR-NPC-001",
+      "title": "NPC Click FIFO 候选顺序与成功后生产终止",
+      "source": "docs/业务逻辑.md",
+      "heading": "[BR-NPC-001] NPC Click 云端 FIFO 候选队列逻辑",
+      "domains": ["npc-click", "fifo", "ocr", "client-cloud", "state-lifecycle"],
+      "crossBoundary": true,
+      "status": "active"
+    },
+    {
       "id": "BR-TIANTING-001",
       "title": "天庭多谢到封妖符的本地连续状态",
       "source": "docs/天庭任务流程大MD.md",
